@@ -2,6 +2,12 @@
 
 Notable changes to Loom, newest first. Releases are tagged `loom/vX.Y.Z` in this repository; releases before this file existed are described in their commit messages.
 
+## 0.33.1 (2026-11-05)
+
+### Fixed
+
+- The Spec tab shows a setting turned on with an empty table, such as `auto_merge.final_review = {}`, as a change. The spec diff walked only into a table's keys, so a table added or removed with none was no change at all: a version that only turned the final review on showed nothing under "Only what changed" and "What changed", and was sent to the spec reviewer instead of being skipped as operational. "What changed" now reads such a table as "on, with its defaults".
+
 ## 0.33.0 (2026-11-05)
 
 ### Added

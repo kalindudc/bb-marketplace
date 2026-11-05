@@ -112,7 +112,13 @@ function walk(out: SpecChange[], path: string, before: unknown, after: unknown, 
   if (isObject(before) || isObject(after)) {
     const a = isObject(before) ? before : {};
     const b = isObject(after) ? after : {};
-    for (const key of new Set([...Object.keys(a), ...Object.keys(b)])) walk(out, path === "" ? key : `${path}.${key}`, a[key], b[key], ref);
+    const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+    // An empty table carries meaning by being there, as final_review = {} does, and has no key to walk into.
+    if (keys.size === 0) {
+      out.push({ ...at, kind: "value", before, after });
+      return;
+    }
+    for (const key of keys) walk(out, path === "" ? key : `${path}.${key}`, a[key], b[key], ref);
     return;
   }
   const long = [before, after].some((text) => typeof text === "string" && (text.length > TEXT_LENGTH || text.includes("\n")));

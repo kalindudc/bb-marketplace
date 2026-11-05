@@ -334,6 +334,25 @@ describe("spec settings", () => {
     // About 150 jumps, each a render of the whole page; a loaded machine needs more than 30 seconds for them.
   }, 60_000);
 
+  it("shows a final review turned on with an empty table, in What changed and while only what changed is shown", async () => {
+    const gh = (auto: Record<string, unknown>) =>
+      valid(
+        specToml((doc) => {
+          everything(doc);
+          doc.merge.forge = { kind: "gh", auto_merge: auto };
+        }),
+      );
+    const before = gh({ method: "squash" });
+    const after = gh({ method: "squash", final_review: {} });
+    const paths = specDiff(before, after).map((change) => change.path);
+    expect(paths).toEqual(["merge.forge.auto_merge.final_review"]);
+    const slot = await openSpec(versionOf(after, before));
+    const part = page(slot).querySelector<HTMLElement>('[data-final-review="merge.forge.auto_merge.final_review"]');
+    expect(part?.textContent).toContain("A final agent review before each merge");
+    expect(page(slot).querySelector('[data-change="merge.forge.auto_merge.final_review"]')?.textContent).toContain("on, with its defaults");
+    expect(missedJumps(slot, paths)).toEqual([]);
+  });
+
   it("draws each hook with its event, what it tells and to whom, and its command", async () => {
     const slot = await openSpec(versionOf(full(), full()));
     entire(slot);

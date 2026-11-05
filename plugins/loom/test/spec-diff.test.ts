@@ -19,6 +19,18 @@ describe("specDiff", () => {
     expect(specDiff(base, spec((doc) => (doc.budget = { deadline: "2026-12-31" })))).toEqual([{ path: "budget.deadline", section: "settings", ref: null, kind: "value", before: undefined, after: "2026-12-31" }]);
   });
 
+  it("counts an empty table that was added or removed as a change at its path", () => {
+    const gh = (auto: Record<string, unknown>) =>
+      spec((doc) => {
+        doc.merge = { strategy: "pr", forge: { kind: "gh", auto_merge: auto } };
+      });
+    const off = gh({ method: "squash" });
+    const on = gh({ method: "squash", final_review: {} });
+    expect(specDiff(off, on)).toEqual([{ path: "merge.forge.auto_merge.final_review", section: "settings", ref: null, kind: "value", before: undefined, after: {} }]);
+    expect(specDiff(on, off)).toEqual([{ path: "merge.forge.auto_merge.final_review", section: "settings", ref: null, kind: "value", before: {}, after: undefined }]);
+    expect(operationalChanges(off, on)).toEqual(["merge.forge.auto_merge.final_review"]);
+  });
+
   it("diffs a list of strings item by item, a rewritten item as a removal before its replacement", () => {
     const [change] = specDiff(base, spec((doc) => (doc.ticket[1].acceptance[1] = "WHEN there are no orders THE SYSTEM SHALL return an empty file")));
     expect(change).toMatchObject({ path: "ticket[csv-export].acceptance", section: "tickets", ref: "csv-export", kind: "list", added: 1, removed: 1 });

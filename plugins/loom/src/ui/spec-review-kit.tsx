@@ -66,6 +66,7 @@ export function formatValue(value: unknown): string {
   if (value === undefined || value === null) return "not set";
   if (typeof value === "boolean") return value ? "on" : "off";
   if (typeof value === "string" || typeof value === "number") return String(value);
+  if (typeof value === "object" && !Array.isArray(value) && Object.keys(value).length === 0) return "on, with its defaults";
   return JSON.stringify(value);
 }
 
