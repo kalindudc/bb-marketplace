@@ -1,7 +1,8 @@
 import { DEFAULT_KIND, isKind, type Kind } from "./kinds";
 
 export const TITLE_MAX = 120;
-export const BODY_MAX = 4000;
+// Room for a page or a view block, which the Flares tab draws as bb draws a reply.
+export const BODY_MAX = 60_000;
 
 export interface FlareDraft {
   kind: Kind;

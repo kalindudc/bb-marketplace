@@ -14,8 +14,8 @@ const containing = (runs: readonly RunDto[], at: number): RunDto | undefined =>
   runs.find((run) => run.startedAt <= at && (run.endedAt ?? Number.POSITIVE_INFINITY) >= at);
 
 /**
- * Groups a thread's flares by the turn they arrived in, newest turn first. A child thread's flare joins the parent's
- * turn that was running when it arrived.
+ * Groups a thread's flares by the turn they arrived in, oldest turn first, as a conversation reads. A child thread's
+ * flare joins the parent's turn that was running when it arrived.
  */
 export function groupFlares(feed: Pick<FeedDto, "flares" | "runs">): Section[] {
   const runs = new Map(feed.runs.map((run) => [run.id, run]));
@@ -30,7 +30,7 @@ export function groupFlares(feed: Pick<FeedDto, "flares" | "runs">): Section[] {
     sections.set(key, section);
   }
   for (const section of sections.values()) section.flares.sort((a, b) => a.createdAt - b.createdAt);
-  return [...sections.values()].sort((a, b) => (b.run?.startedAt ?? b.latestAt) - (a.run?.startedAt ?? a.latestAt));
+  return [...sections.values()].sort((a, b) => (a.run?.startedAt ?? a.latestAt) - (b.run?.startedAt ?? b.latestAt));
 }
 
 export function clock(at: number, now: number): string {

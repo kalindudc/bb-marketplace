@@ -2,6 +2,7 @@
 import { createFakePluginHost, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { describe, expect, it } from "vitest";
 import { threadTag } from "../src/contract";
+import type { Companions } from "../src/companion";
 import { FlareService, MAX_NUDGES_PER_TURN, dueForNudge, type Thread } from "../src/service";
 import { readSettings, type FlareSettings } from "../src/settings";
 import { FlareStore, MIGRATIONS, type RunRow } from "../src/store";
@@ -17,6 +18,7 @@ interface World {
   push?: (input: unknown) => Promise<unknown>;
   ancestorsFail?: boolean;
   onListRunning?: () => void;
+  companions?: { shown: (readonly string[])[]; discarded?: string[] };
 }
 
 function setup(world: World = {}) {
@@ -64,7 +66,20 @@ function setup(world: World = {}) {
   bb.storage.migrate(db, MIGRATIONS);
   const store = new FlareStore(db);
   const settings = { ...readSettings({}), ...world.settings };
-  const service = new FlareService(bb, store, async () => settings, () => now);
+  const companions = world.companions;
+  const fakeCompanions =
+    companions === undefined
+      ? null
+      : ({
+          show: async (viewers: readonly string[]) => {
+            companions.shown.push(viewers);
+          },
+          discard: async (_viewer: string, companion: string) => {
+            companions.discarded?.push(companion);
+          },
+          settled: async () => undefined,
+        } as unknown as Companions);
+  const service = new FlareService(bb, store, async () => settings, () => now, fakeCompanions);
   return {
     bb,
     harness,
@@ -175,7 +190,7 @@ describe("sending a flare", () => {
     await off.service.settled();
     expect(off.calls("plugins.callRpc")).toEqual([]);
 
-    const muted = setup({ threads: { thr_a: {} }, levels: { thr_a: { level: "muted" } } });
+    const muted = setup({ threads: { thr_a: {} }, levels: { thr_a: { own: null, ancestorCap: "muted" } } });
     muted.service.send({ threadId: "thr_a", projectId: null, fields: { title: "Blocked", kind: "blocker" }, source: "tool" });
     await muted.service.settled();
     expect(muted.calls("plugins.callRpc").map((call) => call.method)).toEqual(["threadNotifications.list"]);
@@ -191,6 +206,84 @@ describe("sending a flare", () => {
     await world.service.settled();
     expect(last).toMatchObject({ status: "sent", notes: [expect.stringContaining("did not notify anyone")] });
     expect(world.calls("plugins.callRpc").filter((call) => call.method === "notifications.send")).toHaveLength(20);
+  });
+});
+
+describe("rendering in companions", () => {
+  it("shows each flare in the companions of its thread and every thread above it", async () => {
+    const shown: (readonly string[])[] = [];
+    const world = setup({ threads: { thr_child: { parentThreadId: "thr_parent" } }, ancestors: { thr_child: ["thr_parent", "thr_root"] }, companions: { shown } });
+    world.service.send({ threadId: "thr_child", projectId: null, fields: { title: "Chart ready" }, source: "tool" });
+    await world.service.settled();
+    expect(shown).toEqual([["thr_child", "thr_parent", "thr_root"]]);
+  });
+
+  it("starts no companion when the Flares tab is set to plain cards", async () => {
+    const shown: (readonly string[])[] = [];
+    const world = setup({ threads: { thr_a: {} }, settings: { tab: "cards" }, companions: { shown } });
+    world.service.send({ threadId: "thr_a", projectId: null, fields: { title: "Plain" }, source: "tool" });
+    await world.service.settled();
+    expect(shown).toEqual([]);
+  });
+
+  it("never treats a companion's own turns as a thread's turns", () => {
+    const world = setup();
+    world.service.onActive(active("thr_companion", { providerId: "flare" }));
+    expect(world.store.openRun("thr_companion")).toBeNull();
+  });
+
+  it("reports the companion and which flares it draws in the feed", () => {
+    const world = setup();
+    world.store.setCompanion("thr_a", "thr_companion", 0);
+    const one = world.service.send({ threadId: "thr_a", projectId: null, fields: { title: "Drawn" }, source: "tool" });
+    world.service.send({ threadId: "thr_a", projectId: null, fields: { title: "On its way" }, source: "tool" });
+    if (one.status === "sent") world.store.markShown(one.flare.id, "thr_a", 0);
+    expect(world.service.feed("thr_a", true)).toMatchObject({
+      companionThreadId: "thr_companion",
+      flares: [{ title: "On its way", drawn: false }, { title: "Drawn", drawn: true }],
+    });
+  });
+
+  it("deletes a viewer's companion with the viewer, and refreshes a viewer whose companion was deleted", async () => {
+    const discarded: string[] = [];
+    const world = setup({ companions: { shown: [], discarded } });
+    world.store.setCompanion("thr_a", "thr_companion", 0);
+    world.store.setCompanion("thr_b", "thr_companion_b", 0);
+    world.service.onDeleted(active("thr_a"));
+    world.service.onDeleted(active("thr_companion_b"));
+    await world.service.settled();
+    expect(discarded).toEqual(["thr_companion"]);
+    expect(world.store.companionOf("thr_b")).toBeNull();
+    expect(world.harness.inspection.experimental_rpcInvalidations).toContainEqual([threadTag("thr_companion_b"), threadTag("thr_b")]);
+  });
+
+  it("replaces a companion deleted by hand with one that draws every flare again", async () => {
+    const shown: (readonly string[])[] = [];
+    const world = setup({ companions: { shown, discarded: [] } });
+    const sent = world.service.send({ threadId: "thr_b", projectId: null, fields: { title: "Drawn once" }, source: "tool" });
+    await world.service.settled();
+    shown.length = 0;
+    world.store.setCompanion("thr_b", "thr_companion_b", 0);
+    if (sent.status === "sent") world.store.markShown(sent.flare.id, "thr_b", 0);
+    world.service.onDeleted(active("thr_companion_b"));
+    await world.service.settled();
+    expect(world.store.unshownFor("thr_b", 10).map((row) => row.title)).toEqual(["Drawn once"]);
+    expect(shown).toEqual([["thr_b"]]);
+  });
+
+  it("rebuilds a companion that showed a flare pruning removed", async () => {
+    const shown: (readonly string[])[] = [];
+    const discarded: string[] = [];
+    const world = setup({ companions: { shown, discarded } });
+    const old = world.service.send({ threadId: "thr_a", projectId: null, fields: { title: "Old" }, source: "tool" });
+    world.store.setCompanion("thr_a", "thr_companion", 0);
+    if (old.status === "sent") world.store.markShown(old.flare.id, "thr_a", 0);
+    await world.service.settled();
+    shown.length = 0;
+    world.advance(31 * 86_400_000);
+    expect(await world.service.prune(30)).toBe(1);
+    expect(discarded).toEqual(["thr_companion"]);
+    expect(shown).toEqual([["thr_a"]]);
   });
 });
 
@@ -364,15 +457,15 @@ describe("turns", () => {
     world.service.onActive(active("thr_a"));
     world.service.send({ threadId: "thr_a", projectId: null, fields: { title: "x" }, source: "tool" });
     world.service.onDeleted(active("thr_a"));
-    expect(world.service.feed("thr_a", true)).toEqual({ flares: [], runs: [], truncated: false });
+    expect(world.service.feed("thr_a", true)).toEqual({ flares: [], runs: [], truncated: false, companionThreadId: null });
   });
 
-  it("prunes flares older than the setting", () => {
+  it("prunes flares older than the setting", async () => {
     const world = setup();
     world.service.send({ threadId: "thr_a", projectId: null, fields: { title: "Old" }, source: "tool" });
     world.advance(31 * 86_400_000);
     world.service.send({ threadId: "thr_a", projectId: null, fields: { title: "New" }, source: "tool" });
-    expect(world.service.prune(30)).toBe(1);
+    expect(await world.service.prune(30)).toBe(1);
     expect(world.service.list("thr_a", { limit: 10, children: false }).map((row) => row.title)).toEqual(["New"]);
   });
 });

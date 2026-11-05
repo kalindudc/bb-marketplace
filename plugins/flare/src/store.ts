@@ -74,6 +74,12 @@ export const MIGRATIONS = [
   )`,
   `CREATE INDEX audience_by_thread ON audience (thread_id)`,
   `CREATE TABLE dismissals (thread_id TEXT PRIMARY KEY, through INTEGER NOT NULL)`,
+  // Each viewer thread's hidden companion on Flare's renderer, and which flares reached it.
+  `CREATE TABLE companions (viewer_id TEXT PRIMARY KEY, companion_id TEXT NOT NULL, created_at INTEGER NOT NULL)`,
+  `CREATE INDEX companions_by_companion ON companions (companion_id)`,
+  `CREATE TABLE shown (flare_id TEXT NOT NULL, viewer_id TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (flare_id, viewer_id))`,
+  // A flare too old for a new companion's replay: it is not drawn there, and it is not waiting to be either.
+  `ALTER TABLE shown ADD COLUMN skipped INTEGER NOT NULL DEFAULT 0`,
 ];
 
 type FlareRecord = {
@@ -334,8 +340,94 @@ export class FlareStore {
       .run(threadId, through);
   }
 
+  companionOf(viewerId: string): string | null {
+    const row = this.db.prepare(`SELECT companion_id FROM companions WHERE viewer_id = ?`).get(viewerId) as { companion_id: string } | undefined;
+    return row?.companion_id ?? null;
+  }
+
+  isCompanion(threadId: string): boolean {
+    return this.db.prepare(`SELECT 1 FROM companions WHERE companion_id = ?`).get(threadId) !== undefined;
+  }
+
+  setCompanion(viewerId: string, companionId: string, at: number): void {
+    this.db
+      .prepare(`INSERT INTO companions (viewer_id, companion_id, created_at) VALUES (?, ?, ?) ON CONFLICT (viewer_id) DO UPDATE SET companion_id = excluded.companion_id, created_at = excluded.created_at`)
+      .run(viewerId, companionId, at);
+  }
+
+  forgetCompanion(viewerId: string): void {
+    this.db.transaction(() => {
+      this.db.prepare(`DELETE FROM companions WHERE viewer_id = ?`).run(viewerId);
+      this.db.prepare(`DELETE FROM shown WHERE viewer_id = ?`).run(viewerId);
+    })();
+  }
+
+  forgetCompanionById(companionId: string): void {
+    const row = this.db.prepare(`SELECT viewer_id FROM companions WHERE companion_id = ?`).get(companionId) as { viewer_id: string } | undefined;
+    if (row !== undefined) this.forgetCompanion(row.viewer_id);
+  }
+
+  markShown(flareId: string, viewerId: string, at: number): void {
+    this.db.prepare(`INSERT OR IGNORE INTO shown (flare_id, viewer_id, at) VALUES (?, ?, ?)`).run(flareId, viewerId, at);
+  }
+
+  viewerOf(companionId: string): string | null {
+    const row = this.db.prepare(`SELECT viewer_id FROM companions WHERE companion_id = ?`).get(companionId) as { viewer_id: string } | undefined;
+    return row?.viewer_id ?? null;
+  }
+
+  /** The newest `limit` flares a viewer's tab lists that its companion does not have yet, oldest first. */
+  unshownFor(viewerId: string, limit: number): FlareRow[] {
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM flares WHERE (thread_id = @viewer OR id IN (SELECT flare_id FROM audience WHERE thread_id = @viewer))
+           AND id NOT IN (SELECT flare_id FROM shown WHERE viewer_id = @viewer)
+         ORDER BY created_at DESC, rowid DESC LIMIT @limit`,
+      )
+      .all({ viewer: viewerId, limit }) as FlareRecord[];
+    return rows.map(flare).reverse();
+  }
+
+  /** When the newest flare a viewer's companion shows was sent; null when it shows none. */
+  lastShownAt(viewerId: string): number | null {
+    const row = this.db
+      .prepare(`SELECT max(f.created_at) AS at FROM shown s JOIN flares f ON f.id = s.flare_id WHERE s.viewer_id = ? AND s.skipped = 0`)
+      .get(viewerId) as { at: number | null };
+    return row.at;
+  }
+
+  /** Which of these flares a viewer's companion shows. */
+  shownAmong(viewerId: string, flareIds: readonly string[]): Set<string> {
+    if (flareIds.length === 0) return new Set();
+    const rows = this.db
+      .prepare(`SELECT flare_id FROM shown WHERE viewer_id = ? AND skipped = 0 AND flare_id IN (${flareIds.map(() => "?").join(",")})`)
+      .all(viewerId, ...flareIds) as { flare_id: string }[];
+    return new Set(rows.map((row) => row.flare_id));
+  }
+
+  /** Marks every flare older than `before` that a viewer's companion lacks as too old to replay. */
+  skipUnshownBefore(viewerId: string, before: number, at: number): number {
+    return this.db
+      .prepare(
+        `INSERT OR IGNORE INTO shown (flare_id, viewer_id, at, skipped)
+         SELECT id, @viewer, @at, 1 FROM flares WHERE created_at < @before
+           AND (thread_id = @viewer OR id IN (SELECT flare_id FROM audience WHERE thread_id = @viewer))`,
+      )
+      .run({ viewer: viewerId, before, at }).changes;
+  }
+
+  /** Viewers whose companion shows a flare older than `before`: pruning that flare leaves the companion stale. */
+  viewersShowingBefore(before: number): string[] {
+    const rows = this.db
+      .prepare(`SELECT DISTINCT s.viewer_id AS viewer FROM shown s JOIN flares f ON f.id = s.flare_id WHERE f.created_at < ? AND s.skipped = 0`)
+      .all(before) as { viewer: string }[];
+    return rows.map((row) => row.viewer);
+  }
+
   deleteThread(threadId: string): void {
     this.db.transaction(() => {
+      this.db.prepare(`DELETE FROM shown WHERE viewer_id = ? OR flare_id IN (SELECT id FROM flares WHERE thread_id = ?)`).run(threadId, threadId);
+      this.db.prepare(`DELETE FROM companions WHERE viewer_id = ? OR companion_id = ?`).run(threadId, threadId);
       this.db.prepare(`DELETE FROM audience WHERE thread_id = ? OR flare_id IN (SELECT id FROM flares WHERE thread_id = ?)`).run(threadId, threadId);
       this.db.prepare(`DELETE FROM flares WHERE thread_id = ?`).run(threadId);
       this.db.prepare(`DELETE FROM runs WHERE thread_id = ?`).run(threadId);
@@ -347,6 +439,7 @@ export class FlareStore {
   prune(before: number): number {
     return this.db.transaction(() => {
       this.db.prepare(`DELETE FROM audience WHERE flare_id IN (SELECT id FROM flares WHERE created_at < ?)`).run(before);
+      this.db.prepare(`DELETE FROM shown WHERE flare_id IN (SELECT id FROM flares WHERE created_at < ?)`).run(before);
       const { changes } = this.db.prepare(`DELETE FROM flares WHERE created_at < ?`).run(before);
       this.db.prepare(`DELETE FROM runs WHERE ended_at IS NOT NULL AND ended_at < ?`).run(before);
       return changes;

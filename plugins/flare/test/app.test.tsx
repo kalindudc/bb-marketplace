@@ -20,6 +20,7 @@ function flare(overrides: Partial<FlareDto> = {}): FlareDto {
     fromChild: null,
     pushed: false,
     forwarded: false,
+    drawn: false,
     ...overrides,
   };
 }
@@ -99,11 +100,53 @@ describe("the banner", () => {
     expect(screen.queryByText(/Turn failed/)).toBeNull();
   });
 
+  it("previews only the prose and points at the Flares tab for blocks", async () => {
+    await render({ flare: flare({ body: "The chart is ready.\n\n```ui\nChart(\"bar\", [], [1])\n```" }), count: 1, childCount: 0, run });
+    fireEvent.click(await screen.findByText("Root cause found"));
+    expect(await screen.findByText("The chart is ready.")).toBeTruthy();
+    expect(screen.getByText("1 view in the Flares tab")).toBeTruthy();
+    expect(screen.queryByText(/Chart\(/)).toBeNull();
+  });
+
   it("dismisses through the shown flare and hides at once", async () => {
     const dismiss = vi.fn(() => ({ ok: true as const }));
     await render({ flare: flare(), count: 1, childCount: 0, run }, { dismiss });
     fireEvent.click(await screen.findByLabelText("Dismiss"));
     await waitFor(() => expect(dismiss).toHaveBeenCalledWith({ threadId: "thr_a", through: NOW - 2 * 60_000 }));
+  });
+});
+
+describe("dividers in the rendered view", () => {
+  it("draws a divider with the flare's time over each companion message, and the turn's header over its first", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(NOW);
+    const loaded = await app();
+    const registration = loaded.messageMetadata.find((entry) => entry.id === "divider")!;
+    expect(registration.placement).toBe("above");
+    const { publishMarks } = await import("../src/ui/dividers");
+    const section = { key: "run_1", run, flares: [], latestAt: 0 };
+    publishMarks("thr_companion", new Map([["t1", { flare: flare({ createdAt: NOW - 14 * 60_000 }), section, first: true }], ["t2", { flare: flare({ id: "fl_2" }), section, first: false }]]));
+    const message = (turnId: string | null, threadId = "thr_companion") => ({ id: `m_${turnId}`, threadId, createdAt: NOW, turnId, role: "assistant" as const });
+
+    const first = renderSlot(registration, { message: message("t1") });
+    expect(first.container.querySelector("[data-flare-turn]")?.textContent).toContain("Why is checkout slow?");
+    expect(first.container.querySelector("[data-flare-divider]")?.textContent).toContain("14 min ago");
+    first.lifecycle.unmount();
+
+    const second = renderSlot(registration, { message: message("t2") });
+    expect(second.container.querySelector("[data-flare-turn]")).toBeNull();
+    expect(second.container.querySelector("[data-flare-divider]")?.textContent).toContain("2 min ago");
+    second.lifecycle.unmount();
+
+    publishMarks("thr_companion", new Map([["t3", { flare: flare({ kind: "blocker", fromChild: { threadId: "thr_child", title: "Check the logs" } }), section, first: false }]]));
+    const child = renderSlot(registration, { message: message("t3") });
+    expect(child.container.querySelector("[data-flare-divider]")?.textContent).toMatch(/^Blocker·.*2 min ago·from Check the logs$/);
+    child.lifecycle.unmount();
+
+    // Any other thread's messages, and turns Flare knows nothing about, get nothing.
+    expect(renderSlot(registration, { message: message("t1", "thr_other") }).container.innerHTML).toBe("");
+    expect(renderSlot(registration, { message: message("t9") }).container.innerHTML).toBe("");
+    publishMarks("thr_companion", null);
   });
 });
 
@@ -115,12 +158,46 @@ describe("the Flares tab", () => {
     const tab = loaded.tabs[0]!;
     return renderSlot(tab as { component: React.ComponentType<{ threadId: string; params: null; environment: null }> }, { threadId: "thr_a", params: null, environment: null }, {
       experimental_rpcContract: rpcContract,
-      rpc: { feed: () => feed },
+      rpc: { feed: () => feed, marks: () => ({ companionThreadId: feed.companionThreadId, marks: {} }) },
     });
   };
 
+  it("shows the companion as bb draws a reply, with flares it lacks as cards above, and switches to cards on request", async () => {
+    await render({
+      flares: [
+        flare({ id: "fl_new", title: "Just sent", createdAt: NOW - 5_000 }),
+        flare({ id: "fl_missed", title: "Sent before the companion", createdAt: NOW - 10 * 60_000 }),
+        flare({ id: "fl_drawn", title: "Drawn", drawn: true }),
+      ],
+      runs: [run],
+      truncated: false,
+      companionThreadId: "thr_companion",
+    });
+    const chat = await screen.findByTestId("bb-thread-chat");
+    expect(chat.getAttribute("data-thread-id")).toBe("thr_companion");
+    expect(chat.getAttribute("data-variant")).toBe("timeline");
+    expect(chat.getAttribute("data-layout")).toBe("document");
+    expect(screen.getByText("1 flare is on its way.")).toBeTruthy();
+    expect(screen.getByTestId("bb-thread-chat-leading-content").textContent).toContain("Sent before the companion");
+    expect(screen.getByTestId("bb-thread-chat-leading-content").textContent).not.toContain("Just sent");
+    const toolbar = () =>
+      [...document.querySelectorAll("button")]
+        .map((button) => button.textContent?.trim() || button.getAttribute("aria-label") || "")
+        .filter((text) => ["Rendered", "Cards"].includes(text) || /child threads' flares|Copy all/i.test(text))
+        .map((text) => (/child threads/i.test(text) ? "Child threads" : text.startsWith("Copy all") ? "Copy all" : text));
+    const before = toolbar();
+    fireEvent.click(screen.getByText("Cards"));
+    expect(screen.queryByTestId("bb-thread-chat")).toBeNull();
+    expect(await screen.findByText("Drawn")).toBeTruthy();
+    // The same buttons in the same places, whichever view is showing.
+    expect(toolbar()).toEqual(before);
+    expect(before).toEqual(["Rendered", "Cards", "Child threads", "Copy all"]);
+    const titles = [...document.querySelectorAll("article p:first-child")].map((node) => node.textContent);
+    expect(titles).toEqual(["Sent before the companion", "Drawn", "Just sent"]);
+  });
+
   it("explains what flares are when there are none", async () => {
-    await render({ flares: [], runs: [], truncated: false });
+    await render({ flares: [], runs: [], truncated: false, companionThreadId: null });
     expect(await screen.findByText("No flares yet")).toBeTruthy();
   });
 
@@ -132,11 +209,12 @@ describe("the Flares tab", () => {
       ],
       runs: [run],
       truncated: false,
+      companionThreadId: null,
     });
     expect(await screen.findByText("Why is checkout slow?")).toBeTruthy();
     const titles = [...document.querySelectorAll("article p:first-child")].map((node) => node.textContent);
     expect(titles).toEqual(["Root cause found", "Patch ready"]);
-    fireEvent.click(screen.getByText("Copy all"));
+    fireEvent.click(screen.getByLabelText("Copy all as Markdown"));
     await waitFor(() => expect(slot.inspection.experimental_clipboardWrites).toHaveLength(1));
     const text = slot.inspection.experimental_clipboardWrites[0]!.text;
     expect(text).toContain("> Why is checkout slow?");

@@ -1,14 +1,21 @@
+import { proseBody } from "./blocks";
 import { KIND_LABELS } from "./kinds";
 import type { FlareRow } from "./store";
 
 // Flare's dispatch hook recognizes its own notes by these prefixes and never lets one start a turn.
 export const FORWARD_PREFIX = "[Flare from a child thread]";
 export const NUDGE_PREFIX = "[Flare reminder]";
+/** The most of a child's flare body its parent's agent reads. */
+export const FORWARD_BODY_MAX = 4000;
 
 export function forwardText(flare: Pick<FlareRow, "threadId" | "kind" | "title" | "body">, childTitle: string | null): string {
   const from = childTitle === null ? `@thread:${flare.threadId}` : `"${childTitle}" (@thread:${flare.threadId})`;
   const lines = [`${FORWARD_PREFIX} ${from} sent a ${KIND_LABELS[flare.kind].toLowerCase()}: ${flare.title}`];
-  if (flare.body !== "") lines.push("", flare.body);
+  // The parent reads prose, cut short: every character is its tokens, and the whole flare is in the Flares tab.
+  if (flare.body !== "") {
+    const prose = proseBody(flare.body);
+    lines.push("", prose.length <= FORWARD_BODY_MAX ? prose : `${prose.slice(0, FORWARD_BODY_MAX).trimEnd()}…\n\n(The rest is in the Flares tab.)`);
+  }
   lines.push("", "The child is still working and needs no reply. Use this if it changes your plan; otherwise carry on.");
   return lines.join("\n");
 }
@@ -37,7 +44,9 @@ Send a flare when:
 - you are blocked or working around something, such as missing access or a failing service (kind "blocker");
 - you finished a phase of a long task (kind "progress", or "summary" for a wrap-up).
 
-Write for someone glancing over: the title is one line that stands on its own, about 80 characters; the body is optional Markdown with the evidence (paths, numbers, commands), a few lines at most. Send one flare per real event; one to five in a long turn is typical. Do not flare routine steps such as reading a file.
+Write for someone glancing over: the title is one line that stands on its own, about 80 characters; the body is optional Markdown with the evidence (paths, numbers, commands). Send one flare per real event; one to five in a long turn is typical. Do not flare routine steps such as reading a file.
+
+The Flares tab shows the body the way bb shows your replies, so whatever renders in a reply renders there: tables, mermaid diagrams, images, and any block or directive an installed plugin taught you to write. That holds even where another instruction says tool input stays plain text; a flare's body is read like a reply. Name a file in your thread storage as \`$BB_THREAD_STORAGE/<path>\`. The banner and notifications show only the prose, so open the body with a sentence. The body is cut at 60,000 characters.
 
 Kinds: finding (the default), progress, decision, blocker, summary. Set notify to true only for something the user must see now; blockers notify on their own.
 

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Markdown, experimental_useAppPanel, experimental_useRpcMutation, experimental_useRpcQuery, useComposer } from "@get-bb/plugin-sdk/app";
 import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
+import { previewBody } from "../blocks";
 import { rpcContract, type BannerDto } from "../contract";
 import { ago } from "../format";
 import { KIND_LABELS } from "../kinds";
@@ -49,7 +50,10 @@ export function ThreadBanner({ threadId }: { threadId: string }) {
   const flare = data?.flare ?? null;
   if (data === undefined || flare === null) return null;
 
-  const expanded = expandedId === flare.id && flare.body !== "";
+  // The banner is the quick look: prose only. Blocks another plugin draws wait in the Flares tab.
+  const preview = previewBody(flare.body);
+  const expandable = preview.text !== "" || preview.blocks > 0;
+  const expanded = expandedId === flare.id && expandable;
   // Only a flare from the failed turn itself carries the failure; one that arrived after it is news of its own.
   const failed = data.run?.outcome === "failed" && data.run.endedAt !== null && flare.createdAt <= data.run.endedAt;
   const more = data.count - 1;
@@ -71,10 +75,10 @@ export function ThreadBanner({ threadId }: { threadId: string }) {
         </span>
         <button
           type="button"
-          className={cn("min-w-0 flex-1 truncate text-left font-medium text-foreground", flare.body !== "" ? "cursor-pointer hover:underline" : "cursor-default")}
-          aria-expanded={flare.body === "" ? undefined : expanded}
-          title={flare.body === "" ? flare.title : expanded ? "Hide the detail" : "Show the detail"}
-          onClick={() => flare.body !== "" && setExpandedId(expanded ? null : flare.id)}
+          className={cn("min-w-0 flex-1 truncate text-left font-medium text-foreground", expandable ? "cursor-pointer hover:underline" : "cursor-default")}
+          aria-expanded={expandable ? expanded : undefined}
+          title={!expandable ? flare.title : expanded ? "Hide the detail" : "Show the detail"}
+          onClick={() => expandable && setExpandedId(expanded ? null : flare.id)}
         >
           {flare.title}
         </button>
@@ -90,7 +94,12 @@ export function ThreadBanner({ threadId }: { threadId: string }) {
       </div>
       {expanded && (
         <div className="mt-1.5 max-h-64 overflow-auto border-t border-border pt-1.5 pl-6">
-          <Markdown content={flare.body} />
+          {preview.text !== "" && <Markdown content={preview.text} />}
+          {preview.blocks > 0 && (
+            <button type="button" className="mt-1 cursor-pointer text-xs text-muted-foreground hover:text-foreground hover:underline" onClick={openTab}>
+              {preview.blocks === 1 ? "1 view in the Flares tab" : `${preview.blocks} views in the Flares tab`}
+            </button>
+          )}
         </div>
       )}
     </section>

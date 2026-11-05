@@ -20,6 +20,8 @@ export const flareSchema = z.object({
   fromChild: z.object({ threadId: z.string(), title: z.string().nullable() }).nullable(),
   pushed: z.boolean(),
   forwarded: z.boolean(),
+  /** Whether the thread being read has this flare in its companion, where bb draws it like a reply. */
+  drawn: z.boolean(),
 });
 export type FlareDto = z.infer<typeof flareSchema>;
 
@@ -46,6 +48,8 @@ export const feedSchema = z.object({
   flares: z.array(flareSchema),
   runs: z.array(runSchema),
   truncated: z.boolean(),
+  /** The hidden thread that shows this thread's flares as bb shows a reply; null until its first flare reaches it. */
+  companionThreadId: z.string().nullable(),
 });
 export type FeedDto = z.infer<typeof feedSchema>;
 
@@ -60,6 +64,15 @@ export const rpcContract = defineContract({
   feed: {
     input: z.object({ threadId, children: z.boolean() }).strict(),
     output: feedSchema,
+    tags: ({ threadId }: { threadId: string }) => [threadTag(threadId)],
+  },
+  marks: {
+    input: z.object({ threadId }).strict(),
+    output: z.object({
+      companionThreadId: z.string().nullable(),
+      /** The companion's turn id to the id of the flare it shows. */
+      marks: z.record(z.string(), z.string()),
+    }),
     tags: ({ threadId }: { threadId: string }) => [threadTag(threadId)],
   },
   dismiss: {

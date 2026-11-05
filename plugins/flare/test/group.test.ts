@@ -16,20 +16,21 @@ const flare = (id: string, createdAt: number, overrides: Partial<FlareDto> = {})
   fromChild: null,
   pushed: false,
   forwarded: false,
+  drawn: false,
   ...overrides,
 });
 
 const run = (id: string, startedAt: number, endedAt: number | null): RunDto => ({ id, startedAt, endedAt, outcome: endedAt === null ? "running" : "done", error: null, prompt: null });
 
 describe("groupFlares", () => {
-  it("puts each flare under its turn, newest turn first and each turn in order", () => {
+  it("puts each flare under its turn, oldest turn first and each turn in order, as a conversation reads", () => {
     const sections = groupFlares({
       runs: [run("run_2", 200, null), run("run_1", 100, 150)],
       flares: [flare("c", 210, { runId: "run_2" }), flare("b", 120, { runId: "run_1" }), flare("a", 110, { runId: "run_1" })],
     });
     expect(sections.map((section) => [section.key, section.flares.map((item) => item.id)])).toEqual([
-      ["run_2", ["c"]],
       ["run_1", ["a", "b"]],
+      ["run_2", ["c"]],
     ]);
   });
 
@@ -40,8 +41,8 @@ describe("groupFlares", () => {
       flares: [flare("late", 400, { fromChild: child, runId: "run_child" }), flare("during", 120, { fromChild: child, runId: "run_child" })],
     });
     expect(sections.map((section) => [section.key, section.flares.map((item) => item.id)])).toEqual([
-      ["outside", ["late"]],
       ["run_1", ["during"]],
+      ["outside", ["late"]],
     ]);
   });
 });

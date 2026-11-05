@@ -1,5 +1,6 @@
 import { definePluginApp } from "@get-bb/plugin-sdk/app";
 import { FlareBanner } from "./src/ui/banner";
+import { FlareDivider } from "./src/ui/dividers";
 import { FlaresTab } from "./src/ui/panel";
 import { FLARE_ICON, FLARES_TAB, FLARES_TAB_ID } from "./src/ui/tab";
 
@@ -20,6 +21,9 @@ export default definePluginApp((app) => {
     layout: "flush",
     component: FlaresTab,
   });
+
+  // Draws nothing outside the Flares tab's rendered view: a divider shows only over a companion's flare messages.
+  app.slots.experimental_messageMetadata({ id: "divider", placement: "above", component: FlareDivider });
 
   app.commands.register({
     id: "show-flares",

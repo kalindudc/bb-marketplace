@@ -1,3 +1,4 @@
+import { proseBody } from "./blocks";
 import { KIND_LABELS } from "./kinds";
 import type { FlareRow } from "./store";
 
@@ -24,7 +25,7 @@ export function flaresText(rows: readonly FlareRow[], viewer: string, now: numbe
     const from = row.threadId === viewer ? "" : ` [from ${row.threadTitle ?? row.threadId} ${row.threadId}]`;
     const line = `- ${ago(row.createdAt, now)} · ${KIND_LABELS[row.kind]}: ${row.title}${from} (${row.id})`;
     if (row.body === "") return line;
-    const body = options.bodies === "full" ? row.body.split("\n").map((text) => `    ${text}`).join("\n") : `    ${excerpt(row.body, 240)}`;
+    const body = options.bodies === "full" ? row.body.split("\n").map((text) => `    ${text}`).join("\n") : `    ${excerpt(proseBody(row.body), 240)}`;
     return `${line}\n${body}`;
   });
   return `${head}\n${lines.join("\n")}\n`;

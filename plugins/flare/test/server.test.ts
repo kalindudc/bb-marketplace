@@ -84,6 +84,14 @@ describe("the flare tool", () => {
   });
 });
 
+describe("the renderer provider", () => {
+  it("registers Flare's renderer as a provider with one model and one reasoning level", async () => {
+    const harness = await load();
+    const [provider] = harness.inspection.registrations.providerRegistrations;
+    expect(provider).toMatchObject({ id: "flare", displayName: "Flare", completedTurnDisplay: "flat" });
+  });
+});
+
 describe("the frontend reads", () => {
   it("serves the banner and feed, and a dismissal clears the banner", async () => {
     const harness = await load();

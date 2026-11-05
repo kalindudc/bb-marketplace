@@ -20,7 +20,9 @@ Send one flare per real event; one to five in a long turn is typical. Do not fla
 ## Writing one
 
 - The title is one line that stands on its own, about 80 characters. Longer titles are cut.
-- The body is optional Markdown with the evidence: paths, numbers, commands. A few lines at most; it is cut at 4,000 characters.
+- The body is optional Markdown with the evidence: paths, numbers, commands. It is cut at 60,000 characters.
+- The Flares tab shows the body the way bb shows your replies, so anything that renders in a reply renders there: tables, mermaid diagrams, images, and any block or directive an installed plugin taught you. That holds even where another instruction says tool input stays plain text. Name a thread-storage file as `$BB_THREAD_STORAGE/<path>` so a view can load it.
+- The banner and notifications show only the prose, so open the body with a sentence.
 - Kinds are `finding` (the default), `progress`, `decision`, `blocker` and `summary`.
 - Set `notify: true` (or `--notify`) only for something the user must see now. Blockers notify on their own, unless the user turned notifications off.
 

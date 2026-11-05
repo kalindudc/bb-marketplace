@@ -45,6 +45,15 @@ export const SETTING_DESCRIPTORS = {
     description: "Also remind threads another thread started, such as minions and delegates. Off keeps reminders to threads you started.",
     default: false,
   },
+  tab: {
+    type: "select",
+    label: "Flares tab shows",
+    description:
+      "Rendered shows each flare as bb shows a reply, so any block an installed plugin draws (a chart, a page, a diagram) appears. It keeps a hidden companion thread per thread on Flare's renderer, which runs no model and costs nothing. Cards shows Flare's own Markdown cards and starts no companion.",
+    options: ["rendered", "cards"],
+    experimental_optionLabels: { rendered: "Rendered, like a reply", cards: "Plain cards" },
+    default: "rendered",
+  },
   keepDays: {
     type: "number",
     label: "Keep flares for (days)",
@@ -60,6 +69,7 @@ export interface FlareSettings {
   forwardToParent: ForwardMode;
   nudgeMinutes: number;
   nudgeChildThreads: boolean;
+  tab: "rendered" | "cards";
   keepDays: number;
 }
 
@@ -75,6 +85,7 @@ export function readSettings(values: Record<string, unknown>): FlareSettings {
     forwardToParent: oneOf(FORWARD_MODES, values.forwardToParent, "blockers"),
     nudgeMinutes: Math.max(0, Math.floor(number(values.nudgeMinutes, 0))),
     nudgeChildThreads: values.nudgeChildThreads === true,
+    tab: values.tab === "cards" ? "cards" : "rendered",
     keepDays: Math.max(1, Math.floor(number(values.keepDays, 30))),
   };
 }

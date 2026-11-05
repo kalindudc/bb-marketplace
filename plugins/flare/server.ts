@@ -1,8 +1,11 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { registerCli } from "./src/cli";
+import { Companions } from "./src/companion";
+import { CompanionMarks } from "./src/marks";
 import { rpcContract } from "./src/contract";
 import { FlareService, startsTurnWithOnlyFlareNotes } from "./src/service";
 import { SETTING_DESCRIPTORS, readSettings } from "./src/settings";
+import { registerProvider } from "./src/provider";
 import { FlareStore, MIGRATIONS } from "./src/store";
 import { registerTools } from "./src/tools";
 
@@ -27,10 +30,18 @@ export default function flare(bb: BbPluginApi): void {
   bb.storage.migrate(db, MIGRATIONS);
   // Only this plugin writes its database, so a long wait means something is wrong; a flare must never sit behind it.
   db.pragma("busy_timeout = 500");
-  const flares = new FlareService(bb, new FlareStore(db), async () => readSettings(await settings.get()));
+  const store = new FlareStore(db);
+  const flares = new FlareService(bb, store, async () => readSettings(await settings.get()), Date.now, new Companions(bb, store));
+  registerProvider(bb);
 
+  const marks = new CompanionMarks(bb);
   bb.rpc.register(rpcContract, {
     banner: ({ threadId }) => flares.banner(threadId),
+    marks: async ({ threadId }) => {
+      const companion = store.companionOf(threadId);
+      if (companion === null) return { companionThreadId: null, marks: {} };
+      return { companionThreadId: companion, marks: Object.fromEntries(await marks.read(companion)) };
+    },
     feed: ({ threadId, children }) => flares.feed(threadId, children),
     dismiss: ({ threadId, through }) => {
       flares.dismiss(threadId, through);
@@ -70,7 +81,7 @@ export default function flare(bb: BbPluginApi): void {
   });
 
   bb.background.schedule("prune", "17 3 * * *", async () => {
-    const removed = flares.prune((await settings.get()).keepDays);
+    const removed = await flares.prune((await settings.get()).keepDays);
     if (removed > 0) bb.log.info(`Deleted ${removed} old flares`);
   });
 

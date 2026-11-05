@@ -1,9 +1,12 @@
 import type { BbPluginApi, MessageDispatchHookContext, PluginThreadEventPayloads } from "@get-bb/plugin-sdk";
 import { z } from "zod";
+import { leadLine } from "./blocks";
+import type { Companions } from "./companion";
 import { FEED_LIMIT, threadTag, type BannerDto, type FeedDto, type FlareDto, type RunDto } from "./contract";
 import { KIND_LABELS } from "./kinds";
 import { normalizeFlare, type FlareFields } from "./normalize";
 import { FORWARD_PREFIX, NUDGE_PREFIX, forwardText, nudgeText } from "./notes";
+import { PROVIDER_ID } from "./provider";
 import type { FlareSettings } from "./settings";
 import type { FlareRow, FlareSource, FlareStore, RunRow } from "./store";
 
@@ -87,7 +90,7 @@ export function runDto(run: RunRow): RunDto {
   return { id: run.id, startedAt: run.startedAt, endedAt: run.endedAt, outcome: run.outcome, error: run.error, prompt: run.prompt };
 }
 
-export function flareDto(row: FlareRow, viewer: string): FlareDto {
+export function flareDto(row: FlareRow, viewer: string, drawn = false): FlareDto {
   return {
     id: row.id,
     threadId: row.threadId,
@@ -101,6 +104,7 @@ export function flareDto(row: FlareRow, viewer: string): FlareDto {
     fromChild: row.threadId === viewer ? null : { threadId: row.threadId, title: row.threadTitle },
     pushed: row.pushedAt !== null,
     forwarded: row.forwardedAt !== null,
+    drawn,
   };
 }
 
@@ -119,7 +123,13 @@ export class FlareService {
     private readonly store: FlareStore,
     private readonly settings: () => Promise<FlareSettings>,
     private readonly now: () => number = Date.now,
+    private readonly companions: Companions | null = null,
   ) {}
+
+  /** Flare's own companion threads run on its renderer; they are never turns, viewers or senders. */
+  private isCompanion(thread: Pick<Thread, "id" | "providerId">): boolean {
+    return thread.providerId === PROVIDER_ID || this.store.isCompanion(thread.id);
+  }
 
   send(input: SendInput): SendResult {
     const normalized = normalizeFlare(input.fields);
@@ -165,10 +175,15 @@ export class FlareService {
     if (ancestors.length === 0 && thread?.parentThreadId) ancestors.push(thread.parentThreadId);
     if (ancestors.length > 0) this.store.addAudience(row.id, ancestors);
     this.invalidate([row.threadId, ...ancestors]);
-    if (!loud) return;
 
     const settings = await this.settings();
     const work: Promise<void>[] = [];
+    // Shown in the companions whatever the per-turn limit says: the tab lists every flare.
+    if (settings.tab === "rendered" && this.companions !== null) work.push(this.companions.show([row.threadId, ...ancestors]));
+    if (!loud) {
+      await Promise.all(work);
+      return;
+    }
     if (shouldPush(settings.notify, row)) work.push(this.push(row, title, ancestors));
     const parent = ancestors[0];
     if (parent !== undefined && shouldForward(settings.forwardToParent, row)) work.push(this.forward(row, parent, title));
@@ -178,7 +193,7 @@ export class FlareService {
   private async push(row: FlareRow, threadTitle: string | null, ancestors: readonly string[]): Promise<void> {
     if (await this.muted([row.threadId, ...ancestors])) return;
     const lead = `${KIND_LABELS[row.kind]}${threadTitle === null ? "" : ` in ${threadTitle}`}`;
-    const detail = row.body.split("\n").find((line) => line.trim() !== "")?.trim();
+    const detail = leadLine(row.body) ?? undefined;
     const channels = await this.notify({ title: row.title, body: detail === undefined ? lead : `${lead}: ${detail}`, threadId: row.threadId });
     if (channels > 0) {
       this.store.markPushed(row.id, this.now());
@@ -221,7 +236,7 @@ export class FlareService {
 
   /**
    * Whether the user muted the thread, or a thread above it, in push notifications: a muted parent caps its children
-   * there. `threadNotifications.list` reports only the levels set on each thread. Unknown counts as not muted.
+   * there. Unknown counts as not muted.
    */
   private async muted(threadIds: readonly string[]): Promise<boolean> {
     try {
@@ -231,10 +246,12 @@ export class FlareService {
         input: { threadIds: [...threadIds] },
         outputSchema: threadLevels,
       });
+      // Each entry is `{ own, ancestorCap }`: the thread's own level and the strictest level set above it.
       return threadIds.some((id) => {
         const entry = threads[id];
-        const level = typeof entry === "string" ? entry : (entry as { level?: unknown } | undefined)?.level;
-        return level === "muted";
+        if (typeof entry === "string") return entry === "muted";
+        const levels = entry as { own?: unknown; ancestorCap?: unknown; level?: unknown } | undefined;
+        return levels?.own === "muted" || levels?.ancestorCap === "muted" || levels?.level === "muted";
       });
     } catch {
       return false;
@@ -263,6 +280,7 @@ export class FlareService {
   }
 
   onActive(thread: Thread): void {
+    if (this.isCompanion(thread)) return;
     this.lifecycle.set(thread.id, ++this.events);
     const { run, started } = this.store.startRun(thread.id, this.now(), thread.parentThreadId !== null);
     if (!started) return;
@@ -271,11 +289,18 @@ export class FlareService {
   }
 
   onIdle(thread: Thread): void {
+    if (this.isCompanion(thread)) {
+      // A companion turn that ended has drawn a flare; its viewer's tab can now put a divider over it.
+      const viewer = this.store.viewerOf(thread.id);
+      if (viewer !== null) this.invalidate([viewer]);
+      return;
+    }
     this.lifecycle.set(thread.id, ++this.events);
     if (this.store.endRun(thread.id, this.now(), "done") !== null) this.invalidate([thread.id]);
   }
 
   onFailed(thread: Thread, error: string | null): void {
+    if (this.isCompanion(thread)) return;
     this.lifecycle.set(thread.id, ++this.events);
     const ended = this.store.endRun(thread.id, this.now(), "failed", error === null ? null : cut(error, 500));
     if (ended === null) return;
@@ -290,7 +315,20 @@ export class FlareService {
 
   onDeleted(thread: Thread): void {
     this.lifecycle.delete(thread.id);
+    // A deleted viewer takes its companion with it. A companion deleted by hand is replaced: its viewer's flares are
+    // all drawn again in a new one, which is also how a companion from an older build gets its dividers.
+    const companion = this.store.companionOf(thread.id);
+    const viewer = this.store.viewerOf(thread.id);
+    const companions = this.companions;
+    if (companion !== null && companions !== null) this.defer(() => companions.discard(thread.id, companion));
+    if (viewer !== null) this.store.forgetCompanion(viewer);
     this.store.deleteThread(thread.id);
+    this.invalidate(viewer === null ? [thread.id] : [thread.id, viewer]);
+    if (viewer !== null && companions !== null) {
+      this.defer(async () => {
+        if ((await this.settings()).tab === "rendered") await companions.show([viewer]);
+      });
+    }
   }
 
   /** The message that started a thread's latest turn: when it was sent and its text. */
@@ -330,7 +368,7 @@ export class FlareService {
     for (const threadId of running) {
       if (moved(threadId) || this.store.openRun(threadId) !== null) continue;
       const thread = await this.thread(threadId);
-      if (thread === null) continue;
+      if (thread === null || this.isCompanion(thread)) continue;
       // The turn began before Flare saw it, so its start and label come from the message that started it.
       const request = await this.lastRequest(threadId).catch(() => null);
       if (moved(threadId) || this.store.openRun(threadId) !== null) continue;
@@ -368,8 +406,19 @@ export class FlareService {
     }
   }
 
-  prune(keepDays: number): number {
-    return this.store.prune(this.now() - keepDays * 86_400_000);
+  /** Deletes old flares; a companion that showed one is rebuilt from the flares that are left. */
+  async prune(keepDays: number): Promise<number> {
+    const before = this.now() - keepDays * 86_400_000;
+    const stale = this.store.viewersShowingBefore(before).flatMap((viewer) => {
+      const companion = this.store.companionOf(viewer);
+      return companion === null ? [] : [{ viewer, companion }];
+    });
+    const removed = this.store.prune(before);
+    if (this.companions !== null && stale.length > 0) {
+      for (const { viewer, companion } of stale) await this.companions.discard(viewer, companion);
+      if ((await this.settings()).tab === "rendered") await this.companions.show(stale.map(({ viewer }) => viewer));
+    }
+    return removed;
   }
 
   banner(threadId: string): BannerDto {
@@ -391,10 +440,13 @@ export class FlareService {
     const flares = rows.slice(0, FEED_LIMIT);
     // The thread's own runs that these flares span, so a busy thread's older flares still sit under their turn.
     const oldest = flares.at(-1)?.createdAt ?? this.now();
+    const companion = this.store.companionOf(threadId);
+    const drawn = companion === null ? new Set<string>() : this.store.shownAmong(threadId, flares.map((row) => row.id));
     return {
-      flares: flares.map((row) => flareDto(row, threadId)),
+      flares: flares.map((row) => flareDto(row, threadId, drawn.has(row.id))),
       runs: this.store.runsSince(threadId, oldest).map(runDto),
       truncated: rows.length > FEED_LIMIT,
+      companionThreadId: companion,
     };
   }
 
@@ -424,5 +476,6 @@ export class FlareService {
   /** Resolves once every piece of background work has finished; for tests and disposal. */
   async settled(): Promise<void> {
     while (this.pending.size > 0) await Promise.all([...this.pending]);
+    await this.companions?.settled();
   }
 }
