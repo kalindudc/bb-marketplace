@@ -1,0 +1,32 @@
+import { definePluginApp } from "@get-bb/plugin-sdk/app";
+import { FlareBanner } from "./src/ui/banner";
+import { FlaresTab } from "./src/ui/panel";
+import { FLARE_ICON, FLARES_TAB, FLARES_TAB_ID } from "./src/ui/tab";
+
+export default definePluginApp((app) => {
+  app.composer.customize({
+    id: "flare",
+    scopes: ["thread"],
+    // Bare, so a thread with no flare shows no empty card above its message box.
+    banners: [{ id: "latest", chrome: "bare", component: FlareBanner }],
+  });
+
+  app.slots.experimental_tab({
+    context: { kind: "thread" },
+    availability: "action",
+    id: FLARES_TAB_ID,
+    title: "Flares",
+    icon: FLARE_ICON,
+    layout: "flush",
+    component: FlaresTab,
+  });
+
+  app.commands.register({
+    id: "show-flares",
+    title: "Flare: show this thread's flares",
+    isAvailable: ({ threadId }) => threadId !== null,
+    run: ({ threadId, experimental_panel }) => {
+      if (threadId !== null) experimental_panel.openTab({ tab: FLARES_TAB, title: "Flares" });
+    },
+  });
+});

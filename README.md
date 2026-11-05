@@ -9,6 +9,7 @@ own setup.
 bb marketplace add git:github.com/kalindudc/bb-marketplace@main
 bb plugin install agent-commands@kalindudc
 bb plugin install better-browser@kalindudc
+bb plugin install flare@kalindudc
 bb plugin install follow-thinking@kalindudc
 bb plugin install forage@kalindudc
 bb plugin install gruve@kalindudc
@@ -34,6 +35,7 @@ plugin store.
 |---|---|---|
 | [Agent Commands](plugins/agent-commands) | `agent-commands` | Runs your prompt files from `~/.agents/commands` in any thread: type `!` for a menu of them, or type `/name` as in pi. Codex and Claude Code agents learn the typed form; pi expands it itself. |
 | [Better Browser](plugins/better-browser) | `better-browser` | Makes bb's Browser follow your real browser: sessions from the Chrome, Arc, Brave, Edge, Vivaldi or Firefox profile you pick flow into bb while that browser stays open, Okta, Google and Microsoft sign-in pages finish in your real browser where passkeys and Okta Verify work, and Cmd+click on a link in a conversation or in bb's Browser opens it there. |
+| [Flare](plugins/flare) | `flare` | Lets an agent tell you what it found while it is still working: it sends up a flare (a finding, a decision, progress or a blocker) and keeps going, and you see it in a banner above the message box and the thread's Flares tab, with a push notification for blockers. The tool returns at once and never holds the turn. |
 | [Follow Thinking](plugins/follow-thinking) | `follow-thinking` | Opens thinking blocks in the timeline automatically and keeps live thinking scrolled to its newest line. Toggle it from the thread header, a thread's actions menu or the command palette. |
 | [Forage](plugins/forage) | `forage` | Gives every agent web search and web fetch as bb's own tools, so a pi, Codex, Claude Code or ACP thread gets results in a real timeline row instead of a raw tool call. Keyless DuckDuckGo and Exa, Brave or SearXNG with a key, batch queries, recency and domain filters, readable markdown, GitHub-aware fetching, paging and passage search. |
 | [Gruve](plugins/gruve) | `gruve` | A gruvbox theme for coding: 0px corners, flat surfaces, a JetBrains Mono interface and a composer styled as a terminal prompt. Dark mode is gruvbox soft; light mode keeps gruvbox's ink on neutral paper instead of yellow. Its settings pick the accent, the interface and code fonts, the text size, the corners and the prompt glyph. Pick it under Settings → Appearance. |
