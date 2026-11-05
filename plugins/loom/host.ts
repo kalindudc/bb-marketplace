@@ -51,6 +51,8 @@ export default experimental_defineHostEntry({
     prEdit: (input, { signal }) => ops.prEdit(input, signal),
     prReply: (input, { signal }) => ops.prReply(input, signal),
     remotes: (input, { signal }) => ops.remotes(input, signal),
+    checkoutPrint: (input, { signal }) => ops.checkoutPrint(input, signal),
+    finalScratch: (input, { experimental_paths }) => ops.finalScratch(input, experimental_paths.dataDir),
     ghStatus: (input, { signal }) => ops.ghStatus(input, signal),
     trialWorktree: (input, { signal, experimental_paths }) => ops.trialWorktree(input, experimental_paths.dataDir, signal),
     landedOn: (input, { signal }) => ops.landedOn(input, signal),

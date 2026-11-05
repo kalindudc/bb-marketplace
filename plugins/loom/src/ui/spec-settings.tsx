@@ -365,6 +365,7 @@ function AutoMergeParts({ path, label, auto }: { path: string; label: string; au
           </Commentable>
         )}
       </div>
+      {shown("final_review") && <FinalReviewPart at={`${at}.final_review`} label={`${label} › auto merge › final review`} final={auto?.final_review} />}
       {shown("rejected") && (
         <div className="flex min-w-0 flex-wrap items-center gap-1">
           <Commentable as="span" target={value(`${at}.rejected`, `${label} › auto merge › rejected`, "text")} className="text-[11px] text-muted-foreground">
@@ -389,6 +390,32 @@ function AutoMergeParts({ path, label, auto }: { path: string; label: string; au
         </div>
       )}
     </Part>
+  );
+}
+
+/** auto_merge's final review: on or off, and the agent, reasoning and time limit of its one short turn. */
+function FinalReviewPart({ at, label, final }: { at: string; label: string; final: AutoMergeSpec["final_review"] }) {
+  const review = useReview();
+  const part = (key: "provider" | "model" | "reasoning", fallback: string) =>
+    (final?.[key] !== undefined || changedAt(review, `${at}.${key}`)) && (
+      <Commentable as="span" target={value(`${at}.${key}`, `${label} › ${key}`, "text", final?.[key])} className={CODE}>
+        {final?.[key] ?? fallback}
+      </Commentable>
+    );
+  return (
+    <div data-final-review={at} className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs">
+      <Commentable as="span" target={{ paths: [at, ...review.changes.map((change) => change.path).filter((one) => one.startsWith(`${at}.`))], label, kind: "text" }} className="text-muted-foreground">
+        {final === undefined ? "No final review before the merge" : "A final agent review before each merge, of what changed since approval"}
+      </Commentable>
+      {part("provider", "the reviewer's provider")}
+      {part("model", "the reviewer's model")}
+      {part("reasoning", "low")}
+      {final !== undefined && (
+        <Commentable as="span" target={value(`${at}.timeout_minutes`, `${label} › timeout minutes`, "number", final.timeout_minutes ?? 10, { min: 1, max: 60 })} className="text-muted-foreground">
+          within {plural(final.timeout_minutes ?? 10, "minute")}
+        </Commentable>
+      )}
+    </div>
   );
 }
 

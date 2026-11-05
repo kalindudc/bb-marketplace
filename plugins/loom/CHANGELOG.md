@@ -2,6 +2,18 @@
 
 Notable changes to Loom, newest first. Releases are tagged `loom/vX.Y.Z` in this repository; releases before this file existed are described in their commit messages.
 
+## 0.33.0 (2026-11-05)
+
+### Added
+
+- A final review before Loom merges: `auto_merge.final_review = {}`, or with `provider`, `model`, `reasoning` and `timeout_minutes`, runs one short agent turn right before Loom asks to merge, once every other hold has cleared, on the exact commit it would merge. Loom merges only once it passes for that commit, and a new push needs a new one. It is scoped to the delta: the patches of the pull request's own files that changed since Loom's reviewers approved the ticket (a base merge's conflict resolution, someone else's commits), the pull request's title and description now, people's comments and reviews since the approval, and the acceptance criteria; with no code change it checks the text only. It runs in an empty scratch directory on the project's machine, with no worktree, environment or machine of its own; it never runs in the repo's checkout (should bb refuse the scratch directory, the merge holds). Against accidents, Loom takes a cheap fingerprint of the repo's checkout (HEAD, branch, the index checksum, `git status` and each listed path's lstat, at most 300 paths and 5 seconds) before it and, once the reviewer has really stopped, again before it counts a pass, holding the merge on any change or a fingerprint it cannot take, and never resetting the checkout. A reviewer's thread is stopped and its scratch directory removed once its run is over, a pass included; a run is closed only after the removal is confirmed, and orphaned directories are swept. Own files are those the pull request changed at the approval or changes now, so a conflict resolution that drops an approved change is shown; files only the base brought are counted only when Loom established it. The brief is bounded (12 patches, 40,000 characters, exact counts of what it left out), and a pass of an incomplete brief waits for `bb loom auto-merge <slug> accept --ticket <KEY>`. Runs are kept up apart from whether a merge may start: a deadline recorded with each run (a later verdict is refused), a new push, a pause, an `off`, a block, a cancel or lost readiness ends the run and archives its thread. It runs at `agents.reviewer`'s model and `"low"` reasoning within 10 minutes unless the spec says otherwise. Its one tool, `loom_final_review`, passes or fails with a reason and whether the worker can fix it: a fixable failure is a fix round, counted like other feedback, and any other blocks the ticket. A run that does not start, times out or ends without a verdict never merges; Loom tries again 5 and 10 minutes later and holds after 3, until `bb loom auto-merge <slug> retry --ticket <KEY>`. The ticket's posts, the feed, the Merge order tab ("Waiting for final review", "Final review failed: …") and `bb loom metrics` (`finalReviews`) show it.
+
+### Compatibility
+
+- No migration: each run, verdict and end is a ticket event keyed by the commit (`ticket.final_review_started`, `_bound`, `_verdict`, `_ended`, `_nudged`, `_acted`, `_closed`, `_held`, `_reset`, `_verified`, `_accepted`), recorded before the thread is spawned, so a restart neither runs a second review nor merges without one.
+- A spec without `final_review` parses and hashes as before.
+- New host calls `checkoutPrint` and `finalScratch`.
+
 ## 0.32.0 (2026-11-04)
 
 ### Added

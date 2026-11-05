@@ -606,6 +606,25 @@ export const hostContract = defineRpcContract({
       unavailable,
     ]),
   },
+  // A cheap fingerprint of a checkout, read from its repo's top level: HEAD and the branch it is on, the index file's
+  // trailing checksum, `git status --porcelain=v2`, and each listed path's type, size and mtime. No contents, no writes.
+  // Unavailable past its path cap or deadline, or when a path cannot be read: never a fingerprint with gaps.
+  checkoutPrint: {
+    input: z.object({ repo: absPath }).strict(),
+    output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok"), print: z.string(), head: z.string().nullable(), dirty: z.boolean() }).strict(), unavailable]),
+  },
+  // An empty directory of the data directory for one final review to start in, and what it holds later; `remove` deletes
+  // it, and `sweep` deletes at most 20 of Loom's scratch directories not in `keep`, answering their keys.
+  finalScratch: {
+    input: z
+      .object({
+        key: z.string().regex(/^[a-z0-9][a-z0-9-]{0,79}$/u, "must be a scratch key"),
+        action: z.enum(["create", "inspect", "remove", "sweep"]),
+        keep: z.array(z.string().regex(/^[a-z0-9][a-z0-9-]{0,79}$/u)).max(2000).optional(),
+      })
+      .strict(),
+    output: z.object({ path: z.string(), entries: z.array(z.string()) }).strict(),
+  },
   // Each git remote with its push URLs, in `git remote` order.
   remotes: {
     ...RETRYABLE,

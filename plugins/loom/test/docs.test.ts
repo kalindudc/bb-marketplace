@@ -3,14 +3,14 @@ import { describe, expect, it } from "vitest";
 import { createCli } from "../src/cli";
 import { HOOK_EVENTS } from "../src/hook-events";
 import { parseSpec, proposalErrorsOf } from "../src/spec";
-import { MACHINE_WORKER_TOOLS, ORDINARY_TOOLS, PLANNER_TOOLS, REVIEWER_TOOLS, SKILLS, SPEC_REVIEWER_TOOLS, WORKER_TOOLS } from "../src/tools";
+import { FINAL_REVIEWER_TOOLS, MACHINE_WORKER_TOOLS, ORDINARY_TOOLS, PLANNER_TOOLS, REVIEWER_TOOLS, SKILLS, SPEC_REVIEWER_TOOLS, WORKER_TOOLS } from "../src/tools";
 import { makeHost } from "./helpers";
 
 const read = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 const host = makeHost();
 // Each command as it is typed, such as "forge check", from the start of its usage line.
 const commands = createCli(host.projects, host.engine, host.store, Date.now).commands!.map((command) => command.usage.replace(/^bb loom /, "").split(/ [<[]/)[0]!);
-const tools = [...new Set([...ORDINARY_TOOLS, ...PLANNER_TOOLS, ...WORKER_TOOLS, ...REVIEWER_TOOLS, ...SPEC_REVIEWER_TOOLS])];
+const tools = [...new Set([...ORDINARY_TOOLS, ...PLANNER_TOOLS, ...WORKER_TOOLS, ...REVIEWER_TOOLS, ...SPEC_REVIEWER_TOOLS, ...FINAL_REVIEWER_TOOLS])];
 
 describe("the plugin's own documents", () => {
   it("declares skill roots the way bb reads them, so configure() can select every skill", () => {

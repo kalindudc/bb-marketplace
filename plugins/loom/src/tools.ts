@@ -15,6 +15,7 @@ import { specReviewBlocks } from "./format";
 import { handInPrText, humanFixRound, REPLIES_PER_ROUND, replyToItem } from "./pull-requests";
 import { usesNewMachine } from "./environments";
 import { approve, checkOutReview, requestChanges } from "./review";
+import { finalRunOf, finalVerdict } from "./final-review";
 import { ticketPatchSchema, ticketSpecSchema } from "./spec";
 import { standingInstructionsLines } from "./prompts";
 import { ensureSpecReview, specReviewerOf, specVerdict, type SpecReviewStatus } from "./spec-review";
@@ -29,6 +30,7 @@ export const MACHINE_WORKER_TOOLS = [...WORKER_TOOLS, "loom_resume"] as const;
 export const REVIEWER_TOOLS = ["loom_note", "loom_checkout", "loom_approve", "loom_request_changes"] as const;
 export const ORDINARY_TOOLS = ["loom_propose", "loom_discover"] as const;
 export const SPEC_REVIEWER_TOOLS = ["loom_spec_approve", "loom_spec_request_changes"] as const;
+export const FINAL_REVIEWER_TOOLS = ["loom_final_review"] as const;
 export const SKILLS = { plan: "loom-plan", usage: "loom" } as const;
 
 const MAX_OUTPUT = 12_000;
@@ -437,6 +439,21 @@ export function registerTools(bb: BbPluginApi, projects: Projects, engine: Engin
     execute: ({ summary, findings }, tool) => run(() => specVerdict(ctx, tool.threadId, findings, summary)),
   });
 
+  // ---- the final reviewer's tool
+
+  bb.agents.registerTool({
+    name: "loom_final_review",
+    description:
+      "Give Loom's final review before the merge: verdict pass, or fail with a reason and fixable (true when the ticket's worker can fix it on the branch, false when it needs a person). Judge only what changed since the approval, whether the pull request's text is still true, and anything alarming. One call, then end your turn.",
+    presentation: { label: { pending: "Giving the final review", completed: "Gave the final review" } },
+    parameters: z.object({
+      verdict: z.enum(["pass", "fail"]),
+      reason: z.string().max(4000).describe("For fail: what broke and where, in a few sentences. For pass: optional, one sentence."),
+      fixable: z.boolean().optional().describe("For fail: whether the worker can fix it on the branch. Default true."),
+    }),
+    execute: (input, tool) => run(() => finalVerdict(ctx, tool.threadId, input)),
+  });
+
   bb.agents.configure((context) => {
     if (context.origin.kind === "fork" && context.origin.pluginId === "side-chat") return { tools: [], skills: [] };
     let row;
@@ -447,6 +464,10 @@ export function registerTools(bb: BbPluginApi, projects: Projects, engine: Engin
     } catch (error) {
       bb.log.warn(`agent configuration: ${errText(error)}`);
       return { tools: [], skills: [] };
+    }
+    if (row === null && review === null && context.pluginMetadata.role === "final-review") {
+      const final = finalRunOf(store, context.thread.id, context.pluginMetadata);
+      if (final !== null) return { tools: [...FINAL_REVIEWER_TOOLS], skills: [], instructions: `You are Loom's final review of ${final.ticket.key} before it merges; change nothing, run nothing; follow the brief and call loom_final_review once.` };
     }
     if (review !== null) {
       return { tools: [...SPEC_REVIEWER_TOOLS], skills: [SKILLS.usage], instructions: `You are Loom's spec reviewer for spec v${review.version}; change nothing; follow the brief and call one verdict tool.` };

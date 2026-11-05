@@ -834,6 +834,78 @@ auto_merge = { method = "squash" }
   counts its attempts afresh. `bb loom auto-merge <slug> retry --ticket CSV-1`
   clears an attempt in flight whose outcome Loom cannot see, so it asks again.
 
+### A final review before each merge
+
+`auto_merge.final_review` adds one short agent turn right before Loom asks
+to merge, as a last sanity check. It is off unless the spec sets it:
+
+```toml
+[merge.forge]
+kind = "gh"
+auto_merge = { method = "squash", final_review = {} }   # or { model = "…", reasoning = "low", timeout_minutes = 10 }
+```
+
+- It runs only once every other merge hold has cleared, on the exact commit
+  Loom would merge, and Loom merges only once it passes for that commit. A
+  new push needs a new review; Loom judges the ticket again right before it
+  asks to merge, so a pause, an `off` or a push during the review stops it.
+- It is cheap on purpose. It does not review the change again: it judges
+  only what changed since Loom's reviewers approved the ticket, whether the
+  pull request's title and description are still true, people's comments and
+  reviews since the approval, and the ticket's acceptance criteria. What
+  changed is shown inline for the pull request's own files: those it changed
+  at the approval or changes now, so a conflict resolution that drops an
+  approved change stays in. Files only the base brought are counted, not
+  shown, and only when Loom could establish that; otherwise every changed
+  file counts as the pull request's own. When nothing in the code changed, it
+  is told to check the text only.
+- The brief is bounded: at most 12 patches and about 30 KB of them, 30 more
+  file names, 50 of the pull request's files and 40,000 characters in all.
+  What it leaves out is counted exactly, and a brief that left out anything
+  the reviewer needs says so at its top. A pass of such an incomplete brief
+  is not a full sanity check: Loom holds the merge until you run
+  `bb loom auto-merge <slug> accept --ticket CSV-1`, or `retry` for a new
+  review.
+- It runs as one thread in an empty scratch directory under Loom's data
+  directory on the project's machine, with everything in its brief: no
+  worktree, environment provider or machine to provision, and nothing of
+  yours in its working directory. It never runs in the repo's checkout:
+  should bb refuse the scratch directory, the review does not run and the
+  merge holds with a post. It is told not to run commands or change files.
+  The threat is an accident, such as a reviewer that wanders into the
+  checkout, not an adversary, so the guard is a cheap one: Loom fingerprints
+  the checkout before the review (HEAD and branch, the index file's checksum,
+  `git status`, and each changed or untracked path's type, size and
+  modification time; no contents) and, once the reviewer has really stopped,
+  again before it counts a pass. Any difference, or a fingerprint Loom cannot
+  take (more than 300 changed or untracked paths, a read past 5 seconds, a
+  path it cannot read), holds the merge with a post: check the checkout (you
+  may have edited it yourself meanwhile), then `retry`. Loom never resets it.
+  A reviewer's thread is stopped and its scratch directory removed once its
+  run is over, a pass included, whatever the merge; a removal that fails is
+  tried again later, and directories no run owns are swept.
+- Its agent is the spec's `agents.reviewer` at `"low"` reasoning, unless
+  `provider`, `model` or `reasoning` say otherwise, and it has
+  `timeout_minutes` (10) to answer.
+- It answers with one tool, `loom_final_review`: pass, or fail with a reason
+  and whether the worker can fix it. A failure the worker can fix becomes a
+  fix round with the reason, counted like other feedback; any other blocks
+  the ticket with it.
+- A run is kept up apart from whether a merge may start: it times out at its
+  deadline, which is recorded with it, and a verdict after the deadline is
+  refused; a new push ends it; and a pause, an `off`, a block, a cancel or
+  the pull request no longer being ready to merge stops it and archives its
+  thread. Loom starts a new one only once the pull request is ready again.
+- A review that does not start, times out, or ends its turn twice without a
+  verdict never merges: Loom tries again 5, then 10 minutes later, and after
+  3 such runs for one commit it holds the merge with a post.
+  `bb loom auto-merge <slug> retry --ticket CSV-1` lets it try again.
+  Each run is recorded before its thread starts, so a restart neither runs a
+  second review for the commit nor merges without its verdict.
+- The ticket's posts and the feed record each run and its verdict, the
+  Merge order tab says "Waiting for final review", "Final review running" or
+  "Final review failed: …", and `bb loom metrics` counts them.
+
 ### Asking for reviews
 
 A forge's `reviewers` lists who Loom asks to review each pull request it
@@ -1285,7 +1357,7 @@ bb loom sync <slug> [--ticket CSV-1]         # pull request strategy: read the o
 bb loom forge check <slug> CSV-1 [--version N]  # read a live pull request through the repo's forge, as a poll would
 bb loom rollout <slug>                       # the deploy order: next safe step, warnings, stages, milestones
 bb loom live <slug> CSV-1 [--note t] [--undo]  # mark a rollout step or milestone live, or take the mark back
-bb loom auto-merge <slug> off|on|retry [--ticket CSV-1]  # stop or resume Loom's merging; retry clears a ticket's attempt
+bb loom auto-merge <slug> off|on|retry|accept [--ticket CSV-1]  # stop or resume Loom's merging; retry clears a ticket's attempt or held final review; accept merges on an incomplete one
 bb loom archive <slug>
 ```
 
@@ -1304,6 +1376,7 @@ ready or paused, starting or resuming it makes the section again.
 | Worker | `loom_note`, `loom_submit`, `loom_block`, `loom_pr`, `loom_pr_reply`; on a machine of its own also `loom_resume` |
 | Reviewer | `loom_note`, `loom_checkout`, `loom_approve`, `loom_request_changes` |
 | Spec reviewer | `loom_spec_approve`, `loom_spec_request_changes` |
+| Final reviewer | `loom_final_review` |
 
 ## Metrics
 
@@ -1337,6 +1410,7 @@ time it to done.
 | review findings | Over reviews with a verdict: the findings, how many are blocking and should-fix, the review rounds, and the rounds that requested changes. |
 | tokens by ticket | The 5 tickets whose threads used the most sampled tokens. |
 | reliability | Failed worker attempts, rate-limit retries, worker threads that timed out, and merges sent back to work (a merge conflict or a failed `after_merge` check). |
+| final reviews | With `auto_merge.final_review`: the final reviews started, passed and failed, those that ended without a verdict, and the sampled tokens of the finished ones. |
 
 ## When a project finishes
 

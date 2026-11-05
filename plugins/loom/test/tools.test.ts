@@ -1,8 +1,9 @@
+import { FINAL_BOUND, FINAL_STARTED } from "../src/final-review";
 import type { PluginAgentToolResult } from "@get-bb/plugin-sdk";
 import { makePluginAgentConfigurationContext } from "@get-bb/plugin-sdk/testing";
 import { beforeEach, describe, expect, it } from "vitest";
 import { specVerdict } from "../src/spec-review";
-import { MACHINE_WORKER_TOOLS, ORDINARY_TOOLS, PLANNER_TOOLS, REVIEWER_TOOLS, SKILLS, SPEC_REVIEWER_TOOLS, WORKER_TOOLS, registerTools } from "../src/tools";
+import { FINAL_REVIEWER_TOOLS, MACHINE_WORKER_TOOLS, ORDINARY_TOOLS, PLANNER_TOOLS, REVIEWER_TOOLS, SKILLS, SPEC_REVIEWER_TOOLS, WORKER_TOOLS, registerTools } from "../src/tools";
 import { readFileSync } from "node:fs";
 import { Clock, FakePort, checkOutHead, makeHost, seedMachineProject, seedProject, specToml, type Doc, type EngineHarness } from "./helpers";
 
@@ -93,6 +94,21 @@ describe("agent configuration", () => {
     expect(config.instructions).toBe("You are Loom's spec reviewer for spec v1; change nothing; follow the brief and call one verdict tool.");
     expect(host.store.specReviewBySpawnToken("tok_spec")?.thread_id).toBe("thr_spec");
     const forged = await configure("thr_forged", { pluginMetadata: { spawnToken: "forged", role: "spec-review" } });
+    expect(forged.tools.map((tool) => tool.name)).toEqual([...ORDINARY_TOOLS]);
+  });
+
+  it("gives a final reviewer bound by its spawn token only loom_final_review, and a forged token nothing of it", async () => {
+    await propose();
+    const project = host.store.projectBySlug("csv")!;
+    await host.projects.approve("csv", "human");
+    const ticket = host.store.tickets(project.id)[0]!;
+    host.store.event(project.id, ticket.id, FINAL_STARTED, "loom", { sha: "sq1", url: "https://github.com/acme/shop/pull/1", token: "tok_final" });
+    const config = await configure("thr_final", { pluginMetadata: { spawnToken: "tok_final", role: "final-review", ticket: ticket.key } });
+    expect(config.tools.map((tool) => tool.name)).toEqual([...FINAL_REVIEWER_TOOLS]);
+    expect(config.skills).toEqual([]);
+    expect(config.instructions).toContain("change nothing, run nothing");
+    expect(host.store.eventByData(FINAL_BOUND, "thread", "thr_final")).not.toBeNull();
+    const forged = await configure("thr_forged", { pluginMetadata: { spawnToken: "forged", role: "final-review" } });
     expect(forged.tools.map((tool) => tool.name)).toEqual([...ORDINARY_TOOLS]);
   });
 });

@@ -67,7 +67,9 @@ export function createBbPort(bb: BbPluginApi): BbPort {
       const thread = await bb.sdk.threads.spawn({
         projectId: args.bbProjectId,
         environment:
-          args.environment === undefined
+          args.workspace !== undefined
+            ? { type: "host", hostId: args.hostId, workspace: { type: "unmanaged", path: args.workspace.path } }
+            : args.environment === undefined
             ? { type: "host", hostId: args.hostId, workspace: { type: "managed-worktree", baseBranch: { kind: "named", name: args.baseBranch } } }
             : {
                 type: "provider",

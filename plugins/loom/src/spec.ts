@@ -91,6 +91,17 @@ export const AUTO_MERGE_METHODS = ["squash", "merge", "rebase", "queue", "commen
 
 // Opt-in: Loom merges a ticket's pull request itself once its Ready to merge verdict holds. No defaults, so a forge without
 // it hashes as it did before it existed; autoMergeOf fills them in.
+// One short agent turn right before each merge, on the head Loom would merge. Present, even empty, turns it on; each key
+// unset falls back to agents.reviewer, low reasoning and 10 minutes (finalReviewOf). No defaults, so specs hash as before.
+export const finalReviewSchema = z
+  .object({
+    provider: z.string().min(1).max(100).optional(),
+    model: z.string().min(1).max(100).optional(),
+    reasoning: z.string().min(1).max(40).optional(),
+    timeout_minutes: z.number().int().min(1).max(60).optional(),
+  })
+  .strict();
+
 export const autoMergeSchema = z
   .object({
     method: z.enum(AUTO_MERGE_METHODS),
@@ -101,6 +112,7 @@ export const autoMergeSchema = z
     approval: z.enum(["forge", "loom"]).optional(),
     require_live: z.boolean().optional(),
     max_attempts: z.number().int().min(1).max(10).optional(),
+    final_review: finalReviewSchema.optional(),
   })
   .strict();
 
@@ -348,6 +360,7 @@ export type TicketPatch = z.output<typeof ticketPatchSchema>;
 export type RepoSpec = z.output<typeof repoSpecSchema>;
 export type ForgeSpec = z.output<typeof forgeSchema>;
 export type AutoMergeSpec = z.output<typeof autoMergeSchema>;
+export type FinalReviewSpec = z.output<typeof finalReviewSchema>;
 export type ReviewerRuleSpec = z.output<typeof reviewerRuleSchema>;
 export type EnvironmentSpec = z.output<typeof environmentSchema>;
 export type MachineSpec = z.output<typeof machineSchema>;

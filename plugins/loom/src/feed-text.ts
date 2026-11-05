@@ -70,6 +70,28 @@ export function feedText(event: EventRow, keys: Map<number, string>, { you = fal
     }
     case "ticket.merge_answered":
       return data.restart === true ? `Loom cannot tell whether its merge of ${key}'s pull request went out before a restart, and does not send it again.` : data.unknown === true ? `Loom cannot tell whether its merge of ${key}'s pull request went out, and does not send it again.` : `The forge took Loom's merge of ${key}'s pull request.`;
+    case "ticket.final_review_started":
+      return `Loom started its final review of ${key}'s pull request at ${String(data.sha).slice(0, 12)}.`;
+    case "ticket.final_review_verdict":
+      return data.pass === true ? `Loom's final review passed ${key}'s pull request.` : `Loom's final review failed ${key}'s pull request: ${String(data.reason)}`;
+    case "ticket.final_review_ended":
+      if (data.why === "interrupted") return `Loom stopped ${key}'s final review: ${String(data.message ?? "its pull request is not ready")}.`;
+      return data.why === "superseded" ? `A newer push replaced the head of ${key}'s final review.` : `Loom's final review of ${key}'s pull request ended without a verdict: ${String(data.message ?? data.why)}.`;
+    case "ticket.final_review_held":
+      return data.reason === "checkout" ? `Loom holds ${key}'s merge: the repo's checkout changed during its final review.` : data.reason === "partial" ? `Loom holds ${key}'s merge: its final review passed on an incomplete brief.` : data.reason === "scratch" ? `Loom holds ${key}'s merge: bb would not start its final reviewer in Loom's scratch directory.` : `Loom holds ${key}'s merge: its final review did not finish.`;
+    case "ticket.final_review_reset":
+      return `${human} let ${key}'s final review try again.`;
+    case "ticket.final_review_verified":
+      return `Loom counted the final review's pass of ${key}'s pull request: its reviewer stopped and the repo's checkout is unchanged.`;
+    case "ticket.final_review_cleanup_failed":
+      return `Loom could not remove the scratch directory of ${key}'s final review yet, and tries again later.`;
+    case "ticket.final_review_accepted":
+      return `${human} let ${key} merge on a final review of an incomplete brief.`;
+    case "ticket.final_review_bound":
+    case "ticket.final_review_nudged":
+    case "ticket.final_review_acted":
+    case "ticket.final_review_closed":
+      return `Loom followed ${key}'s final review (${event.kind.slice("ticket.final_review_".length)}).`;
     case "ticket.merge_held":
       return `${key}'s pull request is ready, and Loom waits to merge it: ${Array.isArray(data.holds) ? data.holds.join("; ") : "a hold"}.`;
     case "ticket.auto_merge":

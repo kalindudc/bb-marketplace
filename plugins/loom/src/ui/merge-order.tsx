@@ -48,7 +48,27 @@ function signalsOf(entry: MergeEntry): Signal[] {
   return out;
 }
 
+/** The final review Loom runs before it merges a ready pull request itself, said instead of the plain verdict until it passes. */
+function finalVerdictOf(entry: MergeEntry): { tone: Tone; text: string; short: string } | null {
+  const final = entry.finalReview;
+  if (final == null || (entry.verdict !== "ready" && entry.verdict !== "checks_pass")) return null;
+  switch (final.state) {
+    case "waiting":
+      return { tone: "muted", text: "Waiting for final review", short: "waiting for final review" };
+    case "running":
+      return { tone: "muted", text: "Final review running", short: "final review running" };
+    case "failed":
+      return { tone: "bad", text: `Final review failed: ${final.reason ?? "no reason given"}`, short: "final review failed" };
+    case "held":
+      return { tone: "warn", text: `Final review held: ${final.reason ?? "it did not finish"}`, short: "final review held" };
+    case "passed":
+      return { tone: "good", text: "✓ Ready to merge · final review passed", short: "✓ final review passed" };
+  }
+}
+
 function verdictOf(entry: MergeEntry): { tone: Tone; text: string; short: string } {
+  const final = finalVerdictOf(entry);
+  if (final !== null) return final;
   const after = listText(entry.waitsOn.map((wait) => wait.key));
   switch (entry.verdict) {
     case "ready":

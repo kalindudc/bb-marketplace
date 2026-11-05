@@ -3,6 +3,7 @@
 // ask is an event recorded before the forge is called, so a comment or a command that hands the pull request to a merge
 // service never goes out twice for one attempt; later reads of the pull request settle it: merged completes the ticket as
 // before, and a rejection the worker can address becomes a fix round, or blocks the ticket once the attempts are used up.
+import { acceptFinalReview, finalReviewOf, finalState, followFinalReview, maintainRuns, needsUpkeep, resetFinalReview, sweepScratch, ticketsWithOutstandingRuns } from "./final-review";
 import type { EventRow, ProjectRow, Store, TicketRow } from "./db/store";
 import { hostCallTransient } from "./forge-waits";
 import type { HostOutput } from "./host-contract";
@@ -55,7 +56,10 @@ type Outcome = "rejected" | "refused" | "failed" | "stopped" | "unconfirmed" | "
 export interface MergeRead {
   /** The pull request's head commit as the forge reports it; null when the read has no feedback. */
   head?: string | null;
-  items: ReadonlyArray<{ key: string; stableId?: string | null; createdAt?: number | null; kind: string; author: string; body: string; url: string | null }> | null;
+  /** The pull request's author and its title and description now, for the final review. */
+  author?: string | null;
+  text?: { title: string | null; body: string | null } | null;
+  items: ReadonlyArray<{ key: string; stableId?: string | null; createdAt?: number | null; kind: string; author: string; bot?: boolean; body: string; url: string | null; state?: string | null }> | null;
   queue?: Extract<HostOutput<"prBatch">, { outcome: "ok" }>["pulls"][number]["queue"];
 }
 
@@ -184,6 +188,7 @@ type Readiness =
   | { kind: "settle"; project: ProjectRow; ticket: TicketRow; settings: AutoMergeSettings; state: AttemptState }
   | { kind: "hold"; ticket: TicketRow; holds: MergeHold[] }
   | { kind: "exhausted"; ticket: TicketRow; state: AttemptState }
+  | { kind: "final"; project: ProjectRow; ticket: TicketRow; settings: AutoMergeSettings }
   | { kind: "ask"; project: ProjectRow; spec: Spec; ticket: TicketRow; settings: AutoMergeSettings; state: AttemptState };
 
 /**
@@ -211,6 +216,8 @@ function readiness(ctx: EngineCtx, projectId: number, ticketId: number, read: Me
   const holds = mergeHolds(spec, store.tickets(project.id), ticket, settings, store.rolloutMarks(project.id), ctx.now());
   if (holds.length > 0) return { kind: "hold", ticket, holds };
   if (state.used >= settings.maxAttempts) return { kind: "exhausted", ticket, state };
+  // Last: a final review runs only once nothing else holds the merge, and its pass must be for the head Loom pushed.
+  if (finalReviewOf(spec, settings) !== null && finalState(store, ticket.id, ticket.pushed_sha).passed === null) return { kind: "final", project, ticket, settings };
   return { kind: "ask", project, spec, ticket, settings, state };
 }
 
@@ -220,6 +227,7 @@ function readiness(ctx: EngineCtx, projectId: number, ticketId: number, read: Me
  * still pr_open on the commit Loom pushed.
  */
 export async function followAutoMerge(ctx: EngineCtx, project: ProjectRow, ticketId: number, read: MergeRead): Promise<void> {
+  await upkeep(ctx, project.id, ticketId, read);
   const ready = readiness(ctx, project.id, ticketId, read);
   if (ready === null) return;
   if (ready.kind === "settle") return settleAttempt(ctx, ready.project, ready.ticket, ready.settings, ready.state, read);
@@ -231,7 +239,67 @@ export async function followAutoMerge(ctx: EngineCtx, project: ProjectRow, ticke
     await blockOpenPr(ctx, ticket, reason, { body: `${reason}${last}`, data: { outcome: "auto_merge_exhausted", url: ticket.pr_url, attempts: state.used } });
     return;
   }
+  if (ready.kind === "final") {
+    const still = () => {
+      const again = readiness(ctx, project.id, ticketId, read);
+      return again?.kind === "final" ? again.ticket : null;
+    };
+    if (!(await followFinalReview(ctx, ready.project, ready.ticket, ready.settings, read, still))) return;
+    // The pass was counted just now: the merge goes in the same pass, after one more judgement of the ticket.
+    const now = readiness(ctx, project.id, ticketId, read);
+    if (now?.kind === "ask") await askToMerge(ctx, now, read);
+    return;
+  }
   await askToMerge(ctx, ready, read);
+}
+
+/** Why a final review in flight for the ticket may not go on, in words; null while its pull request is ready for one. */
+function finalStop(ctx: EngineCtx, projectId: number, ticketId: number, read: MergeRead): string | null {
+  const project = ctx.store.project(projectId);
+  const ticket = ctx.store.ticket(ticketId);
+  if (project === null || ticket === null) return "the ticket is gone";
+  if (project.state !== "running") return `the project is ${project.state}`;
+  if (ticket.state !== "pr_open") return `the ticket is ${ticket.state}`;
+  if (projectAutoMergeOff(ctx.store, projectId) || attemptState(ctx.store, ticketId).off) return "auto-merge is off";
+  const ready = readiness(ctx, projectId, ticketId, read);
+  if (ready?.kind === "final") return null;
+  if (ready?.kind === "hold") return `the pull request is not ready to merge any more (${ready.holds.map((one) => one.text).join("; ")})`;
+  return "the pull request is not ready for a final review any more";
+}
+
+/** Keeps up one ticket's final reviews: deadlines, a new push, and a stop when it may not go on (see maintainRuns). */
+async function upkeep(ctx: EngineCtx, projectId: number, ticketId: number, read: MergeRead): Promise<void> {
+  if (!needsUpkeep(ctx.store, ticketId)) return;
+  const project = ctx.store.project(projectId);
+  const ticket = ctx.store.ticket(ticketId);
+  if (project === null || ticket === null) return;
+  const spec = specOf(ctx.store, project);
+  const final = finalReviewOf(spec, autoMergeOf(repoSettings(spec, ticket.repo).forge));
+  await maintainRuns(ctx, ticketId, final === null ? "the spec no longer sets a final review" : finalStop(ctx, projectId, ticketId, read), final?.timeoutMs ?? null);
+}
+
+/**
+ * The tick's upkeep of the final reviews of every project, in every state, apart from any read of a pull request: a run
+ * whose deadline passed, whose project paused or whose ticket blocked, was cancelled or is not ready any more ends, and
+ * every run that is over has its thread stopped and archived and its scratch directory removed. It visits only the
+ * tickets with a run not closed yet, so finished history costs nothing; then it sweeps orphaned scratch directories.
+ * `projectId` is ignored: the upkeep is global.
+ */
+export async function maintainFinalReviews(ctx: EngineCtx, _projectId?: number): Promise<void> {
+  for (const { ticketId, projectId } of ticketsWithOutstandingRuns(ctx.store)) {
+    try {
+      await upkeep(ctx, projectId, ticketId, { items: null });
+    } catch (error) {
+      ctx.bb.log("warn", `Keeping up the final reviews of ticket ${ticketId} stopped: ${errText(error)}`);
+    }
+  }
+  const hosts = () => ctx.store.projects().flatMap((project) => {
+    if ((project.state !== "running" && project.state !== "paused") || project.host_id === null || project.approved_version === null) return [];
+    const spec = specOf(ctx.store, project);
+    const repos = spec.repo === undefined || spec.repo.length === 0 ? [null] : spec.repo.map((repo) => repo.name);
+    return repos.some((name) => finalReviewOf(spec, autoMergeOf(repoSettings(spec, name).forge)) !== null) ? [project.host_id] : [];
+  });
+  await sweepScratch(ctx, hosts);
 }
 
 /** Says once per pushed commit why a pull request that is otherwise ready waits: a freeze window, or a rollout requirement. */
@@ -430,11 +498,15 @@ async function settleAttempt(ctx: EngineCtx, project: ProjectRow, ticket: Ticket
  * or one ticket, or clears a ticket's attempt in flight so the next ready read asks again. On for a ticket starts its
  * attempts afresh. Returns what changed, in a sentence.
  */
-export function setAutoMerge(store: Store, project: ProjectRow, action: "on" | "off" | "retry", ticket: TicketRow | null): string {
+export function setAutoMerge(store: Store, project: ProjectRow, action: "on" | "off" | "retry" | "accept", ticket: TicketRow | null): string {
+  if (action === "accept") {
+    if (ticket === null) throw new Error("accept needs --ticket: it lets one ticket merge on its final review.");
+    return acceptFinalReview(store, ticket);
+  }
   if (action === "retry") {
     if (ticket === null) throw new Error("retry needs --ticket: it clears one ticket's merge attempt.");
     const open = attemptState(store, ticket.id).open;
-    if (open === null) return `${ticket.key} has no merge attempt in flight, so there is nothing to clear.`;
+    if (open === null) return resetFinalReview(store, ticket) ? `Loom tries ${ticket.key}'s final review again for its head.` : `${ticket.key} has no merge attempt in flight and no held final review, so there is nothing to clear.`;
     store.event(project.id, ticket.id, MERGE_OUTCOME, HUMAN_ACTOR, { attempt: open.id, n: open.n, url: open.url, sha: open.sha, outcome: "cleared" });
     return `Cleared ${ticket.key}'s merge attempt ${open.n}: Loom asks to merge again once its pull request is ready, and the cleared attempt does not count.`;
   }

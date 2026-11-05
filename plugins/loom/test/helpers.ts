@@ -372,6 +372,10 @@ export class FakeHost implements HostPort {
   queues = new Map<string, NonNullable<PrBatchPull["queue"]>>();
   /** Who prReviewState says opened, is asked to review and reviewed each pull request, by URL; a missing entry is kalindudc's with no one. */
   reviewState = new Map<string, { author: string | null; requested: string[]; reviewed: string[] }>();
+  /** The fingerprint checkoutPrint gives each checkout; a missing one is "print-clean". An Error makes it throw. */
+  prints = new Map<string, string | Error>();
+  /** What finalScratch lists in each scratch directory it made, by key. */
+  scratch = new Map<string, string[]>();
   /** Each team's members as teamMembers lists them; a missing team has none. */
   teams = new Map<string, Array<{ login: string; bot: boolean }>>();
   /** Each pull request's title and description as the forge has them, by URL: prCreate and prEdit set them, and prBatch and prFeedback read them. */
@@ -604,6 +608,23 @@ export class FakeHost implements HostPort {
         return { outcome: "ok", members: [...(this.teams.get((input as HostInput<"teamMembers">).team) ?? [])] };
       case "prMerge":
         return { outcome: "ok" };
+      case "checkoutPrint": {
+        const print = this.prints.get((input as HostInput<"checkoutPrint">).repo) ?? "print-clean";
+        if (print instanceof Error) return { outcome: "unavailable", message: print.message };
+        return { outcome: "ok", print, head: "base000", dirty: print !== "print-clean" };
+      }
+      case "finalScratch": {
+        const { key, action } = input as HostInput<"finalScratch">;
+        if (action === "create") this.scratch.set(key, []);
+        if (action === "remove") this.scratch.delete(key);
+        if (action === "sweep") {
+          const keep = new Set((input as HostInput<"finalScratch">).keep ?? []);
+          const orphans = [...this.scratch.keys()].filter((name) => name.startsWith("loom-") && !keep.has(name)).slice(0, 20);
+          for (const name of orphans) this.scratch.delete(name);
+          return { path: "/data/final-review", entries: orphans };
+        }
+        return { path: `/data/final-review/${key}`, entries: this.scratch.get(key) ?? [] };
+      }
       case "push": {
         const { src, branch } = input as HostInput<"push">;
         this.remoteBranches.set(branch, src);

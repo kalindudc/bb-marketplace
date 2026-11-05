@@ -1,4 +1,5 @@
 // The page's server side: reads over the store and changes through the same engine methods the CLI calls.
+import { finalBadge } from "./final-review";
 import { experimental_PluginRpcRefusal as PluginRpcRefusal, type BbPluginApi, type ExperimentalPluginRpcHandlersWithContext } from "@get-bb/plugin-sdk";
 import { badgeView } from "./badge";
 import { humanAction } from "./cli";
@@ -346,7 +347,7 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
       at: past?.eventId ?? null,
       specReview,
       openAsks: past === null && project.state !== "archived" ? (plannerAsk(store, project)?.steps.filter((step) => !step.done).length ?? 0) : 0,
-      mergeOrder: past === null && approved !== null ? mergeOrderOf(approved, tickets) : null,
+      mergeOrder: past === null && approved !== null ? mergeOrderOf(approved, tickets, new Map(tickets.map((ticket) => [ticket.key, finalBadge(store, approved, ticket)] as const))) : null,
       // What is live is kept only as it is now, so a rewound view leaves the rollout out, as it does the merge order.
       rollout: past === null && approved !== null ? rolloutOf(approved, tickets, store.rolloutMarks(project.id), at) : null,
     };

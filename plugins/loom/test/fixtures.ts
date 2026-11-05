@@ -132,6 +132,7 @@ export const metrics = (over: Partial<ProjectMetrics> = {}): ProjectMetrics => (
     { key: "CSV-1", tokens: 2000 },
   ],
   reliability: { failedAttempts: 1, rateLimitRetries: 2, timeouts: 1, mergesSentBack: 1 },
+  finalReviews: { runs: 0, passed: 0, failed: 0, unfinished: 0, tokens: 0 },
   ...over,
 });
 

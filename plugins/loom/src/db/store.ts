@@ -642,6 +642,22 @@ export class Store {
     });
   }
 
+  /** Every event of these kinds across all projects, oldest first. */
+  eventsByKinds(kinds: readonly string[]): EventRow[] {
+    const marks = kinds.map(() => "?").join(", ");
+    return this.db.prepare(`SELECT * FROM events WHERE kind IN (${marks}) ORDER BY id`).all(...kinds) as EventRow[];
+  }
+
+  eventById(id: number): EventRow | null {
+    return (this.db.prepare("SELECT * FROM events WHERE id = ?").get(id) as EventRow | undefined) ?? null;
+  }
+
+  /** The newest event of `kind` whose data has `key` set to the string `value`, as the final reviewer's tools find their review. */
+  eventByData(kind: string, key: string, value: string): EventRow | null {
+    const needle = JSON.stringify({ [key]: value }).slice(1, -1);
+    return (this.db.prepare("SELECT * FROM events WHERE kind = ? AND instr(data_json, ?) > 0 ORDER BY id DESC LIMIT 1").get(kind, needle) as EventRow | undefined) ?? null;
+  }
+
   /** A ticket's events in order, optionally only some kinds. */
   ticketEvents(ticketId: number, kinds?: readonly string[]): EventRow[] {
     if (kinds === undefined) return this.db.prepare("SELECT * FROM events WHERE ticket_id = ? ORDER BY id").all(ticketId) as EventRow[];

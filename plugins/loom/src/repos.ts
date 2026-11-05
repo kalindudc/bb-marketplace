@@ -126,6 +126,8 @@ export interface AutoMergeSettings {
   approval: "forge" | "loom";
   requireLive: boolean;
   maxAttempts: number;
+  /** The final review before each merge, as the spec writes it; null when the spec has none. */
+  finalReview: NonNullable<NonNullable<ForgeSpec["auto_merge"]>["final_review"]> | null;
 }
 
 export const AUTO_MERGE_ATTEMPTS = 3;
@@ -133,7 +135,7 @@ export const AUTO_MERGE_ATTEMPTS = 3;
 export function autoMergeOf(forge: ForgeSpec): AutoMergeSettings | null {
   const auto = forge.auto_merge;
   if (auto === undefined || forge.kind === "none") return null;
-  return { method: auto.method, comment: auto.comment ?? null, rejected: [...(auto.rejected ?? [])], approval: auto.approval ?? "forge", requireLive: auto.require_live ?? false, maxAttempts: auto.max_attempts ?? AUTO_MERGE_ATTEMPTS };
+  return { method: auto.method, comment: auto.comment ?? null, rejected: [...(auto.rejected ?? [])], approval: auto.approval ?? "forge", requireLive: auto.require_live ?? false, maxAttempts: auto.max_attempts ?? AUTO_MERGE_ATTEMPTS, finalReview: auto.final_review ?? null };
 }
 
 /** The methods that may run again after a failure Loom cannot read: gh merges or queues a pull request at most once, while a comment or a command could be posted twice. */

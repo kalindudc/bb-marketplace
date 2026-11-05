@@ -896,6 +896,7 @@ describe("metrics and feed", () => {
       { key: "CSV-4", tokens: 240_000 },
     ],
     reliability: { failedAttempts: 3, rateLimitRetries: 4, timeouts: 2, mergesSentBack: 1 },
+    finalReviews: { runs: 0, passed: 0, failed: 0, unfinished: 0, tokens: 0 },
     ...over,
   });
 
@@ -999,6 +1000,7 @@ describe("metrics and feed", () => {
       "counts",
       "cumulativeFlow",
       "cycleTime",
+      "finalReviews",
       "findings",
       "firstPassApproval",
       "humanInterventions",

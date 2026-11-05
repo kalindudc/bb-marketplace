@@ -126,6 +126,8 @@ export interface SpawnArgs {
   detail?: string;
   /** A bb environment provider to start in, on hostId or on a new machine from `machine`; absent keeps the managed worktree from baseBranch. */
   environment?: { providerId: string; inputs: unknown; machine?: { providerId: string; inputs: unknown } };
+  /** Start in this existing directory on hostId, as it is: no worktree, branch, provider or machine of its own. Wins over environment. */
+  workspace?: { path: string };
 }
 
 export interface EnvironmentProviderInfo {

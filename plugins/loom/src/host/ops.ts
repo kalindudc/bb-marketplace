@@ -3,6 +3,7 @@
 import { execFile, spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { lstat, open } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { experimental_runVcsProcess, type ExperimentalVcsProcessPriority } from "@get-bb/plugin-sdk/host";
@@ -1678,6 +1679,109 @@ export async function ghStatus(input: HostInput<"ghStatus">, signal?: AbortSigna
   const checked = await gh(input.repo, ["auth", "status", "--hostname", host], { signal });
   if (checked === "missing") return { status: "missing", host };
   return { status: checked.code === 0 ? "ready" : "signed_out", host };
+}
+
+const sha256 = (parts: ReadonlyArray<string | Buffer>) => {
+  const hash = createHash("sha256");
+  for (const part of parts) hash.update(part).update("\0");
+  return hash.digest("hex");
+};
+
+/** The fingerprint's bounds: listed paths, and the whole read. Past either it is unavailable, so the merge holds. */
+export const PRINT_PATHS_MAX = 300;
+export const PRINT_DEADLINE_MS = 5_000;
+
+/** The paths `git status --porcelain=v2 -z` lists, relative to the top level: changed, renamed (both names), unmerged and untracked. */
+function statusPaths(status: string): string[] {
+  const fields = status.split("\0");
+  const paths: string[] = [];
+  for (let index = 0; index < fields.length; index += 1) {
+    const entry = fields[index]!;
+    if (entry === "") continue;
+    const kind = entry[0];
+    const skip = kind === "1" ? 8 : kind === "2" ? 9 : kind === "u" ? 10 : kind === "?" || kind === "!" ? 1 : -1;
+    if (skip < 0) continue;
+    paths.push(entry.split(" ").slice(skip).join(" "));
+    if (kind === "2") paths.push(fields[++index] ?? "");
+  }
+  return paths.filter((path) => path !== "");
+}
+
+/**
+ * The final review's guard against accidents: a cheap fingerprint of the repo's checkout, so Loom can tell that nothing
+ * touched it while a reviewer ran in its scratch directory. Read from the top level, so every path is rooted the same way,
+ * whatever subdirectory the project's checkout is. It hashes HEAD and the branch, the index file's trailing checksum
+ * (which changes whenever git writes the index, flag changes such as assume-unchanged included), `git status
+ * --porcelain=v2 --untracked-files=normal`, and lstat's type, size and mtime in nanoseconds of each path status lists. It
+ * reads no file contents. `--no-optional-locks` keeps status from writing the index. More than PRINT_PATHS_MAX paths, a
+ * read past PRINT_DEADLINE_MS, or a path lstat cannot read makes it unavailable, which the caller treats as changed.
+ */
+export async function checkoutPrint(input: HostInput<"checkoutPrint">, signal?: AbortSignal): Promise<HostOutput<"checkoutPrint">> {
+  const unavailable = (why: string): HostOutput<"checkoutPrint"> => ({ outcome: "unavailable", message: `Loom could not fingerprint the checkout ${input.repo}: ${why}` });
+  const read = async (): Promise<HostOutput<"checkoutPrint">> => {
+    const top = await git(input.repo, ["rev-parse", "--show-toplevel"], { signal });
+    const head = await tryGit(top, ["rev-parse", "--verify", "-q", "HEAD"], signal);
+    const branch = (await tryGit(top, ["symbolic-ref", "-q", "HEAD"], signal)) ?? "";
+    const indexPath = resolve(top, await git(top, ["rev-parse", "--git-path", "index"], { signal }));
+    let checksum = "(no index)";
+    const index = await open(indexPath, "r").catch((error: NodeJS.ErrnoException) => (error.code === "ENOENT" ? null : Promise.reject(error)));
+    if (index !== null) {
+      try {
+        const { size } = await index.stat();
+        const tail = Buffer.alloc(Math.min(32, size));
+        await index.read(tail, 0, tail.length, size - tail.length);
+        checksum = tail.toString("hex");
+      } finally {
+        await index.close();
+      }
+    }
+    const status = await git(top, ["--no-optional-locks", "status", "--porcelain=v2", "-z", "--untracked-files=normal"], { raw: true, signal });
+    const paths = statusPaths(status);
+    if (paths.length > PRINT_PATHS_MAX) return unavailable(`git status lists more than ${PRINT_PATHS_MAX} changed or untracked paths`);
+    const stats: string[] = [];
+    for (const path of paths) {
+      const stat = await lstat(join(top, path), { bigint: true }).catch(() => null);
+      if (stat === null) return unavailable(`it cannot read ${path}`);
+      const type = stat.isFile() ? "f" : stat.isDirectory() ? "d" : stat.isSymbolicLink() ? "l" : "o";
+      stats.push(`${path}\0${type}\0${stat.size}\0${stat.mtimeNs}`);
+    }
+    return { outcome: "ok", print: sha256([head ?? "(no HEAD)", branch, checksum, status, ...stats]), head, dirty: status !== "" };
+  };
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    const late = new Promise<HostOutput<"checkoutPrint">>((done) => {
+      timer = setTimeout(() => done(unavailable(`it took longer than ${PRINT_DEADLINE_MS / 1000} seconds`)), PRINT_DEADLINE_MS);
+    });
+    return await Promise.race([read(), late]);
+  } catch (error) {
+    return unavailable(error instanceof Error ? error.message : String(error));
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+const SWEEP_MAX = 20;
+
+/** The final review's own empty directory under the data directory: made empty, listed, removed, or the orphans swept. */
+export function finalScratch(input: HostInput<"finalScratch">, dataDir: string): HostOutput<"finalScratch"> {
+  const root = join(dataDir, "final-review");
+  const path = join(root, input.key);
+  if (input.action === "sweep") {
+    const keep = new Set(input.keep ?? []);
+    const orphans = existsSync(root) ? readdirSync(root).filter((name) => name.startsWith("loom-") && !keep.has(name)).sort().slice(0, SWEEP_MAX) : [];
+    for (const name of orphans) rmSync(join(root, name), { recursive: true, force: true });
+    return { path: root, entries: orphans };
+  }
+  if (input.action === "create") {
+    rmSync(path, { recursive: true, force: true });
+    mkdirSync(path, { recursive: true });
+  }
+  if (input.action === "remove") {
+    rmSync(path, { recursive: true, force: true });
+    if (existsSync(path)) throw new Error(`${path} is still there after its removal`);
+    return { path, entries: [] };
+  }
+  return { path, entries: existsSync(path) ? readdirSync(path).sort() : [] };
 }
 
 /** Adds a worktree with no checkout under the data directory and removes it again; git's refusal is the message. */

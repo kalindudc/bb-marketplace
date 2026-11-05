@@ -1,5 +1,7 @@
 // The engine: a control loop that works every running project, the human's commands on the engine's state, and
 // the handlers for bb's thread events. Behavior lives in workers.ts, checks.ts and triage.ts; this wires it together.
+import { maintainFinalReviews } from "./auto-merge";
+import { finalThreadEvent } from "./final-review";
 import { resumeCheckingTickets } from "./checks";
 import { repoCheckout, type RepoCheckout } from "./checkouts";
 import { finishIfComplete, holdMerge, land, mergeHeld, pollPullRequests, runMergeQueue, stopMerge, type LandResult } from "./merge";
@@ -135,6 +137,7 @@ export class Engine {
     }
     resumeCheckingTickets(this.ctx);
     if (store.openSpecReviews().some((row) => row.thread_id === null && row.wait_json !== null)) await retrySpecReviews(this.ctx).catch((error) => this.warn("spec reviews", error));
+    await maintainFinalReviews(this.ctx).catch((error) => this.warn("final reviews", error));
     for (const project of store.projects()) {
       if (this.disposed) return;
       try {
@@ -587,6 +590,7 @@ export class Engine {
     const row = store.threadByThreadId(threadId);
     const review = row === null ? store.specReviewByThreadId(threadId) : null;
     if (review !== null) return onSpecReviewerIdle(this.ctx, review);
+    if (row === null && (await finalThreadEvent(this.ctx, threadId))) return;
     const planning = row === null ? store.planning(threadId) : null;
     if ((row?.role === "planner" && row.state === "active") || (planning !== null && planning.ended_at === null)) recordPlannerTurn(store, threadId, row?.project_id ?? null, lastText);
     if (row === null || row.state !== "active") return;
@@ -611,6 +615,7 @@ export class Engine {
     const row = this.ctx.store.threadByThreadId(threadId);
     const review = row === null ? this.ctx.store.specReviewByThreadId(threadId) : null;
     if (review !== null) return onSpecReviewerGone(this.ctx, review);
+    if (row === null && (await finalThreadEvent(this.ctx, threadId))) return;
     if (row === null) return;
     if (row.role === "reviewer") await onReviewerGone(this.ctx, row);
     else if (row.role === "worker") await endGoneThread(this.ctx, threadId);
@@ -621,6 +626,7 @@ export class Engine {
   async onTurnFailed(event: TurnFailure): Promise<void> {
     const review = this.ctx.store.specReviewByThreadId(event.threadId);
     if (review !== null) return onSpecReviewerTurnFailed(this.ctx, review, event);
+    if (this.ctx.store.threadByThreadId(event.threadId) === null && (await finalThreadEvent(this.ctx, event.threadId))) return;
     if (this.ctx.store.threadByThreadId(event.threadId)?.role === "reviewer") await onReviewerTurnFailed(this.ctx, event);
     else await handleTurnFailed(this.ctx, event);
     this.kick();

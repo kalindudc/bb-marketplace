@@ -9,6 +9,7 @@ import { statusOf } from "./pull-requests";
 import { repoSettings } from "./repos";
 import type { Spec } from "./spec";
 import type { TicketState } from "./states";
+import type { FinalBadge } from "./final-review";
 
 export type MergeVerdict =
   /** Nothing before it, it targets the base, its checks pass, and the forge says it is approved and not a draft. */
@@ -74,6 +75,8 @@ export interface MergeEntry {
   mergedInto: string | null;
   mergedIntoState: TicketState | null;
   blockedReason: string | null;
+  /** The final review before Loom merges it, on a repo whose auto_merge sets one; null otherwise. */
+  finalReview?: FinalBadge | null;
 }
 
 export interface MergeOrderView {
@@ -89,7 +92,8 @@ const FINISHED: readonly TicketState[] = ["done", "cancelled"];
 const numberOf = (url: string | null) => (url === null ? null : (/\/(\d+)\/?$/u.exec(url)?.[1] ?? null));
 const keysOf = (json: string) => JSON.parse(json) as string[];
 
-export function mergeOrderOf(spec: Spec, tickets: readonly TicketRow[]): MergeOrderView | null {
+/** `finals`: each ticket's final review, by key, which the caller reads from the store; the verdict never depends on it. */
+export function mergeOrderOf(spec: Spec, tickets: readonly TicketRow[], finals: ReadonlyMap<string, FinalBadge | null> = new Map()): MergeOrderView | null {
   if (spec.merge.strategy !== "pr") return null;
   const shown = tickets.filter((ticket) => ticket.state !== "cancelled");
   const byKey = new Map(shown.map((ticket) => [ticket.key, ticket]));
@@ -177,6 +181,7 @@ export function mergeOrderOf(spec: Spec, tickets: readonly TicketRow[]): MergeOr
       mergedInto: null,
       mergedIntoState: null,
       blockedReason: ticket.state === "blocked" ? ticket.blocked_reason : null,
+      finalReview: finals.get(ticket.key) ?? null,
     };
     const mergedInto = (into: TicketRow | null) => ({ verdict: "merged_elsewhere" as const, mergedInto: into?.key ?? null, mergedIntoState: into?.state ?? null, step: 0, waitsOn: [] });
     if (ticket.state === "done") return parent !== null && parent.state !== "done" ? { ...entry, ...mergedInto(parent) } : { ...entry, verdict: "merged" };

@@ -1623,7 +1623,7 @@ async function settleRead(ctx: EngineCtx, project: ProjectRow, settings: RepoSet
     await requestReviewers(ctx, project, current.id, { draft: read.meta?.draft ?? null, author: read.feedback?.author || null, reviewed });
     if (read.feedback !== null) await followFeedback(ctx, store.project(project.id)!, store.ticket(current.id)!, read.feedback);
     await syncPrText(ctx, store.project(project.id)!, current.id, read.text ?? null);
-    await followAutoMerge(ctx, project, current.id, { head: read.feedback?.head ?? null, items: read.feedback?.items ?? null, ...(read.queue === undefined ? {} : { queue: read.queue }) });
+    await followAutoMerge(ctx, project, current.id, { head: read.feedback?.head ?? null, author: read.feedback?.author || null, text: read.text ?? null, items: read.feedback?.items ?? null, ...(read.queue === undefined ? {} : { queue: read.queue }) });
   }
 }
 

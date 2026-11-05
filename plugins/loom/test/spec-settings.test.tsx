@@ -47,7 +47,7 @@ function everything(doc: Doc): void {
       merge: 'pr-cli comment "$LOOM_PR_NUMBER" --body /merge',
       request_reviews: 'pr-cli edit "$LOOM_PR_NUMBER" --add-reviewer "$LOOM_REVIEWERS"',
       team_members: 'people-cli members "$LOOM_TEAM"',
-      auto_merge: { method: "command", rejected: ["Merge failed*"], approval: "loom", require_live: true, max_attempts: 2 },
+      auto_merge: { method: "command", rejected: ["Merge failed*"], approval: "loom", require_live: true, max_attempts: 2, final_review: { provider: "codex", model: "gpt-mini", reasoning: "minimal", timeout_minutes: 5 } },
       reviewers: [{ team: "platform", count: 2 }, { users: ["alice", "bob"], count: 1 }],
     },
   };
@@ -74,7 +74,7 @@ function everything(doc: Doc): void {
         kind: "gh",
         after_push: ["ci-cli rerun"],
         ignore_checks: ["Lint*"],
-        auto_merge: { method: "comment", comment: "/merge", rejected: ["❌*"], approval: "forge", require_live: false, max_attempts: 4 },
+        auto_merge: { method: "comment", comment: "/merge", rejected: ["❌*"], approval: "forge", require_live: false, max_attempts: 4, final_review: { provider: "claude", model: "haiku", reasoning: "low", timeout_minutes: 3 } },
         reviewers: [{ team: "acme/web", count: 1 }, { users: ["carol"] }],
       },
       environment: { provider: "git-worktree", inputs: { sparse: "web" } },
@@ -162,7 +162,7 @@ const full = (): Spec => {
 /** `everything` whose project-wide forge is gh, merging through a merge service's comment: the keys only a gh forge takes. */
 function mergingEverything(doc: Doc): void {
   everything(doc);
-  doc.merge.forge = { kind: "gh", auto_merge: { method: "comment", comment: "/merge please", rejected: ["Merge failed*"], max_attempts: 2 }, reviewers: [{ team: "acme/platform", count: 2 }] };
+  doc.merge.forge = { kind: "gh", auto_merge: { method: "comment", comment: "/merge please", rejected: ["Merge failed*"], max_attempts: 2, final_review: { model: "small" } }, reviewers: [{ team: "acme/platform", count: 2 }] };
 }
 const FIXTURES = [
   ["a pull request", full],

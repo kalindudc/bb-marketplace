@@ -34,6 +34,8 @@ export interface ProjectMetrics {
   findings: { total: number; blocking: number; shouldFix: number; rounds: number; changesRequested: number };
   tokensByTicket: Array<{ key: string; tokens: number }>;
   reliability: { failedAttempts: number; rateLimitRetries: number; timeouts: number; mergesSentBack: number };
+  /** Final reviews before Loom's own merges: runs started, verdicts, runs that ended without one, and the tokens of the closed ones. */
+  finalReviews: { runs: number; passed: number; failed: number; unfinished: number; tokens: number };
 }
 
 const DAY_MS = 86_400_000;
@@ -155,6 +157,13 @@ export function computeMetrics(a: { tickets: TicketRow[]; events: EventRow[]; po
       rateLimitRetries: events.filter((event) => event.row.kind === "turn.retry").length,
       timeouts: a.threads.filter((thread) => thread.end_reason === "timeout").length,
       mergesSentBack: events.filter((event) => event.row.kind === "ticket.state" && event.data.from === "merging" && (event.data.to === "working" || event.data.to === "queued")).length,
+    },
+    finalReviews: {
+      runs: events.filter((event) => event.row.kind === "ticket.final_review_started").length,
+      passed: events.filter((event) => event.row.kind === "ticket.final_review_verdict" && event.data.pass === true).length,
+      failed: events.filter((event) => event.row.kind === "ticket.final_review_verdict" && event.data.pass !== true).length,
+      unfinished: events.filter((event) => event.row.kind === "ticket.final_review_ended" && event.data.why !== "superseded").length,
+      tokens: events.filter((event) => event.row.kind === "ticket.final_review_closed").reduce((sum, event) => sum + (typeof event.data.tokens === "number" ? event.data.tokens : 0), 0),
     },
   };
 }

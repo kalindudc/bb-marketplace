@@ -198,6 +198,7 @@ function newMetricLines(m: ProjectMetrics): string[] {
       : `review findings ${findings.total} in ${plural(findings.rounds, "round")} (${findings.blocking} blocking, ${findings.shouldFix} should-fix), changes requested in ${findings.changesRequested}`,
     `tokens by ticket ${m.tokensByTicket.length === 0 ? "none yet" : m.tokensByTicket.map((entry) => `${entry.key} ${entry.tokens}`).join(", ")}`,
     `reliability ${plural(reliability.failedAttempts, "failed attempt")}, ${reliability.rateLimitRetries} rate-limit ${reliability.rateLimitRetries === 1 ? "retry" : "retries"}, ${plural(reliability.timeouts, "timeout")}, ${plural(reliability.mergesSentBack, "merge")} sent back`,
+    ...(m.finalReviews.runs === 0 ? [] : [`final reviews ${m.finalReviews.runs} run, ${m.finalReviews.passed} passed, ${m.finalReviews.failed} failed, ${m.finalReviews.unfinished} unfinished, ${m.finalReviews.tokens.toLocaleString("en-US")} tokens`]),
   ];
 }
 
@@ -421,17 +422,17 @@ export function createCli(projects: Projects, engine: Engine, store: Store, now:
       }),
       "auto-merge": cliCommand({
         summary:
-          "Turn Loom's merging of ready pull requests off or on again, for a project or one ticket with --ticket, on repos whose forge sets auto_merge; retry clears a ticket's merge attempt in flight so Loom asks again. On for a ticket counts its attempts afresh (human only)",
-        positionals: [SLUG, { name: "action", description: "off, on or retry.", required: true }],
+          "Turn Loom's merging of ready pull requests off or on again, for a project or one ticket with --ticket, on repos whose forge sets auto_merge; retry clears a ticket's merge attempt in flight, or a held final review, so Loom asks again; accept lets a ticket merge on a final review that passed on an incomplete brief. On for a ticket counts its attempts afresh (human only)",
+        positionals: [SLUG, { name: "action", description: "off, on, retry or accept.", required: true }],
         options: { ticket: { type: "string", description: "Only this ticket, such as CSV-1; retry needs it." }, json },
         run: ({ options, positionals }, ctx) =>
           guarded(async () => {
             const { slug, action } = positionals;
-            if (action !== "on" && action !== "off" && action !== "retry") throw new LoomError("loom_invalid_input", `"${action}" is not an auto-merge action.`, "Use off, on or retry.");
+            if (action !== "on" && action !== "off" && action !== "retry" && action !== "accept") throw new LoomError("loom_invalid_input", `"${action}" is not an auto-merge action.`, "Use off, on, retry or accept.");
             const project = projects.require(slug);
             const ticket = options.ticket === undefined ? null : store.ticketByKey(options.ticket);
             if (options.ticket !== undefined && ticket?.project_id !== project.id) throw new LoomError("loom_not_found", `${slug} has no ticket ${options.ticket}.`);
-            if (action === "retry" && ticket === null) throw new LoomError("loom_invalid_input", "retry clears one ticket's merge attempt, so it needs --ticket.");
+            if ((action === "retry" || action === "accept") && ticket === null) throw new LoomError("loom_invalid_input", `${action} acts on one ticket, so it needs --ticket.`);
             const data = { slug, action, ...(ticket === null ? {} : { key: ticket.key }) };
             const said = await humanAction(deps, ctx, `auto-merge ${action}`, data, () => setAutoMerge(store, project, action, ticket));
             if (action !== "off") engine.kick();
