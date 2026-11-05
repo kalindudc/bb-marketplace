@@ -1,70 +1,74 @@
 /* Gruve: gruvbox for coding. Sharp corners, flat surfaces, monospace UI.
    Dark is gruvbox "soft" (#32302f), a step lighter than stock gruvbox.
-   Light keeps gruvbox ink and accents on a neutral paper base instead of
-   the yellow #fbf1c7, with accents darkened to clear 4.5:1 as text.
+   Light keeps gruvbox ink and accents on a dimmed neutral paper instead of
+   the bright yellow #fbf1c7, with accents darkened to clear 4.5:1 as text.
    It sets bb's tokens and styles bb's own composer; it never targets
    another plugin's markup, so plugins such as Switchboard keep their UI
    and only pick the colours up through bb's variables. */
 
 :root,
 .light {
-  --canvas: #f4f1e8;
-  --ink: #3c3836;
+  --canvas: #e7e3d8;
+  --ink: #282828;
 
-  --card: #faf8f1;
-  --popover: #faf8f1;
-  --sidebar: #ebe7db;
-  --sidebar-accent: #e1dccd;
-  --secondary: #e6e1d3;
-  --accent: #e6e1d3;
-  --muted: #e1dccd;
+  /* The paper is dimmed so large surfaces don't glare, and cards stay off
+     white. As in dark mode, borders and the card step carry all the
+     separation, so lines are drawn firmly enough to find at a glance. */
+  --card: #edeae1;
+  --popover: #edeae1;
+  --sidebar: #ded9cc;
+  --sidebar-accent: #cbc4b1;
+  --secondary: #d5cebd;
+  --accent: #d5cebd;
+  --muted: #d2cbb8;
 
-  --border: #d3ccba;
-  --border-hairline: #d8d2c2;
-  --border-seam: #d3ccba;
-  --sidebar-border: #d3ccba;
-  --input: #b3aa96;
-  --surface-recessed: rgba(60, 56, 54, 0.05);
-  --surface-recessed-solid: #ece8dc;
+  --border: #a49b82;
+  --border-hairline: #ada48d;
+  --border-seam: #a89f88;
+  --sidebar-border: #a89f88;
+  --input: #877e65;
+  --state-hover: color-mix(in oklab, var(--ink) 10%, transparent);
+  --surface-recessed: rgba(40, 40, 40, 0.08);
+  --surface-recessed-solid: #dcd7ca;
 
-  --primary: #7d520b;
+  --primary: #704700;
   --primary-foreground: #faf8f1;
   --timeline-accent: #076678;
   --file-accent: var(--timeline-accent);
 
-  --muted-foreground: #59524b;
-  --readback-foreground: #605951;
-  --subtle-foreground: #676057;
+  --muted-foreground: #453f3b;
+  --readback-foreground: #4d4741;
+  --subtle-foreground: #554f48;
 
-  --destructive: #c8241d;
+  --destructive: #ba1613;
   --destructive-foreground: #faf8f1;
   --destructive-text: #9d0006;
-  --warning: #a63c06;
-  --warning-text: #a63c06;
-  --attention: #7e5719;
+  --warning: #a53b05;
+  --warning-text: #9b3300;
+  --attention: #754f11;
   --attention-foreground: #faf8f1;
-  --success: #67620a;
-  --diff-added: #66620a;
+  --success: #5d5800;
+  --diff-added: #646007;
   --diff-removed: #9d0006;
-  --pr-merged: #8f3f71;
+  --pr-merged: #883a6b;
 
   /* The terminal paints on --sidebar. Gruvbox's faded colours, darkened
      where needed so every colour but black clears 4.5:1 on paper. */
   --ansi-0: #1d2021;  --ansi-bg-fg-0: #faf8f1;
   --ansi-1: #9d0006;  --ansi-bg-fg-1: #faf8f1;
-  --ansi-2: #6e6a10;  --ansi-bg-fg-2: #faf8f1;
-  --ansi-3: #8c5f18;  --ansi-bg-fg-3: #faf8f1;
+  --ansi-2: #646002;  --ansi-bg-fg-2: #faf8f1;
+  --ansi-3: #80550b;  --ansi-bg-fg-3: #faf8f1;
   --ansi-4: #076678;  --ansi-bg-fg-4: #faf8f1;
   --ansi-5: #8f3f71;  --ansi-bg-fg-5: #faf8f1;
-  --ansi-6: #3e7252;  --ansi-bg-fg-6: #faf8f1;
+  --ansi-6: #36684a;  --ansi-bg-fg-6: #faf8f1;
   --ansi-7: #5f574f;  --ansi-bg-fg-7: #faf8f1;
-  --ansi-8: #72665d;  --ansi-bg-fg-8: #faf8f1;
-  --ansi-9: #c8241d;  --ansi-bg-fg-9: #faf8f1;
-  --ansi-10: #6a6b1d; --ansi-bg-fg-10: #faf8f1;
-  --ansi-11: #836321; --ansi-bg-fg-11: #faf8f1;
-  --ansi-12: #3d7072; --ansi-bg-fg-12: #faf8f1;
-  --ansi-13: #925471; --ansi-bg-fg-13: #faf8f1;
-  --ansi-14: #4d7050; --ansi-bg-fg-14: #faf8f1;
+  --ansi-8: #675c53;  --ansi-bg-fg-8: #faf8f1;
+  --ansi-9: #ba1613;  --ansi-bg-fg-9: #faf8f1;
+  --ansi-10: #606113; --ansi-bg-fg-10: #faf8f1;
+  --ansi-11: #775816; --ansi-bg-fg-11: #faf8f1;
+  --ansi-12: #346567; --ansi-bg-fg-12: #faf8f1;
+  --ansi-13: #874b68; --ansi-bg-fg-13: #faf8f1;
+  --ansi-14: #446647; --ansi-bg-fg-14: #faf8f1;
   --ansi-15: #3c3836; --ansi-bg-fg-15: #faf8f1;
 
   /* bb's base .dark block also sets these; this sheet loads last, so these
@@ -235,6 +239,35 @@
 }
 
 [data-bb-plugin="bb--composer"] [data-promptbox-submit-action]:disabled {
-  border-color: var(--border);
+  border-color: var(--input);
   color: var(--muted-foreground);
+}
+
+/* When sending has options, bb puts the send button and its chevron in one
+   group filled with ink, which is dark in light mode and light in dark mode,
+   and forces both buttons transparent with inherited text. So the group
+   carries the outline and the colour, and the hovered half keeps bb's tint. */
+[data-bb-plugin="bb--composer"] [data-promptbox-send-menu] {
+  border: 1px solid var(--primary);
+  background: transparent;
+  color: var(--primary);
+}
+
+[data-bb-plugin="bb--composer"] [data-promptbox-send-menu]:hover:not(:has([data-promptbox-submit-action]:disabled)) {
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+
+[data-bb-plugin="bb--composer"] [data-promptbox-send-menu]:has([data-promptbox-submit-action]:disabled) {
+  border-color: var(--input);
+  color: var(--muted-foreground);
+}
+
+[data-bb-plugin="bb--composer"] [data-promptbox-send-menu] [data-promptbox-submit-action] {
+  border: 0;
+}
+
+/* The chevron is hidden at zero width until there is text to send. */
+[data-bb-plugin="bb--composer"] [data-promptbox-send-menu] > button:not([data-promptbox-submit-action]):not([aria-hidden="true"]) {
+  border-left: 1px solid color-mix(in oklab, currentColor 40%, transparent);
 }

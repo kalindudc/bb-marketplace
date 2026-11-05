@@ -2,6 +2,42 @@
 
 Notable changes to Gruve, newest first. Releases are tagged `gruve/vX.Y.Z` in this repository.
 
+## 0.3.0 (2026-11-05)
+
+### Added
+
+- A **Light mode** setting that picks how bright light mode is and how firmly it draws lines. Dark mode is not affected.
+  - Classic: the bright paper and faint lines of Gruve 0.2.0.
+  - Bright: the same bright paper with firm lines and near-black text.
+  - Soft (default): a dimmed paper with firm lines, described below.
+  - Dim: the dimmest paper, about 70% as bright as white.
+
+  Each paper replaces every surface, line, text, status and terminal colour, and has its own shade of every accent, so text and accents clear 4.5:1 on all four. The settings page previews the chosen paper, even from dark mode. The palettes live in `src/palettes.ts`.
+
+### Changed
+
+- Light mode's default paper is dimmer, so large surfaces no longer glare. The paper went from `#f4f1e8` to `#e7e3d8`, cards and menus from near-white `#faf8f1` to `#edeae1`, and the sidebar from `#ebe7db` to `#ded9cc`. The brightest surface now reflects 82% as much light as white, down from 94%, and a test keeps the paper, cards, menus and sidebar under a luminance ceiling.
+- The Soft paper has much more contrast, so outlines, chips and selected rows are easy to find:
+
+  | | 0.2.0 | 0.3.0, Soft |
+  |---|---|---|
+  | Borders on the page | 1.42:1 | 2.16:1 |
+  | Seams and dividers | 1.42:1 | 2.05:1 |
+  | Form input outlines | 2.04:1 | 3.15:1 |
+  | The sidebar's edge | 1.30:1 | 1.87:1 |
+  | Selected or hovered sidebar row | 1.11:1 | 1.23:1 |
+  | Chips and filled buttons on a card | 1.23:1 | 1.30:1 |
+  | Body text (now gruvbox `#282828`) | 10.3:1 | 11.5:1 |
+  | Muted, readback and subtle text | 6.8, 6.1 and 5.5:1 | 8.1, 7.1 and 6.3:1 |
+
+  Hovered rows use 10% ink instead of bb's 5.9%.
+- On the Soft paper, the light shades of the accents, status colours and terminal colours are a little deeper, so each still clears 4.5:1 on the dimmer paper and on chips: yellow is `#704700`, orange `#922d00`, green `#575200`, aqua `#265a3e`, blue `#005869` and purple `#813464`; red is unchanged. Dark mode is unchanged.
+- Tests now run the contrast checks on all four papers, hold every paper but Classic to minimum contrasts for its lines, keep Soft and Dim under a brightness ceiling, and check that the send group is outlined rather than filled.
+
+### Fixed
+
+- The send button in bb 0.48's composer showed as a solid dark block in light mode, and a light one in dark mode. bb now puts the send button and its options chevron in one group filled with ink and forces the buttons inside it transparent, so Gruve outlines the group in the accent instead, with a thin seam before the chevron. Hovering fills it with the accent, and an empty composer shows it in the input outline colour.
+
 ## 0.2.0 (2026-10-29)
 
 ### Added

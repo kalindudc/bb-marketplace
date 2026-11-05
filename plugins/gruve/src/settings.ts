@@ -7,6 +7,7 @@ export const MIN_FONT_SIZE = 12;
 export const MAX_FONT_SIZE = 20;
 
 export type Accent = "yellow" | "orange" | "red" | "green" | "aqua" | "blue" | "purple";
+export type LightMode = "classic" | "bright" | "soft" | "dim";
 export type InterfaceFont = "jetbrains" | "plex" | "fira" | "source" | "cascadia" | "system-mono" | "system-sans";
 export type CodeFont = Exclude<InterfaceFont, "system-sans">;
 export type Corners = "square" | "soft" | "rounded";
@@ -14,6 +15,8 @@ export type Prompt = "chevron" | "angle" | "dollar" | "lambda" | "none";
 
 export interface GruveAppearance {
   accent: Accent;
+  /** How bright light mode's paper is and how firmly it draws lines; dark mode is not affected. */
+  lightMode: LightMode;
   interfaceFont: InterfaceFont;
   codeFont: CodeFont;
   /** Root font size in px; the whole interface is laid out in rem. */
@@ -25,6 +28,7 @@ export interface GruveAppearance {
 /** What the theme ships as written: these values inject no CSS at all. */
 export const DEFAULT_APPEARANCE: GruveAppearance = {
   accent: "yellow",
+  lightMode: "soft",
   interfaceFont: "jetbrains",
   codeFont: "jetbrains",
   fontSize: 16,
@@ -33,6 +37,7 @@ export const DEFAULT_APPEARANCE: GruveAppearance = {
 };
 
 const ACCENTS: readonly Accent[] = ["yellow", "orange", "red", "green", "aqua", "blue", "purple"];
+export const LIGHT_MODES: readonly LightMode[] = ["classic", "bright", "soft", "dim"];
 const INTERFACE_FONTS: readonly InterfaceFont[] = ["jetbrains", "plex", "fira", "source", "cascadia", "system-mono", "system-sans"];
 const CODE_FONTS: readonly CodeFont[] = ["jetbrains", "plex", "fira", "source", "cascadia", "system-mono"];
 const CORNERS: readonly Corners[] = ["square", "soft", "rounded"];
@@ -68,6 +73,19 @@ export const SETTING_DESCRIPTORS = {
       purple: "Purple",
     },
     default: DEFAULT_APPEARANCE.accent,
+  },
+  lightMode: {
+    type: "select",
+    label: "Light mode",
+    description: "How bright light mode's paper is and how firmly it draws lines and borders. Dark mode is not affected.",
+    options: [...LIGHT_MODES],
+    experimental_optionLabels: {
+      classic: "Classic: bright paper, faint lines",
+      bright: "Bright: bright paper, firm lines",
+      soft: "Soft: dimmed paper, firm lines (default)",
+      dim: "Dim: dimmest paper, firm lines",
+    },
+    default: DEFAULT_APPEARANCE.lightMode,
   },
   interfaceFont: {
     type: "select",
@@ -137,6 +155,7 @@ export function parseAppearance(values: Readonly<Record<string, unknown>> | unde
   const read = values ?? {};
   return {
     accent: oneOf(ACCENTS, read.accent) ? read.accent : DEFAULT_APPEARANCE.accent,
+    lightMode: oneOf(LIGHT_MODES, read.lightMode) ? read.lightMode : DEFAULT_APPEARANCE.lightMode,
     interfaceFont: oneOf(INTERFACE_FONTS, read.interfaceFont) ? read.interfaceFont : DEFAULT_APPEARANCE.interfaceFont,
     codeFont: oneOf(CODE_FONTS, read.codeFont) ? read.codeFont : DEFAULT_APPEARANCE.codeFont,
     fontSize: isWholeNumber(read.fontSize) ? read.fontSize : DEFAULT_APPEARANCE.fontSize,

@@ -2,7 +2,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { accentColours } from "../src/appearance";
-import { DEFAULT_APPEARANCE, SETTING_DESCRIPTORS, type Accent } from "../src/settings";
+import { LIGHT_PALETTES } from "../src/palettes";
+import { DEFAULT_APPEARANCE, LIGHT_MODES, SETTING_DESCRIPTORS, type Accent, type LightMode } from "../src/settings";
 
 const root = join(import.meta.dirname, "..");
 const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
@@ -21,6 +22,14 @@ function block(selector: string): Record<string, string> {
 
 const light = block(":root,\n.light");
 const dark = { ...light, ...block(".dark") };
+
+/** Light mode as a setting paints it: the theme's light block with the palette and its yellow on top. */
+const paper = (mode: LightMode): Record<string, string> => ({
+  ...light,
+  ...LIGHT_PALETTES[mode].tokens,
+  "--primary": LIGHT_PALETTES[mode].accents.yellow,
+});
+const LIGHT_PAPERS = LIGHT_MODES.map((mode) => [`light (${mode})`, paper(mode)] as const);
 
 function hex(tokens: Record<string, string>, name: string): string {
   let value = tokens[name];
@@ -59,7 +68,7 @@ const ON_FILLS = ["--ink", "--muted-foreground", "--readback-foreground", "--sub
 // treats as its background, so it is exempt.
 const ANSI = Array.from({ length: 15 }, (_, i) => `--ansi-${i + 1}`);
 
-describe.each([["light", light], ["dark", dark]] as const)("%s mode", (_mode, tokens) => {
+describe.each([...LIGHT_PAPERS, ["dark", dark] as const])("%s mode", (_mode, tokens) => {
   it.each(TEXT.flatMap((text) => SURFACES.map((surface) => [text, surface])))(
     "%s on %s clears 4.5:1",
     (text, surface) => {
@@ -101,23 +110,87 @@ describe.each([["light", light], ["dark", dark]] as const)("%s mode", (_mode, to
 });
 
 // With square corners and no shadows, borders and the card step are the only separation between layers.
-// Floors keep cards, buttons and chips distinct from the page; the ceiling keeps lines from going harsh.
-describe("dark mode layers", () => {
-  const step = (a: string, b: string) => contrast(hex(dark, a), hex(dark, b));
+// Floors keep cards, buttons, chips and selected rows distinct from the page; in dark mode a ceiling also
+// keeps lines from going harsh, while light mode's lines need more weight to show on paper.
+type Floor = [string, string, number];
 
-  it.each([
+// Every paper but classic, which keeps 0.2.0's faint lines for whoever preferred them.
+const FIRM_LIGHT: Floor[] = [
+  ["--card", "--canvas", 1.06],
+  ["--border-seam", "--canvas", 1.9],
+  ["--border-seam", "--card", 2.0],
+  ["--border-hairline", "--canvas", 1.8],
+  ["--border", "--canvas", 2.0],
+  ["--border", "--card", 2.1],
+  ["--sidebar-border", "--sidebar", 1.7],
+  ["--secondary", "--card", 1.25],
+  ["--muted", "--canvas", 1.2],
+  ["--sidebar-accent", "--sidebar", 1.2],
+  // WCAG asks 3:1 of the outline that marks a form control.
+  ["--input", "--canvas", 3.0],
+];
+
+describe.each<[string, Record<string, string>, Floor[]]>([
+  ["dark", dark, [
     ["--card", "--canvas", 1.12],
     ["--border-seam", "--canvas", 1.45],
     ["--border-seam", "--card", 1.3],
     ["--border", "--canvas", 1.6],
     ["--border", "--card", 1.45],
     ["--secondary", "--card", 1.08],
-  ])("%s stands %s apart from %s by at least %s:1", (a, b, floor) => {
-    expect(step(a, b)).toBeGreaterThanOrEqual(floor);
+  ]],
+  ...(["bright", "soft", "dim"] as const).map((mode): [string, Record<string, string>, Floor[]] => [`light (${mode})`, paper(mode), FIRM_LIGHT]),
+])("%s mode layers", (_mode, tokens, floors) => {
+  it.each(floors)("%s stands apart from %s by at least %s:1", (a, b, floor) => {
+    expect(contrast(hex(tokens, a), hex(tokens, b))).toBeGreaterThanOrEqual(floor);
+  });
+});
+
+// A light theme glares when its big surfaces sit near white, so the default paper and the dimmer one
+// keep the page and the cards on it dimmed.
+describe.each(["soft", "dim"] as const)("light mode glare (%s)", (mode) => {
+  it.each([["--canvas", 0.8], ["--card", 0.85], ["--popover", 0.85], ["--sidebar", 0.8]])(
+    "%s stays at or under %s relative luminance",
+    (surface, ceiling) => {
+      expect(luminance(hex(paper(mode), surface))).toBeLessThanOrEqual(ceiling);
+    },
+  );
+});
+
+// The setting swaps in a whole palette, so each one must cover every colour the theme's light block
+// sets; a colour it missed would keep the default paper's value and mix two palettes.
+describe("light palettes", () => {
+  const SHARED = new Set(["--primary", "--primary-foreground", "--destructive-foreground", "--attention-foreground", "--file-accent"]);
+  const colours = Object.keys(light).filter(
+    (name) => !SHARED.has(name) && !/^--(ansi-bg-fg-|font-|gruve-|radius|shadow|pill-shadow)/u.test(name),
+  );
+
+  it.each(LIGHT_MODES)("%s sets every colour of the theme's light block", (mode) => {
+    expect(Object.keys(LIGHT_PALETTES[mode].tokens).sort()).toEqual([...colours].sort());
   });
 
+  it("repeats the theme's own light block as the default paper", () => {
+    expect(LIGHT_PALETTES[DEFAULT_APPEARANCE.lightMode].tokens).toEqual(Object.fromEntries(colours.map((name) => [name, light[name]])));
+    expect(LIGHT_PALETTES[DEFAULT_APPEARANCE.lightMode].accents.yellow).toBe(light["--primary"]);
+  });
+
+  it("keeps the classic paper as Gruve 0.2.0 shipped it", () => {
+    expect(LIGHT_PALETTES.classic.tokens["--canvas"]).toBe("#f4f1e8");
+    expect(LIGHT_PALETTES.classic.tokens["--card"]).toBe("#faf8f1");
+    expect(LIGHT_PALETTES.classic.tokens["--border"]).toBe("#d3ccba");
+    expect(LIGHT_PALETTES.classic.accents.yellow).toBe("#7d520b");
+  });
+
+  it.each(["--canvas", "--card", "--sidebar"])("dims %s from the two bright papers to soft, then to dim", (surface) => {
+    const brightness = (mode: LightMode) => luminance(hex(paper(mode), surface));
+    expect(brightness("soft")).toBeLessThan(Math.min(brightness("classic"), brightness("bright")));
+    expect(brightness("dim")).toBeLessThan(brightness("soft"));
+  });
+});
+
+describe("dark mode lines", () => {
   it.each(["--border", "--border-seam", "--border-hairline", "--input"])("%s stays under 2.2:1 on the canvas", (line) => {
-    expect(step(line, "--canvas")).toBeLessThan(2.2);
+    expect(contrast(hex(dark, line), hex(dark, "--canvas"))).toBeLessThan(2.2);
   });
 });
 
@@ -159,6 +232,14 @@ describe("theme", () => {
     expect(selectors.join("\n")).not.toMatch(/\.sb-/);
   });
 
+  // bb fills this group with ink and forces its buttons transparent, so without its own rule the send
+  // button shows dark in light mode and light in dark mode.
+  it("outlines the send group in the accent instead of bb's ink fill", () => {
+    const group = css.match(/\[data-bb-plugin="bb--composer"\] \[data-promptbox-send-menu\] \{([^}]*)\}/u)?.[1] ?? "";
+    expect(group).toContain("background: transparent;");
+    expect(group).toContain("color: var(--primary);");
+  });
+
   it("styles only the bundled composer, so a replacement composer plugin is left alone", () => {
     const composer = selectors.filter((s) => /promptbox|ProseMirror/.test(s));
     expect(composer.length).toBeGreaterThan(0);
@@ -168,19 +249,24 @@ describe("theme", () => {
 
 // The accent is a setting, so each choice has to keep the promise the theme makes:
 // it is drawn as text and as a fill.
-describe.each([["light", light], ["dark", dark]] as const)("%s mode accents", (mode, tokens) => {
+describe.each([
+  ...LIGHT_MODES.map((lightMode) => ["light", lightMode, paper(lightMode)] as const),
+  ["dark", DEFAULT_APPEARANCE.lightMode, dark] as const,
+])("%s mode accents on the %s paper", (mode, lightMode, tokens) => {
   const accents = SETTING_DESCRIPTORS.accent.options as Accent[];
 
   it.each(accents)("%s is readable as text on every surface", (accent) => {
-    const [primary] = accentColours(accent, mode);
+    const [primary] = accentColours(accent, mode, lightMode);
     for (const surface of SURFACES) expect(contrast(primary, hex(tokens, surface))).toBeGreaterThanOrEqual(4.5);
   });
 
   it.each(accents)("%s carries text on its own fill", (accent) => {
-    const [primary, onPrimary] = accentColours(accent, mode);
+    const [primary, onPrimary] = accentColours(accent, mode, lightMode);
     expect(contrast(onPrimary, primary)).toBeGreaterThanOrEqual(4.5);
   });
+});
 
+describe.each([["light", light], ["dark", dark]] as const)("%s mode default accent", (mode, tokens) => {
   it("ships gruvbox yellow as the theme's own accent", () => {
     const [primary, onPrimary] = accentColours(DEFAULT_APPEARANCE.accent, mode);
     expect(hex(tokens, "--primary")).toBe(primary);

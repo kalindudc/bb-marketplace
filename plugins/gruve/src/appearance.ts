@@ -9,8 +9,10 @@ import {
   type Corners,
   type GruveAppearance,
   type InterfaceFont,
+  type LightMode,
   type Prompt,
 } from "./settings";
+import { LIGHT_PALETTES } from "./palettes";
 
 /** Marks the injected stylesheet, so it can be found and removed again. */
 export const STYLE_ATTRIBUTE = "data-gruve-appearance";
@@ -24,19 +26,26 @@ export const THEME_MARKER = "--gruve-prompt";
 
 const THEME_ELEMENT_ID = "bb-app-theme";
 
-/* Gruvbox accents, one pair per mode: the bright shade on gruvbox soft in dark
-   mode, the faded shade on paper in light mode. Every shade clears 4.5:1 as
-   text on the canvas, cards, menus and sidebar, and each foreground clears
-   4.5:1 on its own fill; test/theme.test.ts checks the whole matrix. */
-const ACCENTS: Record<Accent, { light: readonly [string, string]; dark: readonly [string, string] }> = {
-  yellow: { light: ["#7d520b", "#faf8f1"], dark: ["#fabd2f", "#282828"] },
-  orange: { light: ["#a63c06", "#faf8f1"], dark: ["#fe8019", "#282828"] },
-  red: { light: ["#9d0006", "#faf8f1"], dark: ["#fd8270", "#1d2021"] },
-  green: { light: ["#67620a", "#faf8f1"], dark: ["#b8bb26", "#282828"] },
-  aqua: { light: ["#356b4d", "#faf8f1"], dark: ["#8ec07c", "#282828"] },
-  blue: { light: ["#076678", "#faf8f1"], dark: ["#8fb8ac", "#1d2021"] },
-  purple: { light: ["#8f3f71", "#faf8f1"], dark: ["#dc95aa", "#282828"] },
+/* Gruvbox accents in dark mode: the bright shade on gruvbox soft, with the text
+   drawn on it. Light mode's shades depend on the paper, so each light palette
+   carries its own (src/palettes.ts). Every shade clears 4.5:1 as text on the
+   surfaces of its mode and each foreground clears 4.5:1 on its own fill;
+   test/theme.test.ts checks the whole matrix. */
+const DARK_ACCENTS: Record<Accent, readonly [string, string]> = {
+  yellow: ["#fabd2f", "#282828"],
+  orange: ["#fe8019", "#282828"],
+  red: ["#fd8270", "#1d2021"],
+  green: ["#b8bb26", "#282828"],
+  aqua: ["#8ec07c", "#282828"],
+  blue: ["#8fb8ac", "#1d2021"],
+  purple: ["#dc95aa", "#282828"],
 };
+
+const ON_LIGHT_ACCENT = "#faf8f1";
+
+/* Light-only tokens go here rather than in `:root`: this sheet loads after the
+   theme's, so a `:root` palette would also win over the theme's dark block. */
+const LIGHT_SELECTOR = ":root:not(.dark), .light";
 
 const INTERFACE_FONTS: Record<InterfaceFont, string> = {
   jetbrains: '"JetBrainsMono Nerd Font", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace',
@@ -71,11 +80,12 @@ const PROMPTS: Record<Prompt, string | null> = { chevron: "❯", angle: "›", d
 /**
  * The stylesheet for these settings, or "" when every value is the theme's own.
  * It only rewrites theme tokens, so the theme stays the one thing that styles
- * bb; the light shade goes where the theme's own base block is and the dark one
- * in a `.dark` block after it, exactly as the theme does.
+ * bb. Values for both modes go in `:root`, light-only ones in a block that
+ * cannot match in dark mode, and dark shades in a `.dark` block.
  */
 export function appearanceCss(appearance: GruveAppearance): string {
   const root: string[] = [];
+  const light: string[] = [];
   const dark: string[] = [];
 
   if (appearance.fontSize !== DEFAULT_APPEARANCE.fontSize) root.push(`font-size: ${appearance.fontSize}px;`);
@@ -86,10 +96,17 @@ export function appearanceCss(appearance: GruveAppearance): string {
   }
   if (appearance.corners !== DEFAULT_APPEARANCE.corners) root.push(`--gruve-corner: ${CORNERS[appearance.corners]};`);
 
+  if (appearance.lightMode !== DEFAULT_APPEARANCE.lightMode) {
+    for (const [token, value] of Object.entries(LIGHT_PALETTES[appearance.lightMode].tokens)) light.push(`${token}: ${value};`);
+  }
+  // The yellow default is drawn in a shade that depends on the paper, so a new paper needs its accent too.
+  if (appearance.accent !== DEFAULT_APPEARANCE.accent || appearance.lightMode !== DEFAULT_APPEARANCE.lightMode) {
+    const [primary, onPrimary] = accentColours(appearance.accent, "light", appearance.lightMode);
+    light.push(`--primary: ${primary};`, `--primary-foreground: ${onPrimary};`);
+  }
   if (appearance.accent !== DEFAULT_APPEARANCE.accent) {
-    const accent = ACCENTS[appearance.accent];
-    root.push(`--primary: ${accent.light[0]};`, `--primary-foreground: ${accent.light[1]};`);
-    dark.push(`--primary: ${accent.dark[0]};`, `--primary-foreground: ${accent.dark[1]};`);
+    const [primary, onPrimary] = DARK_ACCENTS[appearance.accent];
+    dark.push(`--primary: ${primary};`, `--primary-foreground: ${onPrimary};`);
   }
 
   const glyph = PROMPTS[appearance.prompt];
@@ -105,6 +122,7 @@ export function appearanceCss(appearance: GruveAppearance): string {
 
   const rules: string[] = [];
   if (root.length > 0) rules.push(`:root {\n  ${root.join("\n  ")}\n}`);
+  if (light.length > 0) rules.push(`${LIGHT_SELECTOR} {\n  ${light.join("\n  ")}\n}`);
   if (dark.length > 0) rules.push(`.dark {\n  ${dark.join("\n  ")}\n}`);
   if (rules.length === 0) return "";
   return `/* Gruve appearance settings. */\n${rules.join("\n")}\n`;
@@ -119,7 +137,14 @@ export function isGruveTheme(doc: Document): boolean {
 export const interfaceFontStack = (font: InterfaceFont): string => INTERFACE_FONTS[font];
 export const codeFontStack = (font: CodeFont): string => CODE_FONTS[font];
 export const promptGlyph = (prompt: Prompt): string | null => PROMPTS[prompt];
-export const accentColours = (accent: Accent, mode: "light" | "dark"): readonly [string, string] => ACCENTS[accent][mode];
+export const accentColours = (
+  accent: Accent,
+  mode: "light" | "dark",
+  lightMode: LightMode = DEFAULT_APPEARANCE.lightMode,
+): readonly [string, string] => (mode === "dark" ? DARK_ACCENTS[accent] : [LIGHT_PALETTES[lightMode].accents[accent], ON_LIGHT_ACCENT]);
+
+/** A light palette's colours, for previewing it from either mode. */
+export const lightPalette = (lightMode: LightMode): Readonly<Record<string, string>> => LIGHT_PALETTES[lightMode].tokens;
 
 /** The appearance in effect in this window, set by whoever read the settings. */
 let applied: GruveAppearance | null = null;

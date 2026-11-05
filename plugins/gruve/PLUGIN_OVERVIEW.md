@@ -3,13 +3,13 @@ A gruvbox theme for bb, tuned for long coding sessions: sharp corners, flat surf
 ## What you get
 
 - Dark mode is gruvbox soft: a `#32302f` canvas and a `#2b2928` sidebar, one step lighter than stock gruvbox, with gruvbox yellow as the accent.
-- Light mode keeps gruvbox's ink and accents but trades the yellow `#fbf1c7` background for a neutral paper `#f4f1e8`. Accents use gruvbox's darker faded shades so links and status text stay readable.
+- Light mode keeps gruvbox's ink and accents but trades the bright yellow `#fbf1c7` background for a dimmed neutral paper `#e7e3d8`, with off-white cards, so it doesn't glare. Accents use deeper shades of gruvbox's faded colours so links and status text stay readable, and borders, chips and selected rows are drawn firmly enough to find at a glance.
 - 0px corners everywhere bb uses its radius scale, and no drop shadows. Avatars, spinners, status dots and pills stay round.
 - JetBrains Mono for the whole interface, code and the integrated terminal. It falls back to your system monospace font when JetBrains Mono is not installed.
 - A composer styled as a terminal prompt: a `❯` before your first line, a yellow caret, an accent border while it has focus, and an outlined send button.
 - Gruvbox syntax colours in diffs and file previews: gruvbox dark soft and gruvbox light hard.
 - A gruvbox terminal palette for each mode.
-- Six settings under **Settings → Installed plugins → Gruve**: accent colour (seven gruvbox accents, each with a shade for both modes), interface font, code and terminal font, text size from 12 to 20px, corners (square, 3px or 6px) and the composer's prompt glyph. Every default is what the theme ships with, so the CSS stays exactly as written until you change something, and a save applies straight away in the window you made it.
+- Seven settings under **Settings → Installed plugins → Gruve**: accent colour (seven gruvbox accents, each with a shade for both modes), how bright light mode is (Classic and Bright papers, the default Soft, or Dim), interface font, code and terminal font, text size from 12 to 20px, corners (square, 3px or 6px) and the composer's prompt glyph. Every default is what the theme ships with, so the CSS stays exactly as written until you change something, and a save applies straight away in the window you made it.
 
 Every text colour clears 4.5:1 contrast on the canvas, cards, menus, sidebar and hovered rows in both modes, and so does every terminal colour except black. A test keeps it that way, including every accent the settings offer.
 
