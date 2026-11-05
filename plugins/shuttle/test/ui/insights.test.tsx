@@ -106,6 +106,102 @@ describe("Insights", () => {
     await waitFor(() => expect(box.value).toBe("@uzo could one of you take a look when you have a moment? It is a M change: +86 −12."));
   });
 
+  it("shows auto post's shadow record per repository, why drafts were held, and the latest decisions", async () => {
+    const record = autoPostInsights({
+      target: 0.9,
+      repos: [shadowRepo({
+        repo: "Shopify/terraform-the-cloud", drafts: 6,
+        findings: { agreed: 9, edited: 2, against: 1, pending: 2, missed: 1, held: 4, precision: 0.9, lowerBound: 0.596, needed: 41, judged: 13 },
+        policy: { drafts: 1, findings: 2, agreed: 1, against: 0 },
+        approvals: { drafts: 12, wouldApprove: 5, agreed: 4, against: 1, pending: 0, missed: 3, held: 4, precision: 0.8, lowerBound: 0.38, needed: 190 },
+      })],
+      reasons: [{ check: "approval", reason: "checks are still running", count: 7 }, { check: "accuracy", reason: "no critic votes", count: 3 }],
+      points: [{ holds: 0.9, worth: 0.8, label: "agreed" }, { holds: 0.75, worth: 0.72, label: "against" }],
+      verifier: { runs: 11, failures: 1, medianMs: 8400 },
+      recent: [{ draftId: 4, key: waiting.key, display: "terraform-the-cloud#74066", title: "Move the WAF rules", at: Date.now() - HOUR, verdict: "comment", decision: "hold", findings: 3, passing: 2, posting: 0, approval: "approve", outcome: "posted", posted: "approve", agreed: 2, against: 0, reason: "a bot wrote the PR" }],
+    });
+    const { slot } = await insightsPage("insights/autopost", full, { autoPostInsights: ({ range }: { range: "7d" | "30d" | "90d" }) => ({ ...record, range }), getConfig: () => ({ config: config() }) });
+    const card = await find(slot.container, "[data-auto-post-repo='Shopify/terraform-the-cloud']");
+    const comments = card.querySelector("[data-record='findings']")!;
+    expect([...comments.querySelectorAll("[data-kpi]")].map((tile) => tile.textContent)).toEqual([
+      "Precision90%9 of 10 decided findings", "Proven at least60%95% lower bound, target 90%", "Missed1held findings you posted", "Waiting on you2findings it would pass",
+    ]);
+    expect(comments.querySelector("[data-proof]")!.textContent).toContain("41 more agreeing findings in a row would prove the target.");
+    expect(comments.querySelector("[data-confusion]")!.textContent).toContain("Would pass9 (2 edited)12");
+    expect(comments.querySelector("[data-confusion]")!.textContent).toContain("Held14\u2014");
+    expect(comments.querySelector("[data-policy]")!.textContent).toContain("1 draft with 2 findings; you posted 1 of those and dropped 0.");
+    const approvals = card.querySelector("[data-record='approvals']")!;
+    expect([...approvals.querySelectorAll("[data-kpi]")].map((tile) => tile.textContent)).toEqual([
+      "Would approve5of 12 drafts checked", "Precision80%4 of 5 you approved", "Proven at least38%95% lower bound, target 98%", "Missed3held, and you approved",
+    ]);
+    expect(approvals.querySelector("[data-proof]")!.textContent).toContain("190 more agreeing approvals in a row would prove the target.");
+    expect(card.textContent).toContain("13 findings judged");
+    expect(slot.container.querySelectorAll("[data-chart='scatter'] circle")).toHaveLength(2);
+    expect(slot.container.querySelector("[data-hold-reasons]")!.textContent).toContain("Approvalchecks are still running7");
+    expect(callsTo(slot, "insights")).toEqual([]);
+    expect(callsTo(slot, "autoPostInsights")).toEqual([{ range: "30d" }]);
+    const recent = slot.container.querySelector("[data-recent-decisions]") as HTMLElement;
+    expect(recent.textContent).toContain("2 of 3 pass the gate");
+    expect(recent.textContent).toContain("Would approve");
+    expect(recent.textContent).toContain("You approved");
+    fireEvent.click(within(recent).getByRole("button", { name: "terraform-the-cloud#74066" }));
+    expect(lastNavigation(slot)).toEqual({ method: "toPluginPanel", path: "shuttle", options: { subPath: formatRoute({ view: "pr", key: waiting.key }) } });
+  });
+
+  it("lists what is waiting to post, each repository's modes and what Shuttle posted, and resumes a stopped kind", async () => {
+    const record = autoPostInsights({
+      repos: [shadowRepo({
+        repo: "acme/app", mode: "countdown", approveMode: "auto", drafts: 4,
+        posted: { reviews: 3, approvals: 1, findings: 5, marked: 1, mistakes: 1 },
+        trips: [{ kind: "approve", reason: "you marked 2 approvals as mistakes", at: Date.now() - 2 * HOUR }],
+      }), shadowRepo({ repo: "acme/docs" })],
+      scheduled: [
+        { draftId: 11, key: waiting.key, display: "terraform-the-cloud#74066", title: "Move the WAF rules", at: Date.now() + 12 * 60_000, verdict: "comment", findings: 2 },
+        { draftId: 12, key: "github:acme/app#9", display: "app#9", title: "Bump locales", at: Date.now() + 90 * 60_000, verdict: "approve", findings: 0 },
+      ],
+    });
+    const { slot } = await insightsPage("insights/autopost", full, {
+      autoPostInsights: ({ range }: { range: "7d" | "30d" | "90d" }) => ({ ...record, range }), getConfig: () => ({ config: config() }), resumeAutoPost: () => ({ cleared: 1 }),
+    });
+    const scheduled = await find(slot.container, "[data-scheduled-posts]");
+    const rows = [...scheduled.querySelectorAll<HTMLElement>("[data-scheduled-post]")];
+    expect(rows.map((row) => row.getAttribute("data-scheduled-post"))).toEqual(["11", "12"]);
+    expect(rows[0]!.textContent).toContain("Move the WAF rules");
+    expect(rows[0]!.textContent).toContain("2 comments");
+    expect(rows[0]!.textContent).toContain("12m");
+    expect(rows[1]!.textContent).toContain("Approval");
+    expect(rows[1]!.textContent).toContain("2h");
+    fireEvent.click(within(rows[0]!).getByRole("button", { name: "terraform-the-cloud#74066" }));
+    expect(lastNavigation(slot)).toEqual({ method: "toPluginPanel", path: "shuttle", options: { subPath: formatRoute({ view: "pr", key: waiting.key }) } });
+
+    const card = slot.container.querySelector<HTMLElement>("[data-auto-post-repo='acme/app']")!;
+    expect([...card.querySelectorAll("[data-pill]")].slice(0, 2).map((pill) => pill.textContent)).toEqual(["Comments: Countdown", "Approvals: Auto"]);
+    expect(card.querySelector("[data-posted]")!.textContent).toBe("Posted by Shuttle: 3 reviews (1 approval), 5 comments, 2 marked as mistakes");
+    const trip = card.querySelector<HTMLElement>("[data-auto-post-trip='approve']")!;
+    expect(trip.textContent).toContain("Posting approvals stopped: you marked 2 approvals as mistakes");
+    fireEvent.click(within(trip).getByRole("button", { name: "Resume posting approvals in acme/app" }));
+    await waitFor(() => expect(callsTo(slot, "resumeAutoPost")).toEqual([{ repo: "acme/app", kind: "approve" }]));
+
+    const quiet = slot.container.querySelector<HTMLElement>("[data-auto-post-repo='acme/docs']")!;
+    expect([...quiet.querySelectorAll("[data-pill]")].slice(0, 2).map((pill) => pill.textContent)).toEqual(["Comments: Shadow", "Approvals: Shadow"]);
+    expect(quiet.querySelector("[data-posted]")!.textContent).toBe("Posted by Shuttle: 0 reviews (0 approvals), 0 comments, 0 marked as mistakes");
+    expect(quiet.querySelector("[data-auto-post-trip]")).toBeNull();
+  });
+
+  it("shows no waiting list when nothing is scheduled", async () => {
+    const record = autoPostInsights({ repos: [shadowRepo({ repo: "acme/app" })] });
+    const { slot } = await insightsPage("insights/autopost", full, { autoPostInsights: ({ range }: { range: "7d" | "30d" | "90d" }) => ({ ...record, range }), getConfig: () => ({ config: config() }) });
+    await find(slot.container, "[data-auto-post-repo='acme/app']");
+    expect(slot.container.querySelector("[data-scheduled-posts]")).toBeNull();
+  });
+
+  it("says how to turn auto post on when no repository is in shadow mode", async () => {
+    const { slot } = await insightsPage("insights/autopost", full, { getConfig: () => ({ config: config() }) });
+    const empty = await find(slot.container, "[data-auto-post-empty]");
+    expect(empty.textContent).toContain("Auto post is off");
+    expect(empty.textContent).toContain("Settings › Automations › Auto post");
+  });
+
   it("keeps the old Activity page as the Automation log", async () => {
     const { slot } = await insightsPage("insights/log", full, {
       activity: () => ({ events: [event({ id: 4, kind: "forwarded", text: "Sent 4 items on infra-portal#29278 to its agent.", key: waiting.key, threadId: "thr_agent" })] }),

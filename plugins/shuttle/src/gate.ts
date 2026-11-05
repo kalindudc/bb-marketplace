@@ -234,7 +234,7 @@ async function pool<T>(items: readonly T[], size: number, fn: (item: T) => Promi
   }));
 }
 
-export function hostsOf(pr: PrRow): string[] {
+function hostsOf(pr: PrRow): string[] {
   try {
     const host = new URL(pr.url).hostname.toLowerCase();
     return host === "github.com" ? [host, "docs.github.com"] : [host];
@@ -391,7 +391,7 @@ async function judgeFindings(ctx: Ctx, pr: PrRow, findings: readonly Finding[], 
 }
 
 /** An author who counts as a bot, unless the repository lists them as one who acts for people. */
-export function botAuthor(ctx: Ctx, pr: PrRow, repo: AutoPostRepo): boolean {
+function botAuthor(ctx: Ctx, pr: PrRow, repo: AutoPostRepo): boolean {
   return isBot(ctx, pr) && !repo.allowAuthors.some((glob) => globMatch(glob, pr.author));
 }
 
@@ -574,7 +574,6 @@ export async function runGate(ctx: Ctx, pr: PrRow, draft: DraftRow): Promise<Gat
     approval,
     at: ctx.now(),
     ms: ctx.now() - started,
-    facts: { checks: pr.checks, review: pr.review, size: pr.additions === null || pr.deletions === null ? null : pr.additions + pr.deletions },
   };
 }
 
@@ -643,18 +642,6 @@ async function runVerifier(ctx: Ctx, config: AutoPost, prompt: string, timeoutMs
   } catch (error) {
     return `it could not start: ${errText(error)}`;
   }
-}
-
-const CHECKS_WORST = ["passed", "none", "pending", "failed"] as const;
-
-/** Of two readings of a PR, what an approval would hold on: the worse checks, a requested change, the larger or unknown size. */
-function worseFacts(facts: NonNullable<Gate["facts"]>, pr: PrRow): NonNullable<Gate["facts"]> {
-  const size = pr.additions === null || pr.deletions === null ? null : pr.additions + pr.deletions;
-  return {
-    checks: CHECKS_WORST.indexOf(pr.checks) > CHECKS_WORST.indexOf(facts.checks) ? pr.checks : facts.checks,
-    review: pr.review === "changes" ? "changes" : facts.review,
-    size: facts.size === null || size === null ? null : Math.max(facts.size, size),
-  };
 }
 
 /** The latest gate of each draft, by store, so checks of one draft run one after another and never reuse an older snapshot. */
@@ -758,8 +745,6 @@ export function gateDraft(ctx: Ctx, draftId: number): Promise<Gate | null> {
         const late = repo ? prApprovalReasons(ctx, after, draft, repo).filter((reason) => !gate!.approval!.reasons.includes(reason)) : [];
         if (late.length) gate = { ...gate, approval: { ...gate.approval, decision: "hold", reasons: [...gate.approval.reasons, ...late] } };
       }
-      // A replay of this check must hold on what either reading saw, too.
-      if (after !== null && gate.facts) gate = { ...gate, facts: worseFacts(gate.facts, after) };
       ctx.store.setDraftGate(draft.id, JSON.stringify(gate));
       const count = gate.posting.length;
       const judged = gate.findings.filter((f) => f.holds !== null).length;

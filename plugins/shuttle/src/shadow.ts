@@ -1,23 +1,34 @@
 // Auto post's shadow record: what the gate would have posted, set against what the user did with the same drafts.
-import { POSTING_MODES, type AutoPostRepo } from "./config";
-import type { AutoPostInsights, Finding, Gate, ReplayDraft, ShadowLabel } from "./contract";
+import type { AutoPostInsights, Finding, ShadowLabel } from "./contract";
 import type { Ctx } from "./ctx";
-import type { DraftRow, PrRow } from "./db/store";
+import type { DraftRow } from "./db/store";
 import { autoPostOf, type FindingOutcome } from "./drafts";
-import { APPROVAL_ROUTE, ASKS_CHANGES, botAuthor, CHANGES_ROUTE, hostsOf, NO_APPROVE_PATHS, NO_FINDING_PASSED, parseAssessment, parseGate, safetyProblems, unreadable } from "./gate";
+import { APPROVAL_ROUTE, ASKS_CHANGES, CHANGES_ROUTE, NO_FINDING_PASSED, parseGate, unreadable } from "./gate";
 import { shortKey } from "./prs";
-import { globMatch } from "./glob";
-import { neededFor, wilsonLower } from "./replay";
-
-export { neededFor, wilsonLower };
+import { globMatch } from "./sync";
 
 const DAY = 86_400_000;
 const RANGE_DAYS = { "7d": 7, "30d": 30, "90d": 90 } as const;
 const RANK = { nit: 0, low: 1, medium: 2, high: 3 } as const;
 
 /** The 95% Wilson lower bound of k successes in n tries; null without tries. */
+export function wilsonLower(k: number, n: number, z = 1.96): number | null {
+  if (n === 0) return null;
+  const p = k / n;
+  const denominator = 1 + (z * z) / n;
+  const centre = p + (z * z) / (2 * n);
+  const spread = z * Math.sqrt((p * (1 - p)) / n + (z * z) / (4 * n * n));
+  return (centre - spread) / denominator;
+}
 
 /** Agreeing findings in a row the record still needs for its lower bound to reach the target; null past 1000. */
+export function neededFor(agreed: number, against: number, target: number): number | null {
+  for (let more = 0; more <= 1000; more++) {
+    const lower = wilsonLower(agreed + more, agreed + against + more);
+    if (lower !== null && lower >= target) return more;
+  }
+  return null;
+}
 
 type Decided = "kept" | "edited" | "dropped" | "pending" | "superseded" | "auto" | "retracted";
 
@@ -199,89 +210,4 @@ export function autoPostInsights(ctx: Ctx, range: AutoPostInsights["range"]): Au
     verifier: { runs, failures, medianMs: durations.length ? durations[Math.floor(durations.length / 2)]! : null },
     recent: recent.reverse().slice(0, 50),
   };
-}
-
-// What Insights replays: each check's facts. Stored reasons a replay works out again from the facts are left out; the
-// rest, such as an unsafe summary or a held path, are kept in the check's own words.
-const TIMING = /^(the PR has new commits since the review read it|the PR is (a draft|merged|closed)|the PR changed while it was being checked; check it again|could not read the PR again after the check; check it again)$/u;
-const RECOMPUTED = [
-  TIMING, /^a bot wrote the PR$/u, /^the PR changes \d+ lines, more than \d+$/u, /^[^:]+ did not say how large the PR is$/u, /^the review gave no risk assessment of the PR$/u,
-  /^the reviewer rated the PR /u, /^the reviewer raised a concern/u, /^checks failed$/u, /^checks are still running$/u, /^the server reported no checks$/u,
-  /^a reviewer requested changes$/u, /^the review has \d+ findings? above (nit|low|medium)$/u, /^approvals are not auto-posted yet$/u, /^no paths are set for approvals to cover$/u,
-  /^approvals post through the approval rules$/u, /^requests for changes are not auto-posted$/u,
-];
-const recomputed = (reason: string) => reason === NO_FINDING_PASSED || reason === APPROVAL_ROUTE || reason === CHANGES_ROUTE || reason === ASKS_CHANGES || RECOMPUTED.some((re) => re.test(reason));
-// Finding checks a replay judges again: the severity, the verifier's scores and its limit.
-const REJUDGED = /^\w+ is below the minimum severity \(\w+\)$|^it is not on a line$|^the verifier puts |^past the verifier's limit|^judged without the diff|^beyond the \d+-comment limit$/u;
-
-/**
- * What holds an approval that no replay setting changes. Approvals off in the repository hold everything; a check from
- * before approvals were judged has no approval reasons, so its summary's safety and held paths are read from the draft.
- */
-function approvalKept(ctx: Ctx, pr: PrRow, draft: DraftRow, repo: AutoPostRepo, gate: Gate): string[] {
-  if (repo.approve === "off") return ["approvals are off in this repository"];
-  const kept = gate.approval
-    ? gate.approval.reasons.filter((reason) => !recomputed(reason))
-    : [...safetyOf(ctx, pr, draft), ...gate.reasons.filter((reason) => / a path held for you$/u.test(reason))];
-  if (POSTING_MODES.includes(repo.approve) && repo.approvePaths.length === 0) kept.push(NO_APPROVE_PATHS);
-  return kept;
-}
-
-function safetyOf(ctx: Ctx, pr: PrRow, draft: DraftRow): string[] {
-  const problems = safetyProblems(draft.summary, hostsOf(pr));
-  return problems.length ? [`the summary: ${problems.join("; ")}`] : [];
-}
-
-function youOf(draft: DraftRow, closed: boolean): ReplayDraft["you"] {
-  if (draft.auto_post_state === "posted") {
-    if (draft.auto_post_verdict === "comment") return "shuttle";
-    return draft.approval_mistake_at !== null ? "mistake" : closed ? "approved" : "pending";
-  }
-  if (draft.state === "draft") return "pending";
-  if (draft.state === "discarded") return draft.discard_reason === "superseded" ? "replaced" : "discarded";
-  return draft.posted_verdict === "approve" ? "approved" : draft.posted_verdict === "changes" ? "changes" : draft.posted_verdict === "comment" ? "commented" : "posted";
-}
-
-/** The facts of every draft auto post checked in the range, newest first. */
-export function replayDrafts(ctx: Ctx, range: AutoPostInsights["range"]): ReplayDraft[] {
-  const from = ctx.now() - RANGE_DAYS[range] * DAY;
-  const out: ReplayDraft[] = [];
-  for (const draft of ctx.store.gatedDrafts()) {
-    const gate = parseGate(draft.gate);
-    const pr = gate && gate.at >= from ? ctx.store.prById(draft.pr_id) : null;
-    if (!gate || !pr) continue;
-    // A repository no longer in auto post's settings has no settings to replay it under.
-    const repo = ctx.config().autoPost.repos.find((entry) => globMatch(entry.repo, pr.repo)) ?? null;
-    if (repo === null) continue;
-    const closed = pr.state === "merged" || pr.state === "closed";
-    const stored = gate.approval?.reasons ?? null;
-    const has = (text: string) => stored !== null && stored.includes(text);
-    // Older checks kept no facts: a checks or review hold says what they were; without one, the PR as it is now.
-    const checks = gate.facts?.checks ?? (has("checks failed") ? "failed" : has("checks are still running") ? "pending" : has("the server reported no checks") ? "none" : pr.checks);
-    const review = gate.facts?.review ?? (has("a reviewer requested changes") ? "changes" : pr.review);
-    const size = gate.facts ? gate.facts.size : pr.additions === null || pr.deletions === null ? null : pr.additions + pr.deletions;
-    const assessment = parseAssessment(draft.assessment);
-    const decided = decisionsOf(draft);
-    const byId = new Map((JSON.parse(draft.findings) as Finding[]).map((f) => [f.id, f]));
-    out.push({
-      id: draft.id, key: pr.key, display: shortKey(ctx, pr), title: pr.title, repo: pr.repo, at: gate.at, verdict: draft.verdict,
-      you: youOf(draft, closed), size, checks, review, serverName: ctx.server(pr.server)?.name ?? pr.server,
-      risk: assessment?.risk ?? null, concerns: [...new Set((assessment?.concerns ?? []).map((c) => c.kind))],
-      bot: repo !== null && botAuthor(ctx, pr, repo),
-      timing: gate.reasons.find((reason) => TIMING.test(reason)) ?? stored?.find((reason) => TIMING.test(reason)) ?? null,
-      kept: [...(repo.mode === "off" ? ["comments are off in this repository"] : []), ...gate.reasons.filter((reason) => !recomputed(reason))],
-      keptApproval: approvalKept(ctx, pr, draft, repo, gate),
-      blocking: gate.approval?.blocking?.score ?? null,
-      exact: gate.facts !== undefined,
-      findings: gate.findings.flatMap((row) => {
-        const f = byId.get(row.id);
-        if (!f) return [];
-        const other = row.checks.find((c) => !c.ok && !REJUDGED.test(c.reason) && !unreadable(c.reason))?.reason ?? (row.checks.some((c) => !c.ok && unreadable(c.reason)) ? "a file or the verifier could not be read" : null);
-        const took = decided.get(row.id);
-        const you = took === "kept" || took === "edited" ? "posted" : took === "dropped" || took === "retracted" ? "dropped" : took === "auto" ? (closed ? "posted" : "pending") : took === "pending" ? "pending" : null;
-        return [{ id: f.id, severity: f.severity, path: f.path, line: f.line, body: f.body, holds: row.holds, worth: row.worth, other, you }];
-      }),
-    });
-  }
-  return out.reverse();
 }

@@ -36,7 +36,6 @@ export function registerRpc(bb: BbPluginApi, shuttle: Shuttle): void {
     activity: ({ limit }) => refusing(() => ({ events: shuttle.activity(limit) })),
     insights: ({ range }) => refusing(() => shuttle.insights(range)),
     autoPostInsights: ({ range }) => refusing(() => shuttle.autoPostInsights(range)),
-    autoPostReplay: ({ range }) => refusing(() => shuttle.autoPostReplay(range)),
     reviewHistory: ({ key }) => refusing(() => shuttle.reviewHistory(key)),
     // A sync can take a minute on a slow server; the page follows it through overview.syncing.
     sync: ({ server }) => refusing(() => {
@@ -79,7 +78,6 @@ export function registerRpc(bb: BbPluginApi, shuttle: Shuttle): void {
     projects: ({ key }) => refusing(() => shuttle.projectOptions(key)),
     getConfig: () => refusing(() => ({ config: shuttle.config() })),
     saveConfig: ({ config }) => refusing(() => ({ config: shuttle.saveConfig(config) })),
-    saveAutoPostSettings: ({ changes }) => refusing(() => ({ config: shuttle.saveAutoPostSettings(changes) })),
     boardCreate: (input) => refusing(() => shuttle.boardCreate(input)),
     boardUpdate: (input) => refusing(() => shuttle.boardUpdate(input)),
     boardAdd: (input) => refusing(() => shuttle.boardAdd(input)),

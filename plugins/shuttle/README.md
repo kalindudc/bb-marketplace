@@ -262,19 +262,10 @@ draft is scheduled it shows when it posts, with **Stop** and **Post now**. **Che
 checks once more, and so does `bb shuttle gate <pr>`; in a repository that posts, either may schedule it. `bb shuttle rescore` judges the
 findings of drafts checked in the last 30 days again, posted ones included, keeping each draft's holds.
 Posting a draft records which findings you kept, edited or dropped and the verdict you posted, and a
-discard records whether you discarded it or a newer review replaced it.
-
-**Insights › Auto post** judges every checked draft again with your settings today, so its answers are
-about the settings you have, not the ones each draft was checked with. A tab each for comments and
-approvals says how many drafts would post and how close the record is to proving its target. Drafts are
-grouped by what holds them: nothing, only your settings, or something else, and each opens to its
-reasons and the verifier's scores. Beside them, each setting that holds drafts has its control in place:
-a switch per kind of concern, the size limit, the checks an approval needs, and the verifier's floors
-under its chart. Change one and the page shows at once what would post instead; **Save** keeps the
-changes in your settings, and **Reset** goes back. Each check now keeps the PR's checks, review and size
-with it, so the replay judges the PR as the check saw it; for drafts checked before, it reads them from
-the check's reasons or the PR as Shuttle has it now. It does not run the verifier or the blocking check
-again, and it takes modes, approval paths and allowed authors from your settings today.
+discard records whether you discarded it or a newer review replaced it. **Insights › Auto post**
+compares them per repository: for findings and for approvals, precision, its 95% lower bound against
+its target, how many more agreeing ones would prove it, and what was held that you posted; then why
+drafts were held, how the verifier scored each finding, and the latest decisions.
 
 ### Earlier reviews
 

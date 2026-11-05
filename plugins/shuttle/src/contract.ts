@@ -1,7 +1,7 @@
 // The RPC contract between Shuttle's server and its UI, and the shapes both sides share.
 import { defineContract } from "./define-contract";
 import { z } from "zod";
-import { AUTO_POST_MODES, AUTO_POST_SEVERITIES, CONCERN_KINDS, configSchema, WATCH_MODES } from "./config";
+import { AUTO_POST_MODES, CONCERN_KINDS, configSchema, WATCH_MODES } from "./config";
 
 /** The page's lists. The Inbox has its own read; Insights too. */
 export const AREAS = ["mine", "done", "reviews", "reviewed"] as const;
@@ -234,8 +234,6 @@ export const gateSchema = z.object({
   ms: z.number(),
   /** When its findings were judged again by `bb shuttle rescore`; the draft's own holds are kept from `at`. */
   rescoredAt: z.number().optional(),
-  /** The PR as the check read it, so a replay under other settings judges what the check saw. Absent on older checks. */
-  facts: z.object({ checks: z.enum(CHECK_STATES), review: z.enum(REVIEW_STATES), size: z.number().nullable() }).optional(),
 });
 export type Gate = z.infer<typeof gateSchema>;
 
@@ -835,69 +833,6 @@ const recordSchema = z.object({
 });
 export type ShadowRecord = z.infer<typeof recordSchema>;
 
-/** One finding of a checked draft, as Insights replays it. */
-export const replayFindingSchema = z.object({
-  id: z.string(),
-  severity: z.enum(SEVERITIES),
-  path: z.string(),
-  line: z.number().nullable(),
-  body: z.string(),
-  holds: z.number().nullable(),
-  worth: z.number().nullable(),
-  /** The first check it failed that no setting Insights tries changes, such as missing critic votes; null when none. */
-  other: z.string().nullable(),
-  /** What became of it: you posted it (or Shuttle did and you did not mark it, once the PR is done), dropped it, or not yet. */
-  you: z.enum(["posted", "dropped", "pending"]).nullable(),
-});
-export type ReplayFinding = z.infer<typeof replayFindingSchema>;
-
-/**
- * What a check of a draft read, for Insights to judge again under any settings. `kept` and `keptApproval` are what it
- * found that those settings do not change, in its own words. `exact` is false for a check from before Shuttle kept the
- * PR's checks, review and size with it: those then come from the check's reasons or the PR as Shuttle has it now.
- */
-export const replayDraftSchema = z.object({
-  id: z.number(),
-  key: z.string(),
-  display: z.string(),
-  title: z.string(),
-  repo: z.string(),
-  at: z.number(),
-  verdict: z.enum(VERDICTS),
-  /** What you did with it; `mistake` is an approval of Shuttle's you marked, `shuttle` a comment review Shuttle posted. */
-  you: z.enum(["approved", "commented", "changes", "discarded", "replaced", "pending", "mistake", "shuttle", "posted"]),
-  size: z.number().nullable(),
-  checks: z.enum(CHECK_STATES).nullable(),
-  review: z.enum(REVIEW_STATES).nullable(),
-  serverName: z.string(),
-  risk: z.enum(["low", "medium", "high"]).nullable(),
-  concerns: z.array(z.enum(CONCERN_KINDS)),
-  /** The author counts as a bot and is not one of the repository's allowed authors. */
-  bot: z.boolean(),
-  /** Why the check could not judge the PR as the review read it, such as new commits; null when it could. */
-  timing: z.string().nullable(),
-  kept: z.array(z.string()),
-  keptApproval: z.array(z.string()),
-  /** The verifier's blocking score for an approval, when it read the diff. */
-  blocking: z.number().nullable(),
-  exact: z.boolean(),
-  findings: z.array(replayFindingSchema),
-});
-export type ReplayDraft = z.infer<typeof replayDraftSchema>;
-
-/** Settings Insights › Auto post lets you try, by name; Save sends only the ones you changed. */
-export const replayChangesSchema = z.object({
-  holdComment: z.array(z.enum(CONCERN_KINDS)).max(CONCERN_KINDS.length),
-  holdApprove: z.array(z.enum(CONCERN_KINDS)).max(CONCERN_KINDS.length),
-  minSeverity: z.enum(AUTO_POST_SEVERITIES),
-  holds: z.number().min(0).max(1),
-  worth: z.number().min(0).max(1),
-  maxLines: z.number().int().min(10).max(100_000),
-  checks: z.enum(["passed", "not_failed"]),
-  apprMaxLines: z.number().int().min(1).max(100_000),
-  apprSeverity: z.enum(["nit", "low", "medium"]),
-}).partial().strict();
-
 /** How auto post's shadow decisions compare with what the user posted, per repository. */
 export const autoPostInsightsSchema = z.object({
   range: z.enum(["7d", "30d", "90d"]),
@@ -1031,8 +966,6 @@ export const rpcContract = defineContract({
   insights: { input: z.object({ range: z.enum(["7d", "30d", "90d"]) }), output: insightsSchema, tags: PRS },
   /** Auto post's shadow decisions against what the user posted, for the Insights tab. */
   autoPostInsights: { input: z.object({ range: z.enum(["7d", "30d", "90d"]) }), output: autoPostInsightsSchema, tags: () => ["prs", "config"] },
-  /** The facts of every draft auto post checked in the range, newest first, for Insights to judge under any settings. */
-  autoPostReplay: { input: z.object({ range: z.enum(["7d", "30d", "90d"]) }), output: z.object({ drafts: z.array(replayDraftSchema) }), tags: () => ["prs", "config"] },
   /** Every enabled server, or only `server`. */
   sync: { input: z.object({ server: z.string().min(1).max(100).optional() }), output: ok, invalidates: () => ["prs", "servers", "conversation"] },
   /** Each server's syncs of the last three hours, its last failed sync in full and its failures of the last week. */
@@ -1073,8 +1006,6 @@ export const rpcContract = defineContract({
   projects: { input: z.object({ key: key.optional() }), output: z.object({ projects: z.array(projectOptionSchema), suggested: z.string().nullable() }) },
   getConfig: { input: z.object({}), output: z.object({ config: configSchema }), tags: CONFIG },
   saveConfig: { input: z.object({ config: z.unknown() }), output: z.object({ config: configSchema }), invalidates: () => ["config", "prs", "servers"] },
-  /** Save the auto post settings changed on Insights › Auto post into the settings as they are now; nothing else changes. */
-  saveAutoPostSettings: { input: z.object({ changes: replayChangesSchema }), output: z.object({ config: configSchema }), invalidates: () => ["config", "prs"] },
   boardCreate: { input: boardCreateInputSchema, output: boardDetailSchema, invalidates: () => ["boards"] },
   boardUpdate: { input: boardUpdateInputSchema, output: z.object({ board: boardSummarySchema }), invalidates: () => ["boards"] },
   boardAdd: { input: boardAddInputSchema, output: z.object({ board: boardSummarySchema, added: z.array(z.string()), alreadyPresent: z.array(z.string()) }), invalidates: () => ["boards"] },

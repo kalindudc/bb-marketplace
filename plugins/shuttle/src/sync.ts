@@ -1,7 +1,6 @@
 // One sync of a server: who the user is there, your open PRs, every other list it supports, and a
 // refresh of the linked and watched PRs no list covered. Each list shows as soon as it lands. Each step
 // is recorded with why it failed, for the Sync tab. Then the auto reviews the new requests call for.
-import { globMatch } from "./glob";
 import { AdapterError, type ListResult } from "./adapters/adapter";
 import { LIST_OPERATIONS, type ListOperation, type ServerConfig } from "./config";
 import { SYNC_STEPS, type Reason, type SyncFailure, type SyncState, type SyncStep, type SyncStepName } from "./contract";
@@ -403,7 +402,10 @@ interface AutoWait {
   last: number;
 }
 
-export { globMatch };
+export function globMatch(glob: string, value: string, caseSensitive = false): boolean {
+  const re = new RegExp(`^${glob.trim().replace(/[.+^${}()|[\]\\]/gu, "\\$&").replace(/\*/gu, ".*").replace(/\?/gu, ".")}$`, caseSensitive ? "u" : "iu");
+  return re.test(value);
+}
 
 const TRIGGER_REASON = { requested: "requested", team: "team", mentioned: "mentioned" } as const;
 
