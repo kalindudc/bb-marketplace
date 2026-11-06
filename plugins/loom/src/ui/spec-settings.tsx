@@ -312,6 +312,8 @@ const FORGE_COMMANDS = [
   ["merge", "Merges a ready pull request"],
   ["ready", "Marks a draft ready for review"],
   ["request_reviews", "Asks people to review"],
+  ["review_start", "Starts the review gate on a draft"],
+  ["review_read", "Reads the review gate's findings"],
 ] as const;
 const MERGE_METHODS: Record<AutoMergeSpec["method"], string> = {
   squash: "gh: squash and merge",
@@ -327,7 +329,7 @@ const FORGE_HOOKS = [
 ] as const;
 const hasForgeParts = (forge: ForgeSpec | undefined) =>
   forge !== undefined &&
-  (forge.profile !== undefined || FORGE_COMMANDS.some(([key]) => forge[key] !== undefined) || FORGE_HOOKS.some(([key]) => (forge[key]?.length ?? 0) > 0) || (forge.ignore_checks?.length ?? 0) > 0 || (forge.bots?.length ?? 0) > 0 || forge.notes !== undefined || forge.auto_merge !== undefined || forge.reviewers !== undefined);
+  (forge.profile !== undefined || FORGE_COMMANDS.some(([key]) => forge[key] !== undefined) || FORGE_HOOKS.some(([key]) => (forge[key]?.length ?? 0) > 0) || (forge.ignore_checks?.length ?? 0) > 0 || (forge.bots?.length ?? 0) > 0 || forge.notes !== undefined || forge.review_rounds !== undefined || forge.auto_merge !== undefined || forge.reviewers !== undefined);
 
 /** A forge's list of globs, each a pill of its own, with the ones this version removed struck through. */
 function GlobList({ path, label, items }: { path: string; label: string; items: readonly string[] }) {
@@ -498,6 +500,7 @@ function ForgeRows({ path, label, forge, inherited }: { path: string; label: str
   const profiled = shown("profile", forge?.profile !== undefined);
   const botting = shown("bots", (forge?.bots?.length ?? 0) > 0);
   const noting = shown("notes", forge?.notes !== undefined);
+  const gating = shown("review_rounds", forge?.review_rounds !== undefined);
   const kind = forge === undefined ? (changeAt(review, `${path}.kind`) === undefined ? path : `${path}.kind`) : `${path}.kind`;
   return (
     <>
@@ -512,7 +515,7 @@ function ForgeRows({ path, label, forge, inherited }: { path: string; label: str
           </Commentable>
         )}
       </Row>
-      {(profiled || commands.length > 0 || hooks.length > 0 || ignoring || botting || noting || merging || asking) && (
+      {(profiled || commands.length > 0 || hooks.length > 0 || ignoring || botting || noting || gating || merging || asking) && (
         <dd data-forge={path} className="col-span-full min-w-0 space-y-1.5 border-l-2 border-border-seam pl-2">
           {profiled && (
             <Part label="Forge profile from Loom's settings" paths={[`${path}.profile`]}>
@@ -552,6 +555,13 @@ function ForgeRows({ path, label, forge, inherited }: { path: string; label: str
           {botting && (
             <Part label="Counts these authors as bots" paths={[`${path}.bots`]} target={value(`${path}.bots`, `${label} › bots`, "text")}>
               <GlobList path={`${path}.bots`} label={`${label} › bots`} items={forge?.bots ?? []} />
+            </Part>
+          )}
+          {gating && (
+            <Part label="Review gate's fix rounds" paths={[`${path}.review_rounds`]}>
+              <Commentable as="span" target={value(`${path}.review_rounds`, `${label} › review rounds`, "number", forge?.review_rounds ?? 3, { min: 1, max: 10 })} className="text-xs">
+                {forge?.review_rounds ?? 3} at most, then the human decides
+              </Commentable>
             </Part>
           )}
           {noting && (

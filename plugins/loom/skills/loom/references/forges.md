@@ -56,6 +56,8 @@ retarget = 'sh ~/.local/share/loom-forge/forge.sh retarget'
 ready = 'sh ~/.local/share/loom-forge/forge.sh ready'
 request_reviews = 'sh ~/.local/share/loom-forge/forge.sh request_reviews'
 merge = 'sh ~/.local/share/loom-forge/forge.sh merge'
+review_start = 'sh ~/.local/share/loom-forge/forge.sh review_start'
+review_read = 'sh ~/.local/share/loom-forge/forge.sh review_read'
 after_open = ['forge ci run --pr "$LOOM_PR_NUMBER"']
 after_push = ['forge ci run --pr "$LOOM_PR_NUMBER"']
 ignore_checks = ["Review Bot*"]
@@ -85,6 +87,34 @@ auto_merge = { method = "command", rejected = ["Merge refused*"] }
   forge, and to each fix round, under "About this forge". Say what an agent needs to know about the server that its code
   cannot tell it, such as how the review bot clears a finding.
 
+## A review gate
+
+A profile, or a spec's forge, may add a review gate: an outside review that runs on each draft before Loom publishes it,
+such as a review bot's private review that publishes nothing. It runs only on projects that set `merge.publish`.
+
+```toml
+review_start = 'sh ~/.local/share/loom-forge/forge.sh review_start'
+review_read = 'sh ~/.local/share/loom-forge/forge.sh review_read'
+review_rounds = 3
+```
+
+- `review_start` runs once for each push of the ticket's own work (the opening and each fix round's push, never a
+  restack or a refresh), with `LOOM_URL`, `LOOM_PR_NUMBER`, `LOOM_SHA` (the commit to review), `LOOM_HEAD` and
+  `LOOM_BASE`. Exit 0 when the review is asked for.
+- `review_read` runs at each read until the gate is done, with `LOOM_URL`, `LOOM_PR_NUMBER` and `LOOM_SHA`, and prints one
+  JSON object on its last line:
+
+  ```json
+  {"state": "done", "findings": [{"id": "f1", "title": "Guard empty rows", "body": "The mapper fails on an order with no rows.", "path": "src/rows.ts", "line": 12, "severity": "medium"}]}
+  ```
+
+  `state` is `pending` while the review runs, `done` when it finished, or `failed` with an optional `message`. Only
+  `state`, and each finding's `id` and `title`, are required; print the same `id` for the same finding on a later commit.
+  When the server says it has no review for that commit yet, print `pending`.
+- New findings go to the worker as a fix round, at most `review_rounds` of them (3 when left out). A gate that fails, or
+  is still pending 90 minutes after it started, keeps the draft a draft, with a post on the ticket; the project keeps
+  running.
+
 ## How commands run
 
 Each command runs with `/bin/sh -c` on the machine with the project's checkout, in the repository's checkout, with a
@@ -102,6 +132,8 @@ plus these variables:
 | `ready` | `LOOM_URL`, `LOOM_PR_NUMBER` | nothing | nothing; exit 0 means the draft is ready for review |
 | `request_reviews` | `LOOM_URL`, `LOOM_PR_NUMBER`, `LOOM_REVIEWERS` (logins, comma-separated) | nothing | nothing; exit 0 means every login was asked |
 | `merge` | `LOOM_URL`, `LOOM_PR_NUMBER`, `LOOM_HEAD`, `LOOM_BASE`, `LOOM_SHA` (the commit Loom pushed), `LOOM_ATTEMPT` | nothing | exit 0 when merged or taken by the merge service, 3 when turned away in a way the worker can fix, 4 otherwise, with the reason in the output |
+| `review_start` | `LOOM_URL`, `LOOM_PR_NUMBER`, `LOOM_SHA`, `LOOM_HEAD`, `LOOM_BASE` | nothing | nothing; exit 0 means the review is asked for |
+| `review_read` | `LOOM_URL`, `LOOM_PR_NUMBER`, `LOOM_SHA` | nothing | one JSON object on its last line; see "A review gate" |
 | `after_open` | `LOOM_URL`, `LOOM_PR_NUMBER`, `LOOM_HEAD`, `LOOM_BASE` | nothing | nothing; a failure is posted and holds nothing |
 | `after_push` | `LOOM_URL`, `LOOM_PR_NUMBER`, `LOOM_HEAD`, `LOOM_SHA`, `LOOM_BASE` (the branch it builds on now) | nothing | nothing; a failure is posted and holds nothing |
 
@@ -197,6 +229,11 @@ case "$1" in
     forge pr ready "$LOOM_URL" ;;
   request_reviews)
     forge pr edit "$LOOM_URL" --add-reviewer "$LOOM_REVIEWERS" ;;
+  review_start)
+    forge review request "$LOOM_URL" --commit "$LOOM_SHA" --private ;;
+  review_read)
+    answer=$(forge review show "$LOOM_URL" --commit "$LOOM_SHA" --json state,findings 2>/dev/null) || { echo '{"state": "pending"}'; exit 0; }
+    printf '%s' "$answer" | jq -c '{state, findings: [.findings[] | {id: (.id | tostring), title, body, path, line, severity}]}' ;;
   *)
     echo "forge.sh: unknown command $1" >&2; exit 2 ;;
 esac
@@ -212,6 +249,7 @@ bb loom forge test forge https://forge.example.com/acme/shop/pull/12
 ```toml
 [merge]
 strategy = "pr"
+publish = {}                 # drafts until they can ship, after the review gate
 
 [merge.forge]
 profile = "forge"

@@ -2044,6 +2044,51 @@ export async function prReady(input: HostInput<"prReady">, signal?: AbortSignal)
   return { outcome: "ok" };
 }
 
+/** A review gate's start command, for the commit sha of the pull request at url. */
+export async function prReviewStart(input: HostInput<"prReviewStart">, signal?: AbortSignal): Promise<HostOutput<"prReviewStart">> {
+  const env = { LOOM_URL: input.url, LOOM_PR_NUMBER: prNumber(input.url), LOOM_SHA: input.sha, LOOM_HEAD: input.head, LOOM_BASE: input.base };
+  const result = await spawnCommand({ cwd: input.repo, command: input.command, timeoutMs: FORGE_COMMAND_MS, env }, signal);
+  return commandReadFailed("review_start", result) ?? { outcome: "ok" };
+}
+
+const gateReadSchema = z.object({
+  state: z.enum(["pending", "done", "failed"]),
+  findings: z
+    .array(
+      z.object({
+        id: z.union([z.string(), z.number()]).transform(String).pipe(z.string().min(1).max(200)),
+        title: z.string().min(1).max(300),
+        body: z.string().max(8000).optional(),
+        path: z.string().max(1000).nullable().optional(),
+        line: z.number().int().min(0).nullable().optional(),
+        severity: z.string().max(40).nullable().optional(),
+      }),
+    )
+    .max(100)
+    .optional(),
+  message: z.string().optional(),
+});
+
+/** A review gate's read command: one JSON object on its last line, for LOOM_SHA. */
+export async function prReviewRead(input: HostInput<"prReviewRead">, signal?: AbortSignal): Promise<HostOutput<"prReviewRead">> {
+  const result = await spawnCommand({ cwd: input.repo, command: input.command, timeoutMs: FORGE_COMMAND_MS, env: { LOOM_URL: input.url, LOOM_PR_NUMBER: prNumber(input.url), LOOM_SHA: input.sha } }, signal);
+  const failed = commandReadFailed("review_read", result);
+  if (failed !== null) return failed;
+  const line = result.output.trim().split("\n").at(-1) ?? "";
+  const parsed = gateReadSchema.safeParse(parseJson(line));
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    return { outcome: "unavailable", message: `The forge's review_read command must print a JSON object on its last line${issue === undefined ? "" : `; ${issue.path.join(".") || "it"}: ${issue.message}`}: ${tail(line, 300)}` };
+  }
+  const { state, findings = [], message } = parsed.data;
+  return {
+    outcome: "ok",
+    state,
+    findings: findings.map((each) => ({ id: each.id, title: each.title, body: clipBody(each.body ?? ""), path: each.path ?? null, line: each.line ?? null, severity: each.severity ?? null })),
+    ...(message === undefined ? {} : { message: tail(message, 2000) }),
+  };
+}
+
 const REPLY_MUTATION = `mutation($thread: ID!, $body: String!) {
   addPullRequestReviewThreadReply(input: { pullRequestReviewThreadId: $thread, body: $body }) { comment { url } }
 }`;

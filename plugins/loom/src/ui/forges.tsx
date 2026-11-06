@@ -14,6 +14,8 @@ const COMMANDS = [
   { key: "ready", what: "Marks the draft LOOM_URL ready for review." },
   { key: "request_reviews", what: "Asks the logins in LOOM_REVIEWERS (comma-separated) to review LOOM_URL." },
   { key: "merge", what: "Merges LOOM_URL at LOOM_SHA, or hands it to the server's merge service; for auto_merge with method = \"command\"." },
+  { key: "review_start", what: "The review gate: asks an outside reviewer to review the draft LOOM_URL at LOOM_SHA, once per push of the ticket's own work. Runs only on projects that set merge.publish." },
+  { key: "review_read", what: "Prints {\"state\": \"pending\" | \"done\" | \"failed\", \"findings\": [{\"id\", \"title\", \"body\", \"path\", \"line\", \"severity\"}]} for LOOM_SHA; polled at each read." },
 ] as const;
 type CommandKey = (typeof COMMANDS)[number]["key"];
 
@@ -27,6 +29,7 @@ interface Draft {
   ignoreChecks: string;
   bots: string;
   notes: string;
+  reviewRounds: string;
 }
 
 const lines = (text: string) => text.split("\n").map((line) => line.trim()).filter((line) => line !== "");
@@ -44,6 +47,7 @@ function draftOf(profile: ForgeProfile | null): Draft {
     ignoreChecks: (profile?.ignore_checks ?? []).join(", "),
     bots: (profile?.bots ?? []).join(", "),
     notes: profile?.notes ?? "",
+    reviewRounds: profile?.review_rounds === undefined ? "" : String(profile.review_rounds),
   };
 }
 
@@ -56,6 +60,7 @@ export function profileOf(draft: Draft): Record<string, unknown> {
   if (globs(draft.ignoreChecks).length > 0) out.ignore_checks = globs(draft.ignoreChecks);
   if (globs(draft.bots).length > 0) out.bots = globs(draft.bots);
   if (draft.notes.trim() !== "") out.notes = draft.notes.trim();
+  if (draft.reviewRounds.trim() !== "") out.review_rounds = Number(draft.reviewRounds.trim());
   return out;
 }
 
@@ -199,6 +204,13 @@ function ProfileForm({ initial, onDone }: { initial: Draft; onDone(): void }) {
         <span>
           <input aria-label="Bot authors" className={`${FIELD} font-mono text-xs`} placeholder="*@robots.example.com, merge-bot*" value={draft.bots} onChange={(event) => set("bots", event.target.value)} />
           <span className="mt-1 block text-xs text-muted-foreground">Globs separated by commas. Their top-level comments start no fix round, on top of the accounts the server marks as bots and Loom's Bot authors setting.</span>
+        </span>
+      </label>
+      <label className={row}>
+        <span className={label}>Review gate rounds</span>
+        <span>
+          <input aria-label="Review gate rounds" inputMode="numeric" className={`${FIELD} w-24`} placeholder="3" value={draft.reviewRounds} onChange={(event) => set("reviewRounds", event.target.value)} />
+          <span className="mt-1 block text-xs text-muted-foreground">How many fix rounds the review gate's findings may start before Loom stops sending them and leaves the draft to you. 1 to 10; empty is 3.</span>
         </span>
       </label>
       <label className={row}>

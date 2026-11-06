@@ -391,6 +391,8 @@ export class FakeHost implements HostPort {
   scratch = new Map<string, string[]>();
   /** Each pull request's title and description as the forge has them, by URL: prCreate and prEdit set them, and prBatch and prFeedback read them. */
   texts = new Map<string, { title: string | null; body: string | null }>();
+  /** What prReviewRead answers for any commit: a review gate that is still running, unless a test says otherwise. */
+  gateRead: HostOutput<"prReviewRead"> = { outcome: "ok", state: "pending", findings: [] };
   private squashes = 0;
   /** The base each commit prCommit built was given, for its same-tree shortcut: a tip built on another base lacks this one. */
   private builtOn = new Map<string, string>();
@@ -698,6 +700,10 @@ export class FakeHost implements HostPort {
         return { outcome: "ok", state: this.prStates.get((input as HostInput<"prState">).url) ?? "OPEN" };
       case "homeDir":
         return { path: "/home/dev" };
+      case "prReviewStart":
+        return { outcome: "ok" };
+      case "prReviewRead":
+        return this.gateRead;
       case "remotes":
         return { remotes: this.remoteList.map((remote) => ({ name: remote.name, pushUrls: [...remote.pushUrls] })) };
       case "ghStatus": {

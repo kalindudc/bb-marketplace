@@ -491,13 +491,13 @@ function sentItem(posts: readonly PostRow[], key: string): FeedbackItem | null {
     const data = JSON.parse(posts[index]!.data_json) as { outcome?: string; items?: FeedbackItem[] };
     if (posts[index]!.kind !== "merge") continue;
     if (PUSHED.includes(data.outcome ?? "")) return null;
-    const item = data.outcome === "pr_feedback" ? data.items?.find((each) => each.key === key && each.kind !== "reply") : undefined;
+    const item = data.outcome === "pr_feedback" ? data.items?.find((each) => each.key === key && each.kind !== "reply" && each.kind !== "finding") : undefined;
     if (item !== undefined) return item;
   }
   return null;
 }
 
-const ITEM_NAMES = { review: "review", thread: "review thread", comment: "comment", reply: "reply" } as const;
+const ITEM_NAMES = { review: "review", thread: "review thread", comment: "comment", reply: "reply", finding: "finding" } as const;
 
 /**
  * loom_pr_reply: the worker of a ticket in a fix round answers one item of the feedback Loom sent it, by the item's key,
@@ -721,6 +721,12 @@ export async function humanFixRound(ctx: EngineCtx, ticket: TicketRow, reply: Po
 export async function mergeFixRound(ctx: EngineCtx, ticket: TicketRow, item: FeedbackItem, seen: readonly string[] = []): Promise<boolean> {
   if (!delivers(ctx, ticket.project_id)) return false;
   return startFixRound(ctx, ticket, { checks: [], items: [item], seen: [...seen], ignored: { bots: 0, own: 0 }, skipped: [], foreign: null, human: false });
+}
+
+/** A review gate found what the worker should fix on the draft: a fix round with its findings, counted like the pull request's own feedback. */
+export async function gateFixRound(ctx: EngineCtx, ticket: TicketRow, items: FeedbackItem[]): Promise<boolean> {
+  if (!delivers(ctx, ticket.project_id)) return false;
+  return startFixRound(ctx, ticket, { checks: [], items, seen: items.map((item) => item.key!), ignored: { bots: 0, own: 0 }, skipped: [], foreign: null, human: false });
 }
 
 /**

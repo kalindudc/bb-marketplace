@@ -898,6 +898,17 @@ order tab say what a draft still waits for, such as "Draft until it can ship:
 replaces `after_open` and `after_push` commands that mark pull requests ready
 by branch name.
 
+A repo's forge can add a review gate: `review_start` and `review_read`
+commands that run an outside review on the draft before Loom publishes it,
+such as a review bot's private review. Loom runs `review_start` once for each
+push of the ticket's own work (never for a restack or a refresh), with
+`LOOM_SHA`, and `review_read` at each read until the gate is done. New
+findings go to the worker as a fix round, counted against `max_fix_rounds`,
+with at most `review_rounds` (3 by default) of them. A gate that fails or is
+still pending after 90 minutes keeps the draft a draft, with a post on the
+ticket, and pauses nothing. The loom skill's `references/forges.md` describes
+both commands.
+
 ### Merging ready pull requests
 
 Loom merges nothing by itself unless a repo's forge says how, with

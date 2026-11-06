@@ -29,6 +29,16 @@ const forgeCommand = z.string().min(1).max(2000);
 // pausing: a server error or timeout, a rate limit, or a network failure such as a name that did not resolve;
 // `retryAfterMs` is how long the answer said to wait, when it said. Optional, as from an older host.
 const transient = z.enum(["server", "rate_limit", "network"]);
+const gateFinding = z
+  .object({
+    id: z.string().min(1).max(200),
+    title: z.string().min(1).max(300),
+    body: z.string().max(8000),
+    path: z.string().max(1000).nullable(),
+    line: z.number().int().min(0).nullable(),
+    severity: z.string().max(40).nullable(),
+  })
+  .strict();
 const unavailable = z.object({ outcome: z.literal("unavailable"), message: z.string(), transient: transient.optional(), retryAfterMs: z.number().int().min(0).optional() }).strict();
 
 /** How long a command forge's retarget command may run: as long as its after_push commands, which often follow it. */
@@ -636,6 +646,27 @@ export const hostContract = defineRpcContract({
       })
       .strict(),
     output: z.object({ path: z.string(), entries: z.array(z.string()), refused: z.string().optional() }).strict(),
+  },
+  // A forge's review gate: review_start asks an outside reviewer, such as a review bot's private review, to review the
+  // commit sha of the draft at url; exit 0 means it is asked.
+  prReviewStart: {
+    input: z.object({ repo: absPath, url: prUrl, sha, head: z.string().min(1).max(500), base: z.string().min(1).max(500), command: forgeCommand }).strict(),
+    output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok") }).strict(), unavailable]),
+  },
+  // review_read prints what the gate found for sha: pending while it runs, done with its findings, or failed with why.
+  prReviewRead: {
+    input: z.object({ repo: absPath, url: prUrl, sha, command: forgeCommand }).strict(),
+    output: z.discriminatedUnion("outcome", [
+      z
+        .object({
+          outcome: z.literal("ok"),
+          state: z.enum(["pending", "done", "failed"]),
+          findings: z.array(gateFinding).max(100),
+          message: z.string().max(2000).optional(),
+        })
+        .strict(),
+      unavailable,
+    ]),
   },
   // The home directory of the user bb runs as on this machine, where a forge profile's test runs its commands.
   homeDir: {

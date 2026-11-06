@@ -147,6 +147,12 @@ const forgeKeys = {
   ready: command.optional(),
   // Asks the logins in LOOM_REVIEWERS to review.
   request_reviews: command.optional(),
+  // The review gate: an outside review of a draft before Loom publishes it. review_start asks for one on LOOM_SHA;
+  // review_read prints its state and findings for LOOM_SHA, and is polled like feedback.
+  review_start: command.optional(),
+  review_read: command.optional(),
+  // How many fix rounds the gate's findings may start before Loom stops sending them and holds the publish for the human.
+  review_rounds: z.number().int().min(1).max(10).optional(),
   // Authors whose top-level comments start no fix round, on top of the ones the forge marks as bots and Loom's botAuthors setting.
   bots: z.array(nonBlankGlob).max(50).optional(),
   // What workers and reviewers of this forge's pull requests are told about the server, such as how its review bot clears a finding.
@@ -845,6 +851,7 @@ export function validateSemantics(spec: Spec, rawToml: string): { errors: string
   }
 
   errors.push(...forgeErrors(spec, spec.merge.forge, "merge.forge"), ...environmentErrors(spec.environment, "environment"));
+  warnings.push(...forgesOf(spec).flatMap(([forge, at]) => (forge === undefined ? [] : gateProblems(spec, forge, at).warnings)));
   spec.ticket.forEach((ticket, index) => {
     const repo = ticket.repo === undefined ? undefined : repos.find((entry) => entry.name === ticket.repo);
     // A ticket whose repo is unknown has an error above.
@@ -1024,9 +1031,24 @@ function hookErrors(spec: Spec): string[] {
   });
 }
 
+/** A review gate needs both of its commands, a pull request to review, and drafts Loom publishes. */
+function gateProblems(spec: Spec, forge: ForgeSpec, at: string): { errors: string[]; warnings: string[] } {
+  const start = forge.review_start !== undefined;
+  const read = forge.review_read !== undefined;
+  if (!start && !read && forge.review_rounds === undefined) return { errors: [], warnings: [] };
+  const errors: string[] = [];
+  if (start && !read) errors.push(`${at}.review_read: is required with review_start. Add the command that prints the gate's state and findings for LOOM_SHA, or remove review_start.`);
+  if (read && !start) errors.push(`${at}.review_start: is required with review_read. Add the command that asks for the review of LOOM_SHA, or remove review_read.`);
+  if (!start && !read) errors.push(`${at}.review_rounds: only a review gate uses it, and ${at} has no review_start. Add the gate's commands, or remove review_rounds.`);
+  if (forge.kind === "none") errors.push(`${at}.review_start: kind = "none" opens no pull request, so there is nothing to review. Remove the review gate, or use kind = "gh" or "command".`);
+  if (spec.merge.strategy !== "pr") errors.push(PR_ONLY(`${at}.review_start`, "the review gate reviews"));
+  const warnings = errors.length === 0 && spec.merge.publish === undefined ? [`${at}.review_start: the review gate runs only on drafts Loom publishes, and this spec has no merge.publish, so Loom does not run it. Add publish = {} to [merge] to run it.`] : [];
+  return { errors, warnings };
+}
+
 function forgeErrors(spec: Spec, forge: ForgeSpec | undefined, at: string): string[] {
   if (forge === undefined) return [];
-  const errors = [...autoMergeErrors(spec, forge, at), ...reviewerErrors(spec, forge, at)];
+  const errors = [...autoMergeErrors(spec, forge, at), ...reviewerErrors(spec, forge, at), ...gateProblems(spec, forge, at).errors];
   if (forge.kind === "command") {
     if (forge.open === undefined) {
       errors.push(`${at}.open: is required when ${at}.kind is "command". Add the command that opens a pull request: it gets LOOM_REMOTE, LOOM_BASE, LOOM_HEAD, LOOM_TITLE and LOOM_DRAFT, reads the body on stdin, and prints the pull request's URL.`);

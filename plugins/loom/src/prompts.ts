@@ -934,7 +934,8 @@ export interface FeedbackCheck {
 export interface FeedbackItem {
   /** The forge's key for it, which loom_pr_reply names it by; none on the human's reply and in older feedback posts. */
   key?: string;
-  kind: "review" | "thread" | "comment" | "reply";
+  /** "finding": a review gate's finding on the draft, which has no thread to reply to. */
+  kind: "review" | "thread" | "comment" | "reply" | "finding";
   author: string;
   /** Unknown on the human's reply and in older feedback posts. */
   bot?: boolean;
@@ -949,6 +950,11 @@ const ITEM_TEXT = 1500;
 
 function itemLine(item: FeedbackItem): string {
   const where = item.path === null ? "" : ` on ${item.path}${item.line === null ? "" : `:${item.line}`}`;
+  if (item.kind === "finding") {
+    const [title = "", ...rest] = item.body.trim().split("\n");
+    const body = rest.join("\n").trim();
+    return `- Finding from the review gate${item.state === null ? "" : ` (${item.state})`}${where}: ${title}${body === "" ? "" : `\n${clip(body, ITEM_TEXT).replace(/^/gm, "  > ")}`}`;
+  }
   const what =
     item.kind === "review"
       ? `Review by ${item.author}${item.state === null ? "" : ` (${item.state.replace(/_/g, " ")})`}`
@@ -1056,6 +1062,9 @@ export const RESTORED_NOTE =
 const RESUME_NOTE =
   "Loom merged the new commits on the pull request's branch into your work on the project's machine and pushed the merge, without touching your worktree. Call loom_resume first: it puts that merge in your worktree, and loom_submit is refused until it has. Build your fix on it, and do not fetch or merge the branch yourself.";
 
+const GATE_NOTE =
+  "The findings come from the repo's review gate, a review of the draft before Loom publishes it; there is no thread to reply to. Fix each one that holds. For one you leave as it is, say why in your loom_submit summary. Loom asks the gate again once it pushes your fix.";
+
 const CI_FIX = "These checks ran in the pull request's CI, which may run tests you cannot run here: read each one's log at its link, fix the cause, and say in your loom_submit summary which of those tests you could not run here.";
 
 /** What a fix round's worker must know about commits someone else pushed to the pull request's branch. */
@@ -1077,7 +1086,7 @@ export function prFeedbackText(a: { key: string; url: string | null; round: numb
   const merge = foreignTipLines(a.foreign);
   return {
     summary: `[loom] ${a.key}: ${what} (fix round ${a.round}${human ? "" : `; ${a.counted} of the ${a.max} the pull request may start`}).${a.resume === true ? " Call loom_resume first: it puts in your worktree the merge Loom made on the project's machine." : ""} Address it, then call loom_submit({ summary }).`,
-    detail: [...(a.restored === true ? [RESTORED_NOTE] : []), ...(a.resume === true ? [RESUME_NOTE] : []), feedbackList(a.checks, a.items, a.skipped), ...(a.checks.length === 0 ? [] : [CI_FIX]), ...merge, ...prRules(a.forge ?? { kind: "gh" }, a.signature ?? COMMENT_SIGNATURE).map((rule) => `- ${rule}`), ...(a.forge?.notes === undefined ? [] : [`About this forge: ${a.forge.notes}`])].join("\n\n"),
+    detail: [...(a.restored === true ? [RESTORED_NOTE] : []), ...(a.resume === true ? [RESUME_NOTE] : []), feedbackList(a.checks, a.items, a.skipped), ...(a.items.some((item) => item.kind === "finding") ? [GATE_NOTE] : []), ...(a.checks.length === 0 ? [] : [CI_FIX]), ...merge, ...prRules(a.forge ?? { kind: "gh" }, a.signature ?? COMMENT_SIGNATURE).map((rule) => `- ${rule}`), ...(a.forge?.notes === undefined ? [] : [`About this forge: ${a.forge.notes}`])].join("\n\n"),
   };
 }
 

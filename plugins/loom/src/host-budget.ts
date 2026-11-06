@@ -7,7 +7,7 @@ const NETWORK_CALL_MS = 150_000;
 // prFeedback runs gh or a forge command for up to 2 minutes, so the 30-second default would cut a slow read short and pause the project.
 // exportChanges reads every changed file of a large commit, ensureWorktree may check out a large repository, and
 // prRetarget, prRequestReview, prEdit and prReply run gh or a forge command.
-const NETWORK_METHODS: readonly HostMethod[] = ["prCreate", "prState", "prFeedback", "prBatch", "ensureWorktree", "ghStatus", "exportChanges", "prRetarget", "prRequestReview", "prEdit", "prReady", "prReply"];
+const NETWORK_METHODS: readonly HostMethod[] = ["prCreate", "prState", "prFeedback", "prBatch", "ensureWorktree", "ghStatus", "exportChanges", "prRetarget", "prRequestReview", "prEdit", "prReady", "prReply", "prReviewStart", "prReviewRead"];
 // The calls that list or write trees on the project's checkout (ls-tree, mktree, commit-tree, merge-tree), all of whose steps share GIT_INDEX_TIMEOUT_MS.
 const GIT_INDEX_METHODS: readonly HostMethod[] = ["importCommit", "stackBase", "mergeOnto"];
 /** bb's host call cap is 30 minutes; every call stays under it. */

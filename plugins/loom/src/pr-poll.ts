@@ -6,6 +6,7 @@ import { plural } from "./format";
 import { PROJECT_MACHINE, SERVER_ERROR_LIMIT_MS, Unavailable, backedOffUntil, backoffText, forgeHostOf, hostCallTransient, networkWaitReason, networkWaitText, nextBackoff, nextNetworkBackoff, nextPollAt, nextPollWait, pollWaitOf, pollWaitReason, pollWaitText, transientOf, type Transient, waitableOf } from "./forge-waits";
 import { followDraft } from "./drafts";
 import { publishRule } from "./publish";
+import { followGate } from "./review-gate";
 import { andList } from "./prompts";
 import { followFeedback, syncPrText } from "./pull-requests";
 import { PR_BATCH_MAX, githubPull, type HostInput, type HostOutput as HostOutputOf } from "./host-contract";
@@ -354,6 +355,7 @@ async function settleRead(ctx: EngineCtx, project: ProjectRow, settings: RepoSet
     const undrafted = !publishing && (await followDraft(ctx, project, current.id, read.meta?.draft ?? null, read.meta?.base ?? null));
     await requestReviewers(ctx, project, current.id, { draft: undrafted ? false : (read.meta?.draft ?? null), author: read.feedback?.author || null, reviewed });
     if (read.feedback !== null) await followFeedback(ctx, store.project(project.id)!, store.ticket(current.id)!, read.feedback);
+    if (publishing) await followGate(ctx, store.project(project.id)!, current.id);
     if (publishing && (await followDraft(ctx, project, current.id, read.meta?.draft ?? null, read.meta?.base ?? null))) {
       await requestReviewers(ctx, project, current.id, { draft: false, author: read.feedback?.author || null, reviewed });
     }

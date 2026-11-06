@@ -51,6 +51,8 @@ export default experimental_defineHostEntry({
     prReady: (input, { signal }) => ops.prReady(input, signal),
     prReply: (input, { signal }) => ops.prReply(input, signal),
     homeDir: () => ops.homeDir(),
+    prReviewStart: (input, { signal }) => ops.prReviewStart(input, signal),
+    prReviewRead: (input, { signal }) => ops.prReviewRead(input, signal),
     remotes: (input, { signal }) => ops.remotes(input, signal),
     checkoutPrint: (input, { signal }) => ops.checkoutPrint(input, signal),
     finalScratch: (input, { experimental_paths }) => ops.finalScratch(input, experimental_paths.dataDir),
