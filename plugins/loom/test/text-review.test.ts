@@ -551,4 +551,25 @@ describe("the text review's scratch directory while bb is unsure", () => {
     expect(h.store.thread(reviewer.id)!.state).toBe("ended");
     expect(h.host.scratch.has(key)).toBe(false);
   });
+
+  it("adopts the reviewer bb started when the answer to its spawn is lost, and keeps its directory", async () => {
+    await ready();
+    const real = h.bb.spawnThread.bind(h.bb);
+    let accepted: string | undefined;
+    h.bb.spawnThread = async (args) => {
+      const result = await real(args);
+      accepted = result.threadId;
+      throw new Error("spawn reply lost");
+    };
+    await spawnReviewers(h.ctx, project(), spec());
+    h.bb.spawnThread = real;
+    const row = reviewers().at(-1)!;
+    expect((await h.bb.getThread(accepted!))!.status).toBe("active");
+    expect(row).toMatchObject({ state: "active", thread_id: accepted });
+    expect(h.host.scratch.has(scratchOf(row))).toBe(true);
+    await approve(h.ctx, accepted!, "Good.");
+    await settle();
+    expect(ticket().state).toBe("approved");
+    expect(h.host.scratch.has(scratchOf(row))).toBe(false);
+  });
 });

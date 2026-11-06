@@ -841,7 +841,16 @@ async function startRun(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket:
     const what = delta.same ? "nothing in the code changed since the reviewers approved it" : `${count(delta.own.length, "of the pull request's own file")} changed since the approval`;
     mergePostNow(ctx.store, now, `Loom started its final review of ${url} on ${sha.slice(0, 12)}: ${what}${brief.incomplete.length === 0 ? "" : `; its brief is incomplete (${brief.incomplete.join("; ")})`}. It merges only once the review passes.`, { outcome: "final_review_started", url, sha, same: delta.same, incomplete: brief.incomplete });
   } catch (error) {
-    if (finalState(store, ticket.id, sha).open?.id === run.id) endRun(ctx, now, run, "start", `bb could not start the reviewer: ${errText(error)}`);
+    // The answer to the spawn may be what was lost: a thread bb started under the token is bound, as configure binds it.
+    const unbound = () => {
+      const open = finalState(store, ticket.id, sha).open;
+      return open?.id === run.id && open.thread === null;
+    };
+    if (unbound()) {
+      const found = await ctx.bb.findSpawnedThread(token).catch(() => null);
+      if (found !== null && unbound()) store.event(ticket.project_id, ticket.id, FINAL_BOUND, LOOM_ACTOR, { run: run.id, thread: found });
+      else if (unbound()) endRun(ctx, now, run, "start", `bb could not start the reviewer: ${errText(error)}`);
+    }
   } finally {
     spawningOf(store).delete(run.id);
   }

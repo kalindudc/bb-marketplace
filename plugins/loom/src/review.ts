@@ -405,7 +405,7 @@ async function startReviewer(ctx: EngineCtx, projectId: number, seen: TicketRow,
   // A text review reads only its brief, so it starts in an empty scratch directory: no worktree, environment or machine.
   const scratch = text ? await textScratch(ctx, project, ticket, row) : null;
   if (scratch === undefined) return false;
-  let spawned;
+  let spawned: { threadId: string; environmentId: string | null };
   try {
     const base = onMachine || scratch !== null ? freshBase(spec, ticket.repo) : await localReviewBase(ctx, project, spec, ticket);
     spawned = await ctx.bb.spawnThread({
@@ -424,14 +424,19 @@ async function startReviewer(ctx: EngineCtx, projectId: number, seen: TicketRow,
     });
   } catch (error) {
     const problem = startProblemOf(error);
-    if (problem.kind === "refused") {
-      failReviewerSpawn(ctx, row, problem.message);
-      await blockForReviewers(ctx, ticket, `${REVIEWER_REFUSED}: ${problem.message}`);
-    } else {
-      await reviewerStartFailed(ctx, row, problem);
+    const found = problem.kind === "refused" ? null : await startedAnyway(ctx, row);
+    if (found === null || found === undefined) {
+      if (problem.kind === "refused") {
+        failReviewerSpawn(ctx, row, problem.message);
+        await blockForReviewers(ctx, ticket, `${REVIEWER_REFUSED}: ${problem.message}`);
+      } else {
+        await reviewerStartFailed(ctx, row, problem);
+      }
+      // A thread bb may have started after all keeps its directory, which the sweep removes once nothing owns it.
+      if (scratch !== null && found === null) await removeTextReviewScratch(ctx, row);
+      return false;
     }
-    if (scratch !== null) await removeTextReviewScratch(ctx, row);
-    return false;
+    spawned = { threadId: found, environmentId: (await ctx.bb.getThread(found).catch(() => null))?.environmentId ?? null };
   }
 
   const active = store.tx(() => {
@@ -444,6 +449,23 @@ async function startReviewer(ctx: EngineCtx, projectId: number, seen: TicketRow,
   store.changed(project.id);
   if (staleReason(store, active) !== null || store.project(projectId)?.state === "archived") await endThread(ctx, active, "superseded", { commit: false, move: null });
   return true;
+}
+
+/**
+ * The thread bb started for a reviewer whose spawn failed without a refusal, whose answer may be what was lost: the one its
+ * configuration bound to the row, else the one bb lists with the row's spawn token. Null when bb started none; undefined
+ * when bb could not say.
+ */
+async function startedAnyway(ctx: EngineCtx, row: ThreadRow): Promise<string | null | undefined> {
+  const bound = ctx.store.thread(row.id)?.thread_id ?? null;
+  if (bound !== null) return bound;
+  if (row.spawn_token === null) return null;
+  try {
+    return await ctx.bb.findSpawnedThread(row.spawn_token);
+  } catch (error) {
+    ctx.bb.log("warn", `Could not ask bb whether it started the reviewer of row ${row.id}: ${errText(error)}`);
+    return undefined;
+  }
 }
 
 /**

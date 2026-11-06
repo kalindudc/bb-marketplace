@@ -193,3 +193,25 @@ describe("upkeep tracks only outstanding runs", () => {
 });
 
 export type { HostOutput };
+
+describe("a lost answer to the final reviewer's spawn", () => {
+  it("binds the reviewer bb started by its spawn token and keeps its scratch directory, instead of ending the run", async () => {
+    await openPr(FINAL());
+    approved();
+    const real = h.bb.spawnThread.bind(h.bb);
+    let accepted: string | undefined;
+    h.bb.spawnThread = async (args) => {
+      const result = await real(args);
+      if (args.metadata.role !== "final-review") return result;
+      accepted = result.threadId;
+      throw new Error("spawn reply lost");
+    };
+    await poll();
+    h.bb.spawnThread = real;
+    expect(accepted).toBeDefined();
+    const run = finalState(h.store, ticket().id, ticket().pushed_sha).all.at(-1)!;
+    expect(run).toMatchObject({ thread: accepted, ended: null });
+    expect(h.host.scratch.has(run.scratch!)).toBe(true);
+    expect(spawns()).toHaveLength(1);
+  });
+});
