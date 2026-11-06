@@ -28,10 +28,42 @@ export function doneBecause(ctx: Ctx, pr: PrRow, run: ReviewRow): string | null 
   return null;
 }
 
+const OPEN = new Set(["open", "draft"]);
+/** How deep under a review thread Shuttle looks for threads at work before archiving: critics, and their helpers. */
+const DEPTH = 2;
+
+/** A thread at work, or waiting on the user's answer, under `threadId`, down to `depth` levels. */
+async function busyBelow(ctx: Ctx, threadId: string, depth: number): Promise<boolean> {
+  for (const child of await ctx.port.childThreads(threadId)) {
+    if (child.waiting || BUSY.has(child.status)) return true;
+    if (depth > 1 && (await busyBelow(ctx, child.id, depth - 1))) return true;
+  }
+  return false;
+}
+
+/**
+ * Why bb says the thread must stay right now, or null: it or a thread under it works or waits on the user, or bb archived
+ * or lost it already. Shuttle's own copy of a thread's status comes from events it may have missed, so it is not enough;
+ * bb's answer becomes that copy, so a missed event holds a thread back for one pass, not for good.
+ */
+async function inUseNow(ctx: Ctx, threadId: string): Promise<string | null> {
+  const [thread] = await ctx.port.threadsById([threadId]);
+  if (thread === undefined) return "bb no longer has it";
+  if (thread.archived) {
+    ctx.store.setThreadArchived(threadId, true);
+    return "it is archived already";
+  }
+  ctx.store.setThreadStatus(threadId, thread.status, thread.waiting);
+  if (thread.waiting || BUSY.has(thread.status)) return "it is at work";
+  // bb archives every thread under it along with it.
+  return (await busyBelow(ctx, threadId, DEPTH)) ? "a thread under it is at work" : null;
+}
+
 /**
  * Archives each review thread Shuttle started whose review is done, with its child threads (bb archives
- * them together). A thread that works, waits on the user, became the PR's agent, or that the user brought
- * back after Shuttle archived it stays as it is.
+ * them together). A thread stays as it is when it, or a thread under it, works or waits on the user, by
+ * Shuttle's copy or by bb now; when it became the PR's agent or is linked to another PR still open; or when
+ * the user brought it back after Shuttle archived it.
  */
 export async function archiveDoneReviewThreads(ctx: Ctx, filter: { prId?: number; threadId?: string } = {}): Promise<number> {
   if (!ctx.settings().archiveReviewThreads) return 0;
@@ -43,11 +75,15 @@ export async function archiveDoneReviewThreads(ctx: Ctx, filter: { prId?: number
     const thread = ctx.store.thread(run.thread_id);
     if (!pr || !thread || busy.has(run.thread_id)) continue;
     if (ctx.store.linkRole(pr.id, run.thread_id) !== "review") continue;
-    if (thread.waiting === 1 || (thread.status !== null && BUSY.has(thread.status))) continue;
+    if (ctx.store.prsOfThread(run.thread_id).some((other) => other.id !== pr.id && OPEN.has(other.state))) continue;
     const why = doneBecause(ctx, pr, run);
     if (why === null) continue;
+    const heardBusy = thread.waiting === 1 || (thread.status !== null && BUSY.has(thread.status));
     busy.add(run.thread_id);
     try {
+      // Both must say it is free: what Shuttle last heard, and bb now. Unsure is a no, so a thread bb cannot answer for
+      // stays until the next pass.
+      if ((await inUseNow(ctx, run.thread_id)) !== null || heardBusy) continue;
       const ids = await ctx.port.archive(run.thread_id);
       ctx.store.setReviewArchived(run.id, ctx.now());
       ctx.store.setThreadArchived(run.thread_id, true);

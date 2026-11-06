@@ -18,7 +18,7 @@ export type Route =
   /** Words to find among the PRs Shuttle has; "" before the user types any. */
   | { view: "search"; query: string; key: string | null };
 
-export const INSIGHTS_TABS = ["overview", "autopost", "log", "sync"] as const;
+export const INSIGHTS_TABS = ["overview", "usage", "autopost", "log", "sync"] as const;
 export type InsightsTab = (typeof INSIGHTS_TABS)[number];
 
 /** A route that shows a list, with the PR selected in it. */
@@ -50,7 +50,7 @@ const OLD_SECTIONS: Record<string, (key: string | null) => Route> = {
 
 /**
  * The page's subPath: "inbox", "mine", "done", "reviews" and "reviewed" are their lists, each followed by a
- * selected PR's key as path segments, "insights", "insights/autopost", "insights/log" and "insights/sync", "pr/<key>" one looked-up PR, and
+ * selected PR's key as path segments, "insights", "insights/usage", "insights/autopost", "insights/log" and "insights/sync", "pr/<key>" one looked-up PR, and
  * "search/<words>" the search results, the words percent-encoded as one segment, then a selected key.
  * The Inbox's Reviewing, Snoozed and Dismissed tabs are "inbox~reviewing", "inbox~snoozed" and "inbox~dismissed", the same way.
  * A Reviews source other than Everything rides on the area as "reviews~team": server ids are lowercase
@@ -70,7 +70,10 @@ export function parseRoute(subPath: string): Route {
   if (first === "mine" || first === "done" || first === "reviewed") return { view: first, key };
   if (first === "boards") return { view: "boards", tab: rest[0] === "archived" ? "archived" : "active" };
   if (first === "board") return rest.length === 0 ? { view: "boards", tab: "active" } : { view: "board", id: decoded(rest[0]!), key: rest.length > 1 ? keyFromSegments(rest.slice(1)) : null };
-  if (first === "insights") return rest.length === 1 && (rest[0] === "log" || rest[0] === "sync" || rest[0] === "autopost") ? { view: "insights", tab: rest[0] } : { view: "insights", tab: "overview" };
+  if (first === "insights") {
+    const tab = INSIGHTS_TABS.find((item) => item !== "overview" && rest.length === 1 && item === rest[0]);
+    return { view: "insights", tab: tab ?? "overview" };
+  }
   if (first === "activity" && rest.length === 0) return { view: "insights", tab: "log" };
   if (first === "pr") return key === null ? INBOX : { view: "pr", key };
   if (first === "search") return { view: "search", query: rest[0] === undefined ? "" : decoded(rest[0]), key: rest.length > 1 ? keyFromSegments(rest.slice(1)) : null };

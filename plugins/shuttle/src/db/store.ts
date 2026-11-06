@@ -4,6 +4,7 @@ import { DEFAULT_CONFIG, parseConfig, type Config, type WatchMode } from "../con
 import type { BoardArchived, CheckState, InboxRuleKind, LinkRole, PrState, Reason, ReviewState } from "../contract";
 import { prKey, type PrRef } from "../keys";
 import type { ActivityItem, PrSummary } from "../model";
+import type { ThreadUsage } from "../ports";
 
 /** Distinct query texts, not PRs: Shuttle has about 160, so this only bounds queries built with a varying shape. */
 const MAX_STATEMENTS = 2000;
@@ -261,6 +262,36 @@ export interface ReviewRow {
   attempt: number;
 }
 
+/** What a review thread, or a thread under one, used over its life; zero figures and no started_at while Burn has none. */
+export interface UsageThreadRow {
+  thread_id: string;
+  root_id: string;
+  started_at: number | null;
+  updated_at: number | null;
+  calls: number;
+  input: number;
+  output: number;
+  cache_read: number;
+  cache_write: number;
+  cost: number;
+  estimated: number;
+  model: string | null;
+  read_at: number;
+}
+
+export interface UsageTurnRow {
+  thread_id: string;
+  n: number;
+  at: number;
+  calls: number;
+  input: number;
+  output: number;
+  cache_read: number;
+  cache_write: number;
+  cost: number;
+  model: string | null;
+}
+
 /**
  * A draft came back, the thread said so, the thread failed, its workspace could not be set up, nothing happened in it
  * for too long, or a newer review replaced it.
@@ -386,6 +417,20 @@ export class Store {
   }
   private readonly statements = new Map<string, Database.Statement>();
   private writes = 0;
+
+  /**
+   * A query on the usage tables, which no PR's view or search text reads: its writes leave `version` alone, so reading a
+   * running review's figures every few minutes does not rebuild every PR's view.
+   */
+  private usageSql(text: string): Database.Statement {
+    let statement = this.usageStatements.get(text);
+    if (statement === undefined) {
+      statement = this.db.prepare(text);
+      this.usageStatements.set(text, statement);
+    }
+    return statement;
+  }
+  private readonly usageStatements = new Map<string, Database.Statement>();
   /** The config as last parsed; dropped when it is written. */
   private parsedConfig: Config | null = null;
 
@@ -472,6 +517,7 @@ export class Store {
    */
   upsertPr(server: string, summary: PrSummary, url: string, mine: boolean, viewed = summary.body !== null): PrRow {
     const key = prKey({ server, repo: summary.repo, number: summary.number });
+    const before = (this.sql("SELECT state FROM prs WHERE key = ?").get(key) as { state: PrState } | undefined)?.state;
     this.sql(
         `INSERT INTO prs (key, server, repo, number, url, title, author, state, checks, review, head, head_ref, base, additions, deletions, files, updated_at, mine, fetched_at, body, labels, reviewers, viewed_at,
            created_at, closed_at, check_counts, my_review, auto_merge, in_merge_queue, author_bot, requested_at, first_review_at)
@@ -524,14 +570,31 @@ export class Store {
         requested_at: summary.requestedAt,
         first_review_at: summary.firstReviewAt,
       });
-    return this.prByKey(key)!;
+    const row = this.prByKey(key)!;
+    this.noteClosed(row.id, before, row.state);
+    return row;
+  }
+
+  /**
+   * Called once a write moves a PR from open or draft to merged or closed, whichever read or change brought it: a
+   * sync, a PR the user opened, the fast lane or a merge Shuttle made.
+   */
+  onPrClosed(listener: (prId: number) => void): void {
+    this.closedListener = listener;
+  }
+  private closedListener: ((prId: number) => void) | null = null;
+
+  private noteClosed(prId: number, before: PrState | undefined, after: PrState): void {
+    if ((before === "open" || before === "draft") && (after === "merged" || after === "closed")) this.closedListener?.(prId);
   }
 
   /** Records a change Shuttle made on the server, until the next read brings the server's own copy. */
   patchPr(id: number, patch: Partial<Pick<PrRow, "state" | "labels" | "reviewers" | "updated_at" | "auto_merge" | "closed_at">>): void {
     const cols = Object.keys(patch).filter((c) => ["state", "labels", "reviewers", "updated_at", "auto_merge", "closed_at"].includes(c));
     if (!cols.length) return;
+    const before = patch.state === undefined ? undefined : this.prById(id)?.state;
     this.sql(`UPDATE prs SET ${cols.map((c) => `${c} = @${c}`).join(", ")} WHERE id = @id`).run({ ...patch, id });
+    if (patch.state !== undefined) this.noteClosed(id, before, patch.state);
   }
 
   prByKey(key: string): PrRow | null {
@@ -1330,6 +1393,59 @@ export class Store {
 
   reviewsSince(at: number): ReviewRow[] {
     return this.sql("SELECT * FROM reviews WHERE created_at >= ?").all(at) as ReviewRow[];
+  }
+
+  /** Every run in a thread Shuttle has usage figures for, oldest first. */
+  reviewsOfUsageThreads(): ReviewRow[] {
+    return this.sql("SELECT * FROM reviews WHERE thread_id IN (SELECT root_id FROM usage_threads) ORDER BY created_at, id").all() as ReviewRow[];
+  }
+
+  usageThreads(): UsageThreadRow[] {
+    return this.usageSql("SELECT * FROM usage_threads").all() as UsageThreadRow[];
+  }
+
+  /** The turns that started at or after `at`. */
+  usageTurnsSince(at: number): UsageTurnRow[] {
+    return this.usageSql("SELECT * FROM usage_turns WHERE at >= ? ORDER BY at").all(at) as UsageTurnRow[];
+  }
+
+  /** Each thread's turns summed, to find what its kept turns leave out of its totals. */
+  usageTurnSums(): Array<Omit<UsageTurnRow, "n" | "at" | "model">> {
+    return this.usageSql(
+      "SELECT thread_id, SUM(calls) AS calls, SUM(input) AS input, SUM(output) AS output, SUM(cache_read) AS cache_read, SUM(cache_write) AS cache_write, SUM(cost) AS cost FROM usage_turns GROUP BY thread_id",
+    ).all() as Array<Omit<UsageTurnRow, "n" | "at" | "model">>;
+  }
+
+  /**
+   * Keeps what Burn said the thread used, with every turn it listed; turns it no longer lists stay. A thread Burn has no
+   * figures for keeps the ones it had, such as after the thread was deleted. True when the figures changed.
+   */
+  saveUsage(threadId: string, rootId: string, usage: ThreadUsage | null): boolean {
+    const before = this.usageSql("SELECT * FROM usage_threads WHERE thread_id = ?").get(threadId) as UsageThreadRow | undefined;
+    const at = this.now();
+    if (usage === null) {
+      if (before) this.usageSql("UPDATE usage_threads SET read_at = ? WHERE thread_id = ?").run(at, threadId);
+      else this.usageSql("INSERT INTO usage_threads (thread_id, root_id, read_at) VALUES (?, ?, ?)").run(threadId, rootId, at);
+      return false;
+    }
+    const { tokens } = usage;
+    const changed = before === undefined || before.calls !== usage.calls || before.cost !== usage.cost || before.input + before.output + before.cache_read + before.cache_write !== tokens.input + tokens.output + tokens.cacheRead + tokens.cacheWrite;
+    this.db.transaction(() => {
+      this.usageSql(
+        `INSERT INTO usage_threads (thread_id, root_id, started_at, updated_at, calls, input, output, cache_read, cache_write, cost, estimated, model, read_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (thread_id) DO UPDATE SET root_id = excluded.root_id, started_at = excluded.started_at, updated_at = excluded.updated_at, calls = excluded.calls,
+           input = excluded.input, output = excluded.output, cache_read = excluded.cache_read, cache_write = excluded.cache_write, cost = excluded.cost,
+           estimated = excluded.estimated, model = excluded.model, read_at = excluded.read_at`,
+      ).run(threadId, rootId, usage.startedAt, usage.updatedAt, usage.calls, tokens.input, tokens.output, tokens.cacheRead, tokens.cacheWrite, usage.cost, usage.estimated ? 1 : 0, usage.model, at);
+      const turn = this.usageSql(
+        `INSERT INTO usage_turns (thread_id, n, at, calls, input, output, cache_read, cache_write, cost, model) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (thread_id, n) DO UPDATE SET at = excluded.at, calls = excluded.calls, input = excluded.input, output = excluded.output,
+           cache_read = excluded.cache_read, cache_write = excluded.cache_write, cost = excluded.cost, model = excluded.model`,
+      );
+      for (const t of usage.turns) turn.run(threadId, t.n, t.at, t.calls, t.tokens.input, t.tokens.output, t.tokens.cacheRead, t.tokens.cacheWrite, t.cost, t.model);
+    })();
+    return changed;
   }
 
   /** A run whose thread could not set up its workspace never reviewed anything, so the daily limit leaves it out. */

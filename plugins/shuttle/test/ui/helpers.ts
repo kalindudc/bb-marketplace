@@ -4,7 +4,7 @@ import { afterEach, beforeEach, vi } from "vitest";
 import { DEFAULT_CONFIG, type Config } from "../../src/config";
 import {
   type AutoPostInsights,
-  rpcContract, type AgentView, type ConversationItem, type EventView, type InboxView, type InsightsView, type LinkView, type MergeOptions,
+  rpcContract, type AgentView, type ConversationItem, type EventView, type InboxView, type InsightsView, type LinkView, type MergeOptions, type UsageView,
   type MergeView, type NextStep, type Overview, type PostView, type PrView, type ReviewDraft, type ServerStatus,
 } from "../../src/contract";
 import { reloadPrefs } from "../../src/ui/prefs";
@@ -214,6 +214,20 @@ export function insights(overrides: Partial<InsightsView> = {}): InsightsView {
   };
 }
 
+/** No review used anything yet, and Burn answered. */
+export function usage(overrides: Partial<UsageView> = {}): UsageView {
+  return {
+    range: "7d", from: NOW - 6 * DAY, to: NOW,
+    source: { state: "ok", message: null, at: NOW, unread: 0 },
+    totals: { tokens: 0, cost: 0, calls: 0, reviews: 0, mix: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, estimated: false },
+    previous: { tokens: 0, cost: 0, reviews: 0 },
+    perReview: { medianTokens: null, medianCost: null, p90Cost: null },
+    critics: { tokens: 0, cost: 0, threads: 0 },
+    bucket: "day", series: [], presets: [], models: [], triggers: [], repos: [], outcomes: [], reviews: [], unmeasured: 0,
+    ...overrides,
+  };
+}
+
 export function autoPostInsights(overrides: Partial<AutoPostInsights> = {}): AutoPostInsights {
   return { range: "30d", target: 0.9, approvalTarget: 0.98, repos: [], scheduled: [], reasons: [], points: [], verifier: { runs: 0, failures: 0, medianMs: null }, recent: [], ...overrides };
 }
@@ -271,6 +285,7 @@ export function handlers(overrides: Partial<Handlers> = {}): Handlers {
     descriptionMatches: () => ({ keys: [] }),
     activity: () => ({ events: [] }),
     insights: () => insights(),
+    usage: ({ range }) => usage({ range }),
     autoPostInsights: () => autoPostInsights(),
     sync: () => ({ ok: true }),
     syncHistory: () => ({ windowMs: 3 * 3_600_000, servers: [] }),

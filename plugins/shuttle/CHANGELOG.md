@@ -6,6 +6,7 @@ Notable changes to Shuttle, newest first. Releases are tagged `shuttle/vX.Y.Z` i
 
 ### Added
 
+- Insights › Usage: what AI reviews used in tokens and dollars today or over 7, 30 or 90 days, against the period before, by hour or day, token mix, preset, model, repository and outcome, and each review costliest first; also `bb shuttle usage`. The figures come from the [Burn](https://github.com/kalindudc/burn) plugin.
 - Auto post can post. Comments and approvals each have a mode per repository: off, shadow, countdown (posts after 30 minutes for comments and 2 hours for approvals, unless you stop it) or auto (posts at once). Nothing posts by default, and Settings warns, without stopping you, when a repository's shadow record has not proven its target.
   - An approval posts only from a review that suggested approving, with at least two critic threads behind it, when the repository lists the paths approvals may cover and the PR stays inside them, and when the verifier, reading the whole diff, finds nothing that should block merging.
   - Before it posts, Shuttle checks again that the PR is open at the commit the review read, the mode is unchanged, automations are not paused, the repository is under its daily limit (5), the review's critic threads exist, you have not reviewed it yourself since the draft came, and for an approval that checks passed and nobody requested changes. Changing a rule a decision reads stops what is scheduled until you check it again. A review it posts carries a footer saying so, which you can change.
@@ -37,6 +38,8 @@ Notable changes to Shuttle, newest first. Releases are tagged `shuttle/vX.Y.Z` i
 - A long list draws its first rows at once and the rest right after, in a render typing or a click can interrupt, and rows off screen skip layout and paint until scrolled to. Reviews with 700 PRs shows its first rows in about half the time.
 
 ### Fixed
+
+- A PR that merges or closes has its review threads archived as soon as any read sees it, not after the next full sync, and only when bb says neither the thread nor one under it is at work and no other open PR links it.
 
 - A GitHub PR whose workflow ran again on the same commit no longer reads as failing because of the run it replaced. When a workflow starts again on a head, for example on a second `pull_request` event, concurrency cancels the older run, and its jobs, plus any job that fails because they were cancelled, stay on the head. GitHub's rollup still counts them, so a PR read as "17 checks failing" while its newest runs had skipped or passed those jobs. Shuttle now keeps only each check's newest run, as `gh pr checks` does: the newest run of each workflow for each event, and the newest attempt of each check.
   - The Checks tab lists only those runs, and its total leaves the others out.

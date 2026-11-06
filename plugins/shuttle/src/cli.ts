@@ -1,8 +1,8 @@
 import { PluginCliError, cliCommand, defineCli, type PluginCliRegistration, type PluginCliResult } from "@get-bb/plugin-sdk";
 import { readFile } from "node:fs/promises";
-import { AGENT_MODES, AREAS, boardAddInputSchema, boardCreateInputSchema, boardInputSchema, boardRemoveInputSchema, boardsInputSchema, boardUpdateInputSchema, type AgentMode, type Area } from "./contract";
+import { AGENT_MODES, AREAS, USAGE_RANGES, type UsageRange, boardAddInputSchema, boardCreateInputSchema, boardInputSchema, boardRemoveInputSchema, boardsInputSchema, boardUpdateInputSchema, type AgentMode, type Area } from "./contract";
 import { errText } from "./ctx";
-import { boardDetailText, boardLine, boardList, prDetail, prList, serverText } from "./format";
+import { boardDetailText, boardLine, boardList, prDetail, prList, serverText, usageText } from "./format";
 import type { Shuttle } from "./shuttle";
 
 const json = { type: "boolean", description: "Print machine-readable JSON." } as const;
@@ -304,6 +304,17 @@ export function createCli(shuttle: Shuttle): PluginCliRegistration {
             const result = await shuttle.rescoreDrafts(days);
             if (options.json) return out(toJson(result));
             return out(`Judged the findings of ${result.drafts} draft${result.drafts === 1 ? "" : "s"} again: ${result.judged} judged by the verifier, ${result.failures} failed. Nothing was posted.`);
+          }),
+      }),
+      usage: cliCommand({
+        summary: "What AI reviews used in tokens and dollars, from the Burn plugin: today, or the last 7, 30 or 90 days",
+        options: { range: { type: "string", description: `One of ${USAGE_RANGES.join(", ")} (7d by default).` }, json },
+        run: ({ options }) =>
+          guarded(() => {
+            const range = options.range ?? "7d";
+            if (!(USAGE_RANGES as readonly string[]).includes(range)) throw new PluginCliError(`--range must be one of ${USAGE_RANGES.join(", ")}`);
+            const view = shuttle.usage(range as UsageRange);
+            return out(options.json ? toJson(view) : usageText(view));
           }),
       }),
       sync: cliCommand({

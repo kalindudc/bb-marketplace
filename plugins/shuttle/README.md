@@ -283,6 +283,41 @@ place and text, and whether it posted, posted with your edits (showing the text 
 out, or was posted by Shuttle. A merged or closed
 PR keeps the tab for them when an AI review ran on it, and a draft you never posted joins them there.
 
+### Review threads after the review
+
+A review thread Shuttle started goes to the archive, with its child threads, once its review is done:
+you posted or discarded its draft, you reviewed the PR yourself, a newer review runs in another
+thread, or the PR merged or closed. A PR that merges or closes takes every review thread of it, failed
+ones too, as soon as Shuttle hears, whichever read brought the news: a sync, opening the PR, or the
+fast lane. A thread is archived only when bb says, at that moment, that neither it nor a thread under
+it works or waits on you, and Shuttle's own record agrees. A thread that is also linked to another
+PR still open, a review still running, a thread you picked or unlinked yourself, and a thread you
+brought back after Shuttle archived it all stay. The PR's next review brings the thread back without
+its children. **Archive finished review threads** in Shuttle's settings turns this off.
+
+### Token usage
+
+**Insights › Usage** shows what your AI reviews used, in tokens and dollars, for today, the last 7
+days, the last 30 days or the last 90 days, each against the same stretch just before it: today
+against yesterday by this time. It has the totals, the median and 90th-percentile cost of a review,
+tokens by hour for today and by day otherwise, the token mix, what each preset, model and repository
+used, what the reviews bought (posted, waiting, discarded, replaced, no draft, failed), and every
+review in the range, costliest first, with its critics. `bb shuttle usage [--range today|7d|30d|90d]
+[--json]` prints the same.
+
+The figures come from the [Burn](https://github.com/kalindudc/burn) plugin, which reads what every
+thread used whatever harness runs it, and prices it. Without Burn the tab says so and shows nothing.
+Shuttle reads each review thread and every thread under it from Burn, and keeps every turn it sees in
+its own database, since Burn lists only a thread's latest turns. Each turn counts toward the review
+that was running in its thread when the turn started, and on the hour and day it started. A thread
+under a review thread, such as a critic, counts toward the review it started under. A review in a
+thread you picked counts only until it ends. A review is in a range when it used something in it.
+
+Shuttle reads a running review every 5 minutes and a finished one until an hour after it ended,
+newest first and at most 40 Burn calls a pass, so the first pass over 90 days of reviews spreads over
+a few minutes; the tab says how many review threads it has not read yet. Other model use, such as auto
+post's verifier command, is not counted.
+
 ## Agents
 
 A PR's agent is the thread linked to it as owner. Shuttle reads the PR's activity on every sync, three
@@ -396,8 +431,10 @@ src/posts.ts           the review queue: checks, cancel, try again, and posts a 
 src/merges.ts          the merge queue for your own PRs, the same way
 src/fast-lane.ts       each tick, reads the state of your PRs with a merge pending
 src/review-runs.ts     when a review run ends: a draft, the thread saying so, a failure, or hours of quiet
+src/review-threads.ts  archiving a review thread once its review is done, and bringing it back for the next
 src/conversation.ts    a PR's conversation and details, comments, replies, resolving and merging
 src/insights.ts        the numbers and ideas on the Insights page
+src/usage.ts           what AI reviews used, read from Burn, split between reviews, by range
 src/reviews.ts         review and agent threads from presets
 src/shuttle.ts         the operations the RPC handlers, tools and CLI share
 src/links.ts           which git thing a link names, shared by the server and the page script

@@ -17,7 +17,7 @@ export const AREA_META: Record<Area, { label: string; icon: string }> = {
 
 export const INBOX_TAB_LABELS: Record<InboxTab, string> = { reviewing: "Reviewing", snoozed: "Snoozed", dismissed: "Dismissed" };
 
-export const INSIGHTS_TAB_LABELS: Record<InsightsTab, string> = { overview: "Overview", autopost: "Auto post", log: "Automation log", sync: "Sync" };
+export const INSIGHTS_TAB_LABELS: Record<InsightsTab, string> = { overview: "Overview", usage: "Usage", autopost: "Auto post", log: "Automation log", sync: "Sync" };
 
 export const SOURCE_META: Record<Source, { label: string; chip: string }> = {
   all: { label: "Everything", chip: "Everything" },

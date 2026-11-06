@@ -35,6 +35,7 @@ export function registerRpc(bb: BbPluginApi, shuttle: Shuttle): void {
     lookup: ({ query }) => refusing(async () => ({ pr: await shuttle.lookup(query) })),
     activity: ({ limit }) => refusing(() => ({ events: shuttle.activity(limit) })),
     insights: ({ range }) => refusing(() => shuttle.insights(range)),
+    usage: ({ range }) => refusing(() => shuttle.usage(range)),
     autoPostInsights: ({ range }) => refusing(() => shuttle.autoPostInsights(range)),
     reviewHistory: ({ key }) => refusing(() => shuttle.reviewHistory(key)),
     // A sync can take a minute on a slow server; the page follows it through overview.syncing.

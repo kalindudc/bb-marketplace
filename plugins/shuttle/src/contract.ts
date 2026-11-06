@@ -835,6 +835,77 @@ export const insightsSchema = z.object({
 });
 export type InsightsView = z.infer<typeof insightsSchema>;
 
+/** Today runs from midnight; the others are the last 7, 30 or 90 calendar days, today included. */
+export const USAGE_RANGES = ["today", "7d", "30d", "90d"] as const;
+export type UsageRange = (typeof USAGE_RANGES)[number];
+/**
+ * What became of a review: its draft posted, waits on you, was discarded by you, or was replaced by a newer draft or
+ * review; or it ended with no draft, failed, or still runs.
+ */
+export const USAGE_OUTCOMES = ["posted", "waiting", "discarded", "replaced", "no_draft", "failed", "running"] as const;
+export type UsageOutcome = (typeof USAGE_OUTCOMES)[number];
+export const USAGE_SOURCES = ["ok", "missing", "error", "none"] as const;
+
+const spend = { tokens: z.number(), cost: z.number() };
+/**
+ * What AI reviews used in a range: every turn of a review thread, and of the threads under it such as critics, counts
+ * toward the review that was running in it when the turn started, on the day and hour it started. A review is in the
+ * range when it used something in it, and its figures are what it used in the range.
+ */
+export const usageSchema = z.object({
+  range: z.enum(USAGE_RANGES),
+  from: z.number(),
+  to: z.number(),
+  source: z.object({
+    /** ok: Burn answered Shuttle's last read; missing: Burn is not installed or not running; error: its last read failed; none: none yet. */
+    state: z.enum(USAGE_SOURCES),
+    message: z.string().nullable(),
+    at: z.number().nullable(),
+    /** Review threads with a review started in the range that Shuttle has not read yet. */
+    unread: z.number(),
+  }),
+  totals: z.object({
+    ...spend,
+    calls: z.number(),
+    reviews: z.number(),
+    mix: z.object({ input: z.number(), output: z.number(), cacheRead: z.number(), cacheWrite: z.number() }),
+    /** Some of the cost is Burn's list-price estimate. */
+    estimated: z.boolean(),
+  }),
+  /** The same stretch of time just before the range: yesterday up to this time of day, for today. */
+  previous: z.object({ ...spend, reviews: z.number() }),
+  perReview: z.object({ medianTokens: z.number().nullable(), medianCost: z.number().nullable(), p90Cost: z.number().nullable() }),
+  /** What the threads under review threads used, such as critics. */
+  critics: z.object({ ...spend, threads: z.number() }),
+  /** Hours for today, days otherwise; `start` is the bucket's first millisecond, `critics` its critics' tokens, `reviews` the reviews started in it. */
+  bucket: z.enum(["hour", "day"]),
+  series: z.array(z.object({ start: z.number(), ...spend, critics: z.number(), reviews: z.number() })),
+  presets: z.array(z.object({ preset: z.string(), reviews: z.number(), ...spend, medianCost: z.number().nullable(), posted: z.number() })),
+  models: z.array(z.object({ model: z.string(), ...spend, calls: z.number() })),
+  triggers: z.array(z.object({ trigger: z.enum(["auto", "manual"]), reviews: z.number(), ...spend })),
+  repos: z.array(z.object({ repo: z.string(), reviews: z.number(), ...spend })),
+  outcomes: z.array(z.object({ outcome: z.enum(USAGE_OUTCOMES), reviews: z.number(), ...spend })),
+  /** Costliest first. */
+  reviews: z.array(z.object({
+    runId: z.number(),
+    key: z.string(),
+    display: z.string(),
+    title: z.string(),
+    threadId: z.string(),
+    preset: z.string(),
+    trigger: z.enum(["auto", "manual"]),
+    at: z.number(),
+    outcome: z.enum(USAGE_OUTCOMES),
+    ...spend,
+    calls: z.number(),
+    /** Threads under the review thread that worked for it, such as critics. */
+    critics: z.number(),
+  })),
+  /** Reviews started in the range whose threads Burn has no figures for. */
+  unmeasured: z.number(),
+});
+export type UsageView = z.infer<typeof usageSchema>;
+
 /** What a finding auto post judged turned out to be, by what the user did with its draft. */
 export const SHADOW_LABELS = ["agreed", "against", "pending", "missed", "held"] as const;
 export type ShadowLabel = (typeof SHADOW_LABELS)[number];
@@ -984,6 +1055,8 @@ export const rpcContract = defineContract({
   lookup: { input: z.object({ query: z.string().min(1).max(500) }), output: prOut, invalidates: PRS },
   activity: { input: z.object({ limit: z.number().int().min(1).max(500).optional() }), output: z.object({ events: z.array(eventViewSchema) }), tags: PRS },
   insights: { input: z.object({ range: z.enum(["7d", "30d", "90d"]) }), output: insightsSchema, tags: PRS },
+  /** What AI reviews used in tokens and dollars, from the Burn plugin. */
+  usage: { input: z.object({ range: z.enum(USAGE_RANGES) }), output: usageSchema, tags: () => ["usage", "prs"] },
   /** Auto post's shadow decisions against what the user posted, for the Insights tab. */
   autoPostInsights: { input: z.object({ range: z.enum(["7d", "30d", "90d"]) }), output: autoPostInsightsSchema, tags: () => ["prs", "config"] },
   /** Every enabled server, or only `server`. */

@@ -3,7 +3,7 @@ import type { Runner, RunOptions } from "../src/adapters/exec";
 import { DEFAULT_CONFIG, parseConfig, type Config } from "../src/config";
 import { MIGRATIONS } from "../src/db/schema";
 import { Store } from "../src/db/store";
-import type { BbPort, EnvironmentProviderInfo, MachineProviderInfo, ProjectInfo, SendOptions, SpawnArgs, ThreadInfo } from "../src/ports";
+import { UsageUnavailableError, type BbPort, type EnvironmentProviderInfo, type MachineProviderInfo, type ProjectInfo, type SendOptions, type SpawnArgs, type ThreadInfo, type UsageRead } from "../src/ports";
 import { DEFAULT_SETTINGS, type Settings } from "../src/settings";
 import { Shuttle } from "../src/shuttle";
 
@@ -34,6 +34,19 @@ export class FakePort implements BbPort {
   environments: EnvironmentProviderInfo[] = [];
   machines: MachineProviderInfo[] = [];
   private next = 1;
+
+  /** What Burn answers for each thread; a thread not here has no figures. */
+  usage = new Map<string, UsageRead | Error>();
+  /** Burn is not installed. */
+  noBurn = false;
+  usageCalls: string[] = [];
+  async threadUsage(threadId: string): Promise<UsageRead> {
+    this.usageCalls.push(threadId);
+    if (this.noBurn) throw new UsageUnavailableError('unknown plugin "burn"');
+    const read = this.usage.get(threadId);
+    if (read instanceof Error) throw read;
+    return read ?? { usage: null, descendants: [] };
+  }
 
   settingsPatches: Array<{ autoAgent?: boolean; inboxRequests?: boolean }> = [];
   notifications: Array<{ title: string; body: string }> = [];

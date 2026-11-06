@@ -323,4 +323,36 @@ export const MIGRATIONS: string[] = [
   `ALTER TABLE review_drafts ADD COLUMN auto_post_policy TEXT`,
   // The findings a schedule posts, by id, so a check again that changes them starts a new countdown and says so.
   `ALTER TABLE review_drafts ADD COLUMN auto_post_findings TEXT`,
+  // What review threads and the threads under them used, as the Burn plugin reads it: each thread's totals over its life,
+  // and every turn Shuttle has seen, since Burn lists only a thread's latest turns. root_id is the review thread a thread
+  // counts toward: itself, or the review thread above a critic.
+  `CREATE TABLE usage_threads (
+    thread_id TEXT PRIMARY KEY,
+    root_id TEXT NOT NULL,
+    started_at INTEGER,
+    updated_at INTEGER,
+    calls INTEGER NOT NULL DEFAULT 0,
+    input INTEGER NOT NULL DEFAULT 0,
+    output INTEGER NOT NULL DEFAULT 0,
+    cache_read INTEGER NOT NULL DEFAULT 0,
+    cache_write INTEGER NOT NULL DEFAULT 0,
+    cost REAL NOT NULL DEFAULT 0,
+    estimated INTEGER NOT NULL DEFAULT 0,
+    model TEXT,
+    read_at INTEGER NOT NULL
+  )`,
+  `CREATE INDEX usage_threads_root ON usage_threads (root_id)`,
+  `CREATE TABLE usage_turns (
+    thread_id TEXT NOT NULL,
+    n INTEGER NOT NULL,
+    at INTEGER NOT NULL,
+    calls INTEGER NOT NULL,
+    input INTEGER NOT NULL,
+    output INTEGER NOT NULL,
+    cache_read INTEGER NOT NULL,
+    cache_write INTEGER NOT NULL,
+    cost REAL NOT NULL,
+    model TEXT,
+    PRIMARY KEY (thread_id, n)
+  )`,
 ];

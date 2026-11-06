@@ -11,34 +11,14 @@ import { INSIGHTS_TAB_LABELS } from "./constants";
 import { InsightsSkeleton } from "./skeleton";
 import { SyncView } from "./sync";
 import { AutoPostView } from "./auto-post";
-import { color, Kpi, Panel } from "./insight-parts";
+import { UsageView } from "./usage";
+import { color, Kpi, Panel, SegBar } from "./insight-parts";
 
 type Range = Insights["range"];
 type Idea = Insights["ideas"][number];
 export type IdeaAction = NonNullable<Idea["action"]>;
 
 const RANGES = (["7d", "30d", "90d"] as const).map((value) => ({ value, label: value }));
-
-/** Shares as one bar with a legend; each part's share is of the parts' total. */
-function SegBar({ label, parts }: { label: string; parts: { label: string; value: number; color: string }[] }) {
-  const total = parts.reduce((sum, part) => sum + part.value, 0);
-  const shown = parts.filter((part) => part.value > 0);
-  return (
-    <div data-segbar={label}>
-      <div role="img" aria-label={`${label}: ${parts.map((part) => `${part.label} ${total === 0 ? "0%" : percent(part.value / total)}`).join(", ")}`} className="flex h-3.5 gap-0.5 overflow-hidden rounded-full bg-background">
-        {shown.map((part) => <div key={part.label} title={`${part.label}: ${percent(part.value / total)}`} style={{ flex: part.value, background: part.color }} />)}
-      </div>
-      <div className="mt-2 flex flex-wrap gap-x-3.5 gap-y-1.5 text-[11.5px] text-muted-foreground">
-        {parts.map((part) => (
-          <span key={part.label} className="inline-flex items-center gap-1.5">
-            <i aria-hidden className="inline-block size-2.5 rounded-sm" style={{ background: part.color }} />
-            {part.label} <b className="text-foreground">{total === 0 ? "0%" : percent(part.value / total)}</b>
-          </span>
-        ))}
-      </div>
-    </div>
-  );
-}
 
 const W = 440;
 const H = 150;
@@ -205,6 +185,14 @@ export function InsightsView({ tab, onTab, onAction, onOpenPr }: { tab: Insights
       <div className={PAGE}>
         <PageHeading title="Insights" description="How each server syncs, and why a sync failed.">{tabs}</PageHeading>
         <SyncView />
+      </div>
+    );
+  }
+  if (tab === "usage") {
+    return (
+      <div className={PAGE}>
+        <PageHeading title="Insights" description="What your AI reviews used, in tokens and dollars.">{tabs}</PageHeading>
+        <UsageView onOpenPr={onOpenPr} onOpenThread={actions.openThread} />
       </div>
     );
   }

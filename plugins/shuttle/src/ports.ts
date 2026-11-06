@@ -85,6 +85,42 @@ export interface SkillInfo {
   description: string;
 }
 
+/** Burn, the plugin that reads what every thread used, is not installed or not running. The message is bb's. */
+export class UsageUnavailableError extends ShuttleError {
+  override readonly name = "UsageUnavailableError";
+}
+
+/** Tokens by kind; their sum is the thread's tokens. Reasoning is part of output. */
+export interface TokenCounts {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+}
+
+/** What one thread used over its life, as Burn reads it from the thread's harness. */
+export interface ThreadUsage {
+  startedAt: number;
+  updatedAt: number;
+  calls: number;
+  tokens: TokenCounts;
+  /** Dollars, at Burn's prices. */
+  cost: number;
+  /** Some of the cost is Burn's list-price estimate rather than what the harness recorded. */
+  estimated: boolean;
+  /** The model that cost the most, for turns that name none. */
+  model: string | null;
+  /** The thread's latest turns, oldest first: Burn lists only the last 50. */
+  turns: Array<{ n: number; at: number; calls: number; cost: number; tokens: TokenCounts; model: string | null }>;
+}
+
+export interface UsageRead {
+  /** Null when Burn has no figures for the thread. */
+  usage: ThreadUsage | null;
+  /** Every thread under it that Burn has figures for, such as a review's critics, however deep. */
+  descendants: string[];
+}
+
 export interface BbPort {
   spawnThread(args: SpawnArgs): Promise<string>;
   send(threadId: string, text: string, options?: SendOptions): Promise<void>;
@@ -116,4 +152,6 @@ export interface BbPort {
   log(level: "info" | "warn" | "error", text: string): void;
   /** Sends the user a notification through bb's push-notifications plugin; without it, only logs. */
   notify(title: string, body: string): Promise<void>;
+  /** What the thread used, from the Burn plugin; throws UsageUnavailableError without Burn. */
+  threadUsage(threadId: string): Promise<UsageRead>;
 }

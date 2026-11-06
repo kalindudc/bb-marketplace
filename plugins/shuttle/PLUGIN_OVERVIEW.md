@@ -6,7 +6,7 @@ See what each PR is waiting on and act without leaving bb. GitHub works out of t
 - **My PRs:** your open PRs grouped by their next step or shown in a sortable list, followed by merged and closed PRs. Checks, reviews and agents stay beside each PR.
 - **Reviews:** requests from people and teams, mentions and tracked PRs, grouped by where your review stands, plus every PR you reviewed, even merged. Filter by team, hide bots and quiet PRs.
 - **Boards:** saved PR sets for a release, project or handoff, across repositories and servers.
-- **Insights:** review and merge times, feedback handled by agents, AI review results, auto post's record and the automation log. Sync explains failed steps.
+- **Insights:** review and merge times, feedback handled by agents, AI review results and token cost, auto post's record and the automation log. Sync explains failed steps.
 
 ## Saved PR boards
 
@@ -18,7 +18,7 @@ Archive a board without losing its PRs, then restore it before editing membershi
 
 A PR's agent thread gets new reviews, comments and failed checks. Choose Fix it, Just tell it or Off. Auto agent, off by default, can find the thread on your PR's branch. Threads report which feedback they fixed, replied to or declined.
 
-Start reviews from presets for the skill, model and workspace, or enable auto review. Reviewers hand back a draft and notes only you see; choose its findings and verdict before posting. A review stays open while its critics work. Auto post checks drafts against critic votes, quoted code and a fast verifier, and posts them only in a mode you pick. Finished review threads are archived and revived for the next review.
+Start reviews from presets for the skill, model and workspace, or enable auto review. Reviewers hand back a draft and notes only you see; choose its findings and verdict before posting. A review stays open while its critics work. Auto post checks drafts against critic votes, quoted code and a fast verifier, and posts them only in a mode you pick. Done review threads, a merged PR's at once, are archived and revived for the next review.
 
 ## Act on PRs
 

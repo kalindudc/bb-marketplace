@@ -1,5 +1,6 @@
 // Plain-text views for agent tools and the CLI.
-import type { BoardDetail, BoardSummary, EventView, PrView, ServerStatus } from "./contract";
+import { change, dollars, tokenCount } from "./amounts";
+import type { BoardDetail, BoardSummary, EventView, PrView, ServerStatus, UsageOutcome, UsageRange, UsageView } from "./contract";
 import { failureAdvice, STEP_LABELS } from "./failures";
 
 const REVIEW_TEXT = { approved: "approved", changes: "changes requested", required: "review required", none: "no review decision" } as const;
@@ -89,5 +90,38 @@ export function serverText(server: ServerStatus, now = Date.now()): string {
   if (failure.output !== null) lines.push(...failure.output.split("\n").slice(-4).map((line) => `${pad}| ${line}`));
   lines.push(`${pad}${server.lastOkAt === null ? "no good sync yet" : `last good sync ${hhmm(server.lastOkAt, now)}`}${server.failures > 1 ? ` · ${server.failures} syncs in a row` : ""}`);
   lines.push(`${pad}${failureAdvice(failure, server.nextSyncAt === null ? null : hhmm(Math.max(server.nextSyncAt, now), now))}`);
+  return lines.join("\n");
+}
+
+const RANGE_TEXT: Record<UsageRange, string> = { today: "Today", "7d": "The last 7 days", "30d": "The last 30 days", "90d": "The last 90 days" };
+const BEFORE_TEXT: Record<UsageRange, string> = { today: "yesterday by this time", "7d": "the 7 days before", "30d": "the 30 days before", "90d": "the 90 days before" };
+export const OUTCOME_TEXT: Record<UsageOutcome, string> = {
+  posted: "posted", waiting: "draft waiting", discarded: "discarded", replaced: "replaced", no_draft: "no draft", failed: "failed", running: "running",
+};
+const count = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+const share = (part: number, whole: number) => `${whole === 0 ? 0 : Math.round((part / whole) * 100)}%`;
+
+/** What AI reviews used in a range, for `bb shuttle usage`. */
+export function usageText(view: UsageView): string {
+  const lines: string[] = [];
+  const { source, totals } = view;
+  if (source.state === "missing") lines.push(`Burn is not installed or not running, so Shuttle cannot read what reviews used (${source.message}). Burn: https://github.com/kalindudc/burn`);
+  else if (source.state === "error") lines.push(`Shuttle's last read from Burn failed: ${source.message}`);
+  if (source.unread > 0) lines.push(`${count(source.unread, "review thread")} not read from Burn yet, so the figures may leave out some of what ${source.unread === 1 ? "it" : "they"} used.`);
+  const money = (n: number) => dollars(n, totals.estimated);
+  const delta = change(totals.cost, view.previous.cost);
+  const trend = delta === null ? "" : ` (${delta >= 0 ? "up" : "down"} ${Math.round(Math.abs(delta) * 100)}% from ${BEFORE_TEXT[view.range]})`;
+  lines.push(`${RANGE_TEXT[view.range]}: ${tokenCount(totals.tokens)} tokens and ${money(totals.cost)} across ${count(totals.reviews, "review")} and ${count(totals.calls, "model call")}${trend}.`);
+  if (view.unmeasured > 0) lines.push(`${count(view.unmeasured, "review")} started in this range ${view.unmeasured === 1 ? "has" : "have"} no figures in Burn.`);
+  if (totals.reviews === 0) return lines.join("\n");
+  const { perReview, critics } = view;
+  lines.push(`Per review: ${money(perReview.medianCost ?? 0)} median, ${money(perReview.p90Cost ?? 0)} at the 90th percentile, ${tokenCount(perReview.medianTokens ?? 0)} tokens median.`);
+  const { mix } = totals;
+  lines.push(`Tokens: cache read ${share(mix.cacheRead, totals.tokens)}, cache write ${share(mix.cacheWrite, totals.tokens)}, output ${share(mix.output, totals.tokens)}, input ${share(mix.input, totals.tokens)}.`);
+  if (critics.threads > 0) lines.push(`Critics and other threads under reviews: ${tokenCount(critics.tokens)} tokens and ${money(critics.cost)} in ${count(critics.threads, "thread")}.`);
+  lines.push("By preset:", ...view.presets.map((p) => `  ${p.preset}: ${count(p.reviews, "review")}, ${tokenCount(p.tokens)} tokens, ${money(p.cost)}, ${money(p.medianCost ?? 0)} median, ${p.posted} posted`));
+  lines.push("By model:", ...view.models.slice(0, 6).map((m) => `  ${m.model}: ${tokenCount(m.tokens)} tokens, ${money(m.cost)}, ${count(m.calls, "call")}`));
+  lines.push(`By outcome: ${view.outcomes.map((o) => `${OUTCOME_TEXT[o.outcome]} ${money(o.cost)} (${o.reviews})`).join(", ")}.`);
+  lines.push("Costliest reviews:", ...view.reviews.slice(0, 5).map((r) => `  ${money(r.cost)}  ${tokenCount(r.tokens)}  ${r.display}  ${r.preset}, ${OUTCOME_TEXT[r.outcome]}  ${r.threadId}`));
   return lines.join("\n");
 }

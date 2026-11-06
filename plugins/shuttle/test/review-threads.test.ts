@@ -121,6 +121,98 @@ describe("archiving Shuttle's review threads", () => {
     expect(h.port.lifecycle).toEqual([`archive ${threadId}`]);
   });
 
+  it("archives a PR's review threads as soon as any read sees it merge, its draft unposted, without waiting for a sync", async () => {
+    const { h, threadId } = await reviewed();
+    h.views[3] = pr(3, { head: "h1", state: "merged" });
+    // Opening the PR in Shuttle reads it from its server.
+    await h.shuttle.lookup(KEY);
+    await h.shuttle.closedSettled();
+    expect(h.port.lifecycle).toEqual([`archive ${threadId}`]);
+    expect(archivedIds(h)).toEqual(["thr_critic1", "thr_critic2", threadId].sort());
+    expect(lastEvent(h, "archived")).toBe("Archived the review thread \u201cReview acme/app#3\u201d and its 2 child threads: the PR merged.");
+    await h.shuttle.sync();
+    expect(h.port.lifecycle).toEqual([`archive ${threadId}`]);
+  });
+
+  it("archives every review thread of a PR that closed, failed ones too", async () => {
+    const { h, threadId } = await reviewed();
+    const second = (await h.shuttle.review({ key: KEY, newThread: true })).threadId;
+    await h.shuttle.onThreadFailed(second, { error: "the model refused" });
+    h.port.threads.set(second, { ...h.port.threads.get(second)!, status: "error" });
+    h.lists.review_requested = [];
+    h.views[3] = pr(3, { head: "h1", state: "closed" });
+    await h.shuttle.sync();
+    expect(h.port.lifecycle.sort()).toEqual([`archive ${second}`, `archive ${threadId}`].sort());
+  });
+
+  it("leaves a merged PR's review thread while bb says it or a thread under it works, though Shuttle last heard it idle", async () => {
+    const { h, threadId } = await reviewed();
+    const setStatus = (id: string, status: string) => h.port.threads.set(id, { ...h.port.threads.get(id)!, status });
+    setStatus(threadId, "active");
+    h.views[3] = pr(3, { head: "h1", state: "merged" });
+    await h.shuttle.lookup(KEY);
+    await h.shuttle.closedSettled();
+    expect(h.port.lifecycle).toEqual([]);
+    setStatus(threadId, "idle");
+    setStatus("thr_critic2", "active");
+    await h.shuttle.archiveReviewThreads();
+    expect(h.port.lifecycle).toEqual([]);
+    h.port.threads.set("thr_critic2", { ...h.port.threads.get("thr_critic2")!, status: "idle", waiting: true });
+    await h.shuttle.archiveReviewThreads();
+    expect(h.port.lifecycle).toEqual([]);
+    h.port.threads.set("thr_critic2", { ...h.port.threads.get("thr_critic2")!, waiting: false });
+    // A critic's own helper at work holds it too: bb would archive it along with the rest.
+    h.port.addThread("thr_helper", "Helper", false, { status: "active" });
+    h.port.children.set("thr_critic1", ["thr_helper"]);
+    await h.shuttle.archiveReviewThreads();
+    expect(h.port.lifecycle).toEqual([]);
+    setStatus("thr_helper", "idle");
+    await h.shuttle.archiveReviewThreads();
+    expect(h.port.lifecycle).toEqual([`archive ${threadId}`]);
+  });
+
+  it("leaves a merged PR's review thread that bb cannot answer for, or that is another open PR's agent", async () => {
+    const { h, threadId } = await reviewed();
+    const threadsById = h.port.threadsById.bind(h.port);
+    h.port.threadsById = async () => {
+      throw new Error("bb is restarting");
+    };
+    h.lists.review_requested = [];
+    h.views[3] = pr(3, { head: "h1", state: "merged" });
+    await h.shuttle.lookup(KEY);
+    await h.shuttle.closedSettled();
+    expect(h.port.lifecycle).toEqual([]);
+    expect(h.port.logs.at(-1)).toContain("bb is restarting");
+    h.port.threadsById = threadsById;
+
+    // The review thread became the agent of another PR, still open.
+    h.views[4] = pr(4);
+    await h.shuttle.lookup("forge:acme/app#4");
+    await h.shuttle.link("forge:acme/app#4", threadId, "owner");
+    await h.shuttle.archiveReviewThreads();
+    await h.shuttle.sync();
+    expect(h.port.lifecycle).toEqual([]);
+    // Once that PR merges too, the next sync finds the thread free.
+    h.views[4] = pr(4, { state: "merged" });
+    await h.shuttle.lookup("forge:acme/app#4");
+    await h.shuttle.sync();
+    expect(h.port.lifecycle).toEqual([`archive ${threadId}`]);
+  });
+
+  it("leaves a review that still runs when its PR merges, and archives its thread once it hands back its draft", async () => {
+    const h = harness(testConfig({ servers: [WRITE_SERVER], autoReview: NO_AUTO }));
+    h.lists.review_requested = [pr(3)];
+    await h.shuttle.sync();
+    const { threadId } = await h.shuttle.review({ key: KEY });
+    h.views[3] = pr(3, { state: "merged" });
+    await h.shuttle.lookup(KEY);
+    await h.shuttle.closedSettled();
+    expect(h.port.lifecycle).toEqual([]);
+    await h.shuttle.saveDraft(threadId, KEY, { summary: "Late", verdict: "comment", findings: [] });
+    await h.shuttle.onThreadIdle(threadId);
+    expect(h.port.lifecycle).toEqual([`archive ${threadId}`]);
+  });
+
   it("archives nothing when the setting is off", async () => {
     const { h, draftId } = await reviewed();
     h.settings.archiveReviewThreads = false;

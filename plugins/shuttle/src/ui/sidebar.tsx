@@ -86,6 +86,7 @@ export function ShuttleSidebar({ subPath }: PluginNavPanelProps) {
       {route.view === "insights" && (
         <>
           <NavItem sub label="Overview" count={null} on={route.tab === "overview"} onClick={() => go({ view: "insights", tab: "overview" })} />
+          <NavItem sub label="Usage" count={null} on={route.tab === "usage"} onClick={() => go({ view: "insights", tab: "usage" })} />
           <NavItem sub label="Auto post" count={null} on={route.tab === "autopost"} onClick={() => go({ view: "insights", tab: "autopost" })} />
           <NavItem sub label="Automation log" count={null} on={route.tab === "log"} onClick={() => go({ view: "insights", tab: "log" })} />
           <NavItem sub label="Sync" count={null} on={route.tab === "sync"} onClick={() => go({ view: "insights", tab: "sync" })} />

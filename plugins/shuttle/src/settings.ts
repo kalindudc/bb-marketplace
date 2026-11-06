@@ -42,7 +42,7 @@ export const SETTINGS = {
     type: "boolean",
     label: "Archive finished review threads",
     description:
-      "Archive a review thread Shuttle started, with its child threads, once its review is done: its draft posted or discarded, you reviewed the PR, or the PR merged or closed. The next review of the PR brings the thread back, without its child threads. Threads you picked yourself are never archived.",
+      "Archive a review thread Shuttle started, with its child threads, once its review is done: its draft posted or discarded, you reviewed the PR, or the PR merged or closed, as soon as Shuttle sees it. A thread that it or a thread under it is at work in, or that is linked to another PR still open, stays. The next review of the PR brings the thread back, without its child threads. Threads you picked yourself are never archived.",
     default: true,
   },
   defaultProject: {

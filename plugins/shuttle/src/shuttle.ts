@@ -5,7 +5,7 @@ import { configChanges, configFromToml, configToToml, ConfigError, parseConfig, 
 import type {
   AutoPostInsights, ReviewHistoryItem,
   AgentMode, AgentTarget, Area, BoardDetail, BoardSummary, ConversationItem, EventView, InboxRule, InboxRuleKind, InboxView, InsightsView, LinkRole, MergeMethod, MergeOptions, MergeView, Outcome, Overview, LinkCard, PostFinding, PrChange, PrDetails,
-  PostView, PrView, ReviewDraft, ReviewInput, ServerStatus, SyncHistory, SyncRun, SyncStep, SyncStepName, TestResult, ThreadOption, Verdict,
+  PostView, PrView, ReviewDraft, ReviewInput, ServerStatus, SyncHistory, SyncRun, SyncStep, SyncStepName, TestResult, ThreadOption, UsageRange, UsageView, Verdict,
 } from "./contract";
 import { askAgent, runAutoAgent, setAgent, setAgentMode, type AgentChange } from "./agents";
 import { board as readBoard, boardAdd, boardCreate, boardRemove, boards as listBoards, boardUpdate } from "./boards";
@@ -17,6 +17,7 @@ import { FastLane, type BackOffKind } from "./fast-lane";
 import { cancelMerge, clearMerge, failInterruptedMerges, mergeInputOf, mergeView, queueMerge, recentMerges, retryMerge } from "./merges";
 import { addRule, dismiss, inbox as readInbox, markSeen, removeRule, snooze } from "./inbox";
 import { insights, INSIGHTS_SINCE, snapshotCounts } from "./insights";
+import { readUsage, usageView } from "./usage";
 import { autoPostRepo, gateDraft, parseGate, rescoreDraft } from "./gate";
 import { autoPostInsights } from "./shadow";
 import { feedbackSignature, phaseOf } from "./next";
@@ -129,6 +130,41 @@ export class Shuttle implements Ctx {
     this.lifetime = deps.lifetime;
     // Insights only trust Shuttle's own sightings from here on; rows copied over at the upgrade predate them.
     if (!this.store.kv(INSIGHTS_SINCE)) this.store.setKv(INSIGHTS_SINCE, String(this.now()));
+    // A PR that merged or closed is done with its review threads as soon as Shuttle hears, by whichever read: the list
+    // that was on screen showed it merged beside a review thread still open until the next sync had finished.
+    this.store.onPrClosed((prId) => {
+      if (this.lifetime?.aborted) return;
+      // After the write that called, which may be inside a transaction.
+      const run: Promise<void> = Promise.resolve()
+        .then(() => this.archiveReviewThreads({ prId }))
+        .then(() => undefined)
+        .finally(() => this.closing.delete(run));
+      this.closing.add(run);
+    });
+  }
+
+  /** Archives of the review threads of PRs that just merged or closed, still under way. */
+  private readonly closing = new Set<Promise<void>>();
+  /** The pass reading what reviews used from Burn, while one runs. */
+  private usagePass: Promise<void> | null = null;
+
+  /** Resolves once the review threads of PRs that just merged or closed are archived. */
+  async closedSettled(): Promise<void> {
+    while (this.closing.size > 0) await Promise.all(this.closing);
+  }
+
+  /** Reads what reviews used from Burn, one pass at a time; the tick never waits for it. */
+  readUsage(signal?: AbortSignal): Promise<void> {
+    this.usagePass ??= readUsage(this, signal)
+      .then(() => undefined, (error: unknown) => this.port.log("warn", `review usage: ${errText(error)}`))
+      .finally(() => {
+        this.usagePass = null;
+      });
+    return this.usagePass;
+  }
+
+  usage(range: UsageRange): UsageView {
+    return usageView(this, range);
   }
 
   readonly run: Runner;
@@ -1008,7 +1044,9 @@ export class Shuttle implements Ctx {
     await this.autoAgent(signal).catch((error: unknown) => this.port.log("warn", `auto agent: ${errText(error)}`));
     this.record();
     await this.deliver();
-    // After the lists: a PR that merged or closed since the last sync is done with its review thread.
+    // After the lists: a PR that merged or closed since the last sync is done with its review thread. A PR the lists
+    // just saw close is being archived already; this pass then finds it done.
+    await this.closedSettled();
     if (!signal?.aborted) await this.archiveReviewThreads();
   }
 
@@ -1037,6 +1075,7 @@ export class Shuttle implements Ctx {
     this.drainMerges();
     await endQuietReviews(this).catch((error: unknown) => this.port.log("warn", `quiet reviews: ${errText(error)}`));
     if (signal?.aborted) return;
+    void this.readUsage(signal);
     const last = this.lastFullSync();
     // FULL_SYNC_AT moves only once every server of a full sync finished, so the running one is what says it is under way.
     if (this.fullSync === null && (last === null || this.now() - last >= this.settings().syncMinutes * 60_000)) {

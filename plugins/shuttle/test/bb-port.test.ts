@@ -2,9 +2,36 @@
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
 import { describe, expect, it, vi } from "vitest";
 import { createBbPort, spawnErrorOf } from "../src/bb-port";
-import { SpawnUnavailableError } from "../src/ports";
+import { SpawnUnavailableError, UsageUnavailableError } from "../src/ports";
 
 describe("bb port", () => {
+  it("asks Burn what a thread used, and says Burn is not there when bb has no such plugin", async () => {
+    const calls: unknown[] = [];
+    let answer: () => unknown = () => ({ report: null, family: { children: [{ threadId: "thr_critic1", cost: 0.2 }] } });
+    const host = createFakePluginHost({
+      pluginId: "shuttle",
+      sdk: {
+        plugins: {
+          callRpc: async (args: { pluginId: string; method: string; input: unknown; outputSchema: { parse(value: unknown): unknown } }) => {
+            calls.push({ pluginId: args.pluginId, method: args.method, input: args.input });
+            return args.outputSchema.parse(answer());
+          },
+        },
+      } as never,
+    });
+    const port = createBbPort(host.bb);
+    expect(await port.threadUsage("thr_review1")).toEqual({ usage: null, descendants: ["thr_critic1"] });
+    expect(calls).toEqual([{ pluginId: "burn", method: "usage", input: { threadId: "thr_review1" } }]);
+    answer = () => {
+      throw Object.assign(new Error('HTTP 404: unknown plugin "burn"'), { status: 404 });
+    };
+    await expect(port.threadUsage("thr_review1")).rejects.toEqual(new UsageUnavailableError('unknown plugin "burn"'));
+    answer = () => {
+      throw Object.assign(new Error("HTTP 500: Burn could not read the session log"), { status: 500 });
+    };
+    await expect(port.threadUsage("thr_review1")).rejects.not.toBeInstanceOf(UsageUnavailableError);
+  });
+
   it("builds what the page reads just before telling it PRs changed, once for a burst of changes", async () => {
     vi.useFakeTimers();
     try {

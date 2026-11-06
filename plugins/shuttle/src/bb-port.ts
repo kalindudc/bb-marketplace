@@ -1,6 +1,6 @@
 import type { BbPluginApi, JsonValue } from "@get-bb/plugin-sdk";
 import { z } from "zod";
-import { SpawnUnavailableError, type BbPort, type SpawnArgs, type ThreadInfo } from "./ports";
+import { SpawnUnavailableError, UsageUnavailableError, type BbPort, type SpawnArgs, type ThreadInfo, type UsageRead } from "./ports";
 
 type ThreadSpawnArgs = Parameters<BbPluginApi["sdk"]["threads"]["spawn"]>[0];
 
@@ -25,6 +25,52 @@ export function spawnErrorOf(error: unknown): unknown {
   const unavailable = http.status === 409 && (http.code === "machine_provider_rejected" || (http.code === "environment_provider_rejected" && body.details?.availabilityStatus === "unavailable"));
   return body.retryable === true || unavailable ? new SpawnUnavailableError(bbMessage(error)) : error;
 }
+
+/** The plugin that reads what every thread used: pi's session logs, OpenCode's and Claude Code's records, and bb's usage events. */
+export const BURN = "burn";
+
+const count = z.number().finite().nonnegative();
+const tokens = z.object({ input: count, output: count, cacheRead: count, cacheWrite: count });
+/** The part of Burn's `usage` answer Shuttle reads; other fields are dropped, so a newer Burn still parses. */
+export const burnUsageSchema = z.object({
+  report: z
+    .object({
+      startedAt: count,
+      updatedAt: count,
+      calls: count,
+      tokens,
+      cost: z.object({ total: count }),
+      estimated: z.boolean(),
+      byModel: z.array(z.object({ key: z.string(), cost: count })),
+      turns: z.array(z.object({ n: count, at: count, calls: count, cost: count, tokens, models: z.array(z.string()) })),
+    })
+    .nullable(),
+  family: z.object({ children: z.array(z.object({ threadId: z.string() })) }),
+});
+
+/** Burn's answer as Shuttle keeps it. */
+export function usageOf(answer: z.infer<typeof burnUsageSchema>): UsageRead {
+  const report = answer.report;
+  const descendants = answer.family.children.map((child) => child.threadId);
+  if (report === null) return { usage: null, descendants };
+  const costliest = [...report.byModel].sort((a, b) => b.cost - a.cost)[0]?.key ?? null;
+  return {
+    usage: {
+      startedAt: report.startedAt,
+      updatedAt: report.updatedAt,
+      calls: report.calls,
+      tokens: report.tokens,
+      cost: report.cost.total,
+      estimated: report.estimated,
+      model: costliest,
+      turns: report.turns.map((turn) => ({ n: turn.n, at: turn.at, calls: turn.calls, cost: turn.cost, tokens: turn.tokens, model: turn.models[0] ?? costliest })),
+    },
+    descendants,
+  };
+}
+
+/** bb answers 404 for a plugin it does not have, and for one that is installed but not running. */
+const pluginMissing = (error: unknown) => (error as { status?: unknown } | null)?.status === 404 || /\bunknown plugin\b|\bnot running\b|\bdisabled\b/iu.test(message(error));
 
 /** The environment's `hostLifecycle` once bb removes its machine; a suspended machine stays active, since a message resumes it. */
 const MACHINE_GONE = new Set(["removed", "removing", "cleanup-failed"]);
@@ -234,6 +280,14 @@ export function createBbPort(bb: BbPluginApi, setSettings: BbPort["setSettings"]
         });
       } catch (error) {
         bb.log.info(`no notification sent (${title}): ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+    async threadUsage(threadId) {
+      try {
+        return usageOf(await bb.sdk.plugins.callRpc({ pluginId: BURN, method: "usage", input: { threadId }, outputSchema: burnUsageSchema }));
+      } catch (error) {
+        if (pluginMissing(error)) throw new UsageUnavailableError(bbMessage(error));
+        throw error;
       }
     },
   };
