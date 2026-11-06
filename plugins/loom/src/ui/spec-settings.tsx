@@ -353,6 +353,9 @@ function GlobList({ path, label, items }: { path: string; label: string; items: 
   );
 }
 
+const PUBLISH_NAMES: Record<"checks" | "live", string> = { checks: "its checks passed", live: "what it requires is live" };
+const publishText = (when: ReadonlyArray<"checks" | "live">) => listText(["Loom's reviewers approved it", ...when.map((each) => PUBLISH_NAMES[each]), "it targets its base"]);
+
 const AUTO_MERGE_MODE_NAMES: Record<"auto" | "manual", string> = { manual: "after you confirm each merge", auto: "by itself" };
 
 /** A forge's auto_merge: how Loom merges a ready pull request, what counts as ready, and the comments that mean it was turned away. */
@@ -1130,6 +1133,13 @@ export function SettingsSection({ spec, bbProjectNames, onShowAll, onJump }: { s
                 <Row label="Fresh pull requests" paths={["merge.refresh_behind"]}>
                   <RefreshBehind path="merge.refresh_behind" label="Keep pull requests fresh" n={merge.refresh_behind} base={project.base} />
                 </Row>
+                {(merge.publish !== undefined || changedAt(review, "merge.publish")) && (
+                  <Row label="Published" paths={["merge.publish"]}>
+                    <Commentable as="span" target={value(merge.publish?.when === undefined ? "merge.publish" : "merge.publish.when", "Publish drafts when", "text")}>
+                      {merge.publish === undefined ? "once each targets its base" : `once it can ship: ${publishText(merge.publish.when ?? ["checks", "live"])}`}
+                    </Commentable>
+                  </Row>
+                )}
               </>
             )}
             {(merge.remote !== "origin" || changedAt(review, "merge.remote")) && (

@@ -63,6 +63,8 @@ export interface MergeEntry {
   draft: boolean | null;
   /** "held": the human holds it as a draft (keep_draft); "marking": a draft Loom marks ready at its next read; null otherwise. */
   draftHold: DraftState;
+  /** With merge.publish, what the draft still waits for before Loom publishes it; null otherwise. */
+  publishWait: string | null;
   review: ReviewDecision | null;
   /** The forge reported its draft flag or review decision. */
   reviewRead: boolean;
@@ -98,8 +100,11 @@ const FINISHED: readonly TicketState[] = ["done", "cancelled"];
 const numberOf = (url: string | null) => (url === null ? null : (/\/(\d+)\/?$/u.exec(url)?.[1] ?? null));
 const keysOf = (json: string) => JSON.parse(json) as string[];
 
-/** `finals`: each ticket's final review, by key, which the caller reads from the store; the verdict never depends on it. */
-export function mergeOrderOf(spec: Spec, tickets: readonly TicketRow[], finals: ReadonlyMap<string, FinalBadge | null> = new Map()): MergeOrderView | null {
+/**
+ * `finals`: each ticket's final review, by key, and `publishing`: what each draft waits for before Loom publishes it, which
+ * the caller reads from the store; the verdict never depends on them.
+ */
+export function mergeOrderOf(spec: Spec, tickets: readonly TicketRow[], finals: ReadonlyMap<string, FinalBadge | null> = new Map(), publishing: ReadonlyMap<string, string | null> = new Map()): MergeOrderView | null {
   if (spec.merge.strategy !== "pr") return null;
   const shown = tickets.filter((ticket) => ticket.state !== "cancelled");
   const byKey = new Map(shown.map((ticket) => [ticket.key, ticket]));
@@ -177,6 +182,7 @@ export function mergeOrderOf(spec: Spec, tickets: readonly TicketRow[], finals: 
       checks,
       draft,
       draftHold: draftStateOf(ticket),
+      publishWait: publishing.get(ticket.key) ?? null,
       review,
       reviewRead,
       conflicts,

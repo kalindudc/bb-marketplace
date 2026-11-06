@@ -97,6 +97,14 @@ describe("a running project on a forge profile", () => {
     expect(post.body).toBe(`The forge profile Forge (forge) changed, from version ${before} to ${saved.hash}: Loom runs its new commands from its next call to the forge.`);
   });
 
+  it("marks a draft ready with the profile's ready command, and needs no after_open script for it", async () => {
+    saveProfile(h.store, FORGE, null);
+    await seedProject(h, usesProfile());
+    await reachApproved(h);
+    await queue();
+    expect(h.host.callsTo("prReady")).toEqual([{ repo: "/repo", url: ticketOf(h, "CSV-1").pr_url, forge: { kind: "command", ready: "forge pr ready" } }]);
+  });
+
   it("records nothing when a save changes nothing", async () => {
     saveProfile(h.store, FORGE, null);
     await seedProject(h, usesProfile());

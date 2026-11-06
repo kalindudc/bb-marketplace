@@ -5049,6 +5049,7 @@ describe("merge order tab", () => {
     checks: { passed: 4, failed: 0, pending: 0 },
     draft: false,
     draftHold: null,
+    publishWait: null,
     review: "APPROVED",
     reviewRead: true,
     conflicts: false,
@@ -5087,6 +5088,7 @@ describe("merge order tab", () => {
           entries: [
             entry({ key: "CSV-1", verdict: "first", holds: [{ code: "draft" }], draft: true, draftHold: "held" }),
             entry({ key: "CSV-2", verdict: "first", holds: [{ code: "draft" }], draft: true, draftHold: "marking" }),
+            entry({ key: "CSV-3", verdict: "first", holds: [{ code: "draft" }], draft: true, draftHold: "marking", publishWait: "1 check is still running" }),
           ],
         }),
       ),
@@ -5094,6 +5096,7 @@ describe("merge order tab", () => {
     fireEvent.click(await slot.findByRole("tab", { name: /Merge order/ }));
     await waitFor(() => expect(slot.container.textContent).toContain("held as a draft: you release it"));
     expect(slot.container.textContent).toContain("being marked ready");
+    expect(slot.container.textContent).toContain("draft until it can ship: 1 check is still running");
   });
 
   it("is no tab on an integration project", async () => {
@@ -5492,6 +5495,7 @@ describe("rollout tab", () => {
       checks: { passed: 20, failed: 0, pending: 1 },
       draft: false,
       draftHold: null,
+      publishWait: null,
       review: "REVIEW_REQUIRED",
       reviewRead: true,
       conflicts: false,
@@ -5650,6 +5654,7 @@ describe("rollout tab", () => {
             checks: null,
             draft: false,
             draftHold: null,
+            publishWait: null,
             review: "APPROVED",
             reviewRead: true,
             conflicts: false,

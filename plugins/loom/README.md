@@ -884,6 +884,20 @@ while its project runs; a paused project still reads its pull requests but
 changes none. A pull request that was open as a draft before `keep_draft`
 existed is held: the migration sets `keep_draft` on it.
 
+With `merge.publish`, Loom keeps each pull request a draft while it cannot
+ship yet, and publishes it (marks it ready for review) itself once it can, so
+people review only pull requests that can merge. `publish = { when = ["checks",
+"live"] }`, the default when the table is empty, waits until, for the commit
+Loom pushed, every check it reads has passed and what the ticket's rollout
+requires is live; the pull request must target its base, and a repo whose
+forge has a review gate waits for it to come back clean. A fix round's push
+starts the wait again. Loom posts on the ticket when it publishes, then asks the
+spec's reviewers right away. The board card, the ticket page and the Merge
+order tab say what a draft still waits for, such as "Draft until it can ship:
+1 check is still running". A `keep_draft` ticket is never published. This
+replaces `after_open` and `after_push` commands that mark pull requests ready
+by branch name.
+
 ### Merging ready pull requests
 
 Loom merges nothing by itself unless a repo's forge says how, with

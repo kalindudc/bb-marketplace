@@ -98,6 +98,7 @@ export const card = (over: Partial<BoardCard> = {}): BoardCard => ({
   ci: null,
   mergeConfirm: null,
   draft: null,
+  publishWait: null,
   releaseRequested: null,
   ...over,
 });
@@ -245,6 +246,7 @@ export const ticketDetail = (over: Partial<TicketDetail> = {}): TicketDetail => 
   reviewAgain: false,
   mergeConfirm: null,
   draft: null,
+  publishWait: null,
   releaseRequested: null,
   activity: { brief: { postId: 1, at: NOW - 6 * HOUR, edits: 0, fields: [] }, before: [], attempts: [attempt()] },
   at: null,

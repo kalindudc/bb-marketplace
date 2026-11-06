@@ -78,6 +78,8 @@ export interface BoardCard {
   mergeConfirm: MergeConfirmView | null;
   /** A draft pull request: "held" until the human releases it (keep_draft), "marking" while Loom marks it ready; null otherwise. */
   draft: DraftState;
+  /** With merge.publish, what a draft Loom is to publish still waits for, in words; null otherwise. */
+  publishWait: string | null;
   /** The planner asked the human to release the held draft. */
   releaseRequested: { at: number; note: string } | null;
 }
@@ -287,6 +289,7 @@ export interface TicketDetail {
   mergeConfirm: MergeConfirmView | null;
   /** As BoardCard's. */
   draft: DraftState;
+  publishWait: string | null;
   releaseRequested: { at: number; note: string } | null;
   activity: TicketActivity;
   /** The event the ticket was rewound to, and the time it shows; `at` is null for the live ticket. */

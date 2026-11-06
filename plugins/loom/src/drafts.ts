@@ -15,6 +15,9 @@ import type { Spec } from "./spec";
 import { HUMAN_ACTOR, LOOM_ACTOR } from "./states";
 import { specOf, type EngineCtx } from "./ctx";
 import { mergePostNow } from "./posts";
+import { checkWaitOf } from "./check-wait";
+import { andList } from "./prompts";
+import { publishRule, publishWaits } from "./publish";
 
 /** Loom marked the pull request at `url` ready for review, or tried and was refused; it never tries again for that pull request. */
 export const MARKED_READY = "ticket.pr_marked_ready";
@@ -95,6 +98,8 @@ function mayNotMark(ctx: EngineCtx, spec: Spec, ticket: TicketRow | null, url: s
   if (!canReady(settings.forge)) return "its forge cannot mark it ready";
   if (markedFor(ctx.store, ticket)) return "Loom marked it ready already";
   if (!afterOpenOver(ctx.store, ticket, ctx.now())) return "its after_open commands are still running";
+  const waits = publishWaits(ctx.store, spec, ticket, ctx.now(), ctx.checkWait?.() ?? checkWaitOf({}));
+  if (waits.length > 0) return `it is not ready to publish: ${waits.join("; ")}`;
   return null;
 }
 
@@ -127,7 +132,8 @@ export async function followDraft(ctx: EngineCtx, project: ProjectRow, ticketId:
       store.event(project.id, ticketId, MARKED_READY, LOOM_ACTOR, { url });
       notDraft(ctx, now);
       const held = now.keep_draft === 1 ? " The human held it as a draft while Loom did so, so it is ready for review now anyway; make it a draft again on the forge if it must wait." : "";
-      mergePostNow(ctx.store, now, `Marked ${url} ready for review: the ticket does not keep its pull request a draft.${held}`, { outcome: "pr_marked_ready", url });
+      const why = publishRule(spec) === null ? "the ticket does not keep its pull request a draft" : `it can ship: ${publishedBecause(spec)}`;
+      mergePostNow(ctx.store, now, `${publishRule(spec) === null ? "Marked" : "Published"} ${url} ready for review: ${why}.${held}`, { outcome: "pr_marked_ready", url, ...(publishRule(spec) === null ? {} : { published: true }) });
       return true;
     }
     if (answer.transient !== undefined) {
@@ -140,6 +146,12 @@ export async function followDraft(ctx: EngineCtx, project: ProjectRow, ticketId:
   } finally {
     claims.delete(ticketId);
   }
+}
+
+/** What held for a pull request Loom published, in words. */
+function publishedBecause(spec: Spec): string {
+  const rule = publishRule(spec)!;
+  return andList(["Loom's reviewers approved it", ...(rule.checks ? ["its checks passed on the commit Loom pushed"] : []), ...(rule.live ? ["what it requires is live"] : []), "it targets its base"]);
 }
 
 function heldTicket(store: Store, key: string): { project: ProjectRow; ticket: TicketRow } {

@@ -41,6 +41,8 @@ import { reviewAgainOf } from "./requeue";
 import { specOf } from "./ctx";
 import { mergeConfirmOf } from "./auto-merge";
 import { draftStateOf, releaseRequestOf } from "./drafts";
+import { publishWaitOf, publishWaitsOf } from "./publish";
+import { checkWaitOf } from "./check-wait";
 import { forgeTest, forgeTestPassed, formatForgeTest } from "./forge-check";
 import { deleteProfile, importProfiles, parseProfile, profilesToml, profileUses, saveProfile } from "./forge-profiles";
 
@@ -186,6 +188,7 @@ export function boardCards(tickets: TicketRow[], threads: ThreadRow[], spec: Spe
       ci: ciOf(spec, ticket),
       mergeConfirm: spec === null || store === null ? null : mergeConfirmOf(store, spec, ticket, now),
       draft: draftStateOf(ticket),
+      publishWait: spec === null || store === null ? null : publishWaitOf(store, spec, ticket, now, checkWaitOf({})),
       releaseRequested: store === null ? null : releaseRequestOf(store, ticket),
     };
   });
@@ -283,6 +286,7 @@ export function draftCards(spec: Spec, at: number): BoardCard[] {
     ci: null,
     mergeConfirm: null,
     draft: null,
+    publishWait: null,
     releaseRequested: null,
   }));
 }
@@ -372,7 +376,7 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
       specReview,
       askSteps: past === null && project.state !== "archived" ? (plannerAsk(store, project)?.steps.flatMap((step, index) => (step.done ? [] : [{ index, action: step.action, text: step.text, key: step.key ?? null }])) ?? []) : [],
       badgeAcks: past === null ? badgeAcksOf(store, project) : noAcks(),
-      mergeOrder: past === null && approved !== null ? mergeOrderOf(approved, tickets, new Map(tickets.map((ticket) => [ticket.key, finalBadge(store, approved, ticket)] as const))) : null,
+      mergeOrder: past === null && approved !== null ? mergeOrderOf(approved, tickets, new Map(tickets.map((ticket) => [ticket.key, finalBadge(store, approved, ticket)] as const)), publishWaitsOf(store, approved, at, engine.ctx.checkWait?.() ?? checkWaitOf({}))) : null,
       // What is live is kept only as it is now, so a rewound view leaves the rollout out, as it does the merge order.
       rollout: past === null && approved !== null ? rolloutOf(approved, tickets, store.rolloutMarks(project.id), at) : null,
     };
@@ -481,6 +485,7 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
       reviewAgain: past === null && Object.values(reviewAgainOf(ticket, posts)).some(Boolean),
       mergeConfirm: past === null ? mergeConfirmOf(store, specOf(store, project), ticket, now()) : null,
       draft: draftStateOf(ticket),
+      publishWait: past === null ? publishWaitOf(store, specOf(store, project), ticket, now(), engine.ctx.checkWait?.() ?? checkWaitOf({})) : null,
       releaseRequested: past === null ? releaseRequestOf(store, ticket) : null,
       activity: ticketActivity({ state: ticket.state, posts, threads, runs }),
       at: past?.eventId ?? null,

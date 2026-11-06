@@ -269,7 +269,7 @@ export function TicketHeader({
         </p>
       )}
       {ticket.state === "blocked" && <BlockedCallout ticket={ticket} busy={busy} onAction={onAction} onJump={onJump} />}
-      {ticket.at === null && <DraftHold ticketKey={ticket.key} prUrl={ticket.prUrl} draft={ticket.draft} requested={ticket.releaseRequested} disabled={busy} />}
+      {ticket.at === null && <DraftHold ticketKey={ticket.key} prUrl={ticket.prUrl} draft={ticket.draft} publishWait={ticket.publishWait} requested={ticket.releaseRequested} disabled={busy} />}
       {ticket.mergeConfirm !== null && <MergeConfirm ticketKey={ticket.key} confirm={ticket.mergeConfirm} disabled={busy} />}
       <Tracker state={ticket.state} stoppedFrom={ticket.stoppedFrom} pr={ticket.pr !== null} />
       <div className="flex flex-wrap items-center gap-2 text-xs">

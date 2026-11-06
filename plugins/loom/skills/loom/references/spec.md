@@ -34,6 +34,7 @@ A spec without `[[repo]]` tables is a single-repo project: every ticket runs in 
 | `max_fix_rounds` | integer | `5` | pr strategy only; 0 to 20; fix rounds the pull request's checks and reviews may start before the ticket blocks, counted again from each requeue; the human's replies do not count; `0` follows only merged and closed |
 | `stack` | boolean | `true` | pr strategy only; a ticket starts once its dependencies' pull requests are open, on top of them in its own repo, and its pull request opens on its one open dependency's branch; `false` waits for each dependency to merge |
 | `refresh_behind` | integer | none | pr strategy only; 1 to 1000000; keeps open pull requests fresh with their base: once a pull request's branch lacks at least this many commits of the remote base, or the forge says it conflicts with its base, Loom merges the base into it, runs the ticket's checks in its worker's worktree and pushes, with no new review; unset is off; the default `refresh_behind` of every `[[repo]]`. See [Keeping pull requests fresh](#keeping-pull-requests-fresh) |
+| `publish` | table | none | pr strategy only; keep each pull request a draft until it can ship, and then mark it ready for review: `when` lists what must hold for the commit Loom pushed, `"checks"` (every check Loom reads passed, and a pull request that reports none waits out the `checksSettleMinutes` setting after the push) and `"live"` (what the ticket's rollout `requires_live` names is live); left out, both. Loom's reviewers have always approved by then, the pull request must target its base, and a repo whose forge has a review gate waits for it to come back clean. Only then does Loom ask for reviewers. A `keep_draft` ticket is never published. Needs `draft = true`, a forge with `feedback` and a way to mark drafts ready (gh, or a `ready` command), and `max_fix_rounds` above 0. See [Publishing drafts](#publishing-drafts) |
 | `git_network_timeout_seconds` | integer | `300` | 30 to 600; how long each git fetch, `ls-remote` or push Loom runs in the repo may take, such as fetching the base branch to bring a stacked pull request up to date, building a pull request's commit, or pushing it; a host call that runs two of them in a row gets twice this plus 30 seconds; the default of every `[[repo]]`. Raise it for a large monorepo, where fetching main takes a minute or more; a version approved after the project started applies from Loom's next pass. See [Slow repositories](#slow-repositories) |
 
 ### [merge.forge]
@@ -92,6 +93,21 @@ When `open`, `state` or `feedback` exits non-zero or runs out of time, Loom read
 To try a forge's commands against a live pull request before relying on them, run `bb loom forge check <slug> <KEY or url> [--repo <name>] [--version N]`. It runs the read a poll makes on the project's machine (the `feedback` command, else `state`; with gh, gh's own read) and prints what Loom reads from it, or why the read failed and each field it refused, such as a check whose `state` is not one of the four. `--version N` uses that spec version's forge, so the commands of a pending version can be tried before the human approves it. It changes nothing in Loom.
 
 With `kind = "none"`, Loom pushes the ticket's branch and says where; a person opens the pull request. The ticket is done when the remote's base branch contains the ticket's exact commit, so a squash or rebase merge is not seen: block or cancel that ticket by hand. On the integration strategy, `bb loom land` pushes the integration branch and opens nothing.
+
+### Publishing drafts
+
+With `merge.publish`, a pull request stays a draft while it cannot ship yet, so people are not asked to review work whose
+deploy order or CI still holds it back. In `[merge]`, `publish = { when = ["checks", "live"] }` waits for both, as
+`publish = {}` does.
+
+At each read of a draft, Loom publishes it, marking it ready through the forge (gh, or the forge's `ready` command), once
+it targets its base and every condition holds for the commit it pushed: the checks it reads, less `ignore_checks`, all
+passed, with none pending; and what the ticket's rollout `requires_live` names is live. A repo with a review gate also
+waits for the gate to come back clean on that commit. A fix round's push starts the wait again for its new commit. Loom
+posts "Published … ready for review" on the ticket, then asks the spec's `reviewers` at once. It publishes each pull
+request once, never makes one a draft again, and never publishes a `keep_draft` ticket's. The board card, the ticket page
+and the Merge order tab say what a draft still waits for, such as "Draft until it can ship: 1 check is still running".
+This replaces `after_open` and `after_push` commands that mark pull requests ready by branch name or base.
 
 ### Merging ready pull requests
 
@@ -864,6 +880,7 @@ A spec with any error is refused and nothing is saved. Errors are numbered, at m
 - `merge.describe`, `merge.max_fix_rounds`, `merge.stack`, `merge.refresh_behind` or a repo's `refresh_behind` on the integration strategy.
 - An `environment` (top level or a repo's) sets `machine`, and the strategy is not `"pr"`.
 - `checks.ci` or a repo's `ci` on the integration strategy.
+- `merge.publish` on the integration strategy, with `merge.draft = false` or `merge.max_fix_rounds = 0`, or on a repo whose forge is `kind = "none"`, has no `feedback` command, or cannot mark a draft ready (a command forge without `ready`).
 - A repo whose `ci`, or the top-level `checks.ci`, is `true` while its forge reports no checks: `kind = "command"` without `feedback`, or `kind = "none"`. Add a `feedback` command, or remove `ci` for that repo.
 - An `inputs` string, in `[environment]` or a ticket's `environment`, holds a `{name}` other than `{branch}` or `{base}`.
 - A ticket sets `environment` in a repo whose threads start in git worktrees, with no environment provider to patch.

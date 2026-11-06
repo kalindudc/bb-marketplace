@@ -165,6 +165,9 @@ const full = (): Spec => {
 function mergingEverything(doc: Doc): void {
   everything(doc);
   doc.merge.forge = { kind: "gh", auto_merge: { method: "comment", comment: "/merge please", rejected: ["Merge failed*"], max_attempts: 2, final_review: {} }, reviewers: [{ users: ["kim", "lee", "max"], count: 2 }] };
+  doc.merge.draft = true;
+  doc.merge.publish = { when: ["live"] };
+  doc.repo[1].forge.ready = "api-pr ready";
 }
 const FIXTURES = [
   ["a pull request", full],
@@ -336,7 +339,7 @@ describe("spec settings", () => {
     const changes = specDiff(skeleton(spec), spec).filter((change) => change.kind !== "list" || change.steps.length > 0);
     // The fixture really sets the settings added since Loom 0.24, so the walk below covers them.
     const paths = changes.map((change) => change.path);
-    const expected = strategy === "a merging" ? ["merge.forge.auto_merge.method", "merge.forge.auto_merge.comment", "merge.forge.auto_merge.rejected", "merge.forge.reviewers[0].users", "repo[0].forge.auto_merge.comment", "repo[1].forge.merge"] : strategy === "an integration" ? ["merge.remote", "checks.after_merge", "repo[0].after_merge"] : ["merge.forge.retarget", "merge.forge.merge", "merge.forge.auto_merge.require_live", "merge.forge.reviewers[1].users", "repo[0].forge.auto_merge.max_attempts", "repo[1].forge.reviewers[0].count", "merge.forge.after_push", "merge.refresh_behind", "merge.git_network_timeout_seconds", "checks.ci", "environment.machine.inputs.size", "repo[1].forge.after_push", "repo[0].deploy.on_merge", "repo[1].git_network_timeout_seconds", "rollout.stage[0].soak", "rollout.milestone[0].check", "rollout.window[0].note", "ticket[csv-export].rollout.requires_live", "ticket[csv-export].environment.inputs.sparse"];
+    const expected = strategy === "a merging" ? ["merge.publish.when", "merge.forge.auto_merge.method", "merge.forge.auto_merge.comment", "merge.forge.auto_merge.rejected", "merge.forge.reviewers[0].users", "repo[0].forge.auto_merge.comment", "repo[1].forge.merge"] : strategy === "an integration" ? ["merge.remote", "checks.after_merge", "repo[0].after_merge"] : ["merge.forge.retarget", "merge.forge.merge", "merge.forge.auto_merge.require_live", "merge.forge.reviewers[1].users", "repo[0].forge.auto_merge.max_attempts", "repo[1].forge.reviewers[0].count", "merge.forge.after_push", "merge.refresh_behind", "merge.git_network_timeout_seconds", "checks.ci", "environment.machine.inputs.size", "repo[1].forge.after_push", "repo[0].deploy.on_merge", "repo[1].git_network_timeout_seconds", "rollout.stage[0].soak", "rollout.milestone[0].check", "rollout.window[0].note", "ticket[csv-export].rollout.requires_live", "ticket[csv-export].environment.inputs.sparse"];
     for (const path of expected) {
       expect(paths).toContain(path);
     }

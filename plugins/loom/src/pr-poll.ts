@@ -5,6 +5,7 @@ import type { ProjectRow, TicketRow } from "./db/store";
 import { plural } from "./format";
 import { PROJECT_MACHINE, SERVER_ERROR_LIMIT_MS, Unavailable, backedOffUntil, backoffText, forgeHostOf, hostCallTransient, networkWaitReason, networkWaitText, nextBackoff, nextNetworkBackoff, nextPollAt, nextPollWait, pollWaitOf, pollWaitReason, pollWaitText, transientOf, type Transient, waitableOf } from "./forge-waits";
 import { followDraft } from "./drafts";
+import { publishRule } from "./publish";
 import { andList } from "./prompts";
 import { followFeedback, syncPrText } from "./pull-requests";
 import { PR_BATCH_MAX, githubPull, type HostInput, type HostOutput as HostOutputOf } from "./host-contract";
@@ -348,9 +349,14 @@ async function settleRead(ctx: EngineCtx, project: ProjectRow, settings: RepoSet
     await settleClosed(ctx, project, settings, current, base);
   } else {
     const reviewed = (read.feedback?.items ?? []).filter((item) => item.kind === "review").map((item) => item.author);
-    const undrafted = await followDraft(ctx, project, current.id, read.meta?.draft ?? null, read.meta?.base ?? null);
+    // A pull request Loom publishes is judged on this read's checks, so it is published after its feedback is followed.
+    const publishing = publishRule(specOf(store, project)) !== null;
+    const undrafted = !publishing && (await followDraft(ctx, project, current.id, read.meta?.draft ?? null, read.meta?.base ?? null));
     await requestReviewers(ctx, project, current.id, { draft: undrafted ? false : (read.meta?.draft ?? null), author: read.feedback?.author || null, reviewed });
     if (read.feedback !== null) await followFeedback(ctx, store.project(project.id)!, store.ticket(current.id)!, read.feedback);
+    if (publishing && (await followDraft(ctx, project, current.id, read.meta?.draft ?? null, read.meta?.base ?? null))) {
+      await requestReviewers(ctx, project, current.id, { draft: false, author: read.feedback?.author || null, reviewed });
+    }
     await syncPrText(ctx, store.project(project.id)!, current.id, read.text ?? null);
     await followAutoMerge(ctx, project, current.id, { head: read.feedback?.head ?? null, author: read.feedback?.author || null, text: read.text ?? null, items: read.feedback?.items ?? null, ...(read.queue === undefined ? {} : { queue: read.queue }) });
   }

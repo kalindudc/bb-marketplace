@@ -7,7 +7,7 @@ import { plural } from "./format";
 import { GIT_INDEX_TIMEOUT_MS, GIT_NETWORK_TIMEOUT_MS, GIT_NETWORK_TIMEOUT_SECONDS } from "./git-network";
 import { HOOK_EVENTS } from "./hook-events";
 import { andList } from "./prompts";
-import { AUTO_MERGE_DEFAULTS, followsFeedback, PR_DEFAULTS } from "./repos";
+import { AUTO_MERGE_DEFAULTS, canReady, followsFeedback, PR_DEFAULTS } from "./repos";
 import { matchesAny } from "./scope";
 
 const MAX_ERRORS = 20;
@@ -152,6 +152,9 @@ const forgeKeys = {
   // What workers and reviewers of this forge's pull requests are told about the server, such as how its review bot clears a finding.
   notes: z.string().trim().min(1).max(4000).optional(),
 };
+
+/** What merge.publish waits for besides the review gate and the base: the checks passed on the pushed commit, and the rollout's prerequisites are live. */
+export const PUBLISH_WHEN = ["checks", "live"] as const;
 
 export const FORGE_PROFILE_ID = /^[a-z][a-z0-9-]{0,31}$/;
 const profileId = z.string().regex(FORGE_PROFILE_ID, "must be 1-32 lowercase letters, digits or dashes, starting with a letter (for example forge)");
@@ -324,6 +327,8 @@ export const specSchema = z
         refresh_behind: z.number().int().min(1).max(1_000_000).optional(),
         // Unset: GIT_NETWORK_TIMEOUT_MS. A [[repo]] table's own value replaces it.
         git_network_timeout_seconds: gitNetworkTimeoutSeconds.optional(),
+        // Keep each pull request a draft until it can ship, then mark it ready; unset, Loom marks it ready once it targets its base.
+        publish: z.object({ when: z.array(z.enum(PUBLISH_WHEN)).min(1).max(PUBLISH_WHEN.length).optional() }).strict().optional(),
       })
       .strict(),
     checks: z
@@ -827,7 +832,7 @@ export function validateSemantics(spec: Spec, rawToml: string): { errors: string
   });
 
   if (spec.merge.strategy === "integration") {
-    for (const key of ["describe", "max_fix_rounds", "stack", "refresh_behind"] as const) {
+    for (const key of ["describe", "max_fix_rounds", "stack", "refresh_behind", "publish"] as const) {
       if (spec.merge[key] !== undefined) errors.push(`merge.${key}: it applies to the pull request Loom opens for each ticket, but merge.strategy is "integration". Remove it, or use merge.strategy = "pr".`);
     }
     repos.forEach((repo, index) => {
@@ -836,7 +841,7 @@ export function validateSemantics(spec: Spec, rawToml: string): { errors: string
     const ciPaths = [...(spec.checks.ci === undefined ? [] : ["checks.ci"]), ...repos.flatMap((repo, index) => (repo.ci === undefined ? [] : [`repo[${index}].ci`]))];
     for (const at of ciPaths) errors.push(`${at}: it says whether Loom relies on the CI of the pull request it opens for each ticket, but merge.strategy is "integration". Remove it, or use merge.strategy = "pr".`);
   } else {
-    errors.push(...ciForgeErrors(spec));
+    errors.push(...ciForgeErrors(spec), ...publishErrors(spec));
   }
 
   errors.push(...forgeErrors(spec, spec.merge.forge, "merge.forge"), ...environmentErrors(spec.environment, "environment"));
@@ -993,6 +998,22 @@ function ciForgeErrors(spec: Spec): string[] {
 }
 
 /** Only a worker that starts on a ticket reads a hook: every other event finds it done, gone or waiting. */
+/** merge.publish keeps pull requests drafts and marks them ready once they can ship, so each repo's forge must read and mark drafts. */
+function publishErrors(spec: Spec): string[] {
+  if (spec.merge.publish === undefined) return [];
+  const errors: string[] = [];
+  if (!spec.merge.draft) errors.push("merge.publish: Loom publishes a pull request by marking its draft ready, but merge.draft is false, so each one opens ready for review. Set merge.draft = true, or remove publish.");
+  if (spec.merge.max_fix_rounds === 0) errors.push("merge.publish: Loom reads a pull request's checks only while it follows its feedback, and merge.max_fix_rounds is 0. Raise max_fix_rounds, or remove publish.");
+  const repos = spec.repo ?? [];
+  const entries = repos.length === 0 ? [{ forge: spec.merge.forge ?? { kind: "gh" as const }, at: "merge.forge" }] : repos.map((repo, index) => ({ forge: repo.forge ?? spec.merge.forge ?? { kind: "gh" as const }, at: repo.forge === undefined ? "merge.forge" : `repo[${index}].forge` }));
+  for (const { forge, at } of entries.filter((entry, index) => entries.findIndex((other) => other.at === entry.at) === index)) {
+    if (forge.kind === "none") errors.push(`${at}: merge.publish marks pull requests ready, and kind = "none" opens none. Use kind = "gh" or "command", or remove publish.`);
+    else if (!followsFeedback(forge)) errors.push(`${at}: merge.publish reads a pull request's draft flag and checks, and this forge has no feedback command. Add ${at}.feedback, or remove publish.`);
+    else if (!canReady(forge)) errors.push(`${at}: merge.publish marks drafts ready, and this forge has no ready command. Add ${at}.ready, or remove publish.`);
+  }
+  return errors;
+}
+
 function hookErrors(spec: Spec): string[] {
   return (spec.hook ?? []).flatMap((hook, index) => {
     const at = `hook[${index}]`;

@@ -18,6 +18,8 @@ import { repoCheckout } from "./checkouts";
 import type { Spec } from "./spec";
 import { HUMAN_ACTOR, LOOM_ACTOR } from "./states";
 import { draftStateOf } from "./drafts";
+import { publishWaitOf } from "./publish";
+import { checkWaitOf } from "./check-wait";
 import { LoomError } from "./projects";
 import { specOf, type EngineCtx } from "./ctx";
 import { mergePostNow } from "./posts";
@@ -292,6 +294,8 @@ export function manualWait(store: Store, spec: Spec, ticket: TicketRow, now: num
   if (project.state !== "running") return `the project is ${project.state}`;
   const draft = draftStateOf(ticket);
   if (draft === "held") return "it is held as a draft until you release it";
+  const publishing = draft === "marking" ? publishWaitOf(store, spec, ticket, now, checkWaitOf({})) : null;
+  if (publishing !== null) return `it is a draft until it can ship: ${publishing}`;
   if (draft === "marking") return "being marked ready for review";
   const holds = mergeHolds(spec, store.tickets(project.id), ticket, settings, store.rolloutMarks(project.id), now);
   if (holds.length > 0) return holds[0]!.text;

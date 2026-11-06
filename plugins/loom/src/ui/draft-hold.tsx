@@ -2,14 +2,22 @@ import type { BoardCard } from "../contract";
 import { ConfirmButton, useAction, useLoomWrite } from "./common";
 
 /**
- * A draft pull request's state: one the human holds as a draft (keep_draft), with the button that releases it, or one
- * Loom marks ready for review at its next read. Nothing for any other pull request.
+ * A draft pull request's state: one the human holds as a draft (keep_draft), with the button that releases it, one Loom
+ * publishes once it can ship (merge.publish) with what it waits for, or one Loom marks ready for review at its next read.
+ * Nothing for any other pull request.
  */
-export function DraftHold({ ticketKey, prUrl, draft, requested, compact = false, disabled = false }: { ticketKey: string; prUrl: string | null; draft: BoardCard["draft"]; requested: BoardCard["releaseRequested"]; compact?: boolean; disabled?: boolean }) {
+export function DraftHold({ ticketKey, prUrl, draft, publishWait = null, requested, compact = false, disabled = false }: { ticketKey: string; prUrl: string | null; draft: BoardCard["draft"]; publishWait?: string | null; requested: BoardCard["releaseRequested"]; compact?: boolean; disabled?: boolean }) {
   const send = useLoomWrite("releaseDraft");
   const { busy, act } = useAction();
   if (draft === null) return null;
   const size = compact ? "text-xs" : "text-sm";
+  if (draft === "marking" && publishWait !== null) {
+    return (
+      <p data-draft-hold="publishing" className={`${compact ? "mt-1" : ""} ${size} text-muted-foreground [overflow-wrap:anywhere]`}>
+        {`Draft until it can ship: ${publishWait}`}
+      </p>
+    );
+  }
   if (draft === "marking") {
     return (
       <p data-draft-hold="marking" className={`${compact ? "mt-1" : ""} ${size} text-muted-foreground`}>
