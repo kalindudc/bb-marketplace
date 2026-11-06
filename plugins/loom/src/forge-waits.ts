@@ -33,9 +33,9 @@ export function pollDelayMs(failures: number): number {
   return Math.min(LONGEST_POLL_MS, POLL_MS * 2 ** Math.max(0, failures - 1));
 }
 
-/** When Loom reads the ticket's pull request next: 5 minutes after its last read, or later while the read waits after a failure; null before Loom read it. */
+/** When Loom reads the ticket's pull request next: 5 minutes after its last read, or later while the read or the settling of a closed one waits after a failure; null before Loom read it. */
 export function nextPollAt(ticket: Pick<TicketRow, "pr_checked_at" | "retry_json">): number | null {
-  return ticket.pr_checked_at === null ? null : Math.max(ticket.pr_checked_at + POLL_MS, retryOf(ticket, "read")?.until ?? 0);
+  return ticket.pr_checked_at === null ? null : Math.max(ticket.pr_checked_at + POLL_MS, (retryOf(ticket, "read") ?? retryOf(ticket, "settle"))?.until ?? 0);
 }
 
 /**

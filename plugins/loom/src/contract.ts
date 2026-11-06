@@ -106,8 +106,8 @@ export interface ReviewerLookupView {
 }
 
 export interface RetryView {
-  /** The step that waits: the merge, the read of the diff for review, or a read of the pull request. */
-  step: "merge" | "diff" | "read";
+  /** The step that waits: the merge, the read of the diff for review, a read of the pull request, or settling a closed one. */
+  step: "merge" | "diff" | "read" | "settle";
   /** Failures in a row, the first at `since`. */
   failures: number;
   since: number;

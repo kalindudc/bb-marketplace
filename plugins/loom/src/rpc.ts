@@ -221,13 +221,15 @@ function lookupView(store: Store, ticket: TicketRow, threads: readonly ThreadRow
   return unresolved === null ? null : { since: unresolved.since, until: unresolved.until, reason: unresolved.reason };
 }
 
-const RETRY_STEPS = { merging: "merge", review: "diff", pr_open: "read" } as const;
+const RETRY_STEPS: Partial<Record<TicketRow["state"], ReadonlyArray<RetryView["step"]>>> = { merging: ["merge"], review: ["diff"], pr_open: ["read", "settle"] };
 
 /** The wait of a ticket whose step in its state failed and runs again. */
 export function retryView(ticket: TicketRow): RetryView | null {
-  const step = (RETRY_STEPS as Partial<Record<TicketRow["state"], RetryView["step"]>>)[ticket.state];
-  const wait = step === undefined ? null : retryOf(ticket, step);
-  return wait === null ? null : { step: step!, failures: wait.failures, since: wait.since, until: wait.until, message: wait.message };
+  for (const step of RETRY_STEPS[ticket.state] ?? []) {
+    const wait = retryOf(ticket, step);
+    if (wait !== null) return { step, failures: wait.failures, since: wait.since, until: wait.until, message: wait.message };
+  }
+  return null;
 }
 
 /** An open ticket whose closed stacked pull request Loom let go of, before the merge queue opens its new one. */

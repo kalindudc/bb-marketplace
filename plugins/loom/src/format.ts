@@ -60,7 +60,7 @@ export const endLabel = (reason: string | null) => (reason === null ? "ended" : 
 /** The time of day where the page or the server runs, such as "14:05". */
 export const clockTime = (at: number): string => new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
-const RETRIED = { merge: "tries the merge again", diff: "reads the diff for review again", read: "reads the pull request again" } as const;
+const RETRIED = { merge: "tries the merge again", diff: "reads the diff for review again", read: "reads the pull request again", settle: "settles the closed pull request again" } as const;
 
 /** "Loom tries the merge again at 14:05 after a failure: <reason>." for a ticket whose step waits; with `now`, "now" once the wait is over. */
 export function retryText(wait: { step: keyof typeof RETRIED; failures: number; until: number; message: string }, now?: number): string {

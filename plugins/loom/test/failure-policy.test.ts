@@ -177,6 +177,25 @@ describe("on a running project", () => {
     expect(nextRetry(first, { step: "read", pr: "https://github.com/acme/shop/pull/2", now: 5 * MINUTE, failure: failure("temporary", "ticket") })).toMatchObject({ failures: 1, since: 5 * MINUTE, pr: "https://github.com/acme/shop/pull/2" });
   });
 
+  it("keeps the streak of a closed pull request's settling through reads that work, and blocks the ticket after its tries", async () => {
+    await seedProject(h, pr);
+    await reachApproved(h);
+    await queue();
+    const seen = ticketOf(h, "CSV-1");
+    h.store.updateTicket(seen.id, { pr_base: "loom/gone" });
+    h.host.prStates.set(seen.pr_url!, "CLOSED");
+    h.host.prMeta.set(seen.pr_url!, { base: "loom/gone" });
+    h.host.errors.remoteBranch = new Error("unrecognized branch-read failure");
+    const streak: Array<number | undefined> = [];
+    for (let i = 0; i < 5; i++) {
+      h.clock.advance(15 * MINUTE);
+      await pollPullRequests(h.ctx, project());
+      streak.push(retryOf(ticketOf(h, "CSV-1"), "settle")?.failures);
+    }
+    expect(streak).toEqual([1, 2, 3, 4, undefined]);
+    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "blocked", blocked_reason: expect.stringContaining("failed 5 times in a row") });
+  });
+
   it("goes on with a merge's wait after a restart, pushing the same commit again and opening the pull request once", async () => {
     await seedProject(h, pr);
     await reachApproved(h);

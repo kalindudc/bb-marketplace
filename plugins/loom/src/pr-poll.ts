@@ -24,15 +24,18 @@ import { complete, endFinishedThreads, errText } from "./merge-common";
 import { blockMergedElsewhere, closedPullRequest } from "./pr-closed";
 import { loomPost } from "./posts";
 
-/** A poll's closed read: closedPullRequest, with a failed read of the remote settled as any failed read is. */
+/** A poll's closed read: closedPullRequest, with a failed read of the remote settled by retry.ts on a streak of its own. */
 async function settleClosed(ctx: EngineCtx, ticket: TicketRow, target: string | null): Promise<void> {
   const project = ctx.store.project(ticket.project_id)!;
   try {
     await closedPullRequest(ctx, project, ticket, target);
   } catch (error) {
     noteAnswer(ctx, ticket.id, `Reading the pull request of ${ticket.key} stopped: ${errText(error)}`);
-    await readFailed(ctx, ticket, classify(error));
+    const current = ctx.store.ticket(ticket.id);
+    if (current !== null && samePullRequest(ticket, current)) await stepFailed(ctx, current, "settle", classify(error), { what: `Settling the closed pull request of ${ticket.key}`, floorMs: POLL_MS, ...(current.pr_url === null ? {} : { pr: current.pr_url }) });
+    return;
   }
+  endRetry(ctx, ticket.id, "settle");
 }
 
 /**

@@ -88,8 +88,11 @@ const startWaitSchema = z.object({
 });
 export type StartWait = z.output<typeof startWaitSchema>;
 
-/** The ticket steps whose failures wait in retry_json: a merge, the read of a diff for review, a read of the pull request. */
-const retryStepSchema = z.enum(["merge", "diff", "read"]);
+/**
+ * The ticket steps whose failures wait in retry_json: a merge, the read of a diff for review, a read of the pull request,
+ * and settling a pull request a read found closed, whose own streak a read that works leaves alone.
+ */
+const retryStepSchema = z.enum(["merge", "diff", "read", "settle"]);
 export type RetryStep = z.output<typeof retryStepSchema>;
 
 /**
