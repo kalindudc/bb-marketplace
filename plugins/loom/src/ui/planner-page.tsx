@@ -6,6 +6,7 @@ import { operationalSummary } from "../next-step";
 import { changeLine, journey, workingOn, type Chapter, type JourneyStep, type QuestionRound } from "../planner-journey";
 import { SPEC_REVIEW_ROUNDS } from "../states";
 import { BUTTON, ConfirmButton, HEADING, plural, useAction, useLoom, useLoomWrite } from "./common";
+import { DraftHold } from "./draft-hold";
 import { MergeConfirm } from "./merge-confirm";
 import { SettingPaths } from "./next-step-bar";
 import { PlannerMark, timeLabel } from "./planner-kit";
@@ -367,7 +368,7 @@ export function PlannerPage({ threadId, project, busy = false, onControl, onSpec
   const waitsInChat = status === "waiting" && questions.loaded && pendingQuestions === 0 && questions.error === null;
   // One Ask User Question round can hold several questions; the strip counts the questions, Needs you the rounds.
   const askedCount = questions.rows.reduce((sum, row) => sum + (questionsOf(row.payload.data)?.length ?? 1), 0);
-  const needCount = pendingQuestions + (waitsInChat ? 1 : 0) + (ask === null ? 0 : ask.steps.filter((step) => !step.done).length) + (versionCard ? 1 : 0) + view.mergeRequests.length;
+  const needCount = pendingQuestions + (waitsInChat ? 1 : 0) + (ask === null ? 0 : ask.steps.filter((step) => !step.done).length) + (versionCard ? 1 : 0) + view.mergeRequests.length + view.releaseRequests.length;
   const repos = (project?.overview.repos ?? []).flatMap((repo) => (repo.name === null ? [] : [repo.name]));
   const toNeeds = () => needs.current?.scrollIntoView({ behavior: "smooth", block: "start" });
 
@@ -406,6 +407,14 @@ export function PlannerPage({ threadId, project, busy = false, onControl, onSpec
             {request.title}
           </p>
           <MergeConfirm ticketKey={request.key} confirm={request.confirm} disabled={busy} />
+        </div>
+      ))}
+      {view.releaseRequests.map((request) => (
+        <div key={request.key} data-release-request={request.key} className="space-y-1 rounded-md border border-warning bg-warning/10 p-3">
+          <p className="text-sm font-semibold">
+            {request.key} {request.title}
+          </p>
+          <DraftHold ticketKey={request.key} prUrl={request.prUrl} draft="held" requested={request.requested} disabled={busy} />
         </div>
       ))}
       {needCount === 0 && (

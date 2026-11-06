@@ -96,6 +96,8 @@ export const card = (over: Partial<BoardCard> = {}): BoardCard => ({
   waitsForSlot: false,
   ci: null,
   mergeConfirm: null,
+  draft: null,
+  releaseRequested: null,
   ...over,
 });
 
@@ -239,6 +241,8 @@ export const ticketDetail = (over: Partial<TicketDetail> = {}): TicketDetail => 
   stoppedFrom: null,
   reviewAgain: false,
   mergeConfirm: null,
+  draft: null,
+  releaseRequested: null,
   activity: { brief: { postId: 1, at: NOW - 6 * HOUR, edits: 0, fields: [] }, before: [], attempts: [attempt()] },
   at: null,
   now: NOW,
@@ -351,6 +355,7 @@ export const plannerViewOf = (over: Partial<PlannerView> = {}): PlannerView => (
   review: { kind: "approved", version: 1, round: 1, summary: "Both tickets serve the request." },
   triageRounds: 0,
   mergeRequests: [],
+  releaseRequests: [],
   now: NOW,
   ...over,
 });

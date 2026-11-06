@@ -36,6 +36,7 @@ import { specVersionView } from "./spec-view";
 import { HUMAN_ACTOR, type TicketState } from "./states";
 import { blockedAtStart, reviewAgainOf, specOf } from "./workers";
 import { mergeConfirmOf } from "./auto-merge";
+import { draftStateOf, releaseRequestOf } from "./drafts";
 
 const THROTTLE_MS = 300;
 
@@ -149,7 +150,7 @@ function queueOf(lites: TicketLite[], stack = false): (lite: TicketLite) => { re
 }
 
 /** One card per ticket. A queued ticket that is not ready says why, from a single readyTickets pass; `spec` says whether the project stacks. */
-export function boardCards(tickets: TicketRow[], threads: ThreadRow[], spec: Spec | null = null, store: Store | null = null): BoardCard[] {
+export function boardCards(tickets: TicketRow[], threads: ThreadRow[], spec: Spec | null = null, store: Store | null = null, now = Date.now()): BoardCard[] {
   const lites = tickets.map(toLite);
   const stack = spec !== null && stacking(spec);
   const queue = queueOf(lites, stack);
@@ -176,7 +177,9 @@ export function boardCards(tickets: TicketRow[], threads: ThreadRow[], spec: Spe
       mergeWait: mergeWaitView(ticket),
       waitsForSlot: lite.waitsSince !== null,
       ci: ciOf(spec, ticket),
-      mergeConfirm: spec === null || store === null ? null : mergeConfirmOf(store, spec, ticket),
+      mergeConfirm: spec === null || store === null ? null : mergeConfirmOf(store, spec, ticket, now),
+      draft: draftStateOf(ticket),
+      releaseRequested: store === null ? null : releaseRequestOf(store, ticket),
     };
   });
 }
@@ -266,6 +269,8 @@ export function draftCards(spec: Spec, at: number): BoardCard[] {
     waitsForSlot: false,
     ci: null,
     mergeConfirm: null,
+    draft: null,
+    releaseRequested: null,
   }));
 }
 
@@ -321,7 +326,7 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
     const metrics = past === null ? projectMetrics(store, project, at) : computeMetrics({ ...past, now: at });
     const approved = project.approved_version === null ? null : specOf(store, project);
     const current = approved ?? inForce;
-    const board = project.state === "draft" ? draftCards(current, at) : boardCards(tickets, threads, current, store);
+    const board = project.state === "draft" ? draftCards(current, at) : boardCards(tickets, threads, current, store, at);
     const summary = specSummary(spec.toml);
     const specReview = past === null ? specReviewStatus(store, project) : null;
     return {
@@ -458,7 +463,9 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
       replyTo: past === null ? (replyRecipient(store, ticket)?.role ?? null) : null,
       stoppedFrom: stoppedFrom(ticket, moves),
       reviewAgain: past === null && Object.values(reviewAgainOf(ticket, posts)).some(Boolean),
-      mergeConfirm: past === null ? mergeConfirmOf(store, specOf(store, project), ticket) : null,
+      mergeConfirm: past === null ? mergeConfirmOf(store, specOf(store, project), ticket, now()) : null,
+      draft: draftStateOf(ticket),
+      releaseRequested: past === null ? releaseRequestOf(store, ticket) : null,
       activity: ticketActivity({ state: ticket.state, posts, threads, runs }),
       at: past?.eventId ?? null,
       now: past?.at ?? now(),
@@ -552,6 +559,10 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
     },
     reply: async ({ key, body, parentId }, ctx) => {
       await act(ctx, "post", { key }, () => engine.humanPost(key, body, parentId));
+      return ticketDetail(key);
+    },
+    releaseDraft: async ({ key, prUrl }, ctx) => {
+      await act(ctx, "release draft", { key, prUrl }, () => engine.releaseDraft(key, prUrl));
       return ticketDetail(key);
     },
     confirmMerge: async ({ key, prUrl, sha }, ctx) => {

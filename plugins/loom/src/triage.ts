@@ -207,6 +207,7 @@ export function addTickets(ctx: EngineCtx, projectId: number, tickets: TicketSpe
           repo: ticket.repo ?? null,
           environment_json: ticket.environment === undefined ? null : JSON.stringify(ticket.environment.inputs),
           rollout_json: rolloutJson(ticket.rollout, (name) => resolve(name)!),
+          keep_draft: ticket.keep_draft === true ? 1 : 0,
         },
         actor,
       );
@@ -235,8 +236,14 @@ export function editTicket(ctx: EngineCtx, key: string, patch: TicketPatch, acto
   const ticket = requireTicket(ctx, key);
   const movesRepo = patch.repo !== undefined && patch.repo !== ticket.repo;
   const set = (Object.keys(patch) as Array<keyof TicketPatch>).filter((field) => patch[field] !== undefined);
-  const orderOnly = set.length > 0 && set.every((field) => field === "merge_after" || field === "rollout");
-  if (orderOnly && ticket.state === "cancelled") throw new LoomError("loom_invalid_state", `${key} is cancelled, so its ${set.includes("merge_after") ? "merge order" : "rollout"} no longer matters.`);
+  // Fields about the merge and its pull request, not the work, may change while a worker holds the ticket or it is open.
+  const orderOnly = set.length > 0 && set.every((field) => field === "merge_after" || field === "rollout" || field === "keep_draft");
+  if (orderOnly && ticket.state === "cancelled") throw new LoomError("loom_invalid_state", `${key} is cancelled, so its ${set.includes("merge_after") ? "merge order" : set.includes("rollout") ? "rollout" : "draft hold"} no longer matters.`);
+  if (orderOnly && ticket.state === "done" && set.includes("keep_draft")) throw new LoomError("loom_invalid_state", `${key} is done, so its draft hold no longer matters.`);
+  // The planner may hold a draft, but only the human lets one go: once a pull request exists, by its release or a spec version they approve.
+  if (patch.keep_draft === false && ticket.keep_draft === 1 && ticket.pr_url !== null) {
+    throw new LoomError("loom_forbidden", `${key}'s pull request ${ticket.pr_url} is held as a draft. Only the human releases it, with Release draft or \`bb loom release\`; ask them with loom_release_draft.`);
+  }
   if (orderOnly && ticket.state === "done" && set.includes("merge_after")) throw new LoomError("loom_invalid_state", `${key} is done, so its merge order no longer matters.`);
   if (!orderOnly && ticket.state !== "queued" && ticket.state !== "blocked") {
     if (movesRepo) throw repoLocked(key, `is ${ticket.state}`, patch.repo!);
@@ -318,6 +325,7 @@ export function editTicket(ctx: EngineCtx, key: string, patch: TicketPatch, acto
     ...(patch.depends_on === undefined ? {} : { deps_json: JSON.stringify(deps) }),
     ...(patch.merge_after === undefined ? {} : { merge_after_json: JSON.stringify(mergeAfter) }),
     ...(patch.rollout === undefined ? {} : { rollout_json: rollout }),
+    ...(patch.keep_draft === undefined ? {} : { keep_draft: patch.keep_draft ? 1 : 0 }),
     ...(patch.priority === undefined ? {} : { priority: patch.priority }),
     ...(patch.repo === undefined ? {} : { repo: patch.repo }),
     // An empty patch leaves the ticket with its repo's inputs.

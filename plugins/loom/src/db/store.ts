@@ -115,6 +115,8 @@ export interface TicketRow {
   head_tree: string | null;
   /** TicketRolloutSpec: the ticket's place in the deploy order, with ticket keys in requires_live; null for none. */
   rollout_json: string | null;
+  /** 1 while the human holds the ticket's pull request as a draft (`keep_draft`), 0 otherwise. */
+  keep_draft: number;
   /** MergeWait: the merge failed in a way worth waiting out, so the ticket stays in merging and the queue waits until it runs again; null otherwise. */
   merge_wait_json: string | null;
   /** MergeStep: a merge Loom put in the worker's worktree whose checks have not passed yet, which the next run of the merge finishes instead of merging again; null otherwise. */
@@ -130,7 +132,7 @@ export interface TicketRow {
 }
 
 export type NewTicket = Pick<TicketRow, "project_id" | "seq" | "key" | "ref" | "title" | "body" | "acceptance_json" | "verify_json" | "scope_json" | "deps_json" | "priority"> &
-  Partial<Pick<TicketRow, "repo" | "environment_json" | "merge_after_json" | "rollout_json">>;
+  Partial<Pick<TicketRow, "repo" | "environment_json" | "merge_after_json" | "rollout_json" | "keep_draft">>;
 
 export interface PostRow {
   id: number;
@@ -514,10 +516,10 @@ export class Store {
       const now = this.now();
       const result = this.db
         .prepare(
-          `INSERT INTO tickets (project_id, seq, key, ref, title, body, acceptance_json, verify_json, scope_json, deps_json, priority, repo, environment_json, merge_after_json, rollout_json, state, created_by, created_at, updated_at, state_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)`,
+          `INSERT INTO tickets (project_id, seq, key, ref, title, body, acceptance_json, verify_json, scope_json, deps_json, priority, repo, environment_json, merge_after_json, rollout_json, keep_draft, state, created_by, created_at, updated_at, state_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)`,
         )
-        .run(row.project_id, row.seq, row.key, row.ref, row.title, row.body, row.acceptance_json, row.verify_json, row.scope_json, row.deps_json, row.priority, row.repo ?? null, row.environment_json ?? null, row.merge_after_json ?? "[]", row.rollout_json ?? null, actor, now, now, now);
+        .run(row.project_id, row.seq, row.key, row.ref, row.title, row.body, row.acceptance_json, row.verify_json, row.scope_json, row.deps_json, row.priority, row.repo ?? null, row.environment_json ?? null, row.merge_after_json ?? "[]", row.rollout_json ?? null, row.keep_draft ?? 0, actor, now, now, now);
       const ticket = this.requireTicket(Number(result.lastInsertRowid));
       this.event(ticket.project_id, ticket.id, "ticket.created", actor, { key: ticket.key, ref: ticket.ref });
       return ticket;

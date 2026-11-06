@@ -149,6 +149,8 @@ export const forgeSchema = z
     ignore_checks: z.array(nonBlankGlob).max(20).optional(),
     // Hands a ready pull request to the forge's merge; auto_merge says when.
     merge: command.optional(),
+    // Marks a draft pull request ready for review in LOOM_URL; gh does it itself.
+    ready: command.optional(),
     // Asks the logins in LOOM_REVIEWERS to review; and lists a team's members, one login per line.
     request_reviews: command.optional(),
     team_members: command.optional(),
@@ -223,6 +225,8 @@ export const ticketSpecSchema = z
     repo: z.string().min(1).max(24).optional(),
     environment: ticketEnvironmentSchema.optional(),
     rollout: ticketRolloutSchema.optional(),
+    // Keep the pull request a draft until the human releases it; Loom marks every other one ready for review. No default, so specs hash as before.
+    keep_draft: z.boolean().optional(),
   })
   .strict();
 
@@ -265,6 +269,7 @@ export const ticketPatchSchema = z
     repo: ticketSpecSchema.shape.repo,
     environment: ticketSpecSchema.shape.environment,
     rollout: ticketSpecSchema.shape.rollout,
+    keep_draft: ticketSpecSchema.shape.keep_draft,
   })
   .strict();
 

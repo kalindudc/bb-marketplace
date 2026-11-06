@@ -342,7 +342,8 @@ describe("asking for reviews", () => {
   });
 
   it("asks two of a team once the pull request is not a draft, once, and says who and why", async () => {
-    await openPr({ draft: true, forge: { kind: "gh", reviewers: [{ team: "acme/edge", count: 2 }, { users: ["zoe"] }] } });
+    // Held as a draft, so Loom does not mark it ready itself; someone marks it ready on the forge.
+    await openPr({ draft: true, forge: { kind: "gh", reviewers: [{ team: "acme/edge", count: 2 }, { users: ["zoe"] }] } }, (doc) => void (doc.ticket[0].keep_draft = true));
     h.host.teams.set("acme/edge", people("alice", "bob", "carol", "kalindudc", "ci[bot]"));
     h.host.reviewState.set(URL, { author: "kalindudc", requested: ["bob"], reviewed: [] });
     await poll();

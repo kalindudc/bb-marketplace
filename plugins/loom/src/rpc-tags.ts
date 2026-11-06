@@ -30,6 +30,7 @@ export const RPC_TAGS = {
   reply: { invalidates: (_: unknown, view: TicketDetail) => changedTags(view.slug) },
   ticketAction: { invalidates: (_: unknown, view: TicketDetail) => changedTags(view.slug) },
   confirmMerge: { invalidates: (_: unknown, view: TicketDetail) => changedTags(view.slug) },
+  releaseDraft: { invalidates: (_: unknown, view: TicketDetail) => changedTags(view.slug) },
   control: { invalidates: changesProject },
   sendNotes: { invalidates: changesProject },
   planning: { tags: anything },

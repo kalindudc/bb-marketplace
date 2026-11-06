@@ -1,6 +1,7 @@
 // The engine: a control loop that works every running project, the human's commands on the engine's state, and
 // the handlers for bb's thread events. Behavior lives in workers.ts, checks.ts and triage.ts; this wires it together.
 import { confirmMerge, maintainFinalReviews, type SeenHead } from "./auto-merge";
+import { releaseDraft } from "./drafts";
 import { finalThreadEvent } from "./final-review";
 import { resumeCheckingTickets } from "./checks";
 import { repoCheckout, type RepoCheckout } from "./checkouts";
@@ -538,12 +539,24 @@ export class Engine {
     const ticket = this.ctx.store.ticketByKey(key);
     if (ticket === null) throw new LoomError("loom_not_found", `No ticket ${key}.`);
     const project = this.ctx.store.project(ticket.project_id)!;
-    const said = confirmMerge(this.ctx.store, project, ticket, seen);
+    const said = confirmMerge(this.ctx.store, project, ticket, seen, this.ctx.now());
     try {
       requestSync(this.ctx, project.slug, key);
     } catch (error) {
       this.warn("confirm merge read", error);
     }
+    this.kick();
+    return said;
+  }
+
+  /**
+   * The human's release of a held draft (keep_draft) of the pull request they saw at `prUrl`, from the panel or the CLI;
+   * never a Loom agent's. A ticket whose pull request is another one now is refused.
+   */
+  async releaseDraft(key: string, prUrl: string): Promise<string> {
+    const ticket = this.ctx.store.ticketByKey(key);
+    if (ticket !== null && ticket.pr_url !== null && ticket.pr_url !== prUrl) throw new LoomError("loom_invalid_state", `${key}'s pull request is ${ticket.pr_url} now, not ${prUrl}. Nothing is released; look at the new one.`);
+    const said = await releaseDraft(this.ctx, key);
     this.kick();
     return said;
   }

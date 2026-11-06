@@ -6,7 +6,7 @@ import { notesMessage } from "../src/prompts";
 import { agentRows, boardCards, registerRpc, specSummary, watchChanges } from "../src/rpc";
 import { START_FAILED, specOf } from "../src/workers";
 import { withRepos } from "./fixtures";
-import { FakePort, makeCtx, makeHost, seedProject, specToml, startWorker, type Doc } from "./helpers";
+import { FakePort, makeCtx, makeHost, readyToMerge, seedProject, specToml, startWorker, type Doc } from "./helpers";
 
 let host: ReturnType<typeof makeHost>;
 let fake: FakePort;
@@ -316,9 +316,9 @@ describe("reads", () => {
   it("confirmMerge confirms the pull request and commit the page showed, as the human, and refuses a replay once the head moved", async () => {
     await running((doc) => void (doc.merge = { strategy: "pr", forge: { kind: "gh", auto_merge: { method: "squash" } } }));
     const url = "https://github.com/acme/shop/pull/1";
-    host.store.updateTicket(ticketId("CSV-1"), { state: "pr_open", pr_url: url, pushed_sha: "a".repeat(40) });
+    host.store.updateTicket(ticketId("CSV-1"), { state: "pr_open", pr_url: url, pushed_sha: "a".repeat(40), ...readyToMerge("a".repeat(40)) });
     const shown = (await call<TicketDetail>("ticket", { key: "CSV-1" })).mergeConfirm!;
-    expect(shown).toEqual({ prUrl: url, sha: "a".repeat(40), ready: false, confirmed: false, requested: null });
+    expect(shown).toEqual({ prUrl: url, sha: "a".repeat(40), ready: true, waiting: null, confirmed: false, requested: null });
     const request = { key: "CSV-1", prUrl: shown.prUrl, sha: shown.sha, confirm: true };
 
     host.store.updateTicket(ticketId("CSV-1"), { pushed_sha: "b".repeat(40) });

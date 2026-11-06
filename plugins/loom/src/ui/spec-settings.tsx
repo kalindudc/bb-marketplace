@@ -309,6 +309,7 @@ const FORGE_COMMANDS = [
   ["reply", "Replies to review comments"],
   ["retarget", "Moves a pull request to another base"],
   ["merge", "Merges a ready pull request"],
+  ["ready", "Marks a draft ready for review"],
   ["request_reviews", "Asks people to review"],
   ["team_members", "Lists a team's members"],
 ] as const;

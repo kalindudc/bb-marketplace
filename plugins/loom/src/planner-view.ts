@@ -3,6 +3,7 @@
 // words in each turn, which bb hands over when its thread goes idle. Question rounds live in bb's thread; the page adds them.
 import { plannerAsk, type AskStep, type PlannerAsk } from "./asks";
 import { mergeConfirmOf, type MergeConfirmState } from "./auto-merge";
+import { releaseRequestOf } from "./drafts";
 import { specOf } from "./workers";
 import type { EventRow, ProjectRow, Store } from "./db/store";
 import type { Projects, SpecView } from "./projects";
@@ -91,14 +92,23 @@ export interface PlannerView {
   triageRounds: number;
   /** The merges the planner asked the human to confirm, for the commit each pull request is at now, not yet confirmed. */
   mergeRequests: Array<{ key: string; title: string; confirm: MergeConfirmState }>;
+  /** The held drafts the planner asked the human to release, not yet released. */
+  releaseRequests: Array<{ key: string; title: string; prUrl: string; requested: { at: number; note: string } }>;
   now: number;
 }
 
-function mergeRequestsOf(store: Store, project: ProjectRow): PlannerView["mergeRequests"] {
+function releaseRequestsOf(store: Store, project: ProjectRow): PlannerView["releaseRequests"] {
+  return store.tickets(project.id, ["pr_open"]).flatMap((ticket) => {
+    const requested = releaseRequestOf(store, ticket);
+    return requested === null ? [] : [{ key: ticket.key, title: ticket.title, prUrl: ticket.pr_url!, requested }];
+  });
+}
+
+function mergeRequestsOf(store: Store, project: ProjectRow, now: number): PlannerView["mergeRequests"] {
   if (project.approved_version === null) return [];
   const spec = specOf(store, project);
   return store.tickets(project.id, ["pr_open"]).flatMap((ticket) => {
-    const confirm = mergeConfirmOf(store, spec, ticket);
+    const confirm = mergeConfirmOf(store, spec, ticket, now);
     return confirm?.requested == null ? [] : [{ key: ticket.key, title: ticket.title, confirm }];
   });
 }
@@ -282,7 +292,8 @@ export function plannerView(deps: { store: Store; projects: Projects }, threadId
     versions: project === null ? [] : versionsOf(store, projects, project),
     review: project === null ? { kind: "none" } : specReviewStatus(store, project),
     triageRounds: project?.triage_round ?? 0,
-    mergeRequests: project === null || project.state === "archived" ? [] : mergeRequestsOf(store, project),
+    mergeRequests: project === null || project.state === "archived" ? [] : mergeRequestsOf(store, project, now),
+    releaseRequests: project === null || project.state === "archived" ? [] : releaseRequestsOf(store, project),
     now,
   };
 }

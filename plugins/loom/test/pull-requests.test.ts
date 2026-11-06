@@ -79,7 +79,7 @@ describe("writing the pull request", () => {
     const asks = h.bb.sent(worker.thread_id!).filter((text) => text.includes("loom_pr"));
     expect(asks).toHaveLength(1);
     expect(asks[0]).toContain("Write its pull request and hand it in with loom_pr({ title, body, commit_message })");
-    expect(asks[0]).toContain("follow your own instructions and skills for pull request descriptions and commit messages");
+    expect(asks[0]).toContain("Read the loom-pr-description skill first and follow it for the title and description");
     await queue();
     expect(ticket().state).toBe("approved");
     expect(h.host.callsTo("push")).toEqual([]);
@@ -95,7 +95,7 @@ describe("writing the pull request", () => {
     const branch = ticket().branch!;
     expect(h.host.callsTo("prCommit")).toEqual([{ repo: "/repo", remote: "origin", branch, base: "origin/main", head: "c1", message: TEXT.commit_message }]);
     expect(h.host.callsTo("push")).toEqual([{ repo: "/repo", remote: "origin", src: "sq1", branch }]);
-    expect(h.host.callsTo("prCreate")[0]).toMatchObject({ head: branch, title: TEXT.title, body: `${TEXT.body}\n\n<!-- loom:begin -->\nOpened by Loom for CSV-1.\n<!-- loom:end -->`, draft: true });
+    expect(h.host.callsTo("prCreate")[0]).toMatchObject({ head: branch, title: TEXT.title, body: `${TEXT.body}\n\n<!-- loom:begin -->\n<!-- loom:ticket CSV-1 -->\n<!-- loom:end -->`, draft: true });
     expect(ticket()).toMatchObject({ state: "pr_open", pr_url: URL, pr_branch: branch, pushed_sha: "sq1", pushed_at: h.clock.t });
     expect(dataOf("pr_text")[0]!.data).toMatchObject({ by: "worker", fix: false, title: TEXT.title, body: TEXT.body, commit: TEXT.commit_message });
     expect(dataOf("pr_opened")[0]!.post.body).toBe(`Opened pull request ${URL} as 1 commit (sq1).`);
@@ -119,8 +119,8 @@ describe("writing the pull request", () => {
     expect(h.bb.sent(worker.thread_id!).at(-1)).toContain("your turn ended without loom_pr");
     await onPrWriterIdle(h.ctx, worker);
     await queue();
-    expect(h.host.callsTo("prCommit")[0]!.message).toBe("CSV-1: Order rows");
-    expect(h.host.callsTo("prCreate")[0]).toMatchObject({ title: "CSV-1: Order rows", body: expect.stringContaining("Acceptance criteria:") });
+    expect(h.host.callsTo("prCommit")[0]!.message).toBe("Order rows");
+    expect(h.host.callsTo("prCreate")[0]).toMatchObject({ title: "Order rows", body: expect.stringContaining("## Summary\n\nOrder rows") });
     expect(dataOf("pr_text")[0]).toMatchObject({ post: { author_kind: "loom", body: expect.stringContaining("the worker ended its turn twice without loom_pr") }, data: { by: "loom" } });
   });
 
@@ -179,7 +179,7 @@ describe("following the pull request", () => {
     expect(h.host.callsTo("prFeedback")).toEqual([]);
     expect(h.host.callsTo("prState")).toEqual([]);
     expect(JSON.parse(ticket().pr_status_json!)).toMatchObject({ passed: 1, pending: 1, failed: 0, at: h.clock.t });
-    expect(JSON.parse(ticket().pr_meta_json!)).toEqual({ at: h.clock.t, draft: true, review: null, base: "main", mergeable: null, state: "OPEN" });
+    expect(JSON.parse(ticket().pr_meta_json!)).toEqual({ at: h.clock.t, draft: false, review: null, base: "main", mergeable: null, state: "OPEN" });
     expect(ticket().state).toBe("pr_open");
   });
 
@@ -672,7 +672,7 @@ describe("following the pull request", () => {
       await queue();
 
       expect(h.host.callsTo("fetchTip").at(-1)).toEqual({ repo: "/repo", remote: "origin", branch: ticket().pr_branch, base: "main", ref: "refs/loom/csv/csv-1/tip" });
-      expect(h.host.callsTo("mergeOnto")).toEqual([{ repo: "/repo", head, ref: "theirs1", base: "sq1", message: "Merge the new commits on the pull request's branch into CSV-1 (Loom)", refs: [] }]);
+      expect(h.host.callsTo("mergeOnto")).toEqual([{ repo: "/repo", head, ref: "theirs1", base: "sq1", message: `Merge origin/${ticketOf(h, "CSV-1").pr_branch} into ${ticketOf(h, "CSV-1").pr_branch}`, refs: [] }]);
       const merged = ticket().head_sha!;
       expect(merged).toMatch(/^lm/u);
       expect(h.host.callsTo("resetHard").at(-1)).toEqual({ worktree, sha: merged });

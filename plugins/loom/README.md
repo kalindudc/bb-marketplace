@@ -799,6 +799,28 @@ its own pull request.
   worker until its pull request merges; a spec version approved later may
   change it either way.
 
+### Drafts
+
+With `merge.draft = true`, the default, Loom opens each pull request as a
+draft, and then marks it ready for review: right after it opens when the forge
+has no `after_open` commands, else at the first read after those commands end
+that still finds it a draft, once per pull request, and once it targets its repo's base (a stacked
+pull request waits until it moves there). It posts on the ticket when it does,
+and asks for reviewers as before. `gh` marks it ready itself; a command forge
+needs a `ready` command. Loom never makes a pull request a draft again.
+
+A ticket that must stay a draft sets `keep_draft = true` in its `[[ticket]]`
+table, or through `loom_edit_ticket`; its pull request opens as a draft even
+with `merge.draft = false`. The planner can clear it only before the pull
+request exists; after that only your release, or a spec version you approve,
+lets it go. Loom never marks its pull request ready:
+the board card, the ticket page and the Merge order tab show it as "Held as a
+draft: you release it", and you release it with Release draft there or with
+`bb loom release <slug> --ticket CSV-1`, which marks it ready for review. The
+planner can only ask you to, with `loom_release_draft`; the request shows on
+the Planner page, the ticket and its card. A draft Loom is about to mark ready
+shows as "being marked ready", never as ready to merge.
+
 ### Merging ready pull requests
 
 Loom merges nothing by itself unless a repo's forge says how, with
@@ -819,10 +841,14 @@ auto_merge = { method = "squash" }
   `bb loom auto-merge <slug> confirm --ticket CSV-1 --pr <url> --sha <full sha>`
   (without them it prints the pull request and commit it would confirm). A confirmation names the pull
   request and commit you saw, and Loom refuses it once either has changed, so a
-  new push always needs a new confirmation. You may confirm before the pull
-  request is ready. The planner cannot confirm: its `loom_confirm_merge` only
-  asks you, and the request shows on the Planner page, the ticket and its card
-  with the same Confirm button. `"auto"` merges once the pull request is ready,
+  new push always needs a new confirmation. Confirm merge shows only once the
+  pull request is ready to merge: Loom's Ready to merge verdict (not a draft,
+  approved, checks passed, nothing before it), no freeze window, what
+  `require_live` names live, and a passed final review, all on the commit Loom
+  pushed. Until then the ticket and its card say the one thing it waits for,
+  and Loom refuses a confirmation. The planner cannot confirm: its
+  `loom_confirm_merge` only asks you, and the request shows on the Planner
+  page, the ticket and its card, as waiting until the pull request is ready. `"auto"` merges once the pull request is ready,
   with no confirmation.
 - `method` is how the repo merges. With `gh`: `"squash"`, `"merge"` or
   `"rebase"` run `gh pr merge` with that method; `"queue"` runs
@@ -1417,6 +1443,7 @@ bb loom sync <slug> [--ticket CSV-1]         # pull request strategy: read the o
 bb loom forge check <slug> CSV-1 [--version N]  # read a live pull request through the repo's forge, as a poll would
 bb loom rollout <slug>                       # the deploy order: next safe step, warnings, stages, milestones
 bb loom live <slug> CSV-1 [--note t] [--undo]  # mark a rollout step or milestone live, or take the mark back
+bb loom release <slug> --ticket CSV-1         # mark a held draft (keep_draft) ready for review
 bb loom auto-merge <slug> off|on|retry|accept|confirm [--ticket CSV-1] [--pr <url> --sha <sha>]  # stop or resume Loom's merging; retry clears a ticket's attempt or held final review; accept merges on an incomplete one; confirm lets a manual merge go
 bb loom archive <slug>
 ```

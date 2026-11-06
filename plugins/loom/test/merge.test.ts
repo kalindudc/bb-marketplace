@@ -42,7 +42,7 @@ describe("the integration merge", () => {
     expect(hostCallsSince(mark).map((call) => [call.method, call.input])).toEqual([
       ["ensureWorktree", { repo: "/repo", key: "csv", branch: "loom/csv" }],
       ["worktreeState", { worktree: WORKTREE, base: "main" }],
-      ["merge", { worktree: WORKTREE, ref: "c1", message: "CSV-1: Order rows (Loom)", before: "base000" }],
+      ["merge", { worktree: WORKTREE, ref: "c1", message: `Merge ${ticketOf(h, "CSV-1").branch} into ${spec().merge.branch}\n\nOrder rows`, before: "base000" }],
       ["exec", { cwd: WORKTREE, command: "npm run e2e", timeoutMs: 15 * 60_000 }],
       ["worktreeState", { worktree: WORKTREE, base: "main", trackedOnly: true }],
     ]);
@@ -385,7 +385,7 @@ describe("the integration merge on a multi-repo project", () => {
     expect(hostCallsSince(mark).map((call) => [call.hostId, call.method, call.input])).toEqual([
       ["host_1", "ensureWorktree", { repo: "/src/web", key: "csv.web", branch: "loom/csv" }],
       ["host_1", "worktreeState", { worktree: WEB, base: "main" }],
-      ["host_1", "merge", { worktree: WEB, ref: ticketOf(h, "CSV-1").head_sha, message: "CSV-1: Order rows (Loom)", before: "base000" }],
+      ["host_1", "merge", { worktree: WEB, ref: ticketOf(h, "CSV-1").head_sha, message: `Merge ${ticketOf(h, "CSV-1").branch} into ${spec().merge.branch}\n\nOrder rows`, before: "base000" }],
       ["host_1", "exec", { cwd: WEB, command: "npm run web-e2e", timeoutMs: 15 * 60_000 }],
       ["host_1", "worktreeState", { worktree: WEB, base: "main", trackedOnly: true }],
     ]);
@@ -398,7 +398,7 @@ describe("the integration merge on a multi-repo project", () => {
     expect(hostCallsSince(mark).map((call) => [call.method, call.input])).toEqual([
       ["ensureWorktree", { repo: "/src/api", key: "csv.api", branch: "loom/csv" }],
       ["worktreeState", { worktree: API, base: "trunk" }],
-      ["merge", { worktree: API, ref: ticketOf(h, "CSV-2").head_sha, message: "CSV-2: Export endpoint (Loom)", before: "base000" }],
+      ["merge", { worktree: API, ref: ticketOf(h, "CSV-2").head_sha, message: `Merge ${ticketOf(h, "CSV-2").branch} into ${spec().merge.branch}\n\nExport endpoint`, before: "base000" }],
       ["exec", { cwd: API, command: "npm run e2e", timeoutMs: 15 * 60_000 }],
       ["worktreeState", { worktree: API, base: "trunk", trackedOnly: true }],
     ]);
@@ -483,7 +483,7 @@ describe("the pull request strategy", () => {
     edit?.(doc);
   };
 
-  it("pushes head_sha to the ticket's branch and opens one draft pull request with the ticket, criteria and review summary", async () => {
+  it("pushes head_sha to the ticket's branch and opens one draft pull request with the ticket's summary and criteria", async () => {
     await seedProject(h, pr());
     const worker = await reachApproved(h);
     const branch = ticketOf(h, "CSV-1").branch;
@@ -494,16 +494,17 @@ describe("the pull request strategy", () => {
     expect(pushed).toMatchObject({ method: "push", input: { repo: "/repo", remote: "origin", src: "c1", branch } });
     expect(created!.method).toBe("prCreate");
     const input = created!.input as { repo: string; remote: string; base: string; head: string; title: string; body: string; draft: boolean };
-    expect(input).toMatchObject({ repo: "/repo", remote: "origin", base: "main", head: branch, title: "CSV-1: Order rows", draft: true });
+    expect(input).toMatchObject({ repo: "/repo", remote: "origin", base: "main", head: branch, title: "Order rows", draft: true });
     expect(input.body).toContain("Build the row mapper.");
-    expect(input.body).toContain("1. WHEN an order is mapped THE SYSTEM SHALL return one row");
-    expect(input.body).toContain("Looks good");
+    expect(input.body).toContain("- WHEN an order is mapped THE SYSTEM SHALL return one row");
+    expect(input.body).not.toContain("Looks good");
     expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "pr_open", pr_url: "https://github.com/acme/shop/pull/1", pr_checked_at: h.clock.t });
     expect(lastPost("merge").body).toContain("https://github.com/acme/shop/pull/1");
     expect(h.store.thread(worker.id)!.state).toBe("active");
     expect(mergeRuns().map((run) => [run.label, run.ok])).toEqual([
       ["git push", 1],
       ["open the pull request", 1],
+      ["mark the pull request ready for review", 1],
     ]);
     expect(h.store.runOutput(mergeRuns()[1]!.id)).toBe("Opened https://github.com/acme/shop/pull/1.");
   });
@@ -514,7 +515,7 @@ describe("the pull request strategy", () => {
     await queue();
     const apiBranch = ticketOf(h, "CSV-2").branch;
     expect(h.host.callsTo("push")).toEqual([{ repo: "/src/api", remote: "upstream", src: ticketOf(h, "CSV-2").head_sha, branch: apiBranch }]);
-    expect(h.host.callsTo("prCreate")[0]).toMatchObject({ repo: "/src/api", remote: "upstream", base: "trunk", head: apiBranch, title: "CSV-2: Export endpoint" });
+    expect(h.host.callsTo("prCreate")[0]).toMatchObject({ repo: "/src/api", remote: "upstream", base: "trunk", head: apiBranch, title: "Export endpoint" });
     expect(ticketOf(h, "CSV-2")).toMatchObject({ state: "pr_open", pr_url: "https://github.com/acme/shop/pull/1" });
 
     await reachApproved(h, "CSV-1");
@@ -1136,6 +1137,8 @@ describe("reading open pull requests in batches", () => {
     await seedProject(h, withTickets(12));
     openAll((n) => `https://github.com/acme/shop/pull/${100 + n}`);
     h.host.prMeta.set("https://github.com/acme/shop/pull/103", { draft: true, review: "APPROVED", base: "main", mergeable: false });
+    // Held as a draft, so the read is stored as it came and Loom does not mark it ready.
+    h.store.updateTicket(ticketOf(h, "CSV-3").id, { keep_draft: 1 });
     await pollPullRequests(h.ctx, project());
 
     expect(h.host.calls.map((call) => call.method)).toEqual(["prBatch", "prBatch"]);
@@ -1269,7 +1272,7 @@ describe("land", () => {
     const input = created!.input as { base: string; head: string; title: string; body: string; draft: boolean };
     expect(input).toMatchObject({ base: "main", head: "loom/csv", title: "CSV export", draft: true });
     expect(input.body).toContain("Let people export their orders as a CSV file");
-    expect(input.body).toContain("- CSV-1 Order rows");
+    expect(input.body).toContain("- Order rows");
     expect(input.body).not.toContain("CSV-2");
     expect(project().pr_url).toBe("https://github.com/acme/shop/pull/1");
     expect(h.store.events(project().id).filter((event) => event.kind === "project.landed").map((event) => [event.actor, JSON.parse(event.data_json)])).toEqual([
@@ -1397,7 +1400,7 @@ describe("land", () => {
       const result = await land(h.ctx, "csv", direct);
 
       expect(result).toEqual({ url: null, pushed: "origin/main", sha: "m2", done: true });
-      expect(hostCallsSince(mark).find((call) => call.method === "merge")!.input).toEqual({ worktree: WORKTREE, ref: "up1", message: "Merge origin/main into loom/csv (Loom)" });
+      expect(hostCallsSince(mark).find((call) => call.method === "merge")!.input).toEqual({ worktree: WORKTREE, ref: "up1", message: "Merge origin/main into loom/csv" });
       expect(hostCallsSince(mark).map((call) => call.method)).toEqual(["ensureWorktree", "fetchBranch", "merge", "exec", "worktreeState", "push"]);
       expect(h.host.callsTo("push").at(-1)).toMatchObject({ src: "m2", branch: "main" });
       expect(project().state).toBe("done");
@@ -1520,13 +1523,12 @@ describe("land on a multi-repo project", () => {
 
     const [web, api] = h.host.callsTo("prCreate").map((call) => call.body);
     expect(web).toContain("Let people export their orders as a CSV file");
-    expect(web).toContain("- CSV-1 Order rows");
-    expect(web).not.toContain("CSV-2");
-    expect(web).not.toContain("CSV-3");
-    expect(web).toContain('This pull request lands the project\'s work in the repo "web". The project also changes the repos "api" and "docs", which land on their own.');
-    expect(api).toContain("- CSV-2 Export endpoint");
-    expect(api).not.toContain("CSV-1");
-    expect(api).toContain('the repo "api". The project also changes the repos "web" and "docs"');
+    expect(web).toContain("- Order rows");
+    expect(web).not.toContain("Export endpoint");
+    expect(web).toContain('This pull request lands this work in "web". The same work also changes "api" and "docs", which land on their own.');
+    expect(api).toContain("- Export endpoint");
+    expect(api).not.toContain("Order rows");
+    expect(api).toContain('lands this work in "api". The same work also changes "web" and "docs"');
 
     expect(project().pr_url).toBeNull();
     expect(repoRows()).toEqual({
@@ -1646,13 +1648,13 @@ describe("land on a multi-repo project", () => {
     expect(hostCallsSince(mark).map((call) => [call.method, call.input])).toEqual([
       ["ensureWorktree", { repo: "/src/web", key: "csv.web", branch: "loom/csv" }],
       ["fetchBranch", { worktree: WEB, remote: "origin", branch: "main" }],
-      ["merge", { worktree: WEB, ref: "up1", message: "Merge origin/main into loom/csv (Loom)" }],
+      ["merge", { worktree: WEB, ref: "up1", message: "Merge origin/main into loom/csv" }],
       ["exec", { cwd: WEB, command: "npm run web-e2e", timeoutMs: 15 * 60_000 }],
       ["worktreeState", { worktree: WEB, base: "main", trackedOnly: true }],
       ["push", { repo: "/src/web", remote: "origin", src: "m3", branch: "main" }],
       ["ensureWorktree", { repo: "/src/api", key: "csv.api", branch: "loom/csv" }],
       ["fetchBranch", { worktree: API, remote: "upstream", branch: "trunk" }],
-      ["merge", { worktree: API, ref: "up1", message: "Merge upstream/trunk into loom/csv (Loom)" }],
+      ["merge", { worktree: API, ref: "up1", message: "Merge upstream/trunk into loom/csv" }],
       ["exec", { cwd: API, command: "npm run e2e", timeoutMs: 15 * 60_000 }],
       ["worktreeState", { worktree: API, base: "trunk", trackedOnly: true }],
       ["push", { repo: "/src/api", remote: "upstream", src: "m4", branch: "trunk" }],

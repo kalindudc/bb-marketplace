@@ -5,6 +5,7 @@ import type { BbPluginApi, PluginAgentToolResult } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { ASK_ACTIONS, recordAsk } from "./asks";
 import { requestMerge } from "./auto-merge";
+import { requestRelease } from "./drafts";
 import { submit } from "./checks";
 import { ticketRepo } from "./checkouts";
 import { formatTicket } from "./cli";
@@ -24,7 +25,7 @@ import { SPEC_REVIEW_ROUNDS, TICKET_STATES } from "./states";
 import { addTickets, boardText, editTicket } from "./triage";
 import { blockTicket, requeueTicket, resumeWork, specOf } from "./workers";
 
-export const PLANNER_TOOLS = ["loom_propose", "loom_discover", "loom_board", "loom_ticket", "loom_requeue", "loom_confirm_merge", "loom_add_tickets", "loom_edit_ticket", "loom_cancel_ticket", "loom_post", "loom_ask_human"] as const;
+export const PLANNER_TOOLS = ["loom_propose", "loom_discover", "loom_board", "loom_ticket", "loom_requeue", "loom_confirm_merge", "loom_release_draft", "loom_add_tickets", "loom_edit_ticket", "loom_cancel_ticket", "loom_post", "loom_ask_human"] as const;
 export const WORKER_TOOLS = ["loom_note", "loom_submit", "loom_block", "loom_pr", "loom_pr_reply"] as const;
 /** A worker on a machine of its own also has loom_resume, to carry in the work its ticket's earlier workers left. */
 export const MACHINE_WORKER_TOOLS = [...WORKER_TOOLS, "loom_resume"] as const;
@@ -235,6 +236,19 @@ export function registerTools(bb: BbPluginApi, projects: Projects, engine: Engin
   });
 
   bb.agents.registerTool({
+    name: "loom_release_draft",
+    description:
+      "Ask the human to release a ticket's pull request that keep_draft holds as a draft. This releases nothing: it puts the request, with your note, on the Planner page, the ticket and its board card, and the pull request stays a draft until the human releases it there or with the CLI. Use it when the work the draft waited for is done, or the human asked you to get it reviewed.",
+    presentation: { label: { pending: "Asking the human to release a draft", completed: "Asked the human to release a draft" } },
+    parameters: z.object({ key: z.string().min(1).max(40), note: z.string().min(1).max(2000).describe("Why you ask, for the human.") }),
+    execute: ({ key, note }, tool) =>
+      run(() => {
+        planner(tool.threadId, key);
+        return requestRelease(store, key, tool.threadId, note);
+      }),
+  });
+
+  bb.agents.registerTool({
     name: "loom_add_tickets",
     description:
       "Add tickets to the board, for example to split a blocked ticket or add a missing dependency. Same fields as the spec's [[ticket]] tables. On a project whose spec has [[repo]] tables, every ticket sets repo to one of those repo names, and its scope and verify are checked against that repo's protected paths and checks; on a single-repo project, leave repo out. depends_on may name refs in this batch or tickets already on the board (key or ref); the cycle check covers the batch. merge_after works the same way: the tickets whose pull requests merge before this one's, without holding its start or stacking it. rollout (pull request strategy only) places the ticket in the deploy order: its stage, requires_live (refs in this batch, tickets on the board, or the spec's milestone refs), release, dark, how, verify and rollback; it is advice for the human and holds nothing back. Nothing is added when any ticket is refused.",
@@ -251,7 +265,7 @@ export function registerTools(bb: BbPluginApi, projects: Projects, engine: Engin
   bb.agents.registerTool({
     name: "loom_edit_ticket",
     description:
-      "Change a queued or blocked ticket. Only the fields in the patch change: title, body, acceptance, verify, scope, depends_on, merge_after, priority, repo, rollout. A patch of merge_after alone changes any ticket that has not finished, for example one whose pull request is open, since the merge order holds nothing a worker does. A patch of rollout alone, or with merge_after, does too, and rollout alone also changes a done ticket, whose deploy can come after its merge; it replaces the whole rollout, requires_live by key, ref or milestone ref, and rollout = {} removes it. repo moves the ticket to another of the spec's [[repo]] tables, and only while it has no branch, because a branch lives in one repository; otherwise cancel the ticket and add a new one in the other repo. A ticket a worker holds cannot be edited; cancel it or reply on it.",
+      "Change a queued or blocked ticket. Only the fields in the patch change: title, body, acceptance, verify, scope, depends_on, merge_after, priority, repo, rollout. A patch of merge_after alone changes any ticket that has not finished, for example one whose pull request is open, since the merge order holds nothing a worker does. A patch of rollout alone, or with merge_after, does too, and rollout alone also changes a done ticket, whose deploy can come after its merge; it replaces the whole rollout, requires_live by key, ref or milestone ref, and rollout = {} removes it. keep_draft alone changes any ticket that has not finished: true holds its pull request as a draft, and false lets it go only before the pull request exists; after that only the human releases it, so ask them with loom_release_draft. repo moves the ticket to another of the spec's [[repo]] tables, and only while it has no branch, because a branch lives in one repository; otherwise cancel the ticket and add a new one in the other repo. A ticket a worker holds cannot be edited; cancel it or reply on it.",
     presentation: { label: { pending: "Editing a Loom ticket", completed: "Edited a Loom ticket" } },
     parameters: z.object({ key: z.string().min(1).max(40), patch: ticketPatchSchema }),
     execute: ({ key, patch }, tool) =>

@@ -93,6 +93,7 @@ function row(key: string, state: TicketState, over: Over = {}): TicketRow {
     pr_proposal_json: null,
     pr_applied_json: null,
     rollout_json: rollout === undefined ? null : JSON.stringify(rollout),
+    keep_draft: 0,
     created_by: "human",
     created_at: 0,
     updated_at: 0,

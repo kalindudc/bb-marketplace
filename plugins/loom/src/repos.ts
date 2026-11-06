@@ -111,6 +111,11 @@ export function followsFeedback(forge: ForgeSpec): boolean {
 }
 
 /** Whether Loom can set a pull request's title and description on this forge: gh, or a command forge with an edit command. */
+/** Whether Loom can mark a draft pull request ready for review through this forge. */
+export function canReady(forge: ForgeSpec): boolean {
+  return forge.kind === "gh" || (forge.kind === "command" && forge.ready !== undefined);
+}
+
 export function canEdit(forge: ForgeSpec): boolean {
   return forge.kind === "gh" || (forge.kind === "command" && forge.edit !== undefined);
 }

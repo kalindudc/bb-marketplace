@@ -40,7 +40,9 @@ function signalsOf(entry: MergeEntry): Signal[] {
     out.push({ tone: due ? "warn" : "muted", text: `${entry.behind.toLocaleString("en-US")} ${entry.behind === 1 ? "commit" : "commits"} behind ${entry.base}`, title });
   }
   if (!entry.reviewRead) return [...out, { tone: "muted", text: "review not read", title: "This forge does not tell Loom whether a pull request is a draft or approved." }];
-  if (entry.draft === true) out.push({ tone: "muted", text: "draft" });
+  if (entry.draftHold === "held") out.push({ tone: "warn", text: "held as a draft: you release it" });
+  else if (entry.draftHold === "marking") out.push({ tone: "muted", text: "being marked ready" });
+  else if (entry.draft === true) out.push({ tone: "muted", text: "draft" });
   if (entry.review === "APPROVED") out.push({ tone: "good", text: "approved" });
   else if (entry.review === "CHANGES_REQUESTED") out.push({ tone: "bad", text: "changes requested" });
   else if (entry.review === "REVIEW_REQUIRED") out.push({ tone: "warn", text: "needs review" });

@@ -42,6 +42,7 @@ function everything(doc: Doc): void {
       edit: "pr-cli edit",
       reply: "pr-cli reply",
       retarget: 'pr-cli retarget --base "$LOOM_BASE"',
+      ready: 'pr-cli ready "$LOOM_PR_NUMBER"',
       after_open: ["ci-cli run"],
       after_push: ['ci-cli run --sha "$LOOM_SHA"', "pr-cli ready"],
       ignore_checks: ["Review Bot*", "* (advisory)"],
@@ -74,6 +75,7 @@ function everything(doc: Doc): void {
       forge: {
         kind: "gh",
         after_push: ["ci-cli rerun"],
+        ready: "pr-cli ready",
         ignore_checks: ["Lint*"],
         auto_merge: { method: "comment", mode: "manual", comment: "/merge", rejected: ["❌*"], approval: "forge", require_live: false, max_attempts: 4, final_review: { provider: "claude", model: "haiku", reasoning: "low", timeout_minutes: 3 } },
         reviewers: [{ team: "acme/web", count: 1 }, { users: ["carol"] }],
@@ -125,7 +127,7 @@ function everything(doc: Doc): void {
     { on: "project.started", tell: "Create a Shuttle board named after the project, unless one exists.", run: 'board-cli create "$LOOM_PROJECT_SLUG"' },
     { on: "ticket.started", to: "worker", tell: "Name the ticket key in every commit message." },
   ];
-  doc.ticket[0] = { ...doc.ticket[0], repo: "web", rollout: { stage: "expand", verify: "curl -fsS https://web.example.com/health" } };
+  doc.ticket[0] = { ...doc.ticket[0], repo: "web", keep_draft: true, rollout: { stage: "expand", verify: "curl -fsS https://web.example.com/health" } };
   doc.ticket[1] = {
     ...doc.ticket[1],
     repo: "api",
@@ -244,6 +246,7 @@ const handlers = (over: Partial<Handlers>): Handlers => ({
   reply: unexpected,
   ticketAction: unexpected,
   confirmMerge: unexpected,
+  releaseDraft: unexpected,
   control: unexpected,
   startPlanning: unexpected,
   bbProjects: () => [],

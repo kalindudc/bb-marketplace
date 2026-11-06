@@ -1,0 +1,35 @@
+import type { BoardCard } from "../contract";
+import { ConfirmButton, useAction, useLoomWrite } from "./common";
+
+/**
+ * A draft pull request's state: one the human holds as a draft (keep_draft), with the button that releases it, or one
+ * Loom marks ready for review at its next read. Nothing for any other pull request.
+ */
+export function DraftHold({ ticketKey, prUrl, draft, requested, compact = false, disabled = false }: { ticketKey: string; prUrl: string | null; draft: BoardCard["draft"]; requested: BoardCard["releaseRequested"]; compact?: boolean; disabled?: boolean }) {
+  const send = useLoomWrite("releaseDraft");
+  const { busy, act } = useAction();
+  if (draft === null) return null;
+  const size = compact ? "text-xs" : "text-sm";
+  if (draft === "marking") {
+    return (
+      <p data-draft-hold="marking" className={`${compact ? "mt-1" : ""} ${size} text-muted-foreground`}>
+        Draft: being marked ready for review
+      </p>
+    );
+  }
+  const asked = requested === null ? "" : compact ? " The planner asks you to release it." : ` The planner asks you to release it: “${requested.note}”.`;
+  return (
+    <div data-draft-hold="held" className={`flex flex-wrap items-center gap-2 ${compact ? "mt-1" : ""}`}>
+      <span className={`${size} text-warning-text [overflow-wrap:anywhere]`}>{`Held as a draft: you release it.${asked}`}</span>
+      {prUrl !== null && (
+        <ConfirmButton
+          key={prUrl}
+          label="Release draft"
+          confirmLabel="Click again to mark it ready for review"
+          disabled={disabled || busy}
+          onConfirm={() => void act(() => send({ key: ticketKey, prUrl, confirm: true }), `${ticketKey} released from draft`)}
+        />
+      )}
+    </div>
+  );
+}

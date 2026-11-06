@@ -45,6 +45,7 @@ const handlers = (over: Partial<Handlers> = {}): Handlers => ({
   reply: unexpected,
   ticketAction: unexpected,
   confirmMerge: unexpected,
+  releaseDraft: unexpected,
   control: unexpected,
   startPlanning: unexpected,
   bbProjects: () => [],
@@ -1108,14 +1109,14 @@ describe("planning conversation", () => {
   });
 
   it("shows the merges the planner asks the human to confirm under Needs you, with a Confirm that sends the commit shown", async () => {
-    const confirm: MergeConfirmView = { prUrl: "https://github.com/acme/shop/pull/4", sha: "f".repeat(40), ready: true, confirmed: false, requested: { at: NOW - HOUR, note: "You asked me to get CSV-4 merged" } };
+    const confirm: MergeConfirmView = { prUrl: "https://github.com/acme/shop/pull/4", sha: "f".repeat(40), ready: true, waiting: null, confirmed: false, requested: { at: NOW - HOUR, note: "You asked me to get CSV-4 merged" } };
     const confirmMerge = vi.fn((_input: unknown) => ticketDetail({ key: "CSV-4" }));
     const { slot } = await mountPage("csv", { project: () => projectView(), plannerView: () => plannerViewOf({ projectState: "running", approvedVersion: 1, mergeRequests: [{ key: "CSV-4", title: "Guide", confirm }] }), confirmMerge });
     await slot.findByRole("tab", { name: "Board" });
     fireEvent.click(slot.getByRole("tab", { name: "Planner" }));
     await waitFor(() => expect(slot.container.querySelector('[data-needs-you] [data-merge-request="CSV-4"]')).not.toBeNull());
     const request = slot.container.querySelector<HTMLElement>('[data-needs-you] [data-merge-request="CSV-4"]')!;
-    expect(request.textContent).toContain("The planner asks you to confirm the merge of ffffffffffff: “You asked me to get CSV-4 merged”. Loom merges it only once you confirm.");
+    expect(request.textContent).toContain("Ready to merge at ffffffffffff. The planner asks you to confirm the merge: “You asked me to get CSV-4 merged”. Loom merges it only once you confirm.");
     expect(slot.container.querySelector("[data-needs-you] h2")!.textContent).toBe("Needs you1");
     fireEvent.click(within(request).getByRole("button", { name: "Confirm merge" }));
     fireEvent.click(within(request).getByRole("button", { name: "Click again to merge ffffffffffff" }));
@@ -2670,20 +2671,32 @@ describe("board", () => {
 
   it("puts Confirm merge on the card of a manual merge, with the commit it confirms and the planner's request", async () => {
     const URL = "https://github.com/acme/shop/pull/3";
-    const shown = (sha: string, over: Partial<MergeConfirmView> = {}): MergeConfirmView => ({ prUrl: URL, sha, ready: false, confirmed: false, requested: null, ...over });
+    const shown = (sha: string, over: Partial<MergeConfirmView> = {}): MergeConfirmView => ({ prUrl: URL, sha, ready: false, waiting: null, confirmed: false, requested: null, ...over });
     const cards = [
       card({ key: "CSV-3", title: "Docs", state: "pr_open", mergeConfirm: shown("c".repeat(40), { ready: true }) }),
       card({ key: "CSV-4", title: "Guide", state: "pr_open", mergeConfirm: shown("d".repeat(40), { confirmed: true }) }),
-      card({ key: "CSV-6", title: "Help", state: "pr_open", mergeConfirm: shown("e".repeat(40), { requested: { at: NOW, note: "The human asked in chat" } }) }),
+      card({ key: "CSV-6", title: "Help", state: "pr_open", mergeConfirm: shown("e".repeat(40), { waiting: "needs review", requested: { at: NOW, note: "The human asked in chat" } }) }),
+      card({ key: "CSV-7", title: "Draft", state: "pr_open", draft: "held", releaseRequested: { at: NOW, note: "The flag is on" }, prUrl: "https://github.com/acme/shop/pull/7", mergeConfirm: shown("7".repeat(40), { waiting: "it is held as a draft until you release it" }) }),
       card({ key: "CSV-5", title: "Notes", state: "pr_open" }),
     ];
     const confirmMerge = vi.fn(() => ticketDetail({ key: "CSV-3" }));
-    const { slot } = await mountPage("csv", { project: () => projectView({ board: cards }), confirmMerge });
+    const releaseDraft = vi.fn(() => ticketDetail({ key: "CSV-7" }));
+    const { slot } = await mountPage("csv", { project: () => projectView({ board: cards }), confirmMerge, releaseDraft });
     await slot.findByRole("tab", { name: "Board" });
     const ready = slot.container.querySelector<HTMLElement>('[data-card="CSV-3"] [data-merge-confirm]')!;
     expect(ready.textContent).toContain("Ready at cccccccccccc: waits for your confirmation");
     expect(slot.container.querySelector('[data-card="CSV-4"] [data-merge-confirm]')!.textContent).toBe("Merge of dddddddddddd confirmed");
-    expect(slot.container.querySelector('[data-card="CSV-6"] [data-merge-confirm]')!.textContent).toContain("The planner asks you to confirm eeeeeeeeeeee");
+    // Not ready yet: it says the one thing it waits for, and offers no button, even when the planner asked.
+    const waiting = slot.container.querySelector<HTMLElement>('[data-card="CSV-6"] [data-merge-confirm]')!;
+    expect(waiting.textContent).toBe("Merge waits: needs review. The planner asks you to confirm it.");
+    expect(within(waiting).queryByRole("button")).toBeNull();
+    // A held draft says so, with the human's Release, and its merge waits for that.
+    const held = slot.container.querySelector<HTMLElement>('[data-card="CSV-7"] [data-draft-hold="held"]')!;
+    expect(held.textContent).toContain("Held as a draft: you release it. The planner asks you to release it.");
+    expect(within(slot.container.querySelector<HTMLElement>('[data-card="CSV-7"] [data-merge-confirm]')!).queryByRole("button")).toBeNull();
+    fireEvent.click(within(held).getByRole("button", { name: "Release draft" }));
+    fireEvent.click(within(held).getByRole("button", { name: "Click again to mark it ready for review" }));
+    await waitFor(() => expect(releaseDraft).toHaveBeenLastCalledWith({ key: "CSV-7", prUrl: "https://github.com/acme/shop/pull/7", confirm: true }));
     expect(slot.container.querySelector('[data-card="CSV-5"] [data-merge-confirm]')).toBeNull();
     fireEvent.click(within(ready).getByRole("button", { name: "Confirm merge" }));
     fireEvent.click(within(ready).getByRole("button", { name: "Click again to merge cccccccccccc" }));
@@ -2975,7 +2988,7 @@ describe("ticket", () => {
     const URL = "https://github.com/acme/shop/pull/2";
     const A = "a".repeat(40);
     const B = "b".repeat(40);
-    const shown = (sha: string, over: Partial<MergeConfirmView> = {}): MergeConfirmView => ({ prUrl: URL, sha, ready: true, confirmed: false, requested: null, ...over });
+    const shown = (sha: string, over: Partial<MergeConfirmView> = {}): MergeConfirmView => ({ prUrl: URL, sha, ready: true, waiting: null, confirmed: false, requested: null, ...over });
     const confirmMerge = vi.fn((_input: unknown) => ticketDetail({ posts, state: "pr_open", mergeConfirm: shown(A, { ready: false, confirmed: true }) }));
     let view = ticketDetail({ posts, activity: withItems([]), state: "pr_open", mergeConfirm: shown(A) });
     const { slot } = await mountPage("csv/CSV-2", { ticket: () => view, confirmMerge: async (input) => (view = await confirmMerge(input)) });
@@ -5029,6 +5042,7 @@ describe("merge order tab", () => {
     unblocks: [],
     checks: { passed: 4, failed: 0, pending: 0 },
     draft: false,
+    draftHold: null,
     review: "APPROVED",
     reviewRead: true,
     conflicts: false,
@@ -5059,6 +5073,22 @@ describe("merge order tab", () => {
     await mounted.slot.findByRole("tab", { name: "Board" });
     return mounted.slot;
   };
+
+  it("shows a draft the human holds apart from one Loom is marking ready", async () => {
+    const slot = await mountOrder(
+      prView(
+        order({
+          entries: [
+            entry({ key: "CSV-1", verdict: "first", holds: ["draft"], draft: true, draftHold: "held" }),
+            entry({ key: "CSV-2", verdict: "first", holds: ["draft"], draft: true, draftHold: "marking" }),
+          ],
+        }),
+      ),
+    );
+    fireEvent.click(await slot.findByRole("tab", { name: /Merge order/ }));
+    await waitFor(() => expect(slot.container.textContent).toContain("held as a draft: you release it"));
+    expect(slot.container.textContent).toContain("being marked ready");
+  });
 
   it("is no tab on an integration project", async () => {
     const { slot } = await mountPage("csv", { project: () => projectView() });
@@ -5455,6 +5485,7 @@ describe("rollout tab", () => {
       unblocks: [],
       checks: { passed: 20, failed: 0, pending: 1 },
       draft: false,
+      draftHold: null,
       review: "REVIEW_REQUIRED",
       reviewRead: true,
       conflicts: false,
@@ -5612,6 +5643,7 @@ describe("rollout tab", () => {
             unblocks: [],
             checks: null,
             draft: false,
+            draftHold: null,
             review: "APPROVED",
             reviewRead: true,
             conflicts: false,

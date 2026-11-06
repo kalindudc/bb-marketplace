@@ -45,7 +45,7 @@ describe("starting on an open pull request", () => {
     await openFirst();
     await startWorker(h, "CSV-2");
 
-    expect(h.host.callsTo("stackBase")).toEqual([{ repo: "/repo", branch: "loom/csv/csv-2-stack", commits: ["sq1"], message: "Loom: CSV-1 for CSV-2" }]);
+    expect(h.host.callsTo("stackBase")).toEqual([{ repo: "/repo", branch: "loom/csv/csv-2-stack", commits: ["sq1"], message: `Merge ${ticketOf(h, "CSV-1").pr_branch} into loom/csv/csv-2-stack` }]);
     expect(lastSpawn().baseBranch).toBe("loom/csv/csv-2-stack");
     expect(stackOf(ticketOf(h, "CSV-2"))).toMatchObject({ deps: { "CSV-1": "sq1" }, base: "sq1", cross: {} });
     const brief = lastSpawn().prompt;
@@ -117,7 +117,7 @@ describe("a stacked ticket's review and pull request", () => {
     expect(h.host.callsTo("prCommit").at(-1)).toMatchObject({ base: "sq1" });
     const created = h.host.callsTo("prCreate").at(-1)!;
     expect(created.base).toBe(first.pr_branch);
-    expect(created.body).toContain(`Stacked on ${URL1} (CSV-1): merge that one first. Loom moves this pull request to main when it merges.`);
+    expect(created.body).toContain(`- Builds on ${URL1} (${ticketOf(h, "CSV-1").title}); merge that first, and this pull request then moves to \`main\`.`);
     expect(ticketOf(h, "CSV-2")).toMatchObject({ state: "pr_open", pr_base: first.pr_branch });
   });
 });
@@ -139,13 +139,13 @@ describe("catching up with the dependency", () => {
     await queue();
 
     const ticket = ticketOf(h, "CSV-2");
-    expect(h.host.callsTo("mergeOnto").at(-1)).toEqual({ repo: "/repo", head, ref: "sq7", message: "Merge CSV-1's pull request into CSV-2 (Loom)", refs: [] });
+    expect(h.host.callsTo("mergeOnto").at(-1)).toEqual({ repo: "/repo", head, ref: "sq7", message: `Merge ${ticketOf(h, "CSV-1").pr_branch} into ${ticketOf(h, "CSV-2").pr_branch ?? ticketOf(h, "CSV-2").branch}`, refs: [] });
     expect(h.host.callsTo("merge")).toEqual([]);
     expect(h.host.callsTo("resetHard").at(-1)).toEqual({ worktree: `/wt/${worker.environment_id}`, sha: "lm1" });
     expect(h.host.callsTo("exec").at(-1)).toMatchObject({ cwd: `/wt/${worker.environment_id}`, command: "npm test" });
     expect(ticket).toMatchObject({ state: "pr_open", head_sha: "lm1", pr_rounds: 0 });
     expect(stackOf(ticket)).toMatchObject({ deps: { "CSV-1": "sq7" }, base: "sq7" });
-    expect(h.host.callsTo("prCommit").at(-1)).toMatchObject({ base: "sq7", head: "lm1", message: "CSV-2: merge CSV-1's pull request (Loom)" });
+    expect(h.host.callsTo("prCommit").at(-1)).toMatchObject({ base: "sq7", head: "lm1", message: `Merge ${ticketOf(h, "CSV-1").pr_branch} into ${ticketOf(h, "CSV-2").pr_branch}` });
     expect(h.host.callsTo("push").at(-1)).toMatchObject({ branch: ticket.pr_branch });
     expect(outcomes("CSV-2").slice(-2)).toEqual(["restacked", "pr_pushed"]);
     expect(h.store.threads({ role: "reviewer" })).toHaveLength(reviewers);
@@ -428,10 +428,11 @@ describe("a stacked pull request the forge closed", () => {
     await queue();
     expect(h.host.callsTo("mergeOnto").at(-1)).toMatchObject({ ref: "base001" });
     expect(h.host.callsTo("resetHard").at(-1)).toMatchObject({ worktree: `/wt/${worker.environment_id}` });
-    expect(h.host.callsTo("prCommit").at(-1)).toMatchObject({ branch: second.pr_branch, pushed: second.pushed_sha, message: "CSV-2: merge origin/main (Loom)" });
+    expect(h.host.callsTo("prCommit").at(-1)).toMatchObject({ branch: second.pr_branch, pushed: second.pushed_sha, message: `Merge origin/main into ${second.pr_branch}` });
     expect(h.host.callsTo("prCreate").at(-1)).toMatchObject({ base: "main", head: second.pr_branch });
     expect(ticketOf(h, "CSV-2")).toMatchObject({ state: "pr_open", pr_url: "https://github.com/acme/shop/pull/3", pr_base: "main" });
-    expect(outcomes("CSV-2").slice(-3)).toEqual(["pr_let_go", "restacked", "pr_opened"]);
+    // Loom opens the new pull request as a draft and marks it ready, since the ticket does not keep it a draft.
+    expect(outcomes("CSV-2").slice(-4)).toEqual(["pr_let_go", "restacked", "pr_opened", "pr_marked_ready"]);
   });
 
   it("blocks it as before when the branch it targeted is still there, since a person closed it", async () => {
@@ -496,7 +497,8 @@ describe("a stacked pull request the forge closed", () => {
     expect(h.host.callsTo("resetHard").at(-1)).toMatchObject({ worktree: `/wt/${worker.environment_id}` });
     expect(h.host.callsTo("prRetarget")).toEqual([]);
     expect(ticketOf(h, "CSV-2")).toMatchObject({ state: "pr_open", pr_url: "https://github.com/acme/shop/pull/3", pr_base: "main" });
-    expect(outcomes("CSV-2").slice(-3)).toEqual(["pr_let_go", "restacked", "pr_opened"]);
+    // Loom opens the new pull request as a draft and marks it ready, since the ticket does not keep it a draft.
+    expect(outcomes("CSV-2").slice(-4)).toEqual(["pr_let_go", "restacked", "pr_opened", "pr_marked_ready"]);
   });
 });
 
@@ -572,6 +574,6 @@ describe("a dependency in another repo", () => {
     await queue();
     const created = h.host.callsTo("prCreate").at(-1)!;
     expect(created).toMatchObject({ repo: "/src/api", base: "trunk" });
-    expect(created.body).toContain(`Depends on ${URL1} (CSV-1) in the repo "web": merge that one first.`);
+    expect(created.body).toContain(`- Needs ${URL1} (${ticketOf(h, "CSV-1").title}) merged first.`);
   });
 });

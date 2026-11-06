@@ -49,6 +49,7 @@ export default experimental_defineHostEntry({
     teamMembers: (input, { signal }) => ops.teamMembers(input, signal),
     prMerge: (input, { signal }) => ops.prMerge(input, signal),
     prEdit: (input, { signal }) => ops.prEdit(input, signal),
+    prReady: (input, { signal }) => ops.prReady(input, signal),
     prReply: (input, { signal }) => ops.prReply(input, signal),
     remotes: (input, { signal }) => ops.remotes(input, signal),
     checkoutPrint: (input, { signal }) => ops.checkoutPrint(input, signal),

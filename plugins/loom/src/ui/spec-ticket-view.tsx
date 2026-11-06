@@ -38,7 +38,7 @@ function markOf(changes: readonly SpecChange[], compared: boolean, ref: string):
 
 /** The parts of a ticket that changed, for its list row: "criteria, files". */
 function changedParts(changes: readonly SpecChange[], ref: string): string[] {
-  const names: Record<string, string> = { title: "title", body: "brief", acceptance: "criteria", scope: "files", verify: "verify", depends_on: "order", merge_after: "merge order", priority: "priority", repo: "repo", environment: "environment", rollout: "deploy" };
+  const names: Record<string, string> = { title: "title", body: "brief", acceptance: "criteria", scope: "files", verify: "verify", depends_on: "order", merge_after: "merge order", keep_draft: "draft hold", priority: "priority", repo: "repo", environment: "environment", rollout: "deploy" };
   const parts = changes.filter((change) => change.ref === ref && change.kind !== "ticket-added").map((change) => names[/^ticket\[[^\]]+\]\.(\w+)/.exec(change.path)?.[1] ?? ""] ?? "");
   return [...new Set(parts.filter((part) => part !== ""))];
 }
@@ -242,6 +242,13 @@ function TicketDetail({ ticket, spec, view, onSelect }: { ticket: TicketSpec; sp
             Merges after
           </Commentable>
           <DiffList path={`${base}.merge_after`} items={ticket.merge_after ?? []} compact={false} render={(ref, mark) => chip(ref, mark)} />
+        </p>
+      )}
+      {has("keep_draft") && (ticket.keep_draft !== undefined || changedAt(review, `${base}.keep_draft`)) && (
+        <p data-keep-draft className="mt-1 flex flex-wrap items-center gap-1.5 text-sm">
+          <Commentable as="span" target={{ paths: [`${base}.keep_draft`], label: `${ticket.ref} › keep draft`, kind: "bool", value: ticket.keep_draft ?? false }} className="px-1 text-muted-foreground">
+            {ticket.keep_draft === true ? "Its pull request stays a draft until you release it" : "Its pull request is marked ready for review"}
+          </Commentable>
         </p>
       )}
       {has("rollout") && (ticket.rollout !== undefined || changedAt(review, `${base}.rollout`)) && <TicketRollout ticket={ticket} spec={spec} base={base} onSelect={onSelect} />}

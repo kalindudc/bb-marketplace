@@ -216,4 +216,6 @@ export const MIGRATIONS: string[] = [
   CREATE INDEX hook_firings_open ON hook_firings (state, project_id);
   ALTER TABLE projects ADD COLUMN hook_event_id INTEGER NOT NULL DEFAULT 0;
   UPDATE projects SET hook_event_id = (SELECT COALESCE(MAX(id), 0) FROM events)`,
+  // Keep the ticket's pull request a draft until the human releases it: 1 while held, 0 otherwise.
+  `ALTER TABLE tickets ADD COLUMN keep_draft INTEGER NOT NULL DEFAULT 0`,
 ];

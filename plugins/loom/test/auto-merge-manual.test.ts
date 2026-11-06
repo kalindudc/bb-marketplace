@@ -1,7 +1,7 @@
 // auto_merge.mode: "manual", the default, waits for the human to confirm each pushed commit's merge, in the panel, the
 // CLI or through the planner; "auto" is how auto-merge worked before, asking once the pull request is ready.
 import { beforeEach, describe, expect, it } from "vitest";
-import { confirmMerge, mergeConfirmOf, setAutoMerge } from "../src/auto-merge";
+import { confirmMerge, mergeConfirmOf, requestMerge, setAutoMerge } from "../src/auto-merge";
 import type { ThreadRow } from "../src/db/store";
 import { pollPullRequests, runMergeQueue, settleMerges } from "../src/merge";
 import { askForPrTexts, handInPrText } from "../src/pull-requests";
@@ -69,7 +69,7 @@ describe("a manual merge", () => {
     expect(merges()).toEqual([]);
     expect(dataOf("auto_merge_confirm")).toHaveLength(1);
     expect(dataOf("auto_merge_confirm")[0]!.body).toContain("auto_merge.mode is manual, so Loom waits for you to confirm the merge");
-    expect(mergeConfirmOf(h.store, spec(), ticket())).toMatchObject({ ready: true, confirmed: false });
+    expect(mergeConfirmOf(h.store, spec(), ticket(), h.clock.now())).toMatchObject({ ready: true, confirmed: false });
     expect(card().mergeConfirm).toMatchObject({ ready: true, confirmed: false });
 
     expect(h.engine.confirmMerge("CSV-1", seen())).toBe(`Confirmed CSV-1's merge at ${ticket().pushed_sha!.slice(0, 12)}: Loom asks to merge its pull request at its next read.`);
@@ -81,26 +81,44 @@ describe("a manual merge", () => {
     expect(ticket().state).toBe("done");
   });
 
-  it("takes a confirmation before the pull request is ready, and merges once it is", async () => {
+  // The human's ask: no Confirm merge until the pull request is ready, and the one thing it waits for instead.
+  it("offers no confirmation until the pull request is ready, says what it waits for, and refuses one sent early", async () => {
     await openPr({ method: "squash" });
-    expect(h.engine.confirmMerge("CSV-1", seen())).toContain("Loom asks to merge its pull request once it is ready. A new push needs a new confirmation.");
+    expect(card().mergeConfirm).toMatchObject({ ready: false, confirmed: false, waiting: "checks not read" });
+    expect(() => h.engine.confirmMerge("CSV-1", seen())).toThrow("CSV-1's pull request is not ready to merge yet: checks not read. Confirm it once it is.");
+    expect(h.store.ticketEvents(ticket().id, ["ticket.merge_confirmed"])).toEqual([]);
+    h.host.prMeta.set(URL, { ...h.host.prMeta.get(URL), draft: true, review: "APPROVED" });
     await poll();
-    expect(merges()).toEqual([]);
+    approved({ draft: true });
+    h.store.updateTicket(ticket().id, { pr_meta_json: JSON.stringify({ at: 0, draft: true, review: "APPROVED", base: "main" }) });
+    expect(card().mergeConfirm).toMatchObject({ ready: false, waiting: "being marked ready for review" });
     approved();
     await poll();
+    expect(card().mergeConfirm).toMatchObject({ ready: true, waiting: null });
+    h.engine.confirmMerge("CSV-1", seen());
+    await poll();
     expect(merges()).toHaveLength(1);
-    expect(dataOf("auto_merge_confirm")).toEqual([]);
+  });
+
+  it("records a planner's request early, shown as waiting until the pull request is ready", async () => {
+    await openPr({ method: "squash" });
+    requestMerge(h.store, project(), ticket(), "thr_plan", { sha: ticket().pushed_sha!, note: "Merge once it is approved." });
+    expect(card().mergeConfirm).toMatchObject({ ready: false, waiting: "checks not read", requested: { note: "Merge once it is approved." } });
+    approved();
+    await poll();
+    expect(card().mergeConfirm).toMatchObject({ ready: true, requested: { note: "Merge once it is approved." } });
   });
 
   it("needs a new confirmation for a new push", async () => {
     await openPr({ method: "squash" });
+    approved();
+    await poll();
     h.engine.confirmMerge("CSV-1", seen());
     h.store.updateTicket(ticket().id, { pushed_sha: "f".repeat(40) });
-    approved();
     h.host.feedback.set(URL, { head: "f".repeat(40) });
     await poll();
     expect(merges()).toEqual([]);
-    expect(mergeConfirmOf(h.store, spec(), ticket())).toMatchObject({ ready: true, confirmed: false });
+    expect(mergeConfirmOf(h.store, spec(), ticket(), h.clock.now())).toMatchObject({ ready: true, confirmed: false });
   });
 
   it('merges by itself with mode = "auto", as before', async () => {
@@ -116,18 +134,20 @@ describe("a manual merge", () => {
     await openPr({ method: "squash" });
     setAutoMerge(h.store, project(), "off", ticket());
     expect(card().mergeConfirm).toBeNull();
-    expect(() => confirmMerge(h.store, project(), ticket(), seen())).toThrow("Auto-merge is off for CSV-1");
+    expect(() => confirmMerge(h.store, project(), ticket(), seen(), h.clock.now())).toThrow("Auto-merge is off for CSV-1");
     setAutoMerge(h.store, project(), "on", ticket());
     h.store.updateTicket(ticket().id, { state: "approved" });
-    expect(() => confirmMerge(h.store, project(), ticket(), seen())).toThrow("CSV-1 is approved with no open pull request");
+    expect(() => confirmMerge(h.store, project(), ticket(), seen(), h.clock.now())).toThrow("CSV-1 is approved with no open pull request");
 
     h = makeEngine();
     await seedProject(h, (doc) => void (doc.merge = { strategy: "pr", forge: { kind: "gh" } }));
-    expect(() => confirmMerge(h.store, project(), ticket(), seen())).toThrow("sets no auto_merge");
+    expect(() => confirmMerge(h.store, project(), ticket(), seen(), h.clock.now())).toThrow("sets no auto_merge");
   });
 
   it("records the human as who confirmed, and says so when the commit is already confirmed", async () => {
     await openPr({ method: "squash" });
+    approved();
+    await poll();
     h.engine.confirmMerge("CSV-1", seen());
     expect(h.store.ticketEvents(ticket().id, ["ticket.merge_confirmed"])).toEqual([expect.objectContaining({ actor: HUMAN_ACTOR })]);
     expect(h.engine.confirmMerge("CSV-1", seen())).toBe(`CSV-1's merge at ${ticket().pushed_sha!.slice(0, 12)} is already confirmed.`);
@@ -171,6 +191,6 @@ describe("a confirmation is for the exact pull request and commit the human saw"
     approved();
     await poll();
     expect(merges()).toEqual([]);
-    expect(mergeConfirmOf(h.store, spec(), ticket())).toMatchObject({ ready: true, confirmed: false });
+    expect(mergeConfirmOf(h.store, spec(), ticket(), h.clock.now())).toMatchObject({ ready: true, confirmed: false });
   });
 });

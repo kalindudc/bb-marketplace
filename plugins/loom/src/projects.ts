@@ -385,8 +385,15 @@ export class Projects {
     }
     this.guardVersion(slug, version, project.pending_version);
     const pending = this.specOf(project.id, project.pending_version);
+    const before = project.approved_version === null ? null : this.specOf(project.id, project.approved_version);
     this.store.tx(() => {
       this.store.updateProject(project.id, { approved_version: project.pending_version, pending_version: null, name: pending.project.name });
+      // A version that changes a ticket's keep_draft applies it to that ticket; one that leaves it keeps what loom_edit_ticket or a release set.
+      for (const ticket of pending.ticket) {
+        const was = before?.ticket.find((each) => each.ref === ticket.ref)?.keep_draft === true;
+        const row = this.store.tickets(project.id).find((each) => each.ref === ticket.ref);
+        if (row !== undefined && was !== (ticket.keep_draft === true)) this.store.updateTicket(row.id, { keep_draft: ticket.keep_draft === true ? 1 : 0 });
+      }
       this.store.event(project.id, null, "spec.approved", actor, { version: project.pending_version, pending: true });
     });
     if (project.name !== pending.project.name) await this.renameSection(project, pending.project.name);
@@ -420,6 +427,7 @@ export class Projects {
           environment_json: ticket.environment === undefined ? null : JSON.stringify(ticket.environment.inputs),
           // A milestone ref is no ticket's, so it stays a ref.
           rollout_json: rolloutJson(ticket.rollout, (ref) => keyOf.get(ref) ?? ref),
+          keep_draft: ticket.keep_draft === true ? 1 : 0,
         },
         actor,
       );

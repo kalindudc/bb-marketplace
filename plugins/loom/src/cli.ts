@@ -420,6 +420,21 @@ export function createCli(projects: Projects, engine: Engine, store: Store, now:
             return out(options.json ? toJson(mark) : undo ? `${target} is no longer marked live.\n` : `${target} is live.\n`);
           }),
       }),
+      release: cliCommand({
+        summary: "Release a ticket's pull request that keep_draft holds as a draft: Loom marks it ready for review and stops holding it (human only)",
+        positionals: [SLUG],
+        options: { ticket: { type: "string", description: "The held ticket, such as CSV-1.", required: true }, json },
+        run: ({ options, positionals }, ctx) =>
+          guarded(async () => {
+            const { slug } = positionals;
+            refuseAgents(deps, ctx, "release");
+            const project = projects.require(slug);
+            const ticket = store.ticketByKey(options.ticket);
+            if (ticket?.project_id !== project.id) throw new LoomError("loom_not_found", `${slug} has no ticket ${options.ticket}.`);
+            const said = await humanAction(deps, ctx, "release", { slug, key: ticket.key }, () => engine.releaseDraft(ticket.key, ticket.pr_url ?? ""));
+            return out(options.json ? toJson({ slug, ticket: ticket.key, message: said }) : `${said}\n`);
+          }),
+      }),
       "auto-merge": cliCommand({
         summary:
           "Turn Loom's merging of ready pull requests off or on again, for a project or one ticket with --ticket, on repos whose forge sets auto_merge; retry clears a ticket's merge attempt in flight, or a held final review, so Loom asks again; accept lets a ticket merge on a final review that passed on an incomplete brief; confirm lets Loom merge a ticket's pull request at its pushed commit on a repo whose auto_merge.mode is manual. On for a ticket counts its attempts afresh (human only)",

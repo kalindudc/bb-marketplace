@@ -423,8 +423,12 @@ export class FakeHost implements HostPort {
     return state;
   }
 
+  /** Runs, and is awaited, when a call to the method comes in, before it is answered: to hold a call or change the store meanwhile. */
+  before: Partial<Record<HostMethod, () => Promise<void> | void>> = {};
+
   async call<M extends HostMethod>(hostId: string, method: M, input: HostInput<M>): Promise<HostOutput<M>> {
     this.calls.push({ hostId, method, input });
+    await this.before[method]?.();
     const error = this.errors[method];
     if (error) throw error;
     if ((this.scripted[method]?.length ?? 0) > 0) {
@@ -667,6 +671,11 @@ export class FakeHost implements HostPort {
         this.texts.set(url, { title, body });
         return { outcome: "ok" };
       }
+      case "prReady": {
+        const { url } = input as HostInput<"prReady">;
+        this.prMeta.set(url, { ...this.prMeta.get(url), draft: false });
+        return { outcome: "ok" };
+      }
       case "prReply": {
         const { url, kind, resolve } = input as HostInput<"prReply">;
         return { outcome: "ok", url: `${url}#reply`, resolved: resolve && kind === "thread" };
@@ -761,16 +770,17 @@ export function sdkStubs(state: SdkState): FakeSdkOverrides {
  * A fake bb host, with the real adapter over stubbed sdk calls unless a port is given; tests register the tools or CLI they exercise.
  * The engine runs over a FakeHost, and its kick is a no-op so nothing runs in the background.
  */
-export function makeHost(opts: { port?: BbPort; settings?: () => LoomSettings } = {}) {
+export function makeHost(opts: { port?: BbPort; settings?: () => LoomSettings; clock?: Clock } = {}) {
+  const now = opts.clock?.now ?? Date.now;
   const state: SdkState = { sections: [], takenNames: new Set(), environmentId: "env_1", environmentHost: "host_env", primaryHostId: "host_primary" };
   const { bb, harness } = createFakePluginHost({ pluginId: "loom", agentSkillIds: ["loom-plan", "loom", "loom-pr-description"], sdk: sdkStubs(state) });
   const db = bb.storage.database();
   bb.storage.migrate(db, MIGRATIONS);
-  const store = new Store(db, Date.now);
+  const store = new Store(db, now);
   const port = opts.port ?? createBbPort(bb);
   const hostPort = new FakeHost();
-  const projects = new Projects({ store, bb: port, now: Date.now, host: hostPort, plannerInstructions: () => opts.settings?.().plannerInstructions ?? "" });
-  const engine = new Engine({ store, bb: port, now: Date.now, host: hostPort, projects, settings: opts.settings });
+  const projects = new Projects({ store, bb: port, now, host: hostPort, plannerInstructions: () => opts.settings?.().plannerInstructions ?? "" });
+  const engine = new Engine({ store, bb: port, now, host: hostPort, projects, settings: opts.settings });
   vi.spyOn(engine, "kick").mockImplementation(() => undefined);
   return { bb, harness, state, store, projects, engine, hostPort };
 }
@@ -911,3 +921,10 @@ export async function reachApproved(h: EngineHarness, key = "CSV-1"): Promise<Th
   await settleReviews(h.ctx);
   return worker;
 }
+
+/** A ticket's stored read of its pull request that Loom judges ready to merge: not a draft, approved, every check passed. */
+export const readyToMerge = (sha: string, at = 0) => ({
+  pr_base: "main",
+  pr_meta_json: JSON.stringify({ at, draft: false, review: "APPROVED", base: "main", mergeable: true, state: "OPEN" }),
+  pr_status_json: JSON.stringify({ at, head: sha, passed: 1, failed: 0, pending: 0 }),
+});

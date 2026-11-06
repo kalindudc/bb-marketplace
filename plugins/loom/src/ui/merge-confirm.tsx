@@ -5,10 +5,11 @@ const short = (sha: string) => sha.slice(0, 12);
 
 function stateText(confirm: MergeConfirmView, compact: boolean): string {
   const sha = short(confirm.sha);
-  if (confirm.confirmed) return compact ? `Merge of ${sha} confirmed` : `You confirmed the merge of ${sha}. Loom asks the forge to merge the pull request once it is ready.`;
-  if (confirm.requested !== null) return compact ? `The planner asks you to confirm ${sha}` : `The planner asks you to confirm the merge of ${sha}: “${confirm.requested.note}”. Loom merges it only once you confirm.`;
-  if (confirm.ready) return compact ? `Ready at ${sha}: waits for your confirmation` : `Ready to merge at ${sha}. auto_merge.mode is manual, so Loom waits for you to confirm the merge of this commit.`;
-  return compact ? `Merges at ${sha} once you confirm` : `auto_merge.mode is manual: Loom merges this pull request at ${sha} only once you confirm it. You may confirm now; a new push needs a new confirmation.`;
+  if (confirm.confirmed) return compact ? `Merge of ${sha} confirmed` : `You confirmed the merge of ${sha}. Loom asks the forge to merge the pull request at its next read.`;
+  const asked = confirm.requested === null ? "" : compact ? " The planner asks you to confirm it." : ` The planner asks you to confirm it: “${confirm.requested.note}”.`;
+  if (confirm.waiting !== null) return compact ? `Merge waits: ${confirm.waiting}.${asked}` : `Loom offers the merge of ${sha} for you to confirm once it is ready. It waits: ${confirm.waiting}.${asked}`;
+  if (confirm.requested !== null) return compact ? `Ready at ${sha}: the planner asks you to confirm` : `Ready to merge at ${sha}. The planner asks you to confirm the merge: “${confirm.requested.note}”. Loom merges it only once you confirm.`;
+  return compact ? `Ready at ${sha}: waits for your confirmation` : `Ready to merge at ${sha}. auto_merge.mode is manual, so Loom waits for you to confirm the merge of this commit.`;
 }
 
 /**
@@ -19,12 +20,12 @@ function stateText(confirm: MergeConfirmView, compact: boolean): string {
 export function MergeConfirm({ ticketKey, confirm, compact = false, disabled = false }: { ticketKey: string; confirm: MergeConfirmView; compact?: boolean; disabled?: boolean }) {
   const send = useLoomWrite("confirmMerge");
   const { busy, act } = useAction();
-  const tone = confirm.confirmed ? "text-success-foreground" : confirm.ready || confirm.requested !== null ? "text-warning-text" : "text-muted-foreground";
+  const tone = confirm.confirmed ? "text-success-foreground" : confirm.ready ? "text-warning-text" : "text-muted-foreground";
   const { prUrl, sha } = confirm;
   return (
     <div data-merge-confirm={ticketKey} data-sha={sha} className={`flex flex-wrap items-center gap-2 ${compact ? "mt-1" : ""}`}>
       <span className={`${compact ? "text-xs" : "text-sm"} ${tone} [overflow-wrap:anywhere]`}>{stateText(confirm, compact)}</span>
-      {!confirm.confirmed && (
+      {confirm.ready && (
         <ConfirmButton
           key={`${prUrl} ${sha}`}
           label="Confirm merge"

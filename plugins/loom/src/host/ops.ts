@@ -1601,6 +1601,19 @@ export async function prEdit(input: HostInput<"prEdit">, signal?: AbortSignal): 
   return { outcome: "ok" };
 }
 
+/** gh pr ready, or the forge's ready command. A pull request that is already ready for review is ok. */
+export async function prReady(input: HostInput<"prReady">, signal?: AbortSignal): Promise<HostOutput<"prReady">> {
+  if (input.forge.kind === "command") {
+    const result = await spawnCommand({ cwd: input.repo, command: input.forge.ready, timeoutMs: FORGE_COMMAND_MS, env: { LOOM_URL: input.url, LOOM_PR_NUMBER: prNumber(input.url) } }, signal);
+    return commandReadFailed("ready", result) ?? { outcome: "ok" };
+  }
+  const ready = await ghCall(input.repo, ["pr", "ready", input.url], { signal });
+  if (ready === "missing") return { outcome: "unavailable", message: GH_MISSING };
+  if (ready.code !== 0 && /already .?ready for review/iu.test(`${ready.stderr}\n${ready.stdout}`)) return { outcome: "ok" };
+  if (ready.code !== 0) return readFailed("gh pr ready", ready);
+  return { outcome: "ok" };
+}
+
 const REPLY_MUTATION = `mutation($thread: ID!, $body: String!) {
   addPullRequestReviewThreadReply(input: { pullRequestReviewThreadId: $thread, body: $body }) { comment { url } }
 }`;

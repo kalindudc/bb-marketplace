@@ -3,6 +3,7 @@
 // tickets it depends on and the ones its merge_after names; it is stacked when it targets another ticket's pull request
 // branch, so merging it first would put it into that branch instead of the base. Nothing here asks the forge: it reads
 // what the poll last stored, so the page never adds a call to GitHub.
+import { draftStateOf, type DraftState } from "./drafts";
 import type { TicketRow } from "./db/store";
 import { metaOf, type ReviewDecision } from "./pr-meta";
 import { statusOf } from "./pull-requests";
@@ -57,6 +58,8 @@ export interface MergeEntry {
   unblocks: string[];
   checks: { passed: number; failed: number; pending: number } | null;
   draft: boolean | null;
+  /** "held": the human holds it as a draft (keep_draft); "marking": a draft Loom marks ready at its next read; null otherwise. */
+  draftHold: DraftState;
   review: ReviewDecision | null;
   /** The forge reported its draft flag or review decision. */
   reviewRead: boolean;
@@ -170,6 +173,7 @@ export function mergeOrderOf(spec: Spec, tickets: readonly TicketRow[], finals: 
       unblocks: shown.filter((other) => waits.get(other.key)!.some((wait) => wait.key === ticket.key)).map((other) => other.key),
       checks,
       draft,
+      draftHold: draftStateOf(ticket),
       review,
       reviewRead,
       conflicts,

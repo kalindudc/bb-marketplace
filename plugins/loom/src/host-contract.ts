@@ -473,6 +473,18 @@ export const hostContract = defineRpcContract({
       .strict(),
     output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok") }).strict(), unavailable]),
   },
+  // Marks a draft pull request ready for review: gh pr ready, or a command forge's ready command. One that is already
+  // ready is ok, so the call may run after an after_open command that did it.
+  prReady: {
+    input: z
+      .object({
+        repo: absPath,
+        url: prUrl,
+        forge: z.discriminatedUnion("kind", [z.object({ kind: z.literal("gh") }).strict(), z.object({ kind: z.literal("command"), ready: forgeCommand }).strict()]),
+      })
+      .strict(),
+    output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok") }).strict(), unavailable]),
+  },
   // Answers one item of a pull request's feedback, named by the key its read gave it. gh replies in a review thread, and
   // resolves it with `resolve`, and answers a review or a comment with a comment on the pull request; a command forge runs
   // the spec's reply command with the body on stdin. `message` says why a reply that was posted did not resolve its thread.

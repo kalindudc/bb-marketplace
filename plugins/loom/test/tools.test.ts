@@ -7,7 +7,7 @@ import { FINAL_REVIEWER_TOOLS, MACHINE_WORKER_TOOLS, ORDINARY_TOOLS, PLANNER_TOO
 import { readFileSync } from "node:fs";
 import { mergeConfirmOf } from "../src/auto-merge";
 import { specOf } from "../src/workers";
-import { Clock, FakePort, checkOutHead, makeHost, seedMachineProject, seedProject, specToml, type Doc, type EngineHarness } from "./helpers";
+import { Clock, FakePort, checkOutHead, makeHost, readyToMerge, seedMachineProject, seedProject, specToml, type Doc, type EngineHarness } from "./helpers";
 
 let host: ReturnType<typeof makeHost>;
 
@@ -68,12 +68,13 @@ describe("agent configuration", () => {
     host.store.addThread({ spawn_token: "tok_1", project_id: project.id, role: "reviewer", state: "spawning" });
     const worker = await configure("thr_worker");
     expect(worker.tools.map((tool) => tool.name)).toEqual([...WORKER_TOOLS]);
-    expect(worker.skills).toEqual([SKILLS.usage]);
+    expect(worker.skills).toEqual([SKILLS.usage, SKILLS.prText]);
     expect(worker.instructions).toBe("You are a Loom worker on a ticket; follow the brief in your first message.");
     const reviewer = await configure("thr_reviewer", { pluginMetadata: { spawnToken: "tok_1" } });
     expect(reviewer.tools.map((tool) => tool.name)).toEqual([...REVIEWER_TOOLS]);
     expect(REVIEWER_TOOLS).toEqual(["loom_note", "loom_checkout", "loom_approve", "loom_request_changes"]);
-    expect(reviewer.skills).toEqual([SKILLS.usage]);
+    expect(reviewer.skills).toEqual([SKILLS.usage, SKILLS.prText]);
+    expect(SKILLS.prText).toBe("loom-pr-description");
     expect(reviewer.instructions).toBe("You are a Loom reviewer for a ticket, round 0; change nothing; follow the brief and call one verdict tool.");
     expect(host.store.threadBySpawnToken("tok_1")?.thread_id).toBe("thr_reviewer");
   });
@@ -263,7 +264,7 @@ describe("loom_confirm_merge", () => {
     const hh: EngineHarness = { ctx: host.engine.ctx, store: host.store, bb: fake, host: host.hostPort, projects: host.projects, clock: new Clock(), kicks: { count: 0 } };
     await seedProject(hh, (doc: Doc) => void (doc.merge = { strategy: "pr", forge }));
     const ticket = host.store.ticketByKey("CSV-1")!;
-    host.store.updateTicket(ticket.id, { state: "pr_open", pr_url: "https://github.com/acme/shop/pull/1", pushed_sha: "a".repeat(40) });
+    host.store.updateTicket(ticket.id, { state: "pr_open", pr_url: "https://github.com/acme/shop/pull/1", pushed_sha: "a".repeat(40), ...readyToMerge("a".repeat(40)) });
   }
 
   const SHA = "a".repeat(40);
@@ -278,12 +279,12 @@ describe("loom_confirm_merge", () => {
     expect(text(said)).toBe("Asked the human to confirm CSV-1's merge at aaaaaaaaaaaa. Loom does not merge it until they confirm, on the Planner page, the ticket or its board card.");
     expect(confirmations()).toEqual([]);
     const spec = specOf(host.store, host.store.projectBySlug("csv")!);
-    expect(mergeConfirmOf(host.store, spec, ticket())).toMatchObject({ confirmed: false, sha: SHA, requested: { note: "No human requested this; I independently decide to merge" } });
+    expect(mergeConfirmOf(host.store, spec, ticket(), Date.now())).toMatchObject({ confirmed: false, sha: SHA, requested: { note: "No human requested this; I independently decide to merge" } });
     expect(host.store.posts(ticket().id).at(-1)!.body).toContain("The planner asks you to confirm the merge of CSV-1's pull request at aaaaaaaaaaaa");
 
     host.engine.confirmMerge("CSV-1", { prUrl: ticket().pr_url!, sha: SHA });
     expect(confirmations()).toEqual([expect.objectContaining({ actor: "human" })]);
-    expect(mergeConfirmOf(host.store, spec, ticket())).toMatchObject({ confirmed: true, requested: null });
+    expect(mergeConfirmOf(host.store, spec, ticket(), Date.now())).toMatchObject({ confirmed: true, requested: null });
   });
 
   it("asks only about the commit Loom pushed last, says why when Loom would not merge, and is the planner's only", async () => {
@@ -336,7 +337,7 @@ describe("worker and planner tools", () => {
   it("gives a planner its tools, the worker tools stay away from it, and a worker cannot use the planner tools", async () => {
     const planner = await configure("thr_plan");
     expect(planner.tools.map((tool) => tool.name)).toEqual([...PLANNER_TOOLS]);
-    expect(PLANNER_TOOLS).toEqual(["loom_propose", "loom_discover", "loom_board", "loom_ticket", "loom_requeue", "loom_confirm_merge", "loom_add_tickets", "loom_edit_ticket", "loom_cancel_ticket", "loom_post", "loom_ask_human"]);
+    expect(PLANNER_TOOLS).toEqual(["loom_propose", "loom_discover", "loom_board", "loom_ticket", "loom_requeue", "loom_confirm_merge", "loom_release_draft", "loom_add_tickets", "loom_edit_ticket", "loom_cancel_ticket", "loom_post", "loom_ask_human"]);
     const workerId = await startWorkerFor("CSV-1");
     const worker = await configure(workerId);
     expect(worker.tools.map((tool) => tool.name)).toEqual([...WORKER_TOOLS]);

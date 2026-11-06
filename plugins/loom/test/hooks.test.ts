@@ -321,13 +321,14 @@ describe("running a hook's command", () => {
 describe("the migration", () => {
   it("starts every project that exists before hooks after its newest event, so a later hook never fires for an old one", () => {
     const db = new Database(":memory:");
-    for (const sql of MIGRATIONS.slice(0, -1)) db.exec(sql);
+    const hooks = MIGRATIONS.findIndex((sql) => sql.includes("CREATE TABLE hook_firings"));
+    for (const sql of MIGRATIONS.slice(0, hooks)) db.exec(sql);
     const store = new Store(db, () => 1);
-    const made = store.createProject({ slug: "old", name: "Old", key: "OLD", bb_project_id: "proj_1" }, "human");
-    store.event(made.id, null, "spec.approved", "human", { version: 1 });
-    db.exec(MIGRATIONS.at(-1)!);
+    const made = db.prepare("INSERT INTO projects (slug, name, key, bb_project_id, state, created_at, updated_at) VALUES ('old', 'Old', 'OLD', 'proj_1', 'draft', 1, 1)").run().lastInsertRowid as number;
+    db.prepare("INSERT INTO events (project_id, ticket_id, at, kind, actor, data_json) VALUES (?, NULL, 1, 'spec.approved', 'human', '{}')").run(made);
+    for (const sql of MIGRATIONS.slice(hooks)) db.exec(sql);
     const newest = (db.prepare("SELECT MAX(id) AS id FROM events").get() as { id: number }).id;
-    expect(store.project(made.id)!.hook_event_id).toBe(newest);
+    expect(store.project(Number(made))!.hook_event_id).toBe(newest);
     expect(store.createProject({ slug: "new", name: "New", key: "NEW", bb_project_id: "proj_1" }, "human").hook_event_id).toBe(0);
   });
 });

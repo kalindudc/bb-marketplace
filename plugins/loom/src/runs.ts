@@ -19,6 +19,7 @@ export const STEP_LABELS: Partial<Record<HostMethod, string>> = {
   prCommit: "build the pull request's commit",
   push: "git push",
   prCreate: "open the pull request",
+  prReady: "mark the pull request ready for review",
   stackBase: "build the commit to stack on",
   prRetarget: "move the pull request to another base",
   prRequestReview: "ask the reviewers to review again",

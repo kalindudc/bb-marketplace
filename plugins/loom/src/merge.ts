@@ -33,6 +33,7 @@ import {
   waitableOf,
   type Transient,
 } from "./forge-waits";
+import { AFTER_OPEN_ENDED, AFTER_OPEN_MS, AFTER_OPEN_STARTED, followDraft } from "./drafts";
 import { afterMergeChangedText, afterMergeFailedText, andList, branchName, clip, mergeSubject, conflictText, dependsOnLines, landBody, prDivergedText, restackConflictText, restackFailedText, restackMarkersText, restackRefusedText, unfinishedMergeText, withRestoredNote, workerPrBody } from "./prompts";
 import { appliedOf, applyPrText, closedPrReset, followFeedback, inFixRound, openedText, proposalOf, prRollout, prTextFor, prTextReady, reviewersToAsk, syncPrText, targetText, templatePr, wantedText, type PrApplied, type PrText } from "./pull-requests";
 import { githubPull, prNumber, PR_BATCH_MAX, type HostInput, type HostOutput as HostOutputOf } from "./host-contract";
@@ -54,7 +55,6 @@ import { deliverHandBacks, handBack } from "./slots";
 import { carryTo, homeBranch, isRemote, reviewedRef, workBaseOf } from "./transport";
 import { applyMove, baseOf, endLiveRows, endThread, pauseProject, released, resolveEnvironment, specOf, type EngineCtx } from "./workers";
 
-const AFTER_OPEN_MS = 5 * 60_000;
 const PROVISION_MS = 10 * 60_000;
 const errText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
@@ -675,12 +675,14 @@ async function openPullRequest(ctx: EngineCtx, project: ProjectRow, spec: Spec, 
   const template = templatePr(current, dependsOn, rollout);
   const own = kept !== null || (title !== null && body !== null);
   const pr = own ? { title: title ?? template.title, body: body === null ? template.body : workerPrBody(current.key, body, dependsOn, rollout) } : template;
-  const opened = await ctx.host.call(hostId, "prCreate", { repo, remote, base: prBase, head: branch, title: clip(pr.title, 256), body: clip(pr.body, 60_000), draft: spec.merge.draft, forge: openForge(settings.forge) });
+  const opened = await ctx.host.call(hostId, "prCreate", { repo, remote, base: prBase, head: branch, title: clip(pr.title, 256), body: clip(pr.body, 60_000), draft: spec.merge.draft || current.keep_draft === 1, forge: openForge(settings.forge) });
   if (opened.outcome === "unavailable") throw unavailableOf(opened);
   const on = prBase === base ? "" : ` on ${prBase}`;
   const applied = openedText(ctx, spec, current, clip(pr.title, 256), own ? body : null);
   toPrOpen(ctx, current.id, { ...recorded, pr_url: opened.url, pr_base: prBase, pr_meta_json: null, pr_applied_json: applied, pr_proposal_json: null }, { kind: "merge", body: `Opened pull request ${opened.url}${on}${commits}.`, data: { outcome: "pr_opened", url: opened.url, sha: src, base: prBase } }, { url: opened.url, opened: true });
   await afterOpen(ctx, { hostId, repo, settings, head: branch, base: prBase, url: opened.url, projectId: project.id, ticketId: current.id });
+  // An after_open command may mark it ready itself, so with one, the first read that still finds a draft does it.
+  if (spec.merge.draft && (settings.forge.after_open ?? []).length === 0) await followDraft(ctx, project, current.id, true, prBase);
 }
 
 /** Whether the queue took this ticket from pr_open to catch up, and the refresh it was due then: its move to merging says so. */
@@ -1278,7 +1280,15 @@ type HookArgs = { hostId: string; repo: string; settings: RepoSettings; head: st
 
 /** Runs the forge's after_open commands once a pull request is open; LOOM_BASE is the branch it opened on. */
 async function afterOpen(ctx: EngineCtx, a: HookArgs): Promise<void> {
-  await forgeHooks(ctx, a, "after_open", a.settings.forge.after_open ?? [], {});
+  const commands = a.settings.forge.after_open ?? [];
+  if (a.ticketId === null || commands.length === 0) return forgeHooks(ctx, a, "after_open", commands, {});
+  // Recorded before the first await, in the same stretch as the open, so no read marks the pull request ready while they run.
+  ctx.store.event(a.projectId, a.ticketId, AFTER_OPEN_STARTED, LOOM_ACTOR, { url: a.url, commands: commands.length });
+  try {
+    await forgeHooks(ctx, a, "after_open", commands, {});
+  } finally {
+    ctx.store.event(a.projectId, a.ticketId, AFTER_OPEN_ENDED, LOOM_ACTOR, { url: a.url });
+  }
 }
 
 /** What an after_push run was for, as its event records it. */
@@ -1662,7 +1672,8 @@ async function settleRead(ctx: EngineCtx, project: ProjectRow, settings: RepoSet
     await settleClosed(ctx, project, settings, current, base);
   } else {
     const reviewed = (read.feedback?.items ?? []).filter((item) => item.kind === "review").map((item) => item.author);
-    await requestReviewers(ctx, project, current.id, { draft: read.meta?.draft ?? null, author: read.feedback?.author || null, reviewed });
+    const undrafted = await followDraft(ctx, project, current.id, read.meta?.draft ?? null, read.meta?.base ?? null);
+    await requestReviewers(ctx, project, current.id, { draft: undrafted ? false : (read.meta?.draft ?? null), author: read.feedback?.author || null, reviewed });
     if (read.feedback !== null) await followFeedback(ctx, store.project(project.id)!, store.ticket(current.id)!, read.feedback);
     await syncPrText(ctx, store.project(project.id)!, current.id, read.text ?? null);
     await followAutoMerge(ctx, project, current.id, { head: read.feedback?.head ?? null, author: read.feedback?.author || null, text: read.text ?? null, items: read.feedback?.items ?? null, ...(read.queue === undefined ? {} : { queue: read.queue }) });

@@ -5,7 +5,7 @@ import { ensureSpecReview } from "../src/spec-review";
 import type { ProjectMetrics } from "../src/metrics";
 import { TICKET_STATES } from "../src/states";
 import { START_FAILED } from "../src/workers";
-import { FakePort, makeHost, specToml, type Doc } from "./helpers";
+import { FakePort, makeHost, readyToMerge, specToml, type Doc } from "./helpers";
 
 let host: ReturnType<typeof makeHost>;
 let fake: FakePort;
@@ -33,7 +33,7 @@ describe("auto-merge confirm", () => {
     await propose((doc) => void (doc.merge = { strategy: "pr", forge: { kind: "gh", auto_merge: { method: "squash" } } }));
     await host.projects.approve("csv", "human");
     await run(["start", "csv"]);
-    host.store.updateTicket(host.store.ticketByKey("CSV-1")!.id, { state: "pr_open", pr_url: URL, pushed_sha: SHA });
+    host.store.updateTicket(host.store.ticketByKey("CSV-1")!.id, { state: "pr_open", pr_url: URL, pushed_sha: SHA, ...readyToMerge(SHA) });
   }
   const confirmed = () => host.store.ticketEvents(host.store.ticketByKey("CSV-1")!.id, ["ticket.merge_confirmed"]);
 
