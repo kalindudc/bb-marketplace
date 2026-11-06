@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { experimental_createHostEntryHarness } from "@get-bb/plugin-sdk/testing/host";
@@ -36,6 +36,7 @@ import {
   importCommit,
   landedOn,
   merge,
+  loomHooksDir,
   mergeOnto,
   ownGitEnv,
   parseRemoteUrl,
@@ -2877,7 +2878,7 @@ describe("Loom's own git calls", () => {
     expect(ran(log)).toEqual([]);
   });
 
-  it("keep a push's pre-push hook, which git-lfs uploads a commit's large files from", async () => {
+  it("run none of the repository's hooks on a push either", async () => {
     const log = marker();
     const repo = hooked(log);
     const remote = join(scratch, `remote-${counter++}.git`);
@@ -2886,12 +2887,75 @@ describe("Loom's own git calls", () => {
     const head = commitFile(repo, "x.txt", "x");
     rmSync(log, { force: true });
     expect(await push({ repo, remote: "origin", src: head, branch: "loom/csv-1" })).toEqual({ outcome: "ok" });
-    expect(ran(log)).toContain("pre-push");
+    expect(ran(log)).toEqual([]);
+  });
+
+  const lfs = (() => {
+    try {
+      execFileSync("git", ["lfs", "version"], { stdio: "ignore" });
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+
+  it.skipIf(!lfs)("still upload an LFS file on a push, through Loom's own pre-push, with the repository's hook not run (needs git-lfs installed)", async () => {
+    const log = marker();
+    const repo = hooked(log);
+    sh(repo, "lfs", "install", "--local", "--skip-repo");
+    sh(repo, "lfs", "track", "*.bin");
+    const bytes = createHash("sha256").update(String(counter)).digest("hex").repeat(40);
+    put(repo, "big.bin", bytes);
+    sh(repo, "add", "-A");
+    sh(repo, "commit", "-q", "-m", "a large file");
+    const remote = join(scratch, `remote-${counter++}.git`);
+    execFileSync("git", ["init", "-q", "--bare", remote]);
+    sh(repo, "remote", "add", "origin", remote);
+    rmSync(log, { force: true });
+    expect(await push({ repo, remote: "origin", src: "HEAD", branch: "loom/lfs" })).toEqual({ outcome: "ok" });
+    expect(ran(log)).toEqual([]);
+    const clone = join(scratch, `clone-${counter++}`);
+    execFileSync("git", ["clone", "-q", "-b", "loom/lfs", remote, clone]);
+    sh(clone, "lfs", "install", "--local");
+    sh(clone, "lfs", "pull");
+    expect(readFileSync(join(clone, "big.bin"), "utf8")).toBe(bytes);
+  });
+
+  it("push a repository that uses LFS when git-lfs is not installed, and one that does not use it", async () => {
+    const bin = join(scratch, `git-only-${counter++}`);
+    mkdirSync(bin);
+    symlinkSync(execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim(), join(bin, "git"));
+    const outer = process.env.PATH;
+    for (const uses of [true, false]) {
+      const repo = makeRepo();
+      if (uses) sh(repo, "config", "filter.lfs.required", "true");
+      const remote = join(scratch, `remote-${counter++}.git`);
+      execFileSync("git", ["init", "-q", "--bare", remote]);
+      sh(repo, "remote", "add", "origin", remote);
+      const head = commitFile(repo, "x.txt", "x");
+      process.env.PATH = uses ? `${bin}:/usr/bin:/bin` : outer;
+      try {
+        expect(await push({ repo, remote: "origin", src: head, branch: "loom/x" })).toEqual({ outcome: "ok" });
+      } finally {
+        process.env.PATH = outer;
+      }
+    }
   });
 
   it("set their config through git's environment, after the config the environment already has", () => {
-    expect(ownGitEnv(["status"], {})).toEqual({ GIT_CONFIG_COUNT: "2", GIT_CONFIG_KEY_0: "core.fsmonitor", GIT_CONFIG_VALUE_0: "false", GIT_CONFIG_KEY_1: "core.hooksPath", GIT_CONFIG_VALUE_1: "/dev/null" });
-    expect(ownGitEnv(["push", "origin"], { GIT_CONFIG_COUNT: "2" })).toEqual({ GIT_CONFIG_COUNT: "3", GIT_CONFIG_KEY_2: "core.fsmonitor", GIT_CONFIG_VALUE_2: "false" });
+    const hooks = loomHooksDir();
+    expect(ownGitEnv({})).toEqual({ GIT_CONFIG_COUNT: "2", GIT_CONFIG_KEY_0: "core.fsmonitor", GIT_CONFIG_VALUE_0: "false", GIT_CONFIG_KEY_1: "core.hooksPath", GIT_CONFIG_VALUE_1: hooks });
+    expect(ownGitEnv({ GIT_CONFIG_COUNT: "2" })).toMatchObject({ GIT_CONFIG_COUNT: "4", GIT_CONFIG_KEY_2: "core.fsmonitor", GIT_CONFIG_KEY_3: "core.hooksPath" });
+  });
+
+  it("point hooks at Loom's own directory outside every repository, whose only hook is pre-push, and make it again when it is gone", () => {
+    const hooks = loomHooksDir();
+    expect(readdirSync(hooks)).toEqual(["pre-push"]);
+    expect(statSync(join(hooks, "pre-push")).mode & 0o222).toBe(0);
+    expect(readFileSync(join(hooks, "pre-push"), "utf8")).toContain('pre-push "$@"');
+    rmSync(hooks, { recursive: true, force: true });
+    const again = loomHooksDir();
+    expect(readdirSync(again)).toEqual(["pre-push"]);
   });
 
   it("never start the repository's fsmonitor", async () => {

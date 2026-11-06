@@ -1654,11 +1654,15 @@ settings for that project.
   `bb loom land`, and only `bb loom land --direct` pushes to the base branch,
   never with force and only after the `after_merge` checks pass on what it
   pushes.
-- The git commands Loom runs for itself (status, commit, merge, reset, fetch
-  and the rest) start none of the repository's hooks and no fsmonitor daemon,
-  since they run in checkouts and worktrees Loom does not own. A push keeps the
-  repository's hooks, because git-lfs uploads large files from its pre-push
-  hook. Your spec's check commands run as you wrote them, hooks and all.
+- The git commands Loom runs for itself (status, commit, merge, reset, fetch,
+  push and the rest) start none of the repository's hooks and no fsmonitor
+  daemon, since they run in checkouts and worktrees Loom does not own. Their
+  hooks come from a directory Loom makes outside every repository, whose only
+  hook is a pre-push that runs `git-lfs pre-push` when git-lfs is installed
+  and the repository uses LFS, so a pushed commit's large files still upload.
+  A repository's own pre-push checks, such as a refusal of force pushes or a
+  stale-branch warning, do not run for Loom's pushes; Loom never force-pushes.
+  Your spec's check commands run as you wrote them, hooks and all.
 - Loom's database keeps check output, posts and pull request text, so Loom
   makes it, and its `-wal` and `-shm` files, readable by their owner alone
   (mode 0600) each time it starts.
