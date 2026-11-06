@@ -7,6 +7,7 @@ import { formatDuration, plural } from "./format";
 import { percentile } from "./metrics";
 import { projectTimeline, type ProjectRows, type TicketBar } from "./replay";
 import type { Finding } from "./review";
+import { inTextRound, sentBackForText, textRounds } from "./review-kind";
 import { ROLES, type AuthorKind, type PostKind, type ProjectState, type Role, type TicketState } from "./states";
 
 const MIN = 60_000;
@@ -109,7 +110,10 @@ export interface InsightsNumbers {
   maxWorkers: number;
   prWait: { p50: number | null; max: number | null; n: number };
   firstTry: Array<{ key: string; clean: boolean; rounds: number }>;
+  /** Findings of code reviews in the stretch. */
   findings: { total: number; blocking: number };
+  /** Text reviews with a verdict in the stretch, and the rounds sent back to the worker for its text alone. */
+  text: { reviews: number; sentBack: number };
   checks: { runs: number; failed: number; outside: number; commands: Array<{ command: string; runs: number; failed: number; p50Ms: number | null }> };
   prFeedback: number;
   /** Tokens are one running total per thread, so they always cover the whole project. */
@@ -637,7 +641,9 @@ function numbersOf(ctx: Ctx, rows: ProjectRows, range: { from: number; to: numbe
     const clean = !reviews.some((review) => review.round === round && review.verdict === "changes_requested");
     return [{ key: ticket.key, clean: clean && ["approved", "merging", "pr_open", "done"].includes(ticket.state), rounds: Math.max(...reviews.map((review) => review.round)) }];
   });
-  const findings = rows.reviews.filter((review) => review.verdict !== "pending" && inside(review.at)).flatMap((review) => JSON.parse(review.findings_json) as Finding[]);
+  const textRound = textRounds(ctx.evs.filter((ev) => ev.kind === "ticket.state").map((ev) => ({ ticketId: ev.row.ticket_id, data: ev.d })));
+  const judged = rows.reviews.filter((review) => review.verdict !== "pending" && inside(review.at));
+  const findings = judged.filter((review) => !inTextRound(textRound, review)).flatMap((review) => JSON.parse(review.findings_json) as Finding[]);
 
   const checkPosts = evs.filter((ev) => ev.post?.kind === "check");
   const runs = checkPosts.flatMap((ev) => runsOf(ev.post));
@@ -675,6 +681,7 @@ function numbersOf(ctx: Ctx, rows: ProjectRows, range: { from: number; to: numbe
     prWait: { p50: percentile(prWaits, 50), max: prWaits.length === 0 ? null : Math.max(...prWaits), n: prWaits.length },
     firstTry,
     findings: { total: findings.length, blocking: findings.filter((finding) => finding.severity === "blocking").length },
+    text: { reviews: judged.filter((review) => inTextRound(textRound, review)).length, sentBack: evs.filter((ev) => ev.kind === "ticket.state" && sentBackForText(ev.d)).length },
     checks: { runs: checkPosts.length, failed: checkPosts.filter((ev) => ev.post!.data.passed === false).length, outside: checkPosts.filter((ev) => countOf(ev.post!.data.outside) > 0).length, commands },
     prFeedback: evs.filter((ev) => ev.post?.kind === "merge" && ev.post.data.outcome === "pr_feedback").length,
     tokens: {

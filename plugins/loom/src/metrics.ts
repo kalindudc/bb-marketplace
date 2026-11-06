@@ -2,6 +2,7 @@
 // milliseconds and days are UTC. Flow figures come from the append-only event log, so they can be recomputed at any time.
 import type { EventRow, PostRow, ReviewRow, ThreadRow, TicketRow } from "./db/store";
 import type { Finding } from "./review";
+import { inTextRound, sentBackForText, textRounds } from "./review-kind";
 import { IN_FLIGHT } from "./scheduler";
 import { ROLES, TICKET_STATES, type Role, type TicketState } from "./states";
 
@@ -31,7 +32,10 @@ export interface ProjectMetrics {
   timeInState: { ms: Record<TicketState, number>; flowEfficiency: number | null; n: number };
   checksByCommand: Array<{ command: string; runs: number; failed: number; p50Ms: number | null }>;
   scopeFlags: { outside: number; protectedHits: number };
+  /** Findings of code reviews; text reviews are counted in textReviews. */
   findings: { total: number; blocking: number; shouldFix: number; rounds: number; changesRequested: number };
+  /** Text reviews, which judged a submit that changed only the proposed text, and the rounds sent back to the worker for its text alone. */
+  textReviews: { reviews: number; approved: number; changesRequested: number; textOnlyRounds: number };
   tokensByTicket: Array<{ key: string; tokens: number }>;
   reliability: { failedAttempts: number; rateLimitRetries: number; timeouts: number; mergesSentBack: number };
   /** Final reviews before Loom's own merges: runs started, verdicts, runs that ended without one, and the tokens of the closed ones. */
@@ -124,6 +128,10 @@ export function computeMetrics(a: { tickets: TicketRow[]; events: EventRow[]; po
   }
 
   const checkData = a.posts.filter((post) => post.kind === "check").map(dataOf);
+  const moves = events.filter((event) => event.row.kind === "ticket.state");
+  const textRound = textRounds(moves.map((event) => ({ ticketId: event.row.ticket_id, data: event.data })));
+  const decided = a.reviews.filter((review) => review.verdict !== "pending");
+  const textReviews = decided.filter((review) => inTextRound(textRound, review));
 
   const tokens = Object.fromEntries(ROLES.map((role) => [role, 0])) as Record<Role, number>;
   for (const thread of a.threads) tokens[thread.role] += thread.tokens ?? 0;
@@ -151,7 +159,13 @@ export function computeMetrics(a: { tickets: TicketRow[]; events: EventRow[]; po
     timeInState: timeInState(done, events, createdAt, doneAt),
     checksByCommand: checksByCommand(checkData),
     scopeFlags: { outside: checkData.filter((data) => nonEmpty(data.outside)).length, protectedHits: checkData.filter((data) => nonEmpty(data.protectedHits)).length },
-    findings: findings(a.reviews),
+    findings: findings(decided.filter((review) => !inTextRound(textRound, review))),
+    textReviews: {
+      reviews: textReviews.length,
+      approved: textReviews.filter((review) => review.verdict === "approved").length,
+      changesRequested: textReviews.filter((review) => review.verdict === "changes_requested").length,
+      textOnlyRounds: moves.filter((event) => sentBackForText(event.data)).length,
+    },
     tokensByTicket: tokensByTicket(a.tickets, a.threads),
     reliability: {
       failedAttempts: a.tickets.reduce((sum, ticket) => sum + ticket.failures, 0),
@@ -200,8 +214,7 @@ function checksByCommand(checkData: Record<string, unknown>[]): ProjectMetrics["
 }
 
 // A round is one ticket's review round; with more than one approval required, several reviews share a round.
-function findings(reviews: ReviewRow[]): ProjectMetrics["findings"] {
-  const decided = reviews.filter((review) => review.verdict !== "pending");
+function findings(decided: ReviewRow[]): ProjectMetrics["findings"] {
   const all = decided.flatMap((review) => JSON.parse(review.findings_json) as Finding[]);
   const roundOf = (review: ReviewRow) => `${review.ticket_id}:${review.round}`;
   return {

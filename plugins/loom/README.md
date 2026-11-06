@@ -605,8 +605,10 @@ ticket, on one page:
   An action that wrote several events, such as a review and the move it
   caused, reads as one line; the ticket page keeps everything.
 - In numbers: how long a ticket takes (a dot per ticket; a dot finds its
-  story), where its time goes, how often the first try is right, what it cost,
-  when you stepped in, what went wrong, and the checks by command.
+  story), where its time goes, how often the first try is right, with the
+  code reviews' findings and, apart from them, the text reviews and the rounds
+  sent back for the text alone, what it cost, when you stepped in, what went
+  wrong, and the checks by command.
 
 On the pull request strategy a ticket's work ends when its pull request opens,
 so the timings stop there and the time the pull request then waits on people
@@ -1544,7 +1546,8 @@ time it to done.
 | time in state and flow efficiency | Over done tickets, the time spent in each state from creation (as queued) until done. Flow efficiency is the share of that time spent working. |
 | checks by command | For each check command, its runs, failed runs (a non-zero exit or a timeout) and p50 duration. The plugin's own refusals count under "scope check" and "worktree check". |
 | scope flags | Check posts that found files outside the ticket's scope, and check posts that found protected paths. |
-| review findings | Over reviews with a verdict: the findings, how many are blocking and should-fix, the review rounds, and the rounds that requested changes. |
+| review findings | Over code reviews with a verdict: the findings, how many are blocking and should-fix, the review rounds, and the rounds that requested changes. Text reviews are counted apart. |
+| text reviews | Text reviews with a verdict, approved and with changes requested, and the rounds sent back to the worker for its text alone (`textReviews` in `--json`). Shown once there is one. |
 | tokens by ticket | The 5 tickets whose threads used the most sampled tokens. |
 | reliability | Failed worker attempts, rate-limit retries, worker threads that timed out, and merges sent back to work (a merge conflict or a failed `after_merge` check). |
 | final reviews | With `auto_merge.final_review`: the final reviews started, passed and failed, those that ended without a verdict, and the sampled tokens of the finished ones. |

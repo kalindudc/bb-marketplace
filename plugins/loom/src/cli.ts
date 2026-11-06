@@ -196,6 +196,9 @@ function newMetricLines(m: ProjectMetrics): string[] {
     findings.rounds === 0
       ? "review findings none yet"
       : `review findings ${findings.total} in ${plural(findings.rounds, "round")} (${findings.blocking} blocking, ${findings.shouldFix} should-fix), changes requested in ${findings.changesRequested}`,
+    ...(m.textReviews.reviews === 0 && m.textReviews.textOnlyRounds === 0
+      ? []
+      : [`text reviews ${m.textReviews.reviews} (${m.textReviews.approved} approved, ${m.textReviews.changesRequested} changes requested); ${plural(m.textReviews.textOnlyRounds, "text-only round")} sent back to the worker`]),
     `tokens by ticket ${m.tokensByTicket.length === 0 ? "none yet" : m.tokensByTicket.map((entry) => `${entry.key} ${entry.tokens}`).join(", ")}`,
     `reliability ${plural(reliability.failedAttempts, "failed attempt")}, ${reliability.rateLimitRetries} rate-limit ${reliability.rateLimitRetries === 1 ? "retry" : "retries"}, ${plural(reliability.timeouts, "timeout")}, ${plural(reliability.mergesSentBack, "merge")} sent back`,
     ...(m.finalReviews.runs === 0 ? [] : [`final reviews ${m.finalReviews.runs} run, ${m.finalReviews.passed} passed, ${m.finalReviews.failed} failed, ${m.finalReviews.unfinished} unfinished, ${m.finalReviews.tokens.toLocaleString("en-US")} tokens`]),

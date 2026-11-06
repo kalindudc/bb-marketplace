@@ -982,6 +982,11 @@ function Numbers({ view, onFind, onLink }: { view: ProjectInsights; onFind(key: 
             {n.firstTry.some((entry) => entry.rounds > 2) ? ", a red edge for more than one" : ""}. Reviewers wrote <b>{plural(n.findings.total, "finding")}</b>
             {n.findings.total > 0 ? `, ${n.findings.blocking === n.findings.total ? "all" : n.findings.blocking} blocking` : ""}.
           </Note>
+          {(n.text.reviews > 0 || n.text.sentBack > 0) && (
+            <Note>
+              Text reviews judged <b>{plural(n.text.reviews, "change")}</b> to a pull request&apos;s title or description alone, with no checks and no code review; <b>{plural(n.text.sentBack, "round")}</b> went back to the worker for its text only.
+            </Note>
+          )}
           <Note>
             {n.checks.runs === 0 ? "No check has run." : n.checks.failed === 0 ? `Checks passed all ${n.checks.runs} runs.` : <>Checks failed <b>{n.checks.failed} of {n.checks.runs}</b> runs.</>}
             {n.prFeedback > 0 && (

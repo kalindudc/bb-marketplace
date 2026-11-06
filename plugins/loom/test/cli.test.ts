@@ -946,6 +946,7 @@ describe("metrics and feed", () => {
     ],
     reliability: { failedAttempts: 3, rateLimitRetries: 4, timeouts: 2, mergesSentBack: 1 },
     finalReviews: { runs: 0, passed: 0, failed: 0, unfinished: 0, tokens: 0 },
+    textReviews: { reviews: 0, approved: 0, changesRequested: 0, textOnlyRounds: 0 },
     ...over,
   });
 
@@ -1057,6 +1058,7 @@ describe("metrics and feed", () => {
       "reliability",
       "reviewRounds",
       "scopeFlags",
+      "textReviews",
       "throughput",
       "timeInState",
       "tokens",

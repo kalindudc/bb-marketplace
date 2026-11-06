@@ -29,6 +29,8 @@ export function textRounds(moves: Iterable<Move>): Set<string> {
   return rounds;
 }
 
+export const inTextRound = (rounds: ReadonlySet<string>, review: { ticket_id: number; round: number }) => rounds.has(roundKey(review.ticket_id, review.round));
+
 /** A review round that sent the ticket back to its worker for its pull request's text alone. */
 export const sentBackForText = (data: Record<string, unknown>) => data.from === "review" && data.to === "working" && data.textOnly === true;
 

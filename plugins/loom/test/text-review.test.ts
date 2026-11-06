@@ -5,6 +5,8 @@ import type { ThreadRow } from "../src/db/store";
 import { pollPullRequests, runMergeQueue, settleMerges } from "../src/merge";
 import { askForPrTexts, handInPrText } from "../src/pull-requests";
 import { approve, requestChanges, settleReviews, spawnReviewers, type Finding } from "../src/review";
+import { projectMetrics } from "../src/reports";
+import { formatMetrics } from "../src/cli";
 import { PR_TEXT_CORE } from "../src/prompts";
 import { specOf } from "../src/ctx";
 import { checkOutHead, makeCtx, seedProject, startWorker, ticketOf, type Doc, type EngineHarness } from "./helpers";
@@ -312,5 +314,23 @@ describe("the briefs", () => {
     expect(text).toContain('kind "code"');
     expect(text).toContain("The merge and deploy order, the prerequisites and the Rollout section are Loom's");
     expect(text).toContain("say so in your verdict's summary for the planner");
+  });
+});
+
+describe("metrics", () => {
+  it("count text reviews and text-only rounds apart from code reviews", async () => {
+    await seedProject(h, pr());
+    const worker = await startWorker(h);
+    await handIn(worker, "Done.", { pr: { title: "T", body: "B" } });
+    await requestChanges(h.ctx, (await nextReviewer()).thread_id!, "Text.", [textFinding]);
+    await settle();
+    await handIn(worker, "Rewrote it.", { change: false, pr: PROPOSED });
+    await approve(h.ctx, (await nextReviewer(false)).thread_id!, "Good.");
+    await settle();
+
+    const metrics = projectMetrics(h.store, project(), h.clock.t);
+    expect(metrics.textReviews).toEqual({ reviews: 1, approved: 1, changesRequested: 0, textOnlyRounds: 1 });
+    expect(metrics.findings).toMatchObject({ total: 1, rounds: 1, changesRequested: 1 });
+    expect(formatMetrics(metrics)).toContain("text reviews 1 (1 approved, 0 changes requested); 1 text-only round sent back to the worker");
   });
 });
