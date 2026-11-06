@@ -7,8 +7,8 @@ import { harness, pr, testConfig } from "./helpers";
 
 const review = (id: string, author = "ana", extra: Record<string, unknown> = {}) => ({ id, kind: "review", author, state: "changes requested", body: `Fix ${id}`, ...extra });
 
-async function setup() {
-  const h = harness();
+async function setup(config = testConfig()) {
+  const h = harness(config);
   h.lists.authored = [pr(1, { author: "me" }), pr(2, { author: "me" })];
   await h.shuttle.sync();
   h.port.addThread("thr_owner", "Envoy work");
@@ -203,6 +203,241 @@ describe("watched PRs", () => {
     expect(h.port.sent).toHaveLength(2);
     expect(h.port.sent[1]!.text).toContain("Fix merged");
     expect(h.port.sent[1]!.text).not.toContain("Fix queued");
+  });
+
+  it("never sends failed checks named under Except these checks", async () => {
+    const h = harness(testConfig({ watch: { ...DEFAULT_CONFIG.watch, ignoreChecks: ["Review gate*", "approvals"] } }));
+    h.lists.authored = [pr(1, { author: "me" })];
+    await h.shuttle.sync();
+    h.port.addThread("thr_owner", "Envoy work");
+    await h.shuttle.link("forge:acme/app#1", "thr_owner");
+    await h.shuttle.sync();
+    const check = (name: string) => ({ id: `check:${name}:head1`, kind: "check", state: "failed", body: `${name} failed` });
+    h.activity[1] = { items: [check("Review gate: threads resolved"), check("approvals"), check("unit tests")] };
+    h.clock.now += 3 * 60_000;
+    await h.shuttle.sync();
+    h.clock.now += 3 * 60_000;
+    await h.shuttle.tick();
+    expect(h.port.sent).toHaveLength(1);
+    const text = h.port.sent[0]!.text;
+    expect(text).toContain("unit tests failed");
+    expect(text).not.toContain("Review gate");
+    expect(text).not.toContain("approvals failed");
+  });
+
+  it("counts Bot authors as bots, and hears a bot under Only when they say for what has one of its phrases", async () => {
+    const queue = "merge-queue@robots.example.com";
+    const h = harness(testConfig({
+      watch: { ...DEFAULT_CONFIG.watch, allowBots: ["reviewer@*"], botPhrases: [{ bot: "merge-queue@*", phrases: ["\u274c", "Removed from the queue"] }] },
+    }));
+    h.settings.botAuthors = ["*@robots.example.com"];
+    h.lists.authored = [pr(1, { author: "me" })];
+    await h.shuttle.sync();
+    h.port.addThread("thr_owner", "Envoy work");
+    await h.shuttle.link("forge:acme/app#1", "thr_owner");
+    await h.shuttle.sync();
+    const comment = (id: string, author: string, body: string) => ({ id, kind: "comment", author, bot: false, body });
+    h.activity[1] = {
+      items: [
+        comment("enqueued", queue, "\u2705 **Pull request enqueued successfully**"),
+        comment("ejected", queue, "\u274c **CI failure** The batch containing this PR has been ejected."),
+        comment("cancel", queue, "This PR was removed from the queue by dana."),
+        comment("howto", "ci-notes@robots.example.com", "Pre-merge CI and merging: comment /merge"),
+        comment("finding", "reviewer@robots.example.com", "The check request forwards content-type"),
+        comment("person", "ana", "Looks close"),
+      ],
+    };
+    h.clock.now += 3 * 60_000;
+    await h.shuttle.sync();
+    h.clock.now += 3 * 60_000;
+    await h.shuttle.tick();
+    const text = h.port.sent[0]!.text;
+    expect(text).toContain("CI failure");
+    expect(text).toContain("removed from the queue");
+    expect(text).toContain("forwards content-type");
+    expect(text).toContain("Looks close");
+    expect(text).not.toContain("enqueued successfully");
+    expect(text).not.toContain("Pre-merge CI");
+  });
+
+  it("starts a bot's phrases, and a watch from before phrases, from what is said next", async () => {
+    const h = harness();
+    h.lists.authored = [pr(1, { author: "me" })];
+    await h.shuttle.sync();
+    h.port.addThread("thr_owner", "Envoy work");
+    await h.shuttle.link("forge:acme/app#1", "thr_owner");
+    await h.shuttle.sync();
+    // A watch read by an older Shuttle remembers only a list of allowed bots.
+    h.store.setWatchBots(h.store.prByKey("forge:acme/app#1")!.id, JSON.stringify(["review-bot"]));
+    const said = (id: string, body: string) => ({ id, kind: "comment", author: "merge-queue[bot]", bot: true, body, at: h.clock.now - 1000 });
+    const early = said("early", "\u274c Merge conflict, early");
+    h.activity[1] = { items: [early] };
+    // Named with GitHub's [bot] suffix and in other cases, the rule still matches.
+    h.shuttle.saveConfig(testConfig({ watch: { ...DEFAULT_CONFIG.watch, botPhrases: [{ bot: "Merge-Queue[bot]", phrases: ["MERGE CONFLICT"] }] } }));
+    h.clock.now += 3 * 60_000;
+    await h.shuttle.sync();
+    expect(h.shuttle.view("forge:acme/app#1").pendingItems).toBe(0);
+    h.activity[1] = { items: [early, said("later", "\u274c Merge conflict, later")] };
+    h.clock.now += 3 * 60_000;
+    await h.shuttle.sync();
+    h.clock.now += 3 * 60_000;
+    await h.shuttle.tick();
+    expect(h.port.sent).toHaveLength(1);
+    expect(h.port.sent[0]!.text).toContain("Merge conflict, later");
+    expect(h.port.sent[0]!.text).not.toContain("Merge conflict, early");
+  });
+
+  it("holds approvals and a bot's summary of its open threads until something to act on goes to the thread", async () => {
+    const h = await setup(testConfig({ watch: { ...DEFAULT_CONFIG.watch, allowBots: ["ai-reviewer@*"] } }));
+    h.settings.botAuthors = ["ai-reviewer@*"];
+    await h.shuttle.link("forge:acme/app#1", "thr_owner");
+    await h.shuttle.link("forge:acme/app#2", "thr_owner");
+    await h.shuttle.sync();
+    const thread = { id: "t1", kind: "thread", author: "ai-reviewer@ai.example.com", body: "Fix the timeout", path: "a.rs", line: 3, resolved: false };
+    h.activity[1] = { items: [thread, review("summary", "ai-reviewer@ai.example.com", { body: "Found 1 open finding" }), review("lgtm", "lee", { state: "approved", body: "No blocking findings" })] };
+    h.activity[2] = { items: [review("ok2", "dana", { state: "approved", body: "Ship it" })] };
+    h.clock.now += 3 * 60_000;
+    await h.shuttle.sync();
+    // The thread makes the message, and its summary and both approvals come with it.
+    h.clock.now += 3 * 60_000;
+    await h.shuttle.tick();
+    expect(h.port.sent).toHaveLength(1);
+    expect(h.port.sent[0]!.text).toContain("Fix the timeout");
+    expect(h.port.sent[0]!.text).toContain("Found 1 open finding");
+    h.port.sent.length = 0;
+
+    h.activity[1] = { items: [thread, review("summary2", "ai-reviewer@ai.example.com", { body: "Still 1 open finding" }), review("lgtm2", "lee", { state: "approved", body: "Approved again" })] };
+    h.activity[2] = { items: [review("ok3", "dana", { state: "approved", body: "Ship it again" })] };
+    h.clock.now += 3 * 60_000;
+    await h.shuttle.sync();
+    h.clock.now += 30 * 60_000;
+    await h.shuttle.tick();
+    expect(h.port.sent).toHaveLength(0);
+    expect(h.shuttle.view("forge:acme/app#1").pendingItems).toBe(0);
+    // Sending now skips the batch window, not the need for something to act on.
+    expect(await h.shuttle.sendUnread("thr_owner")).toBe(0);
+
+    h.activity[2] = { items: [review("ok3", "dana", { state: "approved", body: "Ship it again" }), { id: "c1", kind: "comment", author: "dana", body: "One question on the README" }] };
+    h.clock.now += 3 * 60_000;
+    await h.shuttle.sync();
+    h.clock.now += 3 * 60_000;
+    await h.shuttle.tick();
+    expect(h.port.sent).toHaveLength(1);
+    const text = h.port.sent[0]!.text;
+    const [, one, two] = text.split(/^## /mu);
+    expect(one).toContain("```text\nTitle: PR 1\n```\nAlso new, with nothing to do:\n```text\n");
+    expect(one).toContain("\n- review by ai-reviewer@ai.example.com (changes requested): Still 1 open finding");
+    expect(one).toContain("\n- review by lee (approved): Approved again");
+    expect(one).not.toContain("Classify each finding");
+    expect(one).not.toContain("[ref");
+    expect(two).toMatch(/1\. \[ref [0-9a-f]{8}\] comment by dana: One question on the README/u);
+    expect(two).toContain("- review by dana (approved): Ship it again");
+    expect(two).toContain("Classify each finding");
+    expect(text).toContain("shuttle_feedback_done");
+    expect(h.store.pending(h.store.prByKey("forge:acme/app#1")!.id)).toEqual([]);
+  });
+
+  it("sends a bot's review with no open threads of its own at once, and every item with Quiet reviews off", async () => {
+    const h = await setup(testConfig({ watch: { ...DEFAULT_CONFIG.watch, allowBots: ["policy-bot"] } }));
+    await h.shuttle.link("forge:acme/app#1", "thr_owner");
+    await h.shuttle.sync();
+    const done = { id: "t0", kind: "thread", author: "policy-bot", bot: true, body: "Old finding", resolved: true };
+    h.activity[1] = { items: [done, review("policy", "policy-bot", { bot: true, body: "Add a changelog entry" })] };
+    h.clock.now += 3 * 60_000;
+    await h.shuttle.sync();
+    h.clock.now += 3 * 60_000;
+    await h.shuttle.tick();
+    expect(h.port.sent).toHaveLength(1);
+    expect(h.port.sent[0]!.text).toMatch(/\[ref [0-9a-f]{8}\] review by policy-bot \(changes requested\): Add a changelog entry/u);
+
+    h.shuttle.saveConfig(testConfig({ watch: { ...DEFAULT_CONFIG.watch, quietReviews: false } }));
+    h.activity[1] = { items: [review("lgtm", "lee", { state: "approved", body: "LGTM" })] };
+    h.clock.now += 3 * 60_000;
+    await h.shuttle.sync();
+    h.clock.now += 3 * 60_000;
+    await h.shuttle.tick();
+    expect(h.port.sent).toHaveLength(2);
+    expect(h.port.sent[1]!.text).toMatch(/\[ref [0-9a-f]{8}\] review by lee \(approved\): LGTM/u);
+  });
+
+  it("never sends a thread only quiet items while another owner still waits for the work", async () => {
+    const h = await setup();
+    h.port.addThread("thr_second", "Second");
+    await h.shuttle.link("forge:acme/app#1", "thr_owner");
+    await h.shuttle.sync();
+    h.store.link(h.store.prByKey("forge:acme/app#1")!.id, "thr_second", "owner");
+    h.port.failSendTo.add("thr_second");
+    h.activity[1] = { items: [review("fix")] };
+    h.clock.now += 3 * 60_000;
+    await h.shuttle.sync();
+    h.clock.now += 3 * 60_000;
+    await h.shuttle.tick();
+    expect(h.port.sent.map((s) => s.threadId)).toEqual(["thr_owner"]);
+    h.activity[1] = { items: [review("fix"), review("lgtm", "lee", { state: "approved" })] };
+    h.clock.now += 3 * 60_000;
+    await h.shuttle.sync();
+    h.clock.now += 3 * 60_000;
+    await h.shuttle.tick();
+    expect(h.port.sent.map((s) => s.threadId)).toEqual(["thr_owner"]);
+    h.port.failSendTo.clear();
+    h.clock.now += 3 * 60_000;
+    await h.shuttle.tick();
+    expect(h.port.sent.map((s) => s.threadId)).toEqual(["thr_owner", "thr_second"]);
+    expect(h.port.sent[1]!.text).toContain("Fix fix");
+    expect(h.port.sent[1]!.text).toContain("- review by lee (approved)");
+  });
+
+  it("says how many quiet items it left out past the cap", async () => {
+    const h = await setup();
+    await h.shuttle.link("forge:acme/app#1", "thr_owner");
+    await h.shuttle.sync();
+    const approvals = Array.from({ length: 27 }, (_, i) => review(`ok${i}`, `r${i}`, { state: "approved" }));
+    h.activity[1] = { items: [...approvals, review("fix")] };
+    h.clock.now += 3 * 60_000;
+    await h.shuttle.sync();
+    h.clock.now += 3 * 60_000;
+    await h.shuttle.tick();
+    expect(h.port.sent[0]!.text).toContain("\u2026and 2 more with nothing to do.");
+  });
+
+  it("does not hold a bot's review for threads of its own the agent never gets", async () => {
+    const h = await setup(testConfig({ watch: { ...DEFAULT_CONFIG.watch, botPhrases: [{ bot: "gate-bot", phrases: ["blocking"] }] } }));
+    await h.shuttle.link("forge:acme/app#1", "thr_owner");
+    await h.shuttle.sync();
+    h.activity[1] = {
+      items: [
+        { id: "nit", kind: "thread", author: "gate-bot", bot: true, body: "Style nit", resolved: false },
+        review("gate", "gate-bot", { bot: true, body: "Blocking: the migration is missing" }),
+      ],
+    };
+    h.clock.now += 3 * 60_000;
+    await h.shuttle.sync();
+    h.clock.now += 3 * 60_000;
+    await h.shuttle.tick();
+    expect(h.port.sent).toHaveLength(1);
+    expect(h.port.sent[0]!.text).toMatch(/\[ref [0-9a-f]{8}\] review by gate-bot \(changes requested\): Blocking: the migration is missing/u);
+    expect(h.port.sent[0]!.text).not.toContain("Style nit");
+  });
+
+  it("drops held items once the PR merges, and queued items today's settings would not send", async () => {
+    const h = await setup();
+    await h.shuttle.link("forge:acme/app#1", "thr_owner");
+    await h.shuttle.sync();
+    const id = h.store.prByKey("forge:acme/app#1")!.id;
+    h.activity[1] = { items: [review("lgtm", "lee", { state: "approved" }), { id: "check:lint:head1", kind: "check", state: "failed", body: "lint failed" }] };
+    h.clock.now += 3 * 60_000;
+    await h.shuttle.sync();
+    expect(h.store.pending(id)).toHaveLength(2);
+    h.shuttle.saveConfig(testConfig({ watch: { ...DEFAULT_CONFIG.watch, ignoreChecks: ["lint"] } }));
+    h.clock.now += 3 * 60_000;
+    await h.shuttle.tick();
+    expect(h.port.sent).toHaveLength(0);
+    expect(h.store.pending(id).map((row) => row.item_id)).toEqual(["lgtm"]);
+    h.activity[1] = { items: [], state: "merged", closed_at: "2026-10-23T12:30:00Z" };
+    await h.shuttle.sync();
+    await h.shuttle.tick();
+    expect(h.store.pending(id)).toEqual([]);
+    expect(h.port.sent).toHaveLength(0);
   });
 
   it("keeps items pending while no owner thread can receive them", async () => {

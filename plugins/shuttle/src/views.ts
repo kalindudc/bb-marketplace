@@ -8,6 +8,7 @@ import { mergeView, SENT_MERGE_MS } from "./merges";
 import { postView } from "./posts";
 import { myReviewOf } from "./prs";
 import { globMatch, STEP_OF_REASON } from "./sync";
+import { waitingCount } from "./watch";
 
 const DAY = 86_400_000;
 const QUIET_MS = 30 * DAY;
@@ -258,7 +259,7 @@ function viewOf(ctx: Ctx, pr: PrRow, rules: readonly InboxRuleRow[]): { view: Pr
     inMergeQueue: pr.in_merge_queue === 1,
     stale: freshness.stale,
     staleSince: freshness.since,
-    pendingItems: watch ? ctx.store.pendingCount(pr.id) : 0,
+    pendingItems: watch ? waitingCount(ctx, pr.id) : 0,
     labels: parseLabels(pr.labels),
     reviewers,
     actions,

@@ -242,6 +242,26 @@ describe("Shuttle settings sections", () => {
     expect(next.presets).toEqual(config().presets);
   });
 
+  it("saves the checks an agent never gets, the phrases that let a bot through and whether approvals wait", async () => {
+    const slot = await section("automations");
+    const checks = (await slot.findByRole("textbox", { name: "Checks an agent never gets" })) as HTMLTextAreaElement;
+    fireEvent.change(checks, { target: { value: "Threads resolved\n\n  approvals  \n" } });
+    const phrases = slot.getByRole("textbox", { name: "Phrases that let a bot through" }) as HTMLTextAreaElement;
+    fireEvent.change(phrases, { target: { value: "merge-queue*: failed, removed from the queue,\n\npreview-bot:ready" } });
+    fireEvent.click(slot.getByRole("checkbox", { name: /Hold approvals and review summaries/u }));
+    fireEvent.click(slot.getByRole("button", { name: "Save automations" }));
+    await waitFor(() => expect(saved(slot)).toHaveLength(1));
+    expect(saved(slot)[0]!.watch).toMatchObject({
+      ignoreChecks: ["Threads resolved", "approvals"],
+      botPhrases: [{ bot: "merge-queue*", phrases: ["failed", "removed from the queue"] }, { bot: "preview-bot", phrases: ["ready"] }],
+      quietReviews: false,
+    });
+    fireEvent.click(slot.getByRole("checkbox", { name: /Also send failed checks on the head/u }));
+    expect(checks.disabled).toBe(true);
+    fireEvent.click(slot.getByRole("checkbox", { name: /Ignore bots/u }));
+    expect(phrases.disabled).toBe(true);
+  });
+
   it("turns on auto post's shadow mode for a repository, with its guidelines, held paths and bar", async () => {
     const slot = await section("automations");
     await slot.findByText("Auto post");

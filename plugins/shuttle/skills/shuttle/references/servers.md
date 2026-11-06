@@ -155,7 +155,9 @@ a PR that merged or closed shows as such straight away instead of at the next li
 changes the PR's state.
 
 `kind` is `review`, `thread` (a review comment on a line or file), `comment` or `check` (a
-failed check). An `id` must stay the same while the item does not change and change when it does
+failed check, whose `body` is `<name> failed`: Except these checks matches the name). Mark an
+account the server reports as a person but is a service account with `"bot": true` when the
+command can tell, or name it in the Bot authors setting. An `id` must stay the same while the item does not change and change when it does
 (a new reply, a check run again): Shuttle sends each id to a thread once. When a PR is first
 watched, every item already there counts as seen.
 

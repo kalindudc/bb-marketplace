@@ -292,10 +292,24 @@ after the batch window, sends the thread what is new: reviews, review comments, 
 comments and, if you choose, failed checks on the head. Resolved threads and your own reviews and
 replies are left out, and so are bots while **Ignore bots** is on, except the logins and globs under
 **Except these bots**, which starts empty: add the bots whose comments are about the PR's own change,
-such as an AI reviewer or a code scanner. A bot is what the server marks as one; GitHub's logins match
-with or without `[bot]`.
-Each watch remembers which bots it heard from, so a bot added later, or every bot when Ignore bots is
-turned off, starts from what it says next instead of sending what it said while it was ignored.
+such as an AI reviewer or a code scanner. A bot that matters only now and then goes under **Other bots,
+only when they say**, one a line with its phrases, for example `merge-queue*: failed, removed from the
+queue`: the agent gets what it writes only when it has one of the phrases, in any case. A bot is what the
+server marks as one, or an author the **Bot authors** setting names, such as `*@automation.example.com`
+for a server that reports service accounts as people; GitHub's logins match with or without `[bot]`.
+Each watch remembers which bots it heard from, so a bot or a phrase added later, or every bot when Ignore
+bots is turned off, starts from what it says next instead of sending what it said while it was ignored.
+
+Failed checks named under **Except these checks** are never sent, such as a gate that waits for a
+person's approval or for a reviewer's threads to be resolved; the PR's Checks tab still shows them.
+
+With **Hold approvals and review summaries for the next message**, on by default, an approval, a
+dismissal or a bot's review while that bot has open threads on the PR never makes a message by
+itself: the threads come on their own, and the rest has nothing to fix. They wait for the next message
+the thread gets, for any of its PRs, and go at its end under "Also new, with nothing to do", without
+refs. They are dropped when the PR merges or closes, and the PR's unsent count leaves them out. A bot's
+review with no open threads of its own comes at once, since it is the finding. Items already waiting
+follow the settings as they are when they would go.
 
 ## Reviewed by me
 

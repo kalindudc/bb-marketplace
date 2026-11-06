@@ -353,10 +353,13 @@ export interface BoardActivityRow {
   thread_id: string | null;
 }
 
+/** An item waiting to be sent; `summary` marks a bot's review that sums up the bot's own open threads on the PR. */
+export type PendingItem = ActivityItem & { summary?: boolean };
+
 export interface PendingRow {
   pr_id: number;
   item_id: string;
-  item: ActivityItem;
+  item: PendingItem;
   first_seen_at: number;
 }
 
@@ -832,7 +835,7 @@ export class Store {
     });
   }
 
-  addPending(prId: number, items: readonly ActivityItem[]): number {
+  addPending(prId: number, items: readonly PendingItem[]): number {
     let added = 0;
     this.tx(() => {
       const insert = this.sql("INSERT OR IGNORE INTO pending_items (pr_id, item_id, item, first_seen_at) VALUES (?, ?, ?, ?)");
@@ -843,7 +846,7 @@ export class Store {
 
   pending(prId: number): PendingRow[] {
     const rows = this.sql("SELECT * FROM pending_items WHERE pr_id = ? ORDER BY first_seen_at, item_id").all(prId) as Array<Omit<PendingRow, "item"> & { item: string }>;
-    return rows.map((row) => ({ ...row, item: JSON.parse(row.item) as ActivityItem }));
+    return rows.map((row) => ({ ...row, item: JSON.parse(row.item) as PendingItem }));
   }
 
   delivered(prId: number, threadId: string): Set<string> {
@@ -1243,10 +1246,6 @@ export class Store {
       const drop = this.sql("DELETE FROM deliveries WHERE pr_id = ? AND item_id = ?");
       for (const id of itemIds) drop.run(prId, id);
     });
-  }
-
-  pendingCount(prId: number): number {
-    return (this.sql("SELECT COUNT(*) AS n FROM pending_items WHERE pr_id = ?").get(prId) as { n: number }).n;
   }
 
   addReview(row: Omit<ReviewRow, "id" | "finished_at" | "state" | "created_at" | "archived_at" | "active_at" | "ended_by" | "note" | "input" | "attempt"> & { input?: string | null; attempt?: number }): ReviewRow {

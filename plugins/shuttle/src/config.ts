@@ -119,6 +119,16 @@ export const autoReviewSchema = z
   })
   .strict();
 
+const botLogin = z.string().trim().regex(/^[^\s,]{1,100}$/u, "must be one login, with no spaces or commas");
+const botPhrasesSchema = z
+  .object({
+    bot: botLogin,
+    /** Matched anywhere in what the bot wrote, ignoring case. */
+    phrases: z.array(z.string().trim().min(1).max(200)).min(1, "give each bot at least one phrase after a colon").max(20),
+  })
+  .strict();
+export type BotPhrases = z.infer<typeof botPhrasesSchema>;
+
 export const watchSchema = z
   .object({
     enabled: z.boolean().default(true),
@@ -127,7 +137,13 @@ export const watchSchema = z
     includeChecks: z.boolean().default(true),
     ignoreBots: z.boolean().default(true),
     /** Bot logins that Ignore bots lets through, with or without GitHub's [bot] suffix. */
-    allowBots: z.array(z.string().trim().regex(/^[^\s,]{1,100}$/u, "must be one login, with no spaces or commas")).max(50).default([]),
+    allowBots: z.array(botLogin).max(50).default([]),
+    /** Bots Ignore bots lets through only for what contains one of their phrases, such as a merge queue's failures. */
+    botPhrases: z.array(botPhrasesSchema).max(50).default([]),
+    /** Failed checks never sent, by name or glob, such as a gate that only repeats a review's open threads. */
+    ignoreChecks: z.array(z.string().trim().min(1).max(300)).max(50).default([]),
+    /** Approvals, dismissals and a bot's summary of its own open threads come with the next message instead of making one. */
+    quietReviews: z.boolean().default(true),
     batchMinutes: z.number().int().min(0).max(60).default(2),
     actPrompt: z.string().min(1).max(8000),
   })

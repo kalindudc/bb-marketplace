@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
 import type { Config } from "../../config";
-import { BUTTON_GHOST, BUTTON_PRIMARY, CARD, Checkbox, ErrorNote, FIELD, Toggle } from "../common";
+import { BUTTON_GHOST, BUTTON_PRIMARY, CARD, Checkbox, ErrorNote, FIELD, FitTextarea, Toggle } from "../common";
 import { AUTO_TRIGGERS, WATCH_MODES } from "../constants";
 import { ACT_PROMPT_VARIABLES } from "../../templates";
 import { AutoPostCard, fromAutoPostDraft, toAutoPostDraft, type AutoPostDraft } from "./auto-post";
@@ -24,6 +24,15 @@ const AGENT_MODE_SETTINGS: Record<(typeof WATCH_MODES)[number], string> = {
 };
 
 const splitGlobs = (text: string) => text.split(/[\s,]+/u).filter((glob) => glob !== "");
+const splitLines = (text: string) => text.split("\n").map((line) => line.trim()).filter((line) => line !== "");
+/** One bot a line: its login or glob, a colon, then its phrases separated by commas. */
+const phrasesText = (rules: Watch["botPhrases"]) => rules.map((rule) => `${rule.bot}: ${rule.phrases.join(", ")}`).join("\n");
+const parsePhrases = (text: string): Watch["botPhrases"] =>
+  splitLines(text).map((line) => {
+    const colon = line.indexOf(":");
+    if (colon < 0) return { bot: line, phrases: [] };
+    return { bot: line.slice(0, colon).trim(), phrases: line.slice(colon + 1).split(",").map((phrase) => phrase.trim()).filter((phrase) => phrase !== "") };
+  });
 
 function Card({ icon, title, hint, on, onToggle, children }: { icon: string; title: string; hint: string; on: boolean; onToggle(next: boolean): void; children: ReactNode }) {
   return (
@@ -44,10 +53,13 @@ function Card({ icon, title, hint, on, onToggle, children }: { icon: string; tit
 /** What Shuttle does by itself: auto reviews, and what agents get sent about your PRs. */
 export function AutomationsSection() {
   const { config, loadError, saving, saveError, save, clearSaveError } = useConfig();
-  const [draft, setDraft] = useState<{ autoReview: AutoReview; watch: Watch; repos: string; bots: string; autoPost: AutoPostDraft } | null>(null);
+  const [draft, setDraft] = useState<{ autoReview: AutoReview; watch: Watch; repos: string; bots: string; phrases: string; checks: string; autoPost: AutoPostDraft } | null>(null);
   if (config === null) return loadError !== null ? <ErrorNote>Could not load Shuttle's settings: {loadError}</ErrorNote> : <div className="text-sm text-muted-foreground">Loading…</div>;
 
-  const shown = draft ?? { autoReview: config.autoReview, watch: config.watch, repos: config.autoReview.repos.join(", "), bots: config.watch.allowBots.join(", "), autoPost: toAutoPostDraft(config.autoPost) };
+  const shown = draft ?? {
+    autoReview: config.autoReview, watch: config.watch, repos: config.autoReview.repos.join(", "), bots: config.watch.allowBots.join(", "),
+    phrases: phrasesText(config.watch.botPhrases), checks: config.watch.ignoreChecks.join("\n"), autoPost: toAutoPostDraft(config.autoPost),
+  };
   const { autoReview: auto, watch } = shown;
   const setAuto = (patch: Partial<AutoReview>) => {
     clearSaveError();
@@ -61,7 +73,8 @@ export function AutomationsSection() {
     setAuto({ when: AUTO_TRIGGERS.filter((item) => (item === trigger ? on : auto.when.includes(item))) });
   const submit = async () => {
     if (draft === null) return;
-    const next: Config = { ...config, autoReview: { ...draft.autoReview, repos: splitGlobs(draft.repos) }, watch: { ...draft.watch, allowBots: splitGlobs(draft.bots) }, autoPost: fromAutoPostDraft(draft.autoPost) };
+    const watch: Watch = { ...draft.watch, allowBots: splitGlobs(draft.bots), botPhrases: parsePhrases(draft.phrases), ignoreChecks: splitLines(draft.checks) };
+    const next: Config = { ...config, autoReview: { ...draft.autoReview, repos: splitGlobs(draft.repos) }, watch, autoPost: fromAutoPostDraft(draft.autoPost) };
     if (await save(next, "Saved the automations")) setDraft(null);
   };
   const row = "grid grid-cols-1 items-center gap-1 sm:grid-cols-[10rem_minmax(0,1fr)] sm:gap-3";
@@ -128,7 +141,20 @@ export function AutomationsSection() {
         <div className="mt-1.5">
           <Checkbox checked={watch.autoWatch} label="A thread that links one of your PRs becomes its agent" hint="Only when the PR has no agent yet." onChange={(autoWatch) => setWatch({ autoWatch })} />
           <Checkbox checked={watch.includeChecks} label="Also send failed checks on the head" onChange={(includeChecks) => setWatch({ includeChecks })} />
-          <Checkbox checked={watch.ignoreBots} label="Ignore bots" hint="Reviews and comments from accounts the server marks as bots." onChange={(ignoreBots) => setWatch({ ignoreBots })} />
+        </div>
+        <label className={`${row} mt-1.5 items-start text-sm`}>
+          <span className={`${label} pt-1.5`}>Except these checks</span>
+          <span className="flex min-w-0 flex-col gap-1">
+            <FitTextarea aria-label="Checks an agent never gets" rows={2} className={`${FIELD} font-mono`} disabled={!watch.includeChecks} placeholder="No check, or one name or glob a line, such as review-gate*" value={shown.checks}
+              onChange={(event) => { clearSaveError(); setDraft({ ...shown, checks: event.target.value }); }} />
+            <span className="text-xs text-muted-foreground">For checks with nothing in them to fix, such as a gate that waits for a person's approval or for a reviewer's threads to be resolved. The PR's Checks tab still shows them.</span>
+          </span>
+        </label>
+        <div className="mt-1.5">
+          <Checkbox checked={watch.quietReviews} label="Hold approvals and review summaries for the next message"
+            hint="Approvals, dismissals and a bot's review of its own open threads never make a message by themselves. They come with the thread's next one, and are dropped when the PR merges or closes."
+            onChange={(quietReviews) => setWatch({ quietReviews })} />
+          <Checkbox checked={watch.ignoreBots} label="Ignore bots" hint="Reviews and comments from accounts the server marks as bots, or that Bot authors in Shuttle's settings names." onChange={(ignoreBots) => setWatch({ ignoreBots })} />
         </div>
         <label className={`${row} mt-1.5 text-sm`}>
           <span className={label}>Except these bots</span>
@@ -136,6 +162,14 @@ export function AutomationsSection() {
             <input aria-label="Bots an agent still hears from" className={`${FIELD} font-mono`} disabled={!watch.ignoreBots} placeholder="No bot, or logins and globs such as review-bot, *-scanner" value={shown.bots}
               onChange={(event) => { clearSaveError(); setDraft({ ...shown, bots: event.target.value }); }} />
             <span className="text-xs text-muted-foreground">An agent still gets their reviews and comments, such as an AI reviewer's findings. What a bot said before you add it is not sent.</span>
+          </span>
+        </label>
+        <label className={`${row} mt-1.5 items-start text-sm`}>
+          <span className={`${label} pt-1.5`}>Other bots, only when they say</span>
+          <span className="flex min-w-0 flex-col gap-1">
+            <FitTextarea aria-label="Phrases that let a bot through" rows={2} className={`${FIELD} font-mono`} disabled={!watch.ignoreBots} placeholder="merge-queue*: failed, removed from the queue" value={shown.phrases}
+              onChange={(event) => { clearSaveError(); setDraft({ ...shown, phrases: event.target.value }); }} />
+            <span className="text-xs text-muted-foreground">One bot a line: its login or glob, a colon, then phrases separated by commas. An agent gets what the bot writes only when it has one of them, in any case, such as a merge queue's note that it removed the PR.</span>
           </span>
         </label>
         <div className={`${row} mt-2 items-start text-sm`}>

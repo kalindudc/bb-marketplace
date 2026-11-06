@@ -73,7 +73,7 @@ export const SETTINGS = {
   botAuthors: {
     type: "string",
     label: "Bot authors",
-    description: "Authors Reviews hides with Hide bots, as globs separated by commas, on top of the accounts a server marks as bots.",
+    description: "Accounts Shuttle counts as bots on top of the ones a server marks, as globs separated by commas: Reviews hides their PRs with Hide bots, and an agent hears from them only as Automations, Agents allows.",
     default: "dependabot*, renovate*, *[bot]",
     experimental_schema: z.string().trim().max(1000),
   },
