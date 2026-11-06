@@ -234,7 +234,7 @@ describe("tickets", () => {
   it("keeps a merge's wait as the ticket's retry wait and moves a pull request's read wait into it, due when its next read was", () => {
     const old = new Database(":memory:");
     const renamed = MIGRATIONS.findIndex((sql) => sql.startsWith("ALTER TABLE tickets RENAME COLUMN merge_wait_json TO retry_json"));
-    expect(renamed).toBe(MIGRATIONS.length - 1);
+    expect(renamed).toBeGreaterThan(0);
     for (const sql of MIGRATIONS.slice(0, renamed)) old.exec(sql);
     const insert = old.prepare("INSERT INTO tickets (project_id, seq, key, ref, title, body, state, created_by, created_at, updated_at, state_at, merge_wait_json, pr_poll_json, pr_checked_at) VALUES (1, ?, ?, ?, 't', 'b', ?, 'x', 0, 0, 0, ?, ?, ?)");
     const merge = JSON.stringify({ failures: 2, since: 100, until: 400, message: "host plugin worker exited (0)" });
@@ -247,8 +247,24 @@ describe("tickets", () => {
     expect(retryOf(store.ticketByKey("CSV-1")!, "merge")).toEqual(JSON.parse(merge));
     expect(JSON.parse(store.ticketByKey("CSV-2")!.retry_json!)).toEqual({ step: "read", failures: 3, since: 1000, until: 5000 + 20 * 60_000, message: "gh: HTTP 502" });
     expect(nextPollAt(store.ticketByKey("CSV-2")!)).toBe(5000 + 20 * 60_000);
-    expect(store.ticketByKey("CSV-3")).toMatchObject({ retry_json: null, pr_poll_json: null });
+    expect(store.ticketByKey("CSV-3")!.pr_poll_json).toBeNull();
     expect(store.ticketByKey("CSV-2")!.pr_poll_json).toBeNull();
+  });
+
+  it("merges a stale merge wait and an active read wait into one, keeping the later deadline and the larger failure count", () => {
+    const old = new Database(":memory:");
+    const renamed = MIGRATIONS.findIndex((sql) => sql.startsWith("ALTER TABLE tickets RENAME COLUMN merge_wait_json TO retry_json"));
+    for (const sql of MIGRATIONS.slice(0, renamed)) old.exec(sql);
+    const insert = old.prepare("INSERT INTO tickets (project_id, seq, key, ref, title, body, state, created_by, created_at, updated_at, state_at, merge_wait_json, pr_poll_json, pr_checked_at) VALUES (1, ?, ?, ?, 't', 'b', ?, 'x', 0, 0, 0, ?, ?, ?)");
+    insert.run(1, "CSV-1", "one", "pr_open", JSON.stringify({ failures: 1, since: 0, until: 60_000, message: "old merge wait" }), JSON.stringify({ failures: 3, since: 100_000, message: "active read wait" }), 100_000);
+    insert.run(2, "CSV-2", "two", "merging", JSON.stringify({ failures: 4, since: 50_000, until: 9_000_000, message: "merge wait" }), JSON.stringify({ failures: 2, since: 10_000, message: "older read wait" }), 100_000);
+    insert.run(3, "CSV-3", "three", "queued", null, JSON.stringify({ failures: 1, since: 10_000, message: "a read before a fix round" }), 100_000);
+    for (const sql of MIGRATIONS.slice(renamed, renamed + 1)) old.exec(sql);
+    const store = new Store(old, clock.now);
+    expect(retryOf(store.ticketByKey("CSV-1")!, "read")).toEqual({ step: "read", failures: 3, since: 0, until: 100_000 + 20 * 60_000, message: "active read wait" });
+    expect(retryOf(store.ticketByKey("CSV-2")!, "merge")).toEqual({ failures: 4, since: 10_000, until: 9_000_000, message: "merge wait" });
+    expect(retryOf(store.ticketByKey("CSV-3")!, "read")).toEqual({ step: "read", failures: 1, since: 10_000, until: 100_000 + 5 * 60_000, message: "a read before a fix round" });
+    for (const key of ["CSV-1", "CSV-2", "CSV-3"]) expect(store.ticketByKey(key)!.pr_poll_json).toBeNull();
   });
 
   it("keeps a fix round's message stored before hand-backs existed as the ticket's hand-back, which has its worker slot", () => {
