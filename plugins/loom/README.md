@@ -1381,12 +1381,12 @@ with you.
   HEAD. Loom carries on its own, as for a merge of the worker's branch, only
   while the worker's thread is not running a turn, and holds its own messages
   to that worker until the carry is over; a turn the human starts on it at the
-  moment a file goes in is the same race any editor has. A carry
-  that fails leaves the worktree, its files and its index as they are, and
-  says what each path it wrote holds now; the next carry takes its files over
-  when every change there is its own. Each file goes in whole by a rename, and
-  a carry does not start where no directory outside the worktree shares its
-  filesystem.
+  moment a file goes in is the same race any editor has. A carry that fails
+  leaves the worktree, its files and its index as they are, and says what each
+  path it wrote holds now; the next carry takes its files over when every
+  change there is its own. Each file goes in whole by a rename, or, where no
+  directory outside the worktree shares its filesystem, is written in place
+  after one more check, never through a symlink.
 - A machine provider that cannot start a machine now (`machine_provider_rejected`)
   makes the ticket wait as for an unavailable environment provider, and an
   idle caused by bb moving a thread's machine does not count.

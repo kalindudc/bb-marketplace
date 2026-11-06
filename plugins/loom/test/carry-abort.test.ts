@@ -355,17 +355,87 @@ describe("a carry that starts", () => {
     expect([read(v.worktree, "notes.md"), sh(v.worktree, "rev-parse", "HEAD")]).toEqual(["worker ignored unique\n", v.head]);
   });
 
+});
 
-  it("refuses up front when no private directory outside the worktree is on its filesystem", async () => {
-    const w = worker();
+describe("a carry where no private directory shares the worktree's filesystem", () => {
+  // Every directory outside the worktree is on another device, as on a machine whose checkout is a filesystem of its own.
+  const onOwnDevice = (w: { worktree: string }) => {
     const own = realpathSync(w.worktree);
     carryFaults.deviceOf = (path) => (realpathSync(path) === own ? 1 : 2);
+  };
+  afterEach(() => {
+    delete carryFaults.deviceOf;
+  });
+
+  it("writes in place, ranges, modes and symlinks included, with no temporary file anywhere, and commits", async () => {
+    const w = worker();
+    onOwnDevice(w);
+    await start(w);
+    await put(w, "README.md", "carried\n");
+    await put(w, "big.ts", "first ");
+    await put(w, "big.ts", "second\n", 6);
+    await put(w, "run.sh", "echo\n", 0, "100755");
+    await put(w, "link", "README.md", 0, "120000");
+    await carryDelete({ worktree: w.worktree, paths: ["notes.md"] });
+    expect(existsSync(join(w.worktree, ".git", "loom-carry.tmp"))).toBe(false);
+    expect(readdirSync(join(w.worktree, "..")).filter((name) => name.startsWith(".loom-carry"))).toEqual([]);
+    const want = treeWith(w, { "README.md": "carried\n", "big.ts": "first second\n", "run.sh": "echo\n", "notes.md": null }, ["run.sh"]);
+    const linked = execFileSync(GIT, ["-C", w.worktree, "hash-object", "-w", "--stdin"], { input: "README.md", encoding: "utf8" }).trim();
+    const index = join(scratch, `link-index-${counter++}`);
+    execFileSync(GIT, ["-C", w.worktree, "read-tree", want], { env: { ...process.env, GIT_INDEX_FILE: index } });
+    execFileSync(GIT, ["-C", w.worktree, "update-index", "--add", "--cacheinfo", `120000,${linked},link`], { env: { ...process.env, GIT_INDEX_FILE: index } });
+    const tree = execFileSync(GIT, ["-C", w.worktree, "write-tree"], { env: { ...process.env, GIT_INDEX_FILE: index }, encoding: "utf8" }).trim();
+    expect(await finish(w, tree, ["README.md", "big.ts", "run.sh", "link"])).toMatchObject({ outcome: "ok", tree });
+    expect(sh(w.worktree, "status", "--porcelain", "--untracked-files=all")).toBe("");
+  });
+
+  it("never writes through a parent directory that is a symlink now", async () => {
+    const w = worker();
+    onOwnDevice(w);
+    await start(w);
+    await put(w, "dir/carried.ts", "carry\n");
+    const outside = join(scratch, `outside-${counter++}`);
+    mkdirSync(outside);
+    writeFileSync(join(outside, "carried.ts"), "carry\n");
+    renameSync(join(w.worktree, "dir"), join(w.worktree, "worker-saved-dir"));
+    symlinkSync(outside, join(w.worktree, "dir"));
+    await expect(put(w, "dir/carried.ts", "carry\nmore\n")).rejects.toThrow(/symlink|leads out of the worktree/u);
+    expect([read(outside, "carried.ts"), read(w.worktree, "worker-saved-dir/carried.ts")]).toEqual(["carry\n", "carry\n"]);
+  });
+
+  it("replaces HEAD's own leaf symlink without following it, and refuses one the worker put there", async () => {
+    const w = worker();
+    const outside = join(scratch, `outside-${counter++}`);
+    writeFileSync(outside, "worker external unique\n");
+    symlinkSync(outside, join(w.worktree, "link"));
+    sh(w.worktree, "add", "link");
+    sh(w.worktree, "commit", "-q", "-m", "link");
+    const v = { ...w, base: sh(w.worktree, "rev-parse", "HEAD"), head: sh(w.worktree, "rev-parse", "HEAD"), tree: sh(w.worktree, "rev-parse", "HEAD^{tree}") };
+    onOwnDevice(v);
+    await start(v);
+    await put(v, "link", "carry regular file\n");
+    expect([readFileSync(outside, "utf8"), lstatSync(join(v.worktree, "link")).isSymbolicLink(), read(v.worktree, "link")]).toEqual(["worker external unique\n", false, "carry regular file\n"]);
+
+    rmSync(join(v.worktree, "README.md"));
+    symlinkSync(outside, join(v.worktree, "README.md"));
+    await expect(put(v, "README.md", "carried\n")).rejects.toThrow("README.md is not as the carry started it");
+    expect([readFileSync(outside, "utf8"), lstatSync(join(v.worktree, "README.md")).isSymbolicLink()]).toEqual(["worker external unique\n", true]);
+  });
+
+  it("refuses, keeping the worker's edit, when the path changed just before the write", async () => {
+    const w = worker();
+    onOwnDevice(w);
+    await start(w);
+    await put(w, "big.ts", "first ");
     try {
-      expect(await start(w)).toMatchObject({ outcome: "unavailable", message: expect.stringContaining("filesystem") });
+      carryFaults.beforeRename = () => writeFileSync(join(w.worktree, "big.ts"), "worker just before\n");
+      await expect(put(w, "big.ts", "second\n", 6)).rejects.toThrow("big.ts is not as the carry left it");
+      carryFaults.beforeRename = () => writeFileSync(join(w.worktree, "README.md"), "worker just before\n");
+      await expect(put(w, "README.md", "carried\n")).rejects.toThrow("README.md is not as the carry started it");
     } finally {
-      delete carryFaults.deviceOf;
+      delete carryFaults.beforeRename;
     }
-    expect(sh(w.worktree, "rev-parse", "HEAD")).toBe(w.head);
+    expect([read(w.worktree, "big.ts"), read(w.worktree, "README.md")]).toEqual(["worker just before\n", "worker just before\n"]);
   });
 });
 

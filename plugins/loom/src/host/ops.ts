@@ -2,7 +2,7 @@
 // commands in their own process group. host.ts wires these to RPC handlers; tests call them directly.
 import { execFile, spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { appendFileSync, chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, closeSync, constants as fsConstants, existsSync, fchmodSync, fstatSync, openSync, unlinkSync, writeSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { lstat, open } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
@@ -849,8 +849,9 @@ function insideWorktree(worktree: string, path: string, create: boolean): string
 // `.paths`, one JSON line each) says what the path holds and will hold: a state of its content and git mode. A path is the
 // carry's only while it holds one of those states, reached with no symlink on the way; the carry stops at a path that
 // holds anything else. It writes through a temporary file of its own, in a directory outside the worktree on the
-// worktree's own filesystem, with one more check right before the rename; where no such directory exists it does not
-// start, as it never writes a file in place. It commits with
+// worktree's own filesystem, with one more check right before the rename. Where no such directory exists, as on a machine
+// whose checkout is a filesystem of its own, it writes in place instead, guarded the same way: never through a symlinked
+// parent, opening with O_NOFOLLOW, replacing a leaf symlink only when it is HEAD's or the carry's own. It commits with
 // git add and git commit, only while the worker's index still matches HEAD, and journals the commit first. A carry that
 // fails changes nothing more: it removes its own temporary files and says what each path it wrote holds now. The mark is in
 // the worktree's git directory, or, on a machine whose git serves the repository from elsewhere with `.git` a file and no
@@ -864,7 +865,7 @@ interface CarryMark {
   heads: string[];
   /** The worktree's HEAD before the carry. */
   from?: string;
-  /** The carry's private directory for its temporary files: outside the worktree, on its filesystem. */
+  /** The carry's private directory for its temporary files: outside the worktree, on its filesystem. None: in place. */
   temp?: string;
   /** Journaled right before git commit: the commit the carry builds on and the tree it commits. */
   committing?: { parent: string; tree: string };
@@ -1188,15 +1189,12 @@ export async function carryStart(input: HostInput<"carryStart">, signal?: AbortS
     }
   }
   const temp = carryTempOf(top, mark);
-  if (temp === null) {
-    return refusal(`No directory outside the worktree ${worktree} is on its filesystem, so Loom cannot put each file in whole with a rename, and does not write files in place there`);
-  }
   const blocked = await obstructions(top, mark, [...(input.paths ?? []), ...(head === base ? [] : await pathsBetween(top, head, base, signal))], fm, signal);
   if (blocked.length > 0) return obstructed(worktree, blocked);
   // The mark first, so a carry cut short during the reset is known as one.
   removeOwnTemps(mark, fm);
   rmSync(logOf(mark), { force: true });
-  writeCarryMark(mark, { base, tree: input.tree, heads: [], from, temp });
+  writeCarryMark(mark, { base, tree: input.tree, heads: [], from, ...(temp === null ? {} : { temp }) });
   if (head !== base) await git(worktree, ["reset", "-q", "--hard", base], { signal });
   return { outcome: "ok", present: false, from };
 }
@@ -1228,7 +1226,7 @@ export async function carryWrite(input: HostInput<"carryWrite">): Promise<HostOu
   const fm = await fileModeOf(top);
   const mark = await carryMarkOf(input.worktree);
   const carried = readCarryMark(mark);
-  if (carried?.temp === undefined) throw new Error(`No carry into ${input.worktree} has started, so Loom writes nothing`);
+  if (carried === null) throw new Error(`No carry into ${input.worktree} has started, so Loom writes nothing`);
   const { pre, left } = await guardPath(top, mark, path, fm);
   const { file } = reach(top, path);
   const bytes = Buffer.from(input.data, "base64");
@@ -1242,32 +1240,66 @@ export async function carryWrite(input: HostInput<"carryWrite">): Promise<HostOu
   }
   const executable = mode === "100755";
   const post = symlink ? `l:${contentSha(next)}` : `f:${fm && executable ? 1 : 0}:${contentSha(next)}`;
-  const tmp = join(carried.temp, randomBytes(8).toString("hex"));
+  const tmp = carried.temp === undefined ? "" : join(carried.temp, randomBytes(8).toString("hex"));
   // Logged before anything is written, so a carry cut short at any point knows the path and the file as its own.
   logIntent(mark, { w: path, o: offset, n: bytes.length, m: mode, pre, post, tmp });
-  mkdirSync(carried.temp, { recursive: true });
-  if (symlink) symlinkSync(next.toString("utf8"), tmp);
+  if (tmp === "") writeInPlace(top, path, { pre, left, next, symlink, executable, fm, append: !symlink && offset > 0 ? bytes : null });
   else {
-    writeFileSync(tmp, next);
-    chmodSync(tmp, executable ? 0o755 : 0o644);
-  }
-  mkdirSync(dirname(file), { recursive: true });
-  carryFaults.beforeRename?.();
-  // Checked once more right before the file goes in, through real directories only.
-  if (stateAt(top, path, fm) !== pre) {
-    rmSync(tmp, { force: true });
-    throw changedSince(path, left);
-  }
-  try {
-    (carryFaults.rename ?? renameSync)(tmp, file);
-  } catch (error) {
-    rmSync(tmp, { force: true });
-    // A rename across filesystems would need a write in place, which could follow a symlink or meet a worker's write.
-    if ((error as NodeJS.ErrnoException).code === "EXDEV") throw new Error(`${path} would have to be written in place, as the carry's private directory is on another filesystem, so Loom stops the carry and keeps the file as it is`);
-    throw error;
+    mkdirSync(carried.temp!, { recursive: true });
+    if (symlink) symlinkSync(next.toString("utf8"), tmp);
+    else {
+      writeFileSync(tmp, next);
+      chmodSync(tmp, executable ? 0o755 : 0o644);
+    }
+    mkdirSync(dirname(file), { recursive: true });
+    carryFaults.beforeRename?.();
+    // Checked once more right before the file goes in, through real directories only.
+    if (stateAt(top, path, fm) !== pre) {
+      rmSync(tmp, { force: true });
+      throw changedSince(path, left);
+    }
+    try {
+      (carryFaults.rename ?? renameSync)(tmp, file);
+    } catch (error) {
+      rmSync(tmp, { force: true });
+      // A rename across filesystems would need a write in place, which this carry chose not to make when it started.
+      if ((error as NodeJS.ErrnoException).code === "EXDEV") throw new Error(`${path} would have to be written in place, as the carry's private directory is on another filesystem, so Loom stops the carry and keeps the file as it is`);
+      throw error;
+    }
   }
   carryFaults.afterRename?.();
   return { size: symlink ? next.length : offset + bytes.length };
+}
+
+/**
+ * Writes a carry file in place, where no private directory shares the worktree's filesystem. The path is checked right
+ * before the write and reached through real directories only; the file is opened with O_NOFOLLOW, so a symlink put there
+ * since the check fails the write instead of being followed. A leaf symlink, which the check found to be HEAD's or the
+ * carry's own, is removed first; a range is appended only to the file the check read, of the length it read.
+ */
+function writeInPlace(top: string, path: string, a: { pre: State; left: boolean; next: Buffer; symlink: boolean; executable: boolean; fm: boolean; append: Buffer | null }): void {
+  const { file } = reach(top, path);
+  mkdirSync(dirname(file), { recursive: true });
+  carryFaults.beforeRename?.();
+  if (!reach(top, path).safe || stateAt(top, path, a.fm) !== a.pre) throw changedSince(path, a.left);
+  const existing = lstatOrNull(file);
+  if (existing?.isDirectory() === true) throw new Error(`${path} is a directory now, so Loom stops the carry and keeps it as it is`);
+  if (a.symlink || existing?.isSymbolicLink() === true) {
+    if (a.append !== null) throw changedSince(path, a.left);
+    if (existing !== null) unlinkSync(file);
+    if (a.symlink) return symlinkSync(a.next.toString("utf8"), file);
+  }
+  const { O_WRONLY, O_CREAT, O_TRUNC, O_APPEND, O_NOFOLLOW } = fsConstants;
+  const fd = openSync(file, a.append === null ? O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW : O_WRONLY | O_APPEND | O_NOFOLLOW, 0o644);
+  try {
+    const opened = fstatSync(fd);
+    if (!opened.isFile() || (a.append !== null && opened.size !== a.next.length - a.append.length)) throw changedSince(path, a.left);
+    const data = a.append ?? a.next;
+    for (let at = 0; at < data.length; ) at += writeSync(fd, data, at, data.length - at);
+    fchmodSync(fd, a.executable ? 0o755 : 0o644);
+  } finally {
+    closeSync(fd);
+  }
 }
 
 const MARKER = /^(?:<{7}|>{7})(?: |$)/mu;
