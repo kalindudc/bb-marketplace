@@ -116,6 +116,10 @@ const retryWaitSchema = z.object({
 export type RetryWait = z.output<typeof retryWaitSchema>;
 
 
+/** PushIntent: Loom is pushing `sha` to the pull request's `branch`; it stays until the push is recorded as the ticket's. */
+const pushIntentSchema = z.object({ branch: z.string(), sha: z.string(), at: z.number() });
+export type PushIntent = z.output<typeof pushIntentSchema>;
+
 const reviewDecisionSchema = z.enum(["APPROVED", "CHANGES_REQUESTED", "REVIEW_REQUIRED"]);
 export type ReviewDecision = z.output<typeof reviewDecisionSchema>;
 
@@ -252,6 +256,7 @@ const SCHEMAS = {
   pr_meta_json: prMetaSchema,
   rollout_json: ticketRolloutSchema,
   retry_json: retryWaitSchema,
+  push_json: pushIntentSchema,
   merge_step_json: mergeStepSchema,
   pr_proposal_json: prProposalSchema,
   pr_applied_json: prAppliedSchema,

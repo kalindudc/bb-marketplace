@@ -80,7 +80,7 @@ async function fixRoundApproved(): Promise<ThreadRow> {
 }
 
 describe("a fix round's push when Loom restarts in the middle of it", () => {
-  it("pushes the same commit again, and runs after_push, asks for reviews and posts the push once", async () => {
+  it("settles the push whose answer was lost instead of pushing again, and runs after_push, asks for reviews and posts the push once", async () => {
     await prProject();
     await fixRoundApproved();
     const before = { hooks: hooks().length, asks: h.host.callsTo("prRequestReview").length };
@@ -93,7 +93,7 @@ describe("a fix round's push when Loom restarts in the middle of it", () => {
     h.clock.advance(60_000);
     await queue();
     expect(ticket()).toMatchObject({ state: "pr_open", pushed_sha: "sq2" });
-    expect(h.host.callsTo("push").map((call) => call.src)).toEqual(["sq1", "sq2", "sq2"]);
+    expect(h.host.callsTo("push").map((call) => call.src)).toEqual(["sq1", "sq2"]);
     expect(hooks().slice(before.hooks)).toEqual([expect.objectContaining({ env: expect.objectContaining({ LOOM_SHA: "sq2" }) })]);
     expect(h.host.callsTo("prRequestReview").slice(before.asks)).toEqual([expect.objectContaining({ url: URL1, reviewers: ["alice"] })]);
     expect(outcomes().filter((outcome) => outcome === "pr_pushed")).toHaveLength(1);
@@ -103,7 +103,7 @@ describe("a fix round's push when Loom restarts in the middle of it", () => {
     await poll();
     expect(hooks().slice(before.hooks)).toHaveLength(1);
     expect(h.host.callsTo("prRequestReview").slice(before.asks)).toHaveLength(1);
-    expect(h.host.callsTo("push")).toHaveLength(3);
+    expect(h.host.callsTo("push")).toHaveLength(2);
   });
 });
 

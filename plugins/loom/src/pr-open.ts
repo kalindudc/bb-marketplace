@@ -13,7 +13,7 @@ import { refreshedMeta, refreshedText, type Refresh } from "./fresh";
 import type { Spec } from "./spec";
 import { prBaseOf, restackOf, restackWithBase, stacking } from "./stack";
 import { TIP_WHAT } from "./tips";
-import { writeSub } from "./sub-state";
+import { readSub, writeSub } from "./sub-state";
 import { workBaseOf } from "./transport";
 import { type EngineCtx } from "./ctx";
 import { checkoutIn, complete, endFinishedThreads, errText, openForge, sendBack, toPrOpen, type MergePost, unavailableOf } from "./merge-common";
@@ -121,12 +121,16 @@ export async function openPullRequest(ctx: EngineCtx, project: ProjectRow, spec:
   const src = built.sha;
   const created = built.created;
   const pushedNow = created || src !== current.pushed_sha;
-  if (pushedNow) {
+  // prCommit read the remote branch: when it is the commit an earlier run meant to push, that push landed and lost its answer.
+  const intent = readSub(current, "push_json");
+  const landed = !created && intent !== null && intent.branch === branch && intent.sha === src;
+  if (pushedNow && !landed) {
+    store.updateTicket(current.id, writeSub("push_json", { branch, sha: src, at: ctx.now() }));
     const pushed = await ctx.host.call(hostId, "push", { repo, remote, src, branch, ...gitNetwork(settings) });
     if (pushed.outcome === "unavailable") throw unavailableOf(pushed);
   }
   const at = ctx.now();
-  const recorded: Partial<TicketRow> = { pr_branch: branch, pushed_sha: src, pushed_at: at, pr_checked_at: at, pr_status_json: null };
+  const recorded: Partial<TicketRow> = { pr_branch: branch, pushed_sha: src, pushed_at: at, pr_checked_at: at, pr_status_json: null, push_json: null };
   const commits = ` as 1 commit (${src.slice(0, 12)})`;
   const prBase = stacking(spec) ? prBaseOf(store.tickets(project.id), current, base) : base;
 

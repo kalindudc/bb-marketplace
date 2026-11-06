@@ -332,7 +332,7 @@ describe("refreshing an open pull request", () => {
     h.clock.advance(60_000);
     await queue();
     expect(ticket()).toMatchObject({ state: "pr_open", pushed_sha: "sq2" });
-    expect(h.host.callsTo("push").map((call) => call.src)).toEqual(["sq1", "sq2", "sq2"]);
+    expect(h.host.callsTo("push").map((call) => call.src)).toEqual(["sq1", "sq2"]);
     expect(hooks()).toEqual([expect.objectContaining({ env: expect.objectContaining({ LOOM_URL: URL1, LOOM_SHA: "sq2" }) })]);
     await queue();
     expect(hooks()).toHaveLength(1);

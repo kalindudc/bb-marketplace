@@ -250,7 +250,7 @@ describe("a merge that fails in a way worth waiting out", () => {
   describe("on the pull request strategy", () => {
     const pr = (more: Doc = {}) => (doc: Doc) => (doc.merge = { strategy: "pr", describe: "loom", stack: false, ...more });
 
-    it("waits at least 15 minutes when the open command printed a rate limit instead of a URL, then pushes again and opens", async () => {
+    it("waits at least 15 minutes when the open command printed a rate limit instead of a URL, then opens without pushing again", async () => {
       await seedProject(h, pr({ forge: COMMAND_FORGE }));
       await reachApproved(h);
       h.host.scripted.prCreate = [{ outcome: "unavailable", message: RATE_LIMITED, transient: "rate_limit" }];
@@ -265,7 +265,7 @@ describe("a merge that fails in a way worth waiting out", () => {
       expect(h.host.callsTo("prCreate")).toHaveLength(1);
       h.clock.advance(MINUTE);
       await queue();
-      expect(h.host.callsTo("push")).toHaveLength(2);
+      expect(h.host.callsTo("push")).toHaveLength(1);
       expect(ticket()).toMatchObject({ state: "pr_open", pr_url: URL1, retry_json: null });
     });
 

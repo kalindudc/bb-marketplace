@@ -196,7 +196,7 @@ describe("on a running project", () => {
     expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "blocked", blocked_reason: expect.stringContaining("failed 5 times in a row") });
   });
 
-  it("goes on with a merge's wait after a restart, pushing the same commit again and opening the pull request once", async () => {
+  it("goes on with a merge's wait after a restart, settling the push whose answer was lost instead of pushing again, and opens the pull request once", async () => {
     await seedProject(h, pr);
     await reachApproved(h);
     h.host.lost.push = [new Error(DEADLINE)];
@@ -215,7 +215,8 @@ describe("on a running project", () => {
     await queue();
     expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "pr_open", pr_url: "https://github.com/acme/shop/pull/1", retry_json: null });
     expect(h.host.callsTo("prCreate")).toHaveLength(1);
-    expect(new Set(h.host.callsTo("push").map((input) => `${input.src} ${input.branch}`)).size).toBe(1);
+    expect(h.host.callsTo("push")).toHaveLength(1);
+    expect(ticketOf(h, "CSV-1").push_json).toBeNull();
     expect(systemPosts("CSV-1")).toHaveLength(1);
     expect(h.store.posts(ticketOf(h, "CSV-1").id).filter((post) => post.kind === "merge" && JSON.parse(post.data_json).outcome === "pr_opened")).toHaveLength(1);
   });

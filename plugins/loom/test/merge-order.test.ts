@@ -70,6 +70,7 @@ function row(key: string, state: TicketState, over: Over = {}): TicketRow {
     rollout_json: null,
     keep_draft: 0,
     retry_json: null,
+    push_json: null,
     merge_step_json: null,
     pr_proposal_json: null,
     pr_applied_json: null,

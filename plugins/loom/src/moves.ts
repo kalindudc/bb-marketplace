@@ -15,6 +15,7 @@ const RESET = {
   handback_json: null,
   start_wait_json: null,
   retry_json: null,
+  push_json: null,
   merge_step_json: null,
   merge_before: null,
   pr_checked_at: null,
@@ -35,7 +36,7 @@ const RELEASED = ["worker_thread_id", "environment_id"] as const satisfies reado
 /** What a merge Loom started keeps until it finishes. */
 const MERGE = ["merge_step_json", "retry_json", "merge_before"] as const satisfies readonly Column[];
 /** A closed pull request: a requeue opens a new one, one commit on a new branch, with fresh rounds. */
-const CLOSED_PR = ["pr_branch", "pushed_sha", "pushed_at", "pr_ask_json", "pr_text_json", "pr_seen_json", "pr_rounds", "pr_status_json", "handback_json", "pr_base", "pr_applied_json"] as const satisfies readonly Column[];
+const CLOSED_PR = ["pr_branch", "pushed_sha", "pushed_at", "push_json", "pr_ask_json", "pr_text_json", "pr_seen_json", "pr_rounds", "pr_status_json", "handback_json", "pr_base", "pr_applied_json"] as const satisfies readonly Column[];
 /** A human sends a blocked ticket on: its counts start again and nothing a worker was doing is waiting. */
 const SENT_ON = ["failures", "check_failures", "blocked_reason", ...RELEASED, "pr_ask_json", "handback_json", "start_wait_json", "retry_json"] as const satisfies readonly Column[];
 

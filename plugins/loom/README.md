@@ -194,7 +194,9 @@ machine, or the whole project). What Loom does follows from that:
   whose worktree would start from the branch the merge moves. Every step of a
   merge or a push to a pull request is safe to run again: a merge, a push or a
   pull request that already happened is found, not made twice, which is why a
-  call with an unknown outcome is simply run again. A merge Loom has put in a
+  call with an unknown outcome is simply run again. Loom records each push
+  before it makes it, so a push whose answer was lost is found on the remote
+  branch on the next run and counted as made, never sent again. A merge Loom has put in a
   worker's worktree, to bring its branch up to date or to take commits someone
   else pushed, is kept until its checks pass, so the next run finishes that
   merge, and Loom pushes nothing and counts no commit as pushed before then.

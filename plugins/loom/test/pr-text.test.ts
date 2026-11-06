@@ -707,7 +707,7 @@ describe("after_push once per push", () => {
     h.clock.advance(2 * 60_000);
     await queue();
     expect(ticket()).toMatchObject({ state: "pr_open", pr_base: "main" });
-    expect(h.host.callsTo("push").map((call) => call.src)).toEqual(["sq1", "sq2", "sq2"]);
+    expect(h.host.callsTo("push").map((call) => call.src)).toEqual(["sq1", "sq2"]);
     expect(hooks().map((call) => call.env!.LOOM_BASE)).toEqual([ELSEWHERE, "main"]);
     await queue();
     expect(hooks()).toHaveLength(2);

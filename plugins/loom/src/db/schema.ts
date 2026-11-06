@@ -238,4 +238,7 @@ export const MIGRATIONS: string[] = [
   UPDATE tickets SET retry_json = json_object('step', 'read', 'failures', json_extract(pr_poll_json, '$.failures'), 'since', json_extract(pr_poll_json, '$.since'), 'until', COALESCE(pr_checked_at, 0) + MIN(1800000, 300000 * (1 << MIN(3, MAX(0, json_extract(pr_poll_json, '$.failures') - 1)))), 'message', json_extract(pr_poll_json, '$.message'))
     WHERE pr_poll_json IS NOT NULL AND retry_json IS NULL;
   UPDATE tickets SET pr_poll_json = NULL WHERE pr_poll_json IS NOT NULL`,
+  // PushIntent: the push Loom is about to make for the ticket's pull request, so a run after a lost answer settles it
+  // from the remote branch instead of pushing again.
+  `ALTER TABLE tickets ADD COLUMN push_json TEXT`,
 ];

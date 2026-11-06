@@ -602,7 +602,7 @@ describe("the pull request strategy", () => {
     h.clock.advance(15 * 60_000);
     await queue();
     expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "pr_open" });
-    expect(h.host.callsTo("push")).toHaveLength(3);
+    expect(h.host.callsTo("push")).toHaveLength(2);
   });
 
   it("waits for someone to install git-lfs when the push needs it and the machine lacks it, with the reason on the ticket's push step", async () => {

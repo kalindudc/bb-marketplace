@@ -120,6 +120,7 @@ export interface TicketRow {
   keep_draft: number;
   /** RetryWait: the merge failed in a way worth waiting out, so the ticket stays in merging and the queue waits until it runs again; null otherwise. */
   retry_json: string | null;
+  push_json: string | null;
   /** MergeStep: a merge Loom put in the worker's worktree whose checks have not passed yet, which the next run of the merge finishes instead of merging again; null otherwise. */
   merge_step_json: string | null;
   /** PrProposal: the pull request's title and description as the worker proposed them with loom_submit, for the reviewers to judge; null for none. */
