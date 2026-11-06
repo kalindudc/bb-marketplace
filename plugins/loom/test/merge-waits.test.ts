@@ -10,7 +10,6 @@ import { pollPullRequests, runMergeQueue, settleMerges } from "../src/merge";
 import { askForPrTexts, handInPrText } from "../src/pull-requests";
 import { boardCards } from "../src/rpc";
 import { stackOf } from "../src/stack";
-import { LOOM_ACTOR } from "../src/states";
 import { approve, settleReviews, spawnReviewers } from "../src/review";
 import { specOf } from "../src/ctx";
 import { checkOutHead, makeCtx, makeEngine, reachApproved, reachReview, seedMachineProject, seedProject, ticketOf, withDocsTicket, type Doc, type EngineHarness } from "./helpers";
@@ -421,7 +420,7 @@ describe("a merge that runs again after its checks got no answer", () => {
     await queue();
     expect(h.host.callsTo("carryStart")).toHaveLength(carries);
     expect(ticket()).toMatchObject({ state: "merging", pushed_sha: "sq1" });
-    expect(waitOf()).toMatchObject({ failures: 1, message: expect.stringContaining("running a turn") });
+    expect(waitOf()).toMatchObject({ failures: 1, message: expect.stringContaining("not idle (active)") });
     expect(h.bb.sent(worker.thread_id!)).toHaveLength(sent);
 
     h.bb.threads.get(worker.thread_id!)!.status = "idle";
@@ -446,17 +445,35 @@ describe("a merge that runs again after its checks got no answer", () => {
     expect(sent()).toEqual(["a note during the carry"]);
   });
 
-  it("waits to carry while a retry Loom scheduled for the worker's turn is still to come", async () => {
+  it("carries only while bb reports the worker's thread idle: a thread in error waits, and gets Loom's retry first", async () => {
     const worker = await fixOnMachineWithForeignTip();
+    h.ctx.bb = holdingSends(h.bb);
+    const thread = h.bb.threads.get(worker.thread_id!)!;
+    thread.status = "error";
     const carries = h.host.callsTo("carryStart").length;
-    h.store.event(project().id, ticket().id, "turn.retry", LOOM_ACTOR, { thread: worker.thread_id, attempt: 1, sendAt: h.clock.t + 10 * MINUTE });
     await queue();
     expect(h.host.callsTo("carryStart")).toHaveLength(carries);
-    expect(waitOf()).toMatchObject({ failures: 1, message: expect.stringContaining("retry") });
+    expect(ticket()).toMatchObject({ state: "merging", pushed_sha: "sq1" });
+    expect(waitOf()).toMatchObject({ failures: 1, message: expect.stringContaining("not idle") });
+    // No carry is under way while it waits, so Loom's own retry of the failed turn goes out at once.
+    await h.ctx.bb.retryTurn(worker.thread_id!, "req_1", h.clock.t + MINUTE);
+    expect(h.bb.callsTo("retryTurn")).toEqual([[worker.thread_id, "req_1", h.clock.t + MINUTE]]);
 
-    h.clock.advance(15 * MINUTE);
+    thread.status = "idle";
+    h.clock.advance(MINUTE);
     await queue();
     expect(ticket()).toMatchObject({ state: "pr_open", pushed_sha: "sq2" });
+  });
+
+  it("pauses the project after an hour of a worker's thread in error, rather than waiting on it forever", async () => {
+    const worker = await fixOnMachineWithForeignTip();
+    h.bb.threads.get(worker.thread_id!)!.status = "error";
+    for (let minute = 0; minute <= 75 && project().state === "running"; minute += 5) {
+      await queue();
+      h.clock.advance(5 * MINUTE);
+    }
+    expect(project()).toMatchObject({ state: "paused", system_reason: expect.stringContaining("not idle") });
+    expect(ticket()).toMatchObject({ state: "merging", pushed_sha: "sq1" });
   });
 
   it("waits, and hands nothing back, when a carry already under way loses its transport", async () => {

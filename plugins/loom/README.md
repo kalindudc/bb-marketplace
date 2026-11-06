@@ -1515,9 +1515,9 @@ with you.
   with nothing ignored or untracked where it writes, and uses only `git add`
   and `git commit` there, committing only while the worker's index matches
   HEAD. Loom carries on its own, as for a merge of the worker's branch, only
-  while the worker's thread is not running a turn and no turn retry Loom
-  scheduled is still to come, and holds its own messages and turn retries for
-  that worker until the carry is over; a turn the human starts on it at the
+  while bb reports the worker's thread idle, waiting otherwise, a thread in
+  error included, and holds its own messages and turn retries for that worker
+  while the carry is under way; a turn the human starts on it at the
   moment a file goes in is the same race any editor has. A carry that fails
   leaves the worktree, its files and its index as they are, and says what each
   path it wrote holds now; the next carry takes its files over when every

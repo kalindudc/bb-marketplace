@@ -126,23 +126,14 @@ export async function bringHome(ctx: EngineCtx, project: ProjectRow, spec: Spec,
   return { sha: made.sha, tree: exported.tree, copied: true };
 }
 
-/** Whether a thread is running a turn: neither idle nor stopped on an error. A thread bb no longer has runs nothing. */
-async function runningTurn(ctx: EngineCtx, threadId: string): Promise<boolean> {
+/**
+ * The thread's status when bb reports it as anything but idle, else null. Only idle proves no turn runs or is about to:
+ * a thread in error may have a retry bb starts at any moment, so a carry waits for it.
+ */
+async function notIdle(ctx: EngineCtx, threadId: string): Promise<string | null> {
   const thread = await ctx.bb.getThread(threadId);
-  return thread !== null && thread.archivedAt === null && thread.deletedAt === null && thread.status !== "idle" && thread.status !== "error";
-}
-
-// A retry bb holds for a later time cannot be held back, so a carry waits for it: until it is due and a little after, when
-// bb has started it and the thread reads as running.
-const RETRY_START_MS = 2 * 60_000;
-
-/** Whether a turn retry Loom scheduled for the thread is still to start. */
-function retryPending(ctx: EngineCtx, threadId: string): boolean {
-  const row = ctx.store.threadByThreadId(threadId);
-  if (row?.ticket_id == null) return false;
-  const retries = ctx.store.ticketEvents(row.ticket_id, ["turn.retry"]).map((event) => JSON.parse(event.data_json) as { thread?: string; sendAt?: number });
-  const sendAt = retries.filter((retry) => retry.thread === threadId).at(-1)?.sendAt;
-  return typeof sendAt === "number" && ctx.now() < sendAt + RETRY_START_MS;
+  if (thread === null || thread.archivedAt !== null || thread.deletedAt !== null) return "gone";
+  return thread.status === "idle" ? null : thread.status;
 }
 
 const HOLDS = { carry: "what the carry wrote", before: "what it held before the carry", absent: "nothing", changed: "a change the carry did not make" } as const;
@@ -153,17 +144,18 @@ const HOLDS = { carry: "what the carry wrote", before: "what it held before the 
  * with its tree, or for a stacked ticket whose `sha` builds on the commit it is stacked on, as one commit with that
  * commit's tree and one more with its own. `replaces` is a tree the checkout keeps, which the worktree may drop. Throws
  * when the tree in the worktree is not the commit's. `owner` is the thread whose worktree it is, when Loom carries on its
- * own rather than in that thread's tool call: the carry runs only while that thread is not running a turn, as a check
- * right before a file goes in cannot stop the worker writing it a moment later, and waits (Unavailable) until then; Loom's
- * own messages to that thread are held until the carry is over.
+ * own rather than in that thread's tool call: the carry runs only while bb reports that thread idle, as a check right
+ * before a file goes in cannot stop the worker writing it a moment later, and waits (Unavailable) until then, error
+ * included, so a failed turn gets Loom's retry first; Loom's own messages and retries to that thread are held only while
+ * the carry is under way.
  */
 export async function carryTo(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket: TicketRow, sha: string, environment: EnvironmentInfo, opts: { replaces?: string; owner?: string } = {}): Promise<{ tree: string }> {
   const { owner } = opts;
   if (owner === undefined) return carryNow(ctx, project, spec, ticket, sha, environment, opts);
   // Held first, so no message of Loom's starts a turn there between the check and the end of the carry.
   return holdingMessages(owner, async () => {
-    if (await runningTurn(ctx, owner)) throw new Unavailable(`the thread whose worktree it is is running a turn, so Loom waits for it to end before it puts the work in`, { transient: "server" });
-    if (retryPending(ctx, owner)) throw new Unavailable(`a retry Loom scheduled for the turn of the thread whose worktree it is has not started yet, so Loom waits for it before it puts the work in`, { transient: "server" });
+    const status = await notIdle(ctx, owner);
+    if (status !== null) throw new Unavailable(`the thread whose worktree it is is not idle (${status}), so Loom waits for it to be idle before it puts the work in`, { transient: "server" });
     return carryNow(ctx, project, spec, ticket, sha, environment, opts);
   });
 }
