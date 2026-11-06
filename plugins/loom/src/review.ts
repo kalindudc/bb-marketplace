@@ -10,7 +10,7 @@ import { writeSub, type RetryWait, type StartWait } from "./sub-state";
 import { hostCallTransient, mergeWaitExpired, mergeWaitReason, mergeWaitText, nextMergeWait } from "./forge-waits";
 import { plural } from "./format";
 import { changesRequestedText, findingsList, reviewerBrief, reviewerNudgeText, textChangesText, textReviewBrief, withRestoredNote } from "./prompts";
-import { onlyText, roundKind, sentBackForText, textRoundsOn, type FindingKind } from "./review-kind";
+import { onlyText, removeTextReviewScratch, roundKind, sentBackForText, textReviewScratch, textRoundsOn, type FindingKind } from "./review-kind";
 import { openFeedback } from "./pull-requests";
 import { canEdit } from "./repos";
 import { isWaking, releasedWorker } from "./release";
@@ -402,14 +402,17 @@ async function startReviewer(ctx: EngineCtx, projectId: number, seen: TicketRow,
         remote: onMachine,
         tickets: store.tickets(project.id),
       });
+  // A text review reads only its brief, so it starts in an empty scratch directory: no worktree, environment or machine.
+  const scratch = text ? await textScratch(ctx, project, ticket, row) : null;
+  if (scratch === undefined) return false;
   let spawned;
   try {
-    const base = onMachine ? freshBase(spec, ticket.repo) : await localReviewBase(ctx, project, spec, ticket);
+    const base = onMachine || scratch !== null ? freshBase(spec, ticket.repo) : await localReviewBase(ctx, project, spec, ticket);
     spawned = await ctx.bb.spawnThread({
       bbProjectId: repo.bbProjectId ?? project.bb_project_id,
       hostId: project.host_id!,
       baseBranch: base,
-      environment: spawnEnvironment(repo, { branch: threadBranch(project.slug, ticket.key, `review-${round}-${row.id}`), base }, ticketInputsOf(ticket)),
+      ...(scratch === null ? { environment: spawnEnvironment(repo, { branch: threadBranch(project.slug, ticket.key, `review-${round}-${row.id}`), base }, ticketInputsOf(ticket)) } : { workspace: { path: scratch } }),
       title: `${text ? "Text review" : "Review"} ${ticket.key} · round ${round}`,
       prompt: brief,
       sectionId: project.section_id,
@@ -427,6 +430,7 @@ async function startReviewer(ctx: EngineCtx, projectId: number, seen: TicketRow,
     } else {
       await reviewerStartFailed(ctx, row, problem);
     }
+    if (scratch !== null) await removeTextReviewScratch(ctx, row);
     return false;
   }
 
@@ -440,6 +444,23 @@ async function startReviewer(ctx: EngineCtx, projectId: number, seen: TicketRow,
   store.changed(project.id);
   if (staleReason(store, active) !== null || store.project(projectId)?.state === "archived") await endThread(ctx, active, "superseded", { commit: false, move: null });
   return true;
+}
+
+/**
+ * Makes the text reviewer's scratch directory on the project's machine, under the final review's scratch root, outside
+ * bb's data directory. With none there the ticket blocks, as when bb refuses a reviewer: Loom never runs a text review in
+ * a checkout instead. Undefined when it did not start; a host call that failed waits and tries again as a failed start.
+ */
+async function textScratch(ctx: EngineCtx, project: ProjectRow, ticket: TicketRow, row: ThreadRow): Promise<string | undefined> {
+  try {
+    const made = await ctx.host.call(project.host_id!, "finalScratch", { key: textReviewScratch(row.id), action: "create" });
+    if (made.refused === undefined) return made.path;
+    failReviewerSpawn(ctx, row, made.refused);
+    await blockForReviewers(ctx, ticket, `${REVIEWER_REFUSED}: Loom has no scratch directory for its text review on the project's machine (${made.refused}). Set XDG_CACHE_HOME to a directory outside bb's data directory for bb, then review the ticket again`);
+  } catch (error) {
+    await reviewerStartFailed(ctx, row, { kind: "failed", message: `Loom could not make the text review's scratch directory: ${errText(error)}` });
+  }
+  return undefined;
 }
 
 /**
@@ -609,6 +630,7 @@ export async function checkOutReview(ctx: EngineCtx, threadId: string): Promise<
   if (row.state !== "active" || ticket === null || ticket.state !== "review" || ticket.review_round !== row.review_round || ticket.head_sha === null) {
     throw new LoomError("loom_invalid_state", "This review round is over, so there is nothing to check out. End your turn.");
   }
+  if (roundKind(store, ticket) === "text") throw new LoomError("loom_invalid_state", "A text review needs no checkout: judge the text in your brief, then call loom_approve or loom_request_changes.");
   const environment = await reviewerWorktree(ctx, row);
   const project = store.project(ticket.project_id)!;
   let tree: string;

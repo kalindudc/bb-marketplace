@@ -4,12 +4,14 @@ import { settleChecks, submit } from "../src/checks";
 import type { ThreadRow } from "../src/db/store";
 import { pollPullRequests, runMergeQueue, settleMerges } from "../src/merge";
 import { askForPrTexts, handInPrText } from "../src/pull-requests";
+import { maintainFinalReviews } from "../src/auto-merge";
+import { SpawnRefusedError } from "../src/ports";
 import { approve, requestChanges, settleReviews, spawnReviewers, type Finding } from "../src/review";
 import { projectMetrics } from "../src/reports";
 import { formatMetrics } from "../src/cli";
 import { PR_TEXT_CORE } from "../src/prompts";
 import { specOf } from "../src/ctx";
-import { checkOutHead, makeCtx, seedProject, startWorker, ticketOf, type Doc, type EngineHarness } from "./helpers";
+import { checkOutHead, makeCtx, makeEngine, seedMachineProject, seedProject, startWorker, ticketOf, type Doc, type EngineHarness } from "./helpers";
 
 let h: EngineHarness;
 beforeEach(() => {
@@ -23,7 +25,8 @@ const ticket = () => ticketOf(h, "CSV-1");
 const pr = (more: Doc = {}) => (doc: Doc) => {
   doc.merge = { strategy: "pr", ...more };
 };
-const spawns = () => h.bb.callsTo("spawnThread").map(([args]) => args as { prompt: string; detail?: string; reasoningLevel?: string; title: string });
+type Spawn = { prompt: string; detail?: string; reasoningLevel?: string; title: string; hostId: string; workspace?: { path: string }; environment?: unknown };
+const spawns = () => h.bb.callsTo("spawnThread").map(([args]) => args as Spawn);
 const brief = () => {
   const last = spawns().at(-1)!;
   return `${last.prompt}\n${last.detail ?? ""}`;
@@ -403,5 +406,102 @@ describe("loom_pr after the reviewers approved the text", () => {
     await settleMerges(h.ctx);
     expect(h.host.callsTo("push").length).toBeGreaterThan(pushes);
     expect(h.host.callsTo("prEdit").at(-1)!.body.startsWith("Approved fix description.")).toBe(true);
+  });
+});
+
+describe("the text review's scratch directory", () => {
+  const key = () => `loom-text-review-${reviewers().at(-1)!.id}`;
+
+  async function toTextReview(): Promise<ThreadRow> {
+    const worker = await startWorker(h);
+    await handIn(worker, "Done.", { pr: { title: "T", body: "B" } });
+    await requestChanges(h.ctx, (await nextReviewer()).thread_id!, "Text.", [textFinding]);
+    await settle();
+    await handIn(worker, "Rewrote it.", { change: false, pr: PROPOSED });
+    return worker;
+  }
+
+  it("starts the text reviewer in an empty scratch directory on the project's machine, with no environment or machine, and removes it once the reviewer stops", async () => {
+    await seedMachineProject(h, pr());
+    await toTextReview();
+    const reviewer = await nextReviewer(false);
+    const spawn = spawns().at(-1)!;
+    expect(spawn.title).toContain("Text review");
+    expect(spawn.workspace).toEqual({ path: `/data/final-review/${key()}` });
+    expect(spawn.environment).toBeUndefined();
+    expect(spawn.hostId).toBe(project().host_id);
+    expect(h.host.scratch.has(key())).toBe(true);
+    const owned = key();
+    await approve(h.ctx, reviewer.thread_id!, "Good.");
+    await settle();
+    expect(h.store.thread(reviewer.id)!.state).toBe("ended");
+    expect(h.host.scratch.has(owned)).toBe(false);
+  });
+
+  it("refuses loom_checkout, which a text review never needs", async () => {
+    await seedProject(h, pr());
+    await toTextReview();
+    const reviewer = await nextReviewer(false);
+    const { checkOutReview } = await import("../src/review");
+    await expect(checkOutReview(h.ctx, reviewer.thread_id!)).rejects.toThrow("needs no checkout");
+  });
+
+  it("blocks the ticket, and starts nothing in the checkout, when the machine has no scratch directory outside bb's data", async () => {
+    await seedProject(h, pr());
+    await toTextReview();
+    const real = h.host.call.bind(h.host);
+    h.host.call = (async (hostId: string, method: string, input: any) =>
+      method === "finalScratch" && input.action === "create" ? { path: "", entries: [], refused: "every cache directory is inside bb's data directory" } : real(hostId, method as never, input as never)) as typeof h.host.call;
+    const before = spawns().length;
+    await spawnReviewers(h.ctx, project(), spec());
+    await settle();
+    expect(spawns()).toHaveLength(before);
+    expect(ticket().state).toBe("blocked");
+    expect(ticket().blocked_reason).toContain("every cache directory is inside bb's data directory");
+  });
+
+  it("blocks the ticket and removes the directory when bb refuses it as a workspace", async () => {
+    await seedProject(h, pr());
+    await toTextReview();
+    h.bb.spawnError = (args) => (args.workspace !== undefined ? new SpawnRefusedError(400, "bb refused the workspace path") : null);
+    await spawnReviewers(h.ctx, project(), spec());
+    await settle();
+    expect(ticket().state).toBe("blocked");
+    expect(ticket().blocked_reason).toContain("bb refused the workspace path");
+    expect([...h.host.scratch.keys()].filter((name) => name.startsWith("loom-text-review-"))).toEqual([]);
+    expect(spawns().filter((spawn) => spawn.environment !== undefined && spawn.title.includes("Text review"))).toEqual([]);
+  });
+
+  it("is swept after a restart between making it and binding the reviewer's thread, which ends the row", async () => {
+    const engine = makeEngine();
+    h = engine;
+    await seedProject(h, pr());
+    await toTextReview();
+    await nextReviewer(false);
+    const row = reviewers().at(-1)!;
+    const owned = key();
+    h.store.updateThread(row.id, { state: "spawning", thread_id: null, spawn_token: "lost-token" });
+    await maintainFinalReviews(h.ctx);
+    h.clock.advance(31 * 60_000);
+    await maintainFinalReviews(h.ctx);
+    expect(h.host.scratch.has(owned)).toBe(true);
+    await engine.engine.reconcile();
+    expect(h.store.thread(row.id)!.state).toBe("ended");
+    h.clock.advance(31 * 60_000);
+    await maintainFinalReviews(h.ctx);
+    expect(h.host.scratch.has(owned)).toBe(false);
+  });
+
+  it("is kept by the sweep while its reviewer lives, and swept once a restart left it without one", async () => {
+    await seedProject(h, pr());
+    await toTextReview();
+    await nextReviewer(false);
+    const live = key();
+    h.host.scratch.set("loom-text-review-999", []);
+    await maintainFinalReviews(h.ctx);
+    h.clock.advance(31 * 60_000);
+    await maintainFinalReviews(h.ctx);
+    expect(h.host.scratch.has(live)).toBe(true);
+    expect(h.host.scratch.has("loom-text-review-999")).toBe(false);
   });
 });

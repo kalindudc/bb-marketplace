@@ -298,7 +298,7 @@ Compared with 0.23.0: Loom already sent failed CI checks back as fix rounds when
 | `max_rounds` | integer | `3` | 1 to 10; review rounds that ask for changes before the ticket blocks; rounds that ask only for new pull request text count apart, with a limit of their own; see [Retry limits](#retry-limits) |
 | `rubric` | string array | `[]` | at most 20, each up to 500 characters; the text review judges the pull request's text by the lines about it |
 
-On the pull request strategy with `merge.describe = "worker"`, a reviewer gives each finding a kind, `code` or `text`. A round whose findings are all `text` goes back as a text-only round: the worker proposes new text with `loom_submit`'s `pr` and changes no files, and Loom's text review, one short turn by `agents.reviewer` at low reasoning that needs one verdict whatever `approvals` says, judges it with no checks and no code review. Loom then sets the text on the pull request.
+On the pull request strategy with `merge.describe = "worker"`, a reviewer gives each finding a kind, `code` or `text`. A round whose findings are all `text` goes back as a text-only round: the worker proposes new text with `loom_submit`'s `pr` and changes no files, and Loom's text review, one short turn by `agents.reviewer` at low reasoning in an empty scratch directory with no worktree, environment or machine, that needs one verdict whatever `approvals` says, judges it with no checks and no code review. Loom then sets the text on the pull request.
 
 ### [budget]
 

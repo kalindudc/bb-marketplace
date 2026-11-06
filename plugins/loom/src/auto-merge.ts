@@ -12,6 +12,7 @@ import { holdText } from "./verdict";
 import { andList, clip, type FeedbackItem } from "./prompts";
 import { blockOpenPr, globMatch, mergeFixRound } from "./pull-requests";
 import { repoSettings, repeatableMerge, autoMergeOf, type AutoMergeSettings } from "./repos";
+import { textRoundsOn } from "./review-kind";
 import { rolloutOf } from "./rollout";
 import { repoCheckout } from "./checkouts";
 import type { Spec } from "./spec";
@@ -441,7 +442,8 @@ async function upkeep(ctx: EngineCtx, projectId: number, ticketId: number, read:
  * The tick's upkeep of the final reviews of every project, in every state, apart from any read of a pull request: a run
  * whose deadline passed, whose project paused or whose ticket blocked, was cancelled or is not ready any more ends, and
  * every run that is over has its thread stopped and archived and its scratch directory removed. It visits only the
- * tickets with a run not closed yet, so finished history costs nothing; then it sweeps orphaned scratch directories.
+ * tickets with a run not closed yet, so finished history costs nothing; then it sweeps orphaned scratch directories, the
+ * text reviews' included, on the machines of projects with final reviews or text reviews.
  * `projectId` is ignored: the upkeep is global.
  */
 export async function maintainFinalReviews(ctx: EngineCtx, _projectId?: number): Promise<void> {
@@ -456,7 +458,7 @@ export async function maintainFinalReviews(ctx: EngineCtx, _projectId?: number):
     if ((project.state !== "running" && project.state !== "paused") || project.host_id === null || project.approved_version === null) return [];
     const spec = specOf(ctx.store, project);
     const repos = spec.repo === undefined || spec.repo.length === 0 ? [null] : spec.repo.map((repo) => repo.name);
-    return repos.some((name) => finalReviewOf(spec, autoMergeOf(repoSettings(spec, name).forge)) !== null) ? [project.host_id] : [];
+    return textRoundsOn(spec) || repos.some((name) => finalReviewOf(spec, autoMergeOf(repoSettings(spec, name).forge)) !== null) ? [project.host_id] : [];
   });
   await sweepScratch(ctx, hosts);
 }

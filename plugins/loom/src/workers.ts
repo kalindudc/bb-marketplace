@@ -18,6 +18,7 @@ import { HUMAN_ACTOR, LOOM_ACTOR, PAUSE_NOW_REASON } from "./states";
 import { readSub, writeSub, type Resume, type Stack } from "./sub-state";
 import { bringHome, carryTo, homeBranch, isRemote } from "./transport";
 import { canTake, moveTicket, tryMoveTicket, type TicketMove } from "./moves";
+import { removeTextReviewScratch } from "./review-kind";
 import { specOf, signatureOf, type EngineCtx } from "./ctx";
 
 export type EndReason = "abandoned" | "timeout" | "failed" | "gone" | "blocked" | "cancelled" | "verdict" | "superseded" | "merged" | "released" | "unreachable";
@@ -523,6 +524,7 @@ async function finishEnding(ctx: EngineCtx, row: ThreadRow, reason: EndReason, o
       }
     }
     if (!(await stopAndArchive(ctx, row, force))) return;
+    if (row.role === "reviewer") await removeTextReviewScratch(ctx, row);
     retriesOf(store).ending.reset(row.id);
 
     store.tx(() => {

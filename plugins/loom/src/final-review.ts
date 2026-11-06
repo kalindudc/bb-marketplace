@@ -21,6 +21,7 @@ import { REPLY_MARK } from "./host-contract";
 import { clip, type FeedbackItem } from "./prompts";
 import { appliedOf, blockOpenPr, mergeFixRound } from "./pull-requests";
 import { autoMergeOf, repoSettings, type AutoMergeSettings } from "./repos";
+import { liveTextReviewScratches } from "./review-kind";
 import type { Spec } from "./spec";
 import { SpawnRefusedError } from "./ports";
 import { HUMAN_ACTOR, LOOM_ACTOR } from "./states";
@@ -293,8 +294,9 @@ export function needsUpkeep(store: Store, ticketId: number): boolean {
 const swept = new WeakMap<Store, number>();
 
 /**
- * Removes, every SWEEP_MS, the scratch directories on each machine that no outstanding run owns: a run's directory
- * is recorded before it is made, so these are left by a crash between a removal and its record, or by an older Loom.
+ * Removes, every SWEEP_MS, the scratch directories on each machine that no outstanding run and no live text reviewer owns:
+ * each owner is recorded before its directory is made, so these are left by a crash between a removal and its record, a
+ * removal that failed, or an older Loom.
  */
 export async function sweepScratch(ctx: EngineCtx, hostsOf: () => readonly string[]): Promise<void> {
   // The first sweep comes SWEEP_MS after the process starts, so a tick never lists the projects only to find nothing due.
@@ -303,13 +305,13 @@ export async function sweepScratch(ctx: EngineCtx, hostsOf: () => readonly strin
   if (ctx.now() - last < SWEEP_MS) return;
   swept.set(ctx.store, ctx.now());
   const hosts = hostsOf();
-  const keep = [...outstandingOf(ctx.store).values()].flatMap((run) => (run.scratch === null ? [] : [run.scratch]));
+  const keep = [...[...outstandingOf(ctx.store).values()].flatMap((run) => (run.scratch === null ? [] : [run.scratch])), ...liveTextReviewScratches(ctx.store)];
   for (const host of new Set(hosts)) {
     const answer = await ctx.host.call(host, "finalScratch", { key: "loom-sweep", action: "sweep", keep }).catch((error: unknown) => {
-      ctx.bb.log("warn", `Could not sweep the final reviews' scratch directories on ${host}: ${errText(error)}`);
+      ctx.bb.log("warn", `Could not sweep the review scratch directories on ${host}: ${errText(error)}`);
       return null;
     });
-    if (answer !== null && answer.entries.length > 0) ctx.bb.log("info", `Removed ${answer.entries.length} final review scratch directories no run owns on ${host}.`);
+    if (answer !== null && answer.entries.length > 0) ctx.bb.log("info", `Removed ${answer.entries.length} review scratch directories nothing owns on ${host}.`);
   }
 }
 

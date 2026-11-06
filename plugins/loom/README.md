@@ -710,7 +710,14 @@ its own pull request.
   instead: one short turn by `agents.reviewer` at low reasoning, which gets the
   changed files and their line counts (not the patch), the text before and
   after, the ticket, the feedback or findings it answers, the core rules and
-  the rubric, and needs no checkout. It approves, or returns findings, which
+  the rubric. It needs no checkout, so it starts as the final review does: in
+  an empty scratch directory of its own under `~/.cache/bb-loom` (or
+  `$XDG_CACHE_HOME`) on the project's machine, with no worktree, environment
+  or machine, even on a repo whose reviewers get a machine each. Loom removes
+  the directory once the reviewer has stopped, and its sweep removes any that
+  a restart or a failed removal left. With no such directory outside bb's data
+  directory, or when bb refuses it, the ticket blocks; Loom never runs the
+  text review in a checkout instead. It approves, or returns findings, which
   go back to the worker as another text-only round. Text-only rounds and code
   rounds each have `review.max_rounds` of their own, so rewriting the text
   never uses up the code review's rounds.
