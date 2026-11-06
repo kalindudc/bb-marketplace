@@ -196,6 +196,32 @@ describe("the Flares tab", () => {
     expect(titles).toEqual(["Sent before the companion", "Drawn", "Just sent"]);
   });
 
+  it("asks for child threads' flares by the toggle when there is no companion to render", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(NOW);
+    const asked: boolean[] = [];
+    const own = flare({ id: "fl_own", title: "Own flare" });
+    const child = flare({ id: "fl_child", title: "Child's flare", threadId: "thr_child", fromChild: { threadId: "thr_child", title: "Child" } });
+    const loaded = await app();
+    const tab = loaded.tabs[0]!;
+    renderSlot(tab as { component: React.ComponentType<{ threadId: string; params: null; environment: null }> }, { threadId: "thr_a", params: null, environment: null }, {
+      experimental_rpcContract: rpcContract,
+      rpc: {
+        feed: (input: unknown) => {
+          const { children } = input as { children: boolean };
+          asked.push(children);
+          return { flares: children ? [child, own] : [own], runs: [], truncated: false, companionThreadId: null };
+        },
+        marks: () => ({ companionThreadId: null, marks: {} }),
+      },
+    });
+    expect(await screen.findByText("Child's flare")).toBeTruthy();
+    fireEvent.click(screen.getByLabelText("Hide child threads' flares"));
+    expect(await screen.findByText("Own flare")).toBeTruthy();
+    expect(screen.queryByText("Child's flare")).toBeNull();
+    expect(asked.at(-1)).toBe(false);
+  });
+
   it("explains what flares are when there are none", async () => {
     await render({ flares: [], runs: [], truncated: false, companionThreadId: null });
     expect(await screen.findByText("No flares yet")).toBeTruthy();

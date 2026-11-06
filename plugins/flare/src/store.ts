@@ -416,6 +416,14 @@ export class FlareStore {
       .run({ viewer: viewerId, before, at }).changes;
   }
 
+  /** Other viewers whose companion shows a flare of `threadId`: deleting that thread leaves the companion stale. */
+  viewersShowingThread(threadId: string): string[] {
+    const rows = this.db
+      .prepare(`SELECT DISTINCT s.viewer_id AS viewer FROM shown s JOIN flares f ON f.id = s.flare_id WHERE f.thread_id = ? AND s.viewer_id != ? AND s.skipped = 0`)
+      .all(threadId, threadId) as { viewer: string }[];
+    return rows.map((row) => row.viewer);
+  }
+
   /** Viewers whose companion shows a flare older than `before`: pruning that flare leaves the companion stale. */
   viewersShowingBefore(before: number): string[] {
     const rows = this.db

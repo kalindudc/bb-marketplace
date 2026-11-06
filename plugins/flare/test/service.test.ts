@@ -271,6 +271,25 @@ describe("rendering in companions", () => {
     expect(shown).toEqual([["thr_b"]]);
   });
 
+  it("rebuilds the companion of a thread above a deleted child that drew the child's flares", async () => {
+    const shown: (readonly string[])[] = [];
+    const discarded: string[] = [];
+    const world = setup({ threads: { thr_child: { parentThreadId: "thr_parent" } }, ancestors: { thr_child: ["thr_parent", "thr_root"] }, companions: { shown, discarded } });
+    const sent = world.service.send({ threadId: "thr_child", projectId: null, fields: { title: "From the child" }, source: "tool" });
+    await world.service.settled();
+    shown.length = 0;
+    world.store.setCompanion("thr_parent", "thr_companion_parent", 0);
+    world.store.setCompanion("thr_root", "thr_companion_root", 0);
+    if (sent.status === "sent") world.store.markShown(sent.flare.id, "thr_parent", 0);
+    world.service.onDeleted(active("thr_child"));
+    await world.service.settled();
+    // The root's companion never drew the child's flare, so it stays.
+    expect(discarded).toEqual(["thr_companion_parent"]);
+    expect(shown).toEqual([["thr_parent"]]);
+    expect(world.service.feed("thr_parent", true).flares).toEqual([]);
+    expect(world.harness.inspection.experimental_rpcInvalidations).toContainEqual([threadTag("thr_child"), threadTag("thr_parent")]);
+  });
+
   it("rebuilds a companion that showed a flare pruning removed", async () => {
     const shown: (readonly string[])[] = [];
     const discarded: string[] = [];

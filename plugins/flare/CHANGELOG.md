@@ -2,6 +2,16 @@
 
 Notable changes to Flare, newest first. Releases are tagged `flare/vX.Y.Z` in this repository.
 
+## 0.2.1 (2026-11-05)
+
+Fixes from the code review of the Shopify marketplace listing.
+
+### Fixed
+
+- Deleting a child thread now also rebuilds the companion of any thread above it that drew the child's flares, so the parent's rendered Flares tab no longer shows flares that are gone.
+- When a thread has no companion yet and the Flares tab falls back to cards, the child threads' toggle filters the list again; before, child flares stayed in the list and in Copy all while the toggle was off.
+- The plugin's runtime dependencies, `zod` and `@radix-ui/react-slot`, are pinned to exact versions, as the SDK already was, so an install from the marketplace gets the versions Flare was tested with.
+
 ## 0.2.0 (2026-11-05)
 
 Flares render the way bb renders a reply, with no plugin code in Flare.

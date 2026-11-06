@@ -129,12 +129,17 @@ export function FlaresPanel({ threadId }: { threadId: string }) {
   const [chosen, setChosen] = useState<View | null>(null);
   const wanted = chosen ?? preferred;
   // The companion holds every child flare, so the rendered view counts and copies them all, whatever the cards filter.
+  // Without a companion the tab falls back to cards, and the feed follows the toggle again.
+  const [renderable, setRenderable] = useState(true);
   const { data, error, isLoading } = experimental_useRpcQuery({
     contract: rpcContract,
     method: "feed",
-    input: { threadId, children: wanted === "rendered" ? true : children },
+    input: { threadId, children: wanted === "rendered" && renderable ? true : children },
   });
   const companion = data?.companionThreadId ?? null;
+  useEffect(() => {
+    if (data !== undefined) setRenderable(data.companionThreadId !== null);
+  }, [data]);
   const view: View = wanted === "rendered" && companion !== null ? "rendered" : "cards";
   const undrawn = view === "rendered" ? (data?.flares ?? []).filter((flare) => !flare.drawn) : [];
   const onTheirWay = undrawn.filter((flare) => now - flare.createdAt < ON_ITS_WAY_MS).length;

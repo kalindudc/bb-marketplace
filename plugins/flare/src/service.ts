@@ -316,17 +316,24 @@ export class FlareService {
   onDeleted(thread: Thread): void {
     this.lifecycle.delete(thread.id);
     // A deleted viewer takes its companion with it. A companion deleted by hand is replaced: its viewer's flares are
-    // all drawn again in a new one, which is also how a companion from an older build gets its dividers.
+    // all drawn again in a new one, which is also how a companion from an older build gets its dividers. A thread above
+    // a deleted child whose companion drew the child's flares is rebuilt without them, as pruning does.
     const companion = this.store.companionOf(thread.id);
     const viewer = this.store.viewerOf(thread.id);
+    const above = this.store.viewersShowingThread(thread.id).flatMap((id) => {
+      const stale = this.store.companionOf(id);
+      return stale === null ? [] : [{ viewer: id, companion: stale }];
+    });
     const companions = this.companions;
     if (companion !== null && companions !== null) this.defer(() => companions.discard(thread.id, companion));
     if (viewer !== null) this.store.forgetCompanion(viewer);
     this.store.deleteThread(thread.id);
-    this.invalidate(viewer === null ? [thread.id] : [thread.id, viewer]);
-    if (viewer !== null && companions !== null) {
+    const redraw = [...(viewer === null ? [] : [viewer]), ...above.map((stale) => stale.viewer)];
+    this.invalidate([thread.id, ...redraw]);
+    if (redraw.length > 0 && companions !== null) {
       this.defer(async () => {
-        if ((await this.settings()).tab === "rendered") await companions.show([viewer]);
+        for (const stale of above) await companions.discard(stale.viewer, stale.companion);
+        if ((await this.settings()).tab === "rendered") await companions.show(redraw);
       });
     }
   }
