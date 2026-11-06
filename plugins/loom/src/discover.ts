@@ -49,8 +49,6 @@ export interface RepoFacts extends RepoTarget {
   pastPicks: PastPick[];
   plugins: PluginInfo[];
   worktreeTrial: HostOutput<"trialWorktree"> | null;
-  /** `bb plugin run <plugin> <first word> --help` for a [merge.worktree] that names a plugin. */
-  pluginCommand: { ok: boolean; output: string } | null;
 }
 
 /** The repos a spec changes, with their settings and their tickets' environment patches. */
@@ -77,7 +75,7 @@ export async function gatherFacts(ctx: { bb: BbPort; host: HostPort; store?: Sto
     const checkout = await ctx.bb.projectCheckout(target.bbProjectId, hostId);
     const known = { ...target, hostId, checkout, providers, plugins, machineProviders, pastPicks: picksOf(target.bbProjectId) };
     if (checkout === null) {
-      facts.push({ ...known, remotes: [], worktreeTrial: null, pluginCommand: null });
+      facts.push({ ...known, remotes: [], worktreeTrial: null });
       continue;
     }
     const remotes: RemoteFacts[] = [];
@@ -86,9 +84,9 @@ export async function gatherFacts(ctx: { bb: BbPort; host: HostPort; store?: Sto
       const gh = asked && remote.pushUrls.length === 1 ? await ctx.host.call(hostId, "ghStatus", { repo: checkout, pushUrl: remote.pushUrls[0]! }) : null;
       remotes.push({ ...remote, gh });
     }
-    const integration = settings === null || (settings.branch !== null && settings.worktree === null);
+    const integration = settings === null || settings.branch !== null;
     const worktreeTrial = integration ? await ctx.host.call(hostId, "trialWorktree", { repo: checkout }) : null;
-    facts.push({ ...known, remotes, worktreeTrial, pluginCommand: await pluginCommand(ctx, hostId, checkout, settings, plugins) });
+    facts.push({ ...known, remotes, worktreeTrial });
   }
   return facts;
 }
@@ -106,20 +104,10 @@ async function pastPicks(ctx: { bb: BbPort; store?: Store }): Promise<(bbProject
   };
 }
 
-async function pluginCommand(ctx: { host: HostPort }, hostId: string, checkout: string, settings: RepoSettings | null, plugins: PluginInfo[]): Promise<RepoFacts["pluginCommand"]> {
-  const plugin = settings?.worktree?.plugin;
-  if (plugin === undefined || !plugins.some((entry) => entry.id === plugin && entry.enabled)) return null;
-  const first = settings!.worktree!.command.trim().split(/\s+/u)[0] ?? "";
-  // Only a word a CLI command name could be reaches the shell.
-  if (!/^[a-z0-9][a-z0-9:_-]*$/u.test(first)) return { ok: false, output: `"${first}" is not a command name.` };
-  const result = await ctx.host.call(hostId, "exec", { cwd: checkout, command: `bb plugin run ${plugin} ${first} --help`, timeoutMs: PLUGIN_HELP_MS });
-  return { ok: result.exitCode === 0 && !result.timedOut, output: result.output.trim().slice(-500) };
-}
-
 // ---------------------------------------------------------------- paths and words
 
-type Key = "remote" | "forge" | "environment" | "worktree";
-const TOP: Record<Key, string> = { remote: "merge.remote", forge: "merge.forge", environment: "environment", worktree: "merge.worktree" };
+type Key = "remote" | "forge" | "environment";
+const TOP: Record<Key, string> = { remote: "merge.remote", forge: "merge.forge", environment: "environment" };
 const pathOf = (facts: RepoTarget, key: Key) => (facts.index === null ? TOP[key] : `repo[${facts.index}].${key}`);
 
 const listRemotes = (remotes: readonly RemoteFacts[]) => (remotes.length === 0 ? "none" : remotes.map((remote) => `${remote.name} (${remote.pushUrls.join(", ") || "no push URL"})`).join(", "));
@@ -162,8 +150,7 @@ const forgeFix = (facts: RepoTarget, host: string | null) =>
 const environmentFix = (facts: RepoTarget, providers: readonly EnvironmentProviderInfo[]) =>
   `Ask the human whether Loom's threads (workers, reviewers and the spec reviewer) should run in ${providers.length === 1 ? "it" : "one of them"}, then set ${pathOf(facts, "environment")} = { provider = "<id>", inputs = { … } }, or { provider = "git-worktree" } to keep plain git worktrees.`;
 
-const worktreeFix = (facts: RepoTarget) =>
-  `Use merge.strategy = "pr", or set ${pathOf(facts, "worktree")} to a command, or a plugin's CLI command (plugin = "<id>"), that prepares a checkout of the repository and prints its path last.`;
+const WORKTREE_FIX = 'Use merge.strategy = "pr", where each ticket gets its own pull request and Loom needs no integration worktree.';
 
 /** Merging stays the human's unless the spec opts in, so this is a fact to report, not a choice to ask about. */
 function mergingLine(facts: RepoFacts): string {
@@ -217,7 +204,7 @@ function repoText(facts: RepoFacts): string {
     lines.push(
       facts.worktreeTrial.outcome === "ok"
         ? "- Integration worktree: found: Loom can add its own worktree of this repository."
-        : `- Integration worktree: ask (only for merge.strategy = "integration"): git refused Loom's own worktree: ${facts.worktreeTrial.message} ${worktreeFix(facts)}`,
+        : `- Integration worktree: ask (only for merge.strategy = "integration"): git refused Loom's own worktree: ${facts.worktreeTrial.message} ${WORKTREE_FIX}`,
     );
   }
   return lines.join("\n");
@@ -282,17 +269,8 @@ function repoErrors(facts: RepoFacts, settings: RepoSettings): string[] {
     }
   }
 
-  const worktree = settings.worktree;
-  if (settings.branch !== null && worktree === null && facts.worktreeTrial?.outcome === "refused") {
-    errors.push(`${pathOf(facts, "worktree")}: Loom cannot add its own worktree of ${facts.label} on this machine; git said: ${facts.worktreeTrial.message} ${worktreeFix(facts)}`);
-  }
-  if (worktree?.plugin !== undefined) {
-    const plugin = facts.plugins.find((entry) => entry.id === worktree.plugin);
-    if (plugin === undefined) errors.push(`${pathOf(facts, "worktree")}.plugin: bb has no plugin "${worktree.plugin}". Install it, or name another plugin, or drop plugin and give a shell command.`);
-    else if (!plugin.enabled) errors.push(`${pathOf(facts, "worktree")}.plugin: the plugin "${worktree.plugin}" is turned off. Ask the human to turn it on, then call loom_propose again.`);
-    else if (facts.pluginCommand !== null && !facts.pluginCommand.ok) {
-      errors.push(`${pathOf(facts, "worktree")}.command: \`bb plugin run ${worktree.plugin} ${worktree.command.trim().split(/\s+/u)[0]} --help\` failed, so that is not a command of the plugin: ${facts.pluginCommand.output}. Run \`bb plugin run ${worktree.plugin} --help\` to see its commands.`);
-    }
+  if (settings.branch !== null && facts.worktreeTrial?.outcome === "refused") {
+    errors.push(`merge.strategy: Loom cannot add its own worktree of ${facts.label} on this machine; git said: ${facts.worktreeTrial.message} ${WORKTREE_FIX}`);
   }
   return errors;
 }

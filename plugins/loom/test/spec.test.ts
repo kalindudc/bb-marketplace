@@ -11,6 +11,7 @@ function run(edit?: (doc: Doc) => void) {
 
 // The base spec as it was before project.summary existed, for the hashes computed then.
 const beforeSummaries = (doc: Doc) => delete doc.project.summary;
+const BASE_HASH = "f96518d7974822c8b1c65893fa574d5cf07b041509cbddc9a0c604b100c185e7";
 
 describe("parseSpec", () => {
   it("accepts a valid spec and fills the documented defaults", () => {
@@ -20,7 +21,7 @@ describe("parseSpec", () => {
     expect(result.ok).toBe(true);
     const spec = result.spec!;
     expect(spec.project).toMatchObject({ base: "main", non_goals: [], open_questions: [] });
-    expect(spec.merge).toEqual({ strategy: "integration", branch: "loom/csv", remote: "origin", draft: true });
+    expect(spec.merge).toEqual({ strategy: "integration", remote: "origin", draft: true });
     expect(spec.checks).toEqual({ commands: ["npm test"], after_merge: [], timeout_minutes: 15 });
     expect(spec.scope).toEqual({ protected: [], enforce: "warn" });
     expect(spec.agents).toMatchObject({ max_workers: 2, max_reviewers: 2, ticket_timeout_minutes: 120, triage: true, worker: { permission_mode: "full" }, reviewer: { permission_mode: "full" } });
@@ -115,7 +116,7 @@ describe("parseSpec", () => {
     for (const name of ["_release", "release/v1.2", "feature_x", "main", "user/feature-1", "v1.2.3", "a@b", "a./b", "ünï"]) {
       const result = run((doc) => {
         doc.project.base = name;
-        doc.merge = { strategy: "integration", branch: name, remote: name };
+        doc.merge = { strategy: "integration", remote: name };
       });
       expect(result.errors, name).toEqual([]);
       expect(result.spec?.project.base).toBe(name);
@@ -127,11 +128,10 @@ describe("parseSpec", () => {
     for (const name of bad) {
       const result = run((doc) => {
         doc.project.base = name;
-        doc.merge = { strategy: "integration", branch: name, remote: name };
+        doc.merge = { strategy: "integration", remote: name };
       });
       const text = result.errors.join("\n");
       expect(text, JSON.stringify(name)).toContain("project.base:");
-      expect(text, JSON.stringify(name)).toContain("merge.branch:");
       expect(text, JSON.stringify(name)).toContain("merge.remote:");
     }
   });
@@ -148,11 +148,18 @@ describe("parseSpec", () => {
     expect(run((doc) => (doc.budget = { deadline: "soon" })).errors.join("\n")).toContain("budget.deadline:");
   });
 
-  it("gives the pr strategy no integration branch", () => {
+  it("gives the pr strategy no integration branch, and the integration strategy always loom/<slug>", () => {
     const result = run((doc) => (doc.merge = { strategy: "pr" }));
     expect(result.errors).toEqual([]);
     expect(result.spec?.merge).toEqual({ strategy: "pr", remote: "origin", draft: true });
-    expect(run((doc) => (doc.merge = { strategy: "integration", branch: "release/csv" })).spec?.merge.branch).toBe("release/csv");
+    expect(repoSettings(run().spec!, null).branch).toBe("loom/csv");
+    expect(run((doc) => (doc.merge = { strategy: "integration", branch: "release/csv" })).errors).toEqual(["merge.branch: Loom no longer reads this key. The integration branch is always loom/<slug>, from project.slug: remove the key."]);
+  });
+
+  it("refuses merge.worktree and a repo's worktree, and says what to use instead", () => {
+    const why = 'Loom always adds its own git worktree of the integration branch; for a repository that refuses one, use merge.strategy = "pr": remove the key.';
+    expect(run((doc) => (doc.merge.worktree = { command: "prepare" })).errors).toEqual([`merge.worktree: Loom no longer reads this key. ${why}`]);
+    expect(run((doc) => (withRepos(doc), (doc.repo[0].worktree = { command: "prepare" }))).errors).toEqual([`repo[0].worktree: Loom no longer reads this key. ${why}`]);
   });
 });
 
@@ -339,8 +346,8 @@ describe("[[repo]]", () => {
     const spec = run(beforeSummaries).spec!;
     expect(Object.keys(spec)).not.toContain("repo");
     for (const ticket of spec.ticket) expect(Object.keys(ticket)).not.toContain("repo");
-    // Computed by the spec.ts that came before [[repo]]; it changes only if the base spec or the schema's output does.
-    expect(specHash(spec)).toBe("975e726bf34c40a6b5becf170f1eb25e6dc3f7a8e6818724e1ea96d69bf2808f");
+    // It changes only if the base spec or the schema's output does, as when merge.branch stopped being filled in.
+    expect(specHash(spec)).toBe(BASE_HASH);
   });
 
   it("accepts repos that every ticket names, keeps each ticket's repo and fills in nothing", () => {
@@ -509,22 +516,20 @@ describe("skills/loom/references/spec.md", () => {
   });
 });
 
-describe("forges, integration worktrees and environments", () => {
+describe("forges and environments", () => {
   it("leaves them out of a spec that does not set them, so its hash is the one it had before", () => {
     const spec = run(beforeSummaries).spec!;
     expect(Object.keys(spec.merge)).not.toContain("forge");
-    expect(Object.keys(spec.merge)).not.toContain("worktree");
     expect(Object.keys(spec)).not.toContain("environment");
-    expect(specHash(spec)).toBe("975e726bf34c40a6b5becf170f1eb25e6dc3f7a8e6818724e1ea96d69bf2808f");
+    expect(specHash(spec)).toBe(BASE_HASH);
   });
 
-  it("parses a command forge, a plugin worktree and an environment with placeholders, top level and per repo", () => {
+  it("parses a command forge and an environment with placeholders, top level and per repo", () => {
     const result = run((doc) => {
       doc.merge.forge = { kind: "command", open: "review create", state: "review state", after_open: ["ci run"] };
-      doc.merge.worktree = { plugin: "trees", command: "prepare loom" };
       doc.environment = { provider: "trees", inputs: { pool: { branch: "{branch}", base: "{base}", paths: ["a"] } } };
       doc.repo = [
-        { name: "web", project: "proj_web", forge: { kind: "none" }, environment: { provider: "git-worktree" }, worktree: { command: "prep" } },
+        { name: "web", project: "proj_web", forge: { kind: "none" }, environment: { provider: "git-worktree" } },
         { name: "api", project: "proj_api" },
       ];
       doc.ticket[0].repo = "web";
@@ -578,11 +583,9 @@ describe("forges, integration worktrees and environments", () => {
     expect(run((doc) => (doc.merge = { strategy: "pr", forge: { kind: "gh", after_push: ["1", "2", "3", "4", "5", "6"] } })).errors[0]).toMatch(/^merge\.forge\.after_push/u);
   });
 
-  it("refuses a worktree on the pull request strategy, an unknown placeholder, and malformed ids", () => {
-    expect(run((doc) => (doc.merge = { strategy: "pr", worktree: { command: "prep" } })).errors).toEqual(['merge.worktree: only the integration strategy has an integration worktree, and merge.strategy is "pr". Remove merge.worktree, or use merge.strategy = "integration".']);
+  it("refuses an unknown placeholder and malformed ids", () => {
     expect(run((doc) => (doc.environment = { provider: "trees", inputs: { tree: "{ticket}" } })).errors).toEqual(["environment.inputs: {ticket} is not a Loom placeholder. Use {branch} or {base}, or write the value out."]);
     expect(run((doc) => (doc.environment = { provider: "Trees!" })).errors[0]).toMatch(/^environment\.provider: must be a bb environment provider id/u);
-    expect(run((doc) => (doc.merge.worktree = { plugin: "bad id", command: "x" })).errors[0]).toMatch(/^merge\.worktree\.plugin: must be a bb plugin id/u);
   });
 
   it("parses who writes each pull request and the fix-round limit on the pr strategy, and a forge's feedback command", () => {

@@ -328,7 +328,7 @@ export const hostContract = defineRpcContract({
     output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok"), patch: z.string(), truncated: z.boolean() }).strict(), missing]),
   },
   ensureWorktree: {
-    input: z.object({ repo: absPath, key: worktreeKey, branch: ref, path: absPath.optional() }).strict(),
+    input: z.object({ repo: absPath, key: worktreeKey, branch: ref }).strict(),
     output: z.discriminatedUnion("outcome", [
       z.object({ outcome: z.literal("ok"), path: z.string() }).strict(),
       z.object({ outcome: z.literal("unavailable"), reason: z.enum(["branch_checked_out", "git"]), message: z.string() }).strict(),

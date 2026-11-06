@@ -543,8 +543,8 @@ export class FakeHost implements HostPort {
       case "diff":
         return { stat: " src/a.ts | 2 +-\n 1 file changed, 1 insertion(+), 1 deletion(-)", patch: "diff --git a/src/a.ts b/src/a.ts\n+export const a = 1;\n", truncated: false };
       case "ensureWorktree": {
-        const { key, branch, path: provisioned } = input as HostInput<"ensureWorktree">;
-        const path = provisioned ?? `/data/worktrees/${key}`;
+        const { key, branch } = input as HostInput<"ensureWorktree">;
+        const path = `/data/worktrees/${key}`;
         if (!this.worktrees.has(path)) this.worktrees.set(path, { branch, head: "base000", dirty: false, changed: [] });
         return { outcome: "ok", path };
       }

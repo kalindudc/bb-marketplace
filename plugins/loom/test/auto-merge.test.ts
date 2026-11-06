@@ -52,9 +52,9 @@ const squash = { kind: "gh", auto_merge: { mode: "auto", method: "squash" } };
 
 describe("auto-merge in the spec", () => {
   it("hashes a spec without the new settings exactly as Loom 0.31.1 did", () => {
-    // Hashes printed by origin/main's Loom (0.31.1) for these specs; a forge key with a default would change them.
+    // Hashes printed by Loom 0.31.1 for these specs, except the integration one, which changed when merge.branch stopped being filled in; a forge key with a default would change them.
     const hashes: Array<[string, (doc: Doc) => void, string]> = [
-      ["integration", () => undefined, "02c6010dae597fad57dbd40831ac89b26a46051cda3e5aede4e13d7241ba14b2"],
+      ["integration", () => undefined, "0efe24addc88df186883a6a3731fe8dbd1af1186e2c8802f35a5fa328d74fd00"],
       ["pr", (doc) => void (doc.merge = { strategy: "pr" }), "f023c27bc0b74984f92ff9591983b2e25be037d44326928ac03cf8e27ecef8d6"],
       ["gh forge", (doc) => void (doc.merge = { strategy: "pr", forge: { kind: "gh", after_push: ["ci run"], ignore_checks: ["Bot*"] } }), "4580a30fad3cc17a252439821953e027afdfa738b7080e87a7cd46e0f244a2da"],
       ["command forge", (doc) => void (doc.merge = { strategy: "pr", forge: { kind: "command", open: "pr open", state: "pr state", feedback: "pr feedback", retarget: "pr retarget" } }), "5d78dab93ba4e93c37a76b09d8a232b6d305a54d52d6482c16d5cac67b8b5127"],

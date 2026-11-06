@@ -324,13 +324,10 @@ async function commonDir(cwd: string, signal?: AbortSignal): Promise<string | nu
  */
 export async function ensureWorktree(input: HostInput<"ensureWorktree">, dataDir: string, signal?: AbortSignal): Promise<HostOutput<"ensureWorktree">> {
   const { repo, key, branch } = input;
-  // A provisioned path comes from the spec's worktree command: Loom uses it as it is and may switch its branch.
-  const provisioned = input.path !== undefined;
-  const path = input.path ?? join(dataDir, "worktrees", key);
+  const path = join(dataDir, "worktrees", key);
   const unavailable = (reason: "branch_checked_out" | "git", message: string): HostOutput<"ensureWorktree"> => ({ outcome: "unavailable", reason, message });
 
   if (!existsSync(path)) {
-    if (provisioned) return unavailable("git", `The integration worktree command printed ${path}, which does not exist.`);
     await git(repo, ["worktree", "prune"], { signal });
     mkdirSync(dirname(path), { recursive: true });
     const added = await run(repo, ["worktree", "add", path, branch], signal, NETWORK_TIMEOUT_MS);
@@ -345,17 +342,7 @@ export async function ensureWorktree(input: HostInput<"ensureWorktree">, dataDir
   const expected = await commonDir(repo, signal);
   if (owner === null || owner !== expected) return unavailable("git", `The Loom worktree at ${path} belongs to the repository ${owner ?? "(unknown)"}, not ${expected ?? repo}; move it away.`);
   const current = (await tryGit(path, ["symbolic-ref", "--short", "-q", "HEAD"], signal)) || null;
-  if (current !== branch) {
-    if (!provisioned) return unavailable("git", `The Loom worktree at ${path} is on ${current ?? "a detached HEAD"}, not ${branch}.`);
-    if ((await git(path, ["status", "--porcelain", "--untracked-files=no"], { signal })) !== "") {
-      return unavailable("git", `The integration worktree at ${path} is on ${current ?? "a detached HEAD"} with uncommitted changes, so Loom cannot switch it to ${branch}. Commit or discard them, or make the worktree command prepare a clean checkout.`);
-    }
-    const switched = await run(path, ["switch", branch], signal);
-    if (switched.code !== 0) {
-      const message = tail(switched.stderr || switched.stdout);
-      return unavailable(checkedOutElsewhere.test(message) ? "branch_checked_out" : "git", message);
-    }
-  }
+  if (current !== branch) return unavailable("git", `The Loom worktree at ${path} is on ${current ?? "a detached HEAD"}, not ${branch}.`);
 
   if ((await tryGit(path, ["rev-parse", "-q", "--verify", "MERGE_HEAD"], signal)) !== null) await run(path, ["merge", "--abort"], signal);
   await git(path, ["reset", "--hard", "HEAD"], { signal });

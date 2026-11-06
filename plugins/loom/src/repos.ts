@@ -1,4 +1,4 @@
-import type { EnvironmentSpec, ForgeSpec, RepoSpec, Spec, WorktreeSpec } from "./spec";
+import type { EnvironmentSpec, ForgeSpec, RepoSpec, Spec } from "./spec";
 
 /** One repository of a project, with every setting the spec leaves to the top level filled in from it. */
 export interface RepoSettings {
@@ -22,12 +22,15 @@ export interface RepoSettings {
   ci: boolean;
   /** The environment provider its workers and reviewers start in; null for today's managed worktree. */
   environment: EnvironmentSpec | null;
-  /** The command that prepares its integration worktree; null for Loom's own git worktree. */
-  worktree: WorktreeSpec | null;
   /** How many commits of its remote base an open pull request's branch may lack before Loom merges the base into it; null is off. */
   refreshBehind: number | null;
   /** How long each git fetch, ls-remote or push for it may take; null when the spec sets none, so the host's default applies. */
   gitNetworkTimeoutMs: number | null;
+}
+
+/** The integration branch, loom/<slug> in every repo; null on the pr strategy. */
+export function integrationBranchOf(spec: Spec): string | null {
+  return spec.merge.strategy === "integration" ? `loom/${spec.project.slug}` : null;
 }
 
 export function isMultiRepo(spec: Spec): boolean {
@@ -42,15 +45,13 @@ function settingsOf(spec: Spec, repo: RepoSpec | null): RepoSettings {
     bbProjectId: repo?.project ?? null,
     base: repo?.base ?? spec.project.base,
     remote: repo?.remote ?? spec.merge.remote,
-    // parseSpec fills merge.branch in on the integration strategy, as freshBase in workers.ts relies on too.
-    branch: spec.merge.strategy === "integration" ? spec.merge.branch! : null,
+    branch: integrationBranchOf(spec),
     checks: [...(repo?.checks ?? spec.checks.commands)],
     afterMerge: [...(repo?.after_merge ?? spec.checks.after_merge)],
     protected: [...spec.scope.protected, ...(repo?.protected ?? [])],
     forge,
     ci: spec.merge.strategy === "pr" && (repo?.ci ?? spec.checks.ci ?? true) && followsFeedback(forge),
     environment: repo?.environment ?? spec.environment ?? null,
-    worktree: repo?.worktree ?? spec.merge.worktree ?? null,
     refreshBehind: spec.merge.strategy === "pr" ? (repo?.refresh_behind ?? spec.merge.refresh_behind ?? null) : null,
     gitNetworkTimeoutMs: seconds === undefined ? null : seconds * 1000,
   };

@@ -4,7 +4,7 @@ import type { ProjectRow, Store, TicketRow } from "./db/store";
 import { Unavailable } from "./forge-waits";
 import { andList, clip, landBody, mergeSubject } from "./prompts";
 import { LoomError } from "./projects";
-import { gitNetwork, isMultiRepo, repoSettings } from "./repos";
+import { gitNetwork, integrationBranchOf, isMultiRepo, repoSettings } from "./repos";
 import type { Spec } from "./spec";
 import { LOOM_ACTOR } from "./states";
 import { specOf, type EngineCtx } from "./ctx";
@@ -90,7 +90,7 @@ export async function land(ctx: EngineCtx, slug: string, a: LandArgs): Promise<L
     }
     const { sha, url } = await guarded(() => pushIntegration(ctx, project, spec, null, project.pr_url, a, landBody({ project, spec, done })));
     if (url === null) {
-      const pushed = `${spec.merge.remote}/${spec.merge.branch!}`;
+      const pushed = `${spec.merge.remote}/${integrationBranchOf(spec)!}`;
       store.event(project.id, null, "project.landed", a.actor, { pushed, sha });
       completeProject(ctx, project.id);
       store.changed(project.id);

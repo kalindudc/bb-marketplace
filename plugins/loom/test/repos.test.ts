@@ -61,7 +61,6 @@ describe("repoSettings", () => {
       forge: { kind: "gh" },
       ci: false,
       environment: null,
-      worktree: null,
       refreshBehind: null,
       gitNetworkTimeoutMs: null,
     });
@@ -80,7 +79,6 @@ describe("repoSettings", () => {
       forge: { kind: "gh" },
       ci: false,
       environment: null,
-      worktree: null,
       refreshBehind: null,
       gitNetworkTimeoutMs: null,
     });
@@ -99,7 +97,6 @@ describe("repoSettings", () => {
       forge: { kind: "gh" },
       ci: false,
       environment: null,
-      worktree: null,
       refreshBehind: null,
       gitNetworkTimeoutMs: null,
     });
@@ -197,7 +194,7 @@ describe("freshBaseOf", () => {
   });
 
   it("agrees with freshBase for the project's own repo in a single-repo spec", () => {
-    for (const merge of [{ strategy: "integration" }, { strategy: "integration", branch: "release/csv" }, { strategy: "pr", remote: "upstream" }]) {
+    for (const merge of [{ strategy: "integration" }, { strategy: "pr", remote: "upstream" }]) {
       const parsed = spec((doc) => (doc.merge = merge));
       expect(freshBaseOf(parsed, null)).toBe(freshBase(parsed));
     }
@@ -207,6 +204,6 @@ describe("freshBaseOf", () => {
 describe("src/repos.ts", () => {
   it("imports nothing but types from ./spec, so the page can import it", () => {
     const source = readFileSync(new URL("../src/repos.ts", import.meta.url), "utf8");
-    expect(source.match(/^import .*$/gm)).toEqual(['import type { EnvironmentSpec, ForgeSpec, RepoSpec, Spec, WorktreeSpec } from "./spec";']);
+    expect(source.match(/^import .*$/gm)).toEqual(['import type { EnvironmentSpec, ForgeSpec, RepoSpec, Spec } from "./spec";']);
   });
 });

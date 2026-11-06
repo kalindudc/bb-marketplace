@@ -10,7 +10,6 @@ import { resolveEnvironment } from "./workers";
 import { type EngineCtx } from "./ctx";
 import { branchIn, checkoutIn, complete, endFinishedThreads, inRepo, sendBack, type MergePost } from "./merge-common";
 
-const PROVISION_MS = 10 * 60_000;
 // bb creates a worker's worktree after `spawn` returns, branched from its repo's integration branch tip at that moment, so a merge into that repo waits for it.
 export async function provisioningRepos(ctx: EngineCtx, projectId: number): Promise<Set<string | null>> {
   const repos = new Set<string | null>();
@@ -32,27 +31,9 @@ async function worktreeCreating(ctx: EngineCtx, row: ThreadRow): Promise<boolean
 export async function loomWorktree(ctx: EngineCtx, project: ProjectRow, spec: Spec, name: string | null = null): Promise<{ hostId: string; repo: string; worktree: string; settings: RepoSettings }> {
   const { hostId, path: repo, settings } = await checkoutIn(ctx, project, spec, name);
   const key = name === null ? project.slug : `${project.slug}.${name}`;
-  const path = settings.worktree === null ? undefined : await provisionedPath(ctx, hostId, repo, project, settings);
-  const ready = await ctx.host.call(hostId, "ensureWorktree", { repo, key, branch: settings.branch!, ...(path === undefined ? {} : { path }) });
+  const ready = await ctx.host.call(hostId, "ensureWorktree", { repo, key, branch: settings.branch! });
   if (ready.outcome === "ok") return { hostId, repo, worktree: ready.path, settings };
   throw new Unavailable(ready.reason === "branch_checked_out" ? `${branchIn(settings)} is checked out elsewhere; switch that checkout off it and resume` : ready.message);
-}
-
-/** Runs the spec's worktree command, or a plugin's CLI command, before each merge and land, and returns the absolute path it printed last. */
-async function provisionedPath(ctx: EngineCtx, hostId: string, repo: string, project: ProjectRow, settings: RepoSettings): Promise<string> {
-  const worktree = settings.worktree!;
-  // The spec checks a plugin id against ^[a-z0-9][a-z0-9-]*$, so it needs no quoting.
-  const command = worktree.plugin === undefined ? worktree.command : `bb plugin run ${worktree.plugin} ${worktree.command}`;
-  const env = { LOOM_PROJECT_SLUG: project.slug, LOOM_BRANCH: settings.branch!, LOOM_BASE: settings.base };
-  const result = await ctx.host.call(hostId, "exec", { cwd: repo, command, timeoutMs: PROVISION_MS, env });
-  const output = result.output.trim();
-  if (result.timedOut || result.exitCode !== 0) {
-    const how = result.timedOut ? `took longer than ${PROVISION_MS / 60_000} minutes` : `failed (exit ${result.exitCode})`;
-    throw new Unavailable(`The integration worktree command \`${command}\` ${how}: ${clip(output.slice(-1500), 1500)}`);
-  }
-  const last = output.split("\n").map((line) => line.trim()).filter((line) => line !== "").at(-1) ?? "";
-  if (!last.startsWith("/")) throw new Unavailable(`The integration worktree command \`${command}\` must print the worktree's absolute path on its last line, but printed: ${clip(output.slice(-500), 500)}`);
-  return last;
 }
 
 // Loom's own worktree has its half-done merges aborted when Loom prepares it, so only something outside Loom leaves one there.

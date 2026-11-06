@@ -7,7 +7,7 @@ import type { ProjectRow, Store, TicketRow } from "./db/store";
 import type { HostInput, HostOutput } from "./host-contract";
 import type { BbPort, EnvironmentFile, FileStatus, HostPort } from "./ports";
 import { LoomError } from "./projects";
-import { isMultiRepo, repoSettings, type RepoSettings } from "./repos";
+import { integrationBranchOf, isMultiRepo, repoSettings, type RepoSettings } from "./repos";
 import type { Spec } from "./spec";
 import { stackOf } from "./stack";
 import type { TicketState } from "./states";
@@ -156,7 +156,7 @@ function plansOf(store: Store, project: ProjectRow, spec: Spec, repos: readonly 
     return tickets.map((ticket) => unmergedPlan(ticket, spec, { against: against(ticket), landed: ticket.state === "done" }));
   }
 
-  const branch = spec.merge.branch!;
+  const branch = integrationBranchOf(spec)!;
   const finished = project.state === "done" || project.state === "archived";
   const merges = mergesOf(store, project.id);
   const merged = tickets.filter((ticket) => merges.has(ticket.id)).sort((a, b) => merges.get(a.id)!.at - merges.get(b.id)!.at || a.seq - b.seq);
@@ -287,7 +287,7 @@ export class Changes {
       strategy: spec?.merge.strategy ?? "integration",
       base: spec?.project.base ?? "",
       remoteBase: spec === null ? "" : `${spec.merge.remote}/${spec.project.base}`,
-      branch: spec?.merge.branch ?? null,
+      branch: spec === null ? null : integrationBranchOf(spec),
       finished: project.state === "done" || project.state === "archived",
       repos: [],
       sources: [],

@@ -134,12 +134,12 @@ function everything(doc: Doc): void {
   };
 }
 
-/** The integration strategy's own settings, which the pull request strategy refuses: the branch, worktrees and after-merge checks. */
+/** The integration strategy's own settings, which the pull request strategy refuses: the after-merge checks. */
 function integrationEverything(doc: Doc): void {
-  doc.merge = { strategy: "integration", branch: "loom/csv-all", remote: "upstream", draft: false, git_network_timeout_seconds: 200, worktree: { plugin: "example-trees", command: "trees make --base main" }, forge: { kind: "gh", after_open: ["ci-cli run"] } };
+  doc.merge = { strategy: "integration", remote: "upstream", draft: false, git_network_timeout_seconds: 200, forge: { kind: "gh", after_open: ["ci-cli run"] } };
   doc.checks = { commands: ["npm test"], after_merge: ["npm run e2e"] };
   doc.repo = [
-    { name: "web", project: "proj_web", after_merge: ["npm run web-e2e"], worktree: { plugin: "example-trees", command: "trees make web" }, git_network_timeout_seconds: 90 },
+    { name: "web", project: "proj_web", after_merge: ["npm run web-e2e"], git_network_timeout_seconds: 90 },
     { name: "api", project: "proj_api", base: "trunk", checks: [] },
   ];
   doc.ticket[0].repo = "web";
@@ -326,7 +326,7 @@ describe("spec settings", () => {
     const changes = specDiff(skeleton(spec), spec).filter((change) => change.kind !== "list" || change.steps.length > 0);
     // The fixture really sets the settings added since Loom 0.24, so the walk below covers them.
     const paths = changes.map((change) => change.path);
-    const expected = strategy === "a merging" ? ["merge.forge.auto_merge.method", "merge.forge.auto_merge.comment", "merge.forge.auto_merge.rejected", "merge.forge.reviewers[0].team", "repo[0].forge.auto_merge.comment", "repo[1].forge.merge"] : strategy === "an integration" ? ["merge.branch", "merge.worktree.plugin", "checks.after_merge", "repo[0].after_merge", "repo[0].worktree.command"] : ["merge.forge.retarget", "merge.forge.merge", "merge.forge.auto_merge.require_live", "merge.forge.reviewers[1].users", "repo[0].forge.auto_merge.max_attempts", "repo[1].forge.reviewers[0].count", "merge.forge.after_push", "merge.refresh_behind", "merge.git_network_timeout_seconds", "checks.ci", "environment.reviewer.machine.inputs.size", "repo[1].forge.after_push", "repo[0].deploy.on_merge", "repo[1].git_network_timeout_seconds", "rollout.stage[0].soak", "rollout.milestone[0].check", "rollout.window[0].note", "ticket[csv-export].rollout.requires_live", "ticket[csv-export].environment.inputs.sparse"];
+    const expected = strategy === "a merging" ? ["merge.forge.auto_merge.method", "merge.forge.auto_merge.comment", "merge.forge.auto_merge.rejected", "merge.forge.reviewers[0].team", "repo[0].forge.auto_merge.comment", "repo[1].forge.merge"] : strategy === "an integration" ? ["merge.remote", "checks.after_merge", "repo[0].after_merge"] : ["merge.forge.retarget", "merge.forge.merge", "merge.forge.auto_merge.require_live", "merge.forge.reviewers[1].users", "repo[0].forge.auto_merge.max_attempts", "repo[1].forge.reviewers[0].count", "merge.forge.after_push", "merge.refresh_behind", "merge.git_network_timeout_seconds", "checks.ci", "environment.reviewer.machine.inputs.size", "repo[1].forge.after_push", "repo[0].deploy.on_merge", "repo[1].git_network_timeout_seconds", "rollout.stage[0].soak", "rollout.milestone[0].check", "rollout.window[0].note", "ticket[csv-export].rollout.requires_live", "ticket[csv-export].environment.inputs.sparse"];
     for (const path of expected) {
       expect(paths).toContain(path);
     }

@@ -94,43 +94,6 @@ describe("the push-only forge", () => {
   });
 });
 
-describe("a prepared integration worktree", () => {
-  beforeEach(() => {
-    h.bb.pluginList = [...h.bb.pluginList, { id: "trees", enabled: true, builtin: false }];
-  });
-
-  it("runs the command before the merge and merges in the path it printed last", async () => {
-    await seedProject(h, (doc) => (doc.merge = { strategy: "integration", worktree: { command: "prepare-tree" } }));
-    await reachApproved(h);
-    const mark = h.host.calls.length;
-    h.host.execResults.push({ output: "==> preparing\n/trees/loom-csv\n" });
-    await queue();
-
-    expect(h.host.calls.slice(mark).find((call) => call.method === "exec")!.input).toMatchObject({ cwd: "/repo", command: "prepare-tree", env: { LOOM_PROJECT_SLUG: "csv", LOOM_BRANCH: "loom/csv", LOOM_BASE: "main" } });
-    expect(h.host.callsTo("ensureWorktree")[0]).toMatchObject({ key: "csv", branch: "loom/csv", path: "/trees/loom-csv" });
-    expect(h.host.callsTo("merge")[0]).toMatchObject({ worktree: "/trees/loom-csv" });
-  });
-
-  it("runs a plugin's CLI command through bb plugin run", async () => {
-    await seedProject(h, (doc) => (doc.merge = { strategy: "integration", worktree: { plugin: "trees", command: 'prepare "loom-$LOOM_PROJECT_SLUG"' } }));
-    await reachApproved(h);
-    const mark = h.host.calls.length;
-    h.host.execResults.push({ output: "/trees/loom-csv" });
-    await queue();
-    expect(h.host.calls.slice(mark).find((call) => call.method === "exec")!.input).toMatchObject({ command: 'bb plugin run trees prepare "loom-$LOOM_PROJECT_SLUG"' });
-  });
-
-  it("pauses the project, merging nothing, when the command prints no absolute path", async () => {
-    await seedProject(h, (doc) => (doc.merge = { strategy: "integration", worktree: { command: "prepare-tree" } }));
-    await reachApproved(h);
-    h.host.execResults.push({ output: "done" });
-    await queue();
-    expect(h.host.callsTo("merge")).toEqual([]);
-    expect(project().state).toBe("paused");
-    expect(project().system_reason).toContain("must print the worktree's absolute path on its last line");
-  });
-});
-
 describe("an environment provider for workers and reviewers", () => {
   const withTrees = (doc: Doc) => (doc.environment = { provider: "trees", inputs: { pool: { branch: "{branch}", base: "{base}", paths: ["services/orders"] } } });
 

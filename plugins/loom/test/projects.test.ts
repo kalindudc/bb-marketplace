@@ -172,8 +172,6 @@ describe("propose", () => {
     expect(key.message).toContain('project.key: cannot change from "CSV" to "XYZ" after approval, because ticket keys already use it.');
     const strategy = await failure(propose((doc) => (doc.merge = { strategy: "pr" })));
     expect(strategy.message).toContain('merge.strategy: cannot change from "integration" to "pr" after approval');
-    const branch = await failure(propose((doc) => (doc.merge = { strategy: "integration", branch: "other/branch" })));
-    expect(branch.message).toContain('merge.branch: cannot change from "loom/csv" to "other/branch" after approval');
     expect(store.projectBySlug("csv")?.pending_version).toBeNull();
   });
 
@@ -1090,11 +1088,10 @@ describe("how the repos are reached", () => {
     expect(error.message).toContain("Loom could not check how the repositories are reached on this machine (host offline)");
   });
 
-  it("keeps a repo's forge kind and whether it has a worktree as approved, and lets its environment change", async () => {
+  it("keeps a repo's forge kind as approved, and lets its environment change", async () => {
     await propose();
     await projects.approve("csv", "human");
     expect((await failure(propose((doc) => (doc.merge.forge = { kind: "none" })))).message).toContain('merge.forge.kind: cannot change from "gh" to "none" after approval');
-    expect((await failure(propose((doc) => (doc.merge.worktree = { command: "prep" })))).message).toContain("merge.worktree: cannot be added after approval");
     expect((await propose((doc) => (doc.environment = { provider: "git-worktree" }))).change).toBe("pending");
   });
 });

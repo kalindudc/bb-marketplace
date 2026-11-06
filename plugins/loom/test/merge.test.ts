@@ -44,7 +44,7 @@ describe("the integration merge", () => {
     expect(hostCallsSince(mark).map((call) => [call.method, call.input])).toEqual([
       ["ensureWorktree", { repo: "/repo", key: "csv", branch: "loom/csv" }],
       ["worktreeState", { worktree: WORKTREE, base: "main" }],
-      ["merge", { worktree: WORKTREE, ref: "c1", message: `Merge ${ticketOf(h, "CSV-1").branch} into ${spec().merge.branch}\n\nOrder rows`, before: "base000" }],
+      ["merge", { worktree: WORKTREE, ref: "c1", message: `Merge ${ticketOf(h, "CSV-1").branch} into loom/csv\n\nOrder rows`, before: "base000" }],
       ["exec", { cwd: WORKTREE, command: "npm run e2e", timeoutMs: 15 * 60_000 }],
       ["worktreeState", { worktree: WORKTREE, base: "main", trackedOnly: true }],
     ]);
@@ -387,7 +387,7 @@ describe("the integration merge on a multi-repo project", () => {
     expect(hostCallsSince(mark).map((call) => [call.hostId, call.method, call.input])).toEqual([
       ["host_1", "ensureWorktree", { repo: "/src/web", key: "csv.web", branch: "loom/csv" }],
       ["host_1", "worktreeState", { worktree: WEB, base: "main" }],
-      ["host_1", "merge", { worktree: WEB, ref: ticketOf(h, "CSV-1").head_sha, message: `Merge ${ticketOf(h, "CSV-1").branch} into ${spec().merge.branch}\n\nOrder rows`, before: "base000" }],
+      ["host_1", "merge", { worktree: WEB, ref: ticketOf(h, "CSV-1").head_sha, message: `Merge ${ticketOf(h, "CSV-1").branch} into loom/csv\n\nOrder rows`, before: "base000" }],
       ["host_1", "exec", { cwd: WEB, command: "npm run web-e2e", timeoutMs: 15 * 60_000 }],
       ["host_1", "worktreeState", { worktree: WEB, base: "main", trackedOnly: true }],
     ]);
@@ -400,7 +400,7 @@ describe("the integration merge on a multi-repo project", () => {
     expect(hostCallsSince(mark).map((call) => [call.method, call.input])).toEqual([
       ["ensureWorktree", { repo: "/src/api", key: "csv.api", branch: "loom/csv" }],
       ["worktreeState", { worktree: API, base: "trunk" }],
-      ["merge", { worktree: API, ref: ticketOf(h, "CSV-2").head_sha, message: `Merge ${ticketOf(h, "CSV-2").branch} into ${spec().merge.branch}\n\nExport endpoint`, before: "base000" }],
+      ["merge", { worktree: API, ref: ticketOf(h, "CSV-2").head_sha, message: `Merge ${ticketOf(h, "CSV-2").branch} into loom/csv\n\nExport endpoint`, before: "base000" }],
       ["exec", { cwd: API, command: "npm run e2e", timeoutMs: 15 * 60_000 }],
       ["worktreeState", { worktree: API, base: "trunk", trackedOnly: true }],
     ]);

@@ -1414,29 +1414,6 @@ describe("remoteBranch", () => {
   });
 });
 
-describe("ensureWorktree with a prepared path", () => {
-  const dataDir = () => join(scratch, "prepared-data");
-
-  it("uses the path as it is and switches a clean checkout to the integration branch", async () => {
-    const repo = makeRepo();
-    await ensureBranch({ repo, branch: "loom/prep", from: "main" });
-    const path = addWorktree(repo, "tree-branch");
-    expect(await ensureWorktree({ repo, key: "prep", branch: "loom/prep", path }, dataDir())).toEqual({ outcome: "ok", path });
-    expect(sh(path, "symbolic-ref", "--short", "HEAD")).toBe("loom/prep");
-  });
-
-  it("refuses one with uncommitted changes, one that does not exist, and one of another repository", async () => {
-    const repo = makeRepo();
-    await ensureBranch({ repo, branch: "loom/prep2", from: "main" });
-    const dirty = addWorktree(repo, "tree-dirty");
-    put(dirty, "README.md", "changed\n");
-    expect(await ensureWorktree({ repo, key: "prep", branch: "loom/prep2", path: dirty }, dataDir())).toMatchObject({ outcome: "unavailable", reason: "git", message: expect.stringContaining("with uncommitted changes") });
-    expect(await ensureWorktree({ repo, key: "prep", branch: "loom/prep2", path: join(scratch, "nowhere") }, dataDir())).toMatchObject({ outcome: "unavailable", message: expect.stringContaining("which does not exist") });
-    const other = makeRepo();
-    expect(await ensureWorktree({ repo, key: "prep", branch: "loom/prep2", path: other }, dataDir())).toMatchObject({ outcome: "unavailable", message: expect.stringContaining("belongs to the repository") });
-  });
-});
-
 describe("host entry: discovery and the push-only forge", () => {
   const harness = experimental_createHostEntryHarness(hostEntry, { experimental_paths: { dataDir: join(tmpdir(), "loom-host-entry-data"), tempDir: tmpdir() } });
 

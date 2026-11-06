@@ -1306,10 +1306,9 @@ choice is found or ask; the planner asks you the ask items in one round, and
   reviewers, the spec reviewer and the summary agent another provider, or a
   merge patch over the inputs, because they only read; and a ticket's own
   `environment.inputs` narrows the inputs for that ticket's threads.
-- `[merge.worktree]` prepares the integration worktree with a command, or with
-  a plugin's CLI command (`plugin = "<id>"`), for repositories that refuse
-  worktrees outside their own location. Without it, such a repository uses one
-  pull request per ticket.
+- A repository that refuses worktrees outside its own location cannot use the
+  integration strategy, since Loom keeps its own worktree of the integration
+  branch; it uses one pull request per ticket.
 
 Every key, with the commands' variables and output, is in the loom skill's
 `references/spec.md`.

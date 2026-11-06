@@ -5,6 +5,7 @@ import type { EventRow, PostRow, ProjectRow, ReviewRow, RunRow, Store, ThreadRow
 import { feedText } from "./feed-text";
 import type { ProjectOverview } from "./projects";
 import { LoomError } from "./projects";
+import { integrationBranchOf } from "./repos";
 import type { Spec } from "./spec";
 import type { ProjectState, Role, TicketState } from "./states";
 
@@ -201,7 +202,7 @@ export function overviewAt(
     aboutPending: null,
     base: spec.project.base,
     strategy: spec.merge.strategy,
-    branch: spec.merge.branch ?? null,
+    branch: integrationBranchOf(spec),
   };
 }
 

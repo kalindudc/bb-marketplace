@@ -176,13 +176,12 @@ describe("operationalChanges", () => {
       }),
     );
 
-  it("lists the paths of a version that changes only forge, environments, agents, budget, merge settings other than the strategy, branch and remote, the checks' timeout and CI", () => {
+  it("lists the paths of a version that changes only forge, environments, agents, budget, merge settings other than the strategy and remote, the checks' timeout and CI", () => {
     expect(changed((doc) => (doc.merge.forge = { kind: "command", open: "open.sh", state: "state.sh", feedback: "feedback.sh" }))).toEqual(["merge.forge.kind", "merge.forge.open", "merge.forge.state", "merge.forge.feedback"]);
     expect(changed((doc) => Object.assign(doc.agents, { max_workers: 4, worker: { provider: "pi", model: "m" } }))).toEqual(["agents.max_workers", "agents.worker.provider", "agents.worker.model"]);
     expect(changed((doc) => (doc.budget = { max_tokens: 9_000_000, deadline: "2030-01-01" }))).toEqual(["budget.max_tokens", "budget.deadline"]);
     expect(changed((doc) => (doc.environment = { provider: "git-worktree", inputs: { size: "large" } }))).toEqual(["environment.provider", "environment.inputs.size"]);
     expect(changed((doc) => Object.assign(doc.merge, { draft: false, max_fix_rounds: 8, stack: false }), prBase, onPr)).toEqual(["merge.draft", "merge.max_fix_rounds", "merge.stack"]);
-    expect(changed((doc) => (doc.merge.worktree = { command: "prepare.sh" }))).toEqual(["merge.worktree.command"]);
     expect(changed((doc) => Object.assign(doc.checks, { timeout_minutes: 25, ci: false }), prBase, onPr)).toEqual(["checks.timeout_minutes", "checks.ci"]);
     expect(changed((doc) => (doc.ticket[1].environment = { inputs: { size: "large" } }), prBase, onPr)).toEqual(["ticket[csv-export].environment.inputs.size"]);
     expect(changed((doc) => Object.assign(doc.repo[1], { forge: { kind: "gh" }, ci: false, environment: { provider: "git-worktree" } }), multi, repos)).toEqual(["repo[1].ci", "repo[1].forge.kind", "repo[1].environment.provider"]);
@@ -196,7 +195,6 @@ describe("operationalChanges", () => {
     expect(operationalChanges(base, base)).toBeNull();
     for (const edit of [
       (doc: Doc) => (doc.merge.strategy = "pr"),
-      (doc: Doc) => (doc.merge.branch = "loom/other"),
       (doc: Doc) => (doc.merge.remote = "upstream"),
       (doc: Doc) => (doc.project.goal = "Let people export their orders as a CSV file, and more."),
       (doc: Doc) => (doc.project.done_when = ["The export works"]),

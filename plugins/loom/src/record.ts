@@ -11,7 +11,7 @@ import { SpawnRefusedError, type ThreadInfo } from "./ports";
 import { provisioningFailure, startProblemOf, type StartProblem } from "./starts";
 import { COMMENT_SIGNATURE, andList, clip, recordPrompt } from "./prompts";
 import { LoomError, landsOf, repoOverviews, type RepoOverview } from "./projects";
-import { freshBaseOf, isMultiRepo, repoSettings } from "./repos";
+import { freshBaseOf, integrationBranchOf, isMultiRepo, repoSettings } from "./repos";
 import type { Spec } from "./spec";
 import { LOOM_ACTOR } from "./states";
 import { specOf, type EngineCtx } from "./ctx";
@@ -117,7 +117,7 @@ const PER_TICKET = "One pull request per ticket; each ticket below names its own
 function outcome(store: Store, project: ProjectRow, spec: Spec): string {
   if (spec.merge.strategy === "pr") return PER_TICKET;
   const landed = store.eventsOfKind(project.id, "project.landed").at(-1);
-  if (landed === undefined) return `Not landed yet: the work is on the integration branch ${spec.merge.branch}.`;
+  if (landed === undefined) return `Not landed yet: the work is on the integration branch ${integrationBranchOf(spec)}.`;
   const text = landing(landed);
   return `${text[0]!.toUpperCase()}${text.slice(1)}.`;
 }

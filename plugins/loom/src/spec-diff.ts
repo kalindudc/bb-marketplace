@@ -154,10 +154,10 @@ export function specDiff(before: Spec, after: Spec): SpecChange[] {
 }
 
 // Settings that say how Loom runs the project, not what it builds: forge, environments, agents, budget, every merge
-// setting but the strategy, branch and remote, a repo's refresh_behind and git_network_timeout_seconds, and the checks'
+// setting but the strategy and remote, a repo's refresh_behind and git_network_timeout_seconds, and the checks'
 // timeout and CI.
 const OPERATIONAL = [
-  /^merge\.(?!(?:strategy|branch|remote)(?:$|[.[]))/u,
+  /^merge\.(?!(?:strategy|remote)(?:$|[.[]))/u,
   /^(?:environment|agents|budget)(?:$|[.[])/u,
   /^checks\.(?:timeout_minutes|ci)$/u,
   /^repo\[\d+\]\.(?:forge|environment|ci|refresh_behind|git_network_timeout_seconds)(?:$|[.[])/u,

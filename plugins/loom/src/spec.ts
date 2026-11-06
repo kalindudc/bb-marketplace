@@ -193,14 +193,6 @@ export const environmentSchema = z
 // A ticket's own merge patch over its repo's environment inputs, for the threads that start in the repo's provider.
 export const ticketEnvironmentSchema = z.object({ inputs: inputsSchema }).strict();
 
-// A command, or a plugin's CLI command, that prepares the integration worktree and prints its path last.
-export const worktreeSchema = z
-  .object({
-    plugin: z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/, "must be a bb plugin id, such as example-trees").optional(),
-    command,
-  })
-  .strict();
-
 const agentSchema = z
   .object({
     provider: z.string().min(1).max(100).optional(),
@@ -245,7 +237,6 @@ export const repoSpecSchema = z
     protected: z.array(glob).max(100).optional(),
     forge: forgeSchema.optional(),
     environment: environmentSchema.optional(),
-    worktree: worktreeSchema.optional(),
     deploy: deploySchema.optional(),
     refresh_behind: z.number().int().min(1).max(1_000_000).optional(),
     git_network_timeout_seconds: gitNetworkTimeoutSeconds.optional(),
@@ -289,11 +280,9 @@ export const specSchema = z
     merge: z
       .object({
         strategy: z.enum(["integration", "pr"]),
-        branch: gitName.optional(),
         remote: remoteName.default("origin"),
         draft: z.boolean().default(true),
         forge: forgeSchema.optional(),
-        worktree: worktreeSchema.optional(),
         // No defaults, so a spec without them hashes as it did before they existed; prSettings fills them in.
         describe: z.enum(["worker", "loom"]).optional(),
         max_fix_rounds: z.number().int().min(0).max(20).optional(),
@@ -368,7 +357,6 @@ export type FinalReviewSpec = z.output<typeof finalReviewSchema>;
 export type ReviewerRuleSpec = z.output<typeof reviewerRuleSchema>;
 export type EnvironmentSpec = z.output<typeof environmentSchema>;
 export type MachineSpec = z.output<typeof machineSchema>;
-export type WorktreeSpec = z.output<typeof worktreeSchema>;
 export type TicketRolloutSpec = z.output<typeof ticketRolloutSchema>;
 export type RolloutSpec = z.output<typeof rolloutSchema>;
 export type HookSpec = z.output<typeof hookSchema>;
@@ -398,12 +386,17 @@ const settingHome = (setting: string) => `Loom's ${setting} setting is its only 
 
 const INDEX_FIXED = `Loom gives the index and tree steps of one call on a checkout ${GIT_INDEX_TIMEOUT_MS / 1000} seconds, which no project needed to change: remove the key.`;
 
+const WORKTREE_GONE = "Loom always adds its own git worktree of the integration branch; for a repository that refuses one, use merge.strategy = \"pr\": remove the key.";
+
 /** Keys Loom once read and no longer does, by their path with every array index written [], and what replaces each. */
 const REMOVED_KEYS: Readonly<Record<string, string>> = {
   "merge.checks_queued_minutes": settingHome("checksQueuedMinutes"),
   "merge.checks_near_done_percent": settingHome("checksNearDonePercent"),
   "merge.git_index_timeout_seconds": INDEX_FIXED,
   "repo[].git_index_timeout_seconds": INDEX_FIXED,
+  "merge.branch": "The integration branch is always loom/<slug>, from project.slug: remove the key.",
+  "merge.worktree": WORKTREE_GONE,
+  "repo[].worktree": WORKTREE_GONE,
   "merge.squash": "Loom always pushes the reviewed work as one commit, and each fix round as one more: remove the key.",
   "merge.release_workers": "Loom always releases an idle worker whose pull request is open, so bb frees its environment, and brings it back when the pull request needs it: remove the key.",
 };
@@ -469,9 +462,7 @@ export function parseSpec(toml: string): SpecResult {
   if (!parsed.success) return failed(parsed.error.issues.flatMap(describeIssue));
   const { errors, warnings } = validateSemantics(parsed.data, toml);
   if (errors.length > 0) return { ok: false, spec: null, errors, warnings };
-  const spec = parsed.data;
-  if (spec.merge.strategy === "integration" && spec.merge.branch === undefined) spec.merge.branch = `loom/${spec.project.slug}`;
-  return { ok: true, spec, errors: [], warnings };
+  return { ok: true, spec: parsed.data, errors: [], warnings };
 }
 
 const literalPrefix = (pattern: string): string => {
@@ -652,7 +643,7 @@ export function validateSemantics(spec: Spec, rawToml: string): { errors: string
     errors.push(...ciForgeErrors(spec));
   }
 
-  errors.push(...forgeErrors(spec, spec.merge.forge, "merge.forge"), ...worktreeErrors(spec, spec.merge.worktree, "merge.worktree"), ...environmentErrors(spec.environment, "environment"));
+  errors.push(...forgeErrors(spec, spec.merge.forge, "merge.forge"), ...environmentErrors(spec.environment, "environment"));
   spec.ticket.forEach((ticket, index) => {
     const repo = ticket.repo === undefined ? undefined : repos.find((entry) => entry.name === ticket.repo);
     // A ticket whose repo is unknown has an error above.
@@ -660,7 +651,7 @@ export function validateSemantics(spec: Spec, rawToml: string): { errors: string
     errors.push(...ticketEnvironmentErrors(ticket.environment, repo?.environment ?? spec.environment ?? null, `ticket[${index}].environment`));
   });
   repos.forEach((repo, index) => {
-    errors.push(...forgeErrors(spec, repo.forge, `repo[${index}].forge`), ...worktreeErrors(spec, repo.worktree, `repo[${index}].worktree`), ...environmentErrors(repo.environment, `repo[${index}].environment`));
+    errors.push(...forgeErrors(spec, repo.forge, `repo[${index}].forge`), ...environmentErrors(repo.environment, `repo[${index}].environment`));
   });
   errors.push(...machineErrors(spec), ...hookErrors(spec));
 
@@ -894,11 +885,6 @@ function reviewerErrors(spec: Spec, forge: ForgeSpec, at: string): string[] {
     if (rule.users !== undefined && rule.count !== undefined && rule.count > rule.users.length) errors.push(`${path}.count: ${rule.count} is more than the ${plural(rule.users.length, "login")} in users. Lower count, or add logins.`);
   });
   return [...new Set(errors)];
-}
-
-function worktreeErrors(spec: Spec, worktree: WorktreeSpec | undefined, at: string): string[] {
-  if (worktree === undefined || spec.merge.strategy === "integration") return [];
-  return [`${at}: only the integration strategy has an integration worktree, and merge.strategy is "pr". Remove ${at}, or use merge.strategy = "integration".`];
 }
 
 function placeholderErrors(inputs: Record<string, unknown> | undefined, at: string): string[] {

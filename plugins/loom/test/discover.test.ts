@@ -70,24 +70,11 @@ describe("reachErrors", () => {
     expect(unavailable).toContain("is not available for the project's repository on this machine: Only for the shop project.");
   });
 
-  it("refuses the integration strategy when git refused Loom's own worktree, until a worktree command is set", async () => {
+  it("refuses the integration strategy when git refused Loom's own worktree, and points to the pr strategy", async () => {
     host.trial = { outcome: "refused", message: "fatal: refusing to create a worktree outside the allowed locations" };
     const [error] = await errorsOf();
-    expect(error).toMatch(/^merge\.worktree: Loom cannot add its own worktree of the project's repository on this machine; git said: fatal: refusing/u);
+    expect(error).toMatch(/^merge\.strategy: Loom cannot add its own worktree of the project's repository on this machine; git said: fatal: refusing.* Use merge\.strategy = "pr"/u);
     expect(await errorsOf((doc) => (doc.merge = { strategy: "pr" }))).toEqual([]);
-    expect(await errorsOf((doc) => (doc.merge.worktree = { command: "prepare" }))).toEqual([]);
-  });
-
-  it("checks a plugin worktree: installed, turned on, and a CLI command of the plugin", async () => {
-    const withPlugin = (doc: Doc) => (doc.merge.worktree = { plugin: "trees", command: 'prepare "loom-$LOOM_PROJECT_SLUG"' });
-    expect(await errorsOf(withPlugin)).toEqual(['merge.worktree.plugin: bb has no plugin "trees". Install it, or name another plugin, or drop plugin and give a shell command.']);
-    bb.pluginList = [...bb.pluginList, { id: "trees", enabled: false, builtin: false }];
-    expect((await errorsOf(withPlugin))[0]).toContain('the plugin "trees" is turned off');
-    bb.pluginList = bb.pluginList.map((plugin) => (plugin.id === "trees" ? { ...plugin, enabled: true } : plugin));
-    expect(await errorsOf(withPlugin)).toEqual([]);
-    expect(host.callsTo("exec").at(-1)).toMatchObject({ cwd: "/repo", command: "bb plugin run trees prepare --help" });
-    host.execResults.push({ exitCode: 1, output: "unknown command" });
-    expect((await errorsOf(withPlugin))[0]).toMatch(/^merge\.worktree\.command: `bb plugin run trees prepare --help` failed/u);
   });
 
   it("names each [[repo]] by its index", async () => {

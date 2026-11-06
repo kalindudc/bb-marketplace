@@ -1,6 +1,7 @@
 import { Fragment, useState, type ReactNode } from "react";
 import { GIT_NETWORK_TIMEOUT_MS, GIT_NETWORK_TIMEOUT_SECONDS } from "../git-network";
 import { HOOK_EVENT_NAMES, HOOK_EVENTS } from "../hook-events";
+import { integrationBranchOf } from "../repos";
 import type { AutoMergeSpec, EnvironmentSpec, ForgeSpec, MachineSpec, RepoSpec, Spec } from "../spec";
 import { textSteps, type TextStep } from "../spec-diff";
 import { isUnder } from "../spec-paths";
@@ -767,7 +768,6 @@ const REPO_OWN = [
   ["deploy", "deploy"],
   ["refresh_behind", "fresh pull requests"],
   ["git_network_timeout_seconds", "git time limit"],
-  ["worktree", "worktree"],
 ] as const;
 
 /** One [[repo]]: where it is and its checks, with every other setting behind a Settings disclosure that opens itself on a change, a comment or a finding. */
@@ -873,38 +873,9 @@ function RepoItem({ spec, repo, index, bbProjectNames }: { spec: Spec; repo: Rep
           <Row label="Git time limit" paths={[`${at}.git_network_timeout_seconds`]}>
             <RepoGitTimeout path={`${at}.git_network_timeout_seconds`} label={`${repo.name} › git network timeout seconds`} seconds={repo.git_network_timeout_seconds} project={merge.git_network_timeout_seconds} />
           </Row>
-          {(integration || shown("worktree", repo.worktree !== undefined)) && (
-            <Row label="Worktree" paths={[`${at}.worktree`]}>
-              {repo.worktree === undefined ? (
-                <span className="flex min-w-0 flex-col items-start gap-1">
-                  <Commentable as="span" target={value(`${at}.worktree`, `${repo.name} › worktree`, "text")} className="text-muted-foreground">
-                    {merge.worktree === undefined ? "Loom's own git worktree" : "the project's worktree"}
-                  </Commentable>
-                  {changedAt(review, `${at}.worktree`) && <Worktree path={`${at}.worktree`} label={`${repo.name} › worktree`} worktree={undefined} />}
-                </span>
-              ) : (
-                <Worktree path={`${at}.worktree`} label={`${repo.name} › worktree`} worktree={repo.worktree} />
-              )}
-            </Row>
-          )}
         </dl>
       </details>
     </li>
-  );
-}
-
-function Worktree({ path, label, worktree }: { path: string; label: string; worktree: Spec["merge"]["worktree"] }) {
-  const review = useReview();
-  return (
-    <span className="flex min-w-0 flex-col items-start gap-1">
-      {(worktree?.plugin !== undefined || changedAt(review, `${path}.plugin`)) && (
-        <span className="text-xs">
-          <span className="text-muted-foreground">plugin </span>
-          <Prose path={`${path}.plugin`} label={`${label} › plugin`} text={worktree?.plugin} fallback="none: a shell command" className="font-mono" />
-        </span>
-      )}
-      <Command path={`${path}.command`} label={`${label} › command`} command={worktree?.command} />
-    </span>
   );
 }
 
@@ -1143,9 +1114,7 @@ export function SettingsSection({ spec, bbProjectNames, onShowAll, onJump }: { s
             <span aria-hidden className="text-subtle-foreground">→</span>
             {integration ? (
               <>
-                <Commentable as="span" target={value("merge.branch", "Integration branch", "text", merge.branch)} className="rounded-md border border-primary px-2 py-1 font-mono">
-                  {merge.branch}
-                </Commentable>
+                <span className="rounded-md border border-primary px-2 py-1 font-mono">{integrationBranchOf(spec)}</span>
                 <span aria-hidden className="text-subtle-foreground">→</span>
               </>
             ) : (
@@ -1197,11 +1166,6 @@ export function SettingsSection({ spec, bbProjectNames, onShowAll, onJump }: { s
                 <Commentable as="span" target={value("merge.remote", "Remote", "text", merge.remote)} className="font-mono text-xs">
                   {merge.remote}
                 </Commentable>
-              </Row>
-            )}
-            {(merge.worktree !== undefined || changedAt(review, "merge.worktree")) && (
-              <Row label="Worktree" paths={["merge.worktree"]}>
-                <Worktree path="merge.worktree" label="Integration worktree" worktree={merge.worktree} />
               </Row>
             )}
             <Row label="Git time limit" paths={["merge.git_network_timeout_seconds"]}>

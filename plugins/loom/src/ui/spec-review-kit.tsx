@@ -76,7 +76,6 @@ export const tomlLiteral = (value: SpecValue) => (typeof value === "string" ? JS
 const LABELS: Record<string, string> = {
   merge: "Merging",
   "merge.strategy": "Merge strategy",
-  "merge.branch": "Integration branch",
   "merge.remote": "Remote",
   "merge.draft": "Draft pull requests",
   "merge.describe": "Who writes the pull request",
@@ -85,7 +84,6 @@ const LABELS: Record<string, string> = {
   "merge.stack": "Stacked pull requests",
   "merge.refresh_behind": "Keep pull requests fresh",
   "merge.git_network_timeout_seconds": "Git network time limit",
-  "merge.worktree": "Integration worktree",
   "project.base": "Base branch",
   "project.goal": "Goal",
   "project.summary": "Summary",

@@ -7,7 +7,7 @@ import { aboutOf, pendingAboutOf, type PendingAbout, type ProjectAbout } from ".
 import { gatherFacts, reachErrors, specTargets } from "./discover";
 import { SectionNameConflictError, type BbPort, type BbProjectInfo, type HostPort } from "./ports";
 import { MAX_PLANNING_REPOS, notesMessage, planningKickoff, planningTitle, type PickedRepo } from "./prompts";
-import { isMultiRepo, repoSettings } from "./repos";
+import { integrationBranchOf, isMultiRepo, repoSettings } from "./repos";
 import { rolloutJson } from "./rollout";
 import { numberErrors, parseSpec, proposalErrorsOf, specHash, type Spec } from "./spec";
 import type { SpecNote } from "./spec-paths";
@@ -290,9 +290,6 @@ export class Projects {
     }
     if (approved.merge.strategy !== spec.merge.strategy) {
       errors.push(`merge.strategy: cannot change from "${approved.merge.strategy}" to "${spec.merge.strategy}" after approval, because the integration branch and its worktree may already exist. Keep the strategy, or archive this project and propose a new one.`);
-    }
-    if (approved.merge.branch !== spec.merge.branch) {
-      errors.push(`merge.branch: cannot change from "${approved.merge.branch ?? "(none)"}" to "${spec.merge.branch ?? "(none)"}" after approval, because the integration branch and its worktree may already exist. Keep the branch, or archive this project and propose a new one.`);
     }
     errors.push(...lockedRepoErrors(approved, spec), ...lockedReachErrors(approved, spec));
     return errors;
@@ -780,7 +777,7 @@ export class Projects {
       aboutPending: project.pending_version === null || project.state === "archived" ? null : pendingAboutOf(aboutOf(spec), project.pending_version, this.specOf(project.id, project.pending_version)),
       base: spec.project.base,
       strategy: spec.merge.strategy,
-      branch: spec.merge.branch ?? null,
+      branch: integrationBranchOf(spec),
       approvedVersion: project.approved_version,
       pendingVersion: project.pending_version,
       plannerThreadId: project.planner_thread_id,
@@ -862,22 +859,16 @@ export class Projects {
 }
 
 /** A revision after approval may add repos, but every approved repo keeps its name, bb project, base and remote: its tickets, branches and worktrees already use them. */
-/** A repo's forge kind and whether it has a [merge.worktree] stay as approved: open pull requests and the integration worktree depend on them. */
+/** A repo's forge kind stays as approved: Loom follows open pull requests through the forge that opened them. */
 function lockedReachErrors(approved: Spec, spec: Spec): string[] {
   const names: Array<string | null> = isMultiRepo(approved) ? approved.repo!.map((repo) => repo.name).filter((name) => spec.repo?.some((entry) => entry.name === name)) : isMultiRepo(spec) ? [] : [null];
   return names.flatMap((name) => {
     const before = repoSettings(approved, name);
     const after = repoSettings(spec, name);
-    const at = (key: "forge" | "worktree") => (name === null ? `merge.${key}` : `repo[${spec.repo!.findIndex((entry) => entry.name === name)}].${key}`);
+    if (before.forge.kind === after.forge.kind) return [];
+    const at = name === null ? "merge.forge" : `repo[${spec.repo!.findIndex((entry) => entry.name === name)}].forge`;
     const where = name === null ? "" : ` for the repo "${name}"`;
-    const errors: string[] = [];
-    if (before.forge.kind !== after.forge.kind) {
-      errors.push(`${at("forge")}.kind: cannot change from "${before.forge.kind}" to "${after.forge.kind}"${where} after approval, because Loom follows open pull requests through the forge that opened them. Keep the kind, or archive this project and propose a new one.`);
-    }
-    if ((before.worktree === null) !== (after.worktree === null)) {
-      errors.push(`${at("worktree")}: cannot be ${after.worktree === null ? "removed" : "added"}${where} after approval, because the integration worktree may already exist. Keep it as approved, or archive this project and propose a new one.`);
-    }
-    return errors;
+    return [`${at}.kind: cannot change from "${before.forge.kind}" to "${after.forge.kind}"${where} after approval, because Loom follows open pull requests through the forge that opened them. Keep the kind, or archive this project and propose a new one.`];
   });
 }
 
