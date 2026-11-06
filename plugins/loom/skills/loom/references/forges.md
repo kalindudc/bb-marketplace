@@ -33,6 +33,12 @@ reads a failure, and how to test a profile before a project relies on it.
   bb loom forge import forges.toml --apply
   ```
 
+Loom checks a profile before it saves it, from the form, the CLI or an import: each key's shape, the keys that go
+together (`review_start` with `review_read`, `review_rounds` only with them), and, for an edit, every project that uses
+the profile, as `loom_propose` would check its spec with the edited profile. An edit that would leave a project unable to
+run, such as one that drops the `ready` command a project with `merge.publish` needs, is refused with the project, the
+spec version and the field, and the profile stays as it was. An edit still makes no new spec version.
+
 An import adds the profiles the file has and changes the ones that differ. It never removes a profile the file leaves
 out. Loom keeps a profile that a project uses: it refuses to delete it until no spec names it. A profile's id cannot
 change, since specs name it.

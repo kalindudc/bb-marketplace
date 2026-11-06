@@ -8,7 +8,7 @@ import { andList } from "./prompts";
 import { loomPost } from "./posts";
 import { LoomError } from "./projects";
 import { repoSettings } from "./repos";
-import { canonicalJson, forgeProfileSchema, profilesNamed, readSpec, type ForgeProfile, type Spec } from "./spec";
+import { canonicalJson, forgeProfileSchema, profileProblems, profilesNamed, readSpec, storedSpecErrors, type ForgeProfile, type ForgeProfiles, type Spec } from "./spec";
 import { HUMAN_ACTOR } from "./states";
 
 /** A profile was saved with a new hash; one event on each project whose spec in force names it. */
@@ -26,7 +26,30 @@ const issuesText = (issues: ReadonlyArray<{ path: PropertyKey[]; message: string
 export function parseProfile(raw: unknown): ForgeProfile {
   const parsed = forgeProfileSchema.safeParse(raw);
   if (!parsed.success) throw new LoomError("loom_invalid_input", `The forge profile is not valid: ${issuesText(parsed.error.issues)}.`);
+  const problems = profileProblems(parsed.data);
+  if (problems.length > 0) throw new LoomError("loom_invalid_input", `The forge profile is not valid: ${problems.join(" ")}`);
   return parsed.data;
+}
+
+/**
+ * Refuses an edit that would leave a project unable to run: each stored version a project uses (in force, or newer and
+ * not approved yet) is checked with the edited profile as loom_propose would check it, and only the errors the edit
+ * brings count, so a version that had a problem before does not block an unrelated edit.
+ */
+function editErrors(store: Store, profile: ForgeProfile): void {
+  const edited: ForgeProfiles = { forgeProfile: (id) => (id === profile.id ? profile : store.forgeProfile(id)), forgeProfileIds: () => store.forgeProfileIds() };
+  for (const project of store.projects()) {
+    if (project.state === "archived") continue;
+    const latest = store.latestSpecVersion(project.id);
+    const versions = [...new Set([project.approved_version, latest?.version ?? null].filter((version): version is number => version !== null))];
+    for (const version of versions) {
+      const row = store.specVersion(project.id, version)!;
+      if (!named(row.spec_json).includes(profile.id)) continue;
+      const before = new Set(storedSpecErrors(row.spec_json, row.toml, store));
+      const added = storedSpecErrors(row.spec_json, row.toml, edited).filter((error) => !before.has(error));
+      if (added.length > 0) throw new LoomError("loom_invalid_input", `Loom kept the forge profile ${profile.id} as it was: the edit would leave ${project.slug} (spec v${version}) unable to run: ${added.join(" ")}`);
+    }
+  }
 }
 
 /** Which projects name the profile: in the spec in force, or in a newer version not approved yet. Archived projects do not count. */
@@ -82,6 +105,7 @@ export function saveProfile(store: Store, raw: unknown, original: string | null)
   if (original !== null && saved === null) throw new LoomError("loom_not_found", `Loom has no forge profile ${original}.`);
   const hash = profileHash(profile);
   if (saved !== null && saved.hash === hash) return { profile, hash, changed: false, told: [] };
+  if (saved !== null) editErrors(store, profile);
   const told = store.tx(() => {
     store.putForgeProfile(profile, hash);
     return saved === null ? [] : recordChange(store, profile, hash, saved.hash);
@@ -142,6 +166,7 @@ export function importProfiles(store: Store, toml: string, apply: boolean): { ch
   for (const profile of profiles) {
     const saved = store.forgeProfileRow(profile.id);
     if (saved !== null && saved.hash === profileHash(profile)) continue;
+    if (saved !== null) editErrors(store, profile);
     const uses = saved === null ? [] : profileUses(store, profile.id).filter((use) => use.inForce);
     changes.push(saved === null ? `adds forge profile ${profile.id}` : `changes forge profile ${profile.id}${uses.length === 0 ? "" : `, which ${andList(uses.map((use) => use.slug))} ${uses.length === 1 ? "uses" : "use"} now`}`);
     todo.push({ profile, adds: saved === null });

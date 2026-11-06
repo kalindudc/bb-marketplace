@@ -1032,14 +1032,37 @@ function hookErrors(spec: Spec): string[] {
 }
 
 /** A review gate needs both of its commands, a pull request to review, and drafts Loom publishes. */
+/** The review gate's keys among themselves, for a spec's forge at `at` or a profile (at ""). */
+function gatePairErrors(forge: Pick<ForgeSpec, "review_start" | "review_read" | "review_rounds">, at: string): string[] {
+  const key = (name: string) => (at === "" ? name : `${at}.${name}`);
+  const start = forge.review_start !== undefined;
+  const read = forge.review_read !== undefined;
+  const errors: string[] = [];
+  if (start && !read) errors.push(`${key("review_read")}: is required with review_start. Add the command that prints the gate's state and findings for LOOM_SHA, or remove review_start.`);
+  if (read && !start) errors.push(`${key("review_start")}: is required with review_read. Add the command that asks for the review of LOOM_SHA, or remove review_read.`);
+  if (!start && !read && forge.review_rounds !== undefined) errors.push(`${key("review_rounds")}: only a review gate uses it, and ${at === "" ? "the profile" : at} has no review_start. Add the gate's commands, or remove review_rounds.`);
+  return errors;
+}
+
+/** What a profile's keys need of each other, which its schema cannot say. A spec that uses it is checked as it runs, too. */
+export function profileProblems(profile: ForgeProfile): string[] {
+  return gatePairErrors(profile, "");
+}
+
+/** The errors loom_propose would find in a stored spec version, with its forges filled in from `profiles`. */
+export function storedSpecErrors(json: string, toml: string, profiles: ForgeProfiles): string[] {
+  const spec = JSON.parse(json) as Spec;
+  spec.agents.ticket_timeout_minutes ??= TICKET_TIMEOUT_MINUTES;
+  spec.checks.timeout_minutes ??= CHECKS_TIMEOUT_MINUTES;
+  const resolved = withProfiles(spec, profiles);
+  return resolved.errors.length > 0 ? resolved.errors : validateSemantics(resolved.spec, toml).errors;
+}
+
 function gateProblems(spec: Spec, forge: ForgeSpec, at: string): { errors: string[]; warnings: string[] } {
   const start = forge.review_start !== undefined;
   const read = forge.review_read !== undefined;
   if (!start && !read && forge.review_rounds === undefined) return { errors: [], warnings: [] };
-  const errors: string[] = [];
-  if (start && !read) errors.push(`${at}.review_read: is required with review_start. Add the command that prints the gate's state and findings for LOOM_SHA, or remove review_start.`);
-  if (read && !start) errors.push(`${at}.review_start: is required with review_read. Add the command that asks for the review of LOOM_SHA, or remove review_read.`);
-  if (!start && !read) errors.push(`${at}.review_rounds: only a review gate uses it, and ${at} has no review_start. Add the gate's commands, or remove review_rounds.`);
+  const errors = gatePairErrors(forge, at);
   if (forge.kind === "none") errors.push(`${at}.review_start: kind = "none" opens no pull request, so there is nothing to review. Remove the review gate, or use kind = "gh" or "command".`);
   if (spec.merge.strategy !== "pr") errors.push(PR_ONLY(`${at}.review_start`, "the review gate reviews"));
   const warnings = errors.length === 0 && spec.merge.publish === undefined ? [`${at}.review_start: the review gate runs only on drafts Loom publishes, and this spec has no merge.publish, so Loom does not run it. Add publish = {} to [merge] to run it.`] : [];

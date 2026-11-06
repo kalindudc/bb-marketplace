@@ -147,6 +147,33 @@ describe("a running project on a forge profile", () => {
   });
 });
 
+describe("checking a profile before it is saved", () => {
+  it("refuses a profile whose review gate lacks a command, or sets review_rounds with no gate, on save and on import", () => {
+    expect(() => saveProfile(h.store, { ...FORGE, review_start: "bot start" }, null)).toThrow("review_read: is required with review_start");
+    expect(() => saveProfile(h.store, { ...FORGE, review_rounds: 2 }, null)).toThrow("review_rounds: only a review gate uses it");
+    expect(() => importProfiles(h.store, '[[forge]]\nid = "lab"\nname = "Lab"\nopen = "o"\nstate = "s"\nreview_read = "r"\n', false)).toThrow("review_start: is required with review_read");
+    expect(h.store.forgeProfileIds()).toEqual([]);
+  });
+
+  it("refuses an edit that would leave a project unable to run, names the project and the field, and keeps the profile", async () => {
+    const gated: ForgeProfile = { ...FORGE, review_start: "bot start", review_read: "bot read" };
+    saveProfile(h.store, gated, null);
+    await seedProject(h, (doc) => (doc.merge = { strategy: "pr", publish: {}, forge: { profile: "forge" } }));
+    const before = h.store.forgeProfileRow("forge")!;
+    const { review_read: _read, ...noRead } = gated;
+    expect(() => saveProfile(h.store, noRead, "forge")).toThrow("review_read: is required with review_start");
+    const { ready: _ready, ...noReady } = gated;
+    expect(() => saveProfile(h.store, noReady, "forge")).toThrow(
+      "Loom kept the forge profile forge as it was: the edit would leave csv (spec v1) unable to run: merge.forge: merge.publish marks drafts ready, and this forge has no ready command.",
+    );
+    expect(() => importProfiles(h.store, profilesToml(h.store).replace(/ready = "forge pr ready"\n/u, ""), false)).toThrow("the edit would leave csv (spec v1) unable to run");
+    expect(h.store.forgeProfileRow("forge")).toEqual(before);
+    expect(h.store.projectEvents(project().id).filter((event) => event.kind === PROFILE_CHANGED)).toEqual([]);
+    expect(saveProfile(h.store, { ...gated, notes: "Answer the bot once." }, "forge")).toMatchObject({ changed: true, told: ["csv"] });
+    expect(h.store.latestSpecVersion(project().id)!.version).toBe(1);
+  });
+});
+
 describe("a spec with the forge's commands inline", () => {
   it("reads as it did: no profile is looked up", async () => {
     const inline = { kind: "command", open: "review create", state: "review state" };

@@ -9,6 +9,7 @@ import { pollPullRequests, runMergeQueue, settleMerges } from "../src/merge";
 import { askForPrTexts, handInPrText } from "../src/pull-requests";
 import { GATE_DONE, GATE_STARTED } from "../src/publish";
 import { followGate } from "../src/review-gate";
+import { saveProfile } from "../src/forge-profiles";
 import { Store } from "../src/db/store";
 import { prReviewStart } from "../src/host/ops";
 import { tmpdir } from "node:os";
@@ -285,6 +286,18 @@ describe("a review gate on a draft", () => {
     expect(starts()).toHaveLength(1);
     expect(posts("gate_failed")).toHaveLength(1);
     expect(card().publishWait).toContain("its review gate failed");
+  });
+
+  it("keeps the gate of a profile whose edit would drop review_read, so the draft still waits for it", async () => {
+    const profile = { id: "forge", name: "Forge", open: "forge open", state: "forge state", feedback: "forge feedback", ready: "forge ready", ...GATE };
+    saveProfile(h.store, profile, null);
+    await openPr((doc) => (doc.merge.forge = { profile: "forge" }));
+    const { review_read: _, ...broken } = profile;
+    expect(() => saveProfile(h.store, broken, "forge")).toThrow("review_read: is required with review_start");
+    h.host.feedback.set(URL, { head: ticket().pushed_sha!, draft: true, base: "main", checks: [{ key: "check:build", name: "build", state: "passed", url: null, started: null, startedAt: null, completedAt: null, progress: null, steps: null }] });
+    await poll();
+    expect(readies()).toEqual([]);
+    expect(starts()).toHaveLength(1);
   });
 
   it("does not run without merge.publish", async () => {
