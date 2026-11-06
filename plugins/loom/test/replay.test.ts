@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { settleChecks, submit } from "../src/checks";
 import type { EngineHarness } from "./helpers";
 import { LoomError } from "../src/projects";
-import { projectTimeline, rewind, rowsOf } from "../src/replay";
+import { projectTimeline, rewind, rowsOf, runsAt } from "../src/replay";
 import { approve, requestChanges, settleReviews, spawnReviewers } from "../src/review";
 import { endThread } from "../src/workers";
 import { requeueTicket } from "../src/requeue";
@@ -174,8 +174,9 @@ describe("rewind", () => {
     expect(past.events.every((event) => event.id <= moment)).toBe(true);
     expect(past.posts.map((post) => post.body)).toContain("Running the tests.");
     expect(past.posts.map((post) => post.body)).not.toContain("They passed.");
-    expect(past.runs).toHaveLength(1);
-    expect(past.runs[0]).toMatchObject({ id: run, ended_at: null, ok: null, exit_code: null, duration_ms: null });
+    const runs = runsAt(h.store.runs(ticket.id), past.at);
+    expect(runs).toHaveLength(1);
+    expect(runs[0]).toMatchObject({ id: run, ended_at: null, ok: null, exit_code: null, duration_ms: null });
   });
 
   it("returns the stored ticket states at the newest event, and refuses a moment before the project started", async () => {
@@ -269,7 +270,6 @@ describe("projectTimeline", () => {
       threads: [],
       posts: [],
       reviews: [],
-      runs: [],
       events: [
         event(1, 0, "spec.approved", { version: 1 }),
         event(2, 0, "ticket.created", {}, 1),

@@ -218,4 +218,6 @@ export const MIGRATIONS: string[] = [
   UPDATE projects SET hook_event_id = (SELECT COALESCE(MAX(id), 0) FROM events)`,
   // Keep the ticket's pull request a draft until the human releases it: 1 while held, 0 otherwise.
   `ALTER TABLE tickets ADD COLUMN keep_draft INTEGER NOT NULL DEFAULT 0`,
+  // Run rows of file transfers between machines held each chunk's bytes, 1 GB in one install; the rows and their timing stay.
+  `UPDATE runs SET output = 'Loom no longer keeps what this step copied.' WHERE kind = 'git' AND label IN ('readBlob', 'carryWrite', 'importChunk')`,
 ];

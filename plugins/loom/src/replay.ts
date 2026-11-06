@@ -15,7 +15,6 @@ export interface ProjectRows {
   events: EventRow[];
   posts: PostRow[];
   reviews: ReviewRow[];
-  runs: RunRow[];
 }
 
 /** The rows as they were at event `eventId` (N), at time `at` (T). */
@@ -96,7 +95,6 @@ export function rowsOf(store: Store, project: ProjectRow): ProjectRows {
     events: store.projectEvents(project.id),
     posts: store.postsForProject(project.id),
     reviews: store.reviewsForProject(project.id),
-    runs: tickets.flatMap((ticket) => store.runs(ticket.id)),
   };
 }
 
@@ -169,14 +167,18 @@ export function rewind(rows: ProjectRows, eventId: number): PastRows {
     events,
     posts: rows.posts.filter((post) => post.id <= lastPost),
     reviews: rows.reviews.filter((review) => review.at <= at).map((review): ReviewRow => (decided.has(review.id) ? review : { ...review, verdict: "pending", summary: null, findings_json: "[]" })),
-    runs: rows.runs
-      .filter((run) => run.started_at <= at)
-      .map((run): RunRow => (run.ended_at !== null && run.ended_at <= at ? run : { ...run, ended_at: null, ok: null, exit_code: null, duration_ms: null, timed_out: 0 })),
     eventId: events.at(-1)!.id,
     at,
     // A project's first event can come a millisecond before its first spec version.
     specVersion: approved ?? newest ?? 1,
   };
+}
+
+/** A ticket's runs as they were at time `at`; read per ticket, since one carry could once record thousands. */
+export function runsAt(runs: readonly RunRow[], at: number): RunRow[] {
+  return runs
+    .filter((run) => run.started_at <= at)
+    .map((run): RunRow => (run.ended_at !== null && run.ended_at <= at ? run : { ...run, ended_at: null, ok: null, exit_code: null, duration_ms: null, timed_out: 0 }));
 }
 
 /** The overview fields that change over time, at the moment `past` shows; `spec` is the version in force then. */

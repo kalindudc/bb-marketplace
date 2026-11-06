@@ -53,7 +53,7 @@ export class Rows {
   }
   rows(): ProjectRows {
     const project = { ...PROJECT, state: this.state } as ProjectRow;
-    return { project, tickets: this.tickets, threads: this.threads, events: this.events, posts: this.posts, reviews: this.reviews, runs: [] };
+    return { project, tickets: this.tickets, threads: this.threads, events: this.events, posts: this.posts, reviews: this.reviews };
   }
 }
 

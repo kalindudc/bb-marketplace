@@ -20,7 +20,7 @@ import { followsFeedback, prSettings, repoSettings } from "./repos";
 import { computeMetrics } from "./metrics";
 import { nextStepOf } from "./next-step";
 import { LoomError, landsOf, namedRepos, repoOverviews, withRepoNames, type LoomErrorCode, type Projects } from "./projects";
-import { overviewAt, projectTimeline, rewind, rowsOf } from "./replay";
+import { overviewAt, projectTimeline, rewind, rowsOf, runsAt } from "./replay";
 import { changedTags } from "./rpc-tags";
 import { projectMetrics } from "./reports";
 import { UNSTARTED, blockedAtReview } from "./review";
@@ -433,7 +433,7 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
     const own = <T extends { ticket_id: number | null }>(rows: T[]) => rows.filter((row) => row.ticket_id === ticket.id);
     const threads = past === null ? store.threadsForTicket(ticket.id) : own(past.threads);
     const posts = past === null ? store.posts(ticket.id) : own(past.posts);
-    const runs = past === null ? store.runs(ticket.id) : own(past.runs);
+    const runs = past === null ? store.runs(ticket.id) : runsAt(store.runs(ticket.id), past.at);
     const reviews = past === null ? store.reviews(ticket.id) : own(past.reviews);
     const moves = past === null ? store.ticketEvents(ticket.id, ["ticket.state"]) : own(past.events).filter((event) => event.kind === "ticket.state");
     const kept = new Set(posts.map((post) => post.id));

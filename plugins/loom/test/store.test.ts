@@ -697,6 +697,32 @@ describe("runs", () => {
     expect(store.endOpenRuns("again")).toBe(0);
   });
 
+  it("has a migration that clears the bytes of file transfers and keeps every row's timing and result", () => {
+    const db = new Database(":memory:");
+    const at = MIGRATIONS.findIndex((sql) => sql.includes("label IN ('readBlob'"));
+    expect(at).toBeGreaterThan(0);
+    for (const sql of MIGRATIONS.slice(0, at)) db.exec(sql);
+    const old = new Store(db, () => 1000);
+    const project = old.createProject(newProject(), "human");
+    const ticket = old.createTicket(newTicket(project.id, 1), "human");
+    const run = (label: string, output: string) => {
+      const id = old.startRun({ project_id: project.id, ticket_id: ticket.id, stage: "merge", kind: "git", label });
+      old.finishRun(id, { ok: true, output, durationMs: 7 });
+      return id;
+    };
+    const blob = run("readBlob", JSON.stringify({ data: "I2luY2x1ZGUg".repeat(1000) }));
+    const write = run("carryWrite", '{"size":9000}');
+    const chunk = run("importChunk", '{"size":9000}');
+    const commit = run("git commit", "Committed c1.");
+    const before = old.runs(ticket.id);
+    for (const sql of MIGRATIONS.slice(at)) db.exec(sql);
+    const after = old.runs(ticket.id);
+    const meta = (rows: typeof before) => rows.map(({ output_chars: _, ...row }) => row);
+    expect(meta(after)).toEqual(meta(before));
+    for (const id of [blob, write, chunk]) expect(old.runOutput(id)).toBe("Loom no longer keeps what this step copied.");
+    expect(old.runOutput(commit)).toBe("Committed c1.");
+  });
+
   it("tells the hook the project id after a run starts and after it finishes", () => {
     const project = store.createProject(newProject(), "human");
     const ticket = store.createTicket(newTicket(project.id, 1), "human");

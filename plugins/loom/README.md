@@ -374,7 +374,10 @@ The Activity tab shows one card per worker attempt, newest first (Oldest first
 switches the order). Inside an attempt, posts are cards with their replies, each
 check lists its commands with their result, time and exit code and the failed
 command's output, each review shows its verdict, findings and notes, and each
-merge its git steps. On the pull request strategy it also shows the pull
+merge its git steps, each with a line or two on what it did. Copying a
+ticket's files between machines shows as one step with the number of files and
+bytes it moved; Loom keeps no file contents in its database. On the pull
+request strategy it also shows the pull
 request the worker wrote, the commits Loom pushed, the checks as Loom last read
 them, and a card per fix round with the feedback it sent. The Brief tab shows
 the worker's brief as Markdown.
