@@ -96,18 +96,22 @@ async function launch(ctx: EngineCtx, projectId: number, spec: Spec): Promise<vo
   );
 }
 
-// The ticket to merge: the one left in merging, unless its merge waits after a failure worth waiting out, when the queue
-// waits too; else the first candidate whose repo has no worker worktree being created, moved to merging. The tick runs
-// every 15 seconds, so a wait that ends is picked up then.
+// The ticket to merge: one left in merging whose merge does not wait after a failure; else the first candidate whose
+// repo has no worker worktree being created, moved to merging. While a merge left in merging waits, the integration
+// strategy's queue waits too, since its merges share the integration branch; the pull request strategy's goes on with
+// other repos, one ticket in merging per repo. The tick runs every 15 seconds, so a wait that ends is picked up then.
 async function begin(ctx: EngineCtx, projectId: number, spec: Spec): Promise<TicketRow | null> {
   const { store } = ctx;
   if (store.project(projectId)?.state !== "running") return null;
-  const left = store.tickets(projectId, ["merging"])[0];
-  if (left !== undefined) return retryWaits(left, "merge", ctx.now()) ? null : left;
+  const left = store.tickets(projectId, ["merging"]);
+  const due = left.find((ticket) => !retryWaits(ticket, "merge", ctx.now()));
+  if (due !== undefined) return due;
+  if (left.length > 0 && spec.merge.strategy !== "pr") return null;
+  const busy = new Set(left.map((ticket) => ticket.repo));
   postHolds(ctx, projectId, spec);
   if (candidates(ctx, projectId, spec).length === 0) return null;
   const waiting = spec.merge.strategy === "integration" ? await provisioningRepos(ctx, projectId) : new Set<string | null>();
-  const next = candidates(ctx, projectId, spec).find((ticket) => !waiting.has(ticket.repo));
+  const next = candidates(ctx, projectId, spec).find((ticket) => !waiting.has(ticket.repo) && !busy.has(ticket.repo));
   if (next === undefined || store.project(projectId)?.state !== "running") return null;
   store.tx(() => {
     const refresh = next.state === "pr_open" ? refreshDue(spec, next) : null;

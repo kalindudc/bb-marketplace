@@ -189,9 +189,12 @@ machine, or the whole project). What Loom does follows from that:
 - The wait is kept on the ticket, so a restart of Loom goes on with it. The
   ticket gets one post when the failures start, and its card, its page and the
   next-step bar say what it waits for and when Loom tries again.
-- A merge that waits keeps its ticket in merging, and the merge queue waits
-  with it; on the integration strategy so does a new worker in that repo,
-  whose worktree would start from the branch the merge moves. Every step of a
+- A merge that waits keeps its ticket in merging. On the integration strategy
+  the merge queue waits with it, since every merge moves the integration
+  branch, and so does a new worker in that repo, whose worktree would start
+  from the branch the merge moves. On the pull request strategy the queue goes
+  on with the other repos' tickets, one ticket in merging per repo, so a forge
+  that does not answer for one repo holds back no other repo's pull requests. Every step of a
   merge or a push to a pull request is safe to run again: a merge, a push or a
   pull request that already happened is found, not made twice, which is why a
   call with an unknown outcome is simply run again. Loom records each push

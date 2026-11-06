@@ -155,6 +155,35 @@ describe("on a running project", () => {
     expect(project().state).toBe("running");
   });
 
+  it("opens another repo's pull request while one repo's merge waits on its forge, and never two of one repo", async () => {
+    await seedRepoProject(h, (doc) => {
+      pr(doc);
+      doc.ticket.push({ ref: "docs", title: "Web docs", body: "Document the export.", acceptance: ["The docs say how to export."], verify: [], scope: ["docs/**"], depends_on: [], repo: "web" });
+    });
+    await reachApproved(h, "CSV-1");
+    await reachApproved(h, "CSV-3");
+    await reachApproved(h, "CSV-2");
+    const call = h.host.call.bind(h.host);
+    h.host.call = (async (hostId: string, method: string, input: { repo?: string }) => (method === "push" && input.repo === "/src/web" ? { outcome: "unavailable", message: "git push failed: could not resolve host: github.com", transient: "network" } : call(hostId, method as never, input as never))) as typeof h.host.call;
+    await queue();
+    expect(ticketOf(h, "CSV-1").state).toBe("merging");
+    await queue();
+    await queue();
+    expect(ticketOf(h, "CSV-2").state).toBe("pr_open");
+    expect(ticketOf(h, "CSV-3").state).toBe("approved");
+    expect(h.store.tickets(project().id, ["merging"]).map((ticket) => ticket.key)).toEqual(["CSV-1"]);
+  });
+
+  it("keeps the integration strategy's merges one at a time while a merge waits", async () => {
+    await seedRepoProject(h);
+    await reachApproved(h, "CSV-1");
+    await reachApproved(h, "CSV-2");
+    h.host.scripted.merge = [new Error(DEADLINE)];
+    await queue();
+    await queue();
+    expect([ticketOf(h, "CSV-1").state, ticketOf(h, "CSV-2").state]).toEqual(["merging", "approved"]);
+  });
+
   it("keeps a read failure of an old pull request off the ticket's new one", async () => {
     await seedProject(h, pr);
     await reachApproved(h);
