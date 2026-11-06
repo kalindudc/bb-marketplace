@@ -1041,9 +1041,10 @@ and one that changes only it skips the spec review. `gh`, the forge's commands
 and the first checkout of an integration worktree keep their own 2-minute
 limits.
 
-Loom also reads and writes whole trees in the checkout: it brings a commit
-home from a worker on another machine through a temporary index, and runs
-merge-tree to bring a pull request up to date or build a stacked base. The
+Loom also reads and writes trees in the checkout: it brings a commit
+home from a worker on another machine by rewriting only the trees on the way to
+the changed files, and runs merge-tree to bring a pull request up to date or
+build a stacked base. These calls run one at a time per checkout. The
 steps of one such call share `git_index_timeout_seconds`, 300 by default, set
 on a `[[repo]]` or on `[merge]`; quick git calls keep 30 seconds. A submit
 that runs out of it tells the worker to submit again, names the setting, and

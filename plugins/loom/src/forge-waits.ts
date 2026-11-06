@@ -28,7 +28,7 @@ export interface Transient {
 // not there, a plugin update retired the generation the call was for or the new one's startup timed out, or the machine
 // is not connected; and what the host entry says when a git or gh process it ran ran out of time.
 const HOST_CALL_TROUBLE =
-  /host plugin call \S+ (?:exceeded|reached) its deadline|host plugin worker (?:exited|failed to start)|host plugin \S+ worker is unavailable|host plugin manager is shutting down|host plugin \S+ generation \S+ is retired|host plugin \S+ startup timed out|host plugin transport is unavailable|\bhost(?: daemon)? is not connected\b|\bhost is (?:suspended|unavailable)\b|timed out waiting for command result|\b(?:git|gh) [\w-]+ took too long\b/iu;
+  /host plugin call \S+ (?:exceeded|reached) its deadline|host plugin worker (?:exited|failed to start)|host plugin \S+ worker is unavailable|host plugin manager is shutting down|host plugin \S+ generation \S+ is retired|host plugin \S+ startup timed out|host plugin transport is unavailable|\bhost(?: daemon)? is not connected\b|\bhost is (?:suspended|unavailable)\b|timed out waiting for command result|the project's checkout is busy with another call|\b(?:git|gh) [\w-]+ took too long\b/iu;
 // An input or output the contract refuses and an unknown method are answers from bb, so waiting would not help.
 const ANSWERED_CODES: readonly string[] = ["invalid_input", "invalid_output", "unknown_method", "invalid", "invalid_json", "non_json_result", "invalid_response", "forbidden", "not_found"];
 

@@ -559,6 +559,95 @@ describe("a worker on a machine of its own", () => {
     expect(h.host.refs.size).toBe(0);
   });
 
+  describe("when the project's machine times out or does not answer", () => {
+    const TIMEOUT = "git ls-tree took too long: the index and tree steps on the project's checkout ran past 300 seconds. Raise git_index_timeout_seconds for the repo if its index is this slow";
+
+    /** One submit and its run; the same submit again after `waitMs`. */
+    async function attempt(row: { thread_id: string | null }, waitMs: number) {
+      h.clock.advance(waitMs);
+      const reply = submit(h.ctx, row.thread_id!, "Mapped orders to rows");
+      await settleChecks(h.ctx);
+      return reply;
+    }
+
+    it("runs a resubmit only after 15 seconds, then 30, 60 and 120, then every 5 minutes, and says so in the reply", async () => {
+      const { row } = await submittedOnBox();
+      h.host.errors.importCommit = new Error(TIMEOUT);
+      await attempt(row, 0);
+      const imports = () => h.host.callsTo("importCommit").length;
+      expect(imports()).toBe(1);
+
+      const schedule: number[] = [];
+      let last = h.clock.t;
+      for (let round = 0; round < 6; round += 1) {
+        // Submitted right away, as the worker does: Loom holds the run until it is due.
+        const reply = submit(h.ctx, row.thread_id!, "Mapped orders to rows");
+        await settleChecks(h.ctx);
+        expect(reply).toContain("runs them in about");
+        expect(ticketOf(h, "CSV-1").state).toBe("checking");
+        const before = imports();
+        let waited = 0;
+        while (imports() === before) {
+          h.clock.advance(5_000);
+          waited += 5_000;
+          resumeCheckingTickets(h.ctx);
+          await settleChecks(h.ctx);
+        }
+        schedule.push(waited);
+        last = h.clock.t;
+      }
+      expect(last).toBe(h.clock.t);
+      // 15 s, 30 s, 60 s, 120 s, then 300 s twice, each with up to a tenth more.
+      [15, 30, 60, 120, 300, 300].forEach((seconds, at) => {
+        expect(schedule[at]).toBeGreaterThanOrEqual(seconds * 1000);
+        expect(schedule[at]).toBeLessThanOrEqual(seconds * 1100 + 5000);
+      });
+      expect(ticketOf(h, "CSV-1")).toMatchObject({ check_failures: 0, failures: 0, attempt: 1 });
+    });
+
+    it("waits for a transport error whatever its message says, as the structured code is what marks it", async () => {
+      const { row } = await submittedOnBox();
+      h.host.errors.importCommit = Object.assign(new Error("Connection closed"), { code: "transport_error" });
+      await attempt(row, 0);
+      expect(submit(h.ctx, row.thread_id!, "Mapped orders to rows")).toContain("runs them in about");
+    });
+
+    it("waits for a host answer of unavailable that names a network failure, but not for one that does not", async () => {
+      const { row } = await submittedOnBox();
+      h.host.scripted.importCommit = [{ outcome: "unavailable", message: "git fetch from origin failed: could not resolve host", transient: "network" }];
+      await attempt(row, 0);
+      expect(submit(h.ctx, row.thread_id!, "Mapped orders to rows")).toContain("runs them in about");
+    });
+
+    it("starts the schedule over once a run reaches the checks", async () => {
+      const { row } = await submittedOnBox();
+      h.host.errors.importCommit = new Error(TIMEOUT);
+      await attempt(row, 0);
+      await attempt(row, 60_000);
+      h.host.errors.importCommit = null;
+      await attempt(row, 6 * 60_000);
+      expect(ticketOf(h, "CSV-1").state).toBe("review");
+      expect(h.host.callsTo("importCommit").length).toBe(3);
+    });
+
+    it("waits for a host call that got no answer too, but not for a failure of Loom's own step that waiting cannot help", async () => {
+      const { row } = await submittedOnBox();
+      h.host.errors.importCommit = new Error("host plugin call importCommit exceeded its deadline");
+      await attempt(row, 0);
+      expect(submit(h.ctx, row.thread_id!, "Mapped orders to rows")).toContain("runs them in about");
+      await settleChecks(h.ctx);
+      h.clock.advance(6 * 60_000);
+      resumeCheckingTickets(h.ctx);
+      await settleChecks(h.ctx);
+
+      h.host.errors.importCommit = new Error("git fetch from origin failed: the repository does not exist");
+      await attempt(row, 6 * 60_000);
+      const reply = submit(h.ctx, row.thread_id!, "Mapped orders to rows");
+      expect(reply).not.toContain("runs them in about");
+      expect(reply).not.toContain("timed out");
+    });
+  });
+
   it("brings nothing home when the checks fail", async () => {
     const { row } = await submittedOnBox();
     h.host.execResults.push({ exitCode: 1, output: "1 failing" });
@@ -583,6 +672,7 @@ describe("a worker on a machine of its own", () => {
     const { row } = await submittedOnBox();
     h.host.errors.importCommit = new Error("git read-tree took too long: the index and tree steps on the project's checkout ran past 300 seconds. Raise git_index_timeout_seconds for the repo if its index is this slow");
     for (let round = 0; round < 4; round++) {
+      h.clock.advance(6 * 60_000);
       submit(h.ctx, row.thread_id!, "Mapped orders to rows");
       await settleChecks(h.ctx);
       expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "working", check_failures: 0, failures: 0, attempt: 1 });
@@ -595,6 +685,7 @@ describe("a worker on a machine of its own", () => {
     expect(h.store.thread(row.id)).toMatchObject({ ended_at: null });
 
     h.host.errors.importCommit = null;
+    h.clock.advance(6 * 60_000);
     submit(h.ctx, row.thread_id!, "Mapped orders to rows");
     await settleChecks(h.ctx);
     expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "review", head_sha: "home1" });

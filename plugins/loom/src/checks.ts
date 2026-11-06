@@ -1,10 +1,12 @@
 // The submit pipeline: the worker hands in, the plugin commits, checks scope and runs the commands, and only a
 // pass moves the ticket on. Runs are keyed by ticket, so a ticket is never checked twice at once.
 import { posix } from "node:path";
+import { retriesOf } from "./backoff";
 import { repoCheckout, ticketRepo } from "./checkouts";
 import type { ProjectRow, Store, ThreadRow, TicketRow } from "./db/store";
-import { plural } from "./format";
+import { formatDuration, plural } from "./format";
 import { GIT_INDEX_SETTING, GIT_INDEX_TIMEOUT_MS } from "./git-network";
+import { waitableOf } from "./forge-waits";
 import { isMultiRepo, repoSettings } from "./repos";
 import { checkFailedText, clip, prUnchangedText } from "./prompts";
 import { openFeedback, proposalOf, proposeText, textPending, unchangedFix, type PrProposal, type PrText } from "./pull-requests";
@@ -75,7 +77,10 @@ export function submit(ctx: EngineCtx, threadId: string, summary: string, pr?: {
     if (proposal !== null) store.updateTicket(ticket.id, { pr_proposal_json: JSON.stringify(proposal) });
   });
   store.changed(ticket.project_id);
-  void runChecks(ctx, ticket.id).catch((error) => ctx.bb.log("error", `Checks of ${ticket.key} failed: ${errText(error)}`));
+  // After checks that could not reach the project's machine, the next run waits its turn; the tick starts it once it is due.
+  const wait = retriesOf(store).checks.waitMs(ticket.id, ctx.now());
+  if (wait === 0) void runChecks(ctx, ticket.id).catch((error) => ctx.bb.log("error", `Checks of ${ticket.key} failed: ${errText(error)}`));
+  else return `Submitted ${ticket.key}. The plugin's last run of the checks timed out or could not reach the project's machine, so it runs them in about ${formatDuration(wait)}. End your turn; the result arrives as a message.`;
   return `Submitted ${ticket.key}. The plugin is committing your work and running the checks now, so end your turn. The result arrives as a message: either what to fix, or a note that the ticket is waiting for review.`;
 }
 
@@ -99,7 +104,7 @@ export function resumeCheckingTickets(ctx: EngineCtx): number {
   for (const project of ctx.store.projects()) {
     if (project.state === "archived") continue;
     for (const ticket of ctx.store.tickets(project.id, ["checking"])) {
-      if (running.has(ticket.id)) continue;
+      if (running.has(ticket.id) || retriesOf(ctx.store).checks.waitMs(ticket.id, ctx.now()) > 0) continue;
       started += 1;
       void runChecks(ctx, ticket.id).catch((error) => ctx.bb.log("error", `Checks of ${ticket.key} failed: ${errText(error)}`));
     }
@@ -143,9 +148,10 @@ async function pipeline(ctx: EngineCtx, ticketId: number): Promise<void> {
       outcome = { ...outcome, commitSha: (await bringHome(ctx, project, spec, ticket, outcome.environment, "submit", outcome.tree)).sha };
     }
   } catch (error) {
-    hostFailed(ctx, ticketId, errText(error));
+    hostFailed(ctx, ticketId, error);
     return;
   }
+  retriesOf(store).checks.reset(ticketId);
   await finish(ctx, ticketId, spec, outcome);
 }
 
@@ -335,7 +341,7 @@ async function finish(ctx: EngineCtx, ticketId: number, spec: Spec, outcome: Out
 
 /**
  * What Loom tells the worker and posts when its own step on the project's checkout, such as bringing the work home with
- * a temporary index, ran out of the repo's git index time limit: Loom's machine was slow, not the work, so the worker
+ * the tree rewrite, ran out of the repo's git index time limit: Loom's machine was slow, not the work, so the worker
  * submits the same work again and never blocks for it, and the post names the setting the human may raise.
  */
 function indexTimeoutText(ticket: TicketRow, spec: Spec, error: string): string {
@@ -344,11 +350,17 @@ function indexTimeoutText(ticket: TicketRow, spec: Spec, error: string): string 
 }
 
 // A host call threw: the machine disconnected or the call timed out. No check failure is counted.
-function hostFailed(ctx: EngineCtx, ticketId: number, error: string): void {
+function hostFailed(ctx: EngineCtx, ticketId: number, failure: unknown): void {
+  const error = errText(failure);
   const { store } = ctx;
   const ticket = store.ticket(ticketId);
   if (ticket === null || ticket.state !== "checking") return;
   const indexTimeout = error.includes(GIT_INDEX_SETTING);
+  // A timeout or a host that did not answer is the machine being slow or away, so the next run waits 15 seconds, then longer;
+  // any other failure is not helped by waiting.
+  const retries = retriesOf(store).checks;
+  if (indexTimeout || waitableOf(failure) !== null) retries.failed(ticket.id, ctx.now(), error);
+  else retries.reset(ticket.id);
   const text = indexTimeout ? indexTimeoutText(ticket, specOf(store, store.project(ticket.project_id)!), error) : `The checks could not run: ${error}. Submit again.`;
   const worker = workerOf(store, ticket);
   store.tx(() => {

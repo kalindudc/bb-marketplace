@@ -778,6 +778,7 @@ describe("following the pull request", () => {
     expect(ticket()).toMatchObject({ state: "working" });
     expect(JSON.parse(ticket().handback_json!)).toMatchObject({ thread: worker.thread_id, text: { summary: expect.stringContaining("fix round 1;") } });
     h.bb.sendError = null;
+    h.clock.advance(20_000);
     await deliverHandBacks(h.ctx, project().id);
     expect(h.bb.sent(worker.thread_id!).at(-1)).toContain("Rename the column.");
     expect(ticket().handback_json).toBeNull();

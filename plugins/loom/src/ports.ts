@@ -56,6 +56,8 @@ export interface BbPort {
   /** Null when bb no longer knows the thread. */
   getThread(threadId: string): Promise<ThreadInfo | null>;
   getEnvironment(environmentId: string): Promise<EnvironmentInfo | null>;
+  /** Whether bb still has the machine; false once it was removed. */
+  hostKnown(hostId: string): Promise<boolean>;
   /** The id of the thread this plugin spawned with that token in its metadata, if there is one. */
   findSpawnedThread(spawnToken: string): Promise<string | null>;
   /** Cumulative tokens the thread has used, or null when its provider reports none. */

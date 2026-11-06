@@ -220,7 +220,7 @@ export const hostContract = defineRpcContract({
     input: z.object({ uploads: z.array(uploadId).max(50_000) }).strict(),
     output: z.object({}).strict(),
   },
-  // The commit on `base` whose tree is `base` with the entries applied, built with a temporary index so no worktree moves,
+  // The commit on `base` whose tree is `base` with the entries applied, built from tree objects alone so no worktree or index is touched,
   // with the author as its committer too, so the same input gives the same commit. A missing base is fetched from
   // remote's baseBranch, or by its sha. parent, a commit of this repository, takes base's place as the commit's parent.
   // Each of refs is pointed at it only when its tree is `tree`; the uploads go.

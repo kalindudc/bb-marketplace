@@ -1,6 +1,7 @@
 // The worker lifecycle: spawn a worker for a ticket, nudge or end it when it stalls, block and requeue tickets,
 // and end any worker or reviewer thread in one place (endThread). Every state change goes through the store.
 import { randomBytes } from "node:crypto";
+import { retriesOf } from "./backoff";
 import { repoCheckout, ticketRepo, type RepoCheckout } from "./checkouts";
 import type { HostBackoffs } from "./forge-waits";
 import type { PostRow, ProjectRow, Store, ThreadRow, TicketRow } from "./db/store";
@@ -39,7 +40,7 @@ export interface EngineCtx extends Ctx {
 
 export const signatureOf = (ctx: EngineCtx): string => ctx.commentSignature?.() ?? COMMENT_SIGNATURE;
 
-export type EndReason = "abandoned" | "timeout" | "failed" | "gone" | "blocked" | "cancelled" | "verdict" | "superseded" | "merged" | "released";
+export type EndReason = "abandoned" | "timeout" | "failed" | "gone" | "blocked" | "cancelled" | "verdict" | "superseded" | "merged" | "released" | "unreachable";
 export type TicketMove = { to: TicketState; patch: Partial<TicketRow> };
 
 const ENDING_LIMIT_MS = 10 * 60_000;
@@ -88,6 +89,7 @@ export function ticketMoveFor(reason: EndReason, ticket: TicketRow, spec: Spec):
     case "superseded":
     case "merged":
     case "released":
+    case "unreachable":
       return null;
   }
 }
@@ -538,7 +540,10 @@ export async function resumeEnding(ctx: EngineCtx, row: ThreadRow): Promise<void
   const current = ctx.store.thread(row.id);
   if (current === null || current.state !== "ending") return;
   const force = ctx.now() - (current.ended_at ?? ctx.now()) > ENDING_LIMIT_MS;
-  await finishEnding(ctx, current, current.end_reason as EndReason, { commit: current.role === "worker" }, force);
+  // A bring-home that failed waits before the next try; the ten-minute limit still ends the thread on time.
+  if (!force && retriesOf(ctx.store).ending.waitMs(current.id, ctx.now()) > 0) return;
+  // A worker Loom ended because its machine or thread is gone has no work to bring home.
+  await finishEnding(ctx, current, current.end_reason as EndReason, { commit: current.role === "worker" && current.end_reason !== "unreachable" }, force);
 }
 
 async function finishEnding(ctx: EngineCtx, row: ThreadRow, reason: EndReason, opts: { commit: boolean; move?: TicketMove | null }, force: boolean): Promise<void> {
@@ -557,7 +562,8 @@ async function finishEnding(ctx: EngineCtx, row: ThreadRow, reason: EndReason, o
           ctx.bb.log("warn", `Could not save ${ticket.key}'s work before ending its thread: ${errText(error)}`);
         } else if (!force) {
           // Archived, the thread no longer holds its machine, and bb removes it with the only copy; the tick tries again.
-          ctx.bb.log("warn", `Could not bring ${ticket.key}'s work home before ending its thread, so Loom keeps the thread and its machine and tries again: ${errText(error)}`);
+          const retry = retriesOf(store).ending.failed(row.id, ctx.now(), errText(error));
+          if (retry.changed) ctx.bb.log("warn", `Could not bring ${ticket.key}'s work home before ending its thread, so Loom keeps the thread and its machine and tries again: ${errText(error)}`);
           if (row.thread_id !== null) await ctx.bb.stop(row.thread_id).catch((stopError) => ctx.bb.log("warn", `Could not stop ${row.thread_id}: ${errText(stopError)}`));
           return;
         } else {
@@ -567,6 +573,7 @@ async function finishEnding(ctx: EngineCtx, row: ThreadRow, reason: EndReason, o
       }
     }
     if (!(await stopAndArchive(ctx, row, force))) return;
+    retriesOf(store).ending.reset(row.id);
 
     store.tx(() => {
       const current = store.thread(row.id);

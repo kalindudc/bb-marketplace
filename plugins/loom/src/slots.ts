@@ -2,6 +2,7 @@
 // a fix round, a review's changes or a merge that did not land moves its ticket to working with the message stored
 // (HandBack), and the message goes out only once a worker slot is free. Waiting hand-backs take free slots before new
 // workers start, priority 0 first, then the longest waiting. A worker or reviewer that waits for the human holds no slot.
+import { retriesOf } from "./backoff";
 import { delivers } from "./checks";
 import type { Store, ThreadRow, TicketRow } from "./db/store";
 import { plural } from "./format";
@@ -9,7 +10,8 @@ import { advanceWake, isReleased, isWaking, wakeRow } from "./release";
 import { NOT_PARKED, freeReviewerSlots, freeWorkerSlots, handBackOf, slotTurns, toLite, type HandBack, type Parked, type WorkerMessage } from "./scheduler";
 import type { Spec } from "./spec";
 import { startWaits } from "./starts";
-import { specOf, toWorking, type EngineCtx } from "./workers";
+import { LOOM_ACTOR } from "./states";
+import { applyMove, endThread, released, specOf, toWorking, type EngineCtx } from "./workers";
 
 const errText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
@@ -75,7 +77,12 @@ function notice(ctx: EngineCtx, ticket: TicketRow, pending: HandBack, spec: Spec
 const sendingNow = new WeakMap<Store, Set<number>>();
 const sendingOf = (store: Store) => sendingNow.get(store) ?? sendingNow.set(store, new Set()).get(store)!;
 
-/** Sends a ticket's hand-back once it has a slot; it stays stored, for the next tick, until bb takes it. */
+/**
+ * Sends a ticket's hand-back once it has a slot; it stays stored, for a later tick, until bb takes it. A send that fails is
+ * tried again after 15 seconds, 30, 60 and 120, then every 5 minutes, and logged once per new error. When the worker's thread
+ * or machine turns out to be gone, nothing more is sent: the ticket is blocked, with the message kept on its feed for the next
+ * worker.
+ */
 async function deliver(ctx: EngineCtx, ticket: TicketRow): Promise<void> {
   const pending = handBackOf(ticket);
   if (pending === null) return;
@@ -87,18 +94,80 @@ async function deliver(ctx: EngineCtx, ticket: TicketRow): Promise<void> {
   // A worker coming back from a release reads it once its environment is back.
   const row = ctx.store.threadByThreadId(pending.thread);
   if (isWaking(row) || isReleased(row)) return;
+  const retries = retriesOf(ctx.store).sends;
+  const retryKey = `${ticket.id}:${pending.thread}`;
+  if (retries.waitMs(retryKey, ctx.now()) > 0) return;
   const sending = sendingOf(ctx.store);
   if (sending.has(ticket.id)) return;
   sending.add(ticket.id);
   try {
     await ctx.bb.send(pending.thread, pending.text);
   } catch (error) {
-    ctx.bb.log("warn", `Could not send ${ticket.key}'s work to ${pending.thread}; Loom tries again: ${errText(error)}`);
+    const gone = await unreachable(ctx, pending.thread);
+    // The send may have outlived its hand-back: the ticket can have a new worker and a new hand-back by now.
+    if (!isStillPending(ctx, ticket.id, pending.thread)) return;
+    if (gone !== null) return await giveUp(ctx, ticket, pending, gone);
+    const retry = retries.failed(retryKey, ctx.now(), errText(error));
+    if (retry.changed) ctx.bb.log("warn", `Could not send ${ticket.key}'s work to ${pending.thread}; Loom tries again, waiting longer after each failure up to 5 minutes: ${errText(error)}`);
     return;
   } finally {
     sending.delete(ticket.id);
   }
+  retries.reset(retryKey);
   if (ctx.store.ticket(ticket.id)?.handback_json === ticket.handback_json) ctx.store.updateTicket(ticket.id, { handback_json: null });
+}
+
+/** Whether the ticket is still working for `thread` with a hand-back for it. */
+function isStillPending(ctx: EngineCtx, ticketId: number, thread: string): boolean {
+  const current = ctx.store.ticket(ticketId);
+  return current !== null && current.state === "working" && current.worker_thread_id === thread && handBackOf(current)?.thread === thread;
+}
+
+/** Why a worker's thread cannot be sent to for good, read from bb after a failed send; null when it may be a passing failure, or bb could not say. */
+async function unreachable(ctx: EngineCtx, threadId: string): Promise<string | null> {
+  try {
+    const thread = await ctx.bb.getThread(threadId);
+    if (thread === null || thread.deletedAt !== null) return "its thread was deleted";
+    if (thread.archivedAt !== null) return "its thread was archived";
+    const environment = thread.environmentId === null ? null : await ctx.bb.getEnvironment(thread.environmentId);
+    if (thread.environmentId !== null && environment === null) return "its environment is gone";
+    if (environment !== null && !(await ctx.bb.hostKnown(environment.hostId))) return "its machine was removed";
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+const textOf = (message: WorkerMessage) => (typeof message === "string" ? message : `${message.summary}\n\n${message.detail}`);
+
+/** How much of an unsent message the block post carries; the block post stays in the next worker's brief however long the thread is. */
+const EXCERPT_CHARS = 3000;
+
+/**
+ * The worker is gone for good, so nothing will ever read its hand-back. The ticket is blocked at once, whatever bb still reports
+ * of the thread, which frees its worker slot and lets a requeue take it; the message stays on the ticket's feed for the next
+ * worker. The stale thread is then stopped and archived without trying to bring its work home from a machine that is not there
+ * (the ending reason "unreachable" keeps that across retries).
+ */
+async function giveUp(ctx: EngineCtx, ticket: TicketRow, attempted: HandBack, why: string): Promise<void> {
+  const { store } = ctx;
+  const current = store.ticket(ticket.id)!;
+  const pending = handBackOf(current)!;
+  retriesOf(store).sends.reset(`${ticket.id}:${attempted.thread}`);
+  const reason = `its worker can no longer be reached: ${why}`;
+  const move = { to: "blocked" as const, patch: { ...released, blocked_reason: reason, handback_json: null } };
+  if (!applyMove(ctx, current, move, LOOM_ACTOR, { reason })) return;
+  const needs = `Requeue the ticket, for example with \`bb loom requeue ${ticket.key}\`, to start a new worker from its branch.`;
+  const text = textOf(pending.text);
+  const excerpt = text.length <= EXCERPT_CHARS ? text : `${text.slice(0, EXCERPT_CHARS)}\n[The rest is in the post below this one on the ticket's feed.]`;
+  store.tx(() => {
+    store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "block", body: `${reason}. Needs: ${needs}\n\nThe message Loom could not send it:\n${excerpt}`, data_json: JSON.stringify({ reason, needs, undeliverable: why }) });
+    const body = `Loom could not send ${ticket.key}'s worker this message, so it is kept here for the next worker:\n\n${text}`;
+    store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "system", body, data_json: JSON.stringify({ undeliverable: why }) });
+  });
+  store.changed(ticket.project_id);
+  const row = store.threadByThreadId(attempted.thread);
+  if (row !== null && row.state === "active") await endThread(ctx, row, "unreachable", { commit: false, move: null });
 }
 
 /**

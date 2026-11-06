@@ -2,6 +2,23 @@
 
 Notable changes to Loom, newest first. Releases are tagged `loom/vX.Y.Z` in this repository; releases before this file existed are described in their commit messages.
 
+## 0.34.2 (2026-11-06)
+
+### Fixed
+
+- Bringing a worker's commit home from another machine no longer reads the project's whole tree. On a very large monorepo, Loom read the entire base into a temporary index, which took minutes under load and made submits fail with "git read-tree took too long" at the same moment for several tickets. Loom now reads and writes only the directories on the way to the changed files, builds the same tree, and still refuses the commit unless its tree matches the worker's. `git_index_timeout_seconds` keeps covering these steps.
+- Heavy git work on one checkout runs one call at a time. Bringing a commit home, building a stacked base and merging into a pull request's branch no longer overlap on the same checkout, which kept a loaded machine busy and made each of them slower. A call that has waited so long that its own steps no longer fit in its deadline does not start; it fails as a temporary error that Loom waits out and runs again, instead of being cut off halfway.
+- A git command that runs out of time, or is cancelled, now ends the whole process group it started, including children that ignore a polite stop. Before, only git itself was stopped, and the processes git had started, such as a connectivity check, kept running and loading the machine.
+- Every `git fetch` Loom runs turns off packfile URIs and bundle URIs. A repository that sets `fetch.uriprotocols`, as World does, could make a plain fetch download hundreds of prebuilt packs; Loom now fetches only the commits it names.
+- Retries wait longer after each failure instead of repeating every 15 seconds. A submit whose steps on the project's machine timed out or got no answer runs again only after 15 seconds, then 30, 60 and 120, then every 5 minutes, and the reply to the worker's resubmit says when. Bringing the work of a stopped worker home waits the same way, and the ten-minute limit still ends the thread on time. A new success starts the schedule over.
+- A message to a worker that bb does not take is retried on that schedule, and logged once per new error rather than every 15 seconds. When the worker's thread was archived or deleted, or its machine was removed, Loom stops sending and blocks the ticket at once, even while bb still reports the thread active, with the reason "its worker can no longer be reached", without trying to bring the work home from a machine that is gone. The message it could not send is kept on the ticket's feed, and requeuing the ticket starts a new worker that reads it, so the ticket no longer holds a worker slot or sits in working. Before, one removed sandbox produced the same "Host not found" warning every 15 seconds for as long as the ticket waited.
+
+### Compatibility
+
+- No migration, and no spec change. The retry schedules are kept in memory, so a restart tries once at its first tick.
+- `git read-tree`, `update-index` and `write-tree` are no longer run on the project's checkout; the commit Loom brings home is the same one as before, with the same tree, author, date and message.
+- Not changed: the timeline RPC, how often Loom polls whether a commit has landed, and merge-tree itself apart from the one-at-a-time queue.
+
 ## 0.34.1 (2026-11-06)
 
 ### Added

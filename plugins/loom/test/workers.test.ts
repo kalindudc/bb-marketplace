@@ -578,10 +578,43 @@ describe("ending a worker on a machine of its own", () => {
     expect(h.bb.callsTo("archive")).toEqual([]);
     expect(h.bb.callsTo("log").map(([, text]) => text)).toContain("Could not bring CSV-1's work home before ending its thread, so Loom keeps the thread and its machine and tries again: the project's machine is offline");
 
+    h.clock.advance(20_000);
     await resumeEnding(h.ctx, h.store.thread(row.id)!);
     expect(h.store.thread(row.id)?.state).toBe("ended");
     expect(h.host.refs.get("refs/heads/loom/csv/csv-1-home")).toBe("home1");
     expect(h.bb.callsTo("archive")).toEqual([[row.thread_id]]);
+  });
+
+  it("tries to bring the work home after 15 seconds, 30, 60 and 120, then every 5 minutes, and logs an unchanged failure once", async () => {
+    await seedMachineProject(h);
+    const row = await startWorker(h);
+    h.host.worktree(`/wt/${row.environment_id}`).dirty = true;
+    h.host.errors.importCommit = new Error("git ls-tree took too long: the index and tree steps ran past 300 seconds");
+    await endThread(h.ctx, row, "blocked", { commit: true });
+    const imports = () => h.host.callsTo("importCommit").length;
+    const warnings = () => h.bb.callsTo("log").filter(([level, text]) => level === "warn" && String(text).startsWith("Could not bring CSV-1's work home")).length;
+    expect(imports()).toBe(1);
+
+    const tick = async () => {
+      await resumeEnding(h.ctx, h.store.thread(row.id)!);
+    };
+    const waitFor = async (seconds: number) => {
+      const before = imports();
+      h.clock.advance(seconds * 1000 - 1000);
+      await tick();
+      expect(imports()).toBe(before);
+      h.clock.advance(seconds * 100 + 1000);
+      await tick();
+      expect(imports()).toBe(before + 1);
+    };
+    // The thread is forced to end after ten minutes, so the schedule is read over its first four steps.
+    await waitFor(15);
+    await waitFor(30);
+    expect(warnings()).toBe(1);
+    h.host.errors.importCommit = new Error("the project's machine is offline");
+    await waitFor(60);
+    expect(warnings()).toBe(2);
+    expect(h.store.thread(row.id)?.state).toBe("ending");
   });
 
   it("ends the thread after ten minutes of failed bring-homes, and says on the ticket that the work did not come home", async () => {

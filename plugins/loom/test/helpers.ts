@@ -220,6 +220,12 @@ export class FakePort implements BbPort {
     const environment = this.environments.get(environmentId);
     return environment === undefined ? null : { ...environment };
   }
+  /** Hosts bb no longer has; every other host is known. */
+  removedHosts = new Set<string>();
+  async hostKnown(hostId: string) {
+    this.record("hostKnown", hostId);
+    return !this.removedHosts.has(hostId);
+  }
   async findSpawnedThread(spawnToken: string) {
     this.record("findSpawnedThread", spawnToken);
     return this.spawnedTokens.get(spawnToken) ?? null;
@@ -745,7 +751,7 @@ export function sdkStubs(state: SdkState): FakeSdkOverrides {
       listProviders: async () => [{ ...GIT_WORKTREE_PROVIDER, machineAvailability: {}, availability: null }],
     },
     plugins: { list: async () => ({ plugins: [{ id: "environment-git-worktree", enabled: true, provenance: "builtin" }] }) },
-    hosts: { experimental_listProviders: async () => [] },
+    hosts: { experimental_listProviders: async () => [], get: async ({ hostId }) => ({ id: hostId }) },
     projects: { get: async ({ projectId }) => ({ id: projectId, sources: [{ hostId: state.environmentHost, path: "/repo", isDefault: true }] }) },
     system: { config: async () => ({ primaryHostId: state.primaryHostId }) },
   };
