@@ -43,13 +43,19 @@ export function runningGate(spec: Spec, ticket: TicketRow) {
   return publishRule(spec) === null ? null : gateOf(repoSettings(spec, ticket.repo).forge);
 }
 
-/** The head of the newest push of the ticket's own work to its pull request: its opening or a fix round's push. */
+/**
+ * The newest revision of the ticket's own work on its pull request, which a gate run reviews: the head of its opening or of
+ * a fix round's push, or `text:<post id>` for title and description its reviewers approved that Loom set on the forge with
+ * no push. A restack or a refresh changes neither, so it is no new revision.
+ */
 export function ownPush(store: Store, ticket: TicketRow): string | null {
   const posts = store.posts(ticket.id);
   for (let index = posts.length - 1; index >= 0; index -= 1) {
     if (posts[index]!.kind !== "merge") continue;
     const data = JSON.parse(posts[index]!.data_json) as { outcome?: string; url?: string; sha?: string; round?: number };
-    if (data.url !== ticket.pr_url || data.sha === undefined) continue;
+    if (data.url !== ticket.pr_url) continue;
+    if (data.outcome === "pr_edited") return `text:${posts[index]!.id}`;
+    if (data.sha === undefined) continue;
     if (data.outcome === "pr_opened" || (data.outcome === "pr_pushed" && data.round !== undefined)) return data.sha;
   }
   return null;

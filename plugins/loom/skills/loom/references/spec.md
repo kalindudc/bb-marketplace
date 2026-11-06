@@ -57,7 +57,7 @@ The server that hosts pull requests. Leave it out for GitHub: Loom opens and fol
 | `auto_merge` | table | none | strategy `"pr"`, `kind = "gh"` or `"command"`; Loom merges each ready pull request itself: `method` (required), `comment`, `rejected`, `require_live`, `max_attempts`, `final_review`; unset, Loom merges nothing. See [Merging ready pull requests](#merging-ready-pull-requests) |
 | `merge` | string | none | `kind = "command"` only, and only with `auto_merge`; a shell command that merges the pull request, or hands it to the server's merge service |
 | `ready` | string | none | `kind = "command"` only; a shell command that marks the draft pull request in `LOOM_URL` (number in `LOOM_PR_NUMBER`) ready for review, exit 0 for done. Without it Loom cannot mark a command forge's drafts ready, and `keep_draft` tickets are released on the forge by hand |
-| `review_start` | string | none | `kind = "gh"` or `"command"`, strategy `"pr"`, with `review_read`; the review gate, an outside review of a draft before Loom publishes it, such as a review bot's private review. A shell command that asks for a review of the commit `LOOM_SHA` of the draft `LOOM_URL`, once for each push of the ticket's own work (its opening and each fix round's push, never a catch-up, a restack or a refresh). It runs only with `merge.publish`; without it `loom_propose` warns and Loom does not run it. See [The review gate](#the-review-gate) |
+| `review_start` | string | none | `kind = "gh"` or `"command"`, strategy `"pr"`, with `review_read`; the review gate, an outside review of a draft before Loom publishes it, such as a review bot's private review. A shell command that asks for a review of the commit `LOOM_SHA` of the draft `LOOM_URL`, once for each push of the ticket's own work (its opening and each fix round's push, or a fix round's approved text that Loom set with no push; never a catch-up, a restack or a refresh). It runs only with `merge.publish`; without it `loom_propose` warns and Loom does not run it. See [The review gate](#the-review-gate) |
 | `review_read` | string | none | with `review_start`; a shell command Loom runs at each read of the draft until the gate is done, that prints the gate's state and findings for `LOOM_SHA` as one JSON object |
 | `review_rounds` | integer | `3` | 1 to 10, with `review_start`; the fix rounds the gate's findings may start, which also count against `max_fix_rounds`; after that Loom sends no more of them and keeps the draft for the human |
 | `bots` | string array | none | at most 50 globs, as in `ignore_checks`; authors whose items count as a bot's, on top of the ones `feedback` or gh marks and Loom's `botAuthors` setting: their top-level comments start no fix round. Use it for service accounts the server reports as people |
@@ -116,7 +116,8 @@ This replaces `after_open` and `after_push` commands that mark pull requests rea
 
 A forge's `review_start` and `review_read` commands run an outside review on each draft before Loom publishes it, on a
 project with `merge.publish`. At the first read after a push of the ticket's own work (the pull request's opening, or a
-fix round's push), Loom runs `review_start` once for the commit it pushed; a catch-up with a dependency, a restack or a
+fix round's push, or a fix round's title and description that its reviewers approved and Loom set with no push), Loom runs
+`review_start` once for the commit the pull request has; a catch-up with a dependency, a restack or a
 refresh starts none, and the last result still stands. Loom records the run before the command starts, so a restart or a
 lost answer never asks twice. At each later read it runs `review_read`, until the gate is done:
 
