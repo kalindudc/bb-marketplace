@@ -312,7 +312,9 @@ const textLines = (want: PrWant) => [`Title: ${want.title}`, "", "Description:",
 async function edit(ctx: EngineCtx, checkout: RepoCheckout, url: string, title: string, body: string): Promise<HostOutput<"prEdit">> {
   const { forge } = checkout.settings;
   try {
-    return await ctx.host.call(checkout.hostId, "prEdit", { repo: checkout.path, url, title: clip(title, 256), body, forge: forge.kind === "command" ? { kind: "command", edit: forge.edit! } : { kind: "gh" } });
+    const answer = await ctx.host.call(checkout.hostId, "prEdit", { repo: checkout.path, url, title: clip(title, 256), body, forge: forge.kind === "command" ? { kind: "command", edit: forge.edit! } : { kind: "gh" } });
+    // Nothing was sent, so the edit waits for the forge host like a temporary failure and runs again at a later read.
+    return answer.outcome === "held" ? { outcome: "unavailable", message: answer.message, transient: answer.transient, retryAfterMs: answer.retryAfterMs } : answer;
   } catch (error) {
     return { outcome: "unavailable", message: errText(error), ...hostCallTransient(error) };
   }
@@ -550,6 +552,7 @@ export async function replyToItem(ctx: EngineCtx, threadId: string, a: { item: s
   const body = posted !== null ? `The worker replied to ${what}${resolved ? " and resolved it" : ""}:\n\n${clip(text, 2000)}` : `The worker's reply to ${what} did not go out: ${answer.message}`;
   ctx.store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: "worker", author_thread_id: threadId, kind: "merge", body, data_json: JSON.stringify({ outcome: "pr_reply", round, item: a.item, kind, ok: posted !== null, url: posted?.url ?? null, resolved }) });
   store.changed(ticket.project_id);
+  if (answer.outcome === "held") throw new LoomError("loom_unavailable", `Loom did not send the reply: ${answer.message}`, `Try again after ${new Date(answer.until).toISOString()}.`);
   if (answer.outcome === "unavailable") {
     throw new LoomError("loom_unavailable", `The forge did not take the reply: ${answer.message}`, answer.transient === undefined ? undefined : "That looks temporary; try again in a minute.");
   }

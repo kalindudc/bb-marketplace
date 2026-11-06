@@ -40,7 +40,7 @@ import { warnSubStateWith } from "./sub-state";
 const TOKEN_REFRESH_MS = 60_000;
 const errText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
-export type EngineDeps = Omit<EngineCtx, "kick" | "checkWait" | "forgeBackoffs" | "prReads"> & { projects: Projects; settings?: () => LoomSettings };
+export type EngineDeps = Omit<EngineCtx, "kick" | "checkWait" | "forgeBackoffs" | "prReads" | "hostDirect"> & { projects: Projects; settings?: () => LoomSettings };
 
 export interface Approved extends ApproveResult {
   requeued: string[];
@@ -78,6 +78,7 @@ export class Engine {
       bb: holdingSends(deps.bb),
       now: deps.now,
       host: forgeBoundary(deps.host, { backoffs: () => this.ctx.forgeBackoffs, now: deps.now }),
+      hostDirect: deps.host,
       kick: () => this.kick(),
       forgeBackoffs: new Map(),
       prReads: newPrReads(),

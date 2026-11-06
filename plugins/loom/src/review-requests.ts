@@ -19,6 +19,8 @@ import { mergePostNow } from "./posts";
 export const REVIEWERS_REQUESTED = "ticket.reviewers_requested";
 export const REVIEWERS_ASKING = "ticket.reviewers_asking";
 export const REVIEWERS_FAILED = "ticket.reviewers_failed";
+/** The forge gate held the request, so nothing went out: it is asked again later, and uses no try. */
+export const REVIEWERS_HELD = "ticket.reviewers_held";
 /** Tries of a pull request's review request, counting each definite failure, before Loom gives up and says so. */
 export const REVIEW_TRIES = 3;
 const errText = (error: unknown) => (error instanceof Error ? error.message : String(error));
@@ -56,8 +58,11 @@ type StoredRule = ReviewerRuleSpec | { team: string; count?: number; users?: und
 export const teamRuleGone = (rule: { team: string; count?: number }) =>
   `${rule.team}, a team: Loom no longer reads team rules, so it asked no one from it. List the logins of the people to ask in this rule's users instead${rule.count === undefined ? "" : `, with count = ${rule.count}`}.`;
 
-/** A failed call: `thrown` when the call got no answer from the project's machine, rather than the forge's own failure. */
-type Failure = { message: string; transient: boolean; thrown: boolean };
+/**
+ * A failed call: `thrown` when the call got no answer from the project's machine, rather than the forge's own failure;
+ * `held` when the forge gate held the call, so nothing went out and nothing is counted.
+ */
+type Failure = { message: string; transient: boolean; thrown: boolean; held?: boolean };
 const isFailure = (value: unknown): value is Failure => typeof value === "object" && value !== null && "transient" in value && !("outcome" in value);
 const data = (event: EventRow) => JSON.parse(event.data_json) as { url?: string; reviewers?: string[] };
 
@@ -65,10 +70,11 @@ const data = (event: EventRow) => JSON.parse(event.data_json) as { url?: string;
 function requestState(ctx: EngineCtx, ticketId: number, url: string): { done: boolean; sent: string[] | null; failures: number } {
   let sent: string[] | null = null;
   let failures = 0;
-  for (const event of ctx.store.ticketEvents(ticketId, [REVIEWERS_REQUESTED, REVIEWERS_ASKING, REVIEWERS_FAILED])) {
+  for (const event of ctx.store.ticketEvents(ticketId, [REVIEWERS_REQUESTED, REVIEWERS_ASKING, REVIEWERS_FAILED, REVIEWERS_HELD])) {
     if (data(event).url !== url) continue;
     if (event.kind === REVIEWERS_REQUESTED) return { done: true, sent: null, failures };
     if (event.kind === REVIEWERS_ASKING) sent = data(event).reviewers ?? [];
+    else if (event.kind === REVIEWERS_HELD) sent = null;
     else {
       sent = null;
       failures += 1;
@@ -126,6 +132,7 @@ export async function requestReviewers(ctx: EngineCtx, project: ProjectRow, tick
   const call = async <T extends { outcome: string }>(fn: () => Promise<T>): Promise<T | Failure> => {
     try {
       const answer = await fn();
+      if (answer.outcome === "held") return { message: (answer as unknown as { message: string }).message, transient: true, thrown: false, held: true };
       return answer.outcome === "unavailable" ? { message: (answer as unknown as { message: string }).message, transient: (answer as { transient?: unknown }).transient !== undefined, thrown: false } : answer;
     } catch (error) {
       return { message: errText(error), transient: hostCallTransient(error) !== null, thrown: true };
@@ -138,6 +145,7 @@ export async function requestReviewers(ctx: EngineCtx, project: ProjectRow, tick
     const state = await call(() => ctx.host.call(checkout.hostId, "prReviewState", { repo: checkout.path, url }));
     const ticket = stillAsking(ctx, project.id, first.id, url);
     if (ticket === null) return;
+    if (isFailure(state) && state.held === true) return;
     if (isFailure(state)) return failed(ticket, `Loom could not read who reviews it: ${state.message}`);
     const answer = state as Extract<HostOutput<"prReviewState">, { outcome: "ok" }>;
     author = answer.author ?? author;
@@ -177,6 +185,11 @@ export async function requestReviewers(ctx: EngineCtx, project: ProjectRow, tick
   store.event(ticket.project_id, ticket.id, REVIEWERS_ASKING, LOOM_ACTOR, { url, reviewers: chosen });
   const asked = await call(() => ctx.host.call(checkout.hostId, "prRequestReview", { repo: checkout.path, url, reviewers: chosen, ...(forge.kind === "command" ? { forge: { kind: "command" as const, request_reviews: forge.request_reviews! } } : {}) }));
   const after = ctx.store.ticket(ticket.id) ?? ticket;
+  // A request the gate held sent nothing, so it is asked again later.
+  if (isFailure(asked) && asked.held === true) {
+    store.event(ticket.project_id, ticket.id, REVIEWERS_HELD, LOOM_ACTOR, { url, message: asked.message });
+    return;
+  }
   // A command that exits non-zero asked no one, by its contract; a call that got no answer may have run it.
   const lost = isFailure(asked) && asked.thrown && asked.transient && forge.kind === "command";
   if (lost || (!isFailure(asked) && asked.outcome === "unknown")) {

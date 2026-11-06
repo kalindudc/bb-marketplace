@@ -116,6 +116,9 @@ export function hostCallTransient(error: unknown): Transient | null {
   return typeof message === "string" && HOST_CALL_TROUBLE.test(message) ? { transient: "server" } : null;
 }
 
+/** A forge call the forge gate held, as a failure to wait out until its host's backoff ends: nothing was sent. */
+export const heldWait = (held: { message: string; transient: Transient["transient"]; retryAfterMs: number }): Unavailable => new Unavailable(held.message, { transient: held.transient, retryAfterMs: held.retryAfterMs });
+
 /** The Transient part of a host's unavailable answer; null when it has none. */
 export const transientOf = (answer: Partial<Transient>): Transient | null =>
   answer.transient === undefined ? null : { transient: answer.transient, ...(answer.retryAfterMs === undefined ? {} : { retryAfterMs: answer.retryAfterMs }) };

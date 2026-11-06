@@ -186,7 +186,7 @@ async function pushIntegration(ctx: EngineCtx, project: ProjectRow, spec: Spec, 
     return { sha: head, url: open };
   }
   const created = await ctx.host.call(hostId, "prCreate", { repo, remote, base, head: settings.branch!, title: clip(a.title ?? project.name, 256), body, draft: spec.merge.draft && !a.ready, forge: openForge(settings.forge) });
-  if (created.outcome === "unavailable") throw unavailable(created.message);
+  if (created.outcome === "unavailable" || created.outcome === "held") throw unavailable(created.message);
   await afterOpen(ctx, { hostId, repo, settings, head: settings.branch!, base, url: created.url, projectId: project.id, ticketId: null });
   return { sha: head, url: created.url };
 }

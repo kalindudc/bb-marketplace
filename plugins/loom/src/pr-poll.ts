@@ -6,6 +6,7 @@ import { plural } from "./format";
 import { POLL_MS, backedOffUntil, backoffText, forgeHostOf, networkWaitLong, networkWaitLongText, networkWaitText, nextPollAt, type HostBackoff, type NetworkBackoff } from "./forge-waits";
 import { classify, classifyAnswer, transientOf, type Failure, type Transient } from "./failures";
 import { followDraft } from "./drafts";
+import { unheld, type Held } from "./forge-gate";
 import { publishRule } from "./publish";
 import { followGate } from "./review-gate";
 import { andList } from "./prompts";
@@ -62,7 +63,8 @@ type Feedback = Extract<HostOutputOf<"prFeedback">, { outcome: "ok" }>;
  */
 type PrRead =
   | { outcome: "ok"; state: "OPEN" | "MERGED" | "CLOSED"; meta: Pick<PrMeta, "draft" | "review" | "base" | "mergeable"> | null; feedback: Feedback | null; text?: PrTextRead; queue?: MergeRead["queue"] }
-  | { outcome: "unavailable"; message: string; transient?: "server" | "rate_limit" | "network"; retryAfterMs?: number };
+  | { outcome: "unavailable"; message: string; transient?: "server" | "rate_limit" | "network"; retryAfterMs?: number }
+  | Held;
 
 /** The title and description a read gave; null when it gave neither, as a state command or a host from before Loom read them. */
 type PrTextRead = { title: string | null; body: string | null } | null;
@@ -226,7 +228,7 @@ export async function fixRoundState(ctx: EngineCtx, checkout: RepoCheckout, url:
   const { forge } = settings;
   const pull = forge.kind === "gh" ? githubPull(url) : null;
   if (pull !== null) {
-    const answer = await ctx.host.call(hostId, "prBatch", { repo, host: pull.host, owner: pull.owner, name: pull.name, numbers: [pull.number], feedback: false });
+    const answer = unheld(await ctx.host.call(hostId, "prBatch", { repo, host: pull.host, owner: pull.owner, name: pull.name, numbers: [pull.number], feedback: false }));
     if (answer.outcome === "unavailable") return answer;
     const read = answer.pulls.find((each) => each.number === pull.number);
     if (read === undefined) {
@@ -236,11 +238,11 @@ export async function fixRoundState(ctx: EngineCtx, checkout: RepoCheckout, url:
     return { outcome: "ok", state: read.state, meta: { draft: read.draft, review: read.review, base: read.base, mergeable: read.mergeable ?? null } };
   }
   if (forge.kind === "command" && forge.feedback !== undefined) {
-    const read = await ctx.host.call(hostId, "prFeedback", { repo, url, forge: { kind: "command", feedback: forge.feedback } });
+    const read = unheld(await ctx.host.call(hostId, "prFeedback", { repo, url, forge: { kind: "command", feedback: forge.feedback } }));
     if (read.outcome === "unavailable") return read;
     return { outcome: "ok", state: read.state, meta: { draft: read.draft ?? null, review: read.review ?? null, base: read.base ?? null, mergeable: read.mergeable ?? null } };
   }
-  const state = await ctx.host.call(hostId, "prState", { repo, url, forge: stateForge(forge) });
+  const state = unheld(await ctx.host.call(hostId, "prState", { repo, url, forge: stateForge(forge) }));
   return state.outcome === "ok" ? { outcome: "ok", state: state.state, meta: { draft: null, review: null, base: null, mergeable: null } } : state;
 }
 
@@ -282,6 +284,11 @@ async function readBatch(ctx: EngineCtx, project: ProjectRow, spec: Spec, batch:
     const failure = classify(error);
     for (const { ticket } of polled) noteAnswer(ctx, ticket.id, message);
     for (const { ticket } of polled) await readFailed(ctx, ticket, failure);
+    return;
+  }
+  // The forge gate sent nothing: the host's backoff began after the poll checked it, so these are read once it ends.
+  if (answer.outcome === "held") {
+    for (const { ticket } of polled) noteAnswer(ctx, ticket.id, answer.message);
     return;
   }
   if (answer.outcome === "unavailable") {
@@ -332,6 +339,7 @@ function missedRead(ticket: TicketRow, miss: Extract<HostOutputOf<"prBatch">, { 
 async function settleRead(ctx: EngineCtx, project: ProjectRow, settings: RepoSettings, polled: TicketRow, read: PrRead, host: string | null): Promise<void> {
   const { store } = ctx;
   noteAnswer(ctx, polled.id, read.outcome === "ok" ? null : read.message);
+  if (read.outcome === "held") return;
   if (read.outcome === "unavailable") {
     const forge = settings.forge.kind === "gh" ? "GitHub" : (host ?? "the forge");
     if (read.transient === "rate_limit" && host !== null) backOff(ctx, polled, host, read, forge);

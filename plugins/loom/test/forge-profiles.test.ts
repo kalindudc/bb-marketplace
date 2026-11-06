@@ -218,6 +218,14 @@ describe("testing a profile", () => {
     expect(text).toContain("Checks: 1\n  passed  build  (check:1)");
   });
 
+  it("reads the forge as it is now, past a backoff of its host the forge gate keeps", async () => {
+    const url = "https://forge.example.com/acme/shop/pull/7";
+    h.ctx.forgeBackoffs.set("forge.example.com", { until: h.clock.t + 60 * 60_000, delayMs: 15 * 60_000, message: "HTTP 429" });
+    const test = await forgeTest(h.ctx, FORGE, null, url);
+    expect(h.host.callsTo("prState")).toHaveLength(1);
+    expect(test.state).toMatchObject({ state: "OPEN", failure: null });
+  });
+
   it("says which field the feedback command got wrong", async () => {
     h.host.scripted.prFeedback = [{ outcome: "unavailable", message: "The forge's feedback command must print a JSON object on its last line; head: Invalid input: expected string, received undefined: {}" }];
     const test = await forgeTest(h.ctx, FORGE, null, "https://forge.example.com/acme/shop/pull/7");

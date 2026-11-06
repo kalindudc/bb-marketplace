@@ -3,14 +3,15 @@
 //   which pauses the project with the fix (failures.ts); the same refusal from any other host call stays Loom's own.
 // - The engine's backoffs by forge host are kept here for every forge operation, not only pull request reads: a rate
 //   limit, a network failure, or a server error that names when to try again backs off the host, an answer clears it,
-//   and while it lasts no forge call goes there; the step gets the wait as an unavailable answer and waits it out.
+//   and while it lasts no forge call goes there: the caller gets a "held" answer, which says nothing was sent, so it
+//   tries again later, as if it had not called, and counts no attempt and no unknown outcome.
 // A pull request opened in a checkout whose forge host the boundary has not seen since Loom started is not held back.
 import { ForgeContractError } from "./failures";
 import { forgeHostOf, nextBackoff, nextNetworkBackoff, type HostBackoffs } from "./forge-waits";
 import type { HostInput, HostMethod, HostOutput } from "./host-contract";
 import type { HostPort } from "./ports";
 
-const FORGE_METHODS: ReadonlySet<HostMethod> = new Set<HostMethod>(["prBatch", "prFeedback", "prState", "prCreate", "prEdit", "prReady", "prReply", "prRetarget", "prRequestReview", "prReviewState", "prMerge"]);
+const FORGE_METHODS: ReadonlySet<HostMethod> = new Set<HostMethod>(["prBatch", "prFeedback", "prState", "prCreate", "prEdit", "prReady", "prReply", "prRetarget", "prRequestReview", "prReviewState", "prMerge", "prReviewStart", "prReviewRead"]);
 
 type Answer = { outcome: string; message?: string; transient?: "server" | "rate_limit" | "network"; retryAfterMs?: number; pulls?: unknown[]; missing?: Array<{ message: string; transient?: "server" | "rate_limit" | "network"; retryAfterMs?: number }> };
 
@@ -32,7 +33,7 @@ export function forgeBoundary(host: HostPort, gate: { backoffs: () => HostBackof
       const now = gate.now();
       const held = forge === null ? undefined : gate.backoffs().get(forge);
       if (held !== undefined && held.until > now) {
-        const wait = { outcome: "unavailable", message: `Loom sends nothing to ${forge} until ${new Date(held.until).toISOString()}: ${held.message}`, transient: held.network === undefined ? "rate_limit" : "network", retryAfterMs: held.until - now } as const;
+        const wait = { outcome: "held", message: `Loom sent nothing to ${forge}, which it waits out until ${new Date(held.until).toISOString()}: ${held.message}`, until: held.until, transient: held.network === undefined ? "rate_limit" : "network", retryAfterMs: held.until - now } as const;
         return wait as HostOutput<M>;
       }
       let answer: HostOutput<M>;
@@ -80,4 +81,14 @@ function settle(backoffs: HostBackoffs, host: string, answer: Answer, now: numbe
     return;
   }
   if (answer.outcome !== "unavailable") backoffs.delete(host);
+}
+
+/** The answer the gate gives for a forge call it did not send. */
+export type Held = Extract<HostOutput<"prState">, { outcome: "held" }>;
+
+/** A held call as a failure worth waiting out until the host's backoff ends, for a step that waits on its ticket: nothing was sent. */
+export function unheld<T extends { outcome: string }>(answer: T | Held): Exclude<T, Held> | { outcome: "unavailable"; message: string; transient: Held["transient"]; retryAfterMs: number } {
+  if (answer.outcome !== "held") return answer as Exclude<T, Held>;
+  const held = answer as Held;
+  return { outcome: "unavailable", message: held.message, transient: held.transient, retryAfterMs: held.retryAfterMs };
 }

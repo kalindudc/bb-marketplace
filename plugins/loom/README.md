@@ -225,7 +225,9 @@ machine, or the whole project). What Loom does follows from that:
   error that names when to try again, from any call to it (reading, opening,
   editing, moving or merging a pull request, or asking for reviews), no call
   goes to that host from any project until the wait ends, and each step that
-  needed one waits until then. Loom learns each checkout's forge host, on each
+  needed one waits until then. A call held this way sent nothing, so it uses
+  no try: a merge comment or command, a review request or a review gate's
+  start is asked for again once the wait ends. Loom learns each checkout's forge host, on each
   machine, from the pull requests it reads or opens there, so the first pull
   request opened in a checkout Loom has not read since it started is the
   exception. The project's machine has no such shared wait: when it

@@ -7,7 +7,7 @@ import { readBehind } from "../src/fresh";
 import type { HostOutput } from "../src/host-contract";
 import { pollPullRequests, runMergeQueue, settleMerges } from "../src/merge";
 import { askForPrTexts, handInPrText } from "../src/pull-requests";
-import { GATE_DONE, GATE_STARTED } from "../src/publish";
+import { GATE_DONE, GATE_STARTED, GATE_START_FAILED } from "../src/publish";
 import { followGate } from "../src/review-gate";
 import { saveProfile } from "../src/forge-profiles";
 import { Store } from "../src/db/store";
@@ -123,6 +123,27 @@ describe("a review gate on a draft", () => {
     await poll();
     expect(readies()).toHaveLength(1);
     expect(h.host.callsTo("prRequestReview")).toHaveLength(1);
+  });
+
+  it("starts the gate once the forge host's backoff ends when the gate held its start, using no try", async () => {
+    await openPr();
+    passing();
+    // Another call to the forge host is rate-limited between this read's answer and the gate's start.
+    const gate = h.ctx.host;
+    h.ctx.host = {
+      call: (async (hostId: string, method: string, input: never) => {
+        const answer = await gate.call(hostId, method as never, input);
+        if (method === "prBatch") h.ctx.forgeBackoffs.set("github.com", { until: h.clock.t + 10 * 60_000, delayMs: 10 * 60_000, message: "HTTP 429" });
+        return answer;
+      }) as typeof gate.call,
+    };
+    await poll();
+    expect(starts()).toEqual([]);
+    expect(events(GATE_START_FAILED)).toEqual([expect.objectContaining({ held: true })]);
+    h.ctx.host = gate;
+    await poll(10);
+    expect(starts()).toHaveLength(1);
+    expect(card().publishWait).toBe(`its review gate is still running on ${ticket().pushed_sha!.slice(0, 12)}`);
   });
 
   it("does not start again for a refresh that only brought in the base's commits, and its clean result still stands", async () => {

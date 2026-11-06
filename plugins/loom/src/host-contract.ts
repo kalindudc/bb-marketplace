@@ -40,6 +40,11 @@ const gateFinding = z
   })
   .strict();
 const unavailable = z.object({ outcome: z.literal("unavailable"), message: z.string(), transient: transient.optional(), retryAfterMs: z.number().int().min(0).optional() }).strict();
+/**
+ * A forge call the forge gate did not send, because its forge host is backed off until `until` (forge-gate.ts): nothing
+ * reached the forge, so the caller tries again later and counts no attempt. A host never returns it.
+ */
+const held = z.object({ outcome: z.literal("held"), message: z.string(), until: z.number(), transient: z.enum(["rate_limit", "network", "server"]), retryAfterMs: z.number().int().min(0) }).strict();
 
 /** How long a command forge's retarget command may run: as long as its after_push commands, which often follow it. */
 export const RETARGET_COMMAND_MS = 5 * 60_000;
@@ -450,7 +455,7 @@ export const hostContract = defineRpcContract({
         forge: z.discriminatedUnion("kind", [z.object({ kind: z.literal("gh") }).strict(), z.object({ kind: z.literal("command"), retarget: forgeCommand }).strict()]).optional(),
       })
       .strict(),
-    output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok") }).strict(), unavailable]),
+    output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok") }).strict(), unavailable, held]),
   },
   push: {
     input: z.object({ repo: absPath, remote: ref, src: ref, branch: ref, networkTimeoutMs }).strict(),
@@ -469,7 +474,7 @@ export const hostContract = defineRpcContract({
         forge: z.discriminatedUnion("kind", [z.object({ kind: z.literal("gh") }).strict(), z.object({ kind: z.literal("command"), open: forgeCommand }).strict()]),
       })
       .strict(),
-    output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok"), url: z.string() }).strict(), unavailable]),
+    output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok"), url: z.string() }).strict(), unavailable, held]),
   },
   // Sets an open pull request's title and description: gh pr edit <url> --title <title> --body-file -, or the spec's edit
   // command with the body on stdin.
@@ -483,7 +488,7 @@ export const hostContract = defineRpcContract({
         forge: z.discriminatedUnion("kind", [z.object({ kind: z.literal("gh") }).strict(), z.object({ kind: z.literal("command"), edit: forgeCommand }).strict()]),
       })
       .strict(),
-    output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok") }).strict(), unavailable]),
+    output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok") }).strict(), unavailable, held]),
   },
   // Marks a draft pull request ready for review: gh pr ready, or a command forge's ready command. One that is already
   // ready is ok, so the call may run after an after_open command that did it.
@@ -495,7 +500,7 @@ export const hostContract = defineRpcContract({
         forge: z.discriminatedUnion("kind", [z.object({ kind: z.literal("gh") }).strict(), z.object({ kind: z.literal("command"), ready: forgeCommand }).strict()]),
       })
       .strict(),
-    output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok") }).strict(), unavailable]),
+    output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok") }).strict(), unavailable, held]),
   },
   // Answers one item of a pull request's feedback, named by the key its read gave it. gh replies in a review thread, and
   // resolves it with `resolve`, and answers a review or a comment with a comment on the pull request; a command forge runs
@@ -512,7 +517,7 @@ export const hostContract = defineRpcContract({
         forge: z.discriminatedUnion("kind", [z.object({ kind: z.literal("gh") }).strict(), z.object({ kind: z.literal("command"), reply: forgeCommand }).strict()]),
       })
       .strict(),
-    output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok"), url: z.string().nullable(), resolved: z.boolean(), message: z.string().optional() }).strict(), unavailable]),
+    output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok"), url: z.string().nullable(), resolved: z.boolean(), message: z.string().optional() }).strict(), unavailable, held]),
   },
   // The pull request's state through the repo's forge: gh pr view <url> --json state, or the spec's state command.
   prState: {
@@ -523,7 +528,7 @@ export const hostContract = defineRpcContract({
         forge: z.discriminatedUnion("kind", [z.object({ kind: z.literal("gh") }).strict(), z.object({ kind: z.literal("command"), state: forgeCommand }).strict()]),
       })
       .strict(),
-    output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok"), state: prState }).strict(), unavailable]),
+    output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok"), state: prState }).strict(), unavailable, held]),
   },
   // Asks each login for a review of the pull request, again for one who already reviewed it: one REST call each through gh,
   // so one who cannot be asked, such as a person without access to the repository, does not stop the others. A command
@@ -542,12 +547,13 @@ export const hostContract = defineRpcContract({
       z.object({ outcome: z.literal("ok"), requested: z.array(z.string()), failed: z.array(z.object({ login: z.string(), message: z.string() }).strict()) }).strict(),
       z.object({ outcome: z.literal("unknown"), message: z.string() }).strict(),
       unavailable,
+      held,
     ]),
   },
   // Who opened a GitHub pull request, who is asked to review it and who reviewed it: gh pr view --json author,reviewRequests,reviews.
   prReviewState: {
     input: z.object({ repo: absPath, url: prUrl }).strict(),
-    output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok"), author: z.string().nullable(), requested: z.array(z.string()), reviewed: z.array(z.string()) }).strict(), unavailable]),
+    output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok"), author: z.string().nullable(), requested: z.array(z.string()), reviewed: z.array(z.string()) }).strict(), unavailable, held]),
   },
   // Merges a ready pull request, or hands it to the forge's merge: gh pr merge with the method and --match-head-commit, gh
   // pr merge --auto for a merge queue, a gh comment for a merge service, or the spec's merge command. `rejected` is the
@@ -567,7 +573,7 @@ export const hostContract = defineRpcContract({
         ]),
       })
       .strict(),
-    output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok") }).strict(), z.object({ outcome: z.literal("rejected"), fix: z.boolean(), message: z.string() }).strict(), unavailable]),
+    output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok") }).strict(), z.object({ outcome: z.literal("rejected"), fix: z.boolean(), message: z.string() }).strict(), unavailable, held]),
   },
   // A pull request's feedback (feedbackOk) through gh, or the spec's feedback command, which prints the same object as JSON on its last line.
   prFeedback: {
@@ -578,7 +584,7 @@ export const hostContract = defineRpcContract({
         forge: z.discriminatedUnion("kind", [z.object({ kind: z.literal("gh") }).strict(), z.object({ kind: z.literal("command"), feedback: forgeCommand }).strict()]),
       })
       .strict(),
-    output: z.discriminatedUnion("outcome", [feedbackOk, unavailable]),
+    output: z.discriminatedUnion("outcome", [feedbackOk, unavailable, held]),
   },
   // Many pull requests of one GitHub repository in one GraphQL call: each one's state, draft flag, review decision and base
   // branch, and with `feedback` what prFeedback reads for it. A number GitHub does not answer for is in `missing`.
@@ -625,6 +631,7 @@ export const hostContract = defineRpcContract({
         })
         .strict(),
       unavailable,
+      held,
     ]),
   },
   // A cheap fingerprint of a checkout, read from its repo's top level: HEAD and the branch it is on, the index file's
@@ -655,6 +662,7 @@ export const hostContract = defineRpcContract({
     output: z.discriminatedUnion("outcome", [
       z.object({ outcome: z.literal("ok") }).strict(),
       z.object({ outcome: z.enum(["unknown", "failed", "not_started"]), message: z.string() }).strict(),
+      held,
     ]),
   },
   // review_read prints what the gate found for sha: pending while it runs, done with its findings, or failed with why.
@@ -670,6 +678,7 @@ export const hostContract = defineRpcContract({
         })
         .strict(),
       unavailable,
+      held,
     ]),
   },
   // The home directory of the user bb runs as on this machine, where a forge profile's test runs its commands.

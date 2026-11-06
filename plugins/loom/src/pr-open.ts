@@ -16,6 +16,7 @@ import { TIP_WHAT } from "./tips";
 import { readSub, writeSub } from "./sub-state";
 import { workBaseOf } from "./transport";
 import { type EngineCtx } from "./ctx";
+import { heldWait } from "./failures";
 import { checkoutIn, complete, endFinishedThreads, errText, openForge, sendBack, toPrOpen, type MergePost, unavailableOf } from "./merge-common";
 import { TIP_TAKES, finishStep, restack, stepOf, takeAtPush } from "./pr-restack";
 import { blockMergedElsewhere, closedPullRequest } from "./pr-closed";
@@ -190,6 +191,7 @@ export async function openPullRequest(ctx: EngineCtx, project: ProjectRow, spec:
   const own = kept !== null || (title !== null && body !== null);
   const pr = own ? { title: title ?? template.title, body: body === null ? template.body : workerPrBody(current.key, body, dependsOn, rollout) } : template;
   const opened = await ctx.host.call(hostId, "prCreate", { repo, remote, base: prBase, head: branch, title: clip(pr.title, 256), body: clip(pr.body, 60_000), draft: spec.merge.draft || current.keep_draft === 1, forge: openForge(settings.forge) });
+  if (opened.outcome === "held") throw heldWait(opened);
   if (opened.outcome === "unavailable") throw unavailableOf(opened);
   const on = prBase === base ? "" : ` on ${prBase}`;
   const applied = openedText(ctx, spec, current, clip(pr.title, 256), own ? body : null);
@@ -230,6 +232,7 @@ async function retarget(ctx: EngineCtx, a: { hostId: string; repo: string; setti
   }
   const moved = await ctx.host.call(a.hostId, "prRetarget", { repo: a.repo, url, base: a.base, forge: command === undefined ? { kind: "gh" } : { kind: "command", retarget: command } });
   if (moved.outcome === "ok") return { moved: true, post: { kind: "merge", body: `Moved the pull request ${url} to ${a.base}.`, data: { outcome: "retargeted", url, base: a.base } } };
+  if (moved.outcome === "held") throw heldWait(moved);
   if (command === undefined || moved.transient !== undefined) throw unavailableOf(moved, `Moving ${a.ticket.key}'s pull request to ${a.base} stopped: ${moved.message}`);
   return {
     moved: false,

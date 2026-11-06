@@ -11,6 +11,8 @@ import { readSpec, type Spec } from "./spec";
 
 export interface EngineCtx extends Ctx {
   host: HostPort;
+  /** The host port without the forge gate, for a forge profile's test, which reads what the forge says now (forge-gate.ts). */
+  hostDirect: HostPort;
   kick(): void;
   /** Forge hosts that rate-limited Loom's pull request reads, for every project; in memory only. */
   forgeBackoffs: HostBackoffs;

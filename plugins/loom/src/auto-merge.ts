@@ -61,7 +61,7 @@ export interface MergeAttempt {
   removedBefore: number | null;
 }
 
-type Outcome = "rejected" | "refused" | "failed" | "stopped" | "unconfirmed" | "superseded" | "cleared";
+type Outcome = "rejected" | "refused" | "failed" | "stopped" | "unconfirmed" | "superseded" | "cleared" | "held";
 
 /** What a read of the open pull request gives auto-merge besides what the poll stored: its items and its merge queue state. */
 export interface MergeRead {
@@ -118,8 +118,8 @@ export function attemptState(store: Store, ticketId: number): AttemptState {
       };
     } else {
       const outcome = data.outcome as Outcome;
-      // A failure worth retrying and a push that replaced the commit do not use an attempt of the current budget up.
-      if ((outcome === "failed" || outcome === "superseded" || outcome === "cleared") && state.open !== null && state.openCounted) state.used = Math.max(0, state.used - 1);
+      // A failure worth retrying, a push that replaced the commit and a call the forge gate held do not use an attempt of the current budget up.
+      if ((outcome === "failed" || outcome === "superseded" || outcome === "cleared" || outcome === "held") && state.open !== null && state.openCounted) state.used = Math.max(0, state.used - 1);
       state.open = null;
       state.openCounted = false;
       state.last = { outcome, message: typeof data.message === "string" ? data.message : null };
@@ -542,6 +542,12 @@ async function settleAnswer(ctx: EngineCtx, project: ProjectRow, ticketId: numbe
   const now = attemptState(store, ticket.id);
   const { url, sha, n } = attempt;
   const tries = `attempt ${n} of ${settings.maxAttempts}`;
+  // The forge gate sent nothing, so the attempt ends without using one up, and the next read after the backoff asks again.
+  if (answer.outcome === "held") {
+    if (now.open?.id === attempt.id) outcome(ctx, ticket, attempt, "held", answer.message);
+    ctx.bb.log("warn", `Loom did not ask to merge ${url}: ${answer.message}`);
+    return;
+  }
   if (now.open?.id !== attempt.id) {
     const why = now.last?.outcome === "cleared" && now.open === null ? "after it was cleared" : "after a newer push or attempt replaced it";
     const said = answer.outcome === "ok" ? "the forge took it" : answer.outcome === "rejected" ? `the forge turned it away: ${clip(answer.message, 1500)}` : `the call failed: ${clip(answer.message, 1500)}`;

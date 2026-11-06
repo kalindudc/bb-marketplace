@@ -60,6 +60,12 @@ async function startGate(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket
     return;
   }
   if (answer.outcome === "ok") return;
+  // The forge gate sent nothing while the forge host is backed off: the start is tried again once it ends, and uses no try.
+  if (answer.outcome === "held") {
+    store.event(project.id, ticket.id, GATE_START_FAILED, LOOM_ACTOR, { url, sha, own, message: answer.message, notStarted: true, held: true });
+    store.changed(project.id);
+    return;
+  }
   // Only a command that could not start proves nothing was asked, and only an exit with an error says it failed: any other
   // answer may have asked for the review, so the run stays open, is read, and times out.
   if (answer.outcome !== "not_started" && answer.outcome !== "failed") {
@@ -85,6 +91,8 @@ async function readGate(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket:
   }
   const current = store.ticket(ticket.id);
   if (current === null || current.state !== "pr_open" || current.pr_url !== url) return;
+  // Nothing was read while the forge host is backed off; the next read after it ends counts.
+  if (answer.outcome === "held") return;
   if (answer.outcome === "unavailable" || answer.state === "pending") {
     if (ctx.now() - run.at >= GATE_TIMEOUT_MINUTES * 60_000) {
       store.event(project.id, ticket.id, GATE_TIMED_OUT, LOOM_ACTOR, base);

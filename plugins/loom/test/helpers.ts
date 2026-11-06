@@ -830,7 +830,7 @@ export function makeCtx(): EngineHarness & { db: Database.Database } {
   const host = new FakeHost();
   const projects = new Projects({ store, bb, now: clock.now, host });
   const kicks = { count: 0 };
-  const ctx: EngineCtx = { store, bb, now: clock.now, host: forgeBoundary(host, { backoffs: () => ctx.forgeBackoffs, now: clock.now }), kick: () => void (kicks.count += 1), forgeBackoffs: new Map() };
+  const ctx: EngineCtx = { store, bb, now: clock.now, host: forgeBoundary(host, { backoffs: () => ctx.forgeBackoffs, now: clock.now }), hostDirect: host, kick: () => void (kicks.count += 1), forgeBackoffs: new Map() };
   return { ctx, clock, db, store, bb, host, projects, kicks };
 }
 

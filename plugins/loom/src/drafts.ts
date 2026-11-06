@@ -136,7 +136,8 @@ export async function followDraft(ctx: EngineCtx, project: ProjectRow, ticketId:
       mergePostNow(ctx.store, now, `${publishRule(spec) === null ? "Marked" : "Published"} ${url} ready for review: ${why}.${held}`, { outcome: "pr_marked_ready", url, ...(publishRule(spec) === null ? {} : { published: true }) });
       return true;
     }
-    if (answer.transient !== undefined) {
+    // A call the forge gate held sent nothing, and a temporary failure may be gone at the next read, so either is tried then.
+    if (answer.outcome === "held" || answer.transient !== undefined) {
       ctx.bb.log("warn", `Marking ${url} ready for review failed with what looks like a temporary error; Loom tries again at its next read: ${answer.message}`);
       return false;
     }

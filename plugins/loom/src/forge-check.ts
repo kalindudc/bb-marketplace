@@ -3,6 +3,7 @@
 import { repoCheckout } from "./checkouts";
 import type { TicketRow } from "./db/store";
 import { classifyAnswer } from "./failures";
+import { unheld } from "./forge-gate";
 import { githubPull, type HostOutput } from "./host-contract";
 import { LoomError } from "./projects";
 import { replaceLoomBlock } from "./prompts";
@@ -164,7 +165,7 @@ export async function forgeCheck(ctx: EngineCtx, a: { slug: string; target: stri
     const pull = githubPull(url);
     if (pull === null) return failed("prBatch", runs, noFeedback, `${url} is not a GitHub pull request URL, so gh cannot read it.`);
     try {
-      const answer = await ctx.host.call(checkout.hostId, "prBatch", { repo: checkout.path, host: pull.host, owner: pull.owner, name: pull.name, numbers: [pull.number], feedback: follows });
+      const answer = unheld(await ctx.host.call(checkout.hostId, "prBatch", { repo: checkout.path, host: pull.host, owner: pull.owner, name: pull.name, numbers: [pull.number], feedback: follows }));
       if (answer.outcome === "unavailable") return failed("prBatch", runs, noFeedback, answer.message, answer.transient);
       const read = answer.pulls.find((each) => each.number === pull.number);
       if (read === undefined) {
@@ -180,7 +181,7 @@ export async function forgeCheck(ctx: EngineCtx, a: { slug: string; target: stri
 
   if (follows && forge.feedback !== undefined) {
     try {
-      const answer = await ctx.host.call(checkout.hostId, "prFeedback", { repo: checkout.path, url, forge: { kind: "command", feedback: forge.feedback } });
+      const answer = unheld(await ctx.host.call(checkout.hostId, "prFeedback", { repo: checkout.path, url, forge: { kind: "command", feedback: forge.feedback } }));
       if (answer.outcome === "unavailable") return failed("prFeedback", forge.feedback, noFeedback, answer.message, answer.transient);
       return { ...base, call: "prFeedback", runs: forge.feedback, noFeedback, read: readOf(answer, forge, botGlobs(ctx, forge)), failure: null };
     } catch (error) {
@@ -189,7 +190,7 @@ export async function forgeCheck(ctx: EngineCtx, a: { slug: string; target: stri
   }
   const state = forge.state!;
   try {
-    const answer = await ctx.host.call(checkout.hostId, "prState", { repo: checkout.path, url, forge: { kind: "command", state } });
+    const answer = unheld(await ctx.host.call(checkout.hostId, "prState", { repo: checkout.path, url, forge: { kind: "command", state } }));
     if (answer.outcome === "unavailable") return failed("prState", state, noFeedback, answer.message, answer.transient);
     return { ...base, call: "prState", runs: state, noFeedback, read: { state: answer.state, draft: null, review: null, base: null, mergeable: null, head: null, author: null, checks: null, ignored: null, items: null, description: null }, failure: null };
   } catch (error) {
@@ -267,17 +268,17 @@ export interface ForgeTest {
 /**
  * Runs a profile's two read commands, state and feedback, against the pull request at `url`, on the machine bb's server
  * runs on, in its user's home directory: what a poll would read through it. It never runs a command that writes, and it
- * changes nothing in Loom.
+ * changes nothing in Loom. It reads past the forge gate, since the human asks what the forge says now.
  */
 export async function forgeTest(ctx: EngineCtx, profile: ForgeProfile, hash: string | null, url: string): Promise<ForgeTest> {
   if (!/^https?:\/\/\S+$/u.test(url) || url.length > 500) throw new LoomError("loom_invalid_input", `${url} is not a pull request URL.`, "Give the full link to a pull request on this forge.");
   const hostId = await ctx.bb.primaryHostId();
   if (hostId === null) throw new LoomError("loom_unavailable", "bb names no machine for its server, so Loom has nowhere to run the profile's commands.");
-  const cwd = (await ctx.host.call(hostId, "homeDir", {})).path;
+  const cwd = (await ctx.hostDirect.call(hostId, "homeDir", {})).path;
   const fail = (error: unknown): Failure => ({ message: error instanceof Error ? error.message : String(error), transient: null, issues: issuesOf(error) });
   let state: ForgeTest["state"];
   try {
-    const answer = await ctx.host.call(hostId, "prState", { repo: cwd, url, forge: { kind: "command", state: profile.state } });
+    const answer = await ctx.hostDirect.call(hostId, "prState", { repo: cwd, url, forge: { kind: "command", state: profile.state } });
     state = answer.outcome === "ok" ? { runs: profile.state, state: answer.state, failure: null } : { runs: profile.state, state: null, failure: { message: answer.message, transient: answer.transient ?? null, issues: [] } };
   } catch (error) {
     state = { runs: profile.state, state: null, failure: fail(error) };
@@ -286,7 +287,7 @@ export async function forgeTest(ctx: EngineCtx, profile: ForgeProfile, hash: str
   if (profile.feedback !== undefined) {
     const forge: ForgeSpec = { kind: "command", ...(profile.ignore_checks === undefined ? {} : { ignore_checks: profile.ignore_checks }), ...(profile.bots === undefined ? {} : { bots: profile.bots }) };
     try {
-      const answer = await ctx.host.call(hostId, "prFeedback", { repo: cwd, url, forge: { kind: "command", feedback: profile.feedback } });
+      const answer = await ctx.hostDirect.call(hostId, "prFeedback", { repo: cwd, url, forge: { kind: "command", feedback: profile.feedback } });
       feedback =
         answer.outcome === "ok"
           ? { runs: profile.feedback, read: readOf(answer, forge, botGlobs(ctx, forge)), failure: null }
