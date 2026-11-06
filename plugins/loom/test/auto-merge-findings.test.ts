@@ -8,7 +8,9 @@ import { askForPrTexts, handInPrText } from "../src/pull-requests";
 import { pickReviewers, REVIEWERS_REQUESTED } from "../src/review-requests";
 import { markLiveByHuman } from "../src/rollout-live";
 import { parseSpec } from "../src/spec";
-import { blockTicket, requeueTicket, specOf, type EngineCtx } from "../src/workers";
+import { blockTicket } from "../src/workers";
+import { requeueTicket } from "../src/requeue";
+import { specOf, type EngineCtx } from "../src/ctx";
 import { makeCtx, reachApproved, seedProject, specToml, ticketOf, type Doc, type EngineHarness } from "./helpers";
 
 type Item = Extract<HostOutput<"prFeedback">, { outcome: "ok" }>["items"][number];

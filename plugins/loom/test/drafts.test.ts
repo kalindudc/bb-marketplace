@@ -10,7 +10,7 @@ import { askForPrTexts, handInPrText } from "../src/pull-requests";
 import { boardCards } from "../src/rpc";
 import { parseSpec, specHash } from "../src/spec";
 import { registerTools } from "../src/tools";
-import { specOf } from "../src/workers";
+import { specOf } from "../src/ctx";
 import { Clock, FakePort, makeHost, reachApproved, seedProject, specToml, ticketOf, type Doc, type EngineHarness } from "./helpers";
 
 const URL = "https://github.com/acme/shop/pull/1";

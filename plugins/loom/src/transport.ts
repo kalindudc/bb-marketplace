@@ -13,7 +13,7 @@ import type { EnvironmentInfo } from "./ports";
 import { freshBaseOf, gitIndex, gitNetwork } from "./repos";
 import type { Spec } from "./spec";
 import { stackOf } from "./stack";
-import type { EngineCtx } from "./workers";
+import { type EngineCtx } from "./ctx";
 
 const errText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 

@@ -9,7 +9,7 @@ import { LoomError } from "./projects";
 import { deployOf, followsRollout, isRolloutStep, rolloutOf, rolloutOfTicket, whenText, type RolloutView } from "./rollout";
 import type { Spec } from "./spec";
 import { LOOM_ACTOR, type ProjectState } from "./states";
-import { specOf, type EngineCtx } from "./workers";
+import { specOf, type EngineCtx } from "./ctx";
 
 export const ROLLOUT_CHECK_MINUTES = 15;
 const CHECK_MS = ROLLOUT_CHECK_MINUTES * 60_000;

@@ -10,7 +10,7 @@ import { writeSub, type PrMeta } from "./sub-state";
 import { metaOf } from "./pr-meta";
 import { gitNetwork, isMultiRepo, repoSettings } from "./repos";
 import type { Spec } from "./spec";
-import type { EngineCtx } from "./workers";
+import { type EngineCtx } from "./ctx";
 
 export const FETCH_EVERY_MS = 30 * 60_000;
 const errText = (error: unknown) => (error instanceof Error ? error.message : String(error));

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { Changes } from "../src/changes";
 import type { HostOutput } from "../src/host-contract";
 import { runMergeQueue, settleMerges } from "../src/merge";
-import { specOf } from "../src/workers";
+import { specOf } from "../src/ctx";
 import { makeCtx, reachApproved, reachReview, seedProject, seedRepoProject, startWorker, ticketOf, withDocsTicket, type Doc, type EngineHarness } from "./helpers";
 
 let h: EngineHarness;

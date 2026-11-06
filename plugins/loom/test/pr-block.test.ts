@@ -9,7 +9,7 @@ import { LOOM_BEGIN, LOOM_END, loomBlock, replaceLoomBlock } from "../src/prompt
 import { askForPrTexts, FORMAT_REFRESHES, handInPrText } from "../src/pull-requests";
 import { approve, settleReviews, spawnReviewers } from "../src/review";
 import { markLiveByHuman } from "../src/rollout-live";
-import { specOf } from "../src/workers";
+import { specOf } from "../src/ctx";
 import { checkOutHead, makeCtx, seedProject, startWorker, ticketOf, type Doc, type EngineHarness } from "./helpers";
 
 let h: EngineHarness;

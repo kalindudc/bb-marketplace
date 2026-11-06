@@ -6,7 +6,7 @@ import { pollPullRequests, runMergeQueue, settleMerges } from "../src/merge";
 import { askForPrTexts, handInPrText } from "../src/pull-requests";
 import { pickReviewers, REVIEWERS_REQUESTED } from "../src/review-requests";
 import { parseSpec, specHash } from "../src/spec";
-import { specOf } from "../src/workers";
+import { specOf } from "../src/ctx";
 import { makeCtx, reachApproved, seedProject, ticketOf, type Doc, type EngineHarness, specToml } from "./helpers";
 
 type Item = Extract<HostOutput<"prFeedback">, { outcome: "ok" }>["items"][number];

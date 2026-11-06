@@ -13,7 +13,8 @@ import { operationalChanges } from "./spec-diff";
 import { SPEC_REVIEW_ROUNDS } from "./states";
 import type { StartWait } from "./sub-state";
 import { nextWait, provisioningFailure, startProblemOf, unavailableReason, type StartProblem } from "./starts";
-import { MAX_RATE_LIMIT_RETRIES, rateLimitRetryAt, type EngineCtx, type TurnFailure } from "./workers";
+import { MAX_RATE_LIMIT_RETRIES, rateLimitRetryAt, type TurnFailure } from "./workers";
+import { type EngineCtx } from "./ctx";
 
 export interface SpecFinding {
   path?: string;

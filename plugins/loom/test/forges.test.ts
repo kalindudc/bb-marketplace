@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { land, pollPullRequests, runMergeQueue, settleMerges } from "../src/merge";
 import type { SpawnArgs } from "../src/ports";
 import { spawnReviewers } from "../src/review";
-import { specOf } from "../src/workers";
+import { specOf } from "../src/ctx";
 import { GIT_WORKTREE_PROVIDER, makeCtx, reachApproved, reachReview, seedProject, specToml, ticketOf, type Doc, type EngineHarness } from "./helpers";
 
 let h: EngineHarness;

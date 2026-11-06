@@ -3,7 +3,9 @@ import { heldCheckResult } from "../src/prompts";
 import { finishIfComplete, holdMerge, land, mergeTicket, pollPullRequests, runMergeQueue, settleMerges } from "../src/merge";
 import { readyTickets, toLite } from "../src/scheduler";
 import type { HostOutput } from "../src/host-contract";
-import { blockTicket, endThread, requeueTicket, specOf } from "../src/workers";
+import { blockTicket, endThread } from "../src/workers";
+import { requeueTicket } from "../src/requeue";
+import { specOf } from "../src/ctx";
 import { makeCtx, reachApproved, seedProject, seedRepoProject, specToml, startWorker, ticketOf, withDocsTicket, type Doc, type EngineHarness } from "./helpers";
 
 let h: EngineHarness;

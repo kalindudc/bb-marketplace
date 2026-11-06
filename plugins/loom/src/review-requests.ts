@@ -13,7 +13,7 @@ import { repoCheckout, type RepoCheckout } from "./checkouts";
 import { repoSettings } from "./repos";
 import type { ForgeSpec, ReviewerRuleSpec } from "./spec";
 import { LOOM_ACTOR } from "./states";
-import { specOf, type EngineCtx } from "./workers";
+import { specOf, type EngineCtx } from "./ctx";
 
 export const REVIEWERS_REQUESTED = "ticket.reviewers_requested";
 export const REVIEWERS_ASKING = "ticket.reviewers_asking";

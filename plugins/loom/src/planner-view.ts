@@ -4,7 +4,7 @@
 import { plannerAsk, type AskStep, type PlannerAsk } from "./asks";
 import { mergeConfirmOf, type MergeConfirmState } from "./auto-merge";
 import { releaseRequestOf } from "./drafts";
-import { specOf } from "./workers";
+import { specOf } from "./ctx";
 import type { EventRow, ProjectRow, Store } from "./db/store";
 import type { Projects, SpecView } from "./projects";
 import { clip } from "./prompts";

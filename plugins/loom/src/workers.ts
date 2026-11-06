@@ -2,57 +2,29 @@
 // and end any worker or reviewer thread in one place (endThread). Every state change is a named move in moves.ts.
 import { randomBytes } from "node:crypto";
 import { retriesOf } from "./backoff";
-import { repoCheckout, ticketRepo, type RepoCheckout } from "./checkouts";
-import type { HostBackoffs } from "./forge-waits";
-import type { PostRow, ProjectRow, Store, ThreadRow, TicketRow } from "./db/store";
+import { repoCheckout, ticketRepo } from "./checkouts";
+import type { ProjectRow, Store, ThreadRow, TicketRow } from "./db/store";
 import { spawnEnvironment, threadBranch, ticketInputsOf, usesNewMachine } from "./environments";
 import { plural } from "./format";
-import type { EnvironmentInfo, HostPort } from "./ports";
-import type { PrReads } from "./pr-sync";
-import { COMMENT_SIGNATURE, andList, branchName, latestChangesRequested, mergeSubject, nudgeText, workerBrief } from "./prompts";
-import { LoomError, type Ctx } from "./projects";
-import { applyPrText, approvedSinceSubmit, prTextFor, textPending, wantedText } from "./pull-requests";
+import type { EnvironmentInfo } from "./ports";
+import { andList, branchName, latestChangesRequested, mergeSubject, nudgeText, workerBrief } from "./prompts";
+import { LoomError } from "./projects";
 import { freshBaseOf, gitIndex, gitNetwork, repoSettings } from "./repos";
-import { backToReview } from "./review";
 import { idleAction, spawnable, toLite, type TicketLite } from "./scheduler";
 import type { Spec } from "./spec";
-import { EMPTY_STACK, restackOf, stackBranch, stacking, stackOf, upstreamOf } from "./stack";
+import { EMPTY_STACK, stackBranch, stacking, stackOf, upstreamOf } from "./stack";
 import { nextWait, provisioningFailure, startProblemOf, startWaits, unavailableReason, waitOf, waitPost, type StartProblem } from "./starts";
-import { HUMAN_ACTOR, LOOM_ACTOR, PAUSE_NOW_REASON, type AuthorKind } from "./states";
+import { HUMAN_ACTOR, LOOM_ACTOR, PAUSE_NOW_REASON } from "./states";
 import { readSub, writeSub, type Resume, type Stack } from "./sub-state";
 import { bringHome, carryTo, homeBranch, isRemote } from "./transport";
 import { canTake, moveTicket, tryMoveTicket, type TicketMove } from "./moves";
-
-export interface EngineCtx extends Ctx {
-  host: HostPort;
-  kick(): void;
-  /** Forge hosts that rate-limited Loom's pull request reads, for every project; in memory only. */
-  forgeBackoffs: HostBackoffs;
-  /** The pull request reads the human's syncs ask for and follow (pr-sync.ts); in memory only. */
-  prReads?: PrReads;
-  /** How long a pull request's failed checks wait for the pending ones after a push; Loom's checksSettleMinutes setting. */
-  checksSettleMs?: () => number;
-  /** How long a queued check may hold the failed ones; Loom's checksQueuedMinutes setting, which the spec can override. */
-  checksQueuedMinutes?: () => number;
-  /** How far along a running check must be to hold the failed ones; Loom's checksNearDonePercent setting, which the spec can override. */
-  checksNearDonePercent?: () => number;
-  /** The line a worker ends its pull request comments with; Loom's commentSignature setting. */
-  commentSignature?: () => string;
-}
-
-export const signatureOf = (ctx: EngineCtx): string => ctx.commentSignature?.() ?? COMMENT_SIGNATURE;
+import { specOf, signatureOf, type EngineCtx } from "./ctx";
 
 export type EndReason = "abandoned" | "timeout" | "failed" | "gone" | "blocked" | "cancelled" | "verdict" | "superseded" | "merged" | "released" | "unreachable";
 
 const ENDING_LIMIT_MS = 10 * 60_000;
 export const MAX_RATE_LIMIT_RETRIES = 3;
 const errText = (error: unknown) => (error instanceof Error ? error.message : String(error));
-
-export function specOf(store: Store, project: ProjectRow): Spec {
-  const row = project.approved_version === null ? null : store.specVersion(project.id, project.approved_version);
-  if (row === null) throw new LoomError("loom_invalid_state", `Project ${project.slug} has no approved spec.`);
-  return JSON.parse(row.spec_json) as Spec;
-}
 
 /** Where a worker's branch starts in `repo`, the Loom project's own repository for null, when no earlier worker left one. */
 export function freshBase(spec: Spec, repo: string | null = null): string {
@@ -242,7 +214,7 @@ export async function spawnWorker(ctx: EngineCtx, project: ProjectRow, spec: Spe
   }
 }
 
-type EarlierWork = Resume & { branch: string };
+export type EarlierWork = Resume & { branch: string };
 
 /**
  * The ticket's newest work on the project's checkout: the home branch, with the work Loom brought from other machines,
@@ -250,7 +222,7 @@ type EarlierWork = Resume & { branch: string };
  * or there is no home branch. A branch from another machine never builds on it, even where its provider copies it to
  * the checkout. Null when neither is there.
  */
-async function earlierWork(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket: TicketRow): Promise<EarlierWork | null> {
+export async function earlierWork(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket: TicketRow): Promise<EarlierWork | null> {
   const checkout = await repoCheckout(ctx, project, spec, ticket.repo);
   const home = homeBranch(project.slug, ticket.key);
   const homeTip = await ctx.host.call(checkout.hostId, "refTip", { repo: checkout.path, ref: `refs/heads/${home}` });
@@ -735,48 +707,6 @@ export async function endLiveRows(ctx: EngineCtx, ticket: TicketRow, reason: "bl
 }
 
 /**
- * Blocked to queued, for the human or the planner. The next worker starts from the ticket's branch and reads the whole
- * thread. With `review`, the ticket goes back as it is instead, with no new worker (reviewAgain).
- */
-export async function requeueTicket(ctx: EngineCtx, key: string, a: { note: string; actor: string; author: AuthorKind; threadId?: string; review?: boolean }): Promise<TicketRow> {
-  const ticket = ctx.store.ticketByKey(key);
-  if (ticket === null) throw new LoomError("loom_not_found", `No ticket ${key}.`, "Run `bb loom tickets <slug>` to see the ticket keys.");
-  if (ticket.state !== "blocked") throw new LoomError("loom_invalid_state", `${key} is ${ticket.state}; only a blocked ticket can be requeued.`);
-  if (a.review === true) return reviewAgain(ctx, ticket, a);
-  const note = a.note.trim();
-  ctx.store.tx(() => {
-    // A ticket whose pull request stays open comes back as a fix round on it, asked for its own text again.
-    const fix = ticket.pushed_sha !== null ? { pr_rounds: ticket.pr_rounds + 1 } : {};
-    // A block that let go of the pull request leaves no commit pushed; what Loom last read of that pull request goes with it.
-    const gone = ticket.pushed_sha === null ? { pr_meta_json: null } : {};
-    moveTicket(ctx.store, ticket.id, { name: "requeue", set: { ...fix, ...gone } }, a.actor, { requeued: true, failures: 0 });
-    if (note !== "") {
-      ctx.store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: a.author, author_thread_id: a.threadId ?? null, kind: "reply", body: note });
-    }
-  });
-  ctx.store.changed(ticket.project_id);
-  ctx.kick();
-  return ctx.store.ticket(ticket.id)!;
-}
-
-/** What review again as is could do with a ticket, from what Loom stored; reviewAgain then checks its branch. */
-export interface ReviewAgain {
-  /** Back on its pull request: it has one that Loom pushed to. */
-  pr: boolean;
-  /** Back to review: the newest check post passed, at the ticket's head. */
-  review: boolean;
-}
-
-export function reviewAgainOf(ticket: TicketRow, posts: readonly PostRow[]): ReviewAgain {
-  if (ticket.state !== "blocked") return { pr: false, review: false };
-  const check = [...posts].reverse().find((post) => post.kind === "check");
-  const last = check === undefined ? null : (JSON.parse(check.data_json) as { passed?: boolean; head?: string });
-  return { pr: ticket.pr_branch !== null && ticket.pushed_sha !== null, review: ticket.head_sha !== null && last?.passed === true && last.head === ticket.head_sha };
-}
-
-const short = (sha: string) => sha.slice(0, 12);
-
-/**
  * The worker thread a ticket sent back as it is, or back to review, keeps, on the pull request strategy: its newest
  * worker that ran, when Loom ended it for the block or a release. It is the ticket's released worker again, so a fix round or a catch-up
  * brings the same thread back, or hands the ticket to a new worker from its branch when bb cannot (release.ts). A thread
@@ -786,86 +716,4 @@ export function keptWorker(store: Store, ticket: TicketRow): ThreadRow | "ending
   const row = store.threads({ ticketId: ticket.id, role: "worker" }).filter((one) => one.thread_id !== null && (one.environment_id !== null || one.released_at !== null)).at(-1);
   if (row?.state === "ending") return "ending";
   return row?.state === "ended" && (row.end_reason === "blocked" || row.end_reason === "released") ? row : null;
-}
-
-/**
- * Review again as is. A ticket whose newest work has nothing its pull request lacks goes back to pr_open, as a fix with
- * no change does, unless the worker proposed a text the pull request lacks: one the reviewers approved is set on the way
- * back, with nothing pushed, and one they have not goes to review. One whose newest work is the commit whose checks
- * passed last goes back to review for it, in a new round. Blocking ended its worker and reviewers; on the pull request strategy the worker's thread comes back as the
- * ticket's released worker (keptWorker), and requested changes go to a new worker from the branch. A stacked ticket
- * whose worker cannot come back is refused while its branch may still have to catch up, as nothing could run it.
- * Anything else is refused too.
- */
-async function reviewAgain(ctx: EngineCtx, ticket: TicketRow, a: { note: string; actor: string; author: AuthorKind; threadId?: string }): Promise<TicketRow> {
-  const { store } = ctx;
-  const { key } = ticket;
-  const can = reviewAgainOf(ticket, store.posts(ticket.id));
-  const refuse = (why: string) => new LoomError("loom_invalid_state", `${why}, so it cannot go back as it is. A plain requeue starts a new worker from its branch instead.`, `Run \`bb loom requeue ${key}\` without --review, with a note for the next worker.`);
-  if (!can.pr && !can.review) throw refuse(ticket.head_sha === null ? `${key} has no commit that passed its checks` : `The last checks on ${key} did not pass on the commit it was submitted at`);
-
-  const project = store.project(ticket.project_id)!;
-  const spec = specOf(store, project);
-  let tip: EarlierWork | null;
-  let pushedTree: string | null = null;
-  let headTree: string | null = null;
-  let checkout: RepoCheckout;
-  try {
-    tip = await earlierWork(ctx, project, spec, ticket);
-    checkout = await repoCheckout(ctx, project, spec, ticket.repo);
-    const treeOf = async (sha: string) => {
-      const found = await ctx.host.call(checkout.hostId, "refTip", { repo: checkout.path, ref: sha });
-      return found.outcome === "ok" ? found.tree : null;
-    };
-    if (tip !== null && can.pr) pushedTree = await treeOf(ticket.pushed_sha!);
-    if (tip !== null && can.review) headTree = ticket.head_tree ?? (await treeOf(ticket.head_sha!));
-  } catch (error) {
-    if (error instanceof LoomError) throw error;
-    throw new LoomError("loom_unavailable", `Loom could not read ${key}'s branch on the project's checkout: ${errText(error)}`);
-  }
-  if (tip === null) throw refuse(`Loom finds no branch of ${key} on the project's checkout`);
-  const pending = can.pr && textPending(ctx, ticket);
-  const approvedText = pending && approvedSinceSubmit(store, ticket.id);
-  const unchanged = can.pr && tip.tree === pushedTree;
-  const to = unchanged && (!pending || approvedText) ? "pr_open" : can.review && tip.tree === headTree ? "review" : null;
-  if (to === null) {
-    if (unchanged) throw refuse(`${key}'s proposed pull request text has not been reviewed, and it has no commit that passed its checks to review it with`);
-    throw refuse(can.review ? `${key}'s branch has changes since ${short(ticket.head_sha!)}, the commit whose checks passed last` : `${key}'s branch has changes its pull request does not have, and they have not passed Loom's checks`);
-  }
-  const want = to === "pr_open" && approvedText ? wantedText(ctx, ticket, prTextFor(spec, ticket) ?? { head: ticket.head_sha!, by: "loom", title: null, body: null, commit: "" }) : null;
-
-  const kept = spec.merge.strategy === "pr" ? keptWorker(store, ticket) : null;
-  if (kept === "ending") throw new LoomError("loom_invalid_state", `${key}'s worker thread is still stopping; try again in a moment.`);
-  const tickets = store.tickets(ticket.project_id);
-  if (kept === null && stacking(spec) && (upstreamOf(tickets, ticket).open.length > 0 || restackOf(tickets, { ...ticket, state: to }) !== null)) {
-    throw refuse(`${key} is stacked on a pull request it may still have to catch up with, and its worker's thread cannot come back to do it`);
-  }
-
-  const note = a.note.trim();
-  const keep = kept === null ? {} : { worker_thread_id: kept.thread_id };
-  store.tx(() => {
-    const current = store.ticket(ticket.id)!;
-    if (current.state !== "blocked" || current.head_sha !== ticket.head_sha || current.pushed_sha !== ticket.pushed_sha) throw new LoomError("loom_invalid_state", `${key} changed while Loom read its branch; try again.`);
-    if (kept !== null) {
-      const row = store.thread(kept.id)!;
-      if (row.state !== "ended" || row.end_reason !== kept.end_reason) throw new LoomError("loom_invalid_state", `${key}'s worker thread changed while Loom read its branch; try again.`);
-      store.updateThread(row.id, { end_reason: "released", released_at: row.released_at ?? ctx.now() });
-    }
-    if (to === "review") {
-      const text = `Back in review as it is: new reviewers judge ${short(current.head_sha!)}, the commit whose checks passed last, in round ${current.review_round + 1}. A worker starts only if they ask for changes.`;
-      backToReview(ctx, current, text, { actor: a.actor, reason: "sent back to review as it is", requeued: true, set: { ...keep, ...(current.pushed_sha === null ? { pr_meta_json: null } : {}) } });
-    } else {
-      // An old streak of failed reads would make the first new one pause the project, so the next read starts afresh, at once.
-      moveTicket(store, current.id, { name: "pr_again", set: keep }, a.actor, { requeued: true, failures: 0, reason: "sent back to its pull request as it is" });
-      const back = kept === null ? "" : " When the pull request needs a fix, or its branch must catch up, Loom brings back the worker's thread, or starts a new worker from the branch when it cannot.";
-      const text = want === null ? "" : " It sets the title and description the reviewers approved.";
-      const body = `Back on its pull request as it is: ${key}'s branch has nothing ${current.pr_url ?? "the pull request"} lacks, so Loom pushed nothing and follows the pull request again.${text}${back}`;
-      store.addPost({ project_id: current.project_id, ticket_id: current.id, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "merge", body, data_json: JSON.stringify({ outcome: "pr_unchanged", url: current.pr_url, sha: current.pushed_sha, round: current.pr_rounds, again: true }) });
-    }
-    if (note !== "") store.addPost({ project_id: current.project_id, ticket_id: current.id, parent_id: null, author_kind: a.author, author_thread_id: a.threadId ?? null, kind: "reply", body: note });
-  });
-  store.changed(ticket.project_id);
-  if (want !== null) await applyPrText(ctx, spec, store.ticket(ticket.id)!, checkout, want);
-  ctx.kick();
-  return store.ticket(ticket.id)!;
 }

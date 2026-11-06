@@ -4,7 +4,9 @@ import type { EngineHarness } from "./helpers";
 import { LoomError } from "../src/projects";
 import { projectTimeline, rewind, rowsOf } from "../src/replay";
 import { approve, requestChanges, settleReviews, spawnReviewers } from "../src/review";
-import { endThread, requeueTicket, specOf } from "../src/workers";
+import { endThread } from "../src/workers";
+import { requeueTicket } from "../src/requeue";
+import { specOf } from "../src/ctx";
 import { checkOutHead, makeCtx, seedProject, specToml, startWorker, ticketOf } from "./helpers";
 
 const MINUTE = 60_000;

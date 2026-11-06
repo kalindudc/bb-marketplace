@@ -3,7 +3,7 @@ import { finishIfComplete, land, pollPullRequests, runMergeQueue, settleMerges }
 import { SpawnRefusedError, type SpawnArgs } from "../src/ports";
 import { recordPrompt } from "../src/prompts";
 import { HOOK_TIMEOUT_MS, NO_HOOK, RECORD_MAX, SETTINGS, SUMMARY_TIMEOUT_MS, projectRecord, sendRecords, settleRecords, type DoneSettings } from "../src/record";
-import { specOf } from "../src/workers";
+import { specOf } from "../src/ctx";
 import { makeCtx, reachApproved, seedProject, seedRepoProject, ticketOf, type Doc, type EngineHarness } from "./helpers";
 
 let h: EngineHarness;

@@ -10,7 +10,7 @@ import { askForPrTexts, handInPrText } from "../src/pull-requests";
 import { boardCards } from "../src/rpc";
 import { stackOf } from "../src/stack";
 import { approve, settleReviews, spawnReviewers } from "../src/review";
-import { specOf } from "../src/workers";
+import { specOf } from "../src/ctx";
 import { checkOutHead, makeCtx, makeEngine, reachApproved, reachReview, seedMachineProject, seedProject, ticketOf, withDocsTicket, type Doc, type EngineHarness } from "./helpers";
 
 let h: EngineHarness;

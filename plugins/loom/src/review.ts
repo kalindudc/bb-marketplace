@@ -2,7 +2,7 @@
 // from the reviewer row it started for the ticket's current round, and one transaction stores the verdict and
 // applies the round outcome, so a crash cannot leave a verdict without one. The tick replays what a crash cut short.
 import { randomBytes } from "node:crypto";
-import { workerOf } from "./checks";
+import { workerOf, specOf, type EngineCtx } from "./ctx";
 import { repoCheckout, ticketRepo } from "./checkouts";
 import type { ProjectRow, ReviewRow, Store, ThreadRow, TicketRow } from "./db/store";
 import { spawnEnvironment, threadBranch, ticketInputsOf, usesNewMachine } from "./environments";
@@ -19,7 +19,7 @@ import { deliverHandBacks, handBack } from "./slots";
 import type { Spec } from "./spec";
 import { LOOM_ACTOR } from "./states";
 import { carryTo, headCameHome, homeBranch, workBaseOf, worktreeBaseOf } from "./transport";
-import { endLiveRows, endThread, freshBase, keptWorker, machineMoved, otherCheckouts, pauseProject, resolveEnvironment, resumeEnding, retryRateLimited, specOf, type EndReason, type EngineCtx, type TurnFailure } from "./workers";
+import { endLiveRows, endThread, freshBase, keptWorker, machineMoved, otherCheckouts, pauseProject, resolveEnvironment, resumeEnding, retryRateLimited, type EndReason, type TurnFailure } from "./workers";
 import { moveTicket, patchOf, tryMoveTicket, type TicketMove } from "./moves";
 
 export interface Finding {

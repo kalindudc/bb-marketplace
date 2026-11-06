@@ -9,7 +9,8 @@ import { isBudgetPause } from "./scheduler";
 import { dependencyCycle, fallsUnder, numberErrors, ticketEnvironmentErrors, type Spec, type TicketPatch, type TicketRolloutSpec, type TicketSpec } from "./spec";
 import { HUMAN_ACTOR, LOOM_ACTOR, TICKET_STATES, canMoveTicket, type TicketState } from "./states";
 import { writeSub, readSub } from "./sub-state";
-import { endLiveRows, specOf, type EngineCtx } from "./workers";
+import { endLiveRows } from "./workers";
+import { specOf, type EngineCtx } from "./ctx";
 
 const ROUND_LIMIT_MS = 30 * 60_000;
 const DIGEST_POSTS = 3;

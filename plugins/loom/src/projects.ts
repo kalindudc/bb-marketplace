@@ -925,7 +925,7 @@ export function repoOverviews(project: Pick<ProjectRow, "bb_project_id">, spec: 
     const settings = repoSettings(spec, name);
     const land = lands.get(name);
     const landedAt = land?.landedAt ?? null;
-    // The rule of unlandedRepos in merge.ts, which imports this file.
+    // The rule of unlandedRepos in land.ts, which imports this file.
     const toLand = settings.branch !== null && tickets.some((ticket) => ticket.repo === name && ticket.state === "done" && (landedAt ?? -1) < ticket.state_at);
     return { name, bbProjectId: settings.bbProjectId ?? project.bb_project_id, bbProjectName: null, base: settings.base, branch: settings.branch, prUrl: land?.prUrl ?? null, landedAt, toLand };
   });

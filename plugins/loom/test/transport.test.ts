@@ -8,7 +8,7 @@ import { BLOB_MAX_BYTES, type HostInput, type HostMethod, type HostOutput } from
 import * as ops from "../src/host/ops";
 import type { EnvironmentInfo, HostPort } from "../src/ports";
 import { bringHome, carryTo, homeBranch, reviewedRef, workBaseOf } from "../src/transport";
-import { specOf, type EngineCtx } from "../src/workers";
+import { specOf, type EngineCtx } from "../src/ctx";
 import { makeCtx, seedProject, ticketOf, type EngineHarness } from "./helpers";
 import { mergeCommitsSince, restrictedGitBin } from "./restricted-git";
 

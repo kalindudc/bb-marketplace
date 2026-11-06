@@ -8,7 +8,7 @@ import { replaceLoomBlock } from "./prompts";
 import { keptChecks } from "./pull-requests";
 import { followsFeedback, isMultiRepo, prSettings, repoSettings, type RepoSettings } from "./repos";
 import type { ForgeSpec, Spec } from "./spec";
-import type { EngineCtx } from "./workers";
+import { type EngineCtx } from "./ctx";
 
 type Feedback = Extract<HostOutput<"prFeedback">, { outcome: "ok" }>;
 type Transient = "server" | "rate_limit" | "network";

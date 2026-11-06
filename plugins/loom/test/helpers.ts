@@ -12,7 +12,8 @@ import { Engine } from "../src/engine";
 import { approve, settleReviews, spawnReviewers } from "../src/review";
 import { Projects } from "../src/projects";
 import type { LoomSettings } from "../src/record";
-import { specOf, spawnWorker, type EngineCtx } from "../src/workers";
+import { spawnWorker } from "../src/workers";
+import { specOf, type EngineCtx } from "../src/ctx";
 import { SectionNameConflictError, type BbPort, type BbProjectInfo, type EnvironmentFile, type EnvironmentFiles, type EnvironmentInfo, type EnvironmentPatch, type EnvironmentProviderInfo, type HostPort, type MachineProviderInfo, type PluginInfo, type SpawnArgs, type ThreadInfo } from "../src/ports";
 
 export function makeDb(): Database.Database {

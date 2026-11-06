@@ -10,7 +10,7 @@ import { requestChanges, spawnReviewers, type Finding } from "../src/review";
 import { boardCards } from "../src/rpc";
 import { freeWorkerSlots, slotTurns, toLite, waitsForSlot, workerSlots, type TicketLite } from "../src/scheduler";
 import { deliverHandBacks } from "../src/slots";
-import { specOf } from "../src/workers";
+import { specOf } from "../src/ctx";
 import { metrics } from "./fixtures";
 import { checkOutHead, makeEngine, reachApproved, reachReview, seedProject, startWorker, ticketOf, withDocsTicket, type Doc } from "./helpers";
 

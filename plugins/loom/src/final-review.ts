@@ -24,7 +24,7 @@ import { autoMergeOf, repoSettings, type AutoMergeSettings } from "./repos";
 import type { Spec } from "./spec";
 import { SpawnRefusedError } from "./ports";
 import { HUMAN_ACTOR, LOOM_ACTOR } from "./states";
-import { specOf, type EngineCtx } from "./workers";
+import { specOf, type EngineCtx } from "./ctx";
 
 export const FINAL_STARTED = "ticket.final_review_started";
 export const FINAL_BOUND = "ticket.final_review_bound";

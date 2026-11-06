@@ -8,7 +8,8 @@ import { askForPrTexts, handInPrText } from "../src/pull-requests";
 import { isReleased, releaseIdleWorkers } from "../src/release";
 import { approve, settleReviews, spawnReviewers } from "../src/review";
 import { stackOf } from "../src/stack";
-import { resumeWork, spawnWorker, specOf } from "../src/workers";
+import { resumeWork, spawnWorker } from "../src/workers";
+import { specOf } from "../src/ctx";
 import { checkOutHead, makeCtx, reachApproved, seedMachineProject, startWorker, ticketOf, type Doc, type EngineHarness } from "./helpers";
 
 let h: EngineHarness;

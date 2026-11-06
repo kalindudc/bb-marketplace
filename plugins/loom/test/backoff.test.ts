@@ -5,7 +5,9 @@ import { requestChanges, spawnReviewers, type Finding } from "../src/review";
 import { deliverHandBacks } from "../src/slots";
 import { freeWorkerSlots, toLite } from "../src/scheduler";
 import { HUMAN_ACTOR } from "../src/states";
-import { requeueTicket, resumeEnding, specOf } from "../src/workers";
+import { resumeEnding } from "../src/workers";
+import { requeueTicket } from "../src/requeue";
+import { specOf } from "../src/ctx";
 import { checkOutHead, makeEngine, reachReview, seedProject, startWorker, ticketOf } from "./helpers";
 
 describe("the retry schedule", () => {

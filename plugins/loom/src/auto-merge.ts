@@ -18,7 +18,7 @@ import type { Spec } from "./spec";
 import { HUMAN_ACTOR, LOOM_ACTOR } from "./states";
 import { draftStateOf } from "./drafts";
 import { LoomError } from "./projects";
-import { specOf, type EngineCtx } from "./workers";
+import { specOf, type EngineCtx } from "./ctx";
 
 export const MERGE_ATTEMPT = "ticket.merge_attempt";
 export const MERGE_OUTCOME = "ticket.merge_outcome";

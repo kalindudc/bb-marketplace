@@ -1,6 +1,6 @@
 // A dependency in another repo cannot be stacked on, so its dependents only hear about it: each new commit on its open
 // pull request, and its merge, is posted on the dependent ticket, and the dependent's worker is told while it works.
-import { delivers, workerOf } from "./checks";
+import { delivers, workerOf, type EngineCtx } from "./ctx";
 import type { ProjectRow, TicketRow } from "./db/store";
 import { upstreamChangedText } from "./prompts";
 import { repoCheckout } from "./checkouts";
@@ -8,7 +8,6 @@ import { holdForWorker } from "./slots";
 import type { Spec } from "./spec";
 import { writeSub } from "./sub-state";
 import { stacking, stackOf } from "./stack";
-import type { EngineCtx } from "./workers";
 
 const errText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 

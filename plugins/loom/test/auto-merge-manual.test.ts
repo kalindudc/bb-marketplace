@@ -9,7 +9,7 @@ import { autoMergeOf, repoSettings } from "../src/repos";
 import { boardCards } from "../src/rpc";
 import { parseSpec, specHash } from "../src/spec";
 import { HUMAN_ACTOR } from "../src/states";
-import { specOf } from "../src/workers";
+import { specOf } from "../src/ctx";
 import { makeEngine, reachApproved, seedProject, specToml, ticketOf, type Doc, type EngineHarness } from "./helpers";
 
 let h: ReturnType<typeof makeEngine>;

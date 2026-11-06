@@ -7,7 +7,8 @@ import { reviewerBrief, workerBrief } from "../src/prompts";
 import { isReleased, releaseIdleWorkers } from "../src/release";
 import { approve, checkOutReview, settleReviews, spawnReviewers } from "../src/review";
 import { stackOf } from "../src/stack";
-import { resumeWork, specOf } from "../src/workers";
+import { resumeWork } from "../src/workers";
+import { specOf } from "../src/ctx";
 import { checkOutHead, makeCtx, reachApproved, seedMachineProject, ticketOf, type Doc, type EngineHarness } from "./helpers";
 
 let h: EngineHarness;

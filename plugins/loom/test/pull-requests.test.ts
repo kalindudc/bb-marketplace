@@ -8,7 +8,9 @@ import { humanFixRound, askForPrTexts, handInPrText, onPrWriterIdle, resumePrAsk
 import type { LoomSettings } from "../src/record";
 import { approve, settleReviews, spawnReviewers } from "../src/review";
 import { deliverHandBacks } from "../src/slots";
-import { blockTicket, endThread, requeueTicket, resumeEnding, specOf } from "../src/workers";
+import { blockTicket, endThread, resumeEnding } from "../src/workers";
+import { requeueTicket } from "../src/requeue";
+import { specOf } from "../src/ctx";
 import { checkOutHead, makeCtx, makeEngine, reachApproved, seedProject, startWorker, ticketOf, type Doc, type EngineHarness } from "./helpers";
 
 type Feedback = Partial<Extract<HostOutput<"prFeedback">, { outcome: "ok" }>>;

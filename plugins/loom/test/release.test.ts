@@ -13,7 +13,9 @@ import { deliverHandBacks } from "../src/slots";
 import { parseSpec } from "../src/spec";
 import { waitOf } from "../src/starts";
 import { stackOf } from "../src/stack";
-import { blockTicket, onThreadGone, onTurnFailed, onWorkerIdle, RELEASED_TEXT, requeueTicket, specOf } from "../src/workers";
+import { blockTicket, onThreadGone, onTurnFailed, onWorkerIdle, RELEASED_TEXT } from "../src/workers";
+import { requeueTicket } from "../src/requeue";
+import { specOf } from "../src/ctx";
 import { checkOutHead, makeCtx, makeEngine, reachApproved, reachReview, seedMachineProject, seedProject, specToml, startWorker, ticketOf, type Doc, type EngineHarness } from "./helpers";
 
 let h: EngineHarness;

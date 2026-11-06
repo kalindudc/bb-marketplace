@@ -6,7 +6,9 @@ import { SpawnRefusedError, SpawnUnavailableError, type SpawnArgs } from "../src
 import { waitOf } from "../src/starts";
 import { afterMergeFailedText, changesRequestedText, conflictText, heldCheckResult, landBody, prBody, reviewerBrief, reviewerNudgeText } from "../src/prompts";
 import { approve, blockedAtReview, checkOutReview, onReviewerGone, onReviewerIdle, onReviewerTurnFailed, requestChanges, settleReviews, spawnReviewers, type Finding } from "../src/review";
-import { blockTicket, endThread, requeueTicket, specOf } from "../src/workers";
+import { blockTicket, endThread } from "../src/workers";
+import { requeueTicket } from "../src/requeue";
+import { specOf } from "../src/ctx";
 import { GIT_WORKTREE_PROVIDER, checkOutHead, makeCtx, reachReview, seedMachineProject, seedProject, seedRepoProject, startWorker, ticketOf, withDocsTicket, type Doc, type EngineHarness } from "./helpers";
 
 let h: EngineHarness;

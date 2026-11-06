@@ -13,7 +13,7 @@ import { LoomError } from "./projects";
 import { canReady, repoSettings } from "./repos";
 import type { Spec } from "./spec";
 import { HUMAN_ACTOR, LOOM_ACTOR } from "./states";
-import { specOf, type EngineCtx } from "./workers";
+import { specOf, type EngineCtx } from "./ctx";
 
 /** Loom marked the pull request at `url` ready for review, or tried and was refused; it never tries again for that pull request. */
 export const MARKED_READY = "ticket.pr_marked_ready";

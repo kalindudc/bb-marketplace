@@ -3,7 +3,7 @@ import type { HostOutput } from "../src/host-contract";
 import { runMergeQueue, settleMerges } from "../src/merge";
 import { syncMessage, type PrSyncTicket } from "../src/pr-sync";
 import { LoomError } from "../src/projects";
-import { specOf } from "../src/workers";
+import { specOf } from "../src/ctx";
 import { makeEngine, reachApproved, seedProject, seedRepoProject, ticketOf, type Doc } from "./helpers";
 
 let h: ReturnType<typeof makeEngine>;

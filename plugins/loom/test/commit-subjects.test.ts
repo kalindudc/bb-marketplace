@@ -1,7 +1,7 @@
 // Loom writes commit subjects as a reviewer reads git history: the change's title, or a merge as git names one
 // ("Merge origin/main into <branch>"). No ticket key at the start, and no "(Loom)" or "Loom:".
 import { beforeEach, describe, expect, it } from "vitest";
-import { templateText } from "../src/pull-requests";
+import { templateText } from "../src/pr-text";
 import { mergeSubject } from "../src/prompts";
 import { blockTicket } from "../src/workers";
 import { makeCtx, seedProject, startWorker, ticketOf, type EngineHarness } from "./helpers";

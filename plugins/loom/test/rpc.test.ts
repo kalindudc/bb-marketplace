@@ -4,7 +4,8 @@ import type { SpecVersionView } from "../src/spec-view";
 import type { BbPluginApi, NewThreadRequest } from "@get-bb/plugin-sdk";
 import { notesMessage } from "../src/prompts";
 import { agentRows, boardCards, registerRpc, specSummary, watchChanges } from "../src/rpc";
-import { START_FAILED, specOf } from "../src/workers";
+import { START_FAILED } from "../src/workers";
+import { specOf } from "../src/ctx";
 import { withRepos } from "./fixtures";
 import { FakePort, makeCtx, makeHost, readyToMerge, seedProject, specToml, startWorker, type Doc } from "./helpers";
 

@@ -7,7 +7,9 @@ import { applyPrText, askForPrTexts, globMatch, handInPrText, keptChecks, replyT
 import { approve, requestChanges, settleReviews, spawnReviewers } from "../src/review";
 import { markLiveByHuman } from "../src/rollout-live";
 import { repoCheckout } from "../src/checkouts";
-import { blockTicket, requeueTicket, specOf } from "../src/workers";
+import { blockTicket } from "../src/workers";
+import { requeueTicket } from "../src/requeue";
+import { specOf } from "../src/ctx";
 import { checkOutHead, makeCtx, seedProject, startWorker, ticketOf, type Doc, type EngineHarness } from "./helpers";
 
 type Feedback = Partial<Extract<HostOutput<"prFeedback">, { outcome: "ok" }>>;

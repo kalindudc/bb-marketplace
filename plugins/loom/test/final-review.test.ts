@@ -8,7 +8,7 @@ import { computeMetrics } from "../src/metrics";
 import type { SpawnArgs } from "../src/ports";
 import { askForPrTexts, handInPrText } from "../src/pull-requests";
 import { parseSpec, specHash } from "../src/spec";
-import { specOf, type EngineCtx } from "../src/workers";
+import { specOf, type EngineCtx } from "../src/ctx";
 import { makeCtx, reachApproved, seedProject, specToml, ticketOf, type Doc, type EngineHarness } from "./helpers";
 
 let h: EngineHarness & { db: ReturnType<typeof makeCtx>["db"] };

@@ -14,7 +14,7 @@ import { LoomError, landsOf, repoOverviews, type RepoOverview } from "./projects
 import { freshBaseOf, isMultiRepo, repoSettings } from "./repos";
 import type { Spec } from "./spec";
 import { LOOM_ACTOR } from "./states";
-import { specOf, type EngineCtx } from "./workers";
+import { specOf, type EngineCtx } from "./ctx";
 
 export const PLANNER_INSTRUCTIONS_MAX = 4000;
 

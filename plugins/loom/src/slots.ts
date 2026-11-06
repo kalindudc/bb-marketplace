@@ -3,7 +3,7 @@
 // (HandBack), and the message goes out only once a worker slot is free. Waiting hand-backs take free slots before new
 // workers start, priority 0 first, then the longest waiting. A worker or reviewer that waits for the human holds no slot.
 import { retriesOf } from "./backoff";
-import { delivers } from "./checks";
+import { delivers, specOf, type EngineCtx } from "./ctx";
 import type { Store, ThreadRow, TicketRow } from "./db/store";
 import { plural } from "./format";
 import { advanceWake, isReleased, isWaking, wakeRow } from "./release";
@@ -12,7 +12,7 @@ import { NOT_PARKED, freeReviewerSlots, freeWorkerSlots, handBackOf, slotTurns, 
 import type { Spec } from "./spec";
 import { startWaits } from "./starts";
 import { LOOM_ACTOR } from "./states";
-import { endThread, specOf, toWorking, type EngineCtx } from "./workers";
+import { endThread, toWorking } from "./workers";
 import { tryMoveTicket } from "./moves";
 
 const errText = (error: unknown) => (error instanceof Error ? error.message : String(error));

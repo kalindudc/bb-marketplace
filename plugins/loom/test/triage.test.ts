@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import type { TicketSpec } from "../src/spec";
 import { addTickets, boardText, cancelTicket, editTicket, maybeSendTriage, onPlannerIdle } from "../src/triage";
-import { blockTicket, requeueTicket } from "../src/workers";
+import { blockTicket } from "../src/workers";
+import { requeueTicket } from "../src/requeue";
 import { GIT_WORKTREE_PROVIDER, makeCtx, seedProject, startWorker, ticketOf, workerRows, type Doc, type EngineHarness } from "./helpers";
 
 let h: EngineHarness;

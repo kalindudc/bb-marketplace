@@ -7,7 +7,8 @@ import type { HostOutput } from "../src/host-contract";
 import { pollPullRequests, runMergeQueue, settleMerges } from "../src/merge";
 import type { SpawnArgs } from "../src/ports";
 import { askForPrTexts, handInPrText } from "../src/pull-requests";
-import { blockTicket, specOf, type EngineCtx } from "../src/workers";
+import { blockTicket } from "../src/workers";
+import { specOf, type EngineCtx } from "../src/ctx";
 import { makeCtx, reachApproved, seedProject, ticketOf, type Doc, type EngineHarness } from "./helpers";
 
 let h: EngineHarness & { db: ReturnType<typeof makeCtx>["db"] };

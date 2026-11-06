@@ -9,7 +9,7 @@ import { pollPullRequests, runMergeQueue, settleMerges } from "../src/merge";
 import { askForPrTexts, handInPrText } from "../src/pull-requests";
 import { advanceWakes } from "../src/release";
 import { approve, settleReviews, spawnReviewers } from "../src/review";
-import { specOf } from "../src/workers";
+import { specOf } from "../src/ctx";
 import { checkOutHead, makeCtx, reachApproved, seedProject, ticketOf, type Doc, type EngineHarness } from "./helpers";
 
 let h: EngineHarness;

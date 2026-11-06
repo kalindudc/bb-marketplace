@@ -4,7 +4,7 @@ import { readBehind, refreshDue } from "../src/fresh";
 import { pollPullRequests, runMergeQueue, settleMerges } from "../src/merge";
 import { metaOf } from "../src/pr-meta";
 import { isReleased, releaseIdleWorkers, wakeForRestacks } from "../src/release";
-import { specOf } from "../src/workers";
+import { specOf } from "../src/ctx";
 import { makeCtx, makeEngine, reachApproved, seedMachineProject, seedProject, ticketOf, type Doc, type EngineHarness } from "./helpers";
 
 let h: EngineHarness;

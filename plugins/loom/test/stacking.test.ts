@@ -6,7 +6,7 @@ import { mergeOrderOf } from "../src/merge-order";
 import { boardCards } from "../src/rpc";
 import { stackOf } from "../src/stack";
 import { noteUpstreamChanges } from "../src/upstream";
-import { specOf } from "../src/workers";
+import { specOf } from "../src/ctx";
 import { makeCtx, makeEngine, reachApproved, seedProject, seedRepoProject, startWorker, ticketOf, type Doc, type EngineHarness } from "./helpers";
 
 let h: EngineHarness;

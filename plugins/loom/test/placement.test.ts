@@ -8,7 +8,9 @@ import { pollPullRequests, runMergeQueue, settleMerges } from "../src/merge";
 import type { SpawnArgs } from "../src/ports";
 import { isReleased, releaseIdleWorkers } from "../src/release";
 import { approve, settleReviews, spawnReviewers } from "../src/review";
-import { blockTicket, onThreadGone, onWorkerIdle, requeueTicket, resumeWork, spawnWorker, specOf } from "../src/workers";
+import { blockTicket, onThreadGone, onWorkerIdle, resumeWork, spawnWorker } from "../src/workers";
+import { requeueTicket } from "../src/requeue";
+import { specOf } from "../src/ctx";
 import { BOXES, GIT_WORKTREE_PROVIDER, checkOutHead, makeCtx, reachApproved, reachReview, seedMachineProject, seedProject, specToml, startWorker, ticketOf, type Doc, type EngineHarness } from "./helpers";
 
 let h: EngineHarness;

@@ -8,7 +8,7 @@ import { clip, hookTellText, type HookFacts } from "./prompts";
 import { isMultiRepo } from "./repos";
 import type { HookEvent, HookSpec, Spec } from "./spec";
 import { LOOM_ACTOR } from "./states";
-import type { EngineCtx } from "./workers";
+import { type EngineCtx } from "./ctx";
 
 export const HOOK_RUN_TIMEOUT_MS = 120_000;
 /** How long after a command started that an earlier process left running it may still run: the host kills it at its limit. */

@@ -2,7 +2,7 @@
 // checkout itself, using the commit it last pushed there as the merge base, since a head rebuilt from another machine's
 // worktree shares no history with the branch. A worker on another machine gets the result as linear commits, because
 // a machine may keep no merge of a branch other than the base; a worker never has to fetch or merge the branch itself.
-import { workerOf } from "./checks";
+import { workerOf, specOf, type EngineCtx } from "./ctx";
 import { repoCheckout, type RepoCheckout } from "./checkouts";
 import type { ProjectRow, TicketRow } from "./db/store";
 import { transientOf, Unavailable } from "./forge-waits";
@@ -13,7 +13,7 @@ import { gitIndex, gitNetwork } from "./repos";
 import type { Stack } from "./sub-state";
 import { EMPTY_STACK, restackOf, stacking, stackOf } from "./stack";
 import { carryTo, headCameHome, homeBranch, isRemote, reviewedRef } from "./transport";
-import { resolveEnvironment, specOf, type EngineCtx } from "./workers";
+import { resolveEnvironment } from "./workers";
 
 const errText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 

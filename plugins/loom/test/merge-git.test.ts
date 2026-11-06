@@ -8,7 +8,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import * as ops from "../src/host/ops";
 import { land, runMergeQueue, settleMerges } from "../src/merge";
 import type { HostPort } from "../src/ports";
-import { specOf } from "../src/workers";
+import { specOf } from "../src/ctx";
 import { makeCtx, reachApproved, seedProject, seedRepoProject, ticketOf, type Doc, type EngineHarness } from "./helpers";
 
 // Real git in temporary repositories: a few seconds each when the machine is idle, so vitest's 5 s limit fails them under load.

@@ -3,7 +3,7 @@ import { recordAsk } from "../src/asks";
 import { plannerView, type PlannerStep } from "../src/planner-view";
 import { ensureSpecReview, specVerdict } from "../src/spec-review";
 import { maybeSendTriage } from "../src/triage";
-import { requeueTicket } from "../src/workers";
+import { requeueTicket } from "../src/requeue";
 import { makeEngine, specToml, type Doc } from "./helpers";
 
 let h: ReturnType<typeof makeEngine>;

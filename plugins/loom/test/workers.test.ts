@@ -6,24 +6,9 @@ import { renderThread, workerBrief } from "../src/prompts";
 import { SpawnRefusedError, SpawnUnavailableError, type SpawnArgs } from "../src/ports";
 import { waitOf } from "../src/starts";
 import { parseSpec } from "../src/spec";
-import {
-  blockTicket,
-  blockedAtStart,
-  endThread,
-  onThreadGone,
-  onTurnFailed,
-  onWorkerIdle,
-  recordBranch,
-  requeueTicket,
-  resolveEnvironment,
-  resumeEnding,
-  resumeWork,
-  spawnWorker,
-  specOf,
-  startedFine,
-  ticketMoveFor,
-  toWorking,
-} from "../src/workers";
+import { blockTicket, blockedAtStart, endThread, onThreadGone, onTurnFailed, onWorkerIdle, recordBranch, resolveEnvironment, resumeEnding, resumeWork, spawnWorker, startedFine, ticketMoveFor, toWorking } from "../src/workers";
+import { requeueTicket } from "../src/requeue";
+import { specOf } from "../src/ctx";
 import { BOXES, makeCtx, seedMachineProject, seedProject, specToml, startLateWorker, startWorker, ticketOf, workerRows, type Doc, type EngineHarness } from "./helpers";
 import { MOVES, patchOf, type TicketMove } from "../src/moves";
 

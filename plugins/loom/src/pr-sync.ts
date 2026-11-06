@@ -9,7 +9,7 @@ import { LoomError } from "./projects";
 import { andList } from "./prompts";
 import { repoSettings } from "./repos";
 import type { TicketState } from "./states";
-import { specOf, type EngineCtx } from "./workers";
+import { specOf, type EngineCtx } from "./ctx";
 
 /** How long a sync waits for the pass that reads its pull requests before it answers that they are still being read. */
 export const SYNC_WAIT_MS = 30_000;

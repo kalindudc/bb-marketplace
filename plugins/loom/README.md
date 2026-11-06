@@ -1677,9 +1677,21 @@ settings for that project.
   `src/slots.ts` hands work back to workers as slots free up, and asks bb which
   threads wait for you.
   `src/workers.ts`, `src/checks.ts`, `src/triage.ts`, `src/review.ts` and
-  `src/merge.ts` are the engine's parts, and `src/engine.ts` is the control
+  the merge queue are the engine's parts, and `src/engine.ts` is the control
   loop that ticks every 15 seconds, reconciles after a restart and handles bb's
-  thread events.
+  thread events. `src/ctx.ts` holds the context every part works with.
+  `src/moves.ts` is the one table of ticket moves: each move's states and the
+  columns it resets. `src/sub-state.ts` reads and writes every JSON column a
+  ticket keeps beside its state, each checked against its schema.
+- The merge queue is split by job, and `src/merge.ts` names what the rest of
+  Loom calls: `src/merge-queue.ts` (the per-project guard and the queue),
+  `src/merge-integration.ts` (the integration merge), `src/pr-open.ts`
+  (opening and pushing a pull request), `src/pr-restack.ts` (restacks, carries
+  and commits someone else pushed), `src/pr-closed.ts` (closed and
+  merged-elsewhere pull requests), `src/pr-hooks.ts` (the forge's after_open
+  and after_push commands), `src/pr-poll.ts` (reading pull requests and waiting
+  out the forge) and `src/land.ts`. No two engine files import each other's
+  values, directly or around a loop; `test/import-cycles.test.ts` checks it.
 - `host.ts` and `src/host/ops.ts` run on the machine that owns the checkout:
   git through argv, the repo's server for pull requests (`gh`, the spec's own
   commands, or none), and check commands in their own process group. Every git

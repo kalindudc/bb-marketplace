@@ -7,7 +7,7 @@ import { IN_FLIGHT } from "./scheduler";
 import { specReviewStatus } from "./spec-review";
 import type { Spec } from "./spec";
 import { PAUSE_NOW_REASON } from "./states";
-import { specOf } from "./workers";
+import { specOf } from "./ctx";
 
 export interface NeedItem {
   kind: "blocked" | "approve" | "pending" | "land" | "paused";

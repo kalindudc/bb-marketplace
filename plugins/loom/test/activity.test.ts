@@ -6,7 +6,9 @@ import { SpawnRefusedError } from "../src/ports";
 import { approve, settleReviews, spawnReviewers } from "../src/review";
 import type { AuthorKind, PostKind } from "../src/states";
 import { editTicket } from "../src/triage";
-import { blockTicket, endThread, requeueTicket, specOf } from "../src/workers";
+import { blockTicket, endThread } from "../src/workers";
+import { requeueTicket } from "../src/requeue";
+import { specOf } from "../src/ctx";
 import { checkOutHead, makeCtx, reachReview, seedProject, startWorker, ticketOf, type EngineHarness } from "./helpers";
 
 let h: EngineHarness;

@@ -3,7 +3,7 @@
 // back to the worker as a fix round, which goes through the checks and a review again before Loom pushes one more
 // commit. Merging stays the human's, unless the repo's forge sets auto_merge (auto-merge.ts).
 import { checkWaitOf, durationsKey, holdOf, median, queuedSince, USUAL_RUNS, type CheckWait, type Skipped } from "./check-wait";
-import { delivers, workerOf } from "./checks";
+import { delivers, workerOf, signatureOf, specOf, type EngineCtx } from "./ctx";
 import { repoCheckout, type RepoCheckout } from "./checkouts";
 import { createHash } from "node:crypto";
 import type { PostRow, ProjectRow, Store, ThreadRow, TicketRow } from "./db/store";
@@ -21,8 +21,9 @@ import { isWaking, releasedWorker } from "./release";
 import { NOT_PARKED, toLite, workerSlots, type Parked } from "./scheduler";
 import { deliverHandBacks, handBack } from "./slots";
 import { takeForRound, type ForeignTip } from "./tips";
-import { resumeEnding, signatureOf, specOf, type EngineCtx } from "./workers";
+import { resumeEnding } from "./workers";
 import { tryMoveTicket } from "./moves";
+import { inFixRound, prTextFor, templateText } from "./pr-text";
 
 /** How long the worker has to hand in loom_pr before Loom's template stands in; paused time does not count. */
 export const PR_TEXT_MINUTES = 30;
@@ -37,25 +38,6 @@ type Feedback = Extract<HostOutput<"prFeedback">, { outcome: "ok" }>;
 
 export const askOf = (ticket: TicketRow) => readSub(ticket, "pr_ask_json");
 export const statusOf = (ticket: TicketRow) => readSub(ticket, "pr_status_json");
-
-/** A ticket whose pull request branch Loom pushed before: its next push is a fix round, one more commit on that branch. */
-export const inFixRound = (ticket: TicketRow) => ticket.pr_branch !== null && ticket.pushed_sha !== null;
-
-/** The text the next push uses, when it is ready: the worker's for this head, or the template when the spec says so. */
-export function prTextFor(spec: Spec, ticket: TicketRow): PrText | null {
-  if (prSettings(spec).describe === "loom") return templateText(ticket, null);
-  const text = readSub(ticket, "pr_text_json");
-  return text !== null && text.head === ticket.head_sha ? text : null;
-}
-
-/** On the pr strategy, an approved ticket merges only once its pull request's text is ready. */
-export const prTextReady = (spec: Spec, ticket: TicketRow) => spec.merge.strategy !== "pr" || prTextFor(spec, ticket) !== null;
-
-/** Loom's template text for the next push: the ticket's title as the commit's subject, or a fix round's plain one. No ticket key. */
-export function templateText(ticket: TicketRow, body: string | null): PrText {
-  const commit = inFixRound(ticket) ? "Address review feedback" : ticket.title;
-  return { head: ticket.head_sha!, by: "loom", title: null, body, commit };
-}
 
 /** Loom's title and description for a pull request whose text the worker did not write: no ticket key, as the loom-pr-description skill asks. */
 export function templatePr(ticket: TicketRow, dependsOn: string[] = [], rollout: readonly string[] = []): { title: string; body: string } {

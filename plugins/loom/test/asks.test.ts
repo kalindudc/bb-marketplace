@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { dismissAsk, markStepDone, plannerAsk, recordAsk, type AskStep } from "../src/asks";
 import { markLiveByHuman } from "../src/rollout-live";
-import { requeueTicket } from "../src/workers";
+import { requeueTicket } from "../src/requeue";
 import { makeCtx, seedProject, seedRepoProject, specToml, type EngineHarness } from "./helpers";
 
 let h: EngineHarness;

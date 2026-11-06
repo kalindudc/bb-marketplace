@@ -23,7 +23,9 @@ import { standingInstructionsLines } from "./prompts";
 import { ensureSpecReview, specReviewerOf, specVerdict, type SpecReviewStatus } from "./spec-review";
 import { SPEC_REVIEW_ROUNDS, TICKET_STATES } from "./states";
 import { addTickets, boardText, editTicket } from "./triage";
-import { blockTicket, requeueTicket, resumeWork, specOf } from "./workers";
+import { blockTicket, resumeWork } from "./workers";
+import { requeueTicket } from "./requeue";
+import { specOf } from "./ctx";
 
 export const PLANNER_TOOLS = ["loom_propose", "loom_discover", "loom_board", "loom_ticket", "loom_requeue", "loom_confirm_merge", "loom_release_draft", "loom_add_tickets", "loom_edit_ticket", "loom_cancel_ticket", "loom_post", "loom_ask_human"] as const;
 export const WORKER_TOOLS = ["loom_note", "loom_submit", "loom_block", "loom_pr", "loom_pr_reply"] as const;

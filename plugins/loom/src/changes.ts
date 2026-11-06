@@ -11,7 +11,8 @@ import { isMultiRepo, repoSettings, type RepoSettings } from "./repos";
 import type { Spec } from "./spec";
 import { stackOf } from "./stack";
 import type { TicketState } from "./states";
-import { baseOf, specOf } from "./workers";
+import { baseOf } from "./workers";
+import { specOf } from "./ctx";
 
 const MAX_FILES = 2000;
 const PATCH_BYTES = 400_000;

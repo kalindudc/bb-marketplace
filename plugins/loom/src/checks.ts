@@ -19,7 +19,8 @@ import type { Spec } from "./spec";
 import { stackOf } from "./stack";
 import { LOOM_ACTOR } from "./states";
 import { bringHome, isRemote, worktreeBaseOf } from "./transport";
-import { endThread, recordBranch, resolveEnvironment, specOf, ticketMoveFor, toWorking, type EngineCtx } from "./workers";
+import { endThread, recordBranch, resolveEnvironment, ticketMoveFor, toWorking } from "./workers";
+import { delivers, specOf, workerOf, type EngineCtx } from "./ctx";
 import { moveTicket, tryMoveTicket, type TicketMove } from "./moves";
 
 export interface CheckRun {
@@ -41,20 +42,6 @@ export async function settleChecks(ctx: EngineCtx): Promise<void> {
   const running = inflightOf(ctx.store);
   while (running.size > 0) await Promise.all([...running.values()]);
 }
-
-// An `ending` worker is not gone: the endThread that claimed its row still owns the ticket's move, so the checks leave the ticket alone.
-type WorkerStanding = { standing: "active" | "ending"; row: ThreadRow } | { standing: "gone"; row: null };
-
-export function workerOf(store: Store, ticket: TicketRow): WorkerStanding {
-  const row = ticket.worker_thread_id === null ? null : store.threadByThreadId(ticket.worker_thread_id);
-  if (row !== null && row.state === "active") return { standing: "active", row };
-  if (row !== null && row.state === "ending") return { standing: "ending", row };
-  return { standing: "gone", row: null };
-}
-
-// A message to a worker that pause --now stopped would start it again, so results reach workers only while the project runs.
-// Resume hands over a failed result that was held back.
-export const delivers = (ctx: EngineCtx, projectId: number) => ctx.store.project(projectId)?.state === "running";
 
 /**
  * The worker's loom_submit: validates, moves the ticket to checking, starts the checks and returns at once. `pr` is the

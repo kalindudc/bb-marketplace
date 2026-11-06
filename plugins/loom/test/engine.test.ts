@@ -9,7 +9,7 @@ import { ensureSpecReview, specVerdict } from "../src/spec-review";
 import { PAUSE_NOW_REASON } from "../src/states";
 import { editTicket } from "../src/triage";
 import { checkOutHead, makeEngine, reachApproved, reachReview, seedProject, seedRepoProject, specToml, ticketOf, withDocsTicket, workerRows, type Doc } from "./helpers";
-import { specOf } from "../src/workers";
+import { specOf } from "../src/ctx";
 
 let h: ReturnType<typeof makeEngine>;
 

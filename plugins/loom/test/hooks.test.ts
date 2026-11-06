@@ -6,7 +6,9 @@ import { feedText } from "../src/feed-text";
 import { finishIfComplete, runMergeQueue, settleMerges } from "../src/merge";
 import { planningKickoff, specReviewerBrief, standingInstructionsLines, workerBrief } from "../src/prompts";
 import { parseSpec } from "../src/spec";
-import { blockTicket, requeueTicket, specOf } from "../src/workers";
+import { blockTicket } from "../src/workers";
+import { requeueTicket } from "../src/requeue";
+import { specOf } from "../src/ctx";
 import { followHooks, HOOK_RUN_LEASE_MS, HOOK_RUN_TIMEOUT_MS, HOOK_TELL_TRIES, settleHooks } from "../src/hooks";
 import { makeCtx, makeEngine, reachApproved, seedProject, seedRepoProject, specToml, startWorker, ticketOf, type Doc, type EngineHarness } from "./helpers";
 

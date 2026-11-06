@@ -6,7 +6,7 @@ import { specVerdict } from "../src/spec-review";
 import { FINAL_REVIEWER_TOOLS, MACHINE_WORKER_TOOLS, ORDINARY_TOOLS, PLANNER_TOOLS, REVIEWER_TOOLS, SKILLS, SPEC_REVIEWER_TOOLS, WORKER_TOOLS, registerTools } from "../src/tools";
 import { readFileSync } from "node:fs";
 import { mergeConfirmOf } from "../src/auto-merge";
-import { specOf } from "../src/workers";
+import { specOf } from "../src/ctx";
 import { Clock, FakePort, checkOutHead, makeHost, readyToMerge, seedMachineProject, seedProject, specToml, type Doc, type EngineHarness } from "./helpers";
 
 let host: ReturnType<typeof makeHost>;
@@ -239,7 +239,8 @@ describe("tools of threads on machines of their own", () => {
     registerTools(host.bb, host.projects, host.engine);
     const hh: EngineHarness = { ctx: host.engine.ctx, store: host.store, bb: fake, host: host.hostPort, projects: host.projects, clock: new Clock(), kicks: { count: 0 } };
     await seedMachineProject(hh);
-    const { spawnWorker, specOf } = await import("../src/workers");
+    const { spawnWorker } = await import("../src/workers");
+    const { specOf } = await import("../src/ctx");
     const project = host.store.projectBySlug("csv")!;
     await spawnWorker(host.engine.ctx, project, specOf(host.store, project), host.store.ticketByKey("CSV-1")!);
     const workerId = host.store.ticketByKey("CSV-1")!.worker_thread_id!;
@@ -324,7 +325,8 @@ describe("worker and planner tools", () => {
   const call = (name: string, input: unknown, threadId: string) => host.harness.callAgentTool(name, input, { threadId, projectId: "proj_1" });
   const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
   const startWorkerFor = async (key: string) => {
-    const { spawnWorker, specOf } = await import("../src/workers");
+    const { spawnWorker } = await import("../src/workers");
+    const { specOf } = await import("../src/ctx");
     const project = host.store.projectBySlug("csv")!;
     await spawnWorker(host.engine.ctx, project, specOf(host.store, project), ticketNamed(key));
     return host.store.ticketByKey(key)!.worker_thread_id!;
@@ -543,7 +545,7 @@ describe("worker and planner tools", () => {
       const workerId = await startWorkerFor("CSV-1");
       await reachReviewFrom(workerId);
       const { spawnReviewers, settleReviews } = await import("../src/review");
-      const { specOf } = await import("../src/workers");
+      const { specOf } = await import("../src/ctx");
       const project = host.store.projectBySlug("csv")!;
       await spawnReviewers(host.engine.ctx, project, specOf(host.store, project));
       const row = host.store.threads({ ticketId: ticketNamed("CSV-1").id, role: "reviewer" })[0]!;

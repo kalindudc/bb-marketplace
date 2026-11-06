@@ -2,11 +2,11 @@
 // pull request needs it again. A pull request can wait days for a person, and an idle worker holds its environment all
 // that time. Archiving its thread frees the environment; bb's restore later builds a new one on the worker's branch, so
 // the worker comes back with its whole conversation. When bb cannot restore it, a new worker takes over from the branch.
-import { workerOf } from "./checks";
+import { workerOf, specOf, type EngineCtx } from "./ctx";
 import type { ProjectRow, Store, ThreadRow, TicketRow } from "./db/store";
 import { formatDuration } from "./format";
 import { refreshDue } from "./fresh";
-import { prTextReady } from "./pull-requests";
+import { prTextReady } from "./pr-text";
 import { prSettings } from "./repos";
 import { waitsForSlot } from "./scheduler";
 import type { Spec } from "./spec";
@@ -15,7 +15,7 @@ import { writeSub, type StartWait } from "./sub-state";
 import { nextWait, provisioningFailure, startProblemOf, startWaits, UNAVAILABLE_LIMIT_MS, unavailableReason, waitOf, type StartProblem } from "./starts";
 import { LOOM_ACTOR } from "./states";
 import { headCameHome, isRemote, worktreeBaseOf } from "./transport";
-import { endThread, specOf, type EngineCtx } from "./workers";
+import { endThread } from "./workers";
 import { tryMoveTicket } from "./moves";
 
 const errText = (error: unknown) => (error instanceof Error ? error.message : String(error));
