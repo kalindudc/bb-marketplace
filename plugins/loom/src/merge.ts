@@ -33,7 +33,7 @@ import {
   waitableOf,
   type Transient,
 } from "./forge-waits";
-import { afterMergeChangedText, afterMergeFailedText, andList, clip, conflictText, dependsOnLines, landBody, prDivergedText, restackConflictText, restackFailedText, restackMarkersText, restackRefusedText, unfinishedMergeText, withRestoredNote, workerPrBody } from "./prompts";
+import { afterMergeChangedText, afterMergeFailedText, andList, branchName, clip, mergeSubject, conflictText, dependsOnLines, landBody, prDivergedText, restackConflictText, restackFailedText, restackMarkersText, restackRefusedText, unfinishedMergeText, withRestoredNote, workerPrBody } from "./prompts";
 import { appliedOf, applyPrText, closedPrReset, followFeedback, inFixRound, openedText, proposalOf, prRollout, prTextFor, prTextReady, reviewersToAsk, syncPrText, targetText, templatePr, wantedText, type PrApplied, type PrText } from "./pull-requests";
 import { githubPull, prNumber, PR_BATCH_MAX, type HostInput, type HostOutput as HostOutputOf } from "./host-contract";
 import type { EnvironmentInfo } from "./ports";
@@ -400,7 +400,7 @@ async function mergeIntoIntegration(ctx: EngineCtx, project: ProjectRow, spec: S
   const branch = settings.branch!;
   const target = branchIn(settings);
   const before = await rollbackPoint(ctx, hostId, worktree, settings, ticket);
-  const merged = await ctx.host.call(hostId, "merge", { worktree, ref: ticket.head_sha!, message: `${ticket.key}: ${clip(ticket.title, 200)} (Loom)`, before });
+  const merged = await ctx.host.call(hostId, "merge", { worktree, ref: ticket.head_sha!, message: `${mergeSubject([branchName(ticket)], branch)}\n\n${clip(ticket.title, 200)}`, before });
   if (merged.outcome === "unfinished") throw new Unavailable(unfinishedInLoomWorktree(worktree));
 
   if (merged.outcome === "conflict") {
@@ -521,7 +521,7 @@ async function openPullRequest(ctx: EngineCtx, project: ProjectRow, spec: Spec, 
   const taken = fix ? catchUpOf(ctx, ticket) : null;
   const catchUp = taken !== null;
   const refresh = taken?.refresh ?? null;
-  const text = prTextFor(spec, ticket) ?? { head: ticket.head_sha!, by: "loom" as const, title: null, body: null, commit: `${ticket.key}: ${ticket.title}` };
+  const text = prTextFor(spec, ticket) ?? { head: ticket.head_sha!, by: "loom" as const, title: null, body: null, commit: ticket.title };
 
   // While the worker fixed it, the human may have merged or closed the pull request, perhaps into the branch it is stacked on.
   if (fix && ticket.pr_url !== null && settings.forge.kind !== "none") {
@@ -546,6 +546,8 @@ async function openPullRequest(ctx: EngineCtx, project: ProjectRow, spec: Spec, 
 
   let current = ticket;
   let caughtUp: string | null = null;
+  // What those merges took, by branch or remote ref, for the subject of the commit Loom pushes.
+  const sources: string[] = [];
   // Whether a merge Loom made for this push ran the ticket's checks.
   let checked = false;
   // A merge an earlier run put in the worker's worktree is finished first, so nothing builds on the head it replaces.
@@ -555,6 +557,7 @@ async function openPullRequest(ctx: EngineCtx, project: ProjectRow, spec: Spec, 
     if (finished === null) return;
     current = finished;
     caughtUp = step.what;
+    sources.push(...(step.sources ?? []));
     checked = true;
   }
   // A refresh takes the base tip it was counted against through the restack a stacked ticket uses; a merge step finished above was its merge.
@@ -565,6 +568,7 @@ async function openPullRequest(ctx: EngineCtx, project: ProjectRow, spec: Spec, 
     if (result !== "skipped") {
       current = result.ticket;
       caughtUp = caughtUp === null ? result.what : `${caughtUp} and ${result.what}`;
+      sources.push(...result.sources);
       checked ||= result.checked;
     }
   }
@@ -577,7 +581,7 @@ async function openPullRequest(ctx: EngineCtx, project: ProjectRow, spec: Spec, 
   let created = true;
   if (prSettings(spec).squash) {
     const build = async (head: TicketRow) => {
-      const message = catchUp ? `${head.key}: merge ${caughtUp ?? "its new base"} (Loom)` : text.commit;
+      const message = catchUp ? mergeSubject(sources.length > 0 ? sources : [`${remote}/${settings.base}`], branch) : text.commit;
       return ctx.host.call(hostId, "prCommit", { repo, remote, branch, base: await workBaseOf(ctx, project, spec, head, head.head_sha!), head: head.head_sha!, message, ...(head.pushed_sha === null ? {} : { pushed: head.pushed_sha }), ...gitNetwork(settings) });
     };
     let built = await build(current);
@@ -587,6 +591,7 @@ async function openPullRequest(ctx: EngineCtx, project: ProjectRow, spec: Spec, 
       if (took === null) return;
       if (took.head_sha !== current.head_sha) {
         caughtUp = caughtUp === null ? TIP_WHAT : `${caughtUp} and ${TIP_WHAT}`;
+        sources.push(`${remote}/${branch}`);
         checked = true;
       }
       current = took;
@@ -667,7 +672,7 @@ async function openPullRequest(ctx: EngineCtx, project: ProjectRow, spec: Spec, 
   const kept = fix ? appliedOf(current) : null;
   const title = text.title ?? proposal?.title ?? kept?.title ?? null;
   const body = text.body ?? proposal?.body ?? kept?.body ?? null;
-  const template = templatePr(ctx, current, dependsOn, rollout);
+  const template = templatePr(current, dependsOn, rollout);
   const own = kept !== null || (title !== null && body !== null);
   const pr = own ? { title: title ?? template.title, body: body === null ? template.body : workerPrBody(current.key, body, dependsOn, rollout) } : template;
   const opened = await ctx.host.call(hostId, "prCreate", { repo, remote, base: prBase, head: branch, title: clip(pr.title, 256), body: clip(pr.body, 60_000), draft: spec.merge.draft, forge: openForge(settings.forge) });
@@ -692,7 +697,8 @@ function baseMoved(ctx: EngineCtx, settings: RepoSettings, ticket: TicketRow): b
 }
 
 /** A restack that brought the branch up to date: the ticket as it is now, what it took, and whether it merged something and ran the checks on it, false when the head had it all already. */
-type Restacked = { ticket: TicketRow; what: string; checked: boolean };
+/** `sources`: what the merge took, by branch or remote ref, for a commit subject. */
+type Restacked = { ticket: TicketRow; what: string; sources: string[]; checked: boolean };
 
 /**
  * Brings a stacked ticket's branch up to date before Loom pushes it: builds the commit it must take, merges that into the
@@ -707,6 +713,7 @@ async function restack(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket: 
   const { hostId, path: repo, settings } = checkout;
   const takesBase = need.withBase || need.baseTip !== undefined;
   const what = andList([...Object.keys(need.deps).map((key) => `${key}'s pull request`), ...(takesBase ? [`${settings.remote}/${settings.base}`] : [])]);
+  const sources = [...Object.keys(need.deps).map((key) => { const dep = store.ticketByKey(key); return dep === null ? key : branchName(dep); }), ...(takesBase ? [`${settings.remote}/${settings.base}`] : [])];
   const worker = workerOf(store, ticket);
   if (worker.standing !== "active") {
     await sendBack(ctx, ticket.id, { post: { kind: "merge", body: `${ticket.key} must take ${what} before Loom pushes it, and its worker is gone, so a new worker takes it.`, data: { outcome: "restack_waits" } }, text: { summary: "", detail: "" }, countFailure: false, reason: "the worker is gone" });
@@ -720,7 +727,7 @@ async function restack(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket: 
     branch,
     commits: need.baseTip === undefined ? need.commits : [...need.commits, need.baseTip],
     ...(need.withBase && need.baseTip === undefined ? { base: { remote: settings.remote, branch: settings.base } } : {}),
-    message: `Loom: ${what} for ${ticket.key}`,
+    message: mergeSubject(sources, branch),
     ...gitNetwork(settings),
     ...gitIndex(settings),
   });
@@ -736,9 +743,9 @@ async function restack(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket: 
   }
   const { conflict: _gone, ...rest } = known;
   const stack: Stack = { ...rest, deps: need.deps, base: built.sha, synced: takesBase ? ctx.now() : known.synced };
-  if (isRemote(project, environment)) return restackOnMachine(ctx, { project, spec, ticket, what, checkout, text, environment: { ...environment, path: environment.path }, built: built.sha, stack });
+  if (isRemote(project, environment)) return restackOnMachine(ctx, { project, spec, ticket, what, sources, checkout, text, environment: { ...environment, path: environment.path }, built: built.sha, stack });
 
-  const merged = await ctx.host.call(hostId, "mergeOnto", { repo, head: ticket.head_sha!, ref: built.sha, message: `Merge ${what} into ${ticket.key} (Loom)`, refs: [], ...gitIndex(settings) });
+  const merged = await ctx.host.call(hostId, "mergeOnto", { repo, head: ticket.head_sha!, ref: built.sha, message: mergeSubject(sources, branchName(ticket)), refs: [], ...gitIndex(settings) });
   if (merged.outcome === "conflict") {
     await sendBack(ctx, ticket.id, {
       post: { kind: "merge", body: `Merging ${what} into ${ticket.key}'s branch conflicted in: ${merged.files.join(", ")}.`, data: { outcome: "conflict", files: merged.files, restack: true } },
@@ -750,11 +757,11 @@ async function restack(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket: 
   }
   if (merged.already) {
     store.updateTicket(ticket.id, { stack_json: JSON.stringify(stack) });
-    return { ticket: store.ticket(ticket.id)!, what, checked: false };
+    return { ticket: store.ticket(ticket.id)!, what, sources, checked: false };
   }
-  const step: MergeStep = { kind: "restack", from: ticket.head_sha!, sha: merged.sha, tree: null, remote: false, what, checkBase: built.sha, stack, refs: [], data: { deps: need.deps, base: built.tip ?? need.baseTip ?? null } };
+  const step: MergeStep = { kind: "restack", from: ticket.head_sha!, sha: merged.sha, tree: null, remote: false, what, sources, checkBase: built.sha, stack, refs: [], data: { deps: need.deps, base: built.tip ?? need.baseTip ?? null } };
   const finished = await startStep(ctx, project, spec, ticket, step, checkout, text);
-  return finished === null ? null : { ticket: finished, what, checked: true };
+  return finished === null ? null : { ticket: finished, what, sources, checked: true };
 }
 
 /**
@@ -765,15 +772,15 @@ async function restack(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket: 
  */
 async function restackOnMachine(
   ctx: EngineCtx,
-  a: { project: ProjectRow; spec: Spec; ticket: TicketRow; what: string; checkout: RepoCheckout; text: PrText; environment: EnvironmentInfo & { path: string }; built: string; stack: Stack },
+  a: { project: ProjectRow; spec: Spec; ticket: TicketRow; what: string; sources: string[]; checkout: RepoCheckout; text: PrText; environment: EnvironmentInfo & { path: string }; built: string; stack: Stack },
 ): Promise<Restacked | null> {
   const { store } = ctx;
   const { project, spec, ticket, what, environment, stack } = a;
   const refs = [`refs/heads/${homeBranch(project.slug, ticket.key)}`, reviewedRef(project.slug, ticket.key)];
-  const merged = await ctx.host.call(a.checkout.hostId, "mergeOnto", { repo: a.checkout.path, head: ticket.head_sha!, ref: a.built, message: `Merge ${what} into ${ticket.key} (Loom)`, refs, ...gitIndex(a.checkout.settings) });
+  const merged = await ctx.host.call(a.checkout.hostId, "mergeOnto", { repo: a.checkout.path, head: ticket.head_sha!, ref: a.built, message: mergeSubject(a.sources, branchName(ticket)), refs, ...gitIndex(a.checkout.settings) });
   if (merged.outcome === "merged" && merged.already) {
     store.updateTicket(ticket.id, { stack_json: JSON.stringify(stack) });
-    return { ticket: store.ticket(ticket.id)!, what, checked: false };
+    return { ticket: store.ticket(ticket.id)!, what, sources: a.sources, checked: false };
   }
   if (merged.outcome === "conflict") {
     const carried: Stack = { ...stack, markers: merged.files };
@@ -787,9 +794,9 @@ async function restackOnMachine(
     });
     return null;
   }
-  const step: MergeStep = { kind: "restack", from: ticket.head_sha!, sha: merged.sha, tree: merged.tree, remote: true, what, checkBase: freshBaseOf(spec, ticket.repo), stack, refs: [], data: { deps: stack.deps, base: a.built } };
+  const step: MergeStep = { kind: "restack", from: ticket.head_sha!, sha: merged.sha, tree: merged.tree, remote: true, what, sources: a.sources, checkBase: freshBaseOf(spec, ticket.repo), stack, refs: [], data: { deps: stack.deps, base: a.built } };
   const finished = await startStep(ctx, project, spec, ticket, step, a.checkout, a.text);
-  return finished === null ? null : { ticket: finished, what, checked: true };
+  return finished === null ? null : { ticket: finished, what, sources: a.sources, checked: true };
 }
 
 /**
@@ -830,8 +837,10 @@ interface MergeStep {
   tree: string | null;
   /** The worker is on another machine, which gets the merge as linear commits. */
   remote: boolean;
-  /** What the merge took, for the posts and the message of the commit Loom pushes. */
+  /** What the merge took, for the posts. */
   what: string;
+  /** What it took by branch or remote ref, for the subject of the commit Loom pushes; none in a step from before 0.35.0. */
+  sources?: string[];
   /** What the checks measure the worktree against. */
   checkBase: string;
   /** A restack's stack: what the ticket's branch is built on once the merge is in. */
@@ -1004,7 +1013,7 @@ async function takeAtPush(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticke
     head: current.head_sha!,
     ref: tip.sha,
     ...(current.pushed_sha === null ? {} : { base: current.pushed_sha }),
-    message: `Merge ${what} into ${current.key} (Loom)`,
+    message: mergeSubject([`${settings.remote}/${branchName(current)}`], branchName(current)),
     refs: [],
     ...gitIndex(settings),
   });
@@ -1043,6 +1052,7 @@ async function takeAtPush(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticke
     tree: remote ? merged.tree : null,
     remote,
     what,
+    sources: [`${settings.remote}/${branchName(current)}`],
     checkBase: remote ? freshBaseOf(spec, current.repo) : baseOf(spec, current),
     tip: tip.sha,
     refs: remote ? [home, reviewedRef(project.slug, current.key)] : [],
@@ -1855,7 +1865,7 @@ async function pushToBase(ctx: EngineCtx, project: ProjectRow, spec: Spec, name:
 
   const fetched = await ctx.host.call(hostId, "fetchBranch", { worktree, remote, branch: base, ...gitNetwork(settings) });
   if (fetched.outcome === "unavailable") throw unavailable(fetched.message);
-  const merged = await ctx.host.call(hostId, "merge", { worktree, ref: fetched.sha, message: `Merge ${target} into ${branch} (Loom)` });
+  const merged = await ctx.host.call(hostId, "merge", { worktree, ref: fetched.sha, message: mergeSubject([target], branch) });
   if (merged.outcome === "unfinished") throw new LoomError("loom_invalid_state", `Cannot land on ${target}: ${unfinishedInLoomWorktree(worktree)}`);
   if (merged.outcome === "conflict") {
     const asPr = `bb loom land ${project.slug}${name === null ? "" : ` --repo ${name}`}`;

@@ -78,7 +78,7 @@ describe("submit against a real repository", () => {
     await settleChecks(h.ctx);
 
     expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "review", head_sha: sh(worktree, "rev-parse", "HEAD"), branch: "wt-feature" });
-    expect(sh(worktree, "log", "-1", "--format=%s")).toBe("CSV-1: Order rows");
+    expect(sh(worktree, "log", "-1", "--format=%s")).toBe("Order rows");
     expect(sh(worktree, "status", "--porcelain")).toBe("");
     expect(lastCheck().data).toMatchObject({ passed: true, outside: [], protectedHits: [] });
     expect(lastCheck().body).toContain("pass test -f src/model/a.ts && echo mapped");

@@ -9,7 +9,7 @@ import { spawnEnvironment, threadBranch, ticketInputsOf, usesNewMachine } from "
 import { plural } from "./format";
 import type { EnvironmentInfo, HostPort } from "./ports";
 import type { PrReads } from "./pr-sync";
-import { COMMENT_SIGNATURE, andList, latestChangesRequested, nudgeText, workerBrief } from "./prompts";
+import { COMMENT_SIGNATURE, andList, branchName, latestChangesRequested, mergeSubject, nudgeText, workerBrief } from "./prompts";
 import { LoomError, type Ctx } from "./projects";
 import { applyPrText, approvedSinceSubmit, prTextFor, textPending, wantedText } from "./pull-requests";
 import { freshBaseOf, gitIndex, gitNetwork, repoSettings } from "./repos";
@@ -302,7 +302,7 @@ async function stackStart(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticke
       branch,
       commits: open.map((dep) => dep.pushed_sha!),
       ...(withBase ? { base: { remote: settings.remote, branch: settings.base } } : {}),
-      message: `Loom: ${andList(open.map((dep) => dep.key))} for ${ticket.key}`,
+      message: mergeSubject([...open.map(branchName), ...(withBase ? [`${settings.remote}/${settings.base}`] : [])], branch),
       ...gitNetwork(settings),
       ...gitIndex(settings),
     });
@@ -556,7 +556,7 @@ async function finishEnding(ctx: EngineCtx, row: ThreadRow, reason: EndReason, o
     if (opts.commit && ticket !== null) {
       try {
         await recordBranch(ctx, row);
-        await commitWip(ctx, row, ticket, `WIP ${ticket.key} (attempt ${ticket.attempt})`);
+        await commitWip(ctx, row, ticket, `WIP: ${ticket.title}`);
       } catch (error) {
         if (!(error instanceof NotBroughtHome)) {
           ctx.bb.log("warn", `Could not save ${ticket.key}'s work before ending its thread: ${errText(error)}`);

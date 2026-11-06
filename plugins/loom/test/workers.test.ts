@@ -440,7 +440,7 @@ describe("idle policy", () => {
     expect(h.host.callsTo("commitAll")).toEqual([]);
 
     await onWorkerIdle(h.ctx, row);
-    expect(h.host.callsTo("commitAll")).toEqual([{ worktree: "/wt/env_1", message: "WIP CSV-1 (attempt 1)" }]);
+    expect(h.host.callsTo("commitAll")).toEqual([{ worktree: "/wt/env_1", message: "WIP: Order rows" }]);
     expect(h.store.thread(row.id)).toMatchObject({ state: "ended", end_reason: "abandoned" });
     expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "queued", failures: 1, branch: "wt-thr_w1", worker_thread_id: null });
     expect(callNames().filter((name) => name === "stop" || name === "archive")).toEqual(["stop", "archive"]);
@@ -687,7 +687,7 @@ describe("a worker whose environment arrived after spawn", () => {
     await seedProject(h);
     const row = await startLateWorker(h);
     await endThread(h.ctx, row, "blocked", { commit: true });
-    expect(h.host.callsTo("commitAll")).toEqual([{ worktree: "/wt/late", message: "WIP CSV-1 (attempt 1)" }]);
+    expect(h.host.callsTo("commitAll")).toEqual([{ worktree: "/wt/late", message: "WIP: Order rows" }]);
     expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "blocked", branch: "late-branch" });
     expect(h.store.thread(row.id)).toMatchObject({ state: "ended", environment_id: "env_late" });
   });

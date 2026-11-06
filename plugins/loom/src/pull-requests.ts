@@ -5,7 +5,8 @@
 import { checkWaitOf, durationsKey, holdOf, median, queuedSince, USUAL_RUNS, type CheckWait, type Skipped } from "./check-wait";
 import { delivers, workerOf } from "./checks";
 import { repoCheckout, type RepoCheckout } from "./checkouts";
-import type { PostRow, ProjectRow, ThreadRow, TicketRow } from "./db/store";
+import { createHash } from "node:crypto";
+import type { PostRow, ProjectRow, Store, ThreadRow, TicketRow } from "./db/store";
 import { hostCallTransient, nextMergeWait, transientOf, type MergeWait } from "./forge-waits";
 import { PR_BODY_MAX, REPLY_MARK, type HostOutput } from "./host-contract";
 import { formatDuration, plural } from "./format";
@@ -75,15 +76,15 @@ export function prTextFor(spec: Spec, ticket: TicketRow): PrText | null {
 /** On the pr strategy, an approved ticket merges only once its pull request's text is ready. */
 export const prTextReady = (spec: Spec, ticket: TicketRow) => spec.merge.strategy !== "pr" || prTextFor(spec, ticket) !== null;
 
-function templateText(ticket: TicketRow, body: string | null): PrText {
-  const commit = inFixRound(ticket) ? `${ticket.key}: address the pull request's feedback (fix round ${ticket.pr_rounds})` : `${ticket.key}: ${ticket.title}`;
+/** Loom's template text for the next push: the ticket's title as the commit's subject, or a fix round's plain one. No ticket key. */
+export function templateText(ticket: TicketRow, body: string | null): PrText {
+  const commit = inFixRound(ticket) ? "Address review feedback" : ticket.title;
   return { head: ticket.head_sha!, by: "loom", title: null, body, commit };
 }
 
-/** Loom's title and description for a pull request whose text the worker did not write. */
-export function templatePr(ctx: EngineCtx, ticket: TicketRow, dependsOn: string[] = [], rollout: readonly string[] = []): { title: string; body: string } {
-  const approvals = ctx.store.reviews(ticket.id, ticket.review_round).filter((review) => review.verdict === "approved");
-  return { title: `${ticket.key}: ${ticket.title}`, body: prBody({ ticket, approvals, dependsOn, rollout }) };
+/** Loom's title and description for a pull request whose text the worker did not write: no ticket key, as the loom-pr-description skill asks. */
+export function templatePr(ticket: TicketRow, dependsOn: string[] = [], rollout: readonly string[] = []): { title: string; body: string } {
+  return { title: templateTitle(ticket), body: prBody({ ticket, dependsOn, rollout }) };
 }
 
 /** The Rollout section of the description Loom opens `ticket`'s pull request with, from what is live now. */
@@ -106,7 +107,7 @@ function useTemplate(ctx: EngineCtx, ticket: TicketRow, reason: string): void {
     const fix = inFixRound(current);
     post(ctx, current, {
       body: `Loom wrote the ${fix ? "fix round's commit message" : "pull request"} from its template: ${reason}.`,
-      data: { outcome: "pr_text", by: "loom", fix, round: current.pr_rounds, title: fix ? null : templatePr(ctx, current).title, body: null, commit: text.commit, reason },
+      data: { outcome: "pr_text", by: "loom", fix, round: current.pr_rounds, title: fix ? null : templatePr(current).title, body: null, commit: text.commit, reason },
     });
   });
   store.changed(ticket.project_id);
@@ -257,6 +258,8 @@ export interface PrApplied extends PrWant {
   wait?: MergeWait;
   /** Why Loom could not refresh the Rollout section, each reason said once on the ticket. */
   said?: string[];
+  /** A hash of the block Loom last wrote between its markers, or found there already, so a format refresh runs once per block. */
+  block?: string;
 }
 
 export const proposalOf = (ticket: TicketRow) => parse<PrProposal>(ticket.pr_proposal_json);
@@ -279,7 +282,7 @@ export function proposeText(spec: Spec, ticket: TicketRow, pr: { title?: string;
   return { head: null, title: title ?? earlier?.title ?? null, body: body ?? earlier?.body ?? null, at: now };
 }
 
-const templateTitle = (ticket: TicketRow) => `${ticket.key}: ${ticket.title}`;
+const templateTitle = (ticket: TicketRow) => ticket.title;
 
 /**
  * The text Loom last set on the ticket's pull request; for one opened before Loom kept it, the text its posts say it
@@ -364,7 +367,7 @@ export function openedText(ctx: EngineCtx, spec: Spec, ticket: TicketRow, title:
 export function fullBody(ctx: EngineCtx, spec: Spec, ticket: TicketRow, body: string | null): string {
   const dependsOn = dependsOnLines(spec, ctx.store.tickets(ticket.project_id), ticket);
   const rollout = prRollout(ctx, spec, ticket);
-  return body === null ? templatePr(ctx, ticket, dependsOn, rollout).body : workerPrBody(ticket.key, body, dependsOn, rollout);
+  return body === null ? templatePr(ticket, dependsOn, rollout).body : workerPrBody(ticket.key, body, dependsOn, rollout);
 }
 
 function recordOf(ctx: EngineCtx, spec: Spec, ticket: TicketRow): PrApplied {
@@ -456,12 +459,62 @@ export async function syncPrText(ctx: EngineCtx, project: ProjectRow, ticketId: 
       return;
     }
     const live = liveTargets(ctx, spec, ticket);
-    if (live === null) return;
     const record = recordOf(ctx, spec, ticket);
-    if (live.length === record.live.length && live.every((target, index) => target === record.live[index])) return;
-    await refreshRollout(ctx, spec, ticket, await repoCheckout(ctx, project, spec, ticket.repo), record, live, current);
+    if (live !== null && (live.length !== record.live.length || live.some((target, index) => target !== record.live[index]))) {
+      await refreshRollout(ctx, spec, ticket, await repoCheckout(ctx, project, spec, ticket.repo), record, live, current);
+      return;
+    }
+    await refreshFormat(ctx, project, spec, ticket, record, current);
   } catch (error) {
     ctx.bb.log("warn", `Keeping the text of ${ticket.key}'s pull request up to date stopped: ${errText(error)}`);
+  }
+}
+
+/** Loom's block for the ticket's pull request as Loom would write it now. */
+const currentBlock = (ctx: EngineCtx, spec: Spec, ticket: TicketRow) => loomBlock(ticket.key, dependsOnLines(spec, ctx.store.tickets(ticket.project_id), ticket), prRollout(ctx, spec, ticket));
+const blockHash = (block: string) => createHash("sha256").update(block).digest("hex").slice(0, 16);
+
+/** How many blocks a format refresh may rewrite in FORMAT_WINDOW_MS, across every project: an update rewrites every open pull request's block, so the edits are spread out. */
+export const FORMAT_REFRESHES = 5;
+const FORMAT_WINDOW_MS = 10 * 60_000;
+const formatEdits = new WeakMap<Store, number[]>();
+
+function takeFormatEdit(ctx: EngineCtx): boolean {
+  const now = ctx.now();
+  const recent = (formatEdits.get(ctx.store) ?? []).filter((at) => now - at < FORMAT_WINDOW_MS);
+  const free = recent.length < FORMAT_REFRESHES;
+  formatEdits.set(ctx.store, free ? [...recent, now] : recent);
+  return free;
+}
+
+/**
+ * Rewrites Loom's block when the one on the pull request is not what Loom would write now, as after an update changes its
+ * format or a pull request it depends on opens or merges, touching only the text between its markers. It runs once per
+ * block Loom would write (`record.block`), so a forge that reformats the text never makes Loom edit on every read, and at
+ * most FORMAT_REFRESHES times in FORMAT_WINDOW_MS; a pull request it skips is refreshed at a later read. A description
+ * with no markers, or a forge that cannot edit, is left alone without a word: the block is advice for the reviewer.
+ */
+async function refreshFormat(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket: TicketRow, record: PrApplied, current: { title: string | null; body: string | null } | null): Promise<void> {
+  // An edit sets the title too, so Loom edits only with the title it just read: a read without one waits for a later read.
+  if (current?.body == null || current.title == null) return;
+  const block = currentBlock(ctx, spec, ticket);
+  const hash = blockHash(block);
+  if (record.block === hash) return;
+  const replaced = replaceLoomBlock(current.body, block);
+  if ("problem" in replaced) return;
+  const settled = { ...record, block: hash, wait: undefined };
+  if (replaced.body === current.body || !canEdit(repoSettings(spec, ticket.repo).forge) || replaced.body.length > PR_BODY_MAX) return saveApplied(ctx, ticket, settled);
+  if (!takeFormatEdit(ctx)) return;
+  const url = ticket.pr_url!;
+  const answer = await edit(ctx, await repoCheckout(ctx, project, spec, ticket.repo), url, current.title, replaced.body);
+  if (answer.outcome === "ok") {
+    post(ctx, ticket, { body: `Rewrote Loom's merge and deploy section of ${url} as it reads now; the rest of the description is unchanged.`, data: { outcome: "pr_block_refreshed", url } });
+    saveApplied(ctx, ticket, settled);
+  } else if (answer.transient !== undefined) {
+    waitOutEdit(ctx, ticket, record, answer, `rewrite Loom's section of ${url}`);
+  } else {
+    post(ctx, ticket, { body: `Loom could not rewrite its merge and deploy section of ${url}: ${answer.message}. The pull request keeps its description.`, data: { outcome: "pr_block_not_refreshed", url } });
+    saveApplied(ctx, ticket, settled);
   }
 }
 
@@ -477,18 +530,20 @@ async function refreshRollout(ctx: EngineCtx, spec: Spec, ticket: TicketRow, che
   };
   if (!canEdit(checkout.settings.forge)) return cannot("forge", "Loom cannot change a pull request's description through this forge");
   if (current?.body == null) return cannot("body", "the forge's read of the pull request gives no description for Loom to change");
-  const block = loomBlock(ticket.key, dependsOnLines(spec, ctx.store.tickets(ticket.project_id), ticket), prRollout(ctx, spec, ticket));
+  // An edit sets the title too, and Loom never sends one it did not just read, which may be a person's change.
+  if (current.title == null) return cannot("title", "the forge's read of the pull request gives no title, and an edit would set the one Loom last wrote over any change since");
+  const block = currentBlock(ctx, spec, ticket);
   const replaced = replaceLoomBlock(current.body, block);
   if ("problem" in replaced && replaced.problem === "none") return cannot("markers", `its description has no Loom markers (${LOOM_BEGIN} and ${LOOM_END}) around the part Loom may replace`);
   if ("problem" in replaced) return cannot("blocks", `its description has Loom's markers more than once, so Loom cannot tell which part is its own`);
   const next = replaced.body;
-  if (next === current.body) return saveApplied(ctx, ticket, { ...record, live, wait: undefined });
+  if (next === current.body) return saveApplied(ctx, ticket, { ...record, live, wait: undefined, block: blockHash(block) });
   // A read-modify-write never cuts the description short: that would delete what people wrote outside Loom's markers.
   if (next.length > PR_BODY_MAX) return cannot("size", `with the Rollout section as it is now the description would be ${next.length} characters, over the ${PR_BODY_MAX} a pull request takes, and Loom never cuts one short`);
-  const answer = await edit(ctx, checkout, url, current.title ?? record.title, next);
+  const answer = await edit(ctx, checkout, url, current.title, next);
   if (answer.outcome === "ok") {
     post(ctx, ticket, { body: `Refreshed the Rollout section of ${url}: ${what}.`, data: { outcome: "rollout_refreshed", url, live } });
-    saveApplied(ctx, ticket, { ...record, live, wait: undefined });
+    saveApplied(ctx, ticket, { ...record, live, wait: undefined, block: blockHash(block) });
   } else if (answer.transient !== undefined) {
     waitOutEdit(ctx, ticket, record, answer, `refresh the Rollout section of ${url}`);
   } else {

@@ -9,6 +9,7 @@ import { ensureSpecReview, specVerdict } from "../src/spec-review";
 import { PAUSE_NOW_REASON } from "../src/states";
 import { editTicket } from "../src/triage";
 import { checkOutHead, makeEngine, reachApproved, reachReview, seedProject, seedRepoProject, specToml, ticketOf, withDocsTicket, workerRows, type Doc } from "./helpers";
+import { specOf } from "../src/workers";
 
 let h: ReturnType<typeof makeEngine>;
 
@@ -1001,7 +1002,7 @@ describe("tick: review and merge", () => {
     await h.engine.tick();
     await settleMerges(h.ctx);
     expect(ticketOf(h, "CSV-1").state).toBe("done");
-    expect(h.host.callsTo("merge")).toEqual([{ worktree: "/data/worktrees/csv", ref: "c1", message: "CSV-1: Order rows (Loom)", before: "base000" }]);
+    expect(h.host.callsTo("merge")).toEqual([{ worktree: "/data/worktrees/csv", ref: "c1", message: `Merge ${ticketOf(h, "CSV-1").branch} into ${specOf(h.store, h.store.projectBySlug("csv")!).merge.branch}\n\nOrder rows`, before: "base000" }]);
     expect(h.host.callsTo("exec").at(-1)).toMatchObject({ cwd: "/data/worktrees/csv", command: "npm run e2e" });
 
     await h.engine.tick();

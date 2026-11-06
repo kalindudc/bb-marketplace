@@ -261,45 +261,41 @@ describe("rollout warnings", () => {
   });
 });
 
-describe("the pull request's Rollout section", () => {
-  it("says the stage, what must be live first with its pull request and how it deploys, and how this change deploys", () => {
+describe("the deploy part of the pull request's merge and deploy section", () => {
+  it("names what must be in production first by pull request link and title, says whether it is, and how this change deploys", () => {
     const rows = board();
     const lane4 = rows.find((ticket) => ticket.key === "LANE-4")!;
-    expect(rolloutSection(specOf(), rows, lane4, [live("LANE-1", "verify", NOW - HOUR)], NOW)).toEqual([
-      "## Rollout",
-      "",
-      "Stage: migrate (2 of 3): Callers send it.",
-      "Live first:",
-      "- LANE-1 LANE-1 title (https://github.com/acme/core/pull/1). It deploys: Shipit deploys main. It is live.",
-      "- LANE-2 LANE-2 title (https://github.com/acme/core/pull/2). It deploys: The actuator applies on merge. It is not live yet.",
-      "Deploys: Shipit deploys main. Merging does not deploy it.",
-      "Release: wave-1, with LANE-3.",
-      "Dark: it ships with its gate off.",
-      "",
-      "Loom tracks this order on the project's Rollout tab. It is advice: Loom holds no merge or deploy for it.",
+    const lines = rolloutSection(specOf(), rows, lane4, [live("LANE-1", "verify", NOW - HOUR)], NOW);
+    expect(lines).toEqual([
+      "- Needs in production first:",
+      "  - https://github.com/acme/core/pull/1 (LANE-1 title): deployed.",
+      "  - https://github.com/acme/core/pull/2 (LANE-2 title): not deployed yet.",
+      "- How this deploys: Shipit deploys main. Merging does not deploy it.",
+      `- Release: wave-1, with ${rows.find((ticket) => ticket.key === "LANE-3")!.pr_url ?? '"LANE-3 title"'}.`,
+      "- Ships dark: its feature gate starts off.",
     ]);
+    expect(lines.join("\n")).not.toMatch(/\bLoom\b|Stage|migrate|advice|Live first/u);
   });
 
-  it("names a milestone that gates the stage, a deploy on merge, verify and rollback", () => {
+  it("names a milestone by its title, a deploy on merge, verify and rollback", () => {
     const rows = board({ "LANE-2": { rollout: { stage: "expand", verify: "dig +short edge.example.com", rollback: "Revert; the actuator applies the revert" } } });
     const section = (key: string) => rolloutSection(specOf(), rows, rows.find((ticket) => ticket.key === key)!, [], NOW);
-    expect(section("LANE-5").slice(3, 5)).toEqual(["Live first:", "- old-traffic-zero: Old path traffic near zero. It gates this stage. It does not hold yet."]);
-    expect(section("LANE-2").slice(2, 7)).toEqual([
-      "Stage: expand (1 of 3): Servers accept the header.",
-      "Live first: nothing.",
-      "Deploys on merge: The actuator applies on merge.",
-      "Verify: `dig +short edge.example.com`",
-      "Rollback: Revert; the actuator applies the revert.",
+    expect(section("LANE-5")).toContain("  - Old path traffic near zero: not yet.");
+    expect(section("LANE-2")).toEqual([
+      "- How this deploys: It deploys when merged: The actuator applies on merge.",
+      "- Verify after deploy: `dig +short edge.example.com`",
+      "- Rollback: Revert; the actuator applies the revert.",
     ]);
   });
 
-  it("is there for a ticket outside the stages of a staged project, and not for a ticket of a project with neither", () => {
+  it("says nothing for a ticket outside the stages of a staged project, or of a project with no rollout", () => {
     const staged = parseSpec(specToml((doc) => ((doc.merge = { strategy: "pr" }), (doc.rollout = { stage: [{ name: "expand", goal: "Live" }] })))).spec!;
     const plain = row("CSV-1", "pr_open", { repo: null });
-    expect(rolloutSection(staged, [plain], plain, [], NOW).slice(2, 3)).toEqual(["This change is in no rollout stage. Loom follows the project's deploy order on its Rollout tab."]);
+    expect(rolloutSection(staged, [plain], plain, [], NOW)).toEqual([]);
     expect(rolloutSection(parseSpec(specToml((doc) => (doc.merge = { strategy: "pr" }))).spec!, [plain], plain, [], NOW)).toEqual([]);
   });
 });
+
 
 describe("the Rollout tab's reading of the order", () => {
   const statuses = (view: RolloutView, now = NOW) => Object.fromEntries(view.stages.flatMap((stage) => stage.steps).map((step) => [step.key, [stepStatus(view, step, now).kind, stepStatus(view, step, now).label, stepStatus(view, step, now).why]]));

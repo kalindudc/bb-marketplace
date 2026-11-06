@@ -172,7 +172,7 @@ describe("catching up with the dependency on a machine", () => {
 
     const ticket = ticketOf(h, "CSV-2");
     expect(h.host.callsTo("merge")).toEqual([]);
-    expect(h.host.callsTo("mergeOnto")).toEqual([{ repo: "/repo", head: before.head_sha, ref: "sq7", message: "Merge CSV-1's pull request into CSV-2 (Loom)", refs: ["refs/heads/loom/csv/csv-2-home", "refs/loom/csv/csv-2/reviewed"] }]);
+    expect(h.host.callsTo("mergeOnto")).toEqual([{ repo: "/repo", head: before.head_sha, ref: "sq7", message: `Merge ${ticketOf(h, "CSV-1").pr_branch} into ${ticketOf(h, "CSV-2").pr_branch ?? ticketOf(h, "CSV-2").branch}`, refs: ["refs/heads/loom/csv/csv-2-home", "refs/loom/csv/csv-2/reviewed"] }]);
     expect(h.host.callsTo("carryStart").at(-1)).toMatchObject({ worktree: worktreeOf(worker), replaces: before.head_tree });
     expect(h.host.callsTo("exec").at(-1)).toMatchObject({ cwd: worktreeOf(worker), command: "npm test" });
     expect(ticket).toMatchObject({ state: "pr_open", head_sha: "lm1", head_tree: "lm1-tree", pr_rounds: 0 });

@@ -176,7 +176,7 @@ async function runPipeline(ctx: EngineCtx, ticket: TicketRow, spec: Spec, worker
   if (environment?.path == null) throw new Error("the worker's worktree is not available");
   const { path: worktree, hostId } = environment;
 
-  const commit = await ctx.host.call(hostId, "commitAll", { worktree, message: `${ticket.key}: ${ticket.title}` });
+  const commit = await ctx.host.call(hostId, "commitAll", { worktree, message: ticket.title });
   await recordBranch(ctx, worker);
   const repo = ticketRepo(spec, ticket);
   const project = ctx.store.project(ticket.project_id)!;
@@ -293,7 +293,7 @@ async function finish(ctx: EngineCtx, ticketId: number, spec: Spec, outcome: Out
       const stack = stackOf(ticket);
       const resolved = stack?.markers === undefined ? {} : { stack_json: JSON.stringify({ ...stack, markers: undefined } satisfies Stack) };
       // Nothing to push once approved, so Loom asks for no commit message.
-      const text: PrText = { head: outcome.commitSha, by: "loom", title: null, body: null, commit: `${ticket.key}: ${ticket.title}` };
+      const text: PrText = { head: outcome.commitSha, by: "loom", title: null, body: null, commit: ticket.title };
       const textOnly = outcome.textOnly === true ? { pr_text_json: JSON.stringify(text) } : {};
       store.updateTicket(ticket.id, { head_sha: outcome.commitSha, head_tree: outcome.tree, review_round: round, ...resolved, ...textOnly });
       if (worker !== null) store.updateThread((worker as ThreadRow).id, { idle_count: 0 });

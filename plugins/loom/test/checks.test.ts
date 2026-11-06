@@ -64,7 +64,7 @@ describe("a passing submit", () => {
   it("commits, reads the changed files, runs the ticket's verify and then the project checks, and moves to review with head_sha", async () => {
     await submitted((doc) => (doc.ticket[0].verify = ["npm run lint"]));
     expect(h.host.calls.map((call) => call.method)).toEqual(["commitAll", "worktreeState", "exec", "exec", "worktreeState"]);
-    expect(h.host.callsTo("commitAll")).toEqual([{ worktree: WORKTREE, message: "CSV-1: Order rows" }]);
+    expect(h.host.callsTo("commitAll")).toEqual([{ worktree: WORKTREE, message: "Order rows" }]);
     expect(h.host.callsTo("worktreeState")[0]).toEqual({ worktree: WORKTREE, base: "loom/csv" });
     expect(h.host.callsTo("exec")).toEqual([
       { cwd: WORKTREE, command: "npm run lint", timeoutMs: 15 * 60_000 },
@@ -373,7 +373,7 @@ describe("a worker whose environment bb attached after spawn returned", () => {
     await settleChecks(h.ctx);
 
     expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "review", head_sha: "c1", branch: "late-branch", environment_id: "env_late" });
-    expect(h.host.callsTo("commitAll")).toEqual([{ worktree: "/wt/late", message: "CSV-1: Order rows" }]);
+    expect(h.host.callsTo("commitAll")).toEqual([{ worktree: "/wt/late", message: "Order rows" }]);
     expect(h.host.callsTo("exec").every((call) => call.cwd === "/wt/late")).toBe(true);
     expect(h.store.thread(row.id)!.environment_id).toBe("env_late");
   });

@@ -250,18 +250,24 @@ function dependenciesSection(spec: Spec, ticket: TicketRow, tickets: readonly Ti
   return ["## Dependencies", ...lines, ...(notes.length > 0 ? ["", ...notes] : []), ""];
 }
 
-/** The lines a pull request's description gets for the pull requests it depends on: the one it is stacked on, and those in other repos. */
+/** Another change as a reviewer knows it: its pull request's link and its title, or its title when it has no pull request yet. Never its ticket key. */
+export const changeName = (row: { pr_url: string | null; title: string }) => (row.pr_url !== null ? `${row.pr_url} (${row.title})` : `"${row.title}" (pull request not open yet)`);
+
+/**
+ * The lines a pull request's description gets for the pull requests it depends on, for its reviewer: the one it builds
+ * on, those in other repos, and those it merges after, each by its link and title.
+ */
 export function dependsOnLines(spec: Spec, tickets: readonly TicketRow[], ticket: TicketRow): string[] {
   const up = upstreamOf(tickets, ticket);
   const lines: string[] = [];
   const only = up.open.length === 1 ? up.open[0]! : null;
-  if (only?.pr_url != null) lines.push(`Stacked on ${only.pr_url} (${only.key}): merge that one first. Loom moves this pull request to ${repoSettings(spec, ticket.repo).base} when it merges.`);
-  for (const dep of up.cross) if (dep.state !== "done" && dep.state !== "cancelled" && dep.pr_url !== null) lines.push(`Depends on ${dep.pr_url} (${dep.key}) in the repo ${JSON.stringify(dep.repo)}: merge that one first.`);
+  if (only?.pr_url != null) lines.push(`Builds on ${changeName(only)}; merge that first, and this pull request then moves to \`${repoSettings(spec, ticket.repo).base}\`.`);
+  for (const dep of up.cross) if (dep.state !== "done" && dep.state !== "cancelled" && dep.pr_url !== null) lines.push(`Needs ${changeName(dep)} merged first.`);
   const byKey = new Map(tickets.map((row) => [row.key, row]));
   for (const key of JSON.parse(ticket.merge_after_json) as string[]) {
     const before = byKey.get(key);
     if (before === undefined || before.state === "done" || before.state === "cancelled") continue;
-    lines.push(before.pr_url !== null ? `Merge after ${before.pr_url} (${before.key}).` : `Merge after ${before.key}, which has no pull request yet.`);
+    lines.push(`Merge after ${changeName(before)}.`);
   }
   return lines;
 }
@@ -725,31 +731,34 @@ export function afterMergeChangedText(key: string, run: CheckRun, changed: strin
 }
 
 /** Loom's template description of a ticket's pull request, followed by Loom's own sections. */
-export function prBody(a: { ticket: TicketRow; approvals: ReviewRow[]; dependsOn?: string[]; rollout?: readonly string[] }): string {
-  return `${prTemplateText(a.ticket, a.approvals)}\n\n${loomBlock(a.ticket.key, a.dependsOn, a.rollout)}`;
+export function prBody(a: { ticket: TicketRow; dependsOn?: string[]; rollout?: readonly string[] }): string {
+  return `${prTemplateText(a.ticket)}\n\n${loomBlock(a.ticket.key, a.dependsOn, a.rollout)}`;
 }
 
-/** The part of Loom's template a worker's description takes the place of: the ticket, its criteria and its review. */
-export function prTemplateText(ticket: TicketRow, approvals: readonly ReviewRow[]): string {
+/**
+ * The part of Loom's template a worker's description takes the place of, in the shape the loom-pr-description skill
+ * gives: a Summary from the ticket's goal and what it must do. Nothing about how Loom made or reviewed it.
+ */
+export function prTemplateText(ticket: TicketRow): string {
   const acceptance = JSON.parse(ticket.acceptance_json) as string[];
-  return [
-    ticket.body,
-    "",
-    "Acceptance criteria:",
-    ...acceptance.map((line, index) => `${index + 1}. ${line}`),
-    "",
-    `Review: approved by ${approvals.length} ${approvals.length === 1 ? "reviewer" : "reviewers"}.`,
-    ...approvals.map((review) => `- ${review.summary ?? ""}`),
-  ].join("\n");
+  return ["## Summary", "", ticket.title, "", ticket.body, ...(acceptance.length === 0 ? [] : ["", "**What:**", ...acceptance.map((line) => `- ${line}`)])].join("\n");
 }
 
 /** What starts and ends Loom's own sections at the end of a pull request's description, so Loom can find and replace them later. */
 export const LOOM_BEGIN = "<!-- loom:begin -->";
 export const LOOM_END = "<!-- loom:end -->";
 
-/** Loom's own sections of a description, between its markers: the pull requests it depends on, its Rollout section and who opened it. */
+/** The hidden comment that names the ticket a block is for; nothing parses it, and a reviewer never sees it. */
+export const ticketMark = (key: string) => `<!-- loom:ticket ${key} -->`;
+
+/**
+ * Loom's own section of a description, between its markers, written for the reviewer: what must merge or be in
+ * production first, how the change deploys and rolls back (dependsOnLines and rolloutSection), and the ticket's key in
+ * a hidden comment. With nothing to say, only the comment.
+ */
 export function loomBlock(key: string, dependsOn: readonly string[] = [], rollout: readonly string[] = []): string {
-  return [LOOM_BEGIN, ...(dependsOn.length > 0 ? [...dependsOn, ""] : []), ...(rollout.length > 0 ? [...rollout, ""] : []), `Opened by Loom for ${key}.`, LOOM_END].join("\n");
+  const order = [...dependsOn.map((line) => `- ${line}`), ...rollout];
+  return [LOOM_BEGIN, ...(order.length > 0 ? ["## Merge and deploy order", ...order, ""] : []), ticketMark(key), LOOM_END].join("\n");
 }
 
 const count = (text: string, part: string) => text.split(part).length - 1;
@@ -960,9 +969,9 @@ function rolloutBriefSection(spec: Spec, tickets: readonly TicketRow[], ticket: 
   const facts = rolloutFacts(spec, tickets, ticket, null, 0);
   return facts.length === 0 ? [] : ["## Rollout", rule, ...facts, ""];
 }
-const WORKER_ROLLOUT = "Loom writes the rollout order in the pull request's Rollout section; do not write deploy order or prerequisites into the description.";
+const WORKER_ROLLOUT = "Loom writes the merge and deploy order in its own section of the pull request's description; do not write deploy order or prerequisites as a section of your own.";
 const REVIEWER_ROLLOUT =
-  "Loom tracks the rollout order and shows it in the pull request's Rollout section. Do not request changes to keep the pull request a draft or to describe the deploy order. Never call loom_request_changes for the rollout order: it is advice for the human. If the rollout order in the spec looks wrong, say so with loom_note or in your verdict's summary."; 
+  "Loom tracks the rollout order and shows it in its merge and deploy section of the pull request's description. Do not request changes to keep the pull request a draft or to describe the deploy order. Never call loom_request_changes for the rollout order: it is advice for the human. If the rollout order in the spec looks wrong, say so with loom_note or in your verdict's summary.";
 
 /** Loom could not merge what a stacked ticket's branch must take: the worker merges `branch` and resolves the conflict. */
 export function restackConflictText(key: string, what: string, branch: string, files: readonly string[]): { summary: string; detail: string } {
@@ -1025,6 +1034,12 @@ export function upstreamChangedText(key: string, dep: { key: string; url: string
 /** "a", "a and b", "a, b and c". */
 export const andList = (items: readonly string[]) => (items.length <= 1 ? items.join("") : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`);
 
+/** The subject of a merge commit Loom makes, as git names one: what it took, by branch or remote ref, into the branch. No ticket key. */
+export const mergeSubject = (sources: readonly string[], into: string) => `Merge ${andList([...new Set(sources)])} into ${into}`;
+
+/** A ticket's branch as a merge subject names it: its pull request branch, else its work branch. */
+export const branchName = (ticket: { pr_branch: string | null; branch: string | null; title: string }) => ticket.pr_branch ?? ticket.branch ?? ticket.title;
+
 /** On a multi-repo project `repo` is the repo the pull request is in: the body lists only its merged tickets and names the project's other repos. */
 export function landBody(a: { project: ProjectRow; spec: Spec; done: TicketRow[]; repo?: string }): string {
   const { project, spec, repo } = a;
@@ -1033,8 +1048,9 @@ export function landBody(a: { project: ProjectRow; spec: Spec; done: TicketRow[]
   const across =
     others.length === 0
       ? []
-      : [`This pull request lands the project's work in the repo ${JSON.stringify(repo)}. The project also changes the ${others.length === 1 ? "repo" : "repos"} ${andList(others.map((name) => JSON.stringify(name)))}, which ${others.length === 1 ? "lands" : "land"} on ${others.length === 1 ? "its" : "their"} own.`, ""];
-  return [spec.project.goal, "", ...across, "Merged tickets:", ...done.map((ticket) => `- ${ticket.key} ${ticket.title}`), "", `Opened by Loom (project ${project.slug}).`].join("\n");
+      : [`This pull request lands this work in ${JSON.stringify(repo)}. The same work also changes ${andList(others.map((name) => JSON.stringify(name)))}, which ${others.length === 1 ? "lands" : "land"} on ${others.length === 1 ? "its" : "their"} own.`, ""];
+  const changes = done.map((ticket) => `- ${ticket.title}${ticket.pr_url === null ? "" : ` (${ticket.pr_url})`}`);
+  return ["## Summary", "", spec.project.goal, "", ...across, ...(changes.length === 0 ? [] : ["**What:**", ...changes, ""]), `<!-- loom:project ${project.slug} -->`].join("\n");
 }
 
 /** The visible prompt of the agent that summarizes a finished project's record; the record follows as agent-only text. */

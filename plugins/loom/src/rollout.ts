@@ -559,9 +559,33 @@ export function rolloutFacts(spec: Spec, tickets: readonly TicketRow[], ticket: 
   ];
 }
 
-/** The `## Rollout` section Loom adds to a ticket's pull request description, or no lines when it has nothing to say. */
+/**
+ * The deploy part of Loom's merge and deploy section of a ticket's pull request, as bullets for its reviewer: what must
+ * be in production first, each by its pull request link and title, and how the change deploys, releases, verifies and
+ * rolls back, from the ticket's own rollout text. No stage names, ticket keys or Loom vocabulary; a cancelled or unknown
+ * requirement holds nothing back, so it is left out. No lines when there is nothing to say.
+ */
 export function rolloutSection(spec: Spec, tickets: readonly TicketRow[], ticket: TicketRow, marks: readonly RolloutMarkRow[], now: number): string[] {
-  const facts = rolloutFacts(spec, tickets, ticket, marks, now);
-  if (facts.length === 0) return [];
-  return ["## Rollout", "", ...facts, "", "Loom tracks this order on the project's Rollout tab. It is advice: Loom holds no merge or deploy for it."];
+  const stages = spec.rollout?.stage ?? [];
+  if (spec.merge.strategy !== "pr" || (ticket.rollout_json === null && stages.length === 0)) return [];
+  const step = rolloutOf(spec, tickets, marks, now)?.stages.flatMap((stage) => stage.steps).find((each) => each.key === ticket.key);
+  if (step === undefined) return [];
+  const byKey = new Map(tickets.map((row) => [row.key, row]));
+  const bare = (text: string) => text.trim().replace(/[.\s]+$/u, "");
+  const needLine = (need: RolloutRequirement) => {
+    if (need.kind === "milestone") return `  - ${bare(need.title ?? need.target)}: ${need.live ? "confirmed" : "not yet"}.`;
+    const title = bare(need.title ?? byKey.get(need.target)?.title ?? "another change");
+    return `  - ${need.prUrl === null ? `"${title}" (pull request not open yet)` : `${need.prUrl} (${title})`}: ${need.live ? "deployed" : "not deployed yet"}.`;
+  };
+  const needs = step.requires.filter((need) => !need.cancelled && !need.unknown);
+  const how = step.onMerge ? (step.how === null ? "It deploys when merged." : `It deploys when merged: ${sentence(step.how)}`) : step.how === null ? null : `${sentence(step.how)} Merging does not deploy it.`;
+  const releaseWith = step.releaseWith.map((key) => byKey.get(key)).flatMap((row) => (row === undefined ? [] : [row.pr_url ?? `"${row.title}"`]));
+  return [
+    ...(needs.length === 0 ? [] : ["- Needs in production first:", ...needs.map(needLine)]),
+    ...(how === null ? [] : [`- How this deploys: ${how}`]),
+    ...(step.release === null ? [] : [`- Release: ${step.release}${releaseWith.length === 0 ? "" : `, with ${listText(releaseWith)}`}.`]),
+    ...(step.dark ? ["- Ships dark: its feature gate starts off."] : []),
+    ...(step.verify === null ? [] : [`- Verify after deploy: \`${step.verify}\``]),
+    ...(step.rollback === null ? [] : [`- ${sentence(`Rollback: ${step.rollback}`)}`]),
+  ];
 }

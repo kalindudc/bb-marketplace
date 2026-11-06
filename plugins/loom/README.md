@@ -683,12 +683,18 @@ its own pull request.
   body it gives there wins over the proposed one. A worker that ends its turn
   twice without it, or takes more than 30 minutes, gets Loom's template
   instead for what it did not propose, and `merge.describe = "loom"` always
-  uses the template.
-- The worker's description comes first. Loom's own sections follow it between
-  `<!-- loom:begin -->` and `<!-- loom:end -->`: the pull requests it depends on,
-  the Rollout section and the line that says who opened it, so Loom can find
-  and replace them later. Loom takes those markers, and anything between them,
-  out of the worker's text, so a description has one block of Loom's.
+  uses the template. The template follows the skill's shape too: the ticket's
+  title, a Summary from its goal and what it must do, and no ticket key.
+- The worker's description comes first. Loom's own section follows it between
+  `<!-- loom:begin -->` and `<!-- loom:end -->`, so Loom can find and replace it
+  later: a "Merge and deploy order" heading with the pull requests this one
+  builds on or merges after, what must be in production first (each by its
+  pull request link and title, or "pull request not open yet", and whether it
+  is deployed), how the change deploys, its release, verify and rollback, from
+  the ticket's rollout. It names no ticket key and says nothing about Loom; the
+  ticket's key is only in a hidden comment. With nothing to say, the block is
+  that comment alone. Loom takes its markers, and anything between them, out of
+  the worker's text, so a description has one block of Loom's.
 - Loom pushes the reviewed work as one commit (`merge.squash = false` pushes
   the branch as it is), never with force, and opens the pull request.
 - Loom then follows the pull request: its checks, reviews, unresolved review
@@ -761,8 +767,13 @@ its own pull request.
   change it (see [Settings](#settings)), and a hidden mark, so a later read
   never counts the worker's reply as new feedback. A fix round takes at most
   30 replies.
+- When the block Loom would write differs from the one Loom last wrote, as after
+  an update changes its format, or when a pull request it builds on opens or
+  merges, Loom rewrites the block at its next read of the pull request, once
+  per block, at most 5 pull requests every 10 minutes, and says so on the
+  ticket. A description with no markers is left alone without a word.
 - When a ticket or milestone an open pull request requires goes live, Loom
-  rewrites that pull request's Rollout section on its next read of it,
+  rewrites the deploy part of that pull request's section on its next read of it,
   replacing only what lies between its markers and keeping the rest of the
   description as it is. It never cuts a description short. A description Loom
   cannot read, one without exactly one pair of its markers (such as one from
@@ -1131,7 +1142,7 @@ such as a metric reaching zero.
 
 Deploy order is advice for you. Loom never holds, delays or reorders a start, a
 review, a merge or a push because of it, and posts nothing to the forge for it
-apart from the Rollout section of each pull request's description.
+apart from its merge and deploy section of each pull request's description.
 
 - `[rollout]` in the spec has `deploy` (how changes reach traffic, and
   `on_merge` when merging deploys them; a `[[repo]]` can set its own),
@@ -1232,7 +1243,7 @@ choice is found or ask; the planner asks you the ask items in one round, and
   `mergeable` gives the Merge order tab the same drafts, reviews and conflicts
   it reads from GitHub, and lets Loom catch a merge into the wrong branch and
   keep pull requests fresh there too; one that prints `title` and `body` lets
-  Loom refresh the Rollout section. An `edit` command
+  Loom refresh its merge and deploy section. An `edit` command
   lets Loom change a pull request's title and description, and a `reply`
   command lets workers answer its reviews and comments through Loom.
 - `after_push` commands, on `gh` or a command forge, run on the project's

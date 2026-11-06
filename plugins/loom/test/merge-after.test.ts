@@ -29,7 +29,7 @@ describe("dependsOnLines and merge_after", () => {
     const core = row("CSV-2", "working");
     const merged = row("CSV-3", "done", { pr_url: "https://github.com/acme/shop/pull/5" });
     const client = row("CSV-4", "approved", { merge_after_json: JSON.stringify(["CSV-1", "CSV-2", "CSV-3"]) });
-    expect(dependsOnLines(spec, [proxy, core, merged, client], client)).toEqual(["Merge after https://github.com/acme/shop/pull/7 (CSV-1).", "Merge after CSV-2, which has no pull request yet."]);
+    expect(dependsOnLines(spec, [proxy, core, merged, client], client)).toEqual([`Merge after https://github.com/acme/shop/pull/7 (${proxy.title}).`, `Merge after "${core.title}" (pull request not open yet).`]);
   });
 
   it("adds nothing for a ticket with no merge_after", () => {

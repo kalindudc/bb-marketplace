@@ -37,7 +37,7 @@ const poll = async () => {
 };
 const briefs = () => h.bb.callsTo("spawnThread").map(([args]) => `${(args as { prompt: string }).prompt}\n${(args as { detail?: string }).detail ?? ""}`);
 const PROPOSED = { title: "Add order rows", body: "## Why\nSupport wants CSV exports.\n\n## Deploy\nShips dark." };
-const block = (key = "CSV-1") => `<!-- loom:begin -->\nOpened by Loom for ${key}.\n<!-- loom:end -->`;
+const block = (key = "CSV-1") => `<!-- loom:begin -->\n<!-- loom:ticket ${key} -->\n<!-- loom:end -->`;
 const thread = { key: "thread:PRRT_1:9:abc", kind: "thread" as const, author: "alice", bot: false, body: "alice: The description should say how to roll back.", url: `${URL}#discussion_r9`, state: null, path: "src/model/a.ts", line: 4 };
 const review = { key: "review:3:def", kind: "review" as const, author: "bob", bot: false, body: "Please describe the rollback.\nAnd the flag.", url: `${URL}#pullrequestreview-3`, state: "changes_requested", path: null, line: null };
 
@@ -388,9 +388,8 @@ describe("refreshing the pull request's Rollout section", () => {
     doc.rollout = { milestone: [{ ref: "traffic-low", title: "Old traffic is near zero" }] };
     doc.ticket[0].rollout = { requires_live: ["traffic-low"] };
   };
-  const section = (status: string) =>
-    `## Rollout\n\nStage: none.\nLive first:\n- traffic-low: Old traffic is near zero. ${status}\nMerging does not deploy it; it deploys the way its repo does.\n\nLoom tracks this order on the project's Rollout tab. It is advice: Loom holds no merge or deploy for it.`;
-  const blockWith = (status: string) => `<!-- loom:begin -->\n${section(status)}\n\nOpened by Loom for CSV-1.\n<!-- loom:end -->`;
+  const section = (status: string) => `## Merge and deploy order\n- Needs in production first:\n  - Old traffic is near zero: ${status === "It holds." ? "confirmed" : "not yet"}.`;
+  const blockWith = (status: string) => `<!-- loom:begin -->\n${section(status)}\n\n<!-- loom:ticket CSV-1 -->\n<!-- loom:end -->`;
 
   async function openWithRollout(more: Doc = {}): Promise<void> {
     await seedProject(h, rollout(more));
@@ -445,6 +444,15 @@ describe("refreshing the pull request's Rollout section", () => {
     await poll();
     expect(h.host.callsTo("prEdit")).toEqual([]);
     expect(outcomes("rollout_not_refreshed")[0]!.data).toMatchObject({ reason: "body", live: ["traffic-low"] });
+  });
+
+  it("does not refresh the deploy order when the read gives no title, since it never sends a title it did not just read", async () => {
+    await openWithRollout();
+    h.host.texts.set(URL, { title: null, body: `Why.\n\n${blockWith("It does not hold yet.")}` });
+    markLiveByHuman(h.ctx, "csv", "traffic-low", {}, "human");
+    await poll();
+    expect(h.host.callsTo("prEdit")).toEqual([]);
+    expect(outcomes("rollout_not_refreshed")[0]!.data).toMatchObject({ reason: "title" });
   });
 
   it("waits out a refresh that failed with a temporary error, and tries again on a later read", async () => {
@@ -582,7 +590,7 @@ describe("descriptions near the forge's limit", () => {
     const edited = h.host.callsTo("prEdit")[0]!.body;
     expect(edited.startsWith(human)).toBe(true);
     expect(edited.endsWith("\n\nFooter by hand.")).toBe(true);
-    expect(edited).toContain("It holds.");
+    expect(edited).toContain("Old traffic is near zero: confirmed.");
 
     h = makeCtx();
     const again = await opened();
@@ -891,7 +899,7 @@ describe("the text of a stacked pull request Loom opens again after the forge cl
     await reopened({ title: APPROVED.title, body: null });
     const created = h.host.callsTo("prCreate").at(-1)!;
     expect(created.title).toBe(APPROVED.title);
-    expect(created.body).toContain("Opened by Loom for CSV-2.");
+    expect(created.body).toContain("<!-- loom:ticket CSV-2 -->");
     expect(created.body).not.toContain(FIXED);
   });
 });

@@ -273,13 +273,13 @@ describe("rollout order is advice only", () => {
       const args = h.bb.callsTo("spawnThread")[index]![0] as SpawnArgs;
       return `${args.prompt}\n${args.detail ?? ""}`;
     };
-    expect(brief(0)).toContain("## Rollout\nLoom writes the rollout order in the pull request's Rollout section; do not write deploy order or prerequisites into the description.\nStage: none.\nLive first:\n- traffic-low: Old traffic is near zero.\n");
+    expect(brief(0)).toContain("## Rollout\nLoom writes the merge and deploy order in its own section of the pull request's description; do not write deploy order or prerequisites as a section of your own.\nStage: none.\nLive first:\n- traffic-low: Old traffic is near zero.\n");
     h.host.worktree("/wt/env_1").dirty = true;
     submit(h.ctx, "thr_w1", "Mapped orders");
     await settleChecks(h.ctx);
     await h.engine.tick();
     expect(roles()).toEqual(["worker:CSV-1", "reviewer:CSV-1"]);
-    expect(brief(1)).toContain("Loom tracks the rollout order and shows it in the pull request's Rollout section. Do not request changes to keep the pull request a draft or to describe the deploy order. Never call loom_request_changes for the rollout order: it is advice for the human. If the rollout order in the spec looks wrong, say so with loom_note or in your verdict's summary.");
+    expect(brief(1)).toContain("Loom tracks the rollout order and shows it in its merge and deploy section of the pull request's description. Do not request changes to keep the pull request a draft or to describe the deploy order. Never call loom_request_changes for the rollout order: it is advice for the human. If the rollout order in the spec looks wrong, say so with loom_note or in your verdict's summary.");
     checkOutHead(h, h.store.threads({ ticketId: ticketOf(h, "CSV-1").id, role: "reviewer" })[0]!);
     await approve(h.ctx, "thr_w2", "Every criterion holds");
     await settleReviews(h.ctx);
@@ -287,7 +287,7 @@ describe("rollout order is advice only", () => {
     await settleMerges(h.ctx);
     expect(ticketOf(h, "CSV-1").state).toBe("pr_open");
     expect(h.host.callsTo("prCreate")).toHaveLength(1);
-    expect(h.host.callsTo("prCreate")[0]!.body).toContain("## Rollout\n\nStage: none.\nLive first:\n- traffic-low: Old traffic is near zero. It does not hold yet.\nDeploys: Shipit deploys main. Merging does not deploy it.\n\nLoom tracks this order on the project's Rollout tab. It is advice: Loom holds no merge or deploy for it.\n\nOpened by Loom for CSV-1.");
+    expect(h.host.callsTo("prCreate")[0]!.body).toContain("## Merge and deploy order\n- Needs in production first:\n  - Old traffic is near zero: not yet.\n- How this deploys: Shipit deploys main. Merging does not deploy it.\n\n<!-- loom:ticket CSV-1 -->");
     await h.engine.tick();
     expect(roles()).toContain("worker:CSV-2");
     expect(h.store.rolloutMark(project().id, "traffic-low")).toMatchObject({ live_at: null, check_exit: 1 });

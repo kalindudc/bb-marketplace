@@ -174,11 +174,11 @@ describe("refreshing an open pull request", () => {
     await count();
     await queue();
 
-    expect(h.host.callsTo("stackBase")).toEqual([{ repo: "/repo", branch: "loom/csv/csv-1-stack", commits: ["base001"], message: "Loom: origin/main for CSV-1" }]);
-    expect(h.host.callsTo("mergeOnto").at(-1)).toEqual({ repo: "/repo", head, ref: "base001", message: "Merge origin/main into CSV-1 (Loom)", refs: [] });
+    expect(h.host.callsTo("stackBase")).toEqual([{ repo: "/repo", branch: "loom/csv/csv-1-stack", commits: ["base001"], message: "Merge origin/main into loom/csv/csv-1-stack" }]);
+    expect(h.host.callsTo("mergeOnto").at(-1)).toEqual({ repo: "/repo", head, ref: "base001", message: `Merge origin/main into ${ticket().pr_branch}`, refs: [] });
     expect(h.host.callsTo("resetHard").at(-1)).toEqual({ worktree: `/wt/${worker.environment_id}`, sha: "lm1" });
     expect(h.host.callsTo("exec").at(-1)).toMatchObject({ cwd: `/wt/${worker.environment_id}`, command: "npm test" });
-    expect(h.host.callsTo("prCommit").at(-1)).toMatchObject({ head: "lm1", base: "base001", message: "CSV-1: merge origin/main (Loom)", pushed: "sq1" });
+    expect(h.host.callsTo("prCommit").at(-1)).toMatchObject({ head: "lm1", base: "base001", message: `Merge origin/main into ${ticket().pr_branch}`, pushed: "sq1" });
     const after = ticket();
     expect(after).toMatchObject({ state: "pr_open", head_sha: "lm1", pushed_sha: "sq2", pr_rounds: 0, pr_url: URL1 });
     expect(h.host.callsTo("push").at(-1)).toEqual({ repo: "/repo", remote: "origin", src: "sq2", branch: after.pr_branch });
@@ -398,7 +398,7 @@ describe("refreshing an open pull request", () => {
     await queue();
 
     const head = h.store.ticketByKey("CSV-1")!.head_sha;
-    expect(h.host.callsTo("mergeOnto").at(-1)).toMatchObject({ repo: "/repo", ref: "base001", message: "Merge origin/main into CSV-1 (Loom)" });
+    expect(h.host.callsTo("mergeOnto").at(-1)).toMatchObject({ repo: "/repo", ref: "base001", message: `Merge origin/main into ${ticket().pr_branch}` });
     expect(h.host.callsTo("merge")).toEqual([]);
     expect(h.host.callsTo("carryFinish").at(-1)).toMatchObject({ worktree: `/wt/${worker.environment_id}` });
     expect(head).toMatch(/^lm/u);

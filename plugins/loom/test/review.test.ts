@@ -140,21 +140,19 @@ describe("review and merge texts", () => {
     expect(afterMergeFailedText("CSV-1", { command: "c", exitCode: null, timedOut: true, durationMs: 5, output: "" }).summary).toContain("timed out");
   });
 
-  it("prBody carries the ticket body, the numbered criteria and the review summaries", async () => {
+  it("prBody is Loom's template in the skill's shape: a Summary from the ticket, with no ticket key or review talk a reviewer would see", async () => {
     const { ticket } = await readyTicket();
-    const approvals: ReviewRow[] = [{ id: 1, ticket_id: ticket.id, round: 1, thread_row_id: 2, verdict: "approved", summary: "All criteria hold.", findings_json: "[]", at: 0 }];
-    const body = prBody({ ticket, approvals });
-    expect(body).toContain("Build the row mapper.");
-    expect(body).toContain("1. WHEN an order is mapped THE SYSTEM SHALL return one row");
-    expect(body).toContain("All criteria hold.");
-    expect(body).toContain("CSV-1");
+    const body = prBody({ ticket });
+    expect(body).toBe("## Summary\n\nOrder rows\n\nBuild the row mapper.\n\n**What:**\n- WHEN an order is mapped THE SYSTEM SHALL return one row\n\n<!-- loom:begin -->\n<!-- loom:ticket CSV-1 -->\n<!-- loom:end -->");
+    expect(body.replace(/<!--[\s\S]*?-->/gu, "")).not.toMatch(/CSV-1|reviewer|approved/u);
   });
 
-  it("landBody carries the goal and one line per done ticket", async () => {
+  it("landBody carries the goal and each merged change by its title and pull request, with no ticket key or Loom line a reviewer sees", async () => {
     const { project, spec } = await readyTicket();
+    h.store.updateTicket(ticketOf(h, "CSV-2").id, { pr_url: "https://github.com/acme/shop/pull/4" });
     const body = landBody({ project, spec, done: [ticketOf(h, "CSV-1"), ticketOf(h, "CSV-2")] });
-    expect(body).toContain("Let people export their orders as a CSV file");
-    expect(body).toContain("- CSV-1 Order rows\n- CSV-2 Export endpoint");
+    expect(body).toBe("## Summary\n\nLet people export their orders as a CSV file from the admin page.\n\n**What:**\n- Order rows\n- Export endpoint (https://github.com/acme/shop/pull/4)\n\n<!-- loom:project csv -->");
+    expect(body.replace(/<!--[\s\S]*?-->/gu, "")).not.toMatch(/CSV-\d|Loom|ticket/u);
   });
 
   it("reviewerNudgeText asks for exactly one verdict", () => {

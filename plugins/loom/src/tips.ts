@@ -7,6 +7,7 @@ import { repoCheckout, type RepoCheckout } from "./checkouts";
 import type { ProjectRow, TicketRow } from "./db/store";
 import { transientOf, Unavailable } from "./forge-waits";
 import type { HostOutput } from "./host-contract";
+import { branchName, mergeSubject } from "./prompts";
 import { isWaking } from "./release";
 import { gitIndex, gitNetwork } from "./repos";
 import { EMPTY_STACK, restackOf, stacking, stackOf, type Stack } from "./stack";
@@ -96,7 +97,7 @@ export async function takeForRound(ctx: EngineCtx, project: ProjectRow, seen: Ti
       head: seen.head_sha!,
       ref: tip.sha,
       ...(seen.pushed_sha === null ? {} : { base: seen.pushed_sha }),
-      message: `Merge ${TIP_WHAT} into ${seen.key} (Loom)`,
+      message: mergeSubject([`${checkout.settings.remote}/${branchName(seen)}`], branchName(seen)),
       refs: [],
       ...gitIndex(checkout.settings),
     });
