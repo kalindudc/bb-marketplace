@@ -6,6 +6,7 @@ import { errText, type Ctx } from "./ctx";
 import type { DraftRow, ReviewRow, UsageThreadRow, UsageTurnRow } from "./db/store";
 import { median } from "./insights";
 import { UsageUnavailableError } from "./ports";
+import { addDays, dayOf, dayStart, RANGE_DAYS } from "./period";
 import { shortKey } from "./prs";
 
 const MINUTE = 60_000;
@@ -27,7 +28,6 @@ export const MISSING_RETRY_MS = 10 * MINUTE;
 const FAILS_PER_PASS = 3;
 /** While reads keep failing, the failure is logged at most this often. */
 const WARN_EVERY_MS = HOUR;
-const RANGE_DAYS: Record<UsageRange, number> = { today: 1, "7d": 7, "30d": 30, "90d": 90 };
 const REVIEWS_SHOWN = 300;
 
 /** How Burn answered the last pass. Kept in memory, not the database, so a pass changes no PR's view; the next pass after a restart says. */
@@ -199,10 +199,6 @@ function pieces(ctx: Ctx, from: number, now: number): { pieces: Piece[]; rows: M
   return { pieces: out, rows };
 }
 
-const startOfDay = (at: number, back = 0) => {
-  const date = new Date(at);
-  return new Date(date.getFullYear(), date.getMonth(), date.getDate() - back).getTime();
-};
 const startOfHour = (at: number) => {
   const date = new Date(at);
   return new Date(date.getFullYear(), date.getMonth(), date.getDate(), date.getHours()).getTime();
@@ -258,14 +254,24 @@ function percentile(values: number[], share: number): number | null {
   return sorted[Math.min(sorted.length - 1, Math.ceil(share * sorted.length) - 1)]!;
 }
 
-export function usageView(ctx: Ctx, range: UsageRange): UsageView {
+/**
+ * The period of `range` days ending on `end`, or today when it is left out or not before today. A period that ends today
+ * runs until now and is compared with the same stretch just before it, up to this time of day; an earlier one runs to
+ * the end of its last day and is compared with the whole period before it.
+ */
+export function usageView(ctx: Ctx, range: UsageRange, end: string | null = null): UsageView {
   const now = ctx.now();
+  const today = dayOf(now);
+  const last = end !== null && end < today ? end : today;
+  const latest = last === today;
   const days = RANGE_DAYS[range];
-  const from = startOfDay(now, days - 1);
-  const previousFrom = startOfDay(now, 2 * days - 1);
-  const previousTo = previousFrom + (now - from);
+  const from = dayStart(addDays(last, 1 - days));
+  const to = latest ? now : dayStart(addDays(last, 1));
+  const previousFrom = dayStart(addDays(last, 1 - 2 * days));
+  const previousTo = latest ? previousFrom + (now - from) : from;
+  const within = (at: number) => at >= from && (latest ? at <= now : at < to);
   const { pieces: all, rows } = pieces(ctx, previousFrom, now);
-  const current = all.filter((p) => p.at >= from && p.at <= now);
+  const current = all.filter((p) => within(p.at));
   const before = tally();
   for (const p of all) if (p.at >= previousFrom && p.at < previousTo) add(before, p);
 
@@ -293,9 +299,9 @@ export function usageView(ctx: Ctx, range: UsageRange): UsageView {
 
   const bucket = range === "today" ? "hour" : "day";
   const starts: number[] = [];
-  if (bucket === "hour") for (let at = from; at <= now; at = startOfHour(at + HOUR + MINUTE)) starts.push(at);
-  else for (let back = days - 1; back >= 0; back -= 1) starts.push(startOfDay(now, back));
-  const slot = (at: number) => (bucket === "hour" ? startOfHour(at) : startOfDay(at));
+  if (bucket === "hour") for (let at = from; within(at); at = startOfHour(at + HOUR + MINUTE)) starts.push(at);
+  else for (let back = days - 1; back >= 0; back -= 1) starts.push(dayStart(addDays(last, -back)));
+  const slot = (at: number) => (bucket === "hour" ? startOfHour(at) : dayStart(dayOf(at)));
   const series = new Map(starts.map((start) => [start, { start, tokens: 0, cost: 0, critics: 0, reviews: 0 }]));
   for (const p of current) {
     const row = series.get(slot(p.at));
@@ -351,16 +357,22 @@ export function usageView(ctx: Ctx, range: UsageRange): UsageView {
     };
   }).sort(byCost).slice(0, REVIEWS_SHOWN);
 
-  const started = ctx.store.reviewsSince(from).filter((run) => run.created_at <= now);
+  const started = ctx.store.reviewsSince(from).filter((run) => within(run.created_at));
   const unread = new Set(started.filter((run) => !rows.has(run.thread_id)).map((run) => run.thread_id)).size;
   const measured = new Set(all.map((p) => p.run.id));
   const unmeasured = started.filter((run) => rows.get(run.thread_id)?.started_at === null && !measured.has(run.id)).length;
   const source = sources.get(ctx.store);
 
+  const first = ctx.store.firstReviewAt();
+
   return {
     range,
+    today,
+    end: last,
+    latest,
+    firstDay: first === null ? null : dayOf(first),
     from,
-    to: now,
+    to,
     source: { state: source?.state ?? "none", message: source?.message ?? null, at: source?.at ?? null, unread },
     totals: { tokens: total.tokens, cost: total.cost, calls: total.calls, reviews: total.runs.size, mix, estimated: current.some((p) => p.estimated) },
     previous: { tokens: before.tokens, cost: before.cost, reviews: before.runs.size },

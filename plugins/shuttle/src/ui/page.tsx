@@ -270,7 +270,7 @@ export function ShuttlePage({ subPath }: PluginNavPanelProps) {
     case "boards": area = <BoardsView tab={route.tab} onGo={go} />; break;
     case "board": area = <BoardDetailView id={route.id} layout={layout} onGo={go} />; break;
     case "search": area = <SearchView query={route.query} layout={layout} />; break;
-    case "insights": area = <InsightsView tab={route.tab} onTab={(tab) => go({ view: "insights", tab })} onAction={onIdea} onOpenPr={select} />; break;
+    case "insights": area = <InsightsView tab={route.tab} period={route.period} onTab={(tab) => go({ view: "insights", tab })} onPeriod={(period) => go({ view: "insights", tab: "usage", period })} onAction={onIdea} onOpenPr={select} />; break;
     case "pr": area = !phone && showDetail ? <PrDetail key={route.key} prKey={route.key} page onCollapse={() => collapse(route.key)} /> : (
       <div className={PAGE}>
         <PageHeading title="Look up" description="Fetched from the server whose link pattern matches. Works for any PR, whether or not you are part of it." />

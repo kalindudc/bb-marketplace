@@ -1,22 +1,23 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { experimental_Icon as Icon, UrlLink } from "@get-bb/plugin-sdk/app";
 import { change, dollars, tokenCount } from "../amounts";
 import type { UsageOutcome, UsageRange, UsageView as Usage } from "../contract";
-import { BUTTON_GHOST, ErrorNote, Segmented } from "./common";
+import { addDays, isDay, periodLabel, previousText, RANGE_DAYS, stepEnd } from "../period";
+import { BUTTON, BUTTON_GHOST, ErrorNote, ICON_OUTLINE, Segmented } from "./common";
 import { messageOf, useShuttleQuery } from "./data";
 import { percent, plural } from "./format";
 import { color, Kpi, Panel, SegBar } from "./insight-parts";
+import type { UsagePeriod } from "./route";
 import { InsightsSkeleton } from "./skeleton";
 
 const RANGES: Array<{ value: UsageRange; label: string }> = [
-  { value: "today", label: "Today" },
+  { value: "today", label: "Day" },
   { value: "7d", label: "7 days" },
   { value: "30d", label: "30 days" },
   { value: "90d", label: "90 days" },
 ];
-const BEFORE: Record<UsageRange, string> = { today: "yesterday by now", "7d": "the 7 days before", "30d": "the 30 days before", "90d": "the 90 days before" };
-/** "in the 7 days before", or "yesterday by now", to follow a number. */
-const inBefore = (range: UsageRange) => (range === "today" ? BEFORE.today : `in ${BEFORE[range]}`);
+/** "in the 7 days before", "in the day before" or "yesterday by now", to follow a number. */
+const inBefore = (data: Usage) => (data.range === "today" && data.latest ? previousText(data.range, true) : `in ${previousText(data.range, data.latest)}`);
 const OUTCOME: Record<UsageOutcome, { label: string; color: string }> = {
   posted: { label: "Posted", color: color(3) },
   waiting: { label: "Draft waiting", color: color(1) },
@@ -32,10 +33,10 @@ const BURN_URL = "https://github.com/kalindudc/burn";
 const SHOWN = 10;
 const table = "w-full border-collapse text-xs [&_td]:border-t [&_td]:border-border [&_td]:px-1 [&_td]:py-1.5 [&_th]:px-1 [&_th]:pb-1 [&_th]:text-left [&_th]:text-[11px] [&_th]:font-medium [&_th]:text-muted-foreground";
 
-function Trend({ now, before, range }: { now: number; before: number; range: UsageRange }) {
+function Trend({ now, before, data }: { now: number; before: number; data: Usage }) {
   const delta = change(now, before);
-  if (delta === null) return <>nothing {inBefore(range)}</>;
-  return <>{delta >= 0 ? "\u25b2" : "\u25bc"} {percent(Math.abs(delta))} from {BEFORE[range]}</>;
+  if (delta === null) return <>nothing {inBefore(data)}</>;
+  return <>{delta >= 0 ? "\u25b2" : "\u25bc"} {percent(Math.abs(delta))} from {previousText(data.range, data.latest)}</>;
 }
 
 const W = 440;
@@ -87,7 +88,7 @@ function Source({ data }: { data: Usage }) {
   const notes = [
     source.state === "error" ? `Shuttle's last read from Burn failed: ${source.message}` : null,
     source.unread > 0 ? `Reading ${plural(source.unread, "review thread")} from Burn; until then the figures may leave out some of what ${source.unread === 1 ? "it" : "they"} used.` : null,
-    data.unmeasured > 0 ? `${plural(data.unmeasured, "review")} started in this range ${data.unmeasured === 1 ? "has" : "have"} no figures in Burn.` : null,
+    data.unmeasured > 0 ? `${plural(data.unmeasured, "review")} started in this period ${data.unmeasured === 1 ? "has" : "have"} no figures in Burn.` : null,
   ].filter((note): note is string => note !== null);
   if (notes.length === 0) return null;
   return <div data-usage-source={source.state} className="mb-2.5 flex flex-col gap-0.5 text-xs text-muted-foreground">{notes.map((note) => <span key={note}>{note}</span>)}</div>;
@@ -98,7 +99,7 @@ function Body({ data, onOpenPr, onOpenThread }: { data: Usage; onOpenPr(key: str
   const { totals, perReview, critics } = data;
   const money = (n: number | null) => (n === null ? "\u2014" : dollars(n, totals.estimated));
   if (totals.reviews === 0) {
-    return <div className="rounded-lg border border-border bg-card px-3.5 py-3 text-sm text-muted-foreground">No AI review used anything in this range.</div>;
+    return <div className="rounded-lg border border-border bg-card px-3.5 py-3 text-sm text-muted-foreground">{data.range === "today" ? "No AI review used anything on this day." : "No AI review used anything in these days."}</div>;
   }
   const wasted = data.outcomes.filter((o) => WASTED.has(o.outcome));
   const wastedCost = wasted.reduce((sum, o) => sum + o.cost, 0);
@@ -108,9 +109,9 @@ function Body({ data, onOpenPr, onOpenThread }: { data: Usage; onOpenPr(key: str
   return (
     <>
       <div className="grid grid-cols-2 gap-2.5 @3xl:grid-cols-4">
-        <Kpi label="Tokens" value={tokenCount(totals.tokens)} sub={<Trend now={totals.tokens} before={data.previous.tokens} range={data.range} />} />
-        <Kpi label="Cost" value={money(totals.cost)} sub={<Trend now={totals.cost} before={data.previous.cost} range={data.range} />} />
-        <Kpi label="Reviews" value={String(totals.reviews)} sub={`${totals.calls.toLocaleString("en-US")} model call${totals.calls === 1 ? "" : "s"}; ${data.previous.reviews} ${inBefore(data.range)}`} />
+        <Kpi label="Tokens" value={tokenCount(totals.tokens)} sub={<Trend now={totals.tokens} before={data.previous.tokens} data={data} />} />
+        <Kpi label="Cost" value={money(totals.cost)} sub={<Trend now={totals.cost} before={data.previous.cost} data={data} />} />
+        <Kpi label="Reviews" value={String(totals.reviews)} sub={`${totals.calls.toLocaleString("en-US")} model call${totals.calls === 1 ? "" : "s"}; ${data.previous.reviews} ${inBefore(data)}`} />
         <Kpi label="Median per review" value={money(perReview.medianCost)} sub={`${tokenCount(perReview.medianTokens ?? 0)} tokens; 90th percentile ${money(perReview.p90Cost)}`} />
       </div>
       <div className="mt-3 grid grid-cols-1 gap-3 @4xl:grid-cols-2 @[110rem]:grid-cols-3">
@@ -152,7 +153,7 @@ function Body({ data, onOpenPr, onOpenThread }: { data: Usage; onOpenPr(key: str
         </Panel>
       </div>
       <div className="mt-3">
-        <Panel title="Reviews" sub={`Costliest first: what each used in this range, with its critics`}>
+        <Panel title="Reviews" sub={`Costliest first: what each used in ${data.range === "today" ? "this day" : "these days"}, with its critics`}>
           <table className={table} data-usage-reviews>
             <thead><tr><th>PR</th><th>Preset</th><th>Started</th><th>Outcome</th><th className="!text-right">Critics</th><th className="!text-right">Tokens</th><th className="!text-right">Cost</th><th /></tr></thead>
             <tbody>
@@ -180,21 +181,89 @@ function Body({ data, onOpenPr, onOpenThread }: { data: Usage; onOpenPr(key: str
   );
 }
 
-/** What AI reviews used in tokens and dollars, as Burn read it, for today or the last 7, 30 or 90 days. */
-export function UsageView({ onOpenPr, onOpenThread }: { onOpenPr(key: string): void; onOpenThread(threadId: string): void }) {
-  const [range, setRange] = useState<UsageRange>("7d");
-  const usage = useShuttleQuery("usage", { range });
-  const data = usage.data;
+/**
+ * Today, a step back or forward by the period's length, and the days shown over the browser's own date picker, which
+ * opens from a click anywhere on them. `today` and `firstDay` come from the server's answer; until the first one, the
+ * buttons are disabled.
+ */
+function PeriodNav({ period, data, onPeriod }: { period: UsagePeriod; data: Usage | undefined; onPeriod(period: UsagePeriod): void }) {
+  const today = data?.today ?? null;
+  const last = today === null ? null : period.end !== null && period.end < today ? period.end : today;
+  const unit = period.range === "today" ? "day" : `${RANGE_DAYS[period.range]} days`;
+  // Nothing is to be found before Shuttle's first review.
+  const earliest = last === null || data?.firstDay == null || addDays(last, 1 - RANGE_DAYS[period.range]) <= data.firstDay;
+  const step = (by: -1 | 1) => {
+    if (today !== null && last !== null) onPeriod({ range: period.range, end: stepEnd(period.range, last, by, today) });
+  };
+  return (
+    <div data-usage-period className="flex flex-wrap items-center gap-1.5">
+      <button type="button" className={BUTTON} title={`Back to the newest ${unit}`} disabled={last === null || last === today} onClick={() => onPeriod({ range: period.range, end: null })}>Today</button>
+      <button type="button" className={ICON_OUTLINE} aria-label="Earlier" title={`The ${unit} before`} disabled={earliest} onClick={() => step(-1)}>
+        <Icon name="ChevronLeft" className="size-3.5" aria-hidden />
+      </button>
+      <button type="button" className={ICON_OUTLINE} aria-label="Later" title={`The ${unit} after`} disabled={last === null || last === today} onClick={() => step(1)}>
+        <Icon name="ChevronRight" className="size-3.5" aria-hidden />
+      </button>
+      {today !== null && last !== null && (
+        <span className="relative inline-flex h-7 items-center gap-1.5 rounded-md px-1.5 hover:bg-state-hover focus-within:ring-1 focus-within:ring-ring">
+          <Icon name="Calendar" className="size-3.5 text-muted-foreground" aria-hidden />
+          <span data-usage-label className="whitespace-nowrap text-[13px] font-semibold">{periodLabel(period.range, last, today)}</span>
+          <Icon name="ChevronDown" className="size-3.5 text-muted-foreground" aria-hidden />
+          <input
+            type="date"
+            aria-label="Pick a day"
+            title="Pick a day"
+            value={last}
+            min={data?.firstDay ?? undefined}
+            max={today}
+            onClick={(event) => {
+              try {
+                event.currentTarget.showPicker();
+              } catch {
+                // Without showPicker, or where it is refused, the click still reaches the browser's own picker.
+              }
+            }}
+            // Typing a year digit by digit passes through years such as 0002, which name no period.
+            onChange={(event) => {
+              const day = event.target.value;
+              if (isDay(day) && day <= today) onPeriod({ range: period.range, end: day >= today ? null : day });
+            }}
+            className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+          />
+        </span>
+      )}
+    </div>
+  );
+}
+
+/** What AI reviews used in tokens and dollars, as Burn read it, for a day or 7, 30 or 90 days, ending today or earlier. */
+export function UsageView({ period, onPeriod, onOpenPr, onOpenThread }: {
+  period: UsagePeriod;
+  onPeriod(period: UsagePeriod): void;
+  onOpenPr(key: string): void;
+  onOpenThread(threadId: string): void;
+}) {
+  const usage = useShuttleQuery("usage", period.end === null ? { range: period.range } : { range: period.range, end: period.end });
+  // The last answer stays on screen, dimmed, while the next period loads, so stepping through days does not flash.
+  const held = useRef<Usage | undefined>(undefined);
+  if (usage.data !== undefined) held.current = usage.data;
+  const data = usage.data ?? held.current;
+  const reading = usage.data === undefined && data !== undefined;
   return (
     <>
       <div className="mb-2.5 flex flex-wrap items-center gap-2">
-        <Segmented label="Range" value={range} onChange={setRange} options={RANGES} />
-        {data !== undefined && <span className="text-[11px] text-muted-foreground">{data.range === "today" ? "Since midnight" : `${new Date(data.from).toLocaleDateString(undefined, { month: "short", day: "numeric" })} to today`}{data.totals.estimated ? "; ~ marks list-price estimates" : ""}</span>}
+        <Segmented label="Range" value={period.range} onChange={(range) => onPeriod({ range, end: period.end })} options={RANGES} />
+        <PeriodNav period={period} data={data} onPeriod={onPeriod} />
+        {data?.totals.estimated === true && <span className="text-[11px] text-muted-foreground">~ marks list-price estimates</span>}
       </div>
-      {data !== undefined && <Source data={data} />}
       {usage.error !== null && <ErrorNote>Could not load usage: {messageOf(usage.error)}</ErrorNote>}
       {data === undefined && usage.error === null && <InsightsSkeleton label="Loading usage" />}
-      {data !== undefined && data.source.state !== "missing" && <Body data={data} onOpenPr={onOpenPr} onOpenThread={onOpenThread} />}
+      {data !== undefined && (
+        <div data-usage-body aria-busy={reading} className={reading ? "opacity-60 transition-opacity" : undefined}>
+          <Source data={data} />
+          {data.source.state !== "missing" && <Body data={data} onOpenPr={onOpenPr} onOpenThread={onOpenThread} />}
+        </div>
+      )}
     </>
   );
 }

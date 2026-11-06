@@ -1395,6 +1395,11 @@ export class Store {
     return this.sql("SELECT * FROM reviews WHERE created_at >= ?").all(at) as ReviewRow[];
   }
 
+  /** When the first review Shuttle has started; null before any. */
+  firstReviewAt(): number | null {
+    return (this.sql("SELECT MIN(created_at) AS at FROM reviews").get() as { at: number | null }).at;
+  }
+
   /** Every run in a thread Shuttle has usage figures for, oldest first. */
   reviewsOfUsageThreads(): ReviewRow[] {
     return this.sql("SELECT * FROM reviews WHERE thread_id IN (SELECT root_id FROM usage_threads) ORDER BY created_at, id").all() as ReviewRow[];

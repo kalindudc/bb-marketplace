@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, waitFor, within } from "@testing-library/react";
 import type { UsageView } from "../../src/contract";
 import { formatRoute } from "../../src/ui/route";
+import { addDays, dayOf } from "../../src/period";
 import { callsTo, DAY, find, HOUR, lastNavigation, NOW, page, unmountAll, usage } from "./helpers";
 
 vi.mock("sonner", () => ({ toast: Object.assign(vi.fn(), { error: vi.fn(), success: vi.fn() }) }));
@@ -56,10 +57,54 @@ describe("Insights › Usage", () => {
     fireEvent.click(within(rows[0] as HTMLElement).getByRole("button", { name: "Open the review thread" }));
     expect(lastNavigation(slot)).toEqual({ method: "toThread", threadId: "thr_review0" });
 
-    fireEvent.click(within(slot.container).getByRole("radio", { name: "Today" }));
-    await waitFor(() => expect(callsTo(slot, "usage")).toContainEqual({ range: "today" }));
+    // A range is part of the page's address.
+    fireEvent.click(within(slot.container).getByRole("radio", { name: "Day" }));
+    expect(lastNavigation(slot)).toEqual({ method: "toPluginPanel", path: "shuttle", options: { subPath: "insights/usage/day" } });
     fireEvent.click(within(slot.container).getByRole("radio", { name: "90 days" }));
-    await waitFor(() => expect(callsTo(slot, "usage")).toContainEqual({ range: "90d" }));
+    expect(lastNavigation(slot)).toEqual({ method: "toPluginPanel", path: "shuttle", options: { subPath: "insights/usage/90d" } });
+  });
+
+  it("steps back through days, picks one, goes back to today, and keeps the day when the range changes", async () => {
+    const today = dayOf(NOW);
+    const yesterday = addDays(today, -1);
+    // What reviews used each day, and nothing the day before any of them.
+    const { slot, route } = await page("insights/usage/day", {
+      usage: ({ range, end }) => ({ ...week, range, today, end: end ?? today, latest: end === undefined, previous: { tokens: 0, cost: 0, reviews: 0 } }),
+    });
+    const nav = await find(slot.container, "[data-usage-period]");
+    await waitFor(() => expect(nav.querySelector("[data-usage-label]")?.textContent).toMatch(/^Today, /u));
+    expect(callsTo(slot, "usage")).toEqual([{ range: "today" }]);
+    const button = (name: string) => within(nav).getByRole("button", { name }) as HTMLButtonElement;
+    expect(button("Today").disabled).toBe(true);
+    expect(button("Later").disabled).toBe(true);
+
+    fireEvent.click(button("Earlier"));
+    expect(lastNavigation(slot)).toEqual({ method: "toPluginPanel", path: "shuttle", options: { subPath: `insights/usage/day/${yesterday}` } });
+    route(`insights/usage/day/${yesterday}`);
+    await waitFor(() => expect(nav.querySelector("[data-usage-label]")?.textContent).toMatch(/^Yesterday, /u));
+    expect(callsTo(slot, "usage")).toContainEqual({ range: "today", end: yesterday });
+    // The day before's figures stay, dimmed, until yesterday's arrive.
+    await waitFor(() => expect(slot.container.querySelector("[data-kpi]")!.textContent).toContain("nothing in the day before"));
+    expect(slot.container.querySelector("[data-usage-body]")!.getAttribute("aria-busy")).toBe("false");
+    expect(button("Today").disabled).toBe(false);
+
+    fireEvent.click(button("Later"));
+    expect(lastNavigation(slot)).toEqual({ method: "toPluginPanel", path: "shuttle", options: { subPath: "insights/usage/day" } });
+    fireEvent.change(within(nav).getByLabelText("Pick a day"), { target: { value: addDays(today, -9) } });
+    expect(lastNavigation(slot)).toEqual({ method: "toPluginPanel", path: "shuttle", options: { subPath: `insights/usage/day/${addDays(today, -9)}` } });
+    fireEvent.click(within(slot.container).getByRole("radio", { name: "30 days" }));
+    expect(lastNavigation(slot)).toEqual({ method: "toPluginPanel", path: "shuttle", options: { subPath: `insights/usage/30d/${yesterday}` } });
+    fireEvent.click(button("Today"));
+    expect(lastNavigation(slot)).toEqual({ method: "toPluginPanel", path: "shuttle", options: { subPath: "insights/usage/day" } });
+  });
+
+  it("goes no further back than the first review Shuttle has", async () => {
+    const today = dayOf(NOW);
+    const { slot } = await page(`insights/usage/day/${addDays(today, -3)}`, { usage: ({ range, end }) => usage({ range, end: end ?? today, latest: end === undefined, firstDay: addDays(today, -3) }) });
+    const nav = await find(slot.container, "[data-usage-period]");
+    await waitFor(() => expect(nav.querySelector("[data-usage-label]")).not.toBeNull());
+    expect((within(nav).getByRole("button", { name: "Earlier" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((within(nav).getByLabelText("Pick a day") as HTMLInputElement).min).toBe(addDays(today, -3));
   });
 
   it("says it needs Burn when bb has no Burn, and shows no figures", async () => {
@@ -75,7 +120,7 @@ describe("Insights › Usage", () => {
     const { slot } = await page("insights/usage", { usage: () => usage({ source: { state: "ok", message: null, at: NOW, unread: 3 }, unmeasured: 1 }) });
     const note = await find(slot.container, "[data-usage-source=ok]");
     expect(note.textContent).toContain("Reading 3 review threads from Burn");
-    expect(note.textContent).toContain("1 review started in this range has no figures in Burn.");
-    expect(slot.container.textContent).toContain("No AI review used anything in this range.");
+    expect(note.textContent).toContain("1 review started in this period has no figures in Burn.");
+    expect(slot.container.textContent).toContain("No AI review used anything in these days.");
   });
 });

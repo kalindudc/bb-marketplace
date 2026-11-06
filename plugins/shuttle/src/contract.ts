@@ -835,7 +835,7 @@ export const insightsSchema = z.object({
 });
 export type InsightsView = z.infer<typeof insightsSchema>;
 
-/** Today runs from midnight; the others are the last 7, 30 or 90 calendar days, today included. */
+/** One calendar day, or 7, 30 or 90 of them, ending today or on an earlier day. */
 export const USAGE_RANGES = ["today", "7d", "30d", "90d"] as const;
 export type UsageRange = (typeof USAGE_RANGES)[number];
 /**
@@ -854,6 +854,15 @@ const spend = { tokens: z.number(), cost: z.number() };
  */
 export const usageSchema = z.object({
   range: z.enum(USAGE_RANGES),
+  /** Today on bb's server, YYYY-MM-DD: the latest day a period can end on. */
+  today: z.string(),
+  /** The period's last day, YYYY-MM-DD; today for the newest one. */
+  end: z.string(),
+  /** It ends today, so `to` is now and the comparison is with the same stretch before, up to this time of day. */
+  latest: z.boolean(),
+  /** The day of the first review Shuttle has; null before any. Nothing is to be found before it. */
+  firstDay: z.string().nullable(),
+  /** The period's first millisecond, and its end: now for the newest period, else the start of the day after it. */
   from: z.number(),
   to: z.number(),
   source: z.object({
@@ -1056,7 +1065,8 @@ export const rpcContract = defineContract({
   activity: { input: z.object({ limit: z.number().int().min(1).max(500).optional() }), output: z.object({ events: z.array(eventViewSchema) }), tags: PRS },
   insights: { input: z.object({ range: z.enum(["7d", "30d", "90d"]) }), output: insightsSchema, tags: PRS },
   /** What AI reviews used in tokens and dollars, from the Burn plugin. */
-  usage: { input: z.object({ range: z.enum(USAGE_RANGES) }), output: usageSchema, tags: () => ["usage", "prs"] },
+  /** `end` names the period's last day, YYYY-MM-DD; left out, or today or later, the period ends now. */
+  usage: { input: z.object({ range: z.enum(USAGE_RANGES), end: z.iso.date().optional() }), output: usageSchema, tags: () => ["usage", "prs"] },
   /** Auto post's shadow decisions against what the user posted, for the Insights tab. */
   autoPostInsights: { input: z.object({ range: z.enum(["7d", "30d", "90d"]) }), output: autoPostInsightsSchema, tags: () => ["prs", "config"] },
   /** Every enabled server, or only `server`. */

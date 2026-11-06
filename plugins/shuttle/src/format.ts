@@ -1,6 +1,7 @@
 // Plain-text views for agent tools and the CLI.
 import { change, dollars, tokenCount } from "./amounts";
-import type { BoardDetail, BoardSummary, EventView, PrView, ServerStatus, UsageOutcome, UsageRange, UsageView } from "./contract";
+import type { BoardDetail, BoardSummary, EventView, PrView, ServerStatus, UsageOutcome, UsageView } from "./contract";
+import { periodLabel, previousText } from "./period";
 import { failureAdvice, STEP_LABELS } from "./failures";
 
 const REVIEW_TEXT = { approved: "approved", changes: "changes requested", required: "review required", none: "no review decision" } as const;
@@ -93,8 +94,6 @@ export function serverText(server: ServerStatus, now = Date.now()): string {
   return lines.join("\n");
 }
 
-const RANGE_TEXT: Record<UsageRange, string> = { today: "Today", "7d": "The last 7 days", "30d": "The last 30 days", "90d": "The last 90 days" };
-const BEFORE_TEXT: Record<UsageRange, string> = { today: "yesterday by this time", "7d": "the 7 days before", "30d": "the 30 days before", "90d": "the 90 days before" };
 export const OUTCOME_TEXT: Record<UsageOutcome, string> = {
   posted: "posted", waiting: "draft waiting", discarded: "discarded", replaced: "replaced", no_draft: "no draft", failed: "failed", running: "running",
 };
@@ -110,9 +109,9 @@ export function usageText(view: UsageView): string {
   if (source.unread > 0) lines.push(`${count(source.unread, "review thread")} not read from Burn yet, so the figures may leave out some of what ${source.unread === 1 ? "it" : "they"} used.`);
   const money = (n: number) => dollars(n, totals.estimated);
   const delta = change(totals.cost, view.previous.cost);
-  const trend = delta === null ? "" : ` (${delta >= 0 ? "up" : "down"} ${Math.round(Math.abs(delta) * 100)}% from ${BEFORE_TEXT[view.range]})`;
-  lines.push(`${RANGE_TEXT[view.range]}: ${tokenCount(totals.tokens)} tokens and ${money(totals.cost)} across ${count(totals.reviews, "review")} and ${count(totals.calls, "model call")}${trend}.`);
-  if (view.unmeasured > 0) lines.push(`${count(view.unmeasured, "review")} started in this range ${view.unmeasured === 1 ? "has" : "have"} no figures in Burn.`);
+  const trend = delta === null ? "" : ` (${delta >= 0 ? "up" : "down"} ${Math.round(Math.abs(delta) * 100)}% from ${previousText(view.range, view.latest)})`;
+  lines.push(`${periodLabel(view.range, view.end, view.today)}: ${tokenCount(totals.tokens)} tokens and ${money(totals.cost)} across ${count(totals.reviews, "review")} and ${count(totals.calls, "model call")}${trend}.`);
+  if (view.unmeasured > 0) lines.push(`${count(view.unmeasured, "review")} started in this period ${view.unmeasured === 1 ? "has" : "have"} no figures in Burn.`);
   if (totals.reviews === 0) return lines.join("\n");
   const { perReview, critics } = view;
   lines.push(`Per review: ${money(perReview.medianCost ?? 0)} median, ${money(perReview.p90Cost ?? 0)} at the 90th percentile, ${tokenCount(perReview.medianTokens ?? 0)} tokens median.`);

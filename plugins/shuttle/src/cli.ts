@@ -2,6 +2,7 @@ import { PluginCliError, cliCommand, defineCli, type PluginCliRegistration, type
 import { readFile } from "node:fs/promises";
 import { AGENT_MODES, AREAS, USAGE_RANGES, type UsageRange, boardAddInputSchema, boardCreateInputSchema, boardInputSchema, boardRemoveInputSchema, boardsInputSchema, boardUpdateInputSchema, type AgentMode, type Area } from "./contract";
 import { errText } from "./ctx";
+import { isDay } from "./period";
 import { boardDetailText, boardLine, boardList, prDetail, prList, serverText, usageText } from "./format";
 import type { Shuttle } from "./shuttle";
 
@@ -307,13 +308,18 @@ export function createCli(shuttle: Shuttle): PluginCliRegistration {
           }),
       }),
       usage: cliCommand({
-        summary: "What AI reviews used in tokens and dollars, from the Burn plugin: today, or the last 7, 30 or 90 days",
-        options: { range: { type: "string", description: `One of ${USAGE_RANGES.join(", ")} (7d by default).` }, json },
+        summary: "What AI reviews used in tokens and dollars, from the Burn plugin: a day, or 7, 30 or 90 days, ending today or on an earlier day",
+        options: {
+          range: { type: "string", description: `One of ${USAGE_RANGES.join(", ")} (7d by default); today is one day.` },
+          end: { type: "string", description: "The period's last day, YYYY-MM-DD, such as yesterday's; today by default." },
+          json,
+        },
         run: ({ options }) =>
           guarded(() => {
             const range = options.range ?? "7d";
             if (!(USAGE_RANGES as readonly string[]).includes(range)) throw new PluginCliError(`--range must be one of ${USAGE_RANGES.join(", ")}`);
-            const view = shuttle.usage(range as UsageRange);
+            if (options.end !== undefined && !isDay(options.end)) throw new PluginCliError("--end must be a day such as 2026-11-05");
+            const view = shuttle.usage(range as UsageRange, options.end ?? null);
             return out(options.json ? toJson(view) : usageText(view));
           }),
       }),

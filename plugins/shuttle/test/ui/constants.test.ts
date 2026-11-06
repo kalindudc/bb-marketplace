@@ -19,6 +19,16 @@ describe("page routes", () => {
     expect(parseRoute("insights")).toEqual({ view: "insights", tab: "overview" });
     expect(parseRoute("insights/log")).toEqual({ view: "insights", tab: "log" });
     expect(parseRoute("insights/sync")).toEqual({ view: "insights", tab: "sync" });
+    // The Usage tab's period: a range, then the last day; the newest 7 days have neither, and a day that is no day reads as today.
+    expect(parseRoute("insights/usage")).toEqual({ view: "insights", tab: "usage" });
+    expect(parseRoute("insights/usage/7d")).toEqual({ view: "insights", tab: "usage" });
+    expect(parseRoute("insights/usage/day")).toEqual({ view: "insights", tab: "usage", period: { range: "today", end: null } });
+    expect(parseRoute("insights/usage/day/2026-11-05")).toEqual({ view: "insights", tab: "usage", period: { range: "today", end: "2026-11-05" } });
+    expect(parseRoute("insights/usage/90d/2026-02-30")).toEqual({ view: "insights", tab: "usage", period: { range: "90d", end: null } });
+    expect(parseRoute("insights/usage/week")).toEqual({ view: "insights", tab: "usage" });
+    expect(formatRoute({ view: "insights", tab: "usage", period: { range: "today", end: "2026-11-05" } })).toBe("insights/usage/day/2026-11-05");
+    expect(formatRoute({ view: "insights", tab: "usage", period: { range: "30d", end: null } })).toBe("insights/usage/30d");
+    expect(formatRoute({ view: "insights", tab: "usage", period: { range: "7d", end: "2026-10-30" } })).toBe("insights/usage/7d/2026-10-30");
     expect(parseRoute("nonsense")).toEqual({ view: "inbox", key: null });
 
     expect(formatRoute({ view: "inbox", key: null })).toBe("inbox");

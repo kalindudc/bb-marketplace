@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
 import { burnUsageSchema, usageOf } from "../src/bb-port";
+import { usageText } from "../src/format";
 import type { ThreadUsage, TokenCounts, UsageRead } from "../src/ports";
 import { MISSING_RETRY_MS, PASS_CALLS, REREAD_MS, readUsage, SETTLE_MS } from "../src/usage";
 import { harness, pr, testConfig } from "./helpers";
@@ -242,6 +243,21 @@ describe("review usage", () => {
     expect(week).toMatchObject({ bucket: "day", totals: { tokens: 5_400, reviews: 2 } });
     expect(week.series.map((row) => row.tokens)).toEqual([0, 0, 0, 0, 0, 4_400, 1_000]);
     expect(week.series.at(-1)!.start).toBe(new Date(2026, 9, 23).getTime());
+
+    // Yesterday in full, against the whole day before it; and the 7 days that ended yesterday.
+    const yesterdayView = h.shuttle.usage("today", "2026-10-22");
+    expect(yesterdayView).toMatchObject({ today: "2026-10-23", end: "2026-10-22", latest: false, firstDay: "2026-10-22", bucket: "hour", totals: { tokens: 4_400, reviews: 1 }, previous: { tokens: 0, reviews: 0 } });
+    expect(yesterdayView.from).toBe(new Date(2026, 9, 22).getTime());
+    expect(yesterdayView.to).toBe(new Date(2026, 9, 23).getTime());
+    expect(yesterdayView.series).toHaveLength(24);
+    expect(usageText(yesterdayView).split("\n")[0]).toBe("Yesterday, Oct 22: 4.40K tokens and $4.40 across 1 review and 2 model calls.");
+    expect(usageText(h.shuttle.usage("today")).split("\n")[0]).toBe("Today, Oct 23: 1.00K tokens and $1.00 across 1 review and 1 model call (up 150% from yesterday by now).");
+    expect(yesterdayView.series.find((row) => row.start === new Date(2026, 9, 22, 14).getTime())).toMatchObject({ tokens: 4_000 });
+    const lastWeek = h.shuttle.usage("7d", "2026-10-22");
+    expect(lastWeek).toMatchObject({ end: "2026-10-22", latest: false, totals: { tokens: 4_400 } });
+    expect(lastWeek.series.map((row) => row.start)).toEqual(Array.from({ length: 7 }, (_, i) => new Date(2026, 9, 16 + i).getTime()));
+    // Today and later are the newest period.
+    expect(h.shuttle.usage("today", "2026-11-30")).toMatchObject({ end: "2026-10-23", latest: true, totals: { tokens: 1_000 } });
   });
 });
 

@@ -6,7 +6,7 @@ import { ActivityView, TONE_ICON } from "./activity";
 import { BUTTON, ErrorNote, PAGE, PageHeading, Segmented } from "./common";
 import { messageOf, useShuttleQuery } from "./data";
 import { duration, percent, settingsHref } from "./format";
-import { INSIGHTS_TABS, type InsightsTab } from "./route";
+import { DEFAULT_PERIOD, INSIGHTS_TABS, type InsightsTab, type UsagePeriod } from "./route";
 import { INSIGHTS_TAB_LABELS } from "./constants";
 import { InsightsSkeleton } from "./skeleton";
 import { SyncView } from "./sync";
@@ -173,7 +173,14 @@ function Overview({ data, phone, onAction }: { data: Insights; phone: boolean; o
 }
 
 /** How your PRs and reviews flow, with ideas that act on it; and the Automation log. */
-export function InsightsView({ tab, onTab, onAction, onOpenPr }: { tab: InsightsTab; onTab(tab: InsightsTab): void; onAction(action: IdeaAction): void; onOpenPr(key: string): void }) {
+export function InsightsView({ tab, period, onTab, onPeriod, onAction, onOpenPr }: {
+  tab: InsightsTab;
+  period?: UsagePeriod;
+  onTab(tab: InsightsTab): void;
+  onPeriod(period: UsagePeriod): void;
+  onAction(action: IdeaAction): void;
+  onOpenPr(key: string): void;
+}) {
   const actions = useActions();
   const [range, setRange] = useState<Range>("30d");
   const insights = useShuttleQuery("insights", { range }, tab === "overview");
@@ -192,7 +199,7 @@ export function InsightsView({ tab, onTab, onAction, onOpenPr }: { tab: Insights
     return (
       <div className={PAGE}>
         <PageHeading title="Insights" description="What your AI reviews used, in tokens and dollars.">{tabs}</PageHeading>
-        <UsageView onOpenPr={onOpenPr} onOpenThread={actions.openThread} />
+        <UsageView period={period ?? DEFAULT_PERIOD} onPeriod={onPeriod} onOpenPr={onOpenPr} onOpenThread={actions.openThread} />
       </div>
     );
   }

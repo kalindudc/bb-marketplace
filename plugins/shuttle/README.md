@@ -297,13 +297,18 @@ its children. **Archive finished review threads** in Shuttle's settings turns th
 
 ### Token usage
 
-**Insights › Usage** shows what your AI reviews used, in tokens and dollars, for today, the last 7
-days, the last 30 days or the last 90 days, each against the same stretch just before it: today
-against yesterday by this time. It has the totals, the median and 90th-percentile cost of a review,
+**Insights › Usage** shows what your AI reviews used, in tokens and dollars, for a day, 7 days, 30
+days or 90 days. **Today** shows the newest period; the arrows step back and forward by the period's
+length, and a click on the dates opens a picker for any day since Shuttle's first review. Switching
+the range keeps the last day. The page's address holds the period, such as
+`insights/usage/day/2026-11-05`, so the back button and links return to it; the newest period has
+no date in its address, so a page left open goes on following today. Each period is compared with
+the same stretch just before it: today against yesterday by this time, and an earlier day against
+the whole day before. It has the totals, the median and 90th-percentile cost of a review,
 tokens by hour for today and by day otherwise, the token mix, what each preset, model and repository
 used, what the reviews bought (posted, waiting, discarded, replaced, no draft, failed), and every
-review in the range, costliest first, with its critics. `bb shuttle usage [--range today|7d|30d|90d]
-[--json]` prints the same.
+review in the period, costliest first, with its critics. `bb shuttle usage [--range today|7d|30d|90d]
+[--end YYYY-MM-DD] [--json]` prints the same; `--end` names the period's last day.
 
 The figures come from the [Burn](https://github.com/kalindudc/burn) plugin, which reads what every
 thread used whatever harness runs it, and prices it. Without Burn the tab says so and shows nothing.

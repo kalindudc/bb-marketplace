@@ -40,6 +40,8 @@ export const BUTTON_GHOST_DANGER = `${FRAME} h-7 px-2 text-xs text-destructive-t
 const ICON_FRAME = `inline-flex shrink-0 cursor-pointer items-center justify-center rounded-md ${FOCUS}`;
 const ICON_TONE = "text-muted-foreground hover:bg-state-hover hover:text-foreground";
 export const ICON_GHOST = `${ICON_FRAME} size-7 ${ICON_TONE}`;
+/** An icon button with BUTTON's outline and height, to sit in a row of them, such as a period's arrows. */
+export const ICON_OUTLINE = `${ICON_FRAME} size-7 border border-input bg-transparent text-foreground hover:bg-state-hover`;
 /** An icon button in a phone's top bar, a thumb's size. */
 export const ICON_GHOST_LARGE = `${ICON_FRAME} size-9 ${ICON_TONE}`;
 export const ICON_GHOST_LARGE_ON = `${ICON_FRAME} size-9 bg-state-active text-foreground hover:bg-state-hover`;

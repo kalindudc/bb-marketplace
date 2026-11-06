@@ -7,6 +7,7 @@ import {
   rpcContract, type AgentView, type ConversationItem, type EventView, type InboxView, type InsightsView, type LinkView, type MergeOptions, type UsageView,
   type MergeView, type NextStep, type Overview, type PostView, type PrView, type ReviewDraft, type ServerStatus,
 } from "../../src/contract";
+import { addDays, dayOf } from "../../src/period";
 import { reloadPrefs } from "../../src/ui/prefs";
 import { prStates } from "../../src/ui/pr-state";
 
@@ -217,7 +218,7 @@ export function insights(overrides: Partial<InsightsView> = {}): InsightsView {
 /** No review used anything yet, and Burn answered. */
 export function usage(overrides: Partial<UsageView> = {}): UsageView {
   return {
-    range: "7d", from: NOW - 6 * DAY, to: NOW,
+    range: "7d", today: dayOf(NOW), end: dayOf(NOW), latest: true, firstDay: addDays(dayOf(NOW), -60), from: NOW - 6 * DAY, to: NOW,
     source: { state: "ok", message: null, at: NOW, unread: 0 },
     totals: { tokens: 0, cost: 0, calls: 0, reviews: 0, mix: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, estimated: false },
     previous: { tokens: 0, cost: 0, reviews: 0 },
@@ -285,7 +286,7 @@ export function handlers(overrides: Partial<Handlers> = {}): Handlers {
     descriptionMatches: () => ({ keys: [] }),
     activity: () => ({ events: [] }),
     insights: () => insights(),
-    usage: ({ range }) => usage({ range }),
+    usage: ({ range, end }) => usage({ range, ...(end !== undefined && end < dayOf(NOW) ? { end, latest: false } : {}) }),
     autoPostInsights: () => autoPostInsights(),
     sync: () => ({ ok: true }),
     syncHistory: () => ({ windowMs: 3 * 3_600_000, servers: [] }),

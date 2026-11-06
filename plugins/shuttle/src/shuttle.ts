@@ -163,8 +163,8 @@ export class Shuttle implements Ctx {
     return this.usagePass;
   }
 
-  usage(range: UsageRange): UsageView {
-    return usageView(this, range);
+  usage(range: UsageRange, end: string | null = null): UsageView {
+    return usageView(this, range, end);
   }
 
   readonly run: Runner;

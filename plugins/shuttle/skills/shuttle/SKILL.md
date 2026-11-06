@@ -81,7 +81,7 @@ what happens next), `bb shuttle list [--area inbox|mine|done|reviews|reviewed]`,
 `bb shuttle agent <pr> [--thread <id> | --new | --none] [--mode fix|notify|off]`,
 `bb shuttle track <pr> [--off]`, `bb shuttle watch <pr> [--mode act|forward] [--off]`,
 `bb shuttle review <pr> [--preset <id>] [--project <id>] [--note <text>] [--new-thread]` (the PR's last review
-thread of Shuttle's gets it, brought back from the archive when needed, unless `--new-thread`), `bb shuttle sync [--server <id>]`, `bb shuttle usage [--range today|7d|30d|90d]` (what AI reviews used in tokens and dollars, from the Burn plugin),
+thread of Shuttle's gets it, brought back from the archive when needed, unless `--new-thread`), `bb shuttle sync [--server <id>]`, `bb shuttle usage [--range today|7d|30d|90d] [--end YYYY-MM-DD]` (what AI reviews used in tokens and dollars, from the Burn plugin, for a period ending today or on `--end`),
 `bb shuttle config-export`, `bb shuttle config-import <file> [--apply]`. PR and board commands
 accept `--json`; config export prints TOML and config import prints a change summary.
 `link`/`unlink` default to the calling thread.
