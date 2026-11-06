@@ -296,10 +296,8 @@ export const specSchema = z
         worktree: worktreeSchema.optional(),
         // No defaults, so a spec without them hashes as it did before they existed; prSettings fills them in.
         describe: z.enum(["worker", "loom"]).optional(),
-        squash: z.boolean().optional(),
         max_fix_rounds: z.number().int().min(0).max(20).optional(),
         stack: z.boolean().optional(),
-        release_workers: z.boolean().optional(),
         // Commits an open pull request's branch may lack of its remote base before Loom merges the base into it; unset is off.
         refresh_behind: z.number().int().min(1).max(1_000_000).optional(),
         // Unset: GIT_NETWORK_TIMEOUT_MS. A [[repo]] table's own value replaces it.
@@ -406,6 +404,8 @@ const REMOVED_KEYS: Readonly<Record<string, string>> = {
   "merge.checks_near_done_percent": settingHome("checksNearDonePercent"),
   "merge.git_index_timeout_seconds": INDEX_FIXED,
   "repo[].git_index_timeout_seconds": INDEX_FIXED,
+  "merge.squash": "Loom always pushes the reviewed work as one commit, and each fix round as one more: remove the key.",
+  "merge.release_workers": "Loom always releases an idle worker whose pull request is open, so bb frees its environment, and brings it back when the pull request needs it: remove the key.",
 };
 
 const templatePath = (path: readonly PropertyKey[]) => path.map((part, index) => (typeof part === "number" ? "[]" : `${index > 0 ? "." : ""}${String(part)}`)).join("");
@@ -640,7 +640,7 @@ export function validateSemantics(spec: Spec, rawToml: string): { errors: string
   });
 
   if (spec.merge.strategy === "integration") {
-    for (const key of ["describe", "squash", "max_fix_rounds", "stack", "release_workers", "refresh_behind"] as const) {
+    for (const key of ["describe", "max_fix_rounds", "stack", "refresh_behind"] as const) {
       if (spec.merge[key] !== undefined) errors.push(`merge.${key}: it applies to the pull request Loom opens for each ticket, but merge.strategy is "integration". Remove it, or use merge.strategy = "pr".`);
     }
     repos.forEach((repo, index) => {

@@ -30,7 +30,7 @@ const withHooks = (hooks: Array<Record<string, unknown>>, more?: (doc: Doc) => v
   doc.hook = hooks;
   more?.(doc);
 };
-const pr = (doc: Doc) => (doc.merge = { strategy: "pr", describe: "loom", squash: false, max_fix_rounds: 0 });
+const pr = (doc: Doc) => (doc.merge = { strategy: "pr", describe: "loom", max_fix_rounds: 0 });
 const BOARD = "Add this pull request to the project's Shuttle board, and create the board first if it does not exist.";
 
 describe("[[hook]] in the spec", () => {

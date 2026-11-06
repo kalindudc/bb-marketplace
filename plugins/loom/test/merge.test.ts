@@ -480,8 +480,8 @@ describe("the integration merge on a multi-repo project", () => {
 
 describe("the pull request strategy", () => {
   const pr = (edit?: (doc: Doc) => void) => (doc: Doc) => {
-    // Loom's template, the branch as it is, and no fix rounds: these tests cover pushing, opening and polling; test/pull-requests.test.ts covers the rest.
-    doc.merge = { strategy: "pr", describe: "loom", squash: false, max_fix_rounds: 0 };
+    // Loom's template and no fix rounds: these tests cover pushing, opening and polling; test/pull-requests.test.ts covers the rest.
+    doc.merge = { strategy: "pr", describe: "loom", max_fix_rounds: 0 };
     edit?.(doc);
   };
 
@@ -492,8 +492,9 @@ describe("the pull request strategy", () => {
     const mark = h.host.calls.length;
     await queue();
 
-    const [pushed, created] = hostCallsSince(mark);
-    expect(pushed).toMatchObject({ method: "push", input: { repo: "/repo", remote: "origin", src: "c1", branch } });
+    const [committed, pushed, created] = hostCallsSince(mark).filter((call) => ["prCommit", "push", "prCreate"].includes(call.method));
+    expect(committed).toMatchObject({ method: "prCommit", input: { repo: "/repo", remote: "origin", branch, head: "c1" } });
+    expect(pushed).toMatchObject({ method: "push", input: { repo: "/repo", remote: "origin", src: "sq1", branch } });
     expect(created!.method).toBe("prCreate");
     const input = created!.input as { repo: string; remote: string; base: string; head: string; title: string; body: string; draft: boolean };
     expect(input).toMatchObject({ repo: "/repo", remote: "origin", base: "main", head: branch, title: "Order rows", draft: true });
@@ -504,11 +505,14 @@ describe("the pull request strategy", () => {
     expect(lastPost("merge").body).toContain("https://github.com/acme/shop/pull/1");
     expect(h.store.thread(worker.id)!.state).toBe("active");
     expect(mergeRuns().map((run) => [run.label, run.ok])).toEqual([
+      ["read a ref", 1],
+      ["read a ref", 1],
+      ["build the pull request's commit", 1],
       ["git push", 1],
       ["open the pull request", 1],
       ["mark the pull request ready for review", 1],
     ]);
-    expect(h.store.runOutput(mergeRuns()[1]!.id)).toBe("Opened https://github.com/acme/shop/pull/1.");
+    expect(h.store.runOutput(mergeRuns()[4]!.id)).toBe("Opened https://github.com/acme/shop/pull/1.");
   });
 
   it("pushes and opens each ticket's pull request in that ticket's repo, with its remote and base, and reads both of one GitHub repository in one call", async () => {
@@ -516,7 +520,7 @@ describe("the pull request strategy", () => {
     await reachApproved(h, "CSV-2");
     await queue();
     const apiBranch = ticketOf(h, "CSV-2").branch;
-    expect(h.host.callsTo("push")).toEqual([{ repo: "/src/api", remote: "upstream", src: ticketOf(h, "CSV-2").head_sha, branch: apiBranch }]);
+    expect(h.host.callsTo("push")).toEqual([{ repo: "/src/api", remote: "upstream", src: ticketOf(h, "CSV-2").pushed_sha, branch: apiBranch }]);
     expect(h.host.callsTo("prCreate")[0]).toMatchObject({ repo: "/src/api", remote: "upstream", base: "trunk", head: apiBranch, title: "Export endpoint" });
     expect(ticketOf(h, "CSV-2")).toMatchObject({ state: "pr_open", pr_url: "https://github.com/acme/shop/pull/1" });
 
@@ -562,7 +566,7 @@ describe("the pull request strategy", () => {
   });
 
   it("opens a ready pull request when merge.draft is false", async () => {
-    await seedProject(h, pr((doc) => (doc.merge = { strategy: "pr", draft: false, remote: "upstream", describe: "loom", squash: false, max_fix_rounds: 0 })));
+    await seedProject(h, pr((doc) => (doc.merge = { strategy: "pr", draft: false, remote: "upstream", describe: "loom", max_fix_rounds: 0 })));
     await reachApproved(h);
     await queue();
     expect(h.host.callsTo("prCreate")[0]).toMatchObject({ remote: "upstream", draft: false });
@@ -576,7 +580,7 @@ describe("the pull request strategy", () => {
     await queue();
     expect(project()).toMatchObject({ state: "paused", system_reason: "git push to origin failed: no route to host" });
     expect(ticketOf(h, "CSV-1").state).toBe("merging");
-    expect(mergeRuns().map((run) => [run.label, run.ok])).toEqual([["git push", 0]]);
+    expect(mergeRuns().map((run) => [run.label, run.ok]).at(-1)).toEqual(["git push", 0]);
 
     h.store.setProjectState(project().id, "running", "human");
     h.host.scripted.prCreate = [{ outcome: "unavailable", message: "The gh CLI is not installed on this machine, or it is not on PATH." }];
@@ -1131,7 +1135,7 @@ describe("the pull request strategy", () => {
 });
 
 describe("reading open pull requests in batches", () => {
-  const pr = (doc: Doc) => (doc.merge = { strategy: "pr", describe: "loom", squash: false, max_fix_rounds: 0 });
+  const pr = (doc: Doc) => (doc.merge = { strategy: "pr", describe: "loom", max_fix_rounds: 0 });
   /** CSV-1 to CSV-n, none depending on another. */
   const withTickets = (n: number) => (doc: Doc) => {
     pr(doc);
@@ -1246,7 +1250,7 @@ describe("reading open pull requests in batches", () => {
 
 describe("finishIfComplete", () => {
   it("moves a running or paused pull request project to done once every ticket is done or cancelled", async () => {
-    await seedProject(h, (doc) => (doc.merge = { strategy: "pr", describe: "loom", squash: false, max_fix_rounds: 0 }));
+    await seedProject(h, (doc) => (doc.merge = { strategy: "pr", describe: "loom", max_fix_rounds: 0 }));
     expect(finishIfComplete(h.ctx, project())).toBe(false);
     h.store.setTicketState(ticketOf(h, "CSV-1").id, "cancelled", "human");
     expect(finishIfComplete(h.ctx, project())).toBe(false);

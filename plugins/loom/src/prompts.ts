@@ -194,9 +194,9 @@ function pullRequestSection(spec: Spec, repo: RepoSettings, signature: string): 
     pr.describe === "worker"
       ? `${PROPOSE} When the reviewers approve, Loom asks you for the commit message with loom_pr, and for the title and description too if you did not propose them.`
       : "When the reviewers approve, Loom writes the pull request from this ticket.";
-  const push = pr.squash ? "Loom pushes the reviewed work as one commit and opens the pull request; the human merges it." : "Loom pushes the reviewed branch and opens the pull request; the human merges it.";
+  const push = "Loom pushes the reviewed work as one commit and opens the pull request; the human merges it.";
   const following = pr.maxFixRounds > 0 && followsFeedback(repo.forge);
-  const follows = following ? [`While it is open, Loom follows its checks and reviews and sends you what needs a fix. Each fix goes through the checks and a review again and is pushed as ${pr.squash ? "one more commit" : "more commits"}.`] : [];
+  const follows = following ? [`While it is open, Loom follows its checks and reviews and sends you what needs a fix. Each fix goes through the checks and a review again and is pushed as one more commit.`] : [];
   const text =
     pr.describe !== "worker"
       ? []

@@ -8,7 +8,7 @@ import { appliedOf, applyPrText, openedText, prRollout, proposalOf, reviewersToA
 import { inFixRound, prTextFor } from "./pr-text";
 import type { HostOutput as HostOutputOf } from "./host-contract";
 import { readMeta } from "./pr-meta";
-import { gitNetwork, prSettings, type RepoSettings } from "./repos";
+import { gitNetwork, type RepoSettings } from "./repos";
 import { refreshedMeta, refreshedText, type Refresh } from "./fresh";
 import type { Spec } from "./spec";
 import { prBaseOf, restackOf, restackWithBase, stacking } from "./stack";
@@ -91,39 +91,35 @@ export async function openPullRequest(ctx: EngineCtx, project: ProjectRow, spec:
     return;
   }
 
-  let src = current.head_sha!;
-  let created = true;
-  if (prSettings(spec).squash) {
-    const build = async (head: TicketRow) => {
-      const message = catchUp ? mergeSubject(sources.length > 0 ? sources : [`${remote}/${settings.base}`], branch) : text.commit;
-      return ctx.host.call(hostId, "prCommit", { repo, remote, branch, base: await workBaseOf(ctx, project, spec, head, head.head_sha!), head: head.head_sha!, message, ...(head.pushed_sha === null ? {} : { pushed: head.pushed_sha }), ...gitNetwork(settings) });
-    };
-    let built = await build(current);
-    // Someone else pushed to the branch: their commits are merged in first, again if the branch moves meanwhile.
-    for (let taken = 0; built.outcome === "diverged" && taken < TIP_TAKES; taken += 1) {
-      const took = await takeAtPush(ctx, project, spec, current, checkout, text);
-      if (took === null) return;
-      if (took.head_sha !== current.head_sha) {
-        caughtUp = caughtUp === null ? TIP_WHAT : `${caughtUp} and ${TIP_WHAT}`;
-        sources.push(`${remote}/${branch}`);
-        checked = true;
-      }
-      current = took;
-      built = await build(current);
+  const build = async (head: TicketRow) => {
+    const message = catchUp ? mergeSubject(sources.length > 0 ? sources : [`${remote}/${settings.base}`], branch) : text.commit;
+    return ctx.host.call(hostId, "prCommit", { repo, remote, branch, base: await workBaseOf(ctx, project, spec, head, head.head_sha!), head: head.head_sha!, message, ...(head.pushed_sha === null ? {} : { pushed: head.pushed_sha }), ...gitNetwork(settings) });
+  };
+  let built = await build(current);
+  // Someone else pushed to the branch: their commits are merged in first, again if the branch moves meanwhile.
+  for (let taken = 0; built.outcome === "diverged" && taken < TIP_TAKES; taken += 1) {
+    const took = await takeAtPush(ctx, project, spec, current, checkout, text);
+    if (took === null) return;
+    if (took.head_sha !== current.head_sha) {
+      caughtUp = caughtUp === null ? TIP_WHAT : `${caughtUp} and ${TIP_WHAT}`;
+      sources.push(`${remote}/${branch}`);
+      checked = true;
     }
-    if (built.outcome === "unavailable") throw unavailableOf(built);
-    if (built.outcome === "diverged") {
-      await sendBack(ctx, current.id, {
-        post: { kind: "merge", body: `The pull request's branch ${branch} got commits Loom did not push while Loom merged the earlier ones (its tip is ${built.tip.slice(0, 12)}), so Loom pushed nothing.`, data: { outcome: "diverged", tip: built.tip, branch } },
-        text: prDivergedText(current.key),
-        countFailure: false,
-        reason: "the pull request's branch has commits Loom did not push",
-      });
-      return;
-    }
-    src = built.sha;
-    created = built.created;
+    current = took;
+    built = await build(current);
   }
+  if (built.outcome === "unavailable") throw unavailableOf(built);
+  if (built.outcome === "diverged") {
+    await sendBack(ctx, current.id, {
+      post: { kind: "merge", body: `The pull request's branch ${branch} got commits Loom did not push while Loom merged the earlier ones (its tip is ${built.tip.slice(0, 12)}), so Loom pushed nothing.`, data: { outcome: "diverged", tip: built.tip, branch } },
+      text: prDivergedText(current.key),
+      countFailure: false,
+      reason: "the pull request's branch has commits Loom did not push",
+    });
+    return;
+  }
+  const src = built.sha;
+  const created = built.created;
   const pushedNow = created || src !== current.pushed_sha;
   if (pushedNow) {
     const pushed = await ctx.host.call(hostId, "push", { repo, remote, src, branch, ...gitNetwork(settings) });
@@ -131,7 +127,7 @@ export async function openPullRequest(ctx: EngineCtx, project: ProjectRow, spec:
   }
   const at = ctx.now();
   const recorded: Partial<TicketRow> = { pr_branch: branch, pushed_sha: src, pushed_at: at, pr_checked_at: at, pr_status_json: null, pr_poll_json: null };
-  const commits = prSettings(spec).squash ? ` as 1 commit (${src.slice(0, 12)})` : "";
+  const commits = ` as 1 commit (${src.slice(0, 12)})`;
   const prBase = stacking(spec) ? prBaseOf(store.tickets(project.id), current, base) : base;
 
   if (settings.forge.kind === "none" || (fix && current.pr_url !== null)) {

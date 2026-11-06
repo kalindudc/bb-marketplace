@@ -1177,11 +1177,6 @@ export function SettingsSection({ spec, bbProjectNames, onShowAll, onJump }: { s
                   <Choice path="merge.describe" label="Who writes the pull request" value={merge.describe ?? "worker"} options={["worker", "loom"]} names={{ worker: "The worker", loom: "Loom's template" }} />
                 </Row>
                 {drafts}
-                <Row label="Commits" paths={["merge.squash"]}>
-                  <Commentable as="span" target={value("merge.squash", "One commit per pull request", "bool", merge.squash ?? true)}>
-                    {(merge.squash ?? true) ? "One commit per pull request" : "The branch as it is"}
-                  </Commentable>
-                </Row>
                 <Row label="Fix rounds" paths={["merge.max_fix_rounds"]}>
                   <Commentable as="span" target={value("merge.max_fix_rounds", "Fix rounds", "number", merge.max_fix_rounds ?? 5, { min: 0, max: 20 })}>
                     <b className="tabular-nums">{merge.max_fix_rounds ?? 5}</b> <span className="text-xs text-muted-foreground">then the ticket blocks</span>
@@ -1190,11 +1185,6 @@ export function SettingsSection({ spec, bbProjectNames, onShowAll, onJump }: { s
                 <Row label="Stacking" paths={["merge.stack"]}>
                   <Commentable as="span" target={value("merge.stack", "Stacked pull requests", "bool", merge.stack ?? true)}>
                     {(merge.stack ?? true) ? "A ticket starts on its dependencies' open pull requests" : "A ticket waits for its dependencies to merge"}
-                  </Commentable>
-                </Row>
-                <Row label="Idle workers" paths={["merge.release_workers"]}>
-                  <Commentable as="span" target={value("merge.release_workers", "Release idle workers", "bool", merge.release_workers ?? true)}>
-                    {(merge.release_workers ?? true) ? "Released while their pull requests wait, so bb frees their environments" : "Kept, with their environments, until their pull requests merge"}
                   </Commentable>
                 </Row>
                 <Row label="Fresh pull requests" paths={["merge.refresh_behind"]}>

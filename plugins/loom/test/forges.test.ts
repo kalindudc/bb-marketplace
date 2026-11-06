@@ -23,7 +23,7 @@ const lastPost = (kind: string, key = "CSV-1") =>
     .at(-1)!;
 // Neither forge reports checks, so there is no CI to rely on.
 const prStrategy = (forge: Doc) => (doc: Doc) => {
-  doc.merge = { strategy: "pr", forge, describe: "loom", squash: false, max_fix_rounds: 0 };
+  doc.merge = { strategy: "pr", forge, describe: "loom", max_fix_rounds: 0 };
   doc.checks = { commands: ["npm test"], ci: false };
 };
 const COMMAND_FORGE = { kind: "command", open: "review create", state: "review state", after_open: ['ci run --pr "$LOOM_PR_NUMBER"'] };
@@ -69,14 +69,14 @@ describe("the push-only forge", () => {
     expect(h.host.callsTo("prCreate")).toEqual([]);
     const ticket = ticketOf(h, "CSV-1");
     expect(ticket).toMatchObject({ state: "pr_open", pr_url: null });
-    expect(lastPost("merge").body).toBe(`Pushed ${ticket.branch} to origin. Open its pull request there; Loom completes the ticket when origin/main contains ${ticket.head_sha!.slice(0, 12)}.`);
+    expect(lastPost("merge").body).toBe(`Pushed ${ticket.branch} to origin as 1 commit (${ticket.pushed_sha}). Open its pull request there; Loom completes the ticket when origin/main contains ${ticket.pushed_sha}.`);
 
     h.clock.advance(5 * 60_000);
     await pollPullRequests(h.ctx, project());
-    expect(h.host.callsTo("landedOn")).toEqual([{ repo: "/repo", remote: "origin", base: "main", sha: ticket.head_sha }]);
+    expect(h.host.callsTo("landedOn")).toEqual([{ repo: "/repo", remote: "origin", base: "main", sha: ticket.pushed_sha }]);
     expect(ticketOf(h, "CSV-1").state).toBe("pr_open");
 
-    h.host.landed.add(ticket.head_sha!);
+    h.host.landed.add(ticket.pushed_sha!);
     h.clock.advance(5 * 60_000);
     await pollPullRequests(h.ctx, project());
     expect(ticketOf(h, "CSV-1").state).toBe("done");

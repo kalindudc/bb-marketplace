@@ -257,7 +257,7 @@ describe("reads", () => {
   });
 
   it("ticket says when Loom reads the pull request next: later after failed reads, and not before GitHub's rate limit ends", async () => {
-    await running((doc) => (doc.merge = { strategy: "pr", describe: "loom", squash: false }));
+    await running((doc) => (doc.merge = { strategy: "pr", describe: "loom" }));
     const checked = Date.now() - 60_000;
     host.store.updateTicket(ticketId("CSV-1"), { state: "pr_open", pr_url: "https://github.com/acme/shop/pull/1", pr_checked_at: checked });
     const nextCheck = async () => (await call<TicketDetail>("ticket", { key: "CSV-1" })).pr?.nextCheckAt;
@@ -278,7 +278,7 @@ describe("reads", () => {
     const checked = () => Date.now() - 60_000;
 
     it("ticket says Loom reads a GitHub pull request next when the host's wait ends", async () => {
-      await running((doc) => (doc.merge = { strategy: "pr", describe: "loom", squash: false }));
+      await running((doc) => (doc.merge = { strategy: "pr", describe: "loom" }));
       host.store.updateTicket(ticketId("CSV-1"), { state: "pr_open", pr_url: "https://github.com/acme/shop/pull/1", pr_checked_at: checked() });
       const until = Date.now() + 10 * 60_000;
       host.engine.ctx.forgeBackoffs.set("github.com", offline(until));
@@ -286,7 +286,7 @@ describe("reads", () => {
     });
 
     it("ticket says Loom reads a command forge's pull request next when its own host's wait ends, not GitHub's", async () => {
-      await running((doc) => ((doc.merge = { strategy: "pr", describe: "loom", squash: false, forge: { kind: "command", open: "delta open", state: "delta state" } }), (doc.checks.ci = false)));
+      await running((doc) => ((doc.merge = { strategy: "pr", describe: "loom", forge: { kind: "command", open: "delta open", state: "delta state" } }), (doc.checks.ci = false)));
       const at = checked();
       host.store.updateTicket(ticketId("CSV-1"), { state: "pr_open", pr_url: "https://delta.shopify.io/shop/world/pull/2313251", pr_checked_at: at });
       const until = Date.now() + 10 * 60_000;

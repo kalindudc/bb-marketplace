@@ -28,7 +28,7 @@ const merged = (key: string) => {
 
 // CSV-1 verifies itself; CSV-2 needs CSV-1 live and a milestone that a command checks.
 const rollout = (doc: Doc) => {
-  doc.merge = { strategy: "pr", describe: "loom", squash: false, max_fix_rounds: 0 };
+  doc.merge = { strategy: "pr", describe: "loom", max_fix_rounds: 0 };
   doc.rollout = { deploy: { how: "Shipit deploys main" }, milestone: [{ ref: "traffic-low", title: "Old traffic is near zero", check: "./traffic-low.sh" }] };
   doc.ticket[0].rollout = { verify: "curl -f https://shop.example.com/health" };
   doc.ticket[1].rollout = { requires_live: ["csv-model", "traffic-low"] };

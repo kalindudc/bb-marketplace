@@ -161,15 +161,15 @@ describe("writing the pull request", () => {
     expect(h.bb.sent(worker.thread_id!).filter((text) => text.includes("hand it in with loom_pr"))).toHaveLength(2);
   });
 
-  it('opens from the template without asking on describe = "loom", and pushes the branch as it is on squash = false', async () => {
-    await seedProject(h, pr({ describe: "loom", squash: false }));
+  it('opens from the template without asking on describe = "loom", and pushes the reviewed work as one commit', async () => {
+    await seedProject(h, pr({ describe: "loom" }));
     const worker = await reachApproved(h);
     await ask();
     expect(h.bb.sent(worker.thread_id!).some((text) => text.includes("loom_pr"))).toBe(false);
     await queue();
-    expect(h.host.callsTo("prCommit")).toEqual([]);
-    expect(h.host.callsTo("push")[0]).toMatchObject({ src: "c1" });
-    expect(ticket()).toMatchObject({ state: "pr_open", pushed_sha: "c1" });
+    expect(h.host.callsTo("prCommit")).toHaveLength(1);
+    expect(h.host.callsTo("push")[0]).toMatchObject({ src: "sq1" });
+    expect(ticket()).toMatchObject({ state: "pr_open", pushed_sha: "sq1" });
   });
 });
 

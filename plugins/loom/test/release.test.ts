@@ -95,27 +95,6 @@ describe("releasing the worker of an open pull request", () => {
     expect(row(worker.id).end_reason).toBe("released");
   });
 
-  it("keeps the worker when the spec sets merge.release_workers = false, as before", async () => {
-    const worker = await openPr({ release_workers: false });
-    await release();
-    expect(row(worker.id)).toMatchObject({ state: "active", released_at: null });
-    expect(h.bb.callsTo("archive")).not.toContainEqual([worker.thread_id]);
-  });
-
-  it("follows merge.release_workers in a version approved after the project started, either way", async () => {
-    const worker = await openPr();
-    const propose = (value: boolean) => h.projects.propose({ toml: specToml((doc) => (doc.merge = { strategy: "pr", release_workers: value })), threadId: "thr_plan", bbProjectId: "proj_1", hostId: "host_1" });
-    expect(await propose(false)).toMatchObject({ pending: true, version: 2 });
-    await h.projects.approve("csv", "human", 2);
-    await release();
-    expect(row(worker.id)).toMatchObject({ state: "active", released_at: null });
-
-    await propose(true);
-    await h.projects.approve("csv", "human", 3);
-    await release();
-    expect(isReleased(row(worker.id))).toBe(true);
-  });
-
   it("keeps a worker that is busy, waits on the human, has a fix round on its way, or has work beyond the reviewed commit", async () => {
     const worker = await openPr();
     const thread = h.bb.threads.get(worker.thread_id!)!;
@@ -143,9 +122,9 @@ describe("releasing the worker of an open pull request", () => {
     expect(isReleased(row(worker.id))).toBe(true);
   });
 
-  it("refuses merge.release_workers on the integration strategy", () => {
-    const result = parseSpec(specToml((doc) => (doc.merge = { strategy: "integration", release_workers: true })));
-    expect(result.errors).toContain('merge.release_workers: it applies to the pull request Loom opens for each ticket, but merge.strategy is "integration". Remove it, or use merge.strategy = "pr".');
+  it("refuses merge.release_workers, since Loom always releases idle workers", () => {
+    const result = parseSpec(specToml((doc) => (doc.merge = { strategy: "pr", release_workers: false })));
+    expect(result.errors).toEqual(["merge.release_workers: Loom no longer reads this key. Loom always releases an idle worker whose pull request is open, so bb frees its environment, and brings it back when the pull request needs it: remove the key."]);
   });
 });
 

@@ -698,8 +698,8 @@ its own pull request.
   ticket's key is only in a hidden comment. With nothing to say, the block is
   that comment alone. Loom takes its markers, and anything between them, out of
   the worker's text, so a description has one block of Loom's.
-- Loom pushes the reviewed work as one commit (`merge.squash = false` pushes
-  the branch as it is), never with force, and opens the pull request.
+- Loom pushes the reviewed work as one commit, never with force, and opens the
+  pull request.
 - Loom then follows the pull request: its checks, reviews, unresolved review
   threads and comments. What needs a fix goes back to the worker as a fix
   round, once a worker slot is free (see
@@ -797,9 +797,7 @@ its own pull request.
   environment on the worker's branch and the worker keeps its whole
   conversation, with a note that files git ignores must be set up again. When
   bb cannot restore it, a new worker takes over from the branch and can read
-  the earlier worker's thread. `merge.release_workers = false` keeps every
-  worker until its pull request merges; a spec version approved later may
-  change it either way.
+  the earlier worker's thread.
 
 ### Drafts
 

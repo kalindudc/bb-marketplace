@@ -50,7 +50,7 @@ const mergePosts = (key = "CSV-1") => h.store.posts(ticket(key).id).filter((post
  */
 async function fixOnMachineWithForeignTip(): Promise<ThreadRow> {
   await seedMachineProject(h, (doc) => {
-    doc.merge = { strategy: "pr", stack: false, release_workers: false };
+    doc.merge = { strategy: "pr", stack: false };
     doc.checks.ci = false;
   });
   const worker = await reachApproved(h);
@@ -241,7 +241,7 @@ describe("a merge that fails in a way worth waiting out", () => {
   });
 
   describe("on the pull request strategy", () => {
-    const pr = (more: Doc = {}) => (doc: Doc) => (doc.merge = { strategy: "pr", describe: "loom", squash: false, stack: false, ...more });
+    const pr = (more: Doc = {}) => (doc: Doc) => (doc.merge = { strategy: "pr", describe: "loom", stack: false, ...more });
 
     it("waits at least 15 minutes when the open command printed a rate limit instead of a URL, then pushes again and opens", async () => {
       await seedProject(h, pr({ forge: COMMAND_FORGE }));
@@ -285,7 +285,7 @@ describe("a merge that fails in a way worth waiting out", () => {
     });
 
     it("waits out a read of the pull request branch whose host call ran out of time before a push, on a machine", async () => {
-      await seedMachineProject(h, (doc) => (doc.merge = { strategy: "pr", stack: false, release_workers: false }));
+      await seedMachineProject(h, (doc) => (doc.merge = { strategy: "pr", stack: false }));
       const worker = await reachApproved(h);
       await askForPrTexts(h.ctx, project(), spec());
       handInPrText(h.ctx, worker.thread_id!, { title: "Add order rows", body: "Why.", commit_message: "Add the order row mapper" });
@@ -320,7 +320,7 @@ describe("a merge that fails in a way worth waiting out", () => {
   });
 
   describe("still pauses", () => {
-    const pr = (more: Doc = {}) => (doc: Doc) => (doc.merge = { strategy: "pr", describe: "loom", squash: false, stack: false, ...more });
+    const pr = (more: Doc = {}) => (doc: Doc) => (doc.merge = { strategy: "pr", describe: "loom", stack: false, ...more });
 
     it("on a missing login, an open command that printed no URL, and a host call the contract refused", async () => {
       await seedProject(h, pr());
@@ -578,7 +578,7 @@ describe("steps that are not run again", () => {
   });
 
   it("posts once, naming the after_open commands it did not run, and runs none again, when one got no answer", async () => {
-    await seedProject(h, (doc) => (doc.merge = { strategy: "pr", describe: "loom", squash: false, forge: { ...COMMAND_FORGE, after_open: ["ci-cli run", "ci-cli notify"] } }));
+    await seedProject(h, (doc) => (doc.merge = { strategy: "pr", describe: "loom", forge: { ...COMMAND_FORGE, after_open: ["ci-cli run", "ci-cli notify"] } }));
     await reachApproved(h);
     h.host.execResults = [new Error(DEADLINE)];
     await queue();
@@ -593,7 +593,7 @@ describe("steps that are not run again", () => {
   });
 
   it("waits out a push whose git process ran out of time on the machine", async () => {
-    await seedProject(h, (doc) => (doc.merge = { strategy: "pr", describe: "loom", squash: false, stack: false }));
+    await seedProject(h, (doc) => (doc.merge = { strategy: "pr", describe: "loom", stack: false }));
     await reachApproved(h);
     h.host.scripted.push = [new Error("git push took too long")];
     await queue();
@@ -606,7 +606,7 @@ describe("blocking or cancelling a ticket whose merge waits", () => {
   it("blocks a ticket that waits to open its pull request, and ends the wait", async () => {
     const e = makeEngine();
     h = e;
-    await seedProject(h, (doc) => (doc.merge = { strategy: "pr", describe: "loom", squash: false, stack: false, forge: COMMAND_FORGE }));
+    await seedProject(h, (doc) => (doc.merge = { strategy: "pr", describe: "loom", stack: false, forge: COMMAND_FORGE }));
     await reachApproved(h);
     h.host.scripted.prCreate = [{ outcome: "unavailable", message: RATE_LIMITED, transient: "rate_limit" }];
     await queue();
@@ -647,7 +647,7 @@ describe("blocking or cancelling a ticket whose merge waits", () => {
 });
 
 describe("a pull request read whose host call got no answer", () => {
-  const pr = (more: Doc = {}) => (doc: Doc) => (doc.merge = { strategy: "pr", describe: "loom", squash: false, max_fix_rounds: 0, ...more });
+  const pr = (more: Doc = {}) => (doc: Doc) => (doc.merge = { strategy: "pr", describe: "loom", max_fix_rounds: 0, ...more });
 
   it("waits as a server error when the command forge's read ran out of time, and pauses only after an hour", async () => {
     await seedProject(h, (doc) => {

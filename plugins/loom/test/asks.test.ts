@@ -91,7 +91,7 @@ describe("the planner's asks", () => {
 
   it("marks a live step done once its ticket or milestone is live, and keeps it done after an undo", async () => {
     await seedProject(h, (doc) => {
-      doc.merge = { strategy: "pr", describe: "loom", squash: false, max_fix_rounds: 0 };
+      doc.merge = { strategy: "pr", describe: "loom", max_fix_rounds: 0 };
       doc.rollout = { deploy: { how: "Shipit deploys main" }, milestone: [{ ref: "traffic-low", title: "Old traffic is near zero" }] };
     });
     expect(() => ask([{ action: "live", text: "Mark it live." }])).toThrow("steps[0]: live needs the ticket key or milestone ref.");

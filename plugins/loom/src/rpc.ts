@@ -399,7 +399,7 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
       forge: forge.kind,
       branch: pushedSha === null ? null : ticket.pr_branch,
       pushedSha,
-      commits: settings.squash && pushedSha !== null ? first + outcomes.slice(Math.max(0, opened)).filter((outcome) => outcome === "pr_pushed").length : null,
+      commits: pushedSha !== null ? first + outcomes.slice(Math.max(0, opened)).filter((outcome) => outcome === "pr_pushed").length : null,
       rounds,
       counted,
       maxRounds: settings.maxFixRounds,

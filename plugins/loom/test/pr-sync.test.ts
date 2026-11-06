@@ -14,7 +14,7 @@ beforeEach(() => {
 const MINUTE = 60_000;
 const URL = "https://github.com/acme/shop/pull/1";
 const project = () => h.store.projectBySlug("csv")!;
-const pr = (doc: Doc) => (doc.merge = { strategy: "pr", describe: "loom", squash: false, max_fix_rounds: 0 });
+const pr = (doc: Doc) => (doc.merge = { strategy: "pr", describe: "loom", max_fix_rounds: 0 });
 const reads = () => h.host.callsTo("prBatch");
 type Batch = HostOutput<"prBatch">;
 const deferred = <T>() => {
@@ -175,7 +175,7 @@ describe("syncing a project's pull requests", () => {
 
   describe("on the push-only forge", () => {
     const pushOnly = (doc: Doc) => {
-      doc.merge = { strategy: "pr", forge: { kind: "none" }, describe: "loom", squash: false, max_fix_rounds: 0 };
+      doc.merge = { strategy: "pr", forge: { kind: "none" }, describe: "loom", max_fix_rounds: 0 };
       doc.checks.ci = false;
     };
 

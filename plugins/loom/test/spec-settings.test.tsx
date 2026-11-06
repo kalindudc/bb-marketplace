@@ -25,10 +25,8 @@ function everything(doc: Doc): void {
     strategy: "pr",
     draft: false,
     describe: "loom",
-    squash: false,
     max_fix_rounds: 3,
     stack: false,
-    release_workers: false,
     refresh_behind: 50,
     git_network_timeout_seconds: 300,
     forge: {

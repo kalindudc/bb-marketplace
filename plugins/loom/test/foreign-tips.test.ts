@@ -89,7 +89,7 @@ async function fixAndApprove(worker: ThreadRow): Promise<void> {
 
 describe("a fix round whose pull request branch has commits Loom did not push, on a machine", () => {
   it("merges them into the head on the checkout against Loom's last push, carries the result to the live worker, and builds the next push on them", async () => {
-    const worker = await openOnMachine({ release_workers: false });
+    const worker = await openOnMachine();
     pushedByOthers();
     h.host.feedback.set(URL1, { ...changesRequested, head: "theirs1" });
     await poll();
@@ -114,7 +114,7 @@ describe("a fix round whose pull request branch has commits Loom did not push, o
   });
 
   it("carries nothing into the worktree of a worker that is running a turn, and merges them when it pushes the fix", async () => {
-    const worker = await openOnMachine({ release_workers: false });
+    const worker = await openOnMachine();
     pushedByOthers();
     h.bb.threads.get(worker.thread_id!)!.status = "active";
     const carries = h.host.callsTo("carryStart").length;
@@ -151,7 +151,7 @@ describe("a fix round whose pull request branch has commits Loom did not push, o
   });
 
   it("tells the worker Loom merges them when it pushes, when the carry cannot go in, and changes nothing", async () => {
-    const worker = await openOnMachine({ release_workers: false });
+    const worker = await openOnMachine();
     pushedByOthers();
     h.host.scripted.carryStart = [{ outcome: "unavailable", message: "The worktree has uncommitted changes" }];
     h.host.feedback.set(URL1, { ...changesRequested, head: "theirs1" });
@@ -170,7 +170,7 @@ describe("a push whose pull request branch got commits Loom did not push, on a m
   // ticket's own files, which the approved head has, so the merge is the head's tree: Loom pushes it from the project's
   // machine. Carrying it into the worker's worldtree checkout left thousands of files with conflict markers.
   it("pushes the merge from the project's machine, never touching the worktree, when the tip adds nothing the head lacks", async () => {
-    const worker = await openOnMachine({ release_workers: false });
+    const worker = await openOnMachine();
     h.host.feedback.set(URL1, changesRequested);
     await poll();
     await fixAndApprove(worker);
@@ -196,7 +196,7 @@ describe("a push whose pull request branch got commits Loom did not push, on a m
   // Tony's review: a second foreign tip that reverted the first one's change was merged from the base branch's commit,
   // which put the reverted change back. The merge base is the newest tip the head already has.
   it("merges a tip from the newest foreign tip the head already has, never from the base branch's commit", async () => {
-    const worker = await openOnMachine({ release_workers: false });
+    const worker = await openOnMachine();
     h.host.feedback.set(URL1, changesRequested);
     await poll();
     await fixAndApprove(worker);
@@ -216,7 +216,7 @@ describe("a push whose pull request branch got commits Loom did not push, on a m
   });
 
   it("merges from its last push when the tip has more than the base merged in, as a person's revert", async () => {
-    const worker = await openOnMachine({ release_workers: false });
+    const worker = await openOnMachine();
     h.host.feedback.set(URL1, changesRequested);
     await poll();
     await fixAndApprove(worker);
@@ -233,7 +233,7 @@ describe("a push whose pull request branch got commits Loom did not push, on a m
   });
 
   it("pushes a clean merge from the project's machine on a repo that relies on CI, and has loom_resume carry it in at the next fix round", async () => {
-    const worker = await openOnMachine({ release_workers: false });
+    const worker = await openOnMachine();
     h.host.feedback.set(URL1, changesRequested);
     await poll();
     await fixAndApprove(worker);
@@ -254,7 +254,7 @@ describe("a push whose pull request branch got commits Loom did not push, on a m
   });
 
   it("merges them on the checkout, carries the result in, runs the checks there and pushes on them, with no new review, on a repo that does not rely on CI", async () => {
-    const worker = await openOnMachine({ release_workers: false }, noCi);
+    const worker = await openOnMachine({}, noCi);
     h.host.feedback.set(URL1, changesRequested);
     await poll();
     await fixAndApprove(worker);
@@ -277,7 +277,7 @@ describe("a push whose pull request branch got commits Loom did not push, on a m
   });
 
   it("leaves the worktree as it is when the carry of a conflict fails, and tells the worker why", async () => {
-    const worker = await openOnMachine({ release_workers: false });
+    const worker = await openOnMachine();
     h.host.feedback.set(URL1, changesRequested);
     await poll();
     await fixAndApprove(worker);
@@ -296,7 +296,7 @@ describe("a push whose pull request branch got commits Loom did not push, on a m
   });
 
   it("carries a conflict in with its markers and sends it back, building the next merge on the tip", async () => {
-    const worker = await openOnMachine({ release_workers: false });
+    const worker = await openOnMachine();
     h.host.feedback.set(URL1, changesRequested);
     await poll();
     await fixAndApprove(worker);
@@ -316,7 +316,7 @@ describe("a push whose pull request branch got commits Loom did not push, on a m
   });
 
   it("sends a failing check on the merge back to the worker, counting it, with the merge kept in its worktree, on a repo that does not rely on CI", async () => {
-    const worker = await openOnMachine({ release_workers: false }, noCi);
+    const worker = await openOnMachine({}, noCi);
     h.host.feedback.set(URL1, changesRequested);
     await poll();
     await fixAndApprove(worker);

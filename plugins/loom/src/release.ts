@@ -7,7 +7,6 @@ import type { ProjectRow, Store, ThreadRow, TicketRow } from "./db/store";
 import { formatDuration } from "./format";
 import { refreshDue } from "./fresh";
 import { prTextReady } from "./pr-text";
-import { prSettings } from "./repos";
 import { waitsForSlot } from "./scheduler";
 import type { Spec } from "./spec";
 import { holdOf, restackOf, stacking, upstreamOf } from "./stack";
@@ -43,14 +42,14 @@ function restackDue(spec: Spec, tickets: readonly TicketRow[], ticket: TicketRow
 // ---------------------------------------------------------------- releasing
 
 /**
- * The tick's step on the pr strategy, unless the spec sets merge.release_workers = false: archives each idle worker
+ * The tick's step on the pr strategy: archives each idle worker
  * whose ticket's pull request is open, so bb frees its environment. Only a worker with nothing in flight goes: no fix
  * round waiting for it, no question waiting for the human, no catch-up due, and a worktree that holds exactly the
  * reviewed commit, so nothing in it can be lost. A worker on a machine of its own also stays while a dependency in its
  * repo is open: its machine cannot come back, and the restacks that dependency causes run in its worktree.
  */
 export async function releaseIdleWorkers(ctx: EngineCtx, project: ProjectRow, spec: Spec): Promise<void> {
-  if (spec.merge.strategy !== "pr" || !prSettings(spec).releaseWorkers) return;
+  if (spec.merge.strategy !== "pr") return;
   const { store, bb } = ctx;
   for (const seen of store.tickets(project.id, ["pr_open"])) {
     const tickets = store.tickets(project.id);

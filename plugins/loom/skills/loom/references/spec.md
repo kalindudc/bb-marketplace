@@ -33,10 +33,8 @@ A spec without `[[repo]]` tables is a single-repo project: every ticket runs in 
 | `forge` | table | `{ kind = "gh" }` | where pull requests open; see [merge.forge] |
 | `worktree` | table | none | integration strategy only; prepares the integration worktree; see [merge.worktree] |
 | `describe` | string | `"worker"` | pr strategy only; who writes each pull request's title, description and commit message: `"worker"` (the ticket's worker: the title and description it proposes with `loom_submit`, which the reviewers judge, and the commit message with `loom_pr` after approval) or `"loom"` (Loom's template from the ticket; `loom_submit` then refuses `pr`) |
-| `squash` | boolean | `true` | pr strategy only; push the reviewed work as one commit, and each fix round as one more, instead of the worker's branch as it is |
 | `max_fix_rounds` | integer | `5` | pr strategy only; 0 to 20; fix rounds the pull request's checks and reviews may start before the ticket blocks, counted again from each requeue; the human's replies do not count; `0` follows only merged and closed |
 | `stack` | boolean | `true` | pr strategy only; a ticket starts once its dependencies' pull requests are open, on top of them in its own repo, and its pull request opens on its one open dependency's branch; `false` waits for each dependency to merge |
-| `release_workers` | boolean | `true` | pr strategy only; once a ticket's pull request is open and its worker is idle, Loom archives the worker's thread so bb frees its environment, and brings the same thread back with a new environment for a fix round or a catch-up; `false` keeps every worker and its environment until its pull request merges; a pending version may change it after approval. See [Releasing workers](#releasing-workers) |
 | `refresh_behind` | integer | none | pr strategy only; 1 to 1000000; keeps open pull requests fresh with their base: once a pull request's branch lacks at least this many commits of the remote base, or the forge says it conflicts with its base, Loom merges the base into it, runs the ticket's checks in its worker's worktree and pushes, with no new review; unset is off; the default `refresh_behind` of every `[[repo]]`. See [Keeping pull requests fresh](#keeping-pull-requests-fresh) |
 | `git_network_timeout_seconds` | integer | `120` | 30 to 600; how long each git fetch, `ls-remote` or push Loom runs in the repo may take, such as fetching the base branch to bring a stacked pull request up to date, building a pull request's commit, or pushing it; a host call that runs two of them in a row gets twice this plus 30 seconds; the default of every `[[repo]]`. Raise it for a large monorepo, where fetching main takes a minute or more; a version approved after the project started applies from Loom's next pass. See [Slow repositories](#slow-repositories) |
 
@@ -222,7 +220,7 @@ Loom makes every stack merge on the project's checkout and puts only linear comm
 - Work brought home is rebuilt on the stack base itself, so the reviewers' diff, the pull request's commit and the Changes tab count only the ticket's own changes, and its pull request opens on its dependency's branch. A reviewer on another machine reads those changes with `git diff HEAD~1` after `loom_checkout`.
 - When a dependency's pull request gets a new commit or merges, Loom merges the new stack base into the dependent's head on the checkout with `git merge-tree`, without a worktree. It carries the result into the worker's worktree as linear commits, replacing the reviewed work there, which the checkout keeps. It then runs the ticket's checks there, compared by tree, and pushes with no new review. After a merge it also moves the pull request to the base branch.
 - A conflict is committed on the checkout as the tree with conflict markers and carried in the same way. The ticket goes back to the worker with the files to resolve, and `stack_json.markers` keeps them: a submit that still has a marker in one of them fails a "conflict check", so a commit with markers is never brought home as a submit or pushed. A check that fails on the carried result goes back to the worker too. A worktree that holds work other than the reviewed tree is left alone, and the ticket goes back to the worker with the reason.
-- A worker on a machine is not released while its ticket has a dependency in its repo that has not merged: a released worker's machine is removed, and the merges that dependency causes run in its worktree. Once every dependency in its repo has merged and its branch has taken the base branch, it is released as usual. `merge.release_workers = false` keeps every worker, and its machine, until its pull request merges.
+- A worker on a machine is not released while its ticket has a dependency in its repo that has not merged: a released worker's machine is removed, and the merges that dependency causes run in its worktree. Once every dependency in its repo has merged and its branch has taken the base branch, it is released as usual.
 
 #### Moving a running project onto machines, or off them
 
@@ -239,13 +237,11 @@ Approving a pending version that adds or removes `machine` moves only the thread
 
 ### Releasing workers
 
-On the pull request strategy a pull request can wait days for a person, and an idle worker would hold its environment all that time. With `merge.release_workers` (on by default), Loom archives the worker's thread once the ticket is in `pr_open`, the thread is idle with no question waiting, no fix round is on its way to it, its branch does not have to catch up, and its worktree holds exactly the reviewed commit with nothing uncommitted. bb then frees the environment after its provider's grace period. The worker stays the ticket's worker.
+On the pull request strategy a pull request can wait days for a person, and an idle worker would hold its environment all that time, so Loom archives the worker's thread once the ticket is in `pr_open`, the thread is idle with no question waiting, no fix round is on its way to it, its branch does not have to catch up, and its worktree holds exactly the reviewed commit with nothing uncommitted. bb then frees the environment after its provider's grace period. The worker stays the ticket's worker.
 
 - When the pull request's feedback or your reply on the ticket starts a fix round, or the branch must take a dependency's new commits, Loom unarchives the same thread and asks bb to restore its environment on the worker's branch. Once it is ready, the worker gets the fix round with a note that files git ignores (installed dependencies, build output) are gone, and it keeps its whole conversation. A catch-up runs in the restored worktree with no message, and a check that fails there goes to the worker with the same note and counts no failure.
 - A restore that fails waits and tries again, as a failed start does; after 4 failures in a row, or when bb cannot restore the environment (its provider has no restore, or the thread was deleted), a new worker takes the ticket from its branch. A worker on a new machine never comes back, since bb removes the machine; the new worker takes over from the work Loom brought home, with `loom_resume`. So a worker on a new machine is not released while its ticket has a dependency in its repo that has not merged, whose new commits must reach its worktree. A provider that stays unavailable for an hour blocks the ticket instead, and a requeue starts the new worker. Its brief names the earlier workers' threads, which it can read with `bb thread log <id> --all`.
 - Fix-round counting, `merge.max_fix_rounds`, `merge.describe`, stacking, tokens and the page work as before.
-- `merge.release_workers = false` keeps each worker and its worktree until its pull request merges, as Loom did before this setting; choose it when a worktree holds set-up state that takes long to build again and environments cost little.
-- A spec version approved after the project started may turn it on or off; it applies from Loom's next pass. A worker released before it was turned off still comes back for its pull request's next fix round.
 
 ### Keeping pull requests fresh
 
@@ -879,7 +875,7 @@ A spec with any error is refused and nothing is saved. Errors are numbered, at m
 - `auto_merge` with `method = "command"` on a gh forge, or another method on a command forge; a command forge's `auto_merge` without `merge` or `feedback`, or `merge` without `auto_merge`; `comment` without `method = "comment"`, or that method without `comment`; `rejected` with a gh merge or queue method.
 - A command forge's `reviewers` without `feedback`; rules whose counts could ask more than 20 people.
 - A `reviewers` rule with neither `team` nor `users`, or both; a `team` without `count`; a gh `team` that is not `org/slug`; a `count` above the number of `users`; a command forge's `reviewers` without `request_reviews`, a team rule without `team_members`, or either command with no rule that runs it. `merge`, `request_reviews` and `team_members` on a forge whose kind is not `"command"`.
-- `merge.describe`, `merge.squash`, `merge.max_fix_rounds`, `merge.stack`, `merge.release_workers`, `merge.refresh_behind` or a repo's `refresh_behind` on the integration strategy.
+- `merge.describe`, `merge.max_fix_rounds`, `merge.stack`, `merge.refresh_behind` or a repo's `refresh_behind` on the integration strategy.
 - `merge.worktree` is set with strategy `"pr"`.
 - An `environment` (top level or a repo's) or its `reviewer` sets `machine`, and the strategy is not `"pr"`.
 - `checks.ci` or a repo's `ci` on the integration strategy.
@@ -946,6 +942,8 @@ These keys were removed because no project used them, or because they had anothe
 |---|---|
 | `merge.checks_queued_minutes`, `merge.checks_near_done_percent` | Loom's `checksQueuedMinutes` and `checksNearDonePercent` settings, which apply to every project |
 | `merge.git_index_timeout_seconds`, a repo's `git_index_timeout_seconds` | Nothing: the index and tree steps of one call always get 300 seconds, which no project changed |
+| `merge.squash` | Nothing: Loom always pushes the reviewed work as one commit, and each fix round as one more, as it did by default |
+| `merge.release_workers` | Nothing: Loom always releases an idle worker whose pull request is open, as it did by default (see [Releasing workers](#releasing-workers)) |
 
 ## Warnings
 
