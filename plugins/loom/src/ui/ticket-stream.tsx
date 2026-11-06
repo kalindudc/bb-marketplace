@@ -232,7 +232,7 @@ function Item({ ctx, item, openFailed }: { ctx: StreamCtx; item: ActivityItem; o
     case "pr_feedback":
       return (
         <div>
-          <FeedbackCard item={item} max={ctx.ticket.pr?.maxRounds ?? 0} now={ctx.now} openUrl={ctx.openUrl} />
+          <FeedbackCard item={item} max={ctx.ticket.pr?.maxFixRounds ?? 0} now={ctx.now} openUrl={ctx.openUrl} />
           <Replies ctx={ctx} postId={item.postId} />
         </div>
       );

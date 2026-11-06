@@ -189,7 +189,7 @@ function PrFacts({ ticket, now }: { ticket: TicketDetail; now: number }) {
       )}
       {(pr.follows || pr.rounds > 0) && pr.pushedSha !== null && (
         <span data-fact="pr-rounds" className={FACT}>
-          Fix rounds {pr.counted} of {pr.maxRounds}
+          Fix rounds {pr.counted} of {pr.maxFixRounds}
         </span>
       )}
     </>

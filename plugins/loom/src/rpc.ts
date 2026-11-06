@@ -402,7 +402,7 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
       commits: pushedSha !== null ? first + outcomes.slice(Math.max(0, opened)).filter((outcome) => outcome === "pr_pushed").length : null,
       rounds,
       counted,
-      maxRounds: settings.maxFixRounds,
+      maxFixRounds: settings.maxFixRounds,
       follows: settings.maxFixRounds > 0 && followsFeedback(forge),
       checks: status === null || status.head === null ? null : { passed: status.passed, failed: status.failed, pending: status.pending, at: status.at },
       nextCheckAt: live && ticket.state === "pr_open" ? nextCheck(ticket, forge.kind) : null,

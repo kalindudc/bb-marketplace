@@ -3622,7 +3622,7 @@ describe("ticket", () => {
       commits: 1,
       rounds: 0,
       counted: 0,
-      maxRounds: 5,
+      maxFixRounds: 5,
       follows: true,
       checks: { passed: 18, failed: 0, pending: 2, at: Date.now() - 2 * 60_000 },
       nextCheckAt: Date.now() + 3 * 60_000,

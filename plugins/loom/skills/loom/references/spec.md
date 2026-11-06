@@ -295,17 +295,29 @@ Compared with 0.23.0: Loom already sent failed CI checks back as fix rounds when
 | Key | Type | Default | Rule |
 |---|---|---|---|
 | `approvals` | integer | `1` | 1 to 3 |
-| `max_rounds` | integer | `3` | 1 to 10 |
+| `max_rounds` | integer | `3` | 1 to 10; review rounds that ask for changes before the ticket blocks; see [Retry limits](#retry-limits) |
 | `rubric` | string array | `[]` | at most 20, each up to 500 characters |
 
 ### [budget]
 
 | Key | Type | Default | Rule |
 |---|---|---|---|
-| `max_attempts` | integer | `3` | 1 to 10; failed worker attempts before a ticket blocks |
-| `max_check_failures` | integer | `5` | 1 to 20; failed check runs on one ticket before it blocks |
+| `max_attempts` | integer | `3` | 1 to 10; failed worker attempts before a ticket blocks; see [Retry limits](#retry-limits) |
+| `max_check_failures` | integer | `5` | 1 to 20; failed check runs on one ticket before it blocks; see [Retry limits](#retry-limits) |
 | `max_tokens` | integer | none | positive; for the whole project |
 | `deadline` | date | none | a real date such as `2026-12-31`, as a TOML date or a string |
+
+### Retry limits
+
+Five keys limit how often Loom tries one ticket again, each in its own phase. Each blocks the ticket when it is reached, and a requeue starts its count again. Leave them out unless the human asks for another limit.
+
+| Key | Phase | What counts | Default |
+|---|---|---|---|
+| `budget.max_attempts` | a worker works on the ticket | a worker that fails, times out or gives up; a start that fails counts only from its fourth failure in a row | `3` |
+| `budget.max_check_failures` | the worker submits | a submit whose plugin checks (`checks`, a repo's `checks`, the ticket's `verify`, and on the integration strategy `after_merge`) fail | `5` |
+| `review.max_rounds` | Loom's reviewers judge the submit, before any pull request opens | a review round that asks for changes | `3` |
+| `merge.max_fix_rounds` | the pull request is open | a fix round its checks, reviews, review threads or comments start, or a final review failure the worker can fix; the human's replies do not count; `0` reads no feedback at all | `5` |
+| `auto_merge.max_attempts` | Loom merges a ready pull request itself | a merge Loom asks the forge for | `3` |
 
 ### [[repo]]
 

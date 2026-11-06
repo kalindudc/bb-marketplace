@@ -256,6 +256,14 @@ describe("reads", () => {
     expect(detail.reviews.map((review) => review.threadId)).toEqual([null, "thr_r2", "thr_r3", "thr_r4"]);
   });
 
+  it("ticket carries merge.max_fix_rounds as the pull request's maxFixRounds, with the rounds that count against it", async () => {
+    await running((doc) => (doc.merge = { strategy: "pr", describe: "loom", max_fix_rounds: 7 }));
+    host.store.updateTicket(ticketId("CSV-1"), { state: "pr_open", pr_url: "https://github.com/acme/shop/pull/1", pr_branch: "loom/csv/csv-1", pushed_sha: "sq1", pr_checked_at: Date.now() });
+    const pr = (await call<TicketDetail>("ticket", { key: "CSV-1" })).pr!;
+    expect(pr).toMatchObject({ maxFixRounds: 7, rounds: 0, counted: 0 });
+    expect(pr).not.toHaveProperty("maxRounds");
+  });
+
   it("ticket says when Loom reads the pull request next: later after failed reads, and not before GitHub's rate limit ends", async () => {
     await running((doc) => (doc.merge = { strategy: "pr", describe: "loom" }));
     const checked = Date.now() - 60_000;

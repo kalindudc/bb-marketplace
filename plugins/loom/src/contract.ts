@@ -219,12 +219,13 @@ export interface TicketPr {
   /** The remote branch Loom pushes to, and the commit it last pushed there; null before the first push. */
   branch: string | null;
   pushedSha: string | null;
-  /** The commits Loom pushed: one, and one more per fix round with a change; null when the spec pushes the branch as it is. */
+  /** The commits Loom pushed: one, and one more per fix round with a change; null before the first push. */
   commits: number | null;
-  /** Every fix round so far, the human's included; `counted` is the rounds the pull request's feedback started since the last requeue, which `maxRounds` limits. */
+  /** Every fix round so far, the human's included; `counted` is the rounds the pull request's feedback started since the last requeue, which `maxFixRounds` limits. */
   rounds: number;
   counted: number;
-  maxRounds: number;
+  /** The spec's merge.max_fix_rounds; review.max_rounds caps Loom's own review rounds, before the pull request opens. */
+  maxFixRounds: number;
   /** Whether Loom reads the pull request's checks and reviews on this forge. */
   follows: boolean;
   /** The checks on the pull request's head when Loom last read them; null before the first read after a push. */
