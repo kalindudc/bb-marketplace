@@ -392,7 +392,8 @@ export const hostContract = defineRpcContract({
   // `base`, when it is an ancestor of ref, is the merge base instead of git's own: a commit whose tree head builds on,
   // which git cannot tell when head was rebuilt from a worktree on another machine.
   mergeOnto: {
-    input: z.object({ repo: absPath, head: commit, ref: commit, message: z.string().min(1).max(500), refs: z.array(fullRef).max(4), base: commit.optional(), indexTimeoutMs }).strict(),
+    // `ours`: record the merge with the head's tree as it is (git merge -s ours), for a ref proven to add nothing the head lacks.
+    input: z.object({ repo: absPath, head: commit, ref: commit, message: z.string().min(1).max(500), refs: z.array(fullRef).max(4), base: commit.optional(), ours: z.boolean().optional(), indexTimeoutMs }).strict(),
     output: z.discriminatedUnion("outcome", [
       z.object({ outcome: z.literal("merged"), sha, tree: sha, already: z.boolean() }).strict(),
       z.object({ outcome: z.literal("conflict"), files: z.array(z.string()), sha, tree: sha }).strict(),

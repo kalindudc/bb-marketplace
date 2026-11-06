@@ -368,6 +368,8 @@ export class FakeHost implements HostPort {
   foreign = new Map<string, string>();
   /** The newest base-branch commit each tip has, as fetchTip reports it. */
   tipBases = new Map<string, string>();
+  /** The tree a mergeOnto of `${head}+${ref}` makes, where a test says; else a new one. */
+  mergeTrees = new Map<string, string>();
   /** What prFeedback answers, by pull request URL; a missing entry is an open pull request with no checks or feedback. */
   feedback = new Map<string, Partial<Extract<HostOutput<"prFeedback">, { outcome: "ok" }>>>();
   /** What prBatch reports of each pull request besides its state, by URL. prCreate keeps its base and draft flag and prRetarget its new base; the rest is not a draft, with no review decision and no base. */
@@ -579,13 +581,14 @@ export class FakeHost implements HostPort {
         return { outcome: "ok", sha, tip: base === undefined ? null : this.remoteBase, tree: this.trees.get(sha) ?? sha };
       }
       case "mergeOnto": {
-        const { head, ref, refs } = input as HostInput<"mergeOnto">;
+        const { head, ref, refs, ours } = input as HostInput<"mergeOnto">;
         if (head === ref || this.ancestry.has(`${ref}..${head}`)) return { outcome: "merged", sha: head, tree: this.trees.get(head) ?? head, already: true };
         const sha = `lm${++this.merged}`;
-        this.trees.set(sha, `${sha}-tree`);
+        const tree = ours === true ? (this.trees.get(head) ?? head) : (this.mergeTrees.get(`${head}+${ref}`) ?? `${sha}-tree`);
+        this.trees.set(sha, tree);
         this.ancestry.add(`${head}..${sha}`).add(`${ref}..${sha}`);
         for (const name of refs) this.refs.set(name, sha);
-        return { outcome: "merged", sha, tree: `${sha}-tree`, already: false };
+        return { outcome: "merged", sha, tree, already: false };
       }
       case "fetchTip": {
         const { branch, ref } = input as HostInput<"fetchTip">;

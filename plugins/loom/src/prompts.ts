@@ -917,6 +917,9 @@ export function prNudgeText(key: string, commitOnly: boolean): string {
 export const RESTORED_NOTE =
   "While the pull request waited, Loom released your worktree to free its environment, and bb has now built a new one on your branch: every commit is there, but files git ignores, such as installed dependencies and build output, are gone, and paths from earlier in this conversation may have moved. Set up what the checks need before you run them.";
 
+const RESUME_NOTE =
+  "Loom merged the new commits on the pull request's branch into your work on the project's machine and pushed the merge, without touching your worktree. Call loom_resume first: it puts that merge in your worktree, and loom_submit is refused until it has. Build your fix on it, and do not fetch or merge the branch yourself.";
+
 const CI_FIX = "These checks ran in the pull request's CI, which may run tests you cannot run here: read each one's log at its link, fix the cause, and say in your loom_submit summary which of those tests you could not run here.";
 
 /** What a fix round's worker must know about commits someone else pushed to the pull request's branch. */
@@ -931,14 +934,14 @@ function foreignTipLines(foreign: ForeignTip | null): string[] {
   return ["The pull request's branch has commits Loom did not push. Do not fetch or merge them yourself: when Loom pushes your fix, it merges them into your branch first and runs your checks on the result, and a conflict comes back to you."];
 }
 
-export function prFeedbackText(a: { key: string; url: string | null; round: number; counted: number; max: number; checks: FeedbackCheck[]; items: FeedbackItem[]; skipped?: Skipped[]; foreign: ForeignTip | null; forge?: ForgeSpec; signature?: string; restored?: boolean }): { summary: string; detail: string } {
+export function prFeedbackText(a: { key: string; url: string | null; round: number; counted: number; max: number; checks: FeedbackCheck[]; items: FeedbackItem[]; skipped?: Skipped[]; foreign: ForeignTip | null; forge?: ForgeSpec; signature?: string; restored?: boolean; resume?: boolean }): { summary: string; detail: string } {
   const reply = a.items.find((item) => item.kind === "reply");
   const human = reply !== undefined;
   const what = human ? `${reply.author === "the planner" ? "The planner" : "The human"} replied on the ticket about its open pull request` : a.url === null ? "The pull request needs fixes" : `The pull request ${a.url} needs fixes`;
   const merge = foreignTipLines(a.foreign);
   return {
-    summary: `[loom] ${a.key}: ${what} (fix round ${a.round}${human ? "" : `; ${a.counted} of the ${a.max} the pull request may start`}). Address it, then call loom_submit({ summary }).`,
-    detail: [...(a.restored === true ? [RESTORED_NOTE] : []), feedbackList(a.checks, a.items, a.skipped), ...(a.checks.length === 0 ? [] : [CI_FIX]), ...merge, ...prRules(a.forge ?? { kind: "gh" }, a.signature ?? COMMENT_SIGNATURE).map((rule) => `- ${rule}`)].join("\n\n"),
+    summary: `[loom] ${a.key}: ${what} (fix round ${a.round}${human ? "" : `; ${a.counted} of the ${a.max} the pull request may start`}).${a.resume === true ? " Call loom_resume first: it puts in your worktree the merge Loom made on the project's machine." : ""} Address it, then call loom_submit({ summary }).`,
+    detail: [...(a.restored === true ? [RESTORED_NOTE] : []), ...(a.resume === true ? [RESUME_NOTE] : []), feedbackList(a.checks, a.items, a.skipped), ...(a.checks.length === 0 ? [] : [CI_FIX]), ...merge, ...prRules(a.forge ?? { kind: "gh" }, a.signature ?? COMMENT_SIGNATURE).map((rule) => `- ${rule}`)].join("\n\n"),
   };
 }
 

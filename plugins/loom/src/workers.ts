@@ -466,6 +466,8 @@ export async function recordBranch(ctx: EngineCtx, row: ThreadRow): Promise<void
 export interface Resume {
   sha: string;
   tree: string;
+  /** The tree the worktree has now, which the carry may replace: the head Loom merged on the project's machine. */
+  replaces?: string;
 }
 
 export const resumeOf = (row: Pick<ThreadRow, "resume_json">): Resume | null => (row.resume_json === null ? null : (JSON.parse(row.resume_json) as Resume));
@@ -486,7 +488,7 @@ export async function resumeWork(ctx: EngineCtx, threadId: string): Promise<stri
   const project = store.project(row.project_id)!;
   let tree: string;
   try {
-    ({ tree } = await carryTo(ctx, project, specOf(store, project), ticket, resume.sha, environment));
+    ({ tree } = await carryTo(ctx, project, specOf(store, project), ticket, resume.sha, environment, resume.replaces === undefined ? {} : { replaces: resume.replaces }));
   } catch (error) {
     throw new LoomError("loom_unavailable", `Loom could not put the earlier work in your worktree: ${errText(error)}. Call loom_resume again, or loom_block if it keeps failing.`);
   }

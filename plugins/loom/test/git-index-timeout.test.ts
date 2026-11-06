@@ -144,6 +144,14 @@ describe("the git index time limit on the project's checkout", () => {
     expect(slow.limits.get("merge-tree")![0]).toBeGreaterThan(290_000);
   });
 
+  it("records an ours merge with the head's tree and both parents, running no merge-tree", async () => {
+    const repo = checkout();
+    const merged = await mergeOnto({ repo: repo.dir, head: repo.a, ref: repo.b, message: "Merge b into a", refs: [], ours: true });
+    expect(merged).toMatchObject({ outcome: "merged", already: false, tree: sh(repo.dir, "rev-parse", `${repo.a}^{tree}`) });
+    expect(sh(repo.dir, "rev-parse", `${(merged as { sha: string }).sha}^@`).split("\n")).toEqual([repo.a, repo.b]);
+    expect(slow.limits.get("merge-tree")).toBeUndefined();
+  });
+
   it("gives stackBase's merge-tree the limit too", async () => {
     const repo = checkout();
     slow.ms.set("merge-tree", 150_000);

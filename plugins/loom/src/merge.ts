@@ -53,7 +53,7 @@ import { LOOM_ACTOR } from "./states";
 import { isWaking, releasedWorker, restoredSinceSubmit } from "./release";
 import { deliverHandBacks, handBack } from "./slots";
 import { carryTo, homeBranch, isRemote, reviewedRef, workBaseOf } from "./transport";
-import { applyMove, baseOf, endLiveRows, endThread, pauseProject, released, resolveEnvironment, specOf, type EngineCtx } from "./workers";
+import { applyMove, baseOf, endLiveRows, endThread, pauseProject, released, resolveEnvironment, specOf, type EngineCtx, type Resume } from "./workers";
 
 const PROVISION_MS = 10 * 60_000;
 const errText = (error: unknown) => (error instanceof Error ? error.message : String(error));
@@ -1010,18 +1010,25 @@ async function takeAtPush(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticke
   }
   if (!(await isForeign(ctx, checkout, current, tip))) return current;
 
-  const merged = await ctx.host.call(hostId, "mergeOnto", {
-    repo,
-    head: current.head_sha!,
-    ref: tip.sha,
-    ...(current.pushed_sha === null ? {} : { base: current.pushed_sha }),
-    message: mergeSubject([`${settings.remote}/${branchName(current)}`], branchName(current)),
-    refs: [],
-    ...gitIndex(settings),
-  });
+  const mergeTip = (ours: boolean) =>
+    ctx.host.call(hostId, "mergeOnto", {
+      repo,
+      head: current.head_sha!,
+      ref: tip.sha,
+      // The merge base is the commit Loom accounts for: its last push, or the newest foreign tip the head already has.
+      ...(current.pushed_sha === null ? {} : { base: current.pushed_sha }),
+      ...(ours ? { ours: true } : {}),
+      message: mergeSubject([`${settings.remote}/${branchName(current)}`], branchName(current)),
+      refs: [],
+      ...gitIndex(settings),
+    });
+  const merged = await mergeTip(await onlyBaseMergedIn(ctx, checkout, current, tip));
   if (merged.outcome === "merged" && merged.already) return current;
   const remote = isRemote(project, environment);
   const home = `refs/heads/${homeBranch(project.slug, current.key)}`;
+  // A clean merge needs no worker when it leaves the head's tree, or when the pull request's CI checks it: Loom pushes it
+  // from the project's machine and never replays it into a worker's worktree on another machine, whose git may not take it.
+  if (merged.outcome === "merged" && remote && (merged.tree === current.head_tree || settings.ci)) return mergedHome(ctx, project, checkout, current, worker.row, tip.sha, merged);
 
   if (merged.outcome === "conflict" && !remote) {
     await sendBack(ctx, current.id, {
@@ -1061,6 +1068,52 @@ async function takeAtPush(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticke
     data: { tip: tip.sha },
   };
   return startStep(ctx, project, spec, current, step, checkout, text);
+}
+
+/**
+ * Whether the tip is proven to be exactly Loom's last push with the base branch merged in, as a forge's "update branch"
+ * makes, and the head already has that base: then the tip adds nothing the head lacks, and the merge keeps the head's
+ * tree. Proven only when the head does not have the last push itself (a squash Loom built, not a foreign tip the head
+ * took, whose newer changes a later tip may revert), it builds on the tip's base, and merging that base into the last
+ * push on the project's checkout gives the tip's tree. Anything else, such as a person's commit on top, is merged from
+ * the last push as before.
+ */
+async function onlyBaseMergedIn(ctx: EngineCtx, checkout: RepoCheckout, ticket: TicketRow, tip: Tip): Promise<boolean> {
+  const { hostId, path: repo, settings } = checkout;
+  const pushed = ticket.pushed_sha;
+  if (tip.mainBase === null || pushed === null || ticket.head_sha === null || tip.mainBase === pushed) return false;
+  const contains = async (ref: string, sha: string) => {
+    const read = await ctx.host.call(hostId, "refTip", { repo, ref, contains: sha });
+    return read.outcome === "ok" && read.contains === true;
+  };
+  if (await contains(ticket.head_sha, pushed)) return false;
+  if (!(await contains(ticket.head_sha, tip.mainBase))) return false;
+  const update = await ctx.host.call(hostId, "mergeOnto", { repo, head: pushed, ref: tip.mainBase, message: `Merge ${tip.mainBase.slice(0, 12)} into ${pushed.slice(0, 12)}`, refs: [], ...gitIndex(settings) });
+  return update.outcome === "merged" && update.tree === tip.tree;
+}
+
+/**
+ * A clean merge of a foreign tip, for a worker on another machine, made the ticket's head on the project's machine and
+ * pushed from there: the home and reviewed refs point at it, and the tip is the commit Loom accounts for. The worker's
+ * worktree is left as it is; when the merge changed the tree, its thread gets a resume, so loom_resume carries the
+ * merge in before its next submit, as work brought home is carried.
+ */
+async function mergedHome(ctx: EngineCtx, project: ProjectRow, checkout: RepoCheckout, ticket: TicketRow, worker: ThreadRow, tip: string, merged: Extract<HostOutputOf<"mergeOnto">, { outcome: "merged" }>): Promise<TicketRow> {
+  const { store } = ctx;
+  await ctx.host.call(checkout.hostId, "pointRefs", { repo: checkout.path, sha: merged.sha, refs: [`refs/heads/${homeBranch(project.slug, ticket.key)}`, reviewedRef(project.slug, ticket.key)] });
+  const sameTree = merged.tree === ticket.head_tree;
+  store.tx(() => {
+    store.updateTicket(ticket.id, { head_sha: merged.sha, head_tree: merged.tree, pushed_sha: tip, pushed_at: ctx.now() });
+    if (!sameTree) store.updateThread(worker.id, { resume_json: JSON.stringify({ sha: merged.sha, tree: merged.tree, ...(ticket.head_tree === null ? {} : { replaces: ticket.head_tree }) } satisfies Resume) });
+    addMergePost(ctx, ticket, {
+      body: sameTree
+        ? `Merged ${TIP_WHAT} (tip ${tip.slice(0, 12)}) into ${ticket.key} as ${merged.sha.slice(0, 12)} on the project's machine. They add nothing the approved work lacks, so the tree is unchanged, and Loom pushes it from there without touching the worker's worktree.`
+        : `Merged ${TIP_WHAT} (tip ${tip.slice(0, 12)}) into ${ticket.key} as ${merged.sha.slice(0, 12)} on the project's machine, cleanly, and Loom pushes it from there for the pull request's CI to check. The worker's worktree is left as it is; loom_resume puts the merge in it before the worker's next submit.`,
+      data: { outcome: "tip_merged_home", tip, sha: merged.sha, sameTree },
+    });
+  });
+  store.changed(project.id);
+  return store.ticket(ticket.id)!;
 }
 
 /**

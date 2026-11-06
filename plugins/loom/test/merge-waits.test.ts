@@ -43,9 +43,16 @@ const resume = () => h.store.setProjectState(project().id, "running", "human");
 const stepOf = (key = "CSV-1") => JSON.parse(ticket(key).merge_step_json ?? "null") as { kind: string; from: string; sha: string; tree: string | null; tip?: string; remote: boolean; checked?: boolean } | null;
 const mergePosts = (key = "CSV-1") => h.store.posts(ticket(key).id).filter((post) => post.kind === "merge");
 
-/** CSV-1's worker on a machine of its own, its pull request open at sq1 and its fix round approved, with someone else's commit theirs1 on the branch. */
+/**
+ * CSV-1's worker on a machine of its own, its pull request open at sq1 and its fix round approved, with someone else's
+ * commit theirs1 on the branch. On a repo that does not rely on CI, so the clean merge is carried and checked in the
+ * worker's worktree rather than pushed from the project's machine.
+ */
 async function fixOnMachineWithForeignTip(): Promise<ThreadRow> {
-  await seedMachineProject(h, (doc) => (doc.merge = { strategy: "pr", stack: false, release_workers: false }));
+  await seedMachineProject(h, (doc) => {
+    doc.merge = { strategy: "pr", stack: false, release_workers: false };
+    doc.checks.ci = false;
+  });
   const worker = await reachApproved(h);
   await askForPrTexts(h.ctx, project(), spec());
   handInPrText(h.ctx, worker.thread_id!, { title: "Add order rows", body: "Why.", commit_message: "Add the order row mapper" });
@@ -438,7 +445,7 @@ describe("a merge that runs again after its checks got no answer", () => {
     expect(h.host.callsTo("exec").slice(checks)).toEqual([expect.objectContaining({ cwd: `/wt/${worker.environment_id}`, command: "npm test" })]);
     expect(ticket("CSV-2")).toMatchObject({ state: "pr_open", head_sha: "lm1", merge_step_json: null });
     expect(stackOf(ticket("CSV-2"))).toMatchObject({ deps: { "CSV-1": "sq7" } });
-    expect(h.host.callsTo("prCommit").at(-1)).toMatchObject({ head: "lm1", message: "CSV-2: merge CSV-1's pull request (Loom)" });
+    expect(h.host.callsTo("prCommit").at(-1)).toMatchObject({ head: "lm1", message: `Merge ${ticket("CSV-1").pr_branch} into ${ticket("CSV-2").pr_branch}` });
   });
 
   it("finishes a restack whose move into the worker's worktree got no answer, running its checks, instead of taking the merge for unknown work", async () => {
@@ -483,7 +490,7 @@ describe("a merge that runs again after its checks got no answer", () => {
     expect(h.host.callsTo("push")).toHaveLength(pushes + 2);
     expect(h.host.callsTo("mergeOnto")).toHaveLength(1);
     expect(h.host.callsTo("exec")).toHaveLength(checks);
-    expect(h.host.callsTo("prCommit").at(-1)).toMatchObject({ head: "lm1", message: "CSV-2: merge CSV-1's pull request (Loom)" });
+    expect(h.host.callsTo("prCommit").at(-1)).toMatchObject({ head: "lm1", message: `Merge ${ticket("CSV-1").pr_branch} into ${ticket("CSV-2").pr_branch}` });
     expect(ticket("CSV-2")).toMatchObject({ state: "pr_open", head_sha: "lm1", merge_step_json: null });
     expect(ticket("CSV-2").pushed_sha).not.toBe(pushed);
   });

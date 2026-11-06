@@ -879,7 +879,7 @@ async function startFixRound(ctx: EngineCtx, seen: TicketRow, a: Round): Promise
     const asleep = releasedWorker(store, ticket);
     const thread = worker.standing === "active" ? worker.row.thread_id : (asleep?.thread_id ?? null);
     if (thread !== null) {
-      const text = prFeedbackText({ key: ticket.key, url: ticket.pr_url, round, counted, max, checks: a.checks, items: a.items, skipped: a.skipped, foreign: a.foreign, forge: repoSettings(spec, ticket.repo).forge, signature: signatureOf(ctx), restored: asleep !== null || (worker.standing === "active" && isWaking(worker.row)) });
+      const text = prFeedbackText({ key: ticket.key, url: ticket.pr_url, round, counted, max, checks: a.checks, items: a.items, skipped: a.skipped, foreign: a.foreign, forge: repoSettings(spec, ticket.repo).forge, signature: signatureOf(ctx), restored: asleep !== null || (worker.standing === "active" && isWaking(worker.row)), resume: worker.standing === "active" && worker.row.resume_json !== null });
       handBack(ctx, store.ticket(ticket.id)!, worker.standing === "active" ? worker.row : null, thread, text, move);
       return { kind: "working" };
     }

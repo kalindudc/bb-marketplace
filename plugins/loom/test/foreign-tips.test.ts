@@ -40,8 +40,11 @@ const dataOf = (outcome: string, key = "CSV-1") =>
 const changesRequested = { items: [{ key: "review:1:a", kind: "review" as const, author: "alice", bot: false, body: "Rename the column.", url: null, state: "changes_requested", path: null, line: null }] };
 
 /** CSV-1's worker on a machine of its own, with its pull request open at sq1, whose branch someone then pushed theirs1 to. */
-async function openOnMachine(more: Doc = {}): Promise<ThreadRow> {
-  await seedMachineProject(h, (doc) => (doc.merge = { strategy: "pr", stack: false, ...more }));
+async function openOnMachine(more: Doc = {}, edit?: (doc: Doc) => void): Promise<ThreadRow> {
+  await seedMachineProject(h, (doc) => {
+    doc.merge = { strategy: "pr", stack: false, ...more };
+    edit?.(doc);
+  });
   const worker = await reachApproved(h);
   await askForPrTexts(h.ctx, project(), spec());
   handInPrText(h.ctx, worker.thread_id!, { title: "Add order rows", body: "Why.", commit_message: "Add the order row mapper" });
@@ -49,6 +52,17 @@ async function openOnMachine(more: Doc = {}): Promise<ThreadRow> {
   expect(ticket()).toMatchObject({ state: "pr_open", head_sha: "home1", head_tree: "c1", pushed_sha: "sq1" });
   h.bb.threads.get(worker.thread_id!)!.status = "idle";
   return h.store.thread(worker.id)!;
+}
+
+// The plugin's checks are the whole bar, so a clean merge that changes the tree is checked in the worker's worktree.
+const noCi = (doc: Doc) => void (doc.checks.ci = false);
+
+/** The forge's "update branch": theirs1 is the last push sq1 with the base's base005 merged in, and the head builds on base005. */
+function updateBranch(head: string): void {
+  h.host.tipBases.set("theirs1", "base005");
+  h.host.ancestry.add(`base005..${head}`);
+  h.host.mergeTrees.set("sq1+base005", "t-update");
+  h.host.trees.set("theirs1", "t-update");
 }
 
 function pushedByOthers(): void {
@@ -79,7 +93,7 @@ describe("a fix round whose pull request branch has commits Loom did not push, o
     h.host.feedback.set(URL1, { ...changesRequested, head: "theirs1" });
     await poll();
 
-    expect(h.host.callsTo("mergeOnto")).toEqual([{ repo: "/repo", head: "home1", ref: "theirs1", base: "sq1", message: "Merge the new commits on the pull request's branch into CSV-1 (Loom)", refs: [] }]);
+    expect(h.host.callsTo("mergeOnto")).toEqual([{ repo: "/repo", head: "home1", ref: "theirs1", base: "sq1", message: `Merge origin/${ticket().pr_branch} into ${ticket().pr_branch}`, refs: [] }]);
     const merged = ticket().head_sha!;
     expect(h.host.callsTo("carryStart").at(-1)).toMatchObject({ worktree: worktreeOf(worker), replaces: "c1", tree: `${merged}-tree` });
     expect(h.host.callsTo("pointRefs")).toEqual([{ repo: "/repo", sha: merged, refs: [HOME, REVIEWED] }]);
@@ -136,8 +150,97 @@ describe("a fix round whose pull request branch has commits Loom did not push, o
 });
 
 describe("a push whose pull request branch got commits Loom did not push, on a machine", () => {
-  it("merges them on the checkout, carries the result in, runs the checks there and pushes on them, with no new review", async () => {
+  const touches = (worker: ThreadRow) => h.host.calls.filter((call) => call.hostId !== "host_1" || (call.input as { worktree?: string; cwd?: string }).worktree === worktreeOf(worker) || (call.input as { cwd?: string }).cwd === worktreeOf(worker)).length;
+
+  // LANE-16: a forge's "update branch" merged main into the pull request's branch. Its tip adds nothing over main but the
+  // ticket's own files, which the approved head has, so the merge is the head's tree: Loom pushes it from the project's
+  // machine. Carrying it into the worker's worldtree checkout left thousands of files with conflict markers.
+  it("pushes the merge from the project's machine, never touching the worktree, when the tip adds nothing the head lacks", async () => {
     const worker = await openOnMachine({ release_workers: false });
+    h.host.feedback.set(URL1, changesRequested);
+    await poll();
+    await fixAndApprove(worker);
+    const head = ticket().head_sha!;
+    const tree = ticket().head_tree!;
+    pushedByOthers();
+    updateBranch(head);
+    const before = touches(worker);
+    await queue();
+
+    // Loom proves the tip is just its last push with the base merged in, then records the merge with the head's tree.
+    expect(h.host.callsTo("mergeOnto")).toEqual([expect.objectContaining({ head: "sq1", ref: "base005" }), expect.objectContaining({ head, ref: "theirs1", ours: true })]);
+    expect(touches(worker)).toBe(before);
+    const merged = ticket().head_sha!;
+    expect(h.host.callsTo("pointRefs").at(-1)).toEqual({ repo: "/repo", sha: merged, refs: [HOME, REVIEWED] });
+    expect(h.host.callsTo("prCommit").at(-1)).toMatchObject({ head: merged });
+    expect(ticket()).toMatchObject({ state: "pr_open", head_tree: tree, pushed_sha: "sq2" });
+    // The worktree already has that tree, so the worker needs nothing carried in.
+    expect(h.store.thread(worker.id)!.resume_json).toBeNull();
+    expect(dataOf("tip_merged_home")[0]!.data).toMatchObject({ tip: "theirs1", sha: merged, sameTree: true });
+  });
+
+  // Tony's review: a second foreign tip that reverted the first one's change was merged from the base branch's commit,
+  // which put the reverted change back. The merge base is the newest tip the head already has.
+  it("merges a tip from the newest foreign tip the head already has, never from the base branch's commit", async () => {
+    const worker = await openOnMachine({ release_workers: false });
+    h.host.feedback.set(URL1, changesRequested);
+    await poll();
+    await fixAndApprove(worker);
+    const head = ticket().head_sha!;
+    // The head took a first foreign tip, theirs1, which Loom accounts for; a second, theirs2, reverts part of it.
+    h.store.updateTicket(ticket().id, { pushed_sha: "theirs1" });
+    h.host.ancestry.add(`theirs1..${head}`);
+    h.host.foreign.set(ticket().pr_branch!, "theirs2");
+    h.host.ancestry.add("theirs1..theirs2");
+    h.host.tipBases.set("theirs2", "base005");
+    h.host.ancestry.add(`base005..${head}`);
+    await queue();
+
+    const merges = h.host.callsTo("mergeOnto");
+    expect(merges).toEqual([expect.objectContaining({ head, ref: "theirs2", base: "theirs1" })]);
+    expect(merges[0]).not.toHaveProperty("ours");
+  });
+
+  it("merges from its last push when the tip has more than the base merged in, as a person's revert", async () => {
+    const worker = await openOnMachine({ release_workers: false });
+    h.host.feedback.set(URL1, changesRequested);
+    await poll();
+    await fixAndApprove(worker);
+    const head = ticket().head_sha!;
+    pushedByOthers();
+    updateBranch(head);
+    // A person's commit on top of the update: the tip is not just the last push with the base merged in.
+    h.host.trees.set("theirs1", "t-update-and-revert");
+    await queue();
+
+    const merges = h.host.callsTo("mergeOnto");
+    expect(merges.at(-1)).toMatchObject({ head, ref: "theirs1", base: "sq1" });
+    expect(merges.some((call) => call.ours === true)).toBe(false);
+  });
+
+  it("pushes a clean merge from the project's machine on a repo that relies on CI, and has loom_resume carry it in at the next fix round", async () => {
+    const worker = await openOnMachine({ release_workers: false });
+    h.host.feedback.set(URL1, changesRequested);
+    await poll();
+    await fixAndApprove(worker);
+    const tree = ticket().head_tree!;
+    pushedByOthers();
+    const before = touches(worker);
+    await queue();
+
+    expect(touches(worker)).toBe(before);
+    const merged = ticket().head_sha!;
+    expect(ticket()).toMatchObject({ state: "pr_open", head_tree: `${merged}-tree` });
+    expect(JSON.parse(h.store.thread(worker.id)!.resume_json!)).toEqual({ sha: merged, tree: `${merged}-tree`, replaces: tree });
+    h.host.feedback.set(URL1, { items: [{ ...changesRequested.items[0]!, key: "review:2:b", body: "One more." }] });
+    await poll();
+    expect(h.bb.sent(worker.thread_id!).at(-1)).toContain("Call loom_resume first");
+    await resumeWork(h.ctx, worker.thread_id!);
+    expect(h.host.callsTo("carryStart").at(-1)).toMatchObject({ worktree: worktreeOf(worker), replaces: tree });
+  });
+
+  it("merges them on the checkout, carries the result in, runs the checks there and pushes on them, with no new review, on a repo that does not rely on CI", async () => {
+    const worker = await openOnMachine({ release_workers: false }, noCi);
     h.host.feedback.set(URL1, changesRequested);
     await poll();
     await fixAndApprove(worker);
@@ -147,7 +250,7 @@ describe("a push whose pull request branch got commits Loom did not push, on a m
     pushedByOthers();
     await queue();
 
-    expect(h.host.callsTo("mergeOnto")).toEqual([{ repo: "/repo", head, ref: "theirs1", base: "sq1", message: "Merge the new commits on the pull request's branch into CSV-1 (Loom)", refs: [] }]);
+    expect(h.host.callsTo("mergeOnto")).toEqual([{ repo: "/repo", head, ref: "theirs1", base: "sq1", message: `Merge origin/${ticket().pr_branch} into ${ticket().pr_branch}`, refs: [] }]);
     const merged = ticket().head_sha!;
     expect(h.host.callsTo("carryStart").at(-1)).toMatchObject({ worktree: worktreeOf(worker), replaces: tree });
     expect(h.host.callsTo("pointRefs").at(-1)).toEqual({ repo: "/repo", sha: merged, refs: [HOME, REVIEWED] });
@@ -157,6 +260,24 @@ describe("a push whose pull request branch got commits Loom did not push, on a m
     expect(ticket()).toMatchObject({ state: "pr_open", head_tree: `${merged}-tree`, pushed_sha: "sq2" });
     expect(outcomes().slice(-3)).toEqual(["restacked", "pr_pushed", "review_requested"]);
     expect(h.store.threads({ role: "reviewer" })).toHaveLength(reviewers);
+  });
+
+  it("puts the worktree back as it was when the carry of a conflict fails, and tells the worker why", async () => {
+    const worker = await openOnMachine({ release_workers: false });
+    h.host.feedback.set(URL1, changesRequested);
+    await poll();
+    await fixAndApprove(worker);
+    const worktree = h.host.worktree(worktreeOf(worker));
+    const was = worktree.head;
+    pushedByOthers();
+    h.host.scripted.mergeOnto = [{ outcome: "conflict", files: ["src/model/a.ts"], sha: "cf1", tree: "cf1-tree" }];
+    h.host.errors.carryFinish = new Error("carryFinish failed: worldsyncd refused the write");
+    await queue();
+
+    expect(h.host.callsTo("carryAbort").at(-1)).toMatchObject({ worktree: worktreeOf(worker), restore: was });
+    expect(worktree).toMatchObject({ head: was, dirty: false });
+    expect(ticket().state).toBe("working");
+    expect(h.bb.sent(worker.thread_id!).at(-1)).toContain("worldsyncd refused the write");
   });
 
   it("carries a conflict in with its markers and sends it back, building the next merge on the tip", async () => {
@@ -179,8 +300,8 @@ describe("a push whose pull request branch got commits Loom did not push, on a m
     expect(sent).not.toContain("git merge");
   });
 
-  it("sends a failing check on the merge back to the worker, counting it, with the merge kept in its worktree", async () => {
-    const worker = await openOnMachine({ release_workers: false });
+  it("sends a failing check on the merge back to the worker, counting it, with the merge kept in its worktree, on a repo that does not rely on CI", async () => {
+    const worker = await openOnMachine({ release_workers: false }, noCi);
     h.host.feedback.set(URL1, changesRequested);
     await poll();
     await fixAndApprove(worker);
@@ -249,6 +370,7 @@ describe("a stacked ticket whose pull request branch got base branch commits its
     expect(merges.map((call) => call.ref)).toEqual([h.host.stackBranches.get("loom/csv/csv-2-stack"), "theirs1"]);
     expect(merges[1]).toMatchObject({ base: "sq2" });
     expect(stackOf(ticket("CSV-2"))).toMatchObject({ deps: { "CSV-1": "sq1" } });
-    expect(outcomes("CSV-2").slice(-4)).toEqual(["restacked", "restacked", "pr_pushed", "review_requested"]);
+    // The tip's merge is clean and the pull request's CI checks it, so Loom pushes it from the project's machine.
+    expect(outcomes("CSV-2").slice(-4)).toEqual(["restacked", "tip_merged_home", "pr_pushed", "review_requested"]);
   });
 });

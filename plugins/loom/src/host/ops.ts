@@ -551,6 +551,12 @@ async function mergeOntoNow(input: HostInput<"mergeOnto">, signal?: AbortSignal)
   const head = await git(repo, ["rev-parse", "--verify", `${input.head}^{commit}`], { signal });
   const ref = await git(repo, ["rev-parse", "--verify", `${input.ref}^{commit}`], { signal });
   if (await isAncestor(repo, ref, head, signal)) return { outcome: "merged", sha: head, tree: await git(repo, ["rev-parse", `${head}^{tree}`], { signal }), already: true };
+  if (input.ours === true) {
+    const kept = await git(repo, ["rev-parse", `${head}^{tree}`], { signal });
+    const sha = await commitTree(repo, kept, [head, ref], message, signal, indexClock(input));
+    for (const name of refs) await git(repo, ["update-ref", name, sha], { signal });
+    return { outcome: "merged", sha, tree: kept, already: false };
+  }
   const base = input.base === undefined ? null : await git(repo, ["rev-parse", "--verify", `${input.base}^{commit}`], { signal });
   const explicit = base !== null && (await isAncestor(repo, base, ref, signal)) ? [`--merge-base=${base}`] : [];
   const clock = indexClock(input);
