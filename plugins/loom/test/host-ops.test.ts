@@ -2921,24 +2921,44 @@ describe("Loom's own git calls", () => {
     expect(readFileSync(join(clone, "big.bin"), "utf8")).toBe(bytes);
   });
 
-  it("push a repository that uses LFS when git-lfs is not installed, and one that does not use it", async () => {
+  it("refuse to push a repository that uses LFS when git-lfs is not installed, as a lasting failure that says so, and move no remote ref", async () => {
     const bin = join(scratch, `git-only-${counter++}`);
     mkdirSync(bin);
     symlinkSync(execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim(), join(bin, "git"));
+    const repo = makeRepo();
+    put(repo, ".gitattributes", "*.bin filter=lfs diff=lfs merge=lfs -text\n");
+    // A pointer as git-lfs commits it; with no filter configured yet, git stores it as it is.
+    const head = commitFile(repo, "big.bin", "version https://git-lfs.github.com/spec/v1\noid sha256:0000000000000000000000000000000000000000000000000000000000000000\nsize 4\n");
+    const remote = join(scratch, `remote-${counter++}.git`);
+    execFileSync("git", ["init", "-q", "--bare", remote]);
+    sh(repo, "remote", "add", "origin", remote);
     const outer = process.env.PATH;
-    for (const uses of [true, false]) {
-      const repo = makeRepo();
-      if (uses) sh(repo, "config", "filter.lfs.required", "true");
-      const remote = join(scratch, `remote-${counter++}.git`);
-      execFileSync("git", ["init", "-q", "--bare", remote]);
-      sh(repo, "remote", "add", "origin", remote);
-      const head = commitFile(repo, "x.txt", "x");
-      process.env.PATH = uses ? `${bin}:/usr/bin:/bin` : outer;
-      try {
-        expect(await push({ repo, remote: "origin", src: head, branch: "loom/x" })).toEqual({ outcome: "ok" });
-      } finally {
-        process.env.PATH = outer;
-      }
+    process.env.PATH = `${bin}:/usr/bin:/bin`;
+    let answer;
+    try {
+      answer = await push({ repo, remote: "origin", src: head, branch: "loom/lfs" });
+    } finally {
+      process.env.PATH = outer;
+    }
+    expect(answer).toEqual({ outcome: "unavailable", message: expect.stringContaining("git-lfs is needed to push LFS files") });
+    expect(execFileSync("git", ["-C", remote, "for-each-ref"], { encoding: "utf8" })).toBe("");
+  });
+
+  it("push a repository that does not use LFS when git-lfs is not installed", async () => {
+    const bin = join(scratch, `git-only-${counter++}`);
+    mkdirSync(bin);
+    symlinkSync(execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim(), join(bin, "git"));
+    const repo = makeRepo();
+    const remote = join(scratch, `remote-${counter++}.git`);
+    execFileSync("git", ["init", "-q", "--bare", remote]);
+    sh(repo, "remote", "add", "origin", remote);
+    const head = commitFile(repo, "x.txt", "x");
+    const outer = process.env.PATH;
+    process.env.PATH = `${bin}:/usr/bin:/bin`;
+    try {
+      expect(await push({ repo, remote: "origin", src: head, branch: "loom/x" })).toEqual({ outcome: "ok" });
+    } finally {
+      process.env.PATH = outer;
     }
   });
 

@@ -46,12 +46,16 @@ const subcommandOf = (args: readonly string[]): string => {
 };
 
 // The only hook Loom's own git calls run: git-lfs uploads the large files of the commits Loom pushes, in a repository that
-// uses LFS and on a machine that has git-lfs. git-lfs is run by its path, so no alias in the repository's config stands in.
+// uses LFS. Without git-lfs such a push is refused, since it would leave the remote with pointers to files it never got.
+// git-lfs is run by its path, so no alias in the repository's config stands in.
 const PRE_PUSH = `#!/bin/sh
-lfs=$(command -v git-lfs) || exit 0
 if ! git config --get filter.lfs.process >/dev/null && ! git config --get filter.lfs.required >/dev/null; then
   top=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
   grep -qs 'filter=lfs' "$top/.gitattributes" || exit 0
+fi
+if ! lfs=$(command -v git-lfs); then
+  echo "Loom: git-lfs is needed to push LFS files, and it is not on the PATH of bb's host process; install git-lfs or add its directory to that PATH." >&2
+  exit 1
 fi
 exec "$lfs" pre-push "$@"
 `;

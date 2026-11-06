@@ -589,6 +589,19 @@ describe("the pull request strategy", () => {
     expect(h.host.callsTo("push")).toHaveLength(3);
   });
 
+  it("pauses, and does not wait it out, when the push needs git-lfs the machine lacks, with the reason on the ticket's push step", async () => {
+    await seedProject(h, pr());
+    await reachApproved(h);
+    const message = "git push to origin failed: error: failed to push some refs to 'origin'\nLoom: git-lfs is needed to push LFS files, and it is not on the PATH of bb's host process.";
+    h.host.scripted.push = [{ outcome: "unavailable", message }];
+    await queue();
+    expect(project()).toMatchObject({ state: "paused", system_reason: message });
+    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "merging", merge_wait_json: null });
+    const run = mergeRuns().find((each) => each.label === "git push")!;
+    expect(run.ok).toBe(0);
+    expect(h.store.runOutput(run.id)).toContain("git-lfs is needed to push LFS files");
+  });
+
   it("keeps the url that gh returned for a pull request that already existed", async () => {
     await seedProject(h, pr());
     await reachApproved(h);

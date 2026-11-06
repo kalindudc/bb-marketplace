@@ -1658,8 +1658,11 @@ settings for that project.
   push and the rest) start none of the repository's hooks and no fsmonitor
   daemon, since they run in checkouts and worktrees Loom does not own. Their
   hooks come from a directory Loom makes outside every repository, whose only
-  hook is a pre-push that runs `git-lfs pre-push` when git-lfs is installed
-  and the repository uses LFS, so a pushed commit's large files still upload.
+  hook is a pre-push that runs `git-lfs pre-push` when the repository uses
+  LFS, so a pushed commit's large files still upload. When git-lfs is not on
+  the PATH of bb's host process, Loom refuses to push such a repository and
+  pauses the project with the reason, rather than leave the remote without
+  the files.
   A repository's own pre-push checks, such as a refusal of force pushes or a
   stale-branch warning, do not run for Loom's pushes; Loom never force-pushes.
   Your spec's check commands run as you wrote them, hooks and all.
