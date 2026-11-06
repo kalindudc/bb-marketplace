@@ -428,6 +428,21 @@ describe("a merge that runs again after its checks got no answer", () => {
     expect(ticket()).toMatchObject({ state: "pr_open", pushed_sha: "sq2" });
   });
 
+  it("waits, and hands nothing back, when a carry already under way loses its transport", async () => {
+    const worker = await fixOnMachineWithForeignTip();
+    h.host.scripted.carryFinish = [Object.assign(new Error("transport failed"), { code: "transport_error" })];
+    await queue();
+    expect(h.host.callsTo("carryAbort")).toHaveLength(1);
+    expect(project().state).toBe("running");
+    expect(ticket()).toMatchObject({ state: "merging", pushed_sha: "sq1" });
+    expect(waitOf()).toMatchObject({ failures: 1, message: expect.stringContaining("transport failed; Loom left the worktree as it is") });
+    expect(h.bb.sent(worker.thread_id!).join("\n")).not.toContain("transport failed");
+
+    h.clock.advance(MINUTE);
+    await queue();
+    expect(ticket()).toMatchObject({ state: "pr_open", pushed_sha: "sq2" });
+  });
+
   it("waits, and hands nothing back, when carrying the merge to the worker's machine got no answer", async () => {
     const worker = await fixOnMachineWithForeignTip();
     h.host.scripted.carryStart = [new Error(DEADLINE)];

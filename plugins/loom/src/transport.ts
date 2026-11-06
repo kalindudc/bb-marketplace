@@ -7,7 +7,7 @@ import { randomBytes } from "node:crypto";
 import { repoCheckout } from "./checkouts";
 import type { ProjectRow, TicketRow } from "./db/store";
 import { threadBranch } from "./environments";
-import { transientOf, Unavailable } from "./forge-waits";
+import { transientOf, Unavailable, waitableOf } from "./forge-waits";
 import { BLOB_MAX_BYTES, CHUNK_BYTES, type HostOutput } from "./host-contract";
 import type { EnvironmentInfo } from "./ports";
 import { freshBaseOf, gitNetwork } from "./repos";
@@ -181,12 +181,15 @@ export async function carryTo(ctx: EngineCtx, project: ProjectRow, spec: Spec, t
     }
   } catch (error) {
     // A carry that failed changes nothing more in the worktree; losing its progress is fine, losing a worker's edit is not.
-    // The first error says what went wrong; the abort only adds what each path the carry wrote or deleted holds now.
+    // The first error says what went wrong, and keeps whether it is worth waiting out; the abort only adds what each path
+    // the carry wrote or deleted holds now.
+    const wait = waitableOf(error);
+    const fail = (message: string) => (wait === null ? new Error(message) : new Unavailable(message, wait));
     const aborted = await ctx.host.call(environment.hostId, "carryAbort", { worktree, base: start, ...(started.from === undefined ? {} : { restore: started.from }) }).catch((reason: unknown) => ({ failed: errText(reason) }));
-    if ("failed" in aborted) throw new Error(`${errText(error)}; Loom left the worktree as it is, and could not read what the carry wrote (${aborted.failed})`);
+    if ("failed" in aborted) throw fail(`${errText(error)}; Loom left the worktree as it is, and could not read what the carry wrote (${aborted.failed})`);
     const carried = aborted.carried ?? [];
     const listed = carried.slice(0, 10).map(({ path, holds }) => `${path} ${HOLDS[holds]}`);
-    throw new Error(`${errText(error)}; Loom left the worktree as it is.${listed.length === 0 ? "" : ` The paths the carry wrote or deleted hold: ${listed.join(", ")}${carried.length > listed.length ? ", …" : ""}`}`);
+    throw fail(`${errText(error)}; Loom left the worktree as it is.${listed.length === 0 ? "" : ` The paths the carry wrote or deleted hold: ${listed.join(", ")}${carried.length > listed.length ? ", …" : ""}`}`);
   }
   return { tree: finished!.tree };
 }
