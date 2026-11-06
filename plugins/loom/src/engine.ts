@@ -77,7 +77,7 @@ export class Engine {
       store: deps.store,
       bb: holdingSends(deps.bb),
       now: deps.now,
-      host: forgeBoundary(deps.host),
+      host: forgeBoundary(deps.host, { backoffs: () => this.ctx.forgeBackoffs, now: deps.now }),
       kick: () => this.kick(),
       forgeBackoffs: new Map(),
       prReads: newPrReads(),

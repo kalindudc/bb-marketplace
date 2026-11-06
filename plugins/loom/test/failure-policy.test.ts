@@ -4,6 +4,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { specOf, type EngineCtx } from "../src/ctx";
 import { Store } from "../src/db/store";
+import { forgeBoundary } from "../src/forge-gate";
 import type { Failure } from "../src/failures";
 import { pollPullRequests, runMergeQueue, settleMerges } from "../src/merge";
 import { SpawnUnavailableError } from "../src/ports";
@@ -105,7 +106,7 @@ describe("on a running project", () => {
   /** Loom restarts: a new store over the same database, and none of the engine's memory, as after a plugin reload. */
   const restart = () => {
     const store = new Store(h.db, h.clock.now);
-    const ctx: EngineCtx = { ...h.ctx, store, forgeBackoffs: new Map() };
+    const ctx: EngineCtx = { ...h.ctx, store, forgeBackoffs: new Map(), host: forgeBoundary(h.host, { backoffs: () => ctx.forgeBackoffs, now: h.clock.now }) };
     h = { ...h, store, ctx, projects: new Projects({ store, bb: h.bb, now: h.clock.now, host: h.host }) };
   };
 
@@ -198,6 +199,49 @@ describe("on a running project", () => {
     await queue();
     expect(project().state).toBe("running");
     expect(ticketOf(h, "CSV-1").state).toBe("blocked");
+  });
+
+  it("sends no forge call while its forge host is backed off, from any step, and waits until the time it named", async () => {
+    await seedProject(h, (doc) => {
+      pr(doc);
+      doc.ticket[1].depends_on = [];
+    });
+    await reachApproved(h, "CSV-1");
+    await queue();
+    const until = h.clock.t + 40 * MINUTE;
+    h.ctx.forgeBackoffs.set("github.com", { until, delayMs: 15 * MINUTE, message: "API rate limit exceeded" });
+    await reachApproved(h, "CSV-2");
+    await queue();
+    expect(h.host.callsTo("prCreate")).toHaveLength(1);
+    expect(ticketOf(h, "CSV-2").state).toBe("merging");
+    expect(retryOf(ticketOf(h, "CSV-2"), "merge")).toMatchObject({ scope: "forge", until });
+
+    h.clock.advance(40 * MINUTE);
+    await queue();
+    expect(h.host.callsTo("prCreate")).toHaveLength(2);
+    expect(ticketOf(h, "CSV-2").state).toBe("pr_open");
+  });
+
+  it("backs off every read of the forge host after a merge's forge call hit a rate limit or a server error that named a time", async () => {
+    await seedProject(h, (doc) => {
+      pr(doc);
+      doc.ticket[1].depends_on = [];
+    });
+    await reachApproved(h, "CSV-1");
+    await queue();
+    await reachApproved(h, "CSV-2");
+    h.host.scripted.prCreate = [{ outcome: "unavailable", message: "gh pr create failed: HTTP 429: slow down", transient: "rate_limit", retryAfterMs: 20 * MINUTE }];
+    await queue();
+    expect(h.ctx.forgeBackoffs.get("github.com")).toMatchObject({ until: h.clock.t + 20 * MINUTE });
+    h.clock.advance(5 * MINUTE);
+    await pollPullRequests(h.ctx, project());
+    expect(h.host.callsTo("prBatch")).toEqual([]);
+
+    h.ctx.forgeBackoffs.clear();
+    h.host.scripted.prBatch = [{ outcome: "unavailable", message: "gh api graphql failed: HTTP 503", transient: "server", retryAfterMs: 10 * MINUTE }];
+    h.clock.advance(5 * MINUTE);
+    await pollPullRequests(h.ctx, project());
+    expect(h.ctx.forgeBackoffs.get("github.com")).toMatchObject({ until: h.clock.t + 10 * MINUTE });
   });
 
   it("keeps a read failure of an old pull request off the ticket's new one", async () => {

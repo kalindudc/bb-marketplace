@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { settleChecks, submit } from "../src/checks";
 import { specOf, type EngineCtx } from "../src/ctx";
 import { Store, type ThreadRow } from "../src/db/store";
+import { forgeBoundary } from "../src/forge-gate";
 import { readBehind } from "../src/fresh";
 import { pollPullRequests, runMergeQueue, settleMerges } from "../src/merge";
 import { Projects } from "../src/projects";
@@ -42,7 +43,7 @@ const poll = async () => {
 /** Loom restarts: a new store over the same database, and none of the engine's memory, as after a plugin reload. */
 function restart(): void {
   const store = new Store(h.db, h.clock.now);
-  const ctx: EngineCtx = { ...h.ctx, store, forgeBackoffs: new Map() };
+  const ctx: EngineCtx = { ...h.ctx, store, forgeBackoffs: new Map(), host: forgeBoundary(h.host, { backoffs: () => ctx.forgeBackoffs, now: h.clock.now }) };
   h = { ...h, store, ctx, projects: new Projects({ store, bb: h.bb, now: h.clock.now, host: h.host }) };
 }
 

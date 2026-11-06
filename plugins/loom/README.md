@@ -219,6 +219,14 @@ machine, or the whole project). What Loom does follows from that:
 - Reading the diff for a ticket's reviewers, and reading an open pull request,
   wait the same way; a read never runs sooner than the usual 5 minutes after
   the last (see [Syncing pull requests](#syncing-pull-requests)).
+- A forge host waits as one: after a rate limit, a network failure or a server
+  error that names when to try again, from any call to it (reading, opening,
+  editing, moving or merging a pull request, or asking for reviews), no call
+  goes to that host from any project until the wait ends, and each step that
+  needed one waits until then. A first pull request in a repo just after Loom
+  restarts is the exception, since Loom only learns a repo's forge host from
+  its pull requests. The project's machine has no such shared wait: when it
+  does not answer, each ticket's step waits on its own schedule.
 - Starting a worker or a reviewer has its own wait, described under
   [When a ticket gets stuck](#when-a-ticket-gets-stuck), on the same 1, 2, 5,
   10 and 15 minute steps.

@@ -1,8 +1,9 @@
-// How Loom waits out a forge host when pull request reads to it fail for the whole host. A network failure, such as a
-// name that did not resolve, stops every read to that forge host, in every project, for 5, 10, 20, then 30 minutes, and a
-// rate limit stops them for 15 minutes, doubling to an hour, or longer when the forge names a later time. Neither pauses
-// the project: after an hour of network failures the ticket whose read failed says so once more. No read goes out
-// sooner than the usual 5 minutes after the last. A failure of one ticket's read waits on the ticket (retry.ts).
+// How Loom waits out a forge host when calls to it fail for the whole host; forge-gate.ts keeps these backoffs for every
+// forge call. A network failure, such as a name that did not resolve, stops every call to that forge host, in every
+// project, for 5, 10, 20, then 30 minutes, and a rate limit stops them for 15 minutes, doubling to an hour, or longer
+// when the forge names a later time. Neither pauses the project: after an hour of network failures the ticket whose read
+// failed says so once more. No read goes out sooner than the usual 5 minutes after the last. A failure of one ticket's
+// step waits on the ticket (retry.ts).
 import type { TicketRow } from "./db/store";
 import type { Transient } from "./failures";
 import { formatDuration, plural } from "./format";

@@ -3,7 +3,7 @@
 import { repoCheckout, type RepoCheckout } from "./checkouts";
 import type { ProjectRow, TicketRow } from "./db/store";
 import { plural } from "./format";
-import { POLL_MS, backedOffUntil, backoffText, forgeHostOf, networkWaitLong, networkWaitLongText, networkWaitText, nextBackoff, nextNetworkBackoff, nextPollAt } from "./forge-waits";
+import { POLL_MS, backedOffUntil, backoffText, forgeHostOf, networkWaitLong, networkWaitLongText, networkWaitText, nextPollAt, type HostBackoff, type NetworkBackoff } from "./forge-waits";
 import { classify, classifyAnswer, transientOf, type Failure, type Transient } from "./failures";
 import { followDraft } from "./drafts";
 import { publishRule } from "./publish";
@@ -177,11 +177,17 @@ async function readDue(ctx: EngineCtx, project: ProjectRow, spec: Spec, due: Tic
   await endFinishedThreads(ctx, project.id);
 }
 
+/** The host's backoff the forge boundary set for the answer just read (forge-gate.ts). */
+function backoffOf(ctx: EngineCtx, host: string): HostBackoff {
+  const backoff = ctx.forgeBackoffs.get(host);
+  if (backoff === undefined) throw new Error(`The forge boundary kept no backoff for ${host} after a rate limit or network failure there.`);
+  return backoff;
+}
+
 /** A read the forge host rate-limited: no read goes to that host, from any project, until the backoff ends. */
-function backOff(ctx: EngineCtx, ticket: TicketRow, host: string, failure: { message: string; retryAfterMs?: number }, forge = "GitHub"): void {
+function backOff(ctx: EngineCtx, ticket: TicketRow, host: string, failure: { message: string }, forge = "GitHub"): void {
   const now = ctx.now();
-  const backoff = nextBackoff(ctx.forgeBackoffs.get(host), { now, message: failure.message, retryAfterMs: failure.retryAfterMs });
-  ctx.forgeBackoffs.set(host, backoff);
+  const backoff = backoffOf(ctx, host);
   loomPost(ctx.store, ticket, { kind: "system", body: backoffText(host, backoff, now, forge), data: { rateLimited: true, host, until: backoff.until } });
   ctx.bb.log("warn", `${host} rate-limited Loom's pull request reads, so none goes there until ${new Date(backoff.until).toISOString()}: ${failure.message}`);
 }
@@ -194,8 +200,9 @@ function backOff(ctx: EngineCtx, ticket: TicketRow, host: string, failure: { mes
  */
 function waitOutNetworkError(ctx: EngineCtx, ticket: TicketRow, host: string, message: string): void {
   const now = ctx.now();
-  const backoff = nextNetworkBackoff(ctx.forgeBackoffs.get(host), { now, message });
-  ctx.forgeBackoffs.set(host, backoff);
+  const found = backoffOf(ctx, host);
+  if (found.network === undefined) throw new Error(`The forge boundary kept no network backoff for ${host} after a network failure there.`);
+  const backoff: NetworkBackoff = { ...found, network: found.network };
   const { failures, since } = backoff.network;
   if (failures === 1) {
     loomPost(ctx.store, ticket, { kind: "system", body: networkWaitText(host, backoff), data: { networkFailed: true, host, until: backoff.until } });
@@ -303,9 +310,7 @@ async function readBatch(ctx: EngineCtx, project: ProjectRow, spec: Spec, batch:
   }
   // However many pull requests of the one answer GitHub rate-limited, it is one limit: one backoff, one post, the longest wait it named.
   if (limited.length > 0) {
-    const misses = limited.map(({ number }) => missOf(number)!);
-    const waits = misses.flatMap((each) => (each.retryAfterMs === undefined ? [] : [each.retryAfterMs]));
-    backOff(ctx, limited[0]!.ticket, batch.forgeHost, { message: misses[0]!.message, ...(waits.length === 0 ? {} : { retryAfterMs: Math.max(...waits) }) });
+    backOff(ctx, limited[0]!.ticket, batch.forgeHost, { message: missOf(limited[0]!.number)!.message });
   } else if (offline.length > 0) {
     waitOutNetworkError(ctx, offline[0]!.ticket, batch.forgeHost, missOf(offline[0]!.number)!.message);
   }
@@ -334,7 +339,6 @@ async function settleRead(ctx: EngineCtx, project: ProjectRow, settings: RepoSet
     else await readFailed(ctx, polled, classifyAnswer(read));
     return;
   }
-  if (host !== null) ctx.forgeBackoffs.delete(host);
   // The answer is about the pull request and attempt that were polled; the human may have blocked and requeued the ticket during the host call.
   const seen = store.ticket(polled.id);
   if (seen === null || !samePullRequest(polled, seen)) return;
