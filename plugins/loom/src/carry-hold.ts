@@ -24,6 +24,9 @@ export function holdingSends(bb: BbPort): BbPort {
   });
 }
 
+/** Whether a carry into `threadId`'s worktree holds Loom's sends to it now. */
+export const holdsMessages = (threadId: string): boolean => held.has(threadId);
+
 /** Runs a carry into `threadId`'s worktree with Loom's sends and turn retries for that thread held, then lets them go. */
 export async function holdingMessages<T>(threadId: string, run: () => Promise<T>): Promise<T> {
   if (held.has(threadId)) return run();

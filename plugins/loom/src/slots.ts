@@ -2,6 +2,7 @@
 // a fix round, a review's changes or a merge that did not land moves its ticket to working with the message stored
 // (HandBack), and the message goes out only once a worker slot is free. Waiting hand-backs take free slots before new
 // workers start, priority 0 first, then the longest waiting. A worker or reviewer that waits for the human holds no slot.
+import { holdsMessages } from "./carry-hold";
 import { retriesOf } from "./backoff";
 import { delivers, specOf, type EngineCtx } from "./ctx";
 import type { Store, ThreadRow, TicketRow } from "./db/store";
@@ -99,6 +100,8 @@ async function deliver(ctx: EngineCtx, ticket: TicketRow): Promise<void> {
   const retries = retriesOf(ctx.store).sends;
   const retryKey = `${ticket.id}:${pending.thread}`;
   if (retries.waitMs(retryKey, ctx.now()) > 0) return;
+  // A held send would carry the text it has now, and more may be added to it during the carry; a later pass sends it all, once.
+  if (holdsMessages(pending.thread)) return;
   const sending = sendingOf(ctx.store);
   if (sending.has(ticket.id)) return;
   sending.add(ticket.id);
