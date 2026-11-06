@@ -184,6 +184,22 @@ describe("on a running project", () => {
     expect([ticketOf(h, "CSV-1").state, ticketOf(h, "CSV-2").state]).toEqual(["merging", "approved"]);
   });
 
+  it("pauses the project with the fix when any forge operation's answer breaks the host contract, and blocks only the ticket for another host call's", async () => {
+    await seedProject(h, pr);
+    await reachApproved(h);
+    h.host.errors.prCreate = Object.assign(new Error("Host output did not match schema"), { code: "invalid_output" });
+    await queue();
+    expect(project()).toMatchObject({ state: "paused", system_reason: expect.stringMatching(/^Merging CSV-1 stopped: Host output did not match schema\. Fix the forge command in the spec/u) });
+
+    h = makeCtx();
+    await seedProject(h, pr);
+    await reachApproved(h);
+    h.host.errors.prCommit = Object.assign(new Error("Host output did not match schema"), { code: "invalid_output" });
+    await queue();
+    expect(project().state).toBe("running");
+    expect(ticketOf(h, "CSV-1").state).toBe("blocked");
+  });
+
   it("keeps a read failure of an old pull request off the ticket's new one", async () => {
     await seedProject(h, pr);
     await reachApproved(h);

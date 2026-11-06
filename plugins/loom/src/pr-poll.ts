@@ -4,7 +4,7 @@ import { repoCheckout, type RepoCheckout } from "./checkouts";
 import type { ProjectRow, TicketRow } from "./db/store";
 import { plural } from "./format";
 import { POLL_MS, backedOffUntil, backoffText, forgeHostOf, networkWaitLong, networkWaitLongText, networkWaitText, nextBackoff, nextNetworkBackoff, nextPollAt } from "./forge-waits";
-import { classify, classifyAnswer, classifyForgeRead, transientOf, type Failure, type Transient } from "./failures";
+import { classify, classifyAnswer, transientOf, type Failure, type Transient } from "./failures";
 import { followDraft } from "./drafts";
 import { publishRule } from "./publish";
 import { followGate } from "./review-gate";
@@ -162,7 +162,7 @@ async function readDue(ctx: EngineCtx, project: ProjectRow, spec: Spec, due: Tic
       read = await readOne(ctx, checkout, ticket, forge, follows);
     } catch (error) {
       noteAnswer(ctx, ticket.id, `Reading the pull request of ${ticket.key} stopped: ${errText(error)}`);
-      await readFailed(ctx, ticket, classifyForgeRead(error));
+      await readFailed(ctx, ticket, classify(error));
       continue;
     }
     await settleRead(ctx, project, checkout.settings, ticket, read, host);
@@ -271,7 +271,7 @@ async function readBatch(ctx: EngineCtx, project: ProjectRow, spec: Spec, batch:
   } catch (error) {
     const what = polled.length === 1 ? `the pull request of ${polled[0]!.ticket.key}` : `the pull requests of ${andList(polled.map(({ ticket }) => ticket.key))}`;
     const message = `Reading ${what} stopped: ${errText(error)}`;
-    const failure = classifyForgeRead(error);
+    const failure = classify(error);
     for (const { ticket } of polled) noteAnswer(ctx, ticket.id, message);
     for (const { ticket } of polled) await readFailed(ctx, ticket, failure);
     return;

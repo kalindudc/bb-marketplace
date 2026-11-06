@@ -28,6 +28,17 @@ export interface Failure {
   fix?: string;
 }
 
+/** A forge operation's answer that the host contract refused: the forge's command printed it (forge-gate.ts). */
+export class ForgeContractError extends Error {
+  constructor(
+    readonly method: string,
+    message: string,
+    readonly issues: unknown,
+  ) {
+    super(message);
+  }
+}
+
 /** A step a host could not do, with whether its failure is worth waiting out. */
 export class Unavailable extends Error {
   constructor(
@@ -161,22 +172,13 @@ function classifyText(reason: string, wait: Transient | null): Failure {
 export function classify(error: unknown): Failure {
   const reason = errText(error);
   if (error instanceof Unavailable) return classifyText(reason, error.wait);
+  if (error instanceof ForgeContractError) return of("lasting", "project", reason, true, { fix: PROJECT_FIX.command });
   const code: unknown = typeof error === "object" && error !== null ? Reflect.get(error, "code") : undefined;
   // An older host that does not know a method yet is one a reload brings up to date.
   if (code === "unknown_method") return of("temporary", "host", reason, true);
   if (code === "invalid_input" || code === "invalid_output") return of("lasting", "ticket", reason, true);
   if (hostCallTransient(error) !== null) return of("unknown", "host", reason, true);
   return classifyText(reason, null);
-}
-
-/**
- * What a failed read of a pull request through the forge is: as classify says, except that an answer the host contract
- * refuses comes from the forge's own command, such as a feedback command whose JSON has fields out of contract.
- */
-export function classifyForgeRead(error: unknown): Failure {
-  const failure = classify(error);
-  const code: unknown = typeof error === "object" && error !== null ? Reflect.get(error, "code") : undefined;
-  return code === "invalid_output" ? { ...failure, scope: "project", fix: PROJECT_FIX.command } : failure;
 }
 
 /** What a host's or forge's unavailable answer is. */

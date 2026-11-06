@@ -1,7 +1,7 @@
 // One classification for every failure that reaches Loom: its kind and scope decide whether a ticket waits, a ticket
 // blocks, or the project pauses. Most fixtures are pause reasons real projects hit.
 import { describe, expect, it } from "vitest";
-import { Unavailable, classify, classifyAnswer, classifyForgeRead, transientOfText } from "../src/failures";
+import { ForgeContractError, Unavailable, classify, classifyAnswer, transientOfText } from "../src/failures";
 import { LoomError } from "../src/projects";
 
 const coded = (message: string, code: string) => Object.assign(new Error(message), { code });
@@ -94,10 +94,9 @@ describe("classify", () => {
   });
 
   it("pauses the project when a forge read's answer breaks the host contract, since the forge's command printed it", () => {
-    const failure = classifyForgeRead(coded("rpc output validation failed", "invalid_output"));
+    const failure = classify(new ForgeContractError("prFeedback", "rpc output validation failed", []));
     expect(failure).toMatchObject({ kind: "lasting", scope: "project" });
     expect(failure.fix).toMatch(/forge command/u);
-    expect(classifyForgeRead(new Error("host plugin worker exited (0)"))).toMatchObject({ kind: "unknown", scope: "host" });
   });
 
   it("treats anything no rule names as temporary for this ticket, with fewer tries", () => {

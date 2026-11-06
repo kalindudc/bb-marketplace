@@ -13,6 +13,7 @@ import { approve, settleReviews, spawnReviewers } from "../src/review";
 import { Projects } from "../src/projects";
 import type { LoomSettings } from "../src/record";
 import { spawnWorker } from "../src/workers";
+import { forgeBoundary } from "../src/forge-gate";
 import { specOf, type EngineCtx } from "../src/ctx";
 import { SectionNameConflictError, type BbPort, type BbProjectInfo, type EnvironmentFile, type EnvironmentFiles, type EnvironmentInfo, type EnvironmentPatch, type EnvironmentProviderInfo, type HostPort, type MachineProviderInfo, type PluginInfo, type SpawnArgs, type ThreadInfo } from "../src/ports";
 
@@ -829,7 +830,7 @@ export function makeCtx(): EngineHarness & { db: Database.Database } {
   const host = new FakeHost();
   const projects = new Projects({ store, bb, now: clock.now, host });
   const kicks = { count: 0 };
-  const ctx: EngineCtx = { store, bb, now: clock.now, host, kick: () => void (kicks.count += 1), forgeBackoffs: new Map() };
+  const ctx: EngineCtx = { store, bb, now: clock.now, host: forgeBoundary(host), kick: () => void (kicks.count += 1), forgeBackoffs: new Map() };
   return { ctx, clock, db, store, bb, host, projects, kicks };
 }
 

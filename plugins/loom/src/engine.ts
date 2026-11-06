@@ -32,6 +32,7 @@ import type { Spec } from "./spec";
 import { cancelTicket, maybeSendTriage, onPlannerIdle } from "./triage";
 import { blockTicket, blockedAtStart, endThread, failSpawn, onThreadGone as endGoneThread, onTurnFailed as handleTurnFailed, onWorkerIdle, resumeEnding, spawnWorker, startedFine, type TurnFailure } from "./workers";
 import { requeueTicket } from "./requeue";
+import { forgeBoundary } from "./forge-gate";
 import { projectFailed } from "./retry";
 import { DEFAULT_BOT_AUTHORS, globsIn, specOf, type EngineCtx } from "./ctx";
 import { warnSubStateWith } from "./sub-state";
@@ -76,7 +77,7 @@ export class Engine {
       store: deps.store,
       bb: holdingSends(deps.bb),
       now: deps.now,
-      host: deps.host,
+      host: forgeBoundary(deps.host),
       kick: () => this.kick(),
       forgeBackoffs: new Map(),
       prReads: newPrReads(),
