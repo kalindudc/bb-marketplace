@@ -13,6 +13,7 @@ import { numberErrors, parseSpec, proposalErrorsOf, specHash, type Spec } from "
 import type { SpecNote } from "./spec-paths";
 import { PAUSE_NOW_REASON, TICKET_STATES, type AuthorKind, type MergeChoice, type ProjectState, type Role, type TicketState } from "./states";
 import { writeSub } from "./sub-state";
+import { moveTicket } from "./moves";
 
 export type LoomErrorCode = "loom_not_found" | "loom_invalid_state" | "loom_invalid_spec" | "loom_invalid_input" | "loom_forbidden" | "loom_no_checkout" | "loom_unavailable";
 
@@ -470,7 +471,7 @@ export class Projects {
     if (project.state === "archived") throw new LoomError("loom_invalid_state", `Project ${slug} is archived.`);
     const archived = this.store.tx(() => {
       for (const ticket of this.store.tickets(project.id)) {
-        if (ticket.state !== "done" && ticket.state !== "cancelled") this.store.setTicketState(ticket.id, "cancelled", actor, { reason: "project archived" });
+        if (ticket.state !== "done" && ticket.state !== "cancelled") moveTicket(this.store, ticket.id, { name: "archive" }, actor, { reason: "project archived" });
       }
       return this.store.setProjectState(project.id, "archived", actor);
     });
@@ -529,7 +530,7 @@ export class Projects {
     if (text === "") throw new LoomError("loom_invalid_input", "The block reason is empty.");
     const blocked = this.store.tx(() => {
       try {
-        this.store.setTicketState(ticket.id, "blocked", actor, { reason: text });
+        moveTicket(this.store, ticket.id, { name: "human_block" }, actor, { reason: text });
       } catch (error) {
         if (error instanceof StoreError) throw new LoomError("loom_invalid_state", error.message);
         throw error;

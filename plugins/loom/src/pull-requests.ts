@@ -21,7 +21,8 @@ import { isWaking, releasedWorker } from "./release";
 import { NOT_PARKED, toLite, workerSlots, type Parked } from "./scheduler";
 import { deliverHandBacks, handBack } from "./slots";
 import { takeForRound, type ForeignTip } from "./tips";
-import { applyMove, released, resumeEnding, signatureOf, specOf, type EngineCtx } from "./workers";
+import { resumeEnding, signatureOf, specOf, type EngineCtx } from "./workers";
+import { tryMoveTicket } from "./moves";
 
 /** How long the worker has to hand in loom_pr before Loom's template stands in; paused time does not count. */
 export const PR_TEXT_MINUTES = 30;
@@ -751,7 +752,7 @@ export async function blockOpenPr(ctx: EngineCtx, seen: TicketRow, reason: strin
     post(ctx, ticket, said);
     store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "block", body: reason, data_json: JSON.stringify({ reason, needs: "" }) });
     if (worker.standing === "active") return { kind: "blocking", worker: store.thread(worker.row.id)! };
-    applyMove(ctx, store.ticket(ticket.id)!, { to: "blocked", patch: { ...released, blocked_reason: reason } }, LOOM_ACTOR, { reason });
+    tryMoveTicket(store, ticket.id, { name: "block", set: { blocked_reason: reason } }, LOOM_ACTOR, { reason });
     return { kind: "blocked" };
   });
   if (result === null) return false;
@@ -811,7 +812,7 @@ async function startFixRound(ctx: EngineCtx, seen: TicketRow, a: Round): Promise
       post(ctx, ticket, { body: `Pull request feedback over the limit of ${plural(max, "fix round")}:\n\n${feedbackList(a.checks, a.items, a.skipped)}`, data: feedbackData(ticket, round, counted, a, true) });
       store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "block", body: reason, data_json: JSON.stringify({ reason, needs: "" }) });
       if (worker.standing === "active") return { kind: "blocking", worker: store.thread(worker.row.id)! };
-      applyMove(ctx, store.ticket(ticket.id)!, { to: "blocked", patch: { ...released, blocked_reason: reason } }, LOOM_ACTOR, { reason });
+      tryMoveTicket(store, ticket.id, { name: "block", set: { blocked_reason: reason } }, LOOM_ACTOR, { reason });
       return { kind: "blocked" };
     }
     store.updateTicket(ticket.id, { ...writeSub("pr_seen_json", [...seenKeys]), pr_rounds: round, pr_ask_json: null, pr_text_json: null });
@@ -825,7 +826,7 @@ async function startFixRound(ctx: EngineCtx, seen: TicketRow, a: Round): Promise
       handBack(ctx, store.ticket(ticket.id)!, worker.standing === "active" ? worker.row : null, thread, text, move);
       return { kind: "working" };
     }
-    applyMove(ctx, store.ticket(ticket.id)!, { to: "queued", patch: released }, LOOM_ACTOR, { ...move, reason: "the worker is gone" });
+    tryMoveTicket(store, ticket.id, { name: "worker_gone" }, LOOM_ACTOR, { ...move, reason: "the worker is gone" });
     return { kind: "queued" };
   });
   if (result === null) return false;
@@ -900,6 +901,3 @@ export function unchangedFix(posts: readonly PostRow[], head: { sha: string; tre
   const data = JSON.parse(open.data_json) as { head?: string | null; tree?: string | null };
   return data.tree != null ? data.tree === head.tree : data.head === head.sha;
 }
-
-/** When a closed pull request blocks its ticket, a requeue starts a new one: one commit on a new branch, with fresh rounds. */
-export const closedPrReset = { pr_branch: null, pushed_sha: null, pushed_at: null, pr_ask_json: null, pr_text_json: null, pr_seen_json: "[]", pr_rounds: 0, pr_status_json: null, handback_json: null, pr_base: null, pr_applied_json: null } as const;

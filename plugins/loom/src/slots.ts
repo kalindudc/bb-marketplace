@@ -12,7 +12,8 @@ import { NOT_PARKED, freeReviewerSlots, freeWorkerSlots, handBackOf, slotTurns, 
 import type { Spec } from "./spec";
 import { startWaits } from "./starts";
 import { LOOM_ACTOR } from "./states";
-import { applyMove, endThread, released, specOf, toWorking, type EngineCtx } from "./workers";
+import { endThread, specOf, toWorking, type EngineCtx } from "./workers";
+import { tryMoveTicket } from "./moves";
 
 const errText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
@@ -156,8 +157,7 @@ async function giveUp(ctx: EngineCtx, ticket: TicketRow, attempted: HandBack, wh
   const pending = handBackOf(current)!;
   retriesOf(store).sends.reset(`${ticket.id}:${attempted.thread}`);
   const reason = `its worker can no longer be reached: ${why}`;
-  const move = { to: "blocked" as const, patch: { ...released, blocked_reason: reason, handback_json: null } };
-  if (!applyMove(ctx, current, move, LOOM_ACTOR, { reason })) return;
+  if (!tryMoveTicket(store, current.id, { name: "block_unreachable", set: { blocked_reason: reason } }, LOOM_ACTOR, { reason })) return;
   const needs = `Requeue the ticket, for example with \`bb loom requeue ${ticket.key}\`, to start a new worker from its branch.`;
   const text = textOf(pending.text);
   const excerpt = text.length <= EXCERPT_CHARS ? text : `${text.slice(0, EXCERPT_CHARS)}\n[The rest is in the post below this one on the ticket's feed.]`;

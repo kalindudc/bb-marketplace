@@ -25,6 +25,7 @@ import {
   toWorking,
 } from "../src/workers";
 import { BOXES, makeCtx, seedMachineProject, seedProject, specToml, startLateWorker, startWorker, ticketOf, workerRows, type Doc, type EngineHarness } from "./helpers";
+import { MOVES, patchOf, type TicketMove } from "../src/moves";
 
 let h: EngineHarness;
 
@@ -707,13 +708,14 @@ describe("ticketMoveFor", () => {
     const ticket = ticketOf(h, "CSV-1");
     const spec = specOf(h.store, project());
     const working = { ...ticket, state: "working" as const, failures: 0 };
-    expect(ticketMoveFor("abandoned", working, spec)).toMatchObject({ to: "queued", patch: { failures: 1, worker_thread_id: null, environment_id: null } });
-    expect(ticketMoveFor("timeout", { ...working, failures: 1 }, spec)).toMatchObject({ to: "queued", patch: { failures: 2 } });
-    expect(ticketMoveFor("failed", { ...working, failures: 2 }, spec)).toMatchObject({ to: "blocked", patch: { failures: 3 } });
-    expect(ticketMoveFor("gone", { ...working, state: "checking", failures: 2 }, spec)).toMatchObject({ to: "queued", patch: { worker_thread_id: null } });
-    expect(ticketMoveFor("gone", working, spec)?.patch.failures).toBeUndefined();
-    expect(ticketMoveFor("blocked", { ...working, blocked_reason: "why" }, spec)).toMatchObject({ to: "blocked", patch: { blocked_reason: "why" } });
-    expect(ticketMoveFor("cancelled", working, spec)).toMatchObject({ to: "cancelled" });
+    const moved = (move: TicketMove | null) => (move === null ? null : { to: MOVES[move.name].to, patch: patchOf(move) });
+    expect(moved(ticketMoveFor("abandoned", working, spec))).toMatchObject({ to: "queued", patch: { failures: 1, worker_thread_id: null, environment_id: null } });
+    expect(moved(ticketMoveFor("timeout", { ...working, failures: 1 }, spec))).toMatchObject({ to: "queued", patch: { failures: 2 } });
+    expect(moved(ticketMoveFor("failed", { ...working, failures: 2 }, spec))).toMatchObject({ to: "blocked", patch: { failures: 3 } });
+    expect(moved(ticketMoveFor("gone", { ...working, state: "checking", failures: 2 }, spec))).toMatchObject({ to: "queued", patch: { worker_thread_id: null } });
+    expect(moved(ticketMoveFor("gone", working, spec))?.patch.failures).toBeUndefined();
+    expect(moved(ticketMoveFor("blocked", { ...working, blocked_reason: "why" }, spec))).toMatchObject({ to: "blocked", patch: { blocked_reason: "why" } });
+    expect(moved(ticketMoveFor("cancelled", working, spec))).toMatchObject({ to: "cancelled" });
   });
 
   it("returns nothing once the ticket has left working or checking, except for block and cancel", async () => {
@@ -721,8 +723,8 @@ describe("ticketMoveFor", () => {
     const spec = specOf(h.store, project());
     const review = { ...ticketOf(h, "CSV-1"), state: "review" as const };
     for (const reason of ["abandoned", "timeout", "failed", "gone"] as const) expect(ticketMoveFor(reason, review, spec)).toBeNull();
-    expect(ticketMoveFor("blocked", review, spec)?.to).toBe("blocked");
-    expect(ticketMoveFor("cancelled", review, spec)?.to).toBe("cancelled");
+    expect(MOVES[ticketMoveFor("blocked", review, spec)!.name].to).toBe("blocked");
+    expect(MOVES[ticketMoveFor("cancelled", review, spec)!.name].to).toBe("cancelled");
     const done = { ...review, state: "done" as const };
     expect(ticketMoveFor("blocked", done, spec)).toBeNull();
     expect(ticketMoveFor("cancelled", { ...review, state: "cancelled" as const }, spec)).toBeNull();

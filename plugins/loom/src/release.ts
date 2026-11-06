@@ -15,7 +15,8 @@ import { writeSub, type StartWait } from "./sub-state";
 import { nextWait, provisioningFailure, startProblemOf, startWaits, UNAVAILABLE_LIMIT_MS, unavailableReason, waitOf, type StartProblem } from "./starts";
 import { LOOM_ACTOR } from "./states";
 import { headCameHome, isRemote, worktreeBaseOf } from "./transport";
-import { applyMove, endThread, released, specOf, type EngineCtx } from "./workers";
+import { endThread, specOf, type EngineCtx } from "./workers";
+import { tryMoveTicket } from "./moves";
 
 const errText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
@@ -240,7 +241,7 @@ async function cannotWake(ctx: EngineCtx, row: ThreadRow, why: string): Promise<
     const body = `The worker's thread cannot come back with an environment (${why}), so a new worker takes over from ${from}; it can read the earlier worker's conversation.`;
     store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "system", body });
     if (ticket.state === "working" || ticket.state === "pr_open") {
-      applyMove(ctx, ticket, { to: "queued", patch: { ...released, handback_json: null, start_wait_json: null } }, LOOM_ACTOR, { reason: "the worker's thread cannot come back" });
+      tryMoveTicket(store, ticket.id, { name: "worker_lost" }, LOOM_ACTOR, { reason: "the worker's thread cannot come back" });
     }
   });
   store.changed(row.project_id);
@@ -258,7 +259,7 @@ async function blockUnavailable(ctx: EngineCtx, row: ThreadRow, wait: StartWait)
     const ticket = row.ticket_id === null ? null : store.ticket(row.ticket_id);
     if (ticket === null || ticket.worker_thread_id !== row.thread_id) return;
     store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "block", body: reason, data_json: JSON.stringify({ reason, needs: "" }) });
-    applyMove(ctx, ticket, { to: "blocked", patch: { ...released, blocked_reason: reason, handback_json: null, start_wait_json: null } }, LOOM_ACTOR, { reason: "the environment provider stayed unavailable" });
+    tryMoveTicket(store, ticket.id, { name: "block_unavailable", set: { blocked_reason: reason } }, LOOM_ACTOR, { reason: "the environment provider stayed unavailable" });
   });
   store.changed(row.project_id);
   ctx.kick();

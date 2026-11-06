@@ -19,7 +19,8 @@ import type { Spec } from "./spec";
 import { stackOf } from "./stack";
 import { LOOM_ACTOR } from "./states";
 import { bringHome, isRemote, worktreeBaseOf } from "./transport";
-import { applyMove, endThread, recordBranch, resolveEnvironment, specOf, ticketMoveFor, toWorking, type EngineCtx } from "./workers";
+import { endThread, recordBranch, resolveEnvironment, specOf, ticketMoveFor, toWorking, type EngineCtx } from "./workers";
+import { moveTicket, tryMoveTicket, type TicketMove } from "./moves";
 
 export interface CheckRun {
   command: string;
@@ -72,7 +73,7 @@ export function submit(ctx: EngineCtx, threadId: string, summary: string, pr?: {
   if (row.resume_json !== null) throw new LoomError("loom_invalid_state", "Call loom_resume first: it puts the ticket's earlier work in your worktree, and your submit must build on it.");
   const proposal = pr === undefined ? null : proposeText(specOf(store, store.project(ticket.project_id)!), ticket, pr, ctx.now());
   store.tx(() => {
-    store.setTicketState(ticket.id, "checking", threadId, { submit: true });
+    moveTicket(store, ticket.id, { name: "submit" }, threadId, { submit: true });
     const proposed = proposal === null ? "" : proposalText(pr!);
     store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: "worker", author_thread_id: threadId, kind: "submit", body: `${text}${proposed}`, ...(proposal === null ? {} : { data_json: JSON.stringify({ pr: { title: pr!.title?.trim() ?? null, body: pr!.body?.trim() ?? null } }) }) });
     if (proposal !== null) store.updateTicket(ticket.id, writeSub("pr_proposal_json", proposal));
@@ -137,7 +138,7 @@ async function pipeline(ctx: EngineCtx, ticketId: number): Promise<void> {
   if (worker.standing === "ending") return;
   if (worker.standing === "gone") {
     const move = ticketMoveFor("gone", ticket, spec);
-    if (move !== null) applyMove(ctx, ticket, move, LOOM_ACTOR, { reason: "the worker is gone" });
+    if (move !== null) tryMoveTicket(store, ticket.id, move, LOOM_ACTOR, { reason: "the worker is gone" });
     return;
   }
 
@@ -280,7 +281,7 @@ async function finish(ctx: EngineCtx, ticketId: number, spec: Spec, outcome: Out
       store.updateTicket(ticket.id, writeSub("pr_proposal_json", { ...proposal, head }));
     }
     if (outcome.unchanged === true) {
-      store.setTicketState(ticket.id, "pr_open", LOOM_ACTOR, { unchanged: true, fixRound: ticket.pr_rounds });
+      moveTicket(store, ticket.id, { name: "unchanged_fix" }, LOOM_ACTOR, { unchanged: true, fixRound: ticket.pr_rounds });
       const body = `The worker changed nothing for fix round ${ticket.pr_rounds}, so Loom pushed nothing; it keeps following the pull request.`;
       store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "merge", body, data_json: JSON.stringify({ outcome: "pr_unchanged", url: ticket.pr_url, round: ticket.pr_rounds }) });
       if (worker !== null) store.updateThread((worker as ThreadRow).id, { idle_count: 0 });
@@ -290,13 +291,13 @@ async function finish(ctx: EngineCtx, ticketId: number, spec: Spec, outcome: Out
     store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "check", body, data_json: JSON.stringify(data) });
     if (failure === null) {
       const round = ticket.review_round + 1;
-      store.setTicketState(ticket.id, "review", LOOM_ACTOR, { head: outcome.commitSha, round, ...(outcome.textOnly === true ? { textOnly: true } : {}) });
       const stack = stackOf(ticket);
       const resolved = stack?.markers === undefined ? {} : writeSub("stack_json", { ...stack, markers: undefined });
       // Nothing to push once approved, so Loom asks for no commit message.
       const text: PrText = { head: outcome.commitSha, by: "loom", title: null, body: null, commit: ticket.title };
       const textOnly = outcome.textOnly === true ? writeSub("pr_text_json", text) : {};
-      store.updateTicket(ticket.id, { head_sha: outcome.commitSha, head_tree: outcome.tree, review_round: round, ...resolved, ...textOnly });
+      const set = { head_sha: outcome.commitSha, head_tree: outcome.tree, review_round: round, ...resolved, ...textOnly };
+      moveTicket(store, ticket.id, { name: "checked", set }, LOOM_ACTOR, { head: outcome.commitSha, round, ...(outcome.textOnly === true ? { textOnly: true } : {}) });
       if (worker !== null) store.updateThread((worker as ThreadRow).id, { idle_count: 0 });
       return true;
     }
@@ -305,7 +306,7 @@ async function finish(ctx: EngineCtx, ticketId: number, spec: Spec, outcome: Out
     store.updateTicket(ticket.id, { check_failures: checkFailures });
     if (worker === null) {
       const move = ticketMoveFor("gone", ticket, spec);
-      if (move !== null) applyMove(ctx, ticket, move, LOOM_ACTOR, { reason: "the worker is gone" });
+      if (move !== null) tryMoveTicket(store, ticket.id, move, LOOM_ACTOR, { reason: "the worker is gone" });
     } else if (checkFailures >= spec.budget.max_check_failures) {
       blocked = { checkFailures };
     } else {
@@ -332,7 +333,7 @@ async function finish(ctx: EngineCtx, ticketId: number, spec: Spec, outcome: Out
   if (blocked !== null && target !== null) {
     const { checkFailures } = blocked;
     const reason = `checks failed ${plural(checkFailures, "time")}`;
-    const move = { to: "blocked" as const, patch: { check_failures: checkFailures, blocked_reason: reason, worker_thread_id: null, environment_id: null } };
+    const move: TicketMove = { name: "block", set: { check_failures: checkFailures, blocked_reason: reason } };
     if (await endThread(ctx, target, "blocked", { commit: true, move })) {
       store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "block", body: reason, data_json: JSON.stringify({ reason, needs: "" }) });
     }
@@ -372,7 +373,7 @@ function hostFailed(ctx: EngineCtx, ticketId: number, failure: unknown): void {
       return;
     }
     const move = ticketMoveFor("gone", ticket, specOf(store, store.project(ticket.project_id)!));
-    if (move !== null) applyMove(ctx, ticket, move, LOOM_ACTOR, { reason: "the worker is gone" });
+    if (move !== null) tryMoveTicket(store, ticket.id, move, LOOM_ACTOR, { reason: "the worker is gone" });
   });
   if (worker.standing === "active" && worker.row.thread_id !== null && delivers(ctx, ticket.project_id)) void send(ctx, worker.row.thread_id, `[loom] ${ticket.key}: ${text}`);
 }

@@ -19,7 +19,8 @@ import { deliverHandBacks, handBack } from "./slots";
 import type { Spec } from "./spec";
 import { LOOM_ACTOR } from "./states";
 import { carryTo, headCameHome, homeBranch, workBaseOf, worktreeBaseOf } from "./transport";
-import { applyMove, endLiveRows, endThread, freshBase, keptWorker, machineMoved, otherCheckouts, pauseProject, released, resolveEnvironment, resumeEnding, retryRateLimited, specOf, type EndReason, type EngineCtx, type TurnFailure } from "./workers";
+import { endLiveRows, endThread, freshBase, keptWorker, machineMoved, otherCheckouts, pauseProject, resolveEnvironment, resumeEnding, retryRateLimited, specOf, type EndReason, type EngineCtx, type TurnFailure } from "./workers";
+import { moveTicket, patchOf, tryMoveTicket, type TicketMove } from "./moves";
 
 export interface Finding {
   severity: "blocking" | "should-fix";
@@ -98,7 +99,7 @@ function decideRound(ctx: EngineCtx, ticketId: number): Outcome | null {
     const round = tally(store, ticket, spec);
     if (round.changes !== null) return changesOutcome(ctx, ticket, spec, round.changes);
     if (round.approved < spec.review.approvals) return null;
-    store.setTicketState(ticket.id, "approved", LOOM_ACTOR, { round: ticket.review_round, approvals: round.approved });
+    moveTicket(store, ticket.id, { name: "approve" }, LOOM_ACTOR, { round: ticket.review_round, approvals: round.approved });
     return { kind: "approved" } as const;
   });
 }
@@ -116,7 +117,7 @@ function changesOutcome(ctx: EngineCtx, ticket: TicketRow, spec: Spec, review: R
     store.updateTicket(ticket.id, { blocked_reason: reason });
     store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "block", body: reason, data_json: JSON.stringify({ reason, needs: "" }) });
     if (worker.standing === "active") return { kind: "blocking", worker: store.thread(worker.row.id)! };
-    applyMove(ctx, ticket, { to: "blocked", patch: { ...released, blocked_reason: reason } }, LOOM_ACTOR, { reason });
+    tryMoveTicket(store, ticket.id, { name: "block", set: { blocked_reason: reason } }, LOOM_ACTOR, { reason });
     return { kind: "blocked" };
   }
   // A worker Loom released, as a ticket sent back to review keeps one (keptWorker), comes back for the findings once it has a slot, as for a fix round.
@@ -128,7 +129,7 @@ function changesOutcome(ctx: EngineCtx, ticket: TicketRow, spec: Spec, review: R
     handBack(ctx, ticket, worker.standing === "active" ? worker.row : null, thread, text, { round: ticket.review_round });
     return { kind: "changes" };
   }
-  applyMove(ctx, ticket, { to: "queued", patch: released }, LOOM_ACTOR, { reason: "the worker is gone" });
+  tryMoveTicket(store, ticket.id, { name: "worker_gone" }, LOOM_ACTOR, { reason: "the worker is gone" });
   return { kind: "requeued" };
 }
 
@@ -226,17 +227,17 @@ export function blockedAtReview(ticket: TicketRow): boolean {
  * ticket with no worker linked gets its newest worker thread back as a released worker (keptWorker), so a catch-up or a
  * fix round once its pull request is open can bring that thread back.
  */
-export function backToReview(ctx: EngineCtx, ticket: TicketRow, note: string, how: { actor?: string; reason?: string; requeued?: boolean; patch?: Partial<TicketRow> } = {}): void {
+export function backToReview(ctx: EngineCtx, ticket: TicketRow, note: string, how: { actor?: string; reason?: string; requeued?: boolean; set?: Partial<TicketRow> } = {}): void {
   const { store } = ctx;
   const round = ticket.review_round + 1;
   store.tx(() => {
     const reason = how.reason ?? "bb refused its reviewer, and a new spec version is approved";
-    store.setTicketState(ticket.id, "review", how.actor ?? LOOM_ACTOR, { head: ticket.head_sha, round, reason, ...(how.requeued === true ? { requeued: true, failures: 0 } : {}) });
-    const linked = how.patch?.worker_thread_id === undefined ? ticket.worker_thread_id : how.patch.worker_thread_id;
-    const kept = linked === null && specOf(store, store.project(ticket.project_id)!).merge.strategy === "pr" ? keptWorker(store, ticket) : null;
+    const move: TicketMove = { name: how.requeued === true ? "review_again" : "back_to_review", ...(how.set === undefined ? {} : { set: how.set }) };
+    const linked = patchOf(move).worker_thread_id;
+    const kept = (linked === undefined ? ticket.worker_thread_id : linked) === null && specOf(store, store.project(ticket.project_id)!).merge.strategy === "pr" ? keptWorker(store, ticket) : null;
     if (kept !== null && kept !== "ending") store.updateThread(kept.id, { end_reason: "released", released_at: kept.released_at ?? ctx.now() });
     const keep = kept === null || kept === "ending" ? {} : { worker_thread_id: kept.thread_id };
-    store.updateTicket(ticket.id, { ...how.patch, ...keep, review_round: round, blocked_reason: null });
+    moveTicket(store, ticket.id, { name: move.name, set: { ...move.set, ...keep, review_round: round } }, how.actor ?? LOOM_ACTOR, { head: ticket.head_sha, round, reason, ...(how.requeued === true ? { requeued: true, failures: 0 } : {}) });
     store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "reply", body: note });
   });
   store.changed(ticket.project_id);

@@ -35,7 +35,7 @@ import {
 } from "./forge-waits";
 import { AFTER_OPEN_ENDED, AFTER_OPEN_MS, AFTER_OPEN_STARTED, followDraft } from "./drafts";
 import { afterMergeChangedText, afterMergeFailedText, andList, branchName, clip, mergeSubject, conflictText, dependsOnLines, landBody, prDivergedText, restackConflictText, restackFailedText, restackMarkersText, restackRefusedText, unfinishedMergeText, withRestoredNote, workerPrBody } from "./prompts";
-import { appliedOf, applyPrText, closedPrReset, followFeedback, inFixRound, openedText, proposalOf, prRollout, prTextFor, prTextReady, reviewersToAsk, syncPrText, targetText, templatePr, wantedText } from "./pull-requests";
+import { appliedOf, applyPrText, followFeedback, inFixRound, openedText, proposalOf, prRollout, prTextFor, prTextReady, reviewersToAsk, syncPrText, targetText, templatePr, wantedText } from "./pull-requests";
 import { githubPull, prNumber, PR_BATCH_MAX, type HostInput, type HostOutput as HostOutputOf } from "./host-contract";
 import type { EnvironmentInfo } from "./ports";
 import { readMeta } from "./pr-meta";
@@ -54,7 +54,8 @@ import { readSub, writeSub, type MergeStep, type PrApplied, type PrText, type Pr
 import { isWaking, releasedWorker, restoredSinceSubmit } from "./release";
 import { deliverHandBacks, handBack } from "./slots";
 import { carryTo, homeBranch, isRemote, reviewedRef, workBaseOf } from "./transport";
-import { applyMove, baseOf, endLiveRows, endThread, pauseProject, released, resolveEnvironment, specOf, type EngineCtx } from "./workers";
+import { baseOf, endLiveRows, endThread, pauseProject, resolveEnvironment, specOf, type EngineCtx } from "./workers";
+import { moveTicket, tryMoveTicket } from "./moves";
 
 const PROVISION_MS = 10 * 60_000;
 const errText = (error: unknown) => (error instanceof Error ? error.message : String(error));
@@ -152,8 +153,7 @@ async function begin(ctx: EngineCtx, projectId: number, spec: Spec): Promise<Tic
   if (next === undefined || store.project(projectId)?.state !== "running") return null;
   store.tx(() => {
     const refresh = next.state === "pr_open" ? refreshDue(spec, next) : null;
-    store.setTicketState(next.id, "merging", LOOM_ACTOR, next.state === "pr_open" ? { head: next.head_sha, restack: true, ...(refresh === null ? {} : { refresh }) } : { head: next.head_sha });
-    store.updateTicket(next.id, { merge_before: null, merge_wait_json: null, merge_step_json: null });
+    moveTicket(store, next.id, { name: "merge" }, LOOM_ACTOR, next.state === "pr_open" ? { head: next.head_sha, restack: true, ...(refresh === null ? {} : { refresh }) } : { head: next.head_sha });
   });
   return store.ticket(next.id)!;
 }
@@ -462,8 +462,7 @@ function complete(ctx: EngineCtx, ticketId: number, post: MergePost): void {
   const { store } = ctx;
   store.tx(() => {
     const ticket = store.ticket(ticketId)!;
-    store.setTicketState(ticketId, "done", LOOM_ACTOR, { ...post.data });
-    store.updateTicket(ticketId, released);
+    moveTicket(store, ticketId, { name: "merged" }, LOOM_ACTOR, { ...post.data });
     store.addPost({ project_id: ticket.project_id, ticket_id: ticketId, parent_id: null, author_kind: "loom", author_thread_id: null, kind: post.kind, body: post.body, data_json: JSON.stringify(post.data) });
   });
   store.changed(store.ticket(ticketId)!.project_id);
@@ -489,7 +488,7 @@ async function sendBack(ctx: EngineCtx, ticketId: number, a: { post: MergePost; 
     }
     const worker = workerOf(store, ticket);
     if (worker.standing === "active" && worker.row.thread_id !== null) handBack(ctx, store.ticket(ticketId)!, worker.row, worker.row.thread_id, a.text, { reason: a.reason });
-    else applyMove(ctx, store.ticket(ticketId)!, { to: "queued", patch: released }, LOOM_ACTOR, { reason: "the worker is gone" });
+    else tryMoveTicket(store, ticketId, { name: "worker_gone" }, LOOM_ACTOR, { reason: "the worker is gone" });
     return true;
   });
   if (!applied) return;
@@ -925,7 +924,7 @@ async function worktreeGone(ctx: EngineCtx, ticket: TicketRow, row: ThreadRow, w
     const current = store.ticket(ticket.id);
     const worker = store.thread(row.id);
     if (current?.state !== "merging" || worker?.state !== "active" || current.worker_thread_id !== worker.thread_id) return;
-    applyMove(ctx, current, { to: from, patch: { merge_step_json: null, merge_wait_json: null, merge_before: null, environment_id: null } }, LOOM_ACTOR, { reason: "the worker's worktree is gone" });
+    tryMoveTicket(store, current.id, { name: from === "pr_open" ? "restack_left" : "merge_left" }, LOOM_ACTOR, { reason: "the worker's worktree is gone" });
     // Waking: still active, with no environment, which advanceWakes restores or gives up on.
     store.updateThread(worker.id, { released_at: ctx.now(), environment_id: null, clock_at: ctx.now(), idle_count: 0 });
     addMergePost(ctx, current, {
@@ -1173,8 +1172,7 @@ function toPrOpen(ctx: EngineCtx, ticketId: number, patch: Partial<TicketRow>, p
   const posts = post === null ? [] : Array.isArray(post) ? post : [post];
   store.tx(() => {
     const ticket = store.ticket(ticketId)!;
-    store.setTicketState(ticketId, "pr_open", LOOM_ACTOR, data);
-    store.updateTicket(ticketId, { ...patch, merge_step_json: null });
+    moveTicket(store, ticketId, { name: "pr_pushed", set: patch }, LOOM_ACTOR, data);
     for (const each of posts) store.addPost({ project_id: ticket.project_id, ticket_id: ticketId, parent_id: null, author_kind: "loom", author_thread_id: null, kind: each.kind, body: each.body, data_json: JSON.stringify(each.data) });
   });
   store.changed(store.ticket(ticketId)!.project_id);
@@ -1286,7 +1284,7 @@ async function blockPullRequest(ctx: EngineCtx, ticket: TicketRow, reason: strin
     const current = store.ticket(ticket.id)!;
     if (post !== null) store.addPost({ project_id: current.project_id, ticket_id: current.id, parent_id: null, author_kind: "loom", author_thread_id: null, kind: post.kind, body: post.body, data_json: JSON.stringify(post.data) });
     store.addPost({ project_id: current.project_id, ticket_id: current.id, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "block", body: reason, data_json: JSON.stringify({ reason, needs: "" }) });
-    applyMove(ctx, current, { to: "blocked", patch: { ...released, ...closedPrReset, blocked_reason: reason } }, LOOM_ACTOR, { reason });
+    tryMoveTicket(store, current.id, { name: "block_pr_closed", set: { blocked_reason: reason } }, LOOM_ACTOR, { reason });
   });
   store.changed(ticket.project_id);
   for (const row of store.threads({ ticketId: ticket.id, states: ["active"] })) await endThread(ctx, row, "blocked", { commit: false, move: null });

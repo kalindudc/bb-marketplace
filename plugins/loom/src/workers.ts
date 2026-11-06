@@ -1,5 +1,5 @@
 // The worker lifecycle: spawn a worker for a ticket, nudge or end it when it stalls, block and requeue tickets,
-// and end any worker or reviewer thread in one place (endThread). Every state change goes through the store.
+// and end any worker or reviewer thread in one place (endThread). Every state change is a named move in moves.ts.
 import { randomBytes } from "node:crypto";
 import { retriesOf } from "./backoff";
 import { repoCheckout, ticketRepo, type RepoCheckout } from "./checkouts";
@@ -18,9 +18,10 @@ import { idleAction, spawnable, toLite, type TicketLite } from "./scheduler";
 import type { Spec } from "./spec";
 import { EMPTY_STACK, restackOf, stackBranch, stacking, stackOf, upstreamOf } from "./stack";
 import { nextWait, provisioningFailure, startProblemOf, startWaits, unavailableReason, waitOf, waitPost, type StartProblem } from "./starts";
-import { HUMAN_ACTOR, LOOM_ACTOR, PAUSE_NOW_REASON, canMoveTicket, type AuthorKind, type TicketState } from "./states";
+import { HUMAN_ACTOR, LOOM_ACTOR, PAUSE_NOW_REASON, type AuthorKind } from "./states";
 import { readSub, writeSub, type Resume, type Stack } from "./sub-state";
 import { bringHome, carryTo, homeBranch, isRemote } from "./transport";
+import { canTake, moveTicket, tryMoveTicket, type TicketMove } from "./moves";
 
 export interface EngineCtx extends Ctx {
   host: HostPort;
@@ -42,7 +43,6 @@ export interface EngineCtx extends Ctx {
 export const signatureOf = (ctx: EngineCtx): string => ctx.commentSignature?.() ?? COMMENT_SIGNATURE;
 
 export type EndReason = "abandoned" | "timeout" | "failed" | "gone" | "blocked" | "cancelled" | "verdict" | "superseded" | "merged" | "released" | "unreachable";
-export type TicketMove = { to: TicketState; patch: Partial<TicketRow> };
 
 const ENDING_LIMIT_MS = 10 * 60_000;
 export const MAX_RATE_LIMIT_RETRIES = 3;
@@ -66,8 +66,6 @@ export function baseOf(spec: Spec, ticket: Pick<TicketRow, "repo" | "stack_json"
 
 // ---------------------------------------------------------------- ticket moves
 
-export const released = { worker_thread_id: null, environment_id: null } as const;
-
 export function ticketMoveFor(reason: EndReason, ticket: TicketRow, spec: Spec): TicketMove | null {
   const live = ticket.state === "working" || ticket.state === "checking";
   switch (reason) {
@@ -76,16 +74,16 @@ export function ticketMoveFor(reason: EndReason, ticket: TicketRow, spec: Spec):
     case "failed": {
       if (!live) return null;
       const failures = ticket.failures + 1;
-      if (failures < spec.budget.max_attempts) return { to: "queued", patch: { ...released, failures } };
+      if (failures < spec.budget.max_attempts) return { name: "worker_gone", set: { failures } };
       const last = { abandoned: "it went idle twice without submitting", timeout: "it ran past the ticket timeout", failed: "its turns kept failing" }[reason];
-      return { to: "blocked", patch: { ...released, failures, blocked_reason: `The worker failed ${plural(failures, "time")}; the last time ${last}.` } };
+      return { name: "block", set: { failures, blocked_reason: `The worker failed ${plural(failures, "time")}; the last time ${last}.` } };
     }
     case "gone":
-      return live ? { to: "queued", patch: released } : null;
+      return live ? { name: "worker_gone" } : null;
     case "blocked":
-      return canMoveTicket(ticket.state, "blocked") ? { to: "blocked", patch: { ...released, blocked_reason: ticket.blocked_reason ?? "Blocked." } } : null;
+      return canTake("block", ticket.state) ? { name: "block", set: { blocked_reason: ticket.blocked_reason ?? "Blocked." } } : null;
     case "cancelled":
-      return canMoveTicket(ticket.state, "cancelled") ? { to: "cancelled", patch: released } : null;
+      return canTake("cancel", ticket.state) ? { name: "cancel" } : null;
     case "verdict":
     case "superseded":
     case "merged":
@@ -107,22 +105,10 @@ export function pauseProject(ctx: EngineCtx, projectId: number, reason: string):
   store.changed(project.id);
 }
 
-/** Moves the ticket, applies the patch and flags a blocked ticket for triage, in one transaction. False when the state map refuses the move. */
-export function applyMove(ctx: EngineCtx, ticket: TicketRow, move: TicketMove, actor: string = LOOM_ACTOR, data: object = {}): boolean {
-  return ctx.store.tx(() => {
-    const current = ctx.store.ticket(ticket.id);
-    if (current === null || !canMoveTicket(current.state, move.to)) return false;
-    ctx.store.setTicketState(current.id, move.to, actor, move.patch.failures === undefined ? data : { ...data, failures: move.patch.failures });
-    ctx.store.updateTicket(current.id, move.patch);
-    if (move.to === "blocked") ctx.store.updateProject(current.project_id, { triage_pending: 1 });
-    return true;
-  });
-}
-
 /** Puts a ticket back in working and restarts its worker's timeout clock and idle count. Paused time and time in checks or review never count. */
 export function toWorking(ctx: EngineCtx, ticket: TicketRow, row: ThreadRow | null, data: object = {}): void {
   ctx.store.tx(() => {
-    ctx.store.setTicketState(ticket.id, "working", LOOM_ACTOR, data);
+    moveTicket(ctx.store, ticket.id, { name: "to_worker" }, LOOM_ACTOR, data);
     if (row !== null) ctx.store.updateThread(row.id, { clock_at: ctx.now(), idle_count: 0 });
   });
 }
@@ -162,15 +148,13 @@ export async function spawnWorker(ctx: EngineCtx, project: ProjectRow, spec: Spe
     const again = wait?.row == null ? null : store.thread(wait.row);
     if (again !== null && again.state === "ended" && again.end_reason === "failed" && again.role === "worker" && again.ticket_id === ticket.id && again.attempt === current.attempt) {
       store.updateThread(again.id, { state: "spawning", spawn_token: token, thread_id: null, environment_id: null, ended_at: null, end_reason: null, clock_at: ctx.now(), idle_count: 0, rate_limit_retries: 0, maintenance_seq: 0 });
-      store.setTicketState(ticket.id, "working", LOOM_ACTOR, { attempt: current.attempt, retry: wait!.tries });
-      store.updateTicket(ticket.id, { ...released, ...stackPatch });
+      moveTicket(store, ticket.id, { name: "start", set: stackPatch }, LOOM_ACTOR, { attempt: current.attempt, retry: wait!.tries });
       return store.thread(again.id)!;
     }
     const attempt = current.attempt + 1;
     const created = store.addThread({ project_id: project.id, ticket_id: ticket.id, role: "worker", state: "spawning", spawn_token: token });
     store.updateThread(created.id, { clock_at: ctx.now(), attempt });
-    store.setTicketState(ticket.id, "working", LOOM_ACTOR, { attempt });
-    store.updateTicket(ticket.id, { attempt, ...released, ...stackPatch });
+    moveTicket(store, ticket.id, { name: "start", set: { attempt, ...stackPatch } }, LOOM_ACTOR, { attempt });
     store.addPost({ project_id: project.id, ticket_id: ticket.id, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "claim", body: `Worker attempt ${attempt} is starting.` });
     return store.thread(created.id)!;
   });
@@ -179,8 +163,7 @@ export async function spawnWorker(ctx: EngineCtx, project: ProjectRow, spec: Spe
   if (store.project(project.id)?.state !== "running") {
     store.tx(() => {
       store.updateThread(row.id, { state: "ended", ended_at: ctx.now(), end_reason: "cancelled" });
-      store.setTicketState(ticket.id, "queued", LOOM_ACTOR, { reason: "the project is no longer running" });
-      store.updateTicket(ticket.id, { attempt: ticket.attempt });
+      moveTicket(store, ticket.id, { name: "start_undone", set: { attempt: ticket.attempt } }, LOOM_ACTOR, { reason: "the project is no longer running" });
     });
     return;
   }
@@ -364,20 +347,20 @@ export async function failSpawn(ctx: EngineCtx, row: ThreadRow, problem: StartPr
     const post = (body: string) => store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "system", body });
     if (problem.kind === "refused") {
       post(`Could not start a worker: ${error}`);
-      applyMove(ctx, ticket, { to: "blocked", patch: { ...released, failures: ticket.failures + 1, blocked_reason: `bb refused to start a worker: ${error}`, start_wait_json: null } }, LOOM_ACTOR, { reason: START_REFUSED });
+      tryMoveTicket(store, ticket.id, { name: "start_blocked", set: { failures: ticket.failures + 1, blocked_reason: `bb refused to start a worker: ${error}` } }, LOOM_ACTOR, { reason: START_REFUSED });
       return;
     }
     if (problem.kind === "broken") {
       const failures = ticket.failures + 1;
       const blocked = failures >= specOf(store, project).budget.max_attempts;
       post(`Could not start a worker: ${error}`);
-      const move: TicketMove = blocked ? { to: "blocked", patch: { ...released, failures, blocked_reason: `could not start a worker ${plural(failures, "time")}`, start_wait_json: null } } : { to: "queued", patch: { ...released, failures, start_wait_json: null } };
-      applyMove(ctx, ticket, move, LOOM_ACTOR, { reason: START_FAILED });
+      const move: TicketMove = blocked ? { name: "start_blocked", set: { failures, blocked_reason: `could not start a worker ${plural(failures, "time")}` } } : { name: "start_failed", set: { failures } };
+      tryMoveTicket(store, ticket.id, move, LOOM_ACTOR, { reason: START_FAILED });
       return;
     }
     if (ticket.branch !== null && ticket.pushed_sha === null && isRefError(error)) {
       post(`Could not start a worker: ${error}`);
-      applyMove(ctx, ticket, { to: "queued", patch: { ...released, branch: null, start_wait_json: null } }, LOOM_ACTOR, { reason: "the worker could not start from the earlier branch" });
+      tryMoveTicket(store, ticket.id, { name: "start_failed", set: { branch: null } }, LOOM_ACTOR, { reason: "the worker could not start from the earlier branch" });
       return;
     }
     const previous = waitOf(ticket, "worker");
@@ -385,19 +368,19 @@ export async function failSpawn(ctx: EngineCtx, row: ThreadRow, problem: StartPr
     if (wait.expired) {
       const reason = `no worker could start: ${unavailableReason(wait)}`;
       post(`Could not start a worker: ${error}. The ticket blocks, because ${unavailableReason(wait)}.`);
-      applyMove(ctx, ticket, { to: "blocked", patch: { ...released, blocked_reason: reason, start_wait_json: null } }, LOOM_ACTOR, { reason: START_UNAVAILABLE });
+      tryMoveTicket(store, ticket.id, { name: "start_blocked", set: { blocked_reason: reason } }, LOOM_ACTOR, { reason: START_UNAVAILABLE });
       return;
     }
     const failures = ticket.failures + (wait.counted ? 1 : 0);
     if (wait.counted && failures >= specOf(store, project).budget.max_attempts) {
       post(`Could not start a worker: ${error}`);
-      applyMove(ctx, ticket, { to: "blocked", patch: { ...released, failures, blocked_reason: `could not start a worker ${plural(failures, "time")}; the last time: ${error}`, start_wait_json: null } }, LOOM_ACTOR, { reason: START_FAILED });
+      tryMoveTicket(store, ticket.id, { name: "start_blocked", set: { failures, blocked_reason: `could not start a worker ${plural(failures, "time")}; the last time: ${error}` } }, LOOM_ACTOR, { reason: START_FAILED });
       return;
     }
     const text = waitPost("a worker", wait, previous, ctx.now());
     if (text !== null) post(text);
     const reason = wait.kind === "unavailable" ? START_WAITS : START_FAILED;
-    applyMove(ctx, ticket, { to: "queued", patch: { ...released, failures, ...writeSub("start_wait_json", wait) } }, LOOM_ACTOR, { reason, retryAt: wait.until });
+    tryMoveTicket(store, ticket.id, { name: "start_failed", set: { failures, ...writeSub("start_wait_json", wait) } }, LOOM_ACTOR, { reason, retryAt: wait.until });
   });
   store.changed(row.project_id);
   ctx.kick();
@@ -584,7 +567,7 @@ async function finishEnding(ctx: EngineCtx, row: ThreadRow, reason: EndReason, o
         store.addPost({ project_id: held.project_id, ticket_id: held.id, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "system", body: RELEASED_TEXT, data_json: JSON.stringify({ released: true }) });
       }
       const move = opts.move !== undefined ? opts.move : own ? ticketMoveFor(reason, held, specOf(store, store.project(held.project_id)!)) : null;
-      if (move !== null) applyMove(ctx, held, move, LOOM_ACTOR, { reason });
+      if (move !== null) tryMoveTicket(store, held.id, move, LOOM_ACTOR, { reason });
     });
     store.changed(row.project_id);
     ctx.kick();
@@ -748,7 +731,7 @@ export async function endLiveRows(ctx: EngineCtx, ticket: TicketRow, reason: "bl
   if (store.threads({ ticketId: ticket.id, role: "worker", states: ["ending"] }).length > 0) return;
   const left = store.ticket(ticket.id)!;
   const move = ticketMoveFor(reason, left, specOf(store, store.project(left.project_id)!));
-  if (move !== null) applyMove(ctx, left, move, LOOM_ACTOR, { reason });
+  if (move !== null) tryMoveTicket(store, left.id, move, LOOM_ACTOR, { reason });
 }
 
 /**
@@ -762,12 +745,11 @@ export async function requeueTicket(ctx: EngineCtx, key: string, a: { note: stri
   if (a.review === true) return reviewAgain(ctx, ticket, a);
   const note = a.note.trim();
   ctx.store.tx(() => {
-    ctx.store.setTicketState(ticket.id, "queued", a.actor, { requeued: true, failures: 0 });
     // A ticket whose pull request stays open comes back as a fix round on it, asked for its own text again.
     const fix = ticket.pushed_sha !== null ? { pr_rounds: ticket.pr_rounds + 1 } : {};
     // A block that let go of the pull request leaves no commit pushed; what Loom last read of that pull request goes with it.
     const gone = ticket.pushed_sha === null ? { pr_meta_json: null } : {};
-    ctx.store.updateTicket(ticket.id, { failures: 0, check_failures: 0, blocked_reason: null, ...released, ...fix, ...gone, pr_ask_json: null, pr_text_json: null, handback_json: null, start_wait_json: null, merge_wait_json: null });
+    moveTicket(ctx.store, ticket.id, { name: "requeue", set: { ...fix, ...gone } }, a.actor, { requeued: true, failures: 0 });
     if (note !== "") {
       ctx.store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: a.author, author_thread_id: a.threadId ?? null, kind: "reply", body: note });
     }
@@ -860,7 +842,7 @@ async function reviewAgain(ctx: EngineCtx, ticket: TicketRow, a: { note: string;
   }
 
   const note = a.note.trim();
-  const reset = { failures: 0, check_failures: 0, ...released, ...(kept === null ? {} : { worker_thread_id: kept.thread_id }), pr_ask_json: null, handback_json: null, start_wait_json: null } as const;
+  const keep = kept === null ? {} : { worker_thread_id: kept.thread_id };
   store.tx(() => {
     const current = store.ticket(ticket.id)!;
     if (current.state !== "blocked" || current.head_sha !== ticket.head_sha || current.pushed_sha !== ticket.pushed_sha) throw new LoomError("loom_invalid_state", `${key} changed while Loom read its branch; try again.`);
@@ -871,11 +853,10 @@ async function reviewAgain(ctx: EngineCtx, ticket: TicketRow, a: { note: string;
     }
     if (to === "review") {
       const text = `Back in review as it is: new reviewers judge ${short(current.head_sha!)}, the commit whose checks passed last, in round ${current.review_round + 1}. A worker starts only if they ask for changes.`;
-      backToReview(ctx, current, text, { actor: a.actor, reason: "sent back to review as it is", requeued: true, patch: { ...reset, ...(current.pushed_sha === null ? { pr_meta_json: null } : {}) } });
+      backToReview(ctx, current, text, { actor: a.actor, reason: "sent back to review as it is", requeued: true, set: { ...keep, ...(current.pushed_sha === null ? { pr_meta_json: null } : {}) } });
     } else {
-      store.setTicketState(current.id, "pr_open", a.actor, { requeued: true, failures: 0, reason: "sent back to its pull request as it is" });
       // An old streak of failed reads would make the first new one pause the project, so the next read starts afresh, at once.
-      store.updateTicket(current.id, { ...reset, blocked_reason: null, pr_text_json: null, pr_poll_json: null, pr_checked_at: null });
+      moveTicket(store, current.id, { name: "pr_again", set: keep }, a.actor, { requeued: true, failures: 0, reason: "sent back to its pull request as it is" });
       const back = kept === null ? "" : " When the pull request needs a fix, or its branch must catch up, Loom brings back the worker's thread, or starts a new worker from the branch when it cannot.";
       const text = want === null ? "" : " It sets the title and description the reviewers approved.";
       const body = `Back on its pull request as it is: ${key}'s branch has nothing ${current.pr_url ?? "the pull request"} lacks, so Loom pushed nothing and follows the pull request again.${text}${back}`;

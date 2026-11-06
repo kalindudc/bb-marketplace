@@ -165,7 +165,7 @@ export function mergeOrderOf(spec: Spec, tickets: readonly TicketRow[], finals: 
       base,
       prUrl,
       prNumber: numberOf(prUrl),
-      // A closed or wrongly merged pull request lets go of its branch (closedPrReset), so a pushed commit means it is open.
+      // A closed or wrongly merged pull request lets go of its branch (the block_pr_closed move), so a pushed commit means it is open.
       prOpen: prUrl !== null && !FINISHED.includes(ticket.state) && ticket.pushed_sha !== null && meta?.state !== "CLOSED" && meta?.state !== "MERGED",
       elsewhere: target !== null && target !== base && parent === null ? target : null,
       step: stepOf(ticket),
