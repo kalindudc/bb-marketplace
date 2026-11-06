@@ -184,5 +184,8 @@ export function classify(error: unknown): Failure {
   return classifyText(reason, null);
 }
 
+/** Whether a forge's unavailable answer says its command broke its contract, such as a read that printed no JSON object. */
+export const brokeContract = (answer: { message: string } & Partial<Transient>): boolean => classifyAnswer(answer).fix === PROJECT_FIX.command;
+
 /** What a host's or forge's unavailable answer is. */
 export const classifyAnswer = (answer: { message: string } & Partial<Transient>): Failure => classifyText(answer.message, transientOf(answer));

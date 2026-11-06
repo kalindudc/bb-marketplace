@@ -11,7 +11,7 @@ import { GATE_DONE, GATE_STARTED, GATE_START_FAILED } from "../src/publish";
 import { followGate } from "../src/review-gate";
 import { saveProfile } from "../src/forge-profiles";
 import { Store } from "../src/db/store";
-import { prReviewStart } from "../src/host/ops";
+import { prReviewRead, prReviewStart } from "../src/host/ops";
 import { tmpdir } from "node:os";
 import { boardCards } from "../src/rpc";
 import { parseSpec } from "../src/spec";
@@ -307,6 +307,20 @@ describe("a review gate on a draft", () => {
     expect(starts()).toHaveLength(1);
     expect(posts("gate_failed")).toHaveLength(1);
     expect(card().publishWait).toContain("its review gate failed");
+  });
+
+  it("pauses the project with the fix for broken review_read output from the host, and reads the gate again once it runs", async () => {
+    await openPr();
+    await followGate(h.ctx, project(), ticket().id);
+    h.host.gateRead = await prReviewRead({ repo: tmpdir(), url: URL, sha: ticket().pushed_sha!, command: "printf 'not-json\\n'" });
+    expect(h.host.gateRead).toMatchObject({ outcome: "unavailable", message: expect.stringContaining("must print a JSON object") });
+    await followGate(h.ctx, project(), ticket().id);
+    expect(project()).toMatchObject({ state: "paused", system_reason: expect.stringMatching(/must print a JSON object.*Fix the forge command in the spec/su) });
+    expect(events(GATE_DONE)).toEqual([]);
+    gateSays({ findings: [] });
+    h.store.setProjectState(project().id, "running", "human");
+    await followGate(h.ctx, project(), ticket().id);
+    expect(events(GATE_DONE)).toEqual([expect.objectContaining({ state: "done" })]);
   });
 
   it("keeps the gate of a profile whose edit would drop review_read, so the draft still waits for it", async () => {

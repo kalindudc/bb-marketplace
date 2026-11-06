@@ -1,12 +1,13 @@
 // The forge boundary: every host call that goes to a pull request's forge (gh or a forge command) passes through here.
 // - An answer the host contract refuses there was printed by the forge's own command, so it becomes a ForgeContractError,
-//   which pauses the project with the fix (failures.ts); the same refusal from any other host call stays Loom's own.
+//   which pauses the project with the fix (failures.ts); so does an unavailable answer that says the command broke its
+//   contract, such as a read that printed no JSON object. The same refusal from any other host call stays Loom's own.
 // - The engine's backoffs by forge host are kept here for every forge operation, not only pull request reads: a rate
 //   limit, a network failure, or a server error that names when to try again backs off the host, an answer clears it,
 //   and while it lasts no forge call goes there: the caller gets a "held" answer, which says nothing was sent, so it
 //   tries again later, as if it had not called, and counts no attempt and no unknown outcome.
 // A pull request opened in a checkout whose forge host the boundary has not seen since Loom started is not held back.
-import { ForgeContractError } from "./failures";
+import { ForgeContractError, brokeContract } from "./failures";
 import { forgeHostOf, nextBackoff, nextNetworkBackoff, type HostBackoffs } from "./forge-waits";
 import type { HostInput, HostMethod, HostOutput } from "./host-contract";
 import type { HostPort } from "./ports";
@@ -51,6 +52,9 @@ export function forgeBoundary(host: HostPort, gate: { backoffs: () => HostBackof
         if (learned !== null) repoHosts.set(checkout(hostId, repo), learned);
       }
       if (forge !== null) settle(gate.backoffs(), forge, answer as Answer, gate.now());
+      // A command that ran and printed what its contract forbids answers unavailable from the host; it is the same broken forge.
+      const failed = answer as Answer;
+      if (failed.outcome === "unavailable" && brokeContract({ message: failed.message ?? "", ...(failed.transient === undefined ? {} : { transient: failed.transient }) })) throw new ForgeContractError(method, failed.message ?? "", []);
       return answer;
     },
   };
