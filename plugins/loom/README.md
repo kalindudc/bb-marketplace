@@ -699,7 +699,9 @@ its own pull request.
   round needs approved, the ticket goes back to its worker as a text-only
   round: the worker changes no files and proposes the new text with
   `loom_submit`'s `pr`. Loom, never the worker, then puts that text on the
-  pull request, so a worker can always apply a finding about the text. A round
+  pull request, so a worker can always apply a finding about the text, and
+  `loom_block` is refused during such a round. The human's and the planner's
+  controls are unchanged. A round
   with any code finding goes back as an ordinary round. With
   `merge.describe = "loom"` the worker writes no text, so a text finding is an
   ordinary one there.

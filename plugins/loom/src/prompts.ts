@@ -751,6 +751,11 @@ export function textReviewBrief(a: {
   ].join("\n");
 }
 
+/** Why loom_block refuses in a text-only round: nothing there needs the human, since Loom applies the text itself. */
+export function textBlockRefusal(key: string): string {
+  return `${key}'s open findings are all about the pull request's text, which needs no one's permission: propose the new title and description with loom_submit({ summary, pr: { title, body } }), change no files, and end your turn. Loom's text review judges it, then Loom puts it on the pull request; you never edit the pull request yourself. If you think a finding is wrong, say why in the summary and propose the text you stand by.`;
+}
+
 /** The text the worker had proposed by these submits, each replacing the fields it gave; null when none proposed any. */
 function proposedBefore(submits: readonly PostRow[]): { title: string | null; body: string | null } | null {
   const proposals = submits.flatMap((post) => (JSON.parse(post.data_json) as { pr?: { title: string | null; body: string | null } }).pr ?? []);

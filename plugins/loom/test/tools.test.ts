@@ -309,7 +309,7 @@ describe("worker and planner tools", () => {
   let harness: Awaited<ReturnType<typeof setup>>;
   let hh: EngineHarness;
 
-  async function setup() {
+  async function setup(edit: (doc: Doc) => void = () => undefined) {
     fake = new FakePort();
     fake.addThread("thr_plan", "idle");
     host = makeHost({ port: fake });
@@ -317,6 +317,7 @@ describe("worker and planner tools", () => {
     hh = { ctx: host.engine.ctx, store: host.store, bb: fake, host: host.hostPort, projects: host.projects, clock: new Clock(), kicks: { count: 0 } };
     const project = await seedProject(hh, (doc: Doc) => {
       doc.ticket[1].depends_on = [];
+      edit(doc);
     });
     return { project };
   }
@@ -419,6 +420,26 @@ describe("worker and planner tools", () => {
     expect(ticketNamed("CSV-1")).toMatchObject({ state: "blocked", blocked_reason: "No API key. Needs: A key in the CI settings" });
     expect(isError(await call("loom_block", { reason: "again", needs: "x" }, workerId))).toBe(true);
     expect(isError(await call("loom_block", { reason: "x", needs: "y" }, "thr_plan"))).toBe(true);
+  });
+
+  it("loom_block is refused in a text-only round, whose findings Loom applies once the worker proposes the text, and works again after it", async () => {
+    harness = await setup((doc) => {
+      doc.merge = { strategy: "pr" };
+    });
+    const workerId = await startWorkerFor("CSV-1");
+    const ticket = ticketNamed("CSV-1");
+    host.store.event(ticket.project_id, ticket.id, "ticket.state", "loom", { from: "review", to: "working", round: 1, textOnly: true });
+    const refused = await call("loom_block", { reason: "Cannot edit PR text", needs: "Permissions" }, workerId);
+    expect(isError(refused)).toBe(true);
+    expect(text(refused)).toContain("loom_submit({ summary, pr: { title, body } })");
+    expect(text(refused)).toContain("Loom puts it on the pull request");
+    await settle();
+    expect(ticketNamed("CSV-1").state).toBe("working");
+    expect(host.store.thread(host.store.threadByThreadId(workerId)!.id)!.state).toBe("active");
+
+    host.store.event(ticket.project_id, ticket.id, "ticket.state", "loom", { from: "working", to: "queued" });
+    host.store.event(ticket.project_id, ticket.id, "ticket.state", "loom", { from: "queued", to: "working" });
+    expect(isError(await call("loom_block", { reason: "No API key", needs: "A key" }, workerId))).toBe(false);
   });
 
   it("loom_board and loom_ticket show the planner its board and a ticket's thread", async () => {
