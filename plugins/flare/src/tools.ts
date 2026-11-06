@@ -1,7 +1,7 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { flaresText } from "./format";
 import { KINDS } from "./kinds";
-import { DUPLICATE, SENT, TOOL_DESCRIPTION, TOOL_INSTRUCTIONS, notSaved } from "./notes";
+import { BODY_DESCRIPTION, DUPLICATE, SENT, TOOL_DESCRIPTION, TOOL_INSTRUCTIONS, notSaved } from "./notes";
 import { truthy, type FlareFields } from "./normalize";
 import type { FlareService, SendResult } from "./service";
 
@@ -14,7 +14,7 @@ const flareParameters = {
   type: "object",
   properties: {
     title: { type: "string", description: "Required: one line that stands on its own, about 80 characters." },
-    body: { type: "string", description: "Optional Markdown detail: evidence, numbers, paths. A few lines at most." },
+    body: { type: "string", description: BODY_DESCRIPTION },
     kind: { type: "string", description: `One of ${KINDS.join(", ")}; finding by default.` },
     notify: { type: "boolean", description: "Also push a notification to the user's devices. Blockers notify without it." },
   },

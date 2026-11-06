@@ -51,6 +51,23 @@ describe("the flare tool", () => {
     }
   });
 
+  it("asks for the evidence drawn, and says the final-message rule for blocks does not cover a flare", async () => {
+    const harness = await load();
+    const flare = harness.inspection.registrations.agentTools.find((tool) => tool.name === "flare");
+    const body = JSON.stringify((flare?.inputSchema as { properties: { body: unknown } }).properties.body);
+    expect(body).not.toContain("A few lines");
+    expect(body).toMatch(/mermaid diagram, a table, an image/);
+    expect(TOOL_INSTRUCTIONS).toContain("does not cover a flare's body");
+    expect(TOOL_INSTRUCTIONS).toContain('Load("$BB_THREAD_STORAGE/<path>")');
+  });
+
+  it("adds the drawing hint to the result of a flare that is all text", async () => {
+    const harness = await load();
+    const body = "Agents loaded 202 of 6,525 injected hits, about 3%, across 1,727 lookups in 1,496 sessions. Child threads got 815 lookups and loaded 37 hits, 32 of them their parent's own streams. Wake-ups and Loom retries trigger most of the rest.";
+    const result = text(await harness.behavior.callAgentTool("flare", { title: "Memory hits", body }, { threadId: "thr_a" }));
+    expect(result).toMatch(/^Flare sent\. Keep working; nothing will reply\. This flare is all text\. .*Metric row/);
+  });
+
   it("answers at once even while the push notification never finishes", async () => {
     const harness = await load({ callRpc: () => new Promise(() => undefined) });
     const result = await harness.behavior.callAgentTool("flare", { title: "Deploy blocked", kind: "blocker" }, { threadId: "thr_a", projectId: "p" });
@@ -154,6 +171,23 @@ describe("bb flare", () => {
     expect(listed.stdout).toMatch(/^1 flare, newest first:\n- just now · Progress: Tests pass \(fl_\w+\)\n    142 of 142\n$/);
     const json = JSON.parse((await harness.behavior.runCli(["list", "--json"], { threadId: "thr_a" })).stdout) as { flares: unknown[] };
     expect(json.flares).toHaveLength(1);
+  });
+
+  it("shows how to send a body with fenced blocks", async () => {
+    // The bb CLI's --<name>-stdin takes exactly one line, so a multi-line body goes through a file instead.
+    const harness = await load();
+    const help = await harness.behavior.runCli(["send", "--help"], { threadId: "thr_a" });
+    expect(help.stdout).toContain('--body "$(cat body.md)"');
+    expect(help.stdout).not.toContain("A few lines");
+  });
+
+  it("keeps a multi-line body with a fenced block whole", async () => {
+    const harness = await load();
+    const body = 'One sentence first.\n\n```ui\nCard("Run", [Metric("Passed", "105")])\n```';
+    const sent = await harness.behavior.runCli(["send", "Drawn", "--body", body, "--json"], { threadId: "thr_a" });
+    expect(JSON.parse(sent.stdout)).toMatchObject({ status: "sent", notes: [] });
+    const listed = JSON.parse((await harness.behavior.runCli(["list", "--json"], { threadId: "thr_a" })).stdout) as { flares: { body: string }[] };
+    expect(listed.flares[0]?.body).toBe(body);
   });
 
   it("names the flag to add when it runs outside a thread, and refuses an empty flare", async () => {

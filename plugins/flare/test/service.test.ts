@@ -207,6 +207,36 @@ describe("sending a flare", () => {
     expect(last).toMatchObject({ status: "sent", notes: [expect.stringContaining("did not notify anyone")] });
     expect(world.calls("plugins.callRpc").filter((call) => call.method === "notifications.send")).toHaveLength(20);
   });
+
+  it("hints once a turn that a body which is all text would read better drawn", () => {
+    const world = setup();
+    const numbers = "Agents loaded 202 of 6,525 injected hits, about 3%, across 1,727 lookups in 1,496 sessions. Child threads got 815 lookups and loaded 37 hits, 32 of them their parent's own. Wake-ups and Loom retries trigger most of the lookups nobody reads.";
+    const send = (title: string, body: string, kind?: string) =>
+      world.service.send({ threadId: "thr_a", projectId: null, fields: { title, body, kind }, source: "tool" });
+    const hinted = (result: ReturnType<typeof send>) => result.status === "sent" && result.notes.some((note) => note.startsWith("This flare is all text."));
+
+    world.service.onActive(active("thr_a"));
+    expect(hinted(send("Drawn already", `${numbers}\n\n\`\`\`ui\nCard("Hits", [Metric("Loaded", "202")])\n\`\`\``))).toBe(false);
+    expect(hinted(send("Blocked on access", numbers, "blocker"))).toBe(false);
+    expect(hinted(send("Memory hits", numbers))).toBe(true);
+    expect(hinted(send("Memory hits again", `${numbers} Same again.`))).toBe(false);
+
+    world.service.onIdle(active("thr_a"));
+    world.advance(1000);
+    world.service.onActive(active("thr_a"));
+    expect(hinted(send("Next turn", `${numbers} Next turn.`))).toBe(true);
+  });
+
+  it("hints a thread with no turn to count by again only after an hour without a text-only flare", () => {
+    const world = setup();
+    const body = "Three things changed in the stack:\n- First of three things that a table would show better than prose\n- Second of three things a table would show better than prose\n- Third of three things a table would show, the last one";
+    const send = (title: string) => world.service.send({ threadId: "thr_a", projectId: null, fields: { title, body }, source: "cli" });
+    expect(send("One")).toMatchObject({ notes: [expect.stringContaining("turn its 3 bullets into a Table")] });
+    world.advance(10 * 60_000);
+    expect(send("Two")).toMatchObject({ notes: [] });
+    world.advance(61 * 60_000);
+    expect(send("Three")).toMatchObject({ notes: [expect.stringContaining("This flare is all text.")] });
+  });
 });
 
 describe("rendering in companions", () => {

@@ -19,16 +19,29 @@ Send one flare per real event; one to five in a long turn is typical. Do not fla
 
 ## Writing one
 
+The user glances at a flare, so show the evidence instead of describing it.
+
 - The title is one line that stands on its own, about 80 characters. Longer titles are cut.
-- The body is optional Markdown with the evidence: paths, numbers, commands. It is cut at 60,000 characters.
-- The Flares tab shows the body the way bb shows your replies, so anything that renders in a reply renders there: tables, mermaid diagrams, images, and any block or directive an installed plugin taught you. That holds even where another instruction says tool input stays plain text. Name a thread-storage file as `$BB_THREAD_STORAGE/<path>` so a view can load it.
-- The banner and notifications show only the prose, so open the body with a sentence.
+- The body opens with one or two sentences, because the banner and notifications show only its prose. Then it shows the evidence as a block. It is cut at 60,000 characters.
+- The Flares tab renders the body as a reply of its own, so every block a reply can hold is drawn there: `ui` views, mermaid diagrams, Markdown tables, images, inline-vis pages and plugin directives. A rule that only the message ending your turn may hold a block, or that tool input stays plain text, does not cover a flare's body.
+- Pick the block the evidence calls for. The views below are genui's `ui` ones; without genui, use Markdown tables and mermaid.
+  - key numbers: a Metric row; a series: a Chart
+  - A versus B, before and after, or items with several attributes: a Table
+  - a flow, an architecture or the branches of a decision: a mermaid diagram
+  - PRs, commits or phases: Status, Steps or a Table with their state
+  - a file you saved (JSON, CSV, a log, a test report): `Load("$BB_THREAD_STORAGE/<path>")` into its view instead of retyping it
+  - screenshots: Image or Gallery of their paths
+  - a blocker: what fails and what the user can do; Steps when there are several
+- Prose alone is right only when there is nothing to see, such as a one-line status. Never write paragraph-long bullets with bold labels.
+- When a body is all text but holds numbers, a list or a saved file, "Flare sent" comes back with a hint, once a turn, naming the views that fit. Follow it in your next flare.
+- Name a thread-storage file as `$BB_THREAD_STORAGE/<path>` so a view can load it.
 - Kinds are `finding` (the default), `progress`, `decision`, `blocker` and `summary`.
 - Set `notify: true` (or `--notify`) only for something the user must see now. Blockers notify on their own, unless the user turned notifications off.
 
 ## Commands
 
     bb flare send "<title>" --body "<markdown>" --kind blocker   # to the thread the command runs in
+    bb flare send "<title>" --body "$(cat body.md)"               # a body with fenced blocks, written to a file first
     bb flare send "<title>" --thread <thread-id>                 # to another thread
     bb flare send "<title>" --notify --json                      # { status, flare, notes, reason }
     bb flare list                                                # newest first, with child threads' flares

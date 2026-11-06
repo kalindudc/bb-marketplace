@@ -32,7 +32,10 @@ export function registerCli(bb: BbPluginApi, flares: FlareService): void {
             "It returns at once and nothing replies, so keep working after it. Blockers, and flares sent with --notify, also push a notification when the user's settings allow.",
           positionals: [{ name: "title", description: "One line that stands on its own, about 80 characters", variadic: true }],
           options: {
-            body: { type: "string", description: "Markdown detail: evidence, numbers, paths. A few lines at most." },
+            body: {
+              type: "string",
+              description: 'Markdown drawn like a reply: a sentence or two, then the evidence as a block. For fenced blocks, write it to a file and pass --body "$(cat body.md)"',
+            },
             kind: { type: "enum", values: KINDS, default: "finding", description: "finding, progress, decision, blocker or summary" },
             notify: { type: "boolean", description: "Also push a notification to the user's devices" },
             thread,

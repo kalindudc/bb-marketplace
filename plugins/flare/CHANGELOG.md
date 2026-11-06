@@ -2,6 +2,20 @@
 
 Notable changes to Flare, newest first. Releases are tagged `flare/vX.Y.Z` in this repository.
 
+## 0.3.0 (2026-11-06)
+
+Agents draw what they found in a flare instead of describing it.
+
+### Added
+
+- When a body over 200 characters has no block, table or image but holds 6 or more numbers, 3 or more list items or a thread-storage file, "Flare sent" comes back with a hint naming the views that fit. It comes once a turn, or once an hour outside a turn, and never for a blocker.
+- The help for `bb flare send --body` and the skill show how to send a body with fenced blocks: write it to a file and pass `--body "$(cat body.md)"`.
+
+### Changed
+
+- The tool's body description, its instructions and the skill ask for one or two sentences and then the evidence as a block. They map key numbers to a Metric row, comparisons to a Table, flows to a mermaid diagram, PRs to Status or Steps, saved files to a view that loads them and screenshots to a Gallery, and they give one example. On November 5, none of the 42 flares sent during real work drew anything, even after the Flares tab could.
+- The instructions say that a rule keeping blocks to the message that ends a turn, such as genui's, does not cover a flare's body. The old description, "a few lines at most", is gone.
+
 ## 0.2.1 (2026-11-05)
 
 Fixes from the code review of the Shopify marketplace listing.

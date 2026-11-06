@@ -208,6 +208,14 @@ export class FlareStore {
     return row === undefined ? null : flare(row);
   }
 
+  /** The thread's other flares from the same run, or from no run when it has none, sent since `since`. */
+  turnmates(row: Pick<FlareRow, "id" | "threadId" | "runId">, since: number): FlareRow[] {
+    const rows = this.db
+      .prepare(`SELECT * FROM flares WHERE thread_id = @threadId AND run_id IS @runId AND id != @id AND created_at >= @since`)
+      .all({ threadId: row.threadId, runId: row.runId, id: row.id, since }) as FlareRecord[];
+    return rows.map(flare);
+  }
+
   countInRun(runId: string): number {
     return (this.db.prepare(`SELECT count(*) AS n FROM flares WHERE run_id = ?`).get(runId) as { n: number }).n;
   }

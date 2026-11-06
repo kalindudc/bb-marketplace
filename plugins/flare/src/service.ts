@@ -9,6 +9,7 @@ import { FORWARD_PREFIX, NUDGE_PREFIX, forwardText, nudgeText } from "./notes";
 import { PROVIDER_ID } from "./provider";
 import type { FlareSettings } from "./settings";
 import type { FlareRow, FlareSource, FlareStore, RunRow } from "./store";
+import { drawHint, drawable } from "./visual";
 
 export type Thread = PluginThreadEventPayloads["thread.active"]["thread"];
 
@@ -17,6 +18,8 @@ export const DUPLICATE_WINDOW_MS = 2 * 60_000;
 /** Past this many flares in one turn, flares are still kept but no longer notify or reach the parent. */
 export const LOUD_FLARES_PER_TURN = 20;
 export const MAX_NUDGES_PER_TURN = 3;
+/** A flare outside any turn gets the drawing hint again only after this long. */
+export const HINT_WINDOW_MS = 60 * 60_000;
 const PUSH_PLUGIN = "push-notifications";
 const PROMPT_MAX = 200;
 
@@ -58,6 +61,9 @@ export function dueForNudge(run: RunRow, lastFlareAt: number | null, settings: F
   if (run.isChild && !settings.nudgeChildThreads) return false;
   return now - quietSince(run, lastFlareAt) >= settings.nudgeMinutes * 60_000;
 }
+
+// A blocker is read for what to do next, so it is never asked to draw.
+const hintable = (row: Pick<FlareRow, "kind" | "body">) => (row.kind === "blocker" ? null : drawable(row.body));
 
 export const isFlareNote = (text: string): boolean => text.startsWith(FORWARD_PREFIX) || text.startsWith(NUDGE_PREFIX);
 
@@ -149,12 +155,22 @@ export class FlareService {
     try {
       const loud = row.runId === null || this.store.countInRun(row.runId) <= LOUD_FLARES_PER_TURN;
       if (!loud) notes.push("That is a lot of flares for one turn, so this one did not notify anyone. Send only what the user needs to see now.");
+      const hint = this.drawingHint(row);
+      if (hint !== null) notes.push(hint);
       this.invalidate([row.threadId]);
       this.defer(() => this.fanOut(row, loud));
     } catch (error) {
       this.bb.log.warn(`A flare for ${input.threadId} was saved, but its notifications were not started: ${message(error)}`);
     }
     return { status: "sent", flare: row, notes };
+  }
+
+  /** The hint for a body that is all text, unless an earlier flare of the same turn already earned it. */
+  private drawingHint(row: FlareRow): string | null {
+    const found = hintable(row);
+    if (found === null) return null;
+    const since = row.runId === null ? row.createdAt - HINT_WINDOW_MS : 0;
+    return this.store.turnmates(row, since).some((other) => hintable(other) !== null) ? null : drawHint(found);
   }
 
   private async fanOut(row: FlareRow, loud: boolean): Promise<void> {

@@ -2,7 +2,7 @@ Let an agent tell you what it found while it is still working, instead of only i
 
 ## What you get
 
-- Agents get a `flare` tool. They send a flare when they confirm something, make a decision you might redirect, hit a blocker or finish a phase of a long task. The tool's instructions tell them when, so asking "send a flare when you find the cause" in a prompt is enough.
+- Agents get a `flare` tool. They send a flare when they confirm something, make a decision you might redirect, hit a blocker or finish a phase of a long task. The tool's instructions tell them when, and to draw the evidence as a table, chart or diagram instead of describing it, so asking "send a flare when you find the cause" in a prompt is enough.
 - A flare is fire and forget. The tool writes one row and returns at once with "Flare sent. Keep working"; nothing replies, and the agent's turn never waits on it. When a flare cannot be sent, the agent gets a short note to send it again later, never an error.
 - The newest flare of the current turn shows in a banner above the message box: its kind, its title, how long ago, and how many more arrived. Click the title for the detail, open the Flares tab, or dismiss it until the next flare.
 - The **Flares** tab in the thread's side panel shows every flare the way bb shows a reply, so a chart, a page or a diagram any installed plugin draws appears there, with no setup. **Cards** switches to Flare's own list, grouped by turn, and **Copy all** copies the lot as Markdown.
