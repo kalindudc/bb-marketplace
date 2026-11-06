@@ -4,7 +4,7 @@
 // - The engine's backoffs by forge host are kept here for every forge operation, not only pull request reads: a rate
 //   limit, a network failure, or a server error that names when to try again backs off the host, an answer clears it,
 //   and while it lasts no forge call goes there; the step gets the wait as an unavailable answer and waits it out.
-// A pull request opened before the boundary learned its repo's forge host, as the first after a restart, is not held back.
+// A pull request opened in a checkout whose forge host the boundary has not seen since Loom started is not held back.
 import { ForgeContractError } from "./failures";
 import { forgeHostOf, nextBackoff, nextNetworkBackoff, type HostBackoffs } from "./forge-waits";
 import type { HostInput, HostMethod, HostOutput } from "./host-contract";
@@ -16,18 +16,19 @@ type Answer = { outcome: string; message?: string; transient?: "server" | "rate_
 
 /** The host port the engine calls, with forge calls passed through the forge boundary. */
 export function forgeBoundary(host: HostPort, gate: { backoffs: () => HostBackoffs; now: () => number }): HostPort {
-  // Each checkout's forge host, from the pull request URLs of calls made there, for the calls that carry no URL.
+  // Each checkout's forge host, by machine and path, from the calls made there, for the calls that carry no URL.
   const repoHosts = new Map<string, string>();
-  const hostOf = (method: HostMethod, input: Record<string, unknown>): string | null => {
-    const url = typeof input.url === "string" ? forgeHostOf(input.url) : null;
-    if (url !== null && typeof input.repo === "string") repoHosts.set(input.repo, url);
-    if (method === "prBatch" && typeof input.host === "string") return input.host.toLowerCase();
-    return url ?? (typeof input.repo === "string" ? (repoHosts.get(input.repo) ?? null) : null);
+  const checkout = (hostId: string, repo: string) => `${hostId}\u0000${repo}`;
+  const hostOf = (hostId: string, method: HostMethod, input: Record<string, unknown>): string | null => {
+    const named = method === "prBatch" && typeof input.host === "string" ? input.host.toLowerCase() : typeof input.url === "string" ? forgeHostOf(input.url) : null;
+    if (typeof input.repo !== "string") return named;
+    if (named !== null) repoHosts.set(checkout(hostId, input.repo), named);
+    return named ?? repoHosts.get(checkout(hostId, input.repo)) ?? null;
   };
   return {
     call: async <M extends HostMethod>(hostId: string, method: M, input: HostInput<M>): Promise<HostOutput<M>> => {
       if (!FORGE_METHODS.has(method)) return host.call(hostId, method, input);
-      const forge = hostOf(method, input as Record<string, unknown>);
+      const forge = hostOf(hostId, method, input as Record<string, unknown>);
       const now = gate.now();
       const held = forge === null ? undefined : gate.backoffs().get(forge);
       if (held !== undefined && held.until > now) {
@@ -46,7 +47,7 @@ export function forgeBoundary(host: HostPort, gate: { backoffs: () => HostBackof
       const opened = (answer as { url?: unknown }).url;
       if (method === "prCreate" && typeof repo === "string" && typeof opened === "string") {
         const learned = forgeHostOf(opened);
-        if (learned !== null) repoHosts.set(repo, learned);
+        if (learned !== null) repoHosts.set(checkout(hostId, repo), learned);
       }
       if (forge !== null) settle(gate.backoffs(), forge, answer as Answer, gate.now());
       return answer;

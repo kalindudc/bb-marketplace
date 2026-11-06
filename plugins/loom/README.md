@@ -225,9 +225,10 @@ machine, or the whole project). What Loom does follows from that:
   error that names when to try again, from any call to it (reading, opening,
   editing, moving or merging a pull request, or asking for reviews), no call
   goes to that host from any project until the wait ends, and each step that
-  needed one waits until then. A first pull request in a repo just after Loom
-  restarts is the exception, since Loom only learns a repo's forge host from
-  its pull requests. The project's machine has no such shared wait: when it
+  needed one waits until then. Loom learns each checkout's forge host, on each
+  machine, from the pull requests it reads or opens there, so the first pull
+  request opened in a checkout Loom has not read since it started is the
+  exception. The project's machine has no such shared wait: when it
   does not answer, each ticket's step waits on its own schedule.
 - Starting a worker or a reviewer has its own wait, described under
   [When a ticket gets stuck](#when-a-ticket-gets-stuck), on the same 1, 2, 5,
