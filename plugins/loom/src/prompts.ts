@@ -179,8 +179,10 @@ function otherReposSection(spec: Spec, repo: RepoSettings, checkouts: ReadonlyMa
   ];
 }
 
-const PROPOSE =
-  "Propose the pull request's title and description with loom_submit's pr = { title, body }, written as the pull request should read: the reviewers judge them with the work and may ask for changes to them as to the code. Loom adds its own sections after your description, such as the pull requests it depends on and the Rollout section.";
+/** How a worker writes a pull request's text, in every message that asks for it. */
+export const PR_SKILL_RULE =
+  "Read the loom-pr-description skill first and follow it: write for a reviewer who has never seen Loom, its tickets or your machine, so name other changes by their pull request link and title, never by a ticket key or ref, leave out Loom's vocabulary (planner, worker, round, brief, triage, the ticket) and anything about your sandbox, and say what ran and what CI covers.";
+const PROPOSE = `Propose the pull request's title and description with loom_submit's pr = { title, body }, written as the pull request should read: the reviewers judge them with the work and may ask for changes to them as to the code. ${PR_SKILL_RULE} Loom adds its own merge and deploy section after your description; do not write one.`;
 
 /** What a worker on the pr strategy is told about the pull request Loom opens and follows for its ticket. */
 function pullRequestSection(spec: Spec, repo: RepoSettings, signature: string): string[] {
@@ -667,7 +669,8 @@ const shownText = (title: string | null, body: string | null) => [`Title: ${titl
 function prTextReviewSection(spec: Spec, repo: RepoSettings, ticket: TicketRow): string[] {
   if (spec.merge.strategy !== "pr" || prSettings(spec).describe !== "worker") return [];
   const proposal = ticket.pr_proposal_json === null ? null : (JSON.parse(ticket.pr_proposal_json) as PrProposal);
-  const judge = "Judge this text as you judge the code, against the rubric and the ticket: request changes to it with a finding when it is wrong, unclear or leaves out what the rubric asks of a pull request. Loom adds its own sections after the description, such as the Rollout section, so do not ask for those.";
+  const judge =
+    "Judge this text as you judge the code, against the rubric and the ticket, and by the rules of the loom-pr-description skill: its reader is a reviewer who has never seen Loom. Request changes to it with a finding when it is wrong, unclear or leaves out what the rubric asks of a pull request, and request changes with a finding when it names a ticket key or ref instead of a pull request link, uses Loom's vocabulary or says how the change was produced (planner, worker, round, brief, triage, the ticket, the human, acceptance criterion numbers), explains the agent's machine or sandbox instead of what ran and what CI covers, or writes its own merge or deploy order section. Loom adds its own merge and deploy section after the description, so do not ask for that.";
   if (ticket.pushed_sha === null) {
     if (proposal === null) {
       return ["## The pull request as it will open", "The worker proposed no title or description; it writes them after approval, unreviewed. If the rubric asks something of the pull request's description, request changes so the worker proposes it with loom_submit's pr.", ""];
@@ -852,8 +855,8 @@ const prRules = (forge: ForgeSpec, signature: string) => [
   ...replyRules(forge, signature),
   `${canReply(forge) ? "Reply, for example, to explain a change, to ask a question, or to resolve a review thread you fixed with resolve: true. " : ""}Never push, merge, close, approve or edit the pull request yourself: Loom does that.`,
   canEdit(forge)
-    ? "When the feedback asks for a new title or description, pass pr = { title, body } to loom_submit with what it should read; the reviewers judge it, and Loom sets it on the pull request once they approve."
-    : "When the feedback asks for a new title or description, pass pr = { title, body } to loom_submit with what it should read; the reviewers judge it, and since this forge cannot change the pull request's text, Loom posts it on the ticket for the human to set.",
+    ? "When the feedback asks for a new title or description, pass pr = { title, body } to loom_submit with what it should read, written by the loom-pr-description skill; the reviewers judge it, and Loom sets it on the pull request once they approve."
+    : "When the feedback asks for a new title or description, pass pr = { title, body } to loom_submit with what it should read, written by the loom-pr-description skill; the reviewers judge it, and since this forge cannot change the pull request's text, Loom posts it on the ticket for the human to set.",
   "If nothing needs to change, call loom_submit with a summary that says why; Loom then pushes nothing and keeps following the pull request. A fix that changes only pr goes to review, and Loom pushes nothing for it.",
   "Otherwise the fix goes through the checks and a review, then you write its commit message and Loom pushes it as one more commit.",
 ];
@@ -863,7 +866,7 @@ const prRules = (forge: ForgeSpec, signature: string) => [
  * did not propose with loom_submit, or a fix round's commit message. `changes`: the fix round's proposal changes the text.
  */
 export function prAskText(a: { key: string; fix: boolean; round: number; url: string | null; limitMinutes: number; proposed?: { title: boolean; body: boolean }; changes?: boolean }): { summary: string; detail: string } {
-  const own = "Write it the way you normally do: follow your own instructions and skills for pull request descriptions and commit messages, if you have any.";
+  const own = `${PR_SKILL_RULE.replace("and follow it:", "and follow it for the title and description:")} Loom adds its own merge and deploy section after your description; do not write one. For the commit message, follow your own instructions, if you have any, with no ticket key in it.`;
   const after = `Change no files: Loom pushes the exact commit the reviewers approved. Do not commit, push or open a pull request yourself. If loom_pr does not come within ${a.limitMinutes} minutes, Loom uses its own template.`;
   const override = "Pass title or body as well only to change them again now; given, they win.";
   if (a.fix) {

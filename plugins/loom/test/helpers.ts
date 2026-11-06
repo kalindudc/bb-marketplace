@@ -763,7 +763,7 @@ export function sdkStubs(state: SdkState): FakeSdkOverrides {
  */
 export function makeHost(opts: { port?: BbPort; settings?: () => LoomSettings } = {}) {
   const state: SdkState = { sections: [], takenNames: new Set(), environmentId: "env_1", environmentHost: "host_env", primaryHostId: "host_primary" };
-  const { bb, harness } = createFakePluginHost({ pluginId: "loom", agentSkillIds: ["loom-plan", "loom"], sdk: sdkStubs(state) });
+  const { bb, harness } = createFakePluginHost({ pluginId: "loom", agentSkillIds: ["loom-plan", "loom", "loom-pr-description"], sdk: sdkStubs(state) });
   const db = bb.storage.database();
   bb.storage.migrate(db, MIGRATIONS);
   const store = new Store(db, Date.now);

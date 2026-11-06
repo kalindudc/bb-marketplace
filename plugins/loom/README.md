@@ -670,9 +670,16 @@ its own pull request.
   `loom_submit`'s `pr = { title, body }`, written as the pull request should
   read, and the reviewers judge that text with the work: they may request
   changes to it as to the code. A later `pr` replaces only the fields it gives.
+- Both follow the `loom-pr-description` skill, which Loom ships and gives every
+  worker and reviewer: a Summary with Why and What, Review guidance, Changed
+  files, Technical details and Notes for reviewers, readable in under five
+  minutes, and written for a reviewer who has never seen Loom. Other changes
+  are named by their pull request link and title, never by a ticket key; Loom's
+  vocabulary (planner, worker, round, brief, triage) and the agent's sandbox
+  stay out. Reviewers request changes to a text that breaks these rules.
 - Once the reviewers approve a ticket, its worker writes the rest of the pull
   request with `loom_pr`: the commit message, and the title and description if
-  it proposed none, the way its own instructions and skills say. A title or a
+  it proposed none, by the same skill. A title or a
   body it gives there wins over the proposed one. A worker that ends its turn
   twice without it, or takes more than 30 minutes, gets Loom's template
   instead for what it did not propose, and `merge.describe = "loom"` always

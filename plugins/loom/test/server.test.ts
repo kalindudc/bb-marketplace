@@ -14,7 +14,7 @@ async function load(deps?: Parameters<typeof createLoomPlugin>[0]) {
   const fakeHost = new FakeHost();
   const host = createFakePluginHost({
     pluginId: "loom",
-    agentSkillIds: ["loom-plan", "loom"],
+    agentSkillIds: ["loom-plan", "loom", "loom-pr-description"],
     experimental_callHostRpc: (call) => fakeHost.call(call.hostId, call.method as HostMethod, call.input as never),
     sdk: sdkStubs(state),
   });
@@ -40,7 +40,7 @@ async function loadEngine(over: { tickMs?: number } = {}) {
   const base = sdkStubs(state);
   const host = createFakePluginHost({
     pluginId: "loom",
-    agentSkillIds: ["loom-plan", "loom"],
+    agentSkillIds: ["loom-plan", "loom", "loom-pr-description"],
     experimental_callHostRpc: (call) => fakeHost.call(call.hostId, call.method as HostMethod, call.input as never),
     sdk: {
       ...base,

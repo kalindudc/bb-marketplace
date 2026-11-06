@@ -2,6 +2,16 @@
 
 Notable changes to Loom, newest first. Releases are tagged `loom/vX.Y.Z` in this repository; releases before this file existed are described in their commit messages.
 
+## Unreleased
+
+### Added
+
+- A `loom-pr-description` skill ships with Loom, and every worker and reviewer gets it. It says how to write a pull request's title and description for a human reviewer who has never seen Loom: a Summary with Why and What, Review guidance, Changed files, Technical details and Notes for reviewers, readable in under five minutes. Other changes are named by their pull request link and title, never by a ticket key or ref; Loom's vocabulary (planner, worker, round, brief, triage, "the ticket", "the human", acceptance criterion numbers) and the agent's sandbox stay out, and testing says what ran and what CI covers. Loom adds its own merge and deploy section, so the worker writes none.
+
+### Changed
+
+- Workers are told to read the skill first and follow it wherever Loom asks for a pull request's text: the brief's proposal through `loom_submit`, the `loom_pr` request, and a fix round's rules. Reviewers judge the text by it, and request changes when it names a ticket key or ref, uses Loom's vocabulary or says how the change was produced, explains the sandbox, or writes its own deploy section.
+
 ## 0.34.2 (2026-11-06)
 
 ### Fixed

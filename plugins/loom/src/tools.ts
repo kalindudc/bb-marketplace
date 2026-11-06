@@ -32,7 +32,7 @@ export const REVIEWER_TOOLS = ["loom_note", "loom_checkout", "loom_approve", "lo
 export const ORDINARY_TOOLS = ["loom_propose", "loom_discover"] as const;
 export const SPEC_REVIEWER_TOOLS = ["loom_spec_approve", "loom_spec_request_changes"] as const;
 export const FINAL_REVIEWER_TOOLS = ["loom_final_review"] as const;
-export const SKILLS = { plan: "loom-plan", usage: "loom" } as const;
+export const SKILLS = { plan: "loom-plan", usage: "loom", prText: "loom-pr-description" } as const;
 
 const MAX_OUTPUT = 12_000;
 
@@ -509,12 +509,12 @@ export function registerTools(bb: BbPluginApi, projects: Projects, engine: Engin
       } catch (error) {
         bb.log.warn(`agent configuration of ${context.thread.id}: ${errText(error)}`);
       }
-      return { tools: [...(remote ? MACHINE_WORKER_TOOLS : WORKER_TOOLS)], skills: [SKILLS.usage], instructions: `You are a Loom worker on ${ticket?.key ?? "a ticket"}; follow the brief in your first message.` };
+      return { tools: [...(remote ? MACHINE_WORKER_TOOLS : WORKER_TOOLS)], skills: [SKILLS.usage, SKILLS.prText], instructions: `You are a Loom worker on ${ticket?.key ?? "a ticket"}; follow the brief in your first message.` };
     }
     const ticket = row.ticket_id === null ? null : store.ticket(row.ticket_id);
     return {
       tools: [...REVIEWER_TOOLS],
-      skills: [SKILLS.usage],
+      skills: [SKILLS.usage, SKILLS.prText],
       instructions: `You are a Loom reviewer for ${ticket?.key ?? "a ticket"}, round ${row.review_round}; change nothing; follow the brief and call one verdict tool.`,
     };
   });
