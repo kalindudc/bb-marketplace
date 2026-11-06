@@ -129,6 +129,9 @@ describe("on a running project", () => {
     expect(project()).toMatchObject({ state: "running", system_reason: null });
     expect(ticketOf(h, "CSV-1").state).toBe("pr_open");
     expect(systemPosts("CSV-1")).toEqual([expect.stringContaining("could not reach github.com"), expect.stringContaining("Loom still cannot reach github.com")]);
+    expect(project().triage_pending).toBe(1);
+    expect(await maybeSendTriage(h.ctx, project())).toBe(true);
+    expect(h.bb.callsTo("send").filter(([id]) => id === "thr_plan").at(-1)![1]).toMatchObject({ summary: "[loom] Triage round 1 for csv: Loom cannot reach github.com." });
 
     expect(ticketOf(h, "CSV-2").state).toBe("pr_open");
     expect(h.host.callsTo("prBatch").filter((input) => input.host === "git.example.com").length).toBeGreaterThan(30);
