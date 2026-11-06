@@ -4,8 +4,6 @@
 // like checks, under the project's merge guard.
 import { workerOf, specOf, type EngineCtx } from "./ctx";
 import type { ProjectRow, Store, TicketRow } from "./db/store";
-import { plural } from "./format";
-import { Unavailable, mergeWaitExpired, mergeWaitOf, mergeWaitReason, mergeWaitText, mergeWaits, nextMergeWait, type Transient, waitableOf } from "./forge-waits";
 import { prTextReady } from "./pr-text";
 import { LoomError } from "./projects";
 import { repoSettings } from "./repos";
@@ -16,7 +14,8 @@ import { EMPTY_STACK, holdKey, holdOf, restackOf, stackOf, stacking, type Hold }
 import { LOOM_ACTOR } from "./states";
 import { writeSub } from "./sub-state";
 import { isWaking, releasedWorker } from "./release";
-import { pauseProject } from "./workers";
+import { endRetry, stepFailed } from "./retry";
+import { retryWaits } from "./retry-wait";
 import { moveTicket } from "./moves";
 import { endFinishedThreads, errText, holdOpens } from "./merge-common";
 import { loomWorktree, mergeIntoIntegration, provisioningRepos } from "./merge-integration";
@@ -104,7 +103,7 @@ async function begin(ctx: EngineCtx, projectId: number, spec: Spec): Promise<Tic
   const { store } = ctx;
   if (store.project(projectId)?.state !== "running") return null;
   const left = store.tickets(projectId, ["merging"])[0];
-  if (left !== undefined) return mergeWaits(left, ctx.now()) ? null : left;
+  if (left !== undefined) return retryWaits(left, "merge", ctx.now()) ? null : left;
   postHolds(ctx, projectId, spec);
   if (candidates(ctx, projectId, spec).length === 0) return null;
   const waiting = spec.merge.strategy === "integration" ? await provisioningRepos(ctx, projectId) : new Set<string | null>();
@@ -178,9 +177,9 @@ function holdText(spec: Spec, ticket: TicketRow, hold: Hold): string {
 }
 
 /**
- * Merges one ticket in `merging`. Safe to run again: a host step that already happened reports itself as done. A failure
- * worth waiting out keeps the ticket in merging until its wait ends (waitOutMerge); any other failure pauses the project
- * with the reason, instead of retrying every tick, and the ticket stays in merging too.
+ * Merges one ticket in `merging`. Safe to run again: a host step that already happened reports itself as done. A failed
+ * merge is settled by retry.ts: the ticket stays in merging and the queue waits until it runs again, or the merge is
+ * taken out and the ticket blocks, or the project pauses for a failure of the whole project.
  */
 export async function mergeTicket(ctx: EngineCtx, project: ProjectRow, spec: Spec, seen: TicketRow): Promise<void> {
   const ticket = ctx.store.ticket(seen.id);
@@ -190,47 +189,14 @@ export async function mergeTicket(ctx: EngineCtx, project: ProjectRow, spec: Spe
     if (spec.merge.strategy === "integration") await mergeIntoIntegration(recorded, project, spec, ticket);
     else await openPullRequest(recorded, project, spec, ticket);
   } catch (error) {
-    const failure = waitableOf(error);
-    if (failure !== null) return waitOutMerge(ctx, ticket, errText(error), failure);
-    endMergeWait(ctx, ticket.id);
-    pauseProject(ctx, project.id, error instanceof Unavailable ? error.message : `Merging ${ticket.key} stopped: ${errText(error)}`);
+    const current = ctx.store.ticket(ticket.id)!;
+    const what = `Merging ${ticket.key}`;
+    // The ticket moved on before the step after it failed; the next launch replays that step (endFinishedThreads).
+    if (current.state !== "merging") return ctx.bb.log("warn", `${what}: a step after the merge failed: ${errText(error)}`);
+    await stepFailed(ctx, current, "merge", error, { what, stop: () => stopMerge(ctx, ctx.store.ticket(ticket.id)!) });
     return;
   }
-  endMergeWait(ctx, ticket.id);
-}
-
-/**
- * A merge that failed in a way worth waiting out: the ticket stays in merging and the queue waits, 1, 2, 5, 10, then 15
- * minutes, and at least 15 after a rate limit. The first failure of a streak posts on the ticket; an hour of them pauses
- * the project and ends the wait, so a resume merges at once.
- */
-function waitOutMerge(ctx: EngineCtx, seen: TicketRow, message: string, failure: Transient): void {
-  const { store } = ctx;
-  const now = ctx.now();
-  const ticket = store.ticket(seen.id)!;
-  const what = `Merging ${ticket.key}`;
-  // The ticket moved on before the step after it failed; the next launch replays that step (endFinishedThreads).
-  if (ticket.state !== "merging") return ctx.bb.log("warn", `${what}: a step after the merge failed with what looks like a temporary error: ${message}`);
-  const previous = mergeWaitOf(ticket);
-  const wait = nextMergeWait(previous, { now, message, ...failure });
-  ctx.bb.log("warn", `${what} failed ${plural(wait.failures, "time")} in a row with what looks like a temporary error: ${message}`);
-  if (mergeWaitExpired(wait, now)) {
-    endMergeWait(ctx, ticket.id);
-    pauseProject(ctx, ticket.project_id, mergeWaitReason(what, wait, now));
-    return;
-  }
-  store.tx(() => {
-    store.updateTicket(ticket.id, writeSub("merge_wait_json", wait));
-    if (previous === null) loomPost(ctx.store, ticket, { kind: "system", body: mergeWaitText(what, wait, now), data: { mergeFailed: true, failures: wait.failures, until: wait.until } });
-  });
-  store.changed(ticket.project_id);
-}
-
-function endMergeWait(ctx: EngineCtx, ticketId: number): void {
-  const ticket = ctx.store.ticket(ticketId);
-  if (ticket === null || ticket.merge_wait_json === null) return;
-  ctx.store.updateTicket(ticketId, { merge_wait_json: null });
-  ctx.store.changed(ticket.project_id);
+  endRetry(ctx, ticket.id, "merge");
 }
 
 /**
@@ -253,6 +219,6 @@ export async function stopMerge(ctx: EngineCtx, ticket: TicketRow): Promise<void
       throw new LoomError("loom_unavailable", `Loom could not take ${ticket.key}'s merge back out of its integration branch: ${errText(error)}`, "Try again once the project's machine answers.");
     }
   }
-  store.updateTicket(ticket.id, { merge_wait_json: null, merge_step_json: null, merge_before: null });
+  store.updateTicket(ticket.id, { retry_json: null, merge_step_json: null, merge_before: null });
   store.changed(ticket.project_id);
 }

@@ -106,6 +106,7 @@ export interface TicketRow {
   /** The ticket's merge patch over its repo's environment inputs, from its spec's `environment.inputs`; null for none. */
   environment_json: string | null;
   /** PollWait: the pull request's reads failed with GitHub server errors in a row, so the next one waits longer; null once one succeeds. */
+  /** Unused since migration 59 moved the waits it held into retry_json. */
   pr_poll_json: string | null;
   /** The keys of the tickets whose pull requests merge before this one's; unlike deps_json, they hold neither its start nor its stacking. */
   merge_after_json: string;
@@ -118,7 +119,7 @@ export interface TicketRow {
   /** 1 while the human holds the ticket's pull request as a draft (`keep_draft`), 0 otherwise. */
   keep_draft: number;
   /** RetryWait: the merge failed in a way worth waiting out, so the ticket stays in merging and the queue waits until it runs again; null otherwise. */
-  merge_wait_json: string | null;
+  retry_json: string | null;
   /** MergeStep: a merge Loom put in the worker's worktree whose checks have not passed yet, which the next run of the merge finishes instead of merging again; null otherwise. */
   merge_step_json: string | null;
   /** PrProposal: the pull request's title and description as the worker proposed them with loom_submit, for the reviewers to judge; null for none. */

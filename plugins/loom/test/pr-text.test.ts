@@ -737,12 +737,12 @@ describe("after_push once per push", () => {
     expect(runs()).toEqual([expect.objectContaining({ sha: "sq2", pushed: true, moved: false })]);
   });
 
-  it("runs for the push on the base it has when gh cannot move the pull request and the project pauses", async () => {
+  it("runs for the push on the base it has when gh refuses to move the pull request and the ticket blocks", async () => {
     await pushAndMove();
     h.host.scripted.prRetarget = [{ outcome: "unavailable", message: "gh pr edit failed: HTTP 422: base branch is not valid" }];
     await queue();
-    expect(h.store.projectBySlug("csv")!.state).toBe("paused");
-    expect(ticket()).toMatchObject({ state: "merging", pr_base: ELSEWHERE });
+    expect(h.store.projectBySlug("csv")!.state).toBe("running");
+    expect(ticket()).toMatchObject({ state: "blocked", pr_base: ELSEWHERE, blocked_reason: "Merging CSV-1 failed, and trying again would not help: Moving CSV-1's pull request to main stopped: gh pr edit failed: HTTP 422: base branch is not valid." });
     expect(hooks()).toEqual([expect.objectContaining({ env: expect.objectContaining({ LOOM_BASE: ELSEWHERE }) })]);
     expect(runs()).toEqual([expect.objectContaining({ base: ELSEWHERE, pushed: true, moved: false })]);
   });

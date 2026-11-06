@@ -112,13 +112,13 @@ describe("forgeCheck", () => {
     h.host.scripted.prFeedback = [{ outcome: "unavailable", message: "The forge's feedback command failed (exit 1): HTTP 503", transient: "server" }];
     const busy = await check(pull);
     expect(busy).toMatchObject({ read: null, failure: { message: "The forge's feedback command failed (exit 1): HTTP 503", transient: "server", issues: [] } });
-    expect(formatForgeCheck(busy)).toContain("A poll waits this out as a server error or timeout");
+    expect(formatForgeCheck(busy)).toContain("A poll waits this out on the ticket, and blocks the ticket only if its reads keep failing.");
 
     h.host.scripted.prFeedback = [new PluginRpcCallError({ code: "invalid_output", message: "rpc output validation failed", issues: [{ path: ["checks", 0, "state"], message: 'Invalid option: expected one of "pending"|"passed"|"failed"|"neutral"' }] })];
     const refused = await check(pull);
     expect(refused.failure).toMatchObject({ transient: null, issues: [{ path: "checks[0].state", message: 'Invalid option: expected one of "pending"|"passed"|"failed"|"neutral"' }] });
     const text = formatForgeCheck(refused);
-    expect(text).toContain("A poll pauses the project for a failure like this one.");
+    expect(text).toContain("A poll pauses the project for a failure like this one, until someone fixes it.");
     expect(text).toContain('The host contract refused these fields:\n  checks[0].state: Invalid option: expected one of "pending"|"passed"|"failed"|"neutral"');
   });
 

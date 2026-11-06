@@ -206,7 +206,7 @@ describe("spawnWorker", () => {
     }
     const wait = waitOf(ticketOf(h, "CSV-1"))!;
     expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "queued", failures: 0, attempt: 1 });
-    expect(wait).toMatchObject({ kind: "unavailable", tries: 7, counted: false, expired: false, since: h.clock.t - [1, 2, 4, 8, 15, 15].reduce((a, b) => a + b, 0) * 60_000 });
+    expect(wait).toMatchObject({ kind: "unavailable", tries: 7, counted: false, expired: false, since: h.clock.t - [1, 2, 5, 10, 15, 15].reduce((a, b) => a + b, 0) * 60_000 });
     expect(wait.until - h.clock.t).toBe(15 * 60_000);
     expect(h.store.posts(ticketOf(h, "CSV-1").id).filter((post) => post.kind === "system").map((post) => post.body)).toEqual([
       "Could not start a worker: HTTP 409: No room on this machine. Loom tries again in 1m; waiting for its provider counts no attempt, and the ticket blocks if it stays unavailable for 1h.",

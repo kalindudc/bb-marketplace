@@ -41,7 +41,7 @@ export async function endFinishedThreads(ctx: EngineCtx, projectId: number): Pro
 /** A host's unavailable answer as an Unavailable, keeping whether it is worth waiting out; `message` replaces its own. */
 export const unavailableOf = (answer: { message: string } & Partial<Transient>, message = answer.message) => new Unavailable(message, transientOf(answer));
 
-// A repo without a checkout pauses the project with repoCheckout's message, which gives the clone command.
+// A repo without a checkout fails the step with repoCheckout's message, which gives the clone command, and the ticket waits (retry.ts).
 export async function checkoutIn(ctx: EngineCtx, project: ProjectRow, spec: Spec, name: string | null): Promise<RepoCheckout> {
   try {
     return await repoCheckout(ctx, project, spec, name);

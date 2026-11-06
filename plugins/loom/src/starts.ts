@@ -1,10 +1,12 @@
-// Starting an agent thread: what a failed start means, and how long Loom waits before it tries again. A start that bb
-// or the environment provider says cannot happen now waits and counts nothing; any other failed start also waits, and
-// counts as a failed attempt only once it has failed START_GRACE times in a row. An unavailable provider blocks the
-// ticket once it has been unavailable for UNAVAILABLE_LIMIT_MS.
+// Starting an agent thread: what a failed start means, and how long Loom waits before it tries again, on the same 1, 2,
+// 5, 10, then 15 minute steps as every retry (retry-wait.ts). A start that bb or the environment provider says cannot
+// happen now waits and counts nothing; any other failed start also waits, and counts as a failed attempt only once it
+// has failed START_GRACE times in a row. An unavailable provider blocks that ticket alone once it has been unavailable
+// for UNAVAILABLE_LIMIT_MS.
 import type { TicketRow } from "./db/store";
 import { formatDuration } from "./format";
 import { SpawnRefusedError, SpawnUnavailableError } from "./ports";
+import { retryDelayMs } from "./retry-wait";
 import { readSub, type StartWait } from "./sub-state";
 
 /**
@@ -35,14 +37,6 @@ export const provisioningFailure = (failure: { message: string; detail?: string 
 export const START_GRACE = 3;
 /** How long a ticket waits for an environment provider that says it is unavailable before it blocks, so triage hears of it. */
 export const UNAVAILABLE_LIMIT_MS = 60 * 60_000;
-const FIRST_RETRY_MS = 60_000;
-const LONGEST_RETRY_MS = 15 * 60_000;
-
-/** One minute after the first failed start, doubling to at most 15 minutes. */
-export function retryDelayMs(tries: number): number {
-  return Math.min(LONGEST_RETRY_MS, FIRST_RETRY_MS * 2 ** Math.max(0, tries - 1));
-}
-
 /** A ticket waiting to start its worker, or one of its reviewers, again; kept on the ticket until a thread starts. */
 /** Why a wait on an unavailable provider is over: for how long it was unavailable, and its message. */
 export function unavailableReason(wait: StartWait): string {

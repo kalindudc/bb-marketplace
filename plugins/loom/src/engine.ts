@@ -30,8 +30,9 @@ import { readBehind } from "./fresh";
 import { advanceWakes, releaseIdleWorkers, wakeForRestacks } from "./release";
 import type { Spec } from "./spec";
 import { cancelTicket, maybeSendTriage, onPlannerIdle } from "./triage";
-import { blockTicket, blockedAtStart, endThread, failSpawn, onThreadGone as endGoneThread, onTurnFailed as handleTurnFailed, onWorkerIdle, pauseProject, resumeEnding, spawnWorker, startedFine, type TurnFailure } from "./workers";
+import { blockTicket, blockedAtStart, endThread, failSpawn, onThreadGone as endGoneThread, onTurnFailed as handleTurnFailed, onWorkerIdle, resumeEnding, spawnWorker, startedFine, type TurnFailure } from "./workers";
 import { requeueTicket } from "./requeue";
+import { projectFailed } from "./retry";
 import { DEFAULT_BOT_AUTHORS, globsIn, specOf, type EngineCtx } from "./ctx";
 import { warnSubStateWith } from "./sub-state";
 
@@ -170,7 +171,7 @@ export class Engine {
     const tokens = store.threads({ projectId }).reduce((sum, row) => sum + (row.tokens ?? 0), 0);
     const reason = budgetReason(spec, tokens, now());
     if (reason !== null) {
-      pauseProject(this.ctx, projectId, reason);
+      projectFailed(this.ctx, projectId, { reason });
     } else {
       const timeoutMs = spec.agents.ticket_timeout_minutes * 60_000;
       for (const row of store.threads({ projectId, role: "worker", states: ["active"] })) {

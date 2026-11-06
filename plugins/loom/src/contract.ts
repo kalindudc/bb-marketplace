@@ -68,8 +68,8 @@ export interface BoardCard {
   startWait: StartWaitView | null;
   /** The reviewer whose spawn answer bb lost and whose spawn token bb has not answered for yet; null otherwise. */
   reviewerLookup: ReviewerLookupView | null;
-  /** A ticket in merging whose merge failed in a way worth waiting out, and waits to run again; null otherwise. */
-  mergeWait: MergeWaitView | null;
+  /** A ticket whose merge, diff read for review or pull request read failed, and waits to run again; null otherwise. */
+  retry: RetryView | null;
   /** Work went back to the ticket's worker (a fix round, a review's changes, a merge that did not land), and it waits for a free worker slot. */
   waitsForSlot: boolean;
   /** An open pull request's failing and pending CI checks, as Loom last read them, on a repo that relies on CI; null otherwise. */
@@ -105,8 +105,10 @@ export interface ReviewerLookupView {
   reason: string;
 }
 
-export interface MergeWaitView {
-  /** Failed merges in a row, the first at `since`. */
+export interface RetryView {
+  /** The step that waits: the merge, the read of the diff for review, or a read of the pull request. */
+  step: "merge" | "diff" | "read";
+  /** Failures in a row, the first at `since`. */
   failures: number;
   since: number;
   /** When Loom tries again. */
@@ -267,7 +269,7 @@ export interface TicketDetail {
   blockedReason: string | null;
   startWait: StartWaitView | null;
   reviewerLookup: ReviewerLookupView | null;
-  mergeWait: MergeWaitView | null;
+  retry: RetryView | null;
   branch: string | null;
   prUrl: string | null;
   /** Null on the integration strategy. */

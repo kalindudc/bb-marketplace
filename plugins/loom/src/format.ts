@@ -60,11 +60,13 @@ export const endLabel = (reason: string | null) => (reason === null ? "ended" : 
 /** The time of day where the page or the server runs, such as "14:05". */
 export const clockTime = (at: number): string => new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
-/** "Loom tries the merge again at 14:05 after a temporary failure: <reason>." for a ticket whose merge waits; with `now`, "now" once the wait is over. */
-export function mergeRetryText(wait: { failures: number; until: number; message: string }, now?: number): string {
+const RETRIED = { merge: "tries the merge again", diff: "reads the diff for review again", read: "reads the pull request again" } as const;
+
+/** "Loom tries the merge again at 14:05 after a failure: <reason>." for a ticket whose step waits; with `now`, "now" once the wait is over. */
+export function retryText(wait: { step: keyof typeof RETRIED; failures: number; until: number; message: string }, now?: number): string {
   const when = now !== undefined && wait.until <= now ? "now" : `at ${clockTime(wait.until)}`;
-  const after = wait.failures > 1 ? `${wait.failures} temporary failures in a row` : "a temporary failure";
-  return `Loom tries the merge again ${when} after ${after}: ${wait.message.trim().replace(/[.:]+$/u, "")}.`;
+  const after = wait.failures > 1 ? `${wait.failures} failures in a row` : "a failure";
+  return `Loom ${RETRIED[wait.step]} ${when} after ${after}: ${wait.message.trim().replace(/[.:]+$/u, "")}.`;
 }
 
 /** "Its worker could not start (no free slot); Loom tries again in 4m." for a ticket that waits after a failed start. */

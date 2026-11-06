@@ -18,7 +18,7 @@ async function blockClosed(ctx: EngineCtx, ticket: TicketRow): Promise<void> {
 }
 
 /** What Loom lets go of with a closed stacked pull request: the pull request, and what it read of it. The branch and the commit Loom pushed there stay, for the next one. */
-const reopenReset = { pr_url: null, pr_base: null, pr_meta_json: null, pr_status_json: null, pr_seen_json: "[]", pr_ask_json: null, pr_poll_json: null, handback_json: null } as const;
+const reopenReset = { pr_url: null, pr_base: null, pr_meta_json: null, pr_status_json: null, pr_seen_json: "[]", pr_ask_json: null, retry_json: null, handback_json: null } as const;
 
 /**
  * The PrApplied a replacement pull request opens with: the text the old one was to end up with (targetText), the approved

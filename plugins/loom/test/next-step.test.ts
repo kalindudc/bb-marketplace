@@ -215,11 +215,11 @@ describe("nextStepOf", () => {
 
   it("says when a merge waits after a temporary failure and when Loom tries it again, without asking anything of the human", () => {
     const until = Date.UTC(2026, 9, 27, 14, 5);
-    const board = [card({ key: "CSV-2", state: "merging", ready: false, mergeWait: { failures: 1, since: until - 60_000, until, message: "host plugin call 1f46 exceeded its deadline" } })];
+    const board = [card({ key: "CSV-2", state: "merging", ready: false, retry: { step: "merge", failures: 1, since: until - 60_000, until, message: "host plugin call 1f46 exceeded its deadline" } })];
     const step = nextStepOf(input({ state: "running" }, board))!;
     expect(step).toMatchObject({ tone: "normal", title: "Running.", action: null });
     expect(step.text).toBe(
-      `No worker is running now; tickets in checks, review or the merge queue move by themselves. CSV-2's merge waits: Loom tries the merge again at ${clockTime(until)} after a temporary failure: host plugin call 1f46 exceeded its deadline. Nothing needs you now; this bar turns yellow when something does.`,
+      `No worker is running now; tickets in checks, review or the merge queue move by themselves. CSV-2 waits: Loom tries the merge again at ${clockTime(until)} after a failure: host plugin call 1f46 exceeded its deadline. Nothing needs you now; this bar turns yellow when something does.`,
     );
   });
 

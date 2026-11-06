@@ -66,18 +66,6 @@ export function ticketMoveFor(reason: EndReason, ticket: TicketRow, spec: Spec):
   }
 }
 
-/** Pauses a running project with a reason the human reads, and flags it so the planner hears why. */
-export function pauseProject(ctx: EngineCtx, projectId: number, reason: string): void {
-  const { store } = ctx;
-  const project = store.project(projectId);
-  if (project?.state !== "running") return;
-  store.tx(() => {
-    store.setProjectState(projectId, "paused", LOOM_ACTOR, reason);
-    store.updateProject(projectId, { triage_pending: 1 });
-  });
-  store.changed(project.id);
-}
-
 /** Puts a ticket back in working and restarts its worker's timeout clock and idle count. Paused time and time in checks or review never count. */
 export function toWorking(ctx: EngineCtx, ticket: TicketRow, row: ThreadRow | null, data: object = {}): void {
   ctx.store.tx(() => {

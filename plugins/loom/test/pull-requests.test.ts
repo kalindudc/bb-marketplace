@@ -196,11 +196,11 @@ describe("following the pull request", () => {
     expect(h.host.callsTo("prFeedback")).toEqual([]);
     expect(project().state).toBe("running");
     expect(ticket()).toMatchObject({ state: "pr_open", pr_rounds: 0, pr_status_json: null });
-    expect(JSON.parse(ticket().pr_poll_json!)).toMatchObject({ failures: 1 });
+    expect(JSON.parse(ticket().retry_json!)).toMatchObject({ step: "read", failures: 1 });
 
     await poll();
     expect(h.host.callsTo("prBatch").filter((call) => call.feedback)).toHaveLength(2);
-    expect(ticket()).toMatchObject({ state: "working", pr_rounds: 1, pr_poll_json: null });
+    expect(ticket()).toMatchObject({ state: "working", pr_rounds: 1, retry_json: null });
   });
 
   it("waits out a feedback read that could not reach GitHub for the whole host, and starts the fix round once a read succeeds", async () => {
@@ -209,7 +209,7 @@ describe("following the pull request", () => {
     h.host.scripted.prBatch = [{ outcome: "unavailable", message: "gh api graphql failed: error connecting to api.github.com\ncheck your internet connection or https://githubstatus.com", transient: "network" }];
     await poll();
     expect(project().state).toBe("running");
-    expect(ticket()).toMatchObject({ state: "pr_open", pr_rounds: 0, pr_status_json: null, pr_poll_json: null });
+    expect(ticket()).toMatchObject({ state: "pr_open", pr_rounds: 0, pr_status_json: null, retry_json: null });
     expect(h.ctx.forgeBackoffs.get("github.com")).toMatchObject({ delayMs: 5 * 60_000, network: { failures: 1 } });
     expect(h.host.callsTo("prFeedback")).toEqual([]);
 

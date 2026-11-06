@@ -7,8 +7,9 @@ import { repoCheckout, ticketRepo } from "./checkouts";
 import type { ProjectRow, ReviewRow, Store, ThreadRow, TicketRow } from "./db/store";
 import { spawnEnvironment, threadBranch, ticketInputsOf, usesNewMachine } from "./environments";
 import { retriesOf } from "./backoff";
-import { writeSub, type RetryWait, type StartWait } from "./sub-state";
-import { hostCallTransient, mergeWaitExpired, mergeWaitReason, mergeWaitText, nextMergeWait } from "./forge-waits";
+import { writeSub, type StartWait } from "./sub-state";
+import { endRetry, stepFailed } from "./retry";
+import { retryOf } from "./retry-wait";
 import { plural } from "./format";
 import { changesRequestedText, findingsList, reviewerBrief, reviewerNudgeText, textChangesText, textReviewBrief, unresolvedReviewerText, withRestoredNote } from "./prompts";
 import { loomPost } from "./posts";
@@ -23,7 +24,7 @@ import { deliverHandBacks, handBack } from "./slots";
 import type { Spec } from "./spec";
 import { LOOM_ACTOR } from "./states";
 import { carryTo, headCameHome, homeBranch, workBaseOf, worktreeBaseOf } from "./transport";
-import { endLiveRows, endThread, freshBase, keptWorker, machineMoved, otherCheckouts, pauseProject, resolveEnvironment, resumeEnding, retryRateLimited, type EndReason, type TurnFailure } from "./workers";
+import { endLiveRows, endThread, freshBase, keptWorker, machineMoved, otherCheckouts, resolveEnvironment, resumeEnding, retryRateLimited, type EndReason, type TurnFailure } from "./workers";
 import { moveTicket, patchOf, tryMoveTicket, type TicketMove } from "./moves";
 
 export interface Finding {
@@ -311,46 +312,23 @@ async function startReviewers(ctx: EngineCtx, project: ProjectRow, spec: Spec, t
   return started;
 }
 
-// The waits of diff reads whose host call got no answer, by ticket and head. In memory: a restart reads again at once.
-const diffWaits = new WeakMap<Store, Map<number, { head: string; wait: RetryWait }>>();
-const diffWaitsOf = (store: Store) => diffWaits.get(store) ?? diffWaits.set(store, new Map()).get(store)!;
-
 /**
- * The diff the reviewers get. A read whose host call got no answer waits and tries again on a merge's steps, posting
- * once, and pauses the project only after an hour of them; any other failure pauses it with the reason at once, instead
- * of retrying every tick.
+ * The diff the reviewers get. A read that failed is settled by retry.ts: it waits on the ticket for that head and tries
+ * again on a merge's steps, blocks the ticket, or pauses the project for a failure of the whole project. Null while
+ * it waits or after it failed.
  */
 async function readDiff(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket: TicketRow): Promise<Diff | null> {
-  const waits = diffWaitsOf(ctx.store);
-  const known = waits.get(ticket.id);
-  const previous = known?.head === ticket.head_sha ? known.wait : null;
-  if (previous !== null && previous.until > ctx.now()) return null;
+  const head = ticket.head_sha!;
+  const wait = retryOf(ticket, "diff");
+  if (wait !== null && wait.head === head && wait.until > ctx.now()) return null;
   try {
     const checkout = await repoCheckout(ctx, project, spec, ticket.repo);
-    const diff = await ctx.host.call(checkout.hostId, "diff", { repo: checkout.path, base: await workBaseOf(ctx, project, spec, ticket, ticket.head_sha!), head: ticket.head_sha!, maxBytes: PATCH_BYTES });
-    waits.delete(ticket.id);
+    const diff = await ctx.host.call(checkout.hostId, "diff", { repo: checkout.path, base: await workBaseOf(ctx, project, spec, ticket, head), head, maxBytes: PATCH_BYTES });
+    endRetry(ctx, ticket.id, "diff");
     return diff;
   } catch (error) {
-    const failure = hostCallTransient(error);
-    if (failure === null) {
-      waits.delete(ticket.id);
-      pauseProject(ctx, project.id, `Could not read the diff of ${ticket.key} for review: ${errText(error)}`);
-      return null;
-    }
-    const now = ctx.now();
-    const what = `Reading the diff of ${ticket.key} for review`;
-    const wait = nextMergeWait(previous, { now, message: errText(error), ...failure });
-    ctx.bb.log("warn", `${what} failed ${plural(wait.failures, "time")} in a row with what looks like a temporary error: ${errText(error)}`);
-    if (mergeWaitExpired(wait, now)) {
-      waits.delete(ticket.id);
-      pauseProject(ctx, project.id, mergeWaitReason(what, wait, now));
-      return null;
-    }
-    waits.set(ticket.id, { head: ticket.head_sha!, wait });
-    if (previous === null) {
-      ctx.store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "system", body: mergeWaitText(what, wait, now) });
-      ctx.store.changed(ticket.project_id);
-    }
+    const current = ctx.store.ticket(ticket.id);
+    if (current?.state === "review" && current.head_sha === head) await stepFailed(ctx, current, "diff", error, { what: `Reading the diff of ${ticket.key} for review`, head });
     return null;
   }
 }

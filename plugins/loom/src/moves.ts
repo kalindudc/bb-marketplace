@@ -14,10 +14,9 @@ const RESET = {
   pr_text_json: null,
   handback_json: null,
   start_wait_json: null,
-  merge_wait_json: null,
+  retry_json: null,
   merge_step_json: null,
   merge_before: null,
-  pr_poll_json: null,
   pr_checked_at: null,
   pr_branch: null,
   pushed_sha: null,
@@ -34,11 +33,11 @@ type Column = keyof typeof RESET;
 /** The ticket lets go of its worker thread and environment. */
 const RELEASED = ["worker_thread_id", "environment_id"] as const satisfies readonly Column[];
 /** What a merge Loom started keeps until it finishes. */
-const MERGE = ["merge_step_json", "merge_wait_json", "merge_before"] as const satisfies readonly Column[];
+const MERGE = ["merge_step_json", "retry_json", "merge_before"] as const satisfies readonly Column[];
 /** A closed pull request: a requeue opens a new one, one commit on a new branch, with fresh rounds. */
 const CLOSED_PR = ["pr_branch", "pushed_sha", "pushed_at", "pr_ask_json", "pr_text_json", "pr_seen_json", "pr_rounds", "pr_status_json", "handback_json", "pr_base", "pr_applied_json"] as const satisfies readonly Column[];
 /** A human sends a blocked ticket on: its counts start again and nothing a worker was doing is waiting. */
-const SENT_ON = ["failures", "check_failures", "blocked_reason", ...RELEASED, "pr_ask_json", "handback_json", "start_wait_json"] as const satisfies readonly Column[];
+const SENT_ON = ["failures", "check_failures", "blocked_reason", ...RELEASED, "pr_ask_json", "handback_json", "start_wait_json", "retry_json"] as const satisfies readonly Column[];
 
 const ANY = "any";
 
@@ -67,7 +66,7 @@ export const MOVES = {
   /** A fix round changed nothing, so there is nothing to check, review or push. */
   unchanged_fix: { from: ["checking"], to: "pr_open", resets: [] },
   /** Work goes back to the ticket's worker: failed checks, a review's changes, a merge that did not land, a fix round. */
-  to_worker: { from: ["checking", "review", "merging", "pr_open"], to: "working", resets: [] },
+  to_worker: { from: ["checking", "review", "merging", "pr_open"], to: "working", resets: ["retry_json"] },
   /** The worker is gone, so a new one takes the ticket from its branch. */
   worker_gone: { from: ["working", "checking", "review", "merging", "pr_open"], to: "queued", resets: RELEASED },
   /** A released worker cannot come back, so a new one takes the ticket, and nothing waits for the old one. */
@@ -99,11 +98,11 @@ export const MOVES = {
   /** A restack or refresh needs the worker's worktree and bb shows none: the ticket waits outside the queue. */
   restack_left: { from: ["merging"], to: "pr_open", resets: [...MERGE, "environment_id"] },
   /** The human or the planner requeues a blocked ticket. */
-  requeue: { from: ["blocked"], to: "queued", resets: [...SENT_ON, "pr_text_json", "merge_wait_json"] },
+  requeue: { from: ["blocked"], to: "queued", resets: [...SENT_ON, "pr_text_json"] },
   /** The human sends a blocked ticket back to review as it is. */
   review_again: { from: ["blocked"], to: "review", resets: SENT_ON },
   /** The human sends a blocked ticket back to its open pull request as it is; the next read starts afresh. */
-  pr_again: { from: ["blocked"], to: "pr_open", resets: [...SENT_ON, "pr_text_json", "pr_poll_json", "pr_checked_at"] },
+  pr_again: { from: ["blocked"], to: "pr_open", resets: [...SENT_ON, "pr_text_json", "pr_checked_at"] },
   /** A ticket blocked at review goes back to it for the same head. */
   back_to_review: { from: ["blocked"], to: "review", resets: ["blocked_reason"] },
 } as const satisfies Record<string, MoveRule>;

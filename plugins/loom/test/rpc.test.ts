@@ -271,7 +271,7 @@ describe("reads", () => {
     host.store.updateTicket(ticketId("CSV-1"), { state: "pr_open", pr_url: "https://github.com/acme/shop/pull/1", pr_checked_at: checked });
     const nextCheck = async () => (await call<TicketDetail>("ticket", { key: "CSV-1" })).pr?.nextCheckAt;
     expect(await nextCheck()).toBe(checked + 5 * 60_000);
-    host.store.updateTicket(ticketId("CSV-1"), { pr_poll_json: JSON.stringify({ failures: 3, since: checked - 15 * 60_000, message: "gh api graphql failed: gh: HTTP 502" }) });
+    host.store.updateTicket(ticketId("CSV-1"), { retry_json: JSON.stringify({ step: "read", failures: 3, since: checked - 15 * 60_000, until: checked + 20 * 60_000, message: "gh api graphql failed: gh: HTTP 502" }) });
     expect(await nextCheck()).toBe(checked + 20 * 60_000);
     const until = Date.now() + 45 * 60_000;
     host.engine.ctx.forgeBackoffs.set("github.com", { until, delayMs: 15 * 60_000, message: "gh api graphql failed: gh: API rate limit exceeded" });

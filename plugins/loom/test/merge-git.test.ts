@@ -147,7 +147,7 @@ describe("the integration merge against a real repository", () => {
     expect(JSON.parse(lastPost("merge").data_json).sha).toBe(sh(repo, "rev-parse", "loom/csv"));
   });
 
-  it("rolls back to the point persisted before the merge when a rerun finds it made and after_merge then fails", async () => {
+  it("rolls back to the point persisted before the merge when the rerun after a wait finds it made and after_merge then fails", async () => {
     await setup((doc) => (doc.checks.after_merge = [`test ! -f ${scratch}/fail-${counter}`]));
     const before = sh(repo, "rev-parse", "loom/csv");
     failExecOnce = true;
@@ -155,8 +155,10 @@ describe("the integration merge against a real repository", () => {
     expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "merging", merge_before: before });
     expect(sh(repo, "rev-parse", "loom/csv^1")).toBe(before);
 
+    expect(h.store.projectBySlug("csv")!.state).toBe("running");
+
     writeFileSync(join(scratch, `fail-${counter}`), "");
-    h.store.setProjectState(h.store.projectBySlug("csv")!.id, "running", "human");
+    h.clock.advance(60_000);
     await queue();
     expect(sh(repo, "rev-parse", "loom/csv")).toBe(before);
     expect(ticketOf(h, "CSV-1").state).toBe("working");

@@ -33,7 +33,7 @@ export async function loomWorktree(ctx: EngineCtx, project: ProjectRow, spec: Sp
   const key = name === null ? project.slug : `${project.slug}.${name}`;
   const ready = await ctx.host.call(hostId, "ensureWorktree", { repo, key, branch: settings.branch! });
   if (ready.outcome === "ok") return { hostId, repo, worktree: ready.path, settings };
-  throw new Unavailable(ready.reason === "branch_checked_out" ? `${branchIn(settings)} is checked out elsewhere; switch that checkout off it and resume` : ready.message);
+  throw new Unavailable(ready.reason === "branch_checked_out" ? `${branchIn(settings)} is checked out elsewhere; switch that checkout off it, and Loom merges again` : ready.message);
 }
 
 // Loom's own worktree has its half-done merges aborted when Loom prepares it, so only something outside Loom leaves one there.

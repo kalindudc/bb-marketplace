@@ -135,8 +135,8 @@ back, and a plain requeue is the way on.
 
 Triage rounds go to the planner for blocked tickets, and when Loom paused the
 project for its token budget or deadline, which a new spec version can change.
-A pause for anything else, such as a forge or host error, sends no round: the
-next-step bar says why and offers Resume.
+A pause for a missing sign-in or a broken forge command sends no round, since
+the planner cannot fix either: the next-step bar says why and offers Resume.
 
 A spec version the planner proposes after approval waits for your approval,
 and Loom's spec review checks it first, as a change to the version in force.
@@ -170,27 +170,36 @@ is open, bring that thread back.
 
 ### When the machine or the server does not answer
 
-Loom waits out a failure that looks temporary instead of pausing the project:
-a call to the project's machine that got no answer (it ran out of time, or
-the machine's Loom worker exited, as it does while the plugin updates), a
-server error, a rate limit, a timeout or a network failure, from `gh`, `git`
-or a command forge's `open`, `state` or `feedback` command.
+Every failure that reaches Loom, from a call to the project's machine, `gh`,
+`git` or a forge command, is classified once: by its kind (temporary, lasting,
+or an unknown outcome when a call got no answer, so Loom cannot tell whether
+it ran) and by how far it reaches (this ticket, a forge or the project's
+machine, or the whole project). What Loom does follows from that:
 
-- A merge that fails that way keeps its ticket in merging and runs again
-  after 1, 2, 5 and 10 minutes, then every 15 minutes; after a rate limit it
-  waits at least 15 minutes, or longer when the server names a later time. The
-  merge queue waits with it, and on the integration strategy so does a new
-  worker in that repo, whose worktree would start from the branch the merge
-  moves. The ticket gets one post when the failures
-  start, and its card, its page and the next-step bar say when Loom tries
-  again. The project pauses only after an hour of failures, with a reason
-  that names the ticket, the error and how long it lasted. This holds for
-  every step of a merge or a push to a pull request, and each step is safe to
-  run again: a merge, a push or a pull request that already happened is found,
-  not made twice. A merge Loom has put in a worker's worktree, to bring its
-  branch up to date or to take commits someone else pushed, is kept until its
-  checks pass, so the next run finishes that merge, and Loom pushes nothing
-  and counts no commit as pushed before then.
+| The failure | What Loom does |
+|---|---|
+| Temporary, of this ticket, such as a server error (HTTP 500, 502, 503, 504), a timeout or an error no rule names | The step waits and runs again after 1, 2, 5 and 10 minutes, then every 15. The ticket blocks with the last reason once the step has failed for an hour, or after 5 tries of an error no rule recognizes. Other tickets keep going. |
+| Temporary, of a forge or the project's machine, such as a rate limit, a network or name lookup failure, a call that got no answer (the machine's Loom worker exited or was retired, as during a plugin update), a repo with no checkout on the machine | The step waits the same way, never blocks the ticket and never pauses the project. After an hour of it, the ticket says so once more. |
+| Lasting, of this ticket, such as a merge conflict git cannot finish, a push the remote refuses, a branch or pull request that is not there, or a change the forge refuses | The ticket blocks at once with the reason, and the planner's triage hears of it. |
+| Lasting, of the project's machine, such as a checkout git left in the middle of a merge, an integration branch checked out in another worktree, or git-lfs or gh missing | The ticket says at once what someone has to put right, and the step runs again every 15 minutes. Nothing blocks or pauses. |
+| Of the whole project: a missing sign-in (`gh auth login`, bad credentials) or a forge command that breaks its contract (a `feedback` command that prints no JSON object, a `state` command that prints no state, an `open` command that prints no URL and no error) | The project pauses, and the reason says what to fix before you resume. An exhausted token budget or a passed deadline pauses it too. |
+
+- After a rate limit a step waits at least 15 minutes, or until the time the
+  server names.
+- The wait is kept on the ticket, so a restart of Loom goes on with it. The
+  ticket gets one post when the failures start, and its card, its page and the
+  next-step bar say what it waits for and when Loom tries again.
+- A merge that waits keeps its ticket in merging, and the merge queue waits
+  with it; on the integration strategy so does a new worker in that repo,
+  whose worktree would start from the branch the merge moves. Every step of a
+  merge or a push to a pull request is safe to run again: a merge, a push or a
+  pull request that already happened is found, not made twice, which is why a
+  call with an unknown outcome is simply run again. A merge Loom has put in a
+  worker's worktree, to bring its branch up to date or to take commits someone
+  else pushed, is kept until its checks pass, so the next run finishes that
+  merge, and Loom pushes nothing and counts no commit as pushed before then.
+  When the ticket blocks instead, Loom first takes that merge out, as it does
+  when you block the ticket.
 - Asking reviewers to review again and running `after_open` and `after_push`
   commands are not tried again, because a second run could repeat what the
   first did, such as starting CI twice. A failure is posted once and the merge
@@ -199,16 +208,15 @@ or a command forge's `open`, `state` or `feedback` command.
   section, waits the same way, but on the ticket's pull request instead of the
   merge queue: the ticket gets one post, the edit runs again on a later read
   of the pull request, and nothing pauses.
-- While its merge waits, or after a pause left it in merging, you can block or
-  cancel the ticket. On the integration strategy Loom first takes a merge whose
-  `after_merge` checks have not passed back out of the integration branch.
-- Reading the diff for a ticket's reviewers waits on the same steps.
-- Reading an open pull request waits as described in
-  [Syncing pull requests](#syncing-pull-requests); a call to the project's
-  machine that got no answer counts as a server error.
-- Anything else still pauses the project at once with the reason, such as a
-  missing login, a repo without a checkout, a forge command that runs but
-  prints the wrong thing, or a call the machine refuses as invalid.
+- While its step waits, you can block or cancel the ticket. On the
+  integration strategy Loom first takes a merge whose `after_merge` checks
+  have not passed back out of the integration branch.
+- Reading the diff for a ticket's reviewers, and reading an open pull request,
+  wait the same way; a read never runs sooner than the usual 5 minutes after
+  the last (see [Syncing pull requests](#syncing-pull-requests)).
+- Starting a worker or a reviewer has its own wait, described under
+  [When a ticket gets stuck](#when-a-ticket-gets-stuck), on the same 1, 2, 5,
+  10 and 15 minute steps.
 
 ## The page
 
@@ -1138,8 +1146,8 @@ commits behind the base, not in time, and is off unless set.
 ### Syncing pull requests
 
 Loom reads each open pull request every 5 minutes, and waits longer after a
-read that failed: up to 30 minutes after server errors or timeouts, and the
-same for every pull request on a host it could not reach. When you know a pull
+read that failed: up to 15 minutes after a failure of that read, and up to 30
+for every pull request on a host it could not reach. When you know a pull
 request merged, closed or got a review, you do not have to wait for that.
 Press Sync pull requests in the project's header, or Sync now on the ticket,
 or run `bb loom sync <slug>` (`--ticket <KEY>` for one).
@@ -1150,8 +1158,8 @@ or run `bb loom sync <slug>` (`--ticket <KEY>` for one).
   moment is not read again: the sync waits for that read's answer.
 - It goes past the wait after failed reads and past a host's network wait,
   because you may have just fixed what failed. A read that fails again
-  continues the same streak, so the project still pauses after an hour of
-  failures.
+  continues the same streak, so the ticket still blocks after an hour of its
+  own failures.
 - It does not go past a rate limit, since another read would only make the
   limit longer; it says how long the limit lasts instead.
 - It waits up to 30 seconds for the reads and then says what each one found,
@@ -1170,8 +1178,8 @@ take `git_network_timeout_seconds`, 300 by default, set on a `[[repo]]` or on
 minutes. A step that runs
 out of time is waited out like any temporary failure (see
 [When the machine or the server does not answer](#when-the-machine-or-the-server-does-not-answer)),
-but while the fetch stays that slow every try runs out of time, and the project
-pauses after an hour. A revision with a new value applies once it is approved,
+but while the fetch stays that slow every try runs out of time, and the ticket
+blocks after an hour. A revision with a new value applies once it is approved,
 and one that changes only it skips the spec review. `gh`, the forge's commands
 and the first checkout of an integration worktree keep their own 2-minute
 limits.
@@ -1800,9 +1808,9 @@ They apply to every project, and a spec cannot change them.
   hooks come from a directory Loom makes outside every repository, whose only
   hook is a pre-push that runs `git-lfs pre-push` when the repository uses
   LFS, so a pushed commit's large files still upload. When git-lfs is not on
-  the PATH of bb's host process, Loom refuses to push such a repository and
-  pauses the project with the reason, rather than leave the remote without
-  the files.
+  the PATH of bb's host process, Loom refuses to push such a repository, and
+  the ticket says so and waits for someone to install it, rather than leave
+  the remote without the files.
   A repository's own pre-push checks, such as a refusal of force pushes or a
   stale-branch warning, do not run for Loom's pushes; Loom never force-pushes.
   Your spec's check commands run as you wrote them, hooks and all.

@@ -22,6 +22,8 @@ export interface Failure {
   /** A rule recognized the failure. An unrecognized one is temporary for this ticket, with fewer tries. */
   known: boolean;
   retryAfterMs?: number;
+  /** The forge rate-limited Loom, so it waits at least 15 minutes. */
+  rateLimited?: boolean;
   /** What the human must fix, for a failure that pauses the project. */
   fix?: string;
 }
@@ -112,15 +114,19 @@ export const waitableOf = (error: unknown): Transient | null => (error instanceo
 
 // gh with no login, a token GitHub refuses, or git with no credentials for the remote: only the human can sign in.
 const SIGNED_OUT =
-  /gh auth login|GH_TOKEN environment variable|\bHTTP 401\b|bad credentials|requires authentication|authentication failed|could not read (?:Username|Password)|terminal prompts disabled|Permission denied \(publickey|SAML SSO|re-?authorize|token (?:has )?expired/iu;
+  /gh auth login|GH_TOKEN environment variable|\bnot (?:signed|logged) in\b|\bHTTP 401\b|bad credentials|requires authentication|authentication failed|could not read (?:Username|Password)|terminal prompts disabled|Permission denied \(publickey|SAML SSO|re-?authorize|token (?:has )?expired/iu;
 // A forge command that ran and printed what the spec reference says it may not: the command is wrong, not the pull request.
 const BROKEN_COMMAND = /\bmust print a JSON object\b|\bprinted no (?:pull request )?URL\b|\bprinted no JSON\b|\bnot open, merged or closed\b|\bcommand is not configured\b/iu;
-// A checkout git left mid-operation: every step on it fails the same way until someone cleans it up.
-const CHECKOUT_STUCK = /have not concluded your merge|MERGE_HEAD exists|index\.lock': File exists|you need to resolve your current index first/iu;
+// A checkout git left mid-operation or another worktree holds its branch, or a machine that lacks a tool Loom needs:
+// every step there fails the same way until someone puts it right.
+const CHECKOUT_STUCK =
+  /have not concluded your merge|MERGE_HEAD exists|index\.lock': File exists|you need to resolve your current index first|\bis checked out elsewhere\b|\bis already (?:checked out|used by worktree)\b|\bLoom worktree at \S+ is on\b|git-lfs is needed|gh CLI is not installed/iu;
+// A repo bb shows no checkout of on the project's machine, until someone adds one.
+const NO_CHECKOUT = /\bhas no checkout on the machine\b/iu;
 // What no wait changes on one ticket: a merge git stopped, a push the remote refused, a branch or pull request that is not
 // there, or a forge that refuses the change itself.
 const LASTING =
-  /\bCONFLICT\b|\bnon-fast-forward\b|\[rejected\]|\[remote rejected\]|protected branch|couldn't find remote ref|unknown revision|not a valid object name|could not resolve to a (?:PullRequest|Repository)|no pull request found|not a GitHub pull request URL|is part of a stack|\bHTTP (?:404|409|410|422)\b/iu;
+  /\bCONFLICT\b|\bnon-fast-forward\b|\[rejected\]|\[remote rejected\]|protected branch|couldn't find remote ref|unknown revision|bad revision|not a valid object name|could not resolve to a (?:PullRequest|Repository)|no pull request found|not a GitHub pull request URL|is part of a stack|\bHTTP (?:404|409|410|422)\b/iu;
 
 const PROJECT_FIX = {
   signedOut: "Sign in on the project's machine (for gh, `gh auth login`; for git, the remote's credentials), then resume the project.",
@@ -134,15 +140,17 @@ function classifyText(reason: string, wait: Transient | null): Failure {
   if (SIGNED_OUT.test(reason)) return of("lasting", "project", reason, true, { fix: PROJECT_FIX.signedOut });
   if (HOST_CALL_TROUBLE.test(reason)) return of("unknown", "host", reason, true);
   if (CHECKOUT_STUCK.test(reason)) return of("lasting", "host", reason, true);
+  if (NO_CHECKOUT.test(reason)) return of("temporary", "host", reason, true);
   if (wait !== null) {
-    const retry = wait.retryAfterMs === undefined ? {} : { retryAfterMs: wait.retryAfterMs };
+    const retry = { ...(wait.retryAfterMs === undefined ? {} : { retryAfterMs: wait.retryAfterMs }), ...(wait.transient === "rate_limit" ? { rateLimited: true } : {}) };
     // A rate limit or a failure to reach the forge is the forge's or this machine's, so every read there waits.
     return of("temporary", wait.transient === "server" ? "ticket" : "forge", reason, true, retry);
   }
-  if (BROKEN_COMMAND.test(reason)) return of("lasting", "project", reason, true, { fix: PROJECT_FIX.command });
-  if (LASTING.test(reason)) return of("lasting", "ticket", reason, true);
+  // A command that printed a rate limit or a server's refusal instead of what it should is the forge's trouble, not the command's.
   const text = transientOfText(reason);
   if (text !== null) return classifyText(reason, text);
+  if (BROKEN_COMMAND.test(reason)) return of("lasting", "project", reason, true, { fix: PROJECT_FIX.command });
+  if (LASTING.test(reason)) return of("lasting", "ticket", reason, true);
   return of("temporary", "ticket", reason, false);
 }
 
@@ -154,12 +162,21 @@ export function classify(error: unknown): Failure {
   const reason = errText(error);
   if (error instanceof Unavailable) return classifyText(reason, error.wait);
   const code: unknown = typeof error === "object" && error !== null ? Reflect.get(error, "code") : undefined;
-  if (code === "loom_no_checkout") return of("temporary", "host", reason, true);
   // An older host that does not know a method yet is one a reload brings up to date.
   if (code === "unknown_method") return of("temporary", "host", reason, true);
   if (code === "invalid_input" || code === "invalid_output") return of("lasting", "ticket", reason, true);
   if (hostCallTransient(error) !== null) return of("unknown", "host", reason, true);
   return classifyText(reason, null);
+}
+
+/**
+ * What a failed read of a pull request through the forge is: as classify says, except that an answer the host contract
+ * refuses comes from the forge's own command, such as a feedback command whose JSON has fields out of contract.
+ */
+export function classifyForgeRead(error: unknown): Failure {
+  const failure = classify(error);
+  const code: unknown = typeof error === "object" && error !== null ? Reflect.get(error, "code") : undefined;
+  return code === "invalid_output" ? { ...failure, scope: "project", fix: PROJECT_FIX.command } : failure;
 }
 
 /** What a host's or forge's unavailable answer is. */

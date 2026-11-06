@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { useBbNavigate } from "@get-bb/plugin-sdk/app";
 import type { BoardCard } from "../contract";
-import { formatDuration, mergeRetryText, reviewerLookupText, startWaitText } from "../format";
+import { formatDuration, retryText, reviewerLookupText, startWaitText } from "../format";
 import type { TicketState } from "../states";
 import { HEADING, RepoChip, plural } from "./common";
 import { DraftHold } from "./draft-hold";
@@ -76,7 +76,7 @@ function Card({ slug, card, now, draft, onChanges, withState }: { card: BoardCar
       {card.state === "queued" && !card.ready && card.waitingOn.length > 0 && <p className="mt-1 text-xs text-warning-text">Waiting on {card.waitingOn.join(", ")}</p>}
       {card.startWait !== null && <p data-start-wait className="mt-1 text-xs text-warning-text [overflow-wrap:anywhere]">{startWaitText(card.startWait, now)}</p>}
       {card.reviewerLookup !== null && <p data-reviewer-lookup className="mt-1 text-xs text-warning-text [overflow-wrap:anywhere]">{reviewerLookupText(card.reviewerLookup, now)}</p>}
-      {card.mergeWait !== null && <p data-merge-wait className="mt-1 text-xs text-warning-text [overflow-wrap:anywhere]">{mergeRetryText(card.mergeWait, now)}</p>}
+      {card.retry !== null && <p data-retry className="mt-1 text-xs text-warning-text [overflow-wrap:anywhere]">{retryText(card.retry, now)}</p>}
       {card.stackedOn.length > 0 && <p className="mt-1 text-xs text-muted-foreground">Stacked on {card.stackedOn.join(", ")}</p>}
       {card.holding !== null && <p className="mt-1 text-xs text-warning-text">{card.holding}</p>}
       {card.waitsForSlot && <p data-slot-wait className="mt-1 text-xs text-warning-text">Waits for a free worker slot</p>}

@@ -88,13 +88,28 @@ const startWaitSchema = z.object({
 });
 export type StartWait = z.output<typeof startWaitSchema>;
 
-/** RetryWait: a merge, a pull request edit, or another step worth waiting out, failed `failures` times in a row in a way worth waiting out, the first at `since`; it runs again at `until`. */
-const retryWaitSchema = z.object({ failures: z.number(), since: z.number(), until: z.number(), message: z.string() });
+/** The ticket steps whose failures wait in retry_json: a merge, the read of a diff for review, a read of the pull request. */
+const retryStepSchema = z.enum(["merge", "diff", "read"]);
+export type RetryStep = z.output<typeof retryStepSchema>;
+
+/**
+ * RetryWait: a step failed `failures` times in a row, the first at `since`, and runs again at `until`. In retry_json it
+ * names its step (none before 0.35, when only merges waited there), the head a diff read was for, what failures.ts said
+ * the last failure was, and whether the ticket already said it has waited for an hour. A pull request edit keeps one too.
+ */
+const retryWaitSchema = z.object({
+  failures: z.number(),
+  since: z.number(),
+  until: z.number(),
+  message: z.string(),
+  step: retryStepSchema.optional(),
+  head: z.string().optional(),
+  kind: z.enum(["temporary", "lasting", "unknown"]).optional(),
+  scope: z.enum(["ticket", "forge", "host", "project"]).optional(),
+  noted: z.boolean().optional(),
+});
 export type RetryWait = z.output<typeof retryWaitSchema>;
 
-/** PollWait: the ticket's pull request reads failed `failures` times in a row with server errors, the first at `since`. */
-const pollWaitSchema = z.object({ failures: z.number(), since: z.number(), message: z.string() });
-export type PollWait = z.output<typeof pollWaitSchema>;
 
 const reviewDecisionSchema = z.enum(["APPROVED", "CHANGES_REQUESTED", "REVIEW_REQUIRED"]);
 export type ReviewDecision = z.output<typeof reviewDecisionSchema>;
@@ -227,12 +242,11 @@ const SCHEMAS = {
   start_wait_json: startWaitSchema,
   /** The ticket's merge patch over its repo's environment inputs. */
   environment_json: record(z.unknown()),
-  pr_poll_json: pollWaitSchema,
   /** The keys of the tickets whose pull requests merge before this one's. */
   merge_after_json: z.array(z.string()),
   pr_meta_json: prMetaSchema,
   rollout_json: ticketRolloutSchema,
-  merge_wait_json: retryWaitSchema,
+  retry_json: retryWaitSchema,
   merge_step_json: mergeStepSchema,
   pr_proposal_json: prProposalSchema,
   pr_applied_json: prAppliedSchema,

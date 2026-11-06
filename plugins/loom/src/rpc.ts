@@ -3,7 +3,7 @@ import { finalBadge } from "./final-review";
 import { experimental_PluginRpcRefusal as PluginRpcRefusal, type BbPluginApi, type ExperimentalPluginRpcHandlersWithContext } from "@get-bb/plugin-sdk";
 import { badgeView } from "./badge";
 import { humanAction } from "./cli";
-import { rpcContract, type AgentRow, type ForgeProfileView, type BoardCard, type MergeWaitView, type ProjectView, type ReviewerLookupView, type SpecSummary, type StartWaitView, type ThreadInfo, type TicketDetail, type TicketPr } from "./contract";
+import { rpcContract, type AgentRow, type ForgeProfileView, type BoardCard, type RetryView, type ProjectView, type ReviewerLookupView, type SpecSummary, type StartWaitView, type ThreadInfo, type TicketDetail, type TicketPr } from "./contract";
 import type { EventRow, PostRow, ProjectRow, ReviewRow, Store, ThreadRow, TicketRow } from "./db/store";
 import { stripAnsi, ticketActivity } from "./activity";
 import { Changes } from "./changes";
@@ -11,7 +11,8 @@ import { replyRecipient, type Engine } from "./engine";
 import { projectHealth } from "./health";
 import { homeView } from "./home";
 import { projectInsights } from "./insights";
-import { backedOffUntil, forgeHostOf, mergeWaitOf, nextPollAt } from "./forge-waits";
+import { backedOffUntil, forgeHostOf, nextPollAt } from "./forge-waits";
+import { retryOf } from "./retry-wait";
 import { mergeOrderOf } from "./merge-order";
 import { rolloutOf } from "./rollout";
 import { askOf, forgeRoundsSinceRequeue, PR_TEXT_MINUTES, statusOf } from "./pull-requests";
@@ -183,7 +184,7 @@ export function boardCards(tickets: TicketRow[], threads: ThreadRow[], spec: Spe
       ...stackFacts(tickets, ticket, stack, spec !== null && replacingPr(spec, ticket)),
       startWait: startWaitView(ticket, threads),
       reviewerLookup: store === null ? null : lookupView(store, ticket, threads),
-      mergeWait: mergeWaitView(ticket),
+      retry: retryView(ticket),
       waitsForSlot: lite.waitsSince !== null,
       ci: ciOf(spec, ticket),
       mergeConfirm: spec === null || store === null ? null : mergeConfirmOf(store, spec, ticket, now),
@@ -220,8 +221,14 @@ function lookupView(store: Store, ticket: TicketRow, threads: readonly ThreadRow
   return unresolved === null ? null : { since: unresolved.since, until: unresolved.until, reason: unresolved.reason };
 }
 
-/** The wait of a ticket in merging whose merge failed in a way worth waiting out. */
-export const mergeWaitView = (ticket: TicketRow): MergeWaitView | null => (ticket.state === "merging" ? mergeWaitOf(ticket) : null);
+const RETRY_STEPS = { merging: "merge", review: "diff", pr_open: "read" } as const;
+
+/** The wait of a ticket whose step in its state failed and runs again. */
+export function retryView(ticket: TicketRow): RetryView | null {
+  const step = (RETRY_STEPS as Partial<Record<TicketRow["state"], RetryView["step"]>>)[ticket.state];
+  const wait = step === undefined ? null : retryOf(ticket, step);
+  return wait === null ? null : { step: step!, failures: wait.failures, since: wait.since, until: wait.until, message: wait.message };
+}
 
 /** An open ticket whose closed stacked pull request Loom let go of, before the merge queue opens its new one. */
 const replacingPr = (spec: Spec, ticket: TicketRow) => ticket.state === "pr_open" && ticket.pr_url === null && ticket.pushed_sha !== null && repoSettings(spec, ticket.repo).forge.kind !== "none";
@@ -281,7 +288,7 @@ export function draftCards(spec: Spec, at: number): BoardCard[] {
     holding: null,
     startWait: null,
     reviewerLookup: null,
-    mergeWait: null,
+    retry: null,
     waitsForSlot: false,
     ci: null,
     mergeConfirm: null,
@@ -460,7 +467,7 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
       blockedReason: ticket.blocked_reason,
       startWait: startWaitView(ticket, threads),
       reviewerLookup: past === null ? lookupView(store, ticket, threads) : null,
-      mergeWait: mergeWaitView(ticket),
+      retry: retryView(ticket),
       branch: ticket.branch,
       prUrl: ticket.pr_url,
       pr: ticketPr(project, ticket, posts, past === null),

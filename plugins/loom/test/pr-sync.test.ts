@@ -86,19 +86,19 @@ describe("syncing a project's pull requests", () => {
     h.clock.advance(5 * MINUTE);
     h.host.scripted.prBatch = [{ outcome: "unavailable", message: "gh api graphql failed: gh: HTTP 504", transient: "server" } satisfies Batch];
     await h.engine.tick();
-    expect(JSON.parse(ticketOf(h, "CSV-1").pr_poll_json!)).toMatchObject({ failures: 1 });
+    expect(JSON.parse(ticketOf(h, "CSV-1").retry_json!)).toMatchObject({ step: "read", failures: 1 });
 
     h.host.scripted.prBatch = [{ outcome: "unavailable", message: "gh api graphql failed: gh: HTTP 504", transient: "server" } satisfies Batch];
     const failed = await h.engine.syncPullRequests("csv");
     expect(reads()).toHaveLength(2);
-    expect(JSON.parse(ticketOf(h, "CSV-1").pr_poll_json!)).toMatchObject({ failures: 2 });
+    expect(JSON.parse(ticketOf(h, "CSV-1").retry_json!)).toMatchObject({ step: "read", failures: 2 });
     expect(failed).toMatchObject({ tickets: [{ key: "CSV-1", outcome: "failed" }], problem: true });
-    expect(failed.message).toBe("Could not read CSV-1's pull request: gh api graphql failed: gh: HTTP 504; Loom reads it again in 10m.");
+    expect(failed.message).toBe("Could not read CSV-1's pull request: gh api graphql failed: gh: HTTP 504; Loom reads it again in 5m.");
 
     h.host.prStates.set(URL, "MERGED");
     const merged = await h.engine.syncPullRequests("csv");
     expect(merged.tickets[0]).toMatchObject({ outcome: "merged" });
-    expect(ticketOf(h, "CSV-1").pr_poll_json).toBeNull();
+    expect(ticketOf(h, "CSV-1").retry_json).toBeNull();
   });
 
   it("goes past a forge host's network wait, keeping its streak when the read fails again", async () => {
@@ -133,14 +133,15 @@ describe("syncing a project's pull requests", () => {
     expect(h.ctx.prReads!.asked.size).toBe(0);
   });
 
-  it("names the failure that paused the project once, on the ticket", async () => {
+  it("names the failure that paused the project and what to fix", async () => {
     await seedProject(h, pr);
     await open();
     h.host.scripted.prBatch = [{ outcome: "unavailable", message: "gh is not signed in to github.com." } satisfies Batch];
     const result = await h.engine.syncPullRequests("csv");
-    expect(project()).toMatchObject({ state: "paused", system_reason: "gh is not signed in to github.com." });
+    const reason = "Reading the pull request of CSV-1 stopped: gh is not signed in to github.com. Sign in on the project's machine (for gh, `gh auth login`; for git, the remote's credentials), then resume the project.";
+    expect(project()).toMatchObject({ state: "paused", system_reason: reason });
     expect(result.tickets).toEqual([{ key: "CSV-1", state: "pr_open", outcome: "failed", detail: "gh is not signed in to github.com." }]);
-    expect(result.message).toBe("Could not read CSV-1's pull request: gh is not signed in to github.com. Loom paused the project.");
+    expect(result.message).toBe(`Could not read CSV-1's pull request: gh is not signed in to github.com. Loom paused the project: ${reason}`);
     expect(result.problem).toBe(true);
   });
 
@@ -194,9 +195,9 @@ describe("syncing a project's pull requests", () => {
       await open();
       h.host.scripted.landedOn = [{ outcome: "unavailable", message: "git fetch from origin failed: offline" } satisfies HostOutput<"landedOn">];
       const result = await h.engine.syncPullRequests("csv");
-      expect(project().state).toBe("paused");
-      expect(result.tickets).toEqual([{ key: "CSV-1", state: "pr_open", outcome: "failed", detail: "git fetch from origin failed: offline" }]);
-      expect(result.message).toBe("Could not read CSV-1's pull request: git fetch from origin failed: offline. Loom paused the project.");
+      expect(project().state).toBe("running");
+      expect(result.tickets).toEqual([{ key: "CSV-1", state: "pr_open", outcome: "failed", detail: "git fetch from origin failed: offline; Loom reads it again in 5m" }]);
+      expect(result.message).toBe("Could not read CSV-1's pull request: git fetch from origin failed: offline; Loom reads it again in 5m.");
     });
   });
 

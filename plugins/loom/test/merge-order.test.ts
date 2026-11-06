@@ -69,7 +69,7 @@ function row(key: string, state: TicketState, over: Over = {}): TicketRow {
     head_tree: null,
     rollout_json: null,
     keep_draft: 0,
-    merge_wait_json: null,
+    retry_json: null,
     merge_step_json: null,
     pr_proposal_json: null,
     pr_applied_json: null,

@@ -1,6 +1,8 @@
 import Database from "better-sqlite3";
 import { beforeEach, describe, expect, it } from "vitest";
 import { MIGRATIONS } from "../src/db/schema";
+import { nextPollAt } from "../src/forge-waits";
+import { retryOf } from "../src/retry-wait";
 import { Store, type NewTicket } from "../src/db/store";
 import { toLite } from "../src/scheduler";
 import { AUTHOR_KINDS, POST_KINDS, PROJECT_STATES, REVIEW_VERDICTS, ROLES, THREAD_STATES, TICKET_STATES, canMoveProject, canMoveTicket } from "../src/states";
@@ -227,6 +229,26 @@ describe("tickets", () => {
     old.prepare("INSERT INTO tickets (project_id, seq, key, ref, title, body, state, created_by, created_at, updated_at, state_at) VALUES (1, 1, 'CSV-1', 'one', 't', 'b', 'queued', 'x', 0, 0, 0)").run();
     for (const sql of MIGRATIONS.slice(added)) old.exec(sql);
     expect(new Store(old, clock.now).ticketByKey("CSV-1")).toMatchObject({ key: "CSV-1", repo: null });
+  });
+
+  it("keeps a merge's wait as the ticket's retry wait and moves a pull request's read wait into it, due when its next read was", () => {
+    const old = new Database(":memory:");
+    const renamed = MIGRATIONS.findIndex((sql) => sql.startsWith("ALTER TABLE tickets RENAME COLUMN merge_wait_json TO retry_json"));
+    expect(renamed).toBe(MIGRATIONS.length - 1);
+    for (const sql of MIGRATIONS.slice(0, renamed)) old.exec(sql);
+    const insert = old.prepare("INSERT INTO tickets (project_id, seq, key, ref, title, body, state, created_by, created_at, updated_at, state_at, merge_wait_json, pr_poll_json, pr_checked_at) VALUES (1, ?, ?, ?, 't', 'b', ?, 'x', 0, 0, 0, ?, ?, ?)");
+    const merge = JSON.stringify({ failures: 2, since: 100, until: 400, message: "host plugin worker exited (0)" });
+    insert.run(1, "CSV-1", "one", "merging", merge, null, null);
+    insert.run(2, "CSV-2", "two", "pr_open", null, JSON.stringify({ failures: 3, since: 1000, message: "gh: HTTP 502" }), 5000);
+    insert.run(3, "CSV-3", "three", "blocked", null, JSON.stringify({ failures: 1, since: 1000, message: "old" }), 5000);
+    for (const sql of MIGRATIONS.slice(renamed)) old.exec(sql);
+    const store = new Store(old, clock.now);
+    expect(store.ticketByKey("CSV-1")!.retry_json).toBe(merge);
+    expect(retryOf(store.ticketByKey("CSV-1")!, "merge")).toEqual(JSON.parse(merge));
+    expect(JSON.parse(store.ticketByKey("CSV-2")!.retry_json!)).toEqual({ step: "read", failures: 3, since: 1000, until: 5000 + 20 * 60_000, message: "gh: HTTP 502" });
+    expect(nextPollAt(store.ticketByKey("CSV-2")!)).toBe(5000 + 20 * 60_000);
+    expect(store.ticketByKey("CSV-3")).toMatchObject({ retry_json: null, pr_poll_json: null });
+    expect(store.ticketByKey("CSV-2")!.pr_poll_json).toBeNull();
   });
 
   it("keeps a fix round's message stored before hand-backs existed as the ticket's hand-back, which has its worker slot", () => {

@@ -2724,11 +2724,11 @@ describe("board", () => {
   it("says on the card when a merge waits after a temporary failure, when Loom tries it again and why", async () => {
     const now = projectView().now;
     const until = now + 4 * 60_000;
-    const board = [card({ key: "CSV-2", title: "Export endpoint", state: "merging", ready: false, mergeWait: { failures: 2, since: now - 60_000, until, message: "host plugin call 1f46 exceeded its deadline" } }), card({ key: "CSV-3", title: "Docs", state: "merging", ready: false })];
+    const board = [card({ key: "CSV-2", title: "Export endpoint", state: "merging", ready: false, retry: { step: "merge", failures: 2, since: now - 60_000, until, message: "host plugin call 1f46 exceeded its deadline" } }), card({ key: "CSV-3", title: "Docs", state: "merging", ready: false })];
     const { slot } = await mountPage("csv", { project: () => projectView({ board }) });
     await slot.findByRole("tab", { name: "Board" });
-    expect(slot.container.querySelector('[data-card="CSV-2"] [data-merge-wait]')!.textContent).toBe(`Loom tries the merge again at ${clockTime(until)} after 2 temporary failures in a row: host plugin call 1f46 exceeded its deadline.`);
-    expect(slot.container.querySelector('[data-card="CSV-3"] [data-merge-wait]')).toBeNull();
+    expect(slot.container.querySelector('[data-card="CSV-2"] [data-retry]')!.textContent).toBe(`Loom tries the merge again at ${clockTime(until)} after 2 failures in a row: host plugin call 1f46 exceeded its deadline.`);
+    expect(slot.container.querySelector('[data-card="CSV-3"] [data-retry]')).toBeNull();
   });
 
   it("says on the card when work went back to a worker and waits for a free worker slot", async () => {
@@ -3201,8 +3201,8 @@ describe("ticket", () => {
 
   it("says in the summary that the merge waits after a temporary failure and when Loom tries it again", async () => {
     const until = Date.now() + 2 * 60_000;
-    const slot = await mountTicket({ state: "merging", mergeWait: { failures: 1, since: Date.now(), until, message: "The forge's open command printed no pull request URL: Error: 429: retry shortly" } });
-    expect(slot.container.querySelector("[data-ticket-summary]")!.textContent).toBe(`Loom tries the merge again at ${clockTime(until)} after a temporary failure: The forge's open command printed no pull request URL: Error: 429: retry shortly.`);
+    const slot = await mountTicket({ state: "merging", retry: { step: "merge", failures: 1, since: Date.now(), until, message: "The forge's open command printed no pull request URL: Error: 429: retry shortly" } });
+    expect(slot.container.querySelector("[data-ticket-summary]")!.textContent).toBe(`Loom tries the merge again at ${clockTime(until)} after a failure: The forge's open command printed no pull request URL: Error: 429: retry shortly.`);
   });
 
   it("shows the planning row and the reply box for a ticket with no attempt yet", async () => {

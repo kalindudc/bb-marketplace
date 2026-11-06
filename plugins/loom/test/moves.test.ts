@@ -28,10 +28,10 @@ describe("the move table", () => {
   it("resets what a requeue, a review again, a block and a cancel let go of", () => {
     expect(patchOf({ name: "requeue" })).toEqual({
       worker_thread_id: null, environment_id: null, failures: 0, check_failures: 0, blocked_reason: null,
-      pr_ask_json: null, pr_text_json: null, handback_json: null, start_wait_json: null, merge_wait_json: null,
+      pr_ask_json: null, pr_text_json: null, handback_json: null, start_wait_json: null, retry_json: null,
     });
-    expect(patchOf({ name: "review_again" })).toEqual({ worker_thread_id: null, environment_id: null, failures: 0, check_failures: 0, blocked_reason: null, pr_ask_json: null, handback_json: null, start_wait_json: null });
-    expect(patchOf({ name: "pr_again" })).toMatchObject({ pr_text_json: null, pr_poll_json: null, pr_checked_at: null, blocked_reason: null });
+    expect(patchOf({ name: "review_again" })).toEqual({ worker_thread_id: null, environment_id: null, failures: 0, check_failures: 0, blocked_reason: null, pr_ask_json: null, handback_json: null, start_wait_json: null, retry_json: null });
+    expect(patchOf({ name: "pr_again" })).toMatchObject({ pr_text_json: null, retry_json: null, pr_checked_at: null, blocked_reason: null });
     expect(patchOf({ name: "human_block" })).toEqual({});
     expect(patchOf({ name: "cancel" })).toEqual({ worker_thread_id: null, environment_id: null });
     expect(patchOf({ name: "block_unreachable" })).toEqual({ worker_thread_id: null, environment_id: null, handback_json: null });

@@ -126,7 +126,7 @@ export async function openPullRequest(ctx: EngineCtx, project: ProjectRow, spec:
     if (pushed.outcome === "unavailable") throw unavailableOf(pushed);
   }
   const at = ctx.now();
-  const recorded: Partial<TicketRow> = { pr_branch: branch, pushed_sha: src, pushed_at: at, pr_checked_at: at, pr_status_json: null, pr_poll_json: null };
+  const recorded: Partial<TicketRow> = { pr_branch: branch, pushed_sha: src, pushed_at: at, pr_checked_at: at, pr_status_json: null };
   const commits = ` as 1 commit (${src.slice(0, 12)})`;
   const prBase = stacking(spec) ? prBaseOf(store.tickets(project.id), current, base) : base;
 
@@ -214,7 +214,7 @@ type Retargeted = { post: MergePost; moved: boolean };
 /**
  * Moves an open pull request to the branch it now builds on: through gh, or a command forge's retarget command. A failure
  * worth waiting out throws, for the merge to run again. Any other failure of the retarget command asks the human to move
- * it, since the push already stands; gh's pauses the project, as opening a pull request does. On a forge Loom cannot move
+ * it, since the push already stands; gh's fails the merge step, which retry.ts settles as it does a failed opening. On a forge Loom cannot move
  * it through, the post asks the human to.
  */
 async function retarget(ctx: EngineCtx, a: { hostId: string; repo: string; settings: RepoSettings; ticket: TicketRow; base: string }): Promise<Retargeted> {

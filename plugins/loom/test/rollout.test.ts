@@ -88,7 +88,7 @@ function row(key: string, state: TicketState, over: Over = {}): TicketRow {
     merge_after_json: "[]",
     pr_meta_json: meta === undefined ? null : JSON.stringify({ at: 0, draft: false, review: null, base: null, ...meta }),
     head_tree: null,
-    merge_wait_json: null,
+    retry_json: null,
     merge_step_json: null,
     pr_proposal_json: null,
     pr_applied_json: null,

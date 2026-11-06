@@ -1,7 +1,7 @@
 // The one thing to do next on a project, worked out on the server so the page only draws it. The app imports STAGES,
 // so this file imports nothing that pulls zod or smol-toml into the app's bundle.
 import type { BoardCard, ControlAction } from "./contract";
-import { isMultiRepoProject, its, mergeRetryText, plural, readyToLand, reposHave } from "./format";
+import { isMultiRepoProject, its, plural, readyToLand, reposHave, retryText } from "./format";
 import type { ProjectOverview } from "./projects";
 import type { SpecReviewStatus } from "./spec-review";
 import { PAUSE_NOW_REASON, SPEC_REVIEW_ROUNDS } from "./states";
@@ -251,7 +251,7 @@ export function nextStepOf(input: NextStepInput): NextStep | null {
     const waiting = board.filter((card) => card.state === "working" && card.waitsForSlot).map((card) => card.key);
     const now = working.length === 0 ? "No worker is running now; tickets in checks, review or the merge queue move by themselves." : `${plural(working.length, "worker")} ${working.length === 1 ? "is" : "are"} on ${list(working)}.`;
     const queue = waiting.length === 0 ? "" : ` ${list(waiting)} ${waiting.length === 1 ? "waits" : "wait"} for a worker slot.`;
-    const merges = board.flatMap((card) => (card.mergeWait === null ? [] : [` ${card.key}'s merge waits: ${mergeRetryText(card.mergeWait)}`])).join("");
+    const merges = board.flatMap((card) => (card.retry === null ? [] : [` ${card.key} waits: ${retryText(card.retry)}`])).join("");
     return { stage: 4, tone: "normal", title: "Running.", text: `${now}${queue}${merges}${ciText(board)} Nothing needs you now; this bar turns yellow when something does.`, action: null };
   }
 

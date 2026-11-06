@@ -3,7 +3,8 @@
 // may have just fixed what failed, but not past a rate limit, which another read would only make longer. The reads are
 // the engine's ordinary poll (merge.ts), so what they find is settled exactly as a poll settles it.
 import type { TicketRow } from "./db/store";
-import { forgeHostOf, nextPollAt, pollWaitOf, type HostBackoff } from "./forge-waits";
+import { forgeHostOf, nextPollAt, type HostBackoff } from "./forge-waits";
+import { retryOf } from "./retry-wait";
 import { formatDuration, plural } from "./format";
 import { LoomError } from "./projects";
 import { andList } from "./prompts";
@@ -126,7 +127,7 @@ export function requestSync(ctx: EngineCtx, slug: string, key?: string): PrSyncR
   const request: PrSyncRequest = { slug, projectId: project.id, at: now, projectState: project.state, tickets: [], waiting: [] };
   for (const ticket of tickets) {
     const host = repoSettings(spec, ticket.repo).forge.kind === "none" ? null : forgeHostOf(ticket.pr_url);
-    const entry = { id: ticket.id, key: ticket.key, rounds: ticket.pr_rounds, failures: pollWaitOf(ticket)?.failures ?? 0, host };
+    const entry = { id: ticket.id, key: ticket.key, rounds: ticket.pr_rounds, failures: retryOf(ticket, "read")?.failures ?? 0, host };
     // A read that is out now answers the sync, so asking for another would read the pull request twice.
     if (reads.out.has(ticket.id)) {
       request.tickets.push(entry);
@@ -138,7 +139,7 @@ export function requestSync(ctx: EngineCtx, slug: string, key?: string): PrSyncR
         request.waiting.push({ key: ticket.key, state: ticket.state, outcome: "waiting", detail: hostWait(host!, backoff, now) });
         continue;
       }
-      // The wait ends now and its streak stays, so a read that fails again waits longer and still pauses after an hour.
+      // The wait ends now and its streak stays, so a read that fails again waits longer.
       ctx.forgeBackoffs.set(host!, { ...backoff, until: now });
     }
     reads.asked.add(ticket.id);
@@ -165,8 +166,8 @@ export function syncResult(ctx: EngineCtx, request: PrSyncRequest, finished: boo
     const last = reads.last.get(id);
     const answer = last !== undefined && last.at >= request.at ? last : null;
     if (answer !== null && answer.error === null) return of("open");
-    // A server error or timeout counts one more failure on the ticket; a read that worked clears them.
-    const wait = pollWaitOf(ticket);
+    // A failed read counts one more failure on the ticket; a read that worked clears them.
+    const wait = retryOf(ticket, "read");
     const waits = (wait?.failures ?? 0) > failures;
     // The poll takes a ticket off `asked` as its read goes out.
     const unread = reads.asked.has(id);

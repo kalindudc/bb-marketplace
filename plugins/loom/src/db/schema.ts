@@ -224,4 +224,11 @@ export const MIGRATIONS: string[] = [
   `UPDATE runs SET output = 'Loom no longer keeps what this step copied.' WHERE kind = 'git' AND label IN ('readBlob', 'carryWrite', 'importChunk')`,
   // Forge profiles: command forges kept in Loom's settings, which any spec names by id. hash is the profile's canonical JSON's.
   `CREATE TABLE forge_profiles (id TEXT PRIMARY KEY, json TEXT NOT NULL, hash TEXT NOT NULL, updated_at INTEGER NOT NULL)`,
+  // RetryWait: one wait for every ticket step that failed, named by its step. The merge waits keep their column under its
+  // new name, and a pull request's read wait moves in, due when its next read was.
+  `ALTER TABLE tickets RENAME COLUMN merge_wait_json TO retry_json;
+  UPDATE tickets SET retry_json = json_object('step', 'read', 'failures', json_extract(pr_poll_json, '$.failures'), 'since', json_extract(pr_poll_json, '$.since'),
+    'until', COALESCE(pr_checked_at, 0) + MIN(1800000, 300000 * (1 << MIN(3, MAX(0, json_extract(pr_poll_json, '$.failures') - 1)))), 'message', json_extract(pr_poll_json, '$.message'))
+    WHERE pr_poll_json IS NOT NULL AND state = 'pr_open' AND retry_json IS NULL;
+  UPDATE tickets SET pr_poll_json = NULL WHERE pr_poll_json IS NOT NULL`,
 ];

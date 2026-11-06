@@ -123,7 +123,7 @@ export async function reviewAgain(ctx: EngineCtx, ticket: TicketRow, a: { note: 
       const text = `Back in review as it is: new reviewers judge ${short(current.head_sha!)}, the commit whose checks passed last, in round ${current.review_round + 1}. A worker starts only if they ask for changes.`;
       backToReview(ctx, current, text, { actor: a.actor, reason: "sent back to review as it is", requeued: true, set: { ...keep, ...(current.pushed_sha === null ? { pr_meta_json: null } : {}) } });
     } else {
-      // An old streak of failed reads would make the first new one pause the project, so the next read starts afresh, at once.
+      // An old streak of failed reads would make the first new one block the ticket, so the next read starts afresh, at once.
       moveTicket(store, current.id, { name: "pr_again", set: keep }, a.actor, { requeued: true, failures: 0, reason: "sent back to its pull request as it is" });
       const back = kept === null ? "" : " When the pull request needs a fix, or its branch must catch up, Loom brings back the worker's thread, or starts a new worker from the branch when it cannot.";
       const text = want === null ? "" : " It sets the title and description the reviewers approved.";

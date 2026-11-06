@@ -353,25 +353,28 @@ describe("spawnReviewers", () => {
     expect(project().triage_pending).toBe(1);
   });
 
-  it("pauses the project, with the reason, when the diff cannot be read", async () => {
+  it("waits on the ticket, and keeps the project running, when the diff cannot be read", async () => {
     await seedProject(h);
     await reachReview(h);
     h.host.scripted.diff = [new Error("host disconnected")];
     expect(await spawn()).toBe(0);
-    expect(project()).toMatchObject({ state: "paused", system_reason: expect.stringContaining("Could not read the diff of CSV-1 for review: host disconnected") });
+    expect(project().state).toBe("running");
+    expect(JSON.parse(ticketOf(h, "CSV-1").retry_json!)).toMatchObject({ step: "diff", head: "c1", failures: 1, message: "host disconnected" });
+    expect(postsOf().at(-1)!.body).toContain("Reading the diff of CSV-1 for review failed with what looks like a temporary error: host disconnected.");
     expect(reviewers()).toHaveLength(0);
+    h.clock.advance(60_000);
+    expect(await spawn()).toBe(1);
   });
 
-  it("pauses the project, naming its repository and the command that clones it, when the bb project has no checkout on the machine", async () => {
+  it("waits, naming its repository and the command that clones it, when the bb project has no checkout on the machine", async () => {
     await seedProject(h);
     await reachReview(h);
     h.bb.checkout = null;
     expect(await spawn()).toBe(0);
-    expect(project()).toMatchObject({
-      state: "paused",
-      system_reason:
-        "Could not read the diff of CSV-1 for review: The project's repository (bb project proj_1) has no checkout on the machine host_1 that this Loom project uses. Clone it there with `bb project source add proj_1 --clone --machine host_1`, then resume.",
-    });
+    expect(project().state).toBe("running");
+    expect(postsOf().at(-1)!.body).toContain(
+      "Reading the diff of CSV-1 for review failed because of the project's machine: The project's repository (bb project proj_1) has no checkout on the machine host_1 that this Loom project uses. Clone it there with `bb project source add proj_1 --clone --machine host_1`, then resume.",
+    );
     expect(h.host.callsTo("diff")).toEqual([]);
   });
 
@@ -440,15 +443,16 @@ describe("reviewers on a multi-repo project", () => {
     expect(reviewsOf("CSV-2")[0]!.verdict).toBe("approved");
   });
 
-  it("pauses the project, naming the repo and the command that clones it, when the ticket's repo has no checkout on the project's machine", async () => {
+  it("waits, naming the repo and the command that clones it, when the ticket's repo has no checkout on the project's machine", async () => {
     await seedRepoProject(h);
     await reachReview(h, "CSV-1");
     h.bb.checkouts.set("proj_web", {});
     expect(await spawn()).toBe(0);
-    expect(project()).toMatchObject({
-      state: "paused",
-      system_reason:
-        'Could not read the diff of CSV-1 for review: Repo "web" (bb project proj_web) has no checkout on the machine host_1 that this Loom project uses. Clone it there with `bb project source add proj_web --clone --machine host_1`, then resume.',
+    expect(project().state).toBe("running");
+    expect(JSON.parse(ticketOf(h, "CSV-1").retry_json!)).toMatchObject({
+      step: "diff",
+      scope: "host",
+      message: 'Repo "web" (bb project proj_web) has no checkout on the machine host_1 that this Loom project uses. Clone it there with `bb project source add proj_web --clone --machine host_1`, then resume.',
     });
     expect(h.host.callsTo("diff")).toEqual([]);
     expect(reviewers()).toHaveLength(0);

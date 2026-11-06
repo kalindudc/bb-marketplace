@@ -2,6 +2,7 @@
 // poll makes, and says what Loom reads from it. It changes no ticket and writes no event, so any thread may run it.
 import { repoCheckout } from "./checkouts";
 import type { TicketRow } from "./db/store";
+import { classifyAnswer } from "./failures";
 import { githubPull, type HostOutput } from "./host-contract";
 import { LoomError } from "./projects";
 import { replaceLoomBlock } from "./prompts";
@@ -196,18 +197,23 @@ export async function forgeCheck(ctx: EngineCtx, a: { slug: string; target: stri
   }
 }
 
-const TRANSIENT_TEXT: Record<Transient, string> = {
-  server: "A poll waits this out as a server error or timeout: that pull request's next read waits longer, and the project pauses only after an hour of them.",
-  rate_limit: "A poll reads this as a rate limit: no read goes to that host for a while, and the project does not pause.",
-  network: "A poll reads this as a network failure: no read goes to that host for a while, and the project pauses only after an hour of them.",
-};
+/** What a poll does with a read that failed this way, by the failure policy (retry.ts). Fields the host contract refused come from the forge's command. */
+function pollText(failure: NonNullable<ForgeCheck["failure"]>): string {
+  const kind = failure.issues.length > 0 ? { kind: "lasting", scope: "project" } : classifyAnswer({ message: failure.message, ...(failure.transient === null ? {} : { transient: failure.transient }) });
+  if (kind.scope === "project") return "A poll pauses the project for a failure like this one, until someone fixes it.";
+  if (failure.transient === "rate_limit") return "A poll reads this as a rate limit: no read goes to that host for a while, and nothing blocks or pauses.";
+  if (failure.transient === "network") return "A poll reads this as a network failure: no read goes to that host for a while, and nothing blocks or pauses.";
+  if (kind.scope !== "ticket") return "A poll waits this out on the ticket, and never blocks it or pauses the project for it.";
+  if (kind.kind === "lasting") return "A poll blocks the ticket for a failure like this one.";
+  return "A poll waits this out on the ticket, and blocks the ticket only if its reads keep failing.";
+}
 
 const shown = (value: boolean | string | null) => (value === null ? "unknown" : value === true ? "yes" : value === false ? "no" : value);
 
 type Failure = NonNullable<ForgeCheck["failure"]>;
 
 function failureLines(failure: Failure): string[] {
-  const lines = [`The read failed: ${failure.message}`, failure.transient === null ? "A poll pauses the project for a failure like this one." : TRANSIENT_TEXT[failure.transient]];
+  const lines = [`The read failed: ${failure.message}`, pollText(failure)];
   if (failure.issues.length > 0) lines.push("The host contract refused these fields:", ...failure.issues.map((issue) => `  ${issue.path === "" ? "(the answer)" : issue.path}: ${issue.message}`));
   return lines;
 }

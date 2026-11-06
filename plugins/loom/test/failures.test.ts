@@ -1,7 +1,7 @@
 // One classification for every failure that reaches Loom: its kind and scope decide whether a ticket waits, a ticket
 // blocks, or the project pauses. Most fixtures are pause reasons real projects hit.
 import { describe, expect, it } from "vitest";
-import { Unavailable, classify, classifyAnswer, transientOfText } from "../src/failures";
+import { Unavailable, classify, classifyAnswer, classifyForgeRead, transientOfText } from "../src/failures";
 import { LoomError } from "../src/projects";
 
 const coded = (message: string, code: string) => Object.assign(new Error(message), { code });
@@ -28,7 +28,7 @@ describe("classify", () => {
   });
 
   it("waits for the forge host on a rate limit, with the time it named", () => {
-    expect(classify(new Unavailable("gh api graphql failed: HTTP 429", { transient: "rate_limit", retryAfterMs: 60_000 }))).toEqual({ kind: "temporary", scope: "forge", reason: "gh api graphql failed: HTTP 429", known: true, retryAfterMs: 60_000 });
+    expect(classify(new Unavailable("gh api graphql failed: HTTP 429", { transient: "rate_limit", retryAfterMs: 60_000 }))).toEqual({ kind: "temporary", scope: "forge", reason: "gh api graphql failed: HTTP 429", known: true, retryAfterMs: 60_000, rateLimited: true });
   });
 
   it("waits for the forge host when the machine could not reach it", () => {
@@ -64,9 +64,10 @@ describe("classify", () => {
     expect(failure.fix).toMatch(/forge command/u);
   });
 
-  it("still waits when a broken-looking answer says it is worth waiting out", () => {
+  it("still waits when a broken-looking answer says it is worth waiting out, or its words do", () => {
     const rateLimited = "The forge's open command printed no pull request URL: Error: 429: other changes were still being saved after 30s; retry shortly";
     expect(classifyAnswer({ message: rateLimited, transient: "rate_limit" })).toMatchObject({ kind: "temporary", scope: "forge" });
+    expect(classifyAnswer({ message: rateLimited })).toMatchObject({ kind: "temporary", known: true });
   });
 
   it.each([
@@ -90,6 +91,13 @@ describe("classify", () => {
 
   it("blocks the ticket for an input or output the host contract refuses", () => {
     expect(classify(coded("host rpc output validation failed: Invalid input", "invalid_output"))).toMatchObject({ kind: "lasting", scope: "ticket" });
+  });
+
+  it("pauses the project when a forge read's answer breaks the host contract, since the forge's command printed it", () => {
+    const failure = classifyForgeRead(coded("rpc output validation failed", "invalid_output"));
+    expect(failure).toMatchObject({ kind: "lasting", scope: "project" });
+    expect(failure.fix).toMatch(/forge command/u);
+    expect(classifyForgeRead(new Error("host plugin worker exited (0)"))).toMatchObject({ kind: "unknown", scope: "host" });
   });
 
   it("treats anything no rule names as temporary for this ticket, with fewer tries", () => {

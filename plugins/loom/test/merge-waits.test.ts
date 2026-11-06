@@ -1,11 +1,13 @@
 // One error policy for host calls and forge commands: a failure worth waiting out (a host call that got no answer, a
-// server error, a rate limit, a network failure or a timeout) keeps the ticket where it is and tries again, and only an
-// hour of them pauses the project. The fixtures are pause reasons two real projects hit.
+// server error, a rate limit, a network failure or a timeout) keeps the ticket where it is and tries again. An hour of a
+// ticket's own failures blocks that ticket; the project's machine or a forge never blocks or pauses anything; only a
+// failure of the whole project pauses it. The fixtures are pause reasons two real projects hit.
 import { holdingSends } from "../src/carry-hold";
 import { beforeEach, describe, expect, it } from "vitest";
 import { settleChecks, submit } from "../src/checks";
 import type { ThreadRow } from "../src/db/store";
-import { hostCallTransient, mergeWaitOf, nextMergeWait } from "../src/forge-waits";
+import { hostCallTransient, nextMergeWait } from "../src/forge-waits";
+import { retryOf } from "../src/retry-wait";
 import { pollPullRequests, runMergeQueue, settleMerges } from "../src/merge";
 import { askForPrTexts, handInPrText } from "../src/pull-requests";
 import { boardCards } from "../src/rpc";
@@ -29,7 +31,7 @@ const changesRequested = { items: [{ key: "review:1:a", kind: "review" as const,
 const project = () => h.store.projectBySlug("csv")!;
 const spec = () => specOf(h.store, project());
 const ticket = (key = "CSV-1") => ticketOf(h, key);
-const waitOf = (key = "CSV-1") => mergeWaitOf(ticket(key));
+const waitOf = (key = "CSV-1") => retryOf(ticket(key), "merge");
 const systemPosts = (key = "CSV-1") => h.store.posts(ticket(key).id).filter((post) => post.kind === "system").map((post) => post.body);
 const warnings = (text: string) => h.bb.callsTo("log").filter(([level, message]) => level === "warn" && String(message).includes(text));
 const queue = async () => {
@@ -152,9 +154,9 @@ describe("a merge that fails in a way worth waiting out", () => {
 
     expect(project()).toMatchObject({ state: "running", system_reason: null });
     expect(ticket()).toMatchObject({ state: "merging" });
-    expect(waitOf()).toEqual({ failures: 1, since: first, until: first + MINUTE, message: DEADLINE });
+    expect(waitOf()).toEqual({ step: "merge", failures: 1, since: first, until: first + MINUTE, message: DEADLINE, kind: "unknown", scope: "host" });
     expect(systemPosts()).toEqual([
-      `Merging CSV-1 failed with what looks like a temporary error: ${DEADLINE}. Loom tries again in 1m, waiting longer after each failure up to 15m, and pauses the project only if it keeps failing for 1h.`,
+      `Merging CSV-1 got no answer from the project's machine, so Loom cannot tell whether it ran: ${DEADLINE}. Each step first checks what is already done, so nothing is done twice. Loom tries again in 1m, waiting longer after each failure up to 15m. A problem of the project's machine never blocks this ticket or pauses the project.`,
     ]);
     expect(warnings("Merging CSV-1 failed 1 time in a row")).toHaveLength(1);
 
@@ -165,11 +167,11 @@ describe("a merge that fails in a way worth waiting out", () => {
     h.clock.advance(1000);
     await queue();
     expect(h.host.callsTo("merge")).toHaveLength(2);
-    expect(ticket()).toMatchObject({ state: "done", merge_wait_json: null });
+    expect(ticket()).toMatchObject({ state: "done", retry_json: null });
     expect(systemPosts()).toHaveLength(1);
   });
 
-  it("tries again after 1, 2, 5, 10 and 15 minutes, and pauses after an hour, naming the ticket, the error and how long", async () => {
+  it("tries again after 1, 2, 5, 10 and 15 minutes, and after an hour says so once more, never pausing the project", async () => {
     await seedProject(h);
     await reachApproved(h);
     h.host.errors.merge = new Error("host plugin worker exited (0)");
@@ -188,18 +190,22 @@ describe("a merge that fails in a way worth waiting out", () => {
 
     h.clock.advance(15 * MINUTE);
     await queue();
-    expect(project()).toMatchObject({
-      state: "paused",
-      system_reason: "Merging CSV-1 failed 8 times in a row over 1h 3m: host plugin worker exited (0). Resume once the project's machine and the forge answer again.",
-      triage_pending: 1,
-    });
-    expect(ticket()).toMatchObject({ state: "merging", merge_wait_json: null });
-    expect(warnings("Merging CSV-1 failed")).toHaveLength(8);
+    expect(project()).toMatchObject({ state: "running", system_reason: null });
+    expect(ticket()).toMatchObject({ state: "merging" });
+    expect(waitOf()).toMatchObject({ failures: 8, noted: true });
+    expect(systemPosts()).toEqual([
+      expect.stringContaining("Merging CSV-1 got no answer from the project's machine"),
+      "Merging CSV-1 has failed 8 times in a row over 1h 3m, because of the project's machine: host plugin worker exited (0). Loom keeps trying every 15m; a problem of the project's machine never blocks this ticket or pauses the project.",
+    ]);
+    h.clock.advance(15 * MINUTE);
+    await queue();
+    expect(systemPosts()).toHaveLength(2);
+    expect(warnings("Merging CSV-1 failed")).toHaveLength(9);
 
     h.host.errors.merge = null;
-    resume();
+    h.clock.advance(15 * MINUTE);
     await queue();
-    expect(ticket().state).toBe("done");
+    expect(ticket()).toMatchObject({ state: "done", retry_json: null });
   });
 
   it("holds the whole queue while the ticket waits, and a success ends the streak, so a later failure posts again", async () => {
@@ -214,7 +220,7 @@ describe("a merge that fails in a way worth waiting out", () => {
 
     h.clock.advance(MINUTE);
     await queue();
-    expect(ticket("CSV-1")).toMatchObject({ state: "done", merge_wait_json: null });
+    expect(ticket("CSV-1")).toMatchObject({ state: "done", retry_json: null });
     h.host.scripted.merge = [new Error(DEADLINE)];
     await queue();
     expect(ticket("CSV-3")).toMatchObject({ state: "merging" });
@@ -251,7 +257,7 @@ describe("a merge that fails in a way worth waiting out", () => {
       await queue();
       const first = h.clock.t;
       expect(project().state).toBe("running");
-      expect(waitOf()).toEqual({ failures: 1, since: first, until: first + 15 * MINUTE, message: RATE_LIMITED });
+      expect(waitOf()).toMatchObject({ failures: 1, since: first, until: first + 15 * MINUTE, message: RATE_LIMITED, scope: "forge" });
       expect(systemPosts()[0]).toContain("Loom tries again in 15m");
 
       h.clock.advance(14 * MINUTE);
@@ -260,7 +266,7 @@ describe("a merge that fails in a way worth waiting out", () => {
       h.clock.advance(MINUTE);
       await queue();
       expect(h.host.callsTo("push")).toHaveLength(2);
-      expect(ticket()).toMatchObject({ state: "pr_open", pr_url: URL1, merge_wait_json: null });
+      expect(ticket()).toMatchObject({ state: "pr_open", pr_url: URL1, retry_json: null });
     });
 
     it("waits out a fix round whose feedback command took too long, then pushes the fix", async () => {
@@ -277,12 +283,12 @@ describe("a merge that fails in a way worth waiting out", () => {
       expect(ticket()).toMatchObject({ state: "merging" });
       expect(waitOf()).toMatchObject({ failures: 1, message: "The forge's feedback command took longer than 2 minutes: " });
       expect(systemPosts().at(-1)).toBe(
-        "Merging CSV-1 failed with what looks like a temporary error: The forge's feedback command took longer than 2 minutes. Loom tries again in 1m, waiting longer after each failure up to 15m, and pauses the project only if it keeps failing for 1h.",
+        "Merging CSV-1 failed with what looks like a temporary error: The forge's feedback command took longer than 2 minutes. Loom tries again in 1m, waiting longer after each failure up to 15m, and blocks this ticket only if it keeps failing for 1h. The project keeps running.",
       );
 
       h.clock.advance(MINUTE);
       await queue();
-      expect(ticket()).toMatchObject({ state: "pr_open", pr_rounds: 1, merge_wait_json: null });
+      expect(ticket()).toMatchObject({ state: "pr_open", pr_rounds: 1, retry_json: null });
     });
 
     it("waits out a read of the pull request branch whose host call ran out of time before a push, on a machine", async () => {
@@ -307,7 +313,7 @@ describe("a merge that fails in a way worth waiting out", () => {
 
       h.clock.advance(MINUTE);
       await queue();
-      expect(ticket()).toMatchObject({ state: "pr_open", pushed_sha: "sq2", merge_wait_json: null });
+      expect(ticket()).toMatchObject({ state: "pr_open", pushed_sha: "sq2", retry_json: null });
     });
 
     it("waits out a push that could not reach the remote", async () => {
@@ -320,50 +326,68 @@ describe("a merge that fails in a way worth waiting out", () => {
     });
   });
 
-  describe("still pauses", () => {
+  describe("pauses only for the whole project", () => {
     const pr = (more: Doc = {}) => (doc: Doc) => (doc.merge = { strategy: "pr", describe: "loom", stack: false, ...more });
 
-    it("on a missing login, an open command that printed no URL, and a host call the contract refused", async () => {
+    it("on a missing login and an open command that printed no URL, saying what to fix", async () => {
       await seedProject(h, pr());
       await reachApproved(h);
       const signedOut = "gh pr create failed: To get started with GitHub CLI, please run:  gh auth login";
       h.host.scripted.prCreate = [{ outcome: "unavailable", message: signedOut }];
       await queue();
-      expect(project()).toMatchObject({ state: "paused", system_reason: signedOut });
-      expect(ticket().merge_wait_json).toBeNull();
+      expect(project()).toMatchObject({ state: "paused", system_reason: `Merging CSV-1 stopped: ${signedOut}. Sign in on the project's machine (for gh, \`gh auth login\`; for git, the remote's credentials), then resume the project.`, triage_pending: 1 });
+      expect(ticket()).toMatchObject({ state: "merging", retry_json: null });
 
       resume();
       h.host.scripted.prCreate = [{ outcome: "unavailable", message: "The forge's open command printed no pull request URL: created" }];
       await queue();
-      expect(project()).toMatchObject({ state: "paused", system_reason: "The forge's open command printed no pull request URL: created" });
-
-      resume();
-      h.host.scripted.prCreate = [new Error("host rpc input validation failed: must be a pull request URL")];
-      await queue();
-      expect(project()).toMatchObject({ state: "paused", system_reason: "Merging CSV-1 stopped: host rpc input validation failed: must be a pull request URL" });
+      expect(project()).toMatchObject({ state: "paused", system_reason: expect.stringMatching(/^Merging CSV-1 stopped: The forge's open command printed no pull request URL: created\. Fix the forge command in the spec/u) });
       expect(systemPosts()).toEqual([]);
     });
 
-    it("on a repo with no checkout", async () => {
+    it("blocks the ticket alone for a host call the contract refused, and the project keeps running", async () => {
+      await seedProject(h, (doc) => {
+        pr()(doc);
+        withDocsTicket(doc);
+      });
+      await reachApproved(h);
+      h.host.scripted.prCreate = [Object.assign(new Error("host rpc input validation failed: must be a pull request URL"), { code: "invalid_input" })];
+      await queue();
+      expect(project().state).toBe("running");
+      expect(ticket()).toMatchObject({ state: "blocked", blocked_reason: "Merging CSV-1 failed, and trying again would not help: host rpc input validation failed: must be a pull request URL.", retry_json: null, merge_step_json: null });
+      expect(h.store.posts(ticket().id).filter((post) => post.kind === "block").map((post) => post.body)).toEqual([ticket().blocked_reason]);
+      expect(project().triage_pending).toBe(1);
+    });
+
+    it("waits on a repo with no checkout, without pausing", async () => {
       await seedProject(h);
       await reachApproved(h);
       h.bb.checkout = null;
       await queue();
-      expect(project()).toMatchObject({ state: "paused", system_reason: expect.stringContaining("no checkout") });
+      expect(project().state).toBe("running");
+      expect(ticket().state).toBe("merging");
+      expect(waitOf()).toMatchObject({ failures: 1, scope: "host", message: expect.stringContaining("no checkout") });
     });
 
-    it("on a failure that is not worth waiting out, ending a streak, so a resume merges at once", async () => {
-      await seedProject(h);
-      await reachApproved(h);
-      h.host.scripted.merge = [new Error(DEADLINE), new Error("git merge c1 failed (128): fatal: refusing to merge unrelated histories")];
+    it("blocks the ticket after five tries of an error no rule names, taking the merge out, and the queue goes on", async () => {
+      await seedProject(h, withDocsTicket);
+      await reachApproved(h, "CSV-1");
+      await reachApproved(h, "CSV-3");
+      const odd = "git merge c1 failed (128): fatal: refusing to merge unrelated histories";
+      h.host.errors.merge = new Error(odd);
       await queue();
-      h.clock.advance(MINUTE);
+      for (const minutes of [1, 2, 5, 10]) {
+        h.clock.advance(minutes * MINUTE);
+        await queue();
+      }
+      expect(h.host.callsTo("merge")).toHaveLength(5);
+      expect(project().state).toBe("running");
+      expect(ticket("CSV-1")).toMatchObject({ state: "blocked", blocked_reason: `Merging CSV-1 failed 5 times in a row over 18m: ${odd}. Loom blocked this ticket; the rest of the project keeps running.`, retry_json: null, merge_before: null });
+      expect(systemPosts("CSV-1")).toEqual([expect.stringContaining("since it does not recognize this error, blocks this ticket if 5 tries in a row fail")]);
+
+      h.host.errors.merge = null;
       await queue();
-      expect(project()).toMatchObject({ state: "paused", system_reason: "Merging CSV-1 stopped: git merge c1 failed (128): fatal: refusing to merge unrelated histories" });
-      expect(ticket()).toMatchObject({ state: "merging", merge_wait_json: null });
-      resume();
-      await queue();
-      expect(ticket().state).toBe("done");
+      expect(ticket("CSV-3").state).toBe("done");
     });
   });
 });
@@ -408,7 +432,7 @@ describe("a merge that runs again after its checks got no answer", () => {
     await queue();
     expect(h.host.callsTo("mergeOnto")).toHaveLength(1);
     expect(h.host.callsTo("prCommit").at(-1)).toMatchObject({ head: step.sha, pushed: "theirs1" });
-    expect(ticket()).toMatchObject({ state: "pr_open", head_sha: step.sha, head_tree: step.tree, pushed_sha: "sq2", merge_step_json: null, merge_wait_json: null });
+    expect(ticket()).toMatchObject({ state: "pr_open", head_sha: step.sha, head_tree: step.tree, pushed_sha: "sq2", merge_step_json: null, retry_json: null });
     expect(mergePosts().map((post) => JSON.parse(post.data_json).outcome)).toContain("restacked");
   });
 
@@ -635,7 +659,7 @@ describe("steps that are not run again", () => {
     h.host.scripted.prRequestReview = [new Error(DEADLINE)];
     await queue();
     expect(project().state).toBe("running");
-    expect(ticket()).toMatchObject({ state: "pr_open", merge_wait_json: null });
+    expect(ticket()).toMatchObject({ state: "pr_open", retry_json: null });
     expect(h.host.callsTo("prRequestReview")).toHaveLength(1);
     expect(mergePosts().filter((post) => post.body.includes("could not ask")).map((post) => post.body)).toEqual([`Loom could not ask alice to review the pull request again: ${DEADLINE}`]);
   });
@@ -646,7 +670,7 @@ describe("steps that are not run again", () => {
     h.host.execResults = [new Error(DEADLINE)];
     await queue();
     expect(project().state).toBe("running");
-    expect(ticket()).toMatchObject({ state: "pr_open", merge_wait_json: null });
+    expect(ticket()).toMatchObject({ state: "pr_open", retry_json: null });
     const failed = mergePosts().filter((post) => JSON.parse(post.data_json).outcome === "after_open_failed");
     expect(failed.map((post) => post.body)).toEqual([
       `The after_open command \`ci-cli run\` got no answer from the project's machine, so Loom cannot tell whether it ran, and does not run it again: ${DEADLINE} Loom did not run \`ci-cli notify\` after it either.\n\nThe pull request ${URL1} is open; nothing else changed.`,
@@ -675,7 +699,7 @@ describe("blocking or cancelling a ticket whose merge waits", () => {
     await queue();
     expect(waitOf()).not.toBeNull();
     await e.engine.block("CSV-1", "Not this way", "human");
-    expect(ticket()).toMatchObject({ state: "blocked", blocked_reason: "Not this way", merge_wait_json: null, merge_step_json: null });
+    expect(ticket()).toMatchObject({ state: "blocked", blocked_reason: "Not this way", retry_json: null, merge_step_json: null });
     expect(project().state).toBe("running");
   });
 
@@ -692,7 +716,7 @@ describe("blocking or cancelling a ticket whose merge waits", () => {
     await e.engine.cancel("CSV-1", "Dropped", "human");
     expect(h.host.callsTo("resetHard").at(-1)).toEqual({ worktree: "/data/worktrees/csv", sha: "base000" });
     expect(h.host.worktree("/data/worktrees/csv").head).toBe("base000");
-    expect(ticket()).toMatchObject({ state: "cancelled", merge_wait_json: null });
+    expect(ticket()).toMatchObject({ state: "cancelled", retry_json: null });
   });
 
   it("refuses, leaving the ticket merging, when the integration branch cannot be read to take the merge out", async () => {
@@ -711,27 +735,29 @@ describe("blocking or cancelling a ticket whose merge waits", () => {
 
 describe("a pull request read whose host call got no answer", () => {
   const pr = (more: Doc = {}) => (doc: Doc) => (doc.merge = { strategy: "pr", describe: "loom", max_fix_rounds: 0, ...more });
+  const readWait = () => retryOf(ticket(), "read");
+  const commandForge = (doc: Doc) => {
+    pr({ forge: { kind: "command", open: "review-cli open", state: "review-cli state" } })(doc);
+    doc.checks.ci = false;
+  };
 
-  it("waits as a server error when the command forge's read ran out of time, and pauses only after an hour", async () => {
-    await seedProject(h, (doc) => {
-      pr({ forge: { kind: "command", open: "review-cli open", state: "review-cli state" } })(doc);
-      doc.checks.ci = false;
-    });
+  it("waits on the project's machine when the command forge's read ran out of time, and after an hour says so once more, never pausing", async () => {
+    await seedProject(h, commandForge);
     await reachApproved(h);
     await queue();
     const deadline = "host plugin call cb6707d4-28ec-4bd7-b592-6f9d15ce5799 exceeded its deadline";
     h.host.errors.prState = new Error(deadline);
     await poll();
     expect(project().state).toBe("running");
-    expect(JSON.parse(ticket().pr_poll_json!)).toMatchObject({ failures: 1, message: deadline });
+    expect(readWait()).toMatchObject({ step: "read", failures: 1, message: deadline, kind: "unknown", scope: "host" });
     expect(systemPosts()).toEqual([
-      `Reading the pull request failed with what looks like a temporary error on the project's machine: ${deadline}. Loom reads it again in 5m, waiting longer after each failure up to 30m, and pauses the project only if the reads keep failing for 1h.`,
+      `Reading the pull request of CSV-1 got no answer from the project's machine, so Loom cannot tell whether it ran: ${deadline}. Each step first checks what is already done, so nothing is done twice. Loom tries again in 5m, waiting longer after each failure up to 15m. A problem of the project's machine never blocks this ticket or pauses the project.`,
     ]);
-    for (const minutes of [5, 10, 20, 30]) await poll(minutes);
-    expect(project()).toMatchObject({
-      state: "paused",
-      system_reason: `Reading the pull request ${URL1} of CSV-1 failed 5 times in a row over 1h 5m: ${deadline}. Resume once the project's machine answers again.`,
-    });
+    for (let i = 0; i < 6; i += 1) await poll(15);
+    expect(project()).toMatchObject({ state: "running", system_reason: null });
+    expect(ticket().state).toBe("pr_open");
+    expect(systemPosts()).toHaveLength(2);
+    expect(systemPosts()[1]).toMatch(/^Reading the pull request of CSV-1 has failed 5 times in a row over 1h, because of the project's machine/u);
   });
 
   it("waits for each ticket of a GitHub batch whose host worker exited, as during a plugin update", async () => {
@@ -741,9 +767,9 @@ describe("a pull request read whose host call got no answer", () => {
     h.host.scripted.prBatch = [new Error("host plugin worker exited (0)")];
     await poll();
     expect(project().state).toBe("running");
-    expect(JSON.parse(ticket().pr_poll_json!)).toMatchObject({ failures: 1, message: "host plugin worker exited (0)" });
+    expect(readWait()).toMatchObject({ failures: 1, message: "host plugin worker exited (0)" });
     await poll();
-    expect(ticket().pr_poll_json).toBeNull();
+    expect(ticket().retry_json).toBeNull();
   });
 
   // LANE and OTLP paused after each Loom update: bb retired the old host plugin generation in the middle of a read.
@@ -753,51 +779,64 @@ describe("a pull request read whose host call got no answer", () => {
     "host plugin worker exited (0)",
     "Host is not connected",
     "Host is suspended",
-  ])("waits out a GitHub batch and a single read that got %s, and pauses only after an hour of them", async (message) => {
+  ])("waits out a GitHub batch that got %s for as long as it lasts, never pausing or blocking", async (message) => {
     await seedProject(h, pr(), "running");
     await reachApproved(h);
     await queue();
     h.host.errors.prBatch = new Error(message);
     await poll();
     expect(project().state).toBe("running");
-    expect(JSON.parse(ticket().pr_poll_json!)).toMatchObject({ failures: 1, message });
-    for (const minutes of [5, 10, 20, 30]) await poll(minutes);
-    expect(project()).toMatchObject({ state: "paused", system_reason: `Reading the pull request ${URL1} of CSV-1 failed 5 times in a row over 1h 5m: ${message}. Resume once the project's machine answers again.` });
+    expect(readWait()).toMatchObject({ failures: 1, message, scope: "host" });
+    for (let i = 0; i < 8; i += 1) await poll(15);
+    expect(project().state).toBe("running");
+    expect(ticket().state).toBe("pr_open");
+    h.host.errors.prBatch = null;
+    await poll(15);
+    expect(ticket().retry_json).toBeNull();
   });
 
   it("waits out a command forge's read whose host plugin generation was retired, as during a plugin update", async () => {
-    await seedProject(h, (doc) => {
-      pr({ forge: { kind: "command", open: "review-cli open", state: "review-cli state" } })(doc);
-      doc.checks.ci = false;
-    });
+    await seedProject(h, commandForge);
     await reachApproved(h);
     await queue();
     const retired = "host plugin loom generation 958cfa03-7186-47e3-9428-ffb4b2bff84f is retired";
     h.host.errors.prState = new Error(retired);
     await poll();
     expect(project().state).toBe("running");
-    expect(JSON.parse(ticket().pr_poll_json!)).toMatchObject({ failures: 1, message: retired });
+    expect(readWait()).toMatchObject({ failures: 1, message: retired });
     h.host.errors.prState = null;
     await poll(5);
-    expect(ticket().pr_poll_json).toBeNull();
+    expect(ticket().retry_json).toBeNull();
     expect(project().state).toBe("running");
   });
 
-  it("still pauses on a read gh answered with a missing login", async () => {
+  it("blocks the ticket alone when the forge answers its read with a server error for an hour", async () => {
+    await seedProject(h, pr(), "running");
+    await reachApproved(h);
+    await queue();
+    h.host.scripted.prBatch = Array.from({ length: 20 }, () => ({ outcome: "unavailable" as const, message: "gh api graphql failed: gh: HTTP 502", transient: "server" as const }));
+    await poll();
+    expect(systemPosts()).toEqual([expect.stringContaining("and blocks this ticket only if it keeps failing for 1h")]);
+    for (let i = 0; i < 5; i += 1) await poll(15);
+    expect(project().state).toBe("running");
+    expect(ticket()).toMatchObject({ state: "blocked", blocked_reason: expect.stringMatching(/^Reading the pull request of CSV-1 failed 5 times in a row over 1h: gh api graphql failed: gh: HTTP 502\. Loom blocked this ticket/u) });
+  });
+
+  it("still pauses on a read gh answered with a missing login, saying what to fix", async () => {
     await seedProject(h, pr());
     await reachApproved(h);
     await queue();
     const signedOut = "gh api graphql failed: To get started with GitHub CLI, please run: gh auth login";
     h.host.scripted.prBatch = [{ outcome: "unavailable", message: signedOut }];
     await poll();
-    expect(project()).toMatchObject({ state: "paused", system_reason: signedOut });
+    expect(project()).toMatchObject({ state: "paused", system_reason: `Reading the pull request of CSV-1 stopped: ${signedOut}. Sign in on the project's machine (for gh, \`gh auth login\`; for git, the remote's credentials), then resume the project.` });
   });
 });
 
 describe("the review diff", () => {
   const reviewers = () => h.store.threads({ ticketId: ticket().id, role: "reviewer" });
 
-  it("waits and tries again on the merge's steps when its read gets no answer, and pauses only after an hour", async () => {
+  it("waits and tries again on the merge's steps when its read gets no answer, for as long as it lasts", async () => {
     await seedProject(h);
     await reachReview(h);
     h.host.errors.diff = new Error(DEADLINE);
@@ -805,28 +844,28 @@ describe("the review diff", () => {
     expect(project().state).toBe("running");
     expect(reviewers()).toEqual([]);
     expect(systemPosts()).toEqual([
-      `Reading the diff of CSV-1 for review failed with what looks like a temporary error: ${DEADLINE}. Loom tries again in 1m, waiting longer after each failure up to 15m, and pauses the project only if it keeps failing for 1h.`,
+      `Reading the diff of CSV-1 for review got no answer from the project's machine, so Loom cannot tell whether it ran: ${DEADLINE}. Each step first checks what is already done, so nothing is done twice. Loom tries again in 1m, waiting longer after each failure up to 15m. A problem of the project's machine never blocks this ticket or pauses the project.`,
     ]);
     await spawnReviewers(h.ctx, project(), spec());
     expect(h.host.callsTo("diff")).toHaveLength(1);
 
-    for (const minutes of [1, 2, 5, 10, 15, 15]) {
+    for (const minutes of [1, 2, 5, 10, 15, 15, 15]) {
       h.clock.advance(minutes * MINUTE);
       await spawnReviewers(h.ctx, project(), spec());
     }
-    expect(h.host.callsTo("diff")).toHaveLength(7);
+    expect(h.host.callsTo("diff")).toHaveLength(8);
     expect(project().state).toBe("running");
-    h.clock.advance(15 * MINUTE);
-    await spawnReviewers(h.ctx, project(), spec());
-    expect(project()).toMatchObject({ state: "paused", system_reason: `Reading the diff of CSV-1 for review failed 8 times in a row over 1h 3m: ${DEADLINE}. Resume once the project's machine and the forge answer again.` });
+    expect(ticket().state).toBe("review");
+    expect(systemPosts()).toHaveLength(2);
 
     h.host.errors.diff = null;
-    resume();
+    h.clock.advance(15 * MINUTE);
     await spawnReviewers(h.ctx, project(), spec());
     expect(reviewers()).toHaveLength(1);
+    expect(ticket().retry_json).toBeNull();
   });
 
-  it("starts the reviewer once a read works, and still pauses on a diff git cannot make", async () => {
+  it("starts the reviewer once a read works, and blocks the ticket alone on a diff git cannot make", async () => {
     await seedProject(h);
     await reachReview(h);
     h.host.scripted.diff = [new Error(DEADLINE)];
@@ -839,18 +878,19 @@ describe("the review diff", () => {
     await reachReview(h);
     h.host.scripted.diff = [new Error("git diff --stat --no-color main...c1 -- failed (128): fatal: bad revision")];
     await spawnReviewers(h.ctx, project(), spec());
-    expect(project()).toMatchObject({ state: "paused", system_reason: "Could not read the diff of CSV-1 for review: git diff --stat --no-color main...c1 -- failed (128): fatal: bad revision" });
+    expect(project().state).toBe("running");
+    expect(ticket()).toMatchObject({ state: "blocked", blocked_reason: "Reading the diff of CSV-1 for review failed, and trying again would not help: git diff --stat --no-color main...c1 -- failed (128): fatal: bad revision." });
   });
 });
 
-describe("the merge wait on the page", () => {
+describe("the retry wait on the page", () => {
   it("is on the waiting ticket's board card, and on no other", async () => {
     await seedProject(h);
     await reachApproved(h);
     h.host.scripted.merge = [new Error(DEADLINE)];
     await queue();
     const cards = boardCards(h.store.tickets(project().id), h.store.threadsForProject(project().id), spec());
-    expect(cards.find((card) => card.key === "CSV-1")!.mergeWait).toEqual({ failures: 1, since: h.clock.t, until: h.clock.t + MINUTE, message: DEADLINE });
-    expect(cards.find((card) => card.key === "CSV-2")!.mergeWait).toBeNull();
+    expect(cards.find((card) => card.key === "CSV-1")!.retry).toEqual({ step: "merge", failures: 1, since: h.clock.t, until: h.clock.t + MINUTE, message: DEADLINE });
+    expect(cards.find((card) => card.key === "CSV-2")!.retry).toBeNull();
   });
 });
