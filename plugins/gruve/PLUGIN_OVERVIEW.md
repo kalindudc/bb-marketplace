@@ -25,7 +25,7 @@ Light or dark is still bb's own per-client setting.
 
 ## Limits
 
-- It sets bb's theme tokens and styles bb's own composer, nothing else. Plugins that draw their own UI, such as a custom sidebar, keep their own corner radii and pick up the colours through bb's variables. If you choose another composer under Settings → Appearance → Composer, Gruve leaves it alone.
+- It sets bb's theme tokens and styles bb's own composer and numbered lists, nothing else. Plugins that draw their own UI, such as a custom sidebar, keep their own corner radii and pick up the colours through bb's variables. If you choose another composer under Settings → Appearance → Composer, Gruve leaves it alone.
 - The settings only apply while Gruve is the active theme: pick another theme and its own colours come back with nothing left behind.
 - The composer styling relies on bb's `data-promptbox` markup, so a bb release that changes it can drop the prompt glyph until Gruve is updated. The colours are unaffected.
 - The integrated terminal paints on the sidebar colour, so it is paper in light mode rather than dark.

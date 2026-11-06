@@ -25,10 +25,11 @@ Or pick **Gruve** under **Settings → Appearance**. Light or dark stays bb's pe
 - Shape: `--radius` is `0px`, and bb's few fixed-radius utilities (`rounded`, `rounded-xl` and the `rounded-[Npx]` ones) are squared. `rounded-full` stays round, so avatars, spinners, dots and pills keep their shape.
 - Elevation: every `--shadow-*` token is a zero, transparent shadow. Tailwind joins shadows into one `box-shadow` list, so `none` would void the whole declaration.
 - Type: `--font-sans`, `--font-mono` and `--font-terminal` use JetBrains Mono (the Nerd Font build first), then your system monospace font.
+- Lists: bb leaves room for a proportional `1. ` before a numbered item, which a monospace number overflows, so messages clipped it. Gruve indents bb's numbered lists by the number's width in characters plus two, for the full stop and the space, in messages and in plugin overviews alike. Messages set that indent inline, so the rule needs `!important`.
 - Code: diffs and file previews use the gruvbox dark soft and gruvbox light hard syntax themes, declared as `codeTheme` in `package.json`.
 - Composer: bb's bundled composer reads as a terminal prompt, with a `❯` before the first line, a `--primary` caret, an accent border and left rail while it has focus, and an outlined send button. When sending has options, bb joins the send button and its chevron in one group filled with ink; Gruve outlines that group in the accent too, so it never shows as a dark block in light mode or a light one in dark mode.
 
-The theme sets bb's tokens and styles bb's own composer, nothing else. Plugins with their own UI, such as [Switchboard](../switchboard), are not restyled: they keep their own radii and read the colours through bb's variables.
+The theme sets bb's tokens and styles bb's own composer and numbered lists, nothing else. Plugins with their own UI, such as [Switchboard](../switchboard), are not restyled: they keep their own radii and read the colours through bb's variables.
 
 The composer rules hook bb's `data-promptbox` attributes and are scoped to `[data-bb-plugin="bb--composer"]`, the bundled composer's plugin root. A replacement composer chosen under Settings → Appearance → Composer is left alone, and a test fails if a composer rule loses that scope. A bb release that renames those attributes would drop the prompt styling, not the colours.
 

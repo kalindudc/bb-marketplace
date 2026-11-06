@@ -2,6 +2,12 @@
 
 Notable changes to Gruve, newest first. Releases are tagged `gruve/vX.Y.Z` in this repository.
 
+## 0.3.2 (2026-11-05)
+
+### Fixed
+
+- Numbered lists in messages lost the left part of their numbers, so `1.` read as `l.`. bb leaves room for a proportional `1. `, and in a monospace font the number, the full stop and the space are a character each, which is wider. Gruve now indents bb's numbered lists by the number's width in characters plus two, so the numbers line up with the text above them and wrapped lines still hang under the item. Plugin overviews get the same indent, with room for two digits once a list reaches ten items.
+
 ## 0.3.1 (2026-11-05)
 
 ### Fixed

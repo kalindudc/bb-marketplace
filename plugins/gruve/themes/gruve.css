@@ -196,6 +196,23 @@
   border-radius: var(--gruve-corner);
 }
 
+/* bb indents a numbered list for a proportional "1. ": 1.25rem, and 1ch more
+   for each further digit. In a monospace font the number, the full stop and
+   the space are 1ch each, so the number stuck out of the list and bb clipped
+   it. bb sets this padding inline, hence !important. */
+ol[style*="--markdown-list-marker-digits"] {
+  padding-inline-start: calc((var(--markdown-list-marker-digits) + 2) * 1ch) !important;
+}
+
+/* Plugin overviews indent by 1rem and number from 1, ignoring a list's start. */
+[data-plugin-overview] ol {
+  padding-inline-start: 3ch;
+}
+
+[data-plugin-overview] ol:has(> li:nth-child(10)) {
+  padding-inline-start: 4ch;
+}
+
 /* The composer as a terminal prompt: a ❯ before the first line, an accent
    rail and border while it has focus, and an outlined send button. The
    hooks are the bundled composer's data-promptbox attributes; scoping to

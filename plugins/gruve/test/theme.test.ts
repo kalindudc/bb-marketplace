@@ -275,6 +275,18 @@ describe("theme", () => {
     expect(group).toContain("color: var(--primary);");
   });
 
+  // bb leaves room for a proportional "1. " before a numbered item. In a monospace font the number, the
+  // full stop and the space are 1ch each, so anything less than digits + 2 ch clips the number.
+  it("indents bb's numbered lists far enough for a monospace number", () => {
+    // bb sets this padding inline, so only an !important rule can widen it.
+    const markdown = css.match(/ol\[style\*="--markdown-list-marker-digits"\] \{([^}]*)\}/u)?.[1] ?? "";
+    expect(markdown).toContain("padding-inline-start: calc((var(--markdown-list-marker-digits) + 2) * 1ch) !important;");
+
+    // Plugin overviews drop the list's start, so they always count from 1.
+    expect(css).toMatch(/\[data-plugin-overview\] ol \{\s*padding-inline-start: 3ch;/u);
+    expect(css).toMatch(/\[data-plugin-overview\] ol:has\(> li:nth-child\(10\)\) \{\s*padding-inline-start: 4ch;/u);
+  });
+
   it("styles only the bundled composer, so a replacement composer plugin is left alone", () => {
     const composer = selectors.filter((s) => /promptbox|ProseMirror/.test(s));
     expect(composer.length).toBeGreaterThan(0);
