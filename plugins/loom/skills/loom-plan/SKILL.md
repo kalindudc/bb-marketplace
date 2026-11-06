@@ -182,6 +182,8 @@ tell = "Add this pull request to the project's Shuttle board, and create the boa
 
 Call `loom_propose` with the whole spec. Fix every numbered error it returns and call it again; a refused spec creates nothing. Calling it again from this thread with the same slug revises the draft. Read any warnings and fix the ones that matter.
 
+Leave out every key whose value would be its default: write only what this project changes, so the human reads only the choices that matter. The keys planners most often write for nothing are `project.base = "main"`, `review.approvals = 1`, `review.max_rounds = 3`, `scope.enforce = "warn"`, `budget.max_attempts = 3`, `budget.max_check_failures = 5`, `merge.draft = true` and `ticket.priority = 2`; `references/spec.md` gives every default. `loom_propose` warns with a list of the keys it finds set to their default, and saves the spec as you wrote it; leave them out of the next version you propose.
+
 Then wait for the spec review. For each draft version Loom starts a separate reviewer agent that reads this conversation, the spec and the code, and checks that the spec builds what the human asked for, and no more. End your turn after `loom_propose`; the verdict arrives in this thread as a message that starts with "[loom] Spec review".
 
 - A passed review says so: hand over (step 7).

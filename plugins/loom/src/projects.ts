@@ -9,7 +9,7 @@ import { SectionNameConflictError, type BbPort, type BbProjectInfo, type HostPor
 import { MAX_PLANNING_REPOS, notesMessage, planningKickoff, planningTitle, type PickedRepo } from "./prompts";
 import { integrationBranchOf, isMultiRepo, repoSettings } from "./repos";
 import { rolloutJson } from "./rollout";
-import { numberErrors, parseSpec, proposalErrorsOf, specHash, type Spec } from "./spec";
+import { defaultKeysWarning, numberErrors, parseSpec, proposalErrorsOf, specHash, type Spec } from "./spec";
 import type { SpecNote } from "./spec-paths";
 import { PAUSE_NOW_REASON, TICKET_STATES, type AuthorKind, type MergeChoice, type ProjectState, type Role, type TicketState } from "./states";
 import { writeSub } from "./sub-state";
@@ -194,7 +194,9 @@ export class Projects {
     if (errors.length === 0) errors.push(...(await this.reachErrorsOf(parsed.spec, args)));
     if (errors.length > 0) throw rejected(errors);
     const existing = this.store.projectBySlug(parsed.spec.project.slug);
-    return existing === null ? await this.createDraft(args, parsed.spec, parsed.warnings) : await this.revise(existing, args, parsed.spec, parsed.warnings);
+    const defaults = defaultKeysWarning(args.toml);
+    const warnings = defaults === null ? parsed.warnings : [...parsed.warnings, defaults];
+    return existing === null ? await this.createDraft(args, parsed.spec, warnings) : await this.revise(existing, args, parsed.spec, warnings);
   }
 
   private proposalErrors(threadId: string, spec: Spec): string[] {

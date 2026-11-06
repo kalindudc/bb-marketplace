@@ -939,6 +939,7 @@ Warnings are returned but do not block a proposal.
 - Tickets name rollout stages, but the spec has no `[[rollout.stage]]` tables, so the stages have no goal or soak and are ordered by the first ticket that names each.
 - A ticket has a `rollout.verify` in a repo that deploys on merge: Loom marks it live when its pull request merges and never runs `verify`.
 - An `auto_merge` with `method = "comment"` or `"command"` and no `rejected`: Loom cannot see the merge service turn a pull request away, and waits until it merges.
+- The spec sets keys to the value Loom uses when they are left out, such as `review.max_rounds = 3`. The warning lists them; Loom saves the spec as written, and the next version can leave them out. A `ci` counts when it equals what its forge gives.
 
 ## Revisions
 

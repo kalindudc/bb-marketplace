@@ -126,6 +126,7 @@ export function planningKickoff(a: { merge: MergeChoice; reviewer: string; repos
   return [
     "[loom] The human started this thread from the Loom page to plan a new project, and the goal is the message above.",
     "Plan it with the loom-plan skill: one round of questions here, then read the code, run the checks, and call loom_propose.",
+    'Leave out every key whose value would be its default, such as project.base = "main", review.max_rounds = 3 or scope.enforce = "warn": write only what this project changes. loom_propose lists any it finds.',
     "The human reviews, approves and starts the draft on the Loom page, so point them there when you hand over.",
     ...(a.merge === "ask" ? [] : [`The merge plan is already chosen: strategy = "${a.merge}" in [merge], so do not ask about it.`]),
     ...(reviewer === "" ? [] : [`The human asked for this reviewer model: ${JSON.stringify(reviewer)}. Write it into [agents.reviewer] as provider and model; ask only if it is unclear.`]),

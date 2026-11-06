@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { prSettings, repoSettings } from "../src/repos";
-import { dependencyCycle, globsOverlap, numberErrors, parseSpec, proposalErrorsOf, scopeOverlaps, specHash, ticketPatchSchema } from "../src/spec";
+import { defaultKeysIn, dependencyCycle, globsOverlap, numberErrors, parseSpec, proposalErrorsOf, scopeOverlaps, specHash, ticketPatchSchema } from "../src/spec";
 import { withRepos } from "./fixtures";
 import { specToml, type Doc } from "./helpers";
 
@@ -160,6 +160,65 @@ describe("parseSpec", () => {
     const why = 'Loom always adds its own git worktree of the integration branch; for a repository that refuses one, use merge.strategy = "pr": remove the key.';
     expect(run((doc) => (doc.merge.worktree = { command: "prepare" })).errors).toEqual([`merge.worktree: Loom no longer reads this key. ${why}`]);
     expect(run((doc) => (withRepos(doc), (doc.repo[0].worktree = { command: "prepare" }))).errors).toEqual([`repo[0].worktree: Loom no longer reads this key. ${why}`]);
+  });
+});
+
+describe("defaultKeysIn", () => {
+  it("lists every key the TOML sets to the value Loom uses when it is left out, once per key, and nothing else", () => {
+    const toml = specToml((doc) => {
+      doc.project.base = "main";
+      doc.merge = { strategy: "pr", remote: "origin", draft: true, describe: "worker", stack: false, max_fix_rounds: 5, git_network_timeout_seconds: 300, forge: { kind: "gh", auto_merge: { method: "squash", mode: "manual", require_live: false, max_attempts: 3 } } };
+      doc.checks = { commands: ["npm test"], timeout_minutes: 25, ci: true };
+      doc.scope = { enforce: "warn" };
+      doc.agents = { ...doc.agents, max_workers: 3, ticket_timeout_minutes: 180, triage: true, worker: { ...doc.agents.worker, permission_mode: "full" } };
+      doc.review = { approvals: 1, max_rounds: 3, rubric: ["No new dependencies"] };
+      doc.budget = { max_attempts: 3, max_check_failures: 5 };
+      doc.ticket[0].priority = 2;
+      doc.ticket[1].priority = 2;
+    });
+    expect(defaultKeysIn(toml)).toEqual([
+      "project.base",
+      "merge.remote",
+      "merge.draft",
+      "merge.forge.auto_merge.mode",
+      "merge.forge.auto_merge.require_live",
+      "merge.forge.auto_merge.max_attempts",
+      "merge.describe",
+      "merge.max_fix_rounds",
+      "merge.git_network_timeout_seconds",
+      "checks.timeout_minutes",
+      "checks.ci",
+      "scope.enforce",
+      "agents.ticket_timeout_minutes",
+      "agents.triage",
+      "agents.worker.permission_mode",
+      "review.approvals",
+      "review.max_rounds",
+      "budget.max_attempts",
+      "budget.max_check_failures",
+      "ticket[].priority",
+    ]);
+    expect(defaultKeysIn(specToml())).toEqual([]);
+  });
+
+  it("counts ci as a default only where it equals what the forge gives", () => {
+    const command = { kind: "command", open: "o", state: "s" };
+    expect(defaultKeysIn(specToml((doc) => ((doc.merge = { strategy: "pr", forge: command }), (doc.checks.ci = false))))).toEqual(["checks.ci"]);
+    expect(defaultKeysIn(specToml((doc) => ((doc.merge = { strategy: "pr" }), (doc.checks.ci = false))))).toEqual([]);
+    const repos = (doc: Doc) => {
+      doc.merge = { strategy: "pr" };
+      doc.repo = [
+        { name: "web", project: "proj_web", ci: true, git_network_timeout_seconds: 300 },
+        { name: "api", project: "proj_api", ci: true, forge: command },
+      ];
+      doc.ticket[0].repo = "web";
+      doc.ticket[1].repo = "api";
+    };
+    expect(defaultKeysIn(specToml(repos))).toEqual(["repo[].ci", "repo[].git_network_timeout_seconds"]);
+  });
+
+  it("leaves a TOML that does not parse to parseSpec's errors", () => {
+    expect(defaultKeysIn("[project")).toEqual([]);
   });
 });
 

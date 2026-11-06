@@ -4,8 +4,10 @@ import { z } from "zod";
 import { unknownPlaceholders } from "./environments";
 import { deploysOnMerge, SOAK_PATTERN } from "./rollout";
 import { plural } from "./format";
-import { GIT_INDEX_TIMEOUT_MS, GIT_NETWORK_TIMEOUT_SECONDS } from "./git-network";
+import { GIT_INDEX_TIMEOUT_MS, GIT_NETWORK_TIMEOUT_MS, GIT_NETWORK_TIMEOUT_SECONDS } from "./git-network";
 import { HOOK_EVENTS } from "./hook-events";
+import { andList } from "./prompts";
+import { AUTO_MERGE_DEFAULTS, followsFeedback, PR_DEFAULTS } from "./repos";
 import { matchesAny } from "./scope";
 
 const MAX_ERRORS = 20;
@@ -468,6 +470,94 @@ export function parseSpec(toml: string): SpecResult {
   return { ok: true, spec: parsed.data, errors: [], warnings };
 }
 
+// ---------------------------------------------------------------- keys set to their default
+
+/** ci left out follows the forge: true where it reports checks. */
+const FROM_FORGE = Symbol("ci from the forge");
+
+/** The defaults Loom applies in code rather than in the schema, by key path with every array index written []. */
+const CODE_DEFAULTS: ReadonlyMap<string, unknown> = new Map<string, unknown>([
+  ...Object.entries(PR_DEFAULTS).map(([key, value]): [string, unknown] => [`merge.${key}`, value]),
+  ["merge.git_network_timeout_seconds", GIT_NETWORK_TIMEOUT_MS / 1000],
+  ["repo[].git_network_timeout_seconds", GIT_NETWORK_TIMEOUT_MS / 1000],
+  ...["merge.forge", "repo[].forge"].flatMap((at) => Object.entries(AUTO_MERGE_DEFAULTS).map(([key, value]): [string, unknown] => [`${at}.auto_merge.${key}`, value])),
+  ["checks.ci", FROM_FORGE],
+  ["repo[].ci", FROM_FORGE],
+]);
+
+type ZodNode = { _zod: { def: Record<string, unknown> & { type: string } } };
+
+/** Every scalar key path of the schema, in its order, with the default the schema or the code gives it. */
+function defaultsOf(schema: ZodNode, path: string, out: Array<[string, unknown]>): Array<[string, unknown]> {
+  const def = schema._zod.def;
+  switch (def.type) {
+    case "optional":
+    case "prefault":
+      return defaultsOf(def.innerType as ZodNode, path, out);
+    case "pipe":
+      return defaultsOf(def.out as ZodNode, path, out);
+    case "default": {
+      const value = def.defaultValue;
+      if (value !== null && typeof value === "object") return defaultsOf(def.innerType as ZodNode, path, out);
+      out.push([path, value]);
+      return out;
+    }
+    case "object":
+      for (const [key, child] of Object.entries(def.shape as Record<string, ZodNode>)) defaultsOf(child, path === "" ? key : `${path}.${key}`, out);
+      return out;
+    case "array":
+      return defaultsOf(def.element as ZodNode, `${path}[]`, out);
+    default:
+      if (CODE_DEFAULTS.has(path)) out.push([path, CODE_DEFAULTS.get(path)]);
+      return out;
+  }
+}
+
+let defaultPaths: Array<[string, unknown]> | null = null;
+
+/** Each value at a key path, one per array entry, with the table that holds it. */
+function valuesAt(node: unknown, parts: readonly string[], table: Record<string, unknown> | null = null): Array<{ value: unknown; table: Record<string, unknown> | null }> {
+  if (parts.length === 0) return [{ value: node, table }];
+  if (node === null || typeof node !== "object" || Array.isArray(node)) return [];
+  const [head, ...rest] = parts;
+  const list = head!.endsWith("[]");
+  const child = (node as Record<string, unknown>)[list ? head!.slice(0, -2) : head!];
+  if (child === undefined) return [];
+  if (!list) return valuesAt(child, rest, node as Record<string, unknown>);
+  return Array.isArray(child) ? child.flatMap((entry) => valuesAt(entry, rest, entry as Record<string, unknown>)) : [];
+}
+
+/**
+ * The key paths, with every array index written [], that the TOML sets to the value Loom uses when they are left out;
+ * a ci counts where it equals what its forge gives. Empty when the TOML does not parse: parseSpec reports that.
+ */
+export function defaultKeysIn(toml: string): string[] {
+  let raw: Record<string, unknown>;
+  try {
+    raw = parse(toml) as Record<string, unknown>;
+  } catch {
+    return [];
+  }
+  defaultPaths ??= defaultsOf(specSchema as unknown as ZodNode, "", []);
+  const merge = (raw.merge ?? {}) as { forge?: object };
+  const checks = (raw.checks ?? {}) as { ci?: unknown };
+  const repos = Array.isArray(raw.repo) ? raw.repo : [];
+  const forgeGives = (forge: object | undefined) => followsFeedback({ kind: "gh", ...forge } as ForgeSpec);
+  // A top-level ci in a multi-repo spec is each repo's default, whose forges may differ, so only a repo's own ci is judged there.
+  const ciDefault = (path: string, table: Record<string, unknown> | null): unknown =>
+    path === "checks.ci" ? (repos.length === 0 ? forgeGives(merge.forge) : FROM_FORGE) : checks.ci === undefined ? forgeGives((table?.forge as object | undefined) ?? merge.forge) : FROM_FORGE;
+  return defaultPaths
+    .filter(([path, value]) => valuesAt(raw, path.split(".")).some((at) => at.value === (value === FROM_FORGE ? ciDefault(path, at.table) : value)))
+    .map(([path]) => path);
+}
+
+/** The warning loom_propose adds for keys set to their default, or null when there are none. */
+export function defaultKeysWarning(toml: string): string | null {
+  const keys = defaultKeysIn(toml);
+  if (keys.length === 0) return null;
+  return `These keys are set to the value Loom uses when they are left out, so they only make the spec longer: ${andList(keys)}. Leave them out of the next version; Loom saved this one as written.`;
+}
+
 const literalPrefix = (pattern: string): string => {
   const text = pattern.replace(/^\.\//, "");
   const at = text.search(/[*?]/);
@@ -848,7 +938,7 @@ function autoMergeErrors(spec: Spec, forge: ForgeSpec, at: string): string[] {
   const path = `${at}.auto_merge`;
   if (spec.merge.strategy === "integration") return [...errors, PR_ONLY(path, "it merges")];
   if (forge.kind === "none") return [...errors, `${path}: kind = "none" opens no pull request, so there is nothing to merge. Remove auto_merge, or use kind = "gh" or "command".`];
-  if ((spec.merge.max_fix_rounds ?? 5) === 0) errors.push(`${path}: merge.max_fix_rounds is 0, so Loom reads no checks or reviews and its Ready to merge verdict can never hold. Raise max_fix_rounds, or remove auto_merge.`);
+  if ((spec.merge.max_fix_rounds ?? PR_DEFAULTS.max_fix_rounds) === 0) errors.push(`${path}: merge.max_fix_rounds is 0, so Loom reads no checks or reviews and its Ready to merge verdict can never hold. Raise max_fix_rounds, or remove auto_merge.`);
   if (forge.kind === "command") {
     if (auto.method !== "command") errors.push(`${path}.method: a kind = "command" forge merges with its own merge command. Use method = "command".`);
     if (forge.merge === undefined) errors.push(`${at}.merge: is required with auto_merge on a kind = "command" forge. Add the command that merges the pull request in LOOM_URL, or hands it to the server's merge service.`);

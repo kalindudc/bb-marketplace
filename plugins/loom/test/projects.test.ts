@@ -34,6 +34,14 @@ async function failure(promise: Promise<unknown>): Promise<LoomError> {
 const eventKinds = (projectId: number) => store.events(projectId).map((event) => event.kind);
 
 describe("propose", () => {
+  it("warns about keys set to the value Loom uses anyway, and saves the TOML as written", async () => {
+    const result = await propose((doc) => ((doc.review = { approvals: 1, max_rounds: 3 }), (doc.scope = { enforce: "warn" })));
+    expect(result.warnings).toEqual([
+      "These keys are set to the value Loom uses when they are left out, so they only make the spec longer: scope.enforce, review.approvals and review.max_rounds. Leave them out of the next version; Loom saved this one as written.",
+    ]);
+    expect(store.latestSpecVersion(store.projectBySlug("csv")!.id)!.toml).toContain("max_rounds = 3");
+  });
+
   it("creates a draft with a section, a planner row and the planner moved into the section", async () => {
     const result = await propose();
     expect(result).toEqual({ slug: "csv", version: 1, state: "draft", warnings: [], pending: false, change: "created" });
@@ -968,6 +976,7 @@ describe("planning", () => {
   const KICKOFF = [
     "[loom] The human started this thread from the Loom page to plan a new project, and the goal is the message above.",
     "Plan it with the loom-plan skill: one round of questions here, then read the code, run the checks, and call loom_propose.",
+    "Leave out every key whose value would be its default, such as project.base = \"main\", review.max_rounds = 3 or scope.enforce = \"warn\": write only what this project changes. loom_propose lists any it finds.",
     "The human reviews, approves and starts the draft on the Loom page, so point them there when you hand over.",
   ];
   const withRepos = () => {
@@ -996,8 +1005,8 @@ describe("planning", () => {
     withRepos();
     await projects.startPlanning({ request: request(), merge: "pr", reviewer: "", repos: ["proj_docs", "proj_api", "proj_1", "proj_docs"] });
     const lines = spawned()[0]!.kickoff.split("\n");
-    expect(lines.slice(0, 4)).toEqual([...KICKOFF, 'The merge plan is already chosen: strategy = "pr" in [merge], so do not ask about it.']);
-    expect(lines.slice(4)).toEqual([
+    expect(lines.slice(0, 5)).toEqual([...KICKOFF, 'The merge plan is already chosen: strategy = "pr" in [merge], so do not ask about it.']);
+    expect(lines.slice(5)).toEqual([
       "The human picked these repos for the work, besides this thread's own project: docs (proj_docs), shop-api (proj_api).",
       "List each repo the work changes in its own [[repo]] table, with its bb project id as project, and include this thread's own project when the work changes it too.",
       "Every repo needs a checkout on this machine, where the workers run: `bb project list --json` shows each project's checkouts by machine, and `bb status` names this machine. For a repo with no checkout here, offer to clone it with `bb project source add <id> --clone --machine <this machine>`, and run that once the human agrees.",
@@ -1007,7 +1016,7 @@ describe("planning", () => {
     expect(store.planning("thr_p1")).toMatchObject({ bb_project_id: "proj_1" });
 
     await projects.startPlanning({ request: request(), merge: "ask", reviewer: "", repos: ["proj_api"] });
-    expect(spawned()[1]!.kickoff.split("\n")[3]).toBe("The human picked this repo for the work, besides this thread's own project: shop-api (proj_api).");
+    expect(spawned()[1]!.kickoff.split("\n")[4]).toBe("The human picked this repo for the work, besides this thread's own project: shop-api (proj_api).");
   });
 
   it("refuses an unknown or personal picked repo with loom_invalid_input naming each, more than 10 repos, and a list bb cannot read, and spawns none of them", async () => {

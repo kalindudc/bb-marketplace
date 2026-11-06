@@ -89,8 +89,11 @@ export interface PrSettings {
   stack: boolean;
 }
 
+/** What prSettings reads for each [merge] key the spec leaves out; the parser leaves them out so old specs hash as they did. */
+export const PR_DEFAULTS = { describe: "worker", max_fix_rounds: 5, stack: true } as const;
+
 export function prSettings(spec: Spec): PrSettings {
-  return { describe: spec.merge.describe ?? "worker", maxFixRounds: spec.merge.max_fix_rounds ?? 5, stack: spec.merge.stack ?? true };
+  return { describe: spec.merge.describe ?? PR_DEFAULTS.describe, maxFixRounds: spec.merge.max_fix_rounds ?? PR_DEFAULTS.max_fix_rounds, stack: spec.merge.stack ?? PR_DEFAULTS.stack };
 }
 
 /** Whether Loom can read a pull request's checks and reviews on this forge: gh, or a command forge with a feedback command. */
@@ -133,11 +136,13 @@ export interface AutoMergeSettings {
 }
 
 export const AUTO_MERGE_ATTEMPTS = 3;
+/** What autoMergeOf reads for each auto_merge key the spec leaves out. */
+export const AUTO_MERGE_DEFAULTS = { mode: "manual", require_live: false, max_attempts: AUTO_MERGE_ATTEMPTS } as const;
 
 export function autoMergeOf(forge: ForgeSpec): AutoMergeSettings | null {
   const auto = forge.auto_merge;
   if (auto === undefined || forge.kind === "none") return null;
-  return { method: auto.method, mode: auto.mode ?? "manual", comment: auto.comment ?? null, rejected: [...(auto.rejected ?? [])], requireLive: auto.require_live ?? false, maxAttempts: auto.max_attempts ?? AUTO_MERGE_ATTEMPTS, finalReview: auto.final_review !== undefined };
+  return { method: auto.method, mode: auto.mode ?? AUTO_MERGE_DEFAULTS.mode, comment: auto.comment ?? null, rejected: [...(auto.rejected ?? [])], requireLive: auto.require_live ?? AUTO_MERGE_DEFAULTS.require_live, maxAttempts: auto.max_attempts ?? AUTO_MERGE_DEFAULTS.max_attempts, finalReview: auto.final_review !== undefined };
 }
 
 /** The methods that may run again after a failure Loom cannot read: gh merges or queues a pull request at most once, while a comment or a command could be posted twice. */
