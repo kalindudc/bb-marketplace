@@ -11,6 +11,9 @@ import { projectMetrics } from "../src/reports";
 import { formatMetrics } from "../src/cli";
 import { PR_TEXT_CORE } from "../src/prompts";
 import { resumeEnding } from "../src/workers";
+import { boardCards } from "../src/rpc";
+import { reviewerLookupText } from "../src/format";
+import { maybeSendTriage } from "../src/triage";
 import { specOf } from "../src/ctx";
 import { checkOutHead, makeCtx, makeEngine, seedMachineProject, seedProject, startWorker, ticketOf, type Doc, type EngineHarness } from "./helpers";
 
@@ -608,6 +611,47 @@ describe("the text review's scratch directory while bb is unsure", () => {
     h.clock.advance(6 * 60_000);
     await spawnReviewers(h.ctx, project(), spec());
     expect(h.store.thread(row.id)).toMatchObject({ state: "active", thread_id: accepted });
+  });
+
+  it("says on the card that Loom waits to find out whether bb started a reviewer, posts once after an hour with what the human can do, and flags the planner's triage", async () => {
+    await ready();
+    const realSpawn = h.bb.spawnThread.bind(h.bb);
+    h.bb.spawnThread = async (args) => {
+      await realSpawn(args);
+      throw new Error("spawn reply lost");
+    };
+    h.bb.findSpawnedThread = async () => {
+      throw new Error("thread lookup temporarily unavailable");
+    };
+    await spawnReviewers(h.ctx, project(), spec());
+    h.bb.spawnThread = realSpawn;
+    const row = reviewers().at(-1)!;
+    const card = () => boardCards(h.store.tickets(project().id), h.store.threads({ projectId: project().id }), spec(), h.store, h.clock.t).find((each) => each.key === "CSV-1")!;
+    expect(card().reviewerLookup).toMatchObject({ since: h.clock.t });
+    expect(card().reviewerLookup!.until).toBeGreaterThan(h.clock.t);
+    expect(reviewerLookupText(card().reviewerLookup!, h.clock.t)).toMatch(/^Waiting to find out whether bb started a reviewer \(thread lookup temporarily unavailable\); Loom asks bb again in \d+s\.$/u);
+    const unresolved = () => h.store.posts(ticket().id).filter((post) => (JSON.parse(post.data_json) as { outcome?: string }).outcome === "reviewer_unresolved");
+
+    h.clock.advance(50 * 60_000);
+    await spawnReviewers(h.ctx, project(), spec());
+    expect(unresolved()).toEqual([]);
+    expect(project().triage_pending).toBe(0);
+    for (let pass = 0; pass < 240; pass += 1) {
+      h.clock.advance(6 * 60_000);
+      await spawnReviewers(h.ctx, project(), spec());
+    }
+    expect(unresolved()).toHaveLength(1);
+    expect(unresolved()[0]!.body).toContain("Loom cannot tell whether bb started a reviewer");
+    expect(unresolved()[0]!.body).toContain("Review again as is");
+    expect(unresolved()[0]!.body).toContain("requeue");
+    expect(h.store.thread(row.id)!.state).toBe("spawning");
+    expect(h.host.scratch.has(scratchOf(row))).toBe(true);
+    expect(card().reviewerLookup).not.toBeNull();
+    expect(project().triage_pending).toBe(1);
+    expect(await maybeSendTriage(h.ctx, project())).toBe(true);
+    const sent = h.bb.callsTo("send").filter(([id]) => id === "thr_plan").at(-1)![1] as { summary: string; detail: string };
+    expect(sent.detail).toContain("CSV-1");
+    expect(sent.detail).toContain("whether bb started a reviewer");
   });
 
   it("ends the row and removes the directory once a later lookup succeeds and finds no thread", async () => {

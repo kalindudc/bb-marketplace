@@ -68,6 +68,12 @@ export function mergeRetryText(wait: { failures: number; until: number; message:
 }
 
 /** "Its worker could not start (no free slot); Loom tries again in 4m." for a ticket that waits after a failed start. */
+/** What a ticket shows while Loom cannot tell whether bb started its reviewer. */
+export function reviewerLookupText(lookup: { until: number; reason: string }, now: number): string {
+  const again = lookup.until > now ? `asks bb again in ${formatDuration(lookup.until - now)}` : "asks bb again now";
+  return `Waiting to find out whether bb started a reviewer (${lookup.reason}); Loom ${again}.`;
+}
+
 export function startWaitText(wait: { role: "worker" | "reviewer"; reason: string; until: number; tries: number; unavailable: boolean }, now: number): string {
   const again = wait.until > now ? `tries again in ${formatDuration(wait.until - now)}` : "tries again now";
   const count = wait.unavailable ? "; the wait counts no attempt" : wait.tries > 1 ? ` (${plural(wait.tries, "failed start")} in a row)` : "";

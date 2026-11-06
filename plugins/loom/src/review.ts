@@ -10,8 +10,9 @@ import { retriesOf } from "./backoff";
 import { writeSub, type RetryWait, type StartWait } from "./sub-state";
 import { hostCallTransient, mergeWaitExpired, mergeWaitReason, mergeWaitText, nextMergeWait } from "./forge-waits";
 import { plural } from "./format";
-import { changesRequestedText, findingsList, reviewerBrief, reviewerNudgeText, textChangesText, textReviewBrief, withRestoredNote } from "./prompts";
-import { onlyText, removeTextReviewScratch, roundKind, sentBackForText, textReviewScratch, textRoundsOn, type FindingKind } from "./review-kind";
+import { changesRequestedText, findingsList, reviewerBrief, reviewerNudgeText, textChangesText, textReviewBrief, unresolvedReviewerText, withRestoredNote } from "./prompts";
+import { loomPost } from "./posts";
+import { onlyText, removeTextReviewScratch, roundKind, sentBackForText, textReviewScratch, textRoundsOn, UNRESOLVED_OUTCOME, unresolvedNotice, type FindingKind } from "./review-kind";
 import { openFeedback } from "./pull-requests";
 import { canEdit } from "./repos";
 import { isWaking, releasedWorker } from "./release";
@@ -427,8 +428,8 @@ async function startReviewer(ctx: EngineCtx, projectId: number, seen: TicketRow,
   } catch (error) {
     const problem = startProblemOf(error);
     const found = problem.kind === "refused" ? null : await startedAnyway(ctx, row);
-    if (found === undefined) {
-      unresolvedSpawn(ctx, row, errText(error));
+    if (typeof found === "object" && found !== null) {
+      unresolvedSpawn(ctx, row, found.unknown);
       return false;
     }
     if (found === null) {
@@ -474,10 +475,12 @@ async function settleLostSpawns(ctx: EngineCtx, projectId: number): Promise<void
   const { store } = ctx;
   const lookups = retriesOf(store).lookups;
   for (const row of store.threads({ projectId, role: "reviewer", states: ["spawning"] })) {
-    if (lookups.state(row.id) === null || (row.thread_id === null && lookups.waitMs(row.id, ctx.now()) > 0)) continue;
+    if (lookups.state(row.id) === null) continue;
+    noteUnresolved(ctx, row);
+    if (row.thread_id === null && lookups.waitMs(row.id, ctx.now()) > 0) continue;
     const found = await startedAnyway(ctx, row);
-    if (found === undefined) {
-      unresolvedSpawn(ctx, row, "the spawn token lookup failed again");
+    if (typeof found === "object" && found !== null) {
+      unresolvedSpawn(ctx, row, found.unknown);
       continue;
     }
     lookups.reset(row.id);
@@ -499,20 +502,39 @@ async function settleLostSpawns(ctx: EngineCtx, projectId: number): Promise<void
   }
 }
 
+/** How long an unresolved spawn waits before Loom tells the human and the planner about it. */
+const UNRESOLVED_NOTICE_MS = 60 * 60_000;
+
+/**
+ * Once a reviewer's spawn has stayed unresolved for an hour, one post on its ticket says what is uncertain and what the
+ * human can do, and the planner's next triage round hears of it. Once per row, whatever restarts happen.
+ */
+function noteUnresolved(ctx: EngineCtx, row: ThreadRow): void {
+  const { store } = ctx;
+  const ticket = row.ticket_id === null ? null : store.ticket(row.ticket_id);
+  if (ticket === null || ctx.now() - (row.clock_at ?? row.started_at) < UNRESOLVED_NOTICE_MS) return;
+  if (unresolvedNotice(store.posts(ticket.id), row.id) !== null) return;
+  const reason = retriesOf(store).lookups.state(row.id)?.message ?? "bb did not answer";
+  store.tx(() => {
+    loomPost(store, ticket, { kind: "system", body: unresolvedReviewerText(ticket.key, row.review_round, reason), data: { outcome: UNRESOLVED_OUTCOME, row: row.id, round: row.review_round } });
+    store.updateProject(ticket.project_id, { triage_pending: 1 });
+  });
+  store.changed(ticket.project_id);
+}
+
 /**
  * The thread bb started for a reviewer whose spawn failed without a refusal, whose answer may be what was lost: the one its
- * configuration bound to the row, else the one bb lists with the row's spawn token. Null when bb started none; undefined
- * when bb could not say.
+ * configuration bound to the row, else the one bb lists with the row's spawn token. Null when bb started none; `unknown`
+ * with the lookup's error when bb could not say.
  */
-async function startedAnyway(ctx: EngineCtx, row: ThreadRow): Promise<string | null | undefined> {
+async function startedAnyway(ctx: EngineCtx, row: ThreadRow): Promise<string | null | { unknown: string }> {
   const bound = ctx.store.thread(row.id)?.thread_id ?? null;
   if (bound !== null) return bound;
   if (row.spawn_token === null) return null;
   try {
     return await ctx.bb.findSpawnedThread(row.spawn_token);
   } catch (error) {
-    ctx.bb.log("warn", `Could not ask bb whether it started the reviewer of row ${row.id}: ${errText(error)}`);
-    return undefined;
+    return { unknown: errText(error) };
   }
 }
 

@@ -3,7 +3,7 @@ import { finalBadge } from "./final-review";
 import { experimental_PluginRpcRefusal as PluginRpcRefusal, type BbPluginApi, type ExperimentalPluginRpcHandlersWithContext } from "@get-bb/plugin-sdk";
 import { badgeView } from "./badge";
 import { humanAction } from "./cli";
-import { rpcContract, type AgentRow, type BoardCard, type MergeWaitView, type ProjectView, type SpecSummary, type StartWaitView, type ThreadInfo, type TicketDetail, type TicketPr } from "./contract";
+import { rpcContract, type AgentRow, type BoardCard, type MergeWaitView, type ProjectView, type ReviewerLookupView, type SpecSummary, type StartWaitView, type ThreadInfo, type TicketDetail, type TicketPr } from "./contract";
 import type { EventRow, PostRow, ProjectRow, ReviewRow, Store, ThreadRow, TicketRow } from "./db/store";
 import { stripAnsi, ticketActivity } from "./activity";
 import { Changes } from "./changes";
@@ -30,6 +30,7 @@ import { parseSpec, readSpec, type Spec } from "./spec";
 import { specReviewStatus } from "./spec-review";
 import { isReleased } from "./release";
 import { waitOf } from "./starts";
+import { unresolvedReviewer } from "./review-kind";
 import { dismissAsk, markStepDone, plannerAsk } from "./asks";
 import { badgeAcksOf, noAcks } from "./badge-acks";
 import { plannerView } from "./planner-view";
@@ -177,6 +178,7 @@ export function boardCards(tickets: TicketRow[], threads: ThreadRow[], spec: Spe
       hasChanges: ticket.head_sha !== null || ((ticket.state === "working" || ticket.state === "checking") && ticket.environment_id !== null),
       ...stackFacts(tickets, ticket, stack, spec !== null && replacingPr(spec, ticket)),
       startWait: startWaitView(ticket, threads),
+      reviewerLookup: store === null ? null : lookupView(store, ticket, threads),
       mergeWait: mergeWaitView(ticket),
       waitsForSlot: lite.waitsSince !== null,
       ci: ciOf(spec, ticket),
@@ -206,6 +208,11 @@ export function startWaitView(ticket: TicketRow, threads: readonly ThreadRow[]):
       : ticket.state === "review" && !own.some((row) => row.review_round === ticket.review_round && (row.state === "spawning" || row.state === "active"));
   if (!waiting) return null;
   return { role: wait.role, reason: wait.reason, until: wait.until, tries: wait.tries, unavailable: wait.kind === "unavailable" };
+}
+
+function lookupView(store: Store, ticket: TicketRow, threads: readonly ThreadRow[]): ReviewerLookupView | null {
+  const unresolved = unresolvedReviewer(store, ticket, threads);
+  return unresolved === null ? null : { since: unresolved.since, until: unresolved.until, reason: unresolved.reason };
 }
 
 /** The wait of a ticket in merging whose merge failed in a way worth waiting out. */
@@ -268,6 +275,7 @@ export function draftCards(spec: Spec, at: number): BoardCard[] {
     stackedOn: [],
     holding: null,
     startWait: null,
+    reviewerLookup: null,
     mergeWait: null,
     waitsForSlot: false,
     ci: null,
@@ -443,6 +451,7 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
       depsDone: deps.filter((dep) => stateOf(dep) === "done"),
       blockedReason: ticket.blocked_reason,
       startWait: startWaitView(ticket, threads),
+      reviewerLookup: past === null ? lookupView(store, ticket, threads) : null,
       mergeWait: mergeWaitView(ticket),
       branch: ticket.branch,
       prUrl: ticket.pr_url,

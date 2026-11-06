@@ -11,6 +11,7 @@ import { HUMAN_ACTOR, LOOM_ACTOR, TICKET_STATES, canMoveTicket, type TicketState
 import { writeSub, readSub } from "./sub-state";
 import { endLiveRows } from "./workers";
 import { specOf, type EngineCtx } from "./ctx";
+import { unresolvedNotice } from "./review-kind";
 
 const ROUND_LIMIT_MS = 30 * 60_000;
 const DIGEST_POSTS = 3;
@@ -29,20 +30,23 @@ export async function maybeSendTriage(ctx: EngineCtx, project: ProjectRow): Prom
 
   const tickets = store.tickets(fresh.id);
   const blocked = tickets.filter((ticket) => ticket.state === "blocked");
+  const unsure = unsureReviews(store, fresh.id, tickets);
   // Any other pause the planner cannot lift; the next-step bar shows the human its reason and Resume.
   const budgetPaused = fresh.state === "paused" && isBudgetPause(fresh.system_reason);
-  if (blocked.length === 0 && !budgetPaused) {
+  if (blocked.length === 0 && unsure.length === 0 && !budgetPaused) {
     store.updateProject(fresh.id, { triage_pending: 0 });
     return false;
   }
   const counts = Object.fromEntries(TICKET_STATES.map((state) => [state, tickets.filter((ticket) => ticket.state === state).length])) as Record<TicketState, number>;
   const lastPosts = new Map<number, PostRow[]>(blocked.map((ticket) => [ticket.id, store.posts(ticket.id).slice(-DIGEST_POSTS)]));
   const round = fresh.triage_round + 1;
-  const detail = triageDigest({ project: fresh, round, counts, blocked, lastPosts, budgetPaused });
+  const detail = triageDigest({ project: fresh, round, counts, blocked, lastPosts, budgetPaused, unsure });
   const summary =
-    blocked.length === 0
-      ? `[loom] Triage round ${round} for ${fresh.slug}: Loom paused the project. ${fresh.system_reason}`
-      : `[loom] Triage round ${round} for ${fresh.slug}: ${blocked.length === 1 ? "1 ticket is" : `${blocked.length} tickets are`} blocked.`;
+    blocked.length > 0
+      ? `[loom] Triage round ${round} for ${fresh.slug}: ${blocked.length === 1 ? "1 ticket is" : `${blocked.length} tickets are`} blocked.`
+      : unsure.length > 0
+        ? `[loom] Triage round ${round} for ${fresh.slug}: Loom cannot tell whether bb started a reviewer for ${unsure.map((each) => each.ticket.key).join(", ")}.`
+        : `[loom] Triage round ${round} for ${fresh.slug}: Loom paused the project. ${fresh.system_reason}`;
   await ctx.bb.send(planner.thread_id, { summary, detail });
   store.updateProject(fresh.id, { triage_pending: 0, triage_round: round, triage_sent_at: ctx.now() });
   store.event(fresh.id, null, "triage.sent", LOOM_ACTOR, {
@@ -51,6 +55,17 @@ export async function maybeSendTriage(ctx: EngineCtx, project: ProjectRow): Prom
     paused: fresh.state === "paused",
   });
   return true;
+}
+
+/** Tickets in review whose reviewer spawn stayed unresolved long enough for Loom to post about it, with that post. */
+function unsureReviews(store: EngineCtx["store"], projectId: number, tickets: readonly TicketRow[]): Array<{ ticket: TicketRow; post: PostRow }> {
+  const rows = store.threads({ projectId, role: "reviewer", states: ["spawning"] });
+  return tickets.flatMap((ticket) => {
+    if (ticket.state !== "review") return [];
+    const row = rows.find((each) => each.ticket_id === ticket.id && each.review_round === ticket.review_round);
+    const post = row === undefined ? null : unresolvedNotice(store.posts(ticket.id), row.id);
+    return post === null ? [] : [{ ticket, post }];
+  });
 }
 
 /** The planner finished its turn: the round it was answering is over. */

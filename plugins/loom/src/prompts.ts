@@ -493,7 +493,7 @@ export function resumeText(key: string, held: PostRow | null): string | { summar
   return { summary, detail: `The last result of the checks on ${key} came in while the project was paused, so you may not have seen it:\n${clip(held.body, CHECK_TAIL + 500)}` };
 }
 
-export function triageDigest(a: { project: ProjectRow; round: number; counts: Record<TicketState, number>; blocked: TicketRow[]; lastPosts: Map<number, PostRow[]>; budgetPaused?: boolean }): string {
+export function triageDigest(a: { project: ProjectRow; round: number; counts: Record<TicketState, number>; blocked: TicketRow[]; lastPosts: Map<number, PostRow[]>; budgetPaused?: boolean; unsure?: ReadonlyArray<{ ticket: TicketRow; post: PostRow }> }): string {
   const { project, round, counts, blocked, lastPosts } = a;
   const board = Object.entries(counts)
     .filter(([, count]) => count > 0)
@@ -523,6 +523,10 @@ export function triageDigest(a: { project: ProjectRow; round: number; counts: Re
       for (const post of posts) lines.push(`  #${post.id} ${post.author_kind} ${post.kind}: ${clip(post.body.replace(/\s+/g, " "), 400)}`);
     }
     lines.push("");
+  }
+  if ((a.unsure ?? []).length > 0) {
+    lines.push("Loom cannot tell whether bb started a reviewer for these tickets in review, so each keeps its reviewer's place. Tell the human with loom_ask_human what the post says they can do:");
+    for (const { ticket, post } of a.unsure ?? []) lines.push(`${ticket.key} · ${JSON.stringify(ticket.title)}`, `  #${post.id}: ${clip(post.body.replace(/\s+/g, " "), 600)}`, "");
   }
   lines.push(
     "What you can do, only through the tools: loom_ticket to read a ticket, loom_post to answer on it, loom_requeue to send a blocked ticket back to the queue after you answered, loom_edit_ticket to change a queued or blocked ticket, loom_add_tickets to split work or add a dependency, loom_cancel_ticket to drop one, loom_board for the whole board.",
@@ -749,6 +753,11 @@ export function textReviewBrief(a: {
     "- loom_approve({ summary }) when the text follows the rules, matches the changed files and answers what was asked of it.",
     "- loom_request_changes({ summary, findings }) otherwise. Every finding is about the text: a severity (blocking or should-fix), a title, and a detail that says what to write instead. The worker proposes new text, and Loom's text review judges it again.",
   ].join("\n");
+}
+
+/** The post on a ticket whose reviewer bb may or may not have started, an hour on: what is uncertain, and what the human can do. */
+export function unresolvedReviewerText(key: string, round: number, reason: string): string {
+  return `Loom cannot tell whether bb started a reviewer for round ${round} of ${key}: bb lost its answer to the start, and has not answered Loom's lookups of the reviewer's spawn token for an hour (${reason}). Loom keeps that reviewer's place and its scratch directory, so it never runs a second reviewer for the round or deletes the files of one that is running, and it asks bb again every few minutes. If bb lists no reviewer thread for ${key} that is running, block the ticket, then send it back with Review again as is (\`bb loom requeue ${key} --review\`), or requeue it.`;
 }
 
 /** Why loom_block refuses in a text-only round: nothing there needs the human, since Loom applies the text itself. */

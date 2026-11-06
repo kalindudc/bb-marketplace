@@ -2,7 +2,8 @@
 // description (text). The engine, the metrics and Insights read rounds through these, so they agree. A text review starts
 // in a scratch directory of its own, which its reviewer row owns.
 import type { EngineCtx } from "./ctx";
-import type { Store, ThreadRow, TicketRow } from "./db/store";
+import type { PostRow, Store, ThreadRow, TicketRow } from "./db/store";
+import { retriesOf } from "./backoff";
 import { prSettings } from "./repos";
 import type { Finding } from "./review";
 import type { Spec } from "./spec";
@@ -61,6 +62,26 @@ export const isTextReviewer = (store: Store, row: ThreadRow) => row.role === "re
 /** The scratch directories of the text reviewers that have not ended, which the scratch sweep keeps. */
 export function liveTextReviewScratches(store: Store): string[] {
   return store.threads({ role: "reviewer", states: ["spawning", "active", "ending"] }).flatMap((row) => (isTextReviewer(store, row) ? [textReviewScratch(row.id)] : []));
+}
+
+/** The outcome of the post that tells the human Loom cannot tell whether bb started a reviewer. */
+export const UNRESOLVED_OUTCOME = "reviewer_unresolved";
+
+/** The post that told the human about this reviewer row's unresolved spawn, or null before it was written. */
+export function unresolvedNotice(posts: readonly PostRow[], rowId: number): PostRow | null {
+  return posts.find((post) => post.kind === "system" && (JSON.parse(post.data_json) as { outcome?: string; row?: number }).outcome === UNRESOLVED_OUTCOME && (JSON.parse(post.data_json) as { row?: number }).row === rowId) ?? null;
+}
+
+/**
+ * The current round's reviewer whose spawn answer was lost and whose spawn token bb has not answered for since: when it was
+ * reserved, when Loom asks bb again and why the last lookup failed. Null for any other ticket. The retry state is in memory,
+ * as the lookups are; a restart's reconcile sets it again for a row whose lookup still fails.
+ */
+export function unresolvedReviewer(store: Store, ticket: TicketRow, threads: readonly ThreadRow[]): { row: ThreadRow; since: number; until: number; reason: string } | null {
+  const lookups = retriesOf(store).lookups;
+  const row = threads.find((each) => each.ticket_id === ticket.id && each.role === "reviewer" && each.state === "spawning" && each.review_round === ticket.review_round && lookups.state(each.id) !== null);
+  const state = row === undefined ? null : lookups.state(row.id);
+  return row === undefined || state === null ? null : { row, since: row.clock_at ?? row.started_at, until: state.retryAt, reason: state.message };
 }
 
 /** Removes a text reviewer's scratch directory once its thread has stopped; one that stays is left to the sweep. */

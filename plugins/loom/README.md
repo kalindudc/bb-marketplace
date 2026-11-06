@@ -719,6 +719,10 @@ its own pull request.
   later until it does. When bb's answer to the spawn is lost, Loom looks the
   thread up by its spawn token and adopts it; while that lookup fails too, the
   reviewer keeps its place and its directory, and Loom asks again later. The
+  ticket's card and page say "Waiting to find out whether bb started a
+  reviewer" with the next try, and after an hour Loom posts once on the ticket
+  what is uncertain and what you can do (block it, then Review again as is or
+  requeue it), and the planner's next triage round hears of it. The
   final review does the same. The sweep removes any directory that a restart
   or a failed removal left once nothing owns it. With no such directory outside bb's data
   directory, or when bb refuses it, the ticket blocks; Loom never runs the

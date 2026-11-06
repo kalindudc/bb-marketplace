@@ -64,6 +64,8 @@ export interface BoardCard {
   holding: string | null;
   /** A queued ticket whose worker, or a ticket in review whose reviewer, did not start and waits to try again; null otherwise. */
   startWait: StartWaitView | null;
+  /** The reviewer whose spawn answer bb lost and whose spawn token bb has not answered for yet; null otherwise. */
+  reviewerLookup: ReviewerLookupView | null;
   /** A ticket in merging whose merge failed in a way worth waiting out, and waits to run again; null otherwise. */
   mergeWait: MergeWaitView | null;
   /** Work went back to the ticket's worker (a fix round, a review's changes, a merge that did not land), and it waits for a free worker slot. */
@@ -90,6 +92,13 @@ export interface StartWaitView {
   tries: number;
   /** The environment provider said it cannot start one now, so the wait counts no attempt. */
   unavailable: boolean;
+}
+
+/** Loom waits to find out whether bb started a reviewer: since when, when it asks bb again, and why bb could not say. */
+export interface ReviewerLookupView {
+  since: number;
+  until: number;
+  reason: string;
 }
 
 export interface MergeWaitView {
@@ -253,6 +262,7 @@ export interface TicketDetail {
   depsDone: string[];
   blockedReason: string | null;
   startWait: StartWaitView | null;
+  reviewerLookup: ReviewerLookupView | null;
   mergeWait: MergeWaitView | null;
   branch: string | null;
   prUrl: string | null;

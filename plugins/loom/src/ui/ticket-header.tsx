@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { experimental_copyToClipboard, experimental_Icon as Icon, useBbNavigate } from "@get-bb/plugin-sdk/app";
 import type { MergeItem, TicketAction, TicketDetail } from "../contract";
-import { formatDuration, mergeRetryText, plural, startWaitText } from "../format";
+import { formatDuration, mergeRetryText, plural, reviewerLookupText, startWaitText } from "../format";
 import type { TicketState } from "../states";
 import { BUTTON, BUTTON_PRIMARY, ConfirmButton, FIELD, MoreMenu, RepoChip, SyncButton } from "./common";
 import { DraftHold } from "./draft-hold";
@@ -52,6 +52,7 @@ function summaryOf(ticket: TicketDetail, now: number): string | null {
   const pr = ticket.pr;
   const fixing = pr !== null && pr.pushedSha !== null;
   if (ticket.startWait !== null) return startWaitText(ticket.startWait, now);
+  if (ticket.reviewerLookup !== null) return reviewerLookupText(ticket.reviewerLookup, now);
   if (ticket.mergeWait !== null) return mergeRetryText(ticket.mergeWait, now);
   switch (ticket.state) {
     case "queued":
