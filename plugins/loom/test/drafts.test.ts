@@ -239,3 +239,39 @@ describe("draft holds the planner and concurrent work cannot get around", () => 
     expect(readies()).toEqual([]);
   });
 });
+
+// The P review: pausing did not protect drafts, since a paused project still reads its pull requests.
+describe("drafts while the project is not running, and drafts from before keep_draft", () => {
+  it("marks no draft ready while the project is paused, and marks it at a read once it runs again", async () => {
+    await openPr((doc) => void (doc.merge.forge = { kind: "gh", after_open: ["noop"] }));
+    h.store.updateTicket(ticket().id, { pr_meta_json: JSON.stringify({ at: 0, draft: true, review: null, base: "main" }) });
+    h.store.setProjectState(project().id, "paused", "human");
+    const { followDraft } = await import("../src/drafts");
+    expect(await followDraft(h.ctx, project(), ticket().id, true, "main")).toBe(false);
+    expect(readies()).toEqual([]);
+    h.store.setProjectState(project().id, "running", "human");
+    expect(await followDraft(h.ctx, project(), ticket().id, true, "main")).toBe(true);
+    expect(readies()).toHaveLength(1);
+  });
+
+  it("holds every open draft a store from before keep_draft has, so it stays a draft until the human releases it", async () => {
+    const Database = (await import("better-sqlite3")).default;
+    const { MIGRATIONS } = await import("../src/db/schema");
+    const db = new Database(":memory:");
+    const hold = MIGRATIONS.findIndex((sql) => sql.includes("ADD COLUMN keep_draft"));
+    for (const sql of MIGRATIONS.slice(0, hold)) db.exec(sql);
+    db.exec("INSERT INTO projects (slug, name, key, bb_project_id, state, created_at, updated_at) VALUES ('lane', 'Lane', 'LANE', 'proj_1', 'paused', 1, 1)");
+    const add = db.prepare("INSERT INTO tickets (project_id, seq, key, ref, title, body, acceptance_json, verify_json, scope_json, deps_json, priority, state, pr_meta_json, created_by, created_at, updated_at, state_at) VALUES (1, ?, ?, ?, 't', 'b', '[]', '[]', '[]', '[]', 2, ?, ?, 'human', 1, 1, 1)");
+    add.run(1, "LANE-30", "a", "pr_open", JSON.stringify({ at: 0, draft: true, review: null, base: "loom/lane/x" }));
+    add.run(2, "LANE-31", "b", "pr_open", JSON.stringify({ at: 0, draft: false, review: null, base: "main" }));
+    add.run(3, "LANE-33", "c", "approved", null);
+    add.run(4, "LANE-35", "d", "done", JSON.stringify({ at: 0, draft: true, review: null, base: "main" }));
+    for (const sql of MIGRATIONS.slice(hold)) db.exec(sql);
+    expect(db.prepare("SELECT key, keep_draft FROM tickets ORDER BY seq").all()).toEqual([
+      { key: "LANE-30", keep_draft: 1 },
+      { key: "LANE-31", keep_draft: 0 },
+      { key: "LANE-33", keep_draft: 0 },
+      { key: "LANE-35", keep_draft: 0 },
+    ]);
+  });
+});

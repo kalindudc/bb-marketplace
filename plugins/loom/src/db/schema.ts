@@ -216,8 +216,10 @@ export const MIGRATIONS: string[] = [
   CREATE INDEX hook_firings_open ON hook_firings (state, project_id);
   ALTER TABLE projects ADD COLUMN hook_event_id INTEGER NOT NULL DEFAULT 0;
   UPDATE projects SET hook_event_id = (SELECT COALESCE(MAX(id), 0) FROM events)`,
-  // Keep the ticket's pull request a draft until the human releases it: 1 while held, 0 otherwise.
-  `ALTER TABLE tickets ADD COLUMN keep_draft INTEGER NOT NULL DEFAULT 0`,
+  // Keep the ticket's pull request a draft until the human releases it: 1 while held, 0 otherwise. A pull request that is
+  // open as a draft when the column comes in is held, so a draft that exists before keep_draft stays one for the human.
+  `ALTER TABLE tickets ADD COLUMN keep_draft INTEGER NOT NULL DEFAULT 0;
+  UPDATE tickets SET keep_draft = 1 WHERE state = 'pr_open' AND pr_meta_json IS NOT NULL AND json_extract(pr_meta_json, '$.draft') = 1`,
   // Run rows of file transfers between machines held each chunk's bytes, 1 GB in one install; the rows and their timing stay.
   `UPDATE runs SET output = 'Loom no longer keeps what this step copied.' WHERE kind = 'git' AND label IN ('readBlob', 'carryWrite', 'importChunk')`,
 ];

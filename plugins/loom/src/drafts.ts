@@ -88,6 +88,8 @@ export function afterOpenOver(store: Store, ticket: TicketRow, now: number): boo
 function mayNotMark(ctx: EngineCtx, spec: Spec, ticket: TicketRow | null, url: string, sha: string | null, base: string | null): string | null {
   if (ticket === null || ticket.state !== "pr_open" || ticket.pr_url !== url || ticket.pushed_sha !== sha) return "the ticket's pull request changed";
   if (ticket.keep_draft === 1) return "the human holds it as a draft";
+  // A paused project still reads its pull requests; only a running one changes them.
+  if (ctx.store.project(ticket.project_id)?.state !== "running") return "its project is not running";
   const settings = repoSettings(spec, ticket.repo);
   if ((base ?? ticket.pr_base ?? settings.base) !== settings.base) return "it does not target its base";
   if (!canReady(settings.forge)) return "its forge cannot mark it ready";

@@ -28,8 +28,8 @@ Notable changes to Loom, newest first. Releases are tagged `loom/vX.Y.Z` in this
 
 ### Compatibility
 
-- A migration adds `keep_draft` to tickets, 0 for every existing one. Old blocks keep their markers, so Loom replaces them.
-- After the update, every open draft pull request whose ticket does not set `keep_draft` is marked ready for review at its next read, and gets reviewers. Set `keep_draft = true` on the tickets that must stay drafts first, with `loom_edit_ticket` or a spec version.
+- A migration adds `keep_draft` to tickets. Every ticket whose pull request is open and was a draft at Loom's last read gets `keep_draft = 1`, so a draft that exists before this change stays a draft until the human releases it; every other ticket gets 0. Old blocks keep their markers, so Loom replaces them.
+- Loom marks a draft ready only while its project runs: a paused project still reads its pull requests, but changes none. After the update, open drafts are held by the migration, and a pull request that opens later is marked ready unless its ticket sets `keep_draft`; set it with `loom_edit_ticket` or a spec version, for example while the project is paused, on the tickets whose pull requests must open as drafts and stay so.
 - `keep_draft` and `ready` have no default in the spec, so a spec without them hashes as before.
 
 ## 0.34.2 (2026-11-06)

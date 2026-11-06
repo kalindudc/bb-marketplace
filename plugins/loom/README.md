@@ -830,7 +830,10 @@ draft: you release it", and you release it with Release draft there or with
 `bb loom release <slug> --ticket CSV-1`, which marks it ready for review. The
 planner can only ask you to, with `loom_release_draft`; the request shows on
 the Planner page, the ticket and its card. A draft Loom is about to mark ready
-shows as "being marked ready", never as ready to merge.
+shows as "being marked ready", never as ready to merge. Loom marks a draft ready only
+while its project runs; a paused project still reads its pull requests but
+changes none. A pull request that was open as a draft before `keep_draft`
+existed is held: the migration sets `keep_draft` on it.
 
 ### Merging ready pull requests
 
