@@ -133,7 +133,9 @@ restore it. Anything else is refused
 with the reason, such as a stacked ticket whose worker's thread cannot come
 back, and a plain requeue is the way on.
 
-Triage rounds go to the planner for blocked tickets, and when Loom paused the
+Triage rounds go to the planner for blocked tickets, for tickets that wait on
+something Loom cannot fix by itself (a fault of the project's machine, or a
+forge or machine that has not answered for an hour), and when Loom paused the
 project for its token budget or deadline, which a new spec version can change.
 A pause for a missing sign-in or a broken forge command sends no round, since
 the planner cannot fix either: the next-step bar says why and offers Resume.
@@ -179,9 +181,9 @@ machine, or the whole project). What Loom does follows from that:
 | The failure | What Loom does |
 |---|---|
 | Temporary, of this ticket, such as a server error (HTTP 500, 502, 503, 504), a timeout or an error no rule names | The step waits and runs again after 1, 2, 5 and 10 minutes, then every 15. The ticket blocks with the last reason once the step has failed for an hour, or after 5 tries of an error no rule recognizes. Other tickets keep going. |
-| Temporary, of a forge or the project's machine, such as a rate limit, a network or name lookup failure, a call that got no answer (the machine's Loom worker exited or was retired, as during a plugin update), a repo with no checkout on the machine | The step waits the same way, never blocks the ticket and never pauses the project. After an hour of it, the ticket says so once more. |
+| Temporary, of a forge or the project's machine, such as a rate limit, a network or name lookup failure, or a call that got no answer (the machine's Loom worker exited or was retired, as during a plugin update) | The step waits the same way, never blocks the ticket and never pauses the project. After an hour of it, the ticket says so once more and the planner's next triage round names it. |
 | Lasting, of this ticket, such as a merge conflict git cannot finish, a push the remote refuses, a branch or pull request that is not there, or a change the forge refuses | The ticket blocks at once with the reason, and the planner's triage hears of it. |
-| Lasting, of the project's machine, such as a checkout git left in the middle of a merge, an integration branch checked out in another worktree, or git-lfs or gh missing | The ticket says at once what someone has to put right, and the step runs again every 15 minutes. Nothing blocks or pauses. |
+| Lasting, of the project's machine, such as a repo with no checkout there, a checkout git left in the middle of a merge, an integration branch checked out in another worktree, git-lfs or gh missing, or a Loom host that does not know a call this Loom makes | The ticket says at once what someone has to put right, the planner's next triage round names it, and the step runs again every 15 minutes. Nothing blocks or pauses. |
 | Of the whole project: a missing sign-in (`gh auth login`, bad credentials) or a forge command that breaks its contract (a `feedback` command that prints no JSON object, a `state` command that prints no state, an `open` command that prints no URL and no error, or any forge operation whose answer has fields the host contract refuses) | The project pauses, and the reason says what to fix before you resume. An exhausted token budget or a passed deadline pauses it too. |
 
 - After a rate limit a step waits at least 15 minutes, or until the time the

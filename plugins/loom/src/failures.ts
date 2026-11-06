@@ -132,7 +132,7 @@ const BROKEN_COMMAND = /\bmust print a JSON object\b|\bprinted no (?:pull reques
 // every step there fails the same way until someone puts it right.
 const CHECKOUT_STUCK =
   /have not concluded your merge|MERGE_HEAD exists|index\.lock': File exists|you need to resolve your current index first|\bis checked out elsewhere\b|\bis already (?:checked out|used by worktree)\b|\bLoom worktree at \S+ is on\b|git-lfs is needed|gh CLI is not installed/iu;
-// A repo bb shows no checkout of on the project's machine, until someone adds one.
+// A repo bb shows no checkout of on the project's machine: someone has to add one.
 const NO_CHECKOUT = /\bhas no checkout on the machine\b/iu;
 // What no wait changes on one ticket: a merge git stopped, a push the remote refused, a branch or pull request that is not
 // there, or a forge that refuses the change itself.
@@ -151,7 +151,7 @@ function classifyText(reason: string, wait: Transient | null): Failure {
   if (SIGNED_OUT.test(reason)) return of("lasting", "project", reason, true, { fix: PROJECT_FIX.signedOut });
   if (HOST_CALL_TROUBLE.test(reason)) return of("unknown", "host", reason, true);
   if (CHECKOUT_STUCK.test(reason)) return of("lasting", "host", reason, true);
-  if (NO_CHECKOUT.test(reason)) return of("temporary", "host", reason, true);
+  if (NO_CHECKOUT.test(reason)) return of("lasting", "host", reason, true);
   if (wait !== null) {
     const retry = { ...(wait.retryAfterMs === undefined ? {} : { retryAfterMs: wait.retryAfterMs }), ...(wait.transient === "rate_limit" ? { rateLimited: true } : {}) };
     // A rate limit or a failure to reach the forge is the forge's or this machine's, so every read there waits.
@@ -174,8 +174,8 @@ export function classify(error: unknown): Failure {
   if (error instanceof Unavailable) return classifyText(reason, error.wait);
   if (error instanceof ForgeContractError) return of("lasting", "project", reason, true, { fix: PROJECT_FIX.command });
   const code: unknown = typeof error === "object" && error !== null ? Reflect.get(error, "code") : undefined;
-  // An older host that does not know a method yet is one a reload brings up to date.
-  if (code === "unknown_method") return of("temporary", "host", reason, true);
+  // A host that does not know a method is behind this Loom until someone reloads or updates the plugin there.
+  if (code === "unknown_method") return of("lasting", "host", reason, true);
   if (code === "invalid_input" || code === "invalid_output") return of("lasting", "ticket", reason, true);
   if (hostCallTransient(error) !== null) return of("unknown", "host", reason, true);
   return classifyText(reason, null);

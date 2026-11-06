@@ -9,6 +9,7 @@ import type { Failure } from "../src/failures";
 import { pollPullRequests, runMergeQueue, settleMerges } from "../src/merge";
 import { SpawnUnavailableError } from "../src/ports";
 import { Projects } from "../src/projects";
+import { maybeSendTriage } from "../src/triage";
 import { decide, nextRetry, retryOf } from "../src/retry-wait";
 import { makeCtx, reachApproved, seedProject, seedRepoProject, startWorker, ticketOf, type Doc, type EngineHarness } from "./helpers";
 
@@ -67,7 +68,7 @@ describe("decide", () => {
   it("waits every 15 minutes on a lasting failure of the machine, saying at once that someone has to put it right", () => {
     const first = decide(null, { ...at(0), failure: failure("lasting", "host") });
     expect(first).toMatchObject({ do: "wait", wait: { until: 15 * MINUTE, noted: true } });
-    expect(first.do === "wait" && first.post).toContain("Someone has to put the checkout right");
+    expect(first.do === "wait" && first.post).toContain("that someone has to put right");
     expect(decide(first.do === "wait" ? first.wait : null, { ...at(15 * MINUTE), failure: failure("lasting", "host") })).toMatchObject({ do: "wait", post: null });
   });
 
@@ -242,6 +243,52 @@ describe("on a running project", () => {
     h.clock.advance(5 * MINUTE);
     await pollPullRequests(h.ctx, project());
     expect(h.ctx.forgeBackoffs.get("github.com")).toMatchObject({ until: h.clock.t + 10 * MINUTE });
+  });
+
+  const plannerRounds = () => h.bb.callsTo("send").filter(([id]) => id === "thr_plan").map(([, message]) => message as { summary: string; detail: string });
+
+  it("tells the planner at once when a step waits on a fault of the machine Loom cannot fix, and keeps the project running for hours", async () => {
+    await seedProject(h);
+    await reachApproved(h);
+    h.bb.checkout = null;
+    await queue();
+    expect(project()).toMatchObject({ state: "running", triage_pending: 1 });
+    expect(await maybeSendTriage(h.ctx, project())).toBe(true);
+    const round = plannerRounds().at(-1)!;
+    expect(round.summary).toBe("[loom] Triage round 1 for csv: 1 ticket waits on something Loom cannot fix.");
+    expect(round.detail).toContain("CSV-1 · ");
+    expect(round.detail).toContain("has no checkout on the machine");
+    for (let hour = 0; hour < 3 * 4; hour++) {
+      h.clock.advance(15 * MINUTE);
+      await queue();
+    }
+    expect(project().state).toBe("running");
+    expect(ticketOf(h, "CSV-1").state).toBe("merging");
+    expect(systemPosts("CSV-1")).toHaveLength(1);
+    expect(project().triage_pending).toBe(0);
+  });
+
+  it("classifies a host method the machine does not know as a lasting fault of the machine", () => {
+    expect(decide(null, { ...at(0), failure: failure("lasting", "host") })).toMatchObject({ do: "wait", wait: { noted: true } });
+  });
+
+  it("tells the planner only after an hour when the machine stops answering", async () => {
+    await seedProject(h);
+    await reachApproved(h);
+    h.host.errors.merge = new Error(DEADLINE);
+    await queue();
+    expect(project().triage_pending).toBe(0);
+    for (const minutes of [1, 2, 5, 10, 15, 15]) {
+      h.clock.advance(minutes * MINUTE);
+      await queue();
+    }
+    expect(project().triage_pending).toBe(0);
+    h.clock.advance(15 * MINUTE);
+    await queue();
+    expect(project()).toMatchObject({ state: "running", triage_pending: 1 });
+    expect(await maybeSendTriage(h.ctx, project())).toBe(true);
+    expect(plannerRounds().at(-1)!.detail).toContain(`CSV-1 · "Order rows"`);
+    expect(plannerRounds().at(-1)!.detail).toContain(`Failing 8 times since`);
   });
 
   it("keeps a read failure of an old pull request off the ticket's new one", async () => {

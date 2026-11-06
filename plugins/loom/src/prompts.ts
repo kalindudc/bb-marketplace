@@ -7,6 +7,7 @@ import { its, plural } from "./format";
 import { canEdit, canReply, followsFeedback, isMultiRepo, prSettings, repoSettings, type RepoSettings } from "./repos";
 import type { Finding } from "./review";
 import { textRoundsOn } from "./review-kind";
+import type { Stuck } from "./triage";
 import { rolloutFacts } from "./rollout";
 import type { ForgeSpec, Spec } from "./spec";
 import { specDiff, type SpecChange } from "./spec-diff";
@@ -500,7 +501,7 @@ export function resumeText(key: string, held: PostRow | null): string | { summar
   return { summary, detail: `The last result of the checks on ${key} came in while the project was paused, so you may not have seen it:\n${clip(held.body, CHECK_TAIL + 500)}` };
 }
 
-export function triageDigest(a: { project: ProjectRow; round: number; counts: Record<TicketState, number>; blocked: TicketRow[]; lastPosts: Map<number, PostRow[]>; budgetPaused?: boolean; unsure?: ReadonlyArray<{ ticket: TicketRow; post: PostRow }> }): string {
+export function triageDigest(a: { project: ProjectRow; round: number; counts: Record<TicketState, number>; blocked: TicketRow[]; lastPosts: Map<number, PostRow[]>; budgetPaused?: boolean; unsure?: ReadonlyArray<{ ticket: TicketRow; post: PostRow }>; stuck?: Stuck }): string {
   const { project, round, counts, blocked, lastPosts } = a;
   const board = Object.entries(counts)
     .filter(([, count]) => count > 0)
@@ -534,6 +535,15 @@ export function triageDigest(a: { project: ProjectRow; round: number; counts: Re
   if ((a.unsure ?? []).length > 0) {
     lines.push("Loom cannot tell whether bb started a reviewer for these tickets in review, so each keeps its reviewer's place. Tell the human with loom_ask_human what the post says they can do:");
     for (const { ticket, post } of a.unsure ?? []) lines.push(`${ticket.key} · ${JSON.stringify(ticket.title)}`, `  #${post.id}: ${clip(post.body.replace(/\s+/g, " "), 600)}`, "");
+  }
+  const stuck = a.stuck ?? { tickets: [], hosts: [] };
+  if (stuck.tickets.length + stuck.hosts.length > 0) {
+    lines.push("Waiting on something Loom cannot fix by itself. The project keeps running, nothing is blocked for it, and Loom keeps trying every 15 minutes:");
+    for (const { ticket, wait } of stuck.tickets) {
+      lines.push(`${ticket.key} · ${JSON.stringify(ticket.title)}`, `  Failing ${plural(wait.failures, "time")} since ${new Date(wait.since).toISOString()}: ${clip(wait.message.replace(/\s+/g, " "), 600)}`);
+    }
+    for (const { host, backoff } of stuck.hosts) lines.push(`Loom cannot reach ${host}: its reads failed ${plural(backoff.network.failures, "time")} since ${new Date(backoff.network.since).toISOString()}: ${clip(backoff.message.replace(/\s+/g, " "), 600)}`);
+    lines.push("If the human has to act, such as cloning a repo, reloading the plugin or restoring the network, say exactly what with loom_ask_human.", "");
   }
   lines.push(
     "What you can do, only through the tools: loom_ticket to read a ticket, loom_post to answer on it, loom_requeue to send a blocked ticket back to the queue after you answered, loom_edit_ticket to change a queued or blocked ticket, loom_add_tickets to split work or add a dependency, loom_cancel_ticket to drop one, loom_board for the whole board.",

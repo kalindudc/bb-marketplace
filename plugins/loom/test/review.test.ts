@@ -373,7 +373,7 @@ describe("spawnReviewers", () => {
     expect(await spawn()).toBe(0);
     expect(project().state).toBe("running");
     expect(postsOf().at(-1)!.body).toContain(
-      "Reading the diff of CSV-1 for review failed because of the project's machine: The project's repository (bb project proj_1) has no checkout on the machine host_1 that this Loom project uses. Clone it there with `bb project source add proj_1 --clone --machine host_1`, then resume.",
+      "Reading the diff of CSV-1 for review failed because of something on the project's machine that someone has to put right: The project's repository (bb project proj_1) has no checkout on the machine host_1 that this Loom project uses. Clone it there with `bb project source add proj_1 --clone --machine host_1`, then resume.",
     );
     expect(h.host.callsTo("diff")).toEqual([]);
   });

@@ -270,7 +270,7 @@ describe("the integration merge", () => {
     expect(ticketOf(h, "CSV-1").state).toBe("merging");
     expect(JSON.parse(ticketOf(h, "CSV-1").retry_json!)).toMatchObject({ kind: "lasting", scope: "host", until: h.clock.t + 15 * 60_000 });
     expect(h.store.posts(ticketOf(h, "CSV-1").id).at(-1)!.body).toBe(
-      "Merging CSV-1 failed because of the state of the checkout on the project's machine: loom/csv is checked out elsewhere; switch that checkout off it, and Loom merges again. Someone has to put the checkout right; Loom tries again every 15m and does not pause the project or block the ticket for it.",
+      "Merging CSV-1 failed because of something on the project's machine that someone has to put right: loom/csv is checked out elsewhere; switch that checkout off it, and Loom merges again. Loom tries again every 15m, tells the planner, and does not pause the project or block the ticket for it.",
     );
     expect(mergeRuns().map((run) => [run.label, run.ok])).toEqual([["prepare the Loom worktree", 0]]);
     expect(h.store.runOutput(mergeRuns()[0]!.id)).toBe("fatal: 'loom/csv' is already used by worktree at '/repo'");
@@ -614,7 +614,7 @@ describe("the pull request strategy", () => {
     expect(project().state).toBe("running");
     expect(ticketOf(h, "CSV-1").state).toBe("merging");
     expect(JSON.parse(ticketOf(h, "CSV-1").retry_json!)).toMatchObject({ kind: "lasting", scope: "host", until: h.clock.t + 15 * 60_000 });
-    expect(h.store.posts(ticketOf(h, "CSV-1").id).at(-1)!.body).toContain("Someone has to put the checkout right");
+    expect(h.store.posts(ticketOf(h, "CSV-1").id).at(-1)!.body).toContain("that someone has to put right");
     const run = mergeRuns().find((each) => each.label === "git push")!;
     expect(run.ok).toBe(0);
     expect(h.store.runOutput(run.id)).toContain("git-lfs is needed to push LFS files");

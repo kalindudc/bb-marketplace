@@ -49,6 +49,8 @@ export async function stepFailed(ctx: EngineCtx, ticket: TicketRow, step: RetryS
   ctx.store.tx(() => {
     ctx.store.updateTicket(ticket.id, writeSub("retry_json", decision.wait));
     if (decision.post !== null) loomPost(ctx.store, ticket, { kind: "system", body: decision.post, data: { retry: step, kind: failure.kind, scope: failure.scope, failures: decision.wait.failures, until: decision.wait.until } });
+    // A fault Loom cannot fix, or an outage of an hour: the planner's next triage round names it, and nothing blocks.
+    if (decision.post !== null && decision.wait.noted === true) ctx.store.updateProject(ticket.project_id, { triage_pending: 1 });
   });
   ctx.store.changed(ticket.project_id);
   return "wait";

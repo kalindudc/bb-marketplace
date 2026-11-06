@@ -80,7 +80,7 @@ export function decide(previous: RetryWait | null, a: { step: RetryStep; what: s
   if (wait.failures === 1 || (over >= RETRY_LIMIT_MS && wait.noted !== true)) {
     const late = wait.failures > 1;
     const posted = late ? { ...wait, noted: true } : wait;
-    if (failure.kind === "lasting") return { do: "wait", wait: { ...posted, noted: true }, post: `${what} failed because of the state of the checkout on ${where}: ${said}. Someone has to put the checkout right; Loom tries again every ${formatDuration(LONGEST_RETRY_MS)} and does not pause the project or block the ticket for it.` };
+    if (failure.kind === "lasting") return { do: "wait", wait: { ...posted, noted: true }, post: `${what} failed because of something on ${where} that someone has to put right: ${said}. Loom tries again every ${formatDuration(LONGEST_RETRY_MS)}, tells the planner, and does not pause the project or block the ticket for it.` };
     if (late) return { do: "wait", wait: posted, post: `${what} has failed ${plural(wait.failures, "time")} in a row over ${formatDuration(over)}, because of ${where}: ${said}. Loom keeps trying every ${formatDuration(LONGEST_RETRY_MS)}; a problem of ${where} never blocks this ticket or pauses the project.` };
     const opener = failure.kind === "unknown" ? `${what} got no answer from ${where}, so Loom cannot tell whether it ran: ${said}. Each step first checks what is already done, so nothing is done twice.` : `${what} failed because of ${where}: ${said}.`;
     return { do: "wait", wait: posted, post: `${opener} Loom tries again in ${again}, waiting longer after each failure up to ${formatDuration(LONGEST_RETRY_MS)}. A problem of ${where} never blocks this ticket or pauses the project.` };

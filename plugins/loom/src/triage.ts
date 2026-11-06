@@ -8,7 +8,8 @@ import { rolloutJson, rolloutOfTicket } from "./rollout";
 import { isBudgetPause } from "./scheduler";
 import { dependencyCycle, fallsUnder, numberErrors, ticketEnvironmentErrors, type Spec, type TicketPatch, type TicketRolloutSpec, type TicketSpec } from "./spec";
 import { HUMAN_ACTOR, LOOM_ACTOR, TICKET_STATES, canMoveTicket, type TicketState } from "./states";
-import { writeSub, readSub } from "./sub-state";
+import { writeSub, readSub, type RetryWait } from "./sub-state";
+import { forgeHostOf, type NetworkBackoff } from "./forge-waits";
 import { endLiveRows } from "./workers";
 import { specOf, type EngineCtx } from "./ctx";
 import { unresolvedNotice } from "./review-kind";
@@ -17,7 +18,27 @@ const ROUND_LIMIT_MS = 30 * 60_000;
 const DIGEST_POSTS = 3;
 const TRIAGE_REASON_LIMIT = 600;
 
-/** Sends the planner one batched message about every blocked ticket, when a round is due. True when it sent one. */
+/**
+ * What waits on something Loom cannot fix while the project runs: a ticket whose step said so (a fault of the machine,
+ * or a forge or machine outage of an hour), and a forge host its pull requests cannot reach for an hour.
+ */
+export interface Stuck {
+  tickets: Array<{ ticket: TicketRow; wait: RetryWait }>;
+  hosts: Array<{ host: string; backoff: NetworkBackoff }>;
+}
+
+function stuckOf(ctx: EngineCtx, tickets: TicketRow[]): Stuck {
+  const live = tickets.filter((ticket) => ticket.state !== "blocked" && ticket.state !== "done" && ticket.state !== "cancelled");
+  const waits = live.flatMap((ticket) => {
+    const wait = readSub(ticket, "retry_json");
+    return wait?.noted === true ? [{ ticket, wait }] : [];
+  });
+  const read = new Set(live.filter((ticket) => ticket.state === "pr_open").flatMap((ticket) => forgeHostOf(ticket.pr_url) ?? []));
+  const hosts = [...ctx.forgeBackoffs].flatMap(([host, backoff]) => (read.has(host) && backoff.noted === true && backoff.network !== undefined && backoff.until > ctx.now() ? [{ host, backoff: { ...backoff, network: backoff.network } }] : []));
+  return { tickets: waits, hosts };
+}
+
+/** Sends the planner one batched message about every blocked ticket and what waits on something Loom cannot fix, when a round is due. True when it sent one. */
 export async function maybeSendTriage(ctx: EngineCtx, project: ProjectRow): Promise<boolean> {
   const { store } = ctx;
   const fresh = store.project(project.id);
@@ -33,25 +54,29 @@ export async function maybeSendTriage(ctx: EngineCtx, project: ProjectRow): Prom
   const unsure = unsureReviews(store, fresh.id, tickets);
   // Any other pause the planner cannot lift; the next-step bar shows the human its reason and Resume.
   const budgetPaused = fresh.state === "paused" && isBudgetPause(fresh.system_reason);
-  if (blocked.length === 0 && unsure.length === 0 && !budgetPaused) {
+  const stuck = stuckOf(ctx, tickets);
+  const waiting = stuck.tickets.length + stuck.hosts.length;
+  if (blocked.length === 0 && unsure.length === 0 && !budgetPaused && waiting === 0) {
     store.updateProject(fresh.id, { triage_pending: 0 });
     return false;
   }
   const counts = Object.fromEntries(TICKET_STATES.map((state) => [state, tickets.filter((ticket) => ticket.state === state).length])) as Record<TicketState, number>;
   const lastPosts = new Map<number, PostRow[]>(blocked.map((ticket) => [ticket.id, store.posts(ticket.id).slice(-DIGEST_POSTS)]));
   const round = fresh.triage_round + 1;
-  const detail = triageDigest({ project: fresh, round, counts, blocked, lastPosts, budgetPaused, unsure });
-  const summary =
-    blocked.length > 0
-      ? `[loom] Triage round ${round} for ${fresh.slug}: ${blocked.length === 1 ? "1 ticket is" : `${blocked.length} tickets are`} blocked.`
-      : unsure.length > 0
-        ? `[loom] Triage round ${round} for ${fresh.slug}: Loom cannot tell whether bb started a reviewer for ${unsure.map((each) => each.ticket.key).join(", ")}.`
-        : `[loom] Triage round ${round} for ${fresh.slug}: Loom paused the project. ${fresh.system_reason}`;
+  const detail = triageDigest({ project: fresh, round, counts, blocked, lastPosts, budgetPaused, unsure, stuck });
+  const parts = [
+    ...(blocked.length === 0 ? [] : [`${blocked.length === 1 ? "1 ticket is" : `${blocked.length} tickets are`} blocked`]),
+    ...(unsure.length === 0 ? [] : [`Loom cannot tell whether bb started a reviewer for ${unsure.map((each) => each.ticket.key).join(", ")}`]),
+    ...(stuck.tickets.length === 0 ? [] : [`${stuck.tickets.length === 1 ? "1 ticket waits" : `${stuck.tickets.length} tickets wait`} on something Loom cannot fix`]),
+    ...stuck.hosts.map(({ host }) => `Loom cannot reach ${host}`),
+  ];
+  const summary = parts.length === 0 ? `[loom] Triage round ${round} for ${fresh.slug}: Loom paused the project. ${fresh.system_reason}` : `[loom] Triage round ${round} for ${fresh.slug}: ${parts.join(", and ")}.`;
   await ctx.bb.send(planner.thread_id, { summary, detail });
   store.updateProject(fresh.id, { triage_pending: 0, triage_round: round, triage_sent_at: ctx.now() });
   store.event(fresh.id, null, "triage.sent", LOOM_ACTOR, {
     round,
     blocked: blocked.map((ticket) => ({ key: ticket.key, title: ticket.title, reason: clip(ticket.blocked_reason ?? "", TRIAGE_REASON_LIMIT) })),
+    ...(waiting === 0 ? {} : { waiting: [...stuck.tickets.map(({ ticket, wait }) => ({ key: ticket.key, reason: clip(wait.message, TRIAGE_REASON_LIMIT) })), ...stuck.hosts.map(({ host, backoff }) => ({ host, reason: clip(backoff.message, TRIAGE_REASON_LIMIT) }))] }),
     paused: fresh.state === "paused",
   });
   return true;

@@ -84,9 +84,9 @@ describe("classify", () => {
     expect(classify(new Error(message))).toMatchObject({ kind: "lasting", scope: "host" });
   });
 
-  it("waits on the machine for a repo with no checkout there, or a host that does not know a method yet", () => {
-    expect(classify(new LoomError("loom_no_checkout", 'Repo "web" has no checkout on the machine.'))).toMatchObject({ kind: "temporary", scope: "host", known: true });
-    expect(classify(coded('unknown host rpc method "fetchTip"', "unknown_method"))).toMatchObject({ kind: "temporary", scope: "host" });
+  it("reads a repo with no checkout on the machine, or a host that does not know a method, as a lasting fault of the machine", () => {
+    expect(classify(new LoomError("loom_no_checkout", 'Repo "web" has no checkout on the machine.'))).toMatchObject({ kind: "lasting", scope: "host", known: true });
+    expect(classify(coded('unknown host rpc method "fetchTip"', "unknown_method"))).toMatchObject({ kind: "lasting", scope: "host" });
   });
 
   it("blocks the ticket for an input or output the host contract refuses", () => {

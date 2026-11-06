@@ -212,6 +212,7 @@ function waitOutNetworkError(ctx: EngineCtx, ticket: TicketRow, host: string, me
   if (networkWaitLong(backoff, now)) {
     ctx.forgeBackoffs.set(host, { ...backoff, noted: true });
     loomPost(ctx.store, ticket, { kind: "system", body: networkWaitLongText(host, backoff, now), data: { networkFailed: true, host, until: backoff.until, since } });
+    ctx.store.updateProject(ticket.project_id, { triage_pending: 1 });
     ctx.store.changed(ticket.project_id);
   }
 }
