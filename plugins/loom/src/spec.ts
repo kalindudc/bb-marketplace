@@ -150,14 +150,13 @@ export const forgeSchema = z
   .strict();
 
 // What happens when a project event happens: the planner, or for ticket.started each worker's brief, is told to do
-// something with its own tools, and a command runs on the project's machine. Loom only delivers them; neither blocks anything.
+// something with its own tools. Loom only delivers it; it blocks nothing.
 export const hookSchema = z
   .object({
     on: z.enum(HOOK_EVENTS),
-    tell: z.string().trim().min(1).max(2000).optional(),
+    tell: z.string().trim().min(1).max(2000),
     // Unset: the planner.
     to: z.enum(["planner", "worker"]).optional(),
-    run: command.optional(),
   })
   .strict();
 
@@ -400,6 +399,7 @@ const REMOVED_KEYS: Readonly<Record<string, string>> = {
   "repo[].forge.team_members": TEAMS_GONE,
   "merge.forge.reviewers[].team": TEAMS_GONE,
   "repo[].forge.reviewers[].team": TEAMS_GONE,
+  "hook[].run": "A hook tells the planner, or each worker, what to do; for a command on an event, use the doneHook setting, or a forge's after_open and after_push: remove the key.",
   "merge.squash": "Loom always pushes the reviewed work as one commit, and each fix round as one more: remove the key.",
   "merge.release_workers": "Loom always releases an idle worker whose pull request is open, so bb frees its environment, and brings it back when the pull request needs it: remove the key.",
 };
@@ -799,12 +799,10 @@ function ciForgeErrors(spec: Spec): string[] {
   });
 }
 
-/** A hook needs something to do, and only a worker that starts on a ticket reads one: every other event finds it done, gone or waiting. */
+/** Only a worker that starts on a ticket reads a hook: every other event finds it done, gone or waiting. */
 function hookErrors(spec: Spec): string[] {
   return (spec.hook ?? []).flatMap((hook, index) => {
     const at = `hook[${index}]`;
-    if (hook.tell === undefined && hook.run === undefined) return [`${at}: does nothing. Set tell (what the planner is told to do) or run (a command), or both.`];
-    if (hook.to !== undefined && hook.tell === undefined) return [`${at}.to: only says who reads tell, and this hook has none. Remove to, or add tell.`];
     if (hook.to === "worker" && hook.on !== "ticket.started") {
       return [`${at}.to: a worker reads a hook only when it starts on a ticket, in its brief; on ${hook.on} its work is handed in or done. Use on = "ticket.started", or leave to unset so the planner does it.`];
     }

@@ -160,12 +160,11 @@ After approval, change a ticket's rollout with `loom_edit_ticket` and a patch of
 
 The human can set standing instructions for every planner in Loom's settings (Planner instructions), such as "Use Shuttle: create a PR board for every project and link each pull request Loom opens to it." They come in two places, under the heading "The human's standing instructions": the `[loom]` note after the goal when the Loom page started this thread, and the top of `loom_discover`'s report, which you call in step 3 wherever this thread started. Carry out each one that applies to this project, and leave out one that does not. Loom's spec reviewer reads them too, and a standing instruction that applies with nothing in the spec that carries it out is a finding.
 
-An instruction about the work itself goes into the tickets. An instruction about what should happen when a project event happens becomes a `[[hook]]` table, so it is never forgotten: Loom delivers each hook every time its event happens, long after this conversation. A hook has `on`, the event, and `tell`, `run` or both:
+An instruction about the work itself goes into the tickets. An instruction about what should happen when a project event happens becomes a `[[hook]]` table, so it is never forgotten: Loom delivers each hook every time its event happens, long after this conversation. A hook has `on`, the event, and `tell`:
 
 - `on` is one of `spec.approved` (the human approves a version), `project.started`, `ticket.started` (a worker starts on a ticket, once per ticket), `pr.opened` (Loom opens a ticket's pull request, or on the integration strategy the pull request that lands the integration branch), `ticket.blocked`, `ticket.done` and `project.done`.
 - `tell` is what to do then, written as an instruction. Loom sends it to you, the planner, in one message with whatever else fired, once your thread is idle, with what happened (the ticket, its pull request, the reason it blocked). Do it with your own tools, such as Shuttle's board tools, then end your turn.
 - `to = "worker"` with `on = "ticket.started"` puts `tell` in every worker's brief instead, for something each worker does while it works, such as reading the team's conventions file before it changes code. Workers read no other event: by then their work is handed in or done.
-- `run` is a shell command Loom runs on the project's machine, in the checkout of the event's repo, with a 2-minute limit and `LOOM_EVENT`, `LOOM_PROJECT_SLUG`, `LOOM_PROJECT_NAME`, `LOOM_PROJECT_KEY`, `LOOM_TICKET_KEY`, `LOOM_TICKET_TITLE`, `LOOM_URL`, `LOOM_REPO`, `LOOM_VERSION` and `LOOM_REASON` set where they apply. Use it when a command does the whole job and needs no judgment.
 
 Hooks are optional, and Loom only delivers them: it checks nothing a hook asks for, holds no ticket back for one, and records each delivery or failure in the feed. Write only the hooks the human asked for, in this conversation or in the standing instructions; the spec reviewer flags any other. When a hook's details are unclear, such as the board's name, settle them in your question round and write them into its `tell`.
 
@@ -177,10 +176,6 @@ tell = "Create a Shuttle board named after this project, unless one exists, and 
 [[hook]]
 on = "pr.opened"
 tell = "Add this pull request to the project's Shuttle board, and create the board first if it does not exist."
-
-[[hook]]
-on = "ticket.blocked"
-run = 'notify-cli post "#team" "$LOOM_TICKET_KEY is blocked: $LOOM_REASON"'
 ```
 
 ## 6. Propose

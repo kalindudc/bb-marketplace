@@ -992,21 +992,12 @@ function HookList({ spec }: { spec: Spec }) {
               <Commentable as="span" target={{ paths: [`${at}.on`], label: `${label} › on`, kind: "enum", value: hook.on, options: HOOK_EVENTS, names: HOOK_EVENT_NAMES }} className="font-semibold [overflow-wrap:anywhere]">
                 When {eventName(hook.on)}
               </Commentable>
-              {(hook.tell !== undefined || changedAt(review, `${at}.tell`)) && (
-                <Part label="Tell" paths={[`${at}.tell`]}>
-                  <Prose path={`${at}.tell`} label={`${label} › tell`} text={hook.tell} fallback="nothing to tell" className="block whitespace-pre-line" />
-                </Part>
-              )}
-              {(hook.tell !== undefined || hook.to !== undefined || changedAt(review, `${at}.to`)) && (
-                <Part label="Who reads it" paths={[`${at}.to`]}>
-                  <Choice path={`${at}.to`} label={`${label} › to`} value={hook.to ?? "planner"} options={["planner", "worker"]} names={HOOK_READERS} />
-                </Part>
-              )}
-              {(hook.run !== undefined || changedAt(review, `${at}.run`)) && (
-                <Part label="Run" paths={[`${at}.run`]}>
-                  <Command path={`${at}.run`} label={`${label} › run`} command={hook.run} />
-                </Part>
-              )}
+              <Part label="Tell" paths={[`${at}.tell`]}>
+                <Prose path={`${at}.tell`} label={`${label} › tell`} text={hook.tell} fallback="nothing to tell" className="block whitespace-pre-line" />
+              </Part>
+              <Part label="Who reads it" paths={[`${at}.to`]}>
+                <Choice path={`${at}.to`} label={`${label} › to`} value={hook.to ?? "planner"} options={["planner", "worker"]} names={HOOK_READERS} />
+              </Part>
             </li>
           );
         })}

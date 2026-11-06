@@ -251,11 +251,11 @@ describe("the plugin's own documents", () => {
   it("the spec reference, the skills and README describe hooks, every event they follow, and the planner instructions setting", () => {
     const spec = read("skills/loom/references/spec.md");
     expect(spec).toContain("### [[hook]]");
-    for (const key of ["`on`", "`tell`", "`to`", "`run`"]) expect(spec, key).toContain(`| ${key} |`);
+    for (const key of ["`on`", "`tell`", "`to`"]) expect(spec, key).toContain(`| ${key} |`);
     for (const path of ["README.md", "skills/loom/SKILL.md", "skills/loom-plan/SKILL.md", "skills/loom/references/spec.md"]) {
       const text = read(path);
       for (const event of HOOK_EVENTS) expect(text, `${path}: ${event}`).toContain(`\`${event}\``);
-      for (const name of ["LOOM_EVENT", "LOOM_TICKET_KEY", "LOOM_URL", "[[hook]]"]) expect(text, `${path}: ${name}`).toContain(name);
+      expect(text, path).toContain("[[hook]]");
     }
     for (const path of ["README.md", "skills/loom-plan/SKILL.md"]) expect(read(path), path).toMatch(/Planner instructions/);
     expect(read("README.md")).toContain("bb plugin config loom set plannerInstructions");

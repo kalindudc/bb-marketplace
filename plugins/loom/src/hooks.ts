@@ -1,22 +1,14 @@
-// The spec's [[hook]] tables: when a project event happens, Loom tells the planner what a hook says, or runs its command
-// on the project's machine. Loom only delivers them, once each, from the project's events; they move no ticket and
-// block nothing, and a failure is an event in the feed.
-import { repoCheckout } from "./checkouts";
+// The spec's [[hook]] tables: when a project event happens, Loom tells the planner what a hook says. Loom only delivers
+// them, once each, from the project's events; they move no ticket and block nothing, and a failure is an event in the feed.
 import type { EventRow, HookFiringRow, ProjectRow, Store } from "./db/store";
-import { checkoutOf } from "./merge";
 import { clip, hookTellText, type HookFacts } from "./prompts";
-import { isMultiRepo } from "./repos";
 import type { HookEvent, HookSpec, Spec } from "./spec";
 import { LOOM_ACTOR } from "./states";
 import { type EngineCtx } from "./ctx";
 
-export const HOOK_RUN_TIMEOUT_MS = 120_000;
-/** How long after a command started that an earlier process left running it may still run: the host kills it at its limit. */
-export const HOOK_RUN_LEASE_MS = HOOK_RUN_TIMEOUT_MS + 30_000;
 /** How many sends to the planner a tell gets before it fails. */
 export const HOOK_TELL_TRIES = 3;
 const EVENT_BATCH = 500;
-const ENV_MAX = 2000;
 const REASON_MAX = 600;
 
 const errText = (error: unknown) => (error instanceof Error ? error.message : String(error));
@@ -141,8 +133,7 @@ function queueHooks(ctx: EngineCtx, project: ProjectRow): void {
         hooks.forEach((hook, index) => {
           if (hook.on !== occurrence.on) return;
           const base = { project_id: project.id, event_id: event.id, hook: index, hook_on: hook.on, ticket_id: occurrence.ticketId, facts_json: JSON.stringify(occurrence.facts) };
-          if (hook.tell !== undefined && (hook.to ?? "planner") === "planner") store.addHookFiring({ ...base, kind: "tell", text: hook.tell });
-          if (hook.run !== undefined) store.addHookFiring({ ...base, kind: "run", text: hook.run });
+          if ((hook.to ?? "planner") === "planner") store.addHookFiring({ ...base, kind: "tell", text: hook.tell });
         });
       }
       store.setHookCursor(project.id, last);
@@ -161,84 +152,7 @@ function settle(ctx: EngineCtx, row: HookFiringRow, outcome: { state: "done" | "
     if (outcome.state === "skipped") return;
     const data = { hook: row.hook, on: row.hook_on, kind: row.kind, ...(facts.key === undefined ? {} : { key: facts.key }), ...(outcome.reason === undefined ? {} : { reason: outcome.reason }) };
     if (outcome.state === "failed") store.event(row.project_id, null, "hook.failed", LOOM_ACTOR, data);
-    else if (row.kind === "run") store.event(row.project_id, null, "hook.ran", LOOM_ACTOR, data);
   });
-}
-
-// ---------------------------------------------------------------- run
-
-const inflightByStore = new WeakMap<Store, Map<number, Promise<void>>>();
-const inflightOf = (store: Store) => inflightByStore.get(store) ?? inflightByStore.set(store, new Map()).get(store)!;
-
-/** Waits for every hook command in flight. For tests. */
-export async function settleHooks(ctx: EngineCtx): Promise<void> {
-  const running = inflightOf(ctx.store);
-  while (running.size > 0) await Promise.all([...running.values()]);
-}
-
-/**
- * Starts the oldest queued command of each project that has none running, without waiting, so a slow command never holds
- * up the engine's pass and a project's commands run in the order their events happened. A row left running with no
- * command in flight is from an earlier process: it fails, and never runs again, since it may have run.
- */
-function startRuns(ctx: EngineCtx): void {
-  const { store } = ctx;
-  const running = inflightOf(store);
-  // An earlier process's command may still run until the host's limit kills it, so its project starts none until then.
-  const leased = new Set<number>();
-  for (const row of store.hookFirings(null, ["running"], "run")) {
-    if (running.has(row.project_id)) continue;
-    if (ctx.now() - row.updated_at < HOOK_RUN_LEASE_MS) leased.add(row.project_id);
-    else settle(ctx, row, { state: "failed", reason: "Loom restarted while the command ran, so it does not run it again" });
-  }
-  for (const row of store.hookFirings(null, ["pending"], "run")) {
-    if (running.has(row.project_id) || leased.has(row.project_id)) continue;
-    const project = store.project(row.project_id);
-    if (project === null || project.state === "archived") {
-      settle(ctx, row, { state: "skipped", reason: "the project was archived" });
-      continue;
-    }
-    if (!store.moveHookFiring(row.id, "pending", { state: "running" })) continue;
-    const run = runCommand(ctx, project, { ...row, state: "running" })
-      .catch((error) => ctx.bb.log("error", `A hook command of project ${project.slug} failed: ${errText(error)}`))
-      .finally(() => {
-        running.delete(row.project_id);
-        ctx.kick();
-      });
-    running.set(row.project_id, run);
-  }
-}
-
-/** Runs a hook's command in the checkout of the event's repo on the project's machine, with the event's LOOM_ variables. */
-async function runCommand(ctx: EngineCtx, project: ProjectRow, row: HookFiringRow): Promise<void> {
-  const facts = JSON.parse(row.facts_json) as HookFacts;
-  let reason: string | null;
-  try {
-    // The version in force now; a pending version may have moved the event's repo, and repoCheckout says so.
-    const spec = JSON.parse(ctx.store.specVersion(project.id, project.approved_version!)!.spec_json) as Spec;
-    // A ticket's event, or a land's, names its repo; any other runs in the project's own repository.
-    const checkout = facts.repo !== undefined && isMultiRepo(spec) ? await repoCheckout(ctx, project, spec, facts.repo) : await checkoutOf(ctx, project).then(({ hostId, repo }) => ({ hostId, path: repo }));
-    const env = Object.fromEntries(
-      Object.entries({
-        LOOM_EVENT: row.hook_on,
-        LOOM_PROJECT_SLUG: project.slug,
-        LOOM_PROJECT_NAME: project.name,
-        LOOM_PROJECT_KEY: project.key,
-        LOOM_TICKET_KEY: facts.key ?? "",
-        LOOM_TICKET_TITLE: facts.title ?? "",
-        LOOM_URL: facts.url ?? "",
-        LOOM_REPO: facts.repo ?? "",
-        LOOM_VERSION: facts.version === undefined ? "" : String(facts.version),
-        LOOM_REASON: facts.reason ?? "",
-      }).map(([key, value]) => [key, clip(value, ENV_MAX)]),
-    );
-    const result = await ctx.host.call(checkout.hostId, "exec", { cwd: checkout.path, command: row.text, timeoutMs: HOOK_RUN_TIMEOUT_MS, env });
-    const output = result.output.trim() === "" ? "" : `: ${clip(result.output.trim().slice(-300), 300)}`;
-    reason = result.timedOut ? `it timed out after ${HOOK_RUN_TIMEOUT_MS / 60_000} minutes` : result.exitCode === 0 ? null : result.exitCode === null ? `it was killed${output}` : `it exited with ${result.exitCode}${output}`;
-  } catch (error) {
-    reason = `it could not run: ${errText(error)}`;
-  }
-  settle(ctx, row, reason === null ? { state: "done" } : { state: "failed", reason });
 }
 
 // ---------------------------------------------------------------- tell
@@ -289,7 +203,7 @@ async function tellPlanners(ctx: EngineCtx): Promise<void> {
   }
 }
 
-/** One step of every project's hooks: queue what the new events fire, start the queued commands, and tell idle planners. */
+/** One step of every project's hooks: queue what the new events fire, and tell idle planners. */
 export async function followHooks(ctx: EngineCtx): Promise<void> {
   for (const project of ctx.store.projects()) {
     try {
@@ -298,6 +212,5 @@ export async function followHooks(ctx: EngineCtx): Promise<void> {
       ctx.bb.log("warn", `Could not read the hooks of project ${project.slug}: ${errText(error)}`);
     }
   }
-  startRuns(ctx);
   await tellPlanners(ctx);
 }

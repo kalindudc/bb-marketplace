@@ -9,7 +9,7 @@ import { parseSpec } from "../src/spec";
 import { blockTicket } from "../src/workers";
 import { requeueTicket } from "../src/requeue";
 import { specOf } from "../src/ctx";
-import { followHooks, HOOK_RUN_LEASE_MS, HOOK_RUN_TIMEOUT_MS, HOOK_TELL_TRIES, settleHooks } from "../src/hooks";
+import { followHooks, HOOK_TELL_TRIES } from "../src/hooks";
 import { makeCtx, makeEngine, reachApproved, seedProject, seedRepoProject, specToml, startWorker, ticketOf, type Doc, type EngineHarness } from "./helpers";
 
 let h: EngineHarness;
@@ -21,11 +21,7 @@ beforeEach(() => {
 const project = () => h.store.projectBySlug("csv")!;
 const toPlanner = () => h.bb.sent("thr_plan");
 const eventsOf = (kind: string) => h.store.eventsOfKind(project().id, kind).map((event) => JSON.parse(event.data_json) as Record<string, unknown>);
-const hookRuns = (command: string) => h.host.callsTo("exec").filter((input) => input.command === command);
-const follow = async () => {
-  await followHooks(h.ctx);
-  await settleHooks(h.ctx);
-};
+const follow = () => followHooks(h.ctx);
 const withHooks = (hooks: Array<Record<string, unknown>>, more?: (doc: Doc) => void) => (doc: Doc) => {
   doc.hook = hooks;
   more?.(doc);
@@ -36,13 +32,13 @@ const BOARD = "Add this pull request to the project's Shuttle board, and create 
 describe("[[hook]] in the spec", () => {
   const errorsOf = (hooks: unknown[], more?: (doc: Doc) => void) => parseSpec(specToml(withHooks(hooks as Array<Record<string, unknown>>, more))).errors;
 
-  it("takes hooks on every event, with tell, run or both, and leaves a spec without them as it was", () => {
+  it("takes hooks on every event, and leaves a spec without them as it was", () => {
     const hooks = [
       { on: "spec.approved", tell: "Say hello." },
-      { on: "project.started", tell: "Create the board.", run: "board-cli create" },
+      { on: "project.started", tell: "Create the board." },
       { on: "ticket.started", tell: "Name the key in commits.", to: "worker" },
       { on: "pr.opened", tell: BOARD, to: "planner" },
-      { on: "ticket.blocked", run: "notify-cli blocked" },
+      { on: "ticket.blocked", tell: "Tell the channel." },
       { on: "ticket.done", tell: "Note it." },
       { on: "project.done", tell: "Archive the board." },
     ];
@@ -52,9 +48,11 @@ describe("[[hook]] in the spec", () => {
     expect(parseSpec(specToml()).spec!.hook).toBeUndefined();
   });
 
-  it("refuses a hook that does nothing, a to without a tell, a worker hook on any event but ticket.started, and an unknown event", () => {
-    expect(errorsOf([{ on: "pr.opened" }])).toEqual([expect.stringMatching(/^hook\[0\]: does nothing\. Set tell .* or run/)]);
-    expect(errorsOf([{ on: "pr.opened", to: "planner", run: "x" }])).toEqual([expect.stringMatching(/^hook\[0\]\.to: only says who reads tell/)]);
+  it("refuses a hook without tell, a run, a worker hook on any event but ticket.started, and an unknown event", () => {
+    expect(errorsOf([{ on: "pr.opened" }])).toEqual(["hook[0].tell: is required. Add it."]);
+    expect(errorsOf([{ on: "pr.opened", tell: "x", run: "x" }])).toEqual([
+      "hook[0].run: Loom no longer reads this key. A hook tells the planner, or each worker, what to do; for a command on an event, use the doneHook setting, or a forge's after_open and after_push: remove the key.",
+    ]);
     expect(errorsOf([{ on: "pr.opened", to: "worker", tell: "Add it to the board." }])).toEqual([expect.stringMatching(/^hook\[0\]\.to: a worker reads a hook only when it starts on a ticket.*on = "ticket.started"/)]);
     expect(errorsOf([{ on: "ticket.merged", tell: "x" }])[0]).toMatch(/^hook\[0\]\.on: .*Use one of the listed values/);
     expect(errorsOf([{ on: "pr.opened", tell: "x", when: "always" }])[0]).toMatch(/^hook\[0\]: unknown key "when"/);
@@ -229,94 +227,6 @@ describe("the engine", () => {
     await seedProject(e, withHooks([{ on: "project.started", tell: "Create the board." }]));
     await e.engine.tick();
     expect(e.bb.sent("thr_plan").join("\n")).toContain("Do: Create the board.");
-  });
-});
-
-describe("running a hook's command", () => {
-  const BOARD_ADD = 'board-cli add "$LOOM_URL"';
-
-  it("runs the command once in the project's checkout, with the event's variables, and records it", async () => {
-    await seedProject(h, withHooks([{ on: "pr.opened", run: BOARD_ADD }], pr));
-    await reachApproved(h, "CSV-1");
-    await runMergeQueue(h.ctx, project(), specOf(h.store, project()));
-    await settleMerges(h.ctx);
-    await follow();
-    await follow();
-    const runs = hookRuns(BOARD_ADD);
-    expect(runs).toHaveLength(1);
-    expect(runs[0]).toMatchObject({
-      cwd: "/repo",
-      timeoutMs: HOOK_RUN_TIMEOUT_MS,
-      env: { LOOM_EVENT: "pr.opened", LOOM_PROJECT_SLUG: "csv", LOOM_PROJECT_NAME: "CSV export", LOOM_PROJECT_KEY: "CSV", LOOM_TICKET_KEY: "CSV-1", LOOM_TICKET_TITLE: "Order rows", LOOM_URL: ticketOf(h, "CSV-1").pr_url },
-    });
-    expect(eventsOf("hook.ran")).toEqual([{ hook: 0, on: "pr.opened", kind: "run", key: "CSV-1" }]);
-    expect(toPlanner()).toEqual([]);
-  });
-
-  it("records a failed command in the feed, blocks nothing and never runs it again", async () => {
-    await seedProject(h, withHooks([{ on: "ticket.started", run: "notify-cli started" }]));
-    h.host.execResults.push({ exitCode: 3, output: "no such channel\n" });
-    await startWorker(h, "CSV-1");
-    await follow();
-    await follow();
-    expect(hookRuns("notify-cli started")).toHaveLength(1);
-    expect(eventsOf("hook.failed")).toEqual([{ hook: 0, on: "ticket.started", kind: "run", key: "CSV-1", reason: "it exited with 3: no such channel" }]);
-    expect(ticketOf(h, "CSV-1").state).toBe("working");
-    const failed = h.store.eventsOfKind(project().id, "hook.failed")[0]!;
-    expect(feedText(failed, new Map())).toBe("The command of hook[0] on ticket.started for CSV-1 failed: it exited with 3: no such channel.");
-  });
-
-  it("fails a command left running by an earlier process instead of running it again, and starts no other until it cannot still run", async () => {
-    await seedProject(h, withHooks([{ on: "project.started", run: "board-cli create" }, { on: "ticket.started", run: "board-cli note" }]));
-    let release!: () => void;
-    const held = new Promise<void>((resolve) => (release = resolve));
-    const started: string[] = [];
-    const call = h.host.call.bind(h.host);
-    h.host.call = (async (hostId: string, method: string, input: { command?: string }) => {
-      if (method === "exec") started.push(input.command!);
-      if (method === "exec" && input.command === "board-cli create") await held;
-      return call(hostId, method as never, input as never);
-    }) as typeof h.host.call;
-    await followHooks(h.ctx);
-    await startWorker(h, "CSV-1");
-    // A reload: a new store over the same database, with the first command still running in the old process.
-    const store = new Store((h as EngineHarness & { db: Database.Database }).db, h.clock.now);
-    const ctx = { ...h.ctx, store };
-    await followHooks(ctx);
-    await settleHooks(ctx);
-    expect(started).toEqual(["board-cli create"]);
-    expect(store.hookFirings(project().id, ["running"]).map((row) => row.text)).toEqual(["board-cli create"]);
-    h.clock.advance(HOOK_RUN_LEASE_MS);
-    await followHooks(ctx);
-    await settleHooks(ctx);
-    expect(store.hookFirings(project().id, ["failed"]).map((row) => row.reason)).toEqual(["Loom restarted while the command ran, so it does not run it again"]);
-    expect(started).toEqual(["board-cli create", "board-cli note"]);
-    // The old process's command ends after the row failed; its result changes nothing.
-    release();
-    await settleHooks(h.ctx);
-    expect(store.hookFirings(project().id, ["failed"])).toHaveLength(1);
-    expect(eventsOf("hook.ran").map((data) => data.on)).toEqual(["ticket.started"]);
-  });
-
-  it("runs a project event's command in the project's own checkout on a multi-repo project", async () => {
-    await seedRepoProject(h, withHooks([{ on: "project.started", run: "board-cli create" }, { on: "ticket.started", run: "board-cli note" }]));
-    await startWorker(h, "CSV-1");
-    await follow();
-    await follow();
-    expect(hookRuns("board-cli create").map((input) => input.cwd)).toEqual(["/repo"]);
-    expect(hookRuns("board-cli note").map((input) => [input.cwd, input.env?.LOOM_REPO])).toEqual([["/src/web", "web"]]);
-    expect(eventsOf("hook.failed")).toEqual([]);
-  });
-
-  it("runs one project's commands one at a time, in the order their events happened", async () => {
-    await seedProject(h, withHooks([{ on: "ticket.started", run: 'echo "$LOOM_TICKET_KEY"' }]));
-    await startWorker(h, "CSV-1");
-    h.store.setTicketState(ticketOf(h, "CSV-2").id, "working", "loom", { attempt: 1 });
-    await followHooks(h.ctx);
-    expect(h.store.hookFirings(project().id, ["running", "pending"]).map((row) => row.state)).toEqual(["running", "pending"]);
-    await settleHooks(h.ctx);
-    await follow();
-    expect(hookRuns('echo "$LOOM_TICKET_KEY"').map((input) => input.env?.LOOM_TICKET_KEY)).toEqual(["CSV-1", "CSV-2"]);
   });
 });
 

@@ -393,18 +393,17 @@ Write a rollout for every ticket that changes a running system: a service, infra
 
 ### [[hook]]
 
-What happens when a project event happens: the planner is told to do something, every worker's brief says to do something, or Loom runs a command. Hooks keep a standing instruction, such as the human's Planner instructions in Loom's settings, from being forgotten once planning ends. Every hook is optional, and a spec without any reads as before. Loom only delivers a hook: it checks nothing the hook asks for, moves no ticket and holds nothing back for one.
+What happens when a project event happens: the planner is told to do something, or every worker's brief says to do something. Hooks keep a standing instruction, such as the human's Planner instructions in Loom's settings, from being forgotten once planning ends. Every hook is optional, and a spec without any reads as before. Loom only delivers a hook: it checks nothing the hook asks for, moves no ticket and holds nothing back for one.
 
 | Key | Type | Default | Rule |
 |---|---|---|---|
 | `on` | string | required | the event: `spec.approved` (the human approves a version, a pending one too), `project.started` (the human starts the approved project), `ticket.started` (a worker starts on a ticket, at its first start only), `pr.opened` (Loom opens a ticket's pull request, once per pull request; on the integration strategy, the pull request `bb loom land` opens), `ticket.blocked` (each time a ticket moves to blocked), `ticket.done` or `project.done` |
-| `tell` | string | none | up to 2000 characters: what to do, written as an instruction. Loom sends it to the planner thread, with what happened, in one message with every other tell that fired, once the planner is idle |
+| `tell` | string | required | up to 2000 characters: what to do, written as an instruction. Loom sends it to the planner thread, with what happened, in one message with every other tell that fired, once the planner is idle |
 | `to` | string | `"planner"` | who reads `tell`: `"planner"`, or `"worker"` with `on = "ticket.started"`, which puts `tell` in every worker's brief instead of a message |
-| `run` | string | none | a shell command Loom runs on the project's machine when the event happens |
 
-A hook needs `tell`, `run` or both; at most 20 hooks. A command runs with `/bin/sh` in the checkout of the event's repo (the ticket's repo, or the landed repo for the pull request a land opens on a multi-repo project; any other project event runs in the project's own repository), with a 2-minute limit, one at a time per project in the order the events happened. It gets `LOOM_EVENT`, `LOOM_PROJECT_SLUG`, `LOOM_PROJECT_NAME`, `LOOM_PROJECT_KEY`, and where they apply `LOOM_TICKET_KEY`, `LOOM_TICKET_TITLE`, `LOOM_URL` (the pull request), `LOOM_REPO`, `LOOM_VERSION` (on `spec.approved`) and `LOOM_REASON` (on `ticket.blocked`); the others are empty. A command that fails, or that a restart interrupted, is recorded in the feed and never runs again; after a restart, the project's next command waits until the interrupted one can no longer be running, 2.5 minutes after it started. Loom sends each tell once. When bb refuses the send, Loom tries again on the next pass, three sends in all, and then records the failure; a tell a restart interrupted fails and is not sent again, and so does a tell with no planner thread left to read it.
+At most 20 hooks. To run a shell command on an event, use Loom's `doneHook` setting, or a forge's `after_open` and `after_push`. Loom sends each tell once. When bb refuses the send, Loom tries again on the next pass, three sends in all, and then records the failure; a tell a restart interrupted fails and is not sent again, and so does a tell with no planner thread left to read it.
 
-Loom reads the project's events from its approval on, with the version in force: a hook that a pending version adds follows the events after that version's approval, the approval itself included, and a project approved before hooks existed starts after its newest event. The feed records `hook.told` when the planner was told, `hook.ran` when a command ran, and `hook.failed` with the reason.
+Loom reads the project's events from its approval on, with the version in force: a hook that a pending version adds follows the events after that version's approval, the approval itself included, and a project approved before hooks existed starts after its newest event. The feed records `hook.told` when the planner was told, and `hook.failed` with the reason.
 
 An excerpt, to add to a whole spec such as the examples below:
 
@@ -421,10 +420,6 @@ tell = "Add this pull request to the project's Shuttle board, and create the boa
 on = "ticket.started"
 to = "worker"
 tell = "Read docs/CONVENTIONS.md before you change any code, and follow it."
-
-[[hook]]
-on = "ticket.blocked"
-run = 'notify-cli post "#team" "$LOOM_TICKET_KEY is blocked: $LOOM_REASON"'
 ```
 
 ## Example: a two-ticket project
@@ -868,7 +863,7 @@ Rollout adds these errors:
 
 Hooks add these errors:
 
-- A `[[hook]]` with neither `tell` nor `run`.
+- A `[[hook]]` without `tell`.
 - A `to` on a hook without `tell`.
 - `to = "worker"` on any event but `ticket.started`: a worker reads a hook only in its brief, and by every other event its work is handed in or done.
 
@@ -919,6 +914,7 @@ These keys were removed because no project used them, or because they had anothe
 | `auto_merge.approval` (in any forge) | Nothing: Loom merges only once the forge says a person approved the pull request |
 | `auto_merge.final_review.provider`, `.model`, `.reasoning`, `.timeout_minutes` | Nothing: the final review uses `agents.reviewer` at low reasoning with 10 minutes; `final_review = {}` or `final_review = true` turns it on |
 | `forge.team_members`, a reviewers rule's `team` | A rule's `users`, with an optional `count` to pick from them |
+| `hook[].run` | Loom's `doneHook` setting, or a forge's `after_open` and `after_push`, for a command on an event; a hook's `tell` for anything the planner can do |
 | `merge.squash` | Nothing: Loom always pushes the reviewed work as one commit, and each fix round as one more, as it did by default |
 | `merge.release_workers` | Nothing: Loom always releases an idle worker whose pull request is open, as it did by default (see [Releasing workers](#releasing-workers)) |
 

@@ -111,7 +111,7 @@ export function standingInstructionsLines(instructions: string): string[] {
   if (text === "") return [];
   return [
     "## The human's standing instructions",
-    "The human set these planner instructions in Loom's settings, for every project. Carry them out in this spec as far as they apply to it. Where they ask for something to happen when a project event happens (the spec is approved, the project starts, a worker starts a ticket, Loom opens a pull request, a ticket is blocked or done, the project is done), write a [[hook]] table for it: tell for what you, the planner, do then with your own tools, to = \"worker\" on ticket.started for what each worker does, and run for a command. Confirm in your question round any hook the goal leaves unclear, and leave out an instruction that does not apply to this project. Loom's spec reviewer checks the spec against them. The loom skill's references/spec.md describes [[hook]].",
+    "The human set these planner instructions in Loom's settings, for every project. Carry them out in this spec as far as they apply to it. Where they ask for something to happen when a project event happens (the spec is approved, the project starts, a worker starts a ticket, Loom opens a pull request, a ticket is blocked or done, the project is done), write a [[hook]] table for it: tell for what you, the planner, do then with your own tools, and to = \"worker\" on ticket.started for what each worker does. Confirm in your question round any hook the goal leaves unclear, and leave out an instruction that does not apply to this project. Loom's spec reviewer checks the spec against them. The loom skill's references/spec.md describes [[hook]].",
     '"""',
     text,
     '"""',

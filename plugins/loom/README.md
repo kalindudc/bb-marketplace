@@ -394,7 +394,7 @@ The spec as one page in three sections:
   repo, its other settings behind a Settings line that opens by itself when one
   of them changed, the deploy order when the spec has one (how changes deploy,
   the stages with their soak and tickets, the milestones and the windows), the
-  hooks (each one's event, what it tells and to whom, and its command), and the
+  hooks (each one's event, what it tells and to whom), and the
   limits and triage. Every setting the spec can hold is drawn there, and
   what a version removes stays drawn, struck through, so "What changed" can
   jump to any change and you can comment on it.
@@ -1551,19 +1551,14 @@ bb plugin config loom set doneRecord summary   # or full
 A spec's `[[hook]]` tables say what should happen when a project event
 happens, so an instruction such as "put every pull request on a Shuttle
 board" holds for the whole project, long after planning ends. Each hook names
-an event in `on` and does one or both of two things:
-
-- `tell` is an instruction for the planner. When the event happens, Loom sends
-  it to the planner thread with what happened (the ticket, its pull request,
-  why it blocked), in one message with every other hook that fired, once the
-  planner is idle. The planner does it with its own tools, such as Shuttle's
-  board tools, and says in its reply what it did. With `to = "worker"` on
-  `ticket.started`, the instruction goes into every worker's brief instead.
-- `run` is a shell command Loom runs on the project's machine, in the checkout
-  of the event's repo, with a 2-minute limit and `LOOM_EVENT`,
-  `LOOM_PROJECT_SLUG`, `LOOM_PROJECT_NAME`, `LOOM_PROJECT_KEY`,
-  `LOOM_TICKET_KEY`, `LOOM_TICKET_TITLE`, `LOOM_URL`, `LOOM_REPO`,
-  `LOOM_VERSION` and `LOOM_REASON`.
+an event in `on` and an instruction in `tell`. When the event happens, Loom
+sends the instruction to the planner thread with what happened (the ticket,
+its pull request, why it blocked), in one message with every other hook that
+fired, once the planner is idle. The planner does it with its own tools, such
+as Shuttle's board tools, and says in its reply what it did. With
+`to = "worker"` on `ticket.started`, the instruction goes into every worker's
+brief instead. To run a shell command on an event, use the done hook setting
+below, or a forge's `after_open` and `after_push`.
 
 The events are `spec.approved`, `project.started`, `ticket.started` (a
 ticket's first start), `pr.opened` (each pull request Loom opens, the land's
@@ -1572,8 +1567,7 @@ optional: the planner writes the ones you ask for, in the planning
 conversation or in your standing instructions, and confirms the details with
 you. Loom delivers each hook once per event and only delivers it: it checks
 nothing a hook asks for and holds no ticket back for one. The feed and the
-Insights tab record each delivery and each failure. A command that failed or
-that a restart interrupted never runs again. A send to the planner that bb
+Insights tab record each delivery and each failure. A send to the planner that bb
 refuses is tried again on the next pass, three sends in all, before it fails.
 
 ```toml
