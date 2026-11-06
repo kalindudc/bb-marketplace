@@ -166,6 +166,14 @@ request strategy it keeps its newest worker's thread, as Review again as is
 does, so requested changes, or a fix round or a catch-up once its pull request
 is open, bring that thread back.
 
+Loom checks the state it keeps beside each ticket, such as its pull request's
+last read or a fix round waiting for its worker, every time it reads it. When a
+stored value is damaged, Loom blocks that ticket alone, with a post and a
+blocked reason that name the field and what is wrong, and logs it once; every
+other ticket of the project keeps moving. Loom keeps the value as it is, and
+the ticket needs that value repaired before it can go on. The project page
+shows the problem on the ticket's card instead of failing to load.
+
 ### When the machine or the server does not answer
 
 Loom waits out a failure that looks temporary instead of pausing the project:

@@ -22,6 +22,7 @@ import { endFinishedThreads, errText, holdOpens } from "./merge-common";
 import { loomWorktree, mergeIntoIntegration, provisioningRepos } from "./merge-integration";
 import { openPullRequest } from "./pr-open";
 import { loomPost } from "./posts";
+import { containUnreadable } from "./unreadable";
 
 const guards = new WeakMap<Store, Set<number>>();
 
@@ -190,6 +191,7 @@ export async function mergeTicket(ctx: EngineCtx, project: ProjectRow, spec: Spe
     if (spec.merge.strategy === "integration") await mergeIntoIntegration(recorded, project, spec, ticket);
     else await openPullRequest(recorded, project, spec, ticket);
   } catch (error) {
+    if (await containUnreadable(ctx, error)) return endMergeWait(ctx, ticket.id);
     const failure = waitableOf(error);
     if (failure !== null) return waitOutMerge(ctx, ticket, errText(error), failure);
     endMergeWait(ctx, ticket.id);

@@ -40,6 +40,8 @@ import { reviewAgainOf } from "./requeue";
 import { specOf } from "./ctx";
 import { mergeConfirmOf } from "./auto-merge";
 import { draftStateOf, releaseRequestOf } from "./drafts";
+import { shown } from "./sub-state";
+import { unreadableText } from "./unreadable";
 
 const THROTTLE_MS = 300;
 
@@ -314,6 +316,15 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
   const projectView = async (slug: string, eventId?: number): Promise<ProjectView> => {
     // Every read after the names comes in one synchronous pass, so the view is of one moment.
     const names = await projects.bbProjectNames();
+    const { value, unreadable } = shown(() => projectViewAt(slug, names, eventId));
+    if (unreadable.length === 0) return value;
+    // A stored value that does not match its schema reads as absent here, and its ticket's card says what is wrong.
+    const problems = new Map<string, string>();
+    for (const problem of unreadable) if (problem.key !== null && !problems.has(problem.key)) problems.set(problem.key, unreadableText(problem));
+    return { ...value, board: value.board.map((card) => (problems.has(card.key) ? { ...card, unreadable: problems.get(card.key)! } : card)) };
+  };
+
+  const projectViewAt = (slug: string, names: Awaited<ReturnType<typeof projects.bbProjectNames>>, eventId?: number): ProjectView => {
     const live = projects.require(slug);
     const past = eventId === undefined ? null : rewind(rowsOf(store, live), eventId);
     const spec = projects.spec(slug, past?.specVersion);
@@ -484,33 +495,35 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
     return humanAction({ projects, store }, {}, action, data, fn);
   };
 
+  // One synchronous pass over the store, so the view is of one moment.
+  const insightsOf = (slug: string, window: Parameters<typeof projectInsights>[1]["window"], at?: number) => {
+    const live = projects.require(slug);
+    const rows = rowsOf(store, live);
+    const past = at === undefined ? null : rewind(rows, at);
+    const project = past?.project ?? live;
+    const spec = project.approved_version === null ? (JSON.parse(store.specVersion(live.id, projects.spec(slug, past?.specVersion).version)!.spec_json) as Spec) : specOf(store, project);
+    return projectInsights(past ?? rows, { now: past?.at ?? now(), window, strategy: spec.merge.strategy, maxWorkers: spec.agents.max_workers, maxTokens: spec.budget.max_tokens ?? null });
+  };
+
   bb.rpc.register(rpcContract, refusing({
     projects: () => projects.namedList(),
-    badge: () => badgeView({ store, projects, now: now() }),
+    badge: () => shown(() => badgeView({ store, projects, now: now() })).value,
     home: async () => {
       const names = await projects.bbProjectNames();
-      const view = homeView({ store, projects, now: now() });
+      const view = shown(() => homeView({ store, projects, now: now() })).value;
       return { ...view, projects: view.projects.map((row) => withRepoNames(row, names)) };
     },
     project: ({ slug, at }) => projectView(slug, at),
-    ticket: ({ key, at }) => ticketDetail(key, at),
+    ticket: ({ key, at }) => shown(() => ticketDetail(key, at)).value,
     runOutput: ({ id }) => {
       const output = store.runOutput(id);
       return output === null ? null : { output: stripAnsi(output) };
     },
-    insights: ({ slug, window, at }) => {
-      // One synchronous pass over the store, so the view is of one moment.
-      const live = projects.require(slug);
-      const rows = rowsOf(store, live);
-      const past = at === undefined ? null : rewind(rows, at);
-      const project = past?.project ?? live;
-      const spec = project.approved_version === null ? (JSON.parse(store.specVersion(live.id, projects.spec(slug, past?.specVersion).version)!.spec_json) as Spec) : specOf(store, project);
-      return projectInsights(past ?? rows, { now: past?.at ?? now(), window, strategy: spec.merge.strategy, maxWorkers: spec.agents.max_workers, maxTokens: spec.budget.max_tokens ?? null });
-    },
-    timeline: ({ slug }) => projectTimeline(rowsOf(store, projects.require(slug)), now()),
+    insights: ({ slug, window, at }) => shown(() => insightsOf(slug, window, at)).value,
+    timeline: ({ slug }) => shown(() => projectTimeline(rowsOf(store, projects.require(slug)), now())).value,
     planning: () => projects.planningSessions(),
     planningSession: ({ threadId }) => projects.planningSession(threadId),
-    plannerView: ({ threadId }) => plannerView({ store, projects }, threadId, now()),
+    plannerView: ({ threadId }) => shown(() => plannerView({ store, projects }, threadId, now())).value,
     messagePlanner: async ({ threadId, text }, ctx) => {
       await act(ctx, "message", {}, () => engine.messagePlanner(threadId, text));
       return plannerView({ store, projects }, threadId, now());

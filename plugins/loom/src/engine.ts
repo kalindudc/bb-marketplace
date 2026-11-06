@@ -33,8 +33,12 @@ import { cancelTicket, maybeSendTriage, onPlannerIdle } from "./triage";
 import { blockTicket, blockedAtStart, endThread, failSpawn, onThreadGone as endGoneThread, onTurnFailed as handleTurnFailed, onWorkerIdle, pauseProject, resumeEnding, spawnWorker, startedFine, type TurnFailure } from "./workers";
 import { requeueTicket } from "./requeue";
 import { specOf, type EngineCtx } from "./ctx";
+import { containNoticed, containUnreadable } from "./unreadable";
+import { SubStateError } from "./sub-state";
 
 const TOKEN_REFRESH_MS = 60_000;
+/** How many malformed values one project tick may block before it gives up on this pass. */
+const UNREADABLE_RETRIES = 5;
 const errText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 export type EngineDeps = Omit<EngineCtx, "kick" | "checksSettleMs" | "forgeBackoffs" | "prReads"> & { projects: Projects; settings?: () => LoomSettings };
@@ -119,27 +123,47 @@ export class Engine {
 
   private async pass(): Promise<void> {
     const { store } = this.ctx;
+    await containNoticed(this.ctx, this.mergeBusy);
     for (const row of store.threads({ states: ["ending"] })) {
-      await resumeEnding(this.ctx, row).catch((error) => this.warn(`ending ${row.thread_id}`, error));
+      await resumeEnding(this.ctx, row).catch((error) => this.failed(`ending ${row.thread_id}`, error));
     }
-    resumeCheckingTickets(this.ctx);
-    if (store.openSpecReviews().some((row) => row.thread_id === null && row.wait_json !== null)) await retrySpecReviews(this.ctx).catch((error) => this.warn("spec reviews", error));
-    await maintainFinalReviews(this.ctx).catch((error) => this.warn("final reviews", error));
+    try {
+      resumeCheckingTickets(this.ctx);
+    } catch (error) {
+      await this.failed("checks", error);
+    }
+    if (store.openSpecReviews().some((row) => row.thread_id === null && row.wait_json !== null)) await retrySpecReviews(this.ctx).catch((error) => this.failed("spec reviews", error));
+    await maintainFinalReviews(this.ctx).catch((error) => this.failed("final reviews", error));
     for (const project of store.projects()) {
       if (this.disposed) return;
-      try {
-        if (project.state === "running") await this.tickProject(project.id);
-        else if (project.state === "paused") await this.tickPaused(project.id);
-        // The last merge finishes a project, and its deploys come after; their verify and check commands keep running.
-        else if (project.state === "done") followRollout(this.ctx, project);
-        // Read again: the tick may have finished it, and a land or an archive may have moved it since the list was read.
-        await this.projects.removeFinishedSection(store.project(project.id)!);
-      } catch (error) {
-        this.warn(`project ${project.slug}`, error);
+      // A malformed stored value blocks its ticket, and the project's tick runs again for every other ticket.
+      for (let tries = 0; tries < UNREADABLE_RETRIES; tries += 1) {
+        try {
+          if (project.state === "running") await this.tickProject(project.id);
+          else if (project.state === "paused") await this.tickPaused(project.id);
+          // The last merge finishes a project, and its deploys come after; their verify and check commands keep running.
+          else if (project.state === "done") followRollout(this.ctx, project);
+          // Read again: the tick may have finished it, and a land or an archive may have moved it since the list was read.
+          await this.projects.removeFinishedSection(store.project(project.id)!);
+          break;
+        } catch (error) {
+          if (!(error instanceof SubStateError) || tries === UNREADABLE_RETRIES - 1 || !(await containUnreadable(this.ctx, error, this.mergeBusy))) {
+            this.warn(`project ${project.slug}`, error);
+            break;
+          }
+        }
       }
     }
     sendRecords(this.ctx, this.settings());
-    await followHooks(this.ctx).catch((error) => this.warn("hooks", error));
+    await followHooks(this.ctx).catch((error) => this.failed("hooks", error));
+    await containNoticed(this.ctx, this.mergeBusy);
+  }
+
+  /** A ticket whose own merge runs now, which contains a malformed value on it itself. */
+  private readonly mergeBusy = (ticket: TicketRow) => ticket.state === "merging" && mergeHeld(this.ctx, ticket.project_id);
+
+  private async failed(what: string, error: unknown): Promise<void> {
+    if (!(await containUnreadable(this.ctx, error, this.mergeBusy))) this.warn(what, error);
   }
 
   // A paused project starts no worker, reviewer or merge; it still follows its open pull requests and finishes when the last one is done.

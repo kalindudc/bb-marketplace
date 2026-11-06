@@ -20,12 +20,14 @@ import { specOf, type EngineCtx } from "./ctx";
 import { complete, endFinishedThreads, errText } from "./merge-common";
 import { blockMergedElsewhere, closedPullRequest } from "./pr-closed";
 import { loomPost } from "./posts";
+import { containUnreadable } from "./unreadable";
 
 /** A poll's closed read: closedPullRequest, with a failed read of the remote waited out or pausing the project as a failed poll would. */
 async function settleClosed(ctx: EngineCtx, project: ProjectRow, settings: RepoSettings, ticket: TicketRow, target: string | null): Promise<void> {
   try {
     await closedPullRequest(ctx, project, ticket, target);
   } catch (error) {
+    if (await containUnreadable(ctx, error)) return;
     const message = `Reading the pull request of ${ticket.key} stopped: ${errText(error)}`;
     noteAnswer(ctx, ticket.id, message);
     if (waitableOf(error) === null) pauseProject(ctx, project.id, message);

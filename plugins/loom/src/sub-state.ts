@@ -245,12 +245,20 @@ type ListColumn = "pr_seen_json" | "merge_after_json";
 type Read<C extends SubColumn> = C extends ListColumn ? SubValue<C> : SubValue<C> | null;
 type Stored<C extends SubColumn> = C extends ListColumn ? string : string | null;
 
-/** The row a sub-state value is read from: the column, and what names the row in an error. */
-type SubRow<C extends SubColumn> = { [K in C]: string | null } & { id?: number; key?: string; thread_id?: string | null };
+/** The row a sub-state value is read from: the column, what names the row in an error, and its state. */
+type SubRow<C extends SubColumn> = { [K in C]: string | null } & { id?: number; key?: string; state?: string; thread_id?: string | null; ticket_id?: number | null };
 
+/** A stored value that does not match its schema: the row, the column and what is wrong, with the ticket it belongs to. */
 export class SubStateError extends Error {
-  constructor(message: string) {
-    super(message);
+  constructor(
+    readonly ticketId: number | null,
+    readonly key: string | null,
+    readonly column: SubColumn,
+    readonly detail: string,
+    readonly json: string | null,
+    name: string,
+  ) {
+    super(`The ${column} of ${name} ${detail}`);
     this.name = "SubStateError";
   }
 }
@@ -258,21 +266,60 @@ export class SubStateError extends Error {
 const rowName = (row: { id?: number; key?: string; thread_id?: string | null }) =>
   row.key !== undefined ? `ticket ${row.key}` : row.thread_id != null ? `thread ${row.thread_id}` : `row ${row.id ?? "(unknown)"}`;
 
-/** The column's value, checked against its schema; null for none. Throws, naming the row and column, on a malformed value. */
+// A blocked, done or cancelled ticket, and an ended thread, do no work that reads their own state; other tickets' scans
+// still read them. A malformed value there reads as absent and is noticed, so one damaged row cannot stop the rest.
+const resting = (row: { key?: string; state?: string; ticket_id?: number | null }) =>
+  row.key !== undefined ? row.state === "blocked" || row.state === "done" || row.state === "cancelled" : row.ticket_id !== undefined && row.state === "ended";
+
+const noticed = new Map<string, SubStateError>();
+let displaying: SubStateError[] | null = null;
+
+/** The malformed values reads let through as absent since the last call: on resting rows, and in reads that only display. */
+export function takeNoticed(): SubStateError[] {
+  const all = [...noticed.values()];
+  noticed.clear();
+  return all;
+}
+
+/** Runs a read that only displays: a malformed value reads as absent and is reported, instead of throwing. Synchronous code only. */
+export function shown<T>(read: () => T): { value: T; unreadable: SubStateError[] } {
+  const outer = displaying;
+  const unreadable: SubStateError[] = [];
+  displaying = unreadable;
+  try {
+    return { value: read(), unreadable };
+  } finally {
+    displaying = outer;
+  }
+}
+
+function malformed<C extends SubColumn>(row: SubRow<C>, column: C, detail: string): Read<C> {
+  const ticketId = row.key !== undefined ? (row.id ?? null) : (row.ticket_id ?? null);
+  const error = new SubStateError(ticketId, row.key ?? null, column, detail, row[column], rowName(row));
+  if (displaying === null && !resting(row)) throw error;
+  displaying?.push(error);
+  noticed.set(`${ticketId ?? rowName(row)}\u0000${column}\u0000${row[column]}`, error);
+  return (column === "pr_seen_json" || column === "merge_after_json" ? [] : null) as Read<C>;
+}
+
+/**
+ * The column's value, checked against its schema; null for none. Throws, naming the row and column, on a malformed value,
+ * except on a resting row or inside `shown`, where it reads as absent and is noticed (takeNoticed).
+ */
 export function readSub<C extends SubColumn>(row: SubRow<C>, column: C): Read<C> {
   const json = row[column];
   if (json === null) {
-    if (column === "pr_seen_json" || column === "merge_after_json") throw new SubStateError(`The ${column} of ${rowName(row)} is null; it is never null.`);
+    if (column === "pr_seen_json" || column === "merge_after_json") return malformed(row, column, "is null; it is never null.");
     return null as Read<C>;
   }
   let value: unknown;
   try {
     value = JSON.parse(json);
   } catch (error) {
-    throw new SubStateError(`The ${column} of ${rowName(row)} is not JSON: ${error instanceof Error ? error.message : String(error)}`);
+    return malformed(row, column, `is not JSON: ${error instanceof Error ? error.message : String(error)}`);
   }
   const parsed = SCHEMAS[column].safeParse(value);
-  if (!parsed.success) throw new SubStateError(`The ${column} of ${rowName(row)} does not match its schema: ${z.prettifyError(parsed.error)}`);
+  if (!parsed.success) return malformed(row, column, `does not match its schema: ${z.prettifyError(parsed.error)}`);
   // The stored value, not zod's copy, which drops keys the schema does not name, such as one a newer Loom wrote.
   return value as Read<C>;
 }
@@ -281,7 +328,7 @@ export function readSub<C extends SubColumn>(row: SubRow<C>, column: C): Read<C>
 export function writeSub<C extends SubColumn>(column: C, value: Read<C>): { [K in C]: Stored<C> } {
   if (value !== null) {
     const parsed = SCHEMAS[column].safeParse(value);
-    if (!parsed.success) throw new SubStateError(`Loom tried to store a malformed ${column}: ${z.prettifyError(parsed.error)}`);
+    if (!parsed.success) throw new Error(`Loom tried to store a malformed ${column}: ${z.prettifyError(parsed.error)}`);
   }
   return { [column]: value === null ? null : JSON.stringify(value) } as { [K in C]: Stored<C> };
 }
