@@ -7,6 +7,7 @@
 import { createHash } from "node:crypto";
 import type { EventRow, ProjectRow, TicketRow } from "./db/store";
 import { hostCallTransient } from "./forge-waits";
+import { forgeBroke } from "./retry";
 import { githubPull, type HostOutput } from "./host-contract";
 import { andList } from "./prompts";
 import { repoCheckout, type RepoCheckout } from "./checkouts";
@@ -60,7 +61,7 @@ export const teamRuleGone = (rule: { team: string; count?: number }) =>
 
 /**
  * A failed call: `thrown` when the call got no answer from the project's machine, rather than the forge's own failure;
- * `held` when the forge gate held the call, so nothing went out and nothing is counted.
+ * `held` when nothing is counted, because the forge gate held the call or the forge's broken answer paused the project.
  */
 type Failure = { message: string; transient: boolean; thrown: boolean; held?: boolean };
 const isFailure = (value: unknown): value is Failure => typeof value === "object" && value !== null && "transient" in value && !("outcome" in value);
@@ -135,6 +136,7 @@ export async function requestReviewers(ctx: EngineCtx, project: ProjectRow, tick
       if (answer.outcome === "held") return { message: (answer as unknown as { message: string }).message, transient: true, thrown: false, held: true };
       return answer.outcome === "unavailable" ? { message: (answer as unknown as { message: string }).message, transient: (answer as { transient?: unknown }).transient !== undefined, thrown: false } : answer;
     } catch (error) {
+      if (forgeBroke(ctx, project.id, `Asking for reviews of ${url}`, error)) return { message: errText(error), transient: false, thrown: true, held: true };
       return { message: errText(error), transient: hostCallTransient(error) !== null, thrown: true };
     }
   };
@@ -185,9 +187,9 @@ export async function requestReviewers(ctx: EngineCtx, project: ProjectRow, tick
   store.event(ticket.project_id, ticket.id, REVIEWERS_ASKING, LOOM_ACTOR, { url, reviewers: chosen });
   const asked = await call(() => ctx.host.call(checkout.hostId, "prRequestReview", { repo: checkout.path, url, reviewers: chosen, ...(forge.kind === "command" ? { forge: { kind: "command" as const, request_reviews: forge.request_reviews! } } : {}) }));
   const after = ctx.store.ticket(ticket.id) ?? ticket;
-  // A request the gate held sent nothing, so it is asked again later.
+  // A request the gate held sent nothing, so it is asked again later; one the forge answered with broken output paused the project and may have gone out.
   if (isFailure(asked) && asked.held === true) {
-    store.event(ticket.project_id, ticket.id, REVIEWERS_HELD, LOOM_ACTOR, { url, message: asked.message });
+    if (!asked.thrown) store.event(ticket.project_id, ticket.id, REVIEWERS_HELD, LOOM_ACTOR, { url, message: asked.message });
     return;
   }
   // A command that exits non-zero asked no one, by its contract; a call that got no answer may have run it.

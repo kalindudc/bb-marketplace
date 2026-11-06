@@ -6,6 +6,7 @@
 import { acceptFinalReview, finalReviewOf, finalState, followFinalReview, maintainRuns, needsUpkeep, resetFinalReview, sweepScratch, ticketsWithOutstandingRuns } from "./final-review";
 import type { EventRow, ProjectRow, Store, TicketRow } from "./db/store";
 import { hostCallTransient } from "./forge-waits";
+import { forgeBroke } from "./retry";
 import type { HostOutput } from "./host-contract";
 import { mergeOrderOf, type MergeEntry } from "./merge-order";
 import { holdText } from "./verdict";
@@ -497,7 +498,7 @@ async function askToMerge(ctx: EngineCtx, seen: Extract<Readiness, { kind: "ask"
   store.event(project.id, ticket.id, MERGE_ATTEMPT, LOOM_ACTOR, { url, sha, method: settings.method, n, known: (read.items ?? []).map(stableOf), removedBefore: read.queue?.removed?.at ?? null });
   const attempt = attemptState(store, ticket.id).open!;
   const { forge, base } = repoSettings(spec, ticket.repo);
-  const answer = await dispatch(ctx, checkout, attempt, { url, sha, head: ticket.pr_branch ?? ticket.branch ?? "", base: ticket.pr_base ?? base, n, forge, settings });
+  const answer = await dispatch(ctx, checkout, attempt, { projectId: project.id, url, sha, head: ticket.pr_branch ?? ticket.branch ?? "", base: ticket.pr_base ?? base, n, forge, settings });
   await settleAnswer(ctx, project, ticket.id, settings, attempt, state, answer);
 }
 
@@ -508,7 +509,7 @@ async function dispatch(
   ctx: EngineCtx,
   checkout: Awaited<ReturnType<typeof repoCheckout>>,
   attempt: MergeAttempt,
-  a: { url: string; sha: string; head: string; base: string; n: number; forge: ReturnType<typeof repoSettings>["forge"]; settings: AutoMergeSettings },
+  a: { projectId: number; url: string; sha: string; head: string; base: string; n: number; forge: ReturnType<typeof repoSettings>["forge"]; settings: AutoMergeSettings },
 ): Promise<Answer> {
   const { forge, settings } = a;
   callingOf(ctx.store).add(attempt.id);
@@ -523,6 +524,8 @@ async function dispatch(
       forge: forge.kind === "command" ? { kind: "command", merge: forge.merge! } : { kind: "gh", method: settings.method as "squash" | "merge" | "rebase" | "queue" | "comment", ...(settings.comment === null ? {} : { comment: settings.comment }) },
     });
   } catch (error) {
+    // A broken answer may follow a merge that went out, so the attempt stays open for a read, and the project pauses for the fix.
+    if (forgeBroke(ctx, a.projectId, `Merging ${a.url}`, error)) return { outcome: "lost", message: errText(error) };
     const transient = hostCallTransient(error);
     if (transient !== null && !repeatableMerge(settings.method)) return { outcome: "lost", message: errText(error) };
     return { outcome: "unavailable", message: errText(error), ...(transient ?? {}) };

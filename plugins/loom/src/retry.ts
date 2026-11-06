@@ -7,7 +7,7 @@
 // contract, pauses the project, and its reason says what the human must fix. Other tickets keep going in every case but
 // the last.
 import type { TicketRow } from "./db/store";
-import { classify, type Failure } from "./failures";
+import { ForgeContractError, classify, type Failure } from "./failures";
 import { plural } from "./format";
 import { loomPost } from "./posts";
 import { decide, nextRetry, retryOf, type RetryDecision } from "./retry-wait";
@@ -75,6 +75,16 @@ async function blockFor(ctx: EngineCtx, ticket: TicketRow, reason: string): Prom
   });
   await endLiveRows(ctx, ctx.store.ticket(ticket.id)!, "blocked");
   ctx.store.changed(ticket.project_id);
+}
+
+/**
+ * A forge call whose answer the host contract refused, wherever Loom made it: the project pauses with the fix, since the
+ * forge's own command printed it (forge-gate.ts). True when it did; false for any other error, which the caller settles.
+ */
+export function forgeBroke(ctx: EngineCtx, projectId: number, what: string, error: unknown): boolean {
+  if (!(error instanceof ForgeContractError)) return false;
+  projectFailed(ctx, projectId, { reason: `${what} stopped: ${error.message}`, fix: classify(error).fix! });
+  return true;
 }
 
 /** Pauses the project for a failure of the whole project, such as an exhausted budget, with the reason the human reads. */

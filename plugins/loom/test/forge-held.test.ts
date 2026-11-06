@@ -1,8 +1,9 @@
 // A forge call the forge gate held sent nothing, so nothing counts it as attempted: a merge it held is asked for again,
-// a review request it held uses no try.
+// a review request it held uses no try. A forge's broken answer pauses the project with the fix on every forge path.
 import { expect, it } from "vitest";
 import { attemptState, followAutoMerge } from "../src/auto-merge";
 import { specOf } from "../src/ctx";
+import { followDraft } from "../src/drafts";
 import { runMergeQueue, settleMerges } from "../src/merge";
 import { requestReviewers } from "../src/review-requests";
 import { makeCtx, reachApproved, seedProject, ticketOf, type EngineHarness } from "./helpers";
@@ -56,4 +57,35 @@ it("uses no review-request try for a request the gate held, and asks once the ba
   h.clock.advance(MINUTE);
   await requestReviewers(h.ctx, project(h), ticket(h).id, { draft: false, author: "alice", reviewed: [] });
   expect(h.host.callsTo("prRequestReview")).toHaveLength(1);
+});
+
+it("pauses the project with the fix when the forge's merge answer breaks the host contract", async () => {
+  const h = await opened({ kind: "gh", auto_merge: { mode: "auto", method: "squash" } });
+  await ready(h);
+  h.host.errors.prMerge = Object.assign(new Error("bad forge output"), { code: "invalid_output" });
+  await followAutoMerge(h.ctx, project(h), ticket(h).id, read(h));
+  expect(project(h)).toMatchObject({ state: "paused", system_reason: expect.stringMatching(/bad forge output\. Fix the forge command in the spec/u) });
+  expect(ticket(h).state).toBe("pr_open");
+});
+
+it("pauses the project with the fix when marking a draft ready gets a broken answer, and marks it at a later read once it runs", async () => {
+  const h = makeCtx();
+  await seedProject(h, (doc) => (doc.merge = { strategy: "pr", describe: "loom", draft: true, forge: { kind: "gh" } }));
+  await reachApproved(h);
+  h.host.errors.prReady = Object.assign(new Error("bad forge output"), { code: "invalid_output" });
+  await runMergeQueue(h.ctx, project(h), specOf(h.store, project(h)));
+  await settleMerges(h.ctx);
+  expect(project(h)).toMatchObject({ state: "paused", system_reason: expect.stringMatching(/bad forge output\. Fix the forge command in the spec/u) });
+  expect(h.store.posts(ticket(h).id).some((post) => post.body.includes("could not mark"))).toBe(false);
+
+  h.host.errors.prReady = null;
+  h.store.setProjectState(project(h).id, "running", "human");
+  expect(await followDraft(h.ctx, project(h), ticket(h).id, true, "main")).toBe(true);
+});
+
+it("pauses the project with the fix when asking for reviews gets a broken answer", async () => {
+  const h = await opened({ kind: "command", open: "o", state: "s", feedback: "f", request_reviews: "ask", reviewers: [{ users: ["bob"] }] });
+  h.host.errors.prRequestReview = Object.assign(new Error("bad forge output"), { code: "invalid_output" });
+  await requestReviewers(h.ctx, project(h), ticket(h).id, { draft: false, author: "alice", reviewed: [] });
+  expect(project(h)).toMatchObject({ state: "paused", system_reason: expect.stringMatching(/bad forge output\. Fix the forge command in the spec/u) });
 });

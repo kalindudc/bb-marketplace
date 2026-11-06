@@ -2,6 +2,7 @@
 // template stands in. While it is open, Loom follows its checks and reviews through the forge and sends what needs a fix
 // back to the worker as a fix round, which goes through the checks and a review again before Loom pushes one more
 // commit. Merging stays the human's, unless the repo's forge sets auto_merge (auto-merge.ts).
+import { forgeBroke } from "./retry";
 import { checkWaitOf, durationsKey, holdOf, median, queuedSince, USUAL_RUNS, type CheckWait, type Skipped } from "./check-wait";
 import { botAuthorsOf, delivers, workerOf, signatureOf, specOf, type EngineCtx } from "./ctx";
 import { repoCheckout, type RepoCheckout } from "./checkouts";
@@ -309,13 +310,15 @@ function saveApplied(ctx: EngineCtx, ticket: TicketRow, record: PrApplied, consu
 
 const textLines = (want: PrWant) => [`Title: ${want.title}`, "", "Description:", want.body ?? "(Loom's template from the ticket)"].join("\n");
 
-async function edit(ctx: EngineCtx, checkout: RepoCheckout, url: string, title: string, body: string): Promise<HostOutput<"prEdit">> {
+async function edit(ctx: EngineCtx, projectId: number, checkout: RepoCheckout, url: string, title: string, body: string): Promise<HostOutput<"prEdit">> {
   const { forge } = checkout.settings;
   try {
     const answer = await ctx.host.call(checkout.hostId, "prEdit", { repo: checkout.path, url, title: clip(title, 256), body, forge: forge.kind === "command" ? { kind: "command", edit: forge.edit! } : { kind: "gh" } });
     // Nothing was sent, so the edit waits for the forge host like a temporary failure and runs again at a later read.
     return answer.outcome === "held" ? { outcome: "unavailable", message: answer.message, transient: answer.transient, retryAfterMs: answer.retryAfterMs } : answer;
   } catch (error) {
+    // A broken answer pauses the project for the fix, and the edit waits to run again once it runs.
+    if (forgeBroke(ctx, projectId, `Setting the text of ${url}`, error)) return { outcome: "unavailable", message: errText(error), transient: "server" };
     return { outcome: "unavailable", message: errText(error), ...hostCallTransient(error) };
   }
 }
@@ -354,7 +357,7 @@ export async function applyPrText(ctx: EngineCtx, spec: Spec, ticket: TicketRow,
   if (ticket.pr_url === null || !canEdit(forge)) return byHand("Loom cannot change a pull request's text through this forge", "pr_text_by_hand");
   const body = fullBody(ctx, spec, ticket, want.body);
   if (body.length > PR_BODY_MAX) return byHand(`Loom did not set the title and description of ${ticket.pr_url}: with its own sections the description would be ${body.length} characters, over the ${PR_BODY_MAX} a pull request takes, and Loom never cuts one short. The pull request keeps its text`, "pr_edit_failed");
-  const answer = await edit(ctx, checkout, ticket.pr_url, want.title, body);
+  const answer = await edit(ctx, ticket.project_id, checkout, ticket.pr_url, want.title, body);
   if (answer.outcome === "ok") {
     loomPost(ctx.store, ticket, { kind: "merge", body: `Set the title and description of ${ticket.pr_url} to the ones the reviewers approved.`, data: { outcome: "pr_edited", url: ticket.pr_url, round, title: want.title, body: want.body } });
     saveApplied(ctx, ticket, { ...settled, byHand: undefined, live: liveTargets(ctx, spec, ticket) ?? record.live }, consume);
@@ -433,7 +436,7 @@ async function refreshFormat(ctx: EngineCtx, project: ProjectRow, spec: Spec, ti
   if (replaced.body === current.body || !canEdit(repoSettings(spec, ticket.repo).forge) || replaced.body.length > PR_BODY_MAX) return saveApplied(ctx, ticket, settled);
   if (!takeFormatEdit(ctx)) return;
   const url = ticket.pr_url!;
-  const answer = await edit(ctx, await repoCheckout(ctx, project, spec, ticket.repo), url, current.title, replaced.body);
+  const answer = await edit(ctx, ticket.project_id, await repoCheckout(ctx, project, spec, ticket.repo), url, current.title, replaced.body);
   if (answer.outcome === "ok") {
     loomPost(ctx.store, ticket, { kind: "merge", body: `Rewrote Loom's merge and deploy section of ${url} as it reads now; the rest of the description is unchanged.`, data: { outcome: "pr_block_refreshed", url } });
     saveApplied(ctx, ticket, settled);
@@ -467,7 +470,7 @@ async function refreshRollout(ctx: EngineCtx, spec: Spec, ticket: TicketRow, che
   if (next === current.body) return saveApplied(ctx, ticket, { ...record, live, wait: undefined, block: blockHash(block) });
   // A read-modify-write never cuts the description short: that would delete what people wrote outside Loom's markers.
   if (next.length > PR_BODY_MAX) return cannot("size", `with the Rollout section as it is now the description would be ${next.length} characters, over the ${PR_BODY_MAX} a pull request takes, and Loom never cuts one short`);
-  const answer = await edit(ctx, checkout, url, current.title, next);
+  const answer = await edit(ctx, ticket.project_id, checkout, url, current.title, next);
   if (answer.outcome === "ok") {
     loomPost(ctx.store, ticket, { kind: "merge", body: `Refreshed the Rollout section of ${url}: ${what}.`, data: { outcome: "rollout_refreshed", url, live } });
     saveApplied(ctx, ticket, { ...record, live, wait: undefined, block: blockHash(block) });
@@ -544,6 +547,7 @@ export async function replyToItem(ctx: EngineCtx, threadId: string, a: { item: s
   try {
     answer = await ctx.host.call(checkout.hostId, "prReply", { repo: checkout.path, url: ticket.pr_url, key: a.item, kind, body: quoted, resolve, forge: forge.kind === "command" ? { kind: "command", reply: forge.reply! } : { kind: "gh" } });
   } catch (error) {
+    forgeBroke(ctx, ticket.project_id, `Replying on ${ticket.pr_url}`, error);
     answer = { outcome: "unavailable", message: errText(error), ...hostCallTransient(error) };
   }
   const what = `the ${ITEM_NAMES[kind]}${item.path === null ? "" : ` on ${item.path}${item.line === null ? "" : `:${item.line}`}`} by ${item.author}`;

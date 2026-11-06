@@ -6,6 +6,7 @@
 import type { EventRow, ProjectRow, Store, TicketRow } from "./db/store";
 import { repoCheckout, type RepoCheckout } from "./checkouts";
 import { hostCallTransient } from "./forge-waits";
+import { forgeBroke } from "./retry";
 import type { HostOutput } from "./host-contract";
 import { writeSub } from "./sub-state";
 import { metaOf } from "./pr-meta";
@@ -49,11 +50,13 @@ export function releaseRequestOf(store: Store, ticket: TicketRow): { at: number;
 const markedFor = (store: Store, ticket: TicketRow) => store.ticketEvents(ticket.id, [MARKED_READY]).some((event) => parse(event).url === ticket.pr_url);
 
 /** The forge call that marks `url` ready, through a checkout looked up before it. */
-async function dispatchReady(ctx: EngineCtx, checkout: RepoCheckout, url: string): Promise<HostOutput<"prReady">> {
+async function dispatchReady(ctx: EngineCtx, projectId: number, checkout: RepoCheckout, url: string): Promise<HostOutput<"prReady">> {
   const { forge } = checkout.settings;
   try {
     return await ctx.host.call(checkout.hostId, "prReady", { repo: checkout.path, url, forge: forge.kind === "command" ? { kind: "command", ready: forge.ready! } : { kind: "gh" } });
   } catch (error) {
+    // A broken answer pauses the project for the fix; marking it ready is tried again once it runs.
+    if (forgeBroke(ctx, projectId, `Marking ${url} ready for review`, error)) return { outcome: "unavailable", message: errText(error), transient: "server" };
     return { outcome: "unavailable", message: errText(error), ...hostCallTransient(error) };
   }
 }
@@ -124,7 +127,7 @@ export async function followDraft(ctx: EngineCtx, project: ProjectRow, ticketId:
   try {
     const checkout = await repoCheckout(ctx, project, spec, seen.repo);
     if (mayNotMark(ctx, spec, store.ticket(ticketId), url, sha, base) !== null) return false;
-    const answer = await dispatchReady(ctx, checkout, url);
+    const answer = await dispatchReady(ctx, project.id, checkout, url);
     const now = store.ticket(ticketId);
     // The answer is about `url`; a ticket whose pull request is another one now records nothing for it.
     if (now === null || now.pr_url !== url) return false;
@@ -186,7 +189,7 @@ export async function releaseDraft(ctx: EngineCtx, key: string): Promise<string>
   try {
     const checkout = await repoCheckout(ctx, project, spec, ticket.repo);
     if (!stillHeld()) throw changed();
-    const answer = await dispatchReady(ctx, checkout, url);
+    const answer = await dispatchReady(ctx, project.id, checkout, url);
     if (answer.outcome !== "ok") throw new LoomError("loom_unavailable", `Loom could not mark ${url} ready for review: ${answer.message}. ${key} stays held; release it again.`);
     if (!stillHeld()) throw changed();
     store.tx(() => {

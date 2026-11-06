@@ -3,6 +3,7 @@
 // restack or a refresh), review_read is polled for that commit, and its new findings come back to the worker as a fix
 // round. A failed or timed-out gate holds the publish and says so; it never pauses the project. Each run is ticket events,
 // which publish.ts reads to say whether the gate holds the draft.
+import { forgeBroke } from "./retry";
 import { repoCheckout } from "./checkouts";
 import { delivers, specOf, type EngineCtx } from "./ctx";
 import type { EventRow, ProjectRow, TicketRow } from "./db/store";
@@ -55,6 +56,7 @@ async function startGate(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket
     const checkout = await repoCheckout(ctx, project, spec, ticket.repo);
     answer = await ctx.host.call(checkout.hostId, "prReviewStart", { repo: checkout.path, url, sha, head: ticket.pr_branch ?? ticket.branch!, base: ticket.pr_base ?? settings.base, command });
   } catch (error) {
+    forgeBroke(ctx, project.id, `Starting ${ticket.key}'s review gate`, error);
     // The call may have reached the gate and asked; its read will tell, or the run times out.
     ctx.bb.log("warn", `Starting ${ticket.key}'s review gate got no answer, so Loom reads the gate for ${sha.slice(0, 12)} as started: ${errText(error)}`);
     return;
@@ -87,6 +89,8 @@ async function readGate(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket:
     const checkout = await repoCheckout(ctx, project, spec, ticket.repo);
     answer = await ctx.host.call(checkout.hostId, "prReviewRead", { repo: checkout.path, url, sha: run.sha, command: gate.read });
   } catch (error) {
+    // A broken answer pauses the project for the fix; the gate is read again once it runs.
+    if (forgeBroke(ctx, project.id, `Reading ${ticket.key}'s review gate`, error)) return;
     answer = { outcome: "unavailable", message: errText(error), ...hostCallTransient(error) };
   }
   const current = store.ticket(ticket.id);
