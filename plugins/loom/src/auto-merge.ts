@@ -8,6 +8,7 @@ import type { EventRow, ProjectRow, Store, TicketRow } from "./db/store";
 import { hostCallTransient } from "./forge-waits";
 import type { HostOutput } from "./host-contract";
 import { mergeOrderOf, type MergeEntry } from "./merge-order";
+import { holdText } from "./verdict";
 import { andList, clip, type FeedbackItem } from "./prompts";
 import { blockOpenPr, globMatch, mergeFixRound } from "./pull-requests";
 import { repoSettings, repeatableMerge, autoMergeOf, type AutoMergeSettings } from "./repos";
@@ -165,10 +166,11 @@ function verdictHolds(entry: MergeEntry | undefined, settings: AutoMergeSettings
   if (entry.verdict === "moving") return ["the pull request it was stacked on merged, and Loom has not moved it to its base yet"];
   if (entry.verdict === "ready") return [];
   if (entry.verdict !== "first" && entry.verdict !== "checks_pass") return [`the Merge order says ${entry.verdict}`];
-  const holds = entry.holds.filter((hold) => !(settings.approval === "loom" && hold === "needs review"));
+  const kept = entry.holds.filter((hold) => !(settings.approval === "loom" && hold.code === "needs_review"));
+  const holds = kept.map(holdText);
   // Never a draft: a held pull request stays one on purpose. A forge that does not say is not trusted either.
-  if (entry.draft !== false && !holds.includes("draft")) holds.push(entry.draft === null ? "the forge did not say whether it is a draft" : "draft");
-  if (settings.approval === "forge" && entry.review !== "APPROVED" && !holds.some((hold) => hold === "needs review" || hold === "changes requested")) holds.push("the forge did not say it is approved");
+  if (entry.draft !== false && !kept.some((hold) => hold.code === "draft")) holds.push(entry.draft === null ? "the forge did not say whether it is a draft" : "draft");
+  if (settings.approval === "forge" && entry.review !== "APPROVED" && !kept.some((hold) => hold.code === "needs_review" || hold.code === "changes_requested")) holds.push("the forge did not say it is approved");
   return holds;
 }
 

@@ -5060,7 +5060,7 @@ describe("merge order tab", () => {
     repos: [null],
     steps: 2,
     entries: [
-      entry({ key: "CSV-1", verdict: "first", holds: ["needs review"], review: "REVIEW_REQUIRED", unblocks: ["CSV-2"] }),
+      entry({ key: "CSV-1", verdict: "first", holds: [{ code: "needs_review" }], review: "REVIEW_REQUIRED", unblocks: ["CSV-2"] }),
       entry({ key: "CSV-2", step: 2, stackedOn: "CSV-1", waitsOn: [{ key: "CSV-1", why: "stacked", repo: null, prNumber: "1" }], verdict: "after", trap: true }),
       entry({ key: "CSV-3", verdict: "merged", state: "done", step: 0, review: null }),
     ],
@@ -5079,8 +5079,8 @@ describe("merge order tab", () => {
       prView(
         order({
           entries: [
-            entry({ key: "CSV-1", verdict: "first", holds: ["draft"], draft: true, draftHold: "held" }),
-            entry({ key: "CSV-2", verdict: "first", holds: ["draft"], draft: true, draftHold: "marking" }),
+            entry({ key: "CSV-1", verdict: "first", holds: [{ code: "draft" }], draft: true, draftHold: "held" }),
+            entry({ key: "CSV-2", verdict: "first", holds: [{ code: "draft" }], draft: true, draftHold: "marking" }),
           ],
         }),
       ),
@@ -5136,7 +5136,7 @@ describe("merge order tab", () => {
   it("says which pull requests conflict with their base and how far behind it each one is, warning once it is due a refresh", async () => {
     const fresh = order({
       entries: [
-        entry({ key: "CSV-1", verdict: "first", holds: ["conflicts with main"], conflicts: true, behind: 12_374, refreshBehind: 5000 }),
+        entry({ key: "CSV-1", verdict: "first", holds: [{ code: "conflicts", base: "main" }], conflicts: true, behind: 12_374, refreshBehind: 5000 }),
         entry({ key: "CSV-2", behind: 40, refreshBehind: 5000 }),
         entry({ key: "CSV-3", behind: 0, refreshBehind: 5000 }),
       ],
@@ -5153,13 +5153,13 @@ describe("merge order tab", () => {
     expect(within(row("CSV-2")).getByText("40 commits behind main").className).toContain("text-muted-foreground");
     expect(row("CSV-3").textContent).not.toContain("behind");
     expect(slot.container.querySelector("[data-merge-lead]")!.textContent).toContain("2 are ready to merge now.");
-    const alone = order({ entries: [entry({ key: "CSV-1", verdict: "first", holds: ["conflicts with main"], conflicts: true })], steps: 1, counts: { open: 1, first: 1, ready: 0, wrong: 0 } });
+    const alone = order({ entries: [entry({ key: "CSV-1", verdict: "first", holds: [{ code: "conflicts", base: "main" }], conflicts: true })], steps: 1, counts: { open: 1, first: 1, ready: 0, wrong: 0 } });
     expect(mergeLead(alone)).toBe("1 open pull request merges in 1 step. 1 has nothing before it; none is ready yet: 1 conflicts with its base.");
   });
 
   it("turns red for a pull request that merged into another ticket's branch, and says so first", async () => {
     const wrong = order({
-      entries: [entry({ key: "CSV-1", verdict: "first", holds: ["draft"] }), entry({ key: "CSV-2", state: "done", step: 0, verdict: "merged_elsewhere", mergedInto: "CSV-1", mergedIntoState: "pr_open" })],
+      entries: [entry({ key: "CSV-1", verdict: "first", holds: [{ code: "draft" }] }), entry({ key: "CSV-2", state: "done", step: 0, verdict: "merged_elsewhere", mergedInto: "CSV-1", mergedIntoState: "pr_open" })],
       counts: { open: 1, first: 1, ready: 0, wrong: 1 },
     });
     const slot = await mountOrder(prView(wrong));
@@ -5179,7 +5179,7 @@ describe("merge order tab", () => {
   it("explains the red badge at the top of the tab, and hides it once acknowledged until another pull request merges the wrong way", async () => {
     const elsewhere = (key: string) => entry({ key, state: "done", step: 0, verdict: "merged_elsewhere", mergedInto: "CSV-1", mergedIntoState: "pr_open", prUrl: `https://github.com/acme/shop/pull/${key.slice(4)}` });
     const wrong = (keys: string[], acked: string[]) =>
-      projectView({ overview: overview({ strategy: "pr", branch: null }), badgeAcks: { merge: acked, rollout: [] }, mergeOrder: order({ entries: [entry({ key: "CSV-1", verdict: "first", holds: ["draft"] }), ...keys.map(elsewhere)], counts: { open: 1, first: 1, ready: 0, wrong: keys.length } }) });
+      projectView({ overview: overview({ strategy: "pr", branch: null }), badgeAcks: { merge: acked, rollout: [] }, mergeOrder: order({ entries: [entry({ key: "CSV-1", verdict: "first", holds: [{ code: "draft" }] }), ...keys.map(elsewhere)], counts: { open: 1, first: 1, ready: 0, wrong: keys.length } }) });
     let current = wrong(["CSV-2"], []);
     const ackBadge = vi.fn(() => (current = wrong(["CSV-2"], ["CSV-2"])));
     const { slot } = await mountPage("csv", { project: () => current, ackBadge });
@@ -5206,7 +5206,7 @@ describe("merge order tab", () => {
 
   it("disarms Acknowledge when the badge's items change, so it never acknowledges one the human did not see", async () => {
     const elsewhere = (key: string) => entry({ key, state: "done", step: 0, verdict: "merged_elsewhere", mergedInto: "CSV-1", mergedIntoState: "pr_open" });
-    const wrong = (keys: string[]) => projectView({ overview: overview({ strategy: "pr", branch: null }), mergeOrder: order({ entries: [entry({ key: "CSV-1", verdict: "first", holds: ["draft"] }), ...keys.map(elsewhere)], counts: { open: 1, first: 1, ready: 0, wrong: keys.length } }) });
+    const wrong = (keys: string[]) => projectView({ overview: overview({ strategy: "pr", branch: null }), mergeOrder: order({ entries: [entry({ key: "CSV-1", verdict: "first", holds: [{ code: "draft" }] }), ...keys.map(elsewhere)], counts: { open: 1, first: 1, ready: 0, wrong: keys.length } }) });
     let current = wrong(["CSV-2"]);
     const ackBadge = vi.fn(() => current);
     const { slot } = await mountPage("csv", { project: () => current, ackBadge });
@@ -5492,7 +5492,7 @@ describe("rollout tab", () => {
       behind: null,
       refreshBehind: null,
       verdict: "first",
-      holds: ["needs review"],
+      holds: [{ code: "needs_review" }],
       trap: false,
       mergedInto: null,
       mergedIntoState: null,
@@ -5665,7 +5665,7 @@ describe("rollout tab", () => {
   };
 
   it("ticks Review only when the merge order calls the pull request ready", async () => {
-    const draft = await card(plan({}, "merge", { draft: true, verdict: "first", holds: ["draft"] }));
+    const draft = await card(plan({}, "merge", { draft: true, verdict: "first", holds: [{ code: "draft" }] }));
     expect(draft.querySelector('[data-rollout-plan="review"]')!.textContent).toBe("1Review#1 draft · approved");
     const ready = await card(plan({}, "merge", { verdict: "ready", checks: { passed: 3, failed: 0, pending: 0 } }));
     expect(ready.querySelector('[data-rollout-plan="review"]')!.textContent).toContain("✓");

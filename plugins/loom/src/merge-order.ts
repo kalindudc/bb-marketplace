@@ -12,6 +12,7 @@ import { repoSettings } from "./repos";
 import type { Spec } from "./spec";
 import type { TicketState } from "./states";
 import type { FinalBadge } from "./final-review";
+import type { VerdictHold } from "./verdict";
 
 export type MergeVerdict =
   /** Nothing before it, it targets the base, its checks pass, and the forge says it is approved and not a draft. */
@@ -71,8 +72,8 @@ export interface MergeEntry {
   /** Its repo's refresh_behind: Loom merges the base into a pull request that lacks that many commits of it; null when the repo does not set it. */
   refreshBehind: number | null;
   verdict: MergeVerdict;
-  /** On a pull request with nothing before it, what still holds it, in words: "draft", "needs review", "1 check pending". */
-  holds: string[];
+  /** On a pull request with nothing before it, what still holds it. */
+  holds: VerdictHold[];
   /** The forge says it is approved while the pull request it is stacked on is still open. */
   trap: boolean;
   /** For merged_elsewhere: the ticket whose branch it merged into, and that ticket's state now. */
@@ -196,15 +197,15 @@ export function mergeOrderOf(spec: Spec, tickets: readonly TicketRow[], finals: 
     if (prUrl === null) return { ...entry, verdict: own.length > 0 ? "after" : "no_pr" };
     if (own.length > 0) return { ...entry, verdict: "after", trap: entry.stackedOn !== null && review === "APPROVED" };
     if (parent !== null) return { ...entry, verdict: "moving" };
-    const holds = [
-      ...(entry.elsewhere !== null ? [`targets ${entry.elsewhere}, not ${base}`] : []),
-      ...(conflicts ? [`conflicts with ${base}`] : []),
-      ...(ticket.state !== "pr_open" ? ["Loom is pushing a fix"] : []),
-      ...(draft === true ? ["draft"] : []),
-      ...(review === "CHANGES_REQUESTED" ? ["changes requested"] : review === "REVIEW_REQUIRED" ? ["needs review"] : []),
-      ...(checks === null ? ["checks not read"] : []),
-      ...(checks !== null && checks.failed > 0 ? [`${checks.failed} ${checks.failed === 1 ? "check" : "checks"} failing`] : []),
-      ...(checks !== null && checks.pending > 0 ? [`${checks.pending} ${checks.pending === 1 ? "check" : "checks"} pending`] : []),
+    const holds: VerdictHold[] = [
+      ...(entry.elsewhere !== null ? [{ code: "targets" as const, branch: entry.elsewhere, base }] : []),
+      ...(conflicts ? [{ code: "conflicts" as const, base }] : []),
+      ...(ticket.state !== "pr_open" ? [{ code: "pushing" as const }] : []),
+      ...(draft === true ? [{ code: "draft" as const }] : []),
+      ...(review === "CHANGES_REQUESTED" ? [{ code: "changes_requested" as const }] : review === "REVIEW_REQUIRED" ? [{ code: "needs_review" as const }] : []),
+      ...(checks === null ? [{ code: "checks_unread" as const }] : []),
+      ...(checks !== null && checks.failed > 0 ? [{ code: "failing" as const, count: checks.failed }] : []),
+      ...(checks !== null && checks.pending > 0 ? [{ code: "pending" as const, count: checks.pending }] : []),
     ];
     if (holds.length > 0) return { ...entry, verdict: "first", holds };
     // Ready needs every signal said out loud: checks that passed, not a draft, and approved. A forge that leaves one out passes its checks, no more.

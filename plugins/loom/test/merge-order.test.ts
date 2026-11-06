@@ -6,6 +6,7 @@ import { parseSpec, type Spec } from "../src/spec";
 import type { TicketState } from "../src/states";
 import { withRepos } from "./fixtures";
 import { specToml, type Doc } from "./helpers";
+import { holdText, type VerdictHold } from "../src/verdict";
 
 // web merges into main and api into trunk, as withRepos sets them up.
 const spec: Spec = parseSpec(
@@ -124,8 +125,8 @@ describe("mergeOrderOf", () => {
     const unread = row("CSV-3", "pr_open", { checks: green, meta: { draft: null, review: null } });
     const never = row("CSV-4", "pr_open", { checks: green });
     const entries = byKey(mergeOrderOf(spec, [draft, fixing, unread, never])!.entries);
-    expect(entries["CSV-1"]).toMatchObject({ verdict: "first", holds: ["draft", "needs review", "1 check failing", "2 checks pending"] });
-    expect(entries["CSV-2"]).toMatchObject({ verdict: "first", holds: ["Loom is pushing a fix"] });
+    expect(entries["CSV-1"]).toMatchObject({ verdict: "first", holds: [{ code: "draft" }, { code: "needs_review" }, { code: "failing", count: 1 }, { code: "pending", count: 2 }] });
+    expect(entries["CSV-2"]).toMatchObject({ verdict: "first", holds: [{ code: "pushing" }] });
     expect(entries["CSV-3"]).toMatchObject({ verdict: "checks_pass", reviewRead: false });
     expect(entries["CSV-4"]).toMatchObject({ verdict: "checks_pass", reviewRead: false });
   });
@@ -185,14 +186,14 @@ describe("mergeOrderOf", () => {
     const noReview = row("CSV-2", "pr_open", { checks: green, meta: { draft: false, review: null } });
     const draftUnknown = row("CSV-3", "pr_open", { checks: green, meta: { draft: null, review: "APPROVED" } });
     const entries = byKey(mergeOrderOf(spec, [unread, noReview, draftUnknown])!.entries);
-    expect(entries["CSV-1"]).toMatchObject({ verdict: "first", holds: ["checks not read"] });
+    expect(entries["CSV-1"]).toMatchObject({ verdict: "first", holds: [{ code: "checks_unread" }] });
     expect(entries["CSV-2"]!.verdict).toBe("checks_pass");
     expect(entries["CSV-3"]!.verdict).toBe("checks_pass");
   });
 
   it("holds a pull request that targets a branch that is neither its base nor another ticket's", () => {
     const retargeted = row("CSV-1", "pr_open", { checks: green, meta: { ...approved, base: "release" } });
-    expect(byKey(mergeOrderOf(spec, [retargeted])!.entries)["CSV-1"]).toMatchObject({ verdict: "first", elsewhere: "release", holds: ["targets release, not main"], stackedOn: null });
+    expect(byKey(mergeOrderOf(spec, [retargeted])!.entries)["CSV-1"]).toMatchObject({ verdict: "first", elsewhere: "release", holds: [{ code: "targets", branch: "release", base: "main" }], stackedOn: null });
   });
 
   it("stops counting a merge into another ticket's branch as wrong once that ticket merged too, and says which state it is in", () => {
@@ -219,7 +220,7 @@ describe("mergeOrderOf", () => {
     const conflicting = row("CSV-1", "pr_open", { checks: green, meta: { ...approved, mergeable: false, behind: { commits: 12_374, sha: "sha-CSV-1", tip: "t", at: 0 } } });
     const stale = row("CSV-2", "pr_open", { checks: green, repo: "api", meta: { ...approved, mergeable: true, behind: { commits: 40, sha: "older", tip: "t", at: 0 } } });
     const entries = byKey(mergeOrderOf(counted, [conflicting, stale])!.entries);
-    expect(entries["CSV-1"]).toMatchObject({ verdict: "first", holds: ["conflicts with main"], conflicts: true, behind: 12_374, refreshBehind: 5000 });
+    expect(entries["CSV-1"]).toMatchObject({ verdict: "first", holds: [{ code: "conflicts", base: "main" }], conflicts: true, behind: 12_374, refreshBehind: 5000 });
     expect(entries["CSV-2"]).toMatchObject({ verdict: "ready", conflicts: false, behind: null, refreshBehind: 100 });
     expect(byKey(mergeOrderOf(spec, [row("CSV-3", "pr_open", { checks: green, meta: approved })])!.entries)["CSV-3"]).toMatchObject({ verdict: "ready", conflicts: false, behind: null, refreshBehind: null });
   });
@@ -233,5 +234,22 @@ describe("mergeOrderOf", () => {
       ["CSV-2", true],
     ]);
     expect(order.counts).toMatchObject({ open: 1, first: 1 });
+  });
+});
+
+describe("the words of a hold", () => {
+  it("says each hold as the Merge order tab and Loom's posts do", () => {
+    const holds: VerdictHold[] = [
+      { code: "targets", branch: "release", base: "main" },
+      { code: "conflicts", base: "main" },
+      { code: "pushing" },
+      { code: "draft" },
+      { code: "changes_requested" },
+      { code: "needs_review" },
+      { code: "checks_unread" },
+      { code: "failing", count: 1 },
+      { code: "pending", count: 2 },
+    ];
+    expect(holds.map(holdText)).toEqual(["targets release, not main", "conflicts with main", "Loom is pushing a fix", "draft", "changes requested", "needs review", "checks not read", "1 check failing", "2 checks pending"]);
   });
 });

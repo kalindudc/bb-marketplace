@@ -1,6 +1,7 @@
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import { useBbNavigate } from "@get-bb/plugin-sdk/app";
 import type { MergeEntry, MergeOrderView } from "../contract";
+import { holdText, type VerdictHold } from "../verdict";
 import { BUTTON, HEADING, RepoChip, listText, plural } from "./common";
 
 // The merge order of a pull request project: Steps lists the pull requests by the step they merge in, with what each
@@ -78,7 +79,7 @@ function verdictOf(entry: MergeEntry): { tone: Tone; text: string; short: string
     case "checks_pass":
       return { tone: "good", text: "✓ Checks pass", short: "✓ checks pass" };
     case "first":
-      return { tone: "muted", text: capital(entry.holds.join(", ")), short: entry.holds[0]! };
+      return { tone: "muted", text: capital(entry.holds.map(holdText).join(", ")), short: holdText(entry.holds[0]!) };
     case "after":
       return entry.trap ? { tone: "warn", text: `⚠ After ${after}`, short: `⚠ after ${after}` } : { tone: "muted", text: `After ${after}`, short: `after ${after}` };
     case "moving":
@@ -129,18 +130,18 @@ export function mergeLead(order: MergeOrderView): string {
   const repos = new Set(open.map((entry) => entry.repo));
   const first = open.filter((entry) => entry.step === 1 && entry.verdict !== "blocked");
   const count = (test: (entry: MergeEntry) => boolean) => first.filter(test).length;
-  const holding = (test: (hold: string) => boolean) => count((entry) => entry.verdict === "first" && entry.holds.some(test));
+  const holding = (...codes: Array<VerdictHold["code"]>) => count((entry) => entry.verdict === "first" && entry.holds.some((hold) => codes.includes(hold.code)));
   const its = (n: number) => (n === 1 ? "its" : "their");
   const reasons = (
     [
-      [holding((hold) => hold.startsWith("targets ")), (n: number) => `${n} ${n === 1 ? "targets" : "target"} a branch other than ${its(n)} base`],
-      [holding((hold) => hold.startsWith("conflicts with ")), (n: number) => `${n} ${n === 1 ? "conflicts" : "conflict"} with ${its(n)} base`],
-      [holding((hold) => hold === "needs review" || hold === "changes requested"), (n: number) => `${n} need${n === 1 ? "s" : ""} a review`],
-      [holding((hold) => hold === "draft"), (n: number) => `${n} ${n === 1 ? "is a draft" : "are drafts"}`],
-      [holding((hold) => hold.endsWith("pending")), (n: number) => `${n} wait${n === 1 ? "s" : ""} on checks`],
-      [holding((hold) => hold.endsWith("failing")), (n: number) => `${n} ${n === 1 ? "has" : "have"} failing checks`],
-      [holding((hold) => hold === "checks not read"), (n: number) => `${n} ${n === 1 ? "has" : "have"} checks Loom does not read`],
-      [holding((hold) => hold === "Loom is pushing a fix"), (n: number) => `${n} ${n === 1 ? "gets" : "get"} a fix from Loom`],
+      [holding("targets"), (n: number) => `${n} ${n === 1 ? "targets" : "target"} a branch other than ${its(n)} base`],
+      [holding("conflicts"), (n: number) => `${n} ${n === 1 ? "conflicts" : "conflict"} with ${its(n)} base`],
+      [holding("needs_review", "changes_requested"), (n: number) => `${n} need${n === 1 ? "s" : ""} a review`],
+      [holding("draft"), (n: number) => `${n} ${n === 1 ? "is a draft" : "are drafts"}`],
+      [holding("pending"), (n: number) => `${n} wait${n === 1 ? "s" : ""} on checks`],
+      [holding("failing"), (n: number) => `${n} ${n === 1 ? "has" : "have"} failing checks`],
+      [holding("checks_unread"), (n: number) => `${n} ${n === 1 ? "has" : "have"} checks Loom does not read`],
+      [holding("pushing"), (n: number) => `${n} ${n === 1 ? "gets" : "get"} a fix from Loom`],
       [count((entry) => entry.verdict === "moving"), (n: number) => `Loom is moving ${n} to ${its(n)} base`],
       [count((entry) => entry.verdict === "checks_pass"), (n: number) => `${n} pass${n === 1 ? "es" : ""} ${its(n)} checks with no approval Loom can read`],
     ] as const
