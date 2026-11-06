@@ -65,6 +65,24 @@ describe("finding 1: the reviewer never starts in the checkout", () => {
   });
 });
 
+describe("a machine with no cache outside bb's data directory", () => {
+  it("holds the final review with a post that says why, and starts no reviewer", async () => {
+    await openPr(FINAL());
+    approved();
+    const why = "every cache directory on the machine is inside bb's data directory";
+    around("finalScratch", async (input, real) => (input.action === "create" ? { path: "", entries: [], refused: why } : real()));
+    await poll();
+    expect(spawns()).toEqual([]);
+    const held = dataOf("final_review_held");
+    expect(held).toHaveLength(1);
+    expect(held[0]!.data.reason).toBe("scratch");
+    expect(held[0]!.post.body).toContain(why);
+    await poll();
+    expect(spawns()).toEqual([]);
+    expect(merges()).toEqual([]);
+  });
+});
+
 describe("finding 3: a scratch directory is never lost", () => {
   it("records the run, with its scratch key, before it makes the directory", async () => {
     await openPr(FINAL());

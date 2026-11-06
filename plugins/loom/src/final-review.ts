@@ -230,7 +230,7 @@ export function finalBadge(store: Store, spec: Spec, ticket: TicketRow): FinalBa
   if (state.passed !== null) return { state: "passed", reason: null };
   if (state.failed !== null) return { state: "failed", reason: state.failed.verdict!.reason };
   if (state.held === "checkout") return { state: "held", reason: "the repo's checkout changed while it ran, or Loom could not fingerprint it" };
-  if (state.held === "scratch") return { state: "held", reason: "bb would not start it in Loom's scratch directory" };
+  if (state.held === "scratch") return { state: "held", reason: "Loom had no scratch directory outside bb's data directory, or bb would not start it in one" };
   if (state.held === "partial") return { state: "held", reason: "it passed on an incomplete brief; the human accepts it" };
   if (state.held !== null) return { state: "held", reason: state.unfinished.at(-1)?.ended?.message ?? state.unfinished.at(-1)?.ended?.why ?? null };
   if (state.open !== null || state.passRun !== null) return { state: "running", reason: null };
@@ -789,7 +789,16 @@ async function startRun(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket:
   const run = recordStarted(ctx, now, { sha, url, token, approved, same: delta.same, deadline, repo: checkout.path, print, scratch: scratchKey, incomplete: brief.incomplete });
   spawningOf(store).add(run.id);
   try {
-    const scratch = (await ctx.host.call(checkout.hostId, "finalScratch", { key: scratchKey, action: "create" })).path;
+    const made = await ctx.host.call(checkout.hostId, "finalScratch", { key: scratchKey, action: "create" });
+    if (made.refused !== undefined) {
+      endRun(ctx, now, run, "refused", made.refused);
+      const held = still();
+      if (held !== null && held.pushed_sha === sha) {
+        hold(ctx, project, held, sha, "scratch", `Loom has no scratch directory for its final reviewer of ${url} on the project's machine: ${made.refused}. It never runs the reviewer there or in the repo's checkout, so it holds the merge. Set XDG_CACHE_HOME to a directory outside bb's data directory for bb.`);
+      }
+      return;
+    }
+    const scratch = made.path;
     // Upkeep may have stopped the run while the directory was made.
     if (still() === null || finalState(store, ticket.id, sha).open?.id !== run.id) return;
     const spawn = (sectionId: string | null) =>

@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -96,17 +96,56 @@ describe("finalScratch", () => {
 
 describe("finalScratchRoot", () => {
   const inside = (dir: string, path: string) => !relative(dir, path).startsWith("..");
+  let n = 0;
+  /** A home with bb's data directory at ~/.bb and Loom's plugin data under it, as bb lays them out. */
+  const homeOf = () => {
+    const home = join(scratch, `home-${n++}`);
+    const bb = join(home, ".bb");
+    const dataDir = join(bb, "plugins", "loom", "host-data");
+    mkdirSync(dataDir, { recursive: true });
+    return { home, bb, dataDir };
+  };
 
-  it("is outside bb's data directory, which bb refuses as a workspace no project owns", () => {
-    const path = finalScratchRoot("/Users/dev/.bb/plugins/loom/host-data", {}, "/Users/dev");
-    expect(inside("/Users/dev/.bb", path)).toBe(false);
-    expect(inside("/Users/dev/.cache", path)).toBe(true);
+  it("is in ~/.cache, outside bb's data directory, which bb refuses as a workspace no project owns", () => {
+    const { home, bb, dataDir } = homeOf();
+    const path = finalScratchRoot(dataDir, {}, home)!;
+    expect(inside(bb, path)).toBe(false);
+    expect(inside(join(home, ".cache"), path)).toBe(true);
   });
 
   it("follows XDG_CACHE_HOME when it is absolute, and keeps two bb installs apart", () => {
-    expect(inside("/var/cache/dev", finalScratchRoot("/Users/dev/.bb/plugins/loom/host-data", { XDG_CACHE_HOME: "/var/cache/dev" }, "/Users/dev"))).toBe(true);
-    expect(inside("/Users/dev/.cache", finalScratchRoot("/Users/dev/.bb/plugins/loom/host-data", { XDG_CACHE_HOME: "cache" }, "/Users/dev"))).toBe(true);
-    expect(finalScratchRoot("/Users/dev/.bb/plugins/loom/host-data", {}, "/Users/dev")).not.toBe(finalScratchRoot("/Users/dev/.bb-dev/plugins/loom/host-data", {}, "/Users/dev"));
+    const { home, dataDir } = homeOf();
+    const xdg = join(scratch, `xdg-${n++}`);
+    expect(inside(xdg, finalScratchRoot(dataDir, { XDG_CACHE_HOME: xdg }, home)!)).toBe(true);
+    expect(inside(join(home, ".cache"), finalScratchRoot(dataDir, { XDG_CACHE_HOME: "cache" }, home)!)).toBe(true);
+    const other = join(home, ".bb-dev", "plugins", "loom", "host-data");
+    mkdirSync(other, { recursive: true });
+    expect(finalScratchRoot(dataDir, {}, home)).not.toBe(finalScratchRoot(other, {}, home));
+  });
+
+  it("passes over an XDG_CACHE_HOME inside bb's data directory for ~/.cache", () => {
+    const { home, bb, dataDir } = homeOf();
+    const path = finalScratchRoot(dataDir, { XDG_CACHE_HOME: join(bb, "cache") }, home)!;
+    expect(inside(bb, path)).toBe(false);
+    expect(inside(join(home, ".cache"), path)).toBe(true);
+  });
+
+  it("sees through a cache that is a symlink into bb's data directory, and has no root when every cache is inside it", () => {
+    const { home, bb, dataDir } = homeOf();
+    mkdirSync(join(bb, "cache"));
+    symlinkSync(join(bb, "cache"), join(home, ".cache"));
+    expect(finalScratchRoot(dataDir, {}, home)).toBeNull();
+    const xdg = join(scratch, `xdg-link-${n++}`);
+    symlinkSync(bb, xdg);
+    expect(finalScratchRoot(dataDir, { XDG_CACHE_HOME: xdg }, home)).toBeNull();
+  });
+
+  it("refuses to make a scratch directory when there is no root, and makes nothing", () => {
+    const { home, bb, dataDir } = homeOf();
+    const made = finalScratch({ key: "loom-abc", action: "create" }, dataDir, finalScratchRoot(dataDir, { XDG_CACHE_HOME: join(bb, "cache") }, join(bb, "home")));
+    expect(made).toEqual({ path: "", entries: [], refused: expect.stringContaining("inside bb's data directory") });
+    expect(readdirSync(bb)).toEqual(["plugins"]);
+    expect(existsSync(join(home, ".cache"))).toBe(false);
   });
 });
 

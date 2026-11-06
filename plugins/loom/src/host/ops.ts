@@ -5,7 +5,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { appendFileSync, chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { lstat, open } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
-import { dirname, join, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { experimental_runVcsProcess, type ExperimentalVcsProcessPriority } from "@get-bb/plugin-sdk/host";
 import { z } from "zod";
 import { GIT_INDEX_SETTING, GIT_INDEX_TIMEOUT_MS, GIT_NETWORK_TIMEOUT_MS } from "../git-network";
@@ -2070,29 +2070,53 @@ export async function checkoutPrint(input: HostInput<"checkoutPrint">, signal?: 
 
 const SWEEP_MAX = 20;
 
+/** `path` with symlinks resolved as far as it exists: the real path of its nearest existing ancestor, and the rest as written. */
+function realOf(path: string): string {
+  const missing: string[] = [];
+  let at = resolve(path);
+  while (!existsSync(at)) {
+    missing.unshift(basename(at));
+    at = dirname(at);
+  }
+  return join(realpathSync(at), ...missing);
+}
+
+const within = (dir: string, path: string) => {
+  const rel = relative(dir, path);
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+};
+
 /**
  * Where final reviews start: in the user's cache, since bb refuses as a thread's workspace any path under its own data
  * directory that is not one of the project's workspaces, and a plugin's data directory is under it. Named after the
- * plugin's data directory, so two bb installs on one machine never sweep each other's.
+ * plugin's data directory, so two bb installs on one machine never sweep each other's. `$XDG_CACHE_HOME` first, then
+ * `~/.cache`, each with symlinks resolved; null when both are inside bb's data directory.
  */
-export function finalScratchRoot(dataDir: string, env: NodeJS.ProcessEnv = process.env, home = homedir()): string {
-  const cache = env.XDG_CACHE_HOME?.startsWith("/") === true ? env.XDG_CACHE_HOME : join(home, ".cache");
-  return join(cache, "bb-loom", "final-review", sha256([dataDir]).slice(0, 12));
+export function finalScratchRoot(dataDir: string, env: NodeJS.ProcessEnv = process.env, home = homedir()): string | null {
+  // bb keeps a plugin's host data at <bb data directory>/plugins/<plugin id>/host-data.
+  const bbData = realOf(resolve(dataDir, "..", "..", ".."));
+  const caches = [...(env.XDG_CACHE_HOME?.startsWith("/") === true ? [env.XDG_CACHE_HOME] : []), join(home, ".cache")];
+  const roots = caches.map((cache) => realOf(join(cache, "bb-loom", "final-review", sha256([dataDir]).slice(0, 12))));
+  return roots.find((root) => !within(bbData, root)) ?? null;
 }
 
 /**
  * The final review's own empty directory under `root`: made empty, listed, removed, or the orphans swept. Removal and the
- * sweep also clean the data directory's final-review directory, where Loom made them before bb refused it.
+ * sweep also clean the data directory's final-review directory, where Loom made them before bb refused it. With no root,
+ * `create` makes nothing and says why in `refused`.
  */
 export function finalScratch(input: HostInput<"finalScratch">, dataDir: string, root = finalScratchRoot(dataDir)): HostOutput<"finalScratch"> {
-  const roots = [root, join(dataDir, "final-review")];
-  const path = join(root, input.key);
+  if (root === null && input.action === "create") {
+    return { path: "", entries: [], refused: "every cache directory Loom may use ($XDG_CACHE_HOME and ~/.cache) is inside bb's data directory, where bb refuses a workspace that is none of the project's own" };
+  }
+  const roots = [...(root === null ? [] : [root]), join(dataDir, "final-review")];
+  const path = root === null ? "" : join(root, input.key);
   if (input.action === "sweep") {
     const keep = new Set(input.keep ?? []);
     const orphans = roots.flatMap((dir) => (existsSync(dir) ? readdirSync(dir).filter((name) => name.startsWith("loom-") && !keep.has(name)).map((name) => ({ dir, name })) : []));
     const swept = orphans.sort((a, b) => a.name.localeCompare(b.name)).slice(0, SWEEP_MAX);
     for (const { dir, name } of swept) rmSync(join(dir, name), { recursive: true, force: true });
-    return { path: root, entries: swept.map(({ name }) => name) };
+    return { path: roots[0]!, entries: swept.map(({ name }) => name) };
   }
   if (input.action === "create") {
     rmSync(path, { recursive: true, force: true });
@@ -2106,7 +2130,7 @@ export function finalScratch(input: HostInput<"finalScratch">, dataDir: string, 
     }
     return { path, entries: [] };
   }
-  return { path, entries: existsSync(path) ? readdirSync(path).sort() : [] };
+  return { path, entries: path !== "" && existsSync(path) ? readdirSync(path).sort() : [] };
 }
 
 /** Adds a worktree with no checkout under the data directory and removes it again; git's refusal is the message. */

@@ -645,7 +645,8 @@ export const hostContract = defineRpcContract({
     output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok"), print: z.string(), head: z.string().nullable(), dirty: z.boolean() }).strict(), unavailable]),
   },
   // An empty directory outside bb's data directory for one final review to start in, and what it holds later; `remove` deletes
-  // it, and `sweep` deletes at most 20 of Loom's scratch directories not in `keep`, answering their keys.
+  // it, and `sweep` deletes at most 20 of Loom's scratch directories not in `keep`, answering their keys. `refused`: create
+  // found no such directory and made nothing, and says why.
   finalScratch: {
     input: z
       .object({
@@ -654,7 +655,7 @@ export const hostContract = defineRpcContract({
         keep: z.array(z.string().regex(/^[a-z0-9][a-z0-9-]{0,79}$/u)).max(2000).optional(),
       })
       .strict(),
-    output: z.object({ path: z.string(), entries: z.array(z.string()) }).strict(),
+    output: z.object({ path: z.string(), entries: z.array(z.string()), refused: z.string().optional() }).strict(),
   },
   // Each git remote with its push URLs, in `git remote` order.
   remotes: {

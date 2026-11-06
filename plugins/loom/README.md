@@ -957,7 +957,9 @@ auto_merge = { method = "squash", final_review = {} }   # or { model = "…", re
 - It runs as one thread in an empty scratch directory on the project's
   machine, under `~/.cache/bb-loom/final-review` (or `$XDG_CACHE_HOME`),
   outside bb's data directory, where bb refuses a workspace that is none of
-  the project's own. Everything it needs is in its brief: no
+  the project's own. Loom resolves symlinks and passes over a cache inside
+  bb's data directory; when both are inside it, the review does not run and
+  the merge holds with a post. Everything it needs is in its brief: no
   worktree, environment provider or machine to provision, and nothing of
   yours in its working directory. It never runs in the repo's checkout:
   should bb refuse the scratch directory, the review does not run and the
