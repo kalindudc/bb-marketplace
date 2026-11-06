@@ -2,7 +2,7 @@
 // them, once each, from the project's events; they move no ticket and block nothing, and a failure is an event in the feed.
 import type { EventRow, HookFiringRow, ProjectRow, Store } from "./db/store";
 import { clip, hookTellText, type HookFacts } from "./prompts";
-import type { HookEvent, HookSpec, Spec } from "./spec";
+import { readSpec, type HookEvent, type HookSpec } from "./spec";
 import { LOOM_ACTOR } from "./states";
 import { type EngineCtx } from "./ctx";
 
@@ -95,7 +95,7 @@ function hooksOf(store: Store, project: ProjectRow, version: number | null, cach
   let hooks = cache.get(version);
   if (hooks === undefined) {
     const row = store.specVersion(project.id, version);
-    hooks = row === null ? [] : ((JSON.parse(row.spec_json) as Spec).hook ?? []);
+    hooks = row === null ? [] : ((readSpec(row.spec_json)).hook ?? []);
     cache.set(version, hooks);
   }
   return hooks;

@@ -26,7 +26,7 @@ import { projectMetrics } from "./reports";
 import { UNSTARTED, blockedAtReview } from "./review";
 import { IN_FLIGHT, kinship, overlaps, readyTickets, startable, toLite, waitsForSlot, type TicketLite } from "./scheduler";
 import { holdOf, stacking, stackOf, upstreamOf } from "./stack";
-import { parseSpec, type Spec } from "./spec";
+import { parseSpec, readSpec, type Spec } from "./spec";
 import { specReviewStatus } from "./spec-review";
 import { isReleased } from "./release";
 import { waitOf } from "./starts";
@@ -317,7 +317,7 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
     const live = projects.require(slug);
     const past = eventId === undefined ? null : rewind(rowsOf(store, live), eventId);
     const spec = projects.spec(slug, past?.specVersion);
-    const inForce = JSON.parse(store.specVersion(live.id, spec.version)!.spec_json) as Spec;
+    const inForce = readSpec(store.specVersion(live.id, spec.version)!.spec_json);
     const overview = withRepoNames(
       past === null ? projects.overview(slug) : { ...projects.overview(slug), ...overviewAt(past, inForce), repos: repoOverviews(past.project, inForce, past.tickets, landsOf(past.events)) },
       names,
@@ -504,7 +504,7 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
       const rows = rowsOf(store, live);
       const past = at === undefined ? null : rewind(rows, at);
       const project = past?.project ?? live;
-      const spec = project.approved_version === null ? (JSON.parse(store.specVersion(live.id, projects.spec(slug, past?.specVersion).version)!.spec_json) as Spec) : specOf(store, project);
+      const spec = project.approved_version === null ? readSpec(store.specVersion(live.id, projects.spec(slug, past?.specVersion).version)!.spec_json) : specOf(store, project);
       return projectInsights(past ?? rows, { now: past?.at ?? now(), window, strategy: spec.merge.strategy, maxWorkers: spec.agents.max_workers, maxTokens: spec.budget.max_tokens ?? null });
     },
     timeline: ({ slug }) => projectTimeline(rowsOf(store, projects.require(slug)), now()),

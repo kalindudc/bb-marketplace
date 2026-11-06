@@ -5,7 +5,7 @@ import { throughputOf } from "./metrics";
 import type { ProjectOverview, Projects } from "./projects";
 import { IN_FLIGHT } from "./scheduler";
 import { specReviewStatus } from "./spec-review";
-import type { Spec } from "./spec";
+import { readSpec, type Spec } from "./spec";
 import { PAUSE_NOW_REASON } from "./states";
 import { specOf } from "./ctx";
 
@@ -107,7 +107,7 @@ function needsOf(store: Store, { project, row, tickets }: Loaded): NeedItem[] {
   // A draft needs the human once its review passed or stopped, or when it did not finish.
   if (project.state === "draft" && review.kind !== "reviewing" && review.kind !== "changes") {
     const latest = store.latestSpecVersion(project.id)!;
-    const text = review.kind === "failed" ? `draft v${latest.version}'s spec review did not finish: ${review.reason}` : `has a draft spec v${latest.version} with ${plural((JSON.parse(latest.spec_json) as Spec).ticket.length, "ticket")}`;
+    const text = review.kind === "failed" ? `draft v${latest.version}'s spec review did not finish: ${review.reason}` : `has a draft spec v${latest.version} with ${plural((readSpec(latest.spec_json)).ticket.length, "ticket")}`;
     items.push(item("approve", text, latest.created_at));
   } else if (project.state !== "draft" && project.pending_version !== null && review.kind !== "reviewing" && review.kind !== "changes") {
     const text = review.kind === "failed" ? `spec v${project.pending_version}'s spec review did not finish: ${review.reason}` : `spec v${project.pending_version} waits for your approval`;

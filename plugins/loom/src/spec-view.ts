@@ -1,7 +1,7 @@
 // One spec version as the Spec page reads it: the parsed spec, what it changed, the notes the human sent on it and Loom's reviews.
 import type { SpecReviewSkip, Store } from "./db/store";
 import { LoomError, type Projects, type SpecView } from "./projects";
-import { scopeOverlaps, validateSemantics, type Spec } from "./spec";
+import { readSpec, scopeOverlaps, validateSemantics, type Spec } from "./spec";
 import { changedAt, specChanges, type SpecChanges, type SpecNote } from "./spec-paths";
 import type { SpecFinding } from "./spec-review";
 
@@ -59,7 +59,7 @@ export function specVersionView(deps: { store: Store; projects: Projects }, slug
   const comparedWith = base ?? (view.status === "pending" && inForce !== null && inForce < view.version ? inForce : view.version > 1 ? view.version - 1 : null);
   const parsed = new Map<number, Spec>();
   const specAt = (n: number): Spec => {
-    if (!parsed.has(n)) parsed.set(n, JSON.parse(store.specVersion(project.id, n)!.spec_json) as Spec);
+    if (!parsed.has(n)) parsed.set(n, readSpec(store.specVersion(project.id, n)!.spec_json));
     return parsed.get(n)!;
   };
   const spec = specAt(view.version);

@@ -12,7 +12,7 @@ import { provisioningFailure, startProblemOf, type StartProblem } from "./starts
 import { COMMENT_SIGNATURE, andList, clip, recordPrompt } from "./prompts";
 import { LoomError, landsOf, repoOverviews, type RepoOverview } from "./projects";
 import { freshBaseOf, integrationBranchOf, isMultiRepo, repoSettings } from "./repos";
-import type { Spec } from "./spec";
+import { readSpec, type Spec } from "./spec";
 import { LOOM_ACTOR } from "./states";
 import { specOf, type EngineCtx } from "./ctx";
 
@@ -101,7 +101,7 @@ function specFor(store: Store, project: ProjectRow): Spec {
   const version = project.approved_version ?? store.latestSpecVersion(project.id)?.version ?? null;
   const row = version === null ? null : store.specVersion(project.id, version);
   if (row === null) throw new LoomError("loom_invalid_state", `Project ${project.slug} has no spec.`);
-  return JSON.parse(row.spec_json) as Spec;
+  return readSpec(row.spec_json);
 }
 
 type Landed = { repo?: string; direct?: boolean; pushed?: string; sha?: string; url?: string };

@@ -7,7 +7,7 @@ import { LoomError } from "./projects";
 import { replaceLoomBlock } from "./prompts";
 import { keptChecks } from "./pull-requests";
 import { followsFeedback, isMultiRepo, prSettings, repoSettings, type RepoSettings } from "./repos";
-import type { ForgeSpec, Spec } from "./spec";
+import { readSpec, type ForgeSpec, type Spec } from "./spec";
 import { type EngineCtx } from "./ctx";
 
 type Feedback = Extract<HostOutput<"prFeedback">, { outcome: "ok" }>;
@@ -137,7 +137,7 @@ export async function forgeCheck(ctx: EngineCtx, a: { slug: string; target: stri
   const version = a.version ?? project.approved_version ?? store.latestSpecVersion(project.id)!.version;
   const row = store.specVersion(project.id, version);
   if (row === null) throw new LoomError("loom_not_found", `${a.slug} has no spec v${version}.`, `Run \`bb loom show ${a.slug}\` to see its versions.`);
-  const spec = JSON.parse(row.spec_json) as Spec;
+  const spec = readSpec(row.spec_json);
   const { url, ticket, repo } = target(ctx, project.id, spec, a);
   const settings = settingsOf(spec, repo);
   const { forge } = settings;

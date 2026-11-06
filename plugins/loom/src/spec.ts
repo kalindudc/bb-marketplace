@@ -11,6 +11,8 @@ import { AUTO_MERGE_DEFAULTS, followsFeedback, PR_DEFAULTS } from "./repos";
 import { matchesAny } from "./scope";
 
 const MAX_ERRORS = 20;
+const TICKET_TIMEOUT_MINUTES = 180;
+const CHECKS_TIMEOUT_MINUTES = 25;
 const MAX_OVERLAP_WARNINGS = 10;
 
 // The rules of `git check-ref-format --branch`; a remote name follows the same rules.
@@ -286,7 +288,7 @@ export const specSchema = z
       .object({
         commands: z.array(command).max(10).default([]),
         after_merge: z.array(command).max(10).default([]),
-        timeout_minutes: z.number().int().min(1).max(29).default(25),
+        timeout_minutes: z.number().int().min(1).max(29).default(CHECKS_TIMEOUT_MINUTES),
         // No default: unset follows the forge (repoSettings), true where it reports checks.
         ci: z.boolean().optional(),
       })
@@ -303,7 +305,7 @@ export const specSchema = z
       .object({
         max_workers: z.number().int().min(1).max(8).default(2),
         max_reviewers: z.number().int().min(1).max(8).default(2),
-        ticket_timeout_minutes: z.number().int().min(10).max(1440).default(180),
+        ticket_timeout_minutes: z.number().int().min(10).max(1440).default(TICKET_TIMEOUT_MINUTES),
         triage: z.boolean().default(true),
         worker: agentSchema.prefault({}),
         reviewer: agentSchema.prefault({}),
@@ -337,6 +339,17 @@ export const specSchema = z
   .strict();
 
 export type Spec = z.output<typeof specSchema>;
+
+/**
+ * A spec version's stored JSON, as every reader gets it: as it was saved, with the defaults a later schema gave keys a
+ * stored version may lack. A value it holds, an old default included, is kept.
+ */
+export function readSpec(json: string): Spec {
+  const spec = JSON.parse(json) as Spec;
+  spec.agents.ticket_timeout_minutes ??= TICKET_TIMEOUT_MINUTES;
+  spec.checks.timeout_minutes ??= CHECKS_TIMEOUT_MINUTES;
+  return spec;
+}
 export type TicketSpec = z.output<typeof ticketSpecSchema>;
 export type TicketPatch = z.output<typeof ticketPatchSchema>;
 export type RepoSpec = z.output<typeof repoSpecSchema>;

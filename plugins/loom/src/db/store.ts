@@ -2,7 +2,7 @@
 // and post change appends an event in the same transaction.
 import type Database from "better-sqlite3";
 import type { Finding } from "../review";
-import type { EnvironmentSpec, Spec } from "../spec";
+import { readSpec, type EnvironmentSpec } from "../spec";
 import { LOOM_ACTOR, canMoveProject, canMoveTicket, type AuthorKind, type PostKind, type ProjectState, type Role, type ReviewVerdict, type ThreadState, type TicketState } from "../states";
 
 export interface ProjectRow {
@@ -503,7 +503,7 @@ export class Store {
       .prepare("SELECT p.slug, p.bb_project_id, v.spec_json FROM projects p JOIN spec_versions v ON v.project_id = p.id AND v.version = p.approved_version ORDER BY v.created_at DESC, p.id DESC")
       .all() as Array<{ slug: string; bb_project_id: string; spec_json: string }>;
     return rows.flatMap((row) => {
-      const spec = JSON.parse(row.spec_json) as Spec;
+      const spec = readSpec(row.spec_json);
       const repos = (spec.repo ?? []).length === 0 ? [{ bbProjectId: row.bb_project_id, environment: spec.environment }] : spec.repo!.map((repo) => ({ bbProjectId: repo.project, environment: repo.environment ?? spec.environment }));
       return repos.flatMap(({ bbProjectId, environment }) => (environment === undefined ? [] : [{ slug: row.slug, bbProjectId, environment }]));
     });

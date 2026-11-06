@@ -7,7 +7,7 @@ import type { HostPort } from "./ports";
 import type { PrReads } from "./pr-sync";
 import { COMMENT_SIGNATURE } from "./prompts";
 import { LoomError, type Ctx } from "./projects";
-import type { Spec } from "./spec";
+import { readSpec, type Spec } from "./spec";
 
 export interface EngineCtx extends Ctx {
   host: HostPort;
@@ -27,7 +27,7 @@ export const signatureOf = (ctx: EngineCtx): string => ctx.commentSignature?.() 
 export function specOf(store: Store, project: ProjectRow): Spec {
   const row = project.approved_version === null ? null : store.specVersion(project.id, project.approved_version);
   if (row === null) throw new LoomError("loom_invalid_state", `Project ${project.slug} has no approved spec.`);
-  return JSON.parse(row.spec_json) as Spec;
+  return readSpec(row.spec_json);
 }
 
 // An `ending` worker is not gone: the endThread that claimed its row still owns the ticket's move, so the checks leave the ticket alone.

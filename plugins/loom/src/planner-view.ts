@@ -8,7 +8,7 @@ import { specOf } from "./ctx";
 import type { EventRow, ProjectRow, Store } from "./db/store";
 import type { Projects, SpecView } from "./projects";
 import { clip } from "./prompts";
-import type { Spec } from "./spec";
+import { readSpec, type Spec } from "./spec";
 import { specDiff } from "./spec-diff";
 import type { SpecNote } from "./spec-paths";
 import { specReviewStatus, type SpecFinding, type SpecReviewStatus } from "./spec-review";
@@ -141,7 +141,7 @@ function stepsOf(store: Store, project: ProjectRow | null, threadId: string, sta
   const planner = new Set([threadId]);
   const specs = new Map<number, Spec>();
   const specAt = (version: number) => {
-    if (!specs.has(version)) specs.set(version, JSON.parse(store.specVersion(project!.id, version)!.spec_json) as Spec);
+    if (!specs.has(version)) specs.set(version, readSpec(store.specVersion(project!.id, version)!.spec_json));
     return specs.get(version)!;
   };
   const keyOf = (event: EventRow) => (event.ticket_id === null ? null : (store.ticket(event.ticket_id)?.key ?? null));
@@ -253,7 +253,7 @@ function versionsOf(store: Store, projects: Projects, project: ProjectRow): Plan
   for (let version = 1; version <= latest; version++) {
     const row = store.specVersion(project.id, version);
     if (row === null) continue;
-    const spec = JSON.parse(row.spec_json) as Spec;
+    const spec = readSpec(row.spec_json);
     const review = reviews.filter((entry) => entry.version === version).at(-1);
     out.push({
       version,

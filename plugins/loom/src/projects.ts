@@ -9,7 +9,7 @@ import { SectionNameConflictError, type BbPort, type BbProjectInfo, type HostPor
 import { MAX_PLANNING_REPOS, notesMessage, planningKickoff, planningTitle, type PickedRepo } from "./prompts";
 import { integrationBranchOf, isMultiRepo, repoSettings } from "./repos";
 import { rolloutJson } from "./rollout";
-import { defaultKeysWarning, numberErrors, parseSpec, proposalErrorsOf, specHash, type Spec } from "./spec";
+import { defaultKeysWarning, numberErrors, parseSpec, proposalErrorsOf, readSpec, specHash, type Spec } from "./spec";
 import type { SpecNote } from "./spec-paths";
 import { PAUSE_NOW_REASON, TICKET_STATES, type AuthorKind, type MergeChoice, type ProjectState, type Role, type TicketState } from "./states";
 import { writeSub } from "./sub-state";
@@ -369,7 +369,7 @@ export class Projects {
     if (project.state === "draft") {
       const draft = this.store.latestSpecVersion(project.id)!;
       this.guardVersion(slug, version, draft.version);
-      const spec = JSON.parse(draft.spec_json) as Spec;
+      const spec = readSpec(draft.spec_json);
       const keys = this.store.tx(() => {
         this.store.updateProject(project.id, { approved_version: draft.version });
         this.store.event(project.id, null, "spec.approved", actor, { version: draft.version });
@@ -797,7 +797,7 @@ export class Projects {
   private specOf(projectId: number, version: number): Spec {
     const row = this.store.specVersion(projectId, version);
     if (row === null) throw new LoomError("loom_not_found", `Spec version ${version} is missing.`);
-    return JSON.parse(row.spec_json) as Spec;
+    return readSpec(row.spec_json);
   }
 
   require(slug: string): ProjectRow {

@@ -8,7 +8,7 @@ import { spawnEnvironment, threadBranch } from "./environments";
 import { LoomError } from "./projects";
 import { specReviewFailedText, specReviewNudgeText, specReviewSkippedText, specReviewVerdictText, specReviewerBrief } from "./prompts";
 import { isMultiRepo, repoSettings } from "./repos";
-import type { Spec } from "./spec";
+import { readSpec, type Spec } from "./spec";
 import { operationalChanges } from "./spec-diff";
 import { SPEC_REVIEW_ROUNDS } from "./states";
 import type { StartWait } from "./sub-state";
@@ -139,9 +139,9 @@ export async function ensureSpecReview(ctx: EngineCtx, slug: string): Promise<Sp
   const status = specReviewStatus(store, project);
   // Proposing again tries a reviewer that waits to start at once, as it starts a review that failed again.
   const waiting = status.kind === "reviewing" && status.waiting !== undefined ? store.specReviews(project.id).filter((row) => row.version === latest.version && row.state === "reviewing" && row.thread_id === null).at(-1) : undefined;
-  if (waiting !== undefined) return spawnReviewer(ctx, project, waiting, latest.toml, JSON.parse(latest.spec_json) as Spec, false);
+  if (waiting !== undefined) return spawnReviewer(ctx, project, waiting, latest.toml, readSpec(latest.spec_json), false);
   if (status.kind !== "none" && status.kind !== "failed") return status;
-  const spec = JSON.parse(latest.spec_json) as Spec;
+  const spec = readSpec(latest.spec_json);
   const skip = operationalSkip(store, project, latest.version, spec);
   if (skip !== null) return skipReview(ctx, project, latest.version, skip);
   return startReview(ctx, project, latest.version, latest.toml, spec);
@@ -164,7 +164,7 @@ export function operationalSkip(store: Store, project: ProjectRow, version: numb
   if (project.state === "draft" && !cleared(store, project.id, against)) return null;
   const before = store.specVersion(project.id, against);
   if (before === null) return null;
-  const paths = operationalChanges(JSON.parse(before.spec_json) as Spec, spec);
+  const paths = operationalChanges(readSpec(before.spec_json), spec);
   return paths === null ? null : { against, paths };
 }
 
@@ -196,7 +196,7 @@ async function spawnReviewer(ctx: EngineCtx, project: ProjectRow, row: SpecRevie
   const { store } = ctx;
   const { version, round } = row;
   const earlier = cycleReviews(store, project).filter((other) => other.id !== row.id);
-  const inForce = project.approved_version === null ? null : { version: project.approved_version, spec: JSON.parse(store.specVersion(project.id, project.approved_version)!.spec_json) as Spec };
+  const inForce = project.approved_version === null ? null : { version: project.approved_version, spec: readSpec(store.specVersion(project.id, project.approved_version)!.spec_json) };
   const token = row.wait_json === null ? row.spawn_token : randomBytes(12).toString("hex");
   if (token !== row.spawn_token) store.updateSpecReview(row.id, { spawn_token: token });
   // A multi-repo project's reviewer starts in its first repo. Not freshBaseOf: a draft has no integration branch yet.
@@ -254,7 +254,7 @@ export async function retrySpecReviews(ctx: EngineCtx): Promise<void> {
     const project = ctx.store.project(row.project_id);
     const version = project === null ? null : ctx.store.specVersion(project.id, row.version);
     if (project === null || version === null) continue;
-    await spawnReviewer(ctx, project, row, version.toml, JSON.parse(version.spec_json) as Spec, true);
+    await spawnReviewer(ctx, project, row, version.toml, readSpec(version.spec_json), true);
   }
 }
 
