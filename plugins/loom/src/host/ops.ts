@@ -1023,7 +1023,8 @@ async function stagedPaths(top: string, signal?: AbortSignal): Promise<string[]>
   const quiet = await run(top, ["diff", "--cached", "--quiet"], signal);
   if (quiet.code === 0) return [];
   if (quiet.code !== 1) throw failure(["diff", "--cached", "--quiet"], quiet);
-  return (await git(top, ["diff", "--cached", "--name-only", "-z"], { raw: true, signal })).split("\0").filter((path) => path !== "");
+  // Split on newlines too: a machine's git may not take -z on diff. The names only say what is staged; --quiet decided.
+  return (await git(top, ["diff", "--cached", "--name-only", "-z"], { raw: true, signal })).split(/[\0\n]/u).filter((path) => path !== "");
 }
 
 /** The paths that differ between two commits, as a reset from one to the other writes or removes them. */

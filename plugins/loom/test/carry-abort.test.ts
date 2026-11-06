@@ -43,6 +43,8 @@ case "$sub" in
   config) case "\${rest[0]}" in --get|--list|-l) ;; *) refuse "config \${rest[*]}";; esac;;
 esac
 if [ -n "$GIT_INDEX_FILE" ]; then refuse "GIT_INDEX_FILE $sub"; fi
+# World's usage lists no -z for diff: LOOM_SHIM_DIFF_NO_Z drops it, as a git that ignores it would.
+if [ "$sub" = diff ] && [ -n "$LOOM_SHIM_DIFF_NO_Z" ]; then kept=(); for a in "$@"; do [ "$a" = -z ] || kept+=("$a"); done; exec ${JSON.stringify(GIT)} "\${kept[@]}"; fi
 exec ${JSON.stringify(GIT)} "$@"
 `;
   writeFileSync(join(dir, "git"), shim);
@@ -274,6 +276,21 @@ describe("a carry that finishes", () => {
     writeFileSync(join(w.worktree, "mine.ts"), "working newer\n");
     expect(await finish(w, treeWith(w, { "README.md": "carried\n" }), ["README.md"])).toEqual({ outcome: "foreign", paths: ["mine.ts"] });
     expect([indexOf(w, "mine.ts"), read(w.worktree, "mine.ts"), indexOf(w, "README.md"), sh(w.worktree, "rev-parse", "HEAD")]).toEqual(["staged unique", "working newer\n", "hello", w.base]);
+  });
+
+  it("names each staged path when the machine's git ignores -z on diff", async () => {
+    const w = worker();
+    await start(w);
+    await put(w, "README.md", "carried\n");
+    writeFileSync(join(w.worktree, "a.ts"), "a\n");
+    writeFileSync(join(w.worktree, "b.ts"), "b\n");
+    sh(w.worktree, "add", "a.ts", "b.ts");
+    process.env.LOOM_SHIM_DIFF_NO_Z = "1";
+    try {
+      expect(await finish(w, treeWith(w, { "README.md": "carried\n" }), ["README.md"])).toEqual({ outcome: "foreign", paths: ["a.ts", "b.ts"] });
+    } finally {
+      delete process.env.LOOM_SHIM_DIFF_NO_Z;
+    }
   });
 
   it("refuses, touching no index, when the worker staged a version of a carry path, or recreated one it deleted", async () => {
