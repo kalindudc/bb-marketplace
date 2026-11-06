@@ -1,5 +1,5 @@
 import { Fragment, useState, type ReactNode } from "react";
-import { GIT_INDEX_TIMEOUT_MS, GIT_INDEX_TIMEOUT_SECONDS, GIT_NETWORK_TIMEOUT_MS } from "../git-network";
+import { GIT_NETWORK_TIMEOUT_MS, GIT_NETWORK_TIMEOUT_SECONDS } from "../git-network";
 import { HOOK_EVENT_NAMES, HOOK_EVENTS } from "../hook-events";
 import type { AutoMergeSpec, EnvironmentSpec, ForgeSpec, MachineSpec, RepoSpec, Spec } from "../spec";
 import { textSteps, type TextStep } from "../spec-diff";
@@ -12,8 +12,7 @@ const CODE = "rounded bg-surface-recessed px-1 font-mono text-xs [overflow-wrap:
 const ROWS = "grid grid-cols-1 gap-x-3 gap-y-0.5 @min-[17rem]:grid-cols-[7rem_minmax(0,1fr)] @min-[17rem]:gap-y-1.5";
 const minutes = (n: number) => (n % 60 === 0 ? `${n / 60} h` : plural(n, "minute"));
 const DEFAULT_GIT_SECONDS = GIT_NETWORK_TIMEOUT_MS / 1000;
-const NETWORK_LIMIT = { defaultSeconds: DEFAULT_GIT_SECONDS, max: 600, what: "for each git fetch, ls-remote or push" };
-const INDEX_LIMIT = { defaultSeconds: GIT_INDEX_TIMEOUT_MS / 1000, max: GIT_INDEX_TIMEOUT_SECONDS.max, what: "for the index and tree steps of one call on the checkout" };
+const gitSeconds = { min: GIT_NETWORK_TIMEOUT_SECONDS.min, max: GIT_NETWORK_TIMEOUT_SECONDS.max, step: 30, unit: "s" } as const;
 type DeploySpec = NonNullable<RepoSpec["deploy"]>;
 
 /** A choice of the spec as a segmented control: the option in force is raised, and clicking another one suggests it. */
@@ -712,21 +711,21 @@ function RefreshBehind({ path, label, n, base }: { path: string; label: string; 
   );
 }
 
-function GitTimeout({ path, label, seconds, limit = NETWORK_LIMIT }: { path: string; label: string; seconds: number | undefined; limit?: typeof NETWORK_LIMIT }) {
+function GitTimeout({ path, label, seconds }: { path: string; label: string; seconds: number | undefined }) {
   return (
-    <Commentable as="span" target={value(path, label, "number", seconds ?? limit.defaultSeconds, { min: 30, max: limit.max, step: 30, unit: "s" })}>
-      <b className="tabular-nums">{seconds ?? limit.defaultSeconds} s</b>
-      {seconds === undefined && ", the default"} <span className="text-xs text-muted-foreground">{limit.what}</span>
+    <Commentable as="span" target={value(path, label, "number", seconds ?? DEFAULT_GIT_SECONDS, gitSeconds)}>
+      <b className="tabular-nums">{seconds ?? DEFAULT_GIT_SECONDS} s</b>
+      {seconds === undefined && ", the default"} <span className="text-xs text-muted-foreground">for each git fetch, ls-remote or push</span>
     </Commentable>
   );
 }
 
 /** A repo's own git time limit, or the project's, which it inherits when it sets none. */
-function RepoGitTimeout({ path, label, seconds, project, limit }: { path: string; label: string; seconds: number | undefined; project: number | undefined; limit: typeof NETWORK_LIMIT }) {
-  if (seconds !== undefined) return <GitTimeout path={path} label={label} seconds={seconds} limit={limit} />;
+function RepoGitTimeout({ path, label, seconds, project }: { path: string; label: string; seconds: number | undefined; project: number | undefined }) {
+  if (seconds !== undefined) return <GitTimeout path={path} label={label} seconds={seconds} />;
   return (
-    <Commentable as="span" target={value(path, label, "number", project ?? limit.defaultSeconds, { min: 30, max: limit.max, step: 30, unit: "s" })} className="text-muted-foreground">
-      {project === undefined ? `${limit.defaultSeconds} s, the default` : `${project} s, from the project`}
+    <Commentable as="span" target={value(path, label, "number", project ?? DEFAULT_GIT_SECONDS, gitSeconds)} className="text-muted-foreground">
+      {project === undefined ? `${DEFAULT_GIT_SECONDS} s, the default` : `${project} s, from the project`}
     </Commentable>
   );
 }
@@ -768,7 +767,6 @@ const REPO_OWN = [
   ["deploy", "deploy"],
   ["refresh_behind", "fresh pull requests"],
   ["git_network_timeout_seconds", "git time limit"],
-  ["git_index_timeout_seconds", "git index time limit"],
   ["worktree", "worktree"],
 ] as const;
 
@@ -873,10 +871,7 @@ function RepoItem({ spec, repo, index, bbProjectNames }: { spec: Spec; repo: Rep
             </Row>
           )}
           <Row label="Git time limit" paths={[`${at}.git_network_timeout_seconds`]}>
-            <RepoGitTimeout path={`${at}.git_network_timeout_seconds`} label={`${repo.name} › git network timeout seconds`} seconds={repo.git_network_timeout_seconds} project={merge.git_network_timeout_seconds} limit={NETWORK_LIMIT} />
-          </Row>
-          <Row label="Git index time limit" paths={[`${at}.git_index_timeout_seconds`]}>
-            <RepoGitTimeout path={`${at}.git_index_timeout_seconds`} label={`${repo.name} › git index timeout seconds`} seconds={repo.git_index_timeout_seconds} project={merge.git_index_timeout_seconds} limit={INDEX_LIMIT} />
+            <RepoGitTimeout path={`${at}.git_network_timeout_seconds`} label={`${repo.name} › git network timeout seconds`} seconds={repo.git_network_timeout_seconds} project={merge.git_network_timeout_seconds} />
           </Row>
           {(integration || shown("worktree", repo.worktree !== undefined)) && (
             <Row label="Worktree" paths={[`${at}.worktree`]}>
@@ -1221,9 +1216,6 @@ export function SettingsSection({ spec, bbProjectNames, onShowAll, onJump }: { s
             )}
             <Row label="Git time limit" paths={["merge.git_network_timeout_seconds"]}>
               <GitTimeout path="merge.git_network_timeout_seconds" label="Git network time limit" seconds={merge.git_network_timeout_seconds} />
-            </Row>
-            <Row label="Git index time limit" paths={["merge.git_index_timeout_seconds"]}>
-              <GitTimeout path="merge.git_index_timeout_seconds" label="Git index time limit" seconds={merge.git_index_timeout_seconds} limit={INDEX_LIMIT} />
             </Row>
             {(merge.forge !== undefined || changedAt(review, "merge.forge")) && <ForgeRows path="merge.forge" label="Forge" forge={merge.forge} inherited="GitHub through gh, the default" />}
           </dl>

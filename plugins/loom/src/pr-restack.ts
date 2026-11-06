@@ -9,7 +9,7 @@ import { Unavailable, waitableOf } from "./forge-waits";
 import { andList, branchName, mergeSubject, restackConflictText, restackFailedText, restackMarkersText, restackRefusedText, unfinishedMergeText, withRestoredNote } from "./prompts";
 import type { HostOutput as HostOutputOf } from "./host-contract";
 import type { EnvironmentInfo } from "./ports";
-import { freshBaseOf, gitIndex, gitNetwork, type RepoSettings } from "./repos";
+import { freshBaseOf, gitNetwork, type RepoSettings } from "./repos";
 import type { Spec } from "./spec";
 import { EMPTY_STACK, restackWithBase, stackBranch, stackOf, stacking, type Restack } from "./stack";
 import { TIP_WHAT, isForeign, readTip, tipOutgrowsStack, tipRef, type Tip, withMarkers } from "./tips";
@@ -56,7 +56,6 @@ export async function restack(ctx: EngineCtx, project: ProjectRow, spec: Spec, t
     ...(need.withBase && need.baseTip === undefined ? { base: { remote: settings.remote, branch: settings.base } } : {}),
     message: mergeSubject(sources, branch),
     ...gitNetwork(settings),
-    ...gitIndex(settings),
   });
   if (built.outcome === "unavailable") throw unavailableOf(built);
   const known = stackOf(ticket) ?? EMPTY_STACK;
@@ -72,7 +71,7 @@ export async function restack(ctx: EngineCtx, project: ProjectRow, spec: Spec, t
   const stack: Stack = { ...rest, deps: need.deps, base: built.sha, synced: takesBase ? ctx.now() : known.synced };
   if (isRemote(project, environment)) return restackOnMachine(ctx, { project, spec, ticket, what, sources, checkout, text, environment: { ...environment, path: environment.path }, built: built.sha, stack });
 
-  const merged = await ctx.host.call(hostId, "mergeOnto", { repo, head: ticket.head_sha!, ref: built.sha, message: mergeSubject(sources, branchName(ticket)), refs: [], ...gitIndex(settings) });
+  const merged = await ctx.host.call(hostId, "mergeOnto", { repo, head: ticket.head_sha!, ref: built.sha, message: mergeSubject(sources, branchName(ticket)), refs: [] });
   if (merged.outcome === "conflict") {
     await sendBack(ctx, ticket.id, {
       post: { kind: "merge", body: `Merging ${what} into ${ticket.key}'s branch conflicted in: ${merged.files.join(", ")}.`, data: { outcome: "conflict", files: merged.files, restack: true } },
@@ -104,7 +103,7 @@ async function restackOnMachine(
   const { store } = ctx;
   const { project, spec, ticket, what, environment, stack } = a;
   const refs = [`refs/heads/${homeBranch(project.slug, ticket.key)}`, reviewedRef(project.slug, ticket.key)];
-  const merged = await ctx.host.call(a.checkout.hostId, "mergeOnto", { repo: a.checkout.path, head: ticket.head_sha!, ref: a.built, message: mergeSubject(a.sources, branchName(ticket)), refs, ...gitIndex(a.checkout.settings) });
+  const merged = await ctx.host.call(a.checkout.hostId, "mergeOnto", { repo: a.checkout.path, head: ticket.head_sha!, ref: a.built, message: mergeSubject(a.sources, branchName(ticket)), refs });
   if (merged.outcome === "merged" && merged.already) {
     store.updateTicket(ticket.id, writeSub("stack_json", stack));
     return { ticket: store.ticket(ticket.id)!, what, sources: a.sources, checked: false };
@@ -312,7 +311,6 @@ export async function takeAtPush(ctx: EngineCtx, project: ProjectRow, spec: Spec
       ...(ours ? { ours: true } : {}),
       message: mergeSubject([`${settings.remote}/${branchName(current)}`], branchName(current)),
       refs: [],
-      ...gitIndex(settings),
     });
   const merged = await mergeTip(await onlyBaseMergedIn(ctx, checkout, current, tip));
   if (merged.outcome === "merged" && merged.already) return current;
@@ -380,7 +378,7 @@ async function onlyBaseMergedIn(ctx: EngineCtx, checkout: RepoCheckout, ticket: 
   };
   if (await contains(ticket.head_sha, pushed)) return false;
   if (!(await contains(ticket.head_sha, tip.mainBase))) return false;
-  const update = await ctx.host.call(hostId, "mergeOnto", { repo, head: pushed, ref: tip.mainBase, message: `Merge ${tip.mainBase.slice(0, 12)} into ${pushed.slice(0, 12)}`, refs: [], ...gitIndex(settings) });
+  const update = await ctx.host.call(hostId, "mergeOnto", { repo, head: pushed, ref: tip.mainBase, message: `Merge ${tip.mainBase.slice(0, 12)} into ${pushed.slice(0, 12)}`, refs: [] });
   return update.outcome === "merged" && update.tree === tip.tree;
 }
 

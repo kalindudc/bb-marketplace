@@ -1,8 +1,9 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { freshBaseOf, gitIndex, gitNetwork, isMultiRepo, repoSettings } from "../src/repos";
+import { freshBaseOf, gitNetwork, isMultiRepo, repoSettings } from "../src/repos";
 import { parseSpec, specHash, type Spec } from "../src/spec";
 import { freshBase } from "../src/workers";
+import { withRepos } from "./fixtures";
 import { specToml, type Doc } from "./helpers";
 
 function spec(edit?: (doc: Doc) => void): Spec {
@@ -63,7 +64,6 @@ describe("repoSettings", () => {
       worktree: null,
       refreshBehind: null,
       gitNetworkTimeoutMs: null,
-      gitIndexTimeoutMs: null,
     });
   });
 
@@ -83,7 +83,6 @@ describe("repoSettings", () => {
       worktree: null,
       refreshBehind: null,
       gitNetworkTimeoutMs: null,
-      gitIndexTimeoutMs: null,
     });
   });
 
@@ -103,7 +102,6 @@ describe("repoSettings", () => {
       worktree: null,
       refreshBehind: null,
       gitNetworkTimeoutMs: null,
-      gitIndexTimeoutMs: null,
     });
   });
 
@@ -118,21 +116,10 @@ describe("repoSettings", () => {
     expect(gitNetwork(repoSettings(multi(), "web"))).toEqual({});
   });
 
-  it("takes the git index timeout from the repo, else from merge, else leaves it to the host, and sends it only when set", () => {
-    const set = multi((doc) => {
-      doc.merge.git_index_timeout_seconds = 600;
-      doc.repo[1].git_index_timeout_seconds = 900;
-    });
-    expect(["web", "api", "docs"].map((name) => repoSettings(set, name).gitIndexTimeoutMs)).toEqual([600_000, 900_000, 600_000]);
-    expect(gitIndex(repoSettings(set, "api"))).toEqual({ indexTimeoutMs: 900_000 });
-    expect(gitIndex(repoSettings(multi(), "web"))).toEqual({});
-    for (const seconds of [29, 901, 1.5]) expect(parseSpec(specToml((doc) => (doc.merge.git_index_timeout_seconds = seconds))).errors.join("\n")).toContain("git_index_timeout_seconds");
-  });
-
-  it("hashes a spec without git_index_timeout_seconds as before, since the key has no default", () => {
-    const plain = spec();
-    expect("git_index_timeout_seconds" in plain.merge).toBe(false);
-    expect(specHash(spec((doc) => (doc.merge.git_index_timeout_seconds = 300)))).not.toBe(specHash(plain));
+  it("refuses git_index_timeout_seconds in merge and in a repo, and says the limit is fixed", () => {
+    const why = "Loom gives the index and tree steps of one call on a checkout 300 seconds, which no project needed to change: remove the key.";
+    expect(parseSpec(specToml((doc) => (doc.merge.git_index_timeout_seconds = 600))).errors).toEqual([`merge.git_index_timeout_seconds: Loom no longer reads this key. ${why}`]);
+    expect(parseSpec(specToml((doc) => (withRepos(doc), (doc.repo[1].git_index_timeout_seconds = 600)))).errors).toEqual([`repo[1].git_index_timeout_seconds: Loom no longer reads this key. ${why}`]);
   });
 
   it("refuses a git network timeout outside 30 to 600 seconds", () => {

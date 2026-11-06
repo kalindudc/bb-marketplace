@@ -5,9 +5,8 @@ import { retriesOf } from "./backoff";
 import { repoCheckout, ticketRepo } from "./checkouts";
 import type { ProjectRow, Store, ThreadRow, TicketRow } from "./db/store";
 import { formatDuration, plural } from "./format";
-import { GIT_INDEX_SETTING, GIT_INDEX_TIMEOUT_MS } from "./git-network";
+import { GIT_INDEX_TIMED_OUT, GIT_INDEX_TIMEOUT_MS } from "./git-network";
 import { waitableOf } from "./forge-waits";
-import { isMultiRepo, repoSettings } from "./repos";
 import { checkFailedText, clip, prUnchangedText } from "./prompts";
 import { writeSub, type PrText, type Stack } from "./sub-state";
 import { openFeedback, proposalOf, proposeText, textPending, unchangedFix } from "./pull-requests";
@@ -330,12 +329,11 @@ async function finish(ctx: EngineCtx, ticketId: number, spec: Spec, outcome: Out
 
 /**
  * What Loom tells the worker and posts when its own step on the project's checkout, such as bringing the work home with
- * the tree rewrite, ran out of the repo's git index time limit: Loom's machine was slow, not the work, so the worker
- * submits the same work again and never blocks for it, and the post names the setting the human may raise.
+ * the tree rewrite, ran out of its git index time limit: Loom's machine was slow, not the work, so the worker submits the
+ * same work again and never blocks for it.
  */
-function indexTimeoutText(ticket: TicketRow, spec: Spec, error: string): string {
-  const at = isMultiRepo(spec) && ticket.repo !== null ? `repo[${(spec.repo ?? []).findIndex((repo) => repo.name === ticket.repo)}].${GIT_INDEX_SETTING}` : `merge.${GIT_INDEX_SETTING}`;
-  return `The checks could not run: Loom's own step on the project's machine ran out of time (${error}). This is not a failure of your work and counts against nothing: call loom_submit again with the same work, and do not block the ticket for it. If it keeps happening, the human raises ${at} in the spec (it is ${Math.round((repoSettings(spec, ticket.repo).gitIndexTimeoutMs ?? GIT_INDEX_TIMEOUT_MS) / 1000)} seconds now).`;
+function indexTimeoutText(error: string): string {
+  return `The checks could not run: Loom's own step on the project's machine ran out of time (${error}). This is not a failure of your work and counts against nothing: call loom_submit again with the same work, and do not block the ticket for it. Loom gives these steps ${GIT_INDEX_TIMEOUT_MS / 1000} seconds; if it keeps happening, the project's machine is too loaded for its checkout.`;
 }
 
 // A host call threw: the machine disconnected or the call timed out. No check failure is counted.
@@ -344,16 +342,16 @@ function hostFailed(ctx: EngineCtx, ticketId: number, failure: unknown): void {
   const { store } = ctx;
   const ticket = store.ticket(ticketId);
   if (ticket === null || ticket.state !== "checking") return;
-  const indexTimeout = error.includes(GIT_INDEX_SETTING);
+  const indexTimeout = error.includes(GIT_INDEX_TIMED_OUT);
   // A timeout or a host that did not answer is the machine being slow or away, so the next run waits 15 seconds, then longer;
   // any other failure is not helped by waiting.
   const retries = retriesOf(store).checks;
   if (indexTimeout || waitableOf(failure) !== null) retries.failed(ticket.id, ctx.now(), error);
   else retries.reset(ticket.id);
-  const text = indexTimeout ? indexTimeoutText(ticket, specOf(store, store.project(ticket.project_id)!), error) : `The checks could not run: ${error}. Submit again.`;
+  const text = indexTimeout ? indexTimeoutText(error) : `The checks could not run: ${error}. Submit again.`;
   const worker = workerOf(store, ticket);
   store.tx(() => {
-    store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "system", body: text, ...(indexTimeout ? { data_json: JSON.stringify({ outcome: "index_timeout", setting: GIT_INDEX_SETTING }) } : {}) });
+    store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "system", body: text, ...(indexTimeout ? { data_json: JSON.stringify({ outcome: "index_timeout" }) } : {}) });
     if (worker.standing === "ending") return;
     if (worker.standing === "active") {
       toWorking(ctx, ticket, worker.row, { reason: indexTimeout ? "Loom's index step on the project's machine ran out of time" : "the checks could not run" });

@@ -87,7 +87,6 @@ const LABELS: Record<string, string> = {
   "merge.release_workers": "Release idle workers",
   "merge.refresh_behind": "Keep pull requests fresh",
   "merge.git_network_timeout_seconds": "Git network time limit",
-  "merge.git_index_timeout_seconds": "Git index time limit",
   "merge.worktree": "Integration worktree",
   "project.base": "Base branch",
   "project.goal": "Goal",

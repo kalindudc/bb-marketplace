@@ -1,7 +1,7 @@
 // The calls the server makes on the machine that owns a project's checkout and worktrees.
 import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
-import { GIT_INDEX_TIMEOUT_SECONDS, GIT_NETWORK_TIMEOUT_SECONDS } from "./git-network";
+import { GIT_NETWORK_TIMEOUT_SECONDS } from "./git-network";
 
 const absPath = z.string().min(1).max(4096).regex(/^\//, "must be an absolute path");
 
@@ -20,13 +20,6 @@ const networkTimeoutMs = z
   .int()
   .min(GIT_NETWORK_TIMEOUT_SECONDS.min * 1000)
   .max(GIT_NETWORK_TIMEOUT_SECONDS.max * 1000)
-  .optional();
-// The index and tree steps of one call together; optional for the same reason.
-const indexTimeoutMs = z
-  .number()
-  .int()
-  .min(GIT_INDEX_TIMEOUT_SECONDS.min * 1000)
-  .max(GIT_INDEX_TIMEOUT_SECONDS.max * 1000)
   .optional();
 // A Loom worktree's key: the project slug, or the slug and a [[repo]] name joined by a dot. It names a directory, so nothing looser.
 const worktreeKey = z.string().regex(/^[a-z][a-z0-9-]{1,39}(?:\.[a-z][a-z0-9-]{0,23})?$/, "must be a project slug, or a project slug and a repo name joined by a dot");
@@ -238,7 +231,6 @@ export const hostContract = defineRpcContract({
         refs: z.array(fullRef).max(4),
         parent: commit.optional(),
         networkTimeoutMs,
-        indexTimeoutMs,
       })
       .strict(),
     output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok"), sha }).strict(), z.object({ outcome: z.literal("mismatch"), tree: sha }).strict(), unavailable]),
@@ -386,7 +378,6 @@ export const hostContract = defineRpcContract({
         base: z.object({ remote: ref, branch: ref }).strict().optional(),
         message: z.string().min(1).max(500),
         networkTimeoutMs,
-        indexTimeoutMs,
       })
       .strict(),
     output: z.discriminatedUnion("outcome", [
@@ -402,7 +393,7 @@ export const hostContract = defineRpcContract({
   // which git cannot tell when head was rebuilt from a worktree on another machine.
   mergeOnto: {
     // `ours`: record the merge with the head's tree as it is (git merge -s ours), for a ref proven to add nothing the head lacks.
-    input: z.object({ repo: absPath, head: commit, ref: commit, message: z.string().min(1).max(500), refs: z.array(fullRef).max(4), base: commit.optional(), ours: z.boolean().optional(), indexTimeoutMs }).strict(),
+    input: z.object({ repo: absPath, head: commit, ref: commit, message: z.string().min(1).max(500), refs: z.array(fullRef).max(4), base: commit.optional(), ours: z.boolean().optional() }).strict(),
     output: z.discriminatedUnion("outcome", [
       z.object({ outcome: z.literal("merged"), sha, tree: sha, already: z.boolean() }).strict(),
       z.object({ outcome: z.literal("conflict"), files: z.array(z.string()), sha, tree: sha }).strict(),

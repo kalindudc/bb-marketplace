@@ -31,7 +31,6 @@ function everything(doc: Doc): void {
     release_workers: false,
     refresh_behind: 50,
     git_network_timeout_seconds: 300,
-    git_index_timeout_seconds: 600,
     forge: {
       kind: "command",
       open: 'pr-cli open --head "$LOOM_HEAD"',
@@ -142,7 +141,7 @@ function integrationEverything(doc: Doc): void {
   doc.merge = { strategy: "integration", branch: "loom/csv-all", remote: "upstream", draft: false, git_network_timeout_seconds: 200, worktree: { plugin: "example-trees", command: "trees make --base main" }, forge: { kind: "gh", after_open: ["ci-cli run"] } };
   doc.checks = { commands: ["npm test"], after_merge: ["npm run e2e"] };
   doc.repo = [
-    { name: "web", project: "proj_web", after_merge: ["npm run web-e2e"], worktree: { plugin: "example-trees", command: "trees make web" }, git_network_timeout_seconds: 90, git_index_timeout_seconds: 900 },
+    { name: "web", project: "proj_web", after_merge: ["npm run web-e2e"], worktree: { plugin: "example-trees", command: "trees make web" }, git_network_timeout_seconds: 90 },
     { name: "api", project: "proj_api", base: "trunk", checks: [] },
   ];
   doc.ticket[0].repo = "web";

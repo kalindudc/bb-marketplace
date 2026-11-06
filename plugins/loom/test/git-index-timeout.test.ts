@@ -1,5 +1,5 @@
 // The index and tree steps on the project's checkout (ls-tree, mktree, commit-tree, merge-tree) get
-// the repo's git index time limit, not the 30 seconds quick git calls get. A monorepo's read-tree into a temporary index
+// a 5-minute git index time limit, not the 30 seconds quick git calls get. A monorepo's read-tree into a temporary index
 // took 41.5 s under load, past 30 s, so every submit failed; importCommit now lists and writes only the trees on the way
 // to a changed path, and those steps keep the limit. The process runner is wrapped so that a step "takes" a set time: it
 // is reported as a timeout when its limit is shorter, and runs for real otherwise, so no test waits.
@@ -89,7 +89,7 @@ function checkout() {
   return { dir, base, tree: sh(dir, "rev-parse", "HEAD^{tree}"), a: branch("a"), b: branch("b"), dataDir: join(dir, "..", `data-${counter}`) };
 }
 
-const importInput = (repo: ReturnType<typeof checkout>, extra: { indexTimeoutMs?: number } = {}) => ({
+const importInput = (repo: ReturnType<typeof checkout>) => ({
   repo: repo.dir,
   remote: "origin",
   baseBranch: "main",
@@ -99,7 +99,6 @@ const importInput = (repo: ReturnType<typeof checkout>, extra: { indexTimeoutMs?
   author: AUTHOR,
   entries: [],
   refs: ["refs/heads/loom/csv/csv-1-home"],
-  ...extra,
 });
 
 describe("the git index time limit on the project's checkout", () => {
@@ -115,24 +114,15 @@ describe("the git index time limit on the project's checkout", () => {
     expect(new Set(slow.limits.get("rev-parse"))).toEqual(new Set([30_000]));
   });
 
-  it("gives the steps the repo's own limit, shared across the call", async () => {
+  it("shares the limit across the call's steps, and says how long they ran in a message the server waits out", async () => {
     const repo = checkout();
-    const made = await importCommit(importInput(repo, { indexTimeoutMs: 600_000 }), repo.dataDir);
-    expect(made).toMatchObject({ outcome: "ok" });
-    const [listed] = slow.limits.get("ls-tree")!;
-    expect(listed).toBeGreaterThan(590_000);
-    expect(listed).toBeLessThanOrEqual(600_000);
-    expect(slow.limits.get("mktree")![0]).toBeLessThanOrEqual(listed!);
-  });
-
-  it("names the setting to raise when the steps run past the limit, in a message the server waits out", async () => {
-    const repo = checkout();
-    slow.ms.set("ls-tree", 41_500);
-    const error = await importCommit(importInput(repo, { indexTimeoutMs: 30_000 }), repo.dataDir).then(
+    slow.ms.set("ls-tree", 301_000);
+    const error = await importCommit(importInput(repo), repo.dataDir).then(
       () => null,
       (thrown: unknown) => thrown as Error,
     );
-    expect(error?.message).toMatch(/^git ls-tree took too long: .*ran past 30 seconds\. Raise git_index_timeout_seconds/u);
+    expect(slow.limits.get("ls-tree")![0]).toBeLessThanOrEqual(300_000);
+    expect(error?.message).toMatch(/^git ls-tree took too long: the index and tree steps on the project's checkout ran past 300 seconds$/u);
     expect(hostCallTransient(error)).toEqual({ transient: "server" });
   });
 

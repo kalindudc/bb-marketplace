@@ -8,7 +8,7 @@ const NETWORK_CALL_MS = 150_000;
 // exportChanges reads every changed file of a large commit, ensureWorktree may check out a large repository, and
 // prRetarget, prRequestReview, prEdit and prReply run gh or a forge command.
 const NETWORK_METHODS: readonly HostMethod[] = ["prCreate", "prState", "prFeedback", "prBatch", "ensureWorktree", "ghStatus", "exportChanges", "prRetarget", "prRequestReview", "prEdit", "prReady", "prReply"];
-// The calls that list or write trees on the project's checkout (ls-tree, mktree, commit-tree, merge-tree), all of whose steps share the input's indexTimeoutMs, else GIT_INDEX_TIMEOUT_MS.
+// The calls that list or write trees on the project's checkout (ls-tree, mktree, commit-tree, merge-tree), all of whose steps share GIT_INDEX_TIMEOUT_MS.
 const GIT_INDEX_METHODS: readonly HostMethod[] = ["importCommit", "stackBase", "mergeOnto"];
 /** bb's host call cap is 30 minutes; every call stays under it. */
 const CALL_CAP_MS = 1_770_000;
@@ -19,7 +19,7 @@ const GIT_NETWORK_METHODS: readonly HostMethod[] = ["fetchBranch", "push", "prCo
 
 export function callTimeoutMs<M extends HostMethod>(method: M, input: HostInput<M>): number {
   if (method === "exec") return (input as HostInput<"exec">).timeoutMs + HOST_CALL_MS;
-  const index = GIT_INDEX_METHODS.includes(method) ? ((input as { indexTimeoutMs?: number }).indexTimeoutMs ?? GIT_INDEX_TIMEOUT_MS) : 0;
+  const index = GIT_INDEX_METHODS.includes(method) ? GIT_INDEX_TIMEOUT_MS : 0;
   const network = GIT_NETWORK_METHODS.includes(method) ? 2 * ((input as { networkTimeoutMs?: number }).networkTimeoutMs ?? GIT_NETWORK_TIMEOUT_MS) : 0;
   if (index > 0 || network > 0) return Math.min(CALL_CAP_MS, network + index + HOST_CALL_MS);
   if (method === "prRetarget" && (input as HostInput<"prRetarget">).forge?.kind === "command") return RETARGET_COMMAND_MS + HOST_CALL_MS;

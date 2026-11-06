@@ -39,7 +39,6 @@ A spec without `[[repo]]` tables is a single-repo project: every ticket runs in 
 | `release_workers` | boolean | `true` | pr strategy only; once a ticket's pull request is open and its worker is idle, Loom archives the worker's thread so bb frees its environment, and brings the same thread back with a new environment for a fix round or a catch-up; `false` keeps every worker and its environment until its pull request merges; a pending version may change it after approval. See [Releasing workers](#releasing-workers) |
 | `refresh_behind` | integer | none | pr strategy only; 1 to 1000000; keeps open pull requests fresh with their base: once a pull request's branch lacks at least this many commits of the remote base, or the forge says it conflicts with its base, Loom merges the base into it, runs the ticket's checks in its worker's worktree and pushes, with no new review; unset is off; the default `refresh_behind` of every `[[repo]]`. See [Keeping pull requests fresh](#keeping-pull-requests-fresh) |
 | `git_network_timeout_seconds` | integer | `120` | 30 to 600; how long each git fetch, `ls-remote` or push Loom runs in the repo may take, such as fetching the base branch to bring a stacked pull request up to date, building a pull request's commit, or pushing it; a host call that runs two of them in a row gets twice this plus 30 seconds; the default of every `[[repo]]`. Raise it for a large monorepo, where fetching main takes a minute or more; a version approved after the project started applies from Loom's next pass. See [Slow repositories](#slow-repositories) |
-| `git_index_timeout_seconds` | integer | `300` | 30 to 900; how long the index and tree steps of one call on the repo's checkout may take together: listing and writing the trees on the way to the changed files, and committing the result, when Loom brings a worker's commit home from another machine, and merge-tree when it merges or builds a stacked base; the default of every `[[repo]]`. Quick git calls keep 30 seconds. Raise it for a large monorepo on a loaded machine. See [Slow repositories](#slow-repositories) |
 
 ### [merge.forge]
 
@@ -267,10 +266,9 @@ Loom runs git's network steps in a repo's checkout: it fetches the base branch b
 - To change it on a running project, propose a revision with the new value; it applies once the version is approved, and a version that changes only it skips the spec review. The project's pull requests, workers and tickets are unchanged.
 - The setting covers git's network steps only. `gh`, the forge's commands and the first checkout of an integration worktree keep their own 2-minute limits.
 
-Loom also reads and writes trees in the checkout. When a worker runs on another machine, Loom brings its commit home by listing and writing only the trees on the way to the changed files, then committing the result; it runs merge-tree to bring a pull request up to date and to build a stacked base. These steps of one call share `git_index_timeout_seconds` (300 by default), and calls on one checkout run one at a time. On a large monorepo these steps can still take a while when the machine is loaded, far past the 30 seconds quick git calls get.
+Loom also reads and writes trees in the checkout. When a worker runs on another machine, Loom brings its commit home by listing and writing only the trees on the way to the changed files, then committing the result; it runs merge-tree to bring a pull request up to date and to build a stacked base. These steps of one call share 300 seconds, which a spec cannot change, and calls on one checkout run one at a time. On a large monorepo these steps can still take a while when the machine is loaded, far past the 30 seconds quick git calls get.
 
-- A submit whose steps run out of this time comes back to the worker as "the checks could not run", naming the setting. It counts no check failure and no attempt, and the worker submits the same work again. A merge step that runs out of it is waited out like any temporary failure.
-- Time a merge-tree of two recent commits in the checkout, for example `time git merge-tree --write-tree <a> <b>`, and set `git_index_timeout_seconds` well above it on that `[[repo]]`, or on `[merge]` for a single-repo project. It changes on a running project the same way as `git_network_timeout_seconds`.
+- A submit whose steps run out of this time comes back to the worker as "the checks could not run". It counts no check failure and no attempt, and the worker submits the same work again. A merge step that runs out of it is waited out like any temporary failure.
 
 ### [checks]
 
@@ -351,7 +349,6 @@ Zero to 10 entries. Leave them out when the work stays in the planner thread's o
 | `deploy` | table | `rollout.deploy` | `{ on_merge?, how? }`, like `[rollout].deploy`, for the tickets in this repo; each key it sets replaces the project's; strategy `"pr"` only |
 | `refresh_behind` | integer | `merge.refresh_behind` | like `merge.refresh_behind`, for this repo's pull requests; strategy `"pr"` only; see [Keeping pull requests fresh](#keeping-pull-requests-fresh) |
 | `git_network_timeout_seconds` | integer | `merge.git_network_timeout_seconds` | 30 to 600; like `merge.git_network_timeout_seconds`, for this repo's git fetches, `ls-remote` and pushes |
-| `git_index_timeout_seconds` | integer | `merge.git_index_timeout_seconds` | 30 to 900; like `merge.git_index_timeout_seconds`, for the index and tree steps on this repo's checkout |
 
 Each repo gets its own integration branch (`merge.branch`, from the repo's `base`) and its own Loom worktree. Tickets in different repos never share a file, so their scopes never overlap.
 
@@ -948,6 +945,7 @@ These keys were removed because no project used them, or because they had anothe
 | Key | What to do instead |
 |---|---|
 | `merge.checks_queued_minutes`, `merge.checks_near_done_percent` | Loom's `checksQueuedMinutes` and `checksNearDonePercent` settings, which apply to every project |
+| `merge.git_index_timeout_seconds`, a repo's `git_index_timeout_seconds` | Nothing: the index and tree steps of one call always get 300 seconds, which no project changed |
 
 ## Warnings
 

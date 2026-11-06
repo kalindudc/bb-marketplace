@@ -8,7 +8,7 @@ import { homedir, tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { experimental_runVcsProcess, type ExperimentalVcsProcessPriority } from "@get-bb/plugin-sdk/host";
 import { z } from "zod";
-import { GIT_INDEX_SETTING, GIT_INDEX_TIMEOUT_MS, GIT_NETWORK_TIMEOUT_MS } from "../git-network";
+import { GIT_INDEX_TIMED_OUT, GIT_INDEX_TIMEOUT_MS, GIT_NETWORK_TIMEOUT_MS } from "../git-network";
 import { BLOB_MAX_BYTES, githubPull, prNumber, REPLY_MARK, RETARGET_COMMAND_MS, REVIEW_DECISIONS, type HostInput, type HostOutput } from "../host-contract";
 import { runProcess } from "./process";
 import { callTimeoutMs, callWorkMs } from "../host-budget";
@@ -112,25 +112,23 @@ function run(cwd: string, args: readonly string[], signal?: AbortSignal, timeout
 class GitTimedOut extends Error {}
 
 /**
- * The time one host call's index and tree steps on the project's checkout may take together: its indexTimeoutMs, from the
- * repo's git_index_timeout_seconds, else GIT_INDEX_TIMEOUT_MS. Each step gets what is left, at least one second, so the
- * call stays bounded however many steps it runs.
+ * The time one host call's index and tree steps on the project's checkout may take together, GIT_INDEX_TIMEOUT_MS. Each
+ * step gets what is left, at least one second, so the call stays bounded however many steps it runs.
  */
 interface IndexClock {
   limitMs: number;
   left(): number;
 }
-const indexClock = (input: { indexTimeoutMs?: number }, now: () => number = Date.now): IndexClock => {
-  const limitMs = input.indexTimeoutMs ?? GIT_INDEX_TIMEOUT_MS;
+const indexClock = (now: () => number = Date.now): IndexClock => {
+  const limitMs = GIT_INDEX_TIMEOUT_MS;
   const until = now() + limitMs;
   return { limitMs, left: () => Math.max(1000, until - now()) };
 };
 
-/** What an index step that ran out of its time throws: "took too long", which the server waits out, and the setting to raise. */
-export const indexTimedOut = (what: string, clock: IndexClock) =>
-  new Error(`git ${what} took too long: the index and tree steps on the project's checkout ran past ${Math.round(clock.limitMs / 1000)} seconds. Raise ${GIT_INDEX_SETTING} for the repo if its index is this slow`);
+/** What an index step that ran out of its time throws: "took too long", which the server waits out. */
+export const indexTimedOut = (what: string, clock: IndexClock) => new Error(`git ${what} took too long: ${GIT_INDEX_TIMED_OUT} ${Math.round(clock.limitMs / 1000)} seconds`);
 
-/** run, for an index or tree step: its time is what the call's IndexClock has left, and a timeout names the setting. */
+/** run, for an index or tree step: its time is what the call's IndexClock has left. */
 async function runIndexed(cwd: string, args: readonly string[], clock: IndexClock, signal?: AbortSignal, env: GitEnv = {}): Promise<GitRun> {
   try {
     return await run(cwd, args, signal, clock.left(), "background", env);
@@ -522,7 +520,7 @@ async function stackBaseNow(input: HostInput<"stackBase">, signal?: AbortSignal)
   }
   let sha = kept[0]!;
   const top = kept.length > 1 ? await topLevel(repo, signal) : repo;
-  const clock = indexClock(input);
+  const clock = indexClock();
   for (const next of kept.slice(1)) {
     const merged = await runIndexed(top, ["merge-tree", "--write-tree", "--name-only", "--no-messages", sha, next], clock, signal);
     const lines = merged.stdout.split("\n").filter((line) => line !== "");
@@ -596,13 +594,13 @@ async function mergeOntoNow(input: HostInput<"mergeOnto">, signal?: AbortSignal)
   if (await isAncestor(repo, ref, head, signal)) return { outcome: "merged", sha: head, tree: await git(repo, ["rev-parse", `${head}^{tree}`], { signal }), already: true };
   if (input.ours === true) {
     const kept = await git(repo, ["rev-parse", `${head}^{tree}`], { signal });
-    const sha = await commitTree(repo, kept, [head, ref], message, signal, indexClock(input));
+    const sha = await commitTree(repo, kept, [head, ref], message, signal, indexClock());
     for (const name of refs) await git(repo, ["update-ref", name, sha], { signal });
     return { outcome: "merged", sha, tree: kept, already: false };
   }
   const base = input.base === undefined ? null : await git(repo, ["rev-parse", "--verify", `${input.base}^{commit}`], { signal });
   const explicit = base !== null && (await isAncestor(repo, base, ref, signal)) ? [`--merge-base=${base}`] : [];
-  const clock = indexClock(input);
+  const clock = indexClock();
   const merged = await runIndexed(await topLevel(repo, signal), ["merge-tree", "--write-tree", "--name-only", "--no-messages", ...explicit, head, ref], clock, signal);
   const lines = merged.stdout.split("\n").filter((line) => line !== "");
   if ((merged.code !== 0 && merged.code !== 1) || lines[0] === undefined) throw failure(["merge-tree", "--write-tree", head, ref], merged);
@@ -807,7 +805,7 @@ async function importCommitNow(input: HostInput<"importCommit">, dataDir: string
     const base = await git(repo, ["rev-parse", "--verify", `${input.base}^{commit}`], { signal });
     // These steps share the call's IndexClock. Only the changed paths differ from the base, so only the trees on the way to
     // them are read and written, not the base's whole tree.
-    const clock = indexClock(input);
+    const clock = indexClock();
     const hashed = new Map<string, string>();
     const files = [...new Set(entries.flatMap((entry) => ("upload" in entry ? [entry.upload] : [])))];
     if (files.length > 0) {
@@ -1307,7 +1305,7 @@ export async function carryFinish(input: HostInput<"carryFinish">, signal?: Abor
   } finally {
     rmSync(env.GIT_INDEX_FILE, { force: true });
   }
-  const clock = indexClock({});
+  const clock = indexClock();
   const parentTree = await git(top, ["rev-parse", `${parent}^{tree}`], { signal });
   const built = edits.length === 0 ? parentTree : await rewriteTree(treeIO(top, clock, signal), parentTree, edits);
   if (built !== tree) return { outcome: "mismatch", tree: built };

@@ -328,14 +328,13 @@ describe("createHostPort", () => {
     expect(calls).toEqual([...gitNetwork.map((method) => ({ method, timeoutMs: index.has(method) ? 570_000 : 270_000 })), { method: "pointRefs", timeoutMs: 30_000 }, { method: "stackBase", timeoutMs: 930_000 }]);
   });
 
-  it("gives the calls with index and tree steps on the project's checkout the spec's git index timeout, within bb's 30-minute cap", async () => {
+  it("gives the calls with index and tree steps on the project's checkout the 5-minute git index timeout, within bb's 30-minute cap", async () => {
     const calls: Array<{ method: string; timeoutMs: number }> = [];
     const bb = { hosts: { experimental_client: () => ({ call: async (method: string, _input: unknown, opts: { timeoutMs: number }) => (calls.push({ method, timeoutMs: opts.timeoutMs }), {}) }) } } as unknown as Parameters<typeof createHostPort>[0];
     const port = createHostPort(bb);
-    await port.call("host_1", "mergeOnto", { indexTimeoutMs: 600_000 } as never);
-    await port.call("host_1", "importCommit", { indexTimeoutMs: 600_000 } as never);
-    await port.call("host_1", "importCommit", { indexTimeoutMs: 900_000, networkTimeoutMs: 600_000 } as never);
-    expect(calls.map((call) => call.timeoutMs)).toEqual([630_000, 870_000, 1_770_000]);
+    await port.call("host_1", "mergeOnto", {} as never);
+    await port.call("host_1", "importCommit", { networkTimeoutMs: 600_000 } as never);
+    expect(calls.map((call) => call.timeoutMs)).toEqual([330_000, 1_530_000]);
   });
 
   it("gives pull request reads the network deadline, since gh and a forge command may take 2 minutes", async () => {

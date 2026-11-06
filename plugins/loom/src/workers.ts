@@ -9,7 +9,7 @@ import { plural } from "./format";
 import type { EnvironmentInfo } from "./ports";
 import { andList, branchName, latestChangesRequested, mergeSubject, nudgeText, workerBrief } from "./prompts";
 import { LoomError } from "./projects";
-import { freshBaseOf, gitIndex, gitNetwork, repoSettings } from "./repos";
+import { freshBaseOf, gitNetwork, repoSettings } from "./repos";
 import { idleAction, spawnable, toLite, type TicketLite } from "./scheduler";
 import type { Spec } from "./spec";
 import { EMPTY_STACK, stackBranch, stacking, stackOf, upstreamOf } from "./stack";
@@ -260,7 +260,6 @@ async function stackStart(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticke
       ...(withBase ? { base: { remote: settings.remote, branch: settings.base } } : {}),
       message: mergeSubject([...open.map(branchName), ...(withBase ? [`${settings.remote}/${settings.base}`] : [])], branch),
       ...gitNetwork(settings),
-      ...gitIndex(settings),
     });
   } catch (error) {
     ctx.bb.log("warn", `${ticket.key} cannot start on its dependencies' pull requests yet: ${errText(error)}`);

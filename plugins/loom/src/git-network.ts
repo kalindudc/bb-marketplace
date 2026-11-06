@@ -6,13 +6,9 @@ export const GIT_NETWORK_TIMEOUT_SECONDS = { min: 30, max: 600 } as const;
 
 /**
  * How long the index and tree steps of one host call on the project's checkout may take together (ls-tree, mktree,
- * commit-tree and merge-tree), when the spec sets no git_index_timeout_seconds. A monorepo's whole index under
- * load takes well over the 30 seconds quick git calls get.
+ * commit-tree and merge-tree). A monorepo's trees under load take well over the 30 seconds quick git calls get.
  */
 export const GIT_INDEX_TIMEOUT_MS = 300_000;
 
-/** The bounds of git_index_timeout_seconds. */
-export const GIT_INDEX_TIMEOUT_SECONDS = { min: 30, max: 900 } as const;
-
-/** The setting a host's timeout message names, so the post that carries it says what to raise. */
-export const GIT_INDEX_SETTING = "git_index_timeout_seconds";
+/** What a host's index timeout message says, in this version and the ones that still named a spec key after it. */
+export const GIT_INDEX_TIMED_OUT = "the index and tree steps on the project's checkout ran past";

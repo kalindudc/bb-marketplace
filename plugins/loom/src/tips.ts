@@ -9,7 +9,7 @@ import { transientOf, Unavailable } from "./forge-waits";
 import type { HostOutput } from "./host-contract";
 import { branchName, mergeSubject } from "./prompts";
 import { isWaking } from "./release";
-import { gitIndex, gitNetwork } from "./repos";
+import { gitNetwork } from "./repos";
 import type { Stack } from "./sub-state";
 import { EMPTY_STACK, restackOf, stacking, stackOf } from "./stack";
 import { carryTo, headCameHome, homeBranch, isRemote, reviewedRef } from "./transport";
@@ -100,7 +100,6 @@ export async function takeForRound(ctx: EngineCtx, project: ProjectRow, seen: Ti
       ...(seen.pushed_sha === null ? {} : { base: seen.pushed_sha }),
       message: mergeSubject([`${checkout.settings.remote}/${branchName(seen)}`], branchName(seen)),
       refs: [],
-      ...gitIndex(checkout.settings),
     });
     if (merged.outcome === "merged" && merged.already) return null;
     if (merged.outcome === "conflict") return { kind: "later" };

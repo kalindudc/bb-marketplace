@@ -1098,10 +1098,9 @@ Loom also reads and writes trees in the checkout: it brings a commit
 home from a worker on another machine by rewriting only the trees on the way to
 the changed files, and runs merge-tree to bring a pull request up to date or
 build a stacked base. These calls run one at a time per checkout. The
-steps of one such call share `git_index_timeout_seconds`, 300 by default, set
-on a `[[repo]]` or on `[merge]`; quick git calls keep 30 seconds. A submit
-that runs out of it tells the worker to submit again, names the setting, and
-counts against nothing; a merge that runs out of it is waited out.
+steps of one such call share 300 seconds; quick git calls keep 30 seconds. A
+submit that runs out of it tells the worker to submit again and counts against
+nothing; a merge that runs out of it is waited out.
 
 ### Stacked pull requests
 
@@ -1218,7 +1217,7 @@ apart from its merge and deploy section of each pull request's description.
 A spec with `[[repo]]` tables spans several repositories. Each `[[repo]]` names
 a bb project with a checkout on the machine the planner runs on, where the
 workers run too, and can set its own base, remote, checks, `after_merge` checks,
-protected paths, `git_network_timeout_seconds` and `git_index_timeout_seconds`; what it leaves out comes from
+protected paths and `git_network_timeout_seconds`; what it leaves out comes from
 the top level. Every ticket
 names one repo and changes only that repo, with its scope relative to the
 repo's root, so work that spans repos is split into one ticket per repo, linked

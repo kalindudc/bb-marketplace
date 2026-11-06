@@ -4,7 +4,7 @@ import { z } from "zod";
 import { unknownPlaceholders } from "./environments";
 import { deploysOnMerge, SOAK_PATTERN } from "./rollout";
 import { plural } from "./format";
-import { GIT_INDEX_TIMEOUT_SECONDS, GIT_NETWORK_TIMEOUT_SECONDS } from "./git-network";
+import { GIT_INDEX_TIMEOUT_MS, GIT_NETWORK_TIMEOUT_SECONDS } from "./git-network";
 import { HOOK_EVENTS } from "./hook-events";
 import { matchesAny } from "./scope";
 
@@ -232,8 +232,6 @@ export const ticketSpecSchema = z
 
 // How long each git fetch, ls-remote or push for a repo may take. No default, so a spec without it hashes as it did before it existed.
 const gitNetworkTimeoutSeconds = z.number().int().min(GIT_NETWORK_TIMEOUT_SECONDS.min).max(GIT_NETWORK_TIMEOUT_SECONDS.max);
-// How long the index and tree steps of one host call on the project's checkout may take together. No default, for the same reason.
-const gitIndexTimeoutSeconds = z.number().int().min(GIT_INDEX_TIMEOUT_SECONDS.min).max(GIT_INDEX_TIMEOUT_SECONDS.max);
 
 export const repoSpecSchema = z
   .object({
@@ -251,7 +249,6 @@ export const repoSpecSchema = z
     deploy: deploySchema.optional(),
     refresh_behind: z.number().int().min(1).max(1_000_000).optional(),
     git_network_timeout_seconds: gitNetworkTimeoutSeconds.optional(),
-    git_index_timeout_seconds: gitIndexTimeoutSeconds.optional(),
   })
   .strict();
 
@@ -307,8 +304,6 @@ export const specSchema = z
         refresh_behind: z.number().int().min(1).max(1_000_000).optional(),
         // Unset: GIT_NETWORK_TIMEOUT_MS. A [[repo]] table's own value replaces it.
         git_network_timeout_seconds: gitNetworkTimeoutSeconds.optional(),
-        // Unset: GIT_INDEX_TIMEOUT_MS. A [[repo]] table's own value replaces it.
-        git_index_timeout_seconds: gitIndexTimeoutSeconds.optional(),
       })
       .strict(),
     checks: z
@@ -403,10 +398,14 @@ function formatPath(path: readonly PropertyKey[]): string {
 
 const settingHome = (setting: string) => `Loom's ${setting} setting is its only home, for every project: remove the key, and change the setting on Loom's settings page if you need another value.`;
 
+const INDEX_FIXED = `Loom gives the index and tree steps of one call on a checkout ${GIT_INDEX_TIMEOUT_MS / 1000} seconds, which no project needed to change: remove the key.`;
+
 /** Keys Loom once read and no longer does, by their path with every array index written [], and what replaces each. */
 const REMOVED_KEYS: Readonly<Record<string, string>> = {
   "merge.checks_queued_minutes": settingHome("checksQueuedMinutes"),
   "merge.checks_near_done_percent": settingHome("checksNearDonePercent"),
+  "merge.git_index_timeout_seconds": INDEX_FIXED,
+  "repo[].git_index_timeout_seconds": INDEX_FIXED,
 };
 
 const templatePath = (path: readonly PropertyKey[]) => path.map((part, index) => (typeof part === "number" ? "[]" : `${index > 0 ? "." : ""}${String(part)}`)).join("");
