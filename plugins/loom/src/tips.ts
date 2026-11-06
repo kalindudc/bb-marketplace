@@ -10,7 +10,8 @@ import type { HostOutput } from "./host-contract";
 import { branchName, mergeSubject } from "./prompts";
 import { isWaking } from "./release";
 import { gitIndex, gitNetwork } from "./repos";
-import { EMPTY_STACK, restackOf, stacking, stackOf, type Stack } from "./stack";
+import type { Stack } from "./sub-state";
+import { EMPTY_STACK, restackOf, stacking, stackOf } from "./stack";
 import { carryTo, headCameHome, homeBranch, isRemote, reviewedRef } from "./transport";
 import { resolveEnvironment, specOf, type EngineCtx } from "./workers";
 

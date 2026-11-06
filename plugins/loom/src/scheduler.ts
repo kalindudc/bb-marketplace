@@ -2,6 +2,7 @@
 import type { ThreadRow, TicketRow } from "./db/store";
 import { globsOverlap, type Spec } from "./spec";
 import { startsOn } from "./stack";
+import { readSub, type HandBack } from "./sub-state";
 import type { TicketState } from "./states";
 
 export interface TicketLite {
@@ -22,33 +23,15 @@ export interface TicketLite {
   waitsSince: number | null;
 }
 
-/** A message to the worker is plain text, or a short summary the human sees and detail only the agent reads. */
-export type WorkerMessage = string | { summary: string; detail: string };
-
-/**
- * HandBack: work going back to a ticket's worker (a pull request's fix round, a review's changes, a merge that did not
- * land), stored with the ticket's move to working and sent after it, so a failed send or a restart sends it again.
- */
-export interface HandBack {
-  /** The worker thread it goes to. */
-  thread: string;
-  text: WorkerMessage;
-  /** When it began waiting for a free worker slot; absent once it has one. */
-  waiting?: number;
-  /** The ticket says it waits for a slot. */
-  noticed?: boolean;
-}
-
-const parse = <T>(json: string | null): T | null => (json === null ? null : (JSON.parse(json) as T));
-export const handBackOf = (ticket: Pick<TicketRow, "handback_json">): HandBack | null => parse<HandBack>(ticket.handback_json);
+export const handBackOf = (ticket: Pick<TicketRow, "handback_json">): HandBack | null => readSub(ticket, "handback_json");
 
 /** Work for the ticket's worker waits for a free worker slot. */
 export const waitsForSlot = (ticket: Pick<TicketRow, "state" | "handback_json">): boolean => ticket.state === "working" && handBackOf(ticket)?.waiting !== undefined;
 
 /** Loom asked the approved ticket's worker for its pull request's text at this head, and it is not in yet, so the worker is writing it. */
 function writingPr(ticket: Pick<TicketRow, "head_sha" | "pr_ask_json" | "pr_text_json">): boolean {
-  const ask = parse<{ head: string }>(ticket.pr_ask_json);
-  return ask !== null && ask.head === ticket.head_sha && parse<{ head: string }>(ticket.pr_text_json)?.head !== ticket.head_sha;
+  const ask = readSub(ticket, "pr_ask_json");
+  return ask !== null && ask.head === ticket.head_sha && readSub(ticket, "pr_text_json")?.head !== ticket.head_sha;
 }
 
 /** States in which a ticket holds its scope: someone is still working on, checking, reviewing or merging its files. */

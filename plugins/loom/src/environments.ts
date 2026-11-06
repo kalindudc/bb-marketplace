@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { EnvironmentProviderInfo, SpawnArgs } from "./ports";
 import type { RepoSettings } from "./repos";
 import type { MachineSpec } from "./spec";
+import { readSub } from "./sub-state";
 
 const PLACEHOLDER = /\{([a-z_]+)\}/g;
 const KNOWN = new Set(["branch", "base"]);
@@ -86,7 +87,7 @@ export function environmentFor(
 export const usesNewMachine = (repo: RepoSettings, role: ThreadRole): boolean => environmentFor(repo, role)?.machine !== undefined;
 
 /** A ticket's merge patch over its repo's environment inputs, or null. */
-export const ticketInputsOf = (ticket: { environment_json: string | null }): Record<string, unknown> | null => (ticket.environment_json === null ? null : (JSON.parse(ticket.environment_json) as Record<string, unknown>));
+export const ticketInputsOf = (ticket: { environment_json: string | null }): Record<string, unknown> | null => readSub(ticket, "environment_json");
 
 /** The environment a worker or reviewer of `repo` spawns into; undefined keeps today's managed worktree. */
 export function spawnEnvironment(repo: RepoSettings, values: { branch: string; base: string }, role: ThreadRole = "worker", ticketInputs: Record<string, unknown> | null = null): SpawnArgs["environment"] {

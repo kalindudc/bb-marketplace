@@ -5,7 +5,8 @@
 // what the poll last stored, so the page never adds a call to GitHub.
 import { draftStateOf, type DraftState } from "./drafts";
 import type { TicketRow } from "./db/store";
-import { metaOf, type ReviewDecision } from "./pr-meta";
+import type { ReviewDecision } from "./sub-state";
+import { metaOf } from "./pr-meta";
 import { statusOf } from "./pull-requests";
 import { repoSettings } from "./repos";
 import type { Spec } from "./spec";

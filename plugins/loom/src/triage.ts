@@ -8,6 +8,7 @@ import { rolloutJson, rolloutOfTicket } from "./rollout";
 import { isBudgetPause } from "./scheduler";
 import { dependencyCycle, fallsUnder, numberErrors, ticketEnvironmentErrors, type Spec, type TicketPatch, type TicketRolloutSpec, type TicketSpec } from "./spec";
 import { HUMAN_ACTOR, LOOM_ACTOR, TICKET_STATES, canMoveTicket, type TicketState } from "./states";
+import { writeSub, readSub } from "./sub-state";
 import { endLiveRows, specOf, type EngineCtx } from "./workers";
 
 const ROUND_LIMIT_MS = 30 * 60_000;
@@ -202,10 +203,10 @@ export function addTickets(ctx: EngineCtx, projectId: number, tickets: TicketSpe
           verify_json: JSON.stringify(ticket.verify),
           scope_json: JSON.stringify(ticket.scope),
           deps_json: JSON.stringify(ticket.depends_on.map((dep) => keyOf.get(dep) ?? known.get(dep)!)),
-          merge_after_json: JSON.stringify((ticket.merge_after ?? []).map((ref) => keyOf.get(ref) ?? known.get(ref)!)),
+          ...writeSub("merge_after_json", (ticket.merge_after ?? []).map((ref) => keyOf.get(ref) ?? known.get(ref)!)),
           priority: ticket.priority,
           repo: ticket.repo ?? null,
-          environment_json: ticket.environment === undefined ? null : JSON.stringify(ticket.environment.inputs),
+          ...writeSub("environment_json", ticket.environment === undefined ? null : ticket.environment.inputs),
           rollout_json: rolloutJson(ticket.rollout, (name) => resolve(name)!),
           keep_draft: ticket.keep_draft === true ? 1 : 0,
         },
@@ -268,7 +269,7 @@ export function editTicket(ctx: EngineCtx, key: string, patch: TicketPatch, acto
     const cycle = errors.length === 0 ? dependencyCycle(graph) : null;
     if (cycle !== null) errors.push(`depends_on: dependency cycle ${cycle.join(" -> ")}.`);
   }
-  let mergeAfter = JSON.parse(ticket.merge_after_json) as string[];
+  let mergeAfter = readSub(ticket, "merge_after_json");
   if (patch.merge_after !== undefined) {
     mergeAfter = [];
     for (const ref of patch.merge_after) {
@@ -291,7 +292,7 @@ export function editTicket(ctx: EngineCtx, key: string, patch: TicketPatch, acto
   if (errors.length === 0 && (patch.merge_after !== undefined || patch.depends_on !== undefined)) {
     const graph = board.map((other) => {
       const own = other.key === ticket.key;
-      return { ref: other.key, depends_on: [...(own ? deps : (JSON.parse(other.deps_json) as string[])), ...(own ? mergeAfter : (JSON.parse(other.merge_after_json) as string[]))] };
+      return { ref: other.key, depends_on: [...(own ? deps : (JSON.parse(other.deps_json) as string[])), ...(own ? mergeAfter : readSub(other, "merge_after_json"))] };
     });
     const order = dependencyCycle(graph);
     if (order !== null) errors.push(`merge_after: merge order cycle ${order.join(" -> ")} through depends_on and merge_after.`);
@@ -300,7 +301,7 @@ export function editTicket(ctx: EngineCtx, key: string, patch: TicketPatch, acto
     const graph = board.map((other) => {
       const own = other.key === ticket.key;
       const requires = own ? (rolloutOfTicket({ rollout_json: rollout })?.requires_live ?? []) : requiresOf(other);
-      return { ref: other.key, depends_on: [...(own ? deps : (JSON.parse(other.deps_json) as string[])), ...(own ? mergeAfter : (JSON.parse(other.merge_after_json) as string[])), ...requires] };
+      return { ref: other.key, depends_on: [...(own ? deps : (JSON.parse(other.deps_json) as string[])), ...(own ? mergeAfter : readSub(other, "merge_after_json")), ...requires] };
     });
     const order = dependencyCycle(graph);
     if (order !== null) errors.push(`rollout.requires_live: rollout order cycle ${order.join(" -> ")} through depends_on, merge_after and requires_live.`);
@@ -310,7 +311,7 @@ export function editTicket(ctx: EngineCtx, key: string, patch: TicketPatch, acto
   // Moving to another repo checks the whole ticket against that repo's protected paths and checks.
   if (movesRepo || patch.scope !== undefined || patch.verify !== undefined) errors.push(...problemsOf(spec, "patch", movesRepo || patch.scope !== undefined ? scope : [], verify, repo));
   if (patch.environment !== undefined || (movesRepo && ticket.environment_json !== null)) {
-    const environment = patch.environment ?? { inputs: JSON.parse(ticket.environment_json!) as Record<string, unknown> };
+    const environment = patch.environment ?? { inputs: readSub(ticket, "environment_json")! };
     errors.push(...environmentProblems(spec, "patch.environment", environment, repo));
   }
   if (errors.length > 0) throw refused(errors, `${key} not changed. Fix these and call loom_edit_ticket again`);
@@ -323,13 +324,13 @@ export function editTicket(ctx: EngineCtx, key: string, patch: TicketPatch, acto
     ...(patch.verify === undefined ? {} : { verify_json: JSON.stringify(patch.verify) }),
     ...(patch.scope === undefined ? {} : { scope_json: JSON.stringify(patch.scope) }),
     ...(patch.depends_on === undefined ? {} : { deps_json: JSON.stringify(deps) }),
-    ...(patch.merge_after === undefined ? {} : { merge_after_json: JSON.stringify(mergeAfter) }),
+    ...(patch.merge_after === undefined ? {} : writeSub("merge_after_json", mergeAfter)),
     ...(patch.rollout === undefined ? {} : { rollout_json: rollout }),
     ...(patch.keep_draft === undefined ? {} : { keep_draft: patch.keep_draft ? 1 : 0 }),
     ...(patch.priority === undefined ? {} : { priority: patch.priority }),
     ...(patch.repo === undefined ? {} : { repo: patch.repo }),
     // An empty patch leaves the ticket with its repo's inputs.
-    ...(patch.environment === undefined ? {} : { environment_json: Object.keys(patch.environment.inputs).length === 0 ? null : JSON.stringify(patch.environment.inputs) }),
+    ...(patch.environment === undefined ? {} : writeSub("environment_json", Object.keys(patch.environment.inputs).length === 0 ? null : patch.environment.inputs)),
   };
   // The old values let a rewind show the ticket as it was before the edit.
   const before = Object.fromEntries(Object.keys(changes).map((column) => [column, ticket[column as keyof TicketRow]]));

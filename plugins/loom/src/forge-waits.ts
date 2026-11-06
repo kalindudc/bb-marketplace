@@ -8,6 +8,7 @@
 // runs again after 1, 2, 5 and 10 minutes, then every 15, and pauses the project only once it has failed for an hour.
 import type { TicketRow } from "./db/store";
 import { formatDuration, plural } from "./format";
+import { readSub, type MergeWait, type PollWait } from "./sub-state";
 
 export const POLL_MS = 5 * 60_000;
 const LONGEST_POLL_MS = 30 * 60_000;
@@ -65,18 +66,10 @@ export const waitableOf = (error: unknown): Transient | null => (error instanceo
 /** Who a read that failed was waiting on, for pollWaitText and pollWaitReason, when Loom's call to the machine that runs it got no answer. */
 export const PROJECT_MACHINE = "the project's machine";
 
-/** MergeWait: the ticket's merge failed `failures` times in a row in a way worth waiting out, the first at `since`; it runs again at `until`. */
-export interface MergeWait {
-  failures: number;
-  since: number;
-  until: number;
-  message: string;
-}
-
 const MERGE_RETRY_MS = [1, 2, 5, 10, 15].map((minutes) => minutes * 60_000);
 const LONGEST_MERGE_RETRY_MS = MERGE_RETRY_MS.at(-1)!;
 
-export const mergeWaitOf = (ticket: Pick<TicketRow, "merge_wait_json">): MergeWait | null => (ticket.merge_wait_json === null ? null : (JSON.parse(ticket.merge_wait_json) as MergeWait));
+export const mergeWaitOf = (ticket: Pick<TicketRow, "merge_wait_json">): MergeWait | null => readSub(ticket, "merge_wait_json");
 
 /** Whether the ticket's merge waits now. */
 export const mergeWaits = (ticket: Pick<TicketRow, "merge_wait_json">, now: number): boolean => (mergeWaitOf(ticket)?.until ?? 0) > now;
@@ -102,14 +95,7 @@ export function mergeWaitReason(what: string, wait: MergeWait, now: number): str
   return `${what} failed ${plural(wait.failures, "time")} in a row over ${formatDuration(now - wait.since)}: ${clause(wait.message)}. Resume once the project's machine and the forge answer again.`;
 }
 
-/** PollWait: the ticket's pull request reads failed with a server error `failures` times in a row, the first at `since`. */
-export interface PollWait {
-  failures: number;
-  since: number;
-  message: string;
-}
-
-export const pollWaitOf = (ticket: Pick<TicketRow, "pr_poll_json">): PollWait | null => (ticket.pr_poll_json === null ? null : (JSON.parse(ticket.pr_poll_json) as PollWait));
+export const pollWaitOf = (ticket: Pick<TicketRow, "pr_poll_json">): PollWait | null => readSub(ticket, "pr_poll_json");
 
 /** 5 minutes; after failed reads in a row, 5, 10, 20, then at most 30 minutes. */
 export function pollDelayMs(failures: number): number {

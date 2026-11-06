@@ -5,6 +5,7 @@
 import type { TicketRow } from "./db/store";
 import { formatDuration } from "./format";
 import { SpawnRefusedError, SpawnUnavailableError } from "./ports";
+import { readSub, type StartWait } from "./sub-state";
 
 /**
  * Why a thread did not start. `unavailable`: bb or the environment provider said it cannot start one now. `refused`: bb
@@ -43,36 +44,14 @@ export function retryDelayMs(tries: number): number {
 }
 
 /** A ticket waiting to start its worker, or one of its reviewers, again; kept on the ticket until a thread starts. */
-export interface StartWait {
-  role: "worker" | "reviewer";
-  /** The thread row the next try starts again, so a wait keeps one attempt and one claim on the ticket. */
-  row: number | null;
-  /** Failed starts in a row. */
-  tries: number;
-  /** When the first of them failed. */
-  since: number;
-  /** The earliest time Loom tries again. */
-  until: number;
-  kind: "unavailable" | "failed";
-  reason: string;
-  /** Failures in a row, not counting the starts an unavailable provider refused. */
-  failedInRow: number;
-  /** Whether this failed start counted as a failed attempt. */
-  counted: boolean;
-  /** When the provider first said it was unavailable in this streak; null while it has not. */
-  unavailableSince: number | null;
-  /** The provider has been unavailable for UNAVAILABLE_LIMIT_MS, so the wait is over and the ticket blocks. */
-  expired: boolean;
-}
-
 /** Why a wait on an unavailable provider is over: for how long it was unavailable, and its message. */
 export function unavailableReason(wait: StartWait): string {
   return `the environment provider was unavailable for ${formatDuration(UNAVAILABLE_LIMIT_MS)}: ${wait.reason}`;
 }
 
 export function waitOf(ticket: Pick<TicketRow, "start_wait_json">, role?: StartWait["role"]): StartWait | null {
-  if (ticket.start_wait_json === null) return null;
-  const wait = JSON.parse(ticket.start_wait_json) as StartWait;
+  const wait = readSub(ticket, "start_wait_json");
+  if (wait === null) return null;
   return role === undefined || wait.role === role ? wait : null;
 }
 

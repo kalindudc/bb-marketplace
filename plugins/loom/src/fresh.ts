@@ -6,7 +6,8 @@
 import { repoCheckout } from "./checkouts";
 import type { ProjectRow, Store, TicketRow } from "./db/store";
 import { BEHIND_MAX, type HostOutput } from "./host-contract";
-import { metaOf, type PrMeta } from "./pr-meta";
+import { writeSub, type PrMeta } from "./sub-state";
+import { metaOf } from "./pr-meta";
 import { gitNetwork, isMultiRepo, repoSettings } from "./repos";
 import type { Spec } from "./spec";
 import type { EngineCtx } from "./workers";
@@ -56,7 +57,7 @@ export function refreshedText(key: string, refresh: Refresh, target: string, too
 /** The meta once Loom merged the base into the branch: the forge's word that it conflicts is out of date until its next read. */
 export function refreshedMeta(ticket: TicketRow): Partial<TicketRow> {
   const meta = metaOf(ticket);
-  return meta === null || meta.mergeable !== false ? {} : { pr_meta_json: JSON.stringify({ ...meta, mergeable: null } satisfies PrMeta) };
+  return meta === null || meta.mergeable !== false ? {} : writeSub("pr_meta_json", { ...meta, mergeable: null });
 }
 
 // When Loom last fetched each repo's base, by project and repo, and whether the counts since worked. In memory: a restart fetches again at once.
@@ -114,7 +115,7 @@ function keepCounts(ctx: EngineCtx, project: ProjectRow, asked: readonly TicketR
       if (ticket?.state !== "pr_open" || ticket.pushed_sha !== seen.pushed_sha || commits === undefined || meta === null) continue;
       const { behind: _old, ...rest } = meta;
       const next: PrMeta = commits === null ? rest : { ...rest, behind: { commits, sha: ticket.pushed_sha!, tip: answer.tip, at: ctx.now() } };
-      store.updateTicket(ticket.id, { pr_meta_json: JSON.stringify(next) });
+      store.updateTicket(ticket.id, writeSub("pr_meta_json", next));
     }
   });
   store.changed(project.id);

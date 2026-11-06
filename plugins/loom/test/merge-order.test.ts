@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { TicketRow } from "../src/db/store";
 import { mergeOrderOf, type MergeEntry } from "../src/merge-order";
-import type { PrMeta } from "../src/pr-meta";
+import type { PrMeta } from "../src/sub-state";
 import { parseSpec, type Spec } from "../src/spec";
 import type { TicketState } from "../src/states";
 import { withRepos } from "./fixtures";

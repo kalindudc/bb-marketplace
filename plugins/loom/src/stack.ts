@@ -6,30 +6,14 @@ import type { TicketRow } from "./db/store";
 import { prSettings } from "./repos";
 import type { Spec } from "./spec";
 import type { TicketState } from "./states";
-
-export interface Stack {
-  /** The pull request commit of each dependency in the ticket's repo that its branch contains, by ticket key. */
-  deps: Record<string, string>;
-  /** The commit the ticket's own changes are measured against; null for the repo's fresh base. */
-  base: string | null;
-  /** When the ticket's branch last took the repo's base branch: its first start, or Loom's last merge of the base into it. */
-  synced: number;
-  /** The pull request commit of each dependency in another repo that the worker knows of, by ticket key. */
-  cross: Record<string, string>;
-  /** Dependencies' commits that conflicted with each other, by ticket key, so the ticket waits until one of them changes. */
-  conflict?: { on: Record<string, string>; files: string[] };
-  /** The hold last posted on the ticket, so each hold is posted once. */
-  held?: string;
-  /** Files Loom carried to the worker's machine with conflict markers, which a submit may not keep. */
-  markers?: string[];
-}
+import { readSub, type Stack } from "./sub-state";
 
 export const EMPTY_STACK: Stack = { deps: {}, base: null, synced: 0, cross: {} };
 
 /** Whether the project stacks pull requests: the pr strategy, unless the spec sets merge.stack = false. */
 export const stacking = (spec: Spec) => spec.merge.strategy === "pr" && prSettings(spec).stack;
 
-export const stackOf = (ticket: Pick<TicketRow, "stack_json">): Stack | null => (ticket.stack_json === null ? null : (JSON.parse(ticket.stack_json) as Stack));
+export const stackOf = (ticket: Pick<TicketRow, "stack_json">): Stack | null => readSub(ticket, "stack_json");
 
 /** The local branch Loom points at the commit a stacked ticket starts from or merges in. */
 export const stackBranch = (slug: string, key: string) => `loom/${slug}/${key.toLowerCase()}-stack`;

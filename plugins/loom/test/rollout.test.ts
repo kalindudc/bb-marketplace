@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { LiveBy, RolloutMarkRow, TicketRow } from "../src/db/store";
-import type { PrMeta } from "../src/pr-meta";
-import { rolloutOf, rolloutSection, type RolloutView, type TicketRollout } from "../src/rollout";
+import type { PrMeta, TicketRollout } from "../src/sub-state";
+import { rolloutOf, rolloutSection, type RolloutView } from "../src/rollout";
 import { byUrgency, chainOf, columnsOf, earliestOf, holdsOf, milestoneBlockers, milestoneStatus, pullRequestNote, readyToMerge, repoDeploys, shortCommand, stepStatus } from "../src/ui/rollout-plan";
 import type { MergeEntry } from "../src/merge-order";
 import { parseSpec, type Spec } from "../src/spec";

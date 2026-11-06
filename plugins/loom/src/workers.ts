@@ -16,9 +16,10 @@ import { freshBaseOf, gitIndex, gitNetwork, repoSettings } from "./repos";
 import { backToReview } from "./review";
 import { idleAction, spawnable, toLite, type TicketLite } from "./scheduler";
 import type { Spec } from "./spec";
-import { EMPTY_STACK, restackOf, stackBranch, stacking, stackOf, upstreamOf, type Stack } from "./stack";
+import { EMPTY_STACK, restackOf, stackBranch, stacking, stackOf, upstreamOf } from "./stack";
 import { nextWait, provisioningFailure, startProblemOf, startWaits, unavailableReason, waitOf, waitPost, type StartProblem } from "./starts";
 import { HUMAN_ACTOR, LOOM_ACTOR, PAUSE_NOW_REASON, canMoveTicket, type AuthorKind, type TicketState } from "./states";
+import { readSub, writeSub, type Resume, type Stack } from "./sub-state";
 import { bringHome, carryTo, homeBranch, isRemote } from "./transport";
 
 export interface EngineCtx extends Ctx {
@@ -156,7 +157,7 @@ export async function spawnWorker(ctx: EngineCtx, project: ProjectRow, spec: Spe
     const tickets = store.tickets(project.id).map(toLite);
     const freshSpec = specOf(store, fresh);
     if (!spawnable(freshSpec.agents.max_workers, tickets, waiting, stacking(freshSpec), parked).some((lite) => lite.id === ticket.id)) return null;
-    const stackPatch = start === null ? {} : { stack_json: JSON.stringify(start.stack) };
+    const stackPatch = start === null ? {} : writeSub("stack_json", start.stack);
     const wait = waitOf(current, "worker");
     const again = wait?.row == null ? null : store.thread(wait.row);
     if (again !== null && again.state === "ended" && again.end_reason === "failed" && again.role === "worker" && again.ticket_id === ticket.id && again.attempt === current.attempt) {
@@ -206,7 +207,7 @@ export async function spawnWorker(ctx: EngineCtx, project: ProjectRow, spec: Spe
     // A stacked first start on a machine of its own carries in the commit it is stacked on, which is on the checkout alone.
     const stacked: Resume | null = start?.stack.base != null ? { sha: start.stack.base, tree: start.tree! } : null;
     const pending: Resume | null = !onMachine ? null : earlier !== null ? { sha: earlier.sha, tree: earlier.tree } : stacked;
-    if (onMachine) store.updateThread(row.id, { resume_json: pending === null ? null : JSON.stringify(pending) });
+    if (onMachine) store.updateThread(row.id, writeSub("resume_json", pending));
     const checkouts = onMachine ? new Map<string, string>() : await otherCheckouts(ctx, project, spec, ticket);
     // A thread bb never gave an environment never ran, so it has no conversation to read.
     const earlierThreads = store.threads({ ticketId: ticket.id, role: "worker" }).flatMap((other) => (other.id !== row.id && other.thread_id !== null && (other.environment_id !== null || other.released_at !== null) ? [other.thread_id] : []));
@@ -318,7 +319,7 @@ async function stackStart(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticke
     const known = stackOf(ticket) ?? EMPTY_STACK;
     const body = `Loom cannot start ${ticket.key} on its dependencies' pull requests: ${andList(open.map((dep) => dep.key))} conflict with each other in ${built.files.join(", ")}. It starts once one of them changes or merges.`;
     store.tx(() => {
-      store.updateTicket(ticket.id, { stack_json: JSON.stringify({ ...known, conflict: { on: deps, files: built.files } } satisfies Stack) });
+      store.updateTicket(ticket.id, writeSub("stack_json", { ...known, conflict: { on: deps, files: built.files } }));
       store.addPost({ project_id: project.id, ticket_id: ticket.id, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "system", body, data_json: JSON.stringify({ stackConflict: true, on: deps, files: built.files }) });
     });
     store.changed(project.id);
@@ -396,7 +397,7 @@ export async function failSpawn(ctx: EngineCtx, row: ThreadRow, problem: StartPr
     const text = waitPost("a worker", wait, previous, ctx.now());
     if (text !== null) post(text);
     const reason = wait.kind === "unavailable" ? START_WAITS : START_FAILED;
-    applyMove(ctx, ticket, { to: "queued", patch: { ...released, failures, start_wait_json: JSON.stringify(wait) } }, LOOM_ACTOR, { reason, retryAt: wait.until });
+    applyMove(ctx, ticket, { to: "queued", patch: { ...released, failures, ...writeSub("start_wait_json", wait) } }, LOOM_ACTOR, { reason, retryAt: wait.until });
   });
   store.changed(row.project_id);
   ctx.kick();
@@ -463,14 +464,7 @@ export async function recordBranch(ctx: EngineCtx, row: ThreadRow): Promise<void
 }
 
 /** Resume: the work Loom brought home from a ticket's earlier workers, which a worker on a machine of its own carries in with loom_resume. */
-export interface Resume {
-  sha: string;
-  tree: string;
-  /** The tree the worktree has now, which the carry may replace: the head Loom merged on the project's machine. */
-  replaces?: string;
-}
-
-export const resumeOf = (row: Pick<ThreadRow, "resume_json">): Resume | null => (row.resume_json === null ? null : (JSON.parse(row.resume_json) as Resume));
+export const resumeOf = (row: Pick<ThreadRow, "resume_json" | "thread_id">): Resume | null => readSub(row, "resume_json");
 
 /** loom_resume: puts the work brought home from the ticket's earlier workers in this worker's worktree, as one commit with its tree. */
 export async function resumeWork(ctx: EngineCtx, threadId: string): Promise<string> {

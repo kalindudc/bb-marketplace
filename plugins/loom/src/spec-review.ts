@@ -11,7 +11,8 @@ import { isMultiRepo, repoSettings } from "./repos";
 import type { Spec } from "./spec";
 import { operationalChanges } from "./spec-diff";
 import { SPEC_REVIEW_ROUNDS } from "./states";
-import { nextWait, provisioningFailure, startProblemOf, unavailableReason, type StartProblem, type StartWait } from "./starts";
+import type { StartWait } from "./sub-state";
+import { nextWait, provisioningFailure, startProblemOf, unavailableReason, type StartProblem } from "./starts";
 import { MAX_RATE_LIMIT_RETRIES, rateLimitRetryAt, type EngineCtx, type TurnFailure } from "./workers";
 
 export interface SpecFinding {

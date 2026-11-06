@@ -6,7 +6,8 @@ import { upstreamChangedText } from "./prompts";
 import { repoCheckout } from "./checkouts";
 import { holdForWorker } from "./slots";
 import type { Spec } from "./spec";
-import { stacking, stackOf, type Stack } from "./stack";
+import { writeSub } from "./sub-state";
+import { stacking, stackOf } from "./stack";
 import type { EngineCtx } from "./workers";
 
 const errText = (error: unknown) => (error instanceof Error ? error.message : String(error));
@@ -38,7 +39,7 @@ export async function noteUpstreamChanges(ctx: EngineCtx, project: ProjectRow, s
     const post = (body: string, data: object) =>
       store.addPost({ project_id: project.id, ticket_id: ticket.id, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "system", body, data_json: JSON.stringify(data) });
     store.tx(() => {
-      store.updateTicket(ticket.id, { stack_json: JSON.stringify({ ...stack, cross } satisfies Stack) });
+      store.updateTicket(ticket.id, writeSub("stack_json", { ...stack, cross }));
       for (const dep of changed) {
         post(`${dep.key}'s pull request ${dep.pr_url ?? `in the repo "${dep.repo}"`} has a new commit, ${dep.pushed_sha!.slice(0, 12)}. Check that ${ticket.key}'s work still fits it.`, { upstream: dep.key, sha: dep.pushed_sha });
       }

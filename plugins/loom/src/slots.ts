@@ -7,7 +7,8 @@ import { delivers } from "./checks";
 import type { Store, ThreadRow, TicketRow } from "./db/store";
 import { plural } from "./format";
 import { advanceWake, isReleased, isWaking, wakeRow } from "./release";
-import { NOT_PARKED, freeReviewerSlots, freeWorkerSlots, handBackOf, slotTurns, toLite, type HandBack, type Parked, type WorkerMessage } from "./scheduler";
+import { writeSub, type HandBack, type WorkerMessage } from "./sub-state";
+import { NOT_PARKED, freeReviewerSlots, freeWorkerSlots, handBackOf, slotTurns, toLite, type Parked } from "./scheduler";
 import type { Spec } from "./spec";
 import { startWaits } from "./starts";
 import { LOOM_ACTOR } from "./states";
@@ -21,7 +22,7 @@ const errText = (error: unknown) => (error instanceof Error ? error.message : St
  */
 export function handBack(ctx: EngineCtx, ticket: TicketRow, row: ThreadRow | null, thread: string, text: WorkerMessage, data: object = {}): void {
   toWorking(ctx, ticket, row, data);
-  ctx.store.updateTicket(ticket.id, { handback_json: JSON.stringify({ thread, text, waiting: ctx.now() } satisfies HandBack) });
+  ctx.store.updateTicket(ticket.id, writeSub("handback_json", { thread, text, waiting: ctx.now() }));
 }
 
 /**
@@ -57,7 +58,7 @@ function grantSlots(ctx: EngineCtx, projectId: number, parked: Parked): { waking
       continue;
     }
     changed = true;
-    store.updateTicket(ticket.id, { handback_json: JSON.stringify({ thread: pending.thread, text: pending.text } satisfies HandBack) });
+    store.updateTicket(ticket.id, writeSub("handback_json", { thread: pending.thread, text: pending.text }));
     const row = store.threadByThreadId(pending.thread);
     if (row?.state === "active") store.updateThread(row.id, { clock_at: ctx.now(), idle_count: 0 });
     // A released worker whose restore failed comes back once its wait is over (advanceWakes), holding the slot meanwhile.
@@ -69,7 +70,7 @@ function grantSlots(ctx: EngineCtx, projectId: number, parked: Parked): { waking
 function notice(ctx: EngineCtx, ticket: TicketRow, pending: HandBack, spec: Spec): void {
   const max = spec.agents.max_workers;
   const body = `${ticket.key} waits for a worker slot: the project runs at most ${plural(max, "worker")} at once, and ${max === 1 ? "it is" : "all are"} busy. Its worker gets this as soon as a slot is free.`;
-  ctx.store.updateTicket(ticket.id, { handback_json: JSON.stringify({ ...pending, noticed: true } satisfies HandBack) });
+  ctx.store.updateTicket(ticket.id, writeSub("handback_json", { ...pending, noticed: true }));
   ctx.store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "system", body, data_json: JSON.stringify({ slotWait: true }) });
 }
 
@@ -181,7 +182,7 @@ export function holdForWorker(store: Store, seen: TicketRow, message: WorkerMess
   const first = typeof pending.text === "string" ? { summary: pending.text, detail: "" } : pending.text;
   const more = typeof message === "string" ? message : `${message.summary}\n${message.detail}`;
   const text = { summary: first.summary, detail: first.detail === "" ? more : `${first.detail}\n\n${more}` };
-  store.updateTicket(ticket.id, { handback_json: JSON.stringify({ ...pending, text } satisfies HandBack) });
+  store.updateTicket(ticket.id, writeSub("handback_json", { ...pending, text }));
   return true;
 }
 

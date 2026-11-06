@@ -35,10 +35,10 @@ import {
 } from "./forge-waits";
 import { AFTER_OPEN_ENDED, AFTER_OPEN_MS, AFTER_OPEN_STARTED, followDraft } from "./drafts";
 import { afterMergeChangedText, afterMergeFailedText, andList, branchName, clip, mergeSubject, conflictText, dependsOnLines, landBody, prDivergedText, restackConflictText, restackFailedText, restackMarkersText, restackRefusedText, unfinishedMergeText, withRestoredNote, workerPrBody } from "./prompts";
-import { appliedOf, applyPrText, closedPrReset, followFeedback, inFixRound, openedText, proposalOf, prRollout, prTextFor, prTextReady, reviewersToAsk, syncPrText, targetText, templatePr, wantedText, type PrApplied, type PrText } from "./pull-requests";
+import { appliedOf, applyPrText, closedPrReset, followFeedback, inFixRound, openedText, proposalOf, prRollout, prTextFor, prTextReady, reviewersToAsk, syncPrText, targetText, templatePr, wantedText } from "./pull-requests";
 import { githubPull, prNumber, PR_BATCH_MAX, type HostInput, type HostOutput as HostOutputOf } from "./host-contract";
 import type { EnvironmentInfo } from "./ports";
-import { readMeta, type PrMeta } from "./pr-meta";
+import { readMeta } from "./pr-meta";
 import { LoomError } from "./projects";
 import { autoMergeOf, followsFeedback, freshBaseOf, gitIndex, gitNetwork, isMultiRepo, prSettings, repoSettings, type RepoSettings } from "./repos";
 import { followAutoMerge, type MergeRead } from "./auto-merge";
@@ -47,13 +47,14 @@ import { forgetClosedReads, noteAnswer, readGoesOut } from "./pr-sync";
 import { recordingHost } from "./runs";
 import { refreshDue, refreshedMeta, refreshedText, type Refresh } from "./fresh";
 import type { ForgeSpec, Spec } from "./spec";
-import { EMPTY_STACK, holdKey, holdOf, prBaseOf, restackOf, restackWithBase, stackBranch, stacking, stackOf, type Hold, type Restack, type Stack } from "./stack";
+import { EMPTY_STACK, holdKey, holdOf, prBaseOf, restackOf, restackWithBase, stackBranch, stacking, stackOf, type Hold, type Restack } from "./stack";
 import { isForeign, readTip, TIP_WHAT, tipOutgrowsStack, tipRef, withMarkers, type Tip } from "./tips";
 import { LOOM_ACTOR } from "./states";
+import { readSub, writeSub, type MergeStep, type PrApplied, type PrText, type PrMeta, type Stack } from "./sub-state";
 import { isWaking, releasedWorker, restoredSinceSubmit } from "./release";
 import { deliverHandBacks, handBack } from "./slots";
 import { carryTo, homeBranch, isRemote, reviewedRef, workBaseOf } from "./transport";
-import { applyMove, baseOf, endLiveRows, endThread, pauseProject, released, resolveEnvironment, specOf, type EngineCtx, type Resume } from "./workers";
+import { applyMove, baseOf, endLiveRows, endThread, pauseProject, released, resolveEnvironment, specOf, type EngineCtx } from "./workers";
 
 const PROVISION_MS = 10 * 60_000;
 const errText = (error: unknown) => (error instanceof Error ? error.message : String(error));
@@ -206,7 +207,7 @@ function postHolds(ctx: EngineCtx, projectId: number, spec: Spec): void {
     const key = hold === null ? undefined : holdKey(hold);
     if (key === known?.held || (known === null && hold === null)) continue;
     store.tx(() => {
-      store.updateTicket(ticket.id, { stack_json: JSON.stringify({ ...(known ?? EMPTY_STACK), held: key } satisfies Stack) });
+      store.updateTicket(ticket.id, writeSub("stack_json", { ...(known ?? EMPTY_STACK), held: key }));
       if (hold !== null) addMergePost(ctx, ticket, { body: holdText(spec, ticket, hold), data: { outcome: "held", why: hold.why, keys: hold.keys } });
     });
     store.changed(projectId);
@@ -302,7 +303,7 @@ function waitOutMerge(ctx: EngineCtx, seen: TicketRow, message: string, failure:
     return;
   }
   store.tx(() => {
-    store.updateTicket(ticket.id, { merge_wait_json: JSON.stringify(wait) });
+    store.updateTicket(ticket.id, writeSub("merge_wait_json", wait));
     if (previous === null) addWaitPost(ctx, ticket, mergeWaitText(what, wait, now), { mergeFailed: true, failures: wait.failures, until: wait.until });
   });
   store.changed(ticket.project_id);
@@ -527,7 +528,7 @@ async function openPullRequest(ctx: EngineCtx, project: ProjectRow, spec: Spec, 
   if (fix && ticket.pr_url !== null && settings.forge.kind !== "none") {
     const state = await fixRoundState(ctx, checkout, ticket.pr_url);
     if (state.outcome === "unavailable") throw unavailableOf(state);
-    store.updateTicket(ticket.id, { pr_meta_json: JSON.stringify(readMeta(ticket, { at: ctx.now(), ...state.meta, state: state.state })) });
+    store.updateTicket(ticket.id, writeSub("pr_meta_json", readMeta(ticket, { at: ctx.now(), ...state.meta, state: state.state })));
     if (state.state === "MERGED" && state.meta.base !== null && state.meta.base !== base) {
       await blockMergedElsewhere(ctx, ticket, settings, state.meta.base);
       return;
@@ -679,7 +680,7 @@ async function openPullRequest(ctx: EngineCtx, project: ProjectRow, spec: Spec, 
   if (opened.outcome === "unavailable") throw unavailableOf(opened);
   const on = prBase === base ? "" : ` on ${prBase}`;
   const applied = openedText(ctx, spec, current, clip(pr.title, 256), own ? body : null);
-  toPrOpen(ctx, current.id, { ...recorded, pr_url: opened.url, pr_base: prBase, pr_meta_json: null, pr_applied_json: applied, pr_proposal_json: null }, { kind: "merge", body: `Opened pull request ${opened.url}${on}${commits}.`, data: { outcome: "pr_opened", url: opened.url, sha: src, base: prBase } }, { url: opened.url, opened: true });
+  toPrOpen(ctx, current.id, { ...recorded, pr_url: opened.url, pr_base: prBase, pr_meta_json: null, ...writeSub("pr_applied_json", applied), pr_proposal_json: null }, { kind: "merge", body: `Opened pull request ${opened.url}${on}${commits}.`, data: { outcome: "pr_opened", url: opened.url, sha: src, base: prBase } }, { url: opened.url, opened: true });
   await afterOpen(ctx, { hostId, repo, settings, head: branch, base: prBase, url: opened.url, projectId: project.id, ticketId: current.id });
   // An after_open command may mark it ready itself, so with one, the first read that still finds a draft does it.
   if (spec.merge.draft && (settings.forge.after_open ?? []).length === 0) await followDraft(ctx, project, current.id, true, prBase);
@@ -737,7 +738,7 @@ async function restack(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket: 
   const known = stackOf(ticket) ?? EMPTY_STACK;
   if (built.outcome === "conflict") {
     store.tx(() => {
-      store.updateTicket(ticket.id, { stack_json: JSON.stringify({ ...known, conflict: { on: need.deps, files: built.files } } satisfies Stack) });
+      store.updateTicket(ticket.id, writeSub("stack_json", { ...known, conflict: { on: need.deps, files: built.files } }));
       addMergePost(ctx, ticket, { body: `Loom cannot bring ${ticket.key} up to date: ${what} conflict with each other in ${built.files.join(", ")}. It stays as it is until one of them changes.`, data: { outcome: "restack_conflict", files: built.files } });
     });
     store.changed(project.id);
@@ -758,7 +759,7 @@ async function restack(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket: 
     return null;
   }
   if (merged.already) {
-    store.updateTicket(ticket.id, { stack_json: JSON.stringify(stack) });
+    store.updateTicket(ticket.id, writeSub("stack_json", stack));
     return { ticket: store.ticket(ticket.id)!, what, sources, checked: false };
   }
   const step: MergeStep = { kind: "restack", from: ticket.head_sha!, sha: merged.sha, tree: null, remote: false, what, sources, checkBase: built.sha, stack, refs: [], data: { deps: need.deps, base: built.tip ?? need.baseTip ?? null } };
@@ -781,13 +782,13 @@ async function restackOnMachine(
   const refs = [`refs/heads/${homeBranch(project.slug, ticket.key)}`, reviewedRef(project.slug, ticket.key)];
   const merged = await ctx.host.call(a.checkout.hostId, "mergeOnto", { repo: a.checkout.path, head: ticket.head_sha!, ref: a.built, message: mergeSubject(a.sources, branchName(ticket)), refs, ...gitIndex(a.checkout.settings) });
   if (merged.outcome === "merged" && merged.already) {
-    store.updateTicket(ticket.id, { stack_json: JSON.stringify(stack) });
+    store.updateTicket(ticket.id, writeSub("stack_json", stack));
     return { ticket: store.ticket(ticket.id)!, what, sources: a.sources, checked: false };
   }
   if (merged.outcome === "conflict") {
     const carried: Stack = { ...stack, markers: merged.files };
-    if (!(await carryOrRefuse(ctx, project, spec, { ...ticket, stack_json: JSON.stringify(carried) }, merged.sha, environment, what))) return null;
-    store.updateTicket(ticket.id, { stack_json: JSON.stringify(carried) });
+    if (!(await carryOrRefuse(ctx, project, spec, { ...ticket, ...writeSub("stack_json", carried) }, merged.sha, environment, what))) return null;
+    store.updateTicket(ticket.id, writeSub("stack_json", carried));
     await sendBack(ctx, ticket.id, {
       post: { kind: "merge", body: `Merging ${what} into ${ticket.key}'s branch conflicted in: ${merged.files.join(", ")}. Loom put the result, with conflict markers, in the worker's worktree.`, data: { outcome: "conflict", files: merged.files, restack: true } },
       text: restackMarkersText(ticket.key, what, merged.files),
@@ -823,47 +824,13 @@ async function carryOrRefuse(ctx: EngineCtx, project: ProjectRow, spec: Spec, ti
   }
 }
 
-/**
- * MergeStep: a merge Loom put in, or is putting in, the ticket's worker's worktree to bring its branch up to date (a
- * restack) or to take commits someone else pushed to its pull request branch (a tip), with the checks that must pass on
- * it before it becomes the ticket's head. It is kept on the ticket until they finish, so a run of the merge after a
- * failure worth waiting out, a pause or a restart finishes the same merge instead of merging again from the older head,
- * and nothing is pushed or accounted for before its checks pass; then, checked, until Loom pushes it.
- */
-interface MergeStep {
-  kind: "restack" | "tip";
-  /** The ticket's head when Loom merged; the step holds only while head_sha is still this. */
-  from: string;
-  sha: string;
-  /** The merge's tree, which a worker on another machine is checked by; null for a merge made in a worker's own worktree. */
-  tree: string | null;
-  /** The worker is on another machine, which gets the merge as linear commits. */
-  remote: boolean;
-  /** What the merge took, for the posts. */
-  what: string;
-  /** What it took by branch or remote ref, for the subject of the commit Loom pushes; none in a step from before 0.35.0. */
-  sources?: string[];
-  /** What the checks measure the worktree against. */
-  checkBase: string;
-  /** A restack's stack: what the ticket's branch is built on once the merge is in. */
-  stack?: Stack;
-  /** A tip's pull request branch tip, which Loom accounts for as pushed once the worker's worktree builds on it. */
-  tip?: string;
-  /** Refs on the checkout to point at the merge once it is in the worktree. */
-  refs: string[];
-  /** The restacked post's data, besides the sha and the runs. */
-  data: Record<string, unknown>;
-  /** Its checks passed and it is the ticket's head; it stays until Loom pushes it, so a push that failed is made on the next run. */
-  checked?: boolean;
-}
-
 function stepOf(ticket: TicketRow): MergeStep | null {
-  const step = ticket.merge_step_json === null ? null : (JSON.parse(ticket.merge_step_json) as MergeStep);
+  const step = readSub(ticket, "merge_step_json");
   return step !== null && step.from === ticket.head_sha ? step : null;
 }
 
 async function startStep(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket: TicketRow, step: MergeStep, checkout: RepoCheckout, text: PrText): Promise<TicketRow | null> {
-  ctx.store.updateTicket(ticket.id, { merge_step_json: JSON.stringify(step) });
+  ctx.store.updateTicket(ticket.id, writeSub("merge_step_json", step));
   return finishStep(ctx, project, spec, ctx.store.ticket(ticket.id)!, step, checkout, text);
 }
 
@@ -892,7 +859,7 @@ async function finishStep(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticke
   const environment = { ...found, path: found.path };
 
   if (step.remote) {
-    const carried = step.stack === undefined ? ticket : { ...ticket, stack_json: JSON.stringify(step.stack) };
+    const carried = step.stack === undefined ? ticket : { ...ticket, ...writeSub("stack_json", step.stack) };
     if (!(await carryOrRefuse(ctx, project, spec, carried, step.sha, environment, what))) return null;
   } else {
     const state = await ctx.host.call(environment.hostId, "worktreeState", { worktree: environment.path, base: step.checkBase });
@@ -917,7 +884,7 @@ async function finishStep(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticke
   const { runs, failure } = await checksOnMerge(ctx, { spec, ticket, settings: checkout.settings, environment, base: step.checkBase, expect: step.remote ? { tree: step.tree! } : { head: step.sha } });
   // The worktree of a worker on another machine builds on the tip now, so the next merge of the branch uses it as its base.
   const accounted = step.tip !== undefined && step.remote ? { pushed_sha: step.tip, pushed_at: ctx.now() } : {};
-  const stacked = step.stack === undefined ? {} : { stack_json: JSON.stringify(step.stack) };
+  const stacked = step.stack === undefined ? {} : writeSub("stack_json", step.stack);
   if (failure !== null) {
     // A worktree bb restored since the worker last ran has none of the files git ignores, so its first failed check counts no failure.
     const restored = !step.remote && restoredSinceSubmit(store.posts(ticket.id));
@@ -931,10 +898,10 @@ async function finishStep(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticke
     store.updateTicket(ticket.id, {
       head_sha: step.sha,
       head_tree: step.remote ? step.tree : null,
-      merge_step_json: JSON.stringify({ ...step, from: step.sha, checked: true } satisfies MergeStep),
+      ...writeSub("merge_step_json", { ...step, from: step.sha, checked: true }),
       ...accounted,
       ...stacked,
-      ...(text.by === "worker" ? { pr_text_json: JSON.stringify({ ...text, head: step.sha } satisfies PrText) } : {}),
+      ...(text.by === "worker" ? writeSub("pr_text_json", { ...text, head: step.sha }) : {}),
     });
     addMergePost(ctx, ticket, { body: `Merged ${took} into ${ticket.key}'s branch as ${step.sha.slice(0, 12)}${where}${passed}.`, data: { outcome: "restacked", sha: step.sha, ...step.data, runs: runs.map(({ command, exitCode, timedOut, durationMs }) => ({ command, exitCode, timedOut, durationMs })) } });
   });
@@ -1040,7 +1007,7 @@ async function takeAtPush(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticke
     return null;
   }
   if (merged.outcome === "conflict") {
-    const carried = { ...current, stack_json: JSON.stringify(withMarkers(current, merged.files)) };
+    const carried = { ...current, ...writeSub("stack_json", withMarkers(current, merged.files)) };
     if (!(await carryOrRefuse(ctx, project, spec, carried, merged.sha, environment, what))) return null;
     await ctx.host.call(hostId, "pointRefs", { repo, sha: merged.sha, refs: [home] });
     // The worktree builds on the tip now, so the next merge of the branch uses it as its base. Recorded only here, with the
@@ -1104,7 +1071,7 @@ async function mergedHome(ctx: EngineCtx, project: ProjectRow, checkout: RepoChe
   const sameTree = merged.tree === ticket.head_tree;
   store.tx(() => {
     store.updateTicket(ticket.id, { head_sha: merged.sha, head_tree: merged.tree, pushed_sha: tip, pushed_at: ctx.now() });
-    if (!sameTree) store.updateThread(worker.id, { resume_json: JSON.stringify({ sha: merged.sha, tree: merged.tree, ...(ticket.head_tree === null ? {} : { replaces: ticket.head_tree }) } satisfies Resume) });
+    if (!sameTree) store.updateThread(worker.id, writeSub("resume_json", { sha: merged.sha, tree: merged.tree, ...(ticket.head_tree === null ? {} : { replaces: ticket.head_tree }) }));
     addMergePost(ctx, ticket, {
       body: sameTree
         ? `Merged ${TIP_WHAT} (tip ${tip.slice(0, 12)}) into ${ticket.key} as ${merged.sha.slice(0, 12)} on the project's machine. They add nothing the approved work lacks, so the tree is unchanged, and Loom pushes it from there without touching the worker's worktree.`
@@ -1225,9 +1192,9 @@ const reopenReset = { pr_url: null, pr_base: null, pr_meta_json: null, pr_status
  * The PrApplied a replacement pull request opens with: the text the old one was to end up with (targetText), the approved
  * edit still waiting if there is one. The old pull request's edit and retry state, and its Rollout record, stay behind.
  */
-function keptText(ctx: EngineCtx, ticket: TicketRow): string {
+function keptText(ctx: EngineCtx, ticket: TicketRow): PrApplied {
   const text = targetText(ctx, ticket);
-  return JSON.stringify({ title: text.title, body: text.body, live: [], at: ctx.now() } satisfies PrApplied);
+  return { title: text.title, body: text.body, live: [], at: ctx.now() };
 }
 
 /**
@@ -1266,7 +1233,7 @@ async function closedPullRequest(ctx: EngineCtx, project: ProjectRow, ticket: Ti
   const why = owner?.state === "done" ? `${owner.key}'s pull request, whose branch ${branch} it built on, merged` : `the branch it built on, ${branch}, left ${remote}`;
   store.tx(() => {
     const current = store.ticket(ticket.id)!;
-    store.updateTicket(current.id, { ...reopenReset, pr_applied_json: keptText(ctx, current) });
+    store.updateTicket(current.id, { ...reopenReset, ...writeSub("pr_applied_json", keptText(ctx, current)) });
     const after = store.ticket(current.id)!;
     const tickets = store.tickets(project.id);
     const hold = holdOf(tickets, after);
@@ -1543,7 +1510,7 @@ function waitOutServerError(ctx: EngineCtx, ticket: TicketRow, message: string, 
   const previous = pollWaitOf(ticket);
   const wait = nextPollWait(previous, { now, message });
   store.tx(() => {
-    store.updateTicket(ticket.id, { pr_poll_json: JSON.stringify(wait) });
+    store.updateTicket(ticket.id, writeSub("pr_poll_json", wait));
     if (previous === null) addWaitPost(ctx, ticket, pollWaitText(wait, forge), { prReadFailed: true, failures: wait.failures });
   });
   store.changed(ticket.project_id);
@@ -1711,7 +1678,7 @@ async function settleRead(ctx: EngineCtx, project: ProjectRow, settings: RepoSet
   // The answer is about the pull request and attempt that were polled; the human may have blocked and requeued the ticket during the host call.
   const seen = store.ticket(polled.id);
   if (seen?.state !== "pr_open" || seen.pr_url !== polled.pr_url || seen.attempt !== polled.attempt || seen.pushed_sha !== polled.pushed_sha) return;
-  if (read.meta !== null) store.updateTicket(seen.id, { pr_meta_json: JSON.stringify(readMeta(seen, { at: ctx.now(), ...read.meta, state: read.state })) });
+  if (read.meta !== null) store.updateTicket(seen.id, writeSub("pr_meta_json", readMeta(seen, { at: ctx.now(), ...read.meta, state: read.state })));
   const current = store.ticket(seen.id)!;
   const base = read.meta?.base ?? null;
   if (read.state === "MERGED" && settings.forge.kind === "none") {

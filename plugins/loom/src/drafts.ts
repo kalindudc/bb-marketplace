@@ -7,7 +7,8 @@ import type { EventRow, ProjectRow, Store, TicketRow } from "./db/store";
 import { repoCheckout, type RepoCheckout } from "./checkouts";
 import { hostCallTransient } from "./forge-waits";
 import type { HostOutput } from "./host-contract";
-import { metaOf, type PrMeta } from "./pr-meta";
+import { writeSub } from "./sub-state";
+import { metaOf } from "./pr-meta";
 import { LoomError } from "./projects";
 import { canReady, repoSettings } from "./repos";
 import type { Spec } from "./spec";
@@ -61,7 +62,7 @@ async function dispatchReady(ctx: EngineCtx, checkout: RepoCheckout, url: string
 /** The stored read says the pull request is no draft any more, so this pass's reviewer request and merge see it so. */
 function notDraft(ctx: EngineCtx, ticket: TicketRow): void {
   const meta = metaOf(ticket);
-  if (meta !== null) ctx.store.updateTicket(ticket.id, { pr_meta_json: JSON.stringify({ ...meta, draft: false } satisfies PrMeta) });
+  if (meta !== null) ctx.store.updateTicket(ticket.id, writeSub("pr_meta_json", { ...meta, draft: false }));
 }
 
 // The tickets whose pull request this process is marking ready or releasing now, claimed in the same synchronous stretch

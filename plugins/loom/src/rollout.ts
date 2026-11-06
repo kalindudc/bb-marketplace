@@ -8,6 +8,7 @@ import { metaOf } from "./pr-meta";
 // Only types from spec.ts: prompts.ts reads this file, and the page's bundle reads prompts.ts, which keeps zod out of it.
 import type { Spec, TicketRolloutSpec } from "./spec";
 import type { TicketState } from "./states";
+import { readSub, writeSub, type TicketRollout } from "./sub-state";
 
 export const SOAK_PATTERN = /^([1-9]\d{0,2})([mhd])$/;
 const SOAK_UNIT_MS = { m: 60_000, h: 3_600_000, d: 86_400_000 } as const;
@@ -31,14 +32,12 @@ export function hasRollout(spec: Spec): boolean {
 }
 
 /** A ticket row's rollout: the spec's, with the tickets in requires_live as keys and milestones as refs. */
-export type TicketRollout = TicketRolloutSpec;
-
-export const rolloutOfTicket = (ticket: Pick<TicketRow, "rollout_json">): TicketRollout | null => (ticket.rollout_json === null ? null : (JSON.parse(ticket.rollout_json) as TicketRollout));
+export const rolloutOfTicket = (ticket: Pick<TicketRow, "rollout_json">): TicketRollout | null => readSub(ticket, "rollout_json");
 
 /** The rollout_json a ticket row keeps for a spec or patch rollout, its ticket refs turned into keys by `keyOf`; null for none or an empty one. */
 export function rolloutJson(rollout: TicketRolloutSpec | undefined, keyOf: (ref: string) => string): string | null {
   if (rollout === undefined || Object.keys(rollout).length === 0) return null;
-  return JSON.stringify(rollout.requires_live === undefined ? rollout : { ...rollout, requires_live: rollout.requires_live.map(keyOf) });
+  return writeSub("rollout_json", rollout.requires_live === undefined ? rollout : { ...rollout, requires_live: rollout.requires_live.map(keyOf) }).rollout_json;
 }
 
 /** How a ticket's change reaches traffic: the ticket's own words, else its repo's, else the project's; and whether its merge does it. */

@@ -4,7 +4,6 @@ import type { Skipped } from "./check-wait";
 import type { CheckRun } from "./checks";
 import type { PostRow, ProjectRow, ReviewRow, SpecReviewRow, TicketRow } from "./db/store";
 import { its, plural } from "./format";
-import type { PrApplied, PrProposal } from "./pull-requests";
 import { canEdit, canReply, followsFeedback, isMultiRepo, prSettings, repoSettings, type RepoSettings } from "./repos";
 import type { Finding } from "./review";
 import { rolloutFacts } from "./rollout";
@@ -14,6 +13,7 @@ import { restackOf, stacking, stackOf, upstreamOf } from "./stack";
 import type { SpecNote } from "./spec-paths";
 import type { SpecFinding } from "./spec-review";
 import { SPEC_REVIEW_ROUNDS, type MergeChoice, type TicketState } from "./states";
+import { readSub } from "./sub-state";
 import type { ForeignTip } from "./tips";
 
 const minute = (at: number) => `${new Date(at).toISOString().slice(0, 16)}Z`;
@@ -264,7 +264,7 @@ export function dependsOnLines(spec: Spec, tickets: readonly TicketRow[], ticket
   if (only?.pr_url != null) lines.push(`Builds on ${changeName(only)}; merge that first, and this pull request then moves to \`${repoSettings(spec, ticket.repo).base}\`.`);
   for (const dep of up.cross) if (dep.state !== "done" && dep.state !== "cancelled" && dep.pr_url !== null) lines.push(`Needs ${changeName(dep)} merged first.`);
   const byKey = new Map(tickets.map((row) => [row.key, row]));
-  for (const key of JSON.parse(ticket.merge_after_json) as string[]) {
+  for (const key of readSub(ticket, "merge_after_json")) {
     const before = byKey.get(key);
     if (before === undefined || before.state === "done" || before.state === "cancelled") continue;
     lines.push(`Merge after ${changeName(before)}.`);
@@ -674,7 +674,7 @@ const shownText = (title: string | null, body: string | null) => [`Title: ${titl
  */
 function prTextReviewSection(spec: Spec, repo: RepoSettings, ticket: TicketRow): string[] {
   if (spec.merge.strategy !== "pr" || prSettings(spec).describe !== "worker") return [];
-  const proposal = ticket.pr_proposal_json === null ? null : (JSON.parse(ticket.pr_proposal_json) as PrProposal);
+  const proposal = readSub(ticket, "pr_proposal_json");
   const judge =
     "Judge this text as you judge the code, against the rubric and the ticket, and by the rules of the loom-pr-description skill: its reader is a reviewer who has never seen Loom. Request changes to it with a finding when it is wrong, unclear or leaves out what the rubric asks of a pull request, and request changes with a finding when it names a ticket key or ref instead of a pull request link, uses Loom's vocabulary or says how the change was produced (planner, worker, round, brief, triage, the ticket, the human, acceptance criterion numbers), explains the agent's machine or sandbox instead of what ran and what CI covers, or writes its own merge or deploy order section. Loom adds its own merge and deploy section after the description, so do not ask for that.";
   if (ticket.pushed_sha === null) {
@@ -684,7 +684,7 @@ function prTextReviewSection(spec: Spec, repo: RepoSettings, ticket: TicketRow):
     const where = repo.forge.kind === "none" ? " A person opens it here, with the text Loom posts on the ticket." : "";
     return ["## The pull request as it will open", `The worker proposes this title and description; Loom opens the pull request with them once the reviewers approve.${where}`, ...shownText(proposal.title, proposal.body), judge, ""];
   }
-  const applied = ticket.pr_applied_json === null ? null : (JSON.parse(ticket.pr_applied_json) as PrApplied);
+  const applied = readSub(ticket, "pr_applied_json");
   const unknown = repo.forge.kind === "none" ? "Loom opens no pull request on this forge; a person opened it with the text the ticket's posts show." : "Loom has no record of the text it set; read it on the pull request.";
   const current = applied === null ? [unknown] : [`${applied.byHand === true ? "Loom last posted this text on the ticket for the human to set" : "Loom last set"}:`, ...shownText(applied.title, applied.body ?? "(Loom's template from the ticket)")];
   // An approved edit still waiting to be set is what the pull request is to read, so a proposal is judged against it.

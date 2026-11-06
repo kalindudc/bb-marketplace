@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { TicketRow } from "../src/db/store";
-import { conflictWaits, holdOf, prBaseOf, restackOf, syncWanted, type Stack } from "../src/stack";
+import type { Stack } from "../src/sub-state";
+import { conflictWaits, holdOf, prBaseOf, restackOf, syncWanted } from "../src/stack";
 import type { TicketState } from "../src/states";
 
 let seq = 0;

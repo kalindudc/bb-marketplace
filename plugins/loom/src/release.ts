@@ -11,7 +11,8 @@ import { prSettings } from "./repos";
 import { waitsForSlot } from "./scheduler";
 import type { Spec } from "./spec";
 import { holdOf, restackOf, stacking, upstreamOf } from "./stack";
-import { nextWait, provisioningFailure, startProblemOf, startWaits, UNAVAILABLE_LIMIT_MS, unavailableReason, waitOf, type StartProblem, type StartWait } from "./starts";
+import { writeSub, type StartWait } from "./sub-state";
+import { nextWait, provisioningFailure, startProblemOf, startWaits, UNAVAILABLE_LIMIT_MS, unavailableReason, waitOf, type StartProblem } from "./starts";
 import { LOOM_ACTOR } from "./states";
 import { headCameHome, isRemote, worktreeBaseOf } from "./transport";
 import { applyMove, endThread, released, specOf, type EngineCtx } from "./workers";
@@ -211,7 +212,7 @@ async function wakeFailed(ctx: EngineCtx, row: ThreadRow, problem: StartProblem)
   store.tx(() => {
     store.updateThread(row.id, { state: "ended", ended_at: ctx.now(), end_reason: "released" });
     if (ticket === null || ticket.worker_thread_id !== row.thread_id) return;
-    store.updateTicket(ticket.id, { start_wait_json: JSON.stringify(wait) });
+    store.updateTicket(ticket.id, writeSub("start_wait_json", wait));
     if (previous?.reason !== wait.reason) {
       const after = wait.kind === "unavailable" ? `the ticket blocks if the provider stays unavailable for ${formatDuration(UNAVAILABLE_LIMIT_MS)}` : "after 4 failures in a row a new worker takes over from the branch";
       const body = `Could not bring the worker's environment back: ${wait.reason}. Loom tries again in ${formatDuration(wait.until - ctx.now())}; ${after}.`;

@@ -7,7 +7,7 @@ import { delivers, workerOf } from "./checks";
 import { repoCheckout, type RepoCheckout } from "./checkouts";
 import { createHash } from "node:crypto";
 import type { PostRow, ProjectRow, Store, ThreadRow, TicketRow } from "./db/store";
-import { hostCallTransient, nextMergeWait, transientOf, type MergeWait } from "./forge-waits";
+import { hostCallTransient, nextMergeWait, transientOf } from "./forge-waits";
 import { PR_BODY_MAX, REPLY_MARK, type HostOutput } from "./host-contract";
 import { formatDuration, plural } from "./format";
 import { LoomError } from "./projects";
@@ -16,6 +16,7 @@ import { canEdit, canReply, prSettings, repoSettings } from "./repos";
 import { rolloutOf, rolloutSection } from "./rollout";
 import type { ForgeSpec, Spec } from "./spec";
 import { LOOM_ACTOR } from "./states";
+import { readSub, writeSub, type PrApplied, type PrProposal, type PrStatus, type PrText, type PrWant } from "./sub-state";
 import { isWaking, releasedWorker } from "./release";
 import { NOT_PARKED, toLite, workerSlots, type Parked } from "./scheduler";
 import { deliverHandBacks, handBack } from "./slots";
@@ -31,37 +32,10 @@ export const CHECKS_SETTLE_MS = CHECKS_SETTLE_MINUTES * 60_000;
 
 const errText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
-export interface PrAsk {
-  head: string;
-  at: number;
-  fix: boolean;
-  nudged: boolean;
-}
-
-/** What opens the pull request or names the fix commit: the worker's text, or Loom's template (`by: "loom"`). */
-export interface PrText {
-  head: string;
-  by: "worker" | "loom";
-  title: string | null;
-  body: string | null;
-  commit: string;
-}
-
-export interface PrStatus {
-  at: number;
-  head: string;
-  passed: number;
-  failed: number;
-  pending: number;
-  /** When Loom first saw each check that is still queued on this head, by check key. */
-  queued?: Record<string, number>;
-}
-
 type Feedback = Extract<HostOutput<"prFeedback">, { outcome: "ok" }>;
 
-const parse = <T>(json: string | null): T | null => (json === null ? null : (JSON.parse(json) as T));
-export const askOf = (ticket: TicketRow) => parse<PrAsk>(ticket.pr_ask_json);
-export const statusOf = (ticket: TicketRow) => parse<PrStatus>(ticket.pr_status_json);
+export const askOf = (ticket: TicketRow) => readSub(ticket, "pr_ask_json");
+export const statusOf = (ticket: TicketRow) => readSub(ticket, "pr_status_json");
 
 /** A ticket whose pull request branch Loom pushed before: its next push is a fix round, one more commit on that branch. */
 export const inFixRound = (ticket: TicketRow) => ticket.pr_branch !== null && ticket.pushed_sha !== null;
@@ -69,7 +43,7 @@ export const inFixRound = (ticket: TicketRow) => ticket.pr_branch !== null && ti
 /** The text the next push uses, when it is ready: the worker's for this head, or the template when the spec says so. */
 export function prTextFor(spec: Spec, ticket: TicketRow): PrText | null {
   if (prSettings(spec).describe === "loom") return templateText(ticket, null);
-  const text = parse<PrText>(ticket.pr_text_json);
+  const text = readSub(ticket, "pr_text_json");
   return text !== null && text.head === ticket.head_sha ? text : null;
 }
 
@@ -103,7 +77,7 @@ function useTemplate(ctx: EngineCtx, ticket: TicketRow, reason: string): void {
     const current = store.ticket(ticket.id);
     if (current?.state !== "approved" || current.head_sha !== ticket.head_sha) return;
     const text = templateText(current, null);
-    store.updateTicket(current.id, { pr_text_json: JSON.stringify(text) });
+    store.updateTicket(current.id, writeSub("pr_text_json", text));
     const fix = inFixRound(current);
     post(ctx, current, {
       body: `Loom wrote the ${fix ? "fix round's commit message" : "pull request"} from its template: ${reason}.`,
@@ -137,7 +111,7 @@ export async function askForPrTexts(ctx: EngineCtx, project: ProjectRow, spec: S
     if (workerSlots(spec.agents.max_workers, store.tickets(project.id).map(toLite), parked.workers) === 0) continue;
     const fix = inFixRound(ticket);
     store.tx(() => {
-      store.updateTicket(ticket.id, { pr_ask_json: JSON.stringify({ head: ticket.head_sha!, at: ctx.now(), fix, nudged: false } satisfies PrAsk) });
+      store.updateTicket(ticket.id, writeSub("pr_ask_json", { head: ticket.head_sha!, at: ctx.now(), fix, nudged: false }));
       store.updateThread(worker.row.id, { idle_count: 0 });
     });
     store.changed(project.id);
@@ -164,7 +138,7 @@ export async function onPrWriterIdle(ctx: EngineCtx, seen: ThreadRow): Promise<b
     useTemplate(ctx, ticket, "the worker ended its turn twice without loom_pr");
     return true;
   }
-  store.updateTicket(ticket.id, { pr_ask_json: JSON.stringify({ ...ask, nudged: true } satisfies PrAsk) });
+  store.updateTicket(ticket.id, writeSub("pr_ask_json", { ...ask, nudged: true }));
   const proposed = proposedFields(ticket);
   await ctx.bb.send(row.thread_id, prNudgeText(ticket.key, ask.fix || (proposed.title && proposed.body))).catch((error) => ctx.bb.log("warn", `Could not nudge ${row.thread_id}: ${errText(error)}`));
   return true;
@@ -178,7 +152,7 @@ export async function resumePrAsks(ctx: EngineCtx, projectId: number): Promise<v
     if (ask === null || ask.head !== ticket.head_sha || ticket.worker_thread_id === null) continue;
     const thread = await ctx.bb.getThread(ticket.worker_thread_id).catch(() => null);
     const running = thread !== null && ["active", "starting", "pending"].includes(thread.status);
-    store.updateTicket(ticket.id, { pr_ask_json: running ? JSON.stringify({ ...ask, at: ctx.now() } satisfies PrAsk) : null });
+    store.updateTicket(ticket.id, writeSub("pr_ask_json", running ? { ...ask, at: ctx.now() } : null));
   }
 }
 
@@ -212,7 +186,7 @@ export function handInPrText(ctx: EngineCtx, threadId: string, a: { title?: stri
   const text: PrText = { head: ticket.head_sha!, by: "worker", title, body, commit };
   const retitled = ask.fix && (title !== null || body !== null);
   store.tx(() => {
-    store.updateTicket(ticket.id, { pr_text_json: JSON.stringify(text) });
+    store.updateTicket(ticket.id, writeSub("pr_text_json", text));
     post(ctx, ticket, {
       author: "worker",
       threadId,
@@ -230,40 +204,8 @@ export function handInPrText(ctx: EngineCtx, threadId: string, a: { title?: stri
 
 // ---------------------------------------------------------------- the pull request's text
 
-/** PrProposal: the title and description the worker proposed with loom_submit, which the reviewers judge with the work. */
-export interface PrProposal {
-  /** The commit the submit that last changed it passed its checks with; null while its checks run. */
-  head: string | null;
-  title: string | null;
-  body: string | null;
-  at: number;
-}
-
-/** A title and the worker's part of a description; a null body is Loom's template. */
-export interface PrWant {
-  title: string;
-  body: string | null;
-}
-
-/** PrApplied: the text Loom last set on the ticket's pull request, and an edit of it still to make. */
-export interface PrApplied extends PrWant {
-  /** Loom could not set it through the forge, so it posted it on the ticket for the human to set. */
-  byHand?: boolean;
-  /** The Rollout requirements that were live when Loom last wrote the description's Rollout section. */
-  live: string[];
-  at: number;
-  /** The text an edit that failed in a way worth waiting out still has to set. */
-  want?: PrWant;
-  /** When that edit, or a refresh of the Rollout section that failed the same way, is tried again. */
-  wait?: MergeWait;
-  /** Why Loom could not refresh the Rollout section, each reason said once on the ticket. */
-  said?: string[];
-  /** A hash of the block Loom last wrote between its markers, or found there already, so a format refresh runs once per block. */
-  block?: string;
-}
-
-export const proposalOf = (ticket: TicketRow) => parse<PrProposal>(ticket.pr_proposal_json);
-export const appliedOf = (ticket: TicketRow) => parse<PrApplied>(ticket.pr_applied_json);
+export const proposalOf = (ticket: TicketRow) => readSub(ticket, "pr_proposal_json");
+export const appliedOf = (ticket: TicketRow) => readSub(ticket, "pr_applied_json");
 
 const proposedFields = (ticket: TicketRow) => {
   const proposal = proposalOf(ticket);
@@ -359,8 +301,8 @@ function liveWhenOpened(ctx: EngineCtx, ticket: TicketRow, live: readonly string
 }
 
 /** What Loom records when it opens the ticket's pull request with `title` and the worker's `body`, or its template for null. */
-export function openedText(ctx: EngineCtx, spec: Spec, ticket: TicketRow, title: string, body: string | null): string {
-  return JSON.stringify({ title, body, live: liveTargets(ctx, spec, ticket) ?? [], at: ctx.now() } satisfies PrApplied);
+export function openedText(ctx: EngineCtx, spec: Spec, ticket: TicketRow, title: string, body: string | null): PrApplied {
+  return { title, body, live: liveTargets(ctx, spec, ticket) ?? [], at: ctx.now() };
 }
 
 /** The whole description for the worker's `body`, or Loom's template for null, with Loom's own sections as they are now. */
@@ -378,7 +320,7 @@ function recordOf(ctx: EngineCtx, spec: Spec, ticket: TicketRow): PrApplied {
 
 // `consumed`: the proposal is in `record` now, as set, waiting or posted, so it can never undo a later text.
 function saveApplied(ctx: EngineCtx, ticket: TicketRow, record: PrApplied, consumed = false): void {
-  ctx.store.updateTicket(ticket.id, { pr_applied_json: JSON.stringify(record), ...(consumed ? { pr_proposal_json: null } : {}) });
+  ctx.store.updateTicket(ticket.id, { ...writeSub("pr_applied_json", record), ...(consumed ? { pr_proposal_json: null } : {}) });
   ctx.store.changed(ticket.project_id);
 }
 
@@ -640,7 +582,7 @@ export function recordStatus(ctx: EngineCtx, ticket: TicketRow, feedback: Feedba
   const count = (state: string) => feedback.checks.filter((check) => check.state === state).length;
   const queued = queuedSince(feedback.checks, statusOf(ticket), { head: feedback.head, pushedSha: ticket.pushed_sha, pushedAt: ticket.pushed_at, now });
   const status: PrStatus = { at: now, head: feedback.head, passed: count("passed"), failed: count("failed"), pending: count("pending"), queued };
-  ctx.store.updateTicket(ticket.id, { pr_status_json: JSON.stringify(status) });
+  ctx.store.updateTicket(ticket.id, writeSub("pr_status_json", status));
   const runs = feedback.checks.flatMap((check) =>
     check.state === "passed" && check.startedAt != null && check.completedAt != null && check.completedAt > check.startedAt ? [{ name: check.name, key: check.key, durationMs: check.completedAt - check.startedAt, at: check.completedAt }] : [],
   );
@@ -670,7 +612,7 @@ export interface CheckContext {
 
 /** The feedback not yet sent to a worker that asks for a fix. Failed checks wait until no pending check holds them (holdOf), or the settle time after the push. */
 export function newFeedback(ticket: TicketRow, feedback: Feedback, now: number, context: CheckContext): Sorted {
-  const seen = new Set(JSON.parse(ticket.pr_seen_json) as string[]);
+  const seen = new Set(readSub(ticket, "pr_seen_json"));
   const failed = feedback.checks.filter((check) => check.state === "failed" && !seen.has(check.key));
   const hold = failed.length === 0 ? { settled: false, skipped: [] } : holdOf(feedback.checks, { ...context, now, pushedAt: ticket.pushed_at });
   const checks = hold.settled ? failed.map((check) => ({ key: check.key, name: check.name, url: check.url })) : [];
@@ -768,9 +710,9 @@ export function globMatch(pattern: string, text: string): boolean {
 }
 
 function markSeen(ctx: EngineCtx, ticket: TicketRow, keys: readonly string[]): void {
-  const seen = new Set(JSON.parse(ctx.store.ticket(ticket.id)!.pr_seen_json) as string[]);
+  const seen = new Set(readSub(ctx.store.ticket(ticket.id)!, "pr_seen_json"));
   for (const key of keys) seen.add(key);
-  ctx.store.updateTicket(ticket.id, { pr_seen_json: JSON.stringify([...seen]) });
+  ctx.store.updateTicket(ticket.id, writeSub("pr_seen_json", [...seen]));
 }
 
 /**
@@ -859,20 +801,20 @@ async function startFixRound(ctx: EngineCtx, seen: TicketRow, a: Round): Promise
     if (worker.standing === "ending") return null;
     const round = ticket.pr_rounds + 1;
     const counted = forgeRoundsSinceRequeue(store, ticket.id) + (a.human ? 0 : 1);
-    const seenKeys = new Set(JSON.parse(ticket.pr_seen_json) as string[]);
+    const seenKeys = new Set(readSub(ticket, "pr_seen_json"));
     for (const key of a.seen) seenKeys.add(key);
     if (!a.human && counted > max) {
       const reason = `the pull request's checks and reviews needed more than ${plural(max, "fix round")}`;
       // Claiming the worker here makes its ending, which carries the ticket's move to blocked, replayable by the tick.
       if (worker.standing === "active" && !store.claimThread(worker.row.id, "blocked")) return null;
-      store.updateTicket(ticket.id, { pr_seen_json: JSON.stringify([...seenKeys]), blocked_reason: reason });
+      store.updateTicket(ticket.id, { ...writeSub("pr_seen_json", [...seenKeys]), blocked_reason: reason });
       post(ctx, ticket, { body: `Pull request feedback over the limit of ${plural(max, "fix round")}:\n\n${feedbackList(a.checks, a.items, a.skipped)}`, data: feedbackData(ticket, round, counted, a, true) });
       store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "block", body: reason, data_json: JSON.stringify({ reason, needs: "" }) });
       if (worker.standing === "active") return { kind: "blocking", worker: store.thread(worker.row.id)! };
       applyMove(ctx, store.ticket(ticket.id)!, { to: "blocked", patch: { ...released, blocked_reason: reason } }, LOOM_ACTOR, { reason });
       return { kind: "blocked" };
     }
-    store.updateTicket(ticket.id, { pr_seen_json: JSON.stringify([...seenKeys]), pr_rounds: round, pr_ask_json: null, pr_text_json: null });
+    store.updateTicket(ticket.id, { ...writeSub("pr_seen_json", [...seenKeys]), pr_rounds: round, pr_ask_json: null, pr_text_json: null });
     const body = a.human ? `Your reply starts fix round ${round} on the pull request.` : `Pull request feedback for fix round ${round} (${counted} of ${max} the pull request may start):\n\n${feedbackList(a.checks, a.items, a.skipped)}`;
     post(ctx, ticket, { body, data: feedbackData(ticket, round, counted, a, false) });
     const move = { fixRound: round, ...(a.human ? { human: true } : {}) };

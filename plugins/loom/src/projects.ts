@@ -12,6 +12,7 @@ import { rolloutJson } from "./rollout";
 import { numberErrors, parseSpec, proposalErrorsOf, specHash, type Spec } from "./spec";
 import type { SpecNote } from "./spec-paths";
 import { PAUSE_NOW_REASON, TICKET_STATES, type AuthorKind, type MergeChoice, type ProjectState, type Role, type TicketState } from "./states";
+import { writeSub } from "./sub-state";
 
 export type LoomErrorCode = "loom_not_found" | "loom_invalid_state" | "loom_invalid_spec" | "loom_invalid_input" | "loom_forbidden" | "loom_no_checkout" | "loom_unavailable";
 
@@ -421,10 +422,10 @@ export class Projects {
           verify_json: JSON.stringify(ticket.verify),
           scope_json: JSON.stringify(ticket.scope),
           deps_json: JSON.stringify(ticket.depends_on.map((ref) => keyOf.get(ref)!)),
-          merge_after_json: JSON.stringify((ticket.merge_after ?? []).map((ref) => keyOf.get(ref)!)),
+          ...writeSub("merge_after_json", (ticket.merge_after ?? []).map((ref) => keyOf.get(ref)!)),
           priority: ticket.priority,
           repo: ticket.repo ?? null,
-          environment_json: ticket.environment === undefined ? null : JSON.stringify(ticket.environment.inputs),
+          ...writeSub("environment_json", ticket.environment === undefined ? null : ticket.environment.inputs),
           // A milestone ref is no ticket's, so it stays a ref.
           rollout_json: rolloutJson(ticket.rollout, (ref) => keyOf.get(ref) ?? ref),
           keep_draft: ticket.keep_draft === true ? 1 : 0,

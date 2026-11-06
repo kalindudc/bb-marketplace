@@ -9,13 +9,14 @@ import { GIT_INDEX_SETTING, GIT_INDEX_TIMEOUT_MS } from "./git-network";
 import { waitableOf } from "./forge-waits";
 import { isMultiRepo, repoSettings } from "./repos";
 import { checkFailedText, clip, prUnchangedText } from "./prompts";
-import { openFeedback, proposalOf, proposeText, textPending, unchangedFix, type PrProposal, type PrText } from "./pull-requests";
+import { writeSub, type PrText, type Stack } from "./sub-state";
+import { openFeedback, proposalOf, proposeText, textPending, unchangedFix } from "./pull-requests";
 import { LoomError } from "./projects";
 import type { EnvironmentInfo } from "./ports";
 import { recordingHost } from "./runs";
 import { scopeReport } from "./scope";
 import type { Spec } from "./spec";
-import { stackOf, type Stack } from "./stack";
+import { stackOf } from "./stack";
 import { LOOM_ACTOR } from "./states";
 import { bringHome, isRemote, worktreeBaseOf } from "./transport";
 import { applyMove, endThread, recordBranch, resolveEnvironment, specOf, ticketMoveFor, toWorking, type EngineCtx } from "./workers";
@@ -74,7 +75,7 @@ export function submit(ctx: EngineCtx, threadId: string, summary: string, pr?: {
     store.setTicketState(ticket.id, "checking", threadId, { submit: true });
     const proposed = proposal === null ? "" : proposalText(pr!);
     store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: "worker", author_thread_id: threadId, kind: "submit", body: `${text}${proposed}`, ...(proposal === null ? {} : { data_json: JSON.stringify({ pr: { title: pr!.title?.trim() ?? null, body: pr!.body?.trim() ?? null } }) }) });
-    if (proposal !== null) store.updateTicket(ticket.id, { pr_proposal_json: JSON.stringify(proposal) });
+    if (proposal !== null) store.updateTicket(ticket.id, writeSub("pr_proposal_json", proposal));
   });
   store.changed(ticket.project_id);
   // After checks that could not reach the project's machine, the next run waits its turn; the tick starts it once it is due.
@@ -167,7 +168,7 @@ async function markerPaths(ctx: EngineCtx, project: ProjectRow, spec: Spec, tick
   const checkout = await repoCheckout(ctx, project, spec, ticket.repo);
   const { prefix } = await ctx.host.call(checkout.hostId, "repoPrefix", { repo: checkout.path });
   const markers = [...new Set(stored.map((path) => (inside(path) ? path : posix.normalize(`${prefix}${path}`))).filter(inside))];
-  ctx.store.updateTicket(ticket.id, { stack_json: JSON.stringify({ ...stack, markers } satisfies Stack) });
+  ctx.store.updateTicket(ticket.id, writeSub("stack_json", { ...stack, markers }));
   return markers;
 }
 
@@ -276,7 +277,7 @@ async function finish(ctx: EngineCtx, ticketId: number, spec: Spec, outcome: Out
     const proposal = proposalOf(ticket);
     if (proposal?.head === null && failure === null) {
       const head = outcome.unchanged === true ? ticket.head_sha! : outcome.commitSha;
-      store.updateTicket(ticket.id, { pr_proposal_json: JSON.stringify({ ...proposal, head } satisfies PrProposal) });
+      store.updateTicket(ticket.id, writeSub("pr_proposal_json", { ...proposal, head }));
     }
     if (outcome.unchanged === true) {
       store.setTicketState(ticket.id, "pr_open", LOOM_ACTOR, { unchanged: true, fixRound: ticket.pr_rounds });
@@ -291,10 +292,10 @@ async function finish(ctx: EngineCtx, ticketId: number, spec: Spec, outcome: Out
       const round = ticket.review_round + 1;
       store.setTicketState(ticket.id, "review", LOOM_ACTOR, { head: outcome.commitSha, round, ...(outcome.textOnly === true ? { textOnly: true } : {}) });
       const stack = stackOf(ticket);
-      const resolved = stack?.markers === undefined ? {} : { stack_json: JSON.stringify({ ...stack, markers: undefined } satisfies Stack) };
+      const resolved = stack?.markers === undefined ? {} : writeSub("stack_json", { ...stack, markers: undefined });
       // Nothing to push once approved, so Loom asks for no commit message.
       const text: PrText = { head: outcome.commitSha, by: "loom", title: null, body: null, commit: ticket.title };
-      const textOnly = outcome.textOnly === true ? { pr_text_json: JSON.stringify(text) } : {};
+      const textOnly = outcome.textOnly === true ? writeSub("pr_text_json", text) : {};
       store.updateTicket(ticket.id, { head_sha: outcome.commitSha, head_tree: outcome.tree, review_round: round, ...resolved, ...textOnly });
       if (worker !== null) store.updateThread((worker as ThreadRow).id, { idle_count: 0 });
       return true;
