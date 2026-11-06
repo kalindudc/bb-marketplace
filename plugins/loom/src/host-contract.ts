@@ -637,6 +637,11 @@ export const hostContract = defineRpcContract({
       .strict(),
     output: z.object({ path: z.string(), entries: z.array(z.string()), refused: z.string().optional() }).strict(),
   },
+  // The home directory of the user bb runs as on this machine, where a forge profile's test runs its commands.
+  homeDir: {
+    input: z.object({}).strict(),
+    output: z.object({ path: z.string() }).strict(),
+  },
   // Each git remote with its push URLs, in `git remote` order.
   remotes: {
     ...RETRYABLE,

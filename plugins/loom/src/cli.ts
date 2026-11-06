@@ -2,7 +2,10 @@ import { PluginCliError, cliCommand, defineCli, type PluginCliRegistration, type
 import type { Store } from "./db/store";
 import type { Approved, Engine } from "./engine";
 import { setAutoMerge } from "./auto-merge";
-import { forgeCheck, formatForgeCheck } from "./forge-check";
+import { readFile } from "node:fs/promises";
+import { stringify as stringifyToml } from "smol-toml";
+import { forgeCheck, forgeTest, forgeTestPassed, formatForgeCheck, formatForgeTest } from "./forge-check";
+import { importProfiles, profilesToml, profileUses } from "./forge-profiles";
 import { formatDuration, isMultiRepoProject, its, noTokenUsage, plural, readyToLand, reposHave } from "./format";
 import type { ProjectMetrics } from "./metrics";
 import { LoomError, type ProjectOverview, type Projects, type RepoOverview, type SpecView, type TicketSummary, type TicketView } from "./projects";
@@ -324,6 +327,66 @@ export function createCli(projects: Projects, engine: Engine, store: Store, now:
           guarded(async () => {
             const check = await forgeCheck(engine.ctx, { slug: positionals.slug, target: positionals.target, ...(options.repo === undefined ? {} : { repo: options.repo }), ...(options.version === undefined ? {} : { version: options.version }) });
             return { exitCode: check.failure === null ? 0 : 1, stdout: options.json ? toJson(check) : formatForgeCheck(check) };
+          }),
+      }),
+      "forge list": cliCommand({
+        summary: "List the forge profiles in Loom's settings: command forges any spec names with forge = { profile = \"<id>\" }, each with its version and the projects that use it",
+        options: { json },
+        run: ({ options }) =>
+          guarded(() => {
+            const rows = store.forgeProfileRows().map((row) => ({ id: row.profile.id, name: row.profile.name, hash: row.hash, updatedAt: row.updated_at, usedBy: profileUses(store, row.profile.id) }));
+            if (options.json) return out(toJson(rows));
+            if (rows.length === 0) return out("No forge profiles. Add one in Loom's settings under Forges, or with `bb loom forge import <file> --apply`.\n");
+            return out(`${rows.map((row) => `${row.id}  ${row.name}  version ${row.hash}  ${row.usedBy.length === 0 ? "used by no project" : `used by ${row.usedBy.map((use) => `${use.slug}${use.inForce ? "" : " (a version not approved yet)"}`).join(", ")}`}`).join("\n")}\n`);
+          }),
+      }),
+      "forge show": cliCommand({
+        summary: "Print one forge profile as TOML, the shape `bb loom forge import` reads, with its version and the projects that use it",
+        positionals: [{ name: "id", description: "The profile's id, from `bb loom forge list`.", required: true }],
+        options: { json },
+        run: ({ options, positionals }) =>
+          guarded(() => {
+            const row = store.forgeProfileRow(positionals.id);
+            if (row === null) throw new LoomError("loom_not_found", `Loom has no forge profile ${positionals.id}.`, "Run `bb loom forge list` to see the profiles.");
+            const usedBy = profileUses(store, row.profile.id);
+            if (options.json) return out(toJson({ ...row, usedBy }));
+            const uses = usedBy.length === 0 ? "No project uses it." : `Used by ${usedBy.map((use) => use.slug).join(", ")}.`;
+            return out(`# ${row.profile.name}, version ${row.hash}, saved ${minute(row.updated_at)}. ${uses}\n${stringifyToml({ forge: [row.profile] })}\n`);
+          }),
+      }),
+      "forge test": cliCommand({
+        summary:
+          "Run a forge profile's state and feedback commands against a pull request, on the machine bb's server runs on, and print what Loom reads, or which field failed and the command's error. It runs no command that writes, and changes nothing",
+        positionals: [
+          { name: "id", description: "The profile's id, from `bb loom forge list`.", required: true },
+          { name: "url", description: "A pull request on the profile's server.", required: true },
+        ],
+        options: { json },
+        run: ({ options, positionals }) =>
+          guarded(async () => {
+            const row = store.forgeProfileRow(positionals.id);
+            if (row === null) throw new LoomError("loom_not_found", `Loom has no forge profile ${positionals.id}.`, "Run `bb loom forge list` to see the profiles.");
+            const test = await forgeTest(engine.ctx, row.profile, row.hash, positionals.url);
+            return { exitCode: forgeTestPassed(test) ? 0 : 1, stdout: options.json ? toJson(test) : formatForgeTest(test) };
+          }),
+      }),
+      "forge export": cliCommand({
+        summary: "Print every forge profile as TOML, one [[forge]] table each, to keep in a file or import on another machine",
+        run: () => guarded(() => out(profilesToml(store) || "# No forge profiles.\n")),
+      }),
+      "forge import": cliCommand({
+        summary: "Read forge profiles from a TOML file of [[forge]] tables and print what importing them changes; --apply saves them (human only). Profiles the file does not list are kept",
+        positionals: [{ name: "file", description: "A TOML file of [[forge]] tables, as `bb loom forge export` prints.", required: true }],
+        options: { apply: { type: "boolean", description: "Save the profiles, adding and changing them as printed." }, json },
+        run: ({ options, positionals }, ctx) =>
+          guarded(async () => {
+            const toml = await readFile(positionals.file, "utf8");
+            const apply = options.apply === true;
+            if (apply) refuseAgents(deps, ctx, "forge import");
+            const { changes } = importProfiles(store, toml, apply);
+            if (options.json) return out(toJson({ changes, applied: apply }));
+            if (changes.length === 0) return out("The file matches the forge profiles Loom has; nothing to change.\n");
+            return out(`${apply ? "Imported" : "Importing would make"} ${plural(changes.length, "change")}:\n${changes.map((change) => `- ${change}`).join("\n")}\n${apply ? "" : "Run it again with --apply to save them.\n"}`);
           }),
       }),
       rollout: cliCommand({

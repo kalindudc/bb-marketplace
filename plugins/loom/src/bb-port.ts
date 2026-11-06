@@ -29,6 +29,9 @@ export function createBbPort(bb: BbPluginApi): BbPort {
       if (thread.environmentId !== null) return (await bb.sdk.environments.get({ environmentId: thread.environmentId })).hostId;
       return (await bb.sdk.system.config()).primaryHostId ?? null;
     },
+    async primaryHostId() {
+      return (await bb.sdk.system.config()).primaryHostId ?? null;
+    },
     async ensureSection(sectionId, name) {
       const sections = await bb.sdk.threadSections.list();
       if (sectionId !== null && sections.some((section) => section.id === sectionId)) return sectionId;

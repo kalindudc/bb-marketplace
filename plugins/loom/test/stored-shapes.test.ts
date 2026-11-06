@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { settleChecks } from "../src/checks";
 import { followHooks } from "../src/hooks";
 import { specSummary } from "../src/rpc";
-import { readSpec } from "../src/spec";
+import { NO_PROFILES, readSpec } from "../src/spec";
 import { specOf } from "../src/ctx";
 import { makeEngine, reachReview, seedProject, specToml, workerRows, type Doc, type EngineHarness } from "./helpers";
 
@@ -18,8 +18,8 @@ const stored = (h: EngineHarness & { db: { prepare(sql: string): { run(...args: 
 
 describe("a stored spec without a field the schema now defaults", () => {
   it("gets 180 minutes for a worker and 25 for a check, and keeps a stored value", () => {
-    expect(readSpec(JSON.stringify({ agents: { worker: {}, reviewer: {} }, checks: { commands: [] } }))).toMatchObject({ agents: { ticket_timeout_minutes: 180 }, checks: { timeout_minutes: 25 } });
-    expect(readSpec(JSON.stringify({ agents: { ticket_timeout_minutes: 120 }, checks: { timeout_minutes: 15 } }))).toMatchObject({ agents: { ticket_timeout_minutes: 120 }, checks: { timeout_minutes: 15 } });
+    expect(readSpec(JSON.stringify({ merge: { strategy: "pr" }, agents: { worker: {}, reviewer: {} }, checks: { commands: [] } }), NO_PROFILES)).toMatchObject({ agents: { ticket_timeout_minutes: 180 }, checks: { timeout_minutes: 25 } });
+    expect(readSpec(JSON.stringify({ merge: { strategy: "pr" }, agents: { ticket_timeout_minutes: 120 }, checks: { timeout_minutes: 15 } }), NO_PROFILES)).toMatchObject({ agents: { ticket_timeout_minutes: 120 }, checks: { timeout_minutes: 15 } });
   });
 
   it("does not end a worker that just started, and ends it after 180 minutes", async () => {
@@ -65,7 +65,7 @@ describe("a stored hook with only run, which Loom no longer reads", () => {
 
   it("refuses a new proposal with run, and gives the draft card the refusal as warnings", () => {
     const toml = specToml((doc) => (doc.hook = [{ on: "project.started", run: "board-cli create" }]));
-    const summary = specSummary(toml);
+    const summary = specSummary(toml, NO_PROFILES);
     expect(summary.warnings).toContain("hook[0].tell: is required. Add it.");
     expect(summary.warnings.join("\n")).toContain("hook[0].run: Loom no longer reads this key.");
   });

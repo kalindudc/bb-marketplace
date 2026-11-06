@@ -95,7 +95,7 @@ function hooksOf(store: Store, project: ProjectRow, version: number | null, cach
   let hooks = cache.get(version);
   if (hooks === undefined) {
     const row = store.specVersion(project.id, version);
-    hooks = row === null ? [] : ((readSpec(row.spec_json)).hook ?? []);
+    hooks = row === null ? [] : ((readSpec(row.spec_json, store)).hook ?? []);
     cache.set(version, hooks);
   }
   return hooks;

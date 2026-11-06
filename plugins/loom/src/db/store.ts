@@ -2,7 +2,7 @@
 // and post change appends an event in the same transaction.
 import type Database from "better-sqlite3";
 import type { Finding } from "../review";
-import { readSpec, type EnvironmentSpec } from "../spec";
+import { readSpec, type EnvironmentSpec, type ForgeProfile, type ForgeProfiles } from "../spec";
 import { LOOM_ACTOR, canMoveProject, canMoveTicket, type AuthorKind, type PostKind, type ProjectState, type Role, type ReviewVerdict, type ThreadState, type TicketState } from "../states";
 
 export interface ProjectRow {
@@ -336,8 +336,17 @@ export interface RolloutMarkRow {
 
 export class StoreError extends Error {}
 
-export class Store {
+/** A forge profile as stored: the profile, the hash of its canonical JSON, and when it was last saved. */
+export interface ForgeProfileRow {
+  profile: ForgeProfile;
+  hash: string;
+  updated_at: number;
+}
+
+export class Store implements ForgeProfiles {
   private onEvent: ((projectId: number | null) => void) | null = null;
+  /** Every forge profile, read once and dropped when one is written: each spec read looks its profiles up. */
+  private profiles: Map<string, ForgeProfileRow> | null = null;
   private txDepth = 0;
   private queued: Array<number | null> = [];
 
@@ -369,6 +378,41 @@ export class Store {
       for (const projectId of committed) this.onEvent?.(projectId);
     }
     return result;
+  }
+
+  // ---- forge profiles
+
+  forgeProfileRows(): ForgeProfileRow[] {
+    if (this.profiles === null) {
+      const rows = this.db.prepare("SELECT id, json, hash, updated_at FROM forge_profiles ORDER BY id").all() as Array<{ id: string; json: string; hash: string; updated_at: number }>;
+      this.profiles = new Map(rows.map((row) => [row.id, { profile: JSON.parse(row.json) as ForgeProfile, hash: row.hash, updated_at: row.updated_at }]));
+    }
+    return [...this.profiles.values()];
+  }
+
+  forgeProfileRow(id: string): ForgeProfileRow | null {
+    this.forgeProfileRows();
+    return this.profiles!.get(id) ?? null;
+  }
+
+  forgeProfile(id: string): ForgeProfile | null {
+    return this.forgeProfileRow(id)?.profile ?? null;
+  }
+
+  forgeProfileIds(): string[] {
+    return this.forgeProfileRows().map((row) => row.profile.id);
+  }
+
+  putForgeProfile(profile: ForgeProfile, hash: string): void {
+    this.db
+      .prepare("INSERT INTO forge_profiles (id, json, hash, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT (id) DO UPDATE SET json = excluded.json, hash = excluded.hash, updated_at = excluded.updated_at")
+      .run(profile.id, JSON.stringify(profile), hash, this.now());
+    this.profiles = null;
+  }
+
+  deleteForgeProfile(id: string): void {
+    this.db.prepare("DELETE FROM forge_profiles WHERE id = ?").run(id);
+    this.profiles = null;
   }
 
   event(projectId: number, ticketId: number | null, kind: string, actor: string, data: object = {}): void {
@@ -503,7 +547,7 @@ export class Store {
       .prepare("SELECT p.slug, p.bb_project_id, v.spec_json FROM projects p JOIN spec_versions v ON v.project_id = p.id AND v.version = p.approved_version ORDER BY v.created_at DESC, p.id DESC")
       .all() as Array<{ slug: string; bb_project_id: string; spec_json: string }>;
     return rows.flatMap((row) => {
-      const spec = readSpec(row.spec_json);
+      const spec = readSpec(row.spec_json, this);
       const repos = (spec.repo ?? []).length === 0 ? [{ bbProjectId: row.bb_project_id, environment: spec.environment }] : spec.repo!.map((repo) => ({ bbProjectId: repo.project, environment: repo.environment ?? spec.environment }));
       return repos.flatMap(({ bbProjectId, environment }) => (environment === undefined ? [] : [{ slug: row.slug, bbProjectId, environment }]));
     });

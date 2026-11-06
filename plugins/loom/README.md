@@ -1367,6 +1367,51 @@ choice is found or ask; the planner asks you the ask items in one round, and
 Every key, with the commands' variables and output, is in the loom skill's
 `references/spec.md`.
 
+### Forge profiles
+
+When several projects use the same server, keep its commands in a forge
+profile instead of in each spec. A profile lives in bb's settings for Loom,
+under **Forges**, and holds the commands above (`open` and `state` are
+required), `ignore_checks`, `bots` (author globs whose comments count as a
+bot's) and `notes`, which Loom adds to the brief of every worker and reviewer
+of a pull request on that forge, such as how the server's review bot clears a
+finding. A spec names it by id:
+
+```toml
+[merge.forge]
+profile = "forge"
+```
+
+Keys the spec sets beside `profile`, such as `auto_merge`, `reviewers` or its
+own `ignore_checks`, win over the profile's for that project. `loom_propose`
+refuses a profile Loom does not have, and lists the ones it has. A spec stores
+only the id, so an edit to the profile reaches every project that uses it at
+its next call to the forge, with no new spec version. Each change is recorded:
+the project gets an event with the profile's old and new version, and each
+ticket whose pull request Loom follows on it gets a post. Loom keeps a profile
+that a project uses, and a profile's id cannot change.
+
+Settings › Forges shows each profile with its version and the projects that
+use it, a form to add or edit one, and a Test field: give it a pull request
+URL, and Loom runs only the profile's `state` and `feedback` commands, which
+change nothing, on the machine bb's server runs on, and shows what it reads, or
+the failing field and the command's error. Settings › Import and export shows
+every profile as TOML and imports one you paste, after showing what it changes.
+From a terminal:
+
+```sh
+bb loom forge list
+bb loom forge show forge
+bb loom forge test forge https://forge.example.com/acme/shop/pull/12
+bb loom forge export > forges.toml
+bb loom forge import forges.toml [--apply]
+```
+
+An import adds and changes profiles and never removes one the file leaves out.
+The loom skill's `references/forges.md` is the guide for setting one up: what
+each command gets and must print, how Loom reads a failure, a full example and
+how to test it.
+
 `bb loom forge check <slug> <CSV-1 or pull request URL>` tests a repo's forge
 against a live pull request. It runs the repo's own forge read on the
 project's machine, as a poll would (gh's read, or the spec's `feedback`
@@ -1513,6 +1558,11 @@ bb loom land <slug> --direct                 # integration strategy: merge in th
 bb loom land <slug> --repo <name>            # multi-repo project: land only this repo
 bb loom sync <slug> [--ticket CSV-1]         # pull request strategy: read the open pull requests now
 bb loom forge check <slug> CSV-1 [--version N]  # read a live pull request through the repo's forge, as a poll would
+bb loom forge list                           # the forge profiles, their versions and the projects that use them
+bb loom forge show <id>                      # one forge profile as TOML
+bb loom forge test <id> <pull request URL>   # run a profile's state and feedback commands, which change nothing
+bb loom forge export                         # every forge profile as TOML
+bb loom forge import <file> [--apply]        # what importing profiles changes; --apply saves them
 bb loom rollout <slug>                       # the deploy order: next safe step, warnings, stages, milestones
 bb loom live <slug> CSV-1 [--note t] [--undo]  # mark a rollout step or milestone live, or take the mark back
 bb loom release <slug> --ticket CSV-1         # mark a held draft (keep_draft) ready for review

@@ -42,7 +42,8 @@ The server that hosts pull requests. Leave it out for GitHub: Loom opens and fol
 
 | Key | Type | Default | Rule |
 |---|---|---|---|
-| `kind` | string | required | `"gh"`, `"command"` (the `open` and `state` commands below) or `"none"` (Loom only pushes the branch) |
+| `kind` | string | required, `"command"` with `profile` | `"gh"`, `"command"` (the `open` and `state` commands below) or `"none"` (Loom only pushes the branch) |
+| `profile` | string | none | the id of a forge profile in Loom's settings: a command forge whose commands, `ignore_checks`, `bots` and `notes` Loom keeps in one place for every project, so `kind` may be left out and `open` and `state` come from it. Any key set beside it wins over the profile's for this project. `loom_propose` refuses an id Loom does not have, and lists the ones it has. A spec stores only the id, so an edit to the profile reaches the project at its next forge call. See [forges.md](forges.md) |
 | `open` | string | none | required with `kind = "command"`, refused otherwise; a shell command that opens a pull request for a branch that is already pushed |
 | `state` | string | none | required with `kind = "command"`, refused otherwise; a shell command that prints the pull request's state |
 | `feedback` | string | none | `kind = "command"` only; a shell command that prints the pull request's checks and review feedback, so Loom can start fix rounds; without it Loom follows only merged and closed, and does not rely on the repo's CI (see [Relying on CI](#relying-on-ci)) |
@@ -55,8 +56,12 @@ The server that hosts pull requests. Leave it out for GitHub: Loom opens and fol
 | `auto_merge` | table | none | strategy `"pr"`, `kind = "gh"` or `"command"`; Loom merges each ready pull request itself: `method` (required), `comment`, `rejected`, `require_live`, `max_attempts`, `final_review`; unset, Loom merges nothing. See [Merging ready pull requests](#merging-ready-pull-requests) |
 | `merge` | string | none | `kind = "command"` only, and only with `auto_merge`; a shell command that merges the pull request, or hands it to the server's merge service |
 | `ready` | string | none | `kind = "command"` only; a shell command that marks the draft pull request in `LOOM_URL` (number in `LOOM_PR_NUMBER`) ready for review, exit 0 for done. Without it Loom cannot mark a command forge's drafts ready, and `keep_draft` tickets are released on the forge by hand |
+| `bots` | string array | none | at most 50 globs, as in `ignore_checks`; authors whose items count as a bot's, on top of the ones `feedback` or gh marks and Loom's `botAuthors` setting: their top-level comments start no fix round. Use it for service accounts the server reports as people |
+| `notes` | string | none | up to 4,000 characters Loom adds, under "About this forge", to the brief of every worker and reviewer of a pull request on this forge and to each fix round, such as how the server's review bot clears a finding |
 | `reviewers` | array of tables | none | strategy `"pr"`, `kind = "gh"` or `"command"` (with `feedback`); at most 10 rules for who Loom asks to review each pull request it opens: `users` and an optional `count`; together they may ask at most 20 people. See [Asking for reviews](#asking-for-reviews) |
 | `request_reviews` | string | none | `kind = "command"` only, and required there with `reviewers`; a shell command that asks the logins in `LOOM_REVIEWERS` to review the pull request |
+
+For a server many projects use, keep its commands in a forge profile in Loom's settings and name it with `forge = { profile = "<id>" }`: [forges.md](forges.md) is the guide for setting one up, with every command's variables and output, a full example and how to test it with `bb loom forge test <id> <pull request URL>`.
 
 The commands run with `/bin/sh` in the repo's checkout, with a 2-minute limit (`after_open`, `after_push` and `retarget`: 5 minutes):
 

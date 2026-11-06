@@ -9,7 +9,7 @@ import { SectionNameConflictError, type BbPort, type BbProjectInfo, type HostPor
 import { MAX_PLANNING_REPOS, notesMessage, planningKickoff, planningTitle, type PickedRepo } from "./prompts";
 import { integrationBranchOf, isMultiRepo, repoSettings } from "./repos";
 import { rolloutJson } from "./rollout";
-import { defaultKeysWarning, numberErrors, parseSpec, proposalErrorsOf, readSpec, specHash, type Spec } from "./spec";
+import { defaultKeysWarning, numberErrors, parseSpec, proposalErrorsOf, readSpec, specHash, withProfiles, type Spec } from "./spec";
 import type { SpecNote } from "./spec-paths";
 import { PAUSE_NOW_REASON, TICKET_STATES, type AuthorKind, type MergeChoice, type ProjectState, type Role, type TicketState } from "./states";
 import { writeSub } from "./sub-state";
@@ -188,10 +188,12 @@ export class Projects {
   // ---------------------------------------------------------------- propose
 
   async propose(args: { toml: string; threadId: string; bbProjectId: string; hostId: string | null }): Promise<ProposeResult> {
-    const parsed = parseSpec(args.toml);
+    const parsed = parseSpec(args.toml, this.store);
     if (!parsed.ok || parsed.spec === null) throw rejected(parsed.errors);
-    const errors = [...proposalErrorsOf(parsed.spec), ...this.proposalErrors(args.threadId, parsed.spec), ...(await this.providerErrors(parsed.spec)), ...(await this.repoErrors(parsed.spec, args.hostId))];
-    if (errors.length === 0) errors.push(...(await this.reachErrorsOf(parsed.spec, args)));
+    // Checked as it would run, with its forge profiles filled in; stored as written, naming them.
+    const runs = withProfiles(parsed.spec, this.store).spec;
+    const errors = [...proposalErrorsOf(runs), ...this.proposalErrors(args.threadId, runs), ...(await this.providerErrors(runs)), ...(await this.repoErrors(runs, args.hostId))];
+    if (errors.length === 0) errors.push(...(await this.reachErrorsOf(runs, args)));
     if (errors.length > 0) throw rejected(errors);
     const existing = this.store.projectBySlug(parsed.spec.project.slug);
     const defaults = defaultKeysWarning(args.toml);
@@ -369,7 +371,7 @@ export class Projects {
     if (project.state === "draft") {
       const draft = this.store.latestSpecVersion(project.id)!;
       this.guardVersion(slug, version, draft.version);
-      const spec = readSpec(draft.spec_json);
+      const spec = readSpec(draft.spec_json, this.store);
       const keys = this.store.tx(() => {
         this.store.updateProject(project.id, { approved_version: draft.version });
         this.store.event(project.id, null, "spec.approved", actor, { version: draft.version });
@@ -797,7 +799,7 @@ export class Projects {
   private specOf(projectId: number, version: number): Spec {
     const row = this.store.specVersion(projectId, version);
     if (row === null) throw new LoomError("loom_not_found", `Spec version ${version} is missing.`);
-    return readSpec(row.spec_json);
+    return readSpec(row.spec_json, this.store);
   }
 
   require(slug: string): ProjectRow {

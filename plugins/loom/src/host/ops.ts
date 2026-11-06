@@ -2168,6 +2168,10 @@ async function stateWithCommand(input: HostInput<"prState">, command: string, si
 
 // ---------------------------------------------------------------- discovery and the push-only forge
 
+export function homeDir(): HostOutput<"homeDir"> {
+  return { path: homedir() };
+}
+
 export async function remotes(input: HostInput<"remotes">, signal?: AbortSignal): Promise<HostOutput<"remotes">> {
   const names = (await git(input.repo, ["remote"], { signal })).split("\n").filter((name) => name !== "");
   const listed: HostOutput<"remotes">["remotes"] = [];

@@ -101,7 +101,7 @@ function specFor(store: Store, project: ProjectRow): Spec {
   const version = project.approved_version ?? store.latestSpecVersion(project.id)?.version ?? null;
   const row = version === null ? null : store.specVersion(project.id, version);
   if (row === null) throw new LoomError("loom_invalid_state", `Project ${project.slug} has no spec.`);
-  return readSpec(row.spec_json);
+  return readSpec(row.spec_json, store);
 }
 
 type Landed = { repo?: string; direct?: boolean; pushed?: string; sha?: string; url?: string };

@@ -232,6 +232,12 @@ function pullRequestSection(spec: Spec, repo: RepoSettings, signature: string): 
   return ["## The pull request", [write, push, ...follows, ...(following ? text : [])].join(" "), ...(following ? replyRules(repo.forge, signature) : []), ""];
 }
 
+/** What the repo's forge, through its profile or the spec, says workers and reviewers should know about the server. */
+function forgeNotesSection(spec: Spec, repo: RepoSettings): string[] {
+  if (spec.merge.strategy !== "pr" || repo.forge.notes === undefined) return [];
+  return ["## About this forge", repo.forge.notes, ""];
+}
+
 /**
  * On the pr strategy, what each of the ticket's dependencies is: merged, or a pull request still open, which this
  * worktree starts on when it is in the same repo and the worker can read from the other repo's checkout when it is not.
@@ -361,6 +367,7 @@ export function workerBrief(a: {
     ...dependenciesSection(spec, ticket, a.tickets ?? [], a.checkouts ?? new Map(), a.remote),
     ...(spec.merge.strategy === "pr" ? pullRequestSection(spec, repo, a.signature ?? COMMENT_SIGNATURE) : []),
     ...prTextRulesSection(spec),
+    ...forgeNotesSection(spec, repo),
     ...rolloutBriefSection(spec, a.tickets ?? [ticket], ticket, WORKER_ROLLOUT),
     ...workerHooksSection(spec),
     "## Rules",
@@ -656,6 +663,7 @@ export function reviewerBrief(a: {
     "",
     ...rolloutBriefSection(spec, a.tickets ?? [ticket], ticket, REVIEWER_ROLLOUT),
     ...prTextReviewSection(spec, repo, ticket),
+    ...forgeNotesSection(spec, repo),
     ...(a.prFeedback == null
       ? []
       : [
@@ -1069,7 +1077,7 @@ export function prFeedbackText(a: { key: string; url: string | null; round: numb
   const merge = foreignTipLines(a.foreign);
   return {
     summary: `[loom] ${a.key}: ${what} (fix round ${a.round}${human ? "" : `; ${a.counted} of the ${a.max} the pull request may start`}).${a.resume === true ? " Call loom_resume first: it puts in your worktree the merge Loom made on the project's machine." : ""} Address it, then call loom_submit({ summary }).`,
-    detail: [...(a.restored === true ? [RESTORED_NOTE] : []), ...(a.resume === true ? [RESUME_NOTE] : []), feedbackList(a.checks, a.items, a.skipped), ...(a.checks.length === 0 ? [] : [CI_FIX]), ...merge, ...prRules(a.forge ?? { kind: "gh" }, a.signature ?? COMMENT_SIGNATURE).map((rule) => `- ${rule}`)].join("\n\n"),
+    detail: [...(a.restored === true ? [RESTORED_NOTE] : []), ...(a.resume === true ? [RESUME_NOTE] : []), feedbackList(a.checks, a.items, a.skipped), ...(a.checks.length === 0 ? [] : [CI_FIX]), ...merge, ...prRules(a.forge ?? { kind: "gh" }, a.signature ?? COMMENT_SIGNATURE).map((rule) => `- ${rule}`), ...(a.forge?.notes === undefined ? [] : [`About this forge: ${a.forge.notes}`])].join("\n\n"),
   };
 }
 

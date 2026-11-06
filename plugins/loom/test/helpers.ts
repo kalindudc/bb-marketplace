@@ -66,6 +66,10 @@ export class FakePort implements BbPort {
     this.record("threadHostId", threadId);
     return this.hostId;
   }
+  async primaryHostId() {
+    this.record("primaryHostId");
+    return this.hostId;
+  }
   async ensureSection(sectionId: string | null, name: string) {
     this.record("ensureSection", sectionId, name);
     if (sectionId !== null && this.sections.has(sectionId)) return sectionId;
@@ -692,6 +696,8 @@ export class FakeHost implements HostPort {
       }
       case "prState":
         return { outcome: "ok", state: this.prStates.get((input as HostInput<"prState">).url) ?? "OPEN" };
+      case "homeDir":
+        return { path: "/home/dev" };
       case "remotes":
         return { remotes: this.remoteList.map((remote) => ({ name: remote.name, pushUrls: [...remote.pushUrls] })) };
       case "ghStatus": {

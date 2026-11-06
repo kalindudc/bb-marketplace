@@ -3,7 +3,7 @@ import { finalBadge } from "./final-review";
 import { experimental_PluginRpcRefusal as PluginRpcRefusal, type BbPluginApi, type ExperimentalPluginRpcHandlersWithContext } from "@get-bb/plugin-sdk";
 import { badgeView } from "./badge";
 import { humanAction } from "./cli";
-import { rpcContract, type AgentRow, type BoardCard, type MergeWaitView, type ProjectView, type ReviewerLookupView, type SpecSummary, type StartWaitView, type ThreadInfo, type TicketDetail, type TicketPr } from "./contract";
+import { rpcContract, type AgentRow, type ForgeProfileView, type BoardCard, type MergeWaitView, type ProjectView, type ReviewerLookupView, type SpecSummary, type StartWaitView, type ThreadInfo, type TicketDetail, type TicketPr } from "./contract";
 import type { EventRow, PostRow, ProjectRow, ReviewRow, Store, ThreadRow, TicketRow } from "./db/store";
 import { stripAnsi, ticketActivity } from "./activity";
 import { Changes } from "./changes";
@@ -26,7 +26,7 @@ import { projectMetrics } from "./reports";
 import { UNSTARTED, blockedAtReview } from "./review";
 import { IN_FLIGHT, kinship, overlaps, readyTickets, startable, toLite, waitsForSlot, type TicketLite } from "./scheduler";
 import { holdOf, stacking, stackOf, upstreamOf } from "./stack";
-import { parseSpec, readSpec, type Spec } from "./spec";
+import { parseSpec, readSpec, type ForgeProfiles, type Spec } from "./spec";
 import { specReviewStatus } from "./spec-review";
 import { isReleased } from "./release";
 import { waitOf } from "./starts";
@@ -41,6 +41,8 @@ import { reviewAgainOf } from "./requeue";
 import { specOf } from "./ctx";
 import { mergeConfirmOf } from "./auto-merge";
 import { draftStateOf, releaseRequestOf } from "./drafts";
+import { forgeTest, forgeTestPassed, formatForgeTest } from "./forge-check";
+import { deleteProfile, importProfiles, parseProfile, profilesToml, profileUses, saveProfile } from "./forge-profiles";
 
 const THROTTLE_MS = 300;
 
@@ -78,8 +80,8 @@ export function watchChanges(bb: BbPluginApi, store: Store): () => void {
 }
 
 /** The draft card's view of a stored spec. A stored spec always parses; if one ever does not, its errors come back as warnings. */
-export function specSummary(toml: string): SpecSummary {
-  const { spec, errors, warnings } = parseSpec(toml);
+export function specSummary(toml: string, profiles: ForgeProfiles): SpecSummary {
+  const { spec, errors, warnings } = parseSpec(toml, profiles);
   if (spec === null) return { tickets: [], repos: [], checks: [], reviewer: null, warnings: [...errors, ...warnings] };
   return {
     tickets: spec.ticket.map((ticket) => ({ ref: ticket.ref, title: ticket.title, dependsOn: ticket.depends_on })),
@@ -318,6 +320,8 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
   const { projects, engine, store, now } = deps;
   const changes = new Changes({ store, bb: engine.ctx.bb, host: engine.ctx.host });
 
+  const forgeProfilesView = (): ForgeProfileView[] => store.forgeProfileRows().map((row) => ({ profile: row.profile, hash: row.hash, updatedAt: row.updated_at, usedBy: profileUses(store, row.profile.id) }));
+
   /** With `eventId`, the project as it was at that event; it never writes. */
   const projectView = async (slug: string, eventId?: number): Promise<ProjectView> => {
     // Every read after the names comes in one synchronous pass, so the view is of one moment.
@@ -325,7 +329,7 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
     const live = projects.require(slug);
     const past = eventId === undefined ? null : rewind(rowsOf(store, live), eventId);
     const spec = projects.spec(slug, past?.specVersion);
-    const inForce = readSpec(store.specVersion(live.id, spec.version)!.spec_json);
+    const inForce = readSpec(store.specVersion(live.id, spec.version)!.spec_json, store);
     const overview = withRepoNames(
       past === null ? projects.overview(slug) : { ...projects.overview(slug), ...overviewAt(past, inForce), repos: repoOverviews(past.project, inForce, past.tickets, landsOf(past.events)) },
       names,
@@ -338,7 +342,7 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
     const approved = project.approved_version === null ? null : specOf(store, project);
     const current = approved ?? inForce;
     const board = project.state === "draft" ? draftCards(current, at) : boardCards(tickets, threads, current, store, at);
-    const summary = specSummary(spec.toml);
+    const summary = specSummary(spec.toml, store);
     const specReview = past === null ? specReviewStatus(store, project) : null;
     return {
       overview,
@@ -513,7 +517,7 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
       const rows = rowsOf(store, live);
       const past = at === undefined ? null : rewind(rows, at);
       const project = past?.project ?? live;
-      const spec = project.approved_version === null ? readSpec(store.specVersion(live.id, projects.spec(slug, past?.specVersion).version)!.spec_json) : specOf(store, project);
+      const spec = project.approved_version === null ? readSpec(store.specVersion(live.id, projects.spec(slug, past?.specVersion).version)!.spec_json, store) : specOf(store, project);
       return projectInsights(past ?? rows, { now: past?.at ?? now(), window, strategy: spec.merge.strategy, maxWorkers: spec.agents.max_workers, maxTokens: spec.budget.max_tokens ?? null });
     },
     timeline: ({ slug }) => projectTimeline(rowsOf(store, projects.require(slug)), now()),
@@ -554,6 +558,28 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
       return engine.syncPullRequests(slug, key === undefined ? {} : { key });
     },
     bbProjects: () => projects.bbProjectChoices(),
+    forgeProfiles: () => forgeProfilesView(),
+    saveForgeProfile: ({ profile, original }, ctx) => {
+      refusePlugins(ctx);
+      saveProfile(store, profile, original);
+      return forgeProfilesView();
+    },
+    deleteForgeProfile: ({ id }, ctx) => {
+      refusePlugins(ctx);
+      deleteProfile(store, id);
+      return forgeProfilesView();
+    },
+    testForgeProfile: async ({ id, profile, url }) => {
+      const saved = id === undefined ? null : store.forgeProfileRow(id);
+      if (id !== undefined && saved === null) throw new LoomError("loom_not_found", `Loom has no forge profile ${id}.`);
+      const test = saved !== null ? await forgeTest(engine.ctx, saved.profile, saved.hash, url) : await forgeTest(engine.ctx, parseProfile(profile), null, url);
+      return { test, text: formatForgeTest(test), passed: forgeTestPassed(test) };
+    },
+    exportForgeProfiles: () => ({ toml: profilesToml(store) }),
+    importForgeProfiles: ({ toml, apply }, ctx) => {
+      if (apply) refusePlugins(ctx);
+      return importProfiles(store, toml, apply);
+    },
     changes: ({ slug }) => changes.view(slug),
     changePatch: (input) => changes.patch(input),
     startPlanning: ({ request, merge, reviewer, repos }, ctx) => act(ctx, "plan", {}, () => projects.startPlanning({ request, merge, reviewer, repos: repos ?? [] })),

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { NO_PROFILES } from "../src/spec";
 import type { BoardCard, ChangesView, HomeView, PlanningSession, ProjectInsights, ProjectSummary, ProjectTimeline, ProjectView, TicketDetail, ThreadInfo } from "../src/contract";
 import type { SpecVersionView } from "../src/spec-view";
 import type { BbPluginApi, NewThreadRequest } from "@get-bb/plugin-sdk";
@@ -812,9 +813,9 @@ describe("planning", () => {
   });
 
   it("specSummary has no reviewer when neither provider nor model is set, and turns parse errors into warnings", () => {
-    expect(specSummary(specToml((doc) => (doc.agents = {}))).reviewer).toBeNull();
-    expect(specSummary(specToml((doc) => (doc.agents.reviewer = { model: "gpt" }))).reviewer).toBe("gpt");
-    const broken = specSummary("[project");
+    expect(specSummary(specToml((doc) => (doc.agents = {})), NO_PROFILES).reviewer).toBeNull();
+    expect(specSummary(specToml((doc) => (doc.agents.reviewer = { model: "gpt" })), NO_PROFILES).reviewer).toBe("gpt");
+    const broken = specSummary("[project", NO_PROFILES);
     expect(broken).toMatchObject({ tickets: [], checks: [], reviewer: null });
     expect(broken.warnings[0]).toMatch(/^TOML: /);
   });

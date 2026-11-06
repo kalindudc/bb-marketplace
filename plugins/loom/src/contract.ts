@@ -14,7 +14,7 @@ import { MAX_PLANNING_REPOS } from "./prompts";
 import type { Finding } from "./review";
 import type { Moment, MomentKind, ProjectTimeline, SessionBar, TicketBar } from "./replay";
 import { RPC_TAGS } from "./rpc-tags";
-import { repoSpecSchema } from "./spec";
+import { repoSpecSchema, type ForgeProfile } from "./spec";
 import type { SpecReviewStatus } from "./spec-review";
 import type { SentNote, SpecReviewRound, SpecVersionView } from "./spec-view";
 import type { PlannerAction, PlannerStep, PlannerVersion, PlannerView, TurnStep, VersionChange } from "./planner-view";
@@ -24,6 +24,8 @@ import type { ActivityItem, Attempt, ChecksItem, CheckStep, Mark, MergeItem, PrF
 import type { ChangedFile, ChangeKind, ChangeRepo, ChangeSource, ChangesView, FilePatch } from "./changes";
 import type { MergeConfirmState } from "./auto-merge";
 import type { DraftState } from "./drafts";
+import type { ForgeTest } from "./forge-check";
+import type { ProfileUse } from "./forge-profiles";
 import type { AuthorKind, PostKind, ProjectState, ReviewVerdict, Role, ThreadState, TicketState } from "./states";
 import { MERGE_CHOICES } from "./states";
 
@@ -321,6 +323,21 @@ export interface BadgeView {
   threadIds: string[];
 }
 
+/** A forge profile in Loom's settings, with its version and the projects that name it. */
+export interface ForgeProfileView {
+  profile: ForgeProfile;
+  hash: string;
+  updatedAt: number;
+  usedBy: ProfileUse[];
+}
+
+/** What a forge profile's Test shows: the run, in words as `bb loom forge test` prints it, and whether every command worked. */
+export interface ForgeTestView {
+  test: ForgeTest;
+  text: string;
+  passed: boolean;
+}
+
 // "review" is review again as is: a requeue with no new worker, whose note may be empty.
 export const TICKET_ACTIONS = ["requeue", "review", "block", "cancel"] as const;
 export const CONTROL_ACTIONS = ["approve", "start", "pause", "pauseNow", "resume", "land", "landDirect", "archive"] as const;
@@ -441,6 +458,14 @@ export const rpcContract = defineRpcContract({
     ...RPC_TAGS.startPlanning,
   },
   specVersion: { input: z.object({ slug, version: z.number().int().min(1).optional(), base: z.number().int().min(1).optional() }).strict(), output: typed<SpecVersionView>(), ...RPC_TAGS.specVersion },
+  forgeProfiles: { input: z.null(), output: typed<ForgeProfileView[]>(), ...RPC_TAGS.forgeProfiles },
+  // The settings page's form: a new profile (original null) or an edit of the profile with that id. The server checks it.
+  saveForgeProfile: { input: z.object({ profile: z.unknown(), original: z.string().max(40).nullable(), confirm }).strict(), output: typed<ForgeProfileView[]>(), ...RPC_TAGS.saveForgeProfile },
+  deleteForgeProfile: { input: z.object({ id: z.string().min(1).max(40), confirm }).strict(), output: typed<ForgeProfileView[]>(), ...RPC_TAGS.deleteForgeProfile },
+  // A saved profile by id, or the form's profile as it is; only its state and feedback commands run.
+  testForgeProfile: { input: z.object({ id: z.string().min(1).max(40).optional(), profile: z.unknown().optional(), url: z.string().min(1).max(500) }).strict(), output: typed<ForgeTestView>(), ...RPC_TAGS.testForgeProfile },
+  exportForgeProfiles: { input: z.null(), output: typed<{ toml: string }>(), ...RPC_TAGS.exportForgeProfiles },
+  importForgeProfiles: { input: z.object({ toml: z.string().max(200_000), apply: z.boolean(), confirm }).strict(), output: typed<{ changes: string[] }>(), ...RPC_TAGS.importForgeProfiles },
   changes: { input: z.object({ slug }).strict(), output: typed<ChangesView>(), ...RPC_TAGS.changes },
   changePatch: {
     input: z.object({ slug, path: z.string().min(1).max(4096), base: commitHash.optional(), head: commitHash.optional(), key: key.optional(), repo: repoSpecSchema.shape.name.optional() }).strict(),

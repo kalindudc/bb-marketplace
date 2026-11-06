@@ -62,6 +62,12 @@ const handlers = (over: Partial<Handlers> = {}): Handlers => ({
   sendNotes: unexpected,
   changes: unexpected,
   changePatch: unexpected,
+  forgeProfiles: () => [],
+  saveForgeProfile: unexpected,
+  deleteForgeProfile: unexpected,
+  testForgeProfile: unexpected,
+  exportForgeProfiles: () => ({ toml: "" }),
+  importForgeProfiles: unexpected,
   ...over,
 });
 

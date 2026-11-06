@@ -222,4 +222,6 @@ export const MIGRATIONS: string[] = [
   UPDATE tickets SET keep_draft = 1 WHERE state = 'pr_open' AND pr_meta_json IS NOT NULL AND json_extract(pr_meta_json, '$.draft') = 1`,
   // Run rows of file transfers between machines held each chunk's bytes, 1 GB in one install; the rows and their timing stay.
   `UPDATE runs SET output = 'Loom no longer keeps what this step copied.' WHERE kind = 'git' AND label IN ('readBlob', 'carryWrite', 'importChunk')`,
+  // Forge profiles: command forges kept in Loom's settings, which any spec names by id. hash is the profile's canonical JSON's.
+  `CREATE TABLE forge_profiles (id TEXT PRIMARY KEY, json TEXT NOT NULL, hash TEXT NOT NULL, updated_at INTEGER NOT NULL)`,
 ];

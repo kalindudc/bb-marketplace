@@ -41,6 +41,8 @@ function everything(doc: Doc): void {
       after_open: ["ci-cli run"],
       after_push: ['ci-cli run --sha "$LOOM_SHA"', "pr-cli ready"],
       ignore_checks: ["Review Bot*", "* (advisory)"],
+      bots: ["*@robots.example.com"],
+      notes: "The review bot clears a finding once a push fixes it.",
       merge: 'pr-cli comment "$LOOM_PR_NUMBER" --body /merge',
       request_reviews: 'pr-cli edit "$LOOM_PR_NUMBER" --add-reviewer "$LOOM_REVIEWERS"',
       auto_merge: { method: "command", mode: "auto", rejected: ["Merge failed*"], require_live: true, max_attempts: 2, final_review: {} },
@@ -86,6 +88,9 @@ function everything(doc: Doc): void {
       ci: true,
       forge: {
         kind: "command",
+        profile: "example",
+        bots: ["api-bot*"],
+        notes: "Answer the bot once when you disagree.",
         open: "api-pr open",
         state: "api-pr state",
         feedback: "api-pr feedback",
@@ -133,7 +138,7 @@ function everything(doc: Doc): void {
 
 /** The integration strategy's own settings, which the pull request strategy refuses: the after-merge checks. */
 function integrationEverything(doc: Doc): void {
-  doc.merge = { strategy: "integration", remote: "upstream", draft: false, git_network_timeout_seconds: 200, forge: { kind: "gh", after_open: ["ci-cli run"] } };
+  doc.merge = { strategy: "integration", remote: "upstream", draft: false, git_network_timeout_seconds: 200, forge: { profile: "example", after_open: ["ci-cli run"] } };
   doc.checks = { commands: ["npm test"], after_merge: ["npm run e2e"] };
   doc.repo = [
     { name: "web", project: "proj_web", after_merge: ["npm run web-e2e"], git_network_timeout_seconds: 90 },
@@ -144,8 +149,10 @@ function integrationEverything(doc: Doc): void {
   doc.ticket[1].verify = ["npm run api-test"];
 }
 
+// The api repo's forge names a profile; the spec's own keys beside it win, so the profile only needs to exist.
+const PROFILES = { forgeProfile: (id: string) => (id === "example" ? { id, name: "Example", kind: "command" as const, open: "example open", state: "example state" } : null), forgeProfileIds: () => ["example"] };
 const valid = (toml: string) => {
-  const result = parseSpec(toml);
+  const result = parseSpec(toml, PROFILES);
   expect(result.errors).toEqual([]);
   return result.spec!;
 };
@@ -255,6 +262,12 @@ const handlers = (over: Partial<Handlers>): Handlers => ({
   sendNotes: unexpected,
   changes: unexpected,
   changePatch: unexpected,
+  forgeProfiles: () => [],
+  saveForgeProfile: unexpected,
+  deleteForgeProfile: unexpected,
+  testForgeProfile: unexpected,
+  exportForgeProfiles: () => ({ toml: "" }),
+  importForgeProfiles: unexpected,
   ...over,
 });
 

@@ -33,6 +33,8 @@ export class SpawnUnavailableError extends Error {
 export interface BbPort {
   /** The host of the thread's environment, else the server's primary host. */
   threadHostId(threadId: string): Promise<string | null>;
+  /** The machine bb's server runs on, where a forge profile's test runs; null when bb names none. */
+  primaryHostId(): Promise<string | null>;
   /** Reuses `sectionId` when bb still lists it, else creates the section. Throws SectionNameConflictError when the name is taken. */
   ensureSection(sectionId: string | null, name: string): Promise<string>;
   renameSection(sectionId: string, name: string): Promise<void>;

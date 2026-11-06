@@ -59,7 +59,7 @@ export function specVersionView(deps: { store: Store; projects: Projects }, slug
   const comparedWith = base ?? (view.status === "pending" && inForce !== null && inForce < view.version ? inForce : view.version > 1 ? view.version - 1 : null);
   const parsed = new Map<number, Spec>();
   const specAt = (n: number): Spec => {
-    if (!parsed.has(n)) parsed.set(n, readSpec(store.specVersion(project.id, n)!.spec_json));
+    if (!parsed.has(n)) parsed.set(n, readSpec(store.specVersion(project.id, n)!.spec_json, store));
     return parsed.get(n)!;
   };
   const spec = specAt(view.version);

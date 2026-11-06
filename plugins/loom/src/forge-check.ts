@@ -7,7 +7,7 @@ import { LoomError } from "./projects";
 import { replaceLoomBlock } from "./prompts";
 import { keptChecks } from "./pull-requests";
 import { followsFeedback, isMultiRepo, prSettings, repoSettings, type RepoSettings } from "./repos";
-import { readSpec, type ForgeSpec, type Spec } from "./spec";
+import { readSpec, type ForgeProfile, type ForgeSpec, type Spec } from "./spec";
 import { type EngineCtx } from "./ctx";
 
 type Feedback = Extract<HostOutput<"prFeedback">, { outcome: "ok" }>;
@@ -41,6 +41,8 @@ export interface ForgeCheck {
   /** The spec version whose forge ran. */
   version: number;
   forge: "gh" | "command";
+  /** The forge profile the repo's forge names, at the version that ran; null for a forge the spec writes out. */
+  profile: { id: string; hash: string } | null;
   call: "prBatch" | "prFeedback" | "prState";
   /** What the call runs on the machine: gh's GraphQL read, or the spec's command. */
   runs: string;
@@ -137,14 +139,15 @@ export async function forgeCheck(ctx: EngineCtx, a: { slug: string; target: stri
   const version = a.version ?? project.approved_version ?? store.latestSpecVersion(project.id)!.version;
   const row = store.specVersion(project.id, version);
   if (row === null) throw new LoomError("loom_not_found", `${a.slug} has no spec v${version}.`, `Run \`bb loom show ${a.slug}\` to see its versions.`);
-  const spec = readSpec(row.spec_json);
+  const spec = readSpec(row.spec_json, store);
   const { url, ticket, repo } = target(ctx, project.id, spec, a);
   const settings = settingsOf(spec, repo);
   const { forge } = settings;
   if (forge.kind === "none") throw new LoomError("loom_invalid_input", `The forge of ${repo === null ? "the project's repo" : `the repo "${repo}"`} in v${version} is none: Loom only pushes the branch and reads no pull request, so there is nothing to check.`);
   const checkout = await repoCheckout(ctx, project, spec, repo);
   const follows = prSettings(spec).maxFixRounds > 0;
-  const base = { slug: project.slug, url, ticket: ticket?.key ?? null, repo, version, forge: forge.kind, hostId: checkout.hostId, checkout: checkout.path };
+  const profile = forge.profile === undefined ? null : { id: forge.profile, hash: store.forgeProfileRow(forge.profile)!.hash };
+  const base = { slug: project.slug, url, ticket: ticket?.key ?? null, repo, version, forge: forge.kind, profile, hostId: checkout.hostId, checkout: checkout.path };
   const failed = (call: ForgeCheck["call"], runs: string, noFeedback: string | null, message: string, transient?: Transient, issues: Issue[] = []): ForgeCheck => ({
     ...base,
     call,
@@ -201,21 +204,19 @@ const TRANSIENT_TEXT: Record<Transient, string> = {
 
 const shown = (value: boolean | string | null) => (value === null ? "unknown" : value === true ? "yes" : value === false ? "no" : value);
 
-/** The check as the CLI prints it: what ran where, then what Loom reads, or why the read failed. */
-export function formatForgeCheck(check: ForgeCheck): string {
-  const what = check.ticket === null ? check.url : `${check.url} (${check.ticket})`;
-  const repo = check.repo === null ? "" : `the repo "${check.repo}", `;
-  const lines = [`Read ${what} as a poll of ${check.slug} would: ${repo}the forge of spec v${check.version} (${check.forge}), ${check.call} on ${check.hostId} in ${check.checkout}.`, `Ran: ${check.runs}`];
-  if (check.failure !== null) {
-    lines.push(`The read failed: ${check.failure.message}`);
-    lines.push(check.failure.transient === null ? "A poll pauses the project for a failure like this one." : TRANSIENT_TEXT[check.failure.transient]);
-    if (check.failure.issues.length > 0) lines.push("The host contract refused these fields:", ...check.failure.issues.map((issue) => `  ${issue.path === "" ? "(the answer)" : issue.path}: ${issue.message}`));
-    return `${lines.join("\n")}\n`;
-  }
-  const read = check.read!;
+type Failure = NonNullable<ForgeCheck["failure"]>;
+
+function failureLines(failure: Failure): string[] {
+  const lines = [`The read failed: ${failure.message}`, failure.transient === null ? "A poll pauses the project for a failure like this one." : TRANSIENT_TEXT[failure.transient]];
+  if (failure.issues.length > 0) lines.push("The host contract refused these fields:", ...failure.issues.map((issue) => `  ${issue.path === "" ? "(the answer)" : issue.path}: ${issue.message}`));
+  return lines;
+}
+
+function readLines(read: ForgeCheckRead, noFeedback: string | null): string[] {
+  const lines: string[] = [];
   const facts = [`State ${read.state}`, `draft ${shown(read.draft)}`, `review ${shown(read.review)}`, `base ${shown(read.base)}`, `mergeable ${shown(read.mergeable)}`, ...(read.head === null ? [] : [`head ${read.head}`]), ...(read.author === null ? [] : [`author ${read.author}`])];
   lines.push(facts.join(" · "));
-  if (check.noFeedback !== null) lines.push(`No checks or items: ${check.noFeedback}.`);
+  if (noFeedback !== null) lines.push(`No checks or items: ${noFeedback}.`);
   if (read.checks !== null) {
     lines.push(`Checks: ${read.checks.length}`);
     const width = Math.max(0, ...read.checks.map((each) => each.state.length));
@@ -231,5 +232,79 @@ export function formatForgeCheck(check: ForgeCheck): string {
     lines.push(`Items: ${read.items.length}`);
     for (const item of read.items) lines.push(`  ${item.kind}  ${item.author}${item.bot ? " (bot)" : ""}  ${item.key}  ${item.line}`);
   }
+  return lines;
+}
+
+/** The check as the CLI prints it: what ran where, then what Loom reads, or why the read failed. */
+export function formatForgeCheck(check: ForgeCheck): string {
+  const what = check.ticket === null ? check.url : `${check.url} (${check.ticket})`;
+  const repo = check.repo === null ? "" : `the repo "${check.repo}", `;
+  const profile = check.profile === null ? "" : `, profile ${check.profile.id} at version ${check.profile.hash}`;
+  const lines = [`Read ${what} as a poll of ${check.slug} would: ${repo}the forge of spec v${check.version} (${check.forge}${profile}), ${check.call} on ${check.hostId} in ${check.checkout}.`, `Ran: ${check.runs}`];
+  lines.push(...(check.failure !== null ? failureLines(check.failure) : readLines(check.read!, check.noFeedback)));
   return `${lines.join("\n")}\n`;
 }
+
+/** A forge profile's test: its state and feedback commands against one pull request, which are all it runs. */
+export interface ForgeTest {
+  profile: string;
+  /** The version of the profile tested, or null for a form's profile that is not saved. */
+  hash: string | null;
+  url: string;
+  hostId: string;
+  cwd: string;
+  state: { runs: string; state: "OPEN" | "MERGED" | "CLOSED" | null; failure: Failure | null };
+  /** Null when the profile has no feedback command, so Loom reads only the state. */
+  feedback: { runs: string; read: ForgeCheckRead | null; failure: Failure | null } | null;
+}
+
+/**
+ * Runs a profile's two read commands, state and feedback, against the pull request at `url`, on the machine bb's server
+ * runs on, in its user's home directory: what a poll would read through it. It never runs a command that writes, and it
+ * changes nothing in Loom.
+ */
+export async function forgeTest(ctx: EngineCtx, profile: ForgeProfile, hash: string | null, url: string): Promise<ForgeTest> {
+  if (!/^https?:\/\/\S+$/u.test(url) || url.length > 500) throw new LoomError("loom_invalid_input", `${url} is not a pull request URL.`, "Give the full link to a pull request on this forge.");
+  const hostId = await ctx.bb.primaryHostId();
+  if (hostId === null) throw new LoomError("loom_unavailable", "bb names no machine for its server, so Loom has nowhere to run the profile's commands.");
+  const cwd = (await ctx.host.call(hostId, "homeDir", {})).path;
+  const fail = (error: unknown): Failure => ({ message: error instanceof Error ? error.message : String(error), transient: null, issues: issuesOf(error) });
+  let state: ForgeTest["state"];
+  try {
+    const answer = await ctx.host.call(hostId, "prState", { repo: cwd, url, forge: { kind: "command", state: profile.state } });
+    state = answer.outcome === "ok" ? { runs: profile.state, state: answer.state, failure: null } : { runs: profile.state, state: null, failure: { message: answer.message, transient: answer.transient ?? null, issues: [] } };
+  } catch (error) {
+    state = { runs: profile.state, state: null, failure: fail(error) };
+  }
+  let feedback: ForgeTest["feedback"] = null;
+  if (profile.feedback !== undefined) {
+    const forge: ForgeSpec = { kind: "command", ...(profile.ignore_checks === undefined ? {} : { ignore_checks: profile.ignore_checks }) };
+    try {
+      const answer = await ctx.host.call(hostId, "prFeedback", { repo: cwd, url, forge: { kind: "command", feedback: profile.feedback } });
+      feedback =
+        answer.outcome === "ok"
+          ? { runs: profile.feedback, read: readOf(answer, forge), failure: null }
+          : { runs: profile.feedback, read: null, failure: { message: answer.message, transient: answer.transient ?? null, issues: [] } };
+    } catch (error) {
+      feedback = { runs: profile.feedback, read: null, failure: fail(error) };
+    }
+  }
+  return { profile: profile.id, hash, url, hostId, cwd, state, feedback };
+}
+
+/** The test as the CLI and the settings page print it: each command, what it ran and what Loom reads, or why it failed. */
+export function formatForgeTest(test: ForgeTest): string {
+  const version = test.hash === null ? "as the form has it, not saved" : `version ${test.hash}`;
+  const lines = [`Tested the forge profile ${test.profile} (${version}) against ${test.url} on ${test.hostId} in ${test.cwd}. It ran only its state and feedback commands, which read and change nothing.`, "", `state: ${test.state.runs}`];
+  lines.push(test.state.failure === null ? `State ${test.state.state}` : failureLines(test.state.failure).join("\n"));
+  lines.push("");
+  if (test.feedback === null) lines.push("feedback: none, so Loom reads only the state: no checks, reviews or comments, and it cannot ask reviewers or merge.");
+  else {
+    lines.push(`feedback: ${test.feedback.runs}`);
+    lines.push(...(test.feedback.failure !== null ? failureLines(test.feedback.failure) : readLines(test.feedback.read!, null)));
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+/** Whether every command the test ran worked. */
+export const forgeTestPassed = (test: ForgeTest) => test.state.failure === null && (test.feedback === null || test.feedback.failure === null);

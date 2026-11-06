@@ -141,7 +141,7 @@ function stepsOf(store: Store, project: ProjectRow | null, threadId: string, sta
   const planner = new Set([threadId]);
   const specs = new Map<number, Spec>();
   const specAt = (version: number) => {
-    if (!specs.has(version)) specs.set(version, readSpec(store.specVersion(project!.id, version)!.spec_json));
+    if (!specs.has(version)) specs.set(version, readSpec(store.specVersion(project!.id, version)!.spec_json, store));
     return specs.get(version)!;
   };
   const keyOf = (event: EventRow) => (event.ticket_id === null ? null : (store.ticket(event.ticket_id)?.key ?? null));
@@ -253,7 +253,7 @@ function versionsOf(store: Store, projects: Projects, project: ProjectRow): Plan
   for (let version = 1; version <= latest; version++) {
     const row = store.specVersion(project.id, version);
     if (row === null) continue;
-    const spec = readSpec(row.spec_json);
+    const spec = readSpec(row.spec_json, store);
     const review = reviews.filter((entry) => entry.version === version).at(-1);
     out.push({
       version,

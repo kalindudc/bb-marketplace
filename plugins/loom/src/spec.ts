@@ -126,32 +126,74 @@ export const reviewerRuleSchema = z
   })
   .strict();
 
-// The server that hosts a repo's pull requests: gh, the spec's own commands, or none (Loom only pushes the branch).
-export const forgeSchema = z
+// The keys a forge profile shares with a spec's forge: the commands Loom runs, the checks it drops, the authors it counts
+// as bots, and what it tells workers and reviewers about the server.
+const forgeKeys = {
+  open: command.optional(),
+  state: command.optional(),
+  feedback: command.optional(),
+  edit: command.optional(),
+  reply: command.optional(),
+  // Moves an open pull request to another base branch; gh does it itself.
+  retarget: command.optional(),
+  after_open: z.array(command).max(5).optional(),
+  // Run after each push to an open pull request, and after Loom moves one to another base.
+  after_push: z.array(command).max(5).optional(),
+  // Globs, not regular expressions: a pattern from a spec must never be able to stall the plugin's thread.
+  ignore_checks: z.array(nonBlankGlob).max(20).optional(),
+  // Hands a ready pull request to the forge's merge; auto_merge says when.
+  merge: command.optional(),
+  // Marks a draft pull request ready for review in LOOM_URL; gh does it itself.
+  ready: command.optional(),
+  // Asks the logins in LOOM_REVIEWERS to review.
+  request_reviews: command.optional(),
+  // Authors whose top-level comments start no fix round, on top of the ones the forge marks as bots and Loom's botAuthors setting.
+  bots: z.array(nonBlankGlob).max(50).optional(),
+  // What workers and reviewers of this forge's pull requests are told about the server, such as how its review bot clears a finding.
+  notes: z.string().trim().min(1).max(4000).optional(),
+};
+
+export const FORGE_PROFILE_ID = /^[a-z][a-z0-9-]{0,31}$/;
+const profileId = z.string().regex(FORGE_PROFILE_ID, "must be 1-32 lowercase letters, digits or dashes, starting with a letter (for example forge)");
+
+// The server that hosts a repo's pull requests: gh, the spec's own commands, a forge profile from Loom's settings, or none
+// (Loom only pushes the branch). A forge that names a profile is a command forge, so its kind may be left out.
+export const forgeSchema = z.preprocess(
+  (value) => (value !== null && typeof value === "object" && !Array.isArray(value) && "profile" in value && !("kind" in value) ? { kind: "command", ...value } : value),
+  z
+    .object({
+      kind: z.enum(["gh", "command", "none"]),
+      // A forge profile kept in Loom's settings; the keys the spec sets beside it win over the profile's.
+      profile: profileId.optional(),
+      ...forgeKeys,
+      auto_merge: autoMergeSchema.optional(),
+      reviewers: z.array(reviewerRuleSchema).min(1).max(10).optional(),
+    })
+    .strict(),
+);
+
+// A command forge kept in Loom's settings rather than in a spec: any spec names it with forge = { profile = "<id>" }, and
+// an edit to it reaches every project that uses it at Loom's next forge call.
+export const forgeProfileSchema = z
   .object({
-    kind: z.enum(["gh", "command", "none"]),
-    open: command.optional(),
-    state: command.optional(),
-    feedback: command.optional(),
-    edit: command.optional(),
-    reply: command.optional(),
-    // Moves an open pull request to another base branch; gh does it itself.
-    retarget: command.optional(),
-    after_open: z.array(command).max(5).optional(),
-    // Run after each push to an open pull request, and after Loom moves one to another base.
-    after_push: z.array(command).max(5).optional(),
-    // Globs, not regular expressions: a pattern from a spec must never be able to stall the plugin's thread.
-    ignore_checks: z.array(nonBlankGlob).max(20).optional(),
-    // Hands a ready pull request to the forge's merge; auto_merge says when.
-    merge: command.optional(),
-    // Marks a draft pull request ready for review in LOOM_URL; gh does it itself.
-    ready: command.optional(),
-    // Asks the logins in LOOM_REVIEWERS to review.
-    request_reviews: command.optional(),
-    auto_merge: autoMergeSchema.optional(),
-    reviewers: z.array(reviewerRuleSchema).min(1).max(10).optional(),
+    id: profileId,
+    name: z.string().trim().min(1).max(60),
+    kind: z.literal("command").default("command"),
+    ...forgeKeys,
+    open: command,
+    state: command,
   })
   .strict();
+
+export type ForgeProfile = z.output<typeof forgeProfileSchema>;
+
+/** Where a spec's forge profiles come from: the store, or none for a spec read with no settings at hand. */
+export interface ForgeProfiles {
+  forgeProfile(id: string): ForgeProfile | null;
+  forgeProfileIds(): string[];
+}
+
+export const NO_PROFILES: ForgeProfiles = { forgeProfile: () => null, forgeProfileIds: () => [] };
 
 // What happens when a project event happens: the planner, or for ticket.started each worker's brief, is told to do
 // something with its own tools. Loom only delivers it; it blocks nothing.
@@ -344,11 +386,52 @@ export type Spec = z.output<typeof specSchema>;
  * A spec version's stored JSON, as every reader gets it: as it was saved, with the defaults a later schema gave keys a
  * stored version may lack. A value it holds, an old default included, is kept.
  */
-export function readSpec(json: string): Spec {
+export function readSpec(json: string, profiles: ForgeProfiles): Spec {
   const spec = JSON.parse(json) as Spec;
   spec.agents.ticket_timeout_minutes ??= TICKET_TIMEOUT_MINUTES;
   spec.checks.timeout_minutes ??= CHECKS_TIMEOUT_MINUTES;
-  return spec;
+  const resolved = withProfiles(spec, profiles);
+  if (resolved.errors.length > 0) throw new Error(`This spec cannot run: ${resolved.errors.join(" ")}`);
+  return resolved.spec;
+}
+
+/** The forge as it runs: the profile's keys, under the ones the spec sets beside it. */
+export function profileForge(forge: ForgeSpec, profile: ForgeProfile): ForgeSpec {
+  const { id: _id, name: _name, kind: _kind, ...keys } = profile;
+  return { ...keys, ...forge, kind: "command" };
+}
+
+/**
+ * The spec with every forge that names a profile filled in from it, and an error for each profile Loom does not have; the
+ * spec as stored keeps only the profile's id, so an edit to the profile reaches it.
+ */
+export function withProfiles(spec: Spec, profiles: ForgeProfiles): { spec: Spec; errors: string[] } {
+  const errors: string[] = [];
+  const fill = (forge: ForgeSpec | undefined, at: string): ForgeSpec | undefined => {
+    if (forge?.profile === undefined) return forge;
+    if (forge.kind !== "command") {
+      errors.push(`${at}.kind: a forge profile is a command forge, so kind must be "command" or left out, not "${forge.kind}". Remove kind, or remove profile.`);
+      return forge;
+    }
+    const profile = profiles.forgeProfile(forge.profile);
+    if (profile !== null) return profileForge(forge, profile);
+    const ids = profiles.forgeProfileIds();
+    errors.push(
+      `${at}.profile: Loom has no forge profile "${forge.profile}". ${ids.length === 0 ? "It has none yet: add one in Loom's settings under Forges, or with `bb loom forge import <file> --apply`." : `Use one of: ${ids.join(", ")}.`}`,
+    );
+    return forge;
+  };
+  const named = (forge: ForgeSpec | undefined) => forge?.profile !== undefined;
+  if (!named(spec.merge.forge) && !(spec.repo ?? []).some((repo) => named(repo.forge))) return { spec, errors };
+  const merge = { ...spec.merge, forge: fill(spec.merge.forge, "merge.forge") };
+  const repo = spec.repo?.map((entry, index) => ({ ...entry, forge: fill(entry.forge, `repo[${index}].forge`) }));
+  return { spec: { ...spec, merge, ...(repo === undefined ? {} : { repo }) }, errors };
+}
+
+/** The ids of the forge profiles a spec names, in its order, once each. */
+export function profilesNamed(spec: Spec): string[] {
+  const ids = [spec.merge.forge?.profile, ...(spec.repo ?? []).map((repo) => repo.forge?.profile)].filter((id): id is string => id !== undefined);
+  return [...new Set(ids)];
 }
 export type TicketSpec = z.output<typeof ticketSpecSchema>;
 export type TicketPatch = z.output<typeof ticketPatchSchema>;
@@ -469,7 +552,11 @@ export function proposalErrorsOf(spec: Spec): string[] {
   return ["project.summary: required. Write one or two plain sentences, 20 to 300 characters, that say what the project changes and why; Loom shows it on the project page and in its home list."];
 }
 
-export function parseSpec(toml: string): SpecResult {
+/**
+ * Parses and checks a spec. A forge that names a profile is checked as it would run, with the profile's keys filled in from
+ * `profiles`; the spec returned keeps only the profile's id.
+ */
+export function parseSpec(toml: string, profiles: ForgeProfiles = NO_PROFILES): SpecResult {
   let raw: unknown;
   try {
     raw = parse(toml);
@@ -478,7 +565,9 @@ export function parseSpec(toml: string): SpecResult {
   }
   const parsed = specSchema.safeParse(raw);
   if (!parsed.success) return failed(parsed.error.issues.flatMap(describeIssue));
-  const { errors, warnings } = validateSemantics(parsed.data, toml);
+  const resolved = withProfiles(parsed.data, profiles);
+  if (resolved.errors.length > 0) return failed(resolved.errors);
+  const { errors, warnings } = validateSemantics(resolved.spec, toml);
   if (errors.length > 0) return { ok: false, spec: null, errors, warnings };
   return { ok: true, spec: parsed.data, errors: [], warnings };
 }
@@ -555,7 +644,8 @@ export function defaultKeysIn(toml: string): string[] {
   const merge = (raw.merge ?? {}) as { forge?: object };
   const checks = (raw.checks ?? {}) as { ci?: unknown };
   const repos = Array.isArray(raw.repo) ? raw.repo : [];
-  const forgeGives = (forge: object | undefined) => followsFeedback({ kind: "gh", ...forge } as ForgeSpec);
+  // A profile's commands are in Loom's settings, not the TOML, so a ci beside one is never judged a default.
+  const forgeGives = (forge: object | undefined) => (forge !== undefined && "profile" in forge ? FROM_FORGE : followsFeedback({ kind: "gh", ...forge } as ForgeSpec));
   // A top-level ci in a multi-repo spec is each repo's default, whose forges may differ, so only a repo's own ci is judged there.
   const ciDefault = (path: string, table: Record<string, unknown> | null): unknown =>
     path === "checks.ci" ? (repos.length === 0 ? forgeGives(merge.forge) : FROM_FORGE) : checks.ci === undefined ? forgeGives((table?.forge as object | undefined) ?? merge.forge) : FROM_FORGE;
@@ -1071,7 +1161,7 @@ function overlapWarnings(overlaps: readonly ScopeOverlap[]): string[] {
   return warnings;
 }
 
-function canonicalJson(value: unknown): string {
+export function canonicalJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
   if (value !== null && typeof value === "object") {
     const entries = Object.entries(value)

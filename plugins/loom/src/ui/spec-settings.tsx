@@ -326,7 +326,32 @@ const FORGE_HOOKS = [
   ["after_push", "After each push"],
 ] as const;
 const hasForgeParts = (forge: ForgeSpec | undefined) =>
-  forge !== undefined && (FORGE_COMMANDS.some(([key]) => forge[key] !== undefined) || FORGE_HOOKS.some(([key]) => (forge[key]?.length ?? 0) > 0) || (forge.ignore_checks?.length ?? 0) > 0 || forge.auto_merge !== undefined || forge.reviewers !== undefined);
+  forge !== undefined &&
+  (forge.profile !== undefined || FORGE_COMMANDS.some(([key]) => forge[key] !== undefined) || FORGE_HOOKS.some(([key]) => (forge[key]?.length ?? 0) > 0) || (forge.ignore_checks?.length ?? 0) > 0 || (forge.bots?.length ?? 0) > 0 || forge.notes !== undefined || forge.auto_merge !== undefined || forge.reviewers !== undefined);
+
+/** A forge's list of globs, each a pill of its own, with the ones this version removed struck through. */
+function GlobList({ path, label, items }: { path: string; label: string; items: readonly string[] }) {
+  return (
+    <div className="flex min-w-0 flex-wrap gap-1">
+      <DiffList
+        path={path}
+        items={items}
+        compact={false}
+        render={(glob, mark, index) =>
+          mark === "removed" ? (
+            <span data-removed className="rounded-full bg-destructive-text/10 px-2 font-mono text-[11px] leading-5 text-destructive-text line-through">
+              {glob}
+            </span>
+          ) : (
+            <Commentable as="span" target={value(`${path}[${index}]`, `${label} ${index + 1}`, "text")} className={`rounded-full border px-2 font-mono text-[11px] leading-5 [overflow-wrap:anywhere] ${mark === "added" ? "border-success bg-success/15" : "border-border-seam"}`}>
+              {glob}
+            </Commentable>
+          )
+        }
+      />
+    </div>
+  );
+}
 
 const AUTO_MERGE_MODE_NAMES: Record<"auto" | "manual", string> = { manual: "after you confirm each merge", auto: "by itself" };
 
@@ -467,6 +492,9 @@ function ForgeRows({ path, label, forge, inherited }: { path: string; label: str
   const ignoring = shown("ignore_checks", ignored.length > 0);
   const merging = shown("auto_merge", forge?.auto_merge !== undefined);
   const asking = shown("reviewers", forge?.reviewers !== undefined);
+  const profiled = shown("profile", forge?.profile !== undefined);
+  const botting = shown("bots", (forge?.bots?.length ?? 0) > 0);
+  const noting = shown("notes", forge?.notes !== undefined);
   const kind = forge === undefined ? (changeAt(review, `${path}.kind`) === undefined ? path : `${path}.kind`) : `${path}.kind`;
   return (
     <>
@@ -481,8 +509,15 @@ function ForgeRows({ path, label, forge, inherited }: { path: string; label: str
           </Commentable>
         )}
       </Row>
-      {(commands.length > 0 || hooks.length > 0 || ignoring || merging || asking) && (
+      {(profiled || commands.length > 0 || hooks.length > 0 || ignoring || botting || noting || merging || asking) && (
         <dd data-forge={path} className="col-span-full min-w-0 space-y-1.5 border-l-2 border-border-seam pl-2">
+          {profiled && (
+            <Part label="Forge profile from Loom's settings" paths={[`${path}.profile`]}>
+              <Commentable as="span" target={value(`${path}.profile`, `${label} › profile`, "text", forge?.profile)} className="font-mono text-xs">
+                {forge?.profile ?? "none"}
+              </Commentable>
+            </Part>
+          )}
           {commands.map(([key, name]) => (
             <Part key={key} label={name} paths={[`${path}.${key}`]}>
               <Command path={`${path}.${key}`} label={`${label} › ${key}`} command={forge?.[key]} />
@@ -508,24 +543,17 @@ function ForgeRows({ path, label, forge, inherited }: { path: string; label: str
           ))}
           {ignoring && (
             <Part label="Ignores these checks" paths={[`${path}.ignore_checks`]} target={value(`${path}.ignore_checks`, `${label} › ignore checks`, "text")}>
-              <div className="flex min-w-0 flex-wrap gap-1">
-                <DiffList
-                  path={`${path}.ignore_checks`}
-                  items={ignored}
-                  compact={false}
-                  render={(glob, mark, index) =>
-                    mark === "removed" ? (
-                      <span data-removed className="rounded-full bg-destructive-text/10 px-2 font-mono text-[11px] leading-5 text-destructive-text line-through">
-                        {glob}
-                      </span>
-                    ) : (
-                      <Commentable as="span" target={value(`${path}.ignore_checks[${index}]`, `${label} › ignore checks ${index + 1}`, "text")} className={`rounded-full border px-2 font-mono text-[11px] leading-5 [overflow-wrap:anywhere] ${mark === "added" ? "border-success bg-success/15" : "border-border-seam"}`}>
-                        {glob}
-                      </Commentable>
-                    )
-                  }
-                />
-              </div>
+              <GlobList path={`${path}.ignore_checks`} label={`${label} › ignore checks`} items={ignored} />
+            </Part>
+          )}
+          {botting && (
+            <Part label="Counts these authors as bots" paths={[`${path}.bots`]} target={value(`${path}.bots`, `${label} › bots`, "text")}>
+              <GlobList path={`${path}.bots`} label={`${label} › bots`} items={forge?.bots ?? []} />
+            </Part>
+          )}
+          {noting && (
+            <Part label="Tells workers and reviewers" paths={[`${path}.notes`]}>
+              <Command path={`${path}.notes`} label={`${label} › notes`} command={forge?.notes} />
             </Part>
           )}
           {merging && <AutoMergeParts path={path} label={label} auto={forge?.auto_merge} />}

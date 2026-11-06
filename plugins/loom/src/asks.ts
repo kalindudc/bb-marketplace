@@ -71,7 +71,7 @@ function stepError(store: Store, project: ProjectRow, step: AskStep, index: numb
   }
 }
 
-const approvedSpec = (store: Store, project: ProjectRow) => readSpec(store.specVersion(project.id, project.approved_version!)!.spec_json);
+const approvedSpec = (store: Store, project: ProjectRow) => readSpec(store.specVersion(project.id, project.approved_version!)!.spec_json, store);
 
 /** Records the planner's asks, replacing the ones before; no steps clears them. */
 export function recordAsk(store: Store, project: ProjectRow, actor: string, data: AskData): void {
@@ -117,7 +117,7 @@ function stepDone(store: Store, project: ProjectRow, later: readonly EventRow[],
     case "land": {
       // A land of one repo of several, or one that failed part way, leaves the ask open while a repo still has work to land.
       if (!later.some((event) => event.kind === "project.landed") || project.approved_version === null) return false;
-      const spec = readSpec(store.specVersion(project.id, project.approved_version)!.spec_json);
+      const spec = readSpec(store.specVersion(project.id, project.approved_version)!.spec_json, store);
       return !repoOverviews(project, spec, store.tickets(project.id), landsOf(store.eventsOfKind(project.id, "project.landed"))).some((repo) => repo.toLand);
     }
     case "live":

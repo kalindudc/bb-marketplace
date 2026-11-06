@@ -1,4 +1,5 @@
 import type { NewThreadRequest } from "@get-bb/plugin-sdk";
+import { NO_PROFILES } from "../src/spec";
 import { beforeEach, describe, expect, it } from "vitest";
 import { Store } from "../src/db/store";
 import type { BbProjectInfo } from "../src/ports";
@@ -1126,7 +1127,7 @@ describe("summaries", () => {
     db.prepare("UPDATE spec_versions SET toml = ?, spec_json = json_remove(spec_json, '$.project.summary') WHERE project_id = ?").run(specToml(withoutSummary), id);
 
     expect(oldProjects.overview("csv").about).toEqual({ summary: null, lead: "Let people export their orders as a CSV file from the admin page.", doneWhen: [], links: [], nonGoals: 0 });
-    expect(specSummary(old.specVersion(id, 1)!.toml).tickets).toHaveLength(2);
+    expect(specSummary(old.specVersion(id, 1)!.toml, NO_PROFILES).tickets).toHaveLength(2);
     expect((await oldProjects.start("csv", "human")).state).toBe("running");
 
     const refused = await failure(

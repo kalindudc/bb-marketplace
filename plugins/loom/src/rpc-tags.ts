@@ -45,6 +45,12 @@ export const RPC_TAGS = {
   bbProjects: { tags: anything },
   startPlanning: { invalidates: anything },
   specVersion: { tags: ofProject },
+  forgeProfiles: { tags: anything },
+  saveForgeProfile: { invalidates: anything },
+  deleteForgeProfile: { invalidates: anything },
+  testForgeProfile: {},
+  exportForgeProfiles: { tags: anything },
+  importForgeProfiles: { invalidates: ({ apply }: { apply: boolean }) => (apply ? [ANY] : []) },
   changes: { tags: ofProject },
   changePatch: {},
 } as const;
