@@ -26,6 +26,8 @@ const MERGE_QUEUE_FIELDS = "isInMergeQueue";
 const NO_MERGE_QUEUE = /Field '(?:isInMergeQueue|mergeQueueEntry)' doesn't exist/u;
 /** PRs per batched read: GitHub ends a request after 10s, and a search page of 25 full PRs took about 6s. */
 export const VIEW_MANY_SIZE = 10;
+/** PRs whose latest checks an adapter keeps, oldest read dropped first. */
+const LATEST_KEPT = 2000;
 // Counts by state rather than the contexts themselves, so a list of 300 PRs stays light.
 const SUMMARY_FIELDS = `number title url isDraft state reviewDecision headRefOid headRefName baseRefName createdAt updatedAt closedAt mergedAt additions deletions changedFiles
   author { login __typename } repository { nameWithOwner } autoMergeRequest { enabledAt } ${MERGE_QUEUE_FIELDS}
@@ -51,6 +53,8 @@ export function listFields(operation: ListOperation, options: ListOptions = {}):
 }
 
 const WHO = "author { login __typename }";
+// The run and workflow say which check runs a newer run replaced.
+const SUITE = "checkSuite { workflowRun { databaseId event workflow { id name } } app { name } }";
 const REVIEWER = "requestedReviewer { __typename ... on User { login } ... on Bot { login } ... on Mannequin { login } ... on Team { combinedSlug } }";
 const TIMELINE_EVENTS = `REVIEW_REQUESTED_EVENT, REVIEW_REQUEST_REMOVED_EVENT, LABELED_EVENT, UNLABELED_EVENT, READY_FOR_REVIEW_EVENT, CONVERT_TO_DRAFT_EVENT,
   HEAD_REF_FORCE_PUSHED_EVENT, MERGED_EVENT, CLOSED_EVENT, REOPENED_EVENT, RENAMED_TITLE_EVENT, AUTO_MERGE_ENABLED_EVENT, AUTO_MERGE_DISABLED_EVENT,
@@ -66,10 +70,10 @@ function activityQuery(detail: boolean): string {
   const commentExtra = detail ? "pullRequestReview { id }" : "";
   const contexts = detail
     ? `state contexts(first: 100) { totalCount nodes { __typename
-      ... on CheckRun { id name status conclusion detailsUrl startedAt completedAt isRequired(pullRequestNumber: $number) checkSuite { workflowRun { workflow { name } } app { name } } }
+      ... on CheckRun { id databaseId name status conclusion detailsUrl startedAt completedAt isRequired(pullRequestNumber: $number) ${SUITE} }
       ... on StatusContext { id context state targetUrl createdAt description isRequired(pullRequestNumber: $number) } } }`
-    : `contexts(first: 50) { nodes { __typename
-      ... on CheckRun { id name conclusion detailsUrl completedAt } ... on StatusContext { id context state targetUrl createdAt } } }`;
+    : `contexts(first: 100) { nodes { __typename
+      ... on CheckRun { id databaseId name status conclusion detailsUrl completedAt ${SUITE} } ... on StatusContext { id context state targetUrl createdAt } } }`;
   const extra = detail
     ? `isDraft mergeable mergeStateStatus reviewDecision
       commitList: commits(last: 100) { totalCount nodes { commit { oid messageHeadline committedDate author { name user { login } } } } }
@@ -271,15 +275,23 @@ export function firstReviewAtOf(node: SummaryNode): number | null {
 const PASSED_RUN = new Set(["SUCCESS", "NEUTRAL", "SKIPPED"]);
 const FAILED_RUN = new Set(["FAILURE", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE"]);
 
+type Outcome = "passed" | "failed" | "pending";
+const runOutcome = (state: string): Outcome => (PASSED_RUN.has(state) ? "passed" : FAILED_RUN.has(state) ? "failed" : "pending");
+
+type StateCounts = z.infer<typeof stateCounts>;
+function countsOf(contexts: { totalCount: number; checkRunCountsByState?: StateCounts; statusContextCountsByState?: StateCounts }): CheckCounts {
+  const counts = { passed: 0, failed: 0, pending: 0, total: contexts.totalCount };
+  for (const { state, count } of contexts.checkRunCountsByState ?? []) counts[runOutcome(state)] += count;
+  for (const { state, count } of contexts.statusContextCountsByState ?? []) counts[state === "SUCCESS" ? "passed" : state === "FAILURE" || state === "ERROR" ? "failed" : "pending"] += count;
+  return counts;
+}
+
 /** Checks on the head by outcome; a head with no checks has all zeros. */
 export function checkCountsOf(node: SummaryNode): CheckCounts | null {
   const rollup = node.commits.nodes[0]?.commit.statusCheckRollup;
   if (!rollup) return { passed: 0, failed: 0, pending: 0, total: 0 };
   if (!rollup.contexts) return null;
-  const counts = { passed: 0, failed: 0, pending: 0, total: rollup.contexts.totalCount };
-  for (const { state, count } of rollup.contexts.checkRunCountsByState ?? []) counts[PASSED_RUN.has(state) ? "passed" : FAILED_RUN.has(state) ? "failed" : "pending"] += count;
-  for (const { state, count } of rollup.contexts.statusContextCountsByState ?? []) counts[state === "SUCCESS" ? "passed" : state === "FAILURE" || state === "ERROR" ? "failed" : "pending"] += count;
-  return counts;
+  return countsOf(rollup.contexts);
 }
 
 export function toSummary(node: SummaryNode): PrSummary {
@@ -320,6 +332,7 @@ export function toSummary(node: SummaryNode): PrSummary {
 const contextNode = z.object({
   __typename: z.string(),
   id: z.string().optional(),
+  databaseId: z.number().nullish(),
   name: z.string().optional(),
   status: z.string().optional(),
   conclusion: z.string().nullable().optional(),
@@ -327,7 +340,12 @@ const contextNode = z.object({
   startedAt: z.string().nullish(),
   completedAt: z.string().nullish(),
   isRequired: z.boolean().optional(),
-  checkSuite: z.object({ workflowRun: z.object({ workflow: z.object({ name: z.string() }) }).nullish(), app: z.object({ name: z.string() }).nullish() }).nullish(),
+  checkSuite: z
+    .object({
+      workflowRun: z.object({ databaseId: z.number().nullish(), event: z.string().nullish(), workflow: z.object({ id: z.string().optional(), name: z.string() }) }).nullish(),
+      app: z.object({ name: z.string() }).nullish(),
+    })
+    .nullish(),
   context: z.string().optional(),
   state: z.string().optional(),
   targetUrl: z.string().nullable().optional(),
@@ -335,6 +353,90 @@ const contextNode = z.object({
   description: z.string().nullable().optional(),
 });
 type ContextNode = z.infer<typeof contextNode>;
+
+/**
+ * The check runs on a head that a newer run replaced: every job of an older run of the same workflow for the same
+ * event, which concurrency usually cancels, and an older attempt of the same check. GitHub's rollup still lists and
+ * counts them, so a run cancelled when a newer one started kept the PR failing after the newer one passed or
+ * skipped that job. `gh pr checks` also keeps only the newest check per name, workflow and event.
+ */
+function supersededRuns(contexts: readonly ContextNode[]): Set<ContextNode> {
+  const runs = contexts.filter((context) => context.__typename === "CheckRun");
+  const workflowOf = (context: ContextNode) => {
+    const run = context.checkSuite?.workflowRun;
+    return run ? `${run.workflow.id ?? run.workflow.name}\u0000${run.event ?? ""}` : null;
+  };
+  const newestRun = new Map<string, number>();
+  for (const context of runs) {
+    const workflow = workflowOf(context);
+    const id = context.checkSuite?.workflowRun?.databaseId;
+    if (workflow !== null && typeof id === "number") newestRun.set(workflow, Math.max(newestRun.get(workflow) ?? id, id));
+  }
+  const out = new Set<ContextNode>();
+  const newestCheck = new Map<string, { context: ContextNode; id: number }>();
+  for (const context of runs) {
+    const workflow = workflowOf(context);
+    const runId = context.checkSuite?.workflowRun?.databaseId;
+    if (workflow !== null && typeof runId === "number" && runId < newestRun.get(workflow)!) {
+      out.add(context);
+      continue;
+    }
+    const id = context.databaseId;
+    if (typeof id !== "number") continue;
+    const key = `${workflow ?? `app:${context.checkSuite?.app?.name ?? ""}`}\u0000${context.name ?? ""}`;
+    const kept = newestCheck.get(key);
+    if (kept !== undefined && kept.id > id) {
+      out.add(context);
+      continue;
+    }
+    if (kept !== undefined) out.add(kept.context);
+    newestCheck.set(key, { context, id });
+  }
+  return out;
+}
+
+/** A PR's head with every check run on it, read again for a PR whose summary says its checks fail. */
+const LATEST_FIELDS = `headRefOid commits(last: 1) { nodes { commit { statusCheckRollup { state contexts(first: 100) { totalCount
+  checkRunCountsByState { state count } statusContextCountsByState { state count }
+  nodes { __typename ... on CheckRun { databaseId name status conclusion ${SUITE} } } } } } } }`;
+const latestNode = z.object({
+  headRefOid: z.string().nullable(),
+  commits: z.object({
+    nodes: z.array(
+      z.object({
+        commit: z.object({
+          statusCheckRollup: z
+            .object({
+              state: z.string(),
+              contexts: z.object({ totalCount: z.number(), checkRunCountsByState: stateCounts, statusContextCountsByState: stateCounts, nodes: z.array(contextNode) }),
+            })
+            .nullable(),
+        }),
+      }),
+    ),
+  }),
+});
+
+/**
+ * The head's checks without the runs newer ones replaced, from GitHub's state and counts, which include them. Only
+ * runs the read listed come out of the counts, so a superseded run past its first 100 checks still counts.
+ */
+type LatestChecks = { head: string | null; checks: CheckState; checkCounts: CheckCounts };
+function latestChecksOf(node: z.infer<typeof latestNode>): LatestChecks | null {
+  const rollup = node.commits.nodes[0]?.commit.statusCheckRollup ?? null;
+  if (rollup === null) return null;
+  const counts = countsOf(rollup.contexts);
+  const superseded = supersededRuns(rollup.contexts.nodes);
+  if (superseded.size === 0) return { head: node.headRefOid, checks: checksState(rollup.state), checkCounts: counts };
+  for (const run of superseded) {
+    const outcome = runOutcome(run.status === "COMPLETED" ? (run.conclusion ?? "") : (run.status ?? ""));
+    counts[outcome] = Math.max(0, counts[outcome] - 1);
+    counts.total = Math.max(0, counts.total - 1);
+  }
+  const checks: CheckState = counts.failed > 0 ? "failed" : counts.pending > 0 ? "pending" : counts.total > 0 ? "passed" : "none";
+  return { head: node.headRefOid, checks, checkCounts: counts };
+}
+
 const oid = z.object({ abbreviatedOid: z.string() }).nullish();
 const timelineNode = z
   .object({
@@ -431,14 +533,16 @@ export function toActivity(node: z.infer<typeof activityNode>): Activity {
     items.push({ id: comment.id, kind: "comment", author: comment.author?.login ?? null, bot: isBot(comment.author), state: null, body: comment.body, url: comment.url, path: null, line: null, at: ms(comment.createdAt), thread: null, resolved: null });
   }
   const rollup = node.commits.nodes[0]?.commit.statusCheckRollup ?? null;
-  const contexts = rollup?.contexts.nodes ?? [];
+  const listed = rollup?.contexts.nodes ?? [];
+  const superseded = supersededRuns(listed);
+  const contexts = listed.filter((context) => !superseded.has(context));
   for (const context of contexts) {
     const failed = context.__typename === "CheckRun" ? FAILED_RUN.has(context.conclusion ?? "") : context.state === "FAILURE" || context.state === "ERROR";
     if (!failed || !context.id) continue;
     const name = context.name ?? context.context ?? "check";
     items.push({ id: checkItemId(context.id, head), kind: "check", author: null, bot: false, state: "failed", body: `${name} failed`, url: context.detailsUrl ?? context.targetUrl ?? null, path: null, line: null, at: ms(context.completedAt ?? context.createdAt), thread: null, resolved: null });
   }
-  return { head, items, details: node.commitList === undefined ? null : detailsOf(node, contexts, head), pr: activityStateOf(node) };
+  return { head, items, details: node.commitList === undefined ? null : detailsOf(node, contexts, superseded.size, head), pr: activityStateOf(node) };
 }
 
 function activityStateOf(node: z.infer<typeof activityNode>): ActivityState | null {
@@ -518,11 +622,11 @@ export function timelineOf(nodes: ReadonlyArray<TimelineNode | null>): TimelineE
   return out;
 }
 
-function detailsOf(node: z.infer<typeof activityNode>, contexts: readonly ContextNode[], head: string | null): PrDetails {
+function detailsOf(node: z.infer<typeof activityNode>, contexts: readonly ContextNode[], superseded: number, head: string | null): PrDetails {
   const rollup = node.commits.nodes[0]?.commit.statusCheckRollup ?? null;
   const list = node.commitList!;
   return {
-    checks: { total: Math.max(rollup?.contexts.totalCount ?? 0, contexts.length), items: contexts.map((context) => checkRunOf(context, head)) },
+    checks: { total: Math.max((rollup?.contexts.totalCount ?? 0) - superseded, contexts.length), items: contexts.map((context) => checkRunOf(context, head)) },
     commits: {
       total: list.totalCount,
       items: list.nodes.map(({ commit }) => ({ sha: commit.oid, message: commit.messageHeadline, author: commit.author?.user?.login ?? commit.author?.name ?? null, at: ms(commit.committedDate) })),
@@ -769,6 +873,11 @@ export class GithubAdapter implements Adapter {
   }
 
   async list(operation: ListOperation, options: ListOptions, signal?: AbortSignal): Promise<ListResult> {
+    const result = await this.search(operation, options, signal);
+    return { ...result, rows: await this.withLatestChecks(result.rows, signal) };
+  }
+
+  private async search(operation: ListOperation, options: ListOptions, signal?: AbortSignal): Promise<ListResult> {
     const query = `query($q: String!, $first: Int!, $after: String) { search(query: $q, type: ISSUE, first: $first, after: $after) {
       pageInfo { hasNextPage endCursor } nodes { ... on PullRequest { ${listFields(operation, options)} } } } }`;
     const schema = z.object({
@@ -814,7 +923,8 @@ export class GithubAdapter implements Adapter {
     const data = await this.graphql("view", query, this.repoVars(repo, number), schema, signal);
     const node = data.repository?.pullRequest;
     if (!node) throw new AdapterError("view", `${repo}#${number} was not found`);
-    return toSummary(node);
+    const [summary] = await this.withLatestChecks([toSummary(node)], signal);
+    return summary!;
   }
 
   /**
@@ -834,20 +944,78 @@ export class GithubAdapter implements Adapter {
       limited = reads.find((read) => read.error !== null && failureKind(read.error) === "rate_limit")?.error ?? null;
       out.push(...reads);
     }
-    return out;
+    if (limited !== null) return out;
+    const latest = await this.withLatestChecks(out.flatMap((read) => (read.summary ? [read.summary] : [])), signal);
+    let next = 0;
+    return out.map((read) => (read.summary ? { ...read, summary: latest[next++]! } : read));
   }
 
-  private async viewBatch(refs: ReadonlyArray<{ repo: string; number: number }>, signal?: AbortSignal): Promise<PrRead[]> {
+  /** One query that reads each PR under its own alias, p0, p1 and on, with the fields given. */
+  private aliased(refs: ReadonlyArray<{ repo: string; number: number }>, fields: string): { query: string; vars: Record<string, string | number> } {
     const vars: Record<string, string | number> = {};
     const params: string[] = [];
-    const fields: string[] = [];
+    const selections: string[] = [];
     refs.forEach((ref, i) => {
       const { owner, name, number } = this.repoVars(ref.repo, ref.number);
       Object.assign(vars, { [`p${i}o`]: owner, [`p${i}r`]: name, [`p${i}n`]: number });
       params.push(`$p${i}o: String!, $p${i}r: String!, $p${i}n: Int!`);
-      fields.push(`p${i}: repository(owner: $p${i}o, name: $p${i}r) { pullRequest(number: $p${i}n) { ...pr } }`);
+      selections.push(`p${i}: repository(owner: $p${i}o, name: $p${i}r) { pullRequest(number: $p${i}n) { ...pr } }`);
     });
-    const query = `query(${params.join(", ")}) { ${fields.join("\n")} } fragment pr on PullRequest { ${SUMMARY_FIELDS} }`;
+    return { query: `query(${params.join(", ")}) { ${selections.join("\n")} } fragment pr on PullRequest { ${fields} }`, vars };
+  }
+
+  /** Each PR's checks without superseded runs, kept while its head and GitHub's state and counts stay the same. */
+  private readonly latest = new Map<string, { seen: string; checks: CheckState; checkCounts: CheckCounts }>();
+
+  /**
+   * GitHub's state and counts include check runs that a newer run replaced, so each open PR they call failing is
+   * read again with its check runs to leave those out, and again only once its head, state or counts change. A PR
+   * this read misses keeps GitHub's word, as before: a failed read never fails the list or view it corrects.
+   */
+  private async withLatestChecks(rows: readonly PrSummary[], signal?: AbortSignal): Promise<PrSummary[]> {
+    const keyOf = (row: PrSummary) => `${row.repo}#${row.number}`;
+    const seenOf = (row: PrSummary) => `${row.head}|${row.checks}|${JSON.stringify(row.checkCounts)}`;
+    const failing = new Set(rows.filter((row) => (row.state === "open" || row.state === "draft") && row.head !== null && (row.checkCounts?.failed ?? 0) > 0));
+    const unread = [...failing].filter((row) => this.latest.get(keyOf(row))?.seen !== seenOf(row));
+    for (let start = 0; start < unread.length && !signal?.aborted; start += VIEW_MANY_SIZE) {
+      const batch = unread.slice(start, start + VIEW_MANY_SIZE);
+      let reads: Array<LatestChecks | null>;
+      try {
+        reads = await this.latestBatch(batch, signal);
+      } catch (error) {
+        if (failureKind((error as Error).message) === "rate_limit") break;
+        continue;
+      }
+      batch.forEach((row, i) => {
+        const read = reads[i];
+        // A push between the two reads leaves the summary's head behind; the next sync reads both again.
+        if (!read || read.head !== row.head) return;
+        this.latest.delete(keyOf(row));
+        this.latest.set(keyOf(row), { seen: seenOf(row), checks: read.checks, checkCounts: read.checkCounts });
+        if (this.latest.size > LATEST_KEPT) this.latest.delete(this.latest.keys().next().value!);
+      });
+    }
+    return rows.map((row) => {
+      const latest = failing.has(row) ? this.latest.get(keyOf(row)) : undefined;
+      return latest !== undefined && latest.seen === seenOf(row) ? { ...row, checks: latest.checks, checkCounts: latest.checkCounts } : row;
+    });
+  }
+
+  /** The latest checks of each PR, in order; null for one GitHub could not read. */
+  private async latestBatch(refs: readonly PrSummary[], signal?: AbortSignal): Promise<Array<LatestChecks | null>> {
+    const { query, vars } = this.aliased(refs, LATEST_FIELDS);
+    const { data, errors } = await this.graphqlAnswer("view", query, vars, signal, true);
+    const answer = z.record(z.string(), z.object({ pullRequest: z.unknown() }).nullable()).safeParse(data);
+    if (!answer.success) throw new AdapterError("view", `unexpected answer from GitHub: ${answer.error.issues[0]?.message ?? ""}`);
+    return refs.map((_, i) => {
+      const alias = `p${i}`;
+      const node = latestNode.safeParse(answer.data[alias]?.pullRequest);
+      return node.success && !errors.some((e) => e.path?.[0] === alias) ? latestChecksOf(node.data) : null;
+    });
+  }
+
+  private async viewBatch(refs: ReadonlyArray<{ repo: string; number: number }>, signal?: AbortSignal): Promise<PrRead[]> {
+    const { query, vars } = this.aliased(refs, SUMMARY_FIELDS);
     const { data, errors } = await this.graphqlAnswer("view", query, vars, signal, true);
     const answer = z.record(z.string(), z.object({ pullRequest: z.unknown() }).nullable()).safeParse(data);
     if (!answer.success) throw new AdapterError("view", `unexpected answer from GitHub: ${answer.error.issues[0]?.message ?? ""}`);

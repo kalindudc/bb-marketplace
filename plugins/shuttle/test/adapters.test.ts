@@ -821,3 +821,131 @@ describe("merge queues and fresh state", () => {
     expect((bare as Adapter).viewMany).toBeUndefined();
   });
 });
+
+describe("GitHub checks that a newer run replaced", () => {
+  const query = (call: Call) => call.args.find((arg) => arg.startsWith("query="))!;
+  type Context = NonNullable<Parameters<typeof toActivity>[0]["commits"]["nodes"][number]["commit"]["statusCheckRollup"]>["contexts"]["nodes"][number];
+  const actions = (runId: number, event: string, workflow = { id: "W1", name: "CI" }): Context["checkSuite"] => ({ workflowRun: { databaseId: runId, event, workflow }, app: { name: "GitHub Actions" } });
+  const job = (databaseId: number, name: string, conclusion: string | null, checkSuite: Context["checkSuite"]): Context => ({
+    __typename: "CheckRun", id: `CK${databaseId}`, databaseId, name, status: conclusion === null ? "IN_PROGRESS" : "COMPLETED", conclusion, detailsUrl: null, completedAt: "2026-10-22T14:00:00Z", checkSuite,
+  });
+  // CI ran twice for pull_request: the first run was cancelled once the second started, and its gate job failed on that.
+  const contexts: Context[] = [
+    job(1, "build", "CANCELLED", actions(100, "pull_request")),
+    job(2, "gate", "FAILURE", actions(100, "pull_request")),
+    job(3, "shard (${{ matrix.n }})", "CANCELLED", actions(100, "pull_request")),
+    job(10, "build", "SKIPPED", actions(200, "pull_request")),
+    job(11, "gate", "SUCCESS", actions(200, "pull_request")),
+    // Another event's run, and another workflow file with the same name, are not replaced by it.
+    job(5, "build", "FAILURE", actions(150, "pull_request_review")),
+    job(4, "lint", "FAILURE", actions(90, "pull_request", { id: "W2", name: "CI" })),
+    // A check re-run outside Actions: the newer attempt wins.
+    job(20, "e2e", "FAILURE", { workflowRun: null, app: { name: "Buildkite" } }),
+    job(30, "e2e", "SUCCESS", { workflowRun: null, app: { name: "Buildkite" } }),
+    { __typename: "StatusContext", id: "SC1", context: "deploy", state: "ERROR", targetUrl: "t", createdAt: "2026-10-22T15:00:00Z" },
+  ];
+  const head = (nodes: Context[], extra: object = {}) => ({ headRefOid: "h2", reviews: { nodes: [] }, reviewThreads: { nodes: [] }, comments: { nodes: [] }, commits: { nodes: [{ commit: { statusCheckRollup: { state: "FAILURE", contexts: { totalCount: nodes.length, nodes } } } }] }, ...extra });
+
+  it("sends an agent only the failures of each check's newest run", () => {
+    expect(toActivity(head(contexts)).items.map((item) => item.body)).toEqual(["build failed", "lint failed", "deploy failed"]);
+  });
+
+  it("lists only each check's newest run in the PR view, and counts the rest out of the total", () => {
+    const detail = { isDraft: false, mergeable: "MERGEABLE", mergeStateStatus: "BLOCKED", reviewDecision: null, commitList: { totalCount: 0, nodes: [] }, files: null, timelineItems: { nodes: [] } };
+    const checks = toActivity(head(contexts, detail)).details!.checks!;
+    expect(checks.items.map((run) => [run.name, run.state])).toEqual([
+      ["build", "skipped"], ["gate", "passed"], ["build", "failed"], ["lint", "failed"], ["e2e", "passed"], ["deploy", "failed"],
+    ]);
+    expect(checks.total).toBe(6);
+    // Runs past the first page still count: only the runs read come out.
+    const cut = head(contexts, detail);
+    cut.commits.nodes[0]!.commit.statusCheckRollup.contexts.totalCount = 130;
+    expect(toActivity(cut).details!.checks!.total).toBe(126);
+  });
+
+  it("asks for each run and workflow in both activity reads, and for every check in watching's", async () => {
+    const { calls, run } = recorder(() => ({ json: { data: { repository: { pullRequest: head([]) } } } }));
+    const gh = new GithubAdapter(github(), run);
+    await gh.activity("acme/api", 7);
+    await gh.activity("acme/api", 7, undefined, { detail: true });
+    for (const call of calls) expect(query(call)).toContain("databaseId name status conclusion");
+    for (const call of calls) expect(query(call)).toContain("workflowRun { databaseId event workflow { id name } }");
+    expect(query(calls[0]!)).toContain("contexts(first: 100)");
+  });
+
+  // GitHub counts all five runs, the replaced ones too, and calls the head failing.
+  const counted = { state: "FAILURE", contexts: { totalCount: 5, checkRunCountsByState: [{ state: "CANCELLED", count: 1 }, { state: "FAILURE", count: 1 }, { state: "SKIPPED", count: 1 }, { state: "SUCCESS", count: 2 }], statusContextCountsByState: [] } };
+  const failing = (extra: Partial<Node> = {}) => node({ commits: { nodes: [{ commit: { statusCheckRollup: counted } }] }, ...extra });
+  const runs = [
+    { ...job(1, "build", "CANCELLED", actions(100, "pull_request")), status: "COMPLETED" },
+    job(2, "gate", "FAILURE", actions(100, "pull_request")),
+    job(10, "build", "SKIPPED", actions(200, "pull_request")),
+    job(11, "gate", "SUCCESS", actions(200, "pull_request")),
+    job(12, "Graphite / mergeability_check", "SUCCESS", { workflowRun: null, app: { name: "Graphite App" } }),
+  ];
+  const latest = (headRefOid = "h2", nodes: object[] = runs) => ({ headRefOid, commits: { nodes: [{ commit: { statusCheckRollup: { ...counted, contexts: { ...counted.contexts, nodes } } } }] } });
+  const isLatest = (call: Call) => query(call).includes("fragment pr on PullRequest { headRefOid");
+  const server = (rows: Node[], answer: (call: Call) => unknown = () => ({ json: { data: { p0: { pullRequest: latest() } } } })) => recorder((call) => {
+    if (isLatest(call)) return answer(call);
+    if (query(call).includes("search(")) return { json: { data: { search: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: rows } } } };
+    if (query(call).includes("fragment pr on PullRequest")) return { json: { data: Object.fromEntries(rows.map((row, i) => [`p${i}`, { pullRequest: row }])) } };
+    return { json: { data: { repository: { pullRequest: rows[0] } } } };
+  });
+
+  it("reads a PR GitHub calls failing again, and leaves the replaced runs out of its state and counts", async () => {
+    const { calls, run } = server([failing()]);
+    const gh = new GithubAdapter(github(), run);
+    expect(toSummary(failing())).toMatchObject({ checks: "failed", checkCounts: { passed: 3, failed: 2, pending: 0, total: 5 } });
+    expect((await gh.list("authored", { state: "open" })).rows[0]).toMatchObject({ checks: "passed", checkCounts: { passed: 3, failed: 0, pending: 0, total: 3 } });
+    expect(calls.filter(isLatest)).toHaveLength(1);
+    expect(calls.find(isLatest)!.args).toEqual(expect.arrayContaining(["p0o=acme", "p0r=api", "p0n=7"]));
+    // The same head with the same counts is not read again, by a list, a view or a batched view.
+    expect(await gh.view("acme/api", 7)).toMatchObject({ checks: "passed", checkCounts: { failed: 0, total: 3 } });
+    expect((await gh.viewMany([{ repo: "acme/api", number: 7 }]))[0]!.summary).toMatchObject({ checks: "passed" });
+    expect(calls.filter(isLatest)).toHaveLength(1);
+  });
+
+  it("reads it again once its head or counts change, and keeps a check that still fails", async () => {
+    let rollup = counted;
+    let nodes: object[] = runs;
+    const { calls, run } = recorder((call) => (isLatest(call)
+      ? { json: { data: { p0: { pullRequest: { headRefOid: "h2", commits: { nodes: [{ commit: { statusCheckRollup: { ...rollup, contexts: { ...rollup.contexts, nodes } } } }] } } } } } }
+      : { json: { data: { repository: { pullRequest: failing({ commits: { nodes: [{ commit: { statusCheckRollup: rollup } }] } }) } } } }));
+    const gh = new GithubAdapter(github(), run);
+    expect(await gh.view("acme/api", 7)).toMatchObject({ checks: "passed" });
+    // The newest run's deploy job times out.
+    rollup = { ...counted, contexts: { ...counted.contexts, totalCount: 6, checkRunCountsByState: [...counted.contexts.checkRunCountsByState, { state: "TIMED_OUT", count: 1 }] } };
+    nodes = [...runs, job(13, "deploy", "TIMED_OUT", actions(200, "pull_request"))];
+    expect(await gh.view("acme/api", 7)).toMatchObject({ checks: "failed", checkCounts: { passed: 3, failed: 1, total: 4 } });
+    expect(calls.filter(isLatest)).toHaveLength(2);
+  });
+
+  it("keeps GitHub's word when the second read fails, finds another head, or nothing was replaced", async () => {
+    const down = server([failing()], () => ({ code: 1, stderr: "gh: HTTP 502" }));
+    expect((await new GithubAdapter(github(), down.run).list("authored", { state: "open" })).rows[0]).toMatchObject({ checks: "failed", checkCounts: { failed: 2, total: 5 } });
+    const pushed = server([failing()], () => ({ json: { data: { p0: { pullRequest: latest("h3") } } } }));
+    const gh = new GithubAdapter(github(), pushed.run);
+    expect(await gh.view("acme/api", 7)).toMatchObject({ checks: "failed", checkCounts: { failed: 2 } });
+    // Nothing was kept for the old head, so the next read asks again.
+    await gh.view("acme/api", 7);
+    expect(pushed.calls.filter(isLatest)).toHaveLength(2);
+    const plain = server([failing()], () => ({ json: { data: { p0: { pullRequest: latest("h2", runs.slice(2)) } } } }));
+    expect(await new GithubAdapter(github(), plain.run).view("acme/api", 7)).toMatchObject({ checks: "failed", checkCounts: { failed: 2, total: 5 } });
+  });
+
+  it("reads only open PRs GitHub calls failing, ten at a time", async () => {
+    const rows = [
+      ...Array.from({ length: 12 }, (_, i) => failing({ number: i + 1 })),
+      failing({ number: 20, state: "MERGED", mergedAt: "2026-10-23T11:00:00Z" }),
+      node({ number: 21, commits: { nodes: [{ commit: { statusCheckRollup: { state: "SUCCESS", contexts: { totalCount: 2, checkRunCountsByState: [{ state: "SUCCESS", count: 2 }], statusContextCountsByState: [] } } } }] } }),
+    ];
+    const { calls, run } = server(rows, (call) => {
+      const aliases = [...query(call).matchAll(/(p\d+): repository/gu)].map((m) => m[1]!);
+      return { json: { data: Object.fromEntries(aliases.map((alias) => [alias, { pullRequest: latest() }])) } };
+    });
+    const list = await new GithubAdapter(github(), run).list("review_requested", {});
+    expect(calls.filter(isLatest).map((call) => [...query(call).matchAll(/: repository\(/gu)].length)).toEqual([10, 2]);
+    expect(list.rows.filter((row) => row.checks === "passed").map((row) => row.number)).toEqual([...Array.from({ length: 12 }, (_, i) => i + 1), 21]);
+    expect(list.rows.find((row) => row.number === 20)).toMatchObject({ checks: "failed", checkCounts: { failed: 2 } });
+  });
+});

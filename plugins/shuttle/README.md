@@ -91,7 +91,8 @@ A PR's view reads top to bottom the way a person asks about it:
 - **Tabs:** Overview (description, people, facts and linked threads), Your review (the AI draft
   to post, on someone else's PR, with the review's notes for you, which are never posted), Conversation (open threads first with the code they are on, then
   every review and comment, newest first with a button to flip the order), Checks (every check,
-  failing first), Changes (commits and each file's path and line counts, never the diff itself)
+  failing first, each from its newest run: on GitHub, a workflow run a newer run of the same workflow
+  replaced is left out, as `gh pr checks` leaves it out), Changes (commits and each file's path and line counts, never the diff itself)
   and History (what happened on the server and in Shuttle). Tabs that do not fit the width go
   under More, which shows a dot when one of them has failing or running checks or open threads;
   the tab you are on always stays in view.
