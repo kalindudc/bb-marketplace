@@ -5,7 +5,7 @@
 // what the poll last stored, so the page never adds a call to GitHub.
 import { draftStateOf, type DraftState } from "./drafts";
 import type { TicketRow } from "./db/store";
-import type { ReviewDecision } from "./sub-state";
+import { readSub, type ReviewDecision } from "./sub-state";
 import { metaOf } from "./pr-meta";
 import { statusOf } from "./pull-requests";
 import { repoSettings } from "./repos";
@@ -123,7 +123,7 @@ export function mergeOrderOf(spec: Spec, tickets: readonly TicketRow[], finals: 
     };
     if (open(parent ?? undefined)) add(parent!, "stacked");
     for (const key of keysOf(ticket.deps_json)) if (open(byKey.get(key))) add(byKey.get(key)!, "depends");
-    for (const key of keysOf(ticket.merge_after_json)) if (open(byKey.get(key))) add(byKey.get(key)!, "merge_after");
+    for (const key of readSub(ticket, "merge_after_json")) if (open(byKey.get(key))) add(byKey.get(key)!, "merge_after");
     return [...waits.values()];
   };
   const waits = new Map(shown.map((ticket) => [ticket.key, waitsOf(ticket)]));

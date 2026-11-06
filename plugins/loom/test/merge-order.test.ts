@@ -253,3 +253,10 @@ describe("the words of a hold", () => {
     expect(holds.map(holdText)).toEqual(["targets release, not main", "conflicts with main", "Loom is pushing a fix", "draft", "changes requested", "needs review", "checks not read", "1 check failing", "2 checks pending"]);
   });
 });
+
+describe("the merge order's reading of merge_after", () => {
+  it("checks it as every other reader does: a malformed list on a ticket at work is an error, not a list of no keys", () => {
+    const bad = { ...row("CSV-1", "pr_open"), merge_after_json: "[1]" };
+    expect(() => mergeOrderOf(spec, [bad, row("CSV-2", "pr_open")])).toThrow(/merge_after_json of ticket CSV-1/u);
+  });
+});
