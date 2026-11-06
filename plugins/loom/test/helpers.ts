@@ -483,15 +483,21 @@ export class FakeHost implements HostPort {
         return { outcome: "ok", sha };
       }
       case "carryStart":
-        return { outcome: "ok", present: false };
+        return { outcome: "ok", present: false, from: this.worktree((input as HostInput<"carryStart">).worktree).head };
       case "carryWrite":
         return { size: 0 };
       case "conflictMarkers":
         return { files: [] };
       case "repoPrefix":
         return { prefix: "" };
+      case "carryAbort": {
+        const { worktree, restore } = input as HostInput<"carryAbort">;
+        const state = this.worktree(worktree);
+        if (restore !== undefined) state.head = restore;
+        state.dirty = false;
+        return { clean: true, kept: [] };
+      }
       case "carryDelete":
-      case "carryAbort":
       case "dropUploads":
         return {};
       case "carryFinish": {

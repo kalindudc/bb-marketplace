@@ -14,6 +14,7 @@ import {
   behindBase,
   carryDelete,
   carryFinish,
+  carryAbort,
   carryStart,
   carryWrite,
   changedFiles,
@@ -2604,9 +2605,10 @@ describe("carrying a commit to a thread's own machine: carryStart, carryWrite, c
     expect(sh(worktree, "ls-files", "keep.log")).toBe("keep.log");
   });
 
-  it("fetches a base the thread's machine does not have, and resets to the base when the tree does not match", async () => {
+  it("fetches a base the thread's machine does not have, and its carryAbort puts the HEAD back when the tree does not match", async () => {
     const { clone } = setup();
     const worktree = clone();
+    const before = sh(worktree, "rev-parse", "HEAD");
     const upstream = clone();
     commitFile(upstream, "up.txt", "up\n");
     sh(upstream, "push", "-q", "origin", "HEAD:main");
@@ -2616,7 +2618,8 @@ describe("carrying a commit to a thread's own machine: carryStart, carryWrite, c
 
     const finished = await carryOut(upstream, worktree, exported, sh(worktree, "rev-parse", "HEAD^{tree}"));
     expect(finished).toEqual({ outcome: "mismatch", tree: exported.tree });
-    expect(sh(worktree, "rev-parse", "HEAD")).toBe(exported.base);
+    expect(await carryAbort({ worktree, base: exported.base, restore: before })).toEqual({ clean: true, kept: [] });
+    expect(sh(worktree, "rev-parse", "HEAD")).toBe(before);
     expect(sh(worktree, "status", "--porcelain")).toBe("");
   });
 
@@ -2654,7 +2657,7 @@ describe("carrying a commit to a thread's own machine: carryStart, carryWrite, c
     expect(await carryOut(checkout, worktree, exported)).toMatchObject({ outcome: "ok", tree: exported.tree });
     const carried = sh(worktree, "rev-parse", "HEAD");
 
-    expect(await carryStart({ worktree, remote: "origin", baseBranch: "main", base: exported.base, tree: exported.tree })).toEqual({ outcome: "ok", present: true });
+    expect(await carryStart({ worktree, remote: "origin", baseBranch: "main", base: exported.base, tree: exported.tree })).toMatchObject({ outcome: "ok", present: true });
     expect(sh(worktree, "rev-parse", "HEAD")).toBe(carried);
     expect(sh(worktree, "status", "--porcelain")).toBe("");
   });
@@ -2679,9 +2682,9 @@ describe("carrying a commit to a thread's own machine: carryStart, carryWrite, c
     const worktree = clone();
     const exported = await exportChanges({ worktree: checkout, base: "origin/main", head: home });
     const start = { worktree, remote: "origin", baseBranch: "main", base: exported.base, tree: exported.tree };
-    expect(await carryStart(start)).toEqual({ outcome: "ok", present: false });
+    expect(await carryStart(start)).toMatchObject({ outcome: "ok", present: false });
     await carryWrite({ worktree, path: "src/one.txt", mode: "100644", offset: 0, data: Buffer.from("one\n").toString("base64") });
-    expect(await carryStart(start)).toEqual({ outcome: "ok", present: false });
+    expect(await carryStart(start)).toMatchObject({ outcome: "ok", present: false });
     expect(existsSync(join(worktree, "src/one.txt"))).toBe(false);
     expect(await carryOut(checkout, worktree, exported)).toMatchObject({ outcome: "ok", tree: exported.tree });
 
@@ -2724,10 +2727,10 @@ exec "${join(bin, "git")}" "$@"
       expect(sh(worktree, "rev-parse", "--git-path", "loom-carry")).toBe(".git/loom-carry");
       const mark = join(tmpdir(), "loom-carry", createHash("sha256").update(realpathSync(worktree)).digest("hex"));
       const start = { worktree, remote: "origin", baseBranch: "main", base: exported.base, tree: exported.tree };
-      expect(await carryStart(start)).toEqual({ outcome: "ok", present: false });
+      expect(await carryStart(start)).toMatchObject({ outcome: "ok", present: false });
       expect(existsSync(mark)).toBe(true);
       await carryWrite({ worktree, path: "src/one.txt", mode: "100644", offset: 0, data: Buffer.from("one\n").toString("base64") });
-      expect(await carryStart(start)).toEqual({ outcome: "ok", present: false });
+      expect(await carryStart(start)).toMatchObject({ outcome: "ok", present: false });
       expect(await carryOut(checkout, worktree, exported)).toMatchObject({ outcome: "ok", tree: exported.tree });
       expect(existsSync(mark)).toBe(false);
     } finally {
@@ -2748,7 +2751,7 @@ exec "${join(bin, "git")}" "$@"
     const write = (path: string, content: string) => carryWrite({ worktree, path, mode: "100644", offset: 0, data: Buffer.from(content).toString("base64") });
     const finish = (exported: HostOutput<"exportChanges">) => carryFinish({ worktree, base: first.base, message: exported.message, author: exported.author, tree: exported.tree, paths: exported.changes.map((change) => change.path) });
     const commitOfDependency = async () => {
-      expect(await carryStart(start)).toEqual({ outcome: "ok", present: false });
+      expect(await carryStart(start)).toMatchObject({ outcome: "ok", present: false });
       await write("dep/a.txt", "dep\n");
       expect(await finish(first)).toMatchObject({ outcome: "ok", tree: first.tree });
     };
@@ -2819,7 +2822,7 @@ exec "${join(bin, "git")}" "$@"
     const base = sh(worktree, "rev-parse", "origin/main");
     commitFile(worktree, "mine.txt", "mine\n");
     const kept = sh(worktree, "rev-parse", "HEAD^{tree}");
-    expect(await carryStart({ worktree, remote: "origin", baseBranch: "main", base, tree: sh(worktree, "rev-parse", "origin/main^{tree}"), replaces: kept })).toEqual({ outcome: "ok", present: false });
+    expect(await carryStart({ worktree, remote: "origin", baseBranch: "main", base, tree: sh(worktree, "rev-parse", "origin/main^{tree}"), replaces: kept })).toMatchObject({ outcome: "ok", present: false });
     expect(sh(worktree, "rev-parse", "HEAD")).toBe(base);
 
     commitFile(worktree, "other.txt", "other\n");

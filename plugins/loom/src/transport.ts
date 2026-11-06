@@ -15,6 +15,8 @@ import type { Spec } from "./spec";
 import { stackOf } from "./stack";
 import type { EngineCtx } from "./workers";
 
+const errText = (error: unknown) => (error instanceof Error ? error.message : String(error));
+
 /** The branch on the project's checkout with the newest work Loom brought home from the ticket's workers. */
 export const homeBranch = (slug: string, key: string) => threadBranch(slug, key, "home");
 /** The ref that keeps the commit a ticket was submitted at, its head_sha, from being collected. */
@@ -161,11 +163,15 @@ export async function carryTo(ctx: EngineCtx, project: ProjectRow, spec: Spec, t
       }
       const written = exported.changes.filter((change) => change.status !== "D").map((change) => change.path);
       finished = await ctx.host.call(environment.hostId, "carryFinish", { worktree, base: start, message: exported.message, author: exported.author, tree: exported.tree, paths: written });
+      if (finished.outcome === "foreign") throw new Error(`the worktree has changes the carry did not make (${finished.paths.slice(0, 10).join(", ")}), so Loom did not commit the carry`);
       if (finished.outcome === "mismatch") throw new Error(`the worktree had the tree ${finished.tree.slice(0, 12)}, not ${exported.tree.slice(0, 12)}, after Loom put the work in, so Loom reset it to the base`);
     }
   } catch (error) {
-    // The first error says what went wrong; one from the reset would hide it.
-    await ctx.host.call(environment.hostId, "carryAbort", { worktree, base: start }).catch(() => undefined);
+    // Only what the carry changed goes back, to the HEAD the worktree had; a file anyone else changed meanwhile stays. The
+    // first error says what went wrong; one from taking the carry back would hide it, so it only adds what is left.
+    const aborted = await ctx.host.call(environment.hostId, "carryAbort", { worktree, base: start, ...(started.from === undefined ? {} : { restore: started.from }) }).catch((reason: unknown) => ({ failed: errText(reason) }));
+    if ("failed" in aborted) throw new Error(`${errText(error)}; Loom could not take back what the carry changed in the worktree (${aborted.failed}), so it may hold part of the carry`);
+    if ((aborted.kept ?? []).length > 0) throw new Error(`${errText(error)}; Loom took back what the carry changed and kept the worktree's other changes: ${aborted.kept!.slice(0, 10).join(", ")}`);
     throw error;
   }
   return { tree: finished!.tree };

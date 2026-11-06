@@ -250,7 +250,8 @@ export const hostContract = defineRpcContract({
   // and checks the tree, and resets to base when it differs.
   carryStart: {
     input: z.object({ worktree: absPath, remote: ref, baseBranch: ref, base: commit, tree: commit, replaces: commit.optional(), networkTimeoutMs }).strict(),
-    output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok"), present: z.boolean() }).strict(), unavailable]),
+    // `from`: the worktree's HEAD before the carry, which carryAbort puts back.
+    output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok"), present: z.boolean(), from: sha.optional() }).strict(), unavailable]),
   },
   // Offset 0 starts the file again; a symlink comes in one range, its target as the data.
   carryWrite: {
@@ -273,14 +274,22 @@ export const hostContract = defineRpcContract({
     output: z.object({ files: z.array(z.string()) }).strict(),
   },
   // Puts the worktree back at base after a carry that failed part-way, so the next carryStart finds it clean.
+  // Puts back at `restore`, the HEAD the worktree had before the carry (else the one carryStart kept), only what the carry
+  // changed; `clean` says whether nothing else is uncommitted.
   carryAbort: {
-    input: z.object({ worktree: absPath, base: commit }).strict(),
-    output: z.object({}).strict(),
+    input: z.object({ worktree: absPath, base: commit, restore: commit.optional() }).strict(),
+    // `kept`: the files someone else changed or added since the carry started, which it left as they are.
+    output: z.object({ clean: z.boolean().optional(), kept: z.array(z.string()).optional() }).strict(),
   },
   // paths are the files carryWrite wrote, staged even where .gitignore matches them, as the commit had them.
   carryFinish: {
     input: z.object({ worktree: absPath, base: commit, message: z.string().max(20_000), author, tree: commit, paths: z.array(repoPath).max(50_000) }).strict(),
-    output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok"), head: sha, tree: sha }).strict(), z.object({ outcome: z.literal("mismatch"), tree: sha }).strict()]),
+    // "foreign": changes the carry did not make are staged, or a carry path changed since it was written; nothing committed.
+    output: z.discriminatedUnion("outcome", [
+      z.object({ outcome: z.literal("ok"), head: sha, tree: sha }).strict(),
+      z.object({ outcome: z.literal("mismatch"), tree: sha }).strict(),
+      z.object({ outcome: z.literal("foreign"), paths: z.array(z.string()) }).strict(),
+    ]),
   },
   // The commit a ref points at, and its tree; with contains, whether that commit is it or one of its ancestors; with
   // parents, that commit's parents.
