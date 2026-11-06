@@ -111,7 +111,9 @@ review_rounds = 3
   `state` is `pending` while the review runs, `done` when it finished, or `failed` with an optional `message`. Only
   `state`, and each finding's `id` and `title`, are required; print the same `id` for the same finding on a later commit.
   When the server says it has no review for that commit yet, print `pending`.
-- New findings go to the worker as a fix round, at most `review_rounds` of them (3 when left out). A gate that fails, or
+- The gate is clean only when it lists no finding for the commit. Its findings go to the worker as a fix round, and a
+  finding still listed after the worker's next push goes again, at most `review_rounds` rounds in all (3 when left out);
+  after that the draft waits for you, with one post that names what is left. A gate that fails, or
   is still pending 90 minutes after it started, keeps the draft a draft, with a post on the ticket; the project keeps
   running.
 

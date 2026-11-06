@@ -902,9 +902,12 @@ A repo's forge can add a review gate: `review_start` and `review_read`
 commands that run an outside review on the draft before Loom publishes it,
 such as a review bot's private review. Loom runs `review_start` once for each
 push of the ticket's own work (never for a restack or a refresh), with
-`LOOM_SHA`, and `review_read` at each read until the gate is done. New
-findings go to the worker as a fix round, counted against `max_fix_rounds`,
-with at most `review_rounds` (3 by default) of them. A gate that fails or is
+`LOOM_SHA`, and `review_read` at each read until the gate is done. The gate
+is clean only when it lists no finding for the commit. Its findings go to the
+worker as a fix round, and one still listed after the worker's next push goes
+again, counted against `max_fix_rounds`, with at most `review_rounds` (3 by
+default) of these rounds; after that the draft waits for you with a post that
+names what is left. A gate that fails or is
 still pending after 90 minutes keeps the draft a draft, with a post on the
 ticket, and pauses nothing. The loom skill's `references/forges.md` describes
 both commands.

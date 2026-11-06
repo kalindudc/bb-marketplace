@@ -180,6 +180,51 @@ describe("a review gate on a draft", () => {
     expect(card().publishWait).toContain("its review gate still has findings after 1 round");
   });
 
+  it("keeps the draft while a finding it sent stays on the next head, and sends it again as a counted fix round", async () => {
+    const worker = await openPr();
+    passing();
+    gateSays({ findings: [finding("f1", "Guard empty rows")] });
+    await poll();
+    await poll();
+    expect(ticket()).toMatchObject({ state: "working", pr_rounds: 1 });
+    await fix(worker);
+    passing();
+    await poll();
+    await poll();
+    expect(readies()).toEqual([]);
+    expect(ticket()).toMatchObject({ state: "working", pr_rounds: 2 });
+    expect(h.bb.sent(worker.thread_id!).at(-1)).toContain("Finding from the review gate (medium) on src/model/rows.ts:12: Guard empty rows");
+    expect(events(GATE_DONE).map((event) => event.sent)).toEqual([1, 1]);
+  });
+
+  it("is clean only when the gate lists no finding for the head", async () => {
+    await openPr();
+    passing();
+    gateSays({ findings: [finding("f1", "Guard empty rows"), finding("f1", "Guard empty rows")] });
+    await poll();
+    await poll();
+    // The same finding twice in one answer is sent once.
+    expect(JSON.parse(h.store.posts(ticket().id).filter((post) => (JSON.parse(post.data_json) as { outcome?: string }).outcome === "pr_feedback").at(-1)!.data_json).items).toHaveLength(1);
+  });
+
+  it("holds with one post when a finding survives the last gate round the cap allows", async () => {
+    const worker = await openPr((doc) => (doc.merge.forge.review_rounds = 1));
+    passing();
+    gateSays({ findings: [finding("f1", "Guard empty rows")] });
+    await poll();
+    await poll();
+    await fix(worker);
+    passing();
+    await poll();
+    await poll();
+    await poll();
+    expect(ticket()).toMatchObject({ state: "pr_open", pr_rounds: 1 });
+    expect(readies()).toEqual([]);
+    expect(posts("gate_capped")).toHaveLength(1);
+    expect(posts("gate_capped")[0]!.body).toContain("Guard empty rows");
+    expect(card().publishWait).toContain("its review gate still has findings after 1 round");
+  });
+
   it("runs a start once even when its answer is lost", async () => {
     await openPr();
     h.host.lost.prReviewStart = [new Error("socket hang up")];

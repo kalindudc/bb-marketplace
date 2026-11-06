@@ -80,7 +80,8 @@ export function runFor(store: Store, ticket: TicketRow, own: string): GateRun | 
     return { ...run, end: data.transient === true && tries < GATE_START_TRIES ? { kind: "retry" } : { kind: "failed", message: String(data.message) } };
   }
   if (data.state === "failed") return { ...run, end: { kind: "failed", message: String(data.message ?? "the gate says it failed") } };
-  return { ...run, end: Number(data.sent ?? 0) > 0 ? { kind: "findings" } : { kind: "clean" } };
+  // Clean only when the gate lists nothing for the head; findings it lists still hold the draft, whether sent now or before.
+  return { ...run, end: Array.isArray(data.findings) && data.findings.length > 0 ? { kind: "findings" } : { kind: "clean" } };
 }
 
 /** Why the gate holds the ticket's draft back from being published, in words; null when it is clean, or there is no gate. */

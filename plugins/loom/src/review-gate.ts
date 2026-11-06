@@ -95,28 +95,36 @@ async function readGate(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket:
     gateFailed(ctx, current, `The review gate for ${run.sha.slice(0, 12)} failed${answer.message === undefined ? "" : `: ${answer.message}`}.`);
     return;
   }
+  if (answer.findings.length === 0) {
+    store.event(project.id, ticket.id, GATE_DONE, LOOM_ACTOR, { ...base, state: "done", findings, sent: 0 });
+    store.changed(project.id);
+    return;
+  }
+  // Keyed by the push the run reviews: a finding is sent once per run, and again when it survives the next push of the ticket's own work.
+  const keyOf = (id: string) => `gate:${run.own.slice(0, 12)}:${id}`;
   const seen = new Set(readSub(current, "pr_seen_json"));
-  const fresh = answer.findings.filter((each) => !seen.has(`gate:${each.id}`));
+  const fresh = answer.findings.filter((each, index) => !seen.has(keyOf(each.id)) && answer.findings.findIndex((other) => other.id === each.id) === index);
+  const used = store.ticketEvents(ticket.id, [GATE_ROUND]).filter((event) => dataOf(event).url === url).length;
+  // Sent already in this run, as when a restart came between the fix round and this record: they still hold the draft.
   if (fresh.length === 0) {
     store.event(project.id, ticket.id, GATE_DONE, LOOM_ACTOR, { ...base, state: "done", findings, sent: 0 });
     store.changed(project.id);
     return;
   }
-  const used = store.ticketEvents(ticket.id, [GATE_ROUND]).filter((event) => dataOf(event).url === url).length;
   if (used >= gate.rounds) {
     store.tx(() => {
       store.event(project.id, ticket.id, GATE_DONE, LOOM_ACTOR, { ...base, state: "done", findings, sent: 0 });
       store.event(project.id, ticket.id, GATE_CAPPED, LOOM_ACTOR, base);
       loomPost(store, current, {
         kind: "merge",
-        body: `The review gate still found ${plural(fresh.length, "thing")} to fix on ${run.sha.slice(0, 12)} after ${plural(gate.rounds, "fix round")} of its own, the most review_rounds allows, so Loom sends no more and keeps ${url} a draft. Read the findings on the gate, then mark it ready on the forge yourself, or requeue the ticket with a note.`,
+        body: `The review gate still found ${plural(answer.findings.length, "thing")} to fix on ${run.sha.slice(0, 12)} after ${plural(gate.rounds, "fix round")} of its own, the most review_rounds allows, so Loom sends no more and keeps ${url} a draft: ${answer.findings.map((each) => each.title).join("; ")}. Read the findings on the gate, then mark it ready on the forge yourself, or requeue the ticket with a note.`,
         data: { outcome: "gate_capped", url, sha: run.sha, findings },
       });
     });
     store.changed(project.id);
     return;
   }
-  const items: FeedbackItem[] = fresh.map((each) => ({ key: `gate:${each.id}`, kind: "finding", author: "the review gate", bot: false, body: `${each.title}\n\n${each.body}`.trim(), url: null, state: each.severity, path: each.path, line: each.line }));
+  const items: FeedbackItem[] = fresh.map((each) => ({ key: keyOf(each.id), kind: "finding", author: "the review gate", bot: false, body: `${each.title}\n\n${each.body}`.trim(), url: null, state: each.severity, path: each.path, line: each.line }));
   if (!(await gateFixRound(ctx, current, items))) return;
   store.event(project.id, ticket.id, GATE_ROUND, LOOM_ACTOR, { ...base, findings: fresh.length });
   store.event(project.id, ticket.id, GATE_DONE, LOOM_ACTOR, { ...base, state: "done", findings, sent: fresh.length });

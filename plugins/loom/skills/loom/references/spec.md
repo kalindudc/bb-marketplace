@@ -123,10 +123,11 @@ lost answer never asks twice. At each later read it runs `review_read`, until th
 - `review_start` gets `LOOM_URL`, `LOOM_PR_NUMBER`, `LOOM_SHA` (the commit to review), `LOOM_HEAD` (the pull request's branch) and `LOOM_BASE`; exit 0 means the review is asked for. A failure that looks temporary is tried again at the next read, 3 times in all; any other failure holds the publish.
 - `review_read` gets `LOOM_URL`, `LOOM_PR_NUMBER` and `LOOM_SHA`, and prints one JSON object on its last line: `{"state": "pending" | "done" | "failed", "findings": [{"id", "title", "body", "path", "line", "severity"}], "message": "…"}`. Only `state`, and each finding's `id` and `title`, are required.
 
-New findings, by `id`, go to the worker as a fix round, like review items but with no thread to reply to; the worker fixes
-what holds and says in its summary why it leaves one. They count against `max_fix_rounds`, and at most `review_rounds`
-of them run before Loom stops sending findings and keeps the draft for the human. A finding sent once is not sent again,
-and a gate whose findings were all sent before counts as clean. A gate that says `failed`, a read command whose output
+The gate is clean only when `review_read` lists no finding for the commit. Its findings go to the worker as a fix round,
+each `id` once per run, like review items but with no thread to reply to; the worker fixes what holds and says in its
+summary why it leaves one. A finding that is still listed after the worker's next push goes to the worker again in the
+next round. The rounds count against `max_fix_rounds`, and at most `review_rounds` of them run; after that, a gate that
+still lists findings keeps the draft for the human, with one post that names them. A gate that says `failed`, a read command whose output
 Loom cannot read, or a run that is still pending 90 minutes after it started holds the publish with one post on the
 ticket; the project keeps running, and the next fix round's push starts the gate again. Each run is recorded as ticket
 events (`ticket.gate_started`, `ticket.gate_done` with its findings, `ticket.gate_round`, `ticket.gate_timed_out`,
