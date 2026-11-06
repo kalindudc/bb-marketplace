@@ -874,7 +874,7 @@ const contentSha = (data: Buffer | string) => createHash("sha256").update(data).
 const LITERAL = { GIT_LITERAL_PATHSPECS: "1" };
 
 /** Test seam: a throw here leaves the worktree as a crash at that point would. */
-export const carryFaults: { beforeRename?: () => void; afterRename?: () => void; beforeCommit?: () => void; afterCommit?: () => void } = {};
+export const carryFaults: { beforeRename?: () => void; afterRename?: () => void; beforeCommit?: () => void; afterCommit?: () => void; beforeMarkRename?: () => void } = {};
 
 const carryMarkOf = async (worktree: string, signal?: AbortSignal): Promise<string> => {
   const inGitDir = resolve(worktree, await git(worktree, ["rev-parse", "--git-path", "loom-carry"], { signal }));
@@ -898,7 +898,13 @@ const lstatOrNull = (file: string) => {
   }
 };
 const readCarryMark = (path: string): CarryMark | null => (existsSync(path) ? parseJson<CarryMark>(readFileSync(path, "utf8")) : null);
-const writeCarryMark = (path: string, mark: CarryMark) => writeFileSync(path, JSON.stringify(mark));
+/** Publishes the mark whole: written next to it, then renamed over it, so a carry cut short keeps the last whole mark. */
+function writeCarryMark(path: string, mark: CarryMark): void {
+  const next = `${path}.next`;
+  writeFileSync(next, JSON.stringify(mark));
+  carryFaults.beforeMarkRename?.();
+  renameSync(next, path);
+}
 
 /** Whether git tracks the executable bit here; where it does not, the carry ignores it too. */
 const fileModeOf = async (top: string, signal?: AbortSignal) => (await tryGit(top, ["config", "--bool", "core.filemode"], signal)) !== "false";
@@ -1013,6 +1019,7 @@ function removeOwnTemps(mark: string, fm: boolean): void {
 }
 function clearCarry(mark: string, fm: boolean): void {
   removeOwnTemps(mark, fm);
+  rmSync(`${mark}.next`, { force: true });
   rmSync(mark, { force: true });
   rmSync(logOf(mark), { force: true });
 }

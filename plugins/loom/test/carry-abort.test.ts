@@ -289,6 +289,24 @@ describe("a carry that starts again after one was cut short", () => {
     }
   });
 
+  it("keeps the last whole mark when it is cut short while publishing the next one, so a restart still takes the carry over", async () => {
+    const w = worker();
+    await start(w);
+    await put(w, "half.ts", "carry\n");
+    carryFaults.beforeMarkRename = () => {
+      throw new Error("crashed while publishing the mark");
+    };
+    try {
+      await expect(finish(w, treeWith(w, { "half.ts": "carry\n" }), ["half.ts"])).rejects.toThrow("crashed while publishing the mark");
+    } finally {
+      delete carryFaults.beforeMarkRename;
+    }
+    expect(sh(w.worktree, "rev-parse", "HEAD")).toBe(w.base);
+    expect(await start(w)).toEqual({ outcome: "ok", present: false, from: w.head });
+    expect(read(w.worktree, "half.ts")).toBeNull();
+    expect(sh(w.worktree, "status", "--porcelain", "--untracked-files=all")).toBe("");
+  });
+
   it("recognizes the carry's own commit when it was cut short right after the commit, the first of a stacked carry too", async () => {
     const w = worker();
     await start(w);
