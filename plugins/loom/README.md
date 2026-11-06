@@ -954,8 +954,10 @@ auto_merge = { method = "squash", final_review = {} }   # or { model = "…", re
   is not a full sanity check: Loom holds the merge until you run
   `bb loom auto-merge <slug> accept --ticket CSV-1`, or `retry` for a new
   review.
-- It runs as one thread in an empty scratch directory under Loom's data
-  directory on the project's machine, with everything in its brief: no
+- It runs as one thread in an empty scratch directory on the project's
+  machine, under `~/.cache/bb-loom/final-review` (or `$XDG_CACHE_HOME`),
+  outside bb's data directory, where bb refuses a workspace that is none of
+  the project's own. Everything it needs is in its brief: no
   worktree, environment provider or machine to provision, and nothing of
   yours in its working directory. It never runs in the repo's checkout:
   should bb refuse the scratch directory, the review does not run and the

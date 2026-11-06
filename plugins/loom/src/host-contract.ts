@@ -644,7 +644,7 @@ export const hostContract = defineRpcContract({
     input: z.object({ repo: absPath }).strict(),
     output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok"), print: z.string(), head: z.string().nullable(), dirty: z.boolean() }).strict(), unavailable]),
   },
-  // An empty directory of the data directory for one final review to start in, and what it holds later; `remove` deletes
+  // An empty directory outside bb's data directory for one final review to start in, and what it holds later; `remove` deletes
   // it, and `sweep` deletes at most 20 of Loom's scratch directories not in `keep`, answering their keys.
   finalScratch: {
     input: z

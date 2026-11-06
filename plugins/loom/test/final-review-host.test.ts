@@ -1,9 +1,9 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { checkoutPrint, finalScratch } from "../src/host/ops";
+import { checkoutPrint, finalScratch, finalScratchRoot } from "../src/host/ops";
 
 let scratch: string;
 beforeAll(() => {
@@ -73,14 +73,40 @@ describe("checkoutPrint", { timeout: 20_000 }, () => {
 });
 
 describe("finalScratch", () => {
+  const dataDir = () => join(scratch, "bb", "plugins", "loom", "host-data");
+  const root = () => join(scratch, "cache", "final-review");
+
   it("makes an empty directory, lists it, and removes it", () => {
-    const made = finalScratch({ key: "loom-abc", action: "create" }, scratch);
-    expect(made).toEqual({ path: join(scratch, "final-review", "loom-abc"), entries: [] });
+    const made = finalScratch({ key: "loom-abc", action: "create" }, dataDir(), root());
+    expect(made).toEqual({ path: join(root(), "loom-abc"), entries: [] });
     writeFileSync(join(made.path, "left.txt"), "x");
-    expect(finalScratch({ key: "loom-abc", action: "inspect" }, scratch).entries).toEqual(["left.txt"]);
-    expect(finalScratch({ key: "loom-abc", action: "create" }, scratch).entries).toEqual([]);
-    finalScratch({ key: "loom-abc", action: "remove" }, scratch);
+    expect(finalScratch({ key: "loom-abc", action: "inspect" }, dataDir(), root()).entries).toEqual(["left.txt"]);
+    expect(finalScratch({ key: "loom-abc", action: "create" }, dataDir(), root()).entries).toEqual([]);
+    finalScratch({ key: "loom-abc", action: "remove" }, dataDir(), root());
     expect(existsSync(made.path)).toBe(false);
+  });
+
+  it("removes a run's directory that an earlier Loom made in its data directory", () => {
+    const old = join(dataDir(), "final-review", "loom-old");
+    mkdirSync(old, { recursive: true });
+    finalScratch({ key: "loom-old", action: "remove" }, dataDir(), root());
+    expect(existsSync(old)).toBe(false);
+  });
+});
+
+describe("finalScratchRoot", () => {
+  const inside = (dir: string, path: string) => !relative(dir, path).startsWith("..");
+
+  it("is outside bb's data directory, which bb refuses as a workspace no project owns", () => {
+    const path = finalScratchRoot("/Users/dev/.bb/plugins/loom/host-data", {}, "/Users/dev");
+    expect(inside("/Users/dev/.bb", path)).toBe(false);
+    expect(inside("/Users/dev/.cache", path)).toBe(true);
+  });
+
+  it("follows XDG_CACHE_HOME when it is absolute, and keeps two bb installs apart", () => {
+    expect(inside("/var/cache/dev", finalScratchRoot("/Users/dev/.bb/plugins/loom/host-data", { XDG_CACHE_HOME: "/var/cache/dev" }, "/Users/dev"))).toBe(true);
+    expect(inside("/Users/dev/.cache", finalScratchRoot("/Users/dev/.bb/plugins/loom/host-data", { XDG_CACHE_HOME: "cache" }, "/Users/dev"))).toBe(true);
+    expect(finalScratchRoot("/Users/dev/.bb/plugins/loom/host-data", {}, "/Users/dev")).not.toBe(finalScratchRoot("/Users/dev/.bb-dev/plugins/loom/host-data", {}, "/Users/dev"));
   });
 });
 
@@ -123,11 +149,22 @@ describe("the re-review's fingerprint gaps", () => {
 
 describe("finalScratch's sweep", () => {
   it("removes Loom's scratch directories that no run owns, at most 20 at a time, and keeps the rest", () => {
-    for (const key of ["loom-owned", ...Array.from({ length: 22 }, (_, index) => `loom-orphan-${index}`)]) finalScratch({ key, action: "create" }, scratch);
-    const swept = finalScratch({ key: "loom-sweep", action: "sweep", keep: ["loom-owned"] }, scratch);
+    const dataDir = join(scratch, "sweep", "host-data");
+    const root = join(scratch, "sweep", "cache");
+    for (const key of ["loom-owned", ...Array.from({ length: 22 }, (_, index) => `loom-orphan-${index}`)]) finalScratch({ key, action: "create" }, dataDir, root);
+    const swept = finalScratch({ key: "loom-sweep", action: "sweep", keep: ["loom-owned"] }, dataDir, root);
     expect(swept.entries).toHaveLength(20);
-    expect(existsSync(join(scratch, "final-review", "loom-owned"))).toBe(true);
-    finalScratch({ key: "loom-sweep", action: "sweep", keep: ["loom-owned"] }, scratch);
-    expect(readdirSync(join(scratch, "final-review"))).toEqual(["loom-owned"]);
+    expect(existsSync(join(root, "loom-owned"))).toBe(true);
+    finalScratch({ key: "loom-sweep", action: "sweep", keep: ["loom-owned"] }, dataDir, root);
+    expect(readdirSync(root)).toEqual(["loom-owned"]);
+  });
+
+  it("sweeps the orphans an earlier Loom left in its data directory too", () => {
+    const dataDir = join(scratch, "sweep-old", "host-data");
+    const root = join(scratch, "sweep-old", "cache");
+    for (const key of ["loom-owned", "loom-orphan"]) mkdirSync(join(dataDir, "final-review", key), { recursive: true });
+    const swept = finalScratch({ key: "loom-sweep", action: "sweep", keep: ["loom-owned"] }, dataDir, root);
+    expect(swept.entries).toEqual(["loom-orphan"]);
+    expect(readdirSync(join(dataDir, "final-review"))).toEqual(["loom-owned"]);
   });
 });

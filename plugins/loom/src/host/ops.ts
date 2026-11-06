@@ -4,7 +4,7 @@ import { execFile, spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { appendFileSync, chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { lstat, open } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { experimental_runVcsProcess, type ExperimentalVcsProcessPriority } from "@get-bb/plugin-sdk/host";
 import { z } from "zod";
@@ -2056,23 +2056,40 @@ export async function checkoutPrint(input: HostInput<"checkoutPrint">, signal?: 
 
 const SWEEP_MAX = 20;
 
-/** The final review's own empty directory under the data directory: made empty, listed, removed, or the orphans swept. */
-export function finalScratch(input: HostInput<"finalScratch">, dataDir: string): HostOutput<"finalScratch"> {
-  const root = join(dataDir, "final-review");
+/**
+ * Where final reviews start: in the user's cache, since bb refuses as a thread's workspace any path under its own data
+ * directory that is not one of the project's workspaces, and a plugin's data directory is under it. Named after the
+ * plugin's data directory, so two bb installs on one machine never sweep each other's.
+ */
+export function finalScratchRoot(dataDir: string, env: NodeJS.ProcessEnv = process.env, home = homedir()): string {
+  const cache = env.XDG_CACHE_HOME?.startsWith("/") === true ? env.XDG_CACHE_HOME : join(home, ".cache");
+  return join(cache, "bb-loom", "final-review", sha256([dataDir]).slice(0, 12));
+}
+
+/**
+ * The final review's own empty directory under `root`: made empty, listed, removed, or the orphans swept. Removal and the
+ * sweep also clean the data directory's final-review directory, where Loom made them before bb refused it.
+ */
+export function finalScratch(input: HostInput<"finalScratch">, dataDir: string, root = finalScratchRoot(dataDir)): HostOutput<"finalScratch"> {
+  const roots = [root, join(dataDir, "final-review")];
   const path = join(root, input.key);
   if (input.action === "sweep") {
     const keep = new Set(input.keep ?? []);
-    const orphans = existsSync(root) ? readdirSync(root).filter((name) => name.startsWith("loom-") && !keep.has(name)).sort().slice(0, SWEEP_MAX) : [];
-    for (const name of orphans) rmSync(join(root, name), { recursive: true, force: true });
-    return { path: root, entries: orphans };
+    const orphans = roots.flatMap((dir) => (existsSync(dir) ? readdirSync(dir).filter((name) => name.startsWith("loom-") && !keep.has(name)).map((name) => ({ dir, name })) : []));
+    const swept = orphans.sort((a, b) => a.name.localeCompare(b.name)).slice(0, SWEEP_MAX);
+    for (const { dir, name } of swept) rmSync(join(dir, name), { recursive: true, force: true });
+    return { path: root, entries: swept.map(({ name }) => name) };
   }
   if (input.action === "create") {
     rmSync(path, { recursive: true, force: true });
     mkdirSync(path, { recursive: true });
   }
   if (input.action === "remove") {
-    rmSync(path, { recursive: true, force: true });
-    if (existsSync(path)) throw new Error(`${path} is still there after its removal`);
+    for (const dir of roots) {
+      const owned = join(dir, input.key);
+      rmSync(owned, { recursive: true, force: true });
+      if (existsSync(owned)) throw new Error(`${owned} is still there after its removal`);
+    }
     return { path, entries: [] };
   }
   return { path, entries: existsSync(path) ? readdirSync(path).sort() : [] };

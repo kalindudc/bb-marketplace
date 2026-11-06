@@ -2,7 +2,7 @@
 // merge hold has cleared, on the exact commit it would merge. It judges only what changed since Loom's reviewers approved
 // the ticket: did anything break the acceptance criteria, is the pull request's text still true, and is anything alarming.
 //
-// Where it runs: a bb thread in an empty scratch directory of Loom's data directory on the project's machine, with
+// Where it runs: a bb thread in an empty scratch directory in the user's cache on the project's machine, with
 // everything it judges inline in its brief; nothing to provision and nothing of the person's to damage. It never runs in
 // the repo's checkout: should bb refuse the scratch directory, the merge holds. The threat is an accident, not an
 // adversary: a reviewer that wanders into the checkout. So Loom takes a cheap fingerprint of the checkout before the
