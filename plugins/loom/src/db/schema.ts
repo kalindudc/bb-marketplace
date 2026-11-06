@@ -227,7 +227,7 @@ export const MIGRATIONS: string[] = [
   // RetryWait: one wait for every ticket step that failed, named by its step. The merge waits keep their column under its
   // new name, and a pull request's read wait moves in, due when its next read was. A ticket that has both keeps one wait
   // with the larger failure count, the earlier start and the later deadline: the read's on an open pull request, where
-  // reads happen, and the merge's elsewhere.
+  // reads happen, and the merge's elsewhere. A read wait names the ticket's pull request, so its streak goes on there.
   `ALTER TABLE tickets RENAME COLUMN merge_wait_json TO retry_json;
   UPDATE tickets SET retry_json = json_object('step', 'read', 'failures', MAX(json_extract(pr_poll_json, '$.failures'), json_extract(retry_json, '$.failures')), 'since', MIN(json_extract(pr_poll_json, '$.since'), json_extract(retry_json, '$.since')),
     'until', MAX(COALESCE(pr_checked_at, 0) + MIN(1800000, 300000 * (1 << MIN(3, MAX(0, json_extract(pr_poll_json, '$.failures') - 1)))), json_extract(retry_json, '$.until')), 'message', json_extract(pr_poll_json, '$.message'))
@@ -237,6 +237,7 @@ export const MIGRATIONS: string[] = [
     WHERE pr_poll_json IS NOT NULL AND retry_json IS NOT NULL AND state != 'pr_open';
   UPDATE tickets SET retry_json = json_object('step', 'read', 'failures', json_extract(pr_poll_json, '$.failures'), 'since', json_extract(pr_poll_json, '$.since'), 'until', COALESCE(pr_checked_at, 0) + MIN(1800000, 300000 * (1 << MIN(3, MAX(0, json_extract(pr_poll_json, '$.failures') - 1)))), 'message', json_extract(pr_poll_json, '$.message'))
     WHERE pr_poll_json IS NOT NULL AND retry_json IS NULL;
+  UPDATE tickets SET retry_json = json_set(retry_json, '$.pr', pr_url) WHERE pr_poll_json IS NOT NULL AND pr_url IS NOT NULL AND json_extract(retry_json, '$.step') = 'read';
   UPDATE tickets SET pr_poll_json = NULL WHERE pr_poll_json IS NOT NULL`,
   // PushIntent: the push Loom is about to make for the ticket's pull request, so a run after a lost answer settles it
   // from the remote branch instead of pushing again.
