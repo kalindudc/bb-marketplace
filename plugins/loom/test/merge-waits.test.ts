@@ -489,15 +489,15 @@ describe("a merge that runs again after its checks got no answer", () => {
     expect(ticket()).toMatchObject({ state: "pr_open", pushed_sha: "sq2" });
   });
 
-  it("pauses the project after an hour of a worker's thread in error, rather than waiting on it forever", async () => {
+  it("blocks only that ticket after an hour of its worker's thread in error, rather than waiting on it forever, and the project keeps running", async () => {
     const worker = await fixOnMachineWithForeignTip();
     h.bb.threads.get(worker.thread_id!)!.status = "error";
-    for (let minute = 0; minute <= 75 && project().state === "running"; minute += 5) {
+    for (let minute = 0; minute <= 75 && ticket().state !== "blocked"; minute += 5) {
       await queue();
       h.clock.advance(5 * MINUTE);
     }
-    expect(project()).toMatchObject({ state: "paused", system_reason: expect.stringContaining("not idle") });
-    expect(ticket()).toMatchObject({ state: "merging", pushed_sha: "sq1" });
+    expect(project()).toMatchObject({ state: "running", system_reason: null });
+    expect(ticket()).toMatchObject({ state: "blocked", pushed_sha: "sq1", merge_step_json: null, blocked_reason: expect.stringMatching(/^Merging CSV-1 failed \d+ times in a row over 1h.*not idle \(error\)/u) });
   });
 
   it("waits, and hands nothing back, when a carry already under way loses its transport", async () => {
