@@ -1657,6 +1657,9 @@ settings for that project.
   since they run in checkouts and worktrees Loom does not own. A push keeps the
   repository's hooks, because git-lfs uploads large files from its pre-push
   hook. Your spec's check commands run as you wrote them, hooks and all.
+- Loom's database keeps check output, posts and pull request text, so Loom
+  makes it, and its `-wal` and `-shm` files, readable by their owner alone
+  (mode 0600) each time it starts.
 - Workers and reviewers run in bb's full permission mode unless the spec sets
   `permission_mode`, because some providers, such as pi, accept no other mode.
   An approved spec keeps the mode it was approved with.

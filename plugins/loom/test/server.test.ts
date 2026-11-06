@@ -1,4 +1,5 @@
 import { createFakePluginHost, makePluginAgentConfigurationContext, makeThreadResponse, makeTurnFailedEvent } from "@get-bb/plugin-sdk/testing";
+import { statSync } from "node:fs";
 import { beforeEach, describe, expect, it } from "vitest";
 import { createLoomPlugin } from "../server";
 import type { HostMethod } from "../src/host-contract";
@@ -109,6 +110,13 @@ describe("Loom plugin", () => {
     expect(show).toMatchObject({ state: "running", ticketCount: 2 });
     expect(harness.sdk.callsTo("threadSections.create")).toHaveLength(1);
     expect(harness.sdk.callsTo("threads.update")).toEqual([[{ threadId: "thr_plan", sectionId: "sec_1" }]]);
+  });
+
+  it("keeps its database file readable by its owner alone", async () => {
+    const host = await load();
+    const db = host.bb.storage.database();
+    expect(db.memory).toBe(false);
+    expect(statSync(db.name).mode & 0o777).toBe(0o600);
   });
 
   it("registers the tool and the CLI command", async () => {

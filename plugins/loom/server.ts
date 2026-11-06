@@ -2,6 +2,7 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { createBbPort, createHostPort } from "./src/bb-port";
 import { createCli } from "./src/cli";
+import { keepPrivate } from "./src/db/private";
 import { MIGRATIONS } from "./src/db/schema";
 import { Store } from "./src/db/store";
 import { Engine } from "./src/engine";
@@ -25,6 +26,7 @@ const errText = (error: unknown) => (error instanceof Error ? error.message : St
 export function createLoomPlugin(deps: PluginDeps = {}) {
   return async function loom(bb: BbPluginApi): Promise<void> {
     const db = bb.storage.database();
+    keepPrivate(db);
     bb.storage.migrate(db, MIGRATIONS);
     const now = deps.now ?? Date.now;
     const store = new Store(db, now);
