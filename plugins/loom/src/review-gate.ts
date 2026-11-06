@@ -55,12 +55,18 @@ async function startGate(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket
     const checkout = await repoCheckout(ctx, project, spec, ticket.repo);
     answer = await ctx.host.call(checkout.hostId, "prReviewStart", { repo: checkout.path, url, sha, head: ticket.pr_branch ?? ticket.branch!, base: ticket.pr_base ?? settings.base, command });
   } catch (error) {
-    // The call may have reached the gate; its read will tell, or the run times out.
+    // The call may have reached the gate and asked; its read will tell, or the run times out.
     ctx.bb.log("warn", `Starting ${ticket.key}'s review gate got no answer, so Loom reads the gate for ${sha.slice(0, 12)} as started: ${errText(error)}`);
     return;
   }
   if (answer.outcome === "ok") return;
-  store.event(project.id, ticket.id, GATE_START_FAILED, LOOM_ACTOR, { url, sha, own, message: answer.message, transient: answer.transient !== undefined });
+  // Only a command that could not start proves nothing was asked, and only an exit with an error says it failed: any other
+  // answer may have asked for the review, so the run stays open, is read, and times out.
+  if (answer.outcome !== "not_started" && answer.outcome !== "failed") {
+    ctx.bb.log("warn", `${ticket.key}'s review_start may have asked for a review of ${sha.slice(0, 12)} before it ended, so Loom reads the gate for it and never asks again: ${(answer as { message?: string }).message ?? answer.outcome}`);
+    return;
+  }
+  store.event(project.id, ticket.id, GATE_START_FAILED, LOOM_ACTOR, { url, sha, own, message: answer.message, notStarted: answer.outcome === "not_started" });
   const run = runFor(store, ticket, own);
   if (run?.end?.kind === "failed") gateFailed(ctx, ticket, `Loom could not start the review gate for ${sha.slice(0, 12)}: ${answer.message}`);
   else store.changed(project.id);

@@ -120,7 +120,7 @@ fix round's push), Loom runs `review_start` once for the commit it pushed; a cat
 refresh starts none, and the last result still stands. Loom records the run before the command starts, so a restart or a
 lost answer never asks twice. At each later read it runs `review_read`, until the gate is done:
 
-- `review_start` gets `LOOM_URL`, `LOOM_PR_NUMBER`, `LOOM_SHA` (the commit to review), `LOOM_HEAD` (the pull request's branch) and `LOOM_BASE`; exit 0 means the review is asked for. A failure that looks temporary is tried again at the next read, 3 times in all; any other failure holds the publish.
+- `review_start` gets `LOOM_URL`, `LOOM_PR_NUMBER`, `LOOM_SHA` (the commit to review), `LOOM_HEAD` (the pull request's branch) and `LOOM_BASE`; exit 0 means the review is asked for. A command that exits with an error holds the publish. One that runs out of time, is stopped, or whose answer is lost may have asked, so Loom never runs it again for that push, also after a restart: it reads the gate, and holds the publish once the run is 90 minutes old. Only a command that could not start at all is tried again, at the next read, 3 times in all.
 - `review_read` gets `LOOM_URL`, `LOOM_PR_NUMBER` and `LOOM_SHA`, and prints one JSON object on its last line: `{"state": "pending" | "done" | "failed", "findings": [{"id", "title", "body", "path", "line", "severity"}], "message": "…"}`. Only `state`, and each finding's `id` and `title`, are required.
 
 The gate is clean only when `review_read` lists no finding for the commit. Its findings go to the worker as a fix round,

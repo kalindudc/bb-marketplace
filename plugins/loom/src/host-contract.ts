@@ -648,10 +648,14 @@ export const hostContract = defineRpcContract({
     output: z.object({ path: z.string(), entries: z.array(z.string()), refused: z.string().optional() }).strict(),
   },
   // A forge's review gate: review_start asks an outside reviewer, such as a review bot's private review, to review the
-  // commit sha of the draft at url; exit 0 means it is asked.
+  // commit sha of the draft at url; exit 0 means it is asked. "unknown": it timed out or was stopped, so it may have asked;
+  // "failed": it exited with an error; "not_started": the shell could not start, so nothing was asked.
   prReviewStart: {
     input: z.object({ repo: absPath, url: prUrl, sha, head: z.string().min(1).max(500), base: z.string().min(1).max(500), command: forgeCommand }).strict(),
-    output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok") }).strict(), unavailable]),
+    output: z.discriminatedUnion("outcome", [
+      z.object({ outcome: z.literal("ok") }).strict(),
+      z.object({ outcome: z.enum(["unknown", "failed", "not_started"]), message: z.string() }).strict(),
+    ]),
   },
   // review_read prints what the gate found for sha: pending while it runs, done with its findings, or failed with why.
   prReviewRead: {

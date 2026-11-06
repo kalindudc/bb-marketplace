@@ -14,7 +14,7 @@ const dataOf = (event: EventRow) => JSON.parse(event.data_json) as Record<string
 
 /** Loom ran review_start for `sha`, the head of the push of the ticket's own work `own`; recorded before the command runs. */
 export const GATE_STARTED = "ticket.gate_started";
-/** review_start failed; a failure that looks temporary lets Loom start it again, GATE_START_TRIES times in all. */
+/** review_start failed: it exited with an error, or could not start, which lets Loom start it again, GATE_START_TRIES times in all. */
 export const GATE_START_FAILED = "ticket.gate_start_failed";
 /** review_read said the gate is done or failed, with its findings and how many new ones went to the worker. */
 export const GATE_DONE = "ticket.gate_done";
@@ -77,7 +77,7 @@ export function runFor(store: Store, ticket: TicketRow, own: string): GateRun | 
   if (last.kind === GATE_TIMED_OUT) return { ...run, end: { kind: "failed", message: `it did not finish within ${GATE_TIMEOUT_MINUTES} minutes` } };
   if (last.kind === GATE_START_FAILED) {
     const tries = events.filter((event) => event.kind === GATE_START_FAILED).length;
-    return { ...run, end: data.transient === true && tries < GATE_START_TRIES ? { kind: "retry" } : { kind: "failed", message: String(data.message) } };
+    return { ...run, end: data.notStarted === true && tries < GATE_START_TRIES ? { kind: "retry" } : { kind: "failed", message: String(data.message) } };
   }
   if (data.state === "failed") return { ...run, end: { kind: "failed", message: String(data.message ?? "the gate says it failed") } };
   // Clean only when the gate lists nothing for the head; findings it lists still hold the draft, whether sent now or before.

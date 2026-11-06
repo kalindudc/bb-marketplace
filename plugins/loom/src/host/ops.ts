@@ -2047,8 +2047,15 @@ export async function prReady(input: HostInput<"prReady">, signal?: AbortSignal)
 /** A review gate's start command, for the commit sha of the pull request at url. */
 export async function prReviewStart(input: HostInput<"prReviewStart">, signal?: AbortSignal): Promise<HostOutput<"prReviewStart">> {
   const env = { LOOM_URL: input.url, LOOM_PR_NUMBER: prNumber(input.url), LOOM_SHA: input.sha, LOOM_HEAD: input.head, LOOM_BASE: input.base };
-  const result = await spawnCommand({ cwd: input.repo, command: input.command, timeoutMs: FORGE_COMMAND_MS, env }, signal);
-  return commandReadFailed("review_start", result) ?? { outcome: "ok" };
+  let result: HostOutput<"exec">;
+  try {
+    result = await spawnCommand({ cwd: input.repo, command: input.command, timeoutMs: FORGE_COMMAND_MS, env }, signal);
+  } catch (error) {
+    return { outcome: "not_started", message: `The forge's review_start command could not start: ${error instanceof Error ? error.message : String(error)}` };
+  }
+  const message = commandFailure("review_start", result);
+  if (message === null) return { outcome: "ok" };
+  return { outcome: result.timedOut || result.exitCode === null ? "unknown" : "failed", message };
 }
 
 const gateReadSchema = z.object({

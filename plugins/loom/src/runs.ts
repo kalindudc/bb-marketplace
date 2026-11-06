@@ -211,7 +211,7 @@ const SUMMARIES: { [M in Exclude<HostMethod, "exec">]: (output: HostOutput<M>) =
   checkoutPrint: (read) => (read.outcome === "ok" ? done(`HEAD ${read.head === null ? "unborn" : sha12(read.head)}, ${read.dirty ? "with uncommitted changes" : "clean"}.`) : { ok: false, text: read.message }),
   finalScratch: ({ path, entries }) => done(`${path}, with ${entries.length === 1 ? "1 entry" : `${entries.length} entries`}.`),
   homeDir: ({ path }) => done(path),
-  prReviewStart: (started) => (started.outcome === "ok" ? done("Started the review gate.") : { ok: false, text: started.message }),
+  prReviewStart: (started) => (started.outcome === "ok" ? done("Started the review gate.") : { ok: false, text: `${started.outcome.replace("_", " ")}: ${started.message}` }),
   prReviewRead: (read) => (read.outcome === "ok" ? done(`The review gate is ${read.state}${read.findings.length === 0 ? "" : `, with ${read.findings.length} finding${read.findings.length === 1 ? "" : "s"}`}.`) : { ok: false, text: read.message }),
   remotes: ({ remotes }) => done(remotes.length === 0 ? "No remotes." : remotes.map((remote) => remote.name).join(", ")),
   ghStatus: ({ status, host }) => done(`${status.replaceAll("_", " ")}${host === null ? "" : ` on ${host}`}.`),

@@ -8,6 +8,10 @@ import type { HostOutput } from "../src/host-contract";
 import { pollPullRequests, runMergeQueue, settleMerges } from "../src/merge";
 import { askForPrTexts, handInPrText } from "../src/pull-requests";
 import { GATE_DONE, GATE_STARTED } from "../src/publish";
+import { followGate } from "../src/review-gate";
+import { Store } from "../src/db/store";
+import { prReviewStart } from "../src/host/ops";
+import { tmpdir } from "node:os";
 import { boardCards } from "../src/rpc";
 import { parseSpec } from "../src/spec";
 import { approve, settleReviews, spawnReviewers } from "../src/review";
@@ -233,9 +237,68 @@ describe("a review gate on a draft", () => {
     expect(starts()).toHaveLength(1);
   });
 
+  it("never sends a start again that timed out, also after a restart, and holds once the run is out of time", async () => {
+    await openPr();
+    const db = (h as unknown as { db: ConstructorParameters<typeof Store>[0] }).db;
+    const call = h.host.call.bind(h.host);
+    // The command ran and may have asked for the review, then ran out of time; the host says so as it does for any forge command.
+    h.ctx.host = {
+      call: async (hostId: string, method: never, input: never) => {
+        const result = await call(hostId, method, input);
+        return method === "prReviewStart" ? ({ outcome: "unavailable", transient: "server", message: "The forge's review_start command took longer than 2 minutes" } as never) : result;
+      },
+    };
+    await poll();
+    h.ctx.store = new Store(db, h.clock.now);
+    h.store = h.ctx.store;
+    await followGate(h.ctx, project(), ticket().id);
+    await poll();
+    expect(starts()).toHaveLength(1);
+    expect(reads()).not.toEqual([]);
+    await poll(95);
+    expect(posts("gate_failed")).toHaveLength(1);
+    expect(starts()).toHaveLength(1);
+  });
+
+  it("does not repeat a start that went through, across a restart", async () => {
+    await openPr();
+    await poll();
+    h.ctx.store = new Store((h as unknown as { db: ConstructorParameters<typeof Store>[0] }).db, h.clock.now);
+    await followGate(h.ctx, project(), ticket().id);
+    expect(starts()).toHaveLength(1);
+  });
+
+  it("starts again when the command could not start, which proves nothing was asked", async () => {
+    await openPr();
+    h.host.scripted.prReviewStart = [{ outcome: "not_started", message: "spawn /bin/sh ENOENT" }];
+    await poll();
+    await poll();
+    expect(starts()).toHaveLength(2);
+    expect(posts("gate_failed")).toEqual([]);
+  });
+
+  it("holds without starting again when review_start exits with an error", async () => {
+    await openPr();
+    h.host.scripted.prReviewStart = [{ outcome: "failed", message: "The forge's review_start command failed (exit 1): no such pull request" }];
+    await poll();
+    await poll();
+    expect(starts()).toHaveLength(1);
+    expect(posts("gate_failed")).toHaveLength(1);
+    expect(card().publishWait).toContain("its review gate failed");
+  });
+
   it("does not run without merge.publish", async () => {
     await openPr((doc) => void delete doc.merge.publish);
     await poll();
     expect(starts()).toEqual([]);
+  });
+});
+
+describe("review_start on the host", () => {
+  const input = (command: string, repo = tmpdir()) => ({ repo, url: URL, sha: "abc123", head: "loom/csv/csv-1", base: "main", command });
+  it("says ok on exit 0, failed on an exit with an error, and not_started when the shell could not start", async () => {
+    expect(await prReviewStart(input('[ "$LOOM_SHA" = abc123 ]'))).toEqual({ outcome: "ok" });
+    expect(await prReviewStart(input("echo refused >&2; exit 1"))).toMatchObject({ outcome: "failed", message: expect.stringContaining("refused") });
+    expect(await prReviewStart(input("true", "/no/such/checkout"))).toMatchObject({ outcome: "not_started" });
   });
 });

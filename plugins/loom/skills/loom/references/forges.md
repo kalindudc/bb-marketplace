@@ -100,7 +100,9 @@ review_rounds = 3
 
 - `review_start` runs once for each push of the ticket's own work (the opening and each fix round's push, never a
   restack or a refresh), with `LOOM_URL`, `LOOM_PR_NUMBER`, `LOOM_SHA` (the commit to review), `LOOM_HEAD` and
-  `LOOM_BASE`. Exit 0 when the review is asked for.
+  `LOOM_BASE`. Exit 0 when the review is asked for, and non-zero, with the reason, when it was not. A command that runs out
+  of its 2 minutes may have asked, so Loom never runs it again for that push: it reads the gate instead, so make
+  `review_read` print `pending` for a review that never started, and the run times out after 90 minutes.
 - `review_read` runs at each read until the gate is done, with `LOOM_URL`, `LOOM_PR_NUMBER` and `LOOM_SHA`, and prints one
   JSON object on its last line:
 
