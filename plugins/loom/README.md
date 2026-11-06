@@ -1714,7 +1714,7 @@ that applies to the project, or adds a hook nobody asked for.
 
 ## Settings
 
-Besides the done hook and the planner instructions, Loom has four settings for
+Besides the done hook and the planner instructions, Loom has five settings for
 pull requests. Set them in bb's settings for Loom, or from a terminal:
 
 ```sh
@@ -1722,6 +1722,7 @@ bb plugin config loom set checksSettleMinutes 45
 bb plugin config loom set checksQueuedMinutes 10
 bb plugin config loom set checksNearDonePercent 90
 bb plugin config loom set commentSignature '<sub>Posted by Loom</sub>'
+bb plugin config loom set botAuthors 'dependabot*, renovate*, *[bot], *@robots.example.com'
 ```
 
 - `checksSettleMinutes` is the longest Loom waits for a pull request's
@@ -1739,6 +1740,13 @@ bb plugin config loom set commentSignature '<sub>Posted by Loom</sub>'
   pull request with, so people can tell an agent wrote it from your account.
   It is "Posted by Loom" by default, takes Markdown (on GitHub, `<sub>…</sub>`
   makes it small), and an empty value turns it off.
+- `botAuthors` names the accounts Loom counts as bots on every forge, on top
+  of the ones the forge marks, as globs separated by commas (`*` is any run of
+  characters, `?` one). A bot's top-level comments on a pull request start no
+  fix round, so routine notices from service accounts that a server reports as
+  people send the worker nothing. It is `dependabot*, renovate*, *[bot]` by
+  default, and an empty value counts only the ones the forge marks. A forge's
+  own `bots` globs, in a forge profile or the spec, add to it.
 
 They apply to every project, and a spec cannot change them.
 

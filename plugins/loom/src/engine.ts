@@ -32,7 +32,7 @@ import type { Spec } from "./spec";
 import { cancelTicket, maybeSendTriage, onPlannerIdle } from "./triage";
 import { blockTicket, blockedAtStart, endThread, failSpawn, onThreadGone as endGoneThread, onTurnFailed as handleTurnFailed, onWorkerIdle, pauseProject, resumeEnding, spawnWorker, startedFine, type TurnFailure } from "./workers";
 import { requeueTicket } from "./requeue";
-import { specOf, type EngineCtx } from "./ctx";
+import { DEFAULT_BOT_AUTHORS, globsIn, specOf, type EngineCtx } from "./ctx";
 import { warnSubStateWith } from "./sub-state";
 
 const TOKEN_REFRESH_MS = 60_000;
@@ -81,6 +81,7 @@ export class Engine {
       prReads: newPrReads(),
       checkWait: () => checkWaitOf(this.settings()),
       commentSignature: signature,
+      botAuthors: () => globsIn(this.settings().botAuthors ?? DEFAULT_BOT_AUTHORS),
       plannerInstructions: () => this.settings().plannerInstructions ?? "",
     };
   }

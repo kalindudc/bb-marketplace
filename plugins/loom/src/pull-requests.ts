@@ -3,7 +3,7 @@
 // back to the worker as a fix round, which goes through the checks and a review again before Loom pushes one more
 // commit. Merging stays the human's, unless the repo's forge sets auto_merge (auto-merge.ts).
 import { checkWaitOf, durationsKey, holdOf, median, queuedSince, USUAL_RUNS, type CheckWait, type Skipped } from "./check-wait";
-import { delivers, workerOf, signatureOf, specOf, type EngineCtx } from "./ctx";
+import { botAuthorsOf, delivers, workerOf, signatureOf, specOf, type EngineCtx } from "./ctx";
 import { repoCheckout, type RepoCheckout } from "./checkouts";
 import { createHash } from "node:crypto";
 import type { PostRow, ProjectRow, Store, ThreadRow, TicketRow } from "./db/store";
@@ -625,7 +625,7 @@ export async function followFeedback(ctx: EngineCtx, project: ProjectRow, ticket
   const spec = specOf(store, project);
   const settings = repoSettings(spec, ticket.repo);
   // The checks ignore_checks names are dropped before anything counts them: the ticket page, the board, the merge order and the fix round.
-  let feedback: Feedback = { ...read, checks: keptChecks(settings.forge, read.checks).kept };
+  let feedback: Feedback = { ...read, checks: keptChecks(settings.forge, read.checks).kept, items: withBots(read.items, botGlobs(ctx, settings.forge)) };
   const status = recordStatus(ctx, ticket, feedback);
   if (project.state !== "running") return;
   if (!settings.ci) feedback = { ...feedback, checks: [] };
@@ -648,6 +648,14 @@ export async function followFeedback(ctx: EngineCtx, project: ProjectRow, ticket
     foreign,
     human: false,
   });
+}
+
+/** The author globs Loom counts as bots on this forge: its own bots and Loom's botAuthors setting. */
+export const botGlobs = (ctx: EngineCtx, forge: ForgeSpec): string[] => [...(forge.bots ?? []), ...botAuthorsOf(ctx)];
+
+/** The items with bot set on those whose author matches one of `globs`, as when the forge marks them. */
+export function withBots<T extends { author: string; bot: boolean }>(items: readonly T[], globs: readonly string[]): T[] {
+  return items.map((item) => (item.bot || !globs.some((glob) => globMatch(glob, item.author)) ? item : { ...item, bot: true }));
 }
 
 /** The checks a forge's ignore_checks keeps, and the ones it drops by name. */

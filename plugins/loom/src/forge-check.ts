@@ -5,7 +5,7 @@ import type { TicketRow } from "./db/store";
 import { githubPull, type HostOutput } from "./host-contract";
 import { LoomError } from "./projects";
 import { replaceLoomBlock } from "./prompts";
-import { keptChecks } from "./pull-requests";
+import { botGlobs, keptChecks, withBots } from "./pull-requests";
 import { followsFeedback, isMultiRepo, prSettings, repoSettings, type RepoSettings } from "./repos";
 import { readSpec, type ForgeProfile, type ForgeSpec, type Spec } from "./spec";
 import { type EngineCtx } from "./ctx";
@@ -72,7 +72,7 @@ const BLOCK_TEXT = {
   several: "with Loom's markers more than once, so Loom cannot tell its own section and does not refresh it",
 } as const;
 
-function readOf(feedback: Feedback, forge: ForgeSpec): ForgeCheckRead {
+function readOf(feedback: Feedback, forge: ForgeSpec, bots: readonly string[]): ForgeCheckRead {
   const { kept, ignored } = keptChecks(forge, feedback.checks);
   return {
     state: feedback.state,
@@ -84,7 +84,7 @@ function readOf(feedback: Feedback, forge: ForgeSpec): ForgeCheckRead {
     author: feedback.author === "" ? null : feedback.author,
     checks: kept.map((check) => ({ name: check.name, state: check.state, key: check.key, url: check.url })),
     ignored: ignored.map((check) => check.name),
-    items: feedback.items.map((item) => ({ kind: item.kind, author: item.author, bot: item.bot, key: item.key, line: firstLine(item.body) })),
+    items: withBots(feedback.items, bots).map((item) => ({ kind: item.kind, author: item.author, bot: item.bot, key: item.key, line: firstLine(item.body) })),
     description: descriptionOf(feedback.body),
   };
 }
@@ -170,7 +170,7 @@ export async function forgeCheck(ctx: EngineCtx, a: { slug: string; target: stri
         const miss = answer.missing.find((each) => each.number === pull.number);
         return failed("prBatch", runs, noFeedback, miss?.message ?? `gh found no pull request at ${url}.`, miss?.transient);
       }
-      const fields = read.feedback === null ? { head: null, author: null, checks: null, ignored: null, items: null } : readOf(read.feedback, forge);
+      const fields = read.feedback === null ? { head: null, author: null, checks: null, ignored: null, items: null } : readOf(read.feedback, forge, botGlobs(ctx, forge));
       return { ...base, call: "prBatch", runs, noFeedback, read: { ...fields, state: read.state, draft: read.draft, review: read.review, base: read.base, mergeable: read.mergeable ?? null, description: descriptionOf(read.body) }, failure: null };
     } catch (error) {
       return failed("prBatch", runs, noFeedback, error instanceof Error ? error.message : String(error), undefined, issuesOf(error));
@@ -181,7 +181,7 @@ export async function forgeCheck(ctx: EngineCtx, a: { slug: string; target: stri
     try {
       const answer = await ctx.host.call(checkout.hostId, "prFeedback", { repo: checkout.path, url, forge: { kind: "command", feedback: forge.feedback } });
       if (answer.outcome === "unavailable") return failed("prFeedback", forge.feedback, noFeedback, answer.message, answer.transient);
-      return { ...base, call: "prFeedback", runs: forge.feedback, noFeedback, read: readOf(answer, forge), failure: null };
+      return { ...base, call: "prFeedback", runs: forge.feedback, noFeedback, read: readOf(answer, forge, botGlobs(ctx, forge)), failure: null };
     } catch (error) {
       return failed("prFeedback", forge.feedback, noFeedback, error instanceof Error ? error.message : String(error), undefined, issuesOf(error));
     }
@@ -278,12 +278,12 @@ export async function forgeTest(ctx: EngineCtx, profile: ForgeProfile, hash: str
   }
   let feedback: ForgeTest["feedback"] = null;
   if (profile.feedback !== undefined) {
-    const forge: ForgeSpec = { kind: "command", ...(profile.ignore_checks === undefined ? {} : { ignore_checks: profile.ignore_checks }) };
+    const forge: ForgeSpec = { kind: "command", ...(profile.ignore_checks === undefined ? {} : { ignore_checks: profile.ignore_checks }), ...(profile.bots === undefined ? {} : { bots: profile.bots }) };
     try {
       const answer = await ctx.host.call(hostId, "prFeedback", { repo: cwd, url, forge: { kind: "command", feedback: profile.feedback } });
       feedback =
         answer.outcome === "ok"
-          ? { runs: profile.feedback, read: readOf(answer, forge), failure: null }
+          ? { runs: profile.feedback, read: readOf(answer, forge, botGlobs(ctx, forge)), failure: null }
           : { runs: profile.feedback, read: null, failure: { message: answer.message, transient: answer.transient ?? null, issues: [] } };
     } catch (error) {
       feedback = { runs: profile.feedback, read: null, failure: fail(error) };

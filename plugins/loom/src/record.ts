@@ -14,7 +14,7 @@ import { LoomError, landsOf, repoOverviews, type RepoOverview } from "./projects
 import { freshBaseOf, integrationBranchOf, isMultiRepo, repoSettings } from "./repos";
 import { readSpec, type Spec } from "./spec";
 import { LOOM_ACTOR } from "./states";
-import { specOf, type EngineCtx } from "./ctx";
+import { DEFAULT_BOT_AUTHORS, specOf, type EngineCtx } from "./ctx";
 
 export const PLANNER_INSTRUCTIONS_MAX = 4000;
 
@@ -77,11 +77,19 @@ export const SETTINGS = {
     default: COMMENT_SIGNATURE,
     experimental_schema: z.string().max(200).regex(/^[^\r\n]*$/, "The signature is one line."),
   },
+  botAuthors: {
+    type: "string",
+    label: "Bot authors",
+    description:
+      "Accounts Loom counts as bots on every forge, on top of the ones the forge marks, as globs separated by commas, where * is any run of characters: a bot's top-level comments on a pull request start no fix round. Use it for service accounts a server reports as people. A forge profile or a spec's forge adds its own with bots. Empty: only the ones the forge marks.",
+    default: DEFAULT_BOT_AUTHORS,
+    experimental_schema: z.string().trim().max(1000),
+  },
 } satisfies PluginSettingDescriptors;
 
 export type DoneSettings = { doneHook: string; doneRecord: string };
 /** Every Loom setting; the pull request ones are optional so a caller with only the done hook's settings can pass them. */
-export type LoomSettings = DoneSettings & { checksSettleMinutes?: number; checksQueuedMinutes?: number; checksNearDonePercent?: number; commentSignature?: string; plannerInstructions?: string };
+export type LoomSettings = DoneSettings & { checksSettleMinutes?: number; checksQueuedMinutes?: number; checksNearDonePercent?: number; commentSignature?: string; plannerInstructions?: string; botAuthors?: string };
 export const NO_HOOK: DoneSettings = { doneHook: "", doneRecord: "summary" };
 
 export const RECORD_MAX = 300_000;

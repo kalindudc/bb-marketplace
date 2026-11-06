@@ -20,9 +20,16 @@ export interface EngineCtx extends Ctx {
   checkWait?: () => CheckWait;
   /** The line a worker ends its pull request comments with; Loom's commentSignature setting. */
   commentSignature?: () => string;
+  /** Author globs Loom counts as bots on every forge; Loom's botAuthors setting. */
+  botAuthors?: () => string[];
 }
 
 export const signatureOf = (ctx: EngineCtx): string => ctx.commentSignature?.() ?? COMMENT_SIGNATURE;
+
+export const DEFAULT_BOT_AUTHORS = "dependabot*, renovate*, *[bot]";
+/** The globs in a comma-separated setting, blanks left out. */
+export const globsIn = (text: string): string[] => text.split(",").map((glob) => glob.trim()).filter((glob) => glob !== "");
+export const botAuthorsOf = (ctx: EngineCtx): string[] => ctx.botAuthors?.() ?? globsIn(DEFAULT_BOT_AUTHORS);
 
 export function specOf(store: Store, project: ProjectRow): Spec {
   const row = project.approved_version === null ? null : store.specVersion(project.id, project.approved_version);
