@@ -293,6 +293,15 @@ describe("a carry that finishes", () => {
     }
   });
 
+  it("keeps a staged name with a newline in it whole when git gives the names NUL-separated", async () => {
+    const w = worker();
+    await start(w);
+    await put(w, "README.md", "carried\n");
+    writeFileSync(join(w.worktree, "two\nlines.ts"), "x\n");
+    sh(w.worktree, "add", "two\nlines.ts");
+    expect(await finish(w, treeWith(w, { "README.md": "carried\n" }), ["README.md"])).toEqual({ outcome: "foreign", paths: ["two\nlines.ts"] });
+  });
+
   it("refuses, touching no index, when the worker staged a version of a carry path, or recreated one it deleted", async () => {
     const w = worker();
     await start(w);
