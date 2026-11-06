@@ -106,7 +106,10 @@ deploy order or CI still holds it back. In `[merge]`, `publish = { when = ["chec
 At each read of a draft, Loom publishes it, marking it ready through the forge (gh, or the forge's `ready` command), once
 it targets its base and every condition holds for the commit it pushed: the checks it reads, less `ignore_checks`, all
 passed, with none pending; and what the ticket's rollout `requires_live` names is live. A repo with a review gate also
-waits for the gate to come back clean on that commit. A fix round's push starts the wait again for its new commit. Loom
+waits for the gate to come back clean on that commit. The title and description Loom's reviewers approved must be set on
+the pull request too: an edit that waits to be tried again holds the draft, and Loom tries it in the same read before it
+publishes; text Loom could only post for the human to set holds it until the human sets it and marks it ready. A fix
+round's push starts the wait again for its new commit. Loom
 posts "Published … ready for review" on the ticket, then asks the spec's `reviewers` at once. It publishes each pull
 request once, never makes one a draft again, and never publishes a `keep_draft` ticket's. The board card, the ticket page
 and the Merge order tab say what a draft still waits for, such as "Draft until it can ship: 1 check is still running".

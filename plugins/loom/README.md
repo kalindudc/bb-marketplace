@@ -916,7 +916,11 @@ people review only pull requests that can merge. `publish = { when = ["checks",
 "live"] }`, the default when the table is empty, waits until, for the commit
 Loom pushed, every check it reads has passed and what the ticket's rollout
 requires is live; the pull request must target its base, and a repo whose
-forge has a review gate waits for it to come back clean. A fix round's push
+forge has a review gate waits for it to come back clean. The title and
+description Loom's reviewers approved must be on the pull request first:
+Loom sets a waiting edit in the same read before it publishes, and text it
+could only post for you to set holds the draft until you set it and mark the
+pull request ready. A fix round's push
 starts the wait again. Loom posts on the ticket when it publishes, then asks the
 spec's reviewers right away. The board card, the ticket page and the Merge
 order tab say what a draft still waits for, such as "Draft until it can ship:

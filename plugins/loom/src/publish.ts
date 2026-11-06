@@ -123,6 +123,10 @@ export function publishWaits(store: Store, spec: Spec, ticket: TicketRow, now: n
   if (rule === null) return [];
   const gate = gateWait(store, spec, ticket);
   const waits: string[] = gate === null ? [] : [gate];
+  // People review the text Loom's reviewers approved, so it must be on the pull request first; text Loom posted for the human to set is not.
+  const applied = readSub(ticket, "pr_applied_json");
+  if (applied?.want !== undefined) waits.push("the title and description its reviewers approved are not set on it yet");
+  else if (applied?.byHand === true) waits.push("the title and description its reviewers approved wait for you to set them by hand; set them, then mark it ready on the forge");
   if (rule.checks) {
     const status = readSub(ticket, "pr_status_json");
     if (status === null || status.head !== ticket.pushed_sha) waits.push("Loom has not read the checks of the commit it pushed yet");

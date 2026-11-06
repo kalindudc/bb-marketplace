@@ -8,6 +8,8 @@ import { followDraft } from "../src/drafts";
 import { pollPullRequests, runMergeQueue, settleMerges } from "../src/merge";
 import { applyPrText, askForPrTexts, handInPrText } from "../src/pull-requests";
 import { repoSettings } from "../src/repos";
+import { publishWaits } from "../src/publish";
+import { checkWaitOf } from "../src/check-wait";
 import { approve, spawnReviewers, settleReviews } from "../src/review";
 import { writeSub } from "../src/sub-state";
 import { makeCtx, seedProject, reachApproved, ticketOf, type Doc, type EngineHarness } from "./helpers";
@@ -70,4 +72,34 @@ describe("publishing and the pull request's text", () => {
     expect(h.host.callsTo("prReady")).toHaveLength(1);
   });
 
+  it("does not publish before an approved text edit waiting after a server error is applied", async () => {
+    await open(doc => { doc.merge.forge = { kind: "gh" }; });
+    h.host.scripted.prEdit = [{ outcome: "unavailable", message: "HTTP 503", transient: "server" }];
+    await applyPrText(h.ctx, spec(), ticket(), { hostId: "host", path: "/repo", bbProjectId: "proj_1", settings: repoSettings(spec(), null) }, { title: "Correct rows", body: "The corrected description." });
+    expect(JSON.parse(ticket().pr_applied_json!).want.title).toBe("Correct rows");
+    h.store.updateTicket(ticket().id, writeSub("pr_status_json", { at: h.clock.now(), head: ticket().pushed_sha!, passed: 1, failed: 0, pending: 0 }));
+    await followDraft(h.ctx, project(), ticket().id, true, "main");
+    expect(h.host.callsTo("prReady")).toHaveLength(0);
+  });
+
+  it("sets a waiting approved text in the same read before it publishes", async () => {
+    await open((doc) => void (doc.merge.forge = { kind: "gh" }));
+    h.host.scripted.prEdit = [{ outcome: "unavailable", message: "HTTP 503", transient: "server" }];
+    await applyPrText(h.ctx, spec(), ticket(), { hostId: "host", path: "/repo", bbProjectId: "proj_1", settings: repoSettings(spec(), null) }, { title: "Correct rows", body: "The corrected description." });
+    h.clock.advance(60 * 60_000);
+    passing();
+    await poll();
+    const order = h.host.calls.map((call) => call.method).filter((method) => method === "prEdit" || method === "prReady");
+    expect(order).toEqual(["prEdit", "prEdit", "prReady"]);
+  });
+
+  it("holds a draft whose approved text Loom could only post for the human to set, and says so", async () => {
+    await open((doc) => void (doc.merge.forge = { kind: "command", open: "forge open", state: "forge state", feedback: "forge feedback", ready: "forge ready" }));
+    await applyPrText(h.ctx, spec(), ticket(), { hostId: "host", path: "/repo", bbProjectId: "proj_1", settings: repoSettings(spec(), null) }, { title: "Correct rows", body: "The corrected description." });
+    expect(JSON.parse(ticket().pr_applied_json!)).toMatchObject({ byHand: true });
+    h.store.updateTicket(ticket().id, writeSub("pr_status_json", { at: h.clock.now(), head: ticket().pushed_sha!, passed: 1, failed: 0, pending: 0 }));
+    await followDraft(h.ctx, project(), ticket().id, true, "main");
+    expect(h.host.callsTo("prReady")).toEqual([]);
+    expect(publishWaits(h.store, spec(), ticket(), h.clock.now(), checkWaitOf({}))).toEqual(["the title and description its reviewers approved wait for you to set them by hand; set them, then mark it ready on the forge"]);
+  });
 });

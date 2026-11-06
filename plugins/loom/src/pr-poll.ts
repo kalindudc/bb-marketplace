@@ -371,11 +371,12 @@ async function settleRead(ctx: EngineCtx, project: ProjectRow, settings: RepoSet
     const undrafted = !publishing && (await followDraft(ctx, project, current.id, read.meta?.draft ?? null, read.meta?.base ?? null));
     await requestReviewers(ctx, project, current.id, { draft: undrafted ? false : (read.meta?.draft ?? null), author: read.feedback?.author || null, reviewed });
     if (read.feedback !== null) await followFeedback(ctx, store.project(project.id)!, store.ticket(current.id)!, read.feedback);
+    // A draft Loom publishes gets its approved text first, so the gate and the people it asks read that text.
+    await syncPrText(ctx, store.project(project.id)!, current.id, read.text ?? null);
     if (publishing) await followGate(ctx, store.project(project.id)!, current.id);
     if (publishing && (await followDraft(ctx, project, current.id, read.meta?.draft ?? null, read.meta?.base ?? null))) {
       await requestReviewers(ctx, project, current.id, { draft: false, author: read.feedback?.author || null, reviewed });
     }
-    await syncPrText(ctx, store.project(project.id)!, current.id, read.text ?? null);
     await followAutoMerge(ctx, project, current.id, { head: read.feedback?.head ?? null, author: read.feedback?.author || null, text: read.text ?? null, items: read.feedback?.items ?? null, ...(read.queue === undefined ? {} : { queue: read.queue }) });
   }
 }
