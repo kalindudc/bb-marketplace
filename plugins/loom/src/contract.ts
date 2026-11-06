@@ -332,6 +332,8 @@ export interface ForgeProfileView {
   hash: string;
   updatedAt: number;
   usedBy: ProfileUse[];
+  /** No stored spec version names it, archived projects' included, so it may be deleted. */
+  deletable: boolean;
 }
 
 /** What a forge profile's Test shows: the run, in words as `bb loom forge test` prints it, and whether every command worked. */

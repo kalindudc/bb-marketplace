@@ -1419,8 +1419,9 @@ the project gets an event with the profile's old and new version, and each
 ticket whose pull request Loom follows on it gets a post. Loom checks an edit
 against every project that uses the profile, as `loom_propose` checks a spec,
 and refuses one that would leave a project unable to run, naming the project
-and the field. Loom keeps a profile that a project uses, and a profile's id
-cannot change.
+and the field. Loom keeps a profile that any stored spec version names, archived
+projects' and older versions' too, so their history stays readable, and a
+profile's id cannot change.
 
 Settings › Forges shows each profile with its version and the projects that
 use it, a form to add or edit one, and a Test field: give it a pull request

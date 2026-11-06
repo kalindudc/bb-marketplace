@@ -114,11 +114,32 @@ export function saveProfile(store: Store, raw: unknown, original: string | null)
   return { profile, hash, changed: true, told };
 }
 
-/** Deletes a profile no project uses; a spec that names one Loom no longer has could not run. */
+/** Every stored spec version that names the profile, of any project, archived ones too: each one Loom must still be able to read. */
+export function profileNamedBy(store: Store, id: string): Array<{ slug: string; version: number }> {
+  return store.projects().flatMap((project) => {
+    const latest = store.latestSpecVersion(project.id)?.version ?? 0;
+    const out: Array<{ slug: string; version: number }> = [];
+    for (let version = 1; version <= latest; version += 1) {
+      const row = store.specVersion(project.id, version);
+      if (row !== null && named(row.spec_json).includes(id)) out.push({ slug: project.slug, version });
+    }
+    return out;
+  });
+}
+
+/**
+ * Deletes a profile no stored spec names. Every reader of a spec version fills its profiles in, and a profile that is
+ * gone would leave that version, and an archived project's history, unreadable, so Loom keeps any profile one names.
+ */
 export function deleteProfile(store: Store, id: string): void {
   if (store.forgeProfileRow(id) === null) throw new LoomError("loom_not_found", `Loom has no forge profile ${id}.`);
   const uses = profileUses(store, id);
-  if (uses.length > 0) throw new LoomError("loom_invalid_state", `The forge profile ${id} is in use by ${andList(uses.map((use) => use.slug))}, so Loom keeps it. Point their specs at another forge first, or archive the projects.`);
+  if (uses.length > 0) throw new LoomError("loom_invalid_state", `The forge profile ${id} is in use by ${andList(uses.map((use) => use.slug))}, so Loom keeps it. Point their specs at another forge first.`);
+  const named = profileNamedBy(store, id);
+  if (named.length > 0) {
+    const bySlug = [...new Set(named.map((each) => each.slug))].map((slug) => `${slug} (${named.filter((each) => each.slug === slug).map((each) => `v${each.version}`).join(", ")})`);
+    throw new LoomError("loom_invalid_state", `The forge profile ${id} is named by a stored spec of ${andList(bySlug)}, so Loom keeps it: those versions read their forge from it. Edit it instead of deleting it.`);
+  }
   store.deleteForgeProfile(id);
 }
 

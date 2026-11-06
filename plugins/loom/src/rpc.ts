@@ -44,7 +44,7 @@ import { draftStateOf, releaseRequestOf } from "./drafts";
 import { publishWaitOf, publishWaitsOf } from "./publish";
 import { checkWaitOf } from "./check-wait";
 import { forgeTest, forgeTestPassed, formatForgeTest } from "./forge-check";
-import { deleteProfile, importProfiles, parseProfile, profilesToml, profileUses, saveProfile } from "./forge-profiles";
+import { deleteProfile, importProfiles, parseProfile, profileNamedBy, profilesToml, profileUses, saveProfile } from "./forge-profiles";
 
 const THROTTLE_MS = 300;
 
@@ -324,7 +324,7 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
   const { projects, engine, store, now } = deps;
   const changes = new Changes({ store, bb: engine.ctx.bb, host: engine.ctx.host });
 
-  const forgeProfilesView = (): ForgeProfileView[] => store.forgeProfileRows().map((row) => ({ profile: row.profile, hash: row.hash, updatedAt: row.updated_at, usedBy: profileUses(store, row.profile.id) }));
+  const forgeProfilesView = (): ForgeProfileView[] => store.forgeProfileRows().map((row) => ({ profile: row.profile, hash: row.hash, updatedAt: row.updated_at, usedBy: profileUses(store, row.profile.id), deletable: profileNamedBy(store, row.profile.id).length === 0 }));
 
   /** With `eventId`, the project as it was at that event; it never writes. */
   const projectView = async (slug: string, eventId?: number): Promise<ProjectView> => {

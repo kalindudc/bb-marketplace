@@ -20,6 +20,7 @@ const VIEW: ForgeProfileView = {
   hash: "0123456789ab",
   updatedAt: Date.UTC(2026, 10, 6),
   usedBy: [{ slug: "csv", name: "CSV export", state: "running", inForce: true }],
+  deletable: false,
 };
 
 const slots: Array<ReturnType<typeof renderSlot>> = [];
@@ -57,6 +58,14 @@ describe("Loom's settings sections", () => {
     await waitFor(() => expect(card.querySelector("[data-forge-test-result='passed']")?.textContent).toContain("State OPEN"));
     expect(test.mock.calls[0]![0]).toEqual({ id: "forge", url: "https://forge.example.com/acme/shop/pull/7" });
     expect(within(card).queryByRole("button", { name: "Delete" })).toBeNull();
+  });
+
+  it("offers Delete only for a profile no stored spec names, and says why it keeps one that only history names", async () => {
+    const slot = await section("forges", { forgeProfiles: () => [{ ...VIEW, usedBy: [], deletable: false }, { ...VIEW, profile: { ...VIEW.profile, id: "spare", name: "Spare" }, usedBy: [], deletable: true }] });
+    const kept = await waitFor(() => slot.container.querySelector<HTMLElement>("[data-forge-profile='forge']") ?? Promise.reject(new Error("no card")));
+    expect(kept.textContent).toContain("Older or archived specs name it, so Loom keeps it.");
+    expect(within(kept).queryByRole("button", { name: "Delete" })).toBeNull();
+    expect(within(slot.container.querySelector<HTMLElement>("[data-forge-profile='spare']")!).getByRole("button", { name: "Delete" })).toBeTruthy();
   });
 
   it("saves a new profile from the form, leaving empty fields out", async () => {

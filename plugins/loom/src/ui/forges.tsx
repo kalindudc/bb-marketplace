@@ -116,12 +116,13 @@ function ProfileCard({ view, onEdit }: { view: ForgeProfileView; onEdit(): void 
           </div>
           <div className="text-xs text-muted-foreground">
             Version {view.hash}, saved {momentLabel(view.updatedAt)}. {view.usedBy.length === 0 ? "No project uses it." : `Used by ${view.usedBy.map((use) => `${use.slug}${use.inForce ? "" : " (a version not approved yet)"}`).join(", ")}.`}
+            {view.usedBy.length === 0 && !view.deletable && " Older or archived specs name it, so Loom keeps it."}
           </div>
         </div>
         <button type="button" aria-label={`Edit ${profile.name}`} className={BUTTON} onClick={onEdit}>
           Edit
         </button>
-        {view.usedBy.length === 0 && <ConfirmButton label="Delete" confirmLabel="Click again to delete" danger disabled={busy} onConfirm={() => void act(() => remove({ id: profile.id, confirm: true }), `Deleted ${profile.name}`)} />}
+        {view.deletable && <ConfirmButton label="Delete" confirmLabel="Click again to delete" danger disabled={busy} onConfirm={() => void act(() => remove({ id: profile.id, confirm: true }), `Deleted ${profile.name}`)} />}
       </div>
       <div className="mt-1.5 text-xs text-muted-foreground">
         Runs <span className="font-mono">{runs.join(", ")}</span>

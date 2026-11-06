@@ -40,7 +40,9 @@ run, such as one that drops the `ready` command a project with `merge.publish` n
 spec version and the field, and the profile stays as it was. An edit still makes no new spec version.
 
 An import adds the profiles the file has and changes the ones that differ. It never removes a profile the file leaves
-out. Loom keeps a profile that a project uses: it refuses to delete it until no spec names it. A profile's id cannot
+out. Loom keeps a profile that any stored spec version names, an archived project's or an older version's too, since
+reading those versions fills their forge in from it; Settings shows which projects use it now, and offers Delete only for
+a profile no spec names. A profile's id cannot
 change, since specs name it.
 
 Keep the scripts a profile calls outside Loom's install folder, which an update replaces, for example in

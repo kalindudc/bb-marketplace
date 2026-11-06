@@ -130,6 +130,28 @@ describe("a running project on a forge profile", () => {
     expect(h.store.forgeProfileIds()).toEqual(["forge"]);
   });
 
+  it("keeps a profile that any stored spec version names, an archived project's or an older version's, so their history stays readable", async () => {
+    saveProfile(h.store, FORGE, null);
+    saveProfile(h.store, { ...FORGE, id: "other" }, null);
+    await seedProject(h, usesProfile());
+    h.store.updateProject(project().id, { state: "archived" });
+    expect(profileUses(h.store, "forge")).toEqual([]);
+    expect(() => deleteProfile(h.store, "forge")).toThrow("The forge profile forge is named by a stored spec of csv (v1), so Loom keeps it");
+    expect(() => specOf(h.store, project())).not.toThrow();
+    expect(h.store.forgeProfileIds()).toEqual(["forge", "other"]);
+  });
+
+  it("keeps a profile only an older version names, after the project moved to its own commands", async () => {
+    saveProfile(h.store, FORGE, null);
+    await seedProject(h, usesProfile());
+    await h.projects.propose({ toml: specToml((doc) => (doc.merge = { strategy: "pr", forge: { kind: "command", open: "mine open", state: "mine state" }, describe: "loom" })), threadId: "thr_plan", bbProjectId: "proj_1", hostId: "host_1" });
+    await h.projects.approve("csv", "human", 2);
+    expect(project().approved_version).toBe(2);
+    expect(profileUses(h.store, "forge")).toEqual([]);
+    expect(() => deleteProfile(h.store, "forge")).toThrow("named by a stored spec of csv (v1)");
+    expect(() => readSpec(h.store.specVersion(project().id, 1)!.spec_json, h.store)).not.toThrow();
+  });
+
   it("refuses an id that changes, and a new profile whose id is taken", () => {
     saveProfile(h.store, FORGE, null);
     expect(() => saveProfile(h.store, { ...FORGE, id: "forge2" }, "forge")).toThrow("A forge profile's id cannot change");
