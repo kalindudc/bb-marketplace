@@ -1,6 +1,7 @@
 // One error policy for host calls and forge commands: a failure worth waiting out (a host call that got no answer, a
 // server error, a rate limit, a network failure or a timeout) keeps the ticket where it is and tries again, and only an
 // hour of them pauses the project. The fixtures are pause reasons two real projects hit.
+import { holdingSends } from "../src/carry-hold";
 import { beforeEach, describe, expect, it } from "vitest";
 import { settleChecks, submit } from "../src/checks";
 import type { ThreadRow } from "../src/db/store";
@@ -426,6 +427,21 @@ describe("a merge that runs again after its checks got no answer", () => {
     h.clock.advance(MINUTE);
     await queue();
     expect(ticket()).toMatchObject({ state: "pr_open", pushed_sha: "sq2" });
+  });
+
+  it("holds Loom's own messages to the worker while it carries into its worktree, and sends them once the carry is over", async () => {
+    const worker = await fixOnMachineWithForeignTip();
+    h.ctx.bb = holdingSends(h.bb);
+    const sent = () => h.bb.sent(worker.thread_id!).filter((text) => text.includes("a note during the carry"));
+    let during: string[] | null = null;
+    h.host.before.carryFinish = async () => {
+      await h.ctx.bb.send(worker.thread_id!, "a note during the carry");
+      during = sent();
+    };
+    await queue();
+    expect(h.host.callsTo("carryFinish")).toHaveLength(1);
+    expect(during).toEqual([]);
+    expect(sent()).toEqual(["a note during the carry"]);
   });
 
   it("waits, and hands nothing back, when a carry already under way loses its transport", async () => {

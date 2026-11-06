@@ -7,6 +7,7 @@ import { randomBytes } from "node:crypto";
 import { repoCheckout } from "./checkouts";
 import type { ProjectRow, TicketRow } from "./db/store";
 import { threadBranch } from "./environments";
+import { holdingMessages } from "./carry-hold";
 import { transientOf, Unavailable, waitableOf } from "./forge-waits";
 import { BLOB_MAX_BYTES, CHUNK_BYTES, type HostOutput } from "./host-contract";
 import type { EnvironmentInfo } from "./ports";
@@ -140,13 +141,21 @@ const HOLDS = { carry: "what the carry wrote", before: "what it held before the 
  * commit's tree and one more with its own. `replaces` is a tree the checkout keeps, which the worktree may drop. Throws
  * when the tree in the worktree is not the commit's. `owner` is the thread whose worktree it is, when Loom carries on its
  * own rather than in that thread's tool call: the carry runs only while that thread is not running a turn, as a check
- * right before a file goes in cannot stop the worker writing it a moment later, and waits (Unavailable) until then.
+ * right before a file goes in cannot stop the worker writing it a moment later, and waits (Unavailable) until then; Loom's
+ * own messages to that thread are held until the carry is over.
  */
 export async function carryTo(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket: TicketRow, sha: string, environment: EnvironmentInfo, opts: { replaces?: string; owner?: string } = {}): Promise<{ tree: string }> {
+  const { owner } = opts;
+  if (owner === undefined) return carryNow(ctx, project, spec, ticket, sha, environment, opts);
+  // Held first, so no message of Loom's starts a turn there between the check and the end of the carry.
+  return holdingMessages(ctx.bb, owner, async () => {
+    if (await runningTurn(ctx, owner)) throw new Unavailable(`the thread whose worktree it is is running a turn, so Loom waits for it to end before it puts the work in`, { transient: "server" });
+    return carryNow(ctx, project, spec, ticket, sha, environment, opts);
+  });
+}
+
+async function carryNow(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket: TicketRow, sha: string, environment: EnvironmentInfo, opts: { replaces?: string }): Promise<{ tree: string }> {
   const worktree = worktreeOf(environment);
-  if (opts.owner !== undefined && (await runningTurn(ctx, opts.owner))) {
-    throw new Unavailable(`the thread whose worktree it is is running a turn, so Loom waits for it to end before it puts the work in`, { transient: "server" });
-  }
   if (!isRemote(project, environment)) return { tree: (await ctx.host.call(environment.hostId, "detach", { worktree, sha })).tree };
   const checkout = await repoCheckout(ctx, project, spec, ticket.repo);
   const fresh = freshBaseOf(spec, ticket.repo);

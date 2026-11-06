@@ -1,5 +1,6 @@
 // The engine: a control loop that works every running project, the human's commands on the engine's state, and
 // the handlers for bb's thread events. Behavior lives in workers.ts, checks.ts and triage.ts; this wires it together.
+import { holdingSends } from "./carry-hold";
 import { confirmMerge, maintainFinalReviews, type SeenHead } from "./auto-merge";
 import { releaseDraft } from "./drafts";
 import { finalThreadEvent } from "./final-review";
@@ -72,7 +73,7 @@ export class Engine {
     const signature = () => this.settings().commentSignature ?? COMMENT_SIGNATURE;
     this.ctx = {
       store: deps.store,
-      bb: deps.bb,
+      bb: holdingSends(deps.bb),
       now: deps.now,
       host: deps.host,
       kick: () => this.kick(),
