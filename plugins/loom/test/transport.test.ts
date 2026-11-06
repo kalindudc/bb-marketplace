@@ -243,7 +243,7 @@ describe("transport", () => {
     expect(sh(reviewer, "rev-parse", "HEAD")).toBe(head);
   });
 
-  it("puts a worktree back at the base when a carry fails part-way, so the next one succeeds", async () => {
+  it("leaves a carry that fails part-way as it is, naming what it wrote, and the next carry takes it over and succeeds", async () => {
     sh(laptop, "switch", "-q", "-c", "loom/csv/csv-1-home");
     sh(laptop, "rm", "-q", "old.txt");
     put(laptop, "src/a.ts", "export const a = 1;\n");
@@ -256,10 +256,13 @@ describe("transport", () => {
     const base = sh(reviewer, "rev-parse", "HEAD");
 
     host.breakOn = { method: "readBlob", after: 1 };
-    await expect(carryTo(ctx, project(), specOf(h.store, project()), ticketOf(h, "CSV-1"), sha, on("host_box", reviewer))).rejects.toThrow("readBlob timed out");
+    await expect(carryTo(ctx, project(), specOf(h.store, project()), ticketOf(h, "CSV-1"), sha, on("host_box", reviewer))).rejects.toThrow(
+      "readBlob timed out; Loom left the worktree as it is. The paths the carry wrote or deleted hold: old.txt nothing, src/a.ts what the carry wrote",
+    );
     expect(host.methods("host_box")).toEqual(["carryStart", "carryDelete", "carryWrite", "carryAbort"]);
     expect(sh(reviewer, "rev-parse", "HEAD")).toBe(base);
-    expect(sh(reviewer, "status", "--porcelain")).toBe("");
+    // Nothing is put back: the carry's own changes stay, and the next carry knows them as its own.
+    expect(sh(reviewer, "status", "--porcelain", "--untracked-files=all")).toBe("D old.txt\n?? src/a.ts");
 
     const carried = await carryTo(ctx, project(), specOf(h.store, project()), ticketOf(h, "CSV-1"), sha, on("host_box", reviewer));
     expect(carried).toEqual({ tree: sh(laptop, "rev-parse", `${sha}^{tree}`) });

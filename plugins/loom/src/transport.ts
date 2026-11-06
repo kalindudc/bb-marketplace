@@ -125,6 +125,8 @@ export async function bringHome(ctx: EngineCtx, project: ProjectRow, spec: Spec,
   return { sha: made.sha, tree: exported.tree, copied: true };
 }
 
+const HOLDS = { carry: "what the carry wrote", before: "what it held before the carry", absent: "nothing", changed: "a change the carry did not make" } as const;
+
 /**
  * Puts the commit `sha` of the project's checkout in a thread's worktree: on the checkout's machine by checking it out
  * detached, and on another machine with worktree commands alone, on its merge base with the repo's base: as one commit
@@ -164,15 +166,16 @@ export async function carryTo(ctx: EngineCtx, project: ProjectRow, spec: Spec, t
       const written = exported.changes.filter((change) => change.status !== "D").map((change) => change.path);
       finished = await ctx.host.call(environment.hostId, "carryFinish", { worktree, base: start, message: exported.message, author: exported.author, tree: exported.tree, paths: written });
       if (finished.outcome === "foreign") throw new Error(`the worktree has changes the carry did not make (${finished.paths.slice(0, 10).join(", ")}), so Loom did not commit the carry`);
-      if (finished.outcome === "mismatch") throw new Error(`the worktree had the tree ${finished.tree.slice(0, 12)}, not ${exported.tree.slice(0, 12)}, after Loom put the work in, so Loom reset it to the base`);
+      if (finished.outcome === "mismatch") throw new Error(`the worktree would have the tree ${finished.tree.slice(0, 12)}, not ${exported.tree.slice(0, 12)}, after Loom put the work in, so Loom did not commit the carry`);
     }
   } catch (error) {
-    // Only what the carry changed goes back, to the HEAD the worktree had; a file anyone else changed meanwhile stays. The
-    // first error says what went wrong; one from taking the carry back would hide it, so it only adds what is left.
+    // A carry that failed changes nothing more in the worktree; losing its progress is fine, losing a worker's edit is not.
+    // The first error says what went wrong; the abort only adds what each path the carry wrote or deleted holds now.
     const aborted = await ctx.host.call(environment.hostId, "carryAbort", { worktree, base: start, ...(started.from === undefined ? {} : { restore: started.from }) }).catch((reason: unknown) => ({ failed: errText(reason) }));
-    if ("failed" in aborted) throw new Error(`${errText(error)}; Loom could not take back what the carry changed in the worktree (${aborted.failed}), so it may hold part of the carry`);
-    if ((aborted.kept ?? []).length > 0) throw new Error(`${errText(error)}; Loom took back what the carry changed and kept the worktree's other changes: ${aborted.kept!.slice(0, 10).join(", ")}`);
-    throw error;
+    if ("failed" in aborted) throw new Error(`${errText(error)}; Loom left the worktree as it is, and could not read what the carry wrote (${aborted.failed})`);
+    const carried = aborted.carried ?? [];
+    const listed = carried.slice(0, 10).map(({ path, holds }) => `${path} ${HOLDS[holds]}`);
+    throw new Error(`${errText(error)}; Loom left the worktree as it is.${listed.length === 0 ? "" : ` The paths the carry wrote or deleted hold: ${listed.join(", ")}${carried.length > listed.length ? ", …" : ""}`}`);
   }
   return { tree: finished!.tree };
 }

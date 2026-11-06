@@ -263,7 +263,7 @@ describe("a push whose pull request branch got commits Loom did not push, on a m
     expect(h.store.threads({ role: "reviewer" })).toHaveLength(reviewers);
   });
 
-  it("puts the worktree back as it was when the carry of a conflict fails, and tells the worker why", async () => {
+  it("leaves the worktree as it is when the carry of a conflict fails, and tells the worker why", async () => {
     const worker = await openOnMachine({ release_workers: false });
     h.host.feedback.set(URL1, changesRequested);
     await poll();
@@ -275,8 +275,9 @@ describe("a push whose pull request branch got commits Loom did not push, on a m
     h.host.errors.carryFinish = new Error("carryFinish failed: worldsyncd refused the write");
     await queue();
 
-    expect(h.host.callsTo("carryAbort").at(-1)).toMatchObject({ worktree: worktreeOf(worker), restore: was });
+    expect(h.host.callsTo("carryAbort").at(-1)).toMatchObject({ worktree: worktreeOf(worker) });
     expect(worktree).toMatchObject({ head: was, dirty: false });
+    expect(h.bb.sent(worker.thread_id!).at(-1)).toContain("Loom left the worktree as it is");
     expect(ticket().state).toBe("working");
     expect(h.bb.sent(worker.thread_id!).at(-1)).toContain("worldsyncd refused the write");
   });

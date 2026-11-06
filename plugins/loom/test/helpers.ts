@@ -497,11 +497,9 @@ export class FakeHost implements HostPort {
       case "repoPrefix":
         return { prefix: "" };
       case "carryAbort": {
-        const { worktree, restore } = input as HostInput<"carryAbort">;
-        const state = this.worktree(worktree);
-        if (restore !== undefined) state.head = restore;
-        state.dirty = false;
-        return { clean: true, kept: [] };
+        // A carry that failed changes nothing more in the worktree.
+        const state = this.worktree((input as HostInput<"carryAbort">).worktree);
+        return { clean: !state.dirty, kept: [...state.changed], carried: [] };
       }
       case "carryDelete":
       case "dropUploads":

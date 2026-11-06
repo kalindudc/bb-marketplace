@@ -274,12 +274,13 @@ export const hostContract = defineRpcContract({
     output: z.object({ files: z.array(z.string()) }).strict(),
   },
   // Puts the worktree back at base after a carry that failed part-way, so the next carryStart finds it clean.
-  // Puts back at `restore`, the HEAD the worktree had before the carry (else the one carryStart kept), only what the carry
-  // changed; `clean` says whether nothing else is uncommitted.
+  // A carry that failed changes nothing more in the worktree: it removes its own temporary files, and says what is left.
+  // `base` and `restore` are no longer used.
   carryAbort: {
     input: z.object({ worktree: absPath, base: commit, restore: commit.optional() }).strict(),
     // `kept`: the files someone else changed or added since the carry started, which it left as they are.
-    output: z.object({ clean: z.boolean().optional(), kept: z.array(z.string()).optional() }).strict(),
+    // `carried`: what each path the carry wrote or deleted holds now.
+    output: z.object({ clean: z.boolean().optional(), kept: z.array(z.string()).optional(), carried: z.array(z.object({ path: z.string(), holds: z.enum(["carry", "before", "absent", "changed"]) }).strict()).optional() }).strict(),
   },
   // paths are the files carryWrite wrote, staged even where .gitignore matches them, as the commit had them.
   carryFinish: {
