@@ -435,8 +435,9 @@ describe("a merge that runs again after its checks got no answer", () => {
     h.ctx.bb = holdingSends(h.bb);
     const sent = () => h.bb.sent(worker.thread_id!).filter((text) => text.includes("a note during the carry"));
     let during: string[] | null = null;
-    h.host.before.carryFinish = async () => {
-      await h.ctx.bb.send(worker.thread_id!, "a note during the carry");
+    // Not awaited: a held send settles only once the carry is over and bb has taken it.
+    h.host.before.carryFinish = () => {
+      void h.ctx.bb.send(worker.thread_id!, "a note during the carry");
       during = sent();
     };
     await queue();

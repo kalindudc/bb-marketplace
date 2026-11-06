@@ -161,7 +161,7 @@ export async function carryTo(ctx: EngineCtx, project: ProjectRow, spec: Spec, t
   const { owner } = opts;
   if (owner === undefined) return carryNow(ctx, project, spec, ticket, sha, environment, opts);
   // Held first, so no message of Loom's starts a turn there between the check and the end of the carry.
-  return holdingMessages(ctx.bb, owner, async () => {
+  return holdingMessages(owner, async () => {
     if (await runningTurn(ctx, owner)) throw new Unavailable(`the thread whose worktree it is is running a turn, so Loom waits for it to end before it puts the work in`, { transient: "server" });
     if (retryPending(ctx, owner)) throw new Unavailable(`a retry Loom scheduled for the turn of the thread whose worktree it is has not started yet, so Loom waits for it before it puts the work in`, { transient: "server" });
     return carryNow(ctx, project, spec, ticket, sha, environment, opts);
