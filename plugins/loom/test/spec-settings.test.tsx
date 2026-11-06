@@ -363,6 +363,14 @@ describe("spec settings", () => {
     expect(missedJumps(slot, paths)).toEqual([]);
   });
 
+  it("draws a stored hook that has only run, which Loom no longer reads, as one with nothing to tell", async () => {
+    const spec = { ...full(), hook: [{ on: "project.started", run: "board-cli create" }] } as unknown as Spec;
+    const slot = await openSpec(versionOf(spec, spec));
+    entire(slot);
+    const card = page(slot).querySelector<HTMLElement>('[data-settings-card="hooks"]')!;
+    expect(card.querySelector("[data-hook]")!.textContent).toContain("nothing to tell");
+  });
+
   it("draws each hook with its event, what it tells and to whom", async () => {
     const slot = await openSpec(versionOf(full(), full()));
     entire(slot);

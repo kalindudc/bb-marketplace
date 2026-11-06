@@ -3,9 +3,11 @@
 // retired shapes are skipped instead of breaking a pass.
 import { describe, expect, it } from "vitest";
 import { settleChecks } from "../src/checks";
+import { followHooks } from "../src/hooks";
+import { specSummary } from "../src/rpc";
 import { readSpec } from "../src/spec";
 import { specOf } from "../src/ctx";
-import { makeEngine, reachReview, seedProject, workerRows, type Doc, type EngineHarness } from "./helpers";
+import { makeEngine, reachReview, seedProject, specToml, workerRows, type Doc, type EngineHarness } from "./helpers";
 
 const stored = (h: EngineHarness & { db: { prepare(sql: string): { run(...args: unknown[]): unknown } } }, edit: (spec: Doc) => void) => {
   const project = h.store.projectBySlug("csv")!;
@@ -45,5 +47,26 @@ describe("a stored spec without a field the schema now defaults", () => {
     const timeouts = h.host.callsTo("exec").map((call) => call.timeoutMs);
     expect(timeouts.length).toBeGreaterThan(0);
     expect(new Set(timeouts)).toEqual(new Set([25 * 60_000]));
+  });
+});
+describe("a stored hook with only run, which Loom no longer reads", () => {
+  it("is skipped with one log line on a running project, queues no empty tell, and leaves the other hooks firing", async () => {
+    const h = makeEngine();
+    await seedProject(h);
+    stored(h, (spec) => (spec.hook = [{ on: "project.started", run: "board-cli create" }, { on: "project.started", tell: "Create the board." }]));
+    await followHooks(h.ctx);
+    await followHooks(h.ctx);
+    const project = h.store.projectBySlug("csv")!;
+    expect(h.store.hookFirings(project.id, ["pending", "running", "done", "failed", "skipped"]).map((row) => [row.hook, row.kind])).toEqual([[1, "tell"]]);
+    const logs = h.bb.callsTo("log").filter(([, message]) => String(message).includes("hook[0]"));
+    expect(logs).toEqual([["warn", "Skipped hook[0] of project csv on project.started: it has only run, a key Loom no longer reads, and no tell."]]);
+    expect(h.bb.sent("thr_plan").join("\n")).toContain("Do: Create the board.");
+  });
+
+  it("refuses a new proposal with run, and gives the draft card the refusal as warnings", () => {
+    const toml = specToml((doc) => (doc.hook = [{ on: "project.started", run: "board-cli create" }]));
+    const summary = specSummary(toml);
+    expect(summary.warnings).toContain("hook[0].tell: is required. Add it.");
+    expect(summary.warnings.join("\n")).toContain("hook[0].run: Loom no longer reads this key.");
   });
 });

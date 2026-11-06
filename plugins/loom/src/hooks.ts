@@ -132,8 +132,14 @@ function queueHooks(ctx: EngineCtx, project: ProjectRow): void {
         if (occurrence === null) continue;
         hooks.forEach((hook, index) => {
           if (hook.on !== occurrence.on) return;
+          // A version stored before hook.run was retired may hold a hook with run and no tell; Loom runs no command for it.
+          const tell: string | undefined = hook.tell;
+          if (tell === undefined) {
+            ctx.bb.log("warn", `Skipped hook[${index}] of project ${project.slug} on ${hook.on}: it has only run, a key Loom no longer reads, and no tell.`);
+            return;
+          }
           const base = { project_id: project.id, event_id: event.id, hook: index, hook_on: hook.on, ticket_id: occurrence.ticketId, facts_json: JSON.stringify(occurrence.facts) };
-          if ((hook.to ?? "planner") === "planner") store.addHookFiring({ ...base, kind: "tell", text: hook.tell });
+          if ((hook.to ?? "planner") === "planner") store.addHookFiring({ ...base, kind: "tell", text: tell });
         });
       }
       store.setHookCursor(project.id, last);
