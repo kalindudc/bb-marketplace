@@ -65,6 +65,14 @@ describe("the plugin's own documents", () => {
     }
   });
 
+  it("name only strategy and remote as the merge keys a version that skips the spec review may not change, now that merge.branch is gone", () => {
+    for (const path of ["README.md", "skills/loom/SKILL.md", "skills/loom-plan/SKILL.md", "skills/loom/references/spec.md"]) {
+      const text = read(path);
+      expect(text, path).not.toMatch(/but `strategy`, `branch` and `remote`|other than `strategy`, `branch` and `remote`/u);
+      expect(text, path).toMatch(/(?:but|other than) `strategy` and `remote`/u);
+    }
+  });
+
   it("the spec reference, the planner skill and README describe git_network_timeout_seconds for slow repositories", () => {
     const spec = read("skills/loom/references/spec.md");
     for (const phrase of ["| `git_network_timeout_seconds` | integer | `300` |", "| `git_network_timeout_seconds` | integer | `merge.git_network_timeout_seconds` |", "### Slow repositories", "git_network_timeout_seconds = 600"]) expect(spec, phrase).toContain(phrase);

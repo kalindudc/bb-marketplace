@@ -438,7 +438,7 @@ settings skips the spec review, and you still approve it: `bb loom approve`
 and the page's Approve need no `--skip-review`. Operational settings say how
 Loom runs the project, not what it builds: the forge (`merge.forge`, a repo's
 `forge`), environments (`environment`, a repo's or a ticket's), `agents`,
-`budget`, every `[merge]` key but `strategy`, `branch` and `remote`,
+`budget`, every `[merge]` key but `strategy` and `remote`,
 `checks.timeout_minutes`, `checks.ci` and a repo's `ci`. Any other change keeps
 the review, such as a ticket's fields, the goal, the scope, the check commands,
 the review policy, or adding a repo. A pending version is compared with the
