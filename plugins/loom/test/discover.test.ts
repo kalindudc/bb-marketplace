@@ -182,6 +182,5 @@ describe("new machines", () => {
     const wrong = 'Trees on boxes (boxed-trees: A tree on a box of its own) starts each thread on a new machine from the machine provider "boxes". Set';
     expect(await errorsOf(onMachine({ provider: "boxed-trees", machine: { provider: "crates" } }))).toEqual([`environment.machine: ${wrong} environment.machine = { provider = "boxes" }, with the inputs it needs.`]);
     expect(await errorsOf(onMachine({ provider: "boxed-trees" }))).toEqual([`environment.machine: ${wrong} environment.machine = { provider = "boxes" }, with the inputs it needs.`]);
-    expect(await errorsOf(onMachine({ provider: "git-worktree", reviewer: { machine: { provider: "crates" } } }))).toEqual(['environment.reviewer.machine.provider: bb has no machine provider "crates". Use one of: boxes.']);
   });
 });

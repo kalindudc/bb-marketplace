@@ -56,20 +56,23 @@ const push = (sha: string) => {
 };
 
 describe("final review in the spec", () => {
-  it("hashes specs without it as before, auto_merge ones included, and takes an empty table or its keys", () => {
+  it("hashes specs without it as before, auto_merge ones included, takes an empty table or true, and refuses the keys it had", () => {
     const plain = parseSpec(specToml((doc) => void (doc.merge = { strategy: "pr", forge: { kind: "gh", auto_merge: { method: "squash" } } })));
     expect(plain.spec!.merge.forge!.auto_merge).toEqual({ method: "squash" });
     // The 0.32.0 hashes, pinned in auto-merge.test.ts, still hold; and a spec that adds final_review hashes differently.
     const withFinal = parseSpec(specToml((doc) => void (doc.merge = { strategy: "pr", ...FINAL() })));
     expect(specHash(plain.spec!)).not.toBe(specHash(withFinal.spec!));
-    for (const final of [{}, { model: "small", reasoning: "minimal", timeout_minutes: 5 }, { provider: "codex" }]) {
-      const parsed = parseSpec(specToml((doc) => void (doc.merge = { strategy: "pr", ...FINAL(final) })));
+    for (const final of [{}, true]) {
+      const parsed = parseSpec(specToml((doc) => void (doc.merge = { strategy: "pr", ...FINAL(final as Doc) })));
       expect(parsed.errors, JSON.stringify(final)).toEqual([]);
-      expect(parsed.spec!.merge.forge!.auto_merge!.final_review).toEqual(final);
+      expect(parsed.spec!.merge.forge!.auto_merge!.final_review).toEqual({});
     }
-    const bad = parseSpec(specToml((doc) => void (doc.merge = { strategy: "pr", ...FINAL({ timeout_minutes: 0, effort: "x" }) }))).errors.join("\n");
-    expect(bad).toContain("final_review.timeout_minutes");
-    expect(bad).toContain('unknown key "effort"');
+    const why = "The final review always uses agents.reviewer at low reasoning, within 10 minutes: remove the key, and keep final_review = {} or final_review = true to turn it on.";
+    expect(parseSpec(specToml((doc) => void (doc.merge = { strategy: "pr", ...FINAL({ model: "small", timeout_minutes: 5, effort: "x" }) }))).errors).toEqual([
+      `merge.forge.auto_merge.final_review.model: Loom no longer reads this key. ${why}`,
+      `merge.forge.auto_merge.final_review.timeout_minutes: Loom no longer reads this key. ${why}`,
+      'merge.forge.auto_merge.final_review: unknown key "effort". Remove it or correct its spelling; the loom skill lists every key in references/spec.md.',
+    ]);
   });
 });
 
@@ -210,7 +213,7 @@ describe("the final review before a merge", () => {
   });
 
   it("does not merge after a timeout; it tries again later, and holds after its tries are used up", async () => {
-    await openPr(FINAL({ timeout_minutes: 2 }));
+    await openPr(FINAL());
     approved();
     await poll();
     // Each run times out at the next read; the next one waits 5, then 10 minutes.
@@ -244,13 +247,14 @@ describe("the final review before a merge", () => {
   });
 
   it("nudges a reviewer that ends its turn without a verdict once, then ends the run", async () => {
-    await openPr(FINAL({ timeout_minutes: 30 }));
+    await openPr(FINAL());
     approved();
     await poll();
     reviewer().status = "idle";
     await poll();
     expect(h.bb.sent(reviewer().id).at(-1)).toContain("Call loom_final_review now");
-    await poll();
+    h.store.updateTicket(ticket().id, { pr_checked_at: null });
+    await poll(h.ctx, 60_000);
     expect(dataOf("final_review_unfinished")[0]!.data.why).toBe("idle");
     expect(merges()).toEqual([]);
   });

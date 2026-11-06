@@ -126,7 +126,6 @@ const LABELS: Record<string, string> = {
   "budget.max_tokens": "Token budget",
   "budget.deadline": "Deadline",
   environment: "Environment",
-  "environment.reviewer": "Reviewers' environment",
   repo: "Repos",
   rollout: "Deploy order",
   "rollout.deploy": "How changes deploy",

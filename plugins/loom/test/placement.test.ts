@@ -51,11 +51,6 @@ const onMachines = (doc: Doc) => {
   pr(doc);
   doc.environment = { provider: "git-worktree", machine: { provider: "boxes" } };
 };
-// Workers on machines of their own, reviewers on the project's machine.
-const workersOnMachines = (doc: Doc) => {
-  pr(doc);
-  doc.environment = { provider: "boxed-trees", machine: { provider: "boxes" }, reviewer: { provider: "git-worktree" } };
-};
 
 /** Proposes the spec with `edit` as a revision of the running project, and approves it. */
 async function moveTo(edit: (doc: Doc) => void): Promise<void> {
@@ -65,15 +60,6 @@ async function moveTo(edit: (doc: Doc) => void): Promise<void> {
 }
 
 describe("review, after a move", () => {
-  it("onto machines: starts a reviewer on the project's machine from the worker's branch, where the head was made", async () => {
-    await seedProject(h, pr);
-    await reachReview(h);
-    const branch = ticketOf(h, "CSV-1").branch;
-    await moveTo(workersOnMachines);
-    await spawnReviewers(h.ctx, project(), spec());
-    expect(spawns().at(-1)).toMatchObject({ baseBranch: branch, environment: undefined });
-  });
-
   it("off machines: starts a reviewer on the project's machine from the home branch, where the head came home", async () => {
     await seedMachineProject(h, onMachines);
     await reachReview(h);

@@ -208,7 +208,7 @@ async function spawnReviewer(ctx: EngineCtx, project: ProjectRow, row: SpecRevie
       bbProjectId: settings.bbProjectId ?? project.bb_project_id,
       hostId: project.host_id,
       baseBranch: `${settings.remote}/${settings.base}`,
-      environment: spawnEnvironment(settings, { branch: threadBranch(project.slug, "spec", `review-${version}-${round}`), base: `${settings.remote}/${settings.base}` }, "reviewer"),
+      environment: spawnEnvironment(settings, { branch: threadBranch(project.slug, "spec", `review-${version}-${round}`), base: `${settings.remote}/${settings.base}` }),
       title: `${project.key} · spec review v${version}`,
       prompt: specReviewerBrief({ project, spec, toml, version, round, earlier, inForce, instructions: ctx.plannerInstructions?.() ?? "" }),
       sectionId: project.section_id,

@@ -144,12 +144,11 @@ export type MergeHold = { why: "verdict" | "window" | "live"; text: string };
 /**
  * What still holds the ticket's pull request back from a merge Loom asks for, in words; empty when it may merge. Loom's own
  * Ready to merge verdict must hold: nothing it waits on is open, it targets its base, it is not a draft, it does not
- * conflict, its checks (less ignore_checks) pass and the forge says it is approved. With approval = "loom" the forge only
- * must not ask for changes. Then no freeze window may be on and, with require_live, everything its rollout requires is live.
+ * conflict, its checks (less ignore_checks) pass and the forge says it is approved. Then no freeze window may be on and, with require_live, everything its rollout requires is live.
  */
 export function mergeHolds(spec: Spec, tickets: readonly TicketRow[], ticket: TicketRow, settings: AutoMergeSettings, marks: Parameters<typeof rolloutOf>[2], now: number): MergeHold[] {
   const entry = mergeOrderOf(spec, tickets)?.entries.find((each) => each.key === ticket.key);
-  const holds: MergeHold[] = verdictHolds(entry, settings).map((text) => ({ why: "verdict", text }));
+  const holds: MergeHold[] = verdictHolds(entry).map((text) => ({ why: "verdict", text }));
   if (holds.length > 0) return holds;
   const window = activeWindow(spec, now);
   if (window !== null) holds.push({ why: "window", text: `the ${window.title} window is on until ${window.to}` });
@@ -161,17 +160,16 @@ export function mergeHolds(spec: Spec, tickets: readonly TicketRow[], ticket: Ti
   return holds;
 }
 
-function verdictHolds(entry: MergeEntry | undefined, settings: AutoMergeSettings): string[] {
+function verdictHolds(entry: MergeEntry | undefined): string[] {
   if (entry === undefined || entry.prUrl === null || !entry.prOpen) return ["it has no open pull request"];
   if (entry.verdict === "after") return [`it waits for ${andList(entry.waitsOn.map((wait) => wait.key))} to merge first`];
   if (entry.verdict === "moving") return ["the pull request it was stacked on merged, and Loom has not moved it to its base yet"];
   if (entry.verdict === "ready") return [];
   if (entry.verdict !== "first" && entry.verdict !== "checks_pass") return [`the Merge order says ${entry.verdict}`];
-  const kept = entry.holds.filter((hold) => !(settings.approval === "loom" && hold.code === "needs_review"));
-  const holds = kept.map(holdText);
+  const holds = entry.holds.map(holdText);
   // Never a draft: a held pull request stays one on purpose. A forge that does not say is not trusted either.
-  if (entry.draft !== false && !kept.some((hold) => hold.code === "draft")) holds.push(entry.draft === null ? "the forge did not say whether it is a draft" : "draft");
-  if (settings.approval === "forge" && entry.review !== "APPROVED" && !kept.some((hold) => hold.code === "needs_review" || hold.code === "changes_requested")) holds.push("the forge did not say it is approved");
+  if (entry.draft !== false && !entry.holds.some((hold) => hold.code === "draft")) holds.push(entry.draft === null ? "the forge did not say whether it is a draft" : "draft");
+  if (entry.review !== "APPROVED" && !entry.holds.some((hold) => hold.code === "needs_review" || hold.code === "changes_requested")) holds.push("the forge did not say it is approved");
   return holds;
 }
 

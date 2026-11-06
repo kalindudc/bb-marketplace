@@ -62,7 +62,7 @@ export function specTargets(spec: Spec, bbProjectId: string): RepoTarget[] {
 export async function gatherFacts(ctx: { bb: BbPort; host: HostPort; store?: Store }, targets: readonly RepoTarget[], hostId: string): Promise<RepoFacts[]> {
   const plugins = await ctx.bb.plugins();
   const builtin = new Set(plugins.filter((plugin) => plugin.builtin).map((plugin) => plugin.id));
-  const machinesNeeded = targets.some(({ settings }) => settings === null || usesNewMachine(settings, "worker") || usesNewMachine(settings, "reviewer"));
+  const machinesNeeded = targets.some(({ settings }) => settings === null || usesNewMachine(settings));
   const machineProviders = machinesNeeded ? await ctx.bb.machineProviders() : [];
   const picksOf = await pastPicks(ctx);
   const facts: RepoFacts[] = [];
@@ -115,7 +115,7 @@ const describeProvider = (provider: Pick<EnvironmentProviderInfo, "id" | "displa
 const pluginProviders = (facts: RepoFacts) => facts.providers.filter((provider) => !provider.builtin && provider.available);
 const compositions = (facts: RepoFacts) => facts.providers.filter((provider) => provider.machineProviderId !== undefined && provider.available);
 const machineText = (machine: MachineSpec | undefined, inputs = machine?.inputs !== undefined) => (machine === undefined ? "" : `, machine = { provider = "${machine.provider}"${inputs ? ", inputs = { … }" : ""} }`);
-const pickText = (pick: PastPick) => `provider = "${pick.environment.provider}"${machineText(pick.environment.machine ?? pick.environment.reviewer?.machine, false)} in the Loom project ${pick.slug} (\`bb loom spec ${pick.slug}\` shows it)`;
+const pickText = (pick: PastPick) => `provider = "${pick.environment.provider}"${machineText(pick.environment.machine, false)} in the Loom project ${pick.slug} (\`bb loom spec ${pick.slug}\` shows it)`;
 
 /** The environments that start each thread on a new machine: the compositions bb offers, and bb's git worktree on each machine provider. */
 function newMachineLines(facts: RepoFacts): string[] {
@@ -257,15 +257,8 @@ function repoErrors(facts: RepoFacts, settings: RepoSettings): string[] {
     const provider = usableAt(`${at}.provider`, settings.environment.provider);
     if (provider !== null) {
       errors.push(...inputsProblems(at, provider, settings.environment.inputs));
-      for (const ticket of facts.tickets ?? []) errors.push(...inputsProblems(ticket.at, provider, environmentFor(settings, "worker", ticket.inputs)!.inputs));
+      for (const ticket of facts.tickets ?? []) errors.push(...inputsProblems(ticket.at, provider, environmentFor(settings, ticket.inputs)!.inputs));
       machineAt(`${at}.machine`, provider, settings.environment.machine);
-    }
-    const reviewer = settings.environment.reviewer;
-    const other = reviewer?.provider !== undefined && reviewer.provider !== settings.environment.provider;
-    const reviewerProvider = other ? usableAt(`${at}.reviewer.provider`, reviewer.provider!) : provider;
-    if (reviewer !== undefined && reviewerProvider !== null) {
-      errors.push(...inputsProblems(`${at}.reviewer`, reviewerProvider, environmentFor(settings, "reviewer")!.inputs));
-      if (other || reviewer.machine !== undefined) machineAt(`${at}.reviewer.machine`, reviewerProvider, environmentFor(settings, "reviewer")!.machine);
     }
   }
 

@@ -146,7 +146,7 @@ describe("finding 2: a dropped approved change is never called base-only", () =>
 
 describe("finding 3: a running reviewer is stopped once its pull request is not ready any more", () => {
   it("stops and archives the reviewer when approval becomes pending, and starts no new one while it is", async () => {
-    await openPr(FINAL({ timeout_minutes: 2 }));
+    await openPr(FINAL());
     approved();
     await poll();
     approved("REVIEW_REQUIRED");
@@ -181,10 +181,10 @@ describe("finding 3: a running reviewer is stopped once its pull request is not 
   });
 
   it("times a reviewer out at its deadline even while no read of the pull request happens", async () => {
-    await openPr(FINAL({ timeout_minutes: 2 }));
+    await openPr(FINAL());
     approved();
     await poll();
-    h.clock.advance(3 * 60_000);
+    h.clock.advance(11 * 60_000);
     await maintainFinalReviews(h.ctx, project().id);
     expect(h.store.ticketEvents(ticket().id, [FINAL_ENDED]).map((event) => (JSON.parse(event.data_json) as { why: string }).why)).toEqual(["timeout"]);
     expect(reviewer().archivedAt).not.toBeNull();
@@ -193,7 +193,7 @@ describe("finding 3: a running reviewer is stopped once its pull request is not 
 
 describe("finding 4: a verdict after the run's deadline is refused", () => {
   it("refuses a late pass, records the timeout, and never merges on it", async () => {
-    await openPr(FINAL({ timeout_minutes: 2 }));
+    await openPr(FINAL());
     approved();
     await poll();
     h.clock.advance(10 * 60_000);

@@ -59,39 +59,27 @@ export function mergePatch(target: unknown, patch: unknown): unknown {
   return merged;
 }
 
-/** Who a thread is: a worker, or a reviewer-like reader (a ticket's reviewer, the spec reviewer, the summary agent). */
-export type ThreadRole = "worker" | "reviewer";
-
 /**
- * The provider, inputs and new machine a thread of `repo` starts in: the repo's environment; for a reviewer, its
- * `reviewer` table on top (another provider, which drops the workers' machine, or a merge patch over the inputs, and its
- * own machine); then the ticket's own inputs patch, when the thread uses the repo's provider. Null keeps today's managed
- * worktree.
+ * The provider, inputs and new machine a thread of `repo` starts in, a worker or a reader (a ticket's reviewer, the spec
+ * reviewer, the summary agent) alike: the repo's environment, then the ticket's own inputs patch. Null keeps today's
+ * managed worktree.
  */
-export function environmentFor(
-  repo: RepoSettings,
-  role: ThreadRole,
-  ticketInputs: Record<string, unknown> | null = null,
-): { provider: string; inputs: Record<string, unknown> | undefined; machine: MachineSpec | undefined } | null {
+export function environmentFor(repo: RepoSettings, ticketInputs: Record<string, unknown> | null = null): { provider: string; inputs: Record<string, unknown> | undefined; machine: MachineSpec | undefined } | null {
   const environment = repo.environment;
   if (environment === null) return null;
-  const reviewer = role === "reviewer" ? environment.reviewer : undefined;
-  if (reviewer?.provider !== undefined && reviewer.provider !== environment.provider) return { provider: reviewer.provider, inputs: reviewer.inputs, machine: reviewer.machine };
-  let inputs = environment.inputs;
-  if (reviewer?.inputs !== undefined) inputs = mergePatch(inputs ?? {}, reviewer.inputs) as Record<string, unknown>;
-  if (ticketInputs !== null) inputs = mergePatch(inputs ?? {}, ticketInputs) as Record<string, unknown>;
-  return { provider: environment.provider, inputs, machine: reviewer?.machine ?? environment.machine };
+  const inputs = ticketInputs === null ? environment.inputs : (mergePatch(environment.inputs ?? {}, ticketInputs) as Record<string, unknown>);
+  return { provider: environment.provider, inputs, machine: environment.machine };
 }
 
-/** Whether a worker or reviewer of `repo` starts on a new machine of its own, away from the project's checkout. */
-export const usesNewMachine = (repo: RepoSettings, role: ThreadRole): boolean => environmentFor(repo, role)?.machine !== undefined;
+/** Whether the threads of `repo` start on a new machine of their own, away from the project's checkout. */
+export const usesNewMachine = (repo: RepoSettings): boolean => environmentFor(repo)?.machine !== undefined;
 
 /** A ticket's merge patch over its repo's environment inputs, or null. */
 export const ticketInputsOf = (ticket: { environment_json: string | null }): Record<string, unknown> | null => readSub(ticket, "environment_json");
 
-/** The environment a worker or reviewer of `repo` spawns into; undefined keeps today's managed worktree. */
-export function spawnEnvironment(repo: RepoSettings, values: { branch: string; base: string }, role: ThreadRole = "worker", ticketInputs: Record<string, unknown> | null = null): SpawnArgs["environment"] {
-  const environment = environmentFor(repo, role, ticketInputs);
+/** The environment a thread of `repo` spawns into; undefined keeps today's managed worktree. */
+export function spawnEnvironment(repo: RepoSettings, values: { branch: string; base: string }, ticketInputs: Record<string, unknown> | null = null): SpawnArgs["environment"] {
+  const environment = environmentFor(repo, ticketInputs);
   if (environment === null || (environment.provider === GIT_WORKTREE && environment.inputs === undefined && environment.machine === undefined)) return undefined;
   const filled = (inputs: Record<string, unknown> | undefined) => (inputs === undefined ? null : fillInputs(inputs, values));
   const { machine } = environment;

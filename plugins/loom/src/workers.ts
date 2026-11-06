@@ -149,7 +149,7 @@ export async function spawnWorker(ctx: EngineCtx, project: ProjectRow, spec: Spe
   try {
     const repo = ticketRepo(spec, ticket);
     // A worker on a machine of its own starts at the fresh base, which bb can make there, and carries in what earlier workers left with loom_resume.
-    const onMachine = usesNewMachine(repo, "worker");
+    const onMachine = usesNewMachine(repo);
     let earlier: EarlierWork | null = null;
     if (onMachine || resume) {
       try {
@@ -172,7 +172,7 @@ export async function spawnWorker(ctx: EngineCtx, project: ProjectRow, spec: Spe
         bbProjectId: repo.bbProjectId ?? project.bb_project_id,
         hostId: project.host_id!,
         baseBranch,
-        environment: spawnEnvironment(repo, { branch: threadBranch(project.slug, ticket.key, String(row.attempt)), base: baseBranch }, "worker", ticketInputsOf(ticket)),
+        environment: spawnEnvironment(repo, { branch: threadBranch(project.slug, ticket.key, String(row.attempt)), base: baseBranch }, ticketInputsOf(ticket)),
         title: `${ticket.key} · ${ticket.title}`,
         prompt: brief,
         sectionId: project.section_id,

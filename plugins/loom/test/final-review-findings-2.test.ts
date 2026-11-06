@@ -119,13 +119,14 @@ describe("finding 3: a scratch directory is never lost", () => {
   });
 
   it("sweeps Loom's scratch directories that no outstanding run owns, and keeps the one that does", async () => {
-    await openPr(FINAL({ timeout_minutes: 60 }));
+    await openPr(FINAL());
+    await maintainFinalReviews(h.ctx);
     approved();
+    h.clock.advance(24 * 60_000);
     await poll();
     h.host.scratch.set("loom-orphan", []);
     const owned = [...h.host.scratch.keys()].find((key) => key !== "loom-orphan")!;
-    await maintainFinalReviews(h.ctx);
-    h.clock.advance(31 * 60_000);
+    h.clock.advance(2 * 60_000);
     approved();
     await maintainFinalReviews(h.ctx);
     expect([...h.host.scratch.keys()]).toEqual([owned]);

@@ -73,7 +73,7 @@ describe("auto-merge in the spec", () => {
       { kind: "gh", auto_merge: { method: "squash" } },
       { kind: "gh", auto_merge: { method: "queue", require_live: true, max_attempts: 5 } },
       { kind: "gh", auto_merge: { method: "comment", comment: "/merge", rejected: ["Merge failed*"] } },
-      { kind: "command", open: "o", state: "s", feedback: "f", merge: "m", auto_merge: { method: "command", rejected: ["x*"], approval: "loom" } },
+      { kind: "command", open: "o", state: "s", feedback: "f", merge: "m", auto_merge: { method: "command", rejected: ["x*"] } },
     ]) {
       const parsed = parseSpec(specToml(pr({ forge })));
       expect(parsed.errors, JSON.stringify(forge)).toEqual([]);
@@ -158,14 +158,14 @@ describe("merging a ready pull request", () => {
     expect(merges()).toHaveLength(1);
   });
 
-  it('with approval = "loom" merges what the forge leaves unreviewed, but not what it asks to change', async () => {
-    await openPr({ forge: { kind: "gh", auto_merge: { mode: "auto", method: "squash", approval: "loom" } } });
-    approved({ review: "CHANGES_REQUESTED" });
-    await poll();
-    expect(merges()).toEqual([]);
+  it("merges only once the forge says it is approved, and refuses auto_merge.approval", async () => {
+    await openPr({ forge: squash });
     approved({ review: null });
     await poll();
-    expect(merges()).toHaveLength(1);
+    expect(merges()).toEqual([]);
+    expect(parseSpec(specToml(pr({ forge: { kind: "gh", auto_merge: { method: "squash", approval: "loom" } } }))).errors).toEqual([
+      "merge.forge.auto_merge.approval: Loom no longer reads this key. Loom merges only once the forge says a person approved the pull request: remove the key.",
+    ]);
   });
 
   it("waits out a freeze window, saying so once per commit", async () => {

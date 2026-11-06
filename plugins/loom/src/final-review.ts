@@ -71,7 +71,7 @@ const ITEMS_MAX = 10;
 const errText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 const parse = (event: EventRow) => JSON.parse(event.data_json) as Record<string, unknown>;
 
-/** The final review the spec sets for a repo's merges, with each unset key filled in; null when it sets none. */
+/** The final review of a repo's merges: agents.reviewer at low reasoning within 10 minutes; null when the spec sets none. */
 export interface FinalReviewSettings {
   provider: string | undefined;
   model: string | undefined;
@@ -80,10 +80,9 @@ export interface FinalReviewSettings {
 }
 
 export function finalReviewOf(spec: Spec, settings: AutoMergeSettings | null): FinalReviewSettings | null {
-  const own = settings?.finalReview;
-  if (own == null) return null;
-  const reviewer = spec.agents.reviewer;
-  return { provider: own.provider ?? reviewer.provider, model: own.model ?? (own.provider === undefined ? reviewer.model : undefined), reasoning: own.reasoning ?? FINAL_REASONING, timeoutMs: (own.timeout_minutes ?? FINAL_TIMEOUT_MINUTES) * 60_000 };
+  if (settings?.finalReview !== true) return null;
+  const { provider, model } = spec.agents.reviewer;
+  return { provider, model, reasoning: FINAL_REASONING, timeoutMs: FINAL_TIMEOUT_MINUTES * 60_000 };
 }
 
 export interface FinalRun {

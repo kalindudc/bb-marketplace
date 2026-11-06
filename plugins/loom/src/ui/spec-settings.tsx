@@ -321,7 +321,6 @@ const MERGE_METHODS: Record<AutoMergeSpec["method"], string> = {
   comment: "gh: a comment for the merge service",
   command: "the forge's merge command",
 };
-const APPROVALS = { forge: "the forge says approved", loom: "Loom's reviewers are enough" };
 const FORGE_HOOKS = [
   ["after_open", "After opening"],
   ["after_push", "After each push"],
@@ -360,11 +359,7 @@ function AutoMergeParts({ path, label, auto }: { path: string; label: string; au
             {auto.mode === undefined && ", the default"}
           </Commentable>
         )}
-        {auto !== undefined && (
-          <Commentable as="span" target={value(`${at}.approval`, `${label} › auto merge › approval`, "enum", auto.approval ?? "forge", { options: ["forge", "loom"], names: APPROVALS })} className="text-muted-foreground">
-            once {APPROVALS[auto.approval ?? "forge"]}
-          </Commentable>
-        )}
+        {auto !== undefined && <span className="text-muted-foreground">once the forge says a person approved it</span>}
         {shown("require_live") && (
           <Commentable as="span" target={value(`${at}.require_live`, `${label} › auto merge › require live`, "bool", auto?.require_live ?? false)} className="text-muted-foreground">
             {auto?.require_live === true ? "and what its rollout requires is live" : "whatever is live"}
@@ -404,28 +399,13 @@ function AutoMergeParts({ path, label, auto }: { path: string; label: string; au
   );
 }
 
-/** auto_merge's final review: on or off, and the agent, reasoning and time limit of its one short turn. */
+/** auto_merge's final review: on or off. */
 function FinalReviewPart({ at, label, final }: { at: string; label: string; final: AutoMergeSpec["final_review"] }) {
-  const review = useReview();
-  const part = (key: "provider" | "model" | "reasoning", fallback: string) =>
-    (final?.[key] !== undefined || changedAt(review, `${at}.${key}`)) && (
-      <Commentable as="span" target={value(`${at}.${key}`, `${label} › ${key}`, "text", final?.[key])} className={CODE}>
-        {final?.[key] ?? fallback}
-      </Commentable>
-    );
   return (
     <div data-final-review={at} className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs">
-      <Commentable as="span" target={{ paths: [at, ...review.changes.map((change) => change.path).filter((one) => one.startsWith(`${at}.`))], label, kind: "text" }} className="text-muted-foreground">
-        {final === undefined ? "No final review before the merge" : "A final agent review before each merge, of what changed since approval"}
+      <Commentable as="span" target={value(at, label, "text")} className="text-muted-foreground">
+        {final === undefined ? "No final review before the merge" : "A final review before each merge, of what changed since approval, by the reviewer's agent at low reasoning within 10 minutes"}
       </Commentable>
-      {part("provider", "the reviewer's provider")}
-      {part("model", "the reviewer's model")}
-      {part("reasoning", "low")}
-      {final !== undefined && (
-        <Commentable as="span" target={value(`${at}.timeout_minutes`, `${label} › timeout minutes`, "number", final.timeout_minutes ?? 10, { min: 1, max: 60 })} className="text-muted-foreground">
-          within {plural(final.timeout_minutes ?? 10, "minute")}
-        </Commentable>
-      )}
     </div>
   );
 }
@@ -669,35 +649,6 @@ function WorkerEnvironmentRows({ path, label, environment, inherited }: { path: 
   );
 }
 
-/** Where reviewers, the spec reviewer and the summary agent start: the workers' environment, another provider, or the same one with a patch over its inputs. */
-function ReviewerEnvironmentRows({ path, label, environment }: { path: string; label: string; environment: EnvironmentSpec | undefined }) {
-  const review = useReview();
-  const at = `${path}.reviewer`;
-  const own = environment?.reviewer;
-  if (own === undefined && !changedAt(review, at)) {
-    return (
-      <Row label="Reviewers start" paths={[at]}>
-        <Commentable as="span" target={value(at, `${label} › reviewer`, "text")} className="text-muted-foreground">
-          in the workers' environment
-        </Commentable>
-      </Row>
-    );
-  }
-  const other = own?.provider !== undefined;
-  return (
-    <>
-      <Row label="Reviewers start" paths={[`${at}.provider`, `${at}.inputs`]}>
-        <Provider path={at} label={`${label} › reviewer`} provider={own?.provider} inputs={own?.inputs} inherited={own?.inputs === undefined ? "the workers' provider" : "the workers' provider, with these inputs over theirs"} />
-      </Row>
-      {(own?.machine !== undefined || environment?.machine !== undefined || changedAt(review, `${at}.machine`)) && (
-        <Row label="Reviewer machine" paths={[`${at}.machine`]}>
-          <Machine path={`${at}.machine`} label={`${label} › reviewer › machine`} machine={own?.machine} inherited={other || environment?.machine === undefined ? "none" : "the workers' machine"} />
-        </Row>
-      )}
-    </>
-  );
-}
-
 const ciText = (ci: boolean) => (ci ? "The pull request's CI runs every other test" : "Loom ignores the pull request's CI: its own checks are the whole bar");
 
 function RefreshBehind({ path, label, n, base }: { path: string; label: string; n: number | undefined; base: string }) {
@@ -842,10 +793,7 @@ function RepoItem({ spec, repo, index, bbProjectNames }: { spec: Spec; repo: Rep
               </Commentable>
             </Row>
           ) : (
-            <>
-              <WorkerEnvironmentRows path={`${at}.environment`} label={`${repo.name} › environment`} environment={repo.environment} inherited={projectEnvironment} />
-              <ReviewerEnvironmentRows path={`${at}.environment`} label={`${repo.name} › environment`} environment={repo.environment} />
-            </>
+            <WorkerEnvironmentRows path={`${at}.environment`} label={`${repo.name} › environment`} environment={repo.environment} inherited={projectEnvironment} />
           )}
           {(!integration || shown("ci", repo.ci !== undefined)) && (
             <Row label="CI" paths={[`${at}.ci`]}>
@@ -1214,7 +1162,7 @@ export function SettingsSection({ spec, bbProjectNames, onShowAll, onJump }: { s
       id: "reviewers",
       title: "Reviewers",
       note: "approve each ticket",
-      paths: ["agents.reviewer", "agents.max_reviewers", "review.approvals", "review.max_rounds", "environment.reviewer"],
+      paths: ["agents.reviewer", "agents.max_reviewers", "review.approvals", "review.max_rounds"],
       body: (
         <dl className={ROWS}>
           <Row label="Model" paths={["agents.reviewer.model", "agents.reviewer.provider"]}>
@@ -1250,7 +1198,6 @@ export function SettingsSection({ spec, bbProjectNames, onShowAll, onJump }: { s
               {rules.rubric.length === 0 ? "no rubric: the ticket's criteria only" : `${plural(rules.rubric.length, "rubric line")} ↓`}
             </button>
           </Row>
-          {(spec.environment !== undefined || changedAt(review, "environment.reviewer")) && <ReviewerEnvironmentRows path="environment" label="Environment" environment={spec.environment} />}
         </dl>
       ),
     },

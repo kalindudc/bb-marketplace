@@ -866,8 +866,7 @@ auto_merge = { method = "squash" }
   have merged and Loom must have moved it to its base), not a draft, no
   conflict with its base, every check it reads passed and the forge says it is
   approved, and its branch has no commits Loom did not push and review. Loom's reviewers approve inside Loom only, so approved means a
-  person approved it on the forge; `approval = "loom"` makes Loom's own
-  approval enough, as long as the forge does not ask for changes. Checks that
+  person approved it on the forge. Checks that
   `ignore_checks` names do not count, as everywhere else; the forge's own rules
   still apply, so a required check you told Loom to ignore makes the forge turn
   the merge down. The project must be running and the ticket not blocked, no
@@ -922,7 +921,7 @@ to merge, as a last sanity check. It is off unless the spec sets it:
 ```toml
 [merge.forge]
 kind = "gh"
-auto_merge = { method = "squash", final_review = {} }   # or { model = "…", reasoning = "low", timeout_minutes = 10 }
+auto_merge = { method = "squash", final_review = {} }   # or final_review = true
 ```
 
 - It runs only once every other merge hold has cleared, on the exact commit
@@ -968,9 +967,8 @@ auto_merge = { method = "squash", final_review = {} }   # or { model = "…", re
   A reviewer's thread is stopped and its scratch directory removed once its
   run is over, a pass included, whatever the merge; a removal that fails is
   tried again later, and directories no run owns are swept.
-- Its agent is the spec's `agents.reviewer` at `"low"` reasoning, unless
-  `provider`, `model` or `reasoning` say otherwise, and it has
-  `timeout_minutes` (10) to answer.
+- Its agent is the spec's `agents.reviewer` at `"low"` reasoning, and it has
+  10 minutes to answer.
 - It answers with one tool, `loom_final_review`: pass, or fail with a reason
   and whether the worker can fix it. A failure the worker can fix becomes a
   fix round with the reason, counted like other feedback; any other blocks
@@ -1302,9 +1300,7 @@ choice is found or ask; the planner asks you the ask items in one round, and
 - `[environment]` starts the threads Loom runs in a repository (workers,
   reviewers, the spec reviewer and the summary agent) in a bb environment
   provider, such as one a plugin adds, with `inputs` in which Loom fills
-  `{branch}` and `{base}` for each thread. Its `reviewer` table gives
-  reviewers, the spec reviewer and the summary agent another provider, or a
-  merge patch over the inputs, because they only read; and a ticket's own
+  `{branch}` and `{base}` for each thread. A ticket's own
   `environment.inputs` narrows the inputs for that ticket's threads.
 - A repository that refuses worktrees outside its own location cannot use the
   integration strategy, since Loom keeps its own worktree of the integration

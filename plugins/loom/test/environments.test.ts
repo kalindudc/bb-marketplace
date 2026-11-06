@@ -93,34 +93,17 @@ describe("environmentFor: reviewers and tickets", () => {
   const values = { branch: "loom/csv/csv-1-1", base: "origin/main" };
   const pool = { provider: "example-pool", inputs: { pool: { branch: "{branch}", base: "{base}", paths: ["services/orders", "services/billing"], setup: true } } };
 
-  it("gives reviewers the workers' environment when the spec sets no reviewer table", () => {
-    const settings = settingsWith(pool);
-    expect(spawnEnvironment(settings, values, "reviewer")).toEqual(spawnEnvironment(settings, values, "worker"));
-  });
-
-  it("patches the inputs for reviewers, or starts them in another provider", () => {
-    const patched = settingsWith({ ...pool, reviewer: { inputs: { pool: { paths: ["services/orders"], setup: false } } } });
-    expect(spawnEnvironment(patched, values, "reviewer")).toEqual({ providerId: "example-pool", inputs: { pool: { branch: values.branch, base: values.base, paths: ["services/orders"], setup: false } } });
-    expect(spawnEnvironment(patched, values, "worker")).toEqual({ providerId: "example-pool", inputs: { pool: { branch: values.branch, base: values.base, paths: ["services/orders", "services/billing"], setup: true } } });
-
-    const plain = settingsWith({ ...pool, reviewer: { provider: "git-worktree" } });
-    expect(spawnEnvironment(plain, values, "reviewer")).toBeUndefined();
-    const other = settingsWith({ ...pool, reviewer: { provider: "example-reader", inputs: { at: "{base}" } } });
-    expect(spawnEnvironment(other, values, "reviewer")).toEqual({ providerId: "example-reader", inputs: { at: "origin/main" } });
-  });
-
-  it("applies a ticket's own patch last, for its workers and for reviewers in the repo's provider only", () => {
+  it("applies a ticket's own patch over the repo's inputs", () => {
     const ticket = { pool: { paths: ["services/orders"] } };
-    const patched = settingsWith({ ...pool, reviewer: { inputs: { pool: { setup: false } } } });
-    expect(environmentFor(patched, "worker", ticket)).toEqual({ provider: "example-pool", inputs: { pool: { branch: "{branch}", base: "{base}", paths: ["services/orders"], setup: true } } });
-    expect(environmentFor(patched, "reviewer", ticket)).toEqual({ provider: "example-pool", inputs: { pool: { branch: "{branch}", base: "{base}", paths: ["services/orders"], setup: false } } });
-    const other = settingsWith({ ...pool, reviewer: { provider: "git-worktree" } });
-    expect(environmentFor(other, "reviewer", ticket)).toEqual({ provider: "git-worktree", inputs: undefined });
-    expect(environmentFor(settingsWith(undefined), "worker", ticket)).toBeNull();
+    expect(environmentFor(settingsWith(pool), ticket)).toEqual({ provider: "example-pool", inputs: { pool: { branch: "{branch}", base: "{base}", paths: ["services/orders"], setup: true } } });
+    expect(spawnEnvironment(settingsWith(pool), values)).toEqual({ providerId: "example-pool", inputs: { pool: { branch: values.branch, base: values.base, paths: ["services/orders", "services/billing"], setup: true } } });
+    expect(environmentFor(settingsWith(undefined), ticket)).toBeNull();
   });
 
-  it("refuses an unknown placeholder in the reviewer's inputs, and a ticket patch where the repo has no environment", () => {
-    expect(parseSpec(specToml((doc) => (doc.environment = { ...pool, reviewer: { inputs: { at: "{ticket}" } } }))).errors).toContain("environment.reviewer.inputs: {ticket} is not a Loom placeholder. Use {branch} or {base}, or write the value out.");
+  it("refuses environment.reviewer, and a ticket patch where the repo has no environment", () => {
+    expect(parseSpec(specToml((doc) => (doc.environment = { ...pool, reviewer: { inputs: { at: "{base}" } } }))).errors).toEqual([
+      "environment.reviewer: Loom no longer reads this key. Reviewers, the spec reviewer and the summary agent start in the repo's own environment, as workers do: remove the key.",
+    ]);
     expect(parseSpec(specToml((doc) => (doc.ticket[0].environment = { inputs: { pool: { paths: ["a"] } } }))).errors).toContain(
       "ticket[0].environment: the ticket's repo starts its threads in git worktrees, with no environment inputs to patch. Remove ticket[0].environment, or set an [environment] with a provider for the repo.",
     );
@@ -145,22 +128,10 @@ describe("environmentFor: new machines", () => {
   it("starts workers on a new machine from the repo's machine provider, with its inputs filled in", () => {
     const settings = settingsOn(onBoxes);
     // bb refuses null inputs for git-worktree; the named base is the one the managed worktree starts from.
-    expect(spawnEnvironment(settings, values, "worker")).toEqual({ providerId: "git-worktree", inputs: { branch: { kind: "named", name: values.base } }, machine: { providerId: "boxes", inputs: { name: values.branch } } });
-    expect(usesNewMachine(settings, "worker")).toBe(true);
-    expect(usesNewMachine(settingsWith(undefined), "worker")).toBe(false);
-    expect(usesNewMachine(settingsWith({ provider: "git-worktree" }), "reviewer")).toBe(false);
+    expect(spawnEnvironment(settings, values)).toEqual({ providerId: "git-worktree", inputs: { branch: { kind: "named", name: values.base } }, machine: { providerId: "boxes", inputs: { name: values.branch } } });
+    expect(usesNewMachine(settings)).toBe(true);
+    expect(usesNewMachine(settingsWith(undefined))).toBe(false);
+    expect(usesNewMachine(settingsWith({ provider: "git-worktree" }))).toBe(false);
   });
 
-  it("lets reviewers follow the workers' machine with no reviewer table or an inputs patch, drop it in another provider, and use their own", () => {
-    expect(environmentFor(settingsOn(onBoxes), "reviewer")!.machine).toEqual(onBoxes.machine);
-    expect(environmentFor(settingsOn({ ...onBoxes, reviewer: { inputs: { depth: 1 } } }), "reviewer")!.machine).toEqual(onBoxes.machine);
-    const other = settingsOn({ ...onBoxes, reviewer: { provider: "example-reader" } });
-    expect(environmentFor(other, "reviewer")!.machine).toBeUndefined();
-    expect(usesNewMachine(other, "reviewer")).toBe(false);
-    expect(usesNewMachine(other, "worker")).toBe(true);
-    const own = settingsOn({ provider: "git-worktree", reviewer: { machine: { provider: "readers" } } });
-    expect(spawnEnvironment(own, values, "reviewer")).toEqual({ providerId: "git-worktree", inputs: { branch: { kind: "named", name: values.base } }, machine: { providerId: "readers", inputs: null } });
-    expect(spawnEnvironment(own, values, "worker")).toBeUndefined();
-    expect(environmentFor(settingsOn({ ...onBoxes, reviewer: { provider: "example-reader", machine: { provider: "readers" } } }), "reviewer")!.machine).toEqual({ provider: "readers" });
-  });
 });

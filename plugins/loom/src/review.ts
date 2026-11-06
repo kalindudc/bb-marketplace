@@ -259,7 +259,7 @@ async function startReviewers(ctx: EngineCtx, project: ProjectRow, spec: Spec, t
   if (needed <= 0 || ticket.head_sha === null) return 0;
   const diff = await readDiff(ctx, project, spec, ticket);
   if (diff === null) return 0;
-  const remote = usesNewMachine(ticketRepo(spec, ticket), "reviewer");
+  const remote = usesNewMachine(ticketRepo(spec, ticket));
   const checkouts = remote ? new Map<string, string>() : await otherCheckouts(ctx, project, spec, ticket);
   let started = 0;
   for (let n = 0; n < needed; n++) {
@@ -344,7 +344,7 @@ async function startReviewer(ctx: EngineCtx, projectId: number, seen: TicketRow,
   const { row, project, spec, ticket } = reserved;
   const agent = spec.agents.reviewer;
   const repo = ticketRepo(spec, ticket);
-  const onMachine = usesNewMachine(repo, "reviewer");
+  const onMachine = usesNewMachine(repo);
   const brief = reviewerBrief({
     project,
     spec,
@@ -365,7 +365,7 @@ async function startReviewer(ctx: EngineCtx, projectId: number, seen: TicketRow,
       bbProjectId: repo.bbProjectId ?? project.bb_project_id,
       hostId: project.host_id!,
       baseBranch: base,
-      environment: spawnEnvironment(repo, { branch: threadBranch(project.slug, ticket.key, `review-${round}-${row.id}`), base }, "reviewer", ticketInputsOf(ticket)),
+      environment: spawnEnvironment(repo, { branch: threadBranch(project.slug, ticket.key, `review-${round}-${row.id}`), base }, ticketInputsOf(ticket)),
       title: `Review ${ticket.key} · round ${round}`,
       prompt: brief,
       sectionId: project.section_id,

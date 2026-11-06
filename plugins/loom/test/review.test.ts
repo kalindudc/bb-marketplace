@@ -828,15 +828,6 @@ describe("where reviewers of work from other machines start", () => {
     expect(spawnArgs(1)).toMatchObject({ baseBranch: "origin/main", environment: { machine: { providerId: "boxes" } } });
   });
 
-  it("starts a reviewer on the project's machine from the ticket's home branch, since the worker's branch is on another machine", async () => {
-    h.bb.compositionList = [{ ...GIT_WORKTREE_PROVIDER, id: "boxed-trees", displayName: "Trees on boxes", pluginId: "boxes", machineProviderId: "boxes" }];
-    await seedMachineProject(h, (doc) => (doc.environment = { provider: "boxed-trees", machine: { provider: "boxes" }, reviewer: { provider: "git-worktree" } }));
-    await reachReview(h);
-    await spawn();
-    expect(spawnArgs(1)).toMatchObject({ baseBranch: "loom/csv/csv-1-home", environment: undefined });
-    const reviewer = reviewers()[0]!;
-    expect(h.bb.environments.get(reviewer.environment_id!)!.hostId).toBe("host_1");
-  });
 });
 
 describe("a reviewer whose machine moved", () => {

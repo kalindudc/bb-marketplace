@@ -521,7 +521,7 @@ export function registerTools(bb: BbPluginApi, projects: Projects, engine: Engin
       try {
         const project = projects.projectOf(row);
         // A worker that started on a machine of its own keeps loom_resume after a spec version moves new workers elsewhere.
-        remote = row.resume_json !== null || (ticket !== null && project?.approved_version != null && usesNewMachine(ticketRepo(specOf(store, project), ticket), "worker"));
+        remote = row.resume_json !== null || (ticket !== null && project?.approved_version != null && usesNewMachine(ticketRepo(specOf(store, project), ticket)));
       } catch (error) {
         bb.log.warn(`agent configuration of ${context.thread.id}: ${errText(error)}`);
       }

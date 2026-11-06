@@ -93,16 +93,9 @@ export const AUTO_MERGE_MODES = ["auto", "manual"] as const;
 
 // Opt-in: Loom merges a ticket's pull request itself once its Ready to merge verdict holds. No defaults, so a forge without
 // it hashes as it did before it existed; autoMergeOf fills them in.
-// One short agent turn right before each merge, on the head Loom would merge. Present, even empty, turns it on; each key
-// unset falls back to agents.reviewer, low reasoning and 10 minutes (finalReviewOf). No defaults, so specs hash as before.
-export const finalReviewSchema = z
-  .object({
-    provider: z.string().min(1).max(100).optional(),
-    model: z.string().min(1).max(100).optional(),
-    reasoning: z.string().min(1).max(40).optional(),
-    timeout_minutes: z.number().int().min(1).max(60).optional(),
-  })
-  .strict();
+// One short agent turn right before each merge, on the head Loom would merge, as agents.reviewer at low reasoning within 10
+// minutes (finalReviewOf). An empty table or true turns it on; true is read as the empty table, so both hash alike.
+export const finalReviewSchema = z.preprocess((value) => (value === true ? {} : value), z.object({}).strict());
 
 export const autoMergeSchema = z
   .object({
@@ -113,7 +106,6 @@ export const autoMergeSchema = z
     comment: z.string().trim().min(1).max(500).optional(),
     // Comments that appear after Loom's attempt and match one of these are the merge service rejecting it.
     rejected: z.array(nonBlankGlob).max(10).optional(),
-    approval: z.enum(["forge", "loom"]).optional(),
     require_live: z.boolean().optional(),
     max_attempts: z.number().int().min(1).max(10).optional(),
     final_review: finalReviewSchema.optional(),
@@ -179,14 +171,12 @@ const inputsSchema = z.record(z.string(), z.unknown());
 export const machineSchema = z.object({ provider: z.string().regex(PROVIDER_ID, "must be a bb machine provider id"), inputs: inputsSchema.optional() }).strict();
 
 // A bb environment provider for workers and reviewers, with inputs that may hold the {branch} and {base} placeholders,
-// and optionally a new machine per thread. `reviewer` lets reviewers, the spec reviewer and the summary agent start in
-// another provider, or in the same one with a merge patch over the inputs, and on a machine of their own.
+// and optionally a new machine per thread.
 export const environmentSchema = z
   .object({
     provider: providerId,
     inputs: inputsSchema.optional(),
     machine: machineSchema.optional(),
-    reviewer: z.object({ provider: providerId.optional(), inputs: inputsSchema.optional(), machine: machineSchema.optional() }).strict().optional(),
   })
   .strict();
 
@@ -353,7 +343,6 @@ export type TicketPatch = z.output<typeof ticketPatchSchema>;
 export type RepoSpec = z.output<typeof repoSpecSchema>;
 export type ForgeSpec = z.output<typeof forgeSchema>;
 export type AutoMergeSpec = z.output<typeof autoMergeSchema>;
-export type FinalReviewSpec = z.output<typeof finalReviewSchema>;
 export type ReviewerRuleSpec = z.output<typeof reviewerRuleSchema>;
 export type EnvironmentSpec = z.output<typeof environmentSchema>;
 export type MachineSpec = z.output<typeof machineSchema>;
@@ -388,6 +377,11 @@ const INDEX_FIXED = `Loom gives the index and tree steps of one call on a checko
 
 const WORKTREE_GONE = "Loom always adds its own git worktree of the integration branch; for a repository that refuses one, use merge.strategy = \"pr\": remove the key.";
 
+const APPROVAL_GONE = "Loom merges only once the forge says a person approved the pull request: remove the key.";
+const FINAL_FIXED = "The final review always uses agents.reviewer at low reasoning, within 10 minutes: remove the key, and keep final_review = {} or final_review = true to turn it on.";
+
+const REVIEWER_ENV_GONE = "Reviewers, the spec reviewer and the summary agent start in the repo's own environment, as workers do: remove the key.";
+
 /** Keys Loom once read and no longer does, by their path with every array index written [], and what replaces each. */
 const REMOVED_KEYS: Readonly<Record<string, string>> = {
   "merge.checks_queued_minutes": settingHome("checksQueuedMinutes"),
@@ -397,6 +391,11 @@ const REMOVED_KEYS: Readonly<Record<string, string>> = {
   "merge.branch": "The integration branch is always loom/<slug>, from project.slug: remove the key.",
   "merge.worktree": WORKTREE_GONE,
   "repo[].worktree": WORKTREE_GONE,
+  "merge.forge.auto_merge.approval": APPROVAL_GONE,
+  "repo[].forge.auto_merge.approval": APPROVAL_GONE,
+  ...Object.fromEntries(["provider", "model", "reasoning", "timeout_minutes"].flatMap((key) => ["merge.forge", "repo[].forge"].map((at) => [`${at}.auto_merge.final_review.${key}`, FINAL_FIXED]))),
+  "environment.reviewer": REVIEWER_ENV_GONE,
+  "repo[].environment.reviewer": REVIEWER_ENV_GONE,
   "merge.squash": "Loom always pushes the reviewed work as one commit, and each fix round as one more: remove the key.",
   "merge.release_workers": "Loom always releases an idle worker whose pull request is open, so bb frees its environment, and brings it back when the pull request needs it: remove the key.",
 };
@@ -897,8 +896,6 @@ function environmentErrors(environment: EnvironmentSpec | undefined, at: string)
   return [
     ...placeholderErrors(environment.inputs, `${at}.inputs`),
     ...placeholderErrors(environment.machine?.inputs, `${at}.machine.inputs`),
-    ...placeholderErrors(environment.reviewer?.inputs, `${at}.reviewer.inputs`),
-    ...placeholderErrors(environment.reviewer?.machine?.inputs, `${at}.reviewer.machine.inputs`),
   ];
 }
 
@@ -910,7 +907,7 @@ function environmentErrors(environment: EnvironmentSpec | undefined, at: string)
 function machineErrors(spec: Spec): string[] {
   if (spec.merge.strategy === "pr") return [];
   const used: Array<[EnvironmentSpec | undefined, string]> = (spec.repo ?? []).length === 0 ? [[spec.environment, "environment"]] : spec.repo!.map((repo, index) => (repo.environment === undefined ? [spec.environment, "environment"] : [repo.environment, `repo[${index}].environment`]));
-  const paths = used.flatMap(([environment, at]) => (environment?.machine !== undefined ? [`${at}.machine`] : environment?.reviewer?.machine !== undefined ? [`${at}.reviewer.machine`] : []));
+  const paths = used.flatMap(([environment, at]) => (environment?.machine !== undefined ? [`${at}.machine`] : []));
   return [...new Set(paths)].map(
     (at) =>
       `${at}: a thread on a new machine needs merge.strategy = "pr", because Loom does not carry the integration branch, which lives only on the project's machine, to other machines. Set merge.strategy = "pr", or remove ${at}.`,

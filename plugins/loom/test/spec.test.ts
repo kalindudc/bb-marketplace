@@ -708,28 +708,20 @@ describe("relying on the pull request's CI", () => {
 describe("threads on new machines", () => {
   const pr = { strategy: "pr", stack: false };
 
-  it("parses a machine for workers and one for reviewers on the pr strategy without stacking", () => {
+  it("parses a machine for the threads on the pr strategy without stacking", () => {
     const result = run((doc) => {
       doc.merge = pr;
-      doc.environment = { provider: "git-worktree", machine: { provider: "x" }, reviewer: { machine: { provider: "y", inputs: { size: "small" } } } };
+      doc.environment = { provider: "git-worktree", machine: { provider: "x", inputs: { size: "small" } } };
     });
     expect(result.errors).toEqual([]);
-    expect(result.spec!.environment).toEqual({ provider: "git-worktree", machine: { provider: "x" }, reviewer: { machine: { provider: "y", inputs: { size: "small" } } } });
+    expect(result.spec!.environment).toEqual({ provider: "git-worktree", machine: { provider: "x", inputs: { size: "small" } } });
     const plain = run((doc) => (doc.environment = { provider: "git-worktree" })).spec!;
     expect(Object.keys(plain.environment!)).not.toContain("machine");
   });
 
-  it("refuses the integration strategy for a repo whose workers or reviewers use a machine, naming the path, and accepts stacking", () => {
+  it("refuses the integration strategy for a repo whose threads use a machine, naming the path, and accepts stacking", () => {
     const why = 'a thread on a new machine needs merge.strategy = "pr", because Loom does not carry the integration branch, which lives only on the project\'s machine, to other machines. Set merge.strategy = "pr", or remove';
     expect(run((doc) => (doc.environment = { provider: "git-worktree", machine: { provider: "x" } })).errors).toEqual([`environment.machine: ${why} environment.machine.`]);
-    expect(run((doc) => {
-      doc.merge = { strategy: "integration" };
-      doc.environment = { provider: "git-worktree", reviewer: { machine: { provider: "x" } } };
-    }).errors).toEqual([`environment.reviewer.machine: ${why} environment.reviewer.machine.`]);
-    expect(run((doc) => {
-      doc.merge = { strategy: "pr" };
-      doc.environment = { provider: "git-worktree", reviewer: { machine: { provider: "x" } } };
-    }).errors).toEqual([]);
     expect(run((doc) => {
       doc.merge = { strategy: "integration" };
       doc.repo = [

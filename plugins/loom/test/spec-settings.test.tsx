@@ -44,7 +44,7 @@ function everything(doc: Doc): void {
       merge: 'pr-cli comment "$LOOM_PR_NUMBER" --body /merge',
       request_reviews: 'pr-cli edit "$LOOM_PR_NUMBER" --add-reviewer "$LOOM_REVIEWERS"',
       team_members: 'people-cli members "$LOOM_TEAM"',
-      auto_merge: { method: "command", mode: "auto", rejected: ["Merge failed*"], approval: "loom", require_live: true, max_attempts: 2, final_review: { provider: "codex", model: "gpt-mini", reasoning: "minimal", timeout_minutes: 5 } },
+      auto_merge: { method: "command", mode: "auto", rejected: ["Merge failed*"], require_live: true, max_attempts: 2, final_review: {} },
       reviewers: [{ team: "platform", count: 2 }, { users: ["alice", "bob"], count: 1 }],
     },
   };
@@ -58,7 +58,6 @@ function everything(doc: Doc): void {
     provider: "git-worktree",
     inputs: { sparse: "src", depth: 1, dirs: ["src", "test"] },
     machine: { provider: "example-machines", inputs: { size: "large" } },
-    reviewer: { provider: "light-trees", inputs: { sparse: "src/lib" }, machine: { provider: "small-machines", inputs: { size: "small" } } },
   };
   doc.repo = [
     {
@@ -72,7 +71,7 @@ function everything(doc: Doc): void {
         after_push: ["ci-cli rerun"],
         ready: "pr-cli ready",
         ignore_checks: ["Lint*"],
-        auto_merge: { method: "comment", mode: "manual", comment: "/merge", rejected: ["❌*"], approval: "forge", require_live: false, max_attempts: 4, final_review: { provider: "claude", model: "haiku", reasoning: "low", timeout_minutes: 3 } },
+        auto_merge: { method: "comment", mode: "manual", comment: "/merge", rejected: ["❌*"], require_live: false, max_attempts: 4, final_review: {} },
         reviewers: [{ team: "acme/web", count: 1 }, { users: ["carol"] }],
       },
       environment: { provider: "git-worktree", inputs: { sparse: "web" } },
@@ -103,7 +102,7 @@ function everything(doc: Doc): void {
         auto_merge: { method: "command" },
         reviewers: [{ team: "api-team", count: 1 }],
       },
-      environment: { provider: "example-world", inputs: { zone: "west" }, machine: { provider: "example-world", inputs: { pool: "big" } }, reviewer: { provider: "light-trees", inputs: { zone: "east" }, machine: { provider: "small-machines", inputs: { pool: "small" } } } },
+      environment: { provider: "example-world", inputs: { zone: "west" }, machine: { provider: "example-world", inputs: { pool: "big" } } },
       deploy: { how: "The deploy tool ships trunk" },
       refresh_behind: 20,
       git_network_timeout_seconds: 600,
@@ -160,7 +159,7 @@ const full = (): Spec => {
 /** `everything` whose project-wide forge is gh, merging through a merge service's comment: the keys only a gh forge takes. */
 function mergingEverything(doc: Doc): void {
   everything(doc);
-  doc.merge.forge = { kind: "gh", auto_merge: { method: "comment", comment: "/merge please", rejected: ["Merge failed*"], max_attempts: 2, final_review: { model: "small" } }, reviewers: [{ team: "acme/platform", count: 2 }] };
+  doc.merge.forge = { kind: "gh", auto_merge: { method: "comment", comment: "/merge please", rejected: ["Merge failed*"], max_attempts: 2, final_review: {} }, reviewers: [{ team: "acme/platform", count: 2 }] };
 }
 const FIXTURES = [
   ["a pull request", full],
@@ -326,7 +325,7 @@ describe("spec settings", () => {
     const changes = specDiff(skeleton(spec), spec).filter((change) => change.kind !== "list" || change.steps.length > 0);
     // The fixture really sets the settings added since Loom 0.24, so the walk below covers them.
     const paths = changes.map((change) => change.path);
-    const expected = strategy === "a merging" ? ["merge.forge.auto_merge.method", "merge.forge.auto_merge.comment", "merge.forge.auto_merge.rejected", "merge.forge.reviewers[0].team", "repo[0].forge.auto_merge.comment", "repo[1].forge.merge"] : strategy === "an integration" ? ["merge.remote", "checks.after_merge", "repo[0].after_merge"] : ["merge.forge.retarget", "merge.forge.merge", "merge.forge.auto_merge.require_live", "merge.forge.reviewers[1].users", "repo[0].forge.auto_merge.max_attempts", "repo[1].forge.reviewers[0].count", "merge.forge.after_push", "merge.refresh_behind", "merge.git_network_timeout_seconds", "checks.ci", "environment.reviewer.machine.inputs.size", "repo[1].forge.after_push", "repo[0].deploy.on_merge", "repo[1].git_network_timeout_seconds", "rollout.stage[0].soak", "rollout.milestone[0].check", "rollout.window[0].note", "ticket[csv-export].rollout.requires_live", "ticket[csv-export].environment.inputs.sparse"];
+    const expected = strategy === "a merging" ? ["merge.forge.auto_merge.method", "merge.forge.auto_merge.comment", "merge.forge.auto_merge.rejected", "merge.forge.reviewers[0].team", "repo[0].forge.auto_merge.comment", "repo[1].forge.merge"] : strategy === "an integration" ? ["merge.remote", "checks.after_merge", "repo[0].after_merge"] : ["merge.forge.retarget", "merge.forge.merge", "merge.forge.auto_merge.require_live", "merge.forge.reviewers[1].users", "repo[0].forge.auto_merge.max_attempts", "repo[1].forge.reviewers[0].count", "merge.forge.after_push", "merge.refresh_behind", "merge.git_network_timeout_seconds", "checks.ci", "environment.machine.inputs.size", "repo[1].forge.after_push", "repo[0].deploy.on_merge", "repo[1].git_network_timeout_seconds", "rollout.stage[0].soak", "rollout.milestone[0].check", "rollout.window[0].note", "ticket[csv-export].rollout.requires_live", "ticket[csv-export].environment.inputs.sparse"];
     for (const path of expected) {
       expect(paths).toContain(path);
     }
@@ -350,7 +349,7 @@ describe("spec settings", () => {
     expect(paths).toEqual(["merge.forge.auto_merge.final_review"]);
     const slot = await openSpec(versionOf(after, before));
     const part = page(slot).querySelector<HTMLElement>('[data-final-review="merge.forge.auto_merge.final_review"]');
-    expect(part?.textContent).toContain("A final agent review before each merge");
+    expect(part?.textContent).toContain("A final review before each merge, of what changed since approval, by the reviewer's agent at low reasoning within 10 minutes");
     expect(page(slot).querySelector('[data-change="merge.forge.auto_merge.final_review"]')?.textContent).toContain("on, with its defaults");
     expect(missedJumps(slot, paths)).toEqual([]);
   });
@@ -373,7 +372,7 @@ describe("spec settings", () => {
     const before = valid(specToml(withDocs));
     const after = valid(specToml(trimmed));
     const paths = specDiff(before, after).map((change) => change.path);
-    for (const path of ["merge.forge.after_open", "merge.forge.after_push", "merge.forge.ignore_checks", "merge.forge.edit", "environment.inputs.depth", "environment.reviewer.provider", "repo[0].forge.kind", "repo[0].environment.inputs.sparse", "repo[1].environment.machine.inputs.pool", "repo[2].name", "rollout.stage[1].goal", "rollout.milestone[0].check", "rollout.window[0].from", "ticket[csv-export].verify", "ticket[csv-export].environment.inputs.sparse"]) {
+    for (const path of ["merge.forge.after_open", "merge.forge.after_push", "merge.forge.ignore_checks", "merge.forge.edit", "environment.inputs.depth", "repo[0].forge.kind", "repo[0].environment.inputs.sparse", "repo[1].environment.machine.inputs.pool", "repo[2].name", "rollout.stage[1].goal", "rollout.milestone[0].check", "rollout.window[0].from", "ticket[csv-export].verify", "ticket[csv-export].environment.inputs.sparse"]) {
       expect(paths).toContain(path);
     }
     const slot = await openSpec(versionOf(after, before));
@@ -531,7 +530,6 @@ describe("spec settings", () => {
     expect(label("rollout.stage[5].goal")).toBe("Deploy stage 6 › goal");
     expect(label("rollout.deploy.how")).toBe("How changes reach traffic");
     expect(label("merge.refresh_behind")).toBe("Keep pull requests fresh");
-    expect(label("environment.reviewer.machine.provider")).toBe("Reviewers' environment › machine › provider");
     expect(label("ticket[csv-export].rollout.requires_live")).toBe("csv-export › rollout › requires live");
     expect(labelOf("repo[0].checks", ["web"])).toBe("web › checks");
   });
