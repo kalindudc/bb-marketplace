@@ -869,6 +869,8 @@ interface CarryMark {
   temp?: string;
   /** Journaled right before git commit: the commit the carry builds on and the tree it commits. */
   committing?: { parent: string; tree: string };
+  /** A commit the carry made whose tree is not the one sent: it may hold someone else's change, so it is never the carry's. */
+  mismatched?: string;
 }
 
 /** A path's content and git mode: "f:<1 executable, else 0>:<sha256>", "l:<sha256 of the target>", "dir", "other"; null when absent. */
@@ -1139,6 +1141,9 @@ export async function carryStart(input: HostInput<"carryStart">, signal?: AbortS
   const fm = await fileModeOf(top, signal);
   let carried = readCarryMark(mark);
   let head = await git(worktree, ["rev-parse", "HEAD"], { signal });
+  if (carried?.mismatched === head) {
+    return refusal(`The worktree ${worktree} is at ${head.slice(0, 12)}, a commit Loom's last carry made whose tree is not the one it sent, so it may hold changes the carry did not make. Loom left it as it is: look at it, keep what is yours, and reset the branch, then try again`);
+  }
   // A commit the carry journaled is its own when its parent and tree say so, the first of a stacked carry too. HEAD still at
   // the journaled parent means the commit never happened; that parent's own parent is never asked for, as a root has none.
   const committing = carried?.committing;
@@ -1361,7 +1366,7 @@ export async function carryAbort(input: HostInput<"carryAbort">, signal?: AbortS
  * Commits the carry's own paths with git add and git commit: the files it wrote, each still holding what it wrote, and
  * the ones it deleted, still gone. Refused ("foreign") before anything is staged when a carry path holds anything else or
  * the worker's index differs from HEAD anywhere, as a worker's staged change. The commit is journaled first. A commit
- * whose tree is not `tree` is a mismatch: it stays, as the carry's own, for the next carry to take over.
+ * whose tree is not `tree` is a mismatch: it stays as it is, and is never the carry's own, so the next carry refuses it.
  */
 export async function carryFinish(input: HostInput<"carryFinish">, signal?: AbortSignal): Promise<HostOutput<"carryFinish">> {
   const { worktree, message, author, tree, paths } = input;
@@ -1391,14 +1396,16 @@ export async function carryFinish(input: HostInput<"carryFinish">, signal?: Abor
   }
   carryFaults.afterCommit?.();
   const [head = "", built = ""] = (await git(top, ["rev-parse", "HEAD", "HEAD^{tree}"], { signal })).split("\n");
-  // The mark ends with the tree the carry started for; a commit on the way to it, as a stacked ticket's first, or one whose
-  // tree is not the one sent, joins it, so the next carry knows that commit as its own.
+  // The mark ends with the tree the carry started for; a commit on the way to it, as a stacked ticket's first, joins it. A
+  // commit whose tree is not the one sent never does: the next carry refuses it, touching nothing.
   const now = readCarryMark(mark);
   if (now === null || (now.tree === built && built === tree)) clearCarry(mark, fm);
   else {
     const { committing: _done, ...rest } = now;
-    writeCarryMark(mark, { ...rest, heads: head === parent ? now.heads : [...now.heads, head] });
-    if (built === tree) rmSync(logOf(mark), { force: true });
+    if (built === tree) {
+      writeCarryMark(mark, { ...rest, heads: head === parent ? now.heads : [...now.heads, head] });
+      rmSync(logOf(mark), { force: true });
+    } else writeCarryMark(mark, { ...rest, ...(head === parent ? {} : { mismatched: head }) });
   }
   return built === tree ? { outcome: "ok", head, tree: built } : { outcome: "mismatch", tree: built };
 }

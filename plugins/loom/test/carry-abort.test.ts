@@ -297,7 +297,7 @@ describe("a carry that finishes", () => {
     expect(indexOf(v, "notes.md")).toBe("worker recreated");
   });
 
-  it("refuses a file the worker made executable; a tree that is not the one sent is a mismatch the next carry takes over", async () => {
+  it("refuses a file the worker made executable; a commit whose tree is not the one sent is not the carry's to take over", async () => {
     const w = worker();
     await start(w);
     await put(w, "run.sh", "echo\n");
@@ -306,9 +306,28 @@ describe("a carry that finishes", () => {
     expect(sh(w.worktree, "rev-parse", "HEAD")).toBe(w.base);
     chmodSync(join(w.worktree, "run.sh"), 0o644);
     expect(await finish(w, "b".repeat(40), ["run.sh"])).toMatchObject({ outcome: "mismatch", tree: treeWith(w, { "run.sh": "echo\n" }) });
-    expect(await start(w)).toEqual({ outcome: "ok", present: false, from: w.head });
-    expect(sh(w.worktree, "rev-parse", "HEAD")).toBe(w.base);
-    expect(sh(w.worktree, "status", "--porcelain", "--untracked-files=all")).toBe("");
+    const committed = sh(w.worktree, "rev-parse", "HEAD");
+    expect(await start(w)).toMatchObject({ outcome: "unavailable", message: expect.stringContaining(committed.slice(0, 12)) });
+    expect([sh(w.worktree, "rev-parse", "HEAD"), read(w.worktree, "run.sh")]).toEqual([committed, "echo\n"]);
+  });
+
+  it("refuses, touching nothing, the next carry after a commit that took a file the worker staged, with no writer then", async () => {
+    const w = worker();
+    await start(w);
+    await put(w, "carry.ts", "carry\n");
+    carryFaults.beforeCommit = () => {
+      writeFileSync(join(w.worktree, "late.ts"), "worker late unique\n");
+      sh(w.worktree, "add", "late.ts");
+    };
+    try {
+      expect(await finish(w, treeWith(w, { "carry.ts": "carry\n" }), ["carry.ts"])).toMatchObject({ outcome: "mismatch" });
+    } finally {
+      delete carryFaults.beforeCommit;
+    }
+    await abort(w);
+    const committed = sh(w.worktree, "rev-parse", "HEAD");
+    expect(await start(w)).toMatchObject({ outcome: "unavailable", message: expect.stringContaining(committed.slice(0, 12)) });
+    expect([read(w.worktree, "late.ts"), sh(w.worktree, "rev-parse", "HEAD"), sh(w.worktree, "status", "--porcelain")]).toEqual(["worker late unique\n", committed, ""]);
   });
 
   it("commits a file the worker stages during the commit with it, keeping it, and answers mismatch", async () => {

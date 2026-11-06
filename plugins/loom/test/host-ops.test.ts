@@ -2584,7 +2584,7 @@ describe("carrying a commit to a thread's own machine: carryStart, carryWrite, c
     expect(sh(worktree, "ls-files", "keep.log")).toBe("keep.log");
   });
 
-  it("fetches a base the thread's machine does not have, answers mismatch when the tree does not match, and its carryAbort changes nothing", async () => {
+  it("fetches a base the thread's machine does not have, answers mismatch when the tree does not match, and neither its carryAbort nor the next carry changes anything", async () => {
     const { clone } = setup();
     const worktree = clone();
     const before = sh(worktree, "rev-parse", "HEAD");
@@ -2602,8 +2602,9 @@ describe("carrying a commit to a thread's own machine: carryStart, carryWrite, c
     const head = sh(worktree, "rev-parse", "HEAD");
     expect(await carryAbort({ worktree, base: exported.base, restore: before })).toMatchObject({ clean: true, kept: [] });
     expect(sh(worktree, "rev-parse", "HEAD")).toBe(head);
-    expect(await carryStart({ worktree, remote: "origin", baseBranch: "main", base: exported.base, tree: exported.tree })).toMatchObject({ outcome: "ok", present: false });
-    expect(sh(worktree, "rev-parse", "HEAD")).toBe(exported.base);
+    // A commit whose tree is not the one sent may hold someone else's change, so the next carry refuses it, touching nothing.
+    expect(await carryStart({ worktree, remote: "origin", baseBranch: "main", base: exported.base, tree: exported.tree })).toMatchObject({ outcome: "unavailable" });
+    expect(sh(worktree, "rev-parse", "HEAD")).toBe(head);
   });
 
   it("refuses a worktree with uncommitted changes, and a path that leads out of it", async () => {
