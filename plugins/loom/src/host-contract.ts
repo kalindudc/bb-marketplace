@@ -241,8 +241,9 @@ export const hostContract = defineRpcContract({
   // project's machine keeps; carryWrite and carryDelete change the files; carryFinish commits them as the author on HEAD
   // and checks the tree, and resets to base when it differs.
   carryStart: {
-    input: z.object({ worktree: absPath, remote: ref, baseBranch: ref, base: commit, tree: commit, replaces: commit.optional(), networkTimeoutMs }).strict(),
-    // `from`: the worktree's HEAD before the carry, which carryAbort puts back.
+    // `paths`: every path the carry will write or delete, which must hold nothing ignored or untracked before it starts.
+    input: z.object({ worktree: absPath, remote: ref, baseBranch: ref, base: commit, tree: commit, replaces: commit.optional(), paths: z.array(repoPath).max(100_000).optional(), networkTimeoutMs }).strict(),
+    // `from`: the worktree's HEAD before the carry.
     output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok"), present: z.boolean(), from: sha.optional() }).strict(), unavailable]),
   },
   // Offset 0 starts the file again; a symlink comes in one range, its target as the data.

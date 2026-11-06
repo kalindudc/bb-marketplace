@@ -2584,7 +2584,7 @@ describe("carrying a commit to a thread's own machine: carryStart, carryWrite, c
     expect(sh(worktree, "ls-files", "keep.log")).toBe("keep.log");
   });
 
-  it("fetches a base the thread's machine does not have, commits nothing when the tree does not match, and its carryAbort changes nothing", async () => {
+  it("fetches a base the thread's machine does not have, answers mismatch when the tree does not match, and its carryAbort changes nothing", async () => {
     const { clone } = setup();
     const worktree = clone();
     const before = sh(worktree, "rev-parse", "HEAD");
@@ -2597,10 +2597,13 @@ describe("carrying a commit to a thread's own machine: carryStart, carryWrite, c
 
     const finished = await carryOut(upstream, worktree, exported, sh(worktree, "rev-parse", "HEAD^{tree}"));
     expect(finished).toEqual({ outcome: "mismatch", tree: exported.tree });
+    // git commit made the commit before its tree could be read; it stays, as the carry's own, for the next carry.
+    expect(sh(worktree, "rev-parse", "HEAD^")).toBe(exported.base);
+    const head = sh(worktree, "rev-parse", "HEAD");
+    expect(await carryAbort({ worktree, base: exported.base, restore: before })).toMatchObject({ clean: true, kept: [] });
+    expect(sh(worktree, "rev-parse", "HEAD")).toBe(head);
+    expect(await carryStart({ worktree, remote: "origin", baseBranch: "main", base: exported.base, tree: exported.tree })).toMatchObject({ outcome: "ok", present: false });
     expect(sh(worktree, "rev-parse", "HEAD")).toBe(exported.base);
-    const status = sh(worktree, "status", "--porcelain", "--untracked-files=all");
-    expect(await carryAbort({ worktree, base: exported.base, restore: before })).toMatchObject({ clean: false, carried: [{ path: "a.txt", holds: "carry" }] });
-    expect(sh(worktree, "status", "--porcelain", "--untracked-files=all")).toBe(status);
   });
 
   it("refuses a worktree with uncommitted changes, and a path that leads out of it", async () => {

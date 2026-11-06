@@ -159,7 +159,8 @@ export async function carryTo(ctx: EngineCtx, project: ProjectRow, spec: Spec, t
   }
   const start = steps[0]!.base;
   const tree = steps.at(-1)!.tree;
-  const started = await ctx.host.call(environment.hostId, "carryStart", { worktree, remote: checkout.settings.remote, baseBranch: checkout.settings.base, base: start, tree, ...(opts.replaces === undefined ? {} : { replaces: opts.replaces }), ...gitNetwork(checkout.settings) });
+  const paths = [...new Set(steps.flatMap((exported) => exported.changes.map((change) => change.path)))];
+  const started = await ctx.host.call(environment.hostId, "carryStart", { worktree, remote: checkout.settings.remote, baseBranch: checkout.settings.base, base: start, tree, paths, ...(opts.replaces === undefined ? {} : { replaces: opts.replaces }), ...gitNetwork(checkout.settings) });
   if (started.outcome === "unavailable") throw new Unavailable(started.message, transientOf(started));
   if (started.present) return { tree };
   let finished;
