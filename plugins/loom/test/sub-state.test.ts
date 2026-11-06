@@ -1,7 +1,9 @@
 import { existsSync } from "node:fs";
 import Database from "better-sqlite3";
-import { describe, expect, it } from "vitest";
-import { readSub, SUB_COLUMNS, SubStateError, writeSub, type SubColumn } from "../src/sub-state";
+import { afterEach, describe, expect, it } from "vitest";
+import { readSub, SUB_COLUMNS, subProblem, warnSubStateWith, writeSub, type SubColumn } from "../src/sub-state";
+
+afterEach(() => warnSubStateWith((message) => console.warn(message)));
 
 describe("sub-state columns", () => {
   it("reads a stored value as its schema's shape and null as none", () => {
@@ -11,12 +13,20 @@ describe("sub-state columns", () => {
     expect(readSub({ key: "CSV-2", pr_seen_json: '["check:1"]' }, "pr_seen_json")).toEqual(["check:1"]);
   });
 
-  it("fails loudly on a malformed value, naming the ticket and the column", () => {
-    expect(() => readSub({ key: "CSV-2", merge_wait_json: '{"failures":"two"}' }, "merge_wait_json")).toThrow(SubStateError);
-    expect(() => readSub({ key: "CSV-2", merge_wait_json: '{"failures":"two"}' }, "merge_wait_json")).toThrow(/merge_wait_json of ticket CSV-2/u);
-    expect(() => readSub({ key: "CSV-2", handback_json: "{not json" }, "handback_json")).toThrow(/handback_json of ticket CSV-2 is not JSON/u);
-    expect(() => readSub({ thread_id: "thr_1", resume_json: '{"sha":1}' }, "resume_json")).toThrow(/resume_json of thread thr_1/u);
-    expect(() => readSub({ key: "CSV-2", pr_seen_json: null }, "pr_seen_json")).toThrow(/never null/u);
+  it("reads a malformed value as it is stored, as Loom always has, with one warning per row and column", () => {
+    const warnings: string[] = [];
+    warnSubStateWith((message) => warnings.push(message));
+    const bad = { key: "CSV-9", merge_wait_json: '{"failures":"two"}' };
+    expect(readSub(bad, "merge_wait_json")).toEqual({ failures: "two" });
+    expect(readSub(bad, "merge_wait_json")).toEqual({ failures: "two" });
+    expect(readSub({ thread_id: "thr_9", resume_json: '{"sha":1}' }, "resume_json")).toEqual({ sha: 1 });
+    expect(warnings).toHaveLength(2);
+    expect(warnings[0]).toMatch(/^The merge_wait_json of ticket CSV-9 does not match its schema; Loom reads it as it is/u);
+    expect(warnings[1]).toContain("resume_json of thread thr_9");
+  });
+
+  it("throws on JSON that does not parse, as JSON.parse did", () => {
+    expect(() => readSub({ key: "CSV-2", handback_json: "{not json" }, "handback_json")).toThrow(SyntaxError);
   });
 
   it("writes a value as JSON, null as a cleared column, and refuses a malformed value", () => {
@@ -54,7 +64,8 @@ describe.skipIf(snapshot === undefined || !existsSync(snapshot))("a live databas
       const json = row[column] as string | null;
       if (json === null) return;
       values += 1;
-      expect(readSub(row as never, column), `${column} of ${String(row.key ?? row.thread_id)}`).toEqual(JSON.parse(json));
+      expect(subProblem(column, JSON.parse(json)), `${column} of ${String(row.key ?? row.thread_id)}`).toBeNull();
+      expect(readSub(row as never, column)).toEqual(JSON.parse(json));
     };
     for (const ticket of tickets) for (const column of SUB_COLUMNS.filter((name) => name !== "resume_json")) check(ticket, column);
     for (const thread of threads) check(thread, "resume_json");

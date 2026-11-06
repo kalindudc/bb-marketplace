@@ -76,8 +76,6 @@ export interface BoardCard {
   draft: DraftState;
   /** The planner asked the human to release the held draft. */
   releaseRequested: { at: number; note: string } | null;
-  /** What Loom cannot read of the state it keeps for the ticket, which the page shows instead of that state; absent when it reads all of it. */
-  unreadable?: string;
 }
 
 /** A manual merge as the page shows it; a confirmation from the page sends back the `prUrl` and `sha` it showed. */

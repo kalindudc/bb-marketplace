@@ -166,14 +166,6 @@ request strategy it keeps its newest worker's thread, as Review again as is
 does, so requested changes, or a fix round or a catch-up once its pull request
 is open, bring that thread back.
 
-Loom checks the state it keeps beside each ticket, such as its pull request's
-last read or a fix round waiting for its worker, every time it reads it. When a
-stored value is damaged, Loom blocks that ticket alone, with a post and a
-blocked reason that name the field and what is wrong, and logs it once; every
-other ticket of the project keeps moving. Loom keeps the value as it is, and
-the ticket needs that value repaired before it can go on. The project page
-shows the problem on the ticket's card instead of failing to load.
-
 ### When the machine or the server does not answer
 
 Loom waits out a failure that looks temporary instead of pausing the project:
@@ -1722,7 +1714,9 @@ settings for that project.
   thread events. `src/ctx.ts` holds the context every part works with.
   `src/moves.ts` is the one table of ticket moves: each move's states and the
   columns it resets. `src/sub-state.ts` reads and writes every JSON column a
-  ticket keeps beside its state, each checked against its schema.
+  ticket keeps beside its state, with a schema for each. A write that does not
+  match its schema is refused; a stored value that does not match is read as
+  it is, as before, and Loom logs one warning for that ticket and column.
 - The merge queue is split by job, and `src/merge.ts` names what the rest of
   Loom calls: `src/merge-queue.ts` (the per-project guard and the queue),
   `src/merge-integration.ts` (the integration merge), `src/pr-open.ts`

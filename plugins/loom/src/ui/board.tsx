@@ -82,11 +82,6 @@ function Card({ slug, card, now, draft, onChanges, withState }: { card: BoardCar
       <DraftHold ticketKey={card.key} prUrl={card.prUrl} draft={card.draft} requested={card.releaseRequested} compact />
       {card.mergeConfirm !== null && <MergeConfirm ticketKey={card.key} confirm={card.mergeConfirm} compact />}
       {card.state === "blocked" && card.blockedReason !== null && <p className="mt-1 text-xs text-destructive-text [overflow-wrap:anywhere]">{card.blockedReason}</p>}
-      {card.unreadable !== undefined && card.unreadable !== card.blockedReason && (
-        <p data-unreadable className="mt-1 text-xs text-destructive-text [overflow-wrap:anywhere]">
-          {card.unreadable}
-        </p>
-      )}
       <div className="mt-1.5 flex flex-wrap gap-3">
         {card.threadId !== null && (
           <button type="button" aria-label={`Open thread for ${card.key}`} onClick={() => navigate.toThread(card.threadId!)} className={LINK}>

@@ -22,7 +22,6 @@ import { bringHome, isRemote, worktreeBaseOf } from "./transport";
 import { endThread, recordBranch, resolveEnvironment, ticketMoveFor, toWorking } from "./workers";
 import { delivers, specOf, workerOf, type EngineCtx } from "./ctx";
 import { moveTicket, tryMoveTicket, type TicketMove } from "./moves";
-import { containUnreadable } from "./unreadable";
 
 export interface CheckRun {
   command: string;
@@ -138,7 +137,7 @@ async function pipeline(ctx: EngineCtx, ticketId: number): Promise<void> {
       outcome = { ...outcome, commitSha: (await bringHome(ctx, project, spec, ticket, outcome.environment, "submit", outcome.tree)).sha };
     }
   } catch (error) {
-    if (!(await containUnreadable(ctx, error))) hostFailed(ctx, ticketId, error);
+    hostFailed(ctx, ticketId, error);
     return;
   }
   retriesOf(store).checks.reset(ticketId);

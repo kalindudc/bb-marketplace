@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { TicketRow } from "../src/db/store";
 import { mergeOrderOf, type MergeEntry } from "../src/merge-order";
-import type { PrMeta } from "../src/sub-state";
+import { warnSubStateWith, type PrMeta } from "../src/sub-state";
 import { parseSpec, type Spec } from "../src/spec";
 import type { TicketState } from "../src/states";
 import { withRepos } from "./fixtures";
@@ -255,8 +255,12 @@ describe("the words of a hold", () => {
 });
 
 describe("the merge order's reading of merge_after", () => {
-  it("checks it as every other reader does: a malformed list on a ticket at work is an error, not a list of no keys", () => {
+  it("reads it through the sub-state reader, which warns about a malformed list as every other reader does", () => {
+    const warnings: string[] = [];
+    warnSubStateWith((message) => warnings.push(message));
     const bad = { ...row("CSV-1", "pr_open"), merge_after_json: "[1]" };
-    expect(() => mergeOrderOf(spec, [bad, row("CSV-2", "pr_open")])).toThrow(/merge_after_json of ticket CSV-1/u);
+    expect(mergeOrderOf(spec, [bad, row("CSV-2", "pr_open")])).not.toBeNull();
+    warnSubStateWith((message) => console.warn(message));
+    expect(warnings).toEqual([expect.stringContaining("merge_after_json of ticket CSV-1")]);
   });
 });
