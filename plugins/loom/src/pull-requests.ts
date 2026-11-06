@@ -135,9 +135,9 @@ export async function resumePrAsks(ctx: EngineCtx, projectId: number): Promise<v
 }
 
 /**
- * loom_pr: the worker of an approved ticket hands in its pull request's text, or a fix round's commit message. A title or
- * a body it gives wins over the one it proposed with loom_submit; a new pull request opens with the proposal's for the
- * fields it leaves out.
+ * loom_pr: the worker of an approved ticket hands in its commit message, and the title or description of a new pull
+ * request that it did not propose with loom_submit. Text the reviewers approved is never replaced here, and a fix round
+ * takes no text at all, since the pull request has text already: new text goes through loom_submit's pr and a review.
  */
 export function handInPrText(ctx: EngineCtx, threadId: string, a: { title?: string; body?: string; commit_message: string }): string {
   const { store } = ctx;
@@ -153,25 +153,33 @@ export function handInPrText(ctx: EngineCtx, threadId: string, a: { title?: stri
   const commit = a.commit_message.trim();
   const given = (value: string | undefined) => (value === undefined || value.trim() === "" ? null : value.trim());
   const proposal = proposalOf(ticket);
-  const title = ask.fix ? given(a.title) : (given(a.title) ?? proposal?.title ?? null);
   const written = a.body === undefined ? null : given(withoutLoomBlocks(a.body));
-  const body = ask.fix ? written : (written ?? proposal?.body ?? null);
+  const approved = [...(given(a.title) !== null && (ask.fix || proposal?.title != null) ? ["title"] : []), ...(written !== null && (ask.fix || proposal?.body != null) ? ["description"] : [])];
+  if (approved.length > 0) {
+    const what = approved.join(" and ");
+    const why = ask.fix ? `the pull request already has a ${what} the reviewers approved` : `the reviewers approved the ${what} you proposed with loom_submit`;
+    throw new LoomError(
+      "loom_invalid_input",
+      `loom_pr cannot change the ${what}: ${why}, and Loom puts only reviewed text on the pull request. Call loom_pr again without ${approved.length === 1 ? "it" : "them"}. To change the text, propose it with loom_submit's pr, so it is reviewed first: Loom's text review judges it in the pull request's next fix round.`,
+    );
+  }
+  const title = ask.fix ? null : (given(a.title) ?? proposal?.title ?? null);
+  const body = ask.fix ? null : (written ?? proposal?.body ?? null);
   if (commit === "") throw new LoomError("loom_invalid_input", "commit_message is empty. Write a subject line, a blank line, then a short body.");
   if (!ask.fix && (title === null || body === null)) {
     const proposed = proposal === null ? "" : ` You proposed only ${proposal.title === null ? "a body" : "a title"} with loom_submit, so give the ${proposal.title === null ? "title" : "body"} here.`;
     throw new LoomError("loom_invalid_input", `This opens the pull request, so it needs a title and a body as well as the commit_message.${proposed}`);
   }
   const text: PrText = { head: ticket.head_sha!, by: "worker", title, body, commit };
-  const retitled = ask.fix && (title !== null || body !== null);
   store.tx(() => {
     store.updateTicket(ticket.id, writeSub("pr_text_json", text));
-    const said = ask.fix ? `The worker wrote the commit message for fix round ${ticket.pr_rounds}${retitled ? `, and a new ${title !== null && body !== null ? "title and description" : title !== null ? "title" : "description"}` : ""}.` : `The worker wrote the pull request: ${title}`;
+    const said = ask.fix ? `The worker wrote the commit message for fix round ${ticket.pr_rounds}.` : `The worker wrote the pull request: ${title}`;
     const data = { outcome: "pr_text", by: "worker", fix: ask.fix, round: ticket.pr_rounds, title: text.title, body: text.body, commit };
     store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: "worker", author_thread_id: threadId, kind: "merge", body: said, data_json: JSON.stringify(data) });
   });
   store.changed(ticket.project_id);
   ctx.kick();
-  const sets = ask.fix && (retitled || textPending(ctx, ticket)) ? ", then sets the pull request's new title and description" : "";
+  const sets = ask.fix && textPending(ctx, ticket) ? ", then sets the title and description the reviewers approved" : "";
   return ask.fix
     ? `Loom pushes the fix as one more commit with your message now${sets}, so end your turn. It keeps following the pull request and messages you about anything else to fix.`
     : `Loom opens the pull request now with ${given(a.title) === null && written === null ? "the title and description the reviewers approved" : "your text"}, so end your turn. It follows its checks and reviews and messages you about anything to fix.`;

@@ -399,11 +399,11 @@ export function registerTools(bb: BbPluginApi, projects: Projects, engine: Engin
   bb.agents.registerTool({
     name: "loom_pr",
     description:
-      "Hand in the pull request Loom asked you for once your ticket is approved: the message of the one commit Loom pushes, and the title and description you did not propose with loom_submit. In a fix round, hand in the commit_message of the fix commit. Write them as you normally write a pull request and commit message. A title or body you give wins over the proposed one, and in a fix round Loom sets it on the pull request. Then end your turn: Loom pushes and opens or updates the pull request.",
+      "Hand in the pull request Loom asked you for once your ticket is approved: the message of the one commit Loom pushes, and only the title or description you did not propose with loom_submit. In a fix round, hand in only the commit_message of the fix commit. Text the reviewers approved is refused here: propose a change with loom_submit's pr, so it is reviewed. Then end your turn: Loom pushes and opens or updates the pull request.",
     presentation: { label: { pending: "Handing in the pull request", completed: "Handed in the pull request" } },
     parameters: z.object({
-      title: z.string().min(1).max(256).optional().describe("The pull request's title. Required to open one unless you proposed it with loom_submit."),
-      body: z.string().min(1).max(50_000).optional().describe("The pull request's description, in Markdown. Required to open one unless you proposed it with loom_submit."),
+      title: z.string().min(1).max(256).optional().describe("The pull request's title, only when you did not propose one with loom_submit; required then to open one."),
+      body: z.string().min(1).max(50_000).optional().describe("The pull request's description, in Markdown, only when you did not propose one with loom_submit; required then to open one."),
       commit_message: z.string().min(1).max(8000).describe("The commit's message: a subject line, a blank line, then a short body."),
     }),
     execute: (input, tool) => run(() => handInPrText(ctx, tool.threadId, input)),

@@ -720,8 +720,10 @@ its own pull request.
   verdict's summary for the planner instead of a finding.
 - Once the reviewers approve a ticket, its worker writes the rest of the pull
   request with `loom_pr`: the commit message, and the title and description if
-  it proposed none, by the same skill. A title or a
-  body it gives there wins over the proposed one. A worker that ends its turn
+  it proposed none, by the same skill. `loom_pr` refuses a title or a
+  description the reviewers approved, and in a fix round it takes the commit
+  message alone: text reaches the pull request only after a review, so a
+  change to it goes through `loom_submit`'s `pr`. A worker that ends its turn
   twice without it, or takes more than 30 minutes, gets Loom's template
   instead for what it did not propose, and `merge.describe = "loom"` always
   uses the template. The template follows the skill's shape too: the ticket's
@@ -786,7 +788,7 @@ its own pull request.
   `[checks]` or on a `[[repo]]`, makes Loom ignore that repo's CI: its own
   checks are the whole bar, and a failed CI check starts no fix round.
 - A fix round can change the pull request's text: the worker passes `pr`
-  to `loom_submit` again, or a title or body to `loom_pr`. A fix whose only
+  to `loom_submit` again. A fix whose only
   change is the proposed text runs no checks and goes to Loom's text review
   (above), which judges it against the feedback it answers; once it is
   approved, Loom sets it and pushes nothing. A

@@ -334,3 +334,74 @@ describe("metrics", () => {
     expect(formatMetrics(metrics)).toContain("text reviews 1 (1 approved, 0 changes requested); 1 text-only round sent back to the worker");
   });
 });
+
+/** A ticket whose text-only round the text review approved: it waits for loom_pr. `opened`: on an open pull request, as a fix. */
+async function textApproved(worker: ThreadRow, proposal: { title?: string; body?: string }): Promise<void> {
+  await requestChanges(h.ctx, (await nextReviewer()).thread_id!, "Text.", [textFinding]);
+  await settle();
+  await handIn(worker, "Rewrote it.", { change: false, pr: proposal });
+  await approve(h.ctx, (await nextReviewer(false)).thread_id!, "Good.");
+  await settle();
+  expect(ticket().state).toBe("approved");
+  await askForPrTexts(h.ctx, project(), spec());
+}
+
+describe("loom_pr after the reviewers approved the text", () => {
+  it("refuses a title or description the text review approved, saying to propose it with loom_submit's pr, and opens with the approved text", async () => {
+    await seedProject(h, pr());
+    const worker = await startWorker(h);
+    await handIn(worker, "Done.", { pr: { title: "T", body: "Implements CSV-1." } });
+    await textApproved(worker, { body: "Approved description." });
+    expect(h.bb.sent(worker.thread_id!).at(-1)).not.toContain("given, they win");
+    expect(() => handInPrText(h.ctx, worker.thread_id!, { body: "UNREVIEWED CSV-1 jargon", commit_message: "Add order rows" })).toThrow("propose it with loom_submit's pr");
+    expect(() => handInPrText(h.ctx, worker.thread_id!, { title: "Other", commit_message: "Add order rows" })).toThrow("the reviewers approved");
+    handInPrText(h.ctx, worker.thread_id!, { commit_message: "Add order rows" });
+    await runMergeQueue(h.ctx, project(), spec());
+    await settleMerges(h.ctx);
+    expect(h.host.callsTo("prCreate")[0]).toMatchObject({ title: "T" });
+    expect(h.host.callsTo("prCreate")[0]!.body.startsWith("Approved description.")).toBe(true);
+  });
+
+  it("refuses a field the code review approved, takes the one no one proposed, and keeps the no-proposal workflow", async () => {
+    await seedProject(h, pr());
+    const worker = await startWorker(h);
+    await handIn(worker, "Done.", { pr: { body: "Reviewed body." } });
+    await approve(h.ctx, (await nextReviewer()).thread_id!, "Holds.");
+    await settle();
+    await askForPrTexts(h.ctx, project(), spec());
+    expect(() => handInPrText(h.ctx, worker.thread_id!, { title: "Add rows", body: "Other body", commit_message: "Add rows" })).toThrow("description");
+    handInPrText(h.ctx, worker.thread_id!, { title: "Add rows", commit_message: "Add rows" });
+    await runMergeQueue(h.ctx, project(), spec());
+    await settleMerges(h.ctx);
+    expect(h.host.callsTo("prCreate")[0]).toMatchObject({ title: "Add rows" });
+    expect(h.host.callsTo("prCreate")[0]!.body.startsWith("Reviewed body.")).toBe(true);
+
+    h = makeCtx();
+    await seedProject(h, pr());
+    const plain = await startWorker(h);
+    await handIn(plain, "Done.");
+    await approve(h.ctx, (await nextReviewer()).thread_id!, "Holds.");
+    await settle();
+    await askForPrTexts(h.ctx, project(), spec());
+    handInPrText(h.ctx, plain.thread_id!, { title: "Add rows", body: "Why.", commit_message: "Add rows" });
+    await runMergeQueue(h.ctx, project(), spec());
+    await settleMerges(h.ctx);
+    expect(h.host.callsTo("prCreate")[0]).toMatchObject({ title: "Add rows" });
+  });
+
+  it("takes only the commit message in a fix round, so a checked text round pushes the fix and sets the approved text", async () => {
+    const worker = await openProposed();
+    h.host.feedback.set(URL, { items: [{ key: "review:3:def", kind: "review", author: "bob", bot: false, body: "Fix the bug.", url: `${URL}#r3`, state: "changes_requested", path: null, line: null }] });
+    h.clock.advance(5 * 60_000);
+    await pollPullRequests(h.ctx, project());
+    await handIn(worker, "Fixed it.");
+    await textApproved(worker, { body: "Approved fix description." });
+    expect(() => handInPrText(h.ctx, worker.thread_id!, { body: "UNREVIEWED", commit_message: "Fix" })).toThrow("propose it with loom_submit's pr");
+    handInPrText(h.ctx, worker.thread_id!, { commit_message: "Fix" });
+    const pushes = h.host.callsTo("push").length;
+    await runMergeQueue(h.ctx, project(), spec());
+    await settleMerges(h.ctx);
+    expect(h.host.callsTo("push").length).toBeGreaterThan(pushes);
+    expect(h.host.callsTo("prEdit").at(-1)!.body.startsWith("Approved fix description.")).toBe(true);
+  });
+});

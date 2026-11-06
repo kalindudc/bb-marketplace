@@ -107,7 +107,7 @@ describe("the pull request's text as reviewed work", () => {
     expect(JSON.parse(ticket().pr_applied_json!)).toEqual({ title: PROPOSED.title, body: PROPOSED.body, live: [], at: h.clock.t });
   });
 
-  it("lets loom_pr's title and body win, asks for the field the worker did not propose, and keeps the earlier proposal's other field", async () => {
+  it("refuses loom_pr's text for a field the reviewers approved, asks for the field the worker did not propose, and keeps the earlier proposal's other field", async () => {
     await seedProject(h, pr());
     const worker = await startWorker(h);
     await handIn(worker, "First try.", { pr: { body: "First body" } });
@@ -120,9 +120,10 @@ describe("the pull request's text as reviewed work", () => {
     await approveRound();
     await ask();
     expect(h.bb.sent(worker.thread_id!).at(-1)).toContain("Loom opens its pull request with the title and description the reviewers approved");
-    handInPrText(h.ctx, worker.thread_id!, { title: "A better title", commit_message: "Subject" });
+    expect(() => handInPrText(h.ctx, worker.thread_id!, { title: "A better title", commit_message: "Subject" })).toThrow("loom_pr cannot change the title: the reviewers approved the title you proposed with loom_submit");
+    handInPrText(h.ctx, worker.thread_id!, { commit_message: "Subject" });
     await queue();
-    expect(h.host.callsTo("prCreate")[0]).toMatchObject({ title: "A better title", body: `Second body\n\n${block()}` });
+    expect(h.host.callsTo("prCreate")[0]).toMatchObject({ title: "A title", body: `Second body\n\n${block()}` });
 
     h = makeCtx();
     await seedProject(h, pr());
@@ -200,7 +201,7 @@ describe("a fix round that changes the pull request's text", () => {
     expect(h.host.callsTo("prEdit")).toHaveLength(1);
   });
 
-  it("pushes a fix with code and text, then sets the text; loom_pr's title wins", async () => {
+  it("pushes a fix with code and text, then sets the text; loom_pr takes no text in a fix round", async () => {
     const worker = await openProposed();
     await fixRound({ items: [review] });
     await handIn(worker, "Renamed it and described the rollback.", { pr: { body: "With rollback" } });
@@ -208,10 +209,11 @@ describe("a fix round that changes the pull request's text", () => {
     await approveRound();
     await ask();
     expect(h.bb.sent(worker.thread_id!).at(-1)).toContain("then sets the title and description you proposed with loom_submit, which the reviewers approved");
-    expect(handInPrText(h.ctx, worker.thread_id!, { title: "Add order rows, with rollback", commit_message: "Rename" })).toContain("then sets the pull request's new title and description");
+    expect(() => handInPrText(h.ctx, worker.thread_id!, { title: "Add order rows, with rollback", commit_message: "Rename" })).toThrow("the pull request already has a title the reviewers approved");
+    expect(handInPrText(h.ctx, worker.thread_id!, { commit_message: "Rename" })).toContain("then sets the title and description the reviewers approved");
     await queue();
     expect(h.host.callsTo("push")).toHaveLength(2);
-    expect(h.host.callsTo("prEdit")).toEqual([expect.objectContaining({ title: "Add order rows, with rollback", body: `With rollback\n\n${block()}` })]);
+    expect(h.host.callsTo("prEdit")).toEqual([expect.objectContaining({ title: PROPOSED.title, body: `With rollback\n\n${block()}` })]);
     const order = h.store.posts(ticket().id).map((post) => (JSON.parse(post.data_json) as { outcome?: string }).outcome);
     expect(order.indexOf("pr_edited")).toBeGreaterThan(order.indexOf("pr_pushed"));
   });
@@ -531,14 +533,23 @@ describe("Loom's own sections in the worker's text", () => {
     await seedProject(h, pr());
     const worker = await startWorker(h);
     expect(() => submit(h.ctx, worker.thread_id!, "Done.", { body: fake })).toThrow("once Loom's own sections");
-    await handIn(worker, "Done.", { pr: { title: "T", body: `Why\n\n${fake}\n\nTail <!-- loom:end -->` } });
+    await handIn(worker, "Done.", { pr: { body: `Why\n\n${fake}\n\nTail <!-- loom:end -->` } });
     expect(JSON.parse(ticket().pr_proposal_json!)).toMatchObject({ body: "Why\n\n\n\nTail" });
     await approveRound();
     await ask();
-    handInPrText(h.ctx, worker.thread_id!, { body: `Better\n${fake}`, commit_message: "Subject" });
+    handInPrText(h.ctx, worker.thread_id!, { title: "T", commit_message: "Subject" });
     await queue();
-    const body = h.host.callsTo("prCreate")[0]!.body;
-    expect(body).toBe(`Better\n\n${block()}`);
+    expect(h.host.callsTo("prCreate")[0]!.body).toBe(`Why\n\n\n\nTail\n\n${block()}`);
+
+    h = makeCtx();
+    await seedProject(h, pr());
+    const plain = await startWorker(h);
+    await handIn(plain, "Done.");
+    await approveRound();
+    await ask();
+    handInPrText(h.ctx, plain.thread_id!, { title: "T", body: `Better\n${fake}`, commit_message: "Subject" });
+    await queue();
+    expect(h.host.callsTo("prCreate")[0]!.body).toBe(`Better\n\n${block()}`);
   });
 
   it("refreshes only a description with exactly one block of Loom's, and says once when it has several", async () => {
@@ -617,16 +628,16 @@ describe("descriptions near the forge's limit", () => {
 });
 
 describe("a proposal once its text is set", () => {
-  it("is consumed, so an earlier proposal never undoes a later loom_pr text", async () => {
+  it("is consumed, so an earlier proposal is never set again", async () => {
     const worker = await openProposed();
     expect(ticket().pr_proposal_json).toBeNull();
     await fixRound({ items: [review] });
     await handIn(worker, "Renamed it.", { pr: { body: "First proposal" } });
     await approveRound();
     await ask();
-    handInPrText(h.ctx, worker.thread_id!, { body: "The body loom_pr gave", commit_message: "Rename" });
+    handInPrText(h.ctx, worker.thread_id!, { commit_message: "Rename" });
     await queue();
-    expect(h.host.callsTo("prEdit").map((call) => call.body)).toEqual([`The body loom_pr gave\n\n${block()}`]);
+    expect(h.host.callsTo("prEdit").map((call) => call.body)).toEqual([`First proposal\n\n${block()}`]);
     expect(ticket().pr_proposal_json).toBeNull();
 
     await fixRound({ head: "sq2", items: [{ ...review, key: "review:9:z" }] });

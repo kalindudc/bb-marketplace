@@ -990,7 +990,7 @@ const prRules = (forge: ForgeSpec, signature: string) => [
 export function prAskText(a: { key: string; fix: boolean; round: number; url: string | null; limitMinutes: number; proposed?: { title: boolean; body: boolean }; changes?: boolean }): { summary: string; detail: string } {
   const own = `${PR_SKILL_RULE.replace("and follow it:", "and follow it for the title and description:")} Loom adds its own merge and deploy section after your description; do not write one. For the commit message, follow your own instructions, if you have any, with no ticket key in it.`;
   const after = `Change no files: Loom pushes the exact commit the reviewers approved. Do not commit, push or open a pull request yourself. If loom_pr does not come within ${a.limitMinutes} minutes, Loom uses its own template.`;
-  const override = "Pass title or body as well only to change them again now; given, they win.";
+  const override = "Give only commit_message: Loom uses the title and description the reviewers approved, and loom_pr refuses new ones. A change to them goes through loom_submit's pr, so it is reviewed.";
   if (a.fix) {
     const text = a.changes === true ? ", then sets the title and description you proposed with loom_submit, which the reviewers approved" : ", and keeps the pull request's title and description";
     return {
