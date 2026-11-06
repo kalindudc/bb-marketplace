@@ -127,6 +127,10 @@ describe("stepSummary", () => {
     expect(stepSummary("prBatch", read)).toEqual({ ok: false, text: "#4 is merged on main.\ngh found no pull request #5 in o/r" });
     expect(stepSummary("ensureBranch", { sha: "base000", created: true })).toEqual({ ok: true, text: "Created the branch at base000." });
     expect(stepSummary("refTip", { outcome: "missing", message: "no such ref" })).toEqual({ ok: true, text: "no such ref" });
+    expect(stepSummary("carryFinish", { outcome: "foreign", paths: ["a.ts", "b.ts"] })).toEqual({ ok: false, text: "The worktree has changes the copy did not make, so Loom committed nothing:\na.ts\nb.ts" });
+    expect(stepSummary("carryAbort", { clean: false, kept: ["notes.txt"] })).toEqual({ ok: true, text: "Took back what the copy wrote, and kept what someone else changed:\nnotes.txt" });
+    expect(stepSummary("carryAbort", {})).toEqual({ ok: true, text: "Took back what the copy wrote." });
+    expect(stepSummary("prReady", { outcome: "ok" })).toEqual({ ok: true, text: "Marked the pull request ready for review." });
     expect(stepSummary("carryFinish", { outcome: "mismatch", tree: "t2" })).toEqual({ ok: false, text: "After the copy the worktree had the tree t2, not the one sent, so Loom reset it to the base." });
   });
 });

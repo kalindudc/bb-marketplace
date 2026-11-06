@@ -148,9 +148,12 @@ const SUMMARIES: { [M in Exclude<HostMethod, "exec">]: (output: HostOutput<M>) =
   carryDelete: () => done("Deleted the files."),
   repoPrefix: ({ prefix }) => done(prefix === "" ? "The checkout is the repository's top level." : `The checkout is ${prefix} in its repository.`),
   conflictMarkers: ({ files }) => (files.length === 0 ? done("No conflict markers left.") : { ok: false, text: listed("Conflict markers left in:", files) }),
-  carryAbort: () => done("The worktree is back at the base."),
-  carryFinish: (finished) =>
-    finished.outcome === "ok" ? done(`Committed ${sha12(finished.head)}.`) : { ok: false, text: `After the copy the worktree had the tree ${sha12(finished.tree)}, not the one sent, so Loom reset it to the base.` },
+  carryAbort: ({ kept }) => done(kept === undefined || kept.length === 0 ? "Took back what the copy wrote." : listed("Took back what the copy wrote, and kept what someone else changed:", kept)),
+  carryFinish: (finished) => {
+    if (finished.outcome === "ok") return done(`Committed ${sha12(finished.head)}.`);
+    if (finished.outcome === "foreign") return { ok: false, text: listed("The worktree has changes the copy did not make, so Loom committed nothing:", finished.paths) };
+    return { ok: false, text: `After the copy the worktree had the tree ${sha12(finished.tree)}, not the one sent, so Loom reset it to the base.` };
+  },
   refTip: (tip) => {
     if (tip.outcome !== "ok") return done(tip.message);
     const contains = tip.contains === undefined ? "" : tip.contains ? "; it contains the commit asked about" : "; it does not contain the commit asked about";
@@ -179,6 +182,7 @@ const SUMMARIES: { [M in Exclude<HostMethod, "exec">]: (output: HostOutput<M>) =
     return done(read.sha === null ? "The remote has no such branch." : `The remote branch is at ${sha12(read.sha)}.`);
   },
   pointRefs: () => done("Moved the refs."),
+  prReady: (marked) => (marked.outcome === "ok" ? done("Marked the pull request ready for review.") : { ok: false, text: marked.message }),
   prEdit: (edited) => (edited.outcome === "ok" ? done("Set the title and description.") : { ok: false, text: edited.message }),
   prReply: (replied) => {
     if (replied.outcome !== "ok") return { ok: false, text: replied.message };
