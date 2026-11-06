@@ -8,7 +8,7 @@
 // runs again after 1, 2, 5 and 10 minutes, then every 15, and pauses the project only once it has failed for an hour.
 import type { TicketRow } from "./db/store";
 import { formatDuration, plural } from "./format";
-import { readSub, type MergeWait, type PollWait } from "./sub-state";
+import { readSub, type RetryWait, type PollWait } from "./sub-state";
 
 export const POLL_MS = 5 * 60_000;
 const LONGEST_POLL_MS = 30 * 60_000;
@@ -69,13 +69,13 @@ export const PROJECT_MACHINE = "the project's machine";
 const MERGE_RETRY_MS = [1, 2, 5, 10, 15].map((minutes) => minutes * 60_000);
 const LONGEST_MERGE_RETRY_MS = MERGE_RETRY_MS.at(-1)!;
 
-export const mergeWaitOf = (ticket: Pick<TicketRow, "merge_wait_json">): MergeWait | null => readSub(ticket, "merge_wait_json");
+export const mergeWaitOf = (ticket: Pick<TicketRow, "merge_wait_json">): RetryWait | null => readSub(ticket, "merge_wait_json");
 
 /** Whether the ticket's merge waits now. */
 export const mergeWaits = (ticket: Pick<TicketRow, "merge_wait_json">, now: number): boolean => (mergeWaitOf(ticket)?.until ?? 0) > now;
 
 /** The wait after one more failure: 1, 2, 5, 10, then 15 minutes; after a rate limit at least 15 minutes, and never before the time the forge named. */
-export function nextMergeWait(previous: MergeWait | null, a: Transient & { now: number; message: string }): MergeWait {
+export function nextMergeWait(previous: RetryWait | null, a: Transient & { now: number; message: string }): RetryWait {
   const failures = (previous?.failures ?? 0) + 1;
   const step = MERGE_RETRY_MS[Math.min(failures, MERGE_RETRY_MS.length) - 1]!;
   const delay = a.transient === "rate_limit" ? Math.max(step, FIRST_BACKOFF_MS, a.retryAfterMs ?? 0) : step;
@@ -83,15 +83,15 @@ export function nextMergeWait(previous: MergeWait | null, a: Transient & { now: 
 }
 
 /** Whether the failures have gone on long enough to pause the project. */
-export const mergeWaitExpired = (wait: MergeWait, now: number): boolean => now - wait.since >= SERVER_ERROR_LIMIT_MS;
+export const mergeWaitExpired = (wait: RetryWait, now: number): boolean => now - wait.since >= SERVER_ERROR_LIMIT_MS;
 
 /** The ticket post that starts a streak of failed merges; later failures in it post nothing. `what` is the step, such as "Merging CSV-1". */
-export function mergeWaitText(what: string, wait: MergeWait, now: number): string {
+export function mergeWaitText(what: string, wait: RetryWait, now: number): string {
   return `${what} failed with what looks like a temporary error: ${clause(wait.message)}. Loom tries again in ${formatDuration(wait.until - now)}, waiting longer after each failure up to ${formatDuration(LONGEST_MERGE_RETRY_MS)}, and pauses the project only if it keeps failing for ${formatDuration(SERVER_ERROR_LIMIT_MS)}.`;
 }
 
 /** Why the project pauses once the step has failed for SERVER_ERROR_LIMIT_MS. */
-export function mergeWaitReason(what: string, wait: MergeWait, now: number): string {
+export function mergeWaitReason(what: string, wait: RetryWait, now: number): string {
   return `${what} failed ${plural(wait.failures, "time")} in a row over ${formatDuration(now - wait.since)}: ${clause(wait.message)}. Resume once the project's machine and the forge answer again.`;
 }
 

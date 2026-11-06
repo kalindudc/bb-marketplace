@@ -6,7 +6,7 @@ import { workerOf, specOf, type EngineCtx } from "./ctx";
 import { repoCheckout, ticketRepo } from "./checkouts";
 import type { ProjectRow, ReviewRow, Store, ThreadRow, TicketRow } from "./db/store";
 import { spawnEnvironment, threadBranch, ticketInputsOf, usesNewMachine } from "./environments";
-import { writeSub, type MergeWait, type StartWait } from "./sub-state";
+import { writeSub, type RetryWait, type StartWait } from "./sub-state";
 import { hostCallTransient, mergeWaitExpired, mergeWaitReason, mergeWaitText, nextMergeWait } from "./forge-waits";
 import { plural } from "./format";
 import { changesRequestedText, findingsList, reviewerBrief, reviewerNudgeText, withRestoredNote } from "./prompts";
@@ -270,7 +270,7 @@ async function startReviewers(ctx: EngineCtx, project: ProjectRow, spec: Spec, t
 }
 
 // The waits of diff reads whose host call got no answer, by ticket and head. In memory: a restart reads again at once.
-const diffWaits = new WeakMap<Store, Map<number, { head: string; wait: MergeWait }>>();
+const diffWaits = new WeakMap<Store, Map<number, { head: string; wait: RetryWait }>>();
 const diffWaitsOf = (store: Store) => diffWaits.get(store) ?? diffWaits.set(store, new Map()).get(store)!;
 
 /**

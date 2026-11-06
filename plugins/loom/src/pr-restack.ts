@@ -19,8 +19,9 @@ import { restoredSinceSubmit } from "./release";
 import { carryTo, homeBranch, isRemote, reviewedRef } from "./transport";
 import { baseOf, resolveEnvironment } from "./workers";
 import { tryMoveTicket } from "./moves";
-import { addMergePost, errText, sendBack, unavailableOf } from "./merge-common";
+import { errText, sendBack, unavailableOf } from "./merge-common";
 import { afterMergePost } from "./merge-integration";
+import { loomPost } from "./posts";
 
 /** A restack that brought the branch up to date: the ticket as it is now, what it took, and whether it merged something and ran the checks on it, false when the head had it all already. */
 /** `sources`: what the merge took, by branch or remote ref, for a commit subject. */
@@ -62,7 +63,7 @@ export async function restack(ctx: EngineCtx, project: ProjectRow, spec: Spec, t
   if (built.outcome === "conflict") {
     store.tx(() => {
       store.updateTicket(ticket.id, writeSub("stack_json", { ...known, conflict: { on: need.deps, files: built.files } }));
-      addMergePost(ctx, ticket, { body: `Loom cannot bring ${ticket.key} up to date: ${what} conflict with each other in ${built.files.join(", ")}. It stays as it is until one of them changes.`, data: { outcome: "restack_conflict", files: built.files } });
+      loomPost(ctx.store, ticket, { kind: "merge", body: `Loom cannot bring ${ticket.key} up to date: ${what} conflict with each other in ${built.files.join(", ")}. It stays as it is until one of them changes.`, data: { outcome: "restack_conflict", files: built.files } });
     });
     store.changed(project.id);
     return "skipped";
@@ -226,7 +227,7 @@ export async function finishStep(ctx: EngineCtx, project: ProjectRow, spec: Spec
       ...stacked,
       ...(text.by === "worker" ? writeSub("pr_text_json", { ...text, head: step.sha }) : {}),
     });
-    addMergePost(ctx, ticket, { body: `Merged ${took} into ${ticket.key}'s branch as ${step.sha.slice(0, 12)}${where}${passed}.`, data: { outcome: "restacked", sha: step.sha, ...step.data, runs: runs.map(({ command, exitCode, timedOut, durationMs }) => ({ command, exitCode, timedOut, durationMs })) } });
+    loomPost(ctx.store, ticket, { kind: "merge", body: `Merged ${took} into ${ticket.key}'s branch as ${step.sha.slice(0, 12)}${where}${passed}.`, data: { outcome: "restacked", sha: step.sha, ...step.data, runs: runs.map(({ command, exitCode, timedOut, durationMs }) => ({ command, exitCode, timedOut, durationMs })) } });
   });
   store.changed(project.id);
   return store.ticket(ticket.id)!;
@@ -251,7 +252,8 @@ async function worktreeGone(ctx: EngineCtx, ticket: TicketRow, row: ThreadRow, w
     tryMoveTicket(store, current.id, { name: from === "pr_open" ? "restack_left" : "merge_left" }, LOOM_ACTOR, { reason: "the worker's worktree is gone" });
     // Waking: still active, with no environment, which advanceWakes restores or gives up on.
     store.updateThread(worker.id, { released_at: ctx.now(), environment_id: null, clock_at: ctx.now(), idle_count: 0 });
-    addMergePost(ctx, current, {
+    loomPost(ctx.store, current, {
+      kind: "merge",
       body: `${current.key} must take ${what} before Loom pushes it, and bb shows no worktree for its worker any more, as when its environment expired. It leaves the merge queue meanwhile, so the other tickets merge: Loom brings the worker's environment back when bb can restore it, and otherwise a new worker takes ${current.key} from its branch.`,
       data: { outcome: "worktree_gone", back: from },
     });
@@ -395,7 +397,8 @@ async function mergedHome(ctx: EngineCtx, project: ProjectRow, checkout: RepoChe
   store.tx(() => {
     store.updateTicket(ticket.id, { head_sha: merged.sha, head_tree: merged.tree, pushed_sha: tip, pushed_at: ctx.now() });
     if (!sameTree) store.updateThread(worker.id, writeSub("resume_json", { sha: merged.sha, tree: merged.tree, ...(ticket.head_tree === null ? {} : { replaces: ticket.head_tree }) }));
-    addMergePost(ctx, ticket, {
+    loomPost(ctx.store, ticket, {
+      kind: "merge",
       body: sameTree
         ? `Merged ${TIP_WHAT} (tip ${tip.slice(0, 12)}) into ${ticket.key} as ${merged.sha.slice(0, 12)} on the project's machine. They add nothing the approved work lacks, so the tree is unchanged, and Loom pushes it from there without touching the worker's worktree.`
         : `Merged ${TIP_WHAT} (tip ${tip.slice(0, 12)}) into ${ticket.key} as ${merged.sha.slice(0, 12)} on the project's machine, cleanly, and Loom pushes it from there for the pull request's CI to check. The worker's worktree is left as it is; loom_resume puts the merge in it before the worker's next submit.`,

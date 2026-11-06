@@ -14,6 +14,7 @@ import { canReady, repoSettings } from "./repos";
 import type { Spec } from "./spec";
 import { HUMAN_ACTOR, LOOM_ACTOR } from "./states";
 import { specOf, type EngineCtx } from "./ctx";
+import { mergePostNow } from "./posts";
 
 /** Loom marked the pull request at `url` ready for review, or tried and was refused; it never tries again for that pull request. */
 export const MARKED_READY = "ticket.pr_marked_ready";
@@ -43,11 +44,6 @@ export function releaseRequestOf(store: Store, ticket: TicketRow): { at: number;
 }
 
 const markedFor = (store: Store, ticket: TicketRow) => store.ticketEvents(ticket.id, [MARKED_READY]).some((event) => parse(event).url === ticket.pr_url);
-
-function addPost(ctx: EngineCtx, ticket: TicketRow, body: string, data: object): void {
-  ctx.store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "merge", body, data_json: JSON.stringify(data) });
-  ctx.store.changed(ticket.project_id);
-}
 
 /** The forge call that marks `url` ready, through a checkout looked up before it. */
 async function dispatchReady(ctx: EngineCtx, checkout: RepoCheckout, url: string): Promise<HostOutput<"prReady">> {
@@ -129,7 +125,7 @@ export async function followDraft(ctx: EngineCtx, project: ProjectRow, ticketId:
       store.event(project.id, ticketId, MARKED_READY, LOOM_ACTOR, { url });
       notDraft(ctx, now);
       const held = now.keep_draft === 1 ? " The human held it as a draft while Loom did so, so it is ready for review now anyway; make it a draft again on the forge if it must wait." : "";
-      addPost(ctx, now, `Marked ${url} ready for review: the ticket does not keep its pull request a draft.${held}`, { outcome: "pr_marked_ready", url });
+      mergePostNow(ctx.store, now, `Marked ${url} ready for review: the ticket does not keep its pull request a draft.${held}`, { outcome: "pr_marked_ready", url });
       return true;
     }
     if (answer.transient !== undefined) {
@@ -137,7 +133,7 @@ export async function followDraft(ctx: EngineCtx, project: ProjectRow, ticketId:
       return false;
     }
     store.event(project.id, ticketId, MARKED_READY, LOOM_ACTOR, { url, failed: true });
-    addPost(ctx, now, `Loom could not mark ${url} ready for review: ${answer.message}. It stays a draft until someone marks it ready on the forge.`, { outcome: "pr_not_marked_ready", url });
+    mergePostNow(ctx.store, now, `Loom could not mark ${url} ready for review: ${answer.message}. It stays a draft until someone marks it ready on the forge.`, { outcome: "pr_not_marked_ready", url });
     return false;
   } finally {
     claims.delete(ticketId);
@@ -187,7 +183,7 @@ export async function releaseDraft(ctx: EngineCtx, key: string): Promise<string>
   } finally {
     claims.delete(ticket.id);
   }
-  addPost(ctx, ticket, `Released ${url} from draft: it is ready for review, and Loom asks for reviewers at its next read.`, { outcome: "draft_released", url });
+  mergePostNow(ctx.store, ticket, `Released ${url} from draft: it is ready for review, and Loom asks for reviewers at its next read.`, { outcome: "draft_released", url });
   return `Released ${url} from draft; it is ready for review now.`;
 }
 

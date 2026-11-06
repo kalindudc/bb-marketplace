@@ -15,6 +15,7 @@ import { LOOM_ACTOR } from "./states";
 import { deliverHandBacks, handBack } from "./slots";
 import { endLiveRows, endThread } from "./workers";
 import { moveTicket, tryMoveTicket } from "./moves";
+import { loomPost } from "./posts";
 
 export const errText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
@@ -25,10 +26,6 @@ export function holdOpens(spec: Spec, ticket: TicketRow, hold: Hold, fresh = "")
   if (hold.why === "push") return `Its ${fresh}pull request opens once ${keys} has a pull request again.`;
   const { remote, base } = repoSettings(spec, ticket.repo);
   return `Its ${fresh}pull request opens on ${keys}'s branch once Loom has merged ${remote}/${base}, which has the dependencies that merged since, into that branch.`;
-}
-
-export function addMergePost(ctx: EngineCtx, ticket: TicketRow, post: { body: string; data: object }): void {
-  ctx.store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "merge", body: post.body, data_json: JSON.stringify(post.data) });
 }
 
 /** Ends the worker and reviewer threads of a ticket that is done, or blocked because its pull request closed. Replays what a crash after the ticket's move left undone. */
@@ -75,7 +72,7 @@ export function complete(ctx: EngineCtx, ticketId: number, post: MergePost): voi
   store.tx(() => {
     const ticket = store.ticket(ticketId)!;
     moveTicket(store, ticketId, { name: "merged" }, LOOM_ACTOR, { ...post.data });
-    store.addPost({ project_id: ticket.project_id, ticket_id: ticketId, parent_id: null, author_kind: "loom", author_thread_id: null, kind: post.kind, body: post.body, data_json: JSON.stringify(post.data) });
+    loomPost(store, ticket, post);
   });
   store.changed(store.ticket(ticketId)!.project_id);
   ctx.kick();
@@ -93,7 +90,7 @@ export async function sendBack(ctx: EngineCtx, ticketId: number, a: { post: Merg
   const applied = store.tx(() => {
     const ticket = store.ticket(ticketId);
     if (ticket === null || ticket.state !== "merging") return false;
-    store.addPost({ project_id: ticket.project_id, ticket_id: ticketId, parent_id: null, author_kind: "loom", author_thread_id: null, kind: a.post.kind, body: a.post.body, data_json: JSON.stringify(a.post.data) });
+    loomPost(store, ticket, a.post);
     if (a.countFailure) {
       failures = ticket.check_failures + 1;
       store.updateTicket(ticketId, { check_failures: failures });
@@ -112,7 +109,7 @@ export async function sendBack(ctx: EngineCtx, ticketId: number, a: { post: Merg
     const reason = `checks failed ${plural(failures, "time")}`;
     store.tx(() => {
       store.updateTicket(ticketId, { blocked_reason: reason, handback_json: null });
-      store.addPost({ project_id: ticket.project_id, ticket_id: ticketId, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "block", body: reason, data_json: JSON.stringify({ reason, needs: "" }) });
+      loomPost(store, ticket, { kind: "block", body: reason, data: { reason, needs: "" } });
     });
     await endLiveRows(ctx, store.ticket(ticketId)!, "blocked");
     return;
@@ -127,14 +124,10 @@ export function toPrOpen(ctx: EngineCtx, ticketId: number, patch: Partial<Ticket
   store.tx(() => {
     const ticket = store.ticket(ticketId)!;
     moveTicket(store, ticketId, { name: "pr_pushed", set: patch }, LOOM_ACTOR, data);
-    for (const each of posts) store.addPost({ project_id: ticket.project_id, ticket_id: ticketId, parent_id: null, author_kind: "loom", author_thread_id: null, kind: each.kind, body: each.body, data_json: JSON.stringify(each.data) });
+    for (const each of posts) loomPost(store, ticket, each);
   });
   store.changed(store.ticket(ticketId)!.project_id);
 }
 
 export const openForge = (forge: ForgeSpec): HostInput<"prCreate">["forge"] => (forge.kind === "command" ? { kind: "command", open: forge.open! } : { kind: "gh" });
-export function addWaitPost(ctx: EngineCtx, ticket: TicketRow, body: string, data: object): void {
-  ctx.store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "system", body, data_json: JSON.stringify(data) });
-}
-
 export const unavailable = (message: string) => new LoomError("loom_unavailable", message);

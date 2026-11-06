@@ -17,8 +17,9 @@ import type { ForgeSpec, Spec } from "./spec";
 import { type PrMeta, writeSub } from "./sub-state";
 import { pauseProject } from "./workers";
 import { specOf, type EngineCtx } from "./ctx";
-import { addWaitPost, complete, endFinishedThreads, errText } from "./merge-common";
+import { complete, endFinishedThreads, errText } from "./merge-common";
 import { blockMergedElsewhere, closedPullRequest } from "./pr-closed";
+import { loomPost } from "./posts";
 
 /** A poll's closed read: closedPullRequest, with a failed read of the remote waited out or pausing the project as a failed poll would. */
 async function settleClosed(ctx: EngineCtx, project: ProjectRow, settings: RepoSettings, ticket: TicketRow, target: string | null): Promise<void> {
@@ -166,7 +167,7 @@ function waitOutServerError(ctx: EngineCtx, ticket: TicketRow, message: string, 
   const wait = nextPollWait(previous, { now, message });
   store.tx(() => {
     store.updateTicket(ticket.id, writeSub("pr_poll_json", wait));
-    if (previous === null) addWaitPost(ctx, ticket, pollWaitText(wait, forge), { prReadFailed: true, failures: wait.failures });
+    if (previous === null) loomPost(ctx.store, ticket, { kind: "system", body: pollWaitText(wait, forge), data: { prReadFailed: true, failures: wait.failures } });
   });
   store.changed(ticket.project_id);
   ctx.bb.log("warn", `Reading ${ticket.key}'s pull request failed ${plural(wait.failures, "time")} in a row: ${message}`);
@@ -178,7 +179,7 @@ function backOff(ctx: EngineCtx, ticket: TicketRow, host: string, failure: { mes
   const now = ctx.now();
   const backoff = nextBackoff(ctx.forgeBackoffs.get(host), { now, message: failure.message, retryAfterMs: failure.retryAfterMs });
   ctx.forgeBackoffs.set(host, backoff);
-  addWaitPost(ctx, ticket, backoffText(host, backoff, now, forge), { rateLimited: true, host, until: backoff.until });
+  loomPost(ctx.store, ticket, { kind: "system", body: backoffText(host, backoff, now, forge), data: { rateLimited: true, host, until: backoff.until } });
   ctx.bb.log("warn", `${host} rate-limited Loom's pull request reads, so none goes there until ${new Date(backoff.until).toISOString()}: ${failure.message}`);
 
 }
@@ -195,7 +196,7 @@ function waitOutNetworkError(ctx: EngineCtx, ticket: TicketRow, host: string, me
   ctx.forgeBackoffs.set(host, backoff);
   const { failures, since } = backoff.network;
   if (failures === 1) {
-    addWaitPost(ctx, ticket, networkWaitText(host, backoff), { networkFailed: true, host, until: backoff.until });
+    loomPost(ctx.store, ticket, { kind: "system", body: networkWaitText(host, backoff), data: { networkFailed: true, host, until: backoff.until } });
     ctx.store.changed(ticket.project_id);
   }
   ctx.bb.log("warn", `Reading pull requests on ${host} failed ${plural(failures, "time")} in a row with a network error, so none goes there until ${new Date(backoff.until).toISOString()}: ${message}`);

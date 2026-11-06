@@ -8,6 +8,7 @@ import type { RepoSettings } from "./repos";
 import { LOOM_ACTOR } from "./states";
 import { type EngineCtx } from "./ctx";
 import { errText } from "./merge-common";
+import { loomPost } from "./posts";
 
 /** A forge hook's run: where, for which pull request and ticket, and the branches its LOOM_HEAD and LOOM_BASE name. */
 type HookArgs = { hostId: string; repo: string; settings: RepoSettings; head: string; base: string; url: string; projectId: number; ticketId: number | null };
@@ -80,7 +81,7 @@ async function forgeHooks(ctx: EngineCtx, a: HookArgs, hook: "after_open" | "aft
       ctx.store.event(a.projectId, null, `project.${hook}_failed`, LOOM_ACTOR, data);
       ctx.bb.log("warn", body);
     } else {
-      ctx.store.addPost({ project_id: a.projectId, ticket_id: a.ticketId, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "merge", body, data_json: JSON.stringify(data) });
+      loomPost(ctx.store, { id: a.ticketId, project_id: a.projectId }, { kind: "merge", body, data });
     }
     ctx.store.changed(a.projectId);
     if (rest.length > 0) return;

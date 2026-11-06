@@ -25,6 +25,7 @@ import type { Spec } from "./spec";
 import { SpawnRefusedError } from "./ports";
 import { HUMAN_ACTOR, LOOM_ACTOR } from "./states";
 import { specOf, type EngineCtx } from "./ctx";
+import { mergePostNow } from "./posts";
 
 export const FINAL_STARTED = "ticket.final_review_started";
 export const FINAL_BOUND = "ticket.final_review_bound";
@@ -236,11 +237,6 @@ export function finalBadge(store: Store, spec: Spec, ticket: TicketRow): FinalBa
   return { state: "waiting", reason: null };
 }
 
-function addPost(ctx: EngineCtx, ticket: TicketRow, body: string, data: object): void {
-  ctx.store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "merge", body, data_json: JSON.stringify(data) });
-  ctx.store.changed(ticket.project_id);
-}
-
 /** Makes the ticket's pull request due for its next read now, and wakes the loop: a final review's verdict or end acts at once. */
 function readSoon(ctx: EngineCtx, ticketId: number): void {
   const ticket = ctx.store.ticket(ticketId);
@@ -330,11 +326,11 @@ function endRun(ctx: EngineCtx, ticket: TicketRow, run: FinalRun, why: string, m
   ctx.store.event(ticket.project_id, ticket.id, FINAL_ENDED, LOOM_ACTOR, { run: run.id, sha: run.sha, why, ...(message === null ? {} : { message: clip(message, 1000) }) });
   if (why === "superseded" || why === "refused") return;
   if (!COUNTED.has(why)) {
-    addPost(ctx, ticket, `Loom stopped its final review of ${run.url} on ${run.sha.slice(0, 12)}: ${message ?? why}. It starts a new one once the pull request is ready to merge again.`, { outcome: "final_review_stopped", url: run.url, sha: run.sha, why });
+    mergePostNow(ctx.store, ticket, `Loom stopped its final review of ${run.url} on ${run.sha.slice(0, 12)}: ${message ?? why}. It starts a new one once the pull request is ready to merge again.`, { outcome: "final_review_stopped", url: run.url, sha: run.sha, why });
     return;
   }
   const left = FINAL_TRIES - finalState(ctx.store, ticket.id, run.sha).unfinished.length;
-  addPost(ctx, ticket, `Loom's final review of ${run.url} on ${run.sha.slice(0, 12)} ended without a verdict: ${message ?? why}. It does not merge without one${left > 0 ? `, and tries again in ${Math.round((FINAL_RETRY_MS * (FINAL_TRIES - left)) / 60_000)} minutes` : ""}.`, { outcome: "final_review_unfinished", url: run.url, sha: run.sha, why });
+  mergePostNow(ctx.store, ticket, `Loom's final review of ${run.url} on ${run.sha.slice(0, 12)} ended without a verdict: ${message ?? why}. It does not merge without one${left > 0 ? `, and tries again in ${Math.round((FINAL_RETRY_MS * (FINAL_TRIES - left)) / 60_000)} minutes` : ""}.`, { outcome: "final_review_unfinished", url: run.url, sha: run.sha, why });
 }
 
 /**
@@ -461,7 +457,7 @@ function hold(ctx: EngineCtx, project: ProjectRow, ticket: TicketRow, sha: strin
     reason === "partial"
       ? `\`bb loom auto-merge ${project.slug} accept --ticket ${ticket.key}\` lets it merge on this review, and \`retry\` runs a new one.`
       : `\`bb loom auto-merge ${project.slug} retry --ticket ${ticket.key}\` lets it try again.`;
-  addPost(ctx, ticket, `${body} ${next}`, { outcome: "final_review_held", url: ticket.pr_url, sha, reason, ...more });
+  mergePostNow(ctx.store, ticket, `${body} ${next}`, { outcome: "final_review_held", url: ticket.pr_url, sha, reason, ...more });
 }
 
 /**
@@ -833,7 +829,7 @@ async function startRun(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket:
     // Configure may have bound the thread through its token already.
     if (finalState(store, ticket.id, sha).all.find((each) => each.id === run.id)?.thread === null) store.event(ticket.project_id, ticket.id, FINAL_BOUND, LOOM_ACTOR, { run: run.id, thread: spawned.threadId });
     const what = delta.same ? "nothing in the code changed since the reviewers approved it" : `${count(delta.own.length, "of the pull request's own file")} changed since the approval`;
-    addPost(ctx, now, `Loom started its final review of ${url} on ${sha.slice(0, 12)}: ${what}${brief.incomplete.length === 0 ? "" : `; its brief is incomplete (${brief.incomplete.join("; ")})`}. It merges only once the review passes.`, { outcome: "final_review_started", url, sha, same: delta.same, incomplete: brief.incomplete });
+    mergePostNow(ctx.store, now, `Loom started its final review of ${url} on ${sha.slice(0, 12)}: ${what}${brief.incomplete.length === 0 ? "" : `; its brief is incomplete (${brief.incomplete.join("; ")})`}. It merges only once the review passes.`, { outcome: "final_review_started", url, sha, same: delta.same, incomplete: brief.incomplete });
   } catch (error) {
     if (finalState(store, ticket.id, sha).open?.id === run.id) endRun(ctx, now, run, "start", `bb could not start the reviewer: ${errText(error)}`);
   } finally {
@@ -896,8 +892,8 @@ export function finalVerdict(ctx: EngineCtx, threadId: string, a: { verdict: "pa
   if (a.verdict === "fail" && reason === "") throw new Error("A failed review needs a reason: what broke, and where.");
   const fixable = a.verdict === "fail" && a.fixable !== false;
   store.event(ticket.project_id, ticket.id, FINAL_VERDICT, LOOM_ACTOR, { run: run.id, sha: run.sha, pass: a.verdict === "pass", reason, fixable });
-  addPost(
-    ctx,
+  mergePostNow(
+    ctx.store,
     ticket,
     a.verdict === "pass"
       ? `Loom's final review passed ${run.sha.slice(0, 12)}${reason === "" ? "" : `: ${clip(reason, 1500)}`}. Loom counts it once the reviewer has stopped and the repo's checkout is unchanged.`

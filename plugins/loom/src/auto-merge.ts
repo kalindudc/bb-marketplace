@@ -19,6 +19,7 @@ import { HUMAN_ACTOR, LOOM_ACTOR } from "./states";
 import { draftStateOf } from "./drafts";
 import { LoomError } from "./projects";
 import { specOf, type EngineCtx } from "./ctx";
+import { mergePostNow } from "./posts";
 
 export const MERGE_ATTEMPT = "ticket.merge_attempt";
 export const MERGE_OUTCOME = "ticket.merge_outcome";
@@ -174,11 +175,6 @@ function verdictHolds(entry: MergeEntry | undefined, settings: AutoMergeSettings
   return holds;
 }
 
-function addPost(ctx: EngineCtx, ticket: TicketRow, body: string, data: object): void {
-  ctx.store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "merge", body, data_json: JSON.stringify(data) });
-  ctx.store.changed(ticket.project_id);
-}
-
 function outcome(ctx: EngineCtx, ticket: TicketRow, attempt: MergeAttempt, result: Outcome, message: string | null = null): void {
   ctx.store.event(ticket.project_id, ticket.id, MERGE_OUTCOME, LOOM_ACTOR, { attempt: attempt.id, n: attempt.n, url: attempt.url, sha: attempt.sha, outcome: result, ...(message === null ? {} : { message: clip(message, 2000) }) });
 }
@@ -310,8 +306,8 @@ function noteConfirm(ctx: EngineCtx, ticket: TicketRow): void {
   const key = confirmKey(ticket);
   if (ctx.store.ticketEvents(ticket.id, [MERGE_HELD]).some((event) => parse(event).key === key)) return;
   ctx.store.event(ticket.project_id, ticket.id, MERGE_HELD, LOOM_ACTOR, { key, holds: ["the human has not confirmed the merge"] });
-  addPost(
-    ctx,
+  mergePostNow(
+    ctx.store,
     ticket,
     `${ticket.key}'s pull request is ready to merge at ${ticket.pushed_sha}. auto_merge.mode is manual, so Loom waits for you to confirm the merge of that commit: use Confirm merge on the ticket or its card.`,
     { outcome: "auto_merge_confirm", url: ticket.pr_url, sha: ticket.pushed_sha },
@@ -474,7 +470,7 @@ function noteHold(ctx: EngineCtx, ticket: TicketRow, holds: MergeHold[]): void {
   const key = `${ticket.pushed_sha}:${quiet.map((hold) => hold.why).join(",")}`;
   if (ctx.store.ticketEvents(ticket.id, [MERGE_HELD]).some((event) => parse(event).key === key)) return;
   ctx.store.event(ticket.project_id, ticket.id, MERGE_HELD, LOOM_ACTOR, { key, holds: quiet.map((hold) => hold.text) });
-  addPost(ctx, ticket, `${ticket.key}'s pull request is ready to merge, but ${andList(quiet.map((hold) => hold.text))}, so Loom waits before it asks to merge it.`, { outcome: "auto_merge_held", url: ticket.pr_url, holds: quiet.map((hold) => hold.text) });
+  mergePostNow(ctx.store, ticket, `${ticket.key}'s pull request is ready to merge, but ${andList(quiet.map((hold) => hold.text))}, so Loom waits before it asks to merge it.`, { outcome: "auto_merge_held", url: ticket.pr_url, holds: quiet.map((hold) => hold.text) });
 }
 
 /** An item's identity across edits: the stable id the forge gives, else its key, which a forge may change when it is edited. */
@@ -545,7 +541,7 @@ async function settleAnswer(ctx: EngineCtx, project: ProjectRow, ticketId: numbe
   if (now.open?.id !== attempt.id) {
     const why = now.last?.outcome === "cleared" && now.open === null ? "after it was cleared" : "after a newer push or attempt replaced it";
     const said = answer.outcome === "ok" ? "the forge took it" : answer.outcome === "rejected" ? `the forge turned it away: ${clip(answer.message, 1500)}` : `the call failed: ${clip(answer.message, 1500)}`;
-    addPost(ctx, ticket, `The answer to Loom's merge of ${url} (${tries}) came ${why}, so Loom does not act on it: ${said}. It follows the pull request as it is now.`, { outcome: "auto_merge_late", url, n, attempt: attempt.id, answer: answer.outcome });
+    mergePostNow(ctx.store, ticket, `The answer to Loom's merge of ${url} (${tries}) came ${why}, so Loom does not act on it: ${said}. It follows the pull request as it is now.`, { outcome: "auto_merge_late", url, n, attempt: attempt.id, answer: answer.outcome });
     return;
   }
   // A comment or a command may have gone out whatever the answer says, short of a definite refusal, so it is never sent again
@@ -558,7 +554,7 @@ async function settleAnswer(ctx: EngineCtx, project: ProjectRow, ticketId: numbe
   if (answer.outcome === "ok") {
     const direct = settings.method === "squash" || settings.method === "merge" || settings.method === "rebase";
     store.event(ticket.project_id, ticket.id, MERGE_ANSWERED, LOOM_ACTOR, { attempt: attempt.id });
-    addPost(ctx, ticket, `Loom ${METHOD_TEXT[settings.method]} for ${url} (${tries}), because its Ready to merge verdict holds.${direct ? " The next read of the pull request completes the ticket." : " Loom watches the pull request for the merge."}`, { outcome: "auto_merge_asked", url, sha, method: settings.method, n });
+    mergePostNow(ctx.store, ticket, `Loom ${METHOD_TEXT[settings.method]} for ${url} (${tries}), because its Ready to merge verdict holds.${direct ? " The next read of the pull request completes the ticket." : " Loom watches the pull request for the merge."}`, { outcome: "auto_merge_asked", url, sha, method: settings.method, n });
     // The next poll reads it at once, to see the merge.
     if (direct) store.updateTicket(ticket.id, { pr_checked_at: null });
     return;
@@ -568,7 +564,7 @@ async function settleAnswer(ctx: EngineCtx, project: ProjectRow, ticketId: numbe
     if (!repeatableMerge(settings.method)) return unknown(answer.message, "the forge answered with what looks like a temporary error, ran out of time or was stopped");
     const streak = before.last?.outcome === "failed";
     outcome(ctx, ticket, attempt, "failed", answer.message);
-    if (!streak) addPost(ctx, ticket, `Loom asked to merge ${url}, and the forge failed with what looks like a temporary error: ${answer.message}. gh merges a pull request at most once, so Loom asks again at the next read of the pull request; this does not use up an attempt.`, { outcome: "auto_merge_failed", url, n, transient: answer.transient });
+    if (!streak) mergePostNow(ctx.store, ticket, `Loom asked to merge ${url}, and the forge failed with what looks like a temporary error: ${answer.message}. gh merges a pull request at most once, so Loom asks again at the next read of the pull request; this does not use up an attempt.`, { outcome: "auto_merge_failed", url, n, transient: answer.transient });
     return;
   }
   outcome(ctx, ticket, attempt, "refused", answer.message);
@@ -580,8 +576,8 @@ async function settleAnswer(ctx: EngineCtx, project: ProjectRow, ticketId: numbe
 function unknownPost(ctx: EngineCtx, project: ProjectRow, ticket: TicketRow, settings: AutoMergeSettings, attempt: MergeAttempt, why: string, message: string | null): void {
   const what = settings.method === "comment" ? "comment was posted" : "merge command did its work";
   const again = settings.method === "comment" ? "post it" : "run it";
-  addPost(
-    ctx,
+  mergePostNow(
+    ctx.store,
     ticket,
     `Loom asked to merge ${attempt.url} (attempt ${attempt.n} of ${settings.maxAttempts}), ${why}, so it cannot tell whether the ${what}, and does not ${again} again. It keeps reading the pull request; once you have checked, \`bb loom auto-merge ${project.slug} retry --ticket ${ticket.key}\` lets it ask again.${message === null ? "" : `\n\n${clip(message, 1500)}`}`,
     { outcome: "auto_merge_unknown", url: attempt.url, n: attempt.n, attempt: attempt.id, ...(message === null ? {} : { message: clip(message, 2000) }) },
@@ -607,7 +603,7 @@ async function rejected(ctx: EngineCtx, project: ProjectRow, ticket: TicketRow, 
   const { base } = repoSettings(specOf(ctx.store, project), ticket.repo);
   const body = `Loom asked to merge the pull request (${which}), and ${who}:\n\n${text}\n\nFix what it names on your branch, such as merging ${base} in and resolving a conflict, or the test that failed, then submit. Loom asks to merge again once the pull request is ready.`;
   const feedback: FeedbackItem = { ...(item === undefined ? { key: `merge:${attempt.id}` } : { key: item.key }), kind: "comment", author: item?.author ?? "the merge", bot: true, body, url: item?.url ?? url, state: null, path: null, line: null };
-  addPost(ctx, ticket, `The merge of ${url} was turned away (${which}), so ${ticket.key} goes back to its worker:\n\n${clip(text, 1500)}`, { outcome: "auto_merge_rejected", url, n: attempt.n, fix: true, blocked: false });
+  mergePostNow(ctx.store, ticket, `The merge of ${url} was turned away (${which}), so ${ticket.key} goes back to its worker:\n\n${clip(text, 1500)}`, { outcome: "auto_merge_rejected", url, n: attempt.n, fix: true, blocked: false });
   await mergeFixRound(ctx, ctx.store.ticket(ticket.id)!, feedback, item === undefined ? [] : [item.key]);
 }
 
@@ -646,7 +642,7 @@ async function settleAttempt(ctx: EngineCtx, project: ProjectRow, ticket: Ticket
       if (removed.reason === "manual") {
         outcome(ctx, ticket, attempt, "stopped", "removed from the merge queue by a person");
         ctx.store.event(ticket.project_id, ticket.id, TICKET_AUTO_MERGE, LOOM_ACTOR, { on: false, why: "dequeued" });
-        addPost(ctx, ticket, `Someone removed ${ticket.pr_url} from the merge queue, so Loom stops merging it by itself. \`bb loom auto-merge ${project.slug} on --ticket ${ticket.key}\` lets it ask again.`, { outcome: "auto_merge_stopped", url: ticket.pr_url, reason: removed.reason });
+        mergePostNow(ctx.store, ticket, `Someone removed ${ticket.pr_url} from the merge queue, so Loom stops merging it by itself. \`bb loom auto-merge ${project.slug} on --ticket ${ticket.key}\` lets it ask again.`, { outcome: "auto_merge_stopped", url: ticket.pr_url, reason: removed.reason });
         return;
       }
       await rejected(ctx, project, ticket, settings, state, `GitHub's merge queue removed the pull request: ${removed.reason.replace(/_/g, " ")}.`, true, "the merge queue turned it away");
@@ -655,7 +651,7 @@ async function settleAttempt(ctx: EngineCtx, project: ProjectRow, ticket: Ticket
     if (queue.auto || age < UNCONFIRMED_MS) return;
   } else if (age < UNCONFIRMED_MS) return;
   outcome(ctx, ticket, attempt, "unconfirmed");
-  addPost(ctx, ticket, `Loom asked to merge ${ticket.pr_url} ${Math.round(age / 60_000)} minutes ago, and the pull request is still open${settings.method === "queue" ? ", neither in the merge queue nor set to merge" : ""}, so Loom asks again once it is ready.`, { outcome: "auto_merge_unconfirmed", url: ticket.pr_url, n: attempt.n });
+  mergePostNow(ctx.store, ticket, `Loom asked to merge ${ticket.pr_url} ${Math.round(age / 60_000)} minutes ago, and the pull request is still open${settings.method === "queue" ? ", neither in the merge queue nor set to merge" : ""}, so Loom asks again once it is ready.`, { outcome: "auto_merge_unconfirmed", url: ticket.pr_url, n: attempt.n });
 }
 
 /**

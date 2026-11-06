@@ -30,7 +30,8 @@ export type MergeVerdict =
   /** Merged while it targeted another ticket's pull request branch, which has not merged, so its change is not on the base. */
   | "merged_elsewhere";
 
-export interface MergeWait {
+/** A ticket whose pull request must merge before this one, and why. */
+export interface WaitsOn {
   key: string;
   why: "stacked" | "depends" | "merge_after";
   repo: string | null;
@@ -55,7 +56,7 @@ export interface MergeEntry {
   /** The open ticket whose pull request branch this one targets. */
   stackedOn: string | null;
   /** What it still waits on, the ticket it is stacked on first. */
-  waitsOn: MergeWait[];
+  waitsOn: WaitsOn[];
   /** The open tickets that wait on it. */
   unblocks: string[];
   checks: { passed: number; failed: number; pending: number } | null;
@@ -113,11 +114,11 @@ export function mergeOrderOf(spec: Spec, tickets: readonly TicketRow[], finals: 
     return parent === undefined || parent.id === ticket.id ? null : parent;
   };
   const open = (ticket: TicketRow | undefined): ticket is TicketRow => ticket !== undefined && !FINISHED.includes(ticket.state);
-  const waitsOf = (ticket: TicketRow): MergeWait[] => {
+  const waitsOf = (ticket: TicketRow): WaitsOn[] => {
     if (FINISHED.includes(ticket.state)) return [];
     const parent = parentOf(ticket);
-    const waits = new Map<string, MergeWait>();
-    const add = (other: TicketRow, why: MergeWait["why"]) => {
+    const waits = new Map<string, WaitsOn>();
+    const add = (other: TicketRow, why: WaitsOn["why"]) => {
       if (!waits.has(other.key)) waits.set(other.key, { key: other.key, why, repo: other.repo, prNumber: numberOf(other.pr_url) });
     };
     if (open(parent ?? undefined)) add(parent!, "stacked");

@@ -18,9 +18,10 @@ import { writeSub } from "./sub-state";
 import { isWaking, releasedWorker } from "./release";
 import { pauseProject } from "./workers";
 import { moveTicket } from "./moves";
-import { addMergePost, addWaitPost, endFinishedThreads, errText, holdOpens } from "./merge-common";
+import { endFinishedThreads, errText, holdOpens } from "./merge-common";
 import { loomWorktree, mergeIntoIntegration, provisioningRepos } from "./merge-integration";
 import { openPullRequest } from "./pr-open";
+import { loomPost } from "./posts";
 
 const guards = new WeakMap<Store, Set<number>>();
 
@@ -166,7 +167,7 @@ function postHolds(ctx: EngineCtx, projectId: number, spec: Spec): void {
     if (key === known?.held || (known === null && hold === null)) continue;
     store.tx(() => {
       store.updateTicket(ticket.id, writeSub("stack_json", { ...(known ?? EMPTY_STACK), held: key }));
-      if (hold !== null) addMergePost(ctx, ticket, { body: holdText(spec, ticket, hold), data: { outcome: "held", why: hold.why, keys: hold.keys } });
+      if (hold !== null) loomPost(ctx.store, ticket, { kind: "merge", body: holdText(spec, ticket, hold), data: { outcome: "held", why: hold.why, keys: hold.keys } });
     });
     store.changed(projectId);
   }
@@ -220,7 +221,7 @@ function waitOutMerge(ctx: EngineCtx, seen: TicketRow, message: string, failure:
   }
   store.tx(() => {
     store.updateTicket(ticket.id, writeSub("merge_wait_json", wait));
-    if (previous === null) addWaitPost(ctx, ticket, mergeWaitText(what, wait, now), { mergeFailed: true, failures: wait.failures, until: wait.until });
+    if (previous === null) loomPost(ctx.store, ticket, { kind: "system", body: mergeWaitText(what, wait, now), data: { mergeFailed: true, failures: wait.failures, until: wait.until } });
   });
   store.changed(ticket.project_id);
 }

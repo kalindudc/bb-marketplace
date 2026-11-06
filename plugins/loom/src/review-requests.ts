@@ -14,6 +14,7 @@ import { repoSettings } from "./repos";
 import type { ForgeSpec, ReviewerRuleSpec } from "./spec";
 import { LOOM_ACTOR } from "./states";
 import { specOf, type EngineCtx } from "./ctx";
+import { mergePostNow } from "./posts";
 
 export const REVIEWERS_REQUESTED = "ticket.reviewers_requested";
 export const REVIEWERS_ASKING = "ticket.reviewers_asking";
@@ -47,11 +48,6 @@ export function pickReviewers(url: string, pool: ReadonlyArray<{ login: string; 
 }
 
 const ruleText = (rule: ReviewerRuleSpec) => (rule.team !== undefined ? `${rule.count} of ${rule.team}` : rule.count === undefined ? andList(rule.users!) : `${rule.count} of ${andList(rule.users!)}`);
-
-function addPost(ctx: EngineCtx, ticket: TicketRow, body: string, data: object): void {
-  ctx.store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "merge", body, data_json: JSON.stringify(data) });
-  ctx.store.changed(ticket.project_id);
-}
 
 /** A failed call: `thrown` when the call got no answer from the project's machine, rather than the forge's own failure. */
 type Failure = { message: string; transient: boolean; thrown: boolean };
@@ -99,7 +95,7 @@ export async function requestReviewers(ctx: EngineCtx, project: ProjectRow, tick
   if (known.done) return;
   const done = (ticket: TicketRow, body: string, more: { requested: string[]; failed: Array<{ login: string | null; message: string }>; unknown?: string[] }, outcome = "reviewers_requested") => {
     store.event(ticket.project_id, ticket.id, REVIEWERS_REQUESTED, LOOM_ACTOR, { url, ...more });
-    addPost(ctx, ticket, body, { outcome, url, ...more });
+    mergePostNow(ctx.store, ticket, body, { outcome, url, ...more });
   };
   // A command forge's request that went out and has no answer recorded may have asked them: Loom never sends it again.
   if (known.sent !== null && forge.kind === "command") {
@@ -110,7 +106,7 @@ export async function requestReviewers(ctx: EngineCtx, project: ProjectRow, tick
     const failures = requestState(ctx, ticket.id, url).failures + 1;
     store.event(ticket.project_id, ticket.id, REVIEWERS_FAILED, LOOM_ACTOR, { url, message });
     if (failures >= REVIEW_TRIES) done(ticket, `Loom tried ${REVIEW_TRIES} times to ask for reviews of ${url} and gave up: ${message}`, { requested: [], failed: [{ login: null, message }] });
-    else if (failures === 1) addPost(ctx, ticket, `Loom could not ask for reviews of ${url} yet: ${message}. It tries again at the next read of the pull request, ${REVIEW_TRIES} times in all.`, { outcome: "reviewers_failed", url, message });
+    else if (failures === 1) mergePostNow(ctx.store, ticket, `Loom could not ask for reviews of ${url} yet: ${message}. It tries again at the next read of the pull request, ${REVIEW_TRIES} times in all.`, { outcome: "reviewers_failed", url, message });
     else store.changed(ticket.project_id);
   };
   let checkout: RepoCheckout;

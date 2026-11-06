@@ -24,6 +24,7 @@ import { takeForRound, type ForeignTip } from "./tips";
 import { resumeEnding } from "./workers";
 import { tryMoveTicket } from "./moves";
 import { inFixRound, prTextFor, templateText } from "./pr-text";
+import { loomPost } from "./posts";
 
 /** How long the worker has to hand in loom_pr before Loom's template stands in; paused time does not count. */
 export const PR_TEXT_MINUTES = 30;
@@ -49,10 +50,6 @@ export function prRollout(ctx: EngineCtx, spec: Spec, ticket: TicketRow): string
   return rolloutSection(spec, ctx.store.tickets(ticket.project_id), ticket, ctx.store.rolloutMarks(ticket.project_id), ctx.now());
 }
 
-function post(ctx: EngineCtx, ticket: TicketRow, a: { body: string; data: object; author?: "worker" | "loom"; threadId?: string | null }): void {
-  ctx.store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: a.author ?? "loom", author_thread_id: a.threadId ?? null, kind: "merge", body: a.body, data_json: JSON.stringify(a.data) });
-}
-
 /** Loom's template stands in for the worker's text, with the reason posted on the ticket. */
 function useTemplate(ctx: EngineCtx, ticket: TicketRow, reason: string): void {
   const { store } = ctx;
@@ -62,7 +59,8 @@ function useTemplate(ctx: EngineCtx, ticket: TicketRow, reason: string): void {
     const text = templateText(current, null);
     store.updateTicket(current.id, writeSub("pr_text_json", text));
     const fix = inFixRound(current);
-    post(ctx, current, {
+    loomPost(ctx.store, current, {
+      kind: "merge",
       body: `Loom wrote the ${fix ? "fix round's commit message" : "pull request"} from its template: ${reason}.`,
       data: { outcome: "pr_text", by: "loom", fix, round: current.pr_rounds, title: fix ? null : templatePr(current).title, body: null, commit: text.commit, reason },
     });
@@ -170,12 +168,9 @@ export function handInPrText(ctx: EngineCtx, threadId: string, a: { title?: stri
   const retitled = ask.fix && (title !== null || body !== null);
   store.tx(() => {
     store.updateTicket(ticket.id, writeSub("pr_text_json", text));
-    post(ctx, ticket, {
-      author: "worker",
-      threadId,
-      body: ask.fix ? `The worker wrote the commit message for fix round ${ticket.pr_rounds}${retitled ? `, and a new ${title !== null && body !== null ? "title and description" : title !== null ? "title" : "description"}` : ""}.` : `The worker wrote the pull request: ${title}`,
-      data: { outcome: "pr_text", by: "worker", fix: ask.fix, round: ticket.pr_rounds, title: text.title, body: text.body, commit },
-    });
+    const said = ask.fix ? `The worker wrote the commit message for fix round ${ticket.pr_rounds}${retitled ? `, and a new ${title !== null && body !== null ? "title and description" : title !== null ? "title" : "description"}` : ""}.` : `The worker wrote the pull request: ${title}`;
+    const data = { outcome: "pr_text", by: "worker", fix: ask.fix, round: ticket.pr_rounds, title: text.title, body: text.body, commit };
+    store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: "worker", author_thread_id: threadId, kind: "merge", body: said, data_json: JSON.stringify(data) });
   });
   store.changed(ticket.project_id);
   ctx.kick();
@@ -323,7 +318,7 @@ function waitOutEdit(ctx: EngineCtx, ticket: TicketRow, record: PrApplied, failu
   const now = ctx.now();
   const wait = nextMergeWait(record.wait ?? null, { now, message: failure.message, ...transientOf(failure)! });
   saveApplied(ctx, ticket, { ...record, ...patch, wait }, consume);
-  if (record.wait === undefined) post(ctx, ticket, { body: `Loom could not ${what} with what looks like a temporary error: ${failure.message}. It tries again when it next reads the pull request, from ${formatDuration(wait.until - now)} from now; the ticket carries on.`, data: { outcome: "pr_edit_waits", url: ticket.pr_url, failures: wait.failures, until: wait.until } });
+  if (record.wait === undefined) loomPost(ctx.store, ticket, { kind: "merge", body: `Loom could not ${what} with what looks like a temporary error: ${failure.message}. It tries again when it next reads the pull request, from ${formatDuration(wait.until - now)} from now; the ticket carries on.`, data: { outcome: "pr_edit_waits", url: ticket.pr_url, failures: wait.failures, until: wait.until } });
 }
 
 /**
@@ -340,13 +335,13 @@ export async function applyPrText(ctx: EngineCtx, spec: Spec, ticket: TicketRow,
   const round = ticket.pr_rounds;
   const at = ctx.now();
   if (record.want !== undefined && !sameText(record.want, want) && sameText(want, record)) {
-    post(ctx, ticket, { body: `Dropped the edit of ${ticket.pr_url ?? "the pull request"} that waited to be tried again: the newest approved title and description are the ones the pull request has.`, data: { outcome: "pr_edit_superseded", url: ticket.pr_url, round } });
+    loomPost(ctx.store, ticket, { kind: "merge", body: `Dropped the edit of ${ticket.pr_url ?? "the pull request"} that waited to be tried again: the newest approved title and description are the ones the pull request has.`, data: { outcome: "pr_edit_superseded", url: ticket.pr_url, round } });
     saveApplied(ctx, ticket, { ...record, want: undefined, wait: undefined, at }, consume);
     return;
   }
   const settled: PrApplied = { ...record, title: want.title, body: want.body, byHand: true, want: undefined, wait: undefined, at };
   const byHand = (why: string, outcome: string) => {
-    post(ctx, ticket, { body: `${why}, so set this title and description on ${ticket.pr_url ?? "its pull request"} by hand:\n\n${textLines(want)}`, data: { outcome, url: ticket.pr_url, round, title: want.title, body: want.body } });
+    loomPost(ctx.store, ticket, { kind: "merge", body: `${why}, so set this title and description on ${ticket.pr_url ?? "its pull request"} by hand:\n\n${textLines(want)}`, data: { outcome, url: ticket.pr_url, round, title: want.title, body: want.body } });
     saveApplied(ctx, ticket, settled, consume);
   };
   if (ticket.pr_url === null || !canEdit(forge)) return byHand("Loom cannot change a pull request's text through this forge", "pr_text_by_hand");
@@ -354,7 +349,7 @@ export async function applyPrText(ctx: EngineCtx, spec: Spec, ticket: TicketRow,
   if (body.length > PR_BODY_MAX) return byHand(`Loom did not set the title and description of ${ticket.pr_url}: with its own sections the description would be ${body.length} characters, over the ${PR_BODY_MAX} a pull request takes, and Loom never cuts one short. The pull request keeps its text`, "pr_edit_failed");
   const answer = await edit(ctx, checkout, ticket.pr_url, want.title, body);
   if (answer.outcome === "ok") {
-    post(ctx, ticket, { body: `Set the title and description of ${ticket.pr_url} to the ones the reviewers approved.`, data: { outcome: "pr_edited", url: ticket.pr_url, round, title: want.title, body: want.body } });
+    loomPost(ctx.store, ticket, { kind: "merge", body: `Set the title and description of ${ticket.pr_url} to the ones the reviewers approved.`, data: { outcome: "pr_edited", url: ticket.pr_url, round, title: want.title, body: want.body } });
     saveApplied(ctx, ticket, { ...settled, byHand: undefined, live: liveTargets(ctx, spec, ticket) ?? record.live }, consume);
   } else if (answer.transient !== undefined) {
     waitOutEdit(ctx, ticket, record, answer, "set the pull request's title and description", { want }, consume);
@@ -433,12 +428,12 @@ async function refreshFormat(ctx: EngineCtx, project: ProjectRow, spec: Spec, ti
   const url = ticket.pr_url!;
   const answer = await edit(ctx, await repoCheckout(ctx, project, spec, ticket.repo), url, current.title, replaced.body);
   if (answer.outcome === "ok") {
-    post(ctx, ticket, { body: `Rewrote Loom's merge and deploy section of ${url} as it reads now; the rest of the description is unchanged.`, data: { outcome: "pr_block_refreshed", url } });
+    loomPost(ctx.store, ticket, { kind: "merge", body: `Rewrote Loom's merge and deploy section of ${url} as it reads now; the rest of the description is unchanged.`, data: { outcome: "pr_block_refreshed", url } });
     saveApplied(ctx, ticket, settled);
   } else if (answer.transient !== undefined) {
     waitOutEdit(ctx, ticket, record, answer, `rewrite Loom's section of ${url}`);
   } else {
-    post(ctx, ticket, { body: `Loom could not rewrite its merge and deploy section of ${url}: ${answer.message}. The pull request keeps its description.`, data: { outcome: "pr_block_not_refreshed", url } });
+    loomPost(ctx.store, ticket, { kind: "merge", body: `Loom could not rewrite its merge and deploy section of ${url}: ${answer.message}. The pull request keeps its description.`, data: { outcome: "pr_block_not_refreshed", url } });
     saveApplied(ctx, ticket, settled);
   }
 }
@@ -450,7 +445,7 @@ async function refreshRollout(ctx: EngineCtx, spec: Spec, ticket: TicketRow, che
   const what = went.length > 0 ? `${andList(went)} ${went.length === 1 ? "is" : "are"} live now` : `${andList(left)} ${left.length === 1 ? "is" : "are"} not live any more`;
   const said = record.said ?? [];
   const cannot = (reason: string, why: string) => {
-    if (!said.includes(reason)) post(ctx, ticket, { body: `The Rollout section of ${url} is out of date: ${what}, but ${why}. The project's Rollout tab has the order as it is now.`, data: { outcome: "rollout_not_refreshed", url, reason, live } });
+    if (!said.includes(reason)) loomPost(ctx.store, ticket, { kind: "merge", body: `The Rollout section of ${url} is out of date: ${what}, but ${why}. The project's Rollout tab has the order as it is now.`, data: { outcome: "rollout_not_refreshed", url, reason, live } });
     saveApplied(ctx, ticket, { ...record, live, wait: undefined, said: said.includes(reason) ? said : [...said, reason] });
   };
   if (!canEdit(checkout.settings.forge)) return cannot("forge", "Loom cannot change a pull request's description through this forge");
@@ -467,12 +462,12 @@ async function refreshRollout(ctx: EngineCtx, spec: Spec, ticket: TicketRow, che
   if (next.length > PR_BODY_MAX) return cannot("size", `with the Rollout section as it is now the description would be ${next.length} characters, over the ${PR_BODY_MAX} a pull request takes, and Loom never cuts one short`);
   const answer = await edit(ctx, checkout, url, current.title, next);
   if (answer.outcome === "ok") {
-    post(ctx, ticket, { body: `Refreshed the Rollout section of ${url}: ${what}.`, data: { outcome: "rollout_refreshed", url, live } });
+    loomPost(ctx.store, ticket, { kind: "merge", body: `Refreshed the Rollout section of ${url}: ${what}.`, data: { outcome: "rollout_refreshed", url, live } });
     saveApplied(ctx, ticket, { ...record, live, wait: undefined, block: blockHash(block) });
   } else if (answer.transient !== undefined) {
     waitOutEdit(ctx, ticket, record, answer, `refresh the Rollout section of ${url}`);
   } else {
-    post(ctx, ticket, { body: `Loom could not refresh the Rollout section of ${url}: ${answer.message}. The pull request keeps its description; the project's Rollout tab has the order as it is now.`, data: { outcome: "rollout_not_refreshed", url, reason: "edit", live } });
+    loomPost(ctx.store, ticket, { kind: "merge", body: `Loom could not refresh the Rollout section of ${url}: ${answer.message}. The pull request keeps its description; the project's Rollout tab has the order as it is now.`, data: { outcome: "rollout_not_refreshed", url, reason: "edit", live } });
     saveApplied(ctx, ticket, { ...record, live, wait: undefined });
   }
 }
@@ -548,7 +543,7 @@ export async function replyToItem(ctx: EngineCtx, threadId: string, a: { item: s
   const posted = answer.outcome === "ok" ? answer : null;
   const resolved = posted?.resolved === true;
   const body = posted !== null ? `The worker replied to ${what}${resolved ? " and resolved it" : ""}:\n\n${clip(text, 2000)}` : `The worker's reply to ${what} did not go out: ${answer.message}`;
-  post(ctx, ticket, { author: "worker", threadId, body, data: { outcome: "pr_reply", round, item: a.item, kind, ok: posted !== null, url: posted?.url ?? null, resolved } });
+  ctx.store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: "worker", author_thread_id: threadId, kind: "merge", body, data_json: JSON.stringify({ outcome: "pr_reply", round, item: a.item, kind, ok: posted !== null, url: posted?.url ?? null, resolved }) });
   store.changed(ticket.project_id);
   if (answer.outcome === "unavailable") {
     throw new LoomError("loom_unavailable", `The forge did not take the reply: ${answer.message}`, answer.transient === undefined ? undefined : "That looks temporary; try again in a minute.");
@@ -731,8 +726,8 @@ export async function blockOpenPr(ctx: EngineCtx, seen: TicketRow, reason: strin
     if (worker.standing === "ending") return null;
     if (worker.standing === "active" && !store.claimThread(worker.row.id, "blocked")) return null;
     store.updateTicket(ticket.id, { blocked_reason: reason });
-    post(ctx, ticket, said);
-    store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "block", body: reason, data_json: JSON.stringify({ reason, needs: "" }) });
+    loomPost(store, ticket, { kind: "merge", ...said });
+    loomPost(store, ticket, { kind: "block", body: reason, data: { reason, needs: "" } });
     if (worker.standing === "active") return { kind: "blocking", worker: store.thread(worker.row.id)! };
     tryMoveTicket(store, ticket.id, { name: "block", set: { blocked_reason: reason } }, LOOM_ACTOR, { reason });
     return { kind: "blocked" };
@@ -791,15 +786,15 @@ async function startFixRound(ctx: EngineCtx, seen: TicketRow, a: Round): Promise
       // Claiming the worker here makes its ending, which carries the ticket's move to blocked, replayable by the tick.
       if (worker.standing === "active" && !store.claimThread(worker.row.id, "blocked")) return null;
       store.updateTicket(ticket.id, { ...writeSub("pr_seen_json", [...seenKeys]), blocked_reason: reason });
-      post(ctx, ticket, { body: `Pull request feedback over the limit of ${plural(max, "fix round")}:\n\n${feedbackList(a.checks, a.items, a.skipped)}`, data: feedbackData(ticket, round, counted, a, true) });
-      store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "block", body: reason, data_json: JSON.stringify({ reason, needs: "" }) });
+      loomPost(ctx.store, ticket, { kind: "merge", body: `Pull request feedback over the limit of ${plural(max, "fix round")}:\n\n${feedbackList(a.checks, a.items, a.skipped)}`, data: feedbackData(ticket, round, counted, a, true) });
+      loomPost(store, ticket, { kind: "block", body: reason, data: { reason, needs: "" } });
       if (worker.standing === "active") return { kind: "blocking", worker: store.thread(worker.row.id)! };
       tryMoveTicket(store, ticket.id, { name: "block", set: { blocked_reason: reason } }, LOOM_ACTOR, { reason });
       return { kind: "blocked" };
     }
     store.updateTicket(ticket.id, { ...writeSub("pr_seen_json", [...seenKeys]), pr_rounds: round, pr_ask_json: null, pr_text_json: null });
     const body = a.human ? `Your reply starts fix round ${round} on the pull request.` : `Pull request feedback for fix round ${round} (${counted} of ${max} the pull request may start):\n\n${feedbackList(a.checks, a.items, a.skipped)}`;
-    post(ctx, ticket, { body, data: feedbackData(ticket, round, counted, a, false) });
+    loomPost(ctx.store, ticket, { kind: "merge", body, data: feedbackData(ticket, round, counted, a, false) });
     const move = { fixRound: round, ...(a.human ? { human: true } : {}) };
     const asleep = releasedWorker(store, ticket);
     const thread = worker.standing === "active" ? worker.row.thread_id : (asleep?.thread_id ?? null);

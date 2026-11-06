@@ -117,7 +117,7 @@ export interface TicketRow {
   rollout_json: string | null;
   /** 1 while the human holds the ticket's pull request as a draft (`keep_draft`), 0 otherwise. */
   keep_draft: number;
-  /** MergeWait: the merge failed in a way worth waiting out, so the ticket stays in merging and the queue waits until it runs again; null otherwise. */
+  /** RetryWait: the merge failed in a way worth waiting out, so the ticket stays in merging and the queue waits until it runs again; null otherwise. */
   merge_wait_json: string | null;
   /** MergeStep: a merge Loom put in the worker's worktree whose checks have not passed yet, which the next run of the merge finishes instead of merging again; null otherwise. */
   merge_step_json: string | null;

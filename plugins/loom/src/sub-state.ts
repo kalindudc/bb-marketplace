@@ -87,9 +87,9 @@ const startWaitSchema = z.object({
 });
 export type StartWait = z.output<typeof startWaitSchema>;
 
-/** MergeWait: a merge, or another step worth waiting out, failed `failures` times in a row in a way worth waiting out, the first at `since`; it runs again at `until`. */
-const mergeWaitSchema = z.object({ failures: z.number(), since: z.number(), until: z.number(), message: z.string() });
-export type MergeWait = z.output<typeof mergeWaitSchema>;
+/** RetryWait: a merge, a pull request edit, or another step worth waiting out, failed `failures` times in a row in a way worth waiting out, the first at `since`; it runs again at `until`. */
+const retryWaitSchema = z.object({ failures: z.number(), since: z.number(), until: z.number(), message: z.string() });
+export type RetryWait = z.output<typeof retryWaitSchema>;
 
 /** PollWait: the ticket's pull request reads failed `failures` times in a row with server errors, the first at `since`. */
 const pollWaitSchema = z.object({ failures: z.number(), since: z.number(), message: z.string() });
@@ -163,7 +163,7 @@ const prAppliedSchema = prWantSchema.extend({
   /** The text an edit that failed in a way worth waiting out still has to set. */
   want: prWantSchema.optional(),
   /** When that edit, or a refresh of the Rollout section that failed the same way, is tried again. */
-  wait: mergeWaitSchema.optional(),
+  wait: retryWaitSchema.optional(),
   /** Why Loom could not refresh the Rollout section, each reason said once on the ticket. */
   said: z.array(z.string()).optional(),
   /** A hash of the block Loom last wrote between its markers, or found there already, so a format refresh runs once per block. */
@@ -231,7 +231,7 @@ const SCHEMAS = {
   merge_after_json: z.array(z.string()),
   pr_meta_json: prMetaSchema,
   rollout_json: ticketRolloutSchema,
-  merge_wait_json: mergeWaitSchema,
+  merge_wait_json: retryWaitSchema,
   merge_step_json: mergeStepSchema,
   pr_proposal_json: prProposalSchema,
   pr_applied_json: prAppliedSchema,

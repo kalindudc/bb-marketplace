@@ -9,7 +9,8 @@ import { type PrApplied, writeSub } from "./sub-state";
 import { endThread } from "./workers";
 import { specOf, type EngineCtx } from "./ctx";
 import { tryMoveTicket } from "./moves";
-import { addMergePost, checkoutIn, holdOpens, toPrOpen, unavailableOf, type MergePost } from "./merge-common";
+import { checkoutIn, holdOpens, toPrOpen, unavailableOf, type MergePost } from "./merge-common";
+import { loomPost } from "./posts";
 
 /** A pull request closed without merging blocks its ticket and ends its threads; a requeue opens a new one. */
 async function blockClosed(ctx: EngineCtx, ticket: TicketRow): Promise<void> {
@@ -69,7 +70,8 @@ export async function closedPullRequest(ctx: EngineCtx, project: ProjectRow, tic
     const tickets = store.tickets(project.id);
     const hold = holdOf(tickets, after);
     const next = hold === null ? `Its new pull request opens on ${prBaseOf(tickets, after, base)}${restackOf(tickets, after) === null ? "" : ` once Loom has brought its branch up to date`}.` : holdOpens(spec, after, hold, "new ");
-    addMergePost(ctx, current, {
+    loomPost(ctx.store, current, {
+      kind: "merge",
       body: `The pull request ${ticket.pr_url} closed when ${why}. A person did not close it, so Loom let go of it instead of blocking ${current.key}, and keeps its branch. ${next}`,
       data: { outcome: "pr_let_go", url: ticket.pr_url, branch, ticket: owner?.key ?? null },
     });
@@ -103,8 +105,8 @@ async function blockPullRequest(ctx: EngineCtx, ticket: TicketRow, reason: strin
   const { store } = ctx;
   store.tx(() => {
     const current = store.ticket(ticket.id)!;
-    if (post !== null) store.addPost({ project_id: current.project_id, ticket_id: current.id, parent_id: null, author_kind: "loom", author_thread_id: null, kind: post.kind, body: post.body, data_json: JSON.stringify(post.data) });
-    store.addPost({ project_id: current.project_id, ticket_id: current.id, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "block", body: reason, data_json: JSON.stringify({ reason, needs: "" }) });
+    if (post !== null) loomPost(store, current, post);
+    loomPost(store, current, { kind: "block", body: reason, data: { reason, needs: "" } });
     tryMoveTicket(store, current.id, { name: "block_pr_closed", set: { blocked_reason: reason } }, LOOM_ACTOR, { reason });
   });
   store.changed(ticket.project_id);
