@@ -125,6 +125,12 @@ export async function bringHome(ctx: EngineCtx, project: ProjectRow, spec: Spec,
   return { sha: made.sha, tree: exported.tree, copied: true };
 }
 
+/** Whether a thread is running a turn: neither idle nor stopped on an error. A thread bb no longer has runs nothing. */
+async function runningTurn(ctx: EngineCtx, threadId: string): Promise<boolean> {
+  const thread = await ctx.bb.getThread(threadId);
+  return thread !== null && thread.archivedAt === null && thread.deletedAt === null && thread.status !== "idle" && thread.status !== "error";
+}
+
 const HOLDS = { carry: "what the carry wrote", before: "what it held before the carry", absent: "nothing", changed: "a change the carry did not make" } as const;
 
 /**
@@ -132,10 +138,15 @@ const HOLDS = { carry: "what the carry wrote", before: "what it held before the 
  * detached, and on another machine with worktree commands alone, on its merge base with the repo's base: as one commit
  * with its tree, or for a stacked ticket whose `sha` builds on the commit it is stacked on, as one commit with that
  * commit's tree and one more with its own. `replaces` is a tree the checkout keeps, which the worktree may drop. Throws
- * when the tree in the worktree is not the commit's.
+ * when the tree in the worktree is not the commit's. `owner` is the thread whose worktree it is, when Loom carries on its
+ * own rather than in that thread's tool call: the carry runs only while that thread is not running a turn, as a check
+ * right before a file goes in cannot stop the worker writing it a moment later, and waits (Unavailable) until then.
  */
-export async function carryTo(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket: TicketRow, sha: string, environment: EnvironmentInfo, opts: { replaces?: string } = {}): Promise<{ tree: string }> {
+export async function carryTo(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket: TicketRow, sha: string, environment: EnvironmentInfo, opts: { replaces?: string; owner?: string } = {}): Promise<{ tree: string }> {
   const worktree = worktreeOf(environment);
+  if (opts.owner !== undefined && (await runningTurn(ctx, opts.owner))) {
+    throw new Unavailable(`the thread whose worktree it is is running a turn, so Loom waits for it to end before it puts the work in`, { transient: "server" });
+  }
   if (!isRemote(project, environment)) return { tree: (await ctx.host.call(environment.hostId, "detach", { worktree, sha })).tree };
   const checkout = await repoCheckout(ctx, project, spec, ticket.repo);
   const fresh = freshBaseOf(spec, ticket.repo);

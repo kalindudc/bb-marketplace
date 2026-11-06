@@ -113,6 +113,19 @@ describe("a fix round whose pull request branch has commits Loom did not push, o
     expect(outcomes().slice(-2)).toEqual(["pr_pushed", "review_requested"]);
   });
 
+  it("carries nothing into the worktree of a worker that is running a turn, and merges them when it pushes the fix", async () => {
+    const worker = await openOnMachine({ release_workers: false });
+    pushedByOthers();
+    h.bb.threads.get(worker.thread_id!)!.status = "active";
+    const carries = h.host.callsTo("carryStart").length;
+    h.host.feedback.set(URL1, { ...changesRequested, head: "theirs1" });
+    await poll();
+
+    expect(h.host.callsTo("carryStart")).toHaveLength(carries);
+    expect(ticket()).toMatchObject({ state: "working", pushed_sha: "sq1" });
+    expect(dataOf("tip_merged")).toEqual([]);
+  });
+
   it("leaves the merge on the home branch for a released worker, whose replacement resumes from it", async () => {
     const worker = await openOnMachine();
     await releaseIdleWorkers(h.ctx, project(), spec());
@@ -357,6 +370,7 @@ describe("a stacked ticket whose pull request branch got base branch commits its
     worktree.dirty = true;
     worktree.changed = ["src/export/a.ts"];
     submit(h.ctx, worker.thread_id!, "Renamed it.");
+    h.bb.threads.get(worker.thread_id!)!.status = "idle";
     await settleChecks(h.ctx);
     await spawnReviewers(h.ctx, project(), spec());
     const reviewer = h.store.threads({ ticketId: ticket("CSV-2").id, role: "reviewer" }).at(-1)!;

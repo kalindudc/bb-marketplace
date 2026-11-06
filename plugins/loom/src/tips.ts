@@ -109,7 +109,7 @@ export async function takeForRound(ctx: EngineCtx, project: ProjectRow, seen: Ti
       const environment = await resolveEnvironment(ctx, worker.row);
       if (environment?.path == null) return { kind: "later" };
       if (!isRemote(project, environment)) return ownMerge;
-      await carryTo(ctx, project, spec, seen, merged.sha, environment, seen.head_tree === null ? {} : { replaces: seen.head_tree });
+      await carryTo(ctx, project, spec, seen, merged.sha, environment, { ...(seen.worker_thread_id === null ? {} : { owner: seen.worker_thread_id }), ...(seen.head_tree === null ? {} : { replaces: seen.head_tree }) });
       carried = true;
     }
     const now = store.ticket(seen.id);

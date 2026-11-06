@@ -392,6 +392,8 @@ describe("refreshing an open pull request", () => {
     const worker = await reachApproved(h);
     await queue();
     await poll();
+    // The worker ended its turn, as a carry into its worktree waits for.
+    h.bb.threads.get(worker.thread_id!)!.status = "idle";
     h.host.remoteBase = "base001";
     h.host.behind.set("sq1", 250);
     await count();

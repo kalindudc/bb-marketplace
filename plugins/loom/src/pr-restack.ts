@@ -133,7 +133,7 @@ async function restackOnMachine(
  */
 async function carryOrRefuse(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket: TicketRow, sha: string, environment: EnvironmentInfo & { path: string }, what: string): Promise<boolean> {
   try {
-    await carryTo(ctx, project, spec, ticket, sha, environment, ticket.head_tree === null ? {} : { replaces: ticket.head_tree });
+    await carryTo(ctx, project, spec, ticket, sha, environment, { ...(ticket.worker_thread_id === null ? {} : { owner: ticket.worker_thread_id }), ...(ticket.head_tree === null ? {} : { replaces: ticket.head_tree }) });
     return true;
   } catch (error) {
     if (waitableOf(error) !== null) throw error;

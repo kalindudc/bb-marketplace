@@ -62,8 +62,10 @@ function dirty(row: ThreadRow): void {
   worktree.changed = ["src/model/b.ts"];
 }
 
+/** The worker submits and ends its turn, as a carry into its worktree waits for. */
 async function submitted(row: ThreadRow): Promise<void> {
   submit(h.ctx, row.thread_id!, "Done");
+  h.bb.threads.get(row.thread_id!)!.status = "idle";
   await settleChecks(h.ctx);
 }
 

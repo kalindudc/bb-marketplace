@@ -1393,11 +1393,13 @@ with you.
   reviewed tree to its machine or checks it out on the project's machine.
   Neither drops uncommitted changes or commits in the worktree: they refuse
   and say to stash them.
-- A carry never takes a worker's work. A carry that fails leaves the
-  worktree, its files and its index as they are, and says what each path it
-  wrote holds now; the next carry takes its files over when every change
-  there is its own. A carry commits only its own paths, through an index of
-  its own, and refuses when one of them no longer holds what it wrote.
+- A carry never takes a worker's work. Loom carries on its own, as for a merge
+  of the worker's branch, only while the worker's thread is not running a
+  turn. A carry that fails leaves the worktree, its files and its index as
+  they are, and says what each path it wrote holds now; the next carry takes
+  its files over when every change there is its own. A carry commits only its
+  own paths, through an index of its own, and refuses when one of them no
+  longer holds what it wrote.
 - A machine provider that cannot start a machine now (`machine_provider_rejected`)
   makes the ticket wait as for an unavailable environment provider, and an
   idle caused by bb moving a thread's machine does not count.

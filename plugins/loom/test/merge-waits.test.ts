@@ -411,6 +411,23 @@ describe("a merge that runs again after its checks got no answer", () => {
     expect(mergePosts().map((post) => JSON.parse(post.data_json).outcome)).toContain("restacked");
   });
 
+  it("waits for the worker's thread to end its turn before it carries the merge in, writing nothing meanwhile", async () => {
+    const worker = await fixOnMachineWithForeignTip();
+    h.bb.threads.get(worker.thread_id!)!.status = "active";
+    const carries = h.host.callsTo("carryStart").length;
+    const sent = h.bb.sent(worker.thread_id!).length;
+    await queue();
+    expect(h.host.callsTo("carryStart")).toHaveLength(carries);
+    expect(ticket()).toMatchObject({ state: "merging", pushed_sha: "sq1" });
+    expect(waitOf()).toMatchObject({ failures: 1, message: expect.stringContaining("running a turn") });
+    expect(h.bb.sent(worker.thread_id!)).toHaveLength(sent);
+
+    h.bb.threads.get(worker.thread_id!)!.status = "idle";
+    h.clock.advance(MINUTE);
+    await queue();
+    expect(ticket()).toMatchObject({ state: "pr_open", pushed_sha: "sq2" });
+  });
+
   it("waits, and hands nothing back, when carrying the merge to the worker's machine got no answer", async () => {
     const worker = await fixOnMachineWithForeignTip();
     h.host.scripted.carryStart = [new Error(DEADLINE)];

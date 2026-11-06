@@ -106,6 +106,7 @@ async function stackedSecond(): Promise<ThreadRow> {
   if (h.store.thread(worker.id)!.resume_json !== null) await resumeWork(h.ctx, worker.thread_id!);
   dirty(worker);
   await submitted(worker);
+  h.bb.threads.get(worker.thread_id!)!.status = "idle";
   await spawnReviewers(h.ctx, project(), spec());
   const reviewer = h.store.threads({ ticketId: ticketOf(h, "CSV-2").id, role: "reviewer" }).at(-1)!;
   checkOutHead(h, reviewer);
