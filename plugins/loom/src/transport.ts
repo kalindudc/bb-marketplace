@@ -132,6 +132,19 @@ async function runningTurn(ctx: EngineCtx, threadId: string): Promise<boolean> {
   return thread !== null && thread.archivedAt === null && thread.deletedAt === null && thread.status !== "idle" && thread.status !== "error";
 }
 
+// A retry bb holds for a later time cannot be held back, so a carry waits for it: until it is due and a little after, when
+// bb has started it and the thread reads as running.
+const RETRY_START_MS = 2 * 60_000;
+
+/** Whether a turn retry Loom scheduled for the thread is still to start. */
+function retryPending(ctx: EngineCtx, threadId: string): boolean {
+  const row = ctx.store.threadByThreadId(threadId);
+  if (row?.ticket_id == null) return false;
+  const retries = ctx.store.ticketEvents(row.ticket_id, ["turn.retry"]).map((event) => JSON.parse(event.data_json) as { thread?: string; sendAt?: number });
+  const sendAt = retries.filter((retry) => retry.thread === threadId).at(-1)?.sendAt;
+  return typeof sendAt === "number" && ctx.now() < sendAt + RETRY_START_MS;
+}
+
 const HOLDS = { carry: "what the carry wrote", before: "what it held before the carry", absent: "nothing", changed: "a change the carry did not make" } as const;
 
 /**
@@ -150,6 +163,7 @@ export async function carryTo(ctx: EngineCtx, project: ProjectRow, spec: Spec, t
   // Held first, so no message of Loom's starts a turn there between the check and the end of the carry.
   return holdingMessages(ctx.bb, owner, async () => {
     if (await runningTurn(ctx, owner)) throw new Unavailable(`the thread whose worktree it is is running a turn, so Loom waits for it to end before it puts the work in`, { transient: "server" });
+    if (retryPending(ctx, owner)) throw new Unavailable(`a retry Loom scheduled for the turn of the thread whose worktree it is has not started yet, so Loom waits for it before it puts the work in`, { transient: "server" });
     return carryNow(ctx, project, spec, ticket, sha, environment, opts);
   });
 }

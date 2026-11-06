@@ -10,6 +10,7 @@ import { pollPullRequests, runMergeQueue, settleMerges } from "../src/merge";
 import { askForPrTexts, handInPrText } from "../src/pull-requests";
 import { boardCards } from "../src/rpc";
 import { stackOf } from "../src/stack";
+import { LOOM_ACTOR } from "../src/states";
 import { approve, settleReviews, spawnReviewers } from "../src/review";
 import { specOf } from "../src/ctx";
 import { checkOutHead, makeCtx, makeEngine, reachApproved, reachReview, seedMachineProject, seedProject, ticketOf, withDocsTicket, type Doc, type EngineHarness } from "./helpers";
@@ -442,6 +443,19 @@ describe("a merge that runs again after its checks got no answer", () => {
     expect(h.host.callsTo("carryFinish")).toHaveLength(1);
     expect(during).toEqual([]);
     expect(sent()).toEqual(["a note during the carry"]);
+  });
+
+  it("waits to carry while a retry Loom scheduled for the worker's turn is still to come", async () => {
+    const worker = await fixOnMachineWithForeignTip();
+    const carries = h.host.callsTo("carryStart").length;
+    h.store.event(project().id, ticket().id, "turn.retry", LOOM_ACTOR, { thread: worker.thread_id, attempt: 1, sendAt: h.clock.t + 10 * MINUTE });
+    await queue();
+    expect(h.host.callsTo("carryStart")).toHaveLength(carries);
+    expect(waitOf()).toMatchObject({ failures: 1, message: expect.stringContaining("retry") });
+
+    h.clock.advance(15 * MINUTE);
+    await queue();
+    expect(ticket()).toMatchObject({ state: "pr_open", pushed_sha: "sq2" });
   });
 
   it("waits, and hands nothing back, when a carry already under way loses its transport", async () => {
