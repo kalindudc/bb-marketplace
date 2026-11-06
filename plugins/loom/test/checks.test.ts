@@ -67,8 +67,8 @@ describe("a passing submit", () => {
     expect(h.host.callsTo("commitAll")).toEqual([{ worktree: WORKTREE, message: "Order rows" }]);
     expect(h.host.callsTo("worktreeState")[0]).toEqual({ worktree: WORKTREE, base: "loom/csv" });
     expect(h.host.callsTo("exec")).toEqual([
-      { cwd: WORKTREE, command: "npm run lint", timeoutMs: 15 * 60_000 },
-      { cwd: WORKTREE, command: "npm test", timeoutMs: 15 * 60_000 },
+      { cwd: WORKTREE, command: "npm run lint", timeoutMs: 25 * 60_000 },
+      { cwd: WORKTREE, command: "npm test", timeoutMs: 25 * 60_000 },
     ]);
     expect(h.host.calls.every((call) => call.hostId === "host_1")).toBe(true);
     expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "review", head_sha: "c1", branch: "wt-thr_w1", check_failures: 0 });
@@ -229,8 +229,8 @@ describe("a ticket in one repo of a multi-repo project", () => {
   it("runs the ticket's verify commands and then its repo's checks, and no other repo's, in the worker's worktree against the integration branch", async () => {
     await submittedIn("CSV-1", ["src/model/a.ts"], (doc) => (doc.ticket[0].verify = ["npm run lint"]));
     expect(h.host.callsTo("exec")).toEqual([
-      { cwd: WORKTREE, command: "npm run lint", timeoutMs: 15 * 60_000 },
-      { cwd: WORKTREE, command: "npm run web-test", timeoutMs: 15 * 60_000 },
+      { cwd: WORKTREE, command: "npm run lint", timeoutMs: 25 * 60_000 },
+      { cwd: WORKTREE, command: "npm run web-test", timeoutMs: 25 * 60_000 },
     ]);
     expect(h.host.callsTo("worktreeState")[0]).toEqual({ worktree: WORKTREE, base: "loom/csv" });
     expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "review", head_sha: "c1" });

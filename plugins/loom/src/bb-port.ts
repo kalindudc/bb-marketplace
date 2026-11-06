@@ -296,8 +296,8 @@ export function createBbPort(bb: BbPluginApi): BbPort {
 
 /**
  * The host entry client. Local git calls get 30 s; gh, forge commands and ensureWorktree (a first checkout) get 150 s; a call
- * that fetches, runs ls-remote or pushes gets twice its git network timeout plus 30 s (270 s by default), and one with index
- * and tree steps its git index timeout on top (330 s for mergeOnto, 570 s for importCommit and stackBase by default); a command forge's
+ * that fetches, runs ls-remote or pushes gets twice its git network timeout plus 30 s (630 s by default), and one with index
+ * and tree steps its git index timeout on top (330 s for mergeOnto, 930 s for importCommit and stackBase by default); a command forge's
  * retarget gets its 5 minutes plus 30 s; exec gets its own timeout plus 30 s. All stay under bb's 30-minute host call cap.
  */
 export function createHostPort(bb: BbPluginApi): HostPort {

@@ -177,7 +177,7 @@ describe("finding 5: at most 20 reviewers per pull request, and posts say only w
     const users = Array.from({ length: 25 }, (_, index) => `user${index}`);
     const errors = parseSpec(specToml((doc) => void (doc.merge = { strategy: "pr", forge: { kind: "gh", reviewers: [{ users }] } }))).errors.join("\n");
     expect(errors).toContain("merge.forge.reviewers: these rules may ask up to 25 people to review one pull request, and Loom asks at most 20");
-    expect(parseSpec(specToml((doc) => void (doc.merge = { strategy: "pr", forge: { kind: "gh", reviewers: [{ users, count: 10 }, { team: "acme/edge", count: 10 }] } }))).errors).toEqual([]);
+    expect(parseSpec(specToml((doc) => void (doc.merge = { strategy: "pr", forge: { kind: "gh", reviewers: [{ users, count: 10 }, { users: users.slice(0, 10) }] } }))).errors).toEqual([]);
   });
 
   it("names someone the forge refused as not asked", async () => {

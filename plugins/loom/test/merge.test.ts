@@ -45,7 +45,7 @@ describe("the integration merge", () => {
       ["ensureWorktree", { repo: "/repo", key: "csv", branch: "loom/csv" }],
       ["worktreeState", { worktree: WORKTREE, base: "main" }],
       ["merge", { worktree: WORKTREE, ref: "c1", message: `Merge ${ticketOf(h, "CSV-1").branch} into loom/csv\n\nOrder rows`, before: "base000" }],
-      ["exec", { cwd: WORKTREE, command: "npm run e2e", timeoutMs: 15 * 60_000 }],
+      ["exec", { cwd: WORKTREE, command: "npm run e2e", timeoutMs: 25 * 60_000 }],
       ["worktreeState", { worktree: WORKTREE, base: "main", trackedOnly: true }],
     ]);
     expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "done", worker_thread_id: null, environment_id: null });
@@ -388,7 +388,7 @@ describe("the integration merge on a multi-repo project", () => {
       ["host_1", "ensureWorktree", { repo: "/src/web", key: "csv.web", branch: "loom/csv" }],
       ["host_1", "worktreeState", { worktree: WEB, base: "main" }],
       ["host_1", "merge", { worktree: WEB, ref: ticketOf(h, "CSV-1").head_sha, message: `Merge ${ticketOf(h, "CSV-1").branch} into loom/csv\n\nOrder rows`, before: "base000" }],
-      ["host_1", "exec", { cwd: WEB, command: "npm run web-e2e", timeoutMs: 15 * 60_000 }],
+      ["host_1", "exec", { cwd: WEB, command: "npm run web-e2e", timeoutMs: 25 * 60_000 }],
       ["host_1", "worktreeState", { worktree: WEB, base: "main", trackedOnly: true }],
     ]);
     expect(ticketOf(h, "CSV-1").state).toBe("done");
@@ -401,7 +401,7 @@ describe("the integration merge on a multi-repo project", () => {
       ["ensureWorktree", { repo: "/src/api", key: "csv.api", branch: "loom/csv" }],
       ["worktreeState", { worktree: API, base: "trunk" }],
       ["merge", { worktree: API, ref: ticketOf(h, "CSV-2").head_sha, message: `Merge ${ticketOf(h, "CSV-2").branch} into loom/csv\n\nExport endpoint`, before: "base000" }],
-      ["exec", { cwd: API, command: "npm run e2e", timeoutMs: 15 * 60_000 }],
+      ["exec", { cwd: API, command: "npm run e2e", timeoutMs: 25 * 60_000 }],
       ["worktreeState", { worktree: API, base: "trunk", trackedOnly: true }],
     ]);
     expect(ticketOf(h, "CSV-2").state).toBe("done");
@@ -1668,13 +1668,13 @@ describe("land on a multi-repo project", () => {
       ["ensureWorktree", { repo: "/src/web", key: "csv.web", branch: "loom/csv" }],
       ["fetchBranch", { worktree: WEB, remote: "origin", branch: "main" }],
       ["merge", { worktree: WEB, ref: "up1", message: "Merge origin/main into loom/csv" }],
-      ["exec", { cwd: WEB, command: "npm run web-e2e", timeoutMs: 15 * 60_000 }],
+      ["exec", { cwd: WEB, command: "npm run web-e2e", timeoutMs: 25 * 60_000 }],
       ["worktreeState", { worktree: WEB, base: "main", trackedOnly: true }],
       ["push", { repo: "/src/web", remote: "origin", src: "m3", branch: "main" }],
       ["ensureWorktree", { repo: "/src/api", key: "csv.api", branch: "loom/csv" }],
       ["fetchBranch", { worktree: API, remote: "upstream", branch: "trunk" }],
       ["merge", { worktree: API, ref: "up1", message: "Merge upstream/trunk into loom/csv" }],
-      ["exec", { cwd: API, command: "npm run e2e", timeoutMs: 15 * 60_000 }],
+      ["exec", { cwd: API, command: "npm run e2e", timeoutMs: 25 * 60_000 }],
       ["worktreeState", { worktree: API, base: "trunk", trackedOnly: true }],
       ["push", { repo: "/src/api", remote: "upstream", src: "m4", branch: "trunk" }],
     ]);

@@ -1,7 +1,7 @@
 import { Fragment, useState, type ReactNode } from "react";
 import { GIT_NETWORK_TIMEOUT_MS, GIT_NETWORK_TIMEOUT_SECONDS } from "../git-network";
 import { HOOK_EVENT_NAMES, HOOK_EVENTS } from "../hook-events";
-import { integrationBranchOf } from "../repos";
+import { followsFeedback, integrationBranchOf } from "../repos";
 import type { AutoMergeSpec, EnvironmentSpec, ForgeSpec, MachineSpec, RepoSpec, Spec } from "../spec";
 import { textSteps, type TextStep } from "../spec-diff";
 import { isUnder } from "../spec-paths";
@@ -15,6 +15,7 @@ const minutes = (n: number) => (n % 60 === 0 ? `${n / 60} h` : plural(n, "minute
 const DEFAULT_GIT_SECONDS = GIT_NETWORK_TIMEOUT_MS / 1000;
 const gitSeconds = { min: GIT_NETWORK_TIMEOUT_SECONDS.min, max: GIT_NETWORK_TIMEOUT_SECONDS.max, step: 30, unit: "s" } as const;
 type DeploySpec = NonNullable<RepoSpec["deploy"]>;
+const GH: ForgeSpec = { kind: "gh" };
 
 /** A choice of the spec as a segmented control: the option in force is raised, and clicking another one suggests it. */
 function Choice({ path, label, value, options, names }: { path: string; label: string; value: SpecValue; options: readonly SpecValue[]; names: Readonly<Record<string, string>> }) {
@@ -789,8 +790,8 @@ function RepoItem({ spec, repo, index, bbProjectNames }: { spec: Spec; repo: Rep
           )}
           {(!integration || shown("ci", repo.ci !== undefined)) && (
             <Row label="CI" paths={[`${at}.ci`]}>
-              <Commentable as="span" target={value(`${at}.ci`, `${repo.name} › ci`, "bool", repo.ci ?? checks.ci ?? true)} className={repo.ci === undefined ? "text-muted-foreground" : ""}>
-                {repo.ci === undefined ? `${(checks.ci ?? true) ? "relies on CI" : "ignores CI"}, from the project` : ciText(repo.ci)}
+              <Commentable as="span" target={value(`${at}.ci`, `${repo.name} › ci`, "bool", repo.ci ?? checks.ci ?? followsFeedback(repo.forge ?? merge.forge ?? GH))} className={repo.ci === undefined ? "text-muted-foreground" : ""}>
+                {repo.ci === undefined ? `${(checks.ci ?? followsFeedback(repo.forge ?? merge.forge ?? GH)) ? "relies on CI" : "ignores CI"}, ${checks.ci === undefined ? "from the forge" : "from the project"}` : ciText(repo.ci)}
               </Commentable>
             </Row>
           )}
@@ -1221,8 +1222,9 @@ export function SettingsSection({ spec, bbProjectNames, onShowAll, onJump }: { s
           {(!integration || checks.ci !== undefined || changedAt(review, "checks.ci")) && (
             <p className="flex flex-wrap items-center gap-2 pt-1 text-xs text-muted-foreground">
               CI{repos.length > 0 ? " in a repo without a ci of its own" : ""}
-              <Commentable as="span" target={value("checks.ci", "Rely on CI", "bool", checks.ci ?? true)} className="text-foreground">
-                {ciText(checks.ci ?? true)}
+              <Commentable as="span" target={value("checks.ci", "Rely on CI", "bool", checks.ci ?? followsFeedback(merge.forge ?? GH))} className="text-foreground">
+                {ciText(checks.ci ?? followsFeedback(merge.forge ?? GH))}
+                {checks.ci === undefined && ", from the forge"}
               </Commentable>
             </p>
           )}

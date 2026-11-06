@@ -52,12 +52,12 @@ const squash = { kind: "gh", auto_merge: { mode: "auto", method: "squash" } };
 
 describe("auto-merge in the spec", () => {
   it("hashes a spec without the new settings exactly as Loom 0.31.1 did", () => {
-    // Hashes printed by Loom 0.31.1 for these specs, except the integration one, which changed when merge.branch stopped being filled in; a forge key with a default would change them.
+    // These change only with the schema's defaults, as when checks.timeout_minutes and agents.ticket_timeout_minutes moved to 25 and 180; a forge key with a default would change them.
     const hashes: Array<[string, (doc: Doc) => void, string]> = [
-      ["integration", () => undefined, "0efe24addc88df186883a6a3731fe8dbd1af1186e2c8802f35a5fa328d74fd00"],
-      ["pr", (doc) => void (doc.merge = { strategy: "pr" }), "f023c27bc0b74984f92ff9591983b2e25be037d44326928ac03cf8e27ecef8d6"],
-      ["gh forge", (doc) => void (doc.merge = { strategy: "pr", forge: { kind: "gh", after_push: ["ci run"], ignore_checks: ["Bot*"] } }), "4580a30fad3cc17a252439821953e027afdfa738b7080e87a7cd46e0f244a2da"],
-      ["command forge", (doc) => void (doc.merge = { strategy: "pr", forge: { kind: "command", open: "pr open", state: "pr state", feedback: "pr feedback", retarget: "pr retarget" } }), "5d78dab93ba4e93c37a76b09d8a232b6d305a54d52d6482c16d5cac67b8b5127"],
+      ["integration", () => undefined, "ec4db17c8f33d8784e27bedf73090eea62eb910519cf218d0e15f22dd1ad1a06"],
+      ["pr", (doc) => void (doc.merge = { strategy: "pr" }), "83bdaed517e78f6b9f00f34d3e747a918b94b279b17626c3dceb7cde68225bec"],
+      ["gh forge", (doc) => void (doc.merge = { strategy: "pr", forge: { kind: "gh", after_push: ["ci run"], ignore_checks: ["Bot*"] } }), "97017015fbb619977de7cb29f42305eb4a2b50bc0fd51c668ccb98769dca0bc2"],
+      ["command forge", (doc) => void (doc.merge = { strategy: "pr", forge: { kind: "command", open: "pr open", state: "pr state", feedback: "pr feedback", retarget: "pr retarget" } }), "2187177dc9ce30728795ad977b0c24369212cb04c0c40fe265084de376176561"],
     ];
     for (const [name, edit, hash] of hashes) {
       const parsed = parseSpec(specToml(edit));

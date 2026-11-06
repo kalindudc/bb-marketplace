@@ -11,7 +11,7 @@ function run(edit?: (doc: Doc) => void) {
 
 // The base spec as it was before project.summary existed, for the hashes computed then.
 const beforeSummaries = (doc: Doc) => delete doc.project.summary;
-const BASE_HASH = "f96518d7974822c8b1c65893fa574d5cf07b041509cbddc9a0c604b100c185e7";
+const BASE_HASH = "ac9f73c025b739aaa2dbbaff97ec388f46717fd04da8aac7cef0099bb91a0a74";
 
 describe("parseSpec", () => {
   it("accepts a valid spec and fills the documented defaults", () => {
@@ -22,9 +22,9 @@ describe("parseSpec", () => {
     const spec = result.spec!;
     expect(spec.project).toMatchObject({ base: "main", non_goals: [], open_questions: [] });
     expect(spec.merge).toEqual({ strategy: "integration", remote: "origin", draft: true });
-    expect(spec.checks).toEqual({ commands: ["npm test"], after_merge: [], timeout_minutes: 15 });
+    expect(spec.checks).toEqual({ commands: ["npm test"], after_merge: [], timeout_minutes: 25 });
     expect(spec.scope).toEqual({ protected: [], enforce: "warn" });
-    expect(spec.agents).toMatchObject({ max_workers: 2, max_reviewers: 2, ticket_timeout_minutes: 120, triage: true, worker: { permission_mode: "full" }, reviewer: { permission_mode: "full" } });
+    expect(spec.agents).toMatchObject({ max_workers: 2, max_reviewers: 2, ticket_timeout_minutes: 180, triage: true, worker: { permission_mode: "full" }, reviewer: { permission_mode: "full" } });
     expect(spec.review).toEqual({ approvals: 1, max_rounds: 3, rubric: [] });
     expect(spec.budget).toEqual({ max_attempts: 3, max_check_failures: 5 });
     expect(spec.ticket[0]).toMatchObject({ verify: [], depends_on: [], priority: 2 });
@@ -346,7 +346,7 @@ describe("[[repo]]", () => {
     const spec = run(beforeSummaries).spec!;
     expect(Object.keys(spec)).not.toContain("repo");
     for (const ticket of spec.ticket) expect(Object.keys(ticket)).not.toContain("repo");
-    // It changes only if the base spec or the schema's output does, as when merge.branch stopped being filled in.
+    // It changes only if the base spec or the schema's output does, as when merge.branch stopped being filled in and two defaults moved.
     expect(specHash(spec)).toBe(BASE_HASH);
   });
 
@@ -677,30 +677,34 @@ describe("relying on the pull request's CI", () => {
     ]);
   });
 
-  it("refuses a repo that relies on CI through a forge that reports no checks, naming both fixes", () => {
-    expect(run((doc) => (doc.merge = { strategy: "pr", forge: command })).errors).toEqual([
-      'merge.forge: the repo relies on its pull requests\' CI (checks.ci is not false), but this forge reports no checks, so Loom could never send a failed one back. Add a feedback command to merge.forge, or set checks.ci = false so the plugin checks are the whole bar.',
+  it("derives ci from the forge when unset, and refuses ci = true on a forge that reports no checks, naming both fixes", () => {
+    expect(run((doc) => (doc.merge = { strategy: "pr", forge: command })).errors).toEqual([]);
+    expect(repoSettings(run((doc) => (doc.merge = { strategy: "pr", forge: command })).spec!, null).ci).toBe(false);
+    expect(run((doc) => (doc.merge = { strategy: "pr", forge: { kind: "none" } })).errors).toEqual([]);
+    expect(run((doc) => ((doc.merge = { strategy: "pr", forge: command }), (doc.checks = { commands: ["npm test"], ci: true }))).errors).toEqual([
+      'merge.forge: the repo relies on its pull requests\' CI (checks.ci is true), but this forge reports no checks, so Loom could never send a failed one back. Add a feedback command to merge.forge, or remove checks.ci so the plugin checks are the whole bar.',
     ]);
-    expect(run((doc) => (doc.merge = { strategy: "pr", forge: { kind: "none" } })).errors).toEqual([
-      'merge.forge: the repo relies on its pull requests\' CI (checks.ci is not false), but kind = "none" opens no pull request and reports no checks. Use kind = "gh", or kind = "command" with a feedback command, or set checks.ci = false so the plugin checks are the whole bar.',
+    expect(run((doc) => ((doc.merge = { strategy: "pr", forge: { kind: "none" } }), (doc.checks = { commands: ["npm test"], ci: true }))).errors).toEqual([
+      'merge.forge: the repo relies on its pull requests\' CI (checks.ci is true), but kind = "none" opens no pull request and reports no checks. Use kind = "gh", or kind = "command" with a feedback command, or remove checks.ci so the plugin checks are the whole bar.',
     ]);
     expect(run((doc) => ((doc.merge = { strategy: "pr", forge: command }), (doc.checks = { commands: ["npm test"], ci: false }))).errors).toEqual([]);
     expect(run((doc) => (doc.merge = { strategy: "pr", forge: { ...command, feedback: "review-cli checks" } })).errors).toEqual([]);
   });
 
-  it("names the repo's own paths on a multi-repo spec, once per repo that relies on CI", () => {
+  it("names the repo's own paths on a multi-repo spec, once per repo that says ci = true", () => {
     const errors = run((doc) => {
       doc.merge = { strategy: "pr", forge: command };
       doc.repo = [
         { name: "web", project: "proj_web", ci: false },
-        { name: "api", project: "proj_api" },
+        { name: "api", project: "proj_api", ci: true },
         { name: "docs", project: "proj_docs", forge: { kind: "gh" } },
+        { name: "ops", project: "proj_ops" },
       ];
       doc.ticket[0].repo = "web";
       doc.ticket[1].repo = "api";
     }).errors;
     expect(errors).toEqual([
-      'merge.forge: the repo "api" relies on its pull requests\' CI (repo[1].ci is not false), but this forge reports no checks, so Loom could never send a failed one back. Add a feedback command to merge.forge, or set repo[1].ci = false so the plugin checks are the whole bar.',
+      'merge.forge: the repo "api" relies on its pull requests\' CI (repo[1].ci is true), but this forge reports no checks, so Loom could never send a failed one back. Add a feedback command to merge.forge, or remove repo[1].ci so the plugin checks are the whole bar.',
     ]);
   });
 });

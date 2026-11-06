@@ -355,7 +355,7 @@ describe("timeouts", () => {
   it("ends a worker whose ticket has been working for longer than ticket_timeout_minutes, and starts a replacement in the same pass", async () => {
     await seedProject(h);
     await h.engine.tick();
-    h.clock.advance(121 * 60_000);
+    h.clock.advance(181 * 60_000);
     await h.engine.tick();
     expect(workerRows(h, "CSV-1").map((row) => [row.state, row.end_reason])).toEqual([["ended", "timeout"], ["active", null]]);
     expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "working", failures: 1, attempt: 2 });
@@ -365,7 +365,7 @@ describe("timeouts", () => {
   it("stops the pass when a pause lands during the token refresh, so nobody is timed out", async () => {
     await seedProject(h);
     await h.engine.tick();
-    h.clock.advance(121 * 60_000);
+    h.clock.advance(181 * 60_000);
     let paused = false;
     h.bb.threadTokens = async () => {
       if (!paused) {
@@ -385,7 +385,7 @@ describe("timeouts", () => {
   it("stops timing workers out when a pause lands while one of them is being ended", async () => {
     await seedProject(h, wide);
     await h.engine.tick();
-    h.clock.advance(121 * 60_000);
+    h.clock.advance(181 * 60_000);
     const stop = h.bb.stop.bind(h.bb);
     let paused = false;
     h.bb.stop = async (threadId) => {
@@ -422,7 +422,7 @@ describe("timeouts", () => {
     await h.engine.resume("csv", "human");
     await h.engine.tick();
     expect(workerRows(h, "CSV-1")[0]!.state).toBe("active");
-    h.clock.advance(119 * 60_000);
+    h.clock.advance(179 * 60_000);
     await h.engine.tick();
     expect(workerRows(h, "CSV-1")[0]!.state).toBe("active");
     h.clock.advance(2 * 60_000);
@@ -954,7 +954,7 @@ describe("reconcile", () => {
     await h.engine.tick();
     const row = workerRows(h, "CSV-1")[0]!;
     h.bb.stopConfirms = false;
-    h.clock.advance(121 * 60_000);
+    h.clock.advance(181 * 60_000);
     await h.engine.tick();
     expect(h.store.thread(row.id)?.state).toBe("ending");
     expect(ticketOf(h, "CSV-1").state).toBe("working");

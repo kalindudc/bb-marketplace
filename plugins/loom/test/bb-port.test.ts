@@ -325,7 +325,7 @@ describe("createHostPort", () => {
     await port.call("host_1", "stackBase", { networkTimeoutMs: 300_000 } as never);
     // stackBase and importCommit also run index and tree steps, which get the 5-minute git index timeout on top.
     const index = new Set(["stackBase", "importCommit"]);
-    expect(calls).toEqual([...gitNetwork.map((method) => ({ method, timeoutMs: index.has(method) ? 570_000 : 270_000 })), { method: "pointRefs", timeoutMs: 30_000 }, { method: "stackBase", timeoutMs: 930_000 }]);
+    expect(calls).toEqual([...gitNetwork.map((method) => ({ method, timeoutMs: index.has(method) ? 930_000 : 630_000 })), { method: "pointRefs", timeoutMs: 30_000 }, { method: "stackBase", timeoutMs: 930_000 }]);
   });
 
   it("gives the calls with index and tree steps on the project's checkout the 5-minute git index timeout, within bb's 30-minute cap", async () => {
@@ -334,7 +334,8 @@ describe("createHostPort", () => {
     const port = createHostPort(bb);
     await port.call("host_1", "mergeOnto", {} as never);
     await port.call("host_1", "importCommit", { networkTimeoutMs: 600_000 } as never);
-    expect(calls.map((call) => call.timeoutMs)).toEqual([330_000, 1_530_000]);
+    await port.call("host_1", "importCommit", {} as never);
+    expect(calls.map((call) => call.timeoutMs)).toEqual([330_000, 1_530_000, 930_000]);
   });
 
   it("gives pull request reads the network deadline, since gh and a forge command may take 2 minutes", async () => {

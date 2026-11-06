@@ -742,8 +742,9 @@ its own pull request.
   above, and a ticket stacked on this one follows the pushed fix. Pending and
   failing CI shows on the board card, the next-step bar and the Merge order
   tab. This needs a server that reports checks (`gh`, or a command forge with
-  a `feedback` command); `loom_propose` refuses a repo on any other until it
-  has one, or until the spec sets `ci = false` for it. `ci = false`, in
+  a `feedback` command), so a repo on any other forge does not rely on it
+  unless the spec says `ci = true`, which `loom_propose` refuses there.
+  `ci = false`, in
   `[checks]` or on a `[[repo]]`, makes Loom ignore that repo's CI: its own
   checks are the whole bar, and a failed CI check starts no fix round.
 - A fix round can change the pull request's text: the worker passes `pr`
@@ -1077,9 +1078,9 @@ or run `bb loom sync <slug>` (`--ticket <KEY>` for one).
 Loom fetches, runs `ls-remote` and pushes in each repo's checkout: it fetches
 the base branch to bring a stacked pull request up to date, reads the pull
 request's branch to build its commit, and pushes. Each of these git steps may
-take `git_network_timeout_seconds`, 120 by default, set on a `[[repo]]` or on
-`[merge]`. On a large monorepo where fetching main takes a minute or more,
-raise it (300 leaves room for a fetch of 50 to 80 seconds). A step that runs
+take `git_network_timeout_seconds`, 300 by default, set on a `[[repo]]` or on
+`[merge]`. Raise it only for a repository whose fetch of main takes several
+minutes. A step that runs
 out of time is waited out like any temporary failure (see
 [When the machine or the server does not answer](#when-the-machine-or-the-server-does-not-answer)),
 but while the fetch stays that slow every try runs out of time, and the project

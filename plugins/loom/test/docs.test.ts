@@ -52,7 +52,7 @@ describe("the plugin's own documents", () => {
 
   it("the spec reference, the skills and README describe relying on CI, its ci key and the forge it needs", () => {
     const spec = read("skills/loom/references/spec.md");
-    for (const phrase of ["| `ci` | boolean | `true` |", "| `ci` | boolean | `checks.ci` |", "### Relying on CI", "`ci = false`", "feedback = \'\'\'", "pr-cli pr checks"]) expect(spec, phrase).toContain(phrase);
+    for (const phrase of ["| `ci` | boolean | from the forge |", "| `ci` | boolean | `checks.ci` |", "### Relying on CI", "`ci = false`", "feedback = \'\'\'", "pr-cli pr checks"]) expect(spec, phrase).toContain(phrase);
     for (const path of ["README.md", "skills/loom/SKILL.md", "skills/loom-plan/SKILL.md"]) {
       const text = read(path);
       for (const phrase of ["`ci = false`", "CI"]) expect(text, `${path}: ${phrase}`).toContain(phrase);
@@ -67,7 +67,7 @@ describe("the plugin's own documents", () => {
 
   it("the spec reference, the planner skill and README describe git_network_timeout_seconds for slow repositories", () => {
     const spec = read("skills/loom/references/spec.md");
-    for (const phrase of ["| `git_network_timeout_seconds` | integer | `120` |", "| `git_network_timeout_seconds` | integer | `merge.git_network_timeout_seconds` |", "### Slow repositories", "git_network_timeout_seconds = 300"]) expect(spec, phrase).toContain(phrase);
+    for (const phrase of ["| `git_network_timeout_seconds` | integer | `300` |", "| `git_network_timeout_seconds` | integer | `merge.git_network_timeout_seconds` |", "### Slow repositories", "git_network_timeout_seconds = 600"]) expect(spec, phrase).toContain(phrase);
     for (const path of ["README.md", "skills/loom-plan/SKILL.md"]) expect(read(path), path).toContain("git_network_timeout_seconds");
   });
 

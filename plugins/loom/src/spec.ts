@@ -284,8 +284,8 @@ export const specSchema = z
       .object({
         commands: z.array(command).max(10).default([]),
         after_merge: z.array(command).max(10).default([]),
-        timeout_minutes: z.number().int().min(1).max(29).default(15),
-        // No default, so a spec without it hashes as it did before it existed; repoSettings reads unset as true.
+        timeout_minutes: z.number().int().min(1).max(29).default(25),
+        // No default: unset follows the forge (repoSettings), true where it reports checks.
         ci: z.boolean().optional(),
       })
       .strict()
@@ -301,7 +301,7 @@ export const specSchema = z
       .object({
         max_workers: z.number().int().min(1).max(8).default(2),
         max_reviewers: z.number().int().min(1).max(8).default(2),
-        ticket_timeout_minutes: z.number().int().min(10).max(1440).default(120),
+        ticket_timeout_minutes: z.number().int().min(10).max(1440).default(180),
         triage: z.boolean().default(true),
         worker: agentSchema.prefault({}),
         reviewer: agentSchema.prefault({}),
@@ -777,8 +777,8 @@ function rolloutProblems(spec: Spec, indexOfRef: ReadonlyMap<string, number>, lo
 }
 
 /**
- * A repo that relies on its pull requests' CI, which is every repo on the pr strategy unless its ci, or the top-level
- * one, is false, needs a forge that reports checks: gh, or a command forge with a feedback command.
+ * A repo whose ci, or the top-level one, says true needs a forge that reports checks: gh, or a command forge with a
+ * feedback command. Unset, ci follows the forge, so it needs nothing.
  */
 function ciForgeErrors(spec: Spec): string[] {
   const repos = spec.repo ?? [];
@@ -787,10 +787,10 @@ function ciForgeErrors(spec: Spec): string[] {
       ? [{ name: null, forge: spec.merge.forge ?? { kind: "gh" }, forgeAt: "merge.forge", ciAt: "checks.ci", ci: spec.checks.ci }]
       : repos.map((repo, index) => ({ name: repo.name, forge: repo.forge ?? spec.merge.forge ?? { kind: "gh" }, forgeAt: repo.forge === undefined ? "merge.forge" : `repo[${index}].forge`, ciAt: `repo[${index}].ci`, ci: repo.ci ?? spec.checks.ci }));
   return entries.flatMap(({ name, forge, forgeAt, ciAt, ci }) => {
-    if (ci === false || forge.kind === "gh" || (forge.kind === "command" && forge.feedback !== undefined)) return [];
+    if (ci !== true || forge.kind === "gh" || (forge.kind === "command" && forge.feedback !== undefined)) return [];
     const who = name === null ? "the repo" : `the repo ${JSON.stringify(name)}`;
-    const relies = `${who} relies on its pull requests' CI (${ciAt} is not false), but`;
-    const off = `set ${ciAt} = false so the plugin checks are the whole bar.`;
+    const relies = `${who} relies on its pull requests' CI (${ciAt} is true), but`;
+    const off = `remove ${ciAt} so the plugin checks are the whole bar.`;
     return [
       forge.kind === "none"
         ? `${forgeAt}: ${relies} kind = "none" opens no pull request and reports no checks. Use kind = "gh", or kind = "command" with a feedback command, or ${off}`

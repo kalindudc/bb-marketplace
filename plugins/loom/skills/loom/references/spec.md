@@ -34,7 +34,7 @@ A spec without `[[repo]]` tables is a single-repo project: every ticket runs in 
 | `max_fix_rounds` | integer | `5` | pr strategy only; 0 to 20; fix rounds the pull request's checks and reviews may start before the ticket blocks, counted again from each requeue; the human's replies do not count; `0` follows only merged and closed |
 | `stack` | boolean | `true` | pr strategy only; a ticket starts once its dependencies' pull requests are open, on top of them in its own repo, and its pull request opens on its one open dependency's branch; `false` waits for each dependency to merge |
 | `refresh_behind` | integer | none | pr strategy only; 1 to 1000000; keeps open pull requests fresh with their base: once a pull request's branch lacks at least this many commits of the remote base, or the forge says it conflicts with its base, Loom merges the base into it, runs the ticket's checks in its worker's worktree and pushes, with no new review; unset is off; the default `refresh_behind` of every `[[repo]]`. See [Keeping pull requests fresh](#keeping-pull-requests-fresh) |
-| `git_network_timeout_seconds` | integer | `120` | 30 to 600; how long each git fetch, `ls-remote` or push Loom runs in the repo may take, such as fetching the base branch to bring a stacked pull request up to date, building a pull request's commit, or pushing it; a host call that runs two of them in a row gets twice this plus 30 seconds; the default of every `[[repo]]`. Raise it for a large monorepo, where fetching main takes a minute or more; a version approved after the project started applies from Loom's next pass. See [Slow repositories](#slow-repositories) |
+| `git_network_timeout_seconds` | integer | `300` | 30 to 600; how long each git fetch, `ls-remote` or push Loom runs in the repo may take, such as fetching the base branch to bring a stacked pull request up to date, building a pull request's commit, or pushing it; a host call that runs two of them in a row gets twice this plus 30 seconds; the default of every `[[repo]]`. Raise it for a large monorepo, where fetching main takes a minute or more; a version approved after the project started applies from Loom's next pass. See [Slow repositories](#slow-repositories) |
 
 ### [merge.forge]
 
@@ -45,7 +45,7 @@ The server that hosts pull requests. Leave it out for GitHub: Loom opens and fol
 | `kind` | string | required | `"gh"`, `"command"` (the `open` and `state` commands below) or `"none"` (Loom only pushes the branch) |
 | `open` | string | none | required with `kind = "command"`, refused otherwise; a shell command that opens a pull request for a branch that is already pushed |
 | `state` | string | none | required with `kind = "command"`, refused otherwise; a shell command that prints the pull request's state |
-| `feedback` | string | none | `kind = "command"` only; a shell command that prints the pull request's checks and review feedback, so Loom can start fix rounds; without it Loom follows only merged and closed, and a repo on this forge must set `ci = false` (see [Relying on CI](#relying-on-ci)) |
+| `feedback` | string | none | `kind = "command"` only; a shell command that prints the pull request's checks and review feedback, so Loom can start fix rounds; without it Loom follows only merged and closed, and does not rely on the repo's CI (see [Relying on CI](#relying-on-ci)) |
 | `edit` | string | none | `kind = "command"` only; a shell command that sets an open pull request's title and description, so Loom can apply the text the reviewers approved in a fix round and refresh the Rollout section; without it Loom posts a new text on the ticket for the human to set |
 | `reply` | string | none | `kind = "command"` only; a shell command that answers one review, review thread or comment, so workers can reply through Loom with `loom_pr_reply`; without it the tool is refused on this forge |
 | `after_open` | string array | none | at most 5; shell commands run once after a pull request opens, such as one that starts CI; a failure is posted and blocks nothing; not allowed with `kind = "none"` |
@@ -238,9 +238,9 @@ On the pull request strategy Loom brings an open pull request's branch up to dat
 
 ### Slow repositories
 
-Loom runs git's network steps in a repo's checkout: it fetches the base branch before it brings a stacked pull request up to date, runs `ls-remote` and may fetch the branch when it builds a pull request's commit, and pushes. Each step may take `git_network_timeout_seconds` (120 by default), and the host call around it twice that plus 30 seconds. A step that runs longer is stopped and waited out like any temporary failure, so the merge runs again after 1, 2, 5 and 10 minutes, then every 15; while the fetch stays that slow, every run stops the same way, and the project pauses after an hour of them.
+Loom runs git's network steps in a repo's checkout: it fetches the base branch before it brings a stacked pull request up to date, runs `ls-remote` and may fetch the branch when it builds a pull request's commit, and pushes. Each step may take `git_network_timeout_seconds` (300 by default), and the host call around it twice that plus 30 seconds. A step that runs longer is stopped and waited out like any temporary failure, so the merge runs again after 1, 2, 5 and 10 minutes, then every 15; while the fetch stays that slow, every run stops the same way, and the project pauses after an hour of them.
 
-- Time the fetch in the repo's checkout, for example `time git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main`, and set `git_network_timeout_seconds` comfortably above it on that `[[repo]]`, or on `[merge]` for a single-repo project. On a large monorepo whose main takes 50 to 80 seconds to fetch, 300 leaves room.
+- Time the fetch in the repo's checkout, for example `time git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main`, and set `git_network_timeout_seconds` comfortably above it on that `[[repo]]`, or on `[merge]` for a single-repo project. The default, 300, leaves room for a large monorepo whose main takes 50 to 80 seconds to fetch.
 - To change it on a running project, propose a revision with the new value; it applies once the version is approved, and a version that changes only it skips the spec review. The project's pull requests, workers and tickets are unchanged.
 - The setting covers git's network steps only. `gh`, the forge's commands and the first checkout of an integration worktree keep their own 2-minute limits.
 
@@ -254,19 +254,19 @@ Loom also reads and writes trees in the checkout. When a worker runs on another 
 |---|---|---|---|
 | `commands` | string array | `[]` | at most 10; run on every submitted ticket, except in a repo whose `[[repo]]` table sets its own `checks` |
 | `after_merge` | string array | `[]` | at most 10; run on the merged integration branch, which they must leave as they found it (no new commit, no edited tracked file) or the merge is rolled back; not allowed with strategy `"pr"`; a repo that sets its own `after_merge` runs that instead |
-| `timeout_minutes` | integer | `15` | 1 to 29 |
-| `ci` | boolean | `true` | strategy `"pr"` only; `true` relies on the pull request's CI for every test the plugin's checks do not run, `false` ignores it and makes the plugin's checks the whole bar; a repo's own `ci` replaces it; see [Relying on CI](#relying-on-ci) |
+| `timeout_minutes` | integer | `25` | 1 to 29 |
+| `ci` | boolean | from the forge | strategy `"pr"` only; unset is `true` on a forge that reports checks (`gh`, or `kind = "command"` with `feedback`) and `false` on any other; `true` relies on the pull request's CI for every test the plugin's checks do not run, `false` ignores it and makes the plugin's checks the whole bar; a repo's own `ci` replaces it; see [Relying on CI](#relying-on-ci) |
 
 ### Relying on CI
 
 On the pull request strategy, the plugin's checks (`commands`, a repo's `checks` and a ticket's `verify`) are the cheap ones that run where each worker runs, and the pull request's CI is the authority for every other test: one that needs a container runtime or a service the worker's machine does not have, or a suite too slow to run on every submit. `ci` says, per repo, whether Loom relies on it.
 
-- `ci = true`, the default: Loom relies on the pull request's CI.
+- `ci = true`, the default on a forge that reports checks: Loom relies on the pull request's CI.
   - The worker brief says the plugin's checks are the cheap ones and every other test runs in the pull request's CI. It tells the worker to run what it can, not to block, fail or loop on a test its environment cannot run, and to name in its `loom_submit` summary the tests it did not run. The reviewer brief says not to request changes only because a test was not run where the reviewer is, and to request them when the work lacks a test the ticket needs.
   - Once the pull request is open, a failed CI check goes to the worker as a fix round, as described in [When failed checks go to the worker](#when-failed-checks-go-to-the-worker), with a note that CI may run tests the worker cannot run. The fix goes through the checks and a review before Loom pushes it, and a ticket stacked on this one takes the pushed fix through its restack.
   - A ticket's failing and pending CI checks show on its board card, on the next-step bar while the project runs, and on the Merge order tab.
-  - It needs a forge that reports checks: `gh`, or `kind = "command"` with a `feedback` command. `loom_propose` refuses a repo on any other forge, naming both fixes: add a `feedback` command, or set `ci = false` for that repo. With `merge.max_fix_rounds = 0` Loom reads no feedback at all, so no failed check comes back either.
-- `ci = false`: Loom ignores the repo's CI, and the plugin's checks are the whole bar; the briefs say so. A failed CI check starts no fix round, while the pull request's reviews, review threads and comments, and your replies on the ticket, still do. Loom still records the check counts it reads, so the Merge order tab shows them.
+  - It needs a forge that reports checks: `gh`, or `kind = "command"` with a `feedback` command. A repo on any other forge does not rely on CI unless it says `ci = true`, which `loom_propose` refuses, naming both fixes: add a `feedback` command, or remove `ci`. With `merge.max_fix_rounds = 0` Loom reads no feedback at all, so no failed check comes back either.
+- `ci = false`, the default on a forge that reports no checks: Loom ignores the repo's CI, and the plugin's checks are the whole bar; the briefs say so. A failed CI check starts no fix round, while the pull request's reviews, review threads and comments, and your replies on the ticket, still do. Loom still records the check counts it reads, so the Merge order tab shows them.
 
 Compared with 0.23.0: Loom already sent failed CI checks back as fix rounds whenever the forge reported them, but no brief said so, so workers and reviewers took the plugin's checks as the whole bar and could stall on a test they could not run. `ci = true` keeps those fix rounds and adds the guidance and the board's CI counts; `ci = false` stops them. A spec approved before 0.24.0 keeps running as it is, and a repo whose forge reports no checks counts as `ci = false`; proposing a revision of it needs a `feedback` command or `ci = false`.
 
@@ -283,7 +283,7 @@ Compared with 0.23.0: Loom already sent failed CI checks back as fix rounds when
 |---|---|---|---|
 | `max_workers` | integer | `2` | 1 to 8; worker threads running at once, fix rounds and other work sent back to a worker included |
 | `max_reviewers` | integer | `2` | 1 to 8; reviewer threads running at once |
-| `ticket_timeout_minutes` | integer | `120` | 10 to 1440 |
+| `ticket_timeout_minutes` | integer | `180` | 10 to 1440 |
 | `triage` | boolean | `true` | |
 
 `[agents.worker]` and `[agents.reviewer]` each take `provider`, `model` and `reasoning` (optional strings) and `permission_mode` (`"accept-edits"`, `"auto"` or `"full"`, default `"full"`). Some providers, such as pi, accept only `"full"`.
@@ -677,10 +677,9 @@ after_push = ['ci-cli run --pr "$LOOM_PR_NUMBER" --commit "$LOOM_SHA"']
 provider = "example-trees"
 inputs = { branch = "{branch}", base = "{base}", paths = ["services/orders", "services/billing"] }
 
-# review-cli cannot print checks, so Loom cannot rely on the pull request's CI: these checks are the whole bar.
+# review-cli cannot print checks, so Loom does not rely on the pull request's CI: these checks are the whole bar.
 [checks]
 commands = ["make -C services/orders test"]
-ci = false
 
 [[ticket]]
 ref = "tag-model"
@@ -696,7 +695,7 @@ environment = { inputs = { paths = ["services/orders"] } }
 
 A project whose workers and reviewers each run on a new machine that a plugin's environment makes, opening and following its pull requests through a forge command. The provider ids and inputs come from `loom_discover` and the human; these are placeholders. The forge is a server reached through its own CLI, called `pr-cli` here, whose JSON follows GitHub's REST API. The repository is a large monorepo, so the spec raises `git_network_timeout_seconds`; the forge moves a stacked pull request with `retarget`, and `after_push` starts CI again after each push, since this server's CI does not start by itself on a draft, and marks a stacked pull request ready once it builds on main.
 
-The repository's tests need a container runtime that the machines do not have, so the plugin's checks are only the static ones, and Loom relies on the pull request's CI (`ci` unset is `true`) for the rest. That needs the `feedback` command: it reads the pull request with `pr-cli pr view`, and its check runs and commit statuses with `pr-cli pr checks`, which exits 8 while checks are pending. The command turns them into the JSON object Loom reads, mapping each check run's `status` and `conclusion` to Loom's check states. It leaves out the server's `reviews` check run, which is the approval gate rather than CI and would hold every failed check until the settle time. It reports no reviews or comments, so your replies on the ticket are what starts a fix round for a reviewer's request.
+The repository's tests need a container runtime that the machines do not have, so the plugin's checks are only the static ones, and Loom relies on the pull request's CI (`ci` unset is `true` on a forge with `feedback`) for the rest. That needs the `feedback` command: it reads the pull request with `pr-cli pr view`, and its check runs and commit statuses with `pr-cli pr checks`, which exits 8 while checks are pending. The command turns them into the JSON object Loom reads, mapping each check run's `status` and `conclusion` to Loom's check states. It leaves out the server's `reviews` check run, which is the approval gate rather than CI and would hold every failed check until the settle time. It reports no reviews or comments, so your replies on the ticket are what starts a fix round for a reviewer's request.
 
 ```toml
 [project]
@@ -708,8 +707,8 @@ summary = "Each route of the routing controller gets a configurable upstream tim
 
 [merge]
 strategy = "pr"
-# Fetching main of this large monorepo takes about a minute; see Slow repositories.
-git_network_timeout_seconds = 300
+# Fetching main of this very large monorepo takes about six minutes; see Slow repositories.
+git_network_timeout_seconds = 600
 
 [merge.forge]
 kind = "command"
@@ -846,7 +845,7 @@ A spec with any error is refused and nothing is saved. Errors are numbered, at m
 - `merge.describe`, `merge.max_fix_rounds`, `merge.stack`, `merge.refresh_behind` or a repo's `refresh_behind` on the integration strategy.
 - An `environment` (top level or a repo's) sets `machine`, and the strategy is not `"pr"`.
 - `checks.ci` or a repo's `ci` on the integration strategy.
-- A repo that relies on the pull request's CI (strategy `"pr"` with `ci` unset or `true`) whose forge reports no checks: `kind = "command"` without `feedback`, or `kind = "none"`. Add a `feedback` command, or set `ci = false` for that repo.
+- A repo whose `ci`, or the top-level `checks.ci`, is `true` while its forge reports no checks: `kind = "command"` without `feedback`, or `kind = "none"`. Add a `feedback` command, or remove `ci` for that repo.
 - An `inputs` string, in `[environment]` or a ticket's `environment`, holds a `{name}` other than `{branch}` or `{base}`.
 - A ticket sets `environment` in a repo whose threads start in git worktrees, with no environment provider to patch.
 

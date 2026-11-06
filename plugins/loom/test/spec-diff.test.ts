@@ -182,7 +182,7 @@ describe("operationalChanges", () => {
     expect(changed((doc) => (doc.budget = { max_tokens: 9_000_000, deadline: "2030-01-01" }))).toEqual(["budget.max_tokens", "budget.deadline"]);
     expect(changed((doc) => (doc.environment = { provider: "git-worktree", inputs: { size: "large" } }))).toEqual(["environment.provider", "environment.inputs.size"]);
     expect(changed((doc) => Object.assign(doc.merge, { draft: false, max_fix_rounds: 8, stack: false }), prBase, onPr)).toEqual(["merge.draft", "merge.max_fix_rounds", "merge.stack"]);
-    expect(changed((doc) => Object.assign(doc.checks, { timeout_minutes: 25, ci: false }), prBase, onPr)).toEqual(["checks.timeout_minutes", "checks.ci"]);
+    expect(changed((doc) => Object.assign(doc.checks, { timeout_minutes: 20, ci: false }), prBase, onPr)).toEqual(["checks.timeout_minutes", "checks.ci"]);
     expect(changed((doc) => (doc.ticket[1].environment = { inputs: { size: "large" } }), prBase, onPr)).toEqual(["ticket[csv-export].environment.inputs.size"]);
     expect(changed((doc) => Object.assign(doc.repo[1], { forge: { kind: "gh" }, ci: false, environment: { provider: "git-worktree" } }), multi, repos)).toEqual(["repo[1].ci", "repo[1].forge.kind", "repo[1].environment.provider"]);
     expect(changed((doc) => Object.assign(doc.merge, { refresh_behind: 5000 }), multi, repos)).toEqual(["merge.refresh_behind"]);

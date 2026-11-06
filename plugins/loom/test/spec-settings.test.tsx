@@ -333,6 +333,17 @@ describe("spec settings", () => {
     // About 150 jumps, each a render of the whole page; a loaded machine needs more than 30 seconds for them.
   }, 60_000);
 
+  it("shows ci left unset as what the forge gives: relied on with gh, ignored on a command forge without feedback", async () => {
+    const onForge = (forge: Record<string, unknown>) => valid(specToml((doc) => void (doc.merge = { strategy: "pr", forge })));
+    const text = async (spec: Spec) => {
+      const slot = await openSpec(versionOf(spec, spec));
+      entire(slot);
+      return section(slot, "settings").textContent ?? "";
+    };
+    expect(await text(onForge({ kind: "gh" }))).toContain("The pull request's CI runs every other test, from the forge");
+    expect(await text(onForge({ kind: "command", open: "o", state: "s" }))).toContain("Loom ignores the pull request's CI: its own checks are the whole bar, from the forge");
+  });
+
   it("shows a final review turned on with an empty table, in What changed and while only what changed is shown", async () => {
     const gh = (auto: Record<string, unknown>) =>
       valid(

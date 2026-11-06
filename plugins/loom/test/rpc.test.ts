@@ -409,7 +409,7 @@ describe("reads", () => {
       ["planner", "thr_plan", "active"],
       ["reviewer", "thr_r9", "ended"],
     ]);
-    expect(agents[0]).toMatchObject({ ticketKey: "CSV-1", ticketTitle: "Order rows", model: "claude / sonnet", timeoutAt: worker.clock_at! + 120 * 60_000, endReason: null });
+    expect(agents[0]).toMatchObject({ ticketKey: "CSV-1", ticketTitle: "Order rows", model: "claude / sonnet", timeoutAt: worker.clock_at! + 180 * 60_000, endReason: null });
     expect(agents[1]).toMatchObject({ ticketKey: null, model: null, timeoutAt: null });
     expect(agents[2]).toMatchObject({ ticketKey: "CSV-2", model: "codex / gpt", endReason: "verdict", tokens: 400, reviewRound: 1, timeoutAt: null });
   });
@@ -441,7 +441,7 @@ describe("agentRows", () => {
     const spec = specOf(h.store, project);
     const rows = () => agentRows(h.store.threadsForProject(project.id), h.store.tickets(project.id), spec);
     const worker = () => rows().find((entry) => entry.role === "worker")!;
-    expect(worker()).toMatchObject({ model: "claude", timeoutAt: h.store.thread(row.id)!.clock_at! + 120 * 60_000 });
+    expect(worker()).toMatchObject({ model: "claude", timeoutAt: h.store.thread(row.id)!.clock_at! + 180 * 60_000 });
     h.store.setTicketState(row.ticket_id!, "checking", "loom");
     expect(worker().timeoutAt).toBeNull();
     h.store.addThread({ project_id: project.id, role: "reviewer", state: "active", thread_id: "thr_r1", ticket_id: row.ticket_id });

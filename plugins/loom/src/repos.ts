@@ -17,7 +17,7 @@ export interface RepoSettings {
   forge: ForgeSpec;
   /**
    * Loom relies on the pull requests' CI for every test the plugin checks do not run: on the pr strategy unless ci is
-   * false, and only on a forge that reports checks, which loom_propose requires of a spec that relies on it.
+   * false, and only on a forge that reports checks, which loom_propose requires of a spec that sets ci = true.
    */
   ci: boolean;
   /** The environment provider its workers and reviewers start in; null for today's managed worktree. */
