@@ -1652,6 +1652,11 @@ settings for that project.
   `bb loom land`, and only `bb loom land --direct` pushes to the base branch,
   never with force and only after the `after_merge` checks pass on what it
   pushes.
+- The git commands Loom runs for itself (status, commit, merge, reset, fetch
+  and the rest) start none of the repository's hooks and no fsmonitor daemon,
+  since they run in checkouts and worktrees Loom does not own. A push keeps the
+  repository's hooks, because git-lfs uploads large files from its pre-push
+  hook. Your spec's check commands run as you wrote them, hooks and all.
 - Workers and reviewers run in bb's full permission mode unless the spec sets
   `permission_mode`, because some providers, such as pi, accept no other mode.
   An approved spec keeps the mode it was approved with.

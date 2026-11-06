@@ -45,6 +45,20 @@ const subcommandOf = (args: readonly string[]): string => {
   return args[at] ?? "git";
 };
 
+// Loom runs git in checkouts it does not own, so its own calls start no repository hook and no fsmonitor daemon. A push
+// keeps its hooks: git-lfs uploads the large files of the commits it pushes from its pre-push hook. Set through git's
+// environment rather than -c, which a machine's emulated git may not take, after any config the environment already has.
+export function ownGitEnv(args: readonly string[], env: NodeJS.ProcessEnv = process.env): GitEnv {
+  const config: Array<[string, string]> = [["core.fsmonitor", "false"], ...(subcommandOf(args) === "push" ? [] : [["core.hooksPath", "/dev/null"] as [string, string]])];
+  const first = Number(env.GIT_CONFIG_COUNT ?? 0);
+  const vars: GitEnv = { GIT_CONFIG_COUNT: String(first + config.length) };
+  config.forEach(([key, value], index) => {
+    vars[`GIT_CONFIG_KEY_${first + index}`] = key;
+    vars[`GIT_CONFIG_VALUE_${first + index}`] = value;
+  });
+  return vars;
+}
+
 function run(cwd: string, args: readonly string[], signal?: AbortSignal, timeout = GIT_TIMEOUT_MS, priority: Priority = "background", env: GitEnv = {}): Promise<GitRun> {
   const argv = ["-C", cwd, ...args];
   const name = subcommandOf(args);
@@ -54,7 +68,7 @@ function run(cwd: string, args: readonly string[], signal?: AbortSignal, timeout
     async () => {
       let ended;
       try {
-        ended = await runProcess("git", argv, { env: { ...process.env, GIT_TERMINAL_PROMPT: "0", LC_ALL: "C", ...env }, maxBuffer: GIT_MAX_BUFFER, timeoutMs: timeout, signal });
+        ended = await runProcess("git", argv, { env: { ...process.env, GIT_TERMINAL_PROMPT: "0", LC_ALL: "C", ...ownGitEnv(args), ...env }, maxBuffer: GIT_MAX_BUFFER, timeoutMs: timeout, signal });
       } catch (error) {
         throw new Error(`git ${name}: ${(error as Error).message}`);
       }
@@ -422,7 +436,7 @@ async function gitInput(cwd: string, args: readonly string[], input: string, opt
     "git",
     argv,
     async () => {
-      const ended = await runProcess("git", argv, { env: { ...process.env, GIT_TERMINAL_PROMPT: "0", LC_ALL: "C", ...opts.env }, input, maxBuffer: GIT_MAX_BUFFER, timeoutMs: opts.clock?.left() ?? NETWORK_TIMEOUT_MS, signal: opts.signal });
+      const ended = await runProcess("git", argv, { env: { ...process.env, GIT_TERMINAL_PROMPT: "0", LC_ALL: "C", ...ownGitEnv(args), ...opts.env }, input, maxBuffer: GIT_MAX_BUFFER, timeoutMs: opts.clock?.left() ?? NETWORK_TIMEOUT_MS, signal: opts.signal });
       if (ended.code === 0) return ended.stdout.trim();
       if (ended.timedOut && opts.clock !== undefined) throw indexTimedOut(what, opts.clock);
       throw new Error(`git ${what} failed (${ended.code ?? "killed"}): ${tail(ended.stderr || ended.stdout)}`);
@@ -655,7 +669,7 @@ function blobRange(repo: string, sha: string, offset: number, length: number, si
     argv,
     () =>
       new Promise<Buffer>((resolve, reject) => {
-        const child = spawn("git", argv, { env: { ...process.env, GIT_TERMINAL_PROMPT: "0", LC_ALL: "C" }, signal, stdio: ["ignore", "pipe", "pipe"] });
+        const child = spawn("git", argv, { env: { ...process.env, GIT_TERMINAL_PROMPT: "0", LC_ALL: "C", ...ownGitEnv(argv.slice(2)) }, signal, stdio: ["ignore", "pipe", "pipe"] });
         const parts: Buffer[] = [];
         let seen = 0;
         let kept = 0;

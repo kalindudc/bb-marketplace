@@ -37,6 +37,7 @@ import {
   landedOn,
   merge,
   mergeOnto,
+  ownGitEnv,
   parseRemoteUrl,
   pointRefs,
   prBatch,
@@ -2842,5 +2843,67 @@ exec "${join(bin, "git")}" "$@"
     expect(await worktreeState({ worktree, base: "origin/main" })).toMatchObject({ changed: ["dep.txt", "src/loose.txt", "src/mine.txt"] });
     const missing = await worktreeState({ worktree, base: "origin/main", baseTree: sh(worktree, "rev-parse", "HEAD:src") });
     expect(missing).toMatchObject({ changed: ["dep.txt", "src/loose.txt", "src/mine.txt"], onBase: false });
+  });
+});
+
+describe("Loom's own git calls", () => {
+  const marker = () => join(scratch, `hooks-ran-${counter++}.log`);
+  function hooked(log: string): string {
+    const repo = makeRepo();
+    const hooks = join(scratch, `hooks-${counter++}`);
+    mkdirSync(hooks);
+    for (const name of ["post-checkout", "post-commit", "post-merge", "reference-transaction", "pre-push"]) {
+      writeFileSync(join(hooks, name), `#!/bin/sh\necho ${name} >> ${log}\ncat > /dev/null\n`);
+      chmodSync(join(hooks, name), 0o755);
+    }
+    sh(repo, "config", "core.hooksPath", hooks);
+    return repo;
+  }
+  const ran = (log: string) => (existsSync(log) ? readFileSync(log, "utf8").trim().split("\n") : []);
+
+  it("run none of the repository's hooks when they add a worktree, commit, merge or reset", async () => {
+    const log = marker();
+    const repo = hooked(log);
+    const feature = commitFile(repo, "feature.txt", "x");
+    sh(repo, "reset", "-q", "--hard", "HEAD~1");
+    await ensureBranch({ repo, branch: "loom/hooked", from: "main" });
+    rmSync(log, { force: true });
+    const ready = await ensureWorktree({ repo, key: "hooked", branch: "loom/hooked" }, join(scratch, `data-${counter++}`));
+    if (ready.outcome !== "ok") throw new Error(ready.message);
+    put(ready.path, "work.txt", "w");
+    await commitAll({ worktree: ready.path, message: "work" });
+    expect(await merge({ worktree: ready.path, ref: feature, message: "Merge the feature (Loom)" })).toMatchObject({ outcome: "merged" });
+    await resetHard({ worktree: ready.path, sha: feature });
+    expect(ran(log)).toEqual([]);
+  });
+
+  it("keep a push's pre-push hook, which git-lfs uploads a commit's large files from", async () => {
+    const log = marker();
+    const repo = hooked(log);
+    const remote = join(scratch, `remote-${counter++}.git`);
+    execFileSync("git", ["init", "-q", "--bare", remote]);
+    sh(repo, "remote", "add", "origin", remote);
+    const head = commitFile(repo, "x.txt", "x");
+    rmSync(log, { force: true });
+    expect(await push({ repo, remote: "origin", src: head, branch: "loom/csv-1" })).toEqual({ outcome: "ok" });
+    expect(ran(log)).toContain("pre-push");
+  });
+
+  it("set their config through git's environment, after the config the environment already has", () => {
+    expect(ownGitEnv(["status"], {})).toEqual({ GIT_CONFIG_COUNT: "2", GIT_CONFIG_KEY_0: "core.fsmonitor", GIT_CONFIG_VALUE_0: "false", GIT_CONFIG_KEY_1: "core.hooksPath", GIT_CONFIG_VALUE_1: "/dev/null" });
+    expect(ownGitEnv(["push", "origin"], { GIT_CONFIG_COUNT: "2" })).toEqual({ GIT_CONFIG_COUNT: "3", GIT_CONFIG_KEY_2: "core.fsmonitor", GIT_CONFIG_VALUE_2: "false" });
+  });
+
+  it("never start the repository's fsmonitor", async () => {
+    const log = marker();
+    const repo = makeRepo();
+    const monitor = join(scratch, `fsmonitor-${counter++}.sh`);
+    writeFileSync(monitor, `#!/bin/sh\necho fsmonitor >> ${log}\nexit 1\n`);
+    chmodSync(monitor, 0o755);
+    sh(repo, "config", "core.fsmonitor", monitor);
+    put(repo, "new.txt", "n");
+    rmSync(log, { force: true });
+    expect(await worktreeState({ worktree: repo, base: "main" })).toMatchObject({ dirty: true });
+    expect(ran(log)).toEqual([]);
   });
 });
