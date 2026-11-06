@@ -9,6 +9,18 @@ Loom opens one pull request per ticket. Its worker writes the title and descript
 
 The reader is a person on the team that owns the repository. They have never seen Loom, the spec, the ticket board or the machine you work on. Write so they can review the change on one read.
 
+## Core rules
+
+Loom puts these rules in every worker's brief and in every message that asks for a pull request's text, and its text review judges the text by them. The rest of this skill explains them.
+
+- Lead with what changed and why, in two or three plain sentences.
+- Say how a reviewer can verify the change: what ran, and what the pull request's CI covers.
+- Say how the change deploys and rolls back only when Loom's merge and deploy section, which Loom adds after your description, does not already say it.
+- Define each term and acronym the first time you use it.
+- Never use ticket keys, Loom's stage names (planner, worker, round, brief, triage), project slugs or other words a reader outside the project cannot look up; name another change by its pull request link and title.
+- Put long detail, such as tables, logs and migration lists, in collapsed sections (`<details><summary>…</summary>…</details>`).
+- Keep it as short as the change allows.
+
 ## Brevity
 
 The whole description must be readable in under five minutes. Keep it short by leaving out what a reviewer does not need, not by compressing sentences.
@@ -94,4 +106,6 @@ A Loom reviewer judges the title and description with the code, by the rules abo
 - writes its own merge, deploy or rollout order section, or Loom's markers;
 - claims something the diff does not do, or leaves out what the reviewer needs: the Why, the What, or a prerequisite that would break production.
 
-Do not ask for Loom's own section: Loom writes it after the description.
+Give each such finding kind `text`. When every finding of a round is about the text, the worker gets a text-only round: it proposes new text and changes no files, and Loom's text review judges it, with no checks and no code review. Loom, not the worker, then puts the text on the pull request.
+
+Do not ask for Loom's own section: Loom writes it after the description. The merge and deploy order, the prerequisites and the Rollout section are Loom's, written from the spec and kept current by Loom. Do not ask the worker to write them, or rollout and rollback prose they already give; judge only whether the worker's own text contradicts them. When a rollout fact there is wrong, that is a spec matter: say so in your verdict's summary for the planner, not as a finding.

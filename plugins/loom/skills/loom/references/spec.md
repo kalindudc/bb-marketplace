@@ -295,8 +295,10 @@ Compared with 0.23.0: Loom already sent failed CI checks back as fix rounds when
 | Key | Type | Default | Rule |
 |---|---|---|---|
 | `approvals` | integer | `1` | 1 to 3 |
-| `max_rounds` | integer | `3` | 1 to 10; review rounds that ask for changes before the ticket blocks; see [Retry limits](#retry-limits) |
-| `rubric` | string array | `[]` | at most 20, each up to 500 characters |
+| `max_rounds` | integer | `3` | 1 to 10; review rounds that ask for changes before the ticket blocks; rounds that ask only for new pull request text count apart, with a limit of their own; see [Retry limits](#retry-limits) |
+| `rubric` | string array | `[]` | at most 20, each up to 500 characters; the text review judges the pull request's text by the lines about it |
+
+On the pull request strategy with `merge.describe = "worker"`, a reviewer gives each finding a kind, `code` or `text`. A round whose findings are all `text` goes back as a text-only round: the worker proposes new text with `loom_submit`'s `pr` and changes no files, and Loom's text review, one short turn by `agents.reviewer` at low reasoning that needs one verdict whatever `approvals` says, judges it with no checks and no code review. Loom then sets the text on the pull request.
 
 ### [budget]
 
@@ -315,7 +317,7 @@ Five keys limit how often Loom tries one ticket again, each in its own phase. Ea
 |---|---|---|---|
 | `budget.max_attempts` | a worker works on the ticket | a worker that fails, times out or gives up; a start that fails counts only from its fourth failure in a row | `3` |
 | `budget.max_check_failures` | the worker submits | a submit whose plugin checks (`checks`, a repo's `checks`, the ticket's `verify`, and on the integration strategy `after_merge`) fail | `5` |
-| `review.max_rounds` | Loom's reviewers judge the submit, before any pull request opens | a review round that asks for changes | `3` |
+| `review.max_rounds` | Loom's reviewers judge the submit, before any pull request opens | a review round that asks for changes; rounds that send the ticket back for its pull request's text alone count separately, against the same limit | `3` |
 | `merge.max_fix_rounds` | the pull request is open | a fix round its checks, reviews, review threads or comments start, or a final review failure the worker can fix; the human's replies do not count; `0` reads no feedback at all | `5` |
 | `auto_merge.max_attempts` | Loom merges a ready pull request itself | a merge Loom asks the forge for | `3` |
 

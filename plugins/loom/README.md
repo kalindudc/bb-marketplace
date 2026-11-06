@@ -72,7 +72,9 @@ Loom needs:
 7. Review. Reviewer threads call `loom_checkout` to get the exact work that
    passed the checks, read the diff and call `loom_approve` or
    `loom_request_changes`. Requested changes go back to the worker as numbered
-   findings.
+   findings. On the pull request strategy a finding about the pull request's
+   text alone goes back as a text-only round, which Loom's text review judges
+   instead of the checks and a code review (see [Pull requests](#pull-requests)).
 8. Merge. On the integration strategy, Loom merges exactly the reviewed commit
    into the integration branch, one ticket at a time, and runs the
    `after_merge` checks on the result. On the pull request strategy, the
@@ -680,6 +682,40 @@ its own pull request.
   are named by their pull request link and title, never by a ticket key; Loom's
   vocabulary (planner, worker, round, brief, triage) and the agent's sandbox
   stay out. Reviewers request changes to a text that breaks these rules.
+- The skill's core rules are also built into the worker's brief, and into
+  every message that asks for the text, so they hold for every model, even one
+  that skips the skill: lead with what changed and why in two or three
+  sentences; say how to verify it; say how it deploys and rolls back only when
+  Loom's own section does not; define terms on first use; never use ticket
+  keys, Loom's stage names, project slugs or other words a reader outside the
+  project cannot look up; put long detail, such as tables, logs and migration
+  lists, in collapsed sections; and keep it as short as the change allows. A
+  test keeps the brief's rules and the skill's "Core rules" section the same.
+- Reviewers give each finding a kind: `code` (the default) when the change
+  itself must change, `text` when only the title or description must. When
+  every finding of a round is about the text, and the other reviewers the
+  round needs approved, the ticket goes back to its worker as a text-only
+  round: the worker changes no files and proposes the new text with
+  `loom_submit`'s `pr`. Loom, never the worker, then puts that text on the
+  pull request, so a worker can always apply a finding about the text. A round
+  with any code finding goes back as an ordinary round. With
+  `merge.describe = "loom"` the worker writes no text, so a text finding is an
+  ordinary one there.
+- A submit that changes only the proposed text, on work whose checks already
+  passed, runs no checks and no code review. Loom's text review judges it
+  instead: one short turn by `agents.reviewer` at low reasoning, which gets the
+  changed files and their line counts (not the patch), the text before and
+  after, the ticket, the feedback or findings it answers, the core rules and
+  the rubric, and needs no checkout. It approves, or returns findings, which
+  go back to the worker as another text-only round. Text-only rounds and code
+  rounds each have `review.max_rounds` of their own, so rewriting the text
+  never uses up the code review's rounds.
+- The merge and deploy order, the prerequisites and the Rollout section are
+  Loom's: it writes them from the spec and keeps them current. Reviewers do not
+  ask the worker to write them, or rollout and rollback prose they already
+  give; they judge only whether the worker's own text contradicts them. A
+  rollout fact that is wrong is a spec matter, which a reviewer raises in its
+  verdict's summary for the planner instead of a finding.
 - Once the reviewers approve a ticket, its worker writes the rest of the pull
   request with `loom_pr`: the commit message, and the title and description if
   it proposed none, by the same skill. A title or a
@@ -749,8 +785,9 @@ its own pull request.
   checks are the whole bar, and a failed CI check starts no fix round.
 - A fix round can change the pull request's text: the worker passes `pr`
   to `loom_submit` again, or a title or body to `loom_pr`. A fix whose only
-  change is the proposed text still goes through review, so the reviewer who
-  asked can judge it; once it is approved, Loom sets it and pushes nothing. A
+  change is the proposed text runs no checks and goes to Loom's text review
+  (above), which judges it against the feedback it answers; once it is
+  approved, Loom sets it and pushes nothing. A
   fix with code and text is pushed, then Loom sets the text. Loom sets it with
   the server's edit (`gh pr edit`, or a command forge's `edit` command) on the
   project's machine, so a worker on a machine of its own needs no access to the

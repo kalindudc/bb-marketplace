@@ -9,8 +9,10 @@ import { spawnEnvironment, threadBranch, ticketInputsOf, usesNewMachine } from "
 import { writeSub, type RetryWait, type StartWait } from "./sub-state";
 import { hostCallTransient, mergeWaitExpired, mergeWaitReason, mergeWaitText, nextMergeWait } from "./forge-waits";
 import { plural } from "./format";
-import { changesRequestedText, findingsList, reviewerBrief, reviewerNudgeText, withRestoredNote } from "./prompts";
+import { changesRequestedText, findingsList, reviewerBrief, reviewerNudgeText, textChangesText, textReviewBrief, withRestoredNote } from "./prompts";
+import { onlyText, roundKind, sentBackForText, textRoundsOn, type FindingKind } from "./review-kind";
 import { openFeedback } from "./pull-requests";
+import { canEdit } from "./repos";
 import { isWaking, releasedWorker } from "./release";
 import { nextWait, provisioningFailure, startProblemOf, startWaits, unavailableReason, waitOf, waitPost, type StartProblem } from "./starts";
 import { LoomError } from "./projects";
@@ -24,6 +26,8 @@ import { moveTicket, patchOf, tryMoveTicket, type TicketMove } from "./moves";
 
 export interface Finding {
   severity: "blocking" | "should-fix";
+  /** What the finding is about: the change itself, or only the pull request's title and description. Absent is code. */
+  kind?: FindingKind;
   title: string;
   detail: string;
   file?: string;
@@ -31,6 +35,8 @@ export interface Finding {
 }
 
 const PATCH_BYTES = 60_000;
+/** A text review is one short turn: it reads its brief and gives a verdict. */
+const TEXT_REASONING = "low";
 const errText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 // ---------------------------------------------------------------- reading a round
@@ -47,31 +53,54 @@ function standingOf(store: Store, review: ReviewRow): Standing {
   return row.state === "ending" ? "ending" : "live";
 }
 
-/** The current round of a ticket in review. Pending rows without a live thread count toward neither approvals nor `live`. */
+const findingsOf = (review: ReviewRow) => JSON.parse(review.findings_json) as Finding[];
+
+/**
+ * The current round of a ticket in review. Pending rows without a live thread count toward neither approvals nor `live`.
+ * A request for changes to the text alone does not object to the code, so it counts toward the approvals (`cleared`) and
+ * the round waits for the rest; any other request for changes (`objection`) decides it. A text round needs one verdict.
+ */
 function tally(store: Store, ticket: TicketRow, spec: Spec) {
   const rows = store.reviews(ticket.id, ticket.review_round);
+  const needed = roundKind(store, ticket) === "text" ? 1 : spec.review.approvals;
   const approved = rows.filter((review) => review.verdict === "approved").length;
-  const changes = rows.find((review) => review.verdict === "changes_requested") ?? null;
+  const changes = rows.filter((review) => review.verdict === "changes_requested");
+  const textOnly = textRoundsOn(spec) ? changes.filter((review) => onlyText(findingsOf(review))) : [];
+  const objection = changes.find((review) => !textOnly.includes(review)) ?? null;
   const pending = rows.filter((review) => review.verdict === "pending");
+  const cleared = approved + textOnly.length;
   return {
     rows,
+    needed,
     approved,
+    cleared,
     changes,
+    objection,
+    textOnly,
     live: pending.filter((review) => standingOf(store, review) === "live").length,
     dead: pending.filter((review) => standingOf(store, review) === "dead").length,
-    decided: changes !== null || approved >= spec.review.approvals,
+    decided: objection !== null || cleared >= needed,
   };
 }
 
-/** Changes-requested verdicts on the ticket since its last requeue (blocked to queued), or since creation. */
-function changesRequestedSinceRequeue(store: Store, ticketId: number): number {
-  let count = 0;
-  for (const event of store.ticketEvents(ticketId, ["ticket.state", "review.verdict"])) {
-    const data = JSON.parse(event.data_json) as { from?: string; to?: string; verdict?: string; requeued?: boolean };
-    if (event.kind === "ticket.state" && data.from === "blocked" && (data.to === "queued" || data.requeued === true)) count = 0;
-    else if (event.kind === "review.verdict" && data.verdict === "changes_requested") count += 1;
+/**
+ * Review rounds that requested changes on the ticket since its last requeue (blocked to queued), or since creation, the
+ * current one included: those that sent it back for its text alone, or the rest. Each kind has its own review.max_rounds,
+ * so text churn never uses up the code review's rounds.
+ */
+function changesRequestedSinceRequeue(store: Store, ticket: TicketRow, textOnly: boolean): number {
+  const changed = new Set<unknown>();
+  const text = new Set<unknown>();
+  for (const event of store.ticketEvents(ticket.id, ["ticket.state", "review.verdict"])) {
+    const data = JSON.parse(event.data_json) as Record<string, unknown>;
+    if (event.kind === "ticket.state" && data.from === "blocked" && (data.to === "queued" || data.requeued === true)) {
+      changed.clear();
+      text.clear();
+    } else if (event.kind === "review.verdict" && data.verdict === "changes_requested") changed.add(data.round ?? `review ${String(data.review)}`);
+    else if (event.kind === "ticket.state" && sentBackForText(data)) text.add(data.round);
   }
-  return count;
+  if (textOnly) text.add(ticket.review_round);
+  return textOnly ? text.size : [...changed].filter((round) => !text.has(round)).length;
 }
 
 // ---------------------------------------------------------------- the round outcome
@@ -97,21 +126,26 @@ function decideRound(ctx: EngineCtx, ticketId: number): Outcome | null {
     if (ticket === null || ticket.state !== "review") return null;
     const spec = specOf(store, store.project(ticket.project_id)!);
     const round = tally(store, ticket, spec);
-    if (round.changes !== null) return changesOutcome(ctx, ticket, spec, round.changes);
-    if (round.approved < spec.review.approvals) return null;
+    if (round.objection !== null) return changesOutcome(ctx, ticket, spec, round.changes, false);
+    if (round.cleared < round.needed) return null;
+    if (round.textOnly.length > 0) return changesOutcome(ctx, ticket, spec, round.textOnly, true);
     moveTicket(store, ticket.id, { name: "approve" }, LOOM_ACTOR, { round: ticket.review_round, approvals: round.approved });
     return { kind: "approved" } as const;
   });
 }
 
-function changesOutcome(ctx: EngineCtx, ticket: TicketRow, spec: Spec, review: ReviewRow): Outcome {
+/**
+ * `reviews` are the round's requests for changes, the one that objects to the code first; `textOnly` when every one asks
+ * only for new text, which the worker gets as a text-only round.
+ */
+function changesOutcome(ctx: EngineCtx, ticket: TicketRow, spec: Spec, reviews: readonly ReviewRow[], textOnly: boolean): Outcome {
   const { store } = ctx;
   const worker = workerOf(store, ticket);
   if (worker.standing === "ending") return { kind: "deferred" };
 
-  const rounds = changesRequestedSinceRequeue(store, ticket.id);
+  const rounds = changesRequestedSinceRequeue(store, ticket, textOnly);
   if (rounds >= spec.review.max_rounds) {
-    const reason = `review requested changes in ${plural(rounds, "round")}`;
+    const reason = `review requested changes${textOnly ? " to the pull request's text" : ""} in ${plural(rounds, "round")}`;
     // Claiming the worker here makes its ending, which carries the ticket's move to blocked, replayable by the tick.
     if (worker.standing === "active" && !store.claimThread(worker.row.id, "blocked")) return { kind: "deferred" };
     store.updateTicket(ticket.id, { blocked_reason: reason });
@@ -125,8 +159,13 @@ function changesOutcome(ctx: EngineCtx, ticket: TicketRow, spec: Spec, review: R
   const thread = worker.standing === "active" ? worker.row.thread_id : (asleep?.thread_id ?? null);
   if (thread !== null) {
     const restored = asleep !== null || (worker.standing === "active" && isWaking(worker.row));
-    const text = withRestoredNote(changesRequestedText(ticket.key, review.round, review.summary ?? "", JSON.parse(review.findings_json) as Finding[]), restored);
-    handBack(ctx, ticket, worker.standing === "active" ? worker.row : null, thread, text, { round: ticket.review_round });
+    const ordered = [...reviews].sort((a, b) => Number(onlyText(findingsOf(a))) - Number(onlyText(findingsOf(b))));
+    const summary = ordered.map((review) => review.summary ?? "").filter((each) => each !== "").join("\n\n");
+    const findings = ordered.flatMap(findingsOf);
+    const message = textOnly
+      ? textChangesText({ key: ticket.key, round: ticket.review_round, summary, findings, opened: ticket.pushed_sha !== null, canEdit: canEdit(ticketRepo(spec, ticket).forge) })
+      : changesRequestedText(ticket.key, ticket.review_round, summary, findings);
+    handBack(ctx, ticket, worker.standing === "active" ? worker.row : null, thread, withRestoredNote(message, restored), { round: ticket.review_round, ...(textOnly ? { textOnly: true } : {}) });
     return { kind: "changes" };
   }
   tryMoveTicket(store, ticket.id, { name: "worker_gone" }, LOOM_ACTOR, { reason: "the worker is gone" });
@@ -201,13 +240,13 @@ export async function spawnReviewers(ctx: EngineCtx, project: ProjectRow, spec: 
       await settleRound(ctx, ticket.id);
       continue;
     }
-    if (round.dead >= spec.review.approvals + 2) {
+    if (round.dead >= round.needed + 2) {
       await blockForReviewers(ctx, ticket, "reviewers ended without a verdict");
       continue;
     }
     if (startWaits(ticket, "reviewer", ctx.now())) continue;
     if (freeReviewerSlots(spec.agents.max_reviewers, store.threads({ projectId: project.id, role: "reviewer" }), parked.reviewers) === 0) continue;
-    spawned += await startReviewers(ctx, project, spec, ticket, spec.review.approvals - round.approved - round.live, parked);
+    spawned += await startReviewers(ctx, project, spec, ticket, round.needed - round.cleared - round.live, parked);
   }
   return spawned;
 }
@@ -260,7 +299,7 @@ async function startReviewers(ctx: EngineCtx, project: ProjectRow, spec: Spec, t
   const diff = await readDiff(ctx, project, spec, ticket);
   if (diff === null) return 0;
   const remote = usesNewMachine(ticketRepo(spec, ticket));
-  const checkouts = remote ? new Map<string, string>() : await otherCheckouts(ctx, project, spec, ticket);
+  const checkouts = remote || roundKind(ctx.store, ticket) === "text" ? new Map<string, string>() : await otherCheckouts(ctx, project, spec, ticket);
   let started = 0;
   for (let n = 0; n < needed; n++) {
     if (!(await startReviewer(ctx, project.id, ticket, diff, checkouts, parked))) break;
@@ -328,7 +367,7 @@ async function startReviewer(ctx: EngineCtx, projectId: number, seen: TicketRow,
     const spec = specOf(store, project);
     const current = tally(store, ticket, spec);
     const free = freeReviewerSlots(spec.agents.max_reviewers, store.threads({ projectId, role: "reviewer" }), parked.reviewers);
-    if (current.decided || current.approved + current.live >= spec.review.approvals || free === 0) return null;
+    if (current.decided || current.cleared + current.live >= current.needed || free === 0) return null;
     const waiting = store.threads({ ticketId: ticket.id, role: "reviewer", states: ["ended"] }).find((row) => row.end_reason === UNSTARTED && row.review_round === round);
     if (waiting !== undefined) {
       store.updateThread(waiting.id, { state: "spawning", spawn_token: token, thread_id: null, environment_id: null, ended_at: null, end_reason: null, clock_at: ctx.now(), idle_count: 0, rate_limit_retries: 0, maintenance_seq: 0 });
@@ -345,19 +384,24 @@ async function startReviewer(ctx: EngineCtx, projectId: number, seen: TicketRow,
   const agent = spec.agents.reviewer;
   const repo = ticketRepo(spec, ticket);
   const onMachine = usesNewMachine(repo);
-  const brief = reviewerBrief({
-    project,
-    spec,
-    ticket,
-    round,
-    diff,
-    checkPost: store.posts(ticket.id).filter((post) => post.kind === "check").at(-1) ?? null,
-    earlierReviews: store.reviews(ticket.id).filter((review) => review.round < round),
-    prFeedback: openFeedback(store.posts(ticket.id)),
-    checkouts,
-    remote: onMachine,
-    tickets: store.tickets(project.id),
-  });
+  const text = roundKind(store, ticket) === "text";
+  const posts = store.posts(ticket.id);
+  const earlierReviews = store.reviews(ticket.id).filter((review) => review.round < round);
+  const brief = text
+    ? textReviewBrief({ project, spec, ticket, round, stat: diff.stat, submits: posts.filter((post) => post.kind === "submit"), earlierReviews, prFeedback: openFeedback(posts) })
+    : reviewerBrief({
+        project,
+        spec,
+        ticket,
+        round,
+        diff,
+        checkPost: posts.filter((post) => post.kind === "check").at(-1) ?? null,
+        earlierReviews,
+        prFeedback: openFeedback(posts),
+        checkouts,
+        remote: onMachine,
+        tickets: store.tickets(project.id),
+      });
   let spawned;
   try {
     const base = onMachine ? freshBase(spec, ticket.repo) : await localReviewBase(ctx, project, spec, ticket);
@@ -366,13 +410,13 @@ async function startReviewer(ctx: EngineCtx, projectId: number, seen: TicketRow,
       hostId: project.host_id!,
       baseBranch: base,
       environment: spawnEnvironment(repo, { branch: threadBranch(project.slug, ticket.key, `review-${round}-${row.id}`), base }, ticketInputsOf(ticket)),
-      title: `Review ${ticket.key} · round ${round}`,
+      title: `${text ? "Text review" : "Review"} ${ticket.key} · round ${round}`,
       prompt: brief,
       sectionId: project.section_id,
       metadata: { project: project.slug, role: "reviewer", ticket: ticket.key, round: String(round), spawnToken: token },
       providerId: agent.provider,
       model: agent.model,
-      reasoningLevel: agent.reasoning,
+      reasoningLevel: text ? TEXT_REASONING : agent.reasoning,
       permissionMode: agent.permission_mode,
     });
   } catch (error) {
@@ -478,12 +522,16 @@ async function verdict(ctx: EngineCtx, threadId: string, kind: "approved" | "cha
   if (kind === "changes_requested" && findings.length === 0) throw new LoomError("loom_invalid_input", "Give at least one finding: a severity, a title and a detail.");
 
   const seen = pendingReview(store, threadId);
-  await requireHeadCheckedOut(ctx, seen.row, seen.ticket, seen.spec);
+  // A text review judges only the text in its brief, so it needs no checkout, and everything it finds is about the text.
+  const textRound = roundKind(store, seen.ticket) === "text";
+  if (!textRound) await requireHeadCheckedOut(ctx, seen.row, seen.ticket, seen.spec);
+  const found = textRound ? findings.map((finding) => ({ ...finding, kind: "text" as const })) : findings;
 
   const outcome = store.tx(() => {
     const { row, ticket, review } = pendingReview(store, threadId);
-    store.setVerdict(review.id, kind, text, findings);
-    const body = kind === "approved" ? `Approved (round ${review.round}): ${text}` : `Changes requested (round ${review.round}): ${text}\n\nFindings:\n${findingsList(findings)}`;
+    store.setVerdict(review.id, kind, text, found);
+    const what = textRound ? "Text review approved" : "Approved";
+    const body = kind === "approved" ? `${what} (round ${review.round}): ${text}` : `${textRound ? "Text review requested changes" : "Changes requested"} (round ${review.round}): ${text}\n\nFindings:\n${findingsList(found)}`;
     store.addPost({
       project_id: ticket.project_id,
       ticket_id: ticket.id,
@@ -492,7 +540,7 @@ async function verdict(ctx: EngineCtx, threadId: string, kind: "approved" | "cha
       author_thread_id: row.thread_id,
       kind: "review",
       body,
-      data_json: JSON.stringify({ round: review.round, verdict: kind, review: review.id, findings }),
+      data_json: JSON.stringify({ round: review.round, verdict: kind, review: review.id, findings: found, ...(textRound ? { text: true } : {}) }),
     });
     return decideRound(ctx, ticket.id);
   });

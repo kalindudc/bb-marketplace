@@ -17,6 +17,7 @@ import { specReviewBlocks } from "./format";
 import { handInPrText, humanFixRound, REPLIES_PER_ROUND, replyToItem } from "./pull-requests";
 import { usesNewMachine } from "./environments";
 import { approve, checkOutReview, requestChanges } from "./review";
+import { FINDING_KINDS } from "./review-kind";
 import { finalRunOf, finalVerdict } from "./final-review";
 import { ticketPatchSchema, ticketSpecSchema } from "./spec";
 import { standingInstructionsLines } from "./prompts";
@@ -41,6 +42,10 @@ const MAX_OUTPUT = 12_000;
 
 const findingSchema = z.object({
   severity: z.enum(["blocking", "should-fix"]).describe("blocking stops the ticket from merging; should-fix is worth doing but does not stop it."),
+  kind: z
+    .enum(FINDING_KINDS)
+    .optional()
+    .describe("code (the default) when the change itself must change; text when only the pull request's title or description must. A round whose findings are all text goes back as a text-only round, which no checks or code review repeat."),
   title: z.string().min(1).max(200),
   detail: z.string().min(1).max(2000).describe("What is wrong and how to fix it."),
   file: z.string().min(1).max(500).optional(),
@@ -360,7 +365,7 @@ export function registerTools(bb: BbPluginApi, projects: Projects, engine: Engin
   bb.agents.registerTool({
     name: "loom_submit",
     description:
-      "Hand your work in when every acceptance criterion holds, then end your turn. The plugin commits your worktree, checks the changed files against your scope and the protected paths, and runs the ticket's and the project's checks. You get the result as a message: a failure to fix, or a note that the ticket waits for review. On a project that opens a pull request per ticket, pr is the pull request's title and description as they should read: the reviewers judge them with the work, and once they approve, Loom opens the pull request with them, or sets them on the one that is open. A pr replaces only the fields it gives; leave it out to keep the earlier proposal. A fix round that changes only pr still goes to review, and Loom pushes nothing for it.",
+      "Hand your work in when every acceptance criterion holds, then end your turn. The plugin commits your worktree, checks the changed files against your scope and the protected paths, and runs the ticket's and the project's checks. You get the result as a message: a failure to fix, or a note that the ticket waits for review. On a project that opens a pull request per ticket, pr is the pull request's title and description as they should read: the reviewers judge them with the work, and once they approve, Loom opens the pull request with them, or sets them on the one that is open. A pr replaces only the fields it gives; leave it out to keep the earlier proposal. A submit that changes only pr, on work whose checks already passed, runs no checks: Loom's text review judges the text alone, and Loom pushes nothing for it. You never edit the pull request yourself.",
     presentation: { label: { pending: "Submitting work", completed: "Submitted work" } },
     parameters: z.object({
       summary: z.string().min(1).max(20_000).describe("What you did and how each acceptance criterion holds."),
@@ -439,7 +444,7 @@ export function registerTools(bb: BbPluginApi, projects: Projects, engine: Engin
   bb.agents.registerTool({
     name: "loom_approve",
     description:
-      "Approve the ticket you review: every acceptance criterion holds and no blocking finding remains. Give one verdict per round, then end your turn. Refused until loom_checkout put the reviewed work in your worktree.",
+      "Approve the ticket you review: every acceptance criterion holds and no blocking finding remains, or in a text review, the text follows its rules. Give one verdict per round, then end your turn. In a code review, refused until loom_checkout put the reviewed work in your worktree.",
     presentation: { label: { pending: "Approving the ticket", completed: "Approved the ticket" } },
     parameters: z.object({ summary: z.string().min(1).max(4000).describe("How each acceptance criterion holds.") }),
     execute: ({ summary }, tool) => run(() => approve(ctx, tool.threadId, summary)),
@@ -448,7 +453,7 @@ export function registerTools(bb: BbPluginApi, projects: Projects, engine: Engin
   bb.agents.registerTool({
     name: "loom_request_changes",
     description:
-      "Send the ticket back to its worker with findings: each has a severity (blocking or should-fix), a title, a detail, and where you can, a file and a line. Give one verdict per round, then end your turn. Refused until loom_checkout put the reviewed work in your worktree.",
+      "Send the ticket back to its worker with findings: each has a severity (blocking or should-fix), a kind (code, the default, or text for the pull request's title or description alone), a title, a detail, and where you can, a file and a line. Give one verdict per round, then end your turn. In a code review, refused until loom_checkout put the reviewed work in your worktree.",
     presentation: { label: { pending: "Requesting changes", completed: "Requested changes" } },
     parameters: z.object({ summary: z.string().min(1).max(4000).describe("What is wrong, in a few sentences."), findings: z.array(findingSchema).min(1).max(20) }),
     execute: ({ summary, findings }, tool) => run(() => requestChanges(ctx, tool.threadId, summary, findings)),

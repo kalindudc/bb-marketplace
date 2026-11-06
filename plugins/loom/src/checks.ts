@@ -11,6 +11,7 @@ import { checkFailedText, clip, prUnchangedText } from "./prompts";
 import { writeSub, type PrText, type Stack } from "./sub-state";
 import { openFeedback, proposalOf, proposeText, textPending, unchangedFix } from "./pull-requests";
 import { LoomError } from "./projects";
+import { textRoundOpen, textRoundsOn } from "./review-kind";
 import type { EnvironmentInfo } from "./ports";
 import { recordingHost } from "./runs";
 import { scopeReport } from "./scope";
@@ -107,8 +108,12 @@ interface Outcome {
   environment: EnvironmentInfo;
   /** A fix round that changed nothing: no checks, no review, nothing to push. */
   unchanged?: boolean;
-  /** A fix round that changed only the pull request's proposed text: no checks, but a review of the text, and nothing to push. */
-  textOnly?: boolean;
+  /**
+   * A submit that changed only the pull request's proposed text: no checks, and a text review instead of a code review.
+   * "pushed": a fix round on the commit the pull request has, so nothing to push. "checked": a text-only round on the
+   * commit whose checks already passed, which goes on as reviewed work once the text review approves.
+   */
+  textOnly?: "pushed" | "checked";
   runs: CheckRun[];
   failure: CheckRun | null;
   outside: string[];
@@ -132,7 +137,7 @@ async function pipeline(ctx: EngineCtx, ticketId: number): Promise<void> {
   try {
     outcome = await runPipeline({ ...ctx, host: recordingHost(ctx.store, ctx.host, ticket, "check") }, ticket, spec, worker.row);
     const project = store.project(ticket.project_id)!;
-    if (outcome.failure === null && outcome.unchanged !== true && outcome.textOnly !== true && isRemote(project, outcome.environment)) {
+    if (outcome.failure === null && outcome.unchanged !== true && outcome.textOnly === undefined && isRemote(project, outcome.environment)) {
       outcome = { ...outcome, commitSha: (await bringHome(ctx, project, spec, ticket, outcome.environment, "submit", outcome.tree)).sha };
     }
   } catch (error) {
@@ -179,7 +184,11 @@ async function runPipeline(ctx: EngineCtx, ticket: TicketRow, spec: Spec, worker
     if (!textPending(ctx, ticket)) return { ...kept, unchanged: true, runs: [], failure: null, outside: [], protectedHits: [] };
     // The work is the commit the open feedback was sent for, which the checkout has whatever machine the worker is on.
     const sent = (JSON.parse(openFeedback(posts)!.data_json) as { head?: string | null }).head ?? ticket.head_sha!;
-    return { ...kept, commitSha: sent, textOnly: true, runs: [], failure: null, outside: [], protectedHits: [] };
+    return { ...kept, commitSha: sent, textOnly: "pushed", runs: [], failure: null, outside: [], protectedHits: [] };
+  }
+  // The tree its checks passed with, which the checkout has as the ticket's head whatever machine the worker is on.
+  if (ticket.head_sha !== null && ticket.head_tree === state.tree && textRoundsOn(spec) && textRoundOpen(ctx.store, ticket)) {
+    return { ...kept, commitSha: ticket.head_sha, textOnly: "checked", runs: [], failure: null, outside: [], protectedHits: [] };
   }
   const report = scopeReport(state.changed, JSON.parse(ticket.scope_json) as string[], repo.protected);
   const outcome: Outcome = { ...kept, runs: [], failure: null, outside: report.outside, protectedHits: report.protectedHits };
@@ -233,8 +242,11 @@ async function stackedTree(ctx: EngineCtx, project: ProjectRow, spec: Spec, tick
 const seconds = (ms: number) => `${(ms / 1000).toFixed(1)}s`;
 
 function checkPost(outcome: Outcome, enforce: Spec["scope"]["enforce"]): { body: string; data: object } {
-  if (outcome.textOnly === true) {
-    const body = `No checks ran: the work is the commit the pull request has (${outcome.commitSha.slice(0, 12)}), and the fix changes only the pull request's proposed title or description.`;
+  if (outcome.textOnly !== undefined) {
+    const body =
+      outcome.textOnly === "pushed"
+        ? `No checks ran: the work is the commit the pull request has (${outcome.commitSha.slice(0, 12)}), and the fix changes only the pull request's proposed title or description.`
+        : `No checks ran: the work is the commit whose checks passed (${outcome.commitSha.slice(0, 12)}), and this submit changes only the pull request's proposed title or description.`;
     return { body, data: { passed: true, head: outcome.commitSha, runs: [], outside: [], protectedHits: [], textOnly: true } };
   }
   const passed = outcome.failure === null;
@@ -281,9 +293,9 @@ async function finish(ctx: EngineCtx, ticketId: number, spec: Spec, outcome: Out
       const resolved = stack?.markers === undefined ? {} : writeSub("stack_json", { ...stack, markers: undefined });
       // Nothing to push once approved, so Loom asks for no commit message.
       const text: PrText = { head: outcome.commitSha, by: "loom", title: null, body: null, commit: ticket.title };
-      const textOnly = outcome.textOnly === true ? writeSub("pr_text_json", text) : {};
-      const set = { head_sha: outcome.commitSha, head_tree: outcome.tree, review_round: round, ...resolved, ...textOnly };
-      moveTicket(store, ticket.id, { name: "checked", set }, LOOM_ACTOR, { head: outcome.commitSha, round, ...(outcome.textOnly === true ? { textOnly: true } : {}) });
+      const nothingToPush = outcome.textOnly === "pushed" ? writeSub("pr_text_json", text) : {};
+      const set = { head_sha: outcome.commitSha, head_tree: outcome.tree, review_round: round, ...resolved, ...nothingToPush };
+      moveTicket(store, ticket.id, { name: "checked", set }, LOOM_ACTOR, { head: outcome.commitSha, round, ...(outcome.textOnly === undefined ? {} : { textOnly: true }) });
       if (worker !== null) store.updateThread((worker as ThreadRow).id, { idle_count: 0 });
       return true;
     }
@@ -307,8 +319,10 @@ async function finish(ctx: EngineCtx, ticketId: number, spec: Spec, outcome: Out
   if (target?.thread_id != null && delivers(ctx, ticket.project_id) && outcome.unchanged === true) {
     await send(ctx, target.thread_id, prUnchangedText(ticket.key));
   } else if (target?.thread_id != null && delivers(ctx, ticket.project_id)) {
-    if (failure === null && outcome.textOnly === true) {
-      await send(ctx, target.thread_id, `[loom] ${ticket.key}: your fix changes only the pull request's proposed text, so no checks ran. The reviewers judge the text now; once they approve, Loom sets it on the pull request and pushes nothing. End your turn and wait for a message.`);
+    if (failure === null && outcome.textOnly === "pushed") {
+      await send(ctx, target.thread_id, `[loom] ${ticket.key}: your fix changes only the pull request's proposed text, so no checks ran. Loom's text review judges it now; once it approves, Loom sets it on the pull request and pushes nothing. End your turn and wait for a message.`);
+    } else if (failure === null && outcome.textOnly === "checked") {
+      await send(ctx, target.thread_id, `[loom] ${ticket.key}: your submit changes only the pull request's proposed text, so no checks ran. Loom's text review judges it now, and you hear the result as a message. End your turn and wait for a message.`);
     } else if (failure === null) {
       const outside = outcome.outside.length > 0 ? ` These files are outside the ticket's scope: ${outcome.outside.join(", ")}.` : "";
       await send(ctx, target.thread_id, `[loom] ${ticket.key}: the checks passed. The ticket is waiting for review; end your turn and wait for a message.${outside}`);
