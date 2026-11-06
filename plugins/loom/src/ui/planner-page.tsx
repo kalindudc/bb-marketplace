@@ -6,6 +6,7 @@ import { operationalSummary } from "../next-step";
 import { changeLine, journey, workingOn, type Chapter, type JourneyStep, type QuestionRound } from "../planner-journey";
 import { SPEC_REVIEW_ROUNDS } from "../states";
 import { BUTTON, ConfirmButton, HEADING, plural, useAction, useLoom, useLoomWrite } from "./common";
+import { MergeConfirm } from "./merge-confirm";
 import { SettingPaths } from "./next-step-bar";
 import { PlannerMark, timeLabel } from "./planner-kit";
 import { About, Decisions, MessageBox, Versions } from "./planner-side";
@@ -366,7 +367,7 @@ export function PlannerPage({ threadId, project, busy = false, onControl, onSpec
   const waitsInChat = status === "waiting" && questions.loaded && pendingQuestions === 0 && questions.error === null;
   // One Ask User Question round can hold several questions; the strip counts the questions, Needs you the rounds.
   const askedCount = questions.rows.reduce((sum, row) => sum + (questionsOf(row.payload.data)?.length ?? 1), 0);
-  const needCount = pendingQuestions + (waitsInChat ? 1 : 0) + (ask === null ? 0 : ask.steps.filter((step) => !step.done).length) + (versionCard ? 1 : 0);
+  const needCount = pendingQuestions + (waitsInChat ? 1 : 0) + (ask === null ? 0 : ask.steps.filter((step) => !step.done).length) + (versionCard ? 1 : 0) + view.mergeRequests.length;
   const repos = (project?.overview.repos ?? []).flatMap((repo) => (repo.name === null ? [] : [repo.name]));
   const toNeeds = () => needs.current?.scrollIntoView({ behavior: "smooth", block: "start" });
 
@@ -392,6 +393,21 @@ export function PlannerPage({ threadId, project, busy = false, onControl, onSpec
         />
       )}
       {versionCard && project !== null && <VersionCard view={view} project={project} onSpec={onSpec} />}
+      {view.mergeRequests.map((request) => (
+        <div key={request.key} data-merge-request={request.key} className="space-y-1 rounded-md border border-warning bg-warning/10 p-3">
+          <p className="text-sm font-semibold">
+            {onTicket === undefined ? (
+              request.key
+            ) : (
+              <button type="button" onClick={() => onTicket(request.key)} className="cursor-pointer hover:underline">
+                {request.key}
+              </button>
+            )}{" "}
+            {request.title}
+          </p>
+          <MergeConfirm ticketKey={request.key} confirm={request.confirm} disabled={busy} />
+        </div>
+      ))}
       {needCount === 0 && (
         <div data-nothing-needed className={CALM}>
           <p className="text-sm font-semibold">Nothing needs you right now</p>

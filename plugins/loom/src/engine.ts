@@ -1,6 +1,6 @@
 // The engine: a control loop that works every running project, the human's commands on the engine's state, and
 // the handlers for bb's thread events. Behavior lives in workers.ts, checks.ts and triage.ts; this wires it together.
-import { maintainFinalReviews } from "./auto-merge";
+import { confirmMerge, maintainFinalReviews, type SeenHead } from "./auto-merge";
 import { finalThreadEvent } from "./final-review";
 import { resumeCheckingTickets } from "./checks";
 import { repoCheckout, type RepoCheckout } from "./checkouts";
@@ -527,6 +527,25 @@ export class Engine {
     const request = requestSync(this.ctx, slug, opts.key);
     const finished = request.tickets.length === 0 || (await within(this.tick(), opts.waitMs ?? SYNC_WAIT_MS));
     return syncResult(this.ctx, request, finished);
+  }
+
+  /**
+   * The human's confirmation of a manual merge (auto_merge.mode = "manual") of the pull request and exact commit they saw,
+   * from the panel or the CLI; never a Loom agent's. The pull request is read now rather than at its next poll, so a ready
+   * one is asked to merge at once; a read that cannot be asked for now leaves it to the next poll.
+   */
+  confirmMerge(key: string, seen: SeenHead): string {
+    const ticket = this.ctx.store.ticketByKey(key);
+    if (ticket === null) throw new LoomError("loom_not_found", `No ticket ${key}.`);
+    const project = this.ctx.store.project(ticket.project_id)!;
+    const said = confirmMerge(this.ctx.store, project, ticket, seen);
+    try {
+      requestSync(this.ctx, project.slug, key);
+    } catch (error) {
+      this.warn("confirm merge read", error);
+    }
+    this.kick();
+    return said;
   }
 
   /** The human's Mark live on a rollout step or milestone, or its undo. Deploy order is advice, so nothing else moves. */

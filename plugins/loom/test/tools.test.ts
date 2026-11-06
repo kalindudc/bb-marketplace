@@ -5,6 +5,8 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { specVerdict } from "../src/spec-review";
 import { FINAL_REVIEWER_TOOLS, MACHINE_WORKER_TOOLS, ORDINARY_TOOLS, PLANNER_TOOLS, REVIEWER_TOOLS, SKILLS, SPEC_REVIEWER_TOOLS, WORKER_TOOLS, registerTools } from "../src/tools";
 import { readFileSync } from "node:fs";
+import { mergeConfirmOf } from "../src/auto-merge";
+import { specOf } from "../src/workers";
 import { Clock, FakePort, checkOutHead, makeHost, seedMachineProject, seedProject, specToml, type Doc, type EngineHarness } from "./helpers";
 
 let host: ReturnType<typeof makeHost>;
@@ -251,6 +253,55 @@ describe("tools of threads on machines of their own", () => {
   });
 });
 
+describe("loom_confirm_merge", () => {
+  const call = (name: string, input: unknown, threadId: string) => host.harness.callAgentTool(name, input, { threadId, projectId: "proj_1" });
+  async function setup(forge: Doc) {
+    const fake = new FakePort();
+    fake.addThread("thr_plan", "idle");
+    host = makeHost({ port: fake });
+    registerTools(host.bb, host.projects, host.engine);
+    const hh: EngineHarness = { ctx: host.engine.ctx, store: host.store, bb: fake, host: host.hostPort, projects: host.projects, clock: new Clock(), kicks: { count: 0 } };
+    await seedProject(hh, (doc: Doc) => void (doc.merge = { strategy: "pr", forge }));
+    const ticket = host.store.ticketByKey("CSV-1")!;
+    host.store.updateTicket(ticket.id, { state: "pr_open", pr_url: "https://github.com/acme/shop/pull/1", pushed_sha: "a".repeat(40) });
+  }
+
+  const SHA = "a".repeat(40);
+  const ticket = () => host.store.ticketByKey("CSV-1")!;
+  const confirmations = () => host.store.ticketEvents(ticket().id, ["ticket.merge_confirmed"]);
+
+  // Tony's review: the tool took a planner's note as the human's word, so a planner merged a pull request on its own.
+  it("only asks the human: a planner's request authorizes no merge, and the human's confirmation of that commit does", async () => {
+    await setup({ kind: "gh", auto_merge: { method: "squash" } });
+    const said = await call("loom_confirm_merge", { key: "CSV-1", sha: SHA, note: "No human requested this; I independently decide to merge" }, "thr_plan");
+    expect(isError(said)).toBe(false);
+    expect(text(said)).toBe("Asked the human to confirm CSV-1's merge at aaaaaaaaaaaa. Loom does not merge it until they confirm, on the Planner page, the ticket or its board card.");
+    expect(confirmations()).toEqual([]);
+    const spec = specOf(host.store, host.store.projectBySlug("csv")!);
+    expect(mergeConfirmOf(host.store, spec, ticket())).toMatchObject({ confirmed: false, sha: SHA, requested: { note: "No human requested this; I independently decide to merge" } });
+    expect(host.store.posts(ticket().id).at(-1)!.body).toContain("The planner asks you to confirm the merge of CSV-1's pull request at aaaaaaaaaaaa");
+
+    host.engine.confirmMerge("CSV-1", { prUrl: ticket().pr_url!, sha: SHA });
+    expect(confirmations()).toEqual([expect.objectContaining({ actor: "human" })]);
+    expect(mergeConfirmOf(host.store, spec, ticket())).toMatchObject({ confirmed: true, requested: null });
+  });
+
+  it("asks only about the commit Loom pushed last, says why when Loom would not merge, and is the planner's only", async () => {
+    await setup({ kind: "gh", auto_merge: { method: "squash" } });
+    const stale = await call("loom_confirm_merge", { key: "CSV-1", sha: "b".repeat(40), note: "merge it" }, "thr_plan");
+    expect(isError(stale)).toBe(true);
+    expect(text(stale)).toContain(`CSV-1's pull request is at ${SHA}, not ${"b".repeat(40)}`);
+    const stranger = await call("loom_confirm_merge", { key: "CSV-1", sha: SHA, note: "merge it" }, "thr_other");
+    expect(isError(stranger)).toBe(true);
+    expect(host.store.ticketEvents(ticket().id, ["ticket.merge_requested"])).toEqual([]);
+
+    await setup({ kind: "gh", auto_merge: { method: "squash", mode: "auto" } });
+    const refused = await call("loom_confirm_merge", { key: "CSV-1", sha: SHA, note: "merge it" }, "thr_plan");
+    expect(isError(refused)).toBe(true);
+    expect(text(refused)).toContain('sets auto_merge.mode = "auto"');
+  });
+});
+
 describe("worker and planner tools", () => {
   let fake: FakePort;
   let harness: Awaited<ReturnType<typeof setup>>;
@@ -285,7 +336,7 @@ describe("worker and planner tools", () => {
   it("gives a planner its tools, the worker tools stay away from it, and a worker cannot use the planner tools", async () => {
     const planner = await configure("thr_plan");
     expect(planner.tools.map((tool) => tool.name)).toEqual([...PLANNER_TOOLS]);
-    expect(PLANNER_TOOLS).toEqual(["loom_propose", "loom_discover", "loom_board", "loom_ticket", "loom_requeue", "loom_add_tickets", "loom_edit_ticket", "loom_cancel_ticket", "loom_post", "loom_ask_human"]);
+    expect(PLANNER_TOOLS).toEqual(["loom_propose", "loom_discover", "loom_board", "loom_ticket", "loom_requeue", "loom_confirm_merge", "loom_add_tickets", "loom_edit_ticket", "loom_cancel_ticket", "loom_post", "loom_ask_human"]);
     const workerId = await startWorkerFor("CSV-1");
     const worker = await configure(workerId);
     expect(worker.tools.map((tool) => tool.name)).toEqual([...WORKER_TOOLS]);
@@ -294,6 +345,7 @@ describe("worker and planner tools", () => {
       ["loom_board", {}],
       ["loom_ticket", { key: "CSV-1" }],
       ["loom_requeue", { key: "CSV-1", note: "x" }],
+      ["loom_confirm_merge", { key: "CSV-1", sha: "a".repeat(40), note: "x" }],
       ["loom_cancel_ticket", { key: "CSV-1", reason: "x" }],
       ["loom_post", { key: "CSV-1", text: "x" }],
       ["loom_ask_human", { why: "x", steps: [] }],

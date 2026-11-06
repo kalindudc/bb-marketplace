@@ -7,7 +7,7 @@ import { loadPluginApp, renderSlot, type PluginRpcTestHandlers, type PluginSdkTe
 import { useLayoutEffect, useState, useSyncExternalStore } from "react";
 import { useComposers, type NewThreadRequest, type PluginComposerApi, type PluginNavPanelProps, type PluginSidebarThread, type PluginThreadHeaderActionProps } from "@get-bb/plugin-sdk/app";
 import { mergeLead } from "../src/ui/merge-order";
-import type { Attempt, BadgeView, BbProjectChoice, InsightsWindow, ChangedFile, ChangeSource, ChangesView, ChecksItem, HomeProject, MergeEntry, MergeOrderView, NextStep, PlannerView, PlanningSession, ProjectSummary, ProjectView, RepoOverview, RolloutStep, RolloutView, SentNote, SpecVersionView, ThreadInfo, TicketDetail, rpcContract } from "../src/contract";
+import type { Attempt, MergeConfirmView, BadgeView, BbProjectChoice, InsightsWindow, ChangedFile, ChangeSource, ChangesView, ChecksItem, HomeProject, MergeEntry, MergeOrderView, NextStep, PlannerView, PlanningSession, ProjectSummary, ProjectView, RepoOverview, RolloutStep, RolloutView, SentNote, SpecVersionView, ThreadInfo, TicketDetail, rpcContract } from "../src/contract";
 import type { TicketRow } from "../src/db/store";
 import { repoOverviews } from "../src/projects";
 import { clockTime } from "../src/format";
@@ -44,6 +44,7 @@ const handlers = (over: Partial<Handlers> = {}): Handlers => ({
   threadInfo: () => null,
   reply: unexpected,
   ticketAction: unexpected,
+  confirmMerge: unexpected,
   control: unexpected,
   startPlanning: unexpected,
   bbProjects: () => [],
@@ -1104,6 +1105,21 @@ describe("planning conversation", () => {
     const { slot } = await mountPage("_plan/thr_other");
     expect(await slot.findByText("This thread is not a Loom planning thread.")).toBeTruthy();
     expect(slot.queryByTestId("bb-thread-chat")).toBeNull();
+  });
+
+  it("shows the merges the planner asks the human to confirm under Needs you, with a Confirm that sends the commit shown", async () => {
+    const confirm: MergeConfirmView = { prUrl: "https://github.com/acme/shop/pull/4", sha: "f".repeat(40), ready: true, confirmed: false, requested: { at: NOW - HOUR, note: "You asked me to get CSV-4 merged" } };
+    const confirmMerge = vi.fn((_input: unknown) => ticketDetail({ key: "CSV-4" }));
+    const { slot } = await mountPage("csv", { project: () => projectView(), plannerView: () => plannerViewOf({ projectState: "running", approvedVersion: 1, mergeRequests: [{ key: "CSV-4", title: "Guide", confirm }] }), confirmMerge });
+    await slot.findByRole("tab", { name: "Board" });
+    fireEvent.click(slot.getByRole("tab", { name: "Planner" }));
+    await waitFor(() => expect(slot.container.querySelector('[data-needs-you] [data-merge-request="CSV-4"]')).not.toBeNull());
+    const request = slot.container.querySelector<HTMLElement>('[data-needs-you] [data-merge-request="CSV-4"]')!;
+    expect(request.textContent).toContain("The planner asks you to confirm the merge of ffffffffffff: “You asked me to get CSV-4 merged”. Loom merges it only once you confirm.");
+    expect(slot.container.querySelector("[data-needs-you] h2")!.textContent).toBe("Needs you1");
+    fireEvent.click(within(request).getByRole("button", { name: "Confirm merge" }));
+    fireEvent.click(within(request).getByRole("button", { name: "Click again to merge ffffffffffff" }));
+    await waitFor(() => expect(confirmMerge).toHaveBeenLastCalledWith({ key: "CSV-4", prUrl: confirm.prUrl, sha: confirm.sha, confirm: true }));
   });
 
   it("gives a project with a planner thread a Planner tab, and a project without one no such tab", async () => {
@@ -2652,6 +2668,28 @@ describe("board", () => {
     expect(queued.textContent).toContain("Waiting on CSV-2, CSV-3");
   });
 
+  it("puts Confirm merge on the card of a manual merge, with the commit it confirms and the planner's request", async () => {
+    const URL = "https://github.com/acme/shop/pull/3";
+    const shown = (sha: string, over: Partial<MergeConfirmView> = {}): MergeConfirmView => ({ prUrl: URL, sha, ready: false, confirmed: false, requested: null, ...over });
+    const cards = [
+      card({ key: "CSV-3", title: "Docs", state: "pr_open", mergeConfirm: shown("c".repeat(40), { ready: true }) }),
+      card({ key: "CSV-4", title: "Guide", state: "pr_open", mergeConfirm: shown("d".repeat(40), { confirmed: true }) }),
+      card({ key: "CSV-6", title: "Help", state: "pr_open", mergeConfirm: shown("e".repeat(40), { requested: { at: NOW, note: "The human asked in chat" } }) }),
+      card({ key: "CSV-5", title: "Notes", state: "pr_open" }),
+    ];
+    const confirmMerge = vi.fn(() => ticketDetail({ key: "CSV-3" }));
+    const { slot } = await mountPage("csv", { project: () => projectView({ board: cards }), confirmMerge });
+    await slot.findByRole("tab", { name: "Board" });
+    const ready = slot.container.querySelector<HTMLElement>('[data-card="CSV-3"] [data-merge-confirm]')!;
+    expect(ready.textContent).toContain("Ready at cccccccccccc: waits for your confirmation");
+    expect(slot.container.querySelector('[data-card="CSV-4"] [data-merge-confirm]')!.textContent).toBe("Merge of dddddddddddd confirmed");
+    expect(slot.container.querySelector('[data-card="CSV-6"] [data-merge-confirm]')!.textContent).toContain("The planner asks you to confirm eeeeeeeeeeee");
+    expect(slot.container.querySelector('[data-card="CSV-5"] [data-merge-confirm]')).toBeNull();
+    fireEvent.click(within(ready).getByRole("button", { name: "Confirm merge" }));
+    fireEvent.click(within(ready).getByRole("button", { name: "Click again to merge cccccccccccc" }));
+    await waitFor(() => expect(confirmMerge).toHaveBeenLastCalledWith({ key: "CSV-3", prUrl: URL, sha: "c".repeat(40), confirm: true }));
+  });
+
   it("says on the card when a ticket waits to start its worker or reviewer again, and why", async () => {
     const now = projectView().now;
     const waiting = [
@@ -2930,6 +2968,44 @@ describe("ticket", () => {
     fireEvent.click(within(callout).getByRole("button", { name: /Click again/ }));
     await waitFor(() => expect(ticketAction).toHaveBeenCalledWith({ key: "CSV-2", action: "review", note: "", confirm: true }));
     await waitFor(() => expect(toast.success).toHaveBeenCalledWith("CSV-2 sent back as it is"));
+  });
+
+  // Tony's review: the button sent only the key, so the server confirmed whatever head it found when the request ran.
+  it("offers Confirm merge on a manual merge, sends the pull request and commit it shows, and disarms when the head moves", async () => {
+    const URL = "https://github.com/acme/shop/pull/2";
+    const A = "a".repeat(40);
+    const B = "b".repeat(40);
+    const shown = (sha: string, over: Partial<MergeConfirmView> = {}): MergeConfirmView => ({ prUrl: URL, sha, ready: true, confirmed: false, requested: null, ...over });
+    const confirmMerge = vi.fn((_input: unknown) => ticketDetail({ posts, state: "pr_open", mergeConfirm: shown(A, { ready: false, confirmed: true }) }));
+    let view = ticketDetail({ posts, activity: withItems([]), state: "pr_open", mergeConfirm: shown(A) });
+    const { slot } = await mountPage("csv/CSV-2", { ticket: () => view, confirmMerge: async (input) => (view = await confirmMerge(input)) });
+    await slot.findByRole("heading", { name: /Export endpoint/ });
+    expect(slot.container.querySelector("[data-merge-confirm]")!.textContent).toContain("Ready to merge at aaaaaaaaaaaa. auto_merge.mode is manual, so Loom waits for you to confirm the merge of this commit.");
+    fireEvent.click(slot.getByRole("button", { name: "Confirm merge" }));
+    fireEvent.click(slot.getByRole("button", { name: "Click again to merge aaaaaaaaaaaa" }));
+    await waitFor(() => expect(confirmMerge).toHaveBeenLastCalledWith({ key: "CSV-2", prUrl: URL, sha: A, confirm: true }));
+    await waitFor(() => expect(slot.queryByRole("button", { name: "Confirm merge" })).toBeNull());
+    expect(slot.container.querySelector("[data-merge-confirm]")!.textContent).toContain("You confirmed the merge of aaaaaaaaaaaa.");
+    slot.lifecycle.unmount();
+
+    // Armed for one head, the button disarms when the page shows another, and its next click only arms it again.
+    let moving = ticketDetail({ posts, activity: withItems([]), state: "pr_open", mergeConfirm: shown(A) });
+    const never = vi.fn(() => moving);
+    const second = await mountPage("csv/CSV-2", { ticket: () => moving, confirmMerge: never });
+    await second.slot.findByRole("heading", { name: /Export endpoint/ });
+    fireEvent.click(second.slot.getByRole("button", { name: "Confirm merge" }));
+    expect(second.slot.getByRole("button", { name: "Click again to merge aaaaaaaaaaaa" })).toBeTruthy();
+    moving = ticketDetail({ posts, activity: withItems([]), state: "pr_open", mergeConfirm: shown(B) });
+    await second.slot.experimental_invalidateRpc(changedTags("csv"));
+    await waitFor(() => expect(second.slot.container.querySelector("[data-merge-confirm]")!.getAttribute("data-sha")).toBe(B));
+    expect(second.slot.queryByRole("button", { name: /Click again/ })).toBeNull();
+    fireEvent.click(second.slot.getByRole("button", { name: "Confirm merge" }));
+    expect(never).not.toHaveBeenCalled();
+    second.slot.lifecycle.unmount();
+
+    const plain = await mountTicket({ state: "pr_open" });
+    expect(plain.queryByRole("button", { name: "Confirm merge" })).toBeNull();
+    expect(plain.container.querySelector("[data-merge-confirm]")).toBeNull();
   });
 
   it("sends Block and Cancel with the reason from the ⋯ menu, and offers neither on a finished ticket", async () => {

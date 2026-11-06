@@ -29,7 +29,7 @@ const poll = async (ctx: EngineCtx = h.ctx, ms = 5 * 60_000) => {
   await pollPullRequests(ctx, ctx.store.projectBySlug("csv")!);
 };
 const TEXT = { title: "Add order rows", body: "## Why\nSupport wants CSV exports.", commit_message: "Add the order row mapper" };
-const FINAL = (final: Doc = {}) => ({ forge: { kind: "gh", auto_merge: { method: "squash", final_review: final } } });
+const FINAL = (final: Doc = {}) => ({ forge: { kind: "gh", auto_merge: { mode: "auto", method: "squash", final_review: final } } });
 
 async function openPr(merge: Doc): Promise<ThreadRow> {
   await seedProject(h, (doc) => void (doc.merge = { strategy: "pr", draft: false, ...merge }));

@@ -323,7 +323,19 @@ describe("createHostPort", () => {
     const gitNetwork = ["stackBase", "fetchTip", "prCommit", "push", "fetchBranch", "importCommit", "carryStart", "landedOn", "behindBase", "remoteBranch"] as const;
     for (const method of [...gitNetwork, "pointRefs"] as const) await port.call("host_1", method, {} as never);
     await port.call("host_1", "stackBase", { networkTimeoutMs: 300_000 } as never);
-    expect(calls).toEqual([...gitNetwork.map((method) => ({ method, timeoutMs: 270_000 })), { method: "pointRefs", timeoutMs: 30_000 }, { method: "stackBase", timeoutMs: 630_000 }]);
+    // stackBase and importCommit also run index and tree steps, which get the 5-minute git index timeout on top.
+    const index = new Set(["stackBase", "importCommit"]);
+    expect(calls).toEqual([...gitNetwork.map((method) => ({ method, timeoutMs: index.has(method) ? 570_000 : 270_000 })), { method: "pointRefs", timeoutMs: 30_000 }, { method: "stackBase", timeoutMs: 930_000 }]);
+  });
+
+  it("gives the calls with index and tree steps on the project's checkout the spec's git index timeout, within bb's 30-minute cap", async () => {
+    const calls: Array<{ method: string; timeoutMs: number }> = [];
+    const bb = { hosts: { experimental_client: () => ({ call: async (method: string, _input: unknown, opts: { timeoutMs: number }) => (calls.push({ method, timeoutMs: opts.timeoutMs }), {}) }) } } as unknown as Parameters<typeof createHostPort>[0];
+    const port = createHostPort(bb);
+    await port.call("host_1", "mergeOnto", { indexTimeoutMs: 600_000 } as never);
+    await port.call("host_1", "importCommit", { indexTimeoutMs: 600_000 } as never);
+    await port.call("host_1", "importCommit", { indexTimeoutMs: 900_000, networkTimeoutMs: 600_000 } as never);
+    expect(calls.map((call) => call.timeoutMs)).toEqual([630_000, 870_000, 1_770_000]);
   });
 
   it("gives pull request reads the network deadline, since gh and a forge command may take 2 minutes", async () => {
@@ -340,13 +352,13 @@ describe("createHostPort", () => {
     ]);
   });
 
-  it("gives the merge steps that run merge-tree, gh or a forge command the network deadline", async () => {
+  it("gives the merge steps that run gh or a forge command the network deadline, and mergeOnto's merge-tree the git index timeout", async () => {
     const calls: Array<{ method: string; timeoutMs: number }> = [];
     const bb = { hosts: { experimental_client: () => ({ call: async (method: string, _input: unknown, opts: { timeoutMs: number }) => (calls.push({ method, timeoutMs: opts.timeoutMs }), {}) }) } } as unknown as Parameters<typeof createHostPort>[0];
     const port = createHostPort(bb);
     for (const method of ["mergeOnto", "prRetarget", "prRequestReview", "prEdit", "prReply", "pointRefs"] as const) await port.call("host_1", method, {} as never);
     await port.call("host_1", "prRetarget", { forge: { kind: "gh" } } as never);
     await port.call("host_1", "prRetarget", { forge: { kind: "command", retarget: "pr-cli pr edit" } } as never);
-    expect(calls.map((call) => call.timeoutMs)).toEqual([150_000, 150_000, 150_000, 150_000, 150_000, 30_000, 150_000, 330_000]);
+    expect(calls.map((call) => call.timeoutMs)).toEqual([330_000, 150_000, 150_000, 150_000, 150_000, 30_000, 150_000, 330_000]);
   });
 });

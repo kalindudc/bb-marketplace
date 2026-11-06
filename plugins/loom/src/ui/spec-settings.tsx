@@ -1,5 +1,5 @@
 import { Fragment, useState, type ReactNode } from "react";
-import { GIT_NETWORK_TIMEOUT_MS } from "../git-network";
+import { GIT_INDEX_TIMEOUT_MS, GIT_INDEX_TIMEOUT_SECONDS, GIT_NETWORK_TIMEOUT_MS } from "../git-network";
 import { HOOK_EVENT_NAMES, HOOK_EVENTS } from "../hook-events";
 import type { AutoMergeSpec, EnvironmentSpec, ForgeSpec, MachineSpec, RepoSpec, Spec } from "../spec";
 import { textSteps, type TextStep } from "../spec-diff";
@@ -12,6 +12,8 @@ const CODE = "rounded bg-surface-recessed px-1 font-mono text-xs [overflow-wrap:
 const ROWS = "grid grid-cols-1 gap-x-3 gap-y-0.5 @min-[17rem]:grid-cols-[7rem_minmax(0,1fr)] @min-[17rem]:gap-y-1.5";
 const minutes = (n: number) => (n % 60 === 0 ? `${n / 60} h` : plural(n, "minute"));
 const DEFAULT_GIT_SECONDS = GIT_NETWORK_TIMEOUT_MS / 1000;
+const NETWORK_LIMIT = { defaultSeconds: DEFAULT_GIT_SECONDS, max: 600, what: "for each git fetch, ls-remote or push" };
+const INDEX_LIMIT = { defaultSeconds: GIT_INDEX_TIMEOUT_MS / 1000, max: GIT_INDEX_TIMEOUT_SECONDS.max, what: "for the index and tree steps of one call on the checkout" };
 type DeploySpec = NonNullable<RepoSpec["deploy"]>;
 
 /** A choice of the spec as a segmented control: the option in force is raised, and clicking another one suggests it. */
@@ -326,6 +328,8 @@ const FORGE_HOOKS = [
 const hasForgeParts = (forge: ForgeSpec | undefined) =>
   forge !== undefined && (FORGE_COMMANDS.some(([key]) => forge[key] !== undefined) || FORGE_HOOKS.some(([key]) => (forge[key]?.length ?? 0) > 0) || (forge.ignore_checks?.length ?? 0) > 0 || forge.auto_merge !== undefined || forge.reviewers !== undefined);
 
+const AUTO_MERGE_MODE_NAMES: Record<"auto" | "manual", string> = { manual: "after you confirm each merge", auto: "by itself" };
+
 /** A forge's auto_merge: how Loom merges a ready pull request, what counts as ready, and the comments that mean it was turned away. */
 function AutoMergeParts({ path, label, auto }: { path: string; label: string; auto: AutoMergeSpec | undefined }) {
   const review = useReview();
@@ -347,6 +351,12 @@ function AutoMergeParts({ path, label, auto }: { path: string; label: string; au
         {shown("comment") && (
           <Commentable as="span" target={value(`${at}.comment`, `${label} › auto merge › comment`, "text", auto?.comment)} className={CODE}>
             {auto?.comment ?? "no comment"}
+          </Commentable>
+        )}
+        {auto !== undefined && (
+          <Commentable as="span" target={value(`${at}.mode`, `${label} › auto merge › mode`, "enum", auto.mode ?? "manual", { options: ["manual", "auto"], names: AUTO_MERGE_MODE_NAMES })} className="text-muted-foreground">
+            {AUTO_MERGE_MODE_NAMES[auto.mode ?? "manual"]}
+            {auto.mode === undefined && ", the default"}
           </Commentable>
         )}
         {auto !== undefined && (
@@ -701,11 +711,21 @@ function RefreshBehind({ path, label, n, base }: { path: string; label: string; 
   );
 }
 
-function GitTimeout({ path, label, seconds }: { path: string; label: string; seconds: number | undefined }) {
+function GitTimeout({ path, label, seconds, limit = NETWORK_LIMIT }: { path: string; label: string; seconds: number | undefined; limit?: typeof NETWORK_LIMIT }) {
   return (
-    <Commentable as="span" target={value(path, label, "number", seconds ?? DEFAULT_GIT_SECONDS, { min: 30, max: 600, step: 30, unit: "s" })}>
-      <b className="tabular-nums">{seconds ?? DEFAULT_GIT_SECONDS} s</b>
-      {seconds === undefined && ", the default"} <span className="text-xs text-muted-foreground">for each git fetch, ls-remote or push</span>
+    <Commentable as="span" target={value(path, label, "number", seconds ?? limit.defaultSeconds, { min: 30, max: limit.max, step: 30, unit: "s" })}>
+      <b className="tabular-nums">{seconds ?? limit.defaultSeconds} s</b>
+      {seconds === undefined && ", the default"} <span className="text-xs text-muted-foreground">{limit.what}</span>
+    </Commentable>
+  );
+}
+
+/** A repo's own git time limit, or the project's, which it inherits when it sets none. */
+function RepoGitTimeout({ path, label, seconds, project, limit }: { path: string; label: string; seconds: number | undefined; project: number | undefined; limit: typeof NETWORK_LIMIT }) {
+  if (seconds !== undefined) return <GitTimeout path={path} label={label} seconds={seconds} limit={limit} />;
+  return (
+    <Commentable as="span" target={value(path, label, "number", project ?? limit.defaultSeconds, { min: 30, max: limit.max, step: 30, unit: "s" })} className="text-muted-foreground">
+      {project === undefined ? `${limit.defaultSeconds} s, the default` : `${project} s, from the project`}
     </Commentable>
   );
 }
@@ -747,6 +767,7 @@ const REPO_OWN = [
   ["deploy", "deploy"],
   ["refresh_behind", "fresh pull requests"],
   ["git_network_timeout_seconds", "git time limit"],
+  ["git_index_timeout_seconds", "git index time limit"],
   ["worktree", "worktree"],
 ] as const;
 
@@ -851,13 +872,10 @@ function RepoItem({ spec, repo, index, bbProjectNames }: { spec: Spec; repo: Rep
             </Row>
           )}
           <Row label="Git time limit" paths={[`${at}.git_network_timeout_seconds`]}>
-            {repo.git_network_timeout_seconds === undefined ? (
-              <Commentable as="span" target={value(`${at}.git_network_timeout_seconds`, `${repo.name} › git network timeout seconds`, "number", merge.git_network_timeout_seconds ?? DEFAULT_GIT_SECONDS, { min: 30, max: 600, step: 30, unit: "s" })} className="text-muted-foreground">
-                {merge.git_network_timeout_seconds === undefined ? `${DEFAULT_GIT_SECONDS} s, the default` : `${merge.git_network_timeout_seconds} s, from the project`}
-              </Commentable>
-            ) : (
-              <GitTimeout path={`${at}.git_network_timeout_seconds`} label={`${repo.name} › git network timeout seconds`} seconds={repo.git_network_timeout_seconds} />
-            )}
+            <RepoGitTimeout path={`${at}.git_network_timeout_seconds`} label={`${repo.name} › git network timeout seconds`} seconds={repo.git_network_timeout_seconds} project={merge.git_network_timeout_seconds} limit={NETWORK_LIMIT} />
+          </Row>
+          <Row label="Git index time limit" paths={[`${at}.git_index_timeout_seconds`]}>
+            <RepoGitTimeout path={`${at}.git_index_timeout_seconds`} label={`${repo.name} › git index timeout seconds`} seconds={repo.git_index_timeout_seconds} project={merge.git_index_timeout_seconds} limit={INDEX_LIMIT} />
           </Row>
           {(integration || shown("worktree", repo.worktree !== undefined)) && (
             <Row label="Worktree" paths={[`${at}.worktree`]}>
@@ -1232,6 +1250,9 @@ export function SettingsSection({ spec, bbProjectNames, onShowAll, onJump }: { s
             )}
             <Row label="Git time limit" paths={["merge.git_network_timeout_seconds"]}>
               <GitTimeout path="merge.git_network_timeout_seconds" label="Git network time limit" seconds={merge.git_network_timeout_seconds} />
+            </Row>
+            <Row label="Git index time limit" paths={["merge.git_index_timeout_seconds"]}>
+              <GitTimeout path="merge.git_index_timeout_seconds" label="Git index time limit" seconds={merge.git_index_timeout_seconds} limit={INDEX_LIMIT} />
             </Row>
             {(merge.forge !== undefined || changedAt(review, "merge.forge")) && <ForgeRows path="merge.forge" label="Forge" forge={merge.forge} inherited="GitHub through gh, the default" />}
           </dl>

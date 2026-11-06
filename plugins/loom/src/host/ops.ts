@@ -8,13 +8,13 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { experimental_runVcsProcess, type ExperimentalVcsProcessPriority } from "@get-bb/plugin-sdk/host";
 import { z } from "zod";
-import { GIT_NETWORK_TIMEOUT_MS } from "../git-network";
+import { GIT_INDEX_SETTING, GIT_INDEX_TIMEOUT_MS, GIT_NETWORK_TIMEOUT_MS } from "../git-network";
 import { BLOB_MAX_BYTES, githubPull, prNumber, REPLY_MARK, RETARGET_COMMAND_MS, REVIEW_DECISIONS, type HostInput, type HostOutput } from "../host-contract";
 
 const GIT_TIMEOUT_MS = 30_000;
-// gh calls, the first checkout of the integration worktree and merge-tree can take a while on a slow link or a large
-// repository. A git fetch, ls-remote or push gets the call's networkTimeoutMs, from the repo's git_network_timeout_seconds,
-// else GIT_NETWORK_TIMEOUT_MS.
+// gh calls and the first checkout of the integration worktree can take a while on a slow link or a large repository. A git
+// fetch, ls-remote or push gets the call's networkTimeoutMs, from the repo's git_network_timeout_seconds, else
+// GIT_NETWORK_TIMEOUT_MS; the index and tree steps on the project's checkout share an IndexClock.
 const NETWORK_TIMEOUT_MS = 120_000;
 const GIT_MAX_BUFFER = 64 * 1024 * 1024;
 const FORGE_COMMAND_MS = 120_000;
@@ -59,6 +59,41 @@ function run(cwd: string, args: readonly string[], signal?: AbortSignal, timeout
 }
 
 class GitTimedOut extends Error {}
+
+/**
+ * The time one host call's index and tree steps on the project's checkout may take together: its indexTimeoutMs, from the
+ * repo's git_index_timeout_seconds, else GIT_INDEX_TIMEOUT_MS. Each step gets what is left, at least one second, so the
+ * call stays bounded however many steps it runs.
+ */
+interface IndexClock {
+  limitMs: number;
+  left(): number;
+}
+const indexClock = (input: { indexTimeoutMs?: number }, now: () => number = Date.now): IndexClock => {
+  const limitMs = input.indexTimeoutMs ?? GIT_INDEX_TIMEOUT_MS;
+  const until = now() + limitMs;
+  return { limitMs, left: () => Math.max(1000, until - now()) };
+};
+
+/** What an index step that ran out of its time throws: "took too long", which the server waits out, and the setting to raise. */
+export const indexTimedOut = (what: string, clock: IndexClock) =>
+  new Error(`git ${what} took too long: the index and tree steps on the project's checkout ran past ${Math.round(clock.limitMs / 1000)} seconds. Raise ${GIT_INDEX_SETTING} for the repo if its index is this slow`);
+
+/** run, for an index or tree step: its time is what the call's IndexClock has left, and a timeout names the setting. */
+async function runIndexed(cwd: string, args: readonly string[], clock: IndexClock, signal?: AbortSignal, env: GitEnv = {}): Promise<GitRun> {
+  try {
+    return await run(cwd, args, signal, clock.left(), "background", env);
+  } catch (error) {
+    if (error instanceof GitTimedOut) throw indexTimedOut(args[0] ?? "git", clock);
+    throw error;
+  }
+}
+
+async function gitIndexed(cwd: string, args: readonly string[], clock: IndexClock, opts: { signal?: AbortSignal; env?: GitEnv } = {}): Promise<string> {
+  const result = await runIndexed(cwd, args, clock, opts.signal, opts.env);
+  if (result.code !== 0) throw failure(args, result);
+  return result.stdout.trim();
+}
 
 // A fetch, a push or an ls-remote that runs out of its time comes back as a failed run that says so, which remoteFailed reads
 // as worth waiting out, as a server that does not answer.
@@ -367,7 +402,7 @@ export async function prCommit(input: HostInput<"prCommit">, signal?: AbortSigna
 }
 
 /** Runs git with `input` on stdin, which execFile cannot give, so through spawn; returns stdout trimmed. Throws when git exits non-zero. */
-function gitInput(cwd: string, args: readonly string[], input: string, opts: { signal?: AbortSignal; env?: GitEnv; what?: string } = {}): Promise<string> {
+function gitInput(cwd: string, args: readonly string[], input: string, opts: { signal?: AbortSignal; env?: GitEnv; what?: string; clock?: IndexClock } = {}): Promise<string> {
   const argv = ["-C", cwd, ...args];
   return experimental_runVcsProcess(
     "git",
@@ -377,7 +412,14 @@ function gitInput(cwd: string, args: readonly string[], input: string, opts: { s
         const child = spawn("git", argv, { env: { ...process.env, GIT_TERMINAL_PROMPT: "0", LC_ALL: "C", ...opts.env }, signal: opts.signal, stdio: ["pipe", "pipe", "pipe"] });
         let stdout = "";
         let stderr = "";
-        const timer = setTimeout(() => child.kill("SIGKILL"), NETWORK_TIMEOUT_MS);
+        let timedOut = false;
+        const timer = setTimeout(
+          () => {
+            timedOut = true;
+            child.kill("SIGKILL");
+          },
+          opts.clock?.left() ?? NETWORK_TIMEOUT_MS,
+        );
         child.stdout.on("data", (chunk: Buffer) => (stdout += chunk.toString("utf8")));
         child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString("utf8")));
         child.stdin.on("error", () => undefined);
@@ -389,6 +431,7 @@ function gitInput(cwd: string, args: readonly string[], input: string, opts: { s
         child.on("close", (code) => {
           clearTimeout(timer);
           if (code === 0) resolve(stdout.trim());
+          else if (timedOut && opts.clock !== undefined) reject(indexTimedOut(opts.what ?? args[0] ?? "git", opts.clock));
           else reject(new Error(`git ${opts.what ?? args[0]} failed (${code ?? "killed"}): ${tail(stderr || stdout)}`));
         });
       }),
@@ -398,9 +441,9 @@ function gitInput(cwd: string, args: readonly string[], input: string, opts: { s
 
 const SHA = /^[0-9a-f]{40,64}$/u;
 
-async function commitTree(repo: string, tree: string, parents: readonly string[], message: string, signal?: AbortSignal): Promise<string> {
+async function commitTree(repo: string, tree: string, parents: readonly string[], message: string, signal?: AbortSignal, clock?: IndexClock): Promise<string> {
   const identity = await identityArgs(repo, signal);
-  const sha = await gitInput(repo, [...identity, "commit-tree", tree, ...parents.flatMap((parent) => ["-p", parent]), "-F", "-"], message.endsWith("\n") ? message : `${message}\n`, { signal, what: "commit-tree" });
+  const sha = await gitInput(repo, [...identity, "commit-tree", tree, ...parents.flatMap((parent) => ["-p", parent]), "-F", "-"], message.endsWith("\n") ? message : `${message}\n`, { signal, what: "commit-tree", ...(clock === undefined ? {} : { clock }) });
   if (!SHA.test(sha)) throw new Error(`git commit-tree failed (0): ${tail(sha)}`);
   return sha;
 }
@@ -438,12 +481,13 @@ export async function stackBase(input: HostInput<"stackBase">, signal?: AbortSig
   }
   let sha = kept[0]!;
   const top = kept.length > 1 ? await topLevel(repo, signal) : repo;
+  const clock = indexClock(input);
   for (const next of kept.slice(1)) {
-    const merged = await run(top, ["merge-tree", "--write-tree", "--name-only", "--no-messages", sha, next], signal, NETWORK_TIMEOUT_MS);
+    const merged = await runIndexed(top, ["merge-tree", "--write-tree", "--name-only", "--no-messages", sha, next], clock, signal);
     const lines = merged.stdout.split("\n").filter((line) => line !== "");
     if (merged.code === 1) return { outcome: "conflict", files: [...new Set(lines.slice(1))].sort() };
     if (merged.code !== 0 || lines[0] === undefined) throw failure(["merge-tree", "--write-tree", sha, next], merged);
-    sha = await commitTree(repo, lines[0], [sha, next], message, signal);
+    sha = await commitTree(repo, lines[0], [sha, next], message, signal, clock);
   }
   const worktrees = await git(repo, ["worktree", "list", "--porcelain"], { signal });
   if (worktrees.split("\n").includes(`branch refs/heads/${branch}`)) {
@@ -509,11 +553,12 @@ export async function mergeOnto(input: HostInput<"mergeOnto">, signal?: AbortSig
   if (await isAncestor(repo, ref, head, signal)) return { outcome: "merged", sha: head, tree: await git(repo, ["rev-parse", `${head}^{tree}`], { signal }), already: true };
   const base = input.base === undefined ? null : await git(repo, ["rev-parse", "--verify", `${input.base}^{commit}`], { signal });
   const explicit = base !== null && (await isAncestor(repo, base, ref, signal)) ? [`--merge-base=${base}`] : [];
-  const merged = await run(await topLevel(repo, signal), ["merge-tree", "--write-tree", "--name-only", "--no-messages", ...explicit, head, ref], signal, NETWORK_TIMEOUT_MS);
+  const clock = indexClock(input);
+  const merged = await runIndexed(await topLevel(repo, signal), ["merge-tree", "--write-tree", "--name-only", "--no-messages", ...explicit, head, ref], clock, signal);
   const lines = merged.stdout.split("\n").filter((line) => line !== "");
   if ((merged.code !== 0 && merged.code !== 1) || lines[0] === undefined) throw failure(["merge-tree", "--write-tree", head, ref], merged);
   const tree = lines[0];
-  const sha = await commitTree(repo, tree, [head, ref], message, signal);
+  const sha = await commitTree(repo, tree, [head, ref], message, signal, clock);
   for (const name of refs) await git(repo, ["update-ref", name, sha], { signal });
   return merged.code === 0 ? { outcome: "merged", sha, tree, already: false } : { outcome: "conflict", files: [...new Set(lines.slice(1))].sort(), sha, tree };
 }
@@ -692,11 +737,13 @@ export async function importCommit(input: HostInput<"importCommit">, dataDir: st
     const base = await git(repo, ["rev-parse", "--verify", `${input.base}^{commit}`], { signal });
     mkdirSync(dirname(index), { recursive: true });
     const env = { GIT_INDEX_FILE: index };
-    await git(repo, ["read-tree", base], { signal, env });
+    // A whole index of a monorepo under load takes far longer than a quick git call: these steps share the call's IndexClock.
+    const clock = indexClock(input);
+    await gitIndexed(repo, ["read-tree", base], clock, { signal, env });
     const hashed = new Map<string, string>();
     const files = [...new Set(entries.flatMap((entry) => ("upload" in entry ? [entry.upload] : [])))];
     if (files.length > 0) {
-      const shas = (await gitInput(repo, ["hash-object", "-w", "--no-filters", "--stdin-paths"], `${files.map((upload) => uploadPath(dataDir, upload)).join("\n")}\n`, { signal })).split("\n");
+      const shas = (await gitInput(repo, ["hash-object", "-w", "--no-filters", "--stdin-paths"], `${files.map((upload) => uploadPath(dataDir, upload)).join("\n")}\n`, { signal, clock })).split("\n");
       files.forEach((upload, at) => hashed.set(upload, shas[at]!));
     }
     const records: string[] = [];
@@ -704,12 +751,12 @@ export async function importCommit(input: HostInput<"importCommit">, dataDir: st
       if ("upload" in entry) records.push(`${entry.mode} ${hashed.get(entry.upload)!}\t${entry.path}`);
       else records.push(`0 ${"0".repeat(base.length)}\t${entry.path}`);
     }
-    if (records.length > 0) await gitInput(repo, ["update-index", "-z", "--index-info"], `${records.join("\0")}\0`, { signal, env });
-    const written = await git(repo, ["write-tree"], { signal, env });
+    if (records.length > 0) await gitInput(repo, ["update-index", "-z", "--index-info"], `${records.join("\0")}\0`, { signal, env, clock });
+    const written = await gitIndexed(repo, ["write-tree"], clock, { signal, env });
     if (written !== tree) return { outcome: "mismatch", tree: written };
     const committer = { GIT_COMMITTER_NAME: author.name, GIT_COMMITTER_EMAIL: author.email, GIT_COMMITTER_DATE: author.date };
     const parent = input.parent === undefined ? base : await git(repo, ["rev-parse", "--verify", `${input.parent}^{commit}`], { signal });
-    const sha = await gitInput(repo, ["commit-tree", written, "-p", parent, "--no-gpg-sign", "-F", "-"], message, { signal, env: { ...authorEnv(author), ...committer }, what: "commit-tree" });
+    const sha = await gitInput(repo, ["commit-tree", written, "-p", parent, "--no-gpg-sign", "-F", "-"], message, { signal, env: { ...authorEnv(author), ...committer }, what: "commit-tree", clock });
     for (const name of refs) await git(repo, ["update-ref", name, sha], { signal });
     return { outcome: "ok", sha };
   } finally {

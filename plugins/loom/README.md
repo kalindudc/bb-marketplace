@@ -794,6 +794,18 @@ kind = "gh"
 auto_merge = { method = "squash" }
 ```
 
+- `mode` says who decides each merge. `"manual"`, the default, waits for you:
+  once a pull request is ready, Loom posts that it waits, and asks the forge to
+  merge only after you confirm the exact commit, with Confirm merge on the
+  ticket page or its board card, or with
+  `bb loom auto-merge <slug> confirm --ticket CSV-1 --pr <url> --sha <full sha>`
+  (without them it prints the pull request and commit it would confirm). A confirmation names the pull
+  request and commit you saw, and Loom refuses it once either has changed, so a
+  new push always needs a new confirmation. You may confirm before the pull
+  request is ready. The planner cannot confirm: its `loom_confirm_merge` only
+  asks you, and the request shows on the Planner page, the ticket and its card
+  with the same Confirm button. `"auto"` merges once the pull request is ready,
+  with no confirmation.
 - `method` is how the repo merges. With `gh`: `"squash"`, `"merge"` or
   `"rebase"` run `gh pr merge` with that method; `"queue"` runs
   `gh pr merge --auto`, which adds the pull request to the repo's merge queue;
@@ -853,6 +865,7 @@ auto_merge = { method = "squash" }
   `--ticket CSV-1` for one ticket; `on` turns it back on, and for a ticket
   counts its attempts afresh. `bb loom auto-merge <slug> retry --ticket CSV-1`
   clears an attempt in flight whose outcome Loom cannot see, so it asks again.
+  `confirm --ticket CSV-1 --pr <url> --sha <full sha>` confirms a manual merge of that pull request at that commit.
 
 ### A final review before each merge
 
@@ -1028,6 +1041,14 @@ and one that changes only it skips the spec review. `gh`, the forge's commands
 and the first checkout of an integration worktree keep their own 2-minute
 limits.
 
+Loom also reads and writes whole trees in the checkout: it brings a commit
+home from a worker on another machine through a temporary index, and runs
+merge-tree to bring a pull request up to date or build a stacked base. The
+steps of one such call share `git_index_timeout_seconds`, 300 by default, set
+on a `[[repo]]` or on `[merge]`; quick git calls keep 30 seconds. A submit
+that runs out of it tells the worker to submit again, names the setting, and
+counts against nothing; a merge that runs out of it is waited out.
+
 ### Stacked pull requests
 
 A ticket does not wait for the tickets it depends on to merge. It starts once
@@ -1143,7 +1164,7 @@ apart from the Rollout section of each pull request's description.
 A spec with `[[repo]]` tables spans several repositories. Each `[[repo]]` names
 a bb project with a checkout on the machine the planner runs on, where the
 workers run too, and can set its own base, remote, checks, `after_merge` checks,
-protected paths and `git_network_timeout_seconds`; what it leaves out comes from
+protected paths, `git_network_timeout_seconds` and `git_index_timeout_seconds`; what it leaves out comes from
 the top level. Every ticket
 names one repo and changes only that repo, with its scope relative to the
 repo's root, so work that spans repos is split into one ticket per repo, linked
@@ -1377,7 +1398,7 @@ bb loom sync <slug> [--ticket CSV-1]         # pull request strategy: read the o
 bb loom forge check <slug> CSV-1 [--version N]  # read a live pull request through the repo's forge, as a poll would
 bb loom rollout <slug>                       # the deploy order: next safe step, warnings, stages, milestones
 bb loom live <slug> CSV-1 [--note t] [--undo]  # mark a rollout step or milestone live, or take the mark back
-bb loom auto-merge <slug> off|on|retry|accept [--ticket CSV-1]  # stop or resume Loom's merging; retry clears a ticket's attempt or held final review; accept merges on an incomplete one
+bb loom auto-merge <slug> off|on|retry|accept|confirm [--ticket CSV-1] [--pr <url> --sha <sha>]  # stop or resume Loom's merging; retry clears a ticket's attempt or held final review; accept merges on an incomplete one; confirm lets a manual merge go
 bb loom archive <slug>
 ```
 
@@ -1583,6 +1604,14 @@ settings for that project.
   carries `confirm: true`, and it refuses calls from other plugins. bb cannot
   tell the page from an agent running `bb plugin rpc`, so the skill tells
   agents never to call Loom's RPC.
+- Loom's human-only controls rely on agents not impersonating the human. An
+  agent with a shell can call the page's RPC with `bb plugin rpc`, or run the
+  CLI with its bb thread identity stripped, for example
+  `env -u BB_THREAD_ID bb loom auto-merge <slug> confirm …`, and Loom then
+  records the call as the human's, a merge confirmation included. Loom refuses
+  every call it can tell comes from its own threads, but it cannot tell these
+  apart from the human. Closing this needs bb to report where each call came
+  from.
 
 ## How it works
 

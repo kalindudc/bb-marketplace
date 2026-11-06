@@ -4,6 +4,7 @@ import type { BoardCard } from "../contract";
 import { formatDuration, mergeRetryText, startWaitText } from "../format";
 import type { TicketState } from "../states";
 import { HEADING, RepoChip, plural } from "./common";
+import { MergeConfirm } from "./merge-confirm";
 
 // The board stacks a row per stage down the page, grouped by what the human does with it, so a large project grows
 // downward instead of sideways. Cards wrap in a grid inside each row.
@@ -77,6 +78,7 @@ function Card({ slug, card, now, draft, onChanges, withState }: { card: BoardCar
       {card.stackedOn.length > 0 && <p className="mt-1 text-xs text-muted-foreground">Stacked on {card.stackedOn.join(", ")}</p>}
       {card.holding !== null && <p className="mt-1 text-xs text-warning-text">{card.holding}</p>}
       {card.waitsForSlot && <p data-slot-wait className="mt-1 text-xs text-warning-text">Waits for a free worker slot</p>}
+      {card.mergeConfirm !== null && <MergeConfirm ticketKey={card.key} confirm={card.mergeConfirm} compact />}
       {card.state === "blocked" && card.blockedReason !== null && <p className="mt-1 text-xs text-destructive-text [overflow-wrap:anywhere]">{card.blockedReason}</p>}
       <div className="mt-1.5 flex flex-wrap gap-3">
         {card.threadId !== null && (

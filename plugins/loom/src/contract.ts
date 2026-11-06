@@ -22,6 +22,7 @@ import type { AskAction, AskStep, PlannerAsk } from "./asks";
 import { ACK_TABS, type AckTab, type BadgeAcks } from "./badge-acks";
 import type { ActivityItem, Attempt, ChecksItem, CheckStep, Mark, MergeItem, PrFeedbackItem, PrTextItem, ReviewItem, TicketActivity } from "./activity";
 import type { ChangedFile, ChangeKind, ChangeRepo, ChangeSource, ChangesView, FilePatch } from "./changes";
+import type { MergeConfirmState } from "./auto-merge";
 import type { AuthorKind, PostKind, ProjectState, ReviewVerdict, Role, ThreadState, TicketState } from "./states";
 import { MERGE_CHOICES } from "./states";
 
@@ -68,7 +69,12 @@ export interface BoardCard {
   waitsForSlot: boolean;
   /** An open pull request's failing and pending CI checks, as Loom last read them, on a repo that relies on CI; null otherwise. */
   ci: { failed: number; pending: number } | null;
+  /** A pull request whose merge waits for the human's confirmation (auto_merge.mode = "manual"); null otherwise. */
+  mergeConfirm: MergeConfirmView | null;
 }
+
+/** A manual merge as the page shows it; a confirmation from the page sends back the `prUrl` and `sha` it showed. */
+export type MergeConfirmView = MergeConfirmState;
 
 export interface StartWaitView {
   role: "worker" | "reviewer";
@@ -259,6 +265,8 @@ export interface TicketDetail {
   stoppedFrom: TicketState | null;
   /** Whether Review again as is may take a blocked ticket, from what Loom stored; running it also checks the ticket's branch. */
   reviewAgain: boolean;
+  /** As BoardCard's; null for a rewound ticket. */
+  mergeConfirm: MergeConfirmView | null;
   activity: TicketActivity;
   /** The event the ticket was rewound to, and the time it shows; `at` is null for the live ticket. */
   at: number | null;
@@ -305,6 +313,8 @@ const key = z.string().min(1).max(100);
 const eventId = z.number().int().min(1);
 const commitHash = z.string().regex(/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/, "must be a full commit hash");
 // bb's RPC cannot tell the page from an agent that calls `bb plugin rpc`, so every change needs an explicit confirmation.
+// That does not stop an agent impersonating the human, here or through the CLI with its bb thread identity stripped
+// (`env -u BB_THREAD_ID`): Loom's human-only controls rely on agents not doing so, until bb reports where each call came from.
 const confirm = z.literal(true);
 const typed = <T>() => z.custom<T>();
 // bb's spawn validates the rest of the composer's request.
@@ -333,6 +343,12 @@ export const rpcContract = defineRpcContract({
     input: z.object({ key, action: z.enum(TICKET_ACTIONS), note: z.string().max(4000), confirm }).strict(),
     output: typed<TicketDetail>(),
     ...RPC_TAGS.ticketAction,
+  },
+  // The pull request and exact commit the page showed: the server refuses one that is not the ticket's now.
+  confirmMerge: {
+    input: z.object({ key, prUrl: z.string().url().max(2000), sha: commitHash, confirm }).strict(),
+    output: typed<TicketDetail>(),
+    ...RPC_TAGS.confirmMerge,
   },
   control: {
     input: z.object({ slug, action: z.enum(CONTROL_ACTIONS), version: z.number().int().min(1).optional(), repo: z.string().min(1).max(100).optional(), confirm }).strict(),

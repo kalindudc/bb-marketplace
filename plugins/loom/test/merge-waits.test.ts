@@ -86,6 +86,11 @@ describe("hostCallTransient", () => {
     "host plugin manager is shutting down",
     "Host is not connected",
     "Host daemon is not connected",
+    "Host is suspended",
+    // bb retires the old host plugin generation while a plugin update starts the new one, which may time out its startup.
+    "host plugin loom generation 958cfa03-7186-47e3-9428-ffb4b2bff84f is retired",
+    "host plugin loom startup timed out",
+    "host plugin transport is unavailable",
     "Timed out waiting for command result",
     "git push took too long",
     "git merge-tree took too long",
@@ -652,6 +657,43 @@ describe("a pull request read whose host call got no answer", () => {
     expect(JSON.parse(ticket().pr_poll_json!)).toMatchObject({ failures: 1, message: "host plugin worker exited (0)" });
     await poll();
     expect(ticket().pr_poll_json).toBeNull();
+  });
+
+  // LANE and OTLP paused after each Loom update: bb retired the old host plugin generation in the middle of a read.
+  it.each([
+    "host plugin loom generation b8fb7249-25dc-4876-a611-f5331fbe1ad8 is retired",
+    "host plugin loom startup timed out",
+    "host plugin worker exited (0)",
+    "Host is not connected",
+    "Host is suspended",
+  ])("waits out a GitHub batch and a single read that got %s, and pauses only after an hour of them", async (message) => {
+    await seedProject(h, pr(), "running");
+    await reachApproved(h);
+    await queue();
+    h.host.errors.prBatch = new Error(message);
+    await poll();
+    expect(project().state).toBe("running");
+    expect(JSON.parse(ticket().pr_poll_json!)).toMatchObject({ failures: 1, message });
+    for (const minutes of [5, 10, 20, 30]) await poll(minutes);
+    expect(project()).toMatchObject({ state: "paused", system_reason: `Reading the pull request ${URL1} of CSV-1 failed 5 times in a row over 1h 5m: ${message}. Resume once the project's machine answers again.` });
+  });
+
+  it("waits out a command forge's read whose host plugin generation was retired, as during a plugin update", async () => {
+    await seedProject(h, (doc) => {
+      pr({ forge: { kind: "command", open: "review-cli open", state: "review-cli state" } })(doc);
+      doc.checks.ci = false;
+    });
+    await reachApproved(h);
+    await queue();
+    const retired = "host plugin loom generation 958cfa03-7186-47e3-9428-ffb4b2bff84f is retired";
+    h.host.errors.prState = new Error(retired);
+    await poll();
+    expect(project().state).toBe("running");
+    expect(JSON.parse(ticket().pr_poll_json!)).toMatchObject({ failures: 1, message: retired });
+    h.host.errors.prState = null;
+    await poll(5);
+    expect(ticket().pr_poll_json).toBeNull();
+    expect(project().state).toBe("running");
   });
 
   it("still pauses on a read gh answered with a missing login", async () => {

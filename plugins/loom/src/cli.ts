@@ -422,17 +422,29 @@ export function createCli(projects: Projects, engine: Engine, store: Store, now:
       }),
       "auto-merge": cliCommand({
         summary:
-          "Turn Loom's merging of ready pull requests off or on again, for a project or one ticket with --ticket, on repos whose forge sets auto_merge; retry clears a ticket's merge attempt in flight, or a held final review, so Loom asks again; accept lets a ticket merge on a final review that passed on an incomplete brief. On for a ticket counts its attempts afresh (human only)",
-        positionals: [SLUG, { name: "action", description: "off, on, retry or accept.", required: true }],
-        options: { ticket: { type: "string", description: "Only this ticket, such as CSV-1; retry needs it." }, json },
+          "Turn Loom's merging of ready pull requests off or on again, for a project or one ticket with --ticket, on repos whose forge sets auto_merge; retry clears a ticket's merge attempt in flight, or a held final review, so Loom asks again; accept lets a ticket merge on a final review that passed on an incomplete brief; confirm lets Loom merge a ticket's pull request at its pushed commit on a repo whose auto_merge.mode is manual. On for a ticket counts its attempts afresh (human only)",
+        positionals: [SLUG, { name: "action", description: "off, on, retry, accept or confirm.", required: true }],
+        options: { ticket: { type: "string", description: "Only this ticket, such as CSV-1; retry, accept and confirm need it." }, pr: { type: "string", description: "confirm: the URL of the pull request you saw; with --sha, required." }, sha: { type: "string", description: "confirm: the full commit hash you saw; without --pr and --sha, confirm prints the pull request and commit it would confirm." }, json },
         run: ({ options, positionals }, ctx) =>
           guarded(async () => {
             const { slug, action } = positionals;
-            if (action !== "on" && action !== "off" && action !== "retry" && action !== "accept") throw new LoomError("loom_invalid_input", `"${action}" is not an auto-merge action.`, "Use off, on, retry or accept.");
+            if (action !== "on" && action !== "off" && action !== "retry" && action !== "accept" && action !== "confirm") throw new LoomError("loom_invalid_input", `"${action}" is not an auto-merge action.`, "Use off, on, retry, accept or confirm.");
             const project = projects.require(slug);
             const ticket = options.ticket === undefined ? null : store.ticketByKey(options.ticket);
             if (options.ticket !== undefined && ticket?.project_id !== project.id) throw new LoomError("loom_not_found", `${slug} has no ticket ${options.ticket}.`);
-            if ((action === "retry" || action === "accept") && ticket === null) throw new LoomError("loom_invalid_input", `${action} acts on one ticket, so it needs --ticket.`);
+            if ((action === "retry" || action === "accept" || action === "confirm") && ticket === null) throw new LoomError("loom_invalid_input", `${action} acts on one ticket, so it needs --ticket.`);
+            if (action === "confirm") {
+              refuseAgents(deps, ctx, "auto-merge confirm");
+              // The human names the exact pull request and commit they saw; without both, Loom shows the ones it would
+              // confirm and confirms nothing. Neither comes from the ticket's state, so a move to another pull request or commit is refused.
+              if (options.pr === undefined || options.sha === undefined) {
+                if (ticket!.pr_url === null || ticket!.pushed_sha === null) throw new LoomError("loom_invalid_state", `${ticket!.key} has no open pull request on a commit Loom pushed, so there is no merge to confirm.`);
+                throw new LoomError("loom_invalid_input", `${ticket!.key}'s pull request ${ticket!.pr_url} is at ${ticket!.pushed_sha}. Look at that pull request and commit, then confirm them with --pr ${ticket!.pr_url} --sha ${ticket!.pushed_sha}.`);
+              }
+              const seen = { prUrl: options.pr, sha: options.sha };
+              const said = await humanAction(deps, ctx, "auto-merge confirm", { slug, action, key: ticket!.key, pr: options.pr, sha: options.sha }, () => engine.confirmMerge(ticket!.key, seen));
+              return out(options.json ? toJson({ slug, action, ticket: ticket!.key, message: said }) : `${said}\n`);
+            }
             const data = { slug, action, ...(ticket === null ? {} : { key: ticket.key }) };
             const said = await humanAction(deps, ctx, `auto-merge ${action}`, data, () => setAutoMerge(store, project, action, ticket));
             if (action !== "off") engine.kick();

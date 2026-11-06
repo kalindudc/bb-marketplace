@@ -4,6 +4,7 @@ import type { MergeItem, TicketAction, TicketDetail } from "../contract";
 import { formatDuration, mergeRetryText, plural, startWaitText } from "../format";
 import type { TicketState } from "../states";
 import { BUTTON, BUTTON_PRIMARY, ConfirmButton, FIELD, MoreMenu, RepoChip, SyncButton } from "./common";
+import { MergeConfirm } from "./merge-confirm";
 import { ago, checksText, GHOST } from "./ticket-cards";
 
 const STAGES = [
@@ -266,6 +267,7 @@ export function TicketHeader({
         </p>
       )}
       {ticket.state === "blocked" && <BlockedCallout ticket={ticket} busy={busy} onAction={onAction} onJump={onJump} />}
+      {ticket.mergeConfirm !== null && <MergeConfirm ticketKey={ticket.key} confirm={ticket.mergeConfirm} disabled={busy} />}
       <Tracker state={ticket.state} stoppedFrom={ticket.stoppedFrom} pr={ticket.pr !== null} />
       <div className="flex flex-wrap items-center gap-2 text-xs">
         {ticket.attempt > 0 && <span className={FACT}>{plural(ticket.attempt, "attempt")}</span>}

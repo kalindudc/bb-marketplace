@@ -33,6 +33,7 @@ function everything(doc: Doc): void {
     checks_queued_minutes: 10,
     checks_near_done_percent: 80,
     git_network_timeout_seconds: 300,
+    git_index_timeout_seconds: 600,
     forge: {
       kind: "command",
       open: 'pr-cli open --head "$LOOM_HEAD"',
@@ -47,7 +48,7 @@ function everything(doc: Doc): void {
       merge: 'pr-cli comment "$LOOM_PR_NUMBER" --body /merge',
       request_reviews: 'pr-cli edit "$LOOM_PR_NUMBER" --add-reviewer "$LOOM_REVIEWERS"',
       team_members: 'people-cli members "$LOOM_TEAM"',
-      auto_merge: { method: "command", rejected: ["Merge failed*"], approval: "loom", require_live: true, max_attempts: 2, final_review: { provider: "codex", model: "gpt-mini", reasoning: "minimal", timeout_minutes: 5 } },
+      auto_merge: { method: "command", mode: "auto", rejected: ["Merge failed*"], approval: "loom", require_live: true, max_attempts: 2, final_review: { provider: "codex", model: "gpt-mini", reasoning: "minimal", timeout_minutes: 5 } },
       reviewers: [{ team: "platform", count: 2 }, { users: ["alice", "bob"], count: 1 }],
     },
   };
@@ -74,7 +75,7 @@ function everything(doc: Doc): void {
         kind: "gh",
         after_push: ["ci-cli rerun"],
         ignore_checks: ["Lint*"],
-        auto_merge: { method: "comment", comment: "/merge", rejected: ["❌*"], approval: "forge", require_live: false, max_attempts: 4, final_review: { provider: "claude", model: "haiku", reasoning: "low", timeout_minutes: 3 } },
+        auto_merge: { method: "comment", mode: "manual", comment: "/merge", rejected: ["❌*"], approval: "forge", require_live: false, max_attempts: 4, final_review: { provider: "claude", model: "haiku", reasoning: "low", timeout_minutes: 3 } },
         reviewers: [{ team: "acme/web", count: 1 }, { users: ["carol"] }],
       },
       environment: { provider: "git-worktree", inputs: { sparse: "web" } },
@@ -141,7 +142,7 @@ function integrationEverything(doc: Doc): void {
   doc.merge = { strategy: "integration", branch: "loom/csv-all", remote: "upstream", draft: false, git_network_timeout_seconds: 200, worktree: { plugin: "example-trees", command: "trees make --base main" }, forge: { kind: "gh", after_open: ["ci-cli run"] } };
   doc.checks = { commands: ["npm test"], after_merge: ["npm run e2e"] };
   doc.repo = [
-    { name: "web", project: "proj_web", after_merge: ["npm run web-e2e"], worktree: { plugin: "example-trees", command: "trees make web" }, git_network_timeout_seconds: 90 },
+    { name: "web", project: "proj_web", after_merge: ["npm run web-e2e"], worktree: { plugin: "example-trees", command: "trees make web" }, git_network_timeout_seconds: 90, git_index_timeout_seconds: 900 },
     { name: "api", project: "proj_api", base: "trunk", checks: [] },
   ];
   doc.ticket[0].repo = "web";
@@ -242,6 +243,7 @@ const handlers = (over: Partial<Handlers>): Handlers => ({
   threadInfo: () => null,
   reply: unexpected,
   ticketAction: unexpected,
+  confirmMerge: unexpected,
   control: unexpected,
   startPlanning: unexpected,
   bbProjects: () => [],

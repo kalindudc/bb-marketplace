@@ -47,8 +47,8 @@ async function openPr(more: Doc = {}, edit?: (doc: Doc) => void): Promise<Thread
 const approved = (more: Record<string, unknown> = {}) => h.host.prMeta.set(URL, { ...h.host.prMeta.get(URL), draft: false, review: "APPROVED", ...more });
 const comment = (id: number, body: string, a: { at?: number; edit?: string } = {}): Item =>
   ({ key: `comment:${id}:${a.edit ?? "v1"}`, stableId: `comment:${id}`, createdAt: a.at ?? null, kind: "comment", author: "merge-service", bot: true, body, url: `${URL}#c${id}`, state: null, path: null, line: null }) as Item;
-const COMMENT = { kind: "gh", auto_merge: { method: "comment", comment: "/merge", rejected: ["❌*"] } };
-const COMMAND = { kind: "command", open: "pr open", state: "pr state", feedback: "pr feedback", merge: "pr merge", auto_merge: { method: "command", rejected: ["❌*"] } };
+const COMMENT = { kind: "gh", auto_merge: { mode: "auto", method: "comment", comment: "/merge", rejected: ["❌*"] } };
+const COMMAND = { kind: "command", open: "pr open", state: "pr state", feedback: "pr feedback", merge: "pr merge", auto_merge: { mode: "auto", method: "command", rejected: ["❌*"] } };
 const TIMED_OUT = { outcome: "unavailable", message: "The forge's merge command took longer than 5 minutes", transient: "server" } as const;
 
 /** Runs `during` inside the second projectCheckout of the next poll: the first is the poll's own read, the second auto-merge's. */
@@ -94,7 +94,7 @@ describe("finding 1: an ambiguous answer from a comment or command merge keeps i
   });
 
   it("still asks again after a temporary failure of an idempotent gh merge, which cannot merge twice", async () => {
-    await openPr({ forge: { kind: "gh", auto_merge: { method: "squash" } } });
+    await openPr({ forge: { kind: "gh", auto_merge: { mode: "auto", method: "squash" } } });
     approved();
     h.host.scripted.prMerge = [{ outcome: "unavailable", message: "HTTP 502", transient: "server" }];
     await poll();
@@ -113,7 +113,7 @@ describe("finding 2: what changes while Loom looks up the checkout stops the mer
     ["the forge withdraws its approval", () => h.store.updateTicket(ticket().id, { pr_meta_json: JSON.stringify({ ...JSON.parse(ticket().pr_meta_json!), review: "CHANGES_REQUESTED" }) })],
   ];
   it.each(cases)("sends nothing when %s during the lookup", async (_name, during) => {
-    await openPr({ forge: { kind: "gh", auto_merge: { method: "squash" } } });
+    await openPr({ forge: { kind: "gh", auto_merge: { mode: "auto", method: "squash" } } });
     approved();
     duringMergeLookup(during);
     await poll();
@@ -124,7 +124,7 @@ describe("finding 2: what changes while Loom looks up the checkout stops the mer
 
 describe("finding 3: an old removal from the merge queue never settles a newer attempt", () => {
   it("keeps merging after the human turns it on again, while GitHub still shows the old manual removal", async () => {
-    await openPr({ forge: { kind: "gh", auto_merge: { method: "queue" } } });
+    await openPr({ forge: { kind: "gh", auto_merge: { mode: "auto", method: "queue" } } });
     approved();
     await poll();
     // The removal lands 10 seconds before the attempt Loom makes once the human turns it on again, two polls from now.
@@ -143,7 +143,7 @@ describe("finding 3: an old removal from the merge queue never settles a newer a
   });
 
   it("does not let a removal override a pull request that is in the queue now", async () => {
-    await openPr({ forge: { kind: "gh", auto_merge: { method: "queue" } } });
+    await openPr({ forge: { kind: "gh", auto_merge: { mode: "auto", method: "queue" } } });
     approved();
     await poll();
     h.host.queues.set(URL, { queued: true, auto: false, removed: { at: h.clock.now() + 1000, reason: "failed_checks" } });
@@ -276,7 +276,7 @@ describe("finding 8: only a comment made after the attempt rejects it", () => {
 
 describe("finding 9: a fresh budget applies to an attempt that was in flight when it was reset", () => {
   it("after on for the ticket, a rejection of the attempt in flight is a fix round, not the last attempt", async () => {
-    await openPr({ forge: { kind: "gh", auto_merge: { method: "queue", max_attempts: 2 } } });
+    await openPr({ forge: { kind: "gh", auto_merge: { mode: "auto", method: "queue", max_attempts: 2 } } });
     approved();
     await poll();
     // Attempt 1 never shows up in the queue, so it goes unconfirmed and attempt 2 is the last of the budget.
@@ -307,7 +307,7 @@ describe("finding 9: a fresh budget applies to an attempt that was in flight whe
 
 describe("require_live, through the rollout's own transitions", () => {
   it("merges once a milestone the ticket requires is marked live", async () => {
-    await openPr({ forge: { kind: "gh", auto_merge: { method: "squash", require_live: true } } }, (doc) => {
+    await openPr({ forge: { kind: "gh", auto_merge: { mode: "auto", method: "squash", require_live: true } } }, (doc) => {
       doc.ticket[0].rollout = { requires_live: ["schema-ready"] };
       doc.rollout = { milestone: [{ ref: "schema-ready", title: "The schema is migrated" }] };
     });
@@ -320,7 +320,7 @@ describe("require_live, through the rollout's own transitions", () => {
   });
 
   it("waits for a milestone that gates the ticket's stage, which the ticket does not name", async () => {
-    await openPr({ forge: { kind: "gh", auto_merge: { method: "squash", require_live: true } } }, (doc) => {
+    await openPr({ forge: { kind: "gh", auto_merge: { mode: "auto", method: "squash", require_live: true } } }, (doc) => {
       doc.ticket[0].rollout = { stage: "contract" };
       doc.rollout = { stage: [{ name: "contract", goal: "Only the new header is left" }], milestone: [{ ref: "old-zero", title: "Old traffic is zero", stage: "contract" }] };
     });
@@ -333,7 +333,7 @@ describe("require_live, through the rollout's own transitions", () => {
   });
 
   it("is not held by a required ticket that was cancelled", async () => {
-    await openPr({ forge: { kind: "gh", auto_merge: { method: "squash", require_live: true } } }, (doc) => {
+    await openPr({ forge: { kind: "gh", auto_merge: { mode: "auto", method: "squash", require_live: true } } }, (doc) => {
       doc.ticket[1].depends_on = [];
       doc.ticket[0].rollout = { requires_live: ["csv-export"] };
     });

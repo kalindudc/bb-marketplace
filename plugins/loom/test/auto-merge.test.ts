@@ -48,7 +48,7 @@ async function openPr(more: Doc = {}, edit?: (doc: Doc) => void): Promise<Thread
 }
 const approved = (more: Record<string, unknown> = {}) => h.host.prMeta.set(URL, { ...h.host.prMeta.get(URL), draft: false, review: "APPROVED", ...more });
 const comment = (key: string, body: string, author = "merge-service"): Item => ({ key, kind: "comment", author, bot: true, body, url: `${URL}#${key}`, state: null, path: null, line: null });
-const squash = { kind: "gh", auto_merge: { method: "squash" } };
+const squash = { kind: "gh", auto_merge: { mode: "auto", method: "squash" } };
 
 describe("auto-merge in the spec", () => {
   it("hashes a spec without the new settings exactly as Loom 0.31.1 did", () => {
@@ -148,7 +148,7 @@ describe("merging a ready pull request", () => {
   });
 
   it("asks for no merge while the branch has commits someone else pushed, which Loom has not reviewed", async () => {
-    await openPr({ forge: { kind: "gh", auto_merge: { method: "comment", comment: "/merge" } } });
+    await openPr({ forge: { kind: "gh", auto_merge: { mode: "auto", method: "comment", comment: "/merge" } } });
     approved();
     h.host.feedback.set(URL, { head: "someone-else" });
     await poll();
@@ -159,7 +159,7 @@ describe("merging a ready pull request", () => {
   });
 
   it('with approval = "loom" merges what the forge leaves unreviewed, but not what it asks to change', async () => {
-    await openPr({ forge: { kind: "gh", auto_merge: { method: "squash", approval: "loom" } } });
+    await openPr({ forge: { kind: "gh", auto_merge: { mode: "auto", method: "squash", approval: "loom" } } });
     approved({ review: "CHANGES_REQUESTED" });
     await poll();
     expect(merges()).toEqual([]);
@@ -178,7 +178,7 @@ describe("merging a ready pull request", () => {
   });
 
   it("with require_live waits until what the ticket's rollout requires is live", async () => {
-    await openPr({ forge: { kind: "gh", auto_merge: { method: "squash", require_live: true } } }, (doc) => {
+    await openPr({ forge: { kind: "gh", auto_merge: { mode: "auto", method: "squash", require_live: true } } }, (doc) => {
       doc.ticket[0].rollout = { requires_live: ["schema-ready"] };
       doc.rollout = { milestone: [{ ref: "schema-ready", title: "The schema is migrated" }] };
     });
@@ -189,7 +189,7 @@ describe("merging a ready pull request", () => {
   });
 
   it("asks a merge service once per attempt, and a new comment it rejects with starts a fix round with its words", async () => {
-    const worker = await openPr({ forge: { kind: "gh", auto_merge: { method: "comment", comment: "/merge", rejected: ["❌*"] } } });
+    const worker = await openPr({ forge: { kind: "gh", auto_merge: { mode: "auto", method: "comment", comment: "/merge", rejected: ["❌*"] } } });
     h.host.feedback.set(URL, { items: [comment("comment:1", "❌ **CI failure** from an older attempt")] });
     approved();
     await poll();
@@ -206,7 +206,7 @@ describe("merging a ready pull request", () => {
   });
 
   it("blocks once a rejection uses up the last attempt", async () => {
-    await openPr({ forge: { kind: "gh", auto_merge: { method: "comment", comment: "/merge", rejected: ["Merge failed*"], max_attempts: 1 } } });
+    await openPr({ forge: { kind: "gh", auto_merge: { mode: "auto", method: "comment", comment: "/merge", rejected: ["Merge failed*"], max_attempts: 1 } } });
     approved();
     await poll();
     h.host.feedback.set(URL, { items: [comment("comment:7", "Merge failed: the queue's CI failed.")] });
@@ -216,7 +216,7 @@ describe("merging a ready pull request", () => {
   });
 
   it("follows GitHub's merge queue: a removal for failed checks is a fix round, and a person's removal turns it off", async () => {
-    await openPr({ forge: { kind: "gh", auto_merge: { method: "queue" } } });
+    await openPr({ forge: { kind: "gh", auto_merge: { mode: "auto", method: "queue" } } });
     approved();
     await poll();
     expect(merges()).toEqual([expect.objectContaining({ forge: { kind: "gh", method: "queue" } })]);
@@ -231,7 +231,7 @@ describe("merging a ready pull request", () => {
   });
 
   it("stops when a person takes the pull request out of the merge queue, until the human turns it on again", async () => {
-    await openPr({ forge: { kind: "gh", auto_merge: { method: "queue" } } });
+    await openPr({ forge: { kind: "gh", auto_merge: { mode: "auto", method: "queue" } } });
     approved();
     await poll();
     h.host.queues.set(URL, { queued: false, auto: false, removed: { at: h.clock.now(), reason: "manual" } });
@@ -246,7 +246,7 @@ describe("merging a ready pull request", () => {
   });
 
   it("runs a command forge's merge: exit 3's words start a fix round, and exit 4's block the ticket", async () => {
-    const forge = { kind: "command", open: "pr open", state: "pr state", feedback: "pr feedback", merge: "pr merge", auto_merge: { method: "command" } };
+    const forge = { kind: "command", open: "pr open", state: "pr state", feedback: "pr feedback", merge: "pr merge", auto_merge: { mode: "auto", method: "command" } };
     await openPr({ forge });
     h.host.feedback.set(URL, { draft: false, review: "APPROVED" });
     h.host.scripted.prMerge = [{ outcome: "rejected", fix: true, message: "Merge conflict in src/model/a.ts" }];
@@ -264,7 +264,7 @@ describe("merging a ready pull request", () => {
   });
 
   it("never posts a merge comment twice when its answer was lost, until the human clears the attempt", async () => {
-    await openPr({ forge: { kind: "gh", auto_merge: { method: "comment", comment: "/merge", rejected: ["❌*"] } } });
+    await openPr({ forge: { kind: "gh", auto_merge: { mode: "auto", method: "comment", comment: "/merge", rejected: ["❌*"] } } });
     approved();
     h.host.scripted.prMerge = [Object.assign(new Error("Plugin RPC request failed"), { code: "transport_error" })];
     await poll();

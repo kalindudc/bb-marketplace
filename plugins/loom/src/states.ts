@@ -52,7 +52,8 @@ const TICKET_MOVES: Record<TicketState, readonly TicketState[]> = {
   checking: ["working", "review", "queued", "pr_open"],
   review: ["working", "approved", "queued"],
   approved: ["merging"],
-  merging: ["done", "pr_open", "working", "queued"],
+  // Back to approved when the merge needs its worker's worktree and bb shows none: it waits outside the queue for the worker.
+  merging: ["done", "pr_open", "working", "queued", "approved"],
   // A fix round: the pull request's feedback, or the human's reply, goes back to the worker, or to the queue when it is gone.
   // To merging when a dependency it is stacked on changed or merged, or its base for a refresh, so Loom brings its branch
   // up to date and pushes it; or when Loom let go of a stacked pull request the forge closed, to open a new one.

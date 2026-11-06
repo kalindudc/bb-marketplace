@@ -576,4 +576,42 @@ describe("a worker on a machine of its own", () => {
     expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "working", check_failures: 0 });
     expect(posts().at(-1)!.body).toBe("The checks could not run: git fetch from origin failed: offline. Submit again.");
   });
+
+  // LANE: the project's monorepo checkout took 41.5 s to read its base into a temporary index, so every submit failed with
+  // "git read-tree took too long", and each worker blocked its ticket after three. Loom's machine was slow, not the work.
+  it("tells the worker its index step ran out of time and names the setting, counting nothing however often it happens", async () => {
+    const { row } = await submittedOnBox();
+    h.host.errors.importCommit = new Error("git read-tree took too long: the index and tree steps on the project's checkout ran past 300 seconds. Raise git_index_timeout_seconds for the repo if its index is this slow");
+    for (let round = 0; round < 4; round++) {
+      submit(h.ctx, row.thread_id!, "Mapped orders to rows");
+      await settleChecks(h.ctx);
+      expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "working", check_failures: 0, failures: 0, attempt: 1 });
+    }
+    const post = posts().at(-1)!;
+    expect(post).toMatchObject({ kind: "system", data_json: JSON.stringify({ outcome: "index_timeout", setting: "git_index_timeout_seconds" }) });
+    expect(post.body).toContain("This is not a failure of your work and counts against nothing: call loom_submit again with the same work, and do not block the ticket for it.");
+    expect(post.body).toContain("the human raises merge.git_index_timeout_seconds in the spec (it is 300 seconds now)");
+    expect(h.bb.sent(row.thread_id!).at(-1)).toBe(`[loom] CSV-1: ${post.body}`);
+    expect(h.store.thread(row.id)).toMatchObject({ ended_at: null });
+
+    h.host.errors.importCommit = null;
+    submit(h.ctx, row.thread_id!, "Mapped orders to rows");
+    await settleChecks(h.ctx);
+    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "review", head_sha: "home1" });
+  });
+
+  it("sends the spec's git index timeout with the commit it brings home, and none when the spec sets none", async () => {
+    const { row } = await submittedOnBox();
+    submit(h.ctx, row.thread_id!, "Mapped orders to rows");
+    await settleChecks(h.ctx);
+    expect(h.host.callsTo("importCommit")[0]).not.toHaveProperty("indexTimeoutMs");
+
+    h = makeCtx();
+    await seedMachineProject(h, (doc) => (doc.merge.git_index_timeout_seconds = 600));
+    const other = await startWorker(h);
+    Object.assign(h.host.worktree(`/wt/${other.environment_id}`), { dirty: true, changed: ["src/model/a.ts"] });
+    submit(h.ctx, other.thread_id!, "Mapped orders to rows");
+    await settleChecks(h.ctx);
+    expect(h.host.callsTo("importCommit")[0]).toMatchObject({ indexTimeoutMs: 600_000 });
+  });
 });

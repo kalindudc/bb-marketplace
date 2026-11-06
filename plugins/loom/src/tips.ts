@@ -8,7 +8,7 @@ import type { ProjectRow, TicketRow } from "./db/store";
 import { transientOf, Unavailable } from "./forge-waits";
 import type { HostOutput } from "./host-contract";
 import { isWaking } from "./release";
-import { gitNetwork } from "./repos";
+import { gitIndex, gitNetwork } from "./repos";
 import { EMPTY_STACK, restackOf, stacking, stackOf, type Stack } from "./stack";
 import { carryTo, headCameHome, homeBranch, isRemote, reviewedRef } from "./transport";
 import { resolveEnvironment, specOf, type EngineCtx } from "./workers";
@@ -98,6 +98,7 @@ export async function takeForRound(ctx: EngineCtx, project: ProjectRow, seen: Ti
       ...(seen.pushed_sha === null ? {} : { base: seen.pushed_sha }),
       message: `Merge ${TIP_WHAT} into ${seen.key} (Loom)`,
       refs: [],
+      ...gitIndex(checkout.settings),
     });
     if (merged.outcome === "merged" && merged.already) return null;
     if (merged.outcome === "conflict") return { kind: "later" };

@@ -15,6 +15,7 @@ import { rolloutOf } from "./rollout";
 import { repoCheckout } from "./checkouts";
 import type { Spec } from "./spec";
 import { HUMAN_ACTOR, LOOM_ACTOR } from "./states";
+import { LoomError } from "./projects";
 import { specOf, type EngineCtx } from "./workers";
 
 export const MERGE_ATTEMPT = "ticket.merge_attempt";
@@ -22,6 +23,10 @@ export const MERGE_OUTCOME = "ticket.merge_outcome";
 export const MERGE_HELD = "ticket.merge_held";
 export const TICKET_AUTO_MERGE = "ticket.auto_merge";
 export const PROJECT_AUTO_MERGE = "project.auto_merge";
+/** The human confirmed the merge of one pushed commit of a ticket's pull request, on a repo whose auto_merge.mode is manual. */
+export const MERGE_CONFIRMED = "ticket.merge_confirmed";
+/** The planner asked the human to confirm the merge of one pushed commit; it authorizes nothing. */
+export const MERGE_REQUESTED = "ticket.merge_requested";
 /** An attempt's call came back without settling it (the forge took it, or its outcome is unknown), or a restart left it with no answer and Loom said so. */
 export const MERGE_ANSWERED = "ticket.merge_answered";
 /** How long a merge gh said it made, or a queue entry GitHub no longer shows, may go unseen in a read before Loom asks again. */
@@ -189,6 +194,7 @@ type Readiness =
   | { kind: "hold"; ticket: TicketRow; holds: MergeHold[] }
   | { kind: "exhausted"; ticket: TicketRow; state: AttemptState }
   | { kind: "final"; project: ProjectRow; ticket: TicketRow; settings: AutoMergeSettings }
+  | { kind: "confirm"; ticket: TicketRow }
   | { kind: "ask"; project: ProjectRow; spec: Spec; ticket: TicketRow; settings: AutoMergeSettings; state: AttemptState };
 
 /**
@@ -218,7 +224,134 @@ function readiness(ctx: EngineCtx, projectId: number, ticketId: number, read: Me
   if (state.used >= settings.maxAttempts) return { kind: "exhausted", ticket, state };
   // Last: a final review runs only once nothing else holds the merge, and its pass must be for the head Loom pushed.
   if (finalReviewOf(spec, settings) !== null && finalState(store, ticket.id, ticket.pushed_sha).passed === null) return { kind: "final", project, ticket, settings };
+  // In manual mode, the human confirms each pushed commit's merge, after everything else, the final review included, has passed.
+  if (settings.mode === "manual" && !mergeConfirmed(store, ticket)) return { kind: "confirm", ticket };
   return { kind: "ask", project, spec, ticket, settings, state };
+}
+
+const forHead = (event: EventRow, ticket: TicketRow) => parse(event).url === ticket.pr_url && parse(event).sha === ticket.pushed_sha;
+
+/**
+ * Whether the human confirmed the merge of the ticket's pull request at the commit Loom pushed last. Only an event the
+ * human's actor wrote counts: no Loom agent's record authorizes a merge, whatever it says.
+ */
+export function mergeConfirmed(store: Store, ticket: TicketRow): boolean {
+  return store.ticketEvents(ticket.id, [MERGE_CONFIRMED]).some((event) => event.actor === HUMAN_ACTOR && forHead(event, ticket));
+}
+
+/** The planner's open request that the human confirm the merge of the commit Loom pushed last; null when there is none. */
+function mergeRequestOf(store: Store, ticket: TicketRow): { at: number; note: string } | null {
+  const event = store.ticketEvents(ticket.id, [MERGE_REQUESTED]).filter((each) => forHead(each, ticket)).at(-1);
+  return event === undefined ? null : { at: event.at, note: String(parse(event).note ?? "") };
+}
+
+/** The key of the post that says a ready pull request waits for the human's confirmation, once per pushed commit. */
+const confirmKey = (ticket: TicketRow) => `${ticket.pushed_sha}:confirm`;
+
+/** What the panel shows of a manual merge, with the pull request and commit a confirmation from it must name. */
+export interface MergeConfirmState {
+  prUrl: string;
+  sha: string;
+  /** Loom found nothing else holding back the merge of `sha`, so only the confirmation does. */
+  ready: boolean;
+  confirmed: boolean;
+  /** The planner asked the human to confirm the merge of `sha`, and the human has not yet. */
+  requested: { at: number; note: string } | null;
+}
+
+/**
+ * What the panel shows of a manual merge: null unless the ticket's repo sets auto_merge with mode manual, its pull request
+ * is open on a commit Loom pushed, and auto-merge is on for the project and the ticket.
+ */
+export function mergeConfirmOf(store: Store, spec: Spec, ticket: TicketRow): MergeConfirmState | null {
+  if (ticket.state !== "pr_open" || ticket.pr_url === null || ticket.pushed_sha === null) return null;
+  if (autoMergeOf(repoSettings(spec, ticket.repo).forge)?.mode !== "manual") return null;
+  if (attemptState(store, ticket.id).off || projectAutoMergeOff(store, ticket.project_id)) return null;
+  const confirmed = mergeConfirmed(store, ticket);
+  return {
+    prUrl: ticket.pr_url,
+    sha: ticket.pushed_sha,
+    ready: !confirmed && store.ticketEvents(ticket.id, [MERGE_HELD]).some((event) => parse(event).key === confirmKey(ticket)),
+    confirmed,
+    requested: confirmed ? null : mergeRequestOf(store, ticket),
+  };
+}
+
+/** Says once per pushed commit that the pull request is ready and waits for the human to confirm its merge. */
+function noteConfirm(ctx: EngineCtx, ticket: TicketRow): void {
+  const key = confirmKey(ticket);
+  if (ctx.store.ticketEvents(ticket.id, [MERGE_HELD]).some((event) => parse(event).key === key)) return;
+  ctx.store.event(ticket.project_id, ticket.id, MERGE_HELD, LOOM_ACTOR, { key, holds: ["the human has not confirmed the merge"] });
+  addPost(
+    ctx,
+    ticket,
+    `${ticket.key}'s pull request is ready to merge at ${ticket.pushed_sha}. auto_merge.mode is manual, so Loom waits for you to confirm the merge of that commit: use Confirm merge on the ticket or its card.`,
+    { outcome: "auto_merge_confirm", url: ticket.pr_url, sha: ticket.pushed_sha },
+  );
+}
+
+/** Why Loom would not merge the ticket's pull request at all, so there is nothing to confirm or ask about; null when it would. */
+function noManualMerge(store: Store, project: ProjectRow, ticket: TicketRow): string | null {
+  const settings = autoMergeOf(repoSettings(specOf(store, project), ticket.repo).forge);
+  if (settings === null) return `${ticket.key}'s repo sets no auto_merge, so Loom never merges its pull request.`;
+  if (settings.mode !== "manual") return `${ticket.key}'s repo sets auto_merge.mode = "auto", so Loom merges its pull request by itself once it is ready.`;
+  if (ticket.state !== "pr_open" || ticket.pr_url === null || ticket.pushed_sha === null) return `${ticket.key} is ${ticket.state} with no open pull request on a commit Loom pushed, so there is no merge to confirm.`;
+  if (attemptState(store, ticket.id).off || projectAutoMergeOff(store, project.id)) return `Auto-merge is off for ${ticket.key}, so Loom would not merge it. Turn it on first with \`bb loom auto-merge ${project.slug} on\`.`;
+  return null;
+}
+
+/** The pull request and the exact commit a confirmation is for: what the human saw. */
+export interface SeenHead {
+  prUrl: string;
+  sha: string;
+}
+
+/**
+ * The human's confirmation of a manual merge, from the panel or the CLI only: it lets Loom ask to merge the pull request
+ * the human saw at the exact commit they saw, once it is ready. A confirmation for another pull request or commit than
+ * the ticket's now is refused, so a stale or replayed one never authorizes a new head. It is always recorded as the
+ * human's; a Loom agent has no way to call it (the planner's loom_confirm_merge only asks, through requestMerge).
+ */
+export function confirmMerge(store: Store, project: ProjectRow, ticket: TicketRow, seen: SeenHead): string {
+  const no = noManualMerge(store, project, ticket);
+  if (no !== null) throw new LoomError("loom_invalid_state", no);
+  if (seen.prUrl !== ticket.pr_url || seen.sha !== ticket.pushed_sha) {
+    const what = seen.prUrl !== ticket.pr_url ? `you confirmed ${seen.prUrl}, and the ticket's pull request is ${ticket.pr_url} now` : `you confirmed ${seen.sha.slice(0, 12)}, and Loom has pushed ${ticket.pushed_sha!.slice(0, 12)} since`;
+    throw new LoomError("loom_invalid_state", `${ticket.key}'s pull request moved since you saw it: ${what}. Nothing is confirmed; look at the new commit and confirm it if you want it merged.`);
+  }
+  const sha = ticket.pushed_sha!.slice(0, 12);
+  if (mergeConfirmed(store, ticket)) return `${ticket.key}'s merge at ${sha} is already confirmed.`;
+  store.event(project.id, ticket.id, MERGE_CONFIRMED, HUMAN_ACTOR, { url: ticket.pr_url, sha: ticket.pushed_sha });
+  store.changed(project.id);
+  const ready = store.ticketEvents(ticket.id, [MERGE_HELD]).some((event) => parse(event).key === confirmKey(ticket));
+  return ready ? `Confirmed ${ticket.key}'s merge at ${sha}: Loom asks to merge its pull request at its next read.` : `Confirmed ${ticket.key}'s merge at ${sha}: Loom asks to merge its pull request once it is ready. A new push needs a new confirmation.`;
+}
+
+/**
+ * The planner's loom_confirm_merge: records that it asks the human to confirm the merge of the exact commit Loom pushed
+ * last, which the Planner page, the ticket and its card show with a Confirm button. It authorizes nothing by itself.
+ */
+export function requestMerge(store: Store, project: ProjectRow, ticket: TicketRow, threadId: string, ask: { sha: string; note: string }): string {
+  const no = noManualMerge(store, project, ticket);
+  if (no !== null) throw new LoomError("loom_invalid_state", no);
+  if (ask.sha !== ticket.pushed_sha) throw new LoomError("loom_invalid_state", `${ticket.key}'s pull request is at ${ticket.pushed_sha}, not ${ask.sha}. Ask about the commit it is at, and only if the human wants that one merged.`);
+  const sha = ask.sha.slice(0, 12);
+  if (mergeConfirmed(store, ticket)) return `The human already confirmed ${ticket.key}'s merge at ${sha}.`;
+  const asked = `Asked the human to confirm ${ticket.key}'s merge at ${sha}. Loom does not merge it until they confirm, on the Planner page, the ticket or its board card.`;
+  if (mergeRequestOf(store, ticket) !== null) return asked;
+  store.event(project.id, ticket.id, MERGE_REQUESTED, threadId, { url: ticket.pr_url, sha: ask.sha, note: clip(ask.note, 2000) });
+  store.addPost({
+    project_id: project.id,
+    ticket_id: ticket.id,
+    parent_id: null,
+    author_kind: "planner",
+    author_thread_id: threadId,
+    kind: "merge",
+    body: `The planner asks you to confirm the merge of ${ticket.key}'s pull request at ${sha}: "${clip(ask.note, 500)}". Loom merges it only once you confirm, with Confirm merge on the Planner page, the ticket or its card.`,
+    data_json: JSON.stringify({ outcome: "auto_merge_requested", url: ticket.pr_url, sha: ask.sha }),
+  });
+  store.changed(project.id);
+  return asked;
 }
 
 /**
@@ -232,6 +365,7 @@ export async function followAutoMerge(ctx: EngineCtx, project: ProjectRow, ticke
   if (ready === null) return;
   if (ready.kind === "settle") return settleAttempt(ctx, ready.project, ready.ticket, ready.settings, ready.state, read);
   if (ready.kind === "hold") return noteHold(ctx, ready.ticket, ready.holds);
+  if (ready.kind === "confirm") return noteConfirm(ctx, ready.ticket);
   if (ready.kind === "exhausted") {
     const { ticket, state } = ready;
     const last = state.last?.message == null ? "" : ` The last answer was:\n\n${state.last.message}`;
@@ -248,6 +382,7 @@ export async function followAutoMerge(ctx: EngineCtx, project: ProjectRow, ticke
     // The pass was counted just now: the merge goes in the same pass, after one more judgement of the ticket.
     const now = readiness(ctx, project.id, ticketId, read);
     if (now?.kind === "ask") await askToMerge(ctx, now, read);
+    else if (now?.kind === "confirm") noteConfirm(ctx, now.ticket);
     return;
   }
   await askToMerge(ctx, ready, read);

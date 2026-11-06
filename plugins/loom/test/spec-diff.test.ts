@@ -190,6 +190,8 @@ describe("operationalChanges", () => {
     expect(changed((doc) => (doc.repo[0].refresh_behind = 200), multi, repos)).toEqual(["repo[0].refresh_behind"]);
     expect(changed((doc) => (doc.merge.git_network_timeout_seconds = 300))).toEqual(["merge.git_network_timeout_seconds"]);
     expect(changed((doc) => (doc.repo[1].git_network_timeout_seconds = 300), multi, repos)).toEqual(["repo[1].git_network_timeout_seconds"]);
+    expect(changed((doc) => (doc.merge.git_index_timeout_seconds = 600))).toEqual(["merge.git_index_timeout_seconds"]);
+    expect(changed((doc) => (doc.repo[1].git_index_timeout_seconds = 600), multi, repos)).toEqual(["repo[1].git_index_timeout_seconds"]);
   });
 
   it("is null when anything else changed, or nothing did", () => {

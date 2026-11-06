@@ -4,7 +4,7 @@ import { z } from "zod";
 import { unknownPlaceholders } from "./environments";
 import { deploysOnMerge, SOAK_PATTERN } from "./rollout";
 import { plural } from "./format";
-import { GIT_NETWORK_TIMEOUT_SECONDS } from "./git-network";
+import { GIT_INDEX_TIMEOUT_SECONDS, GIT_NETWORK_TIMEOUT_SECONDS } from "./git-network";
 import { HOOK_EVENTS } from "./hook-events";
 import { matchesAny } from "./scope";
 
@@ -88,6 +88,8 @@ export const rolloutSchema = z
 const nonBlankGlob = z.string().max(200).refine((pattern) => pattern.trim() !== "", "must not be blank");
 
 export const AUTO_MERGE_METHODS = ["squash", "merge", "rebase", "queue", "comment", "command"] as const;
+/** "manual": a ready pull request waits for the human to confirm its merge, in the panel or through the planner; "auto": Loom asks at once. */
+export const AUTO_MERGE_MODES = ["auto", "manual"] as const;
 
 // Opt-in: Loom merges a ticket's pull request itself once its Ready to merge verdict holds. No defaults, so a forge without
 // it hashes as it did before it existed; autoMergeOf fills them in.
@@ -105,6 +107,8 @@ export const finalReviewSchema = z
 export const autoMergeSchema = z
   .object({
     method: z.enum(AUTO_MERGE_METHODS),
+    // Unset: "manual" (autoMergeOf). No default here, so a spec without it hashes as before.
+    mode: z.enum(AUTO_MERGE_MODES).optional(),
     // method = "comment": the comment gh posts to hand the pull request to a merge service.
     comment: z.string().trim().min(1).max(500).optional(),
     // Comments that appear after Loom's attempt and match one of these are the merge service rejecting it.
@@ -224,6 +228,8 @@ export const ticketSpecSchema = z
 
 // How long each git fetch, ls-remote or push for a repo may take. No default, so a spec without it hashes as it did before it existed.
 const gitNetworkTimeoutSeconds = z.number().int().min(GIT_NETWORK_TIMEOUT_SECONDS.min).max(GIT_NETWORK_TIMEOUT_SECONDS.max);
+// How long the index and tree steps of one host call on the project's checkout may take together. No default, for the same reason.
+const gitIndexTimeoutSeconds = z.number().int().min(GIT_INDEX_TIMEOUT_SECONDS.min).max(GIT_INDEX_TIMEOUT_SECONDS.max);
 
 export const repoSpecSchema = z
   .object({
@@ -241,6 +247,7 @@ export const repoSpecSchema = z
     deploy: deploySchema.optional(),
     refresh_behind: z.number().int().min(1).max(1_000_000).optional(),
     git_network_timeout_seconds: gitNetworkTimeoutSeconds.optional(),
+    git_index_timeout_seconds: gitIndexTimeoutSeconds.optional(),
   })
   .strict();
 
@@ -298,6 +305,8 @@ export const specSchema = z
         checks_near_done_percent: z.number().int().min(0).max(100).optional(),
         // Unset: GIT_NETWORK_TIMEOUT_MS. A [[repo]] table's own value replaces it.
         git_network_timeout_seconds: gitNetworkTimeoutSeconds.optional(),
+        // Unset: GIT_INDEX_TIMEOUT_MS. A [[repo]] table's own value replaces it.
+        git_index_timeout_seconds: gitIndexTimeoutSeconds.optional(),
       })
       .strict(),
     checks: z

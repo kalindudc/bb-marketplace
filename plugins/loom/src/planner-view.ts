@@ -2,6 +2,8 @@
 // reviews of them, the human's comments and controls, triage rounds, the planner's board changes, and the planner's last
 // words in each turn, which bb hands over when its thread goes idle. Question rounds live in bb's thread; the page adds them.
 import { plannerAsk, type AskStep, type PlannerAsk } from "./asks";
+import { mergeConfirmOf, type MergeConfirmState } from "./auto-merge";
+import { specOf } from "./workers";
 import type { EventRow, ProjectRow, Store } from "./db/store";
 import type { Projects, SpecView } from "./projects";
 import { clip } from "./prompts";
@@ -87,7 +89,18 @@ export interface PlannerView {
   versions: PlannerVersion[];
   review: SpecReviewStatus;
   triageRounds: number;
+  /** The merges the planner asked the human to confirm, for the commit each pull request is at now, not yet confirmed. */
+  mergeRequests: Array<{ key: string; title: string; confirm: MergeConfirmState }>;
   now: number;
+}
+
+function mergeRequestsOf(store: Store, project: ProjectRow): PlannerView["mergeRequests"] {
+  if (project.approved_version === null) return [];
+  const spec = specOf(store, project);
+  return store.tickets(project.id, ["pr_open"]).flatMap((ticket) => {
+    const confirm = mergeConfirmOf(store, spec, ticket);
+    return confirm?.requested == null ? [] : [{ key: ticket.key, title: ticket.title, confirm }];
+  });
 }
 
 export function versionChange(before: Spec, after: Spec): VersionChange {
@@ -269,6 +282,7 @@ export function plannerView(deps: { store: Store; projects: Projects }, threadId
     versions: project === null ? [] : versionsOf(store, projects, project),
     review: project === null ? { kind: "none" } : specReviewStatus(store, project),
     triageRounds: project?.triage_round ?? 0,
+    mergeRequests: project === null || project.state === "archived" ? [] : mergeRequestsOf(store, project),
     now,
   };
 }

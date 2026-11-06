@@ -312,6 +312,30 @@ describe("reads", () => {
     });
   });
 
+  // Tony's review: the page's request carried only the key, so replaying it after the head moved confirmed the new head.
+  it("confirmMerge confirms the pull request and commit the page showed, as the human, and refuses a replay once the head moved", async () => {
+    await running((doc) => void (doc.merge = { strategy: "pr", forge: { kind: "gh", auto_merge: { method: "squash" } } }));
+    const url = "https://github.com/acme/shop/pull/1";
+    host.store.updateTicket(ticketId("CSV-1"), { state: "pr_open", pr_url: url, pushed_sha: "a".repeat(40) });
+    const shown = (await call<TicketDetail>("ticket", { key: "CSV-1" })).mergeConfirm!;
+    expect(shown).toEqual({ prUrl: url, sha: "a".repeat(40), ready: false, confirmed: false, requested: null });
+    const request = { key: "CSV-1", prUrl: shown.prUrl, sha: shown.sha, confirm: true };
+
+    host.store.updateTicket(ticketId("CSV-1"), { pushed_sha: "b".repeat(40) });
+    await expect(call("confirmMerge", request)).rejects.toThrow("CSV-1's pull request moved since you saw it");
+    expect(host.store.ticketEvents(ticketId("CSV-1"), ["ticket.merge_confirmed"])).toEqual([]);
+
+    host.store.updateTicket(ticketId("CSV-1"), { pushed_sha: "a".repeat(40) });
+    const detail = await call<TicketDetail>("confirmMerge", request);
+    expect(detail.mergeConfirm).toMatchObject({ confirmed: true });
+    expect(humanEvents().at(-1)).toMatchObject({ actor: "human", action: "confirm merge", key: "CSV-1", sha: "a".repeat(40) });
+    const view = await call<ProjectView>("project", { slug: "csv" });
+    expect(view.board.find((card) => card.key === "CSV-1")!.mergeConfirm).toMatchObject({ confirmed: true });
+    expect(view.board.find((card) => card.key === "CSV-2")!.mergeConfirm).toBeNull();
+    await expect(call("confirmMerge", { key: "CSV-1", sha: "a".repeat(40), confirm: true })).rejects.toThrow();
+    await expect(call("ticketAction", { key: "CSV-1", action: "confirmMerge", note: "", confirm: true })).rejects.toThrow();
+  });
+
   it("ticket says who hears a reply, and where a blocked ticket stopped", async () => {
     await running();
     await host.engine.tick();

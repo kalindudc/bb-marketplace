@@ -4,6 +4,7 @@
 import type { BbPluginApi, PluginAgentToolResult } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { ASK_ACTIONS, recordAsk } from "./asks";
+import { requestMerge } from "./auto-merge";
 import { submit } from "./checks";
 import { ticketRepo } from "./checkouts";
 import { formatTicket } from "./cli";
@@ -23,7 +24,7 @@ import { SPEC_REVIEW_ROUNDS, TICKET_STATES } from "./states";
 import { addTickets, boardText, editTicket } from "./triage";
 import { blockTicket, requeueTicket, resumeWork, specOf } from "./workers";
 
-export const PLANNER_TOOLS = ["loom_propose", "loom_discover", "loom_board", "loom_ticket", "loom_requeue", "loom_add_tickets", "loom_edit_ticket", "loom_cancel_ticket", "loom_post", "loom_ask_human"] as const;
+export const PLANNER_TOOLS = ["loom_propose", "loom_discover", "loom_board", "loom_ticket", "loom_requeue", "loom_confirm_merge", "loom_add_tickets", "loom_edit_ticket", "loom_cancel_ticket", "loom_post", "loom_ask_human"] as const;
 export const WORKER_TOOLS = ["loom_note", "loom_submit", "loom_block", "loom_pr", "loom_pr_reply"] as const;
 /** A worker on a machine of its own also has loom_resume, to carry in the work its ticket's earlier workers left. */
 export const MACHINE_WORKER_TOOLS = [...WORKER_TOOLS, "loom_resume"] as const;
@@ -213,6 +214,23 @@ export function registerTools(bb: BbPluginApi, projects: Projects, engine: Engin
         if (ticket.state === "review") return `${key} is back in review as it is, in round ${ticket.review_round}: new reviewers judge the commit whose checks passed last.`;
         if (ticket.state === "pr_open") return `${key} is back on its pull request as it is; Loom follows it again and sends a new worker any feedback that needs a fix.`;
         return `${key} is queued again. A new worker starts from its branch and reads the whole ticket thread.`;
+      }),
+  });
+
+  bb.agents.registerTool({
+    name: "loom_confirm_merge",
+    description:
+      "Ask the human to confirm the merge of a ticket's pull request on a repo whose auto_merge.mode is manual, at the exact commit Loom pushed last (sha, the full commit hash Loom's \"ready to merge\" post names). This merges nothing: it puts the request, with your note, on the Planner page, the ticket and its board card, and Loom merges only once the human clicks Confirm there or confirms with the CLI. Use it when the human asked you to get a ticket merged, or a ready pull request waits on their confirmation. A new push needs a new request.",
+    presentation: { label: { pending: "Asking the human to confirm a merge", completed: "Asked the human to confirm a merge" } },
+    parameters: z.object({
+      key: z.string().min(1).max(40),
+      sha: z.string().regex(/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/u, "must be the full commit hash").describe("The full hash of the commit the pull request is at, as Loom's post names it."),
+      note: z.string().min(1).max(2000).describe("Why you ask, for the human."),
+    }),
+    execute: ({ key, sha, note }, tool) =>
+      run(() => {
+        const { projectId, ticket } = planner(tool.threadId, key);
+        return requestMerge(store, store.project(projectId)!, ticket!, tool.threadId, { sha, note });
       }),
   });
 

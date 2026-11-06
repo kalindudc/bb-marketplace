@@ -29,6 +29,7 @@ export const RPC_TAGS = {
   threadInfo: { tags: (_: unknown, info: ThreadInfo | null) => ofThread(info?.slug) },
   reply: { invalidates: (_: unknown, view: TicketDetail) => changedTags(view.slug) },
   ticketAction: { invalidates: (_: unknown, view: TicketDetail) => changedTags(view.slug) },
+  confirmMerge: { invalidates: (_: unknown, view: TicketDetail) => changedTags(view.slug) },
   control: { invalidates: changesProject },
   sendNotes: { invalidates: changesProject },
   planning: { tags: anything },

@@ -41,6 +41,7 @@ A spec without `[[repo]]` tables is a single-repo project: every ticket runs in 
 | `checks_queued_minutes` | integer | Loom's `checksQueuedMinutes` setting (`5`) | pr strategy only; 0 to 1440; a pending check that is still queued this many minutes after Loom first saw it, or after the push, no longer holds back the failed ones; `0` waits for queued checks too |
 | `checks_near_done_percent` | integer | Loom's `checksNearDonePercent` setting (`75`) | pr strategy only; 0 to 100; once a check has failed, a running check holds back the fix round only while it is at least this far along; a check Loom cannot measure, and every commit status, keeps holding it; `0` waits for every running check. See [When failed checks go to the worker](#when-failed-checks-go-to-the-worker) |
 | `git_network_timeout_seconds` | integer | `120` | 30 to 600; how long each git fetch, `ls-remote` or push Loom runs in the repo may take, such as fetching the base branch to bring a stacked pull request up to date, building a pull request's commit, or pushing it; a host call that runs two of them in a row gets twice this plus 30 seconds; the default of every `[[repo]]`. Raise it for a large monorepo, where fetching main takes a minute or more; a version approved after the project started applies from Loom's next pass. See [Slow repositories](#slow-repositories) |
+| `git_index_timeout_seconds` | integer | `300` | 30 to 900; how long the index and tree steps of one call on the repo's checkout may take together: reading the base into a temporary index, updating it, writing its tree and committing it when Loom brings a worker's commit home from another machine, and merge-tree when it merges or builds a stacked base; the default of every `[[repo]]`. Quick git calls keep 30 seconds. Raise it for a large monorepo whose whole index takes minutes to read on a loaded machine. See [Slow repositories](#slow-repositories) |
 
 ### [merge.forge]
 
@@ -102,6 +103,7 @@ A forge's `auto_merge` makes Loom merge each ticket's pull request once it is re
 | Key | Type | Default | Rules |
 |---|---|---|---|
 | `method` | string | required | with `kind = "gh"`: `"squash"`, `"merge"` or `"rebase"` run `gh pr merge --match-head-commit <sha> --<method>`; `"queue"` runs `gh pr merge --match-head-commit <sha> --auto`, which adds the pull request to the base branch's merge queue, or sets it to join once its required checks pass; `"comment"` posts `comment` with `gh pr comment`, for a merge bot that merges on a command. With `kind = "command"`: `"command"`, which runs the forge's `merge` command |
+| `mode` | string | `"manual"` | `"manual"`: once the pull request is ready, Loom posts that it waits, and asks to merge only after the human confirms the merge of the exact commit it pushed, on the ticket page or its board card, or with `bb loom auto-merge <slug> confirm --ticket <KEY> --pr <URL> --sha <SHA>`. A confirmation names the pull request and commit the human saw and is refused once either changed, so a new push needs a new one; it may come before the pull request is ready. The planner's `loom_confirm_merge` only asks the human, on the Planner page, the ticket and its card; it authorizes nothing. `"auto"`: Loom asks as soon as the pull request is ready |
 | `comment` | string | none | required with `method = "comment"`, refused otherwise; up to 500 characters, such as `"/merge"` |
 | `rejected` | string array | none | `method = "comment"` or `"command"` only; at most 10 globs, as in `ignore_checks`, matched against the whole body of each comment that appears on the pull request after Loom's attempt, such as `"Merge failed*"`; a match is the merge service turning the pull request away. Without it Loom cannot see a rejection and waits until the pull request merges, with a warning |
 | `approval` | string | `"forge"` | `"forge"`: the forge's review decision must be approved, which a person gives, since Loom's reviewers approve inside Loom only; `"loom"`: Loom's own reviewers' approval is enough, as long as the forge does not ask for changes |
@@ -264,7 +266,12 @@ Loom runs git's network steps in a repo's checkout: it fetches the base branch b
 
 - Time the fetch in the repo's checkout, for example `time git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main`, and set `git_network_timeout_seconds` comfortably above it on that `[[repo]]`, or on `[merge]` for a single-repo project. On a large monorepo whose main takes 50 to 80 seconds to fetch, 300 leaves room.
 - To change it on a running project, propose a revision with the new value; it applies once the version is approved, and a version that changes only it skips the spec review. The project's pull requests, workers and tickets are unchanged.
-- The setting covers git only. `gh`, the forge's commands and the first checkout of an integration worktree keep their own 2-minute limits, and merge-tree on the project's checkout gets 2 minutes too.
+- The setting covers git's network steps only. `gh`, the forge's commands and the first checkout of an integration worktree keep their own 2-minute limits.
+
+Loom also reads and writes whole trees in the checkout. When a worker runs on another machine, Loom brings its commit home by reading the base into a temporary index, updating the changed files, writing the tree and committing it; it runs merge-tree to bring a pull request up to date and to build a stacked base. These steps of one call share `git_index_timeout_seconds` (300 by default). On a large monorepo, reading the whole index can take most of a minute when the machine is loaded, far past the 30 seconds quick git calls get.
+
+- A submit whose steps run out of this time comes back to the worker as "the checks could not run", naming the setting. It counts no check failure and no attempt, and the worker submits the same work again. A merge step that runs out of it is waited out like any temporary failure.
+- Time it in the checkout, for example `time GIT_INDEX_FILE=$(mktemp -u) git read-tree origin/main`, and set `git_index_timeout_seconds` well above it on that `[[repo]]`, or on `[merge]` for a single-repo project. It changes on a running project the same way as `git_network_timeout_seconds`.
 
 ### [checks]
 
@@ -345,6 +352,7 @@ Zero to 10 entries. Leave them out when the work stays in the planner thread's o
 | `deploy` | table | `rollout.deploy` | `{ on_merge?, how? }`, like `[rollout].deploy`, for the tickets in this repo; each key it sets replaces the project's; strategy `"pr"` only |
 | `refresh_behind` | integer | `merge.refresh_behind` | like `merge.refresh_behind`, for this repo's pull requests; strategy `"pr"` only; see [Keeping pull requests fresh](#keeping-pull-requests-fresh) |
 | `git_network_timeout_seconds` | integer | `merge.git_network_timeout_seconds` | 30 to 600; like `merge.git_network_timeout_seconds`, for this repo's git fetches, `ls-remote` and pushes |
+| `git_index_timeout_seconds` | integer | `merge.git_index_timeout_seconds` | 30 to 900; like `merge.git_index_timeout_seconds`, for the index and tree steps on this repo's checkout |
 
 Each repo gets its own integration branch (`merge.branch`, from the repo's `base`) and its own Loom worktree. Tickets in different repos never share a file, so their scopes never overlap.
 

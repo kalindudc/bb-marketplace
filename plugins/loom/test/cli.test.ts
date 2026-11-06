@@ -26,6 +26,55 @@ async function approved() {
   await host.projects.approve("csv", "human");
 }
 
+describe("auto-merge confirm", () => {
+  const SHA = "a".repeat(40);
+  const URL = "https://github.com/acme/shop/pull/1";
+  async function manual() {
+    await propose((doc) => void (doc.merge = { strategy: "pr", forge: { kind: "gh", auto_merge: { method: "squash" } } }));
+    await host.projects.approve("csv", "human");
+    await run(["start", "csv"]);
+    host.store.updateTicket(host.store.ticketByKey("CSV-1")!.id, { state: "pr_open", pr_url: URL, pushed_sha: SHA });
+  }
+  const confirmed = () => host.store.ticketEvents(host.store.ticketByKey("CSV-1")!.id, ["ticket.merge_confirmed"]);
+
+  it("shows the commit it would confirm and confirms only with --sha naming it", async () => {
+    await manual();
+    const asked = await run(["auto-merge", "csv", "confirm", "--ticket", "CSV-1", "--json"]);
+    expect(errorOf(asked.stdout)).toMatchObject({ code: "loom_invalid_input", message: `CSV-1's pull request ${URL} is at ${SHA}. Look at that pull request and commit, then confirm them with --pr ${URL} --sha ${SHA}.` });
+    expect(errorOf((await run(["auto-merge", "csv", "confirm", "--ticket", "CSV-1", "--sha", SHA, "--json"])).stdout)).toMatchObject({ code: "loom_invalid_input", message: expect.stringContaining("--pr") });
+    expect(confirmed()).toEqual([]);
+
+    const done = await run(["auto-merge", "csv", "confirm", "--ticket", "CSV-1", "--pr", URL, "--sha", SHA]);
+    expect(done).toMatchObject({ exitCode: 0 });
+    expect(done.stdout).toContain("Confirmed CSV-1's merge at aaaaaaaaaaaa");
+    expect(confirmed()).toEqual([expect.objectContaining({ actor: "human" })]);
+    expect(humanEvents().at(-1)).toMatchObject({ action: "confirm", key: "CSV-1", pr: URL, sha: SHA });
+  });
+
+  it("refuses once the head has moved since it was printed, and from a Loom thread", async () => {
+    await manual();
+    host.store.updateTicket(host.store.ticketByKey("CSV-1")!.id, { pushed_sha: "b".repeat(40) });
+    const moved = await run(["auto-merge", "csv", "confirm", "--ticket", "CSV-1", "--pr", URL, "--sha", SHA, "--json"]);
+    expect(errorOf(moved.stdout).message).toContain("CSV-1's pull request moved since you saw it");
+    const planner = await run(["auto-merge", "csv", "confirm", "--ticket", "CSV-1", "--pr", URL, "--sha", "b".repeat(40), "--json"], "thr_plan");
+    expect(errorOf(planner.stdout).code).toBe("loom_human_only");
+    expect(confirmed()).toEqual([]);
+  });
+
+  // Tony's re-review: the CLI took the pull request from the ticket's state, so a command printed for PR #1 at sha A
+  // confirmed PR #2 once the ticket moved to it at the same sha.
+  it("refuses once the ticket moved to another pull request at the same commit", async () => {
+    await manual();
+    const printed = errorOf((await run(["auto-merge", "csv", "confirm", "--ticket", "CSV-1", "--json"])).stdout).message;
+    expect(printed).toContain(`--pr ${URL} --sha ${SHA}`);
+    const OTHER = "https://github.com/acme/shop/pull/2";
+    host.store.updateTicket(host.store.ticketByKey("CSV-1")!.id, { pr_url: OTHER });
+    const replayed = await run(["auto-merge", "csv", "confirm", "--ticket", "CSV-1", "--pr", URL, "--sha", SHA, "--json"]);
+    expect(errorOf(replayed.stdout).message).toContain(`CSV-1's pull request moved since you saw it: you confirmed ${URL}, and the ticket's pull request is ${OTHER} now`);
+    expect(confirmed()).toEqual([]);
+  });
+});
+
 describe("read commands", () => {
   it("list says so when there are no projects, and lists projects otherwise", async () => {
     expect((await run(["list"])).stdout).toContain("No Loom projects yet");

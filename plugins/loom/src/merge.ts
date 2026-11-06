@@ -39,7 +39,7 @@ import { githubPull, prNumber, PR_BATCH_MAX, type HostInput, type HostOutput as 
 import type { EnvironmentInfo } from "./ports";
 import { readMeta, type PrMeta } from "./pr-meta";
 import { LoomError } from "./projects";
-import { autoMergeOf, followsFeedback, freshBaseOf, gitNetwork, isMultiRepo, prSettings, repoSettings, type RepoSettings } from "./repos";
+import { autoMergeOf, followsFeedback, freshBaseOf, gitIndex, gitNetwork, isMultiRepo, prSettings, repoSettings, type RepoSettings } from "./repos";
 import { followAutoMerge, type MergeRead } from "./auto-merge";
 import { requestReviewers } from "./review-requests";
 import { forgetClosedReads, noteAnswer, readGoesOut } from "./pr-sync";
@@ -182,7 +182,8 @@ function candidates(ctx: EngineCtx, projectId: number, spec: Spec): TicketRow[] 
   const onlyRefresh = (ticket: TicketRow) => ticket.state === "pr_open" && !reopens(spec, ticket) && !restacks(ticket);
   return tickets
     .filter((ticket) => {
-      if (ticket.state === "approved") return prTextReady(spec, ticket) && !held(ticket) && !(restacks(ticket) && comingBack(ticket));
+      // A worker coming back after its worktree went missing mid-merge (worktreeGone) is waited for outside the queue.
+      if (ticket.state === "approved") return prTextReady(spec, ticket) && !held(ticket) && !(restacks(ticket) && comingBack(ticket)) && !isWaking(workerOf(store, ticket).row);
       if (ticket.state !== "pr_open" || held(ticket)) return false;
       if (reopens(spec, ticket)) return !restacks(ticket) || present(ticket) || goneForGood(ticket);
       return (restacks(ticket) || refreshDue(spec, ticket) !== null) && present(ticket);
@@ -712,7 +713,7 @@ async function restack(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket: 
     return null;
   }
   const environment = await resolveEnvironment(ctx, worker.row);
-  if (environment?.path == null) throw new Unavailable(`${ticket.key}'s worker has no worktree, so Loom cannot bring its branch up to date with ${what}. Resume once bb shows the worktree again.`);
+  if (environment?.path == null) return worktreeGone(ctx, ticket, worker.row, what);
   const branch = stackBranch(project.slug, ticket.key);
   const built = await ctx.host.call(hostId, "stackBase", {
     repo,
@@ -721,6 +722,7 @@ async function restack(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket: 
     ...(need.withBase && need.baseTip === undefined ? { base: { remote: settings.remote, branch: settings.base } } : {}),
     message: `Loom: ${what} for ${ticket.key}`,
     ...gitNetwork(settings),
+    ...gitIndex(settings),
   });
   if (built.outcome === "unavailable") throw unavailableOf(built);
   const known = stackOf(ticket) ?? EMPTY_STACK;
@@ -736,7 +738,7 @@ async function restack(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket: 
   const stack: Stack = { ...rest, deps: need.deps, base: built.sha, synced: takesBase ? ctx.now() : known.synced };
   if (isRemote(project, environment)) return restackOnMachine(ctx, { project, spec, ticket, what, checkout, text, environment: { ...environment, path: environment.path }, built: built.sha, stack });
 
-  const merged = await ctx.host.call(hostId, "mergeOnto", { repo, head: ticket.head_sha!, ref: built.sha, message: `Merge ${what} into ${ticket.key} (Loom)`, refs: [] });
+  const merged = await ctx.host.call(hostId, "mergeOnto", { repo, head: ticket.head_sha!, ref: built.sha, message: `Merge ${what} into ${ticket.key} (Loom)`, refs: [], ...gitIndex(settings) });
   if (merged.outcome === "conflict") {
     await sendBack(ctx, ticket.id, {
       post: { kind: "merge", body: `Merging ${what} into ${ticket.key}'s branch conflicted in: ${merged.files.join(", ")}.`, data: { outcome: "conflict", files: merged.files, restack: true } },
@@ -768,7 +770,7 @@ async function restackOnMachine(
   const { store } = ctx;
   const { project, spec, ticket, what, environment, stack } = a;
   const refs = [`refs/heads/${homeBranch(project.slug, ticket.key)}`, reviewedRef(project.slug, ticket.key)];
-  const merged = await ctx.host.call(a.checkout.hostId, "mergeOnto", { repo: a.checkout.path, head: ticket.head_sha!, ref: a.built, message: `Merge ${what} into ${ticket.key} (Loom)`, refs });
+  const merged = await ctx.host.call(a.checkout.hostId, "mergeOnto", { repo: a.checkout.path, head: ticket.head_sha!, ref: a.built, message: `Merge ${what} into ${ticket.key} (Loom)`, refs, ...gitIndex(a.checkout.settings) });
   if (merged.outcome === "merged" && merged.already) {
     store.updateTicket(ticket.id, { stack_json: JSON.stringify(stack) });
     return { ticket: store.ticket(ticket.id)!, what, checked: false };
@@ -875,7 +877,7 @@ async function finishStep(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticke
     return back({ post: { kind: "merge", body: `${ticket.key} must take ${what} before Loom pushes it, and its worker is gone, so a new worker takes it.`, data: { outcome: "restack_waits" } }, text: { summary: "", detail: "" }, countFailure: false, reason: "the worker is gone" });
   }
   const found = await resolveEnvironment(ctx, worker.row);
-  if (found?.path == null) throw new Unavailable(`${ticket.key}'s worker has no worktree, so Loom cannot bring its branch up to date with ${what}. Resume once bb shows the worktree again.`);
+  if (found?.path == null) return worktreeGone(ctx, ticket, worker.row, what);
   const environment = { ...found, path: found.path };
 
   if (step.remote) {
@@ -929,6 +931,35 @@ async function finishStep(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticke
   return store.ticket(ticket.id)!;
 }
 
+/**
+ * A merge step needs the worker's worktree, and bb shows none for a worker whose thread is still active, as when its
+ * sandbox expired. Loom never pauses the project for this and never leaves the ticket in merging, where it would hold the
+ * whole queue: the ticket goes back to where the queue took it from (approved, or pr_open for a catch-up), and the worker
+ * comes back the way a released one does (advanceWake): bb restores its environment when it can, after which the queue
+ * takes the ticket again, and when it cannot, the worker's thread ends (cannotWake) and the next merge hands the ticket to
+ * a new worker from its branch. Returns null, as a step that sent the ticket back does.
+ */
+async function worktreeGone(ctx: EngineCtx, ticket: TicketRow, row: ThreadRow, what: string): Promise<null> {
+  const { store } = ctx;
+  const into = store.ticketEvents(ticket.id, ["ticket.state"]).filter((event) => (JSON.parse(event.data_json) as { to?: string }).to === "merging").at(-1);
+  const from = (into === undefined ? null : (JSON.parse(into.data_json) as { from?: string }).from) === "pr_open" ? "pr_open" : "approved";
+  store.tx(() => {
+    const current = store.ticket(ticket.id);
+    const worker = store.thread(row.id);
+    if (current?.state !== "merging" || worker?.state !== "active" || current.worker_thread_id !== worker.thread_id) return;
+    applyMove(ctx, current, { to: from, patch: { merge_step_json: null, merge_wait_json: null, merge_before: null, environment_id: null } }, LOOM_ACTOR, { reason: "the worker's worktree is gone" });
+    // Waking: still active, with no environment, which advanceWakes restores or gives up on.
+    store.updateThread(worker.id, { released_at: ctx.now(), environment_id: null, clock_at: ctx.now(), idle_count: 0 });
+    addMergePost(ctx, current, {
+      body: `${current.key} must take ${what} before Loom pushes it, and bb shows no worktree for its worker any more, as when its environment expired. It leaves the merge queue meanwhile, so the other tickets merge: Loom brings the worker's environment back when bb can restore it, and otherwise a new worker takes ${current.key} from its branch.`,
+      data: { outcome: "worktree_gone", back: from },
+    });
+  });
+  store.changed(ticket.project_id);
+  ctx.kick();
+  return null;
+}
+
 /** How often one push merges the pull request branch's new commits before it gives up, when the branch keeps moving meanwhile. */
 const TIP_TAKES = 3;
 
@@ -950,7 +981,7 @@ async function takeAtPush(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticke
     return null;
   }
   const found = await resolveEnvironment(ctx, worker.row);
-  if (found?.path == null) throw new Unavailable(`${ticket.key}'s worker has no worktree, so Loom cannot merge ${what} into its branch. Resume once bb shows the worktree again.`);
+  if (found?.path == null) return worktreeGone(ctx, ticket, worker.row, what);
   const environment = { ...found, path: found.path };
   let tip: Tip | null;
   try {
@@ -975,6 +1006,7 @@ async function takeAtPush(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticke
     ...(current.pushed_sha === null ? {} : { base: current.pushed_sha }),
     message: `Merge ${what} into ${current.key} (Loom)`,
     refs: [],
+    ...gitIndex(settings),
   });
   if (merged.outcome === "merged" && merged.already) return current;
   const remote = isRemote(project, environment);
