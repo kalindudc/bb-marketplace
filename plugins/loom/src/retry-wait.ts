@@ -34,17 +34,19 @@ export function retryDelayMs(failures: number, failure: Pick<Failure, "retryAfte
 }
 
 /**
- * The wait after one more failure of `step`. A streak goes on from a wait of the same step (and head, when it has one)
- * that ended at most one longest step before this failure; any other wait is over, so this failure starts a new streak.
+ * The wait after one more failure of `step`. A streak goes on from a wait of the same step (and head or pull request,
+ * when it has one) that ended at most one longest step before this failure; any other wait is
+ * over, so this failure starts a new streak.
  * `floorMs` is the step's own pace, such as a pull request's read every 5 minutes, which no wait runs sooner than.
  */
-export function nextRetry(previous: RetryWait | null, a: { step: RetryStep; now: number; failure: Failure; head?: string; floorMs?: number }): RetryWait {
-  const ongoing = previous !== null && (previous.step ?? "merge") === a.step && previous.head === a.head && a.now - previous.until <= LONGEST_RETRY_MS ? previous : null;
+export function nextRetry(previous: RetryWait | null, a: { step: RetryStep; now: number; failure: Failure; head?: string; pr?: string; floorMs?: number }): RetryWait {
+  const ongoing = previous !== null && (previous.step ?? "merge") === a.step && previous.head === a.head && previous.pr === a.pr && a.now - previous.until <= LONGEST_RETRY_MS ? previous : null;
   const failures = (ongoing?.failures ?? 0) + 1;
   const delay = Math.max(a.floorMs ?? 0, a.failure.kind === "lasting" ? LONGEST_RETRY_MS : retryDelayMs(failures, a.failure));
   return {
     step: a.step,
     ...(a.head === undefined ? {} : { head: a.head }),
+    ...(a.pr === undefined ? {} : { pr: a.pr }),
     failures,
     since: ongoing?.since ?? a.now,
     until: a.now + delay,
@@ -58,7 +60,7 @@ export function nextRetry(previous: RetryWait | null, a: { step: RetryStep; now:
 export type RetryDecision = { do: "wait"; wait: RetryWait; post: string | null } | { do: "block"; reason: string } | { do: "pause"; reason: string };
 
 /** What a failure of `what` (such as "Merging CSV-1") means for its ticket, given the ticket's wait so far. */
-export function decide(previous: RetryWait | null, a: { step: RetryStep; what: string; now: number; failure: Failure; head?: string; floorMs?: number }): RetryDecision {
+export function decide(previous: RetryWait | null, a: { step: RetryStep; what: string; now: number; failure: Failure; head?: string; pr?: string; floorMs?: number }): RetryDecision {
   const { failure, what, now } = a;
   const said = clause(failure.reason);
   if (failure.scope === "project") return { do: "pause", reason: `${what} stopped: ${said}. ${failure.fix ?? "Fix it, then resume the project."}` };

@@ -22,11 +22,11 @@ const clause = (message: string) => message.trim().replace(/[.:]+$/u, "");
  * Settles a failure of the ticket's `step`: the ticket waits, blocks, or its project pauses. `stop` runs before a block,
  * as a merge's must be taken out first; if it fails, the ticket waits instead. Other tickets are never touched.
  */
-export async function stepFailed(ctx: EngineCtx, ticket: TicketRow, step: RetryStep, error: unknown, a: { what: string; head?: string; floorMs?: number; stop?: () => Promise<void> }): Promise<RetryDecision["do"]> {
+export async function stepFailed(ctx: EngineCtx, ticket: TicketRow, step: RetryStep, error: unknown, a: { what: string; head?: string; pr?: string; floorMs?: number; stop?: () => Promise<void> }): Promise<RetryDecision["do"]> {
   const failure = isFailure(error) ? error : classify(error);
   const now = ctx.now();
   const previous = readSub(ticket, "retry_json");
-  const decision = decide(previous, { step, what: a.what, now, failure, ...(a.head === undefined ? {} : { head: a.head }), ...(a.floorMs === undefined ? {} : { floorMs: a.floorMs }) });
+  const decision = decide(previous, { step, what: a.what, now, failure, ...(a.head === undefined ? {} : { head: a.head }), ...(a.pr === undefined ? {} : { pr: a.pr }), ...(a.floorMs === undefined ? {} : { floorMs: a.floorMs }) });
   const count = decision.do === "wait" ? ` ${plural(decision.wait.failures, "time")} in a row` : "";
   ctx.bb.log("warn", `${a.what} failed${count} (${failure.kind}, ${failure.scope}): ${failure.reason}`);
   if (decision.do === "pause") {

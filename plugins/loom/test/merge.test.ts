@@ -801,7 +801,7 @@ describe("the pull request strategy", () => {
       await pollIn(5);
       const first = h.clock.t;
       expect(project().state).toBe("running");
-      expect(waitOf()).toEqual({ step: "read", failures: 1, since: first, until: first + 5 * MINUTE, message: BAD_GATEWAY.message, kind: "temporary", scope: "ticket" });
+      expect(waitOf()).toEqual({ step: "read", pr: "https://github.com/acme/shop/pull/1", failures: 1, since: first, until: first + 5 * MINUTE, message: BAD_GATEWAY.message, kind: "temporary", scope: "ticket" });
       expect(systemPosts()).toEqual([
         "Reading the pull request of CSV-1 failed with what looks like a temporary error: gh api graphql failed: gh: HTTP 502. Loom tries again in 5m, waiting longer after each failure up to 15m, and blocks this ticket only if it keeps failing for 1h. The project keeps running.",
       ]);

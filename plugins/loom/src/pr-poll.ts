@@ -35,12 +35,19 @@ async function settleClosed(ctx: EngineCtx, ticket: TicketRow, target: string | 
   }
 }
 
-/** A read of the ticket's pull request failed in a way the ticket waits out, blocks for, or the project pauses for (retry.ts). */
-async function readFailed(ctx: EngineCtx, ticket: TicketRow, failure: Failure): Promise<void> {
-  const current = ctx.store.ticket(ticket.id);
-  if (current?.state !== "pr_open") return;
-  await stepFailed(ctx, current, "read", failure, { what: `Reading the pull request of ${ticket.key}`, floorMs: POLL_MS });
+/**
+ * A read of the ticket's pull request failed in a way the ticket waits out, blocks for, or the project pauses for (retry.ts).
+ * `polled` is the ticket as the read went out; an answer about a pull request or attempt the ticket has left is dropped.
+ */
+async function readFailed(ctx: EngineCtx, polled: TicketRow, failure: Failure): Promise<void> {
+  const current = ctx.store.ticket(polled.id);
+  if (current === null || !samePullRequest(polled, current)) return ctx.bb.log("warn", `Reading the pull request of ${polled.key} failed after the ticket left that pull request: ${failure.reason}`);
+  await stepFailed(ctx, current, "read", failure, { what: `Reading the pull request of ${polled.key}`, floorMs: POLL_MS, ...(current.pr_url === null ? {} : { pr: current.pr_url }) });
 }
+
+/** Whether the ticket is still on the pull request and attempt it was read for. */
+const samePullRequest = (polled: TicketRow, current: TicketRow): boolean =>
+  current.state === "pr_open" && current.pr_url === polled.pr_url && current.attempt === polled.attempt && current.pushed_sha === polled.pushed_sha;
 
 const stateForge = (forge: ForgeSpec): HostInput<"prState">["forge"] => (forge.kind === "command" ? { kind: "command", state: forge.state! } : { kind: "gh" });
 
@@ -325,10 +332,10 @@ async function settleRead(ctx: EngineCtx, project: ProjectRow, settings: RepoSet
     return;
   }
   if (host !== null) ctx.forgeBackoffs.delete(host);
-  endRetry(ctx, polled.id, "read");
   // The answer is about the pull request and attempt that were polled; the human may have blocked and requeued the ticket during the host call.
   const seen = store.ticket(polled.id);
-  if (seen?.state !== "pr_open" || seen.pr_url !== polled.pr_url || seen.attempt !== polled.attempt || seen.pushed_sha !== polled.pushed_sha) return;
+  if (seen === null || !samePullRequest(polled, seen)) return;
+  endRetry(ctx, polled.id, "read");
   if (read.meta !== null) store.updateTicket(seen.id, writeSub("pr_meta_json", readMeta(seen, { at: ctx.now(), ...read.meta, state: read.state })));
   const current = store.ticket(seen.id)!;
   const base = read.meta?.base ?? null;

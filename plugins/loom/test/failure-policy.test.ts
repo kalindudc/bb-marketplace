@@ -155,6 +155,28 @@ describe("on a running project", () => {
     expect(project().state).toBe("running");
   });
 
+  it("keeps a read failure of an old pull request off the ticket's new one", async () => {
+    await seedProject(h, pr);
+    await reachApproved(h);
+    await queue();
+    const seen = ticketOf(h, "CSV-1");
+    const call = h.host.call.bind(h.host);
+    h.host.call = (async (hostId: string, method: string, input: never) => {
+      if (method !== "prBatch") return call(hostId, method as never, input);
+      h.store.updateTicket(seen.id, { pr_url: "https://github.com/acme/shop/pull/999", attempt: seen.attempt + 1 });
+      return { outcome: "unavailable", message: "gh pr view failed: HTTP 404: Not Found" };
+    }) as typeof h.host.call;
+    h.clock.advance(5 * MINUTE);
+    await pollPullRequests(h.ctx, project());
+    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "pr_open", pr_url: "https://github.com/acme/shop/pull/999", retry_json: null });
+    expect(systemPosts("CSV-1")).toEqual([]);
+  });
+
+  it("starts a new streak of read failures for a new pull request", () => {
+    const first = nextRetry(null, { step: "read", pr: "https://github.com/acme/shop/pull/1", now: 0, failure: failure("temporary", "ticket") });
+    expect(nextRetry(first, { step: "read", pr: "https://github.com/acme/shop/pull/2", now: 5 * MINUTE, failure: failure("temporary", "ticket") })).toMatchObject({ failures: 1, since: 5 * MINUTE, pr: "https://github.com/acme/shop/pull/2" });
+  });
+
   it("goes on with a merge's wait after a restart, pushing the same commit again and opening the pull request once", async () => {
     await seedProject(h, pr);
     await reachApproved(h);

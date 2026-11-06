@@ -94,7 +94,7 @@ export type RetryStep = z.output<typeof retryStepSchema>;
 
 /**
  * RetryWait: a step failed `failures` times in a row, the first at `since`, and runs again at `until`. In retry_json it
- * names its step (none before 0.35, when only merges waited there), the head a diff read was for, what failures.ts said
+ * names its step (none before 0.35, when only merges waited there), the head a diff read or the pull request a read was for, what failures.ts said
  * the last failure was, and whether the ticket already said it has waited for an hour. A pull request edit keeps one too.
  */
 const retryWaitSchema = z.object({
@@ -104,6 +104,8 @@ const retryWaitSchema = z.object({
   message: z.string(),
   step: retryStepSchema.optional(),
   head: z.string().optional(),
+  /** The pull request a read wait is for, so a failure of an old one never counts against its replacement. */
+  pr: z.string().optional(),
   kind: z.enum(["temporary", "lasting", "unknown"]).optional(),
   scope: z.enum(["ticket", "forge", "host", "project"]).optional(),
   noted: z.boolean().optional(),
