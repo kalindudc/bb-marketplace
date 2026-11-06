@@ -6,6 +6,7 @@ import { workerOf, specOf, type EngineCtx } from "./ctx";
 import { repoCheckout, ticketRepo } from "./checkouts";
 import type { ProjectRow, ReviewRow, Store, ThreadRow, TicketRow } from "./db/store";
 import { spawnEnvironment, threadBranch, ticketInputsOf, usesNewMachine } from "./environments";
+import { retriesOf } from "./backoff";
 import { writeSub, type RetryWait, type StartWait } from "./sub-state";
 import { hostCallTransient, mergeWaitExpired, mergeWaitReason, mergeWaitText, nextMergeWait } from "./forge-waits";
 import { plural } from "./format";
@@ -229,6 +230,7 @@ export async function settleReviews(ctx: EngineCtx): Promise<void> {
  */
 export async function spawnReviewers(ctx: EngineCtx, project: ProjectRow, spec: Spec, parked: Parked = NOT_PARKED): Promise<number> {
   const { store } = ctx;
+  await settleLostSpawns(ctx, project.id);
   await endStaleReviewers(ctx, { projectId: project.id });
   let spawned = 0;
   for (const seen of store.tickets(project.id, ["review"])) {
@@ -425,15 +427,18 @@ async function startReviewer(ctx: EngineCtx, projectId: number, seen: TicketRow,
   } catch (error) {
     const problem = startProblemOf(error);
     const found = problem.kind === "refused" ? null : await startedAnyway(ctx, row);
-    if (found === null || found === undefined) {
+    if (found === undefined) {
+      unresolvedSpawn(ctx, row, errText(error));
+      return false;
+    }
+    if (found === null) {
       if (problem.kind === "refused") {
         failReviewerSpawn(ctx, row, problem.message);
         await blockForReviewers(ctx, ticket, `${REVIEWER_REFUSED}: ${problem.message}`);
       } else {
         await reviewerStartFailed(ctx, row, problem);
       }
-      // A thread bb may have started after all keeps its directory, which the sweep removes once nothing owns it.
-      if (scratch !== null && found === null) await removeTextReviewScratch(ctx, row);
+      if (scratch !== null) await removeTextReviewScratch(ctx, row);
       return false;
     }
     spawned = { threadId: found, environmentId: (await ctx.bb.getThread(found).catch(() => null))?.environmentId ?? null };
@@ -449,6 +454,49 @@ async function startReviewer(ctx: EngineCtx, projectId: number, seen: TicketRow,
   store.changed(project.id);
   if (staleReason(store, active) !== null || store.project(projectId)?.state === "archived") await endThread(ctx, active, "superseded", { commit: false, move: null });
   return true;
+}
+
+/**
+ * A reviewer whose spawn answer was lost and whose token bb could not look up may be running: its row stays in spawning,
+ * with its token, and so keeps its slot, its place in the round and its scratch directory, until settleLostSpawns or a
+ * restart's reconcile looks the token up again.
+ */
+export function unresolvedSpawn(ctx: EngineCtx, row: ThreadRow, why: string): void {
+  const retry = retriesOf(ctx.store).lookups.failed(row.id, ctx.now(), why);
+  if (retry.changed) ctx.bb.log("warn", `Loom cannot tell whether bb started reviewer row ${row.id} (${why}), so it keeps the row and asks bb again later.`);
+}
+
+/**
+ * The tick's step for reviewers whose spawn is unresolved: once their wait is over, the thread bb started is adopted, a
+ * lookup that finds none fails the start and removes the text review's directory, and one that fails again waits longer.
+ */
+async function settleLostSpawns(ctx: EngineCtx, projectId: number): Promise<void> {
+  const { store } = ctx;
+  const lookups = retriesOf(store).lookups;
+  for (const row of store.threads({ projectId, role: "reviewer", states: ["spawning"] })) {
+    if (lookups.state(row.id) === null || (row.thread_id === null && lookups.waitMs(row.id, ctx.now()) > 0)) continue;
+    const found = await startedAnyway(ctx, row);
+    if (found === undefined) {
+      unresolvedSpawn(ctx, row, "the spawn token lookup failed again");
+      continue;
+    }
+    lookups.reset(row.id);
+    if (found === null) {
+      await reviewerStartFailed(ctx, row, { kind: "failed", message: "bb did not start the reviewer, whose spawn answer was lost" });
+      await removeTextReviewScratch(ctx, row);
+      continue;
+    }
+    const environmentId = (await ctx.bb.getThread(found).catch(() => null))?.environmentId ?? null;
+    const active = store.tx(() => {
+      const current = store.thread(row.id);
+      if (current?.state !== "spawning") return null;
+      store.updateThread(row.id, { state: "active", environment_id: environmentId, thread_id: current.thread_id ?? found, clock_at: ctx.now() });
+      return store.thread(row.id)!;
+    });
+    if (active === null) continue;
+    store.changed(projectId);
+    if (staleReason(store, active) !== null || store.project(projectId)?.state === "archived") await endThread(ctx, active, "superseded", { commit: false, move: null });
+  }
 }
 
 /**

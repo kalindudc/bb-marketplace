@@ -372,6 +372,18 @@ async function closeRuns(ctx: EngineCtx, ticket: TicketRow, runs: readonly Final
         continue;
       }
     }
+    // A run that never bound a thread may still have one bb started: its directory goes only once bb says it has none.
+    if (run.thread === null && run.scratch !== null) {
+      const found = await spawnedThread(ctx, run.token);
+      if (found === undefined) {
+        ctx.store.event(ticket.project_id, ticket.id, FINAL_CLEANUP_FAILED, LOOM_ACTOR, { run: run.id });
+        continue;
+      }
+      if (found !== null) {
+        ctx.store.event(ticket.project_id, ticket.id, FINAL_BOUND, LOOM_ACTOR, { run: run.id, thread: found });
+        continue;
+      }
+    }
     const removed = await removeScratch(ctx, ticket, run);
     // Read again after the awaits: another pass may have closed it meanwhile.
     if (finalState(ctx.store, ticket.id, null).all.find((each) => each.id === run.id)?.closed !== false) continue;
@@ -381,6 +393,16 @@ async function closeRuns(ctx: EngineCtx, ticket: TicketRow, runs: readonly Final
     }
     ctx.store.event(ticket.project_id, ticket.id, FINAL_CLOSED, LOOM_ACTOR, { run: run.id, tokens });
     outstandingOf(ctx.store).delete(run.id);
+  }
+}
+
+/** The thread bb started with this spawn token: null when it started none, undefined when bb could not say. */
+async function spawnedThread(ctx: EngineCtx, token: string): Promise<string | null | undefined> {
+  try {
+    return await ctx.bb.findSpawnedThread(token);
+  } catch (error) {
+    ctx.bb.log("warn", `Could not ask bb whether it started a final reviewer: ${errText(error)}`);
+    return undefined;
   }
 }
 
@@ -541,7 +563,8 @@ async function followRun(ctx: EngineCtx, ticket: TicketRow, run: FinalRun): Prom
   const now = ctx.now();
   if (run.thread === null) {
     if (spawningOf(store).has(run.id)) return;
-    const found = await ctx.bb.findSpawnedThread(run.token).catch(() => null);
+    const found = await spawnedThread(ctx, run.token);
+    if (found === undefined) return;
     if (found !== null) {
       store.event(ticket.project_id, ticket.id, FINAL_BOUND, LOOM_ACTOR, { run: run.id, thread: found });
       return;
@@ -847,9 +870,10 @@ async function startRun(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket:
       return open?.id === run.id && open.thread === null;
     };
     if (unbound()) {
-      const found = await ctx.bb.findSpawnedThread(token).catch(() => null);
-      if (found !== null && unbound()) store.event(ticket.project_id, ticket.id, FINAL_BOUND, LOOM_ACTOR, { run: run.id, thread: found });
-      else if (unbound()) endRun(ctx, now, run, "start", `bb could not start the reviewer: ${errText(error)}`);
+      // A lookup that fails says nothing: the run stays open and unbound, and followRun asks again.
+      const found = await spawnedThread(ctx, token);
+      if (typeof found === "string" && unbound()) store.event(ticket.project_id, ticket.id, FINAL_BOUND, LOOM_ACTOR, { run: run.id, thread: found });
+      else if (found === null && unbound()) endRun(ctx, now, run, "start", `bb could not start the reviewer: ${errText(error)}`);
     }
   } finally {
     spawningOf(store).delete(run.id);

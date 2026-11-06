@@ -56,8 +56,10 @@ export interface StoreRetries {
   checks: Retries;
   /** A hand-back bb did not take, by ticket id and worker thread, so a new worker does not wait out the old one's failures. */
   sends: Retries;
+  /** A reviewer whose spawn answer was lost and whose spawn token bb could not look up, by thread row id: its row waits in spawning. */
+  lookups: Retries;
 }
 
 const byStore = new WeakMap<Store, StoreRetries>();
 
-export const retriesOf = (store: Store): StoreRetries => byStore.get(store) ?? byStore.set(store, { ending: new Retries(), checks: new Retries(), sends: new Retries() }).get(store)!;
+export const retriesOf = (store: Store): StoreRetries => byStore.get(store) ?? byStore.set(store, { ending: new Retries(), checks: new Retries(), sends: new Retries(), lookups: new Retries() }).get(store)!;

@@ -195,6 +195,66 @@ describe("upkeep tracks only outstanding runs", () => {
 export type { HostOutput };
 
 describe("a lost answer to the final reviewer's spawn", () => {
+  it("keeps the unbound run and its scratch directory when the token lookup fails too, and binds the thread once a later lookup finds it", async () => {
+    await openPr(FINAL());
+    approved();
+    const real = h.bb.spawnThread.bind(h.bb);
+    const lookup = h.bb.findSpawnedThread.bind(h.bb);
+    let accepted: string | undefined;
+    h.bb.spawnThread = async (args) => {
+      const result = await real(args);
+      if (args.metadata.role !== "final-review") return result;
+      accepted = result.threadId;
+      throw new Error("spawn reply lost");
+    };
+    h.bb.findSpawnedThread = async () => {
+      throw new Error("thread lookup temporarily unavailable");
+    };
+    await poll();
+    h.bb.spawnThread = real;
+    let run = finalState(h.store, ticket().id, ticket().pushed_sha).all.at(-1)!;
+    expect(run).toMatchObject({ thread: null, ended: null });
+    expect(h.host.scratch.has(run.scratch!)).toBe(true);
+    await poll(h.ctx, 4 * 60_000);
+    run = finalState(h.store, ticket().id, ticket().pushed_sha).all.at(-1)!;
+    expect(run).toMatchObject({ thread: null, ended: null });
+    expect(h.host.scratch.has(run.scratch!)).toBe(true);
+
+    h.bb.findSpawnedThread = lookup;
+    expect(await lookup(run.token)).toBe(accepted);
+    expect((await h.bb.getThread(accepted!))!.status).toBe("active");
+    await poll(h.ctx, 4 * 60_000);
+    run = finalState(h.store, ticket().id, ticket().pushed_sha).all.at(-1)!;
+    expect(run).toMatchObject({ thread: accepted, ended: null });
+    expect(h.host.scratch.has(run.scratch!)).toBe(true);
+    expect(spawns()).toHaveLength(1);
+  });
+
+  it("never removes an unbound run's directory while bb cannot say whether its thread exists, and removes it once bb finds none", async () => {
+    await openPr(FINAL());
+    approved();
+    const lookup = h.bb.findSpawnedThread.bind(h.bb);
+    const real = h.bb.spawnThread.bind(h.bb);
+    h.bb.spawnThread = async (args) => {
+      if (args.metadata.role === "final-review") throw new Error("bb went away");
+      return real(args);
+    };
+    h.bb.findSpawnedThread = async () => {
+      throw new Error("thread lookup temporarily unavailable");
+    };
+    await poll();
+    const run = finalState(h.store, ticket().id, ticket().pushed_sha).all.at(-1)!;
+    h.clock.advance(15 * 60_000);
+    await maintainFinalReviews(h.ctx);
+    expect(finalState(h.store, ticket().id, null).all.find((each) => each.id === run.id)!.ended).not.toBeNull();
+    expect(h.host.scratch.has(run.scratch!)).toBe(true);
+    h.bb.findSpawnedThread = lookup;
+    h.clock.advance(60 * 60_000);
+    await maintainFinalReviews(h.ctx);
+    expect(finalState(h.store, ticket().id, null).all.find((each) => each.id === run.id)!.closed).toBe(true);
+    expect(h.host.scratch.has(run.scratch!)).toBe(false);
+  });
+
   it("binds the reviewer bb started by its spawn token and keeps its scratch directory, instead of ending the run", async () => {
     await openPr(FINAL());
     approved();

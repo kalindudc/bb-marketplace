@@ -552,6 +552,85 @@ describe("the text review's scratch directory while bb is unsure", () => {
     expect(h.host.scratch.has(key)).toBe(false);
   });
 
+  it("keeps the row, its token and its directory when the token lookup fails too, and adopts the thread once a later lookup finds it", async () => {
+    await ready();
+    const realSpawn = h.bb.spawnThread.bind(h.bb);
+    const lookup = h.bb.findSpawnedThread.bind(h.bb);
+    let accepted: string | undefined;
+    h.bb.spawnThread = async (args) => {
+      const result = await realSpawn(args);
+      accepted = result.threadId;
+      throw new Error("spawn reply lost");
+    };
+    h.bb.findSpawnedThread = async () => {
+      throw new Error("thread lookup temporarily unavailable");
+    };
+    await spawnReviewers(h.ctx, project(), spec());
+    h.bb.spawnThread = realSpawn;
+    const row = reviewers().at(-1)!;
+    const key = scratchOf(row);
+    expect(row.state).toBe("spawning");
+    expect(h.host.scratch.has(key)).toBe(true);
+    await sweep();
+    expect(h.host.scratch.has(key)).toBe(true);
+    h.clock.advance(6 * 60_000);
+    await spawnReviewers(h.ctx, project(), spec());
+    expect(h.store.thread(row.id)!.state).toBe("spawning");
+
+    h.bb.findSpawnedThread = lookup;
+    expect(await lookup(row.spawn_token!)).toBe(accepted);
+    expect((await h.bb.getThread(accepted!))!.status).toBe("active");
+    await sweep();
+    expect(h.host.scratch.has(key)).toBe(true);
+    h.clock.advance(6 * 60_000);
+    await spawnReviewers(h.ctx, project(), spec());
+    expect(h.store.thread(row.id)).toMatchObject({ state: "active", thread_id: accepted, spawn_token: row.spawn_token });
+    expect(h.host.scratch.has(key)).toBe(true);
+    expect(spawns().filter((spawn) => spawn.title.includes("Text review"))).toHaveLength(1);
+  });
+
+  it("keeps an unresolved row through a restart whose lookup fails, and adopts its thread on a later pass", async () => {
+    const engine = makeEngine();
+    h = engine;
+    await ready();
+    const lookup = h.bb.findSpawnedThread.bind(h.bb);
+    await nextReviewer(false);
+    const row = reviewers().at(-1)!;
+    const accepted = row.thread_id!;
+    h.store.updateThread(row.id, { state: "spawning", thread_id: null });
+    h.bb.findSpawnedThread = async () => {
+      throw new Error("thread lookup temporarily unavailable");
+    };
+    await engine.engine.reconcile();
+    expect(h.store.thread(row.id)!.state).toBe("spawning");
+    expect(h.host.scratch.has(scratchOf(row))).toBe(true);
+    h.bb.findSpawnedThread = lookup;
+    h.clock.advance(6 * 60_000);
+    await spawnReviewers(h.ctx, project(), spec());
+    expect(h.store.thread(row.id)).toMatchObject({ state: "active", thread_id: accepted });
+  });
+
+  it("ends the row and removes the directory once a later lookup succeeds and finds no thread", async () => {
+    await ready();
+    const realSpawn = h.bb.spawnThread.bind(h.bb);
+    const lookup = h.bb.findSpawnedThread.bind(h.bb);
+    h.bb.spawnThread = async () => {
+      throw new Error("bb went away");
+    };
+    h.bb.findSpawnedThread = async () => {
+      throw new Error("thread lookup temporarily unavailable");
+    };
+    await spawnReviewers(h.ctx, project(), spec());
+    const row = reviewers().at(-1)!;
+    expect(h.store.thread(row.id)!.state).toBe("spawning");
+    h.bb.findSpawnedThread = lookup;
+    h.bb.spawnThread = realSpawn;
+    h.clock.advance(6 * 60_000);
+    await spawnReviewers(h.ctx, project(), spec());
+    expect(h.store.thread(row.id)!.state).toBe("ended");
+    expect(h.host.scratch.has(scratchOf(row))).toBe(false);
+  });
+
   it("adopts the reviewer bb started when the answer to its spawn is lost, and keeps its directory", async () => {
     await ready();
     const real = h.bb.spawnThread.bind(h.bb);

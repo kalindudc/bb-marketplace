@@ -716,8 +716,11 @@ its own pull request.
   or machine, even on a repo whose reviewers get a machine each. Loom removes
   the directory only once bb says the reviewer stopped (idle, failed or
   archived; "stopping" is not stopped), however long that takes, and asks again
-  later until it does; its sweep removes any that a restart or a failed removal
-  left. With no such directory outside bb's data
+  later until it does. When bb's answer to the spawn is lost, Loom looks the
+  thread up by its spawn token and adopts it; while that lookup fails too, the
+  reviewer keeps its place and its directory, and Loom asks again later. The
+  final review does the same. The sweep removes any directory that a restart
+  or a failed removal left once nothing owns it. With no such directory outside bb's data
   directory, or when bb refuses it, the ticket blocks; Loom never runs the
   text review in a checkout instead. It approves, or returns findings, which
   go back to the worker as another text-only round. Text-only rounds and code

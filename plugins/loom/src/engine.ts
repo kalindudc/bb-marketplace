@@ -15,7 +15,7 @@ import { checkWaitOf } from "./check-wait";
 import { followHooks } from "./hooks";
 import { NO_HOOK, sendRecords, type LoomSettings } from "./record";
 import { newPrReads, requestSync, SYNC_WAIT_MS, syncResult, within, type PrSyncResult } from "./pr-sync";
-import { backToReview, blockedAtReview, onReviewerGone, onReviewerIdle, onReviewerTurnFailed, reviewerStartFailed, spawnReviewers } from "./review";
+import { backToReview, blockedAtReview, onReviewerGone, onReviewerIdle, onReviewerTurnFailed, reviewerStartFailed, spawnReviewers, unresolvedSpawn } from "./review";
 import { approvalRefusal, endSpecReviews, onSpecReviewerGone, onSpecReviewerIdle, onSpecReviewerTurnFailed, reconcileSpecReviews, retrySpecReviews, specReviewStatus } from "./spec-review";
 import { NOT_PARKED, budgetReason, spawnable, toLite, waitsForSlot, type Parked, type TicketLite } from "./scheduler";
 import { deliverHandBacks, holdForWorker, parkedThreads } from "./slots";
@@ -278,7 +278,15 @@ export class Engine {
     let rolledBack = 0;
     for (const row of store.threads({ states: ["spawning"] })) {
       if (row.role === "planner") continue;
-      const threadId = row.thread_id ?? (row.spawn_token === null ? null : await bb.findSpawnedThread(row.spawn_token));
+      let threadId: string | null;
+      try {
+        threadId = row.thread_id ?? (row.spawn_token === null ? null : await bb.findSpawnedThread(row.spawn_token));
+      } catch (error) {
+        if (row.role !== "reviewer") throw error;
+        // A reviewer that may be running keeps its row, token and scratch directory until a lookup can say.
+        unresolvedSpawn(this.ctx, row, errText(error));
+        continue;
+      }
       if (threadId === null) {
         if (row.role === "reviewer") await reviewerStartFailed(this.ctx, row, { kind: "failed", message: "The plugin restarted before the reviewer started." });
         else await failSpawn(this.ctx, row, { kind: "failed", message: "The plugin restarted before the worker started." });
