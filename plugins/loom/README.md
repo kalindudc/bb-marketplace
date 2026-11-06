@@ -714,8 +714,10 @@ its own pull request.
   an empty scratch directory of its own under `~/.cache/bb-loom` (or
   `$XDG_CACHE_HOME`) on the project's machine, with no worktree, environment
   or machine, even on a repo whose reviewers get a machine each. Loom removes
-  the directory once the reviewer has stopped, and its sweep removes any that
-  a restart or a failed removal left. With no such directory outside bb's data
+  the directory only once bb says the reviewer stopped (idle, failed or
+  archived; "stopping" is not stopped), however long that takes, and asks again
+  later until it does; its sweep removes any that a restart or a failed removal
+  left. With no such directory outside bb's data
   directory, or when bb refuses it, the ticket blocks; Loom never runs the
   text review in a checkout instead. It approves, or returns findings, which
   go back to the worker as another text-only round. Text-only rounds and code

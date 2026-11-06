@@ -55,7 +55,8 @@ export function roundKind(store: Store, ticket: TicketRow): FindingKind {
  */
 export const textReviewScratch = (rowId: number) => `loom-text-review-${rowId}`;
 
-const isTextReviewer = (store: Store, row: ThreadRow) => row.role === "reviewer" && row.ticket_id !== null && isTextRound(store, row.ticket_id, row.review_round);
+/** A reviewer thread row of a text round, which owns a scratch directory until it has ended. */
+export const isTextReviewer = (store: Store, row: ThreadRow) => row.role === "reviewer" && row.ticket_id !== null && isTextRound(store, row.ticket_id, row.review_round);
 
 /** The scratch directories of the text reviewers that have not ended, which the scratch sweep keeps. */
 export function liveTextReviewScratches(store: Store): string[] {

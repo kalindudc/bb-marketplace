@@ -18,7 +18,7 @@ import { HUMAN_ACTOR, LOOM_ACTOR, PAUSE_NOW_REASON } from "./states";
 import { readSub, writeSub, type Resume, type Stack } from "./sub-state";
 import { bringHome, carryTo, homeBranch, isRemote } from "./transport";
 import { canTake, moveTicket, tryMoveTicket, type TicketMove } from "./moves";
-import { removeTextReviewScratch } from "./review-kind";
+import { isTextReviewer, removeTextReviewScratch } from "./review-kind";
 import { specOf, signatureOf, type EngineCtx } from "./ctx";
 
 export type EndReason = "abandoned" | "timeout" | "failed" | "gone" | "blocked" | "cancelled" | "verdict" | "superseded" | "merged" | "released" | "unreachable";
@@ -490,7 +490,8 @@ export async function endThread(ctx: EngineCtx, row: ThreadRow, reason: EndReaso
 export async function resumeEnding(ctx: EngineCtx, row: ThreadRow): Promise<void> {
   const current = ctx.store.thread(row.id);
   if (current === null || current.state !== "ending") return;
-  const force = ctx.now() - (current.ended_at ?? ctx.now()) > ENDING_LIMIT_MS;
+  // A text reviewer's scratch directory is its workspace, so its row ends only once bb says the thread stopped.
+  const force = ctx.now() - (current.ended_at ?? ctx.now()) > ENDING_LIMIT_MS && !isTextReviewer(ctx.store, current);
   // A bring-home that failed waits before the next try; the ten-minute limit still ends the thread on time.
   if (!force && retriesOf(ctx.store).ending.waitMs(current.id, ctx.now()) > 0) return;
   // A worker Loom ended because its machine or thread is gone has no work to bring home.
@@ -523,8 +524,10 @@ async function finishEnding(ctx: EngineCtx, row: ThreadRow, reason: EndReason, o
         }
       }
     }
-    if (!(await stopAndArchive(ctx, row, force))) return;
-    if (row.role === "reviewer") await removeTextReviewScratch(ctx, row);
+    if (isTextReviewer(store, row)) {
+      if (!(await stoppedForScratch(ctx, row))) return;
+      await removeTextReviewScratch(ctx, row);
+    } else if (!(await stopAndArchive(ctx, row, force))) return;
     retriesOf(store).ending.reset(row.id);
 
     store.tx(() => {
@@ -550,6 +553,28 @@ async function finishEnding(ctx: EngineCtx, row: ThreadRow, reason: EndReason, o
 }
 
 // True once the thread is confirmed stopped (or gone) and archived, or when the ten-minute limit forces it.
+/**
+ * Whether a text reviewer's thread has stopped, so its scratch directory may go: bb says it is idle, failed, archived or
+ * deleted, never "stopping", and never because the ending ran out of time. An archive that fails only logs. Until then the
+ * row stays ending, keeping the directory from the sweep, and the tick asks again after a wait.
+ */
+async function stoppedForScratch(ctx: EngineCtx, row: ThreadRow): Promise<boolean> {
+  const threadId = row.thread_id;
+  if (threadId === null) return true;
+  const tokens = await ctx.bb.threadTokens(threadId).catch(() => null);
+  if (tokens !== null) ctx.store.updateThread(row.id, { tokens, tokens_at: ctx.now() });
+  await ctx.bb.stop(threadId).catch((error) => ctx.bb.log("warn", `Could not stop ${threadId}: ${errText(error)}`));
+  const thread = await ctx.bb.getThread(threadId).catch(() => undefined);
+  const stopped = thread === null || (thread !== undefined && (thread.deletedAt !== null || thread.archivedAt !== null || (thread.status !== "active" && thread.status !== "stopping")));
+  if (!stopped) {
+    const retry = retriesOf(ctx.store).ending.failed(row.id, ctx.now(), "the text reviewer has not stopped");
+    if (retry.changed) ctx.bb.log("warn", `Text reviewer ${threadId} has not stopped, so Loom keeps its scratch directory and asks again later.`);
+    return false;
+  }
+  if (thread !== null && thread.archivedAt === null && thread.deletedAt === null) await ctx.bb.archive(threadId).catch((error) => ctx.bb.log("warn", `Could not archive ${threadId}: ${errText(error)}`));
+  return true;
+}
+
 async function stopAndArchive(ctx: EngineCtx, row: ThreadRow, force: boolean): Promise<boolean> {
   const threadId = row.thread_id;
   if (threadId === null) return true;

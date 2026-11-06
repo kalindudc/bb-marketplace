@@ -10,6 +10,7 @@ import { approve, requestChanges, settleReviews, spawnReviewers, type Finding } 
 import { projectMetrics } from "../src/reports";
 import { formatMetrics } from "../src/cli";
 import { PR_TEXT_CORE } from "../src/prompts";
+import { resumeEnding } from "../src/workers";
 import { specOf } from "../src/ctx";
 import { checkOutHead, makeCtx, makeEngine, seedMachineProject, seedProject, startWorker, ticketOf, type Doc, type EngineHarness } from "./helpers";
 
@@ -503,5 +504,51 @@ describe("the text review's scratch directory", () => {
     await maintainFinalReviews(h.ctx);
     expect(h.host.scratch.has(live)).toBe(true);
     expect(h.host.scratch.has("loom-text-review-999")).toBe(false);
+  });
+});
+
+describe("the text review's scratch directory while bb is unsure", () => {
+  const scratchOf = (row: ThreadRow) => `loom-text-review-${row.id}`;
+  async function ready(): Promise<void> {
+    await seedProject(h, pr());
+    const worker = await startWorker(h);
+    await handIn(worker, "Done.", { pr: PROPOSED });
+    await requestChanges(h.ctx, (await nextReviewer()).thread_id!, "Text.", [textFinding]);
+    await settle();
+    await handIn(worker, "Fixed text.", { change: false, pr: { body: "Approved description." } });
+  }
+  const sweep = async () => {
+    await maintainFinalReviews(h.ctx);
+    h.clock.advance(31 * 60_000);
+    await maintainFinalReviews(h.ctx);
+  };
+
+  it("keeps the directory, and the row that owns it, past the ending limit while the reviewer is still stopping and archiving fails; removes it once bb says it stopped", async () => {
+    await ready();
+    const reviewer = await nextReviewer(false);
+    const key = scratchOf(reviewer);
+    h.bb.stopConfirms = false;
+    const archive = h.bb.archive.bind(h.bb);
+    h.bb.archive = async () => {
+      throw new Error("archive unavailable");
+    };
+    await approve(h.ctx, reviewer.thread_id!, "Good.");
+    await settle();
+    expect(h.store.thread(reviewer.id)!.state).toBe("ending");
+    await sweep();
+    expect(h.host.scratch.has(key)).toBe(true);
+    await resumeEnding(h.ctx, h.store.thread(reviewer.id)!);
+    expect((await h.bb.getThread(reviewer.thread_id!))!.status).toBe("stopping");
+    expect(h.host.scratch.has(key)).toBe(true);
+    expect(h.store.thread(reviewer.id)!.state).toBe("ending");
+    await sweep();
+    expect(h.host.scratch.has(key)).toBe(true);
+
+    h.bb.stopConfirms = true;
+    h.bb.archive = archive;
+    h.clock.advance(6 * 60_000);
+    await resumeEnding(h.ctx, h.store.thread(reviewer.id)!);
+    expect(h.store.thread(reviewer.id)!.state).toBe("ended");
+    expect(h.host.scratch.has(key)).toBe(false);
   });
 });
