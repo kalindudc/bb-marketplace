@@ -49,6 +49,13 @@ export function pickReviewers(url: string, pool: ReadonlyArray<{ login: string; 
 
 const ruleText = (rule: ReviewerRuleSpec) => (rule.count === undefined ? andList(rule.users) : `${rule.count} of ${andList(rule.users)}`);
 
+/** A rule a version stored before team rules were retired may hold: a team and a count, and no users. */
+type StoredRule = ReviewerRuleSpec | { team: string; count?: number; users?: undefined };
+
+/** Why Loom asks no one from a stored team rule, and what the spec writes instead. */
+export const teamRuleGone = (rule: { team: string; count?: number }) =>
+  `${rule.team}, a team: Loom no longer reads team rules, so it asked no one from it. List the logins of the people to ask in this rule's users instead${rule.count === undefined ? "" : `, with count = ${rule.count}`}.`;
+
 /** A failed call: `thrown` when the call got no answer from the project's machine, rather than the forge's own failure. */
 type Failure = { message: string; transient: boolean; thrown: boolean };
 const isFailure = (value: unknown): value is Failure => typeof value === "object" && value !== null && "transient" in value && !("outcome" in value);
@@ -139,7 +146,11 @@ export async function requestReviewers(ctx: EngineCtx, project: ProjectRow, tick
   const exclude = new Set(author === null ? [] : [author.toLowerCase()]);
   const picks: Array<{ rule: ReviewerRuleSpec; kept: string[]; picked: string[]; short: number; problem: string | null }> = [];
   const taken = new Set<string>();
-  for (const rule of rules) {
+  for (const rule of rules as readonly StoredRule[]) {
+    if (rule.users === undefined) {
+      picks.push({ rule: { users: [] }, kept: [], picked: [], short: 0, problem: teamRuleGone(rule) });
+      continue;
+    }
     const pool = rule.users.map((login) => ({ login, bot: false }));
     const pick = pickReviewers(url, pool, rule.count ?? pool.length, { exclude, already, taken });
     for (const login of pick.picked) taken.add(login.toLowerCase());
@@ -151,7 +162,7 @@ export async function requestReviewers(ctx: EngineCtx, project: ProjectRow, tick
   const problems = picks.flatMap((pick) => (pick.problem === null ? [] : [{ login: null, message: pick.problem }]));
   const lines = (requested: ReadonlySet<string>) =>
     picks.map(({ rule, kept, picked, short, problem }) => {
-      if (problem !== null) return `- ${ruleText(rule)}: ${problem}`;
+      if (problem !== null) return `- ${problem}`;
       const asked = picked.filter((login) => requested.has(login));
       const parts = [
         ...(asked.length > 0 ? [`asked ${andList(asked)}`] : []),

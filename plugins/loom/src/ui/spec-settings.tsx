@@ -421,6 +421,17 @@ function ReviewerParts({ path, label, rules }: { path: string; label: string; ru
       <ul className="space-y-0.5">
         {listed.map((rule, index) => {
           const one = `${at}[${index}]`;
+          // A version stored before team rules were retired may hold a team and no users.
+          const team = (rule as { team?: string }).team;
+          if (rule.users === undefined && team !== undefined) {
+            return (
+              <li key={index} data-reviewer-rule={index} className="text-xs">
+                <Commentable as="span" target={value(one, `${label} › reviewers ${index + 1}`, "text")} className="text-muted-foreground">
+                  {team}, a team: Loom no longer reads team rules; list the people to ask in users
+                </Commentable>
+              </li>
+            );
+          }
           return (
             <li key={index} data-reviewer-rule={index} className="flex min-w-0 flex-wrap items-baseline gap-1.5 text-xs">
               <Commentable as="span" target={value(`${one}.count`, `${label} › reviewers ${index + 1} › count`, "number", rule.count, { min: 1, max: 10 })} className="font-semibold tabular-nums">

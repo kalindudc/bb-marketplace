@@ -11,7 +11,7 @@ import { makeCtx, reachApproved, seedProject, ticketOf, type Doc, type EngineHar
 
 type Item = Extract<HostOutput<"prFeedback">, { outcome: "ok" }>["items"][number];
 
-let h: EngineHarness;
+let h: ReturnType<typeof makeCtx>;
 beforeEach(() => {
   h = makeCtx();
 });
@@ -358,6 +358,44 @@ describe("asking for reviews", () => {
     expect(post.post.body).toContain("2 of alice, bob, carol and kalindudc: asked");
     expect(post.post.body).toContain("bob was already asked or reviewing");
     expect(h.store.ticketEvents(ticket().id, [REVIEWERS_REQUESTED])).toHaveLength(1);
+  });
+
+  describe("a stored reviewers rule that names only a team, which Loom no longer reads", () => {
+    const storedRules = (rules: unknown[]) => {
+      const row = h.store.specVersion(project().id, project().approved_version!)!;
+      const json = JSON.parse(row.spec_json) as Doc;
+      json.merge.forge.reviewers = rules;
+      h.db.prepare("UPDATE spec_versions SET spec_json = ? WHERE project_id = ? AND version = ?").run(JSON.stringify(json), project().id, row.version);
+    };
+    const TEAM_GONE = "- acme/platform, a team: Loom no longer reads team rules, so it asked no one from it. List the logins of the people to ask in this rule's users instead, with count = 2.";
+
+    it("asks the other rules' people, and says in the one post that the team rule needs users", async () => {
+      await openPr({ draft: true, forge: { kind: "gh", reviewers: [{ users: ["zoe"] }] } }, (doc) => void (doc.ticket[0].keep_draft = true));
+      storedRules([{ team: "acme/platform", count: 2 }, { users: ["zoe"] }]);
+      h.host.reviewState.set(URL, { author: "kalindudc", requested: [], reviewed: [] });
+      h.host.prMeta.set(URL, { ...h.host.prMeta.get(URL), draft: false });
+      await poll();
+      await poll();
+      expect(h.host.callsTo("prRequestReview").map((call) => call.reviewers)).toEqual([["zoe"]]);
+      const requested = dataOf("reviewers_requested");
+      expect(requested).toHaveLength(1);
+      expect(requested[0]!.post.body).toContain(TEAM_GONE);
+      expect(requested[0]!.data.failed).toEqual([{ login: null, message: TEAM_GONE.slice(2) }]);
+    });
+
+    it("asks no one when it is the only rule, and posts that once", async () => {
+      await openPr({ draft: true, forge: { kind: "gh", reviewers: [{ users: ["zoe"] }] } }, (doc) => void (doc.ticket[0].keep_draft = true));
+      storedRules([{ team: "acme/platform", count: 2 }]);
+      h.host.reviewState.set(URL, { author: "kalindudc", requested: [], reviewed: [] });
+      h.host.prMeta.set(URL, { ...h.host.prMeta.get(URL), draft: false });
+      await poll();
+      await poll();
+      await poll();
+      expect(h.host.callsTo("prRequestReview")).toEqual([]);
+      const requested = dataOf("reviewers_requested");
+      expect(requested).toHaveLength(1);
+      expect(requested[0]!.post.body).toContain(TEAM_GONE);
+    });
   });
 
   it("asks through a command forge's request_reviews", async () => {

@@ -363,6 +363,16 @@ describe("spec settings", () => {
     expect(missedJumps(slot, paths)).toEqual([]);
   });
 
+  it("draws a stored reviewers rule that names only a team as one Loom no longer reads, instead of failing", async () => {
+    const spec = valid(specToml((doc) => void (doc.merge = { strategy: "pr", forge: { kind: "gh", reviewers: [{ users: ["zoe"] }] } })));
+    const stored = { ...spec, merge: { ...spec.merge, forge: { kind: "gh", reviewers: [{ team: "acme/platform", count: 2 }, { users: ["zoe"] }] } } } as unknown as Spec;
+    const slot = await openSpec(versionOf(stored, stored));
+    entire(slot);
+    const text = section(slot, "settings").textContent ?? "";
+    expect(text).toContain("acme/platform, a team: Loom no longer reads team rules; list the people to ask in users");
+    expect(text).toContain("zoe");
+  });
+
   it("draws a stored hook that has only run, which Loom no longer reads, as one with nothing to tell", async () => {
     const spec = { ...full(), hook: [{ on: "project.started", run: "board-cli create" }] } as unknown as Spec;
     const slot = await openSpec(versionOf(spec, spec));
