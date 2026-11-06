@@ -21,9 +21,9 @@ export function createLimiter(limit: number): <T>(task: () => Promise<T>) => Pro
       start();
     }
   };
-  return (task) => new Promise((resolve, reject) => {
+  return <T>(task: () => Promise<T>) => new Promise<T>((resolve, reject) => {
     waiting.push(() => {
-      task().then(resolve, reject).finally(() => {
+      new Promise<T>((started) => started(task())).then(resolve, reject).finally(() => {
         active--;
         next();
       });

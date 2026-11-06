@@ -126,6 +126,9 @@ describe("thread events", () => {
     ["events-appended without event types", ["events-appended"], undefined],
     ["events-appended with item/completed", ["events-appended"], { eventTypes: ["item/agentMessage/delta", "item/completed"] }],
     ["events-appended with turn/completed", ["events-appended"], { eventTypes: ["turn/completed"] }],
+    ["events-appended with turn/diff/updated", ["events-appended"], { eventTypes: ["turn/diff/updated"] }],
+    ["events-appended with item/backgroundTask/completed", ["events-appended"], { eventTypes: ["item/backgroundTask/completed"] }],
+    ["events-appended with item/delegation/completed", ["events-appended"], { eventTypes: ["item/delegation/completed"] }],
     ["archived-changed", ["archived-changed"], undefined],
     ["environment-changed", ["environment-changed"], undefined],
     ["parent-changed", ["parent-changed"], undefined],
@@ -473,6 +476,134 @@ describe("every thread", () => {
     setVisibility("visible");
     await vi.advanceTimersByTimeAsync(5000);
     expect(rpc.call).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("a hidden page", () => {
+  let visibility: "visible" | "hidden" = "visible";
+  const setVisibility = (next: "visible" | "hidden") => {
+    visibility = next;
+    document.dispatchEvent(new Event("visibilitychange"));
+  };
+  beforeEach(() => {
+    visibility = "visible";
+    Object.defineProperty(document, "visibilityState", { configurable: true, get: () => visibility });
+  });
+  afterEach(() => {
+    delete (document as unknown as { visibilityState?: string }).visibilityState;
+  });
+
+  it("does not refresh for events while hidden, and refreshes once when shown again", async () => {
+    const { rpc, thread, emit } = await loaded();
+    await vi.advanceTimersByTimeAsync(5000);
+    setVisibility("hidden");
+    thread("thr_child", ["events-appended"], { eventTypes: ["item/completed"] });
+    emit("environment:changed", { entity: "environment", type: "changed", id: "env_2", changes: ["git-refs-changed"] });
+    thread("thr_child", ["parent-changed"]);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(rpc.call).toHaveBeenCalledTimes(1);
+    setVisibility("visible");
+    expect(rpc.call).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(rpc.call).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not refresh on becoming visible when nothing happened while hidden", async () => {
+    const { rpc } = await loaded();
+    await vi.advanceTimersByTimeAsync(5000);
+    setVisibility("hidden");
+    setVisibility("visible");
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(rpc.call).toHaveBeenCalledTimes(1);
+  });
+
+  it("holds a refresh that was waiting for its delay when the page is hidden in the meantime", async () => {
+    const { rpc, thread } = await loaded();
+    thread("thr_child", ["parent-changed"]);
+    setVisibility("hidden");
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(rpc.call).toHaveBeenCalledTimes(1);
+    setVisibility("visible");
+    expect(rpc.call).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps a hard refresh asked for while hidden hard", async () => {
+    const { calls, thread } = await loaded();
+    await vi.advanceTimersByTimeAsync(5000);
+    setVisibility("hidden");
+    thread("thr_child", ["history-rewritten"]);
+    thread("thr_child", ["parent-changed"]);
+    setVisibility("visible");
+    expect(calls[1]?.input).toMatchObject({ refresh: true });
+  });
+
+  it("still answers a click or a scope change while hidden", async () => {
+    const { rpc, store } = await loaded();
+    setVisibility("hidden");
+    store.refresh();
+    expect(rpc.call).toHaveBeenCalledTimes(2);
+  });
+
+  it("loads at once when it starts hidden", () => {
+    visibility = "hidden";
+    const { rpc } = setup();
+    expect(rpc.call).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops listening for the page to show again on dispose", async () => {
+    const { rpc, store, thread } = await loaded();
+    await vi.advanceTimersByTimeAsync(5000);
+    setVisibility("hidden");
+    thread("thr_child", ["parent-changed"]);
+    store.dispose();
+    setVisibility("visible");
+    expect(rpc.call).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("backing off", () => {
+  it("waits at least 1.5 times as long as the last overview took when that is longer than the usual delay", async () => {
+    const { rpc, calls, thread } = setup();
+    await vi.advanceTimersByTimeAsync(4000);
+    calls[0]!.resolve(tree);
+    await vi.advanceTimersByTimeAsync(0);
+    thread("thr_child", ["parent-changed"]);
+    await vi.advanceTimersByTimeAsync(5999);
+    expect(rpc.call).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(rpc.call).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the usual delay after a fast overview", async () => {
+    const { rpc, thread } = await loaded();
+    thread("thr_child", ["parent-changed"]);
+    await vi.advanceTimersByTimeAsync(1499);
+    expect(rpc.call).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(rpc.call).toHaveBeenCalledTimes(2);
+  });
+
+  it("follows the latest overview, so a fast one brings the delay back", async () => {
+    const { rpc, calls, thread } = setup();
+    await vi.advanceTimersByTimeAsync(4000);
+    calls[0]!.resolve(tree);
+    await vi.advanceTimersByTimeAsync(0);
+    thread("thr_child", ["parent-changed"]);
+    await vi.advanceTimersByTimeAsync(6000);
+    calls[1]!.resolve(tree);
+    await vi.advanceTimersByTimeAsync(0);
+    thread("thr_child", ["parent-changed"]);
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(rpc.call).toHaveBeenCalledTimes(3);
+  });
+
+  it("does not delay a click behind a slow overview", async () => {
+    const { rpc, calls, store } = setup();
+    await vi.advanceTimersByTimeAsync(4000);
+    calls[0]!.resolve(tree);
+    await vi.advanceTimersByTimeAsync(0);
+    store.refresh();
+    expect(rpc.call).toHaveBeenCalledTimes(2);
   });
 });
 

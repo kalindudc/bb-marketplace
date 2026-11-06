@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, type ExecFileOptionsWithStringEncoding } from "node:child_process";
 import { constants } from "node:fs";
 import { lstat, open, readFile, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -11,9 +11,11 @@ import {
   parseLog, parseNameStatusZ, parseNumstatZ, parseReflog, parseStatusZ, splitToplevel, statusFromCode, truncatePatch, type GitEntry,
   type NumstatEntry, type UntrackedFolder,
 } from "./src/git";
+import { limitGit } from "./src/git-exec";
 import { mapLimit } from "./src/limit";
 
 const execFileAsync = promisify(execFile);
+const execGit = limitGit((args: string[], options: ExecFileOptionsWithStringEncoding) => execFileAsync("git", args, options));
 const GIT_TIMEOUT_MS = 20_000;
 const GIT_MAX_BUFFER = 32 * 1024 * 1024;
 const UNTRACKED_COUNT_LIMIT = 2 * 1024 * 1024;
@@ -35,7 +37,7 @@ interface GitResult { code: number; stdout: string; stderr: string }
 
 async function runGit(root: string, args: readonly string[], signal?: AbortSignal): Promise<GitResult> {
   try {
-    const { stdout, stderr } = await execFileAsync("git", ["-C", root, ...args], {
+    const { stdout, stderr } = await execGit(["-C", root, ...args], {
       env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0", LC_ALL: "C" },
       maxBuffer: GIT_MAX_BUFFER,
       timeout: GIT_TIMEOUT_MS,

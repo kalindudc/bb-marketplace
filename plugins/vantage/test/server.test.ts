@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { PLUGIN_CLI_OUTPUT_MAX_BYTES } from "@get-bb/plugin-sdk";
 import { createFakePluginHost, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { createCli, formatOverview, formatWorktree, formatWorktrees } from "../src/cli";
@@ -30,7 +30,8 @@ const DONE: TreeThread = { id: "thr_3", title: "Finished child", parentThreadId:
 
 function start(options: {
   files?: string[]; events?: object[]; hostResult?: (call: HostCall) => unknown; tree?: TreeThread[]; status?: (environmentId: string) => unknown;
-  onList?: () => void; archived?: TreeThread[];
+  onList?: () => void; archived?: TreeThread[]; onDescendants?: () => void | Promise<void>;
+  eventsList?: (args: { threadId: string; afterSeq?: string; order?: string; limit?: string; types?: readonly string[] }) => object[];
 } = {}) {
   const subscriptions: Array<{ event: string; callback: (event: unknown) => void }> = [];
   const unsubscribed: string[] = [];
@@ -70,13 +71,14 @@ function start(options: {
             : tree.map((thread) => makeThreadResponse({ ...thread, status: (thread.status ?? "idle") as "idle", updatedAt: now }));
           return listed.slice(offset ?? 0, (offset ?? 0) + (limit ?? 100));
         },
-        experimental_listDescendants: async () => ({
-          threads: [{ threadId: "thr_1", descendantIds: [...tree.slice(1), ...(options.archived ?? [])].map((thread) => thread.id) }],
-        }),
+        experimental_listDescendants: async () => {
+          await options.onDescendants?.();
+          return { threads: [{ threadId: "thr_1", descendantIds: [...tree.slice(1), ...(options.archived ?? [])].map((thread) => thread.id) }] };
+        },
         experimental_listAncestors: async ({ threadIds }: { threadIds: readonly string[] }) => ({
           threads: threadIds.map((threadId) => ({ threadId, ancestorIds: ancestorsOf(threadId) })),
         }),
-        events: { list: async () => options.events ?? [] },
+        events: { list: async (args: Parameters<NonNullable<typeof options.eventsList>>[0]) => options.eventsList?.(args) ?? options.events ?? [] },
       },
       environments: {
         get: async ({ environmentId }: { environmentId: string }) => envs[environmentId] ?? env,
@@ -207,12 +209,136 @@ describe("server", () => {
   });
 });
 
+describe("server: a thread's tree", () => {
+  const TREE = { target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted", includeArchived: true };
+
+  it("builds one overview for two requests that arrive together, and a new one once it is done", async () => {
+    let builds = 0;
+    const { harness, ready } = start({ tree: [PARENT, CHILD], onDescendants: () => { builds++; } });
+    await ready;
+    const [first, second] = await Promise.all([harness.behavior.callRpc("overview", TREE), harness.behavior.callRpc("overview", TREE)]);
+    expect(builds).toBe(1);
+    expect(second).toEqual(first);
+    await harness.behavior.callRpc("overview", TREE);
+    expect(builds).toBe(2);
+  });
+
+  it("does not share a build between different threads, scopes, archived choices or hard refreshes", async () => {
+    let builds = 0;
+    const { harness, ready } = start({ tree: [PARENT, CHILD], onDescendants: () => { builds++; } });
+    await ready;
+    await Promise.all([
+      harness.behavior.callRpc("overview", TREE),
+      harness.behavior.callRpc("overview", { ...TREE, target: { kind: "tree", threadId: "thr_2" } }),
+      harness.behavior.callRpc("overview", { ...TREE, scope: "branch" }),
+      harness.behavior.callRpc("overview", { ...TREE, includeArchived: false }),
+      harness.behavior.callRpc("overview", { ...TREE, refresh: true }),
+    ]);
+    expect(builds).toBe(5);
+  });
+
+  describe("with a build in flight", () => {
+    const deferred = () => {
+      let resolve!: () => void;
+      const promise = new Promise<void>((done) => { resolve = done; });
+      return { promise, resolve };
+    };
+    function slowBuilds() {
+      const gates: Array<ReturnType<typeof deferred>> = [];
+      const options = { tree: [PARENT, CHILD], onDescendants: () => { const gate = deferred(); gates.push(gate); return gate.promise; } };
+      return { gates, options };
+    }
+    const unknownChange = { id: "thr_2", changes: ["events-appended"] };
+    // Awaiting the settings and host reads before the build starts takes a few turns.
+    const flush = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    it("starts a new build for a request that comes after an invalidation, not joins the one that began before it", async () => {
+      const { gates, options } = slowBuilds();
+      const { harness, ready, emit } = start(options);
+      await ready;
+      const first = harness.behavior.callRpc("overview", TREE);
+      await flush();
+      expect(gates).toHaveLength(1);
+      emit("thread:changed", unknownChange);
+      const second = harness.behavior.callRpc("overview", TREE);
+      await flush();
+      expect(gates).toHaveLength(2);
+      for (const gate of gates) gate.resolve();
+      await Promise.all([first, second]);
+    });
+
+    it("starts a new build after an environment's files changed", async () => {
+      const { gates, options } = slowBuilds();
+      const { harness, ready, emit } = start(options);
+      await ready;
+      const first = harness.behavior.callRpc("overview", TREE);
+      await flush();
+      emit("environment:changed", { id: "env_2", changes: ["git-refs-changed"] });
+      const second = harness.behavior.callRpc("overview", TREE);
+      await flush();
+      expect(gates).toHaveLength(2);
+      for (const gate of gates) gate.resolve();
+      await Promise.all([first, second]);
+    });
+
+    it("starts a new build after a hard refresh read fresh data, not joins a normal one that is still waiting on old data", async () => {
+      let statusCalls = 0;
+      const stale = deferred();
+      const { harness, ready } = start({
+        tree: [PARENT],
+        status: () => {
+          statusCalls++;
+          return statusCalls === 1 ? stale.promise.then(() => statusOf(["stale.ts"])) : statusOf(["fresh.ts"]);
+        },
+      });
+      await ready;
+      const filesOf = (value: unknown) => overviewSchema.parse(value).repos[0]?.files.map((file) => file.path);
+      const normal = harness.behavior.callRpc("overview", TREE);
+      await flush();
+      expect(statusCalls).toBe(1);
+      expect(filesOf(await harness.behavior.callRpc("overview", { ...TREE, refresh: true }))).toEqual(["fresh.ts"]);
+      const after = await harness.behavior.callRpc("overview", TREE);
+      expect(filesOf(after)).toEqual(["fresh.ts"]);
+      stale.resolve();
+      await normal;
+    });
+
+    it("lets an obsolete build finish without removing the build that replaced it", async () => {
+      const { gates, options } = slowBuilds();
+      const { harness, ready, emit } = start(options);
+      await ready;
+      const obsolete = harness.behavior.callRpc("overview", TREE);
+      await flush();
+      emit("thread:changed", unknownChange);
+      const replacement = harness.behavior.callRpc("overview", TREE);
+      await flush();
+      gates[0]!.resolve();
+      await obsolete;
+      const joined = harness.behavior.callRpc("overview", TREE);
+      await flush();
+      expect(gates).toHaveLength(2);
+      gates[1]!.resolve();
+      await Promise.all([replacement, joined]);
+    });
+  });
+
+  it("does not hand a failed build to the next request", async () => {
+    let fail = true;
+    const { harness, ready } = start({ tree: [PARENT, CHILD], onDescendants: () => { if (fail) { fail = false; throw new Error("down"); } } });
+    await ready;
+    await expect(harness.behavior.callRpc("overview", TREE)).rejects.toThrow();
+    expect(overviewSchema.parse(await harness.behavior.callRpc("overview", TREE)).threads).toHaveLength(2);
+  });
+});
+
 describe("server: every thread", () => {
   const ALL = { target: { kind: "all" }, scope: "uncommitted", includeArchived: false };
   const TWO = { tree: [PARENT, CHILD], status: (id: string) => (id === "env_1" ? statusOf(["README.md"]) : statusOf(["b.ts"], ["README.md"], "child-work")) };
   type Calls = { experimental_hostRpcCalls: ReadonlyArray<{ method: string }> };
   const diffs = (harness: Calls) => harness.experimental_hostRpcCalls.filter((call) => call.method === "repoFiles").length;
   const statuses = (harness: Calls) => harness.experimental_hostRpcCalls.filter((call) => call.method === "checkoutStatus").length;
+  // The edit index also lists events, for both started and completed items; the file-event gate asks for completed ones only.
+  const isGateRead = (args: { types?: readonly string[] }) => args.types?.length === 1;
   const threadEvent = (id: string, eventTypes?: string[]) => ({
     id, changes: ["events-appended"], ...(eventTypes === undefined ? {} : { metadata: { eventTypes } }),
   });
@@ -287,6 +413,122 @@ describe("server: every thread", () => {
     emit("thread:changed", threadEvent("thr_unrelated", ["item/completed"]));
     await harness.behavior.callRpc("overview", ALL);
     expect(statuses(harness)).toBe(2);
+  });
+
+  describe("a thread event that cannot have changed files", () => {
+    const rows: object[] = [];
+    const list = (args: { afterSeq?: string; order?: string; limit?: string }) => {
+      const after = Number(args.afterSeq ?? 0);
+      const found = rows.filter((entry) => (entry as { seq: number }).seq > after);
+      return (args.order === "desc" ? found.reverse() : found).slice(0, Number(args.limit ?? 100));
+    };
+    const withRows = () => start({ ...TWO, eventsList: list });
+    const agentMessage = (seq: number) => row(seq, { type: "agentMessage", id: `m${seq}`, text: "Done" });
+    const edit = (seq: number) => fileChangeRow(seq, []);
+    const command = (seq: number) => row(seq, { type: "commandExecution", id: `c${seq}`, command: "touch a", cwd: "/work/two" });
+    beforeEach(() => { rows.length = 0; });
+
+    // The first completed item of a thread has nothing to compare with, so it counts as a change.
+    async function warmed() {
+      const { harness, ready, emit } = withRows();
+      await ready;
+      rows.push(agentMessage(1));
+      await harness.behavior.callRpc("overview", ALL);
+      emit("thread:changed", threadEvent("thr_2", ["item/completed"]));
+      await harness.behavior.callRpc("overview", ALL);
+      expect(statuses(harness)).toBe(3);
+      return { harness, emit };
+    }
+
+    it("keeps the cache when a thread only completed an agent message", async () => {
+      const { harness, emit } = await warmed();
+      rows.push(agentMessage(2), row(3, { type: "reasoning", id: "r3", text: "Thinking" }));
+      emit("thread:changed", threadEvent("thr_2", ["item/started", "item/completed", "thread/tokenUsage/updated"]));
+      await harness.behavior.callRpc("overview", ALL);
+      expect(statuses(harness)).toBe(3);
+    });
+
+    it.each([["a file change", edit], ["a command", command]])("drops the thread's cache when it completed %s", async (_name, make) => {
+      const { harness, emit } = await warmed();
+      rows.push(agentMessage(2), make(3));
+      emit("thread:changed", threadEvent("thr_2", ["item/completed"]));
+      await harness.behavior.callRpc("overview", ALL);
+      expect(statuses(harness)).toBe(4);
+    });
+
+    it("looks only at items completed since the last event", async () => {
+      const { harness, emit } = await warmed();
+      rows.push(edit(2));
+      emit("thread:changed", threadEvent("thr_2", ["item/completed"]));
+      await harness.behavior.callRpc("overview", ALL);
+      expect(statuses(harness)).toBe(4);
+      rows.push(agentMessage(3));
+      emit("thread:changed", threadEvent("thr_2", ["item/completed"]));
+      await harness.behavior.callRpc("overview", ALL);
+      expect(statuses(harness)).toBe(4);
+    });
+
+    it.each([["turn/completed"], ["turn/diff/updated"], ["item/backgroundTask/completed"], ["a type bb has not shipped yet"]])(
+      "drops the cache for %s without reading any item", async (type) => {
+        const { harness, emit } = await warmed();
+        emit("thread:changed", threadEvent("thr_2", [type]));
+        await harness.behavior.callRpc("overview", ALL);
+        expect(statuses(harness)).toBe(4);
+      },
+    );
+
+    it("drops the cache after history was rewritten or compacted, whatever the event types say", async () => {
+      const { harness, emit } = await warmed();
+      emit("thread:changed", { id: "thr_2", changes: ["history-compacted"], metadata: { eventTypes: ["thread/tokenUsage/updated"] } });
+      await harness.behavior.callRpc("overview", ALL);
+      expect(statuses(harness)).toBe(4);
+      emit("thread:changed", { id: "thr_2", changes: ["history-rewritten"] });
+      await harness.behavior.callRpc("overview", ALL);
+      expect(statuses(harness)).toBe(5);
+    });
+
+    it("drops the cache when the items cannot be read", async () => {
+      const { harness, ready, emit } = start({ ...TWO, eventsList: () => { throw new Error("no events"); } });
+      await ready;
+      await harness.behavior.callRpc("overview", ALL);
+      emit("thread:changed", threadEvent("thr_2", ["item/completed"]));
+      emit("thread:changed", threadEvent("thr_2", ["item/completed"]));
+      await harness.behavior.callRpc("overview", ALL);
+      expect(statuses(harness)).toBe(3);
+      emit("thread:changed", threadEvent("thr_2", ["item/completed"]));
+      await harness.behavior.callRpc("overview", ALL);
+      expect(statuses(harness)).toBe(4);
+    });
+  });
+
+  it("reads no events for a thread nothing is cached for", async () => {
+    const reads: string[] = [];
+    const { harness, ready, emit } = start({ ...TWO, eventsList: (args) => { if (isGateRead(args)) reads.push(args.threadId); return []; } });
+    await ready;
+    for (const id of ["thr_1", "thr_2", "thr_unrelated"]) emit("thread:changed", threadEvent(id, ["item/completed"]));
+    await harness.behavior.callRpc("overview", ALL);
+    expect(reads).toEqual([]);
+    expect(statuses(harness)).toBe(2);
+  });
+
+  it("holds an overview back only for the thread whose event is still being read", async () => {
+    let release!: (rows: object[]) => void;
+    let hold = false;
+    const { harness, ready, emit } = start({
+      ...TWO,
+      eventsList: (args) => (hold && isGateRead(args) ? new Promise<object[]>((resolve) => { release = resolve; }) as never : []),
+    });
+    await ready;
+    await harness.behavior.callRpc("overview", ALL);
+    hold = true;
+    emit("thread:changed", threadEvent("thr_2", ["item/completed"]));
+    let answered = false;
+    const overview = harness.behavior.callRpc("overview", ALL).then((value) => { answered = true; return value; });
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(answered).toBe(false);
+    release([]);
+    await overview;
+    expect(statuses(harness)).toBe(3);
   });
 
   it("treats a thread event with no event types as a change", async () => {

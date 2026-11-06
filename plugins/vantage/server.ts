@@ -4,7 +4,8 @@ import { createCli, type OverviewRequest } from "./src/cli";
 import { buildOverview, buildShell, type CollectDeps, type HostCall } from "./src/collect";
 import { hostContract, reviewedTag, rpcContract, type HostInput, type HostMethod, type HostOutput, type Overview, type ShellInput } from "./src/contract";
 import { createEditIndex, findRecordedEdits, type EventsSdk } from "./src/edits";
-import { createRepoCache, isDeltaOnly } from "./src/repo-cache";
+import { createFileEventGate } from "./src/file-events";
+import { createRepoCache } from "./src/repo-cache";
 import { createReviewStore } from "./src/review-store";
 import { createRootCache } from "./src/root-cache";
 import { loadCommitFiles, loadFileSides, loadPatch, type Counting } from "./src/sources";
@@ -23,7 +24,11 @@ export default function vantage(bb: BbPluginApi): void {
   // bb.sdk only works while the plugin is bound, so it is read inside calls, never at load.
   const events: EventsSdk = { threads: { events: { list: (args) => bb.sdk.threads.events.list(args) } } };
   const edits = createEditIndex(events);
-  const cache = createRepoCache();
+  // A build that started before an invalidation, whoever caused it, may have read the old state, so no later request may join it.
+  const cache = createRepoCache({ pending: (threadIds) => fileEvents.pending(threadIds), onInvalidate: () => building.clear() });
+  const fileEvents = createFileEventGate(events, {
+    invalidate: (threadId) => cache.invalidateThreads([threadId]), hasThread: (threadId) => cache.hasThread(threadId),
+  });
   const roots = createRootCache();
 
   const settings = bb.settings.define({
@@ -88,13 +93,14 @@ export default function vantage(bb: BbPluginApi): void {
     bb.sdk.subscribe({
       event: "thread:changed",
       callback(event) {
-        if (event.id !== undefined && !isDeltaOnly(event.metadata?.eventTypes)) cache.invalidateThreads([event.id]);
+        if (event.id !== undefined) fileEvents.handle(event.id, event.changes, event.metadata?.eventTypes);
       },
     }),
     bb.sdk.subscribe({
       event: "environment:changed",
       callback(event) {
-        if (event.id !== undefined && event.changes.some((change) => FILE_ENVIRONMENT_CHANGES.includes(change))) cache.invalidateEnvironment(event.id);
+        if (event.id === undefined || !event.changes.some((change) => FILE_ENVIRONMENT_CHANGES.includes(change))) return;
+        cache.invalidateEnvironment(event.id);
       },
     }),
   ];
@@ -110,15 +116,17 @@ export default function vantage(bb: BbPluginApi): void {
   async function overview(input: OverviewRequest & { refresh?: boolean }): Promise<Overview> {
     const { target, scope, includeArchived, refresh } = input;
     const base = await deps();
-    if (target.kind === "tree") return buildOverview(base, { target, scope, includeArchived, refresh });
-    const allOptions = await allOptionsFor(input.hours);
-    const key = [scope, allOptions.windowHours, allOptions.maxThreads, includeArchived, refresh === true].join("\0");
+    const allOptions = target.kind === "all" ? await allOptionsFor(input.hours) : undefined;
+    const key = [
+      ...(target.kind === "tree" ? ["tree", target.threadId] : [allOptions?.windowHours, allOptions?.maxThreads]),
+      scope, includeArchived, refresh === true,
+    ].join("\0");
     let pending = building.get(key);
     if (pending === undefined) {
       // No caller's abort signal: the build is shared, and finishing it warms the cache for the next one.
-      pending = buildOverview({ ...base, allOptions }, { target, scope, includeArchived, refresh });
+      pending = buildOverview(allOptions === undefined ? base : { ...base, allOptions }, { target, scope, includeArchived, refresh });
       building.set(key, pending);
-      const done = () => { building.delete(key); };
+      const done = () => { if (building.get(key) === pending) building.delete(key); };
       pending.then(done, done);
     }
     return pending;

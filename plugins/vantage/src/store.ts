@@ -1,4 +1,5 @@
 import type { PluginBrowserBbSdk } from "@get-bb/plugin-sdk";
+import { FILE_EVENT_TYPES } from "./event-types";
 import type { Overview, OverviewInput, OverviewTarget, Scope, ShellInput } from "./contract";
 
 export interface VantageSnapshot {
@@ -21,9 +22,10 @@ export interface VantageStore {
 const TREE_REFRESH_DELAY_MS = 1500;
 const ALL_REFRESH_DELAY_MS = 5000;
 const HEARTBEAT_MS = 60_000;
+// A slow overview means a loaded machine: wait this many times as long as the last one took before asking again.
+const BACKOFF_FACTOR = 1.5;
 const THREAD_CHANGES = ["archived-changed", "environment-changed", "parent-changed"];
 const ENVIRONMENT_CHANGES = ["work-status-changed", "git-refs-changed", "status-changed"];
-const FILE_EVENT_TYPES = ["item/completed", "turn/completed"];
 
 const errorMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
@@ -73,6 +75,10 @@ export function createVantageStore(options: {
   let pending: { hard: boolean; urgent: boolean } | null = null;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let lastEndedAt: number | null = null;
+  let lastDurationMs = 0;
+  let startedAt = 0;
+  // Events that arrived while the page was hidden; one refresh runs when it is shown again.
+  let missed: { hard: boolean } | null = null;
   let known: { overview: Overview; threads: Set<string>; environments: Set<string> } | null = null;
   // A load (the first one, or one after the scope or the archived choice changed) draws the outline while the full result is read.
   let outlineWanted = true;
@@ -102,6 +108,7 @@ export function createVantageStore(options: {
   function start(hard: boolean): void {
     const token = { generation };
     running = token;
+    startedAt = Date.now();
     update(snapshot.overview === null ? { status: "loading", error: null } : { refreshing: true });
     const input: OverviewInput = { target, scope: snapshot.scope, includeArchived, ...(hard ? { refresh: true } : {}) };
     let fullArrived = false;
@@ -123,6 +130,7 @@ export function createVantageStore(options: {
       update(change());
       running = null;
       lastEndedAt = Date.now();
+      lastDurationMs = lastEndedAt - startedAt;
       pump();
     };
     rpc.call("overview", input).then(
@@ -136,7 +144,13 @@ export function createVantageStore(options: {
   function pump(): void {
     if (disposed || pending === null || timer !== null) return;
     if (running !== null && running.generation === generation) return;
-    const wait = pending.urgent || lastEndedAt === null ? 0 : Math.max(0, lastEndedAt + refreshDelayMs - Date.now());
+    if (!pending.urgent && isHidden()) {
+      missed = { hard: pending.hard || missed?.hard === true };
+      pending = null;
+      return;
+    }
+    const delayMs = Math.max(refreshDelayMs, BACKOFF_FACTOR * lastDurationMs);
+    const wait = pending.urgent || lastEndedAt === null ? 0 : Math.max(0, lastEndedAt + delayMs - Date.now());
     if (wait > 0) {
       timer = setTimeout(() => { timer = null; pump(); }, wait);
       return;
@@ -145,6 +159,8 @@ export function createVantageStore(options: {
     pending = null;
     start(hard);
   }
+
+  const isHidden = () => typeof document !== "undefined" && document.visibilityState === "hidden";
 
   function request(hard: boolean, urgent: boolean): void {
     if (disposed) return;
@@ -155,6 +171,14 @@ export function createVantageStore(options: {
     }
     pump();
   }
+
+  // A page showing again catches up on what it missed; an all-threads page also checks for changes no event announced.
+  const onVisibility = () => {
+    if (isHidden()) return;
+    const caughtUp = missed;
+    missed = null;
+    if (everyThread || caughtUp !== null) request(caughtUp?.hard === true, false);
+  };
 
   const unsubscribers = [
     sdk.subscribe({
@@ -181,16 +205,15 @@ export function createVantageStore(options: {
   ];
   // A page that stays open keeps up with changes no event announces, such as a file edited by hand.
   let stopWatching = () => {};
-  if (everyThread && typeof document !== "undefined") {
-    const refreshIfVisible = () => { if (document.visibilityState === "visible") request(false, false); };
-    const heartbeat = setInterval(refreshIfVisible, HEARTBEAT_MS);
-    document.addEventListener("visibilitychange", refreshIfVisible);
+  if (typeof document !== "undefined") {
+    const heartbeat = everyThread ? setInterval(() => { if (!isHidden()) request(false, false); }, HEARTBEAT_MS) : null;
+    document.addEventListener("visibilitychange", onVisibility);
     stopWatching = () => {
-      clearInterval(heartbeat);
-      document.removeEventListener("visibilitychange", refreshIfVisible);
+      if (heartbeat !== null) clearInterval(heartbeat);
+      document.removeEventListener("visibilitychange", onVisibility);
     };
   }
-  request(false, false);
+  request(false, true);
 
   return {
     getSnapshot: () => snapshot,

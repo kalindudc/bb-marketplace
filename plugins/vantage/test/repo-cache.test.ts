@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { RepoPlan } from "../src/collect";
-import { createRepoCache, isDeltaOnly, planCached } from "../src/repo-cache";
+import { createRepoCache, planCached } from "../src/repo-cache";
 
 const meta = (threadIds: string[] = ["thr_1"], environmentId: string | null = "env_1") => ({ threadIds, environmentId });
 
@@ -193,17 +193,76 @@ describe("planCached", () => {
   });
 });
 
-describe("isDeltaOnly", () => {
-  it("is true only for a non-empty list of streaming delta types", () => {
-    const deltas = [
-      "item/agentMessage/delta", "item/reasoning/textDelta", "item/reasoning/summaryTextDelta", "item/commandExecution/outputDelta",
-      "item/fileChange/outputDelta", "item/plan/delta", "item/toolCall/progress",
-    ];
-    expect(isDeltaOnly(deltas)).toBe(true);
-    expect(isDeltaOnly(["item/agentMessage/delta"])).toBe(true);
-    expect(isDeltaOnly([...deltas, "item/completed"])).toBe(false);
-    expect(isDeltaOnly(["turn/completed"])).toBe(false);
-    expect(isDeltaOnly([])).toBe(false);
-    expect(isDeltaOnly(undefined)).toBe(false);
+describe("hasThread", () => {
+  it("is true for a thread an entry was built for, loaded or still loading, until the entry goes", async () => {
+    const { cache } = setup();
+    expect(cache.hasThread("thr_1")).toBe(false);
+    let release!: () => void;
+    const loading = cache.get("k", meta(["thr_1", "thr_2"]), () => new Promise<string>((resolve) => { release = () => resolve("files"); }));
+    expect([cache.hasThread("thr_1"), cache.hasThread("thr_2"), cache.hasThread("thr_3")]).toEqual([true, true, false]);
+    release();
+    await loading;
+    expect(cache.hasThread("thr_2")).toBe(true);
+    cache.invalidateThreads(["thr_1"]);
+    expect([cache.hasThread("thr_1"), cache.hasThread("thr_2")]).toEqual([false, false]);
+  });
+});
+
+describe("onInvalidate", () => {
+  it("runs after entries were dropped by thread, by environment or all at once, and not after a plain lookup", async () => {
+    const onInvalidate = vi.fn();
+    const cache = createRepoCache({ onInvalidate });
+    await cache.get("k", meta(), async () => "files");
+    expect(onInvalidate).not.toHaveBeenCalled();
+    cache.invalidateThreads(["thr_1"]);
+    cache.invalidateEnvironment("env_1");
+    cache.clear();
+    expect(onInvalidate).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe("a lookup that waits for a pending decision", () => {
+  const deferred = () => {
+    let resolve!: () => void;
+    const promise = new Promise<void>((done) => { resolve = done; });
+    return { promise, resolve };
+  };
+  const flush = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+  it("holds back only the threads the decision is about, then looks the entry up again", async () => {
+    const undecided = deferred();
+    let decided = false;
+    const cache = createRepoCache({ pending: (ids) => (!decided && ids.includes("thr_b") ? undecided.promise : null) });
+    const loadA = vi.fn(async () => "a");
+    const loadB = vi.fn(async () => "b");
+    expect(await cache.get("a", meta(["thr_a"]), loadA)).toBe("a");
+    const waiting = cache.get("b", meta(["thr_b"]), loadB);
+    let answered = false;
+    void waiting.then(() => { answered = true; });
+    await flush();
+    expect(answered).toBe(false);
+    expect(loadB).not.toHaveBeenCalled();
+    expect(await cache.get("a", meta(["thr_a"]), loadA)).toBe("a");
+    decided = true;
+    undecided.resolve();
+    expect(await waiting).toBe("b");
+    expect(loadA).toHaveBeenCalledTimes(1);
+    expect(loadB).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not serve an entry the decision dropped meanwhile", async () => {
+    const undecided = deferred();
+    let decided = false;
+    const cache = createRepoCache({ pending: () => (decided ? null : undecided.promise) });
+    decided = true;
+    const load = vi.fn(async () => "old");
+    await cache.get("k", meta(), load);
+    decided = false;
+    const waiting = cache.get("k", meta(), load);
+    cache.invalidateThreads(["thr_1"]);
+    decided = true;
+    undecided.resolve();
+    await waiting;
+    expect(load).toHaveBeenCalledTimes(2);
   });
 });

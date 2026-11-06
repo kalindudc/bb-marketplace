@@ -2,7 +2,7 @@
 
 Notable changes to Vantage, newest first. Releases are tagged `vantage/vX.Y.Z` in this repository.
 
-## Unreleased
+## 0.9.0 (2026-11-06)
 
 ### Added
 
@@ -25,6 +25,14 @@ Notable changes to Vantage, newest first. Releases are tagged `vantage/vX.Y.Z` i
 ### Removed
 
 - Reading worktrees through bb's environment status and diff calls, and the 10-second fallback to git. SDK 0.6.104 removed those calls.
+
+### Fixed
+
+- Vantage no longer reads git for every worktree after almost every agent event. What it read for a thread is kept for up to a minute through messages, reasoning and token counts, and is read again only after the thread ran a command, changed a file, finished a turn or had its history rewritten.
+- Two requests for the same thread's worktrees made together share one read instead of each reading every worktree.
+- Vantage runs at most three git commands at a time on a machine, so a busy overview no longer starts dozens of git processes at once.
+- A Vantage page that is hidden no longer refreshes for agent events. It refreshes once when you show it again.
+- After a slow refresh, Vantage waits at least one and a half times as long as that refresh took before it asks again.
 
 ### Compatibility
 
