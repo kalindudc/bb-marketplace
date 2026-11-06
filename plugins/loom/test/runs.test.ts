@@ -128,9 +128,19 @@ describe("stepSummary", () => {
     expect(stepSummary("ensureBranch", { sha: "base000", created: true })).toEqual({ ok: true, text: "Created the branch at base000." });
     expect(stepSummary("refTip", { outcome: "missing", message: "no such ref" })).toEqual({ ok: true, text: "no such ref" });
     expect(stepSummary("carryFinish", { outcome: "foreign", paths: ["a.ts", "b.ts"] })).toEqual({ ok: false, text: "The worktree has changes the copy did not make, so Loom committed nothing:\na.ts\nb.ts" });
-    expect(stepSummary("carryAbort", { clean: false, kept: ["notes.txt"] })).toEqual({ ok: true, text: "Took back what the copy wrote, and kept what someone else changed:\nnotes.txt" });
-    expect(stepSummary("carryAbort", {})).toEqual({ ok: true, text: "Took back what the copy wrote." });
+    const carried = [
+      { path: "a.ts", holds: "carry" as const },
+      { path: "b.ts", holds: "before" as const },
+      { path: "c.ts", holds: "absent" as const },
+      { path: "d.ts", holds: "changed" as const },
+    ];
+    expect(stepSummary("carryAbort", { clean: false, kept: ["a.ts", "d.ts"], carried })).toEqual({
+      ok: true,
+      text: "Left the worktree as it is. What each file the copy wrote or deleted holds now:\na.ts: what the copy wrote\nb.ts: what it held before the copy\nc.ts: nothing\nd.ts: a change the copy did not make",
+    });
+    expect(stepSummary("carryAbort", { clean: true, kept: [], carried: [] })).toEqual({ ok: true, text: "Left the worktree as it is; the copy had written nothing." });
+    expect(STEP_LABELS.carryAbort).toBe("stop the copy, leaving the worktree as it is");
     expect(stepSummary("prReady", { outcome: "ok" })).toEqual({ ok: true, text: "Marked the pull request ready for review." });
-    expect(stepSummary("carryFinish", { outcome: "mismatch", tree: "t2" })).toEqual({ ok: false, text: "After the copy the worktree had the tree t2, not the one sent, so Loom reset it to the base." });
+    expect(stepSummary("carryFinish", { outcome: "mismatch", tree: "t2" })).toEqual({ ok: false, text: "After the copy the worktree would have the tree t2, not the one sent, so Loom committed nothing." });
   });
 });

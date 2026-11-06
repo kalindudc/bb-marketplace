@@ -35,7 +35,7 @@ export const STEP_LABELS: Record<Exclude<HostMethod, "exec">, string> = {
   carryDelete: "delete files",
   repoPrefix: "find the checkout's directory in its repository",
   conflictMarkers: "look for conflict markers",
-  carryAbort: "put the worktree back at the base",
+  carryAbort: "stop the copy, leaving the worktree as it is",
   carryFinish: "commit the work in the worktree",
   refTip: "read a ref",
   detach: "check out the commit",
@@ -88,6 +88,7 @@ function differing(files: readonly string[]): string {
 
 type Summary = { ok: boolean; text: string };
 const done = (text: string): Summary => ({ ok: true, text });
+const COPY_HOLDS = { carry: "what the copy wrote", before: "what it held before the copy", absent: "nothing", changed: "a change the copy did not make" } as const;
 
 const SUMMARIES: { [M in Exclude<HostMethod, "exec">]: (output: HostOutput<M>) => Summary } = {
   commitAll: ({ sha, committed }) => done(committed ? `Committed ${sha12(sha)}.` : `Nothing new to commit; HEAD is ${sha12(sha)}.`),
@@ -148,11 +149,16 @@ const SUMMARIES: { [M in Exclude<HostMethod, "exec">]: (output: HostOutput<M>) =
   carryDelete: () => done("Deleted the files."),
   repoPrefix: ({ prefix }) => done(prefix === "" ? "The checkout is the repository's top level." : `The checkout is ${prefix} in its repository.`),
   conflictMarkers: ({ files }) => (files.length === 0 ? done("No conflict markers left.") : { ok: false, text: listed("Conflict markers left in:", files) }),
-  carryAbort: ({ kept }) => done(kept === undefined || kept.length === 0 ? "Took back what the copy wrote." : listed("Took back what the copy wrote, and kept what someone else changed:", kept)),
+  carryAbort: ({ carried }) =>
+    done(
+      carried === undefined || carried.length === 0
+        ? "Left the worktree as it is; the copy had written nothing."
+        : listed("Left the worktree as it is. What each file the copy wrote or deleted holds now:", carried.map(({ path, holds }) => `${path}: ${COPY_HOLDS[holds]}`)),
+    ),
   carryFinish: (finished) => {
     if (finished.outcome === "ok") return done(`Committed ${sha12(finished.head)}.`);
     if (finished.outcome === "foreign") return { ok: false, text: listed("The worktree has changes the copy did not make, so Loom committed nothing:", finished.paths) };
-    return { ok: false, text: `After the copy the worktree had the tree ${sha12(finished.tree)}, not the one sent, so Loom reset it to the base.` };
+    return { ok: false, text: `After the copy the worktree would have the tree ${sha12(finished.tree)}, not the one sent, so Loom committed nothing.` };
   },
   refTip: (tip) => {
     if (tip.outcome !== "ok") return done(tip.message);
