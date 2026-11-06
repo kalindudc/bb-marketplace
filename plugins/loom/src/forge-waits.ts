@@ -7,6 +7,7 @@
 // A merge that fails in a way worth waiting out, a host call that got no answer included, keeps its ticket in merging and
 // runs again after 1, 2, 5 and 10 minutes, then every 15, and pauses the project only once it has failed for an hour.
 import type { TicketRow } from "./db/store";
+import type { Transient } from "./failures";
 import { formatDuration, plural } from "./format";
 import { readSub, type RetryWait, type PollWait } from "./sub-state";
 
@@ -19,50 +20,8 @@ const LONGEST_BACKOFF_MS = 60 * 60_000;
 // gh's messages often end with a full stop, and a command's with a colon before its empty output; the texts below add their own.
 const clause = (message: string) => message.trim().replace(/[.:]+$/u, "");
 
-/** A failure worth waiting out: a server error or timeout, a rate limit, or a network failure; and how long the answer said to wait, when it said. */
-export interface Transient {
-  transient: "server" | "rate_limit" | "network";
-  retryAfterMs?: number;
-}
-
-// What bb says when a call to Loom's host entry got no answer: it ran out of time, the host's plugin worker exited or is
-// not there, a plugin update retired the generation the call was for or the new one's startup timed out, or the machine
-// is not connected; and what the host entry says when a git or gh process it ran ran out of time.
-const HOST_CALL_TROUBLE =
-  /host plugin call \S+ (?:exceeded|reached) its deadline|host plugin worker (?:exited|failed to start)|host plugin \S+ worker is unavailable|host plugin manager is shutting down|host plugin \S+ generation \S+ is retired|host plugin \S+ startup timed out|host plugin transport is unavailable|\bhost(?: daemon)? is not connected\b|\bhost is (?:suspended|unavailable)\b|timed out waiting for command result|the project's checkout is busy with another call|\b(?:git|gh) [\w-]+ took too long\b/iu;
-// An input or output the contract refuses and an unknown method are answers from bb, so waiting would not help.
-const ANSWERED_CODES: readonly string[] = ["invalid_input", "invalid_output", "unknown_method", "invalid", "invalid_json", "non_json_result", "invalid_response", "forbidden", "not_found"];
-
-/**
- * Whether an error a host call threw is worth waiting out, as a server error: the SDK's transport_error, or a message
- * that says the call got no answer. A handler's own error, such as a git command that failed, is not.
- */
-export function hostCallTransient(error: unknown): Transient | null {
-  if (typeof error !== "object" || error === null) return null;
-  const code: unknown = Reflect.get(error, "code");
-  if (code === "transport_error") return { transient: "server" };
-  if (typeof code === "string" && ANSWERED_CODES.includes(code)) return null;
-  const message: unknown = Reflect.get(error, "message");
-  return typeof message === "string" && HOST_CALL_TROUBLE.test(message) ? { transient: "server" } : null;
-}
-
-/** A step a host could not do, with whether its failure is worth waiting out. */
-export class Unavailable extends Error {
-  constructor(
-    message: string,
-    readonly wait: Transient | null = null,
-  ) {
-    super(message);
-  }
-}
-
-/** The Transient part of a host's unavailable answer; null when it has none. */
-export const transientOf = (answer: Partial<Transient>): Transient | null =>
-  answer.transient === undefined ? null : { transient: answer.transient, ...(answer.retryAfterMs === undefined ? {} : { retryAfterMs: answer.retryAfterMs }) };
-
-/** Whether a failed step is worth waiting out: an Unavailable that says so, or a host call that got no answer. */
-export const waitableOf = (error: unknown): Transient | null => (error instanceof Unavailable ? error.wait : hostCallTransient(error));
-
+// The failure rules live in failures.ts; these names stay importable from here.
+export { Unavailable, hostCallTransient, transientOf, waitableOf, type Transient } from "./failures";
 /** Who a read that failed was waiting on, for pollWaitText and pollWaitReason, when Loom's call to the machine that runs it got no answer. */
 export const PROJECT_MACHINE = "the project's machine";
 

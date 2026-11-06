@@ -8,6 +8,7 @@ import { homedir, tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { experimental_runVcsProcess, type ExperimentalVcsProcessPriority } from "@get-bb/plugin-sdk/host";
 import { z } from "zod";
+import { transientOfText } from "../failures";
 import { GIT_INDEX_TIMED_OUT, GIT_INDEX_TIMEOUT_MS, GIT_NETWORK_TIMEOUT_MS } from "../git-network";
 import { BLOB_MAX_BYTES, githubPull, prNumber, REPLY_MARK, RETARGET_COMMAND_MS, REVIEW_DECISIONS, type HostInput, type HostOutput } from "../host-contract";
 import { runProcess } from "./process";
@@ -1473,22 +1474,6 @@ async function ghCall(cwd: string, args: readonly string[], opts: { stdin?: stri
 }
 
 const GH_AUTH_EXIT = 4;
-// gh's "HTTP 502", git's "returned error: 502", and a forge CLI's "Error: 429: …" or "503: …" at the start of a line.
-const HTTP_STATUS = /\bHTTP (\d{3})\b|\breturned error: (\d{3})\b|^[ \t]*(?:error:[ \t]*)?(\d{3}):/imu;
-const RATE_LIMITED = /rate[-_ ]limit|abuse detection|too many requests/iu;
-// A server that says it is short of something now and asks to be tried again, such as a git server whose upload-pack ran
-// out of its memory budget, counts too.
-const SERVER_TROUBLE =
-  /\bserver error\b|bad gateway|service unavailable|gateway time-?out|\btime(?:d[- ]?|[- ]?)out|deadline exceeded|connection (?:reset|refused)|\bEOF\b|TLS handshake|something went wrong|remote end hung up unexpectedly|retry with backoff|\bretry (?:later|shortly)\b|try again later|temporarily unavailable|budget exhausted|resources? exhausted|\b(?:server|service) (?:is )?(?:too )?busy\b|\boverloaded\b/iu;
-// The read never reached the forge: its name did not resolve or no connection opened. That is this machine's resolver or
-// network, not one pull request, so it is tested before SERVER_TROUBLE, whose timeouts would also match a connect timeout.
-const NETWORK_TROUBLE =
-  /could not resolve host|dns error|failed to lookup address|nodename nor servname|no such host|temporary failure in name resolution|getaddrinfo|name or service not known|error connecting to|client error \(connect\)|network is unreachable|host is unreachable|no route to host|connection timed out|i\/o timeout|check your internet connection|couldn't connect to server|failed to connect to/iu;
-const RETRY_AFTER_SECONDS = /retry[- ]after:?\s*(\d{1,6})\b/iu;
-const RATE_LIMIT_RESET = /x-ratelimit-reset:?\s*(\d{10})\b/iu;
-const TRY_AGAIN_IN = /(?:try again|retry) in (\d{1,4}) (second|minute|hour)s?\b/iu;
-const UNIT_MS: Record<string, number> = { second: 1000, minute: 60_000, hour: 3_600_000 };
-const LONGEST_RETRY_AFTER_MS = 24 * 3_600_000;
 
 /** The error fields of a JSON answer, null when `text` is not JSON. The rest of an answer can hold a pull request's own text. */
 function errorFields(text: string): string[] | null {
@@ -1515,32 +1500,9 @@ function errorText(output: string): string {
 // A failed read's stdout is the response body, which can hold the pull request's own text.
 const ghErrorText = (run: GitRun): string => `${run.stderr}\n${errorText(run.stdout).slice(0, 2000)}`;
 
-function retryAfterMs(text: string): number | null {
-  const seconds = RETRY_AFTER_SECONDS.exec(text);
-  const reset = RATE_LIMIT_RESET.exec(text);
-  const later = TRY_AGAIN_IN.exec(text);
-  const ms = seconds !== null ? Number(seconds[1]) * 1000 : reset !== null ? Number(reset[1]) * 1000 - Date.now() : later !== null ? Number(later[1]) * UNIT_MS[later[2]!.toLowerCase()]! : null;
-  return ms === null ? null : Math.min(LONGEST_RETRY_AFTER_MS, Math.max(0, Math.round(ms)));
-}
-
-/**
- * Whether a failed gh call is worth waiting out: `rate_limit` when GitHub says it rate-limited the call (HTTP 429, a 403 or
- * GraphQL's RATE_LIMITED that says so), `server` for its 500, 502, 503 and 504 answers, timeouts and dropped connections,
- * and `network` when the call never reached it, such as a name lookup that failed. Null for the rest, such as a missing
- * login, a 404 or a bad URL. A forge command's failure and a git fetch or push are classified by the same rules.
- */
+/** Whether a failed gh call is worth waiting out, by transientOfText's rules; never a missing login. A forge command's failure and a git fetch or push are classified the same way. */
 export function ghTransient(run: GitRun): Transient | null {
-  if (run.code === GH_AUTH_EXIT) return null;
-  const text = ghErrorText(run);
-  const found = HTTP_STATUS.exec(text);
-  const status = found?.[1] ?? found?.[2] ?? found?.[3];
-  if (status === "429" || (RATE_LIMITED.test(text) && (status === undefined || status === "403"))) {
-    const wait = retryAfterMs(text);
-    return wait === null ? { transient: "rate_limit" } : { transient: "rate_limit", retryAfterMs: wait };
-  }
-  if (status !== undefined) return /^50[0234]$/u.test(status) ? { transient: "server" } : null;
-  if (NETWORK_TROUBLE.test(text)) return { transient: "network" };
-  return SERVER_TROUBLE.test(text) ? { transient: "server" } : null;
+  return run.code === GH_AUTH_EXIT ? null : transientOfText(ghErrorText(run));
 }
 
 function readFailed(what: string, run: GitRun): UnavailableAnswer {
