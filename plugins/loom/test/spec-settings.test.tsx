@@ -30,8 +30,6 @@ function everything(doc: Doc): void {
     stack: false,
     release_workers: false,
     refresh_behind: 50,
-    checks_queued_minutes: 10,
-    checks_near_done_percent: 80,
     git_network_timeout_seconds: 300,
     git_index_timeout_seconds: 600,
     forge: {
@@ -378,7 +376,7 @@ describe("spec settings", () => {
     const before = valid(specToml(withDocs));
     const after = valid(specToml(trimmed));
     const paths = specDiff(before, after).map((change) => change.path);
-    for (const path of ["merge.forge.after_open", "merge.forge.after_push", "merge.forge.ignore_checks", "merge.forge.edit", "merge.checks_queued_minutes", "merge.checks_near_done_percent", "environment.inputs.depth", "environment.reviewer.provider", "repo[0].forge.kind", "repo[0].environment.inputs.sparse", "repo[1].environment.machine.inputs.pool", "repo[2].name", "rollout.stage[1].goal", "rollout.milestone[0].check", "rollout.window[0].from", "ticket[csv-export].verify", "ticket[csv-export].environment.inputs.sparse"]) {
+    for (const path of ["merge.forge.after_open", "merge.forge.after_push", "merge.forge.ignore_checks", "merge.forge.edit", "environment.inputs.depth", "environment.reviewer.provider", "repo[0].forge.kind", "repo[0].environment.inputs.sparse", "repo[1].environment.machine.inputs.pool", "repo[2].name", "rollout.stage[1].goal", "rollout.milestone[0].check", "rollout.window[0].from", "ticket[csv-export].verify", "ticket[csv-export].environment.inputs.sparse"]) {
       expect(paths).toContain(path);
     }
     const slot = await openSpec(versionOf(after, before));

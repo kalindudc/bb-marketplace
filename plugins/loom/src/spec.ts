@@ -305,9 +305,6 @@ export const specSchema = z
         release_workers: z.boolean().optional(),
         // Commits an open pull request's branch may lack of its remote base before Loom merges the base into it; unset is off.
         refresh_behind: z.number().int().min(1).max(1_000_000).optional(),
-        // Unset: Loom's checksQueuedMinutes and checksNearDonePercent settings apply.
-        checks_queued_minutes: z.number().int().min(0).max(1440).optional(),
-        checks_near_done_percent: z.number().int().min(0).max(100).optional(),
         // Unset: GIT_NETWORK_TIMEOUT_MS. A [[repo]] table's own value replaces it.
         git_network_timeout_seconds: gitNetworkTimeoutSeconds.optional(),
         // Unset: GIT_INDEX_TIMEOUT_MS. A [[repo]] table's own value replaces it.
@@ -404,13 +401,34 @@ function formatPath(path: readonly PropertyKey[]): string {
   return text === "" ? "spec" : text;
 }
 
-function describeIssue(issue: z.core.$ZodIssue): string {
+const settingHome = (setting: string) => `Loom's ${setting} setting is its only home, for every project: remove the key, and change the setting on Loom's settings page if you need another value.`;
+
+/** Keys Loom once read and no longer does, by their path with every array index written [], and what replaces each. */
+const REMOVED_KEYS: Readonly<Record<string, string>> = {
+  "merge.checks_queued_minutes": settingHome("checksQueuedMinutes"),
+  "merge.checks_near_done_percent": settingHome("checksNearDonePercent"),
+};
+
+const templatePath = (path: readonly PropertyKey[]) => path.map((part, index) => (typeof part === "number" ? "[]" : `${index > 0 ? "." : ""}${String(part)}`)).join("");
+
+function describeIssue(issue: z.core.$ZodIssue): string[] {
+  if (issue.code !== "unrecognized_keys") return [describeOtherIssue(issue)];
+  const path = formatPath(issue.path);
+  const template = templatePath(issue.path);
+  const removed = issue.keys.filter((key) => REMOVED_KEYS[`${template}.${key}`] !== undefined);
+  const unknown = issue.keys.filter((key) => !removed.includes(key));
+  const many = unknown.length > 1;
+  return [
+    ...removed.map((key) => `${path}.${key}: Loom no longer reads this key. ${REMOVED_KEYS[`${template}.${key}`]}`),
+    ...(unknown.length === 0
+      ? []
+      : [`${path}: unknown ${many ? "keys" : "key"} ${unknown.map((key) => JSON.stringify(key)).join(", ")}. Remove ${many ? "them" : "it"} or correct ${many ? "their" : "its"} spelling; the loom skill lists every key in references/spec.md.`]),
+  ];
+}
+
+function describeOtherIssue(issue: z.core.$ZodIssue): string {
   const path = formatPath(issue.path);
   switch (issue.code) {
-    case "unrecognized_keys": {
-      const many = issue.keys.length > 1;
-      return `${path}: unknown ${many ? "keys" : "key"} ${issue.keys.map((key) => JSON.stringify(key)).join(", ")}. Remove ${many ? "them" : "it"} or correct ${many ? "their" : "its"} spelling; the loom skill lists every key in references/spec.md.`;
-    }
     case "invalid_type":
       return issue.message.endsWith("received undefined") ? `${path}: is required. Add it.` : `${path}: ${issue.message}. Use a value of the right type.`;
     case "too_small":
@@ -449,7 +467,7 @@ export function parseSpec(toml: string): SpecResult {
     return failed([describeTomlError(error)]);
   }
   const parsed = specSchema.safeParse(raw);
-  if (!parsed.success) return failed(parsed.error.issues.map(describeIssue));
+  if (!parsed.success) return failed(parsed.error.issues.flatMap(describeIssue));
   const { errors, warnings } = validateSemantics(parsed.data, toml);
   if (errors.length > 0) return { ok: false, spec: null, errors, warnings };
   const spec = parsed.data;
@@ -623,7 +641,7 @@ export function validateSemantics(spec: Spec, rawToml: string): { errors: string
   });
 
   if (spec.merge.strategy === "integration") {
-    for (const key of ["describe", "squash", "max_fix_rounds", "stack", "release_workers", "refresh_behind", "checks_queued_minutes", "checks_near_done_percent"] as const) {
+    for (const key of ["describe", "squash", "max_fix_rounds", "stack", "release_workers", "refresh_behind"] as const) {
       if (spec.merge[key] !== undefined) errors.push(`merge.${key}: it applies to the pull request Loom opens for each ticket, but merge.strategy is "integration". Remove it, or use merge.strategy = "pr".`);
     }
     repos.forEach((repo, index) => {

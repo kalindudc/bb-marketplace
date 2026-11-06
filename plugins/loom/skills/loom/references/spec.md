@@ -38,8 +38,6 @@ A spec without `[[repo]]` tables is a single-repo project: every ticket runs in 
 | `stack` | boolean | `true` | pr strategy only; a ticket starts once its dependencies' pull requests are open, on top of them in its own repo, and its pull request opens on its one open dependency's branch; `false` waits for each dependency to merge |
 | `release_workers` | boolean | `true` | pr strategy only; once a ticket's pull request is open and its worker is idle, Loom archives the worker's thread so bb frees its environment, and brings the same thread back with a new environment for a fix round or a catch-up; `false` keeps every worker and its environment until its pull request merges; a pending version may change it after approval. See [Releasing workers](#releasing-workers) |
 | `refresh_behind` | integer | none | pr strategy only; 1 to 1000000; keeps open pull requests fresh with their base: once a pull request's branch lacks at least this many commits of the remote base, or the forge says it conflicts with its base, Loom merges the base into it, runs the ticket's checks in its worker's worktree and pushes, with no new review; unset is off; the default `refresh_behind` of every `[[repo]]`. See [Keeping pull requests fresh](#keeping-pull-requests-fresh) |
-| `checks_queued_minutes` | integer | Loom's `checksQueuedMinutes` setting (`5`) | pr strategy only; 0 to 1440; a pending check that is still queued this many minutes after Loom first saw it, or after the push, no longer holds back the failed ones; `0` waits for queued checks too |
-| `checks_near_done_percent` | integer | Loom's `checksNearDonePercent` setting (`75`) | pr strategy only; 0 to 100; once a check has failed, a running check holds back the fix round only while it is at least this far along; a check Loom cannot measure, and every commit status, keeps holding it; `0` waits for every running check. See [When failed checks go to the worker](#when-failed-checks-go-to-the-worker) |
 | `git_network_timeout_seconds` | integer | `120` | 30 to 600; how long each git fetch, `ls-remote` or push Loom runs in the repo may take, such as fetching the base branch to bring a stacked pull request up to date, building a pull request's commit, or pushing it; a host call that runs two of them in a row gets twice this plus 30 seconds; the default of every `[[repo]]`. Raise it for a large monorepo, where fetching main takes a minute or more; a version approved after the project started applies from Loom's next pass. See [Slow repositories](#slow-repositories) |
 | `git_index_timeout_seconds` | integer | `300` | 30 to 900; how long the index and tree steps of one call on the repo's checkout may take together: listing and writing the trees on the way to the changed files, and committing the result, when Loom brings a worker's commit home from another machine, and merge-tree when it merges or builds a stacked base; the default of every `[[repo]]`. Quick git calls keep 30 seconds. Raise it for a large monorepo on a loaded machine. See [Slow repositories](#slow-repositories) |
 
@@ -153,11 +151,11 @@ Loom asks once per pull request, after the first read that says it is not a draf
 
 On the pull request strategy, a failed check waits for the pending checks that hold it back, and goes to the worker as a fix round once none does, or once Loom's `checksSettleMinutes` setting (30 minutes) has passed since the push, whichever comes first:
 
-- A check still queued `checks_queued_minutes` after Loom first saw it stops holding. A check on Loom's first reading of its own push counts from the push.
-- A running check holds only while it is at least `checks_near_done_percent` along. Loom reads how far it got from the forge's own `progress`, else from its time so far against the median of its last 5 passed runs on the same forge repository, else from a GitHub Actions job's finished steps. A check running for more than twice its usual time stops holding.
+- A check still queued Loom's `checksQueuedMinutes` setting (5 minutes) after Loom first saw it stops holding. A check on Loom's first reading of its own push counts from the push.
+- A running check holds only while it is at least Loom's `checksNearDonePercent` setting (75%) along. Loom reads how far it got from the forge's own `progress`, else from its time so far against the median of its last 5 passed runs on the same forge repository, else from a GitHub Actions job's finished steps. A check running for more than twice its usual time stops holding.
 - A running check Loom cannot measure, and every commit status (it says only pending), holds until the settle time.
 
-The fix round's message lists the pending checks Loom did not wait for, and why. They run again on the worker's fix commit; when the fix changes nothing, Loom follows their results on the same commit.
+The three numbers are Loom settings, so they apply to every project; a spec cannot change them. The fix round's message lists the pending checks Loom did not wait for, and why. They run again on the worker's fix commit; when the fix changes nothing, Loom follows their results on the same commit.
 
 ### [merge.worktree]
 
@@ -884,7 +882,7 @@ A spec with any error is refused and nothing is saved. Errors are numbered, at m
 - `auto_merge` with `method = "command"` on a gh forge, or another method on a command forge; a command forge's `auto_merge` without `merge` or `feedback`, or `merge` without `auto_merge`; `comment` without `method = "comment"`, or that method without `comment`; `rejected` with a gh merge or queue method.
 - A command forge's `reviewers` without `feedback`; rules whose counts could ask more than 20 people.
 - A `reviewers` rule with neither `team` nor `users`, or both; a `team` without `count`; a gh `team` that is not `org/slug`; a `count` above the number of `users`; a command forge's `reviewers` without `request_reviews`, a team rule without `team_members`, or either command with no rule that runs it. `merge`, `request_reviews` and `team_members` on a forge whose kind is not `"command"`.
-- `merge.describe`, `merge.squash`, `merge.max_fix_rounds`, `merge.stack`, `merge.release_workers`, `merge.refresh_behind`, `merge.checks_queued_minutes`, `merge.checks_near_done_percent` or a repo's `refresh_behind` on the integration strategy.
+- `merge.describe`, `merge.squash`, `merge.max_fix_rounds`, `merge.stack`, `merge.release_workers`, `merge.refresh_behind` or a repo's `refresh_behind` on the integration strategy.
 - `merge.worktree` is set with strategy `"pr"`.
 - An `environment` (top level or a repo's) or its `reviewer` sets `machine`, and the strategy is not `"pr"`.
 - `checks.ci` or a repo's `ci` on the integration strategy.
@@ -942,6 +940,14 @@ Refusals tied to existing projects come back the same way:
 - After approval, a revision that adds `[[repo]]` tables to a project approved without them, removes or renames an approved repo, or changes an approved repo's `project`, `base` or `remote`, including through the `project.base` or `merge.remote` it inherits. Its tickets, branches and worktrees already use them. A revision may add new `[[repo]]` tables; the planner adds their tickets with `loom_add_tickets`.
 - bb already has a sidebar section named `Loom · <name> (<slug>)`.
 - Workers and reviewers cannot propose projects.
+
+## Keys Loom no longer reads
+
+These keys were removed because no project used them, or because they had another home. A spec that sets one is refused with an error that names what replaces it; remove the key and propose again. Specs stored before the removal keep working.
+
+| Key | What to do instead |
+|---|---|
+| `merge.checks_queued_minutes`, `merge.checks_near_done_percent` | Loom's `checksQueuedMinutes` and `checksNearDonePercent` settings, which apply to every project |
 
 ## Warnings
 

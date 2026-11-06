@@ -29,9 +29,6 @@ import { loomPost } from "./posts";
 /** How long the worker has to hand in loom_pr before Loom's template stands in; paused time does not count. */
 export const PR_TEXT_MINUTES = 30;
 const PR_TEXT_MS = PR_TEXT_MINUTES * 60_000;
-/** Failed checks wait for the pending checks that hold them, or at most this long after the push: some status checks stay pending until a person approves. Loom's checksSettleMinutes setting changes it. */
-export const CHECKS_SETTLE_MINUTES = 30;
-export const CHECKS_SETTLE_MS = CHECKS_SETTLE_MINUTES * 60_000;
 
 const errText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
@@ -568,9 +565,7 @@ export function recordStatus(ctx: EngineCtx, ticket: TicketRow, feedback: Feedba
   return status;
 }
 
-/** The spec's check wait for this project, else Loom's settings. */
-export const checkWait = (ctx: EngineCtx, spec: Spec): CheckWait =>
-  checkWaitOf(spec, { settleMs: ctx.checksSettleMs?.() ?? CHECKS_SETTLE_MS, queuedMinutes: ctx.checksQueuedMinutes?.(), nearDonePercent: ctx.checksNearDonePercent?.() });
+const checkWait = (ctx: EngineCtx): CheckWait => ctx.checkWait?.() ?? checkWaitOf({});
 
 interface Sorted {
   checks: Array<FeedbackCheck & { key: string }>;
@@ -629,7 +624,7 @@ export async function followFeedback(ctx: EngineCtx, project: ProjectRow, ticket
   const pending = feedback.checks.filter((check) => check.state === "pending").map((check) => check.name);
   const durations = store.checkDurations(durationsKey(ticket.pr_url, ticket.project_id, ticket.repo), pending, USUAL_RUNS);
   const usual = new Map([...durations].map(([name, runs]) => [name, median(runs)!]));
-  const found = newFeedback(ticket, feedback, ctx.now(), { queued: status.queued ?? {}, usual, wait: checkWait(ctx, spec) });
+  const found = newFeedback(ticket, feedback, ctx.now(), { queued: status.queued ?? {}, usual, wait: checkWait(ctx) });
   if (found.checks.length === 0 && found.items.length === 0) {
     if (found.ignored.keys.length > 0) markSeen(ctx, ticket, found.ignored.keys);
     return;

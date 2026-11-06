@@ -2,11 +2,13 @@
 // after Loom first saw it stops holding, and so does a running check that is not yet near done; a check Loom cannot
 // measure, such as a commit status, holds until the settle time after the push, as every check did before.
 import type { HostOutput } from "./host-contract";
-import type { Spec } from "./spec";
+import type { LoomSettings } from "./record";
 
 type Feedback = Extract<HostOutput<"prFeedback">, { outcome: "ok" }>;
 export type Check = Feedback["checks"][number];
 
+/** Failed checks wait for the pending checks that hold them, or at most this long after the push: some status checks stay pending until a person approves. */
+export const CHECKS_SETTLE_MINUTES = 30;
 export const CHECKS_QUEUED_MINUTES = 5;
 export const CHECKS_NEAR_DONE_PERCENT = 75;
 /** A running check past this many times its usual duration stops holding the round: it may be stuck. */
@@ -22,10 +24,13 @@ export interface CheckWait {
   nearDone: number;
 }
 
-/** The spec's keys first, then Loom's settings, then the defaults. */
-export function checkWaitOf(spec: Spec, settings: { settleMs: number; queuedMinutes?: number; nearDonePercent?: number }): CheckWait {
-  const queued = spec.merge.checks_queued_minutes ?? settings.queuedMinutes ?? CHECKS_QUEUED_MINUTES;
-  return { settleMs: settings.settleMs, queuedMs: queued * 60_000, nearDone: spec.merge.checks_near_done_percent ?? settings.nearDonePercent ?? CHECKS_NEAR_DONE_PERCENT };
+/** Loom's checksSettleMinutes, checksQueuedMinutes and checksNearDonePercent settings, else their defaults: the one place check timing is read. */
+export function checkWaitOf(settings: Pick<LoomSettings, "checksSettleMinutes" | "checksQueuedMinutes" | "checksNearDonePercent">): CheckWait {
+  return {
+    settleMs: (settings.checksSettleMinutes ?? CHECKS_SETTLE_MINUTES) * 60_000,
+    queuedMs: (settings.checksQueuedMinutes ?? CHECKS_QUEUED_MINUTES) * 60_000,
+    nearDone: settings.checksNearDonePercent ?? CHECKS_NEAR_DONE_PERCENT,
+  };
 }
 
 export interface Progress {

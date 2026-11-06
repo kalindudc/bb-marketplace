@@ -1,5 +1,6 @@
 // What every engine step works with: the engine's context, the approved spec of a project, and the standing of a
 // ticket's worker. A leaf of the engine's modules, so any of them can import it without an import cycle.
+import type { CheckWait } from "./check-wait";
 import type { HostBackoffs } from "./forge-waits";
 import type { ProjectRow, Store, ThreadRow, TicketRow } from "./db/store";
 import type { HostPort } from "./ports";
@@ -15,12 +16,8 @@ export interface EngineCtx extends Ctx {
   forgeBackoffs: HostBackoffs;
   /** The pull request reads the human's syncs ask for and follow (pr-sync.ts); in memory only. */
   prReads?: PrReads;
-  /** How long a pull request's failed checks wait for the pending ones after a push; Loom's checksSettleMinutes setting. */
-  checksSettleMs?: () => number;
-  /** How long a queued check may hold the failed ones; Loom's checksQueuedMinutes setting, which the spec can override. */
-  checksQueuedMinutes?: () => number;
-  /** How far along a running check must be to hold the failed ones; Loom's checksNearDonePercent setting, which the spec can override. */
-  checksNearDonePercent?: () => number;
+  /** Which pending checks hold a pull request's failed ones, from Loom's settings (checkWaitOf). */
+  checkWait?: () => CheckWait;
   /** The line a worker ends its pull request comments with; Loom's commentSignature setting. */
   commentSignature?: () => string;
 }

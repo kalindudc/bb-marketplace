@@ -730,9 +730,8 @@ its own pull request.
   against its usual duration on that repository, or its GitHub Actions job's
   steps. A check Loom cannot measure, and every commit status, holds until
   `checksSettleMinutes` after the push. The fix round's message lists the
-  checks Loom did not wait for. The spec's `merge.checks_queued_minutes` and
-  `merge.checks_near_done_percent` change the two numbers for one project, and
-  the settings change them for all (see [Settings](#settings)).
+  checks Loom did not wait for. The numbers are Loom settings, so they apply
+  to every project (see [Settings](#settings)).
 - Loom relies on the pull request's CI for every test its own checks do not
   run. The checks in `[checks]` and a repo's `checks` are the cheap ones that
   run where each worker runs; tests that need containers or services, or take
@@ -1640,9 +1639,7 @@ bb plugin config loom set commentSignature '<sub>Posted by Loom</sub>'
   It is "Posted by Loom" by default, takes Markdown (on GitHub, `<sub>…</sub>`
   makes it small), and an empty value turns it off.
 
-They apply to every project; a spec's `merge.checks_queued_minutes` and
-`merge.checks_near_done_percent` override the queued and running check
-settings for that project.
+They apply to every project, and a spec cannot change them.
 
 ## Safety
 

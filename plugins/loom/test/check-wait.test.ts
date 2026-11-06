@@ -1,17 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { checkWaitOf, durationsKey, holdOf, median, progressOf, queuedSince, type Check } from "../src/check-wait";
-import type { Spec } from "../src/spec";
 
 const check = (more: Partial<Check> = {}): Check => ({ key: "check:1", name: "test", state: "pending", url: null, ...more });
 const MIN = 60_000;
 
 describe("checkWaitOf", () => {
-  const spec = (merge: Partial<Spec["merge"]>) => ({ merge: { strategy: "pr", ...merge } }) as Spec;
-
-  it("takes the spec's keys, then Loom's settings, then 5 minutes and 75%", () => {
-    expect(checkWaitOf(spec({}), { settleMs: 30 * MIN })).toEqual({ settleMs: 30 * MIN, queuedMs: 5 * MIN, nearDone: 75 });
-    expect(checkWaitOf(spec({}), { settleMs: MIN, queuedMinutes: 10, nearDonePercent: 50 })).toEqual({ settleMs: MIN, queuedMs: 10 * MIN, nearDone: 50 });
-    expect(checkWaitOf(spec({ checks_queued_minutes: 0, checks_near_done_percent: 0 }), { settleMs: MIN, queuedMinutes: 10, nearDonePercent: 50 })).toEqual({ settleMs: MIN, queuedMs: 0, nearDone: 0 });
+  it("takes Loom's settings, else 30 minutes, 5 minutes and 75%", () => {
+    expect(checkWaitOf({})).toEqual({ settleMs: 30 * MIN, queuedMs: 5 * MIN, nearDone: 75 });
+    expect(checkWaitOf({ checksSettleMinutes: 1, checksQueuedMinutes: 10, checksNearDonePercent: 50 })).toEqual({ settleMs: MIN, queuedMs: 10 * MIN, nearDone: 50 });
+    expect(checkWaitOf({ checksQueuedMinutes: 0, checksNearDonePercent: 0 })).toEqual({ settleMs: 30 * MIN, queuedMs: 0, nearDone: 0 });
   });
 });
 

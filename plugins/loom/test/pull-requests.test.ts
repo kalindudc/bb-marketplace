@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import { checkWaitOf } from "../src/check-wait";
 import { settleChecks, submit } from "../src/checks";
 import type { PostRow, ThreadRow } from "../src/db/store";
 import type { HostOutput } from "../src/host-contract";
@@ -269,7 +270,7 @@ describe("following the pull request", () => {
   });
 
   it("holds a failed check only as long as Loom's checksSettleMinutes setting says", async () => {
-    h.ctx.checksSettleMs = () => 10 * 60_000;
+    h.ctx.checkWait = () => checkWaitOf({ checksSettleMinutes: 10 });
     await openPr();
     h.host.feedback.set(URL, { checks: [{ key: "check:1", name: "lint", state: "failed", url: "https://ci/1" }, { key: "status:reviews", name: "reviews", state: "pending", url: null }] });
     await poll();
@@ -281,11 +282,9 @@ describe("following the pull request", () => {
   it("reads the settings through the engine: 30, 5 and 75 when they are not set", () => {
     const store = h.store;
     const engine = (settings?: () => LoomSettings) => new Engine({ store, bb: h.bb, now: h.clock.now, host: h.host, projects: h.projects, ...(settings === undefined ? {} : { settings }) });
-    expect(engine().ctx.checksSettleMs!()).toBe(30 * 60_000);
-    expect(engine().ctx.checksQueuedMinutes!()).toBe(5);
-    expect(engine().ctx.checksNearDonePercent!()).toBe(75);
+    expect(engine().ctx.checkWait!()).toEqual({ settleMs: 30 * 60_000, queuedMs: 5 * 60_000, nearDone: 75 });
     const set = engine(() => ({ doneHook: "", doneRecord: "summary", checksSettleMinutes: 45, checksQueuedMinutes: 0, checksNearDonePercent: 90 })).ctx;
-    expect([set.checksSettleMs!(), set.checksQueuedMinutes!(), set.checksNearDonePercent!()]).toEqual([45 * 60_000, 0, 90]);
+    expect(set.checkWait!()).toEqual({ settleMs: 45 * 60_000, queuedMs: 0, nearDone: 90 });
   });
 
   describe("which pending checks hold the failed ones", () => {
@@ -319,8 +318,8 @@ describe("following the pull request", () => {
       expect(skippedOf()).toEqual([{ name: "e2e", url: null, why: "queued", minutes: 5 }]);
     });
 
-    it("takes the queued limit from Loom's setting, and the spec's merge.checks_queued_minutes over it; 0 waits until the settle time", async () => {
-      h.ctx.checksQueuedMinutes = () => 15;
+    it("takes the queued limit from Loom's setting; 0 waits until the settle time", async () => {
+      h.ctx.checkWait = () => checkWaitOf({ checksQueuedMinutes: 15 });
       await openPr();
       h.host.feedback.set(URL, { checks: [lint, check("check:2", "e2e", { started: false })] });
       await poll();
@@ -331,8 +330,8 @@ describe("following the pull request", () => {
       expect(skippedOf()).toEqual([{ name: "e2e", url: null, why: "queued", minutes: 15 }]);
 
       h = makeCtx();
-      h.ctx.checksQueuedMinutes = () => 15;
-      await openPr({ checks_queued_minutes: 0 });
+      h.ctx.checkWait = () => checkWaitOf({ checksQueuedMinutes: 0 });
+      await openPr();
       h.host.feedback.set(URL, { checks: [lint, check("check:2", "e2e", { started: false })] });
       for (let index = 0; index < 5; index += 1) await poll();
       expect(ticket().state).toBe("pr_open");
@@ -373,15 +372,16 @@ describe("following the pull request", () => {
       expect(h.store.checkDurations("https://github.com/acme/shop", ["test", "lint"], 5)).toEqual(new Map([["test", [9 * 60_000]]]));
     });
 
-    it("prefers the forge's own progress, and the spec's merge.checks_near_done_percent over Loom's setting; 0 waits for every running check", async () => {
-      h.ctx.checksNearDonePercent = () => 95;
-      await openPr({ checks_near_done_percent: 80 });
+    it("prefers the forge's own progress, measured against Loom's setting; 0 waits for every running check", async () => {
+      h.ctx.checkWait = () => checkWaitOf({ checksNearDonePercent: 80 });
+      await openPr();
       h.host.feedback.set(URL, { checks: [lint, check("check:2", "test", { progress: 85, steps: { done: 1, total: 4 } })] });
       await poll();
       expect(ticket().state).toBe("pr_open");
 
       h = makeCtx();
-      await openPr({ checks_near_done_percent: 0 });
+      h.ctx.checkWait = () => checkWaitOf({ checksNearDonePercent: 0 });
+      await openPr();
       h.host.feedback.set(URL, { checks: [lint, check("check:2", "test", { progress: 5 })] });
       await poll();
       expect(ticket().state).toBe("pr_open");

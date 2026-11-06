@@ -605,19 +605,11 @@ describe("forges, integration worktrees and environments", () => {
     expect(run((doc) => (doc.merge = { strategy: "pr", describe: "planner" })).errors[0]).toMatch(/^merge\.describe: /u);
   });
 
-  it("parses how long queued checks and how far running checks hold the failed ones on the pr strategy, and refuses them elsewhere or out of range", () => {
-    const set = run((doc) => (doc.merge = { strategy: "pr", checks_queued_minutes: 0, checks_near_done_percent: 90 }));
-    expect(set.errors).toEqual([]);
-    expect(set.spec!.merge).toMatchObject({ checks_queued_minutes: 0, checks_near_done_percent: 90 });
-    const plain = run((doc) => (doc.merge = { strategy: "pr" })).spec!;
-    expect(Object.keys(plain.merge)).not.toContain("checks_queued_minutes");
-    expect(Object.keys(plain.merge)).not.toContain("checks_near_done_percent");
-    expect(run((doc) => (doc.merge = { strategy: "integration", checks_queued_minutes: 5, checks_near_done_percent: 75 })).errors).toEqual([
-      'merge.checks_queued_minutes: it applies to the pull request Loom opens for each ticket, but merge.strategy is "integration". Remove it, or use merge.strategy = "pr".',
-      'merge.checks_near_done_percent: it applies to the pull request Loom opens for each ticket, but merge.strategy is "integration". Remove it, or use merge.strategy = "pr".',
+  it("refuses the check wait keys that moved to Loom's settings, and says where they went", () => {
+    expect(run((doc) => (doc.merge = { strategy: "pr", checks_queued_minutes: 0, checks_near_done_percent: 90 })).errors).toEqual([
+      "merge.checks_queued_minutes: Loom no longer reads this key. Loom's checksQueuedMinutes setting is its only home, for every project: remove the key, and change the setting on Loom's settings page if you need another value.",
+      "merge.checks_near_done_percent: Loom no longer reads this key. Loom's checksNearDonePercent setting is its only home, for every project: remove the key, and change the setting on Loom's settings page if you need another value.",
     ]);
-    expect(run((doc) => (doc.merge = { strategy: "pr", checks_near_done_percent: 101 })).errors[0]).toMatch(/^merge\.checks_near_done_percent: /u);
-    expect(run((doc) => (doc.merge = { strategy: "pr", checks_queued_minutes: 2.5 })).errors[0]).toMatch(/^merge\.checks_queued_minutes: /u);
   });
 
   it("keeps open pull requests fresh only when merge.refresh_behind or a repo's refresh_behind is set, on the pr strategy", () => {

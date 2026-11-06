@@ -10,8 +10,7 @@ import type { PostRow, ProjectRow, RolloutMarkRow, Store, ThreadRow, TicketRow }
 import { COMMENT_SIGNATURE, approvedText, blockedReplyText, heldCheckResult, resumeText, reviewRequeueNote, startRequeueNote } from "./prompts";
 import { LoomError, type ApproveResult, type Projects } from "./projects";
 import { isMultiRepo } from "./repos";
-import { CHECKS_NEAR_DONE_PERCENT, CHECKS_QUEUED_MINUTES } from "./check-wait";
-import { CHECKS_SETTLE_MINUTES } from "./pull-requests";
+import { checkWaitOf } from "./check-wait";
 import { followHooks } from "./hooks";
 import { NO_HOOK, sendRecords, type LoomSettings } from "./record";
 import { newPrReads, requestSync, SYNC_WAIT_MS, syncResult, within, type PrSyncResult } from "./pr-sync";
@@ -38,7 +37,7 @@ import { warnSubStateWith } from "./sub-state";
 const TOKEN_REFRESH_MS = 60_000;
 const errText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
-export type EngineDeps = Omit<EngineCtx, "kick" | "checksSettleMs" | "forgeBackoffs" | "prReads"> & { projects: Projects; settings?: () => LoomSettings };
+export type EngineDeps = Omit<EngineCtx, "kick" | "checkWait" | "forgeBackoffs" | "prReads"> & { projects: Projects; settings?: () => LoomSettings };
 
 export interface Approved extends ApproveResult {
   requeued: string[];
@@ -70,7 +69,6 @@ export class Engine {
     this.projects = deps.projects;
     warnSubStateWith((message) => deps.bb.log("warn", message));
     this.settings = deps.settings ?? (() => NO_HOOK);
-    const settleMs = () => (this.settings().checksSettleMinutes ?? CHECKS_SETTLE_MINUTES) * 60_000;
     const signature = () => this.settings().commentSignature ?? COMMENT_SIGNATURE;
     this.ctx = {
       store: deps.store,
@@ -80,9 +78,7 @@ export class Engine {
       kick: () => this.kick(),
       forgeBackoffs: new Map(),
       prReads: newPrReads(),
-      checksSettleMs: settleMs,
-      checksQueuedMinutes: () => this.settings().checksQueuedMinutes ?? CHECKS_QUEUED_MINUTES,
-      checksNearDonePercent: () => this.settings().checksNearDonePercent ?? CHECKS_NEAR_DONE_PERCENT,
+      checkWait: () => checkWaitOf(this.settings()),
       commentSignature: signature,
       plannerInstructions: () => this.settings().plannerInstructions ?? "",
     };

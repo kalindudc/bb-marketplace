@@ -2,7 +2,7 @@
 // Loom only runs the user's command; what the command does with the record is the user's choice.
 import type { PluginSettingDescriptors } from "@get-bb/plugin-sdk";
 import { z } from "zod";
-import { CHECKS_NEAR_DONE_PERCENT, CHECKS_QUEUED_MINUTES } from "./check-wait";
+import { CHECKS_NEAR_DONE_PERCENT, CHECKS_QUEUED_MINUTES, CHECKS_SETTLE_MINUTES } from "./check-wait";
 import type { EventRow, PostRow, ProjectRow, RecordRow, Store, TicketRow } from "./db/store";
 import { spawnEnvironment, threadBranch } from "./environments";
 import { plural } from "./format";
@@ -50,14 +50,14 @@ export const SETTINGS = {
     label: "Wait for pull request checks (minutes)",
     description:
       "On the pull request strategy, Loom sends a pull request's failed checks to the worker once no pending check holds them back (see the queued and running check settings), or this many minutes after it pushed, whichever comes first; some checks stay pending until a person approves them. It applies to every project.",
-    default: 30,
+    default: CHECKS_SETTLE_MINUTES,
     experimental_schema: z.number().int().min(1).max(1440),
   },
   checksQueuedMinutes: {
     type: "number",
     label: "Stop waiting for queued checks (minutes)",
     description:
-      "On the pull request strategy, a check that is still queued this many minutes after Loom first saw it, or after the push, no longer holds back the failed ones, so the worker starts on them sooner. 0 waits for queued checks too. A spec's merge.checks_queued_minutes overrides it.",
+      "On the pull request strategy, a check that is still queued this many minutes after Loom first saw it, or after the push, no longer holds back the failed ones, so the worker starts on them sooner. 0 waits for queued checks too. It applies to every project.",
     default: CHECKS_QUEUED_MINUTES,
     experimental_schema: z.number().int().min(0).max(1440),
   },
@@ -65,7 +65,7 @@ export const SETTINGS = {
     type: "number",
     label: "Wait for running checks that are this far along (percent)",
     description:
-      "On the pull request strategy, once a check has failed, a running check holds back the fix round only while it is at least this far along, by the forge's own progress, its time so far against its usual duration, or a GitHub Actions job's steps. A check Loom cannot measure, such as a commit status, keeps holding it, and so does every check when this is 0. A spec's merge.checks_near_done_percent overrides it.",
+      "On the pull request strategy, once a check has failed, a running check holds back the fix round only while it is at least this far along, by the forge's own progress, its time so far against its usual duration, or a GitHub Actions job's steps. A check Loom cannot measure, such as a commit status, keeps holding it, and so does every check when this is 0. It applies to every project.",
     default: CHECKS_NEAR_DONE_PERCENT,
     experimental_schema: z.number().int().min(0).max(100),
   },

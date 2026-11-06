@@ -181,7 +181,7 @@ describe("operationalChanges", () => {
     expect(changed((doc) => Object.assign(doc.agents, { max_workers: 4, worker: { provider: "pi", model: "m" } }))).toEqual(["agents.max_workers", "agents.worker.provider", "agents.worker.model"]);
     expect(changed((doc) => (doc.budget = { max_tokens: 9_000_000, deadline: "2030-01-01" }))).toEqual(["budget.max_tokens", "budget.deadline"]);
     expect(changed((doc) => (doc.environment = { provider: "git-worktree", inputs: { size: "large" } }))).toEqual(["environment.provider", "environment.inputs.size"]);
-    expect(changed((doc) => Object.assign(doc.merge, { draft: false, max_fix_rounds: 8, checks_queued_minutes: 10 }), prBase, onPr)).toEqual(["merge.draft", "merge.max_fix_rounds", "merge.checks_queued_minutes"]);
+    expect(changed((doc) => Object.assign(doc.merge, { draft: false, max_fix_rounds: 8, stack: false }), prBase, onPr)).toEqual(["merge.draft", "merge.max_fix_rounds", "merge.stack"]);
     expect(changed((doc) => (doc.merge.worktree = { command: "prepare.sh" }))).toEqual(["merge.worktree.command"]);
     expect(changed((doc) => Object.assign(doc.checks, { timeout_minutes: 25, ci: false }), prBase, onPr)).toEqual(["checks.timeout_minutes", "checks.ci"]);
     expect(changed((doc) => (doc.ticket[1].environment = { inputs: { size: "large" } }), prBase, onPr)).toEqual(["ticket[csv-export].environment.inputs.size"]);
