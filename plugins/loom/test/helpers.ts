@@ -399,6 +399,10 @@ export class FakeHost implements HostPort {
   remoteBase = "base000";
   /** How many commits of the remote's base branch behindBase counts each commit lacking; a missing entry lacks none. */
   behind = new Map<string, number | null>();
+  /** The base exportChanges reports a worker's commit was made on. */
+  exportBase = "base000";
+  /** When set, the parents importCommit gives each commit it makes (its parent, else the exported base), which refTip reports when asked. */
+  commitParents: Map<string, string[]> | null = null;
   /** The refs importCommit pointed on the checkout, at the commits it made. */
   refs = new Map<string, string>();
   /** "a..b" when commit a is an ancestor of commit b, for refTip's contains; a commit always contains itself. */
@@ -470,16 +474,17 @@ export class FakeHost implements HostPort {
       case "exportChanges": {
         const { worktree, head } = input as HostInput<"exportChanges">;
         const sha = head ?? this.worktree(worktree).head;
-        return { base: "base000", head: sha, tree: this.trees.get(sha) ?? sha, message: "CSV-1: Order rows\n", author: { name: "Worker", email: "worker@example.com", date: "1800000000 +0000" }, changes: [] };
+        return { base: this.exportBase, head: sha, tree: this.trees.get(sha) ?? sha, message: "CSV-1: Order rows\n", author: { name: "Worker", email: "worker@example.com", date: "1800000000 +0000" }, changes: [] };
       }
       case "readBlob":
         return { data: "" };
       case "importChunk":
         return { size: 0 };
       case "importCommit": {
-        const { tree, refs } = input as HostInput<"importCommit">;
+        const { tree, refs, base, parent } = input as HostInput<"importCommit">;
         const sha = `home${++this.homes}`;
         this.trees.set(sha, tree);
+        this.commitParents?.set(sha, [parent ?? base]);
         for (const ref of refs) this.refs.set(ref, sha);
         return { outcome: "ok", sha };
       }
@@ -509,11 +514,12 @@ export class FakeHost implements HostPort {
         return { outcome: "ok", head: state.head, tree };
       }
       case "refTip": {
-        const { ref, contains } = input as HostInput<"refTip">;
+        const { ref, contains, parents } = input as HostInput<"refTip">;
         // A commit id names itself.
         const sha = this.refs.get(ref) ?? (ref.startsWith("refs/") ? undefined : ref);
         if (sha === undefined) return { outcome: "missing", message: "no such ref" };
-        return { outcome: "ok", sha, tree: this.trees.get(sha) ?? sha, ...(contains === undefined ? {} : { contains: contains === sha || this.ancestry.has(`${contains}..${sha}`) }) };
+        const known = parents === true ? this.commitParents?.get(sha) : undefined;
+        return { outcome: "ok", sha, tree: this.trees.get(sha) ?? sha, ...(contains === undefined ? {} : { contains: contains === sha || this.ancestry.has(`${contains}..${sha}`) }), ...(known === undefined ? {} : { parents: known }) };
       }
       case "detach": {
         const { worktree, sha } = input as HostInput<"detach">;

@@ -1,7 +1,8 @@
 // The rules the forward fixes kept coming back to, as scenarios over the fakes: a side effect on a pull request (a push,
 // an after_push command, a review request, a merge post) belongs to the commit Loom pushed and happens once, even when
 // Loom restarts in the middle of the merge, the restack or the fix round; and work that goes back to a worker reaches it
-// once, whether the worker is live, released, or lost its environment.
+// once, whether the worker is live, released, or lost its environment; and a worker on a machine of its own is measured
+// from the base it had, which the project's checkout may not.
 import { beforeEach, describe, expect, it } from "vitest";
 import { settleChecks, submit } from "../src/checks";
 import { specOf, type EngineCtx } from "../src/ctx";
@@ -13,7 +14,8 @@ import { askForPrTexts, handInPrText } from "../src/pull-requests";
 import { advanceWakes, isReleased, releaseIdleWorkers } from "../src/release";
 import { deliverHandBacks } from "../src/slots";
 import { approve, requestChanges, settleReviews, spawnReviewers } from "../src/review";
-import { checkOutHead, makeCtx, reachApproved, reachReview, seedProject, startWorker, ticketOf, type Doc, type EngineHarness } from "./helpers";
+import { resumeWork } from "../src/workers";
+import { checkOutHead, makeCtx, reachApproved, reachReview, readyToMerge, seedMachineProject, seedProject, startWorker, ticketOf, type Doc, type EngineHarness } from "./helpers";
 
 const DEADLINE = "host plugin call 1f46e1e1-6061-4d69-81e2-afb2e9ac216c exceeded its deadline";
 const URL1 = "https://github.com/acme/shop/pull/1";
@@ -245,6 +247,166 @@ describe("the base a ticket's own work is measured from", () => {
     expect(ticket("CSV-2").state).toBe("review");
     expect(h.host.callsTo("worktreeState").filter((input) => input.worktree === `/wt/${worker.environment_id}`).map((input) => input.base)).toEqual(expect.arrayContaining(["sq1"]));
     expect(h.host.callsTo("worktreeState").map((input) => input.base)).not.toContain("origin/main");
+  });
+});
+
+const FEEDBACK = { items: [{ key: "review:1:a", kind: "review" as const, author: "alice", bot: false, body: "Rename the column.", url: null, state: "changes_requested", path: null, line: null }] };
+
+describe("a side effect whose answer Loom lost before it restarted", () => {
+  it("asks for reviews once, when the review request's answer was lost and Loom restarted after it", async () => {
+    await prProject();
+    await fixRoundApproved();
+    const before = h.host.callsTo("prRequestReview").length;
+    h.host.lost.prRequestReview = [new Error(DEADLINE)];
+    await queue();
+    expect(ticket()).toMatchObject({ state: "pr_open", pushed_sha: "sq2" });
+    restart();
+    await queue();
+    await poll();
+    restart();
+    await queue();
+    expect(h.host.callsTo("prRequestReview").slice(before)).toHaveLength(1);
+    expect(h.host.callsTo("push").filter((call) => call.src === "sq2")).toHaveLength(1);
+  });
+
+  it("posts the merge comment once, when its answer was lost and Loom restarted after it", async () => {
+    await seedProject(h, (doc) => {
+      doc.merge = { strategy: "pr", draft: false, forge: { kind: "gh", auto_merge: { mode: "auto", method: "comment", comment: "/merge", rejected: ["❌*"] } } };
+      doc.ticket[1].depends_on = [];
+    });
+    const worker = await reachApproved(h);
+    await askForPrTexts(h.ctx, project(), spec());
+    handInPrText(h.ctx, worker.thread_id!, { title: "Add order rows", body: "Why.", commit_message: "Add the order row mapper" });
+    await queue();
+    h.host.prMeta.set(URL1, { draft: false, review: "APPROVED" });
+    h.host.scripted.prMerge = [Object.assign(new Error("Plugin RPC request failed"), { code: "transport_error" })];
+    await poll();
+    expect(outcomes()).toContain("auto_merge_unknown");
+    restart();
+    await poll();
+    restart();
+    await poll();
+    expect(h.host.callsTo("prMerge")).toHaveLength(1);
+  });
+
+  it("runs after_push once for a push, when its pull request's move failed twice with Loom restarting in between", async () => {
+    const forge = { kind: "command", open: "review create", state: "review state", retarget: 'review edit "$LOOM_PR_NUMBER" --base "$LOOM_BASE"', after_push: ['ci run --branch "$LOOM_HEAD"'] };
+    await seedProject(h, (doc) => {
+      doc.merge = { strategy: "pr", describe: "loom", forge };
+      doc.checks.ci = false;
+    });
+    await reachApproved(h, "CSV-1");
+    await queue();
+    await reachApproved(h, "CSV-2");
+    await queue();
+    expect(ticket("CSV-2").state).toBe("pr_open");
+    const stackedOn = ticket("CSV-1").pr_branch!;
+    h.host.prStates.set(URL1, "MERGED");
+    await poll();
+    expect(ticket("CSV-1").state).toBe("done");
+    h.host.remoteBase = "base001";
+    const execs = h.host.callsTo("exec").length;
+    const runs = () => h.host.callsTo("exec").slice(execs).filter((call) => call.command.startsWith("ci run")).map((call) => call.env!.LOOM_BASE);
+    const failed = { outcome: "unavailable", message: "The forge's retarget command failed (exit 1): 503", transient: "server" };
+    h.host.scripted.prRetarget = [failed, failed];
+    await queue();
+    expect(ticket("CSV-2").state).toBe("merging");
+    expect(runs()).toEqual([stackedOn]);
+
+    restart();
+    h.clock.advance(60_000);
+    await queue();
+    expect(ticket("CSV-2").state).toBe("merging");
+    expect(runs()).toEqual([stackedOn]);
+
+    restart();
+    h.clock.advance(2 * 60_000);
+    await queue();
+    expect(ticket("CSV-2")).toMatchObject({ state: "pr_open", pr_base: "main" });
+    expect(runs()).toEqual([stackedOn, "main"]);
+  });
+});
+
+describe("a worker whose machine is gone for good", () => {
+  it("blocks its ticket once, keeping the work that could not reach it, when Loom restarted between the failed sends", async () => {
+    await prProject();
+    const worker = await reachApproved(h);
+    await askForPrTexts(h.ctx, project(), spec());
+    handInPrText(h.ctx, worker.thread_id!, { title: "Add order rows", body: "Why.", commit_message: "Add the order row mapper" });
+    await queue();
+    h.bb.sendError = new Error("HTTP 503: bb is restarting");
+    h.host.feedback.set(URL1, FEEDBACK);
+    await poll();
+    expect(ticket()).toMatchObject({ state: "working", worker_thread_id: worker.thread_id });
+    expect(ticket().handback_json).not.toBeNull();
+
+    restart();
+    h.bb.removedHosts.add(h.bb.environments.get(h.bb.threads.get(worker.thread_id!)!.environmentId!)!.hostId);
+    h.clock.advance(10 * 60_000);
+    await deliverHandBacks(h.ctx, project().id);
+    expect(ticket()).toMatchObject({ state: "blocked", worker_thread_id: null, handback_json: null, blocked_reason: "its worker can no longer be reached: its machine was removed" });
+    const kept = () => h.store.posts(ticket().id).filter((post) => post.body.includes("Rename the column.") && post.data_json.includes("undeliverable"));
+    expect(kept()).toHaveLength(2);
+
+    restart();
+    h.clock.advance(10 * 60_000);
+    await deliverHandBacks(h.ctx, project().id);
+    await poll();
+    expect(kept()).toHaveLength(2);
+    expect(h.bb.sent(worker.thread_id!).filter((text) => text.includes("Rename the column."))).toHaveLength(2);
+  });
+});
+
+describe("a worker on a machine of its own", () => {
+  it("has its work measured from the base it had, not the checkout's older one, by the reviewer and the pull request, across a restart", async () => {
+    h.host.commitParents = new Map();
+    h.host.exportBase = "wbase";
+    await seedMachineProject(h, (doc) => (doc.merge = { strategy: "pr", stack: false, describe: "loom" }));
+    const worker = await startWorker(h);
+    await resumeWork(h.ctx, worker.thread_id!).catch(() => undefined);
+    const worktree = h.host.worktree(`/wt/${h.store.thread(worker.id)!.environment_id}`);
+    worktree.dirty = true;
+    worktree.changed = ["src/model/a.ts"];
+    submit(h.ctx, worker.thread_id!, "Done");
+    await settleChecks(h.ctx);
+    expect(ticket()).toMatchObject({ state: "review", head_sha: expect.stringMatching(/^home/u) });
+
+    restart();
+    h.host.calls = [];
+    await spawnReviewers(h.ctx, project(), spec());
+    expect(h.host.callsTo("diff").at(-1)).toMatchObject({ base: "wbase" });
+    const reviewer = h.store.threads({ ticketId: ticket().id, role: "reviewer" }).at(-1)!;
+    h.host.worktree(`/wt/${reviewer.environment_id}`).head = "carried-review";
+    h.host.trees.set("carried-review", ticket().head_tree!);
+    await approve(h.ctx, reviewer.thread_id!, "Looks right.");
+    await settleReviews(h.ctx);
+
+    restart();
+    await queue();
+    expect(h.host.callsTo("prCommit").at(-1)).toMatchObject({ base: "wbase", head: ticket().head_sha });
+    expect(ticket().state).toBe("pr_open");
+  });
+
+  it("stacked on an open pull request, is checked against the checkout's base and the stacked commit's tree, never a commit only the checkout has", async () => {
+    await seedMachineProject(h, (doc) => (doc.merge = { strategy: "pr", describe: "loom" }));
+    await reachApproved(h, "CSV-1");
+    await queue();
+    expect(ticket("CSV-1")).toMatchObject({ state: "pr_open", pushed_sha: "sq1" });
+    const worker = await startWorker(h, "CSV-2");
+    restart();
+    await resumeWork(h.ctx, worker.thread_id!);
+    const path = `/wt/${h.store.thread(worker.id)!.environment_id}`;
+    const worktree = h.host.worktree(path);
+    worktree.dirty = true;
+    worktree.changed = ["src/export/a.ts"];
+    h.host.calls = [];
+    submit(h.ctx, worker.thread_id!, "Done");
+    await settleChecks(h.ctx);
+    const states = h.host.callsTo("worktreeState").filter((input) => input.worktree === path);
+    expect(states.length).toBeGreaterThan(0);
+    expect(states.map((input) => input.base)).not.toContain("sq1");
+    expect(states).toEqual(expect.arrayContaining([expect.objectContaining({ base: "origin/main", baseTree: h.host.trees.get("sq1") ?? "sq1" })]));
+    expect(ticket("CSV-2").state).toBe("review");
   });
 });
 
