@@ -311,7 +311,6 @@ const FORGE_COMMANDS = [
   ["merge", "Merges a ready pull request"],
   ["ready", "Marks a draft ready for review"],
   ["request_reviews", "Asks people to review"],
-  ["team_members", "Lists a team's members"],
 ] as const;
 const MERGE_METHODS: Record<AutoMergeSpec["method"], string> = {
   squash: "gh: squash and merge",
@@ -427,16 +426,9 @@ function ReviewerParts({ path, label, rules }: { path: string; label: string; ru
                 {rule.count ?? "every one"}
               </Commentable>
               <span className="text-muted-foreground">of</span>
-              {(rule.team !== undefined || changedAt(review, `${one}.team`)) && (
-                <Commentable as="span" target={value(`${one}.team`, `${label} › reviewers ${index + 1} › team`, "text", rule.team)} className={CODE}>
-                  {rule.team ?? "no team"}
-                </Commentable>
-              )}
-              {(rule.users !== undefined || changedAt(review, `${one}.users`)) && (
-                <Commentable as="span" target={value(`${one}.users`, `${label} › reviewers ${index + 1} › users`, "text")} className={CODE}>
-                  {(rule.users ?? []).join(", ") || "no logins"}
-                </Commentable>
-              )}
+              <Commentable as="span" target={value(`${one}.users`, `${label} › reviewers ${index + 1} › users`, "text")} className={CODE}>
+                {rule.users.join(", ")}
+              </Commentable>
             </li>
           );
         })}

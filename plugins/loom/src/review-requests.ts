@@ -47,7 +47,7 @@ export function pickReviewers(url: string, pool: ReadonlyArray<{ login: string; 
   return { kept, picked, short: need - picked.length };
 }
 
-const ruleText = (rule: ReviewerRuleSpec) => (rule.team !== undefined ? `${rule.count} of ${rule.team}` : rule.count === undefined ? andList(rule.users!) : `${rule.count} of ${andList(rule.users!)}`);
+const ruleText = (rule: ReviewerRuleSpec) => (rule.count === undefined ? andList(rule.users) : `${rule.count} of ${andList(rule.users)}`);
 
 /** A failed call: `thrown` when the call got no answer from the project's machine, rather than the forge's own failure. */
 type Failure = { message: string; transient: boolean; thrown: boolean };
@@ -140,22 +140,7 @@ export async function requestReviewers(ctx: EngineCtx, project: ProjectRow, tick
   const picks: Array<{ rule: ReviewerRuleSpec; kept: string[]; picked: string[]; short: number; problem: string | null }> = [];
   const taken = new Set<string>();
   for (const rule of rules) {
-    let pool: Array<{ login: string; bot: boolean }>;
-    if (rule.team !== undefined) {
-      const team = rule.team;
-      const members = await call(() => ctx.host.call(checkout.hostId, "teamMembers", { repo: checkout.path, team, forge: teamForge(forge, url) }));
-      if (isFailure(members)) {
-        if (members.transient) {
-          const ticket = stillAsking(ctx, project.id, first.id, url);
-          return ticket === null ? undefined : failed(ticket, `Loom could not list ${team}: ${members.message}`);
-        }
-        picks.push({ rule, kept: [], picked: [], short: 0, problem: `Loom could not list the team: ${members.message}` });
-        continue;
-      }
-      pool = (members as Extract<HostOutput<"teamMembers">, { outcome: "ok" }>).members;
-    } else {
-      pool = rule.users!.map((login) => ({ login, bot: false }));
-    }
+    const pool = rule.users.map((login) => ({ login, bot: false }));
     const pick = pickReviewers(url, pool, rule.count ?? pool.length, { exclude, already, taken });
     for (const login of pick.picked) taken.add(login.toLowerCase());
     picks.push({ rule, ...pick, problem: null });
@@ -196,4 +181,3 @@ export async function requestReviewers(ctx: EngineCtx, project: ProjectRow, tick
   done(after, [head, "", ...lines(requested), ...(misses.length === 0 ? [] : ["", ...misses])].join("\n"), { requested: answer.requested, failed: [...problems, ...answer.failed] });
 }
 
-const teamForge = (forge: ForgeSpec, url: string) => (forge.kind === "command" ? { kind: "command" as const, team_members: forge.team_members! } : { kind: "gh" as const, host: githubPull(url)?.host ?? "github.com" });

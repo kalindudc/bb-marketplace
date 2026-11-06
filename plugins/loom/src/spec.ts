@@ -114,11 +114,10 @@ export const autoMergeSchema = z
 
 const forgeLogin = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.@+-]{0,199}$/, "must be a forge login, such as alice or alice@example.com");
 
-// Who Loom asks to review each pull request it opens: a sample of a team, or of fixed logins.
+// Who Loom asks to review each pull request it opens: a sample of fixed logins.
 export const reviewerRuleSchema = z
   .object({
-    team: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.@/-]{0,199}$/, "must be a team name, such as acme/platform").optional(),
-    users: z.array(forgeLogin).min(1).max(50).optional(),
+    users: z.array(forgeLogin).min(1).max(50),
     count: z.number().int().min(1).max(10).optional(),
   })
   .strict();
@@ -143,9 +142,8 @@ export const forgeSchema = z
     merge: command.optional(),
     // Marks a draft pull request ready for review in LOOM_URL; gh does it itself.
     ready: command.optional(),
-    // Asks the logins in LOOM_REVIEWERS to review; and lists a team's members, one login per line.
+    // Asks the logins in LOOM_REVIEWERS to review.
     request_reviews: command.optional(),
-    team_members: command.optional(),
     auto_merge: autoMergeSchema.optional(),
     reviewers: z.array(reviewerRuleSchema).min(1).max(10).optional(),
   })
@@ -382,6 +380,8 @@ const FINAL_FIXED = "The final review always uses agents.reviewer at low reasoni
 
 const REVIEWER_ENV_GONE = "Reviewers, the spec reviewer and the summary agent start in the repo's own environment, as workers do: remove the key.";
 
+const TEAMS_GONE = "A reviewers rule names its people in users, with an optional count to pick from them: remove the key.";
+
 /** Keys Loom once read and no longer does, by their path with every array index written [], and what replaces each. */
 const REMOVED_KEYS: Readonly<Record<string, string>> = {
   "merge.checks_queued_minutes": settingHome("checksQueuedMinutes"),
@@ -396,6 +396,10 @@ const REMOVED_KEYS: Readonly<Record<string, string>> = {
   ...Object.fromEntries(["provider", "model", "reasoning", "timeout_minutes"].flatMap((key) => ["merge.forge", "repo[].forge"].map((at) => [`${at}.auto_merge.final_review.${key}`, FINAL_FIXED]))),
   "environment.reviewer": REVIEWER_ENV_GONE,
   "repo[].environment.reviewer": REVIEWER_ENV_GONE,
+  "merge.forge.team_members": TEAMS_GONE,
+  "repo[].forge.team_members": TEAMS_GONE,
+  "merge.forge.reviewers[].team": TEAMS_GONE,
+  "repo[].forge.reviewers[].team": TEAMS_GONE,
   "merge.squash": "Loom always pushes the reviewed work as one commit, and each fix round as one more: remove the key.",
   "merge.release_workers": "Loom always releases an idle worker whose pull request is open, so bb frees its environment, and brings it back when the pull request needs it: remove the key.",
 };
@@ -820,7 +824,7 @@ function forgeErrors(spec: Spec, forge: ForgeSpec | undefined, at: string): stri
     }
     return errors;
   }
-  for (const key of ["open", "state", "feedback", "edit", "reply", "retarget", "merge", "request_reviews", "team_members"] as const) {
+  for (const key of ["open", "state", "feedback", "edit", "reply", "retarget", "merge", "request_reviews"] as const) {
     if (forge[key] !== undefined) errors.push(`${at}.${key}: only kind = "command" runs it, and ${at}.kind is "${forge.kind}". Remove it, or set kind = "command".`);
   }
   if (forge.kind === "none") {
@@ -866,22 +870,17 @@ function autoMergeErrors(spec: Spec, forge: ForgeSpec, at: string): string[] {
 function reviewerErrors(spec: Spec, forge: ForgeSpec, at: string): string[] {
   const errors: string[] = [];
   if (forge.kind === "command" && forge.request_reviews !== undefined && forge.reviewers === undefined) errors.push(`${at}.request_reviews: only reviewers runs it, and ${at} has none. Add ${at}.reviewers, or remove request_reviews.`);
-  if (forge.kind === "command" && forge.team_members !== undefined && !(forge.reviewers ?? []).some((rule) => rule.team !== undefined)) errors.push(`${at}.team_members: only a reviewers rule with a team runs it. Add one, or remove team_members.`);
   const rules = forge.reviewers;
   if (rules === undefined) return errors;
   if (spec.merge.strategy === "integration") return [...errors, PR_ONLY(`${at}.reviewers`, "it asks for reviews of")];
   if (forge.kind === "none") return [...errors, `${at}.reviewers: kind = "none" opens no pull request, so there is no one to ask. Remove reviewers, or use kind = "gh" or "command".`];
   if (forge.kind === "command" && forge.request_reviews === undefined) errors.push(`${at}.request_reviews: is required with reviewers on a kind = "command" forge. Add the command that asks the logins in LOOM_REVIEWERS to review the pull request in LOOM_URL.`);
   if (forge.kind === "command" && forge.feedback === undefined) errors.push(`${at}.reviewers: Loom asks for reviews once the forge says the pull request is not a draft, and this forge has no feedback command to say so. Add ${at}.feedback, printing draft, or remove reviewers.`);
-  const most = rules.reduce((sum, rule) => sum + (rule.count ?? rule.users?.length ?? 0), 0);
+  const most = rules.reduce((sum, rule) => sum + (rule.count ?? rule.users.length), 0);
   if (most > REVIEWERS_MAX) errors.push(`${at}.reviewers: these rules may ask up to ${most} people to review one pull request, and Loom asks at most ${REVIEWERS_MAX}. Lower the counts, or set count on a rule of users.`);
   rules.forEach((rule, index) => {
     const path = `${at}.reviewers[${index}]`;
-    if ((rule.team === undefined) === (rule.users === undefined)) errors.push(`${path}: set team or users, not ${rule.team === undefined ? "neither" : "both"}.`);
-    if (rule.team !== undefined && rule.count === undefined) errors.push(`${path}.count: is required with team. Set how many of its members to ask, such as 2.`);
-    if (rule.team !== undefined && forge.kind === "gh" && !/^[^/]+\/[^/]+$/.test(rule.team)) errors.push(`${path}.team: "${rule.team}" is not an organization and a team slug, such as acme/platform.`);
-    if (rule.team !== undefined && forge.kind === "command" && forge.team_members === undefined) errors.push(`${at}.team_members: is required for a reviewers rule with a team on a kind = "command" forge. Add the command that prints the members of the team in LOOM_TEAM, one login per line.`);
-    if (rule.users !== undefined && rule.count !== undefined && rule.count > rule.users.length) errors.push(`${path}.count: ${rule.count} is more than the ${plural(rule.users.length, "login")} in users. Lower count, or add logins.`);
+    if (rule.count !== undefined && rule.count > rule.users.length) errors.push(`${path}.count: ${rule.count} is more than the ${plural(rule.users.length, "login")} in users. Lower count, or add logins.`);
   });
   return [...new Set(errors)];
 }

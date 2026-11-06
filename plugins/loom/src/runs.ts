@@ -50,7 +50,6 @@ export const STEP_LABELS: Record<Exclude<HostMethod, "exec">, string> = {
   prEdit: "set the pull request's title and description",
   prReply: "reply on the pull request",
   prReviewState: "read who reviews the pull request",
-  teamMembers: "read the team's members",
   prMerge: "merge the pull request",
   prFeedback: "read the pull request's feedback",
   checkoutPrint: "fingerprint the checkout",
@@ -199,7 +198,6 @@ const SUMMARIES: { [M in Exclude<HostMethod, "exec">]: (output: HostOutput<M>) =
     const names = (logins: readonly string[]) => (logins.length === 0 ? "no one" : logins.join(", "));
     return done(`Opened by ${read.author ?? "someone unknown"}; asked: ${names(read.requested)}; reviewed: ${names(read.reviewed)}.`);
   },
-  teamMembers: (read) => (read.outcome === "ok" ? done(`${plural(read.members.length, "member")}.`) : { ok: false, text: read.message }),
   prMerge: (merged) => (merged.outcome === "ok" ? done("The forge took the merge.") : { ok: false, text: merged.message }),
   prFeedback: (read) => {
     if (read.outcome !== "ok") return { ok: false, text: read.message };

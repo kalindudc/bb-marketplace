@@ -1900,28 +1900,6 @@ export async function prReviewState(input: HostInput<"prReviewState">, signal?: 
   return { outcome: "ok", author: login(read.author), requested, reviewed };
 }
 
-const TEAM_LOGIN = /^[A-Za-z0-9][A-Za-z0-9_.@+-]{0,199}$/u;
-
-export async function teamMembers(input: HostInput<"teamMembers">, signal?: AbortSignal): Promise<HostOutput<"teamMembers">> {
-  if (input.forge.kind === "command") {
-    const result = await spawnCommand({ cwd: input.repo, command: input.forge.team_members, timeoutMs: FORGE_COMMAND_MS, env: { LOOM_TEAM: input.team } }, signal);
-    const failed = commandReadFailed("team_members", result);
-    if (failed !== null) return failed;
-    const logins = result.output.split("\n").map((line) => line.trim()).filter((line) => TEAM_LOGIN.test(line));
-    return { outcome: "ok", members: [...new Set(logins)].map((login) => ({ login, bot: login.endsWith("[bot]") })) };
-  }
-  const [org, slug] = input.team.split("/");
-  if (org === undefined || slug === undefined || slug === "") return { outcome: "unavailable", message: `${input.team} is not an organization and a team slug, such as acme/platform.` };
-  const listed = await ghCall(input.repo, ["api", "--hostname", input.forge.host, "--paginate", `orgs/${org}/teams/${slug}/members?per_page=100`, "--jq", ".[] | [.login, .type] | @tsv"], { signal });
-  if (listed === "missing") return { outcome: "unavailable", message: GH_MISSING };
-  if (listed.code !== 0) return readFailed(`gh api orgs/${org}/teams/${slug}/members`, listed);
-  const members = listed.stdout.split("\n").flatMap((line) => {
-    const [login, type] = line.split("\t");
-    return login !== undefined && TEAM_LOGIN.test(login) ? [{ login, bot: type === "Bot" }] : [];
-  });
-  return { outcome: "ok", members };
-}
-
 // gh's own words for a pull request that cannot merge because its branch conflicts with, or lags behind, its base: the worker can fix those.
 const MERGE_FIXABLE = /conflict|not mergeable|cannot be cleanly created|out of date|head branch was modified|is behind/iu;
 export const MERGE_COMMAND_MS = 5 * 60_000;

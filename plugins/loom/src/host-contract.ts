@@ -538,18 +538,6 @@ export const hostContract = defineRpcContract({
     input: z.object({ repo: absPath, url: prUrl }).strict(),
     output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok"), author: z.string().nullable(), requested: z.array(z.string()), reviewed: z.array(z.string()) }).strict(), unavailable]),
   },
-  // A team's members: through gh, the organization team `team` (org/slug) on `host`; or the spec's team_members command,
-  // which gets LOOM_TEAM and prints one login per line.
-  teamMembers: {
-    input: z
-      .object({
-        repo: absPath,
-        team: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.@/-]{0,199}$/u, "must be a team name"),
-        forge: z.discriminatedUnion("kind", [z.object({ kind: z.literal("gh"), host: ghHost }).strict(), z.object({ kind: z.literal("command"), team_members: forgeCommand }).strict()]),
-      })
-      .strict(),
-    output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok"), members: z.array(z.object({ login: z.string(), bot: z.boolean() }).strict()) }).strict(), unavailable]),
-  },
   // Merges a ready pull request, or hands it to the forge's merge: gh pr merge with the method and --match-head-commit, gh
   // pr merge --auto for a merge queue, a gh comment for a merge service, or the spec's merge command. `rejected` is the
   // forge refusing this pull request in a way Loom reports: `fix` when the worker can address it, such as a conflict.

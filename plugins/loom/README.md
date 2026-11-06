@@ -991,11 +991,11 @@ auto_merge = { method = "squash", final_review = {} }   # or final_review = true
 ### Asking for reviews
 
 A forge's `reviewers` lists who Loom asks to review each pull request it
-opens: a sample of a team, or of fixed logins.
+opens: a sample of fixed logins.
 
 ```toml
 [[merge.forge.reviewers]]
-team = "acme/platform"        # with gh, an organization and a team slug
+users = ["alice", "bob", "carol"]
 count = 2
 ```
 
@@ -1005,15 +1005,13 @@ count = 2
   that prints `draft`.
 - The pick is random but stable: members are ordered by a hash of the pull
   request's URL and their login, so a retry or a restart picks the same
-  people. The author and bots are never picked and never count, and members
-  already asked or reviewing count toward `count`. `users = ["alice", "bob"]`
-  picks from fixed logins, all of them when `count` is unset. A forge's rules
-  may ask at most 20 people for one pull request.
-- With `gh` Loom lists the team with `gh api` and asks with the same call as
-  its re-requests. A command forge needs `request_reviews`, which gets the
-  logins comma-separated in `LOOM_REVIEWERS`, and for a team rule
-  `team_members`, which gets `LOOM_TEAM` and prints one login per line, in the
-  login form that server's `request_reviews` takes. Loom records the request
+  people. The author and bots are never picked and never count, and people
+  already asked or reviewing count toward `count`. Without `count`, Loom asks
+  every login in `users`. A forge's rules may ask at most 20 people for one
+  pull request.
+- With `gh` Loom asks with the same call as its re-requests. A command forge
+  needs `request_reviews`, which gets the logins comma-separated in
+  `LOOM_REVIEWERS`. Loom records the request
   before it sends it. A `request_reviews` command that exits non-zero must
   have asked no one, and Loom tries again at the next read, three times in
   all; one that runs out of time, is stopped after it started, or whose

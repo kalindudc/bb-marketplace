@@ -102,17 +102,15 @@ describe("auto-merge in the spec", () => {
     expect(warned.warnings.join("\n")).toContain("merge.forge.auto_merge.rejected: unset");
   });
 
-  it("refuses a reviewer rule with no source or two, a team with no count, and a command forge that cannot ask or list", () => {
+  it("refuses a reviewer rule without users, a team and team_members, and a command forge that cannot ask", () => {
     const errors = (forge: Doc) => parseSpec(specToml(pr({ forge }))).errors.join("\n");
-    expect(errors({ kind: "gh", reviewers: [{ count: 1 }] })).toContain("set team or users, not neither");
-    expect(errors({ kind: "gh", reviewers: [{ team: "acme/a", users: ["bob"], count: 1 }] })).toContain("not both");
-    expect(errors({ kind: "gh", reviewers: [{ team: "acme/a" }] })).toContain("count: is required with team");
-    expect(errors({ kind: "gh", reviewers: [{ team: "platform", count: 2 }] })).toContain("is not an organization and a team slug");
+    const why = "Loom no longer reads this key. A reviewers rule names its people in users, with an optional count to pick from them: remove the key.";
+    expect(errors({ kind: "gh", reviewers: [{ count: 1 }] })).toContain("merge.forge.reviewers[0].users: is required. Add it.");
+    expect(errors({ kind: "gh", reviewers: [{ team: "acme/a", users: ["bob"], count: 1 }] })).toBe(`merge.forge.reviewers[0].team: ${why}`);
+    expect(errors({ kind: "command", open: "o", state: "s", feedback: "f", request_reviews: "r", team_members: "t", reviewers: [{ users: ["bob"] }] })).toBe(`merge.forge.team_members: ${why}`);
     expect(errors({ kind: "gh", reviewers: [{ users: ["a", "b"], count: 3 }] })).toContain("3 is more than the 2 logins in users");
-    expect(errors({ kind: "command", open: "o", state: "s", feedback: "f", reviewers: [{ team: "platform", count: 2 }] })).toContain("request_reviews: is required with reviewers");
-    expect(errors({ kind: "command", open: "o", state: "s", feedback: "f", request_reviews: "r", reviewers: [{ team: "platform", count: 2 }, { team: "web", count: 1 }] }).match(/team_members: is required/g)).toHaveLength(1);
+    expect(errors({ kind: "command", open: "o", state: "s", feedback: "f", reviewers: [{ users: ["bob"] }] })).toContain("request_reviews: is required with reviewers");
     expect(errors({ kind: "gh", reviewers: [{ users: ["alice@example.com", "bob"], count: 1 }] })).toBe("");
-    expect(errors({ kind: "command", open: "o", state: "s", feedback: "f", request_reviews: "r", team_members: "t", reviewers: [{ team: "platform", count: 2 }] })).toBe("");
   });
 });
 
@@ -341,17 +339,15 @@ describe("asking for reviews", () => {
     expect(pickReviewers(URL, people("alice"), 2, { exclude: new Set(), already: new Set() })).toEqual({ kept: [], picked: ["alice"], short: 1 });
   });
 
-  it("asks two of a team once the pull request is not a draft, once, and says who and why", async () => {
+  it("asks two of a rule's users once the pull request is not a draft, once, and says who and why", async () => {
     // Held as a draft, so Loom does not mark it ready itself; someone marks it ready on the forge.
-    await openPr({ draft: true, forge: { kind: "gh", reviewers: [{ team: "acme/edge", count: 2 }, { users: ["zoe"] }] } }, (doc) => void (doc.ticket[0].keep_draft = true));
-    h.host.teams.set("acme/edge", people("alice", "bob", "carol", "kalindudc", "ci[bot]"));
+    await openPr({ draft: true, forge: { kind: "gh", reviewers: [{ users: ["alice", "bob", "carol", "kalindudc"], count: 2 }, { users: ["zoe"] }] } }, (doc) => void (doc.ticket[0].keep_draft = true));
     h.host.reviewState.set(URL, { author: "kalindudc", requested: ["bob"], reviewed: [] });
     await poll();
     expect(h.host.callsTo("prRequestReview")).toEqual([]);
     h.host.prMeta.set(URL, { ...h.host.prMeta.get(URL), draft: false });
     await poll();
     await poll();
-    expect(h.host.callsTo("teamMembers")).toEqual([expect.objectContaining({ team: "acme/edge", forge: { kind: "gh", host: "github.com" } })]);
     const asked = h.host.callsTo("prRequestReview");
     expect(asked).toHaveLength(1);
     const expected = pickReviewers(URL, people("alice", "bob", "carol", "kalindudc"), 2, { exclude: new Set(["kalindudc"]), already: new Set(["bob"]) }).picked;
@@ -359,17 +355,15 @@ describe("asking for reviews", () => {
     expect(asked[0]).not.toHaveProperty("forge");
     const post = dataOf("reviewers_requested")[0]!;
     expect(post.data.requested).toEqual([...expected, "zoe"]);
-    expect(post.post.body).toContain("2 of acme/edge: asked");
+    expect(post.post.body).toContain("2 of alice, bob, carol and kalindudc: asked");
     expect(post.post.body).toContain("bob was already asked or reviewing");
     expect(h.store.ticketEvents(ticket().id, [REVIEWERS_REQUESTED])).toHaveLength(1);
   });
 
-  it("lists and asks through a command forge's team_members and request_reviews", async () => {
-    await openPr({ forge: { kind: "command", open: "o", state: "s", feedback: "f", request_reviews: "ask-cli", team_members: "people-cli", reviewers: [{ team: "edge", count: 1 }] } });
-    h.host.teams.set("edge", people("alice@example.com"));
+  it("asks through a command forge's request_reviews", async () => {
+    await openPr({ forge: { kind: "command", open: "o", state: "s", feedback: "f", request_reviews: "ask-cli", reviewers: [{ users: ["alice@example.com"], count: 1 }] } });
     h.host.feedback.set(URL, { draft: false, author: "kalindudc" });
     await poll();
-    expect(h.host.callsTo("teamMembers")).toEqual([expect.objectContaining({ team: "edge", forge: { kind: "command", team_members: "people-cli" } })]);
     expect(h.host.callsTo("prReviewState")).toEqual([]);
     expect(h.host.callsTo("prRequestReview")).toEqual([expect.objectContaining({ reviewers: ["alice@example.com"], forge: { kind: "command", request_reviews: "ask-cli" } })]);
   });

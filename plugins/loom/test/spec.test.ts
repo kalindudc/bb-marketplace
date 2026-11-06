@@ -601,7 +601,7 @@ describe("forges and environments", () => {
     expect(run((doc) => (doc.merge = { strategy: "integration", describe: "worker" })).errors).toEqual([
       'merge.describe: it applies to the pull request Loom opens for each ticket, but merge.strategy is "integration". Remove it, or use merge.strategy = "pr".',
     ]);
-    expect(run((doc) => (doc.merge = { strategy: "pr" })).errors).toEqual(["merge.squash: Loom no longer reads this key. Loom always pushes the reviewed work as one commit, and each fix round as one more: remove the key."]);
+    expect(run((doc) => (doc.merge = { strategy: "pr", squash: false })).errors).toEqual(["merge.squash: Loom no longer reads this key. Loom always pushes the reviewed work as one commit, and each fix round as one more: remove the key."]);
     expect(run((doc) => (doc.merge = { strategy: "pr", forge: { kind: "gh", feedback: "f" } })).errors).toEqual(['merge.forge.feedback: only kind = "command" runs it, and merge.forge.kind is "gh". Remove it, or set kind = "command".']);
     expect(run((doc) => (doc.merge = { strategy: "pr", max_fix_rounds: 21 })).errors[0]).toMatch(/^merge\.max_fix_rounds: /u);
     expect(run((doc) => (doc.merge = { strategy: "pr", describe: "planner" })).errors[0]).toMatch(/^merge\.describe: /u);

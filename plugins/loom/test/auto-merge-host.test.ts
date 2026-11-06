@@ -2,7 +2,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSy
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { batchQuery, ghQueue, MERGE_REFUSED_EXIT, MERGE_REJECTED_EXIT, prFeedback, prMerge, prRequestReview, prReviewState, teamMembers } from "../src/host/ops";
+import { batchQuery, ghQueue, MERGE_REFUSED_EXIT, MERGE_REJECTED_EXIT, prFeedback, prMerge, prRequestReview, prReviewState } from "../src/host/ops";
 
 const URL = "https://github.com/acme/shop/pull/7";
 const SHA = "0123456789abcdef0123456789abcdef01234567";
@@ -93,14 +93,6 @@ describe("reviewer requests on the host", () => {
     fakeGh(`echo '{"author":{"login":"kalindudc"},"reviewRequests":[{"__typename":"User","login":"bob"},{"__typename":"Team","name":"edge","slug":"edge"}],"reviews":[{"author":{"login":"carol"}},{"author":{"login":"carol"}}]}'`);
     expect(await prReviewState({ repo, url: URL })).toEqual({ outcome: "ok", author: "kalindudc", requested: ["bob"], reviewed: ["carol"] });
     expect(calls()).toEqual([["pr", "view", URL, "--json", "author,reviewRequests,reviews"]]);
-  });
-
-  it("lists a GitHub team's members with gh api, every page, and a command forge's team with its command", async () => {
-    fakeGh(`printf 'alice\\tUser\\nci-bot\\tBot\\n'`);
-    expect(await teamMembers({ repo, team: "acme/edge", forge: { kind: "gh", host: "github.example.com" } })).toEqual({ outcome: "ok", members: [{ login: "alice", bot: false }, { login: "ci-bot", bot: true }] });
-    expect(calls()).toEqual([["api", "--hostname", "github.example.com", "--paginate", "orgs/acme/teams/edge/members?per_page=100", "--jq", ".[] | [.login, .type] | @tsv"]]);
-    const listed = await teamMembers({ repo, team: "edge", forge: { kind: "command", team_members: `[ "$LOOM_TEAM" = edge ] && printf 'warning: slow\\nalice@example.com\\nbob@example.com\\n\\nalice@example.com\\n'` } });
-    expect(listed).toEqual({ outcome: "ok", members: [{ login: "alice@example.com", bot: false }, { login: "bob@example.com", bot: false }] });
   });
 
   it("asks through a command forge's request_reviews with every login in LOOM_REVIEWERS", async () => {

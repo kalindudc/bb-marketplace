@@ -385,8 +385,6 @@ export class FakeHost implements HostPort {
   prints = new Map<string, string | Error>();
   /** What finalScratch lists in each scratch directory it made, by key. */
   scratch = new Map<string, string[]>();
-  /** Each team's members as teamMembers lists them; a missing team has none. */
-  teams = new Map<string, Array<{ login: string; bot: boolean }>>();
   /** Each pull request's title and description as the forge has them, by URL: prCreate and prEdit set them, and prBatch and prFeedback read them. */
   texts = new Map<string, { title: string | null; body: string | null }>();
   private squashes = 0;
@@ -628,8 +626,6 @@ export class FakeHost implements HostPort {
         return { outcome: "ok", requested: [...(input as HostInput<"prRequestReview">).reviewers], failed: [] };
       case "prReviewState":
         return { outcome: "ok", ...(this.reviewState.get((input as HostInput<"prReviewState">).url) ?? { author: "kalindudc", requested: [], reviewed: [] }) };
-      case "teamMembers":
-        return { outcome: "ok", members: [...(this.teams.get((input as HostInput<"teamMembers">).team) ?? [])] };
       case "prMerge":
         return { outcome: "ok" };
       case "checkoutPrint": {
