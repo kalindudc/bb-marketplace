@@ -147,3 +147,12 @@ export function autoMergeOf(forge: ForgeSpec): AutoMergeSettings | null {
 
 /** The methods that may run again after a failure Loom cannot read: gh merges or queues a pull request at most once, while a comment or a command could be posted twice. */
 export const repeatableMerge = (method: AutoMergeSettings["method"]) => method !== "comment" && method !== "command";
+
+/** Where a person fixes these forges' commands: in the spec, or in the forge profile a forge names in Loom's settings. */
+export function forgeCommandHome(forges: readonly ForgeSpec[]): string {
+  const commands = forges.filter((forge) => forge.kind === "command");
+  const profiles = [...new Set(commands.flatMap((forge) => (forge.profile === undefined ? [] : [forge.profile])))];
+  const inSpec = commands.length === 0 || commands.some((forge) => forge.profile === undefined);
+  const named = profiles.length === 0 ? [] : [`in the forge ${profiles.length === 1 ? "profile" : "profiles"} ${profiles.map((id) => `"${id}"`).join(" or ")} in Loom's settings, under Forges`];
+  return [...(inSpec ? ["in the spec"] : []), ...named].join(", or ");
+}

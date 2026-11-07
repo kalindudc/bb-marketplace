@@ -97,6 +97,15 @@ describe("a running project on a forge profile", () => {
     expect(post.body).toBe(`The forge profile Forge (forge) changed, from version ${before} to ${saved.hash}: Loom runs its new commands from its next call to the forge.`);
   });
 
+  it("pauses with a fix that points at the profile in Loom's settings when one of its commands breaks the host contract", async () => {
+    saveProfile(h.store, FORGE, null);
+    await seedProject(h, usesProfile());
+    await reachApproved(h);
+    h.host.errors.prCreate = Object.assign(new Error("Host output did not match schema"), { code: "invalid_output" });
+    await queue();
+    expect(project().system_reason).toMatch(/Fix the forge command so it prints what the spec reference describes, then resume the project\. The command is in the forge profile "forge" in Loom's settings, under Forges\.$/u);
+  });
+
   it("marks a draft ready with the profile's ready command, and needs no after_open script for it", async () => {
     saveProfile(h.store, FORGE, null);
     await seedProject(h, usesProfile());

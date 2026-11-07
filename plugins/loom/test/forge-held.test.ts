@@ -64,7 +64,7 @@ it("pauses the project with the fix when the forge's merge answer breaks the hos
   await ready(h);
   h.host.errors.prMerge = Object.assign(new Error("bad forge output"), { code: "invalid_output" });
   await followAutoMerge(h.ctx, project(h), ticket(h).id, read(h));
-  expect(project(h)).toMatchObject({ state: "paused", system_reason: expect.stringMatching(/bad forge output\. Fix the forge command in the spec/u) });
+  expect(project(h)).toMatchObject({ state: "paused", system_reason: expect.stringMatching(/bad forge output\. Fix the forge command so it prints what the spec reference describes, then resume the project\. The command is in the spec\./u) });
   expect(ticket(h).state).toBe("pr_open");
 });
 
@@ -75,7 +75,7 @@ it("pauses the project with the fix when marking a draft ready gets a broken ans
   h.host.errors.prReady = Object.assign(new Error("bad forge output"), { code: "invalid_output" });
   await runMergeQueue(h.ctx, project(h), specOf(h.store, project(h)));
   await settleMerges(h.ctx);
-  expect(project(h)).toMatchObject({ state: "paused", system_reason: expect.stringMatching(/bad forge output\. Fix the forge command in the spec/u) });
+  expect(project(h)).toMatchObject({ state: "paused", system_reason: expect.stringMatching(/bad forge output\. Fix the forge command so it prints what the spec reference describes, then resume the project\. The command is in the spec\./u) });
   expect(h.store.posts(ticket(h).id).some((post) => post.body.includes("could not mark"))).toBe(false);
 
   h.host.errors.prReady = null;
@@ -87,5 +87,5 @@ it("pauses the project with the fix when asking for reviews gets a broken answer
   const h = await opened({ kind: "command", open: "o", state: "s", feedback: "f", request_reviews: "ask", reviewers: [{ users: ["bob"] }] });
   h.host.errors.prRequestReview = Object.assign(new Error("bad forge output"), { code: "invalid_output" });
   await requestReviewers(h.ctx, project(h), ticket(h).id, { draft: false, author: "alice", reviewed: [] });
-  expect(project(h)).toMatchObject({ state: "paused", system_reason: expect.stringMatching(/bad forge output\. Fix the forge command in the spec/u) });
+  expect(project(h)).toMatchObject({ state: "paused", system_reason: expect.stringMatching(/bad forge output\. Fix the forge command so it prints what the spec reference describes, then resume the project\. The command is in the spec\./u) });
 });

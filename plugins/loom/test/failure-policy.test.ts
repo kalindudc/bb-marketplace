@@ -194,7 +194,7 @@ describe("on a running project", () => {
     await reachApproved(h);
     h.host.errors.prCreate = Object.assign(new Error("Host output did not match schema"), { code: "invalid_output" });
     await queue();
-    expect(project()).toMatchObject({ state: "paused", system_reason: expect.stringMatching(/^Merging CSV-1 stopped: Host output did not match schema\. Fix the forge command in the spec/u) });
+    expect(project()).toMatchObject({ state: "paused", system_reason: expect.stringMatching(/^Merging CSV-1 stopped: Host output did not match schema\. Fix the forge command so it prints what the spec reference describes, then resume the project\. The command is in the spec\./u) });
 
     h = makeCtx();
     await seedProject(h, pr);

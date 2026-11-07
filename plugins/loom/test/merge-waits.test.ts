@@ -341,7 +341,7 @@ describe("a merge that fails in a way worth waiting out", () => {
       resume();
       h.host.scripted.prCreate = [{ outcome: "unavailable", message: "The forge's open command printed no pull request URL: created" }];
       await queue();
-      expect(project()).toMatchObject({ state: "paused", system_reason: expect.stringMatching(/^Merging CSV-1 stopped: The forge's open command printed no pull request URL: created\. Fix the forge command in the spec/u) });
+      expect(project()).toMatchObject({ state: "paused", system_reason: expect.stringMatching(/^Merging CSV-1 stopped: The forge's open command printed no pull request URL: created\. Fix the forge command so it prints what the spec reference describes, then resume the project\. The command is in the spec\./u) });
       expect(systemPosts()).toEqual([]);
     });
 

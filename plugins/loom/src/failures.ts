@@ -142,9 +142,9 @@ const NO_CHECKOUT = /\bhas no checkout on the machine\b/iu;
 const LASTING =
   /\bCONFLICT\b|\bnon-fast-forward\b|\[rejected\]|\[remote rejected\]|protected branch|couldn't find remote ref|unknown revision|bad revision|not a valid object name|could not resolve to a (?:PullRequest|Repository)|no pull request found|not a GitHub pull request URL|is part of a stack|\bHTTP (?:404|409|410|422)\b/iu;
 
-const PROJECT_FIX = {
+export const PROJECT_FIX = {
   signedOut: "Sign in on the project's machine (for gh, `gh auth login`; for git, the remote's credentials), then resume the project.",
-  command: "Fix the forge command in the spec so it prints what the spec reference describes, then resume the project.",
+  command: "Fix the forge command so it prints what the spec reference describes, then resume the project.",
 };
 
 const of = (kind: FailureKind, scope: FailureScope, reason: string, known: boolean, extra: Partial<Failure> = {}): Failure => ({ kind, scope, reason, known, ...extra });

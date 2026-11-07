@@ -7,14 +7,15 @@
 // contract, pauses the project, and its reason says what the human must fix. Other tickets keep going in every case but
 // the last.
 import type { TicketRow } from "./db/store";
-import { ForgeContractError, classify, type Failure } from "./failures";
+import { ForgeContractError, PROJECT_FIX, classify, type Failure } from "./failures";
 import { plural } from "./format";
+import { forgeCommandHome, repoSettings } from "./repos";
 import { loomPost } from "./posts";
 import { decide, nextRetry, retryOf, type RetryDecision } from "./retry-wait";
 import { LOOM_ACTOR } from "./states";
 import { readSub, writeSub, type RetryStep } from "./sub-state";
 import { endLiveRows } from "./workers";
-import type { EngineCtx } from "./ctx";
+import { specOf, type EngineCtx } from "./ctx";
 
 const clause = (message: string) => message.trim().replace(/[.:]+$/u, "");
 
@@ -23,7 +24,7 @@ const clause = (message: string) => message.trim().replace(/[.:]+$/u, "");
  * as a merge's must be taken out first; if it fails, the ticket waits instead. Other tickets are never touched.
  */
 export async function stepFailed(ctx: EngineCtx, ticket: TicketRow, step: RetryStep, error: unknown, a: { what: string; head?: string; pr?: string; floorMs?: number; stop?: () => Promise<void> }): Promise<RetryDecision["do"]> {
-  const failure = isFailure(error) ? error : classify(error);
+  const failure = located(ctx, ticket.project_id, isFailure(error) ? error : classify(error), ticket.repo);
   const now = ctx.now();
   const previous = readSub(ticket, "retry_json");
   const decision = decide(previous, { step, what: a.what, now, failure, ...(a.head === undefined ? {} : { head: a.head }), ...(a.pr === undefined ? {} : { pr: a.pr }), ...(a.floorMs === undefined ? {} : { floorMs: a.floorMs }) });
@@ -83,8 +84,16 @@ async function blockFor(ctx: EngineCtx, ticket: TicketRow, reason: string): Prom
  */
 export function forgeBroke(ctx: EngineCtx, projectId: number, what: string, error: unknown): boolean {
   if (!(error instanceof ForgeContractError)) return false;
-  projectFailed(ctx, projectId, { reason: `${what} stopped: ${error.message}`, fix: classify(error).fix! });
+  projectFailed(ctx, projectId, { reason: `${what} stopped: ${error.message}`, fix: located(ctx, projectId, classify(error)).fix! });
   return true;
+}
+
+/** A broken forge command's fix, with where its command is kept: the repo's forge, or with no repo every forge of the project. */
+function located(ctx: EngineCtx, projectId: number, failure: Failure, repo?: string | null): Failure {
+  if (failure.fix !== PROJECT_FIX.command) return failure;
+  const spec = specOf(ctx.store, ctx.store.project(projectId)!);
+  const names = repo !== undefined ? [repo] : spec.repo === undefined ? [null] : spec.repo.map((entry) => entry.name);
+  return { ...failure, fix: `${failure.fix} The command is ${forgeCommandHome(names.map((name) => repoSettings(spec, name).forge))}.` };
 }
 
 /** Pauses the project for a failure of the whole project, such as an exhausted budget, with the reason the human reads. */
