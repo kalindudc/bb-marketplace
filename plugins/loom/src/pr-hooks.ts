@@ -87,4 +87,3 @@ async function forgeHooks(ctx: EngineCtx, a: HookArgs, hook: "after_open" | "aft
     if (rest.length > 0) return;
   }
 }
-

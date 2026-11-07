@@ -410,4 +410,3 @@ describe("a worker on a machine of its own", () => {
     expect(ticket("CSV-2").state).toBe("review");
   });
 });
-
