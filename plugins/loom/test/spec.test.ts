@@ -863,7 +863,7 @@ describe("rollout", () => {
     run((doc) => {
       doc.merge = { strategy: "pr" };
       doc.rollout = {
-        deploy: { on_merge: false, how: "Shipit deploys main" },
+        deploy: { on_merge: false, how: "The pipeline deploys main" },
         stage: [
           { name: "expand", goal: "The row mapper is live in production", soak: "1d" },
           { name: "migrate", goal: "The endpoint uses it" },
@@ -872,7 +872,7 @@ describe("rollout", () => {
         window: [{ title: "Holiday freeze", from: "2026-11-09", to: "2026-11-23" }],
       };
       doc.ticket[0].rollout = { stage: "expand", verify: "curl -f https://example.com/health", rollback: "Revert the commit" };
-      doc.ticket[1].rollout = { stage: "migrate", requires_live: ["csv-model", "traffic-low"], release: "wave-1", dark: true, how: "Shipit, canary first" };
+      doc.ticket[1].rollout = { stage: "migrate", requires_live: ["csv-model", "traffic-low"], release: "wave-1", dark: true, how: "Pipeline, canary first" };
       edit?.(doc);
     });
 
@@ -891,7 +891,7 @@ describe("rollout", () => {
     const spec = result.spec!;
     expect(spec.rollout!.stage!.map((stage) => stage.name)).toEqual(["expand", "migrate"]);
     expect(spec.rollout!.milestone![0]).toEqual({ ref: "traffic-low", title: "Old export traffic is near zero", check: "./traffic-low.sh", stage: "migrate" });
-    expect(spec.ticket[1]!.rollout).toEqual({ stage: "migrate", requires_live: ["csv-model", "traffic-low"], release: "wave-1", dark: true, how: "Shipit, canary first" });
+    expect(spec.ticket[1]!.rollout).toEqual({ stage: "migrate", requires_live: ["csv-model", "traffic-low"], release: "wave-1", dark: true, how: "Pipeline, canary first" });
   });
 
   it("reads a window's dates written as TOML dates", () => {

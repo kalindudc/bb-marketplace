@@ -798,7 +798,7 @@ describe("sync", () => {
 describe("rollout and live", () => {
   const rollout = (doc: Doc) => {
     doc.merge = { strategy: "pr" };
-    doc.rollout = { deploy: { how: "Shipit deploys main" }, stage: [{ name: "expand", goal: "The model is live" }], milestone: [{ ref: "traffic-low", title: "Old traffic is near zero" }] };
+    doc.rollout = { deploy: { how: "The pipeline deploys main" }, stage: [{ name: "expand", goal: "The model is live" }], milestone: [{ ref: "traffic-low", title: "Old traffic is near zero" }] };
     doc.ticket[0].rollout = { stage: "expand", rollback: "Revert the commit" };
     doc.ticket[1].rollout = { requires_live: ["csv-model", "traffic-low"] };
   };
@@ -815,7 +815,7 @@ describe("rollout and live", () => {
     const text = (await run(["rollout", "csv"])).stdout;
     expect(text).toContain("Next: CSV-1 is next; its pull request is not open yet. 1 step waits on it.");
     expect(text).toContain("expand: The model is live. 0 of 1 step live.");
-    expect(text).toContain("- CSV-1 Order rows: no pull request yet, not live. Deploys: Shipit deploys main. Rollback: Revert the commit.");
+    expect(text).toContain("- CSV-1 Order rows: no pull request yet, not live. Deploys: The pipeline deploys main. Rollback: Revert the commit.");
     expect(text).toContain("- traffic-low Old traffic is near zero: does not hold. CSV-2 needs it.");
     expect((await run(["live", "csv", "CSV-1", "--note", "Deployed by hand"])).stdout).toBe("CSV-1 is live.\n");
     expect(JSON.parse((await run(["live", "csv", "traffic-low", "--json"])).stdout)).toMatchObject({ target: "traffic-low", live_by: "human" });

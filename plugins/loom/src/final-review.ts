@@ -600,7 +600,7 @@ interface ChangedFile {
   deletions: number;
 }
 
-export interface Delta {
+export interface ApprovalDelta {
   /** The commit Loom's reviewers approved; null when Loom has no record of it. */
   approved: string | null;
   same: boolean;
@@ -638,11 +638,11 @@ const isTransient = (value: unknown): value is Transient => typeof value === "ob
  * conflict resolution that drops an approved change, which takes the file out of today's diff, stays in. A listing that
  * fails or is cut short makes Loom uncertain, and then every file that changed since the approval counts as its own.
  */
-async function readDelta(ctx: EngineCtx, checkout: RepoCheckout, ticket: TicketRow, approved: string | null): Promise<Delta | Transient> {
+async function readDelta(ctx: EngineCtx, checkout: RepoCheckout, ticket: TicketRow, approved: string | null): Promise<ApprovalDelta | Transient> {
   const { hostId, path: repo, settings } = checkout;
   const head = ticket.pushed_sha!;
   const base = `${settings.remote}/${ticket.pr_base ?? settings.base}`;
-  const delta: Delta = { approved, same: false, certain: false, prFiles: [], own: [], patches: [], baseOnly: null, problem: null };
+  const delta: ApprovalDelta = { approved, same: false, certain: false, prFiles: [], own: [], patches: [], baseOnly: null, problem: null };
   const call = async <T>(fn: () => Promise<T>): Promise<T | Transient | { problem: string }> => {
     try {
       return await fn();
@@ -698,7 +698,7 @@ const count = (n: number, one: string) => `${n.toLocaleString("en-US")} ${one}${
  * reviewer would need to judge the change since the approval is incomplete: it says so at its top, and its pass is not a
  * full sanity check (verifyPass holds it for the human).
  */
-export function finalBrief(a: { ticket: TicketRow; approvedAt: number | null; delta: Delta; text: FinalRead["text"]; approvedText: { title: string; body: string | null } | null; items: NonNullable<FinalRead["items"]> }): { text: string; incomplete: string[] } {
+export function finalBrief(a: { ticket: TicketRow; approvedAt: number | null; delta: ApprovalDelta; text: FinalRead["text"]; approvedText: { title: string; body: string | null } | null; items: NonNullable<FinalRead["items"]> }): { text: string; incomplete: string[] } {
   const { ticket, delta } = a;
   const incomplete: string[] = [];
   if (delta.problem !== null) incomplete.push(delta.problem);

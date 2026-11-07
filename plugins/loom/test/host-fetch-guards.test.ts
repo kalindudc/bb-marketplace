@@ -1,4 +1,4 @@
-// A plain fetch against World accepts the repo's fetch.uriprotocols and fetch.trustpackfileuriindexes, so it can take Delta's
+// A plain fetch accepts the repo's fetch.uriprotocols and fetch.trustpackfileuriindexes, so it can take its git host's
 // prebuilt packs (one base fetch wrote 51 packs and 67 GB). Every fetch Loom runs says no to packfile URIs and bundle URIs.
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";

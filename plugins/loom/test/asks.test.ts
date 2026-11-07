@@ -92,13 +92,13 @@ describe("the planner's asks", () => {
   it("marks a live step done once its ticket or milestone is live, and keeps it done after an undo", async () => {
     await seedProject(h, (doc) => {
       doc.merge = { strategy: "pr", describe: "loom", max_fix_rounds: 0 };
-      doc.rollout = { deploy: { how: "Shipit deploys main" }, milestone: [{ ref: "traffic-low", title: "Old traffic is near zero" }] };
+      doc.rollout = { deploy: { how: "The pipeline deploys main" }, milestone: [{ ref: "traffic-low", title: "Old traffic is near zero" }] };
     });
     expect(() => ask([{ action: "live", text: "Mark it live." }])).toThrow("steps[0]: live needs the ticket key or milestone ref.");
     expect(() => ask([{ action: "live", key: "traffic-high", text: "Mark it live." }])).toThrow('steps[0]: "traffic-high" is neither a ticket of csv nor a milestone of its spec. Its milestones: traffic-low.');
     ask([
       { action: "live", key: "traffic-low", text: "Mark traffic-low live once old traffic is near zero." },
-      { action: "live", key: "CSV-1", text: "Mark CSV-1 live once Shipit deployed it." },
+      { action: "live", key: "CSV-1", text: "Mark CSV-1 live once the pipeline deployed it." },
     ]);
     expect(plannerAsk(h.store, project())!.steps.map((step) => step.done)).toEqual([false, false]);
     markLiveByHuman(h.ctx, "csv", "traffic-low", {}, "human");

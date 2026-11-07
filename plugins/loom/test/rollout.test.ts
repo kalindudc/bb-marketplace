@@ -11,7 +11,7 @@ import { specToml, type Doc } from "./helpers";
 
 const DAY = 24 * HOUR;
 
-// core deploys with the project's Shipit text, edge applies on merge; three stages, and a milestone that gates the last.
+// core deploys with the project's deploy text, edge applies on merge; three stages, and a milestone that gates the last.
 const specOf = (edit?: (doc: Doc) => void): Spec => {
   const result = parseSpec(
     specToml((doc) => {
@@ -21,7 +21,7 @@ const specOf = (edit?: (doc: Doc) => void): Spec => {
         { name: "edge", project: "proj_edge", deploy: { on_merge: true, how: "The actuator applies on merge" } },
       ];
       doc.rollout = {
-        deploy: { how: "Shipit deploys main" },
+        deploy: { how: "The pipeline deploys main" },
         stage: [
           { name: "expand", goal: "Servers accept the header", soak: "1d" },
           { name: "migrate", goal: "Callers send it" },
@@ -116,7 +116,7 @@ function board(over: Partial<Record<string, Over & { state?: TicketState }>> = {
   return [
     make("LANE-1", "done", { rollout: { stage: "expand", verify: "curl -f https://core.example.com/health", rollback: "Revert the commit" } }),
     make("LANE-2", "pr_open", { repo: "edge", rollout: { stage: "expand" } }),
-    make("LANE-3", "pr_open", { rollout: { stage: "migrate", requires_live: ["LANE-1"], how: "Shipit, canary first", release: "wave-1" }, meta: { review: "APPROVED" } }),
+    make("LANE-3", "pr_open", { rollout: { stage: "migrate", requires_live: ["LANE-1"], how: "Pipeline, canary first", release: "wave-1" }, meta: { review: "APPROVED" } }),
     make("LANE-4", "queued", { rollout: { stage: "migrate", requires_live: ["LANE-1", "LANE-2"], release: "wave-1", dark: true } }),
     make("LANE-5", "queued", { rollout: { stage: "contract" } }),
     make("LANE-6", "queued", {}),
@@ -141,12 +141,12 @@ describe("rolloutOf", () => {
       ["contract", "The old path is gone", null, ["LANE-5"], ["old-traffic-zero"]],
       [null, null, null, ["LANE-6"], []],
     ]);
-    expect(stepOf(view, "LANE-1")).toMatchObject({ merge: "merged", how: "Shipit deploys main", onMerge: false, verify: "curl -f https://core.example.com/health", rollback: "Revert the commit", waiting: 2, live: null, soaked: false });
+    expect(stepOf(view, "LANE-1")).toMatchObject({ merge: "merged", how: "The pipeline deploys main", onMerge: false, verify: "curl -f https://core.example.com/health", rollback: "Revert the commit", waiting: 2, live: null, soaked: false });
     expect(stepOf(view, "LANE-2")).toMatchObject({ merge: "open", how: "The actuator applies on merge", onMerge: true, waiting: 1 });
-    expect(stepOf(view, "LANE-3")).toMatchObject({ merge: "approved", how: "Shipit, canary first", release: "wave-1", releaseWith: ["LANE-4"], prNumber: "3" });
+    expect(stepOf(view, "LANE-3")).toMatchObject({ merge: "approved", how: "Pipeline, canary first", release: "wave-1", releaseWith: ["LANE-4"], prNumber: "3" });
     expect(stepOf(view, "LANE-4")).toMatchObject({ merge: "no_pr", prUrl: null, dark: true, releaseWith: ["LANE-3"] });
     expect(stepOf(view, "LANE-4").requires).toEqual([
-      { target: "LANE-1", kind: "ticket", title: "LANE-1 title", live: false, cancelled: false, unknown: false, viaStage: false, prUrl: "https://github.com/acme/core/pull/1", prNumber: "1", how: "Shipit deploys main" },
+      { target: "LANE-1", kind: "ticket", title: "LANE-1 title", live: false, cancelled: false, unknown: false, viaStage: false, prUrl: "https://github.com/acme/core/pull/1", prNumber: "1", how: "The pipeline deploys main" },
       { target: "LANE-2", kind: "ticket", title: "LANE-2 title", live: false, cancelled: false, unknown: false, viaStage: false, prUrl: "https://github.com/acme/core/pull/2", prNumber: "2", how: "The actuator applies on merge" },
     ]);
     expect(stepOf(view, "LANE-5").requires).toEqual([expect.objectContaining({ target: "old-traffic-zero", kind: "milestone", title: "Old path traffic near zero", live: false, viaStage: true })]);
@@ -180,13 +180,13 @@ describe("the next safe step", () => {
       keys: ["LANE-1", "LANE-2"],
       stage: "expand",
       until: null,
-      text: "Deploy LANE-1 (Shipit deploys main). 2 steps wait on it. LANE-2 can go now too.",
+      text: "Deploy LANE-1 (The pipeline deploys main). 2 steps wait on it. LANE-2 can go now too.",
     });
   });
 
   it("says to merge a pull request, and whether its merge deploys it", () => {
     const open = rolloutOf(specOf(), board({ "LANE-1": { state: "pr_open" } }), [], NOW)!.next;
-    expect(open.text).toBe("Merge LANE-1 (#1), then deploy it (Shipit deploys main). 2 steps wait on it. LANE-2 can go now too.");
+    expect(open.text).toBe("Merge LANE-1 (#1), then deploy it (The pipeline deploys main). 2 steps wait on it. LANE-2 can go now too.");
     const edge = rolloutOf(specOf(), board(), [live("LANE-1", "verify", NOW - 2 * DAY)], NOW)!.next;
     expect(edge).toMatchObject({ kind: "merge", keys: ["LANE-2"], text: "Merge LANE-2 (#2): it deploys when it merges (The actuator applies on merge). 1 step waits on it." });
   });
@@ -200,7 +200,7 @@ describe("the next safe step", () => {
       until: NOW + 23 * HOUR,
       text: "Wait for the expand stage to soak until Jan 11 11:00 UTC.",
     });
-    expect(rolloutOf(specOf(), board({ "LANE-2": { state: "done" }, "LANE-3": { state: "done" } }), marks, NOW + 2 * DAY)!.next.text).toBe("Deploy LANE-3 (Shipit, canary first). LANE-4 can go now too.");
+    expect(rolloutOf(specOf(), board({ "LANE-2": { state: "done" }, "LANE-3": { state: "done" } }), marks, NOW + 2 * DAY)!.next.text).toBe("Deploy LANE-3 (Pipeline, canary first). LANE-4 can go now too.");
   });
 
   it("waits for a milestone that gates the stage, then goes on to the steps with no stage, then says everything is live", () => {
@@ -272,7 +272,7 @@ describe("the deploy part of the pull request's merge and deploy section", () =>
       "- Needs in production first:",
       "  - https://github.com/acme/core/pull/1 (LANE-1 title): deployed.",
       "  - https://github.com/acme/core/pull/2 (LANE-2 title): not deployed yet.",
-      "- How this deploys: Shipit deploys main. Merging does not deploy it.",
+      "- How this deploys: The pipeline deploys main. Merging does not deploy it.",
       `- Release: wave-1, with ${rows.find((ticket) => ticket.key === "LANE-3")!.pr_url ?? '"LANE-3 title"'}.`,
       "- Ships dark: its feature gate starts off.",
     ]);
@@ -428,7 +428,7 @@ describe("the Rollout tab's reading of the order", () => {
     expect(shortCommand("./scripts/zero.sh --prod")).toBe("zero.sh --prod");
     expect(shortCommand("curl -f https://core.example.com/health")).toBe("curl -f https://core.example.com/health");
     expect(repoDeploys(view)).toEqual([
-      { repo: "core", how: "Shipit deploys main", onMerge: false },
+      { repo: "core", how: "The pipeline deploys main", onMerge: false },
       { repo: "edge", how: "The actuator applies on merge", onMerge: true },
     ]);
     const entry = { prOpen: true, reviewRead: true, draft: true, review: "REVIEW_REQUIRED", conflicts: false, base: "main", checks: { passed: 20, failed: 1, pending: 0 } } as MergeEntry;

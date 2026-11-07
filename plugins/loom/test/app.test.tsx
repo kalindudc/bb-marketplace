@@ -1399,13 +1399,13 @@ describe("planner page", () => {
           open: done.some((value) => !value),
           steps: [
             { action: "other", text: "Rotate the API token in 1Password.", done: done[0]! },
-            { action: "live", key: "CSV-1", text: "Mark CSV-1 live once Shipit deployed it.", done: done[1]! },
+            { action: "live", key: "CSV-1", text: "Mark CSV-1 live once the pipeline deployed it.", done: done[1]! },
           ],
         },
       });
     const steps = (done: boolean[]) => [
       ...(done[0] ? [] : [{ index: 0, action: "other" as const, text: "Rotate the API token in 1Password.", key: null }]),
-      ...(done[1] ? [] : [{ index: 1, action: "live" as const, text: "Mark CSV-1 live once Shipit deployed it.", key: "CSV-1" }]),
+      ...(done[1] ? [] : [{ index: 1, action: "live" as const, text: "Mark CSV-1 live once the pipeline deployed it.", key: "CSV-1" }]),
     ];
     let done = [false, false];
     const current = () => projectView({ askSteps: steps(done) });
@@ -1421,8 +1421,8 @@ describe("planner page", () => {
     expect(slot.container.querySelector('[data-tab-badge="planner"]')!.textContent).toBe("2");
     const notice = slot.container.querySelector<HTMLElement>('[data-badge-notice="planner"]')!;
     expect(notice.textContent).toContain("The planner asks you to do 2 things.");
-    expect([...notice.querySelectorAll("[data-badge-item]")].map((item) => item.textContent)).toEqual(["Step 1: Rotate the API token in 1Password.", "Step 2: Mark CSV-1 live once Shipit deployed it."]);
-    fireEvent.click(within(notice).getByRole("button", { name: "Step 2: Mark CSV-1 live once Shipit deployed it." }));
+    expect([...notice.querySelectorAll("[data-badge-item]")].map((item) => item.textContent)).toEqual(["Step 1: Rotate the API token in 1Password.", "Step 2: Mark CSV-1 live once the pipeline deployed it."]);
+    fireEvent.click(within(notice).getByRole("button", { name: "Step 2: Mark CSV-1 live once the pipeline deployed it." }));
     expect(slot.inspection.navigateCalls.at(-1)).toEqual(pushed("csv/CSV-1"));
 
     const asks = () => page(slot).querySelector<HTMLElement>("[data-planner-asks]")!;
@@ -1437,7 +1437,7 @@ describe("planner page", () => {
     const live = () => within(asks().querySelector<HTMLElement>('[data-ask-step="live"]')!);
     fireEvent.click(live().getByRole("button", { name: "Mark CSV-1 live" }));
     fireEvent.click(live().getByRole("button", { name: /^Click again/ }));
-    await waitFor(() => expect(markLive).toHaveBeenCalledWith({ slug: "csv", target: "CSV-1", note: "Marked live as the planner asked: Mark CSV-1 live once Shipit deployed it.", confirm: true }));
+    await waitFor(() => expect(markLive).toHaveBeenCalledWith({ slug: "csv", target: "CSV-1", note: "Marked live as the planner asked: Mark CSV-1 live once the pipeline deployed it.", confirm: true }));
     await waitFor(() => expect(slot.container.querySelector('[data-tab-badge="planner"]')).toBeNull());
     expect(slot.container.querySelector("[data-badge-notice]")).toBeNull();
   });
@@ -5254,7 +5254,7 @@ describe("rollout tab", () => {
     live: null,
     soaked: false,
     soakedAt: null,
-    how: "Shipit deploys main",
+    how: "The pipeline deploys main",
     onMerge: false,
     requires: [],
     release: null,
@@ -5280,7 +5280,7 @@ describe("rollout tab", () => {
             onMerge: true,
             how: "The actuator applies on merge",
             requires: [
-              { target: "CSV-1", kind: "ticket", title: "CSV-1 title", live: false, cancelled: false, unknown: false, viaStage: false, prUrl: "https://github.com/acme/shop/pull/1", prNumber: "1", how: "Shipit deploys main" },
+              { target: "CSV-1", kind: "ticket", title: "CSV-1 title", live: false, cancelled: false, unknown: false, viaStage: false, prUrl: "https://github.com/acme/shop/pull/1", prNumber: "1", how: "The pipeline deploys main" },
               { target: "traffic-low", kind: "milestone", title: "Old traffic is near zero", live: true, cancelled: false, unknown: false, viaStage: false, prUrl: null, prNumber: null, how: null },
             ],
           }),
@@ -5293,7 +5293,7 @@ describe("rollout tab", () => {
     ],
     milestones: [{ ref: "traffic-low", title: "Old traffic is near zero", stage: null, check: null, live: { at: NOW - HOUR, by: "human", evidence: "Dashboard" }, lastCheck: null, neededBy: ["CSV-2"] }],
     windows: [{ title: "Holiday freeze", from: "2026-01-09", to: "2026-01-12", note: null, active: true, startsIn: null, past: false }],
-    next: { kind: "deploy", keys: ["CSV-1"], stage: "expand", until: null, text: "Deploy CSV-1 (Shipit deploys main). 1 step waits on it." },
+    next: { kind: "deploy", keys: ["CSV-1"], stage: "expand", until: null, text: "Deploy CSV-1 (The pipeline deploys main). 1 step waits on it." },
     warnings: [{ kind: "ships_on_merge", tone: "warning", keys: ["CSV-2"], text: "CSV-2 deploys when it merges, and CSV-1 is not live yet." }],
     counts: { steps: 2, live: 0, soaked: 0 },
     ...over,
@@ -5370,7 +5370,7 @@ describe("rollout tab", () => {
     expect(within(next).getByRole("heading", { name: "Deploy CSV-1" })).toBeTruthy();
     expect([...next.querySelectorAll("[data-rollout-plan]")].map((row) => row.getAttribute("data-rollout-plan"))).toEqual(["merge", "deploy", "verify"]);
     expect(next.querySelector('[data-rollout-plan="merge"]')!.textContent).toContain("✓");
-    expect(next.querySelector('[data-rollout-plan="deploy"]')!.textContent).toContain("Shipit deploys main");
+    expect(next.querySelector('[data-rollout-plan="deploy"]')!.textContent).toContain("The pipeline deploys main");
     expect(next.querySelector('[data-rollout-plan="verify"] code')!.textContent).toBe("curl -f https://shop.example.com/health");
     expect(next.querySelector("[data-rollout-then]")!.textContent).toBe("When it is live: 1 more step in Expand after this: CSV-2. CSV-2 waits on it.");
     const hold = tab.querySelector<HTMLElement>('[data-rollout-hold="CSV-2"]')!;
@@ -5388,7 +5388,7 @@ describe("rollout tab", () => {
     expect(stage.querySelector('[data-rollout-row="CSV-1"] [data-rollout-status]')!.getAttribute("data-rollout-status")).toBe("deploy");
     expect(stage.querySelector('[data-rollout-row="CSV-2"] [data-rollout-status]')!.textContent).toContain("Don't merge yet");
     expect(stage.querySelector('[data-rollout-milestone="traffic-low"]')!.getAttribute("data-rollout-holds")).toBe("yes");
-    expect(tab.querySelector("[data-rollout-repos]")!.textContent).toContain("after mergeShipit deploys main");
+    expect(tab.querySelector("[data-rollout-repos]")!.textContent).toContain("after mergeThe pipeline deploys main");
   });
 
   it("opens a step's details in place: needs, deploy, verify with its output and rollback, and its ticket and pull request", async () => {
@@ -5397,7 +5397,7 @@ describe("rollout tab", () => {
     const one = await open(slot, "CSV-1");
     const detail = one.querySelector<HTMLElement>("[data-rollout-detail]")!;
     expect(detail.textContent).toContain("nothing first");
-    expect(detail.textContent).toContain("After merge. Shipit deploys main");
+    expect(detail.textContent).toContain("After merge. The pipeline deploys main");
     expect(detail.textContent).toContain("Revert the commit");
     expect(detail.textContent).toContain("Unblocks");
     expect(within(detail).getByText("Output").closest("details")!.textContent).toContain("curl: (22) 503");
@@ -5468,14 +5468,14 @@ describe("rollout tab", () => {
           ...rollout().stages[0]!,
           steps: [
             step({ key: "CSV-1", state: "done", merge: "merged", live: { at: NOW - HOUR, by: "verify", evidence: null }, soakedAt: NOW + 23 * HOUR }),
-            step({ key: "CSV-2", how: "Shipit deploys main", requires: [{ target: "CSV-1", kind: "ticket", title: "CSV-1 title", live: true, cancelled: false, unknown: false, viaStage: false, prUrl: null, prNumber: "1", how: null }] }),
+            step({ key: "CSV-2", how: "The pipeline deploys main", requires: [{ target: "CSV-1", kind: "ticket", title: "CSV-1 title", live: true, cancelled: false, unknown: false, viaStage: false, prUrl: null, prNumber: "1", how: null }] }),
           ],
         },
       ],
       milestones: [],
       windows: [],
       warnings: [],
-      next: { kind: "merge", keys: ["CSV-2"], stage: "expand", until: null, text: "Merge CSV-2 (#2), then deploy it (Shipit deploys main)." },
+      next: { kind: "merge", keys: ["CSV-2"], stage: "expand", until: null, text: "Merge CSV-2 (#2), then deploy it (The pipeline deploys main)." },
       counts: { steps: 2, live: 1, soaked: 0 },
     });
     const entry: MergeEntry = {

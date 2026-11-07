@@ -2,7 +2,7 @@
 // fails leaves the worktree as it is and names what it wrote; it commits with git add and git commit only when the index
 // still matches HEAD; it stops when a path it would change is not as it left it; and a carry cut short is recognized and
 // taken over when it starts again. Each case below lost a worker's edit in a review. The worker's git here serves only
-// what World's emulated git serves: a shim on PATH refuses its index and object plumbing, so none of it comes back.
+// what an emulated git serves: a shim on PATH refuses its index and object plumbing, so none of it comes back.
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -22,7 +22,7 @@ const sh = (cwd: string, ...args: string[]) => execFileSync(GIT, ["-C", cwd, ...
 let scratch: string;
 let refusedLog: string;
 
-/** World's emulated git: no index or object plumbing, no private index, update-ref only on refs/, no config writes. */
+/** An emulated git: no index or object plumbing, no private index, update-ref only on refs/, no config writes. */
 function porcelainOnlyGit(dir: string, log: string): void {
   mkdirSync(dir);
   const shim = `#!/bin/bash
@@ -43,7 +43,7 @@ case "$sub" in
   config) case "\${rest[0]}" in --get|--list|-l) ;; *) refuse "config \${rest[*]}";; esac;;
 esac
 if [ -n "$GIT_INDEX_FILE" ]; then refuse "GIT_INDEX_FILE $sub"; fi
-# World's usage lists no -z for diff: LOOM_SHIM_DIFF_NO_Z drops it, as a git that ignores it would.
+# This git's usage lists no -z for diff: LOOM_SHIM_DIFF_NO_Z drops it, as a git that ignores it would.
 if [ "$sub" = diff ] && [ -n "$LOOM_SHIM_DIFF_NO_Z" ]; then kept=(); for a in "$@"; do [ "$a" = -z ] || kept+=("$a"); done; exec ${JSON.stringify(GIT)} "\${kept[@]}"; fi
 exec ${JSON.stringify(GIT)} "$@"
 `;
@@ -65,7 +65,7 @@ beforeAll(() => {
 afterEach(() => {
   const refused = existsSync(refusedLog) ? readFileSync(refusedLog, "utf8") : "";
   rmSync(refusedLog, { force: true });
-  expect(refused, "the carry ran git that World's emulated git does not serve").toBe("");
+  expect(refused, "the carry ran git that the emulated git does not serve").toBe("");
 });
 afterAll(() => {
   rmSync(scratch, { recursive: true, force: true });

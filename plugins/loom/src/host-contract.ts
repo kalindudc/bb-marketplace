@@ -282,7 +282,7 @@ export const hostContract = defineRpcContract({
     output: z.object({ files: z.array(z.string()) }).strict(),
   },
   // A carry that failed changes nothing more in the worktree: it removes its own temporary files, and says what is left.
-  // `base` and `restore` are no longer used.
+  // `base` and `restore` stay in the input so a caller from before the change still parses; nothing reads them.
   carryAbort: {
     input: z.object({ worktree: absPath, base: commit, restore: commit.optional() }).strict(),
     // `kept`: every file the worktree has changed, the carry's and anyone else's, all left as they are.

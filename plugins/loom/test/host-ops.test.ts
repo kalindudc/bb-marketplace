@@ -73,7 +73,7 @@ let counter = 0;
 
 const sh = (cwd: string, ...args: string[]) => execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8" }).trim();
 const GH = { kind: "gh" } as const;
-// What the Delta CLI printed on 2026-10-26 while this machine's resolver lost names, and what gh prints when it cannot connect.
+// What a forge's CLI printed on 2026-10-26 while this machine's resolver lost names, and what gh prints when it cannot connect.
 const DT_OFFLINE = [
   "Error: GET https://delta.shopify.io/api/v3/repos/shop/world/pulls/2313251",
   "",

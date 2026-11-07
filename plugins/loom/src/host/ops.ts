@@ -145,8 +145,9 @@ async function gitIndexed(cwd: string, args: readonly string[], clock: IndexCloc
   return result.stdout.trim();
 }
 
-// World's own config sets fetch.uriprotocols and fetch.trustpackfileuriindexes, so a plain fetch accepts Delta's prebuilt
-// packs (one base fetch wrote 51 packs and 67 GB). Loom fetches only the commits it names, from the remote itself.
+// A repository's own config may set fetch.uriprotocols and fetch.trustpackfileuriindexes, so a plain fetch accepts its
+// git host's prebuilt packs (one base fetch wrote 51 packs and 67 GB). Loom fetches only the commits it names, from the
+// remote itself.
 export const FETCH_GUARDS = ["-c", "fetch.uriprotocols=", "-c", "transfer.bundleURI=false"] as const;
 
 // A fetch, a push or an ls-remote that runs out of its time comes back as a failed run that says so, which remoteFailed reads

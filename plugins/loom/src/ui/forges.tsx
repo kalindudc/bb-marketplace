@@ -286,7 +286,7 @@ export function ForgeTransferSection() {
         <button type="button" className={BUTTON} onClick={() => setShown(!shown)} aria-expanded={shown}>
           {shown ? "Hide the TOML" : "Show the TOML"}
         </button>
-        <span className="text-xs text-muted-foreground">The same as `bb loom forge export`. Importing never removes a profile the TOML leaves out.</span>
+        <span className="text-xs text-muted-foreground">The same as <code className="rounded bg-surface-recessed px-1 font-mono">bb loom forge export</code>. Importing never removes a profile the TOML leaves out.</span>
       </div>
       {shown && <pre data-forge-toml className="max-h-96 overflow-auto rounded-md border border-border-seam p-2 font-mono text-xs">{exported.data?.toml || "# No forge profiles."}</pre>}
       <textarea aria-label="TOML to import" rows={8} className={`${FIELD} font-mono text-xs`} placeholder={'[[forge]]\nid = "forge"\nname = "Forge"\nopen = "…"\nstate = "…"'} value={toml} onChange={(event) => setToml(event.target.value)} />

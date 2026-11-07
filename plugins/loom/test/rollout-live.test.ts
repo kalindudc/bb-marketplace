@@ -29,7 +29,7 @@ const merged = (key: string) => {
 // CSV-1 verifies itself; CSV-2 needs CSV-1 live and a milestone that a command checks.
 const rollout = (doc: Doc) => {
   doc.merge = { strategy: "pr", describe: "loom", max_fix_rounds: 0 };
-  doc.rollout = { deploy: { how: "Shipit deploys main" }, milestone: [{ ref: "traffic-low", title: "Old traffic is near zero", check: "./traffic-low.sh" }] };
+  doc.rollout = { deploy: { how: "The pipeline deploys main" }, milestone: [{ ref: "traffic-low", title: "Old traffic is near zero", check: "./traffic-low.sh" }] };
   doc.ticket[0].rollout = { verify: "curl -f https://shop.example.com/health" };
   doc.ticket[1].rollout = { requires_live: ["csv-model", "traffic-low"] };
 };
@@ -287,7 +287,7 @@ describe("rollout order is advice only", () => {
     await settleMerges(h.ctx);
     expect(ticketOf(h, "CSV-1").state).toBe("pr_open");
     expect(h.host.callsTo("prCreate")).toHaveLength(1);
-    expect(h.host.callsTo("prCreate")[0]!.body).toContain("## Merge and deploy order\n- Needs in production first:\n  - Old traffic is near zero: not yet.\n- How this deploys: Shipit deploys main. Merging does not deploy it.\n\n<!-- loom:ticket CSV-1 -->");
+    expect(h.host.callsTo("prCreate")[0]!.body).toContain("## Merge and deploy order\n- Needs in production first:\n  - Old traffic is near zero: not yet.\n- How this deploys: The pipeline deploys main. Merging does not deploy it.\n\n<!-- loom:ticket CSV-1 -->");
     await h.engine.tick();
     expect(roles()).toContain("worker:CSV-2");
     expect(h.store.rolloutMark(project().id, "traffic-low")).toMatchObject({ live_at: null, check_exit: 1 });

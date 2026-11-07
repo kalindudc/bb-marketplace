@@ -2,7 +2,7 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { createCli } from "../src/cli";
 import { HOOK_EVENTS } from "../src/hook-events";
-import { parseSpec, proposalErrorsOf } from "../src/spec";
+import { defaultKeysIn, parseSpec, proposalErrorsOf } from "../src/spec";
 import { FINAL_REVIEWER_TOOLS, MACHINE_WORKER_TOOLS, ORDINARY_TOOLS, PLANNER_TOOLS, REVIEWER_TOOLS, SKILLS, SPEC_REVIEWER_TOOLS, WORKER_TOOLS } from "../src/tools";
 import { makeHost } from "./helpers";
 
@@ -59,9 +59,21 @@ describe("the plugin's own documents", () => {
     }
   });
 
-  it("keeps the docs free of any one company's servers and tools", () => {
-    for (const path of ["README.md", "PLUGIN_OVERVIEW.md", "skills/loom/SKILL.md", "skills/loom/references/spec.md", "skills/loom-plan/SKILL.md"]) {
-      expect(read(path), path).not.toMatch(/\b(?:Shopify|Delta|Aquifer|Binks|Shipit|World)\b|\bdt pr\b/);
+  it("keeps the docs, the code and the tests free of any one company's servers and tools", () => {
+    // This file names them to look for them.
+    const code = ["src", "test"].flatMap((dir) =>
+      (readdirSync(new URL(`../${dir}/`, import.meta.url), { recursive: true, encoding: "utf8" }) as string[]).filter((path) => /\.tsx?$/u.test(path)).map((path) => `${dir}/${path}`),
+    );
+    const paths = ["README.md", "PLUGIN_OVERVIEW.md", "skills/loom/SKILL.md", "skills/loom/references/spec.md", "skills/loom/references/forges.md", "skills/loom-plan/SKILL.md", ...code.filter((path) => path !== "test/docs.test.ts")];
+    expect(code.length).toBeGreaterThan(100);
+    for (const path of paths) expect(read(path), path).not.toMatch(/\b(?:Shopify|Delta|Aquifer|Binks|Shipit|World)\b|\bdt pr\b/);
+  });
+
+  it("sets no key to its default in any example of the spec reference or the forge guide, which loom_propose would warn about", () => {
+    for (const path of ["skills/loom/references/spec.md", "skills/loom/references/forges.md"]) {
+      const examples = [...read(path).matchAll(/```toml\n([\s\S]*?)```/g)].map((match) => match[1]!);
+      expect(examples.length, path).toBeGreaterThan(0);
+      examples.forEach((example, index) => expect(defaultKeysIn(example), `${path}, example ${index + 1}`).toEqual([]));
     }
   });
 

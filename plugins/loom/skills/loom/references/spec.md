@@ -495,7 +495,6 @@ key = "CSV"
 goal = "Let admins export the orders table as a CSV file from the orders page, with the same columns as the screen."
 summary = "Admins can download the orders table as a CSV file, so they stop copying it out of the screen by hand."
 non_goals = ["Scheduled exports", "Other file formats"]
-base = "main"
 
 [merge]
 strategy = "integration"
@@ -507,9 +506,6 @@ timeout_minutes = 15
 [scope]
 protected = ["package-lock.json", ".github/**"]
 
-[agents]
-max_workers = 2
-
 [agents.worker]
 provider = "claude-code"
 model = "sonnet"
@@ -519,8 +515,6 @@ provider = "codex"
 model = "gpt"
 
 [review]
-approvals = 1
-max_rounds = 3
 rubric = ["Every acceptance criterion has a test", "No change outside the ticket's scope"]
 
 [[ticket]]
@@ -559,7 +553,6 @@ key = "NOTE"
 goal = "Let staff add a note to an order through the orders API, and show the note on the order page of the web app."
 summary = "Staff can note an order through the API and read the note on the order page."
 non_goals = ["Editing notes from the web app", "Notes on other resources"]
-base = "main"
 
 [merge]
 strategy = "integration"
