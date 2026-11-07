@@ -1,5 +1,6 @@
 // The pr strategy's merge: open the ticket's pull request, or push a fix round, a restack or a refresh to the one open,
 // retarget it to the branch it builds on now and ask its reviewers again.
+import { forgeBroke } from "./retry";
 import type { ProjectRow, TicketRow } from "./db/store";
 import { Unavailable } from "./forge-waits";
 import { followDraft } from "./drafts";
@@ -247,6 +248,7 @@ async function retarget(ctx: EngineCtx, a: { hostId: string; repo: string; setti
 /**
  * After a fix round's push, asks the people whose reviews and review threads the round answered to review the pull
  * request again, and returns the post that says so. Only through gh. A failure is posted and blocks nothing: the fix is pushed.
+ * A broken answer from the forge also pauses the project with the fix.
  */
 async function askForReviews(ctx: EngineCtx, a: { hostId: string; repo: string; settings: RepoSettings; ticket: TicketRow }): Promise<MergePost | null> {
   const url = a.ticket.pr_url;
@@ -256,7 +258,11 @@ async function askForReviews(ctx: EngineCtx, a: { hostId: string; repo: string; 
   // A host from before this call refuses it; that is one more failure to post.
   const asked: HostOutputOf<"prRequestReview"> = await ctx.host
     .call(a.hostId, "prRequestReview", { repo: a.repo, url, reviewers })
-    .catch((error: unknown) => ({ outcome: "unavailable" as const, message: errText(error) }));
+    .catch((error: unknown) => {
+      // A broken answer pauses the project with the fix; the push stands, and the request, which may have gone out, is not sent again.
+      forgeBroke(ctx, a.ticket.project_id, `Asking for reviews of ${url} again`, error);
+      return { outcome: "unavailable" as const, message: errText(error) };
+    });
   const requested = asked.outcome === "ok" ? asked.requested : [];
   const failed = asked.outcome === "ok" ? asked.failed : reviewers.map((login) => ({ login, message: asked.message }));
   const lines =
