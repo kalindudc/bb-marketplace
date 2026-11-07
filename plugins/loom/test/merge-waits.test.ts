@@ -24,7 +24,7 @@ beforeEach(() => {
 const MINUTE = 60_000;
 const URL1 = "https://github.com/acme/shop/pull/1";
 const DEADLINE = "host plugin call 1f46e1e1-6061-4d69-81e2-afb2e9ac216c exceeded its deadline";
-const RATE_LIMITED = "The forge's open command printed no pull request URL: Error: 429: other changes to shop/world's pull requests, reviews, checks or settings were still being saved after 30s, so nothing was changed; retry shortly";
+const RATE_LIMITED = "The forge's open command printed no pull request URL: Error: 429: other changes to acme/shop's pull requests, reviews, checks or settings were still being saved after 30s, so nothing was changed; retry shortly";
 const COMMAND_FORGE = { kind: "command", open: "review-cli open", state: "review-cli state", feedback: "review-cli feedback" };
 const changesRequested = { items: [{ key: "review:1:a", kind: "review" as const, author: "alice", bot: false, body: "Rename the column.", url: null, state: "changes_requested", path: null, line: null }] };
 

@@ -4,6 +4,7 @@ import { createCli } from "../src/cli";
 import { HOOK_EVENTS } from "../src/hook-events";
 import { defaultKeysIn, parseSpec, proposalErrorsOf } from "../src/spec";
 import { FINAL_REVIEWER_TOOLS, MACHINE_WORKER_TOOLS, ORDINARY_TOOLS, PLANNER_TOOLS, REVIEWER_TOOLS, SKILLS, SPEC_REVIEWER_TOOLS, WORKER_TOOLS } from "../src/tools";
+import { companyNamesIn } from "./company-names";
 import { makeHost } from "./helpers";
 
 const read = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
@@ -60,13 +61,18 @@ describe("the plugin's own documents", () => {
   });
 
   it("keeps the docs, the code and the tests free of any one company's servers and tools", () => {
-    // This file names them to look for them.
     const code = ["src", "test"].flatMap((dir) =>
       (readdirSync(new URL(`../${dir}/`, import.meta.url), { recursive: true, encoding: "utf8" }) as string[]).filter((path) => /\.tsx?$/u.test(path)).map((path) => `${dir}/${path}`),
     );
-    const paths = ["README.md", "PLUGIN_OVERVIEW.md", "skills/loom/SKILL.md", "skills/loom/references/spec.md", "skills/loom/references/forges.md", "skills/loom-plan/SKILL.md", ...code.filter((path) => path !== "test/docs.test.ts")];
+    const paths = ["README.md", "PLUGIN_OVERVIEW.md", "skills/loom/SKILL.md", "skills/loom/references/spec.md", "skills/loom/references/forges.md", "skills/loom-plan/SKILL.md", "skills/loom-pr-description/SKILL.md", ...code.filter((path) => path !== "test/docs.test.ts" && path !== "test/company-names.ts")];
     expect(code.length).toBeGreaterThan(100);
-    for (const path of paths) expect(read(path), path).not.toMatch(/\b(?:Shopify|Delta|Aquifer|Binks|Shipit|World)\b|\bdt pr\b/);
+    for (const path of paths) expect(companyNamesIn(read(path)), path).toEqual([]);
+  });
+
+  it("finds a company's names in any case, a host name included, and leaves ordinary words alone", () => {
+    expect(companyNamesIn("GET https://delta.shopify.io/api/v3/repos/shop/world/pulls/7")).toEqual(["shopify", "shop/world"]);
+    expect(companyNamesIn("a thread last from binks, then BINKS again, on Shipit and in World")).toEqual(["binks", "BINKS", "Shipit", "World"]);
+    expect(companyNamesIn("the delta since the approval, hello world, and a stack of shipments")).toEqual([]);
   });
 
   it("sets no key to its default in any example of the spec reference or the forge guide, which loom_propose would warn about", () => {

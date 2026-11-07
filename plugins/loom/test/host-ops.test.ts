@@ -75,10 +75,10 @@ const sh = (cwd: string, ...args: string[]) => execFileSync("git", ["-C", cwd, .
 const GH = { kind: "gh" } as const;
 // What a forge's CLI printed on 2026-10-26 while this machine's resolver lost names, and what gh prints when it cannot connect.
 const DT_OFFLINE = [
-  "Error: GET https://delta.shopify.io/api/v3/repos/shop/world/pulls/2313251",
+  "Error: GET https://forge.example.com/api/v3/repos/acme/shop/pulls/2313251",
   "",
   "Caused by:",
-  "    0: error sending request for url (https://delta.shopify.io/api/v3/repos/shop/world/pulls/2313251)",
+  "    0: error sending request for url (https://forge.example.com/api/v3/repos/acme/shop/pulls/2313251)",
   "    1: client error (Connect)",
   "    2: dns error",
   "    3: failed to lookup address information: nodename nor servname provided, or not known",
@@ -995,10 +995,10 @@ describe("ghTransient", () => {
     'Post "https://api.github.com/graphql": dial tcp 140.82.112.6:443: connect: network is unreachable',
     'Post "https://api.github.com/graphql": dial tcp 140.82.112.6:443: connect: no route to host',
     'Post "https://api.github.com/graphql": dial tcp 140.82.112.6:443: connect: connection timed out',
-    "curl: (6) Could not resolve host: delta.shopify.io",
-    "getaddrinfo ENOTFOUND delta.shopify.io",
+    "curl: (6) Could not resolve host: forge.example.com",
+    "getaddrinfo ENOTFOUND forge.example.com",
     "ssh: Could not resolve hostname github.com: Temporary failure in name resolution",
-    "dial tcp: lookup delta.shopify.io: Name or service not known",
+    "dial tcp: lookup forge.example.com: Name or service not known",
   ])("is a network failure: %s", (stderr) => {
     expect(failed(`${stderr}\n`)).toEqual({ transient: "network" });
   });
@@ -1017,10 +1017,10 @@ describe("ghTransient", () => {
   });
 
   it("reads a status a forge CLI prints at the start of a line, as Error: 429: or 503:", () => {
-    expect(failed("Error: 429: other changes to shop/world's pull requests, reviews, checks or settings were still being saved after 30s, so nothing was changed; retry shortly\n")).toEqual({ transient: "rate_limit" });
+    expect(failed("Error: 429: other changes to acme/shop's pull requests, reviews, checks or settings were still being saved after 30s, so nothing was changed; retry shortly\n")).toEqual({ transient: "rate_limit" });
     expect(failed("Error: 503: the service is restarting\n")).toEqual({ transient: "server" });
     expect(failed("503: upstream connect error or disconnect/reset before headers. reset reason: connection termination\n")).toEqual({ transient: "server" });
-    expect(failed("Error: 404: no pull request 7 in shop/world\n")).toBeNull();
+    expect(failed("Error: 404: no pull request 7 in acme/shop\n")).toBeNull();
     expect(failed("Error: 401: run dt auth login\n")).toBeNull();
   });
 
@@ -1134,7 +1134,7 @@ describe("the spec's forge commands", () => {
   it("marks an open command that printed a temporary error instead of a URL as one to wait out, and keeps its message", async () => {
     const repo = makeRepo();
     const input = { repo, remote: "origin", base: "main", head: "h", title: "t", body: "", draft: true };
-    const busy = "Error: 429: other changes to shop/world's pull requests, reviews, checks or settings were still being saved after 30s, so nothing was changed; retry shortly";
+    const busy = "Error: 429: other changes to acme/shop's pull requests, reviews, checks or settings were still being saved after 30s, so nothing was changed; retry shortly";
     expect(await prCreate({ ...input, forge: { kind: "command", open: `echo "${busy}"` } })).toEqual({ outcome: "unavailable", message: `The forge's open command printed no pull request URL: ${busy}`, transient: "rate_limit" });
     expect(await prCreate({ ...input, forge: { kind: "command", open: `echo "${busy}" >&2; exit 1` } })).toMatchObject({ outcome: "unavailable", message: expect.stringContaining("open command failed (exit 1)"), transient: "rate_limit" });
     expect(await prCreate({ ...input, forge: { kind: "command", open: "echo 'Error: 503: upstream connect error'" } })).toMatchObject({ transient: "server" });
@@ -1205,7 +1205,7 @@ describe("the spec's forge commands", () => {
   });
 
   describe("a failed read", () => {
-    const url = "https://delta.shopify.io/shop/world/pull/2313251";
+    const url = "https://forge.example.com/acme/shop/pull/2313251";
     let runs: string;
     beforeEach(() => {
       runs = join(scratch, `runs-${counter++}`);
@@ -1221,14 +1221,14 @@ describe("the spec's forge commands", () => {
     it("classifies a failed state command's output by gh's rules: a network failure, a server error or a rate limit waits, and the command runs once", async () => {
       expect(await state(printing(DT_OFFLINE))).toEqual({ outcome: "unavailable", message: `The forge's state command failed (exit 1): ${DT_OFFLINE}`, transient: "network" });
       expect(readFileSync(runs, "utf8")).toBe("run\n");
-      const bad = "Error: GET https://delta.shopify.io/api/v3/repos/shop/world/pulls/1\n\nCaused by:\n    HTTP status server error (502 Bad Gateway) for url (https://delta.shopify.io/api/v3/repos/shop/world/pulls/1)";
+      const bad = "Error: GET https://forge.example.com/api/v3/repos/acme/shop/pulls/1\n\nCaused by:\n    HTTP status server error (502 Bad Gateway) for url (https://forge.example.com/api/v3/repos/acme/shop/pulls/1)";
       expect(await state(printing(bad))).toMatchObject({ outcome: "unavailable", transient: "server" });
-      expect(await state(printing("Error: GET https://delta.shopify.io/api/v3/repos/shop/world/pulls/1\n\nCaused by:\n    429 Too Many Requests"))).toMatchObject({ outcome: "unavailable", transient: "rate_limit" });
+      expect(await state(printing("Error: GET https://forge.example.com/api/v3/repos/acme/shop/pulls/1\n\nCaused by:\n    429 Too Many Requests"))).toMatchObject({ outcome: "unavailable", transient: "rate_limit" });
       expect(readFileSync(runs, "utf8")).toBe("run\nrun\nrun\n");
     });
 
     it("pauses on a failed state command that is not worth waiting out, and on one that ran but printed no state", async () => {
-      expect(await state(printing("Error: GET https://delta.shopify.io/api/v3/repos/shop/world/pulls/1\n\nCaused by:\n    HTTP status client error (404 Not Found) for url (https://delta.shopify.io/api/v3/repos/shop/world/pulls/1)"))).not.toHaveProperty("transient");
+      expect(await state(printing("Error: GET https://forge.example.com/api/v3/repos/acme/shop/pulls/1\n\nCaused by:\n    HTTP status client error (404 Not Found) for url (https://forge.example.com/api/v3/repos/acme/shop/pulls/1)"))).not.toHaveProperty("transient");
       expect(await state(printing("dt: you are not logged in; run dt auth login"))).not.toHaveProperty("transient");
       expect(await state(printing(DT_OFFLINE, 4))).not.toHaveProperty("transient");
       // A command that exits 0 after its CLI failed printed the wrong thing, which is its own bug, whatever the text says.
@@ -1249,7 +1249,7 @@ describe("the spec's forge commands", () => {
       const feedback = async (command: string) => prFeedback({ repo: makeRepo(), url, forge: { kind: "command", feedback: command } });
       const pull = JSON.stringify({ state: "open", head: "abc123", items: [{ id: 1, kind: "comment", author: "alice", body: "The deploy hit a dns error, could not resolve host" }] });
       expect(await feedback(`echo '${pull}'; exit 1`)).not.toHaveProperty("transient");
-      expect(await feedback(`echo '{"message":"error connecting to delta.shopify.io"}'; exit 1`)).toMatchObject({ transient: "network" });
+      expect(await feedback(`echo '{"message":"error connecting to forge.example.com"}'; exit 1`)).toMatchObject({ transient: "network" });
     });
 
     it("counts a state or feedback command that timed out as a failure worth waiting out", async () => {
@@ -1966,7 +1966,7 @@ describe("prFeedback", () => {
               ] } } } }] },
               reviews: { nodes: [{ databaseId: 21, author: user("alice"), state: "CHANGES_REQUESTED", body: "Please rename.", url: "https://gh/r21" }] },
               reviewThreads: { nodes: [
-                { id: "T1", isResolved: false, path: "a.ts", line: 4, comments: { nodes: [{ databaseId: 31, author: bot("binks"), body: "Unanchored regex.", url: "https://gh/c31" }, { databaseId: 32, author: user("me"), body: "Will fix.", url: "https://gh/c32" }] } },
+                { id: "T1", isResolved: false, path: "a.ts", line: 4, comments: { nodes: [{ databaseId: 31, author: bot("review-bot"), body: "Unanchored regex.", url: "https://gh/c31" }, { databaseId: 32, author: user("me"), body: "Will fix.", url: "https://gh/c32" }] } },
                 { id: "T2", isResolved: true, path: "b.ts", line: 1, comments: { nodes: [{ databaseId: 33, author: user("alice"), body: "Done.", url: "https://gh/c33" }] } },
               ] },
               comments: { nodes: [{ databaseId: 41, author: bot("terraform-actuator"), body: "Plan: 1 to change.", url: "https://gh/c41" }] },
@@ -2005,7 +2005,7 @@ describe("prFeedback", () => {
         ["thread", "me", false],
         ["comment", "terraform-actuator", true],
       ]);
-      expect(ok.items[1]).toMatchObject({ key: expect.stringMatching(/^thread:T1:32:[0-9a-f]{12}$/u), path: "a.ts", line: 4, body: "binks: Unanchored regex.\n\nme: Will fix." });
+      expect(ok.items[1]).toMatchObject({ key: expect.stringMatching(/^thread:T1:32:[0-9a-f]{12}$/u), path: "a.ts", line: 4, body: "review-bot: Unanchored regex.\n\nme: Will fix." });
     });
 
     it("asks for steps only while a check failed and runs are in progress, and for at most 20 runs", async () => {

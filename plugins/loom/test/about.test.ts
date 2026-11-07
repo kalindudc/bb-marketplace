@@ -8,7 +8,7 @@ describe("aboutOf", () => {
     const spec = parseSpec(
       specToml((doc) => {
         doc.project.goal = [
-          "Implement items 1 to 3 of https://github.com/acme/shop/issues/42 and https://delta.example.io/shop/world/pull/7.",
+          "Implement items 1 to 3 of https://github.com/acme/shop/issues/42 and https://forge.example.com/acme/shop/pull/7.",
           "",
           "Replaces https://github.com/acme/shop/pull/9, see https://github.com/acme/shop/issues/42 again, and https://gitlab.example.com/a/b/-/merge_requests/3.",
         ].join("\n");
@@ -18,9 +18,9 @@ describe("aboutOf", () => {
     ).spec!;
     expect(aboutOf(spec)).toEqual({
       summary: "Let people export their orders as a CSV file from the admin page.",
-      lead: "Implement items 1 to 3 of https://github.com/acme/shop/issues/42 and https://delta.example.io/shop/world/pull/7.",
+      lead: "Implement items 1 to 3 of https://github.com/acme/shop/issues/42 and https://forge.example.com/acme/shop/pull/7.",
       doneWhen: ["The file downloads"],
-      links: ["https://github.com/acme/shop/issues/42", "https://delta.example.io/shop/world/pull/7", "https://github.com/acme/shop/pull/9", "https://gitlab.example.com/a/b/-/merge_requests/3"],
+      links: ["https://github.com/acme/shop/issues/42", "https://forge.example.com/acme/shop/pull/7", "https://github.com/acme/shop/pull/9", "https://gitlab.example.com/a/b/-/merge_requests/3"],
       nonGoals: 1,
     });
   });

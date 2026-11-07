@@ -282,7 +282,7 @@ describe("syncMessage", () => {
 
   it("names each host's own rate limit for the tickets that wait on it", () => {
     const github = "github.com rate-limited Loom's reads for 9m more";
-    const delta = "delta.shopify.io rate-limited Loom's reads for 40m more";
+    const delta = "forge.example.com rate-limited Loom's reads for 40m more";
     expect(syncMessage([t("A-1", "waiting", github), t("A-2", "waiting", delta), t("A-3", "waiting", github)])).toBe(`Not read: A-1 and A-3, because ${github}. Not read: A-2, because ${delta}.`);
   });
 });

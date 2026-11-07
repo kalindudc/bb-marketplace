@@ -1097,15 +1097,15 @@ describe("the pull request strategy", () => {
         for (const [key, number] of [["CSV-1", 11], ["CSV-2", 12]] as const) {
           const id = ticketOf(h, key).id;
           for (const to of ["working", "checking", "review", "approved", "merging", "pr_open"] as const) h.store.setTicketState(id, to, "loom");
-          h.store.updateTicket(id, { pr_url: `https://delta.shopify.io/shop/world/pull/${number}`, pr_branch: `loom/csv/${key.toLowerCase()}`, pushed_sha: `sq${number}`, pr_checked_at: null });
+          h.store.updateTicket(id, { pr_url: `https://forge.example.com/acme/shop/pull/${number}`, pr_branch: `loom/csv/${key.toLowerCase()}`, pushed_sha: `sq${number}`, pr_checked_at: null });
         }
         const other = await otherProject();
-        const offline = { outcome: "unavailable", message: "The forge's state command failed (exit 1): Error: GET https://delta.shopify.io/api/v3/repos/shop/world/pulls/11\n\nCaused by:\n    2: dns error", transient: "network" } as const;
+        const offline = { outcome: "unavailable", message: "The forge's state command failed (exit 1): Error: GET https://forge.example.com/api/v3/repos/acme/shop/pulls/11\n\nCaused by:\n    2: dns error", transient: "network" } as const;
         h.host.scripted.prState = [offline];
         await pollPullRequests(h.ctx, project());
-        expect(h.host.callsTo("prState").map((call) => call.url)).toEqual(["https://delta.shopify.io/shop/world/pull/11"]);
-        expect(h.ctx.forgeBackoffs.get("delta.shopify.io")).toMatchObject({ delayMs: 5 * MINUTE, network: { failures: 1 } });
-        expect(systemPosts("CSV-1")).toEqual([expect.stringMatching(/^Reading the pull request failed because Loom could not reach delta\.shopify\.io: The forge's state command failed/u)]);
+        expect(h.host.callsTo("prState").map((call) => call.url)).toEqual(["https://forge.example.com/acme/shop/pull/11"]);
+        expect(h.ctx.forgeBackoffs.get("forge.example.com")).toMatchObject({ delayMs: 5 * MINUTE, network: { failures: 1 } });
+        expect(systemPosts("CSV-1")).toEqual([expect.stringMatching(/^Reading the pull request failed because Loom could not reach forge\.example\.com: The forge's state command failed/u)]);
         expect(project().state).toBe("running");
 
         await pollPullRequests(h.ctx, other());
@@ -1113,15 +1113,15 @@ describe("the pull request strategy", () => {
         expect(h.ctx.forgeBackoffs.has("github.com")).toBe(false);
 
         await pollIn(5);
-        expect(h.host.callsTo("prState").map((call) => call.url)).toEqual(["https://delta.shopify.io/shop/world/pull/11", "https://delta.shopify.io/shop/world/pull/11", "https://delta.shopify.io/shop/world/pull/12"]);
-        expect(h.ctx.forgeBackoffs.has("delta.shopify.io")).toBe(false);
+        expect(h.host.callsTo("prState").map((call) => call.url)).toEqual(["https://forge.example.com/acme/shop/pull/11", "https://forge.example.com/acme/shop/pull/11", "https://forge.example.com/acme/shop/pull/12"]);
+        expect(h.ctx.forgeBackoffs.has("forge.example.com")).toBe(false);
       });
 
       it("waits out a command forge's server error and rate limit as GitHub's, naming its host", async () => {
         await seedProject(h, pr((doc) => ((doc.merge.forge = { kind: "command", open: "delta open", state: "delta state" }), (doc.checks.ci = false))));
         const id = ticketOf(h, "CSV-1").id;
         for (const to of ["working", "checking", "review", "approved", "merging", "pr_open"] as const) h.store.setTicketState(id, to, "loom");
-        h.store.updateTicket(id, { pr_url: "https://delta.shopify.io/shop/world/pull/11", pushed_sha: "sq11", pr_checked_at: null });
+        h.store.updateTicket(id, { pr_url: "https://forge.example.com/acme/shop/pull/11", pushed_sha: "sq11", pr_checked_at: null });
         h.host.scripted.prState = [
           { outcome: "unavailable", message: "The forge's state command failed (exit 1): 502 Bad Gateway", transient: "server" },
           { outcome: "unavailable", message: "The forge's state command failed (exit 1): 429 Too Many Requests", transient: "rate_limit" },
@@ -1129,10 +1129,10 @@ describe("the pull request strategy", () => {
         await pollPullRequests(h.ctx, project());
         expect(waitOf()).toMatchObject({ failures: 1 });
         await pollIn(5);
-        expect(h.ctx.forgeBackoffs.get("delta.shopify.io")).toMatchObject({ delayMs: 15 * MINUTE });
+        expect(h.ctx.forgeBackoffs.get("forge.example.com")).toMatchObject({ delayMs: 15 * MINUTE });
         expect(systemPosts()).toEqual([
           expect.stringMatching(/^Reading the pull request of CSV-1 failed with what looks like a temporary error: The forge's state command failed \(exit 1\): 502 Bad Gateway\. /u),
-          expect.stringMatching(/^delta\.shopify\.io rate-limited Loom's read of the pull request: /u),
+          expect.stringMatching(/^forge\.example\.com rate-limited Loom's read of the pull request: /u),
         ]);
         expect(project().state).toBe("running");
       });

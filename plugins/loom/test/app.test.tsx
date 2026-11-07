@@ -3698,7 +3698,7 @@ describe("ticket", () => {
         human: false,
         url: URL,
         checks: [{ name: "tf/plan", url: "https://ci/1" }],
-        items: [{ kind: "thread" as const, author: "binks-code-reviewer", body: "The regex is unanchored.", url: null, state: null, path: "gclb_logging.tf", line: 42 }],
+        items: [{ kind: "thread" as const, author: "review-bot", body: "The regex is unanchored.", url: null, state: null, path: "gclb_logging.tf", line: 42 }],
         ignored: { bots: 2, own: 1 },
       };
       const extra = [

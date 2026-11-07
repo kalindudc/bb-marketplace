@@ -15,6 +15,7 @@ import { boardCards } from "../src/rpc";
 import { reviewerLookupText } from "../src/format";
 import { maybeSendTriage } from "../src/triage";
 import { specOf } from "../src/ctx";
+import { companyNamesIn } from "./company-names";
 import { checkOutHead, makeCtx, makeEngine, seedMachineProject, seedProject, startWorker, ticketOf, type Doc, type EngineHarness } from "./helpers";
 
 let h: EngineHarness;
@@ -308,7 +309,8 @@ describe("the briefs", () => {
     const section = skill.split("## Core rules\n")[1]!.split("\n## ")[0]!;
     const listed = section.split("\n").filter((line) => line.startsWith("- ")).map((line) => line.slice(2));
     expect(listed).toEqual([...PR_TEXT_CORE]);
-    expect(PR_TEXT_CORE.join(" ")).not.toMatch(/shopify|world/i);
+    expect(companyNamesIn(PR_TEXT_CORE.join(" "))).toEqual([]);
+    expect(PR_TEXT_CORE.join(" ")).not.toMatch(/\bworld\b/iu);
   });
 
   it("tell the code reviewer to tag findings by kind, and that the merge and deploy order is Loom's, a spec matter when it is wrong", async () => {

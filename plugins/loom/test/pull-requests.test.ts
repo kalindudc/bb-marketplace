@@ -220,22 +220,22 @@ describe("following the pull request", () => {
   });
 
   it("waits out a forge's feedback command that could not reach its host, backing off that host only", async () => {
-    const DELTA = "https://delta.shopify.io/shop/world/pull/2313251";
+    const DELTA = "https://forge.example.com/acme/shop/pull/2313251";
     await openPr({ forge: { kind: "command", open: "delta open", state: "delta state", feedback: "delta feedback" } });
     h.store.updateTicket(ticket().id, { pr_url: DELTA });
     h.host.feedback.set(DELTA, changesRequested);
-    h.host.scripted.prFeedback = [{ outcome: "unavailable", message: "The forge's feedback command failed (exit 1): Error: GET https://delta.shopify.io/api/v3/repos/shop/world/pulls/2313251\n\nCaused by:\n    2: dns error", transient: "network" }];
+    h.host.scripted.prFeedback = [{ outcome: "unavailable", message: "The forge's feedback command failed (exit 1): Error: GET https://forge.example.com/api/v3/repos/acme/shop/pulls/2313251\n\nCaused by:\n    2: dns error", transient: "network" }];
     await poll();
     expect(h.host.callsTo("prFeedback")).toHaveLength(1);
     expect(project().state).toBe("running");
     expect(ticket()).toMatchObject({ state: "pr_open", pr_rounds: 0 });
-    expect(h.ctx.forgeBackoffs.get("delta.shopify.io")).toMatchObject({ network: { failures: 1 } });
+    expect(h.ctx.forgeBackoffs.get("forge.example.com")).toMatchObject({ network: { failures: 1 } });
     expect(h.ctx.forgeBackoffs.has("github.com")).toBe(false);
 
     await poll();
     expect(h.host.callsTo("prFeedback")).toHaveLength(2);
     expect(ticket()).toMatchObject({ state: "working", pr_rounds: 1 });
-    expect(h.ctx.forgeBackoffs.has("delta.shopify.io")).toBe(false);
+    expect(h.ctx.forgeBackoffs.has("forge.example.com")).toBe(false);
   });
 
   it("holds a failed check while others run, until 30 minutes after the push", async () => {
@@ -430,7 +430,7 @@ describe("following the pull request", () => {
     const worker = await openPr();
     const items: Feedback["items"] = [
       changesRequested.items![0]!,
-      { key: "thread:T1:9", kind: "thread", author: "binks", bot: true, body: "binks: The regex is unanchored.", url: null, state: null, path: "src/a.ts", line: 4 },
+      { key: "thread:T1:9", kind: "thread", author: "review-bot", bot: true, body: "review-bot: The regex is unanchored.", url: null, state: null, path: "src/a.ts", line: 4 },
       { key: "comment:5:x", kind: "comment", author: "terraform-actuator", bot: true, body: "Plan: 1 to change.", url: null, state: null, path: null, line: null },
       { key: "comment:6:y", kind: "comment", author: "kalindudc", bot: false, body: "Answered above.", url: null, state: null, path: null, line: null },
       { key: "review:2:b", kind: "review", author: "bob", bot: false, body: "LGTM", url: null, state: "approved", path: null, line: null },
@@ -442,10 +442,10 @@ describe("following the pull request", () => {
     const message = h.bb.sent(worker.thread_id!).at(-1)!;
     expect(message).toContain("needs fixes (fix round 1; 1 of the 5 the pull request may start)");
     expect(message).toContain("Rename the column.");
-    expect(message).toContain("Review thread on src/a.ts:4, last from binks");
+    expect(message).toContain("Review thread on src/a.ts:4, last from review-bot");
     expect(message).not.toContain("Plan: 1 to change.");
     expect(message).toContain("- Review by alice (changes requested) (https://github.com/acme/shop/pull/1#r1), key `review:1:a`:");
-    expect(message).toContain("Review thread on src/a.ts:4, last from binks, key `thread:T1:9`:");
+    expect(message).toContain("Review thread on src/a.ts:4, last from review-bot, key `thread:T1:9`:");
     expect(message).toContain("Answer a review, a review thread or a comment on the pull request with loom_pr_reply");
     expect(dataOf("pr_feedback")[0]!.data).toMatchObject({ round: 1, human: false, ignored: { bots: 1, own: 1 } });
     expect(JSON.parse(ticket().pr_seen_json)).toEqual(expect.arrayContaining(items.map((item) => item.key)));
@@ -541,14 +541,14 @@ describe("following the pull request", () => {
       h.host.feedback.set(URL, {
         items: [
           changesRequested.items![0]!,
-          { key: "thread:T1:9", kind: "thread", author: "binks", bot: true, body: "binks: The regex is unanchored.", url: null, state: null, path: "src/a.ts", line: 4 },
+          { key: "thread:T1:9", kind: "thread", author: "review-bot", bot: true, body: "review-bot: The regex is unanchored.", url: null, state: null, path: "src/a.ts", line: 4 },
           carol,
           { key: "comment:7:z", kind: "comment", author: "dave", bot: false, body: "Can this ship today?", url: null, state: null, path: null, line: null },
           { key: "review:2:b", kind: "review", author: "bob", bot: false, body: "LGTM", url: null, state: "approved", path: null, line: null },
         ],
       });
       await poll();
-      expect(dataOf("pr_feedback")[0]!.data.items).toEqual(expect.arrayContaining([expect.objectContaining({ author: "binks", bot: true }), expect.objectContaining({ author: "alice", bot: false })]));
+      expect(dataOf("pr_feedback")[0]!.data.items).toEqual(expect.arrayContaining([expect.objectContaining({ author: "review-bot", bot: true }), expect.objectContaining({ author: "alice", bot: false })]));
       expect(h.host.callsTo("prRequestReview")).toEqual([]);
 
       await pushFix(worker);

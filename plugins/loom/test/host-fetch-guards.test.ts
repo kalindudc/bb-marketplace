@@ -58,7 +58,7 @@ const subcommand = (argv: readonly string[]) => {
 const fetches = () => seen.argv.filter((argv) => subcommand(argv) === "fetch");
 
 /** An origin with main at one commit, a clone of it, and a second commit that only the origin has. */
-function world() {
+function twoClones() {
   const origin = join(scratch, `origin-${counter}.git`);
   const clone = (name: string) => {
     const dir = join(scratch, `${name}-${counter}`);
@@ -102,57 +102,57 @@ function expectGuarded(minimum = 1) {
 
 describe("every git fetch Loom runs", () => {
   it("fetchBranch", async () => {
-    const w = world();
+    const w = twoClones();
     expect(await fetchBranch({ worktree: w.local, remote: "origin", branch: "feature" })).toMatchObject({ outcome: "ok", sha: w.feature });
     expectGuarded();
   });
 
   it("behindBase", async () => {
-    const w = world();
+    const w = twoClones();
     expect(await behindBase({ repo: w.local, remote: "origin", base: "main", fetch: true, shas: [w.first] })).toMatchObject({ outcome: "ok", tip: w.second });
     expectGuarded();
   });
 
   it("stackBase", async () => {
-    const w = world();
+    const w = twoClones();
     expect(await stackBase({ repo: w.local, branch: "loom/csv/base", commits: [w.first], message: "stack", base: { remote: "origin", branch: "main" } })).toMatchObject({ outcome: "ok", sha: w.second });
     expectGuarded();
   });
 
   it("fetchTip", async () => {
-    const w = world();
+    const w = twoClones();
     expect(await fetchTip({ repo: w.local, remote: "origin", branch: "feature", base: "main", ref: "refs/loom/tip" })).toMatchObject({ outcome: "ok", sha: w.feature });
     expectGuarded(2);
   });
 
   it("landedOn", async () => {
-    const w = world();
+    const w = twoClones();
     expect(await landedOn({ repo: w.local, remote: "origin", base: "main", sha: w.first })).toEqual({ outcome: "ok", landed: true });
     expectGuarded();
   });
 
   it("prCommit, when the branch's tip is not here yet", async () => {
-    const w = world();
+    const w = twoClones();
     const result = await prCommit({ repo: w.local, remote: "origin", branch: "feature", base: "main", head: w.first, message: "pr" });
     expect(result).toMatchObject({ outcome: "diverged" });
     expectGuarded();
   });
 
   it("importCommit, when the base is not here yet", async () => {
-    const w = world();
+    const w = twoClones();
     const made = await importCommit({ repo: w.local, remote: "origin", baseBranch: "main", base: w.second, tree: sh(w.local, "rev-parse", `${w.first}^{tree}`), message: "m\n", author: AUTHOR, entries: [{ path: "b.txt", delete: true }], refs: [] }, join(scratch, "data"));
     expect(made).toMatchObject({ outcome: "ok" });
     expectGuarded();
   });
 
   it("carryStart, when the base is not on the machine", async () => {
-    const w = world();
+    const w = twoClones();
     await carryStart({ worktree: w.local, remote: "origin", baseBranch: "main", base: w.second, tree: "2".repeat(40) });
     expectGuarded();
   });
 
   it("leaves ls-remote and push as they were", async () => {
-    const w = world();
+    const w = twoClones();
     await landedOn({ repo: w.local, remote: "origin", base: "main", sha: w.first });
     const listed = seen.argv.find((argv) => subcommand(argv) === "ls-remote")!;
     expect(listed).toEqual(["-C", w.local, "ls-remote", "origin", "refs/heads/main"]);
