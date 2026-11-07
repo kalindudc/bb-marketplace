@@ -8,7 +8,7 @@ import { createFileEventGate } from "./src/file-events";
 import { createRepoCache } from "./src/repo-cache";
 import { createReviewStore } from "./src/review-store";
 import { createRootCache } from "./src/root-cache";
-import { loadCommitFiles, loadFileSides, loadPatch, type Counting } from "./src/sources";
+import { loadCommitFiles, loadFileSides, loadImages, loadPatch, type Counting } from "./src/sources";
 import { createWholeStore } from "./src/whole-store";
 
 const HOST_TIMEOUT_MS = 25_000;
@@ -142,6 +142,7 @@ export default function vantage(bb: BbPluginApi): void {
     overview: (input) => overview(input),
     patch: async (input) => loadPatch(await deps(), input),
     fileSides: async (input) => loadFileSides(await deps(), input),
+    image: async (input) => loadImages(await deps(), input),
     commitFiles: async (input) => loadCommitFiles(await deps(), input),
     setWhole: async ({ key, whole }) => {
       await wholeStore.set(key, whole);

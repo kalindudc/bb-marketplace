@@ -51,6 +51,7 @@ async function mountPanel(rows = 2, tree: Overview | (() => Overview) = TREE, si
     rpc: {
       shell: () => new Promise<Overview>(() => {}), overview: () => (typeof tree === "function" ? tree() : tree),
       patch: () => ({ patch: "@@ -1 +1 @@\n-a\n+b", truncated: false, binary: false }), fileSides: () => ({ old: null, new: null }),
+      image: () => ({ old: null, new: null, truncated: false }),
       recordedEdits: () => ({ edits: [] }), commitFiles: () => ({ files: [] }),
       reviewed: ({ keys }: { keys: string[] }) => Object.fromEntries(keys.map((entry) => [entry, {}])), setReviewed: () => ({}),
     } as never,

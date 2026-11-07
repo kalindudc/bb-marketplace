@@ -12,6 +12,7 @@ import {
   type NumstatEntry, type UntrackedFolder,
 } from "./src/git";
 import { limitGit } from "./src/git-exec";
+import { IMAGE_LIMIT } from "./src/images";
 import { mapLimit } from "./src/limit";
 
 const execFileAsync = promisify(execFile);
@@ -476,15 +477,42 @@ async function sideRevisions(root: string, target: HostTarget, signal: AbortSign
 
 const isText = (content: Buffer): boolean => !content.subarray(0, BINARY_SNIFF_BYTES).includes(0);
 
-// Only a regular file's blob: a symlink stored in git is its target's name, and a tree is not a file.
-async function blobAt(root: string, revision: string, path: string, signal: AbortSignal): Promise<string | null> {
+async function blobEntry(root: string, revision: string, path: string, signal: AbortSignal): Promise<{ sha: string; size: number } | null> {
   const listing = await runGit(root, ["ls-tree", "-l", "-z", revision, "--", `:(literal)${path}`], signal);
   if (listing.code !== 0) return null;
   const entry = /^(\d{6}) (\w+) ([0-9a-f]+) +(\d+|-)\t([^\0]*)\0/.exec(listing.stdout);
   if (entry === null || entry[5] !== path || entry[2] !== "blob" || (entry[1] !== "100644" && entry[1] !== "100755")) return null;
-  if (Number(entry[4]) > SIDE_LIMIT) return null;
-  const content = await mustGit(root, ["cat-file", "blob", entry[3]!], signal);
+  return { sha: entry[3]!, size: Number(entry[4]) };
+}
+
+// A blob read that keeps the bytes untouched: runGit's text encoding would mangle a picture.
+async function catFileBytes(root: string, sha: string, signal: AbortSignal): Promise<Buffer | null> {
+  try {
+    const { stdout } = (await execGit(["-C", root, "cat-file", "blob", sha], {
+      env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0", LC_ALL: "C" },
+      maxBuffer: GIT_MAX_BUFFER, timeout: GIT_TIMEOUT_MS, signal,
+      // execFile types every encoding as a string; cast past that to read the buffer it really returns.
+      encoding: "buffer",
+    } as unknown as ExecFileOptionsWithStringEncoding)) as unknown as { stdout: Buffer };
+    return stdout;
+  } catch {
+    return null;
+  }
+}
+
+// Only a regular file's blob: a symlink stored in git is its target's name, and a tree is not a file.
+async function blobAt(root: string, revision: string, path: string, signal: AbortSignal): Promise<string | null> {
+  const blob = await blobEntry(root, revision, path, signal);
+  if (blob === null || blob.size > SIDE_LIMIT) return null;
+  const content = await mustGit(root, ["cat-file", "blob", blob.sha], signal);
   return content.includes("\0") ? null : content;
+}
+
+async function blobBytesAt(root: string, revision: string, path: string, signal: AbortSignal): Promise<{ bytes: Buffer | null; tooLarge: boolean }> {
+  const blob = await blobEntry(root, revision, path, signal);
+  if (blob === null) return { bytes: null, tooLarge: false };
+  if (blob.size > IMAGE_LIMIT) return { bytes: null, tooLarge: true };
+  return { bytes: await catFileBytes(root, blob.sha, signal), tooLarge: false };
 }
 
 // The file's own folder, with every symlink in it resolved, must still be inside the repository; checkPaths only looks at
@@ -501,6 +529,27 @@ async function insideRoot(root: string, path: string): Promise<string | null> {
 }
 
 // Opened once, without following a symlink, and read with a bound, so a file swapped or grown after the check is not read.
+async function workingFileBytes(root: string, path: string): Promise<{ bytes: Buffer | null; tooLarge: boolean }> {
+  const full = await insideRoot(root, path);
+  if (full === null) return { bytes: null, tooLarge: false };
+  let handle;
+  try {
+    handle = await open(full, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+  } catch {
+    return { bytes: null, tooLarge: false };
+  }
+  try {
+    const info = await handle.stat();
+    if (!info.isFile() || info.size > IMAGE_LIMIT) return { bytes: null, tooLarge: info.size > IMAGE_LIMIT };
+    const buffer = Buffer.alloc(IMAGE_LIMIT + 1);
+    const { bytesRead } = await handle.read(buffer, 0, IMAGE_LIMIT + 1, 0);
+    if (bytesRead > IMAGE_LIMIT) return { bytes: null, tooLarge: true };
+    return { bytes: buffer.subarray(0, bytesRead), tooLarge: false };
+  } finally {
+    await handle.close();
+  }
+}
+
 async function workingFile(root: string, path: string): Promise<string | null> {
   const full = await insideRoot(root, path);
   if (full === null) return null;
@@ -534,6 +583,23 @@ async function fileSides(input: HostInput<"fileSides">, signal: AbortSignal): Pr
       revisions.new === null ? workingFile(root, path) : blobAt(root, revisions.new, path, signal),
     ]);
     return { outcome: "available" as const, old, new: next };
+  });
+}
+
+async function imageSides(input: HostInput<"imageSides">, signal: AbortSignal): Promise<HostOutput<"imageSides">> {
+  return guard(async () => {
+    const { root, path, previousPath, untracked, target } = input;
+    await verifyRoot(root, signal);
+    checkPaths(path, previousPath);
+    const revisions = untracked ? { old: null, new: null } : await sideRevisions(root, target, signal);
+    const [old, next] = await Promise.all([
+      revisions.old === null ? { bytes: null, tooLarge: false } : blobBytesAt(root, revisions.old, previousPath ?? path, signal),
+      revisions.new === null ? workingFileBytes(root, path) : blobBytesAt(root, revisions.new, path, signal),
+    ]);
+    return {
+      outcome: "available" as const, old: old.bytes?.toString("base64") ?? null, new: next.bytes?.toString("base64") ?? null,
+      truncated: old.tooLarge || next.tooLarge,
+    };
   });
 }
 
@@ -580,6 +646,7 @@ export default experimental_defineHostEntry({
     checkoutStatus: (input, { signal }) => checkoutStatus(input, signal),
     repoPatch: (input, { signal }) => repoPatch(input, signal),
     fileSides: (input, { signal }) => fileSides(input, signal),
+    imageSides: (input, { signal }) => imageSides(input, signal),
     threadCommits: (input, { signal }) => threadCommits(input, signal),
   },
 });

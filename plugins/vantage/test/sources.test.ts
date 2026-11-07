@@ -3,7 +3,7 @@ import type { PluginBbSdk } from "@get-bb/plugin-sdk";
 import type { CollectDeps, HostCall, RepoPlan, Touched } from "../src/collect";
 import type { GitFile, HostOutput, PatchInput, RepoRef } from "../src/contract";
 import type { EditRecord } from "../src/edits";
-import { loadCommitFiles, loadFileSides, loadPatch, loadRepoFiles, loadWorkspaceStatus, recordedFile } from "../src/sources";
+import { loadCommitFiles, loadFileSides, loadImages, loadPatch, loadRepoFiles, loadWorkspaceStatus, recordedFile } from "../src/sources";
 
 const gitFile = (overrides: Partial<GitFile> = {}): GitFile => ({
   path: "src/a.ts", previousPath: null, status: "modified", additions: 2, deletions: 1, binary: false, ...overrides,
@@ -369,6 +369,33 @@ describe("loadFileSides", () => {
     const failed = deps({ host: { outcome: "unavailable", reason: "git-failed", message: "host offline" } });
     await expect(loadFileSides(failed.deps, input("uncommitted"))).rejects.toThrow("host offline");
     expect(await loadFileSides(failed.deps, input("uncommitted", { ref: { kind: "recorded" } }))).toEqual({ old: null, new: null });
+    expect(failed.host).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("loadImages", () => {
+  const input = (scope: PatchInput["scope"], extra: Partial<PatchInput> = {}): PatchInput => ({
+    ref: workspace("origin/main"), path: "shots/after.png", previousPath: null, untracked: false, scope, sha: null, ...extra,
+  });
+
+  it("asks the host at a workspace's repository root for both sides as base64, with each scope's target", async () => {
+    const { deps: d, host } = deps({ host: { outcome: "available", old: "AAA=", new: "BBB=", truncated: false } });
+    expect(await loadImages(d, input("committed"))).toEqual({ old: "AAA=", new: "BBB=", truncated: false });
+    await loadImages(d, input("branch"));
+    await loadImages(d, input("uncommitted", { previousPath: "shots/before.png", untracked: true }));
+    await loadImages(d, input("committed", { sha: "c".repeat(40) }));
+    expect(host.mock.calls).toEqual([
+      ["imageSides", { root: "/repos/mono", path: "shots/after.png", previousPath: null, untracked: false, target: { type: "committed", base: "origin/main" } }, { hostId: "host_1", signal: undefined }],
+      ["imageSides", { root: "/repos/mono", path: "shots/after.png", previousPath: null, untracked: false, target: { type: "merge-base", base: "origin/main" } }, { hostId: "host_1", signal: undefined }],
+      ["imageSides", { root: "/repos/mono", path: "shots/after.png", previousPath: "shots/before.png", untracked: true, target: { type: "uncommitted" } }, { hostId: "host_1", signal: undefined }],
+      ["imageSides", { root: "/repos/mono", path: "shots/after.png", previousPath: null, untracked: false, target: { type: "commit", sha: "c".repeat(40) } }, { hostId: "host_1", signal: undefined }],
+    ]);
+  });
+
+  it("raises the host's message, and answers a recorded repository with no sides", async () => {
+    const failed = deps({ host: { outcome: "unavailable", reason: "git-failed", message: "host offline" } });
+    await expect(loadImages(failed.deps, input("uncommitted"))).rejects.toThrow("host offline");
+    expect(await loadImages(failed.deps, input("uncommitted", { ref: { kind: "recorded" } }))).toEqual({ old: null, new: null, truncated: false });
     expect(failed.host).toHaveBeenCalledTimes(1);
   });
 });

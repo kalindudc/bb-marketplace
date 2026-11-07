@@ -90,6 +90,7 @@ async function mount(subPath: string, options: Options = {}, part: "page" | "sid
       overview: () => options.overview ?? tree(),
       patch: calls.patch,
       fileSides: () => ({ old: null, new: null }),
+      image: () => ({ old: null, new: null, truncated: false }),
       recordedEdits: () => ({ edits: [] }),
       commitFiles: calls.commitFiles,
       reviewed: ({ keys }: { keys: string[] }) => Object.fromEntries(keys.map((entry) => [entry, stored[entry] ?? {}])),

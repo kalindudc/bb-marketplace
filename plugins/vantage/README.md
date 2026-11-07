@@ -99,7 +99,10 @@ Select a row to open its worktree.
 - **Every diff is in one stream**, each file with a header that stays in view.
   Diffs are unified or side by side (the two buttons at the right), and
   "unchanged lines" between the changes expand to show the rest of the file.
-  The wrap button wraps long lines instead of scrolling them sideways. The
+  The wrap button wraps long lines instead of scrolling them sideways. A
+  change to an image (png, jpg, gif, webp and the rest) renders as pictures
+  instead of a diff: Before and After side by side when both sides exist,
+  each clickable to view it full size. The
   chevron folds one file away; Collapse all folds every file at once, and
   Expand all opens them all again. Collapse all is kept: the next worktree
   you open starts folded too, until you press Expand all. Either button also
@@ -423,7 +426,8 @@ or steers a turn of the worktree's thread, as typing them into its chat would.
 - The expandable context comes from a `fileSides` call: both whole sides of
   one file, read with `git cat-file` on the host. A side over 1 MiB, a
   binary file and a symlink come back empty, and the diff then shows its
-  changes without expanding.
+  changes without expanding. An image file's sides are read as bytes
+  instead (`imageSides`), at most 8 MiB a side, so its card can render them.
 - Reviewed marks are stored per worktree in `bb.storage.kv`. A mark is the
   file's status and line counts when you ticked it. The `reviewed` read is
   tagged, so a tick made in one window refreshes every other window. Earlier
@@ -492,8 +496,9 @@ or steers a turn of the worktree's thread, as typing them into its chat would.
 
 - At most 500 files per repository or worktree list, 100 commits per worktree,
   200 shared files, 200 other files and 200 threads in a tree; patches are cut
-  at 1 MiB and recorded diffs at 60,000 characters. The Vantage page reads
-  at most the thread limit setting (200 by default, 500 at most).
+  at 1 MiB, image sides sent at 8 MiB and recorded diffs at 60,000 characters.
+  The Vantage page reads at most the thread limit setting (200 by default, 500
+  at most).
 - The Vantage page can show a repository up to 60 seconds late if bb does
   not report a change that no agent made, such as a file you edit by hand; its
   60-second refresh and the Refresh button bring it up to date.

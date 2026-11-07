@@ -3,7 +3,7 @@ See every worktree your parallel agents work in, review what each one changed, a
 ## What you get
 
 - A Vantage page in bb's left navigation. Its worktree list replaces bb's thread list while it is open, grouped by what needs doing (Waiting on you, Ready to review, Still working, Done) or by project, with search and filters. Each row gives the thread, its line counts and one plain sentence such as "Shares README.md with Banner".
-- One worktree at a time: the page opens the one that needs you first, with a switch for all, uncommitted, committed or one commit's changes, a folding file tree, and every diff in one stream, unified or side by side, with expandable context and wrapping (`W`). Collapse all (`X`) and what you fold are remembered.
+- One worktree at a time: the page opens the one that needs you first, with a switch for all, uncommitted, committed or one commit's changes, a folding file tree, and every diff in one stream, unified or side by side, with expandable context and wrapping (`W`). An image change renders as pictures — Before and After, each clickable full size — instead of "Binary file". Collapse all (`X`) and what you fold are remembered.
 - Comments on files, optionally quoting lines, sent to the agent as one message now or after its turn. The page's Agent tab holds its chat.
 - An overlaps page for files two worktrees both changed, with a guess at whether merging will conflict and an "ask to rebase" comment.
 - All changes: everything the threads changed, by repository, including checkouts edited by path and archived branches.
@@ -32,6 +32,6 @@ Vantage never stages, commits or changes a file. It reads git on the machine tha
 
 ## Limits
 
-- 500 files per list, 100 commits per worktree, patches cut at 1 MiB.
+- 500 files per list, 100 commits per worktree, patches cut at 1 MiB, image sides sent at 8 MiB.
 - Comments are per file. The conflict guess compares line ranges, not a real merge.
 - A checkout outside bb gets a row once a thread both edited a file in it and changed into it with `cd`, `pushd` or `git -C`.

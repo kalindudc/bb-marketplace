@@ -1,6 +1,6 @@
 import type { CollectDeps, RepoPlan, Touched } from "./collect";
 import type {
-  CommitFilesInput, CommitFilesOutput, FileChange, FileSidesOutput, GitFile, HostOutput, HostTarget, PatchInput, PatchOutput, RepoRef, Scope, Worktree,
+  CommitFilesInput, CommitFilesOutput, FileChange, FileSidesOutput, GitFile, HostOutput, HostTarget, ImageOutput, PatchInput, PatchOutput, RepoRef, Scope, Worktree,
 } from "./contract";
 
 export type LiveFiles = { files: FileChange[]; branch: string | null; base: string | null; aheadCount: number | null; truncated: boolean };
@@ -200,6 +200,16 @@ export async function loadPatch(deps: CollectDeps, input: PatchInput, signal?: A
   }, { hostId: ref.hostId, signal });
   if (result.outcome === "unavailable") throw new Error(hostMessage(result));
   return { patch: result.patch, truncated: result.truncated, binary: result.binary };
+}
+
+export async function loadImages(deps: CollectDeps, input: PatchInput, signal?: AbortSignal): Promise<ImageOutput> {
+  if (input.ref.kind === "recorded") return { old: null, new: null, truncated: false };
+  const ref = asGit(input.ref);
+  const result = await deps.host("imageSides", {
+    root: ref.root, path: input.path, previousPath: input.previousPath, untracked: input.untracked, target: hostPatchTarget(ref, input),
+  }, { hostId: ref.hostId, signal });
+  if (result.outcome === "unavailable") throw new Error(hostMessage(result));
+  return { old: result.old, new: result.new, truncated: result.truncated };
 }
 
 export async function loadCommitFiles(deps: CollectDeps, input: CommitFilesInput, signal?: AbortSignal): Promise<CommitFilesOutput> {

@@ -2,6 +2,12 @@
 
 Notable changes to Vantage, newest first. Releases are tagged `vantage/vX.Y.Z` in this repository.
 
+## 0.10.0 (2026-11-07)
+
+### Added
+
+- Image files a change touches — png, jpg, jpeg, gif, webp, avif, bmp, ico and svg — render as pictures in the review instead of "Binary file": Before and After side by side when both sides exist, each clickable to view it full size. The host reads each side's bytes with git and sends at most 8 MiB a side; a larger side is left out and the card says so. The file list shows such a file as "image" instead of "binary".
+
 ## 0.9.0 (2026-11-06)
 
 ### Added

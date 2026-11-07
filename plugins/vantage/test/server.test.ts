@@ -118,7 +118,7 @@ describe("server", () => {
     const { harness, ready } = start();
     await ready;
     expect(harness.registrations.rpcMethods).toEqual([
-      "shell", "overview", "patch", "fileSides", "commitFiles", "recordedEdits", "reviewed", "setReviewed", "setWhole",
+      "shell", "overview", "patch", "fileSides", "image", "commitFiles", "recordedEdits", "reviewed", "setReviewed", "setWhole",
     ]);
     expect(harness.registrations.cli?.name).toBe("vantage");
     expect(harness.logEntries).toContainEqual({ level: "info", message: "loaded" });

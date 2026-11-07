@@ -62,6 +62,15 @@ const folderLimit = z.number().int().min(1).max(1_000_000).optional();
 // The base a checkout was compared with instead of the one asked for, and how many commits that one would have counted.
 export const skippedBaseSchema = z.object({ name: text, aheadCount: count }).strict();
 
+// One read covers repoPatch, fileSides and imageSides: where the file is and which change of it to read.
+const patchTargetInput = z.object({
+  root: absolutePath,
+  path: relativePath,
+  previousPath: relativePath.nullable(),
+  untracked: z.boolean(),
+  target: hostTargetSchema,
+}).strict();
+
 export const hostContract = defineContract({
   resolveRoots: {
     input: z.object({ paths: z.array(resolvablePath).max(2000) }).strict(),
@@ -123,13 +132,7 @@ export const hostContract = defineContract({
     ]),
   },
   repoPatch: {
-    input: z.object({
-      root: absolutePath,
-      path: relativePath,
-      previousPath: relativePath.nullable(),
-      untracked: z.boolean(),
-      target: hostTargetSchema,
-    }).strict(),
+    input: patchTargetInput,
     output: z.discriminatedUnion("outcome", [
       z.object({
         outcome: z.literal("available"),
@@ -143,15 +146,18 @@ export const hostContract = defineContract({
   // Both whole sides of one file's diff, so the diff can show the unchanged lines between its hunks. A side the file does not
   // have (an added or a deleted file) is null, and so is a side too large to send.
   fileSides: {
-    input: z.object({
-      root: absolutePath,
-      path: relativePath,
-      previousPath: relativePath.nullable(),
-      untracked: z.boolean(),
-      target: hostTargetSchema,
-    }).strict(),
+    input: patchTargetInput,
     output: z.discriminatedUnion("outcome", [
       z.object({ outcome: z.literal("available"), old: z.string().nullable(), new: z.string().nullable() }).strict(),
+      hostUnavailableSchema,
+    ]),
+  },
+  // Both sides of one image's diff as base64, so the review renders the pictures instead of "Binary file". A side the file
+  // does not have is null, and so is a side too large to send; `truncated` says at least one side was.
+  imageSides: {
+    input: patchTargetInput,
+    output: z.discriminatedUnion("outcome", [
+      z.object({ outcome: z.literal("available"), old: z.string().nullable(), new: z.string().nullable(), truncated: z.boolean() }).strict(),
       hostUnavailableSchema,
     ]),
   },
@@ -357,6 +363,9 @@ export type CommitFilesOutput = z.infer<typeof commitFilesOutputSchema>;
 export const fileSidesOutputSchema = z.object({ old: z.string().nullable(), new: z.string().nullable() }).strict();
 export type FileSidesOutput = z.infer<typeof fileSidesOutputSchema>;
 
+export const imageOutputSchema = z.object({ old: z.string().nullable(), new: z.string().nullable(), truncated: z.boolean() }).strict();
+export type ImageOutput = z.infer<typeof imageOutputSchema>;
+
 // One worktree's reviewed files: each part of a file (its uncommitted change, its committed change, or one commit's change)
 // maps to the signature it had when it was ticked, so a change made afterwards shows as not reviewed.
 export const reviewMarksSchema = z.record(z.string().max(8192), z.string().max(256));
@@ -379,6 +388,7 @@ export const rpcContract = defineContract({
   overview: { input: overviewInputSchema, output: overviewSchema },
   patch: { input: patchInputSchema, output: patchOutputSchema },
   fileSides: { input: patchInputSchema, output: fileSidesOutputSchema },
+  image: { input: patchInputSchema, output: imageOutputSchema },
   commitFiles: { input: commitFilesInputSchema, output: commitFilesOutputSchema },
   recordedEdits: { input: recordedEditsInputSchema, output: recordedEditsOutputSchema },
   reviewed: {

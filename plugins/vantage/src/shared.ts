@@ -17,6 +17,7 @@ export function useLoaders(): ReviewLoaders {
   return useMemo<ReviewLoaders>(() => ({
     patch: (input) => limitPatches(() => ref.current.call("patch", input)),
     fileSides: (input) => limitSides(() => ref.current.call("fileSides", input)),
+    image: (input) => limitSides(() => ref.current.call("image", input)),
     recordedEdits: (input) => ref.current.call("recordedEdits", input),
     commitFiles: (input) => ref.current.call("commitFiles", input),
   }), []);

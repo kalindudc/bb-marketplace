@@ -1,16 +1,19 @@
 import { memo, useEffect, useRef, useState, type RefObject } from "react";
 import {
-  experimental_Diff as Diff, experimental_FileLink as FileLink, experimental_Icon as Icon, type CodeOverflowMode, type ExperimentalLiveFileTarget,
+  experimental_Diff as Diff, experimental_FileLink as FileLink, experimental_Icon as Icon, experimental_ImageLightbox as ImageLightbox,
+  type CodeOverflowMode, type ExperimentalLiveFileTarget,
 } from "@get-bb/plugin-sdk/app";
 import type {
-  FileChange, FileSidesOutput, PatchOutput, PatchRequest, PatchScope, RecordedEditsInput, RecordedEditsOutput, Repo, ThreadSummary,
+  FileChange, FileSidesOutput, ImageOutput, PatchOutput, PatchRequest, PatchScope, RecordedEditsInput, RecordedEditsOutput, Repo, ThreadSummary,
 } from "./contract";
 import type { Comment } from "./comments";
+import { dataUrlOf, isImagePath } from "./images";
 import { useLoaded } from "./loaded";
 
 export interface FileLoaders {
   patch(input: PatchRequest): Promise<PatchOutput>;
   fileSides(input: PatchRequest): Promise<FileSidesOutput>;
+  image(input: PatchRequest): Promise<ImageOutput>;
   recordedEdits(input: RecordedEditsInput): Promise<RecordedEditsOutput>;
 }
 
@@ -119,13 +122,15 @@ export const patchKey = (repo: FileRepo, file: FileChange, scope: PatchScope, sh
 function PatchBody({ repo, file, scope, sha, view, overflow, loaders, visible }: {
   repo: FileRepo; file: FileChange; scope: PatchScope; sha: string | null; view: DiffView; overflow: CodeOverflowMode; loaders: FileLoaders; visible: boolean;
 }) {
-  const skipped = file.tooLarge || file.binary;
+  const image = isImagePath(file.path);
+  const skipped = image || file.tooLarge || file.binary;
   const request = patchRequest(repo, file, scope, sha);
   const base = patchKey(repo, file, scope, sha);
   const [state, retry] = useLoaded(`patch\0${base}`, visible && !skipped, () => loaders.patch(request));
   const hasHunks = state.status === "ready" && state.value.patch !== "" && !state.value.binary && !state.value.truncated;
   const [sides] = useLoaded(`sides\0${base}`, visible && hasHunks, () => loaders.fileSides(request));
   if (file.tooLarge) return <Note>Too large to show here</Note>;
+  if (image) return <ImageBody repo={repo} file={file} scope={scope} sha={sha} loaders={loaders} visible={visible} />;
   if (file.binary) return <Note>Binary file</Note>;
   if (state.status === "idle" || state.status === "loading") return <Note>Loading diff…</Note>;
   if (state.status === "error") return <Failure message={state.message} onRetry={retry} />;
@@ -140,6 +145,44 @@ function PatchBody({ repo, file, scope, sha, view, overflow, loaders, visible }:
       <Diff patch={patch} path={file.path} view={view} overflow={overflow} {...(full === undefined ? {} : { experimental_fullFileContents: full })} />
       {truncated && <Note>The diff was cut because it is very long.</Note>}
     </>
+  );
+}
+
+function ImageSide({ label, src, alt, title, onOpen }: { label?: string; src: string; alt: string; title: string; onOpen(src: string): void }) {
+  return (
+    <figure className="flex min-w-0 flex-col items-center gap-1">
+      {label !== undefined && <figcaption className="text-[11px] text-muted-foreground">{label}</figcaption>}
+      <button type="button" title={title} onClick={() => onOpen(src)} className="cursor-zoom-in rounded p-1 hover:bg-state-hover">
+        <img src={src} alt={alt} className="max-h-96 max-w-full object-contain" loading="lazy" />
+      </button>
+    </figure>
+  );
+}
+
+function ImageBody({ repo, file, scope, sha, loaders, visible }: {
+  repo: FileRepo; file: FileChange; scope: PatchScope; sha: string | null; loaders: FileLoaders; visible: boolean;
+}) {
+  const base = patchKey(repo, file, scope, sha);
+  const [state, retry] = useLoaded(`image\0${base}`, visible, () => loaders.image(patchRequest(repo, file, scope, sha)));
+  const [open, setOpen] = useState<string | null>(null);
+  if (state.status === "idle" || state.status === "loading") return <Note>Loading image…</Note>;
+  if (state.status === "error") return <Failure message={state.message} onRetry={retry} />;
+  const { old, new: next, truncated } = state.value;
+  const before = old === null ? null : dataUrlOf(file.previousPath ?? file.path, old);
+  const after = next === null ? null : dataUrlOf(file.path, next);
+  if (before === null && after === null) {
+    return <Note>{truncated ? "The image is too large to show here." : "The image is not available."}</Note>;
+  }
+  const both = before !== null && after !== null;
+  return (
+    <div data-image-card className="flex flex-wrap items-start justify-center gap-2 p-3">
+      {before !== null && <ImageSide label={both ? "Before" : undefined} src={before} alt={`Old ${file.path}`} title="View the image full size" onOpen={setOpen} />}
+      {after !== null && <ImageSide label={both ? "After" : undefined} src={after} alt={`New ${file.path}`} title="View the image full size" onOpen={setOpen} />}
+      {truncated && <p className="w-full text-center text-[11px] text-subtle-foreground">A side was too large to send.</p>}
+      {open !== null && (
+        <ImageLightbox imageAlt={file.path} imageSrc={open} isOpen title={file.path} onClose={() => setOpen(null)} />
+      )}
+    </div>
   );
 }
 
@@ -173,7 +216,7 @@ function EditsBody({ file, threads, loaders, view, overflow, visible }: {
 export function Counts({ file }: { file: FileChange }) {
   if (file.status === "clean") return <span className="shrink-0 text-xs text-muted-foreground">unchanged</span>;
   if (file.tooLarge) return <span className="shrink-0 text-xs text-muted-foreground">too large</span>;
-  if (file.binary) return <span className="shrink-0 text-xs text-muted-foreground">binary</span>;
+  if (file.binary) return <span className="shrink-0 text-xs text-muted-foreground">{isImagePath(file.path) ? "image" : "binary"}</span>;
   if (file.additions === null && file.deletions === null) return null;
   return (
     <span className="shrink-0 whitespace-nowrap font-mono text-xs">
