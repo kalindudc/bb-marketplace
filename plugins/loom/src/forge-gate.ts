@@ -65,7 +65,8 @@ export function forgeBoundary(host: HostPort, gate: { backoffs: () => HostBackof
  * covers: a batch that answered some and lost others to a rate limit backs off afresh, with the longest wait it named.
  */
 function settle(backoffs: HostBackoffs, host: string, answer: Answer, now: number): void {
-  const failed = answer.outcome === "unavailable" ? [{ message: answer.message ?? "", transient: answer.transient, retryAfterMs: answer.retryAfterMs }] : (answer.missing ?? []).filter((miss) => miss.transient === "rate_limit" || miss.transient === "network");
+  // A failed answer of any outcome counts when it says what failed, as a review_start that exited with a rate limit does.
+  const failed = answer.outcome === "unavailable" || answer.transient !== undefined ? [{ message: answer.message ?? "", transient: answer.transient, retryAfterMs: answer.retryAfterMs }] : (answer.missing ?? []).filter((miss) => miss.transient === "rate_limit" || miss.transient === "network");
   const answered = answer.outcome !== "unavailable" && (answer.pulls?.length ?? 0) > 0;
   const limited = failed.filter((miss) => miss.transient === "rate_limit");
   const previous = answered ? undefined : backoffs.get(host);
@@ -84,7 +85,8 @@ function settle(backoffs: HostBackoffs, host: string, answer: Answer, now: numbe
     backoffs.set(host, { until: now + named.retryAfterMs!, delayMs: named.retryAfterMs!, message: named.message });
     return;
   }
-  if (answer.outcome !== "unavailable") backoffs.delete(host);
+  // Only an answer from the forge itself says the host takes calls again; a command that failed or ran out of time does not.
+  if (answer.outcome === "ok" || answer.outcome === "rejected") backoffs.delete(host);
 }
 
 /** The answer the gate gives for a forge call it did not send. */

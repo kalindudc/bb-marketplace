@@ -309,6 +309,22 @@ describe("a review gate on a draft", () => {
     expect(card().publishWait).toContain("its review gate failed");
   });
 
+  it("backs off the forge host when review_start exits with a rate limit, and starts again once the backoff ends, using no try", async () => {
+    await openPr();
+    passing();
+    const start = await prReviewStart({ repo: tmpdir(), url: URL, sha: ticket().pushed_sha!, head: "work", base: "main", command: "printf 'HTTP 429 rate limit\\n'; exit 1" });
+    expect(start).toMatchObject({ outcome: "failed", message: expect.stringContaining("HTTP 429"), transient: "rate_limit" });
+    h.host.scripted.prReviewStart = [start];
+    await followGate(h.ctx, project(), ticket().id);
+    const backoff = h.ctx.forgeBackoffs.get("github.com")!;
+    expect(backoff).toMatchObject({ until: expect.any(Number) });
+    expect(posts("gate_failed")).toEqual([]);
+    h.clock.advance(backoff.until - h.clock.t);
+    await followGate(h.ctx, project(), ticket().id);
+    expect(starts()).toHaveLength(2);
+    expect(card().publishWait).toContain(`its review gate is still running on ${ticket().pushed_sha!.slice(0, 12)}`);
+  });
+
   it("pauses the project with the fix for broken review_read output from the host, and reads the gate again once it runs", async () => {
     await openPr();
     await followGate(h.ctx, project(), ticket().id);

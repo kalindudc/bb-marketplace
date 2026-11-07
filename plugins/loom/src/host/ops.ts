@@ -2019,7 +2019,8 @@ export async function prReviewStart(input: HostInput<"prReviewStart">, signal?: 
   }
   const message = commandFailure("review_start", result);
   if (message === null) return { outcome: "ok" };
-  return { outcome: result.timedOut || result.exitCode === null ? "unknown" : "failed", message };
+  if (result.timedOut || result.exitCode === null) return { outcome: "unknown", message };
+  return { outcome: "failed", message, ...commandTransient(result) };
 }
 
 const gateReadSchema = z.object({

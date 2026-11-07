@@ -82,9 +82,11 @@ export function runFor(store: Store, ticket: TicketRow, own: string): GateRun | 
   if (last.kind === GATE_CAPPED) return { ...run, end: { kind: "capped" } };
   if (last.kind === GATE_TIMED_OUT) return { ...run, end: { kind: "failed", message: `it did not finish within ${GATE_TIMEOUT_MINUTES} minutes` } };
   if (last.kind === GATE_START_FAILED) {
-    // A start the forge gate held sent nothing, so it uses no try.
-    const tries = events.filter((event) => event.kind === GATE_START_FAILED && dataOf(event).held !== true).length;
-    return { ...run, end: data.held === true || (data.notStarted === true && tries < GATE_START_TRIES) ? { kind: "retry" } : { kind: "failed", message: String(data.message) } };
+    // A start the forge gate held sent nothing, and one that failed with a rate limit or a passing server error asked
+    // nothing: neither uses a try.
+    const free = (event: EventRow) => dataOf(event).held === true || dataOf(event).waits === true;
+    const tries = events.filter((event) => event.kind === GATE_START_FAILED && !free(event)).length;
+    return { ...run, end: free(last) || (data.notStarted === true && tries < GATE_START_TRIES) ? { kind: "retry" } : { kind: "failed", message: String(data.message) } };
   }
   if (data.state === "failed") return { ...run, end: { kind: "failed", message: String(data.message ?? "the gate says it failed") } };
   // Clean only when the gate lists nothing for the head; findings it lists still hold the draft, whether sent now or before.

@@ -74,7 +74,10 @@ async function startGate(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket
     ctx.bb.log("warn", `${ticket.key}'s review_start may have asked for a review of ${sha.slice(0, 12)} before it ended, so Loom reads the gate for it and never asks again: ${(answer as { message?: string }).message ?? answer.outcome}`);
     return;
   }
-  store.event(project.id, ticket.id, GATE_START_FAILED, LOOM_ACTOR, { url, sha, own, message: answer.message, notStarted: answer.outcome === "not_started" });
+  // A start that failed with what looks like a rate limit or a passing server error asked nothing; it waits for the forge
+  // host's backoff (forge-gate.ts) and starts again, using no try.
+  const waits = answer.outcome === "failed" && answer.transient !== undefined;
+  store.event(project.id, ticket.id, GATE_START_FAILED, LOOM_ACTOR, { url, sha, own, message: answer.message, notStarted: answer.outcome === "not_started", ...(waits ? { waits: true } : {}) });
   const run = runFor(store, ticket, own);
   if (run?.end?.kind === "failed") gateFailed(ctx, ticket, `Loom could not start the review gate for ${sha.slice(0, 12)}: ${answer.message}`);
   else store.changed(project.id);
