@@ -331,7 +331,7 @@ describe("a review gate on a draft", () => {
     h.host.gateRead = await prReviewRead({ repo: tmpdir(), url: URL, sha: ticket().pushed_sha!, command: "printf 'not-json\\n'" });
     expect(h.host.gateRead).toMatchObject({ outcome: "unavailable", message: expect.stringContaining("must print a JSON object") });
     await followGate(h.ctx, project(), ticket().id);
-    expect(project()).toMatchObject({ state: "paused", system_reason: expect.stringMatching(/must print a JSON object.*Fix the forge command in the spec/su) });
+    expect(project()).toMatchObject({ state: "paused", system_reason: expect.stringMatching(/must print a JSON object.*Fix the forge command.*The command is in the spec/su) });
     expect(events(GATE_DONE)).toEqual([]);
     gateSays({ findings: [] });
     h.store.setProjectState(project().id, "running", "human");
