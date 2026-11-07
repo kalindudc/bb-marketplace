@@ -13,7 +13,7 @@ import { plural } from "./format";
 import type { HostOutput } from "./host-contract";
 import { loomPost } from "./posts";
 import type { FeedbackItem } from "./prompts";
-import { GATE_CAPPED, GATE_DONE, GATE_ROUND, GATE_STARTED, GATE_START_FAILED, GATE_TIMED_OUT, GATE_TIMEOUT_MINUTES, ownPush, runFor, runningGate, type GateRun, type ReviewGate } from "./publish";
+import { GATE_CAPPED, GATE_DONE, GATE_ROUND, GATE_STARTED, GATE_START_FAILED, GATE_TIMED_OUT, GATE_TIMEOUT_MINUTES, ownPush, runFor, runningGate, textWait, type GateRun, type ReviewGate } from "./publish";
 import { gateFixRound } from "./pull-requests";
 import { repoSettings } from "./repos";
 import type { Spec } from "./spec";
@@ -36,6 +36,8 @@ export async function followGate(ctx: EngineCtx, project: ProjectRow, ticketId: 
   const gate = runningGate(spec, ticket);
   if (gate === null || readSub(ticket, "pr_meta_json")?.draft === false) return;
   if (store.ticketEvents(ticket.id, [MARKED_READY]).some((event) => dataOf(event).url === ticket.pr_url)) return;
+  // The gate reviews the text too, so it waits for approved text to be on the pull request, and then runs once for it.
+  if (textWait(ticket) !== null) return;
   const own = ownPush(store, ticket);
   if (own === null) return;
   const run = runFor(store, ticket, own);

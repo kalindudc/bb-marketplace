@@ -8,11 +8,12 @@ import { followDraft } from "../src/drafts";
 import { pollPullRequests, runMergeQueue, settleMerges } from "../src/merge";
 import { applyPrText, askForPrTexts, handInPrText } from "../src/pull-requests";
 import { repoSettings } from "../src/repos";
+import { followGate } from "../src/review-gate";
 import { publishWaits } from "../src/publish";
 import { checkWaitOf } from "../src/check-wait";
 import { approve, spawnReviewers, settleReviews } from "../src/review";
 import { writeSub } from "../src/sub-state";
-import { makeCtx, seedProject, reachApproved, ticketOf, type Doc, type EngineHarness } from "./helpers";
+import { checkOutHead, makeCtx, seedProject, reachApproved, ticketOf, type Doc, type EngineHarness } from "./helpers";
 
 let h: EngineHarness;
 beforeEach(() => { h = makeCtx(); });
@@ -42,6 +43,22 @@ async function open(edit: (doc: Doc) => void = () => undefined): Promise<ThreadR
 }
 function passing() {
   h.host.feedback.set(URL, { head: ticket().pushed_sha!, checks: [{ key: "check:build", name: "build", state: "passed", url: null, started: null, startedAt: null, completedAt: null, progress: null, steps: null }] });
+}
+
+async function approveCodeFix(worker: ThreadRow): Promise<void> {
+  const worktree = h.host.worktree(`/wt/${worker.environment_id}`);
+  worktree.dirty = true;
+  worktree.changed = ["src/model/rows.ts"];
+  submit(h.ctx, worker.thread_id!, "Guarded rows.", { body: "Adds rows and explains the empty export." });
+  await settleChecks(h.ctx);
+  await spawnReviewers(h.ctx, project(), spec());
+  const reviewer = h.store.threads({ ticketId: ticket().id, role: "reviewer" }).at(-1)!;
+  checkOutHead(h, reviewer);
+  await approve(h.ctx, reviewer.thread_id!, "The fix holds.");
+  await settleReviews(h.ctx);
+  await askForPrTexts(h.ctx, project(), spec());
+  handInPrText(h.ctx, worker.thread_id!, { commit_message: "Guard rows" });
+  await queue();
 }
 
 describe("publishing and the pull request's text", () => {
@@ -101,5 +118,46 @@ describe("publishing and the pull request's text", () => {
     await followDraft(h.ctx, project(), ticket().id, true, "main");
     expect(h.host.callsTo("prReady")).toEqual([]);
     expect(publishWaits(h.store, spec(), ticket(), h.clock.now(), checkWaitOf({}))).toEqual(["the title and description its reviewers approved wait for you to set them by hand; set them, then mark it ready on the forge"]);
+  });
+
+  describe("the review gate while approved text waits", () => {
+    it("does not run the code fix gate on old text while its approved edit waits", async () => {
+    const worker = await open();
+    passing();
+    h.host.gateRead = { outcome: "ok", state: "done", findings: [{ id: "rows", title: "Guard the rows", body: "Guard the rows and explain them.", severity: "medium", path: null, line: null }] };
+    await poll();
+    await poll();
+    expect(ticket().state).toBe("working");
+    h.host.scripted.prEdit = [{ outcome: "unavailable", message: "HTTP 503", transient: "server" }];
+    await approveCodeFix(worker);
+    expect(ticket().state).toBe("pr_open");
+    expect(JSON.parse(ticket().pr_applied_json!).want).toBeDefined();
+    expect(h.host.callsTo("prReviewStart")).toHaveLength(1);
+    await followGate(h.ctx, project(), ticket().id);
+    expect(h.host.callsTo("prReviewStart")).toHaveLength(1);
+    // Once the edit lands, the gate starts once, for the code and the text together.
+    h.clock.advance(60 * 60_000);
+    await poll();
+    expect(JSON.parse(ticket().pr_applied_json!).want).toBeUndefined();
+    await poll();
+    expect(h.host.callsTo("prReviewStart")).toHaveLength(2);
+  });
+    it("does not start the gate while approved text still waits to be applied", async () => {
+    await open();
+    h.host.scripted.prEdit = [{ outcome: "unavailable", message: "HTTP 503", transient: "server" }];
+    await applyPrText(h.ctx, spec(), ticket(), { hostId: "host", path: "/repo", bbProjectId: "proj_1", settings: repoSettings(spec(), null) }, { title: "Correct rows", body: "The corrected description." });
+    expect(JSON.parse(ticket().pr_applied_json!).want.title).toBe("Correct rows");
+    await followGate(h.ctx, project(), ticket().id);
+    expect(h.host.callsTo("prReviewStart")).toHaveLength(0);
+  });
+
+    it("does not start the gate while approved text requires a by-hand edit", async () => {
+    await open(doc => { doc.merge.forge = { kind: "command", open: "forge open", state: "forge state", feedback: "forge feedback", ready: "forge ready", review_start: "review-bot start", review_read: "review-bot read" }; });
+    await applyPrText(h.ctx, spec(), ticket(), { hostId: "host", path: "/repo", bbProjectId: "proj_1", settings: repoSettings(spec(), null) }, { title: "Correct rows", body: "The corrected description." });
+    expect(JSON.parse(ticket().pr_applied_json!).byHand).toBe(true);
+    await followGate(h.ctx, project(), ticket().id);
+    expect(h.host.callsTo("prReviewStart")).toHaveLength(0);
+  });
+
   });
 });

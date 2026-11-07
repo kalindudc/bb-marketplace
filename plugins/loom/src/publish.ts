@@ -107,6 +107,18 @@ export function gateWait(store: Store, spec: Spec, ticket: TicketRow): string | 
   return null;
 }
 
+/**
+ * Why the title and description Loom's reviewers approved are not on the pull request yet: an edit waits to be tried
+ * again, or Loom could only post the text for the human to set; null when the pull request has it. People and the review
+ * gate read the text, so both wait for it.
+ */
+export function textWait(ticket: TicketRow): string | null {
+  const applied = readSub(ticket, "pr_applied_json");
+  if (applied?.want !== undefined) return "the title and description its reviewers approved are not set on it yet";
+  if (applied?.byHand === true) return "the title and description its reviewers approved wait for you to set them by hand; set them, then mark it ready on the forge";
+  return null;
+}
+
 /** What merge.publish waits for, with what it leaves unset: both conditions. */
 export function publishRule(spec: Spec): { checks: boolean; live: boolean } | null {
   const publish = spec.merge.publish;
@@ -126,9 +138,8 @@ export function publishWaits(store: Store, spec: Spec, ticket: TicketRow, now: n
   const gate = gateWait(store, spec, ticket);
   const waits: string[] = gate === null ? [] : [gate];
   // People review the text Loom's reviewers approved, so it must be on the pull request first; text Loom posted for the human to set is not.
-  const applied = readSub(ticket, "pr_applied_json");
-  if (applied?.want !== undefined) waits.push("the title and description its reviewers approved are not set on it yet");
-  else if (applied?.byHand === true) waits.push("the title and description its reviewers approved wait for you to set them by hand; set them, then mark it ready on the forge");
+  const text = textWait(ticket);
+  if (text !== null) waits.push(text);
   if (rule.checks) {
     const status = readSub(ticket, "pr_status_json");
     if (status === null || status.head !== ticket.pushed_sha) waits.push("Loom has not read the checks of the commit it pushed yet");

@@ -121,7 +121,9 @@ A forge's `review_start` and `review_read` commands run an outside review on eac
 project with `merge.publish`. At the first read after a push of the ticket's own work (the pull request's opening, or a
 fix round's push, or a fix round's title and description that its reviewers approved and Loom set with no push), Loom runs
 `review_start` once for the commit the pull request has; a catch-up with a dependency, a restack or a
-refresh starts none, and the last result still stands. Loom records the run before the command starts, so a restart or a
+refresh starts none, and the last result still stands. While a title and description the reviewers approved still wait
+to be set on the pull request (an edit to try again, or text for the human to set), the gate waits too, and then runs
+once for the code and the text together. Loom records the run before the command starts, so a restart or a
 lost answer never asks twice. At each later read it runs `review_read`, until the gate is done:
 
 - `review_start` gets `LOOM_URL`, `LOOM_PR_NUMBER`, `LOOM_SHA` (the commit to review), `LOOM_HEAD` (the pull request's branch) and `LOOM_BASE`; exit 0 means the review is asked for. A command that exits with an error holds the publish, unless its output reads as a rate limit or a passing server error, as Loom reads gh's errors: then it asked nothing, so Loom backs off the forge host and runs it again once the wait ends, using none of its tries. One that runs out of time, is stopped, or whose answer is lost may have asked, so Loom never runs it again for that push, also after a restart: it reads the gate, and holds the publish once the run is 90 minutes old. Only a command that could not start at all is tried again, at the next read, 3 times in all.
