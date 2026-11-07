@@ -199,9 +199,13 @@ function pieces(ctx: Ctx, from: number, now: number): { pieces: Piece[]; rows: M
   return { pieces: out, rows };
 }
 
+/**
+ * The start of the local hour `at` is in, found by taking off its minutes. Building the hour from a local date instead
+ * gives the first of the two 1 a.m.s on the day clocks go back, so a loop stepping hour by hour would never pass it.
+ */
 const startOfHour = (at: number) => {
   const date = new Date(at);
-  return new Date(date.getFullYear(), date.getMonth(), date.getDate(), date.getHours()).getTime();
+  return at - date.getMinutes() * MINUTE - date.getSeconds() * 1000 - date.getMilliseconds();
 };
 
 /** The draft each review handed back; a draft from before Shuttle kept which review made it goes to the last review of its PR in its thread. */
@@ -299,7 +303,7 @@ export function usageView(ctx: Ctx, range: UsageRange, end: string | null = null
 
   const bucket = range === "today" ? "hour" : "day";
   const starts: number[] = [];
-  if (bucket === "hour") for (let at = from; within(at); at = startOfHour(at + HOUR + MINUTE)) starts.push(at);
+  if (bucket === "hour") for (let at = from; within(at); at = startOfHour(at + HOUR)) starts.push(at);
   else for (let back = days - 1; back >= 0; back -= 1) starts.push(dayStart(addDays(last, -back)));
   const slot = (at: number) => (bucket === "hour" ? startOfHour(at) : dayStart(dayOf(at)));
   const series = new Map(starts.map((start) => [start, { start, tokens: 0, cost: 0, critics: 0, reviews: 0 }]));

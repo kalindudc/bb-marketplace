@@ -259,7 +259,7 @@ function viewOf(ctx: Ctx, pr: PrRow, rules: readonly InboxRuleRow[]): { view: Pr
     inMergeQueue: pr.in_merge_queue === 1,
     stale: freshness.stale,
     staleSince: freshness.since,
-    pendingItems: watch ? waitingCount(ctx, pr.id) : 0,
+    pendingItems: watch ? waitingCount(ctx, pr) : 0,
     labels: parseLabels(pr.labels),
     reviewers,
     actions,

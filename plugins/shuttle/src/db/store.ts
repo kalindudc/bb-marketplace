@@ -384,8 +384,11 @@ export interface BoardActivityRow {
   thread_id: string | null;
 }
 
-/** An item waiting to be sent; `summary` marks a bot's review that sums up the bot's own open threads on the PR. */
-export type PendingItem = ActivityItem & { summary?: boolean };
+/**
+ * An item waiting to be sent; `summary` marks a bot's review that sums up the bot's own open threads on the PR, and
+ * `summarizes` names those threads, with their text, so delivery can check today's settings still send one.
+ */
+export type PendingItem = ActivityItem & { summary?: boolean; summarizes?: Array<{ id: string; body: string | null }> };
 
 export interface PendingRow {
   pr_id: number;

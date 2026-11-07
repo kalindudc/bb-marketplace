@@ -259,6 +259,32 @@ describe("review usage", () => {
     // Today and later are the newest period.
     expect(h.shuttle.usage("today", "2026-11-30")).toMatchObject({ end: "2026-10-23", latest: true, totals: { tokens: 1_000 } });
   });
+
+  it("has a bucket for each hour on the days clocks change, the repeated hour twice", async () => {
+    const zone = process.env.TZ;
+    process.env.TZ = "America/Toronto";
+    try {
+      const h = harness(testConfig({ autoReview: NO_AUTO }));
+      h.clock.now = Date.parse("2026-11-01T04:30:00Z");
+      h.lists.review_requested = [pr(3)];
+      await h.shuttle.sync();
+      const { threadId } = await h.shuttle.review({ key: KEY });
+      // 1:30 a.m. before the clocks go back, and 1:30 a.m. again after.
+      h.port.usage.set(threadId, burn([{ at: Date.parse("2026-11-01T05:30:00Z"), tokens: 100, cost: 0.1 }, { at: Date.parse("2026-11-01T06:30:00Z"), tokens: 200, cost: 0.2 }]));
+      h.clock.now = Date.parse("2026-11-01T07:00:00Z");
+      await h.shuttle.readUsage();
+      h.clock.now = Date.parse("2026-11-03T17:00:00Z");
+      const back = h.shuttle.usage("today", "2026-11-01");
+      expect(back.series).toHaveLength(25);
+      expect(back.series.slice(1).map((row, i) => row.start - back.series[i]!.start)).toEqual(Array(24).fill(HOUR));
+      expect(back.series.find((row) => row.start === Date.parse("2026-11-01T05:00:00Z"))).toMatchObject({ tokens: 100 });
+      expect(back.series.find((row) => row.start === Date.parse("2026-11-01T06:00:00Z"))).toMatchObject({ tokens: 200 });
+      expect(h.shuttle.usage("today", "2026-03-08").series).toHaveLength(23);
+    } finally {
+      if (zone === undefined) delete process.env.TZ;
+      else process.env.TZ = zone;
+    }
+  });
 });
 
 describe("Burn's answer", () => {

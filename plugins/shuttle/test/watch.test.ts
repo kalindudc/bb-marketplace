@@ -287,6 +287,26 @@ describe("watched PRs", () => {
     expect(h.port.sent[0]!.text).not.toContain("Merge conflict, early");
   });
 
+  it("sends a bot's summary as the finding once today's settings leave out every thread it sums up", async () => {
+    const h = await setup(testConfig({ watch: { ...DEFAULT_CONFIG.watch, allowBots: ["ai-reviewer@*"] } }));
+    h.settings.botAuthors = ["ai-reviewer@*"];
+    await h.shuttle.link("forge:acme/app#1", "thr_owner");
+    await h.shuttle.sync();
+    const thread = { id: "t1", kind: "thread", author: "ai-reviewer@ai.example.com", body: "Fix the timeout", path: "a.rs", line: 3, resolved: false };
+    h.activity[1] = { items: [thread, review("summary", "ai-reviewer@ai.example.com", { body: "Found 1 blocking finding" })] };
+    h.clock.now += 3 * 60_000;
+    await h.shuttle.sync();
+    expect(h.shuttle.view("forge:acme/app#1").pendingItems).toBe(1);
+    // Before it goes, the bot is heard only for what says "blocking": its thread no longer goes, so the review is the finding.
+    h.shuttle.saveConfig(testConfig({ watch: { ...DEFAULT_CONFIG.watch, allowBots: [], botPhrases: [{ bot: "ai-reviewer@*", phrases: ["blocking"] }] } }));
+    expect(h.shuttle.view("forge:acme/app#1").pendingItems).toBe(1);
+    h.clock.now += 3 * 60_000;
+    await h.shuttle.tick();
+    expect(h.port.sent).toHaveLength(1);
+    expect(h.port.sent[0]!.text).toMatch(/1\. \[ref [0-9a-f]{8}\] review by ai-reviewer@ai\.example\.com \(changes requested\): Found 1 blocking finding/u);
+    expect(h.port.sent[0]!.text).not.toContain("Fix the timeout");
+  });
+
   it("holds approvals and a bot's summary of its open threads until something to act on goes to the thread", async () => {
     const h = await setup(testConfig({ watch: { ...DEFAULT_CONFIG.watch, allowBots: ["ai-reviewer@*"] } }));
     h.settings.botAuthors = ["ai-reviewer@*"];

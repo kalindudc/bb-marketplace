@@ -319,8 +319,8 @@ describe("auto review", () => {
     };
     expect(await run(auto, dismissed("newhead", "2026-10-23T12:00:30Z"))).toBe(1);
     expect(await run(auto, dismissed("head3", "2026-10-23T12:00:30Z"))).toBe(0);
-    // A review dismissed before the first sync was already waiting then.
-    expect(await run(auto, dismissed("newhead", "2026-10-23T11:00:00Z"))).toBe(0);
+    // A review from before the first sync, such as an approval the server dismissed on a push, asks again too.
+    expect(await run(auto, dismissed("newhead", "2026-10-23T11:00:00Z"))).toBe(1);
     expect(await run({ ...auto, when: ["team" as never] }, dismissed("newhead", "2026-10-23T12:00:30Z"))).toBe(0);
     // You approved it again from Shuttle since, and the server does not list that yet.
     expect(await run(auto, dismissed("newhead", "2026-10-23T12:00:30Z"), { verdict: "approve", head: "newhead" })).toBe(0);
@@ -346,6 +346,22 @@ describe("auto review", () => {
     expect(h.port.spawned).toHaveLength(0);
     expect(h.shuttle.view("forge:acme/app#3").next).toMatchObject({ kind: "rereview", inbox: true });
     h.answers.reviewed = dismissed("h3");
+    await h.shuttle.sync();
+    expect(h.port.spawned).toHaveLength(1);
+  });
+
+  it("reviews a PR whose review was dismissed before the first sync once it gets new commits", async () => {
+    const servers = [{ ...TEST_SERVER, enabled: true, sep: "#" as const, commands: { ...TEST_SERVER.commands, reviewed: "rd" } }];
+    const h = harness(testConfig({ servers, autoReview: { enabled: true, when: ["requested"], drafts: false, preset: "", repos: [], maxPerDay: 8, rerun: "new_head" } }));
+    h.lists.reviewed_closed = [];
+    const dismissed = (head: string) => [pr(3, { head, my_review: { state: "dismissed", at: "2026-10-20T09:00:00Z", head: "head3" } })];
+    h.answers.reviewed = dismissed("head3");
+    await h.shuttle.sync();
+    h.clock.now += 10 * 60_000;
+    await h.shuttle.sync();
+    expect(h.port.spawned).toHaveLength(0);
+    h.answers.reviewed = dismissed("h2");
+    h.clock.now += 10 * 60_000;
     await h.shuttle.sync();
     expect(h.port.spawned).toHaveLength(1);
   });

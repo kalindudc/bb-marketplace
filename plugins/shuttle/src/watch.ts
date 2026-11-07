@@ -78,23 +78,26 @@ const SETTLED_REVIEWS = new Set(["approved", "dismissed"]);
 
 /**
  * An item with nothing in it for the agent to do: an approval, a dismissal, or a bot's review that sums up its own
- * open threads. It never makes a message by itself, and comes with the thread's next one for context.
+ * open threads. It never makes a message by itself, and comes with the thread's next one for context. A summary stays
+ * one only while today's settings still send one of its threads; once they leave them all out, the review is the finding.
  */
-export function isQuiet(ctx: Ctx, item: PendingItem): boolean {
+export function isQuiet(ctx: Ctx, pr: PrRow, item: PendingItem): boolean {
   if (!ctx.config().watch.quietReviews || item.kind !== "review") return false;
-  return SETTLED_REVIEWS.has((item.state ?? "").toLowerCase()) || item.summary === true;
+  if (SETTLED_REVIEWS.has((item.state ?? "").toLowerCase())) return true;
+  if (item.summary !== true) return false;
+  return item.summarizes === undefined || item.summarizes.some((thread) => keepItem(ctx, pr, { ...item, ...thread, kind: "thread", resolved: false }));
 }
 
-/** A bot's review while the same bot has open threads on the PR that an agent gets: those threads come on their own. */
-function summarizes(ctx: Ctx, item: ActivityItem, kept: readonly ActivityItem[]): boolean {
-  if (item.kind !== "review" || item.author == null || !isBotItem(ctx, item)) return false;
+/** The threads of a bot's review that the same bot has open on the PR and an agent gets: those threads come on their own. */
+function summedUp(ctx: Ctx, item: ActivityItem, kept: readonly ActivityItem[]): ActivityItem[] {
+  if (item.kind !== "review" || item.author == null || !isBotItem(ctx, item)) return [];
   const name = botName(item.author);
-  return kept.some((other) => other.kind === "thread" && other.author != null && botName(other.author) === name);
+  return kept.filter((other) => other.kind === "thread" && other.author != null && botName(other.author) === name);
 }
 
-/** Items that would make a message, for the PR's "unsent" count. */
-export function waitingCount(ctx: Ctx, prId: number): number {
-  return ctx.store.pending(prId).filter((row) => !isQuiet(ctx, row.item)).length;
+/** Items that would make a message under today's settings, for the PR's "unsent" count. */
+export function waitingCount(ctx: Ctx, pr: PrRow): number {
+  return ctx.store.pending(pr.id).filter((row) => keepItem(ctx, pr, row.item) && !isQuiet(ctx, pr, row.item)).length;
 }
 
 /** Watched PRs read at once: enough to keep a sync short, few enough to stay well inside a server's limits. */
@@ -154,7 +157,10 @@ export async function pollWatches(ctx: Ctx, serverId?: string, signal?: AbortSig
       const ignored = unseen.filter((i) => !hears(before, i) && !queued.has(i.id) && (watch.checked_at === null || i.at === null || i.at <= watch.checked_at));
       if (ignored.length) ctx.store.markSeen(pr.id, ignored.map((i) => i.id));
       const old = new Set(ignored.map((i) => i.id));
-      const fresh = unseen.filter((i) => !old.has(i.id)).map((i): PendingItem => (summarizes(ctx, i, items) ? { ...i, summary: true } : i));
+      const fresh = unseen.filter((i) => !old.has(i.id)).map((i): PendingItem => {
+        const threads = summedUp(ctx, i, items);
+        return threads.length ? { ...i, summary: true, summarizes: threads.map((t) => ({ id: t.id, body: t.body ?? null })) } : i;
+      });
       const added = ctx.store.addPending(pr.id, fresh);
       ctx.store.markWatchChecked(pr.id, null);
       if (watch.bots !== heard) ctx.store.setWatchBots(pr.id, heard);
@@ -201,8 +207,8 @@ export function formatMessage(ctx: Ctx, batch: ReadonlyArray<{ pr: PrRow; items:
   let acting = false;
   for (const { pr, items } of batch) {
     const vars = promptVars(ctx, pr);
-    const work = items.filter((item) => !isQuiet(ctx, item));
-    const quiet = items.filter((item) => isQuiet(ctx, item));
+    const work = items.filter((item) => !isQuiet(ctx, pr, item));
+    const quiet = items.filter((item) => isQuiet(ctx, pr, item));
     const context = quiet.slice(0, ITEMS_PER_PR);
     const shown = work.slice(0, ITEMS_PER_PR);
     const more = work.length - shown.length;
@@ -245,11 +251,11 @@ export async function deliver(ctx: Ctx, options: { force?: boolean; threadId?: s
     if (!pr) continue;
     const done = pr.state === "merged" || pr.state === "closed";
     const rows = ctx.store.pending(pr.id);
-    const dropped = rows.filter((row) => !keepItem(ctx, pr, row.item) || (done && isQuiet(ctx, row.item)));
+    const dropped = rows.filter((row) => !keepItem(ctx, pr, row.item) || (done && isQuiet(ctx, pr, row.item)));
     if (dropped.length) ctx.store.markSeen(pr.id, dropped.map((row) => row.item_id));
     const pending = rows.filter((row) => !dropped.includes(row));
     if (!pending.length) continue;
-    const firstWork = pending.find((row) => !isQuiet(ctx, row.item));
+    const firstWork = pending.find((row) => !isQuiet(ctx, pr, row.item));
     // Forcing skips the batch window, but quiet items still need something to act on to go with.
     const due = firstWork !== undefined && (options.force === true || firstWork.first_seen_at <= ctx.now() - windowMs);
     const owners = ctx.store.linksOf(pr.id).filter((l) => l.role === "owner" && !l.archived).map((l) => l.thread_id);
@@ -257,13 +263,13 @@ export async function deliver(ctx: Ctx, options: { force?: boolean; threadId?: s
     const items = pending.map((p) => p.item);
     held.push({ pr, items, owners });
     // A PR that is not due yet still lends its quiet items to a message its thread gets for another PR.
-    const going = due ? items : items.filter((item) => isQuiet(ctx, item));
+    const going = due ? items : items.filter((item) => isQuiet(ctx, pr, item));
     for (const threadId of owners) {
       if (options.threadId && threadId !== options.threadId) continue;
       const sent = ctx.store.delivered(pr.id, threadId);
       const fresh = going.filter((item) => !sent.has(item.id));
       // Due for this thread only with work it has not had: another owner may still be missing the work.
-      const work = due && fresh.some((item) => !isQuiet(ctx, item));
+      const work = due && fresh.some((item) => !isQuiet(ctx, pr, item));
       if (fresh.length) byThread.set(threadId, [...(byThread.get(threadId) ?? []), { pr, items: fresh, due: work }]);
     }
   }

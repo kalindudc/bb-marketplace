@@ -31,7 +31,7 @@ row's ⋯ menu holds Snooze and Dismiss too (the only menu on a phone, besides s
 A review of yours that the server dismissed no longer counts, so its PR comes back under Updated
 since your review, even at the commit you reviewed. Some repositories dismiss approvals by themselves,
 such as until their checks have run. Auto review, when it starts on requests by name, treats such a PR
-as asking you again once it has new commits. A PR already dismissed with new commits when auto review
+as asking you again once it has new commits, however long ago you reviewed. A PR already dismissed with new commits when auto review
 first looks waits for its next commits, so turning auto review on never reviews a backlog.
 
 - **Reviewing** lists your reviews on their way to their servers, then the PRs an AI review is
@@ -349,7 +349,8 @@ itself: the threads come on their own, and the rest has nothing to fix. They wai
 the thread gets, for any of its PRs, and go at its end under "Also new, with nothing to do", without
 refs. They are dropped when the PR merges or closes, and the PR's unsent count leaves them out. A bot's
 review with no open threads of its own comes at once, since it is the finding. Items already waiting
-follow the settings as they are when they would go.
+follow the settings as they are when they would go: a bot's review whose threads a change leaves out
+goes as the finding.
 
 ## Reviewed by me
 

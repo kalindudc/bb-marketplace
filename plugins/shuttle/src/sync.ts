@@ -410,11 +410,11 @@ export function globMatch(glob: string, value: string, caseSensitive = false): b
 const TRIGGER_REASON = { requested: "requested", team: "team", mentioned: "mentioned" } as const;
 
 /**
- * Your reviews the server dismissed, on PRs with new commits since. The first look notes the head of each PR already so
- * and leaves it to you, so an upgrade or turning on auto review does not review a backlog; such a PR comes once its head
- * moves on.
+ * Your reviews the server dismissed, on PRs with new commits since, however long ago you reviewed. The first look notes
+ * the head of each PR already so and leaves it to you, so an upgrade or turning on auto review does not review a backlog;
+ * such a PR comes once its head moves on.
  */
-function dismissedWithNewCommits(ctx: Ctx, serverId: string, baseline: number): number[] {
+function dismissedWithNewCommits(ctx: Ctx, serverId: string): number[] {
   const key = `auto_dismissed_heads:${serverId}`;
   const stored = ctx.store.kv(key);
   const noted = stored === null ? null : (JSON.parse(stored) as Record<string, string>);
@@ -423,7 +423,7 @@ function dismissedWithNewCommits(ctx: Ctx, serverId: string, baseline: number): 
     const pr = row.server === serverId ? ctx.store.prById(row.pr_id) : null;
     if (!pr || pr.head === null || noted?.[pr.id] === pr.head) continue;
     const mine = myReviewOf(ctx, pr);
-    if (mine?.verdict === "dismissed" && mine.at !== null && mine.at > baseline && mine.head !== null && mine.head !== pr.head) out.push(pr);
+    if (mine?.verdict === "dismissed" && mine.head !== null && mine.head !== pr.head) out.push(pr);
   }
   if (noted !== null) return out.map((pr) => pr.id);
   ctx.store.setKv(key, JSON.stringify(Object.fromEntries(out.map((pr) => [pr.id, pr.head]))));
@@ -445,7 +445,7 @@ export function autoReviewCandidates(ctx: Ctx, serverId: string, passed?: Readon
     for (const row of ctx.store.reasonRows(TRIGGER_REASON[trigger])) if (row.server === serverId && row.since > baseline) ids.add(row.pr_id);
   }
   if (config.when.includes("requested") && (passed === undefined || passed.has(STEP_OF_REASON.reviewed))) {
-    for (const id of dismissedWithNewCommits(ctx, serverId, baseline)) ids.add(id);
+    for (const id of dismissedWithNewCommits(ctx, serverId)) ids.add(id);
   }
   const out: PrRow[] = [];
   for (const id of ids) {
