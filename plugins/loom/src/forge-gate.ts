@@ -12,6 +12,8 @@ import { forgeHostOf, nextBackoff, nextNetworkBackoff, type HostBackoffs } from 
 import type { HostInput, HostMethod, HostOutput } from "./host-contract";
 import type { HostPort } from "./ports";
 
+/** The backoff of the host's review gate starts alone, beside the host's own in the same map. */
+const startKey = (host: string) => `${host} review_start`;
 const SERVER_FIRST_MS = 5 * 60_000;
 const SERVER_LONGEST_MS = 30 * 60_000;
 
@@ -35,8 +37,11 @@ export function forgeBoundary(host: HostPort, gate: { backoffs: () => HostBackof
       if (!FORGE_METHODS.has(method)) return host.call(hostId, method, input);
       const forge = hostOf(hostId, method, input as Record<string, unknown>);
       const now = gate.now();
-      const held = forge === null ? undefined : gate.backoffs().get(forge);
-      if (held !== undefined && held.until > now) {
+      const backoffs = gate.backoffs();
+      const own = forge === null || method !== "prReviewStart" ? undefined : backoffs.get(startKey(forge));
+      const shared = forge === null ? undefined : backoffs.get(forge);
+      const held = [shared, own].find((each) => each !== undefined && each.until > now);
+      if (held !== undefined) {
         const wait = { outcome: "held", message: `Loom sent nothing to ${forge}, which it waits out until ${new Date(held.until).toISOString()}: ${held.message}`, until: held.until, transient: held.network === undefined ? "rate_limit" : "network", retryAfterMs: held.until - now } as const;
         return wait as HostOutput<M>;
       }
@@ -54,7 +59,7 @@ export function forgeBoundary(host: HostPort, gate: { backoffs: () => HostBackof
         const learned = forgeHostOf(opened);
         if (learned !== null) repoHosts.set(checkout(hostId, repo), learned);
       }
-      if (forge !== null) settle(gate.backoffs(), forge, answer as Answer, gate.now());
+      if (forge !== null) settle(gate.backoffs(), forge, method, answer as Answer, gate.now());
       // A command that ran and printed what its contract forbids answers unavailable from the host; it is the same broken forge.
       const failed = answer as Answer;
       if (failed.outcome === "unavailable" && brokeContract({ message: failed.message ?? "", ...(failed.transient === undefined ? {} : { transient: failed.transient }) })) throw new ForgeContractError(method, failed.message ?? "", []);
@@ -67,7 +72,7 @@ export function forgeBoundary(host: HostPort, gate: { backoffs: () => HostBackof
  * What a forge's answer does to its host's backoff. One answer is one limit or one failure however many pull requests it
  * covers: a batch that answered some and lost others to a rate limit backs off afresh, with the longest wait it named.
  */
-function settle(backoffs: HostBackoffs, host: string, answer: Answer, now: number): void {
+function settle(backoffs: HostBackoffs, host: string, method: HostMethod, answer: Answer, now: number): void {
   // A failed answer of any outcome counts when it says what failed, as a review_start that exited with a rate limit does.
   const failed = answer.outcome === "unavailable" || answer.transient !== undefined ? [{ message: answer.message ?? "", transient: answer.transient, retryAfterMs: answer.retryAfterMs }] : (answer.missing ?? []).filter((miss) => miss.transient === "rate_limit" || miss.transient === "network");
   const answered = answer.outcome !== "unavailable" && (answer.pulls?.length ?? 0) > 0;
@@ -83,14 +88,21 @@ function settle(backoffs: HostBackoffs, host: string, answer: Answer, now: numbe
     backoffs.set(host, nextNetworkBackoff(previous, { now, message: offline.message }));
     return;
   }
-  // A server error backs off the host when it names a time, or when a command such as review_start failed on it, which is
-  // tried again only after a wait: 5 minutes, doubling to 30. A read's server error waits on its ticket (retry.ts).
-  const server = failed.find((miss) => miss.transient === "server" && (miss.retryAfterMs !== undefined || answer.outcome !== "unavailable"));
-  if (server !== undefined) {
-    const delayMs = server.retryAfterMs ?? (previous === undefined || previous.network !== undefined ? SERVER_FIRST_MS : Math.min(SERVER_LONGEST_MS, previous.delayMs * 2));
-    backoffs.set(host, { until: now + delayMs, delayMs, message: server.message });
+  // A review_start that failed with a server error talked to the review gate's own service, not the forge, so only the
+  // host's review gate starts wait: until the time it names, else 5 minutes, doubling to 30.
+  const server = failed.find((miss) => miss.transient === "server");
+  if (server !== undefined && method === "prReviewStart" && answer.outcome !== "unavailable") {
+    const before = backoffs.get(startKey(host));
+    const delayMs = server.retryAfterMs ?? (before === undefined ? SERVER_FIRST_MS : Math.min(SERVER_LONGEST_MS, before.delayMs * 2));
+    backoffs.set(startKey(host), { until: now + delayMs, delayMs, message: server.message });
     return;
   }
+  // Any other server error backs off the host only when it names a time; a read's waits on its ticket (retry.ts).
+  if (server !== undefined && server.retryAfterMs !== undefined) {
+    backoffs.set(host, { until: now + server.retryAfterMs, delayMs: server.retryAfterMs, message: server.message });
+    return;
+  }
+  if (method === "prReviewStart" && answer.outcome === "ok") backoffs.delete(startKey(host));
   // Only an answer from the forge itself says the host takes calls again; a command that failed or ran out of time does not.
   if (answer.outcome === "ok" || answer.outcome === "rejected") backoffs.delete(host);
 }

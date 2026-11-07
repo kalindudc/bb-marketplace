@@ -85,20 +85,40 @@ it("keeps an ordinary failure to ask for reviews again on the ticket, and never 
   expect(h.host.callsTo("prRequestReview")).toHaveLength(1);
 });
 
-it("waits on the forge host's backoff after a review_start server failure that named no delay, and starts again only after it", async () => {
+it("waits after a review_start server failure that named no delay, holding only review gate starts, and starts again only after it", async () => {
   await open();
   const start = await prReviewStart({ repo: tmpdir(), url: URL, sha: ticket().pushed_sha!, head: "work", base: "main", command: "printf 'HTTP 503 Service Unavailable\\n'; exit 1" });
   expect(start).toMatchObject({ outcome: "failed", transient: "server" });
   h.host.scripted.prReviewStart = [start];
   await followGate(h.ctx, project(), ticket().id);
-  const backoff = h.ctx.forgeBackoffs.get("github.com")!;
-  expect(backoff).toMatchObject({ until: expect.any(Number) });
-  expect(backoff.until).toBeGreaterThan(h.clock.t);
-  // A read that works does not end the start's wait early.
-  await h.ctx.host.call("host_1", "prReviewRead", { repo: "/repo", url: URL, sha: ticket().pushed_sha!, command: "read" });
+  expect(h.ctx.forgeBackoffs.get("github.com")).toBeUndefined();
   await followGate(h.ctx, project(), ticket().id);
   expect(h.host.callsTo("prReviewStart")).toHaveLength(1);
-  h.clock.advance(backoff.until - h.clock.t);
+
+  // The gate's service is not the forge: reads and merges on its host go on meanwhile.
+  const reads = h.host.callsTo("prBatch").length;
+  h.clock.advance(60_000);
+  h.store.updateTicket(ticket().id, { pr_checked_at: null });
+  await pollPullRequests(h.ctx, project());
+  expect(h.host.callsTo("prBatch")).toHaveLength(reads + 1);
+  const merge = await h.ctx.host.call("host_1", "prMerge", { repo: "/repo", url: URL, sha: ticket().pushed_sha!, head: ticket().pr_branch!, base: "main", attempt: 1, forge: { kind: "gh", method: "squash" } });
+  expect(merge.outcome).not.toBe("held");
+  expect(h.host.callsTo("prReviewStart")).toHaveLength(1);
+
+  h.clock.advance(4 * 60_000);
+  await followGate(h.ctx, project(), ticket().id);
+  expect(h.host.callsTo("prReviewStart")).toHaveLength(2);
+});
+
+it("waits until the time a review_start server failure names, holding only review gate starts", async () => {
+  await open();
+  h.host.scripted.prReviewStart = [{ outcome: "failed", message: "The forge's review_start command failed (exit 1): HTTP 503", transient: "server", retryAfterMs: 20 * 60_000 }];
+  await followGate(h.ctx, project(), ticket().id);
+  expect(h.ctx.forgeBackoffs.get("github.com")).toBeUndefined();
+  h.clock.advance(19 * 60_000);
+  await followGate(h.ctx, project(), ticket().id);
+  expect(h.host.callsTo("prReviewStart")).toHaveLength(1);
+  h.clock.advance(60_000);
   await followGate(h.ctx, project(), ticket().id);
   expect(h.host.callsTo("prReviewStart")).toHaveLength(2);
 });
