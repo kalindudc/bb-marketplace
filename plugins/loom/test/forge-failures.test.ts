@@ -1,11 +1,15 @@
-// Forge failures on paths the forge gate does not see the end of, such as a review request after a fix push.
+// Forge failures on paths the forge gate does not see the end of: a review request after a fix push, and a review gate
+// start the forge refused for a while.
+import { tmpdir } from "node:os";
 import { beforeEach, expect, it } from "vitest";
 import { settleChecks, submit } from "../src/checks";
 import { specOf } from "../src/ctx";
 import type { ThreadRow } from "../src/db/store";
+import { prReviewStart } from "../src/host/ops";
 import { pollPullRequests, runMergeQueue, settleMerges } from "../src/merge";
 import { askForPrTexts, handInPrText } from "../src/pull-requests";
 import { approve, settleReviews, spawnReviewers } from "../src/review";
+import { followGate } from "../src/review-gate";
 import { checkOutHead, makeCtx, reachApproved, seedProject, ticketOf, type Doc, type EngineHarness } from "./helpers";
 
 let h: EngineHarness;
@@ -79,4 +83,22 @@ it("keeps an ordinary failure to ask for reviews again on the ticket, and never 
   expect(project().state).toBe("running");
   expect(ticket().state).toBe("pr_open");
   expect(h.host.callsTo("prRequestReview")).toHaveLength(1);
+});
+
+it("waits on the forge host's backoff after a review_start server failure that named no delay, and starts again only after it", async () => {
+  await open();
+  const start = await prReviewStart({ repo: tmpdir(), url: URL, sha: ticket().pushed_sha!, head: "work", base: "main", command: "printf 'HTTP 503 Service Unavailable\\n'; exit 1" });
+  expect(start).toMatchObject({ outcome: "failed", transient: "server" });
+  h.host.scripted.prReviewStart = [start];
+  await followGate(h.ctx, project(), ticket().id);
+  const backoff = h.ctx.forgeBackoffs.get("github.com")!;
+  expect(backoff).toMatchObject({ until: expect.any(Number) });
+  expect(backoff.until).toBeGreaterThan(h.clock.t);
+  // A read that works does not end the start's wait early.
+  await h.ctx.host.call("host_1", "prReviewRead", { repo: "/repo", url: URL, sha: ticket().pushed_sha!, command: "read" });
+  await followGate(h.ctx, project(), ticket().id);
+  expect(h.host.callsTo("prReviewStart")).toHaveLength(1);
+  h.clock.advance(backoff.until - h.clock.t);
+  await followGate(h.ctx, project(), ticket().id);
+  expect(h.host.callsTo("prReviewStart")).toHaveLength(2);
 });

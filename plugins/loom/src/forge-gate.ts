@@ -12,6 +12,9 @@ import { forgeHostOf, nextBackoff, nextNetworkBackoff, type HostBackoffs } from 
 import type { HostInput, HostMethod, HostOutput } from "./host-contract";
 import type { HostPort } from "./ports";
 
+const SERVER_FIRST_MS = 5 * 60_000;
+const SERVER_LONGEST_MS = 30 * 60_000;
+
 const FORGE_METHODS: ReadonlySet<HostMethod> = new Set<HostMethod>(["prBatch", "prFeedback", "prState", "prCreate", "prEdit", "prReady", "prReply", "prRetarget", "prRequestReview", "prReviewState", "prMerge", "prReviewStart", "prReviewRead"]);
 
 type Answer = { outcome: string; message?: string; transient?: "server" | "rate_limit" | "network"; retryAfterMs?: number; pulls?: unknown[]; missing?: Array<{ message: string; transient?: "server" | "rate_limit" | "network"; retryAfterMs?: number }> };
@@ -80,9 +83,12 @@ function settle(backoffs: HostBackoffs, host: string, answer: Answer, now: numbe
     backoffs.set(host, nextNetworkBackoff(previous, { now, message: offline.message }));
     return;
   }
-  const named = failed.find((miss) => miss.transient === "server" && miss.retryAfterMs !== undefined);
-  if (named !== undefined) {
-    backoffs.set(host, { until: now + named.retryAfterMs!, delayMs: named.retryAfterMs!, message: named.message });
+  // A server error backs off the host when it names a time, or when a command such as review_start failed on it, which is
+  // tried again only after a wait: 5 minutes, doubling to 30. A read's server error waits on its ticket (retry.ts).
+  const server = failed.find((miss) => miss.transient === "server" && (miss.retryAfterMs !== undefined || answer.outcome !== "unavailable"));
+  if (server !== undefined) {
+    const delayMs = server.retryAfterMs ?? (previous === undefined || previous.network !== undefined ? SERVER_FIRST_MS : Math.min(SERVER_LONGEST_MS, previous.delayMs * 2));
+    backoffs.set(host, { until: now + delayMs, delayMs, message: server.message });
     return;
   }
   // Only an answer from the forge itself says the host takes calls again; a command that failed or ran out of time does not.
