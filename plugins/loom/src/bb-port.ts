@@ -22,6 +22,8 @@ export function spawnErrorOf(error: unknown): unknown {
   return typeof status === "number" && status >= 400 && status < 500 && status !== 408 && status !== 409 && status !== 429 ? new SpawnRefusedError(status, message(error)) : error;
 }
 
+const count = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0;
+
 export function createBbPort(bb: BbPluginApi): BbPort {
   return {
     async threadHostId(threadId) {
@@ -161,10 +163,22 @@ export function createBbPort(bb: BbPluginApi): BbPort {
       }
       return null;
     },
-    async threadTokens(threadId) {
-      const rows = await bb.sdk.threads.events.list({ threadId, types: ["thread/tokenUsage/updated"], order: "desc", limit: "1" });
-      const total = (rows[0] as { data?: { tokenUsage?: { total?: { totalTokens?: number } } } } | undefined)?.data?.tokenUsage?.total?.totalTokens;
-      return typeof total === "number" && Number.isFinite(total) ? total : null;
+    async threadUsage(threadId) {
+      let rows: unknown[];
+      try {
+        rows = await bb.sdk.threads.events.list({ threadId, types: ["thread/tokenUsage/updated"], order: "desc", limit: "1" });
+      } catch (error) {
+        if (isNotFound(error)) return null;
+        throw error;
+      }
+      const row = rows[0] as { seq?: unknown; data?: { providerThreadId?: unknown; tokenUsage?: { total?: { totalTokens?: unknown }; last?: { totalTokens?: unknown } } } } | undefined;
+      const total = row?.data?.tokenUsage?.total?.totalTokens;
+      if (row !== undefined && count(total) && typeof row.seq === "number") {
+        const last = row.data?.tokenUsage?.last?.totalTokens;
+        return { kind: "reading", session: typeof row.data?.providerThreadId === "string" ? row.data.providerThreadId : "", seq: row.seq, total, last: count(last) ? last : 0 };
+      }
+      const turns = await bb.sdk.threads.events.list({ threadId, types: ["turn/started"], limit: "1" });
+      return turns.length === 0 ? { kind: "never-ran" } : null;
     },
     async latestSystemError(threadId) {
       const rows = await bb.sdk.threads.events.list({ threadId, types: ["system/error"], order: "desc", limit: "1" });

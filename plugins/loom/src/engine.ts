@@ -36,8 +36,8 @@ import { forgeBoundary } from "./forge-gate";
 import { projectFailed } from "./retry";
 import { DEFAULT_BOT_AUTHORS, globsIn, specOf, type EngineCtx } from "./ctx";
 import { warnSubStateWith } from "./sub-state";
+import { foldUsage, readEndedUsage, refreshUsage, stopUsage } from "./usage";
 
-const TOKEN_REFRESH_MS = 60_000;
 const errText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 export type EngineDeps = Omit<EngineCtx, "kick" | "checkWait" | "forgeBackoffs" | "prReads" | "hostDirect"> & { projects: Projects; settings?: () => LoomSettings };
@@ -86,6 +86,7 @@ export class Engine {
       checkWait: () => checkWaitOf(this.settings()),
       commentSignature: signature,
       botAuthors: () => globsIn(this.settings().botAuthors ?? DEFAULT_BOT_AUTHORS),
+      usageCommand: () => (this.settings().usageCommand ?? "").trim(),
       plannerInstructions: () => this.settings().plannerInstructions ?? "",
     };
   }
@@ -142,6 +143,7 @@ export class Engine {
         this.warn(`project ${project.slug}`, error);
       }
     }
+    await readEndedUsage(this.ctx).catch((error) => this.warn("token usage", error));
     sendRecords(this.ctx, this.settings());
     await followHooks(this.ctx).catch((error) => this.warn("hooks", error));
   }
@@ -150,6 +152,8 @@ export class Engine {
   private async tickPaused(projectId: number): Promise<void> {
     const project = this.ctx.store.project(projectId);
     if (project?.state !== "paused") return;
+    // Threads can keep working while their project is paused.
+    await refreshUsage(this.ctx, projectId);
     await this.releaseAndWake(projectId, specOf(this.ctx.store, project), false);
     await pollPullRequests(this.ctx, project);
     followRollout(this.ctx, this.ctx.store.project(projectId)!);
@@ -167,7 +171,7 @@ export class Engine {
     if (project === null) return;
     const spec = specOf(store, project);
 
-    await this.refreshTokens(project);
+    await refreshUsage(this.ctx, project.id);
     project = running();
     if (project === null) return;
 
@@ -224,15 +228,6 @@ export class Engine {
     const project = store.project(projectId)!;
     await releaseIdleWorkers(this.ctx, project, spec);
     if (running && store.project(projectId)?.state === "running") await wakeForRestacks(this.ctx, store.project(projectId)!, spec);
-  }
-
-  private async refreshTokens(project: ProjectRow): Promise<void> {
-    const { store, bb, now } = this.ctx;
-    for (const row of store.threads({ projectId: project.id, states: ["active"] })) {
-      if (row.thread_id === null || (row.tokens_at !== null && now() - row.tokens_at <= TOKEN_REFRESH_MS)) continue;
-      const tokens = await bb.threadTokens(row.thread_id).catch(() => null);
-      store.updateThread(row.id, { tokens: tokens ?? row.tokens, tokens_at: now() });
-    }
   }
 
   /** Spawns one worker at a time. Readiness and slots are computed again from fresh rows before each reservation, and a ticket is tried once per pass. */
@@ -351,6 +346,7 @@ export class Engine {
 
   async dispose(): Promise<void> {
     this.disposed = true;
+    stopUsage(this.ctx);
     await this.currentReconcile;
     await this.currentTick?.catch(() => undefined);
     fenceRolloutChecks(this.ctx);
@@ -633,6 +629,8 @@ export class Engine {
     if (row === null && (await finalThreadEvent(this.ctx, threadId))) return;
     const planning = row === null ? store.planning(threadId) : null;
     if ((row?.role === "planner" && row.state === "active") || (planning !== null && planning.ended_at === null)) recordPlannerTurn(store, threadId, row?.project_id ?? null, lastText);
+    // bb keeps only a thread's newest usage event, so the one this turn sent is read before the next turn replaces it.
+    if (row !== null && row.state !== "spawning") await foldUsage(this.ctx, row);
     if (row === null || row.state !== "active") return;
     // The idle that ends a restore: the tick gives the worker its environment and its fix round (advanceWakes).
     if (row.released_at !== null) return this.kick();

@@ -284,6 +284,45 @@ describe("environment providers and plugins", () => {
   });
 });
 
+describe("threadUsage", () => {
+  const usageEvent = {
+    id: "ev_1",
+    threadId: "thr_1",
+    seq: 1403,
+    createdAt: 1,
+    type: "thread/tokenUsage/updated",
+    scope: { kind: "turn" },
+    data: { providerThreadId: "pi_6f1f", tokenUsage: { total: { totalTokens: 693_815 }, last: { totalTokens: 347_285 } } },
+  };
+  const turnEvent = { id: "ev_2", threadId: "thr_1", seq: 3, createdAt: 1, type: "turn/started", scope: { kind: "thread" }, data: {} };
+  const portOf = (events: (types: string[]) => unknown[]) => portWith({ threads: { events: { list: async (args: { types: string[] }) => events(args.types) } } } as unknown as FakeSdkOverrides);
+
+  it("reads bb's newest usage event with its session, sequence number, running total and latest call", async () => {
+    const { port, harness } = portOf(() => [usageEvent]);
+    expect(await port.threadUsage("thr_1")).toEqual({ kind: "reading", session: "pi_6f1f", seq: 1403, total: 693_815, last: 347_285 });
+    expect(harness.sdk.callsTo("threads.events.list")).toEqual([[{ threadId: "thr_1", types: ["thread/tokenUsage/updated"], order: "desc", limit: "1" }]]);
+  });
+
+  it("says a thread that never started a turn never ran, and answers null for one that ran with no usage event", async () => {
+    const idle = portOf(() => []);
+    expect(await idle.port.threadUsage("thr_1")).toEqual({ kind: "never-ran" });
+    expect(idle.harness.sdk.callsTo("threads.events.list")).toEqual([
+      [{ threadId: "thr_1", types: ["thread/tokenUsage/updated"], order: "desc", limit: "1" }],
+      [{ threadId: "thr_1", types: ["turn/started"], limit: "1" }],
+    ]);
+    expect(await portOf((types) => (types[0] === "turn/started" ? [turnEvent] : [])).port.threadUsage("thr_1")).toBeNull();
+  });
+
+  it("answers null for a thread bb no longer has, and passes other errors on", async () => {
+    const failing = (error: Error) =>
+      portOf(() => {
+        throw error;
+      }).port;
+    expect(await failing(Object.assign(new Error("HTTP 404: thread not found"), { status: 404 })).threadUsage("thr_1")).toBeNull();
+    await expect(failing(new Error("HTTP 500: bb is busy")).threadUsage("thr_1")).rejects.toThrow("HTTP 500: bb is busy");
+  });
+});
+
 describe("latestSystemError", () => {
   it("returns the newest system error with its sequence number and time, or null", async () => {
     const row = { id: "ev_9", threadId: "thr_1", seq: 41, createdAt: 1_700_000_000_000, type: "system/error", scope: { kind: "thread" }, data: { code: "machine_maintenance", message: "Machine preservation is interrupting this turn." } };

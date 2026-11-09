@@ -494,7 +494,7 @@ describe("endThread", () => {
   it("archives anyway after ten minutes in ending, and records the final token count", async () => {
     const row = await startBoth();
     h.bb.stopConfirms = false;
-    h.bb.tokens.set("thr_w1", 4321);
+    h.bb.usage.set("thr_w1", { kind: "reading", session: "pi_w1", seq: 9, total: 4321, last: 300 });
     await endThread(h.ctx, row, "timeout", { commit: false });
     h.clock.advance(9 * 60_000);
     await resumeEnding(h.ctx, h.store.thread(row.id)!);

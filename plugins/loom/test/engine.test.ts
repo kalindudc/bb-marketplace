@@ -367,12 +367,12 @@ describe("timeouts", () => {
     await h.engine.tick();
     h.clock.advance(181 * 60_000);
     let paused = false;
-    h.bb.threadTokens = async () => {
+    h.bb.threadUsage = async () => {
       if (!paused) {
         paused = true;
         await h.engine.pause("csv", "human", false);
       }
-      return 0;
+      return { kind: "never-ran" };
     };
     await h.engine.tick();
     expect(project().state).toBe("paused");
@@ -450,7 +450,7 @@ describe("budgets", () => {
   it("pauses the project when the token budget is used up, flags triage, and tells the planner why", async () => {
     await seedProject(h, (doc) => (doc.budget = { max_tokens: 1000 }));
     await h.engine.tick();
-    h.bb.tokens.set("thr_w1", 1500);
+    h.bb.usage.set("thr_w1", { kind: "reading", session: "pi_w1", seq: 5, total: 1500, last: 200 });
     h.clock.advance(61_000);
     await h.engine.tick();
     expect(project()).toMatchObject({ state: "paused", system_reason: "The token budget is used up: 1500 of 1000 tokens.", triage_round: 1 });
@@ -466,13 +466,13 @@ describe("budgets", () => {
     await seedProject(h);
     await h.engine.tick();
     await h.engine.tick();
-    expect(h.bb.callsTo("threadTokens").filter(([id]) => id === "thr_w1")).toHaveLength(1);
+    expect(h.bb.callsTo("threadUsage").filter(([id]) => id === "thr_w1")).toHaveLength(1);
     h.clock.advance(59_000);
     await h.engine.tick();
-    expect(h.bb.callsTo("threadTokens").filter(([id]) => id === "thr_w1")).toHaveLength(1);
+    expect(h.bb.callsTo("threadUsage").filter(([id]) => id === "thr_w1")).toHaveLength(1);
     h.clock.advance(2_000);
     await h.engine.tick();
-    expect(h.bb.callsTo("threadTokens").filter(([id]) => id === "thr_w1")).toHaveLength(2);
+    expect(h.bb.callsTo("threadUsage").filter(([id]) => id === "thr_w1")).toHaveLength(2);
   });
 
   it("pauses at the deadline before it spawns anything", async () => {

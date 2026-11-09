@@ -121,6 +121,7 @@ const thread = (role: ThreadRow["role"], tokens: number | null, over: Partial<Th
   rate_limit_retries: 0,
   tokens,
   tokens_at: null,
+  usage_json: null,
   review_round: 0,
   attempt: null,
   started_at: at(1),
@@ -310,7 +311,7 @@ describe("checks, blocks and human interventions", () => {
 
 describe("tokens", () => {
   it("sums the sampled tokens, by role and per done ticket", () => {
-    const threads = [thread("planner", 1000), thread("worker", 4000), thread("worker", null), thread("reviewer", 2000)];
+    const threads = [thread("planner", 1000), thread("worker", 4000), thread("worker", null, { thread_id: "thr_silent" }), thread("reviewer", 2000)];
     const tickets = [ticket(1, "done"), ticket(2, "done"), ticket(3, "working")];
     expect(compute({ threads, tickets }).tokens).toEqual({ total: 7000, perDoneTicket: 3500, byRole: { planner: 1000, worker: 4000, reviewer: 2000 }, unreported: 1 });
   });
@@ -319,12 +320,13 @@ describe("tokens", () => {
     expect(compute({ threads: [thread("worker", 500)] }).tokens).toMatchObject({ total: 500, perDoneTicket: null });
   });
 
-  it("counts the threads with no tokens that ended or have been live for a minute, as not reported", () => {
+  it("counts the threads bb started with no tokens that ended or have been live for a minute, as not reported", () => {
     const now = at(6, 12);
     const threads = [
-      thread("reviewer", null, { state: "ended", started_at: now - 10_000, ended_at: now }),
-      thread("planner", null, { state: "active", started_at: now - 60_000 }),
-      thread("worker", null, { state: "active", started_at: now - 59_999 }),
+      thread("reviewer", null, { thread_id: "thr_r", state: "ended", started_at: now - 10_000, ended_at: now }),
+      thread("planner", null, { thread_id: "thr_p", state: "active", started_at: now - 60_000 }),
+      thread("worker", null, { thread_id: "thr_w", state: "active", started_at: now - 59_999 }),
+      thread("worker", null, { state: "ended", end_reason: "failed" }),
       thread("worker", 0, { state: "ended" }),
       thread("worker", 300, { state: "active", started_at: now - 5 * 60_000 }),
     ];

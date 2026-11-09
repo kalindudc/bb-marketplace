@@ -85,11 +85,19 @@ export const SETTINGS = {
     default: DEFAULT_BOT_AUTHORS,
     experimental_schema: z.string().trim().max(1000),
   },
+  usageCommand: {
+    type: "string",
+    label: "Usage command",
+    description:
+      "A shell command Loom runs to learn the tokens one of its threads has used, for when bb's own usage events count less than the provider used. Loom runs it in the background in the project's checkout on its machine, with a 30-second limit, about once a minute for each working thread and once after each thread ends, and it gets LOOM_THREAD_ID and LOOM_PROJECT_SLUG. It prints the thread's total tokens so far as a whole number on a line of its own (the last such line counts, stderr included), or nothing when it does not know. Loom keeps the larger of that and what bb's events add up to, and after a failure it waits 10 minutes before running it on that machine again. Empty: bb's usage events alone.",
+    default: "",
+    experimental_schema: z.string().max(4000),
+  },
 } satisfies PluginSettingDescriptors;
 
 export type DoneSettings = { doneHook: string; doneRecord: string };
 /** Every Loom setting; the pull request ones are optional so a caller with only the done hook's settings can pass them. */
-export type LoomSettings = DoneSettings & { checksSettleMinutes?: number; checksQueuedMinutes?: number; checksNearDonePercent?: number; commentSignature?: string; plannerInstructions?: string; botAuthors?: string };
+export type LoomSettings = DoneSettings & { checksSettleMinutes?: number; checksQueuedMinutes?: number; checksNearDonePercent?: number; commentSignature?: string; plannerInstructions?: string; botAuthors?: string; usageCommand?: string };
 export const NO_HOOK: DoneSettings = { doneHook: "", doneRecord: "summary" };
 
 export const RECORD_MAX = 300_000;

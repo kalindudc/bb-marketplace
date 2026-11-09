@@ -3836,6 +3836,14 @@ describe("agents tab", () => {
     expect(slot.container.querySelector("[data-agents-tokens]")!.textContent).toContain("1 thread reports no token usage");
   });
 
+  it("shows a dash, not \"not reported\", for a row bb never started a thread for", async () => {
+    const neverStarted = agent({ threadId: null, role: "reviewer", ticketKey: "CSV-1", state: "ended", endedAt: NOW, endReason: "failed", tokens: null, timeoutAt: null });
+    const { slot } = await mountPage("csv", { project: () => projectView({ agents: [neverStarted, ...agents] }) });
+    fireEvent.click(await slot.findByRole("tab", { name: "Agents" }));
+    const tokens = slot.container.querySelector<HTMLElement>('[data-agent-row="reviewer"] [data-label="Tokens"]')!;
+    expect(tokens.textContent).toBe("—");
+  });
+
   it("says nothing about unreported tokens when every thread reports them", async () => {
     const slot = await openAgents();
     expect(slot.container.querySelector("[data-agents-tokens]")!.textContent).not.toContain("no token usage");

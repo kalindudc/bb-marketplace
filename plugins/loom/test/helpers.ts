@@ -15,7 +15,7 @@ import type { LoomSettings } from "../src/record";
 import { spawnWorker } from "../src/workers";
 import { forgeBoundary } from "../src/forge-gate";
 import { specOf, type EngineCtx } from "../src/ctx";
-import { SectionNameConflictError, type BbPort, type BbProjectInfo, type EnvironmentFile, type EnvironmentFiles, type EnvironmentInfo, type EnvironmentPatch, type EnvironmentProviderInfo, type HostPort, type MachineProviderInfo, type PluginInfo, type SpawnArgs, type ThreadInfo } from "../src/ports";
+import { SectionNameConflictError, type BbPort, type BbProjectInfo, type EnvironmentFile, type EnvironmentFiles, type EnvironmentInfo, type EnvironmentPatch, type EnvironmentProviderInfo, type HostPort, type MachineProviderInfo, type PluginInfo, type SpawnArgs, type ThreadInfo, type ThreadUsage } from "../src/ports";
 
 export function makeDb(): Database.Database {
   const db = new Database(":memory:");
@@ -103,7 +103,8 @@ export class FakePort implements BbPort {
   checkout: string | null = "/repo";
   threads = new Map<string, ThreadInfo>();
   environments = new Map<string, EnvironmentInfo>();
-  tokens = new Map<string, number | null>();
+  /** What threadUsage answers for each thread; a thread not here has nothing to say. */
+  usage = new Map<string, ThreadUsage>();
   /** A missing seq or at reads as 1 and 0. */
   systemErrors = new Map<string, { code: string | null; message: string; detail?: string | null; seq?: number; at?: number }>();
   spawnedTokens = new Map<string, string>();
@@ -236,9 +237,9 @@ export class FakePort implements BbPort {
     this.record("findSpawnedThread", spawnToken);
     return this.spawnedTokens.get(spawnToken) ?? null;
   }
-  async threadTokens(threadId: string) {
-    this.record("threadTokens", threadId);
-    return this.tokens.get(threadId) ?? null;
+  async threadUsage(threadId: string) {
+    this.record("threadUsage", threadId);
+    return this.usage.get(threadId) ?? null;
   }
   async latestSystemError(threadId: string) {
     this.record("latestSystemError", threadId);

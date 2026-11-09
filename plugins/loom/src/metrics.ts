@@ -5,6 +5,7 @@ import type { Finding } from "./review";
 import { inTextRound, sentBackForText, textRounds } from "./review-kind";
 import { IN_FLIGHT } from "./scheduler";
 import { ROLES, TICKET_STATES, type Role, type TicketState } from "./states";
+import { unreportedThreads } from "./usage";
 
 export interface Pct {
   p50: number | null;
@@ -43,7 +44,6 @@ export interface ProjectMetrics {
 }
 
 const DAY_MS = 86_400_000;
-const MINUTE_MS = 60_000;
 const WINDOW_DAYS = 14;
 /** A ticket in one of these states has been approved by its reviewers. */
 const APPROVED: readonly TicketState[] = ["approved", "merging", "pr_open", "done"];
@@ -136,8 +136,7 @@ export function computeMetrics(a: { tickets: TicketRow[]; events: EventRow[]; po
   const tokens = Object.fromEntries(ROLES.map((role) => [role, 0])) as Record<Role, number>;
   for (const thread of a.threads) tokens[thread.role] += thread.tokens ?? 0;
   const tokenTotal = ROLES.reduce((sum, role) => sum + tokens[role], 0);
-  // A thread is sampled about once a minute and when it ends, so one with no tokens after that has a provider that reports none.
-  const unreported = a.threads.filter((thread) => thread.tokens === null && (thread.state === "ended" || a.now - thread.started_at >= MINUTE_MS)).length;
+  const unreported = unreportedThreads(a.threads, a.now);
 
   return {
     counts,

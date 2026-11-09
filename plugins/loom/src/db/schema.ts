@@ -242,4 +242,10 @@ export const MIGRATIONS: string[] = [
   // PushIntent: the push Loom is about to make for the ticket's pull request, so a run after a lost answer settles it
   // from the remote branch instead of pushing again.
   `ALTER TABLE tickets ADD COLUMN push_json TEXT`,
+  // UsageMark (usage.ts): what bb's usage events add up to for the thread, and the newest one counted. A figure from before
+  // starts the sum; it was one event's running total, not a sum, so every ended thread is read once more.
+  `ALTER TABLE threads ADD COLUMN usage_json TEXT;
+  UPDATE threads SET usage_json = json_object('sum', tokens) WHERE tokens IS NOT NULL;
+  UPDATE threads SET tokens_at = NULL WHERE state = 'ended';
+  CREATE INDEX threads_ended ON threads (ended_at) WHERE state = 'ended'`,
 ];

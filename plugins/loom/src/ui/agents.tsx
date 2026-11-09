@@ -11,7 +11,8 @@ const ROLE_SWATCHES: Record<Role, Swatch> = {
   planner: { fill: "var(--muted-foreground, currentColor)" },
 };
 const count = (value: number) => value.toLocaleString("en-US");
-const tokensText = (tokens: number | null) => (tokens === null ? "not reported" : count(tokens));
+// A row bb never started a thread for used nothing, so it is not counted as one that reported nothing.
+const tokensText = (row: Pick<AgentRow, "threadId" | "tokens">) => (row.tokens !== null ? count(row.tokens) : row.threadId === null ? "—" : "not reported");
 const CELL = "py-1 pr-3 align-top @max-xl/loom:p-0";
 // On a narrow page each row stacks: the role and ticket on one line, then its facts, each named by its column.
 const STACKED_ROW = "@max-xl/loom:flex @max-xl/loom:flex-wrap @max-xl/loom:items-baseline @max-xl/loom:gap-x-3 @max-xl/loom:gap-y-0.5 @max-xl/loom:py-2";
@@ -50,7 +51,7 @@ function AgentTable({ rows, now, ended }: { rows: AgentRow[]; now: number; ended
                 </td>
               )}
               <td data-label="Tokens" className={`${CELL} ${FACT}`}>
-                {tokensText(row.tokens)}
+                {tokensText(row)}
               </td>
               <td data-label="Retries" className={`${CELL} ${FACT}`}>
                 {row.rateLimitRetries === 0 ? "0" : plural(row.rateLimitRetries, "rate limit")}
@@ -78,7 +79,7 @@ function PlannerOnCall({ rows }: { rows: AgentRow[] }) {
       {rows.map((row, index) => (
         <div key={row.threadId ?? index} className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
           <span className="flex-1 text-muted-foreground">On call for triage rounds</span>
-          <span>Tokens {tokensText(row.tokens)}</span>
+          <span>Tokens {tokensText(row)}</span>
           {row.threadId !== null && (
             <button type="button" className={BUTTON} onClick={() => navigate.toThread(row.threadId!)}>
               Thread

@@ -24,6 +24,8 @@ export interface EngineCtx extends Ctx {
   commentSignature?: () => string;
   /** Author globs Loom counts as bots on every forge; Loom's botAuthors setting. */
   botAuthors?: () => string[];
+  /** The command that says what a thread used, on top of bb's usage events; Loom's usageCommand setting. Empty for none. */
+  usageCommand?: () => string;
 }
 
 export const signatureOf = (ctx: EngineCtx): string => ctx.commentSignature?.() ?? COMMENT_SIGNATURE;

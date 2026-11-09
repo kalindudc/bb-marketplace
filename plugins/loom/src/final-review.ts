@@ -23,7 +23,7 @@ import { appliedOf, blockOpenPr, mergeFixRound } from "./pull-requests";
 import { autoMergeOf, repoSettings, type AutoMergeSettings } from "./repos";
 import { liveTextReviewScratches } from "./review-kind";
 import type { Spec } from "./spec";
-import { SpawnRefusedError } from "./ports";
+import { SpawnRefusedError, type ThreadUsage } from "./ports";
 import { HUMAN_ACTOR, LOOM_ACTOR } from "./states";
 import { specOf, type EngineCtx } from "./ctx";
 import { mergePostNow } from "./posts";
@@ -70,6 +70,8 @@ const BODY_CHARS = 6000;
 const ITEMS_MAX = 10;
 
 const errText = (error: unknown) => (error instanceof Error ? error.message : String(error));
+/** A final reviewer's tokens: its newest usage event's running total, since a final run keeps no thread row to add events up in. */
+const finalTokens = (usage: ThreadUsage | null) => (usage === null ? null : usage.kind === "never-ran" ? 0 : usage.total);
 const parse = (event: EventRow) => JSON.parse(event.data_json) as Record<string, unknown>;
 
 /** The final review of a repo's merges: agents.reviewer at low reasoning within 10 minutes; null when the spec sets none. */
@@ -366,7 +368,7 @@ async function closeRuns(ctx: EngineCtx, ticket: TicketRow, runs: readonly Final
       try {
         const thread = await ctx.bb.getThread(run.thread);
         if (thread !== null && thread.archivedAt === null && thread.deletedAt === null) await ctx.bb.archive(run.thread);
-        tokens = await ctx.bb.threadTokens(run.thread).catch(() => null);
+        tokens = finalTokens(await ctx.bb.threadUsage(run.thread).catch(() => null));
       } catch (error) {
         ctx.bb.log("warn", `Could not archive the final reviewer ${run.thread}: ${errText(error)}`);
         continue;

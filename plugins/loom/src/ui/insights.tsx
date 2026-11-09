@@ -1,7 +1,7 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { useBbNavigate } from "@get-bb/plugin-sdk/app";
 import type { ActivityMark, CurrentItem, EventLine, InsightsFilter, InsightsNumbers, InsightsWindow, Phrase, ProjectInsights, StoryGroup, StoryItem } from "../contract";
-import { formatDuration, plural } from "../format";
+import { compactCount as big, formatDuration, plural } from "../format";
 import type { TicketState } from "../states";
 import { STATE_COLORS } from "./charts";
 import { BUTTON, BUTTON_PRIMARY, CARD, CHIP, HEADING, useLoom } from "./common";
@@ -30,7 +30,6 @@ const sameDay = (a: number, b: number) => new Date(a).toDateString() === new Dat
 const spanText = (from: number, to: number) => (sameDay(from, to) ? `${dated(from)} – ${clock(to)}` : `${dated(from)} – ${dated(to)}`);
 const dur = (ms: number) => formatDuration(ms);
 const pct = (fraction: number) => `${Math.round(fraction * 100)}%`;
-const big = (n: number) => (n >= 1e6 ? `${(n / 1e6).toFixed(n >= 1e7 ? 0 : 1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n));
 const cap = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 const chapterId = (chapter: Chapter) => `${chapter.key}-${chapter.first}`;
 /** Keys from what an entry is, with a count only for a true duplicate, so a new entry does not remount the others. */
@@ -1188,7 +1187,7 @@ function CostCard({ n, ranged, onFind }: { n: InsightsNumbers; ranged: boolean; 
         </>
       )}
       <p className="text-[11px] text-subtle-foreground">
-        {ranged ? "For the whole project: each thread reports its tokens as one running total. " : ""}Sampled about once a minute{t.unreported > 0 ? `; ${plural(t.unreported, "thread")} reported no usage, so the real total is higher` : ""}.
+        {ranged ? "For the whole project: Loom keeps one total per thread. " : ""}Read from bb as each turn ends{t.unreported > 0 ? `; ${plural(t.unreported, "thread")} reported no usage, so the real total is higher` : ""}.
       </p>
     </NumberCard>
   );

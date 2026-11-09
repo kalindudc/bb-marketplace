@@ -164,6 +164,8 @@ export interface ThreadRow {
   rate_limit_retries: number;
   tokens: number | null;
   tokens_at: number | null;
+  /** UsageMark (usage.ts): what bb's usage events add up to, and the newest one counted; null before the first. */
+  usage_json: string | null;
   review_round: number;
   /** The worker's attempt; null for a reviewer and for rows from before Loom recorded it. */
   attempt: number | null;
@@ -647,6 +649,13 @@ export class Store implements ForgeProfiles {
     if (q.states !== undefined) filters.push([`state IN (${q.states.map(() => "?").join(", ")})`, [...q.states]]);
     const where = filters.length > 0 ? ` WHERE ${filters.map(([clause]) => clause).join(" AND ")}` : "";
     return this.db.prepare(`SELECT * FROM threads${where} ORDER BY id`).all(...filters.flatMap(([, values]) => values)) as ThreadRow[];
+  }
+
+  /** Ended threads, newest end first, that ended by `endedBy`, were not read `settleMs` or more after their end, and are not in `skip`. */
+  threadsToReadUsage(endedBy: number, settleMs: number, limit: number, skip: readonly number[] = []): ThreadRow[] {
+    return this.db
+      .prepare("SELECT * FROM threads WHERE state = 'ended' AND thread_id IS NOT NULL AND ended_at <= ? AND (tokens_at IS NULL OR tokens_at < ended_at + ?) AND id NOT IN (SELECT value FROM json_each(?)) ORDER BY ended_at DESC, id DESC LIMIT ?")
+      .all(endedBy, settleMs, JSON.stringify(skip), limit) as ThreadRow[];
   }
 
   threadsForProject(projectId: number): ThreadRow[] {

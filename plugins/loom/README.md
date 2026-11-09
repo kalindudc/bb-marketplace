@@ -601,7 +601,7 @@ a deploy Loom has no command to check, and Undo live takes it back.
 Every planner, worker and reviewer thread. Those working now come first, with
 their ticket, model, running time, timeout, tokens and rate-limit retries. Then
 the planner, on call for triage rounds, the tokens by role, how threads ended,
-and the ended threads. A provider that reports no token usage shows "not
+and the ended threads. A thread bb has no token figure for shows "not
 reported".
 
 #### Insights
@@ -1674,7 +1674,7 @@ time it to done.
 | check failures | `check` posts, and how many of them failed. |
 | blocks | Times a ticket moved to blocked. |
 | human interventions | Commands the human ran, apart from `start` and the approval of a draft. |
-| tokens (sampled) | Tokens used by the project's threads in total, by role and per done ticket. Sampled, not exact: the plugin reads each live thread about once a minute and once when it ends. Threads with no sample after a minute, or that ended without one, count as not reporting (`tokens.unreported` in `--json`). |
+| tokens (sampled) | Tokens used by the project's threads in total, by role and per done ticket, added up from the usage events bb records for each thread. The plugin reads a thread as each turn ends, about once a minute while it works, and again two minutes after it ends; the `usageCommand` setting can give a larger figure. Totals are only as complete as bb's events: a turn that is interrupted records none. Threads bb started that have no figure count as not reporting (`tokens.unreported` in `--json`). |
 | cumulative flow | Tickets in each state at the end of each of 14 days (or `--days`). A ticket counts as queued from its creation. |
 | active time | Time the project ran, without the paused spans. `windowActiveMs` in `--json` is the part of it in the last 14 days (or `--days`). |
 | time in state and flow efficiency | Over done tickets, the time spent in each state from creation (as queued) until done. Flow efficiency is the share of that time spent working. |
@@ -1779,7 +1779,8 @@ that applies to the project, or adds a hook nobody asked for.
 ## Settings
 
 Besides the done hook and the planner instructions, Loom has five settings for
-pull requests. Set them in bb's settings for Loom, or from a terminal:
+pull requests and one for token usage. Set them in bb's settings for Loom, or
+from a terminal:
 
 ```sh
 bb plugin config loom set checksSettleMinutes 45
@@ -1787,6 +1788,7 @@ bb plugin config loom set checksQueuedMinutes 10
 bb plugin config loom set checksNearDonePercent 90
 bb plugin config loom set commentSignature '<sub>Posted by Loom</sub>'
 bb plugin config loom set botAuthors 'dependabot*, renovate*, *[bot], *@robots.example.com'
+bb plugin config loom set usageCommand '/usr/local/bin/thread-tokens "$LOOM_THREAD_ID"'
 ```
 
 - `checksSettleMinutes` is the longest Loom waits for a pull request's
@@ -1811,6 +1813,19 @@ bb plugin config loom set botAuthors 'dependabot*, renovate*, *[bot], *@robots.e
   people send the worker nothing. It is `dependabot*, renovate*, *[bot]` by
   default, and an empty value counts only the ones the forge marks. A forge's
   own `bots` globs, in a forge profile or the spec, add to it.
+- `usageCommand` tells Loom what a thread used when bb's usage events count
+  less than the provider did, for example a provider that records only some of
+  its model calls. Loom runs it in the background, one run at a time, in the
+  project's checkout on the project's machine, with a 30-second limit and
+  `LOOM_THREAD_ID` and `LOOM_PROJECT_SLUG` set: about once a minute for each
+  working thread, and once for each thread after it ends. It prints the
+  thread's total tokens so far as a whole number on a line of its own, or
+  nothing when it does not know; stderr is read too, so the last line that is a
+  whole number counts. Loom keeps the larger of that and what bb's events add
+  up to, and never adds the two, so the command can only raise a figure. After
+  a failure, a timeout or output with no whole number, Loom logs why and waits
+  10 minutes before running it on that machine again, and reads an ended
+  thread again later. Empty, the default, uses bb's events alone.
 
 They apply to every project, and a spec cannot change them.
 

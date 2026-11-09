@@ -80,6 +80,7 @@ const reviewer = (state: ThreadRow["state"]): ThreadRow => ({
   rate_limit_retries: 0,
   tokens: null,
   tokens_at: null,
+  usage_json: null,
   review_round: 1,
   attempt: null,
   started_at: NOW,

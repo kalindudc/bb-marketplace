@@ -8,6 +8,7 @@ Loom now stops a project only for problems that are the whole project's, opens p
 
 ### Added
 
+- A `usageCommand` setting: a shell command Loom runs in the background for each thread, which prints the thread's total tokens, for when bb's usage events count less than the provider used. Loom keeps the larger of the two figures and never adds them.
 - A `loom-pr-description` skill tells workers how to write a pull request's title and description for a reviewer who has never seen Loom, and reviewers judge the text by it. Its core rules are also in every worker's brief and fix round, so they hold for any model.
 - `[[ticket]] keep_draft = true` keeps that ticket's pull request a draft until the human releases it with Release draft on the ticket, its board card or the Planner page, or `bb loom release <slug> --ticket <KEY>`. Its pull request opens as a draft even with `merge.draft = false`, and the planner can only ask for a release, with `loom_release_draft`.
 - A command forge's `ready` command marks a draft ready for review; `gh` uses `gh pr ready`.
@@ -47,6 +48,7 @@ Loom now stops a project only for problems that are the whole project's, opens p
 - A push whose answer was lost is settled from the remote branch instead of pushed again, and a forge call Loom held back during a rate limit is no longer counted as made.
 - A reviewer whose spawn answer was lost is found by its spawn token and adopted instead of ended. Until bb can say, the ticket shows "Waiting to find out whether bb started a reviewer", and after an hour Loom tells the human. A text reviewer's scratch directory stays until its thread stops.
 - A waiting diff read survives a plugin reload, a failed read of an old pull request no longer counts against the ticket's new one, and a worker thread that stays busy for an hour blocks only its ticket instead of pausing the project.
+- Token totals add up every usage event bb records for a thread. bb keeps only a thread's newest event, and its total starts again when the provider process restarts, so Loom kept one running total and lost the rest. Loom now counts each turn's event as the turn ends, reads threads while their project is paused and again after they end (again later when that read fails), and counts a stopped thread that never started a turn as 0 instead of as not reporting; the Agents tab shows a dash for those. Insights writes large totals such as 2.8B instead of 2803M.
 
 ### Compatibility
 
@@ -58,6 +60,7 @@ Loom now stops a project only for problems that are the whole project's, opens p
 - Authors matching `dependabot*`, `renovate*` or `*[bot]` now count as bots on running projects; set `botAuthors` empty to keep the old rule.
 - Open pull requests get the new Loom section at their next read, and only the text between Loom's markers changes. In metrics, past text-only reviews move to the text review counts.
 - Final reviews that went on hold because bb refused them stay held until you run `bb loom auto-merge <slug> retry --ticket <KEY>`.
+- After the update, every ended thread is read once more, 10 each pass, so past totals pick up what bb still has. Larger totals make a token budget run out sooner.
 
 ## 0.34.2 (2026-11-06)
 

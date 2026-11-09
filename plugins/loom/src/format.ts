@@ -18,6 +18,26 @@ export function formatDuration(ms: number): string {
   return rest > 0 ? `${Math.floor(seconds / size)}${unit} ${rest}${next![1]}` : `${Math.floor(seconds / size)}${unit}`;
 }
 
+const COMPACT_UNITS: ReadonlyArray<readonly [size: number, unit: string, decimal: boolean]> = [
+  [1e3, "k", false],
+  [1e6, "M", true],
+  [1e9, "B", true],
+  [1e12, "T", true],
+];
+
+/** A count in a few characters: 950, 587k, 7.3M, 47M, 2.8B. A rounding that reaches a thousand moves up a unit. */
+export function compactCount(n: number): string {
+  if (n < 1e3) return String(n);
+  let text = "";
+  for (const [size, unit, decimal] of COMPACT_UNITS) {
+    const scaled = n / size;
+    const figure = decimal && scaled < 9.95 ? scaled.toFixed(1) : String(Math.round(scaled));
+    text = `${figure}${unit}`;
+    if (Number(figure) < 1000) break;
+  }
+  return text;
+}
+
 /** "1 ticket", "2 tickets". */
 export const plural = (count: number, noun: string) => `${count} ${noun}${count === 1 ? "" : "s"}`;
 /** "its worker" for one ticket, "their workers" for more. */

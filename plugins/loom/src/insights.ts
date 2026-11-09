@@ -3,7 +3,8 @@
 // Insights only reads: nothing here moves a ticket or changes what Loom schedules.
 import type { EventRow, PostRow, ReviewRow, ThreadRow, TicketRow } from "./db/store";
 import { feedText } from "./feed-text";
-import { formatDuration, plural } from "./format";
+import { compactCount as big, formatDuration, plural } from "./format";
+import { unreportedThreads } from "./usage";
 import { percentile } from "./metrics";
 import { projectTimeline, type ProjectRows, type TicketBar } from "./replay";
 import type { Finding } from "./review";
@@ -183,7 +184,6 @@ const WORDS = ["no", "one", "two", "three", "four", "five", "six", "seven", "eig
 const word = (n: number) => (n <= 10 ? WORDS[n]! : String(n));
 const times = (n: number) => (n === 1 ? "once" : n === 2 ? "twice" : `${n} times`);
 const listText = (items: readonly string[]) => (items.length <= 1 ? items.join("") : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`);
-const big = (n: number) => (n >= 1e6 ? `${(n / 1e6).toFixed(n >= 1e7 ? 0 : 1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n));
 
 /** Whitespace folded and cut to `max` characters at a word. */
 export function clipText(text: string | null | undefined, max = 140): string {
@@ -688,7 +688,7 @@ function numbersOf(ctx: Ctx, rows: ProjectRows, range: { from: number; to: numbe
       total,
       byRole: tokens,
       perReached: goalCount === 0 ? null : total / goalCount,
-      unreported: rows.threads.filter((thread) => thread.tokens === null && (thread.state === "ended" || ctx.now - thread.started_at >= MIN)).length,
+      unreported: unreportedThreads(rows.threads, ctx.now),
       byTicket: tokensByTicket(rows.tickets, rows.threads),
       budget,
     },

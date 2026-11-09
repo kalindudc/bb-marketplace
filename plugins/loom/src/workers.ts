@@ -20,6 +20,7 @@ import { bringHome, carryTo, homeBranch, isRemote } from "./transport";
 import { canTake, moveTicket, tryMoveTicket, type TicketMove } from "./moves";
 import { isTextReviewer, removeTextReviewScratch } from "./review-kind";
 import { specOf, signatureOf, type EngineCtx } from "./ctx";
+import { foldUsage } from "./usage";
 
 export type EndReason = "abandoned" | "timeout" | "failed" | "gone" | "blocked" | "cancelled" | "verdict" | "superseded" | "merged" | "released" | "unreachable";
 
@@ -549,8 +550,7 @@ async function finishEnding(ctx: EngineCtx, row: ThreadRow, reason: EndReason, o
 async function stoppedForScratch(ctx: EngineCtx, row: ThreadRow): Promise<boolean> {
   const threadId = row.thread_id;
   if (threadId === null) return true;
-  const tokens = await ctx.bb.threadTokens(threadId).catch(() => null);
-  if (tokens !== null) ctx.store.updateThread(row.id, { tokens, tokens_at: ctx.now() });
+  await foldUsage(ctx, row);
   await ctx.bb.stop(threadId).catch((error) => ctx.bb.log("warn", `Could not stop ${threadId}: ${errText(error)}`));
   const thread = await ctx.bb.getThread(threadId).catch(() => undefined);
   const stopped = thread === null || (thread !== undefined && (thread.deletedAt !== null || thread.archivedAt !== null || (thread.status !== "active" && thread.status !== "stopping")));
@@ -566,8 +566,7 @@ async function stoppedForScratch(ctx: EngineCtx, row: ThreadRow): Promise<boolea
 async function stopAndArchive(ctx: EngineCtx, row: ThreadRow, force: boolean): Promise<boolean> {
   const threadId = row.thread_id;
   if (threadId === null) return true;
-  const tokens = await ctx.bb.threadTokens(threadId).catch(() => null);
-  if (tokens !== null) ctx.store.updateThread(row.id, { tokens, tokens_at: ctx.now() });
+  await foldUsage(ctx, row);
   await ctx.bb.stop(threadId).catch((error) => ctx.bb.log("warn", `Could not stop ${threadId}: ${errText(error)}`));
   const thread = await ctx.bb.getThread(threadId).catch(() => undefined);
   if (thread === null || (thread?.deletedAt ?? null) !== null) return true;

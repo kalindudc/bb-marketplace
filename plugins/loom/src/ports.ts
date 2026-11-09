@@ -62,8 +62,8 @@ export interface BbPort {
   hostKnown(hostId: string): Promise<boolean>;
   /** The id of the thread this plugin spawned with that token in its metadata, if there is one. */
   findSpawnedThread(spawnToken: string): Promise<string | null>;
-  /** Cumulative tokens the thread has used, or null when its provider reports none. */
-  threadTokens(threadId: string): Promise<number | null>;
+  /** bb's newest usage event of the thread, "never-ran" for a thread that never started a turn, or null when bb has neither. */
+  threadUsage(threadId: string): Promise<ThreadUsage | null>;
   /** The newest system/error event of the thread; `detail` is the cause bb recorded, such as the environment provider's message, and `seq` its place in the thread's events. */
   latestSystemError(threadId: string): Promise<{ code: string | null; message: string; detail?: string | null; seq: number; at: number } | null>;
   retryTurn(threadId: string, turnRequestId: string, sendAt: number): Promise<void>;
@@ -92,6 +92,13 @@ export interface BbPort {
   /** One file's patch in that same comparison. */
   environmentPatch(environmentId: string, base: string, path: string): Promise<EnvironmentPatch>;
 }
+
+/**
+ * One of bb's usage events: `total` is the running total of the provider session `session` when bb recorded event `seq`,
+ * and `last` the part of it the latest model call added. bb keeps only a thread's newest usage event, and a session's
+ * total starts again when its provider process does, so Loom adds the events up itself (usage.ts).
+ */
+export type ThreadUsage = { kind: "reading"; session: string; seq: number; total: number; last: number } | { kind: "never-ran" };
 
 export interface BbProjectInfo {
   id: string;
