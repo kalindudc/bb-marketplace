@@ -32,8 +32,14 @@ interface SdkThread {
   metadata: Record<string, unknown>;
 }
 
+/** Calls the test holds open until it releases them, to stand in for a slow bb or forge. */
+interface Holds {
+  threadsGet?: (threadId: string) => Promise<void> | undefined;
+  eventsList?: (threadId: string) => Promise<void> | undefined;
+}
+
 // Every sdk call on the engine's path, over scripted state: plan 01's stubs plus the worker lifecycle.
-async function loadEngine(over: { tickMs?: number } = {}) {
+async function loadEngine(over: { tickMs?: number } = {}, holds: Holds = {}) {
   const threads = new Map<string, SdkThread>();
   const fakeHost = new FakeHost();
   let n = 0;
@@ -49,7 +55,7 @@ async function loadEngine(over: { tickMs?: number } = {}) {
       environments: { ...base.environments, get: async ({ environmentId }) => ({ id: environmentId, hostId: "host_env", path: `/wt/${environmentId}`, branchName: `wt-${environmentId}` }) },
       threads: {
         ...base.threads,
-        get: async ({ threadId }) => threads.get(threadId) ?? (threadId === "thr_plan" ? { id: threadId, environmentId: state.environmentId, status: "idle", archivedAt: null, deletedAt: null } : Promise.reject(new Error("404 not found"))),
+        get: async ({ threadId }) => (await holds.threadsGet?.(threadId), threads.get(threadId)) ?? (threadId === "thr_plan" ? { id: threadId, environmentId: state.environmentId, status: "idle", archivedAt: null, deletedAt: null } : Promise.reject(new Error("404 not found"))),
         list: async () => [...threads.values()],
         getPluginMetadata: async ({ threadId }) => threads.get(threadId)?.metadata ?? {},
         // A spec reviewer is thr_spec<n>, so the workers keep their own numbering.
@@ -63,7 +69,7 @@ async function loadEngine(over: { tickMs?: number } = {}) {
         send: async () => ({}),
         stop: async ({ threadId }) => void (threads.get(threadId)!.status = "idle"),
         archive: async ({ threadId }) => void (threads.get(threadId)!.archivedAt = 1),
-        events: { list: async () => [] },
+        events: { list: async ({ threadId }) => (await holds.eventsList?.(threadId), []) },
       },
     },
   });
@@ -262,5 +268,55 @@ describe("Loom plugin", () => {
     expect(db.prepare("SELECT end_reason FROM threads WHERE thread_id = 'thr_w1'").get()).toEqual({ end_reason: "gone" });
     again.controller.abort();
     await again.done;
+  });
+
+  // bb gives a stopping service 5 s, then marks the plugin degraded and loads no new version until someone reloads it.
+  const settlesSoon = (done: Promise<void>) => Promise.race([done.then(() => "stopped"), new Promise((resolve) => setTimeout(() => resolve("still running"), 200))]);
+
+  it("stops the service at once when bb aborts it during a pass, and dispose waits for the pass", async () => {
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    const holds: Holds = { eventsList: (threadId) => (threadId === "thr_w1" ? held : undefined) };
+    const { harness } = await loadEngine({ tickMs: 20 }, holds);
+    await proposeReviewed(harness);
+    await harness.behavior.runCli(["approve", "csv"]);
+    await harness.behavior.runCli(["start", "csv"]);
+    const service = harness.runService("engine");
+    // The pass after the spawn reads the worker's token count, and bb does not answer.
+    await until(() => harness.sdk.callsTo("threads.events.list").some(([args]) => (args as { threadId: string }).threadId === "thr_w1"));
+
+    service.controller.abort();
+    expect(await settlesSoon(service.done)).toBe("stopped");
+
+    let disposed = false;
+    const disposing = harness.dispose().then(() => (disposed = true));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(disposed).toBe(false);
+    release();
+    await disposing;
+    expect(harness.logEntries.filter((entry) => entry.level === "error")).toEqual([]);
+  });
+
+  it("stops the service at once when bb aborts it during reconciliation, and dispose waits for it", async () => {
+    const holds: Holds = {};
+    const { harness } = await loadEngine({ tickMs: 20 }, holds);
+    await proposeReviewed(harness);
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    holds.threadsGet = (threadId) => (threadId === "thr_plan" ? held : undefined);
+    const before = harness.sdk.callsTo("threads.get").length;
+    const service = harness.runService("engine");
+    // Reconciliation looks up the planner's thread, and bb does not answer.
+    await until(() => harness.sdk.callsTo("threads.get").length > before);
+
+    service.controller.abort();
+    expect(await settlesSoon(service.done)).toBe("stopped");
+
+    let disposed = false;
+    const disposing = harness.dispose().then(() => (disposed = true));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(disposed).toBe(false);
+    release();
+    await disposing;
   });
 });

@@ -40,6 +40,7 @@ Loom now stops a project only for problems that are the whole project's, opens p
 
 ### Fixed
 
+- An update or reload no longer leaves Loom stopped with "service engine did not stop". The engine's background service now returns as soon as bb stops it, instead of finishing the pass or restart check it was in, which could take longer than the 5 seconds bb allows; Loom waits for that work while it shuts down instead.
 - Final reviews start again. bb refused their scratch directory inside Loom's data; it is now under `~/.cache/bb-loom`, and with no cache outside bb's data the review holds with a post saying why.
 - A forge's "update branch" on a pull request whose worker runs on a machine of its own no longer fills the worker's worktree with conflict markers. Loom recognizes its own push with the base merged in, and pushes clean merges from the project's machine.
 - Carrying work into a worker's worktree never takes the worker's work: a carry that fails leaves the worktree and index as they are and names what it wrote, and Loom carries only while bb reports the worker's thread idle, holding its own messages meanwhile.

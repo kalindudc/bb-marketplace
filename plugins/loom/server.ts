@@ -23,6 +23,19 @@ export interface PluginDeps {
 const TICK_MS = 15_000;
 const errText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
+/** Settles when `work` settles or `signal` aborts, whichever is first, and leaves no listener on the signal. */
+function untilAborted(signal: AbortSignal, work: Promise<unknown>): Promise<void> {
+  if (signal.aborted) return Promise.resolve();
+  return new Promise<void>((resolve) => {
+    const done = () => {
+      signal.removeEventListener("abort", done);
+      resolve();
+    };
+    signal.addEventListener("abort", done, { once: true });
+    work.then(done, done);
+  });
+}
+
 export function createLoomPlugin(deps: PluginDeps = {}) {
   return async function loom(bb: BbPluginApi): Promise<void> {
     const db = bb.storage.database();
@@ -73,20 +86,20 @@ export function createLoomPlugin(deps: PluginDeps = {}) {
     bb.events.on("turn.failed", (event) => safe("turn.failed", () => engine.onTurnFailed(event)));
 
     // bb.sdk and host calls work from here on, so reconciliation waits for the service rather than running at load.
+    // bb gives a stopping service 5 s and then loads no new version until a manual reload, so start returns as soon as bb
+    // aborts it; engine.dispose, which bb runs next, waits for the reconciliation or pass still in flight.
     bb.background.service("engine", {
       async start(signal) {
-        try {
-          const result = await engine.reconcile();
-          bb.log.info(`reconciled: ${result.adopted} spawn(s) adopted, ${result.rolledBack} rolled back, ${result.rechecked} check run(s) restarted`);
-        } catch (error) {
-          bb.log.error(`reconcile failed: ${errText(error)}`);
-        }
+        const reconciled = engine.reconcile().then(
+          (result) => bb.log.info(`reconciled: ${result.adopted} spawn(s) adopted, ${result.rolledBack} rolled back, ${result.rechecked} check run(s) restarted`),
+          (error) => bb.log.error(`reconcile failed: ${errText(error)}`),
+        );
+        await untilAborted(signal, reconciled);
         while (!signal.aborted) {
-          await engine.tick().catch((error) => safe("tick", () => Promise.reject(error)));
-          await new Promise<void>((resolve) => {
-            const timer = setTimeout(resolve, deps.tickMs ?? TICK_MS);
-            signal.addEventListener("abort", () => (clearTimeout(timer), resolve()), { once: true });
-          });
+          await untilAborted(signal, engine.tick().catch((error) => safe("tick", () => Promise.reject(error))));
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          await untilAborted(signal, new Promise<void>((resolve) => (timer = setTimeout(resolve, deps.tickMs ?? TICK_MS))));
+          clearTimeout(timer);
         }
       },
     });

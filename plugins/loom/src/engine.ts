@@ -64,6 +64,7 @@ export class Engine {
   private readonly projects: Projects;
   private disposed = false;
   private currentTick: Promise<void> | null = null;
+  private currentReconcile: Promise<unknown> | null = null;
   private tickAgain = false;
 
   private readonly settings: () => LoomSettings;
@@ -276,7 +277,16 @@ export class Engine {
   }
 
   /** After a restart: adopt or roll back half-made spawns, end rows and planning conversations whose thread is gone, finish endings, check again, and run merges left in merging again. */
-  async reconcile(): Promise<{ adopted: number; rolledBack: number; rechecked: number }> {
+  reconcile(): Promise<{ adopted: number; rolledBack: number; rechecked: number }> {
+    const run = this.reconcileNow();
+    const tracked = run.catch(() => undefined).finally(() => {
+      if (this.currentReconcile === tracked) this.currentReconcile = null;
+    });
+    this.currentReconcile = tracked;
+    return run;
+  }
+
+  private async reconcileNow(): Promise<{ adopted: number; rolledBack: number; rechecked: number }> {
     const { store, bb } = this.ctx;
     let adopted = 0;
     let rolledBack = 0;
@@ -341,6 +351,7 @@ export class Engine {
 
   async dispose(): Promise<void> {
     this.disposed = true;
+    await this.currentReconcile;
     await this.currentTick?.catch(() => undefined);
     fenceRolloutChecks(this.ctx);
   }
