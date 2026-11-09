@@ -56,9 +56,26 @@ describe("the flare tool", () => {
     const flare = harness.inspection.registrations.agentTools.find((tool) => tool.name === "flare");
     const body = JSON.stringify((flare?.inputSchema as { properties: { body: unknown } }).properties.body);
     expect(body).not.toContain("A few lines");
-    expect(body).toMatch(/mermaid diagram, a table, an image/);
+    expect(body).toMatch(/a table, a mermaid diagram, an image/);
     expect(TOOL_INSTRUCTIONS).toContain("does not cover a flare's body");
     expect(TOOL_INSTRUCTIONS).toContain('Load("$BB_THREAD_STORAGE/<path>")');
+    expect(TOOL_INSTRUCTIONS).toContain("A body that is all prose is right only when there is nothing to see");
+  });
+
+  it("names the rendering plugins it draws, beside the Markdown forms that need none", async () => {
+    const harness = await load();
+    const flare = harness.inspection.registrations.agentTools.find((tool) => tool.name === "flare");
+    const body = JSON.stringify((flare?.inputSchema as { properties: { body: unknown } }).properties.body);
+    for (const text of [TOOL_INSTRUCTIONS, body]) expect(text).toMatch(/genui[\s\S]*inline-vis/);
+    expect(TOOL_INSTRUCTIONS).toContain("Markdown tables, mermaid diagrams and images always");
+    expect(TOOL_INSTRUCTIONS).toContain("without genui, use Markdown tables and mermaid");
+  });
+
+  it("ties flares to moments in the agent's own work, not to another plugin's tools", () => {
+    expect(TOOL_INSTRUCTIONS).toContain("you finish a step of your plan or a phase of the work");
+    expect(TOOL_INSTRUCTIONS).toContain("for a quick status it is the whole flare");
+    expect(TOOL_INSTRUCTIONS).toContain("A turn of a few tool calls needs no flare");
+    expect(TOOL_INSTRUCTIONS).not.toMatch(/\bquests?\b|minion|wake-?up/i);
   });
 
   it("adds the drawing hint to the result of a flare that is all text", async () => {

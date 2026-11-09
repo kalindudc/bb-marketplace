@@ -26,7 +26,7 @@ export function nudgeText(minutes: number, again: boolean): string {
     again
       ? `${NUDGE_PREFIX} This turn has gone ${minutes} minutes since its last flare or reminder.`
       : `${NUDGE_PREFIX} This turn has run for ${minutes} minutes without a flare.`,
-    "If you have a finding, a decision or a blocker the user should see now, send it with the flare tool (or `bb flare send`), then keep working.",
+    "If you finished a step, confirmed something, made a decision or hit a blocker since, send a flare with the flare tool (or `bb flare send`); a title alone is enough. Then keep working.",
     "If there is nothing new, ignore this and carry on. Do not reply to this reminder.",
   ].join(" ");
 }
@@ -36,24 +36,24 @@ export const TOOL_DESCRIPTION =
 
 // The text a model reads as it writes the body, so it says what a body is for, not only what it may hold.
 export const BODY_DESCRIPTION =
-  "Markdown, drawn like a reply in the Flares tab: one or two sentences, then the evidence as a block (a ui view, a mermaid diagram, a table, an image, or a saved file loaded into a view). Rules that keep blocks to your final message do not apply here.";
+  "Markdown, drawn like a reply in the Flares tab; leave it out for a quick status. Otherwise one or two sentences, then the evidence as a block (a table, a mermaid diagram, an image, a genui ui view, an inline-vis page, or a saved file loaded into a view). Rules that keep blocks to your final message do not apply here.";
 
 export const TOOL_INSTRUCTIONS = `# Flare
 \`flare\` posts a short note the user sees while you keep working: a banner above the message box, the thread's Flares tab and, for blockers, a push notification. It is fire and forget: it returns at once, nothing replies, and your turn carries on. Never wait for an answer and never end your turn because you sent one.
 
-Send a flare when:
-- the user asked for updates, findings or a summary as you go, or the task will take more than a few minutes;
-- you confirmed something the user would want to know now, such as a root cause, a number or a failing test;
-- you made a decision they might want to redirect, such as an approach, a trade-off or a part you skipped;
+In a turn that runs more than a few minutes, send a flare at each of these moments:
+- you finish a step of your plan or a phase of the work, such as research, a build, a test run or a deploy (kind "progress");
+- you confirm something the user would want to know now, such as a root cause, a number or a failing test;
+- you make a decision they might want to redirect, such as an approach, a trade-off or a part you skipped (kind "decision");
 - you are blocked or working around something, such as missing access or a failing service (kind "blocker");
-- you finished a phase of a long task (kind "progress", or "summary" for a wrap-up).
+- the user asked for updates as you go.
 
-Send one flare per real event; one to five in a long turn is typical. Do not flare routine steps such as reading a file.
+When many tool calls have passed since your last flare, ask yourself whether one of these moments went by. A turn of a few tool calls needs no flare: its reply is the update. Do not flare routine steps such as reading a file. One to five flares in a long turn is typical.
 
 ## Show the evidence, don't describe it
-The user glances at a flare, so draw what you found. The title is one line that stands on its own, about 80 characters. The body opens with one or two sentences, because the banner and notifications show only its prose, then shows the evidence as a block.
+The title is one line that stands on its own, about 80 characters; for a quick status it is the whole flare. Anything more gets a body that opens with one or two sentences, because the banner and notifications show only its prose, then draws the evidence as a block. Draw what you already have, such as numbers you just read, a flow you just traced or a file you saved.
 
-The Flares tab renders the body as a reply of its own, so every block a reply can hold is drawn there: \`ui\` views, mermaid diagrams, Markdown tables, images, inline-vis pages and plugin directives. A rule that only the message ending your turn may hold a block, or that tool input stays plain text, does not cover a flare's body.
+The Flares tab renders the body as a reply of its own, so every block a reply can hold is drawn there: Markdown tables, mermaid diagrams and images always, plus the blocks and directives of installed rendering plugins, such as genui's \`ui\` views and inline-vis pages. A rule that only the message ending your turn may hold a block, or that tool input stays plain text, does not cover a flare's body.
 
 Pick the block the evidence calls for. The views named here are genui's \`ui\` ones; without genui, use Markdown tables and mermaid.
 - key numbers: a Metric row; a series: a Chart
@@ -64,7 +64,7 @@ Pick the block the evidence calls for. The views named here are genui's \`ui\` o
 - screenshots: Image or Gallery of their paths
 - a blocker: what fails and what the user can do; Steps when there are several
 
-Prose alone is right only when there is nothing to see, such as a one-line status. Never write paragraph-long bullets with bold labels. Wrap a \`ui\` block in one Card. An example body:
+A body that is all prose is right only when there is nothing to see. Never write paragraphs or paragraph-long bullets with bold labels. Wrap a \`ui\` block in one Card. An example body:
 
     requeue() passes only the job id, so 312 of 2,040 retried jobs ran with no payload.
 

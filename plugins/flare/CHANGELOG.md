@@ -2,6 +2,17 @@
 
 Notable changes to Flare, newest first. Releases are tagged `flare/vX.Y.Z` in this repository.
 
+## 0.3.1 (2026-11-09)
+
+Agents keep sending flares once a thread's turns get shorter, and flares stay drawn.
+
+### Changed
+
+- The tool's instructions and the skill tie a flare to moments in the agent's own work: finishing a step of its plan or a phase such as research, a build or a deploy, confirming something, making a decision the user might redirect, or hitting a blocker. When many tool calls have passed since the last flare, they ask the agent to check whether one of those moments went by. They also say a turn of a few tool calls needs no flare, because its reply is the update. The triggers name no other plugin's tools. Across Nov 5 and 6, 3% of top-level turns under 2 minutes sent a flare, against 27 to 57% of longer ones, and one 18-minute research turn finished two plan steps without sending any.
+- For a quick status, the title is the whole flare. Anything more still opens with a sentence and draws its evidence. The instructions now add "A body that is all prose is right only when there is nothing to see", and they tell the agent to draw what it already has. After 0.3.0, title-only flares stopped, and the share of turns of 5 minutes or more with a flare fell from 38% to 17%; the work changed shape too, so that drop has more than one cause.
+- The drawing guidance from 0.3.0 stays as it was. The instructions, the body description and the skill name genui's `ui` views and inline-vis pages as rendering plugins Flare draws when they are installed, beside Markdown tables, mermaid and images, which need no plugin. With that guidance, 82 of 87 flares drew a block, a table or an image, against 16 of 164 before it, and walls of text fell from 45 to 3. Tests keep the plugin names, the Markdown fallback and the all-prose rule in the text.
+- The quiet-turn reminder says a title alone is enough.
+
 ## 0.3.0 (2026-11-06)
 
 Agents draw what they found in a flare instead of describing it.

@@ -9,21 +9,23 @@ A flare is a short note the user sees while you keep working: a banner above the
 
 ## When to send one
 
-- The user asked for updates, findings or a summary as you go, or the task will take more than a few minutes.
-- You confirmed something they would want to know now: a root cause, a number, a failing test.
-- You made a decision they might want to redirect: an approach, a trade-off, a part you skipped.
-- You are blocked or working around something: missing access, a failing service. Use kind `blocker`.
-- You finished a phase of a long task: kind `progress`, or `summary` for a wrap-up.
+In a turn that runs more than a few minutes, send a flare at each of these moments:
 
-Send one flare per real event; one to five in a long turn is typical. Do not flare routine steps such as reading a file. A flare does not replace your final answer: end the turn with your full answer as usual.
+- You finish a step of your plan or a phase of the work, such as research, a build, a test run or a deploy. Use kind `progress`.
+- You confirm something the user would want to know now: a root cause, a number, a failing test.
+- You make a decision they might want to redirect: an approach, a trade-off, a part you skipped. Use kind `decision`.
+- You are blocked or working around something: missing access, a failing service. Use kind `blocker`.
+- The user asked for updates as you go.
+
+When many tool calls have passed since your last flare, ask yourself whether one of these moments went by. A turn of a few tool calls needs no flare, because its reply is the update. Do not flare routine steps such as reading a file; one to five flares in a long turn is typical. A flare does not replace your final answer: end the turn with your full answer as usual.
 
 ## Writing one
 
 The user glances at a flare, so show the evidence instead of describing it.
 
-- The title is one line that stands on its own, about 80 characters. Longer titles are cut.
-- The body opens with one or two sentences, because the banner and notifications show only its prose. Then it shows the evidence as a block. It is cut at 60,000 characters.
-- The Flares tab renders the body as a reply of its own, so every block a reply can hold is drawn there: `ui` views, mermaid diagrams, Markdown tables, images, inline-vis pages and plugin directives. A rule that only the message ending your turn may hold a block, or that tool input stays plain text, does not cover a flare's body.
+- The title is one line that stands on its own, about 80 characters. Longer titles are cut. For a quick status, the title is the whole flare.
+- Anything more gets a body that opens with one or two sentences, because the banner and notifications show only its prose. Then it draws the evidence as a block. Draw what you already have, such as numbers you just read, a flow you just traced or a file you saved. The body is cut at 60,000 characters.
+- The Flares tab renders the body as a reply of its own, so every block a reply can hold is drawn there: Markdown tables, mermaid diagrams and images always, plus the blocks and directives of installed rendering plugins, such as genui's `ui` views and inline-vis pages. A rule that only the message ending your turn may hold a block, or that tool input stays plain text, does not cover a flare's body.
 - Pick the block the evidence calls for. The views below are genui's `ui` ones; without genui, use Markdown tables and mermaid.
   - key numbers: a Metric row; a series: a Chart
   - A versus B, before and after, or items with several attributes: a Table
@@ -32,7 +34,7 @@ The user glances at a flare, so show the evidence instead of describing it.
   - a file you saved (JSON, CSV, a log, a test report): `Load("$BB_THREAD_STORAGE/<path>")` into its view instead of retyping it
   - screenshots: Image or Gallery of their paths
   - a blocker: what fails and what the user can do; Steps when there are several
-- Prose alone is right only when there is nothing to see, such as a one-line status. Never write paragraph-long bullets with bold labels.
+- A body that is all prose is right only when there is nothing to see. Never write paragraphs or paragraph-long bullets with bold labels.
 - When a body is all text but holds numbers, a list or a saved file, "Flare sent" comes back with a hint, once a turn, naming the views that fit. Follow it in your next flare.
 - Name a thread-storage file as `$BB_THREAD_STORAGE/<path>` so a view can load it.
 - Kinds are `finding` (the default), `progress`, `decision`, `blocker` and `summary`.
@@ -53,4 +55,4 @@ The user glances at a flare, so show the evidence instead of describing it.
 ## Notes Flare sends to you
 
 - `[Flare from a child thread] ...` is a flare a thread you started sent while you were working. It needs no reply; use it if it changes your plan.
-- `[Flare reminder] ...` means the user turned on reminders and your turn has been quiet for a while. Send a flare if you have something new; otherwise ignore it and do not reply.
+- `[Flare reminder] ...` means the user turned on reminders and your turn has been quiet for a while. Send a flare if you finished a step or have something new, even a title alone; otherwise ignore it and do not reply.
