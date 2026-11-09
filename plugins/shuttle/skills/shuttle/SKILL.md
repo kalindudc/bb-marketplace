@@ -26,6 +26,18 @@ A PR's key is `<server>:<repo>#<number>`, with `!` instead of `#` on servers tha
 
 After you open a pull request, link it with `shuttle_link` so its feedback comes back here.
 
+## Final review cleanup
+
+After a review is posted, Shuttle gives a review thread it started one final cleanup turn before
+archiving it and its child threads. Follow that turn's built-in instructions and any additional
+instructions the user set in `reviewCleanupPrompt` (Extra instructions for review cleanup in
+Shuttle's settings). Remove only review-specific temporary resources and finalize the review's
+tasks and metadata with the available tools; preserve source changes and review evidence.
+
+Confirm completion using the exact last-line acknowledgement the cleanup prompt provides, ONLY
+when cleanup is complete. If cleanup is blocked or incomplete, explain what remains and omit the
+acknowledgement so the thread stays available. Do not post another review or archive yourself.
+
 ## Boards
 
 Boards save an explicit set of PRs across repositories and servers. PR statuses stay live, and

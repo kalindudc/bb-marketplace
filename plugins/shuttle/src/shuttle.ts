@@ -27,7 +27,7 @@ import { THREAD_SCAN, type BbPort, type ProjectInfo } from "./ports";
 import { fetchPr, linkPr, lookup, rememberThread, requirePr, setWatch, shortKey, unlinkPr } from "./prs";
 import { parseKey } from "./keys";
 import { matchProject } from "./projects";
-import { archiveDoneReviewThreads, unarchiveForDraft } from "./review-threads";
+import { archiveDoneReviewThreads, completeReviewCleanup, unarchiveForDraft } from "./review-threads";
 import { endQuietReviews, endReview, failReviewsOfThread, resumeReviews, type ThreadFailure } from "./review-runs";
 import { startReview } from "./reviews";
 import { descriptionMatches, searchIndex, searchPrs } from "./search";
@@ -1145,9 +1145,10 @@ export class Shuttle implements Ctx {
   /**
    * A turn ended. Its review keeps running, since the thread may wait on child threads such as critics; a draft, the
    * thread's shuttle_review_done, a failure or hours of quiet end it. A review thread whose review was already done,
-   * such as one still writing when its draft was posted, is archived now.
+   * such as one still writing when its draft was posted, gets its cleanup turn before archiving.
    */
-  onThreadIdle(threadId: string, parentThreadId: string | null = null): Promise<number> {
+  onThreadIdle(threadId: string, parentThreadId: string | null = null, lastText: string | null = null): Promise<number> {
+    completeReviewCleanup(this, threadId, lastText);
     const known = this.store.setThreadStatus(threadId, "idle", false);
     this.touchReviews(threadId, parentThreadId);
     if (known) this.port.publish();

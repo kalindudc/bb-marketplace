@@ -37,6 +37,7 @@ export interface ThreadInfo {
   /** The branch of its environment, when it has one. */
   branch: string | null;
   updatedAt: number | null;
+  queuedMessageCount?: number;
   /** The agent it runs on, such as pi; a send cannot change it. */
   providerId?: string | null;
   /** Its workspace was removed after an archive and its provider can build it again. */
@@ -69,6 +70,7 @@ export interface MachineProviderInfo {
 
 /** A message's own model and thinking level, for this turn and the ones after it. */
 export interface SendOptions {
+  mode?: "queue-if-active";
   model?: string;
   reasoningLevel?: string;
 }
@@ -133,6 +135,7 @@ export interface BbPort {
   /** The id of the sidebar section with this name, created when there is none. */
   ensureSection(name: string): Promise<string>;
   getThread(threadId: string): Promise<ThreadInfo | null>;
+  threadOutput(threadId: string): Promise<string | null>;
   /** Unarchived threads; bb's order is not by recency, so callers sort. */
   listThreads(limit: number): Promise<ThreadInfo[]>;
   /** These threads, archived or not, at most 200 ids; unknown and deleted ids are left out. */

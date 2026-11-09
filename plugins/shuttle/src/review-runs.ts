@@ -173,7 +173,7 @@ function mayResume(ctx: Ctx, run: ReviewRow): boolean {
 export function resumeReviews(ctx: Ctx, threadId: string): number {
   let resumed = 0;
   for (const run of ctx.store.latestRunsOfThread(threadId)) {
-    if (!mayResume(ctx, run)) continue;
+    if (run.cleanup_requested_at !== null || !mayResume(ctx, run)) continue;
     if (ctx.store.hasDraftSince(run.pr_id, run.created_at)) continue;
     ctx.store.restartReview(run.id);
     ctx.store.addEvent("review", `\u201c${title(ctx, threadId)}\u201d is at work again, so its review of ${prName(ctx, run)} is running again.`, run.pr_id, threadId);

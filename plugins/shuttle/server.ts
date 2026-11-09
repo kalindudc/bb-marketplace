@@ -65,7 +65,7 @@ export function createShuttlePlugin(deps: PluginDeps = {}) {
         bb.log.warn(`${name}: ${errText(error)}`);
       }
     };
-    bb.events.on("thread.idle", ({ thread }) => safe("thread.idle", () => app.onThreadIdle(thread.id, thread.parentThreadId)));
+    bb.events.on("thread.idle", ({ thread, lastAssistantText }) => safe("thread.idle", () => app.onThreadIdle(thread.id, thread.parentThreadId, lastAssistantText)));
     bb.events.on("thread.active", ({ thread }) => safe("thread.active", () => app.onThreadActive(thread.id, thread.parentThreadId)));
     bb.events.on("interaction.pending", ({ thread }) => safe("interaction.pending", () => app.onInteractionPending(thread.id)));
     bb.events.on("thread.failed", ({ thread, error }) => safe("thread.failed", () => app.onThreadFailed(thread.id, { error, environmentId: thread.environmentId })));

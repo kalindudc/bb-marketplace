@@ -16,12 +16,14 @@ async function boot() {
     if (operation === "authored") return [pr(1, { author: "me" })];
     if (operation === "view") return pr(Number(env.SHUTTLE_NUMBER), { author: Number(env.SHUTTLE_NUMBER) === 1 ? "me" : "dana", review: Number(env.SHUTTLE_NUMBER) === 1 ? "approved" : "required" });
     if (operation === "activity") return { items: [] };
+    if (operation === "review") return "";
     return [];
   });
   const host = createFakePluginHost({ pluginId: "shuttle", dataDir: mkdtempSync(join(tmpdir(), "shuttle-")) });
-  await createShuttlePlugin({ port: () => port, runner, tickMs: 3_600_000 })(host.bb);
+  const plugin = createShuttlePlugin({ port: () => port, runner, tickMs: 3_600_000 });
+  await plugin(host.bb);
   const { behavior, inspection, lifecycle } = host.harness;
-  return { port, behavior, inspection, lifecycle, harness: host.harness };
+  return { port, behavior, inspection, lifecycle, harness: host.harness, plugin };
 }
 
 const text = (result: unknown) => (typeof result === "string" ? result : (result as { content: Array<{ type: string; text?: string }> }).content.map((part) => (part.type === "text" ? part.text ?? "" : "")).join("\n"));
@@ -124,6 +126,35 @@ describe("the plugin", () => {
     const detail = (await behavior.callRpc("detail", { key: "forge:acme/app#7" })) as { pr: { key: string } };
     expect(detail.pr.key).toBe("forge:acme/app#2".replace("#2", "#7"));
     await lifecycle.dispose();
+  });
+
+  it("keeps cleanup pending across a reload and completes it through bb's idle event", async () => {
+    const { behavior, lifecycle, harness, port, plugin } = await boot();
+    const config = testConfig();
+    config.servers[0]!.commands.review = "rv";
+    await behavior.callRpc("importToml", { toml: configToToml(config), apply: true });
+    await behavior.setSettings({ reviewCleanupPrompt: "Use cortex_update to close this review task." });
+    await expect(behavior.setSettings({ reviewCleanupPrompt: "x".repeat(16_001) })).rejects.toThrow();
+    const key = "forge:acme/app#2";
+    await behavior.callRpc("lookup", { query: key });
+    const { threadId } = await behavior.callRpc("review", { key }) as { threadId: string };
+    await harness.callAgentTool("shuttle_review_draft", { pr: key, summary: "Looks right", verdict: "comment", findings: [] }, { threadId, projectId: "proj_app" });
+    await behavior.emitThreadEvent("thread.idle", { thread: makeThreadResponse({ id: threadId }), lastAssistantText: "Review ready." });
+    const { draft } = await behavior.callRpc("detail", { key }) as { draft: { id: number } };
+    await behavior.callRpc("queueReview", { key, verdict: "comment", body: "Looks right", findings: [], draftId: draft.id });
+    await expect.poll(() => port.sent).toHaveLength(1);
+    expect(port.sent[0]!.text).toContain("Use cortex_update to close this review task.");
+    expect(port.lifecycle).toEqual([]);
+    const marker = port.sent[0]!.text.match(/\[shuttle:review-cleanup:\d+\]/u)![0];
+    const reloaded = await lifecycle.reload(plugin);
+    const next = reloaded.harness.behavior;
+    await next.emitThreadEvent("thread.idle", { thread: makeThreadResponse({ id: threadId }), lastAssistantText: "Still blocked." });
+    expect(port.lifecycle).toEqual([]);
+    const event = await next.emitThreadEvent("thread.idle", { thread: makeThreadResponse({ id: threadId }), lastAssistantText: `Cleaned up.\n${marker}` });
+    expect(event.errors).toEqual([]);
+    await expect.poll(() => port.lifecycle).toEqual([`archive ${threadId}`]);
+    expect(port.sent).toHaveLength(1);
+    await reloaded.harness.lifecycle.dispose();
   });
 
   it("hands bb's thread.failed to Shuttle with whether the thread got a workspace, so only a setup failure starts the review again", async () => {

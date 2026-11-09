@@ -5,6 +5,18 @@ import { createBbPort, spawnErrorOf } from "../src/bb-port";
 import { SpawnUnavailableError, UsageUnavailableError } from "../src/ports";
 
 describe("bb port", () => {
+  it("queues cleanup separately if a turn races its send, and preserves missing output", async () => {
+    const host = createFakePluginHost({
+      pluginId: "shuttle",
+      sdk: { threads: { send: async () => ({ ok: true, delivery: "sent" }), output: async () => ({ output: null }) } } as never,
+    });
+    const port = createBbPort(host.bb);
+    await port.send("thr_review", "Cleanup", { mode: "queue-if-active" });
+    expect(host.harness.inspection.sdk.callsTo("threads.send")[0]![0]).toMatchObject({ mode: "queue-if-active" });
+    expect(await port.threadOutput("thr_review")).toBeNull();
+    await host.harness.lifecycle.dispose();
+  });
+
   it("asks Burn what a thread used, and says Burn is not there when bb has no such plugin", async () => {
     const calls: unknown[] = [];
     let answer: () => unknown = () => ({ report: null, family: { children: [{ threadId: "thr_critic1", cost: 0.2 }] } });

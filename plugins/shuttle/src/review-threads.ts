@@ -28,6 +28,36 @@ export function doneBecause(ctx: Ctx, pr: PrRow, run: ReviewRow): string | null 
   return null;
 }
 
+function reviewWasPosted(ctx: Ctx, pr: PrRow, run: ReviewRow): boolean {
+  const draft = ctx.store.draftsOfThread(pr.id, run.thread_id, run.created_at)[0];
+  if (draft) return draft.state === "posted";
+  const since = run.finished_at ?? run.created_at;
+  const local = ctx.store.latestMyReview(pr.id);
+  const server = pr.my_review ? (JSON.parse(pr.my_review) as MyReview) : null;
+  return (local !== null && local.at >= since) || (server?.at != null && server.at >= since);
+}
+
+const cleanupMarker = (run: ReviewRow) => `[shuttle:review-cleanup:${run.id}]`;
+const cleanupConfirmed = (run: ReviewRow, text: string | null) => text !== null && text.trimEnd().split("\n").at(-1)?.trim() === cleanupMarker(run);
+
+function cleanupPrompt(ctx: Ctx, pr: PrRow, run: ReviewRow): string {
+  const extra = ctx.settings().reviewCleanupPrompt;
+  return [
+    `[shuttle] The review of ${pr.key} (${pr.url}) has been posted. This is your final cleanup turn before Shuttle archives this thread and its child threads.`,
+    "Clean up temporary files and resources you created for this review, and finalize any review-specific tasks or metadata using the tools available to you. Preserve source changes, review evidence, and anything the user still needs. Do not post another review, start new review work, or archive the thread yourself.",
+    ...(extra ? [`## Additional cleanup instructions\n${extra}`] : []),
+    `When all cleanup is complete, briefly summarize what you cleaned up and put ${cleanupMarker(run)} alone on the last line of your final reply. If cleanup is blocked or incomplete, explain what remains and do not include that line; Shuttle will leave the thread unarchived.`,
+  ].join("\n\n");
+}
+
+/** Only the cleanup turn's final acknowledgement completes it, not an unrelated idle event. */
+export function completeReviewCleanup(ctx: Ctx, threadId: string, lastText: string | null): void {
+  if (lastText === null) return;
+  for (const run of ctx.store.unarchivedReviewRuns({ threadId })) {
+    if (run.cleanup_requested_at !== null && run.cleanup_finished_at === null && cleanupConfirmed(run, lastText)) ctx.store.finishReviewCleanup(run.id);
+  }
+}
+
 const OPEN = new Set(["open", "draft"]);
 /** How deep under a review thread Shuttle looks for threads at work before archiving: critics, and their helpers. */
 const DEPTH = 2;
@@ -35,7 +65,7 @@ const DEPTH = 2;
 /** A thread at work, or waiting on the user's answer, under `threadId`, down to `depth` levels. */
 async function busyBelow(ctx: Ctx, threadId: string, depth: number): Promise<boolean> {
   for (const child of await ctx.port.childThreads(threadId)) {
-    if (child.waiting || BUSY.has(child.status)) return true;
+    if (child.waiting || BUSY.has(child.status) || (child.queuedMessageCount ?? 0) > 0) return true;
     if (depth > 1 && (await busyBelow(ctx, child.id, depth - 1))) return true;
   }
   return false;
@@ -54,7 +84,7 @@ async function inUseNow(ctx: Ctx, threadId: string): Promise<string | null> {
     return "it is archived already";
   }
   ctx.store.setThreadStatus(threadId, thread.status, thread.waiting);
-  if (thread.waiting || BUSY.has(thread.status)) return "it is at work";
+  if (thread.waiting || BUSY.has(thread.status) || (thread.queuedMessageCount ?? 0) > 0) return "it is at work";
   // bb archives every thread under it along with it.
   return (await busyBelow(ctx, threadId, DEPTH)) ? "a thread under it is at work" : null;
 }
@@ -84,12 +114,41 @@ export async function archiveDoneReviewThreads(ctx: Ctx, filter: { prId?: number
       // Both must say it is free: what Shuttle last heard, and bb now. Unsure is a no, so a thread bb cannot answer for
       // stays until the next pass.
       if ((await inUseNow(ctx, run.thread_id)) !== null || heardBusy) continue;
+      const current = ctx.store.unarchivedReviewRuns({ threadId: run.thread_id }).find((candidate) => candidate.id === run.id);
+      const fresh = ctx.store.prById(pr.id);
+      if (!current || !fresh || ctx.store.runningReviewsOfThread(run.thread_id).length > 0 || doneBecause(ctx, fresh, current) === null) continue;
+      if (current.cleanup_finished_at === null && (current.cleanup_requested_at !== null || reviewWasPosted(ctx, fresh, current))) {
+        if (current.cleanup_requested_at === null) {
+          // A lost send response must not send a second cleanup turn after a restart.
+          if (!ctx.store.requestReviewCleanup(current.id)) continue;
+          const prompt = cleanupPrompt(ctx, pr, current);
+          try {
+            await ctx.port.send(run.thread_id, prompt, { mode: "queue-if-active" });
+            ctx.store.addEvent("review_cleanup", `Sent the final cleanup turn to \u201c${thread.title}\u201d: its review was posted.`, pr.id, run.thread_id);
+          } catch (error) {
+            ctx.store.addEvent("review_cleanup_failed", `Could not send the cleanup turn to \u201c${thread.title}\u201d: ${errText(error)}. The thread stays unarchived; check it before sending cleanup again.`, pr.id, run.thread_id);
+            ctx.port.log("warn", `send the review cleanup turn of ${pr.key}: ${errText(error)}`);
+          }
+          ctx.port.publish();
+          continue;
+        }
+        // Idle events are not replayed after a reload; the final output can still prove completion.
+        if (!cleanupConfirmed(current, await ctx.port.threadOutput(run.thread_id))) continue;
+        ctx.store.finishReviewCleanup(current.id);
+        if ((await inUseNow(ctx, run.thread_id)) !== null || ctx.store.runningReviewsOfThread(run.thread_id).length > 0) continue;
+      }
+      const ready = ctx.store.unarchivedReviewRuns({ threadId: run.thread_id }).find((candidate) => candidate.id === run.id);
+      const latestPr = ctx.store.prById(pr.id);
+      if (!ready || !latestPr || !ctx.settings().archiveReviewThreads || ctx.store.runningReviewsOfThread(run.thread_id).length > 0) continue;
+      if (ctx.store.linkRole(pr.id, run.thread_id) !== "review" || ctx.store.prsOfThread(run.thread_id).some((other) => other.id !== pr.id && OPEN.has(other.state))) continue;
+      const finalWhy = doneBecause(ctx, latestPr, ready);
+      if (finalWhy === null) continue;
       const ids = await ctx.port.archive(run.thread_id);
       ctx.store.setReviewArchived(run.id, ctx.now());
       ctx.store.setThreadArchived(run.thread_id, true);
       const children = ids.filter((id) => id !== run.thread_id).length;
       const along = children ? ` and its ${children} child thread${children === 1 ? "" : "s"}` : "";
-      ctx.store.addEvent("archived", `Archived the review thread \u201c${thread.title}\u201d${along}: ${why}.`, pr.id, run.thread_id);
+      ctx.store.addEvent("archived", `Archived the review thread \u201c${thread.title}\u201d${along}: ${finalWhy}.`, pr.id, run.thread_id);
       archived += 1;
     } catch (error) {
       // The next sync tries again.

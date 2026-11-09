@@ -54,6 +54,8 @@ const EVENT_LOOKS: Record<string, Look> = {
   dismissed: { icon: "ArchiveX", tone: "neutral" },
   restored: { icon: "ArchiveRestore", tone: "neutral" },
   inbox_rule: { icon: "Filter", tone: "neutral" },
+  review_cleanup: { icon: "Bot", tone: "info" },
+  review_cleanup_failed: { icon: "AlertTriangle", tone: "warn" },
   archived: { icon: "Archive", tone: "neutral" },
   revived: { icon: "ArchiveRestore", tone: "neutral" },
   revive_failed: { icon: "AlertTriangle", tone: "warn" },

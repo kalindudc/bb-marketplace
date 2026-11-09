@@ -3,6 +3,7 @@ import Database from "better-sqlite3";
 import { describe, expect, it } from "vitest";
 import { MIGRATIONS } from "../src/db/schema";
 import { SpawnUnavailableError } from "../src/ports";
+import { toSettings } from "../src/settings";
 import { harness, pr, testConfig, TEST_SERVER } from "./helpers";
 
 const KEY = "forge:acme/app#3";
@@ -31,11 +32,29 @@ async function reviewed(presets = [PRESET]) {
 const archivedIds = (h: Awaited<ReturnType<typeof reviewed>>["h"]) => [...h.port.threads.values()].filter((t) => t.archived).map((t) => t.id).sort();
 const lastEvent = (h: Awaited<ReturnType<typeof reviewed>>["h"], kind: string) => h.shuttle.activity().find((e) => e.kind === kind)?.text;
 
+async function finishCleanup(h: Awaited<ReturnType<typeof reviewed>>["h"], threadId: string) {
+  const prompt = [...h.port.sent].reverse().find((sent) => sent.threadId === threadId)!.text;
+  const marker = prompt.match(/\[shuttle:review-cleanup:\d+\]/u)![0];
+  h.port.outputs.set(threadId, marker);
+  h.shuttle.onThreadActive(threadId);
+  await h.shuttle.onThreadIdle(threadId, null, marker);
+}
+
 describe("archiving Shuttle's review threads", () => {
-  it("archives the thread with its child threads once its review is posted, and not while its draft waits", async () => {
+  it("gives a posted review one cleanup turn before archiving it and its children", async () => {
     const { h, threadId, draftId } = await reviewed();
     expect(h.port.lifecycle).toEqual([]);
     await h.shuttle.submitReview(KEY, { verdict: "changes", body: "One race", findings: [{ path: "a.go", line: 3, body: "Race" }], draftId });
+    expect(h.port.lifecycle).toEqual([]);
+    expect(h.port.sent).toHaveLength(1);
+    expect(h.port.sent[0]).toMatchObject({ threadId, options: { mode: "queue-if-active" } });
+    expect(h.port.sent[0]!.text).toContain("temporary files");
+    // Another idle event or sync is not proof the cleanup turn finished.
+    await h.shuttle.onThreadIdle(threadId);
+    await h.shuttle.sync();
+    expect(h.port.lifecycle).toEqual([]);
+    expect(h.port.sent).toHaveLength(1);
+    await finishCleanup(h, threadId);
     expect(h.port.lifecycle).toEqual([`archive ${threadId}`]);
     expect(archivedIds(h)).toEqual(["thr_critic1", "thr_critic2", threadId].sort());
     expect(lastEvent(h, "archived")).toBe("Archived the review thread \u201cReview acme/app#3\u201d and its 2 child threads: you posted its review.");
@@ -45,13 +64,158 @@ describe("archiving Shuttle's review threads", () => {
     expect(h.port.lifecycle).toEqual([`archive ${threadId}`]);
   });
 
-  it("waits for a thread that is still writing when its draft is posted, and archives it once it is idle", async () => {
+  it("waits for a thread that is still writing before sending its separate cleanup turn", async () => {
     const { h, threadId, draftId } = await reviewed();
     h.shuttle.onThreadActive(threadId);
     await h.shuttle.submitReview(KEY, { verdict: "comment", body: "ok", findings: [], draftId });
     expect(h.port.lifecycle).toEqual([]);
+    expect(h.port.sent).toEqual([]);
     await h.shuttle.onThreadIdle(threadId);
+    expect(h.port.lifecycle).toEqual([]);
+    expect(h.port.sent).toHaveLength(1);
+    await finishCleanup(h, threadId);
     expect(h.port.lifecycle).toEqual([`archive ${threadId}`]);
+  });
+
+  it("appends the configurable cleanup instructions without replacing the built-in prompt", async () => {
+    const { h, threadId, draftId } = await reviewed();
+    const extra = "Use cortex_update to mark the review task done with a link to the posted review.";
+    Object.assign(h.settings, toSettings({ reviewCleanupPrompt: `  ${extra}  ` }));
+    await h.shuttle.submitReview(KEY, { verdict: "comment", body: "ok", findings: [], draftId });
+    expect(h.port.sent[0]!.text).toContain(extra);
+    expect(h.port.sent[0]!.text).toContain("temporary files");
+    expect(toSettings({}).reviewCleanupPrompt).toBe("");
+    await finishCleanup(h, threadId);
+    expect(archivedIds(h)).toContain(threadId);
+  });
+
+  it("gives queued posts the same cleanup turn and never duplicates it during concurrent syncs", async () => {
+    const { h, threadId, draftId } = await reviewed();
+    h.shuttle.queueReview(KEY, { verdict: "comment", body: "ok", findings: [], draftId });
+    await h.shuttle.postsSettled();
+    await Promise.all([h.shuttle.archiveReviewThreads(), h.shuttle.archiveReviewThreads()]);
+    expect(h.shuttle.posts()[0]!.state).toBe("posted");
+    expect(h.port.sent).toHaveLength(1);
+    expect(h.port.lifecycle).toEqual([]);
+    await finishCleanup(h, threadId);
+    expect(archivedIds(h)).toContain(threadId);
+  });
+
+  it("keeps a failed cleanup unarchived, even if the PR then merges", async () => {
+    const { h, threadId, draftId } = await reviewed();
+    await h.shuttle.submitReview(KEY, { verdict: "comment", body: "ok", findings: [], draftId });
+    await h.shuttle.onThreadFailed(threadId, { error: "cleanup failed" });
+    h.port.threads.set(threadId, { ...h.port.threads.get(threadId)!, status: "error" });
+    h.views[3] = pr(3, { head: "h1", state: "merged" });
+    await h.shuttle.lookup(KEY);
+    await h.shuttle.closedSettled();
+    await h.shuttle.sync();
+    expect(h.port.lifecycle).toEqual([]);
+    expect(h.port.sent).toHaveLength(1);
+    // A manually resumed cleanup can still finish it.
+    await finishCleanup(h, threadId);
+    expect(archivedIds(h)).toContain(threadId);
+  });
+
+  it("keeps a cleanup whose send failed available without blindly sending it again", async () => {
+    const { h, threadId, draftId } = await reviewed();
+    h.port.failSendTo.add(threadId);
+    await h.shuttle.submitReview(KEY, { verdict: "comment", body: "ok", findings: [], draftId });
+    await h.shuttle.sync();
+    expect(h.shuttle.detail(KEY).draft).toBeNull();
+    expect(h.port.lifecycle).toEqual([]);
+    expect(h.port.logs.join("\n")).toContain("cleanup");
+    expect(h.port.logs.join("\n")).toContain("thread is gone");
+  });
+
+  it("recovers a cleanup completion missed during a restart from the thread's output", async () => {
+    const { h, threadId, draftId } = await reviewed();
+    await h.shuttle.submitReview(KEY, { verdict: "comment", body: "ok", findings: [], draftId });
+    const marker = h.port.sent[0]!.text.match(/\[shuttle:review-cleanup:\d+\]/u)![0];
+    h.port.outputs.set(threadId, `Cleaned up.\n${marker}`);
+    await h.shuttle.sync();
+    expect(h.port.sent).toHaveLength(1);
+    expect(archivedIds(h)).toContain(threadId);
+  });
+
+  it("waits for cleanup's child threads and queued messages before archiving", async () => {
+    const { h, threadId, draftId } = await reviewed();
+    await h.shuttle.submitReview(KEY, { verdict: "comment", body: "ok", findings: [], draftId });
+    h.port.threads.set("thr_critic1", { ...h.port.threads.get("thr_critic1")!, status: "active" });
+    await finishCleanup(h, threadId);
+    expect(h.port.lifecycle).toEqual([]);
+    h.port.threads.set("thr_critic1", { ...h.port.threads.get("thr_critic1")!, status: "idle" });
+    h.port.threads.set(threadId, { ...h.port.threads.get(threadId)!, queuedMessageCount: 1 });
+    await h.shuttle.archiveReviewThreads();
+    expect(h.port.lifecycle).toEqual([]);
+    h.port.threads.set(threadId, { ...h.port.threads.get(threadId)!, queuedMessageCount: 0 });
+    await h.shuttle.archiveReviewThreads();
+    expect(archivedIds(h)).toContain(threadId);
+  });
+
+  it("does not send cleanup turns when automatic archiving is disabled", async () => {
+    const { h, draftId } = await reviewed();
+    h.settings.archiveReviewThreads = false;
+    await h.shuttle.submitReview(KEY, { verdict: "comment", body: "ok", findings: [], draftId });
+    await h.shuttle.sync();
+    expect(h.port.sent).toEqual([]);
+    expect(h.port.lifecycle).toEqual([]);
+  });
+
+  it("does not restart a failed review when its cleanup turn becomes active", async () => {
+    const h = harness(testConfig({ servers: [WRITE_SERVER], autoReview: NO_AUTO }));
+    h.answers.review = "";
+    h.lists.review_requested = [pr(3)];
+    await h.shuttle.sync();
+    const { threadId } = await h.shuttle.review({ key: KEY });
+    await h.shuttle.onThreadFailed(threadId, { error: "review interrupted" });
+    h.port.threads.set(threadId, { ...h.port.threads.get(threadId)!, status: "error" });
+    await h.shuttle.submitReview(KEY, { verdict: "comment", body: "Reviewed manually", findings: [] });
+    expect(h.port.sent).toHaveLength(1);
+    h.shuttle.onThreadActive(threadId);
+    expect(h.shuttle.view(KEY).lastReview!.state).toBe("failed");
+    await finishCleanup(h, threadId);
+    expect(archivedIds(h)).toContain(threadId);
+  });
+
+  it("rechecks new drafts after awaiting cleanup output", async () => {
+    const { h, threadId, draftId } = await reviewed();
+    await h.shuttle.submitReview(KEY, { verdict: "comment", body: "ok", findings: [], draftId });
+    const marker = h.port.sent[0]!.text.match(/\[shuttle:review-cleanup:\d+\]/u)![0];
+    h.port.threadOutput = async () => {
+      await h.shuttle.saveDraft(threadId, KEY, { summary: "Revised review", verdict: "comment", findings: [] });
+      return marker;
+    };
+    await h.shuttle.archiveReviewThreads();
+    expect(h.shuttle.detail(KEY).draft!.summary).toBe("Revised review");
+    expect(h.port.lifecycle).toEqual([]);
+  });
+
+  it("rechecks other open PR links after awaiting cleanup output", async () => {
+    const { h, threadId, draftId } = await reviewed();
+    await h.shuttle.submitReview(KEY, { verdict: "comment", body: "ok", findings: [], draftId });
+    const marker = h.port.sent[0]!.text.match(/\[shuttle:review-cleanup:\d+\]/u)![0];
+    h.views[4] = pr(4);
+    await h.shuttle.lookup("forge:acme/app#4");
+    h.port.threadOutput = async () => {
+      await h.shuttle.link("forge:acme/app#4", threadId, "owner");
+      return marker;
+    };
+    await h.shuttle.archiveReviewThreads();
+    expect(h.port.lifecycle).toEqual([]);
+  });
+
+  it.each(["owner", "archiving disabled"])("rechecks %s after awaiting cleanup output", async (change) => {
+    const { h, threadId, draftId } = await reviewed();
+    await h.shuttle.submitReview(KEY, { verdict: "comment", body: "ok", findings: [], draftId });
+    const marker = h.port.sent[0]!.text.match(/\[shuttle:review-cleanup:\d+\]/u)![0];
+    h.port.threadOutput = async () => {
+      if (change === "owner") await h.shuttle.link(KEY, threadId, "owner");
+      else h.settings.archiveReviewThreads = false;
+      return marker;
+    };
+    await h.shuttle.archiveReviewThreads();
+    expect(h.port.lifecycle).toEqual([]);
   });
 
   it("archives on a discard, and Undo brings back the thread but not its children", async () => {
@@ -80,6 +244,8 @@ describe("archiving Shuttle's review threads", () => {
     h.clock.now += 60_000;
     h.views[3] = pr(3);
     await h.shuttle.submitReview(KEY, { verdict: "approve", body: "LGTM", findings: [] });
+    expect(h.port.lifecycle).toEqual([]);
+    await finishCleanup(h, one);
     expect(h.port.lifecycle).toEqual([`archive ${one}`]);
     expect(lastEvent(h, "archived")).toBe("Archived the review thread \u201cReview acme/app#3\u201d: you reviewed the PR.");
     h.lists.review_requested = [pr(3)];
@@ -226,6 +392,7 @@ describe("reviving a review thread for the PR's next review", () => {
   it("brings the archived thread back without its children, with the preset's model, instead of starting one", async () => {
     const { h, threadId, draftId } = await reviewed();
     await h.shuttle.submitReview(KEY, { verdict: "comment", body: "ok", findings: [], draftId });
+    await finishCleanup(h, threadId);
     h.lists.review_requested = [pr(3, { head: "h2" })];
     await h.shuttle.sync();
     h.port.sent = [];
@@ -243,6 +410,8 @@ describe("reviving a review thread for the PR's next review", () => {
     await h.shuttle.endReview(threadId, KEY, { note: "Nothing new since the last review.", failed: false });
     h.views[3] = pr(3, { head: "h2" });
     await h.shuttle.submitReview(KEY, { verdict: "approve", body: "LGTM", findings: [] });
+    expect(h.port.lifecycle.at(-1)).toBe(`unarchive ${threadId}`);
+    await finishCleanup(h, threadId);
     expect(h.port.lifecycle.at(-1)).toBe(`archive ${threadId}`);
   });
 

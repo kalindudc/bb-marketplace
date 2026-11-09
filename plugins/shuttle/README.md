@@ -295,6 +295,20 @@ PR still open, a review still running, a thread you picked or unlinked yourself,
 brought back after Shuttle archived it all stay. The PR's next review brings the thread back without
 its children. **Archive finished review threads** in Shuttle's settings turns this off.
 
+After a review is posted, Shuttle first sends its review thread one final cleanup turn. The built-in
+prompt asks it to remove review-specific temporary files and resources and finalize tasks and
+metadata, while preserving source changes and review evidence. **Extra instructions for review
+cleanup** (`reviewCleanupPrompt`) in Shuttle's settings appends your own instructions, such as using
+Cortex to close the review task and link the posted review. Empty keeps the built-in prompt.
+
+The cleanup turn acknowledges completion on the last line of its final reply. Only then, once the
+thread and its children are idle with no queued messages, does Shuttle archive them. Requests and
+completion are saved, so a restart does not send a second cleanup turn, and a later sync can recover
+a missed completion from the thread's output. A blocked, failed or unconfirmed cleanup stays
+unarchived, even if the PR merges or closes. If sending cleanup fails, Shuttle records the error in
+Activity; check whether the message arrived before sending cleanup manually. Discarded drafts and
+reviews that were never posted keep their existing archive behavior.
+
 ### Token usage
 
 **Insights › Usage** shows what your AI reviews used, in tokens and dollars, for a day, 7 days, 30

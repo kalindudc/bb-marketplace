@@ -250,6 +250,10 @@ export interface ReviewRow {
   own_thread: number;
   /** When Shuttle archived the thread after this run; null while it has not. */
   archived_at: number | null;
+  /** Recorded before sending so a restart never sends the cleanup turn twice. */
+  cleanup_requested_at: number | null;
+  /** The cleanup turn acknowledged completion; null while it has not. */
+  cleanup_finished_at: number | null;
   /** When Shuttle last saw its thread, or a child thread of it, at work; null on runs from before Shuttle kept it. */
   active_at: number | null;
   /** What ended it; null while it runs, and on runs that ended when a turn did, before Shuttle waited for child threads. */
@@ -1314,7 +1318,7 @@ export class Store {
     });
   }
 
-  addReview(row: Omit<ReviewRow, "id" | "finished_at" | "state" | "created_at" | "archived_at" | "active_at" | "ended_by" | "note" | "input" | "attempt"> & { input?: string | null; attempt?: number }): ReviewRow {
+  addReview(row: Omit<ReviewRow, "id" | "finished_at" | "state" | "created_at" | "archived_at" | "cleanup_requested_at" | "cleanup_finished_at" | "active_at" | "ended_by" | "note" | "input" | "attempt"> & { input?: string | null; attempt?: number }): ReviewRow {
     const result = this.sql("INSERT INTO reviews (pr_id, thread_id, preset, trigger, head, state, created_at, own_thread, active_at, input, attempt) VALUES (?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?)")
       .run(row.pr_id, row.thread_id, row.preset, row.trigger, row.head, this.now(), row.own_thread, this.now(), row.input ?? null, row.attempt ?? 1);
     return this.sql("SELECT * FROM reviews WHERE id = ?").get(result.lastInsertRowid) as ReviewRow;
@@ -1340,6 +1344,14 @@ export class Store {
 
   setReviewArchived(id: number, at: number | null): void {
     this.sql("UPDATE reviews SET archived_at = ? WHERE id = ?").run(at, id);
+  }
+
+  requestReviewCleanup(id: number): boolean {
+    return this.sql("UPDATE reviews SET cleanup_requested_at = ? WHERE id = ? AND cleanup_requested_at IS NULL").run(this.now(), id).changes > 0;
+  }
+
+  finishReviewCleanup(id: number): void {
+    this.sql("UPDATE reviews SET cleanup_finished_at = ? WHERE id = ? AND cleanup_requested_at IS NOT NULL AND cleanup_finished_at IS NULL").run(this.now(), id);
   }
 
   /** Drafts this thread handed back for the PR since a time, newest first. */

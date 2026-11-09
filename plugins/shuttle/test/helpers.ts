@@ -16,6 +16,7 @@ export function memoryDb(): Database.Database {
 export class FakePort implements BbPort {
   spawned: Array<SpawnArgs & { threadId: string }> = [];
   sent: Array<{ threadId: string; text: string; options?: SendOptions }> = [];
+  outputs = new Map<string, string>();
   /** Child threads by parent, as bb's sidebar nests them. */
   children = new Map<string, string[]>();
   /** What Shuttle asked bb to do to threads, in order. */
@@ -99,6 +100,9 @@ export class FakePort implements BbPort {
     if (this.failSections) throw new Error("sections are down");
     if (!this.sections.has(name)) this.sections.set(name, `sec_${this.sections.size + 1}`);
     return this.sections.get(name)!;
+  }
+  async threadOutput(threadId: string): Promise<string> {
+    return this.outputs.get(threadId) ?? "";
   }
   async getThread(threadId: string): Promise<ThreadInfo | null> {
     return this.threads.get(threadId) ?? null;

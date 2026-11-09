@@ -85,6 +85,7 @@ type ThreadLike = {
   hasPendingInteraction?: boolean;
   environmentBranchName?: string | null;
   updatedAt?: number | null;
+  queuedMessageCount?: number;
   providerId?: string | null;
   canRestoreEnvironment?: boolean;
   environmentId?: string | null;
@@ -102,6 +103,7 @@ function toThread(thread: ThreadLike): ThreadInfo {
     waiting: thread.hasPendingInteraction === true,
     branch: thread.environmentBranchName ?? null,
     updatedAt: thread.updatedAt ?? null,
+    queuedMessageCount: thread.queuedMessageCount ?? 0,
     providerId: thread.providerId ?? null,
     canRestoreEnvironment: thread.canRestoreEnvironment === true,
     machineRemoved: MACHINE_GONE.has(thread.environment?.hostLifecycle ?? ""),
@@ -164,7 +166,7 @@ export function createBbPort(bb: BbPluginApi, setSettings: BbPort["setSettings"]
     async send(threadId, text, options = {}) {
       await bb.sdk.threads.send({
         threadId,
-        mode: "auto",
+        mode: options.mode ?? "auto",
         input: [{ type: "text", text, mentions: [] }],
         ...(options.model ? { model: options.model } : {}),
         ...(options.reasoningLevel ? { reasoningLevel: options.reasoningLevel } : {}),
@@ -199,6 +201,9 @@ export function createBbPort(bb: BbPluginApi, setSettings: BbPort["setSettings"]
         if (isNotFound(error)) return null;
         throw error;
       }
+    },
+    async threadOutput(threadId) {
+      return (await bb.sdk.threads.output({ threadId })).output;
     },
     async listThreads(limit) {
       // Without `archived: false` bb mixes in archived threads. bb orders by project before date, so read every page:

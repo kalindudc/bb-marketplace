@@ -355,4 +355,6 @@ export const MIGRATIONS: string[] = [
     model TEXT,
     PRIMARY KEY (thread_id, n)
   )`,
+  `ALTER TABLE reviews ADD COLUMN cleanup_requested_at INTEGER`,
+  `ALTER TABLE reviews ADD COLUMN cleanup_finished_at INTEGER`,
 ];

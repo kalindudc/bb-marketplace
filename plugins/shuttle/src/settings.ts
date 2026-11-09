@@ -42,8 +42,16 @@ export const SETTINGS = {
     type: "boolean",
     label: "Archive finished review threads",
     description:
-      "Archive a review thread Shuttle started, with its child threads, once its review is done: its draft posted or discarded, you reviewed the PR, or the PR merged or closed, as soon as Shuttle sees it. A thread that it or a thread under it is at work in, or that is linked to another PR still open, stays. The next review of the PR brings the thread back, without its child threads. Threads you picked yourself are never archived.",
+      "Archive a review thread Shuttle started, with its child threads, once its review is done: its draft posted or discarded, you reviewed the PR, or the PR merged or closed. Posted reviews get a final cleanup turn before archiving. A thread that it or a thread under it is at work in, or that is linked to another PR still open, stays. The next review of the PR brings the thread back, without its child threads. Threads you picked yourself are never archived.",
     default: true,
+  },
+  reviewCleanupPrompt: {
+    type: "string",
+    label: "Extra instructions for review cleanup",
+    description: "Appended to the final cleanup turn after a review is posted, before Shuttle archives its thread. Use this for custom tools or task trackers, such as closing the review’s Cortex task. Empty keeps the built-in cleanup instructions.",
+    default: "",
+    experimental_multiline: true,
+    experimental_schema: z.string().max(16_000),
   },
   defaultProject: {
     type: "project",
@@ -87,6 +95,7 @@ export interface Settings {
   defaultProject: string;
   reviewSection: string;
   archiveReviewThreads: boolean;
+  reviewCleanupPrompt: string;
   autoAgent: boolean;
   inboxRequests: boolean;
   inboxRequestDays: number;
@@ -104,6 +113,7 @@ export const DEFAULT_SETTINGS: Settings = {
   defaultProject: "",
   reviewSection: "",
   archiveReviewThreads: true,
+  reviewCleanupPrompt: "",
   autoAgent: false,
   inboxRequests: true,
   inboxRequestDays: 3,
@@ -120,6 +130,7 @@ export function toSettings(values: Record<string, unknown>): Settings {
     defaultProject: typeof values.defaultProject === "string" ? values.defaultProject : "",
     reviewSection: typeof values.reviewSection === "string" ? values.reviewSection.trim() : "",
     archiveReviewThreads: values.archiveReviewThreads !== false,
+    reviewCleanupPrompt: typeof values.reviewCleanupPrompt === "string" ? values.reviewCleanupPrompt.trim() : "",
     autoAgent: values.autoAgent === true,
     inboxRequests: values.inboxRequests !== false,
     inboxRequestDays: num(values.inboxRequestDays, DEFAULT_SETTINGS.inboxRequestDays),

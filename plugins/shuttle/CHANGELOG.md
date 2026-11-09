@@ -2,6 +2,16 @@
 
 Notable changes to Shuttle, newest first. Releases are tagged `shuttle/vX.Y.Z` in this repository.
 
+## Unreleased
+
+### Added
+
+- Extra instructions for review cleanup (`reviewCleanupPrompt`): a multiline setting appended to the built-in cleanup prompt, for custom tools and task trackers such as Cortex.
+
+### Fixed
+
+- Posted reviews get one final cleanup turn before Shuttle archives their review threads and children. Cleanup requests and completion survive reloads, and blocked or unconfirmed cleanup leaves the thread available.
+
 ## 0.9.0 (2026-11-06)
 
 ### Added
