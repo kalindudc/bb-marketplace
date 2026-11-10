@@ -42,6 +42,12 @@ export function feedText(event: EventRow, keys: Map<number, string>, { you = fal
       return `Spec version ${data.version} was revised.`;
     case "spec.approved":
       return `Spec version ${data.version} was approved.`;
+    case "phase.done":
+      return `Phase ${data.title ?? data.ref} is done (${data.done} done, ${data.cancelled} cancelled); next: ${data.next}.`;
+    case "phase.started":
+      return `Phase ${data.ref} started with ${Array.isArray(data.keys) ? data.keys.join(", ") : "new tickets"}.`;
+    case "phase.told":
+      return `The planner was told phase ${data.ref} is done and to plan ${data.next}.`;
     case "ticket.created":
       return `${key} was created.`;
     case "ticket.edited":

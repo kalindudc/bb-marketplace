@@ -1,5 +1,6 @@
 // The engine: a control loop that works every running project, the human's commands on the engine's state, and
 // the handlers for bb's thread events. Behavior lives in workers.ts, checks.ts and triage.ts; this wires it together.
+import { followPhases } from "./phase-engine";
 import { holdingSends } from "./carry-hold";
 import { confirmMerge, maintainFinalReviews, type SeenHead } from "./auto-merge";
 import { releaseDraft } from "./drafts";
@@ -157,6 +158,7 @@ export class Engine {
     await this.releaseAndWake(projectId, specOf(this.ctx.store, project), false);
     await pollPullRequests(this.ctx, project);
     followRollout(this.ctx, this.ctx.store.project(projectId)!);
+    await followPhases(this.ctx, this.ctx.store.project(projectId)!);
     finishIfComplete(this.ctx, this.ctx.store.project(projectId)!);
   }
 
@@ -214,6 +216,7 @@ export class Engine {
     if (current.state === "running" || current.state === "paused") {
       await pollPullRequests(this.ctx, current);
       followRollout(this.ctx, store.project(projectId)!);
+      await followPhases(this.ctx, store.project(projectId)!);
       finishIfComplete(this.ctx, store.project(projectId)!);
     }
     await maybeSendTriage(this.ctx, store.project(projectId)!);

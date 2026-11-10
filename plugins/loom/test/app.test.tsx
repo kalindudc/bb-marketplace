@@ -20,6 +20,8 @@ import { nextStepOf } from "../src/next-step";
 import { reloadRemembered } from "../src/ui/remember";
 import { questionsOf } from "../src/ui/questions";
 import { HOUR, NOW, agent, attempt, card, changeRepo, health, homeProject, homeView, metrics, overview, plannerViewOf, projectView, repoOverview, specV1, specVersionView, ticketDetail, timeline, withRepos } from "./fixtures";
+import { phasesOf } from "../src/phases";
+import { phased } from "./phase-fixtures";
 import { specToml, type Doc } from "./helpers";
 import { at, story } from "./insights-rows";
 import { projectInsights } from "../src/insights";
@@ -508,6 +510,26 @@ async function mountPage(subPath: string, rpc: Partial<Handlers> = {}, options: 
 }
 const calls = (slot: Slot, method: string) => slot.inspection.rpcCalls.filter((call) => call.method === method);
 const pushed = (subPath: string) => ({ method: "toPluginPanel", path: "loom", options: { subPath } });
+
+describe("phase presentation", () => {
+  it("shows a compact strip, phase chips, and a grouped spec with outlines and reports", async () => {
+    const version = specVersionView({ compared: null, changes: { changed: [], removed: [] } }, (d) => { phased(d); d.phase[0].report = "The CSV download passed."; });
+    const phases = phasesOf(version.spec, [{ phase: "skeleton", state: "done" }]);
+    const view = projectView({ phases, board: [card({ phase: "skeleton" })] });
+    const { slot } = await mountPage("csv", { project: () => view, specVersion: () => version });
+    const strip = await slot.findByRole("list", { name: "Phases" });
+    expect(strip.textContent).toContain("✓ Skeleton");
+    expect(strip.textContent).toContain("planned");
+    expect(slot.container.querySelector('[data-card] [data-phase-chip]')?.textContent).toBe("phase skeleton");
+    fireEvent.click(slot.getByRole("tab", { name: "Spec" }));
+    await waitFor(() => expect(slot.container.querySelector("[data-ticket-list]")).not.toBeNull());
+    const list = slot.container.querySelector("[data-ticket-list]")!;
+    expect(list.textContent).toContain("Phase 1 · Skeleton");
+    expect(list.textContent).toContain("Phase 2 · Polish");
+    expect(list.textContent).toContain("Stream large files");
+    expect(list.textContent).toContain("The CSV download passed.");
+  });
+});
 
 describe("project list", () => {
   afterEach(() => localStorage.clear());

@@ -207,7 +207,7 @@ export function overviewAt(
 }
 
 const FINAL: readonly TicketState[] = ["done", "cancelled"];
-const MOMENT_EVENTS = new Set(["project.created", "project.state", "project.landed", "spec.proposed", "spec.approved", "ticket.created", "ticket.state", "review.verdict", "human.action"]);
+const MOMENT_EVENTS = new Set(["project.created", "project.state", "project.landed", "phase.done", "phase.started", "phase.told", "spec.proposed", "spec.approved", "ticket.created", "ticket.state", "review.verdict", "human.action"]);
 /** Events this close to the one before come from one action or one engine pass. */
 const MOMENT_GAP_MS = 2_000;
 /** Most telling first. */
@@ -220,7 +220,7 @@ function lineKind(event: Parsed): MomentKind {
   const { kind } = event.row;
   if (kind === "human.action") return "you";
   if (kind === "ticket.state") return troubleMove(event.data.from, event.data.to) ? "trouble" : event.data.to === "done" ? "done" : "move";
-  return kind.startsWith("project.") || kind.startsWith("spec.") ? "milestone" : "move";
+  return kind.startsWith("project.") || kind.startsWith("spec.") || kind.startsWith("phase.") ? "milestone" : "move";
 }
 
 function momentsOf(events: readonly Parsed[], keys: Map<number, string>): Moment[] {

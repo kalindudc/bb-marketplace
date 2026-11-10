@@ -43,7 +43,7 @@ const TEXT_LENGTH = 160;
 const MAX_WORD_CELLS = 4_000_000;
 
 export const sectionOf = (path: string): SpecSection =>
-  path.startsWith("ticket[") ? "tickets" : GUARDRAILS.some((root) => path === root || isUnder(path, root)) ? "guardrails" : "settings";
+  path === "phase" || path.startsWith("phase[") || path.startsWith("ticket[") ? "tickets" : GUARDRAILS.some((root) => path === root || isUnder(path, root)) ? "guardrails" : "settings";
 
 /** True when the change is at `path`, under it or above it. */
 export const touches = (change: Pick<SpecChange, "path">, path: string): boolean => change.path === path || isUnder(change.path, path) || isUnder(path, change.path);

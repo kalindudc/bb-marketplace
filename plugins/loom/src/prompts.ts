@@ -12,6 +12,7 @@ import { rolloutFacts } from "./rollout";
 import type { ForgeSpec, Spec } from "./spec";
 import { specDiff, type SpecChange } from "./spec-diff";
 import { restackOf, stacking, stackOf, upstreamOf } from "./stack";
+import type { PhaseView } from "./phases";
 import type { SpecNote } from "./spec-paths";
 import type { SpecFinding } from "./spec-review";
 import { SPEC_REVIEW_ROUNDS, type MergeChoice, type TicketState } from "./states";
@@ -1225,6 +1226,33 @@ export function recordPrompt(project: ProjectRow): string {
 
 // ---------------------------------------------------------------- spec review
 
+export function phaseTicketFacts(tickets: readonly TicketRow[], mergeCommits: ReadonlyMap<string, string> = new Map()): string {
+  return tickets.map((ticket) => `- ${ticket.key}: ${ticket.title}; ${ticket.state}; PR: ${ticket.pr_url ?? "none"}; head commit: ${ticket.head_sha ?? "unknown"}; merge commit: ${mergeCommits.get(ticket.key) ?? "unknown"}; fix rounds: ${ticket.pr_rounds}`).join("\n");
+}
+
+export function phaseDoneText(project: ProjectRow, phase: PhaseView, next: PhaseView, tickets: readonly TicketRow[], mergeCommits: ReadonlyMap<string, string>): string {
+  return [
+    `Phase ${phase.title} (${phase.ref}) of ${project.slug} is done.`,
+    "## Finished tickets",
+    phaseTicketFacts(tickets, mergeCommits),
+    "## Done when",
+    bullets(phase.doneWhen),
+    `## Next phase: ${next.title}`,
+    next.goal,
+    bullets(next.doneWhen),
+    "Outline:",
+    bullets(next.outline),
+    `Check every finished phase done_when item against what landed and cite evidence (PR, command, commit). Write its report: checks and evidence, what landed, cancellations and why, discovered work and where it goes, and changes to the plan. Plan the next phase's tickets within max_tickets = ${next.maxTickets}, reserving one or two for fixes. Revise later outlines from what you learned, or drop unneeded planned phases. Call loom_propose with the full spec. The human approves that version to start the next phase; do not start it yourself.`,
+  ].join("\n\n");
+}
+
+export const PHASE_SPEC_REVIEW_RUBRIC: readonly string[] = [
+  "Roadmap: 2 to 8 vertical slices, each with an outcome goal and observable done_when. Phase 1 is the smallest outcome that lands on its own, a walking skeleton for new work. Later outlines are plausible, not detailed ticket plans.",
+  "Size: judge the newly planned phase's tickets within max_tickets (8 when unset), leaving room for fixes. Do not ask for later phases' tickets now.",
+  "Completeness and done when: trace each project.done_when item to a phase. Trace the newly planned phase's done_when to its tickets; for the first proposal, only phase 1 needs that ticket-level trace.",
+  "Report: for a next-phase version, compare the finished phase's report with the ticket facts. Check evidence for each done_when, cancellations, and explicit carry-over; silent carry-over is a finding. Judge the new tickets for fit to their phase's goal.",
+];
+
 /** What the spec reviewer judges a draft against. Each line names what counts as a finding. */
 export const SPEC_REVIEW_RUBRIC: readonly string[] = [
   "Fit: every ticket and acceptance criterion serves what the human asked for. Work the human ruled out, or never asked for and the goal does not need, is a finding.",
@@ -1277,7 +1305,7 @@ export function specFindingsList(findings: readonly SpecFinding[]): string {
     .join("\n");
 }
 
-export function specReviewerBrief(a: { project: ProjectRow; spec: Spec; toml: string; version: number; round: number; earlier: readonly SpecReviewRow[]; inForce?: { version: number; spec: Spec } | null; instructions?: string }): string {
+export function specReviewerBrief(a: { project: ProjectRow; spec: Spec; toml: string; version: number; round: number; earlier: readonly SpecReviewRow[]; inForce?: { version: number; spec: Spec } | null; instructions?: string; tickets?: readonly TicketRow[]; mergeCommits?: ReadonlyMap<string, string> }): string {
   const { project, spec, toml, version, round } = a;
   const instructions = (a.instructions ?? "").trim();
   const inForce = a.inForce ?? null;
@@ -1307,14 +1335,15 @@ export function specReviewerBrief(a: { project: ProjectRow; spec: Spec; toml: st
       ? []
       : [
           "## A change to an approved project",
-          `The human approved v${inForce.version} and the project is ${project.state}, so its tickets are already on the board. The planner proposed v${version} after that, usually to unblock tickets in a triage round; its latest messages in the planning conversation say why. Judge what v${version} changes from v${inForce.version}, below, against the rubric; leave the parts it does not change alone. Tickets on the board change only through the planner's board tools, so ticket changes in the spec are a record, not new work.`,
+          `The human approved v${inForce.version} and the project is ${project.state}, so its tickets are already on the board. The planner proposed v${version} after that, usually to unblock tickets in a triage round; its latest messages in the planning conversation say why. Judge what v${version} changes from v${inForce.version}, below, against the rubric; leave the parts it does not change alone. ${spec.phase === undefined ? "Tickets on the board change only through the planner's board tools, so ticket changes in the spec are a record, not new work." : "Existing tickets change only through board tools. Approving creates only the next phase's new tickets, after all earlier phases finish; this is the human phase gate."}`,
           "",
           "What changes:",
           specChangeLines(inForce.spec, spec),
           "",
         ]),
     "## Rubric",
-    bullets(SPEC_REVIEW_RUBRIC),
+    bullets(spec.phase === undefined ? SPEC_REVIEW_RUBRIC : [...SPEC_REVIEW_RUBRIC.filter((line) => !/^(Size|Completeness|Done when):/.test(line)), ...PHASE_SPEC_REVIEW_RUBRIC]),
+    ...(spec.phase === undefined || inForce === null ? [] : ["", "## Finished phase ticket facts", phaseTicketFacts((a.tickets ?? []).filter((ticket) => ticket.phase !== null && (ticket.state === "done" || ticket.state === "cancelled")), a.mergeCommits)]),
     "",
     "## The spec",
     clip(toml, SPEC_LIMIT),

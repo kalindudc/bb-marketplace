@@ -394,6 +394,25 @@ Zero to 10 entries. Leave them out when the work stays in the planner thread's o
 
 Each repo gets its own integration branch (`loom/<slug>`, from the repo's `base`) and its own Loom worktree. Tickets in different repos never share a file, so their scopes never overlap.
 
+### [[phase]]
+
+Optional roadmap of 2 to 8 phases. Leave it out for a project that fits one batch.
+New keys have no schema defaults; the values below are what readers use when a key is absent.
+
+| Key | Type | Default | Rule |
+|---|---|---|---|
+| `ref` | string | required | `^[a-z0-9][a-z0-9-]{0,39}$`; unique among phases |
+| `title` | string | required | 1 to 80 characters |
+| `goal` | string | required | 20 to 1000 characters; an outcome, not a task list |
+| `done_when` | string array | required | 1 to 7 observable checks, each 1 to 300 characters |
+| `outline` | string array | none | at most 20 lines of expected work, each 1 to 300 characters |
+| `max_tickets` | integer | `8` | 1 to 12; counts every ticket in the phase, cancelled tickets included |
+| `report` | string | none | 1 to 4000 characters; allowed only on a phase with tickets |
+
+At the first proposal only phase 1 has tickets. In every version, phases with tickets form a prefix of the roadmap, and each phase stays within its ticket budget. Every ticket names its phase. Its `depends_on` and `merge_after` may name tickets in the same or an earlier phase, never a later one.
+
+When a phase finishes, Loom tells the idle planner once with its ticket facts, done-when checks and the next phase's outline. The planner checks the evidence and writes the finished phase's report before proposing the next phase. The report covers each done-when check with its evidence (PR, command or commit), what landed, cancellations and why, discovered work and where it goes, and changes to the plan. The next phase starts only after spec review and the human's approval.
+
 ### [[ticket]]
 
 One to 200 entries.
@@ -401,6 +420,7 @@ One to 200 entries.
 | Key | Type | Default | Rule |
 |---|---|---|---|
 | `ref` | string | required | `^[a-z0-9][a-z0-9-]{0,39}$`; unique; other tickets name it in `depends_on` |
+| `phase` | string | none | required with `[[phase]]`, naming a phase ref; refused without a roadmap |
 | `title` | string | required | 1 to 120 characters |
 | `body` | string | required | 1 to 8000 characters; what a worker who has seen nothing else needs |
 | `acceptance` | string array | required | 1 to 20 items; EARS form is recommended: "WHEN ... THE SYSTEM SHALL ..." |
@@ -462,7 +482,7 @@ What happens when a project event happens: the planner is told to do something, 
 
 | Key | Type | Default | Rule |
 |---|---|---|---|
-| `on` | string | required | the event: `spec.approved` (the human approves a version, a pending one too), `project.started` (the human starts the approved project), `ticket.started` (a worker starts on a ticket, at its first start only), `pr.opened` (Loom opens a ticket's pull request, once per pull request; on the integration strategy, the pull request `bb loom land` opens), `ticket.blocked` (each time a ticket moves to blocked), `ticket.done` or `project.done` |
+| `on` | string | required | the event: `spec.approved` (the human approves a version, a pending one too), `project.started` (the human starts the approved project), `ticket.started` (a worker starts on a ticket, at its first start only), `pr.opened` (Loom opens a ticket's pull request, once per pull request; on the integration strategy, the pull request `bb loom land` opens), `ticket.blocked` (each time a ticket moves to blocked), `ticket.done`, `phase.done` (a phase finishes and a later phase waits for planning), or `project.done` |
 | `tell` | string | required | up to 2000 characters: what to do, written as an instruction. Loom sends it to the planner thread, with what happened, in one message with every other tell that fired, once the planner is idle |
 | `to` | string | `"planner"` | who reads `tell`: `"planner"`, or `"worker"` with `on = "ticket.started"`, which puts `tell` in every worker's brief instead of a message |
 
@@ -541,6 +561,57 @@ acceptance = [
 ]
 scope = ["src/export/**", "src/orders/page.tsx"]
 depends_on = ["row-mapper"]
+```
+
+## Example: a phased project
+
+Only the first phase has tickets. A later version keeps those ticket records,
+adds the finished phase's report and fills in the next phase.
+
+```toml
+[project]
+slug = "csv-phases"
+name = "CSV export"
+key = "CSV"
+goal = "Let people export orders as CSV, including very large exports."
+summary = "Export orders as CSV, starting with a small usable download."
+done_when = ["Orders download as CSV", "Large exports stream without buffering"]
+
+[merge]
+strategy = "pr"
+
+[checks]
+commands = ["npm test"]
+
+[agents.worker]
+provider = "claude-code"
+model = "sonnet"
+
+[agents.reviewer]
+provider = "codex"
+model = "gpt"
+
+[[phase]]
+ref = "download"
+title = "A usable download"
+goal = "Deliver the smallest working CSV download for orders."
+done_when = ["An order downloads as a valid CSV"]
+max_tickets = 8
+
+[[phase]]
+ref = "stream"
+title = "Large exports"
+goal = "Stream large exports without buffering the whole file."
+done_when = ["A large export uses bounded memory"]
+outline = ["Stream rows from storage", "Check memory use on a large export"]
+
+[[ticket]]
+ref = "csv-download"
+phase = "download"
+title = "Download orders as CSV"
+body = "Add the CSV download endpoint using the existing order query."
+acceptance = ["WHEN orders exist THE SYSTEM SHALL download a CSV with a header and one row per order"]
+scope = ["src/export/**", "test/export/**"]
 ```
 
 ## Example: a project across two repos
@@ -909,6 +980,15 @@ A spec with any error is refused and nothing is saved. Errors are numbered, at m
 - An `inputs` string, in `[environment]` or a ticket's `environment`, holds a `{name}` other than `{branch}` or `{base}`.
 - A ticket sets `environment` in a repo whose threads start in git worktrees, with no environment provider to patch.
 
+Phases add these errors:
+
+- A roadmap has fewer than 2 or more than 8 phases, duplicate refs, or invalid field lengths.
+- A ticket omits its phase, names an unknown phase, or names one without a roadmap.
+- Phases with tickets do not form a prefix, a phase exceeds `max_tickets`, or a dependency or merge order points into a later phase.
+- A phase without tickets has a report, or a first proposal fills in more than phase 1.
+- A revision drops, renames or reorders a started phase, changes the project's phase model, or lowers its cap below its live board count.
+- A revision fills in a phase while another is active, fills in more than the first planned phase, reuses a board ticket's ref for new work, or omits the report for the phase just finished.
+
 Rollout adds these errors:
 
 - `[rollout]`, a repo's `deploy` or a ticket's `rollout` on the integration strategy, where every ticket lands together.
@@ -983,7 +1063,7 @@ Warnings are returned but do not block a proposal.
 
 - The reviewer and the worker use the same provider and model (including both left unset), so review shares the worker's blind spots.
 - Two tickets have overlapping scope and no dependency path between them, so they will run one at a time. Add `depends_on` or narrow the scope.
-- After approval, a revision's ticket list is ignored: "Ticket changes after approval go through the planner's board tools."
+- After approval, edits to existing tickets in a revision are records only: "Ticket changes after approval go through the planner's board tools." The next phase's new tickets are the exception: approval creates them.
 - Tickets name rollout stages, but the spec has no `[[rollout.stage]]` tables, so the stages have no goal or soak and are ordered by the first ticket that names each.
 - A ticket has a `rollout.verify` in a repo that deploys on merge: Loom marks it live when its pull request merges and never runs `verify`.
 - An `auto_merge` with `method = "comment"` or `"command"` and no `rejected`: Loom cannot see the merge service turn a pull request away, and waits until it merges.
@@ -992,6 +1072,7 @@ Warnings are returned but do not block a proposal.
 ## Revisions
 
 - Before approval, proposing again from the planner thread with the same slug adds a new draft version; older drafts are kept as superseded, and approving takes the newest.
-- After approval, a revision becomes a pending version; `bb loom approve <slug>` applies it. Tickets are not recreated.
+- After approval, a revision becomes a pending version; `bb loom approve <slug>` applies it. Existing tickets are not recreated. On a phased project, approval creates only the next phase's tickets, from the board's highest ticket number plus one, resolving dependencies against the new batch and earlier tickets.
+- A revision may fill in only the first planned phase and only after all earlier phases are done or cancelled. It must include the finished phase's report. Active and done phases keep their refs and order; unplanned phases may be edited, added, reordered or removed. Board tools change existing tickets. After approval the project cannot switch between phased and unphased planning.
 - Loom's spec review checks each new version before the human is asked, except a version that, against the version before it, changes only operational settings: `merge.forge` and a repo's `forge`, `environment` and a repo's or a ticket's `environment`, `agents`, `budget`, every `[merge]` key but `strategy` and `remote`, `checks.timeout_minutes`, `checks.ci`, and a repo's `ci` and `refresh_behind`. Such a version skips the review and goes to the human, who still approves it. The version before a pending version is the version in force; the version before a draft is the draft before it, and only when that draft's own review passed or was skipped. The first version is always reviewed.
 - Proposing a spec identical to the latest one changes nothing and returns the existing version.

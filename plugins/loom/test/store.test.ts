@@ -760,7 +760,10 @@ describe("runs", () => {
     for (const sql of MIGRATIONS.slice(0, at)) db.exec(sql);
     const old = new Store(db, () => 1000);
     const project = old.createProject(newProject(), "human");
-    const ticket = old.createTicket(newTicket(project.id, 1), "human");
+    const row = { ...newTicket(project.id, 1), state: "queued", created_by: "human", created_at: 1000, updated_at: 1000, state_at: 1000 };
+    const columns = Object.keys(row);
+    const inserted = db.prepare(`INSERT INTO tickets (${columns.join(", ")}) VALUES (${columns.map(() => "?").join(", ")})`).run(...Object.values(row));
+    const ticket = old.ticket(Number(inserted.lastInsertRowid))!;
     const run = (label: string, output: string) => {
       const id = old.startRun({ project_id: project.id, ticket_id: ticket.id, stage: "merge", kind: "git", label });
       old.finishRun(id, { ok: true, output, durationMs: 7 });

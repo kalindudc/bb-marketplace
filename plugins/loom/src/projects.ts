@@ -11,6 +11,7 @@ import { integrationBranchOf, isMultiRepo, repoSettings } from "./repos";
 import { rolloutJson } from "./rollout";
 import { defaultKeysWarning, numberErrors, parseSpec, proposalErrorsOf, readSpec, specHash, withProfiles, type Spec } from "./spec";
 import type { SpecNote } from "./spec-paths";
+import { phaseRevisionErrors, phasesOf } from "./phases";
 import { PAUSE_NOW_REASON, TICKET_STATES, type AuthorKind, type MergeChoice, type ProjectState, type Role, type TicketState } from "./states";
 import { writeSub } from "./sub-state";
 import { moveTicket } from "./moves";
@@ -115,6 +116,7 @@ export interface SpecView {
 }
 
 export interface TicketSummary {
+  phase: string | null;
   key: string;
   ref: string;
   title: string;
@@ -217,6 +219,7 @@ export class Projects {
 
     if (project?.state === "archived") errors.push(`Project ${slug} is archived. Propose a new project with another slug.`);
     else if (project?.approved_version != null) errors.push(...this.lockedFieldErrors(project, spec));
+    else errors.push(...phaseRevisionErrors(null, spec, []));
     return errors;
   }
 
@@ -295,7 +298,7 @@ export class Projects {
     if (approved.merge.strategy !== spec.merge.strategy) {
       errors.push(`merge.strategy: cannot change from "${approved.merge.strategy}" to "${spec.merge.strategy}" after approval, because the integration branch and its worktree may already exist. Keep the strategy, or archive this project and propose a new one.`);
     }
-    errors.push(...lockedRepoErrors(approved, spec), ...lockedReachErrors(approved, spec));
+    errors.push(...lockedRepoErrors(approved, spec), ...lockedReachErrors(approved, spec), ...phaseRevisionErrors(approved, spec, this.store.tickets(project.id)));
     return errors;
   }
 
@@ -359,7 +362,7 @@ export class Projects {
       return added;
     });
     this.store.changed(project.id);
-    return { slug, version, state: project.state, warnings: [...warnings, "Ticket changes after approval go through the planner's board tools."], pending: true, change: "pending" };
+    return { slug, version, state: project.state, warnings: [...warnings, spec.phase === undefined ? "Ticket changes after approval go through the planner's board tools." : "Existing ticket changes after approval go through the planner's board tools. Approving creates only the next phase's tickets."], pending: true, change: "pending" };
   }
 
   // ---------------------------------------------------------------- approve and lifecycle
@@ -389,7 +392,11 @@ export class Projects {
     this.guardVersion(slug, version, project.pending_version);
     const pending = this.specOf(project.id, project.pending_version);
     const before = project.approved_version === null ? null : this.specOf(project.id, project.approved_version);
-    this.store.tx(() => {
+    const errors = this.lockedFieldErrors(project, pending);
+    if (errors.length > 0) throw rejected(errors);
+    const keys = this.store.tx(() => {
+      const planned = phasesOf(pending, this.store.tickets(project.id))?.find((phase) => phase.state === "planned" && pending.ticket.some((ticket) => ticket.phase === phase.ref));
+      const created = planned === undefined ? [] : this.createTickets(project, { ...pending, ticket: pending.ticket.filter((ticket) => ticket.phase === planned.ref) }, actor);
       this.store.updateProject(project.id, { approved_version: project.pending_version, pending_version: null, name: pending.project.name });
       // A version that changes a ticket's keep_draft applies it to that ticket; one that leaves it keeps what loom_edit_ticket or a release set.
       for (const ticket of pending.ticket) {
@@ -398,10 +405,11 @@ export class Projects {
         if (row !== undefined && was !== (ticket.keep_draft === true)) this.store.updateTicket(row.id, { keep_draft: ticket.keep_draft === true ? 1 : 0 });
       }
       this.store.event(project.id, null, "spec.approved", actor, { version: project.pending_version, pending: true });
+      return created;
     });
     if (project.name !== pending.project.name) await this.renameSection(project, pending.project.name);
     this.store.changed(project.id);
-    return { slug, state: project.state, version: project.pending_version, applied: "pending", tickets: [] };
+    return { slug, state: project.state, version: project.pending_version, applied: "pending", tickets: keys };
   }
 
   private guardVersion(slug: string, requested: number | undefined, waiting: number): void {
@@ -410,12 +418,15 @@ export class Projects {
   }
 
   private createTickets(project: ProjectRow, spec: Spec, actor: string): string[] {
-    const keyOf = new Map(spec.ticket.map((ticket, index) => [ticket.ref, `${project.key}-${index + 1}`]));
-    return spec.ticket.map((ticket, index) => {
+    const existing = this.store.tickets(project.id);
+    const first = existing.reduce((max, ticket) => Math.max(max, ticket.seq), 0) + 1;
+    const keyOf = new Map([...existing.map((ticket) => [ticket.ref, ticket.key] as const), ...spec.ticket.map((ticket, index) => [ticket.ref, `${project.key}-${first + index}`] as const)]);
+    const keys = spec.ticket.map((ticket, index) => {
       const row = this.store.createTicket(
         {
           project_id: project.id,
-          seq: index + 1,
+          seq: first + index,
+          phase: ticket.phase ?? null,
           key: keyOf.get(ticket.ref)!,
           ref: ticket.ref,
           title: ticket.title,
@@ -446,6 +457,8 @@ export class Projects {
       });
       return row.key;
     });
+    if (spec.phase !== undefined && spec.ticket.length > 0) this.store.event(project.id, null, "phase.started", actor, { ref: spec.ticket[0]!.phase, keys });
+    return keys;
   }
 
   async start(slug: string, actor: string): Promise<ProjectRow> {
@@ -728,6 +741,11 @@ export class Projects {
     return "superseded";
   }
 
+  phases(slug: string) {
+    const project = this.require(slug);
+    return phasesOf(this.specOf(project.id, project.approved_version ?? this.store.latestSpecVersion(project.id)!.version), this.store.tickets(project.id));
+  }
+
   tickets(slug: string, states?: readonly TicketState[]): TicketSummary[] {
     const project = this.require(slug);
     for (const state of states ?? []) {
@@ -948,6 +966,7 @@ export function withRepoNames<T extends { repos: RepoOverview[] }>(overview: T, 
 
 function summaryOf(ticket: TicketRow): TicketSummary {
   return {
+    phase: ticket.phase,
     key: ticket.key,
     ref: ticket.ref,
     title: ticket.title,

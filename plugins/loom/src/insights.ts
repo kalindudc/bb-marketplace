@@ -544,7 +544,7 @@ function chapterOf(ctx: Ctx, key: string, events: Ev[], group: { to: number; cur
   };
 }
 
-const NOTE_KINDS = new Set(["spec.proposed", "spec.revised", "spec.approved", "spec.review.ended", "spec.review.skipped", "project.created", "record.sent", "record.failed", "triage.sent", "planner.asked", "hook.told", "hook.ran", "hook.failed"]);
+const NOTE_KINDS = new Set(["phase.done", "phase.started", "phase.told", "spec.proposed", "spec.revised", "spec.approved", "spec.review.ended", "spec.review.skipped", "project.created", "record.sent", "record.failed", "triage.sent", "planner.asked", "hook.told", "hook.ran", "hook.failed"]);
 
 function itemsOf(ctx: Ctx, group: { to: number; current: boolean; state: ProjectState }, events: Ev[]): StoryItem[] {
   const items: StoryItem[] = [];

@@ -58,6 +58,7 @@ export class Rows {
 }
 
 const TICKET: TicketRow = {
+  phase: null,
   id: 0, project_id: 1, seq: 0, key: "", ref: "", title: "", body: "", acceptance_json: "[]", verify_json: "[]", scope_json: "[]", deps_json: "[]", priority: 2, state: "queued", attempt: 0, failures: 0, check_failures: 0, review_round: 0,
   branch: null, environment_id: null, worker_thread_id: null, head_sha: null, merge_before: null, pr_url: null, pr_checked_at: null, blocked_reason: null, repo: null, pr_branch: null, pushed_sha: null, pushed_at: null, pr_ask_json: null, pr_text_json: null,
   pr_seen_json: "[]", pr_rounds: 0, pr_status_json: null, handback_json: null, stack_json: null, pr_base: null, start_wait_json: null, environment_json: null, pr_poll_json: null, merge_after_json: "[]", pr_meta_json: null, head_tree: null, retry_json: null, push_json: null, merge_step_json: null, pr_proposal_json: null, pr_applied_json: null, rollout_json: null,

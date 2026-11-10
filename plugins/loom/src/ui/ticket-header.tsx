@@ -3,7 +3,7 @@ import { experimental_copyToClipboard, experimental_Icon as Icon, useBbNavigate 
 import type { MergeItem, TicketAction, TicketDetail } from "../contract";
 import { formatDuration, plural, retryText, reviewerLookupText, startWaitText } from "../format";
 import type { TicketState } from "../states";
-import { BUTTON, BUTTON_PRIMARY, ConfirmButton, FIELD, MoreMenu, RepoChip, SyncButton } from "./common";
+import { BUTTON, BUTTON_PRIMARY, ConfirmButton, FIELD, MoreMenu, PhaseChip, RepoChip, SyncButton } from "./common";
 import { DraftHold } from "./draft-hold";
 import { MergeConfirm } from "./merge-confirm";
 import { ago, checksText, GHOST } from "./ticket-cards";
@@ -237,6 +237,7 @@ export function TicketHeader({
           {PULSING.includes(ticket.state) && <span aria-hidden className="size-1.5 animate-pulse rounded-full bg-current" />}
           {ticket.state.replace("_", " ")}
         </span>
+        {ticket.phase !== null && <PhaseChip name={ticket.phase} />}
         {ticket.repo !== null && <RepoChip name={ticket.repo} />}
         <span className="flex-1" />
         {worker !== undefined && (

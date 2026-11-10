@@ -8,6 +8,7 @@ Loom now stops a project only for problems that are the whole project's, opens p
 
 ### Added
 
+- Optional `[[phase]]` roadmaps plan tickets one phase at a time. Loom wakes the planner when a phase finishes, checks the report and next batch in spec review, and waits for the human to approve it. The page, `bb loom show` and `bb loom tickets --phase` show the phases; hooks can follow `phase.done`.
 - A `usageCommand` setting: a shell command Loom runs in the background for each thread, which prints the thread's total tokens, for when bb's usage events count less than the provider used. Loom keeps the larger of the two figures and never adds them.
 - A `loom-pr-description` skill tells workers how to write a pull request's title and description for a reviewer who has never seen Loom, and reviewers judge the text by it. Its core rules are also in every worker's brief and fix round, so they hold for any model.
 - `[[ticket]] keep_draft = true` keeps that ticket's pull request a draft until the human releases it with Release draft on the ticket, its board card or the Planner page, or `bb loom release <slug> --ticket <KEY>`. Its pull request opens as a draft even with `merge.draft = false`, and the planner can only ask for a release, with `loom_release_draft`.

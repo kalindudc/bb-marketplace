@@ -5,7 +5,7 @@ description: "Turn a goal into a Loom project: a validated spec with tickets, ac
 
 # Plan a Loom project
 
-You turn the user's loose goal into a Loom project spec (TOML). Loom's plugin runs the project afterwards: it hands tickets to worker agents, sends finished work to separate reviewers and merges approved work. You do not run any of that and you do not decide when a ticket is done. Your job ends when `loom_propose` accepts the spec and the human knows the next commands.
+You turn the user's loose goal into a Loom project spec (TOML). Loom's plugin runs the project afterwards: it hands tickets to worker agents, sends finished work to separate reviewers and merges approved work. You do not run any of that and you do not decide when a ticket is done. Hand over once the spec review allows it and the human knows the next commands. On a phased project Loom later wakes this thread to plan the next phase.
 
 Read the spec reference first: the `loom` skill's `references/spec.md` lists every table and key, its default and an example spec.
 
@@ -92,6 +92,12 @@ On a project with `[[repo]]` tables:
 - Scopes, `verify` commands and protected paths are relative to the ticket's repo. Write `src/**`, not the repo's checkout path. Scopes in different repos never overlap.
 - In the body of a dependent ticket, say which files of the other repo to read, such as an API schema. Its brief gives the other repos' checkout paths; on the integration strategy it can read their merged work from the integration branch, and on the pull request strategy from the commit of their open pull request.
 
+### Phases
+
+Use phases when the goal needs more than about eight tickets, spans several repos or deploy stages, or has unknowns the first work will settle. Keep the unphased path for a goal that fits one small batch.
+
+Write the whole roadmap at the first proposal: 2 to 8 `[[phase]]` tables, each with a unique ref, a title, an outcome goal and observable `done_when` checks. Phase 1 is a walking skeleton for new work, or the smallest outcome that lands on its own. Give later phases short `outline` lines, not detailed ticket plans. Trace each project done-when check to a phase, and phase 1's checks to its tickets. Only phase 1 has tickets, each with `phase` naming its ref. Stay within `max_tickets` (8 when unset, at most 12), reserving one or two for fixes.
+
 ### Deploy order
 
 Loom orders three things, and each answers its own question. `depends_on` orders the work: when a ticket can start. `merge_after` orders the merges, so git history is right. `rollout` orders the deploys: when a ticket's change may reach traffic, and what must be live first, not merely merged. A change can merge early and stay dark behind a gate, a repo can deploy on merge, one release can carry several merges, and some prerequisites are no ticket at all. Deploy order is advice for the human: Loom starts, reviews and opens every pull request whatever it says, and holds no merge for it. It tracks what is live, shows the order on the Rollout tab and writes a Rollout section into each pull request's description, which it refreshes when a prerequisite goes live, so do not ask workers or reviewers to write the deploy order into the description, or to keep a pull request a draft until something is live. Workers propose the rest of the description with `loom_submit` and the reviewers judge it with the code, so a rubric line about what a pull request's description must say (how to verify after deploy, how to roll back) is checked before the pull request opens.
@@ -163,7 +169,7 @@ The human can set standing instructions for every planner in Loom's settings (Pl
 
 An instruction about the work itself goes into the tickets. An instruction about what should happen when a project event happens becomes a `[[hook]]` table, so it is never forgotten: Loom delivers each hook every time its event happens, long after this conversation. A hook has `on`, the event, and `tell`:
 
-- `on` is one of `spec.approved` (the human approves a version), `project.started`, `ticket.started` (a worker starts on a ticket, once per ticket), `pr.opened` (Loom opens a ticket's pull request, or on the integration strategy the pull request that lands the integration branch), `ticket.blocked`, `ticket.done` and `project.done`.
+- `on` is one of `spec.approved` (the human approves a version), `project.started`, `ticket.started` (a worker starts on a ticket, once per ticket), `pr.opened` (Loom opens a ticket's pull request, or on the integration strategy the pull request that lands the integration branch), `ticket.blocked`, `ticket.done`, `phase.done` (a phase finishes before the next is planned), and `project.done`.
 - `tell` is what to do then, written as an instruction. Loom sends it to you, the planner, in one message with whatever else fired, once your thread is idle, with what happened (the ticket, its pull request, the reason it blocked). Do it with your own tools, such as Shuttle's board tools, then end your turn.
 - `to = "worker"` with `on = "ticket.started"` puts `tell` in every worker's brief instead, for something each worker does while it works, such as reading the team's conventions file before it changes code. Workers read no other event: by then their work is handed in or done.
 
@@ -196,7 +202,13 @@ Then wait for the spec review. For each draft version Loom starts a separate rev
 
 The human can review the draft on the Loom page and send you notes. They arrive as one message that starts with "[loom] The human reviewed spec" and lists each note under the spec path it is about, such as `ticket[csv-export].acceptance[1]`: tickets by ref, list items counted from 0. A note may suggest a value for its part, written as TOML on a line such as `Suggested value: "pr" (now "integration")`; use it unless it breaks the spec, and then say why. Revise the spec for each note, or answer it in your reply, then call `loom_propose` again with the whole spec.
 
-After the human approves the project, a revision is held as a pending version until they approve it, and its ticket list is ignored. A project approved before summaries were required has none, and its next revision must add `project.summary`: `loom_propose` refuses one without it. Later merge order changes go through `loom_edit_ticket` with a patch of `merge_after` alone, which works on a ticket whose pull request is already open. Loom reviews a pending version too, as a change to the version in force, in the same rounds: end your turn after `loom_propose` and wait for "[loom] Spec review" before you hand it over.
+After the human approves the project, a revision is held as a pending version until they approve it, and edits to existing tickets remain records only. A phased version that fills in the next phase is the exception: approving creates that phase's tickets. A project approved before summaries were required has none, and its next revision must add `project.summary`: `loom_propose` refuses one without it. Later merge order changes go through `loom_edit_ticket` with a patch of `merge_after` alone, which works on a ticket whose pull request is already open. Loom reviews a pending version too, as a change to the version in force, in the same rounds: end your turn after `loom_propose` and wait for "[loom] Spec review" before you hand it over.
+
+## When a phase finishes
+
+A message starting with "[loom] Phase" names the phase that finished, its tickets and final states, PR links, known merge commits and fix rounds, its done-when checks, and the next phase's goal and outline. Check each outcome against what landed; a done ticket alone is not evidence that an outcome holds. Write the finished phase's `report`: evidence for each check, what landed, what was cancelled and why, discovered work and where it goes, and what changed in the plan.
+
+Plan only the next phase's tickets within its budget, reserving one or two for fixes. Update later outlines from what you learned, or drop phases no longer needed. Keep started phases in order. Call `loom_propose` with the full spec and wait for its review as usual. The human's approval starts the next phase; NEVER advance it yourself. Between phases, use a proposal, not `loom_add_tickets`.
 
 ## When a hook fires
 

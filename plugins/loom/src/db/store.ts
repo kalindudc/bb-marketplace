@@ -54,6 +54,7 @@ export interface SpecVersionRow {
 
 export interface TicketRow {
   id: number;
+  phase: string | null;
   project_id: number;
   seq: number;
   key: string;
@@ -134,7 +135,7 @@ export interface TicketRow {
 }
 
 export type NewTicket = Pick<TicketRow, "project_id" | "seq" | "key" | "ref" | "title" | "body" | "acceptance_json" | "verify_json" | "scope_json" | "deps_json" | "priority"> &
-  Partial<Pick<TicketRow, "repo" | "environment_json" | "merge_after_json" | "rollout_json" | "keep_draft">>;
+  Partial<Pick<TicketRow, "phase" | "repo" | "environment_json" | "merge_after_json" | "rollout_json" | "keep_draft">>;
 
 export interface PostRow {
   id: number;
@@ -564,12 +565,12 @@ export class Store implements ForgeProfiles {
       const now = this.now();
       const result = this.db
         .prepare(
-          `INSERT INTO tickets (project_id, seq, key, ref, title, body, acceptance_json, verify_json, scope_json, deps_json, priority, repo, environment_json, merge_after_json, rollout_json, keep_draft, state, created_by, created_at, updated_at, state_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)`,
+          `INSERT INTO tickets (project_id, seq, key, ref, title, body, acceptance_json, verify_json, scope_json, deps_json, priority, repo, environment_json, merge_after_json, rollout_json, keep_draft, phase, state, created_by, created_at, updated_at, state_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)`,
         )
-        .run(row.project_id, row.seq, row.key, row.ref, row.title, row.body, row.acceptance_json, row.verify_json, row.scope_json, row.deps_json, row.priority, row.repo ?? null, row.environment_json ?? null, row.merge_after_json ?? "[]", row.rollout_json ?? null, row.keep_draft ?? 0, actor, now, now, now);
+        .run(row.project_id, row.seq, row.key, row.ref, row.title, row.body, row.acceptance_json, row.verify_json, row.scope_json, row.deps_json, row.priority, row.repo ?? null, row.environment_json ?? null, row.merge_after_json ?? "[]", row.rollout_json ?? null, row.keep_draft ?? 0, row.phase ?? null, actor, now, now, now);
       const ticket = this.requireTicket(Number(result.lastInsertRowid));
-      this.event(ticket.project_id, ticket.id, "ticket.created", actor, { key: ticket.key, ref: ticket.ref });
+      this.event(ticket.project_id, ticket.id, "ticket.created", actor, { key: ticket.key, ref: ticket.ref, ...(ticket.phase === null ? {} : { phase: ticket.phase }) });
       return ticket;
     });
   }

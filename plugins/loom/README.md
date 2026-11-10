@@ -92,6 +92,29 @@ provider id, such as `claude-code`, `codex` or `pi`. `loom_propose` refuses an
 unknown one and names the ids bb has; when bb's list cannot be read, the spec
 is accepted unchecked.
 
+### Phases
+
+For a goal larger than one small batch, the planner can propose a roadmap of
+2 to 8 `[[phase]]` tables. Each phase has an outcome goal, observable
+`done_when` checks and a ticket budget: 8 by default, at most 12. Only the
+first phase has tickets at the first proposal. Later phases hold short
+outlines, not detailed tickets.
+
+When every ticket in a phase is done or cancelled, Loom records
+`phase.done` and tells the planner once its thread is idle. The planner
+checks the outcome against the work that landed, writes the phase's
+`report`, and proposes a full spec version with the next phase's tickets.
+Loom reviews that version and you approve it to start the phase. Approval
+creates only that new batch, with ticket numbers continuing from the board.
+No later phase starts while an earlier one still runs, and the project
+cannot finish while a phase has no tickets.
+
+The planner can revise or drop phases that have not started. Started phases
+keep their refs and order. Board tools still change existing tickets;
+`loom_add_tickets` adds to the active phase within its budget, and refuses
+between phases. Work that does not fit belongs in a later phase's outline.
+Specs without phases work as before.
+
 ### How many agents run at once
 
 `agents.max_workers` and `agents.max_reviewers` (2 each by default) cap the
@@ -373,6 +396,9 @@ done, shipping, in progress, up next and blocked:
 - Up next: Ready, and Waiting, where each ticket names what it waits on.
 - Finished: Done and Cancelled, folded to one line each.
 
+On a phased project, a compact strip above the board shows each phase's title,
+state and progress. Cards and ticket headers name their phase.
+
 Each card shows its age in its state, its attempt and review round, a link to
 the thread working on it and a Changes link. Before approval, the draft's
 tickets show as dashed cards with the keys approval will give them.
@@ -411,7 +437,9 @@ request, your reply starts a fix round.
 
 ![The Spec tab on version 3: what changed since v2, every change marked as answering a comment, and the two sent comments marked as changed in v3](../../screenshots/loom/spec.png)
 
-The spec as one page in three sections:
+The spec as one page in three sections. On a phased project, the ticket list
+groups by phase, with outlines for phases not yet planned and reports for
+finished phases:
 
 - How it runs: the settings as cards. Merging (with stacking, releasing idle
   workers, `refresh_behind`, the git time limit and the forge, each of its
@@ -1603,7 +1631,7 @@ does for an unavailable provider.
 bb loom list                                 # every project with its state and ticket count
 bb loom show <slug>                          # state, goal, merge setup, spec versions, ticket counts, next step
 bb loom spec <slug> [--version N]            # the spec as TOML
-bb loom tickets <slug> [--state s,s]         # the board
+bb loom tickets <slug> [--state s,s] [--phase ref] # the board, optionally one phase
 bb loom ticket CSV-1                         # a ticket and its reply thread
 bb loom metrics <slug> [--days N] [--json]   # flow and agent metrics; --days sets the window (default 14)
 bb loom feed <slug> [--after <id>] [--json]  # the newest 200 events as sentences; --after pages forward from an id
@@ -1639,6 +1667,9 @@ Every command takes `--json`. Each project gets a sidebar section named
 When the project is done or archived, Loom deletes the section and its threads
 go back to the ungrouped list. If you delete the section while a project is
 ready or paused, starting or resuming it makes the section again.
+
+On phased projects, `bb loom show` prints a line per phase with its state and
+ticket counts. `bb loom tickets --phase <ref>` filters the board by phase.
 
 ## Agent tools
 
@@ -1743,7 +1774,8 @@ below, or a forge's `after_open` and `after_push`.
 
 The events are `spec.approved`, `project.started`, `ticket.started` (a
 ticket's first start), `pr.opened` (each pull request Loom opens, the land's
-too), `ticket.blocked`, `ticket.done` and `project.done`. Every hook is
+too), `ticket.blocked`, `ticket.done`, `phase.done` (a phase finishes before
+the next is planned), and `project.done`. Every hook is
 optional: the planner writes the ones you ask for, in the planning
 conversation or in your standing instructions, and confirms the details with
 you. Loom delivers each hook once per event and only delivers it: it checks

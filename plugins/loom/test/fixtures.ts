@@ -74,6 +74,7 @@ export const homeView = (over: Partial<HomeView> = {}): HomeView => ({
 });
 
 export const card = (over: Partial<BoardCard> = {}): BoardCard => ({
+  phase: null,
   key: "CSV-1",
   title: "Order rows",
   state: "queued",
@@ -169,6 +170,7 @@ export const agent = (over: Partial<AgentRow> = {}): AgentRow => ({
 });
 
 export const projectView = (over: Partial<ProjectView> = {}): ProjectView => ({
+  phases: null,
   overview: overview(),
   board: [card(), card({ key: "CSV-2", title: "Export endpoint", state: "working", stateAt: NOW - 5 * HOUR, attempt: 1, ready: false, threadId: "thr_w1" })],
   metrics: metrics(),
@@ -178,8 +180,8 @@ export const projectView = (over: Partial<ProjectView> = {}): ProjectView => ({
     pendingVersion: null,
     summary: {
       tickets: [
-        { ref: "csv-model", title: "Order rows", dependsOn: [] },
-        { ref: "csv-export", title: "Export endpoint", dependsOn: ["csv-model"] },
+        { ref: "csv-model", title: "Order rows", dependsOn: [], phase: null },
+        { ref: "csv-export", title: "Export endpoint", dependsOn: ["csv-model"], phase: null },
       ],
       repos: [],
       checks: ["npm test"],
@@ -215,6 +217,7 @@ export const attempt = (over: Partial<Attempt> = {}): Attempt => ({
 });
 
 export const ticketDetail = (over: Partial<TicketDetail> = {}): TicketDetail => ({
+  phase: null,
   slug: "csv",
   projectState: "running",
   key: "CSV-2",

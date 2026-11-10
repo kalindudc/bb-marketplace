@@ -8,6 +8,7 @@ import { STAGES } from "../next-step";
 import { AboutStrip } from "./about";
 import { AgentsView } from "./agents";
 import { Board } from "./board";
+import { PhaseStrip } from "./phase-strip";
 import { ChangesTab, landingFiles, useViewed } from "./changes";
 import { BUTTON_PRIMARY, ConfirmButton, MoreMenu, RepoChip, StateBadge, SyncButton, countsLabel, listText, mergeLabel, momentLabel, useAction, useLoom, useLoomWrite, useSyncPullRequests } from "./common";
 import { Guide } from "./guide";
@@ -386,6 +387,7 @@ function ProjectPanel({ slug, tab, onTab, at, onSeek, go }: { slug: string; tab:
             <BadgeNotice key={shownTab} slug={slug} tab={shownTab} badge={shownBadge} onTicket={(key) => go(`${slug}/${key}`)} />
           </div>
         )}
+        {shownTab === "board" && <PhaseStrip phases={view.phases} />}
         {shownTab === "board" && <Board slug={slug} cards={view.board} strategy={overview.strategy} now={view.now} draftVersion={overview.state === "draft" ? view.spec.version : null} onChanges={changesTab ? openChanges : undefined} />}
         {shownTab === "agents" && <AgentsView agents={view.agents} byRole={view.metrics.tokens.byRole} unreported={view.metrics.tokens.unreported} now={view.now} />}
         {shownTab === "insights" && <InsightsTab slug={slug} at={at} onTicket={(key) => go(`${slug}/${key}`)} />}

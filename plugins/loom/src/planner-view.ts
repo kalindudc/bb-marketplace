@@ -1,6 +1,7 @@
 // The Planner page's account of a planner's work, from what Loom keeps itself: the spec versions it proposed, Loom's
 // reviews of them, the human's comments and controls, triage rounds, the planner's board changes, and the planner's last
 // words in each turn, which bb hands over when its thread goes idle. Question rounds live in bb's thread; the page adds them.
+import { feedText } from "./feed-text";
 import { plannerAsk, type AskStep, type PlannerAsk } from "./asks";
 import { mergeConfirmOf, type MergeConfirmState } from "./auto-merge";
 import { releaseRequestOf } from "./drafts";
@@ -222,6 +223,11 @@ function stepsOf(store: Store, project: ProjectRow | null, threadId: string, sta
       }
       case "planner.asked":
         act(event.at, { kind: "ask", why: String(data.why ?? ""), steps: (data.steps as AskStep[] | undefined) ?? [] });
+        break;
+      case "phase.done":
+      case "phase.started":
+      case "phase.told":
+        external({ kind: "message", at: event.at, text: feedText(event, new Map()) });
         break;
       case "triage.sent":
         external({ kind: "triage", at: event.at, round: Number(data.round), blocked: (data.blocked as Array<{ key: string; title: string; reason: string }> | undefined) ?? [], response: null });

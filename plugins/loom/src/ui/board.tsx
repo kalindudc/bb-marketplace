@@ -3,7 +3,7 @@ import { useBbNavigate } from "@get-bb/plugin-sdk/app";
 import type { BoardCard } from "../contract";
 import { formatDuration, retryText, reviewerLookupText, startWaitText } from "../format";
 import type { TicketState } from "../states";
-import { HEADING, RepoChip, plural } from "./common";
+import { HEADING, PhaseChip, RepoChip, plural } from "./common";
 import { DraftHold } from "./draft-hold";
 import { MergeConfirm } from "./merge-confirm";
 
@@ -49,6 +49,7 @@ function DraftCard({ card }: { card: BoardCard }) {
   return (
     <div data-card={card.key} data-draft className="min-w-0 rounded-md border border-dashed border-border-seam p-2.5">
       <span className="text-xs font-medium text-muted-foreground">{card.key} · draft</span>
+      {card.phase !== null && <PhaseChip name={card.phase} />}
       {card.repo !== null && <RepoChip name={card.repo} className="ml-1.5" />}
       <span className="mt-0.5 block text-sm [overflow-wrap:anywhere]">{card.title}</span>
       {!card.ready && card.waitingOn.length > 0 && <p className="mt-1 text-xs text-muted-foreground">Waits on {card.waitingOn.join(", ")}</p>}
@@ -64,6 +65,7 @@ function Card({ slug, card, now, draft, onChanges, withState }: { card: BoardCar
     <div data-card={card.key} className="min-w-0 rounded-md border border-border-seam bg-card p-2.5">
       <button type="button" data-open-ticket onClick={() => navigate.toPluginPanel("loom", { subPath: `${slug}/${card.key}` })} className="block w-full cursor-pointer text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">
         <span className="text-xs font-medium text-muted-foreground">{card.key}</span>
+        {card.phase !== null && <PhaseChip name={card.phase} />}
         {card.repo !== null && <RepoChip name={card.repo} className="ml-1.5" />}
         {withState && (
           <span data-card-state className={`ml-1.5 rounded-full px-1.5 text-[10.5px] font-semibold ${STATE_TINTS[card.state] ?? "bg-foreground/5 text-muted-foreground"}`}>

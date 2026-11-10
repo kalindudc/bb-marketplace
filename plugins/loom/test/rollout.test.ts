@@ -46,6 +46,7 @@ function row(key: string, state: TicketState, over: Over = {}): TicketRow {
   const pr = !["queued", "working", "cancelled"].includes(state);
   return {
     id: seq,
+    phase: null,
     project_id: 1,
     seq,
     key,

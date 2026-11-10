@@ -14,7 +14,7 @@ Once a project runs, the plugin starts worker agents by itself, one per ready ti
     bb loom list                                  # projects with state and ticket count
     bb loom show <slug>                           # state, goal, merge setup, spec versions, ticket counts, next step
     bb loom spec <slug> [--version N]             # the spec as TOML (approved version, or the draft)
-    bb loom tickets <slug> [--state s,s]          # the board: key, state, priority, title, dependencies
+    bb loom tickets <slug> [--state s,s] [--phase ref]          # the board: key, state, priority, title, dependencies
     bb loom ticket <KEY>                          # a ticket and its reply thread, indented by reply depth
     bb loom metrics <slug> [--days N]             # flow and agent metrics, one line each, with units; --days sets the window (default 14)
     bb loom feed <slug> [--after <id>]            # the newest 200 events as sentences, oldest first; --after gives the 200 after that id
@@ -223,6 +223,14 @@ Review again as is (`bb loom requeue <KEY> --review`, `loom_requeue({ key, note,
 When the human approves a pending spec version, the plugin itself requeues every blocked ticket whose worker never started (bb refused it, it failed to start `max_attempts` times, or its environment provider stayed unavailable for an hour). A ticket blocked because bb refused its reviewer, or because no reviewer could start while its provider stayed unavailable, goes back to review instead, in a new review round for the same commit, because its work already passed the checks. On the pull request strategy its newest worker thread becomes its released worker again, as with Review again as is, so requested changes, or once its pull request is open a fix round or a catch-up, bring that thread back. The plugin then sends the planner a message that names the version, the tickets it requeued or sent back to review, and the tickets still blocked. Requeue the ones still blocked with `loom_requeue` only when the new version fixes what blocked them.
 
 Each `provider` in `[agents.worker]` and `[agents.reviewer]` must be a bb provider id, such as `claude-code`, `codex` or `pi`, not a model name such as `claude`. `loom_propose` checks them against the providers bb has and refuses an unknown one with the ids bb has; when bb's list cannot be read, the spec is accepted unchecked.
+
+## Phases
+
+A phased spec has a roadmap of 2 to 8 phases, with tickets only for the first phase at the first proposal. Each phase has a goal, observable done-when checks, an outline for work not planned yet, and a ticket budget (8 by default, at most 12). The page shows the roadmap above the board and groups the Spec tab's tickets by phase. `bb loom show` prints phase lines; `bb loom tickets --phase <ref>` filters the board.
+
+When all tickets in a phase are done or cancelled and another phase remains, Loom records `phase.done` and tells the planner once its thread is idle. Read the facts, check each outcome, and write the finished phase's `report` with evidence, cancellations, discovered work and plan changes. Propose the full spec with only the next phase filled in, revising later outlines or dropping unneeded planned phases. The spec review checks the report and new tickets. Only the human's approval creates them and starts the phase.
+
+Existing tickets still change through board tools. `loom_add_tickets` joins the active phase within its cap; between phases it refuses and asks for a proposal. A project cannot finish while a phase has no tickets. Specs without phases work as before. See `references/spec.md` for fields and revision rules.
 
 ## Triage rounds
 

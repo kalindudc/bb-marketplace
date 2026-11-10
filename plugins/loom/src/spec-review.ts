@@ -6,6 +6,7 @@ import { randomBytes } from "node:crypto";
 import type { ProjectRow, SpecReviewRow, SpecReviewSkip, Store } from "./db/store";
 import { spawnEnvironment, threadBranch } from "./environments";
 import { LoomError } from "./projects";
+import { phaseMergeCommits } from "./phases";
 import { specReviewFailedText, specReviewNudgeText, specReviewSkippedText, specReviewVerdictText, specReviewerBrief } from "./prompts";
 import { isMultiRepo, repoSettings } from "./repos";
 import { readSpec, type Spec } from "./spec";
@@ -210,7 +211,7 @@ async function spawnReviewer(ctx: EngineCtx, project: ProjectRow, row: SpecRevie
       baseBranch: `${settings.remote}/${settings.base}`,
       environment: spawnEnvironment(settings, { branch: threadBranch(project.slug, "spec", `review-${version}-${round}`), base: `${settings.remote}/${settings.base}` }),
       title: `${project.key} · spec review v${version}`,
-      prompt: specReviewerBrief({ project, spec, toml, version, round, earlier, inForce, instructions: ctx.plannerInstructions?.() ?? "" }),
+      prompt: specReviewerBrief({ project, spec, toml, version, round, earlier, inForce, tickets: ctx.store.tickets(project.id), mergeCommits: spec.phase === undefined ? undefined : phaseMergeCommits(ctx.store, ctx.store.tickets(project.id)), instructions: ctx.plannerInstructions?.() ?? "" }),
       sectionId: project.section_id,
       metadata: { project: project.slug, role: "spec-review", version: String(version), spawnToken: token },
       providerId: agent.provider,

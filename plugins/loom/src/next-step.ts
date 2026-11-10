@@ -2,6 +2,7 @@
 // so this file imports nothing that pulls zod or smol-toml into the app's bundle.
 import type { BoardCard, ControlAction } from "./contract";
 import { isMultiRepoProject, its, plural, readyToLand, reposHave, retryText } from "./format";
+import type { PhaseView } from "./phases";
 import type { ProjectOverview } from "./projects";
 import type { SpecReviewStatus } from "./spec-review";
 import { PAUSE_NOW_REASON, SPEC_REVIEW_ROUNDS } from "./states";
@@ -20,6 +21,8 @@ export interface NextStep {
 }
 
 export interface NextStepInput {
+  phases?: PhaseView[] | null;
+  phaseFill?: { ref: string; title: string; count: number } | null;
   overview: ProjectOverview;
   board: BoardCard[];
   /** The approved spec version, or the draft's. */
@@ -202,7 +205,7 @@ export function nextStepOf(input: NextStepInput): NextStep | null {
       stage,
       tone: "normal",
       title: `Next: approve v${pendingVersion}.`,
-      text: `The planner proposed spec v${pendingVersion}; it changes the spec, not the tickets on the board. ${reviewedNote(input.specReview, repoNames)}${moves.length === 0 ? "Approving tells the planner." : `Approving ${moves.join(", ")}, and tells the planner.`}`,
+      text: input.phaseFill != null ? `Approve v${pendingVersion} to start phase ${(input.phases?.findIndex((phase) => phase.ref === input.phaseFill!.ref) ?? 0) + 1}, ${input.phaseFill.title}: ${plural(input.phaseFill.count, "ticket")}. ${reviewedNote(input.specReview, repoNames)}Approving creates the tickets on the board and tells the planner.` : `The planner proposed spec v${pendingVersion}; it changes the spec, not the tickets on the board. ${reviewedNote(input.specReview, repoNames)}${moves.length === 0 ? "Approving tells the planner." : `Approving ${moves.join(", ")}, and tells the planner.`}`,
       action: {
         control: "approve",
         version: pendingVersion,
@@ -211,6 +214,12 @@ export function nextStepOf(input: NextStepInput): NextStep | null {
       },
       ...skippedPaths(input.specReview),
     };
+  }
+
+  const planned = input.phases?.findIndex((phase) => phase.state === "planned") ?? -1;
+  if ((state === "running" || state === "paused") && planned > 0 && !input.phases!.some((phase) => phase.state === "active")) {
+    const finished = input.phases![planned - 1]!;
+    return { stage: 4, tone: "normal", title: "Next: plan the next phase.", text: `Phase ${planned} of ${input.phases!.length}, ${finished.title}, is done. The planner is planning phase ${planned + 1}.`, action: null };
   }
 
   if (state === "paused") {

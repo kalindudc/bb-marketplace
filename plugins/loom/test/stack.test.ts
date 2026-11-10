@@ -10,6 +10,7 @@ function row(key: string, state: TicketState, over: Partial<TicketRow> & { deps?
   const { deps = [], stack, ...rest } = over;
   return {
     id: seq,
+    phase: null,
     project_id: 1,
     seq,
     key,

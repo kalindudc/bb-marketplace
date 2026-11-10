@@ -10,6 +10,7 @@ import { isUnder, pathNamesOf } from "../src/spec-paths";
 import { labelOf } from "../src/ui/spec-review-kit";
 import { reloadRemembered } from "../src/ui/remember";
 import { overview, projectView, specVersionView } from "./fixtures";
+import { phased } from "./phase-fixtures";
 import { specToml, type Doc } from "./helpers";
 
 type Handlers = PluginRpcTestHandlers<typeof rpcContract>;
@@ -175,6 +176,12 @@ function mergingEverything(doc: Doc): void {
   doc.merge.publish = { when: ["live"] };
   doc.repo[1].forge.ready = "api-pr ready";
 }
+const phasedSpec = () => valid(specToml((doc) => {
+  phased(doc);
+  doc.phase[0].outline = ["Ship a usable CSV"];
+  doc.phase[0].report = "The download check passed on the merged work.";
+}));
+
 const FIXTURES = [
   ["a pull request", full],
   ["an integration", () => valid(specToml(integrationEverything))],
@@ -333,11 +340,19 @@ describe("spec settings", () => {
   it("sets every key the spec schema has in one of the fixtures, so the walk below reaches every setting", () => {
     const keys = keyPaths(specSchema);
     const records = keys.filter((key) => key.endsWith(".*"));
-    const set = new Set(FIXTURES.flatMap(([, spec]) => specDiff(skeleton(spec()), spec()).map((change) => keyPathOf(change.path, records))));
+    const set = new Set([...FIXTURES.map(([, spec]) => spec), phasedSpec].flatMap((spec) => specDiff(skeleton(spec()), spec()).map((change) => keyPathOf(change.path, records))));
     // A ticket is known by its ref, so a new ref reads as a new ticket, never as a changed ref.
     const exceptions = ["ticket[].ref"];
     expect(keys.length).toBeGreaterThan(120);
     expect(keys.filter((key) => !set.has(key) && !exceptions.includes(key))).toEqual([]);
+  });
+
+  it("draws every phase field and ticket phase as a commentable part", async () => {
+    const spec = phasedSpec();
+    const paths = specDiff(skeleton(spec), spec).map((change) => change.path).filter((path) => path.startsWith("phase[") || path.endsWith(".phase"));
+    const slot = await openSpec(versionOf(spec, skeleton(spec)));
+    entire(slot);
+    expect(missedJumps(slot, paths)).toEqual([]);
   });
 
   it.each(FIXTURES)("draws every part of %s spec that sets every setting, so What changed goes to each change and the human can comment on it", async (strategy, fixture) => {

@@ -14,6 +14,7 @@ const id = () => (nextId += 1);
 
 const ticket = (n: number, state: TicketState, over: Partial<TicketRow> = {}): TicketRow => ({
   id: n,
+  phase: null,
   project_id: 1,
   seq: n,
   key: `CSV-${n}`,

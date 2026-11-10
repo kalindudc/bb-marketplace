@@ -32,6 +32,10 @@ export function RepoChip({ name, className = "" }: { name: string; className?: s
   );
 }
 
+export function PhaseChip({ name }: { name: string }) {
+  return <span data-phase-chip={name} className={`${CHIP} inline-block text-muted-foreground`}>phase {name}</span>;
+}
+
 export const mergeLabel = (project: Pick<ProjectSummary, "strategy" | "branch">) => (project.strategy === "integration" ? `integration branch ${project.branch}` : "one pull request per ticket");
 export const countsLabel = (counts: ProjectSummary["ticketCounts"]) =>
   TICKET_STATES.filter((state) => (counts[state] ?? 0) > 0)

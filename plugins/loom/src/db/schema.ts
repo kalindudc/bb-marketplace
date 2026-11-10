@@ -248,4 +248,5 @@ export const MIGRATIONS: string[] = [
   UPDATE threads SET usage_json = json_object('sum', tokens) WHERE tokens IS NOT NULL;
   UPDATE threads SET tokens_at = NULL WHERE state = 'ended';
   CREATE INDEX threads_ended ON threads (ended_at) WHERE state = 'ended'`,
+  `ALTER TABLE tickets ADD COLUMN phase TEXT`,
 ];

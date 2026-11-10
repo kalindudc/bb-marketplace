@@ -38,7 +38,7 @@ function markOf(changes: readonly SpecChange[], compared: boolean, ref: string):
 
 /** The parts of a ticket that changed, for its list row: "criteria, files". */
 function changedParts(changes: readonly SpecChange[], ref: string): string[] {
-  const names: Record<string, string> = { title: "title", body: "brief", acceptance: "criteria", scope: "files", verify: "verify", depends_on: "order", merge_after: "merge order", keep_draft: "draft hold", priority: "priority", repo: "repo", environment: "environment", rollout: "deploy" };
+  const names: Record<string, string> = { phase: "phase", title: "title", body: "brief", acceptance: "criteria", scope: "files", verify: "verify", depends_on: "order", merge_after: "merge order", keep_draft: "draft hold", priority: "priority", repo: "repo", environment: "environment", rollout: "deploy" };
   const parts = changes.filter((change) => change.ref === ref && change.kind !== "ticket-added").map((change) => names[/^ticket\[[^\]]+\]\.(\w+)/.exec(change.path)?.[1] ?? ""] ?? "");
   return [...new Set(parts.filter((part) => part !== ""))];
 }
@@ -274,6 +274,7 @@ function TicketDetail({ ticket, spec, view, onSelect }: { ticket: TicketSpec; sp
         </Commentable>
         <span className="font-mono text-xs text-muted-foreground [overflow-wrap:anywhere]">{ticket.ref}</span>
         <span className={`${CHIP} px-2 text-muted-foreground`}>wave {wave}</span>
+        {ticket.phase !== undefined && <Commentable as="span" target={{ paths: [`${base}.phase`], label: `${ticket.ref} › phase`, kind: "text", value: ticket.phase }} className={CHIP}>phase {ticket.phase}</Commentable>}
         {ticket.repo !== undefined && (
           <Commentable as="span" target={{ paths: [`${base}.repo`], label: `${ticket.ref} › repo`, kind: "text", value: ticket.repo }} className="inline-flex items-center">
             <RepoChip name={ticket.repo} />
@@ -363,8 +364,8 @@ export function TicketsSection({
   const pick = removedPick === undefined ? (spec.ticket.find((ticket) => ticket.ref === selected) ?? shown[0] ?? (review.only ? null : spec.ticket[0]!)) : null;
   const notesOn = (ref: string) => review.notes.filter((note) => note.paths.some((path) => path === `ticket[${ref}]` || path.startsWith(`ticket[${ref}].`))).length;
   const mark = (ref: string) => markOf(review.changes, compared !== null, ref);
-  const columns: TicketSpec[][] = [];
-  for (const ticket of shown) (columns[waves[ticket.ref]!] ??= []).push(ticket);
+  const columns: TicketSpec[][] = spec.phase === undefined ? [] : spec.phase.map((phase) => shown.filter((ticket) => ticket.phase === phase.ref));
+  if (spec.phase === undefined) for (const ticket of shown) (columns[waves[ticket.ref]!] ??= []).push(ticket);
   const workers = spec.agents.max_workers;
   const waveCount = Math.max(...Object.values(waves)) + 1;
 
@@ -375,9 +376,24 @@ export function TicketsSection({
         column === undefined ? null : (
           <div key={wave}>
             <h4 className={`${HEADING} px-2 pt-2 pb-1`}>
-              Wave {wave + 1}
-              {wave === 0 ? " · starts at once" : ""}
+              {spec.phase === undefined ? `Wave ${wave + 1}${wave === 0 ? " · starts at once" : ""}` : <>Phase {wave + 1} · <Commentable as="span" target={{ paths: [`phase[${wave}].title`], label: `Phase ${wave + 1} › title`, kind: "text" }}>{spec.phase[wave]!.title}</Commentable></>}
             </h4>
+            {spec.phase !== undefined && (
+              <div data-anchor={`phase[${wave}]`} className="space-y-1 px-2 py-1 text-xs">
+                <p className="flex flex-wrap gap-1 text-muted-foreground">
+                  <Commentable as="span" target={{ paths: [`phase[${wave}].ref`], label: `Phase ${wave + 1} › ref`, kind: "text" }}>{spec.phase[wave]!.ref}</Commentable>
+                  <Commentable as="span" target={{ paths: [`phase[${wave}].max_tickets`], label: `Phase ${wave + 1} › ticket budget`, kind: "number", value: spec.phase[wave]!.max_tickets ?? 8, min: 1, max: 12 }}> · budget {spec.phase[wave]!.max_tickets ?? 8}</Commentable>
+                </p>
+                <Prose path={`phase[${wave}].goal`} label={`Phase ${wave + 1} › goal`} text={spec.phase[wave]!.goal} />
+                <Commentable target={{ paths: [`phase[${wave}].done_when`], label: `Phase ${wave + 1} › done when`, kind: "criterion" }}>
+                  <ul className="list-inside list-disc text-muted-foreground">{spec.phase[wave]!.done_when.map((check, index) => <li key={index}>{check}</li>)}</ul>
+                </Commentable>
+                {(spec.phase[wave]!.outline !== undefined || changedAt(review, `phase[${wave}].outline`)) && <Commentable target={{ paths: [`phase[${wave}].outline`], label: `Phase ${wave + 1} › outline`, kind: "text" }}>
+                  <ul className="list-inside list-disc text-subtle-foreground">{(spec.phase[wave]!.outline ?? []).map((line, index) => <li key={index}>{line}</li>)}</ul>
+                </Commentable>}
+                {(spec.phase[wave]!.report !== undefined || changedAt(review, `phase[${wave}].report`)) && <div><p className={HEADING}>Report</p><Prose path={`phase[${wave}].report`} label={`Phase ${wave + 1} › report`} text={spec.phase[wave]!.report} /></div>}
+              </div>
+            )}
             {column.map((ticket) => {
               const parts = changedParts(review.changes, ticket.ref);
               const ticketMark = mark(ticket.ref);
@@ -445,7 +461,7 @@ export function TicketsSection({
           ))}
         </div>
         <span className="text-xs text-muted-foreground">
-          {plural(spec.ticket.length, "ticket")} in {plural(waveCount, "wave")}; {workers === 1 ? "one runs" : `up to ${workers} run`} at a time.
+          {plural(spec.ticket.length, "ticket")} in {spec.phase === undefined ? plural(waveCount, "wave") : plural(spec.phase.length, "phase")}; {workers === 1 ? "one runs" : `up to ${workers} run`} at a time.
           {layout === "map" && " Hover a ticket to trace what it waits for and unblocks."}
         </span>
       </div>

@@ -39,7 +39,10 @@ export type { SpecReviewRound };
 export type { AckTab, AskAction, AskStep, BadgeAcks, PlannerAction, PlannerAsk, PlannerStep, PlannerVersion, PlannerView, TurnStep, VersionChange };
 export type { ActivityItem, Attempt, BbProjectChoice, ChecksItem, CheckStep, PrFeedbackItem, PrTextItem, HomeProject, HomeView, Mark, MergeItem, Moment, MomentKind, NeedItem, NextStep, PlanningSession, ProjectHealth, ProjectTimeline, RepoOverview, ReviewItem, SentNote, SessionBar, SpecVersionView, TicketActivity, TicketBar };
 
+export type { PhaseView } from "./phases";
+
 export interface BoardCard {
+  phase: string | null;
   key: string;
   title: string;
   state: TicketState;
@@ -119,7 +122,7 @@ export interface RetryView {
 
 /** What the draft card shows before a project has tickets on the board. */
 export interface SpecSummary {
-  tickets: Array<{ ref: string; title: string; dependsOn: string[] }>;
+  tickets: Array<{ ref: string; title: string; dependsOn: string[]; phase: string | null }>;
   /** The spec's [[repo]] tables; empty on a single-repo spec. `bbProjectName` is null when bb cannot tell. */
   repos: Array<{ name: string; bbProjectId: string; bbProjectName: string | null }>;
   checks: string[];
@@ -155,6 +158,7 @@ export interface AgentRow {
 }
 
 export interface ProjectView {
+  phases: import("./phases").PhaseView[] | null;
   overview: ProjectOverview;
   /** Before approval, the draft's tickets with the keys approval will give them. */
   board: BoardCard[];
@@ -252,6 +256,7 @@ export interface TicketPr {
 }
 
 export interface TicketDetail {
+  phase: string | null;
   slug: string;
   projectState: ProjectState;
   key: string;

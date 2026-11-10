@@ -109,7 +109,7 @@ function repoLine(repo: RepoOverview): string {
   return `  ${parts.join(" · ")}`;
 }
 
-function formatShow(project: ProjectOverview): string {
+function formatShow(project: ProjectOverview, phases: import("./phases").PhaseView[] | null): string {
   const merge = project.strategy === "integration" ? `integration branch ${project.branch}` : "one pull request per ticket";
   const counts = Object.entries(project.ticketCounts).map(([state, count]) => `${state} ${count}`);
   const specLine =
@@ -122,6 +122,7 @@ function formatShow(project: ProjectOverview): string {
     `Key ${project.key} · base ${project.base} · ${merge}`,
     ...(isMultiRepoProject(project) ? ["Repos:", ...project.repos.map(repoLine)] : []),
     specLine,
+    ...(phases === null ? [] : phases.map((phase, index) => `Phase ${index + 1}. ${phase.title} · ${phase.state} · ${phase.tickets.done} done, ${phase.tickets.cancelled} cancelled, ${phase.tickets.open} open / ${phase.tickets.total} tickets`)),
     `Tickets: ${project.ticketCount}${counts.length > 0 ? ` (${counts.join(", ")})` : ""}`,
   ];
   if (project.plannerThreadId !== null) lines.push(`Planner thread: ${project.plannerThreadId}`);
@@ -222,6 +223,7 @@ function formatRepoLand(slug: string, result: Extract<LandResult, { repos: unkno
 function formatApprove(result: Approved): string {
   const requeued = result.requeued.length === 0 ? "" : `Queued again, because bb never started ${its(result.requeued.length, "worker")}: ${result.requeued.join(", ")}.\n`;
   const reviewed = result.backToReview.length === 0 ? "" : `Back in review, because bb refused to start ${its(result.backToReview.length, "reviewer")}: ${result.backToReview.join(", ")}.\n`;
+  if (result.applied === "pending" && result.tickets.length > 0) return `Applied spec v${result.version} to ${result.slug}. Started the next phase with ${result.tickets.length} tickets: ${result.tickets.join(", ")}.\n${requeued}${reviewed}`;
   if (result.applied === "pending") return `Applied spec v${result.version} to ${result.slug}. Its tickets are unchanged.\n${requeued}${reviewed}`;
   const keys = result.tickets.length <= 8 ? result.tickets.join(", ") : `${result.tickets[0]} to ${result.tickets.at(-1)}`;
   return `Approved ${result.slug}. It is ready with ${result.tickets.length} ${result.tickets.length === 1 ? "ticket" : "tickets"}: ${keys}.\nStart it with \`bb loom start ${result.slug}\`.\n`;
@@ -257,7 +259,8 @@ export function createCli(projects: Projects, engine: Engine, store: Store, now:
         run: ({ options, positionals }) =>
           guarded(async () => {
             const project = await projects.namedOverview(positionals.slug);
-            return out(options.json ? toJson(project) : formatShow(project));
+            const phases = projects.phases(positionals.slug);
+            return out(options.json ? toJson(phases === null ? project : { ...project, phases }) : formatShow(project, phases));
           }),
       }),
       spec: cliCommand({
@@ -274,12 +277,13 @@ export function createCli(projects: Projects, engine: Engine, store: Store, now:
         summary: "List a project's tickets, optionally only those in some states",
         positionals: [SLUG],
         options: {
+          phase: { type: "string", description: "Only tickets in this phase, by ref." },
           state: { type: "enum", values: TICKET_STATES, repeatable: true, split: ",", description: "Only tickets in these states, comma-separated." },
           json,
         },
         run: ({ options, positionals }) =>
           guarded(() => {
-            const tickets = projects.tickets(positionals.slug, options.state.length > 0 ? options.state : undefined);
+            const tickets = projects.tickets(positionals.slug, options.state.length > 0 ? options.state : undefined).filter((ticket) => options.phase === undefined || ticket.phase === options.phase);
             return out(options.json ? toJson(tickets) : formatTickets(tickets));
           }),
       }),

@@ -1,6 +1,7 @@
 // Landing a project on the integration strategy: push its integration branch to its base or open its pull request, repo
 // by repo, and finish the project once every repo is landed.
 import type { ProjectRow, Store, TicketRow } from "./db/store";
+import { phasesOf } from "./phases";
 import { Unavailable } from "./forge-waits";
 import { andList, clip, landBody, mergeSubject } from "./prompts";
 import { LoomError } from "./projects";
@@ -26,6 +27,7 @@ function completeProject(ctx: EngineCtx, projectId: number): boolean {
   if (project === null || (project.state !== "running" && project.state !== "paused")) return false;
   const tickets = store.tickets(projectId);
   if (tickets.length === 0 || !tickets.every((ticket) => ticket.state === "done" || ticket.state === "cancelled")) return false;
+  if (phasesOf(specOf(store, project), tickets)?.some((phase) => phase.state === "planned")) return false;
   if (unlandedRepos(store, projectId, specOf(store, project)).length > 0) return false;
   // Queued with the move, so no restart can finish a project without a record.
   store.tx(() => {

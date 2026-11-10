@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { TomlError, parse } from "smol-toml";
 import { z } from "zod";
+import { phaseErrors } from "./phases";
 import { unknownPlaceholders } from "./environments";
 import { deploysOnMerge, SOAK_PATTERN } from "./rollout";
 import { plural } from "./format";
@@ -244,9 +245,20 @@ const agentSchema = z
   })
   .strict();
 
+export const phaseSchema = z.object({
+  ref: z.string().regex(/^[a-z0-9][a-z0-9-]{0,39}$/),
+  title: z.string().trim().min(1).max(80),
+  goal: z.string().trim().min(20).max(1000),
+  done_when: z.array(z.string().trim().min(1).max(300)).min(1).max(7),
+  outline: z.array(z.string().trim().min(1).max(300)).max(20).optional(),
+  max_tickets: z.number().int().min(1).max(12).optional(),
+  report: z.string().trim().min(1).max(4000).optional(),
+}).strict();
+
 export const ticketSpecSchema = z
   .object({
     ref: z.string().regex(/^[a-z0-9][a-z0-9-]{0,39}$/, "must be 1-40 lowercase letters, digits or dashes, starting with a letter or digit (for example csv-model)"),
+    phase: z.string().max(40).optional(),
     title: z.string().trim().min(1).max(120),
     body: z.string().trim().min(1).max(8000),
     acceptance: z.array(z.string().min(1).max(1000)).min(1).max(20),
@@ -387,6 +399,7 @@ export const specSchema = z
     repo: z.array(repoSpecSchema).max(10).optional(),
     rollout: rolloutSchema.optional(),
     hook: z.array(hookSchema).max(20).optional(),
+    phase: z.array(phaseSchema).min(2).max(8).optional(),
     ticket: z.array(ticketSpecSchema).min(1).max(200),
   })
   .strict();
@@ -733,7 +746,7 @@ export function dependencyCycle(tickets: readonly { ref: string; depends_on: rea
 }
 
 export function validateSemantics(spec: Spec, rawToml: string): { errors: string[]; warnings: string[] } {
-  const errors: string[] = [];
+  const errors: string[] = phaseErrors(spec);
   const warnings: string[] = [];
 
   if (rawToml.includes("[NEEDS CLARIFICATION")) {

@@ -29,6 +29,8 @@ function occurrenceOf(store: Store, event: EventRow): Occurrence | null {
       const what = `The human approved spec version ${version ?? "?"}${data.pending === true ? ", a change to the approved project" : ""}.`;
       return { on: "spec.approved", ticketId: null, facts: { what, ...(version === undefined ? {} : { version }) } };
     }
+    case "phase.done":
+      return { on: "phase.done", ticketId: null, facts: { what: `Phase ${String(data.title)} (${String(data.ref)}) is done; ${String(data.done)} done, ${String(data.cancelled)} cancelled. Next phase: ${String(data.next)}.` } };
     case "project.state":
       if (data.from === "ready" && data.to === "running") return { on: "project.started", ticketId: null, facts: { what: "The human started the project." } };
       if (data.to === "done") return { on: "project.done", ticketId: null, facts: { what: "Every ticket is done or cancelled, so the project is done." } };

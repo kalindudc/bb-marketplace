@@ -802,8 +802,8 @@ describe("planning", () => {
     const { spec } = await call<ProjectView>("project", { slug: "csv" });
     expect(spec.summary).toEqual({
       tickets: [
-        { ref: "csv-model", title: "Order rows", dependsOn: [] },
-        { ref: "csv-export", title: "Export endpoint", dependsOn: ["csv-model"] },
+        { ref: "csv-model", title: "Order rows", dependsOn: [], phase: null },
+        { ref: "csv-export", title: "Export endpoint", dependsOn: ["csv-model"], phase: null },
       ],
       repos: [],
       checks: ["npm test"],

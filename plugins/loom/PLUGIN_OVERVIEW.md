@@ -1,8 +1,9 @@
-Run a software project with agents. A planner turns your goal into a spec and a ticket board, workers build each ticket in its own git worktree, separate reviewers approve the work or send it back, and approved work merges into an integration branch or opens as pull requests. You follow and steer it from the Loom page in bb's left navigation, or with `bb loom`.
+Run a software project with agents. A planner writes the spec, workers build tickets in git worktrees, reviewers approve or request changes, and approved work merges into an integration branch or opens as pull requests. You follow and steer it from the Loom page in bb's left navigation, or with `bb loom`.
 
 ## What you get
 
-- Planning from any thread with the `loom-plan` skill, or from New project on the Loom page. The planner asks its questions (Ask User Question rounds, one question at a time on its page) and proposes a spec: tickets with acceptance criteria, check commands, a review policy and a merge plan.
+- Planning from any thread with the `loom-plan` skill, or from New project on the Loom page. The planner asks its questions (Ask User Question rounds, one at a time on its page) and proposes a spec: tickets with acceptance criteria, check commands, a review policy and a merge plan.
+- Phases for big goals: tickets come one small phase at a time; you approve each next one.
 - A spec review before you see it: a separate agent checks the spec against your request and for work the goal does not need.
 - Spec review without reading TOML: how it runs, the tickets by wave and the goal, opening on what changed since the last version. Comment on any part or suggest a value ("+ note" on files), and the planner gets every comment in one message.
 - Workers that start by themselves, one per ready ticket in its own worktree, once its dependencies are done and its files clear the work in flight. Loom, not the agent, commits, runs your checks and decides whether the work passed.
@@ -10,7 +11,7 @@ Run a software project with agents. A planner turns your goal into a spec and a 
 - Two ways to ship: an integration branch you read on the Changes tab and land as one pull request, or straight onto the base with `--direct`; or one pull request per ticket that the worker writes and Loom follows through CI and review. A dependent ticket stacks on its dependency's open pull request instead of waiting for the merge.
 - Hooks: when a pull request opens or a ticket blocks, Loom tells the planner what to do, or runs a command, as your Planner instructions ask.
 - Deploy order as advice: a Rollout tab and a section in each pull request show the next safe step and what must be live first.
-- Projects across repos: list bb projects as `[[repo]]` tables, and each ticket runs in one, with that repo's checks and integration branch.
+- Projects across repos: `[[repo]]` tables, each with its own checks and integration branch; a ticket runs in one.
 - A Loom page: a home table that puts what needs you first, a next-step bar with the one button you need now, a board with a row per stage, a ticket page with every attempt, check, review and merge, an Agents tab, and an Insights tab that says how the project went and what happened to each ticket.
 - A timeline on every project: rewind the page to any moment or play it back.
 - Blocked tickets go to the planner in a triage round, and your reply on one reaches it at once. The Loom icon in the navigation rail counts what needs you, and the Loom page swaps bb's sidebar for its projects and the open project's tickets.

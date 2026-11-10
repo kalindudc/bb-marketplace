@@ -19,6 +19,7 @@ import { askOf, forgeRoundsSinceRequeue, PR_TEXT_MINUTES, statusOf } from "./pul
 import { prTextFor } from "./pr-text";
 import { followsFeedback, prSettings, repoSettings } from "./repos";
 import { computeMetrics } from "./metrics";
+import { phasesOf } from "./phases";
 import { nextStepOf } from "./next-step";
 import { LoomError, landsOf, namedRepos, repoOverviews, withRepoNames, type LoomErrorCode, type Projects } from "./projects";
 import { overviewAt, projectTimeline, rewind, rowsOf, runsAt } from "./replay";
@@ -87,7 +88,7 @@ export function specSummary(toml: string, profiles: ForgeProfiles): SpecSummary 
   const { spec, errors, warnings } = parseSpec(toml, profiles);
   if (spec === null) return { tickets: [], repos: [], checks: [], reviewer: null, warnings: [...errors, ...warnings] };
   return {
-    tickets: spec.ticket.map((ticket) => ({ ref: ticket.ref, title: ticket.title, dependsOn: ticket.depends_on })),
+    tickets: spec.ticket.map((ticket) => ({ ref: ticket.ref, title: ticket.title, dependsOn: ticket.depends_on, phase: ticket.phase ?? null })),
     repos: (spec.repo ?? []).map((repo) => ({ name: repo.name, bbProjectId: repo.project, bbProjectName: null })),
     checks: spec.checks.commands,
     reviewer: modelLabel(spec.agents.reviewer),
@@ -167,6 +168,7 @@ export function boardCards(tickets: TicketRow[], threads: ThreadRow[], spec: Spe
     const lite = lites[index]!;
     const live = threads.filter((row) => row.ticket_id === ticket.id && row.state === "active" && row.thread_id !== null).sort((a, b) => Number(b.role === "worker") - Number(a.role === "worker"));
     return {
+      phase: ticket.phase,
       key: ticket.key,
       title: ticket.title,
       state: ticket.state,
@@ -274,6 +276,7 @@ export function draftCards(spec: Spec, at: number): BoardCard[] {
   return lites.map((lite, index) => ({
     key: lite.key,
     title: spec.ticket[index]!.title,
+    phase: spec.ticket[index]!.phase ?? null,
     state: "queued",
     stateAt: at,
     repo: lite.repo,
@@ -357,7 +360,12 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
     const board = project.state === "draft" ? draftCards(current, at) : boardCards(tickets, threads, current, store, at);
     const summary = specSummary(spec.toml, store);
     const specReview = past === null ? specReviewStatus(store, project) : null;
+    const phases = phasesOf(current, tickets);
+    const pendingSpec = past === null && project.pending_version !== null ? readSpec(store.specVersion(project.id, project.pending_version)!.spec_json, store) : null;
+    const nextPhase = pendingSpec === null ? undefined : phasesOf(pendingSpec, tickets)?.find((phase) => phase.state === "planned");
+    const nextTickets = nextPhase === undefined ? [] : (pendingSpec?.ticket.filter((ticket) => ticket.phase === nextPhase.ref) ?? []);
     return {
+      phases,
       overview,
       board,
       metrics,
@@ -369,6 +377,8 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
       },
       prUrl: project.pr_url,
       next: nextStepOf({
+        phases,
+        phaseFill: nextPhase === undefined || nextTickets.length === 0 ? null : { ref: nextPhase.ref, title: nextPhase.title, count: nextTickets.length },
         overview,
         board,
         version: spec.version,
@@ -455,6 +465,7 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
     const stateOf = (dep: string) => (past === null ? store.ticketByKey(dep) : past.tickets.find((row) => row.key === dep))?.state;
     return {
       slug: project.slug,
+      phase: ticket.phase,
       projectState: project.state,
       key: ticket.key,
       title: ticket.title,

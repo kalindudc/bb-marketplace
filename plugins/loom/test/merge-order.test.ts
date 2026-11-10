@@ -25,6 +25,7 @@ function row(key: string, state: TicketState, over: Over = {}): TicketRow {
   const pr = state !== "queued" && state !== "working";
   return {
     id: seq,
+    phase: null,
     project_id: 1,
     seq,
     key,

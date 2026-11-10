@@ -1,6 +1,7 @@
 // Triage rounds and the planner's board tools: how a blocked ticket gets back into the queue, and how the
 // planner answers, edits, splits or cancels tickets after approval.
 import type { PostRow, ProjectRow, ThreadRow, TicketRow } from "./db/store";
+import { phasesOf } from "./phases";
 import { briefBody, LoomError } from "./projects";
 import { clip, triageDigest } from "./prompts";
 import { isMultiRepo, repoSettings } from "./repos";
@@ -190,6 +191,13 @@ export function addTickets(ctx: EngineCtx, projectId: number, tickets: TicketSpe
   if (project === null || project.state === "archived") throw new LoomError("loom_invalid_state", "The project is archived; tickets cannot be added.");
   const spec = specOf(store, project);
   const existing = store.tickets(projectId);
+  const phases = phasesOf(spec, existing);
+  const active = phases?.find((phase) => phase.state === "active");
+  if (phases !== null) {
+    if (active === undefined) throw new LoomError("loom_invalid_state", "No phase is active; propose the next phase with loom_propose instead.");
+    if (active.tickets.total + tickets.length > active.maxTickets) throw new LoomError("loom_invalid_input", `Phase ${active.title} has a max_tickets budget of ${active.maxTickets}; park the work for a later phase's outline.`);
+    if (tickets.some((ticket) => ticket.phase !== undefined && ticket.phase !== active.ref)) throw new LoomError("loom_invalid_input", "New tickets must join the active phase.");
+  } else if (tickets.some((ticket) => ticket.phase !== undefined)) throw new LoomError("loom_invalid_input", "A ticket cannot name a phase without a roadmap.");
   const known = new Map(existing.flatMap((ticket) => [[ticket.key, ticket.key] as const, [ticket.ref, ticket.key] as const]));
   const first = existing.reduce((top, ticket) => Math.max(top, ticket.seq), 0) + 1;
   const keyOf = new Map(tickets.map((ticket, index) => [ticket.ref, `${project.key}-${first + index}`]));
@@ -236,6 +244,7 @@ export function addTickets(ctx: EngineCtx, projectId: number, tickets: TicketSpe
         {
           project_id: projectId,
           seq: first + index,
+          phase: active?.ref ?? null,
           key: keyOf.get(ticket.ref)!,
           ref: ticket.ref,
           title: ticket.title,
