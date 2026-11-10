@@ -461,6 +461,37 @@ describe("reviews from Shuttle", () => {
 });
 
 describe("writes", () => {
+  it("never keeps a conversation read that started before a comment, or before a newer read, as the fresh one", async () => {
+    const h = await withWrites();
+    h.lists.review_requested = [pr(2)];
+    await h.shuttle.sync();
+    h.views[2] = pr(2);
+    const said = (id: string, body: string) => ({ id, kind: "comment", author: id === "c0" ? "dana" : "me", body, at: "2026-10-23T11:00:00Z" });
+    h.activity[2] = { items: [said("c0", "Why this cache?")] };
+    // A slow read is under way when the comment goes.
+    const slow = h.hold("activity");
+    const reading = h.shuttle.conversation(KEY(2));
+    await slow.reached;
+    await h.shuttle.comment(KEY(2), "Because lists were slow.");
+    slow.release();
+    expect((await reading).items.map((item) => item.id)).toEqual(["c0"]);
+    h.activity[2] = { items: [said("c0", "Why this cache?"), said("c1", "Because lists were slow.")] };
+    expect((await h.shuttle.conversation(KEY(2))).items.map((item) => item.id).sort()).toEqual(["c0", "c1"]);
+
+    // Two reads at once: the older one finishing last does not replace the newer one's answer.
+    h.clock.now += 60_000;
+    const older = h.hold("activity");
+    const first = h.shuttle.conversation(KEY(2));
+    await older.reached;
+    h.activity[2] = { items: [said("c0", "Why this cache?"), said("c1", "Because lists were slow."), said("c2", "Thanks")] };
+    expect((await h.shuttle.conversation(KEY(2))).items).toHaveLength(3);
+    h.activity[2] = { items: [said("c0", "Why this cache?")] };
+    older.release();
+    await first;
+    // Still within the cache's 30 seconds, so this is what the newer read kept.
+    expect((await h.shuttle.conversation(KEY(2))).items).toHaveLength(3);
+  });
+
   it("merges only your open PRs, at the head you saw, or turns on auto-merge", async () => {
     const h = await withWrites();
     h.lists.authored = [pr(1, { author: "me", review: "approved", head: "abc1234" })];

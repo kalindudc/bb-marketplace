@@ -87,6 +87,21 @@ describe("a review run", () => {
     });
   });
 
+  it("counts a hidden thread at work under the review thread, such as another plugin's, as the review at work", async () => {
+    const { h, threadId } = await reviewing();
+    setStatus(h, "thr_critic1", { status: "idle" });
+    setStatus(h, "thr_critic2", { status: "idle" });
+    h.port.addThread("thr_hidden", "Flares: Review acme/app#3", false, { status: "active", hidden: true });
+    h.port.children.set(threadId, [...(h.port.children.get(threadId) ?? []), "thr_hidden"]);
+    await h.shuttle.onThreadIdle(threadId);
+    h.clock.now += REVIEW_QUIET_MS + 1;
+    expect(await quiet(h)).toBe(0);
+    expect(run(h).state).toBe("running");
+    setStatus(h, "thr_hidden", { status: "idle" });
+    h.clock.now += REVIEW_QUIET_MS + 1;
+    expect(await quiet(h)).toBe(1);
+  });
+
   it("does not end a review as quiet when a draft or new activity comes while bb is asked", async () => {
     for (const late of ["draft", "activity"] as const) {
       const { h, threadId } = await reviewing();

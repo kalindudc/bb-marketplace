@@ -237,10 +237,9 @@ export function formatMessage(ctx: Ctx, batch: ReadonlyArray<{ pr: PrRow; items:
 /**
  * Sends every due batch. A PR's items are due once the oldest that is not quiet has waited the batch
  * window, or at once with `force` when it has one. Quiet items never make a message: they go with the next one their
- * thread gets, and are dropped once the PR merges or closes. Items today's settings would not send are
- * dropped too. Each owner thread gets each item once; an item stays pending until every owner thread has it.
+ * thread gets. Every item of a PR that merged or closed is dropped, and so are items today's settings would not send. Each owner thread gets each item once; an item stays pending until every owner thread has it.
  */
-export async function deliver(ctx: Ctx, options: { force?: boolean; threadId?: string } = {}): Promise<number> {
+export async function deliver(ctx: Ctx, options: { force?: boolean; threadId?: string; signal?: AbortSignal } = {}): Promise<number> {
   const watchConfig = ctx.config().watch;
   if (!watchConfig.enabled || (ctx.settings().pauseAutomations && !options.force)) return 0;
   const windowMs = watchConfig.batchMinutes * 60_000;
@@ -249,9 +248,11 @@ export async function deliver(ctx: Ctx, options: { force?: boolean; threadId?: s
   for (const watch of ctx.store.watches()) {
     const pr = ctx.store.prById(watch.pr_id);
     if (!pr) continue;
+    // Watching stops reading a PR once it merges or closes, so what it had queued goes no further either: the agent can do
+    // nothing more on that PR.
     const done = pr.state === "merged" || pr.state === "closed";
     const rows = ctx.store.pending(pr.id);
-    const dropped = rows.filter((row) => !keepItem(ctx, pr, row.item) || (done && isQuiet(ctx, pr, row.item)));
+    const dropped = rows.filter((row) => done || !keepItem(ctx, pr, row.item));
     if (dropped.length) ctx.store.markSeen(pr.id, dropped.map((row) => row.item_id));
     const pending = rows.filter((row) => !dropped.includes(row));
     if (!pending.length) continue;
@@ -275,6 +276,7 @@ export async function deliver(ctx: Ctx, options: { force?: boolean; threadId?: s
   }
   let sent = 0;
   for (const [threadId, batch] of byThread) {
+    if (options.signal?.aborted) break;
     if (!batch.some((entry) => entry.due)) continue;
     try {
       await ctx.port.send(threadId, formatMessage(ctx, batch));

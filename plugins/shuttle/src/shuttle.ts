@@ -67,6 +67,9 @@ export interface ShuttleDeps {
 }
 
 /** Settles with `work`, or as soon as `signal` aborts; the abort listener goes either way. */
+/** Linked threads read from bb at once when their titles are refreshed. */
+const THREADS_PER_READ = 100;
+
 function settleOrAbort(work: Promise<void>, signal: AbortSignal): Promise<void> {
   if (signal.aborted) return Promise.resolve();
   return new Promise((resolve, reject) => {
@@ -874,7 +877,7 @@ export class Shuttle implements Ctx {
   }
 
   /** One delivery at a time, so a manual send and a background one never send the same item twice. */
-  deliver(options: { force?: boolean; threadId?: string } = {}): Promise<number> {
+  deliver(options: { force?: boolean; threadId?: string; signal?: AbortSignal } = {}): Promise<number> {
     const run = this.deliveries.then(() => deliver(this, options));
     this.deliveries = run.catch(() => undefined);
     return run;
@@ -1043,7 +1046,8 @@ export class Shuttle implements Ctx {
     await this.refreshThreadTitles();
     await this.autoAgent(signal).catch((error: unknown) => this.port.log("warn", `auto agent: ${errText(error)}`));
     this.record();
-    await this.deliver();
+    if (signal?.aborted) return;
+    await this.deliver({ signal });
     // After the lists: a PR that merged or closed since the last sync is done with its review thread. A PR the lists
     // just saw close is being archived already; this pass then finds it done.
     await this.closedSettled();
@@ -1073,7 +1077,7 @@ export class Shuttle implements Ctx {
     this.drainPosts();
     if (!signal?.aborted) this.runAutoPosts();
     this.drainMerges();
-    await endQuietReviews(this).catch((error: unknown) => this.port.log("warn", `quiet reviews: ${errText(error)}`));
+    await endQuietReviews(this, signal).catch((error: unknown) => this.port.log("warn", `quiet reviews: ${errText(error)}`));
     if (signal?.aborted) return;
     void this.readUsage(signal);
     const last = this.lastFullSync();
@@ -1094,7 +1098,8 @@ export class Shuttle implements Ctx {
     if (due.length > 0) this.inBackground(this.sync(signal, due.map((server) => server.id)));
     // A server whose sync just started is read by that sync.
     this.fastLane.start((id) => this.syncingServer(id), signal);
-    await this.deliver();
+    if (signal?.aborted) return;
+    await this.deliver({ signal });
     // Rebuilt here when the clock alone made them old, so opening a list never waits for it.
     this.warmIndexes();
   }
@@ -1123,8 +1128,20 @@ export class Shuttle implements Ctx {
   }
 
   /** Titles and states of linked threads: bb's list has whether one waits on the user, a single read does not. */
+  /**
+   * Every linked thread's title and whether it is archived, a hundred to a read. Delivery skips an archived owner by this
+   * copy, so a thread archived while Shuttle missed the event must be read too, however many threads are linked.
+   */
   private async refreshThreadTitles(): Promise<void> {
-    const linked = this.store.linkedThreadIds().slice(0, 100);
+    const all = this.store.linkedThreadIds();
+    let start = 0;
+    do {
+      await this.refreshThreads(all.slice(start, start + THREADS_PER_READ));
+      start += THREADS_PER_READ;
+    } while (start < all.length);
+  }
+
+  private async refreshThreads(linked: string[]): Promise<void> {
     let listed = new Map<string, Awaited<ReturnType<BbPort["threadsById"]>>[number]>();
     try {
       listed = new Map((await this.port.threadsById(linked)).map((t) => [t.id, t]));

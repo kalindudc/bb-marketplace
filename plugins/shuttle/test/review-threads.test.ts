@@ -337,6 +337,22 @@ describe("archiving Shuttle's review threads", () => {
     expect(h.port.lifecycle).toEqual([`archive ${threadId}`]);
   });
 
+  it("waits for a hidden thread at work under the review thread, which bb lists only when asked, but never counts it as a critic", async () => {
+    const { h, threadId, draftId } = await reviewed();
+    h.port.addThread("thr_hidden", "Flares: Review acme/app#3", false, { status: "active", hidden: true });
+    h.port.children.set(threadId, ["thr_critic1", "thr_critic2", "thr_hidden"]);
+    expect((await h.port.childThreads(threadId)).map((t) => t.id)).toEqual(["thr_critic1", "thr_critic2"]);
+    await h.shuttle.submitReview(KEY, { verdict: "changes", body: "One race", findings: [{ path: "a.go", line: 3, body: "Race" }], draftId });
+    await h.shuttle.archiveReviewThreads();
+    // Neither the cleanup turn nor the archive starts while the hidden thread works.
+    expect(h.port.sent).toHaveLength(0);
+    expect(h.port.lifecycle).toEqual([]);
+    h.port.threads.set("thr_hidden", { ...h.port.threads.get("thr_hidden")!, status: "idle" });
+    await h.shuttle.archiveReviewThreads();
+    await finishCleanup(h, threadId);
+    expect(h.port.lifecycle).toEqual([`archive ${threadId}`]);
+  });
+
   it("leaves a merged PR's review thread that bb cannot answer for, or that is another open PR's agent", async () => {
     const { h, threadId } = await reviewed();
     const threadsById = h.port.threadsById.bind(h.port);

@@ -33,6 +33,23 @@ describe("linking", () => {
     h.shuttle.onThreadDeleted("thr_other");
     expect(h.shuttle.view("forge:acme/app#1").links).toHaveLength(1);
   });
+
+  it("reads every linked thread from bb on each sync, a hundred at a time, so a thread archived without an event is known as archived", async () => {
+    const h = await setup();
+    for (let i = 0; i < 105; i++) {
+      h.port.addThread(`thr_ref${i}`, `Reference ${i}`);
+      await h.shuttle.link("forge:acme/app#1", `thr_ref${i}`, "reference");
+    }
+    h.port.addThread("thr_zlate", "Late owner");
+    await h.shuttle.link("forge:acme/app#2", "thr_zlate");
+    h.port.threads.set("thr_zlate", { ...h.port.threads.get("thr_zlate")!, archived: true, title: "Late owner, renamed" });
+    const asked: number[] = [];
+    const threadsById = h.port.threadsById.bind(h.port);
+    h.port.threadsById = async (ids) => (asked.push(ids.length), threadsById(ids));
+    await h.shuttle.sync();
+    expect(h.store.thread("thr_zlate")).toMatchObject({ archived: 1, title: "Late owner, renamed" });
+    expect(Math.max(...asked)).toBeLessThanOrEqual(100);
+  });
 });
 
 describe("keeping PRs fresh", () => {
@@ -458,6 +475,30 @@ describe("watched PRs", () => {
     await h.shuttle.tick();
     expect(h.store.pending(id)).toEqual([]);
     expect(h.port.sent).toHaveLength(0);
+  });
+
+  it("sends nothing about a PR that merged or closed before its items went, not even work its agent was to do", async () => {
+    const h = await setup();
+    await h.shuttle.link("forge:acme/app#1", "thr_owner");
+    await h.shuttle.link("forge:acme/app#2", "thr_owner");
+    await h.shuttle.sync();
+    const comment = (id: string, body: string) => ({ id, kind: "comment", author: "dana", body });
+    h.activity[1] = { items: [comment("c1", "Rename this before merging"), { id: "check:lint:head1", kind: "check", state: "failed", body: "lint failed" }] };
+    h.activity[2] = { items: [comment("c2", "One question on the README")] };
+    h.clock.now += 60_000;
+    await h.shuttle.sync();
+    const id = h.store.prByKey("forge:acme/app#1")!.id;
+    expect(h.store.pending(id)).toHaveLength(2);
+    // Inside the batch window, PR 1 merges; PR 2 stays open.
+    h.activity[1] = { items: [], state: "merged", closed_at: "2026-10-23T12:30:00Z" };
+    h.clock.now += 3 * 60_000;
+    await h.shuttle.sync();
+    await h.shuttle.tick();
+    expect(h.store.pending(id)).toEqual([]);
+    expect(h.port.sent).toHaveLength(1);
+    expect(h.port.sent[0]!.text).toContain("One question on the README");
+    expect(h.port.sent[0]!.text).not.toContain("Rename this");
+    expect(h.port.sent[0]!.text).not.toContain("lint failed");
   });
 
   it("keeps items pending while no owner thread can receive them", async () => {

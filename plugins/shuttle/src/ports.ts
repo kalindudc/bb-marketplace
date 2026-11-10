@@ -38,6 +38,8 @@ export interface ThreadInfo {
   branch: string | null;
   updatedAt: number | null;
   queuedMessageCount?: number;
+  /** bb hides it from thread lists unless asked, as with a thread another plugin keeps for itself. */
+  hidden?: boolean;
   /** The agent it runs on, such as pi; a send cannot change it. */
   providerId?: string | null;
   /** Its workspace was removed after an archive and its provider can build it again. */
@@ -141,7 +143,8 @@ export interface BbPort {
   /** These threads, archived or not, at most 200 ids; unknown and deleted ids are left out. */
   threadsById(threadIds: readonly string[]): Promise<ThreadInfo[]>;
   /** The thread's unarchived child threads, such as the critics a review starts. */
-  childThreads(threadId: string): Promise<ThreadInfo[]>;
+  /** The unarchived threads right under it; `hidden` adds the ones bb leaves out of lists, such as another plugin's. */
+  childThreads(threadId: string, options?: { hidden?: boolean }): Promise<ThreadInfo[]>;
   listProjects(): Promise<ProjectInfo[]>;
   listSkills(projectId: string): Promise<SkillInfo[]>;
   /** Every environment provider bb has, on any machine; bb tells availability only for a project on a machine, so this has none. */

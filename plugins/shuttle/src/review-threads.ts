@@ -64,7 +64,8 @@ const DEPTH = 2;
 
 /** A thread at work, or waiting on the user's answer, under `threadId`, down to `depth` levels. */
 async function busyBelow(ctx: Ctx, threadId: string, depth: number): Promise<boolean> {
-  for (const child of await ctx.port.childThreads(threadId)) {
+  // Hidden threads too: bb archives them with the rest, and one may be at work, such as another plugin's.
+  for (const child of await ctx.port.childThreads(threadId, { hidden: true })) {
     if (child.waiting || BUSY.has(child.status) || (child.queuedMessageCount ?? 0) > 0) return true;
     if (depth > 1 && (await busyBelow(ctx, child.id, depth - 1))) return true;
   }

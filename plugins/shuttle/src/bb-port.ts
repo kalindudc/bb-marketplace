@@ -86,6 +86,7 @@ type ThreadLike = {
   environmentBranchName?: string | null;
   updatedAt?: number | null;
   queuedMessageCount?: number;
+  visibility?: string | null;
   providerId?: string | null;
   canRestoreEnvironment?: boolean;
   environmentId?: string | null;
@@ -104,6 +105,7 @@ function toThread(thread: ThreadLike): ThreadInfo {
     branch: thread.environmentBranchName ?? null,
     updatedAt: thread.updatedAt ?? null,
     queuedMessageCount: thread.queuedMessageCount ?? 0,
+    ...(thread.visibility === "hidden" ? { hidden: true } : {}),
     providerId: thread.providerId ?? null,
     canRestoreEnvironment: thread.canRestoreEnvironment === true,
     machineRemoved: MACHINE_GONE.has(thread.environment?.hostLifecycle ?? ""),
@@ -222,8 +224,9 @@ export function createBbPort(bb: BbPluginApi, setSettings: BbPort["setSettings"]
       const threads = (await bb.sdk.threads.list({ threadIds, limit: threadIds.length })) as ThreadLike[];
       return threads.map(toThread);
     },
-    async childThreads(threadId) {
-      const threads = (await bb.sdk.threads.list({ parentThreadId: threadId, archived: false, limit: CHILD_LIMIT })) as ThreadLike[];
+    async childThreads(threadId, options) {
+      // bb leaves hidden threads out of a list unless it is asked for them.
+      const threads = (await bb.sdk.threads.list({ parentThreadId: threadId, archived: false, limit: CHILD_LIMIT, ...(options?.hidden ? { includeHidden: true } : {}) })) as ThreadLike[];
       return threads.map(toThread);
     },
     async listProjects() {

@@ -114,8 +114,9 @@ export class FakePort implements BbPort {
   async threadsById(threadIds: readonly string[]): Promise<ThreadInfo[]> {
     return threadIds.flatMap((id) => this.threads.get(id) ?? []);
   }
-  async childThreads(threadId: string): Promise<ThreadInfo[]> {
-    return (this.children.get(threadId) ?? []).flatMap((id) => this.threads.get(id) ?? []).filter((thread) => !thread.archived);
+  /** Like bb: hidden threads only when asked for. */
+  async childThreads(threadId: string, options: { hidden?: boolean } = {}): Promise<ThreadInfo[]> {
+    return (this.children.get(threadId) ?? []).flatMap((id) => this.threads.get(id) ?? []).filter((thread) => !thread.archived && (options.hidden === true || thread.hidden !== true));
   }
   async listProjects(): Promise<ProjectInfo[]> {
     return this.projects;

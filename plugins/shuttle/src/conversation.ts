@@ -16,17 +16,27 @@ const FRESH_MS = 30_000;
 
 export class Conversations {
   private readonly cache = new Map<string, { at: number; items: ConversationItem[]; details: PrDetails | null }>();
+  /**
+   * Per PR, how many reads started and how many writes forgot the cache. A read keeps its answer only if neither moved on
+   * while it ran: a read that started before a comment, or before a newer read, would put back what is out of date.
+   */
+  private readonly started = new Map<string, number>();
+  private readonly forgotten = new Map<string, number>();
 
   constructor(private readonly ctx: Ctx) {}
 
   forget(key: string): void {
     this.cache.delete(key);
+    this.forgotten.set(key, (this.forgotten.get(key) ?? 0) + 1);
   }
 
   async read(key: string): Promise<{ items: ConversationItem[]; details: PrDetails | null; error: string | null; fetchedAt: number }> {
     const pr = requirePr(this.ctx, key);
     const cached = this.cache.get(key);
     if (cached && this.ctx.now() - cached.at < FRESH_MS) return { items: this.annotate(pr, cached.items), details: cached.details, error: null, fetchedAt: cached.at };
+    const load = (this.started.get(key) ?? 0) + 1;
+    this.started.set(key, load);
+    const writes = this.forgotten.get(key) ?? 0;
     try {
       const activity = await this.ctx.adapter(pr.server).activity(pr.repo, pr.number, undefined, { detail: true });
       const me = this.ctx.store.server(pr.server)?.login?.toLowerCase() ?? null;
@@ -51,7 +61,7 @@ export class Conversations {
       }));
       items.sort((a, b) => (b.at ?? 0) - (a.at ?? 0));
       const at = this.ctx.now();
-      this.cache.set(key, { at, items, details: activity.details });
+      if (this.started.get(key) === load && (this.forgotten.get(key) ?? 0) === writes) this.cache.set(key, { at, items, details: activity.details });
       return { items: this.annotate(pr, items), details: activity.details, error: null, fetchedAt: at };
     } catch (error) {
       return { items: [], details: null, error: `Could not read the conversation from ${this.ctx.server(pr.server)?.name ?? pr.server}: ${errText(error)}`, fetchedAt: this.ctx.now() };

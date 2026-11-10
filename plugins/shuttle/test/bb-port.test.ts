@@ -214,4 +214,16 @@ describe("bb port", () => {
     expect(await port.threadsById(["thr_old", "thr_gone"])).toMatchObject([{ id: "thr_old", archived: true }]);
     expect(lists).toEqual([{ threadIds: ["thr_old", "thr_gone"], limit: 2 }]);
   });
+
+  it("asks bb for a thread's hidden children only when told to, since bb leaves them out of lists", async () => {
+    const lists: Array<Record<string, unknown>> = [];
+    const host = createFakePluginHost({
+      pluginId: "shuttle",
+      sdk: { threads: { list: async (args: Record<string, unknown>) => (lists.push(args), args.includeHidden ? [{ id: "thr_flares", title: "Flares", archivedAt: null, projectId: null, status: "active", visibility: "hidden" }] : []) } } as never,
+    });
+    const port = createBbPort(host.bb);
+    expect(await port.childThreads("thr_review")).toEqual([]);
+    expect(await port.childThreads("thr_review", { hidden: true })).toMatchObject([{ id: "thr_flares", status: "active", hidden: true }]);
+    expect(lists.map((args) => args.includeHidden)).toEqual([undefined, true]);
+  });
 });

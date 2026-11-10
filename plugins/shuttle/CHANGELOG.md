@@ -11,6 +11,12 @@ Notable changes to Shuttle, newest first. Releases are tagged `shuttle/vX.Y.Z` i
 ### Fixed
 
 - Posted reviews get one final cleanup turn before Shuttle archives their review threads and children. Cleanup requests and completion survive reloads, and blocked or unconfirmed cleanup leaves the thread available.
+- An update or reload no longer leaves Shuttle degraded. When bb stops the sync service, it gives the service 5 seconds and then loads no new version until a manual reload. The service waited for the tick it was in, which could be waiting on bb itself: checking quiet reviews or sending to an agent. It now returns as soon as bb stops it, and Shuttle's shutdown waits for that tick instead. A tick that bb stops skips sending, and sending stops between threads.
+- A review thread is not archived, and its review not ended as quiet, while a hidden thread under it works. bb leaves hidden threads, such as another plugin's, out of a thread's children unless asked, so Shuttle could archive one at work along with the review thread. The critic count auto post checks still leaves them out.
+- An agent is not sent a GitHub check that GitHub refused to start because the account's payments failed or it reached its spending limit. Such a check still fails, but no change to the code can fix it. Shuttle reads each check run's first annotations, where GitHub says so, and the Checks tab shows the reason beside it.
+- Nothing more about a PR goes to its agent once the PR merges or closes. Watching stops reading a merged or closed PR, but what it had queued, such as a comment inside the batch window, still went to the agent afterwards with the request to fix it. Every waiting item of such a PR is now dropped, not only approvals and review summaries.
+- Every linked thread is read from bb on each sync, a hundred at a time, instead of only the first hundred. Delivery skips an owner thread that is archived, and a thread archived while Shuttle missed bb's event kept its old state, and old title, when more than a hundred threads were linked.
+- A PR's conversation shows a comment, reply or resolve you just made. A read of the conversation already under way when you wrote finished afterwards and kept the older items as the fresh copy for 30 seconds, and the same could happen when an older read finished after a newer one. A read now keeps its answer only when no write and no newer read came while it ran.
 
 ## 0.9.0 (2026-11-06)
 

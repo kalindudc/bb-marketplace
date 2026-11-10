@@ -8,8 +8,8 @@ import { configToToml } from "../src/config";
 import { createShuttlePlugin } from "../server";
 import { FakePort, testConfig, fakeRunner, pr } from "./helpers";
 
-async function boot() {
-  const port = new FakePort();
+async function boot(options: { port?: FakePort; now?: () => number } = {}) {
+  const port = options.port ?? new FakePort();
   port.addThread("thr_1", "Owner");
   const runner = fakeRunner((operation, env) => {
     if (operation === "whoami") return { login: "me" };
@@ -20,7 +20,7 @@ async function boot() {
     return [];
   });
   const host = createFakePluginHost({ pluginId: "shuttle", dataDir: mkdtempSync(join(tmpdir(), "shuttle-")) });
-  const plugin = createShuttlePlugin({ port: () => port, runner, tickMs: 3_600_000 });
+  const plugin = createShuttlePlugin({ port: () => port, runner, tickMs: 3_600_000, now: options.now });
   await plugin(host.bb);
   const { behavior, inspection, lifecycle } = host.harness;
   return { port, behavior, inspection, lifecycle, harness: host.harness, plugin };
@@ -155,6 +155,45 @@ describe("the plugin", () => {
     await expect.poll(() => port.lifecycle).toEqual([`archive ${threadId}`]);
     expect(port.sent).toHaveLength(1);
     await reloaded.harness.lifecycle.dispose();
+  });
+
+  // bb gives a stopping service 5 s, then marks the plugin degraded and loads no new version until someone reloads it.
+  it("stops the sync service at once when bb aborts it while bb holds a call, and dispose waits for that tick", async () => {
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    let holding = false;
+    let reached = false;
+    class HeldPort extends FakePort {
+      override async threadsById(threadIds: readonly string[]) {
+        if (holding) {
+          reached = true;
+          await held;
+        }
+        return super.threadsById(threadIds);
+      }
+    }
+    const clock = { now: Date.parse("2026-11-10T12:00:00Z") };
+    const { behavior, lifecycle, harness } = await boot({ port: new HeldPort(), now: () => clock.now });
+    await behavior.callRpc("importToml", { toml: configToToml(testConfig()), apply: true });
+    await behavior.callRpc("lookup", { query: "forge:acme/app#2" });
+    await behavior.callRpc("review", { key: "forge:acme/app#2" });
+    // Three quiet hours later, the tick asks bb about the review thread, and bb does not answer.
+    clock.now += 3 * 60 * 60_000;
+    holding = true;
+    const service = harness.runService("sync");
+    await expect.poll(() => reached).toBe(true);
+
+    service.controller.abort();
+    const settled = await Promise.race([service.done.then(() => "stopped"), new Promise((resolve) => setTimeout(() => resolve("still running"), 200))]);
+    expect(settled).toBe("stopped");
+
+    let disposed = false;
+    const disposing = lifecycle.dispose().then(() => (disposed = true));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(disposed).toBe(false);
+    release();
+    await disposing;
+    expect(disposed).toBe(true);
   });
 
   it("hands bb's thread.failed to Shuttle with whether the thread got a workspace, so only a setup failure starts the review again", async () => {

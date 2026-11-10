@@ -21,6 +21,19 @@ export interface PluginDeps {
 
 const TICK_MS = 30_000;
 
+/** Settles when `work` settles or `signal` aborts, whichever is first, and leaves no listener on the signal. */
+function untilAborted(signal: AbortSignal, work: Promise<unknown>): Promise<void> {
+  if (signal.aborted) return Promise.resolve();
+  return new Promise<void>((resolve) => {
+    const done = () => {
+      signal.removeEventListener("abort", done);
+      resolve();
+    };
+    signal.addEventListener("abort", done, { once: true });
+    work.then(done, done);
+  });
+}
+
 export function createShuttlePlugin(deps: PluginDeps = {}) {
   return async function shuttle(bb: BbPluginApi): Promise<void> {
     const db = bb.storage.database();
@@ -39,9 +52,11 @@ export function createShuttlePlugin(deps: PluginDeps = {}) {
       if (!disposed) app.warmIndexes();
     });
     let disposed = false;
-    bb.onDispose(() => {
+    let ticking: Promise<void> | null = null;
+    bb.onDispose(async () => {
       disposed = true;
       lifetime.abort();
+      await ticking;
     });
     settingsHandle.onChange((next, prev) => {
       settings = toSettings(next);
@@ -72,10 +87,17 @@ export function createShuttlePlugin(deps: PluginDeps = {}) {
     bb.events.on("thread.archived", ({ thread }) => safe("thread.archived", () => app.onThreadArchived(thread.id)));
     bb.events.on("thread.deleted", ({ thread }) => safe("thread.deleted", () => app.onThreadDeleted(thread.id)));
 
+    // bb gives a stopping service 5 s and then loads no new version until a manual reload, so start returns as soon as bb
+    // aborts it, even while a tick waits on bb; dispose, which bb runs next, waits for that tick.
     bb.background.service("sync", {
       async start(signal) {
         while (!signal.aborted) {
-          await app.tick(signal).catch((error: unknown) => bb.log.warn(`sync: ${errText(error)}`));
+          const tick = app.tick(signal).catch((error: unknown) => bb.log.warn(`sync: ${errText(error)}`));
+          ticking = tick;
+          void tick.finally(() => {
+            if (ticking === tick) ticking = null;
+          });
+          await untilAborted(signal, tick);
           await sleep(deps.tickMs ?? TICK_MS, signal);
         }
       },

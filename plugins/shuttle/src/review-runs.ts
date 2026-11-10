@@ -116,7 +116,8 @@ async function startAgain(ctx: Ctx, run: ReviewRow): Promise<void> {
 
 /** A thread at work, or waiting on the user's answer, under `threadId`. */
 async function busyBelow(ctx: Ctx, threadId: string, depth: number): Promise<boolean> {
-  for (const child of await ctx.port.childThreads(threadId)) {
+  // Hidden threads too: bb archives them with the rest, and one may be at work, such as another plugin's.
+  for (const child of await ctx.port.childThreads(threadId, { hidden: true })) {
     if (child.waiting || BUSY.has(child.status)) return true;
     if (depth > 1 && (await busyBelow(ctx, child.id, depth - 1))) return true;
   }
@@ -128,10 +129,11 @@ async function busyBelow(ctx: Ctx, threadId: string, depth: number): Promise<boo
  * and with no question to the user waiting. bb is asked first, since an event Shuttle missed would make a review look
  * quiet; a review found at work counts as active from now.
  */
-export async function endQuietReviews(ctx: Ctx): Promise<number> {
+export async function endQuietReviews(ctx: Ctx, signal?: AbortSignal): Promise<number> {
   let ended = 0;
   const before = ctx.now() - REVIEW_QUIET_MS;
   for (const run of ctx.store.quietReviews(before)) {
+    if (signal?.aborted) break;
     let busy: boolean;
     try {
       // bb's list says whether a thread waits on the user; a single read does not.

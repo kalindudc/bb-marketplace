@@ -55,6 +55,8 @@ export function listFields(operation: ListOperation, options: ListOptions = {}):
 const WHO = "author { login __typename }";
 // The run and workflow say which check runs a newer run replaced.
 const SUITE = "checkSuite { workflowRun { databaseId event workflow { id name } } app { name } }";
+/** A failed run's first annotations, where GitHub says it refused to start the job over billing. */
+const ANNOTATIONS = "annotations(first: 3) { nodes { message } }";
 const REVIEWER = "requestedReviewer { __typename ... on User { login } ... on Bot { login } ... on Mannequin { login } ... on Team { combinedSlug } }";
 const TIMELINE_EVENTS = `REVIEW_REQUESTED_EVENT, REVIEW_REQUEST_REMOVED_EVENT, LABELED_EVENT, UNLABELED_EVENT, READY_FOR_REVIEW_EVENT, CONVERT_TO_DRAFT_EVENT,
   HEAD_REF_FORCE_PUSHED_EVENT, MERGED_EVENT, CLOSED_EVENT, REOPENED_EVENT, RENAMED_TITLE_EVENT, AUTO_MERGE_ENABLED_EVENT, AUTO_MERGE_DISABLED_EVENT,
@@ -70,10 +72,10 @@ function activityQuery(detail: boolean): string {
   const commentExtra = detail ? "pullRequestReview { id }" : "";
   const contexts = detail
     ? `state contexts(first: 100) { totalCount nodes { __typename
-      ... on CheckRun { id databaseId name status conclusion detailsUrl startedAt completedAt isRequired(pullRequestNumber: $number) ${SUITE} }
+      ... on CheckRun { id databaseId name status conclusion detailsUrl startedAt completedAt isRequired(pullRequestNumber: $number) ${SUITE} ${ANNOTATIONS} }
       ... on StatusContext { id context state targetUrl createdAt description isRequired(pullRequestNumber: $number) } } }`
     : `contexts(first: 100) { nodes { __typename
-      ... on CheckRun { id databaseId name status conclusion detailsUrl completedAt ${SUITE} } ... on StatusContext { id context state targetUrl createdAt } } }`;
+      ... on CheckRun { id databaseId name status conclusion detailsUrl completedAt ${SUITE} ${ANNOTATIONS} } ... on StatusContext { id context state targetUrl createdAt } } }`;
   const extra = detail
     ? `isDraft mergeable mergeStateStatus reviewDecision
       commitList: commits(last: 100) { totalCount nodes { commit { oid messageHeadline committedDate author { name user { login } } } } }
@@ -351,8 +353,16 @@ const contextNode = z.object({
   targetUrl: z.string().nullable().optional(),
   createdAt: z.string().nullish(),
   description: z.string().nullable().optional(),
+  annotations: z.object({ nodes: z.array(z.object({ message: z.string() })) }).nullish(),
 });
 type ContextNode = z.infer<typeof contextNode>;
+
+/**
+ * A check run GitHub never started because the account's payments failed or it reached its spending limit. It still
+ * fails, with this as its annotation, but no change to the code can fix it, so an agent is never sent it.
+ */
+const BILLING_REFUSED = /^The job was not started because (recent account payments have failed|your spending limit needs to be increased)/iu;
+const billingRefused = (context: ContextNode) => context.annotations?.nodes.some((note) => BILLING_REFUSED.test(note.message)) === true;
 
 /**
  * The check runs on a head that a newer run replaced: every job of an older run of the same workflow for the same
@@ -538,7 +548,7 @@ export function toActivity(node: z.infer<typeof activityNode>): Activity {
   const contexts = listed.filter((context) => !superseded.has(context));
   for (const context of contexts) {
     const failed = context.__typename === "CheckRun" ? FAILED_RUN.has(context.conclusion ?? "") : context.state === "FAILURE" || context.state === "ERROR";
-    if (!failed || !context.id) continue;
+    if (!failed || !context.id || billingRefused(context)) continue;
     const name = context.name ?? context.context ?? "check";
     items.push({ id: checkItemId(context.id, head), kind: "check", author: null, bot: false, state: "failed", body: `${name} failed`, url: context.detailsUrl ?? context.targetUrl ?? null, path: null, line: null, at: ms(context.completedAt ?? context.createdAt), thread: null, resolved: null });
   }
@@ -561,7 +571,9 @@ export function checkRunOf(context: ContextNode, head: string | null): CheckRun 
     const state: RunState = context.status !== "COMPLETED" || conclusion === null ? "running"
       : FAILED_RUN.has(conclusion) ? "failed"
         : conclusion === "SKIPPED" || conclusion === "STALE" ? "skipped" : "passed";
-    const detail = state === "running" ? (context.status ? words(context.status) : null) : conclusion !== null && !["SUCCESS", "FAILURE", "SKIPPED"].includes(conclusion) ? words(conclusion) : null;
+    const detail = state === "running" ? (context.status ? words(context.status) : null)
+      : state === "failed" && billingRefused(context) ? "GitHub refused to start it over the account's billing"
+        : conclusion !== null && !["SUCCESS", "FAILURE", "SKIPPED"].includes(conclusion) ? words(conclusion) : null;
     return {
       name: context.name ?? "check",
       group: context.checkSuite?.workflowRun?.workflow.name ?? context.checkSuite?.app?.name ?? null,

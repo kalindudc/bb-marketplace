@@ -863,6 +863,18 @@ describe("GitHub checks that a newer run replaced", () => {
     expect(toActivity(cut).details!.checks!.total).toBe(126);
   });
 
+  it("does not send an agent a check GitHub refused to start over billing, and says why in the PR view", () => {
+    const refused = "The job was not started because recent account payments have failed or your spending limit needs to be increased. Please check the 'Billing & plans' section in your settings";
+    const billed = (databaseId: number, name: string, message: string): Context => ({ ...job(databaseId, name, "FAILURE", actions(300, "pull_request")), annotations: { nodes: [{ message }] } });
+    const nodes = [billed(40, "build", refused), billed(41, "lint", "Process completed with exit code 1.")];
+    expect(toActivity(head(nodes)).items.map((item) => item.body)).toEqual(["lint failed"]);
+    const detail = { isDraft: false, mergeable: "MERGEABLE", mergeStateStatus: "BLOCKED", reviewDecision: null, commitList: { totalCount: 0, nodes: [] }, files: null, timelineItems: { nodes: [] } };
+    expect(toActivity(head(nodes, detail)).details!.checks!.items.map((run) => [run.name, run.state, run.detail])).toEqual([
+      ["build", "failed", "GitHub refused to start it over the account's billing"],
+      ["lint", "failed", null],
+    ]);
+  });
+
   it("asks for each run and workflow in both activity reads, and for every check in watching's", async () => {
     const { calls, run } = recorder(() => ({ json: { data: { repository: { pullRequest: head([]) } } } }));
     const gh = new GithubAdapter(github(), run);
@@ -870,6 +882,7 @@ describe("GitHub checks that a newer run replaced", () => {
     await gh.activity("acme/api", 7, undefined, { detail: true });
     for (const call of calls) expect(query(call)).toContain("databaseId name status conclusion");
     for (const call of calls) expect(query(call)).toContain("workflowRun { databaseId event workflow { id name } }");
+    for (const call of calls) expect(query(call)).toContain("annotations(first: 3) { nodes { message } }");
     expect(query(calls[0]!)).toContain("contexts(first: 100)");
   });
 

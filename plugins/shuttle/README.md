@@ -290,7 +290,7 @@ you posted or discarded its draft, you reviewed the PR yourself, a newer review 
 thread, or the PR merged or closed. A PR that merges or closes takes every review thread of it, failed
 ones too, as soon as Shuttle hears, whichever read brought the news: a sync, opening the PR, or the
 fast lane. A thread is archived only when bb says, at that moment, that neither it nor a thread under
-it works or waits on you, and Shuttle's own record agrees. A thread that is also linked to another
+it works or waits on you, hidden threads such as another plugin's included, and Shuttle's own record agrees. A thread that is also linked to another
 PR still open, a review still running, a thread you picked or unlinked yourself, and a thread you
 brought back after Shuttle archived it all stay. The PR's next review brings the thread back without
 its children. **Archive finished review threads** in Shuttle's settings turns this off.
@@ -353,15 +353,19 @@ server marks as one, or an author the **Bot authors** setting names, such as `*@
 for a server that reports service accounts as people; GitHub's logins match with or without `[bot]`.
 Each watch remembers which bots it heard from, so a bot or a phrase added later, or every bot when Ignore
 bots is turned off, starts from what it says next instead of sending what it said while it was ignored.
+Once a PR merges or closes, nothing more about it goes to its agent, including what was still waiting for
+the batch window.
 
 Failed checks named under **Except these checks** are never sent, such as a gate that waits for a
-person's approval or for a reviewer's threads to be resolved; the PR's Checks tab still shows them.
+person's approval or for a reviewer's threads to be resolved; the PR's Checks tab still shows them. Nor is
+a GitHub check that GitHub refused to start because the account's payments failed or it reached its
+spending limit, since no change to the code can fix it; the Checks tab says so beside it.
 
 With **Hold approvals and review summaries for the next message**, on by default, an approval, a
 dismissal or a bot's review while that bot has open threads on the PR never makes a message by
 itself: the threads come on their own, and the rest has nothing to fix. They wait for the next message
 the thread gets, for any of its PRs, and go at its end under "Also new, with nothing to do", without
-refs. They are dropped when the PR merges or closes, and the PR's unsent count leaves them out. A bot's
+refs. The PR's unsent count leaves them out. A bot's
 review with no open threads of its own comes at once, since it is the finding. Items already waiting
 follow the settings as they are when they would go: a bot's review whose threads a change leaves out
 goes as the finding.
