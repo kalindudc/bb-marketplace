@@ -93,6 +93,16 @@ describe("mergeOrderOf", () => {
     expect(mergeOrderOf(integration, [row("CSV-1", "pr_open")])).toBeNull();
   });
 
+  it("keeps what each pull request holds itself on, even while it waits on another, so a merge can say what stays", () => {
+    const a = row("CSV-1", "pr_open", { checks: green, meta: approved });
+    const b = row("CSV-2", "pr_open", { after: ["CSV-1"], checks: { passed: 4, failed: 1, pending: 0 }, meta: approved });
+    const c = row("CSV-3", "working", { deps: ["CSV-1"] });
+    const entries = byKey(mergeOrderOf(spec, [a, b, c])!.entries);
+    expect(entries["CSV-2"]).toMatchObject({ verdict: "after", holds: [], prHolds: [{ code: "failing", count: 1 }] });
+    expect(entries["CSV-1"]).toMatchObject({ verdict: "ready", holds: [], prHolds: [] });
+    expect(entries["CSV-3"]!.prHolds).toEqual([]);
+  });
+
   it("puts a stack in steps, one after the other, and counts what is first", () => {
     const a = row("CSV-1", "pr_open", { checks: green, meta: approved });
     const b = row("CSV-2", "pr_open", { deps: ["CSV-1"], pr_base: "loom/csv-1", checks: green });

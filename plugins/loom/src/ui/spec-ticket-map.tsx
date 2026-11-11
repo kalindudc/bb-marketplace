@@ -75,7 +75,7 @@ export function TicketMap({ tickets, selected, onSelect, markOf, pinsOf, fadedOf
   return (
     <div data-ticket-map className="overflow-x-auto rounded-lg border border-border-seam bg-card">
       <div className="relative" style={{ width: map.width, height: map.height }}>
-        <svg aria-hidden width={map.width} height={map.height} className="pointer-events-none absolute inset-0 text-subtle-foreground">
+        <svg aria-hidden width={map.width} height={map.height} className="pointer-events-none absolute inset-0 text-[var(--loom-muted)]">
           <defs>
             <marker id="loom-map-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto">
               <path d="M0,0 L8,4 L0,8 z" fill="currentColor" />
@@ -99,15 +99,15 @@ export function TicketMap({ tickets, selected, onSelect, markOf, pinsOf, fadedOf
                 stroke="currentColor"
                 strokeWidth={lit ? 1.8 : 1.2}
                 markerEnd="url(#loom-map-arrow)"
-                className={lit ? "text-primary" : ""}
+                className={lit ? "text-[var(--loom-link)]" : ""}
                 opacity={chain === null ? 0.6 : lit ? 1 : 0.15}
               />
             );
           })}
         </svg>
         {map.columns.map((column, wave) => (
-          <span key={wave} className="absolute top-2 text-[11px] font-semibold text-muted-foreground" style={{ left: PAD + wave * (WIDTH + GAP_X) }}>
-            Wave {wave + 1} <span className="font-normal text-subtle-foreground">· {wave === 0 ? "starts at once" : plural(column.length, "ticket")}</span>
+          <span key={wave} className="absolute top-2 text-[11px] font-semibold text-[var(--loom-muted)]" style={{ left: PAD + wave * (WIDTH + GAP_X) }}>
+            Wave {wave + 1} <span className="font-normal text-[var(--loom-muted)]">· {wave === 0 ? "starts at once" : plural(column.length, "ticket")}</span>
           </span>
         ))}
         {[...map.at].map(([ref, { x, y }]) => {
@@ -128,15 +128,15 @@ export function TicketMap({ tickets, selected, onSelect, markOf, pinsOf, fadedOf
               onFocus={() => setHovered(ref)}
               onBlur={() => setHovered(null)}
               style={{ left: x, top: y, width: WIDTH, height: HEIGHT }}
-              className={`absolute flex cursor-pointer flex-col justify-center overflow-hidden rounded-lg border bg-card py-1 pr-2 pl-3 text-left transition-opacity ${dim ? "opacity-35" : ""} ${
+              className={`absolute flex cursor-pointer flex-col justify-center overflow-hidden rounded-lg border bg-card py-1 pr-2 pl-3 text-left transition-opacity ${dim ? "border-dashed text-[var(--loom-muted)] [&_*]:text-[var(--loom-muted)]" : ""} ${
                 mark === "new" ? "border-success ring-2 ring-success" : mark === "changed" ? "border-primary ring-2 ring-primary" : ref === selected ? "border-primary ring-1 ring-primary" : "border-border-seam hover:bg-state-hover"
               }`}
             >
               <span aria-hidden className={`absolute inset-y-0 left-0 w-[3px] ${PRIORITY_COLOURS[ticket.priority] ?? "bg-border-seam"}`} />
-              <span className="flex items-center gap-1 font-mono text-[11px] text-muted-foreground">
+              <span className="flex items-center gap-1 font-mono text-[11px] text-[var(--loom-muted)]">
                 <span className="truncate">{ref}</span>
-                {mark === "new" && <span className="ml-auto rounded bg-success px-1 font-sans text-[9.5px] font-bold text-success-foreground">NEW</span>}
-                {pins > 0 && <span className="ml-auto inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-warning px-1 font-sans text-[10px] font-semibold text-black">{pins}</span>}
+                {mark === "new" && <span className="ml-auto rounded border border-[var(--loom-ok)] px-1 font-sans text-[11px] font-bold text-[var(--loom-ok)]">NEW</span>}
+                {pins > 0 && <span className="ml-auto inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-warning px-1 font-sans text-[11px] font-semibold text-black">{pins}</span>}
               </span>
               <span className="line-clamp-2 text-xs leading-tight">{ticket.title}</span>
             </button>

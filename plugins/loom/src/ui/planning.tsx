@@ -17,11 +17,11 @@ export function PlanningView({ threadId, openProject }: { threadId: string; open
     if (slug !== null) openProject(slug);
   }, [slug, openProject]);
   if (remote.data === undefined) {
-    return remote.error === null ? <p role="status" className="p-4 text-sm text-muted-foreground">Loading…</p> : <p role="alert" className="p-4 text-sm text-destructive-text">Could not load the conversation: {remote.error}</p>;
+    return remote.error === null ? <p role="status" className="p-4 text-sm text-[var(--loom-muted)]">Loading…</p> : <p role="alert" className="p-4 text-sm text-[var(--loom-bad)]">Could not load the conversation: {remote.error}</p>;
   }
   const session = remote.data;
-  if (session === null) return <p className="p-4 text-sm text-muted-foreground">This thread is not a Loom planning thread.</p>;
-  if (slug !== null) return <p role="status" className="p-4 text-sm text-muted-foreground">The planner proposed {slug}; opening its Planner tab…</p>;
+  if (session === null) return <p className="p-4 text-sm text-[var(--loom-muted)]">This thread is not a Loom planning thread.</p>;
+  if (slug !== null) return <p role="status" className="p-4 text-sm text-[var(--loom-muted)]">The planner proposed {slug}; opening its Planner tab…</p>;
   return (
     <div data-planning-view className="space-y-1">
       <div className="space-y-3 px-4 pt-4">

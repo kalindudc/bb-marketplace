@@ -3,7 +3,7 @@ import { useBbNavigate } from "@get-bb/plugin-sdk/app";
 import type { ActivityMark, CurrentItem, EventLine, InsightsFilter, InsightsNumbers, InsightsWindow, Phrase, ProjectInsights, StoryGroup, StoryItem } from "../contract";
 import { compactCount as big, formatDuration, plural } from "../format";
 import type { TicketState } from "../states";
-import { STATE_COLORS } from "./charts";
+import { markStyle, SHARE_PART, SHARE_TRACK, STATE_COLORS, type Swatch } from "./charts";
 import { BUTTON, BUTTON_PRIMARY, CARD, CHIP, HEADING, useLoom } from "./common";
 import { activityAxis, labelsOf, stepMax, type Bucket } from "./insights-axis";
 
@@ -16,13 +16,23 @@ const SHIP = "color-mix(in oklab, var(--success, currentColor) 45%, transparent)
 const WARN = "var(--warning, currentColor)";
 const BAD = "var(--destructive, currentColor)";
 const PRIMARY = "var(--primary, currentColor)";
-const MUTED = "var(--muted-foreground, currentColor)";
+const MUTED = "var(--loom-muted, currentColor)";
+/** A jump the person asked for glides, unless they asked for reduced motion; the place it ends at is the same. */
+const glide = (): ScrollBehavior => (typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth");
+/** What the chart's card sits on: CARD draws no fill of its own. */
+const SURFACE = "var(--background, transparent)";
 const MARK_FILL: Record<"done" | "pr" | "back" | "bad", string> = { done: SUCCESS_INK, pr: SHIP, back: WARN, bad: BAD };
+// The pull request's pale fill is under 3:1 against the card, so its outline carries it; blocked is hatched because the
+// warning and destructive colours of some themes are nearly the same (1.0:1 in gruve light).
+const MARK_RING: Partial<Record<"done" | "pr" | "back" | "bad", string>> = { pr: SUCCESS_INK, bad: BAD };
+const BAD_HATCH = `repeating-linear-gradient(45deg, ${BAD} 0 1.5px, transparent 1.5px 3.5px)`;
+/** A line of the surface's colour between stacked marks, so each meets 3:1 against what touches it (WCAG 1.4.11's separator). */
+const SEPARATOR_PX = 1.5;
 const CODE = "rounded bg-state-hover px-1 font-mono text-[11.5px] [overflow-wrap:anywhere]";
-const LINK = "cursor-pointer rounded underline decoration-primary/60 decoration-[1.5px] underline-offset-2 hover:text-primary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
-const KEY_BUTTON = "cursor-pointer rounded text-xs font-semibold hover:text-primary hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
+const LINK = "cursor-pointer rounded underline decoration-primary/60 decoration-[1.5px] underline-offset-2 hover:text-[var(--loom-link)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
+const KEY_BUTTON = "inline-flex min-h-6 @max-xl/loom:min-h-11 @max-xl/loom:min-w-11 max-[576px]:min-w-11 pointer-coarse:min-h-11 pointer-coarse:min-w-11 items-center justify-center cursor-pointer rounded text-xs font-semibold hover:text-[var(--loom-link)] hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
 const SEG = "inline-flex flex-wrap gap-0.5 rounded-md border border-border-seam p-0.5";
-const segButton = (on: boolean) => `cursor-pointer rounded px-2 py-0.5 text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring ${on ? "bg-surface-selected font-semibold text-foreground" : "text-muted-foreground hover:bg-state-hover"}`;
+const segButton = (on: boolean) => `inline-flex items-center justify-center cursor-pointer rounded px-2 py-0.5 @max-xl/loom:min-h-11 max-[576px]:min-h-11 @max-xl/loom:min-w-11 max-[576px]:min-w-11 pointer-coarse:min-h-11 pointer-coarse:min-w-11 text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring ${on ? "bg-surface-selected font-semibold text-foreground" : "text-[var(--loom-muted)] hover:bg-state-hover"}`;
 
 const clock = (at: number) => new Date(at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 const dated = (at: number) => new Date(at).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
@@ -104,7 +114,7 @@ export function InsightsTab({ slug, at, onTicket }: { slug: string; at: number |
   useEffect(() => {
     if (found === null) return;
     const frame = requestAnimationFrame(() => {
-      story.current?.querySelector(`[data-chapter="${CSS.escape(found.key)}"]`)?.scrollIntoView?.({ block: "center", behavior: "smooth" });
+      story.current?.querySelector(`[data-chapter="${CSS.escape(found.key)}"]`)?.scrollIntoView?.({ block: "center", behavior: glide() });
       story.current?.focus({ preventScroll: true });
     });
     return () => cancelAnimationFrame(frame);
@@ -126,9 +136,9 @@ export function InsightsTab({ slug, at, onTicket }: { slug: string; at: number |
     setOpen(new Set());
   };
   if (view === null) {
-    if (remote.error === null) return <p role="status" className="p-4 text-sm text-muted-foreground">Loading…</p>;
+    if (remote.error === null) return <p role="status" className="p-4 text-sm text-[var(--loom-muted)]">Loading…</p>;
     return (
-      <div role="alert" className="space-y-2 p-4 text-sm text-destructive-text">
+      <div role="alert" className="space-y-2 p-4 text-sm text-[var(--loom-bad)]">
         <p>Could not load the insights: {remote.error}</p>
         {window !== "all" && (
           <button type="button" className={BUTTON} onClick={() => pick("all")}>
@@ -143,7 +153,7 @@ export function InsightsTab({ slug, at, onTicket }: { slug: string; at: number |
   const showStory = () => {
     setPane("story");
     requestAnimationFrame(() => {
-      story.current?.scrollIntoView?.({ block: "start", behavior: "smooth" });
+      story.current?.scrollIntoView?.({ block: "start", behavior: glide() });
       story.current?.focus({ preventScroll: true });
     });
   };
@@ -178,13 +188,13 @@ export function InsightsTab({ slug, at, onTicket }: { slug: string; at: number |
         {typeof window !== "string" && sameWindow(view.window, window) && view.range !== null && (
           <span data-insights-range className="inline-flex items-center gap-1 rounded-full border border-primary/50 bg-primary/10 py-0.5 pr-0.5 pl-2.5 text-xs">
             Showing {spanText(view.range.from, view.range.to)}
-            <button type="button" aria-label="Show the whole project" className="cursor-pointer rounded-full px-1.5 text-muted-foreground hover:bg-state-hover hover:text-foreground" onClick={() => pick("all")}>
+            <button type="button" aria-label="Show the whole project" className="cursor-pointer rounded-full px-1.5 text-[var(--loom-muted)] hover:bg-state-hover hover:text-foreground" onClick={() => pick("all")}>
               ×
             </button>
           </span>
         )}
         {at === null && view.state === "running" && (
-          <span data-insights-live className="ml-auto inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+          <span data-insights-live className="ml-auto inline-flex items-center gap-1.5 text-xs text-[var(--loom-muted)]">
             <span aria-hidden className="size-1.5 rounded-full bg-primary" />
             Live: it updates within a second of an event
           </span>
@@ -194,7 +204,7 @@ export function InsightsTab({ slug, at, onTicket }: { slug: string; at: number |
       <section data-insights-activity className={CARD}>
         <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
           <h2 className="text-sm font-semibold">When the work happened</h2>
-          <p className="text-xs text-muted-foreground">Quiet stretches are folded. Click a bar, or drag across bars, to see only that stretch.</p>
+          <p className="text-xs text-[var(--loom-muted)]">Quiet stretches are folded. Click a bar, or drag across bars, to see only that stretch.</p>
         </div>
         <ActivityChart activity={view.activity} strategy={view.strategy} range={view.range} onRange={(range) => pick(range === null ? "all" : range)} />
       </section>
@@ -231,12 +241,13 @@ function Summary({ view, onLink }: { view: ProjectInsights; onLink(filter: Insig
           </p>
         ))}
       </div>
-      <dl className="grid grid-cols-2 gap-2 self-start">
+      {/* As many columns as fit at 11rem each, so enlarged text stacks the figures rather than spill from them. */}
+      <dl className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,11rem),1fr))] gap-2 self-start">
         {view.figures.map((figure) => (
           <div key={figure.label} data-figure={figure.label} className="min-w-0 rounded-md border border-border-seam bg-surface-recessed px-3 py-2">
             <dt className={HEADING}>{figure.label}</dt>
-            <dd className="mt-0.5 text-lg font-semibold">{figure.value}</dd>
-            <dd className="text-xs text-muted-foreground">{figure.note}</dd>
+            <dd className="mt-0.5 text-lg font-semibold [overflow-wrap:anywhere]">{figure.value}</dd>
+            <dd className="text-xs text-[var(--loom-muted)] [overflow-wrap:anywhere]">{figure.note}</dd>
           </div>
         ))}
       </dl>
@@ -349,7 +360,7 @@ function ActivityChart({ activity, strategy, range, onRange }: { activity: Activ
     }
   };
   const endDrag = () => setDrag(null);
-  const labels = labelsOf(axis, width, (at, date) => (date ? dated(at) : clock(at)).length * 5.4);
+  const labels = labelsOf(axis, width, (at, date) => (date ? dated(at) : clock(at)).length * 6.6);
   const paused = activity.spans.filter((span) => span.state !== "running" && span.state !== "done" && span.state !== "archived");
   const runs: Bar[][] = [];
   bars.forEach((bar, index) => {
@@ -369,15 +380,15 @@ function ActivityChart({ activity, strategy, range, onRange }: { activity: Activ
       onKeyDown={onKey}
       onBlur={() => setCursor(null)}
     >
-      <div className="mb-1 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+      <div className="mb-1 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-[var(--loom-muted)]">
         <Key fill={MARK_FILL.done}>Shipped</Key>
-        {strategy === "pr" && <Key fill={MARK_FILL.pr}>Pull request opened</Key>}
+        {strategy === "pr" && <Key fill={MARK_FILL.pr} ring={MARK_RING.pr}>Pull request opened</Key>}
         <Key fill={MARK_FILL.back}>Sent back for a fix</Key>
-        <Key fill={MARK_FILL.bad}>Blocked or failed</Key>
+        <Key fill={BAD_HATCH} ring={MARK_RING.bad}>Blocked or failed</Key>
         <Key fill={`color-mix(in oklab, ${PRIMARY} 22%, transparent)`} ring={PRIMARY}>Tickets in flight</Key>
         <Key fill="transparent" ring={INK} round>You</Key>
         <Key fill={PRIMARY} diamond>Milestone</Key>
-        {paused.length > 0 && <Key fill={`repeating-linear-gradient(45deg, color-mix(in oklab, ${MUTED} 35%, transparent) 0 2px, transparent 2px 4px)`}>Paused or planning</Key>}
+        {paused.length > 0 && <Key fill={`repeating-linear-gradient(45deg, ${MUTED} 0 1.25px, transparent 1.25px 4px)`}>Paused or planning</Key>}
         <span className="ml-auto">Each bar is {dur(axis.bucket)}</span>
       </div>
       <svg
@@ -413,8 +424,12 @@ function ActivityChart({ activity, strategy, range, onRange }: { activity: Activ
         }}
       >
         <defs>
-          <pattern id={hatch} width={6} height={6} patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-            <line x1={0} y1={0} x2={0} y2={6} style={{ stroke: MUTED, strokeOpacity: 0.25 }} strokeWidth={2} />
+          {/* A paused stretch is data, so its hatch is drawn in full-strength muted ink, thin and sparse, to reach 3:1. */}
+          <pattern id={hatch} width={7} height={7} patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+            <line x1={0} y1={0} x2={0} y2={7} style={{ stroke: MUTED }} strokeWidth={1.25} />
+          </pattern>
+          <pattern id={`${hatch}-bad`} width={3.5} height={3.5} patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+            <line x1={0} y1={0} x2={0} y2={3.5} style={{ stroke: BAD }} strokeWidth={1.5} />
           </pattern>
         </defs>
         {paused
@@ -445,14 +460,22 @@ function ActivityChart({ activity, strategy, range, onRange }: { activity: Activ
               {(["done", "pr", "back", "bad"] as const).map((kind, k) => {
                 const count = stacks[index]![k]!;
                 if (count === 0) return null;
-                const rect = <rect key={kind} data-mark={kind} x={bar.x + gap / 2} y={y(base + count)} width={Math.max(1, bar.w - gap)} height={y(base) - y(base + count)} rx={1.5} style={{ fill: MARK_FILL[kind] }} />;
+                const below = base;
                 base += count;
-                return rect;
+                const x = bar.x + gap / 2;
+                const w = Math.max(1, bar.w - gap);
+                const ring = MARK_RING[kind];
+                return (
+                  <g key={kind}>
+                    <rect data-mark={kind} x={x} y={y(base)} width={w} height={y(below) - y(base)} rx={1.5} fill={kind === "bad" ? `url(#${hatch}-bad)` : undefined} strokeWidth={ring === undefined ? undefined : 1} style={{ fill: kind === "bad" ? undefined : MARK_FILL[kind], stroke: ring }} />
+                    {below > 0 && <line data-mark-separator x1={x} x2={x + w} y1={y(below)} y2={y(below)} strokeWidth={SEPARATOR_PX} style={{ stroke: SURFACE }} />}
+                  </g>
+                );
               })}
               {(selected(bar) || inMarked(index)) && <rect x={bar.x} y={TOP - 6} width={bar.w} height={HEIGHT - TOP - BOTTOM + 6} style={{ fill: `color-mix(in oklab, ${PRIMARY} 16%, transparent)` }} data-activity-selected />}
               {shown === index && <rect x={bar.x} y={TOP - 6} width={bar.w} height={HEIGHT - TOP - BOTTOM + 6} fill="none" strokeWidth={1} style={{ stroke: PRIMARY }} />}
               {bar.marks.some((mark) => mark.kind === "milestone") && <rect x={bar.x + bar.w / 2 - 3.5} y={2.5} width={7} height={7} transform={`rotate(45 ${bar.x + bar.w / 2} 6)`} style={{ fill: PRIMARY }} />}
-              {bar.marks.some((mark) => mark.kind === "you") && <circle cx={bar.x + bar.w / 2 + (bar.marks.some((mark) => mark.kind === "milestone") ? 8 : 0)} cy={6} r={3.8} strokeWidth={1.5} style={{ fill: "var(--card, transparent)", stroke: INK }} />}
+              {bar.marks.some((mark) => mark.kind === "you") && <circle cx={bar.x + bar.w / 2 + (bar.marks.some((mark) => mark.kind === "milestone") ? 8 : 0)} cy={6} r={3.8} strokeWidth={1.5} style={{ fill: SURFACE, stroke: INK }} />}
             </g>
           );
         })}
@@ -463,17 +486,17 @@ function ActivityChart({ activity, strategy, range, onRange }: { activity: Activ
             {[-3, 3].map((dx) => (
               <line key={dx} x1={fold.x + fold.w / 2 + dx} x2={fold.x + fold.w / 2 + dx} y1={TOP} y2={y(0)} strokeDasharray="2 2" style={{ stroke: MUTED, strokeOpacity: 0.6 }} />
             ))}
-            <text x={fold.x + fold.w / 2} y={TOP + 9} textAnchor="middle" fontSize={9} style={{ fill: MUTED, paintOrder: "stroke", stroke: "var(--card, transparent)", strokeWidth: 3 }}>
+            <text x={fold.x + fold.w / 2} y={TOP - 9} textAnchor="middle" fontSize={11} style={{ fill: MUTED, paintOrder: "stroke", stroke: SURFACE, strokeWidth: 3 }}>
               {dur(fold.to - fold.from).split(" ")[0]}
             </text>
           </g>
         ))}
         {labels.map((label) => (
-          <text key={label.at} x={label.x + 1} y={HEIGHT - 5} fontSize={9.5} style={{ fill: MUTED }}>
+          <text key={label.at} x={label.x + 1} y={HEIGHT - 5} fontSize={11} style={{ fill: MUTED }}>
             {label.date ? dated(label.at) : clock(label.at)}
           </text>
         ))}
-        <text x={width} y={y(most) - 3} textAnchor="end" fontSize={9} style={{ fill: MUTED }}>
+        <text x={width} y={y(most) - 3} textAnchor="end" fontSize={11} style={{ fill: MUTED }}>
           {most}
         </text>
         {bars.map((bar, index) => (
@@ -488,7 +511,7 @@ function ActivityChart({ activity, strategy, range, onRange }: { activity: Activ
         >
           <p className="font-semibold">{spanText(tip.from, tip.to)}</p>
           {bucketText(tip, paused).map((line, index) => (
-            <p key={index} className="text-muted-foreground">
+            <p key={index} className="text-[var(--loom-muted)]">
               {line}
             </p>
           ))}
@@ -513,21 +536,21 @@ function Key({ fill, ring, round = false, diamond = false, children }: { fill: s
 // ---- the story
 
 const TONE_ICON: Record<Chapter["tone"], { mark: string; className: string }> = {
-  ok: { mark: "✓", className: "bg-success/15 text-success" },
-  fixed: { mark: "✓", className: "bg-success/15 text-success ring-[1.5px] ring-warning ring-inset" },
-  going: { mark: "●", className: "bg-primary/10 text-primary" },
-  blocked: { mark: "!", className: "bg-destructive-text/15 text-destructive-text" },
-  pr: { mark: "↗", className: "text-success ring-[1.5px] ring-success ring-inset" },
-  quiet: { mark: "·", className: "bg-state-hover text-muted-foreground" },
+  ok: { mark: "✓", className: "bg-success/15 text-[var(--loom-ok)]" },
+  fixed: { mark: "✓", className: "bg-success/15 text-[var(--loom-ok)] ring-[1.5px] ring-warning ring-inset" },
+  going: { mark: "●", className: "bg-primary/10 text-[color-mix(in_oklab,var(--primary)_70%,var(--foreground))]" },
+  blocked: { mark: "!", className: "bg-destructive-text/15 text-[var(--loom-bad)]" },
+  pr: { mark: "↗", className: "text-[var(--loom-ok)] ring-[1.5px] ring-success ring-inset" },
+  quiet: { mark: "·", className: "bg-state-hover text-[var(--loom-muted)]" },
 };
 const NOTE_ICON: Record<"you" | "bad" | "milestone" | "created" | "back", { mark: string; className: string }> = {
   you: { mark: "Y", className: "text-foreground ring-[1.5px] ring-foreground ring-inset" },
-  bad: { mark: "!", className: "bg-destructive-text/15 text-destructive-text" },
-  back: { mark: "↺", className: "bg-warning/15 text-warning-text" },
-  milestone: { mark: "◆", className: "bg-state-hover text-muted-foreground" },
-  created: { mark: "+", className: "bg-state-hover text-muted-foreground" },
+  bad: { mark: "!", className: "bg-destructive-text/15 text-[var(--loom-bad)]" },
+  back: { mark: "↺", className: "bg-warning/15 text-[var(--loom-warn)]" },
+  milestone: { mark: "◆", className: "bg-state-hover text-[var(--loom-muted)]" },
+  created: { mark: "+", className: "bg-state-hover text-[var(--loom-muted)]" },
 };
-const CHIP_TONE: Record<string, string> = { "": "text-muted-foreground", warn: "border-warning/50 text-warning-text", bad: "border-destructive-text/40 text-destructive-text", you: "border-foreground text-foreground" };
+const CHIP_TONE: Record<string, string> = { "": "text-[var(--loom-muted)]", warn: "border-warning/50 text-[var(--loom-warn)]", bad: "border-destructive-text/40 text-[var(--loom-bad)]", you: "border-foreground text-foreground" };
 
 function Icon({ mark, className }: { mark: string; className: string }) {
   return (
@@ -539,10 +562,11 @@ function Icon({ mark, className }: { mark: string; className: string }) {
 
 function Row({ icon, children, side, className = "", ...rest }: { icon: ReactNode; children: ReactNode; side?: ReactNode; className?: string; [data: `data-${string}`]: string | undefined }) {
   return (
-    <li className={`grid grid-cols-[1.25rem_minmax(0,1fr)_auto] gap-x-2.5 border-b border-border-seam/60 py-2 last:border-b-0 ${className}`} {...rest}>
+    <li className={`grid grid-cols-[1.25rem_minmax(0,1fr)_minmax(0,auto)] gap-x-2.5 border-b border-border-seam/60 py-2 last:border-b-0 ${className}`} {...rest}>
       {icon}
       <div className="min-w-0 [overflow-wrap:anywhere]">{children}</div>
-      <div className="text-right text-xs whitespace-nowrap text-muted-foreground">{side}</div>
+      {/* Beside the row while the page is wide; under its text on a narrow page, where enlarged text would leave none. */}
+      <div className="min-w-0 max-w-[12rem] text-right text-xs text-[var(--loom-muted)] @max-xl/loom:col-start-2 @max-xl/loom:max-w-none @max-xl/loom:text-left">{side}</div>
     </li>
   );
 }
@@ -553,11 +577,10 @@ function LifeBar({ parts }: { parts: Chapter["parts"] }) {
   const total = Math.max(1, parts.at(-1)!.to - from);
   const label = parts.map((part) => `${STATE_WORD[part.state]} ${dur(part.to - part.from)}`).join(" · ");
   return (
-    <div role="img" aria-label={label} title={label} className="mt-1.5 flex h-1.5 max-w-sm overflow-hidden rounded-full bg-state-hover">
-      {parts.map((part, index) => {
-        const swatch = STATE_COLORS[part.state];
-        return <span key={index} className="h-full min-w-px" style={{ width: `${((part.to - part.from) / total) * 100}%`, background: swatch.fill, opacity: swatch.opacity ?? 1 }} />;
-      })}
+    <div role="img" aria-label={label} title={label} className={`${SHARE_TRACK} mt-1.5 h-1.5 max-w-sm`}>
+      {parts.map((part, index) => (
+        <span key={index} className={SHARE_PART} style={{ width: `${((part.to - part.from) / total) * 100}%`, ...markStyle(STATE_COLORS[part.state]) }} />
+      ))}
     </div>
   );
 }
@@ -611,7 +634,7 @@ function Story(props: StoryProps) {
           {(["story", "problems", "you", "all"] as const).map((value) => (
             <button key={value} type="button" aria-pressed={filter === value} className={segButton(filter === value)} onClick={() => props.onFilter(value)}>
               {labels[value]}
-              {counts[value] !== null && <span className="ml-1 text-[10.5px] font-medium text-subtle-foreground">{counts[value]}</span>}
+              {counts[value] !== null && <span className="ml-1 text-[11px] font-medium text-[var(--loom-muted)]">{counts[value]}</span>}
             </button>
           ))}
         </div>
@@ -621,7 +644,7 @@ function Story(props: StoryProps) {
           placeholder="Find a ticket or a word"
           value={query}
           onChange={(event) => props.onQuery(event.target.value)}
-          className="h-7 min-w-40 flex-1 rounded-md border border-border-seam bg-transparent px-2 text-xs text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring sm:max-w-64"
+          className="h-7 @max-xl/loom:h-11 max-[576px]:h-11 pointer-coarse:h-11 min-w-40 flex-1 rounded-md border border-[var(--loom-field-line)] bg-transparent px-2 text-xs text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring sm:max-w-64"
         />
       </div>
       {filter === "story" && view.range === null && needle === "" && view.current.length > 0 && <Current items={view.current} state={view.state} now={props.now} onTicket={props.onTicket} />}
@@ -655,10 +678,10 @@ function Current({ items, state, now, onTicket }: { items: CurrentItem[]; state:
               </button>
               <span className="text-sm">{item.title}</span>
             </div>
-            <p className="mt-0.5 text-sm text-muted-foreground">
+            <p className="mt-0.5 text-sm text-[var(--loom-muted)]">
               {item.kind === "blocked" ? (
                 <>
-                  <b className="font-semibold text-destructive-text">Blocked, waiting for you</b>
+                  <b className="font-semibold text-[var(--loom-bad)]">Blocked, waiting for you</b>
                   {item.reason !== null && (
                     <>
                       : <q className="text-foreground">{item.reason}</q>
@@ -686,7 +709,7 @@ function Current({ items, state, now, onTicket }: { items: CurrentItem[]; state:
           </Row>
         ))}
       </ul>
-      {state === "paused" && <p className="pb-2 text-xs text-muted-foreground">The project is paused, so nothing moves until you resume it.</p>}
+      {state === "paused" && <p className="pb-2 text-xs text-[var(--loom-muted)]">The project is paused, so nothing moves until you resume it.</p>}
     </div>
   );
 }
@@ -697,10 +720,10 @@ function GroupHead({ group, right }: { group: StoryGroup; right?: string }) {
   return (
     <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-0.5 border-b border-border-seam pb-1.5">
       <h3 className="text-[13px] font-semibold">{group.title}</h3>
-      <span className="text-xs text-muted-foreground">
+      <span className="text-xs text-[var(--loom-muted)]">
         {group.state === "done" ? dated(group.from) : `${spanText(group.from, group.to)} · ${dur(group.to - group.from)}`}
       </span>
-      {right !== undefined && right !== "" && <span className="ml-auto text-xs text-muted-foreground">{right}</span>}
+      {right !== undefined && right !== "" && <span className="ml-auto min-w-0 text-xs text-[var(--loom-muted)] [overflow-wrap:anywhere]">{right}</span>}
     </div>
   );
 }
@@ -718,7 +741,7 @@ function StoryGroups({ view, ordered, matches, open, onOpen, hit, onTicket, quer
     if (items.length === 0) {
       if (group.state === "paused" && query.trim() === "")
         rendered.push(
-          <div key={key} data-group={group.title} className="my-3 flex items-center gap-2.5 text-xs text-subtle-foreground before:flex-1 before:border-t before:border-dashed before:border-border-seam after:flex-1 after:border-t after:border-dashed after:border-border-seam">
+          <div key={key} data-group={group.title} className="my-3 flex items-center gap-2.5 text-xs text-[var(--loom-muted)] before:flex-1 before:border-t before:border-dashed before:border-border-seam after:flex-1 after:border-t after:border-dashed after:border-border-seam">
             {group.title} {dur(group.to - group.from)}
             {why === "" ? "" : ` · ${why}`}
           </div>,
@@ -740,7 +763,7 @@ function StoryGroups({ view, ordered, matches, open, onOpen, hit, onTicket, quer
       </div>,
     );
   }
-  return rendered.length === 0 ? <p className="py-4 text-sm text-muted-foreground">{query.trim() === "" ? "Nothing happened in this stretch." : `Nothing matches “${query.trim()}”.`}</p> : <>{rendered}</>;
+  return rendered.length === 0 ? <p className="py-4 text-sm text-[var(--loom-muted)]">{query.trim() === "" ? "Nothing happened in this stretch." : `Nothing matches “${query.trim()}”.`}</p> : <>{rendered}</>;
 }
 
 function StoryRow({ item, lines, open, onOpen, hit, onTicket }: { item: StoryItem; lines: Map<number, EventLine>; open: ReadonlySet<string>; onOpen(open: ReadonlySet<string>): void; hit: string | null; onTicket(key: string): void }) {
@@ -758,7 +781,7 @@ function StoryRow({ item, lines, open, onOpen, hit, onTicket }: { item: StoryIte
         <p className="text-sm">
           {plural(item.tickets.length, "ticket")} created <Words phrase={item.by} />
         </p>
-        <p className="text-sm text-muted-foreground">
+        <p className="text-sm text-[var(--loom-muted)]">
           {item.tickets
             .slice(0, 6)
             .map((ticket) => ticket.key)
@@ -778,7 +801,7 @@ function StoryRow({ item, lines, open, onOpen, hit, onTicket }: { item: StoryIte
           </ul>
         )}
         {item.tickets.length > 1 && (
-          <button type="button" aria-expanded={shown} className="mt-1 cursor-pointer text-xs text-muted-foreground hover:text-foreground" onClick={() => toggle(id)}>
+          <button type="button" aria-expanded={shown} className="mt-1 inline-flex min-h-6 cursor-pointer items-center text-xs text-[var(--loom-muted)] hover:text-foreground @max-xl/loom:min-h-11 pointer-coarse:min-h-11" onClick={() => toggle(id)}>
             {shown ? "Hide the list" : "List them"}
           </button>
         )}
@@ -805,7 +828,7 @@ function StoryRow({ item, lines, open, onOpen, hit, onTicket }: { item: StoryIte
         </button>
         <span className="text-[13px]">{item.title}</span>
       </div>
-      <p className="mt-0.5 text-[13px] text-muted-foreground">
+      <p className="mt-0.5 text-[13px] text-[var(--loom-muted)]">
         <b className="font-semibold text-foreground">{item.head}.</b>{" "}
         {item.says.map((say, index) => (
           <span key={index}>
@@ -828,10 +851,10 @@ function StoryRow({ item, lines, open, onOpen, hit, onTicket }: { item: StoryIte
         <ol data-chapter-steps className="mt-2 grid gap-1 border-l-2 border-border-seam pl-3">
           {steps.map((line) => (
             <li key={line.id} className="grid grid-cols-[4.25rem_minmax(0,1fr)] gap-2 text-xs">
-              <time className="text-subtle-foreground" dateTime={new Date(line.at).toISOString()}>
+              <time className="text-[var(--loom-muted)]" dateTime={new Date(line.at).toISOString()}>
                 {clock(line.at)}
               </time>
-              <span className={line.tone === "bad" ? "text-destructive-text" : line.tone === "back" ? "text-warning-text" : line.you ? "font-semibold" : ""}>
+              <span className={line.tone === "bad" ? "text-[var(--loom-bad)]" : line.tone === "back" ? "text-[var(--loom-warn)]" : line.you ? "font-semibold" : ""}>
                 <Words phrase={line.text} />
               </span>
             </li>
@@ -839,7 +862,7 @@ function StoryRow({ item, lines, open, onOpen, hit, onTicket }: { item: StoryIte
         </ol>
       )}
       {steps.length > 0 && (
-        <button type="button" aria-expanded={shown} className="mt-1 cursor-pointer text-xs text-muted-foreground hover:text-foreground" onClick={() => toggle(id)}>
+        <button type="button" aria-expanded={shown} className="mt-1 inline-flex min-h-6 cursor-pointer items-center text-xs text-[var(--loom-muted)] hover:text-foreground @max-xl/loom:min-h-11 pointer-coarse:min-h-11" onClick={() => toggle(id)}>
           {shown ? "Hide the steps" : `Show ${plural(steps.length, "step")}`}
         </button>
       )}
@@ -863,17 +886,17 @@ function LineGroups({ view, filter, ordered, matches, onTicket, query }: Helpers
               const same = index > 0 && clock(all[index - 1]!.at) === clock(line.at);
               return (
                 <li key={line.id} data-line={line.id} className="grid grid-cols-[4.25rem_5rem_minmax(0,1fr)] gap-2 border-b border-border-seam/40 py-1 text-xs last:border-b-0">
-                  <time className="text-subtle-foreground" dateTime={new Date(line.at).toISOString()}>
+                  <time className="text-[var(--loom-muted)]" dateTime={new Date(line.at).toISOString()}>
                     {same ? "" : clock(line.at)}
                   </time>
                   <span className="min-w-0 [overflow-wrap:anywhere]">
                     {line.key !== null && (
-                      <button type="button" className={`${KEY_BUTTON} text-[11px] text-muted-foreground`} onClick={() => onTicket(line.key!)}>
+                      <button type="button" className={`${KEY_BUTTON} text-[11px] text-[var(--loom-muted)]`} onClick={() => onTicket(line.key!)}>
                         {line.key}
                       </button>
                     )}
                   </span>
-                  <span className={line.problem ? "text-destructive-text" : line.you ? "font-semibold" : line.tone === "detail" ? "text-muted-foreground" : ""}>
+                  <span className={line.problem ? "text-[var(--loom-bad)]" : line.you ? "font-semibold" : line.tone === "detail" ? "text-[var(--loom-muted)]" : ""}>
                     <Words phrase={line.text} />
                   </span>
                 </li>
@@ -903,14 +926,14 @@ function LineGroups({ view, filter, ordered, matches, onTicket, query }: Helpers
   }
   if (rendered.length > 0) return <>{rendered}</>;
   const empty = query.trim() !== "" ? `Nothing matches “${query.trim()}”.` : filter === "problems" ? "No problems in this stretch: nothing was sent back, blocked or failed." : filter === "you" ? "You did nothing in this stretch; Loom ran on its own." : "Nothing happened in this stretch.";
-  return <p className="py-4 text-sm text-muted-foreground">{empty}</p>;
+  return <p className="py-4 text-sm text-[var(--loom-muted)]">{empty}</p>;
 }
 
 // ---- the numbers
 
 const TIME_WORD: Partial<Record<TicketState, string>> = { queued: "Waiting for a worker", working: "Being built", checking: "Running checks", review: "In review", approved: "Approved, waiting to merge", merging: "Merging", pr_open: "Pull request open", blocked: "Blocked" };
 const TIME_ORDER: TicketState[] = ["queued", "working", "checking", "review", "approved", "merging", "pr_open", "blocked"];
-const ROLE_FILL: Record<string, string> = { worker: PRIMARY, planner: SUCCESS_INK, reviewer: WARN };
+const ROLE_FILL: Record<string, Swatch> = { worker: { fill: PRIMARY }, planner: { fill: SUCCESS_INK }, reviewer: { fill: WARN, hatch: true } };
 
 function NumberCard({ id, title, children }: { id: string; title: string; children: ReactNode }) {
   return (
@@ -924,10 +947,10 @@ function NumberCard({ id, title, children }: { id: string; title: string; childr
 const Big = ({ value, note }: { value: string; note: string }) => (
   <p className="text-xl leading-tight font-semibold">
     {value}
-    <span className="ml-1.5 text-xs font-normal text-muted-foreground">{note}</span>
+    <span className="ml-1.5 text-xs font-normal text-[var(--loom-muted)]">{note}</span>
   </p>
 );
-const Note = ({ children }: { children: ReactNode }) => <p className="text-[13px] text-muted-foreground [&_b]:font-semibold [&_b]:text-foreground">{children}</p>;
+const Note = ({ children }: { children: ReactNode }) => <p className="text-[13px] text-[var(--loom-muted)] [&_b]:font-semibold [&_b]:text-foreground">{children}</p>;
 
 function Numbers({ view, onFind, onLink }: { view: ProjectInsights; onFind(key: string): void; onLink(filter: InsightsFilter): void }) {
   const n = view.numbers;
@@ -957,7 +980,7 @@ function Numbers({ view, onFind, onLink }: { view: ProjectInsights; onFind(key: 
       {n.firstTry.length > 0 && (
         <NumberCard id="first-try" title="How often is the first try right?">
           <Big value={pct(n.firstTry.filter((entry) => entry.clean).length / n.firstTry.length)} note="passed their first review" />
-          <div className="flex flex-wrap gap-1">
+          <div className="flex flex-wrap">
             {[...n.firstTry]
               .sort((a, b) => Number(b.clean) - Number(a.clean) || a.rounds - b.rounds || a.key.localeCompare(b.key))
               .map((entry) => (
@@ -967,10 +990,18 @@ function Numbers({ view, onFind, onLink }: { view: ProjectInsights; onFind(key: 
                   data-first-try={entry.key}
                   aria-label={`${entry.key}: ${entry.clean ? "passed its first review" : `needed ${plural(entry.rounds, "review round")}`}`}
                   title={`${entry.key}: ${entry.clean ? "passed its first review" : `needed ${plural(entry.rounds, "review round")}`}`}
-                  className="size-3.5 cursor-pointer rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                  style={{ background: entry.clean ? SUCCESS_INK : WARN, boxShadow: entry.rounds > 2 ? `inset 0 0 0 2px ${BAD}` : undefined }}
+                  className="grid size-6 cursor-pointer place-items-center rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                   onClick={() => onFind(entry.key)}
-                />
+                >
+                  {/* More than one fix is a ring round a dot rather than a red edge, which measured 1.0 to 1.9:1 on its fill:
+                      the shape tells it apart, and its orange is 3:1 or more on the card. */}
+                  <span
+                    aria-hidden
+                    data-mark={entry.clean ? "clean" : entry.rounds > 2 ? "fixes" : "fix"}
+                    className="size-3.5 rounded-sm"
+                    style={entry.clean || entry.rounds <= 2 ? { background: entry.clean ? SUCCESS_INK : WARN } : { background: `radial-gradient(circle, ${WARN} 0 2.5px, transparent 3px)`, boxShadow: `inset 0 0 0 2px ${WARN}` }}
+                  />
+                </button>
               ))}
           </div>
           <Note>
@@ -978,7 +1009,7 @@ function Numbers({ view, onFind, onLink }: { view: ProjectInsights; onFind(key: 
             <button type="button" className={LINK} onClick={() => onLink("problems")}>
               {n.firstTry.filter((entry) => !entry.clean).length} needed a fix
             </button>
-            {n.firstTry.some((entry) => entry.rounds > 2) ? ", a red edge for more than one" : ""}. Reviewers wrote <b>{plural(n.findings.total, "finding")}</b>
+            {n.firstTry.some((entry) => entry.rounds > 2) ? ", a ringed one for more than one" : ""}. Reviewers wrote <b>{plural(n.findings.total, "finding")}</b>
             {n.findings.total > 0 ? `, ${n.findings.blocking === n.findings.total ? "all" : n.findings.blocking} blocking` : ""}.
           </Note>
           {(n.text.reviews > 0 || n.text.sentBack > 0) && (
@@ -1007,7 +1038,7 @@ function Numbers({ view, onFind, onLink }: { view: ProjectInsights; onFind(key: 
               {n.you.slice(-8).map((line) => (
                 <li key={line.id} className="flex justify-between gap-3">
                   <span className="min-w-0">{textOf(line.text.map((part) => (typeof part === "object" && "quote" in part ? "" : part))).replace(/: $/, ".")}</span>
-                  <span className="whitespace-nowrap text-muted-foreground">{sameDay(line.at, n.you[0]!.at) ? clock(line.at) : dated(line.at)}</span>
+                  <span className="whitespace-nowrap text-[var(--loom-muted)]">{sameDay(line.at, n.you[0]!.at) ? clock(line.at) : dated(line.at)}</span>
                 </li>
               ))}
             </ul>
@@ -1026,7 +1057,7 @@ function Numbers({ view, onFind, onLink }: { view: ProjectInsights; onFind(key: 
         <details data-card="checks" className={CARD}>
           <summary className="cursor-pointer text-[13px] font-semibold">Checks by command</summary>
           <table className="mt-2 w-full text-left text-xs">
-            <thead className="text-subtle-foreground">
+            <thead className="text-[var(--loom-muted)]">
               <tr>
                 <th className="py-1 pr-2 font-normal">Command</th>
                 <th className="py-1 pr-2 text-right font-normal">Runs</th>
@@ -1041,7 +1072,7 @@ function Numbers({ view, onFind, onLink }: { view: ProjectInsights; onFind(key: 
                     <code className={CODE}>{command.command}</code>
                   </td>
                   <td className="py-1 pr-2 text-right tabular-nums">{command.runs}</td>
-                  <td className={`py-1 pr-2 text-right tabular-nums ${command.failed > 0 ? "font-semibold text-destructive-text" : ""}`}>{command.failed}</td>
+                  <td className={`py-1 pr-2 text-right tabular-nums ${command.failed > 0 ? "font-semibold text-[var(--loom-bad)]" : ""}`}>{command.failed}</td>
                   <td className="py-1 text-right whitespace-nowrap tabular-nums">{command.p50Ms === null ? "—" : dur(command.p50Ms)}</td>
                 </tr>
               ))}
@@ -1053,39 +1084,84 @@ function Numbers({ view, onFind, onLink }: { view: ProjectInsights; onFind(key: 
   );
 }
 
+/**
+ * Each ticket's time of work as a dot. The strip is one control, so crowded dots never make targets too small to hit:
+ * a click finds the nearest dot's story, and with focus on the strip, Left and Right pick a dot and Enter finds it.
+ */
 function Dots({ cycle, p50, p85, onFind }: { cycle: InsightsNumbers["cycle"]; p50: number; p85: number; onFind(key: string): void }) {
+  const [picked, setPicked] = useState<number | null>(null);
   const most = Math.max(1, ...cycle.map((entry) => entry.ms));
   const left = (ms: number) => 3 + (ms / most) * 94;
   // Close marks put their labels on either side of their lines, so the two words do not overlap.
   const close = p85 !== p50 && left(p85) - left(p50) < 8;
   const stacked = new Map<number, number>();
+  const order = [...cycle].sort((a, b) => a.ms - b.ms);
+  const current = picked === null ? null : (order[picked] ?? null);
+  const nearest = (event: MouseEvent): string | null => {
+    const own = (event.target as Element).getAttribute?.("data-cycle-dot");
+    if (own) return own;
+    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+    if (rect.width === 0 || order.length === 0) return null;
+    const at = ((event.clientX - rect.left) / rect.width) * 100;
+    return order.reduce((best, entry) => (Math.abs(left(entry.ms) - at) < Math.abs(left(best.ms) - at) ? entry : best)).key;
+  };
+  const onKey = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (order.length === 0) return;
+    const step = { ArrowRight: 1, ArrowLeft: -1 }[event.key];
+    if (step !== undefined) {
+      event.preventDefault();
+      setPicked(picked === null ? (step > 0 ? 0 : order.length - 1) : Math.max(0, Math.min(order.length - 1, picked + step)));
+    } else if (event.key === "Home" || event.key === "End") {
+      event.preventDefault();
+      setPicked(event.key === "Home" ? 0 : order.length - 1);
+    } else if ((event.key === "Enter" || event.key === " ") && current !== null) {
+      event.preventDefault();
+      onFind(current.key);
+    }
+  };
   return (
-    <div data-cycle-dots className="relative h-14">
+    <div
+      data-cycle-dots
+      role="group"
+      tabIndex={0}
+      aria-label={`Time of work per ticket, ${plural(cycle.length, "ticket")}. Left and Right pick a ticket, Enter finds its story.`}
+      className="relative h-14 cursor-pointer rounded focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+      onKeyDown={onKey}
+      onBlur={() => setPicked(null)}
+      onClick={(event) => {
+        const key = nearest(event.nativeEvent);
+        if (key !== null) onFind(key);
+      }}
+    >
       {[
         { ms: p50, label: "half", side: close ? "-translate-x-full pr-0.5" : "-translate-x-1/2" },
         ...(p85 === p50 ? [] : [{ ms: p85, label: "most", side: close ? "pl-0.5" : "-translate-x-1/2" }]),
       ].map((mark) => (
-        <span key={mark.label} aria-hidden className="absolute top-0 bottom-3 border-l border-dashed border-foreground/40" style={{ left: `${left(mark.ms)}%` }}>
-          <span data-cycle-mark={mark.label} className={`absolute top-full ${mark.side} text-[9.5px] text-muted-foreground`}>{mark.label}</span>
+        <span key={mark.label} aria-hidden>
+          <span className="absolute top-0 bottom-4 border-l border-dashed border-foreground/40" style={{ left: `${left(mark.ms)}%` }} />
+          <span data-cycle-mark={mark.label} className={`absolute bottom-0 ${mark.side} text-[11px] leading-4 text-[var(--loom-muted)]`} style={{ left: `${left(mark.ms)}%` }}>
+            {mark.label}
+          </span>
         </span>
       ))}
       {cycle.map((entry) => {
         const bin = Math.round(left(entry.ms) / 3);
         const row = stacked.get(bin) ?? 0;
         stacked.set(bin, row + 1);
+        const on = current?.key === entry.key;
         return (
-          <button
+          <span
             key={entry.key}
-            type="button"
             data-cycle-dot={entry.key}
-            aria-label={`${entry.key}: ${dur(entry.ms)} of work`}
             title={`${entry.key}: ${dur(entry.ms)} of work`}
-            className="absolute size-2 -translate-x-1/2 cursor-pointer rounded-full hover:scale-150 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-            style={{ left: `${left(entry.ms)}%`, bottom: `${14 + Math.min(row, 4) * 9}px`, background: SUCCESS_INK }}
-            onClick={() => onFind(entry.key)}
+            className={`absolute size-2 -translate-x-1/2 rounded-full ${on ? "scale-150 ring-2 ring-ring" : ""}`}
+            style={{ left: `${left(entry.ms)}%`, bottom: `${18 + Math.min(row, 4) * 7}px`, background: SUCCESS_INK }}
           />
         );
       })}
+      <p aria-live="polite" className="sr-only">
+        {current === null ? "" : `${current.key}: ${dur(current.ms)} of work`}
+      </p>
     </div>
   );
 }
@@ -1110,17 +1186,17 @@ function TimeCard({ n }: { n: InsightsNumbers }) {
   const label = `Where the time goes: ${states.map((state) => `${TIME_WORD[state]} ${pct(share(state))}`).join(", ")}`;
   return (
     <NumberCard id="time" title="Where does a ticket's time go?">
-      <div role="img" aria-label={label} className="flex h-2.5 overflow-hidden rounded-full bg-state-hover">
+      <div role="img" aria-label={label} className={`${SHARE_TRACK} h-2.5`}>
         {states.map((state) => (
-          <span key={state} title={`${TIME_WORD[state]} ${pct(share(state))}`} className="h-full" style={{ width: `${share(state) * 100}%`, background: STATE_COLORS[state].fill, opacity: STATE_COLORS[state].opacity ?? 1 }} />
+          <span key={state} title={`${TIME_WORD[state]} ${pct(share(state))}`} className={SHARE_PART} style={{ width: `${share(state) * 100}%`, ...markStyle(STATE_COLORS[state]) }} />
         ))}
       </div>
       <ul className="grid gap-0.5 text-xs">
         {states.map((state) => (
           <li key={state} className="grid grid-cols-[0.625rem_minmax(0,1fr)_auto] items-center gap-2">
-            <span aria-hidden className="size-2.5 rounded-sm" style={{ background: STATE_COLORS[state].fill, opacity: STATE_COLORS[state].opacity ?? 1 }} />
+            <span aria-hidden className="size-2.5 rounded-sm" style={markStyle(STATE_COLORS[state])} />
             <span>{TIME_WORD[state]}</span>
-            <span className="text-muted-foreground tabular-nums">
+            <span className="text-[var(--loom-muted)] tabular-nums">
               {pct(share(state))} · {dur((n.time[state] ?? 0) / n.reached)} each
             </span>
           </li>
@@ -1132,7 +1208,7 @@ function TimeCard({ n }: { n: InsightsNumbers }) {
           After that, pull requests waited on people for a typical <b>{dur(n.prWait.p50)}</b>, the longest {dur(n.prWait.max!)}.
         </Note>
       )}
-      <p className="text-[11px] text-subtle-foreground">
+      <p className="text-[11px] text-[var(--loom-muted)]">
         Over the {plural(n.reached, "ticket")} that {n.goal === "pr" ? "reached a pull request" : "shipped"}, from being created to {n.goal === "pr" ? "the pull request" : "shipping"}.
       </p>
     </NumberCard>
@@ -1152,17 +1228,17 @@ function CostCard({ n, ranged, onFind }: { n: InsightsNumbers; ranged: boolean; 
           <b>{pct(t.total / t.budget)}</b> of the {big(t.budget)} token budget.
         </Note>
       )}
-      <div role="img" aria-label={`Tokens by role: ${roles.map((role) => `${role}s ${pct(t.byRole[role] / t.total)}`).join(", ")}`} className="flex h-2.5 overflow-hidden rounded-full bg-state-hover">
+      <div role="img" aria-label={`Tokens by role: ${roles.map((role) => `${role}s ${pct(t.byRole[role] / t.total)}`).join(", ")}`} className={`${SHARE_TRACK} h-2.5`}>
         {roles.map((role) => (
-          <span key={role} className="h-full" style={{ width: `${(t.byRole[role] / t.total) * 100}%`, background: ROLE_FILL[role] }} />
+          <span key={role} className={SHARE_PART} style={{ width: `${(t.byRole[role] / t.total) * 100}%`, ...markStyle(ROLE_FILL[role]!) }} />
         ))}
       </div>
       <ul className="grid gap-0.5 text-xs">
         {roles.map((role) => (
           <li key={role} className="grid grid-cols-[0.625rem_minmax(0,1fr)_auto] items-center gap-2">
-            <span aria-hidden className="size-2.5 rounded-sm" style={{ background: ROLE_FILL[role] }} />
+            <span aria-hidden className="size-2.5 rounded-sm" style={markStyle(ROLE_FILL[role]!)} />
             <span>{cap(role)}s</span>
-            <span className="text-muted-foreground tabular-nums">
+            <span className="text-[var(--loom-muted)] tabular-nums">
               {big(t.byRole[role])} · {pct(t.byRole[role] / t.total)}
             </span>
           </li>
@@ -1180,13 +1256,13 @@ function CostCard({ n, ranged, onFind }: { n: InsightsNumbers; ranged: boolean; 
                 <span aria-hidden className="h-1.5 overflow-hidden rounded-full bg-state-hover">
                   <span className="block h-full rounded-full" style={{ width: `${(entry.tokens / top) * 100}%`, background: PRIMARY }} />
                 </span>
-                <span className="text-right text-muted-foreground tabular-nums">{big(entry.tokens)}</span>
+                <span className="text-right text-[var(--loom-muted)] tabular-nums">{big(entry.tokens)}</span>
               </li>
             ))}
           </ul>
         </>
       )}
-      <p className="text-[11px] text-subtle-foreground">
+      <p className="text-[11px] text-[var(--loom-muted)]">
         {ranged ? "For the whole project: Loom keeps one total per thread. " : ""}Read from bb as each turn ends{t.unreported > 0 ? `; ${plural(t.unreported, "thread")} reported no usage, so the real total is higher` : ""}.
       </p>
     </NumberCard>
@@ -1212,7 +1288,7 @@ function WrongCard({ n, onLink }: { n: InsightsNumbers; onLink(filter: InsightsF
       {!any && <Note><b>Nothing went wrong.</b></Note>}
       <ul className="grid gap-0.5 text-xs">
         {shown.map(([label, value]) => (
-          <li key={label} className={`flex justify-between gap-3 ${value === 0 ? "text-subtle-foreground" : ""}`}>
+          <li key={label} className={`flex justify-between gap-3 ${value === 0 ? "text-[var(--loom-muted)]" : ""}`}>
             <span>{label}</span>
             <span className={`tabular-nums ${value === 0 ? "" : "font-semibold"}`}>{value === 0 ? "none" : value}</span>
           </li>

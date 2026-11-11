@@ -4,19 +4,25 @@ import { formatDuration } from "../format";
 import type { ProjectState, TicketState } from "../states";
 import { HEADING, plural, useLoom } from "./common";
 import { axisOf, foldsOf, lastIndexAt, nearestIndex, stateAt, ticksOf, type Axis } from "./timeline-axis";
+import { useCoarsePointer } from "./narrow";
 
 const OPEN_KEY = "loom.timeline.open";
 const SEEK_MS = 120;
 const TRACK_PX = 30;
 const BASE_Y = 19;
-const ROW_PX = 20;
+const ROW_PX = 24;
+/** A row on a phone-narrow frame or a touch screen, so each ticket's name is a 44 px tap. */
+const TOUCH_ROW_PX = 44;
 const BAR_PX = 10;
 /** Rows shown before the list scrolls. */
 const ROWS_SHOWN = 16;
 /** A pointer this close to a fold's edge points at the moment there, not at the quiet stretch. */
 const FOLD_EDGE_PX = 3;
-/** About how wide one character of an axis label is. */
-const CHAR_PX = 5.6;
+/** About how wide one character of an axis label is: the labels are 11 px monospace. */
+const CHAR_PX = 6.6;
+/** The longest label between the ends, such as "Tue 11:27 PM", and the space kept beside every label. */
+const LABEL_CHARS = 12;
+const LABEL_GAP_PX = 14;
 const SPEEDS = [
   { label: "1 min/s", times: 60 },
   { label: "5 min/s", times: 300 },
@@ -27,7 +33,7 @@ const SPEEDS = [
 // stacks what does not fit; the `@max-xl:` classes are container queries on the frame.
 const COLUMNS = "grid grid-cols-[124px_minmax(0,1fr)_150px] gap-x-3.5";
 const HEAD_ROW = `${COLUMNS} items-center @max-xl:grid-cols-[minmax(0,1fr)_auto] @max-xl:gap-y-1`;
-const MOMENT_ROW = `${COLUMNS} items-center @max-xl:grid-cols-[minmax(0,1fr)_auto]`;
+const MOMENT_ROW = `${COLUMNS} items-center @max-xl:grid-cols-[minmax(0,1fr)] @max-xl:gap-y-2`;
 const CONTROLS_ROW = `${COLUMNS} items-center @max-xl:flex @max-xl:flex-wrap @max-xl:gap-2`;
 const LANES_ROW = `${COLUMNS} items-stretch @max-xl:grid-cols-[88px_minmax(0,1fr)]`;
 const FOOT_ROW = `${COLUMNS} items-center @max-xl:grid-cols-[88px_minmax(0,1fr)]`;
@@ -35,12 +41,14 @@ const FOOT_ROW = `${COLUMNS} items-center @max-xl:grid-cols-[88px_minmax(0,1fr)]
 // The frame's own background, so the fade over the future and the marks' cut-outs match it rewound or not.
 const FRAME = "var(--loom-timeline-bg)";
 const INK = "var(--foreground, currentColor)";
+// Queued is an outline only, so its line is the quiet mark: 3:1 or more on every surface (half the ink was 2.78:1 in light).
+const QUIET = "var(--loom-mark-quiet, currentColor)";
 const mix = (color: string, percent: number, base = FRAME) => `color-mix(in oklab, ${color} ${percent}%, ${base})`;
 const PRIMARY = "var(--primary, currentColor)";
 const SUCCESS = "var(--success, currentColor)";
 const WARNING = "var(--warning, currentColor)";
 const DANGER = "var(--destructive, currentColor)";
-const SUBTLE = "var(--subtle-foreground, currentColor)";
+const SUBTLE = "var(--loom-muted, currentColor)";
 // Light themes' success and warning colours are pale against the frame, so their outlines and marks lean towards the ink.
 const SUCCESS_INK = mix(SUCCESS, 70, INK);
 const WARNING_INK = "var(--warning-text, var(--warning, currentColor))";
@@ -62,7 +70,7 @@ const KIND_DOT: Record<MomentKind, CSSProperties> = {
   milestone: { background: PRIMARY },
 };
 const STATE_DOT: Record<TicketState, CSSProperties> = {
-  queued: { boxShadow: `inset 0 0 0 1.2px ${mix(INK, 55, "transparent")}` },
+  queued: { boxShadow: `inset 0 0 0 1.2px ${QUIET}` },
   working: cssPaint(PAINT.working!),
   checking: cssPaint(CHECKS),
   review: cssPaint(PAINT.review!),
@@ -125,6 +133,22 @@ function useWidth(): [(element: HTMLElement | null) => void, number] {
     return () => observer.disconnect();
   }, [element]);
   return [setElement, width];
+}
+
+/** Whether Loom's frame is as narrow as its `@max-xl/loom` container queries mean (under 36rem); false where nothing measures it. */
+function useNarrowFrame(element: HTMLElement | null): boolean {
+  const [narrow, setNarrow] = useState(false);
+  useEffect(() => {
+    const frame = element?.closest<HTMLElement>("[data-loom-scroll]");
+    if (frame == null || typeof ResizeObserver === "undefined") return;
+    const rem = Number.parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry !== undefined && entry.contentRect.width > 0) setNarrow(entry.contentRect.width < 36 * rem);
+    });
+    observer.observe(frame);
+    return () => observer.disconnect();
+  }, [element]);
+  return narrow;
 }
 
 /** Calls `fn` at most once every `ms`, always with the newest value; `cancel` drops a value still waiting. */
@@ -231,9 +255,9 @@ const Track = memo(function Track({ moments, folds, axis, width }: { moments: re
 });
 
 /** One row for the project's states and your actions, then one row per ticket or per ticket's agent sessions. */
-const LanesArt = memo(function LanesArt({ rows, lanes, data, folds, axis, width, hatch }: { rows: readonly Row[]; lanes: Lanes; data: ProjectTimeline; folds: readonly Span[]; axis: Axis; width: number; hatch: string }) {
-  const height = (rows.length + 1) * ROW_PX;
-  const middle = ROW_PX / 2;
+const LanesArt = memo(function LanesArt({ rows, lanes, data, folds, axis, width, hatch, rowPx }: { rows: readonly Row[]; lanes: Lanes; data: ProjectTimeline; folds: readonly Span[]; axis: Axis; width: number; hatch: string; rowPx: number }) {
+  const height = (rows.length + 1) * rowPx;
+  const middle = rowPx / 2;
   return (
     <svg data-timeline-lanes role="img" aria-label={lanes === "tickets" ? "Tickets over time" : "Agent sessions over time"} width={width} height={height} className="relative block overflow-visible">
       <defs>
@@ -256,7 +280,7 @@ const LanesArt = memo(function LanesArt({ rows, lanes, data, folds, axis, width,
           <g key={index} data-timeline-band={band.state}>
             <line x1={x0 + 2} x2={Math.max(x0 + 2, x1 - 2)} y1={middle} y2={middle} style={{ stroke, strokeWidth: 3, strokeLinecap: "round", strokeDasharray: band.state === "paused" ? "1 3" : undefined }} />
             {band.state === "paused" && x1 - x0 > 64 && (
-              <text x={x0 + 4} y={middle - 5} style={{ fill: SUBTLE, fontSize: 9.5 }}>
+              <text x={x0 + 4} y={middle - 4} style={{ fill: SUBTLE, fontSize: 11 }}>
                 paused {roughly(band.to - band.from)}
               </text>
             )}
@@ -267,7 +291,7 @@ const LanesArt = memo(function LanesArt({ rows, lanes, data, folds, axis, width,
         <Ring key={x} x={x} y={middle} r={3.4} />
       ))}
       {rows.map((row, index) => {
-        const y = (index + 1) * ROW_PX + (ROW_PX - BAR_PX) / 2;
+        const y = (index + 1) * rowPx + (rowPx - BAR_PX) / 2;
         if (lanes === "agents")
           return (
             <g key={row.key ?? ""} data-timeline-row={row.key ?? ""}>
@@ -284,7 +308,7 @@ const LanesArt = memo(function LanesArt({ rows, lanes, data, folds, axis, width,
               const x0 = axis.x(part.from);
               const box = { x: x0, y, width: Math.max(1.2, axis.x(part.to) - x0 - 0.6), height: BAR_PX, rx: 1.5 };
               if (part.state === "blocked") return <rect key={at} data-timeline-part="blocked" {...box} style={{ fill: `url(#${hatch})`, stroke: DANGER, strokeWidth: 1 }} />;
-              if (part.state === "queued") return <rect key={at} data-timeline-part="queued" {...box} style={{ fill: "none", stroke: mix(INK, 50, "transparent"), strokeDasharray: "2 2" }} />;
+              if (part.state === "queued") return <rect key={at} data-timeline-part="queued" {...box} style={{ fill: "none", stroke: QUIET, strokeWidth: 1, strokeDasharray: "2 2" }} />;
               return <rect key={at} data-timeline-part={part.state} {...box} style={svgPaint(PAINT[part.state] ?? { fill: SUBTLE })} />;
             })}
             {bar.sentBack.map((time, at) => (
@@ -309,7 +333,7 @@ function AxisLabels({ data, folds, axis, width }: { data: ProjectTimeline; folds
   const startText = width < 360 ? clock(data.start) : `${dayOf(data.start)} ${clock(data.start)}`;
   const endLength = live(data.state) ? 3 : sameDay(data.start, data.end) ? 8 : 12;
   let previous = data.start;
-  const ticks = ticksOf(folds, data.start, data.end, axis, width, { startRoom: startText.length * CHAR_PX + 40, endRoom: endLength * CHAR_PX + 40 }).map((tick) => {
+  const ticks = ticksOf(folds, data.start, data.end, axis, width, { gap: LABEL_CHARS * CHAR_PX + LABEL_GAP_PX, startRoom: (startText.length + LABEL_CHARS / 2) * CHAR_PX + LABEL_GAP_PX, endRoom: (endLength + LABEL_CHARS / 2) * CHAR_PX + LABEL_GAP_PX }).map((tick) => {
     const text = clockAfter(previous, tick.at);
     previous = tick.at;
     return { ...tick, text };
@@ -317,7 +341,7 @@ function AxisLabels({ data, folds, axis, width }: { data: ProjectTimeline; folds
   const endText = live(data.state) ? "now" : clockAfter(previous, data.end);
   const label = "absolute top-px whitespace-nowrap";
   return (
-    <div data-timeline-axis className="relative h-3.5 text-[10px] text-subtle-foreground tabular-nums" style={{ width }}>
+    <div data-timeline-axis className="relative h-3.5 text-[11px] text-[var(--loom-muted)] tabular-nums" style={{ width }}>
       <span className={`${label} left-0`}>{startText}</span>
       {ticks.map((tick, index) => (
         <span key={index} className={`${label} -translate-x-1/2`} style={{ left: tick.x }}>
@@ -351,8 +375,8 @@ const PAUSE = (
 );
 const FOCUS = "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
 // aria-disabled rather than disabled, so a step button at either end keeps keyboard focus.
-const STEP = `inline-grid size-6 shrink-0 cursor-pointer place-items-center rounded-md border border-border-seam text-foreground hover:bg-state-hover ${FOCUS} aria-disabled:cursor-default aria-disabled:opacity-35 aria-disabled:hover:bg-transparent`;
-const CHOICE = `cursor-pointer whitespace-nowrap rounded-[5px] px-2 py-px text-[11.5px] hover:bg-state-hover ${FOCUS}`;
+const STEP = `inline-grid size-6 @max-xl/loom:min-h-11 @max-xl/loom:min-w-11 pointer-coarse:min-h-11 pointer-coarse:min-w-11 shrink-0 cursor-pointer place-items-center rounded-md border border-border-seam text-foreground hover:bg-state-hover ${FOCUS} aria-disabled:cursor-default aria-disabled:opacity-35 aria-disabled:hover:bg-transparent`;
+const CHOICE = `cursor-pointer whitespace-nowrap rounded-[5px] px-2 py-px @max-xl/loom:min-h-11 pointer-coarse:min-h-11 text-[11.5px] hover:bg-state-hover ${FOCUS}`;
 
 function Legend({ lanes, hatch }: { lanes: Lanes; hatch: string }) {
   const swatch = (paint: Paint) => <span aria-hidden className="inline-block h-[7px] w-3.5 rounded-sm" style={cssPaint(paint)} />;
@@ -384,7 +408,7 @@ function Legend({ lanes, hatch }: { lanes: Lanes; hatch: string }) {
           ["you", <Dot key="you" style={KIND_DOT.you} />],
         ];
   return (
-    <ul aria-label="Legend" className="flex min-w-0 flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-muted-foreground @max-xl:order-last @max-xl:basis-full">
+    <ul aria-label="Legend" className="flex min-w-0 flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-[var(--loom-muted)] @max-xl:order-last @max-xl:basis-full">
       {items.map(([label, mark]) => (
         <li key={label} className="inline-flex items-center gap-1.5">
           {mark}
@@ -409,13 +433,13 @@ function rowSummary(row: Row, lanes: Lanes, until: number): ReactNode {
   return (
     <>
       {back > 0 && (
-        <span className="text-destructive-text" title={`Sent back ${back === 1 ? "once" : `${back} times`}`}>
+        <span className="text-[var(--loom-bad)]" title={`Sent back ${back === 1 ? "once" : `${back} times`}`}>
           <span aria-hidden>↩ </span>
           <span className="sr-only">sent back </span>
           {back}
         </span>
       )}
-      {bar.parts.some((part) => part.state === "blocked" && part.from <= until) && <span className="text-destructive-text">blocked</span>}
+      {bar.parts.some((part) => part.state === "blocked" && part.from <= until) && <span className="text-[var(--loom-bad)]">blocked</span>}
       <span>{roughly(Math.min(bar.to, until) - bar.from)}</span>
     </>
   );
@@ -431,12 +455,13 @@ function partTotals(bar: TicketBar): string {
 }
 
 /** A project's history under its health strip: a strip that rewinds the page to the moment chosen, and, open, a row per ticket. */
-export function TimelineStrip({ slug, at, onSeek, onTicket }: { slug: string; at: number | null; onSeek(at: number | null): void; onTicket(key: string): void }) {
+/** `full` is History's Rewind: the whole timeline, always open, with no fold. */
+export function TimelineStrip({ slug, at, onSeek, onTicket, full = false }: { slug: string; at: number | null; onSeek(at: number | null): void; onTicket(key: string): void; full?: boolean }) {
   const data = useLoom("timeline", { slug }).data ?? null;
-  const [open, setOpen] = useState(savedOpen);
+  const [open, setOpen] = useState(() => full || savedOpen());
   // A narrow page starts with the strip folded into one row, so the tabs show on the first screen; unfolded there, it
   // shows everything, and `open`, the wide page's remembered choice, stays as it was.
-  const [unfolded, setUnfolded] = useState(false);
+  const [unfolded, setUnfolded] = useState(full);
   const [playing, setPlaying] = useState(false);
   const [playhead, setPlayhead] = useState(0);
   const [speed, setSpeed] = useState<number>(SPEEDS[1].times);
@@ -449,6 +474,13 @@ export function TimelineStrip({ slug, at, onSeek, onTicket }: { slug: string; at
   const [lanesRef, lanesWidth] = useWidth();
   const hatch = `loom-timeline-hatch-${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
   const section = useRef<HTMLElement>(null);
+  const [sectionElement, setSectionElement] = useState<HTMLElement | null>(null);
+  const sectionRef = useCallback((element: HTMLElement | null) => {
+    section.current = element;
+    setSectionElement(element);
+  }, []);
+  const coarse = useCoarsePointer();
+  const rowPx = useNarrowFrame(sectionElement) || coarse ? TOUCH_ROW_PX : ROW_PX;
   const tip = useRef<HTMLDivElement>(null);
   const drag = useRef<Drag | null>(null);
   const clockRef = useRef(0);
@@ -519,9 +551,9 @@ export function TimelineStrip({ slug, at, onSeek, onTicket }: { slug: string; at
       top = inner.top - outer.top - box.offsetHeight - 8;
       if (outer.top + top < clip.top + 4) top = inner.bottom - outer.top + 18;
     } else {
-      const row = Math.floor(hover.y / ROW_PX);
-      top = inner.top - outer.top + (row + 1) * ROW_PX + 6;
-      if (outer.top + top + box.offsetHeight > clip.bottom - 4) top = inner.top - outer.top + row * ROW_PX - box.offsetHeight - 6;
+      const row = Math.floor(hover.y / rowPx);
+      top = inner.top - outer.top + (row + 1) * rowPx + 6;
+      if (outer.top + top + box.offsetHeight > clip.bottom - 4) top = inner.top - outer.top + row * rowPx - box.offsetHeight - 6;
     }
     box.style.left = `${left}px`;
     box.style.top = `${top}px`;
@@ -585,7 +617,7 @@ export function TimelineStrip({ slug, at, onSeek, onTicket }: { slug: string; at
   /** What a pointer in a plot points at: inside a fold, its quiet stretch; on a ticket's row, the nearest moment about that ticket. */
   const pointed = (spot: Hover) => {
     const axis = axisFor(spot.plot);
-    const row = spot.plot === "lanes" ? Math.floor(spot.y / ROW_PX) : null;
+    const row = spot.plot === "lanes" ? Math.floor(spot.y / rowPx) : null;
     const key = row !== null && row >= 1 ? (rows[row - 1]?.key ?? null) : null;
     const fits = (moment: Moment) => (key !== null ? moment.lines.some((line) => line.key === key) : row === 0 ? hasKind(moment, "you") || hasKind(moment, "milestone") : true);
     const all = moments.map((moment, momentIndex) => ({ moment, momentIndex }));
@@ -612,7 +644,7 @@ export function TimelineStrip({ slug, at, onSeek, onTicket }: { slug: string; at
       const spot = spotOf(plot, event.currentTarget, event.clientX, event.clientY);
       const row = drag.current?.tap === null ? drag.current.row : null;
       // While dragging on the rows, the highlight and the tooltip stay on the row the drag scrubs.
-      setHover(row === null ? spot : { ...spot, y: row * ROW_PX + ROW_PX / 2 });
+      setHover(row === null ? spot : { ...spot, y: row * rowPx + rowPx / 2 });
     },
     onMouseLeave: () => setHover(null),
     onPointerDown: (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -639,7 +671,7 @@ export function TimelineStrip({ slug, at, onSeek, onTicket }: { slug: string; at
       }
       const spot = spotOf(plot, event.currentTarget, event.clientX, event.clientY);
       // A drag stays on the row it started on.
-      seekMoment(pointed(active.row === null ? spot : { ...spot, y: active.row * ROW_PX + ROW_PX / 2 }).index, false);
+      seekMoment(pointed(active.row === null ? spot : { ...spot, y: active.row * rowPx + rowPx / 2 }).index, false);
     },
     onPointerUp: (event: ReactPointerEvent<HTMLDivElement>) => {
       const active = drag.current;
@@ -676,10 +708,10 @@ export function TimelineStrip({ slug, at, onSeek, onTicket }: { slug: string; at
 
   const status = past ? (
     <>
-      <span data-timeline-when className="text-xs font-semibold text-warning-text tabular-nums">
+      <span data-timeline-when className="text-xs font-semibold text-[var(--loom-warn)] tabular-nums">
         {clock(shownAt)}
       </span>
-      <span className="text-[11px] text-muted-foreground @max-xl:hidden">
+      <span className="text-[11px] text-[var(--loom-muted)] @max-xl:hidden">
         {dayOf(shownAt)}
         {live(data.state) && ` · ${roughly(data.end - shownAt)} ago`}
       </span>
@@ -693,7 +725,7 @@ export function TimelineStrip({ slug, at, onSeek, onTicket }: { slug: string; at
         <Dot style={{ background: SUCCESS }} />
         {data.state === "running" ? "Live" : "Now"}
       </span>
-      <span className="text-[11px] text-muted-foreground">{data.state === "running" ? "updates as it runs" : data.state === "paused" ? "paused" : `last change ${clock(data.end)}`}</span>
+      <span className="text-[11px] text-[var(--loom-muted)]">{data.state === "running" ? "updates as it runs" : data.state === "paused" ? "paused" : `last change ${clock(data.end)}`}</span>
     </>
   );
 
@@ -704,7 +736,7 @@ export function TimelineStrip({ slug, at, onSeek, onTicket }: { slug: string; at
       return (
         <>
           <p className="font-semibold">Quiet for {roughly(to - from)}</p>
-          <p className="text-muted-foreground">
+          <p className="text-[var(--loom-muted)]">
             Nothing happened from {sameDay(from, to) ? clock(from) : `${weekday(from)} ${clock(from)}`} to {clockAfter(from, to)}, so this stretch is folded.
           </p>
         </>
@@ -712,7 +744,7 @@ export function TimelineStrip({ slug, at, onSeek, onTicket }: { slug: string; at
     }
     const moment = moments[spot.index]!;
     const row = spot.row !== null && spot.row >= 1 ? rows[spot.row - 1] : undefined;
-    const hint = <p className="mt-1.5 border-t border-dotted border-border pt-1 text-[11px] text-subtle-foreground">Click to see the project at {clock(moment.at)}</p>;
+    const hint = <p className="mt-1.5 border-t border-dotted border-border pt-1 text-[11px] text-[var(--loom-muted)]">Click to see the project at {clock(moment.at)}</p>;
     if (row !== undefined && row.key !== null) {
       const line = moment.lines.find((entry) => entry.key === row.key) ?? tellingLine(moment);
       const bar = row.bar;
@@ -731,7 +763,7 @@ export function TimelineStrip({ slug, at, onSeek, onTicket }: { slug: string; at
             </span>
           </p>
           {session !== undefined && (
-            <p className="mt-1 text-muted-foreground">
+            <p className="mt-1 text-[var(--loom-muted)]">
               {session.role === "worker" ? "Worker" : "Reviewer"}
               {session.label !== "" && `, ${session.label}`}: {roughly(session.to - session.from)}
               {session.endReason === null ? ", still running" : `, ended: ${session.endReason}`}
@@ -739,8 +771,8 @@ export function TimelineStrip({ slug, at, onSeek, onTicket }: { slug: string; at
           )}
           {bar !== null && lanes === "tickets" && (
             <>
-              <p className="mt-1 text-muted-foreground">{partTotals(bar)}</p>
-              <p className="text-muted-foreground">
+              <p className="mt-1 text-[var(--loom-muted)]">{partTotals(bar)}</p>
+              <p className="text-[var(--loom-muted)]">
                 {bar.sentBack.length > 0 && `Sent back ${bar.sentBack.length === 1 ? "once" : `${bar.sentBack.length} times`} · `}
                 {bar.final === "done" ? `done after ${roughly(bar.to - bar.from)}` : bar.final === "cancelled" ? "cancelled" : `${STATE_WORD[stateAt(bar, data.end)]} for ${roughly(data.end - (latest?.from ?? bar.from))}`}
               </p>
@@ -763,7 +795,7 @@ export function TimelineStrip({ slug, at, onSeek, onTicket }: { slug: string; at
             </li>
           ))}
         </ul>
-        {moment.lines.length > 4 && <p className="text-muted-foreground">+{moment.lines.length - 4} more</p>}
+        {moment.lines.length > 4 && <p className="text-[var(--loom-muted)]">+{moment.lines.length - 4} more</p>}
         {hint}
       </>
     );
@@ -788,7 +820,7 @@ export function TimelineStrip({ slug, at, onSeek, onTicket }: { slug: string; at
           <span aria-hidden>{icon(<path d="m9 18 6-6-6-6" />, 12)}</span>
           <span className={HEADING}>Timeline</span>
           {past ? (
-            <span className="ml-auto text-xs font-semibold text-warning-text tabular-nums">{clock(shownAt)}</span>
+            <span className="ml-auto text-xs font-semibold text-[var(--loom-warn)] tabular-nums">{clock(shownAt)}</span>
           ) : (
             <span className="ml-auto inline-flex items-center gap-1.5 text-xs font-semibold">
               <Dot style={{ background: SUCCESS }} />
@@ -798,7 +830,7 @@ export function TimelineStrip({ slug, at, onSeek, onTicket }: { slug: string; at
         </button>
       )}
       <section
-        ref={section}
+        ref={sectionRef}
         data-timeline-strip
         data-rewound={past || undefined}
         tabIndex={0}
@@ -814,19 +846,25 @@ export function TimelineStrip({ slug, at, onSeek, onTicket }: { slug: string; at
           </p>
           <div className={HEAD_ROW}>
             <div className="flex items-center justify-between gap-1.5 @max-xl:justify-start @max-xl:gap-2.5">
+              {full ? (
+                <span className={`${HEADING} py-0.5 pr-1`}>Timeline</span>
+              ) : (
               <button type="button" aria-expanded={open} onClick={toggle} className={`${HEADING} inline-flex cursor-pointer items-center gap-1 rounded py-0.5 pr-1 hover:bg-state-hover @max-xl/loom:hidden ${FOCUS}`}>
                 <span aria-hidden className={`inline-block transition-transform ${open ? "rotate-90" : ""}`}>
                   {icon(<path d="m9 18 6-6-6-6" />, 12)}
                 </span>
                 Timeline
               </button>
+              )}
+              {!full && (
               <button type="button" data-timeline-fold aria-label="Fold the Timeline" aria-expanded onClick={() => unfold(false)} className={`${HEADING} hidden cursor-pointer items-center gap-1 rounded py-0.5 pr-1 hover:bg-state-hover @max-xl/loom:inline-flex ${FOCUS}`}>
                 <span aria-hidden className="inline-block rotate-90">
                   {icon(<path d="m9 18 6-6-6-6" />, 12)}
                 </span>
                 Timeline
               </button>
-              <button type="button" aria-label={playing ? "Pause" : "Play"} title={playing ? "Pause (Space)" : "Play the project back (Space)"} onClick={play} className={`inline-grid size-[26px] shrink-0 cursor-pointer place-items-center rounded-full border ${FOCUS} ${playing ? "border-foreground/40 text-foreground hover:bg-state-hover" : "border-transparent bg-foreground text-background"}`}>
+              )}
+              <button type="button" aria-label={playing ? "Pause" : "Play"} title={playing ? "Pause (Space)" : "Play the project back (Space)"} onClick={play} className={`inline-grid size-[26px] @max-xl/loom:min-h-11 @max-xl/loom:min-w-11 pointer-coarse:min-h-11 pointer-coarse:min-w-11 shrink-0 cursor-pointer place-items-center rounded-full border ${FOCUS} ${playing ? "border-foreground/40 text-foreground hover:bg-state-hover" : "border-transparent bg-foreground text-background"}`}>
                 {playing ? PAUSE : PLAY}
               </button>
             </div>
@@ -852,7 +890,7 @@ export function TimelineStrip({ slug, at, onSeek, onTicket }: { slug: string; at
               <div className={MOMENT_ROW}>
                 <div className="@max-xl:hidden">
                   <p className={HEADING}>Moment</p>
-                  <p data-timeline-count className="text-[11px] text-muted-foreground tabular-nums">
+                  <p data-timeline-count className="text-[11px] text-[var(--loom-muted)] tabular-nums">
                     {at === null && !playing ? "now" : `${index + 1} of ${n}`}
                   </p>
                 </div>
@@ -864,13 +902,13 @@ export function TimelineStrip({ slug, at, onSeek, onTicket }: { slug: string; at
                     {icon(<path d="m9 18 6-6-6-6" />)}
                   </button>
                   <Dot style={KIND_DOT[caption.kind]} />
-                  <p data-timeline-moment title={shownMoment.lines.map((line) => line.text).join("\n")} className="min-w-0 truncate text-[12.5px]">
+                  <p data-timeline-moment title={shownMoment.lines.map((line) => line.text).join("\n")} className="min-w-0 truncate text-[12.5px] @max-xl:line-clamp-2 @max-xl:whitespace-normal">
                     <b className="mr-1.5 tabular-nums">{clock(shownMoment.at)}</b>
                     {caption.text}
-                    {shownMoment.lines.length > 1 && <span className="ml-1 text-[11.5px] text-muted-foreground">+{shownMoment.lines.length - 1} more</span>}
+                    {shownMoment.lines.length > 1 && <span className="ml-1 text-[11.5px] text-[var(--loom-muted)]">+{shownMoment.lines.length - 1} more</span>}
                   </p>
                 </div>
-                <select aria-label="Playback speed" value={speed} onChange={(event) => setSpeed(Number(event.target.value))} className={`h-6 max-w-full justify-self-end rounded-md border border-border-seam bg-transparent px-1 text-[11.5px] text-foreground ${FOCUS}`}>
+                <select aria-label="Playback speed" value={speed} onChange={(event) => setSpeed(Number(event.target.value))} className={`h-6 @max-xl/loom:h-11 pointer-coarse:h-11 max-w-full justify-self-end @max-xl:justify-self-start rounded-md border border-[var(--loom-field-line)] bg-transparent px-1 text-[11.5px] text-foreground ${FOCUS}`}>
                   {SPEEDS.map((entry) => (
                     <option key={entry.times} value={entry.times}>
                       Play at {entry.label}
@@ -882,13 +920,13 @@ export function TimelineStrip({ slug, at, onSeek, onTicket }: { slug: string; at
               <div className={CONTROLS_ROW}>
                 <div role="group" aria-label="Rows" className="inline-flex w-fit gap-0.5 rounded-md border border-border-seam p-0.5">
                   {(["tickets", "agents"] as const).map((entry) => (
-                    <button key={entry} type="button" aria-pressed={lanes === entry} onClick={() => setLanes(entry)} className={`${CHOICE} ${lanes === entry ? "bg-surface-selected font-semibold text-foreground" : "text-muted-foreground"}`}>
+                    <button key={entry} type="button" aria-pressed={lanes === entry} onClick={() => setLanes(entry)} className={`${CHOICE} ${lanes === entry ? "bg-surface-selected font-semibold text-foreground" : "text-[var(--loom-muted)]"}`}>
                       {entry === "tickets" ? "Tickets" : "Agents"}
                     </button>
                   ))}
                 </div>
                 <Legend lanes={lanes} hatch={hatch} />
-                <button type="button" role="switch" aria-checked={troubleOnly} onClick={() => setTroubleOnly(!troubleOnly)} className={`inline-flex cursor-pointer items-center gap-1.5 justify-self-end whitespace-nowrap rounded text-[11.5px] @max-xl:ml-auto ${FOCUS}`}>
+                <button type="button" role="switch" aria-checked={troubleOnly} onClick={() => setTroubleOnly(!troubleOnly)} className={`inline-flex @max-xl/loom:min-h-11 pointer-coarse:min-h-11 cursor-pointer items-center gap-1.5 justify-self-end whitespace-nowrap rounded text-[11.5px] @max-xl:ml-auto ${FOCUS}`}>
                   <span aria-hidden className={`relative h-3.5 w-6 shrink-0 rounded-full transition-colors ${troubleOnly ? "bg-destructive" : "bg-foreground/25"}`}>
                     <span className={`absolute top-0.5 size-2.5 rounded-full bg-background transition-[left] ${troubleOnly ? "left-3" : "left-0.5"}`} />
                   </span>
@@ -896,9 +934,9 @@ export function TimelineStrip({ slug, at, onSeek, onTicket }: { slug: string; at
                 </button>
               </div>
 
-              <div className="overflow-x-hidden overflow-y-auto" style={{ maxHeight: (ROWS_SHOWN + 1) * ROW_PX + 2 }} onScroll={() => setHover(null)}>
+              <div className="overflow-x-hidden overflow-y-auto" style={{ maxHeight: (ROWS_SHOWN + 1) * rowPx + 2 }} onScroll={() => setHover(null)}>
                 <div className={LANES_ROW}>
-                  <ul aria-label={lanes === "tickets" ? "Tickets" : "Tickets with agent sessions"} className="grid auto-rows-[20px] text-[11px]">
+                  <ul aria-label={lanes === "tickets" ? "Tickets" : "Tickets with agent sessions"} className="grid text-[11px]" style={{ gridAutoRows: rowPx }}>
                     <li className={`${HEADING} flex items-center pl-0.5`}>Project</li>
                     {rows.map((row, rowIndex) => {
                       const state = row.bar === null ? null : stateAt(row.bar, stateTime);
@@ -911,7 +949,7 @@ export function TimelineStrip({ slug, at, onSeek, onTicket }: { slug: string; at
                             aria-describedby={`${hatch}-row-${rowIndex}`}
                             title={row.key === null ? undefined : `${row.key}${row.title === "" ? "" : ` · ${row.title}`}${state === null ? "" : `, ${STATE_WORD[state]}`}`}
                             onClick={() => row.key !== null && onTicket(row.key)}
-                            className={`flex h-5 w-full min-w-0 cursor-pointer items-center gap-1.5 rounded pl-0.5 text-left font-mono hover:bg-state-hover disabled:cursor-default ${FOCUS} ${spot?.row === rowIndex + 1 ? "bg-state-hover" : ""}`}
+                            className={`flex h-full w-full min-w-0 cursor-pointer items-center gap-1.5 rounded pl-0.5 text-left font-mono hover:bg-state-hover disabled:cursor-default ${FOCUS} ${spot?.row === rowIndex + 1 ? "bg-state-hover" : ""}`}
                           >
                             <Dot style={state === null ? {} : STATE_DOT[state]} />
                             <span className="truncate">{row.key ?? "no ticket"}</span>
@@ -921,11 +959,11 @@ export function TimelineStrip({ slug, at, onSeek, onTicket }: { slug: string; at
                     })}
                   </ul>
                   <div ref={lanesRef} data-timeline-lanes-plot className="relative cursor-pointer touch-pan-y" {...plotEvents("lanes")}>
-                    {spot !== null && spot.row !== null && <span aria-hidden className="pointer-events-none absolute -inset-x-1 h-5 rounded bg-state-hover" style={{ top: spot.row * ROW_PX }} />}
-                    <LanesArt rows={rows} lanes={lanes} data={data} folds={folds} axis={lanesAxis} width={lanesWidth} hatch={hatch} />
-                    {overlay(lanesAxis, (rows.length + 1) * ROW_PX)}
+                    {spot !== null && spot.row !== null && <span aria-hidden className="pointer-events-none absolute -inset-x-1 rounded bg-state-hover" style={{ top: spot.row * rowPx, height: rowPx }} />}
+                    <LanesArt rows={rows} lanes={lanes} data={data} folds={folds} axis={lanesAxis} width={lanesWidth} hatch={hatch} rowPx={rowPx} />
+                    {overlay(lanesAxis, (rows.length + 1) * rowPx)}
                   </div>
-                  <div className="grid auto-rows-[20px] text-[11px] text-muted-foreground tabular-nums @max-xl:hidden">
+                  <div className="grid text-[11px] text-[var(--loom-muted)] tabular-nums @max-xl:hidden" style={{ gridAutoRows: rowPx }}>
                     <span aria-hidden />
                     {rows.map((row, rowIndex) => (
                       <span key={row.key ?? ""} id={`${hatch}-row-${rowIndex}`} data-timeline-summary className={`flex items-center justify-end gap-1.5 whitespace-nowrap rounded pr-0.5 ${spot?.row === rowIndex + 1 ? "bg-state-hover" : ""}`}>
@@ -937,7 +975,7 @@ export function TimelineStrip({ slug, at, onSeek, onTicket }: { slug: string; at
               </div>
 
               <div className={FOOT_ROW}>
-                <p data-timeline-note className="text-[11px] text-subtle-foreground">
+                <p data-timeline-note className="text-[11px] text-[var(--loom-muted)]">
                   {plural(ticketRows, "ticket")}
                   {lanes === "tickets" && !troubleOnly && data.ticketCount > data.tickets.length && ` · ${data.ticketCount - data.tickets.length} not started`}
                 </p>
@@ -946,7 +984,7 @@ export function TimelineStrip({ slug, at, onSeek, onTicket }: { slug: string; at
               </div>
               <div className={`${FOOT_ROW} @max-xl:hidden`}>
                 <span />
-                <p className="text-[11px] text-subtle-foreground">
+                <p className="text-[11px] text-[var(--loom-muted)]">
                   Hover to read a moment, click to see the page then. <Key>←</Key>
                   <Key>→</Key> step · <Key>Space</Key> play · <Key>Esc</Key> back to now
                 </p>
@@ -965,4 +1003,4 @@ export function TimelineStrip({ slug, at, onSeek, onTicket }: { slug: string; at
   );
 }
 
-const Key = ({ children }: { children: ReactNode }) => <kbd className="mx-px rounded border border-b-2 border-border px-1 font-mono text-[10px] text-muted-foreground">{children}</kbd>;
+const Key = ({ children }: { children: ReactNode }) => <kbd className="mx-px rounded border border-b-2 border-border px-1 font-mono text-[11px] text-[var(--loom-muted)]">{children}</kbd>;

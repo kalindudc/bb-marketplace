@@ -5,7 +5,10 @@ import { followsFeedback, integrationBranchOf } from "../repos";
 import type { AutoMergeSpec, EnvironmentSpec, ForgeSpec, MachineSpec, RepoSpec, Spec } from "../spec";
 import { textSteps, type TextStep } from "../spec-diff";
 import { isUnder } from "../spec-paths";
-import { BUTTON, CHIP, HEADING, RepoChip, listText, plural } from "./common";
+import { BUTTON, CHIP, HEADING, RepoChip, listText, plural, TAP } from "./common";
+
+// Parts that did not change step back by colour, not opacity: faded text still has to be read at 4.5:1.
+const FADED = "text-[var(--loom-muted)] [&_*]:text-[var(--loom-muted)]";
 import { CHANGED_TAG, Commentable, DiffList, Pin, REMOVED_TAG, WasBadge, changeAt, changedAt, foundAt, kept, notedAt, pinsAt, useReview, type CommentTarget, type ListMark, type Review, type SpecValue } from "./spec-review-kit";
 
 const CODE = "rounded bg-surface-recessed px-1 font-mono text-xs [overflow-wrap:anywhere]";
@@ -34,7 +37,7 @@ function Choice({ path, label, value, options, names }: { path: string; label: s
               data-option={String(option)}
               data-preset={review.onComment === undefined ? undefined : String(option)}
               title={review.onComment === undefined ? undefined : `Suggest ${names[String(option)] ?? String(option)}`}
-              className={`rounded px-2 py-0.5 text-xs text-muted-foreground ${review.onComment === undefined ? "" : "hover:bg-state-hover hover:text-foreground"}`}
+              className={`rounded px-2 py-0.5 text-xs text-[var(--loom-muted)] ${review.onComment === undefined ? "" : "hover:bg-state-hover hover:text-foreground"}`}
             >
               {names[String(option)] ?? String(option)}
             </span>
@@ -72,7 +75,7 @@ function modelParts(model: string): ReactNode {
 function Model({ agent }: { agent: { provider?: string; model?: string } }) {
   return (
     <span className="inline-flex min-w-0 flex-wrap items-center gap-1.5">
-      <span className="rounded bg-surface-recessed px-1.5 text-[11px] leading-[18px] text-muted-foreground">{agent.provider ?? "default provider"}</span>
+      <span className="rounded bg-surface-recessed px-1.5 text-[11px] leading-[18px] text-[var(--loom-muted)]">{agent.provider ?? "default provider"}</span>
       {agent.model === undefined ? (
         <span className="font-mono text-xs">default model</span>
       ) : (
@@ -90,8 +93,8 @@ function Row({ label, paths, children }: { label: string; paths: readonly string
   const faded = review.only && !kept(review, paths);
   return (
     <>
-      <dt className={`pt-1 text-xs text-muted-foreground ${faded ? "opacity-45" : ""}`}>{label}</dt>
-      <dd className={`min-w-0 text-sm ${faded ? "opacity-45" : ""}`}>{children}</dd>
+      <dt className={`pt-1 text-xs text-[var(--loom-muted)] ${faded ? FADED : ""}`}>{label}</dt>
+      <dd className={`min-w-0 text-sm ${faded ? FADED : ""}`}>{children}</dd>
     </>
   );
 }
@@ -121,10 +124,10 @@ function Card({ card }: { card: SettingsCard }) {
       aria-label={card.title}
       className={`@container min-w-0 rounded-lg border bg-card p-3 ${changed ? "border-primary ring-1 ring-primary ring-inset" : "border-border-seam"} ${card.full ? "@xl:col-span-2 @5xl:col-span-3" : card.wide ? "@xl:col-span-2" : ""}`}
     >
-      <header className="mb-2.5 flex items-center gap-2">
-        <h3 className="text-sm font-semibold">{card.title}</h3>
+      <header className="mb-2.5 flex flex-wrap items-center gap-2">
+        <h3 className="text-sm font-semibold [overflow-wrap:anywhere]">{card.title}</h3>
         {card.note !== undefined && (
-          <span className="min-w-0 truncate text-xs text-muted-foreground" title={card.note}>
+          <span className="min-w-0 truncate text-xs text-[var(--loom-muted)]" title={card.note}>
             {card.note}
           </span>
         )}
@@ -133,7 +136,7 @@ function Card({ card }: { card: SettingsCard }) {
           <Pin key={n} n={n} />
         ))}
         {review.onComment !== undefined && (
-          <button type="button" className={`${CHIP} ml-auto cursor-pointer px-2 text-muted-foreground hover:text-foreground`} onClick={(event) => review.onComment!({ paths: card.paths, label: card.title, kind: "text" }, event.currentTarget)}>
+          <button type="button" className={`${CHIP} ml-auto inline-flex cursor-pointer items-center px-2 text-[var(--loom-muted)] hover:text-foreground ${TAP}`} onClick={(event) => review.onComment!({ paths: card.paths, label: card.title, kind: "text" }, event.currentTarget)}>
             Comment
           </button>
         )}
@@ -147,23 +150,23 @@ function Card({ card }: { card: SettingsCard }) {
 function Steps({ path, label, commands, missing }: { path: string; label: string; commands: readonly string[]; missing?: readonly string[] }) {
   const step = (command: string, mark: ListMark, index: number) =>
     mark === "removed" ? (
-      <span data-removed className="inline-flex items-center gap-1.5 rounded-md border border-dashed border-destructive-text/40 bg-destructive-text/5 px-2 py-0.5 font-mono text-[11.5px] text-destructive-text line-through">
+      <span data-removed className="inline-flex items-center gap-1.5 rounded-md border border-dashed border-destructive-text/40 bg-destructive-text/5 px-2 py-0.5 font-mono text-[11.5px] text-[var(--loom-bad)] line-through">
         {command}
       </span>
     ) : (
       <Commentable as="span" target={value(`${path}[${index}]`, `${label} ${index + 1}`, "command")} className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 font-mono text-[11.5px] ${mark === "added" ? "border-success bg-success/15" : "border-border-seam bg-surface-recessed/50"}`}>
-        <span className="font-sans text-[10px] text-subtle-foreground">{index + 1}</span>
+        <span className="font-sans text-[11px] text-[var(--loom-muted)]">{index + 1}</span>
         <span className="[overflow-wrap:anywhere]">{command}</span>
-        {mark === "added" && <span className="font-sans text-[10px] font-semibold text-success">new</span>}
+        {mark === "added" && <span className="font-sans text-[11px] font-semibold text-[var(--loom-ok)]">new</span>}
       </Commentable>
     );
   return (
     <div className="flex flex-wrap items-center gap-1.5">
       <DiffList path={path} items={commands} render={step} compact={false} />
       {missing?.map((command) => (
-        <span key={command} data-skipped title="Runs on every ticket, but not after a merge" className="inline-flex items-center gap-1.5 rounded-md border border-dashed border-border-seam px-2 py-0.5 font-mono text-[11.5px] text-subtle-foreground">
+        <span key={command} data-skipped title="Runs on every ticket, but not after a merge" className="inline-flex items-center gap-1.5 rounded-md border border-dashed border-border-seam px-2 py-0.5 font-mono text-[11.5px] text-[var(--loom-muted)]">
           {command}
-          <span className="font-sans text-[10px]">tickets only</span>
+          <span className="font-sans text-[11px]">tickets only</span>
         </span>
       ))}
     </div>
@@ -171,7 +174,7 @@ function Steps({ path, label, commands, missing }: { path: string; label: string
 }
 
 function Piece({ step }: { step: TextStep }) {
-  return step.op === "same" ? <span>{step.text}</span> : step.op === "added" ? <ins className="rounded-sm bg-success/15 text-success no-underline">{step.text}</ins> : <del className="rounded-sm bg-destructive-text/10 text-destructive-text">{step.text}</del>;
+  return step.op === "same" ? <span>{step.text}</span> : step.op === "added" ? <ins className="rounded-sm bg-success/15 text-[var(--loom-ok)] no-underline">{step.text}</ins> : <del className="rounded-sm bg-destructive-text/10 text-[var(--loom-bad)]">{step.text}</del>;
 }
 
 /** A version's old and new text, word by word. */
@@ -193,10 +196,10 @@ export function Prose({ path, label, text, fallback = "not set", className = "" 
   return (
     <Commentable as="span" target={value(path, label, "text")} showWas={before === undefined} className={`min-w-0 [overflow-wrap:anywhere] ${className}`}>
       {before === undefined ? (
-        (text ?? <span className="text-muted-foreground">{fallback}</span>)
+        (text ?? <span className="text-[var(--loom-muted)]">{fallback}</span>)
       ) : text === undefined ? (
         <>
-          <del className="text-destructive-text">{before}</del> <span className="text-muted-foreground">{fallback}</span>
+          <del className="text-[var(--loom-bad)]">{before}</del> <span className="text-[var(--loom-muted)]">{fallback}</span>
         </>
       ) : (
         <Diff before={before} after={text} />
@@ -230,7 +233,7 @@ function Folded({ target, steps, diff = false, className = "", tag }: { target: 
   const rows: ReactNode[] = [];
   lines.forEach((line, index) => {
     if (open || stays[index]) rows.push(line.map((step, at) => <Piece key={at} step={step} />));
-    else if (stays[index - 1]) rows.push(<span className="text-subtle-foreground">⋯</span>);
+    else if (stays[index - 1]) rows.push(<span className="text-[var(--loom-muted)]">⋯</span>);
   });
   const code = (
     <>
@@ -258,7 +261,7 @@ function Folded({ target, steps, diff = false, className = "", tag }: { target: 
         </Commentable>
       )}
       {hidden > 0 && (
-        <button type="button" aria-expanded={open} className={`${CHIP} shrink-0 cursor-pointer px-2 text-muted-foreground hover:text-foreground`} onClick={() => setOpen(!open)}>
+        <button type="button" aria-expanded={open} className={`${CHIP} inline-flex shrink-0 cursor-pointer items-center px-2 text-[var(--loom-muted)] hover:text-foreground ${TAP}`} onClick={() => setOpen(!open)}>
           {open ? "Fold" : `+${plural(hidden, "line")}`}
         </button>
       )}
@@ -267,7 +270,7 @@ function Folded({ target, steps, diff = false, className = "", tag }: { target: 
 }
 
 const same = (text: string): TextStep[] => [{ op: "same", text }];
-const NEW = <span className="text-[10px] font-semibold text-success">new</span>;
+const NEW = <span className="text-[11px] font-semibold text-[var(--loom-ok)]">new</span>;
 
 /** A command the spec sets at `path`: new, rewritten (its old and new text) or removed in this version, or as it is. */
 export function Command({ path, label, command }: { path: string; label: string; command: string | undefined }) {
@@ -287,12 +290,12 @@ function Part({ label, paths, target, children }: { label: string; paths: readon
   const review = useReview();
   const faded = review.only && !kept(review, paths);
   return (
-    <div data-faded={faded || undefined} className={`min-w-0 space-y-0.5 ${faded ? "opacity-45" : ""}`}>
+    <div data-faded={faded || undefined} className={`min-w-0 space-y-0.5 ${faded ? FADED : ""}`}>
       {target === undefined ? (
-        <p className="text-[11px] text-muted-foreground">{label}</p>
+        <p className="text-[11px] text-[var(--loom-muted)]">{label}</p>
       ) : (
         // A list's own target: a version that removes its entries changes the list, and What changed goes here.
-        <Commentable target={target} showWas={false} className="inline-block text-[11px] text-muted-foreground">
+        <Commentable target={target} showWas={false} className="inline-block text-[11px] text-[var(--loom-muted)]">
           {label}
         </Commentable>
       )}
@@ -341,7 +344,7 @@ function GlobList({ path, label, items }: { path: string; label: string; items: 
         compact={false}
         render={(glob, mark, index) =>
           mark === "removed" ? (
-            <span data-removed className="rounded-full bg-destructive-text/10 px-2 font-mono text-[11px] leading-5 text-destructive-text line-through">
+            <span data-removed className="rounded-full bg-destructive-text/10 px-2 font-mono text-[11px] leading-5 text-[var(--loom-bad)] line-through">
               {glob}
             </span>
           ) : (
@@ -370,7 +373,7 @@ function AutoMergeParts({ path, label, auto }: { path: string; label: string; au
     <Part label="Merges a ready pull request itself" paths={[at]}>
       <div data-auto-merge={path} className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs">
         {auto === undefined ? (
-          <Commentable as="span" target={{ paths: [at, ...review.changes.map((change) => change.path).filter((one) => one.startsWith(`${at}.`))], label: `${label} › auto merge`, kind: "text" }} className="text-muted-foreground">
+          <Commentable as="span" target={{ paths: [at, ...review.changes.map((change) => change.path).filter((one) => one.startsWith(`${at}.`))], label: `${label} › auto merge`, kind: "text" }} className="text-[var(--loom-muted)]">
             off
           </Commentable>
         ) : (
@@ -384,19 +387,19 @@ function AutoMergeParts({ path, label, auto }: { path: string; label: string; au
           </Commentable>
         )}
         {auto !== undefined && (
-          <Commentable as="span" target={value(`${at}.mode`, `${label} › auto merge › mode`, "enum", auto.mode ?? "manual", { options: ["manual", "auto"], names: AUTO_MERGE_MODE_NAMES })} className="text-muted-foreground">
+          <Commentable as="span" target={value(`${at}.mode`, `${label} › auto merge › mode`, "enum", auto.mode ?? "manual", { options: ["manual", "auto"], names: AUTO_MERGE_MODE_NAMES })} className="text-[var(--loom-muted)]">
             {AUTO_MERGE_MODE_NAMES[auto.mode ?? "manual"]}
             {auto.mode === undefined && ", the default"}
           </Commentable>
         )}
-        {auto !== undefined && <span className="text-muted-foreground">once the forge says a person approved it</span>}
+        {auto !== undefined && <span className="text-[var(--loom-muted)]">once the forge says a person approved it</span>}
         {shown("require_live") && (
-          <Commentable as="span" target={value(`${at}.require_live`, `${label} › auto merge › require live`, "bool", auto?.require_live ?? false)} className="text-muted-foreground">
+          <Commentable as="span" target={value(`${at}.require_live`, `${label} › auto merge › require live`, "bool", auto?.require_live ?? false)} className="text-[var(--loom-muted)]">
             {auto?.require_live === true ? "and what its rollout requires is live" : "whatever is live"}
           </Commentable>
         )}
         {auto !== undefined && (
-          <Commentable as="span" target={value(`${at}.max_attempts`, `${label} › auto merge › max attempts`, "number", auto.max_attempts ?? 3, { min: 1, max: 10 })} className="text-muted-foreground">
+          <Commentable as="span" target={value(`${at}.max_attempts`, `${label} › auto merge › max attempts`, "number", auto.max_attempts ?? 3, { min: 1, max: 10 })} className="text-[var(--loom-muted)]">
             at most {plural(auto.max_attempts ?? 3, "attempt")}
           </Commentable>
         )}
@@ -404,7 +407,7 @@ function AutoMergeParts({ path, label, auto }: { path: string; label: string; au
       {shown("final_review") && <FinalReviewPart at={`${at}.final_review`} label={`${label} › auto merge › final review`} final={auto?.final_review} />}
       {shown("rejected") && (
         <div className="flex min-w-0 flex-wrap items-center gap-1">
-          <Commentable as="span" target={value(`${at}.rejected`, `${label} › auto merge › rejected`, "text")} className="text-[11px] text-muted-foreground">
+          <Commentable as="span" target={value(`${at}.rejected`, `${label} › auto merge › rejected`, "text")} className="text-[11px] text-[var(--loom-muted)]">
             Turned away when a new comment matches
           </Commentable>
           <DiffList
@@ -413,7 +416,7 @@ function AutoMergeParts({ path, label, auto }: { path: string; label: string; au
             compact={false}
             render={(glob, mark, index) =>
               mark === "removed" ? (
-                <span data-removed className="rounded-full bg-destructive-text/10 px-2 font-mono text-[11px] leading-5 text-destructive-text line-through">
+                <span data-removed className="rounded-full bg-destructive-text/10 px-2 font-mono text-[11px] leading-5 text-[var(--loom-bad)] line-through">
                   {glob}
                 </span>
               ) : (
@@ -433,7 +436,7 @@ function AutoMergeParts({ path, label, auto }: { path: string; label: string; au
 function FinalReviewPart({ at, label, final }: { at: string; label: string; final: AutoMergeSpec["final_review"] }) {
   return (
     <div data-final-review={at} className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs">
-      <Commentable as="span" target={value(at, label, "text")} className="text-muted-foreground">
+      <Commentable as="span" target={value(at, label, "text")} className="text-[var(--loom-muted)]">
         {final === undefined ? "No final review before the merge" : "A final review before each merge, of what changed since approval, by the reviewer's agent at low reasoning within 10 minutes"}
       </Commentable>
     </div>
@@ -456,7 +459,7 @@ function ReviewerParts({ path, label, rules }: { path: string; label: string; ru
           if (rule.users === undefined && team !== undefined) {
             return (
               <li key={index} data-reviewer-rule={index} className="text-xs">
-                <Commentable as="span" target={value(one, `${label} › reviewers ${index + 1}`, "text")} className="text-muted-foreground">
+                <Commentable as="span" target={value(one, `${label} › reviewers ${index + 1}`, "text")} className="text-[var(--loom-muted)]">
                   {team}, a team: Loom no longer reads team rules; list the people to ask in users
                 </Commentable>
               </li>
@@ -467,7 +470,7 @@ function ReviewerParts({ path, label, rules }: { path: string; label: string; ru
               <Commentable as="span" target={value(`${one}.count`, `${label} › reviewers ${index + 1} › count`, "number", rule.count, { min: 1, max: 10 })} className="font-semibold tabular-nums">
                 {rule.count ?? "every one"}
               </Commentable>
-              <span className="text-muted-foreground">of</span>
+              <span className="text-[var(--loom-muted)]">of</span>
               <Commentable as="span" target={value(`${one}.users`, `${label} › reviewers ${index + 1} › users`, "text")} className={CODE}>
                 {rule.users.join(", ")}
               </Commentable>
@@ -506,7 +509,7 @@ function ForgeRows({ path, label, forge, inherited }: { path: string; label: str
     <>
       <Row label="Forge" paths={[path]}>
         {forge === undefined ? (
-          <Commentable as="span" target={value(kind, label, "text")} className="text-muted-foreground">
+          <Commentable as="span" target={value(kind, label, "text")} className="text-[var(--loom-muted)]">
             {inherited}
           </Commentable>
         ) : (
@@ -601,7 +604,7 @@ export function Inputs({ path, label, inputs }: { path: string; label: string; i
       {gone.map((key) => {
         const change = changeAt(review, `${path}.${key}`);
         return (
-          <Commentable key={key} as="span" target={target(key)} showWas={false} className="rounded bg-destructive-text/10 px-1.5 font-mono text-xs text-destructive-text [overflow-wrap:anywhere]">
+          <Commentable key={key} as="span" target={target(key)} showWas={false} className="rounded bg-destructive-text/10 px-1.5 font-mono text-xs text-[var(--loom-bad)] [overflow-wrap:anywhere]">
             <del>
               {key}
               {change?.kind === "value" || change?.kind === "text" ? ` = ${inputText(change.before)}` : ""}
@@ -643,7 +646,7 @@ function removedTables(review: Review, list: string, kept: number): RemovedTable
 function RemovedRow({ table, label, children }: { table: RemovedTable; label: string; children: ReactNode }) {
   return (
     <li data-removed-row={table.at} className="min-w-0">
-      <Commentable target={{ paths: [table.at, ...table.paths], label, kind: "text" }} showWas={false} className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1 border border-dashed border-destructive-text/40 bg-destructive-text/5 px-2 py-1.5 text-sm text-destructive-text [overflow-wrap:anywhere]">
+      <Commentable target={{ paths: [table.at, ...table.paths], label, kind: "text" }} showWas={false} className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1 border border-dashed border-destructive-text/40 bg-destructive-text/5 px-2 py-1.5 text-sm text-[var(--loom-bad)] [overflow-wrap:anywhere]">
         <del className="min-w-0">{children}</del>
         <span className={REMOVED_TAG}>removed</span>
       </Commentable>
@@ -657,7 +660,7 @@ const oldText = (table: RemovedTable, key: string) => (typeof table.old[key] ===
 function Provider({ path, label, provider, inputs, inherited }: { path: string; label: string; provider: string | undefined; inputs: Readonly<Record<string, unknown>> | undefined; inherited: string }) {
   return (
     <span className="flex min-w-0 flex-col items-start gap-1">
-      <Commentable as="span" target={value(`${path}.provider`, `${label} › provider`, "text", provider)} className={provider === undefined ? "text-muted-foreground" : "font-mono text-xs [overflow-wrap:anywhere]"}>
+      <Commentable as="span" target={value(`${path}.provider`, `${label} › provider`, "text", provider)} className={provider === undefined ? "text-[var(--loom-muted)]" : "font-mono text-xs [overflow-wrap:anywhere]"}>
         {provider ?? inherited}
       </Commentable>
       <Inputs path={`${path}.inputs`} label={`${label} › inputs`} inputs={inputs} />
@@ -669,7 +672,7 @@ function Machine({ path, label, machine, inherited }: { path: string; label: str
   const review = useReview();
   if (machine === undefined && !changedAt(review, path)) {
     return (
-      <Commentable as="span" target={value(path, label, "text")} className="text-muted-foreground">
+      <Commentable as="span" target={value(path, label, "text")} className="text-[var(--loom-muted)]">
         {inherited}
       </Commentable>
     );
@@ -698,7 +701,7 @@ const ciText = (ci: boolean) => (ci ? "The pull request's CI runs every other te
 
 function RefreshBehind({ path, label, n, base }: { path: string; label: string; n: number | undefined; base: string }) {
   return n === undefined ? (
-    <Commentable as="span" target={value(path, label, "text")} className="text-muted-foreground">
+    <Commentable as="span" target={value(path, label, "text")} className="text-[var(--loom-muted)]">
       off
     </Commentable>
   ) : (
@@ -712,7 +715,7 @@ function GitTimeout({ path, label, seconds }: { path: string; label: string; sec
   return (
     <Commentable as="span" target={value(path, label, "number", seconds ?? DEFAULT_GIT_SECONDS, gitSeconds)}>
       <b className="tabular-nums">{seconds ?? DEFAULT_GIT_SECONDS} s</b>
-      {seconds === undefined && ", the default"} <span className="text-xs text-muted-foreground">for each git fetch, ls-remote or push</span>
+      {seconds === undefined && ", the default"} <span className="text-xs text-[var(--loom-muted)]">for each git fetch, ls-remote or push</span>
     </Commentable>
   );
 }
@@ -721,7 +724,7 @@ function GitTimeout({ path, label, seconds }: { path: string; label: string; sec
 function RepoGitTimeout({ path, label, seconds, project }: { path: string; label: string; seconds: number | undefined; project: number | undefined }) {
   if (seconds !== undefined) return <GitTimeout path={path} label={label} seconds={seconds} />;
   return (
-    <Commentable as="span" target={value(path, label, "number", project ?? DEFAULT_GIT_SECONDS, gitSeconds)} className="text-muted-foreground">
+    <Commentable as="span" target={value(path, label, "number", project ?? DEFAULT_GIT_SECONDS, gitSeconds)} className="text-[var(--loom-muted)]">
       {project === undefined ? `${DEFAULT_GIT_SECONDS} s, the default` : `${project} s, from the project`}
     </Commentable>
   );
@@ -737,7 +740,7 @@ function Deploy({ path, label, deploy, project, inherited }: { path: string; lab
   const how = deploy?.how !== undefined || changedAt(review, `${path}.how`);
   if (!onMerge && !how) {
     return (
-      <Commentable as="span" target={value(path, label, "text")} className="text-muted-foreground">
+      <Commentable as="span" target={value(path, label, "text")} className="text-[var(--loom-muted)]">
         {inherited}
       </Commentable>
     );
@@ -786,16 +789,16 @@ function RepoItem({ spec, repo, index, bbProjectNames }: { spec: Spec; repo: Rep
         <Commentable as="span" target={value(`${at}.project`, `${repo.name} › bb project`, "text", repo.project)} className="min-w-0 [overflow-wrap:anywhere]">
           <span data-repo-project>bb project {bbProjectNames[repo.project] ?? <code className={CODE}>{repo.project}</code>}</span>
         </Commentable>
-        <Commentable as="span" target={value(`${at}.base`, `${repo.name} › base`, "text", base)} className="text-muted-foreground">
+        <Commentable as="span" target={value(`${at}.base`, `${repo.name} › base`, "text", base)} className="text-[var(--loom-muted)]">
           base <code className={CODE}>{base}</code>
         </Commentable>
         {shown("remote", repo.remote !== undefined) && (
-          <Commentable as="span" target={value(`${at}.remote`, `${repo.name} › remote`, "text", repo.remote ?? merge.remote)} className="text-muted-foreground">
+          <Commentable as="span" target={value(`${at}.remote`, `${repo.name} › remote`, "text", repo.remote ?? merge.remote)} className="text-[var(--loom-muted)]">
             remote <code className={CODE}>{repo.remote ?? merge.remote}</code>
           </Commentable>
         )}
       </span>
-      <span data-repo-checks={repo.name} className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+      <span data-repo-checks={repo.name} className="flex flex-wrap items-center gap-1.5 text-xs text-[var(--loom-muted)]">
         <Commentable as="span" target={value(`${at}.checks`, `${repo.name} › checks`, "command")} className="inline-flex min-w-0 flex-wrap items-center gap-1.5">
           checks: {repo.checks === undefined ? "the project checks" : repo.checks.length === 0 ? "none: its tickets run only their own verify commands" : repo.checks.map((command) => <code key={command} className={CODE}>{command}</code>)}
         </Commentable>
@@ -813,14 +816,14 @@ function RepoItem({ spec, repo, index, bbProjectNames }: { spec: Spec; repo: Rep
         )}
       </span>
       {shown("protected", (repo.protected?.length ?? 0) > 0) && (
-        <Commentable as="span" target={value(`${at}.protected`, `${repo.name} › protected`, "file")} className="flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
+        <Commentable as="span" target={value(`${at}.protected`, `${repo.name} › protected`, "file")} className="flex flex-wrap items-center gap-1 text-xs text-[var(--loom-muted)]">
           also protected:
           <DiffList
             path={`${at}.protected`}
             items={repo.protected ?? []}
             compact={false}
             render={(glob, mark) => (
-              <code className={`${CODE} ${mark === "removed" ? "text-destructive-text line-through" : mark === "added" ? "ring-1 ring-success" : ""}`} data-removed={mark === "removed" || undefined}>
+              <code className={`${CODE} ${mark === "removed" ? "text-[var(--loom-bad)] line-through" : mark === "added" ? "ring-1 ring-success" : ""}`} data-removed={mark === "removed" || undefined}>
                 {glob}
               </code>
             )}
@@ -828,12 +831,12 @@ function RepoItem({ spec, repo, index, bbProjectNames }: { spec: Spec; repo: Rep
         </Commentable>
       )}
       <details data-repo-settings={repo.name} open={open} className="text-xs">
-        <summary className="cursor-pointer text-muted-foreground hover:text-foreground">Settings · {own.length === 0 ? "all from the project" : `its own ${listText(own.map(([, name]) => name))}`}</summary>
+        <summary className={`flex min-h-6 cursor-pointer items-center text-[var(--loom-muted)] hover:text-foreground ${TAP}`}>Settings · {own.length === 0 ? "all from the project" : `its own ${listText(own.map(([, name]) => name))}`}</summary>
         <dl className={`${ROWS} mt-1.5 pl-2`}>
           <ForgeRows path={`${at}.forge`} label={`${repo.name} › forge`} forge={repo.forge} inherited={`${FORGE_KINDS[merge.forge?.kind ?? "gh"]}, from the project`} />
           {repo.environment === undefined && !changedAt(review, `${at}.environment`) ? (
             <Row label="Environment" paths={[`${at}.environment`]}>
-              <Commentable as="span" target={value(`${at}.environment`, `${repo.name} › environment`, "text")} className="text-muted-foreground">
+              <Commentable as="span" target={value(`${at}.environment`, `${repo.name} › environment`, "text")} className="text-[var(--loom-muted)]">
                 {projectEnvironment}
               </Commentable>
             </Row>
@@ -842,7 +845,7 @@ function RepoItem({ spec, repo, index, bbProjectNames }: { spec: Spec; repo: Rep
           )}
           {(!integration || shown("ci", repo.ci !== undefined)) && (
             <Row label="CI" paths={[`${at}.ci`]}>
-              <Commentable as="span" target={value(`${at}.ci`, `${repo.name} › ci`, "bool", repo.ci ?? checks.ci ?? followsFeedback(repo.forge ?? merge.forge ?? GH))} className={repo.ci === undefined ? "text-muted-foreground" : ""}>
+              <Commentable as="span" target={value(`${at}.ci`, `${repo.name} › ci`, "bool", repo.ci ?? checks.ci ?? followsFeedback(repo.forge ?? merge.forge ?? GH))} className={repo.ci === undefined ? "text-[var(--loom-muted)]" : ""}>
                 {repo.ci === undefined ? `${(checks.ci ?? followsFeedback(repo.forge ?? merge.forge ?? GH)) ? "relies on CI" : "ignores CI"}, ${checks.ci === undefined ? "from the forge" : "from the project"}` : ciText(repo.ci)}
               </Commentable>
             </Row>
@@ -855,7 +858,7 @@ function RepoItem({ spec, repo, index, bbProjectNames }: { spec: Spec; repo: Rep
           {(!integration || shown("refresh_behind", repo.refresh_behind !== undefined)) && (
             <Row label="Fresh pull requests" paths={[`${at}.refresh_behind`]}>
               {repo.refresh_behind === undefined ? (
-                <Commentable as="span" target={value(`${at}.refresh_behind`, `${repo.name} › refresh behind`, "text")} className="text-muted-foreground">
+                <Commentable as="span" target={value(`${at}.refresh_behind`, `${repo.name} › refresh behind`, "text")} className="text-[var(--loom-muted)]">
                   {merge.refresh_behind === undefined ? "off, from the project" : `${plural(merge.refresh_behind, "commit")} behind, from the project`}
                 </Commentable>
               ) : (
@@ -877,13 +880,13 @@ function DeployOrder({ spec }: { spec: Spec }) {
   const review = useReview();
   const rollout = spec.rollout;
   const repos = (spec.repo ?? []).map((repo, index) => ({ repo, at: `repo[${index}].deploy` })).filter(({ repo, at }) => repo.deploy !== undefined || changedAt(review, at));
-  const faded = (path: string) => (review.only && !kept(review, [path]) ? "opacity-45" : "");
+  const faded = (path: string) => (review.only && !kept(review, [path]) ? FADED : "");
   const named = (path: string, key: string, label: string, className: string, children: ReactNode) => {
     const renamed = changeAt(review, `${path}.${key}`);
     return (
       <Commentable as="span" target={{ paths: [path, `${path}.${key}`], label, kind: "text" }} className={className}>
         {children}
-        {renamed?.kind === "value" && (typeof renamed.before === "string" && renamed.before.length > 24 ? <del className="ml-1.5 text-xs font-normal text-destructive-text">{renamed.before}</del> : <WasBadge before={renamed.before} />)}
+        {renamed?.kind === "value" && (typeof renamed.before === "string" && renamed.before.length > 24 ? <del className="ml-1.5 text-xs font-normal text-[var(--loom-bad)]">{renamed.before}</del> : <WasBadge before={renamed.before} />)}
       </Commentable>
     );
   };
@@ -895,7 +898,7 @@ function DeployOrder({ spec }: { spec: Spec }) {
   const goneWindows = removedTables(review, "rollout.window", windows.length);
   return (
     <div className="min-w-0 space-y-3">
-      <p className="text-xs text-muted-foreground">Deploy order is advice for you: Loom tracks what is live and shows the next safe step on the Rollout tab, and holds no start, review or merge back for it.</p>
+      <p className="text-xs text-[var(--loom-muted)]">Deploy order is advice for you: Loom tracks what is live and shows the next safe step on the Rollout tab, and holds no start, review or merge back for it.</p>
       {(rollout?.deploy !== undefined || changedAt(review, "rollout.deploy")) && (
         <dl className={ROWS}>
           <Row label="Changes deploy" paths={["rollout.deploy"]}>
@@ -933,15 +936,15 @@ function DeployOrder({ spec }: { spec: Spec }) {
                     `Deploy stage ${stage.name}`,
                     "inline-flex items-baseline gap-1.5",
                     <>
-                      <span className="text-xs text-subtle-foreground tabular-nums">{index + 1}</span>
+                      <span className="text-xs text-[var(--loom-muted)] tabular-nums">{index + 1}</span>
                       <b className="font-mono text-xs font-semibold">{stage.name}</b>
                     </>,
                   )}
                   <Prose path={`${at}.goal`} label={`Deploy stage ${stage.name} › goal`} text={stage.goal} className="flex-1 basis-40" />
-                  <Commentable as="span" target={value(`${at}.soak`, `Deploy stage ${stage.name} › soak`, "text", stage.soak)} className={`${CHIP} px-2 text-muted-foreground`}>
+                  <Commentable as="span" target={value(`${at}.soak`, `Deploy stage ${stage.name} › soak`, "text", stage.soak)} className={`${CHIP} px-2 text-[var(--loom-muted)]`}>
                     {stage.soak === undefined ? "no soak" : `soaks ${stage.soak}`}
                   </Commentable>
-                  <span data-stage-tickets title={tickets.join(", ")} className="text-xs text-muted-foreground">
+                  <span data-stage-tickets title={tickets.join(", ")} className="text-xs text-[var(--loom-muted)]">
                     {plural(tickets.length, "ticket")}
                   </span>
                 </li>
@@ -967,13 +970,13 @@ function DeployOrder({ spec }: { spec: Spec }) {
                     {named(at, "ref", `Milestone ${milestone.ref}`, "font-mono text-xs font-semibold [overflow-wrap:anywhere]", milestone.ref)}
                     <Prose path={`${at}.title`} label={`Milestone ${milestone.ref} › title`} text={milestone.title} className="flex-1 basis-40" />
                     {(milestone.stage !== undefined || changedAt(review, `${at}.stage`)) && (
-                      <Commentable as="span" target={value(`${at}.stage`, `Milestone ${milestone.ref} › stage`, "text", milestone.stage)} className={`${CHIP} px-2 text-muted-foreground`}>
+                      <Commentable as="span" target={value(`${at}.stage`, `Milestone ${milestone.ref} › stage`, "text", milestone.stage)} className={`${CHIP} px-2 text-[var(--loom-muted)]`}>
                         {milestone.stage === undefined ? "gates no stage" : `gates ${milestone.stage}`}
                       </Commentable>
                     )}
                   </span>
                   {milestone.check === undefined && changeAt(review, `${at}.check`) === undefined ? (
-                    <p className="text-xs text-muted-foreground">No check command: you mark it live when it holds.</p>
+                    <p className="text-xs text-[var(--loom-muted)]">No check command: you mark it live when it holds.</p>
                   ) : (
                     <Command path={`${at}.check`} label={`Milestone ${milestone.ref} › check`} command={milestone.check} />
                   )}
@@ -1007,7 +1010,7 @@ function DeployOrder({ spec }: { spec: Spec }) {
                     </Commentable>
                   </span>
                   {(window.note !== undefined || changedAt(review, `${at}.note`)) && (
-                    <Prose path={`${at}.note`} label={`Deploy window ${window.title} › note`} text={window.note} fallback="no note" className="basis-full text-xs text-muted-foreground" />
+                    <Prose path={`${at}.note`} label={`Deploy window ${window.title} › note`} text={window.note} fallback="no note" className="basis-full text-xs text-[var(--loom-muted)]" />
                   )}
                 </li>
               );
@@ -1031,11 +1034,11 @@ function HookList({ spec }: { spec: Spec }) {
   const review = useReview();
   const hooks = spec.hook ?? [];
   const gone = removedTables(review, "hook", hooks.length);
-  const faded = (path: string) => (review.only && !kept(review, [path]) ? "opacity-45" : "");
+  const faded = (path: string) => (review.only && !kept(review, [path]) ? FADED : "");
   const eventName = (on: string) => HOOK_EVENT_NAMES[on as keyof typeof HOOK_EVENT_NAMES] ?? on;
   return (
     <div className="min-w-0 space-y-2">
-      <p className="text-xs text-muted-foreground">When each event happens, Loom tells the planner what to do, or puts it in each worker's brief, and runs the command on the project's machine. It checks neither and holds nothing back for them.</p>
+      <p className="text-xs text-[var(--loom-muted)]">When each event happens, Loom tells the planner what to do, or puts it in each worker's brief, and runs the command on the project's machine. It checks neither and holds nothing back for them.</p>
       <ol className="space-y-1">
         {hooks.map((hook, index) => {
           const at = `hook[${index}]`;
@@ -1095,16 +1098,16 @@ export function SettingsSection({ spec, bbProjectNames, onShowAll, onJump }: { s
         <>
           <p className="mb-2.5 flex flex-wrap items-center gap-1.5 text-xs">
             <span className="rounded-md border border-border-seam px-2 py-1">{spec.ticket.length} ticket {spec.ticket.length === 1 ? "branch" : "branches"}</span>
-            <span aria-hidden className="text-subtle-foreground">→</span>
+            <span aria-hidden className="text-[var(--loom-muted)]">→</span>
             {integration ? (
               <>
                 <span className="rounded-md border border-primary px-2 py-1 font-mono">{integrationBranchOf(spec)}</span>
-                <span aria-hidden className="text-subtle-foreground">→</span>
+                <span aria-hidden className="text-[var(--loom-muted)]">→</span>
               </>
             ) : (
               <>
                 <span className="rounded-md border border-primary px-2 py-1">a pull request each</span>
-                <span aria-hidden className="text-subtle-foreground">→</span>
+                <span aria-hidden className="text-[var(--loom-muted)]">→</span>
               </>
             )}
             <Commentable as="span" target={value("project.base", "Base branch", "text", project.base)} className="rounded-md border border-border-seam px-2 py-1 font-mono">
@@ -1118,7 +1121,7 @@ export function SettingsSection({ spec, bbProjectNames, onShowAll, onJump }: { s
             {integration ? (
               <>
                 <Row label="Landing" paths={["merge.strategy"]}>
-                  <span className="text-xs text-muted-foreground">
+                  <span className="text-xs text-[var(--loom-muted)]">
                     You land it with <code className={`${CODE} whitespace-nowrap`}>bb loom land</code>: {repos.length > 0 ? "one pull request per repo" : "one pull request"}, or onto {repos.length > 0 ? "each base" : project.base} with <code className={`${CODE} whitespace-nowrap`}>--direct</code>.
                   </span>
                 </Row>
@@ -1132,7 +1135,7 @@ export function SettingsSection({ spec, bbProjectNames, onShowAll, onJump }: { s
                 {drafts}
                 <Row label="Fix rounds" paths={["merge.max_fix_rounds"]}>
                   <Commentable as="span" target={value("merge.max_fix_rounds", "Fix rounds", "number", merge.max_fix_rounds ?? 5, { min: 0, max: 20 })}>
-                    <b className="tabular-nums">{merge.max_fix_rounds ?? 5}</b> <span className="text-xs text-muted-foreground">then the ticket blocks</span>
+                    <b className="tabular-nums">{merge.max_fix_rounds ?? 5}</b> <span className="text-xs text-[var(--loom-muted)]">then the ticket blocks</span>
                   </Commentable>
                 </Row>
                 <Row label="Stacking" paths={["merge.stack"]}>
@@ -1181,7 +1184,7 @@ export function SettingsSection({ spec, bbProjectNames, onShowAll, onJump }: { s
           </Row>
           <Row label="Reasoning" paths={["agents.worker.reasoning"]}>
             <Commentable as="span" target={value("agents.worker.reasoning", "Worker reasoning", "text", worker.reasoning)}>
-              {worker.reasoning ?? <span className="text-muted-foreground">the model's default</span>}
+              {worker.reasoning ?? <span className="text-[var(--loom-muted)]">the model's default</span>}
             </Commentable>
           </Row>
           <Row label="At the same time" paths={["agents.max_workers"]}>
@@ -1215,7 +1218,7 @@ export function SettingsSection({ spec, bbProjectNames, onShowAll, onJump }: { s
           </Row>
           <Row label="Reasoning" paths={["agents.reviewer.reasoning"]}>
             <Commentable as="span" target={value("agents.reviewer.reasoning", "Reviewer reasoning", "text", reviewer.reasoning)}>
-              {reviewer.reasoning ?? <span className="text-muted-foreground">the model's default</span>}
+              {reviewer.reasoning ?? <span className="text-[var(--loom-muted)]">the model's default</span>}
             </Commentable>
           </Row>
           <Row label="At the same time" paths={["agents.max_reviewers"]}>
@@ -1225,19 +1228,19 @@ export function SettingsSection({ spec, bbProjectNames, onShowAll, onJump }: { s
           </Row>
           <Row label="Approvals needed" paths={["review.approvals"]}>
             <Commentable as="span" target={value("review.approvals", "Approvals needed", "number", rules.approvals, { min: 1, max: 3 })}>
-              <b className="tabular-nums">{rules.approvals}</b> <span className="text-xs text-muted-foreground">of up to 3</span>
+              <b className="tabular-nums">{rules.approvals}</b> <span className="text-xs text-[var(--loom-muted)]">of up to 3</span>
             </Commentable>
           </Row>
           <Row label="Review rounds" paths={["review.max_rounds"]}>
             <Commentable as="span" target={value("review.max_rounds", "Review rounds", "number", rules.max_rounds, { min: 1, max: 10 })}>
-              <b className="tabular-nums">up to {rules.max_rounds}</b> <span className="text-xs text-muted-foreground">then the ticket blocks</span>
+              <b className="tabular-nums">up to {rules.max_rounds}</b> <span className="text-xs text-[var(--loom-muted)]">then the ticket blocks</span>
             </Commentable>
           </Row>
           <Row label="Permissions" paths={["agents.reviewer.permission_mode"]}>
             <Choice path="agents.reviewer.permission_mode" label="Reviewer permissions" value={reviewer.permission_mode} options={["accept-edits", "auto", "full"]} names={permission} />
           </Row>
           <Row label="What they check" paths={["review.rubric"]}>
-            <button type="button" className="cursor-pointer text-xs text-primary underline-offset-2 hover:underline" onClick={() => onJump("guardrails")}>
+            <button type="button" className="cursor-pointer text-xs text-[var(--loom-link)] underline-offset-2 hover:underline" onClick={() => onJump("guardrails")}>
               {rules.rubric.length === 0 ? "no rubric: the ticket's criteria only" : `${plural(rules.rubric.length, "rubric line")} ↓`}
             </button>
           </Row>
@@ -1252,26 +1255,26 @@ export function SettingsSection({ spec, bbProjectNames, onShowAll, onJump }: { s
       wide: true,
       body: (
         <div className="space-y-2">
-          <p className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+          <p className="flex flex-wrap items-center gap-2 text-xs text-[var(--loom-muted)]">
             On every ticket{repos.length > 0 ? " in a repo without checks of its own" : ""}, before review
             <Commentable as="span" target={value("checks.timeout_minutes", "Check time limit", "number", checks.timeout_minutes, { min: 1, max: 29, unit: "min" })} className={`${CHIP} px-2 text-foreground`}>
               {checks.timeout_minutes} min limit
             </Commentable>
           </p>
           {checks.commands.length === 0 && (
-            <Commentable target={value("checks.commands", "Ticket checks", "command")} className="text-sm text-muted-foreground">
+            <Commentable target={value("checks.commands", "Ticket checks", "command")} className="text-sm text-[var(--loom-muted)]">
               No project checks: each ticket runs only its own verify commands.
             </Commentable>
           )}
           {(checks.commands.length > 0 || changeAt(review, "checks.commands") !== undefined) && <Steps path="checks.commands" label="Ticket check" commands={checks.commands} />}
           {(integration || checks.after_merge.length > 0 || changedAt(review, "checks.after_merge")) && (
             <>
-              <p className="flex flex-wrap items-center gap-2 pt-1 text-xs text-muted-foreground">
+              <p className="flex flex-wrap items-center gap-2 pt-1 text-xs text-[var(--loom-muted)]">
                 On the integration branch after each merge
                 {skipped.length > 0 && checks.after_merge.length > 0 && <span className={`${CHIP} px-2`}>skips {skipped.length === 1 ? "1 ticket check" : `${skipped.length} ticket checks`}</span>}
               </p>
               {checks.after_merge.length === 0 && (
-                <Commentable target={value("checks.after_merge", "After-merge checks", "command")} className="text-sm text-muted-foreground">
+                <Commentable target={value("checks.after_merge", "After-merge checks", "command")} className="text-sm text-[var(--loom-muted)]">
                   Nothing runs after a merge.
                 </Commentable>
               )}
@@ -1279,7 +1282,7 @@ export function SettingsSection({ spec, bbProjectNames, onShowAll, onJump }: { s
             </>
           )}
           {(!integration || checks.ci !== undefined || changedAt(review, "checks.ci")) && (
-            <p className="flex flex-wrap items-center gap-2 pt-1 text-xs text-muted-foreground">
+            <p className="flex flex-wrap items-center gap-2 pt-1 text-xs text-[var(--loom-muted)]">
               CI{repos.length > 0 ? " in a repo without a ci of its own" : ""}
               <Commentable as="span" target={value("checks.ci", "Rely on CI", "bool", checks.ci ?? followsFeedback(merge.forge ?? GH))} className="text-foreground">
                 {ciText(checks.ci ?? followsFeedback(merge.forge ?? GH))}
@@ -1287,9 +1290,9 @@ export function SettingsSection({ spec, bbProjectNames, onShowAll, onJump }: { s
               </Commentable>
             </p>
           )}
-          <p className="pt-1 text-xs text-muted-foreground">
+          <p className="pt-1 text-xs text-[var(--loom-muted)]">
             Plus each ticket's own verify commands: <b className="text-foreground">{ownVerify === spec.ticket.length ? "every ticket" : `${ownVerify} of ${spec.ticket.length} tickets`}</b> {ownVerify === 1 ? "has" : "have"} some.{" "}
-            <button type="button" className="cursor-pointer text-primary underline-offset-2 hover:underline" onClick={() => onJump("tickets")}>
+            <button type="button" className="cursor-pointer text-[var(--loom-link)] underline-offset-2 hover:underline" onClick={() => onJump("tickets")}>
               See the tickets ↓
             </button>
           </p>
@@ -1302,12 +1305,12 @@ export function SettingsSection({ spec, bbProjectNames, onShowAll, onJump }: { s
       paths: ["scope"],
       body: (
         <div className="space-y-2">
-          <p className="text-xs text-muted-foreground">When a worker changes a file outside its ticket's scope</p>
+          <p className="text-xs text-[var(--loom-muted)]">When a worker changes a file outside its ticket's scope</p>
           <Choice path="scope.enforce" label="Scope enforcement" value={scope.enforce} options={["warn", "reject"]} names={{ warn: "Warn the reviewer", reject: "Reject the work" }} />
-          <p className="pt-1 text-xs text-muted-foreground">No ticket may change{repos.length > 0 ? ", in any repo" : ""}</p>
+          <p className="pt-1 text-xs text-[var(--loom-muted)]">No ticket may change{repos.length > 0 ? ", in any repo" : ""}</p>
           <div className="flex flex-wrap gap-1">
             {scope.protected.length === 0 && (
-              <Commentable as="span" target={value("scope.protected", "Protected paths", "file")} className="text-sm text-muted-foreground">
+              <Commentable as="span" target={value("scope.protected", "Protected paths", "file")} className="text-sm text-[var(--loom-muted)]">
                 No protected paths.
               </Commentable>
             )}
@@ -1318,7 +1321,7 @@ export function SettingsSection({ spec, bbProjectNames, onShowAll, onJump }: { s
                 compact={false}
                 render={(glob, mark, index) =>
                   mark === "removed" ? (
-                    <span data-removed className="rounded bg-destructive-text/10 px-1.5 font-mono text-xs text-destructive-text line-through">
+                    <span data-removed className="rounded bg-destructive-text/10 px-1.5 font-mono text-xs text-[var(--loom-bad)] line-through">
                       {glob}
                     </span>
                   ) : (
@@ -1380,10 +1383,10 @@ export function SettingsSection({ spec, bbProjectNames, onShowAll, onJump }: { s
           ).map(([path, label, shown, note, target]) => {
             const faded = review.only && !kept(review, [path]);
             return (
-              <Commentable key={path} target={{ paths: [path], label, ...target }} className={`rounded-md border border-border-seam bg-surface-recessed/40 px-2.5 py-2 ${faded ? "opacity-45" : ""}`}>
-                <span className="block text-[11px] text-muted-foreground">{label}</span>
-                <span className={`block text-base font-semibold tabular-nums ${shown === "No limit" || shown === "None" ? "text-sm font-medium text-subtle-foreground" : ""}`}>{shown}</span>
-                <span className="block text-[11px] text-subtle-foreground">{note}</span>
+              <Commentable key={path} target={{ paths: [path], label, ...target }} className={`rounded-md border border-border-seam bg-surface-recessed/40 px-2.5 py-2 ${faded ? FADED : ""}`}>
+                <span className="block text-[11px] text-[var(--loom-muted)]">{label}</span>
+                <span className={`block text-base font-semibold tabular-nums ${shown === "No limit" || shown === "None" ? "text-sm font-medium text-[var(--loom-muted)]" : ""}`}>{shown}</span>
+                <span className="block text-[11px] text-[var(--loom-muted)]">{note}</span>
               </Commentable>
             );
           })}
@@ -1407,7 +1410,7 @@ export function SettingsSection({ spec, bbProjectNames, onShowAll, onJump }: { s
         </div>
       )}
       {hidden > 0 && (
-        <p data-hidden-line className="mt-3 flex items-center gap-2 rounded-md border border-dashed border-border-seam px-3 py-2 text-xs text-muted-foreground">
+        <p data-hidden-line className="mt-3 flex flex-wrap items-center gap-2 rounded-md border border-dashed border-border-seam px-3 py-2 text-xs text-[var(--loom-muted)]">
           {hidden === cards.length ? "No setting changed." : `${plural(hidden, "group")} of settings did not change.`}
           <button type="button" className={`${BUTTON} ml-auto`} onClick={onShowAll}>
             Show {hidden === 1 ? "it" : "them"}

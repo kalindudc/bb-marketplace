@@ -1,10 +1,10 @@
 import { useState } from "react";
 import type { PlannerVersion, PlannerView } from "../contract";
 import { changeLine, type JourneyStep, type QuestionRound } from "../planner-journey";
-import { BUTTON_PRIMARY, CARD, FIELD, messageOf, plural, useLoomWrite } from "./common";
+import { BUTTON_PRIMARY, CARD, FIELD, TAP, messageOf, plural, useLoomWrite } from "./common";
 import { timeLabel } from "./planner-kit";
 
-const TITLE = "mb-2 flex items-baseline gap-2 text-sm font-semibold";
+const TITLE = "mb-2 flex flex-wrap items-baseline gap-x-2 text-sm font-semibold";
 
 /** A message to the planner from the page, sent as the human's own words. Changes to the spec go to the Spec tab instead, where the next version answers each comment. */
 export function MessageBox({ threadId, live, text, onText }: { threadId: string; live: boolean; text: string; onText(text: string): void }) {
@@ -42,10 +42,10 @@ export function MessageBox({ threadId, live, text, onText }: { threadId: string;
         }}
         className={`${FIELD} min-h-20 resize-y`}
       />
-      <p className="mt-1.5 text-[11px] text-muted-foreground">To change the spec, comment on the Spec tab instead: the planner gets every comment in one message, and the next version shows what it did with each.</p>
-      {error !== null && <p role="alert" className="mt-1 text-xs text-destructive-text">{error}</p>}
+      <p className="mt-1.5 text-[11px] text-[var(--loom-muted)]">Changing the spec? Comment on Spec: each comment gets an answer in the next version.</p>
+      {error !== null && <p role="alert" className="mt-1 text-xs text-[var(--loom-bad)]">{error}</p>}
       <div className="mt-2 flex items-center gap-2">
-        {sent && <span role="status" className="text-xs text-success">Sent. Its reply shows under What happened.</span>}
+        {sent && <span role="status" className="text-xs text-[var(--loom-ok)]">Sent. Its reply shows under What happened.</span>}
         <button type="button" className={`${BUTTON_PRIMARY} ml-auto`} disabled={!live || busy || text.trim() === ""} onClick={send}>
           Send
         </button>
@@ -62,27 +62,27 @@ export function Decisions({ rounds, now }: { rounds: readonly QuestionRound[]; n
   return (
     <section data-decisions aria-label="What you decided" className={`${CARD} bg-card`}>
       <h3 className={TITLE}>
-        What you decided {total > 0 && <span className="text-xs font-normal text-muted-foreground">{plural(total, "answer")}</span>}
+        What you decided {total > 0 && <span className="text-xs font-normal text-[var(--loom-muted)]">{plural(total, "answer")}</span>}
       </h3>
       {answered.length === 0 ? (
-        <p className="text-xs text-muted-foreground">Your answers to the planner's questions collect here, so you can see what it works from.</p>
+        <p className="text-xs text-[var(--loom-muted)]">No answers yet: the planner works from what you answer.</p>
       ) : (
         <div className="space-y-2">
           {answered.map((round) => (
             <div key={round.id}>
-              <p className="text-[11px] text-subtle-foreground">{timeLabel(round.answeredAt!, now)}</p>
+              <p className="text-[11px] text-[var(--loom-muted)]">{timeLabel(round.answeredAt!, now)}</p>
               <dl className="divide-y divide-dashed divide-border-seam text-xs">
                 {round.answers.map((answer) => {
                   const replaced = seen.has(answer.header);
                   seen.add(answer.header);
                   return (
-                    <div key={answer.question} data-decision={answer.header} className="grid grid-cols-[6rem_minmax(0,1fr)] gap-2 py-1">
-                      <dt className="text-muted-foreground" title={answer.question}>
+                    <div key={answer.question} data-decision={answer.header} className="flex flex-wrap gap-x-2 py-1">
+                      <dt className="w-24 shrink-0 text-[var(--loom-muted)] [overflow-wrap:anywhere]" title={answer.question}>
                         {answer.header}
                       </dt>
-                      <dd className={`[overflow-wrap:anywhere] ${replaced ? "text-subtle-foreground line-through" : ""}`}>
+                      <dd className={`min-w-[min(100%,7rem)] flex-1 [overflow-wrap:anywhere] ${replaced ? "text-[var(--loom-muted)] line-through" : ""}`}>
                         {answer.answer}
-                        {replaced && <span className="block text-[11px] text-primary no-underline">asked again later</span>}
+                        {replaced && <span className="block text-[11px] text-[var(--loom-link)] no-underline">asked again later</span>}
                       </dd>
                     </div>
                   );
@@ -97,10 +97,10 @@ export function Decisions({ rounds, now }: { rounds: readonly QuestionRound[]; n
 }
 
 const STATUS: Record<PlannerVersion["status"], { label: string; tone: string }> = {
-  draft: { label: "Draft", tone: "border-warning text-warning-text" },
-  pending: { label: "Waits for you", tone: "border-warning text-warning-text" },
-  approved: { label: "In force", tone: "border-success text-success" },
-  superseded: { label: "Superseded", tone: "border-border-seam text-muted-foreground" },
+  draft: { label: "Draft", tone: "border-warning text-[var(--loom-warn)]" },
+  pending: { label: "Waits for you", tone: "border-warning text-[var(--loom-warn)]" },
+  approved: { label: "In force", tone: "border-success text-[var(--loom-ok)]" },
+  superseded: { label: "Superseded", tone: "border-border-seam text-[var(--loom-muted)]" },
 };
 
 const REVIEW_LABEL: Record<NonNullable<PlannerVersion["review"]>["state"], string> = {
@@ -117,7 +117,7 @@ export function Versions({ versions, onSpec }: { versions: readonly PlannerVersi
     <section data-versions aria-label="Spec versions" className={`${CARD} bg-card`}>
       <h3 className={TITLE}>Spec versions</h3>
       {versions.length === 0 ? (
-        <p className="text-xs text-muted-foreground">No draft yet. The planner proposes one once it has what it needs from you.</p>
+        <p className="text-xs text-[var(--loom-muted)]">No draft yet. The planner proposes one once it has what it needs from you.</p>
       ) : (
         <ul className="space-y-0.5">
           {[...versions].reverse().map((entry) => {
@@ -126,8 +126,8 @@ export function Versions({ versions, onSpec }: { versions: readonly PlannerVersi
               <>
                 <b className="text-xs">v{entry.version}</b>
                 <span className="min-w-0 text-xs">
-                  <span className={`mr-1.5 inline-block rounded-full border px-1.5 text-[10.5px] leading-4 ${status.tone}`}>{status.label}</span>
-                  <span className="text-muted-foreground">
+                  <span className={`mr-1.5 inline-block rounded-full border px-1.5 text-[11px] leading-4 ${status.tone}`}>{status.label}</span>
+                  <span className="text-[var(--loom-muted)]">
                     {changeLine(entry.tickets, entry.change)}
                     {entry.review === null ? "" : ` · ${REVIEW_LABEL[entry.review.state]}`}
                   </span>
@@ -139,7 +139,7 @@ export function Versions({ versions, onSpec }: { versions: readonly PlannerVersi
                 {onSpec === undefined ? (
                   <div className="grid grid-cols-[2rem_minmax(0,1fr)] items-baseline gap-2 px-1.5 py-1">{body}</div>
                 ) : (
-                  <button type="button" aria-label={`Open v${entry.version} on the Spec tab`} onClick={() => onSpec(entry.version)} className="grid w-full cursor-pointer grid-cols-[2rem_minmax(0,1fr)] items-baseline gap-2 rounded px-1.5 py-1 text-left hover:bg-state-hover">
+                  <button type="button" aria-label={`Open v${entry.version} on the Spec tab`} onClick={() => onSpec(entry.version)} className={`grid min-h-6 w-full cursor-pointer grid-cols-[2rem_minmax(0,1fr)] items-baseline gap-2 rounded px-1.5 py-1 text-left hover:bg-state-hover ${TAP} @max-xl/loom:content-center`}>
                     {body}
                   </button>
                 )}
@@ -166,11 +166,12 @@ export function About({ view, rounds, steps }: { view: PlannerView; rounds: read
   return (
     <section data-about-planner aria-label="About this planner" className={`${CARD} bg-card`}>
       <h3 className={TITLE}>About this planner</h3>
-      <dl className="grid grid-cols-[6rem_minmax(0,1fr)] gap-x-2 gap-y-1 text-xs">
+      {/* Each value sits beside its label while it has 7rem, and under it otherwise, so enlarged text never squeezes it. */}
+      <dl className="grid gap-y-1 text-xs">
         {rows.map(([key, value]) => (
-          <div key={key} className="contents">
-            <dt className="text-muted-foreground">{key}</dt>
-            <dd>{value}</dd>
+          <div key={key} data-about-row className="flex flex-wrap gap-x-2">
+            <dt className="w-24 shrink-0 text-[var(--loom-muted)]">{key}</dt>
+            <dd className="min-w-[min(100%,7rem)] flex-1 [overflow-wrap:anywhere]">{value}</dd>
           </div>
         ))}
       </dl>

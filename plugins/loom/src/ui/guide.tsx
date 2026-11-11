@@ -25,9 +25,9 @@ export function GuideSteps() {
     <ol className="space-y-2.5">
       {STEPS.map(([title, text], index) => (
         <li key={title} data-guide-step className="flex gap-2.5 text-sm">
-          <span aria-hidden className="flex size-5 shrink-0 items-center justify-center rounded-full border border-border-seam text-[11px] text-muted-foreground">{index + 1}</span>
+          <span aria-hidden className="flex size-5 shrink-0 items-center justify-center rounded-full border border-border-seam text-[11px] text-[var(--loom-muted)]">{index + 1}</span>
           <span>
-            <b>{title}</b> <span className="text-muted-foreground">{text}</span>
+            <b>{title}</b> <span className="text-[var(--loom-muted)]">{text}</span>
           </span>
         </li>
       ))}
@@ -50,7 +50,7 @@ export function Guide({ onStart }: { onStart(): void }) {
           <button type="button" className={BUTTON_PRIMARY} onClick={onStart}>
             Start your first project
           </button>
-          <span className="text-xs text-muted-foreground">Takes about 5 minutes of questions with the planner.</span>
+          <span className="text-xs text-[var(--loom-muted)]">Takes about 5 minutes of questions with the planner.</span>
         </div>
       </section>
       <div className="grid content-start gap-4">
@@ -61,7 +61,7 @@ export function Guide({ onStart }: { onStart(): void }) {
               {ROLES.map(([who, what]) => (
                 <tr key={who}>
                   <td className="py-0.5 pr-3 align-top font-medium">{who}</td>
-                  <td className="py-0.5 text-muted-foreground">{what}</td>
+                  <td className="py-0.5 text-[var(--loom-muted)]">{what}</td>
                 </tr>
               ))}
             </tbody>
@@ -69,7 +69,7 @@ export function Guide({ onStart }: { onStart(): void }) {
         </section>
         <section className={CARD}>
           <h2 className={HEADING}>A ticket's life</h2>
-          <p className="mt-2 flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
+          <p className="mt-2 flex flex-wrap items-center gap-1 text-xs text-[var(--loom-muted)]">
             {LIFE.map((state, index) => (
               <span key={state} className="flex items-center gap-1">
                 {index > 0 && <span aria-hidden>→</span>}
@@ -77,7 +77,7 @@ export function Guide({ onStart }: { onStart(): void }) {
               </span>
             ))}
           </p>
-          <p className="mt-2 text-xs text-muted-foreground">Failed checks and requested changes go back to working. A stuck ticket is blocked until the planner or you answer it.</p>
+          <p className="mt-2 text-xs text-[var(--loom-muted)]">Failed checks and requested changes go back to working. A stuck ticket is blocked until the planner or you answer it.</p>
         </section>
         <details className={CARD}>
           <summary className="cursor-pointer text-sm">Prefer the terminal?</summary>

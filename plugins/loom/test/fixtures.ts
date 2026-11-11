@@ -1,4 +1,4 @@
-import type { AgentRow, Attempt, BoardCard, ChangeRepo, HomeProject, HomeView, PlannerView, ProjectHealth, ProjectSummary, ProjectTimeline, ProjectView, RepoOverview, SpecVersionView, TicketDetail } from "../src/contract";
+import type { AgentRow, Attempt, BoardCard, ChangeRepo, HomeProject, HomeView, NeedItem, PlannerView, ThreadInfo, ProjectHealth, ProjectSummary, ProjectTimeline, ProjectView, RepoOverview, SpecVersionView, TicketDetail } from "../src/contract";
 import type { ProjectMetrics } from "../src/metrics";
 import { parseSpec } from "../src/spec";
 import { TICKET_STATES, type TicketState } from "../src/states";
@@ -55,19 +55,51 @@ export const homeProject = (over: Partial<HomeProject> = {}): HomeProject => ({
   agents: 3,
   throughput: [0, 0, 1, 2, 1, 0, 1, 2, 0, 1, 1, 0, 2, 1],
   tokens: 12_000,
+  tokenThreads: 4,
+  tokensUnreported: 0,
   maxTokens: 50_000,
   lastEventAt: NOW - 2 * 60_000,
+  phase: null,
+  failed: 0,
   ...over,
 });
 
+/** A Needs you item: a blocked ticket of CSV export by default. */
+export const need = (over: Partial<NeedItem> & Pick<NeedItem, "kind">): NeedItem => ({
+  id: `${over.kind}:${over.key ?? over.slug ?? "csv"}`,
+  slug: "csv",
+  project: "CSV export",
+  projectKey: "CSV",
+  key: null,
+  keys: over.key == null ? [] : [over.key],
+  title: null,
+  text: "",
+  startedAt: NOW - 5 * 60_000,
+  sources: [over.kind],
+  unblocks: null,
+  meanwhile: null,
+  clears: "Clears when it is done.",
+  version: null,
+  ask: null,
+  prUrl: null,
+  sha: null,
+  ackItems: [],
+  budget: false,
+  ...over,
+});
+
+/** A Loom thread as threadInfo answers: a worker of CSV-3 by default. */
+export const threadInfo = (over: Partial<ThreadInfo> = {}): ThreadInfo => ({ role: "worker", slug: "csv", key: "CSV-3", state: "review", project: { key: "CSV", name: "CSV export" }, phase: null, attempt: 1, ...over });
+
 export const homeView = (over: Partial<HomeView> = {}): HomeView => ({
-  totals: { projects: 4, running: 2, paused: 1, workers: 3, reviewers: 2, planners: 1, slots: 8, doneLast7: 14, doneByDay: [0, 1, 2, 1, 3, 0, 2, 4, 1, 2, 3, 2, 4, 3], tokens: 3_100_000, perDoneTicket: 220_000 },
+  totals: { projects: 4, running: 2, paused: 1, workers: 3, reviewers: 2, planners: 1, slots: 8, busy: 5, doneLast7: 14, doneByDay: [0, 1, 2, 1, 3, 0, 2, 4, 1, 2, 3, 2, 4, 3], tokens: 3_100_000, tokenThreads: 30, tokensUnreported: 0, perDoneTicket: 220_000 },
   needsYou: [
-    { kind: "blocked", slug: "csv", project: "CSV export", key: "CSV-7", text: "needs the staging DB credentials", at: NOW - 5 * 60_000 },
-    { kind: "approve", slug: "audit", project: "Audit log", key: null, text: "has a draft spec v1 with 9 tickets", at: NOW - 12 * 60_000 },
-    { kind: "land", slug: "srch", project: "Search revamp", key: null, text: "finished all 12 tickets; land the integration branch", at: NOW - HOUR },
-    { kind: "paused", slug: "bill", project: "Billing API", key: null, text: "The token budget is used up: 900 of 900 tokens.", at: NOW - 3 * HOUR },
+    need({ kind: "paused", slug: "bill", project: "Billing API", projectKey: "BILL", text: "The token budget is used up: 900 of 900 tokens.", startedAt: NOW - 3 * HOUR, budget: true }),
+    need({ kind: "land", slug: "srch", project: "Search revamp", projectKey: "SRCH", text: "finished all 12 tickets; land the integration branch", startedAt: NOW - HOUR }),
+    need({ kind: "approve", slug: "audit", project: "Audit log", projectKey: "AUD", version: 1, text: "has a draft spec v1 with 9 tickets", startedAt: NOW - 12 * 60_000 }),
+    need({ kind: "blocked", key: "CSV-7", title: "Export endpoint", text: "needs the staging DB credentials", startedAt: NOW - 5 * 60_000, unblocks: { direct: ["CSV-8"], all: 2 } }),
   ],
+  threads: [],
   projects: [homeProject()],
   now: NOW,
   ...over,
@@ -101,6 +133,8 @@ export const card = (over: Partial<BoardCard> = {}): BoardCard => ({
   draft: null,
   publishWait: null,
   releaseRequested: null,
+  prereqs: (over.deps ?? []).map((key) => ({ key, kind: "work" as const })),
+  ask: null,
   ...over,
 });
 
@@ -171,6 +205,7 @@ export const agent = (over: Partial<AgentRow> = {}): AgentRow => ({
 
 export const projectView = (over: Partial<ProjectView> = {}): ProjectView => ({
   phases: null,
+  phaseFill: null,
   overview: overview(),
   board: [card(), card({ key: "CSV-2", title: "Export endpoint", state: "working", stateAt: NOW - 5 * HOUR, attempt: 1, ready: false, threadId: "thr_w1" })],
   metrics: metrics(),
@@ -200,6 +235,7 @@ export const projectView = (over: Partial<ProjectView> = {}): ProjectView => ({
   badgeAcks: { merge: [], rollout: [] },
   mergeOrder: null,
   rollout: null,
+  gate: null,
   ...over,
 });
 
@@ -251,6 +287,8 @@ export const ticketDetail = (over: Partial<TicketDetail> = {}): TicketDetail => 
   draft: null,
   publishWait: null,
   releaseRequested: null,
+  prereqs: (over.deps ?? ["CSV-1"]).map((key) => ({ key, kind: "work" as const })),
+  ask: null,
   activity: { brief: { postId: 1, at: NOW - 6 * HOUR, edits: 0, fields: [] }, before: [], attempts: [attempt()] },
   at: null,
   now: NOW,

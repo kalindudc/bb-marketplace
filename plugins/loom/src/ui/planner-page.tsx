@@ -5,14 +5,17 @@ import { specReviewBlocks } from "../format";
 import { operationalSummary } from "../next-step";
 import { changeLine, journey, workingOn, type Chapter, type JourneyStep, type QuestionRound } from "../planner-journey";
 import { SPEC_REVIEW_ROUNDS } from "../states";
-import { BUTTON, ConfirmButton, HEADING, plural, useAction, useLoom, useLoomWrite } from "./common";
+import { ActionButton, BUTTON, ConfirmButton, HEADING, TAP, plural, useAction, useLoom, useLoomWrite } from "./common";
 import { DraftHold } from "./draft-hold";
+import { approveWords } from "./gate";
+import { jumpBehavior } from "./motion";
 import { MergeConfirm } from "./merge-confirm";
 import { SettingPaths } from "./next-step-bar";
 import { PlannerMark, timeLabel } from "./planner-kit";
 import { About, Decisions, MessageBox, Versions } from "./planner-side";
 import { PlannerStory } from "./planner-story";
 import { PlannerQuestions, questionsOf, usePendingQuestions, useQuestionRounds } from "./questions";
+import { Docked } from "./answer-dock";
 
 type Status = "working" | "waiting" | "idle" | "missing";
 
@@ -61,22 +64,22 @@ function Strip({ view, status, questions, steps }: { view: PlannerView; status: 
   const finished = view.projectState === "done" || view.projectState === "archived";
   const [label, tone] =
     status === "working"
-      ? ["Working", "border-primary/50 bg-primary/10 text-primary"]
+      ? ["Working", "border-primary/50 bg-primary/10 text-[var(--loom-link)]"]
       : status === "waiting"
-        ? [questions > 0 ? `Waiting on you · ${plural(questions, "question")}` : "Waiting on you", "border-warning bg-warning/10 text-warning-text"]
+        ? [questions > 0 ? `Waiting on you · ${plural(questions, "question")}` : "Waiting on you", "border-warning bg-warning/10 text-[var(--loom-warn)]"]
         : finished
-          ? ["Finished", "border-border-seam text-muted-foreground"]
+          ? ["Finished", "border-border-seam text-[var(--loom-muted)]"]
           : view.approvedVersion !== null
-            ? ["Idle · on call for triage", "border-border-seam text-muted-foreground"]
+            ? ["Idle · on call for triage", "border-border-seam text-[var(--loom-muted)]"]
             : view.review.kind === "reviewing"
-              ? ["Idle · Loom is reviewing its draft", "border-border-seam text-muted-foreground"]
+              ? ["Idle · Loom is reviewing its draft", "border-border-seam text-[var(--loom-muted)]"]
               : view.review.kind === "failed"
-                ? ["Idle · Loom's spec review did not finish", "border-warning bg-warning/10 text-warning-text"]
+                ? ["Idle · Loom's spec review did not finish", "border-warning bg-warning/10 text-[var(--loom-warn)]"]
                 : commentedOnNewest(view)
-                  ? [`Idle · it has your comments on v${view.versions.at(-1)!.version}`, "border-border-seam text-muted-foreground"]
+                  ? [`Idle · it has your comments on v${view.versions.at(-1)!.version}`, "border-border-seam text-[var(--loom-muted)]"]
                   : view.versions.length > 0
-                ? [`Idle · v${view.versions.at(-1)!.version} is with you`, "border-border-seam text-muted-foreground"]
-                : ["Idle", "border-border-seam text-muted-foreground"];
+                ? [`Idle · v${view.versions.at(-1)!.version} is with you`, "border-border-seam text-[var(--loom-muted)]"]
+                : ["Idle", "border-border-seam text-[var(--loom-muted)]"];
   const facts = [on === null ? "" : `on ${on}`, lastWords === undefined ? "" : `last turn ${timeLabel(lastWords.at, view.now)}`, status === "missing" ? "bb does not list its thread" : ""].filter((part) => part !== "");
   const current = view.approvedVersion === null && view.projectState !== "archived" ? planningStep(view, status, steps) : null;
   const latest = view.versions.at(-1)?.version;
@@ -93,7 +96,7 @@ function Strip({ view, status, questions, steps }: { view: PlannerView; status: 
           <span aria-hidden className={`size-1.5 rounded-full bg-current ${status === "working" ? "animate-pulse" : ""}`} />
           {label}
         </span>
-        {facts.length > 0 && <span className="text-xs text-muted-foreground">{facts.join(" · ")}</span>}
+        {facts.length > 0 && <span className="text-xs text-[var(--loom-muted)]">{facts.join(" · ")}</span>}
         <button type="button" className={`${BUTTON} ml-auto`} onClick={() => navigate.toThread(view.threadId)}>
           Open as thread
         </button>
@@ -103,8 +106,8 @@ function Strip({ view, status, questions, steps }: { view: PlannerView; status: 
           {PLANNING_STEPS.map((step, index) => {
             const state = index < current ? "done" : index === current ? "current" : "todo";
             return (
-              <li key={step} data-planning-step={state} aria-current={state === "current" ? "step" : undefined} className={`inline-flex items-center gap-1.5 rounded-full border py-0.5 pr-2.5 pl-0.5 ${state === "current" ? "border-border-seam font-semibold text-foreground" : "border-transparent text-muted-foreground"}`}>
-                <span aria-hidden className={`inline-flex size-4.5 items-center justify-center rounded-full border text-[10px] ${state === "done" ? "border-success bg-success text-success-foreground" : state === "current" ? "border-primary text-primary" : "border-border-seam"}`}>
+              <li key={step} data-planning-step={state} aria-current={state === "current" ? "step" : undefined} className={`inline-flex items-center gap-1.5 rounded-full border py-0.5 pr-2.5 pl-0.5 ${state === "current" ? "border-border-seam font-semibold text-foreground" : "border-transparent text-[var(--loom-muted)]"}`}>
+                <span aria-hidden className={`inline-flex size-4.5 items-center justify-center rounded-full border text-[11px] ${state === "done" ? "border-[var(--loom-ok)] font-bold text-[var(--loom-ok)]" : state === "current" ? "border-primary text-[var(--loom-link)]" : "border-border-seam"}`}>
                   {state === "done" ? "✓" : index + 1}
                 </span>
                 {step}
@@ -132,16 +135,32 @@ function VersionSummary({ entry, draft }: { entry: PlannerVersion | undefined; d
 }
 
 /** The planner's asks from loom_ask_human as a checklist, a button on each step the page can take. */
-function AsksCard({ ask, project, versions, busy, onControl, onSpec, onTicket, onDismiss, onStepDone }: { ask: PlannerAsk; project: ProjectView; versions: readonly PlannerVersion[]; busy: boolean; onDismiss(): void; onStepDone(index: number): void } & Pick<PlannerPageProps, "onControl" | "onSpec" | "onTicket">) {
+export function AsksCard({ ask, project, versions, busy, onControl, onSpec, onTicket, onDismiss, onStepDone }: { ask: PlannerAsk; project: ProjectView; versions: readonly PlannerVersion[]; busy: boolean; onDismiss(): void; onStepDone(index: number): void } & Pick<PlannerPageProps, "onControl" | "onSpec" | "onTicket">) {
   const requeue = useLoomWrite("ticketAction");
   const markLive = useLoomWrite("markLive");
   const { busy: requeueing, act } = useAction();
   const blocked = new Set(project.board.filter((card) => card.state === "blocked").map((card) => card.key));
-  // A requeue waits for an approve step listed before it, as the planner ordered them.
-  const approveBefore = (index: number) => ask.steps.slice(0, index).find((step) => step.action === "approve" && !step.done);
+  // An action waits for an approve step listed before it, as the planner ordered them: "resume once v21 is approved".
+  const approveBefore = (index: number) => {
+    const at = ask.steps.slice(0, index).findIndex((step) => step.action === "approve" && !step.done);
+    return at === -1 ? undefined : { ...ask.steps[at]!, number: at + 1 };
+  };
+  const waiting = (index: number, label: string) => {
+    const before = approveBefore(index)!;
+    return (
+      <>
+        <button type="button" className={`${BUTTON} border-dashed`} disabled title={`Approve v${before.version} first`}>
+          {label}
+        </button>
+        <span data-ask-wait className="min-w-0 self-center text-xs text-[var(--loom-muted)] [overflow-wrap:anywhere]">
+          after step {before.number}
+        </span>
+      </>
+    );
+  };
   const control = (action: ControlAction, version?: number) => onControl?.(action, version);
   const action = (step: AskStep & { done: boolean }, index: number): ReactNode => {
-    if (step.done) return <span className="rounded-full border border-success px-2 text-[11px] text-success">Done</span>;
+    if (step.done) return <span data-ask-done className="inline-flex h-5 items-center rounded-full border border-[var(--loom-ok)] px-2 text-[11px] font-semibold text-[var(--loom-ok)]">Done</span>;
     switch (step.action) {
       case "approve":
         return (
@@ -151,18 +170,27 @@ function AsksCard({ ask, project, versions, busy, onControl, onSpec, onTicket, o
                 See what changed
               </button>
             )}
-            {onControl !== undefined && !specReviewBlocks(project.specReview) && <ConfirmButton label={`Approve v${step.version}`} disabled={busy} onConfirm={() => control("approve", step.version)} />}
+            {onControl !== undefined && !specReviewBlocks(project.specReview) && (
+              <ConfirmButton
+                label={`Approve v${step.version}`}
+                // At the gate, the armed text says what approving creates and starts, as the gate's own Approve does.
+                {...(project.gate != null && project.gate.version === step.version ? { confirmLabel: approveWords(project.gate, project.overview.state === "paused").yes } : {})}
+                disarmKey={`${project.overview.slug} ${ask.id}`}
+                disabled={busy}
+                onConfirm={() => control("approve", step.version)}
+              />
+            )}
           </>
         );
       case "requeue": {
-        const before = approveBefore(index);
-        const waits = before !== undefined ? `Approve v${before.version} first` : !blocked.has(step.key!) ? `${step.key} is not blocked` : null;
+        if (approveBefore(index) !== undefined) return waiting(index, "Requeue");
+        const waits = !blocked.has(step.key!) ? `${step.key} is not blocked` : null;
         return waits !== null ? (
           <button type="button" className={BUTTON} disabled title={waits}>
             Requeue
           </button>
         ) : (
-          <ConfirmButton label="Requeue" confirmLabel={`Click again to requeue ${step.key}`} disabled={busy || requeueing} onConfirm={() => void act(() => requeue({ key: step.key!, action: "requeue", note: `Requeued as the planner asked: ${step.text}`, confirm: true }), `${step.key} requeued`)} />
+          <ActionButton label="Requeue" title={`Requeues ${step.key} with the planner's note`} disabled={busy || requeueing} onClick={() => void act(() => requeue({ key: step.key!, action: "requeue", note: `Requeued as the planner asked: ${step.text}`, confirm: true }), `${step.key} requeued`)} />
         );
       }
       case "reply":
@@ -174,9 +202,13 @@ function AsksCard({ ask, project, versions, busy, onControl, onSpec, onTicket, o
       case "start":
       case "resume":
       case "land":
-        return onControl === undefined ? null : <ConfirmButton label={step.action === "start" ? "Start" : step.action === "resume" ? "Resume" : "Land"} disabled={busy} onConfirm={() => control(step.action as ControlAction)} />;
+        if (onControl === undefined) return null;
+        if (approveBefore(index) !== undefined) return waiting(index, step.action === "start" ? "Start" : step.action === "land" ? "Land" : "Resume");
+        if (step.action === "resume") return <ActionButton label="Resume" disabled={busy} onClick={() => control("resume")} />;
+        return <ConfirmButton label={step.action === "start" ? "Start" : "Land"} disarmKey={`${project.overview.slug} ${ask.id}`} confirmLabel={step.action === "start" ? "Yes, start the project" : "Yes, land: push and open the pull request"} disabled={busy} onConfirm={() => control(step.action as ControlAction)} />;
       case "live":
-        return <ConfirmButton label={`Mark ${step.key} live`} disabled={busy || requeueing} onConfirm={() => void act(() => markLive({ slug: project.overview.slug, target: step.key!, note: `Marked live as the planner asked: ${step.text}`, confirm: true }), `${step.key} marked live`)} />;
+        if (approveBefore(index) !== undefined) return waiting(index, `Mark ${step.key} live`);
+        return <ActionButton label={`Mark ${step.key} live`} disabled={busy || requeueing} onClick={() => void act(() => markLive({ slug: project.overview.slug, target: step.key!, note: `Marked live as the planner asked: ${step.text}`, confirm: true }), `${step.key} marked live`)} />;
       case "other":
         return null;
     }
@@ -185,36 +217,43 @@ function AsksCard({ ask, project, versions, busy, onControl, onSpec, onTicket, o
   const actions = (step: AskStep & { done: boolean }, index: number): ReactNode => (
     <>
       {action(step, index)}
-      {!step.done && <ConfirmButton label="Mark done" confirmLabel={`Click again to mark step ${index + 1} done`} disabled={busy} onConfirm={() => onStepDone(index)} />}
+      {!step.done && <ConfirmButton label="Mark done" confirmLabel={`Yes, mark step ${index + 1} done`} disarmKey={`${project.overview.slug} ${ask.id} ${index}`} disabled={busy} onConfirm={() => onStepDone(index)} />}
     </>
   );
+  const current = ask.steps.findIndex((step) => !step.done);
   return (
     <section data-planner-asks aria-label="The planner asks you to" className={NEED}>
       <div className="flex flex-wrap items-center gap-2">
         <PlannerMark />
         <h3 className="text-sm font-semibold">The planner asks you to</h3>
-        <span className="text-xs text-muted-foreground">asked {timeLabel(ask.at, project.now)}</span>
+        <span className="text-xs text-[var(--loom-muted)]">asked {timeLabel(ask.at, project.now)}</span>
         <button type="button" className={`${BUTTON} ml-auto`} title="Hides every step of these asks until the planner asks again" onClick={onDismiss}>
           Set aside
         </button>
       </div>
-      {ask.why !== "" && <p className="text-sm text-muted-foreground [overflow-wrap:anywhere]">{ask.why}</p>}
+      {ask.why !== "" && (
+        <p data-content className="text-sm text-[var(--loom-muted)] [overflow-wrap:anywhere]">
+          {ask.why}
+        </p>
+      )}
       <ol className="space-y-1.5">
         {ask.steps.map((step, index) => (
-          <li key={index} data-ask-step={step.action} data-done={step.done ? "" : undefined} className={`grid grid-cols-[1.25rem_minmax(0,1fr)] items-start gap-x-2.5 gap-y-1.5 @xl:grid-cols-[1.25rem_minmax(0,1fr)_auto] rounded-md border border-border-seam bg-surface-recessed px-2.5 py-2 ${step.done ? "opacity-60" : ""}`}>
-            <span aria-hidden className={`inline-flex size-5 items-center justify-center rounded-full text-[10.5px] font-semibold ${step.done ? "bg-success text-success-foreground" : "bg-surface-selected"}`}>
+          <li key={index} data-ask-step={step.action} data-done={step.done ? "" : undefined} className={`grid grid-cols-[1.25rem_minmax(0,1fr)] items-start gap-x-2.5 gap-y-1.5 rounded-md border border-border-seam bg-surface-recessed px-2.5 py-2 ${step.done ? "text-[var(--loom-muted)]" : ""}`}>
+            {/* A done step steps back by colour, not opacity, so its text and mark keep their contrast. */}
+            <span aria-hidden className={`inline-flex size-5 items-center justify-center rounded-full text-[11px] font-semibold ${step.done ? "border border-[var(--loom-ok)] font-bold text-[var(--loom-ok)]" : "bg-surface-selected"}`}>
               {step.done ? "✓" : index + 1}
             </span>
             <span className="text-sm [overflow-wrap:anywhere]">
-              {step.text}
+              <span data-content>{step.text}</span>
               {step.action === "approve" && !step.done && (
-                <span className="mt-1 block text-xs text-muted-foreground">
+                <span className="mt-1 block text-xs text-[var(--loom-muted)]">
                   <VersionSummary entry={versions.find((entry) => entry.version === step.version)} draft={project.overview.state === "draft"} />
                 </span>
               )}
             </span>
-            <span data-ask-actions className="col-start-2 flex flex-wrap gap-1.5 empty:hidden @xl:col-start-auto @xl:justify-end">
-              {actions(step, index)}
+            <span data-ask-actions className="col-start-2 flex flex-wrap gap-1.5 empty:hidden">
+              {/* The first step not taken is the one to answer now: in Home's phone reader its controls dock at the bottom. */}
+              {index === current ? <Docked label={`Step ${index + 1} of ${ask.steps.length}`}>{actions(step, index)}</Docked> : actions(step, index)}
             </span>
           </li>
         ))}
@@ -235,7 +274,7 @@ function WaitsInChat({ threadId }: { threadId: string }) {
           Answer in the thread
         </button>
       </div>
-      <p className="text-sm text-muted-foreground">
+      <p className="text-sm text-[var(--loom-muted)]">
         It waits on something this page cannot show, such as a tool approval. The "?" on the Planner tab clears once you answer it in the thread or stop the planner's turn there; reading the thread does not clear it.
       </p>
     </section>
@@ -274,12 +313,12 @@ function VersionCard({ view, project, onSpec }: { view: PlannerView; project: Pr
       <div className="flex flex-wrap items-center gap-2">
         <PlannerMark />
         <h3 className="text-sm font-semibold">{review.kind === "failed" ? `Loom's spec review of v${version} did not finish` : draft ? `Draft v${version} is ready for your review` : `Spec v${version} waits for your approval`}</h3>
-        {entry !== undefined && <span className="text-xs text-muted-foreground">proposed {timeLabel(entry.createdAt, view.now)}</span>}
+        {entry !== undefined && <span className="text-xs text-[var(--loom-muted)]">proposed {timeLabel(entry.createdAt, view.now)}</span>}
       </div>
       <ul className="space-y-0.5 text-sm">
         {facts.map(([icon, text], index) => (
           <li key={index} className="grid grid-cols-[1rem_minmax(0,1fr)] gap-1.5">
-            <span aria-hidden className={`text-center ${icon === "✓" ? "text-success" : icon === "!" ? "text-warning-text" : "text-muted-foreground"}`}>
+            <span aria-hidden className={`text-center ${icon === "✓" ? "text-[var(--loom-ok)]" : icon === "!" ? "text-[var(--loom-warn)]" : "text-[var(--loom-muted)]"}`}>
               {icon}
             </span>
             <span className="[overflow-wrap:anywhere]">{text}</span>
@@ -292,7 +331,7 @@ function VersionCard({ view, project, onSpec }: { view: PlannerView; project: Pr
             Review v{version} on the Spec tab
           </button>
         )}
-        {barApproves && <span className="text-xs text-muted-foreground">When you are happy with it, approve it with the button in the bar above.</span>}
+        {barApproves && <span className="text-xs text-[var(--loom-muted)]">When you are happy with it, approve it with the button in the bar above.</span>}
       </div>
     </section>
   );
@@ -350,9 +389,9 @@ export function PlannerPage({ threadId, project, busy = false, onControl, onSpec
   const dismiss = useAction();
 
   if (remote.data === undefined) {
-    return remote.error === null ? <p role="status" className="p-4 text-sm text-muted-foreground">Loading the planner…</p> : <p role="alert" className="p-4 text-sm text-destructive-text">Could not load the planner: {remote.error}</p>;
+    return remote.error === null ? <p role="status" className="p-4 text-sm text-[var(--loom-muted)]">Loading the planner…</p> : <p role="alert" className="p-4 text-sm text-[var(--loom-bad)]">Could not load the planner: {remote.error}</p>;
   }
-  if (view === null) return <p className="p-4 text-sm text-muted-foreground">This thread is not a Loom planner.</p>;
+  if (view === null) return <p className="p-4 text-sm text-[var(--loom-muted)]">This thread is not a Loom planner.</p>;
   const chapters: Chapter[] = journey(view, rounds);
   const steps = chapters.flatMap((chapter) => chapter.steps);
   // The server refuses a planner that has ended; bb's sidebar may leave out a thread that still takes messages.
@@ -370,13 +409,13 @@ export function PlannerPage({ threadId, project, busy = false, onControl, onSpec
   const askedCount = questions.rows.reduce((sum, row) => sum + (questionsOf(row.payload.data)?.length ?? 1), 0);
   const needCount = pendingQuestions + (waitsInChat ? 1 : 0) + (ask === null ? 0 : ask.steps.filter((step) => !step.done).length) + (versionCard ? 1 : 0) + view.mergeRequests.length + view.releaseRequests.length;
   const repos = (project?.overview.repos ?? []).flatMap((repo) => (repo.name === null ? [] : [repo.name]));
-  const toNeeds = () => needs.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  const toNeeds = () => needs.current?.scrollIntoView({ behavior: jumpBehavior(), block: "start" });
 
   const needsYou = (
     <section ref={needs} data-needs-you aria-label="Needs you" className="space-y-2">
       <h2 className={`${HEADING} flex items-center gap-2`}>
         Needs you
-        {needCount > 0 && <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-warning px-1 text-[10px] font-semibold text-black">{needCount}</span>}
+        {needCount > 0 && <span className="loom-num inline-flex h-[18px] min-w-[18px] items-center justify-center px-1 text-[11px] font-bold leading-none bg-[var(--attention)] text-[var(--attention-foreground)]">{needCount}</span>}
       </h2>
       <PlannerQuestions threadId={threadId} rows={questions.rows} error={questions.error} respond={questions.respond} />
       {waitsInChat && <WaitsInChat threadId={threadId} />}
@@ -420,7 +459,7 @@ export function PlannerPage({ threadId, project, busy = false, onControl, onSpec
       {needCount === 0 && (
         <div data-nothing-needed className={CALM}>
           <p className="text-sm font-semibold">Nothing needs you right now</p>
-          <p className="text-sm text-muted-foreground">{calmText(view, status, steps)}</p>
+          <p className="text-sm text-[var(--loom-muted)]">{calmText(view, status, steps)}</p>
         </div>
       )}
     </section>
@@ -441,12 +480,12 @@ export function PlannerPage({ threadId, project, busy = false, onControl, onSpec
       <div className="flex flex-wrap items-center gap-3">
         <div role="tablist" aria-label="Planner view" className="flex gap-0.5 rounded-md border border-border-seam p-0.5">
           {(["summary", "chat"] as const).map((entry) => (
-            <button key={entry} type="button" role="tab" aria-selected={mode === entry} onClick={() => setMode(entry)} className={`cursor-pointer rounded px-2.5 py-0.5 text-xs ${mode === entry ? "bg-surface-selected font-medium text-foreground" : "text-muted-foreground hover:bg-state-hover"}`}>
+            <button key={entry} type="button" role="tab" aria-selected={mode === entry} onClick={() => setMode(entry)} className={`cursor-pointer rounded px-2.5 py-0.5 text-xs ${TAP} @max-xl/loom:min-w-11 pointer-coarse:min-w-11 ${mode === entry ? "bg-surface-selected font-medium text-foreground" : "text-[var(--loom-muted)] hover:bg-state-hover"}`}>
               {entry === "summary" ? "Summary" : "Conversation"}
             </button>
           ))}
         </div>
-        <span className="text-xs text-muted-foreground">{mode === "summary" ? "What the planner needs from you, and what it did step by step." : "The planner's whole thread, as bb shows it."}</span>
+        <span className="text-xs text-[var(--loom-muted)]">{mode === "summary" ? "Needs you, then what it did" : "Its whole thread, as bb shows it"}</span>
       </div>
       {mode === "chat" ? (
         <div className="h-[70vh] min-h-96">

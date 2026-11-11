@@ -1,6 +1,7 @@
 import { experimental_useSidebarThreads, type ExperimentalBadge } from "@get-bb/plugin-sdk/app";
 import type { BadgeView } from "../contract";
 import { useLoom } from "./common";
+import { useCommandNavigator } from "./commands";
 
 // bb puts the panel's title before it, as in "Loom, 3 things need you".
 const labelOf = (count: number) => (count === 1 ? "1 thing needs you" : `${count} things need you`);
@@ -14,6 +15,7 @@ export function badgeOf(view: BadgeView, waiting: number): ExperimentalBadge | n
 
 /** Loom's rail badge: the server's Needs you count, plus the Loom threads bb's own thread state shows waiting on a question or an approval. */
 export function useLoomBadge(): ExperimentalBadge | null {
+  useCommandNavigator();
   const view = useLoom("badge", null).data;
   const { threads } = experimental_useSidebarThreads();
   if (view === undefined) return null;

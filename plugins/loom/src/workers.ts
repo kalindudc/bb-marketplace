@@ -1,7 +1,9 @@
 // The worker lifecycle: spawn a worker for a ticket, nudge or end it when it stalls, block and requeue tickets,
 // and end any worker or reviewer thread in one place (endThread). Every state change is a named move in moves.ts.
+import { spawnModel } from "./thread-model";
 import { randomBytes } from "node:crypto";
 import { retriesOf } from "./backoff";
+import type { BlockAsk } from "./block-ask";
 import { repoCheckout, ticketRepo } from "./checkouts";
 import type { ProjectRow, Store, ThreadRow, TicketRow } from "./db/store";
 import { spawnEnvironment, threadBranch, ticketInputsOf, usesNewMachine } from "./environments";
@@ -109,13 +111,13 @@ export async function spawnWorker(ctx: EngineCtx, project: ProjectRow, spec: Spe
     const wait = waitOf(current, "worker");
     const again = wait?.row == null ? null : store.thread(wait.row);
     if (again !== null && again.state === "ended" && again.end_reason === "failed" && again.role === "worker" && again.ticket_id === ticket.id && again.attempt === current.attempt) {
-      store.updateThread(again.id, { state: "spawning", spawn_token: token, thread_id: null, environment_id: null, ended_at: null, end_reason: null, clock_at: ctx.now(), idle_count: 0, rate_limit_retries: 0, maintenance_seq: 0 });
+      store.updateThread(again.id, { state: "spawning", spawn_token: token, thread_id: null, environment_id: null, ended_at: null, end_reason: null, clock_at: ctx.now(), idle_count: 0, rate_limit_retries: 0, maintenance_seq: 0, model: spawnModel(freshSpec, "worker") });
       moveTicket(store, ticket.id, { name: "start", set: stackPatch }, LOOM_ACTOR, { attempt: current.attempt, retry: wait!.tries });
       return store.thread(again.id)!;
     }
     const attempt = current.attempt + 1;
     const created = store.addThread({ project_id: project.id, ticket_id: ticket.id, role: "worker", state: "spawning", spawn_token: token });
-    store.updateThread(created.id, { clock_at: ctx.now(), attempt });
+    store.updateThread(created.id, { clock_at: ctx.now(), attempt, model: spawnModel(freshSpec, "worker") });
     moveTicket(store, ticket.id, { name: "start", set: { attempt, ...stackPatch } }, LOOM_ACTOR, { attempt });
     store.addPost({ project_id: project.id, ticket_id: ticket.id, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "claim", body: `Worker attempt ${attempt} is starting.` });
     return store.thread(created.id)!;
@@ -684,7 +686,7 @@ export async function onThreadGone(ctx: EngineCtx, threadId: string): Promise<vo
  * Blocks a ticket. Its live rows end first; the worker's own row carries the move to blocked, so the ticket is freed
  * only once that thread has stopped. `actor` is the worker's thread id, or "human".
  */
-export async function blockTicket(ctx: EngineCtx, ticket: TicketRow, a: { reason: string; needs: string; actor: string }): Promise<void> {
+export async function blockTicket(ctx: EngineCtx, ticket: TicketRow, a: { reason: string; needs: string; actor: string; ask?: BlockAsk | null }): Promise<void> {
   const reason = a.reason.trim();
   const needs = a.needs.trim();
   const text = needs === "" ? reason : `${reason.replace(/[.\s]+$/, "")}. Needs: ${needs}`;
@@ -699,7 +701,7 @@ export async function blockTicket(ctx: EngineCtx, ticket: TicketRow, a: { reason
       author_thread_id: human ? null : a.actor,
       kind: "block",
       body: text,
-      data_json: JSON.stringify({ reason, needs }),
+      data_json: JSON.stringify(a.ask == null ? { reason, needs } : { reason, needs, ask: a.ask }),
     });
   });
   await endLiveRows(ctx, ticket, "blocked");

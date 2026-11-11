@@ -77,6 +77,8 @@ export interface MergeEntry {
   verdict: MergeVerdict;
   /** On a pull request with nothing before it, what still holds it. */
   holds: VerdictHold[];
+  /** What the pull request itself holds it on, whatever it waits on: the holds it would have once nothing before it is open. Empty without an open pull request. */
+  prHolds: VerdictHold[];
   /** The forge says it is approved while the pull request it is stacked on is still open. */
   trap: boolean;
   /** For merged_elsewhere: the ticket whose branch it merged into, and that ticket's state now. */
@@ -190,21 +192,14 @@ export function mergeOrderOf(spec: Spec, tickets: readonly TicketRow[], finals: 
       refreshBehind: repoSettings(spec, ticket.repo).refreshBehind,
       verdict: "no_pr",
       holds: [],
+      prHolds: [],
       trap: false,
       mergedInto: null,
       mergedIntoState: null,
       blockedReason: ticket.state === "blocked" ? ticket.blocked_reason : null,
       finalReview: finals.get(ticket.key) ?? null,
     };
-    const mergedInto = (into: TicketRow | null) => ({ verdict: "merged_elsewhere" as const, mergedInto: into?.key ?? null, mergedIntoState: into?.state ?? null, step: 0, waitsOn: [] });
-    if (ticket.state === "done") return parent !== null && parent.state !== "done" ? { ...entry, ...mergedInto(parent) } : { ...entry, verdict: "merged" };
-    // Loom blocks a pull request that merged into a branch other than the base, and the read that saw it is kept.
-    if (ticket.state === "blocked" && meta?.state === "MERGED" && meta.base !== null && meta.base !== base) return { ...entry, ...mergedInto(byBranch.get(meta.base) ?? null) };
-    if (ticket.state === "blocked") return { ...entry, verdict: "blocked" };
-    if (prUrl === null) return { ...entry, verdict: own.length > 0 ? "after" : "no_pr" };
-    if (own.length > 0) return { ...entry, verdict: "after", trap: entry.stackedOn !== null && review === "APPROVED" };
-    if (parent !== null) return { ...entry, verdict: "moving" };
-    const holds: VerdictHold[] = [
+    const prHolds: VerdictHold[] = [
       ...(entry.elsewhere !== null ? [{ code: "targets" as const, branch: entry.elsewhere, base }] : []),
       ...(conflicts ? [{ code: "conflicts" as const, base }] : []),
       ...(ticket.state !== "pr_open" ? [{ code: "pushing" as const }] : []),
@@ -214,7 +209,16 @@ export function mergeOrderOf(spec: Spec, tickets: readonly TicketRow[], finals: 
       ...(checks !== null && checks.failed > 0 ? [{ code: "failing" as const, count: checks.failed }] : []),
       ...(checks !== null && checks.pending > 0 ? [{ code: "pending" as const, count: checks.pending }] : []),
     ];
-    if (holds.length > 0) return { ...entry, verdict: "first", holds };
+    if (prUrl !== null && !FINISHED.includes(ticket.state) && ticket.state !== "blocked") entry.prHolds = prHolds;
+    const mergedInto = (into: TicketRow | null) => ({ verdict: "merged_elsewhere" as const, mergedInto: into?.key ?? null, mergedIntoState: into?.state ?? null, step: 0, waitsOn: [] });
+    if (ticket.state === "done") return parent !== null && parent.state !== "done" ? { ...entry, ...mergedInto(parent) } : { ...entry, verdict: "merged" };
+    // Loom blocks a pull request that merged into a branch other than the base, and the read that saw it is kept.
+    if (ticket.state === "blocked" && meta?.state === "MERGED" && meta.base !== null && meta.base !== base) return { ...entry, ...mergedInto(byBranch.get(meta.base) ?? null) };
+    if (ticket.state === "blocked") return { ...entry, verdict: "blocked" };
+    if (prUrl === null) return { ...entry, verdict: own.length > 0 ? "after" : "no_pr" };
+    if (own.length > 0) return { ...entry, verdict: "after", trap: entry.stackedOn !== null && review === "APPROVED" };
+    if (parent !== null) return { ...entry, verdict: "moving" };
+    if (prHolds.length > 0) return { ...entry, verdict: "first", holds: prHolds };
     // Ready needs every signal said out loud: checks that passed, not a draft, and approved. A forge that leaves one out passes its checks, no more.
     return { ...entry, verdict: draft === false && review === "APPROVED" ? "ready" : "checks_pass" };
   });

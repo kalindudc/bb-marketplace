@@ -5,7 +5,7 @@ import type { SpecVersionView } from "../src/spec-view";
 import type { BbPluginApi, NewThreadRequest } from "@get-bb/plugin-sdk";
 import { notesMessage } from "../src/prompts";
 import { agentRows, boardCards, registerRpc, specSummary, watchChanges } from "../src/rpc";
-import { START_FAILED } from "../src/workers";
+import { START_FAILED, blockTicket } from "../src/workers";
 import { specOf } from "../src/ctx";
 import { withRepos } from "./fixtures";
 import { FakePort, makeCtx, makeHost, readyToMerge, seedProject, specToml, startWorker, type Doc } from "./helpers";
@@ -183,7 +183,7 @@ describe("reads", () => {
     await host.projects.approve("csv", "human");
     const ready = await call<ProjectView>("project", { slug: "csv" });
     expect(ready.next).toMatchObject({ stage: 3 });
-    expect(ready.next!.action).toEqual({ control: "start", label: "Start project · 1 worker", confirm: "Click again to start 1 worker" });
+    expect(ready.next!.action).toEqual({ control: "start", label: "Start project · 1 worker", confirm: "Yes, start 1 worker" });
   });
 
   it("a revised draft's next step, board and approval all take the newest version, and the older one is refused", async () => {
@@ -426,7 +426,7 @@ describe("reads", () => {
   it("home returns the totals, what needs the human and the project rows", async () => {
     await propose();
     const home = await call<HomeView>("home");
-    expect(Object.keys(home).sort()).toEqual(["needsYou", "now", "projects", "totals"]);
+    expect(Object.keys(home).sort()).toEqual(["needsYou", "now", "projects", "threads", "totals"]);
     expect(home.totals).toMatchObject({ projects: 1, running: 0, planners: 1, slots: 0 });
     expect(home.needsYou).toEqual([expect.objectContaining({ kind: "approve", slug: "csv", text: "has a draft spec v1 with 2 tickets" })]);
     expect(home.projects).toEqual([expect.objectContaining({ slug: "csv", state: "draft", agents: 0, maxTokens: null })]);
@@ -435,9 +435,87 @@ describe("reads", () => {
   it("threadInfo names the role, project, ticket and state of a Loom thread, and is null for any other", async () => {
     await running();
     await host.engine.tick();
-    expect(await call<ThreadInfo | null>("threadInfo", { threadId: "thr_plan" })).toEqual({ role: "planner", slug: "csv", key: null, state: "running" });
-    expect(await call<ThreadInfo | null>("threadInfo", { threadId: "thr_w1" })).toEqual({ role: "worker", slug: "csv", key: "CSV-1", state: "working" });
+    const project = { key: "CSV", name: "CSV export" };
+    expect(await call<ThreadInfo | null>("threadInfo", { threadId: "thr_plan" })).toEqual({ role: "planner", slug: "csv", key: null, state: "running", project, phase: null, attempt: null });
+    expect(await call<ThreadInfo | null>("threadInfo", { threadId: "thr_w1" })).toEqual({ role: "worker", slug: "csv", key: "CSV-1", state: "working", project, phase: null, attempt: 1 });
     expect(await call("threadInfo", { threadId: "thr_unknown" })).toBeNull();
+  });
+
+  it("threadInfos answers every Loom thread of a list in one read, once each, and leaves the others out", async () => {
+    await running();
+    await host.engine.tick();
+    const infos = await call<Record<string, ThreadInfo>>("threadInfos", { threadIds: ["thr_plan", "thr_w1", "thr_unknown", "thr_plan"] });
+    expect(Object.keys(infos).sort()).toEqual(["thr_plan", "thr_w1"]);
+    expect(infos.thr_w1).toEqual(await call("threadInfo", { threadId: "thr_w1" }));
+  });
+
+  it("homeFeed lists every live project's events of the kinds Home scans for since a time, newest first, with counts", async () => {
+    await running();
+    await host.engine.tick();
+    const csv = host.store.projectBySlug("csv")!;
+    const ticket = host.store.tickets(csv.id).find((row) => row.key === "CSV-1")!;
+    host.store.setTicketState(ticket.id, "blocked", "loom", { reason: "needs a decision" });
+    const feed = await call<{ rows: Array<{ kind: string; ticketKey: string | null; slug: string; at: number }>; counts: Record<string, number> }>("homeFeed", { since: 0 });
+    expect(feed.rows[0]).toMatchObject({ kind: "blocked", ticketKey: "CSV-1", slug: "csv" });
+    expect(feed.rows.map((row) => row.at)).toEqual([...feed.rows.map((row) => row.at)].sort((a, b) => b - a));
+    expect(feed.counts.blocked).toBe(feed.rows.filter((row) => row.kind === "blocked").length);
+    expect((await call<{ rows: unknown[] }>("homeFeed", { since: Date.now() + 60_000 })).rows).toEqual([]);
+  });
+
+  it("homeFeed filters by kind before it cuts the rows: 60 newer events of one kind cannot hide 3 older blocked ones", async () => {
+    await running();
+    await host.engine.tick();
+    const csv = host.store.projectBySlug("csv")!;
+    const since = Date.now();
+    const ticket = host.store.tickets(csv.id).find((row) => row.key === "CSV-1")!;
+    // Written in this order, the 60 are the newer ones: the feed orders by time, then by event id.
+    for (let n = 0; n < 3; n += 1) host.store.event(csv.id, ticket.id, "ticket.state", "loom", { from: "working", to: "blocked" });
+    for (let n = 0; n < 60; n += 1) host.store.event(csv.id, null, "human.action", "human", { action: "resume" });
+    type Feed = { rows: Array<{ kind: string }>; counts: Record<string, number>; matched: number; partial: unknown[] };
+    const all = await call<Feed>("homeFeed", { since });
+    expect([all.counts.you, all.counts.blocked, all.matched, all.rows.length]).toEqual([60, 3, 63, 60]);
+    expect(all.rows.every((row) => row.kind === "you")).toBe(true);
+    const blocked = await call<Feed>("homeFeed", { since, kind: "blocked" });
+    expect([blocked.rows.map((row) => row.kind), blocked.matched, blocked.counts.you]).toEqual([["blocked", "blocked", "blocked"], 3, 60]);
+    expect((await call<Feed>("homeFeed", { since, limit: 120 })).rows).toHaveLength(63);
+    expect(all.partial).toEqual([]);
+  });
+});
+
+describe("homeFeed over Loom's read limit", () => {
+  it("counts a project only as far as it reads, names it and where its count starts, and never says more is counted", async () => {
+    const { homeFeed } = await import("../src/home-feed");
+    const { Store } = await import("../src/db/store");
+    const { Clock, makeDb } = await import("./helpers");
+    const store = new Store(makeDb(), new Clock().now);
+    const project = store.createProject({ slug: "busy", name: "Busy", key: "BUSY", bb_project_id: "proj_1" }, "human");
+    for (let n = 0; n < 12; n += 1) store.event(project.id, null, "human.action", "human", { action: "resume" });
+    const feed = homeFeed(store, 0, { readLimit: 5 });
+    expect(feed.counts.you).toBe(5);
+    expect(feed.partial).toEqual([{ slug: "busy", projectKey: "BUSY", from: expect.any(Number) }]);
+    expect(feed.rows).toHaveLength(5);
+    // Exactly at the limit with nothing older is complete, not partial.
+    const all = store.eventsSince(project.id, 0, 1_000).length;
+    expect(homeFeed(store, 0, { readLimit: all }).partial).toEqual([]);
+    expect(homeFeed(store, 0, { readLimit: all - 1 }).partial).toHaveLength(1);
+    expect(homeFeed(store, 0, { readLimit: all }).counts.you).toBe(12);
+  });
+
+  it("names the project when every event it read is of a kind Home does not show, though older ones are", async () => {
+    const { homeFeed, kindOf } = await import("../src/home-feed");
+    const { Store } = await import("../src/db/store");
+    const { Clock, makeDb } = await import("./helpers");
+    const store = new Store(makeDb(), new Clock().now);
+    const project = store.createProject({ slug: "busy", name: "Busy", key: "BUSY", bb_project_id: "proj_1" }, "human");
+    for (let n = 0; n < 3; n += 1) store.event(project.id, null, "ticket.state", "loom", { from: "working", to: "blocked" });
+    for (let n = 0; n < 10; n += 1) store.event(project.id, null, "ticket.state", "loom", { from: "ready", to: "working" });
+    const read = store.eventsSince(project.id, 0, 5);
+    expect(read.map((event) => kindOf(event))).toEqual([null, null, null, null, null]);
+    const feed = homeFeed(store, 0, { readLimit: 5 });
+    expect(Object.values(feed.counts).every((count) => count === 0)).toBe(true);
+    expect([feed.rows, feed.matched]).toEqual([[], 0]);
+    expect(feed.partial).toEqual([{ slug: "busy", projectKey: "BUSY", from: read.at(-1)!.at }]);
+    expect(homeFeed(store, 0).counts.blocked).toBe(3);
   });
 });
 
@@ -451,11 +529,18 @@ describe("agentRows", () => {
     const rows = () => agentRows(h.store.threadsForProject(project.id), h.store.tickets(project.id), spec);
     const worker = () => rows().find((entry) => entry.role === "worker")!;
     expect(worker()).toMatchObject({ model: "claude", timeoutAt: h.store.thread(row.id)!.clock_at! + 180 * 60_000 });
+    // A later spec that names another model does not relabel the thread already running.
+    const later = { ...spec!, agents: { ...spec!.agents, worker: { ...spec!.agents.worker, provider: "codex" } } };
+    expect(agentRows(h.store.threadsForProject(project.id), h.store.tickets(project.id), later).find((entry) => entry.role === "worker")!.model).toBe("claude");
     h.store.setTicketState(row.ticket_id!, "checking", "loom");
     expect(worker().timeoutAt).toBeNull();
     h.store.addThread({ project_id: project.id, role: "reviewer", state: "active", thread_id: "thr_r1", ticket_id: row.ticket_id });
     expect(rows().find((entry) => entry.role === "reviewer")!.model).toBeNull();
-    expect(agentRows(h.store.threadsForProject(project.id), h.store.tickets(project.id), null).every((entry) => entry.model === null && entry.timeoutAt === null)).toBe(true);
+    const bare = agentRows(h.store.threadsForProject(project.id), h.store.tickets(project.id), null);
+    expect(bare.every((entry) => entry.timeoutAt === null)).toBe(true);
+    // A thread keeps the model it was spawned with, which needs no spec; one with none recorded has none without a spec.
+    expect(bare.find((entry) => entry.role === "worker")!.model).toBe("claude");
+    expect(bare.find((entry) => entry.role === "reviewer")!.model).toBeNull();
   });
 });
 
@@ -559,6 +644,20 @@ describe("changes", () => {
     expect(requeued.posts.at(-1)).toMatchObject({ kind: "reply", authorKind: "human", body: "Use the v2 API" });
     expect(humanEvents().map((event) => event.action)).toEqual(["start", "block", "requeue"]);
     await expect(call("ticketAction", { key: "CSV-2", action: "requeue", note: "go", confirm: true })).rejects.toThrow(/only a blocked ticket/);
+  });
+
+  it("carries a worker's structured ask from the block post to the ticket and the count of its options to the card, and none for prose", async () => {
+    await running();
+    await host.engine.tick();
+    const ask = { question: "Which runner?", options: [{ label: "In CI", consequence: "14 GB free" }, { label: "Nightly", consequence: null }], recommended: 1 };
+    await blockTicket(host.engine.ctx, host.store.ticketByKey("CSV-1")!, { reason: "The fixture does not fit", needs: "A runner", actor: "human", ask });
+    expect((await call<TicketDetail>("ticket", { key: "CSV-1" })).ask).toEqual(ask);
+    expect((await call<ProjectView>("project", { slug: "csv" })).board.find((card) => card.key === "CSV-1")!.ask).toEqual({ question: "Which runner?", options: 2 });
+    await call("ticketAction", { key: "CSV-1", action: "requeue", note: "Nightly", confirm: true });
+    expect((await call<TicketDetail>("ticket", { key: "CSV-1" })).ask).toBeNull();
+    await host.engine.block("CSV-2", "Wait for the API", "human");
+    expect((await call<TicketDetail>("ticket", { key: "CSV-2" })).ask).toBeNull();
+    expect((await call<ProjectView>("project", { slug: "csv" })).board.find((card) => card.key === "CSV-2")!.ask).toBeNull();
   });
 
   it("ticketAction review sends a blocked ticket back as it is, with or without a note, and the detail says when it may", async () => {
@@ -756,9 +855,9 @@ describe("planning", () => {
 
   it("threadInfo describes an open planning conversation until it proposes, and is null once one without a spec ends", async () => {
     const { threadId } = await host.projects.startPlanning({ request: request(), merge: "integration", reviewer: "" });
-    expect(await call<ThreadInfo | null>("threadInfo", { threadId })).toEqual({ role: "planner", slug: null, key: null, state: "planning" });
+    expect(await call<ThreadInfo | null>("threadInfo", { threadId })).toEqual({ role: "planner", slug: null, key: null, state: "planning", project: null, phase: null, attempt: null });
     await host.projects.propose({ toml: specToml(), threadId, bbProjectId: "proj_1", hostId: "host_env" });
-    expect(await call<ThreadInfo | null>("threadInfo", { threadId })).toEqual({ role: "planner", slug: "csv", key: null, state: "draft" });
+    expect(await call<ThreadInfo | null>("threadInfo", { threadId })).toEqual({ role: "planner", slug: "csv", key: null, state: "draft", project: { key: "CSV", name: "CSV export" }, phase: null, attempt: null });
 
     const other = await host.projects.startPlanning({ request: request(), merge: "integration", reviewer: "" });
     host.projects.planningGone(other.threadId, "archived");
@@ -1057,6 +1156,19 @@ describe("rollout and markLive", () => {
     doc.ticket[0].rollout = { stage: "expand" };
     doc.ticket[1].rollout = { requires_live: ["csv-model", "traffic-low"] };
   };
+
+  it("names each card's prerequisites by kind, work before merge before live, and keeps milestones out", async () => {
+    await approved((doc) => {
+      rollout(doc);
+      doc.ticket[1].merge_after = ["csv-model"];
+    });
+    const view = await call<ProjectView>("project", { slug: "csv" });
+    expect(view.board.map((card) => [card.key, card.prereqs])).toEqual([
+      ["CSV-1", []],
+      ["CSV-2", [{ key: "CSV-1", kind: "work" }, { key: "CSV-1", kind: "live" }]],
+    ]);
+    expect((await call<TicketDetail>("ticket", { key: "CSV-2" })).prereqs).toEqual([{ key: "CSV-1", kind: "work" }, { key: "CSV-1", kind: "live" }]);
+  });
 
   it("puts the rollout in the project view, and none for a project without one", async () => {
     await approved();

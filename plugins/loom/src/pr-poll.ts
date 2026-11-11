@@ -4,7 +4,7 @@ import { repoCheckout, type RepoCheckout } from "./checkouts";
 import type { ProjectRow, TicketRow } from "./db/store";
 import { plural } from "./format";
 import { POLL_MS, backedOffUntil, backoffText, forgeHostOf, networkWaitLong, networkWaitLongText, networkWaitText, nextPollAt, type HostBackoff, type NetworkBackoff } from "./forge-waits";
-import { classify, classifyAnswer, transientOf, type Failure, type Transient } from "./failures";
+import { classify, classifyAnswer, isRetiredGeneration, isWorkerStopped, transientOf, type Failure, type Transient } from "./failures";
 import { followDraft } from "./drafts";
 import { unheld, type Held } from "./forge-gate";
 import { publishRule } from "./publish";
@@ -20,23 +20,25 @@ import { forgetClosedReads, noteAnswer, readGoesOut } from "./pr-sync";
 import type { ForgeSpec, Spec } from "./spec";
 import { type PrMeta, writeSub } from "./sub-state";
 import { endRetry, stepFailed } from "./retry";
-import { specOf, type EngineCtx } from "./ctx";
+import { passStopped, specOf, type EngineCtx } from "./ctx";
 import { complete, endFinishedThreads, errText } from "./merge-common";
 import { blockMergedElsewhere, closedPullRequest } from "./pr-closed";
 import { loomPost } from "./posts";
 
 /** A poll's closed read: closedPullRequest, with a failed read of the remote settled by retry.ts on a streak of its own. */
 async function settleClosed(ctx: EngineCtx, ticket: TicketRow, target: string | null): Promise<void> {
+  if (passStopped(ctx)) return;
   const project = ctx.store.project(ticket.project_id)!;
   try {
     await closedPullRequest(ctx, project, ticket, target);
   } catch (error) {
-    noteAnswer(ctx, ticket.id, `Reading the pull request of ${ticket.key} stopped: ${errText(error)}`);
+    if (passStopped(ctx)) return;
+    if (!isWorkerStopped(error)) noteAnswer(ctx, ticket.id, `Reading the pull request of ${ticket.key} stopped: ${errText(error)}`);
     const current = ctx.store.ticket(ticket.id);
     if (current !== null && samePullRequest(ticket, current)) await stepFailed(ctx, current, "settle", classify(error), { what: `Settling the closed pull request of ${ticket.key}`, floorMs: POLL_MS, ...(current.pr_url === null ? {} : { pr: current.pr_url }) });
     return;
   }
-  endRetry(ctx, ticket.id, "settle");
+  if (!passStopped(ctx)) endRetry(ctx, ticket.id, "settle");
 }
 
 /**
@@ -44,14 +46,26 @@ async function settleClosed(ctx: EngineCtx, ticket: TicketRow, target: string | 
  * `polled` is the ticket as the read went out; an answer about a pull request or attempt the ticket has left is dropped.
  */
 async function readFailed(ctx: EngineCtx, polled: TicketRow, failure: Failure): Promise<void> {
+  if (abandonRead(ctx, polled)) {
+    if (isRetiredGeneration(failure.reason)) ctx.bb.log("debug", `Reading the pull request of ${polled.key} stopped during engine disposal: ${failure.reason}`);
+    return;
+  }
   const current = ctx.store.ticket(polled.id);
   if (current === null || !samePullRequest(polled, current)) return ctx.bb.log("warn", `Reading the pull request of ${polled.key} failed after the ticket left that pull request: ${failure.reason}`);
   await stepFailed(ctx, current, "read", failure, { what: `Reading the pull request of ${polled.key}`, floorMs: POLL_MS, ...(current.pr_url === null ? {} : { pr: current.pr_url }) });
+  abandonRead(ctx, polled);
 }
 
 /** Whether the ticket is still on the pull request and attempt it was read for. */
 const samePullRequest = (polled: TicketRow, current: TicketRow): boolean =>
   current.state === "pr_open" && current.pr_url === polled.pr_url && current.attempt === polled.attempt && current.pushed_sha === polled.pushed_sha;
+
+function abandonRead(ctx: EngineCtx, polled: TicketRow): boolean {
+  if (!passStopped(ctx)) return false;
+  const current = ctx.store.ticket(polled.id);
+  if (current !== null && samePullRequest(polled, current)) ctx.store.updateTicket(polled.id, { pr_checked_at: polled.pr_checked_at });
+  return true;
+}
 
 const stateForge = (forge: ForgeSpec): HostInput<"prState">["forge"] => (forge.kind === "command" ? { kind: "command", state: forge.state! } : { kind: "gh" });
 
@@ -92,6 +106,7 @@ interface Batch {
  * failure of the whole project. A pull request the human synced (pr-sync.ts) is due now, whatever its own wait says.
  */
 export async function pollPullRequests(ctx: EngineCtx, project: ProjectRow): Promise<void> {
+  if (passStopped(ctx)) return;
   const { store } = ctx;
   const spec = specOf(store, project);
   const forgeOf = (ticket: TicketRow) => repoSettings(spec, ticket.repo).forge;
@@ -129,6 +144,7 @@ async function readDue(ctx: EngineCtx, project: ProjectRow, spec: Spec, due: Tic
   };
   const batches = new Map<string, Batch>();
   for (const seen of due) {
+    if (passStopped(ctx)) return;
     const ticket = store.ticket(seen.id);
     if (ticket?.state !== "pr_open") continue;
     const forge = forgeOf(ticket);
@@ -137,6 +153,7 @@ async function readDue(ctx: EngineCtx, project: ProjectRow, spec: Spec, due: Tic
     const host = forge.kind === "none" ? null : forgeHostOf(ticket.pr_url);
     if (backedOffUntil(ctx.forgeBackoffs, host, ctx.now()) !== null) continue;
     const checkout = await checkoutOfRepo(ticket.repo);
+    if (passStopped(ctx)) return;
     if (!("hostId" in checkout)) {
       markRead(ctx, ticket.id);
       noteAnswer(ctx, ticket.id, checkout.reason);
@@ -163,20 +180,23 @@ async function readDue(ctx: EngineCtx, project: ProjectRow, spec: Spec, due: Tic
     try {
       read = await readOne(ctx, checkout, ticket, forge, follows);
     } catch (error) {
-      noteAnswer(ctx, ticket.id, `Reading the pull request of ${ticket.key} stopped: ${errText(error)}`);
+      if (!passStopped(ctx) && !isWorkerStopped(error)) noteAnswer(ctx, ticket.id, `Reading the pull request of ${ticket.key} stopped: ${errText(error)}`);
       await readFailed(ctx, ticket, classify(error));
+      if (passStopped(ctx)) return;
       continue;
     }
+    if (abandonRead(ctx, ticket)) return;
     await settleRead(ctx, project, checkout.settings, ticket, read, host);
   }
   for (const batch of batches.values()) {
     for (let start = 0; start < batch.tickets.length; start += PR_BATCH_MAX) {
+      if (passStopped(ctx)) return;
       // A rate limit or network failure in an earlier chunk, or another repository's, leaves the rest due for the first poll after the backoff ends.
       if (backedOffUntil(ctx.forgeBackoffs, batch.forgeHost, ctx.now()) !== null) break;
       await readBatch(ctx, project, spec, batch, batch.tickets.slice(start, start + PR_BATCH_MAX), follows);
     }
   }
-  await endFinishedThreads(ctx, project.id);
+  if (!passStopped(ctx)) await endFinishedThreads(ctx, project.id);
 }
 
 /** The host's backoff the forge boundary set for the answer just read (forge-gate.ts). */
@@ -266,6 +286,7 @@ async function readOne(ctx: EngineCtx, checkout: RepoCheckout, ticket: TicketRow
 
 /** Reads up to PR_BATCH_MAX of one repository's due GitHub pull requests in one call, then settles each ticket on its own. */
 async function readBatch(ctx: EngineCtx, project: ProjectRow, spec: Spec, batch: Batch, chunk: Batch["tickets"], follows: boolean): Promise<void> {
+  if (passStopped(ctx)) return;
   const { store } = ctx;
   // Each ticket as it is when the call goes out: settleRead compares the ticket with it once the answer is in.
   const polled = chunk.flatMap(({ id, number }) => {
@@ -282,8 +303,12 @@ async function readBatch(ctx: EngineCtx, project: ProjectRow, spec: Spec, batch:
     const what = polled.length === 1 ? `the pull request of ${polled[0]!.ticket.key}` : `the pull requests of ${andList(polled.map(({ ticket }) => ticket.key))}`;
     const message = `Reading ${what} stopped: ${errText(error)}`;
     const failure = classify(error);
-    for (const { ticket } of polled) noteAnswer(ctx, ticket.id, message);
+    if (!passStopped(ctx) && !isWorkerStopped(error)) for (const { ticket } of polled) noteAnswer(ctx, ticket.id, message);
     for (const { ticket } of polled) await readFailed(ctx, ticket, failure);
+    return;
+  }
+  if (passStopped(ctx)) {
+    for (const { ticket } of polled) abandonRead(ctx, ticket);
     return;
   }
   // The forge gate sent nothing: the host's backoff began after the poll checked it, so these are read once it ends.
@@ -315,6 +340,10 @@ async function readBatch(ctx: EngineCtx, project: ProjectRow, spec: Spec, batch:
         ? missedRead(ticket, missOf(number))
         : { outcome: "ok", state: pull.state, meta: { draft: pull.draft, review: pull.review, base: pull.base, mergeable: pull.mergeable ?? null }, feedback: pull.feedback, text: textRead(pull), ...(pull.queue === undefined ? {} : { queue: pull.queue }) };
     await settleRead(ctx, project, repoSettings(spec, ticket.repo), ticket, read, batch.forgeHost);
+    if (passStopped(ctx)) {
+      for (const { ticket } of polled) abandonRead(ctx, ticket);
+      return;
+    }
   }
   // However many pull requests of the one answer GitHub rate-limited, it is one limit: one backoff, one post, the longest wait it named.
   if (limited.length > 0) {
@@ -337,6 +366,7 @@ function missedRead(ticket: TicketRow, miss: Extract<HostOutputOf<"prBatch">, { 
  * successful read stores the PrMeta first.
  */
 async function settleRead(ctx: EngineCtx, project: ProjectRow, settings: RepoSettings, polled: TicketRow, read: PrRead, host: string | null): Promise<void> {
+  if (abandonRead(ctx, polled)) return;
   const { store } = ctx;
   noteAnswer(ctx, polled.id, read.outcome === "ok" ? null : read.message);
   if (read.outcome === "held") return;
@@ -369,14 +399,22 @@ async function settleRead(ctx: EngineCtx, project: ProjectRow, settings: RepoSet
     // A pull request Loom publishes is judged on this read's checks, so it is published after its feedback is followed.
     const publishing = publishRule(specOf(store, project)) !== null;
     const undrafted = !publishing && (await followDraft(ctx, project, current.id, read.meta?.draft ?? null, read.meta?.base ?? null));
+    if (abandonRead(ctx, polled)) return;
     await requestReviewers(ctx, project, current.id, { draft: undrafted ? false : (read.meta?.draft ?? null), author: read.feedback?.author || null, reviewed });
+    if (abandonRead(ctx, polled)) return;
     if (read.feedback !== null) await followFeedback(ctx, store.project(project.id)!, store.ticket(current.id)!, read.feedback);
+    if (abandonRead(ctx, polled)) return;
     // A draft Loom publishes gets its approved text first, so the gate and the people it asks read that text.
     await syncPrText(ctx, store.project(project.id)!, current.id, read.text ?? null);
+    if (abandonRead(ctx, polled)) return;
     if (publishing) await followGate(ctx, store.project(project.id)!, current.id);
+    if (abandonRead(ctx, polled)) return;
     if (publishing && (await followDraft(ctx, project, current.id, read.meta?.draft ?? null, read.meta?.base ?? null))) {
+      if (abandonRead(ctx, polled)) return;
       await requestReviewers(ctx, project, current.id, { draft: false, author: read.feedback?.author || null, reviewed });
     }
+    if (abandonRead(ctx, polled)) return;
     await followAutoMerge(ctx, project, current.id, { head: read.feedback?.head ?? null, author: read.feedback?.author || null, text: read.text ?? null, items: read.feedback?.items ?? null, ...(read.queue === undefined ? {} : { queue: read.queue }) });
   }
+  abandonRead(ctx, polled);
 }

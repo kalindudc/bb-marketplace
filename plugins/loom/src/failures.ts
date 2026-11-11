@@ -103,6 +103,10 @@ const HOST_CALL_TROUBLE =
 // An input or output the contract refuses and an unknown method are answers from bb, so waiting would not help.
 const ANSWERED_CODES: readonly string[] = ["invalid_input", "invalid_output", "unknown_method", "invalid", "invalid_json", "non_json_result", "invalid_response", "forbidden", "not_found"];
 
+export const isRetiredGeneration = (error: unknown): boolean => /host plugin \S+ generation \S+ is retired/iu.test(errText(error));
+
+export const isWorkerStopped = (error: unknown): boolean => errText(error) === "host plugin worker exited (0)";
+
 /**
  * Whether an error a host call threw is worth waiting out, as a server error: the SDK's transport_error, or a message
  * that says the call got no answer. A handler's own error, such as a git command that failed, is not.

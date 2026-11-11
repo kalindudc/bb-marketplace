@@ -14,7 +14,7 @@ their role, and only Loom's own code moves a ticket, runs checks, merges, or
 decides that work is done. A project can stay in one repository or span
 several.
 
-![The Loom home page with Loom's sidebar: tiles for running projects, agents at work, tickets done and what needs you, above a table with a blocked ticket, a draft to review, a planner asking questions and a project ready to land](../../screenshots/loom/home.png)
+![Loom's Home beside its sidebar: four numbers (4 need you, 3 running, 15 done this week, and tokens with 2 of 75 threads unreported), the Needs you queue with a planner ask, a spec version waiting for approval, a blocked ticket and a held draft, each with its age, five events since you last looked, and the projects with their ticket bars: three running, one paused, a planning conversation and one finished](../../screenshots/loom/home.png)
 
 ## Install
 
@@ -106,6 +106,15 @@ checks the outcome against the work that landed, writes the phase's
 `report`, and proposes a full spec version with the next phase's tickets.
 Loom reviews that version and you approve it to start the phase. Approval
 creates only that new batch, with ticket numbers continuing from the board.
+
+Spec opens on the phase gate while that version waits. The finished phase
+shows as Loom recorded it: each ticket with its pull request, merge commit,
+checks and review, why a cancelled ticket was cut, and the planner's report,
+marked unverified. Beside it is the proposed phase: its goal, done-when
+checks, the tickets with the keys approval will give them, which start at
+once and what each waits on. Comment on any line the planner wrote; while
+comments are unsent, Send replaces Approve. Approve names what it creates
+and starts, and that no ticket starts while the project is paused.
 No later phase starts while an earlier one still runs, and the project
 cannot finish while a phase has no tickets.
 
@@ -141,6 +150,13 @@ round and answers with its board tools (`loom_board`, `loom_ticket`,
 `loom_cancel_ticket`), or you answer on the ticket. Your reply on a blocked
 ticket goes to the planner at once, as a message that names the ticket.
 
+A worker that blocks on a choice can ask it as one: `loom_block` takes an
+optional `question`, 2 to 4 `options`, each a label and what it leads to, and
+the one it `recommended`. Loom stores them on the block post, and the ticket
+draws the question as a form with the worker's pick chosen and Other for an
+answer of your own; Requeue sends the next worker the option you chose and your
+note. A block without them reads as before, its reason and what it needs.
+
 When the work is right and only needs another look, such as after reviewers
 that ended without a verdict or a status no fix can clear, `bb loom requeue
 CSV-1 --review` (Review again as is on the ticket page, or the planner's
@@ -161,7 +177,7 @@ something Loom cannot fix by itself (a fault of the project's machine, or a
 forge or machine that has not answered for an hour), and when Loom paused the
 project for its token budget or deadline, which a new spec version can change.
 A pause for a missing sign-in or a broken forge command sends no round, since
-the planner cannot fix either: the next-step bar says why and offers Resume.
+the planner cannot fix either: the project line says why and offers Resume.
 
 A spec version the planner proposes after approval waits for your approval,
 and Loom's spec review checks it first, as a change to the version in force.
@@ -171,6 +187,8 @@ the Planner tab lists them under Needs you with a button for each. Loom checks
 a step off once it sees you take it: an approval, a requeue, a reply, a start,
 a resume, a land, or a live mark on the ticket or milestone a `live` step names.
 Mark done checks off any other step, such as one you did outside Loom.
+A step listed after an approval, such as "resume once v21 is approved",
+waits for that approval and says so.
 
 When bb refuses to start a worker or a reviewer with a client error (an HTTP
 4xx status other than 408, 409 and 429), the ticket blocks at once with bb's
@@ -213,7 +231,7 @@ machine, or the whole project). What Loom does follows from that:
   server names.
 - The wait is kept on the ticket, so a restart of Loom goes on with it. The
   ticket gets one post when the failures start, and its card, its page and the
-  next-step bar say what it waits for and when Loom tries again.
+  project line say what it waits for and when Loom tries again.
 - A merge that waits keeps its ticket in merging. On the integration strategy
   the merge queue waits with it, since every merge moves the integration
   branch, and so does a new worker in that repo, whose worktree would start
@@ -265,30 +283,45 @@ Loom adds a full-screen page to bb's left navigation. The Loom icon in the
 navigation rail counts what needs you: the Needs you items and Loom threads
 waiting on a question or an approval. The count is amber, and red while a
 ticket is blocked. While the page is open, bb's sidebar lists Loom instead of
-your threads: Home, the planning conversations, every project with what needs
-you in it, the open project's tickets that are moving or stuck (blocked first),
-done and archived projects folded away, How Loom works and New project. bb's
-title bar names the page, such as `Loom / CSV export › CSV-3`, with the project
-linking back to it. The page updates within about a second of an event,
+your threads: Home, every project with what needs you in it and a bar of its
+tickets by state with a count such as `12/30` (hover or focus it for the key,
+or on a touch screen tap the info button beside it),
+the open project's phases, each with its count, and its tickets that need you,
+the planning conversations, finished projects folded away, How Loom works and
+New project. bb's title bar names the page, such as `Loom / CSV export › CSV-3`,
+with the project linking back to it (by its key, `LANE › LANE-16`, where the
+name would run into the controls), and holds Loom's controls: Jump to (`/`),
+and on a project Sync pull requests, Pause or Resume, and a ⋯ menu with the
+rarer controls. The page updates within about a second of an event,
 without a reload, catches up by itself after bb reconnects, and reopens a view
 seen before at once. It remembers where you left it on this device: the Loom
-icon in the rail reopens the page you were on, each project opens on the tab
+icon in the rail reopens the page you were on, each project opens on the view
 you left it on, each view scrolls back to where you were, and the sidebar keeps
-its Done and archived group open or folded. Its addresses work after a reload:
+its Finished group open or folded. Its addresses work after a reload:
 `/plugins/loom/loom/_home` opens home, `/plugins/loom/loom/<slug>` a project,
 `/plugins/loom/loom/<slug>/<KEY>` a ticket and
 `/plugins/loom/loom/_plan/<threadId>` a planning conversation.
 
 On a phone, or any page narrower than 36rem (576 pixels), every view fits the
-screen and the page never scrolls sideways. A project's tabs stay in one row
-that scrolls sideways by itself, with the chosen tab in view, and stick to the
-top while the page scrolls. The health strip folds into one row of its main
-numbers and the Timeline into one row, each opening its full view with one
-click and folding back with another, and the About strip keeps the summary's first lines, so the tabs show on the first
-screen. The next-step bar's button goes under its sentence. Home draws each
-project as a card with its name, summary, state, what needs you and progress,
-the Agents tab stacks each thread's facts, and bb's title bar names a ticket's
-project by its key.
+screen and the page never scrolls sideways. A project's views stay in one row
+that scrolls sideways by itself, with the chosen view in view, and stick to the
+top with the time ruler while the page scrolls. The health strip folds into one
+row of its main numbers and History's Timeline into one row, each opening its
+full view with one click and folding back with another, and the About strip
+keeps the summary's first lines. Home puts its four numbers in two rows, and
+opening an item from Needs you shows it full screen with its answer docked at
+the bottom (Resume, Release draft, Confirm merge or the ask's current step, with
+its armed Yes and Back); Back (or Escape) returns to the same row. Work keeps its tools on
+one row, with the filter behind a search button and every group heading on the
+first screen. The Agents tab stacks each thread's facts, and bb's title bar names
+a ticket's project by its key. At 320 pixels no view scrolls sideways.
+
+On a touch screen, at any width, Loom's controls take the same 44 pixel tap as
+on a phone: the dependency map is drawn as a picture beside its full-size list,
+History's rows are 44 pixels tall and Spec picks a version from one menu. Spec's
+values stay text-sized so the spec reads as prose; each section's Comment on a
+value lists every value it takes a comment on, one row each, and opens the same
+comment box as the value.
 
 ### Home
 
@@ -296,22 +329,46 @@ A first visit, before any project exists, shows a guide: the five steps from
 plan to land, who does what, and a ticket's life. "How Loom works" opens it at
 any time.
 
-Five tiles sum up every project that is not archived: projects running, agents
-working against the worker and reviewer slots of running and paused projects,
-tickets done in the last 7 days, how many things need you (across how many
-projects, and how many tickets are blocked), and the sampled tokens.
+Four numbers sum up the day across every project that is not archived: what
+needs you, with how long the oldest has waited; projects running, with the
+worker and reviewer slots in use (counted as the scheduler counts them: a
+worker waiting in review or on its pull request keeps its thread but no slot);
+tickets done this week against the week before; and tokens, with about how many
+per done ticket. Tokens never count a thread that reported no usage as zero:
+the number reads "not recorded" when no thread reported, and says how many of
+the threads did not when some are missing. Cost is not recorded yet.
 
-Under them, one table lists every project and every planning conversation. Its
-Needs you column has a button for each blocked ticket, draft to review, pending
-spec version, integration project ready to land, and project Loom paused by
-itself (a budget or a deadline). Rows that need you come first, most urgent
-first, with a coloured edge: red for a blocked ticket, green for a project
-ready to land, amber for the rest. A planning conversation has "Continue
-planning". Each row also shows the project's state, strategy, ticket counts and
-progress, its workers and reviewers at work, a 14-day throughput sparkline, its
-tokens against the spec's budget and its last event. A search box filters the
-table by name, key, slug or title. Done and archived projects that need nothing
-fold into a Finished group at the bottom.
+Needs you lists everything that waits on you, oldest first, from every project:
+blocked tickets (with how many open tickets each holds back), drafts and
+pending versions to approve, the planner's asks (one item when an ask is to
+approve the version that waits), projects Loom paused, integration projects
+ready to land, merge confirmations, held drafts, merges to a wrong branch,
+rollout warnings, tickets whose step keeps failing, and Loom threads that bb
+shows waiting on you. Each row names its source and its age, or "age unknown"
+where Loom does not record when the need began. `j` and `k` move between rows
+and Enter opens one. A blocked ticket opens with its note focused, a draft on
+Spec and a thread in bb; a pause, an ask, a merge confirmation, a held draft or
+a warning opens in place with its answer: Resume, the ask's steps with Mark
+done and Set aside (each step tracked on its own, a step after an approval
+waiting for it), Confirm merge, Release draft or Acknowledge. Six rows show,
+the rest behind "N more". The rail badge, the sidebar's count and "Go to the
+next thing that needs me" read the same list.
+
+Since you looked lists every project's events since your last visit to Home
+(the last day on a first visit), by kind: shipped, sent back, blocked, asks,
+phases and your own moves, each a filter. The counts cover every event since
+then, and a kind's filter lists its own events, older ones 60 at a time. A
+project with more events since then than Loom reads at once (20,000) is named,
+with where its count starts and a link to its History. Leaving Home marks them
+seen.
+
+Projects lists every project and planning conversation with its ticket bar,
+state, phase or open count, failed tickets, what needs you in it and its last
+event; those that need you come first. A search box filters by name, key or
+slug, and done and archived projects that need nothing fold into a Finished
+group that Home remembers open or folded. Without Loom's sidebar (below 56rem),
+Home has Insights and How Loom works, and on a phone New project, so each stays
+reachable.
 
 ### New project
 
@@ -331,7 +388,26 @@ because Loom needs a git checkout.
 
 ### A project
 
-Under its header, an About strip says what the project is for: the spec's
+A project's page has the same frame on every view. The project line comes
+first: the state (open it for when it changed, who is working, the tokens, and
+Pause or Resume), the workers and reviewers at work, the repos, the merge
+strategy, the tokens, and on the right the next step with the one button you
+need now. Under it the phase rail shows each phase as a card with its number,
+title, a bar of its tickets by state and one count; a closed phase says closed
+with its done and cancelled tickets apart (`7/8`, `1 cut`), never complete. A
+project with no phases has one card per repo instead. Then the views, Work (`1`),
+Spec (`2`), Planner (`3`), Ship (`4`) and History (`5`), beside the time ruler.
+Ship holds Changes, Merge order and Rollout, under Do next on a pull request
+project; History holds Rewind (the full Timeline), Insights and Agents. The
+sidebar's Insights, under Home, reads every project at once. `/` opens Jump to, a palette of what needs you,
+the open project's tickets and views, every project and the page's places;
+`?` lists the keys; `[` and `]` step through time. On a touch screen a tap on a
+phase card opens its full title and the key to its bar, with Open Work beside
+them. From anywhere in bb, its own palette (Mod+Shift+P) has two Loom rows:
+"Loom: Go to the next thing that needs me" opens the oldest item in home's
+Needs you, and "Loom: Jump to a project or ticket" opens Jump to over the page.
+
+On Work's side, an About pane says what the project is for: the spec's
 summary, the issues and pull requests its goal links to, its repos, and "Done
 when" with the spec's `done_when` lines. Full goal opens the Spec tab, and
 Planner thread opens the planner. A project approved before every spec needed a
@@ -340,16 +416,17 @@ revision adds one. While a version that writes or changes the summary waits for
 your approval, the strip shows that version's summary and links to it. The home
 list shows each project's summary under its name.
 
-Every project has a next-step bar under its header: the stages from Plan to
-Land with the current one marked, one sentence on what happens next, and the
-one button you need now, such as "Approve v1 · create 7 tickets" or "Start
-project · 2 workers". It turns yellow when tickets are blocked or Loom paused
-the project, and says why and what Loom is doing about it. When every ticket of
-an integration project is done or cancelled, it offers Land beside Review
-changes, which opens the Changes tab; the header's "Land to <base>" lands with
-`--direct` instead.
+The project line's next step (the next-step bar of earlier versions) says what
+happens next and offers the one button you need now, such as "Approve v1 ·
+create 7 tickets" or "Start project · 2 workers"; its sentence, with why and
+what Loom is doing about it, opens from the step or its info button. It is
+bold when tickets are blocked or Loom paused the project. When a ticket asks
+you, it leads with Answer, and it never points at the view or ticket already
+open. When every ticket of an integration project is done or cancelled, it
+offers Land beside Review changes, which opens Ship's Changes; "Land to <base>"
+in the title bar's ⋯ menu lands with `--direct` instead.
 
-On the pull request strategy, while a pull request is open, the header also
+On the pull request strategy, while a pull request is open, the title bar also
 has Sync pull requests. It reads every open pull request now instead of at its
 next check, and acts on what each one says, as the regular check would (see
 [Syncing pull requests](#syncing-pull-requests)). A toast says what the reads
@@ -361,18 +438,18 @@ count), the time left at that pace, the token budget and the deadline when the
 spec sets them, and worker and reviewer capacity with the ready tickets and the
 work going back to workers that wait for a slot.
 
-A tab carries a badge only for something that needs you, and the tab opens
-with a short notice that says what the badge counts, lists those items with a
-link to each, and says what clears it:
+A view or part carries a badge only for something that needs you (Ship's badge
+sums its parts'), and it opens with a short notice that says what the badge
+counts, lists those items with a link to each, and says what clears it:
 
-| Tab | The badge counts | It clears when |
+| View or part | The badge counts | It clears when |
 | --- | --- | --- |
-| Board | Blocked tickets (red) | each ticket is requeued, by you or by the planner in a triage round, or cancelled |
+| Work | Blocked tickets (solid) | each ticket is requeued, by you or by the planner in a triage round, or cancelled |
 | Spec | A draft or a pending version waiting for you | you approve it; comments get you a new version instead |
 | Planner, "?" | bb's word that the planner's thread waits for an answer, such as a question or a tool approval | it is answered, under Needs you or in the thread, or the planner's turn is stopped; reading the thread does not clear it |
 | Planner, a number | The steps of the planner's newest `loom_ask_human` ask that are not done | Loom sees you take each step, or you mark it done; Set aside hides the whole ask |
 | Changes | Files of a project ready to land you have not marked Viewed | you mark each one Viewed (kept in this browser) |
-| Merge order | Pull requests merged into another ticket's branch, so their change is not on the base (red) | the ticket whose branch each went into merges, or you acknowledge it |
+| Merge order | Pull requests merged into another ticket's branch, so their change is not on the base (solid) | the ticket whose branch each went into merges, or you acknowledge it |
 | Rollout | Warning-tone rollout warnings, such as a step that deploys on merge before what it needs is live | what each waits for goes live, or you acknowledge them |
 
 A badge Loom cannot see you resolve, Merge order and Rollout, has
@@ -383,38 +460,89 @@ review and checks, which the Merge order tab shows. Info-tone rollout warnings,
 such as a milestone that does not hold yet or a freeze window a few days away,
 show on the Rollout tab without a badge.
 
-#### Board
+#### Work
 
-![The Board tab of a paused project: a blocked ticket under Needs you, two tickets in review and three waiting on their dependencies, beside the sidebar's list of the project's tickets in flight](../../screenshots/loom/board.png)
+![Work on a phased project: the list grouped by whose move it is, a blocked ticket under Needs you, and the phase's dependency map](../../screenshots/loom/board.png)
 
-A row per stage, stacked down the page, under a bar that counts the tickets
-done, shipping, in progress, up next and blocked:
+Work lists the phase's tickets (or every ticket of a project with no phases)
+grouped by whose move it is, in a fixed order:
 
-- Needs you: the blocked tickets, when there are any.
-- In progress: Working, Checking, Review, and Shipping (approved, merging and
-  open pull requests, each card with its state).
-- Up next: Ready, and Waiting, where each ticket names what it waits on.
-- Finished: Done and Cancelled, folded to one line each.
+- Needs you: blocked tickets, and a ticket whose worker asks a question says
+  how many options it offers.
+- Failed: a step Loom retries by itself, with the step and when it tries again.
+- Ready for you: merges waiting for your Confirm merge.
+- Working: workers, checks, reviews and merges in flight.
+- Waiting on others: queued tickets, with what each waits on, and open pull
+  requests.
+- Paused on a paused project, Not started before the start, and Proposed
+  before approval: the draft's tickets, which open nothing until approval
+  creates them.
+- Done and Cancelled, folded to one line with both counts.
 
-On a phased project, a compact strip above the board shows each phase's title,
-state and progress. Cards and ticket headers name their phase.
+Each row is one line: the ticket's mark, key and title, Loom's own word for its
+state (`queued`, `in review`, `PR open`) and up to three facts that tell it
+apart, such as its attempt, review round or pull request, and its age in its
+state. Each group shows the rows that fit on the first screen and folds the rest
+behind "N more". A filter matches keys and titles; `j` and `k` move between
+rows and Enter opens one. With a ticket open, the list stays beside it, one line
+per row, with the open ticket marked.
 
-Each card shows its age in its state, its attempt and review round, a link to
-the thread working on it and a Changes link. Before approval, the draft's
-tickets show as dashed cards with the keys approval will give them.
+Map (`m`) draws the same tickets as a dependency map: a phase's tickets laid
+out left to right by what they need, earlier phases as one stub, and a set of
+tickets that each need the same tickets drawn through one bar. Lines show the
+kind: solid for work, dashed for merges after, dotted for needs live. Every
+line leaves and enters a ticket at a port of its own kind, so two kinds between
+the same tickets run apart, and the caption counts any crossings left. Opening a
+ticket lights it, what it waits on and what it unblocks. A project with no
+phases shows the open ticket and its hops instead, one or two steps either
+way, with done prerequisites folded to a count and at most seven a side.
+Arrow keys walk the map along its edges. Exact list switches the map for a
+table of every open ticket with what it waits on and how many tickets it
+unblocks, directly and in all.
+
+Show done draws the whole project instead: every ticket, done included, with
+every edge between them. A phased project shows each phase in order as a band
+titled with its number, title and done count; a project without phases is one
+graph. Done tickets have a woven edge in the done colour, the rail's finished
+cloth; cancelled tickets have a hatched edge, as on the ticket bar, and the
+legend names both. The map keeps its text size and scrolls sideways when the
+project is wider than the page, the exact list lists every ticket with its
+phase, and rewinding replays the whole picture. It is off while a project has
+open tickets and on for a finished one, so a finished project's map is never
+empty; Loom remembers the choice for each project.
+
+Export, at the end of the Map's header, turns the map into a picture to share:
+Copy image, Download PNG and Download SVG. The picture is the whole map, not
+the part in view, drawn from the map's own layout in the theme you are using.
+It is Loom's card with a header and a legend. The header names the project,
+what the map covers (`Phase 2 of 3 · Directions · 8 tickets · 3 done`, or
+`Whole project · 42 tickets · 31 done`) and the day, or `as of` the moment a
+rewound map shows. The legend counts each state. Nothing is lit or dimmed, and
+ticket titles stay out, as on the map. A draft exports its proposed tickets. The
+PNG is drawn at twice its size; a map too large for the browser's canvas
+(16,384 px a side) is drawn smaller, and the toast says so. The SVG stands
+alone, with every colour resolved and any web font the theme loads inlined, so
+design tools open it as it looks. Files are named for the project, what the map
+covers and the day, such as `LANE-map-whole-2026-11-11.png`. When the clipboard
+refuses an image, the toast says so and offers Download PNG. Export is hidden
+while the exact list is shown.
 
 #### Ticket
 
 ![A ticket page: the stage tracker from Queued to Done, the second attempt's note and submit, the checks that passed and the reviewer's approval, beside the acceptance criteria and the files in scope](../../screenshots/loom/ticket.png)
 
-A header with the state, a one-line summary, a stage tracker from Queued to
-Done, and chips for the attempts, review rounds, total time, dependencies, the
-branch and the pull request. While the pull request is open, Sync now beside it
-reads that one pull request now. A blocked ticket shows its reason, an answer
-box and Requeue; Block and Cancel ticket sit in the ⋯ menu, and each needs a
-reason. Beside Requeue, Review again as is appears when Loom may send the
+A ticket opens in a pane beside Work's list. Its header has the state and its
+age, the title, the phase, the attempts and review rounds, and the facts Loom
+reads from the board: what it waits on, what it unblocks, the branch and the
+pull request, each a link. While the pull request is open, Sync now beside it
+reads that one pull request now. Its ⋯ menu holds Block and Cancel ticket, and
+each needs a reason. A blocked ticket shows its reason and an answer box with
+Requeue; when its worker asked a structured question, the box is that question
+as a form. Beside Requeue, Review again as is appears when Loom may send the
 ticket back as it is: to review for the commit whose checks passed, or to its
-open pull request.
+open pull request. Confirm merge says what the merge changes for each ticket
+that waits on it, with what still holds each one, from Ship's merge order.
+A ticket that cannot load says why in its pane, with Try again.
 
 The Activity tab shows one card per worker attempt, newest first (Oldest first
 switches the order). Inside an attempt, posts are cards with their replies, each
@@ -426,12 +554,10 @@ bytes it moved; Loom keeps no file contents in its database. On the pull
 request strategy it also shows the pull
 request the worker wrote, the commits Loom pushed, the checks as Loom last read
 them, and a card per fix round with the feedback it sent. The Brief tab shows
-the worker's brief as Markdown.
-
-A side column lists the acceptance criteria, the files in scope, the verify
-command and every worker and reviewer thread with how it ended; Hide details
-folds it away. The reply box says who gets your reply now; on an open pull
-request, your reply starts a fix round.
+the worker's brief as Markdown, with the acceptance criteria, the files in scope
+and the verify command, and the Agents tab lists every worker and reviewer
+thread with how it ended. The reply box says who gets your reply now; on an
+open pull request, your reply starts a fix round.
 
 #### Spec
 
@@ -501,7 +627,7 @@ the review policy, or adding a repo. A pending version is compared with the
 version in force; a draft with the draft before it, and only when that draft's
 review passed or was skipped; the first version is always reviewed. Loom
 records the skip with the paths that changed, writes it to the feed, and tells
-the planner to hand over, as a passed review does. The next-step bar and the
+the planner to hand over, as a passed review does. The project line and the
 Planner tab's version card say how many settings changed and what they belong
 to, such as "6 operational settings: the forge on 4 repos and web's
 refresh_behind", with each setting listed behind a disclosure.
@@ -544,6 +670,30 @@ diff viewer, unified or split. Viewed marks stay in your browser and clear when
 a file changes again. On the branch, a panel carries Land and "Land to <base>"
 with what each pushes. A done project still shows what it merged, from the
 merge commits Loom recorded.
+
+#### Do next
+
+On the pull request strategy, Ship opens on Do next: your moves in order, each
+a row with its one action, read from the merge order and the rollout together,
+so neither ever offers a step the other holds. A merge shows only when nothing
+it waits on is open, its checks pass, it is not held as a draft, Loom does not
+merge it itself after a final review, and no freeze covers a merge that deploys
+it. Rows, in order: the rollout's next merge when it can go; otherwise what it
+is stacked on or waits for, with why it goes first ("LANE-36 is stacked on it,
+and 1 check failing still holds it"); merges you confirm in Loom (Confirm merge,
+then "Yes, merge 9f3c2e1"); held drafts to release; the other pull requests
+that can merge, one row for those nothing waits on, each with its pull request
+to open; and steps whose change merged and can go live (Mark live, one click,
+with Undo live beside it). A freeze that is on holds a merged step's deploy
+too, so during one Do next offers no Mark live for a step still to deploy, and
+the rollout's tiles and next step say "Not yet" instead of "Deploy now"; the
+server's warnings still name a freeze only for a pull request whose merge
+deploys, and a pull request's Rollout section names no freeze. Held lists what keeps the rest back, one reason a
+row: a review, a failing check, a freeze, a stage still to soak, a held final
+review. The rollout's own Do next card says the same when the merge order holds
+its step, and a ticket's Confirm merge warns when merging it now would deploy it
+during a freeze or before what it needs is live. As before, Loom's engine never
+holds a merge for a rollout: these are words, not locks.
 
 #### Merge order
 
@@ -632,6 +782,27 @@ the planner, on call for triage rounds, the tokens by role, how threads ended,
 and the ended threads. A thread bb has no token figure for shows "not
 reported".
 
+#### Insights across projects
+
+The sidebar's Insights reads every project at once: five figures (tickets done,
+with the change on the window before; median and p85 cycle time, pooled across
+projects before the percentiles; review rounds per ticket and first-pass
+approval; time blocked, with the ticket blocked longest; tokens, and tokens per
+ticket done), done per week as one labelled row per project on one shared scale,
+done per day, and tables by project, by model and by repo. Project buttons
+narrow it, Finished counts the finished projects as one, and 4 weeks or 12 weeks
+sets the window; the choice stays on the device. On the day chart, the arrow
+keys pick a day, Shift with an arrow picks several, Enter counts only that
+stretch in the figures and tables (the charts keep the whole window), and Escape
+or the × counts the whole window again; a click or a drag picks days too. A
+project's History Insights opens it with Across projects. Loom records the
+model each worker and reviewer is spawned with from this version on; older
+threads and planners show as "not recorded", and with no prices kept the cost
+says "not recorded yet" rather than guessing. bb reports a thread's tokens as a
+running total with no time on each use, so the tokens figure is the total of the
+agent threads started in the window, and it says how many of them have no usage
+report; a figure with no report at all says "not recorded", never 0.
+
 #### Insights
 
 ![The Insights tab of a project ready to land: how it went in plain words with four figures, a chart of when the work happened with the quiet hour folded, each ticket's story, and how long a ticket takes](../../screenshots/loom/insights.png)
@@ -644,7 +815,8 @@ ticket, on one page:
   and tokens. A link in a sentence shows the problems, or your own actions, in
   the story.
 - When the work happened: a bar per stretch of time for the tickets shipped,
-  sent back for a fix and blocked, with the tickets in flight behind them, your
+  sent back for a fix and blocked (an opened pull request outlined, a block
+  hatched, each part apart), with the tickets in flight behind them, your
   actions and milestones above, and paused stretches hatched. Quiet stretches
   fold. Hover a bar to read it; click a bar, or drag across bars, to show only
   that stretch, or use the arrow keys, Enter and Escape. Whole project, Latest
@@ -672,19 +844,25 @@ tokens, which threads report as one running total.
 
 #### Timeline
 
-Under the health strip, every project has a Timeline in a dashed frame. Collapsed,
-it is one row: a Play button, a strip of how much happened when on a labelled
+Every view has a time ruler beside the view tabs: a tick for each moment,
+shaped by its kind, a playhead, and the day labels that fit. Drag it, step with
+its buttons or the arrow keys, or press `[` and `]` to rewind the whole page;
+the project line then says when the page shows, read-only, with Back to now
+(or Esc). History's Rewind holds the full Timeline in a dashed frame, open at
+every width. Its first row has a Play button, a strip of how much happened when on a labelled
 time axis, with a red dot under each time a ticket blocked or was sent back and
 a ring for each of your own actions, and whether the page is live. Hover the
 strip to read what happened at a moment before anything changes; click or drag
 it, press Play, or step with the arrow keys while the Timeline has focus to
 rewind the whole page to that moment. Rewound, the frame turns orange and the
-time after the playhead fades; the health strip, Board, Agents, Insights,
-Spec and any ticket show the project as it was then, every control is disabled,
-and Back to now (or Esc) returns the live page.
+time after the playhead fades; Work, Spec, History and any ticket show the
+project as it was then, Planner and Ship wait for now, every control that
+changes something is disabled and refused, wherever it is (the title bar, the
+⋯ menu, Jump to, a key, a row or a ticket), and Back to now (or Esc) returns
+the live page.
 
 The Timeline steps through moments, not raw events: each moment changes the
-board, the header or the health strip, and events less than 2 seconds apart
+board, the project line or the health strip, and events less than 2 seconds apart
 read as one. Posts and edits only add text, so they are not moments, but the
 Insights tab of a rewound page still shows them. Open, the Timeline shows the moment's
 time and sentence with previous and next buttons, plays at 1, 5 or 20 minutes
@@ -702,25 +880,37 @@ no failed attempts.
 
 #### Controls
 
-Every button that changes something asks twice: the first click turns it amber
-with "Click again to ..." and a bar that drains over five seconds, beside a
-Cancel button. Each button calls the same engine method as the matching command
-and is logged as a `human.action` event. Sync pull requests and Sync now are
-the exception: they only read, so they take one click and log nothing, and a
-read that failed or still runs turns their toast into a warning. Archive sits
-in the ⋯ menu. A project control or a ticket action says in bb's toast what it
+A button whose change is risky arms in place: the first click turns it into
+"Yes, <what it does>", such as "Yes, approve v2" or "Yes, land web and api",
+beside Back, with focus on Yes. It waits for you, with no timer; Esc or Back
+puts it back. These are Approve, Start, every Land, Archive, Cancel ticket,
+Confirm merge, Release draft, Mark done on an ask step, sending comments to an
+older version and deleting a forge profile. Everything you can undo takes one
+click: Pause, Pause now (which stops running agents at once), Resume, Mark live
+and Undo live, Acknowledge, and Requeue, Review again as is and Block once
+their note or reason is typed. Each button calls the same engine method as the
+matching command and is logged as a `human.action` event. Sync pull requests
+and Sync now take one click and log nothing, and a read that failed or still
+runs turns their toast into a warning. Archive sits in the title bar's ⋯ menu. A project control or a ticket action says in bb's toast what it
 did, such as "Project started" or "CSV-2 requeued"; the toasts stay in bb's
 notification center. A
 change Loom refuses shows in bb's own error toast, as every failed change in bb
 does, with Loom's reason. A reply, a message to the planner, spec comments and
 New project also keep their errors beside the text you wrote.
 
-A worker, reviewer or planner thread shows a header chip such as
-`CSV-3 · review` that opens its ticket, and a planning conversation shows
-"Planning", which opens it on the page. The chip is hidden on phone-sized
-screens. The thread's Info tab has a Loom row on every screen size: the ticket
-(or project, or planning conversation), its state and the thread's role, with a
-link to the page.
+A worker, reviewer or planner thread shows a button in bb's thread header such
+as `CSV-3 · in review` that opens its ticket, and a planning conversation shows
+"Planning", which opens it on the page; bb leaves header buttons out on
+phone-sized screens. Above the composer, a Loom segment names the ticket, the
+thread's role, the phase and attempt, and the ticket's state; it opens in place
+to where the ticket stands, with Open in Loom. The side panel's Loom tab shows a
+worker's or reviewer's ticket (without the thread's own conversation again),
+or for a planner its project's ticket bar and what the project needs from you,
+answerable there. The thread's Info tab has a Loom row on every screen size.
+
+A ticket's Threads tab lists each attempt's worker and reviewer threads, newest
+first, and shows the chosen one's conversation from bb, with Open to go to the
+thread; a note to the agent goes through the ticket's reply.
 
 ## Pull requests
 
@@ -852,7 +1042,7 @@ its own pull request.
   not run when it submits, and a reviewer does not request changes only
   because a test was not run. A failed CI check comes back as a fix round, as
   above, and a ticket stacked on this one follows the pushed fix. Pending and
-  failing CI shows on the board card, the next-step bar and the Merge order
+  failing CI shows on the board card, the project line and the Merge order
   tab. This needs a server that reports checks (`gh`, or a command forge with
   a `feedback` command), so a repo on any other forge does not rely on it
   unless the spec says `ci = true`, which `loom_propose` refuses there.

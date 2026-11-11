@@ -5,7 +5,7 @@ import type { Spec, TicketSpec } from "../spec";
 import type { SpecChange } from "../spec-diff";
 import { repoSettings } from "../repos";
 import { wavesOf } from "../spec-paths";
-import { BUTTON, CHIP, HEADING, RepoChip, listText, plural } from "./common";
+import { BUTTON, CHIP, HEADING, RepoChip, TAP, listText, plural } from "./common";
 import { FilesPane } from "./spec-panes";
 import { CHANGED_TAG, Commentable, DiffList, NEW_TAG, REMOVED_TAG, ReviewContext, WordDiff, changeAt, changedAt, kept, useReview, type ListMark } from "./spec-review-kit";
 import { Command, Inputs, Prose } from "./spec-settings";
@@ -22,7 +22,12 @@ export const REMOVED = "removed:";
 const LONG_BRIEF = 900;
 
 function Priority({ priority }: { priority: number }) {
-  return <span className={`inline-flex h-4 shrink-0 items-center rounded px-1 text-[10px] font-bold text-white ${PRIORITY_COLOURS[priority] ?? "bg-subtle-foreground"}`}>P{priority}</span>;
+  // White on the priority's fill failed for P3 in gruvbox (2.27:1); the colour is a dot beside text that always reads.
+  return (
+    <span className="inline-flex h-4 shrink-0 items-center gap-1 rounded border border-[var(--loom-line)] px-1 text-[11px] font-bold text-foreground">
+      <span aria-hidden className={`size-1.5 rounded-full ${PRIORITY_COLOURS[priority] ?? "bg-subtle-foreground"}`} />P{priority}
+    </span>
+  );
 }
 
 function Label({ children }: { children: ReactNode }) {
@@ -54,7 +59,7 @@ function TicketRollout({ ticket, spec, base, onSelect }: { ticket: TicketSpec; s
   const target = (key: string, kind: "text" | "bool" | "deps" = "text", current?: string | boolean) => ({ paths: [`${at}.${key}`], label: `${ticket.ref} › rollout › ${key.replace(/_/g, " ")}`, kind, ...(current === undefined ? {} : { value: current }) });
   const need = (ref: string, mark: ListMark) =>
     mark === "removed" ? (
-      <span data-removed className="rounded-full border border-dashed border-destructive-text/40 px-2 font-mono text-[11px] leading-5 text-destructive-text line-through">
+      <span data-removed className="rounded-full border border-dashed border-destructive-text/40 px-2 font-mono text-[11px] leading-5 text-[var(--loom-bad)] line-through">
         {ref}
       </span>
     ) : refs.has(ref) ? (
@@ -63,7 +68,7 @@ function TicketRollout({ ticket, spec, base, onSelect }: { ticket: TicketSpec; s
       </button>
     ) : (
       <span data-milestone-chip={ref} title={milestones.has(ref) ? `Milestone: ${milestones.get(ref)}` : "Not a ticket or milestone of this spec"} className={`rounded-full border border-dashed px-2 font-mono text-[11px] leading-5 [overflow-wrap:anywhere] ${mark === "added" ? "border-success bg-success/15" : "border-border-seam"}`}>
-        {ref} <span className="font-sans text-[10px] text-subtle-foreground">{milestones.has(ref) ? "milestone" : "unknown"}</span>
+        {ref} <span className="font-sans text-[11px] text-[var(--loom-muted)]">{milestones.has(ref) ? "milestone" : "unknown"}</span>
       </span>
     );
   return (
@@ -87,7 +92,7 @@ function TicketRollout({ ticket, spec, base, onSelect }: { ticket: TicketSpec; s
         </p>
         {shown("requires_live") && (
           <p className="flex flex-wrap items-center gap-1.5">
-            <Commentable as="span" target={target("requires_live", "deps")} className="px-1 text-muted-foreground" showWas={false}>
+            <Commentable as="span" target={target("requires_live", "deps")} className="px-1 text-[var(--loom-muted)]" showWas={false}>
               Needs live first
             </Commentable>
             <DiffList path={`${at}.requires_live`} items={rollout.requires_live ?? []} compact={false} render={need} />
@@ -95,19 +100,19 @@ function TicketRollout({ ticket, spec, base, onSelect }: { ticket: TicketSpec; s
         )}
         {shown("how") && (
           <p className="px-1">
-            <span className="text-xs text-muted-foreground">Ships: </span>
+            <span className="text-xs text-[var(--loom-muted)]">Ships: </span>
             <Prose path={`${at}.how`} label={`${ticket.ref} › rollout › how`} text={rollout.how} fallback="as its repo's changes do" />
           </p>
         )}
         {shown("verify") && (
           <div className="min-w-0">
-            <p className="px-1 text-[11px] text-muted-foreground">Live once this passes after the merge</p>
+            <p className="px-1 text-[11px] text-[var(--loom-muted)]">Live once this passes after the merge</p>
             <Command path={`${at}.verify`} label={`${ticket.ref} › rollout › verify`} command={rollout.verify} />
           </div>
         )}
         {shown("rollback") && (
           <p className="px-1 whitespace-pre-wrap">
-            <span className="text-xs text-muted-foreground">Rollback: </span>
+            <span className="text-xs text-[var(--loom-muted)]">Rollback: </span>
             <Prose path={`${at}.rollback`} label={`${ticket.ref} › rollout › rollback`} text={rollout.rollback} fallback="not said" />
           </p>
         )}
@@ -167,7 +172,7 @@ function TicketDetail({ ticket, spec, view, onSelect }: { ticket: TicketSpec; sp
   const overlaps = view.overlaps.filter((overlap) => overlap.a === ticket.ref || overlap.b === ticket.ref);
   const chip = (ref: string, mark: ListMark = null) =>
     mark === "removed" ? (
-      <span key={ref} data-removed className="rounded-full border border-dashed border-destructive-text/40 px-2 font-mono text-[11px] leading-5 text-destructive-text line-through">
+      <span key={ref} data-removed className="rounded-full border border-dashed border-destructive-text/40 px-2 font-mono text-[11px] leading-5 text-[var(--loom-bad)] line-through">
         {ref}
       </span>
     ) : (
@@ -177,14 +182,14 @@ function TicketDetail({ ticket, spec, view, onSelect }: { ticket: TicketSpec; sp
     );
   const item = (kind: "criterion" | "file" | "command", part: string, label: (index: number, text: string) => string) => (text: string, mark: ListMark, index: number) =>
     mark === "removed" ? (
-      <span data-removed className={`block rounded-md bg-destructive-text/10 px-1.5 py-1 text-destructive-text line-through ${kind === "criterion" ? "text-sm" : "font-mono text-xs"}`}>
+      <span data-removed className={`block rounded-md bg-destructive-text/10 px-1.5 py-1 text-[var(--loom-bad)] line-through [overflow-wrap:anywhere] ${kind === "criterion" ? "text-sm" : "font-mono text-xs"}`}>
         {text}
       </span>
     ) : (
-      <Commentable target={{ paths: [`${base}.${part}[${index}]`], label: label(index, text), kind }} className={`px-1.5 py-1 ${kind === "criterion" ? "text-sm" : "font-mono text-xs [overflow-wrap:anywhere]"} ${mark === "added" ? "bg-success/15 ring-1 ring-success" : kind === "criterion" ? "" : "bg-surface-recessed"}`}>
-        {kind === "criterion" && <span className="mr-1.5 text-xs text-subtle-foreground">{index + 1}.</span>}
+      <Commentable target={{ paths: [`${base}.${part}[${index}]`], label: label(index, text), kind }} className={`px-1.5 py-1 [overflow-wrap:anywhere] ${kind === "criterion" ? "text-sm" : "font-mono text-xs"} ${mark === "added" ? "bg-success/15 ring-1 ring-success" : kind === "criterion" ? "" : "bg-surface-recessed"}`}>
+        {kind === "criterion" && <span className="mr-1.5 text-xs text-[var(--loom-muted)]">{index + 1}.</span>}
         {text}
-        {mark === "added" && <span className="ml-1.5 text-[10px] font-semibold text-success">new</span>}
+        {mark === "added" && <span className="ml-1.5 text-[11px] font-semibold text-[var(--loom-ok)]">new</span>}
       </Commentable>
     );
   const brief = has("body") ? <Brief ticket={ticket} base={base} /> : null;
@@ -210,7 +215,7 @@ function TicketDetail({ ticket, spec, view, onSelect }: { ticket: TicketSpec; sp
         <>
           <Label>Verify</Label>
           {ticket.verify.length === 0 && (
-            <Commentable target={{ paths: [`${base}.verify`], label: `${ticket.ref} › verify`, kind: "command" }} className="p-1 text-sm text-muted-foreground">
+            <Commentable target={{ paths: [`${base}.verify`], label: `${ticket.ref} › verify`, kind: "command" }} className="p-1 text-sm text-[var(--loom-muted)]">
               No command of its own; only {listText(checks)} {checks.length === 1 ? "runs" : "run"}.
             </Commentable>
           )}
@@ -225,20 +230,20 @@ function TicketDetail({ ticket, spec, view, onSelect }: { ticket: TicketSpec; sp
         <>
           <Label>Order</Label>
           <p className="flex flex-wrap items-center gap-1.5 text-sm">
-            <Commentable as="span" target={{ paths: [`${base}.depends_on`], label: `${ticket.ref} › waits for`, kind: "deps" }} className="px-1 text-muted-foreground" showWas={false}>
+            <Commentable as="span" target={{ paths: [`${base}.depends_on`], label: `${ticket.ref} › waits for`, kind: "deps" }} className="px-1 text-[var(--loom-muted)]" showWas={false}>
               Waits for
             </Commentable>
-            {ticket.depends_on.length === 0 && changeAt(review, `${base}.depends_on`) === undefined ? <span className="text-xs text-muted-foreground">nothing, so it starts in wave 1</span> : <DiffList path={`${base}.depends_on`} items={ticket.depends_on} compact={false} render={(ref, mark) => chip(ref, mark)} />}
+            {ticket.depends_on.length === 0 && changeAt(review, `${base}.depends_on`) === undefined ? <span className="text-xs text-[var(--loom-muted)]">nothing, so it starts in wave 1</span> : <DiffList path={`${base}.depends_on`} items={ticket.depends_on} compact={false} render={(ref, mark) => chip(ref, mark)} />}
           </p>
           <p data-unblocks className="mt-1 flex flex-wrap items-center gap-1.5 text-sm">
-            <span className="px-1 text-muted-foreground">Unblocks</span>
-            {dependents.length === 0 ? <span className="text-xs text-muted-foreground">nothing</span> : dependents.map((ref) => chip(ref))}
+            <span className="px-1 text-[var(--loom-muted)]">Unblocks</span>
+            {dependents.length === 0 ? <span className="text-xs text-[var(--loom-muted)]">nothing</span> : dependents.map((ref) => chip(ref))}
           </p>
         </>
       )}
       {has("merge_after") && ((ticket.merge_after ?? []).length > 0 || changeAt(review, `${base}.merge_after`) !== undefined) && (
         <p data-merge-after className="mt-1 flex flex-wrap items-center gap-1.5 text-sm">
-          <Commentable as="span" target={{ paths: [`${base}.merge_after`], label: `${ticket.ref} › merges after`, kind: "deps" }} className="px-1 text-muted-foreground" showWas={false}>
+          <Commentable as="span" target={{ paths: [`${base}.merge_after`], label: `${ticket.ref} › merges after`, kind: "deps" }} className="px-1 text-[var(--loom-muted)]" showWas={false}>
             Merges after
           </Commentable>
           <DiffList path={`${base}.merge_after`} items={ticket.merge_after ?? []} compact={false} render={(ref, mark) => chip(ref, mark)} />
@@ -246,7 +251,7 @@ function TicketDetail({ ticket, spec, view, onSelect }: { ticket: TicketSpec; sp
       )}
       {has("keep_draft") && (ticket.keep_draft !== undefined || changedAt(review, `${base}.keep_draft`)) && (
         <p data-keep-draft className="mt-1 flex flex-wrap items-center gap-1.5 text-sm">
-          <Commentable as="span" target={{ paths: [`${base}.keep_draft`], label: `${ticket.ref} › keep draft`, kind: "bool", value: ticket.keep_draft ?? false }} className="px-1 text-muted-foreground">
+          <Commentable as="span" target={{ paths: [`${base}.keep_draft`], label: `${ticket.ref} › keep draft`, kind: "bool", value: ticket.keep_draft ?? false }} className="px-1 text-[var(--loom-muted)]">
             {ticket.keep_draft === true ? "Its pull request stays a draft until you release it" : "Its pull request is marked ready for review"}
           </Commentable>
         </p>
@@ -255,7 +260,7 @@ function TicketDetail({ ticket, spec, view, onSelect }: { ticket: TicketSpec; sp
       {has("environment") && (ticket.environment !== undefined || changedAt(review, `${base}.environment`)) && (
         <div data-ticket-environment className="min-w-0">
           <Label>Environment</Label>
-          <p className="mb-1 text-xs text-muted-foreground">Its workers' and reviewers' inputs, over {ticket.repo === undefined ? "the project's" : `${ticket.repo}'s`}:</p>
+          <p className="mb-1 text-xs text-[var(--loom-muted)]">Its workers' and reviewers' inputs, over {ticket.repo === undefined ? "the project's" : `${ticket.repo}'s`}:</p>
           <Inputs path={`${base}.environment.inputs`} label={`${ticket.ref} › environment › inputs`} inputs={ticket.environment?.inputs} />
         </div>
       )}
@@ -272,8 +277,8 @@ function TicketDetail({ ticket, spec, view, onSelect }: { ticket: TicketSpec; sp
         <Commentable as="span" target={{ paths: [`${base}.priority`], label: `${ticket.ref} › priority`, kind: "enum", value: ticket.priority, options: [0, 1, 2, 3], names: { 0: "P0", 1: "P1", 2: "P2", 3: "P3" } }} className="inline-flex items-center">
           <Priority priority={ticket.priority} />
         </Commentable>
-        <span className="font-mono text-xs text-muted-foreground [overflow-wrap:anywhere]">{ticket.ref}</span>
-        <span className={`${CHIP} px-2 text-muted-foreground`}>wave {wave}</span>
+        <span className="font-mono text-xs text-[var(--loom-muted)] [overflow-wrap:anywhere]">{ticket.ref}</span>
+        <span className={`${CHIP} px-2 text-[var(--loom-muted)]`}>wave {wave}</span>
         {ticket.phase !== undefined && <Commentable as="span" target={{ paths: [`${base}.phase`], label: `${ticket.ref} › phase`, kind: "text", value: ticket.phase }} className={CHIP}>phase {ticket.phase}</Commentable>}
         {ticket.repo !== undefined && (
           <Commentable as="span" target={{ paths: [`${base}.repo`], label: `${ticket.ref} › repo`, kind: "text", value: ticket.repo }} className="inline-flex items-center">
@@ -291,7 +296,7 @@ function TicketDetail({ ticket, spec, view, onSelect }: { ticket: TicketSpec; sp
         <h3 className="inline text-base font-semibold">{ticket.title}</h3>
       </Commentable>
       {overlaps.length > 0 && (
-        <p data-ticket-overlap className="mt-2 rounded-md bg-warning/10 px-2 py-1.5 text-xs text-warning-text">
+        <p data-ticket-overlap className="mt-2 rounded-md bg-warning/10 px-2 py-1.5 text-xs text-[var(--loom-warn)]">
           {overlaps.map((overlap) => `Shares ${listText(overlap.paths)} with ${overlap.a === ticket.ref ? overlap.b : overlap.a}, and nothing orders them, so they run one at a time.`).join(" ")}
         </p>
       )}
@@ -311,10 +316,10 @@ function RemovedDetail({ change, compared, onSelect }: { change: Extract<SpecCha
     <div data-removed-ticket={change.ref} className="space-y-2">
       <p className="flex flex-wrap items-center gap-2 text-sm">
         <span className={REMOVED_TAG}>REMOVED IN v{review.version}</span>
-        <span className="font-mono text-xs text-muted-foreground">{change.ref}</span>
+        <span className="font-mono text-xs text-[var(--loom-muted)]">{change.ref}</span>
         {change.into.length > 0 && (
           <>
-            <span className="text-xs text-muted-foreground">its files go to</span>
+            <span className="text-xs text-[var(--loom-muted)]">its files go to</span>
             {change.into.map((ref) => (
               <button key={ref} type="button" className="cursor-pointer rounded-full border border-border-seam px-2 font-mono text-[11px] leading-5 hover:border-primary" onClick={() => onSelect(ref)}>
                 {ref}
@@ -380,16 +385,16 @@ export function TicketsSection({
             </h4>
             {spec.phase !== undefined && (
               <div data-anchor={`phase[${wave}]`} className="space-y-1 px-2 py-1 text-xs">
-                <p className="flex flex-wrap gap-1 text-muted-foreground">
+                <p className="flex flex-wrap gap-1 text-[var(--loom-muted)]">
                   <Commentable as="span" target={{ paths: [`phase[${wave}].ref`], label: `Phase ${wave + 1} › ref`, kind: "text" }}>{spec.phase[wave]!.ref}</Commentable>
                   <Commentable as="span" target={{ paths: [`phase[${wave}].max_tickets`], label: `Phase ${wave + 1} › ticket budget`, kind: "number", value: spec.phase[wave]!.max_tickets ?? 8, min: 1, max: 12 }}> · budget {spec.phase[wave]!.max_tickets ?? 8}</Commentable>
                 </p>
                 <Prose path={`phase[${wave}].goal`} label={`Phase ${wave + 1} › goal`} text={spec.phase[wave]!.goal} />
                 <Commentable target={{ paths: [`phase[${wave}].done_when`], label: `Phase ${wave + 1} › done when`, kind: "criterion" }}>
-                  <ul className="list-inside list-disc text-muted-foreground">{spec.phase[wave]!.done_when.map((check, index) => <li key={index}>{check}</li>)}</ul>
+                  <ul className="list-inside list-disc text-[var(--loom-muted)]">{spec.phase[wave]!.done_when.map((check, index) => <li key={index}>{check}</li>)}</ul>
                 </Commentable>
                 {(spec.phase[wave]!.outline !== undefined || changedAt(review, `phase[${wave}].outline`)) && <Commentable target={{ paths: [`phase[${wave}].outline`], label: `Phase ${wave + 1} › outline`, kind: "text" }}>
-                  <ul className="list-inside list-disc text-subtle-foreground">{(spec.phase[wave]!.outline ?? []).map((line, index) => <li key={index}>{line}</li>)}</ul>
+                  <ul className="list-inside list-disc text-[var(--loom-muted)]">{(spec.phase[wave]!.outline ?? []).map((line, index) => <li key={index}>{line}</li>)}</ul>
                 </Commentable>}
                 {(spec.phase[wave]!.report !== undefined || changedAt(review, `phase[${wave}].report`)) && <div><p className={HEADING}>Report</p><Prose path={`phase[${wave}].report`} label={`Phase ${wave + 1} › report`} text={spec.phase[wave]!.report} /></div>}
               </div>
@@ -406,15 +411,15 @@ export function TicketsSection({
                   data-mark={ticketMark ?? undefined}
                   aria-current={pick?.ref === ticket.ref ? "true" : undefined}
                   onClick={() => onSelect(ticket.ref)}
-                  className={`flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm ${pick?.ref === ticket.ref ? "bg-surface-selected font-medium" : "hover:bg-state-hover"}`}
+                  className={`flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm ${TAP} ${pick?.ref === ticket.ref ? "bg-surface-selected font-medium" : "hover:bg-state-hover"}`}
                 >
                   <Priority priority={ticket.priority} />
                   <span className="min-w-0 flex-1 truncate" title={`${ticket.ref}: ${ticket.title}`}>
                     {ticket.title}
                   </span>
                   {ticket.repo !== undefined && <RepoChip name={ticket.repo} />}
-                  {ticketMark === "new" ? <span className={NEW_TAG}>NEW</span> : ticketMark === "changed" ? <span className="shrink-0 text-[10.5px] text-primary">{parts.join(", ") || "changed"}</span> : null}
-                  {notes > 0 && <span className="inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-warning px-1 text-[10px] font-semibold text-black">{notes}</span>}
+                  {ticketMark === "new" ? <span className={NEW_TAG}>NEW</span> : ticketMark === "changed" ? <span className="shrink-0 text-[11px] font-semibold text-foreground">{parts.join(", ") || "changed"}</span> : null}
+                  {notes > 0 && <span className="inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-warning px-1 text-[11px] font-semibold text-black">{notes}</span>}
                 </button>
               );
             })}
@@ -434,33 +439,33 @@ export function TicketsSection({
               className={`flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm ${removedPick?.ref === change.ref ? "bg-surface-selected" : "hover:bg-state-hover"}`}
             >
               <span className={REMOVED_TAG}>−</span>
-              <span className="min-w-0 flex-1 truncate text-muted-foreground line-through">{compared?.ticket.find((ticket) => ticket.ref === change.ref)?.title ?? change.ref}</span>
+              <span className="min-w-0 flex-1 truncate text-[var(--loom-muted)] line-through">{compared?.ticket.find((ticket) => ticket.ref === change.ref)?.title ?? change.ref}</span>
             </button>
           ))}
         </div>
       )}
-      {hidden > 0 && <p className="px-2 py-2 text-[11px] text-subtle-foreground">… {plural(hidden, "unchanged ticket")} hidden</p>}
+      {hidden > 0 && <p className="px-2 py-2 text-[11px] text-[var(--loom-muted)]">… {plural(hidden, "unchanged ticket")} hidden</p>}
     </nav>
   );
 
   return (
     <div className="space-y-3">
       {view.warnings.length > 0 && (
-        <ul data-spec-warnings className="space-y-0.5 rounded-md border border-warning/50 bg-warning/10 px-3 py-2 text-xs text-warning-text">
+        <ul data-spec-warnings className="space-y-0.5 rounded-md border border-warning/50 bg-warning/10 px-3 py-2 text-xs text-[var(--loom-warn)]">
           {view.warnings.map((warning) => (
             <li key={warning}>{warning}</li>
           ))}
         </ul>
       )}
       <div className="flex flex-wrap items-center gap-2">
-        <div role="group" aria-label="Ticket layout" className="inline-flex gap-0.5 rounded-md border border-border-seam bg-card p-0.5">
+        <div role="group" aria-label="Ticket layout" className="inline-flex max-w-full flex-wrap gap-0.5 rounded-md border border-border-seam bg-card p-0.5">
           {LAYOUTS.map((entry) => (
-            <button key={entry.layout} type="button" aria-pressed={layout === entry.layout} onClick={() => onLayout(entry.layout)} className={`cursor-pointer rounded px-2.5 py-0.5 text-xs ${layout === entry.layout ? "bg-surface-selected font-semibold text-foreground" : "text-muted-foreground hover:bg-state-hover"}`}>
+            <button key={entry.layout} type="button" aria-pressed={layout === entry.layout} onClick={() => onLayout(entry.layout)} className={`cursor-pointer rounded px-2.5 py-0.5 text-xs ${TAP} @max-xl/loom:min-w-11 pointer-coarse:min-w-11 ${layout === entry.layout ? "bg-surface-selected font-semibold text-foreground" : "text-[var(--loom-muted)] hover:bg-state-hover"}`}>
               {entry.label}
             </button>
           ))}
         </div>
-        <span className="text-xs text-muted-foreground">
+        <span className="text-xs text-[var(--loom-muted)]">
           {plural(spec.ticket.length, "ticket")} in {spec.phase === undefined ? plural(waveCount, "wave") : plural(spec.phase.length, "phase")}; {workers === 1 ? "one runs" : `up to ${workers} run`} at a time.
           {layout === "map" && " Hover a ticket to trace what it waits for and unblocks."}
         </span>
@@ -471,10 +476,10 @@ export function TicketsSection({
         <>
           <TicketMap tickets={spec.ticket} selected={removedPick === undefined ? (pick?.ref ?? null) : null} onSelect={onSelect} markOf={mark} pinsOf={notesOn} fadedOf={(ref) => !kept(review, [`ticket[${ref}]`])} />
           {removed.length > 0 && (
-            <p className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+            <p className="flex flex-wrap items-center gap-1.5 text-xs text-[var(--loom-muted)]">
               Removed in v{review.version}:
               {removed.map((change) => (
-                <button key={change.ref} type="button" className="cursor-pointer rounded-full border border-dashed border-destructive-text/40 px-2 font-mono text-[11px] leading-5 text-destructive-text line-through" onClick={() => onSelect(`${REMOVED}${change.ref}`)}>
+                <button key={change.ref} type="button" className="cursor-pointer rounded-full border border-dashed border-destructive-text/40 px-2 font-mono text-[11px] leading-5 text-[var(--loom-bad)] line-through" onClick={() => onSelect(`${REMOVED}${change.ref}`)}>
                   {change.ref}
                 </button>
               ))}
@@ -489,7 +494,7 @@ export function TicketsSection({
         </div>
       )}
       {hidden > 0 && layout !== "files" && (
-        <p data-hidden-line className="flex items-center gap-2 rounded-md border border-dashed border-border-seam px-3 py-2 text-xs text-muted-foreground">
+        <p data-hidden-line className="flex flex-wrap items-center gap-2 rounded-md border border-dashed border-border-seam px-3 py-2 text-xs text-[var(--loom-muted)]">
           {hidden === spec.ticket.length ? "No ticket changed." : `${plural(hidden, "ticket")} did not change.`}
           <button type="button" className={`${BUTTON} ml-auto`} onClick={onShowAll}>
             Show {hidden === 1 ? "it" : "them"}

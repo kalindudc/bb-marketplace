@@ -6,8 +6,10 @@ import { holdingSends } from "../src/carry-hold";
 import { beforeEach, describe, expect, it } from "vitest";
 import { settleChecks, submit } from "../src/checks";
 import type { ThreadRow } from "../src/db/store";
+import { Engine } from "../src/engine";
 import { hostCallTransient, nextMergeWait } from "../src/forge-waits";
 import { retryOf } from "../src/retry-wait";
+import { stepFailed } from "../src/retry";
 import { pollPullRequests, runMergeQueue, settleMerges } from "../src/merge";
 import { askForPrTexts, handInPrText } from "../src/pull-requests";
 import { boardCards } from "../src/rpc";
@@ -174,7 +176,7 @@ describe("a merge that fails in a way worth waiting out", () => {
   it("tries again after 1, 2, 5, 10 and 15 minutes, and after an hour says so once more, never pausing the project", async () => {
     await seedProject(h);
     await reachApproved(h);
-    h.host.errors.merge = new Error("host plugin worker exited (0)");
+    h.host.errors.merge = new Error("host plugin worker exited (1)");
     await queue();
     for (const minutes of [1, 2, 5, 10, 15, 15]) {
       h.clock.advance(minutes * MINUTE - 1000);
@@ -195,7 +197,7 @@ describe("a merge that fails in a way worth waiting out", () => {
     expect(waitOf()).toMatchObject({ failures: 8, noted: true });
     expect(systemPosts()).toEqual([
       expect.stringContaining("Merging CSV-1 got no answer from the project's machine"),
-      "Merging CSV-1 has failed 8 times in a row over 1h 3m, because of the project's machine: host plugin worker exited (0). Loom keeps trying every 15m; a problem of the project's machine never blocks this ticket or pauses the project.",
+      "Merging CSV-1 has failed 8 times in a row over 1h 3m, because of the project's machine: host plugin worker exited (1). Loom keeps trying every 15m; a problem of the project's machine never blocks this ticket or pauses the project.",
     ]);
     h.clock.advance(15 * MINUTE);
     await queue();
@@ -760,14 +762,14 @@ describe("a pull request read whose host call got no answer", () => {
     expect(systemPosts()[1]).toMatch(/^Reading the pull request of CSV-1 has failed 5 times in a row over 1h, because of the project's machine/u);
   });
 
-  it("waits for each ticket of a GitHub batch whose host worker exited, as during a plugin update", async () => {
+  it("waits for each ticket of a GitHub batch whose host worker crashed", async () => {
     await seedProject(h, pr(), "running");
     await reachApproved(h);
     await queue();
-    h.host.scripted.prBatch = [new Error("host plugin worker exited (0)")];
+    h.host.scripted.prBatch = [new Error("host plugin worker exited (1)")];
     await poll();
     expect(project().state).toBe("running");
-    expect(readWait()).toMatchObject({ failures: 1, message: "host plugin worker exited (0)" });
+    expect(readWait()).toMatchObject({ failures: 1, message: "host plugin worker exited (1)" });
     await poll();
     expect(ticket().retry_json).toBeNull();
   });
@@ -776,7 +778,7 @@ describe("a pull request read whose host call got no answer", () => {
   it.each([
     "host plugin loom generation b8fb7249-25dc-4876-a611-f5331fbe1ad8 is retired",
     "host plugin loom startup timed out",
-    "host plugin worker exited (0)",
+    "host plugin worker exited (1)",
     "Host is not connected",
     "Host is suspended",
   ])("waits out a GitHub batch that got %s for as long as it lasts, never pausing or blocking", async (message) => {
@@ -793,6 +795,276 @@ describe("a pull request read whose host call got no answer", () => {
     h.host.errors.prBatch = null;
     await poll(15);
     expect(ticket().retry_json).toBeNull();
+  });
+
+  it.each([
+    ["host plugin loom generation b8fb7249-25dc-4876-a611-f5331fbe1ad8 is retired", false],
+    ["host plugin loom generation b8fb7249-25dc-4876-a611-f5331fbe1ad8 is retired", true],
+    ["host plugin worker exited (0)", false],
+    ["host plugin worker exited (0)", true],
+  ])("abandons a batch before disposal runs: %s (previous read: %s)", async (message, previousRead) => {
+    const e = makeEngine();
+    h = e;
+    await seedProject(h, pr(), "running");
+    await reachApproved(h);
+    await queue();
+    await reachApproved(h, "CSV-2");
+    await queue();
+    h.store.updateTicket(ticket("CSV-2").id, { pr_url: "https://github.com/acme/other/pull/2" });
+    if (previousRead) await poll();
+    else h.store.updateTicket(ticket().id, { pr_checked_at: null });
+    const before = [ticket(), ticket("CSV-2")];
+    const posts = before.map((row) => h.store.posts(row.id));
+    const answers = new Map(h.ctx.prReads?.last);
+    const calls = h.host.calls.length;
+    h.clock.advance(5 * MINUTE);
+    h.host.before.prBatch = () => {
+      expect(e.ctx.disposed()).toBe(false);
+      throw new Error(message);
+    };
+
+    await e.engine.tick();
+
+    for (const [index, row] of before.entries()) {
+      expect(h.store.ticket(row.id)).toMatchObject({ state: "pr_open", retry_json: null, pr_checked_at: row.pr_checked_at });
+      expect(h.store.posts(row.id)).toEqual(posts[index]);
+    }
+    expect(project()).toMatchObject({ state: "running", system_reason: null });
+    expect(warnings("Reading the pull request")).toEqual([]);
+    expect(h.host.calls.slice(calls).map((call) => call.method)).toEqual(["prBatch"]);
+    expect(h.ctx.prReads?.last).toEqual(answers);
+    await e.engine.dispose();
+
+    delete h.host.before.prBatch;
+    const fresh = new Engine({ store: h.store, bb: h.bb, now: h.clock.now, host: h.host, projects: h.projects });
+    await fresh.tick();
+
+    expect(h.host.callsTo("prBatch").slice(-2).map((input) => input.name)).toEqual(["shop", "other"]);
+    expect(ticket()).toMatchObject({ retry_json: null, pr_checked_at: h.clock.t });
+    expect(ticket("CSV-2")).toMatchObject({ retry_json: null, pr_checked_at: h.clock.t });
+    expect(project().state).toBe("running");
+    await fresh.dispose();
+  });
+
+  it.each(["prBatch", "prState"] as const)("retries a live engine's clean worker stop on the next tick: %s", async (method) => {
+    const e = makeEngine();
+    h = e;
+    await seedProject(h, method === "prState" ? commandForge : pr());
+    await reachApproved(h);
+    await queue();
+    const checkedAt = ticket().pr_checked_at;
+    const reads = h.host.callsTo(method).length;
+    const posts = h.store.posts(ticket().id);
+    const answers = new Map(h.ctx.prReads?.last);
+    h.clock.advance(5 * MINUTE);
+    h.host.scripted[method] = [new Error("host plugin worker exited (0)")];
+
+    await e.engine.tick();
+
+    expect(e.ctx.disposed()).toBe(false);
+    expect(ticket()).toMatchObject({ state: "pr_open", retry_json: null, pr_checked_at: checkedAt });
+    expect(project()).toMatchObject({ state: "running", system_reason: null });
+    expect(h.store.posts(ticket().id)).toEqual(posts);
+    expect(warnings("Reading the pull request")).toEqual([]);
+    expect(h.host.callsTo(method)).toHaveLength(reads + 1);
+    expect(h.ctx.prReads?.last).toEqual(answers);
+    expect(h.bb.callsTo("log").filter(([level, message]) => level === "info" && String(message).includes("host plugin worker exited (0)"))).toHaveLength(1);
+    h.clock.advance(15_000);
+    await e.engine.tick();
+
+    expect(h.host.callsTo(method)).toHaveLength(reads + 2);
+    expect(ticket()).toMatchObject({ retry_json: null, pr_checked_at: h.clock.t });
+    await e.engine.dispose();
+  });
+
+  it.each(["prState", "landedOn"] as const)("abandons a single read before disposal runs: %s", async (method) => {
+    const e = makeEngine();
+    h = e;
+    await seedProject(h, method === "prState" ? commandForge : pr({ forge: { kind: "none" } }));
+    await reachApproved(h);
+    await queue();
+    const checkedAt = ticket().pr_checked_at;
+    const posts = h.store.posts(ticket().id);
+    const answers = new Map(h.ctx.prReads?.last);
+    let callsAtFailure = 0;
+    h.clock.advance(5 * MINUTE);
+    h.host.before[method] = () => {
+      callsAtFailure = h.host.calls.length;
+      expect(e.ctx.disposed()).toBe(false);
+      throw new Error("host plugin loom generation x is retired");
+    };
+
+    await e.engine.tick();
+
+    expect(e.ctx.disposed()).toBe(true);
+    expect(ticket()).toMatchObject({ state: "pr_open", retry_json: null, pr_checked_at: checkedAt });
+    expect(project()).toMatchObject({ state: "running", system_reason: null });
+    expect(h.store.posts(ticket().id)).toEqual(posts);
+    expect(warnings("Reading the pull request")).toEqual([]);
+    expect(h.host.calls).toHaveLength(callsAtFailure);
+    expect(h.ctx.prReads?.last).toEqual(answers);
+    await e.engine.dispose();
+
+    delete h.host.before[method];
+    const fresh = new Engine({ store: h.store, bb: h.bb, now: h.clock.now, host: h.host, projects: h.projects });
+    await fresh.tick();
+    expect(ticket()).toMatchObject({ retry_json: null, pr_checked_at: h.clock.t });
+    await fresh.dispose();
+  });
+
+  it.each(["host", "hostDirect"] as const)("retires the engine before rethrowing from %s, even for a non-forge call", async (port) => {
+    const e = makeEngine();
+    const error = new Error("host plugin loom generation x is retired");
+    e.host.errors.worktreeState = error;
+    expect(e.ctx.disposed()).toBe(false);
+
+    await expect(e.ctx[port].call("host_1", "worktreeState", { worktree: "/repo", base: "main" })).rejects.toBe(error);
+
+    expect(e.ctx.disposed()).toBe(true);
+    await e.engine.dispose();
+  });
+
+  it("does not change an existing retry or post when a live step loses a cleanly stopped worker", async () => {
+    await seedProject(h);
+    await reachApproved(h);
+    h.host.scripted.merge = [new Error(DEADLINE)];
+    await queue();
+    const before = ticket();
+    const posts = h.store.posts(before.id);
+    const logs = h.bb.callsTo("log").length;
+    for (let i = 0; i < 2; i += 1) {
+      expect(await stepFailed(h.ctx, before, "merge", new Error("host plugin worker exited (0)"), { what: "Merging CSV-1" })).toBe("wait");
+    }
+
+    expect(ticket()).toEqual(before);
+    expect(h.store.posts(before.id)).toEqual(posts);
+    expect(h.bb.callsTo("log").slice(logs)).toEqual([["info", expect.stringContaining("host plugin worker exited (0)")]]);
+  });
+
+  it("keeps a live engine running through a real host transport outage", async () => {
+    const e = makeEngine();
+    h = e;
+    await seedProject(h, pr());
+    await reachApproved(h);
+    await queue();
+    h.host.errors.prBatch = Object.assign(new Error("Plugin RPC request failed"), { code: "transport_error" });
+    for (let i = 0; i < 8; i += 1) {
+      h.clock.advance(15 * MINUTE);
+      await e.engine.tick();
+    }
+    expect(e.ctx.disposed()).toBe(false);
+    expect(readWait()).toMatchObject({ failures: 8, scope: "host" });
+    expect(project()).toMatchObject({ state: "running", system_reason: null });
+    h.host.errors.prBatch = null;
+    h.clock.advance(15 * MINUTE);
+    await e.engine.tick();
+    expect(ticket().retry_json).toBeNull();
+    await e.engine.dispose();
+  });
+
+  it.each([
+    ["host plugin loom generation b8fb7249-25dc-4876-a611-f5331fbe1ad8 is retired", false],
+    ["host plugin loom generation b8fb7249-25dc-4876-a611-f5331fbe1ad8 is retired", true],
+    ["host plugin worker exited (0)", false],
+    ["host plugin worker exited (0)", true],
+  ])("leaves a disposed batch due for its replacement engine: %s (previous read: %s)", async (message, previousRead) => {
+    const e = makeEngine();
+    h = e;
+    await seedProject(h, pr(), "running");
+    await reachApproved(h);
+    await queue();
+    if (previousRead) await poll();
+    else h.store.updateTicket(ticket().id, { pr_checked_at: null });
+    const checkedAt = ticket().pr_checked_at;
+    const reads = h.host.callsTo("prBatch").length;
+    h.clock.advance(5 * MINUTE);
+    h.host.before.prBatch = () => {
+      void e.engine.dispose();
+      throw new Error(message);
+    };
+
+    await e.engine.tick();
+
+    expect(ticket()).toMatchObject({ state: "pr_open", retry_json: null, pr_checked_at: checkedAt });
+    expect(project()).toMatchObject({ state: "running", system_reason: null });
+    expect(systemPosts()).toEqual([]);
+    expect(warnings("Reading the pull request")).toEqual([]);
+    expect(h.host.callsTo("prBatch")).toHaveLength(reads + 1);
+
+    delete h.host.before.prBatch;
+    const fresh = new Engine({ store: h.store, bb: h.bb, now: h.clock.now, host: h.host, projects: h.projects });
+    await fresh.tick();
+
+    expect(h.host.callsTo("prBatch")).toHaveLength(reads + 2);
+    expect(ticket()).toMatchObject({ retry_json: null, pr_checked_at: h.clock.t });
+    expect(project().state).toBe("running");
+    await fresh.dispose();
+  });
+
+  it("leaves a disposed command forge read due for its replacement engine", async () => {
+    const e = makeEngine();
+    h = e;
+    await seedProject(h, commandForge);
+    await reachApproved(h);
+    await queue();
+    const checkedAt = ticket().pr_checked_at;
+    const reads = h.host.callsTo("prState").length;
+    h.clock.advance(5 * MINUTE);
+    h.host.before.prState = () => {
+      void e.engine.dispose();
+      throw new Error("host plugin loom generation 958cfa03-7186-47e3-9428-ffb4b2bff84f is retired");
+    };
+
+    await e.engine.tick();
+
+    expect(ticket()).toMatchObject({ state: "pr_open", retry_json: null, pr_checked_at: checkedAt });
+    expect(project()).toMatchObject({ state: "running", system_reason: null });
+    expect(systemPosts()).toEqual([]);
+    delete h.host.before.prState;
+    const fresh = new Engine({ store: h.store, bb: h.bb, now: h.clock.now, host: h.host, projects: h.projects });
+    await fresh.tick();
+    expect(h.host.callsTo("prState")).toHaveLength(reads + 2);
+    expect(ticket().pr_checked_at).toBe(h.clock.t);
+    await fresh.dispose();
+  });
+
+  it.each(["running", "paused"] as const)("stops a %s project's pass when disposed during its usage read", async (state) => {
+    const e = makeEngine();
+    h = e;
+    await seedProject(h, pr());
+    await reachApproved(h);
+    await queue();
+    if (state === "paused") h.store.setProjectState(project().id, "paused", "human");
+    h.clock.advance(5 * MINUTE);
+    const calls = h.host.calls.length;
+    const usage = h.bb.threadUsage.bind(h.bb);
+    h.bb.threadUsage = async (threadId) => {
+      void e.engine.dispose();
+      return usage(threadId);
+    };
+
+    await e.engine.tick();
+
+    expect(h.host.calls).toHaveLength(calls);
+    expect(project().state).toBe(state);
+  });
+
+  it.each(["host plugin worker exited (0)", "HTTP 401: Bad credentials", "a failure with no matching rule"])("does not record any step's failure after disposal: %s", async (message) => {
+    const e = makeEngine();
+    h = e;
+    await seedProject(h, pr());
+    await reachApproved(h);
+    await queue();
+    await e.engine.dispose();
+    const before = ticket();
+    const posts = h.store.posts(before.id);
+
+    expect(await stepFailed(h.ctx, before, "merge", new Error(message), { what: "Merging CSV-1" })).toBe("wait");
+
+    expect(ticket()).toEqual(before);
+    expect(h.store.posts(before.id)).toEqual(posts);
+    expect(project()).toMatchObject({ state: "running", system_reason: null });
+    expect(warnings("Merging CSV-1")).toEqual([]);
   });
 
   it("waits out a command forge's read whose host plugin generation was retired, as during a plugin update", async () => {
@@ -890,7 +1162,7 @@ describe("the retry wait on the page", () => {
     h.host.scripted.merge = [new Error(DEADLINE)];
     await queue();
     const cards = boardCards(h.store.tickets(project().id), h.store.threadsForProject(project().id), spec());
-    expect(cards.find((card) => card.key === "CSV-1")!.retry).toEqual({ step: "merge", failures: 1, since: h.clock.t, until: h.clock.t + MINUTE, message: DEADLINE });
+    expect(cards.find((card) => card.key === "CSV-1")!.retry).toEqual({ step: "merge", failures: 1, since: h.clock.t, until: h.clock.t + MINUTE, message: DEADLINE, kind: "unknown" });
     expect(cards.find((card) => card.key === "CSV-2")!.retry).toBeNull();
   });
 });

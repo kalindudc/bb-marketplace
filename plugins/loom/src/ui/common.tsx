@@ -1,20 +1,31 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { experimental_useRpcMutation, experimental_useRpcQuery, type StandardSchemaV1InferInput } from "@get-bb/plugin-sdk/app";
 import { toast } from "sonner";
 import type { ProjectSummary, rpcContract } from "../contract";
 import { contract } from "./contract-client";
 import { TICKET_STATES } from "../states";
+import { REWOUND_REASON, guardWrite, useRewound } from "./dispatch";
 
 
-export const BUTTON = "inline-flex h-7 shrink-0 cursor-pointer items-center rounded-md border border-border-seam px-2.5 text-xs text-foreground hover:bg-state-hover focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-default disabled:opacity-50";
-export const BUTTON_DANGER = `${BUTTON} text-destructive-text`;
-export const BUTTON_PRIMARY = "inline-flex h-7 shrink-0 cursor-pointer items-center rounded-md bg-primary px-2.5 text-xs text-primary-foreground hover:opacity-90 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-default disabled:opacity-50";
-export const BUTTON_CTA = "inline-flex h-9 shrink-0 cursor-pointer items-center rounded-md bg-primary px-4 text-sm font-semibold text-primary-foreground hover:opacity-90 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-default disabled:opacity-50";
-const BUTTON_ARMED = "relative inline-flex shrink-0 cursor-pointer items-center overflow-hidden rounded-md bg-warning font-semibold text-black focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-default disabled:opacity-50";
+// A button is at least 28 px (32 for the call to action) and never wider than its row: with enlarged or spaced text
+// its label wraps and the button grows, rather than run out of its card (WCAG 1.4.4 and 1.4.12); a word longer than the
+// room left breaks rather than spill.
+// Decision 7: on a phone every control is at least 44 px tall. The page asks its own width, a popover the window's.
+export const TAP = "@max-xl/loom:min-h-11 max-[576px]:min-h-11 pointer-coarse:min-h-11";
+export const BUTTON = "inline-flex min-h-7 max-w-full shrink-0 cursor-pointer py-1 text-left leading-tight [overflow-wrap:anywhere] items-center gap-1.5 rounded-md border border-border-seam px-2.5 text-xs text-foreground hover:bg-state-hover focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-default disabled:opacity-50 aria-disabled:cursor-not-allowed aria-disabled:opacity-55 @max-xl/loom:min-h-11 max-[576px]:min-h-11 pointer-coarse:min-h-11";
+// Destructive text misses 4.5:1 in gruvbox dark, so a destructive button keeps the foreground and says so with its border.
+export const BUTTON_DANGER = "inline-flex min-h-7 max-w-full shrink-0 cursor-pointer py-1 text-left leading-tight [overflow-wrap:anywhere] items-center gap-1.5 rounded-md border border-destructive/70 px-2.5 text-xs text-foreground hover:bg-surface-destructive focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-default disabled:opacity-50 aria-disabled:cursor-not-allowed aria-disabled:opacity-55 @max-xl/loom:min-h-11 max-[576px]:min-h-11 pointer-coarse:min-h-11";
+export const BUTTON_PRIMARY = "inline-flex min-h-7 max-w-full shrink-0 cursor-pointer py-1 text-left leading-tight [overflow-wrap:anywhere] items-center gap-1.5 rounded-md bg-primary px-2.5 text-xs text-primary-foreground hover:opacity-90 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-default disabled:opacity-50 @max-xl/loom:min-h-11 max-[576px]:min-h-11 pointer-coarse:min-h-11";
+export const BUTTON_CTA = "inline-flex min-h-8 max-w-full shrink-0 cursor-pointer py-1 text-left leading-tight [overflow-wrap:anywhere] items-center gap-1.5 rounded-md bg-primary px-3 text-sm font-semibold text-primary-foreground hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 disabled:cursor-default disabled:opacity-50 aria-disabled:cursor-not-allowed aria-disabled:opacity-55 @max-xl/loom:min-h-11 max-[576px]:min-h-11 pointer-coarse:min-h-11";
+// Yes keeps its natural width, up to the whole row: where Back does not fit beside it, Back wraps under it, rather than
+// squeezing Yes to a word a line (at 200% text on a phone it was 91 px wide and taller than the screen).
+const BUTTON_YES = "inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-md bg-primary font-semibold text-primary-foreground hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 disabled:cursor-default disabled:opacity-50 @max-xl/loom:min-h-11 max-[576px]:min-h-11 pointer-coarse:min-h-11";
+const BUTTON_YES_DANGER = "inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-md bg-destructive font-semibold text-destructive-foreground hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 disabled:cursor-default disabled:opacity-50 @max-xl/loom:min-h-11 max-[576px]:min-h-11 pointer-coarse:min-h-11";
 export const CARD = "rounded-md border border-border-seam p-3";
-export const FIELD = "w-full rounded-md border border-border-seam bg-transparent px-2 py-1.5 text-sm text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
-export const HEADING = "text-[10.5px] font-semibold uppercase tracking-wider text-subtle-foreground";
-export const CHIP = "rounded-full border border-border-seam px-1.5 text-[10.5px] leading-4";
+// A field's boundary uses Loom's field line, 3:1 or more on every surface (WCAG 1.4.11); the focus ring stays bb's.
+export const FIELD = "w-full rounded-md border border-[var(--loom-field-line)] bg-transparent px-2 py-1.5 text-sm text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
+export const HEADING = "text-[11px] font-semibold uppercase tracking-wider text-[var(--loom-muted)]";
+export const CHIP = "rounded-full border border-border-seam px-1.5 text-[11px] leading-4";
 
 export const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error));
 /** "Tue, Jan 6, 14:05": the moment a rewound page shows. */
@@ -26,14 +37,14 @@ export const listText = (items: readonly string[]) => (items.length <= 1 ? items
 /** The repo a ticket runs in, on a multi-repo project. */
 export function RepoChip({ name, className = "" }: { name: string; className?: string }) {
   return (
-    <span data-repo-chip={name} title={`repo ${name}`} className={`${CHIP} inline-block font-mono text-muted-foreground [overflow-wrap:anywhere] ${className}`}>
+    <span data-repo-chip={name} title={`repo ${name}`} className={`${CHIP} inline-block font-mono text-[var(--loom-muted)] [overflow-wrap:anywhere] ${className}`}>
       {name}
     </span>
   );
 }
 
 export function PhaseChip({ name }: { name: string }) {
-  return <span data-phase-chip={name} className={`${CHIP} inline-block text-muted-foreground`}>phase {name}</span>;
+  return <span data-phase-chip={name} className={`${CHIP} inline-block text-[var(--loom-muted)]`}>phase {name}</span>;
 }
 
 export const mergeLabel = (project: Pick<ProjectSummary, "strategy" | "branch">) => (project.strategy === "integration" ? `integration branch ${project.branch}` : "one pull request per ticket");
@@ -43,27 +54,27 @@ export const countsLabel = (counts: ProjectSummary["ticketCounts"]) =>
     .join(" · ") || "no tickets";
 
 const BADGE_TONES: Record<string, string> = {
-  draft: "text-muted-foreground",
-  ready: "text-muted-foreground",
-  queued: "text-muted-foreground",
-  running: "text-primary",
-  working: "text-primary",
-  checking: "text-primary",
-  review: "text-primary",
-  approved: "text-success",
-  merging: "text-success",
-  pr_open: "text-success",
-  done: "text-success",
-  merged: "text-success",
-  paused: "text-warning-text",
-  blocked: "text-destructive-text",
-  cancelled: "text-subtle-foreground",
-  archived: "text-subtle-foreground",
-  rewound: "text-warning-text",
+  draft: "text-[var(--loom-muted)]",
+  ready: "text-[var(--loom-muted)]",
+  queued: "text-[var(--loom-muted)]",
+  running: "text-[var(--loom-link)]",
+  working: "text-[var(--loom-link)]",
+  checking: "text-[var(--loom-link)]",
+  review: "text-[var(--loom-link)]",
+  approved: "text-[var(--loom-ok)]",
+  merging: "text-[var(--loom-ok)]",
+  pr_open: "text-[var(--loom-ok)]",
+  done: "text-[var(--loom-ok)]",
+  merged: "text-[var(--loom-ok)]",
+  paused: "text-[var(--loom-warn)]",
+  blocked: "text-[var(--loom-bad)]",
+  cancelled: "text-[var(--loom-muted)]",
+  archived: "text-[var(--loom-muted)]",
+  rewound: "text-[var(--loom-warn)]",
 };
 
 /** The text colour a state is drawn in. */
-export const stateTone = (state: string) => BADGE_TONES[state] ?? "text-muted-foreground";
+export const stateTone = (state: string) => BADGE_TONES[state] ?? "text-[var(--loom-muted)]";
 
 export function StateBadge({ state }: { state: string }) {
   return (
@@ -73,49 +84,116 @@ export function StateBadge({ state }: { state: string }) {
   );
 }
 
-/** A two-step button: the first click turns it amber with "Click again to …" and a bar that drains for five seconds, beside Cancel; the second click acts. */
-export function ConfirmButton({ label, confirmLabel, onConfirm, onArm, disabled = false, danger = false, primary = false }: { label: string; confirmLabel?: string; onConfirm(): void; onArm?(): void; disabled?: boolean; danger?: boolean; primary?: boolean }) {
-  const [armed, setArmed] = useState(false);
-  const drain = useRef<HTMLSpanElement>(null);
+const lowerFirst = (text: string) => text.charAt(0).toLowerCase() + text.slice(1);
+
+/** What an armed confirmation confirms: a change to any part of it disarms the button. */
+export const confirmTarget = (label: string, confirmLabel: string | undefined, key: string | undefined): string => JSON.stringify([label, confirmLabel ?? null, key ?? null]);
+
+/**
+ * A risky action, confirmed in place: the first click turns the button into "Yes, <what it does>" beside Back, with focus
+ * on Yes, and no timer. Enter on Yes acts; Esc or Back puts the button back and returns focus to it. It stays armed only
+ * for what was armed: its label, its Yes text and `disarmKey` (what it acts on, such as a merge's commit or a spec
+ * version). When any of them changes it is idle again in the same render, so Yes can never act on something the person
+ * did not arm. Rewound, it is disabled with the reason, and the write guard refuses it anyway.
+ */
+/** The time, again every `ms`, so ages and "for 7m" stay current between refreshes. */
+export function useNow(ms: number): number {
+  const [now, setNow] = useState(Date.now);
   useEffect(() => {
-    if (!armed) return;
-    const timer = setTimeout(() => setArmed(false), 5000);
-    return () => clearTimeout(timer);
+    const timer = setInterval(() => setNow(Date.now()), ms);
+    return () => clearInterval(timer);
+  }, [ms]);
+  return now;
+}
+
+export function ConfirmButton({ label, confirmLabel, onConfirm, onArm, disabled = false, danger = false, primary = false, lead = false, disarmKey, icon }: { label: string; confirmLabel?: string; onConfirm(): void; onArm?(): void; disabled?: boolean; danger?: boolean; primary?: boolean; lead?: boolean; disarmKey?: string; icon?: ReactNode }) {
+  const target = confirmTarget(label, confirmLabel, disarmKey);
+  const [armedFor, setArmedFor] = useState<string | null>(null);
+  const armed = armedFor !== null && armedFor === target;
+  const rewound = useRewound();
+  const trigger = useRef<HTMLButtonElement>(null);
+  const yes = useRef<HTMLButtonElement>(null);
+  const refocus = useRef(false);
+  useEffect(() => {
+    if (armed) yes.current?.focus();
+    else if (refocus.current) {
+      refocus.current = false;
+      trigger.current?.focus();
+    }
   }, [armed]);
-  // Reading offsetWidth forces a layout at full width, so the transition runs from full to empty without keyframes.
-  useLayoutEffect(() => {
-    const bar = drain.current;
-    if (!armed || bar === null) return;
-    void bar.offsetWidth;
-    bar.style.transform = "scaleX(0)";
-  }, [armed]);
-  const idle = primary ? BUTTON_CTA : danger ? BUTTON_DANGER : BUTTON;
-  const size = primary ? "h-9 px-4 text-sm" : "h-7 px-2.5 text-xs";
-  return (
-    <>
-      <button
-        type="button"
-        disabled={disabled}
-        data-confirming={armed ? "" : undefined}
-        className={armed ? `${BUTTON_ARMED} ${size}` : idle}
-        onClick={() => {
-          if (!armed) {
-            onArm?.();
-            return setArmed(true);
-          }
-          setArmed(false);
-          onConfirm();
+  // What it was armed for went away: forget it, and put focus back on the button if Yes took it with it.
+  useEffect(() => {
+    if (armedFor === null || armedFor === target) return;
+    setArmedFor(null);
+    if (document.activeElement === null || document.activeElement === document.body) trigger.current?.focus();
+  }, [armedFor, target]);
+  const setArmed = (next: boolean) => setArmedFor(next ? target : null);
+  const back = () => {
+    refocus.current = true;
+    setArmed(false);
+  };
+  // The armed Yes says what it does, so it may be longer than the row has room for: it wraps and grows rather than run
+  // past the screen (the gate's footer and Ship's Do next measured 69 px past a 320 px screen).
+  const size = primary ? "min-h-8 px-3 py-1 text-sm" : "min-h-7 px-2.5 py-1 text-xs";
+  if (armed && !rewound) {
+    return (
+      <span
+        role="group"
+        aria-label={label}
+        data-confirm-armed
+        className="loom-pop inline-flex min-w-0 max-w-full flex-wrap items-center gap-1.5"
+        onKeyDown={(event) => {
+          if (event.key !== "Escape") return;
+          event.preventDefault();
+          event.stopPropagation();
+          back();
         }}
       >
-        {armed ? (confirmLabel ?? `Click again to ${label.toLowerCase()}`) : label}
-        {armed && <span ref={drain} data-drain aria-hidden className="absolute bottom-0 left-0 h-[3px] w-full origin-left bg-black/40" style={{ transition: "transform 5s linear" }} />}
-      </button>
-      {armed && (
-        <button type="button" className={BUTTON} onClick={() => setArmed(false)}>
-          Cancel
+        <button ref={yes} type="button" data-confirming disabled={disabled} className={`${danger ? BUTTON_YES_DANGER : BUTTON_YES} ${size} max-w-full text-left leading-snug [overflow-wrap:anywhere]`} onClick={() => { setArmed(false); onConfirm(); }}>
+          {confirmLabel ?? `Yes, ${lowerFirst(label)}`}
         </button>
-      )}
-    </>
+        <button type="button" className={BUTTON} onClick={back}>
+          Back
+        </button>
+      </span>
+    );
+  }
+  const idle = primary ? `${BUTTON_CTA}${lead ? " loom-lead" : ""}` : danger ? BUTTON_DANGER : BUTTON;
+  return (
+    <button
+      ref={trigger}
+      type="button"
+      disabled={disabled}
+      aria-disabled={rewound || undefined}
+      title={rewound ? REWOUND_REASON : undefined}
+      className={idle}
+      onClick={() => {
+        if (rewound) return void toast.error(REWOUND_REASON);
+        onArm?.();
+        setArmed(true);
+      }}
+    >
+      {icon}
+      {label}
+    </button>
+  );
+}
+
+/** A reversible action: one click, no confirmation (Pause, Resume, Requeue once its note is typed, Mark live). */
+export function ActionButton({ label, onClick, disabled = false, primary = false, danger = false, icon, title, className = "" }: { label: string; onClick(): void; disabled?: boolean; primary?: boolean; danger?: boolean; icon?: ReactNode; title?: string; className?: string }) {
+  const rewound = useRewound();
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      aria-disabled={rewound || undefined}
+      title={rewound ? REWOUND_REASON : title}
+      className={`${primary ? BUTTON_CTA : danger ? BUTTON_DANGER : BUTTON} ${className}`}
+      onClick={() => (rewound ? void toast.error(REWOUND_REASON) : onClick())}
+    >
+      {icon}
+      {label}
+    </button>
   );
 }
 
@@ -132,8 +210,18 @@ export function MoreMenu({ children }: { children: ReactNode | ((close: () => vo
     return () => document.removeEventListener("mousedown", close);
   }, [open]);
   return (
-    <span ref={root} className="relative">
-      <button type="button" aria-label="More actions" aria-expanded={open} className={BUTTON} onClick={() => setOpen(!open)}>
+    <span
+      ref={root}
+      className="relative"
+      onKeyDown={(event) => {
+        if (!open || event.key !== "Escape" || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLInputElement) return;
+        event.preventDefault();
+        event.stopPropagation();
+        setOpen(false);
+        root.current?.querySelector<HTMLButtonElement>("button")?.focus();
+      }}
+    >
+      <button type="button" aria-label="More actions" aria-haspopup="true" aria-expanded={open} className={BUTTON} onClick={() => setOpen(!open)}>
         ⋯
       </button>
       {open && (
@@ -165,7 +253,16 @@ export function useLoom<M extends Method>(method: M, input: Input<M>, options: {
 
 /** A change: its reads refresh as soon as the server takes it, through the method's `invalidates`. */
 export function useLoomWrite<M extends Method>(method: M) {
-  return experimental_useRpcMutation({ contract, method }).mutate;
+  const mutate = experimental_useRpcMutation({ contract, method }).mutate;
+  return useCallback(((...args: Parameters<typeof mutate>) => {
+    // The one rewind guard: refused here, a write cannot reach the server from any button, menu, key or palette row.
+    try {
+      guardWrite(method);
+    } catch (refused) {
+      return Promise.reject(refused);
+    }
+    return mutate(...args);
+  }) as typeof mutate, [mutate, method]);
 }
 
 /** Runs a change: one at a time, with its refusal kept for the page to show. */

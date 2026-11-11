@@ -35,13 +35,15 @@ import { blockTicket, blockedAtStart, endThread, failSpawn, onThreadGone as endG
 import { requeueTicket } from "./requeue";
 import { forgeBoundary } from "./forge-gate";
 import { projectFailed } from "./retry";
-import { DEFAULT_BOT_AUTHORS, globsIn, specOf, type EngineCtx } from "./ctx";
+import { isRetiredGeneration } from "./failures";
+import type { HostPort } from "./ports";
+import { DEFAULT_BOT_AUTHORS, globsIn, passStopped, specOf, type EngineCtx } from "./ctx";
 import { warnSubStateWith } from "./sub-state";
 import { foldUsage, readEndedUsage, refreshUsage, stopUsage } from "./usage";
 
 const errText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
-export type EngineDeps = Omit<EngineCtx, "kick" | "checkWait" | "forgeBackoffs" | "prReads" | "hostDirect"> & { projects: Projects; settings?: () => LoomSettings };
+export type EngineDeps = Omit<EngineCtx, "kick" | "disposed" | "workerStopped" | "checkWait" | "forgeBackoffs" | "prReads" | "hostDirect"> & { projects: Projects; settings?: () => LoomSettings };
 
 export interface Approved extends ApproveResult {
   requeued: string[];
@@ -75,13 +77,25 @@ export class Engine {
     warnSubStateWith((message) => deps.bb.log("warn", message));
     this.settings = deps.settings ?? (() => NO_HOOK);
     const signature = () => this.settings().commentSignature ?? COMMENT_SIGNATURE;
+    const host: HostPort = {
+      call: async (hostId, method, input) => {
+        try {
+          return await deps.host.call(hostId, method, input);
+        } catch (error) {
+          if (isRetiredGeneration(error)) this.disposed = true;
+          throw error;
+        }
+      },
+    };
     this.ctx = {
       store: deps.store,
       bb: holdingSends(deps.bb),
       now: deps.now,
-      host: forgeBoundary(deps.host, { backoffs: () => this.ctx.forgeBackoffs, now: deps.now }),
-      hostDirect: deps.host,
+      host: forgeBoundary(host, { backoffs: () => this.ctx.forgeBackoffs, now: deps.now }),
+      hostDirect: host,
       kick: () => this.kick(),
+      disposed: () => this.disposed,
+      workerStopped: false,
       forgeBackoffs: new Map(),
       prReads: newPrReads(),
       checkWait: () => checkWaitOf(this.settings()),
@@ -93,7 +107,7 @@ export class Engine {
   }
 
   private warn(what: string, error: unknown): void {
-    if (!this.disposed) this.ctx.bb.log("warn", `${what}: ${errText(error)}`);
+    if (!passStopped(this.ctx)) this.ctx.bb.log("warn", `${what}: ${errText(error)}`);
   }
 
   // ---------------------------------------------------------------- the control loop
@@ -115,7 +129,7 @@ export class Engine {
         do {
           this.tickAgain = false;
           await this.pass();
-        } while (this.tickAgain && !this.disposed);
+        } while (this.tickAgain && !passStopped(this.ctx));
       } finally {
         this.currentTick = null;
       }
@@ -124,27 +138,34 @@ export class Engine {
   }
 
   private async pass(): Promise<void> {
+    this.ctx.workerStopped = false;
     const { store } = this.ctx;
     for (const row of store.threads({ states: ["ending"] })) {
+      if (passStopped(this.ctx)) return;
       await resumeEnding(this.ctx, row).catch((error) => this.warn(`ending ${row.thread_id}`, error));
     }
+    if (passStopped(this.ctx)) return;
     resumeCheckingTickets(this.ctx);
     if (store.openSpecReviews().some((row) => row.thread_id === null && row.wait_json !== null)) await retrySpecReviews(this.ctx).catch((error) => this.warn("spec reviews", error));
+    if (passStopped(this.ctx)) return;
     await maintainFinalReviews(this.ctx).catch((error) => this.warn("final reviews", error));
     for (const project of store.projects()) {
-      if (this.disposed) return;
+      if (passStopped(this.ctx)) return;
       try {
         if (project.state === "running") await this.tickProject(project.id);
         else if (project.state === "paused") await this.tickPaused(project.id);
         // The last merge finishes a project, and its deploys come after; their verify and check commands keep running.
         else if (project.state === "done") followRollout(this.ctx, project);
         // Read again: the tick may have finished it, and a land or an archive may have moved it since the list was read.
+        if (passStopped(this.ctx)) return;
         await this.projects.removeFinishedSection(store.project(project.id)!);
       } catch (error) {
         this.warn(`project ${project.slug}`, error);
       }
     }
+    if (passStopped(this.ctx)) return;
     await readEndedUsage(this.ctx).catch((error) => this.warn("token usage", error));
+    if (passStopped(this.ctx)) return;
     sendRecords(this.ctx, this.settings());
     await followHooks(this.ctx).catch((error) => this.warn("hooks", error));
   }
@@ -152,13 +173,17 @@ export class Engine {
   // A paused project starts no worker, reviewer or merge; it still follows its open pull requests and finishes when the last one is done.
   private async tickPaused(projectId: number): Promise<void> {
     const project = this.ctx.store.project(projectId);
-    if (project?.state !== "paused") return;
+    if (passStopped(this.ctx) || project?.state !== "paused") return;
     // Threads can keep working while their project is paused.
     await refreshUsage(this.ctx, projectId);
+    if (passStopped(this.ctx)) return;
     await this.releaseAndWake(projectId, specOf(this.ctx.store, project), false);
+    if (passStopped(this.ctx)) return;
     await pollPullRequests(this.ctx, project);
+    if (passStopped(this.ctx)) return;
     followRollout(this.ctx, this.ctx.store.project(projectId)!);
     await followPhases(this.ctx, this.ctx.store.project(projectId)!);
+    if (passStopped(this.ctx)) return;
     finishIfComplete(this.ctx, this.ctx.store.project(projectId)!);
   }
 
@@ -167,7 +192,7 @@ export class Engine {
     const { store, now } = this.ctx;
     const running = (): ProjectRow | null => {
       const current = store.project(projectId);
-      return current?.state === "running" ? current : null;
+      return !passStopped(this.ctx) && current?.state === "running" ? current : null;
     };
     let project = running();
     if (project === null) return;
@@ -212,11 +237,14 @@ export class Engine {
       await this.spawnReady(projectId, parked);
     }
 
+    if (passStopped(this.ctx)) return;
     const current = store.project(projectId)!;
     if (current.state === "running" || current.state === "paused") {
       await pollPullRequests(this.ctx, current);
+      if (passStopped(this.ctx)) return;
       followRollout(this.ctx, store.project(projectId)!);
       await followPhases(this.ctx, store.project(projectId)!);
+      if (passStopped(this.ctx)) return;
       finishIfComplete(this.ctx, store.project(projectId)!);
     }
     await maybeSendTriage(this.ctx, store.project(projectId)!);
@@ -225,12 +253,12 @@ export class Engine {
   /** Releases the idle workers of open pull requests and brings released ones back; `running` also wakes them for catch-ups. A project with none skips the steps. */
   private async releaseAndWake(projectId: number, spec: Spec, running: boolean): Promise<void> {
     const { store } = this.ctx;
-    if (spec.merge.strategy !== "pr") return;
+    if (passStopped(this.ctx) || spec.merge.strategy !== "pr") return;
     if (store.threads({ projectId, role: "worker", states: ["active", "ended"] }).some((row) => row.released_at !== null)) await advanceWakes(this.ctx, projectId);
-    if (store.tickets(projectId, ["pr_open", "approved"]).length === 0) return;
+    if (passStopped(this.ctx) || store.tickets(projectId, ["pr_open", "approved"]).length === 0) return;
     const project = store.project(projectId)!;
     await releaseIdleWorkers(this.ctx, project, spec);
-    if (running && store.project(projectId)?.state === "running") await wakeForRestacks(this.ctx, store.project(projectId)!, spec);
+    if (!passStopped(this.ctx) && running && store.project(projectId)?.state === "running") await wakeForRestacks(this.ctx, store.project(projectId)!, spec);
   }
 
   /** Spawns one worker at a time. Readiness and slots are computed again from fresh rows before each reservation, and a ticket is tried once per pass. */
@@ -238,7 +266,7 @@ export class Engine {
     const { store, now } = this.ctx;
     const next = (tried: ReadonlySet<number>) => {
       const project = store.project(projectId);
-      if (project?.state !== "running" || (project.hold_until !== null && project.hold_until > now())) return null;
+      if (passStopped(this.ctx) || project?.state !== "running" || (project.hold_until !== null && project.hold_until > now())) return null;
       const spec = specOf(store, project);
       const rows = store.tickets(projectId);
       const stack = stacking(spec);
@@ -256,7 +284,7 @@ export class Engine {
     if (first === null) return;
     await this.projects.ensureProjectSection(first.project);
     for (;;) {
-      if (this.disposed) return;
+      if (passStopped(this.ctx)) return;
       const pick = next(tried);
       if (pick === null) return;
       tried.add(pick.ticket.id);

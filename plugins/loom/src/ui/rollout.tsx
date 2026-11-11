@@ -1,7 +1,7 @@
 import { useBbNavigate } from "@get-bb/plugin-sdk/app";
 import { useCallback, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type { MergeEntry, MergeOrderView, RolloutCheckResult, RolloutMilestone, RolloutRequirement, RolloutStage, RolloutStep, RolloutView, RolloutWindow } from "../contract";
-import { BUTTON, BUTTON_PRIMARY, ConfirmButton, HEADING, RepoChip, listText, plural, useAction, useLoomWrite } from "./common";
+import { ActionButton, BUTTON, BUTTON_PRIMARY, HEADING, RepoChip, listText, plural, useAction, useLoomWrite } from "./common";
 import { createStored, useStored } from "./remember";
 import {
   byUrgency,
@@ -27,16 +27,17 @@ import {
   type Status,
   type Tone,
 } from "./rollout-plan";
+import { deployHoldsOf, holdsLine, readinessMap, shipStepStatus, stepCanGo, type Readiness } from "./ship-readiness";
 
 // The deploy order of a pull request project, for the human: what to do next and what to hold off, the freeze windows
 // on a dated strip, and one column per stage with one status per step, whose details open in place. It is advice: the
 // Mark live buttons record what is live and move nothing.
 
-const TONE_TEXT: Record<Tone, string> = { live: "text-success", go: "text-primary", hold: "text-destructive-text", warn: "text-warning-text", wait: "text-muted-foreground" };
+const TONE_TEXT: Record<Tone, string> = { live: "text-[var(--loom-ok)]", go: "text-[var(--loom-link)]", hold: "text-[var(--loom-bad)]", warn: "text-[var(--loom-warn)]", wait: "text-[var(--loom-muted)]" };
 const TONE_ICON: Record<Tone, string> = { live: "✓", go: "●", hold: "■", warn: "▲", wait: "○" };
-const NOTE = "text-[11.5px] text-muted-foreground [overflow-wrap:anywhere]";
+const NOTE = "text-[11.5px] text-[var(--loom-muted)] [overflow-wrap:anywhere]";
 const FOCUS = "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
-const SWITCH = `inline-flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded py-1 text-[11.5px] text-muted-foreground ${FOCUS}`;
+const SWITCH = `inline-flex @max-xl/loom:min-h-11 max-[576px]:min-h-11 pointer-coarse:min-h-11 cursor-pointer items-center gap-1.5 whitespace-nowrap rounded py-1 text-[11.5px] text-[var(--loom-muted)] ${FOCUS}`;
 const DAY_MS = 86_400_000;
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const LIVE_BY = { merge: "its pull request merged", verify: "its verify command passed", check: "its check passed", human: "marked by you" } as const;
@@ -77,6 +78,9 @@ function leftLabel(at: number, now: number): string {
 interface Actions {
   now: number;
   busy: boolean;
+  /** The merge order and Ship's readiness of each pull request in it: every "now" and "can go" below reads these. */
+  order: MergeOrderView | null;
+  readiness: ReadonlyMap<string, Readiness>;
   onMark(target: string, undo: boolean): void;
   onTicket(key: string): void;
   onOpen(url: string): void;
@@ -84,9 +88,9 @@ interface Actions {
 
 function MarkButton({ target, live, busy, onMark, label }: { target: string; live: boolean; label?: string } & Pick<Actions, "busy" | "onMark">) {
   return live ? (
-    <ConfirmButton label="Undo live" confirmLabel={`Click again to undo ${target}'s live mark`} disabled={busy} onConfirm={() => onMark(target, true)} />
+    <ActionButton label="Undo live" title={`Takes ${target}'s live mark back`} disabled={busy} onClick={() => onMark(target, true)} />
   ) : (
-    <ConfirmButton label={label ?? "Mark live"} confirmLabel={`Click again to mark ${target} live`} disabled={busy} onConfirm={() => onMark(target, false)} />
+    <ActionButton label={label ?? "Mark live"} title={`Marks ${target} live; Undo live takes it back`} disabled={busy} onClick={() => onMark(target, false)} />
   );
 }
 
@@ -156,14 +160,14 @@ function Command({ command, check, idle, now }: { command: string; check: Rollou
         <code title={command} className="rounded bg-surface-recessed px-1 font-mono text-[11px] text-foreground [overflow-wrap:anywhere]">
           {shortCommand(command)}
         </code>
-        {(result !== null || idle !== "") && <span className={result === null ? "text-muted-foreground" : TONE_TEXT[result.tone]}>{result === null ? idle : result.text}</span>}
+        {(result !== null || idle !== "") && <span className={result === null ? "text-[var(--loom-muted)]" : TONE_TEXT[result.tone]}>{result === null ? idle : result.text}</span>}
         <CopyButton text={command} />
       </span>
       {(output || full) && (
         <details className="mt-0.5">
-          <summary className={`cursor-pointer rounded text-[11px] text-subtle-foreground ${FOCUS}`}>{output && full ? "Full command and output" : output ? "Output" : "Full command"}</summary>
-          {full && <pre className="mt-1 rounded bg-surface-recessed p-2 font-mono text-[10.5px] whitespace-pre-wrap [overflow-wrap:anywhere]">{command}</pre>}
-          {output && <pre className="mt-1 max-h-40 overflow-auto rounded bg-surface-recessed p-2 font-mono text-[10.5px] whitespace-pre-wrap [overflow-wrap:anywhere]">{check!.output}</pre>}
+          <summary className={`cursor-pointer rounded text-[11px] text-[var(--loom-muted)] ${FOCUS}`}>{output && full ? "Full command and output" : output ? "Output" : "Full command"}</summary>
+          {full && <pre className="mt-1 rounded bg-surface-recessed p-2 font-mono text-[11px] whitespace-pre-wrap [overflow-wrap:anywhere]">{command}</pre>}
+          {output && <pre className="mt-1 max-h-40 overflow-auto rounded bg-surface-recessed p-2 font-mono text-[11px] whitespace-pre-wrap [overflow-wrap:anywhere]">{check!.output}</pre>}
         </details>
       )}
     </div>
@@ -175,7 +179,7 @@ function StatusLine({ status, data }: { status: Status; data?: Record<string, st
     <span className={`flex flex-wrap items-baseline gap-x-1.5 text-[11.5px] font-semibold ${TONE_TEXT[status.tone]}`} {...data}>
       <span aria-hidden className={`size-[7px] shrink-0 -translate-y-px self-center rounded-full ${status.tone === "wait" ? "border-[1.5px] border-current" : "bg-current"}`} />
       <span>{status.label}</span>{" "}
-      {status.why !== null && <span className="basis-full pl-3 text-[11px] font-normal text-muted-foreground">{status.why}</span>}
+      {status.why !== null && <span className="basis-full pl-3 text-[11px] font-normal text-[var(--loom-muted)]">{status.why}</span>}
     </span>
   );
 }
@@ -186,12 +190,12 @@ function NeedLine({ need, view }: { need: RolloutRequirement; view: RolloutView 
   const word = need.cancelled ? "cancelled" : need.unknown ? "no longer in the spec" : need.kind === "milestone" ? (need.live ? "holds" : "does not hold") : need.live ? "live" : "not live";
   return (
     <div data-rollout-need={need.target} className="[overflow-wrap:anywhere]">
-      <span aria-hidden className={need.live ? "text-success" : need.cancelled || need.unknown ? "text-muted-foreground" : "text-destructive-text"}>
+      <span aria-hidden className={need.live ? "text-[var(--loom-ok)]" : need.cancelled || need.unknown ? "text-[var(--loom-muted)]" : "text-[var(--loom-bad)]"}>
         {need.live ? "✓" : need.cancelled || need.unknown ? "–" : "○"}
       </span>{" "}
       <b className={`font-semibold text-foreground ${need.kind === "milestone" ? "font-mono text-[11px]" : ""}`}>{need.target}</b> {word}
       {need.viaStage && " · gates the stage"}
-      {milestone === undefined && other === undefined && need.title !== null && <span className="text-subtle-foreground"> · {need.title}</span>}
+      {milestone === undefined && other === undefined && need.title !== null && <span className="text-[var(--loom-muted)]"> · {need.title}</span>}
     </div>
   );
 }
@@ -202,8 +206,8 @@ function Detail({ rows, children }: { rows: Array<[string, ReactNode]>; children
       <dl className="grid grid-cols-[4rem_minmax(0,1fr)] gap-x-2 gap-y-1.5 text-[11.5px] @max-xl/loom:grid-cols-1 @max-xl/loom:gap-y-0.5">
         {rows.map(([label, value]) => (
           <div key={label} className="contents">
-            <dt className="pt-px text-[10.5px] text-subtle-foreground @max-xl/loom:mt-1.5">{label}</dt>
-            <dd className="min-w-0 text-muted-foreground [overflow-wrap:anywhere]">{value}</dd>
+            <dt className="pt-px text-[11px] text-[var(--loom-muted)] @max-xl/loom:mt-1.5">{label}</dt>
+            <dd className="min-w-0 text-[var(--loom-muted)] [overflow-wrap:anywhere]">{value}</dd>
           </div>
         ))}
       </dl>
@@ -252,7 +256,7 @@ function StepDetail({ step, view, ...actions }: { step: RolloutStep; view: Rollo
     [
       "Deploys",
       <>
-        {step.onMerge ? <b className="font-semibold text-warning-text">⚡ On merge. </b> : <b className="font-semibold text-foreground">{step.how === null ? "After merge, the way its repo deploys." : "After merge. "}</b>}
+        {step.onMerge ? <b className="font-semibold text-[var(--loom-warn)]">⚡ On merge. </b> : <b className="font-semibold text-foreground">{step.how === null ? "After merge, the way its repo deploys." : "After merge. "}</b>}
         {step.how}
         {step.release !== null && ` Release ${step.release}${step.releaseWith.length === 0 ? "" : ` with ${listText(step.releaseWith)}`}.`}
         {step.dark && " Ships dark, with its gate off."}
@@ -266,7 +270,7 @@ function StepDetail({ step, view, ...actions }: { step: RolloutStep; view: Rollo
       <>
         {step.rollback}
         {step.liveConsumers.length > 0 && (
-          <span className="mt-0.5 block text-destructive-text">
+          <span className="mt-0.5 block text-[var(--loom-bad)]">
             ⚠ Rolling it back now breaks {listText(step.liveConsumers)}, which {step.liveConsumers.length === 1 ? "is" : "are"} live.
           </span>
         )}
@@ -320,12 +324,12 @@ interface Focus {
   onHover(key: string | null): void;
 }
 
-const RELATION = "pointer-events-none absolute -top-2 right-2 z-[2] rounded border border-current bg-card px-1 text-[10px] leading-[13px] font-bold tracking-wide uppercase";
+const RELATION = "pointer-events-none absolute -top-2 right-2 z-[2] rounded border border-current bg-card px-1 text-[11px] leading-[13px] font-bold tracking-wide uppercase";
 
 function Relation({ itemKey, focus }: { itemKey: string; focus: Focus }) {
   if (focus.chain === null) return null;
-  if (focus.chain.up.has(itemKey)) return <span className={`${RELATION} text-primary`}>needed first</span>;
-  if (focus.chain.down.has(itemKey)) return <span className={`${RELATION} text-muted-foreground`}>waits on it</span>;
+  if (focus.chain.up.has(itemKey)) return <span className={`${RELATION} text-[var(--loom-link)]`}>needed first</span>;
+  if (focus.chain.down.has(itemKey)) return <span className={`${RELATION} text-[var(--loom-muted)]`}>waits on it</span>;
   return null;
 }
 
@@ -337,26 +341,26 @@ function tileClass(key: string, focus: Focus, extra: string): string {
 }
 
 function StepTile({ step, view, next, merge, focus, ...actions }: { step: RolloutStep; view: RolloutView; next: boolean; merge: MergeEntry | undefined; focus: Focus } & Actions) {
-  const status = stepStatus(view, step, actions.now);
+  const status = shipStepStatus(view, step, actions.now, actions.readiness, actions.order);
   const open = focus.open === step.key;
   const detailId = `rollout-detail-${step.key}`;
   const note = pullRequestNote(merge);
   const live = step.live !== null;
-  const edge = live ? "border-border-seam bg-transparent" : next ? "border-primary bg-card ring-1 ring-primary" : status.tone === "hold" ? "border-destructive/55 bg-card" : "border-border-seam bg-card";
+  const edge = live ? "border-border-seam bg-transparent" : next ? "border-primary bg-[var(--loom-card)] ring-1 ring-primary" : status.tone === "hold" ? "border-destructive/55 bg-[var(--loom-card)]" : "border-border-seam bg-[var(--loom-card)]";
   const summary = live ? (
     <span className="grid grid-cols-[0.75rem_auto_minmax(0,1fr)_auto] items-baseline gap-x-1.5">
-      <span aria-hidden className="text-success">
+      <span aria-hidden className="text-[var(--loom-ok)]">
         ✓
       </span>
       <b className="font-semibold whitespace-nowrap">
         <span className="sr-only">Live:</span>{" "}
         {step.key}
       </b>{" "}
-      <span data-rollout-title title={step.title} className={`text-muted-foreground ${open ? "[overflow-wrap:anywhere]" : "truncate"}`}>
+      <span data-rollout-title title={step.title} className={`text-[var(--loom-muted)] ${open ? "[overflow-wrap:anywhere]" : "truncate"}`}>
         {step.title}
       </span>{" "}
-      <span className="flex items-baseline gap-1 text-[10.5px] whitespace-nowrap text-subtle-foreground" data-rollout-status={status.kind}>
-        {step.dark && <span className="rounded-full border border-border-seam px-1.5 text-[10px]">dark</span>}{" "}
+      <span className="flex items-baseline gap-1 text-[11px] whitespace-nowrap text-[var(--loom-muted)]" data-rollout-status={status.kind}>
+        {step.dark && <span className="rounded-full border border-border-seam px-1.5 text-[11px]">dark</span>}{" "}
         {status.kind === "soaking" ? <span title={`Soaking until ${whenLabel(step.soakedAt!, actions.now)}`}>soaks {leftLabel(step.soakedAt!, actions.now)} more</span> : stageOfStep(view, step.key)?.soak == null ? "live" : "soaked"}
       </span>
     </span>
@@ -365,19 +369,19 @@ function StepTile({ step, view, next, merge, focus, ...actions }: { step: Rollou
       <span className="flex flex-wrap items-baseline gap-1.5">
         <b className="font-semibold">{step.key}</b> {step.repo !== null && <RepoChip name={step.repo} />}{" "}
         {step.onMerge && (
-          <span title="Merging deploys it" className="text-[11px] text-warning-text">
+          <span title="Merging deploys it" className="text-[11px] text-[var(--loom-warn)]">
             <span aria-hidden>⚡</span>
             <span className="sr-only">deploys on merge</span>
           </span>
         )}
         {" "}
-        {step.prNumber !== null && <span className="font-mono text-[11px] text-primary">#{step.prNumber}</span>}{" "}
-        {next && <span className="ml-auto rounded-sm bg-primary px-1 text-[10px] leading-[15px] font-bold tracking-wide text-primary-foreground">NEXT</span>}
+        {step.prNumber !== null && <span className="font-mono text-[11px] text-[var(--loom-link)]">#{step.prNumber}</span>}{" "}
+        {next && <span className="ml-auto rounded-sm bg-primary px-1 text-[11px] leading-[15px] font-bold tracking-wide text-primary-foreground">NEXT</span>}
       </span>
       {" "}
       <span data-rollout-title className="[overflow-wrap:anywhere]">{step.title}</span>{" "}
       <StatusLine status={status} data={{ "data-rollout-status": status.kind }} />{" "}
-      {note !== null && <span className={`text-[11px] ${note.tone === "hold" ? "text-destructive-text" : "text-muted-foreground"}`}>{note.text}</span>}
+      {note !== null && <span className={`text-[11px] ${note.tone === "hold" ? "text-[var(--loom-bad)]" : "text-[var(--loom-muted)]"}`}>{note.text}</span>}
     </span>
   );
   return (
@@ -390,7 +394,7 @@ function StepTile({ step, view, next, merge, focus, ...actions }: { step: Rollou
         onClick={() => focus.onToggle(step.key)}
         onFocus={(event) => focusVisible(event.currentTarget) && focus.onHover(step.key)}
         onBlur={() => focus.onHover(null)}
-        className={`block w-full cursor-pointer rounded-md text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring ${live ? "px-2 py-1 @max-xl/loom:py-1.5" : "px-2 py-1.5 @max-xl/loom:py-2"}`}
+        className={`block w-full @max-xl/loom:min-h-11 max-[576px]:min-h-11 pointer-coarse:min-h-11 cursor-pointer rounded-md text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring ${live ? "px-2 py-1 @max-xl/loom:py-1.5" : "px-2 py-1.5 @max-xl/loom:py-2"}`}
       >
         {summary}
       </button>
@@ -412,7 +416,7 @@ function MilestoneTile({ milestone, focus, ...actions }: { milestone: RolloutMil
     <div
       data-rollout-milestone={milestone.ref}
       data-rollout-holds={holds ? "yes" : "no"}
-      className={tileClass(milestone.ref, focus, `border-dashed ${holds ? "border-border-seam bg-transparent" : "border-border-seam bg-card"}`)}
+      className={tileClass(milestone.ref, focus, `border-dashed ${holds ? "border-border-seam bg-transparent" : "border-border-seam bg-[var(--loom-card)]"}`)}
       onPointerEnter={(event) => fromMouse(event) && focus.onHover(milestone.ref)}
       onPointerLeave={(event) => fromMouse(event) && focus.onHover(null)}
     >
@@ -428,17 +432,17 @@ function MilestoneTile({ milestone, focus, ...actions }: { milestone: RolloutMil
       >
         {holds ? (
           <span className="grid grid-cols-[0.75rem_auto_minmax(0,1fr)_auto] items-baseline gap-x-1.5">
-            <span aria-hidden className="text-success">
+            <span aria-hidden className="text-[var(--loom-ok)]">
               ◆
             </span>
             <b className="font-mono text-[11px] font-semibold [overflow-wrap:anywhere]">
               <span className="sr-only">Milestone</span>{" "}
               {milestone.ref}
             </b>{" "}
-            <span title={milestone.title} className={`text-muted-foreground ${open ? "[overflow-wrap:anywhere]" : "truncate"}`}>
+            <span title={milestone.title} className={`text-[var(--loom-muted)] ${open ? "[overflow-wrap:anywhere]" : "truncate"}`}>
               {milestone.title}
             </span>{" "}
-            <span className="text-[10.5px] text-subtle-foreground">holds</span>
+            <span className="text-[11px] text-[var(--loom-muted)]">holds</span>
           </span>
         ) : (
           <span className="flex flex-col gap-1">
@@ -451,7 +455,7 @@ function MilestoneTile({ milestone, focus, ...actions }: { milestone: RolloutMil
                 {milestone.ref}
               </b>
             </span>{" "}
-            <span className={`text-muted-foreground [overflow-wrap:anywhere] ${open ? "" : "line-clamp-3"}`}>{milestone.title}</span>{" "}
+            <span className={`text-[var(--loom-muted)] [overflow-wrap:anywhere] ${open ? "" : "line-clamp-3"}`}>{milestone.title}</span>{" "}
             <StatusLine status={status} />
           </span>
         )}
@@ -467,7 +471,7 @@ function MilestoneTile({ milestone, focus, ...actions }: { milestone: RolloutMil
 
 function Then() {
   return (
-    <div role="separator" aria-label="Then, after the steps above" className="mx-1 my-1.5 flex items-center gap-1.5 text-[10px] tracking-wider text-subtle-foreground uppercase before:flex-1 before:border-t before:border-dashed before:border-border-seam after:flex-1 after:border-t after:border-dashed after:border-border-seam">
+    <div role="separator" aria-label="Then, after the steps above" className="mx-1 my-1.5 flex items-center gap-1.5 text-[11px] tracking-wider text-[var(--loom-muted)] uppercase before:flex-1 before:border-t before:border-dashed before:border-border-seam after:flex-1 after:border-t after:border-dashed after:border-border-seam">
       <span aria-hidden>then</span>
     </div>
   );
@@ -480,7 +484,7 @@ function stageStatusText(view: RolloutView, columns: Column[], index: number, ea
   const thenSoaks = stage.soak === null ? "" : `; this stage then soaks ${soakWords(stage.soak)}`;
   let lead: ReactNode;
   if (stage.name === null) lead = "Steps in no stage: they go in any order.";
-  else if (pending.length === 0) lead = stage.soaked || stage.soakedAt === null ? <b className="font-semibold text-success">✓ Done</b> : <><b className="font-semibold text-success">All live</b>, soaking until {whenLabel(stage.soakedAt, now)}</>;
+  else if (pending.length === 0) lead = stage.soaked || stage.soakedAt === null ? <b className="font-semibold text-[var(--loom-ok)]">✓ Done</b> : <><b className="font-semibold text-[var(--loom-ok)]">All live</b>, soaking until {whenLabel(stage.soakedAt, now)}</>;
   else {
     const before = index > 0 && columns[index - 1]!.stage.name !== null && !columns[index - 1]!.stage.soaked ? columns[index - 1]!.stage : earlierOpen(view, stage);
     lead =
@@ -501,7 +505,7 @@ function stageStatusText(view: RolloutView, columns: Column[], index: number, ea
     <>
       {lead}
       {!done && earliest !== undefined && (
-        <span className="block text-muted-foreground">
+        <span className="block text-[var(--loom-muted)]">
           {earliest.at !== null ? `Earliest done: ${dateLabel(earliest.at)}` : `Earliest done: once ${listText(earliest.waitsFor)} ${earliest.waitsFor.length === 1 ? "holds" : "hold"}`}
         </span>
       )}
@@ -519,24 +523,24 @@ function StageColumn({ column, index, columns, view, current, earliest, merges, 
     <section data-rollout-stage={stage.name ?? "none"} aria-label={stageLabel(stage.name)} className={`relative min-w-0 rounded-lg border bg-surface-raised px-2 pt-2.5 pb-2 ${current ? "border-primary/55" : "border-border-seam"}`}>
       {index > 0 && stage.name !== null && (
         <>
-          <span aria-hidden className="absolute top-2 -left-[17px] hidden text-lg leading-none text-subtle-foreground @3xl/rollout:block">
+          <span aria-hidden className="absolute top-2 -left-[17px] hidden text-lg leading-none text-[var(--loom-muted)] @3xl/rollout:block">
             ›
           </span>
-          <span aria-hidden className="absolute -top-[21px] left-1/2 text-sm text-subtle-foreground @3xl/rollout:hidden">
+          <span aria-hidden className="absolute -top-[21px] left-1/2 text-sm text-[var(--loom-muted)] @3xl/rollout:hidden">
             ⌄
           </span>
         </>
       )}
       <header className="px-1 pb-2">
         <div className="flex items-baseline gap-1.5">
-          {stage.name !== null && <span className="font-semibold text-subtle-foreground">{index + 1}</span>}
+          {stage.name !== null && <span className="font-semibold text-[var(--loom-muted)]">{index + 1}</span>}
           <h4 className="text-[12.5px] font-semibold [overflow-wrap:anywhere]">{stageLabel(stage.name)}</h4>
-          <span className="ml-auto text-[11px] whitespace-nowrap text-muted-foreground">
+          <span className="ml-auto text-[11px] whitespace-nowrap text-[var(--loom-muted)]">
             {live} of {stage.steps.length} live
           </span>
         </div>
         {stage.goal !== null && (
-          <button type="button" data-rollout-goal aria-expanded={goalOpen} onClick={() => setGoalOpen(!goalOpen)} className={`mt-0.5 block w-full cursor-pointer rounded text-left text-[11px] text-muted-foreground [overflow-wrap:anywhere] ${FOCUS}`}>
+          <button type="button" data-rollout-goal aria-expanded={goalOpen} onClick={() => setGoalOpen(!goalOpen)} className={`mt-0.5 block w-full @max-xl/loom:min-h-11 max-[576px]:min-h-11 pointer-coarse:min-h-11 cursor-pointer rounded text-left text-[11px] text-[var(--loom-muted)] [overflow-wrap:anywhere] ${FOCUS}`}>
             {/* The clamp sets its own display, so it sits on a span: on the button, `block` would win over it. */}
             <span className={goalOpen ? "" : "line-clamp-2"}>
               <span className="sr-only">Goal:</span> {stage.goal}
@@ -545,12 +549,12 @@ function StageColumn({ column, index, columns, view, current, earliest, merges, 
         )}
         <div aria-hidden className="mt-1.5 flex gap-0.5">
           {order.map((step) => {
-            const status = stepStatus(view, step, actions.now);
-            const fill = step.live !== null ? "bg-success" : step.key === nextKey ? "bg-primary" : status.tone === "hold" ? "bg-destructive/70" : "bg-foreground/15";
+            const status = shipStepStatus(view, step, actions.now, actions.readiness, actions.order);
+            const fill = step.live !== null ? "bg-success" : step.key === nextKey ? "bg-primary" : status.tone === "hold" ? "bg-[var(--loom-mark-bad)]" : "bg-[var(--loom-mark-quiet)]";
             return <i key={step.key} title={`${step.key}: ${status.label}`} className={`h-1 flex-1 rounded-sm ${fill}`} />;
           })}
         </div>
-        <p className="mt-1.5 text-[11px] text-muted-foreground">{stageStatusText(view, columns, index, earliest, actions.now)}</p>
+        <p className="mt-1.5 text-[11px] text-[var(--loom-muted)]">{stageStatusText(view, columns, index, earliest, actions.now)}</p>
       </header>
       {column.gates.map((milestone) => (
         <MilestoneTile key={milestone.ref} milestone={milestone} focus={focus} {...actions} />
@@ -664,9 +668,9 @@ function DeployOrder({ view, columns, earliest, merges, focus, showAll, ...actio
               data-rollout-link={`${edge.from}>${edge.to}`}
               d={edge.d}
               fill="none"
-              strokeWidth={chain !== null && named(edge) ? 1.75 : 1.25}
+              strokeWidth={chain !== null && named(edge) ? 1.75 : showAll ? 1 : 1.25}
               markerEnd={`url(#${marker}-${edge.live ? "live" : "wait"})`}
-              className={`${edge.live ? "stroke-success" : "stroke-subtle-foreground [stroke-dasharray:4_3]"} ${showAll && !(chain !== null && named(edge)) ? "opacity-35" : ""}`}
+              className={edge.live ? "stroke-success" : "stroke-subtle-foreground [stroke-dasharray:4_3]"}
             />
           ))}
         </svg>
@@ -689,11 +693,11 @@ function Switch({ on, label, onChange, className = "" }: { on: boolean; label: s
 function PlanRow({ index, done, current, label, children }: { index: number; done: boolean; current: boolean; label: string; children: ReactNode }) {
   return (
     <li data-rollout-plan={label.toLowerCase()} className="grid grid-cols-[1.125rem_3.5rem_minmax(0,1fr)] items-baseline gap-x-1.5 py-0.5 @max-xl/loom:grid-cols-[1.125rem_minmax(0,1fr)]">
-      <span aria-hidden className={`inline-flex size-4 items-center justify-center rounded-full border-[1.5px] text-[9.5px] ${done ? "border-success text-success" : current ? "border-primary font-semibold text-primary" : "border-border-seam text-muted-foreground"}`}>
+      <span aria-hidden className={`inline-flex size-4 items-center justify-center rounded-full border-[1.5px] text-[11px] ${done ? "border-success text-[var(--loom-ok)]" : current ? "border-primary font-semibold text-[var(--loom-link)]" : "border-border-seam text-[var(--loom-muted)]"}`}>
         {done ? "✓" : index}
       </span>
       <span className="font-semibold">{label}</span>
-      <div className="min-w-0 text-muted-foreground [overflow-wrap:anywhere] @max-xl/loom:col-start-2">{children}</div>
+      <div className="min-w-0 text-[var(--loom-muted)] [overflow-wrap:anywhere] @max-xl/loom:col-start-2">{children}</div>
     </li>
   );
 }
@@ -716,7 +720,7 @@ function StepPlan({ view, step, merge, earliest, ...actions }: { view: RolloutVi
       body: (
         <>
           {note === null ? `Loom has not read ${name === "its pull request" ? "its pull request's" : `${name}'s`} review yet.` : `${name === "its pull request" ? "Its pull request:" : name} ${note.text}`}
-          {ready && <span className="block">The Merge order calls it ready to merge.</span>}
+          {ready && <span className="block">Its review and checks pass.</span>}
           {merge.elsewhere !== null && <span className="block">It targets {merge.elsewhere}, not {merge.base}.</span>}
           {stacked !== undefined && <span className="block">It builds on {stacked.key}'s branch; merge {stacked.prNumber === null ? stacked.key : `#${stacked.prNumber}`} first.</span>}
         </>
@@ -724,8 +728,38 @@ function StepPlan({ view, step, merge, earliest, ...actions }: { view: RolloutVi
     });
   }
   if (step.merge === "no_pr") rows.push({ label: "Review", done: false, body: "Its pull request is not open yet; Loom opens it once the work passes review." });
-  rows.push({ label: "Merge", done: merged, body: merged ? "merged" : step.onMerge ? <b className="font-semibold text-warning-text">⚡ merging deploys it</b> : "merging deploys nothing" });
-  if (!step.onMerge) rows.push({ label: "Deploy", done: false, body: step.how ?? "the way its repo deploys" });
+  const one = actions.readiness.get(step.key);
+  const mergeHold = merged || one === undefined || one.canMerge ? null : one.loomMerges && holdsLine(one) === "" ? "Loom merges it itself after a final review." : `Not yet: ${holdsLine(one) || "not ready"}.`;
+  rows.push({
+    label: "Merge",
+    done: merged,
+    body: (
+      <>
+        {merged ? "merged" : step.onMerge ? <b className="font-semibold text-[var(--loom-warn)]">⚡ merging deploys it</b> : "merging deploys nothing"}
+        {mergeHold !== null && (
+          <span data-rollout-merge-hold className="block text-[var(--loom-warn)]">
+            {mergeHold}
+          </span>
+        )}
+      </>
+    ),
+  });
+  const deployHold = deployHoldsOf(view, step.key);
+  if (!step.onMerge)
+    rows.push({
+      label: "Deploy",
+      done: false,
+      body: (
+        <>
+          {step.how ?? "the way its repo deploys"}
+          {deployHold.length > 0 && (
+            <span data-rollout-deploy-hold className="block text-[var(--loom-warn)]">
+              Not yet: {deployHold.join(" · ")}.
+            </span>
+          )}
+        </>
+      ),
+    });
   rows.push({
     label: "Verify",
     done: false,
@@ -749,6 +783,12 @@ function StepPlan({ view, step, merge, earliest, ...actions }: { view: RolloutVi
   const others = stage.steps.filter((each) => each.live === null && each.key !== step.key);
   const after = view.stages.slice(view.stages.indexOf(stage) + 1).find((each) => each.name !== null && each.steps.length > 0);
   const opens = after === undefined ? [] : after.steps.filter((each) => each.live === null && unmet(each).every((need) => need.kind === "ticket" && need.target === step.key)).map((each) => each.key);
+  // What could go once this step is live and its stage soaked; the rest keep holds of their own.
+  const opened = opens.filter((key) => stepCanGo(key, actions.order, view, { live: [step.key], soaked: true }));
+  const stillHeld = opens.filter((key) => !opened.includes(key));
+  const also = view.next.keys.slice(1);
+  const alsoGo = also.filter((key) => stepCanGo(key, actions.order, view));
+  const alsoHeld = also.filter((key) => !alsoGo.includes(key));
   const waits = dependentsOf(view, step.key).filter((key) => view.stages.some((each) => each.steps.some((other) => other.key === key && other.live === null)));
   const soaked = earliest.find((each) => each.stage === stage)?.at ?? null;
   return (
@@ -760,7 +800,7 @@ function StepPlan({ view, step, merge, earliest, ...actions }: { view: RolloutVi
           </PlanRow>
         ))}
       </ol>
-      <p data-rollout-then className="mt-2.5 border-t border-dashed border-border-seam pt-2 text-muted-foreground [overflow-wrap:anywhere]">
+      <p data-rollout-then className="mt-2.5 border-t border-dashed border-border-seam pt-2 text-[var(--loom-muted)] [overflow-wrap:anywhere]">
         When it is live:{" "}
         {others.length > 0 ? (
           `${plural(others.length, "more step")} in ${stageLabel(stage.name)} after this: ${listText(others.map((each) => each.key))}.`
@@ -770,22 +810,24 @@ function StepPlan({ view, step, merge, earliest, ...actions }: { view: RolloutVi
           <>
             <b className="font-semibold text-foreground">{stageLabel(stage.name)}</b> is all live{stage.soak === null ? "" : ` and soaks ${soakWords(stage.soak)}`}
             {soaked !== null && stage.soak !== null && `, until about ${whenLabel(soaked, actions.now)}`}.
-            {after !== undefined && opens.length > 0 && (
+            {after !== undefined && opened.length > 0 && (
               <>
                 {" "}
-                Then <b className="font-semibold text-foreground">{listText(opens)}</b> can go in {stageLabel(after.name)}.
+                Then <b className="font-semibold text-foreground">{listText(opened)}</b> can go in {stageLabel(after.name)}.
               </>
             )}
+            {after !== undefined && stillHeld.length > 0 && ` ${listText(stillHeld)} ${stillHeld.length === 1 ? "comes" : "come"} next in ${stageLabel(after.name)}, still held.`}
           </>
         )}
         {waits.length > 0 && ` ${listText(waits)} ${waits.length === 1 ? "waits" : "wait"} on it.`}
-        {view.next.keys.length > 1 && ` ${listText(view.next.keys.slice(1))} can go now too.`}
+        {alsoGo.length > 0 && ` ${listText(alsoGo)} can go now too.`}
+        {alsoHeld.length > 0 && ` ${listText(alsoHeld)} ${alsoHeld.length === 1 ? "is" : "are"} next in order too, still held.`}
       </p>
     </>
   );
 }
 
-function NextCard({ view, merges, earliest, ...actions }: { view: RolloutView; merges: ReadonlyMap<string, MergeEntry>; earliest: Earliest[] } & Actions) {
+function NextCard({ view, merges, earliest, held, ...actions }: { view: RolloutView; merges: ReadonlyMap<string, MergeEntry>; earliest: Earliest[]; held: string | null } & Actions) {
   const next = view.next;
   const steps = view.stages.flatMap((stage) => stage.steps);
   const step = steps.find((each) => each.key === next.keys[0]);
@@ -794,7 +836,8 @@ function NextCard({ view, merges, earliest, ...actions }: { view: RolloutView; m
   let body: ReactNode = null;
   let buttons: ReactNode = null;
   if ((next.kind === "merge" || next.kind === "deploy" || next.kind === "pr") && step !== undefined) {
-    title = next.kind === "deploy" ? `Deploy ${step.key}` : next.kind === "pr" ? `${step.key} is next` : step.onMerge ? `Merge ${step.key}: merging deploys it` : `Merge ${step.key}, then deploy it`;
+    const deployHold = next.kind === "deploy" ? deployHoldsOf(view, step.key) : [];
+    title = next.kind === "merge" && held !== null ? held : next.kind === "deploy" ? (deployHold.length > 0 ? `${step.key} cannot deploy yet: ${deployHold.join(" · ")}` : `Deploy ${step.key}`) : next.kind === "pr" ? `${step.key} is next` : step.onMerge ? `Merge ${step.key}: merging deploys it` : `Merge ${step.key}, then deploy it`;
     body = <StepPlan view={view} step={step} merge={merges.get(step.key)} earliest={earliest} {...actions} />;
     buttons = (
       <>
@@ -803,7 +846,8 @@ function NextCard({ view, merges, earliest, ...actions }: { view: RolloutView; m
             Open {step.prNumber === null ? "pull request" : `#${step.prNumber}`}
           </button>
         ) : null}
-        <MarkButton target={step.key} live={false} label={`Mark ${step.key} live`} busy={actions.busy} onMark={actions.onMark} />
+        {/* Attesting a step live belongs to a merged change whose deploy nothing holds; otherwise Mark live stays on its own tile. */}
+        {step.merge === "merged" && deployHold.length === 0 && <MarkButton target={step.key} live={false} label={`Mark ${step.key} live`} busy={actions.busy} onMark={actions.onMark} />}
         <button type="button" className={step.prUrl === null ? BUTTON_PRIMARY : BUTTON} onClick={() => actions.onTicket(step.key)}>
           Open ticket
         </button>
@@ -811,7 +855,7 @@ function NextCard({ view, merges, earliest, ...actions }: { view: RolloutView; m
     );
   } else if (next.kind === "blocked" && step !== undefined) {
     title = `${step.key} is next, and it is blocked`;
-    body = <p className="mt-1.5 text-muted-foreground">Its ticket is blocked. Answer it or requeue it from the ticket page; the deploy order waits on it.</p>;
+    body = <p className="mt-1.5 text-[var(--loom-muted)]">Its ticket is blocked. Answer it or requeue it from the ticket page; the deploy order waits on it.</p>;
     buttons = (
       <button type="button" className={BUTTON_PRIMARY} onClick={() => actions.onTicket(step.key)}>
         Open ticket
@@ -819,15 +863,14 @@ function NextCard({ view, merges, earliest, ...actions }: { view: RolloutView; m
     );
   } else if (next.kind === "soak" && stage !== null && next.until !== null) {
     // The server names every step still to go; only those that need nothing else can go once the soak ends.
-    const soakReady = next.keys.filter((key) => {
-      const waiting = steps.find((each) => each.key === key);
-      return waiting !== undefined && waiting.state !== "blocked" && unmet(waiting).length === 0;
-    });
+    const soakReady = next.keys.filter((key) => stepCanGo(key, actions.order, view, { soaked: true }));
+    const soakHeld = next.keys.filter((key) => !soakReady.includes(key) && steps.some((each) => each.key === key && each.live === null && each.state !== "blocked" && unmet(each).length === 0));
     title = `Wait for ${stageLabel(stage.name)} to soak`;
     body = (
-      <p className="mt-1.5 text-muted-foreground">
+      <p className="mt-1.5 text-[var(--loom-muted)]">
         It soaks until {whenLabel(next.until, actions.now)}, {leftLabel(next.until, actions.now)} from now.{" "}
         {soakReady.length > 0 ? `Then ${listText(soakReady)} can go.` : "Then the next stage starts, once what its steps need is live."}
+        {soakHeld.length > 0 && ` ${listText(soakHeld)} ${soakHeld.length === 1 ? "keeps holds" : "keep holds"} of ${soakHeld.length === 1 ? "its" : "their"} own.`}
       </p>
     );
   } else if (next.kind === "milestone") {
@@ -835,7 +878,7 @@ function NextCard({ view, merges, earliest, ...actions }: { view: RolloutView; m
     title = `Wait for ${next.keys[0]} to hold`;
     body =
       milestone === undefined ? null : (
-        <div className="mt-1.5 text-muted-foreground">
+        <div className="mt-1.5 text-[var(--loom-muted)]">
           <p className="[overflow-wrap:anywhere]">{milestone.title}</p>
           <div className="mt-1.5">
             {milestone.check === null ? "It has no check command: mark it live once it holds." : <Command command={milestone.check} check={milestone.lastCheck} idle="not run yet; Loom runs it every 15 minutes" now={actions.now} />}
@@ -849,9 +892,9 @@ function NextCard({ view, merges, earliest, ...actions }: { view: RolloutView; m
     title = `Wait for ${next.keys[0]} to go live`;
     body = target === undefined ? null : (
       <div className="mt-1.5">
-        <p className="text-muted-foreground [overflow-wrap:anywhere]">{target.title}</p>
+        <p className="text-[var(--loom-muted)] [overflow-wrap:anywhere]">{target.title}</p>
         <div className="mt-1">
-          <StatusLine status={stepStatus(view, target, actions.now)} />
+          <StatusLine status={shipStepStatus(view, target, actions.now, actions.readiness, actions.order)} />
         </div>
       </div>
     );
@@ -863,7 +906,7 @@ function NextCard({ view, merges, earliest, ...actions }: { view: RolloutView; m
       );
   } else {
     title = next.kind === "done" ? "Everything is live" : next.text;
-    if (next.kind === "done" && next.until !== null) body = <p className="mt-1.5 text-muted-foreground">The last stage soaks until {whenLabel(next.until, actions.now)}.</p>;
+    if (next.kind === "done" && next.until !== null) body = <p className="mt-1.5 text-[var(--loom-muted)]">The last stage soaks until {whenLabel(next.until, actions.now)}.</p>;
   }
   const where = stage === null ? "" : ` · ${stageLabel(stage.name)}`;
   return (
@@ -875,10 +918,10 @@ function NextCard({ view, merges, earliest, ...actions }: { view: RolloutView; m
       <h3 className="mt-1 text-sm font-semibold [overflow-wrap:anywhere]">{title}</h3>
       {step !== undefined && (next.kind === "merge" || next.kind === "deploy" || next.kind === "pr" || next.kind === "blocked") && (
         <>
-          <p className="text-muted-foreground [overflow-wrap:anywhere]">{step.title}</p>
+          <p className="text-[var(--loom-muted)] [overflow-wrap:anywhere]">{step.title}</p>
           <p className="mt-1 flex flex-wrap items-baseline gap-1.5">
             {step.repo !== null && <RepoChip name={step.repo} />}
-            {step.prNumber !== null && <span className="font-mono text-[11px] text-primary">#{step.prNumber}</span>}
+            {step.prNumber !== null && <span className="font-mono text-[11px] text-[var(--loom-link)]">#{step.prNumber}</span>}
           </p>
         </>
       )}
@@ -923,22 +966,22 @@ function HoldCard({ view, holds, now, onOpen }: { view: RolloutView; holds: Hold
               </span>
               <span className={`[overflow-wrap:anywhere] ${TONE_TEXT[hold.tone]}`}>{holdTitle(hold)}</span>
               {hold.step.prUrl !== null && (
-                <button type="button" aria-label={prLabel(hold.step)} className={`cursor-pointer rounded font-mono text-[11px] text-primary hover:underline ${FOCUS}`} onClick={() => onOpen(hold.step.prUrl!)}>
+                <button type="button" aria-label={prLabel(hold.step)} className={`inline-flex items-center justify-center @max-xl/loom:min-h-11 max-[576px]:min-h-11 @max-xl/loom:min-w-11 max-[576px]:min-w-11 pointer-coarse:min-h-11 pointer-coarse:min-w-11 cursor-pointer rounded font-mono text-[11px] text-[var(--loom-link)] hover:underline ${FOCUS}`} onClick={() => onOpen(hold.step.prUrl!)}>
                   {hold.step.prNumber === null ? "pull request" : `#${hold.step.prNumber}`}
                 </button>
               )}
               {hold.step.repo !== null && <RepoChip name={hold.step.repo} />}
             </p>
-            <p className="mt-0.5 text-muted-foreground [overflow-wrap:anywhere]">
+            <p className="mt-0.5 text-[var(--loom-muted)] [overflow-wrap:anywhere]">
               {hold.step.title}
               {hold.kind === "dont_merge" && (
-                <span className="text-warning-text">
+                <span className="text-[var(--loom-warn)]">
                   {" "}
                   · <span aria-hidden>⚡</span> merging deploys it
                 </span>
               )}
             </p>
-            <ul className="mt-0.5 list-disc pl-4 text-muted-foreground">
+            <ul className="mt-0.5 list-disc pl-4 text-[var(--loom-muted)]">
               {hold.needs.map((need) => {
                 const milestone = need.kind === "milestone" ? view.milestones.find((each) => each.ref === need.target) : undefined;
                 const why = milestone === undefined ? null : milestoneStatus(milestone).why;
@@ -968,7 +1011,8 @@ function HoldCard({ view, holds, now, onOpen }: { view: RolloutView; holds: Hold
   );
 }
 
-const BANDS = ["bg-warning/15 text-warning-text", "bg-destructive/15 text-destructive-text", "border border-dashed border-warning/45 bg-warning/5 text-warning-text"];
+// Each band is outlined in its own ink, 3:1 or more, since a light fill alone measures 1.24:1 against the calendar.
+const BANDS = ["border border-[var(--loom-warn)] bg-warning/15 text-[var(--loom-warn)]", "border border-[var(--loom-bad)] bg-destructive/15 text-[var(--loom-bad)]", "border border-dashed border-[var(--loom-warn)] bg-warning/5 text-[var(--loom-warn)]"];
 
 function Calendar({ view, earliest, now }: { view: RolloutView; earliest: Earliest[]; now: number }) {
   const today = new Date(now);
@@ -990,9 +1034,9 @@ function Calendar({ view, earliest, now }: { view: RolloutView; earliest: Earlie
       <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-0.5">
         <h3 className={HEADING}>Calendar</h3>
         {soon !== undefined && (
-          <span className="text-muted-foreground [overflow-wrap:anywhere]">
+          <span className="text-[var(--loom-muted)] [overflow-wrap:anywhere]">
             {soon.active ? (
-              <b className="font-semibold text-destructive-text">The {windowName(soon)} is on now, until {dayLabel(soon.to)}</b>
+              <b className="font-semibold text-[var(--loom-bad)]">The {windowName(soon)} is on now, until {dayLabel(soon.to)}</b>
             ) : (
               <>
                 <b className="font-semibold text-foreground">{plural(soon.startsIn!, "day")}</b> until the {windowName(soon)} on {dayLabel(soon.from)}
@@ -1005,7 +1049,7 @@ function Calendar({ view, earliest, now }: { view: RolloutView; earliest: Earlie
       <div aria-hidden className="relative mt-1.5 h-[46px]">
         <div className="absolute inset-x-0 top-[30px] border-t border-border-seam" />
         {ticks.map((at) => (
-          <span key={at} className="absolute top-[30px] h-4 border-l border-border-seam pt-0.5 pl-0.5 text-[10px] whitespace-nowrap text-subtle-foreground" style={{ left: x(at) }}>
+          <span key={at} className="absolute top-[30px] h-4 border-l border-border-seam pt-0.5 pl-0.5 text-[11px] whitespace-nowrap text-[var(--loom-muted)]" style={{ left: x(at) }}>
             {utcDateLabel(at)}
           </span>
         ))}
@@ -1014,7 +1058,7 @@ function Calendar({ view, earliest, now }: { view: RolloutView; earliest: Earlie
             key={`${window.title}-${window.from}`}
             data-rollout-window={window.title}
             title={`${window.title}: ${dayLabel(window.from)} to ${dayLabel(window.to)}${window.note === null ? "" : `. ${window.note}`}`}
-            className={`absolute top-1.5 h-[22px] truncate rounded px-1.5 text-[10.5px] leading-[22px] ${BANDS[index % BANDS.length]}`}
+            className={`absolute top-1.5 h-[22px] truncate rounded px-1.5 text-[11px] leading-[22px] ${BANDS[index % BANDS.length]}`}
             style={{ left: x(utcDay(window.from)), width: span(utcDay(window.from), utcDay(window.to) + DAY_MS) }}
           >
             {windowName(window)}
@@ -1023,11 +1067,12 @@ function Calendar({ view, earliest, now }: { view: RolloutView; earliest: Earlie
         {forecast.map((each) => (
           <span key={each.stage.name} title={`${stageLabel(each.stage.name)} done, at the earliest: ${whenLabel(each.at, now)}`} className="absolute top-[25px] -ml-[5px] size-[11px] rounded-full border-2 border-primary bg-background" style={{ left: x(each.at) }} />
         ))}
-        <span className="absolute top-0 h-[46px] border-l-2 border-primary" style={{ left: x(now) }}>
-          <span className="absolute -top-px left-1 text-[10.5px] font-semibold whitespace-nowrap text-primary">Today</span>
+        <span className="absolute top-0 h-[46px] border-l-2 border-primary" style={{ left: x(now) }} />
+        <span className="absolute -top-px ml-1 text-[11px] font-semibold whitespace-nowrap text-[var(--loom-link)]" style={{ left: x(now) }}>
+          Today
         </span>
       </div>
-      <p className="mt-1 flex flex-wrap gap-x-3.5 gap-y-0.5 text-[11px] text-muted-foreground">
+      <p className="mt-1 flex flex-wrap gap-x-3.5 gap-y-0.5 text-[11px] text-[var(--loom-muted)]">
         {forecast.map((each) => (
           <span key={each.stage.name}>
             <span aria-hidden className="mr-1 inline-block size-[9px] rounded-full border-2 border-primary align-[-1px]" />
@@ -1036,14 +1081,14 @@ function Calendar({ view, earliest, now }: { view: RolloutView; earliest: Earlie
         ))}
         {gated !== undefined && (
           <span className="[overflow-wrap:anywhere]">
-            <span aria-hidden className="mr-1 text-destructive-text">
+            <span aria-hidden className="mr-1 text-[var(--loom-bad)]">
               ◆
             </span>
             {stageLabel(gated.stage.name)} waits for <span className="font-mono [overflow-wrap:anywhere]">{listText(gated.waitsFor)}</span>
           </span>
         )}
       </p>
-      <ul aria-label="Windows" className="mt-1 text-[11px] text-muted-foreground @3xl/rollout:pointer-fine:sr-only">
+      <ul aria-label="Windows" className="mt-1 text-[11px] text-[var(--loom-muted)] @3xl/rollout:pointer-fine:sr-only">
         {view.windows.map((window) => (
           <li key={`${window.title}-${window.from}`} data-rollout-window-row={window.title} className={`[overflow-wrap:anywhere] ${window.past ? "opacity-60" : ""}`}>
             <b className="font-medium text-foreground">{window.title}</b> · {dayLabel(window.from)} to {dayLabel(window.to)} · {window.active ? "on now" : window.past ? "over" : `in ${plural(window.startsIn!, "day")}`}
@@ -1064,17 +1109,17 @@ function RepoLegend({ view }: { view: RolloutView }) {
       <dl className="mt-1.5 grid grid-cols-[minmax(0,max-content)_max-content_minmax(0,1fr)] items-baseline gap-x-2.5 gap-y-1 text-[11.5px] @max-xl/loom:grid-cols-[minmax(0,max-content)_minmax(0,1fr)]">
         {repos.map((entry) => (
           <div key={entry.repo ?? "project"} className="contents">
-            <dt className="justify-self-start">{entry.repo === null ? <span className="text-muted-foreground">project</span> : <RepoChip name={entry.repo} />}</dt>
+            <dt className="justify-self-start">{entry.repo === null ? <span className="text-[var(--loom-muted)]">project</span> : <RepoChip name={entry.repo} />}</dt>
             <dd className="font-semibold">
               {entry.onMerge ? (
-                <span className="text-warning-text">
+                <span className="text-[var(--loom-warn)]">
                   <span aria-hidden>⚡ </span>on merge
                 </span>
               ) : (
                 "after merge"
               )}
             </dd>
-            <dd className="text-muted-foreground [overflow-wrap:anywhere] @max-xl/loom:col-span-2 @max-xl/loom:mb-1">{entry.how}</dd>
+            <dd className="text-[var(--loom-muted)] [overflow-wrap:anywhere] @max-xl/loom:col-span-2 @max-xl/loom:mb-1">{entry.how}</dd>
           </div>
         ))}
       </dl>
@@ -1082,12 +1127,13 @@ function RepoLegend({ view }: { view: RolloutView }) {
   );
 }
 
-export function RolloutTab({ slug, rollout, mergeOrder = null, now, onTicket }: { slug: string; rollout: RolloutView | null; mergeOrder?: MergeOrderView | null; now: number; onTicket(key: string): void }) {
-  if (rollout === null) return <p className="p-4 text-sm text-muted-foreground">The rollout shows the project as it is now. Go back to now to read it.</p>;
-  return <RolloutBody slug={slug} view={rollout} mergeOrder={mergeOrder} now={now} onTicket={onTicket} />;
+/** `held` is Do next's word on the rollout's next merge when the merge order holds it, so the two never contradict each other. */
+export function RolloutTab({ slug, rollout, mergeOrder = null, now, onTicket, held = null }: { slug: string; rollout: RolloutView | null; mergeOrder?: MergeOrderView | null; now: number; onTicket(key: string): void; held?: string | null }) {
+  if (rollout === null) return <p className="p-4 text-sm text-[var(--loom-muted)]">The rollout shows the project as it is now. Go back to now to read it.</p>;
+  return <RolloutBody slug={slug} view={rollout} mergeOrder={mergeOrder} now={now} onTicket={onTicket} held={held} />;
 }
 
-function RolloutBody({ slug, view, mergeOrder, now, onTicket }: { slug: string; view: RolloutView; mergeOrder: MergeOrderView | null; now: number; onTicket(key: string): void }) {
+function RolloutBody({ slug, view, mergeOrder, now, onTicket, held }: { slug: string; view: RolloutView; mergeOrder: MergeOrderView | null; now: number; onTicket(key: string): void; held: string | null }) {
   const navigate = useBbNavigate();
   const send = useLoomWrite("markLive");
   const { busy, act } = useAction();
@@ -1106,6 +1152,8 @@ function RolloutBody({ slug, view, mergeOrder, now, onTicket }: { slug: string; 
   const actions: Actions = {
     now,
     busy,
+    order: mergeOrder,
+    readiness: readinessMap(mergeOrder, view),
     onOpen: (url) => navigate.openUrl(url),
     onTicket,
     onMark: (target, undo) => void act(() => send({ slug, target, ...(undo ? { undo: true } : {}), confirm: true }), undo ? `${target} is no longer marked live` : `Marked ${target} live`),
@@ -1126,16 +1174,16 @@ function RolloutBody({ slug, view, mergeOrder, now, onTicket }: { slug: string; 
     <div data-rollout className="@container/rollout px-4 pt-3.5 pb-5 text-xs @max-xl/loom:px-3">
       <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-0.5">
         <h2 className="text-sm font-semibold">Rollout</h2>
-        <span data-rollout-summary className="text-muted-foreground">
+        <span data-rollout-summary className="text-[var(--loom-muted)]">
           {view.counts.live === view.counts.steps ? `All ${plural(view.counts.steps, "step")} live` : `${view.counts.live} of ${plural(view.counts.steps, "step")} live`}
           {current >= 0 && ` · stage ${current + 1} of ${named.length}, ${stageLabel(named[current]!.stage.name)}`}
         </span>
-        <span data-rollout-advice className="ml-auto text-[11px] text-subtle-foreground @max-xl/loom:ml-0 @max-xl/loom:basis-full">
+        <span data-rollout-advice className="ml-auto text-[11px] text-[var(--loom-muted)] @max-xl/loom:ml-0 @max-xl/loom:basis-full">
           Advice only: Loom blocks no merge or deploy
         </span>
       </div>
       <div className={`mt-3 grid gap-3 ${holds.length > 0 ? "@3xl/rollout:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)]" : ""}`}>
-        <NextCard view={view} merges={merges} earliest={earliest} {...actions} />
+        <NextCard view={view} merges={merges} earliest={earliest} held={held} {...actions} />
         {holds.length > 0 && <HoldCard view={view} holds={holds} now={now} onOpen={actions.onOpen} />}
       </div>
       {view.windows.length > 0 && <Calendar view={view} earliest={earliest} now={now} />}
@@ -1143,7 +1191,7 @@ function RolloutBody({ slug, view, mergeOrder, now, onTicket }: { slug: string; 
         <section aria-label="Deploy order" className="mt-4">
           <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
             <h3 className={HEADING}>Deploy order</h3>
-            <span className="text-[11px] text-subtle-foreground [overflow-wrap:anywhere]">
+            <span className="text-[11px] text-[var(--loom-muted)] [overflow-wrap:anywhere]">
               Stages go in order, and steps above a "then" line go first. {hoverOn && <span className="pointer-coarse:hidden">Hover a step to see what it needs and what waits on it. </span>}Open one for how to deploy, verify and roll back.
             </span>
             <span className="ml-auto flex flex-wrap gap-x-3 gap-y-1 @max-xl/loom:ml-0">

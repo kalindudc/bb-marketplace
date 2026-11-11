@@ -6,7 +6,7 @@ import { HEADING, RepoChip, plural } from "./common";
 
 // About three lines of the summary on a phone; a longer one folds there behind Read all.
 const CLAMP_CHARS = 100;
-const LINK = "cursor-pointer text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
+const LINK = "cursor-pointer text-xs text-[var(--loom-muted)] underline underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
 
 /** "infra-central#28600" for an issue or pull request URL, as people write them. */
 export function linkLabel(url: string): string {
@@ -34,7 +34,7 @@ export function AboutStrip({ overview, onGoal }: { overview: ProjectSummary; onG
           {summary ?? about.lead}
         </p>
       </div>
-      <div className="mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs text-muted-foreground">
+      <div className="mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs text-[var(--loom-muted)]">
         {folds && (
           <button type="button" data-about-more aria-expanded={full} className={`${LINK} hidden @max-xl/loom:inline`} onClick={() => setFull(!full)}>
             {full ? "Less" : "Read all"}
@@ -56,7 +56,7 @@ export function AboutStrip({ overview, onGoal }: { overview: ProjectSummary; onG
         <button type="button" className={LINK} onClick={onGoal}>
           Full goal
         </button>
-        {about.nonGoals > 0 && <span className="text-subtle-foreground">{plural(about.nonGoals, "non-goal")}</span>}
+        {about.nonGoals > 0 && <span className="text-[var(--loom-muted)]">{plural(about.nonGoals, "non-goal")}</span>}
         {overview.plannerThreadId !== null && (
           <button type="button" className={LINK} onClick={() => navigate.toThread(overview.plannerThreadId!)}>
             Planner thread
@@ -73,7 +73,7 @@ export function AboutStrip({ overview, onGoal }: { overview: ProjectSummary; onG
         </ul>
       )}
       {proposed !== null && (
-        <p data-about-pending={proposed.version} className="mt-1.5 flex flex-wrap items-baseline gap-x-2 text-[11.5px] text-primary">
+        <p data-about-pending={proposed.version} className="mt-1.5 flex flex-wrap items-baseline gap-x-2 text-[11.5px] text-[var(--loom-link)]">
           <span>
             {about.summary === null
               ? `From v${proposed.version}, which waits for your approval; the version in force has no summary.`
@@ -84,7 +84,7 @@ export function AboutStrip({ overview, onGoal }: { overview: ProjectSummary; onG
           </button>
         </p>
       )}
-      {summary === null && <p className="mt-1.5 text-[11.5px] text-warning-text">This spec has no summary, so this is the goal's first paragraph. The planner's next revision of the spec has to add one.</p>}
+      {summary === null && <p className="mt-1.5 text-[11.5px] text-[var(--loom-warn)]">This spec has no summary, so this is the goal's first paragraph. The planner's next revision of the spec has to add one.</p>}
     </section>
   );
 }

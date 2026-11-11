@@ -1,10 +1,14 @@
 // The page's RPC contract and the types it carries. The app imports only types from this file, so zod stays out of its bundle.
 import { defineRpcContract, type NewThreadRequest } from "@get-bb/plugin-sdk";
 import { z } from "zod";
+import type { BlockAsk } from "./block-ask";
 import type { ProjectHealth } from "./health";
-import type { HomeProject, HomeView, NeedItem } from "./home";
+import type { HomeProject, HomeView, NeedItem, NeedKind, WaitableThread } from "./home";
+import { FEED_KINDS, HOME_FEED_MAX } from "./feed-kinds";
+import type { FeedKind, HomeFeed, HomeFeedRow } from "./home-feed";
 import type { ActivityMark, Chip, CurrentItem, EventLine, InsightsFilter, InsightsNumbers, InsightsWindow, LineTone, Part, Phrase, ProjectInsights, StoryGroup, StoryItem } from "./insights";
 import type { ProjectMetrics } from "./metrics";
+import type { InsightsAllView, InsightsFigures, InsightsModelRow, InsightsProjectRow, InsightsRepoRow, InsightsWeeks } from "./insights-all";
 import type { MergeEntry, MergeOrderView, MergeVerdict, WaitsOn } from "./merge-order";
 import type { NextStep } from "./next-step";
 import type { PrSyncOutcome, PrSyncResult, PrSyncTicket } from "./pr-sync";
@@ -36,10 +40,20 @@ export type { MergeEntry, MergeOrderView, MergeVerdict, WaitsOn };
 export type { PrSyncOutcome, PrSyncResult, PrSyncTicket };
 export type { RolloutCheckResult, RolloutLive, RolloutMerge, RolloutMilestone, RolloutNext, RolloutRequirement, RolloutStage, RolloutStep, RolloutView, RolloutWarning, RolloutWindow };
 export type { SpecReviewRound };
+export type { BlockAsk };
 export type { AckTab, AskAction, AskStep, BadgeAcks, PlannerAction, PlannerAsk, PlannerStep, PlannerVersion, PlannerView, TurnStep, VersionChange };
-export type { ActivityItem, Attempt, BbProjectChoice, ChecksItem, CheckStep, PrFeedbackItem, PrTextItem, HomeProject, HomeView, Mark, MergeItem, Moment, MomentKind, NeedItem, NextStep, PlanningSession, ProjectHealth, ProjectTimeline, RepoOverview, ReviewItem, SentNote, SessionBar, SpecVersionView, TicketActivity, TicketBar };
+export type { ActivityItem, Attempt, BbProjectChoice, ChecksItem, CheckStep, PrFeedbackItem, PrTextItem, HomeProject, HomeView, Mark, NeedKind, WaitableThread, FeedKind, HomeFeed, HomeFeedRow, MergeItem, Moment, MomentKind, NeedItem, NextStep, PlanningSession, ProjectHealth, ProjectTimeline, RepoOverview, ReviewItem, SentNote, SessionBar, SpecVersionView, TicketActivity, TicketBar };
 
 export type { PhaseView } from "./phases";
+export type { GateProposedTicket, GateRecordedTicket, GateView } from "./gate";
+export type { InsightsAllView, InsightsFigures, InsightsModelRow, InsightsProjectRow, InsightsRepoRow, InsightsWeeks };
+
+/** One ticket this one waits on, by kind: work (depends_on), merge (merge_after) or live (rollout.requires_live). */
+export interface Prereq {
+  key: string;
+  kind: "work" | "merge" | "live";
+}
+
 
 export interface BoardCard {
   phase: string | null;
@@ -85,6 +99,10 @@ export interface BoardCard {
   publishWait: string | null;
   /** The planner asked the human to release the held draft. */
   releaseRequested: { at: number; note: string } | null;
+  /** What it waits on, each ticket once per kind, among this project's tickets; a key in depends_on is work only. */
+  prereqs: Prereq[];
+  /** On a blocked ticket, the worker's structured ask: its question and how many options it offers; null for prose only. */
+  ask: { question: string | null; options: number } | null;
 }
 
 /** A manual merge as the page shows it; a confirmation from the page sends back the `prUrl` and `sha` it showed. */
@@ -118,6 +136,8 @@ export interface RetryView {
   until: number;
   /** What the last one failed with. */
   message: string;
+  /** What failures.ts said the last one was: temporary, lasting (someone has to put it right) or unknown; null for a wait from before Loom kept it. */
+  kind: "temporary" | "lasting" | "unknown" | null;
 }
 
 /** What the draft card shows before a project has tickets on the board. */
@@ -151,7 +171,7 @@ export interface AgentRow {
   tokens: number | null;
   rateLimitRetries: number;
   reviewRound: number;
-  /** The spec's "provider / model" for the role; null for a planner or when the spec sets neither. */
+  /** The "provider / model" the thread was spawned with; for a thread from before Loom recorded it, the spec's for the role; null for a planner or when the spec sets neither. */
   model: string | null;
   /** When the engine ends a worker whose ticket is still being worked on; null otherwise. */
   timeoutAt: number | null;
@@ -159,6 +179,8 @@ export interface AgentRow {
 
 export interface ProjectView {
   phases: import("./phases").PhaseView[] | null;
+  /** The planned phase the pending version fills with tickets, and how many; null otherwise and in a rewound view. */
+  phaseFill: { ref: string; title: string; count: number; version: number } | null;
   overview: ProjectOverview;
   /** Before approval, the draft's tickets with the keys approval will give them. */
   board: BoardCard[];
@@ -184,6 +206,8 @@ export interface ProjectView {
   mergeOrder: MergeOrderView | null;
   /** The project's deploy order, advice for the human, when its spec or a ticket has one; null otherwise and in a rewound view. */
   rollout: RolloutView | null;
+  /** The phase gate, when the pending version fills the next phase: the finished phase as recorded beside the proposed one; null otherwise and in a rewound view. */
+  gate: import("./gate").GateView | null;
 }
 
 /** A step of the planner's newest ask that is not done, by its place in the ask. */
@@ -298,6 +322,10 @@ export interface TicketDetail {
   draft: DraftState;
   publishWait: string | null;
   releaseRequested: { at: number; note: string } | null;
+  /** As BoardCard's. */
+  prereqs: Prereq[];
+  /** On a blocked ticket, the ask of the block post it is blocked by; null when that block is prose only. */
+  ask: BlockAsk | null;
   activity: TicketActivity;
   /** The event the ticket was rewound to, and the time it shows; `at` is null for the live ticket. */
   at: number | null;
@@ -321,6 +349,12 @@ export interface ThreadInfo {
   key: string | null;
   /** The ticket's state for a worker or reviewer, the project's for a planner, "planning" before a spec exists. */
   state: string;
+  /** The project's key and name; null before a spec exists. */
+  project: { key: string; name: string } | null;
+  /** The ticket's phase of a phased project, counted from 0; null otherwise. */
+  phase: { index: number; count: number; title: string } | null;
+  /** A worker's or reviewer's attempt of its ticket; null for a planner. */
+  attempt: number | null;
 }
 
 /** What the badge on Loom's rail button counts, less the threads the page finds waiting on the human in bb's own thread state. */
@@ -381,7 +415,17 @@ export const rpcContract = defineRpcContract({
     ...RPC_TAGS.insights,
   },
   timeline: { input: z.object({ slug }).strict(), output: typed<ProjectTimeline>(), ...RPC_TAGS.timeline },
+  // Home's Since you looked: every live project's events of the kinds it shows, at or after `since`.
+  homeFeed: { input: z.object({ since: z.number().int().min(0), kind: z.enum(FEED_KINDS).nullable().optional(), limit: z.number().int().min(1).max(HOME_FEED_MAX).optional() }).strict(), output: typed<HomeFeed>(), ...RPC_TAGS.homeFeed },
+  // Insights over 4 or 12 weeks across the projects named, every project when none is: figures pooled on the server.
+  insightsAll: {
+    input: z.object({ weeks: z.union([z.literal(4), z.literal(12)]), from: z.number().int().min(0).optional(), to: z.number().int().min(0).optional(), slugs: z.array(slug).max(200).optional() }).strict(),
+    output: typed<InsightsAllView>(),
+    ...RPC_TAGS.insightsAll,
+  },
   threadInfo: { input: z.object({ threadId: z.string().min(1).max(200) }).strict(), output: typed<ThreadInfo | null>(), ...RPC_TAGS.threadInfo },
+  // The same for every thread whose header shows Loom's button, in one read; a thread that is not Loom's is left out.
+  threadInfos: { input: z.object({ threadIds: z.array(z.string().min(1).max(200)).max(200) }).strict(), output: typed<Record<string, ThreadInfo>>(), ...RPC_TAGS.threadInfos },
   reply: {
     input: z.object({ key, body: z.string().min(1).max(20_000), parentId: z.number().int().min(1).optional(), confirm }).strict(),
     output: typed<TicketDetail>(),

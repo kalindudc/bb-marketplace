@@ -95,7 +95,7 @@ export class FakePort implements BbPort {
   async setMetadata(threadId: string, set: Record<string, string | number | boolean | null>) {
     this.record("setMetadata", threadId, set);
   }
-  log(level: "info" | "warn" | "error", message: string) {
+  log(level: "debug" | "info" | "warn" | "error", message: string) {
     this.record("log", level, message);
   }
 
@@ -831,7 +831,7 @@ export function makeCtx(): EngineHarness & { db: Database.Database } {
   const host = new FakeHost();
   const projects = new Projects({ store, bb, now: clock.now, host });
   const kicks = { count: 0 };
-  const ctx: EngineCtx = { store, bb, now: clock.now, host: forgeBoundary(host, { backoffs: () => ctx.forgeBackoffs, now: clock.now }), hostDirect: host, kick: () => void (kicks.count += 1), forgeBackoffs: new Map() };
+  const ctx: EngineCtx = { store, bb, now: clock.now, host: forgeBoundary(host, { backoffs: () => ctx.forgeBackoffs, now: clock.now }), hostDirect: host, kick: () => void (kicks.count += 1), disposed: () => false, workerStopped: false, forgeBackoffs: new Map() };
   return { ctx, clock, db, store, bb, host, projects, kicks };
 }
 

@@ -106,7 +106,7 @@ describe("spawnWorker", () => {
         "- Work only in this worktree. Never push, merge, or edit a protected path.",
         "- Call loom_note({ text }) once for each milestone, so the human can follow along on the ticket.",
         "- Call loom_submit({ summary }) when every acceptance criterion holds, then end your turn. The plugin commits your work and runs the checks; you get the result as a message.",
-        "- Call loom_block({ reason, needs }) when you cannot continue without something from the human or the planner: say what is wrong and exactly what you need. Then end your turn.",
+        "- Call loom_block({ reason, needs }) when you cannot continue without something from the human or the planner: say what is wrong and exactly what you need. When they can answer by choosing, add question, options (2 to 4, each a label and its consequence) and recommended (the number of the one you pick). Then end your turn.",
         "- Do not commit yourself; the plugin does it. Do not run bb loom commands.",
       ].join("\n"),
       sectionId: "sec_1",

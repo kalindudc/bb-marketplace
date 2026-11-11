@@ -31,7 +31,7 @@ function TicketChip({ name, on, onPick }: { name: string; on: boolean; onPick(re
       data-ticket-chip
       aria-pressed={on}
       onClick={() => onPick(name)}
-      className={`cursor-pointer rounded-full border px-2 text-[11px] leading-5 [overflow-wrap:anywhere] ${on ? "border-primary bg-surface-selected text-foreground" : "border-border-seam text-muted-foreground hover:bg-state-hover hover:text-foreground"}`}
+      className={`cursor-pointer rounded-full border px-2 text-[11px] leading-5 [overflow-wrap:anywhere] ${on ? "border-primary bg-surface-selected text-foreground" : "border-border-seam text-[var(--loom-muted)] hover:bg-state-hover hover:text-foreground"}`}
     >
       {name}
     </button>
@@ -156,7 +156,7 @@ export function FilesPane({ view, highlighted, onPick, onClear }: { view: SpecVe
       .map(([folder, rows]) => (
         <div key={folder} data-folder={folder} className="space-y-0.5">
           <h5 className="text-xs font-semibold">
-            <span className={folder === "" ? "" : "font-mono [overflow-wrap:anywhere]"}>{folder === "" ? "Top level" : folder}</span> <span className="font-normal text-muted-foreground">· {rows.length}</span>
+            <span className={folder === "" ? "" : "font-mono [overflow-wrap:anywhere]"}>{folder === "" ? "Top level" : folder}</span> <span className="font-normal text-[var(--loom-muted)]">· {rows.length}</span>
           </h5>
           <ul className="space-y-0.5 border-l border-border-seam pl-2">
             {rows
@@ -173,10 +173,10 @@ export function FilesPane({ view, highlighted, onPick, onClear }: { view: SpecVe
                     className={`flex flex-wrap items-center gap-x-2 gap-y-1 rounded px-1.5 py-0.5 text-sm ${lit(row.tickets) ? "bg-surface-selected" : ""}`}
                   >
                     <Code>{row.name === "" ? "(the whole folder)" : row.name}</Code>
-                    {row.name === "**" && <span className="text-[11px] text-muted-foreground">everything in this folder</span>}
+                    {row.name === "**" && <span className="text-[11px] text-[var(--loom-muted)]">everything in this folder</span>}
                     {chips(row.tickets)}
-                    {share !== undefined && <span className={`${CHIP} ${share.loose ? "text-warning-text" : "text-muted-foreground"}`}>shared</span>}
-                    {changed && <span className="text-[11px] text-primary">changed in v{view.version}</span>}
+                    {share !== undefined && <span className={`${CHIP} ${share.loose ? "text-[var(--loom-warn)]" : "text-[var(--loom-muted)]"}`}>shared</span>}
+                    {changed && <span className="text-[11px] text-[var(--loom-link)]">changed in v{view.version}</span>}
                   </li>
                 );
               })}
@@ -189,10 +189,10 @@ export function FilesPane({ view, highlighted, onPick, onClear }: { view: SpecVe
       <section className="space-y-1.5">
         <h4 className={HEADING}>Shared files{shared.length > 0 && ` · ${shared.length}`}</h4>
         {shared.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No two tickets share a path, so none of them waits for another to finish with a file.</p>
+          <p className="text-sm text-[var(--loom-muted)]">No two tickets share a path, so none of them waits for another to finish with a file.</p>
         ) : (
           <>
-            <p className="text-xs text-muted-foreground">Tickets that share a path never run at the same time: they run in the order their dependencies set, or one at a time when there is none.</p>
+            <p className="text-xs text-[var(--loom-muted)]">Tickets that share a path never run at the same time: they run in the order their dependencies set, or one at a time when there is none.</p>
             <ul className="space-y-0.5">
               {shared.map((row) => (
                 <li key={fileKey(row.repo, row.glob)} data-shared={row.glob} data-repo={row.repo ?? undefined} data-highlighted={lit(row.tickets) || undefined} className={`rounded-md ${lit(row.tickets) ? "bg-surface-selected" : ""}`}>
@@ -201,7 +201,7 @@ export function FilesPane({ view, highlighted, onPick, onClear }: { view: SpecVe
                       {row.repo !== null && <RepoChip name={row.repo} />}
                       <Code>{row.glob}</Code>
                       {chips(row.tickets)}
-                      <span data-order data-unordered={row.loose || undefined} className={`text-xs ${row.loose ? "text-warning-text" : "text-muted-foreground"}`}>
+                      <span data-order data-unordered={row.loose || undefined} className={`text-xs ${row.loose ? "text-[var(--loom-warn)]" : "text-[var(--loom-muted)]"}`}>
                         {row.order}
                       </span>
                     </span>
@@ -230,14 +230,14 @@ export function FilesPane({ view, highlighted, onPick, onClear }: { view: SpecVe
                 type="button"
                 aria-pressed={sharedOnly === only}
                 onClick={() => setSharedOnly(only)}
-                className={`cursor-pointer rounded px-2 py-0.5 text-xs ${sharedOnly === only ? "bg-surface-selected font-semibold text-foreground" : "text-muted-foreground hover:bg-state-hover"}`}
+                className={`cursor-pointer rounded px-2 py-0.5 text-xs ${sharedOnly === only ? "bg-surface-selected font-semibold text-foreground" : "text-[var(--loom-muted)] hover:bg-state-hover"}`}
               >
                 {label}
               </button>
             ))}
           </div>
           {highlighted === null ? (
-            <span className="text-[11px] text-muted-foreground">Click a ticket to highlight the paths it may change.</span>
+            <span className="text-[11px] text-[var(--loom-muted)]">Click a ticket to highlight the paths it may change.</span>
           ) : (
             <>
               <span className="text-xs">The paths {highlighted} may change are highlighted.</span>
@@ -248,23 +248,23 @@ export function FilesPane({ view, highlighted, onPick, onClear }: { view: SpecVe
           )}
         </div>
         <div className="flex flex-wrap items-center gap-1">
-          <span className="text-[11px] text-muted-foreground">Paths per ticket:</span>
+          <span className="text-[11px] text-[var(--loom-muted)]">Paths per ticket:</span>
           {spec.ticket.map((ticket) => (
             <Noteable key={ticket.ref} paths={[`ticket[${ticket.ref}].scope`]} label={`${ticket.ref} › paths`}>
               <span className="inline-flex flex-wrap items-center gap-1">
                 <TicketChip name={ticket.ref} on={ticket.ref === highlighted} onPick={onPick} />
-                <span className="text-[11px] text-muted-foreground">{plural(ticket.scope.length, "path")}</span>
+                <span className="text-[11px] text-[var(--loom-muted)]">{plural(ticket.scope.length, "path")}</span>
               </span>
             </Noteable>
           ))}
         </div>
-        {groups.size === 0 && <p className="text-sm text-muted-foreground">No shared paths to show.</p>}
+        {groups.size === 0 && <p className="text-sm text-[var(--loom-muted)]">No shared paths to show.</p>}
         {multi
           ? [...groups].map(([repo, folders]) => (
               <section key={repo} data-repo-files={repo} aria-label={`Files in ${repo}`} className="space-y-1.5 rounded-md border border-border-seam p-2">
                 <h5 className="flex flex-wrap items-center gap-1.5 text-sm font-semibold">
                   <RepoChip name={repo!} />
-                  <span className="text-xs font-normal text-muted-foreground">{plural([...folders.values()].reduce((count, rows) => count + rows.length, 0), "path")}</span>
+                  <span className="text-xs font-normal text-[var(--loom-muted)]">{plural([...folders.values()].reduce((count, rows) => count + rows.length, 0), "path")}</span>
                 </h5>
                 {folderList(repo, folders)}
               </section>
@@ -276,9 +276,9 @@ export function FilesPane({ view, highlighted, onPick, onClear }: { view: SpecVe
         <Noteable paths={["scope.enforce"]} label="scope › enforce">
           <span className={HEADING}>Protected paths · enforce: {spec.scope.enforce}</span>
         </Noteable>
-        {multi && <p className="pl-2 text-[11px] text-muted-foreground">These apply in every repo; a repo's own protected paths are under Project & limits.</p>}
+        {multi && <p className="pl-2 text-[11px] text-[var(--loom-muted)]">These apply in every repo; a repo's own protected paths are under Project & limits.</p>}
         {spec.scope.protected.length === 0 ? (
-          <p className="pl-2 text-sm text-muted-foreground">No protected paths.</p>
+          <p className="pl-2 text-sm text-[var(--loom-muted)]">No protected paths.</p>
         ) : (
           <div className="flex flex-wrap gap-1">
             {spec.scope.protected.map((glob, index) => (

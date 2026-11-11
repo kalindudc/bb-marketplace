@@ -1,21 +1,26 @@
 // The page's server side: reads over the store and changes through the same engine methods the CLI calls.
 import { finalBadge } from "./final-review";
+import { askOfPosts } from "./block-ask";
 import { experimental_PluginRpcRefusal as PluginRpcRefusal, type BbPluginApi, type ExperimentalPluginRpcHandlersWithContext } from "@get-bb/plugin-sdk";
 import { badgeView } from "./badge";
 import { humanAction } from "./cli";
-import { rpcContract, type AgentRow, type ForgeProfileView, type BoardCard, type RetryView, type ProjectView, type ReviewerLookupView, type SpecSummary, type StartWaitView, type ThreadInfo, type TicketDetail, type TicketPr } from "./contract";
+import { rpcContract, type AgentRow, type ForgeProfileView, type BoardCard, type Prereq, type RetryView, type ProjectView, type ReviewerLookupView, type SpecSummary, type StartWaitView, type ThreadInfo, type TicketDetail, type TicketPr } from "./contract";
 import type { EventRow, PostRow, ProjectRow, ReviewRow, Store, ThreadRow, TicketRow } from "./db/store";
 import { stripAnsi, ticketActivity } from "./activity";
 import { Changes } from "./changes";
 import { replyRecipient, type Engine } from "./engine";
 import { projectHealth } from "./health";
-import { homeView } from "./home";
+import { homeView, type CardsOf } from "./home";
+import { homeFeed } from "./home-feed";
 import { projectInsights } from "./insights";
+import { insightsAll } from "./insights-all";
+import { modelLabel } from "./thread-model";
 import { backedOffUntil, forgeHostOf, nextPollAt } from "./forge-waits";
 import { retryOf } from "./retry-wait";
 import { mergeOrderOf } from "./merge-order";
-import { rolloutOf } from "./rollout";
+import { rolloutOf, rolloutOfTicket } from "./rollout";
 import { askOf, forgeRoundsSinceRequeue, PR_TEXT_MINUTES, statusOf } from "./pull-requests";
+import { readSub } from "./sub-state";
 import { prTextFor } from "./pr-text";
 import { followsFeedback, prSettings, repoSettings } from "./repos";
 import { computeMetrics } from "./metrics";
@@ -47,6 +52,7 @@ import { publishWaitOf, publishWaitsOf } from "./publish";
 import { checkWaitOf } from "./check-wait";
 import { forgeTest, forgeTestPassed, formatForgeTest } from "./forge-check";
 import { deleteProfile, importProfiles, parseProfile, profileNamedBy, profilesToml, profileUses, saveProfile } from "./forge-profiles";
+import { gateOf } from "./gate";
 
 const THROTTLE_MS = 300;
 
@@ -96,9 +102,6 @@ export function specSummary(toml: string, profiles: ForgeProfiles): SpecSummary 
   };
 }
 
-/** "provider / model" with only the parts that are set, or null when neither is. */
-const modelLabel = ({ provider, model }: { provider?: string; model?: string }) => [provider, model].filter((part) => part !== undefined).join(" / ") || null;
-
 /** Every thread row of a project: spawning, active and ending rows first, then the newest. A worker shows when it times out only while its ticket is being worked on and not waiting for a worker slot, as the engine's timeout rule reads. */
 export function agentRows(threads: ThreadRow[], tickets: TicketRow[], spec: Spec | null): AgentRow[] {
   const byId = new Map(tickets.map((ticket) => [ticket.id, ticket]));
@@ -120,7 +123,7 @@ export function agentRows(threads: ThreadRow[], tickets: TicketRow[], spec: Spec
         tokens: row.tokens,
         rateLimitRetries: row.rate_limit_retries,
         reviewRound: row.review_round,
-        model: spec === null || row.role === "planner" ? null : modelLabel(spec.agents[row.role]),
+        model: row.model ?? (spec === null || row.role === "planner" ? null : modelLabel(spec.agents[row.role])),
         timeoutAt: timing ? row.clock_at! + spec.agents.ticket_timeout_minutes * 60_000 : null,
       };
     });
@@ -159,11 +162,27 @@ function queueOf(lites: TicketLite[], stack = false): (lite: TicketLite) => { re
   };
 }
 
+/** What a ticket waits on, each key once per kind and only among `keys`: depends_on is work, so a key there is not also merge. */
+export function prereqsOf(ticket: Pick<TicketRow, "deps_json" | "merge_after_json" | "rollout_json">, keys: ReadonlySet<string>): Prereq[] {
+  const work = (JSON.parse(ticket.deps_json) as string[]).filter((key) => keys.has(key));
+  const merge = readSub(ticket, "merge_after_json").filter((key) => keys.has(key) && !work.includes(key));
+  const live = (rolloutOfTicket(ticket)?.requires_live ?? []).filter((key) => keys.has(key));
+  return [...new Set(work)].map((key): Prereq => ({ key, kind: "work" })).concat([...new Set(merge)].map((key) => ({ key, kind: "merge" })), [...new Set(live)].map((key) => ({ key, kind: "live" })));
+}
+
+/** A blocked card's ask, from the block post it is blocked by: its question and how many options it offers. */
+const cardAsk = (store: Store | null, ticket: TicketRow): BoardCard["ask"] => {
+  if (store === null || ticket.state !== "blocked") return null;
+  const ask = askOfPosts(store.posts(ticket.id));
+  return ask === null ? null : { question: ask.question, options: ask.options.length };
+};
+
 /** One card per ticket. A queued ticket that is not ready says why, from a single readyTickets pass; `spec` says whether the project stacks. */
 export function boardCards(tickets: TicketRow[], threads: ThreadRow[], spec: Spec | null = null, store: Store | null = null, now = Date.now()): BoardCard[] {
   const lites = tickets.map(toLite);
   const stack = spec !== null && stacking(spec);
   const queue = queueOf(lites, stack);
+  const keys = new Set(tickets.map((ticket) => ticket.key));
   return tickets.map((ticket, index) => {
     const lite = lites[index]!;
     const live = threads.filter((row) => row.ticket_id === ticket.id && row.state === "active" && row.thread_id !== null).sort((a, b) => Number(b.role === "worker") - Number(a.role === "worker"));
@@ -193,6 +212,8 @@ export function boardCards(tickets: TicketRow[], threads: ThreadRow[], spec: Spe
       draft: draftStateOf(ticket),
       publishWait: spec === null || store === null ? null : publishWaitOf(store, spec, ticket, now, checkWaitOf({})),
       releaseRequested: store === null ? null : releaseRequestOf(store, ticket),
+      prereqs: prereqsOf(ticket, keys),
+      ask: cardAsk(store, ticket),
     };
   });
 }
@@ -229,7 +250,7 @@ const RETRY_STEPS: Partial<Record<TicketRow["state"], ReadonlyArray<RetryView["s
 export function retryView(ticket: TicketRow): RetryView | null {
   for (const step of RETRY_STEPS[ticket.state] ?? []) {
     const wait = retryOf(ticket, step);
-    if (wait !== null) return { step, failures: wait.failures, since: wait.since, until: wait.until, message: wait.message };
+    if (wait !== null) return { step, failures: wait.failures, since: wait.since, until: wait.until, message: wait.message, kind: wait.kind ?? null };
   }
   return null;
 }
@@ -300,7 +321,18 @@ export function draftCards(spec: Spec, at: number): BoardCard[] {
     draft: null,
     publishWait: null,
     releaseRequested: null,
+    prereqs: draftPrereqs(spec.ticket[index]!, keyOf),
+    ask: null,
   }));
+}
+
+/** A draft ticket's prerequisites by kind, keyed as approval will key them. */
+function draftPrereqs(ticket: Spec["ticket"][number], keyOf: ReadonlyMap<string, string>): Prereq[] {
+  const key = (ref: string) => keyOf.get(ref);
+  const work = ticket.depends_on.flatMap((ref) => key(ref) ?? []);
+  const merge = (ticket.merge_after ?? []).filter((ref) => !ticket.depends_on.includes(ref)).flatMap((ref) => key(ref) ?? []);
+  const live = (ticket.rollout?.requires_live ?? []).flatMap((ref) => key(ref) ?? []);
+  return [...work.map((k): Prereq => ({ key: k, kind: "work" })), ...merge.map((k): Prereq => ({ key: k, kind: "merge" })), ...live.map((k): Prereq => ({ key: k, kind: "live" }))];
 }
 
 // A refusal is an answer the page shows, not a crash bb records against the plugin.
@@ -364,8 +396,10 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
     const pendingSpec = past === null && project.pending_version !== null ? readSpec(store.specVersion(project.id, project.pending_version)!.spec_json, store) : null;
     const nextPhase = pendingSpec === null ? undefined : phasesOf(pendingSpec, tickets)?.find((phase) => phase.state === "planned");
     const nextTickets = nextPhase === undefined ? [] : (pendingSpec?.ticket.filter((ticket) => ticket.phase === nextPhase.ref) ?? []);
+    const phaseFill = nextPhase === undefined || nextTickets.length === 0 ? null : { ref: nextPhase.ref, title: nextPhase.title, count: nextTickets.length };
     return {
       phases,
+      phaseFill: phaseFill === null || project.pending_version === null ? null : { ...phaseFill, version: project.pending_version },
       overview,
       board,
       metrics,
@@ -378,7 +412,7 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
       prUrl: project.pr_url,
       next: nextStepOf({
         phases,
-        phaseFill: nextPhase === undefined || nextTickets.length === 0 ? null : { ref: nextPhase.ref, title: nextPhase.title, count: nextTickets.length },
+        phaseFill,
         overview,
         board,
         version: spec.version,
@@ -398,6 +432,7 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
       mergeOrder: past === null && approved !== null ? mergeOrderOf(approved, tickets, new Map(tickets.map((ticket) => [ticket.key, finalBadge(store, approved, ticket)] as const)), publishWaitsOf(store, approved, at, engine.ctx.checkWait?.() ?? checkWaitOf({}))) : null,
       // What is live is kept only as it is now, so a rewound view leaves the rollout out, as it does the merge order.
       rollout: past === null && approved !== null ? rolloutOf(approved, tickets, store.rolloutMarks(project.id), at) : null,
+      gate: pendingSpec === null || approved === null ? null : gateOf(store, project, approved, pendingSpec, tickets, at),
     };
   };
 
@@ -507,6 +542,8 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
       draft: draftStateOf(ticket),
       publishWait: past === null ? publishWaitOf(store, specOf(store, project), ticket, now(), engine.ctx.checkWait?.() ?? checkWaitOf({})) : null,
       releaseRequested: past === null ? releaseRequestOf(store, ticket) : null,
+      prereqs: prereqsOf(ticket, new Set((past?.tickets ?? store.tickets(project.id)).map((row) => row.key))),
+      ask: ticket.state === "blocked" ? askOfPosts(posts) : null,
       activity: ticketActivity({ state: ticket.state, posts, threads, runs }),
       at: past?.eventId ?? null,
       now: past?.at ?? now(),
@@ -522,12 +559,27 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
     return humanAction({ projects, store }, {}, action, data, fn);
   };
 
+  const cards: CardsOf = (_project, tickets, threads, spec) => boardCards(tickets, threads, spec, store, now());
+  /** What Loom knows of a bb thread: its role, its ticket or project and their state; null for a thread that is not Loom's. */
+  const threadInfoOf = (threadId: string): ThreadInfo | null => {
+    const row = store.threadByThreadId(threadId);
+    const project = row === null ? null : store.project(row.project_id);
+    if (row === null || project === null) return store.planning(threadId)?.ended_at === null ? { role: "planner", slug: null, key: null, state: "planning", project: null, phase: null, attempt: null } : null;
+    const named = { key: project.key, name: project.name };
+    if (row.role === "planner") return { role: "planner", slug: project.slug, key: null, state: project.state, project: named, phase: null, attempt: null };
+    const ticket = row.ticket_id === null ? null : store.ticket(row.ticket_id);
+    if (ticket === null) return null;
+    const phases = ticket.phase === null || project.approved_version === null ? null : (specOf(store, project).phase ?? null);
+    const index = phases?.findIndex((phase) => phase.ref === ticket.phase) ?? -1;
+    const phase = phases === null || index === -1 ? null : { index, count: phases.length, title: phases[index]!.title };
+    return { role: row.role, slug: project.slug, key: ticket.key, state: ticket.state, project: named, phase, attempt: ticket.attempt };
+  };
   bb.rpc.register(rpcContract, refusing({
     projects: () => projects.namedList(),
-    badge: () => badgeView({ store, projects, now: now() }),
+    badge: () => badgeView({ store, projects, now: now(), cards }),
     home: async () => {
       const names = await projects.bbProjectNames();
-      const view = homeView({ store, projects, now: now() });
+      const view = homeView({ store, projects, now: now(), cards });
       return { ...view, projects: view.projects.map((row) => withRepoNames(row, names)) };
     },
     project: ({ slug, at }) => projectView(slug, at),
@@ -546,6 +598,12 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
       return projectInsights(past ?? rows, { now: past?.at ?? now(), window, strategy: spec.merge.strategy, maxWorkers: spec.agents.max_workers, maxTokens: spec.budget.max_tokens ?? null });
     },
     timeline: ({ slug }) => projectTimeline(rowsOf(store, projects.require(slug)), now()),
+    homeFeed: ({ since, kind, limit }) => homeFeed(store, since, { kind: kind ?? null, ...(limit === undefined ? {} : { limit }) }),
+    insightsAll: async ({ weeks, from, to, slugs }) => {
+      const names = await projects.bbProjectNames();
+      const all = store.projects().map((project) => ({ project, tickets: store.tickets(project.id), events: store.projectEvents(project.id), threads: store.threadsForProject(project.id), reviews: store.reviewsForProject(project.id) }));
+      return insightsAll(all, { now: now(), weeks, range: from === undefined || to === undefined ? null : { from, to }, slugs, names });
+    },
     planning: () => projects.planningSessions(),
     planningSession: ({ threadId }) => projects.planningSession(threadId),
     plannerView: ({ threadId }) => plannerView({ store, projects }, threadId, now()),
@@ -612,14 +670,11 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
       await act(ctx, "notes", { slug, notes }, () => projects.sendNotes(slug, notes, includeOlder === true));
       return specVersionView({ store, projects }, slug);
     },
-    threadInfo: ({ threadId }): ThreadInfo | null => {
-      const row = store.threadByThreadId(threadId);
-      const project = row === null ? null : store.project(row.project_id);
-      if (row === null || project === null) return store.planning(threadId)?.ended_at === null ? { role: "planner", slug: null, key: null, state: "planning" } : null;
-      if (row.role === "planner") return { role: "planner", slug: project.slug, key: null, state: project.state };
-      const ticket = row.ticket_id === null ? null : store.ticket(row.ticket_id);
-      return ticket === null ? null : { role: row.role, slug: project.slug, key: ticket.key, state: ticket.state };
-    },
+    threadInfo: ({ threadId }) => threadInfoOf(threadId),
+    threadInfos: ({ threadIds }) => Object.fromEntries([...new Set(threadIds)].flatMap((threadId) => {
+      const info = threadInfoOf(threadId);
+      return info === null ? [] : [[threadId, info] as const];
+    })),
     reply: async ({ key, body, parentId }, ctx) => {
       await act(ctx, "post", { key }, () => engine.humanPost(key, body, parentId));
       return ticketDetail(key);

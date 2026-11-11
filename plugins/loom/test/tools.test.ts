@@ -422,6 +422,32 @@ describe("worker and planner tools", () => {
     expect(isError(await call("loom_block", { reason: "x", needs: "y" }, "thr_plan"))).toBe(true);
   });
 
+  it("loom_block keeps a structured ask on the block post, and refuses a recommendation that names no option", async () => {
+    const workerId = await startWorkerFor("CSV-1");
+    const options = [{ label: "Generate rows on the fly", consequence: "no disk" }, { label: "Nightly runner for 2M rows", consequence: "nightly runner has 200 GB" }, { label: "Lower the check to 1M rows" }];
+    const refused = await call("loom_block", { reason: "The fixture does not fit", needs: "A decision", options, recommended: 4 }, workerId);
+    expect(isError(refused)).toBe(true);
+    expect(text(refused)).toContain("recommended is 4, but there are 3 options");
+    expect(ticketNamed("CSV-1").state).toBe("working");
+    // An option of spaces is no option, and a recommendation needs options to name, even with no question either.
+    await expect(call("loom_block", { reason: "The fixture does not fit", needs: "A decision", options: [{ label: "  " }, { label: "Nightly runner" }] }, workerId)).rejects.toThrow("options.0.label");
+    const lone = await call("loom_block", { reason: "The fixture does not fit", needs: "A decision", recommended: 1 }, workerId);
+    expect(isError(lone)).toBe(true);
+    expect(text(lone)).toContain("recommended is 1, but there are 0 options");
+    expect(ticketNamed("CSV-1").state).toBe("working");
+    const result = await call("loom_block", { reason: "The fixture does not fit", needs: "A decision", question: "How should the 2M-row check run?", options, recommended: 2 }, workerId);
+    expect(isError(result)).toBe(false);
+    await settle();
+    const ticket = ticketNamed("CSV-1");
+    expect(ticket).toMatchObject({ state: "blocked", blocked_reason: "The fixture does not fit. Needs: A decision" });
+    const block = host.store.posts(ticket.id).filter((post) => post.kind === "block").at(-1)!;
+    expect(JSON.parse(block.data_json)).toEqual({
+      reason: "The fixture does not fit",
+      needs: "A decision",
+      ask: { question: "How should the 2M-row check run?", options: [{ label: "Generate rows on the fly", consequence: "no disk" }, { label: "Nightly runner for 2M rows", consequence: "nightly runner has 200 GB" }, { label: "Lower the check to 1M rows", consequence: null }], recommended: 1 },
+    });
+  });
+
   it("loom_block is refused in a text-only round, whose findings Loom applies once the worker proposes the text, and works again after it", async () => {
     harness = await setup((doc) => {
       doc.merge = { strategy: "pr" };

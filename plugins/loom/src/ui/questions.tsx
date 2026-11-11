@@ -184,7 +184,7 @@ export function PlannerQuestions({ threadId, rows, error, respond }: { threadId:
   if (rows.length === 0 && error === null) return null;
   return (
     <>
-      {error !== null && <p role="alert" className="text-xs text-destructive-text">Could not read the planner's questions: {error}</p>}
+      {error !== null && <p role="alert" className="text-xs text-[var(--loom-bad)]">Could not read the planner's questions: {error}</p>}
       {rows.map((row) => {
         const questions = row.origin.rendererId === ASK_RENDERER_ID ? questionsOf(row.payload.data) : null;
         if (questions === null) {
@@ -260,7 +260,7 @@ function QuestionCard({ id, title, questions, send }: { id: string; title: strin
       <div className="flex flex-wrap items-center gap-2">
         <PlannerMark />
         <h3 className="text-sm font-semibold">{paged ? `The planner asks ${questions.length} questions` : "The planner asks a question"}</h3>
-        <span className="text-xs text-muted-foreground">{title}</span>
+        <span className="text-xs text-[var(--loom-muted)]">{title}</span>
       </div>
       {paged && (
         <div role="tablist" aria-label="Questions" className="flex flex-wrap gap-1">
@@ -274,15 +274,15 @@ function QuestionCard({ id, title, questions, send }: { id: string; title: strin
                 setIndex(n);
                 setReviewing(false);
               }}
-              className={`inline-flex cursor-pointer items-center gap-1.5 rounded-full border py-0.5 pr-2.5 pl-1 text-xs ${!reviewing && n === index ? "border-foreground font-semibold text-foreground" : "border-border-seam text-muted-foreground hover:bg-state-hover"}`}
+              className={`inline-flex cursor-pointer items-center gap-1.5 rounded-full border py-0.5 pr-2.5 pl-1 text-xs ${!reviewing && n === index ? "border-foreground font-semibold text-foreground" : "border-border-seam text-[var(--loom-muted)] hover:bg-state-hover"}`}
             >
-              <span aria-hidden className={`inline-flex size-4 items-center justify-center rounded-full text-[10px] ${isAnswered(entry) ? "bg-success text-success-foreground" : "bg-surface-selected"}`}>
+              <span aria-hidden className={`inline-flex size-4 items-center justify-center rounded-full text-[11px] ${isAnswered(entry) ? "border border-[var(--loom-ok)] text-[var(--loom-ok)]" : "bg-surface-selected"}`}>
                 {isAnswered(entry) ? "✓" : n + 1}
               </span>
               {entry.shortLabel}
             </button>
           ))}
-          <button type="button" role="tab" aria-selected={reviewing} onClick={() => setReviewing(true)} className={`inline-flex cursor-pointer items-center rounded-full border px-2.5 py-0.5 text-xs ${reviewing ? "border-foreground font-semibold text-foreground" : "border-border-seam text-muted-foreground hover:bg-state-hover"}`}>
+          <button type="button" role="tab" aria-selected={reviewing} onClick={() => setReviewing(true)} className={`inline-flex cursor-pointer items-center rounded-full border px-2.5 py-0.5 text-xs ${reviewing ? "border-foreground font-semibold text-foreground" : "border-border-seam text-[var(--loom-muted)] hover:bg-state-hover"}`}>
             Review
           </button>
         </div>
@@ -291,11 +291,11 @@ function QuestionCard({ id, title, questions, send }: { id: string; title: strin
         <dl data-question-review className="divide-y divide-dashed divide-border-seam text-sm">
           {questions.map((entry, n) => (
             <div key={entry.id} className="grid grid-cols-[7rem_minmax(0,1fr)_auto] items-baseline gap-3 py-1.5">
-              <dt className="text-xs text-muted-foreground">{entry.shortLabel}</dt>
-              <dd className={isAnswered(entry) ? "" : "text-warning-text"}>{isAnswered(entry) ? labelsOf(entry).join(", ") : "Not answered yet"}</dd>
+              <dt className="text-xs text-[var(--loom-muted)]">{entry.shortLabel}</dt>
+              <dd className={isAnswered(entry) ? "" : "text-[var(--loom-warn)]"}>{isAnswered(entry) ? labelsOf(entry).join(", ") : "Not answered yet"}</dd>
               <button
                 type="button"
-                className="cursor-pointer text-xs text-primary hover:underline"
+                className="cursor-pointer text-xs text-[var(--loom-link)] hover:underline"
                 onClick={() => {
                   setIndex(n);
                   setReviewing(false);
@@ -309,9 +309,9 @@ function QuestionCard({ id, title, questions, send }: { id: string; title: strin
       ) : (
         <fieldset key={question.id} className="space-y-2">
           <legend className="text-base font-semibold">{question.prompt}</legend>
-          <p className="text-xs text-muted-foreground">{question.multiSelect ? "Pick any that apply" : "Pick one"}</p>
+          <p className="text-xs text-[var(--loom-muted)]">{question.multiSelect ? "Pick any that apply" : "Pick one"}</p>
           {question.context !== undefined && (
-            <details className="text-xs text-muted-foreground">
+            <details className="text-xs text-[var(--loom-muted)]">
               <summary className="cursor-pointer select-none">Why it asks</summary>
               <div className="mt-1 rounded-md border border-border-seam p-2">
                 <Markdown content={question.context} className="text-xs [overflow-wrap:anywhere]" />
@@ -328,9 +328,9 @@ function QuestionCard({ id, title, questions, send }: { id: string; title: strin
                       {on ? "✓" : ""}
                     </span>
                     {option.label}
-                    {option.recommended === true && <span className="rounded-sm bg-success/15 px-1 text-[10px] text-success">Recommended</span>}
+                    {option.recommended === true && <span className="rounded-sm bg-success/15 px-1 text-[11px] text-[var(--loom-ok)]">Recommended</span>}
                   </span>
-                  {option.description !== undefined && <span className="text-xs text-muted-foreground">{option.description}</span>}
+                  {option.description !== undefined && <span className="text-xs text-[var(--loom-muted)]">{option.description}</span>}
                 </button>
               );
             })}
@@ -349,7 +349,7 @@ function QuestionCard({ id, title, questions, send }: { id: string; title: strin
           )}
         </fieldset>
       )}
-      {error !== null && <p role="alert" className="text-xs text-destructive-text">{error}</p>}
+      {error !== null && <p role="alert" className="text-xs text-[var(--loom-bad)]">{error}</p>}
       <div className="flex flex-wrap items-center gap-2 border-t border-border-seam pt-2">
         {paged && (
           <button type="button" className={BUTTON} disabled={!reviewing && index === 0} onClick={() => (reviewing ? setReviewing(false) : setIndex(index - 1))}>
@@ -357,7 +357,7 @@ function QuestionCard({ id, title, questions, send }: { id: string; title: strin
           </button>
         )}
         {paged && (
-          <span className="text-xs text-muted-foreground">
+          <span className="text-xs text-[var(--loom-muted)]">
             {answered} of {questions.length} answered
           </span>
         )}

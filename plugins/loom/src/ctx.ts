@@ -14,6 +14,8 @@ export interface EngineCtx extends Ctx {
   /** The host port without the forge gate, for a forge profile's test, which reads what the forge says now (forge-gate.ts). */
   hostDirect: HostPort;
   kick(): void;
+  disposed(): boolean;
+  workerStopped: boolean;
   /** Forge hosts that rate-limited Loom's pull request reads, for every project; in memory only. */
   forgeBackoffs: HostBackoffs;
   /** The pull request reads the human's syncs ask for and follow (pr-sync.ts); in memory only. */
@@ -27,6 +29,8 @@ export interface EngineCtx extends Ctx {
   /** The command that says what a thread used, on top of bb's usage events; Loom's usageCommand setting. Empty for none. */
   usageCommand?: () => string;
 }
+
+export const passStopped = (ctx: EngineCtx): boolean => ctx.disposed() || ctx.workerStopped;
 
 export const signatureOf = (ctx: EngineCtx): string => ctx.commentSignature?.() ?? COMMENT_SIGNATURE;
 

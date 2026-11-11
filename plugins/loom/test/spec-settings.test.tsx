@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, waitFor, within } from "@testing-library/react";
 import { loadPluginApp, renderSlot, type PluginRpcTestHandlers } from "@get-bb/plugin-sdk/testing/app";
 import type { PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
@@ -8,6 +8,7 @@ import { parseSpec, specSchema, type Spec } from "../src/spec";
 import { specDiff } from "../src/spec-diff";
 import { isUnder, pathNamesOf } from "../src/spec-paths";
 import { labelOf } from "../src/ui/spec-review-kit";
+import { SpecPage } from "../src/ui/spec-page";
 import { reloadRemembered } from "../src/ui/remember";
 import { overview, projectView, specVersionView } from "./fixtures";
 import { phased } from "./phase-fixtures";
@@ -257,7 +258,10 @@ const handlers = (over: Partial<Handlers>): Handlers => ({
   runOutput: unexpected,
   insights: unexpected,
   timeline: unexpected,
+  insightsAll: unexpected,
   threadInfo: () => null,
+  threadInfos: () => ({}),
+  homeFeed: () => ({ rows: [], counts: { shipped: 0, sentBack: 0, blocked: 0, asks: 0, phase: 0, you: 0 }, matched: 0, partial: [] }),
   reply: unexpected,
   ticketAction: unexpected,
   confirmMerge: unexpected,
@@ -335,6 +339,11 @@ function missedJumps(slot: Slot, paths: readonly string[]): string[] {
   return missed;
 }
 const versionOf = (spec: Spec, compared: Spec): SpecVersionView => specVersionView({ spec, toml: "", compared: { version: 1, status: "superseded", spec: compared }, changes: null });
+const walkPaths = (spec: Spec) => specDiff(skeleton(spec), spec).filter((change) => change.kind !== "list" || change.steps.length > 0).map((change) => change.path);
+const walkSection = (path: string) => {
+  const [table, field] = path.split(".");
+  return field === "forge" ? `${table}.forge` : table!;
+};
 
 describe("spec settings", () => {
   it("sets every key the spec schema has in one of the fixtures, so the walk below reaches every setting", () => {
@@ -350,25 +359,40 @@ describe("spec settings", () => {
   it("draws every phase field and ticket phase as a commentable part", async () => {
     const spec = phasedSpec();
     const paths = specDiff(skeleton(spec), spec).map((change) => change.path).filter((path) => path.startsWith("phase[") || path.endsWith(".phase"));
-    const slot = await openSpec(versionOf(spec, skeleton(spec)));
-    entire(slot);
+    const before = { ...spec, ticket: spec.ticket.map(({ phase, ...ticket }) => ticket) };
+    delete before.phase;
+    expect(specDiff(before, spec).map((change) => change.path)).toEqual(paths);
+    const slot = renderSlot<Parameters<typeof SpecPage>[0], typeof rpcContract>({ component: SpecPage }, { slug: "csv" }, { pluginId: "loom", rpc: handlers({ specVersion: () => versionOf(spec, before) }) });
+    mounts.push(slot);
+    await waitFor(() => expect(page(slot)).not.toBeNull());
     expect(missedJumps(slot, paths)).toEqual([]);
   });
 
-  it.each(FIXTURES)("draws every part of %s spec that sets every setting, so What changed goes to each change and the human can comment on it", async (strategy, fixture) => {
-    const spec = fixture();
-    const changes = specDiff(skeleton(spec), spec).filter((change) => change.kind !== "list" || change.steps.length > 0);
-    // The fixture really sets the settings added since Loom 0.24, so the walk below covers them.
-    const paths = changes.map((change) => change.path);
-    const expected = strategy === "a merging" ? ["merge.publish.when", "merge.forge.auto_merge.method", "merge.forge.auto_merge.comment", "merge.forge.auto_merge.rejected", "merge.forge.reviewers[0].users", "repo[0].forge.auto_merge.comment", "repo[1].forge.merge"] : strategy === "an integration" ? ["merge.remote", "checks.after_merge", "repo[0].after_merge"] : ["merge.forge.retarget", "merge.forge.merge", "merge.forge.auto_merge.require_live", "merge.forge.reviewers[1].users", "repo[0].forge.auto_merge.max_attempts", "repo[1].forge.reviewers[0].count", "merge.forge.after_push", "merge.refresh_behind", "merge.git_network_timeout_seconds", "checks.ci", "environment.machine.inputs.size", "repo[1].forge.after_push", "repo[0].deploy.on_merge", "repo[1].git_network_timeout_seconds", "rollout.stage[0].soak", "rollout.milestone[0].check", "rollout.window[0].note", "ticket[csv-export].rollout.requires_live", "ticket[csv-export].environment.inputs.sparse"];
-    for (const path of expected) {
-      expect(paths).toContain(path);
-    }
-    const slot = await openSpec(versionOf(spec, skeleton(spec)));
-    entire(slot);
-    expect(missedJumps(slot, paths)).toEqual([]);
-    // About 150 jumps, each a render of the whole page; a loaded machine needs more than 30 seconds for them.
-  }, 60_000);
+  for (const [strategy, fixture] of FIXTURES) {
+    const allPaths = walkPaths(fixture());
+    const sections = [...new Set(allPaths.map(walkSection))].map((section) => ({ section, count: allPaths.filter((path) => walkSection(path) === section).length }));
+    describe(`${strategy} spec's commentable sections`, () => {
+      it("covers every changed path exactly once and includes every expected setting", () => {
+        const paths = walkPaths(fixture());
+        const expected = strategy === "a merging" ? ["merge.publish.when", "merge.forge.auto_merge.method", "merge.forge.auto_merge.comment", "merge.forge.auto_merge.rejected", "merge.forge.reviewers[0].users", "repo[0].forge.auto_merge.comment", "repo[1].forge.merge"] : strategy === "an integration" ? ["merge.remote", "checks.after_merge", "repo[0].after_merge"] : ["merge.forge.retarget", "merge.forge.merge", "merge.forge.auto_merge.require_live", "merge.forge.reviewers[1].users", "repo[0].forge.auto_merge.max_attempts", "repo[1].forge.reviewers[0].count", "merge.forge.after_push", "merge.refresh_behind", "merge.git_network_timeout_seconds", "checks.ci", "environment.machine.inputs.size", "repo[1].forge.after_push", "repo[0].deploy.on_merge", "repo[1].git_network_timeout_seconds", "rollout.stage[0].soak", "rollout.milestone[0].check", "rollout.window[0].note", "ticket[csv-export].rollout.requires_live", "ticket[csv-export].environment.inputs.sparse"];
+        for (const path of expected) {
+          expect(paths).toContain(path);
+        }
+        expect(sections.flatMap(({ section }) => paths.filter((path) => walkSection(path) === section)).sort()).toEqual([...paths].sort());
+      });
+
+      it.each(sections)("draws every part of $section ($count changes), so What changed reaches a commentable part", async ({ section, count }) => {
+        const spec = fixture();
+        const paths = walkPaths(spec).filter((path) => walkSection(path) === section);
+        expect(paths).toHaveLength(count);
+        const slot = renderSlot<Parameters<typeof SpecPage>[0], typeof rpcContract>({ component: SpecPage }, { slug: "csv" }, { pluginId: "loom", rpc: handlers({ specVersion: () => versionOf(spec, skeleton(spec)) }) });
+        mounts.push(slot);
+        await waitFor(() => expect(page(slot)).not.toBeNull());
+        entire(slot);
+        expect(missedJumps(slot, paths)).toEqual([]);
+      });
+    });
+  }
 
   it("shows ci left unset as what the forge gives: relied on with gh, ignored on a command forge without feedback", async () => {
     const onForge = (forge: Record<string, unknown>) => valid(specToml((doc) => void (doc.merge = { strategy: "pr", forge })));
@@ -595,5 +619,56 @@ describe("spec settings", () => {
     expect(label("merge.refresh_behind")).toBe("Keep pull requests fresh");
     expect(label("ticket[csv-export].rollout.requires_live")).toBe("csv-export › rollout › requires live");
     expect(labelOf("repo[0].checks", ["web"])).toBe("web › checks");
+  });
+});
+
+describe("Spec's value picker", () => {
+  it("gives a touch screen the one 44 px version picker at any width, and a mouse the row of versions", async () => {
+    const fine = await openSpec(specVersionView());
+    expect(page(fine).querySelector("[data-version-select]")).toBeNull();
+    expect(within(page(fine)).getByRole("group", { name: "Spec versions" })).toBeTruthy();
+    fine.lifecycle.unmount();
+    mounts.splice(mounts.indexOf(fine), 1);
+    vi.stubGlobal("matchMedia", (query: string) => ({ matches: query === "(pointer: coarse)", media: query, addEventListener() {}, removeEventListener() {} }));
+    try {
+      const coarse = await openSpec(specVersionView());
+      expect(page(coarse).querySelector("[data-version-select]")).not.toBeNull();
+      expect(within(page(coarse)).queryByRole("group", { name: "Spec versions" })).toBeNull();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("lists every value a section takes a comment on, each a row of its own, and opens the same comment box as the value", async () => {
+    const slot = await openSpec(specVersionView());
+    entire(slot);
+    const settings = section(slot, "settings");
+    const values = [...settings.querySelectorAll<HTMLElement>("[data-comment-target]")];
+    expect(values.length).toBeGreaterThan(10);
+    const pickers = [...settings.querySelectorAll<HTMLElement>("[data-value-picker]")];
+    expect(pickers.map((picker) => picker.dataset.placement)).toEqual(["header", "bar"]);
+    fireEvent.click(pickers[1]!);
+    const sheet = await slot.findByRole("dialog", { name: /^Comment on a value in / });
+    const rows = [...sheet.querySelectorAll<HTMLElement>("[data-pick]")];
+    expect(rows.map((row) => row.dataset.pick)).toEqual(values.map((value) => value.dataset.commentTarget));
+    const find = within(sheet).getByRole("textbox", { name: /^Find a value in / });
+    fireEvent.change(find, { target: { value: "zzz-no-such-value" } });
+    expect(within(sheet).getByRole("status").textContent).toContain("No value matches");
+    fireEvent.change(find, { target: { value: "" } });
+    const chosen = values[3]!;
+    fireEvent.click(sheet.querySelector<HTMLElement>(`[data-pick="${chosen.dataset.commentTarget}"]`)!);
+    await waitFor(() => expect(page(slot).querySelector("[data-comment-box]")).not.toBeNull());
+    const box = page(slot).querySelector<HTMLElement>("[data-comment-box]")!;
+    expect(box.getAttribute("aria-label")).toBe(chosen.title);
+    expect(slot.queryByRole("dialog", { name: /^Comment on a value in / })).toBeNull();
+    // Escape closes the box and hands focus back to the value, not to bb's composer.
+    const reached: string[] = [];
+    const host = (event: KeyboardEvent) => reached.push(event.key);
+    document.addEventListener("keydown", host);
+    fireEvent.keyDown(box, { key: "Escape" });
+    document.removeEventListener("keydown", host);
+    await waitFor(() => expect(page(slot).querySelector("[data-comment-box]")).toBeNull());
+    expect(document.activeElement).toBe(chosen);
+    expect(reached).toEqual([]);
   });
 });

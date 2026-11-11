@@ -7,19 +7,24 @@ import { loadPluginApp, renderSlot, type PluginRpcTestHandlers, type PluginSdkTe
 import { useLayoutEffect, useState, useSyncExternalStore } from "react";
 import { useComposers, type NewThreadRequest, type PluginComposerApi, type PluginNavPanelProps, type PluginSidebarThread, type PluginThreadHeaderActionProps } from "@get-bb/plugin-sdk/app";
 import { mergeLead } from "../src/ui/merge-order";
-import type { Attempt, MergeConfirmView, BadgeView, BbProjectChoice, InsightsWindow, ChangedFile, ChangeSource, ChangesView, ChecksItem, HomeProject, MergeEntry, MergeOrderView, NextStep, PlannerView, PlanningSession, ProjectSummary, ProjectView, RepoOverview, RolloutStep, RolloutView, SentNote, SpecVersionView, ThreadInfo, TicketDetail, rpcContract } from "../src/contract";
+import type { Attempt, BoardCard, MergeConfirmView, BadgeView, BbProjectChoice, InsightsWindow, ChangedFile, ChangeSource, ChangesView, ChecksItem, HomeProject, MergeEntry, MergeOrderView, NextStep, PlannerView, PlanningSession, ProjectSummary, ProjectView, RepoOverview, RolloutStep, RolloutView, SentNote, SpecVersionView, ThreadInfo, TicketDetail, rpcContract } from "../src/contract";
 import type { TicketRow } from "../src/db/store";
 import { repoOverviews } from "../src/projects";
 import { clockTime } from "../src/format";
 import { notesMessage } from "../src/prompts";
 import { parseSpec } from "../src/spec";
 import { ConfirmButton, MoreMenu } from "../src/ui/common";
+import { armedFits } from "../src/ui/header";
+import { NewProject } from "../src/ui/new-project";
 import { repoLand } from "../src/ui/next-step-bar";
-import { controlDone, narrowPage, sidewaysInto } from "../src/ui/page";
+import { controlDone, narrowPage, shortCrumb, sidewaysInto } from "../src/ui/page";
+import { createCommands } from "../src/ui/commands";
+import { exportHost } from "../src/ui/map-export-ui";
 import { nextStepOf } from "../src/next-step";
 import { reloadRemembered } from "../src/ui/remember";
+import { keysSheet, palette, rewind } from "../src/ui/dispatch";
 import { questionsOf } from "../src/ui/questions";
-import { HOUR, NOW, agent, attempt, card, changeRepo, health, homeProject, homeView, metrics, overview, plannerViewOf, projectView, repoOverview, specV1, specVersionView, ticketDetail, timeline, withRepos } from "./fixtures";
+import { HOUR, NOW, agent, attempt, card, changeRepo, health, homeProject, homeView, metrics, need, overview, plannerViewOf, projectView, repoOverview, specV1, specVersionView, threadInfo, ticketDetail, timeline, withRepos } from "./fixtures";
 import { phasesOf } from "../src/phases";
 import { phased } from "./phase-fixtures";
 import { specToml, type Doc } from "./helpers";
@@ -28,7 +33,7 @@ import { projectInsights } from "../src/insights";
 import { changedTags } from "../src/rpc-tags";
 import { toast } from "sonner";
 
-vi.mock("sonner", () => ({ toast: { success: vi.fn(), warning: vi.fn(), error: vi.fn() } }));
+vi.mock("sonner", () => ({ toast: { success: vi.fn(), warning: vi.fn(), error: vi.fn(), info: vi.fn() } }));
 
 type Handlers = PluginRpcTestHandlers<typeof rpcContract>;
 const unexpected = (): never => {
@@ -43,7 +48,10 @@ const handlers = (over: Partial<Handlers> = {}): Handlers => ({
   runOutput: unexpected,
   insights: unexpected,
   timeline: () => timeline(),
+  insightsAll: unexpected,
   threadInfo: () => null,
+  threadInfos: () => ({}),
+  homeFeed: () => ({ rows: [], counts: { shipped: 0, sentBack: 0, blocked: 0, asks: 0, phase: 0, you: 0 }, matched: 0, partial: [] }),
   reply: unexpected,
   ticketAction: unexpected,
   confirmMerge: unexpected,
@@ -79,9 +87,14 @@ afterEach(() => {
   vi.mocked(toast.success).mockClear();
   vi.mocked(toast.warning).mockClear();
   vi.mocked(toast.error).mockClear();
+  vi.mocked(toast.info).mockClear();
   for (const slot of mounts.splice(0)) slot.lifecycle.unmount();
   cleanup();
   document.body.replaceChildren();
+  // The page's overlays and rewind are stores shared by its separate React trees, so they outlive a mount.
+  palette.set(false);
+  keysSheet.set(false);
+  rewind.set(null);
   // Where the page was left is remembered on the device; each case starts as a first visit.
   localStorage.clear();
   reloadRemembered();
@@ -92,7 +105,16 @@ describe("registration", () => {
     const app = await loadPluginApp(() => import("../app"));
     expect(app.navPanels.map(({ id, title, icon, path }) => ({ id, title, icon, path }))).toEqual([{ id: "loom", title: "Loom", icon: "loom/loom", path: "loom" }]);
     expect(app.navPanels[0]).toMatchObject({ experimental_sidebar: expect.any(Function), experimental_useBadge: expect.any(Function), experimental_usePageTitle: expect.any(Function) });
-    expect(app.threadHeaderActions.map(({ id, title }) => ({ id, title }))).toEqual([{ id: "ticket", title: "Loom" }]);
+    // The ticket button is a header thread action now; the retired header slot is empty.
+    expect(app.threadHeaderActions).toEqual([]);
+    expect(app.threadActions.map(({ id, title, group }) => ({ id, title, group }))).toEqual([{ id: "ticket", title: "Loom", group: "loom" }]);
+    // The pinned test harness drops fields it does not know, so read the registration bb receives.
+    const registered: Array<{ placement?: string }> = [];
+    const recorder = new Proxy({}, { get: (_target, slot) => (slot === "experimental_threadAction" ? (entry: { placement?: string }) => registered.push(entry) : () => undefined) });
+    ((await import("../app")).default as unknown as { setup(app: unknown): void }).setup({ slots: recorder, commands: { register: () => undefined } });
+    expect(registered.map((entry) => entry.placement)).toEqual(["header"]);
+    expect(app.threadContextSegments.map(({ id, group }) => ({ id, group }))).toEqual([{ id: "loom", group: "2_loom" }]);
+    expect(app.tabs.map(({ id, context, availability }) => ({ id, context, availability }))).toEqual([{ id: "loom", context: { kind: "thread" }, availability: "fixed" }]);
     expect(app.threadInfoRows.map(({ id, group, order }) => ({ id, group, order }))).toEqual([{ id: "loom", group: "1_thread", order: 40 }]);
     // bb draws the rail's badge now, so nothing reaches into its DOM.
     expect(app.contentScripts).toEqual([]);
@@ -118,129 +140,6 @@ describe("registration", () => {
     expect(svg).toMatch(/^<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg" viewBox="0 0 24 24"/);
     expect(svg).not.toMatch(/<!DOCTYPE|<\?xml|<(script|style|image|foreignObject|a)\b|\son[a-z]+=|url\(|href=|fill="#|stroke="#/i);
     expect(Buffer.byteLength(svg)).toBeLessThan(32 * 1024);
-  });
-});
-
-describe("thread header chip", () => {
-  const mountChip = async (info: ThreadInfo | null, props: Partial<PluginThreadHeaderActionProps> = {}) => {
-    const app = await loadPluginApp(() => import("../app"));
-    const threadInfo = (input: { threadId: string }) => (input.threadId === "thr_known" ? info : null);
-    const slot = renderSlot<PluginThreadHeaderActionProps, typeof rpcContract>(app.threadHeaderActions[0]!, { threadId: "thr_known", projectId: "proj_1", isCompactViewport: false, ...props }, { pluginId: "loom", rpc: handlers({ threadInfo }) });
-    mounts.push(slot);
-    return slot;
-  };
-
-  it("shows the ticket and its state for a worker thread", async () => {
-    const slot = await mountChip({ role: "worker", slug: "csv", key: "CSV-3", state: "review" });
-    expect((await slot.findByRole("button", { name: "Open CSV-3 in Loom" })).textContent).toBe("CSV-3 · review");
-    expect(slot.inspection.rpcCalls).toEqual([{ method: "threadInfo", input: { threadId: "thr_known" } }]);
-  });
-
-  it("shows the ticket for a reviewer and the project for a planner", async () => {
-    const reviewer = await mountChip({ role: "reviewer", slug: "csv", key: "CSV-3", state: "review" });
-    expect((await reviewer.findByRole("button")).textContent).toBe("CSV-3 · review");
-    document.body.replaceChildren();
-    const planner = await mountChip({ role: "planner", slug: "csv", key: null, state: "running" });
-    expect((await planner.findByRole("button", { name: "Open csv in Loom" })).textContent).toBe("csv");
-  });
-
-  it("shows nothing for a thread that is not a Loom thread", async () => {
-    const slot = await mountChip(null, { threadId: "thr_other" });
-    await waitFor(() => expect(slot.inspection.rpcCalls).toHaveLength(1));
-    expect(slot.queryByRole("button")).toBeNull();
-    expect(slot.container.textContent).toBe("");
-  });
-
-  it("shows nothing on a compact viewport, and does not ask", async () => {
-    const slot = await mountChip({ role: "worker", slug: "csv", key: "CSV-3", state: "review" }, { isCompactViewport: true });
-    expect(slot.queryByRole("button")).toBeNull();
-    expect(slot.inspection.rpcCalls).toEqual([]);
-  });
-
-  it("opens the ticket on the page when clicked, and the project for a planner", async () => {
-    const worker = await mountChip({ role: "worker", slug: "csv", key: "CSV-3", state: "review" });
-    fireEvent.click(await worker.findByRole("button"));
-    expect(worker.inspection.navigateCalls).toEqual([{ method: "toPluginPanel", path: "loom", options: { subPath: "csv/CSV-3" } }]);
-    document.body.replaceChildren();
-    const planner = await mountChip({ role: "planner", slug: "csv", key: null, state: "running" });
-    fireEvent.click(await planner.findByRole("button"));
-    expect(planner.inspection.navigateCalls).toEqual([{ method: "toPluginPanel", path: "loom", options: { subPath: "csv" } }]);
-  });
-
-  it("shows Planning for a planning conversation that has no spec yet, and opens it on the page", async () => {
-    const slot = await mountChip({ role: "planner", slug: null, key: null, state: "planning" });
-    const chip = await slot.findByRole("button", { name: "Open this planning conversation in Loom" });
-    expect(chip.textContent).toBe("Planning");
-    fireEvent.click(chip);
-    expect(slot.inspection.navigateCalls).toEqual([{ method: "toPluginPanel", path: "loom", options: { subPath: "_plan/thr_known" } }]);
-  });
-
-  it("asks again on any project's change while it shows a planning conversation, which becomes a project when it proposes", async () => {
-    let info: ThreadInfo = { role: "planner", slug: null, key: null, state: "planning" };
-    const app = await loadPluginApp(() => import("../app"));
-    const slot = renderSlot<PluginThreadHeaderActionProps, typeof rpcContract>(app.threadHeaderActions[0]!, { threadId: "thr_known", projectId: "proj_1", isCompactViewport: false }, {
-      pluginId: "loom",
-      rpc: handlers({ threadInfo: () => info }),
-    });
-    mounts.push(slot);
-    expect((await slot.findByRole("button")).textContent).toBe("Planning");
-    info = { role: "planner", slug: "csv", key: null, state: "draft" };
-    await slot.experimental_invalidateRpc(changedTags("csv"));
-    await waitFor(() => expect(slot.getByRole("button", { name: "Open csv in Loom" }).textContent).toBe("csv"));
-    expect(slot.inspection.rpcCalls).toHaveLength(2);
-  });
-
-  it("asks again when its project changes, so the state stays current", async () => {
-    let state = "review";
-    const app = await loadPluginApp(() => import("../app"));
-    const slot = renderSlot<PluginThreadHeaderActionProps, typeof rpcContract>(app.threadHeaderActions[0]!, { threadId: "thr_known", projectId: "proj_1", isCompactViewport: false }, {
-      pluginId: "loom",
-      rpc: handlers({ threadInfo: () => ({ role: "worker", slug: "csv", key: "CSV-3", state }) }),
-    });
-    mounts.push(slot);
-    expect((await slot.findByRole("button")).textContent).toBe("CSV-3 · review");
-    state = "approved";
-    await slot.experimental_invalidateRpc(changedTags("other"));
-    expect(slot.inspection.rpcCalls).toHaveLength(1);
-    await slot.experimental_invalidateRpc(changedTags("csv"));
-    await waitFor(() => expect(slot.getByRole("button").textContent).toBe("CSV-3 · approved"));
-  });
-
-  describe("a response that arrives after the thread changed", () => {
-    const worker = (key: string): ThreadInfo => ({ role: "worker", slug: "csv", key, state: "working" });
-    const mountSwitching = async () => {
-      const app = await loadPluginApp(() => import("../app"));
-      // The first thread's read is still out when the header moves to another thread.
-      const late: Array<(info: ThreadInfo | null) => void> = [];
-      const threadInfo = ({ threadId }: { threadId: string }): ThreadInfo | null | Promise<ThreadInfo | null> => {
-        if (threadId === "thr_other") return null;
-        if (threadId === "thr_next") return worker("CSV-2");
-        return new Promise((resolve) => late.push(resolve));
-      };
-      const slot = renderSlot<PluginThreadHeaderActionProps, typeof rpcContract>(app.threadHeaderActions[0]!, { threadId: "thr_loom", projectId: "proj_1", isCompactViewport: false }, { pluginId: "loom", rpc: handlers({ threadInfo }) });
-      mounts.push(slot);
-      await waitFor(() => expect(late).toHaveLength(1));
-      const Chip = app.threadHeaderActions[0]!.component;
-      const switchTo = (threadId: string) => slot.lifecycle.rerender(<Chip threadId={threadId} projectId="proj_1" isCompactViewport={false} />);
-      return { slot, late, switchTo };
-    };
-
-    it("does not show the previous thread's chip on a thread that is not a Loom thread", async () => {
-      const { slot, late, switchTo } = await mountSwitching();
-      switchTo("thr_other");
-      await waitFor(() => expect(slot.inspection.rpcCalls.at(-1)?.input).toEqual({ threadId: "thr_other" }));
-      await waitFor(() => expect(slot.queryByRole("button")).toBeNull());
-      await act(async () => late[0]!(worker("CSV-1")));
-      expect(slot.queryByRole("button")).toBeNull();
-    });
-
-    it("does not replace the new thread's chip with the previous thread's", async () => {
-      const { slot, late, switchTo } = await mountSwitching();
-      switchTo("thr_next");
-      await slot.findByRole("button", { name: "Open CSV-2 in Loom" });
-      await act(async () => late[0]!(worker("CSV-1")));
-      expect(slot.getByRole("button").textContent).toBe("CSV-2 · working");
-    });
   });
 });
 
@@ -334,7 +233,7 @@ describe("thread Info tab", () => {
   };
 
   it("shows a worker's ticket, its state and the project, and opens the ticket on the page", async () => {
-    const slot = await mountRow({ role: "worker", slug: "csv", key: "CSV-3", state: "pr_open" });
+    const slot = await mountRow(threadInfo({ role: "worker", slug: "csv", key: "CSV-3", state: "pr_open" }));
     const link = await slot.findByRole("button", { name: "CSV-3" });
     expect(slot.container.querySelector("[data-loom-info]")!.textContent).toBe("CSV-3pr open · Worker on csv");
     fireEvent.click(link);
@@ -342,10 +241,10 @@ describe("thread Info tab", () => {
   });
 
   it("shows a planner's project, and a planning conversation before it has a spec", async () => {
-    const planner = await mountRow({ role: "planner", slug: "csv", key: null, state: "running" });
+    const planner = await mountRow(threadInfo({ role: "planner", slug: "csv", key: null, state: "running" }));
     expect((await planner.findByRole("button", { name: "csv" })).closest("[data-loom-info]")!.textContent).toBe("csvrunning · Planner");
     document.body.replaceChildren();
-    const planning = await mountRow({ role: "planner", slug: null, key: null, state: "planning" });
+    const planning = await mountRow(threadInfo({ role: "planner", slug: null, key: null, state: "planning" }));
     fireEvent.click(await planning.findByRole("button", { name: "Planning conversation" }));
     expect(planning.inspection.navigateCalls).toEqual([{ method: "toPluginPanel", path: "loom", options: { subPath: "_plan/thr_known" } }]);
   });
@@ -371,35 +270,77 @@ describe("sidebar", () => {
     await slot.findByRole("button", { name: /CSV export/ });
     return slot;
   };
-  const names = (slot: Slot) => [...slot.container.querySelectorAll("nav > button")].map((button) => button.textContent);
+  // A project row sits beside its info button, which only touch screens and narrow windows show.
+  const names = (slot: Slot) => [...slot.container.querySelectorAll("nav button:not([data-row-info])")].filter((button) => !button.className.includes("pl-7")).map((button) => button.textContent);
 
-  it("lists home with what needs you, the live projects, the finished ones folded, and the guide and New project", async () => {
+
+  it("lists home with what needs you, the live projects woven with their state, the finished ones folded, and the guide and New project", async () => {
     const slot = await mountSidebar("");
-    expect(names(slot)).toEqual(["Home1", "CSV export1", "Docs siteDOC", "Done and archived (1)", "How Loom works", "New project"]);
+    expect(names(slot)).toEqual(["Home1", "Insights", "CSV CSV export11/4running", "DOC Docs site1/4paused", "Finished1", "How Loom works", "New project"]);
     expect(slot.getByRole("button", { name: /Home/ }).getAttribute("aria-current")).toBe("page");
-    fireEvent.click(slot.getByRole("button", { name: /Done and archived/ }));
-    expect(names(slot)).toContain("Old workOLD");
+    // The ticket bar says its counts in words, and the count beside it says done of all the project's tickets.
+    const row = slot.getByRole("button", { name: /CSV export/ });
+    expect(row.querySelector('[role="img"]')!.getAttribute("aria-label")).toBe("1 done · 1 in progress · 2 up next");
+    expect([...row.querySelectorAll("[data-bar]")].map((block) => block.getAttribute("data-bar"))).toEqual(["done", "flight", "open"]);
+    fireEvent.click(slot.getByRole("button", { name: /Finished/ }));
+    expect(names(slot)).toContain("OLD Old work1/4done");
     fireEvent.click(slot.getByRole("button", { name: /Docs site/ }));
     fireEvent.click(slot.getByRole("button", { name: "New project" }));
     expect(slot.inspection.navigateCalls).toEqual([pushed("docs"), pushed("_new")]);
   });
 
-  it("lists the open project's tickets that are moving or stuck, blocked first, and marks the open ticket", async () => {
-    const board = [card(), card({ key: "CSV-2", state: "working" }), card({ key: "CSV-3", state: "done" }), card({ key: "CSV-7", state: "blocked" })];
-    const slot = await mountSidebar("csv/CSV-2", { project: () => projectView({ board }) });
-    await slot.findByRole("button", { name: /CSV-7/ });
-    expect(names(slot).slice(1, 4)).toEqual(["CSV export1", "CSV-7blocked", "CSV-2working"]);
-    expect(slot.getByRole("button", { name: /CSV-2/ }).getAttribute("aria-current")).toBe("page");
-    fireEvent.click(slot.getByRole("button", { name: /CSV-7/ }));
-    expect(slot.inspection.navigateCalls).toEqual([pushed("csv/CSV-7")]);
+  it("gives each project's bar a button of its own for touch, which opens the key and opens nothing else", async () => {
+    const slot = await mountSidebar("");
+    await slot.findByRole("button", { name: /CSV export/ });
+    const info = slot.getByRole("button", { name: "Key to the CSV bar" });
+    // Shown only where there is no hover to show a tip on: touch screens and narrow windows.
+    expect(info.className).toContain("hidden");
+    expect(info.className).toContain("[@media(pointer:coarse)]:inline-flex");
+    expect(info.className).toContain("max-[576px]:inline-flex");
+    fireEvent.click(info);
+    expect(info.getAttribute("aria-expanded")).toBe("true");
+    const key = await within(document.body).findByRole("dialog", { name: "Key to the CSV bar" });
+    expect(key.textContent).toContain("CSV export");
+    expect(key.textContent).toContain("1 done");
+    expect(key.textContent).toContain("2 up next");
+    expect(slot.inspection.navigateCalls).toEqual([]);
+    fireEvent.keyDown(key, { key: "Escape" });
+    await waitFor(() => expect(info.getAttribute("aria-expanded")).toBe("false"));
+    fireEvent.click(slot.getByRole("button", { name: /CSV export/ }));
+    expect(slot.inspection.navigateCalls).toEqual([pushed("csv")]);
   });
 
-  it("keeps the project marked on a ticket it does not list, such as a done one", async () => {
-    const board = [card({ key: "CSV-2", state: "working" }), card({ key: "CSV-3", state: "done" })];
-    const slot = await mountSidebar("csv/CSV-3", { project: () => projectView({ board }) });
-    await slot.findByRole("button", { name: /CSV-2/ });
+  it("lists the open project's phases, a closed one with no success tick and its cut tickets apart, and the tickets that need you", async () => {
+    const version = specVersionView({}, phased);
+    const tickets = [
+      { phase: "skeleton", state: "done" as const },
+      { phase: "skeleton", state: "cancelled" as const },
+      { phase: "polish", state: "working" as const },
+    ];
+    const board = tickets.map((ticket, index) => card({ key: `CSV-${index + 1}`, ...ticket }));
+    const blocked = need({ kind: "blocked", slug: "csv", project: "CSV export", key: "CSV-7", text: "Needs a decision", startedAt: NOW });
+    const slot = await mountSidebar("csv/CSV-7", { home: () => homeView({ projects: two, needsYou: [blocked] }), project: () => projectView({ phases: phasesOf(version.spec, tickets), board }) });
+    const skeleton = await slot.findByRole("button", { name: /Skeleton/ });
+    expect(skeleton.getAttribute("title")).toBe("Phase 1, Skeleton · closed · 1 done · 1 cancelled");
+    expect(skeleton.textContent).toContain("1/2· 1 cut");
+    expect(skeleton.querySelector('[data-phase-mark="closed"]')).not.toBeNull();
+    expect(skeleton.textContent).not.toMatch(/complete|✓/i);
+    expect(skeleton.querySelector(GREEN_INK)).toBeNull();
+    expect(slot.getByRole("button", { name: /Polish/ }).textContent).toContain("0/1");
+    expect(slot.getByRole("button", { name: /Launch/ }).textContent).toContain("planned");
+    const ask = slot.getByRole("button", { name: /CSV-7/ });
+    expect(ask.textContent).toBe("CSV-7 blocked");
+    expect(ask.getAttribute("aria-current")).toBe("page");
+    fireEvent.click(slot.getByRole("button", { name: /DOC Docs site/ }));
+    expect(slot.inspection.navigateCalls).toEqual([pushed("docs")]);
+  });
+
+  it("marks the open project on its Work view, and not on another view or a ticket", async () => {
+    const slot = await mountSidebar("csv", { project: () => projectView() });
     expect(slot.getByRole("button", { name: /CSV export/ }).getAttribute("aria-current")).toBe("page");
-    expect(slot.queryByRole("button", { name: /CSV-3/ })).toBeNull();
+    slot.lifecycle.unmount();
+    const ticket = await mountSidebar("csv/CSV-3", { project: () => projectView() });
+    expect(ticket.getByRole("button", { name: /CSV export/ }).getAttribute("aria-current")).toBeNull();
   });
 
   it("lists a planning conversation with no spec yet, and marks one whose planner asks you", async () => {
@@ -422,10 +363,10 @@ describe("sidebar", () => {
     const slot = await mountSidebar("csv");
     fireEvent.click(slot.getByRole("button", { name: /Home/ }));
     expect(slot.inspection.navigateCalls).toEqual([pushed("_home")]);
-    fireEvent.click(slot.getByRole("button", { name: /Done and archived/ }));
+    fireEvent.click(slot.getByRole("button", { name: /Finished/ }));
     slot.lifecycle.unmount();
-    const again = await mountSidebar("csv");
-    expect(names(again)).toContain("Old workOLD");
+    const again = await mountSidebar("csv", { project: () => projectView() });
+    expect(names(again)).toContain("OLD Old work1/4done");
   });
 
   it("marks the route the page reopens on, and names it in the title, while the address is still bb's root", async () => {
@@ -501,26 +442,124 @@ describe("questionsOf", () => {
 
 async function mountPage(subPath: string, rpc: Partial<Handlers> = {}, options: Pick<RenderSlotOptions<typeof rpcContract>, "sdk" | "sidebarThreads"> = {}) {
   const app = await loadPluginApp(() => import("../app"));
-  // The page alone: its title in bb's header has tests of its own.
-  const slot = renderSlot<PluginNavPanelProps, typeof rpcContract>({ component: app.navPanels[0]!.component }, { subPath }, { pluginId: "loom", rpc: handlers(rpc), ...options });
-  mounts.push(slot);
+  // The page with its controls in bb's title bar; the title itself has tests of its own.
   const Panel = app.navPanels[0]!.component;
-  const goTo = (next: string) => slot.lifecycle.rerender(<Panel subPath={next} />);
+  const Header = app.navPanels[0]!.headerContent!;
+  const Page = (props: PluginNavPanelProps) => (
+    <>
+      <Header {...props} />
+      <Panel {...props} />
+    </>
+  );
+  const slot = renderSlot<PluginNavPanelProps, typeof rpcContract>({ component: Page }, { subPath }, { pluginId: "loom", rpc: handlers(rpc), ...options });
+  mounts.push(slot);
+  const goTo = (next: string) => slot.lifecycle.rerender(<Page subPath={next} />);
   return { slot, goTo };
 }
 const calls = (slot: Slot, method: string) => slot.inspection.rpcCalls.filter((call) => call.method === method);
+// A closed phase never paints itself green, in bb's success ink or Loom's own.
+const GREEN_INK = ".text-success, .text-\\[var\\(--loom-ok\\)\\]";
+const classNamesOf = (element: Element | null) => (element?.getAttribute("class") ?? "").split(/\s+/);
+const titleBar = (slot: Slot) => slot.container.querySelector<HTMLElement>("[data-title-controls]")!;
+const inTitleBar = async (slot: Slot) => {
+  await waitFor(() => expect(titleBar(slot)).not.toBeNull());
+  return within(titleBar(slot));
+};
+/** Opens the title bar's ⋯ menu, which Radix opens from the keyboard in jsdom. */
+const openMenu = async (slot: Slot) => {
+  const trigger = await slot.findByRole("button", { name: "More project controls" });
+  fireEvent.keyDown(trigger, { key: "Enter" });
+  return within(await slot.findByRole("menu", { name: "More project controls" }));
+};
+const pick = async (slot: Slot, item: string | RegExp) => fireEvent.click((await openMenu(slot)).getByRole("menuitem", { name: item }));
+const menuLabels = async (slot: Slot) => (await openMenu(slot)).queryAllByRole("menuitem").map((item) => item.querySelector("[data-menu-label]")?.textContent ?? item.textContent);
+/** Opens a project view by its tab, then a part of Ship or History by its own. */
+async function openView(slot: Slot | HTMLElement, view: "Work" | "Spec" | "Planner" | "Ship" | "History", part?: string | RegExp) {
+  const scope = slot instanceof HTMLElement ? within(slot) : slot;
+  fireEvent.click(await scope.findByRole("tab", { name: view }));
+  if (part !== undefined) fireEvent.click(await scope.findByRole("tab", { name: part }));
+}
 const pushed = (subPath: string) => ({ method: "toPluginPanel", path: "loom", options: { subPath } });
+/** Opens the open ticket's ⋯ menu in Work's pane. */
+const ticketMenu = async (slot: Slot, key?: string) => {
+  // Whole-page role retries can consume the ticket query's notification window under load.
+  const header = await waitFor(() => {
+    const header = slot.container.querySelector<HTMLElement>(key === undefined ? "[data-ticket-header]" : `[data-ticket="${key}"] [data-ticket-header]`);
+    expect(header).not.toBeNull();
+    return header!;
+  });
+  fireEvent.keyDown(within(header).getByRole("button", { name: "Ticket actions" }), { key: "Enter" });
+  return within(await slot.findByRole("menu", { name: "Ticket actions" }));
+};
+const ticketTab = (slot: Slot, name: "Activity" | "Brief" | "Agents") => fireEvent.click(slot.getByRole("tab", { name: new RegExp(`^${name}`) }));
 
 describe("phase presentation", () => {
-  it("shows a compact strip, phase chips, and a grouped spec with outlines and reports", async () => {
-    const version = specVersionView({ compared: null, changes: { changed: [], removed: [] } }, (d) => { phased(d); d.phase[0].report = "The CSV download passed."; });
-    const phases = phasesOf(version.spec, [{ phase: "skeleton", state: "done" }]);
-    const view = projectView({ phases, board: [card({ phase: "skeleton" })] });
+  it("draws each phase's tickets on the rail, keeps a closed phase's done and cancelled apart, and groups the spec by phase", async () => {
+    const version = specVersionView({ compared: null, changes: { changed: [], removed: [] } }, (d) => {
+      phased(d);
+      d.phase[0].report = "The CSV download passed.";
+    });
+    const tickets = [
+      { phase: "skeleton", state: "done" as const },
+      { phase: "skeleton", state: "done" as const },
+      { phase: "skeleton", state: "cancelled" as const },
+      { phase: "polish", state: "cancelled" as const },
+      { phase: "polish", state: "cancelled" as const },
+      { phase: "launch", state: "queued" as const },
+    ];
+    const phases = phasesOf(version.spec, tickets);
+    const view = projectView({ phases, board: tickets.map((ticket, index) => card({ key: `CSV-${index + 1}`, ...ticket })) });
     const { slot } = await mountPage("csv", { project: () => view, specVersion: () => version });
-    const strip = await slot.findByRole("list", { name: "Phases" });
-    expect(strip.textContent).toContain("✓ Skeleton");
-    expect(strip.textContent).toContain("planned");
-    expect(slot.container.querySelector('[data-card] [data-phase-chip]')?.textContent).toBe("phase skeleton");
+    const rail = await slot.findByRole("navigation", { name: "Phases" });
+    const cardOf = (ref: string) => rail.querySelector<HTMLElement>(`[data-phase="${ref}"]`)!;
+    // A closed phase is closed, never complete: no success tick, and its bar and count keep the cut ticket apart.
+    expect(cardOf("skeleton").getAttribute("aria-label")).toBe("Phase 1, Skeleton: closed · 2 done · 1 cancelled");
+    expect(cardOf("skeleton").textContent).toContain("2/3");
+    expect(cardOf("skeleton").textContent).toContain("1 cut");
+    expect(cardOf("skeleton").querySelector('[role="img"]')!.getAttribute("aria-label")).toBe("2 done · 1 cancelled");
+    expect([...cardOf("skeleton").querySelectorAll("[data-bar]")].map((block) => block.getAttribute("data-bar"))).toEqual(["done", "cut"]);
+    expect(cardOf("polish").getAttribute("aria-label")).toBe("Phase 2, Polish: closed · 0 done · 2 cancelled");
+    expect(cardOf("polish").textContent).toContain("0/2");
+    expect(cardOf("launch").getAttribute("aria-label")).toBe("Phase 3, Launch: active · 0 of 1 done");
+    expect(cardOf("launch").getAttribute("aria-current")).toBe("true");
+    for (const ref of ["skeleton", "polish"]) {
+      expect(cardOf(ref).textContent).not.toMatch(/complete|✓/i);
+      expect(cardOf(ref).querySelector(GREEN_INK)).toBeNull();
+    }
+    // Work lists the active phase's tickets under its name.
+    expect(slot.container.querySelector("[data-ticket-list] h2")!.textContent).toBe("Phase 3Launch");
+    // The active phase's title shows whole, wrapping as it needs; another is cut, with its whole name a focus away.
+    const titleOf = (ref: string) => cardOf(ref).querySelector<HTMLElement>("[data-rail-title]")!;
+    expect(titleOf("launch").textContent).toBe("Launch");
+    expect(titleOf("launch").className).not.toMatch(/line-clamp|truncate/);
+    expect(titleOf("skeleton").className).toContain("truncate");
+    fireEvent.focus(cardOf("skeleton"));
+    expect((await within(document.body).findByRole("tooltip")).textContent).toContain("Phase 1, Skeleton · closed · 2 done · 1 cancelled");
+    fireEvent.blur(cardOf("skeleton"));
+    // A tap shows the same facts and the key as a popover, and stays on the page; its button does what a click does.
+    fireEvent.click(slot.getByRole("tab", { name: /^Spec/ }));
+    await waitFor(() => expect(slot.getByRole("tab", { name: /^Spec/ }).getAttribute("aria-selected")).toBe("true"));
+    fireEvent.pointerDown(cardOf("skeleton"), { pointerType: "touch" });
+    fireEvent.click(cardOf("skeleton"));
+    const facts = await within(document.body).findByRole("dialog", { name: "Phase 1, Skeleton" });
+    expect(facts.textContent).toContain("closed · 2 done · 1 cancelled");
+    // The key: a swatch beside each state's count, the same blocks the bar draws.
+    expect(facts.querySelectorAll("[aria-hidden].size-2")).toHaveLength(2);
+    expect(slot.getByRole("tab", { name: /^Spec/ }).getAttribute("aria-selected")).toBe("true");
+    fireEvent.keyDown(facts, { key: "Escape" });
+    await waitFor(() => expect(within(document.body).queryByRole("dialog", { name: "Phase 1, Skeleton" })).toBeNull());
+    expect(slot.getByRole("tab", { name: /^Spec/ }).getAttribute("aria-selected")).toBe("true");
+    fireEvent.pointerDown(cardOf("polish"), { pointerType: "touch" });
+    fireEvent.click(cardOf("polish"));
+    fireEvent.click(within(await within(document.body).findByRole("dialog", { name: "Phase 2, Polish" })).getByRole("button", { name: "Open Work" }));
+    await waitFor(() => expect(slot.getByRole("tab", { name: /^Work/ }).getAttribute("aria-selected")).toBe("true"));
+    expect(within(document.body).queryByRole("dialog", { name: "Phase 2, Polish" })).toBeNull();
+    // A mouse click acts at once, as before.
+    fireEvent.click(slot.getByRole("tab", { name: /^Spec/ }));
+    fireEvent.pointerDown(cardOf("launch"), { pointerType: "mouse" });
+    fireEvent.click(cardOf("launch"));
+    await waitFor(() => expect(slot.getByRole("tab", { name: /^Work/ }).getAttribute("aria-selected")).toBe("true"));
+    expect(within(document.body).queryByRole("dialog", { name: "Phase 3, Launch" })).toBeNull();
     fireEvent.click(slot.getByRole("tab", { name: "Spec" }));
     await waitFor(() => expect(slot.container.querySelector("[data-ticket-list]")).not.toBeNull());
     const list = slot.container.querySelector("[data-ticket-list]")!;
@@ -529,288 +568,14 @@ describe("phase presentation", () => {
     expect(list.textContent).toContain("Stream large files");
     expect(list.textContent).toContain("The CSV download passed.");
   });
-});
 
-describe("project list", () => {
-  afterEach(() => localStorage.clear());
-  const two: HomeProject[] = [homeProject(), homeProject({ slug: "docs", name: "Docs site", key: "DOC", state: "paused", reason: "The token budget is used up: 900 of 900 tokens.", strategy: "pr", branch: null, ticketCount: 3, ticketCounts: { queued: 3 } })];
-  const home = () => homeView({ projects: two });
-
-  it("lists every project with its state, strategy, counts and the reason the plugin paused it", async () => {
-    const { slot } = await mountPage("_home", { home });
-    await slot.findByText("CSV export");
-    const rows = [...slot.container.querySelectorAll("[data-project-row]")];
-    expect(rows.map((row) => row.getAttribute("data-project-row"))).toEqual(["csv", "docs"]);
-    expect(rows[0]!.querySelector("[data-state-badge]")!.textContent).toBe("running");
-    expect(rows[1]!.querySelector("[data-state-badge]")!.textContent).toBe("paused");
-    expect(rows[0]!.textContent).toContain("integration branch loom/csv");
-    expect(rows[0]!.textContent).toContain("2 queued");
-    expect(rows[0]!.textContent).toContain("1 working");
-    expect(rows[1]!.textContent).toContain("one pull request per ticket");
-    expect(rows[1]!.textContent).toContain("The token budget is used up");
-  });
-
-  it("shows the guide when there are no projects and no planning conversations, and its button opens New project", async () => {
-    const { slot } = await mountPage("_home", { home: () => homeView({ projects: [], needsYou: [] }) });
-    expect(await slot.findByRole("heading", { name: "Welcome to Loom" })).toBeTruthy();
-    const guide = slot.container.querySelector("[data-guide]")!;
-    expect([...guide.querySelectorAll("[data-guide-step]")].map((step) => step.querySelector("b")!.textContent)).toEqual(["Plan.", "Approve.", "Start.", "Check and review.", "Merge and land."]);
-    expect(guide.textContent).toContain("Who does what");
-    expect(guide.textContent).toContain("A ticket's life");
-    expect(guide.textContent).toContain("bb loom approve <slug>");
-    fireEvent.click(slot.getByRole("button", { name: "Start your first project" }));
-    expect(slot.inspection.navigateCalls).toEqual([pushed("_new")]);
-  });
-
-  it("opens a project on its address when its row is clicked", async () => {
-    const { slot } = await mountPage("_home", { home });
-    fireEvent.click(await slot.findByRole("button", { name: /Docs site/ }));
-    expect(slot.inspection.navigateCalls).toEqual([pushed("docs")]);
-  });
-
-  describe("search and the Finished group", () => {
-    const three = () => homeView({ projects: [homeProject(), homeProject({ slug: "docs", name: "Docs site", key: "DOC", state: "done" }), homeProject({ slug: "old", name: "Old importer", key: "LEGACY", state: "archived" })] });
-    const slugs = (slot: Slot) => [...slot.container.querySelectorAll("[data-project-row]")].map((row) => row.getAttribute("data-project-row"));
-    const finished = (slot: Slot) => within(slot.container.querySelector<HTMLElement>("[data-finished]")!).getByRole("button", { name: /Finished · 2/ });
-
-    it("folds done and archived projects into a Finished group it remembers opening", async () => {
-      const { slot } = await mountPage("_home", { home: three });
-      await slot.findByText("CSV export");
-      expect(slugs(slot)).toEqual(["csv"]);
-      expect(finished(slot).getAttribute("aria-expanded")).toBe("false");
-      fireEvent.click(finished(slot));
-      expect(slugs(slot)).toEqual(["csv", "docs", "old"]);
-      expect(localStorage.getItem("loom.home.showFinished")).toBe("true");
-      slot.lifecycle.unmount();
-
-      const { slot: again } = await mountPage("_home", { home: three });
-      await again.findByText("CSV export");
-      expect(slugs(again)).toEqual(["csv", "docs", "old"]);
-      expect(finished(again).getAttribute("aria-expanded")).toBe("true");
-      fireEvent.click(finished(again));
-      expect(slugs(again)).toEqual(["csv"]);
-      expect(localStorage.getItem("loom.home.showFinished")).toBe("false");
-      expect(again.queryByRole("checkbox")).toBeNull();
-    });
-
-    it("keeps a finished project that still needs you among the active rows", async () => {
-      const needsYou = [{ kind: "land" as const, slug: "docs", project: "Docs site", key: null, text: "finished all 3 tickets; land the integration branch", at: NOW }];
-      const { slot } = await mountPage("_home", { home: () => ({ ...three(), needsYou }) });
-      await slot.findByText("Docs site");
-      expect(slugs(slot)).toEqual(["docs", "csv"]);
-      expect(within(slot.container.querySelector<HTMLElement>("[data-finished]")!).getByRole("button", { name: /Finished · 1/ })).toBeTruthy();
-    });
-
-    it("filters the table by name, key or slug as the human types", async () => {
-      const { slot } = await mountPage("_home", { home: three });
-      await slot.findByText("CSV export");
-      const search = slot.getByRole("searchbox", { name: "Search projects" });
-      for (const [query, shown] of [["importer", ["old"]], ["legacy", ["old"]], ["docs", ["docs"]], ["  CSV ", ["csv"]]] as const) {
-        fireEvent.change(search, { target: { value: query } });
-        expect(slugs(slot), query).toEqual(shown);
-      }
-      fireEvent.change(search, { target: { value: "zzz" } });
-      expect(slugs(slot)).toEqual([]);
-      expect(slot.container.querySelector("[data-projects-empty]")!.textContent).toBe('No project matches "zzz".');
-    });
-
-    it("opens the Finished group and says so when every project is done or archived", async () => {
-      const { slot } = await mountPage("_home", { home: () => homeView({ projects: [homeProject({ state: "done" })], needsYou: [] }) });
-      await slot.findByText("CSV export");
-      expect(slot.container.querySelector("[data-projects-empty]")!.textContent).toBe("Every project is done or archived.");
-      expect(slugs(slot)).toEqual(["csv"]);
-      expect(within(slot.container.querySelector<HTMLElement>("[data-finished]")!).queryByRole("button", { name: /Finished/ })).toBeNull();
-      expect(slot.container.querySelector("[data-finished]")!.textContent).toContain("Finished · 1");
-    });
-  });
-
-  it("reads the list again when any project changes", async () => {
-    const { slot } = await mountPage("_home", { home });
-    await slot.findByText("CSV export");
-    await slot.experimental_invalidateRpc(changedTags("docs"));
-    await waitFor(() => expect(calls(slot, "home")).toHaveLength(2));
-  });
-});
-
-describe("home", () => {
-  const session = (over: Partial<PlanningSession> = {}): PlanningSession => ({ threadId: "thr_p1", title: "Rate limits for the public API", startedAt: Date.now() - 4 * 60_000, slug: null, projectState: null, ...over });
-  const homeTile = (slot: Slot, name: string) => slot.container.querySelector<HTMLElement>(`[data-home-tile="${name}"]`)!;
-
-  it("reads the overview and the planning conversations, not the project list", async () => {
-    const { slot } = await mountPage("_home", { home: () => homeView() });
-    await slot.findByText("CSV export");
-    await waitFor(() => expect(calls(slot, "planning")).toHaveLength(1));
-    expect(calls(slot, "home")).toEqual([{ method: "home", input: null }]);
-    expect(calls(slot, "projects")).toEqual([]);
-  });
-
-  it("shows five tiles: running projects, agents against the slots, done in 7 days, what needs you, and tokens", async () => {
-    const { slot } = await mountPage("_home", { home: () => homeView() });
-    await slot.findByText("CSV export");
-    expect([...slot.container.querySelectorAll("[data-home-tile]")].map((tile) => tile.getAttribute("data-home-tile"))).toEqual(["running", "agents", "done", "needs", "tokens"]);
-    expect(homeTile(slot, "running").textContent).toContain("2");
-    expect(homeTile(slot, "running").textContent).toContain("of 4 projects · 1 paused");
-    expect(homeTile(slot, "agents").textContent).toContain("5 / 8 slots");
-    expect(homeTile(slot, "agents").textContent).toContain("3 workers · 2 reviewers");
-    expect(homeTile(slot, "done").querySelector("[data-tile-value]")!.textContent).toBe("14");
-    expect(homeTile(slot, "done").querySelector("svg[aria-label]")).not.toBeNull();
-    expect(homeTile(slot, "needs").querySelector("[data-tile-value]")!.textContent).toBe("4");
-    expect(homeTile(slot, "tokens").textContent).toContain("Tokens (sampled)");
-    expect(homeTile(slot, "tokens").textContent).toContain("3,100,000");
-    expect(homeTile(slot, "tokens").textContent).toContain("220,000 per done ticket");
-
-    const { slot: one } = await mountPage("_home", { home: () => ({ ...homeView(), totals: { ...homeView().totals, projects: 1, running: 1, paused: 0, workers: 1, reviewers: 1, slots: 4 } }) });
-    await waitFor(() => expect(homeTile(one, "running")).not.toBeNull());
-    expect(homeTile(one, "running").textContent).toContain("of 1 project · 0 paused");
-    expect(homeTile(one, "agents").textContent).toContain("1 worker · 1 reviewer");
-  });
-
-  describe("what needs you, in each project's row", () => {
-    const pending = { kind: "pending" as const, slug: "csv", project: "CSV export", key: null, text: "spec v2 waits for your approval", at: NOW - 2 * 60_000 };
-    // The server sends needs newest first, so the pending version comes before the blocked ticket.
-    const needsYou = [pending, ...homeView().needsYou];
-    const projects = [
-      homeProject({ slug: "calm", name: "Calm one", key: "CALM" }),
-      homeProject({ slug: "srch", name: "Search revamp", key: "SRCH" }),
-      homeProject({ pendingVersion: 2 }),
-      homeProject({ slug: "audit", name: "Audit log", key: "AUD", state: "draft" }),
-      homeProject({ slug: "bill", name: "Billing API", key: "BILL", state: "paused" }),
-    ];
-    const rows = (slot: Slot) => [...slot.container.querySelectorAll<HTMLElement>("[data-project-row]")];
-    const chips = (row: HTMLElement) => [...row.querySelectorAll<HTMLElement>("[data-project-needs] button")];
-
-    it("puts rows that need you first, most urgent first, each with its chips and a coloured edge", async () => {
-      const { slot } = await mountPage("_home", { home: () => homeView({ needsYou, projects }) });
-      await slot.findByText("Calm one");
-      expect(rows(slot).map((row) => [row.getAttribute("data-project-row"), row.getAttribute("data-attention")])).toEqual([
-        ["csv", "blocked"],
-        ["bill", "paused"],
-        ["audit", "approve"],
-        ["srch", "land"],
-        ["calm", null],
-      ]);
-      const [csv, bill, audit, srch, calm] = rows(slot);
-      expect(chips(csv!).map((chip) => [chip.getAttribute("data-need"), chip.textContent])).toEqual([
-        ["blocked", "!CSV-7 blocked"],
-        ["pending", "✎Approve v2"],
-      ]);
-      expect(chips(csv!)[0]!.getAttribute("title")).toBe("CSV-7 is blocked: needs the staging DB credentials");
-      expect(chips(bill!).map((chip) => chip.textContent)).toEqual(["⏸Paused by Loom"]);
-      expect(chips(bill!)[0]!.getAttribute("title")).toBe("The token budget is used up: 900 of 900 tokens.");
-      expect(chips(audit!).map((chip) => chip.textContent)).toEqual(["✎Review draft"]);
-      expect(chips(srch!).map((chip) => chip.textContent)).toEqual(["↑Ready to land"]);
-      expect(calm!.querySelector("[data-project-needs]")!.textContent).toBe("—");
-      expect(csv!.querySelector("td")!.className).toContain("border-l-destructive");
-      expect(srch!.querySelector("td")!.className).toContain("border-l-success");
-      expect(audit!.querySelector("td")!.className).toContain("border-l-warning");
-      expect(calm!.querySelector("td")!.className).toContain("border-l-transparent");
-      expect(slot.queryByRole("region", { name: "Needs you" })).toBeNull();
-    });
-
-    it("opens a chip's ticket or project, and only that", async () => {
-      const { slot } = await mountPage("_home", { home: () => homeView({ needsYou, projects }) });
-      await slot.findByText("Calm one");
-      for (const row of rows(slot)) for (const chip of chips(row)) fireEvent.click(chip);
-      expect(slot.inspection.navigateCalls).toEqual([pushed("csv/CSV-7"), pushed("csv"), pushed("bill"), pushed("audit"), pushed("srch")]);
-    });
-
-    it("shows three chips and a +N more that opens the project", async () => {
-      const blocked = [7, 8, 9, 10].map((n) => ({ kind: "blocked" as const, slug: "csv", project: "CSV export", key: `CSV-${n}`, text: "stuck", at: NOW - n }));
-      const { slot } = await mountPage("_home", { home: () => homeView({ needsYou: [pending, ...blocked] }) });
-      await slot.findByText("CSV export");
-      expect(chips(rows(slot)[0]!).map((chip) => chip.textContent)).toEqual(["!CSV-7 blocked", "!CSV-8 blocked", "!CSV-9 blocked", "+2 more"]);
-      fireEvent.click(slot.getByRole("button", { name: "+2 more" }));
-      expect(slot.inspection.navigateCalls).toEqual([pushed("csv")]);
-    });
-
-    it("says on the tile how many projects need you and how many tickets are blocked", async () => {
-      const { slot } = await mountPage("_home", { home: () => homeView({ needsYou, projects }) });
-      await slot.findByText("Calm one");
-      const tile = slot.container.querySelector<HTMLElement>('[data-home-tile="needs"]')!;
-      expect(tile.querySelector("[data-tile-value]")!.textContent).toBe("5");
-      expect(tile.textContent).toContain("across 4 projects · 1 blocked");
-      expect(tile.className).toContain("border-warning");
-
-      slot.lifecycle.unmount();
-      const { slot: none } = await mountPage("_home", { home: () => homeView({ needsYou: [] }) });
-      await none.findByText("CSV export");
-      const calm = none.container.querySelector<HTMLElement>('[data-home-tile="needs"]')!;
-      expect(calm.textContent).toBe("Needs you0");
-      expect(calm.className).not.toContain("border-warning");
-    });
-  });
-
-  it("shows each project's progress, live agents, 14-day throughput, tokens against its budget and its last event", async () => {
-    const projects = [homeProject(), homeProject({ slug: "docs", name: "Docs site", key: "DOC", state: "draft", progress: { done: 0, total: 0, inFlight: 0, blocked: 0 }, agents: 1, tokens: 800, maxTokens: null, lastEventAt: null })];
-    const { slot } = await mountPage("_home", { home: () => homeView({ projects }) });
-    await slot.findByText("CSV export");
-    const row = (slug: string) => slot.container.querySelector<HTMLElement>(`[data-project-row="${slug}"]`)!;
-    expect(row("csv").querySelector("div[role=img]")!.getAttribute("aria-label")).toBe("Progress: 1 of 4 done, 1 in flight, 2 queued");
-    expect(row("csv").querySelector("[data-project-agents]")!.textContent).toBe("3");
-    expect(row("csv").querySelector("svg[aria-label]")!.getAttribute("aria-label")).toBe("CSV export: tickets done per day, last 14 days");
-    expect(row("csv").querySelector("[data-project-tokens]")!.textContent).toBe("12,000 / 50,000");
-    expect(row("csv").textContent).toContain("2m ago");
-    expect(row("docs").querySelector("div[role=img]")).toBeNull();
-    expect(row("docs").querySelector("[data-project-tokens]")!.textContent).toBe("800");
-    expect(row("docs").textContent).not.toContain("ago");
-  });
-
-  it("reads the overview again on any change", async () => {
-    const { slot } = await mountPage("_home", { home: () => homeView() });
-    await slot.findByText("CSV export");
-    await slot.experimental_invalidateRpc(changedTags("csv"));
-    await waitFor(() => expect(calls(slot, "home")).toHaveLength(2));
-    await slot.experimental_invalidateRpc(changedTags(null));
-    await waitFor(() => expect(calls(slot, "home")).toHaveLength(3));
-  });
-
-  it("lists the projects and only the conversations that have no project yet, and Continue opens one", async () => {
-    const planning = () => [session(), session({ threadId: "thr_p2", title: "CSV export plan", slug: "csv", projectState: "draft" })];
-    const { slot } = await mountPage("_home", { home: () => homeView(), planning });
-    await slot.findByText("Rate limits for the public API");
-    expect([...slot.container.querySelectorAll("[data-project-row]")].map((row) => row.getAttribute("data-project-row"))).toEqual(["csv"]);
-    const rows = [...slot.container.querySelectorAll("[data-planning-row]")];
-    expect(rows.map((row) => row.getAttribute("data-planning-row"))).toEqual(["thr_p1"]);
-    expect(rows[0]!.textContent).toContain("planner is asking questions · started 4m");
-    expect(rows[0]!.getAttribute("data-attention")).toBe("planning");
-    expect(rows[0]!.querySelector("[data-state-badge]")!.textContent).toBe("planning");
-    expect(slot.container.querySelector("[data-guide]")).toBeNull();
-    expect(slot.queryByRole("region", { name: "Planning" })).toBeNull();
-    fireEvent.click(slot.getByRole("button", { name: "Continue planning" }));
-    expect(slot.inspection.navigateCalls).toEqual([pushed("_plan/thr_p1")]);
-    fireEvent.click(rows[0]!);
-    expect(slot.inspection.navigateCalls).toEqual([pushed("_plan/thr_p1"), pushed("_plan/thr_p1")]);
-
-    fireEvent.change(slot.getByRole("searchbox", { name: "Search projects" }), { target: { value: "csv" } });
-    expect(slot.container.querySelector("[data-planning-row]")).toBeNull();
-    fireEvent.change(slot.getByRole("searchbox", { name: "Search projects" }), { target: { value: "rate limits" } });
-    expect([...slot.container.querySelectorAll("[data-planning-row]")]).toHaveLength(1);
-    expect(slot.container.querySelector("[data-project-row]")).toBeNull();
-  });
-
-  it("shows a conversation instead of the guide when it is the only thing there is", async () => {
-    const { slot } = await mountPage("_home", { home: () => homeView({ projects: [], needsYou: [] }), planning: () => [session()] });
-    await slot.findByText("Rate limits for the public API");
-    expect(slot.container.querySelector("[data-guide]")).toBeNull();
-    expect(slot.container.querySelector("[data-projects-empty]")).toBeNull();
-  });
-
-  it("opens the guide from How Loom works and New project from its button, and _guide shows the guide", async () => {
-    const { slot, goTo } = await mountPage("_home", { home: () => homeView() });
-    fireEvent.click(await slot.findByRole("button", { name: "How Loom works" }));
-    fireEvent.click(slot.getByRole("button", { name: "New project" }));
-    expect(slot.inspection.navigateCalls).toEqual([pushed("_guide"), pushed("_new")]);
-    goTo("_guide");
-    expect(await slot.findByRole("heading", { name: "Welcome to Loom" })).toBeTruthy();
-    expect(calls(slot, "project")).toEqual([]);
-  });
-
-  it("reads the planning conversations again on a change outside any project", async () => {
-    const { slot } = await mountPage("_home", { home: () => homeView() });
-    await slot.findByText("CSV export");
-    await waitFor(() => expect(calls(slot, "planning")).toHaveLength(1));
-    await slot.experimental_invalidateRpc(changedTags(null));
-    await waitFor(() => expect(calls(slot, "planning")).toHaveLength(2));
+  it("draws an unphased project by repo, and keeps a count whole however narrow its card", async () => {
+    const repos = [repoOverview({ name: "web" }), repoOverview({ name: "world", bbProjectName: "shop-world" })];
+    const board = [card({ key: "CSV-1", repo: "web", state: "done" }), ...Array.from({ length: 14 }, (_, index) => card({ key: `CSV-${index + 2}`, repo: "world", state: index < 3 ? "done" : "queued" }))];
+    const { slot } = await mountPage("csv", { project: () => projectView({ overview: overview({ repos }), board }) });
+    const rail = await slot.findByRole("navigation", { name: "Tickets by repo" });
+    expect([...rail.querySelectorAll("[data-rail-card]")].map((entry) => entry.getAttribute("aria-label"))).toEqual(["web: 1 of 1 done", "world: 3 of 14 done"]);
+    expect(rail.querySelector('[data-rail-card="world"]')!.textContent).toContain("3/14");
   });
 });
 
@@ -1024,11 +789,18 @@ describe("new project", () => {
     const startPlanning = vi.fn(() => ({ threadId: "thr_p7" }));
     const { slot } = await mountPage("_new", { startPlanning, bbProjects: choices });
     await waitFor(() => expect(repoRows(slot)).toHaveLength(4));
+    // At 200% text a truncated name could not be read in full: it wraps instead.
+    const name = repoBox(slot, "docs").nextElementSibling!;
+    expect(name.textContent).toBe("docs");
+    expect(classNamesOf(name)).toContain("[overflow-wrap:anywhere]");
+    expect(classNamesOf(name)).not.toContain("truncate");
     fireEvent.click(repoBox(slot, "docs"));
     fireEvent.click(repoBox(slot, "docs"));
     fireEvent.change(within(slot.getByRole("group", { name: "Repos" })).getByRole("searchbox"), { target: { value: "zzz" } });
     expect(repoRows(slot)).toEqual([]);
     expect(slot.getByRole("group", { name: "Repos" }).textContent).toContain('No repo matches "zzz".');
+    // The note is in the picker's status region, so a screen reader hears it.
+    expect(within(slot.getByRole("group", { name: "Repos" })).getByRole("status").textContent).toBe('No repo matches "zzz".');
     typeGoal(slot, "Write the docs site.");
     fireEvent.click(slot.getByTestId("bb-new-thread-composer-submit"));
     await waitFor(() => expect(startPlanning).toHaveBeenCalledWith(expect.objectContaining({ repos: [] })));
@@ -1048,13 +820,16 @@ describe("new project", () => {
 
   it("lets the human pick at most 10 repos", async () => {
     const many = Array.from({ length: 11 }, (_, n): BbProjectChoice => ({ id: `proj_${n}`, name: `repo-${String(n).padStart(2, "0")}`, hostIds: ["host_1"] }));
-    const { slot } = await mountPage("_new", { bbProjects: () => many });
-    await waitFor(() => expect(repoRows(slot)).toHaveLength(11));
-    for (const choice of many.slice(0, 10)) fireEvent.click(repoBox(slot, choice.name));
-    expect(repoBox(slot, "repo-10").disabled).toBe(true);
-    expect(repoBox(slot, "repo-00").disabled).toBe(false);
-    fireEvent.click(repoBox(slot, "repo-00"));
-    expect(repoBox(slot, "repo-10").disabled).toBe(false);
+    const slot = renderSlot<Parameters<typeof NewProject>[0], typeof rpcContract>({ component: NewProject }, { go: unexpected }, { pluginId: "loom", rpc: handlers({ bbProjects: () => many }) });
+    mounts.push(slot);
+    const group = await slot.findByRole("group", { name: "Repos" });
+    await waitFor(() => expect(group.querySelectorAll("[data-repo-choice]")).toHaveLength(11));
+    const boxes = many.map((choice) => within(group).getByLabelText<HTMLInputElement>(choice.name));
+    for (const box of boxes.slice(0, 10)) fireEvent.click(box);
+    expect(boxes[10]!.disabled).toBe(true);
+    expect(boxes[0]!.disabled).toBe(false);
+    fireEvent.click(boxes[0]!);
+    expect(boxes[10]!.disabled).toBe(false);
   });
 
   it("says when bb cannot list its projects, and still starts planning without repos", async () => {
@@ -1066,6 +841,7 @@ describe("new project", () => {
       },
     });
     await waitFor(() => expect(slot.getByRole("group", { name: "Repos" }).textContent).toContain("Could not list bb's projects: bb is restarting"));
+    expect(within(slot.getByRole("group", { name: "Repos" })).getByRole("alert").textContent).toBe("Could not list bb's projects: bb is restarting");
     typeGoal(slot, "Write the docs site.");
     fireEvent.click(slot.getByTestId("bb-new-thread-composer-submit"));
     await waitFor(() => expect(slot.inspection.navigateCalls).toEqual([pushed("_plan/thr_p7")]));
@@ -1140,21 +916,21 @@ describe("planning conversation", () => {
     const confirm: MergeConfirmView = { prUrl: "https://github.com/acme/shop/pull/4", sha: "f".repeat(40), ready: true, waiting: null, confirmed: false, requested: { at: NOW - HOUR, note: "You asked me to get CSV-4 merged" } };
     const confirmMerge = vi.fn((_input: unknown) => ticketDetail({ key: "CSV-4" }));
     const { slot } = await mountPage("csv", { project: () => projectView(), plannerView: () => plannerViewOf({ projectState: "running", approvedVersion: 1, mergeRequests: [{ key: "CSV-4", title: "Guide", confirm }] }), confirmMerge });
-    await slot.findByRole("tab", { name: "Board" });
+    await slot.findByRole("tab", { name: "Work" });
     fireEvent.click(slot.getByRole("tab", { name: "Planner" }));
     await waitFor(() => expect(slot.container.querySelector('[data-needs-you] [data-merge-request="CSV-4"]')).not.toBeNull());
     const request = slot.container.querySelector<HTMLElement>('[data-needs-you] [data-merge-request="CSV-4"]')!;
     expect(request.textContent).toContain("Ready to merge at ffffffffffff. The planner asks you to confirm the merge: “You asked me to get CSV-4 merged”. Loom merges it only once you confirm.");
     expect(slot.container.querySelector("[data-needs-you] h2")!.textContent).toBe("Needs you1");
     fireEvent.click(within(request).getByRole("button", { name: "Confirm merge" }));
-    fireEvent.click(within(request).getByRole("button", { name: "Click again to merge ffffffffffff" }));
+    fireEvent.click(within(request).getByRole("button", { name: "Yes, merge ffffffffffff" }));
     await waitFor(() => expect(confirmMerge).toHaveBeenLastCalledWith({ key: "CSV-4", prUrl: confirm.prUrl, sha: confirm.sha, confirm: true }));
   });
 
   it("gives a project with a planner thread a Planner tab, and a project without one no such tab", async () => {
     const { slot } = await mountPage("csv", { project: () => projectView(), plannerView: () => plannerViewOf({ projectState: "running", approvedVersion: 1 }) });
-    await slot.findByRole("tab", { name: "Board" });
-    expect([...slot.container.querySelectorAll("[role=tab]")].map((tab) => tab.textContent)).toEqual(["Board", "Agents", "Insights", "Spec", "Planner", "Changes"]);
+    await slot.findByRole("tab", { name: "Work" });
+    expect([...slot.container.querySelectorAll('[role=tablist][aria-label="Project views"] [role=tab]')].map((tab) => tab.textContent)).toEqual(["Work", "Spec", "Planner", "Ship", "History"]);
     fireEvent.click(slot.getByRole("tab", { name: "Planner" }));
     await waitFor(() => expect(slot.container.querySelector("[data-planner-page]")).not.toBeNull());
     expect(calls(slot, "plannerView")[0]!.input).toEqual({ threadId: "thr_plan" });
@@ -1162,8 +938,13 @@ describe("planning conversation", () => {
     slot.lifecycle.unmount();
 
     const none = await mountPage("csv", { project: () => projectView({ overview: overview({ plannerThreadId: null }) }) });
-    await none.slot.findByRole("tab", { name: "Board" });
-    expect(none.slot.queryByRole("tab", { name: "Planner" })).toBeNull();
+    await none.slot.findByRole("tab", { name: "Work" });
+    // The five views keep their places and keys; a project with no planner thread says so on its Planner tab.
+    const planner = none.slot.getByRole("tab", { name: "Planner" });
+    expect(planner.getAttribute("aria-disabled")).toBe("true");
+    fireEvent.click(planner);
+    expect(toast.info).toHaveBeenCalledWith("This project has no planner thread");
+    expect(none.slot.container.querySelector("[data-planner-page]")).toBeNull();
   });
 });
 
@@ -1178,7 +959,7 @@ describe("planner page", () => {
     delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
   });
   const sidebar = (status: string, hasPendingInteraction = false) => ({ threads: [{ id: "thr_plan", status, hasPendingInteraction } as unknown as PluginSidebarThread] });
-  const approveStep: NextStep = { stage: 1, tone: "normal", title: "Next: review draft v2.", text: "Loom's spec review passed it.", action: { control: "approve", version: 2, label: "Approve v2 · create 2 tickets", confirm: "Click again to approve v2" } };
+  const approveStep: NextStep = { stage: 1, tone: "normal", title: "Next: review draft v2.", text: "Loom's spec review passed it.", action: { control: "approve", version: 2, label: "Approve v2 · create 2 tickets", confirm: "Yes, approve v2" } };
   const draft = () => projectView({ overview: overview({ state: "draft", approvedVersion: null, ticketCount: 0, ticketCounts: {} }), board: [], next: approveStep });
   const page = (slot: Slot) => slot.container.querySelector<HTMLElement>("[data-planner-page]")!;
   const openPlanner = async (rpc: Partial<Handlers> = {}, view: ProjectView = projectView(), options: Pick<RenderSlotOptions<typeof rpcContract>, "sdk" | "sidebarThreads"> = {}) => {
@@ -1342,14 +1123,13 @@ describe("planner page", () => {
     expect(page(slot).querySelector("[data-version-card]")).toBeNull();
 
     fireEvent.click(within(asks()).getByRole("button", { name: "Approve v2" }));
-    fireEvent.click(within(asks()).getByRole("button", { name: "Click again to approve v2" }));
+    fireEvent.click(within(asks()).getByRole("button", { name: "Yes, approve v2" }));
     await waitFor(() => expect(control).toHaveBeenCalledWith({ slug: "csv", action: "approve", version: 2, confirm: true }));
     // The approve refreshes the project's reads, the planner's among them.
     await waitFor(() => expect(asks().querySelector('[data-ask-step="approve"]')!.hasAttribute("data-done")).toBe(true));
     expect(toast.success).toHaveBeenCalledWith("Approved v2");
     expect(requeue().disabled).toBe(false);
     fireEvent.click(requeue());
-    fireEvent.click(within(asks()).getByRole("button", { name: "Click again to requeue CSV-1" }));
     await waitFor(() => expect(ticketAction).toHaveBeenCalledWith({ key: "CSV-1", action: "requeue", note: "Requeued as the planner asked: Then requeue CSV-1.", confirm: true }));
     await waitFor(() => expect(toast.success).toHaveBeenCalledWith("CSV-1 requeued"));
 
@@ -1359,7 +1139,45 @@ describe("planner page", () => {
     expect(toast.success).toHaveBeenLastCalledWith("Set aside until the planner asks again");
   });
 
-  it("keeps an ask's text the width of its step, with the step's buttons under the text on a narrow page and beside it on a wide one", async () => {
+  it("holds every action the planner listed after an approval until that approval lands, and says which step it waits for", async () => {
+    const asked = (approved: boolean) =>
+      plannerViewOf({
+        projectState: "paused",
+        approvedVersion: approved ? 2 : 1,
+        pendingVersion: approved ? null : 2,
+        review: { kind: "approved", version: 2, round: 1, summary: "Holds." },
+        ask: {
+          id: 8,
+          at: NOW - 60_000,
+          why: "",
+          open: true,
+          steps: [
+            { action: "approve", version: 2, text: "Approve v2.", done: approved },
+            { action: "resume", text: "Resume once v2 is approved.", done: false },
+            { action: "live", key: "CSV-1", text: "Then mark CSV-1 live.", done: false },
+          ],
+        },
+      });
+    let current = asked(false);
+    const paused = projectView({ overview: overview({ state: "paused", pendingVersion: 2 }) });
+    const slot = await openPlanner({ plannerView: () => current }, paused);
+    const asks = () => page(slot).querySelector<HTMLElement>("[data-planner-asks]")!;
+    const step = (action: string) => within(asks().querySelector<HTMLElement>(`[data-ask-step="${action}"]`)!);
+    for (const [action, label] of [["resume", "Resume"], ["live", "Mark CSV-1 live"]] as const) {
+      const button = step(action).getByRole("button", { name: label }) as HTMLButtonElement;
+      expect(button.disabled).toBe(true);
+      expect(button.title).toBe("Approve v2 first");
+      expect(asks().querySelector(`[data-ask-step="${action}"] [data-ask-wait]`)!.textContent).toBe("after step 1");
+    }
+    // The approval lands: the planner's view says step 1 is done, and the actions after it open up.
+    current = asked(true);
+    await slot.experimental_invalidateRpc(changedTags("csv"));
+    await waitFor(() => expect((step("resume").getByRole("button", { name: "Resume" }) as HTMLButtonElement).disabled).toBe(false));
+    expect((step("live").getByRole("button", { name: "Mark CSV-1 live" }) as HTMLButtonElement).disabled).toBe(false);
+    expect(asks().querySelector("[data-ask-wait]")).toBeNull();
+  });
+
+  it("keeps an ask's text the width of its step, with the step's buttons under the text at every width", async () => {
     const view = plannerViewOf({
       projectState: "running",
       approvedVersion: 1,
@@ -1374,10 +1192,17 @@ describe("planner page", () => {
       return found!;
     });
     const classes = (element: Element | null) => (element?.getAttribute("class") ?? "").split(/\s+/);
-    expect(classes(step)).toEqual(expect.arrayContaining(["grid-cols-[1.25rem_minmax(0,1fr)]", "@xl:grid-cols-[1.25rem_minmax(0,1fr)_auto]"]));
+    // Beside the text, three buttons squeezed a long step to a few words a line, so they sit under it.
+    expect(classes(step)).toEqual(expect.arrayContaining(["grid-cols-[1.25rem_minmax(0,1fr)]"]));
+    expect(classes(step).some((name) => name.includes("_auto]"))).toBe(false);
     const actions = step.querySelector("[data-ask-actions]")!;
-    expect(classes(actions)).toEqual(expect.arrayContaining(["col-start-2", "@xl:col-start-auto", "@xl:justify-end", "empty:hidden"]));
+    expect(classes(actions)).toEqual(expect.arrayContaining(["col-start-2", "empty:hidden"]));
     expect(within(actions as HTMLElement).getAllByRole("button").map((button) => button.textContent)).toEqual(["See what changed", "Approve v2", "Mark done"]);
+    // At 200% text a fixed-height button ran 81 px out of its step: each wraps inside the row and grows instead.
+    for (const button of within(actions as HTMLElement).getAllByRole("button")) {
+      expect(classes(button)).toEqual(expect.arrayContaining(["max-w-full"]));
+      expect(classes(button).some((name) => /^h-\d/.test(name))).toBe(false);
+    }
     // An other step has no button of its own, only the human's Mark done.
     expect(within(page(slot).querySelector<HTMLElement>('[data-ask-step="other"] [data-ask-actions]')!).getAllByRole("button").map((button) => button.textContent)).toEqual(["Mark done"]);
     // A story step's title breaks a long link or name rather than run off the page.
@@ -1441,16 +1266,15 @@ describe("planner page", () => {
     });
     const slot = await openPlanner({ plannerView: () => asked(done), project: current, askStepDone, markLive }, current());
     expect(slot.container.querySelector('[data-tab-badge="planner"]')!.textContent).toBe("2");
-    const notice = slot.container.querySelector<HTMLElement>('[data-badge-notice="planner"]')!;
-    expect(notice.textContent).toContain("The planner asks you to do 2 things.");
-    expect([...notice.querySelectorAll("[data-badge-item]")].map((item) => item.textContent)).toEqual(["Step 1: Rotate the API token in 1Password.", "Step 2: Mark CSV-1 live once the pipeline deployed it."]);
-    fireEvent.click(within(notice).getByRole("button", { name: "Step 2: Mark CSV-1 live once the pipeline deployed it." }));
-    expect(slot.inspection.navigateCalls.at(-1)).toEqual(pushed("csv/CSV-1"));
-
+    // The asks card is the one reader of the open steps on Planner: no notice above it repeats them.
+    expect(slot.container.querySelector('[data-badge-notice="planner"]')).toBeNull();
     const asks = () => page(slot).querySelector<HTMLElement>("[data-planner-asks]")!;
+    expect([...asks().querySelectorAll("[data-ask-step]")].map((step) => step.getAttribute("data-ask-step"))).toEqual(["other", "live"]);
+    expect(asks().textContent).toContain("Rotate the API token in 1Password.");
+    expect(asks().textContent).toContain("Mark CSV-1 live once the pipeline deployed it.");
     const other = () => within(asks().querySelector<HTMLElement>('[data-ask-step="other"]')!);
     fireEvent.click(other().getByRole("button", { name: "Mark done" }));
-    fireEvent.click(other().getByRole("button", { name: "Click again to mark step 1 done" }));
+    fireEvent.click(other().getByRole("button", { name: "Yes, mark step 1 done" }));
     await waitFor(() => expect(askStepDone).toHaveBeenCalledWith({ slug: "csv", ask: 9, step: 0, confirm: true }));
     await waitFor(() => expect(asks().querySelector('[data-ask-step="other"]')!.hasAttribute("data-done")).toBe(true));
     expect(toast.success).toHaveBeenCalledWith("Step 1 marked done");
@@ -1458,7 +1282,6 @@ describe("planner page", () => {
 
     const live = () => within(asks().querySelector<HTMLElement>('[data-ask-step="live"]')!);
     fireEvent.click(live().getByRole("button", { name: "Mark CSV-1 live" }));
-    fireEvent.click(live().getByRole("button", { name: /^Click again/ }));
     await waitFor(() => expect(markLive).toHaveBeenCalledWith({ slug: "csv", target: "CSV-1", note: "Marked live as the planner asked: Mark CSV-1 live once the pipeline deployed it.", confirm: true }));
     await waitFor(() => expect(slot.container.querySelector('[data-tab-badge="planner"]')).toBeNull());
     expect(slot.container.querySelector("[data-badge-notice]")).toBeNull();
@@ -1708,6 +1531,10 @@ describe("planner questions", () => {
     expect(story.textContent).toContain("Merge planIntegration branch");
     expect([...slot.container.querySelectorAll("[data-decision]")].map((row) => row.textContent)).toEqual(["Merge planIntegration branch", "Checksnpm test"]);
     expect(slot.container.querySelector("[data-about-planner]")!.textContent).toContain("1 round, 2 answers");
+    // A fixed 6rem label column squeezed each value at 200% text; a value goes under its label when it has under 7rem.
+    const about = slot.container.querySelector("[data-about-planner] [data-about-row]")!;
+    expect(classNamesOf(about)).toEqual(expect.arrayContaining(["flex", "flex-wrap"]));
+    expect(classNamesOf(about.querySelector("dd")!)).toEqual(expect.arrayContaining(["min-w-[min(100%,7rem)]", "[overflow-wrap:anywhere]"]));
   });
 
   it("keeps a round open while bb resolves it, says when one ended unanswered, and reads the open questions when the sidebar leaves the thread out", async () => {
@@ -1747,7 +1574,7 @@ describe("planner questions", () => {
     const sdk = { threads: { interactions: { list: async () => [] } } } as unknown as PluginSdkTestFakes;
     const { slot } = await mountPage("csv", { project: () => projectView(), plannerView: () => plannerViewOf({ projectState: "running", approvedVersion: 1 }) }, { sdk, sidebarThreads: sidebar("thr_plan", true) });
     const tab = await slot.findByRole("tab", { name: "Planner" });
-    expect(tab.getAttribute("title")).toBe("The planner's thread waits for your answer in its chat");
+    expect(tab.getAttribute("aria-description")).toBe("The planner's thread waits for your answer in its chat");
     fireEvent.click(tab);
     const waits = await waitFor(() => {
       const found = slot.container.querySelector<HTMLElement>("[data-waits-in-chat]");
@@ -1756,14 +1583,10 @@ describe("planner questions", () => {
     });
     expect(waits.textContent).toContain("reading the thread does not clear it");
     expect(slot.container.querySelector("[data-nothing-needed]")).toBeNull();
-    const notice = slot.container.querySelector<HTMLElement>('[data-badge-notice="planner"]')!;
-    expect(notice.textContent).toContain("It clears once the question or approval is answered, here under Needs you or in the thread, or the planner's turn is stopped. Reading the thread does not clear it.");
-    fireEvent.click(within(notice).getByRole("button", { name: "Open the planner's thread" }));
+    // The card is the one reader of the wait on Planner: no notice above it says the same.
+    expect(slot.container.querySelector('[data-badge-notice="planner"]')).toBeNull();
     fireEvent.click(within(waits).getByRole("button", { name: "Answer in the thread" }));
-    expect(slot.inspection.navigateCalls.slice(-2)).toEqual([
-      { method: "toThread", threadId: "thr_plan" },
-      { method: "toThread", threadId: "thr_plan" },
-    ]);
+    expect(slot.inspection.navigateCalls.at(-1)).toEqual({ method: "toThread", threadId: "thr_plan" });
   });
 });
 
@@ -1779,7 +1602,9 @@ describe("routing", () => {
     const { slot } = await mountPage("csv/CSV-2", { ticket: () => ticketDetail() });
     await waitFor(() => expect(calls(slot, "ticket")).toHaveLength(1));
     expect(calls(slot, "ticket")[0]!.input).toEqual({ key: "CSV-2" });
-    expect(calls(slot, "project")).toEqual([]);
+    // The ticket sits in its project's shell, which reads the project; the ticket shows even when that read fails.
+    expect(calls(slot, "project")[0]!.input).toEqual({ slug: "csv" });
+    expect(await slot.findByRole("heading", { name: /Export endpoint/ })).toBeTruthy();
   });
 
   it("moves between the list, a project and a ticket when the address changes", async () => {
@@ -1791,6 +1616,158 @@ describe("routing", () => {
     await waitFor(() => expect(calls(slot, "ticket")).toHaveLength(1));
     goTo("_home");
     await waitFor(() => expect(calls(slot, "home")).toHaveLength(2));
+  });
+
+  it("puts one theme layer in the page that defines only --loom-* properties, scoped to Loom, with prefixed keyframes", async () => {
+    const { slot } = await mountPage("_home", { home: () => homeView() });
+    await slot.findByText("CSV export");
+    const css = document.getElementById("loom-theme")!.textContent!;
+    expect(document.querySelectorAll("#loom-theme")).toHaveLength(1);
+    // A host token defined in terms of itself turns invalid in the subtree, so Loom mixes into names of its own.
+    const defined = [...css.matchAll(/(--[a-z0-9-]+)\s*:/g)].map((match) => match[1]!);
+    expect(defined.length).toBeGreaterThan(10);
+    expect(defined.filter((name) => !name.startsWith("--loom-"))).toEqual([]);
+    const selectors = [...css.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/(?:^|})\s*([^{}@]+?)\s*\{/g)].map((match) => match[1]!.trim()).filter((selector) => !/^(from|to|\d+%)$/.test(selector));
+    for (const selector of selectors) for (const part of selector.split(",")) expect(part, part).toContain("[data-loom-root]");
+    expect([...css.matchAll(/@keyframes\s+([a-z-]+)/g)].map((match) => match[1]!).every((name) => name.startsWith("loom-"))).toBe(true);
+  });
+
+  it("opens Jump to with / and the keys with ?, both from the keyboard, and Jump to only goes places", async () => {
+    const { slot } = await mountPage("csv", { project: () => projectView(), home: () => homeView() });
+    await slot.findByRole("heading", { name: "CSV export" });
+    const shell = slot.container.querySelector<HTMLElement>("[data-project-shell]")!;
+    const page = within(document.body);
+    fireEvent.keyDown(shell, { key: "/" });
+    const input = await page.findByRole("combobox", { name: "Jump to" });
+    await waitFor(() => expect(document.activeElement).toBe(input));
+    await waitFor(() => expect(page.getAllByRole("option").length).toBeGreaterThan(5));
+    const labels = page.getAllByRole("option").map((option) => option.textContent);
+    expect(labels).toEqual(expect.arrayContaining(["CSV · Spec", "Home", "New project", "How Loom works", "Keys"]));
+    fireEvent.change(input, { target: { value: "spec" } });
+    expect(page.getAllByRole("option")[0]!.textContent).toContain("CSV · Spec");
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(page.queryByRole("combobox", { name: "Jump to" })).toBeNull());
+    await waitFor(() => expect(slot.getByRole("tab", { name: "Spec" }).getAttribute("aria-selected")).toBe("true"));
+    expect(calls(slot, "control")).toEqual([]);
+
+    fireEvent.keyDown(slot.container.querySelector<HTMLElement>("[data-project-shell]")!, { key: "?" });
+    const sheet = await page.findByRole("dialog", { name: "Keys" });
+    expect(within(sheet).getByRole("region", { name: "In a row of tabs" }).textContent).toContain("Move between tabs");
+    expect(within(sheet).getByRole("region", { name: "In a row of tabs" }).textContent).toContain("EnterSpaceOpen it");
+    expect(within(sheet).getByRole("region", { name: "On the time ruler" }).textContent).toContain("SpacePlay the moments up to now, or pause");
+    expect(within(sheet).getByRole("region", { name: "In Work" }).textContent).toContain("jkNext or previous ticket in the list");
+    expect(within(sheet).getByRole("region", { name: "In Work" }).textContent).toContain("mMap, or back to the list");
+    expect(within(sheet).getByRole("region", { name: "In a dependency map" }).textContent).toContain("EnterSpaceOpen the ticket");
+    fireEvent.keyDown(sheet, { key: "Escape" });
+    await waitFor(() => expect(page.queryByRole("dialog", { name: "Keys" })).toBeNull());
+  });
+
+  describe("Loom's rows in bb's palette", () => {
+    const blocked = need({ kind: "blocked", slug: "csv", project: "CSV export", key: "CSV-7", text: "Needs a decision", startedAt: NOW });
+    const context = {} as Parameters<ReturnType<typeof createCommands>[number]["run"]>[0];
+    const command = (id: string) => createCommands().find((entry) => entry.id === id)!;
+    // bb keeps the rail's badge hook mounted on every screen, which is where the commands get their navigator.
+    const mountRail = async () => {
+      const app = await loadPluginApp(() => import("../app"));
+      const useBadge = app.navPanels[0]!.experimental_useBadge!;
+      const Probe = () => <output>{JSON.stringify(useBadge())}</output>;
+      const slot = renderSlot({ component: Probe }, {}, { pluginId: "loom", rpc: handlers() });
+      mounts.push(slot);
+      return slot;
+    };
+
+    it("names two rows for themselves, offered once bb's rail has Loom mounted and gone when it unmounts", async () => {
+      expect(createCommands().map(({ id, title }) => ({ id, title }))).toEqual([
+        { id: "next-needs-you", title: "Loom: Go to the next thing that needs me" },
+        { id: "jump-to", title: "Loom: Jump to a project or ticket" },
+      ]);
+      expect(createCommands().every((entry) => entry.isAvailable?.(context) === false)).toBe(true);
+      const rail = await mountRail();
+      await waitFor(() => expect(createCommands().every((entry) => entry.isAvailable?.(context) === true)).toBe(true));
+      rail.lifecycle.unmount();
+      expect(createCommands().every((entry) => entry.isAvailable?.(context) === false)).toBe(true);
+    });
+
+    it("goes from elsewhere in bb to the oldest thing that needs you, replacing Home so Back returns to where you were", async () => {
+      const rail = await mountRail();
+      await waitFor(() => expect(command("next-needs-you").isAvailable?.(context)).toBe(true));
+      act(() => void command("next-needs-you").run(context));
+      expect(rail.inspection.navigateCalls).toEqual([pushed("_home")]);
+      const { slot } = await mountPage("_home", { home: () => homeView({ needsYou: [blocked] }) });
+      await waitFor(() => expect(slot.inspection.navigateCalls).toEqual([{ method: "toPluginPanel", path: "loom", options: { subPath: "csv/CSV-7", replace: true } }]));
+    });
+
+    it("opens Jump to over Loom from elsewhere in bb, and acts in place while Loom is open", async () => {
+      const rail = await mountRail();
+      await waitFor(() => expect(command("jump-to").isAvailable?.(context)).toBe(true));
+      act(() => void command("jump-to").run(context));
+      expect(rail.inspection.navigateCalls).toEqual([{ method: "toPluginPanel", path: "loom", options: undefined }]);
+      const { slot } = await mountPage("csv", { project: () => projectView(), home: () => homeView() });
+      const page = within(document.body);
+      const input = await page.findByRole("combobox", { name: "Jump to" });
+      await waitFor(() => expect(page.getAllByRole("option").map((option) => option.textContent)).toContain("CSV CSV export"));
+      fireEvent.keyDown(input, { key: "Escape" });
+      await waitFor(() => expect(page.queryByRole("combobox", { name: "Jump to" })).toBeNull());
+      act(() => void command("jump-to").run(context));
+      await page.findByRole("combobox", { name: "Jump to" });
+      act(() => void command("next-needs-you").run(context));
+      expect(rail.inspection.navigateCalls).toHaveLength(1);
+      // The oldest item is first: Billing API's pause.
+      await waitFor(() => expect(slot.inspection.navigateCalls).toEqual([{ method: "toPluginPanel", path: "loom", options: { subPath: "bill", replace: true } }]));
+    });
+  });
+
+  it("brings the option the arrows choose into view on a long list, and leaves the list alone under the pointer", async () => {
+    const board = Array.from({ length: 45 }, (_, index) => card({ key: `CSV-${index + 1}`, title: `Ticket ${index + 1}` }));
+    const { slot } = await mountPage("csv", { project: () => projectView({ board }), home: () => homeView() });
+    await slot.findByRole("heading", { name: "CSV export" });
+    const scrolled: Array<{ id: string; options: unknown }> = [];
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = function (this: Element, options?: unknown) {
+      scrolled.push({ id: this.id, options });
+    } as typeof Element.prototype.scrollIntoView;
+    try {
+      fireEvent.keyDown(slot.container.querySelector<HTMLElement>("[data-project-shell]")!, { key: "/" });
+      const page = within(document.body);
+      const input = await page.findByRole("combobox", { name: "Jump to" });
+      await waitFor(() => expect(page.getAllByRole("option").length).toBe(40));
+      for (let press = 0; press < 25; press++) fireEvent.keyDown(input, { key: "ArrowDown" });
+      const chosen = page.getAllByRole("option").findIndex((option) => option.getAttribute("aria-selected") === "true");
+      expect(chosen).toBe(25);
+      expect(input.getAttribute("aria-activedescendant")).toBe("loom-palette-25");
+      expect(scrolled.at(-1)).toEqual({ id: "loom-palette-25", options: { block: "nearest" } });
+      expect(scrolled).toHaveLength(25);
+      fireEvent.keyDown(input, { key: "ArrowUp" });
+      expect(scrolled.at(-1)).toEqual({ id: "loom-palette-24", options: { block: "nearest" } });
+      fireEvent.pointerMove(page.getAllByRole("option")[30]!);
+      expect(page.getAllByRole("option")[30]!.getAttribute("aria-selected")).toBe("true");
+      expect(scrolled).toHaveLength(26);
+    } finally {
+      Element.prototype.scrollIntoView = original;
+    }
+  });
+
+  it("makes each row of tabs one Tab stop that arrows, Home and End move along, and Enter opens", async () => {
+    const { slot } = await mountPage("csv", { project: () => projectView() });
+    const list = await slot.findByRole("tablist", { name: "Project views" });
+    const tabs = within(list).getAllByRole("tab");
+    expect(tabs.map((tab) => tab.tabIndex)).toEqual([0, -1, -1, -1, -1]);
+    tabs[0]!.focus();
+    fireEvent.keyDown(tabs[0]!, { key: "ArrowRight" });
+    expect(document.activeElement).toBe(tabs[1]);
+    // Focus alone opens nothing: each view reads its own data.
+    expect(tabs[1]!.getAttribute("aria-selected")).toBe("false");
+    fireEvent.keyDown(tabs[1]!, { key: "End" });
+    expect(document.activeElement).toBe(tabs[4]);
+    fireEvent.keyDown(tabs[4]!, { key: "ArrowRight" });
+    expect(document.activeElement).toBe(tabs[0]);
+    fireEvent.keyDown(tabs[0]!, { key: "ArrowLeft" });
+    expect(document.activeElement).toBe(tabs[4]);
+    fireEvent.keyDown(tabs[4]!, { key: "Home" });
+    expect(document.activeElement).toBe(tabs[0]);
+    fireEvent.click(tabs[4]!);
+    await waitFor(() => expect(within(list).getByRole("tab", { name: "History" }).tabIndex).toBe(0));
+    expect(within(list).getAllByRole("tab").filter((tab) => tab.tabIndex === 0)).toHaveLength(1);
   });
 });
 
@@ -1825,17 +1802,17 @@ describe("where the page was left", () => {
 
   it("opens each project on the tab it was left on, and another project on the board", async () => {
     const first = await mountPage("csv", rpc);
-    fireEvent.click(await first.slot.findByRole("tab", { name: "Insights" }));
+    await openView(first.slot, "History", "Insights");
     first.slot.lifecycle.unmount();
     const { slot, goTo } = await mountPage("csv", rpc);
     await waitFor(() => expect(slot.getByRole("tab", { name: "Insights" }).getAttribute("aria-selected")).toBe("true"));
     goTo("docs");
-    await waitFor(() => expect(slot.getByRole("tab", { name: "Board" }).getAttribute("aria-selected")).toBe("true"));
+    await waitFor(() => expect(slot.getByRole("tab", { name: "Work" }).getAttribute("aria-selected")).toBe("true"));
   });
 
   it("scrolls back to where each view was left", async () => {
     const first = await mountPage("csv", rpc);
-    await first.slot.findByRole("tab", { name: "Board" });
+    await first.slot.findByRole("tab", { name: "Work" });
     const node = scroller(first.slot);
     let top = 0;
     // jsdom lays nothing out, so the scroll position is a plain property here.
@@ -1855,7 +1832,7 @@ describe("where the page was left", () => {
     Object.defineProperty(HTMLElement.prototype, "scrollTop", { configurable: true, get: () => top, set: (next: number) => void (top = next) });
     try {
       const { slot } = await mountPage("csv", rpc);
-      await slot.findByRole("tab", { name: "Board" });
+      await slot.findByRole("tab", { name: "Work" });
       expect(top).toBe(420);
     } finally {
       if (originalDescriptor === undefined) delete (HTMLElement.prototype as { scrollTop?: number }).scrollTop;
@@ -1865,47 +1842,64 @@ describe("where the page was left", () => {
 });
 
 describe("project controls", () => {
+  // A test that patches layout restores it here, which runs even when the test times out: the patch once outlived a timed-out
+  // test and sent the next tests' armed controls to the panel.
+  let layoutPatch: { mockRestore(): void } | null = null;
+  afterEach(() => {
+    layoutPatch?.mockRestore();
+    layoutPatch = null;
+  });
   const withState = (state: ProjectSummary["state"], over: Partial<ProjectSummary> = {}) => projectView({ overview: overview({ state, ...over }) });
+  /** The title bar's own buttons, then the ⋯ menu's items. */
   const labels = async (view: ReturnType<typeof projectView>) => {
     const { slot } = await mountPage("csv", { project: () => view });
     await slot.findByRole("heading", { name: "CSV export" });
-    const shown = [...slot.container.querySelectorAll("[data-controls] button")].map((button) => button.textContent);
+    await waitFor(() => expect(titleBar(slot)).not.toBeNull());
+    const bar = [...titleBar(slot).querySelectorAll(":scope > button")].map((button) => button.getAttribute("aria-label") ?? button.textContent);
+    const menu = (await openMenu(slot)).queryAllByRole("menuitem").map((item) => item.querySelector("[data-menu-label]")?.textContent ?? item.textContent);
     slot.lifecycle.unmount();
-    return shown;
+    return { bar, menu };
   };
 
   const bare = (state: ProjectSummary["state"], over: Partial<ProjectSummary> = {}) => ({ ...withState(state, over), next: null });
-  const starting = (): NextStep => ({ stage: 3, tone: "normal", title: "Next: start the project.", text: "Loom starts 2 workers right away, on CSV-1 and CSV-3.", action: { control: "start", label: "Start project · 2 workers", confirm: "Click again to start 2 workers" } });
+  const starting = (): NextStep => ({ stage: 3, tone: "normal", title: "Next: start the project.", text: "Loom starts 2 workers right away, on CSV-1 and CSV-3.", action: { control: "start", label: "Start project · 2 workers", confirm: "Yes, start 2 workers" } });
 
-  it("shows the controls that fit the project's state, with Archive in the ⋯ menu", async () => {
-    const none = { ticketCounts: { queued: 2 } };
-    expect(await labels(bare("draft", { approvedVersion: null, ...none }))).toEqual(["Approve", "⋯"]);
-    expect(await labels(bare("ready", none))).toEqual(["Start", "⋯"]);
-    expect(await labels(bare("running", none))).toEqual(["Pause", "Pause now", "⋯"]);
-    expect(await labels(bare("paused", none))).toEqual(["Resume", "⋯"]);
-    expect(await labels(bare("done", none))).toEqual(["⋯"]);
-    expect(await labels(bare("archived", none))).toEqual([]);
+  // One mount per case, each with its own time: six whole-page mounts in one test ran past 5 s on a loaded machine.
+  const none = { ticketCounts: { queued: 2 } };
+  it.each([
+    ["draft", { approvedVersion: null, ...none }, { bar: ["More project controls"], menu: ["Approve", "Planner", "Archive project…"] }],
+    ["ready", none, { bar: ["More project controls"], menu: ["Start", "Planner", "Archive project…"] }],
+    ["running", none, { bar: ["Pause", "More project controls"], menu: ["Pause now", "Planner", "Archive project…"] }],
+    ["paused", none, { bar: ["Resume", "More project controls"], menu: ["Planner", "Archive project…"] }],
+    ["done", none, { bar: ["More project controls"], menu: ["Planner", "Archive project…"] }],
+    ["archived", none, { bar: ["More project controls"], menu: ["Planner"] }],
+  ] as const)("shows the controls that fit a %s project: Pause or Resume in the bar, the rest in the ⋯ menu", async (state, over, expected) => {
+    expect(await labels(bare(state, over))).toEqual(expected);
   });
 
-  it("hides a draft's Approve while its spec review runs, has findings or did not finish, and shows it once the review passed", async () => {
-    const draft = (specReview: ReturnType<typeof projectView>["specReview"]) => ({ ...bare("draft", { approvedVersion: null, ticketCounts: {} }), specReview });
-    expect(await labels(draft({ kind: "reviewing", version: 1, round: 1 }))).toEqual(["⋯"]);
-    expect(await labels(draft({ kind: "changes", version: 1, round: 1, findings: [{ title: "Too big", detail: "Drop it." }] }))).toEqual(["⋯"]);
-    expect(await labels(draft({ kind: "failed", version: 1, round: 1, reason: "the reviewer ended its turn twice without a verdict" }))).toEqual(["⋯"]);
-    expect(await labels(draft({ kind: "approved", version: 1, round: 1, summary: "Fits." }))).toEqual(["Approve", "⋯"]);
+  it.each([
+    ["runs", { kind: "reviewing", version: 1, round: 1 }, false],
+    ["has findings", { kind: "changes", version: 1, round: 1, findings: [{ title: "Too big", detail: "Drop it." }] }, false],
+    ["did not finish", { kind: "failed", version: 1, round: 1, reason: "the reviewer ended its turn twice without a verdict" }, false],
+    ["passed", { kind: "approved", version: 1, round: 1, summary: "Fits." }, true],
+  ] as const)("offers a draft's Approve only once its spec review passed: here the review %s", async (_case, specReview, offered) => {
+    const draft = { ...bare("draft", { approvedVersion: null, ticketCounts: {} }), specReview: specReview as ReturnType<typeof projectView>["specReview"] };
+    expect((await labels(draft)).menu.includes("Approve")).toBe(offered);
   });
 
   it("offers Land on an integration project with a done ticket, and Approve for a pending spec version", async () => {
-    expect(await labels(bare("running", { ticketCounts: { done: 1 } }))).toEqual(["Pause", "Pause now", "Land", "Land to main", "⋯"]);
-    expect(await labels(bare("running", { strategy: "pr", ticketCounts: { done: 1 } }))).toEqual(["Pause", "Pause now", "⋯"]);
-    expect(await labels(bare("paused", { pendingVersion: 2, ticketCounts: {} }))).toEqual(["Approve v2", "Resume", "⋯"]);
+    expect((await labels(bare("running", { ticketCounts: { done: 1 } }))).menu).toEqual(["Pause now", "Land", "Land to main", "Planner", "Archive project…"]);
+    expect((await labels(bare("running", { strategy: "pr", ticketCounts: { done: 1 } }))).menu).toEqual(["Pause now", "Planner", "Archive project…"]);
+    expect(await labels(bare("paused", { pendingVersion: 2, ticketCounts: {} }))).toEqual({ bar: ["Resume", "More project controls"], menu: ["Approve v2", "Planner", "Archive project…"] });
   });
 
-  it("offers Sync pull requests on a running or paused pull request project with one open", async () => {
-    const open = { strategy: "pr" as const, ticketCounts: { pr_open: 1, queued: 1 } };
-    expect(await labels(bare("running", open))).toEqual(["↻Sync pull requests", "Pause", "Pause now", "⋯"]);
-    expect(await labels(bare("paused", open))).toEqual(["↻Sync pull requests", "Resume", "⋯"]);
-    expect(await labels(bare("done", { strategy: "pr", ticketCounts: { done: 2 } }))).toEqual(["⋯"]);
+  const prOpen = { strategy: "pr" as const, ticketCounts: { pr_open: 1, queued: 1 } };
+  it("offers Sync pull requests on a running pull request project with one open, in the bar and the menu", async () => {
+    expect(await labels(bare("running", prOpen))).toEqual({ bar: ["Sync pull requests", "Pause", "More project controls"], menu: ["Sync pull requests", "Pause now", "Planner", "Archive project…"] });
+  });
+  it("offers Sync pull requests on a paused pull request project with one open, and not on a finished one", async () => {
+    expect((await labels(bare("paused", prOpen))).bar).toEqual(["Sync pull requests", "Resume", "More project controls"]);
+    expect((await labels(bare("done", { strategy: "pr", ticketCounts: { done: 2 } }))).bar).toEqual(["More project controls"]);
   });
 
   it("syncs on one click, says what the reads found in a toast, and warns when a read failed", async () => {
@@ -1923,104 +1917,204 @@ describe("project controls", () => {
     expect(syncPullRequests).toHaveBeenCalledTimes(2);
   });
 
-  it("lands to the base branch from the header after a second click", async () => {
-    const control = vi.fn(() => bare("done", { ticketCounts: { done: 1 } }));
-    const { slot } = await mountPage("csv", { project: () => bare("running", { ticketCounts: { done: 1 } }), control });
-    fireEvent.click(await slot.findByRole("button", { name: "Land to main" }));
-    expect(control).not.toHaveBeenCalled();
-    fireEvent.click(slot.getByRole("button", { name: "Click again to land to main" }));
-    await waitFor(() => expect(control).toHaveBeenCalledWith({ slug: "csv", action: "landDirect", confirm: true }));
-  });
-
-  it("leaves the next step's action out of the header", async () => {
-    expect(await labels({ ...withState("ready", { ticketCounts: { queued: 2 } }), next: starting() })).toEqual(["⋯"]);
-  });
-
-  it("archives through the ⋯ menu after a second click", async () => {
-    const control = vi.fn(() => withState("archived"));
-    const { slot } = await mountPage("csv", { project: () => withState("running"), control });
-    fireEvent.click(await slot.findByRole("button", { name: "More actions" }));
-    fireEvent.click(slot.getByRole("button", { name: "Archive project" }));
-    expect(control).not.toHaveBeenCalled();
-    fireEvent.click(slot.getByRole("button", { name: "Click again to archive project" }));
-    await waitFor(() => expect(control).toHaveBeenCalledWith({ slug: "csv", action: "archive", confirm: true }));
-  });
-
-  it("shows the next step over the tabs, yellow with the reason when tickets are blocked", async () => {
-    const next: NextStep = { stage: 4, tone: "warning", title: "1 ticket is blocked.", text: "CSV-1: bb refused to start a worker.", action: null };
-    const { slot } = await mountPage("csv", { project: () => ({ ...withState("running"), next }) });
-    await slot.findByRole("heading", { name: "CSV export" });
-    const bar = slot.container.querySelector<HTMLElement>('[data-next-step][data-tone="warning"]')!;
-    expect(bar.getAttribute("aria-label")).toBe("Next step");
-    expect(bar.textContent).toContain("1 ticket is blocked.");
-    expect(bar.textContent).toContain("CSV-1: bb refused to start a worker.");
-    expect([...bar.querySelectorAll("[data-stage]")].map((stage) => [stage.getAttribute("data-stage"), stage.getAttribute("data-stage-state")])).toEqual([
-      ["Plan", "done"],
-      ["Review draft", "done"],
-      ["Approve", "done"],
-      ["Start", "done"],
-      ["Work", "current"],
-      ["Land", "todo"],
-    ]);
-    expect(bar.querySelector('[aria-current="step"]')!.getAttribute("data-stage")).toBe("Work");
-    expect(bar.querySelector("button")).toBeNull();
-  });
-
-  it("acts from the bar's button after a second click", async () => {
-    const control = vi.fn(() => withState("running"));
-    const { slot } = await mountPage("csv", { project: () => ({ ...withState("ready"), next: starting() }), control });
-    const bar = () => slot.container.querySelector<HTMLElement>("[data-next-step]")!;
-    fireEvent.click(await slot.findByRole("button", { name: "Start project · 2 workers" }));
-    expect(bar().getAttribute("data-tone")).toBe("normal");
-    expect(control).not.toHaveBeenCalled();
-    fireEvent.click(within(bar()).getByRole("button", { name: "Click again to start 2 workers" }));
-    await waitFor(() => expect(control).toHaveBeenCalledWith({ slug: "csv", action: "start", confirm: true }));
-  });
-
-  it("asks twice before it acts, then calls control with confirm: true, says so in a toast and shows the refreshed project", async () => {
-    let state: ProjectView["overview"]["state"] = "ready";
-    const control = vi.fn(() => {
-      state = "running";
-      return withState(state);
-    });
-    const { slot } = await mountPage("csv", { project: () => withState(state), control });
-    fireEvent.click(await slot.findByRole("button", { name: "Start" }));
-    expect(control).not.toHaveBeenCalled();
-    fireEvent.click(slot.getByRole("button", { name: "Click again to start" }));
-    await waitFor(() => expect(control).toHaveBeenCalledWith({ slug: "csv", action: "start", confirm: true }));
-    await waitFor(() => expect(slot.queryByRole("button", { name: "Start" })).toBeNull());
-    expect(slot.getByRole("button", { name: "Pause" })).toBeTruthy();
-    expect(toast.success).toHaveBeenCalledWith("Project started");
-    expect(calls(slot, "project")).toHaveLength(2);
-  });
-
-  it("goes back to the plain label after five seconds", async () => {
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  it("arms Land to main in the title bar from the menu, and lands on Yes with no timer", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"], shouldAdvanceTime: true });
     try {
-      const { slot } = await mountPage("csv", { project: () => withState("ready") });
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(10);
-      });
-      fireEvent.click(slot.getByRole("button", { name: "Start" }));
-      expect(slot.getByRole("button", { name: "Click again to start" })).toBeTruthy();
-      act(() => void vi.advanceTimersByTime(4900));
-      expect(slot.getByRole("button", { name: "Click again to start" })).toBeTruthy();
-      act(() => void vi.advanceTimersByTime(200));
-      expect(slot.getByRole("button", { name: "Start" })).toBeTruthy();
+      const control = vi.fn(() => bare("done", { ticketCounts: { done: 1 } }));
+      const { slot } = await mountPage("csv", { project: () => bare("running", { ticketCounts: { done: 1 } }), control });
+      await pick(slot, /Land to main/);
+      expect(control).not.toHaveBeenCalled();
+      const yes = await within(titleBar(slot)).findByRole("button", { name: "Yes, land to main" });
+      await waitFor(() => expect(document.activeElement).toBe(yes));
+      // Confirm in place waits for the person: a minute later it is still armed.
+      act(() => void vi.advanceTimersByTime(60_000));
+      fireEvent.click(within(titleBar(slot)).getByRole("button", { name: "Yes, land to main" }));
+      await waitFor(() => expect(control).toHaveBeenCalledWith({ slug: "csv", action: "landDirect", confirm: true }));
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it("sends Pause now and an approve version with their own actions", async () => {
-    const control = vi.fn(() => withState("running", { pendingVersion: 2 }));
-    const { slot } = await mountPage("csv", { project: () => withState("running", { pendingVersion: 2 }), control });
-    fireEvent.click(await slot.findByRole("button", { name: "Pause now" }));
-    fireEvent.click(slot.getByRole("button", { name: "Click again to pause now" }));
+  it("leaves the next step's action out of the title bar", async () => {
+    expect((await labels({ ...withState("ready", { ticketCounts: { queued: 2 } }), next: starting() })).menu).toEqual(["Planner", "Archive project…"]);
+  });
+
+  it("archives from the ⋯ menu on Yes, and Back or Escape disarms it without acting", async () => {
+    const control = vi.fn(() => withState("archived"));
+    const { slot } = await mountPage("csv", { project: () => withState("running"), control });
+    await pick(slot, "Archive project…");
+    fireEvent.click(await within(titleBar(slot)).findByRole("button", { name: "Back" }));
+    expect(within(titleBar(slot)).queryByRole("button", { name: "Yes, archive CSV" })).toBeNull();
+    await pick(slot, "Archive project…");
+    fireEvent.keyDown(await within(titleBar(slot)).findByRole("button", { name: "Yes, archive CSV" }), { key: "Escape" });
+    expect(within(titleBar(slot)).queryByRole("button", { name: "Yes, archive CSV" })).toBeNull();
+    expect(control).not.toHaveBeenCalled();
+    await pick(slot, "Archive project…");
+    fireEvent.click(await within(titleBar(slot)).findByRole("button", { name: "Yes, archive CSV" }));
+    await waitFor(() => expect(control).toHaveBeenCalledWith({ slug: "csv", action: "archive", confirm: true }));
+  });
+
+  it("confirms in a panel under the bar when the armed group would leave the window, with Back and the whole consequence", async () => {
+    // jsdom lays nothing out: the armed group reports itself running 120 px past the window's edge, as at 320 px.
+    const real = Element.prototype.getBoundingClientRect;
+    layoutPatch = vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+      return this.hasAttribute("data-confirm-armed") && !this.hasAttribute("data-confirm-panel") ? ({ left: 200, right: window.innerWidth + 120, width: window.innerWidth - 80, top: 0, bottom: 28, height: 28, x: 200, y: 0 } as DOMRect) : real.call(this);
+    });
+    const control = vi.fn(() => withState("archived"));
+    const { slot } = await mountPage("csv", { project: () => withState("running"), control });
+    await pick(slot, "Archive project…");
+    const panel = await waitFor(() => document.querySelector<HTMLElement>("[data-confirm-panel]")!);
+    expect(within(titleBar(slot)).queryByRole("button", { name: "Yes, archive CSV" })).toBeNull();
+    expect(within(panel).getByRole("button", { name: "Yes, archive CSV" })).toBe(document.activeElement);
+    expect(within(panel).getByRole("button", { name: "Back" })).toBeTruthy();
+    fireEvent.keyDown(within(panel).getByRole("button", { name: "Yes, archive CSV" }), { key: "Escape" });
+    await waitFor(() => expect(document.querySelector("[data-confirm-panel]")).toBeNull());
+    expect(document.activeElement).toBe(slot.getByRole("button", { name: "More project controls" }));
+    expect(control).not.toHaveBeenCalled();
+    await pick(slot, "Archive project…");
+    fireEvent.click(within(await waitFor(() => document.querySelector<HTMLElement>("[data-confirm-panel]")!)).getByRole("button", { name: "Yes, archive CSV" }));
+    await waitFor(() => expect(control).toHaveBeenCalledWith({ slug: "csv", action: "archive", confirm: true }));
+  });
+
+  it("keeps an armed group in the bar only while it fits", () => {
+    const rect = (left: number, right: number) => ({ left, right, width: right - left }) as DOMRect;
+    expect(armedFits(rect(600, 900), 1000, { scrollWidth: 120, clientWidth: 120 })).toBe(true);
+    expect(armedFits(rect(200, 1110), 1000, null)).toBe(false);
+    expect(armedFits(rect(-40, 300), 1000, null)).toBe(false);
+    expect(armedFits(rect(600, 900), 1000, { scrollWidth: 180, clientWidth: 120 })).toBe(false);
+    expect(armedFits(rect(0, 0), 1000, null)).toBe(true);
+  });
+
+  it("shows the next step on the project line, with the reason a tap or a key away", async () => {
+    const next: NextStep = { stage: 4, tone: "warning", title: "1 ticket is blocked.", text: "CSV-1: bb refused to start a worker.", action: null };
+    const { slot } = await mountPage("csv", { project: () => ({ ...withState("running"), next }) });
+    await slot.findByRole("heading", { name: "CSV export" });
+    const line = slot.container.querySelector<HTMLElement>('[data-next-step][data-tone="warning"]')!;
+    expect(line.getAttribute("aria-label")).toBe("Next step");
+    expect(line.textContent).toContain("1 ticket is blocked");
+    const title = within(line).getByRole("button", { name: "1 ticket is blocked" });
+    expect(title.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(title);
+    expect(title.getAttribute("aria-expanded")).toBe("true");
+    expect((await slot.findByRole("dialog", { name: "Next step" })).textContent).toContain("CSV-1: bb refused to start a worker.");
+  });
+
+  it("opens the state's facts from the pill by key or tap, says so, and Esc closes them back onto the pill", async () => {
+    const { slot } = await mountPage("csv", { project: () => ({ ...withState("paused"), next: null }) });
+    await slot.findByRole("heading", { name: "CSV export" });
+    const pill = slot.container.querySelector<HTMLElement>("[data-state-pill]")!;
+    expect(pill.tagName).toBe("BUTTON");
+    expect(pill.getAttribute("aria-expanded")).toBe("false");
+    pill.focus();
+    // A focused button activates on Enter and Space as a click.
+    fireEvent.click(pill);
+    expect(pill.getAttribute("aria-expanded")).toBe("true");
+    const card = await within(document.body).findByRole("dialog", { name: /CSV export: paused/i });
+    expect(card.textContent).toContain("Since");
+    expect(within(card).getByRole("button", { name: /Resume/ })).toBeTruthy();
+    fireEvent.keyDown(card, { key: "Escape" });
+    await waitFor(() => expect(pill.getAttribute("aria-expanded")).toBe("false"));
+    await waitFor(() => expect(document.activeElement).toBe(pill));
+  });
+
+  it("never points the project line at the view or the ticket already open", async () => {
+    const blocked = (key: string, hours: number) => card({ key, title: `Ticket ${key}`, state: "blocked", stateAt: NOW - hours * HOUR });
+    const asks = { ...withState("running"), board: [blocked("CSV-1", 5), blocked("CSV-2", 2)], next: null };
+    const answer = (slot: Slot) => slot.container.querySelector<HTMLElement>("[data-next-step]")!.textContent;
+    const onWork = await mountPage("csv", { project: () => asks });
+    await onWork.slot.findByRole("heading", { name: "CSV export" });
+    // The oldest ask leads, until that ticket is the one open.
+    await waitFor(() => expect(answer(onWork.slot)).toContain("CSV-1"));
+    onWork.slot.lifecycle.unmount();
+    const onTicket = await mountPage("csv/CSV-1", { project: () => asks, ticket: () => ticketDetail({ key: "CSV-1", state: "blocked" }) });
+    await waitFor(() => expect(answer(onTicket.slot)).toContain("CSV-2"));
+    expect(answer(onTicket.slot)).not.toContain("CSV-1");
+    onTicket.slot.lifecycle.unmount();
+    // With the only ask open below, the line says it is open and offers no second way to it, never "nothing needs you".
+    const one = { ...asks, board: [blocked("CSV-1", 5), card({ key: "CSV-3", state: "working" })] };
+    const alone = await mountPage("csv/CSV-1", { project: () => one, ticket: () => ticketDetail({ key: "CSV-1", state: "blocked" }) });
+    await waitFor(() => expect(answer(alone.slot)).toBe("CSV-1asks · answer below"));
+    expect(within(alone.slot.container.querySelector<HTMLElement>("[data-next-step]")!).queryByRole("button")).toBeNull();
+    alone.slot.lifecycle.unmount();
+
+    const pending: NextStep = { stage: 2, tone: "normal", title: "v2 waits for you.", text: "Approve v2 to run it.", action: { control: "approve", version: 2, label: "Approve v2", confirm: "Yes, approve v2" } };
+    const { slot } = await mountPage("csv", { project: () => ({ ...withState("running", { pendingVersion: 2 }), next: pending }) });
+    await slot.findByRole("heading", { name: "CSV export" });
+    const line = () => within(slot.container.querySelector<HTMLElement>("[data-next-step]")!);
+    expect(line().getByRole("button", { name: "Read v2" })).toBeTruthy();
+    fireEvent.click(line().getByRole("button", { name: "Read v2" }));
+    await waitFor(() => expect(slot.getByRole("tab", { name: /^Spec/ }).getAttribute("aria-selected")).toBe("true"));
+    expect(line().queryByRole("button", { name: "Read v2" })).toBeNull();
+    expect(line().getByRole("button", { name: "Approve v2" })).toBeTruthy();
+  });
+
+  it("acts from the project line's lead on Yes", async () => {
+    const control = vi.fn(() => withState("running"));
+    const { slot } = await mountPage("csv", { project: () => ({ ...withState("ready"), next: starting() }), control });
+    const line = () => slot.container.querySelector<HTMLElement>("[data-next-step]")!;
+    fireEvent.click(await slot.findByRole("button", { name: "Start project · 2 workers" }));
+    expect(line().getAttribute("data-tone")).toBe("normal");
+    expect(control).not.toHaveBeenCalled();
+    fireEvent.click(within(line()).getByRole("button", { name: "Yes, start 2 workers" }));
+    await waitFor(() => expect(control).toHaveBeenCalledWith({ slug: "csv", action: "start", confirm: true }));
+  });
+
+  it("arms a risky control first, then calls control with confirm: true, says so in a toast and shows the refreshed project", async () => {
+    let state: ProjectView["overview"]["state"] = "ready";
+    const control = vi.fn(() => {
+      state = "running";
+      return { ...withState(state), next: null };
+    });
+    const { slot } = await mountPage("csv", { project: () => ({ ...withState(state), next: null }), control });
+    await pick(slot, /^Start/);
+    expect(control).not.toHaveBeenCalled();
+    fireEvent.click(await within(titleBar(slot)).findByRole("button", { name: /^Yes, start/ }));
+    await waitFor(() => expect(control).toHaveBeenCalledWith({ slug: "csv", action: "start", confirm: true }));
+    await waitFor(() => expect(within(titleBar(slot)).getByRole("button", { name: "Pause" })).toBeTruthy());
+    expect(toast.success).toHaveBeenCalledWith("Project started");
+    expect(calls(slot, "project")).toHaveLength(2);
+  });
+
+  it("pauses and resumes in one click, and sends Pause now and an approve version with their own actions", async () => {
+    const control = vi.fn(() => ({ ...withState("running", { pendingVersion: 2 }), next: null }));
+    const { slot } = await mountPage("csv", { project: () => ({ ...withState("running", { pendingVersion: 2 }), next: null }), control });
+    fireEvent.click((await inTitleBar(slot)).getByRole("button", { name: "Pause" }));
+    await waitFor(() => expect(control).toHaveBeenLastCalledWith({ slug: "csv", action: "pause", confirm: true }));
+    await waitFor(() => expect((within(titleBar(slot)).getByRole("button", { name: "Pause" }) as HTMLButtonElement).disabled).toBe(false));
+    // Pause now says what it does, and does it: it stops the agents at once, with one click like Pause.
+    const menu = await openMenu(slot);
+    expect(menu.getByRole("menuitem", { name: /Pause now/ }).textContent).toContain("Stops running agents at once");
+    fireEvent.click(menu.getByRole("menuitem", { name: /Pause now/ }));
     await waitFor(() => expect(control).toHaveBeenLastCalledWith({ slug: "csv", action: "pauseNow", confirm: true }));
-    fireEvent.click(await slot.findByRole("button", { name: "Approve v2" }));
-    fireEvent.click(slot.getByRole("button", { name: "Click again to approve v2" }));
+    expect(toast.success).toHaveBeenLastCalledWith("Paused, and its workers stopped");
+    await waitFor(() => expect((within(titleBar(slot)).getByRole("button", { name: "Pause" }) as HTMLButtonElement).disabled).toBe(false));
+    await pick(slot, /Approve v2/);
+    fireEvent.click(await within(titleBar(slot)).findByRole("button", { name: "Yes, approve v2" }));
     await waitFor(() => expect(control).toHaveBeenLastCalledWith({ slug: "csv", action: "approve", version: 2, confirm: true }));
+  });
+
+  it("disables every write in the title bar while rewound, refuses one that gets through, and keeps navigation", async () => {
+    const project = (input: { slug: string; at?: number }) => (input.at === undefined ? withState("running", { strategy: "pr", ticketCounts: { pr_open: 1, done: 1 } }) : { ...withState("running", { strategy: "pr", ticketCounts: { pr_open: 1, done: 1 } }), at: input.at, now: NOW - 15 * 60_000 });
+    const control = vi.fn(() => withState("paused"));
+    const syncPullRequests = vi.fn(() => ({ slug: "csv", tickets: [], message: "", problem: false }));
+    const { slot } = await mountPage("csv", { project, control, syncPullRequests });
+    await waitFor(() => expect(slot.getByRole("slider", { name: "Timeline" }).getAttribute("aria-valuemax")).not.toBe("0"));
+    fireEvent.click(slot.getByRole("button", { name: "Previous moment" }));
+    await waitFor(() => expect(slot.container.querySelector("[data-rewind-bar]")).not.toBeNull());
+    const bar = within(titleBar(slot));
+    for (const name of ["Pause", "Sync pull requests"]) {
+      const button = bar.getByRole("button", { name });
+      expect(button.getAttribute("aria-disabled")).toBe("true");
+      fireEvent.click(button);
+    }
+    expect(toast.error).toHaveBeenCalledWith("Read-only while rewound: go back to now to act");
+    const menu = await openMenu(slot);
+    for (const name of [/Sync pull requests/, /Pause now/, /Archive project/]) expect(menu.getByRole("menuitem", { name }).getAttribute("aria-disabled")).toBe("true");
+    expect(menu.getByRole("menuitem", { name: "Planner" }).getAttribute("aria-disabled")).toBeNull();
+    // The keys write nothing either: 1 to 5 change views, [ and ] move in time.
+    fireEvent.keyDown(slot.container.querySelector("[data-project-shell]")!, { key: "p" });
+    expect(control).not.toHaveBeenCalled();
+    expect(syncPullRequests).not.toHaveBeenCalled();
   });
 
   // bb's query client shows its own toast for every failed write, so Loom adds none and says nothing went through.
@@ -2028,15 +2122,13 @@ describe("project controls", () => {
     const control = vi.fn(() => {
       throw new Error("Project csv is ready; pause needs a running project.");
     });
-    const { slot } = await mountPage("csv", { project: () => withState("ready"), control });
-    fireEvent.click(await slot.findByRole("button", { name: "Start" }));
-    fireEvent.click(slot.getByRole("button", { name: "Click again to start" }));
+    const { slot } = await mountPage("csv", { project: () => withState("running"), control });
+    fireEvent.click((await inTitleBar(slot)).getByRole("button", { name: "Pause" }));
     await waitFor(() => expect(control).toHaveBeenCalled());
-    await waitFor(() => expect((slot.getByRole("button", { name: "Start" }) as HTMLButtonElement).disabled).toBe(false));
+    await waitFor(() => expect((within(titleBar(slot)).getByRole("button", { name: "Pause" }) as HTMLButtonElement).disabled).toBe(false));
     expect(toast.error).not.toHaveBeenCalled();
     expect(toast.success).not.toHaveBeenCalled();
     expect(slot.queryByRole("alert")).toBeNull();
-    expect((slot.getByRole("button", { name: "Start" }) as HTMLButtonElement).disabled).toBe(false);
   });
 
   it("says in each control's toast what it did", () => {
@@ -2048,40 +2140,48 @@ describe("project controls", () => {
     expect(controlDone("landDirect")).toBe("Landed on the base branch");
     expect(controlDone("archive")).toBe("Project archived");
   });
-
 });
 
 describe("confirm button", () => {
-  it("turns amber on the first click, with a bar that drains and a Cancel button, and acts on the second", () => {
+  it("arms in place on the first click: Yes with what it does, beside Back, focus on Yes, and acts on Yes", () => {
     const onConfirm = vi.fn();
     const view = render(<ConfirmButton label="Start" onConfirm={onConfirm} />);
     fireEvent.click(view.getByRole("button", { name: "Start" }));
-    const armed = view.getByRole("button", { name: "Click again to start" });
+    const armed = view.getByRole("button", { name: "Yes, start" });
     expect(armed.hasAttribute("data-confirming")).toBe(true);
-    expect(armed.className).toContain("bg-warning");
-    expect(armed.querySelector<HTMLElement>("[data-drain]")!.style.transform).toBe("scaleX(0)");
-    expect(view.getByRole("button", { name: "Cancel" })).toBeTruthy();
+    expect(document.activeElement).toBe(armed);
+    expect(view.getByRole("group", { name: "Start" })).toBeTruthy();
+    expect(view.getByRole("button", { name: "Back" })).toBeTruthy();
     expect(onConfirm).not.toHaveBeenCalled();
     fireEvent.click(armed);
     expect(onConfirm).toHaveBeenCalledTimes(1);
-    expect(view.getByRole("button", { name: "Start" }).hasAttribute("data-confirming")).toBe(false);
-    expect(view.queryByRole("button", { name: "Cancel" })).toBeNull();
+    expect(view.getByRole("button", { name: "Start" })).toBeTruthy();
+    expect(view.queryByRole("button", { name: "Back" })).toBeNull();
   });
 
-  it("goes back to its label on Cancel without acting", () => {
-    const onConfirm = vi.fn();
-    const view = render(<ConfirmButton label="Archive project" danger onConfirm={onConfirm} />);
-    fireEvent.click(view.getByRole("button", { name: "Archive project" }));
-    fireEvent.click(view.getByRole("button", { name: "Cancel" }));
-    expect(view.getByRole("button", { name: "Archive project" })).toBeTruthy();
-    expect(view.queryByRole("button", { name: "Cancel" })).toBeNull();
-    expect(onConfirm).not.toHaveBeenCalled();
+  it("goes back to its label on Back or Escape without acting, with focus on it again, and never on a timer", () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const onConfirm = vi.fn();
+      const view = render(<ConfirmButton label="Archive project" danger onConfirm={onConfirm} />);
+      fireEvent.click(view.getByRole("button", { name: "Archive project" }));
+      act(() => void vi.advanceTimersByTime(60_000));
+      fireEvent.click(view.getByRole("button", { name: "Back" }));
+      expect(document.activeElement).toBe(view.getByRole("button", { name: "Archive project" }));
+      fireEvent.click(view.getByRole("button", { name: "Archive project" }));
+      fireEvent.keyDown(view.getByRole("button", { name: "Yes, archive project" }), { key: "Escape" });
+      expect(view.getByRole("button", { name: "Archive project" })).toBeTruthy();
+      expect(view.queryByRole("button", { name: "Back" })).toBeNull();
+      expect(onConfirm).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("says its own confirm label when it has one", () => {
-    const view = render(<ConfirmButton primary label="Start project · 2 workers" confirmLabel="Click again to start 2 workers" onConfirm={() => undefined} />);
+    const view = render(<ConfirmButton primary label="Start project · 2 workers" confirmLabel="Yes, start 2 workers" onConfirm={() => undefined} />);
     fireEvent.click(view.getByRole("button", { name: "Start project · 2 workers" }));
-    expect(view.getByRole("button", { name: "Click again to start 2 workers" }).className).toContain("h-9");
+    expect(view.getByRole("button", { name: "Yes, start 2 workers" }).className).toContain("h-8");
   });
 });
 
@@ -2110,10 +2210,55 @@ describe("more menu", () => {
 });
 
 describe("live updates", () => {
+  const approving = (version: number): ReturnType<typeof projectView> => ({
+    ...projectView({ overview: overview({ state: "paused", pendingVersion: version }) }),
+    next: { stage: 2, tone: "normal", title: `v${version} waits for you.`, text: `Approve v${version} to run it.`, action: { control: "approve", version, label: `Approve v${version}`, confirm: `Yes, approve v${version}` } },
+  });
+
+  it("disarms the project line's Approve when the pending version changes under it, so Enter writes nothing", async () => {
+    let version = 21;
+    const control = vi.fn(() => approving(version));
+    const { slot } = await mountPage("csv", { project: () => approving(version), control });
+    await slot.findByRole("heading", { name: "CSV export" });
+    const line = () => within(slot.container.querySelector<HTMLElement>("[data-next-step]")!);
+    fireEvent.click(line().getByRole("button", { name: "Approve v21" }));
+    const yes = line().getByRole("button", { name: "Yes, approve v21" });
+    await waitFor(() => expect(document.activeElement).toBe(yes));
+    version = 22;
+    await slot.experimental_invalidateRpc(changedTags("csv"));
+    await waitFor(() => expect(line().getByRole("button", { name: "Approve v22" })).toBeTruthy());
+    expect(line().queryByRole("button", { name: /^Yes, approve/ })).toBeNull();
+    // Focus went back to the idle button, where Enter arms the new version instead of approving it.
+    expect(document.activeElement).toBe(line().getByRole("button", { name: "Approve v22" }));
+    fireEvent.keyDown(document.activeElement!, { key: "Enter" });
+    fireEvent.click(yes);
+    expect(control).not.toHaveBeenCalled();
+    fireEvent.click(line().getByRole("button", { name: "Approve v22" }));
+    fireEvent.click(line().getByRole("button", { name: "Yes, approve v22" }));
+    await waitFor(() => expect(control).toHaveBeenCalledTimes(1));
+    expect(calls(slot, "control")[0]!.input).toMatchObject({ slug: "csv", action: "approve", version: 22 });
+  });
+
+  it("disarms the title bar's armed control when its offer goes away or changes, so Yes writes nothing", async () => {
+    let state: ProjectSummary["state"] = "running";
+    const control = vi.fn(() => projectView({ overview: overview({ state }) }));
+    const { slot } = await mountPage("csv", { project: () => ({ ...projectView({ overview: overview({ state }) }), next: null }), control });
+    await slot.findByRole("heading", { name: "CSV export" });
+    fireEvent.click((await openMenu(slot)).getByRole("menuitem", { name: /Archive project/ }));
+    const yes = await within(titleBar(slot)).findByRole("button", { name: /^Yes, archive/ });
+    await waitFor(() => expect(document.activeElement).toBe(yes));
+    state = "archived";
+    await slot.experimental_invalidateRpc(changedTags("csv"));
+    await waitFor(() => expect(within(titleBar(slot)).queryByRole("button", { name: /^Yes, archive/ })).toBeNull());
+    fireEvent.click(yes);
+    expect(control).not.toHaveBeenCalled();
+  });
+
   it("asks for the project again when it changes, and ignores other projects", async () => {
     let state: ProjectSummary["state"] = "ready";
     const { slot } = await mountPage("csv", { project: () => projectView({ overview: overview({ state }) }) });
-    await slot.findByRole("button", { name: "Start" });
+    await slot.findByRole("heading", { name: "CSV export" });
+    expect(slot.queryByRole("button", { name: "Pause" })).toBeNull();
     state = "running";
     await slot.experimental_invalidateRpc(changedTags("other"));
     expect(calls(slot, "project")).toHaveLength(1);
@@ -2138,21 +2283,21 @@ describe("spec tab", () => {
     const panel = slot.container.querySelector<HTMLElement>("[data-review-panel]")!;
     fireEvent.click(within(panel).getByRole("button", { name: "Approve v2" }));
     expect(control).not.toHaveBeenCalled();
-    fireEvent.click(within(panel).getByRole("button", { name: "Click again to approve v2" }));
+    fireEvent.click(within(panel).getByRole("button", { name: "Yes, approve v2" }));
     await waitFor(() => expect(control).toHaveBeenCalledWith({ slug: "csv", action: "approve", version: 2, confirm: true }));
   });
 
   it("leaves a pending version's Approve to the next-step bar when the bar carries it", async () => {
-    const next: NextStep = { stage: 4, tone: "normal", title: "Next: approve v2.", text: "The planner proposed spec v2.", action: { control: "approve", version: 2, label: "Approve v2", confirm: "Click again to approve v2" } };
+    const next: NextStep = { stage: 4, tone: "normal", title: "Next: approve v2.", text: "The planner proposed spec v2.", action: { control: "approve", version: 2, label: "Approve v2", confirm: "Yes, approve v2" } };
     const control = vi.fn(() => projectView());
     const { slot } = await mountPage("csv", { project: () => pending(next), control, specVersion: () => pendingSpec() });
     fireEvent.click(await slot.findByRole("tab", { name: "Spec" }));
     await waitFor(() => expect(slot.container.querySelector("[data-review-panel]")).not.toBeNull());
     expect(within(slot.container.querySelector<HTMLElement>("[data-review-panel]")!).queryByRole("button", { name: /^Approve/ })).toBeNull();
     expect(slot.getAllByRole("button", { name: /^Approve v2/ })).toHaveLength(1);
-    expect(slot.getByRole("button", { name: "More actions" })).toBeTruthy();
+    expect(slot.getByRole("button", { name: "More project controls" })).toBeTruthy();
     fireEvent.click(within(slot.container.querySelector<HTMLElement>("[data-next-step]")!).getByRole("button", { name: "Approve v2" }));
-    fireEvent.click(slot.getByRole("button", { name: "Click again to approve v2" }));
+    fireEvent.click(slot.getByRole("button", { name: "Yes, approve v2" }));
     await waitFor(() => expect(control).toHaveBeenCalledWith({ slug: "csv", action: "approve", version: 2, confirm: true }));
   });
 
@@ -2175,23 +2320,24 @@ describe("spec tab", () => {
     it("counts the blocked tickets on the Board tab, and shows none without one", async () => {
       const blocked = projectView({ board: [card(), card({ key: "CSV-2", state: "blocked", blockedReason: "Needs a decision." }), card({ key: "CSV-3", state: "blocked" })] });
       const { slot } = await mountPage("csv", { project: () => blocked });
-      const board = await slot.findByRole("tab", { name: "Board" });
-      expect(badge(slot, "board")!.textContent).toBe("2");
-      expect(badge(slot, "board")!.getAttribute("aria-hidden")).toBe("true");
-      expect(badge(slot, "board")!.className).toContain("bg-destructive");
-      expect(board.getAttribute("title")).toBe("2 tickets are blocked");
+      const board = await slot.findByRole("tab", { name: "Work" });
+      expect(badge(slot, "work")!.textContent).toBe("2");
+      expect(badge(slot, "work")!.getAttribute("aria-hidden")).toBe("true");
+      expect(badge(slot, "work")!.getAttribute("data-tone")).toBe("destructive");
       expect(board.getAttribute("aria-description")).toBe("2 tickets are blocked");
       expect(badge(slot, "spec")).toBeNull();
-      // The tab says the same at its top, with each ticket one click away and what clears it.
+      // The tab says the same at its top, in one line with what clears it; the tickets are the Needs you rows just under it.
       const notice = slot.container.querySelector<HTMLElement>('[data-badge-notice="board"]')!;
-      expect(notice.textContent).toContain("2 tickets are blocked. A ticket leaves the count once it is requeued, by you or by the planner in a triage round, or cancelled.");
+      expect(notice.textContent).toBe("2 tickets are blocked. A ticket leaves the count once it is requeued, by you or by the planner in a triage round, or cancelled.");
       expect(notice.className).toContain("border-l-destructive");
-      fireEvent.click(within(notice).getByRole("button", { name: /^CSV-3: / }));
+      expect(notice.querySelector("[data-badge-item]")).toBeNull();
+      const need = await slot.findByRole("list", { name: "Needs you" });
+      fireEvent.click(within(need).getByRole("button", { name: /^CSV-3, blocked/ }));
       expect(slot.inspection.navigateCalls.at(-1)).toEqual(pushed("csv/CSV-3"));
 
       slot.lifecycle.unmount();
       const { slot: calm } = await mountPage("csv", { project: () => projectView() });
-      expect((await calm.findByRole("tab", { name: "Board" })).getAttribute("title")).toBeNull();
+      expect((await calm.findByRole("tab", { name: "Work" })).getAttribute("aria-description")).toBeNull();
       expect(calm.container.querySelector("[data-tab-badge]")).toBeNull();
     });
 
@@ -2200,13 +2346,13 @@ describe("spec tab", () => {
       const { slot } = await mountPage("csv", { project: () => pending });
       const spec = await slot.findByRole("tab", { name: "Spec" });
       expect(badge(slot, "spec")!.textContent).toBe("1");
-      expect(badge(slot, "spec")!.className).toContain("bg-warning");
-      expect(spec.getAttribute("title")).toBe("Spec v2 waits for your approval");
+      expect(badge(slot, "spec")!.getAttribute("data-tone")).toBe("warning");
+      expect(spec.getAttribute("aria-description")).toBe("Spec v2 waits for your approval");
 
       const draft = projectView({ overview: overview({ state: "draft", approvedVersion: null }), spec: { ...projectView().spec, version: 3 } });
       slot.lifecycle.unmount();
       const { slot: drafted } = await mountPage("csv", { project: () => draft });
-      expect((await drafted.findByRole("tab", { name: "Spec" })).getAttribute("title")).toBe("Draft v3 waits for your review");
+      expect((await drafted.findByRole("tab", { name: "Spec" })).getAttribute("aria-description")).toBe("Draft v3 waits for your review");
 
       const archived = projectView({ overview: overview({ state: "archived", pendingVersion: 2 }) });
       drafted.lifecycle.unmount();
@@ -2248,14 +2394,21 @@ describe("changes tab", () => {
     ...over,
   });
   const board = [card({ key: "CSV-1", state: "done", ready: false, hasChanges: true }), card({ key: "CSV-2", title: "Export endpoint", state: "working", ready: false, threadId: "thr_w1", hasChanges: true }), card({ key: "CSV-3", title: "Docs" })];
-  const landing = () => projectView({ overview: overview({ ticketCounts: { done: 3 } }), board: board.map((entry) => ({ ...entry, state: "done" })), next: { stage: 5, tone: "normal", title: "Next: land the project.", text: "Every ticket is finished.", action: { control: "land", label: "Land · open the pull request", confirm: "Click again to land" } } });
+  const landing = () => projectView({ overview: overview({ ticketCounts: { done: 3 } }), board: board.map((entry) => ({ ...entry, state: "done" })), next: { stage: 5, tone: "normal", title: "Next: land the project.", text: "Every ticket is finished.", action: { control: "land", label: "Land · open the pull request", confirm: "Yes, land: push and open the pull request" } } });
   const mountChanges = async (rpc: Partial<Handlers> = {}, view = projectView({ board })) => {
-    const mounted = await mountPage("csv", { project: () => view, changes: () => changesView(), changePatch: ({ path }) => ({ patch: `diff --git a/${path} b/${path}\n+x\n`, truncated: false }), ...rpc });
-    await mounted.slot.findByRole("tab", { name: "Board" });
-    return mounted.slot;
+    const mounted = await mountPage("csv", { project: () => view, ticket: ({ key }) => ticketDetail({ key }), changes: () => changesView(), changePatch: ({ path }) => ({ patch: `diff --git a/${path} b/${path}\n+x\n`, truncated: false }), ...rpc });
+    await mounted.slot.findByRole("tab", { name: "Work" });
+    return Object.assign(mounted.slot, { goTo: mounted.goTo });
+  };
+  /** A ticket's changes, from its menu in Work's pane: the page leaves the ticket for Ship's Changes. */
+  const changesOf = async (slot: Slot & { goTo(next: string): void }, key: string) => {
+    slot.goTo(`csv/${key}`);
+    fireEvent.click((await ticketMenu(slot, key)).getByRole("menuitem", { name: "Changes" }));
+    expect(slot.inspection.navigateCalls.at(-1)).toEqual(pushed("csv"));
+    slot.goTo("csv");
   };
   const openTab = async (slot: Slot) => {
-    fireEvent.click(slot.getByRole("tab", { name: "Changes" }));
+    await openView(slot, "Ship", "Changes");
     return slot.findByText("compared with", { exact: false });
   };
   const fileRow = (slot: Slot, path: string) => slot.container.querySelector<HTMLElement>(`[data-file="${path}"]`)!;
@@ -2298,12 +2451,11 @@ describe("changes tab", () => {
     await waitFor(() => expect(slot.getAllByTestId("bb-diff")).toHaveLength(2));
   });
 
-  it("opens a ticket's changes from a file's ticket chip and from a board card's Changes link", async () => {
+  it("opens a ticket's changes from a file's ticket chip and from the ticket's menu", async () => {
     const slot = await mountChanges();
-    fireEvent.click(slot.getByRole("button", { name: "Show the changes of CSV-2" }));
+    await changesOf(slot, "CSV-2");
     expect(await slot.findByText("Live.", { exact: false })).toBeTruthy();
     expect(slot.container.querySelector("[data-change-source]")!.getAttribute("data-change-source")).toBe("live:CSV-2");
-    expect(slot.queryByRole("button", { name: "Show the changes of CSV-3" })).toBeNull();
     fireEvent.click(slot.container.querySelector<HTMLElement>('[data-source="branch"]')!);
     fireEvent.click(fileRow(slot, "src/a.ts").querySelector<HTMLElement>('[data-file-ticket="CSV-1"]')!);
     expect(slot.container.querySelector("[data-change-source]")!.getAttribute("data-change-source")).toBe("merge:CSV-1");
@@ -2312,7 +2464,7 @@ describe("changes tab", () => {
 
   it("reads a live worktree's patch by the ticket's key and marks a file git does not track yet", async () => {
     const slot = await mountChanges();
-    fireEvent.click(slot.getByRole("button", { name: "Show the changes of CSV-2" }));
+    await changesOf(slot, "CSV-2");
     await slot.findByText("Live.", { exact: false });
     expect(fileRow(slot, "src/export.ts").textContent).toContain("new, not committed");
     fireEvent.click(slot.getByRole("button", { name: "Open worker thread" }));
@@ -2326,7 +2478,7 @@ describe("changes tab", () => {
     vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
     try {
       const slot = await mountChanges();
-      fireEvent.click(slot.getByRole("button", { name: "Show the changes of CSV-2" }));
+      await changesOf(slot, "CSV-2");
       await slot.findByText("Live.", { exact: false });
       const before = calls(slot, "changes").length;
       await act(async () => {
@@ -2360,10 +2512,62 @@ describe("changes tab", () => {
     await waitFor(() => expect(slot.getByText("Viewed 0 of 2", { exact: false })).toBeTruthy());
   });
 
+  it("says politely when a refresh changes the open source's files, and not when the person picks another source", async () => {
+    let view = changesView({ sources: [source({ files: [changed("src/a.ts")] }), changesView().sources[1]!] });
+    const slot = await mountChanges({ changes: () => view });
+    await openTab(slot);
+    const status = () => slot.container.querySelector<HTMLElement>("[data-changes-refreshed]")!;
+    await waitFor(() => expect(status().getAttribute("role")).toBe("status"));
+    expect(status().textContent).toBe("");
+    view = changesView({ sources: [source({ files: [changed("src/a.ts"), changed("src/c.ts", { status: "added" })] }), changesView().sources[1]!] });
+    await slot.experimental_invalidateRpc(changedTags("csv"));
+    await waitFor(() => expect(status().textContent).toBe("Changes updated: 1 added; 2 files in all."));
+    const said = status().firstElementChild;
+    // The same files read again say nothing new; another source the person picks is not an update.
+    await slot.experimental_invalidateRpc(changedTags("csv"));
+    await waitFor(() => expect(calls(slot, "changes").length).toBeGreaterThanOrEqual(3));
+    expect(status().textContent).toBe("Changes updated: 1 added; 2 files in all.");
+    expect(status().firstElementChild).toBe(said);
+    fireEvent.click(slot.container.querySelector<HTMLElement>('[data-source="merge:CSV-1"]')!);
+    await waitFor(() => expect(slot.container.querySelector("[data-change-source]")!.getAttribute("data-change-source")).toBe("merge:CSV-1"));
+    expect(status().textContent).toBe("");
+  });
+
+  it("announces each refresh that changes the open source's files, also when the count stays the same", async () => {
+    const twoFiles = (a: string, b: string) => changesView({ sources: [source({ files: [changed("src/a.ts", { fingerprint: a }), changed("src/b.ts", { fingerprint: b })] }), changesView().sources[1]!] });
+    let view = twoFiles("a1", "b1");
+    const slot = await mountChanges({ changes: () => view });
+    await openTab(slot);
+    const status = () => slot.container.querySelector<HTMLElement>("[data-changes-refreshed]")!;
+    await waitFor(() => expect(status().getAttribute("role")).toBe("status"));
+    expect(status().textContent).toBe("");
+    view = twoFiles("a2", "b2");
+    await slot.experimental_invalidateRpc(changedTags("csv"));
+    await waitFor(() => expect(status().textContent).toBe("Changes updated: 2 files changed; 2 files in all."));
+    const first = status().firstElementChild;
+    // The second refresh changes the same two files again: the words match, so the note is a new node a screen reader reads as news.
+    view = twoFiles("a3", "b3");
+    await slot.experimental_invalidateRpc(changedTags("csv"));
+    await waitFor(() => expect(status().firstElementChild).not.toBe(first));
+    expect(status().textContent).toBe("Changes updated: 2 files changed; 2 files in all.");
+    const second = status().firstElementChild;
+    view = twoFiles("a3", "b4");
+    await slot.experimental_invalidateRpc(changedTags("csv"));
+    await waitFor(() => expect(status().textContent).toBe("Changes updated: 1 file changed; 2 files in all."));
+    expect(status().firstElementChild).not.toBe(second);
+    // An unchanged read leaves the last note in place.
+    const third = status().firstElementChild;
+    const reads = calls(slot, "changes").length;
+    await slot.experimental_invalidateRpc(changedTags("csv"));
+    await waitFor(() => expect(calls(slot, "changes").length).toBeGreaterThan(reads));
+    expect(status().firstElementChild).toBe(third);
+  });
+
   it("when the project is ready to land, the bar's Review changes opens the branch, the tab counts the files not viewed, and the panel lands", async () => {
     const slot = await mountChanges({ control: () => landing() }, landing());
+    // On Work the Ship tab carries the count; inside Ship, its Changes part does.
     const badge = await waitFor(() => {
-      const found = slot.container.querySelector('[data-tab-badge="changes"]');
+      const found = slot.container.querySelector('[data-tab-badge="ship"]');
       if (found === null) throw new Error("no badge yet");
       return found;
     });
@@ -2374,14 +2578,14 @@ describe("changes tab", () => {
     expect(slot.container.querySelector('[data-tab-badge="changes"]')!.textContent).toBe("1");
     const panel = slot.container.querySelector<HTMLElement>("[data-land-panel]")!;
     fireEvent.click(within(panel).getByRole("button", { name: "Land" }));
-    fireEvent.click(within(panel).getByRole("button", { name: "Click again to land" }));
+    fireEvent.click(within(panel).getByRole("button", { name: "Yes, land: push and open the pull request" }));
     await waitFor(() => expect(calls(slot, "control")).toEqual([{ method: "control", input: { slug: "csv", action: "land", confirm: true } }]));
   });
 
   it("leaves out work whose commits are gone, says why nothing can be read, and shows a finished project's merges", async () => {
     const gone = changesView({ finished: true, sources: [changesView().sources[0]!, { ...changesView().sources[1]!, gone: true, files: null, note: "Its commits are no longer in the repository." }] });
     const slot = await mountChanges({ changes: () => gone }, projectView({ overview: overview({ state: "done", ticketCounts: { done: 1 } }), board, next: null }));
-    fireEvent.click(slot.getByRole("tab", { name: "Changes" }));
+    await openView(slot, "Ship", "Changes");
     await waitFor(() => expect(slot.container.querySelector("[data-change-source]")!.textContent).toContain("What loom/csv merged"));
     expect(slot.container.querySelector("[data-land-panel]")).toBeNull();
     expect([...slot.container.querySelectorAll("[data-source]")].map((node) => node.getAttribute("data-source"))).toEqual(["branch"]);
@@ -2389,7 +2593,7 @@ describe("changes tab", () => {
     slot.lifecycle.unmount();
 
     const none = await mountChanges({ changes: () => changesView({ sources: [], unavailable: "The bb project has no checkout on the machine host_1, so its changes cannot be read." }) });
-    fireEvent.click(none.getByRole("tab", { name: "Changes" }));
+    await openView(none, "Ship", "Changes");
     expect(await none.findByText("The bb project has no checkout on the machine host_1, so its changes cannot be read.")).toBeTruthy();
   });
 
@@ -2432,7 +2636,7 @@ describe("changes tab", () => {
       projectView({
         overview: overview({ repos, ticketCounts: { done: 2 } }),
         board: multiBoard.slice(0, 2),
-        next: { stage: 5, tone: "normal", title: "Next: land the project.", text: "Every ticket is finished.", action: { control: "land", label: "Land · 1 repo", confirm: "Click again to land" } },
+        next: { stage: 5, tone: "normal", title: "Next: land the project.", text: "Every ticket is finished.", action: { control: "land", label: "Land · 1 repo", confirm: "Yes, land: push and open the pull request" } },
       });
     const shown = (slot: Slot) => slot.container.querySelector("[data-change-source]")?.getAttribute("data-change-source") ?? null;
     const pick = (slot: Slot, id: string) => fireEvent.click(slot.container.querySelector<HTMLElement>(`[data-source="${id}"]`)!);
@@ -2490,7 +2694,7 @@ describe("changes tab", () => {
         ),
       });
       const slot = await mountChanges({ changes: () => goneAndUnread }, running());
-      fireEvent.click(slot.getByRole("tab", { name: "Changes" }));
+      await openView(slot, "Ship", "Changes");
       expect(await empty(slot)).toBe("The changes of the repos that can be read are no longer in their repositories. A repo that cannot be read says why in its section.");
       expect([...slot.container.querySelectorAll("[data-change-repo]")].map((section) => section.getAttribute("data-change-repo"))).toEqual(["web", "api"]);
       expect(sectionOf(slot, "web").textContent).toBe("webIts changes are no longer in the repository.");
@@ -2506,7 +2710,7 @@ describe("changes tab", () => {
         unavailable: `None of the project's repos can be read. ${webMessage} ${apiMessage}`,
       });
       const none = await mountChanges({ changes: () => unread }, running());
-      fireEvent.click(none.getByRole("tab", { name: "Changes" }));
+      await openView(none, "Ship", "Changes");
       expect(await empty(none)).toBe("None of the project's repos can be read; each repo's section says why.");
       expect(sectionOf(none, "web").querySelector("[data-repo-unavailable]")!.textContent).toBe(webMessage);
       expect(sectionOf(none, "api").querySelector("[data-repo-unavailable]")!.textContent).toBe(apiMessage);
@@ -2516,7 +2720,7 @@ describe("changes tab", () => {
       // A single-repo project still shows only the one sentence.
       const allGone = changesView({ sources: changesView().sources.map((entry) => ({ ...entry, files: null, gone: true })) });
       const single = await mountChanges({ changes: () => allGone });
-      fireEvent.click(single.getByRole("tab", { name: "Changes" }));
+      await openView(single, "Ship", "Changes");
       expect(await single.findByText("This project's changes are no longer in the repository.")).toBeTruthy();
       expect(single.container.querySelector("[data-changes], [data-change-sources], [data-change-repo]")).toBeNull();
     });
@@ -2541,16 +2745,16 @@ describe("changes tab", () => {
 
     it("lands only the repo of the branch shown, onto that repo's base", async () => {
       const slot = await mountChanges({ changes: () => landingChanges(), control: () => landingView() }, landingView());
-      fireEvent.click(slot.getByRole("tab", { name: "Changes" }));
+      await openView(slot, "Ship", "Changes");
       await slot.findByText("This is what lands in api.", { exact: false });
       const panel = () => slot.container.querySelector<HTMLElement>("[data-land-panel]")!;
       expect(panel().textContent).toContain("Land api pushes loom/csv in api at ccccccc and opens one pull request into trunk, or updates the one already open. Land api to trunk merges upstream/trunk in");
       expect(panel().textContent).toContain("The other repos do not land.");
       fireEvent.click(within(panel()).getByRole("button", { name: "Land api" }));
-      fireEvent.click(within(panel()).getByRole("button", { name: "Click again to land api" }));
+      fireEvent.click(within(panel()).getByRole("button", { name: "Yes, land api: push and open its pull request" }));
       await waitFor(() => expect(within(panel()).getByRole<HTMLButtonElement>("button", { name: "Land api to trunk" }).disabled).toBe(false));
       fireEvent.click(within(panel()).getByRole("button", { name: "Land api to trunk" }));
-      fireEvent.click(within(panel()).getByRole("button", { name: "Click again to land api to trunk" }));
+      fireEvent.click(within(panel()).getByRole("button", { name: "Yes, push api straight to trunk" }));
       await waitFor(() =>
         expect(calls(slot, "control").map((call) => call.input)).toEqual([
           { slug: "csv", action: "land", repo: "api", confirm: true },
@@ -2566,36 +2770,36 @@ describe("changes tab", () => {
 
     it("disarms a Land armed for one repo when another repo's branch shows, so landing that repo takes two fresh clicks", async () => {
       const slot = await mountChanges({ changes: () => landingChanges(), control: () => landingView() }, landingView());
-      fireEvent.click(slot.getByRole("tab", { name: "Changes" }));
+      await openView(slot, "Ship", "Changes");
       await slot.findByText("This is what lands in api.", { exact: false });
       const panel = () => slot.container.querySelector<HTMLElement>("[data-land-panel]")!;
       const buttons = () => within(panel()).getAllByRole("button").map((button) => button.textContent);
       fireEvent.click(within(panel()).getByRole("button", { name: "Land api to trunk" }));
-      expect(buttons()).toEqual(["Land api", "Click again to land api to trunk", "Cancel"]);
+      expect(buttons()).toEqual(["Land api", "Yes, push api straight to trunk", "Back"]);
       pick(slot, "branch:web");
       expect(buttons()).toEqual(["Land web", "Land web to main"]);
       fireEvent.click(within(panel()).getByRole("button", { name: "Land web to main" }));
-      expect(buttons()).toEqual(["Land web", "Click again to land web to main", "Cancel"]);
+      expect(buttons()).toEqual(["Land web", "Yes, push web straight to main", "Back"]);
 
       pick(slot, "branch:api");
       expect(buttons()).toEqual(["Land api", "Land api to trunk"]);
       fireEvent.click(within(panel()).getByRole("button", { name: "Land api" }));
-      expect(buttons()).toEqual(["Click again to land api", "Cancel", "Land api to trunk"]);
+      expect(buttons()).toEqual(["Yes, land api: push and open its pull request", "Back", "Land api to trunk"]);
       pick(slot, "branch:web");
       expect(buttons()).toEqual(["Land web", "Land web to main"]);
       expect(calls(slot, "control")).toEqual([]);
 
       fireEvent.click(within(panel()).getByRole("button", { name: "Land web" }));
       expect(calls(slot, "control")).toEqual([]);
-      fireEvent.click(within(panel()).getByRole("button", { name: "Click again to land web" }));
+      fireEvent.click(within(panel()).getByRole("button", { name: "Yes, land web: push and open its pull request" }));
       await waitFor(() => expect(calls(slot, "control").map((call) => call.input)).toEqual([{ slug: "csv", action: "land", repo: "web", confirm: true }]));
     });
 
     it("keeps a Viewed mark for each repo the same path changed in, and counts the files not viewed across every repo on the tab's badge", async () => {
       const slot = await mountChanges({ changes: () => landingChanges() }, landingView());
-      const badge = () => slot.container.querySelector('[data-tab-badge="changes"]')?.textContent ?? null;
+      const badge = () => slot.container.querySelector('[data-tab-badge="ship"]')?.textContent ?? null;
       await waitFor(() => expect(badge()).toBe("3"));
-      fireEvent.click(slot.getByRole("tab", { name: "Changes" }));
+      await openView(slot, "Ship", "Changes");
       await waitFor(() => expect(shown(slot)).toBe("branch:api"));
       fireEvent.click(within(fileRow(slot, "src/a.ts")).getByRole("button", { name: "Viewed" }));
       expect(badge()).toBe("2");
@@ -2611,17 +2815,18 @@ describe("changes tab", () => {
       expect(fileRow(slot, "src/api.ts").hasAttribute("data-viewed")).toBe(false);
     });
 
-    it("opens the first repo with work to land from the bar's Review changes, else the first repo's branch, and a ticket from its board card", async () => {
+    it("opens the first repo with work to land from the bar's Review changes, else the first repo's branch, and a ticket's from its menu", async () => {
       const slot = await mountChanges({ changes: () => landingChanges() }, landingView());
       fireEvent.click(slot.getByRole("button", { name: "Review changes" }));
       await waitFor(() => expect(shown(slot)).toBe("branch:api"));
-      fireEvent.click(slot.getByRole("tab", { name: "Board" }));
-      fireEvent.click(slot.getByRole("button", { name: /^Show \d+ done tickets?$/u }));
-      fireEvent.click(slot.getByRole("button", { name: "Show the changes of CSV-1" }));
+      await changesOf(slot, "CSV-1");
       await waitFor(() => expect(shown(slot)).toBe("merge:CSV-1"));
       slot.lifecycle.unmount();
 
       const landed = await mountChanges({ changes: () => landingChanges() }, landingView([web(), api({ toLand: false, landedAt: NOW - HOUR })]));
+      // The page reopens on Ship's Changes, where Review changes would point at what is open; Work offers it.
+      expect(landed.queryByRole("button", { name: "Review changes" })).toBeNull();
+      fireEvent.click(landed.getByRole("tab", { name: "Work" }));
       fireEvent.click(landed.getByRole("button", { name: "Review changes" }));
       await waitFor(() => expect(shown(landed)).toBe("branch:web"));
       landed.lifecycle.unmount();
@@ -2639,186 +2844,572 @@ describe("changes tab", () => {
   });
 });
 
-describe("board", () => {
+describe("work", () => {
   const cards = [
     card({ key: "CSV-1", title: "Order rows", state: "done", ready: false }),
-    card({ key: "CSV-2", title: "Export endpoint", state: "working", attempt: 2, ready: false, threadId: "thr_w1" }),
+    card({ key: "CSV-2", title: "Export endpoint", state: "working", attempt: 2, ready: false, threadId: "thr_w1", deps: ["CSV-1"] }),
     card({ key: "CSV-3", title: "Docs", state: "queued", ready: true }),
     card({ key: "CSV-4", title: "Guide", state: "queued", ready: false, deps: ["CSV-2"], waitingOn: ["CSV-2", "CSV-3"] }),
-    card({ key: "CSV-5", title: "Fix flaky test", state: "blocked", ready: false, blockedReason: "Needs a decision." }),
+    card({ key: "CSV-5", title: "Fix flaky test", state: "blocked", ready: false, blockedReason: "Needs a decision.", ask: { question: "Which runner?", options: 3 }, deps: ["CSV-2"] }),
     card({ key: "CSV-6", title: "Old idea", state: "cancelled", ready: false }),
-    card({ key: "CSV-7", title: "Review me", state: "review", ready: false, reviewRound: 2, threadId: "thr_r1" }),
-    card({ key: "CSV-8", title: "Merge me", state: "merging", ready: false }),
+    card({ key: "CSV-7", title: "Review me", state: "review", ready: false, reviewRound: 2, threadId: "thr_r1", deps: ["CSV-2"] }),
+    card({ key: "CSV-8", title: "Merge me", state: "merging", ready: false, deps: ["CSV-2"] }),
     card({ key: "CSV-9", title: "Open PR", state: "pr_open", ready: false, prUrl: "https://github.com/acme/shop/pull/9" }),
   ];
-  const lane = (slot: Slot, state: string) => slot.container.querySelector<HTMLElement>(`[data-lane="${state}"]`)!;
-  const mountBoard = async (strategy: "integration" | "pr" = "integration") => {
-    const { slot } = await mountPage("csv", { project: () => projectView({ overview: overview({ strategy, branch: strategy === "pr" ? null : "loom/csv" }), board: cards.map((entry) => ({ ...entry, stateAt: projectView().now - 5 * HOUR })) }) });
-    await slot.findByRole("tab", { name: "Board" });
-    return slot;
+  const groupsOf = (slot: Slot) => [...slot.container.querySelectorAll<HTMLElement>("[data-move-group]")].map((group) => [group.getAttribute("data-move-group"), [...group.querySelectorAll("[data-row]")].map((row) => row.getAttribute("data-row"))]);
+  const row = (slot: Slot, key: string) => slot.container.querySelector<HTMLElement>(`[data-row="${key}"]`)!;
+  const mountWork = async (board = cards, over: Partial<ProjectView> = {}, path = "csv", rpc: Partial<Handlers> = {}) => {
+    const mounted = await mountPage(path, { project: () => projectView({ board: board.map((entry) => ({ ...entry, stateAt: projectView().now - 5 * HOUR })), ...over }), ticket: ({ key }) => ticketDetail({ key }), ...rpc });
+    await mounted.slot.findByRole("tab", { name: "Work" });
+    await waitFor(() => expect(mounted.slot.container.querySelector("[data-ticket-list], [data-map-stage]")).not.toBeNull());
+    return mounted;
   };
 
-  it("stacks a row per stage down the page, blocked first, with Shipping holding approved, merging and open pull requests", async () => {
-    const slot = await mountBoard();
-    expect([...slot.container.querySelectorAll("[data-lane]")].map((node) => node.getAttribute("data-lane"))).toEqual(["blocked", "working", "checking", "review", "approved", "queued", "done", "cancelled"]);
-    expect(lane(slot, "approved").textContent).toContain("Shipping");
-    expect(lane(slot, "approved").textContent).toContain("approved · merging");
-    expect(lane(slot, "approved").querySelector('[data-card="CSV-8"] [data-card-state]')!.textContent).toBe("merging");
-    expect(lane(slot, "working").querySelector("[data-card-state]")).toBeNull();
-    expect(lane(slot, "checking").textContent).toContain("None");
-    expect(slot.container.querySelector("[data-board-progress]")!.textContent).toContain("1 of 8 done");
+  it("groups the tickets by whose move it is, in a fixed order, with Loom's own state words and Done folded", async () => {
+    const { slot } = await mountWork();
+    expect(groupsOf(slot)).toEqual([
+      ["need", ["CSV-5"]],
+      ["working", ["CSV-2", "CSV-7", "CSV-8"]],
+      ["waiting", ["CSV-3", "CSV-4", "CSV-9"]],
+      ["done", []],
+    ]);
+    expect(slot.container.querySelector('[data-move-group="need"] h3')!.textContent).toBe("Needs you1");
+    expect(row(slot, "CSV-5").textContent).toContain("blocked · asks · 3 options");
+    expect(row(slot, "CSV-7").textContent).toContain("in review · round 2");
+    expect(row(slot, "CSV-9").textContent).toContain("PR open · #9 · in review");
+    expect(row(slot, "CSV-4").textContent).toContain("queued · after CSV-2, CSV-3");
+    expect(row(slot, "CSV-2").textContent).toContain("5h");
+    // The lists are plain lists of named row buttons, one list per group.
+    const need = slot.getByRole("list", { name: "Needs you" });
+    expect(within(need).getByRole("button", { name: "CSV-5, blocked: Fix flaky test" })).toBeTruthy();
+    const done = slot.container.querySelector<HTMLElement>('[data-move-group="done"] h3 button')!;
+    expect(done.getAttribute("aria-expanded")).toBe("false");
+    expect(done.textContent).toBe("Done1Cancelled 1");
+    fireEvent.click(done);
+    expect(groupsOf(slot).at(-1)).toEqual(["done", ["CSV-1", "CSV-6"]]);
   });
 
-  it("folds the done and cancelled tickets to one line each", async () => {
-    const slot = await mountBoard();
-    expect(lane(slot, "done").textContent).not.toContain("Order rows");
-    fireEvent.click(within(lane(slot, "done")).getByRole("button", { name: "Show 1 done ticket" }));
-    expect(lane(slot, "done").textContent).toContain("Order rows");
-    expect(lane(slot, "cancelled").textContent).not.toContain("Old idea");
-    fireEvent.click(lane(slot, "cancelled").querySelector("button[aria-expanded]")!);
-    expect(lane(slot, "cancelled").textContent).toContain("Old idea");
-  });
-
-  it("puts open pull requests in Shipping on the pull request strategy, and leaves out Needs you when nothing is blocked", async () => {
-    const pr = await mountBoard("pr");
-    expect(lane(pr, "approved").textContent).toContain("approved · merging · PR open");
-    expect(lane(pr, "approved").querySelector('[data-card="CSV-9"] [data-card-state]')!.textContent).toBe("PR open");
-    const { slot } = await mountPage("csv", { project: () => projectView({ board: cards.filter((entry) => entry.state !== "blocked") }) });
-    await slot.findByRole("tab", { name: "Board" });
-    expect(slot.container.querySelector('[data-lane="blocked"]')).toBeNull();
-  });
-
-  it("splits the queue into ready tickets and tickets that wait, and names what they wait on", async () => {
-    const slot = await mountBoard();
-    const queued = lane(slot, "queued");
-    expect(queued.querySelector('[data-queue-group="ready"]')!.textContent).toContain("Docs");
-    expect(queued.querySelector('[data-queue-group="ready"]')!.textContent).not.toContain("Guide");
-    expect(queued.querySelector('[data-queue-group="waiting"]')!.textContent).toContain("Guide");
-    expect(queued.textContent).toContain("Waiting on CSV-2, CSV-3");
-  });
-
-  it("puts Confirm merge on the card of a manual merge, with the commit it confirms and the planner's request", async () => {
-    const URL = "https://github.com/acme/shop/pull/3";
-    const shown = (sha: string, over: Partial<MergeConfirmView> = {}): MergeConfirmView => ({ prUrl: URL, sha, ready: false, waiting: null, confirmed: false, requested: null, ...over });
-    const cards = [
-      card({ key: "CSV-3", title: "Docs", state: "pr_open", mergeConfirm: shown("c".repeat(40), { ready: true }) }),
-      card({ key: "CSV-4", title: "Guide", state: "pr_open", mergeConfirm: shown("d".repeat(40), { confirmed: true }) }),
-      card({ key: "CSV-6", title: "Help", state: "pr_open", mergeConfirm: shown("e".repeat(40), { waiting: "needs review", requested: { at: NOW, note: "The human asked in chat" } }) }),
-      card({ key: "CSV-7", title: "Draft", state: "pr_open", draft: "held", releaseRequested: { at: NOW, note: "The flag is on" }, prUrl: "https://github.com/acme/shop/pull/7", mergeConfirm: shown("7".repeat(40), { waiting: "it is held as a draft until you release it" }) }),
-      card({ key: "CSV-5", title: "Notes", state: "pr_open" }),
-    ];
-    const confirmMerge = vi.fn(() => ticketDetail({ key: "CSV-3" }));
-    const releaseDraft = vi.fn(() => ticketDetail({ key: "CSV-7" }));
-    const { slot } = await mountPage("csv", { project: () => projectView({ board: cards }), confirmMerge, releaseDraft });
-    await slot.findByRole("tab", { name: "Board" });
-    const ready = slot.container.querySelector<HTMLElement>('[data-card="CSV-3"] [data-merge-confirm]')!;
-    expect(ready.textContent).toContain("Ready at cccccccccccc: waits for your confirmation");
-    expect(slot.container.querySelector('[data-card="CSV-4"] [data-merge-confirm]')!.textContent).toBe("Merge of dddddddddddd confirmed");
-    // Not ready yet: it says the one thing it waits for, and offers no button, even when the planner asked.
-    const waiting = slot.container.querySelector<HTMLElement>('[data-card="CSV-6"] [data-merge-confirm]')!;
-    expect(waiting.textContent).toBe("Merge waits: needs review. The planner asks you to confirm it.");
-    expect(within(waiting).queryByRole("button")).toBeNull();
-    // A held draft says so, with the human's Release, and its merge waits for that.
-    const held = slot.container.querySelector<HTMLElement>('[data-card="CSV-7"] [data-draft-hold="held"]')!;
-    expect(held.textContent).toContain("Held as a draft: you release it. The planner asks you to release it.");
-    expect(within(slot.container.querySelector<HTMLElement>('[data-card="CSV-7"] [data-merge-confirm]')!).queryByRole("button")).toBeNull();
-    fireEvent.click(within(held).getByRole("button", { name: "Release draft" }));
-    fireEvent.click(within(held).getByRole("button", { name: "Click again to mark it ready for review" }));
-    await waitFor(() => expect(releaseDraft).toHaveBeenLastCalledWith({ key: "CSV-7", prUrl: "https://github.com/acme/shop/pull/7", confirm: true }));
-    expect(slot.container.querySelector('[data-card="CSV-5"] [data-merge-confirm]')).toBeNull();
-    fireEvent.click(within(ready).getByRole("button", { name: "Confirm merge" }));
-    fireEvent.click(within(ready).getByRole("button", { name: "Click again to merge cccccccccccc" }));
-    await waitFor(() => expect(confirmMerge).toHaveBeenLastCalledWith({ key: "CSV-3", prUrl: URL, sha: "c".repeat(40), confirm: true }));
-  });
-
-  it("says on the card when a ticket waits to start its worker or reviewer again, and why", async () => {
+  it("puts a failure Loom retries in Failed and a merge to confirm in Ready for you, ahead of the work in flight", async () => {
     const now = projectView().now;
-    const waiting = [
-      card({ key: "CSV-3", title: "Docs", state: "queued", ready: true, startWait: { role: "worker", reason: "No free slot.", until: now + 4 * 60_000, tries: 3, unavailable: true } }),
-      card({ key: "CSV-4", title: "Guide", state: "review", ready: false, startWait: { role: "reviewer", reason: "The provider failed.", until: now + 60_000, tries: 2, unavailable: false } }),
+    const board = [
+      card({ key: "CSV-2", title: "Export endpoint", state: "merging", ready: false, retry: { step: "merge", failures: 2, since: now - 60_000, until: now + 4 * 60_000, message: "deadline", kind: "unknown" } }),
+      card({ key: "CSV-3", title: "Docs", state: "pr_open", ready: false, prUrl: "https://github.com/acme/shop/pull/3", mergeConfirm: { prUrl: "https://github.com/acme/shop/pull/3", sha: "c".repeat(40), ready: true, waiting: null, confirmed: false, requested: null } }),
+      card({ key: "CSV-4", title: "Guide", state: "working", ready: false, waitsForSlot: true }),
     ];
-    const { slot } = await mountPage("csv", { project: () => projectView({ board: waiting }) });
-    await slot.findByRole("tab", { name: "Board" });
-    expect(slot.container.querySelector('[data-card="CSV-3"] [data-start-wait]')!.textContent).toBe("Its worker could not start (No free slot.); Loom tries again in 4m; the wait counts no attempt.");
-    expect(slot.container.querySelector('[data-card="CSV-4"] [data-start-wait]')!.textContent).toBe("Its reviewer could not start (The provider failed.); Loom tries again in 1m (2 failed starts in a row).");
+    const { slot } = await mountWork(board);
+    expect(groupsOf(slot).map(([group]) => group)).toEqual(["failed", "ready", "working"]);
+    expect(row(slot, "CSV-2").textContent).toContain(`Failed · merge failed · retry ${clockTime(now + 4 * 60_000)}`);
+    expect(row(slot, "CSV-3").textContent).toContain("PR open · #3 · confirm merge");
+    expect(row(slot, "CSV-4").textContent).toContain("waits for a slot");
   });
 
-  it("says on the card when a merge waits after a temporary failure, when Loom tries it again and why", async () => {
-    const now = projectView().now;
-    const until = now + 4 * 60_000;
-    const board = [card({ key: "CSV-2", title: "Export endpoint", state: "merging", ready: false, retry: { step: "merge", failures: 2, since: now - 60_000, until, message: "host plugin call 1f46 exceeded its deadline" } }), card({ key: "CSV-3", title: "Docs", state: "merging", ready: false })];
-    const { slot } = await mountPage("csv", { project: () => projectView({ board }) });
-    await slot.findByRole("tab", { name: "Board" });
-    expect(slot.container.querySelector('[data-card="CSV-2"] [data-retry]')!.textContent).toBe(`Loom tries the merge again at ${clockTime(until)} after 2 failures in a row: host plugin call 1f46 exceeded its deadline.`);
-    expect(slot.container.querySelector('[data-card="CSV-3"] [data-retry]')).toBeNull();
+  it("folds a group past what fits on the first screen, counts what it hides, and opens it in place", async () => {
+    const many = Array.from({ length: 30 }, (_, at) => card({ key: `CSV-${at + 1}`, title: `Ticket ${at + 1}`, state: "working", ready: false }));
+    const { slot } = await mountWork(many);
+    const group = slot.container.querySelector<HTMLElement>('[data-move-group="working"]')!;
+    const shown = group.querySelectorAll("[data-row]").length;
+    expect(shown).toBeGreaterThan(0);
+    expect(shown).toBeLessThanOrEqual(8);
+    fireEvent.click(within(group).getByRole("button", { name: `${30 - shown} more` }));
+    expect(group.querySelectorAll("[data-row]")).toHaveLength(30);
+    fireEvent.click(within(group).getByRole("button", { name: "Fewer" }));
+    expect(group.querySelectorAll("[data-row]")).toHaveLength(shown);
   });
 
-  it("says on the card when work went back to a worker and waits for a free worker slot", async () => {
-    const board = [card({ key: "CSV-2", title: "Export endpoint", state: "working", ready: false, waitsForSlot: true }), card({ key: "CSV-3", title: "Docs", state: "working", ready: false })];
-    const { slot } = await mountPage("csv", { project: () => projectView({ board }) });
-    await slot.findByRole("tab", { name: "Board" });
-    expect(slot.container.querySelector('[data-card="CSV-2"] [data-slot-wait]')!.textContent).toBe("Waits for a free worker slot");
-    expect(slot.container.querySelector('[data-card="CSV-3"] [data-slot-wait]')).toBeNull();
+  it("opens a ticket from its row, and with one open keeps the list beside it, compact, with the open row marked", async () => {
+    const { slot, goTo } = await mountWork();
+    fireEvent.click(within(row(slot, "CSV-2")).getByRole("button", { name: "CSV-2, working: Export endpoint" }));
+    expect(slot.inspection.navigateCalls).toEqual([pushed("csv/CSV-2")]);
+    goTo("csv/CSV-2");
+    await slot.findByRole("heading", { name: "Export endpoint", level: 1 });
+    const open = within(row(slot, "CSV-2")).getByRole("button");
+    expect(open.getAttribute("aria-current")).toBe("true");
+    // Compact: one line per row, no facts.
+    expect(row(slot, "CSV-7").textContent).not.toContain("round 2");
+    expect(slot.container.querySelector("[data-work-pane] [data-ticket='CSV-2']")).not.toBeNull();
+    // The pane names what it waits on and what it unblocks, from the board.
+    const facts = slot.container.querySelector<HTMLElement>("[data-ticket-facts]")!;
+    expect(facts.querySelector('[data-fact="waits-on"]')!.textContent).toContain("CSV-1");
+    expect(facts.querySelector('[data-fact="unblocks"]')!.textContent).toBe("UnblocksCSV-4CSV-5CSV-7CSV-8");
+    fireEvent.click(within(facts).getByRole("button", { name: "CSV-7" }));
+    expect(slot.inspection.navigateCalls.at(-1)).toEqual(pushed("csv/CSV-7"));
+    fireEvent.click(slot.getByRole("button", { name: "Close the ticket" }));
+    expect(slot.inspection.navigateCalls.at(-1)).toEqual(pushed("csv"));
   });
 
-  it("shows each card's age in its state, attempt and review round", async () => {
-    const slot = await mountBoard();
-    const working = lane(slot, "working").querySelector('[data-card="CSV-2"]')!;
-    expect(working.textContent).toContain("Export endpoint");
-    expect(working.textContent).toContain("5h in working");
-    expect(working.textContent).toContain("attempt 2");
-    expect(lane(slot, "review").querySelector('[data-card="CSV-7"]')!.textContent).toContain("round 2");
-    expect(lane(slot, "blocked").textContent).toContain("Needs a decision.");
+  it("shows a row's whole title in a tip on keyboard focus when the row cuts it, and none for a title that fits", async () => {
+    const long = "Core: lane header in request specs for every shard of the admin and storefront suites";
+    const board = [card({ key: "CSV-1", title: long, state: "working", ready: false }), card({ key: "CSV-2", title: "Docs", state: "working", ready: false })];
+    // jsdom has no layout: the long title overflows its box, the short one fits.
+    Object.defineProperty(HTMLElement.prototype, "scrollWidth", { configurable: true, get(this: HTMLElement) { return this.hasAttribute("data-row-title") && this.textContent === long ? 500 : 0; } });
+    Object.defineProperty(HTMLElement.prototype, "clientWidth", { configurable: true, get(this: HTMLElement) { return this.hasAttribute("data-row-title") ? 100 : 0; } });
+    try {
+      const { slot } = await mountWork(board);
+      const open = (key: string) => within(row(slot, key)).getByRole("button");
+      expect(open("CSV-1").hasAttribute("title")).toBe(false);
+      fireEvent.focus(open("CSV-2"));
+      await new Promise((done) => setTimeout(done, 50));
+      expect(within(document.body).queryByRole("tooltip")).toBeNull();
+      fireEvent.blur(open("CSV-2"));
+      fireEvent.focus(open("CSV-1"));
+      expect((await within(document.body).findByRole("tooltip")).textContent).toBe(long);
+      // Showing it opens nothing.
+      expect(slot.inspection.navigateCalls).toEqual([]);
+      fireEvent.blur(open("CSV-1"));
+    } finally {
+      delete (HTMLElement.prototype as { scrollWidth?: number }).scrollWidth;
+      delete (HTMLElement.prototype as { clientWidth?: number }).clientWidth;
+    }
   });
 
-  it("opens a ticket on the page from its card, and its thread from the thread link", async () => {
-    const slot = await mountBoard();
-    fireEvent.click(lane(slot, "working").querySelector('[data-card="CSV-2"] button[data-open-ticket]')!);
-    fireEvent.click(slot.getByRole("button", { name: "Open thread for CSV-2" }));
-    fireEvent.click(slot.getByRole("button", { name: "Open thread for CSV-7" }));
-    expect(slot.inspection.navigateCalls).toEqual([pushed("csv/CSV-2"), { method: "toThread", threadId: "thr_w1" }, { method: "toThread", threadId: "thr_r1" }]);
-    expect(slot.queryByRole("button", { name: "Open thread for CSV-3" })).toBeNull();
+  it("moves between rows with j and k, and leaves those keys to a field", async () => {
+    const { slot } = await mountWork();
+    const buttons = () => [...slot.container.querySelectorAll<HTMLButtonElement>("[data-open-row]")];
+    buttons()[0]!.focus();
+    fireEvent.keyDown(buttons()[0]!, { key: "j" });
+    expect(document.activeElement).toBe(buttons()[1]);
+    fireEvent.keyDown(buttons()[1]!, { key: "j" });
+    fireEvent.keyDown(buttons()[2]!, { key: "k" });
+    expect(document.activeElement).toBe(buttons()[1]);
+    const filter = slot.getByRole("textbox", { name: "Filter tickets" });
+    filter.focus();
+    fireEvent.keyDown(filter, { key: "j" });
+    expect(document.activeElement).toBe(filter);
   });
 
-  it("opens a pull request from its card", async () => {
-    const slot = await mountBoard("pr");
-    fireEvent.click(slot.getByRole("button", { name: "Open the pull request for CSV-9" }));
-    expect(slot.inspection.navigateCalls).toEqual([{ method: "openUrl", url: "https://github.com/acme/shop/pull/9" }]);
+  it("filters by key or title, says when nothing matches and clears in one step", async () => {
+    const { slot } = await mountWork();
+    fireEvent.change(slot.getByRole("textbox", { name: "Filter tickets" }), { target: { value: "guide" } });
+    expect(groupsOf(slot)).toEqual([["waiting", ["CSV-4"]]]);
+    fireEvent.change(slot.getByRole("textbox", { name: "Filter tickets" }), { target: { value: "nothing like it" } });
+    expect(slot.getByRole("status").textContent).toContain("No ticket matches");
+    fireEvent.click(slot.getByRole("button", { name: "Clear filters" }));
+    expect(groupsOf(slot)[0]).toEqual(["need", ["CSV-5"]]);
   });
 
-  it("grows down the page instead of sideways", async () => {
-    const slot = await mountBoard();
-    const board = slot.container.querySelector("[data-board]")!;
-    expect(board.className).not.toContain("overflow-x-auto");
-    expect(board.className).toContain("@container");
+  it("shows a draft's tickets as proposals under a note, with nothing to open", async () => {
+    const board = [card({ key: "CSV-1", title: "Order rows" }), card({ key: "CSV-2", title: "Export endpoint", ready: false, deps: ["CSV-1"], waitingOn: ["CSV-1"] })];
+    const { slot } = await mountWork(board, { overview: overview({ state: "draft", approvedVersion: null, ticketCount: 0, ticketCounts: {} }) });
+    expect(slot.container.querySelector("[data-draft-note]")!.textContent).toBe("Draft v1: approving creates these 2 tickets. Until then they are proposals, not tickets to open.");
+    expect(slot.container.querySelector('[data-move-group="paused"] h3')!.textContent).toContain("Proposed");
+    expect(row(slot, "CSV-1").hasAttribute("data-draft")).toBe(true);
+    expect(row(slot, "CSV-2").textContent).toContain("proposed · after CSV-1");
+    expect(slot.container.querySelector("[data-open-row]")).toBeNull();
+    // The map and the exact list draw the proposals too, and open none of them.
+    fireEvent.click(within(slot.container.querySelector<HTMLElement>("[data-work-mode]")!).getByRole("button", { name: "Map" }));
+    const stage = await waitFor(() => slot.container.querySelector<HTMLElement>("[data-map-stage]")!);
+    expect(stage.querySelectorAll("[data-map-node]").length).toBeGreaterThan(0);
+    expect(stage.querySelector("button[data-map-node]")).toBeNull();
+    fireEvent.click(within(stage).getByRole("switch", { name: "Exact list" }));
+    expect(slot.container.querySelector("[data-exact-list] [data-exact-row] button")).toBeNull();
   });
 
-  it("shows a draft's tickets as dashed cards under a note, with no ticket link", async () => {
-    const draft = projectView({
-      overview: overview({ state: "draft", approvedVersion: null, ticketCount: 0, ticketCounts: {} }),
-      board: [card({ key: "CSV-1", title: "Order rows" }), card({ key: "CSV-2", title: "Export endpoint", ready: false, deps: ["CSV-1"], waitingOn: ["CSV-1"] })],
+  it("draws the tickets as a map one key away, walks it by keyboard, and has the exact list one switch away", async () => {
+    const { slot } = await mountWork();
+    const list = slot.container.querySelector("[data-ticket-list]")!;
+    fireEvent.keyDown(list.querySelector("[data-open-row]")!, { key: "m" });
+    const stage = await waitFor(() => slot.container.querySelector<HTMLElement>("[data-map-stage]")!);
+    // One node per ticket, whatever kinds join it.
+    const nodes = [...stage.querySelectorAll<HTMLButtonElement>("[data-map-node]")];
+    expect(new Set(nodes.map((node) => node.dataset.mapNode)).size).toBe(nodes.length);
+    const map = within(stage).getByRole("group", { name: /arrows move along the edges/ });
+    // One tab stop: the focus, else the first node.
+    expect(nodes.filter((node) => node.tabIndex === 0)).toHaveLength(1);
+    // An unphased project's map starts on what needs the person, with what it waits on to its left.
+    const first = stage.querySelector<HTMLButtonElement>('[data-map-node][tabindex="0"]')!;
+    expect(first.dataset.mapNode).toBe("CSV-5");
+    first.focus();
+    fireEvent.keyDown(first, { key: "ArrowLeft" });
+    const next = document.activeElement as HTMLElement;
+    expect(next.dataset.mapNode).toBe("CSV-2");
+    expect(next.tabIndex).toBe(0);
+    fireEvent.keyDown(next, { key: "ArrowRight" });
+    expect(document.activeElement).toBe(first);
+    fireEvent.click(first);
+    expect(slot.inspection.navigateCalls.at(-1)).toEqual(pushed(`csv/${first.dataset.mapNode}`));
+    expect(map).toBeTruthy();
+    fireEvent.click(within(stage).getByRole("switch", { name: "Exact list" }));
+    const table = slot.container.querySelector<HTMLElement>("[data-exact-list]")!;
+    expect(table.textContent).toContain("Every ticket: 7 open, most unblocked first. Unblocks counts open tickets, directly and in all.");
+    expect([...table.querySelectorAll("th")].map((cell) => cell.textContent)).toEqual(["Ticket", "State", "Waits on", "Unblocks directly", "In all"]);
+    expect(table.querySelector("[data-exact-row]")!.getAttribute("data-exact-row")).toBe("CSV-2");
+    expect(table.querySelector('[data-exact-row="CSV-2"]')!.textContent).toContain("CSV-1");
+    fireEvent.click(within(stage).getByRole("button", { name: "List" }));
+    expect(slot.container.querySelector("[data-ticket-list]")).not.toBeNull();
+  });
+
+  it("never shrinks a map below its text size: the side map folds to what needs you, its neighbours, and counts the rest", async () => {
+    const phase = (ref: string, title: string, state: "done" | "active") => ({ ref, title, goal: "", doneWhen: [], outline: [], report: null, maxTickets: 12, state, tickets: { total: 0, done: 0, cancelled: 0, open: 0 } });
+    const mk = (key: string, state: BoardCard["state"], deps: string[] = [], phaseRef = "large") => card({ key, title: `${key} title`, state, ready: false, deps, waitingOn: deps, phase: phaseRef });
+    const board = [mk("CSV-3", "done", [], "p1"), mk("CSV-6", "done", ["CSV-3"]), mk("CSV-7", "done", ["CSV-3"]), mk("CSV-8", "done", ["CSV-3"]), mk("CSV-9", "working", ["CSV-6", "CSV-7", "CSV-8"]), mk("CSV-10", "review", ["CSV-6", "CSV-7", "CSV-8"]), mk("CSV-11", "blocked", ["CSV-6", "CSV-7", "CSV-8"]), mk("CSV-12", "pr_open", ["CSV-7"]), mk("CSV-13", "queued", ["CSV-10"]), mk("CSV-16", "queued", ["CSV-11", "CSV-13"]), mk("CSV-17", "queued", ["CSV-9", "CSV-11"])];
+    // jsdom has no layout: give the maps a 300 px frame, a phone's pane.
+    Object.defineProperty(HTMLElement.prototype, "clientWidth", { configurable: true, get(this: HTMLElement) { return this.hasAttribute("data-phase-map") || this.hasAttribute("data-dep-map") ? 300 : 0; } });
+    try {
+      const { slot } = await mountWork(board, { phases: [phase("p1", "A usable download", "done"), phase("large", "Large exports", "active")] });
+      const side = await waitFor(() => slot.container.querySelector<HTMLElement>("[data-phase-summary] [data-phase-map]")!);
+      expect(side.dataset.mapFold).not.toBe("phase");
+      expect(side.querySelector("[data-map-node][aria-current]")).toBeNull();
+      expect(side.querySelector('[data-map-node="CSV-11"]')).not.toBeNull();
+      expect(side.querySelector('[data-map-node="CSV-12"]')).toBeNull();
+      expect(side.querySelector("figcaption")!.textContent).toMatch(/^\d+ of the phase's 10 tickets: CSV-11, what it waits on and /);
+      for (const camera of slot.container.querySelectorAll<HTMLElement>("[data-map-camera]")) expect(camera.style.transform).toBe("scale(1.0000)");
+    } finally {
+      delete (HTMLElement.prototype as { clientWidth?: number }).clientWidth;
+    }
+  });
+
+  describe("Map's Show done", () => {
+    const phase = (ref: string, title: string, state: "done" | "active") => ({ ref, title, goal: "", doneWhen: [], outline: [], report: null, maxTickets: 12, state, tickets: { total: 0, done: 0, cancelled: 0, open: 0 } });
+    const mk = (key: string, state: BoardCard["state"], deps: string[] = [], phaseRef: string | null = "large") => card({ key, title: `${key} title`, state, ready: false, deps, waitingOn: deps, phase: phaseRef });
+    const phases = [phase("p1", "A usable download", "done"), phase("large", "Large exports", "active")];
+    const openBoard = [mk("CSV-3", "done", [], "p1"), mk("CSV-4", "cancelled", [], "p1"), mk("CSV-6", "done", ["CSV-3"]), mk("CSV-7", "working", ["CSV-3"]), mk("CSV-8", "queued", ["CSV-6", "CSV-7"])];
+    const toMap = async (slot: Awaited<ReturnType<typeof mountWork>>["slot"]) => {
+      fireEvent.click(within(slot.container.querySelector<HTMLElement>("[data-work-mode]")!).getByRole("button", { name: "Map" }));
+      return waitFor(() => slot.container.querySelector<HTMLElement>("[data-map-stage]")!);
+    };
+    const nodeKeys = (root: HTMLElement) => [...root.querySelectorAll<HTMLElement>("[data-map-node]")].map((node) => node.dataset.mapNode).sort();
+
+    it("is off while tickets are open, and leaves the phase map as it was", async () => {
+      const { slot } = await mountWork(openBoard, { phases });
+      const stage = await toMap(slot);
+      expect(within(stage).getByRole<HTMLInputElement>("switch", { name: "Show done" }).checked).toBe(false);
+      expect(stage.querySelector("[data-project-map]")).toBeNull();
+      // Today's map: the active phase, with phase 1 as one stub.
+      expect(nodeKeys(stage.querySelector("[data-phase-map]")!)).toEqual(["CSV-6", "CSV-7", "CSV-8"]);
+      expect(stage.querySelector('[data-map-stub="phase:p1"]')!.textContent).toBe("Phase 1");
+      expect(stage.querySelector("[data-map-band]")).toBeNull();
+      expect(stage.querySelector("h2")!.textContent).toBe("Phase 2Large exports");
     });
-    const { slot } = await mountPage("csv", { project: () => draft });
-    await slot.findByRole("tab", { name: "Board" });
-    expect(slot.container.querySelector("[data-draft-note]")!.textContent).toBe("Draft v1: approving creates these 2 tickets. Dashed cards are not on the board yet.");
-    const { slot: one } = await mountPage("csv", { project: () => ({ ...draft, board: draft.board.slice(0, 1) }) });
-    await waitFor(() => expect(one.container.querySelector("[data-draft-note]")).not.toBeNull());
-    expect(one.container.querySelector("[data-draft-note]")!.textContent).toBe("Draft v1: approving creates this ticket. Its dashed card is not on the board yet.");
-    const queued = lane(slot, "queued");
-    const ready = queued.querySelector<HTMLElement>('[data-queue-group="ready"] [data-card="CSV-1"]')!;
-    const waiting = queued.querySelector<HTMLElement>('[data-queue-group="waiting"] [data-card="CSV-2"]')!;
-    expect(ready.hasAttribute("data-draft")).toBe(true);
-    expect(ready.className).toContain("border-dashed");
-    expect(ready.textContent).toContain("CSV-1 · draft");
-    expect(ready.textContent).toContain("Order rows");
-    expect(waiting.textContent).toContain("Waits on CSV-1");
-    expect(slot.container.querySelector("[data-open-ticket]")).toBeNull();
+
+    it("draws every phase as a band with its done and cancelled tickets, remembers the choice, and the exact list follows", async () => {
+      const first = await mountWork(openBoard, { phases });
+      let stage = await toMap(first.slot);
+      fireEvent.click(within(stage).getByRole("switch", { name: "Show done" }));
+      const map = await waitFor(() => stage.querySelector<HTMLElement>("[data-project-map]")!);
+      expect(nodeKeys(map)).toEqual(["CSV-3", "CSV-4", "CSV-6", "CSV-7", "CSV-8"]);
+      expect(map.querySelector("[data-map-stub]")).toBeNull();
+      expect([...map.querySelectorAll<HTMLElement>("[data-map-band]")].map((band) => [band.dataset.mapBand, band.textContent])).toEqual([
+        ["p1", "1A usable download1 of 2 done · 1 cancelled"],
+        ["large", "2Large exports1 of 3 done"],
+      ]);
+      expect(map.querySelector('[data-map-band="large"]')!.getAttribute("data-on")).toBe("true");
+      expect(map.querySelector('[data-map-node="CSV-3"]')!.getAttribute("data-closed")).toBe("done");
+      expect(map.querySelector('[data-map-node="CSV-4"]')!.getAttribute("data-closed")).toBe("cancelled");
+      expect(map.querySelector('[data-map-node="CSV-7"]')!.hasAttribute("data-closed")).toBe(false);
+      // Every edge between them, the cross-phase ones included.
+      expect(map.querySelectorAll("[data-edge]")).toHaveLength(4);
+      expect([...map.querySelectorAll<HTMLElement>("[data-legend]")].map((entry) => entry.textContent)).toEqual(["done", "cancelled"]);
+      expect(stage.querySelector("h2")!.textContent).toBe("Whole project2 of 5 done · 1 cancelled");
+      expect(map.querySelector("figcaption")!.textContent).toBe("5 tickets in 2 phases · 2 of 5 done · 1 cancelled");
+      // Keyboard and Enter still open tickets.
+      const start = map.querySelector<HTMLButtonElement>('[data-map-node][tabindex="0"]')!;
+      start.focus();
+      fireEvent.keyDown(start, { key: "End" });
+      fireEvent.click(document.activeElement!);
+      expect(first.slot.inspection.navigateCalls.at(-1)).toEqual(pushed(`csv/${(document.activeElement as HTMLElement).dataset.mapNode}`));
+      // The exact list lists every ticket too, open first, with its phase.
+      fireEvent.click(within(stage).getByRole("switch", { name: "Exact list" }));
+      const table = stage.querySelector<HTMLElement>("[data-exact-list]")!;
+      expect(table.textContent).toContain("Every ticket: 5 tickets, 2 open; open ones first");
+      expect([...table.querySelectorAll<HTMLElement>("[data-exact-row]")].map((one) => one.dataset.exactRow)).toEqual(["CSV-7", "CSV-8", "CSV-3", "CSV-6", "CSV-4"]);
+      expect([...table.querySelectorAll("th")].map((cell) => cell.textContent)).toContain("Phase");
+      fireEvent.click(within(stage).getByRole("switch", { name: "Exact list" }));
+      // Remembered for this project: it is on again after a reload of the page.
+      first.slot.unmount();
+      const again = await mountWork(openBoard, { phases });
+      stage = await waitFor(() => again.slot.container.querySelector<HTMLElement>("[data-map-stage]")!);
+      expect(within(stage).getByRole<HTMLInputElement>("switch", { name: "Show done" }).checked).toBe(true);
+      fireEvent.click(within(stage).getByRole("switch", { name: "Show done" }));
+      await waitFor(() => expect(stage.querySelector("[data-phase-map]")).not.toBeNull());
+    });
+
+    it("is on for a project with no open tickets, so a finished project's map is never empty", async () => {
+      const board = [mk("CSV-3", "done", [], "p1"), mk("CSV-6", "done", ["CSV-3"]), mk("CSV-7", "cancelled", ["CSV-3"])];
+      const { slot } = await mountWork(board, { phases: [phase("p1", "A usable download", "done"), phase("large", "Large exports", "done")], overview: overview({ state: "done" }) });
+      const stage = await toMap(slot);
+      expect(within(stage).getByRole<HTMLInputElement>("switch", { name: "Show done" }).checked).toBe(true);
+      expect(nodeKeys(stage.querySelector("[data-project-map]")!)).toEqual(["CSV-3", "CSV-6", "CSV-7"]);
+      expect(stage.textContent).not.toContain("No open tickets");
+    });
+
+    it("draws an unphased finished project's whole graph instead of the hop map", async () => {
+      const board = [mk("CSV-1", "done", [], null), mk("CSV-2", "done", ["CSV-1"], null), mk("CSV-3", "done", ["CSV-1"], null), mk("CSV-4", "done", ["CSV-2", "CSV-3"], null), mk("CSV-5", "done", [], null)];
+      const { slot } = await mountWork(board, { phases: null, overview: overview({ state: "done" }) });
+      const stage = await toMap(slot);
+      expect(stage.querySelector("[data-hop-map]")).toBeNull();
+      const map = stage.querySelector<HTMLElement>("[data-project-map]")!;
+      expect(nodeKeys(map)).toEqual(["CSV-1", "CSV-2", "CSV-3", "CSV-4", "CSV-5"]);
+      expect(map.querySelector("[data-map-band]")).toBeNull();
+      expect(map.querySelectorAll("[data-edge]")).toHaveLength(4);
+      expect(map.querySelector("figcaption")!.textContent).toBe("5 tickets · 5 of 5 done");
+    });
   });
 
-  it("shows no draft note on a project that is running", async () => {
-    const slot = await mountBoard();
-    expect(slot.container.querySelector("[data-draft-note]")).toBeNull();
-    expect(slot.container.querySelector("[data-draft]")).toBeNull();
+  describe("Map's Export", () => {
+    const phase = (ref: string, title: string, state: "done" | "active") => ({ ref, title, goal: "", doneWhen: [], outline: [], report: null, maxTickets: 12, state, tickets: { total: 0, done: 0, cancelled: 0, open: 0 } });
+    const mk = (key: string, state: BoardCard["state"], deps: string[] = [], phaseRef: string | null = "large") => card({ key, title: `${key} title`, state, ready: false, deps, waitingOn: deps, phase: phaseRef });
+    const phases = [phase("p1", "A usable download", "done"), phase("large", "Large exports", "active")];
+    const openBoard = [mk("CSV-3", "done", [], "p1"), mk("CSV-4", "cancelled", [], "p1"), mk("CSV-6", "done", ["CSV-3"]), mk("CSV-7", "working", ["CSV-3"]), mk("CSV-8", "queued", ["CSV-6", "CSV-7"])];
+    const toMap = async (slot: Awaited<ReturnType<typeof mountWork>>["slot"]) => {
+      fireEvent.click(within(slot.container.querySelector<HTMLElement>("[data-work-mode]")!).getByRole("button", { name: "Map" }));
+      return waitFor(() => slot.container.querySelector<HTMLElement>("[data-map-stage]")!);
+    };
+    /** Radix opens a menu from the keyboard in jsdom, and names it by its trigger. */
+    const openExport = async (stage: HTMLElement) => {
+      fireEvent.keyDown(within(stage).getByRole("button", { name: "Export" }), { key: "Enter" });
+      return within(await within(document.body).findByRole("menu", { name: "Export" }));
+    };
+    const DAY = /\d{4}-\d{2}-\d{2}/.source;
+    // jsdom's Blob has no text().
+    const textOf = (blob: Blob) =>
+      new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = () => reject(reader.error);
+        reader.readAsText(blob);
+      });
+    let saved: Array<{ fileName: string; blob: Blob }> = [];
+    beforeEach(() => {
+      saved = [];
+      vi.spyOn(exportHost, "save").mockImplementation(async (request) => {
+        saved.push(request);
+        return "started";
+      });
+      vi.spyOn(exportHost, "rasterize").mockImplementation(async (_svg, width, height) => new Blob([`png ${width}x${height}`], { type: "image/png" }));
+      // jsdom has no canvas; the export measures text by estimate there.
+      vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
+    });
+    afterEach(() => vi.restoreAllMocks());
+
+    it("sits in the Map's header with Copy image and both downloads, and hides while the exact list is shown", async () => {
+      const { slot } = await mountWork(openBoard, { phases });
+      const stage = await toMap(slot);
+      const header = stage.querySelector("header")!;
+      expect(within(header).getByRole("button", { name: "Export" })).toBeTruthy();
+      const menu = await openExport(stage);
+      expect(menu.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Copy image", "Download PNG", "Download SVG"]);
+      fireEvent.keyDown(menu.getAllByRole("menuitem")[0]!, { key: "Escape" });
+      fireEvent.click(within(stage).getByRole("switch", { name: "Exact list" }));
+      await waitFor(() => expect(within(stage).queryByRole("button", { name: "Export" })).toBeNull());
+      fireEvent.click(within(stage).getByRole("switch", { name: "Exact list" }));
+      await waitFor(() => expect(within(stage).getByRole("button", { name: "Export" })).toBeTruthy());
+    });
+
+    it("downloads an SVG drawn from the map's own layout, named for the project, the phase and the day", async () => {
+      const { slot } = await mountWork(openBoard, { phases });
+      const stage = await toMap(slot);
+      fireEvent.click((await openExport(stage)).getByRole("menuitem", { name: "Download SVG" }));
+      await waitFor(() => expect(saved).toHaveLength(1));
+      const { fileName, blob } = saved[0]!;
+      expect(fileName).toMatch(new RegExp(`^CSV-map-phase-2-${DAY}\\.svg$`));
+      expect(blob.type).toBe("image/svg+xml");
+      const svg = await textOf(blob);
+      expect(svg.match(/ data-node="/g)).toHaveLength(stage.querySelectorAll("[data-map-node]").length);
+      expect(svg.match(/ data-edge="/g)).toHaveLength(stage.querySelectorAll("[data-edge]").length);
+      expect(svg.match(/ data-stub="/g)).toHaveLength(stage.querySelectorAll("[data-map-stub]").length);
+      expect(svg).toContain("Phase 2 of 2 · Large exports · 3 tickets · 1 done");
+      expect(svg).toContain(">CSV</text>");
+      expect(svg).toContain(">CSV export</text>");
+      expect(svg).not.toContain("var(");
+      expect(svg).not.toContain("foreignObject");
+      expect(toast.success).toHaveBeenCalledWith(`Saved ${fileName}`);
+    });
+
+    it("downloads a PNG drawn at 2x from the same picture", async () => {
+      const { slot } = await mountWork(openBoard, { phases });
+      const stage = await toMap(slot);
+      fireEvent.click((await openExport(stage)).getByRole("menuitem", { name: "Download PNG" }));
+      await waitFor(() => expect(saved).toHaveLength(1));
+      expect(saved[0]!.fileName).toMatch(new RegExp(`^CSV-map-phase-2-${DAY}\\.png$`));
+      const [svg, width, height] = vi.mocked(exportHost.rasterize).mock.calls[0]!;
+      const box = /viewBox="0 0 (\d+) (\d+)"/.exec(svg)!;
+      expect([width, height]).toEqual([Number(box[1]) * 2, Number(box[2]) * 2]);
+      expect(svg).toContain(`width="${width}" height="${height}"`);
+      expect(toast.success).toHaveBeenCalledWith(`Saved ${saved[0]!.fileName}`);
+    });
+
+    it("copies the PNG through a clipboard item made inside the click, and offers Download PNG when the clipboard refuses it", async () => {
+      const items: Array<Record<string, Promise<Blob>>> = [];
+      class Item {
+        constructor(data: Record<string, Promise<Blob>>) {
+          items.push(data);
+        }
+      }
+      const write = vi.fn(async (list: unknown[]) => {
+        await items.at(-1)!["image/png"];
+        return void list;
+      });
+      vi.spyOn(exportHost, "ClipboardItem").mockReturnValue(Item as unknown as typeof ClipboardItem);
+      vi.spyOn(exportHost, "clipboard").mockReturnValue({ write });
+      const { slot } = await mountWork(openBoard, { phases });
+      const stage = await toMap(slot);
+      fireEvent.click((await openExport(stage)).getByRole("menuitem", { name: "Copy image" }));
+      // The write starts in the click itself, with the PNG still a promise (Safari's form).
+      expect(write).toHaveBeenCalledTimes(1);
+      expect(Object.keys(items[0]!)).toEqual(["image/png"]);
+      expect(items[0]!["image/png"]).toBeInstanceOf(Promise);
+      await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Copied the map of CSV, 3 tickets"));
+      expect(await textOf(await items[0]!["image/png"])).toMatch(/^png \d+x\d+$/);
+      expect(saved).toHaveLength(0);
+
+      write.mockRejectedValueOnce(Object.assign(new Error("Write permission denied."), { name: "NotAllowedError" }));
+      fireEvent.click((await openExport(stage)).getByRole("menuitem", { name: "Copy image" }));
+      await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Couldn't copy: the clipboard refused the image", expect.objectContaining({ action: expect.objectContaining({ label: "Download PNG" }) })));
+      const offer = vi.mocked(toast.error).mock.calls.at(-1)![1] as unknown as { action: { onClick(): void } };
+      offer.action.onClick();
+      await waitFor(() => expect(saved).toHaveLength(1));
+      expect(saved[0]!.fileName).toMatch(new RegExp(`^CSV-map-phase-2-${DAY}\\.png$`));
+    });
+
+    it("says so when the browser cannot put an image on the clipboard, and offers Download PNG", async () => {
+      vi.spyOn(exportHost, "ClipboardItem").mockReturnValue(undefined);
+      const { slot } = await mountWork(openBoard, { phases });
+      const stage = await toMap(slot);
+      fireEvent.click((await openExport(stage)).getByRole("menuitem", { name: "Copy image" }));
+      expect(toast.error).toHaveBeenCalledWith("Couldn't copy: this browser can't put an image on the clipboard", expect.objectContaining({ action: expect.objectContaining({ label: "Download PNG" }) }));
+      expect(exportHost.rasterize).not.toHaveBeenCalled();
+    });
+
+    it("exports the whole project with Show done, and a draft with its proposed tickets", async () => {
+      const first = await mountWork(openBoard, { phases });
+      let stage = await toMap(first.slot);
+      fireEvent.click(within(stage).getByRole("switch", { name: "Show done" }));
+      await waitFor(() => expect(stage.querySelector("[data-project-map]")).not.toBeNull());
+      fireEvent.click((await openExport(stage)).getByRole("menuitem", { name: "Download SVG" }));
+      await waitFor(() => expect(saved).toHaveLength(1));
+      expect(saved[0]!.fileName).toMatch(new RegExp(`^CSV-map-whole-${DAY}\\.svg$`));
+      const whole = await textOf(saved[0]!.blob);
+      expect(whole).toContain("Whole project · 5 tickets · 2 done · 1 cancelled");
+      expect(whole.match(/ data-band="/g)).toHaveLength(2);
+      expect(whole.match(/ data-node="/g)).toHaveLength(5);
+      fireEvent.click(within(stage).getByRole("switch", { name: "Show done" }));
+      first.slot.unmount();
+
+      const draft = await mountWork(openBoard.map((one) => ({ ...one, state: "queued" as const })), { phases, overview: overview({ state: "draft" }) });
+      stage = await toMap(draft.slot);
+      fireEvent.click((await openExport(stage)).getByRole("menuitem", { name: "Download SVG" }));
+      await waitFor(() => expect(saved).toHaveLength(2));
+      expect(saved[1]!.fileName).toMatch(new RegExp(`^CSV-map-draft-phase-2-${DAY}\\.svg$`));
+      expect(await textOf(saved[1]!.blob)).toContain("Draft v1 · Phase 2 of 2 · Large exports · 3 proposed tickets");
+    });
+  });
+
+  it("reaches a capped column's and-N-more by keyboard, opens it, and puts focus on the first ticket it revealed", async () => {
+    const board = [card({ key: "CSV-1", title: "Shared schema", state: "blocked", ready: false }), ...Array.from({ length: 10 }, (_, at) => card({ key: `CSV-${at + 2}`, title: `Uses the schema ${at + 2}`, state: "queued", ready: false, deps: ["CSV-1"], waitingOn: ["CSV-1"] }))];
+    const { slot } = await mountWork(board);
+    fireEvent.keyDown(slot.container.querySelector("[data-open-row]")!, { key: "m" });
+    const stage = await waitFor(() => slot.container.querySelector<HTMLElement>("[data-map-stage]")!);
+    const start = stage.querySelector<HTMLButtonElement>('[data-map-stop][tabindex="0"]')!;
+    expect(start.dataset.mapNode).toBe("CSV-1");
+    const before = new Set([...stage.querySelectorAll<HTMLElement>("[data-map-node]")].map((node) => node.dataset.mapNode));
+    expect(before.size).toBe(8);
+    start.focus();
+    // End reaches the last stop, the column's "and 3 more"; Up and Down walk past it and back.
+    fireEvent.keyDown(start, { key: "End" });
+    const more = document.activeElement as HTMLButtonElement;
+    expect(more.dataset.mapMore).toBeDefined();
+    expect(more.getAttribute("aria-label")).toBe("Show 3 more tickets in this column");
+    expect(more.tabIndex).toBe(0);
+    fireEvent.keyDown(more, { key: "ArrowUp" });
+    expect((document.activeElement as HTMLElement).dataset.mapNode).toBeDefined();
+    fireEvent.keyDown(document.activeElement!, { key: "ArrowDown" });
+    expect(document.activeElement).toBe(more);
+    fireEvent.click(more);
+    await waitFor(() => expect(stage.querySelector("[data-map-more]")).toBeNull());
+    expect(stage.querySelectorAll("[data-map-node]")).toHaveLength(11);
+    const revealed = document.activeElement as HTMLElement;
+    expect(revealed.dataset.mapNode).toBeDefined();
+    expect(before.has(revealed.dataset.mapNode)).toBe(false);
+    expect(revealed.tabIndex).toBe(0);
+  });
+
+  it("says in Confirm merge what merging changes for each ticket that waits on it, with what still holds it, as Ship does", async () => {
+    const URL = "https://github.com/acme/shop/pull/12";
+    const board = [
+      card({ key: "CSV-12", title: "Gzip", state: "pr_open", ready: false, prUrl: URL }),
+      card({ key: "CSV-15", title: "Rate limit", state: "pr_open", ready: false, prUrl: "https://github.com/acme/shop/pull/15", prereqs: [{ key: "CSV-12", kind: "merge" }] }),
+      card({ key: "CSV-16", title: "Retry", state: "pr_open", ready: false, prUrl: "https://github.com/acme/shop/pull/16", prereqs: [{ key: "CSV-12", kind: "merge" }] }),
+      card({ key: "CSV-17", title: "Load test", state: "queued", ready: false, prereqs: [{ key: "CSV-9", kind: "work" }, { key: "CSV-12", kind: "live" }] }),
+    ];
+    const base = { title: "", repo: null, base: "main", prOpen: true, elsewhere: null, step: 2, stackedOn: null, unblocks: [], checks: null, draft: false, draftHold: null, publishWait: null, review: "APPROVED" as const, reviewRead: true, conflicts: false, behind: null, refreshBehind: null, trap: false, mergedInto: null, mergedIntoState: null, blockedReason: null };
+    const waitsOn = [{ key: "CSV-12", why: "merge_after" as const, repo: null, prNumber: "12" }];
+    const mergeOrder: MergeOrderView = {
+      repos: [null],
+      steps: 2,
+      counts: { open: 3, first: 1, ready: 1, wrong: 0 },
+      entries: [
+        { ...base, key: "CSV-12", state: "pr_open", prUrl: URL, prNumber: "12", step: 1, waitsOn: [], verdict: "ready", holds: [], prHolds: [] },
+        { ...base, key: "CSV-15", state: "pr_open", prUrl: "https://github.com/acme/shop/pull/15", prNumber: "15", waitsOn, verdict: "after", holds: [], prHolds: [{ code: "failing", count: 1 }] },
+        { ...base, key: "CSV-16", state: "pr_open", prUrl: "https://github.com/acme/shop/pull/16", prNumber: "16", waitsOn, verdict: "after", holds: [], prHolds: [] },
+      ],
+    };
+    const confirm = { prUrl: URL, sha: "a".repeat(40), ready: true, waiting: null, confirmed: false, requested: null };
+    const { slot } = await mountWork(board, { mergeOrder }, "csv/CSV-12", { ticket: ({ key }) => ticketDetail({ key, state: "pr_open", prUrl: URL, mergeConfirm: confirm }) });
+    const then = await waitFor(() => slot.container.querySelector<HTMLElement>("[data-merge-then]")!);
+    expect(then.textContent).toBe("Then CSV-15 stops waiting on CSV-12, but 1 check failing still holds it · CSV-16 stops waiting on CSV-12 and can merge · CSV-17 still needs CSV-12 live");
+  });
+
+  it("draws a worker's structured ask as a form with its pick preselected, and sends the option chosen with the note", async () => {
+    const ask = { question: "How should the memory check run?", options: [{ label: "Generate rows in the test", consequence: "no disk" }, { label: "Nightly runner; 200k rows in CI", consequence: "nightly runner has 200 GB" }, { label: "Lower the check to 1M rows", consequence: null }], recommended: 1 };
+    const block = { id: 6, parentId: null, depth: 0, authorKind: "worker" as const, authorThreadId: "thr_w1", kind: "block" as const, body: "The fixture does not fit.", at: 6 };
+    const ticketAction = vi.fn(() => ticketDetail({ key: "CSV-5", state: "queued" }));
+    const { slot } = await mountWork(cards, {}, "csv/CSV-5", { ticket: () => ticketDetail({ key: "CSV-5", state: "blocked", attempt: 1, blockedReason: "The fixture does not fit.", posts: [block], ask }), ticketAction });
+    const form = await slot.findByRole("radiogroup", { name: "How should the memory check run?" });
+    const options = within(form).getAllByRole("radio") as HTMLInputElement[];
+    expect(options).toHaveLength(4);
+    expect(options.map((option) => option.checked)).toEqual([false, true, false, false]);
+    expect(form.querySelector('[data-ask-option="1"]')!.textContent).toContain("Recommended");
+    expect(form.querySelector('[data-ask-option="1"]')!.textContent).toContain("nightly runner has 200 GB");
+    const note = slot.getByRole("textbox", { name: "Note" }) as HTMLTextAreaElement;
+    expect(note.placeholder).toBe("Note (optional)");
+    // A digit picks an option; Other asks for the person's own answer.
+    fireEvent.keyDown(form, { key: "4" });
+    expect(options[3]!.checked).toBe(true);
+    expect(note.placeholder).toBe("Your answer for the next worker (required)");
+    const requeue = slot.getByRole("button", { name: "Requeue · attempt 2" }) as HTMLButtonElement;
+    expect(requeue.disabled).toBe(true);
+    fireEvent.keyDown(form, { key: "1" });
+    expect(options[0]!.checked).toBe(true);
+    fireEvent.change(note, { target: { value: "Keep it under a minute." } });
+    fireEvent.click(requeue);
+    await waitFor(() => expect(ticketAction).toHaveBeenCalledWith({ key: "CSV-5", action: "requeue", note: "Generate rows in the test\n\nKeep it under a minute.", confirm: true }));
+  });
+
+  it("docks the answer at the bottom on a phone, and asks for the answer before it offers Requeue", async () => {
+    const width = window.innerWidth;
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 });
+    try {
+      const ticketAction = vi.fn(() => ticketDetail({ key: "CSV-5", state: "queued" }));
+      const { slot } = await mountWork(cards, {}, "csv/CSV-5", { ticket: () => ticketDetail({ key: "CSV-5", state: "blocked", attempt: 1, blockedReason: "Needs the staging key." }), ticketAction });
+      const dock = await waitFor(() => slot.container.querySelector<HTMLElement>("[data-answer-dock]")!);
+      expect(dock.className).toContain("sticky");
+      expect(dock.className).toContain("safe-area-inset-bottom");
+      // Only the dock holds the action, and with no answer yet it takes the person to the note.
+      const callout = slot.container.querySelector<HTMLElement>("[data-blocked-callout]")!;
+      expect(within(callout).queryByRole("button", { name: /^Requeue/ })).toBeNull();
+      const note = slot.getByRole("textbox", { name: "Note" });
+      expect(note.className).toContain("text-[16px]");
+      fireEvent.click(within(dock).getByRole("button", { name: "Write your answer to requeue" }));
+      expect(document.activeElement).toBe(note);
+      fireEvent.change(note, { target: { value: "The key is in the vault now." } });
+      fireEvent.click(within(dock).getByRole("button", { name: "Requeue · attempt 2" }));
+      await waitFor(() => expect(ticketAction).toHaveBeenCalledWith({ key: "CSV-5", action: "requeue", note: "The key is in the vault now.", confirm: true }));
+    } finally {
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: width });
+    }
+  });
+
+  it("shows a ticket that cannot load in its own pane, with the list still beside it", async () => {
+    const { slot } = await mountWork(cards, {}, "csv/CSV-2", {
+      ticket: () => {
+        throw new Error("CSV-2 is no longer blocked.");
+      },
+    });
+    const error = await waitFor(() => slot.container.querySelector<HTMLElement>("[data-work-pane] [data-ticket-error]")!);
+    expect(error.textContent).toContain("Could not load CSV-2");
+    expect(error.textContent).toContain("CSV-2 is no longer blocked.");
+    expect(slot.container.querySelector("[data-ticket-list]")).not.toBeNull();
+    expect(within(error).getByRole("button", { name: "Try again" })).toBeTruthy();
   });
 });
 
@@ -2838,6 +3429,7 @@ describe("ticket", () => {
     // As on the server, the ticket a change returns is the one the page reads after it.
     let view = ticketDetail({ posts, activity: withItems([]), ...over });
     const { slot } = await mountPage("csv/CSV-2", {
+      project: () => projectView(),
       ticket: () => view,
       ...rpc,
       reply: async (input) => (view = await (rpc.reply ?? unexpected)(input)),
@@ -2873,8 +3465,8 @@ describe("ticket", () => {
     expect(header.textContent).toContain("2 review rounds");
     expect(header.querySelector("[data-ticket-branch]")!.textContent).toContain("loom/csv-2");
     expect(within(header).getByRole("button", { name: "CSV-1" })).toBeTruthy();
-    expect([...header.querySelectorAll("[data-stage]")].map((node) => node.getAttribute("data-mark"))).toEqual(["done", "now", "todo", "todo", "todo", "todo"]);
-    expect(slot.container.querySelector("[data-ticket-side] [data-ac]")!.textContent).toContain("WHEN the endpoint is called THE SYSTEM SHALL stream a CSV");
+    ticketTab(slot, "Brief");
+    expect(slot.container.querySelector("[data-ticket-brief] [data-ac]")!.textContent).toContain("WHEN the endpoint is called THE SYSTEM SHALL stream a CSV");
     fireEvent.click(within(header).getByRole("button", { name: "Open worker thread" }));
     fireEvent.click(slot.getByRole("button", { name: "Open the pull request" }));
     expect(slot.inspection.navigateCalls).toEqual([{ method: "toThread", threadId: "thr_w1" }, { method: "openUrl", url: "https://github.com/acme/shop/pull/2" }]);
@@ -2891,7 +3483,8 @@ describe("ticket", () => {
       ],
       reviews: [{ id: 7, round: 2, verdict: "approved", status: "approved", summary: "Fine", findings: [], threadId: "thr_r2", at: 1 }],
     });
-    const row = (id: string) => slot.container.querySelector<HTMLElement>(`[data-ticket-side] [data-ticket-threads] [data-thread-row="${id}"]`)!;
+    ticketTab(slot, "Agents");
+    const row = (id: string) => slot.container.querySelector<HTMLElement>(`[data-ticket-details] [data-ticket-threads] [data-thread-row="${id}"]`)!;
     expect(row("thr_old").textContent).toContain("Worker · attempt 1");
     expect(row("thr_old").textContent).toContain("idle twice");
     expect(row("thr_old").textContent).toContain("1m");
@@ -2945,7 +3538,7 @@ describe("ticket", () => {
     const reply = vi.fn(() => ticketDetail({ posts }));
     const slot = await mountTicket({}, { reply });
     const box = slot.getByRole("textbox", { name: "New reply" }) as HTMLTextAreaElement;
-    expect(box.placeholder).toBe("Write on CSV-2…");
+    expect(box.placeholder).toBe("Reply on CSV-2…");
     expect(slot.container.querySelector("[data-reply-hint]")!.textContent).toBe("The worker gets this now.");
     expect((slot.getByRole("button", { name: "Send reply" }) as HTMLButtonElement).disabled).toBe(true);
     fireEvent.change(box, { target: { value: "  Please add a test.  " } });
@@ -2956,7 +3549,7 @@ describe("ticket", () => {
 
   it("shows Requeue only for a blocked ticket, and sends the action with the note after a second click", async () => {
     const working = await mountTicket();
-    expect(working.queryByRole("button", { name: "Requeue" })).toBeNull();
+    expect(working.queryByRole("button", { name: /^Requeue/ })).toBeNull();
     expect(working.container.querySelector("[data-blocked-callout]")).toBeNull();
     working.lifecycle.unmount();
 
@@ -2966,18 +3559,18 @@ describe("ticket", () => {
     const slot = await mountTicket({ ...blocked, activity: withItems([{ type: "post", postId: 6 }], { outcome: "blocked", endedAt: Date.now() }) }, { ticketAction });
     const callout = slot.container.querySelector<HTMLElement>("[data-blocked-callout]")!;
     expect(callout.hasAttribute("data-ticket-actions")).toBe(true);
-    expect(callout.textContent).toContain("Blocked: the worker needs an answer");
+    expect(callout.textContent).toContain("Worker asks");
     expect(callout.textContent).toContain("Needs a decision. Which API?");
     expect(callout.textContent).toContain("Or reply on the post: the planner gets it now and can requeue the ticket itself.");
     expect((within(callout).getByRole("textbox", { name: "Note" }) as HTMLTextAreaElement).placeholder).toBe("Your answer for the next worker (required)");
-    expect((within(callout).getByRole("button", { name: "Requeue" }) as HTMLButtonElement).disabled).toBe(true);
-    fireEvent.click(slot.getByRole("button", { name: "More actions" }));
-    expect(slot.queryByRole("button", { name: "Block" })).toBeNull();
-    expect(slot.getByRole("button", { name: "Cancel ticket" })).toBeTruthy();
+    expect((within(callout).getByRole("button", { name: "Requeue · attempt 2" }) as HTMLButtonElement).disabled).toBe(true);
+    const menu = await ticketMenu(slot);
+    expect(menu.queryByRole("menuitem", { name: "Block…" })).toBeNull();
+    expect(menu.getByRole("menuitem", { name: "Cancel ticket…" })).toBeTruthy();
+    fireEvent.keyDown(slot.getByRole("menu"), { key: "Escape" });
     fireEvent.change(within(callout).getByRole("textbox", { name: "Note" }), { target: { value: "Use the v2 API" } });
-    fireEvent.click(within(callout).getByRole("button", { name: "Requeue" }));
-    expect(ticketAction).not.toHaveBeenCalled();
-    fireEvent.click(within(callout).getByRole("button", { name: "Click again to requeue" }));
+    // The typed note is the deliberate step, so Requeue takes one click.
+    fireEvent.click(within(callout).getByRole("button", { name: "Requeue · attempt 2" }));
     await waitFor(() => expect(ticketAction).toHaveBeenCalledWith({ key: "CSV-2", action: "requeue", note: "Use the v2 API", confirm: true }));
     await waitFor(() => expect(slot.container.querySelector("[data-ticket-header] [data-state-badge]")!.textContent).toBe("queued"));
     expect(toast.success).toHaveBeenCalledWith("CSV-2 requeued");
@@ -2986,7 +3579,7 @@ describe("ticket", () => {
     const refused = await mountTicket({ ...blocked, posts, replyTo: null, blockedReason: "bb refused to start a worker: HTTP 400" });
     const plain = refused.container.querySelector<HTMLElement>("[data-blocked-callout]")!;
     expect(plain.textContent).toContain("Blocked");
-    expect(plain.textContent).not.toContain("the worker needs an answer");
+    expect(plain.textContent).not.toContain("Worker asks");
     expect(plain.textContent).not.toContain("Or reply on the post");
     expect(within(plain).queryByRole("button", { name: "Read the post that blocked it" })).toBeNull();
   });
@@ -3005,8 +3598,6 @@ describe("ticket", () => {
     const button = within(callout).getByRole("button", { name: "Review again as is" }) as HTMLButtonElement;
     expect(button.disabled).toBe(false);
     fireEvent.click(button);
-    expect(ticketAction).not.toHaveBeenCalled();
-    fireEvent.click(within(callout).getByRole("button", { name: /Click again/ }));
     await waitFor(() => expect(ticketAction).toHaveBeenCalledWith({ key: "CSV-2", action: "review", note: "", confirm: true }));
     await waitFor(() => expect(toast.success).toHaveBeenCalledWith("CSV-2 sent back as it is"));
   });
@@ -3023,7 +3614,7 @@ describe("ticket", () => {
     await slot.findByRole("heading", { name: /Export endpoint/ });
     expect(slot.container.querySelector("[data-merge-confirm]")!.textContent).toContain("Ready to merge at aaaaaaaaaaaa. auto_merge.mode is manual, so Loom waits for you to confirm the merge of this commit.");
     fireEvent.click(slot.getByRole("button", { name: "Confirm merge" }));
-    fireEvent.click(slot.getByRole("button", { name: "Click again to merge aaaaaaaaaaaa" }));
+    fireEvent.click(slot.getByRole("button", { name: "Yes, merge aaaaaaaaaaaa" }));
     await waitFor(() => expect(confirmMerge).toHaveBeenLastCalledWith({ key: "CSV-2", prUrl: URL, sha: A, confirm: true }));
     await waitFor(() => expect(slot.queryByRole("button", { name: "Confirm merge" })).toBeNull());
     expect(slot.container.querySelector("[data-merge-confirm]")!.textContent).toContain("You confirmed the merge of aaaaaaaaaaaa.");
@@ -3035,11 +3626,11 @@ describe("ticket", () => {
     const second = await mountPage("csv/CSV-2", { ticket: () => moving, confirmMerge: never });
     await second.slot.findByRole("heading", { name: /Export endpoint/ });
     fireEvent.click(second.slot.getByRole("button", { name: "Confirm merge" }));
-    expect(second.slot.getByRole("button", { name: "Click again to merge aaaaaaaaaaaa" })).toBeTruthy();
+    expect(second.slot.getByRole("button", { name: "Yes, merge aaaaaaaaaaaa" })).toBeTruthy();
     moving = ticketDetail({ posts, activity: withItems([]), state: "pr_open", mergeConfirm: shown(B) });
     await second.slot.experimental_invalidateRpc(changedTags("csv"));
     await waitFor(() => expect(second.slot.container.querySelector("[data-merge-confirm]")!.getAttribute("data-sha")).toBe(B));
-    expect(second.slot.queryByRole("button", { name: /Click again/ })).toBeNull();
+    expect(second.slot.queryByRole("button", { name: /^Yes, / })).toBeNull();
     fireEvent.click(second.slot.getByRole("button", { name: "Confirm merge" }));
     expect(never).not.toHaveBeenCalled();
     second.slot.lifecycle.unmount();
@@ -3049,50 +3640,54 @@ describe("ticket", () => {
     expect(plain.container.querySelector("[data-merge-confirm]")).toBeNull();
   });
 
-  it("sends Block and Cancel with the reason from the ⋯ menu, and offers neither on a finished ticket", async () => {
+  it("asks for a reason in place before Block or Cancel acts, from the ticket's menu, and offers neither on a finished ticket", async () => {
     const ticketAction = vi.fn(() => ticketDetail({ posts }));
     const slot = await mountTicket({}, { ticketAction });
-    fireEvent.click(slot.getByRole("button", { name: "More actions" }));
-    const reason = () => slot.getByRole("textbox", { name: "Reason" }) as HTMLTextAreaElement;
-    expect(reason().placeholder).toBe("Why (required)");
-    expect(slot.container.querySelector("[data-more-menu]")!.textContent).toContain("Each needs a reason and a second click.");
-    expect((slot.getByRole("button", { name: "Block" }) as HTMLButtonElement).disabled).toBe(true);
-    expect((slot.getByRole("button", { name: "Cancel ticket" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click((await ticketMenu(slot)).getByRole("menuitem", { name: "Block…" }));
+    // Block opens a form first: nothing is sent until a reason is typed and Block is pressed.
+    const form = await waitFor(() => slot.container.querySelector<HTMLElement>('[data-reason-form="block"]')!);
+    const reason = () => within(form).getByRole("textbox", { name: "Reason" }) as HTMLTextAreaElement;
+    expect(reason().placeholder).toBe("Why block it (required)");
+    expect(document.activeElement).toBe(reason());
+    expect((within(form).getByRole("button", { name: "Block CSV-2" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(ticketAction).not.toHaveBeenCalled();
     fireEvent.change(reason(), { target: { value: "Wrong approach" } });
-    fireEvent.click(slot.getByRole("button", { name: "Block" }));
-    fireEvent.click(slot.getByRole("button", { name: "Click again to block" }));
+    fireEvent.click(within(form).getByRole("button", { name: "Block CSV-2" }));
     await waitFor(() => expect(ticketAction).toHaveBeenLastCalledWith({ key: "CSV-2", action: "block", note: "Wrong approach", confirm: true }));
-    await waitFor(() => expect(slot.container.querySelector("[data-more-menu]")).toBeNull());
-    fireEvent.click(slot.getByRole("button", { name: "More actions" }));
-    expect(reason().value).toBe("");
-    fireEvent.change(reason(), { target: { value: "Not needed" } });
-    fireEvent.click(slot.getByRole("button", { name: "Cancel ticket" }));
-    fireEvent.click(slot.getByRole("button", { name: "Click again to cancel ticket" }));
+    await waitFor(() => expect(slot.container.querySelector("[data-reason-form]")).toBeNull());
+    // Escape backs out of the form with nothing sent.
+    fireEvent.click((await ticketMenu(slot)).getByRole("menuitem", { name: "Block…" }));
+    const again = await waitFor(() => slot.container.querySelector<HTMLElement>('[data-reason-form="block"]')!);
+    fireEvent.keyDown(within(again).getByRole("textbox", { name: "Reason" }), { key: "Escape" });
+    expect(slot.container.querySelector("[data-reason-form]")).toBeNull();
+    fireEvent.click((await ticketMenu(slot)).getByRole("menuitem", { name: "Cancel ticket…" }));
+    const cancel = await waitFor(() => slot.container.querySelector<HTMLElement>('[data-reason-form="cancel"]')!);
+    fireEvent.change(within(cancel).getByRole("textbox", { name: "Reason" }), { target: { value: "Not needed" } });
+    fireEvent.click(within(cancel).getByRole("button", { name: "Cancel ticket" }));
+    fireEvent.click(within(cancel).getByRole("button", { name: "Yes, cancel CSV-2" }));
     await waitFor(() => expect(ticketAction).toHaveBeenLastCalledWith({ key: "CSV-2", action: "cancel", note: "Not needed", confirm: true }));
-    await waitFor(() => expect(slot.container.querySelector("[data-more-menu]")).toBeNull());
+    expect(ticketAction).toHaveBeenCalledTimes(2);
     slot.lifecycle.unmount();
 
     const refusedAction = vi.fn(() => {
       throw new Error("The ticket is checking.");
     });
     const refused = await mountTicket({}, { ticketAction: refusedAction });
-    fireEvent.click(refused.getByRole("button", { name: "More actions" }));
-    fireEvent.change(refused.getByRole("textbox", { name: "Reason" }), { target: { value: "Wrong approach" } });
-    fireEvent.click(refused.getByRole("button", { name: "Block" }));
-    fireEvent.click(refused.getByRole("button", { name: "Click again to block" }));
+    fireEvent.click((await ticketMenu(refused)).getByRole("menuitem", { name: "Block…" }));
+    const kept = await waitFor(() => refused.container.querySelector<HTMLElement>('[data-reason-form="block"]')!);
+    fireEvent.change(within(kept).getByRole("textbox", { name: "Reason" }), { target: { value: "Wrong approach" } });
+    fireEvent.click(within(kept).getByRole("button", { name: "Block CSV-2" }));
     await waitFor(() => expect(refusedAction).toHaveBeenCalled());
-    await waitFor(() => expect((refused.getByRole("button", { name: "Block" }) as HTMLButtonElement).disabled).toBe(false));
-    expect(toast.error).not.toHaveBeenCalled();
-    expect(refused.queryByRole("alert")).toBeNull();
-    expect((refused.getByRole("textbox", { name: "Reason" }) as HTMLTextAreaElement).value).toBe("Wrong approach");
+    await waitFor(() => expect((within(kept).getByRole("button", { name: "Block CSV-2" }) as HTMLButtonElement).disabled).toBe(false));
+    expect((within(kept).getByRole("textbox", { name: "Reason" }) as HTMLTextAreaElement).value).toBe("Wrong approach");
     refused.lifecycle.unmount();
 
     for (const state of ["done", "cancelled"] as const) {
       const finished = await mountTicket({ state });
-      expect(finished.queryByRole("button", { name: "More actions" })).toBeNull();
-      expect(finished.queryByRole("button", { name: "Block" })).toBeNull();
-      expect(finished.queryByRole("button", { name: "Cancel ticket" })).toBeNull();
-      expect(finished.queryByRole("textbox", { name: "Reason" })).toBeNull();
+      const menu = await ticketMenu(finished);
+      expect(menu.queryByRole("menuitem", { name: "Block…" })).toBeNull();
+      expect(menu.queryByRole("menuitem", { name: "Cancel ticket…" })).toBeNull();
+      expect(menu.getByRole("menuitem", { name: "Copy key" })).toBeTruthy();
       finished.lifecycle.unmount();
     }
   });
@@ -3180,7 +3775,7 @@ describe("ticket", () => {
     expect((await within(stepOf(slot, "npm run e2e")).findByRole("alert")).textContent).toContain("The database is busy.");
   });
 
-  it("shows the criteria, files, verify command and agents beside the stream, and the brief in its own tab", async () => {
+  it("shows the brief with its criteria, files and verify command in Brief, and the agents in Agents", async () => {
     const slot = await mountTicket({
       acceptance: ["WHEN the endpoint is called THE SYSTEM SHALL stream a CSV", "IF there are no orders THEN THE SYSTEM SHALL return a header row"],
       scope: ["src/export/**", "README.md"],
@@ -3189,7 +3784,9 @@ describe("ticket", () => {
       reviews: [{ id: 2, round: 2, verdict: "approved", status: "approved", summary: "Fine", findings: [], threadId: "thr_r2", at: 1 }],
       body: "Serve the file.\n\n## Notes\nStream it.",
     });
-    const side = slot.container.querySelector<HTMLElement>("[data-ticket-side]")!;
+    expect(slot.getByRole("tab", { name: /Activity/ }).getAttribute("aria-selected")).toBe("true");
+    ticketTab(slot, "Brief");
+    const side = slot.container.querySelector<HTMLElement>("[data-ticket-brief]")!;
     const ac = side.querySelector<HTMLElement>("[data-ac]")!;
     expect([...ac.querySelectorAll("[data-ears]")].map((node) => node.textContent)).toEqual(["WHEN", "THE SYSTEM SHALL", "IF", "THEN", "THE SYSTEM SHALL"]);
     expect(ac.querySelector("[data-ears]")!.className).toContain("tracking-wider");
@@ -3201,15 +3798,11 @@ describe("ticket", () => {
     expect(verify.textContent).toContain("npm test -- export");
     fireEvent.click(within(verify).getByRole("button", { name: "Copy the verify command" }));
     await waitFor(() => expect(slot.inspection.experimental_clipboardWrites).toEqual([{ text: "npm test -- export" }]));
-    expect(side.querySelector("[data-ticket-threads]")).toBeTruthy();
-
-    expect(slot.getByRole("tab", { name: /Activity/ }).getAttribute("aria-selected")).toBe("true");
     expect(slot.container.querySelector("[data-ticket-details]")).toBeNull();
-    fireEvent.click(slot.getByRole("tab", { name: "Details" }));
-    expect(slot.getByRole("tab", { name: "Details" }).getAttribute("aria-selected")).toBe("true");
-    expect(slot.container.querySelector("[data-ticket-details] [data-ac]")).toBeTruthy();
-    expect(slot.container.querySelector("[data-ticket-details]")!.className).toContain("@4xl:hidden");
-    fireEvent.click(slot.getByRole("tab", { name: "Brief" }));
+    ticketTab(slot, "Agents");
+    expect(slot.getByRole("tab", { name: /^Agents/ }).getAttribute("aria-selected")).toBe("true");
+    expect(slot.container.querySelector("[data-ticket-details] [data-ticket-threads]")).toBeTruthy();
+    ticketTab(slot, "Brief");
     const pane = slot.container.querySelector<HTMLElement>("[data-ticket-brief]")!;
     expect(within(pane).getByTestId("bb-markdown").textContent).toBe("Serve the file.\n\n## Notes\nStream it.");
     expect(pane.textContent).toContain("This is the brief the next worker reads.");
@@ -3223,7 +3816,7 @@ describe("ticket", () => {
 
   it("says in the summary that the merge waits after a temporary failure and when Loom tries it again", async () => {
     const until = Date.now() + 2 * 60_000;
-    const slot = await mountTicket({ state: "merging", retry: { step: "merge", failures: 1, since: Date.now(), until, message: "The forge's open command printed no pull request URL: Error: 429: retry shortly" } });
+    const slot = await mountTicket({ state: "merging", retry: { step: "merge", failures: 1, since: Date.now(), until, message: "The forge's open command printed no pull request URL: Error: 429: retry shortly", kind: "temporary" } });
     expect(slot.container.querySelector("[data-ticket-summary]")!.textContent).toBe(`Loom tries the merge again at ${clockTime(until)} after a failure: The forge's open command printed no pull request URL: Error: 429: retry shortly.`);
   });
 
@@ -3236,15 +3829,14 @@ describe("ticket", () => {
     expect(planning.textContent).toContain("edited 2 times since (scope, body)");
     expect(slot.getByRole("textbox", { name: "New reply" })).toBeTruthy();
     expect(slot.container.querySelector("[data-reply-hint]")!.textContent).toBe("It stays on the ticket for anyone who reads it.");
-    expect(slot.container.querySelector("[data-ticket-side] [data-verify]")!.textContent).toContain("No command of its own; only the project's checks run.");
     fireEvent.click(within(planning).getByRole("button", { name: "Read the brief" }));
     expect(slot.getByRole("tab", { name: "Brief" }).getAttribute("aria-selected")).toBe("true");
+    expect(slot.container.querySelector("[data-ticket-brief] [data-verify]")!.textContent).toContain("No command of its own; only the project's checks run.");
     expect(slot.container.querySelector("[data-ticket-brief]")!.textContent).toContain("Written by the planner, edited 2 times since (scope, body).");
   });
 
   it("says in the header what the ticket is doing", async () => {
     const now = Date.now();
-    const marks = (slot: Slot) => [...slot.container.querySelectorAll("[data-stage]")].map((node) => [node.getAttribute("data-stage"), node.getAttribute("data-mark")]);
     const summary = (slot: Slot) => slot.container.querySelector("[data-ticket-summary]")?.textContent ?? null;
     const merge = { type: "merge" as const, postId: 9, at: now - 2 * HOUR, outcome: "merged" as const, into: "loom/csv", running: false, steps: [] };
     const done = await mountTicket({
@@ -3262,12 +3854,12 @@ describe("ticket", () => {
       },
     });
     expect(summary(done)).toBe("Merged into loom/csv 2h ago, after 3 attempts and 2 review rounds.");
-    expect(marks(done).every(([, mark]) => mark === "done")).toBe(true);
     const header = done.container.querySelector<HTMLElement>("[data-ticket-header]")!;
     expect(header.textContent).toContain("3 attempts");
     expect(header.textContent).toContain("2 review rounds");
     expect(header.querySelector("[data-fact='time']")!.textContent).toBe("1h");
-    expect(within(header).getByRole("button", { name: "CSV-1" }).parentElement!.textContent).toContain("✓");
+    expect(header.querySelector('[data-dep="CSV-1"]')!.textContent).toContain("✓");
+    expect(header.querySelector('[data-dep="CSV-3"]')!.textContent).not.toContain("✓");
     expect(within(header).queryByRole("button", { name: "Open worker thread" })).toBeNull();
     fireEvent.click(within(header).getByRole("button", { name: "CSV-3" }));
     expect(done.inspection.navigateCalls).toEqual([{ method: "toPluginPanel", path: "loom", options: { subPath: "csv/CSV-3" } }]);
@@ -3277,27 +3869,17 @@ describe("ticket", () => {
 
     const working = await mountTicket({ activity: withItems([], { startedAt: now - 7 * 60_000 }) });
     expect(summary(working)).toBe("Worker attempt 1 is working for 7m.");
-    expect(marks(working)).toEqual([
-      ["queued", "done"],
-      ["working", "now"],
-      ["checking", "todo"],
-      ["review", "todo"],
-      ["merging", "todo"],
-      ["done", "todo"],
-    ]);
-    expect(working.container.querySelector("[data-state-badge] .animate-pulse")).toBeTruthy();
+    expect(working.container.querySelector("[data-state-badge]")!.textContent).toBe("working");
     working.lifecycle.unmount();
 
     const blocked = await mountTicket({ state: "blocked", stoppedFrom: "working", blockedReason: "Needs a key.", activity: withItems([], { outcome: "blocked", endedAt: now }) });
     expect(summary(blocked)).toBeNull();
-    expect(marks(blocked).map(([, mark]) => mark)).toEqual(["done", "stop", "todo", "todo", "todo", "todo"]);
-    expect(blocked.container.querySelector("[data-stage='working']")!.textContent).toContain("Blocked");
+    expect(blocked.container.querySelector("[data-state-badge]")!.textContent).toBe("blocked");
     blocked.lifecycle.unmount();
 
     const open = await mountTicket({ state: "pr_open", prUrl: "https://github.com/acme/shop/pull/2" });
-    expect(open.container.querySelector("[data-state-badge]")!.textContent).toBe("pr open");
+    expect(open.container.querySelector("[data-state-badge]")!.textContent).toBe("PR open");
     expect(summary(open)).toBe("The pull request is open; the ticket is done when it merges.");
-    expect(marks(open).map(([, mark]) => mark)).toEqual(["done", "done", "done", "done", "now", "todo"]);
   });
 
   it("jumps from the blocked callout to the post that blocked it", async () => {
@@ -3351,7 +3933,7 @@ describe("ticket", () => {
     const card = (n: number) => slot.container.querySelector<HTMLElement>(`[data-attempt="${n}"]`)!;
     const planning = () => slot.container.querySelector("[data-planning]")!;
     expect(slot.container.querySelector("[data-stream-toolbar]")!.textContent).toContain("2 attempts · 6 posts");
-    expect(slot.getByRole("tab", { name: /Activity/ }).textContent).toContain("2 attempts");
+    expect(slot.getByRole("tab", { name: /Activity/ }).textContent).toBe("Activity2");
     expect(order()).toEqual(["2", "1"]);
     expect(card(1).compareDocumentPosition(planning()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(card(2).getAttribute("data-open")).toBe("true");
@@ -3399,13 +3981,13 @@ describe("ticket", () => {
     expect(show.getAttribute("aria-expanded")).toBe("false");
     fireEvent.click(show);
     expect([...cards[0]!.querySelectorAll("[data-check-step]")].map((node) => node.getAttribute("data-ok"))).toEqual(["pass", "pass", "pass"]);
-    expect(cards[0]!.querySelector("[data-check-step] .font-mono")!.className).toContain("text-subtle-foreground");
+    expect(cards[0]!.querySelector("[data-check-step] .font-mono")!.className).toContain("text-[var(--loom-muted)]");
     expect(within(cards[0]!).getByRole("button", { name: "Hide commands" }).getAttribute("aria-expanded")).toBe("true");
 
     expect(cards[1]!.textContent).toContain("Checks after the merge failed");
     const changed = cards[1]!.querySelector("[data-changed]")!;
     expect(changed.textContent).toBe("The command passed but changed the branch: moved HEAD from aaa to bbb.");
-    expect(changed.className).toContain("text-destructive-text");
+    expect(changed.className).toContain("text-[var(--loom-bad)]");
 
     expect(cards[2]!.textContent).toContain("Checks failed");
     expect(cards[2]!.textContent).toContain("1 of 2 passed · npm test failed");
@@ -3452,16 +4034,7 @@ describe("ticket", () => {
     expect(cards[1]!.textContent).toContain("1 command · 12.7s");
   });
 
-  it("draws the ⋯ menu above the stage tracker's circles", async () => {
-    const slot = await mountTicket();
-    fireEvent.click(slot.getByRole("button", { name: "More actions" }));
-    const z = (node: Element) => Number(/(?:^|\s)z-(\d+)(?=\s|$)/.exec(node.className)?.[1] ?? 0);
-    const circles = [...slot.container.querySelectorAll("[data-stage] > span[aria-hidden]")];
-    expect(circles).toHaveLength(6);
-    expect(z(slot.container.querySelector("[data-more-menu]")!)).toBeGreaterThan(Math.max(...circles.map(z)));
-  });
-
-  it("writes success text in the success foreground colour, which keeps its contrast on a pale tint in light themes", async () => {
+  it("writes success text in Loom's success tone, bb's success foreground mixed toward the text colour so it keeps its contrast on a pale tint", async () => {
     const review = { id: 8, parentId: null, depth: 0, authorKind: "reviewer" as const, authorThreadId: "thr_r1", kind: "review" as const, body: "Approved (round 1): Fine", at: 8 };
     const merged = { id: 9, parentId: null, depth: 0, authorKind: "loom" as const, authorThreadId: null, kind: "merge" as const, body: "Merged m1 into loom/csv.", at: 9 };
     const slot = await mountTicket({
@@ -3483,89 +4056,26 @@ describe("ticket", () => {
     const checksCard = slot.container.querySelector<HTMLElement>("[data-checks-card]")!;
     fireEvent.click(within(checksCard).getByRole("button", { name: "Show commands" }));
     const page = slot.container.querySelector<HTMLElement>("[data-ticket]")!;
-    const toned = (node: Element) => node.classList.contains("text-success-foreground");
+    const toned = (node: Element) => node.classList.contains("text-[var(--loom-ok)]");
     expect(page.querySelectorAll(".text-success")).toHaveLength(0);
-    expect(toned(page.querySelector("[data-state-badge]")!)).toBe(true);
     expect(toned(within(page).getByText("Merged"))).toBe(true);
     expect(toned(within(page).getByText("Approved"))).toBe(true);
     expect(toned(within(checksCard).getByText("Checks passed"))).toBe(true);
+    expect(page.querySelectorAll('[data-pipeline] [class~="text-[var(--loom-ok)]"]')).toHaveLength(4);
+    expect(checksCard.querySelectorAll('[data-check-step] [class~="text-[var(--loom-ok)]"]')).toHaveLength(1);
+    expect(toned(page.querySelector('[data-dep="CSV-1"] [role="img"]')!)).toBe(true);
+    ticketTab(slot, "Brief");
     expect(toned(within(page.querySelector<HTMLElement>("[data-ac]")!).getByText(/approved, round 1/))).toBe(true);
-    const agents = page.querySelector<HTMLElement>("[data-ticket-side] [data-ticket-threads]")!;
+    ticketTab(slot, "Agents");
+    const agents = page.querySelector<HTMLElement>("[data-ticket-details] [data-ticket-threads]")!;
     expect(toned(within(agents).getByText("merged"))).toBe(true);
     expect(toned(within(agents).getByText("approved"))).toBe(true);
-    expect(page.querySelectorAll("[data-pipeline] .text-success-foreground")).toHaveLength(4);
-    expect(checksCard.querySelectorAll("[data-check-step] .text-success-foreground")).toHaveLength(1);
-    expect(toned(within(page).getByRole("button", { name: "CSV-1" }).nextElementSibling!)).toBe(true);
-  });
-
-  it("scrolls the side column with the page, and pins it beside the activity only while all of it fits", async () => {
-    const plain = await mountTicket();
-    const plainSide = plain.container.querySelector<HTMLElement>("[data-ticket-side]")!;
-    expect(plainSide.getAttribute("data-pinned")).toBe("false");
-    expect(plainSide.className).not.toMatch(/overflow|max-h|sticky/u);
-    plain.lifecycle.unmount();
-
-    const height = Object.getOwnPropertyDescriptor(window, "innerHeight")!;
-    const offset = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetHeight")!;
-    let sideHeight = 600;
-    const rect = (top: number, bottom: number) => ({ top, bottom, height: bottom - top, left: 0, right: 0, width: 0, x: 0, y: top, toJSON: () => ({}) }) as DOMRect;
-    const boxes = vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
-      return this.hasAttribute("data-loom-scroll") ? rect(48, 1000) : rect(0, 0);
-    });
-    Object.defineProperty(HTMLElement.prototype, "offsetHeight", {
-      configurable: true,
-      get(this: HTMLElement) {
-        return this.hasAttribute("data-ticket-side") ? sideHeight : 0;
-      },
-    });
-    const removed = vi.spyOn(window, "removeEventListener");
-    try {
-      Object.defineProperty(window, "innerHeight", { configurable: true, value: 1000 });
-      const slot = await mountTicket();
-      const side = slot.container.querySelector<HTMLElement>("[data-ticket-side]")!;
-      expect(side.getAttribute("data-pinned")).toBe("true");
-      expect(side.className).toContain("@4xl:sticky");
-      sideHeight = 1200;
-      act(() => {
-        window.dispatchEvent(new Event("resize"));
-      });
-      expect(side.getAttribute("data-pinned")).toBe("false");
-      expect(side.className).not.toContain("sticky");
-      slot.lifecycle.unmount();
-      expect(removed).toHaveBeenCalledWith("resize", expect.any(Function));
-    } finally {
-      Object.defineProperty(window, "innerHeight", height);
-      Object.defineProperty(HTMLElement.prototype, "offsetHeight", offset);
-      boxes.mockRestore();
-      removed.mockRestore();
-    }
-  });
-
-  it("hides and shows the side column on a wide page, and remembers the choice for the next ticket", async () => {
-    localStorage.removeItem("loom.ticket.sideOpen");
-    const slot = await mountTicket();
-    const toggle = () => slot.container.querySelector<HTMLElement>("[data-side-toggle]")!;
-    expect(toggle().textContent).toBe("Hide details");
-    expect(toggle().getAttribute("aria-expanded")).toBe("true");
-    expect(slot.container.querySelector("[data-ticket-grid]")!.className).toContain("@6xl:grid-cols-[minmax(0,1fr)_24rem]");
-    fireEvent.click(toggle());
-    expect(slot.container.querySelector("[data-ticket-side]")).toBeNull();
-    expect(toggle().textContent).toBe("Show details");
-    expect(slot.container.querySelector("[data-ticket-grid]")!.className).not.toContain("grid-cols");
-    expect(localStorage.getItem("loom.ticket.sideOpen")).toBe("false");
-    slot.lifecycle.unmount();
-
-    const next = await mountTicket();
-    expect(next.container.querySelector("[data-ticket-side]")).toBeNull();
-    fireEvent.click(next.container.querySelector<HTMLElement>("[data-side-toggle]")!);
-    expect(next.container.querySelector("[data-ticket-side]")).not.toBeNull();
-    expect(localStorage.getItem("loom.ticket.sideOpen")).toBe("true");
-    localStorage.removeItem("loom.ticket.sideOpen");
   });
 
   it("wraps long words in the criteria and shows backticked text as code", async () => {
     const slot = await mountTicket({ acceptance: ["WHEN a backend has `logging false` THE SYSTEM SHALL drop `networkservices.googleapis.com/WasmPluginVersion` entries"] });
-    const criteria = slot.container.querySelector<HTMLElement>("[data-ticket-side] [data-ac] ol")!;
+    ticketTab(slot, "Brief");
+    const criteria = slot.container.querySelector<HTMLElement>("[data-ticket-brief] [data-ac] ol")!;
     expect(criteria.className).toContain("[overflow-wrap:anywhere]");
     expect([...criteria.querySelectorAll("code")].map((node) => node.textContent)).toEqual(["logging false", "networkservices.googleapis.com/WasmPluginVersion"]);
     expect([...criteria.querySelectorAll("[data-ears]")].map((node) => node.textContent)).toEqual(["WHEN", "THE SYSTEM SHALL"]);
@@ -3629,7 +4139,8 @@ describe("ticket", () => {
     expect(card.textContent).not.toContain("Worker attempt 1 started");
     expect(within(card).queryByRole("button", { name: "Open the thread of attempt 1" })).toBeNull();
     expect(card.querySelector("[data-attempt-time]")!.textContent).toMatch(/^[^·]+ ago$/);
-    const row = slot.container.querySelector<HTMLElement>('[data-ticket-side] [data-thread-row="worker"]')!;
+    ticketTab(slot, "Agents");
+    const row = slot.container.querySelector<HTMLElement>('[data-ticket-details] [data-thread-row="worker"]')!;
     expect(row.textContent).toBe("WWorker · attempt 1could not start");
   });
 
@@ -3658,12 +4169,10 @@ describe("ticket", () => {
       ...over,
     });
     const header = (slot: Slot) => slot.container.querySelector<HTMLElement>("[data-ticket-header]")!;
-    const stageNames = (slot: Slot) => [...slot.container.querySelectorAll("[data-stage]")].map((node) => node.textContent);
 
     it("names the stage Pull request and says the worker is writing it, with how long it has left", async () => {
       const now = Date.now();
       const slot = await mountTicket({ state: "approved", reviewRound: 2, pr: pr({ pushedSha: null, commits: null, checks: null, nextCheckAt: null, writing: { since: now - 4 * 60_000, fix: false, until: now + 26 * 60_000 } }) });
-      expect(stageNames(slot)).toContain("Pull request");
       expect(slot.container.querySelector("[data-ticket-summary]")!.textContent).toBe("Approved in round 2. The worker is writing the pull request's title, description and commit message (4m); Loom uses its own template if they are not in within 30m.");
       expect(header(slot).querySelector("[data-fact='pr-writing']")!.textContent).toBe("Writing the pull request · 4m");
       expect(slot.container.querySelector("[data-live-row]")!.textContent).toContain("The worker is writing the pull request · for 4m");
@@ -3720,7 +4229,10 @@ describe("ticket", () => {
         human: false,
         url: URL,
         checks: [{ name: "tf/plan", url: "https://ci/1" }],
-        items: [{ kind: "thread" as const, author: "review-bot", body: "The regex is unanchored.", url: null, state: null, path: "gclb_logging.tf", line: 42 }],
+        items: [
+          { kind: "thread" as const, author: "review-bot", body: "The regex is unanchored.", url: null, state: null, path: "gclb_logging.tf", line: 42 },
+          { kind: "review" as const, author: "river", body: "> Test while logged in with a verified email\n>\n> - Preview options\n> - Sign in\n\n1. First\n2. Second\n\nThird paragraph.", url: null, state: "COMMENTED", path: null, line: null },
+        ],
         ignored: { bots: 2, own: 1 },
       };
       const extra = [
@@ -3737,6 +4249,31 @@ describe("ticket", () => {
       expect(round.querySelector("[data-feedback-check]")!.textContent).toContain("tf/plan");
       expect(round.querySelector("[data-feedback-item='thread']")!.textContent).toContain("gclb_logging.tf:42");
       expect(round.textContent).toContain("Not counted: 2 bot comments and 1 item from your own account");
+      // A comment's Markdown sits in a box that clips whole blocks: a line clamp on quotes and lists painted their lines over one another.
+      const [short, long] = [...round.querySelectorAll<HTMLElement>("[data-feedback-body]")];
+      for (const body of [short!, long!]) expect(body.className).not.toMatch(/line-clamp/);
+      expect(long!.className).toContain("max-h-[7.5em]");
+      expect(within(short!.parentElement!).queryByRole("button", { name: "Show all" })).toBeNull();
+      const more = within(long!.parentElement!).getByRole("button", { name: "Show all" });
+      expect(more.getAttribute("aria-expanded")).toBe("false");
+      fireEvent.click(more);
+      expect(long!.className).not.toContain("max-h-");
+      expect(within(long!.parentElement!).getByRole("button", { name: "Show less" }).getAttribute("aria-expanded")).toBe("true");
+      // A keyboard stop the box hides opens the body, then is scrolled into view once the opened layout has moved it.
+      fireEvent.click(within(long!.parentElement!).getByRole("button", { name: "Show less" }));
+      const stop = long!.querySelector<HTMLElement>("[data-testid='bb-markdown']")!;
+      stop.tabIndex = 0;
+      const scroll = vi.fn();
+      Element.prototype.scrollIntoView = scroll;
+      try {
+        act(() => stop.focus());
+        expect(within(long!.parentElement!).getByRole("button", { name: "Show less" })).toBeTruthy();
+        await waitFor(() => expect(scroll.mock.contexts).toContain(stop));
+        expect(scroll.mock.calls[scroll.mock.contexts.indexOf(stop)]![0]).toMatchObject({ block: "nearest" });
+        expect(document.activeElement).toBe(stop);
+      } finally {
+        delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+      }
       fireEvent.click(within(round).getByRole("button", { name: "Open the details of tf/plan" }));
       expect(slot.inspection.navigateCalls.at(-1)).toMatchObject({ method: "openUrl" });
       expect(slot.container.querySelector("[data-pipeline]")!.textContent).toContain("PR ✓✗");
@@ -3753,9 +4290,9 @@ describe("ticket", () => {
 describe("health strip", () => {
   const part = (slot: Slot, name: string) => slot.container.querySelector<HTMLElement>(`[data-health="${name}"]`);
 
-  it("shows progress, pace, the token budget, the deadline and capacity above the tabs", async () => {
+  it("shows progress, pace, the token budget, the deadline and capacity in Work's side pane", async () => {
     const { slot } = await mountPage("csv", { project: () => projectView() });
-    await slot.findByRole("tab", { name: "Board" });
+    await slot.findByRole("tab", { name: "Work" });
     expect(part(slot, "progress")!.textContent).toContain("8 of 14 done");
     expect(part(slot, "progress")!.textContent).toContain("3 in flight");
     expect(part(slot, "progress")!.querySelector("[role=img]")!.getAttribute("aria-label")).toBe("Progress: 8 done, 3 in flight, 1 blocked, 2 queued");
@@ -3768,13 +4305,13 @@ describe("health strip", () => {
     expect(part(slot, "capacity")!.textContent).toContain("1/2 workers");
     expect(part(slot, "capacity")!.textContent).toContain("1/2 reviewers · 1 ready ticket waiting for a slot");
     const strip = slot.container.querySelector("[data-health-strip]")!;
-    expect(strip.compareDocumentPosition(slot.getByRole("tablist")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(strip.closest('[data-work-pane]')).not.toBeNull();
   });
 
   it("hides the budget and the deadline when the spec sets neither, and says when nothing was done to pace by", async () => {
     const view = projectView({ health: health({ budget: null, deadline: null, pace: { perHour: 0, remaining: 6, etaMs: null } }) });
     const { slot } = await mountPage("csv", { project: () => view });
-    await slot.findByRole("tab", { name: "Board" });
+    await slot.findByRole("tab", { name: "Work" });
     expect(part(slot, "progress")).not.toBeNull();
     expect(part(slot, "budget")).toBeNull();
     expect(part(slot, "deadline")).toBeNull();
@@ -3784,21 +4321,21 @@ describe("health strip", () => {
 
   it("shows a fast pace per hour and the running time left in minutes", async () => {
     const { slot } = await mountPage("csv", { project: () => projectView({ health: health({ pace: { perHour: 3.85, remaining: 3, etaMs: 46.8 * 60_000 } }) }) });
-    await slot.findByRole("tab", { name: "Board" });
+    await slot.findByRole("tab", { name: "Work" });
     expect(part(slot, "pace")!.textContent).toContain("3.9/hour");
     expect(part(slot, "pace")!.textContent).toContain("3 left: about 47m of running at this pace");
   });
 
   it("says when the project did not run in the window to pace by", async () => {
     const { slot } = await mountPage("csv", { project: () => projectView({ health: health({ pace: { perHour: null, remaining: 2, etaMs: null } }) }) });
-    await slot.findByRole("tab", { name: "Board" });
+    await slot.findByRole("tab", { name: "Work" });
     expect(part(slot, "pace")!.textContent).toContain("none yet");
     expect(part(slot, "pace")!.textContent).toContain("2 left; not run in the last 14 days");
   });
 
   it("is not shown for a draft", async () => {
     const { slot } = await mountPage("csv", { project: () => projectView({ overview: overview({ state: "draft", approvedVersion: null }), health: null }) });
-    await slot.findByRole("tab", { name: "Board" });
+    await slot.findByRole("tab", { name: "Work" });
     expect(slot.container.querySelector("[data-health-strip]")).toBeNull();
   });
 });
@@ -3813,7 +4350,7 @@ describe("agents tab", () => {
   ];
   const openAgents = async () => {
     const { slot } = await mountPage("csv", { project: () => projectView({ agents }) });
-    fireEvent.click(await slot.findByRole("tab", { name: "Agents" }));
+    await openView(slot, "History", "Agents");
     return slot;
   };
   const row = (slot: Slot, threadId: string) => slot.container.querySelector<HTMLElement>(`[data-agent-row="${threadId}"]`)!;
@@ -3825,7 +4362,9 @@ describe("agents tab", () => {
     const worker = row(slot, "thr_w1");
     expect(worker.textContent).toContain("worker");
     expect(worker.textContent).toContain("CSV-2 · Export endpoint");
-    expect(worker.textContent).toContain("claude / sonnet");
+    // The model reads as its provider's icon and its name, with the whole "provider / model" in its title.
+    expect(worker.querySelector('[data-model-name="claude / sonnet"]')!.textContent).toBe("sonnet");
+    expect(worker.querySelector('[data-model-name="claude / sonnet"]')!.getAttribute("title")).toBe("claude / sonnet");
     expect(worker.textContent).toContain("5h · timeout at 6h");
     expect(worker.textContent).toContain("6,000");
     expect(worker.textContent).toContain("1 rate limit");
@@ -3851,7 +4390,7 @@ describe("agents tab", () => {
     const plannerSilent = agent({ threadId: "thr_plan", role: "planner", ticketKey: null, ticketTitle: null, tokens: null, model: null, timeoutAt: null });
     const view = projectView({ agents: [silent, plannerSilent, ...agents], metrics: metrics({ tokens: { ...metrics().tokens, unreported: 1 } }) });
     const { slot } = await mountPage("csv", { project: () => view });
-    fireEvent.click(await slot.findByRole("tab", { name: "Agents" }));
+    await openView(slot, "History", "Agents");
     expect(row(slot, "thr_r3").textContent).toContain("not reported");
     expect(row(slot, "thr_w1").textContent).not.toContain("not reported");
     expect(slot.container.querySelector("[data-agents-planner]")!.textContent).toContain("Tokens not reported");
@@ -3861,7 +4400,7 @@ describe("agents tab", () => {
   it("shows a dash, not \"not reported\", for a row bb never started a thread for", async () => {
     const neverStarted = agent({ threadId: null, role: "reviewer", ticketKey: "CSV-1", state: "ended", endedAt: NOW, endReason: "failed", tokens: null, timeoutAt: null });
     const { slot } = await mountPage("csv", { project: () => projectView({ agents: [neverStarted, ...agents] }) });
-    fireEvent.click(await slot.findByRole("tab", { name: "Agents" }));
+    await openView(slot, "History", "Agents");
     const tokens = slot.container.querySelector<HTMLElement>('[data-agent-row="reviewer"] [data-label="Tokens"]')!;
     expect(tokens.textContent).toBe("—");
   });
@@ -3873,7 +4412,7 @@ describe("agents tab", () => {
 
   it("says so when no agent is working", async () => {
     const { slot } = await mountPage("csv", { project: () => projectView({ agents: [] }) });
-    fireEvent.click(await slot.findByRole("tab", { name: "Agents" }));
+    await openView(slot, "History", "Agents");
     expect(await slot.findByText("No agent is working now.")).toBeTruthy();
     expect(slot.container.querySelector("[data-agents-history]")).toBeNull();
     expect(slot.container.querySelector("[data-agents-planner]")).toBeNull();
@@ -3882,7 +4421,7 @@ describe("agents tab", () => {
   it("shows the planner on call in its own section, with its tokens and thread but no running time, and not as working", async () => {
     const planner = agent({ threadId: "thr_plan", role: "planner", ticketKey: null, ticketTitle: null, startedAt: NOW - 32 * 60_000, tokens: 2000, rateLimitRetries: 0, model: null, timeoutAt: null });
     const { slot } = await mountPage("csv", { project: () => projectView({ agents: [planner, ...agents] }) });
-    fireEvent.click(await slot.findByRole("tab", { name: "Agents" }));
+    await openView(slot, "History", "Agents");
     const live = slot.container.querySelector("[data-agents-live]")!;
     expect([...live.querySelectorAll("[data-agent-row]")].map((entry) => entry.getAttribute("data-agent-row"))).toEqual(["thr_w1", "thr_r2"]);
     const section = slot.container.querySelector<HTMLElement>("[data-agents-planner]")!;
@@ -3897,7 +4436,7 @@ describe("agents tab", () => {
   it("says no agent is working when only the planner is on call", async () => {
     const planner = agent({ threadId: "thr_plan", role: "planner", ticketKey: null, ticketTitle: null, model: null, timeoutAt: null });
     const { slot } = await mountPage("csv", { project: () => projectView({ agents: [planner] }) });
-    fireEvent.click(await slot.findByRole("tab", { name: "Agents" }));
+    await openView(slot, "History", "Agents");
     expect(await slot.findByText("No agent is working now.")).toBeTruthy();
     expect(slot.container.querySelector("[data-agents-planner]")!.textContent).toContain("On call for triage rounds");
   });
@@ -3907,7 +4446,7 @@ describe("insights tab", () => {
   const insightsView = (input: { slug: string; window?: InsightsWindow; at?: number } = { slug: "csv" }) => projectInsights(story().rows(), { now: at(60), window: input.window, strategy: "integration", maxWorkers: 2, maxTokens: null });
   const openInsights = async (insights: Handlers["insights"] = insightsView, project: Handlers["project"] = () => projectView()) => {
     const { slot } = await mountPage("csv", { project, insights });
-    fireEvent.click(await slot.findByRole("tab", { name: "Insights" }));
+    await openView(slot, "History", "Insights");
     await waitFor(() => expect(slot.container.querySelector("[data-insights-headline]")).not.toBeNull());
     return slot;
   };
@@ -3921,6 +4460,62 @@ describe("insights tab", () => {
   afterEach(() => {
     expect(errors.mock.calls.filter((call: unknown[]) => /same key|unique "key"|act\(/.test(String(call[0])))).toEqual([]);
     errors.mockRestore();
+  });
+
+  it("separates stacked marks with a line of the surface colour, outlines a pull request's and hatches a block, in the chart and its key", async () => {
+    const view = (input: Parameters<typeof insightsView>[0]) => {
+      const out = insightsView(input);
+      const when = out.activity.marks.find((mark) => mark.kind === "done")!.at;
+      const marks = (["done", "pr", "back", "bad"] as const).map((kind) => ({ at: when, kind, key: "CSV-1", text: kind }));
+      return { ...out, strategy: "pr" as const, activity: { ...out.activity, marks: [...out.activity.marks, ...marks] } };
+    };
+    const slot = await openInsights(view);
+    const bar = [...slot.container.querySelectorAll("[data-activity-bar]")].find((entry) => entry.querySelectorAll("[data-mark]").length === 4)!;
+    expect([...bar.querySelectorAll("[data-mark]")].map((mark) => mark.getAttribute("data-mark"))).toEqual(["done", "pr", "back", "bad"]);
+    // Every mark but the bottom one has a separator at its lower edge, in the colour the chart sits on.
+    const separators = [...bar.querySelectorAll<SVGLineElement>("[data-mark-separator]")];
+    expect(separators).toHaveLength(3);
+    for (const line of separators) expect(line.style.stroke).toBe("var(--background, transparent)");
+    const mark = (kind: string) => bar.querySelector<SVGRectElement>(`[data-mark="${kind}"]`)!;
+    expect(mark("pr").style.stroke).toContain("--success");
+    expect(mark("bad").getAttribute("fill")).toMatch(/^url\(#.*-bad\)$/);
+    expect(mark("done").style.stroke).toBe("");
+    const key = slot.getByText("Blocked or failed").firstElementChild as HTMLElement;
+    expect(key.style.background).toContain("repeating-linear-gradient");
+    // The paused hatch is data too: its lines are full-strength muted ink, never faded below 3:1.
+    const paused = bar.closest("svg")!.querySelector<SVGLineElement>("pattern line")!;
+    expect(paused.style.stroke).toBe("var(--loom-muted, currentColor)");
+    expect(paused.style.strokeOpacity).toBe("");
+  });
+
+  it("brings a ticket's story into view without gliding when the person asks for reduced motion", async () => {
+    const calls: unknown[] = [];
+    const original = (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+    Element.prototype.scrollIntoView = function (options?: unknown) {
+      calls.push(options);
+    } as typeof Element.prototype.scrollIntoView;
+    const media = window.matchMedia;
+    // jsdom has no CSS.escape, which the story's lookup uses.
+    const css = (globalThis as { CSS?: unknown }).CSS;
+    (globalThis as { CSS?: unknown }).CSS = { escape: (value: string) => value };
+    try {
+      for (const reduce of [true, false]) {
+        calls.length = 0;
+        window.matchMedia = ((query: string) => ({ matches: reduce && query.includes("reduce"), media: query, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {}, onchange: null, dispatchEvent: () => false })) as typeof window.matchMedia;
+        const slot = await openInsights();
+        fireEvent.click(slot.container.querySelector<HTMLElement>("[data-first-try]")!);
+        await waitFor(() => expect(calls.length).toBeGreaterThan(0));
+        expect(calls.every((options) => (options as ScrollIntoViewOptions).behavior === (reduce ? "auto" : "smooth")), JSON.stringify(calls)).toBe(true);
+        // It lands on the same ticket's story either way.
+        expect((slot.getByPlaceholderText("Find a ticket or a word") as HTMLInputElement).value).toBe(slot.container.querySelector("[data-first-try]")!.getAttribute("data-first-try"));
+        slot.lifecycle.unmount();
+      }
+    } finally {
+      window.matchMedia = media;
+      (globalThis as { CSS?: unknown }).CSS = css;
+      if (original === undefined) delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+      else Element.prototype.scrollIntoView = original as typeof Element.prototype.scrollIntoView;
+    }
   });
 
   it("takes the place of the Feed and Metrics tabs and reads the whole project", async () => {
@@ -3937,6 +4532,10 @@ describe("insights tab", () => {
     expect(slot.container.querySelector("[data-insights-headline]")!.textContent).toBe("Running: 1 ticket is blocked and needs you.");
     expect([...slot.container.querySelectorAll("[data-insights-line]")].map((line) => line.textContent)).toContain("Checks failed once in 3 runs, in npm test.");
     expect([...slot.container.querySelectorAll("[data-figure]")].map((figure) => figure.getAttribute("data-figure"))).toEqual(["Running time", "A ticket takes", "Right first time", "Tokens"]);
+    // At 200% text two fixed columns spilled every figure: the figures take as many 11rem columns as fit.
+    const figures = classNamesOf(slot.container.querySelector("[data-figure]")!.parentElement!);
+    expect(figures).toContain("grid-cols-[repeat(auto-fit,minmax(min(100%,11rem),1fr))]");
+    expect(figures).not.toContain("grid-cols-2");
     expect(slot.container.querySelector('[data-figure="Right first time"]')!.textContent).toContain("0%");
     fireEvent.click(within(slot.container.querySelector<HTMLElement>("[data-insights-summary]")!).getByRole("button", { name: "The one reviewed ticket" }));
     expect(pressed(slot, "[data-story-filter]")).toEqual(["Problems3"]);
@@ -4109,18 +4708,19 @@ describe("insights tab", () => {
     slot.lifecycle.unmount();
 
     const { slot: failed } = await mountPage("csv", { project: () => projectView(), insights: () => Promise.reject(new Error("db is closed")) });
-    fireEvent.click(await failed.findByRole("tab", { name: "Insights" }));
+    await openView(failed, "History", "Insights");
     expect((await failed.findByRole("alert")).textContent).toContain("db is closed");
   });
 
   it("reads the moment the page is rewound to", async () => {
     const project = (input: { slug: string; at?: number }) => (input.at === undefined ? projectView() : projectView({ at: input.at, now: NOW - 15 * 60_000 }));
     const { slot } = await mountPage("csv", { project, insights: insightsView });
-    fireEvent.click(await slot.findByRole("button", { name: "Timeline" }));
-    await waitFor(() => expect(slot.container.querySelector("[data-timeline-open]")).not.toBeNull());
+    // The ruler over every view rewinds the page.
+    await waitFor(() => expect(slot.container.querySelector("[data-time-ruler]")).not.toBeNull());
+    await waitFor(() => expect(slot.getByRole("slider", { name: "Timeline" }).getAttribute("aria-valuemax")).not.toBe("0"));
     fireEvent.click(slot.getByRole("button", { name: "Previous moment" }));
     await waitFor(() => expect(slot.container.querySelector("[data-rewind-bar]")).not.toBeNull());
-    fireEvent.click(slot.getByRole("tab", { name: "Insights" }));
+    await openView(slot, "History", "Insights");
     await waitFor(() => expect(calls(slot, "insights").length).toBeGreaterThan(0));
     expect(calls(slot, "insights")[0]!.input).toEqual({ slug: "csv", at: expect.any(Number) });
     await waitFor(() => expect(slot.container.querySelector("[data-insights-headline]")).not.toBeNull());
@@ -4134,54 +4734,92 @@ describe("timeline", () => {
   const PAST = NOW - 15 * 60_000;
   const project = (input: { slug: string; at?: number }) => (input.at === undefined ? projectView() : projectView({ at: input.at, now: PAST }));
   const strip = (slot: Slot) => slot.container.querySelector<HTMLElement>("[data-timeline-strip]")!;
+  // The full timeline is History's Rewind, always open there; the ruler over every view has tests of its own.
+  const history = async (slot: Slot) => {
+    await openView(slot, "History");
+    return waitFor(() => {
+      expect(slot.container.querySelector("[data-timeline-strip]")).not.toBeNull();
+      return strip(slot);
+    });
+  };
   const open = async (slot: Slot) => {
-    fireEvent.click(await slot.findByRole("button", { name: "Timeline" }));
+    await history(slot);
     await waitFor(() => expect(slot.container.querySelector("[data-timeline-open]")).not.toBeNull());
   };
+  const inStrip = (slot: Slot, name: string) => within(strip(slot)).getByRole("button", { name });
   const rewound = async (slot: Slot) => waitFor(() => expect(slot.container.querySelector("[data-rewind-bar]")).not.toBeNull());
   const rewind = async (slot: Slot) => {
     await open(slot);
-    fireEvent.click(slot.getByRole("button", { name: "Previous moment" }));
+    fireEvent.click(inStrip(slot, "Previous moment"));
     await rewound(slot);
   };
   // With no ResizeObserver the plot is 720 pixels wide over the fixture's 20 minutes, so a moment 15 minutes ago sits at 180.
   const track = (slot: Slot) => slot.container.querySelector<HTMLElement>("[data-timeline-track]")!;
 
-  it("starts collapsed as a dashed frame with a Play button and says it is live", async () => {
+  it("opens in full as a dashed frame with its rows, a Play button and no fold, and says it is live", async () => {
     const { slot } = await mountPage("csv", { project });
-    const toggle = await slot.findByRole("button", { name: "Timeline" });
-    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    await history(slot);
     expect(strip(slot).className).toContain("border-dashed");
     expect(track(slot)).not.toBeNull();
-    expect(slot.container.querySelector("[data-timeline-open]")).toBeNull();
-    expect(slot.getByRole("button", { name: "Play" })).toBeTruthy();
+    await waitFor(() => expect(slot.container.querySelector("[data-timeline-open]")).not.toBeNull());
+    expect(within(strip(slot)).queryByRole("button", { name: "Timeline" })).toBeNull();
+    expect(within(strip(slot)).queryByRole("button", { name: "Fold the Timeline" })).toBeNull();
+    expect(inStrip(slot, "Play")).toBeTruthy();
     expect(slot.container.querySelector("[data-timeline-status]")!.textContent).toContain("Live");
     expect(calls(slot, "timeline")[0]!.input).toEqual({ slug: "csv" });
   });
 
-  it("opens on the newest moment, and stays open across a remount", async () => {
+  it("gives each ticket's row a 44 px tap on a phone-narrow frame, and keeps 24 px rows otherwise", async () => {
+    const tickets = (slot: Slot) => strip(slot).querySelector<HTMLElement>('ul[aria-label="Tickets"]')!;
+    const observer = (globalThis as { ResizeObserver?: unknown }).ResizeObserver;
+    // jsdom lays nothing out: every observed element reports `frame` pixels wide, once.
+    const reporting = (frame: number) =>
+      class {
+        constructor(private readonly report: (entries: Array<{ contentRect: { width: number } }>) => void) {}
+        observe() {
+          this.report([{ contentRect: { width: frame } }]);
+        }
+        disconnect() {}
+      };
+    try {
+      vi.stubGlobal("ResizeObserver", reporting(390));
+      const narrow = await mountPage("csv", { project });
+      await open(narrow.slot);
+      await waitFor(() => expect(tickets(narrow.slot).style.gridAutoRows).toBe("44px"));
+      expect(strip(narrow.slot).querySelector("[data-timeline-lanes]")!.getAttribute("height")).toBe(String(44 * (tickets(narrow.slot).children.length)));
+      narrow.slot.lifecycle.unmount();
+      vi.stubGlobal("ResizeObserver", reporting(1080));
+      const wide = await mountPage("csv", { project });
+      await open(wide.slot);
+      expect(tickets(wide.slot).style.gridAutoRows).toBe("24px");
+    } finally {
+      vi.stubGlobal("ResizeObserver", observer);
+    }
+  });
+
+  it("opens on the newest moment, and open again after a remount", async () => {
     const first = await mountPage("csv", { project });
     await open(first.slot);
-    expect(first.slot.getByRole("button", { name: "Timeline" }).getAttribute("aria-expanded")).toBe("true");
-    expect(localStorage.getItem("loom.timeline.open")).toBe("true");
     expect(first.slot.container.querySelector("[data-timeline-count]")!.textContent).toBe("now");
     expect(first.slot.container.querySelector("[data-timeline-moment]")!.textContent).toContain("CSV-1 moved from working to review: the checks passed, round 1.+1 more");
-    expect(first.slot.getByRole("button", { name: "Next moment" }).getAttribute("aria-disabled")).toBe("true");
+    expect(within(strip(first.slot)).getByRole("button", { name: "Next moment" }).getAttribute("aria-disabled")).toBe("true");
     first.slot.lifecycle.unmount();
     const again = await mountPage("csv", { project });
     await waitFor(() => expect(again.slot.container.querySelector("[data-timeline-open]")).not.toBeNull());
   });
 
-  it("rewinds the page to the previous moment, with no controls, and either Back to now returns it", async () => {
+  it("rewinds the page to the previous moment, read-only, and either Back to now returns it", async () => {
     const { slot } = await mountPage("csv", { project });
-    await slot.findByRole("button", { name: "Pause" });
+    const pause = () => slot.container.querySelector<HTMLElement>('[data-title-toggle="pause"]')!;
+    await waitFor(() => expect(pause()).not.toBeNull());
     await rewind(slot);
     expect(calls(slot, "project").at(-1)!.input).toEqual({ slug: "csv", at: 12 });
-    expect([...slot.container.querySelectorAll("[data-state-badge]")].map((badge) => badge.textContent)).toContain("rewound");
-    expect(slot.container.querySelector("[data-rewind-bar]")!.textContent).toContain("nothing here can change it");
+    expect(slot.container.querySelector("[data-rewind-bar]")!.textContent).toContain("read-only");
     expect(slot.container.querySelector("[data-next-step]")).toBeNull();
-    expect(slot.queryByRole("button", { name: "Pause" })).toBeNull();
-    expect(slot.queryByRole("button", { name: "More actions" })).toBeNull();
+    // The title bar keeps its controls in place, disabled, so nothing moves under the pointer.
+    expect(pause().getAttribute("aria-disabled")).toBe("true");
+    fireEvent.click(pause());
+    expect(calls(slot, "control")).toEqual([]);
     expect(strip(slot).hasAttribute("data-rewound")).toBe(true);
     expect(slot.container.querySelector("[data-timeline-count]")!.textContent).toBe("2 of 3");
     // The caption is the line that gave the moment its kind, not the first one.
@@ -4189,13 +4827,12 @@ describe("timeline", () => {
     expect(slot.container.querySelector("[data-timeline-playhead]")).not.toBeNull();
 
     fireEvent.click(within(slot.container.querySelector<HTMLElement>("[data-rewind-bar]")!).getByRole("button", { name: "Back to now" }));
-    await slot.findByRole("button", { name: "Pause" });
+    await waitFor(() => expect(slot.container.querySelector("[data-rewind-bar]")).toBeNull());
     expect(calls(slot, "project").at(-1)!.input).toEqual({ slug: "csv" });
-    expect(slot.getByRole("button", { name: "More actions" })).toBeTruthy();
-    expect(slot.container.querySelector("[data-rewind-bar]")).toBeNull();
+    expect(pause().getAttribute("aria-disabled")).toBeNull();
     expect(strip(slot).hasAttribute("data-rewound")).toBe(false);
 
-    fireEvent.click(slot.getByRole("button", { name: "Previous moment" }));
+    fireEvent.click(inStrip(slot, "Previous moment"));
     await rewound(slot);
     fireEvent.click(within(strip(slot)).getByRole("button", { name: "Back to now" }));
     await waitFor(() => expect(slot.container.querySelector("[data-rewind-bar]")).toBeNull());
@@ -4209,21 +4846,39 @@ describe("timeline", () => {
     expect(calls(slot, "project").at(-1)!.input).toEqual({ slug: "csv", at: 12 });
     fireEvent.keyDown(strip(slot), { key: "ArrowLeft" });
     await waitFor(() => expect(calls(slot, "project").at(-1)!.input).toEqual({ slug: "csv", at: 11 }));
-    const previous = slot.getByRole("button", { name: "Previous moment" });
+    const previous = inStrip(slot, "Previous moment");
     expect(previous.getAttribute("aria-disabled")).toBe("true");
     // At the first moment Previous keeps its focus and does nothing.
     previous.focus();
     fireEvent.click(previous);
     expect(document.activeElement).toBe(previous);
     expect(calls(slot, "project").at(-1)!.input).toEqual({ slug: "csv", at: 11 });
+    const when = slot.container.querySelector("[data-ruler-when]")!.textContent!;
+    expect(when).toMatch(/^[A-Z][a-z]{2} \d{1,2}, /);
     fireEvent.keyDown(strip(slot), { key: "Escape" });
     await waitFor(() => expect(slot.container.querySelector("[data-rewind-bar]")).toBeNull());
     expect(calls(slot, "project").at(-1)!.input).toEqual({ slug: "csv" });
+    expect(slot.container.querySelector("[data-ruler-when]")!.textContent).toBe("Now");
+  });
+
+  it("takes Escape from the body while rewound, before bb leaves the page with it", async () => {
+    const { slot } = await mountPage("csv", { project });
+    await open(slot);
+    fireEvent.keyDown(strip(slot), { key: "ArrowLeft" });
+    await rewound(slot);
+    const host = vi.fn();
+    window.addEventListener("keydown", host);
+    (document.activeElement as HTMLElement | null)?.blur();
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    window.removeEventListener("keydown", host);
+    await waitFor(() => expect(slot.container.querySelector("[data-rewind-bar]")).toBeNull());
+    expect(calls(slot, "project").at(-1)!.input).toEqual({ slug: "csv" });
+    expect(host).not.toHaveBeenCalled();
   });
 
   it("shows what happened at a moment on hover, before anything rewinds, and a click rewinds to it", async () => {
     const { slot } = await mountPage("csv", { project });
-    await slot.findByRole("button", { name: "Timeline" });
+    await history(slot);
     fireEvent.mouseMove(track(slot), { clientX: 182, clientY: 10 });
     const tip = await slot.findByRole("tooltip");
     expect(tip.textContent).toContain("You ran start.");
@@ -4263,13 +4918,13 @@ describe("timeline", () => {
     const { slot } = await mountPage("csv", { project });
     await open(slot);
     const lanes = slot.container.querySelector<HTMLElement>("[data-timeline-lanes-plot]")!;
-    fireEvent.mouseMove(lanes, { clientX: 400, clientY: 2 * 20 + 5 });
+    fireEvent.mouseMove(lanes, { clientX: 400, clientY: 2 * 24 + 5 });
     const tip = await slot.findByRole("tooltip");
     expect(tip.textContent).toContain("CSV-2 · Export endpoint");
     expect(tip.textContent).toContain("CSV-2 moved from queued to working: attempt 1.");
     expect(tip.textContent).toContain("working 10m");
     expect(tip.textContent).toContain("working for 10m");
-    fireEvent.mouseMove(lanes, { clientX: 400, clientY: 20 + 5 });
+    fireEvent.mouseMove(lanes, { clientX: 400, clientY: 24 + 5 });
     // CSV-1 worked 5 minutes and has been in review for the 10 since, not for its whole 15.
     await waitFor(() => expect(slot.getByRole("tooltip").textContent).toContain("in review for 10m"));
     fireEvent.click(slot.getByRole("button", { name: "Open CSV-2" }));
@@ -4296,7 +4951,7 @@ describe("timeline", () => {
         moments: timeline().moments.map((moment, index) => (index === 0 ? { ...moment, at: NOW - 60 * 60_000 } : moment)),
       });
     const { slot } = await mountPage("csv", { project, timeline: quiet });
-    await slot.findByRole("button", { name: "Timeline" });
+    await history(slot);
     // The 45 quiet minutes fold to the first 16 pixels.
     fireEvent.mouseMove(track(slot), { clientX: 8, clientY: 10 });
     expect((await slot.findByRole("tooltip")).textContent).toContain("Quiet for 45m");
@@ -4307,17 +4962,18 @@ describe("timeline", () => {
   it("puts now one step past the newest moment when something happened after it, and on it when that was in the same millisecond", async () => {
     const later = await mountPage("csv", { project, timeline: () => timeline({ events: [...timeline().events, [14, NOW - 5 * 60_000]] }) });
     await open(later.slot);
-    fireEvent.click(later.slot.getByRole("button", { name: "Previous moment" }));
+    fireEvent.click(inStrip(later.slot, "Previous moment"));
     await rewound(later.slot);
     expect(calls(later.slot, "project").at(-1)!.input).toEqual({ slug: "csv", at: 13 });
     expect(later.slot.container.querySelector("[data-timeline-count]")!.textContent).toBe("3 of 3");
-    fireEvent.click(later.slot.getByRole("button", { name: "Next moment" }));
+    fireEvent.click(inStrip(later.slot, "Next moment"));
     await waitFor(() => expect(calls(later.slot, "project").at(-1)!.input).toEqual({ slug: "csv" }));
     later.slot.lifecycle.unmount();
 
     const same = await mountPage("csv", { project, timeline: () => timeline({ events: [[11, NOW - 20 * 60_000], [12, NOW - 15 * 60_000], [14, NOW - 10 * 60_000]] }) });
     // The first mount left the Timeline open.
-    fireEvent.click(await same.slot.findByRole("button", { name: "Previous moment" }));
+    await waitFor(() => expect(same.slot.container.querySelector("[data-timeline-open]")).not.toBeNull());
+    fireEvent.click(inStrip(same.slot, "Previous moment"));
     await rewound(same.slot);
     expect(calls(same.slot, "project").at(-1)!.input).toEqual({ slug: "csv", at: 12 });
   });
@@ -4327,12 +4983,12 @@ describe("timeline", () => {
     await open(slot);
     vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "setTimeout", "clearTimeout", "Date"] });
     try {
-      fireEvent.click(slot.getByRole("button", { name: "Play" }));
+      fireEvent.click(inStrip(slot, "Play"));
       await act(async () => {
         vi.advanceTimersByTime(130);
       });
       expect(calls(slot, "project").at(-1)!.input).toEqual({ slug: "csv", at: 11 });
-      expect(slot.getByRole("button", { name: "Pause" })).toBeTruthy();
+      expect(inStrip(slot, "Pause")).toBeTruthy();
       // One tick per act, so each moment the playhead passes renders and asks for its page.
       for (let tick = 0; tick < 25; tick += 1)
         await act(async () => {
@@ -4340,7 +4996,7 @@ describe("timeline", () => {
         });
       expect(calls(slot, "project").at(-1)!.input).toEqual({ slug: "csv" });
       expect(calls(slot, "project").some((call) => (call.input as { at?: number }).at === 12)).toBe(true);
-      expect(slot.getByRole("button", { name: "Play" })).toBeTruthy();
+      expect(inStrip(slot, "Play")).toBeTruthy();
     } finally {
       vi.useRealTimers();
     }
@@ -4366,7 +5022,7 @@ describe("timeline", () => {
     const { slot } = await mountPage("csv", { project });
     await open(slot);
     expect(slot.container.querySelector("[data-timeline-announce]")!.textContent).toBe("");
-    fireEvent.click(slot.getByRole("button", { name: "Previous moment" }));
+    fireEvent.click(inStrip(slot, "Previous moment"));
     await rewound(slot);
     expect(slot.container.querySelector("[data-timeline-announce]")!.textContent).toBe(`${new Date(NOW - 15 * 60_000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}: You ran start.`);
     const back = within(strip(slot)).getByRole("button", { name: "Back to now" });
@@ -4408,10 +5064,12 @@ describe("timeline", () => {
   it("hides the Planner tab and the tab badges while rewound, and shows the spec in force with no notes", async () => {
     const pending = (input: { slug: string; at?: number }) => ({ ...project(input), overview: overview({ pendingVersion: 2 }) });
     const { slot } = await mountPage("csv", { project: pending, specVersion: () => specVersionView({ version: 1, status: "approved", changes: null }) });
-    expect(await slot.findByRole("tab", { name: "Planner" })).toBeTruthy();
+    expect((await slot.findByRole("tab", { name: "Planner" })).getAttribute("aria-disabled")).toBeNull();
     expect(slot.container.querySelector('[data-tab-badge="spec"]')).not.toBeNull();
     await rewind(slot);
-    expect(slot.queryByRole("tab", { name: "Planner" })).toBeNull();
+    // Planner and Ship stay in their places, disabled, and say why.
+    expect(slot.getByRole("tab", { name: "Planner" }).getAttribute("aria-disabled")).toBe("true");
+    expect(slot.getByRole("tab", { name: "Ship" }).getAttribute("aria-disabled")).toBe("true");
     expect(slot.container.querySelector("[data-tab-badge]")).toBeNull();
     fireEvent.click(slot.getByRole("tab", { name: "Spec" }));
     await waitFor(() => expect(slot.container.querySelector("[data-spec-page]")).not.toBeNull());
@@ -4533,6 +5191,26 @@ describe("spec page", () => {
     await waitFor(() => expect(tray()).toEqual([]));
   });
 
+  it("keeps the keyboard clear of the review dock while it is docked at the bottom", async () => {
+    // jsdom applies no Tailwind, so the dock reports itself docked the way the browser does below the two-column width.
+    const real = window.getComputedStyle;
+    vi.spyOn(window, "getComputedStyle").mockImplementation((element, pseudo) => {
+      const style = real(element, pseudo);
+      return element instanceof HTMLElement && element.hasAttribute("data-spec-review-dock") ? ({ ...style, bottom: "0px" } as CSSStyleDeclaration) : style;
+    });
+    vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function (this: HTMLElement) {
+      return this.hasAttribute("data-spec-review-dock") ? 212 : 0;
+    });
+    const slot = await openPage();
+    const scroller = slot.container.querySelector<HTMLElement>("[data-loom-scroll]")!;
+    expect(page(slot).querySelector("[data-spec-review-dock]")).not.toBeNull();
+    expect(scroller.style.scrollPaddingBottom).toBe("220px");
+    fireEvent.click(slot.getByRole("tab", { name: "Work" }));
+    await waitFor(() => expect(slot.container.querySelector("[data-spec-page]")).toBeNull());
+    expect(scroller.style.scrollPaddingBottom).toBe("");
+    vi.restoreAllMocks();
+  });
+
   it("suggests a number with no text, adds a note on the whole spec, and edits and deletes a comment", async () => {
     const sendNotes = vi.fn(() => specVersionView());
     const slot = await openPage({ sendNotes });
@@ -4541,6 +5219,9 @@ describe("spec page", () => {
     expect(within(box(slot)).getByRole("button", { name: "Add comment" })).toHaveProperty("disabled", true);
     fireEvent.click(within(box(slot)).getByRole("button", { name: "More" }));
     expect(within(box(slot)).getByRole("status", { hidden: true }).textContent).toBe("3");
+    // At 200% text "now 2 · 1 to 8" ran 59 px out of the box: the stepper row and the box's actions wrap.
+    expect(classNamesOf(box(slot).querySelector("[data-number-row]"))).toContain("flex-wrap");
+    expect(classNamesOf(box(slot).querySelector("[data-comment-actions]"))).toContain("flex-wrap");
     fireEvent.click(within(box(slot)).getByRole("button", { name: "Add comment" }));
     expect(tray()).toEqual([{ version: 2, paths: ["agents.max_workers"], body: "", label: "Workers at the same time", section: "settings", suggest: { from: "2", to: "3" } }]);
 
@@ -4599,6 +5280,9 @@ describe("spec page", () => {
     expect(detail().getAttribute("data-ticket-detail")).toBe("csv-export");
     expect(detail().querySelector("[data-removed]")!.textContent).toBe("WHEN there are no orders THE SYSTEM SHALL return an empty file");
     expect(target(slot, "ticket[csv-export].acceptance[1]")!.textContent).toContain("WHEN there are no orders THE SYSTEM SHALL return a header row");
+    // A long path in a criterion, kept or removed, breaks inside the card as file and command values do.
+    expect(target(slot, "ticket[csv-export].acceptance[1]")!.className).toContain("[overflow-wrap:anywhere]");
+    expect(detail().querySelector("[data-removed]")!.className).toContain("[overflow-wrap:anywhere]");
     expect(target(slot, "ticket[csv-export].acceptance[0]")).toBeNull();
     expect(detail().textContent).toContain("… 1 unchanged");
     expect(detail().textContent).not.toContain("Brief for the worker");
@@ -4694,6 +5378,9 @@ describe("spec page", () => {
     expect(classes(go.querySelector("[data-change-line]"))).toEqual(expect.arrayContaining(["[overflow-wrap:anywhere]", "@3xl:truncate"]));
     // The sections bar stops under the project's tab bar, which sticks at the top of a narrow page too.
     expect(classes(page(slot).querySelector("[data-spec-sections]"))).toEqual(expect.arrayContaining(["sticky", "top-0", "@max-xl/loom:top-[var(--loom-tabs,0px)]"]));
+    // Opaque like the other sticky bars: the dark themes' recessed surface is a third opaque, so text scrolled under it showed through.
+    expect(classes(page(slot).querySelector("[data-spec-sections]"))).toContain("bg-background");
+    expect(classes(page(slot).querySelector("[data-spec-sections]"))).not.toContain("backdrop-blur");
   });
 
   it("reads another version from the switcher, and compares the newest with an older version", async () => {
@@ -4899,18 +5586,20 @@ describe("repos", () => {
     fireEvent.click(within(within(page).getByRole("group", { name: "Ticket layout" })).getByRole("button", { name: "Files" }));
     return { slot, pane: () => page.querySelector<HTMLElement>('[data-spec-section="tickets"]')! };
   };
-  const landing = (label = "Land · 2 repos"): NextStep => ({ stage: 5, tone: "normal", title: "Next: land the project.", text: "Every ticket is finished.", action: { control: "land", label, confirm: "Click again to land" } });
+  const landing = (label = "Land · 2 repos"): NextStep => ({ stage: 5, tone: "normal", title: "Next: land the project.", text: "Every ticket is finished.", action: { control: "land", label, confirm: "Yes, land: push and open the pull request" } });
 
-  it("shows each card's repo as a chip on the board and on a draft's dashed cards", async () => {
+  it("shows each row's repo as its own mark in Work's list, and on a draft's proposed rows", async () => {
     const { slot } = await mountPage("csv", { project: () => multi() });
-    await slot.findByRole("tab", { name: "Board" });
-    expect(chipsIn(slot.container.querySelector('[data-card="CSV-1"]')!)).toEqual(["web"]);
-    expect(chipsIn(slot.container.querySelector('[data-card="CSV-2"]')!)).toEqual(["api"]);
+    await slot.findByRole("tab", { name: "Work" });
+    await waitFor(() => expect(slot.container.querySelector('[data-row="CSV-1"]')).not.toBeNull());
+    fireEvent.click(slot.container.querySelector<HTMLElement>('[data-move-group="done"] h3 button') ?? document.body);
+    expect(chipsIn(slot.container.querySelector('[data-row="CSV-1"]')!)).toEqual(["web"]);
+    expect(chipsIn(slot.container.querySelector('[data-row="CSV-2"]')!)).toEqual(["api"]);
 
     const draft = multi({ overview: overview({ state: "draft", approvedVersion: null, ticketCount: 0, ticketCounts: {}, repos: repos() }) });
     const { slot: dashed } = await mountPage("csv", { project: () => draft });
-    await waitFor(() => expect(dashed.container.querySelector('[data-card="CSV-1"][data-draft]')).not.toBeNull());
-    expect(chipsIn(dashed.container.querySelector('[data-card="CSV-1"][data-draft]')!)).toEqual(["web"]);
+    await waitFor(() => expect(dashed.container.querySelector('[data-row="CSV-1"][data-draft]')).not.toBeNull());
+    expect(chipsIn(dashed.container.querySelector('[data-row="CSV-1"][data-draft]')!)).toEqual(["web"]);
   });
 
   it("shows the ticket's repo in the ticket page's header", async () => {
@@ -4958,10 +5647,11 @@ describe("repos", () => {
     const view = multi({ overview: overview({ repos: repos(), ticketCounts: { done: 2 } }), next: landing() });
     const { slot } = await mountPage("csv", { project: () => view, control });
     await slot.findByRole("heading", { name: "CSV export" });
-    expect([...slot.container.querySelectorAll("[data-controls] button")].map((button) => button.textContent)).toEqual(["Pause", "Pause now", "Land to each repo's base", "⋯"]);
-    const bar = () => slot.container.querySelector<HTMLElement>("[data-next-step]")!;
-    fireEvent.click(within(bar()).getByRole("button", { name: "Land · open the pull requests" }));
-    fireEvent.click(within(bar()).getByRole("button", { name: "Click again to land web and api" }));
+    expect(await menuLabels(slot)).toEqual(["Pause now", "Land to each repo's base", "Planner", "Archive project…"]);
+    fireEvent.keyDown(slot.getByRole("menu"), { key: "Escape" });
+    const line = () => slot.container.querySelector<HTMLElement>("[data-next-step]")!;
+    fireEvent.click(within(line()).getByRole("button", { name: "Land · open the pull requests" }));
+    fireEvent.click(within(line()).getByRole("button", { name: "Yes, land web and api" }));
     await waitFor(() => expect(control).toHaveBeenCalledWith({ slug: "csv", action: "land", confirm: true }));
   });
 
@@ -4971,35 +5661,37 @@ describe("repos", () => {
     const partly = [repoOverview({ prUrl: "https://github.com/acme/web/pull/4", landedAt: NOW - HOUR, toLand: false }), repoOverview({ name: "api", bbProjectId: "proj_api", base: "trunk" })];
     const { slot } = await mountPage("csv", { project: () => multi({ overview: overview({ repos: partly, ticketCounts: { done: 2 } }), next: null }), control });
     await slot.findByRole("heading", { name: "CSV export" });
-    expect([...slot.container.querySelectorAll("[data-controls] button")].map((button) => button.textContent)).toEqual(["Pause", "Pause now", "Land · open the pull requests", "Land to each repo's base", "⋯"]);
-    fireEvent.click(slot.getByRole("button", { name: "Land · open the pull requests" }));
-    expect(slot.getByRole("button", { name: "Click again to land web and api" })).toBeTruthy();
-    fireEvent.click(slot.getByRole("button", { name: "Land to each repo's base" }));
-    fireEvent.click(slot.getByRole("button", { name: "Click again to land web and api to their bases" }));
+    expect(await menuLabels(slot)).toEqual(["Pause now", "Land · open the pull requests", "Land to each repo's base", "Planner", "Archive project…"]);
+    fireEvent.click(slot.getByRole("menuitem", { name: /^Land · open the pull requests/ }));
+    expect(within(titleBar(slot)).getByRole("button", { name: "Yes, land web and api" })).toBeTruthy();
+    fireEvent.click(within(titleBar(slot)).getByRole("button", { name: "Back" }));
+    await pick(slot, /^Land to each repo's base/);
+    fireEvent.click(within(titleBar(slot)).getByRole("button", { name: "Yes, land web and api to their bases" }));
     await waitFor(() => expect(control).toHaveBeenCalledWith({ slug: "csv", action: "landDirect", confirm: true }));
 
     const { slot: bar } = await mountPage("csv", { project: () => multi({ overview: overview({ repos: partly, ticketCounts: { done: 2 } }), next: landing("Land · 1 repo") }) });
     await waitFor(() => expect(bar.container.querySelector("[data-next-step]")).not.toBeNull());
     const step = bar.container.querySelector<HTMLElement>("[data-next-step]")!;
     fireEvent.click(within(step).getByRole("button", { name: "Land · open the pull requests" }));
-    expect(within(step).getByRole("button", { name: "Click again to land web and api" })).toBeTruthy();
+    expect(within(step).getByRole("button", { name: "Yes, land web and api" })).toBeTruthy();
   });
 
   it("leaves out a repo with no done ticket, and keeps the bar's label when every repo is landed", async () => {
     const apiOnly = [repoOverview({ toLand: false }), repoOverview({ name: "api", bbProjectId: "proj_api", base: "trunk" })];
     const { slot } = await mountPage("csv", { project: () => multi({ overview: overview({ repos: apiOnly, ticketCounts: { done: 1 } }), next: null }) });
     await slot.findByRole("heading", { name: "CSV export" });
-    fireEvent.click(slot.getByRole("button", { name: "Land · open the pull requests" }));
-    expect(slot.getByRole("button", { name: "Click again to land api" })).toBeTruthy();
-    fireEvent.click(slot.getByRole("button", { name: "Land to each repo's base" }));
-    expect(slot.getByRole("button", { name: "Click again to land api to their bases" })).toBeTruthy();
+    await pick(slot, /^Land · open the pull requests/);
+    expect(within(titleBar(slot)).getByRole("button", { name: "Yes, land api" })).toBeTruthy();
+    fireEvent.click(within(titleBar(slot)).getByRole("button", { name: "Back" }));
+    await pick(slot, /^Land to each repo's base/);
+    expect(within(titleBar(slot)).getByRole("button", { name: "Yes, land api to their bases" })).toBeTruthy();
 
     const landed = repos().map((repo) => ({ ...repo, landedAt: NOW - HOUR, toLand: false }));
     const { slot: done } = await mountPage("csv", { project: () => multi({ overview: overview({ repos: landed, ticketCounts: { done: 2 } }), next: landing("Land · finish the project") }) });
     await waitFor(() => expect(done.container.querySelector("[data-next-step]")).not.toBeNull());
     const step = done.container.querySelector<HTMLElement>("[data-next-step]")!;
     fireEvent.click(within(step).getByRole("button", { name: "Land · finish the project" }));
-    expect(within(step).getByRole("button", { name: "Click again to land web and api" })).toBeTruthy();
+    expect(within(step).getByRole("button", { name: "Yes, land web and api" })).toBeTruthy();
   });
 
   it("names exactly the repos the engine lands: those with a done ticket, from the server's repo overviews", () => {
@@ -5024,10 +5716,10 @@ describe("repos", () => {
     const withDone = new Set(tickets.filter((ticket) => ticket.state === "done").map((ticket) => ticket.repo));
     const landedByEngine = spec.repo!.map((repo) => repo.name).filter((name) => withDone.has(name));
     expect(repoLand(overviews)!.names).toEqual(landedByEngine);
-    expect(repoLand(overviews)!.confirm).toBe("Click again to land web and api");
+    expect(repoLand(overviews)!.confirm).toBe("Yes, land web and api");
   });
 
-  it("opens each repo's pull request from under the header", async () => {
+  it("opens each repo's pull request from Work's side pane", async () => {
     const landed = [repoOverview({ prUrl: "https://github.com/acme/web/pull/4", toLand: false }), repoOverview({ name: "api", bbProjectId: "proj_api", prUrl: null, toLand: false })];
     const { slot } = await mountPage("csv", { project: () => multi({ overview: overview({ repos: landed }) }) });
     await slot.findByRole("heading", { name: "CSV export" });
@@ -5038,12 +5730,12 @@ describe("repos", () => {
 
   it("shows no repo chip and no repo section on a single-repo project", async () => {
     const { slot } = await mountPage("csv", { project: () => projectView({ next: landing("Land · open the pull request") }), specVersion: () => specVersionView() });
-    await slot.findByRole("tab", { name: "Board" });
+    await slot.findByRole("tab", { name: "Work" });
     expect(slot.container.querySelector("[data-repo-chip]")).toBeNull();
     expect(slot.container.querySelector("[data-repo-prs]")).toBeNull();
     const bar = slot.container.querySelector<HTMLElement>("[data-next-step]")!;
     fireEvent.click(within(bar).getByRole("button", { name: "Land · open the pull request" }));
-    expect(within(bar).getByRole("button", { name: "Click again to land" })).toBeTruthy();
+    expect(within(bar).getByRole("button", { name: "Yes, land: push and open the pull request" })).toBeTruthy();
 
     fireEvent.click(slot.getByRole("tab", { name: "Spec" }));
     await waitFor(() => expect(slot.container.querySelector("[data-spec-page]")).not.toBeNull());
@@ -5087,6 +5779,7 @@ describe("merge order tab", () => {
     refreshBehind: null,
     verdict: "ready",
     holds: [],
+    prHolds: [],
     trap: false,
     mergedInto: null,
     mergedIntoState: null,
@@ -5107,7 +5800,7 @@ describe("merge order tab", () => {
   const prView = (mergeOrder: MergeOrderView | null = order()) => projectView({ overview: overview({ strategy: "pr", branch: null }), mergeOrder });
   const mountOrder = async (view = prView()) => {
     const mounted = await mountPage("csv", { project: () => view });
-    await mounted.slot.findByRole("tab", { name: "Board" });
+    await mounted.slot.findByRole("tab", { name: "Work" });
     return mounted.slot;
   };
 
@@ -5123,7 +5816,7 @@ describe("merge order tab", () => {
         }),
       ),
     );
-    fireEvent.click(await slot.findByRole("tab", { name: /Merge order/ }));
+    await openView(slot, "Ship", /Merge order/);
     await waitFor(() => expect(slot.container.textContent).toContain("held as a draft: you release it"));
     expect(slot.container.textContent).toContain("being marked ready");
     expect(slot.container.textContent).toContain("draft until it can ship: 1 check is still running");
@@ -5131,12 +5824,14 @@ describe("merge order tab", () => {
 
   it("is no tab on an integration project", async () => {
     const { slot } = await mountPage("csv", { project: () => projectView() });
-    await slot.findByRole("tab", { name: "Board" });
+    await openView(slot, "Ship");
+    await slot.findByRole("tablist", { name: "Ship" });
     expect(slot.queryByRole("tab", { name: /Merge order/ })).toBeNull();
   });
 
   it("is a tab on a pull request project that has started, with no badge for pull requests that only have nothing before them", async () => {
     const slot = await mountOrder();
+    await openView(slot, "Ship");
     const tab = await slot.findByRole("tab", { name: /Merge order/ });
     // A pull request at step 1 waits on its own review and checks, not on the human, so it is no badge.
     expect(tab.querySelector("[data-tab-badge]")).toBeNull();
@@ -5147,7 +5842,7 @@ describe("merge order tab", () => {
 
   it("opens on Steps: what to merge first, what each waits on, and a warning for the approved stacked one", async () => {
     const slot = await mountOrder();
-    fireEvent.click(slot.getByRole("tab", { name: /Merge order/ }));
+    await openView(slot, "Ship", /Merge order/);
     expect((await slot.findByText(/2 open pull requests merge in 2 steps\. 1 has nothing before it; none is ready yet: 1 needs a review\./)).hasAttribute("data-merge-lead")).toBe(true);
     expect([...slot.container.querySelectorAll("[data-merge-step]")].map((node) => node.getAttribute("data-merge-step"))).toEqual(["step-1", "step-2", "merged"]);
     const row = (key: string) => slot.container.querySelector<HTMLElement>(`[data-merge-row="${key}"]`)!;
@@ -5162,7 +5857,7 @@ describe("merge order tab", () => {
 
   it("lays the pull requests out by repo and step, and says what to do with the one clicked", async () => {
     const slot = await mountOrder();
-    fireEvent.click(slot.getByRole("tab", { name: /Merge order/ }));
+    await openView(slot, "Ship", /Merge order/);
     fireEvent.click(await slot.findByRole("button", { name: "By repo" }));
     expect([...slot.container.querySelectorAll("[data-merge-card]")].map((node) => node.getAttribute("data-merge-card"))).toEqual(["CSV-3", "CSV-1", "CSV-2"]);
     fireEvent.click(slot.container.querySelector<HTMLElement>('[data-merge-card="CSV-2"]')!);
@@ -5183,15 +5878,15 @@ describe("merge order tab", () => {
       counts: { open: 3, first: 3, ready: 2, wrong: 0 },
     });
     const slot = await mountOrder(prView(fresh));
-    fireEvent.click(slot.getByRole("tab", { name: /Merge order/ }));
+    await openView(slot, "Ship", /Merge order/);
     const row = (key: string) => slot.container.querySelector<HTMLElement>(`[data-merge-row="${key}"]`)!;
     await waitFor(() => expect(row("CSV-1")).not.toBeNull());
-    expect(within(row("CSV-1")).getByText("conflicts with main").className).toContain("text-destructive-text");
-    expect(within(row("CSV-1")).getByText("12,374 commits behind main").className).toContain("text-warning-text");
+    expect(within(row("CSV-1")).getByText("conflicts with main").className).toContain("text-[var(--loom-bad)]");
+    expect(within(row("CSV-1")).getByText("12,374 commits behind main").className).toContain("text-[var(--loom-warn)]");
     expect(within(row("CSV-1")).getByText("Conflicts with main").getAttribute("data-merge-verdict")).toBe("first");
-    expect(within(row("CSV-2")).getByText("40 commits behind main").className).toContain("text-muted-foreground");
+    expect(within(row("CSV-2")).getByText("40 commits behind main").className).toContain("text-[var(--loom-muted)]");
     expect(row("CSV-3").textContent).not.toContain("behind");
-    expect(slot.container.querySelector("[data-merge-lead]")!.textContent).toContain("2 are ready to merge now.");
+    expect(slot.container.querySelector("[data-merge-lead]")!.textContent).toContain("2 pass review and checks: you can merge 2 now.");
     const alone = order({ entries: [entry({ key: "CSV-1", verdict: "first", holds: [{ code: "conflicts", base: "main" }], conflicts: true })], steps: 1, counts: { open: 1, first: 1, ready: 0, wrong: 0 } });
     expect(mergeLead(alone)).toBe("1 open pull request merges in 1 step. 1 has nothing before it; none is ready yet: 1 conflicts with its base.");
   });
@@ -5202,8 +5897,9 @@ describe("merge order tab", () => {
       counts: { open: 1, first: 1, ready: 0, wrong: 1 },
     });
     const slot = await mountOrder(prView(wrong));
-    const tab = slot.getByRole("tab", { name: /Merge order/ });
-    expect(tab.querySelector("[data-tab-badge]")!.className).toContain("bg-destructive");
+    await openView(slot, "Ship");
+    const tab = await slot.findByRole("tab", { name: /Merge order/ });
+    expect(tab.querySelector("[data-tab-badge]")!.getAttribute("data-tone")).toBe("destructive");
     fireEvent.click(tab);
     const alert = await waitFor(() => {
       const found = slot.container.querySelector<HTMLElement>('[data-merged-elsewhere="CSV-2"]');
@@ -5222,7 +5918,7 @@ describe("merge order tab", () => {
     let current = wrong(["CSV-2"], []);
     const ackBadge = vi.fn(() => (current = wrong(["CSV-2"], ["CSV-2"])));
     const { slot } = await mountPage("csv", { project: () => current, ackBadge });
-    fireEvent.click(await slot.findByRole("tab", { name: /Merge order/ }));
+    await openView(slot, "Ship", /Merge order/);
     const notice = await waitFor(() => {
       const found = slot.container.querySelector<HTMLElement>('[data-badge-notice="merge"]');
       expect(found).not.toBeNull();
@@ -5236,31 +5932,26 @@ describe("merge order tab", () => {
     expect(slot.inspection.navigateCalls.at(-1)).toEqual({ method: "openUrl", url: "https://github.com/acme/shop/pull/2" });
 
     fireEvent.click(within(notice).getByRole("button", { name: "Acknowledge" }));
-    fireEvent.click(within(notice).getByRole("button", { name: "Click again to hide the badge" }));
     await waitFor(() => expect(ackBadge).toHaveBeenCalledWith({ slug: "csv", tab: "merge", items: ["CSV-2"], confirm: true }));
     await waitFor(() => expect(slot.container.querySelector('[data-tab-badge="merge"]')).toBeNull());
     expect(slot.container.querySelector("[data-badge-notice]")).toBeNull();
     expect(toast.success).toHaveBeenCalledWith("Badge hidden until something new comes up");
   });
 
-  it("disarms Acknowledge when the badge's items change, so it never acknowledges one the human did not see", async () => {
+  it("acknowledges in one click exactly the items shown, so it never acknowledges one the human did not see", async () => {
     const elsewhere = (key: string) => entry({ key, state: "done", step: 0, verdict: "merged_elsewhere", mergedInto: "CSV-1", mergedIntoState: "pr_open" });
     const wrong = (keys: string[]) => projectView({ overview: overview({ strategy: "pr", branch: null }), mergeOrder: order({ entries: [entry({ key: "CSV-1", verdict: "first", holds: [{ code: "draft" }] }), ...keys.map(elsewhere)], counts: { open: 1, first: 1, ready: 0, wrong: keys.length } }) });
     let current = wrong(["CSV-2"]);
     const ackBadge = vi.fn(() => current);
     const { slot } = await mountPage("csv", { project: () => current, ackBadge });
-    fireEvent.click(await slot.findByRole("tab", { name: /Merge order/ }));
+    await openView(slot, "Ship", /Merge order/);
     const notice = () => slot.container.querySelector<HTMLElement>('[data-badge-notice="merge"]')!;
     await waitFor(() => expect(notice()).not.toBeNull());
-    fireEvent.click(within(notice()).getByRole("button", { name: "Acknowledge" }));
-    expect(within(notice()).queryByRole("button", { name: "Click again to hide the badge" })).not.toBeNull();
 
     current = wrong(["CSV-2", "CSV-3"]);
     await slot.experimental_invalidateRpc(changedTags("csv"));
     await waitFor(() => expect(notice().querySelector('[data-badge-item="CSV-3"]')).not.toBeNull());
-    expect(within(notice()).queryByRole("button", { name: "Click again to hide the badge" })).toBeNull();
     fireEvent.click(within(notice()).getByRole("button", { name: "Acknowledge" }));
-    fireEvent.click(within(notice()).getByRole("button", { name: "Click again to hide the badge" }));
     await waitFor(() => expect(ackBadge).toHaveBeenCalledWith({ slug: "csv", tab: "merge", items: ["CSV-2", "CSV-3"], confirm: true }));
     expect(ackBadge).toHaveBeenCalledTimes(1);
   });
@@ -5331,7 +6022,8 @@ describe("rollout tab", () => {
   const prView = (view: RolloutView | null = rollout()) => projectView({ overview: overview({ strategy: "pr", branch: null }), rollout: view });
   const mountRollout = async (rpc: Partial<Handlers> = {}, view = prView()) => {
     const mounted = await mountPage("csv", { project: () => view, ...rpc });
-    await mounted.slot.findByRole("tab", { name: "Board" });
+    // The rollout is a part of Ship.
+    await openView(mounted.slot, "Ship");
     return mounted.slot;
   };
 
@@ -5344,7 +6036,7 @@ describe("rollout tab", () => {
     const slot = await mountRollout();
     const badge = (await slot.findByRole("tab", { name: /Rollout/ })).querySelector("[data-tab-badge]")!;
     expect(badge.textContent).toBe("1");
-    expect(badge.className).toContain("bg-warning");
+    expect(badge.getAttribute("data-tone")).toBe("warning");
   });
 
   it("badges only warning-tone warnings, explains them on the tab, and hides the badge once acknowledged", async () => {
@@ -5360,7 +6052,7 @@ describe("rollout tab", () => {
     const slot = await mountRollout({ ackBadge, project: () => current }, current);
     const tab = await slot.findByRole("tab", { name: /Rollout/ });
     expect(tab.querySelector("[data-tab-badge]")!.textContent).toBe("1");
-    expect(tab.getAttribute("title")).toBe("1 rollout warning before you merge or deploy");
+    expect(tab.getAttribute("aria-description")).toBe("1 rollout warning before you merge or deploy");
     fireEvent.click(tab);
     const notice = await waitFor(() => {
       const found = slot.container.querySelector<HTMLElement>('[data-badge-notice="rollout"]');
@@ -5370,7 +6062,6 @@ describe("rollout tab", () => {
     expect(notice.textContent).toContain("CSV-2 deploys when it merges, and CSV-1 is not live yet.");
     expect(notice.textContent).not.toContain("traffic-low");
     fireEvent.click(within(notice).getByRole("button", { name: "Acknowledge" }));
-    fireEvent.click(within(notice).getByRole("button", { name: "Click again to hide the badge" }));
     await waitFor(() => expect(ackBadge).toHaveBeenCalledWith({ slug: "csv", tab: "rollout", items: [id], confirm: true }));
     await waitFor(() => expect(tab.querySelector("[data-tab-badge]")).toBeNull());
   });
@@ -5385,7 +6076,7 @@ describe("rollout tab", () => {
     return row;
   };
   const showTab = async (slot: Slot) => {
-    fireEvent.click(slot.getByRole("tab", { name: /Rollout/ }));
+    await openView(slot, "Ship", /Rollout/);
     return waitFor(() => {
       const found = slot.container.querySelector<HTMLElement>("[data-rollout]");
       expect(found).not.toBeNull();
@@ -5397,10 +6088,12 @@ describe("rollout tab", () => {
     const slot = await mountRollout();
     const tab = await showTab(slot);
     const next = tab.querySelector<HTMLElement>('[data-rollout-next="deploy"]')!;
-    expect(within(next).getByRole("heading", { name: "Deploy CSV-1" })).toBeTruthy();
+    // The Holiday freeze is on, so the next deploy is held rather than advised, and Mark live stays on CSV-1's own tile.
+    expect(within(next).getByRole("heading", { name: "CSV-1 cannot deploy yet: Holiday freeze is on until Jan 12" })).toBeTruthy();
+    expect(within(next).queryByRole("button", { name: "Mark CSV-1 live" })).toBeNull();
     expect([...next.querySelectorAll("[data-rollout-plan]")].map((row) => row.getAttribute("data-rollout-plan"))).toEqual(["merge", "deploy", "verify"]);
     expect(next.querySelector('[data-rollout-plan="merge"]')!.textContent).toContain("✓");
-    expect(next.querySelector('[data-rollout-plan="deploy"]')!.textContent).toContain("The pipeline deploys main");
+    expect(next.querySelector('[data-rollout-plan="deploy"]')!.textContent).toContain("The pipeline deploys mainNot yet: Holiday freeze is on until Jan 12.");
     expect(next.querySelector('[data-rollout-plan="verify"] code')!.textContent).toBe("curl -f https://shop.example.com/health");
     expect(next.querySelector("[data-rollout-then]")!.textContent).toBe("When it is live: 1 more step in Expand after this: CSV-2. CSV-2 waits on it.");
     const hold = tab.querySelector<HTMLElement>('[data-rollout-hold="CSV-2"]')!;
@@ -5415,7 +6108,7 @@ describe("rollout tab", () => {
     expect(stage.textContent).toContain("2 steps left, then it soaks 1 day");
     // CSV-1 goes first; CSV-2 needs it, so it sits under a "then" line; the milestone CSV-2 needs sits in its stage.
     expect([...stage.querySelectorAll("[data-rollout-row], [data-rollout-milestone]")].map((tile) => tile.getAttribute("data-rollout-row") ?? tile.getAttribute("data-rollout-milestone"))).toEqual(["traffic-low", "CSV-1", "CSV-2"]);
-    expect(stage.querySelector('[data-rollout-row="CSV-1"] [data-rollout-status]')!.getAttribute("data-rollout-status")).toBe("deploy");
+    expect(stage.querySelector('[data-rollout-row="CSV-1"] [data-rollout-status]')!.textContent!.replace(/\s+/g, " ").trim()).toBe("Not yet Holiday freeze is on until Jan 12");
     expect(stage.querySelector('[data-rollout-row="CSV-2"] [data-rollout-status]')!.textContent).toContain("Don't merge yet");
     expect(stage.querySelector('[data-rollout-milestone="traffic-low"]')!.getAttribute("data-rollout-holds")).toBe("yes");
     expect(tab.querySelector("[data-rollout-repos]")!.textContent).toContain("after mergeThe pipeline deploys main");
@@ -5440,17 +6133,15 @@ describe("rollout tab", () => {
     expect(slot.inspection.navigateCalls.slice(-2)).toEqual([pushed("csv/CSV-2"), { method: "openUrl", url: "https://github.com/acme/shop/pull/2" }]);
   });
 
-  it("marks a step live, and undoes a milestone's mark, with two clicks and a toast", async () => {
+  it("marks a step live, and undoes a milestone's mark, each in one click with a toast", async () => {
     const slot = await mountRollout({ markLive: () => prView() });
     await showTab(slot);
     const row = await open(slot, "CSV-1");
     fireEvent.click(within(row).getByRole("button", { name: "Mark live" }));
-    fireEvent.click(within(row).getByRole("button", { name: "Click again to mark CSV-1 live" }));
     await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Marked CSV-1 live"));
     const milestone = await open(slot, "traffic-low");
     expect(milestone.querySelector("[data-rollout-detail]")!.textContent).toContain("No command: mark it live once it holds.");
     fireEvent.click(within(milestone).getByRole("button", { name: "Undo live" }));
-    fireEvent.click(within(milestone).getByRole("button", { name: "Click again to undo traffic-low's live mark" }));
     await waitFor(() => expect(toast.success).toHaveBeenCalledWith("traffic-low is no longer marked live"));
     expect(calls(slot, "markLive").map((call) => call.input)).toEqual([
       { slug: "csv", target: "CSV-1", confirm: true },
@@ -5533,6 +6224,7 @@ describe("rollout tab", () => {
       refreshBehind: null,
       verdict: "first",
       holds: [{ code: "needs_review" }],
+      prHolds: [{ code: "needs_review" }],
       trap: false,
       mergedInto: null,
       mergedIntoState: null,
@@ -5542,7 +6234,8 @@ describe("rollout tab", () => {
     const slot = await mountRollout({}, view);
     const tab = await showTab(slot);
     const next = tab.querySelector<HTMLElement>('[data-rollout-next="merge"]')!;
-    expect(within(next).getByRole("heading", { name: "Merge CSV-2, then deploy it" })).toBeTruthy();
+    // The merge order holds CSV-2 on its review, so the card says so, as Ship's Do next does, rather than "Merge CSV-2".
+    expect(within(next).getByRole("heading", { name: "CSV-2 cannot merge yet: needs review" })).toBeTruthy();
     expect(next.querySelector('[data-rollout-plan="review"]')!.textContent).toContain("#2 needs review · 1 pending · ✓ 20 checks");
     expect(next.querySelector("[data-rollout-then]")!.textContent).toContain("Expand is all live and soaks 1 day");
     expect(tab.querySelector('[data-rollout-row="CSV-2"]')!.textContent).toContain("needs review · 1 pending · ✓ 20 checks");
@@ -5612,15 +6305,17 @@ describe("rollout tab", () => {
     expect(again.querySelector('[data-rollout-row="CSV-1"]')!.textContent).not.toContain("needed first");
   });
 
-  it("fades the links off the chain when every link shows", async () => {
+  // Faded to 35% the shown links measured 1.67 to 2.14:1; they recede by width instead, at full strength.
+  it("thins the links off the chain when every link shows, and never fades them", async () => {
     localStorage.setItem("loom.rollout.links", "true");
     reloadRemembered();
     const tab = await showTab(await mountRollout());
     const link = (id: string) => tab.querySelector(`[data-rollout-link="${id}"]`)!;
-    expect(link("CSV-1>CSV-2").getAttribute("class")).toContain("opacity-35");
+    expect(link("CSV-1>CSV-2").getAttribute("stroke-width")).toBe("1");
     fireEvent.pointerEnter(tab.querySelector('[data-rollout-row="CSV-1"]')!, { pointerType: "mouse" });
-    expect(link("CSV-1>CSV-2").getAttribute("class")).not.toContain("opacity-35");
-    expect(link("traffic-low>CSV-2").getAttribute("class")).toContain("opacity-35");
+    expect(link("CSV-1>CSV-2").getAttribute("stroke-width")).toBe("1.75");
+    expect(link("traffic-low>CSV-2").getAttribute("stroke-width")).toBe("1");
+    for (const each of tab.querySelectorAll("[data-rollout-link]")) expect(each.getAttribute("class") ?? "").not.toMatch(/opacity-/);
   });
 
   it("copies a command, and says so when the page has no clipboard", async () => {
@@ -5645,7 +6340,7 @@ describe("rollout tab", () => {
     let view = prView();
     const mounted = await mountPage("csv", { project: () => view });
     const slot = mounted.slot;
-    await slot.findByRole("tab", { name: "Board" });
+    await slot.findByRole("tab", { name: "Work" });
     await showTab(slot);
     await open(slot, "CSV-1");
     const only = rollout();
@@ -5692,6 +6387,7 @@ describe("rollout tab", () => {
             refreshBehind: null,
             verdict: "ready",
             holds: [],
+            prHolds: [],
             trap: false,
             mergedInto: null,
             mergedIntoState: null,
@@ -5710,7 +6406,8 @@ describe("rollout tab", () => {
     expect(draft.querySelector('[data-rollout-plan="review"]')!.textContent).toBe("1Review#1 draft · approved");
     const ready = await card(plan({}, "merge", { verdict: "ready", checks: { passed: 3, failed: 0, pending: 0 } }));
     expect(ready.querySelector('[data-rollout-plan="review"]')!.textContent).toContain("✓");
-    expect(ready.querySelector('[data-rollout-plan="review"]')!.textContent).toContain("The Merge order calls it ready to merge.");
+    // The forge's review and checks pass; whether the person can merge it now is the Merge row's to say.
+    expect(ready.querySelector('[data-rollout-plan="review"]')!.textContent).toContain("Its review and checks pass.");
     const unnumbered = await card(plan({ prNumber: null }, "merge", { prNumber: null, review: "REVIEW_REQUIRED", verdict: "first" }));
     expect(unnumbered.querySelector('[data-rollout-plan="review"]')!.textContent).toContain("Its pull request: needs review");
   });
@@ -5897,11 +6594,6 @@ describe("about strip", () => {
     expect(strip.querySelector("[data-about-pending]")!.textContent).toContain("v3, which waits for your approval, changes the summary to: Export orders for finance.");
   });
 
-  it("puts each project's summary under its name on the home list", async () => {
-    const { slot } = await mountPage("_home", { home: () => homeView({ projects: [homeProject({ about: about() }), homeProject({ slug: "docs", name: "Docs", key: "DOC", about: about({ summary: null }) })] }) });
-    await waitFor(() => expect(slot.container.querySelectorAll("[data-project-summary]")).toHaveLength(2));
-    expect([...slot.container.querySelectorAll("[data-project-summary]")].map((node) => node.textContent)).toEqual(["Export orders as a CSV file, so finance can reconcile them.", "Implement items 1 to 3 of the issue."]);
-  });
 });
 
 describe("on a narrow page", () => {
@@ -5935,43 +6627,44 @@ describe("on a narrow page", () => {
 
   it("names its page as the container the narrow layouts ask, and never scrolls it sideways", async () => {
     const { slot } = await mountPage("csv", { project: () => projectView() });
-    await slot.findByRole("tab", { name: "Board" });
+    await slot.findByRole("tab", { name: "Work" });
     const scroller = slot.container.querySelector("[data-loom-scroll]");
     expect(classes(scroller)).toEqual(expect.arrayContaining(["@container/loom", "overflow-x-hidden", "overflow-y-auto"]));
   });
 
-  it("keeps the tabs in one row that scrolls sideways by itself, stuck to the top, and scrolls the chosen tab into view", async () => {
+  it("keeps the views in one row that scrolls sideways by itself, stuck to the top, and scrolls the chosen view into view", async () => {
     const lefts = new WeakMap<Element, number>();
     Object.defineProperty(HTMLElement.prototype, "scrollLeft", { configurable: true, get: function (this: Element) { return lefts.get(this) ?? 0; }, set: function (this: Element, next: number) { lefts.set(this, next); } });
     const rect = (left: number, right: number) => ({ left, right, top: 0, bottom: 28, width: right - left, height: 28, x: left, y: 0, toJSON: () => ({}) }) as DOMRect;
-    // The bar is 200 pixels wide and each tab 80, 10 apart: Insights, the third, ends at 260.
+    // The bar is 200 pixels wide and each view 80, 10 apart: History, the fifth, ends at 440.
     const boxes = vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
-      if (this.matches('[role="tablist"][aria-label="Project"]')) return rect(0, 200);
+      if (this.matches('[role="tablist"][aria-label="Project views"]')) return rect(0, 200);
       const bar = this.parentElement;
-      if (this.getAttribute("role") === "tab" && bar?.matches('[aria-label="Project"]')) {
+      if (this.getAttribute("role") === "tab" && bar?.matches('[aria-label="Project views"]')) {
         const index = [...bar.children].indexOf(this);
         return rect(index * 90, index * 90 + 80);
       }
       return rect(0, 0);
     });
     try {
-      const rpc = { project: () => projectView(), insights: () => projectInsights(story().rows(), { now: at(60), strategy: "integration", maxWorkers: 2, maxTokens: null }) };
+      const rpc = { project: () => projectView() };
       const first = await mountPage("csv", rpc);
-      const bar = await first.slot.findByRole("tablist", { name: "Project" });
-      expect(classes(bar)).toEqual(expect.arrayContaining(["flex", "flex-nowrap", "min-w-0", "overflow-x-auto", "[scrollbar-width:none]", "@max-xl/loom:sticky", "@max-xl/loom:top-0"]));
+      const bar = await first.slot.findByRole("tablist", { name: "Project views" });
+      expect(classes(bar)).toEqual(expect.arrayContaining(["flex", "flex-nowrap", "min-w-0", "overflow-x-auto", "[scrollbar-width:none]"]));
+      expect(classes(bar.closest("[data-view-row]"))).toEqual(expect.arrayContaining(["@max-xl/loom:sticky", "@max-xl/loom:top-0"]));
       for (const tab of within(bar).getAllByRole("tab")) expect(classes(tab)).toEqual(expect.arrayContaining(["shrink-0", "whitespace-nowrap"]));
       expect(bar.scrollLeft).toBe(0);
-      fireEvent.click(within(bar).getByRole("tab", { name: "Insights" }));
-      await waitFor(() => expect(bar.scrollLeft).toBe(76));
-      fireEvent.click(within(bar).getByRole("tab", { name: "Board" }));
-      expect(bar.scrollLeft).toBe(76);
-      fireEvent.click(within(bar).getByRole("tab", { name: "Insights" }));
+      fireEvent.click(within(bar).getByRole("tab", { name: "History" }));
+      await waitFor(() => expect(bar.scrollLeft).toBe(256));
+      fireEvent.click(within(bar).getByRole("tab", { name: "Work" }));
+      expect(bar.scrollLeft).toBe(256);
+      fireEvent.click(within(bar).getByRole("tab", { name: "History" }));
       first.slot.lifecycle.unmount();
-      // Opened again on the tab it was left on, the bar starts scrolled to it.
+      // Opened again on the view it was left on, the bar starts scrolled to it.
       const again = await mountPage("csv", rpc);
-      const reopened = await again.slot.findByRole("tablist", { name: "Project" });
-      await waitFor(() => expect(within(reopened).getByRole("tab", { name: "Insights" }).getAttribute("aria-selected")).toBe("true"));
-      expect(reopened.scrollLeft).toBe(76);
+      const reopened = await again.slot.findByRole("tablist", { name: "Project views" });
+      await waitFor(() => expect(within(reopened).getByRole("tab", { name: "History" }).getAttribute("aria-selected")).toBe("true"));
+      expect(reopened.scrollLeft).toBe(256);
     } finally {
       boxes.mockRestore();
       delete (HTMLElement.prototype as { scrollLeft?: number }).scrollLeft;
@@ -5981,7 +6674,7 @@ describe("on a narrow page", () => {
   it("folds the health cards and the timeline into one row each, a click from the full view, and keeps the summary's first lines", async () => {
     const long = "Export orders as a CSV file from the admin page, so finance can reconcile them each month without asking an engineer.";
     const { slot } = await mountPage("csv", { project: () => projectView({ overview: overview({ about: { summary: long, lead: long, doneWhen: [], links: ["https://github.com/acme/shop/issues/12"], nonGoals: 0 } }) }) });
-    await slot.findByRole("tab", { name: "Board" });
+    await slot.findByRole("tab", { name: "Work" });
     const summary = slot.container.querySelector<HTMLElement>("[data-health-summary]")!;
     const strip = () => slot.container.querySelector("[data-health-strip]");
     expect(classes(summary)).toEqual(expect.arrayContaining(["hidden", "@max-xl/loom:flex"]));
@@ -5993,42 +6686,31 @@ describe("on a narrow page", () => {
     expect(summary.getAttribute("aria-expanded")).toBe("true");
     expect(classes(strip())).not.toContain("@max-xl/loom:hidden");
 
-    const folded = await waitFor(() => {
-      const found = slot.container.querySelector<HTMLElement>("[data-timeline-folded]");
+    // The ruler sits in the view row on every view; the full Timeline is History's Rewind, open at every width, so a
+    // narrow page shows its moment controls and rows with no fold to open first.
+    expect(slot.container.querySelector("[data-view-row] [data-time-ruler]")).not.toBeNull();
+    await openView(slot, "History");
+    const strip2 = await waitFor(() => {
+      const found = slot.container.querySelector<HTMLElement>("[data-timeline-strip]");
       expect(found).not.toBeNull();
       return found!;
     });
-    expect(classes(folded)).toEqual(expect.arrayContaining(["hidden", "@max-xl/loom:flex"]));
-    expect(folded.textContent).toContain("Live");
-    expect(classes(slot.container.querySelector("[data-timeline-strip]"))).toContain("@max-xl/loom:hidden");
-    // Both fold above the tabs, so the tabs come up on a phone's first screen.
-    expect(folded.compareDocumentPosition(slot.getByRole("tablist", { name: "Project" })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(slot.container.querySelector("[data-timeline-open]")).toBeNull();
-    // One click opens the whole Timeline on a narrow page, its moment controls and rows included, though the wide
-    // page's remembered choice is closed and stays so.
-    fireEvent.click(folded);
-    const strip2 = slot.container.querySelector<HTMLElement>("[data-timeline-strip]")!;
     expect(slot.container.querySelector("[data-timeline-folded]")).toBeNull();
     expect(classes(strip2)).not.toContain("@max-xl/loom:hidden");
     const full = strip2.querySelector<HTMLElement>("[data-timeline-open]")!;
     expect(full).not.toBeNull();
-    expect(classes(full)).toContain("@xl/loom:hidden");
+    expect(classes(full)).not.toContain("@xl/loom:hidden");
     expect(within(full).getByRole("button", { name: "Previous moment" })).toBeTruthy();
     expect(within(full).getByRole("combobox", { name: "Playback speed" })).toBeTruthy();
     expect(within(full).getByRole("group", { name: "Rows" })).toBeTruthy();
-    expect(full.querySelector("[data-timeline-lanes-plot]")).not.toBeNull();
-    expect(classes(within(strip2).getByRole("button", { name: "Timeline" }))).toContain("@max-xl/loom:hidden");
-    expect(localStorage.getItem("loom.timeline.open")).toBeNull();
-    // Another click folds it back to the row.
-    const fold = within(strip2).getByRole("button", { name: "Fold the Timeline" });
-    expect(classes(fold)).toEqual(expect.arrayContaining(["hidden", "@max-xl/loom:inline-flex"]));
-    fireEvent.click(fold);
-    expect(slot.container.querySelector("[data-timeline-open]")).toBeNull();
-    expect(classes(slot.container.querySelector("[data-timeline-strip]"))).toContain("@max-xl/loom:hidden");
-    expect(slot.container.querySelector("[data-timeline-folded]")).not.toBeNull();
-    expect(localStorage.getItem("loom.timeline.open")).toBeNull();
+    expect(within(strip2).queryByRole("button", { name: "Fold the Timeline" })).toBeNull();
 
-    const about = slot.container.querySelector<HTMLElement>("[data-about]")!;
+    await openView(slot, "Work");
+    const about = await waitFor(() => {
+      const found = slot.container.querySelector<HTMLElement>("[data-about]");
+      expect(found).not.toBeNull();
+      return found!;
+    });
     expect(classes(about.querySelector("[data-about-summary]"))).toContain("@max-xl/loom:line-clamp-3");
     expect(about.querySelector("[data-about-link]")!.textContent).toContain("shop#12");
     const more = about.querySelector<HTMLElement>("[data-about-more]")!;
@@ -6038,22 +6720,24 @@ describe("on a narrow page", () => {
     expect(classes(about.querySelector("[data-about-summary]"))).not.toContain("@max-xl/loom:line-clamp-3");
   });
 
-  it("puts the next-step bar's button under its text when they do not fit, and lists a skipped review's settings behind a disclosure", async () => {
+  it("keeps the next step to one line with its reason a click away, and lists a skipped review's settings behind a disclosure", async () => {
     const repos = [repoOverview({ name: "web" }), repoOverview({ name: "api", bbProjectId: "proj_api" })];
     const paths = ["repo[0].forge.kind", "repo[1].forge.kind", "repo[0].refresh_behind"];
     const summary = overview({ pendingVersion: 2, repos });
     const next = nextStepOf({ overview: summary, board: [], version: 1, maxWorkers: 2, triage: true, startFailed: [], reviewRefused: [], specReview: { kind: "skipped", version: 2, against: 1, paths } })!;
     const { slot } = await mountPage("csv", { project: () => projectView({ overview: summary, next }) });
-    const bar = await waitFor(() => {
+    const line = await waitFor(() => {
       const found = slot.container.querySelector<HTMLElement>("[data-next-step]");
       expect(found).not.toBeNull();
       return found!;
     });
-    const text = bar.querySelector("[data-next-text]")!;
-    expect(classes(text)).toEqual(expect.arrayContaining(["min-w-[min(100%,18rem)]", "flex-1", "[overflow-wrap:anywhere]"]));
+    expect(within(line).getByRole("button", { name: "Approve v2" })).toBeTruthy();
+    fireEvent.click(line.querySelector<HTMLElement>("[data-next-title]")!);
+    const text = (await slot.findByRole("dialog", { name: "Next step" })).querySelector("[data-next-text]")!;
+    expect(classes(text)).toContain("[overflow-wrap:anywhere]");
     expect(text.textContent).toContain("Loom skipped its spec review, because against v1 it changes only 3 operational settings: the forge on 2 repos and web's refresh_behind.");
     expect(text.textContent).not.toContain("repo[0]");
-    const list = bar.querySelector<HTMLDetailsElement>("[data-setting-paths]")!;
+    const list = text.querySelector<HTMLDetailsElement>("[data-setting-paths]")!;
     expect(list.open).toBe(false);
     expect(list.querySelector("summary")!.textContent).toBe("The 3 settings it changes");
     expect([...list.querySelectorAll("[data-setting-path]")].map((item) => [item.getAttribute("data-setting-path"), item.textContent])).toEqual([
@@ -6061,40 +6745,13 @@ describe("on a narrow page", () => {
       ["repo[1].forge.kind", "api › forge › kind"],
       ["repo[0].refresh_behind", "web › refresh behind"],
     ]);
-    expect(within(bar).getByRole("button", { name: "Approve v2" })).toBeTruthy();
   });
 
-  it("draws the home projects as cards of name, summary, state, what needs you and progress, and keeps the table's other columns for a wide page", async () => {
-    const needsYou = [{ kind: "blocked" as const, slug: "csv", project: "CSV export", key: "CSV-2", text: "The checks fail.", at: NOW }];
-    // The spec allows an 80-character name with no space in it.
-    const unbroken = `${"Export".repeat(13)}Cs`;
-    const { slot } = await mountPage("_home", {
-      home: () => homeView({ projects: [homeProject(), homeProject({ slug: "docs", name: "Docs site", key: "DOC", progress: { done: 0, total: 0, inFlight: 0, blocked: 0 } }), homeProject({ slug: "long", name: unbroken, key: "LONG" })], needsYou }),
-    });
-    await slot.findByText("Docs site");
-    const name = slot.container.querySelector('[data-project-row="long"] [data-project-name]')!;
-    expect(name.textContent).toContain(unbroken);
-    expect(unbroken).toHaveLength(80);
-    expect(classes(name)).toEqual(expect.arrayContaining(["min-w-0", "max-w-full", "[overflow-wrap:anywhere]"]));
-    const table = slot.container.querySelector("[data-projects-table]")!;
-    expect(classes(table)).toEqual(expect.arrayContaining(["min-w-[860px]", "@max-xl/loom:block", "@max-xl/loom:min-w-0"]));
-    expect(classes(table.querySelector("thead"))).toContain("@max-xl/loom:hidden");
-    const row = slot.container.querySelector('[data-project-row="csv"]')!;
-    expect(classes(row)).toEqual(expect.arrayContaining(["@max-xl/loom:grid", "@max-xl/loom:grid-cols-[minmax(0,1fr)_auto]", "@max-xl/loom:shadow-[inset_3px_0_0_var(--destructive)]"]));
-    expect(classes(row.querySelector("[data-project-needs]"))).toContain("@max-xl/loom:col-span-2");
-    expect(classes(row.querySelector("[data-project-progress]"))).toEqual(expect.arrayContaining(["@max-xl/loom:col-span-2", "@max-xl/loom:min-w-0"]));
-    expect(classes(row.querySelector("[data-project-summary]"))).toEqual(expect.arrayContaining(["truncate", "@max-xl/loom:line-clamp-2", "@max-xl/loom:whitespace-normal"]));
-    for (const hidden of ["[data-project-agents]", "[data-project-tokens]"]) expect(classes(row.querySelector(hidden))).toContain("@max-xl/loom:hidden");
-    // A card leaves out what has nothing to say: no need, no tickets yet.
-    const docs = slot.container.querySelector('[data-project-row="docs"]')!;
-    expect(classes(docs.querySelector("[data-project-needs]"))).toContain("@max-xl/loom:hidden");
-    expect(classes(docs.querySelector("[data-project-progress]"))).toContain("@max-xl/loom:hidden");
-  });
 
   it("stacks each agent's row, its facts named by their columns", async () => {
     const agents = [agent(), agent({ threadId: "thr_w0", state: "ended", startedAt: NOW - 9 * HOUR, endedAt: NOW - 7 * HOUR, endReason: "abandoned", timeoutAt: null })];
     const { slot } = await mountPage("csv", { project: () => projectView({ agents }) });
-    fireEvent.click(await slot.findByRole("tab", { name: "Agents" }));
+    await openView(slot, "History", "Agents");
     for (const id of ["thr_w1", "thr_w0"]) {
       const row = slot.container.querySelector(`[data-agent-row="${id}"]`)!;
       expect(classes(row)).toEqual(expect.arrayContaining(["@max-xl/loom:flex", "@max-xl/loom:flex-wrap"]));
@@ -6109,7 +6766,7 @@ describe("on a narrow page", () => {
 
   it("breaks a long name in an Insights row rather than run off the page", async () => {
     const { slot } = await mountPage("csv", { project: () => projectView(), insights: () => projectInsights(story().rows(), { now: at(60), strategy: "integration", maxWorkers: 2, maxTokens: null }) });
-    fireEvent.click(await slot.findByRole("tab", { name: "Insights" }));
+    await openView(slot, "History", "Insights");
     const rows = await waitFor(() => {
       const found = [...slot.container.querySelectorAll("[data-insights-story] li[data-chapter], [data-insights-story] li[data-current]")];
       expect(found.length).toBeGreaterThan(0);
@@ -6124,6 +6781,32 @@ describe("on a narrow page", () => {
     expect(classes(group)).toContain("flex-wrap");
     expect(classes(group.querySelector("[data-merge-choices]"))).toContain("flex-wrap");
     expect(within(group).getAllByRole("button").map((button) => button.textContent)).toEqual(["Ask me", "Integration branch", "PR per ticket"]);
+  });
+
+  it("leaves bb's title room on a phone: icons in the title bar, with Sync pull requests in the ⋯ menu alone", async () => {
+    const view = { ...projectView({ overview: overview({ state: "paused", strategy: "pr", ticketCounts: { pr_open: 1, queued: 1 } }) }), next: null };
+    const bar = (width: number) =>
+      measuring(width, async () => {
+        const { slot } = await mountPage("csv", { project: () => view });
+        await slot.findByRole("heading", { name: "CSV export" });
+        await waitFor(() => expect(narrowPage.get()).toBe(width < 576));
+        await waitFor(() => expect(titleBar(slot)).not.toBeNull());
+        const buttons = [...titleBar(slot).querySelectorAll(":scope > button")].map((button) => ({ name: button.getAttribute("aria-label") ?? button.textContent, text: button.textContent }));
+        const jump = slot.getByRole("button", { name: /^Jump to/ });
+        const menu = (await openMenu(slot)).queryAllByRole("menuitem").map((item) => item.textContent);
+        slot.lifecycle.unmount();
+        return { buttons, jump: { text: jump.textContent, kbd: jump.querySelector("kbd") !== null }, menu };
+      });
+    const phone = await bar(360);
+    expect(phone.buttons).toEqual([
+      { name: "Resume", text: "" },
+      { name: "More project controls", text: "" },
+    ]);
+    expect(phone.jump).toEqual({ text: "", kbd: false });
+    expect(phone.menu[0]).toContain("Sync pull requests");
+    const wide = await bar(1300);
+    expect(wide.buttons.map((button) => button.name)).toEqual(["Sync pull requests", "Resume", "More project controls"]);
+    expect(wide.jump).toEqual({ text: "Jump to/", kbd: true });
   });
 
   it("names a ticket's project by its key in bb's title bar, and by its name on a wide page", async () => {
@@ -6144,5 +6827,50 @@ describe("on a narrow page", () => {
     expect(await titled(360)).toEqual({ breadcrumbs: [{ label: "CSV", to: "/plugins/loom/loom/csv" }, { label: "CSV-3" }] });
     expect(narrowPage.get()).toBe(false);
     expect(await titled(1300)).toEqual({ breadcrumbs: [{ label: "CSV export", to: "/plugins/loom/loom/csv" }, { label: "CSV-3" }] });
+  });
+
+  // bb draws the project crumb as a link that never shrinks, so a long name painted through Loom's controls at 720 px.
+  it("names a ticket's project by its key where its full name would run into Loom's controls in bb's title bar", async () => {
+    const app = await loadPluginApp(() => import("../app"));
+    const Header = app.navPanels[0]!.headerContent!;
+    const titled = async (nameWidth: number) => {
+      const box = (left: number, width: number) => ({ left, width, right: left + width, top: 10, bottom: 38, height: 28, x: left, y: 10, toJSON: () => ({}) }) as DOMRect;
+      const rects = vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+        if (this.matches('a[href$="/loom/csv"]')) return box(100, nameWidth);
+        if (this.hasAttribute("data-loom-header")) return box(356, 276);
+        return box(0, 0);
+      });
+      try {
+        // bb's title bar: its crumb link to the project, then Loom's controls.
+        const Bar = (props: PluginNavPanelProps) => (
+          <header>
+            <a href="/plugins/loom/loom/csv">CSV export</a>
+            <Header {...props} />
+          </header>
+        );
+        const slot = renderSlot<PluginNavPanelProps, typeof rpcContract>(
+          { component: Bar, experimental_usePageTitle: app.navPanels[0]!.experimental_usePageTitle },
+          { subPath: "csv/CSV-3" },
+          { pluginId: "loom", rpc: handlers({ home: () => homeView({ projects: [homeProject()] }), ticket: () => ticketDetail() }) },
+        );
+        mounts.push(slot);
+        // Until home arrives the crumb is the slug; then the project's key or its name.
+        const title = await waitFor(() => {
+          const shown = slot.inspection.experimental_pageTitle as { breadcrumbs: Array<{ label: string; to?: string }> };
+          expect(shown.breadcrumbs.map((crumb) => crumb.to ?? crumb.label)).toEqual(["/plugins/loom/loom/csv", "CSV-3"]);
+          expect(shown.breadcrumbs[0]!.label).not.toBe("csv");
+          return shown;
+        });
+        slot.lifecycle.unmount();
+        return { first: title.breadcrumbs[0]!.label, short: shortCrumb.get() };
+      } finally {
+        rects.mockRestore();
+      }
+    };
+    // 100 + 400 px of name, a chevron and the key run past Loom's controls at 356 px.
+    expect((await titled(400)).first).toBe("CSV");
+    expect(shortCrumb.get()).toBe(false);
+    // 100 + 100 px of name and the key end before them, so the name stays.
+    expect((await titled(100)).first).toBe("CSV export");
   });
 });

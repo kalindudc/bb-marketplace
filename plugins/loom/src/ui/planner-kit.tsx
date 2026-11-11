@@ -9,7 +9,7 @@ const KINDS = { you: "human", planner: "planner", loom: "loom", reviewer: "revie
 /** The ticket page's avatar for the one who did a step, with its name for screen readers. */
 export function ActorMark({ actor }: { actor: Actor }) {
   return (
-    <span data-actor={actor} title={NAMES[actor]} className="inline-flex shrink-0">
+    <span data-actor={actor} title={NAMES[actor]} className="relative inline-flex shrink-0">
       <Avatar kind={KINDS[actor]} />
       <span className="sr-only">{NAMES[actor]}</span>
     </span>

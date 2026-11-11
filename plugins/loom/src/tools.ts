@@ -4,6 +4,7 @@
 import type { BbPluginApi, PluginAgentToolResult } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { ASK_ACTIONS, recordAsk } from "./asks";
+import { blockAskOf, blockAskSchema } from "./block-ask";
 import { requestMerge } from "./auto-merge";
 import { requestRelease } from "./drafts";
 import { submit } from "./checks";
@@ -384,15 +385,16 @@ export function registerTools(bb: BbPluginApi, projects: Projects, engine: Engin
   bb.agents.registerTool({
     name: "loom_block",
     description:
-      "Say that you cannot continue without something from the human or the planner: what is wrong and exactly what you need. The plugin saves your work on the ticket's branch and blocks the ticket. End your turn after calling it. Refused in a text-only round: Loom puts the text you propose with loom_submit's pr on the pull request itself.",
+      "Say that you cannot continue without something from the human or the planner: what is wrong and exactly what you need. The plugin saves your work on the ticket's branch and blocks the ticket. End your turn after calling it. When the human can answer by choosing, also pass question, the options you see with what each leads to, and the one you recommend: Loom shows them as a form with your pick chosen, and the next worker gets the answer. Refused in a text-only round: Loom puts the text you propose with loom_submit's pr on the pull request itself.",
     presentation: { label: { pending: "Blocking the ticket", completed: "Blocked the ticket" } },
-    parameters: z.object({ reason: z.string().min(1).max(4000), needs: z.string().min(1).max(4000) }),
-    execute: ({ reason, needs }, tool) =>
+    parameters: z.object({ reason: z.string().min(1).max(4000), needs: z.string().min(1).max(4000), ...blockAskSchema }),
+    execute: ({ reason, needs, question, options, recommended }, tool) =>
       run(() => {
         const { ticket } = worker(tool.threadId);
         if (ticket.state === "working" && textRoundsOn(specOf(ctx.store, ctx.store.project(ticket.project_id)!)) && textRoundOpen(ctx.store, ticket)) throw new LoomError("loom_invalid_state", textBlockRefusal(ticket.key));
+        const ask = blockAskOf({ question, options, recommended });
         // Ending the worker stops its own thread, which is busy running this call: do not wait for it.
-        void blockTicket(ctx, ticket, { reason, needs, actor: tool.threadId }).catch((error) => log(`block ${ticket.key}`, error));
+        void blockTicket(ctx, ticket, { reason, needs, actor: tool.threadId, ask }).catch((error) => log(`block ${ticket.key}`, error));
         return `${ticket.key} is blocked and your work is saved on its branch, so end your turn now. The planner or the human will answer on the ticket.`;
       }),
   });

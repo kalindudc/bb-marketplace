@@ -1,18 +1,23 @@
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import { useBbNavigate } from "@get-bb/plugin-sdk/app";
-import type { MergeEntry, MergeOrderView } from "../contract";
+import type { MergeEntry, MergeOrderView, RolloutView } from "../contract";
 import { holdText, type VerdictHold } from "../verdict";
 import { BUTTON, HEADING, RepoChip, listText, plural } from "./common";
+import { readinessMap, type Readiness } from "./ship-readiness";
 
 // The merge order of a pull request project: Steps lists the pull requests by the step they merge in, with what each
 // waits on and unblocks; By repo lays them out as one lane per repo and one column per step, with a line from each pull
 // request to what waits on it. Both read what Loom stored from its last poll, so the tab never asks the forge.
 
 export type Tone = "good" | "warn" | "bad" | "muted";
-export const TONES: Record<Tone, string> = { good: "text-success", warn: "text-warning-text", bad: "text-destructive-text", muted: "text-muted-foreground" };
-export const CHIP_TONES: Record<Tone, string> = { good: "border-success/45 text-success", warn: "border-warning/45 text-warning-text", bad: "border-destructive/45 text-destructive-text", muted: "border-border-seam text-muted-foreground" };
-export const CHIP = "inline-block whitespace-nowrap rounded-full border px-1.5 text-[10.5px] leading-4";
-export const PR_LINK = "cursor-pointer whitespace-nowrap font-mono text-[11.5px] text-primary hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
+export const TONES: Record<Tone, string> = { good: "text-[var(--loom-ok)]", warn: "text-[var(--loom-warn)]", bad: "text-[var(--loom-bad)]", muted: "text-[var(--loom-muted)]" };
+export const CHIP_TONES: Record<Tone, string> = { good: "border-success/45 text-[var(--loom-ok)]", warn: "border-warning/45 text-[var(--loom-warn)]", bad: "border-destructive/45 text-[var(--loom-bad)]", muted: "border-border-seam text-[var(--loom-muted)]" };
+export const CHIP = "inline-block whitespace-nowrap rounded-full border px-1.5 text-[11px] leading-4";
+// Its own string, not CHIP plus overrides: Tailwind's stylesheet order, not the class order, decides between two whitespace utilities.
+const CHIP_WRAP = "inline-block max-w-full whitespace-normal rounded-lg border px-1.5 text-[11px] leading-4 [overflow-wrap:anywhere]";
+// Primary text on a card's fill is 4.31:1 in gruvbox dark; leaning it towards the ink lifts it in light and dark themes.
+const CARD_PR = "text-[color-mix(in_oklab,var(--primary)_70%,var(--foreground))]";
+export const PR_LINK = "inline-flex items-center justify-center @max-xl/loom:min-h-11 max-[576px]:min-h-11 @max-xl/loom:min-w-11 max-[576px]:min-w-11 pointer-coarse:min-h-11 pointer-coarse:min-w-11 cursor-pointer whitespace-nowrap font-mono text-[11.5px] text-[var(--loom-link)] hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
 
 const finished = (entry: MergeEntry) => entry.state === "done" || entry.verdict === "merged_elsewhere";
 const keyOrder = (a: MergeEntry, b: MergeEntry) => a.key.localeCompare(b.key, undefined, { numeric: true });
@@ -70,9 +75,13 @@ function finalVerdictOf(entry: MergeEntry): { tone: Tone; text: string; short: s
   }
 }
 
-function verdictOf(entry: MergeEntry): { tone: Tone; text: string; short: string } {
+/** The forge's verdict, held back to Ship's readiness: a pull request the forge calls ready that the rollout holds says so. */
+function verdictOf(entry: MergeEntry, one?: Readiness): { tone: Tone; text: string; short: string } {
   const final = finalVerdictOf(entry);
   if (final !== null) return final;
+  if (one !== undefined && one.rolloutHolds.length > 0 && (entry.verdict === "ready" || entry.verdict === "checks_pass")) {
+    return { tone: "warn", text: `⚠ ${entry.verdict === "ready" ? "Ready" : "Checks pass"}, but hold off: ${listText(one.rolloutHolds)}`, short: "⚠ hold off" };
+  }
   const after = listText(entry.waitsOn.map((wait) => wait.key));
   switch (entry.verdict) {
     case "ready":
@@ -123,8 +132,28 @@ function relationOf(entry: MergeEntry, byKey: ReadonlyMap<string, MergeEntry>): 
   return parts.join(" ");
 }
 
+/**
+ * ", and 4 pass review and checks: you can merge 1 now, Loom merges 2 itself after a final review, and 1 waits for the
+ * rollout." Passing the forge's checks is not leave to merge, so the count says who merges each and what still holds it.
+ */
+function readyText(ready: readonly MergeEntry[], readiness: ReadonlyMap<string, Readiness> | undefined): string {
+  if (readiness === undefined) return `, and ${ready.length} ${ready.length === 1 ? "is" : "are"} ready to merge now.`;
+  const of = (test: (one: Readiness) => boolean) => ready.filter((entry) => { const one = readiness.get(entry.key); return one !== undefined && test(one); }).length;
+  const you = of((one) => one.canMerge);
+  const loom = of((one) => one.loomMerges);
+  const rollout = of((one) => !one.loomMerges && one.rolloutHolds.length > 0);
+  const other = ready.length - you - loom - rollout;
+  const parts = [
+    you > 0 ? `you can merge ${you} now` : "none can merge now",
+    ...(loom > 0 ? [`Loom merges ${loom} itself after a final review`] : []),
+    ...(rollout > 0 ? [`${rollout} ${rollout === 1 ? "waits" : "wait"} for the rollout`] : []),
+    ...(other > 0 ? [`${other} ${other === 1 ? "has" : "have"} another hold`] : []),
+  ];
+  return `, and ${ready.length} ${ready.length === 1 ? "passes" : "pass"} review and checks: ${listText(parts)}.`;
+}
+
 /** The tab's opening sentence: how much is open, how many steps, and what holds the first step. */
-export function mergeLead(order: MergeOrderView): string {
+export function mergeLead(order: MergeOrderView, readiness?: ReadonlyMap<string, Readiness>): string {
   const open = order.entries.filter((entry) => entry.prOpen);
   const noPr = order.entries.filter((entry) => entry.prUrl === null && !finished(entry) && entry.state !== "blocked");
   if (open.length === 0) return noPr.length === 0 ? "No pull request is open." : `No pull request is open yet; ${plural(noPr.length, "ticket")} ${noPr.length === 1 ? "has" : "have"} none.`;
@@ -152,7 +181,7 @@ export function mergeLead(order: MergeOrderView): string {
   const ready = first.filter((entry) => entry.verdict === "ready").length;
   const where = repos.size > 1 ? ` in ${repos.size} repos` : "";
   const firstText = `${first.length} ${first.length === 1 ? "has" : "have"} nothing before ${first.length === 1 ? "it" : "them"}`;
-  const rest = ready > 0 ? `, and ${ready} ${ready === 1 ? "is" : "are"} ready to merge now.` : reasons.length > 0 ? `; none is ready yet: ${listText(reasons)}.` : ".";
+  const rest = ready > 0 ? readyText(first.filter((entry) => entry.verdict === "ready"), readiness) : reasons.length > 0 ? `; none is ready yet: ${listText(reasons)}.` : ".";
   const tail = noPr.length > 0 ? ` ${plural(noPr.length, "ticket")} ${noPr.length === 1 ? "has" : "have"} no pull request yet.` : "";
   return `${plural(open.length, "open pull request")}${where} merge${open.length === 1 ? "s" : ""} in ${plural(order.steps, "step")}. ${firstText}${rest}${tail}`;
 }
@@ -172,7 +201,7 @@ function Callouts({ order, onOpen }: { order: MergeOrderView; onOpen(url: string
         const into = entry.mergedInto === null ? null : (byKey.get(entry.mergedInto) ?? null);
         // Once the ticket whose branch it went into merged too, the change may be on the base through it.
         const since = into !== null && into.state === "done";
-        const tone = since ? "bg-warning/10 text-warning-text shadow-[inset_3px_0_0_var(--warning)]" : "bg-destructive/10 text-destructive-text shadow-[inset_3px_0_0_var(--destructive-text)]";
+        const tone = since ? "bg-warning/10 text-[var(--loom-warn)] shadow-[inset_3px_0_0_var(--warning)]" : "bg-destructive/10 text-[var(--loom-bad)] shadow-[inset_3px_0_0_var(--loom-bad)]";
         const how = entry.state === "done" ? `Loom counted ${entry.key} as done before it checked where a pull request merged.` : `Loom blocked ${entry.key}.`;
         return (
           <div key={entry.key} role={since ? "note" : "alert"} data-merged-elsewhere={entry.key} className={`mt-2.5 flex flex-wrap items-start gap-2.5 rounded-lg px-3 py-2.5 text-xs ${tone}`}>
@@ -196,7 +225,7 @@ function Callouts({ order, onOpen }: { order: MergeOrderView; onOpen(url: string
         );
       })}
       {traps.length > 0 && (
-        <div role="alert" data-merge-trap className="mt-2.5 flex items-start gap-2.5 rounded-lg bg-warning/10 px-3 py-2.5 text-xs text-warning-text shadow-[inset_3px_0_0_var(--warning)]">
+        <div role="alert" data-merge-trap className="mt-2.5 flex items-start gap-2.5 rounded-lg bg-warning/10 px-3 py-2.5 text-xs text-[var(--loom-warn)] shadow-[inset_3px_0_0_var(--warning)]">
           <span aria-hidden>⚠</span>
           <div className="min-w-0 flex-1 [overflow-wrap:anywhere]">
             <p className="font-semibold">
@@ -224,11 +253,12 @@ function Callouts({ order, onOpen }: { order: MergeOrderView; onOpen(url: string
   );
 }
 
-function Chips({ entry }: { entry: MergeEntry }) {
+/** `wrap` is for a narrow card: a long state such as "31,536 commits behind main" wraps inside it instead of running out. */
+function Chips({ entry, wrap = false }: { entry: MergeEntry; wrap?: boolean }) {
   return (
     <>
       {signalsOf(entry).map((signal) => (
-        <span key={signal.text} title={signal.title} className={`${CHIP} ${CHIP_TONES[signal.tone]}`}>
+        <span key={signal.text} data-merge-chip title={signal.title} className={`${wrap ? CHIP_WRAP : CHIP} ${CHIP_TONES[signal.tone]}`}>
           {signal.text}
         </span>
       ))}
@@ -239,20 +269,22 @@ function Chips({ entry }: { entry: MergeEntry }) {
 interface Actions {
   onTicket(key: string): void;
   onOpen(url: string): void;
+  /** Ship's readiness of each listed pull request, so a verdict never offers what the rollout holds. */
+  readiness: ReadonlyMap<string, Readiness>;
 }
 
-function StepRow({ entry, byKey, onTicket, onOpen }: { entry: MergeEntry; byKey: ReadonlyMap<string, MergeEntry> } & Actions) {
-  const verdict = verdictOf(entry);
+function StepRow({ entry, byKey, onTicket, onOpen, readiness }: { entry: MergeEntry; byKey: ReadonlyMap<string, MergeEntry> } & Actions) {
+  const verdict = verdictOf(entry, readiness.get(entry.key));
   const relation = relationOf(entry, byKey);
   return (
     <div data-merge-row={entry.key} className="flex flex-col gap-1 border-b border-border-seam px-1.5 py-2 text-xs hover:bg-state-hover @3xl:grid @3xl:grid-cols-[15rem_minmax(0,1fr)_auto_12.5rem] @3xl:items-baseline @3xl:gap-x-3 @3xl:gap-y-0.5">
       <div className="flex min-w-0 flex-wrap items-baseline gap-1.5">
         {entry.stackedOn !== null && (
-          <span aria-hidden className="w-3 font-mono text-subtle-foreground">
+          <span aria-hidden className="w-3 font-mono text-[var(--loom-muted)]">
             ↳
           </span>
         )}
-        <button type="button" onClick={() => onTicket(entry.key)} className="cursor-pointer font-semibold hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">
+        <button type="button" onClick={() => onTicket(entry.key)} className="inline-flex items-center @max-xl/loom:min-h-11 max-[576px]:min-h-11 @max-xl/loom:min-w-11 max-[576px]:min-w-11 pointer-coarse:min-h-11 pointer-coarse:min-w-11 cursor-pointer font-semibold hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">
           {entry.key}
         </button>
         {entry.repo !== null && <RepoChip name={entry.repo} />}
@@ -271,7 +303,7 @@ function StepRow({ entry, byKey, onTicket, onOpen }: { entry: MergeEntry; byKey:
       <span data-merge-verdict={entry.verdict} className={`font-medium ${TONES[verdict.tone]}`}>
         {verdict.text}
       </span>
-      {relation !== "" && <p className="text-[11.5px] text-muted-foreground [overflow-wrap:anywhere] @3xl:col-start-2 @3xl:col-end-5">{relation}</p>}
+      {relation !== "" && <p className="text-[11.5px] text-[var(--loom-muted)] [overflow-wrap:anywhere] @3xl:col-start-2 @3xl:col-end-5">{relation}</p>}
     </div>
   );
 }
@@ -304,8 +336,8 @@ function StepsView({ order, ...actions }: { order: MergeOrderView } & Actions) {
         <section key={group.id} data-merge-step={group.id} aria-label={group.title} className="mt-4">
           <div className="flex flex-wrap items-baseline gap-x-2 border-b border-border-seam pb-1">
             <h3 className={HEADING}>{group.title}</h3>
-            {group.hint !== "" && <span className="text-[11px] text-subtle-foreground">{group.hint}</span>}
-            <span className="ml-auto text-[11px] text-subtle-foreground">{countLabel(group.entries)}</span>
+            {group.hint !== "" && <span className="text-[11px] text-[var(--loom-muted)]">{group.hint}</span>}
+            <span className="ml-auto text-[11px] text-[var(--loom-muted)]">{countLabel(group.entries)}</span>
           </div>
           {group.entries.map((entry) => (
             <StepRow key={entry.key} entry={entry} byKey={byKey} {...actions} />
@@ -338,7 +370,7 @@ function chainOf(byKey: ReadonlyMap<string, MergeEntry>, key: string): Set<strin
   return out;
 }
 
-function GraphView({ order, onTicket, onOpen }: { order: MergeOrderView } & Actions) {
+function GraphView({ order, onTicket, onOpen, readiness }: { order: MergeOrderView } & Actions) {
   const byKey = new Map(order.entries.map((entry) => [entry.key, entry]));
   const [hover, setHover] = useState<string | null>(null);
   const [chosen, setChosen] = useState<string | null>(null);
@@ -412,7 +444,7 @@ function GraphView({ order, onTicket, onOpen }: { order: MergeOrderView } & Acti
                     .filter((entry) => entry.repo === lane && columnOf(entry) === column)
                     .sort(keyOrder)
                     .map((entry) => {
-                      const verdict = verdictOf(entry);
+                      const verdict = verdictOf(entry, readiness.get(entry.key));
                       const dim = chain !== null && !chain.has(entry.key);
                       return (
                         <button
@@ -431,12 +463,12 @@ function GraphView({ order, onTicket, onOpen }: { order: MergeOrderView } & Acti
                         >
                           <span className="flex items-baseline gap-1.5">
                             <b className="font-semibold whitespace-nowrap">{entry.key}</b>
-                            {entry.prNumber !== null && <span className="font-mono text-[11px] text-primary">#{entry.prNumber}</span>}
+                            {entry.prNumber !== null && <span className={`font-mono text-[11px] ${CARD_PR}`}>#{entry.prNumber}</span>}
                           </span>
                           <span className={`mt-px block text-[11px] font-semibold [overflow-wrap:anywhere] ${TONES[verdict.tone]}`}>{verdict.short}</span>
-                          <span className="mt-0.5 line-clamp-2 text-[11.5px] text-muted-foreground">{entry.title}</span>
-                          <span className="mt-1 flex flex-wrap gap-0.5">
-                            <Chips entry={entry} />
+                          <span className="mt-0.5 line-clamp-2 text-[11.5px] text-[var(--loom-muted)]">{entry.title}</span>
+                          <span className="mt-1 flex min-w-0 flex-wrap gap-0.5">
+                            <Chips entry={entry} wrap />
                           </span>
                         </button>
                       );
@@ -453,7 +485,7 @@ function GraphView({ order, onTicket, onOpen }: { order: MergeOrderView } & Acti
           </svg>
         </div>
       </div>
-      <div className="mt-2.5 flex flex-wrap gap-x-4 gap-y-1 text-[11.5px] text-muted-foreground">
+      <div className="mt-2.5 flex flex-wrap gap-x-4 gap-y-1 text-[11.5px] text-[var(--loom-muted)]">
         <span>
           <svg aria-hidden width="28" height="8" className="mr-1 inline align-middle">
             <path d="M0 4H28" className="stroke-subtle-foreground" strokeWidth="1.5" />
@@ -474,7 +506,7 @@ function GraphView({ order, onTicket, onOpen }: { order: MergeOrderView } & Acti
         </span>
       </div>
       {picked === undefined ? (
-        <p className="mt-2.5 text-xs text-muted-foreground">Hover a pull request to see what it waits on and what waits on it; click one for what to do with it.</p>
+        <p className="mt-2.5 text-xs text-[var(--loom-muted)]">Hover a pull request to see what it waits on and what waits on it; click one for what to do with it.</p>
       ) : (
         <div data-merge-detail={picked.key} className="mt-3 rounded-lg border border-border-seam px-3 py-2.5 text-xs">
           <p className="flex flex-wrap items-baseline gap-1.5">
@@ -482,8 +514,8 @@ function GraphView({ order, onTicket, onOpen }: { order: MergeOrderView } & Acti
             {picked.repo !== null && <RepoChip name={picked.repo} />}
             <span className="min-w-0 [overflow-wrap:anywhere]">{picked.title}</span>
           </p>
-          <p className={`mt-1.5 font-medium ${TONES[verdictOf(picked).tone]}`}>{verdictOf(picked).text}</p>
-          {relationOf(picked, byKey) !== "" && <p className="mt-0.5 text-muted-foreground [overflow-wrap:anywhere]">{relationOf(picked, byKey)}</p>}
+          <p className={`mt-1.5 font-medium ${TONES[verdictOf(picked, readiness.get(picked.key)).tone]}`}>{verdictOf(picked, readiness.get(picked.key)).text}</p>
+          {relationOf(picked, byKey) !== "" && <p className="mt-0.5 text-[var(--loom-muted)] [overflow-wrap:anywhere]">{relationOf(picked, byKey)}</p>}
           <div className="mt-2 flex flex-wrap gap-1.5">
             {picked.prUrl !== null && (
               <button type="button" className={BUTTON} onClick={() => onOpen(picked.prUrl!)}>
@@ -500,18 +532,19 @@ function GraphView({ order, onTicket, onOpen }: { order: MergeOrderView } & Acti
   );
 }
 
-export function MergeOrderTab({ order, onTicket }: { order: MergeOrderView | null; onTicket(key: string): void }) {
+export function MergeOrderTab({ order, rollout = null, onTicket }: { order: MergeOrderView | null; rollout?: RolloutView | null; onTicket(key: string): void }) {
   const navigate = useBbNavigate();
+  const readiness = readinessMap(order, rollout);
   const [layout, setLayout] = useState<"steps" | "graph">("steps");
-  if (order === null) return <p className="p-4 text-sm text-muted-foreground">The merge order shows the project as it is now. Go back to now to read it.</p>;
+  if (order === null) return <p className="p-4 text-sm text-[var(--loom-muted)]">The merge order shows the project as it is now. Go back to now to read it.</p>;
   const onOpen = (url: string) => navigate.openUrl(url);
   return (
     <div data-merge-order className="@container px-4 pt-3.5 pb-5">
       <div className="flex flex-wrap items-start gap-x-4 gap-y-2">
         <div className="min-w-64 flex-1">
           <h2 className="text-sm font-semibold">Merge order</h2>
-          <p data-merge-lead className="mt-0.5 max-w-[70rem] text-xs text-muted-foreground">
-            {mergeLead(order)}
+          <p data-merge-lead className="mt-0.5 max-w-[70rem] text-xs text-[var(--loom-muted)]">
+            {mergeLead(order, readiness)}
           </p>
         </div>
         <span role="group" aria-label="Merge order layout" className="inline-flex overflow-hidden rounded-md border border-border-seam text-xs">
@@ -521,14 +554,14 @@ export function MergeOrderTab({ order, onTicket }: { order: MergeOrderView | nul
               ["graph", "By repo"],
             ] as const
           ).map(([value, label]) => (
-            <button key={value} type="button" aria-pressed={layout === value} onClick={() => setLayout(value)} className={`cursor-pointer px-2.5 py-1 ${layout === value ? "bg-surface-selected text-foreground" : "text-muted-foreground hover:bg-state-hover"}`}>
+            <button key={value} type="button" aria-pressed={layout === value} onClick={() => setLayout(value)} className={`inline-flex cursor-pointer items-center justify-center px-2.5 py-1 @max-xl/loom:min-h-11 max-[576px]:min-h-11 @max-xl/loom:min-w-11 max-[576px]:min-w-11 pointer-coarse:min-h-11 pointer-coarse:min-w-11 ${layout === value ? "bg-surface-selected text-foreground" : "text-[var(--loom-muted)] hover:bg-state-hover"}`}>
               {label}
             </button>
           ))}
         </span>
       </div>
       <Callouts order={order} onOpen={onOpen} />
-      {layout === "steps" ? <StepsView order={order} onTicket={onTicket} onOpen={onOpen} /> : <GraphView order={order} onTicket={onTicket} onOpen={onOpen} />}
+      {layout === "steps" ? <StepsView order={order} onTicket={onTicket} onOpen={onOpen} readiness={readiness} /> : <GraphView order={order} onTicket={onTicket} onOpen={onOpen} readiness={readiness} />}
     </div>
   );
 }

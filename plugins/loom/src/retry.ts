@@ -7,7 +7,7 @@
 // contract, pauses the project, and its reason says what the human must fix. Other tickets keep going in every case but
 // the last.
 import type { TicketRow } from "./db/store";
-import { ForgeContractError, PROJECT_FIX, classify, type Failure } from "./failures";
+import { ForgeContractError, PROJECT_FIX, classify, isWorkerStopped, type Failure } from "./failures";
 import { plural } from "./format";
 import { forgeCommandHome, repoSettings } from "./repos";
 import { loomPost } from "./posts";
@@ -15,7 +15,7 @@ import { decide, nextRetry, retryOf, type RetryDecision } from "./retry-wait";
 import { LOOM_ACTOR } from "./states";
 import { readSub, writeSub, type RetryStep } from "./sub-state";
 import { endLiveRows } from "./workers";
-import { specOf, type EngineCtx } from "./ctx";
+import { passStopped, specOf, type EngineCtx } from "./ctx";
 
 const clause = (message: string) => message.trim().replace(/[.:]+$/u, "");
 
@@ -24,7 +24,14 @@ const clause = (message: string) => message.trim().replace(/[.:]+$/u, "");
  * as a merge's must be taken out first; if it fails, the ticket waits instead. Other tickets are never touched.
  */
 export async function stepFailed(ctx: EngineCtx, ticket: TicketRow, step: RetryStep, error: unknown, a: { what: string; head?: string; pr?: string; floorMs?: number; stop?: () => Promise<void> }): Promise<RetryDecision["do"]> {
-  const failure = located(ctx, ticket.project_id, isFailure(error) ? error : classify(error), ticket.repo);
+  if (passStopped(ctx)) return "wait";
+  const classified = isFailure(error) ? error : classify(error);
+  if (isWorkerStopped(classified.reason)) {
+    ctx.workerStopped = true;
+    ctx.bb.log("info", `${a.what} stopped: ${classified.reason}. Loom tries again on the next tick.`);
+    return "wait";
+  }
+  const failure = located(ctx, ticket.project_id, classified, ticket.repo);
   const now = ctx.now();
   const previous = readSub(ticket, "retry_json");
   const decision = decide(previous, { step, what: a.what, now, failure, ...(a.head === undefined ? {} : { head: a.head }), ...(a.pr === undefined ? {} : { pr: a.pr }), ...(a.floorMs === undefined ? {} : { floorMs: a.floorMs }) });

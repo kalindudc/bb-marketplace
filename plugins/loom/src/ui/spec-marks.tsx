@@ -19,7 +19,7 @@ export const MarksContext = createContext<Marks | null>(null);
 
 // Faint until its part is hovered, and always solid where nothing can hover (Tailwind's hover variants need hover).
 export const NOTE_BUTTON =
-  "cursor-pointer rounded border border-border-seam bg-card px-1.5 text-[11px] leading-[18px] text-muted-foreground opacity-60 group-hover:opacity-100 hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring [@media(hover:none)]:opacity-100";
+  "cursor-pointer rounded border border-border-seam bg-card px-1.5 text-[11px] leading-[18px] text-[var(--loom-muted)] opacity-60 group-hover:opacity-100 hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring [@media(hover:none)]:opacity-100";
 
 export const notesUnder = (notePaths: readonly string[], path: string) => notePaths.filter((notePath) => notePath === path || isUnder(notePath, path)).length;
 
@@ -36,8 +36,8 @@ export function Noteable({ paths, label, children }: { paths: string[]; label: s
       className={`group relative rounded-md border-l-2 py-1 pr-16 pl-2 text-sm ${noted ? "border-warning-text" : changed ? "border-primary" : "border-transparent"} hover:bg-state-hover`}
     >
       {children}
-      {changed && <span className="ml-2 text-[11px] text-primary">changed in v{marks!.version}</span>}
-      {noted && <span className="ml-2 text-[11px] text-warning-text">has your note</span>}
+      {changed && <span className="ml-2 text-[11px] text-[var(--loom-link)]">changed in v{marks!.version}</span>}
+      {noted && <span className="ml-2 text-[11px] text-[var(--loom-warn)]">has your note</span>}
       {marks?.onNote !== undefined && (
         <button
           type="button"

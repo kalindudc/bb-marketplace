@@ -1,8 +1,17 @@
+import { ChildProcess, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { PassThrough } from "node:stream";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { batchQuery, ghQueue, MERGE_REFUSED_EXIT, MERGE_REJECTED_EXIT, prFeedback, prMerge, prRequestReview, prReviewState } from "../src/host/ops";
+
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:child_process")>();
+  return { ...actual, spawn: vi.fn(actual.spawn) };
+});
+
+afterEach(() => vi.restoreAllMocks());
 
 const URL = "https://github.com/acme/shop/pull/7";
 const SHA = "0123456789abcdef0123456789abcdef01234567";
@@ -147,32 +156,33 @@ describe("a comment's identity across edits, for auto_merge's rejected", () => {
   });
 });
 
-// A loaded run can take seconds to start a shell, so these wait for the command itself rather than vitest's 5 seconds.
-describe("a forge command stopped after it started", { timeout: 20_000 }, () => {
-  const stopAfterStart = async <T>(run: (signal: AbortSignal) => Promise<T>): Promise<T> => {
+describe("a forge command stopped after it started", () => {
+  // host-ops.test.ts exercises real process-group cancellation; these check how its result is classified.
+  const stopAfterStart = async <T>(output: string, run: (signal: AbortSignal) => Promise<T>): Promise<T> => {
+    const stdio: ChildProcessWithoutNullStreams["stdio"] = [new PassThrough(), new PassThrough(), new PassThrough(), null, null];
+    const child = Object.assign(new ChildProcess(), { pid: 42, stdin: stdio[0], stdout: stdio[1], stderr: stdio[2], stdio });
+    vi.mocked(spawn).mockReturnValueOnce(child);
+    const kill = vi.spyOn(process, "kill").mockImplementation(() => {
+      child.emit("close", null);
+      return true;
+    });
     const controller = new AbortController();
     const pending = run(controller.signal);
-    let ended = false;
-    void pending.then(
-      () => (ended = true),
-      () => (ended = true),
-    );
-    // The command touches its marker, then sleeps: abort only once the marker is there, however long the shell takes to start.
-    const marker = join(bin, "started");
-    while (!existsSync(marker) && !ended) await new Promise((done) => setTimeout(done, 10));
-    if (!existsSync(marker)) throw new Error("The command ended before it touched its start marker, so it was never stopped after it started.");
+    stdio[1].emit("data", Buffer.from(output));
     controller.abort();
-    return pending;
+    const result = await pending;
+    expect(kill).toHaveBeenCalledExactlyOnceWith(-child.pid, "SIGKILL");
+    return result;
   };
 
   it("answers unknown for request_reviews, since it may have asked them", async () => {
-    const asked = await stopAfterStart((signal) => prRequestReview({ repo, url: URL, reviewers: ["alice"], forge: { kind: "command", request_reviews: `echo "review assignment accepted"; touch "${bin}/started"; sleep 30` } }, signal));
-    expect(asked).toEqual({ outcome: "unknown", message: expect.stringContaining("was stopped before it finished") });
+    const asked = await stopAfterStart("review assignment accepted", (signal) => prRequestReview({ repo, url: URL, reviewers: ["alice"], forge: { kind: "command", request_reviews: "request-reviews" } }, signal));
+    expect(asked).toEqual({ outcome: "unknown", message: "The forge's request_reviews command was stopped before it finished: review assignment accepted" });
   });
 
   it("answers a stopped merge command as a temporary failure, which keeps a comment or command attempt open", async () => {
-    const merged = await stopAfterStart((signal) => prMerge({ repo, url: URL, sha: SHA, head: "loom/csv-1", base: "main", attempt: 1, forge: { kind: "command", merge: `echo "/merge posted"; touch "${bin}/started"; sleep 30` } }, signal));
-    expect(merged).toMatchObject({ outcome: "unavailable", transient: "server", message: expect.stringContaining("was stopped before it finished") });
+    const merged = await stopAfterStart("/merge posted", (signal) => prMerge({ repo, url: URL, sha: SHA, head: "loom/csv-1", base: "main", attempt: 1, forge: { kind: "command", merge: "post-merge" } }, signal));
+    expect(merged).toEqual({ outcome: "unavailable", transient: "server", message: "The forge's merge command was stopped before it finished: /merge posted" });
   });
 
   it("keeps a command that could not start a definite failure", async () => {

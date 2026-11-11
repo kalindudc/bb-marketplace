@@ -180,6 +180,8 @@ export interface ThreadRow {
   resume_json: string | null;
   /** The seq of the newest machine_maintenance event whose idle Loom did not count. */
   maintenance_seq: number;
+  /** "provider / model" as spawned; null for a planner and for threads from before Loom recorded it, absent in rows built by hand. */
+  model?: string | null;
 }
 
 export type NewThread = Pick<ThreadRow, "project_id" | "role" | "state"> & Partial<Pick<ThreadRow, "thread_id" | "spawn_token" | "ticket_id" | "environment_id">>;
@@ -449,6 +451,13 @@ export class Store implements ForgeProfiles {
   /** A project's events of one kind, oldest first. */
   eventsOfKind(projectId: number, kind: string): EventRow[] {
     return this.db.prepare("SELECT * FROM events WHERE project_id = ? AND kind = ? ORDER BY id").all(projectId, kind) as EventRow[];
+  }
+
+  /** The project's events at or after a time, newest first, at most `limit`. */
+  /** Events at or after `since`, newest first; with `beforeId`, only those older than that event, to page through them. */
+  eventsSince(projectId: number, since: number, limit: number, beforeId?: number): EventRow[] {
+    if (beforeId === undefined) return this.db.prepare("SELECT * FROM events WHERE project_id = ? AND at >= ? ORDER BY id DESC LIMIT ?").all(projectId, since, limit) as EventRow[];
+    return this.db.prepare("SELECT * FROM events WHERE project_id = ? AND at >= ? AND id < ? ORDER BY id DESC LIMIT ?").all(projectId, since, beforeId, limit) as EventRow[];
   }
 
   /** The newest events first, optionally only those before an event id. */

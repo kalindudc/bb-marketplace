@@ -7,7 +7,7 @@ import { BUTTON, ConfirmButton, HEADING, RepoChip, StateBadge, messageOf, plural
 const LIVE_REFRESH_MS = 10_000;
 const VIEWED_LIMIT = 5000;
 const STATUS_LETTERS: Record<ChangedFile["status"], string> = { added: "A", modified: "M", deleted: "D", renamed: "R", copied: "C", type_changed: "T" };
-const STATUS_TONES: Record<ChangedFile["status"], string> = { added: "text-success", modified: "text-warning-text", deleted: "text-destructive-text", renamed: "text-primary", copied: "text-primary", type_changed: "text-warning-text" };
+const STATUS_TONES: Record<ChangedFile["status"], string> = { added: "text-[var(--loom-ok)]", modified: "text-[var(--loom-warn)]", deleted: "text-[var(--loom-bad)]", renamed: "text-[var(--loom-link)]", copied: "text-[var(--loom-link)]", type_changed: "text-[var(--loom-warn)]" };
 
 const short = (sha: string | null) => (sha === null ? "" : sha.slice(0, 7));
 const totals = (files: readonly ChangedFile[]) => files.reduce((sum, file) => ({ additions: sum.additions + file.additions, deletions: sum.deletions + file.deletions }), { additions: 0, deletions: 0 });
@@ -16,7 +16,7 @@ function Counts({ files }: { files: readonly ChangedFile[] }) {
   const { additions, deletions } = totals(files);
   return (
     <span className="font-mono text-[11px] whitespace-nowrap">
-      <span className="text-success">+{additions}</span> <span className="text-destructive-text">−{deletions}</span>
+      <span className="text-[var(--loom-ok)]">+{additions}</span> <span className="text-[var(--loom-bad)]">−{deletions}</span>
     </span>
   );
 }
@@ -122,7 +122,7 @@ function SourceRow({ source, selected, now, branch, onSelect }: { source: Change
         {source.kind === "branch" ? <span className="font-mono font-semibold">{branch}</span> : <span className="font-medium">{source.key}</span>}
         {source.kind !== "branch" && source.kind !== "merge" && source.state !== null && <StateBadge state={source.state} />}
       </span>
-      <span className="mt-0.5 flex flex-wrap gap-x-1.5 text-muted-foreground">
+      <span className="mt-0.5 flex flex-wrap gap-x-1.5 text-[var(--loom-muted)]">
         <span>{sourceDetail(source, now)}</span>
         {source.files !== null && source.files.length > 0 && <Counts files={source.files} />}
       </span>
@@ -165,11 +165,11 @@ function SourceList({ changes, selected, now, onSelect }: { changes: ChangesView
                   <RepoChip name={repo.name!} />
                 </h3>
                 {repo.unavailable !== null ? (
-                  <p data-repo-unavailable className="px-2 text-xs text-muted-foreground">
+                  <p data-repo-unavailable className="px-2 text-xs text-[var(--loom-muted)]">
                     {repo.unavailable}
                   </p>
                 ) : own.length === 0 ? (
-                  <p className="px-2 text-xs text-muted-foreground">{changes.sources.some((source) => source.repo === repo.name) ? "Its changes are no longer in the repository." : "No changes yet."}</p>
+                  <p className="px-2 text-xs text-[var(--loom-muted)]">{changes.sources.some((source) => source.repo === repo.name) ? "Its changes are no longer in the repository." : "No changes yet."}</p>
                 ) : (
                   groups(own, "h4")
                 )}
@@ -178,7 +178,7 @@ function SourceList({ changes, selected, now, onSelect }: { changes: ChangesView
           })
         : groups(shown, "h3")}
       {gone > 0 && (
-        <p data-gone className="px-2 text-xs text-muted-foreground">
+        <p data-gone className="px-2 text-xs text-[var(--loom-muted)]">
           {gone === 1 ? "1 part of this project is" : `${gone} parts of this project are`} no longer in the repository, so {gone === 1 ? "it is" : "they are"} left out.
         </p>
       )}
@@ -205,15 +205,15 @@ function FileDiff({ slug, source, file, view }: { slug: string; source: ChangeSo
     };
   }, [rpc, slug, live, source.repo, source.key, source.base, source.head, file.path, file.fingerprint]);
 
-  if (file.binary) return <p className="px-3 py-2 text-xs text-muted-foreground">Binary file, not shown.</p>;
-  if (state.error !== null) return <p role="alert" className="px-3 py-2 text-xs text-destructive-text">Could not load the patch: {state.error}</p>;
-  if (state.patch === null) return <p role="status" className="px-3 py-2 text-xs text-muted-foreground">Loading…</p>;
-  if (state.patch.patch === null) return <p className="px-3 py-2 text-xs text-muted-foreground">{state.patch.message}</p>;
-  if (state.patch.patch === "") return <p className="px-3 py-2 text-xs text-muted-foreground">No line changes, such as a change of file mode.</p>;
+  if (file.binary) return <p className="px-3 py-2 text-xs text-[var(--loom-muted)]">Binary file, not shown.</p>;
+  if (state.error !== null) return <p role="alert" className="px-3 py-2 text-xs text-[var(--loom-bad)]">Could not load the patch: {state.error}</p>;
+  if (state.patch === null) return <p role="status" className="px-3 py-2 text-xs text-[var(--loom-muted)]">Loading…</p>;
+  if (state.patch.patch === null) return <p className="px-3 py-2 text-xs text-[var(--loom-muted)]">{state.patch.message}</p>;
+  if (state.patch.patch === "") return <p className="px-3 py-2 text-xs text-[var(--loom-muted)]">No line changes, such as a change of file mode.</p>;
   return (
     <div data-file-diff>
       <Diff patch={state.patch.patch} path={file.path} view={view} />
-      {state.patch.truncated && <p className="px-3 py-2 text-xs text-warning-text">The patch is longer than 400 KB, so it is cut short here.</p>}
+      {state.patch.truncated && <p className="px-3 py-2 text-xs text-[var(--loom-warn)]">The patch is longer than 400 KB, so it is cut short here.</p>}
     </div>
   );
 }
@@ -223,26 +223,26 @@ function FileRow(props: { slug: string; source: ChangeSource; file: ChangedFile;
   return (
     <div data-file={file.path} data-viewed={viewed ? "" : undefined} className="overflow-hidden rounded-md border border-border-seam">
       <div className="flex flex-wrap items-center gap-2 bg-surface-recessed px-2.5 py-1.5 text-xs">
-        <button type="button" aria-expanded={open} aria-label={`${open ? "Hide" : "Show"} ${file.path}`} onClick={props.onToggle} className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-left">
-          <span aria-hidden className="w-3 text-muted-foreground">
+        <button type="button" aria-expanded={open} aria-label={`${open ? "Hide" : "Show"} ${file.path}`} onClick={props.onToggle} className="flex min-w-0 flex-1 @max-xl/loom:min-h-11 max-[576px]:min-h-11 pointer-coarse:min-h-11 cursor-pointer items-center gap-2 text-left">
+          <span aria-hidden className="w-3 text-[var(--loom-muted)]">
             {open ? "▾" : "▸"}
           </span>
-          <span title={file.status.replace("_", " ")} className={`w-3 text-center text-[10px] font-bold ${STATUS_TONES[file.status]}`}>
+          <span title={file.status.replace("_", " ")} className={`w-3 text-center text-[11px] font-bold ${STATUS_TONES[file.status]}`}>
             {STATUS_LETTERS[file.status]}
           </span>
-          <span className={`min-w-0 truncate font-mono ${viewed ? "text-muted-foreground" : ""}`}>
+          <span className={`min-w-0 truncate font-mono ${viewed ? "text-[var(--loom-muted)]" : ""}`}>
             {file.previousPath !== null && file.previousPath !== file.path ? `${file.previousPath} → ` : ""}
             {file.path}
           </span>
         </button>
         {file.tickets.map((key) => (
-          <button key={key} type="button" data-file-ticket={key} onClick={() => props.onTicket(key)} className="cursor-pointer rounded border border-border-seam px-1 text-[10.5px] text-muted-foreground hover:text-foreground">
+          <button key={key} type="button" data-file-ticket={key} onClick={() => props.onTicket(key)} className="inline-flex items-center justify-center @max-xl/loom:min-h-11 max-[576px]:min-h-11 @max-xl/loom:min-w-11 max-[576px]:min-w-11 pointer-coarse:min-h-11 pointer-coarse:min-w-11 cursor-pointer rounded border border-border-seam px-1 text-[11px] text-[var(--loom-muted)] hover:text-foreground">
             {key}
           </button>
         ))}
-        {file.untracked && <span className="rounded-full border border-warning px-1.5 text-[10.5px] text-warning-text">new, not committed</span>}
+        {file.untracked && <span className="rounded-full border border-warning px-1.5 text-[11px] text-[var(--loom-warn)]">new, not committed</span>}
         <Counts files={[file]} />
-        <button type="button" aria-pressed={viewed} onClick={() => props.onViewed(!viewed)} className={`cursor-pointer rounded border px-1.5 text-[11px] ${viewed ? "border-success text-success" : "border-border-seam text-muted-foreground hover:text-foreground"}`}>
+        <button type="button" aria-pressed={viewed} onClick={() => props.onViewed(!viewed)} className={`inline-flex items-center justify-center @max-xl/loom:min-h-11 max-[576px]:min-h-11 @max-xl/loom:min-w-11 max-[576px]:min-w-11 pointer-coarse:min-h-11 pointer-coarse:min-w-11 cursor-pointer rounded border px-1.5 text-[11px] ${viewed ? "border-success text-[var(--loom-ok)]" : "border-border-seam text-[var(--loom-muted)] hover:text-foreground"}`}>
           {viewed ? "✓ Viewed" : "Viewed"}
         </button>
       </div>
@@ -286,15 +286,15 @@ function SourceIntro({ changes, source, view, busy, onControl }: { changes: Chan
           {name !== null && <RepoChip name={name} className="mr-1.5 align-middle" />}
           {changes.finished ? (
             <>
-              What <span className="font-mono">{branch}</span> merged
+              What <span className="font-mono [overflow-wrap:anywhere]">{branch}</span> merged
             </>
           ) : (
             <>
-              <span className="font-mono">{branch}</span> compared with <span className="font-mono">{source.against}</span>
+              <span className="font-mono [overflow-wrap:anywhere]">{branch}</span> compared with <span className="font-mono [overflow-wrap:anywhere]">{source.against}</span>
             </>
           )}
         </h2>
-        <p className="text-xs text-muted-foreground">
+        <p className="text-xs text-[var(--loom-muted)]">
           {changes.finished ? `From before its first merge to its last, ${short(source.head)}: ` : "Everything merged so far: "}
           {plural(merged, "ticket")}, {sizes}
           {changes.finished ? "." : `, at ${short(source.head)}.`}
@@ -304,25 +304,25 @@ function SourceIntro({ changes, source, view, busy, onControl }: { changes: Chan
             {name === null ? (
               <p className="min-w-0 flex-1 text-xs">
                 {readyToLand(overview) && <b>This is what lands. </b>}
-                Land pushes <span className="font-mono">{changes.branch}</span> at <span className="font-mono">{short(source.head)}</span> and opens one pull request into {changes.base}, or updates the one already open. Land to {changes.base} merges{" "}
-                <span className="font-mono">{changes.remoteBase}</span> in, runs the after_merge checks and pushes straight to {changes.base}.
+                Land pushes <span className="font-mono [overflow-wrap:anywhere]">{changes.branch}</span> at <span className="font-mono [overflow-wrap:anywhere]">{short(source.head)}</span> and opens one pull request into {changes.base}, or updates the one already open. Land to {changes.base} merges{" "}
+                <span className="font-mono [overflow-wrap:anywhere]">{changes.remoteBase}</span> in, runs the after_merge checks and pushes straight to {changes.base}.
               </p>
             ) : (
               <p className="min-w-0 flex-1 text-xs">
                 {readyToLand(overview) && <b>This is what lands in {name}. </b>}
-                Land {name} pushes <span className="font-mono">{branch}</span> in {name} at <span className="font-mono">{short(source.head)}</span> and opens one pull request into {base}, or updates the one already open. Land {name} to {base} merges{" "}
-                <span className="font-mono">{repo!.remoteBase}</span> in, runs the after_merge checks and pushes straight to {base}. The other repos do not land.
+                Land {name} pushes <span className="font-mono [overflow-wrap:anywhere]">{branch}</span> in {name} at <span className="font-mono [overflow-wrap:anywhere]">{short(source.head)}</span> and opens one pull request into {base}, or updates the one already open. Land {name} to {base} merges{" "}
+                <span className="font-mono [overflow-wrap:anywhere]">{repo!.remoteBase}</span> in, runs the after_merge checks and pushes straight to {base}. The other repos do not land.
               </p>
             )}
             {name === null ? (
               <>
-                <ConfirmButton label="Land" confirmLabel="Click again to land" disabled={busy} onConfirm={() => onControl("land")} />
-                <ConfirmButton label={`Land to ${changes.base}`} disabled={busy} onConfirm={() => onControl("landDirect")} />
+                <ConfirmButton label="Land" confirmLabel="Yes, land: push and open the pull request" disarmKey={`${overview.slug} ${source.head}`} disabled={busy} onConfirm={() => onControl("land")} />
+                <ConfirmButton label={`Land to ${changes.base}`} confirmLabel={`Yes, push straight to ${changes.base}`} disarmKey={`${overview.slug} ${source.head}`} disabled={busy} onConfirm={() => onControl("landDirect")} />
               </>
             ) : (
               <>
-                <ConfirmButton label={`Land ${name}`} confirmLabel={`Click again to land ${name}`} disabled={busy} onConfirm={() => onControl("land", name)} />
-                <ConfirmButton label={`Land ${name} to ${base}`} confirmLabel={`Click again to land ${name} to ${base}`} disabled={busy} onConfirm={() => onControl("landDirect", name)} />
+                <ConfirmButton label={`Land ${name}`} confirmLabel={`Yes, land ${name}: push and open its pull request`} disarmKey={`${overview.slug} ${source.head}`} disabled={busy} onConfirm={() => onControl("land", name)} />
+                <ConfirmButton label={`Land ${name} to ${base}`} confirmLabel={`Yes, push ${name} straight to ${base}`} disarmKey={`${overview.slug} ${source.head}`} disabled={busy} onConfirm={() => onControl("landDirect", name)} />
               </>
             )}
           </div>
@@ -350,8 +350,8 @@ function SourceIntro({ changes, source, view, busy, onControl }: { changes: Chan
     return (
       <div className="space-y-2">
         {title}
-        <p className="text-xs text-muted-foreground">
-          What its merge <span className="font-mono">{short(source.head)}</span> added to <span className="font-mono">{source.against}</span>
+        <p className="text-xs text-[var(--loom-muted)]">
+          What its merge <span className="font-mono [overflow-wrap:anywhere]">{short(source.head)}</span> added to <span className="font-mono [overflow-wrap:anywhere]">{source.against}</span>
           {source.at === null ? "" : `, ${formatDuration(view.now - source.at)} ago`}: {sizes}.
         </p>
       </div>
@@ -362,8 +362,8 @@ function SourceIntro({ changes, source, view, busy, onControl }: { changes: Chan
       <div className="space-y-2">
         {title}
         <div data-live className="flex flex-wrap items-center gap-3 rounded-md border border-warning bg-warning/10 px-3 py-2.5">
-          <p className="min-w-0 flex-1 text-xs text-warning-text">
-            <b>Live.</b> The worker is still editing, so this is its worktree now, uncommitted changes included, against <span className="font-mono">{source.against}</span>. It refreshes every 10 seconds while you watch, and none of it has passed the checks yet.
+          <p className="min-w-0 flex-1 text-xs text-[var(--loom-warn)]">
+            <b>Live.</b> The worker is still editing, so this is its worktree now, uncommitted changes included, against <span className="font-mono [overflow-wrap:anywhere]">{source.against}</span>. It refreshes every 10 seconds while you watch, and none of it has passed the checks yet.
           </p>
           {card?.threadId != null && (
             <button type="button" className={BUTTON} onClick={() => navigate.toThread(card.threadId!)}>
@@ -378,10 +378,10 @@ function SourceIntro({ changes, source, view, busy, onControl }: { changes: Chan
   return (
     <div className="space-y-2">
       {title}
-      <p className="text-xs text-muted-foreground">
+      <p className="text-xs text-[var(--loom-muted)]">
         {reviewed ? "Commit " : "Its last commit, "}
-        <span className="font-mono">{short(source.head)}</span>
-        {reviewed ? ", the one that passed the checks and the diff the reviewers read," : ","} against <span className="font-mono">{source.against}</span>
+        <span className="font-mono [overflow-wrap:anywhere]">{short(source.head)}</span>
+        {reviewed ? ", the one that passed the checks and the diff the reviewers read," : ","} against <span className="font-mono [overflow-wrap:anywhere]">{source.against}</span>
         {changes.strategy === "pr" && source.state === "done" ? ", as it merged" : ""}: {sizes}.
       </p>
     </div>
@@ -404,6 +404,34 @@ export function pickSource(changes: ChangesView, chosen: string | null, repos: r
   return listed.find((source) => source.kind === "branch" && source.repo === landing?.name) ?? listed.find((source) => source.files === null || source.files.length > 0) ?? listed[0] ?? null;
 }
 
+/** Which files a refresh changed, added and removed, beside the total; the total alone when the earlier list is unknown. */
+function refreshWords(before: readonly ChangedFile[] | null, after: readonly ChangedFile[]): string {
+  const total = plural(after.length, "file");
+  if (before === null) return `Changes updated: ${total}.`;
+  const was = new Map(before.map((file) => [file.path, file.fingerprint]));
+  const paths = new Set(after.map((file) => file.path));
+  const changed = after.filter((file) => was.has(file.path) && was.get(file.path) !== file.fingerprint).length;
+  const added = after.filter((file) => !was.has(file.path)).length;
+  const removed = before.filter((file) => !paths.has(file.path)).length;
+  const parts = [changed > 0 ? `${plural(changed, "file")} changed` : null, added > 0 ? `${added} added` : null, removed > 0 ? `${removed} removed` : null].filter((part) => part !== null);
+  return parts.length === 0 ? `Changes updated: ${total}.` : `Changes updated: ${parts.join(", ")}; ${total} in all.`;
+}
+
+/**
+ * What a polite status says after a refresh changed the files of the source the person has open: once per read that
+ * changed them, never for choosing another source, and nothing while the list stays the same. `seq` counts the notes,
+ * so the status can mount each one afresh: two refreshes that change the same files read alike, and both are news.
+ */
+function useRefreshNote(source: ChangeSource | null): { note: string; seq: number } {
+  const signature = source === null ? null : source.files === null ? "unread" : source.files.map((file) => `${file.path}@${file.fingerprint}`).join("|");
+  const [seen, setSeen] = useState({ id: source?.id, signature, files: source?.files ?? null, note: "", seq: 0 });
+  if (seen.id !== source?.id || seen.signature !== signature) {
+    const note = seen.id === source?.id && source !== null && source.files !== null ? refreshWords(seen.files, source.files) : "";
+    setSeen({ id: source?.id, signature, files: source?.files ?? null, note, seq: seen.seq + 1 });
+  }
+  return seen;
+}
+
 export function ChangesTab(props: { changes: ChangesView | null; error: string | null; view: ProjectView; busy: boolean; chosen: string | null; onChoose(id: string): void; onControl(action: ControlAction, repo?: string): void; onReload(): void }) {
   const { changes, view, chosen } = props;
   const slug = view.overview.slug;
@@ -424,21 +452,22 @@ export function ChangesTab(props: { changes: ChangesView | null; error: string |
     setOpenIn(source?.id);
     setOpen(new Set());
   }
+  const refreshed = useRefreshNote(source);
 
   if (changes === null) {
-    return props.error === null ? <p role="status" className="p-4 text-sm text-muted-foreground">Loading…</p> : <p role="alert" className="p-4 text-sm text-destructive-text">Could not load the changes: {props.error}</p>;
+    return props.error === null ? <p role="status" className="p-4 text-sm text-[var(--loom-muted)]">Loading…</p> : <p role="alert" className="p-4 text-sm text-[var(--loom-bad)]">Could not load the changes: {props.error}</p>;
   }
   // A multi-repo project keeps its repo sections whatever happens, so each repo that cannot be read still says why and how to fix it.
   const multi = isMultiRepoProject(changes);
-  if (!multi && changes.unavailable !== null) return <p data-changes-unavailable className="p-4 text-sm text-muted-foreground">{changes.unavailable}</p>;
+  if (!multi && changes.unavailable !== null) return <p data-changes-unavailable className="p-4 text-sm text-[var(--loom-muted)]">{changes.unavailable}</p>;
   if (source === null) {
     const nothing = changes.sources.length > 0 ? "This project's changes are no longer in the repository." : "No changes yet.";
-    if (!multi) return <p className="p-4 text-sm text-muted-foreground">{nothing}</p>;
+    if (!multi) return <p className="p-4 text-sm text-[var(--loom-muted)]">{nothing}</p>;
     const unreadable = changes.repos.some((repo) => repo.unavailable !== null);
     return (
       <div data-changes className="flex min-h-0 flex-col md:flex-row">
         <SourceList changes={changes} selected={null} now={view.now} onSelect={props.onChoose} />
-        <p data-changes-empty className="min-w-0 flex-1 p-4 text-sm text-muted-foreground">
+        <p data-changes-empty className="min-w-0 flex-1 p-4 text-sm text-[var(--loom-muted)]">
           {changes.unavailable !== null
             ? "None of the project's repos can be read; each repo's section says why."
             : `${changes.sources.some((entry) => entry.gone) ? "The changes of the repos that can be read are no longer in their repositories." : "No changes yet."}${unreadable ? " A repo that cannot be read says why in its section." : ""}`}
@@ -458,18 +487,21 @@ export function ChangesTab(props: { changes: ChangesView | null; error: string |
     <div data-changes className="flex min-h-0 flex-col md:flex-row">
       <SourceList changes={changes} selected={source} now={view.now} onSelect={props.onChoose} />
       <div data-change-source={source.id} className="min-w-0 flex-1 space-y-3 p-4">
+        <p role="status" data-changes-refreshed className="sr-only">
+          <span key={refreshed.seq}>{refreshed.note}</span>
+        </p>
         {/* Keyed by source, so a Land armed for one repo is disarmed when another repo shows. */}
         <SourceIntro key={source.id} changes={changes} source={source} view={view} busy={props.busy} onControl={props.onControl} />
         {source.files === null ? (
-          <p role="alert" className="text-xs text-destructive-text">{source.note}</p>
+          <p role="alert" className="text-xs text-[var(--loom-bad)]">{source.note}</p>
         ) : files.length === 0 ? (
-          <p className="text-xs text-muted-foreground">{source.note ?? "No files differ."}</p>
+          <p className="text-xs text-[var(--loom-muted)]">{source.note ?? "No files differ."}</p>
         ) : (
           <>
             <div className="flex flex-wrap items-center gap-2">
               <span role="group" aria-label="Diff layout" className="inline-flex overflow-hidden rounded-md border border-border-seam text-xs">
                 {(["unified", "split"] as const).map((option) => (
-                  <button key={option} type="button" aria-pressed={mode === option} onClick={() => setMode(option)} className={`cursor-pointer px-2.5 py-1 capitalize ${mode === option ? "bg-surface-selected text-foreground" : "text-muted-foreground hover:bg-state-hover"}`}>
+                  <button key={option} type="button" aria-pressed={mode === option} onClick={() => setMode(option)} className={`inline-flex items-center justify-center @max-xl/loom:min-h-11 max-[576px]:min-h-11 @max-xl/loom:min-w-11 max-[576px]:min-w-11 pointer-coarse:min-h-11 pointer-coarse:min-w-11 cursor-pointer px-2.5 py-1 capitalize ${mode === option ? "bg-surface-selected text-foreground" : "text-[var(--loom-muted)] hover:bg-state-hover"}`}>
                     {option}
                   </button>
                 ))}
@@ -480,14 +512,14 @@ export function ChangesTab(props: { changes: ChangesView | null; error: string |
               <button type="button" className={BUTTON} onClick={() => setOpen(new Set())}>
                 Collapse all
               </button>
-              <span data-viewed-progress className="ml-auto flex items-center gap-2 text-xs text-muted-foreground">
+              <span data-viewed-progress className="ml-auto flex items-center gap-2 text-xs text-[var(--loom-muted)]">
                 Viewed {seen} of {files.length}
                 <span aria-hidden className="h-1.5 w-24 overflow-hidden rounded-full bg-state-hover">
                   <span className="block h-full bg-success" style={{ width: `${Math.round((seen / files.length) * 100)}%` }} />
                 </span>
               </span>
             </div>
-            {source.truncated && <p className="text-xs text-warning-text">Showing the first {plural(files.length, "file")}.</p>}
+            {source.truncated && <p className="text-xs text-[var(--loom-warn)]">Showing the first {plural(files.length, "file")}.</p>}
             <div className="space-y-2">
               {files.map((file) => (
                 <FileRow

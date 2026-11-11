@@ -1,5 +1,6 @@
 import type { BoardCard } from "../contract";
 import { ConfirmButton, useAction, useLoomWrite } from "./common";
+import { Docked } from "./answer-dock";
 
 /**
  * A draft pull request's state: one the human holds as a draft (keep_draft), with the button that releases it, one Loom
@@ -13,14 +14,14 @@ export function DraftHold({ ticketKey, prUrl, draft, publishWait = null, request
   const size = compact ? "text-xs" : "text-sm";
   if (draft === "marking" && publishWait !== null) {
     return (
-      <p data-draft-hold="publishing" className={`${compact ? "mt-1" : ""} ${size} text-muted-foreground [overflow-wrap:anywhere]`}>
+      <p data-draft-hold="publishing" className={`${compact ? "mt-1" : ""} ${size} text-[var(--loom-muted)] [overflow-wrap:anywhere]`}>
         {`Draft until it can ship: ${publishWait}`}
       </p>
     );
   }
   if (draft === "marking") {
     return (
-      <p data-draft-hold="marking" className={`${compact ? "mt-1" : ""} ${size} text-muted-foreground`}>
+      <p data-draft-hold="marking" className={`${compact ? "mt-1" : ""} ${size} text-[var(--loom-muted)]`}>
         Draft: being marked ready for review
       </p>
     );
@@ -28,15 +29,17 @@ export function DraftHold({ ticketKey, prUrl, draft, publishWait = null, request
   const asked = requested === null ? "" : compact ? " The planner asks you to release it." : ` The planner asks you to release it: “${requested.note}”.`;
   return (
     <div data-draft-hold="held" className={`flex flex-wrap items-center gap-2 ${compact ? "mt-1" : ""}`}>
-      <span className={`${size} text-warning-text [overflow-wrap:anywhere]`}>{`Held as a draft: you release it.${asked}`}</span>
+      <span className={`${size} text-[var(--loom-warn)] [overflow-wrap:anywhere]`}>{`Held as a draft: you release it.${asked}`}</span>
       {prUrl !== null && (
-        <ConfirmButton
-          key={prUrl}
-          label="Release draft"
-          confirmLabel="Click again to mark it ready for review"
-          disabled={disabled || busy}
-          onConfirm={() => void act(() => send({ key: ticketKey, prUrl, confirm: true }), `${ticketKey} released from draft`)}
-        />
+        <Docked>
+          <ConfirmButton
+            key={prUrl}
+            label="Release draft"
+            confirmLabel="Yes, mark it ready for review"
+            disabled={disabled || busy}
+            onConfirm={() => void act(() => send({ key: ticketKey, prUrl, confirm: true }), `${ticketKey} released from draft`)}
+          />
+        </Docked>
       )}
     </div>
   );

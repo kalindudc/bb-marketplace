@@ -3,6 +3,7 @@ import { experimental_Icon as Icon, Markdown, useBbNavigate } from "@get-bb/plug
 import type { ActivityItem, Attempt, ChecksItem, Mark, PostDto, TicketDetail } from "../contract";
 import { formatDuration, plural } from "../format";
 import { BUTTON, FIELD } from "./common";
+import { PHONE_TEXT } from "./narrow";
 import { Avatar, ago, CLAMP, ChecksCard, checksText, FeedbackCard, GHOST, INNER, MARKDOWN, MergeRow, PrTextCard, ReviewCard, useLong } from "./ticket-cards";
 
 const INDENT_PX = 16;
@@ -21,7 +22,7 @@ export function ReplyBox({ textLabel, sendLabel, busy, hint, placeholder, onSend
   const [text, setText] = useState("");
   return (
     <div className="mt-2 space-y-2">
-      <textarea aria-label={textLabel} value={text} rows={3} placeholder={placeholder} onChange={(event) => setText(event.target.value)} className={FIELD} />
+      <textarea aria-label={textLabel} value={text} rows={3} placeholder={placeholder} onChange={(event) => setText(event.target.value)} className={`${FIELD} ${PHONE_TEXT}`} />
       <div className="flex flex-wrap items-center gap-2">
         <button type="button" aria-label={sendLabel} disabled={busy || text.trim() === ""} onClick={() => void onSend(text.trim()).then((sent) => sent && setText(""))} className={BUTTON}>
           Send reply
@@ -31,7 +32,7 @@ export function ReplyBox({ textLabel, sendLabel, busy, hint, placeholder, onSend
             Cancel
           </button>
         )}
-        <span data-reply-hint className="text-[11px] text-subtle-foreground">
+        <span data-reply-hint className="text-[11px] text-[var(--loom-muted)]">
           {hint}
         </span>
       </div>
@@ -55,9 +56,9 @@ interface StreamCtx {
 }
 
 const KIND_TAGS: Partial<Record<PostDto["kind"], { text: string; tone: string }>> = {
-  note: { text: "note", tone: "bg-foreground/5 text-muted-foreground" },
-  submit: { text: "Submitted for checks", tone: "bg-timeline-accent/15 text-timeline-accent" },
-  block: { text: "Blocked", tone: "bg-destructive-text/15 text-destructive-text" },
+  note: { text: "note", tone: "bg-foreground/5 text-[var(--loom-muted)]" },
+  submit: { text: "Submitted for checks", tone: "bg-timeline-accent/15 text-[var(--loom-run)]" },
+  block: { text: "Blocked", tone: "bg-destructive-text/15 text-[var(--loom-bad)]" },
 };
 
 function nameOf(ctx: StreamCtx, post: PostDto): string {
@@ -122,14 +123,14 @@ function PostCard({ ctx, post, withReplies }: { ctx: StreamCtx; post: PostDto; w
   const bar = post.kind === "block" ? "shadow-[inset_3px_0_0_var(--destructive-text)]" : post.authorKind === "human" ? "shadow-[inset_3px_0_0_var(--success)]" : "";
   return (
     <article data-post={post.id} style={{ marginLeft: `${Math.min(post.depth, MAX_DEPTH) * INDENT_PX}px` }} className={`${INNER} ${bar}`}>
-      <header className="flex flex-wrap items-center gap-x-2 gap-y-1 px-3 pt-2 text-xs text-muted-foreground">
-        <span className="inline-flex items-center gap-1.5 font-semibold text-foreground">
+      <header className="flex flex-wrap items-center gap-x-2 gap-y-1 px-3 pt-2 text-xs text-[var(--loom-muted)]">
+        <span className="inline-flex min-w-0 max-w-full flex-wrap items-center gap-1.5 font-semibold text-foreground [overflow-wrap:anywhere]">
           <Avatar kind={post.authorKind} />
           {nameOf(ctx, post)}
         </span>
         {tag !== undefined && <span className={`rounded px-1.5 text-[11px] ${tag.tone}`}>{tag.text}</span>}
         <span>{ago(post.at, ctx.now)}</span>
-        <span className="text-[11px] text-subtle-foreground">#{post.id}</span>
+        <span className="text-[11px] text-[var(--loom-muted)]">#{post.id}</span>
       </header>
       <div ref={ref} data-post-body className={`px-3 pt-1 ${long && !expanded ? CLAMP : ""}`}>
         <Markdown content={post.body} className={MARKDOWN} />
@@ -160,11 +161,11 @@ function Marker({ ctx, post }: { ctx: StreamCtx; post: PostDto }) {
   const failed = post.body.startsWith("Could not start") || post.body.startsWith("The checks could not run");
   return (
     <div data-marker={post.id}>
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 py-1 text-xs text-muted-foreground">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 py-1 text-xs text-[var(--loom-muted)]">
         <Icon name="EditFile" aria-hidden className="size-3.5" />
         <Avatar kind={post.authorKind} />
-        <span className={`[overflow-wrap:anywhere] ${failed ? "text-destructive-text" : "text-foreground"}`}>{post.body}</span>
-        <span className="text-subtle-foreground">{ago(post.at, ctx.now)}</span>
+        <span className={`[overflow-wrap:anywhere] ${failed ? "text-[var(--loom-bad)]" : "text-foreground"}`}>{post.body}</span>
+        <span className="text-[var(--loom-muted)]">{ago(post.at, ctx.now)}</span>
         {editsBody && (
           <button type="button" onClick={ctx.onBrief} className={GHOST}>
             Read the brief
@@ -240,10 +241,10 @@ function Item({ ctx, item, openFailed }: { ctx: StreamCtx; item: ActivityItem; o
 }
 
 const MARK_GLYPHS: Record<Mark, { glyph: string; tone: string }> = {
-  pass: { glyph: "✓", tone: "text-success-foreground" },
-  fail: { glyph: "✗", tone: "text-destructive-text" },
-  running: { glyph: "●", tone: "text-timeline-accent" },
-  none: { glyph: "·", tone: "text-muted-foreground" },
+  pass: { glyph: "✓", tone: "text-[var(--loom-ok)]" },
+  fail: { glyph: "✗", tone: "text-[var(--loom-bad)]" },
+  running: { glyph: "●", tone: "text-[var(--loom-run)]" },
+  none: { glyph: "·", tone: "text-[var(--loom-muted)]" },
 };
 
 function Pipeline({ pipeline }: { pipeline: Attempt["pipeline"] }) {
@@ -255,13 +256,13 @@ function Pipeline({ pipeline }: { pipeline: Attempt["pipeline"] }) {
     ["PR", pipeline.pr],
   ];
   return (
-    <span data-pipeline className="inline-flex flex-wrap items-center gap-1 text-[11.5px] text-muted-foreground">
+    <span data-pipeline className="inline-flex flex-wrap items-center gap-1 text-[11.5px] text-[var(--loom-muted)]">
       {stages
         .filter(([, marks], index) => index === 0 || marks.length > 0)
         .map(([label, marks], index) => (
           <Fragment key={label}>
             {index > 0 && (
-              <span aria-hidden className="text-subtle-foreground">
+              <span aria-hidden className="text-[var(--loom-muted)]">
                 {" → "}
               </span>
             )}
@@ -280,11 +281,11 @@ function Pipeline({ pipeline }: { pipeline: Attempt["pipeline"] }) {
 }
 
 const OUTCOMES: Record<Attempt["outcome"], { text: string; tone: string }> = {
-  merged: { text: "Merged", tone: "bg-success/15 text-success-foreground" },
-  in_progress: { text: "In progress", tone: "bg-timeline-accent/15 text-timeline-accent" },
-  blocked: { text: "Blocked", tone: "bg-destructive-text/15 text-destructive-text" },
-  cancelled: { text: "Cancelled", tone: "bg-muted-foreground/15 text-muted-foreground" },
-  ended: { text: "Ended", tone: "bg-muted-foreground/15 text-muted-foreground" },
+  merged: { text: "Merged", tone: "bg-success/15 text-[var(--loom-ok)]" },
+  in_progress: { text: "In progress", tone: "bg-timeline-accent/15 text-[var(--loom-run)]" },
+  blocked: { text: "Blocked", tone: "bg-destructive-text/15 text-[var(--loom-bad)]" },
+  cancelled: { text: "Cancelled", tone: "bg-muted-foreground/15 text-[var(--loom-muted)]" },
+  ended: { text: "Ended", tone: "bg-muted-foreground/15 text-[var(--loom-muted)]" },
 };
 
 function Pulse() {
@@ -297,7 +298,7 @@ function LiveRow({ ctx, attempt }: { ctx: StreamCtx; attempt: Attempt }) {
   const { ticket, now } = ctx;
   const reviewer = ticket.threads.filter((thread) => thread.role === "reviewer" && thread.state !== "ended" && thread.threadId !== null && thread.reviewRound === ticket.reviewRound).at(-1);
   const row = (live: boolean, text: ReactNode, action?: ReactNode) => (
-    <div data-live-row className={`flex flex-wrap items-center gap-2 py-1 text-xs ${live ? "text-timeline-accent" : "text-muted-foreground"}`}>
+    <div data-live-row className={`flex flex-wrap items-center gap-2 py-1 text-xs ${live ? "text-[var(--loom-run)]" : "text-[var(--loom-muted)]"}`}>
       {live && <Pulse />}
       <span className="font-semibold">{text}</span>
       {action}
@@ -355,27 +356,27 @@ function AttemptCard({ ctx, attempt, newest, open, onToggle, openFailed }: { ctx
   return (
     <section data-attempt={attempt.n} data-open={open ? "true" : "false"} className="rounded-lg border border-border-seam bg-card">
       <button type="button" aria-expanded={open} onClick={onToggle} className="flex w-full cursor-pointer flex-wrap items-center gap-x-2 gap-y-1 px-3 py-2 text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">
-        <Icon name="ChevronRight" aria-hidden className={`size-3.5 text-muted-foreground transition-transform ${open ? "rotate-90" : ""}`} />
+        <Icon name="ChevronRight" aria-hidden className={`size-3.5 text-[var(--loom-muted)] transition-transform ${open ? "rotate-90" : ""}`} />
         <span className="text-[13.5px] font-semibold">Attempt {attempt.n}</span>
         <Pipeline pipeline={attempt.pipeline} />
         <span className={`rounded-full px-2 text-xs font-semibold ${outcome.tone}`}>{outcome.text}</span>
         <span className="flex-1" />
-        <span data-attempt-time className="text-xs text-muted-foreground">
+        <span data-attempt-time className="text-xs text-[var(--loom-muted)]">
           {attempt.threadId === null && attempt.endedAt !== null ? ago(attempt.startedAt, ctx.now) : `${formatDuration((attempt.endedAt ?? ctx.now) - attempt.startedAt)} · ${ago(attempt.startedAt, ctx.now)}`}
         </span>
         {!open && attempt.line !== null && (
-          <span data-attempt-line className="basis-full pl-5 text-xs text-muted-foreground [overflow-wrap:anywhere]">
+          <span data-attempt-line className="basis-full pl-5 text-xs text-[var(--loom-muted)] [overflow-wrap:anywhere]">
             {attempt.line}
           </span>
         )}
       </button>
       {open && (
         <div className="ml-5 space-y-2 border-l border-border-seam pb-3 pl-3 pr-3">
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 py-1 text-xs text-muted-foreground">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 py-1 text-xs text-[var(--loom-muted)]">
             <span aria-hidden>▷</span>
             <Avatar kind="worker" />
             <span className="font-semibold text-foreground">Worker attempt {attempt.n} {unstarted ? "could not start" : "started"}</span>
-            <span className="text-subtle-foreground">{ago(attempt.startedAt, ctx.now)}</span>
+            <span className="text-[var(--loom-muted)]">{ago(attempt.startedAt, ctx.now)}</span>
             {attempt.threadId !== null && (
               <button type="button" aria-label={`Open the thread of attempt ${attempt.n}`} onClick={() => navigate.toThread(attempt.threadId!)} className={GHOST}>
                 ↗ Thread
@@ -401,7 +402,7 @@ function Planning({ ctx }: { ctx: StreamCtx }) {
     <section data-planning className="space-y-2 rounded-lg border border-dashed border-border-seam p-3">
       {brief !== null && post !== undefined && (
         <article data-post={post.id} style={{ marginLeft: "0px" }}>
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-[var(--loom-muted)]">
             <Avatar kind="planner" />
             <span className="font-semibold text-foreground">The planner wrote the brief</span>
             <span>
@@ -483,12 +484,12 @@ export function Stream({ ticket, now, busy, onReply, onBrief, jumpTo }: { ticket
 
   return (
     <div ref={root} className="space-y-3">
-      <div data-stream-toolbar className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+      <div data-stream-toolbar className="flex flex-wrap items-center gap-2 text-xs text-[var(--loom-muted)]">
         <span>{attempts.length === 0 ? "No attempts yet" : `${plural(attempts.length, "attempt")} · ${plural(ticket.posts.length, "post")}`}</span>
         <span className="flex-1" />
         {attempts.length > 0 && (
           <>
-            <span className="inline-flex rounded-md border border-border-seam p-0.5">
+            <span className="inline-flex max-w-full flex-wrap rounded-md border border-border-seam p-0.5">
               <button type="button" aria-pressed={order === "newest"} onClick={() => setOrder("newest")} className={pressed("newest")}>
                 Newest first
               </button>

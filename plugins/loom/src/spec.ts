@@ -447,8 +447,9 @@ export function withProfiles(spec: Spec, profiles: ForgeProfiles): { spec: Spec;
   };
   const named = (forge: ForgeSpec | undefined) => forge?.profile !== undefined;
   if (!named(spec.merge.forge) && !(spec.repo ?? []).some((repo) => named(repo.forge))) return { spec, errors };
-  const merge = { ...spec.merge, forge: fill(spec.merge.forge, "merge.forge") };
-  const repo = spec.repo?.map((entry, index) => ({ ...entry, forge: fill(entry.forge, `repo[${index}].forge`) }));
+  // A key set to undefined is not JSON, and bb refuses an RPC result that holds one.
+  const merge = spec.merge.forge === undefined ? spec.merge : { ...spec.merge, forge: fill(spec.merge.forge, "merge.forge") };
+  const repo = spec.repo?.map((entry, index) => (entry.forge === undefined ? entry : { ...entry, forge: fill(entry.forge, `repo[${index}].forge`) }));
   return { spec: { ...spec, merge, ...(repo === undefined ? {} : { repo }) }, errors };
 }
 

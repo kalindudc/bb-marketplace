@@ -1,7 +1,7 @@
 // One classification for every failure that reaches Loom: its kind and scope decide whether a ticket waits, a ticket
 // blocks, or the project pauses. Most fixtures are pause reasons real projects hit.
 import { describe, expect, it } from "vitest";
-import { ForgeContractError, Unavailable, classify, classifyAnswer, transientOfText } from "../src/failures";
+import { ForgeContractError, Unavailable, classify, classifyAnswer, isRetiredGeneration, isWorkerStopped, transientOfText } from "../src/failures";
 import { LoomError } from "../src/projects";
 
 const coded = (message: string, code: string) => Object.assign(new Error(message), { code });
@@ -102,6 +102,55 @@ describe("classify", () => {
   it("treats anything no rule names as temporary for this ticket, with fewer tries", () => {
     expect(classify(new Error("LANE-16's worker has no worktree, so Loom cannot merge the new commits."))).toMatchObject({ kind: "temporary", scope: "ticket", known: false });
     expect(classify("a string thrown")).toMatchObject({ kind: "temporary", scope: "ticket", known: false, reason: "a string thrown" });
+  });
+});
+
+describe("isRetiredGeneration", () => {
+  it.each([
+    "host plugin loom generation 958cfa03-7186-47e3-9428-ffb4b2bff84f is retired",
+  ])("recognizes a host generation's retirement: %s", (message) => {
+    expect(isRetiredGeneration(new Error(message))).toBe(true);
+    expect(isRetiredGeneration(message)).toBe(true);
+  });
+
+  it.each([
+    "host plugin loom startup timed out",
+    "host plugin worker failed to start",
+    "host plugin worker exited (0)",
+    "host plugin worker exited (1)",
+    "Host plugin worker exited unexpectedly",
+    "host plugin call x exceeded its deadline",
+    "Host is not connected",
+    "generation is retired",
+    "worker exited (0)",
+    "HTTP 502: Bad Gateway",
+    null,
+    undefined,
+    {},
+  ])("does not mistake another failure for a retired generation: %s", (error) => {
+    expect(isRetiredGeneration(error)).toBe(false);
+  });
+});
+
+describe("isWorkerStopped", () => {
+  it("recognizes only bb's clean worker stop", () => {
+    expect(isWorkerStopped(new Error("host plugin worker exited (0)"))).toBe(true);
+    expect(isWorkerStopped("host plugin worker exited (0)")).toBe(true);
+  });
+
+  it.each([
+    "host plugin worker exited (1)",
+    "host plugin worker exited (SIGTERM)",
+    "Host plugin worker exited unexpectedly",
+    "host plugin worker exited (00)",
+    "host plugin worker exited (0) unexpectedly",
+    "worker exited (0)",
+    "host plugin loom generation x is retired",
+    null,
+    undefined,
+    {},
+  ])("does not discard another failure: %s", (error) => {
+    expect(isWorkerStopped(error)).toBe(false);
   });
 });
 

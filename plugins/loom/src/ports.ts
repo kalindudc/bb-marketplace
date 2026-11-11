@@ -42,7 +42,7 @@ export interface BbPort {
   deleteSection(sectionId: string): Promise<void>;
   moveThread(threadId: string, sectionId: string | null): Promise<void>;
   setMetadata(threadId: string, set: Record<string, string | number | boolean | null>): Promise<void>;
-  log(level: "info" | "warn" | "error", message: string): void;
+  log(level: "debug" | "info" | "warn" | "error", message: string): void;
 
   /** The path of the project's default source on that host, or null when the project has none there. */
   projectCheckout(bbProjectId: string, hostId: string): Promise<string | null>;

@@ -1,6 +1,7 @@
 // Reviewers: separate agent threads that judge a ticket that passed its checks. The plugin counts a verdict only
 // from the reviewer row it started for the ticket's current round, and one transaction stores the verdict and
 // applies the round outcome, so a crash cannot leave a verdict without one. The tick replays what a crash cut short.
+import { spawnModel } from "./thread-model";
 import { randomBytes } from "node:crypto";
 import { workerOf, specOf, type EngineCtx } from "./ctx";
 import { repoCheckout, ticketRepo } from "./checkouts";
@@ -351,11 +352,11 @@ async function startReviewer(ctx: EngineCtx, projectId: number, seen: TicketRow,
     if (current.decided || current.cleared + current.live >= current.needed || free === 0) return null;
     const waiting = store.threads({ ticketId: ticket.id, role: "reviewer", states: ["ended"] }).find((row) => row.end_reason === UNSTARTED && row.review_round === round);
     if (waiting !== undefined) {
-      store.updateThread(waiting.id, { state: "spawning", spawn_token: token, thread_id: null, environment_id: null, ended_at: null, end_reason: null, clock_at: ctx.now(), idle_count: 0, rate_limit_retries: 0, maintenance_seq: 0 });
+      store.updateThread(waiting.id, { state: "spawning", spawn_token: token, thread_id: null, environment_id: null, ended_at: null, end_reason: null, clock_at: ctx.now(), idle_count: 0, rate_limit_retries: 0, maintenance_seq: 0, model: spawnModel(spec, "reviewer") });
       return { row: store.thread(waiting.id)!, project, spec, ticket };
     }
     const created = store.addThread({ project_id: projectId, ticket_id: ticket.id, role: "reviewer", state: "spawning", spawn_token: token });
-    store.updateThread(created.id, { review_round: round, clock_at: ctx.now() });
+    store.updateThread(created.id, { review_round: round, clock_at: ctx.now(), model: spawnModel(spec, "reviewer") });
     store.addReview({ ticket_id: ticket.id, round, thread_row_id: created.id });
     return { row: store.thread(created.id)!, project, spec, ticket };
   });

@@ -3,7 +3,7 @@ import { Markdown } from "@get-bb/plugin-sdk/app";
 import type { PlannerAction, TurnStep } from "../contract";
 import { changeLine, leadOf, proposalOf, stepMatches, type Chapter, type JourneyFilter, type JourneyStep } from "../planner-journey";
 import { SPEC_REVIEW_ROUNDS } from "../states";
-import { HEADING, plural } from "./common";
+import { HEADING, TAP, plural } from "./common";
 import { ActorMark, timeLabel, type Actor } from "./planner-kit";
 import { labelOf } from "./spec-review-kit";
 
@@ -21,32 +21,34 @@ const FILTERS: ReadonlyArray<{ id: JourneyFilter; label: string }> = [
   { id: "triage", label: "Triage" },
 ];
 
-const SEGMENT = "cursor-pointer rounded px-2 py-0.5 text-xs";
-const LINK = "cursor-pointer text-xs text-primary hover:underline";
+// Standalone controls are 24 px, 44 on a phone; a ticket key inside a sentence stays inline, as WCAG 2.5.8 allows.
+const SEGMENT = `inline-flex min-h-6 cursor-pointer items-center rounded px-2 py-0.5 text-xs ${TAP}`;
+const LINK = `inline-flex min-h-6 cursor-pointer items-center text-xs text-[var(--loom-link)] hover:underline ${TAP}`;
 const QUOTE = "mt-1 rounded-r-md border-l-2 border-primary bg-card px-2.5 py-1.5 text-sm [overflow-wrap:anywhere]";
 
 function More({ label, text }: { label: string; text: string }) {
   return (
-    <details className="mt-1.5 text-xs text-muted-foreground">
-      <summary className="cursor-pointer select-none">{label}</summary>
-      <div className="mt-1 max-h-96 overflow-auto rounded-md border border-border-seam bg-card p-2.5 text-foreground">
+    <details className="mt-1.5 text-xs text-[var(--loom-muted)]">
+      <summary className={`flex min-h-6 cursor-pointer select-none items-center [overflow-wrap:anywhere] ${TAP}`}>{label}</summary>
+      <div data-content className="mt-1 max-h-96 overflow-auto rounded-md border border-border-seam bg-card p-2.5 text-foreground">
         <Markdown content={text} className="text-sm [overflow-wrap:anywhere] [&_pre]:whitespace-pre-wrap" />
       </div>
     </details>
   );
 }
 
-function Entry({ actor, title, at, now, live = false, pending = false, children }: { actor: Actor; title: ReactNode; at: number; now: number; live?: boolean; pending?: boolean; children?: ReactNode }) {
+/** `quoted`: the title is an agent's own words, which the page shows as written. */
+function Entry({ actor, title, at, now, live = false, pending = false, quoted = false, children }: { actor: Actor; title: ReactNode; at: number; now: number; live?: boolean; pending?: boolean; quoted?: boolean; children?: ReactNode }) {
   return (
     <li data-story-step className={`grid grid-cols-[1.25rem_minmax(0,1fr)] gap-2.5 py-2 ${pending ? "-mx-2 rounded-md bg-warning/10 px-2" : ""}`}>
       <ActorMark actor={actor} />
       <div className="min-w-0">
         <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
-          <span className={`min-w-0 text-sm font-medium [overflow-wrap:anywhere] ${live ? "text-primary" : ""}`}>
+          <span data-content={quoted ? "" : undefined} className={`min-w-0 text-sm font-medium [overflow-wrap:anywhere] ${live ? "text-[var(--loom-link)]" : ""}`}>
             {live && <span aria-hidden className="mr-1.5 inline-block size-1.5 animate-pulse rounded-full bg-primary align-middle" />}
             {title}
           </span>
-          <span className="ml-auto text-[11px] whitespace-nowrap text-subtle-foreground">{live ? "now" : timeLabel(at, now)}</span>
+          <span className="ml-auto text-[11px] text-[var(--loom-muted)]">{live ? "now" : timeLabel(at, now)}</span>
         </div>
         {children}
       </div>
@@ -59,7 +61,7 @@ function ActionLine({ action, on }: { action: PlannerAction; on: StoryActions })
     on.onTicket === undefined ? (
       <b>{key}</b>
     ) : (
-      <button type="button" className="cursor-pointer font-medium text-primary hover:underline" onClick={() => on.onTicket!(key)}>
+      <button type="button" className="cursor-pointer font-medium text-[var(--loom-link)] hover:underline" onClick={() => on.onTicket!(key)}>
         {key}
       </button>
     );
@@ -88,15 +90,16 @@ function ActionLine({ action, on }: { action: PlannerAction; on: StoryActions })
       case "add":
         return ["+", <>Added {ticket(action.key)}.</>];
       case "ask":
-        return ["→", action.steps.length === 0 ? <>Cleared its asks.</> : <>Asked you to: {action.steps.map((step) => step.text).join(" ")}</>];
+        return ["→", action.steps.length === 0 ? <>Cleared its asks.</> : <>Asked you to: <span data-content>{action.steps.map((step) => step.text).join(" ")}</span></>];
     }
   })();
   return (
     <li className="grid grid-cols-[1rem_minmax(0,1fr)] gap-1.5">
-      <span aria-hidden className="text-center text-muted-foreground">
+      <span aria-hidden className="text-center text-[var(--loom-muted)]">
         {icon}
       </span>
-      <span className="[overflow-wrap:anywhere]">{body}</span>
+      {/* A record of what an agent did, quoting it. */}
+      <span data-content className="[overflow-wrap:anywhere]">{body}</span>
     </li>
   );
 }
@@ -122,13 +125,13 @@ function StepRow({ step, now, repos, on }: { step: JourneyStep; now: number; rep
     case "started":
       return (
         <Entry actor="you" title="You started planning" at={step.at} now={now}>
-          <p className={QUOTE}>{step.text}</p>
+          <p data-content className={QUOTE}>{step.text}</p>
         </Entry>
       );
     case "message":
       return (
         <Entry actor="you" title="You wrote to the planner" at={step.at} now={now}>
-          <p className={`${QUOTE} whitespace-pre-wrap`}>{step.text}</p>
+          <p data-content className={`${QUOTE} whitespace-pre-wrap`}>{step.text}</p>
         </Entry>
       );
     case "questions": {
@@ -136,7 +139,7 @@ function StepRow({ step, now, repos, on }: { step: JourneyStep; now: number; rep
       if (round.status === "open") {
         return (
           <Entry actor="planner" title={`The planner asks: ${round.title}`} at={step.at} now={now} pending>
-            <p className="text-sm text-muted-foreground">
+            <p className="text-sm text-[var(--loom-muted)]">
               Waiting for your answer.{" "}
               {on.onNeeds === undefined ? (
                 "Answer it in the Conversation view."
@@ -153,13 +156,13 @@ function StepRow({ step, now, repos, on }: { step: JourneyStep; now: number; rep
       return (
         <Entry actor="you" title={round.answers.length === 0 ? `You answered “${round.title}”` : `You answered ${round.answers.length === 1 ? "a question" : `${round.answers.length} questions`}`} at={round.answeredAt ?? step.at} now={now}>
           {round.answers.length > 0 && (
-            <dl className="mt-1 grid grid-cols-[minmax(5rem,auto)_minmax(0,1fr)] gap-x-3 gap-y-0.5 text-sm">
+            <dl className="mt-1 grid gap-y-0.5 text-sm">
               {round.answers.map((answer) => (
-                <div key={answer.question} className="contents">
-                  <dt className="text-xs leading-5 text-muted-foreground" title={answer.question}>
+                <div key={answer.question} data-story-answer className="flex flex-wrap gap-x-3">
+                  <dt className="min-w-20 text-xs leading-5 text-[var(--loom-muted)] [overflow-wrap:anywhere]" title={answer.question}>
                     {answer.header}
                   </dt>
-                  <dd className="[overflow-wrap:anywhere]">{answer.answer}</dd>
+                  <dd className="min-w-[min(100%,7rem)] flex-1 [overflow-wrap:anywhere]">{answer.answer}</dd>
                 </div>
               ))}
             </dl>
@@ -174,11 +177,11 @@ function StepRow({ step, now, repos, on }: { step: JourneyStep; now: number; rep
         <Entry actor="you" title={`You sent ${plural(step.notes.length, "comment")} on v${step.version}`} at={step.at} now={now}>
           <ul className="mt-1 space-y-0.5 text-sm">
             {step.notes.map((note, index) => (
-              <li key={index} className="[overflow-wrap:anywhere]">
-                <span className="text-xs text-muted-foreground">{note.paths.map((path) => labelOf(path, repos)).join(", ")}: </span>
+              <li key={index} data-content className="[overflow-wrap:anywhere]">
+                <span className="text-xs text-[var(--loom-muted)]">{note.paths.map((path) => labelOf(path, repos)).join(", ")}: </span>
                 {note.body}
                 {note.suggest !== undefined && (
-                  <span className="text-muted-foreground">
+                  <span className="text-[var(--loom-muted)]">
                     {" "}
                     (suggested “{note.suggest.to}” for “{note.suggest.from}”)
                   </span>
@@ -201,7 +204,7 @@ function StepRow({ step, now, repos, on }: { step: JourneyStep; now: number; rep
                 : `Loom is reviewing v${step.version}`;
       return (
         <Entry actor="reviewer" title={title} at={step.at} now={now} live={step.state === "reviewing"}>
-          <p className="text-xs text-muted-foreground">
+          <p className="text-xs text-[var(--loom-muted)] [overflow-wrap:anywhere]">
             {step.state === "skipped" ? "No reviewer ran" : `Round ${step.round} of ${SPEC_REVIEW_ROUNDS}`}
             {step.state === "failed" && step.reason !== null ? ` · ${step.reason}` : ""}
             {on.onSpec !== undefined && (
@@ -216,8 +219,8 @@ function StepRow({ step, now, repos, on }: { step: JourneyStep; now: number; rep
           {step.findings.length > 0 && (
             <ol className="mt-1 list-decimal space-y-0.5 pl-5 text-sm">
               {step.findings.map((finding, index) => (
-                <li key={index} className="[overflow-wrap:anywhere]">
-                  {finding.path !== undefined && <span className="text-xs text-muted-foreground">{labelOf(finding.path, repos)}: </span>}
+                <li key={index} data-content className="[overflow-wrap:anywhere]">
+                  {finding.path !== undefined && <span className="text-xs text-[var(--loom-muted)]">{labelOf(finding.path, repos)}: </span>}
                   {finding.title}
                 </li>
               ))}
@@ -247,25 +250,29 @@ function StepRow({ step, now, repos, on }: { step: JourneyStep; now: number; rep
         <Entry actor="loom" title={`Triage round ${step.round}: ${plural(step.blocked.length, "ticket")} blocked`} at={step.at} now={now}>
           <ul className="mt-1 space-y-1">
             {step.blocked.map((ticket) => (
-              <li key={ticket.key} className="rounded-md border border-border-seam bg-card px-2.5 py-1.5 text-sm [overflow-wrap:anywhere]">
+              <li key={ticket.key} data-content className="rounded-md border border-border-seam bg-card px-2.5 py-1.5 text-sm [overflow-wrap:anywhere]">
                 {on.onTicket === undefined ? (
-                  <b className="mr-1.5 text-destructive-text">{ticket.key}</b>
+                  <>
+                    <b className="mr-1.5 text-[var(--loom-bad)]">{ticket.key}</b>
+                    {ticket.title}
+                  </>
                 ) : (
-                  <button type="button" className="mr-1.5 cursor-pointer font-semibold text-destructive-text hover:underline" onClick={() => on.onTicket!(ticket.key)}>
-                    {ticket.key}
+                  // The key and title open the ticket together, so on a phone or a touch screen the tap is the whole line.
+                  <button type="button" data-triage-ticket={ticket.key} className="group/key block w-full cursor-pointer text-left @max-xl/loom:min-h-11 max-[576px]:min-h-11 pointer-coarse:min-h-11" onClick={() => on.onTicket!(ticket.key)}>
+                    <span className="mr-1.5 font-semibold text-[var(--loom-bad)] group-hover/key:underline">{ticket.key}</span>
+                    {ticket.title}
                   </button>
                 )}
-                {ticket.title}
-                {ticket.reason !== "" && <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">{ticket.reason}</p>}
+                {ticket.reason !== "" && <p className="text-xs text-[var(--loom-muted)] [overflow-wrap:anywhere]">{ticket.reason}</p>}
               </li>
             ))}
           </ul>
           {step.response === null ? (
-            <p className="mt-1.5 text-xs text-muted-foreground">The planner has not answered yet.</p>
+            <p className="mt-1.5 text-xs text-[var(--loom-muted)]">The planner has not answered yet.</p>
           ) : (
             <div className="mt-1.5">
               <p className={HEADING}>What the planner did</p>
-              {step.response.actions.length === 0 && step.response.text !== null && <p className="text-sm [overflow-wrap:anywhere]">{leadOf(step.response.text)}</p>}
+              {step.response.actions.length === 0 && step.response.text !== null && <p data-content className="text-sm [overflow-wrap:anywhere]">{leadOf(step.response.text)}</p>}
               <Actions actions={step.response.actions} on={on} />
               {step.response.text !== null && <More label="The planner's message" text={step.response.text} />}
             </div>
@@ -279,8 +286,8 @@ function TurnRow({ step, now, on }: { step: TurnStep; now: number; on: StoryActi
   const title = turnTitle(step);
   const lead = step.text === null ? null : leadOf(step.text);
   return (
-    <Entry actor="planner" title={title} at={step.at} now={now}>
-      {lead !== null && lead !== title && <p className="text-sm text-muted-foreground [overflow-wrap:anywhere]">{lead}</p>}
+    <Entry actor="planner" title={title} at={step.at} now={now} quoted={step.text !== null}>
+      {lead !== null && lead !== title && <p data-content className="text-sm text-[var(--loom-muted)] [overflow-wrap:anywhere]">{lead}</p>}
       <Actions actions={step.actions} on={on} />
       {step.text !== null && <More label="The planner's message" text={step.text} />}
     </Entry>
@@ -300,21 +307,21 @@ export function PlannerStory({ chapters, now, repos, working, on }: { chapters: 
         <h2 className={HEADING}>What happened</h2>
         <div role="group" aria-label="Show" className="ml-auto flex flex-wrap gap-1">
           {FILTERS.map((entry) => (
-            <button key={entry.id} type="button" aria-pressed={filter === entry.id} onClick={() => setFilter(entry.id)} className={`${SEGMENT} border ${filter === entry.id ? "border-foreground bg-foreground text-background" : "border-border-seam text-muted-foreground hover:bg-state-hover"}`}>
+            <button key={entry.id} type="button" aria-pressed={filter === entry.id} onClick={() => setFilter(entry.id)} className={`${SEGMENT} border ${filter === entry.id ? "border-foreground bg-foreground text-background" : "border-border-seam text-[var(--loom-muted)] hover:bg-state-hover"}`}>
               {entry.label}
             </button>
           ))}
         </div>
         <div role="group" aria-label="Order" className="flex gap-0.5 rounded-md border border-border-seam p-0.5">
-          <button type="button" aria-pressed={!oldestFirst} onClick={() => setOldestFirst(false)} className={`${SEGMENT} ${oldestFirst ? "text-muted-foreground" : "bg-surface-selected font-medium"}`}>
+          <button type="button" aria-pressed={!oldestFirst} onClick={() => setOldestFirst(false)} className={`${SEGMENT} ${oldestFirst ? "text-[var(--loom-muted)]" : "bg-surface-selected font-medium"}`}>
             Newest first
           </button>
-          <button type="button" aria-pressed={oldestFirst} onClick={() => setOldestFirst(true)} className={`${SEGMENT} ${oldestFirst ? "bg-surface-selected font-medium" : "text-muted-foreground"}`}>
+          <button type="button" aria-pressed={oldestFirst} onClick={() => setOldestFirst(true)} className={`${SEGMENT} ${oldestFirst ? "bg-surface-selected font-medium" : "text-[var(--loom-muted)]"}`}>
             Oldest first
           </button>
         </div>
       </div>
-      {shown.every((chapter) => !chapter.steps.some((step) => stepMatches(step, filter))) && <p className="text-xs text-muted-foreground">Nothing here matches this filter yet.</p>}
+      {shown.every((chapter) => !chapter.steps.some((step) => stepMatches(step, filter))) && <p className="text-xs text-[var(--loom-muted)] [overflow-wrap:anywhere]">Nothing here matches this filter yet.</p>}
       {shown.map((chapter) => {
         // Keyed by place in the chapter, so switching the order keeps each row, and its open details, mounted.
         const steps = chapter.steps.map((step, index) => ({ step, key: `${chapter.id}:${index}` })).filter(({ step }) => stepMatches(step, filter));
@@ -327,14 +334,14 @@ export function PlannerStory({ chapters, now, repos, working, on }: { chapters: 
         ) : null;
         return (
           <section key={chapter.id} data-chapter={chapter.title} className="rounded-md border border-border-seam bg-card">
-            <button type="button" aria-expanded={open} onClick={() => setOpened({ ...opened, [chapter.id]: !open })} className="flex w-full cursor-pointer flex-wrap items-baseline gap-x-2.5 gap-y-0.5 rounded-md px-3 py-2 text-left hover:bg-state-hover">
-              <span aria-hidden className="w-3 text-[10px] text-muted-foreground">
+            <button type="button" aria-expanded={open} onClick={() => setOpened({ ...opened, [chapter.id]: !open })} className={`flex w-full cursor-pointer flex-wrap items-baseline gap-x-2.5 gap-y-0.5 rounded-md px-3 py-2 text-left hover:bg-state-hover ${TAP} @max-xl/loom:items-center`}>
+              <span aria-hidden className="w-3 text-[11px] text-[var(--loom-muted)]">
                 {open ? "▾" : "▸"}
               </span>
               <span className="text-sm font-semibold">{chapter.title}</span>
-              {chapter.id === last && <span className="rounded-full border border-primary/50 px-1.5 text-[10.5px] text-primary">current</span>}
-              <span className="ml-auto text-xs text-muted-foreground">{filter === "all" ? plural(chapter.steps.length, "step") : `${steps.length} of ${plural(chapter.steps.length, "step")}`}</span>
-              {!open && <span className="basis-full pl-5 text-xs text-muted-foreground">{chapter.summary}</span>}
+              {chapter.id === last && <span className="rounded-full border border-primary/50 px-1.5 text-[11px] text-[var(--loom-link)]">current</span>}
+              <span className="ml-auto text-xs text-[var(--loom-muted)]">{filter === "all" ? plural(chapter.steps.length, "step") : `${steps.length} of ${plural(chapter.steps.length, "step")}`}</span>
+              {!open && <span className="basis-full pl-5 text-xs text-[var(--loom-muted)]">{chapter.summary}</span>}
             </button>
             {open && (
               <ol className="divide-y divide-border-seam/60 px-3 pb-1">

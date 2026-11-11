@@ -1,14 +1,19 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
+import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
 import type { ProjectView, SpecReviewRound, SpecVersionView } from "../contract";
 import { sectionOf, specDiff, touches, type SpecChange, type SpecSection } from "../spec-diff";
 import { WHOLE_SPEC, isUnder, pathNamesOf, specChanges } from "../spec-paths";
 import type { SpecFinding, SpecReviewStatus } from "../spec-review";
 import { SPEC_REVIEW_ROUNDS } from "../states";
-import { BUTTON, HEADING, plural, useLoom } from "./common";
+import { BUTTON, HEADING, plural, useLoom, TAP } from "./common";
 import { CommentBox, ReviewPanel } from "./spec-comments";
 import { GuardrailsSection } from "./spec-guardrails";
 import { MarksContext, type Marks } from "./spec-marks";
 import { useNoteTray, type DraftNote } from "./spec-notes";
+import { jumpBehavior } from "./motion";
+import { PHONE_TEXT, useCoarsePointer, useNarrowPage } from "./narrow";
+import { ValuePicker } from "./spec-value-picker";
+import { markUnread } from "./spec-read";
 import { ReviewContext, changeText, formatValue, labelOf, type CommentTarget, type Review, type ReviewFinding } from "./spec-review-kit";
 import { SettingsSection } from "./spec-settings";
 import { REMOVED, TicketsSection, type TicketLayout } from "./spec-ticket-view";
@@ -81,13 +86,13 @@ function LoomReview({ rounds, status, version, labelFor, onGo }: { rounds: reado
     <ol data-spec-findings className="space-y-1">
       {findings.map((finding, index) => (
         <li key={index} data-finding={index + 1} className="grid grid-cols-[2rem_minmax(0,1fr)_auto] items-baseline gap-2">
-          <span className="inline-flex h-4 items-center justify-center rounded-full border border-attention bg-attention/15 text-[10px] font-semibold">R{index + 1}</span>
+          <span className="inline-flex h-4 items-center justify-center rounded-full border border-attention bg-attention/15 text-[11px] font-semibold">R{index + 1}</span>
           <details className="min-w-0">
             <summary className="cursor-pointer text-sm [overflow-wrap:anywhere]">
-              {finding.path !== undefined && <span className="mr-1 text-xs text-muted-foreground">{labelFor(finding.path)}:</span>}
+              {finding.path !== undefined && <span className="mr-1 text-xs text-[var(--loom-muted)]">{labelFor(finding.path)}:</span>}
               {finding.title}
             </summary>
-            <p className="mt-1 text-xs whitespace-pre-wrap text-muted-foreground [overflow-wrap:anywhere]">{finding.detail}</p>
+            <p className="mt-1 text-xs whitespace-pre-wrap text-[var(--loom-muted)] [overflow-wrap:anywhere]">{finding.detail}</p>
           </details>
           {finding.path !== undefined && (
             <button type="button" className={BUTTON} onClick={() => onGo(finding.path!)}>
@@ -103,10 +108,10 @@ function LoomReview({ rounds, status, version, labelFor, onGo }: { rounds: reado
     if (stopped) return box("border-warning/50 bg-warning/10", <><p><b>Loom stopped reviewing after {SPEC_REVIEW_ROUNDS} rounds</b>; these findings of the last round are still open.</p>{list(status.findings)}</>);
     return null;
   }
-  const earlier = rounds.length > 1 ? <p className="text-subtle-foreground">Earlier rounds of v{version}: {rounds.slice(0, -1).map((round) => (round.state === "skipped" ? "skipped" : `round ${round.round} ${round.state === "approved" ? "passed" : round.state === "changes_requested" ? `found ${plural(round.findings.length, "problem")}` : "did not finish"}`)).join(", ")}.</p> : null;
+  const earlier = rounds.length > 1 ? <p className="text-[var(--loom-muted)]">Earlier rounds of v{version}: {rounds.slice(0, -1).map((round) => (round.state === "skipped" ? "skipped" : `round ${round.round} ${round.state === "approved" ? "passed" : round.state === "changes_requested" ? `found ${plural(round.findings.length, "problem")}` : "did not finish"}`)).join(", ")}.</p> : null;
   const summary = latest.summary !== null && latest.summary !== "" ? (
     <details>
-      <summary className="cursor-pointer text-muted-foreground">The reviewer's summary</summary>
+      <summary className={`flex min-h-6 cursor-pointer items-center text-[var(--loom-muted)] ${TAP}`}>The reviewer's summary</summary>
       <p className="mt-1 whitespace-pre-wrap [overflow-wrap:anywhere]">{latest.summary}</p>
     </details>
   ) : null;
@@ -114,7 +119,7 @@ function LoomReview({ rounds, status, version, labelFor, onGo }: { rounds: reado
     case "reviewing":
       return box("border-primary/40 bg-primary/5", <p><b>Loom is reviewing v{version}</b> (round {latest.round} of {SPEC_REVIEW_ROUNDS}). The planner revises it for each finding before it asks you.</p>);
     case "approved":
-      return box("border-border-seam bg-card", <><p><b className="text-success">✓ Loom's spec review passed v{version}</b> · round {latest.round} of {SPEC_REVIEW_ROUNDS}</p>{summary}{earlier}</>);
+      return box("border-border-seam bg-card", <><p><b className="text-[var(--loom-ok)]">✓ Loom's spec review passed v{version}</b> · round {latest.round} of {SPEC_REVIEW_ROUNDS}</p>{summary}{earlier}</>);
     case "changes_requested":
       return box(
         "border-attention/50 bg-attention/5",
@@ -137,7 +142,7 @@ function LoomReview({ rounds, status, version, labelFor, onGo }: { rounds: reado
           <p>
             <b>Loom skipped the spec review of v{version}</b>: against v{latest.skip?.against ?? version - 1}, it changes only operational settings, which say how Loom runs the project and not what it builds. You still approve it.
           </p>
-          {latest.skip !== null && <p data-skipped-paths className="font-mono text-[11px] text-muted-foreground [overflow-wrap:anywhere]">{latest.skip.paths.map(labelFor).join(" · ")}</p>}
+          {latest.skip !== null && <p data-skipped-paths className="font-mono text-[11px] text-[var(--loom-muted)] [overflow-wrap:anywhere]">{latest.skip.paths.map(labelFor).join(" · ")}</p>}
           {earlier}
         </>,
       );
@@ -149,7 +154,7 @@ function ChangeLine({ change }: { change: SpecChange }) {
   if (change.kind === "value") {
     return (
       <>
-        <s className="text-destructive-text">{formatValue(change.before)}</s> <span aria-hidden>→</span> <b className="font-semibold text-success">{formatValue(change.after)}</b>
+        <s className="text-[var(--loom-bad)]">{formatValue(change.before)}</s> <span aria-hidden>→</span> <b className="font-semibold text-[var(--loom-ok)]">{formatValue(change.after)}</b>
       </>
     );
   }
@@ -176,11 +181,92 @@ export interface SpecApprove {
  * what changed from the version it is compared with, a comment on any part, and one message to the planner. `readOnly`
  * opens at `version` and takes no comments: the page of a rewound project.
  */
-export function SpecPage(props: { slug: string; version?: number; readOnly?: boolean; bbProjectNames?: Readonly<Record<string, string>>; specReview?: SpecReviewStatus | null; approve?: SpecApprove | null }) {
+/** While the review panel is docked at the bottom (below the two-column width), the keyboard and scrolled-to parts stop
+ * above it: a control Tab reaches is never wholly under the dock (WCAG 2.4.11). */
+function useDockClearance(dock: RefObject<HTMLDivElement | null>) {
+  useLayoutEffect(() => {
+    const element = dock.current;
+    const scroller = element?.closest<HTMLElement>("[data-loom-scroll]");
+    if (element == null || scroller == null) return;
+    const measure = () => {
+      const docked = getComputedStyle(element).bottom === "0px";
+      scroller.style.scrollPaddingBottom = docked ? `${element.offsetHeight + 8}px` : "";
+    };
+    measure();
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    observer?.observe(element);
+    observer?.observe(scroller);
+    return () => {
+      observer?.disconnect();
+      scroller.style.scrollPaddingBottom = "";
+    };
+  }, [dock]);
+}
+
+export function SpecPage(props: { slug: string; version?: number; readOnly?: boolean; bbProjectNames?: Readonly<Record<string, string>>; specReview?: SpecReviewStatus | null; approve?: SpecApprove | null; tried?: number; inForce?: number | null; onPlanner?(): void }) {
   return <Page key={`${props.slug} ${props.version ?? "latest"} ${props.readOnly === true}`} {...props} />;
 }
 
-function Page({ slug, version: pinned, readOnly = false, bbProjectNames = {}, specReview = null, approve = null }: Parameters<typeof SpecPage>[0]) {
+/**
+ * A version the page could not read: which one, in plain words, what still works (Retry, the version in force, the
+ * planner), that the unsent comments are kept, and that an Approve now approves it unread. The raw error is folded.
+ */
+function SpecError({ slug, tried, inForce, error, comments, onRetry, onInForce, onPlanner }: { slug: string; tried: number | null; inForce: number | null; error: string; comments: number; onRetry(): void; onInForce: (() => void) | null; onPlanner?: () => void }) {
+  useEffect(() => {
+    if (tried === null) return;
+    markUnread(slug, tried, true);
+  }, [slug, tried]);
+  const name = tried === null ? "The spec" : `Spec v${tried}`;
+  return (
+    <section data-spec-error aria-label={`${name} did not load`} className="loom-card grid max-w-3xl gap-3 p-4">
+      <div role="alert" className="flex flex-wrap items-start gap-x-3 gap-y-2">
+        <Icon name="AlertCircle" className="mt-0.5 size-4 shrink-0 text-[var(--loom-bad)]" />
+        <div className="grid min-w-0 flex-1 gap-0.5">
+          <h2 className="text-sm font-semibold">{name} did not load</h2>
+          <p className="text-xs text-[var(--loom-muted)]">The server's answer could not be read here, so nothing of {tried === null ? "it" : `v${tried}`} counts as reviewed.</p>
+        </div>
+        <button type="button" className={BUTTON} onClick={onRetry}>
+          <Icon name="RotateCcw" className="size-3.5" />
+          Retry
+        </button>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {onInForce !== null && inForce !== null && (
+          <button type="button" data-read-in-force className={BUTTON} onClick={onInForce}>
+            Read v{inForce} · in force
+          </button>
+        )}
+        {onPlanner !== undefined && (
+          <button type="button" className={BUTTON} onClick={onPlanner}>
+            Planner
+          </button>
+        )}
+      </div>
+      <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1 text-xs">
+        <dt className="text-[var(--loom-muted)]">Your comments</dt>
+        <dd data-kept-comments>{comments === 0 ? "none unsent" : `${plural(comments, "comment")} unsent · kept in this browser`}</dd>
+        {tried !== null && (
+          <>
+            <dt className="text-[var(--loom-muted)]">Approve</dt>
+            <dd>
+              from the project line · <b className="font-semibold">unread</b>
+            </dd>
+            <dt className="text-[var(--loom-muted)]">CLI</dt>
+            <dd className="font-mono [overflow-wrap:anywhere]">
+              bb loom spec {slug} --version {tried}
+            </dd>
+          </>
+        )}
+      </dl>
+      <details data-raw-error className="text-xs">
+        <summary className={`${BUTTON} w-fit list-none`}>Raw error</summary>
+        <p className="mt-1.5 font-mono text-[var(--loom-muted)] [overflow-wrap:anywhere]">{error}</p>
+      </details>
+    </section>
+  );
+}
+
+function Page({ slug, version: pinned, readOnly = false, bbProjectNames = {}, specReview = null, approve = null, tried, inForce = null, onPlanner }: Parameters<typeof SpecPage>[0]) {
   const [version, setVersion] = useState<number | null>(pinned ?? null);
   const [base, setBase] = useState<number | null>(null);
   const input = { slug, ...(version === null ? {} : { version }), ...(base === null ? {} : { base }) };
@@ -188,11 +274,15 @@ function Page({ slug, version: pinned, readOnly = false, bbProjectNames = {}, sp
   // Here, above the version on screen, so notes kept only in memory survive a switch of version or compared version.
   const tray = useNoteTray(slug);
   const view = remote.data;
+  const shown = view?.version ?? null;
+  useEffect(() => {
+    if (shown !== null) markUnread(slug, shown, false);
+  }, [slug, shown]);
   return view === undefined ? (
     remote.error === null ? (
-      <p role="status" className="text-sm text-muted-foreground">Loading the spec…</p>
+      <p role="status" className="text-sm text-[var(--loom-muted)]">Loading the spec…</p>
     ) : (
-      <p role="alert" className="text-sm text-destructive-text">Could not load the spec: {remote.error}</p>
+      <SpecError slug={slug} tried={version ?? tried ?? null} inForce={inForce} error={remote.error} comments={tray.notes.length} onRetry={() => void remote.reload()} onInForce={inForce === null || version === inForce ? null : () => setVersion(inForce)} {...(onPlanner === undefined ? {} : { onPlanner })} />
     )
   ) : (
     <Loaded
@@ -239,6 +329,10 @@ function Loaded({
   onSent(view: SpecVersionView): void;
 }) {
   const root = useRef<HTMLDivElement>(null);
+  const dock = useRef<HTMLDivElement>(null);
+  useDockClearance(dock);
+  const narrow = useNarrowPage(root);
+  const coarse = useCoarsePointer();
   // Where the last press landed: the Files view's "+ note" buttons say what to comment on, not where they are, and Safari does not focus a clicked button.
   const pressed = useRef<HTMLElement | null>(null);
   const changes = useMemo(() => (view.compared === null ? [] : specDiff(view.compared.spec, view.spec)), [view]);
@@ -299,7 +393,7 @@ function Loaded({
   useEffect(() => {
     if (jump === null || root.current === null) return;
     const element = elementFor(root.current, jump.path);
-    element?.scrollIntoView({ behavior: "smooth", block: "center" });
+    element?.scrollIntoView({ behavior: jumpBehavior(), block: "center" });
     element?.animate?.([{ boxShadow: "0 0 0 3px var(--primary)" }, { boxShadow: "0 0 0 0 transparent" }], { duration: 1600, easing: "ease-out" });
   }, [jump]);
 
@@ -372,17 +466,28 @@ function Loaded({
       <header className="space-y-2">
         <div className="flex flex-wrap items-center gap-2">
           <h2 className="text-sm font-semibold">Spec</h2>
-          <div role="group" aria-label="Spec versions" className="inline-flex flex-wrap gap-0.5 rounded-md border border-border-seam bg-card p-0.5">
-            {view.versions.map((entry) => (
-              <button key={entry.version} type="button" aria-pressed={entry.version === view.version} onClick={() => onVersion(entry.version)} className={`cursor-pointer rounded px-2 py-0.5 text-xs ${entry.version === view.version ? "bg-surface-selected font-semibold text-foreground" : "text-muted-foreground hover:bg-state-hover"}`}>
-                v{entry.version} <span className="font-normal text-muted-foreground">{entry.status}</span>
-              </button>
-            ))}
-          </div>
+          {/* A phone or a touch screen gets one 44 px picker for every version; a row of buttons would be 24 px targets. */}
+          {narrow || coarse ? (
+            <select aria-label="Spec version" data-version-select className={`min-h-11 min-w-0 flex-1 rounded-md border border-[var(--loom-field-line)] bg-card px-2 text-foreground ${PHONE_TEXT}`} value={view.version} onChange={(event) => onVersion(Number(event.target.value))}>
+              {view.versions.map((entry) => (
+                <option key={entry.version} value={entry.version}>
+                  v{entry.version} {entry.status}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <div role="group" aria-label="Spec versions" className="inline-flex flex-wrap gap-0.5 rounded-md border border-border-seam bg-card p-0.5">
+              {view.versions.map((entry) => (
+                <button key={entry.version} type="button" aria-pressed={entry.version === view.version} onClick={() => onVersion(entry.version)} className={`inline-flex min-h-6 cursor-pointer items-center gap-1 rounded px-2 py-0.5 text-xs ${entry.version === view.version ? "bg-surface-selected font-semibold text-foreground" : "text-[var(--loom-muted)] hover:bg-state-hover"}`}>
+                  v{entry.version} <span className="font-normal text-[var(--loom-muted)]">{entry.status}</span>
+                </button>
+              ))}
+            </div>
+          )}
           {view.compared !== null && (
-            <label className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+            <label className="inline-flex items-center gap-1.5 text-xs text-[var(--loom-muted)] @max-xl:w-full">
               compared with
-              <select aria-label="Compare with" className="rounded-md border border-border-seam bg-card px-1.5 py-0.5 text-xs text-foreground" value={view.compared.version} onChange={(event) => onBase(Number(event.target.value))}>
+              <select aria-label="Compare with" className={`min-h-6 rounded-md border border-[var(--loom-field-line)] bg-card px-1.5 py-0.5 text-xs text-foreground ${TAP} @max-xl:min-w-0 @max-xl:flex-1 ${PHONE_TEXT}`} value={view.compared.version} onChange={(event) => onBase(Number(event.target.value))}>
                 {view.versions
                   .filter((entry) => entry.version < view.version)
                   .map((entry) => (
@@ -409,23 +514,23 @@ function Loaded({
           </p>
         )}
         {view.compared === null ? (
-          !readOnly && waitsForYou && <p className="text-xs text-muted-foreground">v{view.version} is the first version, so the entire spec is shown.</p>
+          !readOnly && waitsForYou && <p className="text-xs text-[var(--loom-muted)]">v{view.version} is the first version, so the entire spec is shown.</p>
         ) : (
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
             <div role="group" aria-label="What to show" className="inline-flex gap-0.5 rounded-md border border-border-seam bg-card p-0.5">
-              <button type="button" aria-pressed={only} onClick={() => toggleFilter("changes")} className={`inline-flex cursor-pointer items-center gap-1.5 rounded px-2.5 py-1 text-xs ${only ? "bg-surface-selected font-semibold text-foreground" : "text-muted-foreground hover:bg-state-hover"}`}>
+              <button type="button" aria-pressed={only} onClick={() => toggleFilter("changes")} className={`inline-flex cursor-pointer items-center gap-1.5 rounded px-2.5 py-1 text-xs ${TAP} ${only ? "bg-surface-selected font-semibold text-foreground" : "text-[var(--loom-muted)] hover:bg-state-hover"}`}>
                 Only what changed since v{view.compared.version}
-                <span className="rounded-full bg-primary px-1.5 text-[10px] leading-4 font-semibold text-primary-foreground">{changes.length}</span>
+                <span className="rounded-full bg-primary px-1.5 text-[11px] leading-4 font-semibold text-primary-foreground">{changes.length}</span>
               </button>
-              <button type="button" aria-pressed={!only} onClick={() => toggleFilter("all")} className={`cursor-pointer rounded px-2.5 py-1 text-xs ${!only ? "bg-surface-selected font-semibold text-foreground" : "text-muted-foreground hover:bg-state-hover"}`}>
+              <button type="button" aria-pressed={!only} onClick={() => toggleFilter("all")} className={`cursor-pointer rounded px-2.5 py-1 text-xs ${TAP} ${!only ? "bg-surface-selected font-semibold text-foreground" : "text-[var(--loom-muted)] hover:bg-state-hover"}`}>
                 The entire spec
               </button>
             </div>
-            <span className="text-xs text-muted-foreground">
+            <span className="text-xs text-[var(--loom-muted)]">
               {only ? (
                 <>
                   Parts that did not change are hidden, or faded on the map. {unseen > 0 ? `${plural(unseen, "change")} not seen yet.` : changes.length > 0 ? "You have seen every change." : ""}{" "}
-                  <button type="button" className="cursor-pointer font-semibold text-primary underline-offset-2 hover:underline" onClick={() => toggleFilter("all")}>
+                  <button type="button" className="cursor-pointer font-semibold text-[var(--loom-link)] underline-offset-2 hover:underline" onClick={() => toggleFilter("all")}>
                     View the entire spec →
                   </button>
                 </>
@@ -437,34 +542,35 @@ function Loaded({
         )}
       </header>
 
-      {/* On a narrow page the project's tab bar sticks at the top too, so this bar stops under it. */}
-      <nav aria-label="Spec sections" data-spec-sections className="sticky top-0 z-20 @max-xl/loom:top-[var(--loom-tabs,0px)] -mx-4 flex flex-wrap items-center gap-1 border-b border-border-seam bg-surface-recessed/95 px-4 py-1.5 backdrop-blur">
+      {/* On a narrow page the project's tab bar sticks at the top too, so this bar stops under it. With enlarged text it
+          wraps, and past 40% of the screen it scrolls inside itself rather than cover the spec. */}
+      <nav aria-label="Spec sections" data-spec-sections className="sticky top-0 z-20 @max-xl/loom:top-[var(--loom-tabs,0px)] -mx-4 flex max-h-[40dvh] flex-wrap items-center gap-1 overflow-y-auto border-b border-border-seam bg-background px-4 py-1.5">
         {SECTIONS.map(({ section, title }, index) => {
           const count = countIn(section);
           const done = marks.reviewed.has(section);
           return (
-            <button key={section} type="button" onClick={() => document.getElementById(domId(section))?.scrollIntoView({ behavior: "smooth", block: "start" })} className="inline-flex cursor-pointer items-center gap-1.5 rounded-full px-2 py-0.5 text-xs text-muted-foreground hover:bg-state-hover hover:text-foreground">
-              <span className={`inline-flex size-5 items-center justify-center rounded-full border text-[10.5px] font-bold ${done ? "border-success bg-success text-success-foreground" : "border-border-seam bg-card"}`}>{done ? "✓" : index + 1}</span>
+            <button key={section} type="button" onClick={() => document.getElementById(domId(section))?.scrollIntoView({ behavior: jumpBehavior(), block: "start" })} data-section-jump={section} className={`inline-flex min-h-6 cursor-pointer items-center gap-1.5 rounded-full px-2 py-0.5 text-xs text-[var(--loom-muted)] hover:bg-state-hover hover:text-foreground ${TAP}`}>
+              <span className={`inline-flex size-5 items-center justify-center rounded-full border text-[11px] font-bold ${done ? "border-[var(--loom-ok)] font-bold text-[var(--loom-ok)]" : "border-border-seam bg-card"}`}>{done ? "✓" : index + 1}</span>
               {title}
-              {count.changes > 0 && <span className="text-[11px] text-primary">· {count.changes} changed</span>}
-              {count.notes > 0 && <span className="text-[11px] text-warning-text">· {plural(count.notes, "comment")}</span>}
+              {count.changes > 0 && <span className="text-[11px] text-[var(--loom-link)]">· {count.changes} changed</span>}
+              {count.notes > 0 && <span className="text-[11px] text-[var(--loom-warn)]">· {plural(count.notes, "comment")}</span>}
             </button>
           );
         })}
         {view.compared !== null && (
-          <span className="ml-auto flex items-center gap-1">
+          <span className="ml-auto flex min-w-0 max-w-full flex-wrap items-center gap-1">
             <button type="button" className={BUTTON} onClick={() => toggleFilter(only ? "all" : "changes")}>
               {only ? "View the entire spec" : `Only what changed · ${changes.length}`}
             </button>
             {changes.length > 0 && (
               <>
-                <span className="ml-1 text-xs font-semibold text-primary tabular-nums">
+                <span className="ml-1 text-xs font-semibold text-[var(--loom-link)] tabular-nums">
                   Change {cursor < 0 ? "–" : cursor + 1} of {changes.length}
                 </span>
-                <button type="button" aria-label="Previous change (k)" title="Previous change (k)" className={BUTTON} onClick={() => step(-1)}>
+                <button type="button" aria-label="Previous change (k)" title="Previous change (k)" className={`${BUTTON} @max-xl/loom:min-w-11 pointer-coarse:min-w-11 @max-xl/loom:justify-center`} onClick={() => step(-1)}>
                   ↑
                 </button>
-                <button type="button" aria-label="Next change (j)" title="Next change (j)" className={BUTTON} onClick={() => step(1)}>
+                <button type="button" aria-label="Next change (j)" title="Next change (j)" className={`${BUTTON} @max-xl/loom:min-w-11 pointer-coarse:min-w-11 @max-xl/loom:justify-center`} onClick={() => step(1)}>
                   ↓
                 </button>
               </>
@@ -479,9 +585,9 @@ function Loaded({
             <section data-what-changed aria-label="What changed" className="rounded-lg border border-primary bg-card p-3">
               <div className="flex flex-wrap items-center gap-2">
                 <h3 className="text-sm font-semibold">
-                  What changed in v{view.version} <span className="font-normal text-muted-foreground">since v{view.compared.version}</span>
+                  What changed in v{view.version} <span className="font-normal text-[var(--loom-muted)]">since v{view.compared.version}</span>
                 </h3>
-                <span className="ml-auto text-xs text-muted-foreground">
+                <span className="ml-auto text-xs text-[var(--loom-muted)]">
                   {seenCount} of {changes.length} seen
                 </span>
                 <button type="button" className={BUTTON} onClick={() => marks.see(changes.map(changeKey))}>
@@ -505,32 +611,35 @@ function Loaded({
                           const seen = marks.seen.has(changeKey(change));
                           const why = answers(change);
                           return (
-                            <div key={changeKey(change)} data-change={change.path} data-seen={seen || undefined} className={`flex items-start gap-2 rounded-md px-2 py-1 text-sm hover:bg-state-hover ${seen ? "opacity-60" : ""} ${index === cursor ? "bg-surface-selected" : ""}`}>
-                              <span aria-hidden className={`mt-0.5 inline-flex size-4 shrink-0 items-center justify-center rounded text-[11px] font-bold text-white ${change.kind === "ticket-added" ? "bg-success" : change.kind === "ticket-removed" ? "bg-destructive-text" : "bg-primary"}`}>
+                            <div key={changeKey(change)} data-change={change.path} data-seen={seen || undefined} className={`flex items-start gap-2 rounded-md px-2 py-1 text-sm hover:bg-state-hover ${seen ? "text-[var(--loom-muted)] [&_*]:text-[var(--loom-muted)]" : ""} ${index === cursor ? "bg-surface-selected" : ""}`}>
+                              <span aria-hidden className={`mt-0.5 inline-flex size-4 shrink-0 items-center justify-center rounded border text-[11px] font-bold ${change.kind === "ticket-added" ? "border-[var(--loom-ok)] text-[var(--loom-ok)]" : change.kind === "ticket-removed" ? "border-[var(--loom-bad)] text-[var(--loom-bad)]" : "border-[var(--loom-line)] text-foreground"}`}>
                                 {change.kind === "ticket-added" ? "+" : change.kind === "ticket-removed" ? "−" : "~"}
                               </span>
                               {/* The tags go under the change when the row is too narrow for both, never over it. */}
                               <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-3 gap-y-0.5">
-                                <button type="button" className="flex min-w-[min(100%,12rem)] flex-1 cursor-pointer flex-wrap items-baseline gap-x-3 text-left" onClick={() => goChange(index)}>
+                                <button type="button" className={`flex min-w-[min(100%,12rem)] flex-1 cursor-pointer flex-wrap items-baseline gap-x-3 text-left ${TAP} @max-xl/loom:items-center`} onClick={() => goChange(index)}>
                                   <span className={`min-w-0 font-medium [overflow-wrap:anywhere] ${change.ref === null ? "" : "font-mono text-xs"}`}>{labelFor(change.path)}</span>
-                                  <span data-change-line className="min-w-0 text-xs text-muted-foreground [overflow-wrap:anywhere] @3xl:truncate">
+                                  <span data-change-line className="min-w-0 text-xs text-[var(--loom-muted)] [overflow-wrap:anywhere] @3xl:truncate">
                                     <ChangeLine change={change} />
                                   </span>
                                 </button>
                                 {why.length > 0 && (
-                                  <span className="ml-auto shrink-0 text-[11px] text-warning-text" title={why.map((note) => note.body).join("\n")}>
+                                  <span className="ml-auto shrink-0 text-[11px] text-[var(--loom-warn)]" title={why.map((note) => note.body).join("\n")}>
                                     answers your comment
                                   </span>
                                 )}
-                                {why.length === 0 && answered.length > 0 && <span data-change-tag className="ml-auto shrink-0 text-[11px] text-subtle-foreground">not from your comments</span>}
+                                {why.length === 0 && answered.length > 0 && <span data-change-tag className="ml-auto shrink-0 text-[11px] text-[var(--loom-muted)]">not from your comments</span>}
                                 {answersFinding(change).length > 0 && (
                                   <span className="ml-auto shrink-0 text-[11px] text-foreground" title={answersFinding(change).map((finding) => finding.title).join("\n")}>
                                     answers Loom's review
                                   </span>
                                 )}
                               </div>
-                              <button type="button" aria-label={seen ? `Mark ${labelFor(change.path)} not seen` : `Mark ${labelFor(change.path)} seen`} aria-pressed={seen} className={`mt-px inline-flex size-4.5 shrink-0 cursor-pointer items-center justify-center rounded-full border text-[10px] ${seen ? "border-success bg-success text-success-foreground" : "border-border-seam text-transparent hover:text-muted-foreground"}`} onClick={() => (seen ? marks.unsee(changeKey(change)) : marks.see([changeKey(change)]))}>
-                                ✓
+                              <button type="button" aria-label={seen ? `Mark ${labelFor(change.path)} not seen` : `Mark ${labelFor(change.path)} seen`} aria-pressed={seen} className="group -m-[3px] inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-full @max-xl/loom:-my-3 @max-xl/loom:size-11 max-[576px]:size-11 pointer-coarse:size-11" onClick={() => (seen ? marks.unsee(changeKey(change)) : marks.see([changeKey(change)]))}>
+                                {/* An unseen change is an empty ring: a tick drawn in a transparent colour still reads as text. */}
+                                <span aria-hidden className={`inline-flex size-4.5 items-center justify-center rounded-full border text-[11px] ${seen ? "border-[var(--loom-ok)] font-bold text-[var(--loom-ok)]" : "border-border-seam group-hover:border-[var(--loom-muted)]"}`}>
+                                  {seen ? "✓" : null}
+                                </span>
                               </button>
                             </div>
                           );
@@ -538,7 +647,7 @@ function Loaded({
                       </div>
                     );
                   })}
-                  <p className="mt-1 px-2 text-[11px] text-subtle-foreground">Click a change to go to it; it then counts as seen. j and k step through them.</p>
+                  <p className="mt-1 px-2 text-[11px] text-[var(--loom-muted)]">Click a change to go to it; it then counts as seen. j and k step through them.</p>
                 </div>
               )}
             </section>
@@ -549,24 +658,27 @@ function Loaded({
             const done = marks.reviewed.has(section);
             const showAll = () => setShown(new Set([...shown, section]));
             return (
-              <section key={section} id={domId(section)} data-spec-section={section} aria-label={title} className="scroll-mt-14 space-y-3 @max-xl/loom:scroll-mt-40">
-                <div className="flex items-start gap-2.5">
-                  <span className={`inline-flex size-6 shrink-0 items-center justify-center rounded-full text-xs font-bold ${done ? "bg-success text-success-foreground" : "bg-foreground text-background"}`}>{done ? "✓" : index + 1}</span>
-                  <div className="min-w-0 flex-1">
-                    <h2 className="flex flex-wrap items-center gap-2 text-base font-semibold">
+              <section key={section} id={domId(section)} data-spec-section={section} aria-label={title} className="scroll-mt-14 space-y-3 @max-xl/loom:scroll-mt-40 pointer-coarse:scroll-mt-32">
+                {/* The title keeps 12rem; with less, Mark reviewed and the picker wrap under it instead of squeezing it. */}
+                <div className="flex flex-wrap items-start gap-2.5">
+                  <span className={`inline-flex size-6 shrink-0 items-center justify-center rounded-full text-xs font-bold ${done ? "border border-[var(--loom-ok)] text-[var(--loom-ok)]" : "bg-foreground text-background"}`}>{done ? "✓" : index + 1}</span>
+                  <div className="min-w-[min(100%,12rem)] flex-1">
+                    <h2 className="flex flex-wrap items-center gap-2 text-base font-semibold [overflow-wrap:anywhere]">
                       {title}
-                      {count.changes > 0 && <span className="rounded-full bg-primary px-1.5 text-[10.5px] leading-4 font-semibold text-primary-foreground">{count.changes} changed</span>}
+                      {count.changes > 0 && <span className="rounded-full bg-primary px-1.5 text-[11px] leading-4 font-semibold text-primary-foreground">{count.changes} changed</span>}
                     </h2>
-                    <p className="text-xs text-muted-foreground">{text}</p>
+                    <p className="text-xs text-[var(--loom-muted)]">{text}</p>
                   </div>
+                  {!readOnly && <ValuePicker title={title} placement="header" scope={() => document.getElementById(domId(section))} />}
                   {!readOnly && (
-                    <button type="button" aria-pressed={done} className={`${BUTTON} ${done ? "border-success text-success" : ""}`} onClick={() => marks.review(section, !done)}>
+                    <button type="button" aria-pressed={done} className={`${BUTTON} ${done ? "border-success text-[var(--loom-ok)]" : ""}`} onClick={() => marks.review(section, !done)}>
                       {done ? "✓ Reviewed" : "Mark reviewed"}
                     </button>
                   )}
                 </div>
+                {!readOnly && <ValuePicker title={title} placement="bar" scope={() => document.getElementById(domId(section))} />}
                 <ReviewContext.Provider value={sectionReview(section)}>
-                  {section === "settings" && <SettingsSection spec={view.spec} bbProjectNames={bbProjectNames} onShowAll={showAll} onJump={(to) => document.getElementById(domId(to))?.scrollIntoView({ behavior: "smooth", block: "start" })} />}
+                  {section === "settings" && <SettingsSection spec={view.spec} bbProjectNames={bbProjectNames} onShowAll={showAll} onJump={(to) => document.getElementById(domId(to))?.scrollIntoView({ behavior: jumpBehavior(), block: "start" })} />}
                   {section === "tickets" && (
                     <MarksContext.Provider value={filesMarks}>
                       <TicketsSection view={view} compared={view.compared?.spec ?? null} layout={layout} onLayout={setLayout} selected={selected} onSelect={setSelected} filesView={filesView} onShowAll={showAll} />
@@ -579,7 +691,7 @@ function Loaded({
           })}
         </div>
         {!readOnly && (
-          <div className="sticky bottom-0 z-30 max-h-[60dvh] min-w-0 overflow-y-auto @5xl:top-14 @5xl:bottom-auto @5xl:max-h-[calc(100dvh-10rem)] @5xl:self-start">
+          <div ref={dock} data-spec-review-dock className="sticky bottom-0 z-30 max-h-[60dvh] min-w-0 overflow-y-auto @5xl:top-14 @5xl:bottom-auto @5xl:max-h-[calc(100dvh-10rem)] @5xl:self-start">
             <ReviewPanel
               view={view}
               notes={tray.notes}

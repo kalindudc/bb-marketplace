@@ -3,7 +3,8 @@ import type { SentNote, SpecVersionView } from "../contract";
 import { notesMessage } from "../prompts";
 import { sectionOf, type SpecSection } from "../spec-diff";
 import { WHOLE_SPEC } from "../spec-paths";
-import { BUTTON, BUTTON_PRIMARY, ConfirmButton, FIELD, HEADING, plural, useLoomWrite, useRun } from "./common";
+import { BUTTON, BUTTON_PRIMARY, ConfirmButton, FIELD, HEADING, TAP, plural, useLoomWrite, useRun } from "./common";
+import { PHONE_TEXT } from "./narrow";
 import { sentForm, type DraftNote } from "./spec-notes";
 import { Pin, formatValue, tomlLiteral, type CommentKind, type CommentTarget, type SpecValue } from "./spec-review-kit";
 
@@ -33,7 +34,10 @@ const STARTERS: Readonly<Record<string, string>> = {
   "Also needs another file": "Also needs ",
 };
 
-const OPTION = "cursor-pointer rounded-full border border-border-seam px-2 text-xs leading-5 hover:border-warning-text";
+// The number steppers are square targets: 44 by 44 on a phone or a touch screen.
+const STEP = "justify-center @max-xl/loom:min-w-11 max-[576px]:min-w-11 pointer-coarse:min-w-11";
+// The suggestions and quick picks: 24 px at least, and 44 px on a phone or a touch screen (decision 13).
+const OPTION = `inline-flex min-h-6 cursor-pointer items-center rounded-full border border-border-seam px-2 text-xs leading-5 hover:border-warning-text ${TAP}`;
 
 /** The comment box for one part: a suggested value where the part has one, quick picks, and the text. */
 export function CommentBox({ target, existing, position, onSave, onDelete, onCancel }: { target: CommentTarget; existing: DraftNote | null; position: { top: number; left: number }; onSave(body: string, suggest: DraftNote["suggest"]): void; onDelete?(): void; onCancel(): void }) {
@@ -64,7 +68,7 @@ export function CommentBox({ target, existing, position, onSave, onDelete, onCan
       <div className="flex flex-wrap gap-1">
         {target.options.map((option) =>
           option === current ? (
-            <span key={String(option)} className="rounded-full border border-dashed border-border-seam px-2 text-xs leading-5 text-subtle-foreground">
+            <span key={String(option)} className="rounded-full border border-dashed border-border-seam px-2 text-xs leading-5 text-[var(--loom-muted)]">
               {name(option)} · now
             </span>
           ) : (
@@ -80,18 +84,18 @@ export function CommentBox({ target, existing, position, onSave, onDelete, onCan
     const shown = suggest === undefined ? current : Number(suggest.to);
     const move = (by: number) => toggle(Math.min(target.max ?? Number.MAX_SAFE_INTEGER, Math.max(target.min ?? 0, shown + by)));
     choices = (
-      <div className="flex items-center gap-1.5">
-        <button type="button" aria-label="Less" className={BUTTON} disabled={shown <= (target.min ?? 0)} onClick={() => move(-step)}>
+      <div data-number-row className="flex flex-wrap items-center gap-1.5">
+        <button type="button" aria-label="Less" className={`${BUTTON} ${STEP}`} disabled={shown <= (target.min ?? 0)} onClick={() => move(-step)}>
           −
         </button>
         <output aria-label="Suggested value" className="min-w-12 text-center text-sm font-semibold tabular-nums">
           {shown}
           {target.unit === undefined ? "" : ` ${target.unit}`}
         </output>
-        <button type="button" aria-label="More" className={BUTTON} disabled={shown >= (target.max ?? Number.MAX_SAFE_INTEGER)} onClick={() => move(step)}>
+        <button type="button" aria-label="More" className={`${BUTTON} ${STEP}`} disabled={shown >= (target.max ?? Number.MAX_SAFE_INTEGER)} onClick={() => move(step)}>
           +
         </button>
-        <span className="text-[11px] text-subtle-foreground">
+        <span className="min-w-0 max-w-full text-[11px] text-[var(--loom-muted)]">
           now {current}
           {target.min !== undefined && target.max !== undefined && ` · ${target.min} to ${target.max}`}
         </span>
@@ -100,7 +104,7 @@ export function CommentBox({ target, existing, position, onSave, onDelete, onCan
   } else if (typeof current === "boolean" && target.kind === "bool") {
     choices = (
       <div className="flex flex-wrap gap-1">
-        <span className="rounded-full border border-dashed border-border-seam px-2 text-xs leading-5 text-subtle-foreground">{current ? "on" : "off"} · now</span>
+        <span className="rounded-full border border-dashed border-border-seam px-2 text-xs leading-5 text-[var(--loom-muted)]">{current ? "on" : "off"} · now</span>
         <button type="button" aria-pressed={suggest !== undefined} className={`${OPTION} ${suggest !== undefined ? "border-warning bg-warning text-black" : ""}`} onClick={() => toggle(!current)}>
           Turn it {current ? "off" : "on"}
         </button>
@@ -128,22 +132,27 @@ export function CommentBox({ target, existing, position, onSave, onDelete, onCan
       style={{ top: position.top, left: position.left }}
       className="absolute z-40 w-[22rem] max-w-[calc(100%-1.5rem)] space-y-2 rounded-lg border border-border-seam bg-popover p-3 text-popover-foreground shadow-lg"
       onKeyDown={(event) => {
-        if (event.key === "Escape") onCancel();
+        // Escape closes the box only: let through, bb's own Escape would then take focus from the value to its composer.
+        if (event.key === "Escape") {
+          event.preventDefault();
+          event.stopPropagation();
+          onCancel();
+        }
         if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) save();
       }}
     >
       <div className="flex items-start gap-2">
-        <p className="min-w-0 text-xs">
+        <p className="min-w-0 text-xs [overflow-wrap:anywhere]">
           {existing === null ? "Comment on" : "Edit the comment on"} <b className="block text-sm">{target.label}</b>
-          <code className="font-mono text-[11px] text-subtle-foreground [overflow-wrap:anywhere]">{target.paths[0]}</code>
+          <code className="font-mono text-[11px] text-[var(--loom-muted)] [overflow-wrap:anywhere]">{target.paths[0]}</code>
         </p>
-        <button type="button" aria-label="Close" className="ml-auto cursor-pointer rounded px-1 text-muted-foreground hover:bg-state-hover" onClick={onCancel}>
+        <button type="button" aria-label="Close" className={`-mt-1 -mr-1 ml-auto inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded text-[var(--loom-muted)] hover:bg-state-hover ${TAP} @max-xl/loom:min-w-11 max-[576px]:min-w-11 pointer-coarse:min-w-11`} onClick={onCancel}>
           ✕
         </button>
       </div>
       {choices !== null && (
         <div className="space-y-1">
-          <p className="text-[11px] text-muted-foreground">{target.kind === "enum" ? "Suggest instead" : target.kind === "number" || target.kind === "bool" ? "Suggest a value" : "Suggested value"}</p>
+          <p className="text-[11px] text-[var(--loom-muted)]">{target.kind === "enum" ? "Suggest instead" : target.kind === "number" || target.kind === "bool" ? "Suggest a value" : "Suggested value"}</p>
           {choices}
         </div>
       )}
@@ -156,11 +165,11 @@ export function CommentBox({ target, existing, position, onSave, onDelete, onCan
           ))}
         </div>
       )}
-      <textarea ref={field} aria-label="Comment" rows={3} maxLength={4000} className={FIELD} placeholder={suggest === undefined ? "What should the planner change here, and why?" : "Why? (optional)"} value={body} onChange={(event) => setBody(event.target.value)} />
-      <div className="flex items-center gap-2">
-        <span className="mr-auto text-[11px] text-subtle-foreground">⌘↵ adds · Esc closes</span>
+      <textarea ref={field} aria-label="Comment" rows={3} maxLength={4000} className={`${FIELD} ${PHONE_TEXT}`} placeholder={suggest === undefined ? "What should the planner change here, and why?" : "Why? (optional)"} value={body} onChange={(event) => setBody(event.target.value)} />
+      <div data-comment-actions className="flex flex-wrap items-center justify-end gap-2">
+        <span className="mr-auto text-[11px] text-[var(--loom-muted)] @max-xl/loom:invisible max-[576px]:invisible pointer-coarse:invisible">⌘↵ adds · Esc closes</span>
         {onDelete !== undefined && (
-          <button type="button" className={`${BUTTON} text-destructive-text`} onClick={onDelete}>
+          <button type="button" className={`${BUTTON} text-[var(--loom-bad)]`} onClick={onDelete}>
             Delete
           </button>
         )}
@@ -178,17 +187,17 @@ export function CommentBox({ target, existing, position, onSave, onDelete, onCan
 function Suggestion({ suggest }: { suggest: NonNullable<DraftNote["suggest"]> }) {
   return (
     <span data-suggestion className="mt-1 inline-flex flex-wrap items-center gap-1.5 rounded bg-surface-recessed px-1.5 font-mono text-[11px]">
-      <s className="text-destructive-text">{suggest.from}</s>
+      <s className="text-[var(--loom-bad)]">{suggest.from}</s>
       <span aria-hidden>→</span>
-      <b className="font-semibold text-success">{suggest.to}</b>
+      <b className="font-semibold text-[var(--loom-ok)]">{suggest.to}</b>
     </span>
   );
 }
 
 function sentState(note: SentNote): { text: string; tone: string } {
-  if (note.answeredIn === null) return { text: "Waiting for the planner's next version", tone: "text-muted-foreground" };
-  if (note.changed) return { text: `✓ v${note.answeredIn} changed this`, tone: "text-success" };
-  return { text: `v${note.answeredIn} left this as it was; the planner may have answered in its chat`, tone: "text-warning-text" };
+  if (note.answeredIn === null) return { text: "Waiting for the planner's next version", tone: "text-[var(--loom-muted)]" };
+  if (note.changed) return { text: `✓ v${note.answeredIn} changed this`, tone: "text-[var(--loom-ok)]" };
+  return { text: `v${note.answeredIn} left this as it was; the planner may have answered in its chat`, tone: "text-[var(--loom-warn)]" };
 }
 
 /**
@@ -236,16 +245,16 @@ export function ReviewPanel({
 
   return (
     <aside data-review-panel aria-label="Your review" className="min-w-0 rounded-lg border border-border-seam bg-card shadow-sm">
-      <button type="button" aria-expanded={open} className="flex w-full cursor-pointer items-center gap-2 px-3 pt-3 pb-2 text-left @5xl:cursor-default" onClick={() => setOpen(!open)}>
+      <button type="button" aria-expanded={open} className={`flex w-full cursor-pointer items-center gap-2 px-3 pt-3 pb-2 text-left @5xl:cursor-default ${TAP}`} onClick={() => setOpen(!open)}>
         <h3 className="text-sm font-semibold">Your review of v{view.version}</h3>
-        {count > 0 && <span className="text-xs font-semibold text-warning-text">{plural(count, "comment")}</span>}
-        <span aria-hidden className="ml-auto text-xs text-muted-foreground @5xl:hidden">
+        {count > 0 && <span className="text-xs font-semibold text-[var(--loom-warn)]">{plural(count, "comment")}</span>}
+        <span aria-hidden className="ml-auto text-xs text-[var(--loom-muted)] @5xl:hidden">
           {open ? "Hide ▾" : "Show ▴"}
         </span>
       </button>
       <div className={`space-y-2 px-3 pb-3 ${open ? "" : "hidden"} @5xl:block`}>
         {notes.filter((note) => note.paths[0] !== WHOLE_SPEC).length === 0 ? (
-          <p className="rounded-md border border-dashed border-border-seam px-3 py-2 text-xs text-muted-foreground">
+          <p className="rounded-md border border-dashed border-border-seam px-3 py-2 text-xs text-[var(--loom-muted)]">
             <b className="text-foreground">Nothing yet.</b> Click any setting, ticket, criterion, file or line to comment on it. Comments collect here and go to the planner together, in one message.
           </p>
         ) : (
@@ -261,19 +270,19 @@ export function ReviewPanel({
                   <div key={index} data-draft-comment={note.paths[0]} className="rounded-md border border-border-seam bg-surface-recessed/40 p-2">
                     <div className="flex items-center gap-1.5">
                       <Pin n={index + 1} />
-                      <button type="button" className="min-w-0 flex-1 cursor-pointer truncate text-left text-xs font-semibold hover:underline" title={`Show ${note.label}`} onClick={() => onJump(note)}>
+                      <button type="button" className={`min-w-0 flex-1 cursor-pointer truncate text-left text-xs font-semibold hover:underline ${TAP}`} title={`Show ${note.label}`} onClick={() => onJump(note)}>
                         {note.label || labelFor(note.paths[0]!)}
                       </button>
-                      <button type="button" aria-label={`Edit the comment on ${note.label}`} className="cursor-pointer rounded px-1 text-xs text-muted-foreground hover:bg-state-hover hover:text-foreground" onClick={(event) => onEdit(index, event.currentTarget)}>
+                      <button type="button" aria-label={`Edit the comment on ${note.label}`} className="cursor-pointer rounded px-1 text-xs text-[var(--loom-muted)] hover:bg-state-hover hover:text-foreground" onClick={(event) => onEdit(index, event.currentTarget)}>
                         ✎
                       </button>
-                      <button type="button" aria-label={`Remove the comment on ${note.label}`} className="cursor-pointer rounded px-1 text-xs text-muted-foreground hover:bg-state-hover hover:text-foreground" onClick={() => onRemove(index)}>
+                      <button type="button" aria-label={`Remove the comment on ${note.label}`} className="cursor-pointer rounded px-1 text-xs text-[var(--loom-muted)] hover:bg-state-hover hover:text-foreground" onClick={() => onRemove(index)}>
                         ✕
                       </button>
                     </div>
                     {note.suggest !== undefined && <Suggestion suggest={note.suggest} />}
                     {note.body !== "" && <p className="mt-1 text-xs whitespace-pre-wrap [overflow-wrap:anywhere]">{note.body}</p>}
-                    {note.version < newest.version && <p className="mt-1 text-[11px] text-warning-text">Written on v{note.version}; v{newest.version} is newer</p>}
+                    {note.version < newest.version && <p className="mt-1 text-[11px] text-[var(--loom-warn)]">Written on v{note.version}; v{newest.version} is newer</p>}
                   </div>
                 ))}
               </div>
@@ -286,7 +295,7 @@ export function ReviewPanel({
             aria-label="A note on the whole spec"
             rows={2}
             maxLength={4000}
-            className={FIELD}
+            className={`${FIELD} ${PHONE_TEXT}`}
             placeholder="A note on the spec as a whole (optional)"
             value={generalText}
             onChange={(event) => {
@@ -296,21 +305,21 @@ export function ReviewPanel({
           />
         </label>
         {error !== null && (
-          <p role="alert" className="text-xs text-destructive-text">
+          <p role="alert" className="text-xs text-[var(--loom-bad)]">
             {error}
           </p>
         )}
         {count > 0 ? (
           <div className="grid gap-1.5">
-            {older ? <ConfirmButton label={sendLabel} primary disabled={busy} onConfirm={send} /> : <button type="button" className="inline-flex h-9 cursor-pointer items-center justify-center rounded-md bg-primary px-4 text-sm font-semibold text-primary-foreground hover:opacity-90 disabled:cursor-default disabled:opacity-50" disabled={busy} onClick={send}>{sendLabel}</button>}
+            {older ? <ConfirmButton label={sendLabel} disarmKey={`${view.slug} ${notes.length}`} primary disabled={busy} onConfirm={send} /> : <button type="button" className="inline-flex h-9 cursor-pointer items-center justify-center rounded-md bg-primary px-4 text-sm font-semibold text-primary-foreground hover:opacity-90 disabled:cursor-default disabled:opacity-50" disabled={busy} onClick={send}>{sendLabel}</button>}
             <button type="button" className={`${BUTTON} justify-center`} aria-expanded={preview} onClick={() => setPreview(!preview)}>
               {preview ? "Hide the message" : "Preview the message"}
             </button>
           </div>
         ) : approve !== null ? (
           <div className="grid gap-1">
-            <ConfirmButton label={approve.label} primary disabled={approve.busy} onConfirm={approve.onApprove} />
-            <p className="text-center text-[11px] text-subtle-foreground">Nothing runs until you start the project.</p>
+            <ConfirmButton label={approve.label} disarmKey={view.slug} primary disabled={approve.busy} onConfirm={approve.onApprove} />
+            <p className="text-center text-[11px] text-[var(--loom-muted)]">Nothing runs until you start the project.</p>
           </div>
         ) : null}
         {preview && count > 0 && (
@@ -318,7 +327,7 @@ export function ReviewPanel({
             {notesMessage({ slug: view.slug, version: newest.version, status: newest.status, notes: notes.map(sentForm) })}
           </pre>
         )}
-        <p className="text-[11px] text-subtle-foreground">Kept in this browser until you send them. The planner revises the spec and proposes the next version, and this page then shows what changed.</p>
+        <p className="text-[11px] text-[var(--loom-muted)]">Kept in this browser until you send them. The planner revises the spec and proposes the next version, and this page then shows what changed.</p>
         {view.notes.length > 0 && (
           <details data-sent-comments open={waiting > 0} className="pt-1">
             <summary className={`${HEADING} cursor-pointer`}>
@@ -330,7 +339,7 @@ export function ReviewPanel({
                 const state = sentState(note);
                 return (
                   <div key={index} data-sent-note className="rounded-md border border-border-seam p-2">
-                    <p className="truncate text-[11px] text-muted-foreground" title={note.paths.join(", ")}>
+                    <p className="truncate text-[11px] text-[var(--loom-muted)]" title={note.paths.join(", ")}>
                       {note.paths[0] === WHOLE_SPEC ? "The whole spec" : labelFor(note.paths[0]!)} · written on v{note.version}
                     </p>
                     {note.suggest !== undefined && <Suggestion suggest={note.suggest} />}

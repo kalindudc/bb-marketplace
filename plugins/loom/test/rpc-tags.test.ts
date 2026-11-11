@@ -38,8 +38,8 @@ describe("tags", () => {
 
   it("tags a thread's reads by its project once it has one, and by ANY before", () => {
     expect(tags("threadInfo", { threadId: "thr_1" }, null)).toEqual([ANY]);
-    expect(tags("threadInfo", { threadId: "thr_1" }, { role: "planner", slug: null, key: null, state: "planning" } satisfies ThreadInfo)).toEqual([ANY]);
-    expect(tags("threadInfo", { threadId: "thr_1" }, { role: "worker", slug: "csv", key: "CSV-1", state: "working" } satisfies ThreadInfo)).toEqual(["project:csv"]);
+    expect(tags("threadInfo", { threadId: "thr_1" }, { role: "planner", slug: null, key: null, state: "planning", project: null, phase: null, attempt: null } satisfies ThreadInfo)).toEqual([ANY]);
+    expect(tags("threadInfo", { threadId: "thr_1" }, { role: "worker", slug: "csv", key: "CSV-1", state: "working", project: { key: "CSV", name: "CSV export" }, phase: null, attempt: 1 } satisfies ThreadInfo)).toEqual(["project:csv"]);
     expect(tags("plannerView", { threadId: "thr_1" }, { slug: "csv" } as PlannerView)).toEqual(["project:csv"]);
   });
 

@@ -4,7 +4,7 @@ import { STAGES } from "../next-step";
 import { BUTTON, ConfirmButton, listText, plural } from "./common";
 import { labelOf } from "./spec-review-kit";
 
-const STAGE_TONES = { done: "text-muted-foreground", current: "font-semibold text-foreground", todo: "text-subtle-foreground" } as const;
+const STAGE_TONES = { done: "text-[var(--loom-muted)]", current: "font-semibold text-foreground", todo: "text-[var(--loom-muted)]" } as const;
 
 /**
  * The land buttons of a multi-repo project. land and landDirect name no repo, so the engine lands every repo with a done ticket, landed before or not,
@@ -15,13 +15,13 @@ export function repoLand(repos: readonly RepoOverview[]): { names: string[]; lab
   // A repo has a done ticket exactly when it has work to land or was landed: done is final, and only a repo with a done ticket lands.
   const names = repos.flatMap((repo) => (repo.toLand || repo.landedAt !== null ? [repo.name!] : []));
   if (names.length === 0) return null;
-  return { names, label: repos.some((repo) => repo.toLand) ? "Land · open the pull requests" : null, confirm: `Click again to land ${listText(names)}` };
+  return { names, label: repos.some((repo) => repo.toLand) ? "Land · open the pull requests" : null, confirm: `Yes, land ${listText(names)}` };
 }
 
 /** The settings a skipped spec review changed, behind a disclosure, each as the Spec tab names it, such as "web › forge › kind". */
 export function SettingPaths({ paths, repos }: { paths: readonly string[]; repos: readonly string[] }) {
   return (
-    <details data-setting-paths className="mt-1 text-xs text-muted-foreground">
+    <details data-setting-paths className="mt-1 text-xs text-[var(--loom-muted)]">
       <summary className="cursor-pointer">The {plural(paths.length, "setting")} it changes</summary>
       <ul className="mt-1 list-disc space-y-0.5 pl-5 font-mono text-[11px] [overflow-wrap:anywhere]">
         {paths.map((path) => (
@@ -55,7 +55,7 @@ export function NextStepBar({ next, busy, onAct, onReviewChanges, repos = [] }: 
         })}
       </ol>
       <div className="flex flex-wrap items-center gap-3">
-        <div data-next-text className={`min-w-[min(100%,18rem)] flex-1 text-sm [overflow-wrap:anywhere] ${warning ? "text-warning-text" : ""}`}>
+        <div data-next-text className={`min-w-[min(100%,18rem)] flex-1 text-sm [overflow-wrap:anywhere] ${warning ? "text-[var(--loom-warn)]" : ""}`}>
           <p>
             <b>{next.title}</b> {next.text}
           </p>
@@ -66,7 +66,7 @@ export function NextStepBar({ next, busy, onAct, onReviewChanges, repos = [] }: 
             Review changes
           </button>
         )}
-        {action !== null && <ConfirmButton key={action.label} primary label={action.label} confirmLabel={action.confirm} disabled={busy} onConfirm={() => onAct(action.control, action.version)} />}
+        {action !== null && <ConfirmButton key={action.label} primary label={action.label} confirmLabel={action.confirm} disarmKey={`${action.control} ${action.version ?? ""}`} disabled={busy} onConfirm={() => onAct(action.control, action.version)} />}
       </div>
     </section>
   );

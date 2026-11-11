@@ -249,4 +249,7 @@ export const MIGRATIONS: string[] = [
   UPDATE threads SET tokens_at = NULL WHERE state = 'ended';
   CREATE INDEX threads_ended ON threads (ended_at) WHERE state = 'ended'`,
   `ALTER TABLE tickets ADD COLUMN phase TEXT`,
+  // The "provider / model" a worker or reviewer thread was spawned with, from the spec then; null for a planner and for
+  // threads from before Loom recorded it, which Insights counts as not recorded.
+  `ALTER TABLE threads ADD COLUMN model TEXT`,
 ];

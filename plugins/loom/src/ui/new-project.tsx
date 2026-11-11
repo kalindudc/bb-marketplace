@@ -2,8 +2,9 @@ import { memo, useCallback, useId, useLayoutEffect, useRef, useState, type React
 import { experimental_NewThreadComposer as NewThreadComposer, useComposers, type NewThreadRequest, type PluginComposerApi } from "@get-bb/plugin-sdk/app";
 import { MAX_PLANNING_REPOS } from "../prompts";
 import { MERGE_CHOICES, type MergeChoice } from "../states";
-import { BUTTON, CARD, CHIP, FIELD, HEADING, messageOf, useLoom, useLoomWrite } from "./common";
+import { BUTTON, CARD, CHIP, FIELD, HEADING, TAP, messageOf, useLoom, useLoomWrite } from "./common";
 import { GuideSteps } from "./guide";
+import { PHONE_TEXT } from "./narrow";
 
 const MERGE_LABELS: Record<MergeChoice, string> = { ask: "Ask me", integration: "Integration branch", pr: "PR per ticket" };
 const PROJECT_KEY = "loom.newProject.projectId";
@@ -39,24 +40,27 @@ function RepoPicker({ exclude, picked, onChange }: { exclude: string | null; pic
   const needle = query.trim().toLowerCase();
   const shown = offered.filter((choice) => picked.includes(choice.id) || choice.name.toLowerCase().includes(needle));
   const full = picked.length >= MAX_PLANNING_REPOS;
-  const note = (text: string, tone = "text-muted-foreground") => <p className={`text-xs ${tone}`}>{text}</p>;
-
-  let list: ReactNode;
-  if (choices.data === undefined) list = choices.error === null ? note("Loading bb's projects…") : note(`Could not list bb's projects: ${choices.error}`, "text-destructive-text");
-  else if (offered.length === 0) list = note("bb has no other projects.");
-  else if (shown.length === 0) list = note(`No repo matches "${query.trim()}".`);
+  // Loading, empty and no-match notes land in a status region that is always there, so a screen reader hears them; a
+  // failed read is an alert.
+  let status: string | null = null;
+  let list: ReactNode = null;
+  if (choices.data === undefined) status = choices.error === null ? "Loading bb's projects…" : null;
+  else if (offered.length === 0) status = "bb has no other projects.";
+  else if (shown.length === 0) status = `No repo matches "${query.trim()}".`;
   else
     list = (
-      <ul className="grid max-h-48 gap-x-4 gap-y-1 overflow-y-auto sm:grid-cols-2">
+      <ul className="grid max-h-48 gap-x-4 gap-y-1 overflow-y-auto sm:grid-cols-2 @max-xl/loom:max-h-80 pointer-coarse:max-h-80">
         {shown.map((choice) => {
           const checked = picked.includes(choice.id);
           return (
             <li key={choice.id} data-repo-choice={choice.id}>
-              <label className="flex cursor-pointer items-center gap-2">
+              {/* The whole row is the target: 24 px, and 44 px on a phone or a touch screen (decision 13). */}
+              <label className={`flex min-h-6 cursor-pointer items-center gap-2 ${TAP}`}>
                 <input type="checkbox" checked={checked} disabled={!checked && full} onChange={(event) => onChange(event.target.checked ? [...picked, choice.id] : picked.filter((id) => id !== choice.id))} />
-                <span className="truncate">{choice.name}</span>{" "}
+                {/* A long name wraps, so enlarged text never hides which repo this is. */}
+                <span className="min-w-0 [overflow-wrap:anywhere]">{choice.name}</span>{" "}
                 {choice.hostIds.length === 0 && (
-                  <span data-no-checkout title="No machine has a checkout of this repo. The planner offers to clone it." className={`${CHIP} shrink-0 text-warning-text`}>
+                  <span data-no-checkout title="No machine has a checkout of this repo. The planner offers to clone it." className={`${CHIP} shrink-0 text-[var(--loom-warn)]`}>
                     no checkout
                   </span>
                 )}
@@ -71,11 +75,19 @@ function RepoPicker({ exclude, picked, onChange }: { exclude: string | null; pic
     <div role="group" aria-label="Repos" className="grid basis-full gap-2">
       <div className="flex flex-wrap items-center gap-2">
         <span>Repos</span>
-        <span className="text-xs text-muted-foreground">
+        <span className="text-xs text-[var(--loom-muted)]">
           {picked.length} of up to {MAX_PLANNING_REPOS} picked, besides the composer's project
         </span>
-        <input type="search" aria-label="Filter repos" placeholder="Filter by name" value={query} onChange={(event) => setQuery(event.target.value)} className={`${FIELD} ml-auto min-w-0 max-w-56`} />
+        <input type="search" aria-label="Filter repos" placeholder="Filter by name" value={query} onChange={(event) => setQuery(event.target.value)} className={`${FIELD} ${TAP} ${PHONE_TEXT} ml-auto min-w-0 max-w-56`} />
       </div>
+      <p data-repo-status role="status" className="m-0 text-xs text-[var(--loom-muted)] empty:hidden">
+        {status}
+      </p>
+      {choices.data === undefined && choices.error !== null && (
+        <p role="alert" className="m-0 text-xs text-[var(--loom-bad)]">
+          Could not list bb's projects: {choices.error}
+        </p>
+      )}
       {list}
     </div>
   );
@@ -129,7 +141,7 @@ export function NewProject({ go }: { go(subPath: string): void }) {
       <div className="grid content-start gap-3">
         <h2 className="text-sm font-semibold">What should exist when the project is done?</h2>
         <PlannerComposer projectId={projectId} onSubmit={onSubmit} />
-        {error !== null && <p role="alert" className="text-xs text-destructive-text">{error}</p>}
+        {error !== null && <p role="alert" className="text-xs text-[var(--loom-bad)]">{error}</p>}
         <section className={CARD}>
           <h2 className={HEADING}>Optional: answer up front</h2>
           <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
@@ -145,11 +157,11 @@ export function NewProject({ go }: { go(subPath: string): void }) {
             </div>
             <div className="flex min-w-[min(100%,14rem)] flex-1 items-center gap-2">
               <label htmlFor={reviewerId} className="shrink-0">Reviewer model</label>
-              <input id={reviewerId} type="text" value={reviewer} maxLength={200} placeholder="for example: codex, gpt-5" onChange={(event) => setReviewer(event.target.value)} className={FIELD} />
+              <input id={reviewerId} type="text" value={reviewer} maxLength={200} placeholder="for example: codex, gpt-5" onChange={(event) => setReviewer(event.target.value)} className={`${FIELD} ${TAP} ${PHONE_TEXT}`} />
             </div>
             <RepoPicker exclude={composerProject} picked={picked} onChange={setRepos} />
           </div>
-          <p className="mt-2 text-xs text-muted-foreground">These go to the planner with your goal, so it asks fewer questions. It still asks about checks, scope and anything it cannot find in the code. The repos are a starting point: the planner can add others the work changes.</p>
+          <p className="mt-2 text-xs text-[var(--loom-muted)]">These go to the planner with your goal, so it asks fewer questions. It still asks about checks, scope and anything it cannot find in the code. The repos are a starting point: the planner can add others the work changes.</p>
         </section>
       </div>
       <section className={`${CARD} content-start`}>

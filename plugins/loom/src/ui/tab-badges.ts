@@ -2,6 +2,7 @@
 // notice at the top of the tab. A badge is for something that needs the human: it stays until Loom sees the thing
 // resolved, and a badge Loom cannot see resolved (Merge order, Rollout) can be acknowledged instead.
 import type { AckTab, ProjectView } from "../contract";
+import { acknowledged, rolloutWarnings, warningId, wrongMerges } from "../badge-acks";
 import { plural, readyToLand } from "../format";
 
 export type BadgeTab = "board" | "spec" | "planner" | "changes" | "merge" | "rollout";
@@ -27,14 +28,7 @@ export interface TabBadge {
   ack?: { tab: AckTab; items: string[] };
 }
 
-/** A pull request that merged into the branch of a ticket that has not merged, so its change is not on the base. */
-export const wrongMerges = (view: ProjectView) => (view.mergeOrder?.entries ?? []).filter((entry) => entry.verdict === "merged_elsewhere" && entry.mergedIntoState !== "done");
-
-/** The rollout warnings that call for care before a merge or a deploy; info-tone ones are left to the tab. */
-export const rolloutWarnings = (view: ProjectView) => (view.rollout?.warnings ?? []).filter((warning) => warning.tone === "warning");
-
-/** Whether the human's newest acknowledgement covers every item: a new item shows the badge again, one that went away does not. */
-export const acknowledged = (acked: readonly string[], items: readonly string[]) => items.length > 0 && items.every((item) => acked.includes(item));
+export { acknowledged } from "../badge-acks";
 
 /**
  * The badge of each tab that needs the human. `unviewed` counts the files of a project ready to land that the human has
@@ -95,7 +89,7 @@ export function tabBadges(view: ProjectView, unviewed: number | null = null, pla
     };
   }
 
-  const wrong = wrongMerges(view);
+  const wrong = wrongMerges(view.mergeOrder);
   const wrongIds = wrong.map((entry) => entry.key);
   if (wrong.length > 0 && !acknowledged(view.badgeAcks.merge, wrongIds)) {
     badges.merge = {
@@ -108,9 +102,7 @@ export function tabBadges(view: ProjectView, unviewed: number | null = null, pla
     };
   }
 
-  const warnings = rolloutWarnings(view);
-  // The text names what is particular to the warning, such as a freeze window's title and dates, so two warnings of one kind on one ticket differ.
-  const warningId = (warning: (typeof warnings)[number]) => `${warning.kind}:${warning.keys.join(",")}:${warning.text}`;
+  const warnings = rolloutWarnings(view.rollout);
   const warningIds = [...new Set(warnings.map(warningId))];
   if (warnings.length > 0 && !acknowledged(view.badgeAcks.rollout, warningIds)) {
     badges.rollout = {

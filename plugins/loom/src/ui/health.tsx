@@ -6,8 +6,8 @@ import { CARD, HEADING, plural } from "./common";
 
 const DONE: Swatch = { fill: "var(--success, currentColor)" };
 const IN_FLIGHT: Swatch = { fill: "var(--primary, currentColor)" };
-const BLOCKED: Swatch = { fill: "var(--destructive, currentColor)" };
-const WAITING: Swatch = { fill: "var(--muted-foreground, currentColor)", opacity: 0.35 };
+const BLOCKED: Swatch = { fill: "var(--loom-mark-bad, currentColor)" };
+const WAITING: Swatch = { fill: "var(--loom-mark-quiet, currentColor)" };
 const USED: Swatch = { fill: "var(--warning, currentColor)" };
 const count = (value: number) => value.toLocaleString("en-US");
 const MINUTE = 60_000;
@@ -25,7 +25,7 @@ function Part({ id, title, value, note, children }: { id: string; title: string;
       <h3 className={HEADING}>{title}</h3>
       <p className="mt-1 text-lg font-semibold">{value}</p>
       {children}
-      {note !== undefined && <p className="mt-0.5 text-xs text-muted-foreground">{note}</p>}
+      {note !== undefined && <p className="mt-0.5 text-xs text-[var(--loom-muted)]">{note}</p>}
     </div>
   );
 }
@@ -40,7 +40,7 @@ const paceValue = (perHour: number | null, small: (text: string) => ReactNode) =
 export function HealthStrip({ health }: { health: ProjectHealth }) {
   const { progress, pace, budget, deadline, capacity } = health;
   const [open, setOpen] = useState(false);
-  const small = (text: string) => <span className="text-xs font-normal text-muted-foreground">{text}</span>;
+  const small = (text: string) => <span className="text-xs font-normal text-[var(--loom-muted)]">{text}</span>;
   return (
     <>
       <button
@@ -53,18 +53,18 @@ export function HealthStrip({ health }: { health: ProjectHealth }) {
         <span>
           <b className="font-semibold">{progress.done}</b> {small(`of ${progress.total} done`)}
         </span>
-        {progress.blocked > 0 && <span className="text-destructive-text">{progress.blocked} blocked</span>}
+        {progress.blocked > 0 && <span className="text-[var(--loom-bad)]">{progress.blocked} blocked</span>}
         <span>{paceValue(pace.perHour, small)}</span>
         <span>
           {capacity.workers}/{capacity.maxWorkers} {small("workers")}
         </span>
         {budget !== null && <span>{Math.round((budget.used / budget.max) * 100)}% {small("of the budget")}</span>}
         {deadline !== null && <span>{deadline.daysLeft > 0 ? `${plural(deadline.daysLeft, "day")} left` : "deadline passed"}</span>}
-        <span aria-hidden className="ml-auto text-muted-foreground">
+        <span aria-hidden className="ml-auto text-[var(--loom-muted)]">
           {open ? "▾" : "▸"}
         </span>
       </button>
-      <div data-health-strip className={`grid shrink-0 grid-cols-2 gap-3 border-b border-border-seam px-4 py-3 lg:grid-cols-5 ${open ? "" : "@max-xl/loom:hidden"}`}>
+      <div data-health-strip className={`grid shrink-0 grid-cols-[repeat(auto-fill,minmax(10rem,1fr))] gap-3 border-b border-border-seam px-4 py-3 ${open ? "" : "@max-xl/loom:hidden"}`}>
         <Part id="progress" title="Progress" value={<>{progress.done} {small(`of ${progress.total} done`)}</>}>
           <ShareBar
             label="Progress"

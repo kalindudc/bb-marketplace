@@ -33,7 +33,7 @@ describe("nextStepOf", () => {
     const step = nextStepOf(input({ state: "draft", approvedVersion: null }, [queued("CSV-1", true), queued("CSV-2", false)]))!;
     expect(step).toMatchObject({ stage: 1, tone: "normal", title: "Next: review draft v1." });
     expect(step.text).toBe("Read its tickets and checks, and ask the planner in its chat for any change, or approve it as it is. Approving creates 2 tickets on the board; nothing runs until you start.");
-    expect(step.action).toEqual({ control: "approve", version: 1, label: "Approve v1 · create 2 tickets", confirm: "Click again to approve v1" });
+    expect(step.action).toEqual({ control: "approve", version: 1, label: "Approve v1 · create 2 tickets", confirm: "Yes, approve v1: create 2 tickets" });
   });
 
   it("waits in the Plan stage with no button while a draft's spec review runs, has findings or did not finish, and names the override", () => {
@@ -77,7 +77,7 @@ describe("nextStepOf", () => {
     const step = nextStepOf(input({ state: "running", pendingVersion: 2 }, board, { startFailed: ["CSV-1", "CSV-2"] }))!;
     expect(step).toMatchObject({ stage: 4, tone: "normal", title: "Next: approve v2." });
     expect(step.text).toBe("The planner proposed spec v2; it changes the spec, not the tickets on the board. Approving queues CSV-1 and CSV-2 again, because bb never started their workers, and tells the planner.");
-    expect(step.action).toEqual({ control: "approve", version: 2, label: "Approve v2 · requeue 2 tickets", confirm: "Click again to approve v2" });
+    expect(step.action).toEqual({ control: "approve", version: 2, label: "Approve v2 · requeue 2 tickets", confirm: "Yes, approve v2" });
 
     const both = nextStepOf(input({ state: "running", pendingVersion: 2 }, [blocked("CSV-1", refused), blocked("CSV-2", reviewerRefused)], { startFailed: ["CSV-1"], reviewRefused: ["CSV-2"] }))!;
     expect(both.text).toBe(
@@ -124,7 +124,7 @@ describe("nextStepOf", () => {
   it("says who paused the project and offers Resume", () => {
     const human = nextStepOf(input({ state: "paused" }, [queued("CSV-1", true)]))!;
     expect(human).toMatchObject({ stage: 4, tone: "normal", title: "Paused.", text: "You paused the project: running workers finish their turn and no new one starts." });
-    expect(human.action).toEqual({ control: "resume", label: "Resume", confirm: "Click again to resume" });
+    expect(human.action).toEqual({ control: "resume", label: "Resume", confirm: "" });
 
     const now = nextStepOf(input({ state: "paused", reason: PAUSE_NOW_REASON }, []))!;
     expect(now).toMatchObject({ tone: "normal", text: "You paused the project and stopped its workers; Resume continues them." });
@@ -158,21 +158,21 @@ describe("nextStepOf", () => {
     const step = nextStepOf(input({ state: "ready" }, [queued("CSV-1", true), queued("CSV-2", true), queued("CSV-3", true), queued("CSV-4", false)]))!;
     expect(step).toMatchObject({ stage: 3, tone: "normal", title: "Next: start the project." });
     expect(step.text).toBe("Loom starts 2 workers right away, on CSV-1 and CSV-2. The other 2 tickets wait for the tickets they depend on or share files with.");
-    expect(step.action).toEqual({ control: "start", label: "Start project · 2 workers", confirm: "Click again to start 2 workers" });
+    expect(step.action).toEqual({ control: "start", label: "Start project · 2 workers", confirm: "Yes, start 2 workers" });
 
     const single = nextStepOf(input({ state: "ready" }, [queued("CSV-1", true), queued("CSV-2", false)]))!;
     expect(single.text).toBe("Loom starts 1 worker right away, on CSV-1. The other ticket waits for the tickets it depends on or shares files with.");
-    expect(single.action).toEqual({ control: "start", label: "Start project · 1 worker", confirm: "Click again to start 1 worker" });
+    expect(single.action).toEqual({ control: "start", label: "Start project · 1 worker", confirm: "Yes, start 1 worker" });
 
     const none = nextStepOf(input({ state: "ready" }, [queued("CSV-2", false)]))!;
-    expect(none.action).toEqual({ control: "start", label: "Start project", confirm: "Click again to start" });
+    expect(none.action).toEqual({ control: "start", label: "Start project", confirm: "Yes, start the project" });
   });
 
   it("offers Land once every ticket of an integration project is finished", () => {
     const step = nextStepOf(input({ state: "running", ticketCounts: { done: 2, cancelled: 1 } }, [card({ state: "done", ready: false })]))!;
     expect(step).toMatchObject({ stage: 5, tone: "normal", title: "Next: land the project." });
     expect(step.text).toBe("Every ticket is finished. Read what lands on the Changes tab; landing pushes the integration branch and opens its pull request, or updates the one already open.");
-    expect(step.action).toEqual({ control: "land", label: "Land · open the pull request", confirm: "Click again to land" });
+    expect(step.action).toEqual({ control: "land", label: "Land · open the pull request", confirm: "Yes, land: push and open the pull request" });
   });
 
   it("names the repos of a multi-repo project whose merged work is not landed yet in the land step", () => {
@@ -184,7 +184,7 @@ describe("nextStepOf", () => {
     expect(two.text).toBe(
       'Every ticket is finished, and the repos "web" and "api" have merged work that is not landed yet. Read what lands on the Changes tab; landing pushes each one\'s integration branch and opens its pull request, or updates the one already open.',
     );
-    expect(two.action).toEqual({ control: "land", label: "Land · 2 repos", confirm: "Click again to land" });
+    expect(two.action).toEqual({ control: "land", label: "Land · 2 repos", confirm: "Yes, land: push and open the pull requests" });
 
     const one = nextStepOf(finished([repo("web", false), repo("api", true)]))!;
     expect(one.text).toBe('Every ticket is finished, and the repo "api" has merged work that is not landed yet. Read what lands on the Changes tab; landing pushes its integration branch and opens its pull request, or updates the one already open.');
@@ -192,7 +192,7 @@ describe("nextStepOf", () => {
 
     const none = nextStepOf(finished([repo("web", false), repo("api", false)]))!;
     expect(none).toMatchObject({ stage: 5, text: "Every ticket is finished, and every repo with merged work is landed. Read what lands on the Changes tab; landing again finishes the project." });
-    expect(none.action).toEqual({ control: "land", label: "Land · finish the project", confirm: "Click again to land" });
+    expect(none.action).toEqual({ control: "land", label: "Land · finish the project", confirm: "Yes, land: push and open the pull requests" });
 
     const working = nextStepOf(input({ state: "running", ticketCounts: { done: 1, working: 1 }, repos: [repo("web", true), repo("api", false)] }, [card({ key: "CSV-2", state: "working", ready: false })]))!;
     expect(working.title).toBe("Running.");
@@ -215,7 +215,7 @@ describe("nextStepOf", () => {
 
   it("says when a merge waits after a temporary failure and when Loom tries it again, without asking anything of the human", () => {
     const until = Date.UTC(2026, 9, 27, 14, 5);
-    const board = [card({ key: "CSV-2", state: "merging", ready: false, retry: { step: "merge", failures: 1, since: until - 60_000, until, message: "host plugin call 1f46 exceeded its deadline" } })];
+    const board = [card({ key: "CSV-2", state: "merging", ready: false, retry: { step: "merge", failures: 1, since: until - 60_000, until, message: "host plugin call 1f46 exceeded its deadline", kind: "unknown" } })];
     const step = nextStepOf(input({ state: "running" }, board))!;
     expect(step).toMatchObject({ tone: "normal", title: "Running.", action: null });
     expect(step.text).toBe(

@@ -68,6 +68,28 @@ describe("a spec that names a forge profile", () => {
     expect(merging.errors).toContain('merge.forge.merge: is required with auto_merge on a kind = "command" forge. Add the command that merges the pull request in LOOM_URL, or hands it to the server\'s merge service.');
   });
 
+  it("leaves merge.forge out when only a repo names a profile, so the spec stays a JSON value", () => {
+    saveProfile(h.store, FORGE, null);
+    const parsed = parseSpec(
+      specToml((doc) => {
+        doc.merge = { strategy: "pr", describe: "loom" };
+        doc.repo = [
+          { name: "web", project: "proj_web", forge: { profile: "forge" } },
+          { name: "api", project: "proj_api" },
+        ];
+        doc.ticket[0].repo = "web";
+        doc.ticket[1].repo = "api";
+        doc.ticket[1].depends_on = [];
+      }),
+      h.store,
+    );
+    expect(parsed.errors).toEqual([]);
+    const runs = readSpec(JSON.stringify(parsed.spec), h.store);
+    expect("forge" in runs.merge).toBe(false);
+    expect(runs.repo![0]!.forge).toMatchObject({ profile: "forge", open: "forge pr create" });
+    expect("forge" in runs.repo![1]!).toBe(false);
+  });
+
   it("is refused at loom_propose when the profile is unknown", async () => {
     await expect(h.projects.propose({ toml: specToml(usesProfile()), threadId: "thr_plan", bbProjectId: "proj_1", hostId: "host_1" })).rejects.toThrow('Loom has no forge profile "forge"');
   });

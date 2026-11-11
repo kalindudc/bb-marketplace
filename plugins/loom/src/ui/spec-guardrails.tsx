@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { Markdown } from "@get-bb/plugin-sdk/app";
 import type { Spec } from "../spec";
-import { BUTTON, HEADING, plural } from "./common";
+import { BUTTON, HEADING, plural, TAP } from "./common";
 import { CHANGED_TAG, Commentable, DiffList, NEW_TAG, WordDiff, changeAt, kept, useReview, type ListMark } from "./spec-review-kit";
 
 const LONG_GOAL = 700;
@@ -11,7 +11,7 @@ function Card({ id, title, count, anchor, children }: { id: string; title: strin
     <section data-guardrail={id} data-anchor={anchor} aria-label={title} className="min-w-0 rounded-lg border border-border-seam bg-card p-3">
       <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold">
         {title}
-        {count !== undefined && <span className="text-xs font-normal text-muted-foreground">{count}</span>}
+        {count !== undefined && <span className="text-xs font-normal text-[var(--loom-muted)]">{count}</span>}
       </h3>
       {children}
     </section>
@@ -22,25 +22,25 @@ function Card({ id, title, count, anchor, children }: { id: string; title: strin
 function Lines({ path, label, items, marker }: { path: string; label: string; items: readonly string[]; marker: (index: number) => ReactNode }) {
   const line = (text: string, mark: ListMark, index: number) =>
     mark === "removed" ? (
-      <li data-removed className="flex gap-2 rounded-md bg-destructive-text/10 px-1.5 py-1 text-sm text-destructive-text line-through">
+      <li data-removed className="flex gap-2 rounded-md bg-destructive-text/10 px-1.5 py-1 text-sm text-[var(--loom-bad)] line-through">
         {text}
       </li>
     ) : (
       <li>
         <Commentable target={{ paths: [`${path}[${index}]`], label: `${label} ${index + 1}`, kind: "text" }} className={`flex gap-2 px-1.5 py-1 text-sm ${mark === "added" ? "bg-success/15 ring-1 ring-success" : ""}`}>
-          <span aria-hidden className="shrink-0 text-xs text-subtle-foreground">
+          <span aria-hidden className="shrink-0 text-xs text-[var(--loom-muted)]">
             {marker(index)}
           </span>
           <span className="min-w-0 [overflow-wrap:anywhere]">
             {text}
-            {mark === "added" && <span className="ml-1.5 text-[10px] font-semibold text-success">new</span>}
+            {mark === "added" && <span className="ml-1.5 text-[11px] font-semibold text-[var(--loom-ok)]">new</span>}
           </span>
         </Commentable>
       </li>
     );
   return (
     <ul className="space-y-0.5">
-      <DiffList path={path} items={items} render={line} rest={(count) => <li className="px-1.5 text-[11px] text-subtle-foreground">… {count} unchanged</li>} />
+      <DiffList path={path} items={items} render={line} rest={(count) => <li className="px-1.5 text-[11px] text-[var(--loom-muted)]">… {count} unchanged</li>} />
     </ul>
   );
 }
@@ -70,7 +70,7 @@ export function GuardrailsSection({ spec, toml, onShowAll }: { spec: Spec; toml:
     <div className="space-y-3">
       {shown.has("goal") && (
         <Card id="goal" title="Goal" anchor="project">
-          <p className="mb-1 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+          <p className="mb-1 flex flex-wrap items-center gap-1.5 text-xs text-[var(--loom-muted)]">
             <Commentable as="span" target={{ paths: ["project.name"], label: "Project name", kind: "text", value: project.name }} className="px-1 text-foreground">
               {project.name}
             </Commentable>
@@ -95,7 +95,7 @@ export function GuardrailsSection({ spec, toml, onShowAll }: { spec: Spec; toml:
               showWas={false}
             >
               {project.summary === undefined ? (
-                <p data-spec-summary className="text-xs text-warning-text">
+                <p data-spec-summary className="text-xs text-[var(--loom-warn)]">
                   No summary: this version was written before every proposal needed one, so the planner's next revision adds it.
                 </p>
               ) : summaryDiff ? (
@@ -137,7 +137,8 @@ export function GuardrailsSection({ spec, toml, onShowAll }: { spec: Spec; toml:
           {((project.done_when ?? []).length > 0 || changeAt(review, "project.done_when") !== undefined) && (
             <div data-spec-done-when className="mt-2">
               <h4 className={`${HEADING} mb-1 px-1`}>Done when</h4>
-              <Lines path="project.done_when" label="Done when" items={project.done_when ?? []} marker={() => "✓"} />
+              {/* Numbered, not ticked: Loom does not check these lines, so a tick would claim what nobody verified. */}
+              <Lines path="project.done_when" label="Done when" items={project.done_when ?? []} marker={(index) => `${index + 1}.`} />
             </div>
           )}
         </Card>
@@ -146,9 +147,9 @@ export function GuardrailsSection({ spec, toml, onShowAll }: { spec: Spec; toml:
         <div className="grid gap-3 @3xl:grid-cols-2">
           {shown.has("non-goals") && (
             <Card id="non-goals" title="Not in this project" anchor="project.non_goals" count={project.non_goals.length}>
-              {project.non_goals.length === 0 && changeAt(review, "project.non_goals") === undefined ? <p className="px-1.5 text-sm text-muted-foreground">The planner listed no non-goals.</p> : <Lines path="project.non_goals" label="Non-goal" items={project.non_goals} marker={() => "⊘"} />}
+              {project.non_goals.length === 0 && changeAt(review, "project.non_goals") === undefined ? <p className="px-1.5 text-sm text-[var(--loom-muted)]">The planner listed no non-goals.</p> : <Lines path="project.non_goals" label="Non-goal" items={project.non_goals} marker={() => "⊘"} />}
               {review.onComment !== undefined && (
-                <Commentable as="span" target={{ paths: ["project.non_goals"], label: "Non-goals", kind: "text" }} className="mt-2 inline-block rounded-full border border-border-seam px-2 text-xs text-muted-foreground" showWas={false}>
+                <Commentable as="span" target={{ paths: ["project.non_goals"], label: "Non-goals", kind: "text" }} className="mt-2 inline-block rounded-full border border-border-seam px-2 text-xs text-[var(--loom-muted)]" showWas={false}>
                   + Suggest another non-goal
                 </Commentable>
               )}
@@ -157,7 +158,7 @@ export function GuardrailsSection({ spec, toml, onShowAll }: { spec: Spec; toml:
           {shown.has("rubric") && (
             <Card id="rubric" title="What every reviewer checks" anchor="review.rubric" count={rules.rubric.length}>
               {rules.rubric.length === 0 && changeAt(review, "review.rubric") === undefined ? (
-                <Commentable target={{ paths: ["review.rubric"], label: "Reviewer rubric", kind: "text" }} className="p-1.5 text-sm text-muted-foreground">
+                <Commentable target={{ paths: ["review.rubric"], label: "Reviewer rubric", kind: "text" }} className="p-1.5 text-sm text-[var(--loom-muted)]">
                   No rubric: reviewers judge each ticket by its criteria.
                 </Commentable>
               ) : (
@@ -169,11 +170,11 @@ export function GuardrailsSection({ spec, toml, onShowAll }: { spec: Spec; toml:
       )}
       {shown.has("questions") && (
         <Card id="questions" title="Open questions" anchor="project.open_questions" count={project.open_questions.length}>
-          {project.open_questions.length === 0 && changeAt(review, "project.open_questions") === undefined ? <p className="px-1.5 text-sm text-muted-foreground">The planner left no open questions.</p> : <Lines path="project.open_questions" label="Open question" items={project.open_questions} marker={() => "?"} />}
+          {project.open_questions.length === 0 && changeAt(review, "project.open_questions") === undefined ? <p className="px-1.5 text-sm text-[var(--loom-muted)]">The planner left no open questions.</p> : <Lines path="project.open_questions" label="Open question" items={project.open_questions} marker={() => "?"} />}
         </Card>
       )}
       {hidden > 0 && (
-        <p data-hidden-line className="flex items-center gap-2 rounded-md border border-dashed border-border-seam px-3 py-2 text-xs text-muted-foreground">
+        <p data-hidden-line className="flex flex-wrap items-center gap-2 rounded-md border border-dashed border-border-seam px-3 py-2 text-xs text-[var(--loom-muted)]">
           {hidden === 4 ? "Nothing here changed." : `${plural(hidden, "part")} did not change.`}
           <button type="button" className={`${BUTTON} ml-auto`} onClick={onShowAll}>
             Show {hidden === 1 ? "it" : "them"}
@@ -181,7 +182,7 @@ export function GuardrailsSection({ spec, toml, onShowAll }: { spec: Spec; toml:
         </p>
       )}
       <details data-spec-raw-details className="rounded-lg border border-border-seam bg-card px-3 py-2">
-        <summary className="cursor-pointer text-xs text-muted-foreground">Read the raw spec (TOML). Everything above comes from it.</summary>
+        <summary className={`flex min-h-6 cursor-pointer items-center text-xs text-[var(--loom-muted)] ${TAP}`}>Read the raw spec (TOML). Everything above comes from it.</summary>
         <pre data-spec-raw className="mt-2 max-h-96 overflow-auto rounded-md bg-surface-recessed p-3 text-xs leading-relaxed">{toml}</pre>
       </details>
     </div>

@@ -172,12 +172,12 @@ describe("the plugin's own documents", () => {
     expect(read("PLUGIN_OVERVIEW.md")).toContain("Ask User Question");
   });
 
-  it("README and the loom skill describe the refusal and approval requeue, and the next-step bar", () => {
+  it("README and the loom skill describe the refusal and approval requeue, the project line and confirm in place", () => {
     for (const path of ["README.md", "skills/loom/SKILL.md"]) {
       const text = read(path);
-      for (const phrase of ["never started", "next-step bar"]) expect(text, `${path}: ${phrase}`).toContain(phrase);
+      for (const phrase of ["never started", "project line", "Yes, <what it does>", "no timer"]) expect(text, `${path}: ${phrase}`).toContain(phrase);
+      expect(text, path).not.toContain("Click again to");
     }
-    expect(read("README.md")).toContain("Click again to");
   });
 
   it("README and the loom skill say a reply on a blocked ticket reaches the planner, providers are checked, and approval sends a refused reviewer's ticket back to review", () => {

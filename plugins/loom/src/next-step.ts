@@ -15,6 +15,7 @@ export interface NextStep {
   tone: "normal" | "warning";
   title: string;
   text: string;
+  /** `confirm` is the armed button's "Yes, …" text; an empty one is a reversible action that takes one click. */
   action: { control: ControlAction; version?: number; label: string; confirm: string } | null;
   /** The setting paths a skipped spec review changed, which `text` sums up and the bar lists behind a disclosure. */
   paths?: string[];
@@ -76,7 +77,7 @@ function ciText(board: readonly BoardCard[]): string {
 /** A multi-repo project names the repos with merged work that is not landed yet; landing with none left finishes the project. */
 function landStep(overview: ProjectOverview): NextStep {
   const step = { stage: 5, tone: "normal" as const, title: "Next: land the project." };
-  const confirm = "Click again to land";
+  const confirm = isMultiRepoProject(overview) ? "Yes, land: push and open the pull requests" : "Yes, land: push and open the pull request";
   if (!isMultiRepoProject(overview)) {
     return {
       ...step,
@@ -190,7 +191,7 @@ export function nextStepOf(input: NextStepInput): NextStep | null {
       tone: "normal",
       title: `Next: review draft v${version}.`,
       text: `${reviewedNote(input.specReview, repoNames)}Read its tickets and checks, and ask the planner in its chat for any change, or approve it as it is. Approving creates ${tickets} on the board; nothing runs until you start.`,
-      action: { control: "approve", version, label: `Approve v${version} · create ${tickets}`, confirm: `Click again to approve v${version}` },
+      action: { control: "approve", version, label: `Approve v${version} · create ${tickets}`, confirm: `Yes, approve v${version}: create ${tickets}` },
       ...skippedPaths(input.specReview),
     };
   }
@@ -210,7 +211,7 @@ export function nextStepOf(input: NextStepInput): NextStep | null {
         control: "approve",
         version: pendingVersion,
         label: `Approve v${pendingVersion}${moved === 0 ? "" : ` · requeue ${plural(moved, "ticket")}`}`,
-        confirm: `Click again to approve v${pendingVersion}`,
+        confirm: `Yes, approve v${pendingVersion}`,
       },
       ...skippedPaths(input.specReview),
     };
@@ -230,7 +231,8 @@ export function nextStepOf(input: NextStepInput): NextStep | null {
       tone: (reason !== null && reason !== PAUSE_NOW_REASON) || blocked.length > 0 ? "warning" : "normal",
       title: "Paused.",
       text: blocked.length === 0 ? why : `${why} ${blockedText(blocked, input)}`,
-      action: { control: "resume", label: "Resume", confirm: "Click again to resume" },
+      // Resume is reversible, so it takes one click: it has no confirmation.
+      action: { control: "resume", label: "Resume", confirm: "" },
     };
   }
 
@@ -249,7 +251,7 @@ export function nextStepOf(input: NextStepInput): NextStep | null {
       tone: "normal",
       title: "Next: start the project.",
       text: n === 0 ? `No ticket is ready to start yet.${waits}` : `Loom starts ${plural(n, "worker")} right away, on ${list(starting.map((card) => card.key))}.${waits}`,
-      action: n === 0 ? { control: "start", label: "Start project", confirm: "Click again to start" } : { control: "start", label: `Start project · ${plural(n, "worker")}`, confirm: `Click again to start ${plural(n, "worker")}` },
+      action: n === 0 ? { control: "start", label: "Start project", confirm: "Yes, start the project" } : { control: "start", label: `Start project · ${plural(n, "worker")}`, confirm: `Yes, start ${plural(n, "worker")}` },
     };
   }
 

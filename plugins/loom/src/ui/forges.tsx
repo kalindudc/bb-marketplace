@@ -90,8 +90,8 @@ function TestRun({ label, run }: { label: string; run(url: string): Promise<Forg
           {busy ? "Testing…" : "Test"}
         </button>
       </div>
-      <p className="text-xs text-muted-foreground">Runs only the state and feedback commands, which read the pull request and change nothing.</p>
-      {error !== null && <p className="text-xs text-destructive-text">{error}</p>}
+      <p className="text-xs text-[var(--loom-muted)]">Runs only the state and feedback commands, which read the pull request and change nothing.</p>
+      {error !== null && <p className="text-xs text-[var(--loom-bad)]">{error}</p>}
       {result !== null && (
         <pre data-forge-test-result={result.passed ? "passed" : "failed"} className={`max-h-96 overflow-auto rounded-md border p-2 font-mono text-[11.5px] leading-relaxed ${result.passed ? "border-border-seam" : "border-destructive-text"}`}>
           {result.text}
@@ -112,9 +112,9 @@ function ProfileCard({ view, onEdit }: { view: ForgeProfileView; onEdit(): void 
       <div className="flex flex-wrap items-center gap-2">
         <div className="min-w-0 flex-1">
           <div className="text-sm font-semibold">
-            {profile.name} <span className="font-mono text-xs font-normal text-muted-foreground">{profile.id}</span>
+            {profile.name} <span className="font-mono text-xs font-normal text-[var(--loom-muted)]">{profile.id}</span>
           </div>
-          <div className="text-xs text-muted-foreground">
+          <div className="text-xs text-[var(--loom-muted)]">
             Version {view.hash}, saved {momentLabel(view.updatedAt)}. {view.usedBy.length === 0 ? "No project uses it." : `Used by ${view.usedBy.map((use) => `${use.slug}${use.inForce ? "" : " (a version not approved yet)"}`).join(", ")}.`}
             {view.usedBy.length === 0 && !view.deletable && " Older or archived specs name it, so Loom keeps it."}
           </div>
@@ -122,9 +122,9 @@ function ProfileCard({ view, onEdit }: { view: ForgeProfileView; onEdit(): void 
         <button type="button" aria-label={`Edit ${profile.name}`} className={BUTTON} onClick={onEdit}>
           Edit
         </button>
-        {view.deletable && <ConfirmButton label="Delete" confirmLabel="Click again to delete" danger disabled={busy} onConfirm={() => void act(() => remove({ id: profile.id, confirm: true }), `Deleted ${profile.name}`)} />}
+        {view.deletable && <ConfirmButton label="Delete" confirmLabel={`Yes, delete ${profile.name}`} disarmKey={profile.id} danger disabled={busy} onConfirm={() => void act(() => remove({ id: profile.id, confirm: true }), `Deleted ${profile.name}`)} />}
       </div>
-      <div className="mt-1.5 text-xs text-muted-foreground">
+      <div className="mt-1.5 text-xs text-[var(--loom-muted)]">
         Runs <span className="font-mono">{runs.join(", ")}</span>
         {profile.after_open !== undefined && ", after_open"}
         {profile.after_push !== undefined && ", after_push"}
@@ -155,7 +155,7 @@ function ProfileForm({ initial, onDone }: { initial: Draft; onDone(): void }) {
     }
   };
   const row = "grid grid-cols-1 items-start gap-1 sm:grid-cols-[10rem_minmax(0,1fr)] sm:gap-3";
-  const label = "pt-1.5 text-xs text-muted-foreground";
+  const label = "pt-1.5 text-xs text-[var(--loom-muted)]";
   return (
     <div data-forge-form className={`${CARD} flex flex-col gap-2.5`}>
       <b className="text-sm">{draft.original === null ? "Add a forge profile" : `Edit ${initial.name}`}</b>
@@ -167,7 +167,7 @@ function ProfileForm({ initial, onDone }: { initial: Draft; onDone(): void }) {
         <span className={label}>Id</span>
         <span>
           <input aria-label="Profile id" className={`${FIELD} font-mono`} placeholder="forge" value={draft.id} disabled={draft.original !== null} onChange={(event) => set("id", event.target.value)} />
-          <span className="mt-1 block text-xs text-muted-foreground">What a spec names: forge = {"{"} profile = "{draft.id.trim() || "forge"}" {"}"}. Lowercase letters, digits and dashes; it cannot change later.</span>
+          <span className="mt-1 block text-xs text-[var(--loom-muted)]">What a spec names: forge = {"{"} profile = "{draft.id.trim() || "forge"}" {"}"}. Lowercase letters, digits and dashes; it cannot change later.</span>
         </span>
       </label>
       {COMMANDS.map((command) => (
@@ -178,7 +178,7 @@ function ProfileForm({ initial, onDone }: { initial: Draft; onDone(): void }) {
           </span>
           <span>
             <input aria-label={`${command.key} command`} className={`${FIELD} font-mono text-xs`} value={draft.commands[command.key]} onChange={(event) => set("commands", { ...draft.commands, [command.key]: event.target.value })} />
-            <span className="mt-1 block text-xs text-muted-foreground">{command.what}</span>
+            <span className="mt-1 block text-xs text-[var(--loom-muted)]">{command.what}</span>
           </span>
         </label>
       ))}
@@ -186,14 +186,14 @@ function ProfileForm({ initial, onDone }: { initial: Draft; onDone(): void }) {
         <span className={label}>after_open</span>
         <span>
           <textarea aria-label="after_open commands" rows={2} className={`${FIELD} font-mono text-xs`} value={draft.afterOpen} onChange={(event) => set("afterOpen", event.target.value)} />
-          <span className="mt-1 block text-xs text-muted-foreground">One command per line, run once after the pull request opens; a failure is posted and holds nothing.</span>
+          <span className="mt-1 block text-xs text-[var(--loom-muted)]">One command per line, run once after the pull request opens; a failure is posted and holds nothing.</span>
         </span>
       </label>
       <label className={row}>
         <span className={label}>after_push</span>
         <span>
           <textarea aria-label="after_push commands" rows={2} className={`${FIELD} font-mono text-xs`} value={draft.afterPush} onChange={(event) => set("afterPush", event.target.value)} />
-          <span className="mt-1 block text-xs text-muted-foreground">One command per line, run after each push to the open pull request and after Loom moves it to another base.</span>
+          <span className="mt-1 block text-xs text-[var(--loom-muted)]">One command per line, run after each push to the open pull request and after Loom moves it to another base.</span>
         </span>
       </label>
       <label className={row}>
@@ -204,25 +204,25 @@ function ProfileForm({ initial, onDone }: { initial: Draft; onDone(): void }) {
         <span className={label}>Bot authors</span>
         <span>
           <input aria-label="Bot authors" className={`${FIELD} font-mono text-xs`} placeholder="*@robots.example.com, merge-bot*" value={draft.bots} onChange={(event) => set("bots", event.target.value)} />
-          <span className="mt-1 block text-xs text-muted-foreground">Globs separated by commas. Their top-level comments start no fix round, on top of the accounts the server marks as bots and Loom's Bot authors setting.</span>
+          <span className="mt-1 block text-xs text-[var(--loom-muted)]">Globs separated by commas. Their top-level comments start no fix round, on top of the accounts the server marks as bots and Loom's Bot authors setting.</span>
         </span>
       </label>
       <label className={row}>
         <span className={label}>Review gate rounds</span>
         <span>
           <input aria-label="Review gate rounds" inputMode="numeric" className={`${FIELD} w-24`} placeholder="3" value={draft.reviewRounds} onChange={(event) => set("reviewRounds", event.target.value)} />
-          <span className="mt-1 block text-xs text-muted-foreground">How many fix rounds the review gate's findings may start before Loom stops sending them and leaves the draft to you. 1 to 10; empty is 3.</span>
+          <span className="mt-1 block text-xs text-[var(--loom-muted)]">How many fix rounds the review gate's findings may start before Loom stops sending them and leaves the draft to you. 1 to 10; empty is 3.</span>
         </span>
       </label>
       <label className={row}>
         <span className={label}>Notes for agents</span>
         <span>
           <textarea aria-label="Notes for agents" rows={3} className={FIELD} value={draft.notes} onChange={(event) => set("notes", event.target.value)} />
-          <span className="mt-1 block text-xs text-muted-foreground">Added to the brief of every worker and reviewer of a pull request on this forge, such as how the server's review bot clears a finding.</span>
+          <span className="mt-1 block text-xs text-[var(--loom-muted)]">Added to the brief of every worker and reviewer of a pull request on this forge, such as how the server's review bot clears a finding.</span>
         </span>
       </label>
       <TestRun label="this profile" run={(url) => test({ profile: profileOf(draft), url })} />
-      {error !== null && <p className="text-xs text-destructive-text">{error}</p>}
+      {error !== null && <p className="text-xs text-[var(--loom-bad)]">{error}</p>}
       <div className="flex justify-end gap-2">
         <button type="button" className={BUTTON} onClick={onDone}>
           Cancel
@@ -239,7 +239,7 @@ function ProfileForm({ initial, onDone }: { initial: Draft; onDone(): void }) {
 export function ForgesSection() {
   const { data, error } = useLoom("forgeProfiles", null);
   const [editing, setEditing] = useState<Draft | null>(null);
-  if (data === undefined) return error !== null ? <p className="text-sm text-destructive-text">Could not load the forge profiles: {error}</p> : <p className="text-sm text-muted-foreground">Loading…</p>;
+  if (data === undefined) return error !== null ? <p className="text-sm text-[var(--loom-bad)]">Could not load the forge profiles: {error}</p> : <p className="text-sm text-[var(--loom-muted)]">Loading…</p>;
   return (
     <div data-section="forges" className="flex flex-col gap-3">
       <ul className="flex flex-col gap-2.5">
@@ -247,7 +247,7 @@ export function ForgesSection() {
           <ProfileCard key={view.profile.id} view={view} onEdit={() => setEditing(draftOf(view.profile))} />
         ))}
       </ul>
-      {data.length === 0 && <p className="text-sm text-muted-foreground">No forge profiles yet. A spec can still write its forge's commands itself; a profile keeps them in one place for every project.</p>}
+      {data.length === 0 && <p className="text-sm text-[var(--loom-muted)]">No forge profiles yet. A spec can still write its forge's commands itself; a profile keeps them in one place for every project.</p>}
       {editing !== null ? (
         <ProfileForm key={editing.original ?? "new"} initial={editing} onDone={() => setEditing(null)} />
       ) : (
@@ -286,14 +286,14 @@ export function ForgeTransferSection() {
         <button type="button" className={BUTTON} onClick={() => setShown(!shown)} aria-expanded={shown}>
           {shown ? "Hide the TOML" : "Show the TOML"}
         </button>
-        <span className="text-xs text-muted-foreground">The same as <code className="rounded bg-surface-recessed px-1 font-mono">bb loom forge export</code>. Importing never removes a profile the TOML leaves out.</span>
+        <span className="text-xs text-[var(--loom-muted)]">The same as <code className="rounded bg-surface-recessed px-1 font-mono">bb loom forge export</code>. Importing never removes a profile the TOML leaves out.</span>
       </div>
       {shown && <pre data-forge-toml className="max-h-96 overflow-auto rounded-md border border-border-seam p-2 font-mono text-xs">{exported.data?.toml || "# No forge profiles."}</pre>}
       <textarea aria-label="TOML to import" rows={8} className={`${FIELD} font-mono text-xs`} placeholder={'[[forge]]\nid = "forge"\nname = "Forge"\nopen = "…"\nstate = "…"'} value={toml} onChange={(event) => setToml(event.target.value)} />
-      {error !== null && <p className="text-xs text-destructive-text">{error}</p>}
+      {error !== null && <p className="text-xs text-[var(--loom-bad)]">{error}</p>}
       {current !== null && (
         <div data-forge-import-preview className="text-sm">
-          {current.changes.length === 0 ? <span className="text-muted-foreground">This TOML matches the profiles Loom has.</span> : <ul className="list-disc pl-5">{current.changes.map((change) => <li key={change}>{change}</li>)}</ul>}
+          {current.changes.length === 0 ? <span className="text-[var(--loom-muted)]">This TOML matches the profiles Loom has.</span> : <ul className="list-disc pl-5">{current.changes.map((change) => <li key={change}>{change}</li>)}</ul>}
         </div>
       )}
       <div className="flex justify-end gap-2">

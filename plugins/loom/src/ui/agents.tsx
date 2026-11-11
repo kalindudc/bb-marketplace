@@ -4,11 +4,12 @@ import { endLabel, formatDuration, noTokenUsage } from "../format";
 import type { Role } from "../states";
 import { ShareBar, type Swatch } from "./charts";
 import { BUTTON, CARD, HEADING, plural } from "./common";
+import { ModelName } from "./model-name";
 
 const ROLE_SWATCHES: Record<Role, Swatch> = {
   worker: { fill: "var(--primary, currentColor)" },
   reviewer: { fill: "var(--success, currentColor)" },
-  planner: { fill: "var(--muted-foreground, currentColor)" },
+  planner: { fill: "var(--loom-muted, currentColor)" },
 };
 const count = (value: number) => value.toLocaleString("en-US");
 // A row bb never started a thread for used nothing, so it is not counted as one that reported nothing.
@@ -16,7 +17,7 @@ const tokensText = (row: Pick<AgentRow, "threadId" | "tokens">) => (row.tokens !
 const CELL = "py-1 pr-3 align-top @max-xl/loom:p-0";
 // On a narrow page each row stacks: the role and ticket on one line, then its facts, each named by its column.
 const STACKED_ROW = "@max-xl/loom:flex @max-xl/loom:flex-wrap @max-xl/loom:items-baseline @max-xl/loom:gap-x-3 @max-xl/loom:gap-y-0.5 @max-xl/loom:py-2";
-const FACT = "@max-xl/loom:text-xs @max-xl/loom:before:mr-1 @max-xl/loom:before:text-muted-foreground @max-xl/loom:before:content-[attr(data-label)]";
+const FACT = "@max-xl/loom:text-xs @max-xl/loom:before:mr-1 @max-xl/loom:before:text-[var(--loom-muted)] @max-xl/loom:before:content-[attr(data-label)]";
 
 function ticketText(row: AgentRow): string {
   if (row.ticketKey === null) return "the project's planner";
@@ -28,7 +29,7 @@ function AgentTable({ rows, now, ended }: { rows: AgentRow[]; now: number; ended
   return (
     <div className="overflow-x-auto">
       <table className="mt-1 w-full min-w-[560px] text-left text-sm @max-xl/loom:block @max-xl/loom:min-w-0">
-        <thead className="text-xs text-muted-foreground @max-xl/loom:hidden">
+        <thead className="text-xs text-[var(--loom-muted)] @max-xl/loom:hidden">
           <tr>
             {["Role", "Ticket", "Model", ended ? "Ran for" : "Running for", ...(ended ? ["Ended"] : []), "Tokens", "Retries", ""].map((heading) => (
               <th key={heading} className={`${CELL} font-normal`}>{heading}</th>
@@ -40,10 +41,10 @@ function AgentTable({ rows, now, ended }: { rows: AgentRow[]; now: number; ended
             <tr key={row.threadId ?? `${row.role}-${index}`} data-agent-row={row.threadId ?? row.role} className={`border-t border-border-seam ${STACKED_ROW}`}>
               <td className={`${CELL} @max-xl/loom:font-medium`}>{row.role}</td>
               <td className={`${CELL} @max-xl/loom:min-w-0 @max-xl/loom:flex-1 @max-xl/loom:basis-[60%] [overflow-wrap:anywhere]`}>{ticketText(row)}</td>
-              <td data-label="Model" className={`${CELL} ${FACT} text-muted-foreground`}>{row.model ?? "default"}</td>
+              <td data-label="Model" className={`${CELL} ${FACT} max-w-48 text-[var(--loom-muted)]`}>{row.model === null ? "default" : <ModelName model={row.model} />}</td>
               <td data-label={ended ? "Ran for" : "Running for"} className={`${CELL} ${FACT}`}>
                 {formatDuration((row.endedAt ?? now) - row.startedAt)}
-                {row.timeoutAt !== null && <span className="text-warning-text"> · timeout at {formatDuration(row.timeoutAt - row.startedAt)}</span>}
+                {row.timeoutAt !== null && <span className="text-[var(--loom-warn)]"> · timeout at {formatDuration(row.timeoutAt - row.startedAt)}</span>}
               </td>
               {ended && (
                 <td data-label="Ended" className={`${CELL} ${FACT}`}>
@@ -78,7 +79,7 @@ function PlannerOnCall({ rows }: { rows: AgentRow[] }) {
       <h2 className={HEADING}>Planner</h2>
       {rows.map((row, index) => (
         <div key={row.threadId ?? index} className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
-          <span className="flex-1 text-muted-foreground">On call for triage rounds</span>
+          <span className="flex-1 text-[var(--loom-muted)]">On call for triage rounds</span>
           <span>Tokens {tokensText(row)}</span>
           {row.threadId !== null && (
             <button type="button" className={BUTTON} onClick={() => navigate.toThread(row.threadId!)}>
@@ -102,7 +103,7 @@ export function AgentsView({ agents, byRole, unreported, now }: { agents: AgentR
     <div className="space-y-4 p-4">
       <section data-agents-live className={CARD}>
         <h2 className={HEADING}>Working now</h2>
-        {live.length === 0 ? <p className="mt-1 text-sm text-muted-foreground">No agent is working now.</p> : <AgentTable rows={live} now={now} ended={false} />}
+        {live.length === 0 ? <p className="mt-1 text-sm text-[var(--loom-muted)]">No agent is working now.</p> : <AgentTable rows={live} now={now} ended={false} />}
       </section>
       {planners.length > 0 && <PlannerOnCall rows={planners} />}
       <div className="grid gap-4 lg:grid-cols-2">
@@ -116,12 +117,12 @@ export function AgentsView({ agents, byRole, unreported, now }: { agents: AgentR
               { label: `planner ${count(byRole.planner)}`, value: byRole.planner, swatch: ROLE_SWATCHES.planner },
             ]}
           />
-          {unreported > 0 && <p className="mt-2 text-xs text-muted-foreground">{noTokenUsage(unreported)}</p>}
+          {unreported > 0 && <p className="mt-2 text-xs text-[var(--loom-muted)]">{noTokenUsage(unreported)}</p>}
         </section>
         <section className={CARD}>
           <h2 className={HEADING}>How threads ended</h2>
           {endings.size === 0 ? (
-            <p className="mt-1 text-sm text-muted-foreground">No thread has ended yet.</p>
+            <p className="mt-1 text-sm text-[var(--loom-muted)]">No thread has ended yet.</p>
           ) : (
             <table className="mt-1 text-sm">
               <tbody>
@@ -138,7 +139,7 @@ export function AgentsView({ agents, byRole, unreported, now }: { agents: AgentR
       </div>
       {ended.length > 0 && (
         <details data-agents-history className={CARD}>
-          <summary className="cursor-pointer text-sm">Ended threads ({ended.length})</summary>
+          <summary className="cursor-pointer text-sm @max-xl/loom:leading-[2.75rem] max-[576px]:leading-[2.75rem]">Ended threads ({ended.length})</summary>
           <AgentTable rows={ended} now={now} ended />
         </details>
       )}

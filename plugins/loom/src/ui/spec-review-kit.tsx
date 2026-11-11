@@ -235,7 +235,7 @@ export function changeText(change: SpecChange): string {
 
 export function Pin({ n }: { n: number }) {
   return (
-    <span data-pin={n} title="Your comment" className="ml-1.5 inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-warning px-1 align-[1px] text-[10px] leading-none font-semibold text-black">
+    <span data-pin={n} title="Your comment" className="ml-1.5 inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-warning px-1 align-[1px] text-[11px] leading-none font-semibold text-black">
       {n}
     </span>
   );
@@ -244,7 +244,7 @@ export function Pin({ n }: { n: number }) {
 /** A finding of Loom's spec review on the part, numbered as the review lists them; its title shows on hover. */
 export function FindingPin({ finding }: { finding: ReviewFinding }) {
   return (
-    <span data-finding-pin={finding.n} title={`Loom's spec review: ${finding.title}`} className="ml-1.5 inline-flex h-4 shrink-0 items-center justify-center rounded-full border border-attention bg-attention/15 px-1 align-[1px] text-[10px] leading-none font-semibold text-foreground">
+    <span data-finding-pin={finding.n} title={`Loom's spec review: ${finding.title}`} className="ml-1.5 inline-flex h-4 shrink-0 items-center justify-center rounded-full border border-attention bg-attention/15 px-1 align-[1px] text-[11px] leading-none font-semibold text-foreground">
       R{finding.n}
     </span>
   );
@@ -252,16 +252,17 @@ export function FindingPin({ finding }: { finding: ReviewFinding }) {
 
 export function WasBadge({ before }: { before: unknown }) {
   return (
-    <span data-was className="ml-1.5 inline-flex max-w-full shrink-0 items-center gap-1 rounded-full bg-primary/10 px-1.5 align-[1px] text-[10.5px] leading-4 text-primary [overflow-wrap:anywhere]">
+    <span data-was className="ml-1.5 inline-flex max-w-full shrink-0 items-center gap-1 rounded-full bg-primary/10 px-1.5 align-[1px] text-[11px] leading-4 text-foreground [overflow-wrap:anywhere]">
       <span aria-hidden className="size-1.5 rounded-full bg-primary" />
       was {formatValue(before)}
     </span>
   );
 }
 
-export const CHANGED_TAG = "rounded-full bg-primary px-1.5 text-[10px] leading-4 font-semibold text-primary-foreground";
-export const NEW_TAG = "rounded bg-success px-1 text-[10px] leading-4 font-semibold text-success-foreground";
-export const REMOVED_TAG = "rounded bg-destructive px-1 text-[10px] leading-4 font-semibold text-destructive-foreground";
+export const CHANGED_TAG = "rounded-full bg-primary px-1.5 text-[11px] leading-4 font-semibold text-primary-foreground";
+// Outlined: success-foreground on the success fill measured 1:1 in gruvbox dark.
+export const NEW_TAG = "rounded border border-[var(--loom-ok)] px-1 text-[11px] leading-4 font-semibold text-[var(--loom-ok)]";
+export const REMOVED_TAG = "rounded bg-destructive px-1 text-[11px] leading-4 font-semibold text-destructive-foreground";
 
 /**
  * One part of the spec that takes a comment: a click or Enter opens the comment box on it. It shows the numbers of the
@@ -314,7 +315,7 @@ export function Commentable({ target, as: Tag = "div", className = "", showWas =
         <Pin key={n} n={n} />
       ))}
       {open !== undefined && pins.length === 0 && (
-        <span aria-hidden className="pointer-events-none absolute -top-2 right-1 z-10 hidden rounded-full bg-warning px-1.5 text-[10px] leading-4 text-black group-hover/comment:inline-block">
+        <span aria-hidden className="pointer-events-none absolute -top-2 right-1 z-10 hidden rounded-full bg-warning px-1.5 text-[11px] leading-4 text-black group-hover/comment:inline-block">
           Comment
         </span>
       )}
@@ -331,7 +332,7 @@ export type ListMark = "added" | "removed" | null;
 export function DiffList({ path, items, render, rest, compact }: { path: string; items: readonly string[]; render(item: string, mark: ListMark, index: number): ReactNode; rest?(count: number): ReactNode; compact?: boolean }) {
   const review = useReview();
   const change = changeAt(review, path);
-  const fold = rest ?? ((count: number) => <span className="px-1 text-[11px] text-subtle-foreground">… {count} unchanged</span>);
+  const fold = rest ?? ((count: number) => <span className="px-1 text-[11px] text-[var(--loom-muted)]">… {count} unchanged</span>);
   if (change?.kind !== "list") return <>{items.map((item, index) => <Fragment key={index}>{render(item, null, index)}</Fragment>)}</>;
   const trim = compact ?? review.only;
   const at = (one: string, index: number) => one === path || one === `${path}[${index}]` || isUnder(one, `${path}[${index}]`);
@@ -360,11 +361,11 @@ export function WordDiff({ before, after, className = "" }: { before: string; af
         step.op === "same" ? (
           <span key={index}>{step.text}</span>
         ) : step.op === "added" ? (
-          <ins key={index} className="rounded-sm bg-success/15 text-success no-underline">
+          <ins key={index} className="rounded-sm bg-success/15 text-[var(--loom-ok)] no-underline">
             {step.text}
           </ins>
         ) : (
-          <del key={index} className="rounded-sm bg-destructive-text/10 text-destructive-text">
+          <del key={index} className="rounded-sm bg-destructive-text/10 text-[var(--loom-bad)]">
             {step.text}
           </del>
         ),

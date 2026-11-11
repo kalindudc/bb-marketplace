@@ -1,4 +1,5 @@
 import type { MergeConfirmView } from "../contract";
+import { Docked } from "./answer-dock";
 import { ConfirmButton, useAction, useLoomWrite } from "./common";
 
 const short = (sha: string) => sha.slice(0, 12);
@@ -17,22 +18,34 @@ function stateText(confirm: MergeConfirmView, compact: boolean): string {
  * so the server refuses it once the head has moved; the button is keyed on them, so one armed for a commit that has since
  * changed disarms instead of confirming the new one.
  */
-export function MergeConfirm({ ticketKey, confirm, compact = false, disabled = false }: { ticketKey: string; confirm: MergeConfirmView; compact?: boolean; disabled?: boolean }) {
+export function MergeConfirm({ ticketKey, confirm, compact = false, disabled = false, then = null, hold = null }: { ticketKey: string; confirm: MergeConfirmView; compact?: boolean; disabled?: boolean; then?: string | null; hold?: string | null }) {
   const send = useLoomWrite("confirmMerge");
   const { busy, act } = useAction();
-  const tone = confirm.confirmed ? "text-success-foreground" : confirm.ready ? "text-warning-text" : "text-muted-foreground";
+  const tone = confirm.confirmed ? "text-[var(--loom-ok)]" : confirm.ready ? "text-[var(--loom-warn)]" : "text-[var(--loom-muted)]";
   const { prUrl, sha } = confirm;
   return (
     <div data-merge-confirm={ticketKey} data-sha={sha} className={`flex flex-wrap items-center gap-2 ${compact ? "mt-1" : ""}`}>
       <span className={`${compact ? "text-xs" : "text-sm"} ${tone} [overflow-wrap:anywhere]`}>{stateText(confirm, compact)}</span>
+      {then !== null && !confirm.confirmed && (
+        <span data-merge-then className="basis-full text-xs text-[var(--loom-muted)] [overflow-wrap:anywhere]">
+          <span className="font-semibold text-foreground">Then</span> {then}
+        </span>
+      )}
+      {hold !== null && confirm.ready && !confirm.confirmed && (
+        <span data-merge-hold className="basis-full text-xs text-[var(--loom-warn)] [overflow-wrap:anywhere]">
+          {hold}
+        </span>
+      )}
       {confirm.ready && (
-        <ConfirmButton
-          key={`${prUrl} ${sha}`}
-          label="Confirm merge"
-          confirmLabel={`Click again to merge ${short(sha)}`}
-          disabled={disabled || busy}
-          onConfirm={() => void act(() => send({ key: ticketKey, prUrl, sha, confirm: true }), `${ticketKey} merge of ${short(sha)} confirmed`)}
-        />
+        <Docked>
+          <ConfirmButton
+            key={`${prUrl} ${sha}`}
+            label="Confirm merge"
+            confirmLabel={`Yes, merge ${short(sha)}`}
+            disabled={disabled || busy}
+            onConfirm={() => void act(() => send({ key: ticketKey, prUrl, sha, confirm: true }), `${ticketKey} merge of ${short(sha)} confirmed`)}
+          />
+        </Docked>
       )}
     </div>
   );

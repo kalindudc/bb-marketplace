@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { badgeView } from "../src/badge";
 import type { BadgeView } from "../src/contract";
 import { SpawnRefusedError } from "../src/ports";
-import { registerRpc } from "../src/rpc";
+import { boardCards, registerRpc } from "../src/rpc";
 import { badgeOf } from "../src/ui/badge";
 import { FakePort, makeEngine, makeHost, specToml } from "./helpers";
 
@@ -36,7 +36,7 @@ describe("the badge read", () => {
 describe("badgeView", () => {
   it("counts a revised draft once, a refused ticket and a pending version, says when a ticket is blocked, and drops the ticket that approving requeues", async () => {
     const h = makeEngine();
-    const view = () => badgeView({ store: h.store, projects: h.projects, now: h.clock.now() });
+    const view = () => badgeView({ store: h.store, projects: h.projects, now: h.clock.now(), cards: (_project, tickets, threads, spec) => boardCards(tickets, threads, spec, h.store, h.clock.now()) });
     const propose = (goal: string) => h.projects.propose({ toml: specToml((doc) => void (doc.project.goal = goal)), threadId: "thr_plan", bbProjectId: "proj_1", hostId: "host_1" });
     await propose("Export the orders as a CSV file, first draft.");
     await propose("Export the orders as a CSV file, second draft.");

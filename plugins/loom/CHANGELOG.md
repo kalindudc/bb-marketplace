@@ -4,37 +4,46 @@ Notable changes to Loom, newest first. Releases are tagged `loom/vX.Y.Z` in this
 
 ## Unreleased
 
-Loom now stops a project only for problems that are the whole project's, opens pull requests that read as if a person wrote them, can keep a pull request a draft until it is ready to ship, keeps forges in its settings, and drops spec keys no project used.
+Loom now plans large projects one phase at a time, and its page is rebuilt around what needs you, whose move each ticket is, and a dependency map. It also stops a project only for problems that are the whole project's, writes pull requests that read as if a person wrote them, can keep a pull request a draft until it is ready to ship, keeps forges in its settings, and drops spec keys no project used.
 
 ### Added
 
-- Optional `[[phase]]` roadmaps plan tickets one phase at a time. Loom wakes the planner when a phase finishes, checks the report and next batch in spec review, and waits for the human to approve it. The page, `bb loom show` and `bb loom tickets --phase` show the phases; hooks can follow `phase.done`.
-- A `usageCommand` setting: a shell command Loom runs in the background for each thread, which prints the thread's total tokens, for when bb's usage events count less than the provider used. Loom keeps the larger of the two figures and never adds them.
-- A `loom-pr-description` skill tells workers how to write a pull request's title and description for a reviewer who has never seen Loom, and reviewers judge the text by it. Its core rules are also in every worker's brief and fix round, so they hold for any model.
-- `[[ticket]] keep_draft = true` keeps that ticket's pull request a draft until the human releases it with Release draft on the ticket, its board card or the Planner page, or `bb loom release <slug> --ticket <KEY>`. Its pull request opens as a draft even with `merge.draft = false`, and the planner can only ask for a release, with `loom_release_draft`.
-- A command forge's `ready` command marks a draft ready for review; `gh` uses `gh pr ready`.
-- `merge.publish = { when = ["checks", "live"] }` keeps each pull request a draft until, for the commit Loom pushed, its checks passed, its prerequisites are live and the title and description its reviewers approved are set on it, then marks it ready and asks for reviewers. The board and the ticket page say what a draft waits for.
-- A review gate: a forge's `review_start` and `review_read` commands run an outside review on each draft before Loom publishes it, once per push of the ticket's own work, and again when a fix round's approved title and description are set with no push, so a finding about the text can clear; while approved text still waits to be set, the gate waits too and then runs once for it. Its findings go to the worker as fix rounds, at most `review_rounds` of them (3 by default); a gate that fails keeps the draft with a post and pauses nothing.
-- Forge profiles: a command forge kept in Loom's settings, which any spec names with `forge = { profile = "<id>" }`; keys set beside it win, and an edit reaches every project that uses it. Settings › Forges edits and tests profiles, and `bb loom forge list`, `show`, `test`, `export` and `import` do the same from the command line. Loom refuses an edit that would leave a project unable to run, and the deletion of a profile any spec version names.
-- A forge's `notes` are added to every worker's and reviewer's brief. The loom skill has a guide to setting up a command forge.
-- A `botAuthors` setting and a forge's `bots` globs name the authors Loom counts as bots, whose comments start no fix round.
-- Reviewers mark each finding `code` or `text`. With `merge.describe = "worker"`, a round whose findings are all about the text goes back as a text-only round: the worker proposes new text with `loom_submit`, a short text review judges it with no checks, no code review and no sandbox, and Loom sets it on the pull request. `bb loom metrics` and Insights count text reviews apart from code reviews.
-- `loom_propose` warns about keys set to the value Loom uses when they are left out. The spec reference lists every retry limit and the keys Loom no longer reads.
+- Optional `[[phase]]` roadmaps plan tickets one phase at a time. When a phase finishes, Loom wakes the planner, checks its report and next batch in spec review, and waits for the human to approve. `bb loom show`, `bb loom tickets --phase` and the `phase.done` hook follow the phases.
+- A `usageCommand` setting runs a shell command for each thread that prints its total tokens; Loom keeps the larger of that figure and bb's.
+- A `loom-pr-description` skill tells workers how to write a pull request for a reviewer who has never seen Loom, and reviewers judge the text by it.
+- `[[ticket]] keep_draft = true` keeps a ticket's pull request a draft until the human releases it, with Release draft or `bb loom release <slug> --ticket <KEY>`; the planner can only ask, with `loom_release_draft`. A command forge's `ready` command marks a draft ready (`gh pr ready`).
+- `merge.publish = { when = ["checks", "live"] }` keeps each pull request a draft until its checks pass, its prerequisites are live and its approved text is set, then marks it ready and asks for reviewers.
+- A review gate: a forge's `review_start` and `review_read` commands run an outside review on each draft before Loom publishes it. Its findings go to the worker as fix rounds, at most `review_rounds` (3); a gate that fails keeps the draft and pauses nothing.
+- Forge profiles: command forges kept in Loom's settings, named from a spec with `forge = { profile = "<id>" }`, and edited in Settings › Forges or with `bb loom forge list`, `show`, `test`, `export` and `import`. A forge's `notes` join every worker's and reviewer's brief.
+- A `botAuthors` setting and a forge's `bots` globs name the authors whose comments start no fix round.
+- Reviewers mark each finding `code` or `text`. With `merge.describe = "worker"`, a round about the text alone gets a short text review, with no checks and no sandbox.
+- `loom_block` takes an optional structured ask: a question, 2 to 4 options with what each leads to, and the one the worker recommends. The ticket draws it as a form.
+- Insights across every project, from a new `insightsAll` read: tickets done, pooled cycle times, review rounds, time blocked and tokens, by project, model and repo. Worker and reviewer threads record their model.
+- The Map's Show done switch draws the whole project: every phase as a titled band in order, done and cancelled tickets included. It starts on for a project with nothing open.
+- The Map's Export menu copies the dependency map as an image, or downloads it as a PNG or an SVG, in the theme in use, with a header naming the project, what the map covers and the day.
+- `loom_propose` warns about keys set to the value Loom uses when they are left out.
 
 ### Changed
 
-- A failure pauses a project only when it is the whole project's: a missing sign-in, a forge command that breaks its contract, an exhausted budget or a passed deadline. Network failures, rate limits, a machine that did not answer or a checkout left mid-merge make only the ticket concerned wait.
-- A ticket whose own step keeps failing blocks alone: after an hour, after 5 tries of an error Loom does not recognize, or at once when waiting cannot help. Retries wait 1, 2, 5 and 10 minutes, then every 15, and every forge call waits out its forge host's rate limit or outage. The card and ticket page say what a step waits for and when Loom tries again, and the planner's triage hears of a forge or machine silent for an hour.
+- The Loom page is rebuilt, as the README describes: a project line and a phase rail over five views (Work, Spec, Planner, Ship and History), with a time ruler that rewinds the page. Loom's controls sit in bb's title bar; `/` opens Jump to and `?` lists the keys.
+- Work replaces the Board. Tickets are grouped by whose move it is, the open ticket sits in a pane beside the list with what it waits on and unblocks, and Map draws the phase's dependencies, with an exact list one switch away.
+- Spec opens on the phase gate while a version that fills the next phase waits: the finished phase as Loom recorded it beside the proposed one. Approve says what it creates and starts.
+- Home leads with one Needs you queue from every source, oldest first with each item's age, answered in place where it can be; then Since you looked and the projects. The sidebar, Jump to and the rail badge count the same items.
+- Ship opens on Do next. Do next, the merge order, the rollout and Confirm merge read one readiness calculation, so none offers a step another holds, and a freeze also holds a merged step's deploy.
+- Risky buttons arm in place as "Yes, …" beside Back, with no timer. While the page is rewound, nothing that changes state works.
+- A Loom thread has a ticket button in its header, a Loom line above the composer and a Loom tab in the side panel. A ticket's Threads tab embeds each attempt's conversations.
+- On phones and touch screens Loom's controls are 44 pixels, answers dock at the bottom of the screen, and no view scrolls sideways at 320 pixels. Text meets 4.5:1 and marks 3:1 in light and dark themes, and layouts hold at 200% text.
+- One failed pull request read no longer marks a ticket Failed; three in a row, or a failure only a person can fix, does.
+- A failure pauses a project only when it is the whole project's: a missing sign-in, a forge command that breaks its contract, an exhausted budget or a passed deadline. Network failures, rate limits, a silent machine or a checkout left mid-merge make only the ticket concerned wait.
+- A ticket whose own step keeps failing blocks alone: after an hour, after 5 tries of an error Loom does not recognize, or at once when waiting cannot help. Retries wait 1, 2, 5 and 10 minutes, then every 15, and every forge call waits out its host's rate limit or outage.
 - On the pull request strategy, a merge that waits holds back only its own repo.
-- Loom marks every pull request its ticket does not hold ready for review, once it targets its base and any `after_open` commands have finished, and only while the project runs. Before, a draft opened with `merge.draft = true`, the default, could stay a draft and never merge.
-- In manual merge mode, Confirm merge shows only once the pull request is ready to merge; until then the ticket says what it waits for.
-- Commits, merges and the integration strategy's landing pull request no longer name ticket keys, and merges read as git's do. Loom's own section of a description is now a Merge and deploy order for the reviewer, listing related pull requests by link and title and how the change deploys and rolls back. Loom's fallback template follows the skill.
-- In a text-only round, `loom_pr` takes no text the reviewers approved and `loom_block` is refused. A request for changes about the text alone no longer ends the other reviewers of its round, and `review.max_rounds` counts text rounds apart from the others.
+- Loom marks every pull request its ticket does not hold ready for review, once it targets its base and `after_open` has finished; before, a draft opened with `merge.draft = true` could never merge. In manual merge mode, Confirm merge shows only once the pull request is ready.
+- Commits and merges no longer name ticket keys, and Loom's section of a description is a Merge and deploy order for the reviewer.
+- In a text-only round, `loom_pr` takes no approved text and `loom_block` is refused, and `review.max_rounds` counts text rounds apart from the others.
 - New defaults: `agents.ticket_timeout_minutes` is 180 (was 120), `checks.timeout_minutes` 25 (was 15) and `git_network_timeout_seconds` 300 (was 120). `ci` left out follows the forge, and `auto_merge.final_review = true` turns the final review on.
-- Loom's own git commands, pushes included, run none of the repository's hooks and no fsmonitor. Pushes still upload LFS files with `git-lfs pre-push`.
-- Run logs keep a short summary of each step instead of its full output, and a copy of files between machines is one step. The timeline and insights no longer load every run.
-- Loom checks the state it keeps beside each ticket against a schema when it writes it and logs a warning when a stored value does not match, and every ticket move clears stale state from one table.
-- Loom's database files are readable by their owner alone.
+- Loom's own git commands run none of the repository's hooks and no fsmonitor; pushes still upload LFS files with `git-lfs pre-push`.
+- Run logs keep a short summary of each step instead of its full output, and the timeline and insights no longer load every run.
+- Loom checks the state it keeps beside each ticket against a schema, and its database files are readable by their owner alone.
 
 ### Removed
 
@@ -42,24 +51,27 @@ Loom now stops a project only for problems that are the whole project's, opens p
 
 ### Fixed
 
-- An update or reload no longer leaves Loom stopped with "service engine did not stop". The engine's background service now returns as soon as bb stops it, instead of finishing the pass or restart check it was in, which could take longer than the 5 seconds bb allows; Loom waits for that work while it shuts down instead.
-- Final reviews start again. bb refused their scratch directory inside Loom's data; it is now under `~/.cache/bb-loom`, and with no cache outside bb's data the review holds with a post saying why.
-- A forge's "update branch" on a pull request whose worker runs on a machine of its own no longer fills the worker's worktree with conflict markers. Loom recognizes its own push with the base merged in, and pushes clean merges from the project's machine.
-- Carrying work into a worker's worktree never takes the worker's work: a carry that fails leaves the worktree and index as they are and names what it wrote, and Loom carries only while bb reports the worker's thread idle, holding its own messages meanwhile.
-- A push whose answer was lost is settled from the remote branch instead of pushed again, and a forge call Loom held back during a rate limit is no longer counted as made.
-- A reviewer whose spawn answer was lost is found by its spawn token and adopted instead of ended. Until bb can say, the ticket shows "Waiting to find out whether bb started a reviewer", and after an hour Loom tells the human. A text reviewer's scratch directory stays until its thread stops.
-- A waiting diff read survives a plugin reload, a failed read of an old pull request no longer counts against the ticket's new one, and a worker thread that stays busy for an hour blocks only its ticket instead of pausing the project.
-- Token totals add up every usage event bb records for a thread. bb keeps only a thread's newest event, and its total starts again when the provider process restarts, so Loom kept one running total and lost the rest. Loom now counts each turn's event as the turn ends, reads threads while their project is paused and again after they end (again later when that read fails), and counts a stopped thread that never started a turn as 0 instead of as not reporting; the Agents tab shows a dash for those. Insights writes large totals such as 2.8B instead of 2803M.
+- A plugin reload no longer counts an interrupted pull request read as a failure or delays the next engine's first read.
+- An update or reload no longer leaves Loom stopped with "service engine did not stop".
+- Spec no longer fails to load when only a repo names a forge profile.
+- Final reviews start again; their scratch directory is now under `~/.cache/bb-loom`.
+- A forge's "update branch" on a pull request whose worker runs on its own machine no longer fills the worker's worktree with conflict markers.
+- Carrying work into a worker's worktree never takes the worker's work, and happens only while its thread is idle.
+- A push whose answer was lost is settled from the remote branch, and a forge call held back during a rate limit is not counted as made.
+- A reviewer whose spawn answer was lost is found by its spawn token and adopted instead of ended.
+- A waiting diff read survives a reload, an old pull request's failed read no longer counts against the new one, and a worker thread busy for an hour blocks only its ticket.
+- Token totals add up every usage event bb records for a thread, read while a project is paused and after a thread ends. Insights writes large totals such as 2.8B.
 
 ### Compatibility
 
-- Migrations add `keep_draft`, a `forge_profiles` table and a record of each push, move pull request read waits into one retry wait per ticket, and replace the stored output of old file-transfer runs with a short note. Vacuum the database to free that space.
-- Every open pull request that was a draft at Loom's last read gets `keep_draft`, so today's drafts stay drafts until you release them. A pull request that opens later is marked ready unless its ticket sets `keep_draft`, so set it, for example while the project is paused, on tickets whose pull requests must stay drafts.
-- Stored specs keep working, and stored versions without the timeouts get the new defaults. A stored hook with only `run` is skipped, and a stored reviewers rule with only a `team` asks no one and says so on the ticket. New proposals may not use the removed keys.
-- Spec hashes change because of the new defaults and `merge.branch`, so re-proposing an unchanged TOML makes a new version. The archived `hooks-live` demo's TOML no longer parses, because it sets `hook.run`; its stored version still loads.
-- A repository's own pre-push checks no longer run for Loom's pushes. A push from a repository that uses LFS, on a machine without git-lfs on its path, is now refused and pauses the project instead of leaving pointers without files.
-- Authors matching `dependabot*`, `renovate*` or `*[bot]` now count as bots on running projects; set `botAuthors` empty to keep the old rule.
-- Open pull requests get the new Loom section at their next read, and only the text between Loom's markers changes. In metrics, past text-only reviews move to the text review counts.
+- Migrations add `tickets.phase`, `threads.model` and `keep_draft` (all nullable), a `forge_profiles` table and a record of each push, move pull request read waits into one retry wait per ticket, and replace the stored output of old file-transfer runs with a short note. Vacuum the database to free that space.
+- Specs without `[[phase]]` work as before.
+- Every open pull request that was a draft at Loom's last read gets `keep_draft`, so today's drafts stay drafts until you release them. Set `keep_draft` on tickets whose later pull requests must stay drafts.
+- Stored specs keep working, and stored versions without the timeouts get the new defaults. A stored hook with only `run` is skipped, and a stored reviewers rule with only a `team` asks no one and says so. New proposals may not use the removed keys.
+- Spec hashes change with the new defaults and `merge.branch`, so re-proposing an unchanged TOML makes a new version. The archived `hooks-live` demo's TOML no longer parses; its stored version still loads.
+- A repository's own pre-push checks no longer run for Loom's pushes. A push from a repository that uses LFS, on a machine without git-lfs on its path, is refused and pauses the project.
+- Authors matching `dependabot*`, `renovate*` or `*[bot]` now count as bots; set `botAuthors` empty to keep the old rule.
+- Open pull requests get the new Loom section at their next read. Past text-only reviews move to the text review counts.
 - Final reviews that went on hold because bb refused them stay held until you run `bb loom auto-merge <slug> retry --ticket <KEY>`.
 - After the update, every ended thread is read once more, 10 each pass, so past totals pick up what bb still has. Larger totals make a token budget run out sooner.
 
