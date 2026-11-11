@@ -87,6 +87,22 @@ export function createShuttlePlugin(deps: PluginDeps = {}) {
     bb.events.on("thread.archived", ({ thread }) => safe("thread.archived", () => app.onThreadArchived(thread.id)));
     bb.events.on("thread.deleted", ({ thread }) => safe("thread.deleted", () => app.onThreadDeleted(thread.id)));
 
+    const unsubscribers = [
+      bb.sdk.subscribe({
+        event: "project:changed",
+        callback(event) {
+          if (event.changes.some((change) => change !== "threads-changed")) safe("projects changed", () => app.invalidateProjects());
+        },
+      }),
+      bb.sdk.subscribe({
+        event: "realtime:connection",
+        callback(event) {
+          if (event.state === "connected") safe("projects reconnected", () => app.invalidateProjects());
+        },
+      }),
+    ];
+    bb.onDispose(() => { for (const unsubscribe of unsubscribers) unsubscribe(); });
+
     // bb gives a stopping service 5 s and then loads no new version until a manual reload, so start returns as soon as bb
     // aborts it, even while a tick waits on bb; dispose, which bb runs next, waits for that tick.
     bb.background.service("sync", {

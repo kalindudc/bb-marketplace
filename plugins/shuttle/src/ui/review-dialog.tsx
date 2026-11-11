@@ -6,7 +6,7 @@ import { BUTTON, BUTTON_PRIMARY, Dialog, FIELD, ServerBadge } from "./common";
 import { useShuttleQuery } from "./data";
 import { ExecutionPicker, executionOf, type Execution } from "./execution";
 import { shortKey } from "./format";
-import { ProjectSelect } from "./link-dialog";
+import { isProjectUnavailable, ProjectSelect } from "./link-dialog";
 import { defaultPresetOf, presetSummary, useStartReview } from "./review-button";
 import { SkillInput } from "./skill-input";
 
@@ -26,6 +26,7 @@ export function ReviewDialog({ pr, presets, thread = null, initialNote = "", onC
   const [note, setNote] = useState(initialNote);
   const projects = useShuttleQuery("projects", { key: pr.key });
   const projectId = projectChoice ?? projects.data?.suggested ?? "";
+  const projectUnavailable = where === NEW_THREAD && isProjectUnavailable(projects.data, projectId);
 
   const pickPreset = (id: string) => {
     setPresetId(id);
@@ -34,7 +35,7 @@ export function ReviewDialog({ pr, presets, thread = null, initialNote = "", onC
   };
 
   const submit = async () => {
-    if (preset === null) return;
+    if (preset === null || projectUnavailable) return;
     const trimmedNote = note.trim();
     const input: ReviewInput = {
       key: pr.key,
@@ -60,7 +61,7 @@ export function ReviewDialog({ pr, presets, thread = null, initialNote = "", onC
         <>
           <span className="flex-1 text-xs text-muted-foreground">The reviewer drafts its findings and asks you before posting anything.</span>
           <button type="button" className={BUTTON} onClick={onClose}>Cancel</button>
-          <button type="button" className={BUTTON_PRIMARY} disabled={busy || preset === null} onClick={() => void submit()}>
+          <button type="button" className={BUTTON_PRIMARY} disabled={busy || preset === null || projectUnavailable} onClick={() => void submit()}>
             <Icon name="Play" className="size-3.5" aria-hidden />
             Start review
           </button>
@@ -108,8 +109,7 @@ export function ReviewDialog({ pr, presets, thread = null, initialNote = "", onC
         </select>
         {where === NEW_THREAD && (
           <>
-            <span className="text-xs text-muted-foreground">Project</span>
-            <ProjectSelect projects={projects.data} value={projectId} onChange={setProjectChoice} />
+            <div className="col-span-2"><ProjectSelect projects={projects.data} value={projectId} onChange={setProjectChoice} error={projects.error} /></div>
           </>
         )}
         <span className="self-start pt-1.5 text-xs text-muted-foreground">Note for the reviewer</span>

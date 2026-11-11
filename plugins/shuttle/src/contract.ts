@@ -1106,7 +1106,8 @@ export const rpcContract = defineContract({
   /** Send every pending review item of the thread's PRs now, without waiting for the batch window. */
   sendUnread: { input: z.object({ threadId }), output: z.object({ sent: z.number() }), invalidates: PRS },
   threads: { input: z.object({ query: z.string().max(200).optional() }), output: z.object({ threads: z.array(threadOptionSchema) }) },
-  projects: { input: z.object({ key: key.optional() }), output: z.object({ projects: z.array(projectOptionSchema), suggested: z.string().nullable() }) },
+  projects: { input: z.object({ key: key.optional() }), output: z.object({ projects: z.array(projectOptionSchema), suggested: z.string().nullable() }), tags: () => ["projects", "config"] },
+  refreshProjects: { input: z.object({}), output: z.object({ count: z.number().int().nonnegative(), fetchedAt: z.number() }) },
   getConfig: { input: z.object({}), output: z.object({ config: configSchema }), tags: CONFIG },
   saveConfig: { input: z.object({ config: z.unknown() }), output: z.object({ config: configSchema }), invalidates: () => ["config", "prs", "servers"] },
   boardCreate: { input: boardCreateInputSchema, output: boardDetailSchema, invalidates: () => ["boards"] },

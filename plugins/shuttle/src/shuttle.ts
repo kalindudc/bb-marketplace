@@ -92,6 +92,7 @@ export class Shuttle implements Ctx {
   readonly lifetime?: AbortSignal;
   private readonly adapters = new Map<string, { json: string; adapter: Adapter }>();
   private projectCache: { at: number; projects: ProjectInfo[] } | null = null;
+  private projectsRevision = 0;
   /** Each server's running sync, by server id: its lists, then its auto reviews and watched PRs. */
   private readonly serverSyncs = new Map<string, Promise<boolean>>();
   /** The steps after the servers' syncs, and the one run waiting to follow it. */
@@ -194,9 +195,25 @@ export class Shuttle implements Ctx {
 
   async projects(): Promise<ProjectInfo[]> {
     if (this.projectCache && this.now() - this.projectCache.at < PROJECTS_TTL_MS) return this.projectCache.projects;
+    const revision = this.projectsRevision;
     const projects = await this.port.listProjects();
+    if (revision !== this.projectsRevision) return this.projects();
     this.projectCache = { at: this.now(), projects };
     return projects;
+  }
+
+  invalidateProjects(): void {
+    this.projectsRevision++;
+    this.projectCache = null;
+    this.port.publish(["projects"]);
+  }
+
+  async refreshProjects(): Promise<{ count: number; fetchedAt: number }> {
+    this.projectsRevision++;
+    this.projectCache = null;
+    const projects = await this.projects();
+    this.port.publish(["projects"]);
+    return { count: projects.length, fetchedAt: this.now() };
   }
 
   saveConfig(raw: unknown): Config {

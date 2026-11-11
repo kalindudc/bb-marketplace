@@ -1,9 +1,9 @@
 import { formatRoute } from "../../src/ui/route";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, waitFor } from "@testing-library/react";
+import { fireEvent, waitFor, screen } from "@testing-library/react";
 import { createElement } from "react";
 import type { PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
-import { app, callsTo, handlers, mount, pr, unmountAll, type Handlers } from "./helpers";
+import { app, callsTo, handlers, mount, pr, setViewport, unmountAll, type Handlers } from "./helpers";
 
 const toasts = vi.hoisted(() => ({ error: vi.fn(), success: vi.fn() }));
 vi.mock("sonner", () => ({ toast: Object.assign(vi.fn(), toasts) }));
@@ -91,6 +91,18 @@ describe("Shuttle page header", () => {
     fireEvent.keyDown(input, { key: "Enter" });
     await waitFor(() => expect(toasts.error).toHaveBeenCalledWith("no server's link pattern matches that"));
     expect(slot.inspection.navigateCalls).toEqual([]);
+  });
+
+  it.each([1400, 390])("offers a project-only refresh from the Sync menu at %ipx", async (width) => {
+    setViewport(width);
+    const slot = await header({ refreshProjects: () => ({ count: 26, fetchedAt: Date.now() }) });
+    const trigger = slot.getByRole("button", { name: "More sync actions" });
+    if (width > 480) fireEvent.keyDown(trigger, { key: "Enter" });
+    else fireEvent.click(trigger);
+    fireEvent.click(await screen.findByRole("menuitem", { name: /BB projects/u }));
+    await waitFor(() => expect(callsTo(slot, "refreshProjects")).toEqual([{}]));
+    expect(callsTo(slot, "sync")).toEqual([]);
+    setViewport(1440);
   });
 
   it("syncs, and links to Shuttle's settings page", async () => {

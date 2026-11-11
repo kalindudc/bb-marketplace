@@ -83,6 +83,10 @@ them for context and report nothing about them.
 A message that starts with `[shuttle] About <key>` is the user writing to you from Shuttle about
 that PR.
 
+## Refresh projects
+
+BB project changes update Shuttle's project list automatically. If a new project is missing, use Refresh projects beside the project picker, or open the Sync menu and choose BB projects. This reloads BB projects and repository matches only, preserving the current review choices. It does not sync pull requests, start a review, post anything, or change settings. A failed refresh shows an error and leaves the previous list available.
+
 ## CLI
 
 `bb shuttle status` (each server's last sync, and when one failed, the step, why, what its command printed and

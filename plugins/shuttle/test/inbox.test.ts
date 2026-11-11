@@ -307,7 +307,7 @@ describe("the Inbox RPCs", () => {
       if (operation === "activity") return { items: [] };
       return [];
     });
-    const host = createFakePluginHost({ pluginId: "shuttle", dataDir: mkdtempSync(join(tmpdir(), "shuttle-")) });
+    const host = createFakePluginHost({ pluginId: "shuttle", dataDir: mkdtempSync(join(tmpdir(), "shuttle-")), sdk: { subscribe: () => () => {} } });
     await createShuttlePlugin({ port: () => port, runner, tickMs: 3_600_000 })(host.bb);
     const { behavior, lifecycle } = host.harness;
     await behavior.callRpc("importToml", { toml: configToToml(testConfig()), apply: true });

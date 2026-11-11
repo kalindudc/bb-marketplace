@@ -77,6 +77,7 @@ export function registerRpc(bb: BbPluginApi, shuttle: Shuttle): void {
     sendUnread: ({ threadId }) => refusing(async () => ({ sent: await shuttle.sendUnread(threadId) })),
     threads: ({ query }) => refusing(async () => ({ threads: await shuttle.threads(query) })),
     projects: ({ key }) => refusing(() => shuttle.projectOptions(key)),
+    refreshProjects: () => refusing(() => shuttle.refreshProjects()),
     getConfig: () => refusing(() => ({ config: shuttle.config() })),
     saveConfig: ({ config }) => refusing(() => ({ config: shuttle.saveConfig(config) })),
     boardCreate: (input) => refusing(() => shuttle.boardCreate(input)),

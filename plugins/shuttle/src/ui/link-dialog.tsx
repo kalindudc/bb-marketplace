@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { toast } from "sonner";
 import { experimental_Icon as Icon, useBbNavigate } from "@get-bb/plugin-sdk/app";
 import type { AgentMode, PrView } from "../contract";
@@ -37,16 +37,57 @@ function TabButton({ on, onClick, children }: { on: boolean; onClick(): void; ch
   );
 }
 
-export function ProjectSelect({ projects, value, onChange }: { projects: Output<"projects"> | undefined; value: string; onChange(id: string): void }) {
+export function isProjectUnavailable(projects: Output<"projects"> | undefined, value: string): boolean {
+  return projects !== undefined && value !== "" && !projects.projects.some((project) => project.id === value);
+}
+
+export function ProjectSelect({ projects, value, onChange, error = null }: { projects: Output<"projects"> | undefined; value: string; onChange(id: string): void; error?: unknown }) {
+  const id = useId();
+  const refresh = useShuttleMutation("refreshProjects");
+  const unavailable = isProjectUnavailable(projects, value);
+  const [refreshedAt, setRefreshedAt] = useState<number | null>(null);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
+  const reload = async () => {
+    if (refresh.isPending) return;
+    setRefreshError(null);
+    try {
+      const result = await refresh.mutate({});
+      setRefreshedAt(result.fetchedAt);
+    } catch (failure) {
+      setRefreshError(messageOf(failure));
+    }
+  };
   return (
-    <select aria-label="Project" className={`${FIELD} w-full`} value={value} onChange={(event) => onChange(event.target.value)} disabled={projects === undefined}>
-      <option value="">Let Shuttle pick: the project whose remote matches, or its default</option>
-      {projects?.projects.map((project) => (
-        <option key={project.id} value={project.id}>
-          {project.name}{project.id === projects.suggested ? " (its remote matches the repository)" : ""}
-        </option>
-      ))}
-    </select>
+    <div className="min-w-0">
+      <div className="mb-1.5 flex items-center justify-between gap-2">
+        <label htmlFor={id} className="text-xs text-muted-foreground">Project</label>
+        <button type="button" className={`${BUTTON} min-h-9 max-sm:min-h-11`} disabled={refresh.isPending} aria-label={refresh.isPending ? "Refreshing projects" : "Refresh projects"}
+          title="Reload BB projects and repository matches only; keeps your review choices" onClick={() => void reload()}>
+          <Icon name="ArrowReloadHorizontal" className={`size-3.5 ${refresh.isPending ? "animate-spin motion-reduce:animate-none" : ""}`} aria-hidden />
+          {refresh.isPending ? "Refreshing…" : "Refresh projects"}
+        </button>
+      </div>
+      <select id={id} aria-label="Project" aria-describedby={`${id}-status`} aria-busy={refresh.isPending} className={`${FIELD} w-full max-sm:text-base`} value={value} onChange={(event) => onChange(event.target.value)} disabled={projects === undefined}>
+        <option value="">Let Shuttle pick: the project whose remote matches, or its default</option>
+        {unavailable && <option value={value} disabled>Previously selected project (unavailable)</option>}
+        {projects?.projects.map((project) => (
+          <option key={project.id} value={project.id}>
+            {project.name}{project.id === projects.suggested ? " (suggested)" : ""}
+          </option>
+        ))}
+      </select>
+      <div id={`${id}-status`} role="status" className="mt-1.5 text-xs text-muted-foreground">
+        {refresh.isPending ? "Reading BB projects…" : projects === undefined ? "Loading projects…" : `${projects.projects.length} projects${refreshedAt === null ? "" : ` · updated ${ago(refreshedAt)}`}`}
+      </div>
+      {unavailable && <ErrorNote>Selected project is no longer available. Choose another project, or let Shuttle pick.</ErrorNote>}
+      {refreshError !== null && <ErrorNote>Could not refresh projects: {refreshError}. Your previous list and choices are unchanged.</ErrorNote>}
+      {error !== null && refreshError === null && <ErrorNote>Could not list projects: {messageOf(error)}</ErrorNote>}
+      {projects?.suggested === null && value === "" && error === null && refreshError === null && (
+        <div role="status" className="mt-2 border-l-2 border-warning-text bg-surface-attention p-2.5 text-xs text-foreground">
+          No matching BB project. Pick one, or refresh after adding the repository in BB.
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -74,11 +115,13 @@ export function LinkDialog({ request, onClose }: { request: LinkRequest; onClose
   const [work, setWork] = useState<AgentWork>(pr.agent !== null && pr.agent.mode !== "off" ? pr.agent.mode : "fix");
   const [projectChoice, setProjectChoice] = useState<string | null>(null);
   const projectId = projectChoice ?? projects.data?.suggested ?? "";
+  const projectUnavailable = isProjectUnavailable(projects.data, projectId);
   const [start, setStart] = useState<"own" | "review">(pr.mine ? "own" : "review");
   const projectName = (id: string | null) => (id === null ? null : projects.data?.projects.find((project) => project.id === id)?.name ?? null);
   const linkedRole = (threadId: string) => pr.links.find((link) => link.threadId === threadId)?.role ?? null;
 
   const submit = async () => {
+    if (tab === "new" && projectUnavailable) return;
     if (tab === "existing") {
       const thread = threads?.find((item) => item.id === picked);
       if (!thread) return;
@@ -104,7 +147,7 @@ export function LinkDialog({ request, onClose }: { request: LinkRequest; onClose
     onClose();
   };
 
-  const canSubmit = !busy && (tab === "new" || (picked !== null && threads?.some((item) => item.id === picked) === true));
+  const canSubmit = !busy && (tab === "new" ? !projectUnavailable : picked !== null && threads?.some((item) => item.id === picked) === true);
   return (
     <Dialog
       title={`Link ${shortKey(pr)} to a thread`}
@@ -170,14 +213,12 @@ export function LinkDialog({ request, onClose }: { request: LinkRequest; onClose
         </>
       ) : (
         <div className="grid grid-cols-[7rem_minmax(0,1fr)] items-center gap-x-2 gap-y-3 text-sm">
-          <span className="text-xs text-muted-foreground">Project</span>
-          <ProjectSelect projects={projects.data} value={projectId} onChange={setProjectChoice} />
+          <div className="col-span-2"><ProjectSelect projects={projects.data} value={projectId} onChange={setProjectChoice} error={projects.error} /></div>
           <span className="text-xs text-muted-foreground">Start it to</span>
           <select aria-label="Start it to" className={FIELD} value={start} onChange={(event) => setStart(event.target.value as "own" | "review")}>
             <option value="own">{pr.mine ? "Be its agent: work on the PR and fix its feedback" : "Work on the PR"}</option>
             <option value="review">Start an AI review of it</option>
           </select>
-          {projects.error !== null && <div className="col-span-2"><ErrorNote>Could not list projects: {messageOf(projects.error)}</ErrorNote></div>}
         </div>
       )}
     </Dialog>

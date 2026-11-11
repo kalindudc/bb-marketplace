@@ -2,11 +2,20 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { createFakePluginHost, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { configToToml } from "../src/config";
 import { createShuttlePlugin } from "../server";
 import { FakePort, testConfig, fakeRunner, pr } from "./helpers";
+
+type Subscription = Parameters<BbPluginApi["sdk"]["subscribe"]>[0];
+
+function projectChanged(subscriptions: Set<Subscription>, change: "project-created" | "project-updated" | "project-deleted" | "threads-changed") {
+  for (const subscription of subscriptions) {
+    if (subscription.event === "project:changed") subscription.callback({ type: "changed", entity: "project", changes: [change] });
+  }
+}
 
 async function boot(options: { port?: FakePort; now?: () => number } = {}) {
   const port = options.port ?? new FakePort();
@@ -19,11 +28,24 @@ async function boot(options: { port?: FakePort; now?: () => number } = {}) {
     if (operation === "review") return "";
     return [];
   });
-  const host = createFakePluginHost({ pluginId: "shuttle", dataDir: mkdtempSync(join(tmpdir(), "shuttle-")) });
+  const subscriptions = new Set<Subscription>();
+  const unsubscribed: string[] = [];
+  const host = createFakePluginHost({
+    pluginId: "shuttle", dataDir: mkdtempSync(join(tmpdir(), "shuttle-")),
+    sdk: {
+      subscribe(subscription) {
+        subscriptions.add(subscription);
+        return () => {
+          subscriptions.delete(subscription);
+          unsubscribed.push(subscription.event);
+        };
+      },
+    },
+  });
   const plugin = createShuttlePlugin({ port: () => port, runner, tickMs: 3_600_000, now: options.now });
   await plugin(host.bb);
   const { behavior, inspection, lifecycle } = host.harness;
-  return { port, behavior, inspection, lifecycle, harness: host.harness, plugin };
+  return { port, behavior, inspection, lifecycle, harness: host.harness, plugin, subscriptions, unsubscribed };
 }
 
 const text = (result: unknown) => (typeof result === "string" ? result : (result as { content: Array<{ type: string; text?: string }> }).content.map((part) => (part.type === "text" ? part.text ?? "" : "")).join("\n"));
@@ -95,6 +117,108 @@ describe("the plugin", () => {
       "shuttle_board_remove",
     ]) expect(tools).toContain(name);
     await lifecycle.dispose();
+  });
+
+  it("picks up project creation, edits and deletion without waiting for the cache to expire", async () => {
+    const { behavior, lifecycle, port, subscriptions, unsubscribed } = await boot();
+    try {
+      const reads = vi.spyOn(port, "listProjects");
+      port.projects = [];
+      await behavior.callRpc("importToml", { toml: configToToml(testConfig()), apply: true });
+      const key = "forge:acme/app#2";
+      await behavior.callRpc("lookup", { query: key });
+      expect(await behavior.callRpc("projects", { key })).toEqual({ projects: [], suggested: null });
+      await expect(behavior.callRpc("review", { key })).rejects.toThrow("no bb project matches acme/app");
+      projectChanged(subscriptions, "threads-changed");
+      await behavior.callRpc("projects", { key });
+      expect(reads).toHaveBeenCalledTimes(1);
+
+      port.projects = [{ id: "proj_new", name: "app", gitRemoteUrl: "https://forge.test/acme/app.git" }];
+      projectChanged(subscriptions, "project-created");
+      expect(port.invalidations).toContainEqual(["projects"]);
+      expect(await behavior.callRpc("projects", { key })).toEqual({ projects: [{ id: "proj_new", name: "app" }], suggested: "proj_new" });
+      await behavior.callRpc("review", { key });
+      expect(port.spawned).toMatchObject([{ projectId: "proj_new" }]);
+
+      port.projects = [{ id: "proj_new", name: "Renamed", gitRemoteUrl: "https://forge.test/acme/other.git" }];
+      projectChanged(subscriptions, "project-updated");
+      expect(await behavior.callRpc("projects", { key })).toEqual({ projects: [{ id: "proj_new", name: "Renamed" }], suggested: null });
+      port.projects = [];
+      projectChanged(subscriptions, "project-deleted");
+      expect(await behavior.callRpc("projects", { key })).toEqual({ projects: [], suggested: null });
+      expect(reads).toHaveBeenCalledTimes(4);
+    } finally {
+      await lifecycle.dispose();
+    }
+    expect(subscriptions.size).toBe(0);
+    expect(unsubscribed.sort()).toEqual(["project:changed", "realtime:connection"]);
+  });
+
+  it("refreshes cached BB projects on demand without syncing PRs or starting a review", async () => {
+    const { behavior, lifecycle, port } = await boot();
+    try {
+      await behavior.callRpc("projects", {});
+      port.projects = [{ id: "proj_new", name: "New", gitRemoteUrl: null }];
+      expect(await behavior.callRpc("refreshProjects", {})).toEqual({ count: 1, fetchedAt: expect.any(Number) });
+      expect(await behavior.callRpc("projects", {})).toEqual({ projects: [{ id: "proj_new", name: "New" }], suggested: null });
+      expect(port.spawned).toEqual([]);
+      expect(port.invalidations).toContainEqual(["projects"]);
+      const invalidations = port.invalidations.length;
+      vi.spyOn(port, "listProjects").mockRejectedValueOnce(new Error("BB unavailable"));
+      await expect(behavior.callRpc("refreshProjects", {})).rejects.toThrow("BB unavailable");
+      expect(port.invalidations).toHaveLength(invalidations);
+    } finally {
+      await lifecycle.dispose();
+    }
+  });
+
+  it("refreshes projects on connection so changes missed while disconnected do not stay cached", async () => {
+    const { behavior, lifecycle, port, subscriptions } = await boot();
+    try {
+      const reads = vi.spyOn(port, "listProjects");
+      await behavior.callRpc("projects", {});
+      port.projects = [{ id: "proj_new", name: "New", gitRemoteUrl: null }];
+      for (const subscription of subscriptions) {
+        if (subscription.event === "realtime:connection") subscription.callback({ state: "disconnected", reconnected: false, reconnectDelayMs: 1000 });
+      }
+      await behavior.callRpc("projects", {});
+      expect(reads).toHaveBeenCalledTimes(1);
+      for (const subscription of subscriptions) {
+        if (subscription.event === "realtime:connection") subscription.callback({ state: "connected", reconnected: true, reconnectDelayMs: null });
+      }
+      expect(await behavior.callRpc("projects", {})).toEqual({ projects: [{ id: "proj_new", name: "New" }], suggested: null });
+      expect(reads).toHaveBeenCalledTimes(2);
+    } finally {
+      await lifecycle.dispose();
+    }
+  });
+
+  it("does not return or cache an old project read that finishes after a project change", async () => {
+    const { behavior, lifecycle, port, subscriptions } = await boot();
+    let release!: () => void;
+    let reached!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    const reading = new Promise<void>((resolve) => { reached = resolve; });
+    const previous = port.projects;
+    vi.spyOn(port, "listProjects").mockImplementationOnce(async () => {
+      reached();
+      await held;
+      return previous;
+    });
+    try {
+      const pending = behavior.callRpc("projects", {});
+      await reading;
+      port.projects = [{ id: "proj_new", name: "New", gitRemoteUrl: null }];
+      projectChanged(subscriptions, "project-created");
+      const current = { projects: [{ id: "proj_new", name: "New" }], suggested: null };
+      expect(await behavior.callRpc("projects", {})).toEqual(current);
+      release();
+      expect(await pending).toEqual(current);
+      expect(await behavior.callRpc("projects", {})).toEqual(current);
+    } finally {
+      release();
+      await lifecycle.dispose();
+    }
   });
 
   it("takes a review's notes for the user through shuttle_review_draft and keeps them out of what posts", async () => {

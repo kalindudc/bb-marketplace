@@ -10,6 +10,7 @@ Notable changes to Shuttle, newest first. Releases are tagged `shuttle/vX.Y.Z` i
 
 ### Fixed
 
+- Newly added or edited BB projects become available to review and thread pickers as soon as BB reports the change, including after a realtime reconnect. Older reads cannot restore a stale list. Refresh projects beside a project picker, or BB projects in the Sync menu, reloads just that list without syncing PRs or starting a review; failed refreshes keep your current choices.
 - Posted reviews get one final cleanup turn before Shuttle archives their review threads and children. Cleanup requests and completion survive reloads, and blocked or unconfirmed cleanup leaves the thread available.
 - An update or reload no longer leaves Shuttle degraded. When bb stops the sync service, it gives the service 5 seconds and then loads no new version until a manual reload. The service waited for the tick it was in, which could be waiting on bb itself: checking quiet reviews or sending to an agent. It now returns as soon as bb stops it, and Shuttle's shutdown waits for that tick instead. A tick that bb stops skips sending, and sending stops between threads.
 - A review thread is not archived, and its review not ended as quiet, while a hidden thread under it works. bb leaves hidden threads, such as another plugin's, out of a thread's children unless asked, so Shuttle could archive one at work along with the review thread. The critic count auto post checks still leaves them out.

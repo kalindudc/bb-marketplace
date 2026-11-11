@@ -310,6 +310,7 @@ export function handlers(overrides: Partial<Handlers> = {}): Handlers {
     sendUnread: () => ({ sent: 0 }),
     threads: () => ({ threads: [] }),
     projects: () => ({ projects: [{ id: "prj_bb", name: "bb" }], suggested: "prj_bb" }),
+    refreshProjects: () => ({ count: 1, fetchedAt: NOW }),
     getConfig: () => ({ config: config() }),
     saveConfig: ({ config: next }) => ({ config: next as Config }),
     testServer: () => ({ results: [] }),

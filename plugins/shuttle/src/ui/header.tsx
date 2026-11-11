@@ -9,6 +9,7 @@ import { settingsHref } from "./format";
 import { routeOf } from "./prefs";
 import { formatRoute, type Route } from "./route";
 import { useViewport } from "./viewport";
+import { Picker, PickerAction } from "./picker";
 
 const SEARCH_DELAY_MS = 200;
 
@@ -123,7 +124,35 @@ function SearchInput({ subPath, placeholder, autoFocus = false }: { subPath: str
   );
 }
 
-/** A phone's header has room for two icons: search opens its field in their place, and stays open on the Search page. */
+function SyncControls({ phone, syncing, onSync }: { phone: boolean; syncing: boolean; onSync(): void }) {
+  const refresh = useShuttleMutation("refreshProjects");
+  const refreshProjects = async () => {
+    if (refresh.isPending) return;
+    const result = await refresh.run({});
+    if (result !== null) toast.success(`Refreshed ${result.count} BB projects`);
+  };
+  return (
+    <div className="flex items-center gap-0.5">
+      <button type="button" aria-label={syncing ? "Syncing" : "Sync"} className={phone ? ICON_GHOST : BUTTON} disabled={syncing} title="Sync pull requests from every server" onClick={onSync}>
+        <Icon name="ArrowReloadHorizontal" className={`size-3.5 ${syncing ? "animate-spin" : ""}`} aria-hidden />
+        {!phone && (syncing ? "Syncing" : "Sync")}
+      </button>
+      <Picker phone={phone} title="Sync" triggerLabel="More sync actions" triggerClassName={`${ICON_GHOST} max-sm:min-h-11 max-sm:min-w-11`}
+        trigger={<Icon name={refresh.isPending ? "Loading" : "ChevronDown"} className={`size-3.5 ${refresh.isPending ? "animate-spin motion-reduce:animate-none" : ""}`} aria-hidden />} width="w-72">
+        <PickerAction onSelect={() => { if (!syncing) onSync(); }}>
+          <Icon name="GitPullRequest" className="size-4 shrink-0" aria-hidden />
+          <span><span className="block">Pull requests</span><span className="block text-xs text-muted-foreground">Fetch PRs, reviews and checks</span></span>
+        </PickerAction>
+        <PickerAction onSelect={() => void refreshProjects()}>
+          <Icon name="Folder" className="size-4 shrink-0" aria-hidden />
+          <span><span className="block">BB projects</span><span className="block text-xs text-muted-foreground">Reload projects and repository matches</span></span>
+        </PickerAction>
+      </Picker>
+    </div>
+  );
+}
+
+/** A phone's search opens its field in place of the header controls, and stays open on the Search page. */
 function PhoneHeader({ subPath, syncing, onSync, onClose }: { subPath: string; syncing: boolean; onSync(): void; onClose(): void }) {
   const [open, setOpen] = useState(false);
   const onSearch = routeOf(subPath).view === "search";
@@ -144,9 +173,7 @@ function PhoneHeader({ subPath, syncing, onSync, onClose }: { subPath: string; s
       <button type="button" aria-label="Search PRs" title="Search PRs, or look one up" className={ICON_GHOST} onClick={() => setOpen(true)}>
         <Icon name="Search" className="size-4" aria-hidden />
       </button>
-      <button type="button" aria-label={syncing ? "Syncing" : "Sync"} title="Sync" className={ICON_GHOST} disabled={syncing} onClick={onSync}>
-        <Icon name="ArrowReloadHorizontal" className={`size-4 ${syncing ? "animate-spin" : ""}`} aria-hidden />
-      </button>
+      <SyncControls phone syncing={syncing} onSync={onSync} />
     </div>
   );
 }
@@ -168,10 +195,7 @@ export function ShuttleHeader({ subPath }: PluginNavPanelProps) {
       <div className="w-56 min-w-0 xl:w-80">
         <SearchInput subPath={subPath} placeholder="Search PRs, or paste a link to look one up" />
       </div>
-      <button type="button" className={BUTTON} disabled={syncing} title="Sync every server now" onClick={() => void sync()}>
-        <Icon name="ArrowReloadHorizontal" className={`size-3.5 ${syncing ? "animate-spin" : ""}`} aria-hidden />
-        {syncing ? "Syncing" : "Sync"}
-      </button>
+      <SyncControls phone={false} syncing={syncing} onSync={() => void sync()} />
       <UrlLink href={settingsHref(pluginId)} aria-label="Shuttle settings" title="Shuttle settings: opens Shuttle's page in bb's Settings" className={ICON_GHOST}>
         <Icon name="Settings" className="size-4" aria-hidden />
       </UrlLink>
