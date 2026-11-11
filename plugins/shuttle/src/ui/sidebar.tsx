@@ -1,8 +1,9 @@
-import { experimental_Icon as Icon, experimental_usePluginId, UrlLink, useBbNavigate, type PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
+import { experimental_Icon as Icon, useBbNavigate, type PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
 import type { ServerStatus } from "../contract";
 import { AREA_META, PANEL_PATH, SOURCE_META } from "./constants";
 import { useShuttleQuery } from "./data";
-import { ago, settingsHref } from "./format";
+import { ago } from "./format";
+import { AutomationPauseControls } from "./automation-pause";
 import { sourceCounts } from "./reviews";
 import { routeOf } from "./prefs";
 import { formatRoute, SOURCES, type Route } from "./route";
@@ -50,7 +51,6 @@ function Health({ server, onOpen }: { server: ServerStatus; onOpen(): void }) {
 /** Shuttle's areas in place of bb's thread list while the page is open; on compact screens bb shows it in its drawer. */
 export function ShuttleSidebar({ subPath }: PluginNavPanelProps) {
   const navigate = useBbNavigate();
-  const pluginId = experimental_usePluginId();
   const overview = useShuttleQuery("overview", {});
   const route = routeOf(subPath);
   const reviewsOpen = route.view === "reviews" || route.view === "reviewed";
@@ -94,13 +94,7 @@ export function ShuttleSidebar({ subPath }: PluginNavPanelProps) {
       )}
       <div data-sidebar-footer className="mt-auto flex flex-col gap-1.5 border-t border-border px-2 pb-0.5 pt-2.5 text-[11.5px] text-muted-foreground">
         {servers.map((server) => <Health key={server.id} server={server} onOpen={() => go({ view: "insights", tab: "sync" })} />)}
-        {overview.data !== undefined && (
-          <div className={`flex items-center gap-1.5 ${overview.data.paused ? "text-warning-text" : ""}`}>
-            <Icon name={overview.data.paused ? "Pause" : "Bot"} fallback="Circle" className="size-3.5 shrink-0" aria-hidden />
-            <span>{overview.data.paused ? "Automations paused" : "Automations on"} ·</span>
-            <UrlLink href={settingsHref(pluginId)} className="text-primary hover:underline">{overview.data.paused ? "resume" : "pause"}</UrlLink>
-          </div>
-        )}
+        {overview.data !== undefined && <AutomationPauseControls overview={overview.data} />}
       </div>
     </nav>
   );

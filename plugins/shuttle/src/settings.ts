@@ -6,8 +6,8 @@ import { z } from "zod";
 export const SETTINGS = {
   pauseAutomations: {
     type: "boolean",
-    label: "Pause automations",
-    description: "Stops auto reviews and the messages to watched PRs' threads. Lists keep syncing, and buttons still work.",
+    label: "Pause automations indefinitely",
+    description: "Stops automatic reviews, auto posting, agent assignment and feedback delivery until you resume. For a timed pause, use Automations below. Lists keep syncing, and buttons still work.",
     default: false,
   },
   syncMinutes: {

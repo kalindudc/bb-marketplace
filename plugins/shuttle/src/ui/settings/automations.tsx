@@ -4,6 +4,8 @@ import type { Config } from "../../config";
 import { BUTTON_GHOST, BUTTON_PRIMARY, CARD, Checkbox, ErrorNote, FIELD, FitTextarea, Toggle } from "../common";
 import { AUTO_TRIGGERS, WATCH_MODES } from "../constants";
 import { ACT_PROMPT_VARIABLES } from "../../templates";
+import { AutomationPauseControls } from "../automation-pause";
+import { useShuttleQuery } from "../data";
 import { AutoPostCard, fromAutoPostDraft, toAutoPostDraft, type AutoPostDraft } from "./auto-post";
 import { PromptEditor } from "./prompt-editor";
 import { useConfig } from "./use-config";
@@ -52,6 +54,7 @@ function Card({ icon, title, hint, on, onToggle, children }: { icon: string; tit
 
 /** What Shuttle does by itself: auto reviews, and what agents get sent about your PRs. */
 export function AutomationsSection() {
+  const overview = useShuttleQuery("overview", {});
   const { config, loadError, saving, saveError, save, clearSaveError } = useConfig();
   const [draft, setDraft] = useState<{ autoReview: AutoReview; watch: Watch; repos: string; bots: string; phrases: string; checks: string; autoPost: AutoPostDraft } | null>(null);
   if (config === null) return loadError !== null ? <ErrorNote>Could not load Shuttle's settings: {loadError}</ErrorNote> : <div className="text-sm text-muted-foreground">Loading…</div>;
@@ -83,6 +86,7 @@ export function AutomationsSection() {
 
   return (
     <div data-section="automations" className="flex flex-col gap-3">
+      {overview.data !== undefined && <div className={`${CARD} p-3.5 text-xs`}><AutomationPauseControls overview={overview.data} /></div>}
       {saveError !== null && <ErrorNote>{saveError}</ErrorNote>}
       <Card icon="Bot" title="Auto review" hint="Start a review thread by itself when a PR asks for you." on={auto.enabled} onToggle={(enabled) => setAuto({ enabled })}>
         <div className="mb-0.5 text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground">Start one when</div>

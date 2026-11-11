@@ -42,7 +42,7 @@ export function createShuttlePlugin(deps: PluginDeps = {}) {
     const store = new Store(db, now);
     const settingsHandle = bb.settings.define(SETTINGS);
     let settings: Settings = toSettings(await settingsHandle.get());
-    const setSettings = async (patch: { autoAgent?: boolean; inboxRequests?: boolean }) => {
+    const setSettings: BbPort["setSettings"] = async (patch) => {
       settings = toSettings(await settingsHandle.experimental_set(patch));
     };
     const port = deps.port ? deps.port(bb) : createBbPort(bb, setSettings);
@@ -60,6 +60,7 @@ export function createShuttlePlugin(deps: PluginDeps = {}) {
     });
     settingsHandle.onChange((next, prev) => {
       settings = toSettings(next);
+      if (next.pauseAutomations !== prev.pauseAutomations) app.clearTimedPause();
       // Turning auto agent on gives the PRs without one their agents now, not at the next sync.
       if (settings.autoAgent && prev.autoAgent !== true && !disposed) app.autoAgent().catch((error: unknown) => bb.log.warn(`auto agent: ${errText(error)}`));
       port.publish();

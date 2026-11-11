@@ -6,6 +6,7 @@ Notable changes to Shuttle, newest first. Releases are tagged `shuttle/vX.Y.Z` i
 
 ### Added
 
+- Timed automation pauses from the sidebar and Automations settings: for today, 24 hours, one week or a chosen return date and time, alongside the indefinite pause. The status shows when automation resumes; pauses survive restarts and can be changed or ended early without changing your automation rules.
 - Extra instructions for review cleanup (`reviewCleanupPrompt`): a multiline setting appended to the built-in cleanup prompt, for custom tools and task trackers such as Cortex.
 
 ### Fixed

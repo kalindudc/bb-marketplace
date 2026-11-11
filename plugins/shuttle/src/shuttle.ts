@@ -3,7 +3,7 @@ import { adapterFor, type Adapter } from "./adapters";
 import { runProcess, sleep, type Runner } from "./adapters/exec";
 import { configChanges, configFromToml, configToToml, ConfigError, parseConfig, serverSchema, type Config, type ServerConfig, type WatchMode } from "./config";
 import type {
-  AutoPostInsights, ReviewHistoryItem,
+  AutoPostInsights, AutomationPause, ReviewHistoryItem,
   AgentMode, AgentTarget, Area, BoardDetail, BoardSummary, ConversationItem, EventView, InboxRule, InboxRuleKind, InboxView, InsightsView, LinkRole, MergeMethod, MergeOptions, MergeView, Outcome, Overview, LinkCard, PostFinding, PrChange, PrDetails,
   PostView, PrView, ReviewDraft, ReviewInput, ServerStatus, SyncHistory, SyncRun, SyncStep, SyncStepName, TestResult, ThreadOption, UsageRange, UsageView, Verdict,
 } from "./contract";
@@ -47,6 +47,7 @@ const DAY_MS = 86_400_000;
 /** How far back the Sync tab's marks go. */
 const HISTORY_WINDOW_MS = 3 * 3_600_000;
 const FULL_SYNC_AT = "full_sync_at";
+const AUTOMATION_PAUSE_UNTIL = "automation_pause_until";
 /** How far up from a thread at work Shuttle looks for the review it belongs to: critics, their helpers, and theirs. */
 const THREAD_ANCESTORS = 4;
 
@@ -88,6 +89,7 @@ export class Shuttle implements Ctx {
   readonly port: BbPort;
   readonly now: () => number;
   readonly settings: () => Settings;
+  private readonly rawSettings: () => Settings;
   private readonly runner?: Runner;
   readonly lifetime?: AbortSignal;
   private readonly adapters = new Map<string, { json: string; adapter: Adapter }>();
@@ -127,7 +129,11 @@ export class Shuttle implements Ctx {
     this.store = deps.store;
     this.port = deps.port;
     this.now = deps.now;
-    this.settings = deps.settings;
+    this.rawSettings = deps.settings;
+    this.settings = () => {
+      const settings = deps.settings();
+      return !settings.pauseAutomations && this.pauseUntil() !== null ? { ...settings, pauseAutomations: true } : settings;
+    };
     this.runner = deps.runner;
     this.run = deps.runner ?? runProcess;
     this.pause = deps.pause ?? ((ms, signal) => sleep(ms, signal ?? new AbortController().signal));
@@ -246,7 +252,7 @@ export class Shuttle implements Ctx {
     };
     const servers = this.config().servers.map((server) => this.serverStatus(server));
     const syncedAt = servers.reduce<number | null>((max, s) => (s.lastSyncAt !== null && (max === null || s.lastSyncAt > max) ? s.lastSyncAt : max), null);
-    return { servers, counts, syncedAt, syncing: this.serverSyncs.size > 0 || this.finishing !== null, paused: this.settings().pauseAutomations, autoAgent: this.settings().autoAgent };
+    return { servers, counts, syncedAt, syncing: this.serverSyncs.size > 0 || this.finishing !== null, paused: this.settings().pauseAutomations, pauseUntil: this.rawSettings().pauseAutomations ? null : this.pauseUntil(), autoAgent: this.settings().autoAgent };
   }
 
   private serverStatus(server: ServerConfig): ServerStatus {
@@ -852,6 +858,29 @@ export class Shuttle implements Ctx {
     return recordOutcomes(this, threadId, query, items);
   }
 
+  private pauseUntil(): number | null {
+    const stored = this.store.kv(AUTOMATION_PAUSE_UNTIL);
+    if (stored === null) return null;
+    const until = Number(stored);
+    if (!Number.isSafeInteger(until) || until <= 0 || until > 8_640_000_000_000_000) throw new ShuttleError("Invalid stored automation pause deadline");
+    return until > this.now() ? until : null;
+  }
+
+  clearTimedPause(): void {
+    this.store.deleteKv(AUTOMATION_PAUSE_UNTIL);
+  }
+
+  async setAutomationPause(input: AutomationPause): Promise<Overview> {
+    if (input.mode === "until" && (!Number.isSafeInteger(input.until) || input.until <= this.now() || input.until > 8_640_000_000_000_000)) {
+      throw new ShuttleError("Choose a future date and time");
+    }
+    await this.port.setSettings({ pauseAutomations: input.mode === "indefinite" });
+    if (input.mode === "until") this.store.setKv(AUTOMATION_PAUSE_UNTIL, String(input.until));
+    else this.clearTimedPause();
+    this.port.publish();
+    return this.overview();
+  }
+
   async setSettings(patch: { autoAgent?: boolean; inboxRequests?: boolean }): Promise<void> {
     await this.port.setSettings(patch);
   }
@@ -1091,6 +1120,10 @@ export class Shuttle implements Ctx {
    * syncing, and delivers the batches whose window passed.
    */
   async tick(signal?: AbortSignal): Promise<void> {
+    if (this.store.kv(AUTOMATION_PAUSE_UNTIL) !== null && this.pauseUntil() === null) {
+      this.clearTimedPause();
+      this.port.publish();
+    }
     this.drainPosts();
     if (!signal?.aborted) this.runAutoPosts();
     this.drainMerges();

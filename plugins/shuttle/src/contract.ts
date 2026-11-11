@@ -611,9 +611,17 @@ export const overviewSchema = z.object({
   syncedAt: z.number().nullable(),
   syncing: z.boolean(),
   paused: z.boolean(),
+  pauseUntil: z.number().nullable(),
   autoAgent: z.boolean(),
 });
 export type Overview = z.infer<typeof overviewSchema>;
+
+export const automationPauseSchema = z.discriminatedUnion("mode", [
+  z.object({ mode: z.literal("resume") }),
+  z.object({ mode: z.literal("indefinite") }),
+  z.object({ mode: z.literal("until"), until: z.number().int().positive().max(8_640_000_000_000_000) }),
+]);
+export type AutomationPause = z.infer<typeof automationPauseSchema>;
 
 export const inboxRuleSchema = z.object({
   id: z.number(),
@@ -1083,6 +1091,7 @@ export const rpcContract = defineContract({
   askAgent: { input: z.object({ key, text: body }), output: ok, invalidates: PRS },
   /** The page's own switches for Shuttle's bb settings. */
   setSettings: { input: z.object({ autoAgent: z.boolean().optional(), inboxRequests: z.boolean().optional() }), output: ok, invalidates: () => ["prs", "servers", "config"] },
+  setAutomationPause: { input: automationPauseSchema, output: overviewSchema, invalidates: () => ["prs", "servers", "config"] },
   track: { input: z.object({ key, on: z.boolean() }), output: prOut, invalidates: PRS },
   /**
    * Out of the Inbox until an epoch-ms time (in the future, at most 60 days ahead) or "update", until it changes;

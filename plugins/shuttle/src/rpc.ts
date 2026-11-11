@@ -58,6 +58,7 @@ export function registerRpc(bb: BbPluginApi, shuttle: Shuttle): void {
       await shuttle.setSettings(patch);
       return { ok: true as const };
     }),
+    setAutomationPause: (input) => refusing(() => shuttle.setAutomationPause(input)),
     track: ({ key, on }) => refusing(() => ({ pr: shuttle.track(key, on) })),
     snooze: ({ keys, until }) => refusing(() => ({ prs: shuttle.snooze(keys, until) })),
     dismiss: ({ keys, on }) => refusing(() => ({ prs: shuttle.dismiss(keys, on) })),

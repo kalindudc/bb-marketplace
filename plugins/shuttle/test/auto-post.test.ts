@@ -122,6 +122,7 @@ describe("posting comments", () => {
       ["a push", (s) => { s.h.views[3] = pr(3, { head: "h2", additions: 12, deletions: 3 }); }, "the PR has new commits since the review read it"],
       ["a merge", (s) => { s.h.views[3] = pr(3, { head: "h1", additions: 12, deletions: 3, state: "merged" }); }, "the PR is merged"],
       ["paused automations", (s) => { s.h.settings.pauseAutomations = true; }, "automations are paused"],
+      ["timed pause", async (s) => { await s.h.shuttle.setAutomationPause({ mode: "until", until: s.h.clock.now + 24 * 60 * MINUTE }); }, "automations are paused"],
       ["a mode turned back to shadow", (s) => {
         const config = s.h.shuttle.config();
         s.h.shuttle.saveConfig({ ...config, autoPost: { ...config.autoPost, repos: [{ ...config.autoPost.repos[0]!, mode: "shadow" }] } });

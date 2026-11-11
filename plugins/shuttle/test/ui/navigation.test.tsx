@@ -149,6 +149,7 @@ describe("the sidebar", () => {
     fireEvent.click(footer.querySelector<HTMLElement>("[data-server='gitlab']")!);
     expect(slot.inspection.navigateCalls.at(-1)).toEqual({ method: "toPluginPanel", path: "shuttle", options: { subPath: "insights/sync" } });
     expect(footer.textContent).toContain("Automations paused");
-    expect(within(footer).getByRole("link", { name: "resume" }).getAttribute("href")).toBe("/settings/plugins/shuttle");
+    expect(within(footer).getByRole("button", { name: "Resume now" })).toBeTruthy();
+    expect(within(footer).getByRole("button", { name: "Change pause" })).toBeTruthy();
   });
 });

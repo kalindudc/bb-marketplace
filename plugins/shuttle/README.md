@@ -19,6 +19,21 @@ Captured in an isolated demo bb with made-up PRs on two fictional command server
 
 ![A saved board for a release](../../screenshots/shuttle/board.jpg)
 
+## Pause automations
+
+Use **Pause automations** at the foot of Shuttle's sidebar or in Settings › Shuttle › Automations.
+Choose **For today** (until midnight in your browser's local time zone), **For 24 hours**,
+**For 1 week**, **Until a date and time** for a vacation, or **Until I resume**. A timed pause
+shows its return time, survives restarts, and expires even while bb is closed. If bb is closed
+at that time, automation resumes when it next runs. **Resume now** ends it early; **Change pause**
+changes the duration.
+
+Pausing stops new automatic reviews, auto posting, automatic agent assignment and feedback
+delivery. Lists keep syncing, manual actions still work, and already-running threads are not
+stopped. The existing **Pause automations indefinitely** switch remains available; changing it
+clears any timed pause. Your automation rules are not changed. A review that auto post refuses
+while paused still needs to be checked again, as with an indefinite pause.
+
 ## Inbox
 
 The Inbox lists what waits on you, one row per PR under what to do with it: Needs you, Ready to

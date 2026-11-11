@@ -3,6 +3,7 @@ import { experimental_Icon as Icon, useBbNavigate, type PluginNavPanelProps } fr
 import type { Overview } from "../contract";
 import { ActionsProvider, nudgeText, runNext, useActions } from "./actions";
 import { BUTTON, ErrorNote, ICON_GHOST_LARGE, PAGE, PageHeading, TipProvider } from "./common";
+import { AutomationPauseControls } from "./automation-pause";
 import { AREA_META, PANEL_PATH } from "./constants";
 import { isNotFound, messageOf, threadsOf, useShuttleMutation, useShuttleQuery } from "./data";
 import { PrDetail } from "./detail";
@@ -292,7 +293,7 @@ export function ShuttlePage({ subPath }: PluginNavPanelProps) {
       )}
       {phone && overview.data?.paused === true && (
         <div role="status" className="mx-4 mt-3 rounded-md border border-warning/40 bg-warning/5 px-3 py-2 text-xs text-warning-text">
-          Automations are paused: no auto reviews, and nothing is sent to agents. Lists keep syncing.
+          <AutomationPauseControls overview={overview.data} />
         </div>
       )}
     </>

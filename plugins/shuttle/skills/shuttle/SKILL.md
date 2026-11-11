@@ -83,6 +83,18 @@ them for context and report nothing about them.
 A message that starts with `[shuttle] About <key>` is the user writing to you from Shuttle about
 that PR.
 
+## Pause automations
+
+The sidebar and Settings, Shuttle, Automations offer a pause for today (until local midnight),
+24 hours, one week, a chosen local date and time, or until the user resumes. A timed pause is
+stored on the server and expires even across restarts. The status shows its return time;
+Resume now ends it early and Change pause replaces it. The existing indefinite setting is
+still available, and changing that switch clears a timed pause.
+
+A pause stops automatic reviews, auto posting, automatic agent assignment and feedback delivery.
+Lists keep syncing, manual actions remain available, and threads already running are not stopped.
+Automation rules stay unchanged. Auto posts refused during a pause still need a fresh check.
+
 ## Refresh projects
 
 BB project changes update Shuttle's project list automatically. If a new project is missing, use Refresh projects beside the project picker, or open the Sync menu and choose BB projects. This reloads BB projects and repository matches only, preserving the current review choices. It does not sync pull requests, start a review, post anything, or change settings. A failed refresh shows an error and leaves the previous list available.

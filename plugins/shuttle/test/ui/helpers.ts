@@ -195,6 +195,7 @@ export function overview(overrides: Partial<Overview> = {}): Overview {
     syncedAt: NOW - 60_000,
     syncing: false,
     paused: false,
+    pauseUntil: null,
     autoAgent: false,
     ...overrides,
   };
@@ -297,6 +298,7 @@ export function handlers(overrides: Partial<Handlers> = {}): Handlers {
     setAgentMode: unexpected("setAgentMode"),
     askAgent: unexpected("askAgent"),
     setSettings: unexpected("setSettings"),
+    setAutomationPause: unexpected("setAutomationPause"),
     track: unexpected("track"),
     snooze: unexpected("snooze"),
     dismiss: unexpected("dismiss"),

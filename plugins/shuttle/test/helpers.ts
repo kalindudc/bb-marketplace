@@ -49,7 +49,7 @@ export class FakePort implements BbPort {
     return read ?? { usage: null, descendants: [] };
   }
 
-  settingsPatches: Array<{ autoAgent?: boolean; inboxRequests?: boolean }> = [];
+  settingsPatches: Array<Parameters<BbPort["setSettings"]>[0]> = [];
   notifications: Array<{ title: string; body: string }> = [];
   async notify(title: string, body: string): Promise<void> {
     this.notifications.push({ title, body });
@@ -58,7 +58,7 @@ export class FakePort implements BbPort {
   addThread(id: string, title = `Thread ${id}`, archived = false, extra: Partial<ThreadInfo> = {}): void {
     this.threads.set(id, { id, title, archived, projectId: "proj_app", status: "idle", waiting: false, branch: null, updatedAt: 0, ...extra });
   }
-  async setSettings(patch: { autoAgent?: boolean; inboxRequests?: boolean }): Promise<void> {
+  async setSettings(patch: Parameters<BbPort["setSettings"]>[0]): Promise<void> {
     this.settingsPatches.push(patch);
   }
   async spawnThread(args: SpawnArgs): Promise<string> {
