@@ -19,26 +19,37 @@ In a turn that runs more than a few minutes, send a flare at each of these momen
 
 When many tool calls have passed since your last flare, ask yourself whether one of these moments went by. A turn of a few tool calls needs no flare, because its reply is the update. Do not flare routine steps such as reading a file; one to five flares in a long turn is typical. A flare does not replace your final answer: end the turn with your full answer as usual.
 
-## Writing one
+## Render the evidence
+The title is one standalone line, about 80 characters; for a quick status it is the whole flare. For a finding with evidence, open the body with one or two sentences, then draw what you already measured or saved. A body that is all prose is right only when there is nothing to see. NEVER replace a chart, flow or screenshot with a wall of text.
 
-The user glances at a flare, so show the evidence instead of describing it.
+If genui is installed, prefer its `ui` components for evidence; if inline-vis is installed, use it for custom HTML/SVG. Markdown tables are a fallback, not the default with a suitable renderer. The Flares tab renders the body as a reply; a final-reply-only or plain-tool-input rule does not cover a flare's body. People read child agents' flares too. Missing check_ui or ui_examples does NOT mean genui is unavailable. If unsure, check installed renderers once with `bb plugin list`. Use this reference without extra tools or dependencies. If the renderer really is absent: without genui, use Markdown tables and mermaid.
 
-- The title is one line that stands on its own, about 80 characters. Longer titles are cut. For a quick status, the title is the whole flare.
-- Anything more gets a body that opens with one or two sentences, because the banner and notifications show only its prose. Then it draws the evidence as a block. Draw what you already have, such as numbers you just read, a flow you just traced or a file you saved. The body is cut at 60,000 characters.
-- The Flares tab renders the body as a reply of its own, so every block a reply can hold is drawn there: Markdown tables, mermaid diagrams and images always, plus the blocks and directives of installed rendering plugins, such as genui's `ui` views and inline-vis pages. A rule that only the message ending your turn may hold a block, or that tool input stays plain text, does not cover a flare's body.
-- Pick the block the evidence calls for. The views below are genui's `ui` ones; without genui, use Markdown tables and mermaid.
-  - key numbers: a Metric row; a series: a Chart
-  - A versus B, before and after, or items with several attributes: a Table
-  - a flow, an architecture or the branches of a decision: a mermaid diagram
-  - PRs, commits or phases: Status, Steps or a Table with their state
-  - a file you saved (JSON, CSV, a log, a test report): `Load("$BB_THREAD_STORAGE/<path>")` into its view instead of retyping it
-  - screenshots: Image or Gallery of their paths
-  - a blocker: what fails and what the user can do; Steps when there are several
-- A body that is all prose is right only when there is nothing to see. Never write paragraphs or paragraph-long bullets with bold labels.
-- When a body is all text but holds numbers, a list or a saved file, "Flare sent" comes back with a hint, once a turn, naming the views that fit. Follow it in your next flare.
-- Name a thread-storage file as `$BB_THREAD_STORAGE/<path>` so a view can load it.
-- Kinds are `finding` (the default), `progress`, `decision`, `blocker` and `summary`.
-- Set `notify: true` (or `--notify`) only for something the user must see now. Blockers notify on their own, unless the user turned notifications off.
+## Compact genui reference
+In a complete ```ui fence: one expression per line, JS arrays/objects/variables, `Load("$BB_THREAD_STORAGE/<path>")`, named arguments last. Wrap in Card(title, children); Row(children) lays items side by side.
+- Counts: Metric(label, value, note?)
+- Timings/series: Chart(type, labels, series, unit: "ms"); type "bar" or "line", series a number array or {name: numberArray}
+- Attributes: Table(columns, rows), both arrays; rows contain value arrays
+- Flows: Diagram(mermaid), e.g. "flowchart LR\n A[Client] --> B[Proxy] --> C[App]"
+- Screenshots: Image(path) or Gallery(paths)
+- Saved results: Tests(Load(path)), Logs(Load(path)), Findings(Load(path)); changes: Changes()
+- Phases/PRs: Steps([{title, detail, status}]); status "done", "current" or "blocked"
+A blocker says what failed and what the user can do; use Steps for several actions.
+Use the fitting component and measured data. Name files as `$BB_THREAD_STORAGE/<path>`; do not retype a saved report.
+
+Example body:
+
+    Direct mounting preserves the assertions and reduces focused test time.
+
+    ```ui
+    Card("Test timing", [Chart("bar", ["Original", "Smaller fixture", "Direct mount"], [2163, 1034, 236], unit: "ms")])
+    ```
+
+## Inline-vis
+Use a complete ```inline-vis fence for small HTML/SVG with inline CSS/JS and data, using BB theme variables (--foreground, --primary). The companion has no sibling files. Do not build a page just for a status.
+
+Drawing hints advise the NEXT flare; do not resend or reformat the saved one. Use Markdown if the suggested engine is absent. Hints share one budget: once per turn, or once an hour outside turns; never for blockers.
+
+Kinds: `finding`, `progress`, `decision`, `blocker`, `summary`. Notify only for urgency; blockers notify automatically. A failed send is not a reason to stop or loop. Bodies are limited to 60,000 characters.
 
 ## Commands
 
@@ -55,4 +66,4 @@ The user glances at a flare, so show the evidence instead of describing it.
 ## Notes Flare sends to you
 
 - `[Flare from a child thread] ...` is a flare a thread you started sent while you were working. It needs no reply; use it if it changes your plan.
-- `[Flare reminder] ...` means the user turned on reminders and your turn has been quiet for a while. Send a flare if you finished a step or have something new, even a title alone; otherwise ignore it and do not reply.
+- `[Flare reminder] ...` means the user turned on reminders and your turn has been quiet for a while. Send a flare if you finished a step or have something new. A title alone is enough for a quick status; substantive evidence still gets a fitting visual. Otherwise ignore it and do not reply.

@@ -1,6 +1,7 @@
 import { PluginCliError, cliCommand, defineCli, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { flaresText } from "./format";
 import { KINDS } from "./kinds";
+import { BODY_DESCRIPTION } from "./notes";
 import type { FlareService } from "./service";
 import { resultText } from "./tools";
 
@@ -34,7 +35,7 @@ export function registerCli(bb: BbPluginApi, flares: FlareService): void {
           options: {
             body: {
               type: "string",
-              description: 'Markdown drawn like a reply: a sentence or two, then the evidence as a block. For fenced blocks, write it to a file and pass --body "$(cat body.md)"',
+              description: `${BODY_DESCRIPTION} For fenced blocks, write it to a file and pass --body "$(cat body.md)"`,
             },
             kind: { type: "enum", values: KINDS, default: "finding", description: "finding, progress, decision, blocker or summary" },
             notify: { type: "boolean", description: "Also push a notification to the user's devices" },

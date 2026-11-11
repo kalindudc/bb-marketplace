@@ -165,7 +165,7 @@ export class FlareService {
     return { status: "sent", flare: row, notes };
   }
 
-  /** The hint for a body that is all text, unless an earlier flare of the same turn already earned it. */
+  /** Presentation advice, unless an earlier flare of the same turn already earned it. */
   private drawingHint(row: FlareRow): string | null {
     const found = hintable(row);
     if (found === null) return null;

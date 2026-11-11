@@ -227,6 +227,32 @@ describe("sending a flare", () => {
     expect(hinted(send("Next turn", `${numbers} Next turn.`))).toBe(true);
   });
 
+  it("saves timing tables and hints at most once per turn across tool and CLI sends", () => {
+    const world = setup();
+    const body = "The first fix preserved the assertions but was still slow under load. The new direct mount is being checked in repeated full runs.\n\n| Version | Focused timing |\n| --- | ---: |\n| Original | 2,163 ms |\n| Smaller fixture | 1,034 ms |\n| Direct mount | 236 ms |";
+    const send = (title: string, source: "tool" | "cli", kind?: string) =>
+      world.service.send({ threadId: "thr_a", projectId: null, fields: { title, body, kind }, source });
+    world.service.onActive(active("thr_a"));
+    expect(send("Urgent timings", "tool", "blocker")).toMatchObject({ status: "sent", notes: [] });
+    expect(send("Comparison", "tool")).toMatchObject({ status: "sent", notes: [expect.stringContaining("If genui is available")] });
+    expect(send("Comparison again", "cli")).toMatchObject({ status: "sent", notes: [] });
+    world.service.onIdle(active("thr_a"));
+    world.advance(1000);
+    world.service.onActive(active("thr_a"));
+    expect(send("Next turn", "cli")).toMatchObject({ status: "sent", notes: [expect.stringContaining("Chart")] });
+    expect(world.service.list("thr_a", { children: false, limit: 10 })).toHaveLength(4);
+  });
+
+  it("shares the drawing-hint budget between prose and timing tables", () => {
+    const world = setup();
+    world.service.onActive(active("thr_a"));
+    const send = (title: string, body: string) => world.service.send({ threadId: "thr_a", projectId: null, fields: { title, body }, source: "tool" });
+    const prose = "The comparison is ready. 200 requests ran with 100 successes and 100 failures; 50 retried, 20 recovered and 30 stopped. ".repeat(2);
+    expect(send("Prose", prose)).toMatchObject({ notes: [expect.stringContaining("This flare is all text.")] });
+    const table = `${prose}\n\n| Run | Latency |\n| --- | --- |\n| Before | 200 ms |\n| After | 100 ms |`;
+    expect(send("Table", table)).toMatchObject({ status: "sent", notes: [] });
+  });
+
   it("hints a thread with no turn to count by again only after an hour without a text-only flare", () => {
     const world = setup();
     const body = "Three things changed in the stack:\n- First of three things that a table would show better than prose\n- Second of three things a table would show better than prose\n- Third of three things a table would show, the last one";

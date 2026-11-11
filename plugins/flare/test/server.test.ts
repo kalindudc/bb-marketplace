@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { readFileSync } from "node:fs";
-import { createFakePluginHost, makeMessageDispatchHookContext, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
+import { createFakePluginHost, makeMessageDispatchHookContext, makePluginAgentConfigurationContext, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { describe, expect, it } from "vitest";
 import plugin from "../server";
 import { TOOL_INSTRUCTIONS } from "../src/notes";
@@ -56,7 +56,7 @@ describe("the flare tool", () => {
     const flare = harness.inspection.registrations.agentTools.find((tool) => tool.name === "flare");
     const body = JSON.stringify((flare?.inputSchema as { properties: { body: unknown } }).properties.body);
     expect(body).not.toContain("A few lines");
-    expect(body).toMatch(/a table, a mermaid diagram, an image/);
+    expect(body).toMatch(/a table, a mermaid diagram, or an image/);
     expect(TOOL_INSTRUCTIONS).toContain("does not cover a flare's body");
     expect(TOOL_INSTRUCTIONS).toContain('Load("$BB_THREAD_STORAGE/<path>")');
     expect(TOOL_INSTRUCTIONS).toContain("A body that is all prose is right only when there is nothing to see");
@@ -67,8 +67,28 @@ describe("the flare tool", () => {
     const flare = harness.inspection.registrations.agentTools.find((tool) => tool.name === "flare");
     const body = JSON.stringify((flare?.inputSchema as { properties: { body: unknown } }).properties.body);
     for (const text of [TOOL_INSTRUCTIONS, body]) expect(text).toMatch(/genui[\s\S]*inline-vis/);
-    expect(TOOL_INSTRUCTIONS).toContain("Markdown tables, mermaid diagrams and images always");
+    expect(body).toContain("Prefer genui");
+    expect(TOOL_INSTRUCTIONS).toContain("Markdown tables are a fallback");
+    expect(TOOL_INSTRUCTIONS).toContain("If genui is installed");
+    expect(TOOL_INSTRUCTIONS).toContain("bb plugin list");
     expect(TOOL_INSTRUCTIONS).toContain("without genui, use Markdown tables and mermaid");
+  });
+
+  it("keeps the compact reference on the static tool selected for a child configuration", async () => {
+    const harness = await load();
+    const configuration = await harness.behavior.resolveAgentConfiguration(makePluginAgentConfigurationContext({
+      thread: { id: "thr_child", parentThreadId: "thr_parent" },
+      origin: { pluginId: "pi-minions" },
+    }));
+    expect(configuration.tools.map((tool) => tool.name)).toEqual(["flare", "flare_list"]);
+    const instructions = configuration.tools.find((tool) => tool.name === "flare")!.instructions!;
+    expect(instructions).toContain("Missing check_ui or ui_examples does NOT mean genui is unavailable");
+    expect(instructions).toContain("Chart(type, labels, series");
+    expect(instructions).toContain("Metric(label, value");
+    expect(instructions).toContain("```inline-vis");
+    expect(instructions).toContain("Diagram(mermaid)");
+    expect(instructions).toContain("Gallery(paths)");
+    expect(harness.inspection.sdk.callsTo("plugins.callRpc")).toHaveLength(0);
   });
 
   it("ties flares to moments in the agent's own work, not to another plugin's tools", () => {
@@ -196,6 +216,18 @@ describe("bb flare", () => {
     const help = await harness.behavior.runCli(["send", "--help"], { threadId: "thr_a" });
     expect(help.stdout).toContain('--body "$(cat body.md)"');
     expect(help.stdout).not.toContain("A few lines");
+    expect(help.stdout).toContain("Prefer genui");
+    expect(help.stdout).toContain("compact rendering reference");
+  });
+
+  it("keeps the timing table sent through the CLI and gives advice only for the next flare", async () => {
+    const harness = await load();
+    const body = "Direct mounting preserved every assertion. The fixture-only change was insufficient; loaded repeats and full-suite runs are still being checked.\n\n| Version | Latency |\n| --- | --- |\n| Original | 2163 ms |\n| Direct mount | 236 ms |";
+    const result = await harness.behavior.runCli(["send", "Timings", "--body", body, "--json"], { threadId: "thr_a" });
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({ status: "sent", notes: [expect.stringContaining("If genui is available")] });
+    const listed = JSON.parse((await harness.behavior.runCli(["list", "--json"], { threadId: "thr_a" })).stdout) as { flares: { body: string }[] };
+    expect(listed.flares[0]?.body).toBe(body);
   });
 
   it("keeps a multi-line body with a fenced block whole", async () => {

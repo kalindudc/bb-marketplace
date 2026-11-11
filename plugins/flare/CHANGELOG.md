@@ -2,6 +2,14 @@
 
 Notable changes to Flare, newest first. Releases are tagged `flare/vX.Y.Z` in this repository.
 
+## Unreleased
+
+### Changed
+
+- Rich rendering is the default for substantive flare evidence: fitting genui components for structured data and inline-vis for custom HTML/SVG, with Markdown tables as the unavailable-renderer fallback. Quick statuses still need only a title. The body description, reminder and CLI help make the same distinction.
+- Every author gets a compact rendering reference through Flare's own tool instructions and skill, including the genui syntax, common components, a timing chart example and the inline-vis fence form. Missing genui validation tools no longer implies that its renderer is unavailable. No other plugin's tools are selected and no dependency is added.
+- Timing-comparison tables with at least two measurements carrying units in the cells or header can earn a soft suggestion to use a Chart for the next flare. Ordinary attribute tables, headers marking configured limits or targets, unitless durations, single measurements, short statuses and blockers stay quiet. Leading pipes are optional, and escaped pipes, compound durations and percentage deltas are supported. This shares the existing once-per-turn or once-per-hour budget with the all-text hint; saved flares are never rejected or resent.
+
 ## 0.3.1 (2026-11-09)
 
 Agents keep sending flares once a thread's turns get shorter, and flares stay drawn.
