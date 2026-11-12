@@ -9,7 +9,7 @@ import { agent, app, callsTo, handlers, link, mount, pr, unmountAll } from "./he
 afterEach(unmountAll);
 
 const THREAD = "thr_1";
-const SHUTTLE_TAB_OPEN = { surface: { kind: "current" }, tab: { id: "shuttle", context: { kind: "thread" }, availability: "action" }, params: { threadId: THREAD } };
+const SHUTTLE_TAB_OPEN = { method: "openTab", options: { tab: { id: "shuttle", context: { kind: "thread" }, availability: "action" }, params: { threadId: THREAD } } };
 
 const owned = pr({ number: 4411, mine: true, reasons: [], links: [link({ threadId: THREAD, role: "owner" })], agent: agent({ threadId: THREAD }), watch: "act" });
 const failing = pr({ repo: "get-bb/bb", number: 4412, mine: true, reasons: [], checks: "failed", links: [link({ threadId: THREAD, role: "owner" })] });
@@ -37,7 +37,7 @@ describe("the thread Info tab's Pull requests", () => {
     expect(rows[1]!.textContent).toContain("open · checks failing");
     expect(rows[1]!.querySelector("[data-icon='X']")).not.toBeNull();
     fireEvent.click(within(rows[1]!).getByRole("button", { name: "get-bb/bb#4412" }));
-    expect(slot.inspection.experimental_tabOpenCalls).toEqual([SHUTTLE_TAB_OPEN]);
+    expect(slot.inspection.experimental_panelCalls).toEqual([SHUTTLE_TAB_OPEN]);
     expect(panelPrs.get()).toEqual({ [THREAD]: failing.key });
   });
 
@@ -161,12 +161,12 @@ describe("the context segment beside the composer", () => {
     });
     expect(rows[1]!.textContent).toContain("changes requested");
     fireEvent.click(within(rows[1]!).getByRole("button"));
-    expect(details.inspection.experimental_tabOpenCalls).toEqual([SHUTTLE_TAB_OPEN]);
+    expect(details.inspection.experimental_panelCalls).toEqual([SHUTTLE_TAB_OPEN]);
     expect(panelPrs.get()).toEqual({ [THREAD]: changes.key });
 
     const action = mount<ExperimentalThreadContextSegmentProps>(registration.action!, props, handlers());
     fireEvent.click(action.getByRole("button", { name: "Open the Shuttle tab" }));
-    expect(action.inspection.experimental_tabOpenCalls).toEqual([SHUTTLE_TAB_OPEN]);
+    expect(action.inspection.experimental_panelCalls).toEqual([SHUTTLE_TAB_OPEN]);
     expect(panelPrs.get()).toEqual({ [THREAD]: changes.key });
   });
 });

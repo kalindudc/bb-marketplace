@@ -3,6 +3,7 @@ import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import type { LinkCard } from "../../src/contract";
 import { parseConfig } from "../../src/config";
 import { parseGitLink } from "../../src/links";
+import { cardTabStops } from "../../src/ui/links/overlay";
 import { app, callsTo, config, handlers, item, mine, mount, unmountAll, type Handlers } from "./helpers";
 import { retryPr } from "./fixtures";
 
@@ -62,6 +63,44 @@ const frame = () => new Promise((resolve) => requestAnimationFrame(() => resolve
 const hover = (el: Element) => fireEvent(el, new Event("pointerover", { bubbles: true }));
 
 describe("git links in a thread", () => {
+  it("closes an open card when its target changes, including sheets", async () => {
+    const { link } = await thread([PR_URL]);
+    await waitFor(() => expect(link(0).dataset.shuttleLink).toBe("pr"));
+    hover(link(0));
+    await screen.findByRole("dialog");
+    link(0).href = PR_URL.replace("4821", "4822");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    const down = new Event("pointerdown", { bubbles: true });
+    Object.assign(down, { pointerType: "touch" });
+    fireEvent(link(0), down);
+    link(0).dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    await screen.findByRole("dialog");
+    link(0).remove();
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("does not carry a correction draft between messages pointing to the same PR", async () => {
+    const { link } = await thread([PR_URL, PR_URL]);
+    link(0).dataset.shuttleReferenceId = "a".repeat(64);
+    link(1).dataset.shuttleReferenceId = "b".repeat(64);
+    await waitFor(() => expect(link(0).dataset.shuttleLink).toBe("pr"));
+    hover(link(0));
+    const first = await screen.findByRole("dialog");
+    fireEvent.click(within(first).getByText("Correct this reference"));
+    fireEvent.change(within(first).getByRole("textbox", { name: "Correct reference target" }), { target: { value: "https://github.com/acme/WRONG/pull/999" } });
+    hover(link(1));
+    await waitFor(() => expect(within(screen.getByRole("dialog")).getByRole("textbox", { name: "Correct reference target", hidden: true }).getAttribute("value")).toBe(PR_URL));
+  });
+
+  it("uses only visible tab stops in correction disclosures", () => {
+    const root = document.createElement("div");
+    root.innerHTML = '<button>Flag</button><details><summary>Correct</summary><input aria-label="Target"><button>Save</button></details>';
+    document.body.append(root);
+    expect(cardTabStops(root).map((e) => e.tagName)).toEqual(["BUTTON", "SUMMARY"]);
+    root.querySelector("details")!.open = true;
+    expect(cardTabStops(root).map((e) => e.tagName)).toEqual(["BUTTON", "SUMMARY", "INPUT", "BUTTON"]);
+  });
+
   it("marks the links Shuttle can read by kind and their PR's state, and leaves the rest alone", async () => {
     const { slot, link } = await thread([PR_URL, `${PR_URL}#issuecomment-9`, "https://github.com/acme/checkout/commit/1a2b3c4", "https://github.com/acme/checkout/actions/runs/8", "https://github.com/acme/checkout/issues/3", "https://example.com/a"]);
     await waitFor(() => expect(link(0).dataset.shuttleState).toBe("open"));

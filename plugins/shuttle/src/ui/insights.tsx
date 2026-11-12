@@ -12,6 +12,7 @@ import { InsightsSkeleton } from "./skeleton";
 import { SyncView } from "./sync";
 import { AutoPostView } from "./auto-post";
 import { UsageView } from "./usage";
+import { ReferenceInsights } from "./reference-insights";
 import { color, Kpi, Panel, SegBar } from "./insight-parts";
 
 type Range = Insights["range"];
@@ -187,6 +188,10 @@ export function InsightsView({ tab, period, onTab, onPeriod, onAction, onOpenPr 
   const data = insights.data;
   const servers = useShuttleQuery("overview", {}).data?.servers.filter((server) => server.enabled).map((server) => server.name) ?? [];
   const tabs = <Segmented label="Insights" value={tab} onChange={onTab} options={INSIGHTS_TABS.map((value) => ({ value, label: INSIGHTS_TAB_LABELS[value] }))} />;
+  if (tab === "references") return <div className={PAGE}>
+    <PageHeading title="Reference resolutions" description="Where bare PR numbers point, and the matches that need your review.">{tabs}</PageHeading>
+    <ReferenceInsights onOpenThread={actions.openThread} />
+  </div>;
   if (tab === "sync") {
     return (
       <div className={PAGE}>

@@ -156,9 +156,39 @@ and the app overlay (`src/ui/links/overlay.tsx`) draws the card from `linkCard`,
 copy and the PR view's 30-second read; a PR it has not seen is never fetched on a hover. Shuttle keeps no copy
 of issues, so an issue card reads it from the server, as a commit or check Shuttle cannot place does, at most
 once a minute; only GitHub's adapter can read issues. An issue link whose number is a PR's shows the PR.
-Nothing on a card writes.
+Cards never write to the git server. A card for a resolved bare reference also offers local flag and correction controls.
 On a focused link, Down moves into its card. The script finds messages by bb's timeline markers, which
 are not a published contract.
+
+## Bare references and corrections
+
+Shuttle can resolve bare numbers such as `#90386` in displayed timeline messages. It uses explicit
+PR or issue links and qualified keys in the message, PRs linked to the source thread (including
+archived parents and Flare companions), or a cached PR in the project's exact server and repository.
+It never uses global number uniqueness or invents a target for an unseen number. Conflicting
+repository context stays unlinked. Code, existing links, file anchors and explicit Cortex task
+numbers are excluded. Custom message widgets and code-fence renderers are outside this first version.
+
+The original message is not rewritten. A References row provides keyboard and phone access to
+the existing cards; pointer hovering over the original text uses non-mutating text ranges.
+These ranges still depend on BB's private timeline markers.
+
+Insights › References lists targets, short source excerpts, matching reasons, candidates and
+feedback history. Records are collected when messages are displayed, not by scanning all historical
+threads. It retains the latest 2,000 records without feedback and preserves records with feedback.
+Counts describe retained records, not measured matching accuracy.
+
+Flag incorrect removes the resolved target until you correct or reset it. Correct this reference
+accepts a PR key or a PR / issue URL on an enabled Shuttle server; it saves your choice without
+fetching the target to verify its existence. Not a git reference suppresses it. These decisions apply
+only to this number in this message, never to every occurrence of the number across threads.
+Edits to the message or changes to a resolved target's context flag the reference for another review
+instead of silently reusing the previous choice. Corrections are local to Shuttle; nothing is posted
+to the PR or issue and the original message stays intact.
+
+The SDK migration uses explicit server-side RPC invalidation and the current panel controller.
+The database migration only adds reference-resolution and feedback tables; existing settings,
+PRs, links and review records are retained.
 
 ## Theme
 

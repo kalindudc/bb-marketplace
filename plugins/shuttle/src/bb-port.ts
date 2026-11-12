@@ -204,6 +204,19 @@ export function createBbPort(bb: BbPluginApi, setSettings: BbPort["setSettings"]
         throw error;
       }
     },
+    async referenceContext(threadId) {
+      const ids = [threadId];
+      let current = threadId;
+      for (let depth = 0; depth < 8; depth++) {
+        const thread = await bb.sdk.threads.get({ threadId: current });
+        const metadata = await bb.sdk.threads.getPluginMetadata({ threadId: current, pluginId: "flare" });
+        const source = typeof metadata.companionOf === "string" ? metadata.companionOf : thread.parentThreadId;
+        if (!source || ids.includes(source)) break;
+        ids.push(source);
+        current = source;
+      }
+      return ids;
+    },
     async threadOutput(threadId) {
       return (await bb.sdk.threads.output({ threadId })).output;
     },

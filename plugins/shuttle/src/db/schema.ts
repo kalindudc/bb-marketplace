@@ -360,4 +360,7 @@ export const MIGRATIONS: string[] = [
   // A watch is on or it is not: the old mode that only sent without asking the thread to act is now the same watch.
   `UPDATE watches SET mode = 'act' WHERE mode = 'forward'`,
   `UPDATE kv SET value = json_set(value, '$.watch.mode', 'act') WHERE key = 'config' AND json_valid(value) AND json_extract(value, '$.watch.mode') = 'forward'`,
+  `CREATE TABLE reference_resolutions (id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, message_id TEXT NOT NULL, text_hash TEXT NOT NULL, value TEXT NOT NULL, updated_at INTEGER NOT NULL)`,
+  `CREATE INDEX reference_resolutions_updated ON reference_resolutions(updated_at)`,
+  `CREATE TABLE reference_feedback (id INTEGER PRIMARY KEY AUTOINCREMENT, reference_id TEXT NOT NULL, action TEXT NOT NULL, before_url TEXT, after_url TEXT, at INTEGER NOT NULL)`,
 ];

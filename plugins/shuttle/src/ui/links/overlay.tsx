@@ -10,6 +10,7 @@ import { Dialog, usePortalScope } from "../common";
 import { useShuttleQuery } from "../data";
 import { useViewport } from "../viewport";
 import { LinkCardBody } from "./card";
+import { ReferenceFeedback } from "../reference-feedback";
 import { markOpen, paintState, registerBridge, type LinkTargetRef } from "./dom";
 
 const SHOW_DELAY = 250;
@@ -18,7 +19,16 @@ const WIDTH = 340;
 const BATCH = 100;
 /** The longest link linkStates takes; a longer one is never asked about, so it cannot fail its batch. */
 const MAX_URL = 2000;
-const FOCUSABLE = "button:not([disabled]), a[href]";
+const FOCUSABLE = "button:not([disabled]), a[href], summary, input:not([disabled]):not([type=hidden]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex='-1'])";
+
+export function cardTabStops(root: HTMLElement): HTMLElement[] {
+  return [...root.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((el) => {
+    if (el.closest("[hidden], [inert]")) return false;
+    const closed = el.closest("details:not([open])");
+    if (closed && !(el.tagName === "SUMMARY" && el.parentElement === closed)) return false;
+    return getComputedStyle(el).display !== "none" && getComputedStyle(el).visibility !== "hidden";
+  });
+}
 
 type Open = { target: LinkTargetRef; sheet: boolean };
 
@@ -74,7 +84,7 @@ export function LinkOverlay() {
       },
       tap: (target) => setOpen({ target, sheet: true }),
       into: () => {
-        const first = cardRef.current?.querySelector<HTMLElement>(FOCUSABLE);
+        const first = cardRef.current ? cardTabStops(cardRef.current)[0] : undefined;
         if (!first) return false;
         first.focus();
         // Leaving the link for the card is not leaving the card.
@@ -117,7 +127,7 @@ export function LinkOverlay() {
     const onScroll = () => {
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(() => {
-        const rect = open.target.el.getBoundingClientRect();
+        const rect = open.target.rect?.() ?? open.target.el.getBoundingClientRect();
         if (!open.target.el.isConnected || rect.bottom < 0 || rect.top > window.innerHeight) setOpen(null);
         else setMoved((n) => n + 1);
       });
@@ -129,6 +139,22 @@ export function LinkOverlay() {
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("scroll", onScroll, { capture: true });
     };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const { target } = open;
+    const stillMatches = () => target.el.isConnected && target.el.href === target.url && target.el.dataset.shuttleReferenceId === target.referenceId && (target.valid?.() ?? true);
+    const check = () => {
+      if (!stillMatches()) {
+        clearTimeout(showTimer.current);
+        setOpen(null);
+      }
+    };
+    check();
+    const observer = new MutationObserver(check);
+    observer.observe(document.body, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ["href", "data-shuttle-reference-id"] });
+    return () => observer.disconnect();
   }, [open]);
 
   useEffect(() => () => markOpen(null), []);
@@ -174,7 +200,7 @@ function HoverCard({ target, moved, cardRef, onPointerEnter, onPointerLeave, onF
   // control and Tab from its last go back to the link, whose next Tab carries on through the thread.
   const onKeyDown = (event: ReactKeyboardEvent) => {
     if (event.key !== "Tab") return;
-    const controls = [...(ref.current?.querySelectorAll<HTMLElement>(FOCUSABLE) ?? [])];
+    const controls = ref.current ? cardTabStops(ref.current) : [];
     const edge = event.shiftKey ? controls[0] : controls.at(-1);
     if (edge !== undefined && document.activeElement === edge) {
       event.preventDefault();
@@ -188,7 +214,7 @@ function HoverCard({ target, moved, cardRef, onPointerEnter, onPointerLeave, onF
   usePaintRead(target, card.data);
 
   useLayoutEffect(() => {
-    const rect = target.el.getBoundingClientRect();
+    const rect = target.rect?.() ?? target.el.getBoundingClientRect();
     const height = ref.current?.offsetHeight ?? 180;
     const below = rect.bottom + 6;
     const top = below + height > window.innerHeight - 8 ? Math.max(8, rect.top - 6 - height) : below;
@@ -203,6 +229,7 @@ function HoverCard({ target, moved, cardRef, onPointerEnter, onPointerLeave, onF
       style={{ position: "fixed", top: pos?.top ?? -9999, left: pos?.left ?? -9999, width: WIDTH, maxWidth: "calc(100vw - 16px)", zIndex: 60 }}
       className="overflow-hidden rounded-lg border border-border bg-popover text-popover-foreground shadow-md">
       <LinkCardBody url={target.url} kind={target.kind} card={card.data} error={card.error} navigate={navigate} onDone={onDone} />
+      {target.referenceId && <div className="border-t border-border p-3"><ReferenceFeedback key={target.referenceId} id={target.referenceId} url={target.url} onDone={onDone} /></div>}
     </div>,
     document.body,
   );
@@ -229,6 +256,7 @@ function LinkSheet({ target, onClose }: { target: LinkTargetRef; onClose(): void
     <Dialog title={card.data?.label ?? "Link"} onClose={onClose}>
       <div data-shuttle-card="" className={phone ? "-mx-4" : ""}>
         <LinkCardBody url={target.url} kind={target.kind} card={card.data} error={card.error} navigate={navigate} onDone={onClose} sheet />
+        {target.referenceId && <div className="border-t border-border p-3"><ReferenceFeedback key={target.referenceId} id={target.referenceId} url={target.url} onDone={onClose} /></div>}
       </div>
     </Dialog>
   );

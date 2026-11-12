@@ -12,7 +12,7 @@ export const tabParams = (threadId: string) => ({ threadId });
 export function useOpenShuttleTab() {
   const panel = experimental_useAppPanel();
   return (threadId: string) => {
-    if (!panel.experimental_openTab({ surface: { kind: "current" }, tab: SHUTTLE_TAB, params: tabParams(threadId) })) toast.error("bb could not open the Shuttle tab here");
+    if (!panel.openTab({ tab: SHUTTLE_TAB, params: tabParams(threadId) })) toast.error("bb could not open the Shuttle tab here");
   };
 }
 

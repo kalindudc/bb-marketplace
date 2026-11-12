@@ -4,6 +4,7 @@ import { PANEL_ACTION_ID, PANEL_PATH } from "./src/ui/constants";
 import { ShuttleHeader } from "./src/ui/header";
 import { mountLinks } from "./src/ui/links/dom";
 import { LinkOverlay } from "./src/ui/links/overlay";
+import { MessageReferences } from "./src/ui/links/references";
 import { useNeedsBadge, useShuttlePageTitle } from "./src/ui/navigation";
 import { ShuttlePage } from "./src/ui/page";
 import { ShuttlePanel } from "./src/ui/panel";
@@ -19,6 +20,7 @@ export default definePluginApp((app) => {
   // Git links in thread messages: the page script marks them, the overlay draws their cards.
   app.contentScripts.register({ id: "git-links", mount: ({ signal }) => mountLinks(signal) });
   app.slots.experimental_appOverlay({ id: "link-cards", component: LinkOverlay });
+  app.slots.experimental_messageMetadata({ id: "references", component: MessageReferences });
   app.slots.navPanel({
     id: "shuttle",
     title: "Shuttle",
@@ -38,8 +40,8 @@ export default definePluginApp((app) => {
     icon: "shuttle/shuttle",
     layout: "flush",
     component: ShuttlePanel,
-    run: ({ threadId, openPanel }) => {
-      openPanel({ params: tabParams(threadId) });
+    run: ({ threadId, experimental_panel }) => {
+      experimental_panel.openTab({ tab: { id: PANEL_ACTION_ID, context: { kind: "thread" }, availability: "action" }, params: tabParams(threadId) });
     },
   });
   app.slots.experimental_threadInfoSection({ id: "pull-requests", group: INFO_SECTION_GROUPS.related, order: 5, component: PullRequestsInfo });

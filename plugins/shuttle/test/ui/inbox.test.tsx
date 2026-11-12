@@ -678,7 +678,7 @@ describe("the Snoozed and Dismissed tabs", () => {
       inbox: () => (reads++ === 0 ? data : new Promise<never>(() => {})),
       snooze: () => ({ prs: [{ ...woken, snoozed: false }] }),
       dismiss: () => ({ prs: [{ ...restored, dismissed: null }] }),
-    });
+    }, { invalidateWrites: false });
     fireEvent.click(within(await row(slot, woken.key)).getByRole("button", { name: "Wake now" }));
     await waitFor(() => expect(slot.container.querySelector(`[data-row="${woken.key}"]`)).toBeNull());
     route("inbox~dismissed");

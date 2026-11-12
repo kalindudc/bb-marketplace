@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, waitFor, within } from "@testing-library/react";
 import type { ExperimentalThreadActionTabProps, ExperimentalTabRegistration } from "@get-bb/plugin-sdk/app";
+import { experimental_makePanelController } from "@get-bb/plugin-sdk/testing";
 import type { PrView } from "../../src/contract";
 import { agent, app, CAN_ALL, callsTo, event, find, handlers, item, link, mount, pr, unmountAll, type Handlers, type PullRequests } from "./helpers";
 
@@ -31,7 +32,7 @@ async function panel(rpc: Partial<Handlers> & { pullRequests?: PullRequests } = 
     prs = prs.map((item) => (item.key === key ? update(item) : item));
     return { pr: prs.find((item) => item.key === key)! };
   };
-  return mount<ExperimentalThreadActionTabProps>(registration.component as never, { threadId: THREAD, params: { threadId: THREAD } }, {
+  return mount<ExperimentalThreadActionTabProps>(registration.component as never, { threadId: THREAD, environment: null, params: { threadId: THREAD } }, {
     ...handlers({
       threadPrs: () => ({ prs, sent: [event({ id: 7, kind: "forwarded", text: "tomas approved: sent with the act prompt", key: base.key, threadId: THREAD })] }),
       detail: ({ key }) => ({ pr: prs.find((item) => item.key === key) ?? base, events: [], body: "## Why\n\nThe ticket page shows **every** stage.", draft: null, drafts: 0 }),
@@ -58,11 +59,10 @@ describe("Shuttle thread tab", () => {
   it("registers as a flush thread action tab that opens with the thread's id", async () => {
     const registration = await tab();
     expect(registration).toMatchObject({ id: "shuttle", title: "Shuttle", icon: "shuttle/shuttle", layout: "flush", availability: "action", context: { kind: "thread" } });
-    const openPanel = vi.fn(() => true);
-    // Narrowing the registration union by context.kind does not narrow run's parameter, so name the thread form.
-    const run = registration.run as (context: { threadId: string; openPanel: typeof openPanel }) => Promise<void> | void;
-    await run({ threadId: "thr_1", openPanel });
-    expect(openPanel).toHaveBeenCalledWith({ params: { threadId: "thr_1" } });
+    const openTab = vi.fn(() => true);
+    const run = registration.run as (context: { threadId: string; environment: null; experimental_panel: ReturnType<typeof experimental_makePanelController> }) => Promise<void> | void;
+    await run({ threadId: "thr_1", environment: null, experimental_panel: experimental_makePanelController({ openTab }) });
+    expect(openTab).toHaveBeenCalledWith({ tab: { id: "shuttle", context: { kind: "thread" }, availability: "action" }, params: { threadId: "thr_1" } });
   });
 
   it("lists every PR linked to the thread with its role, status and agent", async () => {
@@ -311,7 +311,7 @@ describe("a PR in full inside the tab", () => {
     expect((await fullView(again)).getAttribute("data-detail")).toBe(middle.key);
     again.lifecycle.unmount();
     const registration = await tab();
-    const other = mount<ExperimentalThreadActionTabProps>(registration.component as never, { threadId: "thr_other", params: { threadId: "thr_other" } },
+    const other = mount<ExperimentalThreadActionTabProps>(registration.component as never, { threadId: "thr_other", environment: null, params: { threadId: "thr_other" } },
       handlers({ threadPrs: () => ({ prs: [middle], sent: [] }) }), { sdk: { threads: { get: async () => ({ environmentId: null }) as never } } });
     await other.findByText(middle.title);
     expect(other.container.querySelector("[data-panel-pr]")).toBeNull();

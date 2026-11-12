@@ -137,6 +137,7 @@ export interface BbPort {
   /** The id of the sidebar section with this name, created when there is none. */
   ensureSection(name: string): Promise<string>;
   getThread(threadId: string): Promise<ThreadInfo | null>;
+  referenceContext(threadId: string): Promise<string[]>;
   threadOutput(threadId: string): Promise<string | null>;
   /** Unarchived threads; bb's order is not by recency, so callers sort. */
   listThreads(limit: number): Promise<ThreadInfo[]>;

@@ -1,7 +1,7 @@
-import { experimental_PluginRpcRefusal, type BbPluginApi } from "@get-bb/plugin-sdk";
+import { experimental_PluginRpcRefusal, type BbPluginApi, type PluginRpcHandlers } from "@get-bb/plugin-sdk";
 import { sleep } from "./adapters/exec";
 import { ConfigError } from "./config";
-import { rpcContract } from "./contract";
+import { mutationTags, rpcContract } from "./contract";
 import { NotFoundError, ShuttleError } from "./ctx";
 import { LookupError } from "./keys";
 import type { Shuttle } from "./shuttle";
@@ -17,15 +17,31 @@ async function refusing<T>(fn: () => T | Promise<T>): Promise<T> {
   }
 }
 
+function withInvalidations(bb: BbPluginApi, handlers: PluginRpcHandlers<typeof rpcContract>): PluginRpcHandlers<typeof rpcContract> {
+  const tags = mutationTags as Record<string, (input: { apply?: boolean }) => readonly string[]>;
+  const mapped = Object.fromEntries(Object.entries(handlers).map(([method, handler]) => [
+    method, async (input: unknown, context: unknown) => {
+      const result = await (handler as (input: unknown, context: unknown) => unknown)(input, context);
+      const invalidate = tags[method];
+      if (invalidate) bb.rpc.experimental_invalidate(invalidate(input as { apply?: boolean }));
+      return result;
+    },
+  ]));
+  return mapped as PluginRpcHandlers<typeof rpcContract>;
+}
+
 const WATCHED_FRESH_MS = 60_000;
 
 export function registerRpc(bb: BbPluginApi, shuttle: Shuttle): void {
-  bb.rpc.register(rpcContract, {
+  bb.rpc.register(rpcContract, withInvalidations(bb, {
     overview: () => refusing(() => shuttle.overview()),
     inbox: () => refusing(() => shuttle.inbox()),
     list: ({ area }) => refusing(() => ({ prs: shuttle.list(area) })),
     detail: ({ key }) => refusing(() => shuttle.detailOrLookup(key)),
     conversation: ({ key }) => refusing(() => shuttle.conversation(key)),
+    resolveReferences: (input) => refusing(async () => ({ rows: await shuttle.references.resolve(input) })),
+    referenceLog: ({ limit }) => refusing(() => shuttle.references.log(limit)),
+    referenceFeedback: ({ id, action, query }) => refusing(() => shuttle.references.feedback(id, action, query)),
     linkCard: ({ url }) => refusing(() => shuttle.linkCard(url)),
     linkStates: ({ urls }) => refusing(() => ({ links: shuttle.linkStates(urls) })),
     search: ({ query }) => refusing(() => shuttle.search(query)),
@@ -120,7 +136,7 @@ export function registerRpc(bb: BbPluginApi, shuttle: Shuttle): void {
     }),
     skills: ({ projectId }) => refusing(async () => ({ skills: await shuttle.skills(projectId) })),
     workspaceProviders: () => refusing(() => shuttle.workspaceProviders()),
-  });
+  }));
 
   // While a PR's drawer or a thread's PRs are on screen, keep those PRs fresh from their server.
   const keepFresh = (keys: (input: unknown) => string[]) => async (read: { input: unknown } | { key: string }, signal: AbortSignal) => {

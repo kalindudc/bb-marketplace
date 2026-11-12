@@ -74,7 +74,7 @@ describe("Shuttle while its server has not answered", () => {
 
   it("draws a linked PR's card in a thread's Shuttle tab", async () => {
     const loaded = await app();
-    const slot = mount<ExperimentalThreadActionTabProps>(loaded.tabs[0]!.component as never, { threadId: "thr_1", params: { threadId: "thr_1" } }, handlers({ threadPrs: pending }), {
+    const slot = mount<ExperimentalThreadActionTabProps>(loaded.tabs[0]!.component as never, { threadId: "thr_1", environment: null, params: { threadId: "thr_1" } }, handlers({ threadPrs: pending }), {
       sdk: { threads: { get: async () => ({ environmentId: null }) as never } },
     });
     await slot.findByRole("status", { name: "Loading this thread's pull requests" });

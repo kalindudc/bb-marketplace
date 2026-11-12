@@ -21,7 +21,7 @@ export type Route =
   /** Words to find among the PRs Shuttle has; "" before the user types any. */
   | { view: "search"; query: string; key: string | null };
 
-export const INSIGHTS_TABS = ["overview", "usage", "autopost", "log", "sync"] as const;
+export const INSIGHTS_TABS = ["overview", "usage", "autopost", "references", "log", "sync"] as const;
 export type InsightsTab = (typeof INSIGHTS_TABS)[number];
 
 /** What the Usage tab shows: a range ending on `end`, or ending now when `end` is null. */

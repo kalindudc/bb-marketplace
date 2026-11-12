@@ -1,7 +1,7 @@
 // Typed repository over the plugin database.
 import type Database from "better-sqlite3";
 import { DEFAULT_CONFIG, parseConfig, type Config, type WatchMode } from "../config";
-import type { BoardArchived, CheckState, InboxRuleKind, LinkRole, PrState, Reason, ReviewState } from "../contract";
+import type { BoardArchived, CheckState, InboxRuleKind, LinkRole, PrState, Reason, ReviewState, ReferenceRecord } from "../contract";
 import { prKey, type PrRef } from "../keys";
 import type { ActivityItem, PrSummary } from "../model";
 import type { ThreadUsage } from "../ports";
@@ -749,6 +749,32 @@ export class Store {
 
   linkRole(prId: number, threadId: string): LinkRole | null {
     return (this.sql("SELECT role FROM links WHERE pr_id = ? AND thread_id = ?").get(prId, threadId) as { role: LinkRole } | undefined)?.role ?? null;
+  }
+
+  reference(id: string): { hash: string; record: ReferenceRecord } | null {
+    const row = this.sql("SELECT text_hash, value FROM reference_resolutions WHERE id = ?").get(id) as { text_hash: string; value: string } | undefined;
+    return row ? { hash: row.text_hash, record: JSON.parse(row.value) as ReferenceRecord } : null;
+  }
+
+  saveReference(record: ReferenceRecord, hash: string): void {
+    this.sql("INSERT INTO reference_resolutions(id, thread_id, message_id, text_hash, value, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET text_hash=excluded.text_hash, value=excluded.value, updated_at=excluded.updated_at")
+      .run(record.id, record.threadId, record.messageId, hash, JSON.stringify(record), this.now());
+    this.sql("DELETE FROM reference_resolutions WHERE id IN (SELECT id FROM reference_resolutions WHERE id NOT IN (SELECT reference_id FROM reference_feedback) ORDER BY updated_at DESC LIMIT -1 OFFSET 2000)").run();
+  }
+
+  referenceFeedback(record: ReferenceRecord, hash: string, action: string, before: string | null): void {
+    this.tx(() => {
+      this.sql("INSERT INTO reference_feedback(reference_id, action, before_url, after_url, at) VALUES (?, ?, ?, ?, ?)")
+        .run(record.id, action, before, record.url, this.now());
+      this.saveReference(record, hash);
+    });
+  }
+
+  referenceLog(limit: number) {
+    const rows = (this.sql("SELECT value FROM reference_resolutions ORDER BY updated_at DESC, id LIMIT ?").all(limit) as Array<{ value: string }>).map((r) => JSON.parse(r.value) as ReferenceRecord);
+    const counts = Object.fromEntries((this.sql("SELECT json_extract(value, '$.status') AS status, count(*) AS n FROM reference_resolutions GROUP BY status").all() as Array<{ status: string; n: number }>).map((r) => [r.status, r.n]));
+    const events = this.sql("SELECT id, reference_id AS referenceId, action, before_url AS beforeUrl, after_url AS afterUrl, at FROM reference_feedback ORDER BY id DESC LIMIT ?").all(limit) as Array<{ id: number; referenceId: string; action: string; beforeUrl: string | null; afterUrl: string | null; at: number }>;
+    return { rows, counts, total: Object.values(counts).reduce((sum, n) => sum + n, 0), events };
   }
 
   prsOfThread(threadId: string): PrRow[] {

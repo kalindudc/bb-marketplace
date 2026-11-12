@@ -10,6 +10,9 @@ export interface LinkTargetRef {
   url: string;
   key: string;
   kind: string;
+  referenceId?: string;
+  rect?(): DOMRect;
+  valid?(): boolean;
 }
 
 export interface Bridge {
@@ -30,6 +33,10 @@ const SCOPE = "[data-timeline-row-id], [data-message-column]";
 const MARKED = "a[data-shuttle-link]";
 
 let bridge: Bridge | null = null;
+
+export const enterReference = (target: LinkTargetRef) => bridge?.enter(target);
+export const leaveReference = () => bridge?.leave();
+export const tapReference = (target: LinkTargetRef) => bridge?.tap(target);
 let schedule: () => void = () => {};
 const states = new Map<string, string>();
 /** What a link turned out to name, when that is not what it looks like: an issue link whose number is a PR's. */
@@ -115,7 +122,7 @@ function linkFrom(target: EventTarget | null): HTMLAnchorElement | null {
 
 function targetOf(a: HTMLAnchorElement): LinkTargetRef | null {
   const { shuttleKey: key, shuttleLink: kind } = a.dataset;
-  return key && kind ? { el: a, url: a.href, key, kind } : null;
+  return key && kind ? { el: a, url: a.href, key, kind, referenceId: a.dataset.shuttleReferenceId } : null;
 }
 
 /** Mounts the page script; returns its cleanup. */

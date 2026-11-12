@@ -37,6 +37,7 @@ import { RECHECK_MS, runAutoReviews, syncServer } from "./sync";
 import { allViews, inArea, inboxCandidates, inboxOf, toView } from "./views";
 import { editOptions, editPr } from "./edit";
 import { LinkCards } from "./link-cards";
+import { References } from "./references";
 import { deliver, pollWatches } from "./watch";
 import { checkWorkspace } from "./workspaces";
 
@@ -118,6 +119,7 @@ export class Shuttle implements Ctx {
   private readonly fastLane = new FastLane(this, { backOff: (id) => this.backOff(id), holdOff: (id, kind, askedAt) => this.holdOff(id, kind, askedAt) });
   private readonly conversations = new Conversations(this);
   private readonly linkCards = new LinkCards(this, this.conversations);
+  readonly references = new References(this);
   /** The worker posting each server's queued reviews, by server id. */
   private readonly posters = new Map<string, Promise<void>>();
   /** The worker carrying out each server's queued merges, by server id. */

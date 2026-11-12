@@ -6,6 +6,9 @@ Notable changes to Shuttle, newest first. Releases are tagged `shuttle/vX.Y.Z` i
 
 ### Added
 
+- Conservative popovers for bare PR references in displayed messages, with a keyboard-accessible References row. Insights › References shows targets, matching reasons, source excerpts, conflicts and feedback history. Flag, correct, suppress or reset a reference in one message without changing the message or writing to the git server. Edits and changed target context require another review.
+- Migrate to the published SDK 0.6.121: panel actions use the current controller and RPC writes explicitly invalidate server-side reads. The new database tables are additive; existing data and settings are retained.
+
 - Timed automation pauses from the sidebar and Automations settings: for today, 24 hours, one week or a chosen return date and time, alongside the indefinite pause. The status shows when automation resumes; pauses survive restarts and can be changed or ended early without changing your automation rules.
 - Extra instructions for review cleanup (`reviewCleanupPrompt`): a multiline setting appended to the built-in cleanup prompt, for custom tools and task trackers such as Cortex.
 

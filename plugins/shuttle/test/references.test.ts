@@ -1,0 +1,123 @@
+// @vitest-environment node
+import { describe, expect, it } from "vitest";
+import { References } from "../src/references";
+import { harness, pr } from "./helpers";
+
+async function setup() {
+  const h = harness();
+  h.lists.authored = [pr(90386, { author: "me" })];
+  await h.shuttle.sync();
+  h.port.addThread("thr_rollout");
+  h.port.projects = [{ id: "proj_app", name: "app", gitRemoteUrl: "https://forge.test/acme/app.git" }];
+  const refs = new References(h.shuttle);
+  const input = { threadId: "thr_rollout", messageId: "msg_1", text: "PR #90386 is ready.", urls: [] as string[] };
+  return { h, refs, input };
+}
+
+describe("reference resolution", () => {
+  it("uses a cached PR in the exact server/repository, never a global number lookup", async () => {
+    const { h, refs, input } = await setup();
+    const calls = h.runner.calls.length;
+    const [row] = await refs.resolve(input);
+    expect(row).toMatchObject({ status: "automatic", url: "https://forge.test/acme/app/pull/90386", reason: "Known PR in this thread’s repository" });
+    expect(h.runner.calls.length).toBe(calls);
+    expect(await refs.resolve({ ...input, text: "PR #99999" })).toMatchObject([{ status: "unresolved", url: null }]);
+    h.port.projects[0]!.gitRemoteUrl = "https://other.test/acme/app.git";
+    h.shuttle.invalidateProjects();
+    expect(await refs.resolve(input)).toMatchObject([{ status: "flagged", url: null }]);
+  });
+
+  it("refuses mixed repositories and conflicting number-specific links", async () => {
+    const { refs, input } = await setup();
+    expect(await refs.resolve({ ...input, urls: ["https://forge.test/other/repo/pull/12"] })).toMatchObject([{ status: "ambiguous", url: null }]);
+    expect(await refs.resolve({ ...input, urls: ["https://forge.test/acme/app/pull/90386", "https://forge.test/other/repo/pull/90386"] })).toMatchObject([{ status: "ambiguous", url: null }]);
+    expect(await refs.resolve({ ...input, urls: ["https://forge.test/other/repo/issues/90386"] })).toMatchObject([{ status: "automatic", url: "https://forge.test/other/repo/issues/90386" }]);
+  });
+
+  it("skips code, colours, paths and explicitly non-git task numbers", async () => {
+    const { refs, input } = await setup();
+    expect(await refs.resolve({ ...input, text: "cortex task #1059; handover #1058; colour #282828; `PR #90386`; file.ts#123\n```ui\n#90386\n```" })).toEqual([]);
+  });
+
+  it("persists flags and corrections per message and invalidates them on edits", async () => {
+    const { h, refs, input } = await setup();
+    const [row] = await refs.resolve(input);
+    refs.feedback(row!.id, "flag", null);
+    expect(await new References(h.shuttle).resolve(input)).toMatchObject([{ status: "flagged", url: null, automaticUrl: row!.url }]);
+    refs.feedback(row!.id, "correct", "https://forge.test/other/repo/issues/10");
+    expect(await refs.resolve(input)).toMatchObject([{ status: "corrected", url: "https://forge.test/other/repo/issues/10" }]);
+    expect(await refs.resolve({ ...input, messageId: "msg_other" })).toMatchObject([{ status: "automatic" }]);
+    expect(await refs.resolve({ ...input, text: "Changed: PR #90386." })).toMatchObject([{ status: "flagged", url: null }]);
+    expect(refs.log(20).events).toHaveLength(2);
+    expect(() => refs.feedback(row!.id, "correct", "https://evil.test/a/b/pull/3")).toThrow();
+    expect(() => refs.feedback(row!.id, "correct", "javascript:alert(1)")).toThrow();
+  });
+
+  it("requires number-specific evidence in mixed-repository text and rejects unknown servers", async () => {
+    const { refs, input } = await setup();
+    expect(await refs.resolve({ ...input, text: "PR #90386 and forge:other/repo#12" })).toMatchObject([{ number: 90386, status: "ambiguous", url: null }, { number: 12 }]);
+    expect(await refs.resolve({ ...input, text: "forge:acme/app#90386 and forge:other/repo#90386" })).toMatchObject([{ status: "ambiguous", url: null }]);
+    expect(await refs.resolve({ ...input, text: "unknown:acme/app#90386" })).toMatchObject([{ status: "unresolved", url: null }]);
+  });
+
+  it("uses the archived source thread for helpers and does not silently switch a resolved target", async () => {
+    const { h, refs, input } = await setup();
+    h.port.addThread("thr_source", "Source", true);
+    h.port.children.set("thr_source", [input.threadId]);
+    const row = h.shuttle.store.prByKey("forge:acme/app#90386")!;
+    h.shuttle.store.link(row.id, "thr_source", "reference");
+    expect(await refs.resolve(input)).toMatchObject([{ reason: "PR linked to the source thread" }]);
+    const [resolved] = await refs.resolve({ ...input, messageId: "msg_other" });
+    refs.feedback(resolved!.id, "correct", "https://forge.test/other/repo/issues/10");
+    expect(await refs.resolve({ ...input, messageId: "msg_other", text: "Edited PR #90386" })).toMatchObject([{ status: "flagged", url: null }]);
+  });
+
+  it("rechecks context before reusing a persisted correction", async () => {
+    const { h, refs, input } = await setup();
+    const [row] = await refs.resolve(input);
+    refs.feedback(row!.id, "correct", "forge:acme/app#90386");
+    h.port.projects[0]!.gitRemoteUrl = "https://other.test/other/repo.git";
+    h.shuttle.invalidateProjects();
+    expect(await refs.resolve(input)).toMatchObject([{ status: "flagged", url: null }]);
+  });
+
+  it("does not infer an HTTP target from a project using a different port", async () => {
+    const { h, refs, input } = await setup();
+    h.port.projects[0]!.gitRemoteUrl = "https://forge.test:8443/acme/app.git";
+    h.shuttle.invalidateProjects();
+    expect(await refs.resolve(input)).toMatchObject([{ status: "unresolved", url: null }]);
+  });
+
+  it("deduplicates equivalent URLs by target identity", async () => {
+    const { refs, input } = await setup();
+    expect(await refs.resolve({ ...input, urls: ["https://forge.test/acme/app/pull/90386", "https://forge.test/acme/app/pull/90386/", "https://forge.test/acme/app/pull/90386/files"] })).toMatchObject([{ status: "automatic", url: "https://forge.test/acme/app/pull/90386" }]);
+  });
+
+  it.each(["flag", "suppress"] as const)("never silently restores a %s after context changes", async (action) => {
+    const { h, refs, input } = await setup();
+    const [row] = await refs.resolve(input);
+    refs.feedback(row!.id, action, null);
+    h.port.projects[0]!.gitRemoteUrl = "https://other.test/other/repo.git";
+    h.shuttle.invalidateProjects();
+    expect(await refs.resolve(input)).toMatchObject([{ status: "flagged", url: null }]);
+  });
+
+  it("uses the same issue target regardless of equivalent candidate order", async () => {
+    const { refs, input } = await setup();
+    const urls = ["https://forge.test/acme/app/issues/90386", "http://forge.test/acme/app/issues/90386"];
+    const first = await refs.resolve({ ...input, urls });
+    const second = await refs.resolve({ ...input, urls: [...urls].reverse() });
+    expect(second).toEqual(first);
+  });
+
+  it("deduplicates re-renders and suppresses a mistaken reference until reset", async () => {
+    const { refs, input } = await setup();
+    const [row] = await refs.resolve(input);
+    await refs.resolve(input);
+    expect(refs.log(20).rows).toHaveLength(1);
+    refs.feedback(row!.id, "suppress", null);
+    expect(await refs.resolve(input)).toMatchObject([{ status: "suppressed", url: null }]);
+    refs.feedback(row!.id, "reset", null);
+    expect(await refs.resolve(input)).toMatchObject([{ status: "automatic" }]);
+  });
+});

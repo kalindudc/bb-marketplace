@@ -789,6 +789,19 @@ export const linkCardSchema = z.object({
 });
 export type LinkCard = z.infer<typeof linkCardSchema>;
 
+export const referenceSchema = z.object({
+  id: z.string(), threadId: z.string(), messageId: z.string(), number: z.number(),
+  excerpt: z.string(), status: z.enum(["automatic", "unresolved", "ambiguous", "flagged", "corrected", "suppressed"]),
+  url: z.string().nullable(), automaticUrl: z.string().nullable(), reason: z.string(),
+  candidates: z.array(z.string()), at: z.number(),
+});
+export type ReferenceRecord = z.infer<typeof referenceSchema>;
+export const referenceInputSchema = z.object({
+  threadId: z.string().min(1).max(100), messageId: z.string().min(1).max(200),
+  text: z.string().max(50000), urls: z.array(z.string().max(2000)).max(100),
+});
+export type ReferenceInput = z.infer<typeof referenceInputSchema>;
+
 export const mergeOptionsSchema = z.object({
   /** Methods the repository allows, the default first. */
   methods: z.array(z.enum(MERGE_METHODS)),
@@ -1037,11 +1050,61 @@ const body = z.string().trim().min(1).max(60_000);
 export const postFindingSchema = z.object({ id: z.string().max(20).optional(), path: z.string().min(1).max(1000), line: z.number().int().positive().nullable(), body: z.string().trim().min(1).max(20_000) });
 export type PostFinding = z.infer<typeof postFindingSchema>;
 
-// Reads carry tags and writes declare what they invalidate; background syncs invalidate "prs" and "servers" from the server.
+// Reads carry tags; write handlers and background work invalidate them where the data changes.
 const PRS = () => ["prs"];
 const BOARDS = () => ["boards", "prs"];
 const CONVERSATION = () => ["prs", "conversation"];
 const CONFIG = () => ["config"];
+
+export const mutationTags = {
+  referenceFeedback: () => ["references", "reference-log"],
+  lookup: PRS,
+  sync: () => ["prs", "servers", "conversation"],
+  link: PRS,
+  unlink: PRS,
+  watch: PRS,
+  setAgent: PRS,
+  setAgentMode: PRS,
+  askAgent: PRS,
+  setSettings: () => ["prs", "servers", "config"],
+  setAutomationPause: () => ["prs", "servers", "config"],
+  track: PRS,
+  snooze: PRS,
+  dismiss: PRS,
+  markSeen: PRS,
+  inboxRuleAdd: PRS,
+  inboxRuleRemove: PRS,
+  handle: PRS,
+  review: PRS,
+  newThread: PRS,
+  sendUnread: PRS,
+  saveConfig: () => ["config", "prs", "servers"],
+  boardCreate: () => ["boards"],
+  boardUpdate: () => ["boards"],
+  boardAdd: () => ["boards"],
+  boardRemove: () => ["boards"],
+  importToml: (input: { apply?: boolean }) => (input.apply ? ["config", "prs", "servers"] : []),
+  editPr: PRS,
+  queueMerge: PRS,
+  cancelMerge: PRS,
+  retryMerge: PRS,
+  clearMerge: PRS,
+  cancelAutoMerge: PRS,
+  comment: CONVERSATION,
+  queueReview: PRS,
+  cancelPost: PRS,
+  retryPost: PRS,
+  clearPost: PRS,
+  discardDraft: PRS,
+  checkDraft: PRS,
+  stopAutoPost: PRS,
+  autoPostNow: PRS,
+  markAutoPost: PRS,
+  resumeAutoPost: () => ["prs", "config"],
+  restoreDraft: PRS,
+  reply: CONVERSATION,
+  resolve: CONVERSATION,
+};
 
 export const rpcContract = defineContract({
   overview: { input: z.object({}), output: overviewSchema, tags: () => ["prs", "servers", "config"] },
@@ -1069,7 +1132,7 @@ export const rpcContract = defineContract({
   boards: { input: boardsInputSchema, output: z.object({ boards: z.array(boardSummarySchema) }), tags: BOARDS },
   board: { input: boardInputSchema, output: boardDetailSchema, tags: BOARDS },
   /** A link or a key such as forge:acme/app#1234; fetched from its server and kept. */
-  lookup: { input: z.object({ query: z.string().min(1).max(500) }), output: prOut, invalidates: PRS },
+  lookup: { input: z.object({ query: z.string().min(1).max(500) }), output: prOut },
   activity: { input: z.object({ limit: z.number().int().min(1).max(500).optional() }), output: z.object({ events: z.array(eventViewSchema) }), tags: PRS },
   insights: { input: z.object({ range: z.enum(["7d", "30d", "90d"]) }), output: insightsSchema, tags: PRS },
   /** What AI reviews used in tokens and dollars, from the Burn plugin. */
@@ -1078,57 +1141,57 @@ export const rpcContract = defineContract({
   /** Auto post's shadow decisions against what the user posted, for the Insights tab. */
   autoPostInsights: { input: z.object({ range: z.enum(["7d", "30d", "90d"]) }), output: autoPostInsightsSchema, tags: () => ["prs", "config"] },
   /** Every enabled server, or only `server`. */
-  sync: { input: z.object({ server: z.string().min(1).max(100).optional() }), output: ok, invalidates: () => ["prs", "servers", "conversation"] },
+  sync: { input: z.object({ server: z.string().min(1).max(100).optional() }), output: ok },
   /** Each server's syncs of the last three hours, its last failed sync in full and its failures of the last week. */
   syncHistory: { input: z.object({}), output: syncHistorySchema, tags: () => ["servers"] },
-  link: { input: z.object({ key, threadId, role: z.enum(LINK_ROLES).optional() }), output: prOut, invalidates: PRS },
-  unlink: { input: z.object({ key, threadId }), output: prOut, invalidates: PRS },
-  watch: { input: z.object({ key, mode: z.enum(WATCH_MODES).nullable() }), output: prOut, invalidates: PRS },
+  link: { input: z.object({ key, threadId, role: z.enum(LINK_ROLES).optional() }), output: prOut },
+  unlink: { input: z.object({ key, threadId }), output: prOut },
+  watch: { input: z.object({ key, mode: z.enum(WATCH_MODES).nullable() }), output: prOut },
   /** Make a thread the PR's agent (the one before stays linked for reference), start a new one, or have none. */
-  setAgent: { input: z.object({ key, target: agentTargetSchema, mode: z.enum(AGENT_MODES).optional() }), output: z.object({ pr: prViewSchema, threadId: z.string().nullable() }), invalidates: PRS },
-  setAgentMode: { input: z.object({ key, mode: z.enum(AGENT_MODES), backlog: z.boolean().optional() }), output: prOut, invalidates: PRS },
+  setAgent: { input: z.object({ key, target: agentTargetSchema, mode: z.enum(AGENT_MODES).optional() }), output: z.object({ pr: prViewSchema, threadId: z.string().nullable() }) },
+  setAgentMode: { input: z.object({ key, mode: z.enum(AGENT_MODES), backlog: z.boolean().optional() }), output: prOut },
   /** Send your text to the PR's agent thread, with the PR named; nothing is posted on the PR. */
-  askAgent: { input: z.object({ key, text: body }), output: ok, invalidates: PRS },
+  askAgent: { input: z.object({ key, text: body }), output: ok },
   /** The page's own switches for Shuttle's bb settings. */
-  setSettings: { input: z.object({ autoAgent: z.boolean().optional(), inboxRequests: z.boolean().optional() }), output: ok, invalidates: () => ["prs", "servers", "config"] },
-  setAutomationPause: { input: automationPauseSchema, output: overviewSchema, invalidates: () => ["prs", "servers", "config"] },
-  track: { input: z.object({ key, on: z.boolean() }), output: prOut, invalidates: PRS },
+  setSettings: { input: z.object({ autoAgent: z.boolean().optional(), inboxRequests: z.boolean().optional() }), output: ok },
+  setAutomationPause: { input: automationPauseSchema, output: overviewSchema },
+  track: { input: z.object({ key, on: z.boolean() }), output: prOut },
   /**
    * Out of the Inbox until an epoch-ms time (in the future, at most 60 days ahead) or "update", until it changes;
    * anything new brings it back sooner either way. null: back now.
    */
-  snooze: { input: z.object({ keys: z.array(key).min(1).max(200), until: z.union([z.number().int(), z.literal("update")]).nullable() }), output: prsOut, invalidates: PRS },
+  snooze: { input: z.object({ keys: z.array(key).min(1).max(200), until: z.union([z.number().int(), z.literal("update")]).nullable() }), output: prsOut },
   /** Out of the Inbox for good, even when it changes, and its snooze ends; off restores it. */
-  dismiss: { input: z.object({ keys: z.array(key).min(1).max(200), on: z.boolean() }), output: prsOut, invalidates: PRS },
+  dismiss: { input: z.object({ keys: z.array(key).min(1).max(200), on: z.boolean() }), output: prsOut },
   /** You opened these PRs: they are no longer new. */
-  markSeen: { input: z.object({ keys: z.array(key).min(1).max(500) }), output: ok, invalidates: PRS },
+  markSeen: { input: z.object({ keys: z.array(key).min(1).max(500) }), output: ok },
   /** The same rule twice returns the existing one, with created false. */
-  inboxRuleAdd: { input: z.object({ kind: z.enum(INBOX_RULE_KINDS), server: z.string().min(1).max(100), value: z.string().trim().min(1).max(200) }), output: z.object({ rule: inboxRuleSchema, created: z.boolean() }), invalidates: PRS },
-  inboxRuleRemove: { input: z.object({ id: z.number().int() }), output: ok, invalidates: PRS },
+  inboxRuleAdd: { input: z.object({ kind: z.enum(INBOX_RULE_KINDS), server: z.string().min(1).max(100), value: z.string().trim().min(1).max(200) }), output: z.object({ rule: inboxRuleSchema, created: z.boolean() }) },
+  inboxRuleRemove: { input: z.object({ id: z.number().int() }), output: ok },
   /** "I'll do it": its current feedback leaves the Inbox until new feedback arrives. */
-  handle: { input: z.object({ key, on: z.boolean() }), output: prOut, invalidates: PRS },
+  handle: { input: z.object({ key, on: z.boolean() }), output: prOut },
   /** Runs in the PR's review thread, brought back from the archive when Shuttle archived it, or in a new one. */
-  review: { input: reviewInputSchema, output: z.object({ threadId: z.string(), revived: z.boolean() }), invalidates: PRS },
+  review: { input: reviewInputSchema, output: z.object({ threadId: z.string(), revived: z.boolean() }) },
   /** Start a thread that owns the PR ("own") or reviews it ("review"), and link it. */
-  newThread: { input: z.object({ key, start: z.enum(["own", "review"]), projectId: z.string().max(100).optional() }), output: z.object({ threadId: z.string() }), invalidates: PRS },
+  newThread: { input: z.object({ key, start: z.enum(["own", "review"]), projectId: z.string().max(100).optional() }), output: z.object({ threadId: z.string() }) },
   threadPrs: { input: z.object({ threadId }), output: z.object({ prs: z.array(prViewSchema), sent: z.array(eventViewSchema) }), tags: PRS },
   /** Send every pending review item of the thread's PRs now, without waiting for the batch window. */
-  sendUnread: { input: z.object({ threadId }), output: z.object({ sent: z.number() }), invalidates: PRS },
+  sendUnread: { input: z.object({ threadId }), output: z.object({ sent: z.number() }) },
   threads: { input: z.object({ query: z.string().max(200).optional() }), output: z.object({ threads: z.array(threadOptionSchema) }) },
   projects: { input: z.object({ key: key.optional() }), output: z.object({ projects: z.array(projectOptionSchema), suggested: z.string().nullable() }), tags: () => ["projects", "config"] },
   refreshProjects: { input: z.object({}), output: z.object({ count: z.number().int().nonnegative(), fetchedAt: z.number() }) },
   getConfig: { input: z.object({}), output: z.object({ config: configSchema }), tags: CONFIG },
-  saveConfig: { input: z.object({ config: z.unknown() }), output: z.object({ config: configSchema }), invalidates: () => ["config", "prs", "servers"] },
-  boardCreate: { input: boardCreateInputSchema, output: boardDetailSchema, invalidates: () => ["boards"] },
-  boardUpdate: { input: boardUpdateInputSchema, output: z.object({ board: boardSummarySchema }), invalidates: () => ["boards"] },
-  boardAdd: { input: boardAddInputSchema, output: z.object({ board: boardSummarySchema, added: z.array(z.string()), alreadyPresent: z.array(z.string()) }), invalidates: () => ["boards"] },
-  boardRemove: { input: boardRemoveInputSchema, output: z.object({ board: boardSummarySchema, removed: z.array(z.string()) }), invalidates: () => ["boards"] },
+  saveConfig: { input: z.object({ config: z.unknown() }), output: z.object({ config: configSchema }) },
+  boardCreate: { input: boardCreateInputSchema, output: boardDetailSchema },
+  boardUpdate: { input: boardUpdateInputSchema, output: z.object({ board: boardSummarySchema }) },
+  boardAdd: { input: boardAddInputSchema, output: z.object({ board: boardSummarySchema, added: z.array(z.string()), alreadyPresent: z.array(z.string()) }) },
+  boardRemove: { input: boardRemoveInputSchema, output: z.object({ board: boardSummarySchema, removed: z.array(z.string()) }) },
   /** Run a server's commands once (a saved server by id, or an unsaved one) and report each. */
   testServer: { input: z.object({ id: z.string().max(32).optional(), server: z.unknown().optional() }), output: z.object({ results: z.array(testResultSchema) }) },
   exportToml: { input: z.object({}), output: z.object({ toml: z.string() }), tags: CONFIG },
-  importToml: { input: z.object({ toml: z.string().max(200_000), apply: z.boolean() }), output: z.object({ changes: z.array(z.string()), config: configSchema.nullable() }), invalidates: (input) => (input.apply ? ["config", "prs", "servers"] : []) },
+  importToml: { input: z.object({ toml: z.string().max(200_000), apply: z.boolean() }), output: z.object({ changes: z.array(z.string()), config: configSchema.nullable() }) },
   /** Change one of the user's own PRs on its server, then read it back. */
-  editPr: { input: z.object({ key, change: prChangeSchema }), output: prOut, invalidates: PRS },
+  editPr: { input: z.object({ key, change: prChangeSchema }), output: prOut },
   /** What the label and reviewer pickers offer: the repo's labels, people the server suggests, and known teams. */
   editOptions: {
     input: z.object({ key }),
@@ -1144,19 +1207,18 @@ export const rpcContract = defineContract({
   queueMerge: {
     input: z.object({ key, method: z.enum(MERGE_METHODS), head: z.string().min(7).max(100), auto: z.boolean(), deleteBranch: z.boolean(), subject: z.string().trim().max(500).optional() }),
     output: z.object({ pr: prViewSchema, merge: mergeViewSchema }),
-    invalidates: PRS,
   },
   /** Merges waiting or running, and those that finished in the last 10 minutes. */
   merges: { input: z.object({}), output: z.object({ merges: z.array(mergeViewSchema) }), tags: PRS },
   /** Take a merge that has not started out of the queue. */
-  cancelMerge: { input: z.object({ id: z.number().int() }), output: prOut, invalidates: PRS },
+  cancelMerge: { input: z.object({ id: z.number().int() }), output: prOut },
   /** Put a merge that failed back in the queue as it was. */
-  retryMerge: { input: z.object({ id: z.number().int() }), output: z.object({ pr: prViewSchema, merge: mergeViewSchema }), invalidates: PRS },
+  retryMerge: { input: z.object({ id: z.number().int() }), output: z.object({ pr: prViewSchema, merge: mergeViewSchema }) },
   /** Stop showing a merge that failed. */
-  clearMerge: { input: z.object({ id: z.number().int() }), output: prOut, invalidates: PRS },
-  cancelAutoMerge: { input: z.object({ key }), output: prOut, invalidates: PRS },
+  clearMerge: { input: z.object({ id: z.number().int() }), output: prOut },
+  cancelAutoMerge: { input: z.object({ key }), output: prOut },
   /** A comment on the PR's conversation, as you. */
-  comment: { input: z.object({ key, body }), output: prOut, invalidates: CONVERSATION },
+  comment: { input: z.object({ key, body }), output: prOut },
   /**
    * A review as you: a verdict, a body and inline comments, queued and posted in the background, in order on each server.
    * It is checked now against what Shuttle knows, and again against the server's head when it posts. With draftId, the AI
@@ -1173,37 +1235,42 @@ export const rpcContract = defineContract({
       staleOk: z.boolean().optional(),
     }),
     output: z.object({ pr: prViewSchema, post: postViewSchema }),
-    invalidates: PRS,
   },
   /** Reviews waiting or posting, and those that finished in the last 10 minutes. */
   posts: { input: z.object({}), output: z.object({ posts: z.array(postViewSchema) }), tags: PRS },
   /** Take a review that has not started posting out of the queue. */
-  cancelPost: { input: z.object({ id: z.number().int() }), output: prOut, invalidates: PRS },
+  cancelPost: { input: z.object({ id: z.number().int() }), output: prOut },
   /** Put a review that failed to post back in the queue as it was. */
-  retryPost: { input: z.object({ id: z.number().int() }), output: z.object({ pr: prViewSchema, post: postViewSchema }), invalidates: PRS },
+  retryPost: { input: z.object({ id: z.number().int() }), output: z.object({ pr: prViewSchema, post: postViewSchema }) },
   /** Stop showing a review that failed to post. */
-  clearPost: { input: z.object({ id: z.number().int() }), output: prOut, invalidates: PRS },
-  discardDraft: { input: z.object({ key, draftId: z.number().int() }), output: prOut, invalidates: PRS },
+  clearPost: { input: z.object({ id: z.number().int() }), output: prOut },
+  discardDraft: { input: z.object({ key, draftId: z.number().int() }), output: prOut },
   /** The PR's earlier AI reviews, newest first, with the notes each left for the user. */
   reviewHistory: { input: z.object({ key }), output: z.object({ items: z.array(reviewHistoryItemSchema) }), tags: PRS },
   /** Run auto post's checks on a live draft again, such as after the verifier failed. Never posts. */
-  checkDraft: { input: z.object({ key, draftId: z.number().int() }), output: prOut, invalidates: PRS },
+  checkDraft: { input: z.object({ key, draftId: z.number().int() }), output: prOut },
   /** Stop a draft from posting on its own; it stays a draft for you to post or discard. */
-  stopAutoPost: { input: z.object({ key, draftId: z.number().int() }), output: prOut, invalidates: PRS },
+  stopAutoPost: { input: z.object({ key, draftId: z.number().int() }), output: prOut },
   /** Post a scheduled draft now, with every post-time check. */
-  autoPostNow: { input: z.object({ key, draftId: z.number().int() }), output: prOut, invalidates: PRS },
+  autoPostNow: { input: z.object({ key, draftId: z.number().int() }), output: prOut },
   /**
    * Mark what Shuttle posted as a mistake: one finding with `findingId`, else the approval. It counts against the record,
    * and can stop posting in the repository by itself; `undo` takes the mark back.
    */
-  markAutoPost: { input: z.object({ key, draftId: z.number().int(), findingId: z.string().min(1).max(40).optional(), undo: z.boolean().optional() }), output: prOut, invalidates: PRS },
+  markAutoPost: { input: z.object({ key, draftId: z.number().int(), findingId: z.string().min(1).max(40).optional(), undo: z.boolean().optional() }), output: prOut },
   /** Let a repository entry post again after its breaker stopped it. */
-  resumeAutoPost: { input: z.object({ repo: z.string().min(1).max(200), kind: z.enum(["comment", "approve"]) }), output: z.object({ cleared: z.number() }), invalidates: () => ["prs", "config"] },
+  resumeAutoPost: { input: z.object({ repo: z.string().min(1).max(200), kind: z.enum(["comment", "approve"]) }), output: z.object({ cleared: z.number() }) },
   /** Undo a discard. */
-  restoreDraft: { input: z.object({ key, draftId: z.number().int() }), output: prOut, invalidates: PRS },
-  reply: { input: z.object({ key, thread: z.string().min(1).max(300), body }), output: ok, invalidates: CONVERSATION },
-  resolve: { input: z.object({ key, thread: z.string().min(1).max(300), resolved: z.boolean() }), output: ok, invalidates: CONVERSATION },
+  restoreDraft: { input: z.object({ key, draftId: z.number().int() }), output: prOut },
+  reply: { input: z.object({ key, thread: z.string().min(1).max(300), body }), output: ok },
+  resolve: { input: z.object({ key, thread: z.string().min(1).max(300), resolved: z.boolean() }), output: ok },
   /** The card for a git link in a thread. A PR comes from Shuttle's copy; its comments and details from the same 30-second read as its view. Nothing is written. */
+  resolveReferences: { input: referenceInputSchema, output: z.object({ rows: z.array(referenceSchema) }), tags: () => ["references", "prs", "projects"] },
+  referenceLog: { input: z.object({ limit: z.number().int().min(1).max(200).default(100) }), output: z.object({
+    rows: z.array(referenceSchema), total: z.number(), counts: z.record(z.string(), z.number()),
+    events: z.array(z.object({ id: z.number(), referenceId: z.string(), action: z.string(), beforeUrl: z.string().nullable(), afterUrl: z.string().nullable(), at: z.number() })),
+  }), tags: () => ["reference-log"] },
+  referenceFeedback: { input: z.object({ id: z.string().length(64), action: z.enum(["flag", "correct", "suppress", "reset"]), query: z.string().max(2000).nullable() }), output: referenceSchema, tags: () => ["references", "reference-log"] },
   linkCard: { input: z.object({ url: z.string().min(8).max(2000) }), output: linkCardSchema, tags: () => ["prs", "conversation"] },
   /** Each link's kind and its PR's or issue's state, from what Shuttle already has, to mark links in threads; no server is asked. */
   linkStates: {

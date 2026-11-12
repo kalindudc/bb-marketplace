@@ -101,6 +101,9 @@ export class FakePort implements BbPort {
     if (!this.sections.has(name)) this.sections.set(name, `sec_${this.sections.size + 1}`);
     return this.sections.get(name)!;
   }
+  async referenceContext(threadId: string): Promise<string[]> {
+    return [threadId, ...[...this.children].filter(([, children]) => children.includes(threadId)).map(([id]) => id)];
+  }
   async threadOutput(threadId: string): Promise<string> {
     return this.outputs.get(threadId) ?? "";
   }

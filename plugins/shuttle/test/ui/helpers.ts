@@ -4,7 +4,7 @@ import { afterEach, beforeEach, vi } from "vitest";
 import { DEFAULT_CONFIG, type Config } from "../../src/config";
 import {
   type AutoPostInsights,
-  rpcContract, type AgentView, type ConversationItem, type EventView, type InboxView, type InsightsView, type LinkView, type MergeOptions, type UsageView,
+  mutationTags, rpcContract, type AgentView, type ConversationItem, type EventView, type InboxView, type InsightsView, type LinkView, type MergeOptions, type UsageView,
   type MergeView, type NextStep, type Overview, type PostView, type PrView, type ReviewDraft, type ServerStatus,
 } from "../../src/contract";
 import { addDays, dayOf } from "../../src/period";
@@ -280,6 +280,9 @@ export function handlers(overrides: Partial<Handlers> = {}): Handlers {
     list: () => ({ prs: [] }),
     detail: unexpected("detail"),
     conversation: () => ({ items: [], details: null, error: null, fetchedAt: NOW }),
+    resolveReferences: () => ({ rows: [] }),
+    referenceLog: () => ({ rows: [], counts: {}, total: 0, events: [] }),
+    referenceFeedback: unexpected("referenceFeedback"),
     linkCard: unexpected("linkCard"),
     linkStates: ({ urls }) => ({ links: urls.map((url) => ({ url, kind: null, state: null })) }),
     lookup: unexpected("lookup"),
@@ -369,13 +372,21 @@ export async function app() {
   return loadPluginApp(() => import("../../app"));
 }
 
-export function mount<Props extends object>(component: ComponentType<Props>, props: Props, rpc: Handlers & { pullRequests?: PullRequests }, options: Omit<RenderSlotOptions<typeof rpcContract>, "rpc"> = {}): RenderedSlot {
+export function mount<Props extends object>(component: ComponentType<Props>, props: Props, rpc: Handlers & { pullRequests?: PullRequests }, options: Omit<RenderSlotOptions<typeof rpcContract>, "rpc"> & { invalidateWrites?: boolean } = {}): RenderedSlot {
+  const tags = mutationTags as Record<string, (input: { apply?: boolean }) => readonly string[]>;
+  const serverRpc = Object.fromEntries(Object.entries(rpc).map(([method, handler]) => [method, !tags[method] ? handler : async (input: unknown) => {
+    const result = await (handler as (input: unknown) => unknown)(input);
+    setTimeout(() => {
+      if (options.invalidateWrites !== false && mounted.includes(slot)) void slot.behavior.experimental_invalidateRpc(tags[method]!(input as { apply?: boolean }));
+    }, 0);
+    return result;
+  }])) as unknown as typeof rpc;
   const slot = renderSlot<Props, typeof rpcContract>({ component }, props, {
     pluginId: "shuttle",
     openUrl: () => true,
     experimental_rpcContract: rpcContract,
     ...options,
-    rpc,
+    rpc: serverRpc,
   });
   mounted.push(slot);
   return slot;
@@ -395,7 +406,7 @@ export function unmountAll() {
 export const callsTo = (slot: RenderedSlot, method: string) => slot.inspection.rpcCalls.filter((call) => call.method === method).map((call) => call.input);
 
 /** The page at a subPath, and what bb's router does after a navigation: the same page with the new subPath. */
-export async function page(subPath: string, rpc: Partial<Handlers> = {}, options: Omit<RenderSlotOptions<typeof rpcContract>, "rpc"> = {}) {
+export async function page(subPath: string, rpc: Partial<Handlers> = {}, options: Omit<RenderSlotOptions<typeof rpcContract>, "rpc"> & { invalidateWrites?: boolean } = {}) {
   const loaded = await app();
   const panel = loaded.navPanels[0]!;
   const slot = mount(panel.component, { subPath }, handlers(rpc), options);
