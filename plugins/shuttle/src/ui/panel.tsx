@@ -20,7 +20,7 @@ import { parseGitLink } from "../links";
 import { prKey as keyOfReference } from "../keys";
 import { useSurface } from "./surface";
 import { useScrollMemory } from "./scroll";
-import { ThreadTabSkeleton } from "./skeleton";
+import { DetailSkeleton, ThreadTabSkeleton } from "./skeleton";
 import { GITHUB_PR_STATUS, githubPrStatus } from "./tab";
 import { useViewport } from "./viewport";
 import type { PrWrites } from "./writes";
@@ -286,7 +286,8 @@ export function ShuttlePanel({ threadId }: ExperimentalThreadActionTabProps) {
   const referenceId = useStored(panelReferences)[threadId] ?? null;
   const reference = useShuttleQuery("reference", { id: referenceId ?? "" }, referenceId !== null);
   const config = useShuttleQuery("getConfig", {}, referenceId !== null);
-  const target = !isNotFound(reference.error) && reference.data?.url ? parseGitLink(reference.data.url, config.data?.config.servers ?? []) : null;
+  const referencePending = referenceId !== null && !reference.error && (reference.data?.id !== referenceId || !config.data);
+  const target = !isNotFound(reference.error) && reference.data?.id === referenceId && reference.data?.url ? parseGitLink(reference.data.url, config.data?.config.servers ?? []) : null;
   // Only a PR still linked here opens in full; an unlinked one leaves the tab on its list.
   const openKey = referenceId !== null ? target?.kind === "pr" ? keyOfReference(target.ref) : null : remembered !== null && prs?.some((pr) => pr.key === remembered) === true ? remembered : null;
   const select = (key: string) => { rememberPanelReference(threadId, null); rememberPanelPr(threadId, key); };
@@ -296,7 +297,7 @@ export function ShuttlePanel({ threadId }: ExperimentalThreadActionTabProps) {
   return (
     <ActionsProvider value={actions}>
       <TipProvider>
-        {openKey !== null ? (
+        {referencePending ? <DetailSkeleton label="Reading matched pull request" phone={phone} onClose={() => { rememberPanelReference(threadId, null); rememberPanelPr(threadId, null); }} /> : openKey !== null ? (
           <PanelPrView prKey={openKey} canExpand={referenceId === null} onBack={() => { rememberPanelReference(threadId, null); rememberPanelPr(threadId, null); }} />
         ) : (
           <PanelList threadId={threadId} prs={prs} data={data} writes={actions.writes} onView={select} />

@@ -184,7 +184,9 @@ Insights › References uses compact rows with source excerpts, matching reasons
 Search runs across retained records before pagination. Filter by pending, needs attention, handled or
 all records, or by individual status; group by status, repository or source thread, and sort by age.
 Search and view choices are remembered like Shuttle's other lists. Clicking a PR row expands its
-evidence and opens the matched PR beside the list, not as a full page. Selection follows the reference
+evidence and opens the matched PR beside the list, not as a full page. Only the selected reference
+shows its details; selecting another closes the previous details. The PR panel remains docked while
+the next match loads, rather than collapsing and opening again. Selection follows the reference
 identity, so a correction updates the already-open panel even after the record leaves Pending;
 source-thread, external-link and evidence controls act independently. Records are collected when messages are displayed, not by scanning all historical
 threads. It retains the latest 2,000 records without feedback and preserves records with feedback.

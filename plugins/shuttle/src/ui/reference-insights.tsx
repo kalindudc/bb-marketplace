@@ -23,13 +23,11 @@ function targetOf(row: ReferenceRecord, servers: ServerConfig[]) {
   return target?.kind === "pr" || target?.kind === "issue" ? target : null;
 }
 
-function ReferenceRow({ row, servers, onOpenThread, onOpenPr, selected = false }: { row: ReferenceRecord; servers: ServerConfig[]; onOpenThread(id: string): void; onOpenPr(key: string, referenceId?: string): void; selected?: boolean }) {
-  const [expanded, setExpanded] = useState(false);
+function ReferenceRow({ row, servers, onOpenThread, onOpenPr, selected = false }: { row: ReferenceRecord; servers: ServerConfig[]; onOpenThread(id: string): void; onOpenPr(key: string | null, referenceId?: string): void; selected?: boolean }) {
   const feedback = useShuttleMutation("referenceFeedback");
-  useEffect(() => { if (selected) setExpanded(true); }, [selected]);
   const target = targetOf(row, servers);
   const pr = row.url && target?.kind === "pr" ? prKey(target.ref) : null;
-  const open = () => { setExpanded(true); if (pr) onOpenPr(pr, row.id); };
+  const open = () => onOpenPr(pr, row.id);
   const title = target ? `${target.repo}#${target.kind === "pr" ? target.ref.number : target.number}` : "No target";
   const issue = row.url && target?.kind === "issue" ? target : null;
   return <li data-reference={row.id} aria-current={selected ? "true" : undefined} tabIndex={0} onClick={onCardClick(open)} onKeyDown={(event) => {
@@ -38,7 +36,7 @@ function ReferenceRow({ row, servers, onOpenThread, onOpenPr, selected = false }
     <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
       {issue ? <UrlLink href={row.url!} data-shuttle-reference-id={row.id} onClick={(event) => {
         if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-        event.preventDefault(); tapReference({ el: event.currentTarget, url: row.url!, key: linkKey(issue), kind: "issue", referenceId: row.id });
+        event.preventDefault(); open(); tapReference({ el: event.currentTarget, url: row.url!, key: linkKey(issue), kind: "issue", referenceId: row.id });
       }} className={BUTTON}>#{row.number}</UrlLink> : <button type="button" onClick={open} title={pr ? `Open ${title} in Shuttle` : "Inspect this reference"} className={BUTTON}>#{row.number}</button>}
       <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground" title={title}>{title}</span>
       <span className="text-xs">{STATUS_LABELS[row.status]}</span>
@@ -53,9 +51,8 @@ function ReferenceRow({ row, servers, onOpenThread, onOpenPr, selected = false }
       <span className="min-w-0 flex-1 truncate" title={row.reason}>{row.reason}</span>
       <button type="button" title={row.threadTitle ?? row.threadId} className={BUTTON} onClick={() => onOpenThread(row.threadId)}>Open thread</button>
       {row.url && <UrlLink href={row.url} title={row.url} className={BUTTON}>Open externally ↗</UrlLink>}
-      <button type="button" aria-label={`Details for #${row.number}`} aria-expanded={expanded} className={BUTTON} onClick={() => expanded ? setExpanded(false) : open()}>{expanded ? "Less" : "Details"}</button>
     </div>
-    {expanded && <div className="mt-2 space-y-3 border-t border-border pt-3" onClick={(event) => event.stopPropagation()}>
+    {selected && <div data-reference-details="" className="mt-2 space-y-3 border-t border-border pt-3" onClick={(event) => event.stopPropagation()}>
       <blockquote className="break-words text-sm" data-content="">{row.excerpt}</blockquote>
       <p className="text-xs text-muted-foreground">{row.reason}</p>
       <div className="break-all text-xs">Automatic target: {row.automaticUrl ?? "None"}</div>
@@ -65,7 +62,7 @@ function ReferenceRow({ row, servers, onOpenThread, onOpenPr, selected = false }
   </li>;
 }
 
-export function ReferenceInsights({ onOpenThread, onOpenPr, selectedReference }: { onOpenThread(id: string): void; onOpenPr(key: string, referenceId?: string): void; selectedReference?: string | null }) {
+export function ReferenceInsights({ onOpenThread, onOpenPr, selectedReference }: { onOpenThread(id: string): void; onOpenPr(key: string | null, referenceId?: string): void; selectedReference?: string | null }) {
   const prefs = useStored(referenceView);
   const [query, setQuery] = useKeywordQuery("references");
   const [offset, setOffset] = useState(0);

@@ -180,7 +180,7 @@ export function InsightsView({ tab, period, onTab, onPeriod, onAction, onOpenPr,
   onTab(tab: InsightsTab): void;
   onPeriod(period: UsagePeriod): void;
   onAction(action: IdeaAction): void;
-  onOpenPr(key: string, referenceId?: string): void;
+  onOpenPr(key: string | null, referenceId?: string): void;
   selectedReference?: string | null;
 }) {
   const actions = useActions();

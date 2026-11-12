@@ -7,6 +7,7 @@ import { AutomationPauseControls } from "./automation-pause";
 import { AREA_META, PANEL_PATH } from "./constants";
 import { isNotFound, messageOf, threadsOf, useShuttleMutation, useShuttleQuery } from "./data";
 import { PrDetail } from "./detail";
+import { DetailSkeleton } from "./skeleton";
 import { PrMenu, TrackButton } from "./pr-menu";
 import { keyLabel } from "./format";
 import { parseGitLink } from "../links";
@@ -158,10 +159,13 @@ export function ShuttlePage({ subPath }: PluginNavPanelProps) {
 
   const referencesOpen = route.view === "insights" && route.tab === "references";
   const referenceId = referencesOpen ? route.reference ?? null : null;
+  const requestedReference = useRef<{ id: string; key: string | null } | null>(null);
   const reference = useShuttleQuery("reference", { id: referenceId ?? "" }, referenceId !== null);
   const config = useShuttleQuery("getConfig", {}, referenceId !== null);
-  const target = !isNotFound(reference.error) && reference.data?.url ? parseGitLink(reference.data.url, config.data?.config.servers ?? []) : null;
-  const selectedKey = referenceId !== null ? target?.kind === "pr" ? keyOfReference(target.ref) : null : route.view === "boards" ? null : route.view === "insights" ? referencesOpen ? route.key ?? null : null : route.key;
+  const referencePending = referenceId !== null && !reference.error && (reference.data?.id !== referenceId || !config.data);
+  const target = !isNotFound(reference.error) && reference.data?.id === referenceId && reference.data?.url ? parseGitLink(reference.data.url, config.data?.config.servers ?? []) : null;
+  const requestedKey = requestedReference.current?.id === referenceId ? requestedReference.current.key : null;
+  const selectedKey = referenceId !== null ? referencePending ? requestedKey : target?.kind === "pr" ? keyOfReference(target.ref) : null : route.view === "boards" ? null : route.view === "insights" ? referencesOpen ? route.key ?? null : null : route.key;
   const inbox = useShuttleQuery("inbox", {}, route.view === "inbox");
   const listArea = route.view === "mine" || route.view === "done" || route.view === "reviews" || route.view === "reviewed" ? route.view : "mine";
   const list = useShuttleQuery("list", { area: listArea }, listArea === route.view);
@@ -191,12 +195,14 @@ export function ShuttlePage({ subPath }: PluginNavPanelProps) {
   }, [subPath, resume, here]);
   const scroller = useScrollMemory(route.view === "pr" ? `pr/${route.key}` : isListRoute(route) ? formatRoute({ ...route, key: null, ...(referencesOpen ? { reference: undefined } : {}) }) : here, route.view === "pr");
   const prScroller = useScrollMemory(selectedKey === null ? null : `pr/${selectedKey}`, true);
-  const select = (key: string, id?: string) => {
+  const select = (key: string | null, id?: string) => {
     if (referencesOpen) {
       if (selectedKey === key && referenceId === (id ?? null)) return;
-      if (selectedKey === null) pushed.current = true;
-      return go({ view: "insights", tab: "references", ...(id ? { reference: id } : { key }) }, selectedKey !== null);
+      if (id) requestedReference.current = { id, key };
+      if (referenceId === null && selectedKey === null) pushed.current = true;
+      return go({ view: "insights", tab: "references", ...(id ? { reference: id } : { key }) }, referenceId !== null || selectedKey !== null);
     }
+    if (key === null) throw new Error("Only a reference can be selected without a PR.");
     if (!isListRoute(route)) {
       if (route.view === "pr" && route.key === key) return;
       if (route.view !== "pr") pushed.current = true;
@@ -257,7 +263,7 @@ export function ShuttlePage({ subPath }: PluginNavPanelProps) {
 
   const lookedUp = route.view === "pr" ? detail : null;
   // A PR on its own page draws its own shape while it loads; only a refusal shows the look-up page.
-  const showDetail = selectedKey !== null && (route.view !== "pr" || detail.data !== undefined || detail.error === null);
+  const showDetail = (selectedKey !== null && (route.view !== "pr" || detail.data !== undefined || detail.error === null)) || (referencePending && (requestedReference.current?.id !== referenceId || requestedKey !== null));
   const overlay = viewport === "narrow" && isListRoute(route) && showDetail;
   useEffect(() => {
     if (!overlay || dialogOpen) return;
@@ -312,7 +318,7 @@ export function ShuttlePage({ subPath }: PluginNavPanelProps) {
     </>
   );
 
-  const detailPanel = (onClose?: () => void) => selectedKey !== null && <PrDetail key={selectedKey} prKey={selectedKey} onClose={onClose} onExpand={referencesOpen ? undefined : () => expand(selectedKey)} />;
+  const detailPanel = (onClose?: () => void) => selectedKey !== null ? <PrDetail key={selectedKey} prKey={selectedKey} onClose={onClose} onExpand={referencesOpen ? undefined : () => expand(selectedKey)} /> : <DetailSkeleton label="Reading matched pull request" phone={phone} onClose={onClose} />;
   const backLabel = route.view === "pr" ? "Back" : route.view === "search" ? "Search" : AREA_META[areaOf(route) ?? "inbox"].label;
   let body: ReactNode;
   if (phone && showDetail && !referencesOpen) {
@@ -341,13 +347,13 @@ export function ShuttlePage({ subPath }: PluginNavPanelProps) {
         </div>
       </div>
     );
-  } else if (showDetail && isListRoute(route)) {
+  } else if ((showDetail && isListRoute(route)) || referencesOpen) {
     body = (
       <div className="flex h-full min-h-0 flex-row">
         <div ref={scroller.ref} onScroll={scroller.onScroll} data-scroller className="min-w-0 flex-1 overflow-y-auto">{notices}{area}</div>
-        <ResizablePanel overlay={false}>
+        {showDetail && <ResizablePanel overlay={false}>
           <div ref={prScroller.ref} onScroll={prScroller.onScroll} data-panel className="min-h-0 flex-1 overflow-y-auto">{detailPanel(closeSelection)}</div>
-        </ResizablePanel>
+        </ResizablePanel>}
       </div>
     );
   } else {

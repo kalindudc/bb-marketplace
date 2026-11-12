@@ -110,6 +110,45 @@ describe("reference oversight", () => {
     await waitFor(() => expect(slot.container.querySelectorAll("[data-reference]")).toHaveLength(1));
   });
 
+  it("shows details only for the selected reference, without toggle buttons", async () => {
+    const second = { ...record, id: "b".repeat(64), number: 90387, url: "https://github.com/acme/app/pull/90387", excerpt: "Second reference" };
+    const { slot, route } = await page(`insights/references/ref/${record.id}`, {
+      reference: ({ id }) => id === second.id ? second : record,
+      referenceLog: ({ filter }) => ({ rows: filter === "handled" ? [] : [record, second], total: 2, filteredTotal: filter === "handled" ? 0 : 2, counts: {}, events: [] }),
+      getConfig: () => ({ config: config({ servers: [{ id: "github", name: "GitHub", kind: "github", enabled: true, sep: "#", commands: {} }] }) }),
+      detail: ({ key }) => ({ pr: pr({ repo: "acme/app", number: key.endsWith("#90387") ? 90387 : 90386 }), events: [], body: "", draft: null, drafts: 0 }),
+    });
+    await waitFor(() => expect(slot.container.querySelector(`[data-reference="${record.id}"] [data-shuttle-reference-controls]`)).not.toBeNull());
+    expect(slot.queryByRole("button", { name: "Details" })).toBeNull();
+    expect(slot.queryByRole("button", { name: "Less" })).toBeNull();
+    fireEvent.click(slot.getByRole("button", { name: "#90387" }));
+    await route(`insights/references/ref/${second.id}`);
+    await waitFor(() => expect(slot.container.querySelector(`[data-reference="${second.id}"] [data-shuttle-reference-controls]`)).not.toBeNull());
+    expect(slot.container.querySelector(`[data-reference="${record.id}"] [data-shuttle-reference-controls]`)).toBeNull();
+    await route("insights/references");
+    await waitFor(() => expect(slot.container.querySelector("[data-shuttle-reference-controls]")).toBeNull());
+  });
+
+  it("keeps the same panel mounted while another reference is being read", async () => {
+    const second = { ...record, id: "b".repeat(64), number: 90387, url: "https://github.com/acme/app/pull/90387" };
+    let release!: (value: ReferenceRecord) => void;
+    const delayed = new Promise<ReferenceRecord>((resolve) => { release = resolve; });
+    const read = vi.fn(({ id }: { id: string }) => id === second.id ? delayed : record);
+    const { slot, route } = await page(`insights/references/ref/${record.id}`, {
+      reference: read,
+      getConfig: () => ({ config: config({ servers: [{ id: "github", name: "GitHub", kind: "github", enabled: true, sep: "#", commands: {} }] }) }),
+      detail: ({ key }) => ({ pr: pr({ repo: "acme/app", number: key.endsWith("#90387") ? 90387 : 90386 }), events: [], body: "", draft: null, drafts: 0 }),
+    });
+    const panel = await waitFor(() => { const p = slot.container.querySelector("[data-panel]"); if (!p) throw new Error("No panel"); return p; });
+    const rendering = route(`insights/references/ref/${second.id}`);
+    try {
+      await waitFor(() => expect(read.mock.calls.some(([input]) => input.id === second.id)).toBe(true));
+      expect(slot.container.querySelector("[data-panel]")).toBe(panel);
+    } finally { release(second); await rendering; }
+    await waitFor(() => expect(slot.container.querySelector('[data-detail="github:acme/app#90387"]')).not.toBeNull());
+    expect(slot.container.querySelector("[data-panel]")).toBe(panel);
+  });
+
   it("keeps the list beside the matched PR and follows a correction", async () => {
     let current = record;
     const makePr = (number: number) => pr({ repo: "acme/app", number });
@@ -184,7 +223,7 @@ describe("reference oversight", () => {
       referenceLog: ({ filter }) => ({ rows: filter === "handled" ? [saved] : [], counts: { corrected: 1 }, total: 1, filteredTotal: filter === "handled" ? 1 : 0, events: [] }),
       detail: () => ({ pr: pr({ repo: "acme/app", number: 90386 }), events: [], body: "", draft: null, drafts: 0 }),
     });
-    await waitFor(() => expect(slot.container.querySelector(`[data-reference="${record.id}"] button[aria-label="Details for #90386"]`)?.getAttribute("aria-expanded")).toBe("true"));
+    await waitFor(() => expect(slot.container.querySelector(`[data-reference="${record.id}"] [data-reference-details]`)).not.toBeNull());
   });
 
   it("stops showing a cached PR when its selected reference disappears", async () => {
@@ -231,7 +270,9 @@ describe("reference oversight", () => {
 
   it("offers correction and flags in Insights, with a retained history", async () => {
     let current = record;
-    const { slot } = await page("insights/references", {
+    const { slot, route } = await page("insights/references", {
+      reference: () => current,
+      detail: () => ({ pr: pr({ repo: "acme/app", number: 90386 }), events: [], body: "", draft: null, drafts: 0 }),
       referenceLog: () => ({ rows: [current], total: 1, filteredTotal: 1, counts: { [current.status]: 1 }, events: [] }),
       referenceFeedback: ({ action, query }) => {
         current = { ...current, status: action === "correct" ? "corrected" : "flagged", url: action === "correct" ? query : null };
@@ -241,7 +282,8 @@ describe("reference oversight", () => {
     await slot.findByText("Reference resolutions");
     fireEvent.click(await slot.findByRole("radio", { name: "All matches" }));
     await slot.findByText("PR #90386 (management)");
-    fireEvent.click(slot.getByRole("button", { name: "Details for #90386" }));
+    fireEvent.click(slot.getByRole("button", { name: "#90386" }));
+    await route(`insights/references/ref/${record.id}`);
     fireEvent.click(slot.getByRole("button", { name: "Flag incorrect" }));
     await slot.findByText("Flagged");
     fireEvent.click(slot.getByText("Correct this reference"));
