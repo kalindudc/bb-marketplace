@@ -13,7 +13,7 @@ export class References {
 
   async resolve(input: ReferenceInput): Promise<ReferenceRecord[]> {
     const mentions = referenceNumbers(input.text).slice(0, 100);
-    const numbers = [...new Map(mentions.map((r) => [r.number, r])).values()].slice(0, 50);
+    const numbers = [...new Map(mentions.filter((r) => r.token.startsWith("#")).map((r) => [r.number, r])).values()].slice(0, 50);
     if (numbers.length === 0) return [];
     const servers = this.ctx.config().servers.filter((server) => server.enabled);
     const urls = [...input.urls, ...[...input.text.matchAll(/https?:\/\/[^\s)]+/gu)].map((m) => m[0])];

@@ -39,6 +39,13 @@ describe("reference resolution", () => {
     expect(await refs.resolve({ ...input, text: "cortex task #1059; handover #1058; colour #282828; `PR #90386`; file.ts#123\n```ui\n#90386\n```" })).toEqual([]);
   });
 
+  it("does not create inferred records for complete URLs or qualified keys", async () => {
+    const { refs, input } = await setup();
+    expect(await refs.resolve({ ...input, text: "Review https://forge.test/acme/app/pull/90386 (forge:acme/app#90386, head abc123)", urls: ["https://forge.test/acme/app/pull/90386"] })).toEqual([]);
+    expect(await refs.resolve({ ...input, text: "acme/app#90386" })).toEqual([]);
+    expect(refs.log(20).rows).toEqual([]);
+  });
+
   it("persists flags and corrections per message and invalidates them on edits", async () => {
     const { h, refs, input } = await setup();
     const [row] = await refs.resolve(input);
@@ -55,9 +62,9 @@ describe("reference resolution", () => {
 
   it("requires number-specific evidence in mixed-repository text and rejects unknown servers", async () => {
     const { refs, input } = await setup();
-    expect(await refs.resolve({ ...input, text: "PR #90386 and forge:other/repo#12" })).toMatchObject([{ number: 90386, status: "ambiguous", url: null }, { number: 12 }]);
-    expect(await refs.resolve({ ...input, text: "forge:acme/app#90386 and forge:other/repo#90386" })).toMatchObject([{ status: "ambiguous", url: null }]);
-    expect(await refs.resolve({ ...input, text: "unknown:acme/app#90386" })).toMatchObject([{ status: "unresolved", url: null }]);
+    expect(await refs.resolve({ ...input, text: "PR #90386 and forge:other/repo#12" })).toMatchObject([{ number: 90386, status: "ambiguous", url: null }]);
+    expect(await refs.resolve({ ...input, text: "PR #90386: forge:acme/app#90386 and forge:other/repo#90386" })).toMatchObject([{ status: "ambiguous", url: null }]);
+    expect(await refs.resolve({ ...input, text: "PR #90386: unknown:acme/app#90386" })).toMatchObject([{ status: "unresolved", url: null }]);
   });
 
   it("uses the archived source thread for helpers and does not silently switch a resolved target", async () => {

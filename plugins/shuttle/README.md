@@ -162,7 +162,10 @@ are not a published contract.
 
 ## Bare references and corrections
 
-Shuttle can resolve bare numbers such as `#90386` in displayed timeline messages. It uses explicit
+Shuttle can resolve bare numbers such as `#90386` in displayed timeline messages.
+Complete URLs and qualified PR keys are matching evidence, not separate inferred references.
+The conversation row keeps BB’s subtle default link styling; larger action buttons belong in Insights.
+It uses explicit
 PR or issue links and qualified keys in the message, PRs linked to the source thread (including
 archived parents and Flare companions), or a cached PR in the project's exact server and repository.
 It never uses global number uniqueness or invents a target for an unseen number. Conflicting

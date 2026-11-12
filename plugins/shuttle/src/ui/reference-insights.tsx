@@ -83,8 +83,14 @@ export function ReferenceInsights({ onOpenThread, onOpenPr, selectedReference }:
   const currentOffset = pageKey === key ? offset : 0;
   useEffect(() => { setOffset(0); setPageKey(key); }, [key]);
   const log = useShuttleQuery("referenceLog", { limit: PAGE_SIZE, offset: currentOffset, filter, status, query: query.slice(0, 200), sort });
-  const rows = log.data?.rows ?? [];
   const handled = useShuttleQuery("referenceLog", { limit: PAGE_SIZE, filter: "handled", status: "all", query: query.slice(0, 200), sort }, prefs.filter === "pending" || prefs.filter === "attention");
+  useEffect(() => {
+    const selected = handled.data?.rows.find((row) => row.id === selectedReference);
+    if (!selected) return;
+    setHandledOpen(true);
+    setHandledExpanded((old) => old.has(selected.status) ? old : new Set([...old, selected.status]));
+  }, [selectedReference, handled.data]);
+  const rows = log.data?.rows ?? [];
   const handledGroups = Object.entries(STATUS_LABELS).flatMap(([status, title]) => {
     const items = handled.data?.rows.filter((row) => row.status === status) ?? [];
     return items.length ? [{ status, title, items }] : [];

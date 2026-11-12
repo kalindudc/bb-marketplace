@@ -19,7 +19,17 @@ describe("reference oversight", () => {
     document.body.append(row);
     const scan = scanReferenceText(row);
     expect(scan.text).toBe("acme/other#90386\nPR #90387");
-    expect(scan.ranges.map((r) => [r.number, r.range.toString()])).toEqual([[90386, "acme/other#90386"], [90387, "#90387"]]);
+    expect(scan.ranges.map((r) => [r.number, r.range.toString()])).toEqual([[90387, "#90387"]]);
+  });
+
+  it("uses complete links and keys as evidence without creating text ranges for them", () => {
+    const row = document.createElement("div"); row.dataset.timelineRowId = "msg_complete";
+    row.innerHTML = '<div data-message-column><p>Review <a href="https://github.com/Shopify/ingress-nginx/pull/711">https://github.com/Shopify/ingress-nginx/pull/711</a> (github:Shopify/ingress-nginx#711, head abc123)</p></div>';
+    document.body.append(row);
+    const scan = scanReferenceText(row);
+    expect(scan.ranges).toEqual([]);
+    expect(scan.urls).toEqual(["https://github.com/Shopify/ingress-nginx/pull/711"]);
+    expect(scan.text).toContain("github:Shopify/ingress-nginx#711");
   });
 
   it("does not merge numbers across hard line breaks", () => {
@@ -42,6 +52,8 @@ describe("reference oversight", () => {
     row.prepend(slot.container);
     await waitFor(() => expect(slot.getByRole("link", { name: "#90386" })).toBeTruthy());
     expect(row.querySelector("p")!.firstChild).toBe(text);
+    expect(slot.getByRole("link", { name: "#90386" }).classList.contains("border")).toBe(false);
+    expect(slot.getByRole("link", { name: "#90386" }).classList.contains("min-h-8")).toBe(false);
     const scan = scanReferenceText(row);
     expect(scan.text).toContain("PR #90386");
     expect(scan.text).not.toContain("#1059");
@@ -148,6 +160,17 @@ describe("reference oversight", () => {
     });
     await slot.findByRole("dialog", { name: "Matched pull request" });
     expect(slot.container.querySelector("[data-phone-pr]")).toBeNull();
+  });
+
+  it("opens the selected handled reference and its status group after navigation", async () => {
+    const saved = { ...record, status: "corrected" as const };
+    const { slot } = await page(`insights/references/ref/${record.id}`, {
+      getConfig: () => ({ config: config({ servers: [{ id: "github", name: "GitHub", kind: "github", enabled: true, sep: "#", commands: {} }] }) }),
+      reference: () => saved,
+      referenceLog: ({ filter }) => ({ rows: filter === "handled" ? [saved] : [], counts: { corrected: 1 }, total: 1, filteredTotal: filter === "handled" ? 1 : 0, events: [] }),
+      detail: () => ({ pr: pr({ repo: "acme/app", number: 90386 }), events: [], body: "", draft: null, drafts: 0 }),
+    });
+    await waitFor(() => expect(slot.container.querySelector(`[data-reference="${record.id}"] button[aria-label="Details for #90386"]`)?.getAttribute("aria-expanded")).toBe("true"));
   });
 
   it("stops showing a cached PR when its selected reference disappears", async () => {

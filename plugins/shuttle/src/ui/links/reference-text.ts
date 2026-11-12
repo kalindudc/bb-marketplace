@@ -28,7 +28,7 @@ export function scanReferenceText(row: Element): { text: string; urls: string[];
     text += node.data;
     previousBlock = block;
   }
-  const ranges = referenceNumbers(text).flatMap((ref) => {
+  const ranges = referenceNumbers(text).filter((ref) => ref.token.startsWith("#")).flatMap((ref) => {
     const start = nodes.find(({ node, offset }) => ref.offset >= offset && ref.offset < offset + node.length);
     const endOffset = ref.offset + ref.token.length;
     const end = nodes.find(({ node, offset }) => endOffset > offset && endOffset <= offset + node.length);

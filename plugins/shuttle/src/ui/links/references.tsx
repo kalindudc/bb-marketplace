@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { UrlLink, type ExperimentalMessageMetadataProps } from "@get-bb/plugin-sdk/app";
 import { messageOf, useShuttleQuery } from "../data";
 import { linkKey, parseGitLink } from "../../links";
@@ -6,6 +6,7 @@ import { rememberPanelReference } from "../prefs";
 import { useOpenShuttleTab } from "../tab";
 import { toast } from "sonner";
 import { dismissReference, enterReference, leaveReference, tapReference, type LinkTargetRef } from "./dom";
+import { referenceNumbers } from "../../reference-tokens";
 import { scanReferenceText, type ReferenceRange } from "./reference-text";
 import { clearReferenceHighlights, setReferenceHighlights, supportsReferenceHighlights } from "./reference-highlights";
 
@@ -15,8 +16,9 @@ export function MessageReferences({ message }: ExperimentalMessageMetadataProps)
   const ranges = useRef<ReferenceRange[]>([]);
   const highlightOwner = useRef(Symbol("reference highlights"));
   const paint = useRef<() => void>(() => {});
-  const query = useShuttleQuery("resolveReferences", { threadId: message.threadId, messageId: message.id, ...snapshot }, snapshot.text.includes("#"));
-  const rows = query.data?.rows ?? [];
+  const bare = useMemo(() => new Set(referenceNumbers(snapshot.text).filter((ref) => ref.token.startsWith("#")).map((ref) => ref.number)), [snapshot.text]);
+  const query = useShuttleQuery("resolveReferences", { threadId: message.threadId, messageId: message.id, ...snapshot }, bare.size > 0);
+  const rows = (query.data?.rows ?? []).filter((row) => bare.has(row.number));
   const openPanel = useOpenShuttleTab();
   const config = useShuttleQuery("getConfig", {}, rows.some((r) => r.url));
   const rowsRef = useRef(rows);
@@ -103,7 +105,7 @@ export function MessageReferences({ message }: ExperimentalMessageMetadataProps)
 
   return <span ref={marker} data-shuttle-references="" className={rows.some((r) => r.url) || query.error ? "mb-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground" : "contents"}>
     {rows.some((r) => r.url) && <span>References:</span>}
-    {rows.filter((r) => r.url).map((row) => <UrlLink key={row.id} href={row.url!} className="inline-flex min-h-8 items-center rounded-md border border-input px-2 text-sm font-medium text-primary hover:bg-state-hover focus-visible:ring-1 focus-visible:ring-ring" data-shuttle-reference-id={row.id} data-shuttle-reference-number={row.number}
+    {rows.filter((r) => r.url).map((row) => <UrlLink key={row.id} href={row.url!} data-shuttle-reference-id={row.id} data-shuttle-reference-number={row.number}
       data-shuttle-navigation={parseGitLink(row.url!, config.data?.config.servers ?? [])?.kind === "pr" ? "shuttle" : undefined}
       onClick={(event) => {
         if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
