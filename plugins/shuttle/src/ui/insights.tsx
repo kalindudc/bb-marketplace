@@ -190,7 +190,7 @@ export function InsightsView({ tab, period, onTab, onPeriod, onAction, onOpenPr 
   const tabs = <Segmented label="Insights" value={tab} onChange={onTab} options={INSIGHTS_TABS.map((value) => ({ value, label: INSIGHTS_TAB_LABELS[value] }))} />;
   if (tab === "references") return <div className={PAGE}>
     <PageHeading title="Reference resolutions" description="Where bare PR numbers point, and the matches that need your review.">{tabs}</PageHeading>
-    <ReferenceInsights onOpenThread={actions.openThread} />
+    <ReferenceInsights onOpenThread={actions.openThread} onOpenPr={onOpenPr} />
   </div>;
   if (tab === "sync") {
     return (

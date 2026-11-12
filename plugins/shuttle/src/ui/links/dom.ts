@@ -184,6 +184,7 @@ export function mountLinks(signal: AbortSignal): () => void {
     if (!(kind ? kind === "touch" : touch)) return;
     const a = linkFrom(event.target);
     const target = a ? targetOf(a) : null;
+    if (a?.dataset.shuttleNavigation === "shuttle") return;
     if (!target || !bridge) return;
     event.preventDefault();
     event.stopPropagation();

@@ -1,7 +1,7 @@
 // Typed repository over the plugin database.
 import type Database from "better-sqlite3";
 import { DEFAULT_CONFIG, parseConfig, type Config, type WatchMode } from "../config";
-import type { BoardArchived, CheckState, InboxRuleKind, LinkRole, PrState, Reason, ReviewState, ReferenceRecord } from "../contract";
+import type { BoardArchived, CheckState, InboxRuleKind, LinkRole, PrState, Reason, ReviewState, ReferenceRecord, ReferenceLogOptions } from "../contract";
 import { prKey, type PrRef } from "../keys";
 import type { ActivityItem, PrSummary } from "../model";
 import type { ThreadUsage } from "../ports";
@@ -770,11 +770,24 @@ export class Store {
     });
   }
 
-  referenceLog(limit: number) {
-    const rows = (this.sql("SELECT value FROM reference_resolutions ORDER BY updated_at DESC, id LIMIT ?").all(limit) as Array<{ value: string }>).map((r) => JSON.parse(r.value) as ReferenceRecord);
+  referenceLog(limit: number, options: ReferenceLogOptions = {}) {
+    const pending = ["automatic", "unresolved", "ambiguous", "flagged"];
+    const handled = ["confirmed", "dismissed", "corrected", "suppressed"];
+    const states = options.filter === "pending" ? pending : options.filter === "attention" ? ["unresolved", "ambiguous", "flagged"] : options.filter === "handled" ? handled : [];
+    const where: string[] = [];
+    const params: string[] = [];
+    if (states.length) { where.push(`json_extract(value, '$.status') IN (${states.map(() => "?").join(",")})`); params.push(...states); }
+    if (options.status && options.status !== "all") { where.push("json_extract(value, '$.status') = ?"); params.push(options.status); }
+    for (const word of (options.query ?? "").trim().toLowerCase().split(/\s+/u).filter(Boolean)) {
+      where.push("instr(lower(json_extract(value, '$.excerpt') || ' ' || coalesce(json_extract(value, '$.url'), '') || ' ' || coalesce(json_extract(value, '$.automaticUrl'), '') || ' ' || json_extract(value, '$.reason') || ' ' || json_extract(value, '$.threadId') || ' ' || coalesce((SELECT title FROM threads WHERE threads.id = reference_resolutions.thread_id), '') || ' ' || json_extract(value, '$.number') || ' ' || json_extract(value, '$.candidates')), ?) > 0"); params.push(word);
+    }
+    const condition = where.length ? ` WHERE ${where.join(" AND ")}` : "";
+    const filteredTotal = (this.sql("SELECT count(*) AS n FROM reference_resolutions" + condition).get(...params) as { n: number }).n;
+    const direction = options.sort === "oldest" ? "ASC" : "DESC";
+    const rows = (this.sql(`SELECT value FROM reference_resolutions${condition} ORDER BY json_extract(value, '$.at') ${direction}, id LIMIT ? OFFSET ?`).all(...params, limit, options.offset ?? 0) as Array<{ value: string }>).map((r) => JSON.parse(r.value) as ReferenceRecord);
     const counts = Object.fromEntries((this.sql("SELECT json_extract(value, '$.status') AS status, count(*) AS n FROM reference_resolutions GROUP BY status").all() as Array<{ status: string; n: number }>).map((r) => [r.status, r.n]));
     const events = this.sql("SELECT id, reference_id AS referenceId, action, before_url AS beforeUrl, after_url AS afterUrl, at FROM reference_feedback ORDER BY id DESC LIMIT ?").all(limit) as Array<{ id: number; referenceId: string; action: string; beforeUrl: string | null; afterUrl: string | null; at: number }>;
-    return { rows, counts, total: Object.values(counts).reduce((sum, n) => sum + n, 0), events };
+    return { rows: rows.map((row) => ({ ...row, threadTitle: this.threadTitle(row.threadId) ?? row.threadId })), counts, total: Object.values(counts).reduce((sum, n) => sum + n, 0), filteredTotal, events };
   }
 
   prsOfThread(threadId: string): PrRow[] {

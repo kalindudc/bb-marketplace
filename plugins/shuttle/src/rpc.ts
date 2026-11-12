@@ -40,7 +40,7 @@ export function registerRpc(bb: BbPluginApi, shuttle: Shuttle): void {
     detail: ({ key }) => refusing(() => shuttle.detailOrLookup(key)),
     conversation: ({ key }) => refusing(() => shuttle.conversation(key)),
     resolveReferences: (input) => refusing(async () => ({ rows: await shuttle.references.resolve(input) })),
-    referenceLog: ({ limit }) => refusing(() => shuttle.references.log(limit)),
+    referenceLog: ({ limit, ...options }) => refusing(() => shuttle.references.log(limit, options)),
     referenceFeedback: ({ id, action, query }) => refusing(() => shuttle.references.feedback(id, action, query)),
     linkCard: ({ url }) => refusing(() => shuttle.linkCard(url)),
     linkStates: ({ urls }) => refusing(() => ({ links: shuttle.linkStates(urls) })),

@@ -791,11 +791,18 @@ export type LinkCard = z.infer<typeof linkCardSchema>;
 
 export const referenceSchema = z.object({
   id: z.string(), threadId: z.string(), messageId: z.string(), number: z.number(),
-  excerpt: z.string(), status: z.enum(["automatic", "unresolved", "ambiguous", "flagged", "corrected", "suppressed"]),
+  threadTitle: z.string().optional(), excerpt: z.string(), status: z.enum(["automatic", "unresolved", "ambiguous", "flagged", "corrected", "suppressed", "confirmed", "dismissed"]),
   url: z.string().nullable(), automaticUrl: z.string().nullable(), reason: z.string(),
   candidates: z.array(z.string()), at: z.number(),
 });
 export type ReferenceRecord = z.infer<typeof referenceSchema>;
+export const referenceLogInputSchema = z.object({
+  limit: z.number().int().min(1).max(200).default(100), offset: z.number().int().min(0).default(0),
+  filter: z.enum(["pending", "attention", "handled", "all"]).default("all"),
+  status: z.enum(["all", "automatic", "unresolved", "ambiguous", "flagged", "corrected", "suppressed", "confirmed", "dismissed"]).default("all"),
+  query: z.string().max(200).default(""), sort: z.enum(["newest", "oldest"]).default("newest"),
+});
+export type ReferenceLogOptions = Partial<Omit<z.infer<typeof referenceLogInputSchema>, "limit">>;
 export const referenceInputSchema = z.object({
   threadId: z.string().min(1).max(100), messageId: z.string().min(1).max(200),
   text: z.string().max(50000), urls: z.array(z.string().max(2000)).max(100),
@@ -1266,11 +1273,11 @@ export const rpcContract = defineContract({
   resolve: { input: z.object({ key, thread: z.string().min(1).max(300), resolved: z.boolean() }), output: ok },
   /** The card for a git link in a thread. A PR comes from Shuttle's copy; its comments and details from the same 30-second read as its view. Nothing is written. */
   resolveReferences: { input: referenceInputSchema, output: z.object({ rows: z.array(referenceSchema) }), tags: () => ["references", "prs", "projects"] },
-  referenceLog: { input: z.object({ limit: z.number().int().min(1).max(200).default(100) }), output: z.object({
-    rows: z.array(referenceSchema), total: z.number(), counts: z.record(z.string(), z.number()),
+  referenceLog: { input: referenceLogInputSchema, output: z.object({
+    rows: z.array(referenceSchema), total: z.number(), filteredTotal: z.number(), counts: z.record(z.string(), z.number()),
     events: z.array(z.object({ id: z.number(), referenceId: z.string(), action: z.string(), beforeUrl: z.string().nullable(), afterUrl: z.string().nullable(), at: z.number() })),
   }), tags: () => ["reference-log"] },
-  referenceFeedback: { input: z.object({ id: z.string().length(64), action: z.enum(["flag", "correct", "suppress", "reset"]), query: z.string().max(2000).nullable() }), output: referenceSchema, tags: () => ["references", "reference-log"] },
+  referenceFeedback: { input: z.object({ id: z.string().length(64), action: z.enum(["flag", "correct", "suppress", "reset", "confirm", "dismiss"]), query: z.string().max(2000).nullable() }), output: referenceSchema, tags: () => ["references", "reference-log"] },
   linkCard: { input: z.object({ url: z.string().min(8).max(2000) }), output: linkCardSchema, tags: () => ["prs", "conversation"] },
   /** Each link's kind and its PR's or issue's state, from what Shuttle already has, to mark links in threads; no server is asked. */
   linkStates: {

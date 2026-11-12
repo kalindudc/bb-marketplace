@@ -6,6 +6,8 @@ Notable changes to Shuttle, newest first. Releases are tagged `shuttle/vX.Y.Z` i
 
 ### Added
 
+- References uses compact, searchable rows with status filters, repository/status/thread grouping and pagination. Mark correct or Dismiss moves a record out of Pending without deleting it or its popover. PR references open their Shuttle page by default; external, source and correction controls remain separate.
+
 - Conservative popovers for bare PR references in displayed messages, with a keyboard-accessible References row. Insights › References shows targets, matching reasons, source excerpts, conflicts and feedback history. Flag, correct, suppress or reset a reference in one message without changing the message or writing to the git server. Edits and changed target context require another review.
 - Migrate to the published SDK 0.6.121: panel actions use the current controller and RPC writes explicitly invalidate server-side reads. The new database tables are additive; existing data and settings are retained.
 

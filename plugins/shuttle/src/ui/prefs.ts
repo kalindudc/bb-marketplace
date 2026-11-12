@@ -87,6 +87,16 @@ export function rememberSeen(key: string, at: number): void {
 }
 
 /** Each list's keyword filter, by list, such as "inbox", "mine" or "board/<id>"; kept for this tab's session only. */
+export const referenceView = createStored("reference-view", { filter: "pending", status: "all", group: "status", sort: "newest" }, (value) => {
+  if (!isRecord(value)) return null;
+  return {
+    filter: oneOf(["pending", "attention", "handled", "all"])(value.filter) ?? "pending",
+    status: oneOf(["all", "automatic", "unresolved", "ambiguous", "flagged", "corrected", "suppressed", "confirmed", "dismissed"])(value.status) ?? "all",
+    group: oneOf(["status", "repo", "thread", "none"])(value.group) ?? "status",
+    sort: oneOf(["newest", "oldest"])(value.sort) ?? "newest",
+  };
+});
+
 export const keywordFilters = createStored<Readonly<Record<string, string>>>("keywords", {}, (value) => {
   if (!isRecord(value)) return null;
   return Object.fromEntries(Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === "string" && entry[1] !== ""));
@@ -169,5 +179,5 @@ export function useFolding(area: string): Folding {
 
 /** Tests clear localStorage between cases; this reads every remembered value again. */
 export function reloadPrefs(): void {
-  for (const stored of [lastRoute, mineLayout, mineSort, doneSort, reviewedSort, reviewedFilter, boardViews, reviewFilter, folds, scrolls, panelPrs, conversationOrder, hideBotComments, prSeen, inboxView, inboxSwipeHint, threadPrsOpen, panelWidth, keywordFilters]) stored.reload();
+  for (const stored of [lastRoute, mineLayout, mineSort, doneSort, reviewedSort, reviewedFilter, boardViews, reviewFilter, folds, scrolls, panelPrs, conversationOrder, hideBotComments, prSeen, inboxView, inboxSwipeHint, threadPrsOpen, panelWidth, keywordFilters, referenceView]) stored.reload();
 }

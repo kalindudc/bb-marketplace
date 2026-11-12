@@ -2,11 +2,11 @@ import { useState } from "react";
 import { BUTTON, ErrorNote } from "./common";
 import { messageOf, useShuttleMutation } from "./data";
 
-export function ReferenceFeedback({ id, url, onDone }: { id: string; url: string | null; onDone?(): void }) {
+export function ReferenceFeedback({ id, url, onDone, showTriage = true }: { id: string; url: string | null; onDone?(): void; showTriage?: boolean }) {
   const [query, setQuery] = useState(url ?? "");
   const [error, setError] = useState<string | null>(null);
   const feedback = useShuttleMutation("referenceFeedback");
-  const act = async (action: "flag" | "correct" | "suppress" | "reset") => {
+  const act = async (action: "flag" | "correct" | "suppress" | "reset" | "confirm" | "dismiss") => {
     setError(null);
     try {
       await feedback.mutate({ id, action, query: action === "correct" ? query : null });
@@ -15,6 +15,10 @@ export function ReferenceFeedback({ id, url, onDone }: { id: string; url: string
   };
   return <div className="space-y-2" data-shuttle-reference-controls="">
     <div className="flex flex-wrap gap-2">
+      {showTriage && <>
+        <button className={BUTTON} disabled={feedback.isPending || !url} onClick={() => void act("confirm")}>Mark correct</button>
+        <button className={BUTTON} disabled={feedback.isPending} onClick={() => void act("dismiss")}>Dismiss</button>
+      </>}
       <button className={BUTTON} disabled={feedback.isPending} onClick={() => void act("flag")}>Flag incorrect</button>
       <button className={BUTTON} disabled={feedback.isPending} onClick={() => void act("suppress")}>Not a git reference</button>
       <button className={BUTTON} disabled={feedback.isPending} onClick={() => void act("reset")}>Reset to automatic</button>

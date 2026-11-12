@@ -1,6 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { UrlLink, type ExperimentalMessageMetadataProps } from "@get-bb/plugin-sdk/app";
+import { UrlLink, useBbNavigate, type ExperimentalMessageMetadataProps } from "@get-bb/plugin-sdk/app";
 import { messageOf, useShuttleQuery } from "../data";
+import { prKey } from "../../keys";
+import { linkKey, parseGitLink } from "../../links";
+import { PANEL_PATH } from "../constants";
+import { formatRoute } from "../route";
+import { toast } from "sonner";
 import { enterReference, leaveReference, tapReference, type LinkTargetRef } from "./dom";
 import { scanReferenceText, type ReferenceRange } from "./reference-text";
 
@@ -10,6 +15,8 @@ export function MessageReferences({ message }: ExperimentalMessageMetadataProps)
   const ranges = useRef<ReferenceRange[]>([]);
   const query = useShuttleQuery("resolveReferences", { threadId: message.threadId, messageId: message.id, ...snapshot }, snapshot.text.includes("#"));
   const rows = query.data?.rows ?? [];
+  const navigate = useBbNavigate();
+  const config = useShuttleQuery("getConfig", {}, rows.some((r) => r.url));
   const rowsRef = useRef(rows);
   rowsRef.current = rows;
 
@@ -79,6 +86,15 @@ export function MessageReferences({ message }: ExperimentalMessageMetadataProps)
   return <span ref={marker} data-shuttle-references="" className={rows.some((r) => r.url) || query.error ? "mb-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground" : "contents"}>
     {rows.some((r) => r.url) && <span>References:</span>}
     {rows.filter((r) => r.url).map((row) => <UrlLink key={row.id} href={row.url!} data-shuttle-reference-id={row.id} data-shuttle-reference-number={row.number}
+      data-shuttle-navigation={parseGitLink(row.url!, config.data?.config.servers ?? [])?.kind === "pr" ? "shuttle" : undefined}
+      onClick={(event) => {
+        if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+        event.preventDefault();
+        const target = parseGitLink(row.url!, config.data?.config.servers ?? []);
+        if (target?.kind === "pr") navigate.toPluginPanel(PANEL_PATH, { subPath: formatRoute({ view: "pr", key: prKey(target.ref) }) });
+        else if (target?.kind === "issue") tapReference({ el: event.currentTarget, url: row.url!, key: linkKey(target), kind: "issue", referenceId: row.id });
+        else toast.error("Shuttle could not identify this reference's target yet.");
+      }}
       title={`${row.reason}. Review or correct this match in Insights › References.`}>#{row.number}</UrlLink>)}
     {query.error && <span role="status" title={messageOf(query.error)}>Reference lookup unavailable</span>}
   </span>;

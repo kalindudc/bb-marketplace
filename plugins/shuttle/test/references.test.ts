@@ -110,6 +110,36 @@ describe("reference resolution", () => {
     expect(second).toEqual(first);
   });
 
+  it.each(["confirm", "dismiss"] as const)("persists %s and hides it from pending without removing its target", async (action) => {
+    const { h, refs, input } = await setup();
+    const [row] = await refs.resolve(input);
+    const result = refs.feedback(row!.id, action, null);
+    expect(result).toMatchObject({ status: action === "confirm" ? "confirmed" : "dismissed", url: row!.url });
+    expect(await new References(h.shuttle).resolve(input)).toMatchObject([{ status: result.status }]);
+    expect(refs.log(20, { filter: "pending" }).rows).toEqual([]);
+    expect(refs.log(20, { filter: "handled" }).rows).toHaveLength(1);
+    expect(await refs.resolve({ ...input, text: "Edited PR #90386" })).toMatchObject([{ status: "flagged", url: null }]);
+  });
+
+  it("refuses to confirm a reference with no target", async () => {
+    const { refs, input } = await setup();
+    const [row] = await refs.resolve({ ...input, text: "PR #99999" });
+    expect(() => refs.feedback(row!.id, "confirm", null)).toThrow("no target");
+  });
+
+  it("searches before paginating and filters handled decisions", async () => {
+    const { refs, input } = await setup();
+    await refs.resolve({ ...input, messageId: "msg_a", text: "PR #90386 alpha" });
+    await refs.resolve({ ...input, messageId: "msg_b", text: "PR #90386 beta" });
+    const first = refs.log(1, { query: "alpha", filter: "pending" });
+    expect(first.filteredTotal).toBe(1);
+    expect(first.rows[0]!.excerpt).toContain("alpha");
+    expect(refs.log(1, { query: "alpha 90386", filter: "pending" }).filteredTotal).toBe(1);
+    expect(refs.log(1, { query: "ALPHA\t90386", filter: "pending" }).filteredTotal).toBe(1);
+    expect(refs.log(1, { query: "alpha missing", filter: "pending" }).filteredTotal).toBe(0);
+    expect(refs.log(1, { offset: 1, filter: "pending" }).rows).toHaveLength(1);
+  });
+
   it("deduplicates re-renders and suppresses a mistaken reference until reset", async () => {
     const { refs, input } = await setup();
     const [row] = await refs.resolve(input);

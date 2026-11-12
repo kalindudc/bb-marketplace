@@ -169,14 +169,22 @@ It never uses global number uniqueness or invents a target for an unseen number.
 repository context stays unlinked. Code, existing links, file anchors and explicit Cortex task
 numbers are excluded. Custom message widgets and code-fence renderers are outside this first version.
 
-The original message is not rewritten. A References row provides keyboard and phone access to
-the existing cards; pointer hovering over the original text uses non-mutating text ranges.
+The original message is not rewritten. A References row provides keyboard and phone access;
+activating a PR reference opens its page in Shuttle, while an issue opens its card. Explicit external
+links follow BB's URL preference. Pointer hovering over the original text uses non-mutating ranges.
 These ranges still depend on BB's private timeline markers.
 
-Insights › References lists targets, short source excerpts, matching reasons, candidates and
-feedback history. Records are collected when messages are displayed, not by scanning all historical
+Insights › References uses compact rows with source excerpts, matching reasons and expandable evidence.
+Search runs across retained records before pagination. Filter by pending, needs attention, handled or
+all records, or by individual status; group by status, repository or source thread, and sort by age.
+Search and view choices are remembered like Shuttle's other lists. PR rows open the PR in Shuttle;
+source-thread, external-link and evidence controls act independently. Records are collected when messages are displayed, not by scanning all historical
 threads. It retains the latest 2,000 records without feedback and preserves records with feedback.
 Counts describe retained records, not measured matching accuracy.
+
+Mark correct confirms a target without removing its popover; Dismiss hides a record without judging its
+target. Both persist for that message and leave the default Pending list. The Handled view retains
+confirmed, dismissed, corrected and non-git records without deleting them.
 
 Flag incorrect removes the resolved target until you correct or reset it. Correct this reference
 accepts a PR key or a PR / issue URL on an enabled Shuttle server; it saves your choice without
