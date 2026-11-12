@@ -2,6 +2,12 @@
 
 Notable changes to Vantage, newest first. Releases are tagged `vantage/vX.Y.Z` in this repository.
 
+## Unreleased
+
+### Fixed
+
+- The composer summary shrinks with its pane, including split views. Narrow panes hide the words; tighter panes replace this thread’s line counts with its file count. Child worktrees and attention counts remain visible, and the full details stay available on expansion and hover.
+
 ## 0.10.0 (2026-11-07)
 
 ### Added

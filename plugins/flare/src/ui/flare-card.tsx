@@ -21,16 +21,18 @@ export function KindIcon({ kind, className }: { kind: FlareDto["kind"]; classNam
   );
 }
 
-export function ChildLink({ child }: { child: NonNullable<FlareDto["fromChild"]> }) {
+export function ChildLink({ child, compact = false }: { child: NonNullable<FlareDto["fromChild"]>; compact?: boolean }) {
   const navigate = useBbNavigate();
   return (
     <button
       type="button"
-      className="min-w-0 max-w-48 cursor-pointer truncate text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-      title="Open the child thread"
+      className={cn("min-w-0 max-w-48 cursor-pointer truncate text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring", compact && "@max-[48rem]/promptbox-shell:inline-flex @max-[48rem]/promptbox-shell:size-6 @max-[48rem]/promptbox-shell:shrink-0 @max-[48rem]/promptbox-shell:items-center @max-[48rem]/promptbox-shell:justify-center")}
+      aria-label={`Open child thread: ${child.title ?? "a child thread"}`}
+      title={`Open child thread: ${child.title ?? "a child thread"}`}
       onClick={() => navigate.toThread(child.threadId)}
     >
-      from {child.title ?? "a child thread"}
+      {compact && <Icon name="ChildThread" className="hidden size-3.5 @max-[48rem]/promptbox-shell:inline" aria-hidden />}
+      <span data-flare-child-title className={compact ? "@max-[48rem]/promptbox-shell:hidden" : undefined}>from {child.title ?? "a child thread"}</span>
     </button>
   );
 }

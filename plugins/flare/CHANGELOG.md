@@ -10,6 +10,10 @@ Notable changes to Flare, newest first. Releases are tagged `flare/vX.Y.Z` in th
 - Every author gets a compact rendering reference through Flare's own tool instructions and skill, including the genui syntax, common components, a timing chart example and the inline-vis fence form. Missing genui validation tools no longer implies that its renderer is unavailable. No other plugin's tools are selected and no dependency is added.
 - Timing-comparison tables with at least two measurements carrying units in the cells or header can earn a soft suggestion to use a Chart for the next flare. Ordinary attribute tables, headers marking configured limits or targets, unitless durations, single measurements, short statuses and blockers stay quiet. Leading pipes are optional, and escaped pipes, compound durations and percentage deltas are supported. This shares the existing once-per-turn or once-per-hour budget with the all-text hint; saved flares are never rejected or resent.
 
+### Fixed
+
+- Narrow composer panes give the flare title more room by hiding the kind and age, shortening the extra-flare count and showing the child-thread link as an icon. The full metadata stays in the tooltip, failed turns keep a warning icon, and the detail, child-thread, Flares-tab and dismiss actions remain available.
+
 ## 0.3.1 (2026-11-09)
 
 Agents keep sending flares once a thread's turns get shorter, and flares stay drawn.

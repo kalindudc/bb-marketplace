@@ -121,17 +121,19 @@ export function PullRequestsSummary({ threadId, isExpanded, onToggle }: Experime
         threadPrsOpen.set(!isExpanded);
         onToggle();
       }}
-      aria-label={`Shuttle: ${named}, ${worst.label}`} title={isExpanded ? "Hide the linked PRs" : "Show the linked PRs"}
-      className="flex min-h-6 items-center gap-1.5 overflow-hidden rounded px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-state-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">
-      <Icon name="shuttle/shuttle" fallback="GitPullRequest" className="size-3.5 shrink-0" aria-hidden />
-      <span className="truncate font-mono">{label}</span>
+      aria-label={`Shuttle: ${named}, ${worst.label}`} title={`${isExpanded ? "Hide" : "Show"} the linked PRs: ${named}, ${worst.label}`}
+      className="flex min-h-6 min-w-0 max-w-max flex-1 items-center gap-1 overflow-hidden rounded px-1.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-state-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">
+      <Icon name="shuttle/shuttle" fallback="GitPullRequest" className={`size-3.5 shrink-0 ${TONE_TEXT[worst.tone]}`} aria-hidden />
+      {worst.rank > 0 && <Icon name={worst.tone === "bad" ? "AlertTriangle" : "MessageSquare"} className={`hidden size-3 shrink-0 @max-[48rem]/promptbox-shell:inline ${TONE_TEXT[worst.tone]}`} aria-hidden />}
+      <span data-shuttle-full className="min-w-0 truncate font-mono @max-[48rem]/promptbox-shell:hidden">{label}</span>
+      <span data-shuttle-compact className="hidden truncate font-mono tabular-nums @max-[48rem]/promptbox-shell:inline">{only !== null ? `${only.sep}${only.number}` : prs.length}</span>
       {(only !== null || worst.rank > 0) && (
-        <>
+        <span data-shuttle-state className={`inline-flex min-w-0 items-center gap-1 @max-[48rem]/promptbox-shell:hidden ${TONE_TEXT[worst.tone]}`}>
           <span aria-hidden>·</span>
-          <span className={`truncate ${TONE_TEXT[worst.tone]}`}>{worst.label}</span>
-        </>
+          <span className="truncate">{worst.label}</span>
+        </span>
       )}
-      <Icon name={isExpanded ? "ChevronDown" : "ChevronRight"} className="size-3 shrink-0" aria-hidden />
+      <Icon name={isExpanded ? "ChevronDown" : "ChevronRight"} className="size-3 shrink-0 @max-[34rem]/promptbox-shell:hidden" aria-hidden />
     </button>
   );
 }

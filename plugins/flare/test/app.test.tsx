@@ -72,10 +72,31 @@ describe("the banner", () => {
     const slot = await render({ flare: flare({ body: "The **cache key** drops the locale." }), count: 3, childCount: 0, run });
     expect(await screen.findByText("Root cause found")).toBeTruthy();
     expect(screen.getByText("2 min ago")).toBeTruthy();
-    fireEvent.click(screen.getByText("+2 more"));
+    fireEvent.click(screen.getByRole("button", { name: "2 more flares" }));
     expect(slot.inspection.experimental_panelCalls).toEqual([expect.objectContaining({ method: "openTab" })]);
     fireEvent.click(screen.getByText("Root cause found"));
     expect(await screen.findByText(/drops the locale/)).toBeTruthy();
+  });
+
+  it("gives the title room in narrow panes without losing its actions or metadata", async () => {
+    const slot = await render({
+      flare: flare({ body: "The cache key drops the locale.", fromChild: { threadId: "thr_child", title: "A very long child thread title" } }),
+      count: 3, childCount: 1, run,
+    });
+    const title = await screen.findByRole("button", { name: /Finding: Root cause found/ });
+    expect(title.getAttribute("title")).toContain("A very long child thread title");
+    const banner = slot.container.querySelector("[data-flare-banner]")!;
+    for (const entry of banner.querySelectorAll("[data-flare-metadata]")) {
+      expect(entry.className).toContain("@max-[48rem]/promptbox-shell:hidden");
+    }
+    const child = screen.getByRole("button", { name: "Open child thread: A very long child thread title" });
+    expect(child.querySelector("[data-flare-child-title]")?.className).toContain("@max-[48rem]/promptbox-shell:hidden");
+    fireEvent.click(child);
+    expect(slot.inspection.navigateCalls).toContainEqual({ method: "toThread", threadId: "thr_child" });
+    expect(screen.getByRole("button", { name: "Open the Flares tab" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Dismiss" })).toBeTruthy();
+    fireEvent.click(title);
+    expect(await screen.findByText("The cache key drops the locale.")).toBeTruthy();
   });
 
   it("says when the turn failed and which child sent the flare", async () => {

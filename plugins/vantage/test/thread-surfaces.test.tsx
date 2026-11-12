@@ -50,10 +50,14 @@ describe("the composer segment", () => {
     const onToggle = vi.fn();
     const slot = renderSlot<object, typeof rpcContract>({ component: segment.summary } as never, { ...PROPS, segments: [], isExpanded: false, onToggle }, options());
     const button = await within(slot.container).findByRole("button", { name: "Vantage: 2 child worktrees · 1 waiting on you · 1 shared file" });
-    expect(button.className).toContain("min-w-min");
+    expect(button.className).toContain("min-w-0");
     expect(button.className).toContain("flex-1");
+    expect(button.className).toContain("max-w-max");
     const words = [...button.querySelectorAll("[data-promptbox-hide-compact]")].map((entry) => entry.textContent);
     expect(words).toEqual(["child worktrees", "waiting on you", "shared file"]);
+    for (const entry of button.querySelectorAll("[data-promptbox-hide-compact]")) {
+      expect(entry.className).toContain("@max-[48rem]/promptbox-shell:hidden");
+    }
     // With the words hidden, what is left is the icons and "2", "1" and "1".
     const kept = [...button.querySelectorAll(":scope > span.shrink-0")].map((entry) => entry.textContent).filter((text) => text !== "");
     expect(kept).toEqual(["2", "1", "1"]);
@@ -73,6 +77,10 @@ describe("the composer segment", () => {
       { ...PROPS, segments: [], isExpanded: false, onToggle: vi.fn() }, options(alone));
     const button = await within(slot.container).findByRole("button", { name: "Vantage: this thread +1204 −39" });
     expect(button.querySelector("[data-own]")?.textContent).toBe("+1.2k −39");
+    expect(button.querySelector("[data-own]")?.className).toContain("@max-[34rem]/promptbox-shell:hidden");
+    expect(button.querySelector("[data-vantage-compact]")?.textContent).toBe("2");
+    expect(button.querySelector("[data-vantage-compact]")?.className).toContain("@max-[34rem]/promptbox-shell:inline");
+    expect(button.getAttribute("title")).toContain("2 files");
     expect([...button.querySelectorAll("[data-promptbox-hide-compact]")].map((entry) => entry.textContent)).toEqual(["2 files"]);
     slot.lifecycle.unmount();
   });

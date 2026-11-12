@@ -71,10 +71,18 @@ describe("the context segment beside the composer", () => {
   it("shows one PR's key and state", async () => {
     const slot = await summary([owned]);
     const button = await slot.findByRole("button", { name: "Shuttle: get-bb/bb#4411, open" });
-    expect(button.textContent).toBe("get-bb/bb#4411·open");
+    expect(button.querySelector("[data-shuttle-state]")?.textContent).toBe("·open");
     expect(button.querySelector("[data-icon='shuttle/shuttle']")).not.toBeNull();
     expect(button.querySelector("[data-icon='ChevronRight']")).not.toBeNull();
-    expect(button.getAttribute("title")).toBe("Show the linked PRs");
+    expect(button.getAttribute("title")).toContain("get-bb/bb#4411, open");
+    const full = button.querySelector("[data-shuttle-full]")!;
+    expect(full.textContent).toBe("get-bb/bb#4411");
+    expect(full.className).toContain("@max-[48rem]/promptbox-shell:hidden");
+    const compact = button.querySelector("[data-shuttle-compact]")!;
+    expect(compact.textContent).toBe("#4411");
+    expect(compact.className).toContain("@max-[48rem]/promptbox-shell:inline");
+    expect(button.className).toContain("min-w-0");
+    expect(button.className).toContain("max-w-max");
   });
 
   it("starts folded and remembers on this device whether the list was left open", async () => {
@@ -107,13 +115,17 @@ describe("the context segment beside the composer", () => {
 
   it("shows how many PRs and the worst state among them", async () => {
     const several = await summary([owned, unsent, failing, changes]);
-    expect((await several.findByRole("button", { name: /^Shuttle: 4 linked PRs/u })).textContent).toBe("4 PRs·changes requested");
+    const severalButton = await several.findByRole("button", { name: /^Shuttle: 4 linked PRs/u });
+    expect(severalButton.querySelector("[data-shuttle-full]")?.textContent).toBe("4 PRs");
+    expect(severalButton.querySelector("[data-shuttle-compact]")?.textContent).toBe("4");
+    expect(severalButton.querySelector("[data-shuttle-state]")?.textContent).toBe("·changes requested");
+    expect(severalButton.querySelector("[data-icon='shuttle/shuttle']")?.getAttribute("class")).toContain("text-destructive-text");
     several.lifecycle.unmount();
     const fine = await summary([owned, unsent, failing]);
-    expect((await fine.findByRole("button", { name: /^Shuttle: 3 linked PRs/u })).textContent).toBe("3 PRs·checks failing");
+    expect((await fine.findByRole("button", { name: /^Shuttle: 3 linked PRs/u })).querySelector("[data-shuttle-state]")?.textContent).toBe("·checks failing");
     fine.lifecycle.unmount();
     const quiet = await summary([owned, pr({ number: 9, links: [link({ threadId: THREAD })] })]);
-    expect((await quiet.findByRole("button", { name: /^Shuttle: 2 linked PRs/u })).textContent).toBe("2 PRs");
+    expect((await quiet.findByRole("button", { name: /^Shuttle: 2 linked PRs/u })).querySelector("[data-shuttle-state]")).toBeNull();
   });
 
   it("is visible only while the thread has a linked PR", async () => {

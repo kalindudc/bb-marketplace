@@ -64,29 +64,31 @@ export function ThreadBanner({ threadId }: { threadId: string }) {
       aria-label="Latest flare"
       data-flare-banner
       className={cn(
-        "rounded-lg border border-border bg-card px-3 py-1.5 text-sm text-card-foreground shadow-xs",
+        "min-w-0 rounded-lg border border-border bg-card px-3 py-1.5 text-sm text-card-foreground shadow-xs @max-[48rem]/promptbox-shell:px-2 @max-[48rem]/promptbox-shell:py-1",
         flare.kind === "blocker" && "border-l-2 border-l-destructive",
       )}
     >
-      <div className="flex min-w-0 items-center gap-2">
+      <div className="flex min-w-0 items-center gap-2 @max-[48rem]/promptbox-shell:gap-1">
         <KindIcon kind={flare.kind} />
-        <span className={cn("shrink-0 text-xs font-medium", failed ? "text-destructive" : "text-muted-foreground")}>
+        {failed && <Icon name="AlertTriangle" className="hidden size-3.5 shrink-0 text-destructive @max-[48rem]/promptbox-shell:inline" aria-label="Turn failed" />}
+        <span data-flare-metadata className={cn("shrink-0 text-xs font-medium @max-[48rem]/promptbox-shell:hidden", failed ? "text-destructive" : "text-muted-foreground")}>
           {failed ? `Turn failed · ${KIND_LABELS[flare.kind]}` : KIND_LABELS[flare.kind]}
         </span>
         <button
           type="button"
           className={cn("min-w-0 flex-1 truncate text-left font-medium text-foreground", expandable ? "cursor-pointer hover:underline" : "cursor-default")}
           aria-expanded={expandable ? expanded : undefined}
-          title={!expandable ? flare.title : expanded ? "Hide the detail" : "Show the detail"}
+          aria-label={`${failed ? "Turn failed · " : ""}${KIND_LABELS[flare.kind]}: ${flare.title}`}
+          title={`${KIND_LABELS[flare.kind]}: ${flare.title}${flare.fromChild === null ? "" : ` · from ${flare.fromChild.title ?? "a child thread"}`} · ${ago(flare.createdAt, now)}`}
           onClick={() => expandable && setExpandedId(expanded ? null : flare.id)}
         >
           {flare.title}
         </button>
-        {flare.fromChild !== null && <ChildLink child={flare.fromChild} />}
-        <span className="shrink-0 text-xs text-muted-foreground">{ago(flare.createdAt, now)}</span>
+        {flare.fromChild !== null && <ChildLink child={flare.fromChild} compact />}
+        <span data-flare-metadata className="shrink-0 text-xs text-muted-foreground @max-[48rem]/promptbox-shell:hidden">{ago(flare.createdAt, now)}</span>
         {more > 0 && (
-          <button type="button" className="shrink-0 cursor-pointer text-xs text-muted-foreground hover:text-foreground hover:underline" onClick={openTab}>
-            +{more} more
+          <button type="button" aria-label={`${more} more flares`} className="shrink-0 cursor-pointer text-xs tabular-nums text-muted-foreground hover:text-foreground hover:underline" onClick={openTab}>
+            +{more}<span className="@max-[48rem]/promptbox-shell:hidden"> more</span>
           </button>
         )}
         <IconButton icon="PanelRight" label="Open the Flares tab" onClick={openTab} />

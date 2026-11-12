@@ -95,10 +95,10 @@ function LineCounts({ additions, deletions }: { additions: number; deletions: nu
   return <span className="whitespace-nowrap font-mono text-[11px] tabular-nums"><span className="text-diff-added">+{additions}</span> <span className="text-diff-removed">−{deletions}</span></span>;
 }
 
-// Words that take only the row's spare room and give it back first, as bb's own segments' labels do; a narrow composer hides them.
+// The named container follows the composer pane, including splits in a wide window.
 function Words({ children, className = "" }: { children: ReactNode; className?: string }) {
   return (
-    <span data-promptbox-hide-compact="" className="grid min-w-0 grid-cols-[minmax(0,max-content)]">
+    <span data-promptbox-hide-compact="" className="grid min-w-0 grid-cols-[minmax(0,max-content)] @max-[48rem]/promptbox-shell:hidden">
       <span className={`truncate ${className}`}>{children}</span>
     </span>
   );
@@ -121,11 +121,10 @@ function SegmentSummaryView({ threadId, isExpanded, onToggle }: ExperimentalThre
   const shared = sharedPaths(own === null ? rows : [own, ...rows]).length;
   const files = own === null ? 0 : fileCount(own.worktree);
   const sentence = loading ? "Changes" : segmentSentence(own, rows.length, needs, shared);
-  // The numbers always show; the words grow into the row's spare room, so the segment is about 60px when the row is full.
   return (
     <button type="button" aria-expanded={isExpanded} onClick={onToggle} data-vantage-segment aria-label={`Vantage: ${sentence}`}
-      title={isExpanded ? "Hide the details" : sentence}
-      className="flex h-6 min-w-min max-w-max flex-1 cursor-pointer items-center gap-1 overflow-hidden rounded-md px-1.5 text-xs text-muted-foreground hover:bg-state-hover hover:text-foreground">
+      title={`${isExpanded ? "Hide the details" : sentence}${own === null ? "" : ` · ${plural(files, "file")}`}`}
+      className="flex h-6 min-w-0 max-w-max flex-1 cursor-pointer items-center gap-1 overflow-hidden rounded-md px-1.5 text-xs text-muted-foreground hover:bg-state-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">
       <Icon name={VANTAGE_ICON} className="size-3.5 shrink-0" aria-hidden />
       {loading
         ? <Words>Changes</Words>
@@ -133,9 +132,10 @@ function SegmentSummaryView({ threadId, isExpanded, onToggle }: ExperimentalThre
           <>
             {own !== null && (
               <>
-                <span data-own className="shrink-0 whitespace-nowrap font-mono text-[11px] tabular-nums">
+                <span data-own className="shrink-0 whitespace-nowrap font-mono text-[11px] tabular-nums @max-[34rem]/promptbox-shell:hidden">
                   <span className="text-diff-added">+{compact(own.additions)}</span> <span className="text-diff-removed">−{compact(own.deletions)}</span>
                 </span>
+                <span data-vantage-compact className="hidden tabular-nums @max-[34rem]/promptbox-shell:inline" aria-hidden>{compact(files)}</span>
                 <Words>{plural(files, "file")}</Words>
               </>
             )}
@@ -162,7 +162,7 @@ function SegmentSummaryView({ threadId, isExpanded, onToggle }: ExperimentalThre
             )}
           </>
         )}
-      <Icon name={isExpanded ? "ChevronDown" : "ChevronRight"} className="size-3 shrink-0" aria-hidden />
+      <Icon name={isExpanded ? "ChevronDown" : "ChevronRight"} className="size-3 shrink-0 @max-[34rem]/promptbox-shell:hidden" aria-hidden />
     </button>
   );
 }
