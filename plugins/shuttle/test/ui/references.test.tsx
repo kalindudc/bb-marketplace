@@ -1,7 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, waitFor, within } from "@testing-library/react";
+import type { ExperimentalThreadActionTabProps } from "@get-bb/plugin-sdk/app";
+import { Dialog } from "../../src/ui/common";
+import { clearReferenceHighlights, setReferenceHighlights } from "../../src/ui/links/reference-highlights";
+import { rememberPanelReference } from "../../src/ui/prefs";
 import type { ReferenceRecord } from "../../src/contract";
-import { app, config, handlers, mount, page, unmountAll } from "./helpers";
+import { app, config, handlers, mount, page, pr, setViewport, unmountAll } from "./helpers";
 import { registerBridge } from "../../src/ui/links/dom";
 import { scanReferenceText } from "../../src/ui/links/reference-text";
 
@@ -56,7 +60,8 @@ describe("reference oversight", () => {
       });
       expect(row.querySelector("p")!.firstChild).toBe(text);
       fireEvent.click(slot.getByRole("link", { name: "#90386" }));
-      expect(slot.inspection.navigateCalls.at(-1)).toEqual({ method: "toPluginPanel", path: "shuttle", options: { subPath: "pr/github/acme/app/90386" } });
+      expect(slot.inspection.navigateCalls.some((call) => call.method === "toPluginPanel")).toBe(false);
+      expect(slot.inspection.experimental_panelCalls.at(-1)).toMatchObject({ method: "openTab", options: { tab: { id: "shuttle" }, params: { threadId: "thr_1" } } });
       row.querySelector("p")!.textContent = "Edited: PR #90386";
       await waitFor(() => expect(scanReferenceText(row).text).toContain("Edited:"));
     } finally {
@@ -71,7 +76,7 @@ describe("reference oversight", () => {
     const { slot } = await page("insights/references", {
       getConfig: () => ({ config: config({ servers: [{ id: "github", name: "GitHub", kind: "github", enabled: true, sep: "#" as const, commands: {} }] }) }),
       referenceLog: ({ filter, query }) => {
-        const filtered = rows.filter((r) => (filter !== "pending" || !["confirmed", "dismissed"].includes(r.status)) && r.excerpt.toLowerCase().includes((query ?? "").toLowerCase()));
+        const filtered = rows.filter((r) => (filter === "handled" ? ["confirmed", "dismissed", "corrected", "suppressed"].includes(r.status) : filter !== "pending" || !["confirmed", "dismissed", "corrected", "suppressed"].includes(r.status)) && r.excerpt.toLowerCase().includes((query ?? "").toLowerCase()));
         return { rows: filtered, total: rows.length, filteredTotal: filtered.length, counts: {}, events: [] };
       },
       referenceFeedback: ({ id, action }) => {
@@ -80,17 +85,111 @@ describe("reference oversight", () => {
       },
     });
     const row = await waitFor(() => { const r = slot.container.querySelector<HTMLElement>(`[data-reference="${record.id}"]`); if (!r) throw new Error("no reference"); return r; });
-    expect(slot.container.querySelector('[data-reference="' + "b".repeat(64) + '"]')).toBeNull();
+    expect(slot.queryByRole("button", { name: "#90387" })).toBeNull();
     fireEvent.click(within(row).getByRole("button", { name: "#90386" }));
-    expect(slot.inspection.navigateCalls.at(-1)).toEqual({ method: "toPluginPanel", path: "shuttle", options: { subPath: "pr/github/acme/app/90386" } });
+    expect(slot.inspection.navigateCalls.at(-1)).toEqual({ method: "toPluginPanel", path: "shuttle", options: { subPath: `insights/references/ref/${record.id}` } });
     fireEvent.change(slot.getByRole("combobox", { name: "Group references" }), { target: { value: "repo" } });
     await slot.findByRole("button", { name: /acme\/app/u });
     fireEvent.click(within(slot.container.querySelector<HTMLElement>(`[data-reference="${record.id}"]`)!).getByRole("button", { name: "Mark correct" }));
-    await waitFor(() => expect(slot.container.querySelector(`[data-reference="${record.id}"]`)).toBeNull());
+    await waitFor(() => expect(slot.queryByRole("button", { name: "#90386" })).toBeNull());
     fireEvent.click(slot.getByRole("radio", { name: "Handled" }));
     await waitFor(() => expect(slot.container.querySelectorAll("[data-reference]")).toHaveLength(2));
     fireEvent.change(slot.getByRole("searchbox", { name: "Search references" }), { target: { value: "Other" } });
     await waitFor(() => expect(slot.container.querySelectorAll("[data-reference]")).toHaveLength(1));
+  });
+
+  it("keeps the list beside the matched PR and follows a correction", async () => {
+    let current = record;
+    const makePr = (number: number) => pr({ repo: "acme/app", number });
+    const { slot } = await page(`insights/references/ref/${record.id}`, {
+      getConfig: () => ({ config: config({ servers: [{ id: "github", name: "GitHub", kind: "github", enabled: true, sep: "#", commands: {} }] }) }),
+      reference: () => current,
+      referenceLog: ({ filter }) => { const include = filter === "handled" ? current.status === "corrected" : filter === "pending" ? current.status !== "corrected" : true; return { rows: include ? [current] : [], total: 1, filteredTotal: include ? 1 : 0, counts: {}, events: [] }; },
+      detail: ({ key }) => ({ pr: makePr(key.endsWith("#90388") ? 90388 : 90386), events: [], body: "", draft: null, drafts: 0 }),
+      referenceFeedback: () => { current = { ...current, status: "corrected", url: "https://github.com/acme/app/pull/90388" }; return current; },
+    });
+    const side = await waitFor(() => { const r = slot.container.querySelector<HTMLElement>('[data-panel] [data-detail="github:acme/app#90386"]'); if (!r) throw new Error("no reference side panel"); return r; });
+    expect(slot.getByRole("searchbox", { name: "Search references" })).toBeTruthy();
+    expect(within(side).queryByRole("button", { name: "Open as a full page" })).toBeNull();
+    fireEvent.click(slot.getByText("Correct this reference"));
+    fireEvent.change(slot.getByRole("textbox", { name: "Correct reference target" }), { target: { value: "https://github.com/acme/app/pull/90388" } });
+    fireEvent.click(slot.getByRole("button", { name: "Save correction" }));
+    await waitFor(() => expect(slot.container.querySelector('[data-panel] [data-detail="github:acme/app#90388"]')).not.toBeNull());
+    expect(slot.container.querySelector('[data-panel] [data-detail="github:acme/app#90386"]')).toBeNull();
+    expect(slot.getByRole("searchbox", { name: "Search references" })).toBeTruthy();
+  });
+
+  it("opens an unlinked matched PR in the thread panel and follows corrections", async () => {
+    let current = record;
+    rememberPanelReference("thr_1", record.id);
+    const loaded = await app();
+    const slot = mount<ExperimentalThreadActionTabProps>(loaded.tabs[0]!.component as never, { threadId: "thr_1", environment: null, params: { threadId: "thr_1" } }, handlers({
+      getConfig: () => ({ config: config({ servers: [{ id: "github", name: "GitHub", kind: "github", enabled: true, sep: "#", commands: {} }] }) }),
+      reference: () => current,
+      threadPrs: () => ({ prs: [], sent: [] }),
+      detail: ({ key }) => ({ pr: pr({ repo: "acme/app", number: key.endsWith("#90388") ? 90388 : 90386 }), events: [], body: "", draft: null, drafts: 0 }),
+      referenceFeedback: () => { current = { ...current, status: "corrected", url: "https://github.com/acme/app/pull/90388" }; return current; },
+    }), { sdk: { threads: { get: async () => ({ environmentId: null }) as never } } });
+    await waitFor(() => expect(slot.container.querySelector('[data-panel-pr="github:acme/app#90386"]')).not.toBeNull());
+    expect(slot.queryByRole("button", { name: "Show in Shuttle" })).toBeNull();
+    current = { ...current, status: "corrected", url: "https://github.com/acme/app/pull/90388" };
+    await slot.behavior.experimental_invalidateRpc(["references"]);
+    await waitFor(() => expect(slot.container.querySelector('[data-panel-pr="github:acme/app#90388"]')).not.toBeNull());
+    expect(slot.container.querySelector('[data-panel-pr="github:acme/app#90386"]')).toBeNull();
+  });
+
+  it("keeps a selected reference in a sheet rather than a full PR page on phones", async () => {
+    setViewport(390);
+    const { slot } = await page(`insights/references/ref/${record.id}`, {
+      getConfig: () => ({ config: config({ servers: [{ id: "github", name: "GitHub", kind: "github", enabled: true, sep: "#", commands: {} }] }) }),
+      reference: () => record,
+      referenceLog: () => ({ rows: [record], total: 1, filteredTotal: 1, counts: {}, events: [] }),
+      detail: () => ({ pr: pr({ repo: "acme/app", number: 90386 }), events: [], body: "", draft: null, drafts: 0 }),
+    });
+    await slot.findByRole("dialog", { name: "Matched pull request" });
+    expect(slot.container.querySelector("[data-phone-pr]")).toBeNull();
+  });
+
+  it("stops showing a cached PR when its selected reference disappears", async () => {
+    let gone = false;
+    const { slot } = await page(`insights/references/ref/${record.id}`, {
+      getConfig: () => ({ config: config({ servers: [{ id: "github", name: "GitHub", kind: "github", enabled: true, sep: "#", commands: {} }] }) }),
+      reference: () => { if (gone) throw Object.assign(new Error("Reference no longer in log"), { code: "not_found" }); return record; },
+      detail: () => ({ pr: pr({ repo: "acme/app", number: 90386 }), events: [], body: "", draft: null, drafts: 0 }),
+    });
+    await waitFor(() => expect(slot.container.querySelector('[data-panel] [data-detail="github:acme/app#90386"]')).not.toBeNull());
+    gone = true;
+    await slot.behavior.experimental_invalidateRpc(["references"]);
+    await waitFor(() => expect(slot.container.querySelector('[data-panel] [data-detail="github:acme/app#90386"]')).toBeNull());
+  });
+
+  it("lets the top dialog handle Escape above a matched PR sheet", () => {
+    const close = vi.fn();
+    const top = vi.fn();
+    const Stack = () => <><Dialog title="Matched PR" onClose={close} escapeDisabled>Matched</Dialog><Dialog title="Action" onClose={top}>Action</Dialog></>;
+    mount(Stack, {}, handlers());
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(top).toHaveBeenCalledOnce();
+    expect(close).not.toHaveBeenCalled();
+  });
+
+  it("shares highlight ranges across messages without replacing their text", () => {
+    const registry = new Map<string, Set<Range>>();
+    vi.stubGlobal("CSS", { highlights: registry });
+    vi.stubGlobal("Highlight", class extends Set<Range> { constructor(...values: Range[]) { super(values); } });
+    const node = document.createTextNode("#90386 #90387"); document.body.append(node);
+    const first = document.createRange(); first.setStart(node, 0); first.setEnd(node, 6);
+    const second = document.createRange(); second.setStart(node, 7); second.setEnd(node, 13);
+    const a = Symbol(), b = Symbol();
+    try {
+      setReferenceHighlights(a, [first]); setReferenceHighlights(b, [second]);
+      expect(registry.get("shuttle-inferred-links")!.size).toBe(2);
+      clearReferenceHighlights(a);
+      expect(registry.get("shuttle-inferred-links")!.size).toBe(1);
+      expect(node.data).toBe("#90386 #90387");
+      clearReferenceHighlights(b);
+      expect(registry.has("shuttle-inferred-links")).toBe(false);
+    } finally { clearReferenceHighlights(a); clearReferenceHighlights(b); vi.unstubAllGlobals(); }
   });
 
   it("offers correction and flags in Insights, with a retained history", async () => {

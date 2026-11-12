@@ -1273,6 +1273,7 @@ export const rpcContract = defineContract({
   resolve: { input: z.object({ key, thread: z.string().min(1).max(300), resolved: z.boolean() }), output: ok },
   /** The card for a git link in a thread. A PR comes from Shuttle's copy; its comments and details from the same 30-second read as its view. Nothing is written. */
   resolveReferences: { input: referenceInputSchema, output: z.object({ rows: z.array(referenceSchema) }), tags: () => ["references", "prs", "projects"] },
+  reference: { input: z.object({ id: z.string().regex(/^[a-f0-9]{64}$/u) }), output: referenceSchema, tags: () => ["references", "reference-log"] },
   referenceLog: { input: referenceLogInputSchema, output: z.object({
     rows: z.array(referenceSchema), total: z.number(), filteredTotal: z.number(), counts: z.record(z.string(), z.number()),
     events: z.array(z.object({ id: z.number(), referenceId: z.string(), action: z.string(), beforeUrl: z.string().nullable(), afterUrl: z.string().nullable(), at: z.number() })),

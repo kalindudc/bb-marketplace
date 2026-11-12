@@ -132,5 +132,11 @@ export class References {
     return record;
   }
 
+  read(id: string): ReferenceRecord {
+    const record = this.ctx.store.reference(id)?.record;
+    if (!record) throw new NotFoundError("That reference is no longer in the log.");
+    return record;
+  }
+
   log(limit: number, options: ReferenceLogOptions = {}) { return this.ctx.store.referenceLog(limit, options); }
 }

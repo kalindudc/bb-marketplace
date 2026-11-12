@@ -30,6 +30,7 @@ export const BUTTON_OFF = `${FRAME} ${SMALL} border border-transparent bg-transp
 export const BUTTON_DANGER = `${FRAME} ${SMALL} border border-destructive/40 bg-transparent text-destructive-text hover:bg-surface-destructive`;
 export const BUTTON_PRIMARY = `${FRAME} ${SMALL} border border-foreground bg-foreground font-medium text-background hover:bg-foreground/90`;
 /** The main action at the foot of a long form, such as posting a review. */
+export const BUTTON_LARGE = `${FRAME} h-9 px-3 text-sm border border-input bg-transparent text-foreground hover:bg-state-hover`;
 export const BUTTON_PRIMARY_LARGE = `${FRAME} h-8 px-3 text-[13px] border border-foreground bg-foreground font-medium text-background hover:bg-foreground/90`;
 /** A main action that is a go-ahead, such as Merge or Approve. */
 export const BUTTON_SUCCESS = `${FRAME} ${SMALL} border border-success bg-success font-medium text-background hover:bg-success/90`;
@@ -171,7 +172,7 @@ export function ErrorNote({ children }: { children: ReactNode }) {
 }
 
 /** A plain modal: Escape and a click on the backdrop close it. On a phone it is a sheet from the bottom. */
-export function Dialog({ title, subtitle, leading, onClose, footer, children, wide = false }: {
+export function Dialog({ title, subtitle, leading, onClose, footer, children, wide = false, escapeDisabled = false }: {
   title: string;
   subtitle?: ReactNode;
   leading?: ReactNode;
@@ -179,16 +180,19 @@ export function Dialog({ title, subtitle, leading, onClose, footer, children, wi
   footer?: ReactNode;
   children: ReactNode;
   wide?: boolean;
+  escapeDisabled?: boolean;
 }) {
   const titleId = useId();
   const panel = useRef<HTMLDivElement>(null);
   const close = useRef(onClose);
   close.current = onClose;
+  const disableEscape = useRef(escapeDisabled);
+  disableEscape.current = escapeDisabled;
   const phone = useViewport() === "phone";
   const scope = usePortalScope();
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || event.defaultPrevented) return;
+      if (event.key !== "Escape" || event.defaultPrevented || disableEscape.current) return;
       // bb's "Back to app" and the PR panel also listen for Escape; the dialog on top owns it.
       event.preventDefault();
       close.current();

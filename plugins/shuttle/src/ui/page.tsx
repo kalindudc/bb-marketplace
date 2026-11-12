@@ -2,13 +2,15 @@ import { useEffect, useRef, type ReactNode } from "react";
 import { experimental_Icon as Icon, useBbNavigate, type PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
 import type { Overview } from "../contract";
 import { ActionsProvider, nudgeText, runNext, useActions } from "./actions";
-import { BUTTON, ErrorNote, ICON_GHOST_LARGE, PAGE, PageHeading, TipProvider } from "./common";
+import { BUTTON, Dialog, ErrorNote, ICON_GHOST_LARGE, PAGE, PageHeading, TipProvider } from "./common";
 import { AutomationPauseControls } from "./automation-pause";
 import { AREA_META, PANEL_PATH } from "./constants";
 import { isNotFound, messageOf, threadsOf, useShuttleMutation, useShuttleQuery } from "./data";
 import { PrDetail } from "./detail";
 import { PrMenu, TrackButton } from "./pr-menu";
 import { keyLabel } from "./format";
+import { parseGitLink } from "../links";
+import { prKey as keyOfReference } from "../keys";
 import { BoardDetailView, BoardsView } from "./boards";
 import { InboxView } from "./inbox";
 import { InsightsView, type IdeaAction } from "./insights";
@@ -37,7 +39,7 @@ const AREA_ROUTES: Record<Area, Route> = {
 };
 const INBOX: Route = AREA_ROUTES.inbox;
 
-const isListRoute = (route: Route): route is ListRoute => route.view === "inbox" || route.view === "mine" || route.view === "done" || route.view === "reviews" || route.view === "reviewed" || route.view === "search" || route.view === "board";
+const isListRoute = (route: Route): route is ListRoute => route.view === "inbox" || route.view === "mine" || route.view === "done" || route.view === "reviews" || route.view === "reviewed" || route.view === "search" || route.view === "board" || (route.view === "insights" && route.tab === "references");
 
 function countOf(area: Area, overview: Overview | undefined): number | null {
   if (overview === undefined || area === "insights" || area === "boards") return null;
@@ -154,7 +156,12 @@ export function ShuttlePage({ subPath }: PluginNavPanelProps) {
   const filter = useStored(reviewFilter);
   const setFilter = reviewFilter.set;
 
-  const selectedKey = route.view === "insights" || route.view === "boards" ? null : route.key;
+  const referencesOpen = route.view === "insights" && route.tab === "references";
+  const referenceId = referencesOpen ? route.reference ?? null : null;
+  const reference = useShuttleQuery("reference", { id: referenceId ?? "" }, referenceId !== null);
+  const config = useShuttleQuery("getConfig", {}, referenceId !== null);
+  const target = !isNotFound(reference.error) && reference.data?.url ? parseGitLink(reference.data.url, config.data?.config.servers ?? []) : null;
+  const selectedKey = referenceId !== null ? target?.kind === "pr" ? keyOfReference(target.ref) : null : route.view === "boards" ? null : route.view === "insights" ? referencesOpen ? route.key ?? null : null : route.key;
   const inbox = useShuttleQuery("inbox", {}, route.view === "inbox");
   const listArea = route.view === "mine" || route.view === "done" || route.view === "reviews" || route.view === "reviewed" ? route.view : "mine";
   const list = useShuttleQuery("list", { area: listArea }, listArea === route.view);
@@ -182,9 +189,14 @@ export function ShuttlePage({ subPath }: PluginNavPanelProps) {
     else if (resume !== null) navigate.toPluginPanel(PANEL_PATH, { subPath: resume, replace: true });
     // Only a change of place counts; `navigate` is a new object on each render.
   }, [subPath, resume, here]);
-  const scroller = useScrollMemory(route.view === "pr" ? `pr/${route.key}` : isListRoute(route) ? formatRoute({ ...route, key: null }) : here, route.view === "pr");
+  const scroller = useScrollMemory(route.view === "pr" ? `pr/${route.key}` : isListRoute(route) ? formatRoute({ ...route, key: null, ...(referencesOpen ? { reference: undefined } : {}) }) : here, route.view === "pr");
   const prScroller = useScrollMemory(selectedKey === null ? null : `pr/${selectedKey}`, true);
-  const select = (key: string) => {
+  const select = (key: string, id?: string) => {
+    if (referencesOpen) {
+      if (selectedKey === key && referenceId === (id ?? null)) return;
+      if (selectedKey === null) pushed.current = true;
+      return go({ view: "insights", tab: "references", ...(id ? { reference: id } : { key }) }, selectedKey !== null);
+    }
     if (!isListRoute(route)) {
       if (route.view === "pr" && route.key === key) return;
       if (route.view !== "pr") pushed.current = true;
@@ -199,7 +211,7 @@ export function ShuttlePage({ subPath }: PluginNavPanelProps) {
       pushed.current = false;
       window.history.back();
     } else if (isListRoute(route)) {
-      go({ ...route, key: null }, true);
+      go({ ...route, key: null, ...(referencesOpen ? { reference: undefined } : {}) }, true);
     } else {
       go(INBOX, true);
     }
@@ -271,7 +283,7 @@ export function ShuttlePage({ subPath }: PluginNavPanelProps) {
     case "boards": area = <BoardsView tab={route.tab} onGo={go} />; break;
     case "board": area = <BoardDetailView id={route.id} layout={layout} onGo={go} />; break;
     case "search": area = <SearchView query={route.query} layout={layout} />; break;
-    case "insights": area = <InsightsView tab={route.tab} period={route.period} onTab={(tab) => go({ view: "insights", tab })} onPeriod={(period) => go({ view: "insights", tab: "usage", period })} onAction={onIdea} onOpenPr={select} />; break;
+    case "insights": area = <InsightsView tab={route.tab} period={route.period} onTab={(tab) => go({ view: "insights", tab })} onPeriod={(period) => go({ view: "insights", tab: "usage", period })} onAction={onIdea} onOpenPr={select} selectedReference={referenceId} />; break;
     case "pr": area = !phone && showDetail ? <PrDetail key={route.key} prKey={route.key} page onCollapse={() => collapse(route.key)} /> : (
       <div className={PAGE}>
         <PageHeading title="Look up" description="Fetched from the server whose link pattern matches. Works for any PR, whether or not you are part of it." />
@@ -287,6 +299,7 @@ export function ShuttlePage({ subPath }: PluginNavPanelProps) {
 
   const notices = (
     <>
+      {referenceId !== null && reference.error !== null && <div className="px-4 pt-3"><ErrorNote>{messageOf(reference.error)}</ErrorNote></div>}
       {overview.error !== null && <div className="px-4 pt-3"><ErrorNote>Could not load Shuttle's status: {messageOf(overview.error)}</ErrorNote></div>}
       {overview.data !== undefined && !(route.view === "insights" && route.tab === "sync") && (
         <SyncBanner servers={overview.data.servers} onSeeWhy={() => go({ view: "insights", tab: "sync" })} />
@@ -299,10 +312,10 @@ export function ShuttlePage({ subPath }: PluginNavPanelProps) {
     </>
   );
 
-  const detailPanel = (onClose?: () => void) => selectedKey !== null && <PrDetail key={selectedKey} prKey={selectedKey} onClose={onClose} onExpand={() => expand(selectedKey)} />;
+  const detailPanel = (onClose?: () => void) => selectedKey !== null && <PrDetail key={selectedKey} prKey={selectedKey} onClose={onClose} onExpand={referencesOpen ? undefined : () => expand(selectedKey)} />;
   const backLabel = route.view === "pr" ? "Back" : route.view === "search" ? "Search" : AREA_META[areaOf(route) ?? "inbox"].label;
   let body: ReactNode;
-  if (phone && showDetail) {
+  if (phone && showDetail && !referencesOpen) {
     body = <PhonePrView prKey={selectedKey!} backLabel={backLabel} onBack={closeSelection} />;
   } else if (phone) {
     body = (
@@ -346,6 +359,7 @@ export function ShuttlePage({ subPath }: PluginNavPanelProps) {
       <TipProvider>
         <div className="h-full min-h-0 min-w-0 bg-background text-foreground">
           {body}
+          {phone && referencesOpen && showDetail && <Dialog title="Matched pull request" onClose={closeSelection} escapeDisabled={dialogOpen}>{detailPanel(closeSelection)}</Dialog>}
           {dialogs}
         </div>
       </TipProvider>

@@ -16,7 +16,7 @@ export type Route =
   | { view: "boards"; tab: "active" | "archived" }
   | { view: "board"; id: string; key: string | null }
   /** `period` only on the Usage tab, and only when it is not the newest 7 days. */
-  | { view: "insights"; tab: InsightsTab; period?: UsagePeriod }
+  | { view: "insights"; tab: InsightsTab; period?: UsagePeriod; key?: string | null; reference?: string }
   | { view: "pr"; key: string }
   /** Words to find among the PRs Shuttle has; "" before the user types any. */
   | { view: "search"; query: string; key: string | null };
@@ -44,7 +44,7 @@ function periodOf(segments: readonly string[]): UsagePeriod | undefined {
 const periodPath = (period: UsagePeriod | undefined) => (period === undefined ? "" : `/${PERIOD_PATHS[period.range]}${period.end === null ? "" : `/${period.end}`}`);
 
 /** A route that shows a list, with the PR selected in it. */
-export type ListRoute = Exclude<Route, { view: "insights" | "pr" | "boards" }>;
+export type ListRoute = Exclude<Route, { view: "insights" | "pr" | "boards" }> | (Extract<Route, { view: "insights" }> & { tab: "references" });
 
 /** The areas of the page; Merged and closed sits under My PRs, and Reviewed by me under Reviews. */
 export type Area = "inbox" | "mine" | "reviews" | "boards" | "insights";
@@ -93,6 +93,11 @@ export function parseRoute(subPath: string): Route {
   if (first === "boards") return { view: "boards", tab: rest[0] === "archived" ? "archived" : "active" };
   if (first === "board") return rest.length === 0 ? { view: "boards", tab: "active" } : { view: "board", id: decoded(rest[0]!), key: rest.length > 1 ? keyFromSegments(rest.slice(1)) : null };
   if (first === "insights") {
+    if (rest[0] === "references") {
+      if (rest[1] === "ref" && /^[a-f0-9]{64}$/u.test(rest[2] ?? "") && rest.length === 3) return { view: "insights", tab: "references", reference: rest[2] };
+      if (rest[1] === "pr") return { view: "insights", tab: "references", key: keyFromSegments(rest.slice(2)) };
+      return { view: "insights", tab: "references" };
+    }
     if (rest[0] === "usage" && rest.length > 1) {
       const period = periodOf(rest.slice(1));
       return period === undefined ? { view: "insights", tab: "usage" } : { view: "insights", tab: "usage", period };
@@ -123,7 +128,7 @@ export function formatRoute(route: Route): string {
     }
     case "boards": return route.tab === "active" ? "boards" : "boards/archived";
     case "board": return route.key === null ? `board/${encodeURIComponent(route.id)}` : `board/${encodeURIComponent(route.id)}/${keySegments(route.key)}`;
-    case "insights": return route.tab === "overview" ? "insights" : `insights/${route.tab}${route.tab === "usage" ? periodPath(route.period) : ""}`;
+    case "insights": return route.tab === "references" ? `insights/references${route.reference ? `/ref/${route.reference}` : route.key ? `/pr/${keySegments(route.key)}` : ""}` : route.tab === "overview" ? "insights" : `insights/${route.tab}${route.tab === "usage" ? periodPath(route.period) : ""}`;
     case "inbox": {
       const area = route.tab === undefined ? "inbox" : `inbox~${route.tab}`;
       return route.key === null ? area : `${area}/${keySegments(route.key)}`;

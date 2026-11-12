@@ -6,6 +6,8 @@ Notable changes to Shuttle, newest first. Releases are tagged `shuttle/vX.Y.Z` i
 
 ### Added
 
+- Reference clicks open matching details and a PR side panel that follows corrections. Actions are clearly framed buttons, and handled status groups stay collapsed. Inferred references have non-mutating dotted text decoration; their popovers remain interactive across pointer movement and acknowledge completed actions.
+
 - References uses compact, searchable rows with status filters, repository/status/thread grouping and pagination. Mark correct or Dismiss moves a record out of Pending without deleting it or its popover. PR references open their Shuttle page by default; external, source and correction controls remain separate.
 
 - Conservative popovers for bare PR references in displayed messages, with a keyboard-accessible References row. Insights › References shows targets, matching reasons, source excerpts, conflicts and feedback history. Flag, correct, suppress or reset a reference in one message without changing the message or writing to the git server. Edits and changed target context require another review.

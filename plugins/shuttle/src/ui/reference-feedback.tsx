@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { toast } from "sonner";
 import { BUTTON, ErrorNote } from "./common";
 import { messageOf, useShuttleMutation } from "./data";
 
@@ -10,6 +11,8 @@ export function ReferenceFeedback({ id, url, onDone, showTriage = true }: { id: 
     setError(null);
     try {
       await feedback.mutate({ id, action, query: action === "correct" ? query : null });
+      const messages = { confirm: "Reference marked correct and moved to Handled.", dismiss: "Reference dismissed and moved to Handled.", correct: "Reference corrected; its matched PR panel is updated.", flag: "Reference flagged for review.", suppress: "Reference marked as not a git reference.", reset: "Reference reset to automatic matching." };
+      toast.success(messages[action]);
       onDone?.();
     } catch (failure) { setError(messageOf(failure)); }
   };

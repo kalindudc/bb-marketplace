@@ -281,6 +281,7 @@ export function handlers(overrides: Partial<Handlers> = {}): Handlers {
     detail: unexpected("detail"),
     conversation: () => ({ items: [], details: null, error: null, fetchedAt: NOW }),
     resolveReferences: () => ({ rows: [] }),
+    reference: unexpected("reference"),
     referenceLog: () => ({ rows: [], counts: {}, total: 0, filteredTotal: 0, events: [] }),
     referenceFeedback: unexpected("referenceFeedback"),
     linkCard: unexpected("linkCard"),

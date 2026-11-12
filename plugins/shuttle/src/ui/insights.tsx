@@ -174,13 +174,14 @@ function Overview({ data, phone, onAction }: { data: Insights; phone: boolean; o
 }
 
 /** How your PRs and reviews flow, with ideas that act on it; and the Automation log. */
-export function InsightsView({ tab, period, onTab, onPeriod, onAction, onOpenPr }: {
+export function InsightsView({ tab, period, onTab, onPeriod, onAction, onOpenPr, selectedReference }: {
   tab: InsightsTab;
   period?: UsagePeriod;
   onTab(tab: InsightsTab): void;
   onPeriod(period: UsagePeriod): void;
   onAction(action: IdeaAction): void;
-  onOpenPr(key: string): void;
+  onOpenPr(key: string, referenceId?: string): void;
+  selectedReference?: string | null;
 }) {
   const actions = useActions();
   const [range, setRange] = useState<Range>("30d");
@@ -190,7 +191,7 @@ export function InsightsView({ tab, period, onTab, onPeriod, onAction, onOpenPr 
   const tabs = <Segmented label="Insights" value={tab} onChange={onTab} options={INSIGHTS_TABS.map((value) => ({ value, label: INSIGHTS_TAB_LABELS[value] }))} />;
   if (tab === "references") return <div className={PAGE}>
     <PageHeading title="Reference resolutions" description="Where bare PR numbers point, and the matches that need your review.">{tabs}</PageHeading>
-    <ReferenceInsights onOpenThread={actions.openThread} onOpenPr={onOpenPr} />
+    <ReferenceInsights onOpenThread={actions.openThread} onOpenPr={onOpenPr} selectedReference={selectedReference} />
   </div>;
   if (tab === "sync") {
     return (

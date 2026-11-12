@@ -44,6 +44,18 @@ export function LinkOverlay() {
   rpcRef.current = rpc;
   const cardRef = useRef<HTMLDivElement | null>(null);
   const hovered = useRef(false);
+  const pointer = useRef<{ x: number; y: number } | null>(null);
+  const interacting = () => {
+    const card = cardRef.current;
+    if (!card) return false;
+    if (card.contains(document.activeElement)) return true;
+    return pointer.current ? card.contains(document.elementFromPoint?.(pointer.current.x, pointer.current.y) ?? null) : hovered.current;
+  };
+  useEffect(() => {
+    const track = (event: PointerEvent) => { pointer.current = { x: event.clientX, y: event.clientY }; };
+    window.addEventListener("pointermove", track);
+    return () => window.removeEventListener("pointermove", track);
+  }, []);
 
   useEffect(() => {
     if (servers === undefined) return;
@@ -80,7 +92,10 @@ export function LinkOverlay() {
       },
       leave: () => {
         clearTimeout(showTimer.current);
-        hideTimer.current = setTimeout(() => setOpen((current) => (current?.sheet ? current : null)), HIDE_DELAY);
+        hideTimer.current = setTimeout(() => {
+          if (interacting()) return;
+          setOpen((current) => current?.sheet ? current : null);
+        }, HIDE_DELAY);
       },
       tap: (target) => setOpen({ target, sheet: true }),
       into: () => {
@@ -168,14 +183,14 @@ export function LinkOverlay() {
         hovered.current = false;
         // Keyboard focus inside the card keeps it; leaving with the keyboard closes it.
         if (cardRef.current?.contains(document.activeElement)) return;
-        hideTimer.current = setTimeout(() => setOpen(null), HIDE_DELAY);
+        hideTimer.current = setTimeout(() => { if (!interacting()) setOpen(null); }, HIDE_DELAY);
       }}
       onFocusIn={() => clearTimeout(hideTimer.current)}
       onFocusOut={(next) => {
         if (next !== null && (cardRef.current?.contains(next) || next === open.target.el)) return;
         // A click on the card's text takes focus to nowhere, but the pointer is still on the card.
         if (next === null && hovered.current) return;
-        hideTimer.current = setTimeout(() => setOpen(null), HIDE_DELAY);
+        hideTimer.current = setTimeout(() => { if (!interacting()) setOpen(null); }, HIDE_DELAY);
       }}
       onDone={() => setOpen(null)} />
   );

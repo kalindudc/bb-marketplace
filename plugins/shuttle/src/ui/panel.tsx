@@ -8,14 +8,16 @@ import type { PrView } from "../contract";
 import { ActionsProvider } from "./actions";
 import { BUTTON, BUTTON_GHOST, BUTTON_PRIMARY, CARD, ErrorNote, HEADING, ICON_GHOST, Pill, Segmented, ServerBadge, TipProvider } from "./common";
 import { AGENT_MODE_META, AGENT_MODES, PANEL_PATH, ROLE_LABELS } from "./constants";
-import { messageOf, openExternal, threadsOf, useShuttleMutation, useShuttleQuery } from "./data";
+import { isNotFound, messageOf, openExternal, threadsOf, useShuttleMutation, useShuttleQuery } from "./data";
 import { PrDetail } from "./detail";
 import { ago, plural, shortKey } from "./format";
 import { LookupInput } from "./header";
 import { AgentPill, ChecksPill, isLive, MyReviewPill, ReviewPill, StalePill, StatePill } from "./pills";
-import { panelPrs, rememberPanelPr } from "./prefs";
+import { panelPrs, panelReferences, rememberPanelPr, rememberPanelReference } from "./prefs";
 import { useStored } from "./remember";
 import { formatRoute } from "./route";
+import { parseGitLink } from "../links";
+import { prKey as keyOfReference } from "../keys";
 import { useSurface } from "./surface";
 import { useScrollMemory } from "./scroll";
 import { ThreadTabSkeleton } from "./skeleton";
@@ -162,7 +164,7 @@ function PrCard({ pr, threadId, busy, writes, onView, onUnlink }: {
 }
 
 /** One PR in full inside the tab, as the Shuttle page shows it, with a way back to the thread's list. */
-function PanelPrView({ prKey, onBack }: { prKey: string; onBack(): void }) {
+function PanelPrView({ prKey, onBack, canExpand = true }: { prKey: string; onBack(): void; canExpand?: boolean }) {
   const navigate = useBbNavigate();
   const scroller = useScrollMemory(`pr/${prKey}`, true);
   return (
@@ -173,10 +175,10 @@ function PanelPrView({ prKey, onBack }: { prKey: string; onBack(): void }) {
           <Icon name="ChevronLeft" className="size-4" aria-hidden />Pull requests
         </button>
         <span className="flex-1" />
-        <button type="button" aria-label="Show in Shuttle" title="Show in Shuttle" className={ICON_GHOST}
+        {canExpand && <button type="button" aria-label="Show in Shuttle" title="Show in Shuttle" className={ICON_GHOST}
           onClick={() => navigate.toPluginPanel(PANEL_PATH, { subPath: formatRoute({ view: "pr", key: prKey }) })}>
           <Icon name="shuttle/shuttle" fallback="GitPullRequest" className="size-4" aria-hidden />
-        </button>
+        </button>}
       </div>
       <div ref={scroller.ref} onScroll={scroller.onScroll} data-scroller className="min-h-0 flex-1 overflow-y-auto">
         <PrDetail key={prKey} prKey={prKey} />
@@ -281,9 +283,13 @@ export function ShuttlePanel({ threadId }: ExperimentalThreadActionTabProps) {
   const data = useShuttleQuery("threadPrs", { threadId });
   const prs = data.data?.prs;
   const remembered = useStored(panelPrs)[threadId] ?? null;
+  const referenceId = useStored(panelReferences)[threadId] ?? null;
+  const reference = useShuttleQuery("reference", { id: referenceId ?? "" }, referenceId !== null);
+  const config = useShuttleQuery("getConfig", {}, referenceId !== null);
+  const target = !isNotFound(reference.error) && reference.data?.url ? parseGitLink(reference.data.url, config.data?.config.servers ?? []) : null;
   // Only a PR still linked here opens in full; an unlinked one leaves the tab on its list.
-  const openKey = remembered !== null && prs?.some((pr) => pr.key === remembered) === true ? remembered : null;
-  const select = (key: string) => rememberPanelPr(threadId, key);
+  const openKey = referenceId !== null ? target?.kind === "pr" ? keyOfReference(target.ref) : null : remembered !== null && prs?.some((pr) => pr.key === remembered) === true ? remembered : null;
+  const select = (key: string) => { rememberPanelReference(threadId, null); rememberPanelPr(threadId, key); };
   const threadIds = [...new Set([threadId, ...threadsOf(prs ?? [])])];
   const { actions, dialogs } = useSurface({ phone, sheetComposer: false, selected: openKey, select, threadIds });
 
@@ -291,10 +297,11 @@ export function ShuttlePanel({ threadId }: ExperimentalThreadActionTabProps) {
     <ActionsProvider value={actions}>
       <TipProvider>
         {openKey !== null ? (
-          <PanelPrView prKey={openKey} onBack={() => rememberPanelPr(threadId, null)} />
+          <PanelPrView prKey={openKey} canExpand={referenceId === null} onBack={() => { rememberPanelReference(threadId, null); rememberPanelPr(threadId, null); }} />
         ) : (
           <PanelList threadId={threadId} prs={prs} data={data} writes={actions.writes} onView={select} />
         )}
+        {reference.error && <ErrorNote>{messageOf(reference.error)}</ErrorNote>}
         {dialogs}
       </TipProvider>
     </ActionsProvider>

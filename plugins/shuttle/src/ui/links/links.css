@@ -68,6 +68,20 @@ a[data-shuttle-link="pr"][data-shuttle-state="closed"] { --shuttle-link-icon: va
 a[data-shuttle-link][data-shuttle-state="completed"] { --shuttle-link-mark: var(--pr-merged); --shuttle-link-icon: var(--shuttle-link-issue-completed); }
 a[data-shuttle-link][data-shuttle-state="not_planned"] { --shuttle-link-mark: var(--muted-foreground); --shuttle-link-icon: var(--shuttle-link-issue-not-planned); }
 
+::highlight(shuttle-inferred-links) {
+  text-decoration-line: underline;
+  text-decoration-style: dotted;
+  text-decoration-color: color-mix(in oklab, var(--primary) 60%, transparent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+::highlight(shuttle-inferred-links-active) {
+  background-color: var(--state-hover);
+  text-decoration-line: underline;
+  text-decoration-style: solid;
+  text-decoration-color: var(--primary);
+}
+
 @media (prefers-reduced-motion: reduce) {
   a[data-shuttle-link] { transition: none; }
 }

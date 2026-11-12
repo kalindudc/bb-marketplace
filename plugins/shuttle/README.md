@@ -170,21 +170,26 @@ repository context stays unlinked. Code, existing links, file anchors and explic
 numbers are excluded. Custom message widgets and code-fence renderers are outside this first version.
 
 The original message is not rewritten. A References row provides keyboard and phone access;
-activating a PR reference opens its page in Shuttle, while an issue opens its card. Explicit external
+activating a PR reference opens the thread’s Shuttle side panel, while an issue opens its card. Explicit external
 links follow BB's URL preference. Pointer hovering over the original text uses non-mutating ranges.
-These ranges still depend on BB's private timeline markers.
+These ranges still depend on BB's private timeline markers. CSS Custom Highlights draw the usual dotted
+underline without replacing message text; the active reference uses a solid underline. Older browsers
+without that API show an explicit notice and retain the reference buttons.
 
 Insights › References uses compact rows with source excerpts, matching reasons and expandable evidence.
 Search runs across retained records before pagination. Filter by pending, needs attention, handled or
 all records, or by individual status; group by status, repository or source thread, and sort by age.
-Search and view choices are remembered like Shuttle's other lists. PR rows open the PR in Shuttle;
+Search and view choices are remembered like Shuttle's other lists. Clicking a PR row expands its
+evidence and opens the matched PR beside the list, not as a full page. Selection follows the reference
+identity, so a correction updates the already-open panel even after the record leaves Pending;
 source-thread, external-link and evidence controls act independently. Records are collected when messages are displayed, not by scanning all historical
 threads. It retains the latest 2,000 records without feedback and preserves records with feedback.
 Counts describe retained records, not measured matching accuracy.
 
 Mark correct confirms a target without removing its popover; Dismiss hides a record without judging its
 target. Both persist for that message and leave the default Pending list. The Handled view retains
-confirmed, dismissed, corrected and non-git records without deleting them.
+confirmed, dismissed, corrected and non-git records without deleting them. Pending also has a collapsed
+Handled section, with collapsed status groups. Popover actions acknowledge completion in a toast.
 
 Flag incorrect removes the resolved target until you correct or reset it. Correct this reference
 accepts a PR key or a PR / issue URL on an enabled Shuttle server; it saves your choice without

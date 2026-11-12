@@ -124,6 +124,15 @@ export function rememberScroll(key: string, top: number): void {
   scrolls.set(Object.fromEntries([...entries.slice(Math.max(0, entries.length - MAX_SCROLLS + 1)), [key, top]]));
 }
 
+export const panelReferences = createStored<Readonly<Record<string, string>>>("panel-reference", {}, (value) => isRecord(value)
+  ? Object.fromEntries(Object.entries(value).flatMap(([id, reference]) => typeof reference === "string" && /^[a-f0-9]{64}$/u.test(reference) ? [[id, reference]] : []).slice(-50))
+  : null);
+
+export function rememberPanelReference(threadId: string, reference: string | null): void {
+  const { [threadId]: _old, ...rest } = panelReferences.get();
+  panelReferences.set(reference === null ? rest : Object.fromEntries([...Object.entries(rest).slice(-49), [threadId, reference]]));
+}
+
 const MAX_PANEL_PRS = 50;
 /** The PR each thread's Shuttle tab shows in full, by thread id; a thread without one shows its list. */
 export const panelPrs = createStored<Readonly<Record<string, string>>>("panel-pr", {}, (value) => {
@@ -179,5 +188,5 @@ export function useFolding(area: string): Folding {
 
 /** Tests clear localStorage between cases; this reads every remembered value again. */
 export function reloadPrefs(): void {
-  for (const stored of [lastRoute, mineLayout, mineSort, doneSort, reviewedSort, reviewedFilter, boardViews, reviewFilter, folds, scrolls, panelPrs, conversationOrder, hideBotComments, prSeen, inboxView, inboxSwipeHint, threadPrsOpen, panelWidth, keywordFilters, referenceView]) stored.reload();
+  for (const stored of [lastRoute, mineLayout, mineSort, doneSort, reviewedSort, reviewedFilter, boardViews, reviewFilter, folds, scrolls, panelPrs, conversationOrder, hideBotComments, prSeen, inboxView, inboxSwipeHint, threadPrsOpen, panelWidth, keywordFilters, referenceView, panelReferences]) stored.reload();
 }
