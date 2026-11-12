@@ -62,7 +62,8 @@ In a complete \`\`\`ui fence: one expression per line, JS arrays/objects/variabl
 - Attributes: Table(columns, rows), both arrays; rows contain value arrays
 - Flows: Diagram(mermaid), e.g. "flowchart LR\\n A[Client] --> B[Proxy] --> C[App]"
 - Screenshots: Image(path) or Gallery(paths)
-- Saved results: Tests(Load(path)), Logs(Load(path)), Findings(Load(path)); changes: Changes()
+- Saved results: Tests(Load(path)), Logs(Load(path)), Findings(Load(path))
+- A change: save \`git diff -- <file>\` to thread storage, then Diff(Load(path)) per file. NEVER use Changes(), Commits(), PullRequest() or Threads(): they read the viewing thread, not the sender.
 - Phases/PRs: Steps([{title, detail, status}]); status "done", "current" or "blocked"
 A blocker says what failed and what the user can do; use Steps for several actions.
 Use the fitting component and measured data. Name files as \`$BB_THREAD_STORAGE/<path>\`; do not retype a saved report.

@@ -91,6 +91,16 @@ describe("the flare tool", () => {
     expect(harness.inspection.sdk.callsTo("plugins.callRpc")).toHaveLength(0);
   });
 
+  it("shows a change as a saved patch, never through a view that reads the viewer's checkout", () => {
+    // An ancestor's companion reuses the ancestor's environment, so these views would show its work, not the sender's.
+    const skill = readFileSync(new URL("../skills/flare/SKILL.md", import.meta.url), "utf8");
+    for (const text of [TOOL_INSTRUCTIONS, skill]) {
+      expect(text).not.toContain("changes: Changes()");
+      expect(text).toContain("Diff(Load(path))");
+      expect(text).toContain("NEVER use Changes(), Commits(), PullRequest() or Threads()");
+    }
+  });
+
   it("ties flares to moments in the agent's own work, not to another plugin's tools", () => {
     expect(TOOL_INSTRUCTIONS).toContain("you finish a step of your plan or a phase of the work");
     expect(TOOL_INSTRUCTIONS).toContain("for a quick status it is the whole flare");
