@@ -10,7 +10,7 @@ import { Dialog, usePortalScope } from "../common";
 import { useShuttleQuery } from "../data";
 import { useViewport } from "../viewport";
 import { LinkCardBody } from "./card";
-import { ReferenceFeedback } from "../reference-feedback";
+import { ReferencePopoverFooter } from "../reference-feedback";
 import { markOpen, paintState, registerBridge, type LinkTargetRef } from "./dom";
 
 const SHOW_DELAY = 250;
@@ -230,12 +230,19 @@ function HoverCard({ target, moved, cardRef, onPointerEnter, onPointerLeave, onF
   usePaintRead(target, card.data);
 
   useLayoutEffect(() => {
-    const rect = target.rect?.() ?? target.el.getBoundingClientRect();
-    const height = ref.current?.offsetHeight ?? 180;
-    const below = rect.bottom + 6;
-    const top = below + height > window.innerHeight - 8 ? Math.max(8, rect.top - 6 - height) : below;
-    const left = Math.max(8, Math.min(rect.left, window.innerWidth - WIDTH - 8));
-    setPos({ top, left });
+    const place = () => {
+      const rect = target.rect?.() ?? target.el.getBoundingClientRect();
+      const height = ref.current?.offsetHeight ?? 180;
+      const below = rect.bottom + 6;
+      const top = below + height > window.innerHeight - 8 ? Math.max(8, rect.top - 6 - height) : below;
+      const left = Math.max(8, Math.min(rect.left, window.innerWidth - WIDTH - 8));
+      setPos({ top, left });
+    };
+    place();
+    if (typeof ResizeObserver === "undefined") return;
+    const resize = new ResizeObserver(place);
+    if (ref.current) resize.observe(ref.current);
+    return () => resize.disconnect();
   }, [target, moved, card.data, card.error]);
 
   return createPortal(
@@ -245,7 +252,7 @@ function HoverCard({ target, moved, cardRef, onPointerEnter, onPointerLeave, onF
       style={{ position: "fixed", top: pos?.top ?? -9999, left: pos?.left ?? -9999, width: WIDTH, maxWidth: "calc(100vw - 16px)", zIndex: 60 }}
       className="overflow-hidden rounded-lg border border-border bg-popover text-popover-foreground shadow-md">
       <LinkCardBody url={target.url} kind={target.kind} card={card.data} error={card.error} navigate={navigate} onDone={onDone} onOpenInShuttle={target.el.dataset.shuttleNavigation === "shuttle" ? () => target.el.click() : undefined} />
-      {target.referenceId && <div className="border-t border-border p-3"><ReferenceFeedback key={target.referenceId} id={target.referenceId} url={target.url} onDone={onDone} /></div>}
+      {target.referenceId && <div className="border-t border-border p-3"><ReferencePopoverFooter key={target.referenceId} id={target.referenceId} onDone={onDone} /></div>}
     </div>,
     document.body,
   );
@@ -272,7 +279,7 @@ function LinkSheet({ target, onClose }: { target: LinkTargetRef; onClose(): void
     <Dialog title={card.data?.label ?? "Link"} onClose={onClose}>
       <div data-shuttle-card="" className={phone ? "-mx-4" : ""}>
         <LinkCardBody url={target.url} kind={target.kind} card={card.data} error={card.error} navigate={navigate} onDone={onClose} sheet onOpenInShuttle={target.el.dataset.shuttleNavigation === "shuttle" ? () => target.el.click() : undefined} />
-        {target.referenceId && <div className="border-t border-border p-3"><ReferenceFeedback key={target.referenceId} id={target.referenceId} url={target.url} onDone={onClose} /></div>}
+        {target.referenceId && <div className="border-t border-border p-3"><ReferencePopoverFooter key={target.referenceId} id={target.referenceId} onDone={onClose} /></div>}
       </div>
     </Dialog>
   );

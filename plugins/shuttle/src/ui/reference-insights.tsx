@@ -4,7 +4,7 @@ import type { ReferenceLogOptions, ReferenceRecord } from "../contract";
 import type { ServerConfig } from "../config";
 import { prKey } from "../keys";
 import { linkKey, parseGitLink } from "../links";
-import { BUTTON, BUTTON_LARGE, BUTTON_PRIMARY_LARGE, ErrorNote, FIELD_SMALL, onCardClick, Segmented, SELECTED_ROW } from "./common";
+import { BUTTON, BUTTON_PRIMARY, CARD, ErrorNote, FIELD_SMALL, onCardClick, Segmented, SELECTED_ROW } from "./common";
 import { messageOf, useShuttleMutation, useShuttleQuery } from "./data";
 import { ago } from "./format";
 import { KeywordField, useKeywordQuery } from "./keywords";
@@ -39,21 +39,21 @@ function ReferenceRow({ row, servers, onOpenThread, onOpenPr, selected = false }
       {issue ? <UrlLink href={row.url!} data-shuttle-reference-id={row.id} onClick={(event) => {
         if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
         event.preventDefault(); tapReference({ el: event.currentTarget, url: row.url!, key: linkKey(issue), kind: "issue", referenceId: row.id });
-      }} className="inline-flex min-h-9 items-center rounded-md border border-input px-3 font-mono text-base font-semibold text-primary">#{row.number}</UrlLink> : <button type="button" onClick={open} title={pr ? `Open ${title} in Shuttle` : "Inspect this reference"} className="inline-flex min-h-9 cursor-pointer items-center rounded-md border border-input px-3 font-mono text-base font-semibold text-primary">#{row.number}</button>}
+      }} className={BUTTON}>#{row.number}</UrlLink> : <button type="button" onClick={open} title={pr ? `Open ${title} in Shuttle` : "Inspect this reference"} className={BUTTON}>#{row.number}</button>}
       <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground" title={title}>{title}</span>
       <span className="text-xs">{STATUS_LABELS[row.status]}</span>
       <span className="text-[11px] text-muted-foreground" title={new Date(row.at).toLocaleString()}>{ago(row.at)}</span>
       <div className="flex shrink-0 gap-1">
-        <button className={BUTTON_PRIMARY_LARGE} title="Accept this match and move it to Handled" disabled={feedback.isPending || !row.url} onClick={() => void feedback.run({ id: row.id, action: "confirm", query: null })}>Mark correct</button>
-        <button className={BUTTON_LARGE} disabled={feedback.isPending} onClick={() => void feedback.run({ id: row.id, action: "dismiss", query: null })}>Dismiss</button>
+        <button className={BUTTON_PRIMARY} title="Accept this match and move it to Handled" disabled={feedback.isPending || !row.url} onClick={() => void feedback.run({ id: row.id, action: "confirm", query: null })}>Mark correct</button>
+        <button className={BUTTON} disabled={feedback.isPending} onClick={() => void feedback.run({ id: row.id, action: "dismiss", query: null })}>Dismiss</button>
       </div>
     </div>
     <p className="my-1 truncate text-xs text-muted-foreground" title={row.excerpt}>{row.excerpt.replace(/\s+/gu, " ")}</p>
     <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
       <span className="min-w-0 flex-1 truncate" title={row.reason}>{row.reason}</span>
-      <button type="button" title={row.threadTitle ?? row.threadId} className={`${BUTTON_LARGE} max-w-48 truncate`} onClick={() => onOpenThread(row.threadId)}>{row.threadTitle ?? "Open source thread"}</button>
-      {row.url && <UrlLink href={row.url} title={row.url} className={BUTTON_LARGE}>Open externally ↗</UrlLink>}
-      <button type="button" aria-label={`Details for #${row.number}`} aria-expanded={expanded} className={BUTTON_LARGE} onClick={() => expanded ? setExpanded(false) : open()}>{expanded ? "Less" : "Details"}</button>
+      <button type="button" title={row.threadTitle ?? row.threadId} className={BUTTON} onClick={() => onOpenThread(row.threadId)}>Open thread</button>
+      {row.url && <UrlLink href={row.url} title={row.url} className={BUTTON}>Open externally ↗</UrlLink>}
+      <button type="button" aria-label={`Details for #${row.number}`} aria-expanded={expanded} className={BUTTON} onClick={() => expanded ? setExpanded(false) : open()}>{expanded ? "Less" : "Details"}</button>
     </div>
     {expanded && <div className="mt-2 space-y-3 border-t border-border pt-3" onClick={(event) => event.stopPropagation()}>
       <blockquote className="break-words text-sm" data-content="">{row.excerpt}</blockquote>
@@ -130,14 +130,14 @@ export function ReferenceInsights({ onOpenThread, onOpenPr, selectedReference }:
       {rows.length === 0 && <p role="status" className="py-6 text-center text-sm text-muted-foreground">{log.data.total ? "Nothing matches these filters." : "Open a thread containing bare PR numbers to collect references."}</p>}
       {groups.map((group) => <section key={group.id} aria-label={group.title}>
         {prefs.group !== "none" && <GroupHeader title={group.title} count={group.items.length} layout={{ compact: false, phone }} folded={folded.has(group.id)} onFold={() => setFolded((old) => { const next = new Set(old); if (next.has(group.id)) next.delete(group.id); else next.add(group.id); return next; })} />}
-        {(prefs.group === "none" || !folded.has(group.id)) && <ul className="overflow-hidden rounded-lg border border-border bg-card">{group.items.map((row) => <ReferenceRow key={row.id} row={row} servers={servers} onOpenThread={onOpenThread} onOpenPr={onOpenPr} selected={row.id === selectedReference} />)}</ul>}
+        {(prefs.group === "none" || !folded.has(group.id)) && <ul className={`${CARD} overflow-hidden`}>{group.items.map((row) => <ReferenceRow key={row.id} row={row} servers={servers} onOpenThread={onOpenThread} onOpenPr={onOpenPr} selected={row.id === selectedReference} />)}</ul>}
       </section>)}
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
         <span>{rows.length ? `${currentOffset + 1}–${currentOffset + rows.length} of ${log.data.filteredTotal}` : "No results"}</span>
         {log.data.filteredTotal > PAGE_SIZE && <><button className={BUTTON} disabled={currentOffset === 0} onClick={() => setOffset(Math.max(0, currentOffset - PAGE_SIZE))}>Previous</button><button className={BUTTON} disabled={currentOffset + PAGE_SIZE >= log.data.filteredTotal} onClick={() => setOffset(currentOffset + PAGE_SIZE)}>Next</button></>}
         <span className="ml-auto">Collected from displayed messages</span>
       </div>
-      {(prefs.filter === "pending" || prefs.filter === "attention") && <section className="rounded-lg border border-border bg-card" aria-label="Handled references">
+      {(prefs.filter === "pending" || prefs.filter === "attention") && <section className={CARD} aria-label="Handled references">
         <button type="button" aria-expanded={handledOpen} onClick={() => setHandledOpen((value) => !value)} className="flex min-h-10 w-full cursor-pointer items-center gap-2 px-3 py-3 text-left text-sm font-semibold">{handledOpen ? "▾" : "▸"} Handled references ({handled.data?.filteredTotal ?? 0})</button>
         {handled.error && <ErrorNote>{messageOf(handled.error)}</ErrorNote>}
         {handledOpen && handledGroups.map((group) => <section key={group.status} className="border-t border-border" aria-label={group.title}>

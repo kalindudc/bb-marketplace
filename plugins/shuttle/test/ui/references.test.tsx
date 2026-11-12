@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, waitFor, within } from "@testing-library/react";
 import type { ExperimentalThreadActionTabProps } from "@get-bb/plugin-sdk/app";
-import { Dialog } from "../../src/ui/common";
+import { BUTTON, BUTTON_PRIMARY, Dialog } from "../../src/ui/common";
 import { clearReferenceHighlights, setReferenceHighlights } from "../../src/ui/links/reference-highlights";
 import { rememberPanelReference } from "../../src/ui/prefs";
 import type { ReferenceRecord } from "../../src/contract";
@@ -160,6 +160,20 @@ describe("reference oversight", () => {
     });
     await slot.findByRole("dialog", { name: "Matched pull request" });
     expect(slot.container.querySelector("[data-phone-pr]")).toBeNull();
+  });
+
+  it("uses standard row actions and a fixed Open thread label for long titles", async () => {
+    const saved = { ...record, threadTitle: "Review Shopify/ingress-nginx#711 with an exceptionally long title" };
+    const { slot } = await page("insights/references", {
+      getConfig: () => ({ config: config({ servers: [{ id: "github", name: "GitHub", kind: "github", enabled: true, sep: "#", commands: {} }] }) }),
+      referenceLog: () => ({ rows: [saved], counts: { automatic: 1 }, total: 1, filteredTotal: 1, events: [] }),
+    });
+    const open = await within(slot.container).findByRole("button", { name: "Open thread" });
+    expect(open.getAttribute("title")).toBe(saved.threadTitle);
+    expect(open.className).toBe(BUTTON);
+    expect(slot.getByRole("button", { name: "Mark correct" }).className).toBe(BUTTON_PRIMARY);
+    fireEvent.click(open);
+    expect(slot.inspection.navigateCalls.at(-1)).toMatchObject({ method: "toThread", threadId: saved.threadId });
   });
 
   it("opens the selected handled reference and its status group after navigation", async () => {

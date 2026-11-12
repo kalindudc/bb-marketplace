@@ -39,6 +39,7 @@ async function thread(links: string[], rpc: Partial<Handlers> = {}) {
     getConfig: () => ({ config: config({ servers: SERVERS }) }),
     linkStates: ({ urls }) => ({ links: urls.map((url) => ({ url, kind: kindOf(url), state: url.startsWith(PR_URL) ? "open" : null })) }),
     linkCard: () => card(),
+    reference: ({ id }) => ({ id, threadId: "thr_1", messageId: "msg_1", number: 4821, excerpt: "PR #4821", status: "automatic", url: PR_URL, automaticUrl: PR_URL, reason: "Matched", candidates: [], at: 0 }),
     ...rpc,
   }));
   const script = loaded.contentScripts.find((entry) => entry.id === "git-links")!;
@@ -101,10 +102,34 @@ describe("git links in a thread", () => {
     await waitFor(() => expect(link(0).dataset.shuttleLink).toBe("pr"));
     hover(link(0));
     const first = await screen.findByRole("dialog");
-    fireEvent.click(within(first).getByText("Correct this reference"));
+    fireEvent.click(await within(first).findByText("Correct this reference"));
     fireEvent.change(within(first).getByRole("textbox", { name: "Correct reference target" }), { target: { value: "https://github.com/acme/WRONG/pull/999" } });
     hover(link(1));
     await waitFor(() => expect(within(screen.getByRole("dialog")).getByRole("textbox", { name: "Correct reference target", hidden: true }).getAttribute("value")).toBe(PR_URL));
+  });
+
+  it.each([
+    ["confirmed", "Marked correct", false], ["corrected", "Corrected match", false],
+    ["confirmed", "Marked correct", true], ["corrected", "Corrected match", true],
+  ] as const)("shows a quiet %s footer (%s, sheet=%s) with a reference management link", async (status, label, sheet) => {
+    const id = "c".repeat(64);
+    const { slot, link } = await thread([PR_URL], {
+      reference: () => ({ id, threadId: "thr_1", messageId: "msg_1", number: 4821, excerpt: "PR #4821", status, url: PR_URL, automaticUrl: PR_URL, reason: "Saved", candidates: [], at: 0 }),
+    });
+    link(0).dataset.shuttleReferenceId = id;
+    await waitFor(() => expect(link(0).dataset.shuttleLink).toBe("pr"));
+    if (sheet) {
+      const down = new Event("pointerdown", { bubbles: true }); Object.assign(down, { pointerType: "touch" }); fireEvent(link(0), down);
+      fireEvent.click(link(0));
+    } else hover(link(0));
+    const shown = await screen.findByRole("dialog");
+    await within(shown).findByText(label);
+    expect(within(shown).queryByRole("button", { name: "Mark correct" })).toBeNull();
+    expect(within(shown).queryByRole("button", { name: "Flag incorrect" })).toBeNull();
+    expect(within(shown).queryByRole("textbox", { name: "Correct reference target", hidden: true })).toBeNull();
+    fireEvent.click(within(shown).getByRole("button", { name: "Manage reference in Shuttle" }));
+    expect(slot.inspection.navigateCalls.at(-1)).toMatchObject({ method: "toPluginPanel", options: { subPath: `insights/references/ref/${id}` } });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 
   it("uses only visible tab stops in correction disclosures", () => {

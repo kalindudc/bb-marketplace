@@ -164,7 +164,8 @@ are not a published contract.
 
 Shuttle can resolve bare numbers such as `#90386` in displayed timeline messages.
 Complete URLs and qualified PR keys are matching evidence, not separate inferred references.
-The conversation row keeps BB’s subtle default link styling; larger action buttons belong in Insights.
+The conversation row keeps BB’s subtle default link styling. Insights reuses Shuttle’s standard row
+buttons and cards, with a fixed Open thread label and the full title in its tooltip.
 It uses explicit
 PR or issue links and qualified keys in the message, PRs linked to the source thread (including
 archived parents and Flare companions), or a cached PR in the project's exact server and repository.
@@ -193,6 +194,8 @@ Mark correct confirms a target without removing its popover; Dismiss hides a rec
 target. Both persist for that message and leave the default Pending list. The Handled view retains
 confirmed, dismissed, corrected and non-git records without deleting them. Pending also has a collapsed
 Handled section, with collapsed status groups. Popover actions acknowledge completion in a toast.
+After a match is confirmed or corrected, its popover shows the saved status and one management link
+instead of repeating the action buttons. That link opens the selected reference’s controls in Shuttle.
 
 Flag incorrect removes the resolved target until you correct or reset it. Correct this reference
 accepts a PR key or a PR / issue URL on an enabled Shuttle server; it saves your choice without

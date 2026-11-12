@@ -1,7 +1,10 @@
 import { useState } from "react";
+import { useBbNavigate } from "@get-bb/plugin-sdk/app";
+import { PANEL_PATH } from "./constants";
+import { formatRoute } from "./route";
 import { toast } from "sonner";
-import { BUTTON, ErrorNote } from "./common";
-import { messageOf, useShuttleMutation } from "./data";
+import { BUTTON, BUTTON_GHOST_SMALL, ErrorNote } from "./common";
+import { messageOf, useShuttleMutation, useShuttleQuery } from "./data";
 
 export function ReferenceFeedback({ id, url, onDone, showTriage = true }: { id: string; url: string | null; onDone?(): void; showTriage?: boolean }) {
   const [query, setQuery] = useState(url ?? "");
@@ -39,4 +42,18 @@ export function ReferenceFeedback({ id, url, onDone, showTriage = true }: { id: 
     </details>
     {error !== null && <ErrorNote>{error}</ErrorNote>}
   </div>;
+}
+
+export function ReferencePopoverFooter({ id, onDone }: { id: string; onDone(): void }) {
+  const reference = useShuttleQuery("reference", { id });
+  const navigate = useBbNavigate();
+  const manage = () => {
+    navigate.toPluginPanel(PANEL_PATH, { subPath: formatRoute({ view: "insights", tab: "references", reference: id }) });
+    onDone();
+  };
+  const link = <button type="button" className={BUTTON_GHOST_SMALL} title="Re-correct or drop this reference in Shuttle" onClick={manage}>Manage reference in Shuttle</button>;
+  if (reference.error) return <div className="space-y-1"><ErrorNote>{messageOf(reference.error)}</ErrorNote>{link}</div>;
+  if (!reference.data) return <p role="status" className="text-xs text-muted-foreground">Checking saved match…</p>;
+  if (reference.data.status === "confirmed" || reference.data.status === "corrected") return <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground"><span>{reference.data.status === "confirmed" ? "Marked correct" : "Corrected match"}</span>{link}</div>;
+  return <ReferenceFeedback key={id} id={id} url={reference.data.url} onDone={onDone} />;
 }

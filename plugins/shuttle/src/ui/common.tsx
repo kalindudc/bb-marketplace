@@ -30,7 +30,6 @@ export const BUTTON_OFF = `${FRAME} ${SMALL} border border-transparent bg-transp
 export const BUTTON_DANGER = `${FRAME} ${SMALL} border border-destructive/40 bg-transparent text-destructive-text hover:bg-surface-destructive`;
 export const BUTTON_PRIMARY = `${FRAME} ${SMALL} border border-foreground bg-foreground font-medium text-background hover:bg-foreground/90`;
 /** The main action at the foot of a long form, such as posting a review. */
-export const BUTTON_LARGE = `${FRAME} h-9 px-3 text-sm border border-input bg-transparent text-foreground hover:bg-state-hover`;
 export const BUTTON_PRIMARY_LARGE = `${FRAME} h-8 px-3 text-[13px] border border-foreground bg-foreground font-medium text-background hover:bg-foreground/90`;
 /** A main action that is a go-ahead, such as Merge or Approve. */
 export const BUTTON_SUCCESS = `${FRAME} ${SMALL} border border-success bg-success font-medium text-background hover:bg-success/90`;
