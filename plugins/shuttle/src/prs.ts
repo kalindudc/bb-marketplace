@@ -79,9 +79,10 @@ export async function rememberThread(ctx: Ctx, threadId: string): Promise<void> 
 
 /**
  * Links a thread. An owner is the PR's agent, and a PR has one: the owner before stays linked for
- * reference. Linking an owner to your own PR watches it in your default mode when autoWatch is on.
+ * reference. Linking an owner to your own PR turns its watch on when autoWatch is on, starting from what the
+ * PR already has: `backlog` says this link is what turned it on, so the caller sends those items now.
  */
-export async function linkPr(ctx: Ctx, pr: PrRow, threadId: string, role: LinkRole, options: { watch?: boolean; auto?: boolean } = {}): Promise<void> {
+export async function linkPr(ctx: Ctx, pr: PrRow, threadId: string, role: LinkRole, options: { watch?: boolean; auto?: boolean } = {}): Promise<{ backlog: boolean }> {
   await rememberThread(ctx, threadId);
   const before = ctx.store.linkRole(pr.id, threadId);
   const replaced = ctx.store.tx(() => {
@@ -92,7 +93,8 @@ export async function linkPr(ctx: Ctx, pr: PrRow, threadId: string, role: LinkRo
   if (role === "owner") ctx.store.setSuggestion(pr.id, null, null);
   const watch = ctx.config().watch;
   const wantWatch = options.watch ?? (role === "owner" && pr.mine === 1 && watch.enabled && watch.autoWatch);
-  if (wantWatch && ctx.store.watch(pr.id) === null) setWatch(ctx, pr, watch.mode);
+  const backlog = wantWatch && ctx.store.watch(pr.id) === null;
+  if (backlog) setWatch(ctx, pr, "act", { backlog });
   const title = `\u201c${ctx.store.threadTitle(threadId)}\u201d`;
   if (before !== role) {
     const was = replaced.map((id) => `\u201c${ctx.store.threadTitle(id) ?? id}\u201d`).join(", ");
@@ -100,6 +102,7 @@ export async function linkPr(ctx: Ctx, pr: PrRow, threadId: string, role: LinkRo
     ctx.store.addEvent("linked", text, pr.id, threadId);
   }
   ctx.port.publish();
+  return { backlog };
 }
 
 export function unlinkPr(ctx: Ctx, pr: PrRow, threadId: string): void {
@@ -113,15 +116,20 @@ export function hasOwner(ctx: Ctx, pr: PrRow): boolean {
   return ctx.store.linksOf(pr.id).some((l) => l.role === "owner" && !l.archived);
 }
 
-/** `backlog` sends what is on the PR now on the next check, instead of treating it as already seen. */
+/**
+ * A watch is on or off. The argument still takes a WatchMode so a caller written before the modes were cut
+ * keeps working; every value but null is the one watch, the feedback and the ask to fix it.
+ * `backlog` sends what is on the PR now on the next check, instead of treating it as already seen.
+ */
 export function setWatch(ctx: Ctx, pr: PrRow, mode: WatchMode | null, options: { backlog?: boolean } = {}): void {
   if (mode !== null && !hasOwner(ctx, pr)) throw new ShuttleError(`${shortKey(ctx, pr)} has no agent to send reviews to; make a thread its agent first`);
+  const next = mode === null ? null : "act";
   const before = ctx.store.watch(pr.id)?.mode ?? null;
-  ctx.store.setWatch(pr.id, mode, options.backlog === true);
-  if (before === mode) return;
+  ctx.store.setWatch(pr.id, next, options.backlog === true);
+  if (before === next) return;
   const agent = ctx.store.ownerLink(pr.id);
   const who = agent ? `\u201c${ctx.store.threadTitle(agent.thread_id) ?? agent.thread_id}\u201d` : "its agent";
-  const text = mode === null ? `${who} no longer gets feedback on ${shortKey(ctx, pr)}.` : mode === "act" ? `${who} gets new feedback on ${shortKey(ctx, pr)} and is asked to fix it.` : `${who} gets new feedback on ${shortKey(ctx, pr)}, and is not asked to act.`;
+  const text = next === null ? `${who} no longer gets feedback on ${shortKey(ctx, pr)}.` : `${who} gets new feedback on ${shortKey(ctx, pr)} and is asked to fix it.`;
   ctx.store.addEvent("watch", text, pr.id, agent?.thread_id ?? null);
   ctx.port.publish();
 }

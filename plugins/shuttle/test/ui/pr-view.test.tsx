@@ -134,17 +134,53 @@ describe("the PR view of your own PR", () => {
     const panel = await view();
     fireEvent.click(within(statusRow(panel, "agent")).getByRole("button"));
     const card = await find(panel, "[data-agent-card]");
-    fireEvent.click(within(card).getByRole("radio", { name: "Just tell it" }));
-    await waitFor(() => expect(callsTo(slot, "setAgentMode")).toEqual([{ key: own.key, mode: "notify" }]));
-    expect(within(card).getByRole("radio", { name: "Just tell it" }).getAttribute("aria-checked")).toBe("true");
-    expect(card.textContent).toContain("It is not asked to act.");
+    fireEvent.click(within(card).getByRole("radio", { name: "Off" }));
+    await waitFor(() => expect(callsTo(slot, "setAgentMode")).toEqual([{ key: own.key, mode: "off" }]));
+    expect(within(card).getByRole("radio", { name: "Off" }).getAttribute("aria-checked")).toBe("true");
+    expect(card.textContent).toContain("Nothing is sent.");
     release();
     await waitFor(() => expect(toasts.success).toHaveBeenCalledTimes(1));
-    expect(toasts.success.mock.calls[0]![0]).toBe("The agent is now told about new feedback, and not asked to fix it.");
+    expect(toasts.success.mock.calls[0]![0]).toBe("The agent of infra-portal#29278 is off. New feedback waits in your Inbox.");
     toasts.success.mock.calls[0]![1].action.onClick();
-    await waitFor(() => expect(callsTo(slot, "setAgentMode")).toEqual([{ key: own.key, mode: "notify" }, { key: own.key, mode: "fix" }]));
+    await waitFor(() => expect(callsTo(slot, "setAgentMode")).toEqual([{ key: own.key, mode: "off" }, { key: own.key, mode: "fix", backlog: false }]));
     release();
     await waitFor(() => expect(toasts.success).toHaveBeenCalledTimes(2));
+  });
+
+  it("keeps the agent's controls behind its row, so a linked thread whose watch is off is reachable in one click", async () => {
+    const off = { ...own, agent: { ...own.agent!, mode: "off" as const } };
+    const { slot, view } = await prPage(off);
+    const panel = await view();
+    expect(statusRow(panel, "agent").textContent).toContain("· Off");
+    expect(within(panel).queryAllByRole("radio")).toEqual([]);
+    // The Threads section lists the link with its role and an Unlink button, and no way to change what it does.
+    const threads = within(panel).getByRole("region", { name: "Threads" });
+    expect(within(threads).queryAllByRole("radio")).toEqual([]);
+    fireEvent.click(within(statusRow(panel, "agent")).getByRole("button"));
+    const card = await find(panel, "[data-agent-card]");
+    expect(within(card).getAllByRole("radio").map((node) => node.textContent)).toEqual(["Fix it", "Off"]);
+    fireEvent.click(within(card).getByRole("radio", { name: "Fix it" }));
+    await waitFor(() => expect(callsTo(slot, "setAgentMode")).toEqual([{ key: own.key, mode: "fix" }]));
+  });
+
+  it("changes what the linked thread does with the PR from its row in Threads", async () => {
+    const { slot, view } = await prPage(own);
+    const panel = await view();
+    const threads = within(panel).getByRole("region", { name: "Threads" });
+    const trigger = within(threads).getByRole("button", { name: "What this thread does with the PR's feedback" });
+    expect(trigger.textContent).toBe("Agent");
+    expect(within(threads).queryByRole("button", { name: "What this thread does with the PR's feedback" })).toBeTruthy();
+    // The reference thread beside it has no such menu: only the PR's one agent decides.
+    expect(within(threads).getAllByRole("button", { name: /^What this thread does/u })).toHaveLength(1);
+    fireEvent.keyDown(trigger, { key: "Enter" });
+    const menu = await screen.findByRole("menu", { name: "What this thread does with the PR's feedback" });
+    expect(within(menu).getAllByRole("menuitemradio").map((node) => node.textContent)).toEqual([
+      "Fix itSend new feedback, and ask the thread to fix it",
+      "OffNothing is sent; it waits in your Inbox",
+    ]);
+    expect(within(menu).getByRole("menuitemradio", { name: /^Fix it/u }).getAttribute("aria-checked")).toBe("true");
+    fireEvent.click(within(menu).getByRole("menuitemradio", { name: /^Off/u }));
+    await waitFor(() => expect(callsTo(slot, "setAgentMode")).toEqual([{ key: own.key, mode: "off" }]));
   });
 
   it("gives a PR without an agent the thread picked in the agent dialog, or its suggested one", async () => {
@@ -162,9 +198,10 @@ describe("the PR view of your own PR", () => {
     const dialog = await slot.findByRole("dialog", { name: "Who handles feedback on infra-portal#29278?" });
     expect(within(dialog).getByRole("radio", { name: /CF token containment 2/u }).getAttribute("aria-checked")).toBe("true");
     fireEvent.click(await within(dialog).findByRole("radio", { name: /Edge capacity scenes/u }));
-    fireEvent.click(within(within(dialog).getByRole("radiogroup", { name: "What it does" })).getByRole("radio", { name: "Just tell it" }));
+    expect(within(dialog).queryByRole("radiogroup", { name: "What it does" })).toBeNull();
+    expect(dialog.textContent).toContain("is asked to fix them");
     fireEvent.click(within(dialog).getByRole("button", { name: "Give it this agent" }));
-    await waitFor(() => expect(callsTo(slot, "setAgent")).toEqual([{ key: own.key, target: { kind: "existing", threadId: "thr_recent" }, mode: "notify" }]));
+    await waitFor(() => expect(callsTo(slot, "setAgent")).toEqual([{ key: own.key, target: { kind: "existing", threadId: "thr_recent" }, mode: "fix" }]));
     await waitFor(() => expect(slot.queryByRole("dialog")).toBeNull());
     await waitFor(() => expect(toasts.success).toHaveBeenCalledTimes(1));
     toasts.success.mock.calls[0]![1].action.onClick();
@@ -1268,7 +1305,7 @@ describe("the PR view of someone else's PR", () => {
     await waitFor(() => expect(callsTo(slot, "link")[1]).toEqual({ key: theirs.key, threadId: "thr_x", role: "review" }));
   });
 
-  it("makes a linked thread your PR's agent, with what it does, instead of offering a review", async () => {
+  it("makes a linked thread your PR's agent, which fixes its feedback, instead of offering a review", async () => {
     const before = { ...own, agent: agent({ threadId: "thr_agent", title: "CF token containment 2: retry WAF deletes", mode: "fix" }) };
     const { slot, view } = await prPage(before, {
       threads: () => ({ threads: [{ id: "thr_fixer", title: "Fix the retry budget", projectId: "prj_bb", status: "idle", updatedAt: null }] }),
@@ -1283,9 +1320,10 @@ describe("the PR view of someone else's PR", () => {
     expect(within(purposes).getByRole("radio", { name: /Reference only/u }).getAttribute("aria-checked")).toBe("true");
     fireEvent.click(within(purposes).getByRole("radio", { name: /^Agent/u }));
     expect(within(purposes).getByRole("radio", { name: /^Agent/u }).textContent).toContain("It takes over from “CF token containment 2: retry WAF deletes”, which stays linked for reference.");
-    fireEvent.click(within(within(dialog).getByRole("radiogroup", { name: "What the agent does" })).getByRole("radio", { name: "Just tell it" }));
+    expect(within(dialog).queryByRole("radiogroup", { name: "What the agent does" })).toBeNull();
+    expect(dialog.textContent).toContain("is asked to fix them");
     fireEvent.click(within(dialog).getByRole("button", { name: "Link" }));
-    await waitFor(() => expect(callsTo(slot, "setAgent")).toEqual([{ key: before.key, target: { kind: "existing", threadId: "thr_fixer" }, mode: "notify" }]));
+    await waitFor(() => expect(callsTo(slot, "setAgent")).toEqual([{ key: before.key, target: { kind: "existing", threadId: "thr_fixer" }, mode: "fix" }]));
     expect(callsTo(slot, "link")).toEqual([]);
     await waitFor(() => expect(slot.queryByRole("dialog")).toBeNull());
   });
@@ -1297,7 +1335,7 @@ describe("the PR view of someone else's PR", () => {
     const dialog = await slot.findByRole("dialog");
     const purposes = within(dialog).getByRole("radiogroup", { name: "What it is for" });
     expect(within(purposes).getByRole("radio", { name: /^Agent/u }).getAttribute("aria-checked")).toBe("true");
-    expect(within(within(dialog).getByRole("radiogroup", { name: "What the agent does" })).getByRole("radio", { name: "Fix it" }).getAttribute("aria-checked")).toBe("true");
+    expect(dialog.textContent).toContain("is asked to fix them");
     fireEvent.click(within(dialog).getByRole("tab", { name: "A new thread" }));
     expect([...(within(dialog).getByRole("combobox", { name: "Start it to" }) as HTMLSelectElement).options].map((option) => option.textContent)).toEqual(["Be its agent: work on the PR and fix its feedback", "Start an AI review of it"]);
   });

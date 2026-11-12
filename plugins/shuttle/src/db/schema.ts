@@ -357,4 +357,7 @@ export const MIGRATIONS: string[] = [
   )`,
   `ALTER TABLE reviews ADD COLUMN cleanup_requested_at INTEGER`,
   `ALTER TABLE reviews ADD COLUMN cleanup_finished_at INTEGER`,
+  // A watch is on or it is not: the old mode that only sent without asking the thread to act is now the same watch.
+  `UPDATE watches SET mode = 'act' WHERE mode = 'forward'`,
+  `UPDATE kv SET value = json_set(value, '$.watch.mode', 'act') WHERE key = 'config' AND json_valid(value) AND json_extract(value, '$.watch.mode') = 'forward'`,
 ];

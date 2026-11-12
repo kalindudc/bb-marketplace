@@ -20,11 +20,6 @@ const TRIGGER_LABELS: Record<Trigger, { label: string; hint?: string }> = {
   mentioned: { label: "I am @mentioned" },
 };
 
-const AGENT_MODE_SETTINGS: Record<(typeof WATCH_MODES)[number], string> = {
-  act: "Fix it: send new feedback and ask it to fix it",
-  forward: "Just tell it: send new feedback only",
-};
-
 const splitGlobs = (text: string) => text.split(/[\s,]+/u).filter((glob) => glob !== "");
 const splitLines = (text: string) => text.split("\n").map((line) => line.trim()).filter((line) => line !== "");
 /** One bot a line: its login or glob, a colon, then its phrases separated by commas. */
@@ -127,12 +122,6 @@ export function AutomationsSection() {
 
       <Card icon="Bot" title="Agents" hint="Send new reviews, comments and failed checks on your PRs to the thread that handles them." on={watch.enabled} onToggle={(enabled) => setWatch({ enabled })}>
         <div className="flex flex-col gap-2.5 text-sm">
-          <label className={row}>
-            <span className={label}>What a new agent does</span>
-            <select aria-label="What a new agent does" className={FIELD} value={watch.mode} onChange={(event) => setWatch({ mode: event.target.value as Watch["mode"] })}>
-              {WATCH_MODES.map((mode) => <option key={mode} value={mode}>{AGENT_MODE_SETTINGS[mode]}</option>)}
-            </select>
-          </label>
           <label className={row}>
             <span className={label}>Wait to batch</span>
             <span className="flex items-center gap-2">

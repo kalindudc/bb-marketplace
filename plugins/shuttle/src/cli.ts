@@ -195,7 +195,7 @@ export function createCli(shuttle: Shuttle): PluginCliRegistration {
           thread: { type: "string", description: "The thread to make the agent." },
           new: { type: "boolean", description: "Start a new thread for the PR as its agent." },
           none: { type: "boolean", description: "No agent; its thread stays linked for reference." },
-          mode: { type: "string", description: `${AGENT_MODES.join(", ")}: fix asks it to fix new feedback, notify only sends it.` },
+          mode: { type: "string", description: `${AGENT_MODES.join(", ")}: fix sends new feedback and asks the thread to fix it; off sends nothing.` },
           json,
         },
         run: ({ options, positionals }) =>
@@ -228,15 +228,14 @@ export function createCli(shuttle: Shuttle): PluginCliRegistration {
           }),
       }),
       watch: cliCommand({
-        summary: "Set what a PR's agent does with new feedback: act (fix it) or forward (just tell it), or stop with --off; `agent` does the same with more choices",
+        summary: "Send a PR's new feedback to its agent thread, which is asked to fix it, or stop with --off; `agent` does the same with more choices",
         positionals: [PR],
-        options: { mode: { type: "string", description: "act (default: send and ask the thread to act) or forward (send only)." }, off: { type: "boolean", description: "Stop watching." }, json },
+        options: { off: { type: "boolean", description: "Stop watching." }, json },
         run: ({ options, positionals }) =>
           guarded(async () => {
-            const mode = options.off ? null : ((options.mode ?? "act") as "act" | "forward");
-            if (mode !== null && mode !== "act" && mode !== "forward") throw new PluginCliError("--mode must be act or forward");
+            const mode = options.off ? null : "act";
             const known = await shuttle.lookup(positionals.pr);
-            const view = shuttle.watch(known.key, mode);
+            const view = await shuttle.watch(known.key, mode);
             return out(options.json ? toJson(view) : prDetail(view));
           }),
       }),

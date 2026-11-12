@@ -152,7 +152,9 @@ export async function pollWatches(ctx: Ctx, serverId?: string, signal?: AbortSig
       const had = owner ? ctx.store.sentTo(pr.id, owner.thread_id) : new Set<string>();
       const unseen = items.filter((i) => !seen.has(i.id) && !had.has(i.id));
       // A bot let through since the last read starts from what it says next: what it said before was ignored then.
-      const before = heardBefore(watch.bots);
+      // A watch that starts from a backlog has read nothing yet, so what is on the PR now is judged by today's settings;
+      // a read that failed leaves `checked_at` alone, so this still holds once the server answers again.
+      const before = watch.bots === null && watch.checked_at === null ? heardNow(ctx) : heardBefore(watch.bots);
       const queued = new Set(ctx.store.pending(pr.id).map((p) => p.item_id));
       const ignored = unseen.filter((i) => !hears(before, i) && !queued.has(i.id) && (watch.checked_at === null || i.at === null || i.at <= watch.checked_at));
       if (ignored.length) ctx.store.markSeen(pr.id, ignored.map((i) => i.id));
@@ -224,7 +226,7 @@ export function formatMessage(ctx: Ctx, batch: ReadonlyArray<{ pr: PrRow; items:
       ...(context.length ? ["Also new, with nothing to do:", "```text", ...context.map(contextLine), "```"] : []),
       ...(quiet.length > context.length ? [`\u2026and ${quiet.length - context.length} more with nothing to do.`] : []),
     ];
-    if (work.length && ctx.store.watch(pr.id)?.mode === "act") {
+    if (work.length) {
       section.push(renderTemplate(actPrompt, vars));
       acting = true;
     }

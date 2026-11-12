@@ -31,7 +31,7 @@ const waitingReview = mine({
   suggestedAgent: { threadId: "thr_cf4", title: "CF token containment 4", why: "Opened this PR: its id is in the branch name" },
   next: next({ kind: "waiting_review", more: [{ id: "nudge", label: "Nudge reviewers" }] }),
 });
-const drafted = mine({ number: 5, title: "Export only failed event requests", state: "draft", agent: agent({ mode: "notify" }), next: next({ kind: "draft", label: "Draft", primary: { id: "ready", label: "Ready for review" } }) });
+const drafted = mine({ number: 5, title: "Export only failed event requests", state: "draft", agent: agent({ mode: "fix" }), next: next({ kind: "draft", label: "Draft", primary: { id: "ready", label: "Ready for review" } }) });
 const open = [waiting, ready, fixing, waitingReview, drafted];
 
 function minePage(rpc: Partial<Handlers> = {}, prs: PrView[] = open, subPath = "mine") {
@@ -90,7 +90,7 @@ describe("My PRs", () => {
     expect(row(waitingReview.key).textContent).toContain("No review · 3d");
     expect(row(waitingReview.key).querySelector("[data-pill='none']")!.textContent).toBe("No agent");
     expect(row(waitingReview.key).querySelector("[data-label='applications']")).not.toBeNull();
-    expect(row(drafted.key).textContent).toContain("Agent told");
+    expect(row(drafted.key).textContent).toContain("Agent fixes");
     expect(within(row(ready.key)).getByRole("button", { name: "Merge…" })).toBeTruthy();
     expect(within(row(waitingReview.key)).queryByRole("button")).toBeNull();
   });

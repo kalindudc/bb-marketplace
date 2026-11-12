@@ -7,7 +7,7 @@ import {
 import type { PrView } from "../contract";
 import { ActionsProvider } from "./actions";
 import { BUTTON, BUTTON_GHOST, BUTTON_PRIMARY, CARD, ErrorNote, HEADING, ICON_GHOST, Pill, Segmented, ServerBadge, TipProvider } from "./common";
-import { AGENT_MODE_META, PANEL_PATH, ROLE_LABELS } from "./constants";
+import { AGENT_MODE_META, AGENT_MODES, PANEL_PATH, ROLE_LABELS } from "./constants";
 import { messageOf, openExternal, threadsOf, useShuttleMutation, useShuttleQuery } from "./data";
 import { PrDetail } from "./detail";
 import { ago, plural, shortKey } from "./format";
@@ -23,7 +23,7 @@ import { GITHUB_PR_STATUS, githubPrStatus } from "./tab";
 import { useViewport } from "./viewport";
 import type { PrWrites } from "./writes";
 
-const MODES = (["fix", "notify", "off"] as const).map((value) => ({ value, label: AGENT_MODE_META[value].label }));
+const MODES = AGENT_MODES.map((value) => ({ value, label: AGENT_MODE_META[value].label }));
 
 const sameUrl = (a: string, b: string) => a.replace(/\/+$/u, "").toLowerCase() === b.replace(/\/+$/u, "").toLowerCase();
 

@@ -251,7 +251,7 @@ describe("agents", () => {
     await h.shuttle.sync();
     h.port.addThread("thr_old", "Old");
     h.port.addThread("thr_new", "New");
-    await h.shuttle.setAgent(KEY(1), { kind: "existing", threadId: "thr_old" }, "notify");
+    await h.shuttle.setAgent(KEY(1), { kind: "existing", threadId: "thr_old" }, "fix");
     await h.shuttle.sync();
     h.activity[1] = { items: [{ id: "c1", kind: "comment", author: "ana", body: "Nice, one question" }] };
     h.clock.now += 4 * 60_000;
@@ -747,6 +747,21 @@ describe("the draft notes migration", () => {
     db.exec("INSERT INTO review_drafts (pr_id, thread_id, summary, verdict, findings, state, created_at) VALUES (1, 'thr_r', 's', 'comment', '[]', 'draft', 0)");
     for (const sql of MIGRATIONS.slice(first)) db.exec(sql);
     expect(db.prepare("SELECT summary, notes FROM review_drafts").all()).toEqual([{ summary: "s", notes: null }]);
+  });
+});
+
+describe("the watch mode migration", () => {
+  it("turns a watch that only sent the feedback into the one watch, in the rows and in the saved config", () => {
+    const db = new Database(":memory:");
+    const first = MIGRATIONS.indexOf("UPDATE watches SET mode = 'act' WHERE mode = 'forward'");
+    expect(first).toBeGreaterThan(0);
+    for (const sql of MIGRATIONS.slice(0, first)) db.exec(sql);
+    db.exec("INSERT INTO prs (key, server, repo, number, url, title, author, state, checks, review, mine, fetched_at) VALUES ('forge:acme/app#1', 'forge', 'acme/app', 1, 'u', 't', 'a', 'open', 'none', 'none', 1, 0)");
+    db.exec("INSERT INTO watches (pr_id, mode, created_at) VALUES (1, 'forward', 0)");
+    db.prepare("INSERT INTO kv (key, value) VALUES ('config', ?)").run(JSON.stringify({ watch: { mode: "forward", batchMinutes: 5 } }));
+    for (const sql of MIGRATIONS.slice(first)) db.exec(sql);
+    expect(db.prepare("SELECT mode FROM watches").all()).toEqual([{ mode: "act" }]);
+    expect(JSON.parse((db.prepare("SELECT value FROM kv WHERE key = 'config'").get() as { value: string }).value)).toEqual({ watch: { mode: "act", batchMinutes: 5 } });
   });
 });
 

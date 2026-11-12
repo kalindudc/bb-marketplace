@@ -1,8 +1,8 @@
 import { AUTO_TRIGGERS, CHANGE_OPERATIONS, OPERATIONS, WATCH_MODES, WORKSPACES, WRITE_OPERATIONS } from "../config";
-import { AREAS, LINK_ROLES, type AgentMode, type NextKind } from "../contract";
+import { AGENT_MODES, AREAS, LINK_ROLES, type AgentMode, type NextKind } from "../contract";
 import type { Area, InboxTab, InsightsTab, Source } from "./route";
 
-export { AREAS, AUTO_TRIGGERS, LINK_ROLES, OPERATIONS, WATCH_MODES, WORKSPACES };
+export { AGENT_MODES, AREAS, AUTO_TRIGGERS, LINK_ROLES, OPERATIONS, WATCH_MODES, WORKSPACES };
 
 export const PANEL_ACTION_ID = "shuttle";
 export const PANEL_PATH = "shuttle";
@@ -86,9 +86,17 @@ export const AGENT_MODE_META: Record<AgentMode, { label: string; icon: string; s
     icon: "Bot",
     sentence: "New reviews, comments and failed checks go to the thread, and it is asked to fix them. It asks you before it pushes, replies or resolves.",
   },
-  notify: { label: "Just tell it", icon: "Sent", sentence: "New reviews, comments and failed checks go to the thread. It is not asked to act." },
-  off: { label: "Off", icon: "X", sentence: "Nothing is sent. New feedback waits in your Inbox." },
+  off: { label: "Off", icon: "X", sentence: "Nothing is sent. New feedback waits in your Inbox; turning this on sends what the PR already has." },
 };
+
+/** What a menu row says under the mode's name, short enough for a picker. */
+export const AGENT_MODE_SHORT: Record<AgentMode, string> = {
+  fix: "Send new feedback, and ask the thread to fix it",
+  off: "Nothing is sent; it waits in your Inbox",
+};
+
+/** A pill-shaped menu trigger, the size of the role pill it sits beside. */
+export const PILL_TRIGGER = "inline-flex h-5 shrink-0 cursor-pointer items-center gap-1 whitespace-nowrap rounded-full border border-border bg-surface-raised px-2 text-[11.5px] leading-none text-foreground hover:bg-state-hover";
 
 export const ROLE_LABELS: Record<(typeof LINK_ROLES)[number], { short: string; long: string }> = {
   owner: { short: "Agent", long: "Agent: it gets the PR's feedback" },

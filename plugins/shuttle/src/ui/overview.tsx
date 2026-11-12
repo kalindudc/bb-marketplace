@@ -4,12 +4,13 @@ import type { PrDetails, PrView, Reviewer } from "../contract";
 import { useActions } from "./actions";
 import { Avatar } from "./avatar";
 import { BUTTON_GHOST, ICON_GHOST, ICON_GHOST_SMALL, PaneSection, Pill, type Tone } from "./common";
+import { AGENT_MODE_META, AGENT_MODE_SHORT, AGENT_MODES, PILL_TRIGGER } from "./constants";
 import { useShuttleMutation, useShuttleQuery } from "./data";
 import { useEditPr } from "./edit";
 import { ago, clock, plural } from "./format";
 import { REVIEWER_LOOKS, ReviewerChoices } from "./manage";
 import { mergeInQueue } from "./merges";
-import { Picker } from "./picker";
+import { Picker, PickerGroup, PickerRadio } from "./picker";
 import { isLive } from "./pills";
 import { copy } from "./pr-menu";
 import { usePrState } from "./pr-state";
@@ -174,6 +175,28 @@ export function About({ pr, details, compact = false }: { pr: PrView; details: P
   );
 }
 
+/** The agent's row says what it does with the PR's feedback and changes it here, where the link is shown. */
+function RolePick({ pr, isAgent, label, tone }: { pr: PrView; isAgent: boolean; label: string; tone: Tone }) {
+  const actions = useActions();
+  if (!isAgent) return <Pill tone={tone}>{label}</Pill>;
+  const mode = pr.agent?.mode ?? "off";
+  return (
+    <Picker phone={actions.phone} title="What this thread does" triggerLabel="What this thread does with the PR's feedback" align="end" width="w-64"
+      triggerClassName={PILL_TRIGGER}
+      trigger={<>{mode === "off" ? "Agent · off" : "Agent"}<Icon name="ChevronDown" className="size-3" aria-hidden /></>}>
+      <PickerGroup>New feedback</PickerGroup>
+      {AGENT_MODES.map((option) => (
+        <PickerRadio key={option} checked={mode === option} onSelect={() => void actions.writes.changeMode(pr, option)}>
+          <span className="flex min-w-0 flex-col">
+            <span>{AGENT_MODE_META[option].label}</span>
+            <span className="text-xs text-muted-foreground">{AGENT_MODE_SHORT[option]}</span>
+          </span>
+        </PickerRadio>
+      ))}
+    </Picker>
+  );
+}
+
 /** The bb threads linked to the PR, the agent's marked as such; open, unlink, or link another. */
 export function Threads({ pr, compact = false }: { pr: PrView; compact?: boolean }) {
   const actions = useActions();
@@ -197,7 +220,7 @@ export function Threads({ pr, compact = false }: { pr: PrView; compact?: boolean
                   {entry.title}
                   {entry.archived && <span className="text-xs text-muted-foreground"> (archived)</span>}
                 </button>
-                <Pill tone={role.tone}>{role.label}</Pill>
+                <RolePick pr={pr} isAgent={role.label === "Agent"} label={role.label} tone={role.tone} />
                 <button type="button" aria-label={`Unlink “${entry.title}”`} title="Unlink" className={ICON_GHOST} disabled={unlink.isPending}
                   onClick={() => void unlink.run({ key: pr.key, threadId: entry.threadId })}>
                   <Icon name="X" className="size-3.5" aria-hidden />

@@ -103,7 +103,7 @@ describe("Shuttle thread tab", () => {
     await waitFor(() => expect(toasts.success).toHaveBeenCalledTimes(1));
     expect(mode(slot, base.key)).toBe("Off");
     toasts.success.mock.calls[0]![1].action.onClick();
-    await waitFor(() => expect(callsTo(slot, "setAgentMode")).toEqual([{ key: base.key, mode: "off" }, { key: base.key, mode: "fix" }]));
+    await waitFor(() => expect(callsTo(slot, "setAgentMode")).toEqual([{ key: base.key, mode: "off" }, { key: base.key, mode: "fix", backlog: false }]));
     release();
     await waitFor(() => expect(toasts.success).toHaveBeenCalledTimes(2));
   });
@@ -113,7 +113,7 @@ describe("Shuttle thread tab", () => {
       setAgentMode: () => { throw Object.assign(new Error("the agent's thread is archived"), { code: "invalid" }); },
     });
     await slot.findByText(base.title);
-    fireEvent.click(within(modes(slot, base.key)).getByRole("radio", { name: "Just tell it" }));
+    fireEvent.click(within(modes(slot, base.key)).getByRole("radio", { name: "Off" }));
     await waitFor(() => expect(toasts.error).toHaveBeenCalledWith("the agent's thread is archived"));
     expect(mode(slot, base.key)).toBe("Fix it");
   });

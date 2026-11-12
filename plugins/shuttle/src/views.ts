@@ -40,8 +40,9 @@ export function staleness(server: ServerRow | null, pr: { reasons: readonly Reas
   return { stale: true, since: times.length > 0 ? Math.max(...times) : server.last_ok_at };
 }
 
+/** A row that still says forward, from before a watch was only on or off, is the same watch as act. */
 export function agentMode(watch: "act" | "forward" | null): AgentView["mode"] {
-  return watch === "act" ? "fix" : watch === "forward" ? "notify" : "off";
+  return watch === null ? "off" : "fix";
 }
 
 /** A thread Shuttle has not read yet is unknown. */

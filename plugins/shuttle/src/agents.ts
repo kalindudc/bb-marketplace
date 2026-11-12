@@ -1,5 +1,5 @@
 // A PR's agent: the one thread that gets its new reviews, comments and failed checks. It is the
-// PR's owner link, and its watch mode is what the agent does: act (fix it) or forward (just tell it).
+// PR's owner link, and its watch is what the agent does: it gets the feedback and is asked to fix it, or nothing.
 import type { WatchMode } from "./config";
 import type { AgentMode, AgentTarget } from "./contract";
 import { errText, ShuttleError, type Ctx } from "./ctx";
@@ -10,15 +10,11 @@ import { linkPr, requirePr, setWatch, shortKey } from "./prs";
 import { startOwnerThread } from "./reviews";
 import { agentMode } from "./views";
 
-const WATCH_OF: Record<AgentMode, WatchMode | null> = { fix: "act", notify: "forward", off: null };
+const WATCH_OF: Record<AgentMode, WatchMode | null> = { fix: "act", off: null };
 const THREAD_IN_BRANCH = /thr_[a-z0-9]{6,}/u;
 
 export const hasFeedback = (pr: PrRow) => pr.review === "changes" || pr.checks === "failed";
 const removedKey = (pr: PrRow) => `agent_removed:${pr.id}`;
-
-export function defaultMode(ctx: Ctx): AgentMode {
-  return ctx.config().watch.mode === "act" ? "fix" : "notify";
-}
 
 /** What the caller must do next: send the PR's current feedback to the new agent when `backlog`. */
 export interface AgentChange {
@@ -47,9 +43,13 @@ export async function setAgent(ctx: Ctx, key: string, target: AgentTarget, mode?
     threadId = target.threadId;
   }
   ctx.store.setKv(removedKey(pr), "");
-  const next = mode ?? (before && beforeMode !== "off" ? beforeMode : defaultMode(ctx));
+  // There is one thing a watch does, so a PR that had one keeps the mode it had, and a new one is fix.
+  const next = mode ?? "fix";
+  const turningOn = next !== "off" && beforeMode === "off";
   const changedThread = before?.thread_id !== threadId;
-  const backlog = next !== "off" && (changedThread || beforeMode === "off") && hasFeedback(pr);
+  // Turning the watch on by hand starts from what the PR has now; auto agent keeps to feedback worth
+  // acting on, so a background assignment does not pour a PR's history into its thread.
+  const backlog = next !== "off" && (turningOn ? options.auto !== true || hasFeedback(pr) : changedThread && hasFeedback(pr));
   // Items still queued go to the new agent. With a backlog, what the old agent saw is not what the
   // new one has, so it starts again from what it has been sent itself.
   if (changedThread && backlog) ctx.store.forgetSeen(pr.id);
@@ -58,13 +58,23 @@ export async function setAgent(ctx: Ctx, key: string, target: AgentTarget, mode?
   return { threadId, backlog };
 }
 
-export function setAgentMode(ctx: Ctx, key: string, mode: AgentMode): AgentChange {
+/**
+ * Turning a watch on from off starts from the PR as it is now, so a thread that was linked while it
+ * was off hears what it missed rather than only what comes next. Items the thread already had are
+ * not sent again, and an approval alone still makes no message.
+ */
+export function watchBacklog(ctx: Ctx, pr: PrRow, mode: WatchMode | null): boolean {
+  return mode !== null && agentMode(ctx.store.watch(pr.id)?.mode ?? null) === "off";
+}
+
+/** `backlog` says whether the PR's existing items go too: undo puts a mode back without its backlog. */
+export function setAgentMode(ctx: Ctx, key: string, mode: AgentMode, wanted?: boolean): AgentChange {
   const pr = requirePr(ctx, key);
   const owner = ctx.store.ownerLink(pr.id);
   if (!owner) throw new ShuttleError(`${shortKey(ctx, pr)} has no agent; pick a thread first`);
-  const beforeMode = agentMode(ctx.store.watch(pr.id)?.mode ?? null);
-  const backlog = mode !== "off" && beforeMode === "off" && hasFeedback(pr);
-  setWatch(ctx, pr, WATCH_OF[mode], { backlog });
+  const next = WATCH_OF[mode];
+  const backlog = wanted ?? watchBacklog(ctx, pr, next);
+  setWatch(ctx, pr, next, { backlog });
   return { threadId: owner.thread_id, backlog };
 }
 

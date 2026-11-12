@@ -47,9 +47,9 @@ export function registerRpc(bb: BbPluginApi, shuttle: Shuttle): void {
     syncHistory: () => refusing(() => shuttle.syncHistory()),
     link: ({ key, threadId, role }) => refusing(async () => ({ pr: await shuttle.link(key, threadId, role ?? "owner") })),
     unlink: ({ key, threadId }) => refusing(async () => ({ pr: await shuttle.unlink(key, threadId) })),
-    watch: ({ key, mode }) => refusing(() => ({ pr: shuttle.watch(key, mode) })),
+    watch: ({ key, mode }) => refusing(async () => ({ pr: await shuttle.watch(key, mode) })),
     setAgent: ({ key, target, mode }) => refusing(() => shuttle.setAgent(key, target, mode)),
-    setAgentMode: ({ key, mode }) => refusing(async () => ({ pr: await shuttle.setAgentMode(key, mode) })),
+    setAgentMode: ({ key, mode, backlog }) => refusing(async () => ({ pr: await shuttle.setAgentMode(key, mode, backlog) })),
     askAgent: ({ key, text }) => refusing(async () => {
       await shuttle.askAgent(key, text);
       return { ok: true as const };

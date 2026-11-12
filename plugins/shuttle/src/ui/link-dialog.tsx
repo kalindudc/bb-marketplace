@@ -20,8 +20,7 @@ const SEARCH_DELAY_MS = 200;
  * can be a review thread. Either way it can be linked only for reference.
  */
 type Purpose = "agent" | "review" | "reference";
-type AgentWork = Exclude<AgentMode, "off">;
-const AGENT_WORK = (["fix", "notify"] as const).map((value) => ({ value, label: AGENT_MODE_META[value].label, icon: AGENT_MODE_META[value].icon }));
+const AGENT_WORK: Exclude<AgentMode, "off"> = "fix";
 const PURPOSES: Record<Purpose, { title: string; hint: string }> = {
   agent: { title: "Agent", hint: "It gets the PR's new reviews, comments and failed checks." },
   review: { title: "Review", hint: "A thread reviewing this PR, such as an AI review. A review draft it hands back shows in Your review." },
@@ -112,7 +111,6 @@ export function LinkDialog({ request, onClose }: { request: LinkRequest; onClose
   const [picked, setPicked] = useState<string | null>(null);
   const purposes: readonly Purpose[] = pr.mine ? ["agent", "reference"] : ["review", "reference"];
   const [purpose, setPurpose] = useState<Purpose>(pr.mine && pr.agent === null ? "agent" : "reference");
-  const [work, setWork] = useState<AgentWork>(pr.agent !== null && pr.agent.mode !== "off" ? pr.agent.mode : "fix");
   const [projectChoice, setProjectChoice] = useState<string | null>(null);
   const projectId = projectChoice ?? projects.data?.suggested ?? "";
   const projectUnavailable = isProjectUnavailable(projects.data, projectId);
@@ -128,7 +126,7 @@ export function LinkDialog({ request, onClose }: { request: LinkRequest; onClose
       if (purpose === "agent") {
         // The agent picker's own write, so the feedback already on the PR goes to the thread now and Undo works.
         setGiving(true);
-        const given = await writes.giveAgent(pr, { kind: "existing", threadId: thread.id }, work);
+        const given = await writes.giveAgent(pr, { kind: "existing", threadId: thread.id }, AGENT_WORK);
         setGiving(false);
         if (given !== null) onClose();
         return;
@@ -204,12 +202,7 @@ export function LinkDialog({ request, onClose }: { request: LinkRequest; onClose
                   : PURPOSES[item].hint} />
             ))}
           </div>
-          {purpose === "agent" && (
-            <div className="mt-1">
-              <Segmented label="What the agent does" value={work} options={AGENT_WORK} onChange={setWork} />
-              <div className="mt-1.5 text-xs text-muted-foreground">{AGENT_MODE_META[work].sentence}</div>
-            </div>
-          )}
+          {purpose === "agent" && <div className="mt-1 text-xs text-muted-foreground">{AGENT_MODE_META[AGENT_WORK].sentence}</div>}
         </>
       ) : (
         <div className="grid grid-cols-[7rem_minmax(0,1fr)] items-center gap-x-2 gap-y-3 text-sm">

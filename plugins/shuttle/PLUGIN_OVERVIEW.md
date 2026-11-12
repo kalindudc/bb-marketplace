@@ -16,7 +16,7 @@ Archive a board without losing its PRs, then restore it before editing membershi
 
 ## Work with agents
 
-A PR's agent thread gets new reviews, comments and failed checks. Choose Fix it, Just tell it or Off. Auto agent, off by default, can find the thread on your PR's branch. Threads report which feedback they fixed, replied to or declined.
+A PR's agent thread gets reviews, comments and failed checks and fixes them; Off leaves them there. Auto agent, off by default, can find the thread on your PR's branch. Threads report which feedback they fixed, replied to or declined.
 
 Start reviews from presets for the skill, model and workspace, or enable auto review. Reviewers hand back a draft and notes only you see; choose its findings and verdict before posting. A review stays open while its critics work. Auto post checks drafts against critic votes, quoted code and a fast verifier, and posts them only in a mode you pick. Done review threads, a merged PR's at once, are archived and revived for the next review.
 

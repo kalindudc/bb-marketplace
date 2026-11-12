@@ -7,7 +7,7 @@ import type {
   AgentMode, AgentTarget, Area, BoardDetail, BoardSummary, ConversationItem, EventView, InboxRule, InboxRuleKind, InboxView, InsightsView, LinkRole, MergeMethod, MergeOptions, MergeView, Outcome, Overview, LinkCard, PostFinding, PrChange, PrDetails,
   PostView, PrView, ReviewDraft, ReviewInput, ServerStatus, SyncHistory, SyncRun, SyncStep, SyncStepName, TestResult, ThreadOption, UsageRange, UsageView, Verdict,
 } from "./contract";
-import { askAgent, runAutoAgent, setAgent, setAgentMode, type AgentChange } from "./agents";
+import { askAgent, runAutoAgent, setAgent, setAgentMode, watchBacklog, type AgentChange } from "./agents";
 import { board as readBoard, boardAdd, boardCreate, boardRemove, boards as listBoards, boardUpdate } from "./boards";
 import { cancelAutoMerge, comment, Conversations, merge, mergeOptions, recordOutcomes, reply, resolve, type MergeOutcome } from "./conversation";
 import { draftView, historyView, saveDraft, setDraftState, submitReview, type DraftInput, type SubmitInput } from "./drafts";
@@ -519,7 +519,10 @@ export class Shuttle implements Ctx {
 
   async link(query: string, threadId: string, role: LinkRole = "owner", watch?: boolean): Promise<PrView> {
     const pr = await lookup(this, query);
-    await linkPr(this, pr, threadId, role, watch === undefined ? {} : { watch });
+    const { backlog } = await linkPr(this, pr, threadId, role, watch === undefined ? {} : { watch });
+    // The link is what turned the watch on, so the thread hears what the PR already has, now.
+    if (backlog) await this.kick(pr.key, { threadId, backlog })
+      .catch((error: unknown) => this.port.log("warn", `send feedback to the new agent of ${pr.key}: ${errText(error)}`));
     return toView(this, this.store.prById(pr.id)!);
   }
 
@@ -529,10 +532,13 @@ export class Shuttle implements Ctx {
     return toView(this, pr);
   }
 
-  watch(key: string, mode: WatchMode | null): PrView {
+  async watch(key: string, mode: WatchMode | null): Promise<PrView> {
     const pr = requirePr(this, key);
-    setWatch(this, pr, mode);
-    return toView(this, pr);
+    const backlog = watchBacklog(this, pr, mode);
+    setWatch(this, pr, mode, { backlog });
+    await this.kick(key, { threadId: this.store.ownerLink(pr.id)?.thread_id ?? null, backlog })
+      .catch((error: unknown) => this.port.log("warn", `send feedback to the agent of ${key}: ${errText(error)}`));
+    return this.view(key);
   }
 
   /** Sends a new agent the feedback already on the PR, now rather than after the batch window. */
@@ -550,8 +556,8 @@ export class Shuttle implements Ctx {
     return { pr: this.view(key), threadId: change.threadId };
   }
 
-  async setAgentMode(key: string, mode: AgentMode): Promise<PrView> {
-    const change = setAgentMode(this, key, mode);
+  async setAgentMode(key: string, mode: AgentMode, backlog?: boolean): Promise<PrView> {
+    const change = setAgentMode(this, key, mode, backlog);
     await this.kick(key, change).catch((error: unknown) => this.port.log("warn", `send feedback to the agent of ${key}: ${errText(error)}`));
     return this.view(key);
   }

@@ -70,24 +70,100 @@ describe("keeping PRs fresh", () => {
 describe("watched PRs", () => {
   it("refuses to watch a PR without an owner thread", async () => {
     const h = await setup();
-    expect(() => h.shuttle.watch("forge:acme/app#1", "act")).toThrow(/no agent/u);
+    await expect(h.shuttle.watch("forge:acme/app#1", "act")).rejects.toThrow(/no agent/u);
   });
 
-  it("baselines what is already there, then sends new items after the batch window, once", async () => {
-    const h = await setup();
-    await h.shuttle.link("forge:acme/app#1", "thr_owner");
-    h.activity[1] = { items: [review("old")] };
+  it("sends what the PR already has when its watch is turned on, at once and including a bot it hears from", async () => {
+    const h = harness(testConfig({ watch: { ...DEFAULT_CONFIG.watch, allowBots: ["review-bot"] } }));
+    h.lists.authored = [pr(1, { author: "me" })];
     await h.shuttle.sync();
-    expect(h.port.sent).toHaveLength(0);
-    h.activity[1] = { items: [review("old"), review("new"), review("bot", "ci", { bot: true }), review("mine", "me")] };
+    h.port.addThread("thr_owner", "Envoy work");
+    await h.shuttle.link("forge:acme/app#1", "thr_owner", "owner", false);
+    expect(h.shuttle.view("forge:acme/app#1").agent?.mode).toBe("off");
+    h.activity[1] = {
+      items: [review("missed"), review("finding", "review-bot", { bot: true }), review("queue", "merge-queue", { bot: true })],
+    };
+    await h.shuttle.watch("forge:acme/app#1", "act");
+    const text = h.port.sent.map((sent) => sent.text).join("\n");
+    expect(h.port.sent.map((sent) => sent.threadId)).toEqual(["thr_owner"]);
+    expect(text).toContain("Fix missed");
+    expect(text).toContain("Fix finding");
+    expect(text).not.toContain("Fix queue");
+    expect(h.clock.now).toBe(Date.parse("2026-10-23T12:00:00Z"));
+  });
+
+  it("still sends what a PR had when the first read after the watch went on fails", async () => {
+    const h = harness(testConfig({ watch: { ...DEFAULT_CONFIG.watch, allowBots: ["review-bot"] } }));
+    h.lists.authored = [pr(1, { author: "me" })];
+    await h.shuttle.sync();
+    h.port.addThread("thr_owner", "Envoy work");
+    await h.shuttle.link("forge:acme/app#1", "thr_owner", "owner", false);
+    h.activity[1] = new Error("temporary network failure");
+    await h.shuttle.watch("forge:acme/app#1", "act");
+    expect(h.port.sent).toEqual([]);
+    // The read that failed saw nothing, so it must not count as one that had already seen the PR's items.
+    h.activity[1] = { items: [review("bot-old", "review-bot", { bot: true, at: h.clock.now - 60_000 })] };
     h.clock.now += 3 * 60_000;
     await h.shuttle.sync();
-    expect(h.port.sent).toHaveLength(0);
+    h.clock.now += 3 * 60_000;
+    await h.shuttle.tick();
+    expect(h.port.sent).toHaveLength(1);
+    expect(h.port.sent[0]!.text).toContain("Fix bot-old");
+  });
+
+  it("sends nothing it was already sent, and nothing at all when all it missed is quiet", async () => {
+    const h = await setup();
+    await h.shuttle.link("forge:acme/app#1", "thr_owner");
+    await h.shuttle.sync();
+    h.activity[1] = { items: [review("a1")] };
+    h.clock.now += 3 * 60_000;
+    await h.shuttle.sync();
+    expect(await h.shuttle.sendUnread("thr_owner")).toBe(1);
+
+    await h.shuttle.watch("forge:acme/app#1", null);
+    h.activity[1] = { items: [review("a1"), { id: "ap", kind: "review", author: "ana", state: "approved", body: "LGTM" }] };
+    await h.shuttle.watch("forge:acme/app#1", "act");
+    expect(h.port.sent).toHaveLength(1);
+
+    await h.shuttle.watch("forge:acme/app#1", null);
+    await h.shuttle.watch("forge:acme/app#1", "act");
+    expect(h.port.sent).toHaveLength(1);
+  });
+
+  it("sends what a PR already has when a thread is made its agent by hand, and leaves auto agent to what is worth acting on", async () => {
+    const h = await setup();
+    h.activity[1] = { items: [review("old"), { id: "c1", kind: "comment", author: "ana", body: "An old question" }] };
+    await h.shuttle.setAgent("forge:acme/app#1", { kind: "existing", threadId: "thr_owner" }, "fix");
+    expect(h.port.sent).toHaveLength(1);
+    expect(h.port.sent[0]!.text).toContain("Fix old");
+    expect(h.port.sent[0]!.text).toContain("An old question");
+
+    const auto = harness();
+    auto.settings.autoAgent = true;
+    auto.port.addThread("thr_opened", "Opened it", false, { branch: "main-fix" });
+    auto.lists.authored = [pr(1, { author: "me", head_ref: "main-fix" })];
+    auto.activity[1] = { items: [{ id: "c1", kind: "comment", author: "ana", body: "An old question" }] };
+    await auto.shuttle.sync();
+    expect(auto.shuttle.view("forge:acme/app#1").agent?.threadId).toBe("thr_opened");
+    expect(auto.port.sent).toEqual([]);
+  });
+
+  it("sends what the PR had when its watch went on, then new items after the batch window, once", async () => {
+    const h = await setup();
+    h.activity[1] = { items: [review("old")] };
+    // Linking an owner to your own PR turns the watch on, so what is already there goes now.
+    await h.shuttle.link("forge:acme/app#1", "thr_owner");
+    expect(h.port.sent).toHaveLength(1);
+    expect(h.port.sent[0]!.text).toContain("Fix old");
+    h.activity[1] = { items: [review("old"), review("new"), review("bot", "ci", { bot: true }), review("mine", "me")] };
+    h.clock.now += 60_000;
+    await h.shuttle.sync();
+    expect(h.port.sent).toHaveLength(1);
     expect(h.shuttle.view("forge:acme/app#1").pendingItems).toBe(1);
     h.clock.now += 2 * 60_000;
     await h.shuttle.tick();
-    expect(h.port.sent).toHaveLength(1);
-    const text = h.port.sent[0]!.text;
+    expect(h.port.sent).toHaveLength(2);
+    const text = h.port.sent[1]!.text;
     expect(text).toContain("forge:acme/app#1");
     expect(text).toContain("Fix new");
     expect(text).not.toContain("Fix old");
@@ -98,14 +174,13 @@ describe("watched PRs", () => {
     await h.shuttle.sync();
     h.clock.now += 3 * 60_000;
     await h.shuttle.tick();
-    expect(h.port.sent).toHaveLength(1);
+    expect(h.port.sent).toHaveLength(2);
   });
 
-  it("sends one message per thread covering every PR it owns, and only items in forward mode", async () => {
+  it("sends one message per thread covering every PR it owns", async () => {
     const h = await setup();
     await h.shuttle.link("forge:acme/app#1", "thr_owner");
     await h.shuttle.link("forge:acme/app#2", "thr_owner");
-    h.shuttle.watch("forge:acme/app#2", "forward");
     await h.shuttle.sync();
     h.activity[1] = { items: [review("a1")] };
     h.activity[2] = { items: [review("b1")] };
@@ -118,8 +193,10 @@ describe("watched PRs", () => {
     expect(text).toContain("Fix a1");
     expect(text).toContain("Fix b1");
     const [one, two] = text.split("## forge:acme/app#2");
+    // Each PR's section carries the prompt that asks the thread to act, and the whole message asks once for the outcome.
     expect(one).toContain("Classify each finding");
-    expect(two).not.toContain("Classify each finding");
+    expect(two).toContain("Classify each finding");
+    expect(text.match(/shuttle_feedback_done/gu)).toHaveLength(1);
     expect(h.shuttle.threadPrs("thr_owner").sent).toHaveLength(2);
   });
 

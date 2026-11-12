@@ -44,7 +44,7 @@ export function ReviewPill({ pr }: { pr: Pick<PrView, "review" | "state" | "crea
   return <Pill tone={waited !== null && waited > 2 * DAY ? "warn" : "neutral"} icon="Clock">{waited === null ? "No review" : `No review · ${age(pr.createdAt!)}`}</Pill>;
 }
 
-/** Who handles the PR's feedback: nobody (dashed), an agent that fixes, or one that is only told. */
+/** Who handles the PR's feedback: nobody (dashed), or an agent that fixes it. */
 export function AgentPill({ pr }: { pr: Pick<PrView, "agent" | "state"> }) {
   if (!isLive(pr)) return null;
   const agent = pr.agent;
@@ -57,8 +57,8 @@ export function AgentPill({ pr }: { pr: Pick<PrView, "agent" | "state"> }) {
   }
   const status = agent.status === "waiting" ? { text: "needs you", className: "text-warning-text" } : agent.status === "working" ? { text: "fixing", className: "text-foreground" } : null;
   return (
-    <Pill tone={agent.mode === "fix" ? "info" : "neutral"} icon="Bot">
-      {agent.mode === "fix" ? "Agent fixes" : "Agent told"}
+    <Pill tone="info" icon="Bot">
+      Agent fixes
       {status !== null && <> · <b className={`font-semibold ${status.className}`}>{status.text}</b></>}
     </Pill>
   );

@@ -25,8 +25,8 @@ export type ReviewerState = (typeof REVIEWER_STATES)[number];
 /** What the user can change on a PR of theirs right now, given its state and its server's commands. */
 export const PR_ACTIONS = ["ready", "draft", "close", "reopen", "labels", "reviewers"] as const;
 export type PrAction = (typeof PR_ACTIONS)[number];
-/** What an agent does with new feedback: fix it (watch mode act), just hear about it (forward), or nothing. */
-export const AGENT_MODES = ["fix", "notify", "off"] as const;
+/** What an agent does with new feedback: fix it, or nothing. A watch that only sent the feedback was the same delivery with a shorter prompt. */
+export const AGENT_MODES = ["fix", "off"] as const;
 export type AgentMode = (typeof AGENT_MODES)[number];
 export const AGENT_STATUSES = ["working", "waiting", "idle", "archived", "unknown"] as const;
 export const VERDICTS = ["comment", "approve", "changes"] as const;
@@ -1086,7 +1086,7 @@ export const rpcContract = defineContract({
   watch: { input: z.object({ key, mode: z.enum(WATCH_MODES).nullable() }), output: prOut, invalidates: PRS },
   /** Make a thread the PR's agent (the one before stays linked for reference), start a new one, or have none. */
   setAgent: { input: z.object({ key, target: agentTargetSchema, mode: z.enum(AGENT_MODES).optional() }), output: z.object({ pr: prViewSchema, threadId: z.string().nullable() }), invalidates: PRS },
-  setAgentMode: { input: z.object({ key, mode: z.enum(AGENT_MODES) }), output: prOut, invalidates: PRS },
+  setAgentMode: { input: z.object({ key, mode: z.enum(AGENT_MODES), backlog: z.boolean().optional() }), output: prOut, invalidates: PRS },
   /** Send your text to the PR's agent thread, with the PR named; nothing is posted on the PR. */
   askAgent: { input: z.object({ key, text: body }), output: ok, invalidates: PRS },
   /** The page's own switches for Shuttle's bb settings. */

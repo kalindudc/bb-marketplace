@@ -1,12 +1,12 @@
 // Plain-text views for agent tools and the CLI.
 import { change, dollars, tokenCount } from "./amounts";
-import type { BoardDetail, BoardSummary, EventView, PrView, ServerStatus, UsageOutcome, UsageView } from "./contract";
+import type { AgentMode, BoardDetail, BoardSummary, EventView, PrView, ServerStatus, UsageOutcome, UsageView } from "./contract";
 import { periodLabel, previousText } from "./period";
 import { failureAdvice, STEP_LABELS } from "./failures";
 
 const REVIEW_TEXT = { approved: "approved", changes: "changes requested", required: "review required", none: "no review decision" } as const;
 
-const MODE_TEXT = { fix: "fixes new feedback", notify: "is told about new feedback", off: "is off" } as const;
+const MODE_TEXT: Record<AgentMode, string> = { fix: "fixes new feedback", off: "is off" };
 
 export function prLine(pr: PrView): string {
   const bits = [pr.state, `checks ${pr.checks}`, REVIEW_TEXT[pr.review]];

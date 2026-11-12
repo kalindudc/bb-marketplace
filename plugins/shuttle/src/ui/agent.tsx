@@ -3,13 +3,12 @@ import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
 import type { AgentMode, AgentView, PrView } from "../contract";
 import { useActions } from "./actions";
 import { BUTTON, BUTTON_GHOST, BUTTON_PRIMARY, Choice, Dialog, ErrorNote, LABEL, LABEL_FIRST, Pill, Segmented } from "./common";
-import { AGENT_MODE_META } from "./constants";
+import { AGENT_MODE_META, AGENT_MODES } from "./constants";
 import { messageOf, useShuttleQuery } from "./data";
 import { ago, tinyKey } from "./format";
 import { isLive } from "./pills";
 
-const MODES = (["fix", "notify", "off"] as const).map((value) => ({ value, label: AGENT_MODE_META[value].label, icon: AGENT_MODE_META[value].icon }));
-const NEW_MODES = MODES.filter((mode): mode is (typeof MODES)[number] & { value: "fix" | "notify" } => mode.value !== "off");
+const MODES = AGENT_MODES.map((value) => ({ value, label: AGENT_MODE_META[value].label, icon: AGENT_MODE_META[value].icon }));
 
 function StatusPill({ agent }: { agent: AgentView }) {
   if (agent.mode === "off") return null;
@@ -86,7 +85,7 @@ const SEARCH_DELAY_MS = 200;
 export function AgentDialog({ pr, start, onClose }: { pr: PrView; start?: "new"; onClose(): void }) {
   const { writes } = useActions();
   const [picked, setPicked] = useState<string | null>(start === NEW ? NEW : pr.suggestedAgent?.threadId ?? pr.agent?.threadId ?? null);
-  const [mode, setMode] = useState<Exclude<AgentMode, "off">>(pr.agent !== null && pr.agent.mode !== "off" ? pr.agent.mode : "fix");
+  const mode: Exclude<AgentMode, "off"> = "fix";
   const [query, setQuery] = useState("");
   const [search, setSearch] = useState("");
   const [busy, setBusy] = useState(false);
@@ -138,12 +137,7 @@ export function AgentDialog({ pr, start, onClose }: { pr: PrView; start?: "new";
         <Choice on={picked === NEW} title="A new thread for this PR" hint={`In the project whose remote matches ${pr.repo}, on the PR's branch`} onPick={() => setPicked(NEW)} />
       </div>
       <div className={LABEL}>What it does</div>
-      <Segmented label="What it does" value={mode} options={NEW_MODES} onChange={setMode} />
-      <div className="mt-1.5 text-xs text-muted-foreground">
-        {mode === "fix"
-          ? "The thread gets each new review, comment and failed check, and is asked to fix them. It asks you before it pushes or replies."
-          : "The thread gets each new review, comment and failed check, and is not asked to act."}
-      </div>
+      <div className="text-xs text-muted-foreground">The thread gets each new review, comment and failed check, and is asked to fix them. It asks you before it pushes or replies.</div>
     </Dialog>
   );
 }

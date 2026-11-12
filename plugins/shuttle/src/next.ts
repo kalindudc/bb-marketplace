@@ -170,9 +170,7 @@ function mineNext(f: NextFacts): NextStep {
   }
   if (feedback && active) {
     const what = feedbackText(f);
-    return active.mode === "fix"
-      ? step("agent_on_it", "info", "The agent is on it", `\u201c${active.title}\u201d has ${what} and is asked to fix it.`, { more: [act("open_agent", "Open the thread")] })
-      : step("agent_on_it", "info", "Sent to its thread", `\u201c${active.title}\u201d was told about ${what}, and not asked to fix it.`, { more: [act("open_agent", "Open the thread")] });
+    return step("agent_on_it", "info", "The agent is on it", `\u201c${active.title}\u201d has ${what} and is asked to fix it.`, { more: [act("open_agent", "Open the thread")] });
   }
   if (f.state === "draft") {
     return step("draft", "neutral", "Draft", "Reviewers are not notified until it is ready.", { primary: f.can.ready ? act("ready", "Ready for review") : null });

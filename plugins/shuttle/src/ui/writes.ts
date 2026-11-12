@@ -6,11 +6,10 @@ import { atNine, plural, ruleText, tinyKey, when } from "./format";
 import { useMergeWrites } from "./merges";
 import { usePostWrites } from "./posts";
 
-const WATCH_OF: Record<AgentMode, PrView["watch"]> = { fix: "act", notify: "forward", off: null };
+const WATCH_OF: Record<AgentMode, PrView["watch"]> = { fix: "act", off: null };
 
 const MODE_TOASTS: Record<AgentMode, (pr: PrView) => string> = {
   fix: () => "The agent now fixes new feedback.",
-  notify: () => "The agent is now told about new feedback, and not asked to fix it.",
   off: (pr) => `The agent of ${tinyKey(pr)} is off. New feedback waits in your Inbox.`,
 };
 
@@ -77,12 +76,20 @@ export function usePrWrites(threadIds: readonly string[]) {
   const merges = useMergeWrites();
   const cancelAutoMerge = useShuttleMutation("cancelAutoMerge", ({ key }, cache) => patchPr(cache, key, (pr) => ({ ...pr, autoMerge: false }), threadIds));
 
+  const setMode = (pr: PrView, mode: AgentMode, backlog?: boolean) => setAgentMode.run({ key: pr.key, mode, ...(backlog === undefined ? {} : { backlog }) });
+
+  /** Undo puts the previous mode back and nothing else: an accidental Off must not send the PR's history. */
+  const undoMode = async (pr: PrView, mode: AgentMode) => {
+    const out = await setMode(pr, mode, false);
+    if (out !== null) toast.success(MODE_TOASTS[mode](pr));
+  };
+
   const changeMode = async (pr: PrView, mode: AgentMode, undoable = true) => {
     const before = pr.agent?.mode ?? null;
     if (before === null || before === mode) return;
     const out = await setAgentMode.run({ key: pr.key, mode });
     if (out === null) return;
-    if (undoable) undoToast(MODE_TOASTS[mode](pr), () => void changeMode({ ...pr, agent: { ...pr.agent!, mode } }, before, false));
+    if (undoable) undoToast(MODE_TOASTS[mode](pr), () => void undoMode({ ...pr, agent: { ...pr.agent!, mode } }, before));
     else toast.success(MODE_TOASTS[mode](pr));
   };
 

@@ -20,6 +20,11 @@ export type WriteOperation = (typeof WRITE_OPERATIONS)[number];
 
 export const AUTO_TRIGGERS = ["requested", "team", "mentioned"] as const;
 export const WORKSPACES = ["project-default", "worktree"] as const;
+/**
+ * A watch is on ("act") or off (null). "forward", a watch that only sent the feedback, was folded into it: the same
+ * items, the same batching, only a shorter prompt. It is still accepted so a saved config or a caller written before
+ * the change loads, and every value but null means the same watch.
+ */
 export const WATCH_MODES = ["act", "forward"] as const;
 export type WatchMode = (typeof WATCH_MODES)[number];
 
@@ -132,6 +137,7 @@ export type BotPhrases = z.infer<typeof botPhrasesSchema>;
 export const watchSchema = z
   .object({
     enabled: z.boolean().default(true),
+    /** Kept only so a config saved before the modes were cut still loads; nothing reads it. */
     mode: z.enum(WATCH_MODES).default("act"),
     autoWatch: z.boolean().default(true),
     includeChecks: z.boolean().default(true),

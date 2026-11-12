@@ -227,7 +227,6 @@ describe("Shuttle settings sections", () => {
     fireEvent.change(slot.getByRole("textbox", { name: "Only these repositories" }), { target: { value: "acme/app, get-bb/*" } });
     fireEvent.change(slot.getByRole("spinbutton", { name: "Auto reviews a day" }), { target: { value: "3" } });
     fireEvent.change(slot.getByRole("combobox", { name: "Auto review preset" }), { target: { value: "quick" } });
-    fireEvent.change(slot.getByRole("combobox", { name: "What a new agent does" }), { target: { value: "forward" } });
     const bots = slot.getByRole("textbox", { name: "Bots an agent still hears from" }) as HTMLInputElement;
     expect(bots.value).toBe("");
     fireEvent.change(bots, { target: { value: "review-bot, *-scanner" } });
@@ -238,7 +237,7 @@ describe("Shuttle settings sections", () => {
     await waitFor(() => expect(saved(slot)).toHaveLength(1));
     const next = saved(slot)[0]!;
     expect(next.autoReview).toMatchObject({ when: ["requested", "mentioned"], repos: ["acme/app", "get-bb/*"], maxPerDay: 3, preset: "quick" });
-    expect(next.watch).toMatchObject({ mode: "forward", ignoreBots: false, allowBots: ["review-bot", "*-scanner"], autoWatch: false });
+    expect(next.watch).toMatchObject({ ignoreBots: false, allowBots: ["review-bot", "*-scanner"], autoWatch: false });
     expect(next.presets).toEqual(config().presets);
   });
 
@@ -390,11 +389,8 @@ describe("Shuttle settings sections", () => {
   it("names agents, not watching, in the automations", async () => {
     const slot = await section("automations");
     await slot.findByText("Agents");
-    const mode = slot.getByRole("combobox", { name: "What a new agent does" }) as HTMLSelectElement;
-    expect([...mode.options].map((option) => [option.value, option.textContent])).toEqual([
-      ["act", "Fix it: send new feedback and ask it to fix it"],
-      ["forward", "Just tell it: send new feedback only"],
-    ]);
+    // There is one thing an agent does, so there is nothing to choose here.
+    expect(slot.queryByRole("combobox", { name: "What a new agent does" })).toBeNull();
     expect(slot.getByRole("checkbox", { name: /Also send failed checks on the head/u })).toBeTruthy();
     expect(slot.getByText("What a Fix it agent is asked to do")).toBeTruthy();
     expect(slot.queryByText(/Watched PRs/u)).toBeNull();

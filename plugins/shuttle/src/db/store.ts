@@ -882,8 +882,13 @@ export class Store {
     return this.sql("SELECT * FROM watches").all() as WatchRow[];
   }
 
+  /** `checked_at` is when a read last worked: a read that failed saw nothing, so it leaves that time alone. */
   markWatchChecked(prId: number, error: string | null, baselined?: boolean): void {
-    this.sql("UPDATE watches SET checked_at = ?, error = ?, baselined = CASE WHEN ? THEN 1 ELSE baselined END WHERE pr_id = ?").run(this.now(), error, baselined ? 1 : 0, prId);
+    if (error !== null) {
+      this.sql("UPDATE watches SET error = ? WHERE pr_id = ?").run(error, prId);
+      return;
+    }
+    this.sql("UPDATE watches SET checked_at = ?, error = NULL, baselined = CASE WHEN ? THEN 1 ELSE baselined END WHERE pr_id = ?").run(this.now(), baselined ? 1 : 0, prId);
   }
 
   setWatchBots(prId: number, bots: string): void {
