@@ -63,6 +63,22 @@ describe("plugin app", () => {
     expect(injected()!.textContent).toContain("--canvas: #1d2021;");
   });
 
+  it("previews House style and applies it after a settings change", async () => {
+    page();
+    const app = await loadPluginApp(() => import("../app"));
+    const getSettings = settings({ mode: "soft" });
+    const slot = renderSlot(app.settingsSections[0]!, {}, { pluginId: "gruve", sdk: { plugins: { getSettings } } });
+    await vi.waitFor(() => expect(getSettings).toHaveBeenCalled());
+
+    getSettings.mockResolvedValueOnce({ ok: true, schema: {}, values: { mode: "house" } });
+    await slot.behavior.emitRealtime("appearance", {});
+    await vi.waitFor(() => expect(slot.getByText(/House style:/u)).toBeTruthy());
+    expect(slot.getByLabelText("Light preview").style.background).toBe("rgb(246, 243, 236)");
+    expect(slot.getByLabelText("Dark preview").style.background).toBe("rgb(36, 34, 31)");
+    expect(injected()!.textContent).toContain("--primary: #3f6b78;");
+    expect(injected()!.textContent).toContain("--primary: #7daea3;");
+  });
+
   it("re-reads the settings when the server reports a change", async () => {
     page();
     const app = await loadPluginApp(() => import("../app"));

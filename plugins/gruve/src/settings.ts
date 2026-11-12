@@ -7,7 +7,7 @@ export const MIN_FONT_SIZE = 12;
 export const MAX_FONT_SIZE = 20;
 
 export type Accent = "yellow" | "orange" | "red" | "green" | "aqua" | "blue" | "purple";
-export type Mode = "classic" | "crisp" | "soft" | "dim";
+export type Mode = "classic" | "crisp" | "soft" | "dim" | "house";
 export type InterfaceFont = "jetbrains" | "plex" | "fira" | "source" | "cascadia" | "system-mono" | "system-sans";
 export type CodeFont = Exclude<InterfaceFont, "system-sans">;
 export type Corners = "square" | "soft" | "rounded";
@@ -37,7 +37,7 @@ export const DEFAULT_APPEARANCE: GruveAppearance = {
 };
 
 const ACCENTS: readonly Accent[] = ["yellow", "orange", "red", "green", "aqua", "blue", "purple"];
-export const MODES: readonly Mode[] = ["classic", "crisp", "soft", "dim"];
+export const MODES: readonly Mode[] = ["classic", "crisp", "soft", "dim", "house"];
 
 /* Gruve 0.3.0 stored a light-only setting under this key; its choices map onto the modes. */
 const LEGACY_LIGHT_MODES: Readonly<Record<string, Mode>> = { classic: "classic", bright: "crisp", soft: "soft", dim: "dim" };
@@ -64,7 +64,7 @@ export const SETTING_DESCRIPTORS = {
   accent: {
     type: "select",
     label: "Accent colour",
-    description: "Links, the composer prompt and focused controls. Each mode gets its own shade of the colour, so both stay readable.",
+    description: "Links, the composer prompt and focused controls. Each mode uses its own shades. House style uses Blue in place of Yellow, which is not in the house palette.",
     options: [...ACCENTS],
     experimental_optionLabels: {
       yellow: "Yellow (default)",
@@ -81,13 +81,14 @@ export const SETTING_DESCRIPTORS = {
     type: "select",
     label: "Mode",
     description:
-      "How much light Gruve gives off and how firmly it draws lines. Each mode has a light and a dark version, and bb's own light or dark setting picks between them.",
+      "The palette, brightness and contrast. Each mode has a light and a dark version, and bb's own light or dark setting picks between them. House style uses the house paper, charcoal and muted accents.",
     options: [...MODES],
     experimental_optionLabels: {
       classic: "Classic: the colours of Gruve 0.2.0",
       crisp: "Crisp: the most contrast, with the brightest text",
       soft: "Soft: dimmed paper and gruvbox soft dark (default)",
       dim: "Dim: the least light, for a dark room",
+      house: "House style: warm paper, charcoal and muted accents",
     },
     default: DEFAULT_APPEARANCE.mode,
   },

@@ -48,7 +48,7 @@ export function GruveAppearanceSettings() {
           The quick brown fox jumps over the lazy dog.
         </p>
         <p className="text-muted-foreground" style={{ fontFamily: codeFontStack(shown.codeFont), fontSize: `${shown.fontSize}px` }}>
-          {"const yellow = '#fabd2f';"}
+          {`const accent = '${primary}';`}
         </p>
         <p className="flex items-center gap-2 text-xs text-muted-foreground">
           <span aria-hidden style={{ color: primary, fontFamily: interfaceFontStack(shown.interfaceFont) }}>

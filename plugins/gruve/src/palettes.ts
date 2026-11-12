@@ -6,6 +6,7 @@
    falls back on another's, and carries its own shade of each accent. */
 
 import type { Accent, Mode } from "./settings";
+import house from "./house-tokens.json";
 
 export interface Palette {
   /** Every colour the theme sets for this scheme, by token name. */
@@ -14,7 +15,71 @@ export interface Palette {
   readonly accents: Readonly<Record<Accent, readonly [string, string]>>;
 }
 
+const HOUSE_TOKEN_MAP = {
+  "--canvas": "paper",
+  "--ink": "ink",
+  "--card": "card",
+  "--popover": "card",
+  "--sidebar": "paper",
+  "--sidebar-accent": "deep",
+  "--secondary": "deep",
+  "--accent": "deep",
+  "--muted": "deep",
+  "--border": "rule",
+  "--border-hairline": "ruleSoft",
+  "--border-seam": "rule",
+  "--sidebar-border": "rule",
+  "--input": "inkSoft",
+  "--surface-recessed-solid": "deep",
+  "--timeline-accent": "blue",
+  "--file-accent": "blue",
+  "--muted-foreground": "inkSoft",
+  "--readback-foreground": "inkSoft",
+  "--subtle-foreground": "inkSoft",
+  "--destructive": "red",
+  "--destructive-foreground": "onAccent",
+  "--destructive-text": "red",
+  "--warning": "orange",
+  "--warning-text": "orange",
+  "--attention": "orange",
+  "--attention-foreground": "onAccent",
+  "--success": "aqua",
+  "--diff-added": "aqua",
+  "--diff-removed": "red",
+  "--pr-merged": "purple",
+} as const;
+
+function housePalette(scheme: "light" | "dark"): Palette {
+  const colours = house[scheme];
+  const ansi = [
+    scheme === "light" ? colours.ink : colours.deep,
+    colours.red, colours.green, colours.orange, colours.blue, colours.purple, colours.aqua, colours.inkSoft,
+    colours.inkSoft, colours.red, colours.green, colours.orange, colours.blue, colours.purple, colours.aqua, colours.ink,
+  ];
+  return {
+    tokens: {
+      ...Object.fromEntries(Object.entries(HOUSE_TOKEN_MAP).map(([token, key]) => [token, colours[key]])),
+      "--state-hover": "color-mix(in oklab, var(--ink) 8%, transparent)",
+      "--surface-recessed": "var(--surface-recessed-solid)",
+      ...Object.fromEntries(ansi.flatMap((colour, i) => [
+        [`--ansi-${i}`, colour],
+        [`--ansi-bg-fg-${i}`, scheme === "dark" && i === 0 ? colours.ink : colours.onAccent],
+      ])),
+    },
+    accents: {
+      yellow: [colours.blue, colours.onAccent],
+      orange: [colours.orange, colours.onAccent],
+      red: [colours.red, colours.onAccent],
+      green: [colours.green, colours.onAccent],
+      aqua: [colours.aqua, colours.onAccent],
+      blue: [colours.blue, colours.onAccent],
+      purple: [colours.purple, colours.onAccent],
+    },
+  };
+}
+
 export const PALETTES: Readonly<Record<Mode, { readonly light: Palette; readonly dark: Palette }>> = {
+  house: { light: housePalette("light"), dark: housePalette("dark") },
   classic: {
     light: {
       tokens: {

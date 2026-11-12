@@ -8,10 +8,10 @@ A gruvbox theme for bb, tuned for long coding sessions: sharp corners, flat surf
 - JetBrains Mono for the whole interface, code and the integrated terminal. It falls back to your system monospace font when JetBrains Mono is not installed.
 - A composer styled as a terminal prompt: a `❯` before your first line, a yellow caret, an accent border while it has focus, and an outlined send button.
 - Gruvbox syntax colours in diffs and file previews: gruvbox dark soft and gruvbox light hard.
-- A gruvbox terminal palette for each mode.
-- Seven settings under **Settings → Installed plugins → Gruve**: accent colour (seven gruvbox accents, each with a shade for both modes), a mode for how much light and contrast the theme has, in light and dark alike (Classic, Crisp, the default Soft, or Dim), interface font, code and terminal font, text size from 12 to 20px, corners (square, 3px or 6px) and the composer's prompt glyph. Every default is what the theme ships with, so the CSS stays exactly as written until you change something, and a save applies straight away in the window you made it.
+- A matching terminal palette for each mode. House style uses warm paper and charcoal with the house accents, including orange rather than yellow.
+- Seven settings under **Settings → Installed plugins → Gruve**: accent colour (seven gruvbox accents, each with a shade for both modes), a mode for how much light and contrast the theme has, in light and dark alike (Classic, Crisp, the default Soft, Dim, or House style), interface font, code and terminal font, text size from 12 to 20px, corners (square, 3px or 6px) and the composer's prompt glyph. Every default is what the theme ships with, so the CSS stays exactly as written until you change something, and a save applies straight away in the window you made it.
 
-Every text colour clears 4.5:1 contrast on the canvas, cards, menus, sidebar and hovered rows in both modes, and so does every terminal colour except black. A test keeps it that way, including every accent the settings offer.
+The four gruvbox modes keep their contrast checks. House style preserves the exact house colours and its single secondary ink colour. On BB’s translucent dark card badges, orange, purple and red fall below the 4.5:1 threshold for small text; tests record those limits. House style maps the Yellow accent setting to house Blue and leaves the font, corner and prompt controls independent.
 
 ## Turn it on
 

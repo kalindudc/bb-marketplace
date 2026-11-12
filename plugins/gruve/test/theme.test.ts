@@ -91,19 +91,34 @@ describe.each(SCHEMES)("%s", (_name, tokens) => {
   });
 
   // bb's status badges and Theme Preview paint the text on a 15% wash of the status colour.
-  it.each([
+  const washes = [
     ["--success", "--success"],
     ["--warning-text", "--warning"],
     ["--attention", "--attention"],
     ["--destructive-text", "--destructive"],
     ["--pr-merged", "--pr-merged"],
-  ])("%s on a 15 percent wash of %s clears 4.5:1", (text, wash) => {
+  ];
+  const houseLimit = ([text]: string[]) => _name === "house dark" && text !== "--success";
+
+  it.each(washes.filter((pair) => !houseLimit(pair)))("%s on a 15 percent wash of %s clears 4.5:1", (text, wash) => {
     for (const surface of ["--card", "--canvas"]) {
       expect(contrast(hex(tokens, text), over(hex(tokens, wash), hex(tokens, surface), 0.15))).toBeGreaterThanOrEqual(4.5);
     }
   });
 
-  it("orders the text tiers muted, readback, subtle from strongest to weakest", () => {
+  it.each(washes.filter(houseLimit))("records the exact house palette's %s on a wash of %s below AA", (text, wash) => {
+    const ratios = ["--card", "--canvas"].map((surface) =>
+      contrast(hex(tokens, text), over(hex(tokens, wash), hex(tokens, surface), 0.15)));
+    expect(Math.min(...ratios)).toBeGreaterThanOrEqual(3.8);
+    expect(Math.min(...ratios)).toBeLessThan(4.5);
+  });
+
+  it("keeps text tiers ordered, with one secondary ink in House style", () => {
+    if (_name.startsWith("house ")) {
+      expect(tokens["--muted-foreground"]).toBe(tokens["--readback-foreground"]);
+      expect(tokens["--readback-foreground"]).toBe(tokens["--subtle-foreground"]);
+      return;
+    }
     const onCanvas = (name: string) => contrast(hex(tokens, name), hex(tokens, "--canvas"));
     expect(onCanvas("--muted-foreground")).toBeGreaterThan(onCanvas("--readback-foreground"));
     expect(onCanvas("--readback-foreground")).toBeGreaterThan(onCanvas("--subtle-foreground"));
@@ -196,7 +211,7 @@ describe("palettes", () => {
   it.each(MODES.flatMap((mode) => (["light", "dark"] as const).map((scheme) => [mode, scheme] as const)))(
     "%s %s sets every colour the theme sets",
     (mode, scheme) => {
-      expect(Object.keys(PALETTES[mode][scheme].tokens).sort()).toEqual(colours(themeBlock[scheme]).sort());
+      expect(colours(PALETTES[mode][scheme].tokens).sort()).toEqual(colours(themeBlock[scheme]).sort());
     },
   );
 

@@ -2,6 +2,13 @@
 
 Notable changes to Gruve, newest first. Releases are tagged `gruve/vX.Y.Z` in this repository.
 
+## 0.4.0 (2026-11-12)
+
+### Added
+
+- House style mode with the house palette's warm paper and charcoal, muted accents, semantic status colours and matching terminal colours in both light and dark mode. Yellow maps to house Blue; other accent choices keep their house equivalents. Existing font, corner, size and prompt settings are unchanged.
+- Tests for palette fidelity, settings persistence and live settings previews. Contrast tests record the exact palette's known limits on BB's dark status badge washes.
+
 ## 0.3.2 (2026-11-05)
 
 ### Fixed
