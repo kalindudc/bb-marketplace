@@ -91,6 +91,20 @@ describe("House style", () => {
     expect(appearanceCss(parseAppearance({ mode: "crisp" }))).not.toContain("--gruve-sent");
   });
 
+  it("keeps heavier light text and restores regular dark text", () => {
+    const css = appearanceCss(parseAppearance({ mode: "house" }));
+    const root = css.match(/:root \{([^}]*)\}/u)![1];
+    const light = css.match(/:root:not\(\.dark\), \.light \{([^}]*)\}/u)![1];
+    const dark = css.match(/\.dark \{([^}]*)\}/u)![1];
+    expect(root).not.toContain("--font-weight-normal:");
+    expect(root).not.toContain("--font-weight-medium:");
+    expect(light).toContain("--font-weight-normal: 500;");
+    expect(light).toContain("--font-weight-medium: 600;");
+    expect(dark).toContain("--font-weight-normal: 400;");
+    expect(dark).toContain("--font-weight-medium: 500;");
+    expect(dark).not.toContain("--font-weight-medium: 600;");
+  });
+
   it("uses stronger text weights, native smoothing and sturdier icons only in House style", () => {
     const css = appearanceCss(parseAppearance({ mode: "house" }));
     expect(css).toContain("-webkit-font-smoothing: auto;");

@@ -73,7 +73,9 @@ export function appearanceCss(appearance: GruveAppearance): string {
 
   if (appearance.mode === "house") {
     root.push("-webkit-font-smoothing: auto;", "-moz-osx-font-smoothing: auto;", "text-rendering: optimizeLegibility;");
-    root.push("--font-weight-normal: 500;", "--font-weight-medium: 600;", "font-weight: var(--font-weight-normal);");
+    root.push("font-weight: var(--font-weight-normal);");
+    light.push("--font-weight-normal: 500;", "--font-weight-medium: 600;");
+    dark.push("--font-weight-normal: 400;", "--font-weight-medium: 500;");
     root.push("--icon-stroke-width: 2;");
   }
   if (appearance.fontSize !== DEFAULT_APPEARANCE.fontSize) root.push(`font-size: ${appearance.fontSize}px;`);

@@ -2,6 +2,12 @@
 
 Notable changes to Gruve, newest first. Releases are tagged `gruve/vX.Y.Z` in this repository.
 
+## 0.4.2 (2026-11-12)
+
+### Fixed
+
+- House style’s heavier text weights now apply only in light mode. Dark mode returns to weight 400 for regular text and 500 for medium labels, and the settings previews show each scheme’s actual weight.
+
 ## 0.4.1 (2026-11-12)
 
 ### Changed

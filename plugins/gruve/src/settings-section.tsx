@@ -76,7 +76,7 @@ function ModeSample({ mode, scheme, appearance }: { mode: Mode; scheme: "light" 
     <div
       aria-label={`${scheme === "light" ? "Light" : "Dark"} preview`}
       className="flex flex-col gap-1.5 rounded-lg p-2 text-sm"
-      style={{ background: colours["--canvas"], border: `1px solid ${colours["--border"]}`, fontFamily: interfaceFontStack(appearance.interfaceFont) }}
+      style={{ background: colours["--canvas"], border: `1px solid ${colours["--border"]}`, fontFamily: interfaceFontStack(appearance.interfaceFont), fontWeight: mode === "house" ? (scheme === "light" ? 500 : 400) : undefined }}
     >
       <div
         className="flex flex-wrap items-center gap-2 rounded px-2 py-1.5"
