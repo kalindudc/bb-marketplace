@@ -20,6 +20,7 @@ export interface Bridge {
   read(url: string): { key: string; kind: string } | null;
   enter(target: LinkTargetRef): void;
   leave(): void;
+  dismiss?(): void;
   /** A touch on a link: the card opens as a sheet instead of the link. */
   tap(target: LinkTargetRef): void;
   /** Links whose PR state nobody has asked for yet. */
@@ -36,6 +37,7 @@ let bridge: Bridge | null = null;
 
 export const enterReference = (target: LinkTargetRef) => bridge?.enter(target);
 export const leaveReference = () => bridge?.leave();
+export const dismissReference = () => bridge?.dismiss?.();
 export const tapReference = (target: LinkTargetRef) => bridge?.tap(target);
 let schedule: () => void = () => {};
 const states = new Map<string, string>();

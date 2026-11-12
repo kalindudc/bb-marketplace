@@ -97,6 +97,7 @@ export function LinkOverlay() {
           setOpen((current) => current?.sheet ? current : null);
         }, HIDE_DELAY);
       },
+      dismiss: () => { clearTimeout(showTimer.current); clearTimeout(hideTimer.current); setOpen(null); },
       tap: (target) => setOpen({ target, sheet: true }),
       into: () => {
         const first = cardRef.current ? cardTabStops(cardRef.current)[0] : undefined;
@@ -243,7 +244,7 @@ function HoverCard({ target, moved, cardRef, onPointerEnter, onPointerLeave, onF
       onFocus={onFocusIn} onBlur={(event) => onFocusOut(event.relatedTarget instanceof Element ? event.relatedTarget : null)}
       style={{ position: "fixed", top: pos?.top ?? -9999, left: pos?.left ?? -9999, width: WIDTH, maxWidth: "calc(100vw - 16px)", zIndex: 60 }}
       className="overflow-hidden rounded-lg border border-border bg-popover text-popover-foreground shadow-md">
-      <LinkCardBody url={target.url} kind={target.kind} card={card.data} error={card.error} navigate={navigate} onDone={onDone} />
+      <LinkCardBody url={target.url} kind={target.kind} card={card.data} error={card.error} navigate={navigate} onDone={onDone} onOpenInShuttle={target.el.dataset.shuttleNavigation === "shuttle" ? () => target.el.click() : undefined} />
       {target.referenceId && <div className="border-t border-border p-3"><ReferenceFeedback key={target.referenceId} id={target.referenceId} url={target.url} onDone={onDone} /></div>}
     </div>,
     document.body,
@@ -270,7 +271,7 @@ function LinkSheet({ target, onClose }: { target: LinkTargetRef; onClose(): void
   return (
     <Dialog title={card.data?.label ?? "Link"} onClose={onClose}>
       <div data-shuttle-card="" className={phone ? "-mx-4" : ""}>
-        <LinkCardBody url={target.url} kind={target.kind} card={card.data} error={card.error} navigate={navigate} onDone={onClose} sheet />
+        <LinkCardBody url={target.url} kind={target.kind} card={card.data} error={card.error} navigate={navigate} onDone={onClose} sheet onOpenInShuttle={target.el.dataset.shuttleNavigation === "shuttle" ? () => target.el.click() : undefined} />
         {target.referenceId && <div className="border-t border-border p-3"><ReferenceFeedback key={target.referenceId} id={target.referenceId} url={target.url} onDone={onClose} /></div>}
       </div>
     </Dialog>

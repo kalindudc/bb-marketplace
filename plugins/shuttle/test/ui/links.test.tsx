@@ -63,6 +63,21 @@ const frame = () => new Promise((resolve) => requestAnimationFrame(() => resolve
 const hover = (el: Element) => fireEvent(el, new Event("pointerover", { bubbles: true }));
 
 describe("git links in a thread", () => {
+  it("delegates a reference popover to its side-panel link instead of a full PR page", async () => {
+    const { slot, link } = await thread([PR_URL]);
+    const open = vi.fn();
+    link(0).dataset.shuttleNavigation = "shuttle";
+    link(0).dataset.shuttleReferenceId = "a".repeat(64);
+    link(0).addEventListener("click", open);
+    await waitFor(() => expect(link(0).dataset.shuttleLink).toBe("pr"));
+    hover(link(0));
+    const card = await screen.findByRole("dialog");
+    fireEvent.click(await within(card).findByRole("button", { name: "Open in Shuttle" }));
+    expect(open).toHaveBeenCalledOnce();
+    expect(slot.inspection.navigateCalls.some((call) => call.method === "toPluginPanel")).toBe(false);
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
   it("closes an open card when its target changes, including sheets", async () => {
     const { link } = await thread([PR_URL]);
     await waitFor(() => expect(link(0).dataset.shuttleLink).toBe("pr"));

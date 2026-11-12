@@ -104,7 +104,7 @@ function Quote({ author, bot, at, verdict, children }: { author: string | null; 
 }
 
 /** What the link names, the next step of its PR, a few facts, then Open in Shuttle and Open on its server. Nothing in it writes. */
-export function LinkCardBody({ url, kind, card, error, navigate, onDone, sheet = false }: {
+export function LinkCardBody({ url, kind, card, error, navigate, onDone, sheet = false, onOpenInShuttle }: {
   url: string;
   kind: string;
   card: LinkCard | undefined;
@@ -112,13 +112,15 @@ export function LinkCardBody({ url, kind, card, error, navigate, onDone, sheet =
   navigate: BbNavigate;
   onDone(): void;
   sheet?: boolean;
+  onOpenInShuttle?(): void;
 }) {
   const icon = KIND_ICONS[(card?.kind ?? kind) as LinkCard["kind"]] ?? "GitPullRequest";
   const pr = card?.pr ?? null;
   const openInShuttle = () => {
     if (!card?.prKey) return;
     presetTab(card.prKey, card.tab);
-    navigate.toPluginPanel(PANEL_PATH, { subPath: formatRoute({ view: "pr", key: card.prKey }) });
+    if (onOpenInShuttle) onOpenInShuttle();
+    else navigate.toPluginPanel(PANEL_PATH, { subPath: formatRoute({ view: "pr", key: card.prKey }) });
     onDone();
   };
   const openOnServer = () => {

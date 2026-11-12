@@ -5,7 +5,7 @@ import { linkKey, parseGitLink } from "../../links";
 import { rememberPanelReference } from "../prefs";
 import { useOpenShuttleTab } from "../tab";
 import { toast } from "sonner";
-import { enterReference, leaveReference, tapReference, type LinkTargetRef } from "./dom";
+import { dismissReference, enterReference, leaveReference, tapReference, type LinkTargetRef } from "./dom";
 import { scanReferenceText, type ReferenceRange } from "./reference-text";
 import { clearReferenceHighlights, setReferenceHighlights, supportsReferenceHighlights } from "./reference-highlights";
 
@@ -109,7 +109,7 @@ export function MessageReferences({ message }: ExperimentalMessageMetadataProps)
         if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
         event.preventDefault();
         const target = parseGitLink(row.url!, config.data?.config.servers ?? []);
-        if (target?.kind === "pr") { rememberPanelReference(message.threadId, row.id); openPanel(message.threadId); }
+        if (target?.kind === "pr") { dismissReference(); rememberPanelReference(message.threadId, row.id); openPanel(message.threadId); }
         else if (target?.kind === "issue") tapReference({ el: event.currentTarget, url: row.url!, key: linkKey(target), kind: "issue", referenceId: row.id });
         else toast.error("Shuttle could not identify this reference's target yet.");
       }}
