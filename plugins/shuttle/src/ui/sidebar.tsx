@@ -1,12 +1,12 @@
 import { experimental_Icon as Icon, useBbNavigate, type PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
 import type { ServerStatus } from "../contract";
-import { AREA_META, PANEL_PATH, SOURCE_META } from "./constants";
+import { AREA_META, INSIGHTS_TAB_LABELS, PANEL_PATH, SOURCE_META } from "./constants";
 import { useShuttleQuery } from "./data";
 import { ago } from "./format";
 import { AutomationPauseControls } from "./automation-pause";
 import { sourceCounts } from "./reviews";
 import { routeOf } from "./prefs";
-import { formatRoute, SOURCES, type Route } from "./route";
+import { formatRoute, INSIGHTS_TABS, SOURCES, type Route } from "./route";
 import { sidebarReason } from "./sync";
 
 function NavItem({ icon, label, count, hot = false, on, sub = false, onClick }: { icon?: string; label: string; count: number | null; hot?: boolean; on: boolean; sub?: boolean; onClick(): void }) {
@@ -83,15 +83,9 @@ export function ShuttleSidebar({ subPath }: PluginNavPanelProps) {
         <NavItem key={board.id} sub label={board.name} count={board.prCount} on={route.view === "board" && route.id === board.id} onClick={() => go({ view: "board", id: board.id, key: null })} />
       ))}
       <NavItem icon={AREA_META.insights.icon} label="Insights" count={null} on={route.view === "insights"} onClick={() => go({ view: "insights", tab: "overview" })} />
-      {route.view === "insights" && (
-        <>
-          <NavItem sub label="Overview" count={null} on={route.tab === "overview"} onClick={() => go({ view: "insights", tab: "overview" })} />
-          <NavItem sub label="Usage" count={null} on={route.tab === "usage"} onClick={() => go({ view: "insights", tab: "usage" })} />
-          <NavItem sub label="Auto post" count={null} on={route.tab === "autopost"} onClick={() => go({ view: "insights", tab: "autopost" })} />
-          <NavItem sub label="Automation log" count={null} on={route.tab === "log"} onClick={() => go({ view: "insights", tab: "log" })} />
-          <NavItem sub label="Sync" count={null} on={route.tab === "sync"} onClick={() => go({ view: "insights", tab: "sync" })} />
-        </>
-      )}
+      {route.view === "insights" && INSIGHTS_TABS.map((tab) => (
+        <NavItem key={tab} sub label={INSIGHTS_TAB_LABELS[tab]} count={null} on={route.tab === tab} onClick={() => go({ view: "insights", tab })} />
+      ))}
       <div data-sidebar-footer className="mt-auto flex flex-col gap-1.5 border-t border-border px-2 pb-0.5 pt-2.5 text-[11.5px] text-muted-foreground">
         {servers.map((server) => <Health key={server.id} server={server} onOpen={() => go({ view: "insights", tab: "sync" })} />)}
         {overview.data !== undefined && <AutomationPauseControls overview={overview.data} />}

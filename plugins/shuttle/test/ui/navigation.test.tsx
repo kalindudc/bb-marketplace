@@ -100,6 +100,14 @@ describe("the sidebar", () => {
     ]);
   });
 
+  it("shows References under Insights and opens its route", async () => {
+    const slot = await sidebar("insights/references");
+    const references = slot.getByRole("button", { name: "References" });
+    expect(references.getAttribute("aria-current")).toBe("page");
+    fireEvent.click(references);
+    expect(slot.inspection.navigateCalls.at(-1)).toEqual({ method: "toPluginPanel", path: "shuttle", options: { subPath: "insights/references" } });
+  });
+
   it("shows Reviews' sources with their counts while Reviews is open", async () => {
     const slot = await sidebar("reviews~asked", {
       list: () => ({ prs: [pr(), pr({ number: 2, reasons: [{ reason: "team", teams: ["edge"] }], teams: ["edge"], tracked: true })] }),
