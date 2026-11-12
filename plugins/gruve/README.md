@@ -62,9 +62,9 @@ The modes, each with a light and a dark version:
 
 Dark Crisp sits on gruvbox's medium background with its brightest text, `#fbf1c7`. Dark Dim sits on gruvbox's hard background with the dimmer `#d5c4a1` text and gruvbox's normal accents in place of the bright ones, so it gives off the least light at the same contrast as Soft. Classic's dark version is Soft's, since Gruve 0.2.0 shipped today's dark mode.
 
-House style uses the house palette's warm paper (`#f6f3ec`) and charcoal (`#24221f`), with its own card, rule, ink and muted accent colours. Warnings and attention use orange, success uses aqua, errors use red, and merged PRs use purple. Terminal colours use the same house accents, including orange instead of ANSI yellow. Yellow in the accent setting becomes house Blue; the other accent choices use their house equivalents. Font, size, corner and prompt settings stay independent. Syntax highlighting still uses the gruvbox themes declared in the manifest.
+House style uses a dimmed version of the house paper (`#ebe8e1`, with `#efede8` cards) and its charcoal (`#24221f`), with its own card, rule, ink and muted accent colours. Warnings and attention use orange, success uses aqua, errors use red, and merged PRs use purple. Terminal colours use the same house accents, including orange instead of ANSI yellow. Yellow in the accent setting becomes house Blue; the other accent choices use their house equivalents. Font, size, corner and prompt settings stay independent. Syntax highlighting still uses the gruvbox themes declared in the manifest.
 
-The exact house palette keeps its softer borders and one secondary ink colour rather than Gruve's three secondary text tiers. On BB's 15% status washes over a dark card, red has 3.84:1 contrast, purple 4.25:1 and orange 4.47:1: these badge pairs do not meet the 4.5:1 AA threshold for small text. Tests record those limits rather than changing the house colours or claiming full AA compliance. The house tokens are copied into `src/house-tokens.json`, so local and Git installs need no external skill files.
+House style uses firmer panel borders and dividers, and a stronger secondary ink colour rather than Gruve's three secondary text tiers. Its light page and card surfaces are blended with 6% house ink to reduce glare; light status text is slightly deeper so badges still clear 4.5:1. Regular text uses weight 500 and medium-weight labels use 600, with native font smoothing instead of forced grayscale. Built-in SVG icons use a sturdier 2-unit stroke, including older bb icons that do not read the stroke token. Thread hover follows the chosen accent: light mode mixes 11% accent into its matching soft tint for a more visible highlight; dark mode uses the accent's soft tint. Sent-message bubbles use the same tint with an accent-coloured border. These changes apply only while House style is selected. On BB's 15% status washes over a dark card, red has 3.84:1 contrast, purple 4.25:1 and orange 4.47:1: these badge pairs do not meet the 4.5:1 AA threshold for small text. Tests record those limits rather than changing the house colours or claiming full AA compliance. The house tokens are copied into `src/house-tokens.json`, so local and Git installs need no external skill files.
 
 Soft is the theme sheet itself; the other modes live in `src/palettes.ts` and replace every surface, line, text, status and terminal colour in both schemes, with accent shades of their own. Light colours go in a `:root:not(.dark), .light` block and dark ones in `.dark`, so neither reaches the other scheme. A test fails if Soft in `src/palettes.ts` drifts from the theme sheet, or if a palette misses one of its colours.
 
@@ -102,7 +102,7 @@ Theme Preview (a built-in bb panel) shows every resolved token with its contrast
 After merging to an up-to-date `main`, tag the version and push the tag:
 
 ```sh
-git tag gruve/v0.4.0 && git push origin gruve/v0.4.0
+git tag gruve/v0.4.1 && git push origin gruve/v0.4.1
 ```
 
 ## Credits

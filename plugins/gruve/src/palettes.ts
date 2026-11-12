@@ -15,6 +15,19 @@ export interface Palette {
   readonly accents: Readonly<Record<Accent, readonly [string, string]>>;
 }
 
+const HOUSE_ACCENT_TINT_KEYS = {
+  yellow: "blueSoft",
+  orange: "orangeSoft",
+  red: "redSoft",
+  green: "greenSoft",
+  aqua: "aquaSoft",
+  blue: "blueSoft",
+  purple: "purpleSoft",
+} as const;
+
+export const houseAccentTint = (accent: Accent, scheme: "light" | "dark"): string =>
+  house[scheme][HOUSE_ACCENT_TINT_KEYS[accent]];
+
 const HOUSE_TOKEN_MAP = {
   "--canvas": "paper",
   "--ink": "ink",
@@ -59,8 +72,15 @@ function housePalette(scheme: "light" | "dark"): Palette {
   return {
     tokens: {
       ...Object.fromEntries(Object.entries(HOUSE_TOKEN_MAP).map(([token, key]) => [token, colours[key]])),
-      "--state-hover": "color-mix(in oklab, var(--ink) 8%, transparent)",
+      "--state-hover": "var(--sidebar-accent)",
+      "--sidebar-accent": colours.blueSoft,
       "--surface-recessed": "var(--surface-recessed-solid)",
+      ...(scheme === "light" ? {
+        "--success": house.light.aquaStrong,
+        "--warning-text": house.light.orangeStrong,
+        "--attention": house.light.orangeStrong,
+        "--destructive-text": house.light.redStrong,
+      } : {}),
       ...Object.fromEntries(ansi.flatMap((colour, i) => [
         [`--ansi-${i}`, colour],
         [`--ansi-bg-fg-${i}`, scheme === "dark" && i === 0 ? colours.ink : colours.onAccent],

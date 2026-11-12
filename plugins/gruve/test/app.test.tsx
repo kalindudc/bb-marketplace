@@ -73,7 +73,7 @@ describe("plugin app", () => {
     getSettings.mockResolvedValueOnce({ ok: true, schema: {}, values: { mode: "house" } });
     await slot.behavior.emitRealtime("appearance", {});
     await vi.waitFor(() => expect(slot.getByText(/House style:/u)).toBeTruthy());
-    expect(slot.getByLabelText("Light preview").style.background).toBe("rgb(246, 243, 236)");
+    expect(slot.getByLabelText("Light preview").style.background).toBe("rgb(235, 232, 225)");
     expect(slot.getByLabelText("Dark preview").style.background).toBe("rgb(36, 34, 31)");
     expect(injected()!.textContent).toContain("--primary: #3f6b78;");
     expect(injected()!.textContent).toContain("--primary: #7daea3;");

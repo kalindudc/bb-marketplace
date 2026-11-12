@@ -2,6 +2,15 @@
 
 Notable changes to Gruve, newest first. Releases are tagged `gruve/vX.Y.Z` in this repository.
 
+## 0.4.1 (2026-11-12)
+
+### Changed
+
+- Dimmed House style's light page and card surfaces to reduce glare, with slightly deeper light status text to preserve badge contrast. Dark canvas colours and link accents are unchanged.
+- House style now uses weight 500 for regular text and 600 for medium-weight labels, native font smoothing, and sturdier strokes for built-in SVG icons, including older bb icons with fixed stroke widths.
+- Thread hover follows the selected accent's house-palette tint in both schemes, with a deeper highlight in light mode. Sent-message bubbles use a softer accent tint and an accent-coloured border to separate them from the page.
+- Panel borders and dividers are firmer in both schemes, and secondary ink is stronger in light mode.
+
 ## 0.4.0 (2026-11-12)
 
 ### Added

@@ -12,7 +12,7 @@ import {
   type Mode,
   type Prompt,
 } from "./settings";
-import { PALETTES } from "./palettes";
+import { houseAccentTint, PALETTES } from "./palettes";
 
 /** Marks the injected stylesheet, so it can be found and removed again. */
 export const STYLE_ATTRIBUTE = "data-gruve-appearance";
@@ -71,6 +71,11 @@ export function appearanceCss(appearance: GruveAppearance): string {
   const light: string[] = [];
   const dark: string[] = [];
 
+  if (appearance.mode === "house") {
+    root.push("-webkit-font-smoothing: auto;", "-moz-osx-font-smoothing: auto;", "text-rendering: optimizeLegibility;");
+    root.push("--font-weight-normal: 500;", "--font-weight-medium: 600;", "font-weight: var(--font-weight-normal);");
+    root.push("--icon-stroke-width: 2;");
+  }
   if (appearance.fontSize !== DEFAULT_APPEARANCE.fontSize) root.push(`font-size: ${appearance.fontSize}px;`);
   if (appearance.interfaceFont !== DEFAULT_APPEARANCE.interfaceFont) root.push(`--font-sans: ${INTERFACE_FONTS[appearance.interfaceFont]};`);
   if (appearance.codeFont !== DEFAULT_APPEARANCE.codeFont) {
@@ -88,6 +93,11 @@ export function appearanceCss(appearance: GruveAppearance): string {
     if (modeChanged || appearance.accent !== DEFAULT_APPEARANCE.accent) {
       const [primary, onPrimary] = accentColours(appearance.accent, scheme, appearance.mode);
       block.push(`--primary: ${primary};`, `--primary-foreground: ${onPrimary};`);
+      if (appearance.mode === "house") {
+        const tint = houseAccentTint(appearance.accent, scheme);
+        const hover = scheme === "light" ? `color-mix(in srgb, ${tint} 89%, ${primary})` : tint;
+        block.push(`--sidebar-accent: ${hover};`, `--gruve-sent-background: ${tint};`, `--gruve-sent-border: ${primary};`);
+      }
     }
   }
 
@@ -106,6 +116,11 @@ export function appearanceCss(appearance: GruveAppearance): string {
   if (root.length > 0) rules.push(`:root {\n  ${root.join("\n  ")}\n}`);
   if (light.length > 0) rules.push(`${LIGHT_SELECTOR} {\n  ${light.join("\n  ")}\n}`);
   if (dark.length > 0) rules.push(`.dark {\n  ${dark.join("\n  ")}\n}`);
+  if (appearance.mode === "house") {
+    // Older bb icons set stroke widths directly instead of using the theme token.
+    rules.push(':root svg[data-icon-root]:not([data-icon*="/"]) [stroke="currentColor"] {\n  stroke-width: var(--icon-stroke-width);\n}');
+    rules.push(':root [data-message-column] > .group\\/message.ml-auto > div > .bg-surface-recessed {\n  background: var(--gruve-sent-background);\n  border-color: var(--gruve-sent-border);\n}');
+  }
   if (rules.length === 0) return "";
   return `/* Gruve appearance settings. */\n${rules.join("\n")}\n`;
 }
