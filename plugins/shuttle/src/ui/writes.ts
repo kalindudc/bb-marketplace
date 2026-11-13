@@ -75,6 +75,8 @@ export function usePrWrites(threadIds: readonly string[]) {
   const posts = usePostWrites();
   const merges = useMergeWrites();
   const cancelAutoMerge = useShuttleMutation("cancelAutoMerge", ({ key }, cache) => patchPr(cache, key, (pr) => ({ ...pr, autoMerge: false }), threadIds));
+  const stop = useShuttleMutation("stopReviews");
+  const skip = useShuttleMutation("skipAutoReview");
 
   const setMode = (pr: PrView, mode: AgentMode, backlog?: boolean) => setAgentMode.run({ key: pr.key, mode, ...(backlog === undefined ? {} : { backlog }) });
 
@@ -202,7 +204,29 @@ export function usePrWrites(threadIds: readonly string[]) {
     if ((await cancelAutoMerge.run({ key: pr.key })) !== null) toast.success(`Auto-merge is off for ${tinyKey(pr)}.`);
   };
 
-  return { changeMode, giveAgent, setTracked, setSnooze, snoozePrs, dismissPrs, markSeen, addRule, removeRule, undoLast, setHandled, discard, setAutoAgent, cancelAuto, ...posts, ...merges };
+  /** Stops the AI reviews running on these PRs, or every one with null. A stopped review stays stopped, so there is no Undo. */
+  const stopReviews = async (prs: readonly PrView[] | null, archive = false): Promise<boolean> => {
+    const out = await stop.run({ ...(prs === null ? {} : { keys: prs.map((pr) => pr.key) }), ...(archive ? { archive } : {}) });
+    if (out === null) return false;
+    const count = out.stopped.length;
+    const message = count === 0 ? "No AI review was running." : `Stopped ${count === 1 ? `the AI review of ${tinyKey(out.stopped[0]!)}` : plural(count, "AI review")}${archive ? `, and archived ${count === 1 ? "its thread" : "their threads"}` : ""}.`;
+    const first = out.failed[0];
+    if (first !== undefined) toast.warning(`${message} bb could not ${first.step === "archive" ? "archive" : "stop"} ${plural(out.failed.length, "thread")}: ${first.error}`);
+    else toast.success(message);
+    return true;
+  };
+
+  /** On or off the list auto review never starts on; a review you start yourself still runs. */
+  const skipAutoReview = async (prs: readonly PrView[], on: boolean, undoable = true): Promise<boolean> => {
+    if (prs.length === 0 || (await skip.run({ keys: prs.map((pr) => pr.key), on })) === null) return false;
+    const label = prsLabel(prs);
+    const message = on ? `Auto review never starts on ${label} now.` : `Auto review can start on ${label} again.`;
+    if (undoable) offerUndo(message, () => void skipAutoReview(prs, !on, false));
+    else toast.success(message);
+    return true;
+  };
+
+  return { changeMode, giveAgent, setTracked, setSnooze, snoozePrs, dismissPrs, markSeen, addRule, removeRule, undoLast, setHandled, discard, setAutoAgent, cancelAuto, stopReviews, skipAutoReview, ...posts, ...merges };
 }
 
 export type PrWrites = ReturnType<typeof usePrWrites>;

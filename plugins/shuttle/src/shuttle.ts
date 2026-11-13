@@ -25,10 +25,10 @@ import { errText, ShuttleError, type Ctx } from "./ctx";
 import type { EventRow, MergeRow, PostRow, ServerRow, Store, SyncRunRow } from "./db/store";
 import { THREAD_SCAN, type BbPort, type ProjectInfo } from "./ports";
 import { fetchPr, linkPr, lookup, rememberThread, requirePr, setWatch, shortKey, unlinkPr } from "./prs";
-import { parseKey } from "./keys";
+import { parseKey, prKey, resolveQuery } from "./keys";
 import { matchProject } from "./projects";
 import { archiveDoneReviewThreads, completeReviewCleanup, unarchiveForDraft } from "./review-threads";
-import { endQuietReviews, endReview, failReviewsOfThread, resumeReviews, type ThreadFailure } from "./review-runs";
+import { endQuietReviews, endReview, failReviewsOfThread, resumeReviews, stopReviews, type StopResult, type ThreadFailure } from "./review-runs";
 import { startReview } from "./reviews";
 import { descriptionMatches, searchIndex, searchPrs } from "./search";
 import type { Settings } from "./settings";
@@ -910,6 +910,32 @@ export class Shuttle implements Ctx {
     await lookup(this, input.key);
     const { threadId, revived } = await startReview(this, input, "manual");
     return { threadId, revived };
+  }
+
+  /** Stops the running AI reviews of these PRs, or every one without keys. */
+  async stopReviews(keys?: readonly string[], archive = false): Promise<{ stopped: PrView[]; failed: StopResult["failed"] }> {
+    const prIds = keys === undefined ? undefined : keys.map((key) => requirePr(this, key).id);
+    const { stopped, failed } = await stopReviews(this, { ...(prIds === undefined ? {} : { prIds }), archive });
+    return { stopped: stopped.map((pr) => toView(this, this.store.prById(pr.id)!)), failed };
+  }
+
+  /** Puts PRs, by link or key, on the list auto review never starts on, or takes them off; the list as it is now. */
+  skipAutoReview(queries: readonly string[], on: boolean): { skipPrs: string[] } {
+    const config = this.config();
+    const keys = [...new Set(queries.map((query) => prKey(resolveQuery(query, config.servers))))];
+    const before = new Set(config.autoReview.skipPrs);
+    const changed = keys.filter((key) => before.has(key) !== on);
+    const skipPrs = on ? [...config.autoReview.skipPrs, ...changed] : config.autoReview.skipPrs.filter((key) => !keys.includes(key));
+    if (changed.length === 0) return { skipPrs };
+    const saved = parseConfig({ ...config, autoReview: { ...config.autoReview, skipPrs } });
+    this.store.saveConfig(saved);
+    for (const key of changed) {
+      const pr = this.store.prByKey(key);
+      const name = pr ? shortKey(this, pr) : key;
+      this.store.addEvent("auto_skip", on ? `Auto review never starts on ${name} now; a review you start yourself still runs.` : `Auto review can start on ${name} again.`, pr?.id ?? null);
+    }
+    this.port.publish();
+    return { skipPrs: saved.autoReview.skipPrs };
   }
 
   async newThread(key: string, start: "own" | "review", projectId?: string): Promise<string> {

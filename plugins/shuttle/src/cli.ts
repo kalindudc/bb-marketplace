@@ -50,7 +50,10 @@ export function createCli(shuttle: Shuttle): PluginCliRegistration {
             const overview = shuttle.overview();
             if (options.json) return out(toJson(overview));
             const servers = overview.servers.map((s) => serverText(s));
-            return out([...servers, countsText(overview.counts), overview.paused ? "automations are paused" : "", overview.autoAgent ? "auto agent is on" : ""].filter(Boolean).join("\n"));
+            const auto = shuttle.config().autoReview;
+            const { autoRunning, autoQueue } = auto.enabled ? shuttle.inbox() : { autoRunning: 0, autoQueue: [] };
+            const autoLine = auto.enabled ? `auto review: ${autoRunning} of ${auto.maxRunning} running, ${autoQueue.length} waiting` : "";
+            return out([...servers, countsText(overview.counts), autoLine, overview.paused ? "automations are paused" : "", overview.autoAgent ? "auto agent is on" : ""].filter(Boolean).join("\n"));
           }),
       }),
       list: cliCommand({
@@ -261,6 +264,33 @@ export function createCli(shuttle: Shuttle): PluginCliRegistration {
             });
             if (options.json) return out(toJson(result));
             return out(result.revived ? `Brought review thread ${result.threadId} back from the archive for ${known.key}.` : `Started the review of ${known.key} in thread ${result.threadId}.`);
+          }),
+      }),
+      stop: cliCommand({
+        summary: "Stop running AI reviews, every one or those of these PRs: bb stops each review thread and the threads at work under it",
+        positionals: [{ name: "pr", description: "PR links or keys; every running review without one.", required: false, variadic: true }],
+        options: { archive: { type: "boolean", description: "Archive the review threads Shuttle started too, with their child threads." }, json },
+        run: ({ options, positionals }) =>
+          guarded(async () => {
+            const keys = positionals.pr.length ? await Promise.all(positionals.pr.map(async (query) => (await shuttle.lookup(query)).key)) : undefined;
+            const result = await shuttle.stopReviews(keys, options.archive === true);
+            if (options.json) return out(toJson(result));
+            if (result.stopped.length === 0) return out("No AI review was running.");
+            const lines = [`Stopped ${result.stopped.length === 1 ? "the review" : `${result.stopped.length} reviews`} of ${result.stopped.map((pr) => pr.key).join(", ")}.`];
+            const verb = { stop: "stop", find: "find the threads under", archive: "archive" } as const;
+            for (const failure of result.failed) lines.push(`  bb could not ${verb[failure.step]} thread ${failure.threadId}: ${failure.error}`);
+            return out(lines.join("\n"));
+          }),
+      }),
+      skip: cliCommand({
+        summary: "Never auto review these PRs, or let auto review start on them again with --off; lists them without a PR",
+        positionals: [{ name: "pr", description: "PR links or keys.", required: false, variadic: true }],
+        options: { off: { type: "boolean", description: "Take them off the list." }, json },
+        run: ({ options, positionals }) =>
+          guarded(() => {
+            const result = positionals.pr.length ? shuttle.skipAutoReview(positionals.pr, options.off !== true) : { skipPrs: shuttle.config().autoReview.skipPrs };
+            if (options.json) return out(toJson(result));
+            return out(result.skipPrs.length ? `Auto review never starts on:\n${result.skipPrs.map((key) => `  ${key}`).join("\n")}` : "Auto review may start on any PR.");
           }),
       }),
       gate: cliCommand({

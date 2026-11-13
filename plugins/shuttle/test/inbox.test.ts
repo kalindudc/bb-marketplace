@@ -253,7 +253,7 @@ describe("the Inbox read", () => {
     inbox = h.shuttle.inbox();
     expect(inbox.snoozed.map((v) => v.key)).toEqual([KEY(2)]);
     expect(inbox.dismissed.map((v) => v.key)).toEqual([KEY(1), OTHER]);
-    expect(Object.keys(inbox).sort()).toEqual(["dismissed", "handled", "merging", "olderRequests", "posting", "prs", "reviewing", "rules", "snoozed"]);
+    expect(Object.keys(inbox).sort()).toEqual(["autoQueue", "autoRunning", "dismissed", "handled", "merging", "olderRequests", "posting", "prs", "reviewing", "rules", "snoozed"]);
     expect(inbox.handled).toBe(0);
     for (let i = 0; i < 12; i++) h.store.addEvent("forwarded", `Sent ${i}`);
     h.store.addEvent("tracked", "Not automation");

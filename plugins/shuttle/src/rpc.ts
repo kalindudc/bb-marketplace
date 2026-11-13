@@ -78,6 +78,8 @@ export function registerRpc(bb: BbPluginApi, shuttle: Shuttle): void {
     setAutomationPause: (input) => refusing(() => shuttle.setAutomationPause(input)),
     track: ({ key, on }) => refusing(() => ({ pr: shuttle.track(key, on) })),
     snooze: ({ keys, until }) => refusing(() => ({ prs: shuttle.snooze(keys, until) })),
+    stopReviews: ({ keys, archive }) => refusing(() => shuttle.stopReviews(keys, archive ?? false)),
+    skipAutoReview: ({ keys, on }) => refusing(() => shuttle.skipAutoReview(keys, on)),
     dismiss: ({ keys, on }) => refusing(() => ({ prs: shuttle.dismiss(keys, on) })),
     markSeen: ({ keys }) => refusing(() => {
       shuttle.markSeen(keys);

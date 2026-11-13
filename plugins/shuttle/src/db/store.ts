@@ -130,6 +130,8 @@ export interface ReasonRow {
   reason: Reason;
   teams: string;
   since: number;
+  /** When a full list first left the PR out; null while lists bring it. */
+  unlisted_since: number | null;
 }
 
 export interface LinkRow {
@@ -300,7 +302,7 @@ export interface UsageTurnRow {
  * A draft came back, the thread said so, the thread failed, its workspace could not be set up, nothing happened in it
  * for too long, or a newer review replaced it.
  */
-export type ReviewEnd = "draft" | "thread" | "failed" | "setup" | "quiet" | "replaced";
+export type ReviewEnd = "draft" | "thread" | "failed" | "setup" | "quiet" | "replaced" | "stopped";
 
 export type PostState = "queued" | "posting" | "posted" | "failed" | "cancelled";
 
@@ -707,6 +709,35 @@ export class Store {
         for (const row of rows) if (!had.has(row.prId)) open.run(row.prId, reason, this.now());
         for (const row of existing) if (!keep.has(row.pr_id)) close.run(this.now(), row.pr_id, reason);
       }
+    });
+  }
+
+  /**
+   * After a full list landed: the server's PRs with the reason that it left out keep it, marked as left out from now or
+   * from when a list first left them out. Returns them.
+   */
+  markUnlisted(server: string, reason: Reason, listed: ReadonlySet<number>): Array<ReasonRow & { server: string }> {
+    return this.tx(() => {
+      const mark = this.sql("UPDATE reasons SET unlisted_since = COALESCE(unlisted_since, ?) WHERE pr_id = ? AND reason = ?");
+      const left = this.reasonRows(reason).filter((row) => row.server === server && !listed.has(row.pr_id));
+      for (const row of left) mark.run(this.now(), row.pr_id, reason);
+      return left.map((row) => ({ ...row, unlisted_since: row.unlisted_since ?? this.now() }));
+    });
+  }
+
+  /** A list brought these PRs, or a read confirmed them: their reason no longer waits on a check. */
+  clearUnlisted(reason: Reason, prIds: readonly number[]): void {
+    this.tx(() => {
+      const clear = this.sql("UPDATE reasons SET unlisted_since = NULL WHERE pr_id = ? AND reason = ? AND unlisted_since IS NOT NULL");
+      for (const prId of prIds) clear.run(prId, reason);
+    });
+  }
+
+  /** Lets go of one PR's reason, as a full list that left it out would, and ends its request. */
+  dropReason(prId: number, reason: Reason): void {
+    this.tx(() => {
+      if (this.sql("DELETE FROM reasons WHERE pr_id = ? AND reason = ?").run(prId, reason).changes === 0) return;
+      if (reason === "requested" || reason === "team" || reason === "mentioned") this.sql("UPDATE requests SET gone_at = ? WHERE pr_id = ? AND reason = ? AND gone_at IS NULL").run(this.now(), prId, reason);
     });
   }
 
@@ -1416,6 +1447,16 @@ export class Store {
     return this.sql("UPDATE reviews SET state = 'done', finished_at = ?, ended_by = 'replaced' WHERE pr_id = ? AND state = 'running'").run(this.now(), prId).changes;
   }
 
+  /** Every running review, oldest first. */
+  runningReviews(): ReviewRow[] {
+    return this.sql("SELECT * FROM reviews WHERE state = 'running' ORDER BY created_at, id").all() as ReviewRow[];
+  }
+
+  /** Ends a run as stopped only if it still runs; false when something else ended it first. */
+  stopReview(id: number): boolean {
+    return this.sql("UPDATE reviews SET state = 'done', finished_at = ?, ended_by = 'stopped', note = NULL WHERE id = ? AND state = 'running'").run(this.now(), id).changes > 0;
+  }
+
   runningReviewsOfThread(threadId: string): ReviewRow[] {
     return this.sql("SELECT * FROM reviews WHERE thread_id = ? AND state = 'running'").all(threadId) as ReviewRow[];
   }
@@ -1513,6 +1554,10 @@ export class Store {
   }
 
   /** A run whose thread could not set up its workspace never reviewed anything, so the daily limit leaves it out. */
+  runningAutoReviews(): number {
+    return (this.sql("SELECT COUNT(*) AS n FROM reviews WHERE trigger = 'auto' AND state = 'running'").get() as { n: number }).n;
+  }
+
   autoReviewsSince(at: number): number {
     return (this.sql("SELECT COUNT(*) AS n FROM reviews WHERE trigger = 'auto' AND created_at >= ? AND ended_by IS NOT 'setup'").get(at) as { n: number }).n;
   }

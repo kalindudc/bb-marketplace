@@ -86,11 +86,12 @@ export const TONE_PANEL: Record<NextTone, string> = {
   neutral: "border-border bg-card",
 };
 
-export function Pill({ tone = "neutral", icon, title, children }: { tone?: Tone; icon?: string; title?: string; children: ReactNode }) {
+/** With `truncate`, a long pill shrinks to its row and ends in an ellipsis; give it a `title` with the whole text. */
+export function Pill({ tone = "neutral", icon, title, truncate = false, children }: { tone?: Tone; icon?: string; title?: string; truncate?: boolean; children: ReactNode }) {
   return (
-    <span data-pill={tone} title={title} className={`inline-flex h-5 shrink-0 items-center gap-1 whitespace-nowrap rounded-full border px-2 text-[11.5px] leading-none ${TONES[tone]}`}>
-      {icon && <Icon name={icon} fallback="Circle" className="size-3" aria-hidden />}
-      {children}
+    <span data-pill={tone} title={title} className={`inline-flex h-5 items-center gap-1 whitespace-nowrap rounded-full border px-2 text-[11.5px] leading-none ${truncate ? "min-w-0 max-w-full" : "shrink-0"} ${TONES[tone]}`}>
+      {icon && <Icon name={icon} fallback="Circle" className="size-3 shrink-0" aria-hidden />}
+      {truncate ? <span className="min-w-0 truncate">{children}</span> : children}
     </span>
   );
 }

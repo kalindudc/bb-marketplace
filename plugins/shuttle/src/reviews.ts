@@ -64,6 +64,24 @@ export interface ReviewStarted {
 }
 
 /** `attempt` above 1: Shuttle starts the review again after a thread that could not set up its workspace (review-runs.ts). */
+/** Auto reviews whose thread bb is starting, by store: they hold a place before their run is recorded. */
+const starting = new WeakMap<object, number>();
+
+/** The places `maxRunning` counts: auto reviews running, and those whose thread is starting. */
+export function autoPlacesTaken(ctx: Ctx): number {
+  return ctx.store.runningAutoReviews() + (starting.get(ctx.store) ?? 0);
+}
+
+/** Starts an auto review holding its place while bb starts the thread, so a start elsewhere meanwhile sees it taken. */
+export async function startAutoReview(ctx: Ctx, input: ReviewInput, attempt = 1): Promise<ReviewStarted> {
+  starting.set(ctx.store, (starting.get(ctx.store) ?? 0) + 1);
+  try {
+    return await startReview(ctx, input, "auto", attempt);
+  } finally {
+    starting.set(ctx.store, (starting.get(ctx.store) ?? 1) - 1);
+  }
+}
+
 export async function startReview(ctx: Ctx, input: ReviewInput, trigger: "auto" | "manual", attempt = 1): Promise<ReviewStarted> {
   const pr = requirePr(ctx, input.key);
   const config = ctx.config();

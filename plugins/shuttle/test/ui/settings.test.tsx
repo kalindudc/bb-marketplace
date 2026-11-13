@@ -241,6 +241,19 @@ describe("Shuttle settings sections", () => {
     expect(next.presets).toEqual(config().presets);
   });
 
+  it("saves how many auto reviews run at once, when a PR is too idle, and the PRs auto review never starts on", async () => {
+    const slot = await section("automations");
+    const running = await slot.findByRole("spinbutton", { name: "Auto reviews running at once" }) as HTMLInputElement;
+    const idle = slot.getByRole("spinbutton", { name: "Days a PR may be idle" }) as HTMLInputElement;
+    expect([running.value, idle.value]).toEqual(["5", "14"]);
+    fireEvent.change(running, { target: { value: "2" } });
+    fireEvent.change(idle, { target: { value: "12" } });
+    fireEvent.change(slot.getByRole("textbox", { name: "PRs auto review never starts on" }), { target: { value: "github:acme/app#12\n\ngithub:acme/app#40 " } });
+    fireEvent.click(slot.getByRole("button", { name: "Save automations" }));
+    await waitFor(() => expect(saved(slot)).toHaveLength(1));
+    expect(saved(slot)[0]!.autoReview).toMatchObject({ maxRunning: 2, idleDays: 12, skipPrs: ["github:acme/app#12", "github:acme/app#40"] });
+  });
+
   it("saves the checks an agent never gets, the phrases that let a bot through and whether approvals wait", async () => {
     const slot = await section("automations");
     const checks = (await slot.findByRole("textbox", { name: "Checks an agent never gets" })) as HTMLTextAreaElement;

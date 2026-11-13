@@ -288,7 +288,8 @@ function othersNext(f: NextFacts): NextStep {
       more: [act("open_review", "Open the thread")],
     });
   }
-  if (run?.state === "done" && !f.lastReviewHandled && !reviewedAfterRun) {
+  // A review you stopped leaves nothing to act on: the PR reads as if it had not run.
+  if (run?.state === "done" && run.endedBy !== "stopped" && !f.lastReviewHandled && !reviewedAfterRun) {
     const said = run.endedBy === "thread" && run.note !== null ? ` It says: ${run.note}` : " Read it in its thread.";
     return step("review_done", "info", "AI review finished", `${run.preset} finished in \u201c${run.title}\u201d without a draft for Shuttle.${said}`, {
       inbox: true,

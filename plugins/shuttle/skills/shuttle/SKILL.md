@@ -109,7 +109,9 @@ what happens next), `bb shuttle list [--area inbox|mine|done|reviews|reviewed]`,
 `bb shuttle agent <pr> [--thread <id> | --new | --none] [--mode fix|off]`,
 `bb shuttle track <pr> [--off]`, `bb shuttle watch <pr> [--off]`,
 `bb shuttle review <pr> [--preset <id>] [--project <id>] [--note <text>] [--new-thread]` (the PR's last review
-thread of Shuttle's gets it, brought back from the archive when needed, unless `--new-thread`), `bb shuttle sync [--server <id>]`, `bb shuttle usage [--range today|7d|30d|90d] [--end YYYY-MM-DD]` (what AI reviews used in tokens and dollars, from the Burn plugin, for a period ending today or on `--end`),
+thread of Shuttle's gets it, brought back from the archive when needed, unless `--new-thread`),
+`bb shuttle stop [<pr>…] [--archive]` (stops running AI reviews, every one without a PR; `--archive` archives the review threads Shuttle started; naming a PR whose review was stopped stops its threads again; a stopped review's `shuttle_review_draft` is refused, so a review thread told it was stopped hands back nothing),
+`bb shuttle skip [<pr>…] [--off]` (the PRs auto review never starts on; lists them without a PR), `bb shuttle sync [--server <id>]`, `bb shuttle usage [--range today|7d|30d|90d] [--end YYYY-MM-DD]` (what AI reviews used in tokens and dollars, from the Burn plugin, for a period ending today or on `--end`),
 `bb shuttle config-export`, `bb shuttle config-import <file> [--apply]`. PR and board commands
 accept `--json`; config export prints TOML and config import prints a change summary.
 `link`/`unlink` default to the calling thread.

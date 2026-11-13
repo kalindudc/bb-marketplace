@@ -174,6 +174,9 @@ export function createBbPort(bb: BbPluginApi, setSettings: BbPort["setSettings"]
         ...(options.reasoningLevel ? { reasoningLevel: options.reasoningLevel } : {}),
       });
     },
+    async stop(threadId) {
+      await bb.sdk.threads.stop({ threadId });
+    },
     async archive(threadId) {
       return (await bb.sdk.threads.archive({ threadId })).archivedThreadIds;
     },

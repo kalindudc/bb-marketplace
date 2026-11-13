@@ -1,6 +1,7 @@
 import Database from "better-sqlite3";
 import type { Runner, RunOptions } from "../src/adapters/exec";
-import { DEFAULT_CONFIG, parseConfig, type Config } from "../src/config";
+import type { z } from "zod";
+import { DEFAULT_CONFIG, parseConfig, type Config, type configSchema } from "../src/config";
 import { MIGRATIONS } from "../src/db/schema";
 import { Store } from "../src/db/store";
 import { UsageUnavailableError, type BbPort, type EnvironmentProviderInfo, type MachineProviderInfo, type ProjectInfo, type SendOptions, type SpawnArgs, type ThreadInfo, type UsageRead } from "../src/ports";
@@ -61,7 +62,22 @@ export class FakePort implements BbPort {
   async setSettings(patch: Parameters<BbPort["setSettings"]>[0]): Promise<void> {
     this.settingsPatches.push(patch);
   }
+  private spawnHeld: { entered: () => void; until: Promise<void> } | null = null;
+  /** The next spawn waits, as while bb provisions a thread: `entered` resolves once it waits, `release` lets it go on. */
+  holdSpawn(): { entered: Promise<void>; release: () => void } {
+    let entered!: () => void;
+    let release!: () => void;
+    const reached = new Promise<void>((resolve) => (entered = resolve));
+    this.spawnHeld = { entered, until: new Promise<void>((resolve) => (release = resolve)) };
+    return { entered: reached, release };
+  }
   async spawnThread(args: SpawnArgs): Promise<string> {
+    if (this.spawnHeld) {
+      const held = this.spawnHeld;
+      this.spawnHeld = null;
+      held.entered();
+      await held.until;
+    }
     if (this.spawnError) throw this.spawnError;
     const threadId = `thr_spawned${this.next++}`;
     this.spawned.push({ ...args, threadId });
@@ -71,6 +87,15 @@ export class FakePort implements BbPort {
   async send(threadId: string, text: string, options?: SendOptions): Promise<void> {
     if (this.failSendTo.has(threadId)) throw new Error("thread is gone");
     this.sent.push(options && Object.keys(options).length ? { threadId, text, options } : { threadId, text });
+  }
+  /** Threads bb refuses to stop, as when their machine is gone. */
+  failStop = new Set<string>();
+  /** Like bb: the thread only, which goes idle. */
+  async stop(threadId: string): Promise<void> {
+    if (this.failStop.has(threadId)) throw new Error("stop refused");
+    this.lifecycle.push(`stop ${threadId}`);
+    const thread = this.threads.get(threadId);
+    if (thread) this.threads.set(threadId, { ...thread, status: "idle" });
   }
   /** Like bb: the thread and every child under it. */
   async archive(threadId: string): Promise<string[]> {
@@ -174,7 +199,8 @@ export const TEST_SERVER = {
   commands: { whoami: "w", authored: "a", review_requested: "r", team_requested: "t", mentioned: "m", view: "v", activity: "x" },
 } as const;
 
-export function testConfig(patch: Partial<Config> = {}): Config {
+/** Fields with a default may be left out, as in a saved config from before they existed. */
+export function testConfig(patch: Partial<z.input<typeof configSchema>> = {}): Config {
   return parseConfig({ ...DEFAULT_CONFIG, servers: [TEST_SERVER], ...patch });
 }
 

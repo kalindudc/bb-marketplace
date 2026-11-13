@@ -17,8 +17,8 @@ export type ReviewState = (typeof REVIEW_STATES)[number];
 export const LINK_ROLES = ["owner", "review", "reference"] as const;
 export type LinkRole = (typeof LINK_ROLES)[number];
 export const REVIEW_RUN_STATES = ["running", "done", "failed"] as const;
-/** What ended a review run: its thread handed back a draft, said it was over, failed, could not set up its workspace, nothing happened in it for hours, or a newer review of the PR started. */
-export const REVIEW_ENDS = ["draft", "thread", "failed", "setup", "quiet", "replaced"] as const;
+/** What ended a review run: its thread handed back a draft, said it was over, failed, could not set up its workspace, nothing happened in it for hours, a newer review of the PR started, or you stopped it. */
+export const REVIEW_ENDS = ["draft", "thread", "failed", "setup", "quiet", "replaced", "stopped"] as const;
 export type ReviewEnd = (typeof REVIEW_ENDS)[number];
 export const REVIEWER_STATES = ["requested", "approved", "changes", "commented", "dismissed"] as const;
 export type ReviewerState = (typeof REVIEWER_STATES)[number];
@@ -645,6 +645,10 @@ export const inboxSchema = z.object({
   dismissed: z.array(prViewSchema),
   /** Live PRs with an AI review running, most recently started first; dismissed ones too, since the review still runs. */
   reviewing: z.array(prViewSchema),
+  /** PRs auto review starts next, in that order, waiting for a running auto review to end or for the daily limit. */
+  autoQueue: z.array(prViewSchema),
+  /** Auto reviews running now, against the limit of how many run at once. */
+  autoRunning: z.number(),
   /** PRs with a review of yours waiting or posting, in the queue's order, whatever their state. */
   posting: z.array(prViewSchema),
   /** Your PRs with a merge waiting or running, in the queue's order. */
@@ -1083,6 +1087,8 @@ export const mutationTags = {
   inboxRuleRemove: PRS,
   handle: PRS,
   review: PRS,
+  stopReviews: PRS,
+  skipAutoReview: () => ["config", "prs"],
   newThread: PRS,
   sendUnread: PRS,
   saveConfig: () => ["config", "prs", "servers"],
@@ -1170,6 +1176,13 @@ export const rpcContract = defineContract({
   snooze: { input: z.object({ keys: z.array(key).min(1).max(200), until: z.union([z.number().int(), z.literal("update")]).nullable() }), output: prsOut },
   /** Out of the Inbox for good, even when it changes, and its snooze ends; off restores it. */
   dismiss: { input: z.object({ keys: z.array(key).min(1).max(200), on: z.boolean() }), output: prsOut },
+  /** Stops the running AI reviews of these PRs, or every running one without keys; `archive` archives their threads too. */
+  stopReviews: {
+    input: z.object({ keys: z.array(key).min(1).max(500).optional(), archive: z.boolean().optional() }),
+    output: z.object({ stopped: z.array(prViewSchema), failed: z.array(z.object({ threadId: z.string(), step: z.enum(["stop", "find", "archive"]), error: z.string() })) }),
+  },
+  /** Puts PRs on the list auto review never starts on, or takes them off with `on: false`; returns the list. */
+  skipAutoReview: { input: z.object({ keys: z.array(key).min(1).max(500), on: z.boolean() }), output: z.object({ skipPrs: z.array(z.string()) }) },
   /** You opened these PRs: they are no longer new. */
   markSeen: { input: z.object({ keys: z.array(key).min(1).max(500) }), output: ok },
   /** The same rule twice returns the existing one, with created false. */

@@ -119,6 +119,25 @@ describe("the plugin", () => {
     await lifecycle.dispose();
   });
 
+  it("stops running reviews and keeps auto review off PRs from the CLI, and the config round-trips through TOML", async () => {
+    const { behavior, lifecycle, port } = await boot();
+    try {
+      const config = testConfig({ autoReview: { enabled: false, idleDays: 12, maxRunning: 3, skipPrs: ["forge:acme/app#9"] } });
+      expect(configToToml(config)).toContain('skipPrs = [ "forge:acme/app#9" ]');
+      await behavior.callRpc("importToml", { toml: configToToml(config), apply: true });
+      expect((await behavior.runCli(["skip"])).stdout).toBe("Auto review never starts on:\n  forge:acme/app#9\n");
+      expect((await behavior.runCli(["skip", "https://forge.test/acme/app/pull/2", "--json"])).stdout).toContain('"forge:acme/app#2"');
+      expect((await behavior.runCli(["skip", "forge:acme/app#9", "--off"])).stdout).toBe("Auto review never starts on:\n  forge:acme/app#2\n");
+      expect((await behavior.runCli(["stop"])).stdout).toBe("No AI review was running.\n");
+      await behavior.callRpc("review", { key: "forge:acme/app#2" });
+      const stopped = await behavior.runCli(["stop", "forge:acme/app#2"]);
+      expect(stopped.stdout).toBe("Stopped the review of forge:acme/app#2.\n");
+      expect(port.lifecycle).toContain("stop thr_spawned1");
+    } finally {
+      await lifecycle.dispose();
+    }
+  });
+
   it("picks up project creation, edits and deletion without waiting for the cache to expire", async () => {
     const { behavior, lifecycle, port, subscriptions, unsubscribed } = await boot();
     try {

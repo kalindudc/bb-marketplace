@@ -202,7 +202,7 @@ export function overview(overrides: Partial<Overview> = {}): Overview {
 }
 
 export function inbox(overrides: Partial<InboxView> = {}): InboxView {
-  return { prs: [], snoozed: [], dismissed: [], reviewing: [], posting: [], merging: [], rules: [], olderRequests: 0, handled: 0, ...overrides };
+  return { prs: [], snoozed: [], dismissed: [], reviewing: [], autoQueue: [], autoRunning: 0, posting: [], merging: [], rules: [], olderRequests: 0, handled: 0, ...overrides };
 }
 
 export function insights(overrides: Partial<InsightsView> = {}): InsightsView {
@@ -306,6 +306,8 @@ export function handlers(overrides: Partial<Handlers> = {}): Handlers {
     track: unexpected("track"),
     snooze: unexpected("snooze"),
     dismiss: unexpected("dismiss"),
+    stopReviews: unexpected("stopReviews"),
+    skipAutoReview: unexpected("skipAutoReview"),
     markSeen: () => ({ ok: true }),
     inboxRuleAdd: unexpected("inboxRuleAdd"),
     inboxRuleRemove: unexpected("inboxRuleRemove"),

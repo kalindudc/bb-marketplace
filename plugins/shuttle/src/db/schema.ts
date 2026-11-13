@@ -363,4 +363,6 @@ export const MIGRATIONS: string[] = [
   `CREATE TABLE reference_resolutions (id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, message_id TEXT NOT NULL, text_hash TEXT NOT NULL, value TEXT NOT NULL, updated_at INTEGER NOT NULL)`,
   `CREATE INDEX reference_resolutions_updated ON reference_resolutions(updated_at)`,
   `CREATE TABLE reference_feedback (id INTEGER PRIMARY KEY AUTOINCREMENT, reference_id TEXT NOT NULL, action TEXT NOT NULL, before_url TEXT, after_url TEXT, at INTEGER NOT NULL)`,
+  // When a full list first left out a PR that has the reason; it keeps the reason until Shuttle can tell the server sees the PR.
+  `ALTER TABLE reasons ADD COLUMN unlisted_since INTEGER`,
 ];

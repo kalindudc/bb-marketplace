@@ -128,6 +128,8 @@ export interface UsageRead {
 export interface BbPort {
   spawnThread(args: SpawnArgs): Promise<string>;
   send(threadId: string, text: string, options?: SendOptions): Promise<void>;
+  /** Stops the thread's work: a turn it runs is interrupted. Only the thread itself; its child threads go on. */
+  stop(threadId: string): Promise<void>;
   /** Archives the thread with its child threads; the ids bb archived, the thread's own included. */
   archive(threadId: string): Promise<string[]>;
   /** Brings back only the thread itself: its child threads stay archived. */

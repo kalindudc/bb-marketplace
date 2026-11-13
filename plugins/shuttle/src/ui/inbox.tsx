@@ -4,9 +4,9 @@ import { experimental_Icon as Icon, useSettings } from "@get-bb/plugin-sdk/app";
 import type { InboxRule, InboxRuleKind, InboxView as InboxData, NextKind, NextTone, PrView } from "../contract";
 import { INBOX_ORDER, REVIEW_QUIET_MS, ruleMatches } from "../next";
 import { NextButton, useActions } from "./actions";
-import { BUTTON, BUTTON_GHOST, Dialog, ErrorNote, escapedByTip, ICON_GHOST, ICON_GHOST_SMALL, PAGE, Segmented, Tip, TONE_TEXT } from "./common";
+import { BUTTON, BUTTON_DANGER, BUTTON_GHOST, Checkbox, Dialog, ErrorNote, escapedByTip, ICON_GHOST, ICON_GHOST_SMALL, PAGE, Segmented, Tip, TONE_TEXT } from "./common";
 import { INBOX_TAB_LABELS } from "./constants";
-import { messageOf, useShuttleQuery } from "./data";
+import { messageOf, useShuttleMutation, useShuttleQuery } from "./data";
 import { atNine, plural, ruleText, timeOfDay, tinyKey, tinyOfKey } from "./format";
 import { Picker, PickerAction, PickerGroup, PickerRadio, PickerSeparator } from "./picker";
 import { inboxSwipeHint, inboxView, useFolding, type InboxGrouping, type InboxSort } from "./prefs";
@@ -15,6 +15,8 @@ import type { InboxTab, Route } from "./route";
 import { KeywordField, NoMatches, useListFilter, type KeywordFilter } from "./keywords";
 import { InboxRow, mentionsYouOnly, RepoChip, type RowLayout } from "./row";
 import { InboxSkeleton } from "./skeleton";
+import { defaultPresetOf, useStartReview } from "./review-button";
+import { useConfig } from "./settings/use-config";
 
 const HOUR = 60 * 60_000;
 const KBD = "rounded border border-b-2 border-border bg-background px-1 font-mono text-[10.5px] leading-[15px] text-muted-foreground";
@@ -508,6 +510,13 @@ function InboxList({ data, layout, keywords, onGo, onShortcuts }: { data: InboxD
           <Icon name="ArchiveX" fallback="Archive" className="size-3.5" aria-hidden />Dismiss
         </button>
       </Tip>
+      {selection.some((pr) => !pr.mine) && (
+        <Tip text={`Auto review never starts on the ${plural(selection.filter((pr) => !pr.mine).length, "selected PR")}; you can still start one yourself`}>
+          <button type="button" className={BUTTON} onClick={() => void writes.skipAutoReview(selection.filter((pr) => !pr.mine), true)}>
+            <Icon name="Ban" fallback="X" className="size-3.5" aria-hidden />Never auto review
+          </button>
+        </Tip>
+      )}
       <span className="flex-1" />
       <Tip text="Clear the selection">
         <button type="button" className={BUTTON_GHOST} onClick={() => setChecked(new Set())}>Clear{!phone && <kbd aria-hidden className={KBD}>Esc</kbd>}</button>
@@ -563,6 +572,7 @@ function InboxList({ data, layout, keywords, onGo, onShortcuts }: { data: InboxD
   const inFlight = [
     ...(data.posting.length > 0 ? [`${plural(data.posting.length, "review")} posting`] : []),
     ...(data.reviewing.length > 0 ? [`${plural(data.reviewing.length, "AI review")} running`] : []),
+    ...(data.autoQueue.length > 0 ? [`${plural(data.autoQueue.length, "PR")} waiting for auto review`] : []),
   ];
   if (inFlight.length > 0) {
     foot.push(
@@ -652,22 +662,30 @@ function Rules({ rules }: { rules: readonly InboxRule[] }) {
   );
 }
 
-function ListHeading({ title, count }: { title: string; count: number }) {
+function ListHeading({ title, count, trailing }: { title: string; count: number; trailing?: ReactNode }) {
   return (
     <div className="mb-1 mt-3.5 flex min-h-6 items-center gap-2">
       <b className="text-[11.5px] font-bold uppercase tracking-wider">{title}</b>
       <span className="text-[11.5px] font-medium text-muted-foreground">{count}</span>
+      {trailing !== undefined && <><span className="flex-1" />{trailing}</>}
     </div>
   );
 }
 
-/** The Reviewing tab: reviews of yours on their way to their servers, then PRs out of the Inbox while an AI review runs on them. */
+/** The Reviewing tab: reviews of yours on their way to their servers, PRs out of the Inbox while an AI review runs on them, then the auto review queue. */
 function ReviewingList({ data, layout, keywords }: { data: InboxData; layout: RowLayout; keywords: InboxKeywords }) {
   const actions = useActions();
+  const { config } = useConfig();
+  const overview = useShuttleQuery("overview", {});
+  const pause = useShuttleMutation("setAutomationPause");
+  const starter = useStartReview();
+  const [stopAll, setStopAll] = useState(false);
   const posting = keywords.filter.apply(data.posting);
   const reviewing = keywords.filter.apply(data.reviewing);
-  const total = data.posting.length + data.reviewing.length;
-  const row = (pr: PrView, mode: "posting" | "reviewing", trailing: ReactNode) => (
+  const queued = keywords.filter.apply(data.autoQueue);
+  const total = data.posting.length + data.reviewing.length + data.autoQueue.length;
+  const shown = posting.length + reviewing.length + queued.length;
+  const row = (pr: PrView, mode: "posting" | "reviewing" | "queued", trailing: ReactNode) => (
     <InboxRow key={pr.key} pr={pr} mode={mode} phone={layout.phone} selected={layout.selected === pr.key} checked={false} selecting={false} cursor={false} active={false} kindChip={false}
       onOpen={() => layout.onSelect(pr.key)} onCheck={() => {}} trailing={trailing} />
   );
@@ -681,16 +699,36 @@ function ReviewingList({ data, layout, keywords }: { data: InboxData; layout: Ro
     if (run === null) return undefined;
     const waiting = run.thread === "waiting";
     return (
-      <Tip text={waiting ? `\u201c${run.title}\u201d asked you something` : `Open \u201c${run.title}\u201d`}>
-        <button type="button" className={BUTTON} onClick={() => actions.openThread(run.threadId)}>{waiting ? "Answer in the thread" : "Open the thread"}</button>
-      </Tip>
+      <span className="flex items-center gap-1">
+        <Tip text={waiting ? `\u201c${run.title}\u201d asked you something` : `Open \u201c${run.title}\u201d`}>
+          <button type="button" className={BUTTON} onClick={() => actions.openThread(run.threadId)}>{waiting ? "Answer in the thread" : "Open the thread"}</button>
+        </Tip>
+        <Tip text={`Stop this review: bb stops \u201c${run.title}\u201d and the threads at work under it`}>
+          <button type="button" aria-label={`Stop the AI review of ${tinyKey(pr)}`} className={BUTTON_GHOST} onClick={() => void actions.writes.stopReviews([pr])}>Stop</button>
+        </Tip>
+      </span>
     );
   };
-  if (total === 0) return <div className="mt-2"><Empty>Nothing is posting, and no AI review is running.</Empty></div>;
+  // Started by hand, it runs with the auto review preset and does not wait for a place.
+  const autoPreset = config === null ? null : config.presets.find((preset) => preset.id === config.autoReview.preset) ?? defaultPresetOf(config.presets);
+  const startNow = (pr: PrView) => void starter.start({ key: pr.key, ...(autoPreset === null ? {} : { presetId: autoPreset.id }) }, autoPreset?.name ?? "The review");
+  const queue = (pr: PrView) => (
+    <span className="flex items-center gap-1">
+      <Tip text={`Start it now${autoPreset === null ? "" : ` with ${autoPreset.name}`}, without waiting for a place`}>
+        <button type="button" className={BUTTON} disabled={starter.busy} onClick={() => startNow(pr)}>Start now</button>
+      </Tip>
+      <Tip text="Auto review never starts on this PR; you can still start one yourself">
+        <button type="button" aria-label={`Never auto review ${tinyKey(pr)}`} className={BUTTON_GHOST} onClick={() => void actions.writes.skipAutoReview([pr], true)}>Never</button>
+      </Tip>
+    </span>
+  );
+  if (total === 0) return <div className="mt-2"><Empty>Nothing is posting, no AI review is running, and none is waiting.</Empty></div>;
+  const limit = config?.autoReview.maxRunning ?? null;
+  const paused = overview.data?.paused === true;
   return (
     <>
-      <div className="mt-2 flex"><InboxKeywordField keywords={keywords} count={{ shown: posting.length + reviewing.length, total }} phone={layout.phone} /></div>
-      {posting.length + reviewing.length === 0 && <NoMatches query={keywords.filter.query} onClear={() => keywords.setQuery("")} />}
+      <div className="mt-2 flex"><InboxKeywordField keywords={keywords} count={{ shown, total }} phone={layout.phone} /></div>
+      {shown === 0 && <NoMatches query={keywords.filter.query} onClear={() => keywords.setQuery("")} />}
       {posting.length > 0 && (
         <section aria-label="Posting">
           <ListHeading title="Posting" count={posting.length} />
@@ -700,14 +738,65 @@ function ReviewingList({ data, layout, keywords }: { data: InboxData; layout: Ro
       )}
       {reviewing.length > 0 && (
         <section aria-label="AI reviews running">
-          <ListHeading title="AI reviews running" count={reviewing.length} />
+          <ListHeading title="AI reviews running" count={reviewing.length}
+            trailing={<button type="button" className={BUTTON_DANGER} onClick={() => setStopAll(true)}><Icon name="Square" fallback="X" className="size-3.5" aria-hidden />Stop all</button>} />
           <p className="mb-2 text-[12.5px] text-muted-foreground">
             A review runs until its thread hands back a draft or says it is over, even while the thread waits on child threads such as critics. One with nothing happening for {plural(REVIEW_QUIET_MS / 3_600_000, "hour")} counts as gone quiet. When one finishes or stops, its PR comes back to the Inbox, unless you dismissed it or a rule keeps it out.
           </p>
           <ul className="overflow-hidden rounded-lg border border-border bg-card">{reviewing.map((pr) => row(pr, "reviewing", thread(pr)))}</ul>
         </section>
       )}
+      {queued.length > 0 && (
+        <section aria-label="Waiting for auto review">
+          <ListHeading title="Waiting for auto review" count={queued.length} />
+          <p className="mb-2 text-[12.5px] text-muted-foreground">
+            {paused
+              ? "Automations are paused, so none of these starts until you resume."
+              : `${limit === null ? "Auto review starts these in this order" : `${plural(data.autoRunning, "auto review")} of at most ${limit} running; the next starts when one ends`}, or tomorrow once the daily limit is reached.`}
+            {" "}Start one now to skip the wait: a review you start yourself does not count toward the limit.
+          </p>
+          <ul className="overflow-hidden rounded-lg border border-border bg-card">{queued.map((pr) => row(pr, "queued", queue(pr)))}</ul>
+        </section>
+      )}
+      {stopAll && <StopAllDialog count={data.reviewing.length} queued={data.autoQueue.length} paused={paused} onClose={() => setStopAll(false)} onStop={async (archive, alsoPause) => {
+        if (!(await actions.writes.stopReviews(null, archive))) return;
+        if (alsoPause && (await pause.run({ mode: "indefinite" })) !== null) toast.success("Automations are paused until you resume them.");
+        setStopAll(false);
+      }} />}
     </>
+  );
+}
+
+/** Asks before stopping every running AI review, whether to archive their threads, and whether to pause what would start next. */
+function StopAllDialog({ count, queued, paused, onClose, onStop }: { count: number; queued: number; paused: boolean; onClose(): void; onStop(archive: boolean, pause: boolean): Promise<void> }) {
+  const [archive, setArchive] = useState(false);
+  const [alsoPause, setAlsoPause] = useState(!paused && queued > 0);
+  const [busy, setBusy] = useState(false);
+  const stop = async () => {
+    setBusy(true);
+    try {
+      await onStop(archive, alsoPause && !paused);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Dialog title={`Stop ${plural(count, "AI review")}?`} subtitle="bb stops each review thread and the threads at work under it, such as critics. Auto review does not start a stopped review again on the same commit, nor on a new one unless Again on new commits is on. A review you start yourself always runs."
+      onClose={() => { if (!busy) onClose(); }}
+      footer={(
+        <>
+          <span className="flex-1" />
+          <button type="button" className={BUTTON_GHOST} disabled={busy} onClick={onClose}>Cancel</button>
+          <button type="button" className={BUTTON_DANGER} disabled={busy} onClick={() => void stop()}>{busy ? "Stopping\u2026" : `Stop ${plural(count, "review")}`}</button>
+        </>
+      )}>
+      <Checkbox checked={archive} label="Also archive their threads" hint="Only threads Shuttle started for the review, with their child threads." onChange={setArchive} />
+      {!paused && (
+        <Checkbox checked={alsoPause} label="Also pause automations"
+          hint={queued > 0 ? `Otherwise ${plural(queued, "PR")} waiting for auto review start${queued === 1 ? "s" : ""} as places free up.` : "Until you resume them; new requests start no auto review meanwhile."}
+          onChange={setAlsoPause} />
+      )}
+    </Dialog>
   );
 }
 
@@ -755,7 +844,7 @@ export function InboxView({ tab, layout, onGo }: { tab: InboxTab | "inbox"; layo
   const unseen = data?.prs.filter((pr) => pr.next.inbox && pr.unseen).map((pr) => pr.key) ?? [];
   const tabs = [
     { value: "inbox" as const, label: "Inbox", tip: "What waits on you" },
-    { value: "reviewing" as const, tip: "Your reviews on their way to their servers, and PRs with an AI review running", label: <>{INBOX_TAB_LABELS.reviewing}{data !== undefined && <>{" "}<b className="font-semibold">{data.posting.length + data.reviewing.length}</b></>}</> },
+    { value: "reviewing" as const, tip: "Your reviews on their way to their servers, PRs with an AI review running, and PRs waiting for auto review", label: <>{INBOX_TAB_LABELS.reviewing}{data !== undefined && <>{" "}<b className="font-semibold">{data.posting.length + data.reviewing.length + data.autoQueue.length}</b></>}</> },
     { value: "snoozed" as const, tip: "What you snoozed, and when each comes back", label: <>{INBOX_TAB_LABELS.snoozed}{data !== undefined && <>{" "}<b className="font-semibold">{data.snoozed.length}</b></>}</> },
     {
       value: "dismissed" as const,

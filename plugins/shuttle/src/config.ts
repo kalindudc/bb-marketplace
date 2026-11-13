@@ -2,6 +2,7 @@
 // settings (settings.ts) hold only the flat knobs; this lives in the plugin database.
 import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
 import { z } from "zod";
+import { parseKey, prKey } from "./keys";
 
 export const OPERATIONS = [
   "whoami", "authored", "review_requested", "team_requested", "mentioned", "reviewed", "view", "activity",
@@ -120,9 +121,24 @@ export const autoReviewSchema = z
     /** Repository globs such as acme/app or acme/*; empty for every repository. */
     repos: z.array(z.string().min(1).max(200)).max(50).default([]),
     maxPerDay: z.number().int().min(0).max(100).default(8),
+    /** Auto reviews running at once; the rest wait their turn. A review you start yourself neither waits nor counts. */
+    maxRunning: z.number().int().min(1).max(50).default(5),
     rerun: z.enum(["never", "new_head"]).default("never"),
+    /**
+     * A PR with no update for longer than this, whose request is as old, is not reviewed: a request Shuttle sees again,
+     * such as after a server listed nothing for a sync, is not a new one. 0 reviews such PRs too.
+     */
+    idleDays: z.number().int().min(0).max(365).default(14),
+    /** PR keys auto review never starts on; a review you start yourself still runs. */
+    skipPrs: z.array(z.string().trim().refine((key) => parseKey(key) !== null, "must be a PR key such as github:owner/repo#123").transform((key) => prKey(parseKey(key)!))).max(500).default([]),
   })
   .strict();
+
+/** On the never auto review list; keys match whatever the case, as servers do with repository names. */
+export function skipsPr(autoReview: Pick<z.infer<typeof autoReviewSchema>, "skipPrs">, key: string): boolean {
+  const wanted = key.toLowerCase();
+  return autoReview.skipPrs.some((skip) => skip.toLowerCase() === wanted);
+}
 
 const botLogin = z.string().trim().regex(/^[^\s,]{1,100}$/u, "must be one login, with no spaces or commas");
 const botPhrasesSchema = z

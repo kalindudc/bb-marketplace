@@ -102,7 +102,10 @@ export function sidebarReason(server: ServerStatus, now = Date.now()): { text: s
 export function SyncStatusPill({ server }: { server: ServerStatus }) {
   if (server.state === null) return <Pill>Not synced yet</Pill>;
   if (server.state === "ok") return <Pill tone="ok" icon="Check">{server.lastSyncAt === null ? "Synced" : `Synced ${ago(server.lastSyncAt)}`}</Pill>;
-  if (server.state === "partial") return <Pill tone="warn" icon="AlertTriangle">Synced, except {failedLabels(server)}</Pill>;
+  if (server.state === "partial") {
+    const text = `Synced, except ${failedLabels(server)}`;
+    return <Pill tone="warn" icon="AlertTriangle" title={text} truncate>{text}</Pill>;
+  }
   return <Pill tone="bad" icon="AlertTriangle">{server.failingSince === null ? "Failing" : `Failing since ${clock(server.failingSince)}`}</Pill>;
 }
 

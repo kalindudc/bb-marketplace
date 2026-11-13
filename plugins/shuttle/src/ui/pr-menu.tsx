@@ -5,6 +5,7 @@ import { useActions } from "./actions";
 import { BUTTON_OFF, BUTTON_ON, ICON_GHOST, ICON_GHOST_LARGE, ICON_GHOST_LARGE_ON } from "./common";
 import { Picker, PickerAction, PickerGroup, PickerSeparator } from "./picker";
 import { isLive } from "./pills";
+import { useConfig } from "./settings/use-config";
 
 /** Copies text and says what was copied; a browser that refuses says so instead. */
 export function copy(text: string, what: string): void {
@@ -36,6 +37,8 @@ const STATE_ACTIONS: { action: Extract<PrAction, "ready" | "draft" | "close" | "
 /** Everything that does not need a place on screen: copying, tracking, snoozing and dismissing, threads, reviews, and your PR's state. */
 export function PrMenu({ pr, triggerClassName = ICON_GHOST }: { pr: PrView; triggerClassName?: string }) {
   const actions = useActions();
+  const { config } = useConfig();
+  const skipped = config?.autoReview.skipPrs.includes(pr.key) ?? false;
   const live = isLive(pr);
   const states = pr.mine ? STATE_ACTIONS.filter((entry) => entry.when(pr) && pr.actions.includes(entry.action)) : [];
   const missing = pr.mine ? STATE_ACTIONS.filter((entry) => entry.when(pr) && !pr.actions.includes(entry.action)) : [];
@@ -67,6 +70,14 @@ export function PrMenu({ pr, triggerClassName = ICON_GHOST }: { pr: PrView; trig
       )}
       <PickerAction onSelect={() => actions.link(pr)}><Icon name="Link" className="size-3.5" aria-hidden />Link a thread…</PickerAction>
       {!pr.mine && live && <PickerAction onSelect={() => actions.startReview(pr)}><Icon name="Play" className="size-3.5" aria-hidden />Start an AI review…</PickerAction>}
+      {!pr.mine && pr.lastReview?.state === "running" && (
+        <PickerAction danger onSelect={() => void actions.writes.stopReviews([pr])}><Icon name="Square" fallback="X" className="size-3.5" aria-hidden />Stop the AI review</PickerAction>
+      )}
+      {!pr.mine && config !== null && (
+        <PickerAction onSelect={() => void actions.writes.skipAutoReview([pr], !skipped)}>
+          <Icon name={skipped ? "Bot" : "Ban"} fallback="X" className="size-3.5" aria-hidden />{skipped ? "Let auto review start on it" : "Never auto review"}
+        </PickerAction>
+      )}
       {(states.length > 0 || missing.length > 0) && <PickerSeparator />}
       {states.map((entry) => (
         <PickerAction key={entry.action} danger={entry.danger === true} onSelect={() => actions.edits.apply(pr, { kind: entry.action })}>

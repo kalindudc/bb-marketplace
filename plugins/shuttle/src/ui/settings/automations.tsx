@@ -51,11 +51,11 @@ function Card({ icon, title, hint, on, onToggle, children }: { icon: string; tit
 export function AutomationsSection() {
   const overview = useShuttleQuery("overview", {});
   const { config, loadError, saving, saveError, save, clearSaveError } = useConfig();
-  const [draft, setDraft] = useState<{ autoReview: AutoReview; watch: Watch; repos: string; bots: string; phrases: string; checks: string; autoPost: AutoPostDraft } | null>(null);
+  const [draft, setDraft] = useState<{ autoReview: AutoReview; watch: Watch; repos: string; skips: string; bots: string; phrases: string; checks: string; autoPost: AutoPostDraft } | null>(null);
   if (config === null) return loadError !== null ? <ErrorNote>Could not load Shuttle's settings: {loadError}</ErrorNote> : <div className="text-sm text-muted-foreground">Loading…</div>;
 
   const shown = draft ?? {
-    autoReview: config.autoReview, watch: config.watch, repos: config.autoReview.repos.join(", "), bots: config.watch.allowBots.join(", "),
+    autoReview: config.autoReview, watch: config.watch, repos: config.autoReview.repos.join(", "), skips: config.autoReview.skipPrs.join("\n"), bots: config.watch.allowBots.join(", "),
     phrases: phrasesText(config.watch.botPhrases), checks: config.watch.ignoreChecks.join("\n"), autoPost: toAutoPostDraft(config.autoPost),
   };
   const { autoReview: auto, watch } = shown;
@@ -72,7 +72,7 @@ export function AutomationsSection() {
   const submit = async () => {
     if (draft === null) return;
     const watch: Watch = { ...draft.watch, allowBots: splitGlobs(draft.bots), botPhrases: parsePhrases(draft.phrases), ignoreChecks: splitLines(draft.checks) };
-    const next: Config = { ...config, autoReview: { ...draft.autoReview, repos: splitGlobs(draft.repos) }, watch, autoPost: fromAutoPostDraft(draft.autoPost) };
+    const next: Config = { ...config, autoReview: { ...draft.autoReview, repos: splitGlobs(draft.repos), skipPrs: splitGlobs(draft.skips) }, watch, autoPost: fromAutoPostDraft(draft.autoPost) };
     if (await save(next, "Saved the automations")) setDraft(null);
   };
   const row = "grid grid-cols-1 items-center gap-1 sm:grid-cols-[10rem_minmax(0,1fr)] sm:gap-3";
@@ -108,6 +108,30 @@ export function AutomationsSection() {
               <input aria-label="Auto reviews a day" type="number" min={0} max={100} className={`${FIELD} w-20`} value={Number.isNaN(auto.maxPerDay) ? "" : auto.maxPerDay}
                 onChange={(event) => setAuto({ maxPerDay: number(event.target.value) })} />
               <span className="text-xs text-muted-foreground">a day; the rest wait for you in Reviews</span>
+            </span>
+          </label>
+          <label className={row}>
+            <span className={label}>Running at once</span>
+            <span className="flex items-center gap-2">
+              <input aria-label="Auto reviews running at once" type="number" min={1} max={50} className={`${FIELD} w-20`} value={Number.isNaN(auto.maxRunning) ? "" : auto.maxRunning}
+                onChange={(event) => setAuto({ maxRunning: number(event.target.value) })} />
+              <span className="text-xs text-muted-foreground">at most; the rest wait in Inbox › Reviewing, where you can start one now</span>
+            </span>
+          </label>
+          <label className={row}>
+            <span className={label}>Skip idle PRs after</span>
+            <span className="flex items-center gap-2">
+              <input aria-label="Days a PR may be idle" type="number" min={0} max={365} className={`${FIELD} w-20`} value={Number.isNaN(auto.idleDays) ? "" : auto.idleDays}
+                onChange={(event) => setAuto({ idleDays: number(event.target.value) })} />
+              <span className="text-xs text-muted-foreground">days with no update, unless you were asked within them; 0 never skips</span>
+            </span>
+          </label>
+          <label className={`${row} items-start`}>
+            <span className={`${label} pt-1.5`}>Never auto review</span>
+            <span className="flex min-w-0 flex-col gap-1">
+              <FitTextarea aria-label="PRs auto review never starts on" className={`${FIELD} font-mono`} placeholder="PR keys, one a line, such as github:acme/app#123" value={shown.skips}
+                onChange={(event) => { clearSaveError(); setDraft({ ...shown, skips: event.target.value }); }} />
+              <span className="text-xs text-muted-foreground">A review you start yourself still runs. A PR's ⋯ menu and the Inbox selection add to it too.</span>
             </span>
           </label>
           <label className={row}>

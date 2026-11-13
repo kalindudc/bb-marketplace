@@ -51,8 +51,10 @@ first looks waits for its next commits, so turning auto review on never reviews 
 
 - **Reviewing** lists your reviews on their way to their servers, then the PRs an AI review is
   running on, which are out of the Inbox until it finishes or stops: the preset, when it started,
-  whether its thread waits on your answer or is idle, and a button to its thread. The Inbox's foot
-  says how many of each there are, and how many merges are on their way.
+  whether its thread waits on your answer or is idle, a button to its thread and **Stop**. **Stop
+  all** stops every running review after asking, and can archive their threads too. Last come the
+  PRs waiting for auto review, in the order they start, each with **Start now** and **Never**. The
+  Inbox's foot says how many of each there are, and how many merges are on their way.
 - **Snooze** hides a PR until later today, tomorrow, next week or until it changes; anything new
   brings it back sooner. The Snoozed tab lists them with when each comes back.
 - **Dismiss** keeps a PR out of the Inbox for good, even when it changes. The Dismissed tab lists
@@ -248,7 +250,44 @@ failed or went quiet runs again when the thread gets back to work.
 A thread whose workspace bb could not set up, because a machine or environment provider failed,
 never ran its agent. Shuttle starts the same review again in a new thread, up to twice, and
 then stops and brings the PR to the Inbox. An auto review isn't started again while
-automations are paused or auto review is off. The PR's next review also skips such a thread.
+automations are paused, auto review is off or the PR is on the never auto review list. The PR's
+next review also skips such a thread.
+
+**Stop** ends a running review: bb stops the threads at work under its thread, such as critics,
+each on its own, then the review thread, and the PR's next step reads as if the review had not run.
+A stopped review does not resume, and a draft it hands back afterwards is refused. Auto review does
+not start it again on the same commit, nor on a new one unless **Again on new commits** is on. Stop
+one from its row under Reviewing, its Your review card or its ⋯ menu; **Stop all** under Reviewing
+asks first, can archive the threads and pause automations, so the queue does not refill at once.
+`bb shuttle stop [<pr>…] [--archive]` does the same; naming a PR whose review was already stopped
+stops its threads again, for one bb could not stop the first time.
+
+### Auto review
+
+Auto review starts a review thread by itself for a request that is new since Shuttle's first sync,
+with the rules in **Settings › Automations › Auto review**:
+
+- **At most** a number a day, and **Running at once** (5 by default): the rest wait, in the order
+  they were asked, under Inbox › Reviewing. **Start now** there starts one with the auto review
+  preset; a review you start yourself never waits and does not count toward either limit. A review
+  started again after bb could not set up its thread takes the place its first thread held, and
+  one whose thread waits on your answer keeps its place until you answer.
+- **Skip idle PRs after** (14 days by default): a PR with no update for longer, whose request is as
+  old, is left to you, and its activity says so once. A PR asked of you within that time is still
+  reviewed, however old it is. 0 turns this off.
+- **Never auto review** lists PRs it never starts on, one key a line. A PR's ⋯ menu, the Inbox's
+  selection bar, **Never** in the queue and `bb shuttle skip <pr>… [--off]` add to it or take
+  from it. A review you start yourself still runs.
+
+A request only counts as new when Shuttle had not seen it. A server can answer a list without the
+PRs it cannot show you, as GitHub does when an organisation's IP allow list refuses your network,
+so a PR a full list leaves out keeps its place until Shuttle can tell the list is right: another
+list or the closed list brings it, its own read works, or the server says it is gone. A PR the
+server refuses keeps it for up to a day, and the sync's refresh step says why; a sync checks up to
+10 such PRs after its linked and tracked ones. While a PR waits on that check, its request starts no
+auto review. When the list brings it back, its request is the one from before, not a new one. And
+where the server says when it asked you, as GitHub does, a request from before Shuttle's first sync
+is never new, however late Shuttle sees it.
 
 ### Auto post
 

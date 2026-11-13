@@ -4,6 +4,7 @@ import { NotFoundError, ShuttleError, type Ctx } from "./ctx";
 import type { InboxRuleRow, PrRow } from "./db/store";
 import { ruleMatches } from "./next";
 import { requirePr, shortKey } from "./prs";
+import { autoReviewQueue } from "./sync";
 import { inboxCandidates, inboxOf, toView } from "./views";
 
 const DAY_MS = 86_400_000;
@@ -138,6 +139,8 @@ export function inbox(ctx: Ctx): InboxView {
     snoozed,
     dismissed,
     reviewing,
+    autoQueue: autoReviewQueue(ctx).map((pr) => toView(ctx, pr)),
+    autoRunning: ctx.store.runningAutoReviews(),
     posting,
     merging,
     rules: ctx.store.inboxRules().map((rule) => ruleView(ctx, rule, candidates)),

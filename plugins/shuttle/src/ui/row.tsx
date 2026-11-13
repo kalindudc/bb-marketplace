@@ -348,7 +348,7 @@ function FactLine({ items }: { items: readonly ReactNode[] }) {
   );
 }
 
-export type InboxRowMode = "inbox" | "reviewing" | "posting" | "snoozed" | "dismissed";
+export type InboxRowMode = "inbox" | "reviewing" | "queued" | "posting" | "snoozed" | "dismissed";
 
 /** A review of yours in the queue: whose PR, what it posts, and how long it has waited or posted. */
 function postingFacts(pr: PrView): Fact[] {
@@ -378,9 +378,17 @@ function reviewingFacts(pr: PrView): Fact[] {
   return out;
 }
 
+/** A PR waiting for auto review: whose it is and since when it asks; an earlier run belongs to another commit. */
+function queuedFacts(pr: PrView): Fact[] {
+  const out: Fact[] = [{ text: pr.author, strong: true }, { text: pr.requestedAt === null ? "Waiting for a place" : `Asked ${ago(pr.requestedAt)}`, icon: "Clock" }];
+  if (pr.dismissed !== null) out.push({ text: "Dismissed", dashed: true });
+  return out;
+}
+
 function lineTwo(pr: PrView, mode: InboxRowMode, kindChip: boolean): ReactNode[] {
   if (mode === "posting") return postingFacts(pr).map((fact, index) => <FactView key={`fact-${index}`} fact={fact} />);
   if (mode === "reviewing") return [...reviewingFacts(pr).map((fact, index) => <FactView key={`fact-${index}`} fact={fact} />), <SizeFact key="size" pr={pr} />];
+  if (mode === "queued") return [...queuedFacts(pr).map((fact, index) => <FactView key={`fact-${index}`} fact={fact} />), <SizeFact key="size" pr={pr} />];
   if (mode === "snoozed") return [<FactView key="back" fact={{ text: pr.snoozedUntil === null ? "Back when it changes" : `Back ${when(pr.snoozedUntil)}`, icon: "Clock" }} />];
   if (mode === "dismissed") {
     const dismissed = pr.dismissed;

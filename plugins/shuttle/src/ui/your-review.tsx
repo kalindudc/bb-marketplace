@@ -456,7 +456,10 @@ export function YourReviewCard({ pr, draft }: { pr: PrView; draft: ReviewDraft |
           <span className="text-xs text-muted-foreground">{ago(run.at)}</span>
         </div>
         <div aria-hidden className="my-2 h-1 overflow-hidden rounded bg-surface-recessed"><div className="h-full w-2/5 animate-pulse rounded bg-muted-foreground" /></div>
-        <Buttons><button type="button" className={BUTTON} onClick={() => actions.openThread(run.threadId)}>Open the thread</button></Buttons>
+        <Buttons>
+          <button type="button" className={BUTTON} onClick={() => actions.openThread(run.threadId)}>Open the thread</button>
+          <button type="button" className={BUTTON_GHOST} onClick={() => void actions.writes.stopReviews([pr])}>Stop the review</button>
+        </Buttons>
         <div className={NOTE}>Its findings land here as a draft. Nothing is posted until you choose.</div>
       </>
     );

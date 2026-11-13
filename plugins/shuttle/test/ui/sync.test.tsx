@@ -184,4 +184,17 @@ describe("Settings › Servers", () => {
     fireEvent.click(within(note).getByRole("button", { name: "See sync history" }));
     expect(lastNavigation(slot)).toEqual({ method: "toPluginPanel", path: "shuttle", options: { subPath: "insights/sync" } });
   });
+
+  it("keeps a long partial sync pill inside its card, with the whole text on hover", async () => {
+    const loaded = await app();
+    const registration = loaded.settingsSections.find((item) => item.id === "servers")!;
+    const slot = mount<PluginSettingsSectionProps>(registration.component, {}, handlers({
+      overview: () => overview({ servers: [partialGithub({ failedSteps: ["authored_closed", "reviewed", "reviewed_closed", "refresh"] })] }),
+    }));
+    const pill = await find(slot.container, "[data-server='github'] [data-pill='warn']");
+    expect(pill.className).toContain("max-w-full");
+    expect(pill.className).not.toContain("shrink-0");
+    expect(pill.querySelector(".truncate")!.textContent).toBe(pill.getAttribute("title"));
+    expect(pill.getAttribute("title")).toMatch(/^Synced, except your merged and closed PRs, /u);
+  });
 });

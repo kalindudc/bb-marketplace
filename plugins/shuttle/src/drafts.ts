@@ -139,6 +139,8 @@ export async function saveDraft(ctx: Ctx, threadId: string, query: string, input
   if (latest && latest.thread_id !== threadId) {
     throw new ShuttleError(`a newer review of ${shortKey(ctx, pr)} runs in \u201c${ctx.store.threadTitle(latest.thread_id) ?? latest.thread_id}\u201d; this thread's draft is out of date`);
   }
+  // The user stopped it: nothing it hands back may reach auto post. Starting a review again opens the way.
+  if (review?.ended_by === "stopped") throw new ShuttleError(`the user stopped this review of ${shortKey(ctx, pr)}; stop working on it and hand back nothing`);
   const findings: Finding[] = input.findings.map((f, index) => ({
     id: `f${index + 1}`, severity: f.severity, path: f.path, line: f.line ?? null, body: f.body,
     ...(f.evidence?.length ? { evidence: f.evidence } : {}),
