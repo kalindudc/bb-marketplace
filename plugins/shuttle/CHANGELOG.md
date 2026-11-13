@@ -2,6 +2,12 @@
 
 Notable changes to Shuttle, newest first. Releases are tagged `shuttle/vX.Y.Z` in this repository.
 
+## 0.10.2 (2026-11-13)
+
+### Fixed
+
+- A sync banner for a server where only some lists failed reads as a sentence: "Your open PRs show what Shuttle had at 1:51 AM", not "Its your open PRs show what Shuttle had at 1:51 AM".
+
 ## 0.10.1 (2026-11-13)
 
 ### Fixed

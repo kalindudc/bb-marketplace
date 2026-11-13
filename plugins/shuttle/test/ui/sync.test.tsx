@@ -80,7 +80,14 @@ describe("the sync banner", () => {
     const alert = await banner(slot.container, "github");
     expect(alert.className).toContain("border-warning");
     expect(alert.textContent).toContain("GitHub synced, except team requests");
-    expect(alert.textContent).toContain(`Its team requests show what Shuttle had at ${clock(LAST_GOOD)}.`);
+    expect(alert.textContent).toContain(`Team requests show what Shuttle had at ${clock(LAST_GOOD)}.`);
+  });
+
+  it("names the lists that failed in a sentence that reads", async () => {
+    const { slot } = await page("reviews", { overview: () => overview({ servers: [partialGithub({ failedSteps: ["authored", "reviewed"] })] }) });
+    const alert = await banner(slot.container, "github");
+    expect(alert.textContent).toMatch(/\. Your open PRs and PRs you reviewed show what Shuttle had at /u);
+    expect(alert.textContent).not.toContain("Its ");
   });
 
   it("dates a list that has not passed since the upgrade by the last good sync", async () => {

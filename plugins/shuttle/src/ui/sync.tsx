@@ -22,7 +22,8 @@ function staleText(server: ServerStatus): string {
   // Who you are brings no PRs. A step that has not passed since Shuttle began keeping steps is as old as the last good sync.
   const times = server.failedSteps.filter((step) => step !== "whoami").map((step) => server.stepOkAt[step] ?? server.lastOkAt).filter((at): at is number => at !== null);
   const since = times.length > 0 ? Math.min(...times) : server.lastOkAt;
-  const whose = server.state === "partial" ? `Its ${failedLabels(server)}` : `${server.name}'s PRs`;
+  const lists = failedLabels(server);
+  const whose = server.state === "partial" ? lists.charAt(0).toUpperCase() + lists.slice(1) : `${server.name}'s PRs`;
   return since === null ? `${whose} show nothing yet.` : `${whose} show what Shuttle had at ${clock(since)}.`;
 }
 
