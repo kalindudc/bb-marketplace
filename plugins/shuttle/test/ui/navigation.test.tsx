@@ -4,7 +4,7 @@ import type { PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
 import { renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { rpcContract, type Overview } from "../../src/contract";
 import { formatRoute } from "../../src/ui/route";
-import { app, callsTo, handlers, mount, overview, pr, server, unmountAll } from "./helpers";
+import { app, callsTo, handlers, mount, overview, pr, server, setViewport, unmountAll } from "./helpers";
 
 afterEach(unmountAll);
 
@@ -71,6 +71,19 @@ describe("the page title", () => {
     expect(await title(formatRoute({ view: "search", query: "edge", key: "lab:acme/app#2" }))).toEqual({
       breadcrumbs: [{ label: "Search: \u201cedge\u201d", to: "/plugins/shuttle/shuttle/search/edge" }, { label: "acme/app#2" }],
     });
+  });
+
+  it("names only the last part on a phone, which bb shortens to fit instead of running it over the header's buttons", async () => {
+    setViewport(390);
+    try {
+      expect(await title("mine")).toEqual({ title: "Open" });
+      expect(await title(formatRoute({ view: "inbox", key: "lab:acme/app#2" }))).toEqual({ title: "acme/app#2" });
+      expect(await title(formatRoute({ view: "reviews", source: "team", key: "github:acme/deploy-v2#88" }))).toEqual({ title: "acme/deploy-v2#88" });
+      expect(await title("insights/sync")).toEqual({ title: "Sync" });
+      expect(await title("")).toEqual({ title: "Inbox" });
+    } finally {
+      setViewport(1440);
+    }
   });
 });
 

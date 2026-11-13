@@ -41,8 +41,11 @@ export function httpStatus(text: string): number | null {
 export function failureKind(text: string, status: number | null = httpStatus(text)): SyncFailureKind {
   if (status === 429 || /rate.?limit|too many requests|abuse detection/iu.test(text)) return "rate_limit";
   if (status === 401 || status === 403 || /unauthori[sz]ed|not (?:logged|signed) in|bad credentials|token (?:is )?(?:expired|invalid|revoked)|did not accept your sign-in|gh auth login/iu.test(text)) return "auth";
-  // A gateway timeout is a server error, but asking again would repeat the same slow request.
-  if (status === 504 || /took longer than|timed? ?out\b|deadline exceeded|gateway time-?out|couldn't respond to your request in time/iu.test(text)) return "timeout";
+  // A gateway timeout is a server error, but asking again would repeat the same slow request. A 503 is the
+  // server saying it cannot answer now, even in words such as "writer-timeout on this host; retry shortly",
+  // unless Shuttle stopped the command at its time limit: the 503 is then one read's, and another was still waiting.
+  if (status === 504 || /took longer than/iu.test(text)) return "timeout";
+  if (status !== 503 && /timed? ?out\b|deadline exceeded|gateway time-?out|couldn't respond to your request in time/iu.test(text)) return "timeout";
   if ((status !== null && status >= 500) || /restarting|service unavailable|bad gateway|internal server error|temporarily unavailable/iu.test(text)) return "unavailable";
   if (/unexpected end of JSON input|unexpected EOF|printed nothing/iu.test(text)) return "cut_short";
   if (/dns error|lookup address|could not resolve|getaddrinfo|ENOTFOUND|ECONNREFUSED|ECONNRESET|EHOSTUNREACH|ENETUNREACH|connection (?:refused|reset|closed)|network is unreachable|client error \(Connect\)/iu.test(text)) return "network";

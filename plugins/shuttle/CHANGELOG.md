@@ -2,6 +2,13 @@
 
 Notable changes to Shuttle, newest first. Releases are tagged `shuttle/vX.Y.Z` in this repository.
 
+## 0.10.1 (2026-11-13)
+
+### Fixed
+
+- A list a server answers with HTTP 503 is tried once more, after the usual 3-second pause, and reads as a server error. A 503 whose message has the word "timeout" in it, such as "search needs the pull-request index, which is writer-timeout on this host; retry shortly", was taken for a slow answer: Shuttle never asked again and said the server "took too long to answer". A 504, and a command Shuttle stopped at 60 seconds, still count as too slow and are not asked again, even when one of the command's reads printed a 503.
+- On a phone, the page header names only where you are, such as Open or the selected PR, instead of the whole trail. bb draws each part of a trail at full width, so on a narrow screen `My PRs › Open › acme/app#123` ran over itself and under the header's search and sync buttons; a single title is shortened to fit.
+
 ## 0.10.0 (2026-11-12)
 
 ### Added

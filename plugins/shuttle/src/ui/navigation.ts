@@ -4,6 +4,7 @@ import { useShuttleQuery } from "./data";
 import { keyLabel } from "./format";
 import { routeOf } from "./prefs";
 import { formatRoute, type Route } from "./route";
+import { useViewport } from "./viewport";
 
 /** The rail badge: how many decisions wait in the Inbox. */
 export function useNeedsBadge(): ExperimentalBadge | null {
@@ -34,12 +35,15 @@ function crumbsOf(route: Route, boardName?: string): { label: string; route: Rou
 
 export function useShuttlePageTitle({ subPath }: PluginNavPanelProps): ExperimentalPageTitle | null {
   const pluginId = experimental_usePluginId();
+  const phone = useViewport() === "phone";
   const route = routeOf(subPath);
   const board = useShuttleQuery("board", { id: route.view === "board" ? route.id : "board" }, route.view === "board");
   const boardName = route.view === "board" ? board.data?.board.name : undefined;
   const crumbs = crumbsOf(route, boardName);
   const key = route.view === "insights" || route.view === "boards" ? null : route.key;
   if (key === null && crumbs.length === 1) return { title: crumbs[0]!.label };
+  // bb draws each breadcrumb at full width, so on a phone a trail runs over the header's buttons; a title is shortened to fit.
+  if (phone) return { title: key === null ? crumbs[crumbs.length - 1]!.label : keyLabel(key) };
   const to = (target: Route) => {
     const path = formatRoute(target);
     return `/plugins/${encodeURIComponent(pluginId)}/${PANEL_PATH}${path === "" ? "" : `/${path}`}`;

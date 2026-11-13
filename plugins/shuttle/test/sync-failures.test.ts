@@ -7,6 +7,8 @@ import { RECHECK_MS, RETRY_PAUSE_MS } from "../src/sync";
 import { harness, pr, RawRun, testConfig, type Harness } from "./helpers";
 
 const RESTARTING = "Error: 503: the host serving this repository is restarting; retry in a few seconds (git: rerun the command)";
+// A forge's answer while its search index catches up: a server error, whatever its words say.
+const INDEX_BUSY = "Error: 503: search needs the pull-request index, which is writer-timeout on this host; retry shortly";
 const FORGE = { name: "Forge", kind: "command" };
 
 /** Answers an operation from a queue, one answer per call, then `rest` for every later call. */
@@ -25,6 +27,9 @@ describe("why a sync step failed", () => {
       ["gh exited 1: gh: HTTP 502", "unavailable", "Forge had a server error (HTTP 502)"],
       ["gh exited 1: unexpected end of JSON input", "cut_short", "Forge cut its answer short"],
       ["authored took longer than 60s", "timeout", "Forge took too long to answer"],
+      [`authored exited 1: ${INDEX_BUSY}`, "unavailable", "Forge had a server error (HTTP 503)"],
+      ["authored exited 1: Error: 503: search needs the pull-request index, which is pool-timeout on this host; retry shortly", "unavailable", "Forge had a server error (HTTP 503)"],
+      ["gh exited 1: gh: HTTP 504: Gateway Timeout", "timeout", "Forge took too long to answer (HTTP 504)"],
       ["view exited 1: 0: client error (Connect) 1: dns error 2: failed to lookup address information", "network", "Shuttle could not reach Forge"],
       ["gh exited 1: gh: API rate limit exceeded (HTTP 403)", "rate_limit", "Forge is limiting how often Shuttle asks (HTTP 403)"],
       ["whoami exited 1: Error: 401: unauthorized", "auth", "Forge did not accept your sign-in (HTTP 401)"],
@@ -71,6 +76,15 @@ describe("sync steps", () => {
     expect(h.shuttle.overview().servers[0]).toMatchObject({ ok: true, state: "ok", failures: 0, alert: false });
   });
 
+  it("tries a list once more after a search index answered 503, and passes", async () => {
+    const h = harness();
+    answer(h, "review_requested", [new Error(INDEX_BUSY)], [pr(5)]);
+    await h.shuttle.sync();
+    expect(h.pauses).toEqual([RETRY_PAUSE_MS]);
+    expect(step(h, "review_requested")).toMatchObject({ status: "ok", attempts: 2, detail: "1 PR" });
+    expect(h.shuttle.overview().servers[0]).toMatchObject({ ok: true, state: "ok", failures: 0, alert: false });
+  });
+
   it("never tries again after a rate limit or an error that will not pass, and starts no list after a rate limit", async () => {
     const h = harness();
     h.lists.authored = new Error("authored printed JSON in the wrong shape: 0.number: Invalid input") as unknown as unknown[];
@@ -107,6 +121,17 @@ describe("sync steps", () => {
     for (const call of h.runner.calls.slice(before)) asked.push(call.operation === "authored" ? `authored ${call.env.SHUTTLE_STATE}` : call.operation);
     expect(asked).toEqual([]);
     expect(step(h, "authored_closed")).toMatchObject({ status: "skipped", detail: "Not run: Forge is limiting how often Shuttle asks (HTTP 429)" });
+  });
+
+  it("does not run a request Shuttle stopped at its time limit again, even when one of its reads printed a 503", async () => {
+    expect(describeFailure(FORGE, { message: "reviewed took longer than 60s", output: INDEX_BUSY })).toMatchObject({ kind: "timeout" });
+    expect(describeFailure(FORGE, { message: "gh took longer than 60s", output: "gh: HTTP 503" })).toMatchObject({ kind: "timeout" });
+    const h = harness();
+    h.lists.review_requested = new RawRun({ code: null, stdout: "", stderr: INDEX_BUSY, timedOut: true }) as unknown as unknown[];
+    await h.shuttle.sync();
+    expect(h.pauses).toEqual([]);
+    expect(calls(h, "review_requested")).toBe(1);
+    expect(step(h, "review_requested").failure).toMatchObject({ kind: "timeout" });
   });
 
   it("does not run a request that timed out again in the same sync", async () => {
