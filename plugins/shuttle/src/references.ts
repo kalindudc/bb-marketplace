@@ -50,8 +50,10 @@ export class References {
     const hash = digest(JSON.stringify([input.text, [...input.urls].sort()]));
     const out: ReferenceRecord[] = [];
     let changed = false;
+    let shared = false;
     for (const reference of numbers) {
-      const id = digest(JSON.stringify([input.threadId, input.messageId, reference.number]));
+      // One record per thread and number: the message that first mentions the number owns it, and later ones share it.
+      const id = digest(JSON.stringify([input.threadId, reference.number]));
       const old = this.ctx.store.reference(id);
       const explicit = targets.filter(({ target }) => (target.kind === "issue" ? target.number : target.ref.number) === reference.number).map(({ url }) => url);
       const qualifiedMentions = mentions.filter((r) => r.number === reference.number && r.token.includes("/"));
@@ -87,6 +89,13 @@ export class References {
       const unique = distinct(candidates);
       const ambiguous = unique.length > 1 || (!qualifiedMentions.length && !exact.length && !links.length && mixed);
       const automaticUrl = !ambiguous && unique.length === 1 ? unique[0]! : null;
+      const fills = old !== null && automaticUrl !== null && (old.record.status === "unresolved" || (old.record.status === "ambiguous" && exact.length > 0));
+      if (old && old.record.messageId !== input.messageId && !fills) {
+        // A message whose own links name another target, or a target on a disabled server, leaves this mention plain.
+        const conflicts = old.record.url !== null && (exact.some((url) => url !== old.record.url) || !parseGitLink(old.record.url, servers));
+        if (!conflicts) out.push(old.record);
+        continue;
+      }
       if (old?.hash === hash && old.record.automaticUrl === automaticUrl && FEEDBACK_STATES.includes(old.record.status) && (old.record.url === null || parseGitLink(old.record.url, servers))) {
         out.push(old.record);
         continue;
@@ -102,10 +111,12 @@ export class References {
       if (old?.hash !== hash || JSON.stringify(old.record) !== JSON.stringify(record)) {
         this.ctx.store.saveReference(record, hash);
         changed = true;
+        if (old && (old.record.status !== record.status || old.record.url !== record.url)) shared = true;
       }
       out.push(record);
     }
-    if (changed) this.ctx.port.publish(["reference-log"]);
+    // Other messages of the thread show the same record, so a new status or target refreshes them too.
+    if (changed) this.ctx.port.publish(shared ? ["references", "reference-log"] : ["reference-log"]);
     return out;
   }
 

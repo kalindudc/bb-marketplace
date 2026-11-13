@@ -36,7 +36,7 @@ export function ReferenceFeedback({ id, url, onDone, showTriage = true }: { id: 
           <input aria-label="Correct reference target" value={query} onChange={(event) => setQuery(event.target.value)} maxLength={2000}
             className="mt-1 block w-full rounded-md border border-input bg-background px-2 py-2 text-sm text-foreground" placeholder="github:owner/repo#123 or https://…/issues/123" />
         </label>
-        <p className="text-xs text-muted-foreground">Applies only to this number in this message. Saved as your choice; the target is not fetched to verify it.</p>
+        <p className="text-xs text-muted-foreground">Applies to this number everywhere in this thread. Saved as your choice; the target is not fetched to verify it.</p>
         <button type="submit" className={BUTTON} disabled={feedback.isPending || !query.trim()}>Save correction</button>
       </form>
     </details>

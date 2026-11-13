@@ -191,11 +191,15 @@ shows its details; selecting another closes the previous details. The PR panel r
 the next match loads, rather than collapsing and opening again. Selection follows the reference
 identity, so a correction updates the already-open panel even after the record leaves Pending;
 source-thread, external-link and evidence controls act independently. Records are collected when messages are displayed, not by scanning all historical
-threads. It retains the latest 2,000 records without feedback and preserves records with feedback.
+threads. A thread keeps one record per number, however many of its messages mention it: the message that
+mentions it first gives the record its excerpt, and later mentions show the same match. A later message
+can supply a target only when the record has none and you have not decided on it; an ambiguous first
+mention needs an explicit link. A later message whose own links name a different target leaves its
+mention unlinked instead of showing the thread's match. It retains the latest 2,000 records without feedback and preserves records with feedback.
 Counts describe retained records, not measured matching accuracy.
 
 Mark correct confirms a target without removing its popover; Dismiss hides a record without judging its
-target. Both persist for that message and leave the default Pending list. The Handled view retains
+target. Both persist for that number in that thread and leave the default Pending list. The Handled view retains
 confirmed, dismissed, corrected and non-git records without deleting them. Pending also has a collapsed
 Handled section, with collapsed status groups. Popover actions acknowledge completion in a toast.
 After a match is confirmed or corrected, its popover shows the saved status and one management link
@@ -204,14 +208,15 @@ instead of repeating the action buttons. That link opens the selected referenceâ
 Flag incorrect removes the resolved target until you correct or reset it. Correct this reference
 accepts a PR key or a PR / issue URL on an enabled Shuttle server; it saves your choice without
 fetching the target to verify its existence. Not a git reference suppresses it. These decisions apply
-only to this number in this message, never to every occurrence of the number across threads.
-Edits to the message or changes to a resolved target's context flag the reference for another review
+to every mention of this number in its thread, never to the same number in other threads.
+Edits to the message that first mentioned it or changes to a resolved target's context flag the reference for another review
 instead of silently reusing the previous choice. Corrections are local to Shuttle; nothing is posted
 to the PR or issue and the original message stays intact.
 
 The SDK migration uses explicit server-side RPC invalidation and the current panel controller.
-The database migration only adds reference-resolution and feedback tables; existing settings,
-PRs, links and review records are retained.
+The database migrations only add reference-resolution and feedback tables, then clear the
+per-message reference log of earlier builds once; existing settings, PRs, links and review records
+are retained.
 
 ## Theme
 

@@ -1,5 +1,7 @@
 // @vitest-environment node
+import Database from "better-sqlite3";
 import { describe, expect, it } from "vitest";
+import { MIGRATIONS } from "../src/db/schema";
 import { References } from "../src/references";
 import { harness, pr } from "./helpers";
 
@@ -46,14 +48,16 @@ describe("reference resolution", () => {
     expect(refs.log(20).rows).toEqual([]);
   });
 
-  it("persists flags and corrections per message and invalidates them on edits", async () => {
+  it("shares flags and corrections across the thread and invalidates them on edits to the first mention", async () => {
     const { h, refs, input } = await setup();
+    h.port.addThread("thr_other");
     const [row] = await refs.resolve(input);
     refs.feedback(row!.id, "flag", null);
     expect(await new References(h.shuttle).resolve(input)).toMatchObject([{ status: "flagged", url: null, automaticUrl: row!.url }]);
     refs.feedback(row!.id, "correct", "https://forge.test/other/repo/issues/10");
     expect(await refs.resolve(input)).toMatchObject([{ status: "corrected", url: "https://forge.test/other/repo/issues/10" }]);
-    expect(await refs.resolve({ ...input, messageId: "msg_other" })).toMatchObject([{ status: "automatic" }]);
+    expect(await refs.resolve({ ...input, messageId: "msg_other", text: "Still #90386." })).toMatchObject([{ id: row!.id, status: "corrected", url: "https://forge.test/other/repo/issues/10" }]);
+    expect(await refs.resolve({ ...input, threadId: "thr_other", messageId: "msg_other" })).toMatchObject([{ status: "automatic" }]);
     expect(await refs.resolve({ ...input, text: "Changed: PR #90386." })).toMatchObject([{ status: "flagged", url: null }]);
     expect(refs.log(20).events).toHaveLength(2);
     expect(() => refs.feedback(row!.id, "correct", "https://evil.test/a/b/pull/3")).toThrow();
@@ -76,7 +80,7 @@ describe("reference resolution", () => {
     expect(await refs.resolve(input)).toMatchObject([{ reason: "PR linked to the source thread" }]);
     const [resolved] = await refs.resolve({ ...input, messageId: "msg_other" });
     refs.feedback(resolved!.id, "correct", "https://forge.test/other/repo/issues/10");
-    expect(await refs.resolve({ ...input, messageId: "msg_other", text: "Edited PR #90386" })).toMatchObject([{ status: "flagged", url: null }]);
+    expect(await refs.resolve({ ...input, text: "Edited PR #90386" })).toMatchObject([{ status: "flagged", url: null }]);
   });
 
   it("rechecks context before reusing a persisted correction", async () => {
@@ -135,9 +139,10 @@ describe("reference resolution", () => {
   });
 
   it("searches before paginating and filters handled decisions", async () => {
-    const { refs, input } = await setup();
+    const { h, refs, input } = await setup();
+    h.port.addThread("thr_other");
     await refs.resolve({ ...input, messageId: "msg_a", text: "PR #90386 alpha" });
-    await refs.resolve({ ...input, messageId: "msg_b", text: "PR #90386 beta" });
+    await refs.resolve({ ...input, threadId: "thr_other", messageId: "msg_b", text: "PR #90386 beta" });
     const first = refs.log(1, { query: "alpha", filter: "pending" });
     expect(first.filteredTotal).toBe(1);
     expect(first.rows[0]!.excerpt).toContain("alpha");
@@ -156,5 +161,69 @@ describe("reference resolution", () => {
     expect(await refs.resolve(input)).toMatchObject([{ status: "suppressed", url: null }]);
     refs.feedback(row!.id, "reset", null);
     expect(await refs.resolve(input)).toMatchObject([{ status: "automatic" }]);
+  });
+
+  it("keeps one record per thread and number however many messages mention it", async () => {
+    const { h, refs, input } = await setup();
+    h.port.addThread("thr_other");
+    const [first] = await refs.resolve(input);
+    const [second] = await refs.resolve({ ...input, messageId: "msg_2", text: "Merged #90386 after CI." });
+    const [third] = await refs.resolve({ ...input, messageId: "msg_3", text: "#90386 is deployed." });
+    expect(second!.id).toBe(first!.id);
+    expect(third).toEqual(first);
+    expect(refs.log(20).rows).toEqual([expect.objectContaining({ id: first!.id, messageId: "msg_1", excerpt: input.text })]);
+    refs.feedback(third!.id, "confirm", null);
+    expect(await refs.resolve({ ...input, messageId: "msg_4", text: "Again #90386." })).toMatchObject([{ id: first!.id, status: "confirmed" }]);
+    expect(await refs.resolve({ ...input, threadId: "thr_other" })).toMatchObject([{ status: "automatic" }]);
+    expect(refs.log(20).total).toBe(2);
+  });
+
+  it("lets a later message supply the target a first mention could not find", async () => {
+    const { h, refs, input } = await setup();
+    expect(await refs.resolve({ ...input, text: "PR #12 is next." })).toMatchObject([{ status: "unresolved", url: null }]);
+    h.port.invalidations.length = 0;
+    expect(await refs.resolve({ ...input, messageId: "msg_2", text: "Opened #12.", urls: ["https://forge.test/acme/app/pull/12"] })).toMatchObject([{ status: "automatic", url: "https://forge.test/acme/app/pull/12", messageId: "msg_2" }]);
+    expect(h.port.invalidations).toEqual([["references", "reference-log"]]);
+    expect(await refs.resolve({ ...input, text: "PR #12 is next." })).toMatchObject([{ status: "automatic", url: "https://forge.test/acme/app/pull/12" }]);
+    expect(refs.log(20).total).toBe(1);
+  });
+
+  it("resolves an ambiguous first mention only from an explicit link in a later message", async () => {
+    const { refs, input } = await setup();
+    expect(await refs.resolve({ ...input, text: "PR #90386 and forge:other/repo#12" })).toMatchObject([{ status: "ambiguous", url: null }]);
+    expect(await refs.resolve({ ...input, messageId: "msg_2" })).toMatchObject([{ status: "ambiguous", url: null }]);
+    expect(await refs.resolve({ ...input, messageId: "msg_3", urls: ["https://forge.test/acme/app/pull/90386"] })).toMatchObject([{ status: "automatic", url: "https://forge.test/acme/app/pull/90386", messageId: "msg_3" }]);
+  });
+
+  it("leaves a later mention plain when its own message links the number elsewhere", async () => {
+    const { refs, input } = await setup();
+    const [row] = await refs.resolve(input);
+    expect(await refs.resolve({ ...input, messageId: "msg_2", urls: ["https://forge.test/other/repo/pull/90386"] })).toEqual([]);
+    expect(await refs.resolve({ ...input, messageId: "msg_2", urls: ["https://forge.test/acme/app/pull/90386"] })).toEqual([row]);
+    expect(refs.log(20).rows).toMatchObject([{ id: row!.id, messageId: "msg_1", url: "https://forge.test/acme/app/pull/90386" }]);
+    expect(refs.log(20).total).toBe(1);
+  });
+
+  it("never shows a shared target on a server that was disabled since", async () => {
+    const { h, refs, input } = await setup();
+    await refs.resolve(input);
+    h.shuttle.store.saveConfig({ ...h.shuttle.config(), servers: h.shuttle.config().servers.map((server) => ({ ...server, enabled: false })) });
+    expect(await refs.resolve({ ...input, messageId: "msg_2" })).toEqual([]);
+  });
+});
+
+describe("the one-record-per-thread migration", () => {
+  it("clears the per-message reference log and its feedback, and nothing else", () => {
+    const db = new Database(":memory:");
+    const first = MIGRATIONS.indexOf("DELETE FROM reference_feedback");
+    expect(first).toBeGreaterThan(0);
+    for (const sql of MIGRATIONS.slice(0, first)) db.exec(sql);
+    db.exec("INSERT INTO reference_resolutions (id, thread_id, message_id, text_hash, value, updated_at) VALUES ('a', 'thr_a', 'msg_1', 'h', '{}', 0), ('b', 'thr_a', 'msg_2', 'h', '{}', 0)");
+    db.exec("INSERT INTO reference_feedback (reference_id, action, before_url, after_url, at) VALUES ('a', 'confirm', null, 'u', 0)");
+    db.exec("INSERT INTO threads (id, title, updated_at) VALUES ('thr_a', 'A', 0)");
+    for (const sql of MIGRATIONS.slice(first)) db.exec(sql);
+    expect(db.prepare("SELECT count(*) AS n FROM reference_resolutions").get()).toEqual({ n: 0 });
+    expect(db.prepare("SELECT count(*) AS n FROM reference_feedback").get()).toEqual({ n: 0 });
+    expect(db.prepare("SELECT id FROM threads").all()).toEqual([{ id: "thr_a" }]);
   });
 });

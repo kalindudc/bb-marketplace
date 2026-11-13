@@ -365,4 +365,7 @@ export const MIGRATIONS: string[] = [
   `CREATE TABLE reference_feedback (id INTEGER PRIMARY KEY AUTOINCREMENT, reference_id TEXT NOT NULL, action TEXT NOT NULL, before_url TEXT, after_url TEXT, at INTEGER NOT NULL)`,
   // When a full list first left out a PR that has the reason; it keeps the reason until Shuttle can tell the server sees the PR.
   `ALTER TABLE reasons ADD COLUMN unlisted_since INTEGER`,
+  // References became one record per thread and number; the per-message log kept before that starts over.
+  `DELETE FROM reference_feedback`,
+  `DELETE FROM reference_resolutions`,
 ];
