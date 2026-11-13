@@ -2,8 +2,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import { fireEvent, waitFor, within } from "@testing-library/react";
 import { experimental_THREAD_INFO_SECTION_GROUPS, type ExperimentalThreadContextSegmentProps, type ExperimentalThreadInfoProps } from "@get-bb/plugin-sdk/app";
 import { renderSlot } from "@get-bb/plugin-sdk/testing/app";
-import { rpcContract, type PrView } from "../../src/contract";
-import { panelPrs, threadPrsOpen } from "../../src/ui/prefs";
+import { rpcContract, type PrView, type ReferenceRecord } from "../../src/contract";
+import { ShuttlePanel } from "../../src/ui/panel";
+import { panelPrs, panelReferences, rememberPanelPr, rememberPanelReference, threadPrsOpen } from "../../src/ui/prefs";
 import { agent, app, callsTo, handlers, link, mount, pr, unmountAll } from "./helpers";
 
 afterEach(unmountAll);
@@ -15,6 +16,36 @@ const owned = pr({ number: 4411, mine: true, reasons: [], links: [link({ threadI
 const failing = pr({ repo: "get-bb/bb", number: 4412, mine: true, reasons: [], checks: "failed", links: [link({ threadId: THREAD, role: "owner" })] });
 const changes = pr({ repo: "get-bb/bb", number: 4413, mine: true, reasons: [], review: "changes", links: [link({ threadId: THREAD, role: "owner" })] });
 const unsent = pr({ repo: "get-bb/bb", number: 4414, mine: true, reasons: [], pendingItems: 2, links: [link({ threadId: THREAD, role: "owner" })] });
+
+describe("opening a linked PR after a message reference", () => {
+  it.each(["Info", "composer"])("replaces the reference with the PR selected from %s", async (source) => {
+    const referenced = pr({ number: 4415 });
+    const reference: ReferenceRecord = { id: "a".repeat(64), threadId: THREAD, messageId: "msg_1", number: referenced.number, excerpt: "PR #4415", status: "automatic", url: referenced.url, automaticUrl: referenced.url, reason: "Known PR", candidates: [], at: Date.now() };
+    rememberPanelPr(THREAD, failing.key);
+    rememberPanelReference(THREAD, reference.id);
+    rememberPanelReference("thr_other", "b".repeat(64));
+    const loaded = await app();
+    const Info = loaded.threadInfoSections[0]!.component;
+    const Details = loaded.threadContextSegments[0]!.details!;
+    const props = { threadId: THREAD, projectId: "prj_bb", environment: null };
+    const Thread = () => <>
+      <ShuttlePanel threadId={THREAD} environment={null} params={{ threadId: THREAD }} />
+      <div data-entry>{source === "Info" ? <Info {...props} /> : <Details {...props} segments={[]} isExpanded onToggle={() => {}} />}</div>
+    </>;
+    const slot = mount(Thread, {}, handlers({
+      threadPrs: () => ({ prs: [owned, failing], sent: [] }),
+      reference: () => reference,
+      detail: ({ key }) => ({ pr: key === referenced.key ? referenced : failing, events: [], body: "", draft: null, drafts: 0 }),
+    }), { sdk: { threads: { get: async () => ({ environmentId: null }) as never } } });
+    await waitFor(() => expect(slot.container.querySelector("[data-panel-pr]")?.getAttribute("data-panel-pr")).toBe(referenced.key));
+    const entry = within(slot.container.querySelector<HTMLElement>("[data-entry]")!);
+    fireEvent.click(await entry.findByRole("button", { name: /get-bb\/bb#4412/u }));
+    await waitFor(() => expect(slot.container.querySelector("[data-panel-pr]")?.getAttribute("data-panel-pr")).toBe(failing.key));
+    expect(panelReferences.get()).toEqual({ thr_other: "b".repeat(64) });
+    expect(panelPrs.get()).toEqual({ [THREAD]: failing.key });
+    expect(slot.inspection.experimental_panelCalls).toEqual([SHUTTLE_TAB_OPEN]);
+  });
+});
 
 describe("the thread Info tab's Pull requests", () => {
   async function info(prs: PrView[]) {

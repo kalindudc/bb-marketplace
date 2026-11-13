@@ -431,7 +431,9 @@ async function refreshTracked(
   let halted = false;
   // Each PR is read once: one that fails waits for the next sync rather than a retry.
   await atOnce(tracked, REFRESH_AT_ONCE, async (pr, index) => {
-    if (halted || signal?.aborted) return;
+    if (signal?.aborted) return;
+    // A halted refresh never reads the rest, so they get the sweep they were kept out of above.
+    if (halted) return drop(pr.id, (since) => ctx.now() - since >= UNLISTED_MAX_MS);
     try {
       const summary = await adapter.view(pr.repo, pr.number, signal);
       if (summary.repo.toLowerCase() !== pr.repo.toLowerCase() || summary.number !== pr.number) throw new Error(`answered for ${summary.repo}#${summary.number}`);
@@ -492,7 +494,8 @@ function dismissedWithNewCommits(ctx: Ctx, serverId: string, peek: boolean): num
   const noted = stored === null ? null : (JSON.parse(stored) as Record<string, string>);
   const out: PrRow[] = [];
   for (const row of ctx.store.reasonRows("reviewed")) {
-    const pr = row.server === serverId ? ctx.store.prById(row.pr_id) : null;
+    // As for requests: what the last full list left out is unconfirmed, and its cached review may be stale.
+    const pr = row.server === serverId && row.unlisted_since === null ? ctx.store.prById(row.pr_id) : null;
     if (!pr || pr.head === null || noted?.[pr.id] === pr.head) continue;
     const mine = myReviewOf(ctx, pr);
     if (mine?.verdict === "dismissed" && mine.head !== null && mine.head !== pr.head) out.push(pr);

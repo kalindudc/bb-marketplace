@@ -4,7 +4,7 @@ import {
 } from "../../config";
 import type { AutoPostInsights } from "../../contract";
 import { TripNote } from "../auto-post";
-import { BUTTON, BUTTON_GHOST_SMALL, CARD, Checkbox, FIELD, FIELD_CODE } from "../common";
+import { BUTTON, BUTTON_GHOST_SMALL, BUTTON_GHOST_WRAP, CARD, Checkbox, FIELD, FIELD_CODE } from "../common";
 import { useShuttleQuery } from "../data";
 import { percent, plural } from "../format";
 
@@ -214,7 +214,7 @@ export function AutoPostCard({ value, onChange }: { value: AutoPostDraft; onChan
           <textarea aria-label="Footer of posted reviews" rows={2} className={FIELD} value={value.disclosure} onChange={(event) => set({ disclosure: event.target.value })} />
         </label>
         {value.disclosure.trim() !== DEFAULT_DISCLOSURE && (
-          <div><button type="button" className={BUTTON_GHOST_SMALL} onClick={() => set({ disclosure: DEFAULT_DISCLOSURE })}>Use the default footer</button></div>
+          <div><button type="button" className={BUTTON_GHOST_WRAP} onClick={() => set({ disclosure: DEFAULT_DISCLOSURE })}>Use the default footer</button></div>
         )}
         <div data-disclosure-preview className="rounded-md border border-border bg-background px-3 py-2 text-[13px]">
           <div className="mb-1 text-[10.5px] uppercase tracking-wider text-muted-foreground">How a posted review reads</div>
@@ -341,7 +341,7 @@ export function AutoPostCard({ value, onChange }: { value: AutoPostDraft; onChan
         </label>
         <div className="flex flex-wrap items-center gap-2">
           {value.verifier.trim() !== DEFAULT_VERIFIER_COMMAND && (
-            <button type="button" className={BUTTON_GHOST_SMALL} onClick={() => set({ verifier: DEFAULT_VERIFIER_COMMAND })}>Use the default (Kimi K3 through pi)</button>
+            <button type="button" className={BUTTON_GHOST_WRAP} onClick={() => set({ verifier: DEFAULT_VERIFIER_COMMAND })}>Use the default (Kimi K3 through pi)</button>
           )}
           <label className="flex items-center gap-2 text-xs text-muted-foreground">
             Give it up to

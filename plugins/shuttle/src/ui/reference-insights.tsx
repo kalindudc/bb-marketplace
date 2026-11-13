@@ -62,7 +62,7 @@ function ReferenceRow({ row, servers, onOpenThread, onOpenPr, selected = false }
   </li>;
 }
 
-export function ReferenceInsights({ onOpenThread, onOpenPr, selectedReference }: { onOpenThread(id: string): void; onOpenPr(key: string | null, referenceId?: string): void; selectedReference?: string | null }) {
+export function ReferenceInsights({ onOpenThread, onOpenPr, selectedReference, selectedRecord }: { onOpenThread(id: string): void; onOpenPr(key: string | null, referenceId?: string): void; selectedReference?: string | null; selectedRecord?: ReferenceRecord | null }) {
   const prefs = useStored(referenceView);
   const [query, setQuery] = useKeywordQuery("references");
   const [offset, setOffset] = useState(0);
@@ -106,6 +106,8 @@ export function ReferenceInsights({ onOpenThread, onOpenPr, selectedReference }:
     }
     return [...found].map(([id, items]) => ({ id, title: prefs.group === "thread" ? items[0]!.threadTitle ?? id : id, items }));
   }, [rows, servers, prefs.group]);
+  const selectedVisible = log.data && (groups.some((group) => (prefs.group === "none" || !folded.has(group.id)) && group.items.some((row) => row.id === selectedReference)) || ((prefs.filter === "pending" || prefs.filter === "attention") && handledOpen && handledGroups.some((group) => handledExpanded.has(group.status) && group.items.some((row) => row.id === selectedReference))));
+  const reveal = selectedRecord?.id === selectedReference && !selectedVisible ? selectedRecord : null;
   const change = (next: Partial<typeof prefs>) => referenceView.set({ ...prefs, ...next });
   const filters = [{ value: "pending", label: "Pending" }, { value: "attention", label: "Needs attention" }, { value: "handled", label: "Handled" }, { value: "all", label: "All matches" }];
   return <section aria-label="Reference resolutions" className="space-y-2">
@@ -119,6 +121,7 @@ export function ReferenceInsights({ onOpenThread, onOpenPr, selectedReference }:
       </span>
     </div>
     <p className="text-xs text-muted-foreground">Mark correct accepts the current match; Correct this reference chooses another PR. Handled items stay collapsed below.</p>
+    {reveal && <ul aria-label="Selected reference" className={`${CARD} overflow-hidden`}><ReferenceRow key={reveal.id} row={reveal} servers={servers} onOpenThread={onOpenThread} onOpenPr={onOpenPr} selected /></ul>}
     {log.error && <ErrorNote>{messageOf(log.error)}</ErrorNote>}
     {config.error && <ErrorNote>Could not load reference targets: {messageOf(config.error)}</ErrorNote>}
     {!log.data && !log.error && <p role="status">Loading reference resolutions…</p>}

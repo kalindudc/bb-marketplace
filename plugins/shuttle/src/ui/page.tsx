@@ -9,6 +9,7 @@ import { isNotFound, messageOf, threadsOf, useShuttleMutation, useShuttleQuery }
 import { PrDetail } from "./detail";
 import { DetailSkeleton } from "./skeleton";
 import { PrMenu, TrackButton } from "./pr-menu";
+import { ReferenceFeedback } from "./reference-feedback";
 import { keyLabel } from "./format";
 import { parseGitLink } from "../links";
 import { prKey as keyOfReference } from "../keys";
@@ -289,7 +290,7 @@ export function ShuttlePage({ subPath }: PluginNavPanelProps) {
     case "boards": area = <BoardsView tab={route.tab} onGo={go} />; break;
     case "board": area = <BoardDetailView id={route.id} layout={layout} onGo={go} />; break;
     case "search": area = <SearchView query={route.query} layout={layout} />; break;
-    case "insights": area = <InsightsView tab={route.tab} period={route.period} onTab={(tab) => go({ view: "insights", tab })} onPeriod={(period) => go({ view: "insights", tab: "usage", period })} onAction={onIdea} onOpenPr={select} selectedReference={referenceId} />; break;
+    case "insights": area = <InsightsView tab={route.tab} period={route.period} onTab={(tab) => go({ view: "insights", tab })} onPeriod={(period) => go({ view: "insights", tab: "usage", period })} onAction={onIdea} onOpenPr={select} selectedReference={referenceId} selectedRecord={!reference.error && reference.data?.id === referenceId ? reference.data : null} />; break;
     case "pr": area = !phone && showDetail ? <PrDetail key={route.key} prKey={route.key} page onCollapse={() => collapse(route.key)} /> : (
       <div className={PAGE}>
         <PageHeading title="Look up" description="Fetched from the server whose link pattern matches. Works for any PR, whether or not you are part of it." />
@@ -365,7 +366,11 @@ export function ShuttlePage({ subPath }: PluginNavPanelProps) {
       <TipProvider>
         <div className="h-full min-h-0 min-w-0 bg-background text-foreground">
           {body}
-          {phone && referencesOpen && showDetail && <Dialog title="Matched pull request" onClose={closeSelection} escapeDisabled={dialogOpen}>{detailPanel(closeSelection)}</Dialog>}
+          {phone && referencesOpen && showDetail && <Dialog title="Matched pull request" onClose={closeSelection} escapeDisabled={dialogOpen}>
+            {/* The sheet covers the reference's own row, so its controls come along. */}
+            {!reference.error && reference.data?.id === referenceId && <div className="mb-3 border-b border-border pb-3"><ReferenceFeedback key={reference.data.id} id={reference.data.id} url={reference.data.url} showTriage={false} /></div>}
+            {detailPanel(closeSelection)}
+          </Dialog>}
           {dialogs}
         </div>
       </TipProvider>

@@ -4,7 +4,7 @@ import { burnUsageSchema, usageOf } from "../src/bb-port";
 import { usageText } from "../src/format";
 import type { ThreadUsage, TokenCounts, UsageRead } from "../src/ports";
 import { MISSING_RETRY_MS, PASS_CALLS, REREAD_MS, readUsage, SETTLE_MS } from "../src/usage";
-import { harness, pr, testConfig } from "./helpers";
+import { harness, pr, testConfig, TEST_SERVER } from "./helpers";
 
 const KEY = "forge:acme/app#3";
 const MINUTE = 60_000;
@@ -150,6 +150,56 @@ describe("review usage", () => {
     await h.shuttle.review({ key: KEY });
     await h.shuttle.readUsage();
     expect(h.port.usageCalls).toHaveLength(reads + 1);
+  });
+
+  it("reads a settled review's usage again for its cleanup turn, and settles even when cleanup never confirms", async () => {
+    const h = harness(testConfig({ autoReview: NO_AUTO, servers: [{ ...TEST_SERVER, enabled: true, sep: "#", commands: { ...TEST_SERVER.commands, review: "rv" } }] }));
+    h.clock.now = NOON;
+    h.answers.review = "";
+    h.lists.review_requested = [pr(3)];
+    h.views[3] = pr(3);
+    await h.shuttle.sync();
+    const { threadId } = await h.shuttle.review({ key: KEY });
+    h.clock.now += MINUTE;
+    await h.shuttle.saveDraft(threadId, KEY, { summary: "Fine", verdict: "comment", findings: [] });
+    await h.shuttle.onThreadIdle(threadId);
+    const draftId = h.shuttle.detail(KEY).draft!.id;
+    const reviewTurn = { at: NOON, tokens: 1_000, cost: 1 };
+    h.port.usage.set(threadId, burn([reviewTurn]));
+    await h.shuttle.readUsage();
+    h.clock.now += SETTLE_MS;
+    await h.shuttle.readUsage();
+    h.clock.now += REREAD_MS;
+    await h.shuttle.readUsage();
+    expect(h.port.usageCalls).toHaveLength(2);
+
+    await h.shuttle.submitReview(KEY, { verdict: "comment", body: "Fine", findings: [], draftId });
+    expect(h.port.sent).toHaveLength(1);
+    await h.shuttle.readUsage();
+    expect(h.port.usageCalls).toHaveLength(3);
+    h.shuttle.onThreadActive(threadId);
+    for (const elapsed of [2 * SETTLE_MS, SETTLE_MS]) {
+      h.clock.now += elapsed;
+      await h.shuttle.readUsage();
+    }
+    expect(h.port.usageCalls).toHaveLength(4);
+    const cleanupTurn = { at: h.clock.now, tokens: 500, cost: 0.5 };
+    h.clock.now += MINUTE;
+    const marker = h.port.sent[0]!.text.match(/\[shuttle:review-cleanup:\d+\]/u)![0];
+    await h.shuttle.onThreadIdle(threadId, null, marker);
+    expect(h.port.lifecycle).toEqual([`archive ${threadId}`]);
+    h.port.usage.set(threadId, burn([reviewTurn, cleanupTurn]));
+    h.clock.now += REREAD_MS;
+    await h.shuttle.readUsage();
+    expect(h.port.usageCalls).toHaveLength(5);
+    expect(h.shuttle.usage("today").totals).toMatchObject({ tokens: 1_500, cost: 1.5, calls: 2, reviews: 1 });
+
+    h.clock.now += SETTLE_MS - REREAD_MS;
+    await h.shuttle.readUsage();
+    expect(h.port.usageCalls).toHaveLength(6);
+    h.clock.now += 2 * SETTLE_MS;
+    await h.shuttle.readUsage();
+    expect(h.port.usageCalls).toHaveLength(6);
   });
 
   it("reads the newest reviews first, at most a pass's worth of Burn calls at a time", async () => {

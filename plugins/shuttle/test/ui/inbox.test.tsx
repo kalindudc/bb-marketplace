@@ -319,7 +319,7 @@ describe("the Inbox", () => {
   });
 
   it("keeps auto review off the selected PRs from the selection bar, and Undo lets it start again", async () => {
-    const { slot } = await inboxPage({ skipAutoReview: ({ keys, on }) => ({ skipPrs: on ? keys : [] }) });
+    const { slot } = await inboxPage({ skipAutoReview: ({ keys, on }) => ({ skipPrs: on ? keys : [], changed: keys }) });
     await row(slot, waiting.key);
     fireEvent.click(slot.getByRole("checkbox", { name: "Select app#2312065" }));
     fireEvent.click(slot.getByRole("checkbox", { name: "Select infrastructure#86110" }));
@@ -328,6 +328,17 @@ describe("the Inbox", () => {
     await waitFor(() => expect(toasts.success).toHaveBeenCalledWith("Auto review never starts on 2 PRs now.", expect.anything()));
     toasts.success.mock.calls[0]![1].action.onClick();
     await waitFor(() => expect(callsTo(slot, "skipAutoReview")[1]).toEqual({ keys: [request.key, mention.key], on: false }));
+  });
+
+  it("takes back with Undo only the PRs the exclusion added, so one already excluded stays excluded", async () => {
+    const { slot } = await inboxPage({ skipAutoReview: ({ keys, on }) => ({ skipPrs: on ? keys : [mention.key], changed: on ? [request.key] : keys }) });
+    await row(slot, waiting.key);
+    fireEvent.click(slot.getByRole("checkbox", { name: "Select app#2312065" }));
+    fireEvent.click(slot.getByRole("checkbox", { name: "Select infrastructure#86110" }));
+    fireEvent.click(within(await find(slot.container, "[data-selection-bar]")).getByRole("button", { name: /Never auto review/u }));
+    await waitFor(() => expect(toasts.success).toHaveBeenCalledWith("Auto review never starts on 2 PRs now.", expect.anything()));
+    toasts.success.mock.calls[0]![1].action.onClick();
+    await waitFor(() => expect(callsTo(slot, "skipAutoReview")[1]).toEqual({ keys: [request.key], on: false }));
   });
 
   it("snoozes the selection from the selection bar until it changes, and Undo brings it back", async () => {
@@ -817,9 +828,10 @@ describe("the Reviewing tab", () => {
 
   it("offers to pause automations as it stops every review, so the queue does not start the next ones", async () => {
     const waiting = pr({ number: 501, title: "Queue: first in line", author: "dana", next: next({ kind: "new_request", inbox: true }) });
+    const order: string[] = [];
     const { slot } = await inboxPage({
-      stopReviews: () => ({ stopped: [reviewingWorking], failed: [] }),
-      setAutomationPause: () => overview({ paused: true }),
+      stopReviews: () => { order.push("stopReviews"); return { stopped: [reviewingWorking], failed: [] }; },
+      setAutomationPause: () => { order.push("setAutomationPause"); return overview({ paused: true }); },
     }, ALL, "inbox~reviewing", { reviewing: [reviewingWorking], autoQueue: [waiting], autoRunning: 1 });
     expect(facts(await row(slot, waiting.key))).toEqual(["dana", "Asked 5h ago", expect.anything()]);
     fireEvent.click(within(slot.getByRole("region", { name: "AI reviews running" })).getByRole("button", { name: /Stop all/u }));
@@ -829,7 +841,18 @@ describe("the Reviewing tab", () => {
     expect(dialog.textContent).toContain("Otherwise 1 PR waiting for auto review starts as places free up.");
     fireEvent.click(within(dialog).getByRole("button", { name: "Stop 1 review" }));
     await waitFor(() => expect(callsTo(slot, "setAutomationPause")).toEqual([{ mode: "indefinite" }]));
+    await waitFor(() => expect(callsTo(slot, "stopReviews")).toEqual([{}]));
+    // Paused first: stopping frees places at once, and the queue must not start into them.
+    expect(order).toEqual(["setAutomationPause", "stopReviews"]);
     await waitFor(() => expect(toasts.success).toHaveBeenCalledWith("Automations are paused until you resume them."));
+  });
+
+  it("keeps Start now off until the settings say which preset auto review uses", async () => {
+    const waitingA = pr({ number: 501, title: "Queue: first in line", author: "dana", next: next({ kind: "new_request", inbox: true }) });
+    await inboxPage({ getConfig: () => new Promise(() => {}) }, ALL, "inbox~reviewing", { reviewing: [reviewingWorking], autoQueue: [waitingA], autoRunning: 1 });
+    await screen.findByRole("region", { name: "Waiting for auto review" });
+    const start = within(screen.getByRole("region", { name: "Waiting for auto review" })).getByRole("button", { name: "Start now" }) as HTMLButtonElement;
+    expect(start.disabled).toBe(true);
   });
 
   it("lists PRs waiting for auto review in order, starts one now with the auto preset, or keeps auto review off it", async () => {
@@ -838,7 +861,7 @@ describe("the Reviewing tab", () => {
     const { slot } = await inboxPage({
       getConfig: () => ({ config: config({ autoReview: { ...config().autoReview, preset: "quick", maxRunning: 5 } }) }),
       review: () => ({ threadId: "thr_new", revived: false }),
-      skipAutoReview: ({ keys }) => ({ skipPrs: keys }),
+      skipAutoReview: ({ keys }) => ({ skipPrs: keys, changed: keys }),
     }, ALL, "inbox~reviewing", { reviewing: [reviewingWorking], autoQueue: [waitingA, waitingB], autoRunning: 5 });
     const queue = await screen.findByRole("region", { name: "Waiting for auto review" });
     expect(queue.textContent).toContain("5 auto reviews of at most 5 running; the next starts when one ends");

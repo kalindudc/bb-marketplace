@@ -55,7 +55,11 @@ describe("Shuttle settings sections", () => {
     expect(within(standard).queryByRole("button", { name: /Use the shipped prompt/u })).toBeNull();
     fireEvent.click(slot.getByRole("button", { name: /Quick skim/u }));
     const quick = slot.container.querySelector<HTMLElement>("[data-preset-editor='quick']")!;
-    fireEvent.click(within(quick).getByRole("button", { name: "Use the shipped prompt (what, why, how and should)" }));
+    const shipped = within(quick).getByRole("button", { name: "Use the shipped prompt (what, why, how and should)" });
+    // The prompt column can be narrower than the label, which then has to wrap instead of running past the card.
+    expect(shipped.className.split(/\s+/u)).not.toContain("whitespace-nowrap");
+    expect(shipped.className.split(/\s+/u)).not.toContain("h-6");
+    fireEvent.click(shipped);
     expect(within(quick).queryByRole("button", { name: /Use the shipped prompt/u })).toBeNull();
     expect(quick.querySelector("[data-prompt-preview]")!.textContent).toContain("4. Should:");
     fireEvent.click(slot.getByRole("button", { name: "Save presets" }));

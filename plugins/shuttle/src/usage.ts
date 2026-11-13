@@ -49,7 +49,7 @@ const settled = (row: UsageThreadRow, activeAt: number) => row.read_at - Math.ma
 function activity(ctx: Ctx, now: number): Map<string, { at: number; started: number }> {
   const out = new Map<string, { at: number; started: number }>();
   for (const run of ctx.store.reviewsSince(now - HORIZON_MS)) {
-    const last = run.state === "running" ? now : Math.max(run.created_at, run.finished_at ?? 0, run.active_at ?? 0);
+    const last = run.state === "running" ? now : Math.max(run.created_at, run.finished_at ?? 0, run.active_at ?? 0, run.cleanup_requested_at ?? 0, run.cleanup_finished_at ?? 0);
     const seen = out.get(run.thread_id);
     out.set(run.thread_id, { at: Math.max(seen?.at ?? 0, last), started: Math.max(seen?.started ?? 0, run.created_at) });
   }

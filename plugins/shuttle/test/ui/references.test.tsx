@@ -3,7 +3,7 @@ import { fireEvent, waitFor, within } from "@testing-library/react";
 import type { ExperimentalThreadActionTabProps } from "@get-bb/plugin-sdk/app";
 import { BUTTON, BUTTON_PRIMARY, Dialog } from "../../src/ui/common";
 import { clearReferenceHighlights, setReferenceHighlights } from "../../src/ui/links/reference-highlights";
-import { rememberPanelReference } from "../../src/ui/prefs";
+import { keywordFilters, rememberPanelReference } from "../../src/ui/prefs";
 import type { ReferenceRecord } from "../../src/contract";
 import { app, config, handlers, mount, page, pr, setViewport, unmountAll } from "./helpers";
 import { registerBridge } from "../../src/ui/links/dom";
@@ -20,6 +20,33 @@ describe("reference oversight", () => {
     const scan = scanReferenceText(row);
     expect(scan.text).toBe("acme/other#90386\nPR #90387");
     expect(scan.ranges.map((r) => [r.number, r.range.toString()])).toEqual([[90387, "#90387"]]);
+  });
+
+  it("keeps numbers adjoining repository links qualified in scanned text", () => {
+    for (const [label, url] of [
+      ["acme/other", "https://github.com/acme/other"],
+      ["acme/<strong>other</strong>", "https://example.com/guide"],
+      ["Repository", "https://forge.test/acme/other"],
+      ["", "https://forge.test/acme/other/"],
+    ]) {
+      const row = document.createElement("div"); row.dataset.timelineRowId = "msg_linked_repo";
+      row.innerHTML = `<div data-message-column><p>Review <a href="${url}">${label}</a>#<strong>90386</strong>.</p></div>`;
+      document.body.append(row);
+      const scan = scanReferenceText(row);
+      expect(scan.ranges.map((r) => [r.number, r.range.toString()])).toEqual([]);
+      expect(scan.text).toBe("Review acme/other#90386.");
+      expect(scan.urls).toEqual([url]);
+      row.remove();
+    }
+  });
+
+  it("keeps separate bare references eligible after links and maps their text ranges", () => {
+    const row = document.createElement("div"); row.dataset.timelineRowId = "msg_separate_links";
+    row.innerHTML = '<div data-message-column><p><a href="https://github.com/acme/other">acme/other</a> #90386</p><p><a href="https://example.com">Guide</a>#<strong>90387</strong></p><p><code><a href="https://github.com/acme/other">acme/other</a></code>#90388</p></div>';
+    document.body.append(row);
+    const scan = scanReferenceText(row);
+    expect(scan.ranges.map((r) => [r.number, r.range.toString()])).toEqual([[90386, "#90386"], [90387, "#90387"], [90388, "#90388"]]);
+    expect(scan.text).not.toContain("acme/other");
   });
 
   it("uses complete links and keys as evidence without creating text ranges for them", () => {
@@ -201,6 +228,27 @@ describe("reference oversight", () => {
     expect(slot.container.querySelector("[data-phone-pr]")).toBeNull();
   });
 
+  it("puts a selected reference's correction controls in the phone sheet, above its PR", async () => {
+    setViewport(390);
+    const feedback = vi.fn(() => ({ ...record, status: "flagged" as const, url: null }));
+    const { slot } = await page(`insights/references/ref/${record.id}`, {
+      getConfig: () => ({ config: config({ servers: [{ id: "github", name: "GitHub", kind: "github", enabled: true, sep: "#", commands: {} }] }) }),
+      reference: () => record,
+      referenceLog: () => ({ rows: [record], total: 1, filteredTotal: 1, counts: {}, events: [] }),
+      detail: () => ({ pr: pr({ repo: "acme/app", number: 90386 }), events: [], body: "", draft: null, drafts: 0 }),
+      referenceFeedback: feedback,
+    });
+    const sheet = await slot.findByRole("dialog", { name: "Matched pull request" });
+    await waitFor(() => expect(sheet.querySelector("[data-shuttle-reference-controls]")).not.toBeNull());
+    await waitFor(() => expect(sheet.querySelector('[data-detail="github:acme/app#90386"]')).not.toBeNull());
+    const controls = sheet.querySelector<HTMLElement>("[data-shuttle-reference-controls]")!;
+    expect(controls.compareDocumentPosition(sheet.querySelector('[data-detail="github:acme/app#90386"]')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    fireEvent.click(within(controls).getByText("Correct this reference"));
+    expect((within(controls).getByRole("textbox", { name: "Correct reference target" }) as HTMLInputElement).value).toBe(record.url);
+    fireEvent.click(within(controls).getByRole("button", { name: "Flag incorrect" }));
+    await waitFor(() => expect(feedback).toHaveBeenCalledWith({ id: record.id, action: "flag", query: null }));
+  });
+
   it("uses standard row actions and a fixed Open thread label for long titles", async () => {
     const saved = { ...record, threadTitle: "Review Shopify/ingress-nginx#711 with an exceptionally long title" };
     const { slot } = await page("insights/references", {
@@ -224,6 +272,52 @@ describe("reference oversight", () => {
       detail: () => ({ pr: pr({ repo: "acme/app", number: 90386 }), events: [], body: "", draft: null, drafts: 0 }),
     });
     await waitFor(() => expect(slot.container.querySelector(`[data-reference="${record.id}"] [data-reference-details]`)).not.toBeNull());
+  });
+
+  it("shows a selected confirmed reference's controls without clearing a saved search", async () => {
+    const saved = { ...record, status: "confirmed" as const };
+    keywordFilters.set({ references: "unrelated" });
+    const feedback = vi.fn(() => ({ ...saved, status: "automatic" as const }));
+    const { slot, route } = await page("insights/references", {
+      getConfig: () => ({ config: config({ servers: [{ id: "github", name: "GitHub", kind: "github", enabled: true, sep: "#", commands: {} }] }) }),
+      reference: () => saved,
+      referenceLog: ({ filter, query }) => {
+        const rows = filter === "handled" && saved.excerpt.toLowerCase().includes((query ?? "").toLowerCase()) ? [saved] : [];
+        return { rows, counts: { confirmed: 1 }, total: 1, filteredTotal: rows.length, events: [] };
+      },
+      detail: () => ({ pr: pr({ repo: "acme/app", number: 90386 }), events: [], body: "", draft: null, drafts: 0 }),
+      referenceFeedback: feedback,
+    });
+    await slot.findByText("Nothing matches these filters.");
+    await route(`insights/references/ref/${record.id}`);
+    await waitFor(() => expect(slot.container.querySelector('[data-panel] [data-detail="github:acme/app#90386"]')).not.toBeNull());
+    await waitFor(() => expect(slot.container.querySelector(`[data-reference="${record.id}"] [data-shuttle-reference-controls]`)).not.toBeNull());
+    expect((slot.getByRole("searchbox", { name: "Search references" }) as HTMLInputElement).value).toBe("unrelated");
+    expect(slot.getByRole("radio", { name: "Pending" }).getAttribute("aria-checked")).toBe("true");
+    fireEvent.click(slot.getByText("Correct this reference"));
+    expect((slot.getByRole("textbox", { name: "Correct reference target" }) as HTMLInputElement).value).toBe(saved.url);
+    fireEvent.click(slot.getByRole("button", { name: "Reset to automatic" }));
+    await waitFor(() => expect(feedback).toHaveBeenCalledWith({ id: record.id, action: "reset", query: null }));
+    fireEvent.change(slot.getByRole("searchbox", { name: "Search references" }), { target: { value: "" } });
+    await waitFor(() => expect(slot.getByRole("button", { name: /Handled references/u }).getAttribute("aria-expanded")).toBe("true"));
+    expect(slot.container.querySelectorAll(`[data-reference="${record.id}"] [data-shuttle-reference-controls]`)).toHaveLength(1);
+  });
+
+  it("shows a selected corrected reference beyond the first handled batch", async () => {
+    const saved = { ...record, status: "corrected" as const };
+    const rows = [...Array.from({ length: 100 }, (_, index) => ({ ...saved, id: index.toString(16).padStart(64, "0"), number: index + 1 })), saved];
+    const { slot } = await page(`insights/references/ref/${record.id}`, {
+      getConfig: () => ({ config: config({ servers: [{ id: "github", name: "GitHub", kind: "github", enabled: true, sep: "#", commands: {} }] }) }),
+      reference: () => saved,
+      referenceLog: ({ filter, limit, offset }) => ({ rows: filter === "handled" ? rows.slice(offset ?? 0, (offset ?? 0) + (limit ?? 100)) : [], counts: { corrected: rows.length }, total: rows.length, filteredTotal: filter === "handled" ? rows.length : 0, events: [] }),
+      detail: () => ({ pr: pr({ repo: "acme/app", number: 90386 }), events: [], body: "", draft: null, drafts: 0 }),
+    });
+    await waitFor(() => expect(slot.container.querySelector('[data-panel] [data-detail="github:acme/app#90386"]')).not.toBeNull());
+    await slot.findByRole("button", { name: "▸ Handled references (101)" });
+    await waitFor(() => expect(slot.container.querySelector(`[data-reference="${record.id}"] [data-shuttle-reference-controls]`)).not.toBeNull());
+    expect(slot.getByRole("button", { name: "Reset to automatic" })).toBeTruthy();
+    fireEvent.click(slot.getByText("Correct this reference"));
+    expect((slot.getByRole("textbox", { name: "Correct reference target" }) as HTMLInputElement).value).toBe(saved.url);
   });
 
   it("stops showing a cached PR when its selected reference disappears", async () => {

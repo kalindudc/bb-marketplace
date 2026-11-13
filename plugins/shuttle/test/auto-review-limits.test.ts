@@ -1,6 +1,6 @@
 // @vitest-environment node
-import { describe, expect, it } from "vitest";
-import { harness, pr, testConfig, type Harness } from "./helpers";
+import { describe, expect, it, vi } from "vitest";
+import { harness, pr, testConfig, TEST_SERVER, type Harness } from "./helpers";
 
 const AUTO = { enabled: true, when: ["requested" as const], drafts: false, preset: "", repos: [], maxPerDay: 50, rerun: "never" as const };
 const DAY = 86_400_000;
@@ -79,7 +79,7 @@ describe("the never auto review list", () => {
   it("never starts an auto review on a listed PR, and takes links and keys", async () => {
     const h = harness(testConfig({ autoReview: AUTO }));
     await h.shuttle.sync();
-    expect(h.shuttle.skipAutoReview(["https://forge.test/acme/app/pull/3", "forge:acme/app!5"], true)).toEqual({ skipPrs: ["forge:acme/app#3", "forge:acme/app#5"] });
+    expect(h.shuttle.skipAutoReview(["https://forge.test/acme/app/pull/3", "forge:acme/app!5"], true)).toEqual({ skipPrs: ["forge:acme/app#3", "forge:acme/app#5"], changed: ["forge:acme/app#3", "forge:acme/app#5"] });
     h.clock.now += 60_000;
     h.lists.review_requested = [pr(3), pr(4), pr(5)];
     await h.shuttle.sync();
@@ -88,7 +88,7 @@ describe("the never auto review list", () => {
     // A review you start yourself still runs.
     await h.shuttle.review({ key: "forge:acme/app#3" });
     expect(reviewed(h)).toEqual(["Review acme/app#4", "Review acme/app#3"]);
-    expect(h.shuttle.skipAutoReview(["forge:acme/app#5"], false)).toEqual({ skipPrs: ["forge:acme/app#3"] });
+    expect(h.shuttle.skipAutoReview(["forge:acme/app#5"], false)).toEqual({ skipPrs: ["forge:acme/app#3"], changed: ["forge:acme/app#5"] });
     await h.shuttle.sync();
     expect(reviewed(h)).toEqual(["Review acme/app#4", "Review acme/app#3", "Review acme/app#5"]);
     expect(h.shuttle.activity().filter((e) => e.kind === "auto_skip").map((e) => e.text)).toEqual([
@@ -101,7 +101,7 @@ describe("the never auto review list", () => {
   it("writes nothing when the list already says so", async () => {
     const h = harness(testConfig({ autoReview: { ...AUTO, skipPrs: ["forge:acme/app#3"] } }));
     const publishes = h.port.publishes;
-    expect(h.shuttle.skipAutoReview(["forge:acme/app#3"], true)).toEqual({ skipPrs: ["forge:acme/app#3"] });
+    expect(h.shuttle.skipAutoReview(["forge:acme/app#3"], true)).toEqual({ skipPrs: ["forge:acme/app#3"], changed: [] });
     expect(h.port.publishes).toBe(publishes);
   });
 
@@ -112,6 +112,19 @@ describe("the never auto review list", () => {
     h.lists.review_requested = [pr(3), pr(4)];
     await h.shuttle.sync();
     expect(reviewed(h)).toEqual(["Review acme/app#4"]);
+  });
+
+  it("takes a PR off the list whatever the case of its saved key", async () => {
+    const h = harness(testConfig({ autoReview: { ...AUTO, skipPrs: ["forge:Acme/App#3", "forge:acme/app#4"] } }));
+    expect(h.shuttle.skipAutoReview(["forge:acme/app#3"], false)).toEqual({ skipPrs: ["forge:acme/app#4"], changed: ["forge:acme/app#3"] });
+    expect(h.shuttle.skipAutoReview(["forge:ACME/app#4"], true)).toEqual({ skipPrs: ["forge:acme/app#4"], changed: [] });
+    expect(h.shuttle.activity().filter((e) => e.kind === "auto_skip")).toHaveLength(1);
+  });
+
+  it("says which PRs it changed, and tells an open Settings page of the new list", async () => {
+    const h = harness(testConfig({ autoReview: { ...AUTO, skipPrs: ["forge:acme/app#3"] } }));
+    expect(h.shuttle.skipAutoReview(["forge:acme/app#3", "forge:acme/app#4"], true)).toEqual({ skipPrs: ["forge:acme/app#3", "forge:acme/app#4"], changed: ["forge:acme/app#4"] });
+    expect(h.port.invalidations.at(-1)).toEqual(expect.arrayContaining(["config", "prs"]));
   });
 
   it("reads the list again before each start, so a PR added while a batch starts is left alone", async () => {
@@ -269,6 +282,42 @@ describe("stopping reviews", () => {
     expect(h.shuttle.activity(1)[0]!.text).toBe("You stopped the review of acme/app#3; bb could not archive \u201cReview acme/app#3\u201d: archive refused; bb could not stop a thread under it: stop refused");
   });
 
+  it("leaves alone a review that starts in the thread while the threads under it are listed", async () => {
+    const h = harness(testConfig({ autoReview: AUTO }));
+    const [a] = await running(h, [3]);
+    h.port.addThread("thr_c1", "thr_c1", false, { status: "active" });
+    h.port.children.set(a!, ["thr_c1"]);
+    const list = h.port.childThreads.bind(h.port);
+    let replaced = false;
+    vi.spyOn(h.port, "childThreads").mockImplementation(async (id, options) => {
+      if (!replaced) {
+        replaced = true;
+        h.views[3] = pr(3, { head: "h2" });
+        await h.shuttle.sync();
+        await h.shuttle.review({ key: "forge:acme/app#3" });
+      }
+      return list(id, options);
+    });
+    await h.shuttle.stopReviews(["forge:acme/app#3"], true);
+    expect(h.store.runningReviewsOfThread(a!)).toHaveLength(1);
+    expect(h.port.lifecycle).toEqual([]);
+  });
+
+  it("still stops the threads it found when listing the threads under one of them fails", async () => {
+    const h = harness(testConfig({ autoReview: AUTO }));
+    const [a] = await running(h, [3]);
+    for (const id of ["thr_c1", "thr_c2"]) h.port.addThread(id, id, false, { status: "active" });
+    h.port.children.set(a!, ["thr_c1", "thr_c2"]);
+    const list = h.port.childThreads.bind(h.port);
+    vi.spyOn(h.port, "childThreads").mockImplementation(async (id, options) => {
+      if (id === "thr_c1") throw new Error("list refused");
+      return list(id, options);
+    });
+    const result = await h.shuttle.stopReviews();
+    expect(h.port.lifecycle).toEqual(["stop thr_c2", "stop thr_c1", `stop ${a}`]);
+    expect(result.failed).toEqual([{ threadId: a, step: "find", error: "list refused" }]);
+  });
+
   it("refuses a draft that a stopped review hands back, so auto post never sees it", async () => {
     const h = harness(testConfig({ autoReview: AUTO }));
     const [a] = await running(h, [3]);
@@ -316,6 +365,32 @@ describe("a list that leaves PRs out", () => {
     expect(reviewed(h)).toEqual([]);
   });
 
+  it("starts no auto review for a dismissed review the list left out, from what Shuttle had cached", async () => {
+    const servers = [{ ...TEST_SERVER, enabled: true, sep: "#" as const, commands: { ...TEST_SERVER.commands, reviewed: "rd" } }];
+    const h = harness(testConfig({ servers, autoReview: { ...AUTO, idleDays: 0, maxRunning: 1, rerun: "new_head" } }));
+    const dismissed = (head: string) => [pr(3, { head, my_review: { state: "dismissed", at: "2026-10-23T12:01:00Z", head: "head3" } })];
+    h.answers.reviewed = dismissed("head3");
+    h.lists.reviewed_closed = [];
+    await h.shuttle.sync();
+    h.clock.now += 10 * 60_000;
+    // Another review holds the one place, so the dismissed one with new commits waits.
+    h.lists.review_requested = [pr(4)];
+    await h.shuttle.sync();
+    expect(reviewed(h)).toEqual(["Review acme/app#4"]);
+    h.clock.now += 3 * 60_000;
+    h.answers.reviewed = dismissed("h2");
+    await h.shuttle.sync();
+    expect(reviewed(h)).toEqual(["Review acme/app#4"]);
+    h.clock.now += 3 * 60_000;
+    h.answers.reviewed = [];
+    h.views[3] = REFUSED;
+    await h.shuttle.sync();
+    expect(h.store.reasons(idOf(h, 3)).find((r) => r.reason === "reviewed")?.unlisted_since).not.toBeNull();
+    await h.shuttle.stopReviews(["forge:acme/app#4"]);
+    await h.shuttle.sync();
+    expect(reviewed(h)).toEqual(["Review acme/app#4"]);
+  });
+
   it("lets go of a request once the PR's own read shows the server sees it", async () => {
     const h = harness();
     h.lists.review_requested = [pr(3)];
@@ -353,6 +428,24 @@ describe("a list that leaves PRs out", () => {
     await h.shuttle.sync();
     expect(requested(h, 3)).toHaveLength(1);
     h.clock.now += 3_600_000;
+    await h.shuttle.sync();
+    expect(requested(h, 3)).toEqual([]);
+  });
+
+  it("still lets go after a day of a left-out PR that a halted refresh never got to", async () => {
+    const h = harness();
+    h.lists.review_requested = [pr(3), pr(4), pr(5), pr(6)];
+    await h.shuttle.sync();
+    for (const n of [4, 5, 6]) h.store.setTracked(idOf(h, n), true);
+    h.lists.review_requested = [];
+    h.views[3] = REFUSED;
+    for (const n of [4, 5, 6]) h.views[n] = pr(n);
+    h.clock.now += 3 * 60_000;
+    await h.shuttle.sync();
+    expect(requested(h, 3)).toHaveLength(1);
+    // A day on, the tracked PRs read first hit a rate limit, so the refresh halts before it reaches #3.
+    for (const n of [4, 5, 6]) h.views[n] = new Error("gh: API rate limit exceeded (HTTP 403)");
+    h.clock.now += 24 * 3_600_000;
     await h.shuttle.sync();
     expect(requested(h, 3)).toEqual([]);
   });

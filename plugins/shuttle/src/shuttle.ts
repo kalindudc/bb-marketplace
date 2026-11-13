@@ -545,10 +545,16 @@ export class Shuttle implements Ctx {
 
   /** Sends a new agent the feedback already on the PR, now rather than after the batch window. */
   private async kick(key: string, change: AgentChange): Promise<void> {
-    if (!change.backlog || !change.threadId) return;
+    if (!change.threadId) return;
     const pr = requirePr(this, key);
+    // A new watch without a backlog takes everything its first read sees as seen. Read now, as Undo of Off does, so what
+    // comes after this is not taken for history by a read minutes later.
+    if (!change.backlog) {
+      if (this.store.watch(pr.id)?.baselined === 0) await pollWatches(this, undefined, undefined, pr.id);
+      return;
+    }
     await pollWatches(this, undefined, undefined, pr.id);
-    await this.deliver({ force: true, threadId: change.threadId });
+    await this.deliver({ force: true, threadId: change.threadId, prId: pr.id });
   }
 
   async setAgent(key: string, target: AgentTarget, mode?: AgentMode): Promise<{ pr: PrView; threadId: string | null }> {
@@ -919,14 +925,15 @@ export class Shuttle implements Ctx {
     return { stopped: stopped.map((pr) => toView(this, this.store.prById(pr.id)!)), failed };
   }
 
-  /** Puts PRs, by link or key, on the list auto review never starts on, or takes them off; the list as it is now. */
-  skipAutoReview(queries: readonly string[], on: boolean): { skipPrs: string[] } {
+  /** Puts PRs, by link or key, on the list auto review never starts on, or takes them off; the list as it is now, and the keys this changed. */
+  skipAutoReview(queries: readonly string[], on: boolean): { skipPrs: string[]; changed: string[] } {
     const config = this.config();
     const keys = [...new Set(queries.map((query) => prKey(resolveQuery(query, config.servers))))];
-    const before = new Set(config.autoReview.skipPrs);
-    const changed = keys.filter((key) => before.has(key) !== on);
-    const skipPrs = on ? [...config.autoReview.skipPrs, ...changed] : config.autoReview.skipPrs.filter((key) => !keys.includes(key));
-    if (changed.length === 0) return { skipPrs };
+    // Keys match whatever their case, as `skipsPr` does, so taking one off finds it however it was saved.
+    const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
+    const changed = keys.filter((key, at) => config.autoReview.skipPrs.some((skip) => same(skip, key)) !== on && keys.findIndex((other) => same(other, key)) === at);
+    const skipPrs = on ? [...config.autoReview.skipPrs, ...changed] : config.autoReview.skipPrs.filter((skip) => !keys.some((key) => same(key, skip)));
+    if (changed.length === 0) return { skipPrs, changed };
     const saved = parseConfig({ ...config, autoReview: { ...config.autoReview, skipPrs } });
     this.store.saveConfig(saved);
     for (const key of changed) {
@@ -934,8 +941,9 @@ export class Shuttle implements Ctx {
       const name = pr ? shortKey(this, pr) : key;
       this.store.addEvent("auto_skip", on ? `Auto review never starts on ${name} now; a review you start yourself still runs.` : `Auto review can start on ${name} again.`, pr?.id ?? null);
     }
-    this.port.publish();
-    return { skipPrs: saved.autoReview.skipPrs };
+    // `bb shuttle skip` comes here without the RPC's invalidation, so an open Settings page must hear of the new config.
+    this.port.publish(["config", "prs"]);
+    return { skipPrs: saved.autoReview.skipPrs, changed };
   }
 
   async newThread(key: string, start: "own" | "review", projectId?: string): Promise<string> {
@@ -957,7 +965,7 @@ export class Shuttle implements Ctx {
   }
 
   /** One delivery at a time, so a manual send and a background one never send the same item twice. */
-  deliver(options: { force?: boolean; threadId?: string; signal?: AbortSignal } = {}): Promise<number> {
+  deliver(options: { force?: boolean; threadId?: string; prId?: number; signal?: AbortSignal } = {}): Promise<number> {
     const run = this.deliveries.then(() => deliver(this, options));
     this.deliveries = run.catch(() => undefined);
     return run;

@@ -37,6 +37,8 @@ export const BUTTON_GHOST = `${FRAME} h-7 px-2 text-xs text-muted-foreground hov
 /** A ghost button in a tight row, such as a log's Copy. */
 export const BUTTON_GHOST_SMALL = `${FRAME} h-6 px-2 text-xs text-muted-foreground hover:bg-state-hover hover:text-foreground`;
 export const BUTTON_GHOST_DANGER = `${FRAME} h-7 px-2 text-xs text-destructive-text hover:bg-surface-destructive`;
+/** A small ghost button whose label wraps in a narrow column, such as a setting's "Use the default …". */
+export const BUTTON_GHOST_WRAP = `inline-flex max-w-full cursor-pointer items-center gap-1.5 rounded-md ${FOCUS} min-h-6 px-2 py-1 text-left text-xs text-muted-foreground hover:bg-state-hover hover:text-foreground`;
 const ICON_FRAME = `inline-flex shrink-0 cursor-pointer items-center justify-center rounded-md ${FOCUS}`;
 const ICON_TONE = "text-muted-foreground hover:bg-state-hover hover:text-foreground";
 export const ICON_GHOST = `${ICON_FRAME} size-7 ${ICON_TONE}`;

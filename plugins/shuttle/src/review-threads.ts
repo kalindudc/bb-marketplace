@@ -29,8 +29,8 @@ export function doneBecause(ctx: Ctx, pr: PrRow, run: ReviewRow): string | null 
 }
 
 function reviewWasPosted(ctx: Ctx, pr: PrRow, run: ReviewRow): boolean {
-  const draft = ctx.store.draftsOfThread(pr.id, run.thread_id, run.created_at)[0];
-  if (draft) return draft.state === "posted";
+  // An older draft of the run can post while a newer one waits, and discarding the newer one leaves the older posted.
+  if (ctx.store.draftsOfThread(pr.id, run.thread_id, run.created_at).some((draft) => draft.state === "posted")) return true;
   const since = run.finished_at ?? run.created_at;
   const local = ctx.store.latestMyReview(pr.id);
   const server = pr.my_review ? (JSON.parse(pr.my_review) as MyReview) : null;
@@ -53,8 +53,8 @@ function cleanupPrompt(ctx: Ctx, pr: PrRow, run: ReviewRow): string {
 /** Only the cleanup turn's final acknowledgement completes it, not an unrelated idle event. */
 export function completeReviewCleanup(ctx: Ctx, threadId: string, lastText: string | null): void {
   if (lastText === null) return;
-  for (const run of ctx.store.unarchivedReviewRuns({ threadId })) {
-    if (run.cleanup_requested_at !== null && run.cleanup_finished_at === null && cleanupConfirmed(run, lastText)) ctx.store.finishReviewCleanup(run.id);
+  for (const run of ctx.store.pendingReviewCleanups(threadId)) {
+    if (cleanupConfirmed(run, lastText)) ctx.store.finishReviewCleanup(run.id);
   }
 }
 
@@ -115,9 +115,18 @@ export async function archiveDoneReviewThreads(ctx: Ctx, filter: { prId?: number
       // Both must say it is free: what Shuttle last heard, and bb now. Unsure is a no, so a thread bb cannot answer for
       // stays until the next pass.
       if ((await inUseNow(ctx, run.thread_id)) !== null || heardBusy) continue;
-      const current = ctx.store.unarchivedReviewRuns({ threadId: run.thread_id }).find((candidate) => candidate.id === run.id);
+      const current = ctx.store.unarchivedReviewRun(run.id);
       const fresh = ctx.store.prById(pr.id);
       if (!current || !fresh || ctx.store.runningReviewsOfThread(run.thread_id).length > 0 || doneBecause(ctx, fresh, current) === null) continue;
+      // A newer review in the same thread does not end an earlier one's cleanup: the thread waits until it is confirmed.
+      const earlier = ctx.store.pendingReviewCleanups(run.thread_id).filter((other) => other.id !== current.id);
+      if (earlier.length) {
+        const output = await ctx.port.threadOutput(run.thread_id);
+        for (const other of earlier) if (cleanupConfirmed(other, output)) ctx.store.finishReviewCleanup(other.id);
+        if (earlier.some((other) => !cleanupConfirmed(other, output))) continue;
+        // Reading the output waited on bb, and the thread or one under it may have started work meanwhile.
+        if ((await inUseNow(ctx, run.thread_id)) !== null || ctx.store.runningReviewsOfThread(run.thread_id).length > 0) continue;
+      }
       if (current.cleanup_finished_at === null && (current.cleanup_requested_at !== null || reviewWasPosted(ctx, fresh, current))) {
         if (current.cleanup_requested_at === null) {
           // A lost send response must not send a second cleanup turn after a restart.
@@ -138,7 +147,7 @@ export async function archiveDoneReviewThreads(ctx: Ctx, filter: { prId?: number
         ctx.store.finishReviewCleanup(current.id);
         if ((await inUseNow(ctx, run.thread_id)) !== null || ctx.store.runningReviewsOfThread(run.thread_id).length > 0) continue;
       }
-      const ready = ctx.store.unarchivedReviewRuns({ threadId: run.thread_id }).find((candidate) => candidate.id === run.id);
+      const ready = ctx.store.unarchivedReviewRun(run.id);
       const latestPr = ctx.store.prById(pr.id);
       if (!ready || !latestPr || !ctx.settings().archiveReviewThreads || ctx.store.runningReviewsOfThread(run.thread_id).length > 0) continue;
       if (ctx.store.linkRole(pr.id, run.thread_id) !== "review" || ctx.store.prsOfThread(run.thread_id).some((other) => other.id !== pr.id && OPEN.has(other.state))) continue;

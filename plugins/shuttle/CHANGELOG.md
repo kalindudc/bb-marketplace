@@ -2,7 +2,7 @@
 
 Notable changes to Shuttle, newest first. Releases are tagged `shuttle/vX.Y.Z` in this repository.
 
-## Unreleased
+## 0.10.0 (2026-11-12)
 
 ### Added
 
@@ -23,6 +23,14 @@ Notable changes to Shuttle, newest first. Releases are tagged `shuttle/vX.Y.Z` i
 
 ### Fixed
 
+- A setting's long reset button, such as a preset's "Use the shipped prompt (what, why, how and should)", wraps in a narrow Settings pane instead of running past its card, and so do the auto post footer's and verifier's "Use the default" buttons.
+- Fixed before release, from its review:
+  - References read only the cached PRs with the message's numbers, through a new index, without making Shuttle rebuild every PR's view, and only the latest resolve of a streaming message saves.
+  - A reference takes its evidence from the whole message: a number right after a repository link, keys written with `!`, links to a PR's comment, review, commit or check, references past the first hundred, and repositories in any case. Two repositories named for one number make it ambiguous, and an `ssh://` remote with a port resolves by its repository.
+  - Picking a linked PR from Info or the composer replaces a reference in the side panel, and Manage reference shows its controls when filters hide the reference, on a phone too.
+  - A posted review gets its cleanup turn after a newer draft is discarded or its thread is reused, a thread that starts work meanwhile is not archived, and Insights › Usage counts the cleanup turn.
+  - Undo of Off sends what comes after it, turning one PR's watch on reads and sends only that PR, and a watch turned off while Shuttle sends to another thread gets nothing more.
+  - Auto review starts nothing for a dismissed review the last list left out, and a refresh that halts still lets go of day-old left-out PRs. Stop stops every thread it found and leaves alone a review that started meanwhile, and Stop all pauses before it stops. Undo of Never auto review takes back only what it added, taking a PR off matches its key in any case, `bb shuttle skip` refreshes Settings, and Start now waits for the auto review preset.
 - Insights › References keeps one record per thread and number. A PR mentioned in twenty messages of its thread was twenty records, each waiting in Pending for its own Mark correct; now it is one, and one decision covers every mention. A later message can fill in a target the first mention could not find, and a message whose own link names another target leaves its mention unlinked. The per-message log of earlier builds is cleared once on update.
 - Auto review no longer starts on old requests after a sync that listed nothing. When GitHub refused your network for an organisation with an IP allow list, its search answered every list with no PRs, Shuttle dropped every request, and the next sync took all of them for new ones: dozens of auto reviews started at once, some on PRs requested years ago. A PR a full list leaves out now keeps its place until Shuttle can tell the list is right: another list or the closed list brings it, its own read works, or the server says it is gone. While the server refuses the PR it keeps its place for up to a day, the sync's refresh step says how many wait, and its request starts no auto review. A sync checks up to 10 such PRs, after its linked and tracked ones. The same check applies to your open PRs on the hourly full read. Where the server says when it asked you, as GitHub does, a request from before Shuttle's first sync is never taken for a new one.
 - A long "Synced, except …" pill stays inside its server card in Settings › Servers and in Insights › Sync: it ends in an ellipsis, and the whole text shows on hover.

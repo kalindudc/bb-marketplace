@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
 import { DEFAULT_REVIEW_PROMPT, type Preset } from "../../config";
-import { BUTTON, BUTTON_GHOST, BUTTON_GHOST_DANGER, BUTTON_GHOST_SMALL, BUTTON_PRIMARY, CARD, ErrorNote, FIELD, Pill } from "../common";
+import { BUTTON, BUTTON_GHOST, BUTTON_GHOST_DANGER, BUTTON_GHOST_WRAP, BUTTON_PRIMARY, CARD, ErrorNote, FIELD, Pill } from "../common";
 import { WORKSPACES } from "../constants";
 import { ExecutionPicker, executionOf, withExecution, type Execution } from "../execution";
 import { defaultPresetOf, presetSummary } from "../review-button";
@@ -58,7 +58,7 @@ function PresetEditor({ preset, isNew, canDelete, onChange, onExecution, onMakeD
       <div className="flex min-w-0 flex-col gap-1.5">
         <PromptEditor label="Prompt template" value={preset.prompt} variables={PROMPT_VARIABLES} onChange={(prompt) => onChange({ prompt })} />
         {preset.prompt !== DEFAULT_REVIEW_PROMPT && (
-          <button type="button" className={`${BUTTON_GHOST_SMALL} self-start`} onClick={() => onChange({ prompt: DEFAULT_REVIEW_PROMPT })}>
+          <button type="button" className={`${BUTTON_GHOST_WRAP} self-start`} onClick={() => onChange({ prompt: DEFAULT_REVIEW_PROMPT })}>
             Use the shipped prompt (what, why, how and should)
           </button>
         )}

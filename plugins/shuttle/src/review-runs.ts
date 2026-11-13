@@ -172,13 +172,19 @@ export async function endQuietReviews(ctx: Ctx, signal?: AbortSignal): Promise<n
 }
 
 /** The threads under `threadId` at work or waiting on the user, down to `depth` levels, hidden ones too. */
-async function busyThreadsBelow(ctx: Ctx, threadId: string, depth: number): Promise<string[]> {
-  const out: string[] = [];
-  for (const child of await ctx.port.childThreads(threadId, { hidden: true })) {
-    if (child.waiting || BUSY.has(child.status)) out.push(child.id);
-    if (depth > 1) out.push(...(await busyThreadsBelow(ctx, child.id, depth - 1)));
+/** Adds the threads at work under this one to `out`; a listing bb refuses goes to `refused`, and the rest are still read. */
+async function busyThreadsBelow(ctx: Ctx, threadId: string, depth: number, out: string[], refused: unknown[]): Promise<void> {
+  let children;
+  try {
+    children = await ctx.port.childThreads(threadId, { hidden: true });
+  } catch (error) {
+    refused.push(error);
+    return;
   }
-  return out;
+  for (const child of children) {
+    if (child.waiting || BUSY.has(child.status)) out.push(child.id);
+    if (depth > 1) await busyThreadsBelow(ctx, child.id, depth - 1, out, refused);
+  }
 }
 
 export type StopStep = "stop" | "find" | "archive";
@@ -222,11 +228,17 @@ export async function stopReviews(ctx: Ctx, options: { prIds?: readonly number[]
   for (const threadId of new Set(all.map((run) => run.thread_id))) {
     // A thread that still runs another PR's review keeps working on it.
     if (ctx.store.runningReviewsOfThread(threadId).length > 0) continue;
-    let below: string[] = [];
-    await attempt(threadId, "find", async () => (below = await busyThreadsBelow(ctx, threadId, DEPTH)));
+    const below: string[] = [];
+    await attempt(threadId, "find", async () => {
+      const refused: unknown[] = [];
+      await busyThreadsBelow(ctx, threadId, DEPTH, below, refused);
+      if (refused.length) throw refused[0];
+    });
+    // Listing waited on bb, and a review started meanwhile may have taken the thread: it is not part of this stop.
+    if (ctx.store.runningReviewsOfThread(threadId).length > 0) continue;
     for (const id of below.reverse()) await attempt(id, "stop", () => ctx.port.stop(id));
     const stopped = await attempt(threadId, "stop", () => ctx.port.stop(threadId));
-    if (!options.archive || !stopped || !all.some((run) => run.thread_id === threadId && run.own_thread === 1)) continue;
+    if (!options.archive || !stopped || ctx.store.runningReviewsOfThread(threadId).length > 0 || !all.some((run) => run.thread_id === threadId && run.own_thread === 1)) continue;
     await attempt(threadId, "archive", async () => {
       await ctx.port.archive(threadId);
       for (const run of all) if (run.thread_id === threadId) ctx.store.setReviewArchived(run.id, ctx.now());

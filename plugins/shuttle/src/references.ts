@@ -6,14 +6,34 @@ import { parseGitLink } from "./links";
 
 const FEEDBACK_STATES = ["flagged", "corrected", "suppressed", "confirmed", "dismissed"];
 const digest = (text: string) => createHash("sha256").update(text).digest("hex");
+/** One record per thread and number: the message that first mentions the number owns it, and later ones share it. */
+const referenceId = (threadId: string, number: number) => digest(JSON.stringify([threadId, number]));
 
 import { referenceNumbers } from "./reference-tokens";
 export class References {
+  /** The latest resolve of each message, by a number that never repeats, until it returns. */
+  private readonly generations = new Map<string, number>();
+  private sequence = 0;
+
   constructor(private readonly ctx: Ctx) {}
 
   async resolve(input: ReferenceInput): Promise<ReferenceRecord[]> {
-    const mentions = referenceNumbers(input.text).slice(0, 100);
-    const numbers = [...new Map(mentions.filter((r) => r.token.startsWith("#")).map((r) => [r.number, r])).values()].slice(0, 50);
+    const key = JSON.stringify([input.threadId, input.messageId]);
+    const generation = ++this.sequence;
+    this.generations.set(key, generation);
+    try {
+      return await this.resolveAs(input, key, generation);
+    } finally {
+      if (this.generations.get(key) === generation) this.generations.delete(key);
+    }
+  }
+
+  private async resolveAs(input: ReferenceInput, key: string, generation: number): Promise<ReferenceRecord[]> {
+    const mentions = referenceNumbers(input.text);
+    // Only the first bare numbers get a record, but a qualified reference anywhere in the message is evidence for them.
+    const numbers = [...new Map(mentions.slice(0, 100).filter((r) => r.token.startsWith("#")).map((r) => [r.number, r])).values()].slice(0, 50);
+    const qualifiedAll = mentions.filter((r) => r.token.includes("/"));
+    const repoOf = (token: string) => token.split(/[#!]/u)[0]!;
     if (numbers.length === 0) return [];
     const servers = this.ctx.config().servers.filter((server) => server.enabled);
     const urls = [...input.urls, ...[...input.text.matchAll(/https?:\/\/[^\s)]+/gu)].map((m) => m[0])];
@@ -23,7 +43,8 @@ export class References {
         const target = parseGitLink(url, servers);
         if (!target || (target.kind !== "pr" && target.kind !== "issue")) continue;
         const number = target.kind === "issue" ? target.number : target.ref.number;
-        const id = JSON.stringify([target.kind, target.server, target.repo, number]);
+        // Repository names match whatever their case, as on GitHub, so one PR named two ways is one candidate.
+        const id = JSON.stringify([target.kind, target.server, target.repo.toLowerCase(), number]);
         if (target.kind === "pr") found.set(id, linkFor(servers.find((s) => s.id === target.server)!, target.repo, number));
         else {
           const canonical = new URL(url);
@@ -37,44 +58,60 @@ export class References {
     };
     const targets = urls.flatMap((url) => {
       const target = parseGitLink(url, servers);
-      return target && (target.kind === "pr" || target.kind === "issue") ? [{ target, url }] : [];
+      if (!target || target.kind === "pr" || target.kind === "issue") return target ? [{ target, url }] : [];
+      // A link to a PR's comment, review, commit or check names that PR as much as a link to the PR does.
+      if (target.ref === null) return [];
+      const server = servers.find((s) => s.id === target.server)!;
+      return [{ target: { kind: "pr" as const, server: target.server, repo: target.repo, ref: target.ref, part: "overview" as const }, url: linkFor(server, target.ref.repo, target.ref.number) }];
     });
     const thread = await this.ctx.port.getThread(input.threadId);
     if (!thread) throw new NotFoundError("The source thread no longer exists.");
-    this.ctx.store.saveThread(thread.id, thread.title, thread.archived);
     const projects = await this.ctx.projects();
     const remote = projects.find((project) => project.id === thread.projectId)?.gitRemoteUrl;
     const contextIds = await this.ctx.port.referenceContext(input.threadId);
+    if (this.generations.get(key) !== generation) {
+      return numbers.flatMap((reference) => {
+        return this.ctx.store.reference(referenceId(input.threadId, reference.number))?.record ?? [];
+      });
+    }
+    const savedThread = this.ctx.store.thread(thread.id);
+    if (!savedThread || savedThread.title !== thread.title || savedThread.archived !== (thread.archived ? 1 : 0)) {
+      this.ctx.store.saveThread(thread.id, thread.title, thread.archived);
+    }
     const linked = contextIds.flatMap((id) => this.ctx.store.prsOfThread(id));
-    const known = this.ctx.store.allPrs();
+    const known = this.ctx.store.prsByNumbers(numbers.map((reference) => reference.number));
     const hash = digest(JSON.stringify([input.text, [...input.urls].sort()]));
     const out: ReferenceRecord[] = [];
     let changed = false;
     let shared = false;
     for (const reference of numbers) {
-      // One record per thread and number: the message that first mentions the number owns it, and later ones share it.
-      const id = digest(JSON.stringify([input.threadId, reference.number]));
+      const id = referenceId(input.threadId, reference.number);
       const old = this.ctx.store.reference(id);
       const explicit = targets.filter(({ target }) => (target.kind === "issue" ? target.number : target.ref.number) === reference.number).map(({ url }) => url);
-      const qualifiedMentions = mentions.filter((r) => r.number === reference.number && r.token.includes("/"));
+      const qualifiedMentions = qualifiedAll.filter((r) => r.number === reference.number);
       const qualified = qualifiedMentions.flatMap((mention) => {
         const key = parseKey(mention.token);
-        const repo = mention.token.split("#")[0]!;
+        const repo = repoOf(mention.token);
         const server = key ? servers.find((s) => s.id === key.server) : null;
         return key ? server ? [linkFor(server, key.repo, key.number)] : []
-          : known.filter((p) => p.repo === repo && p.number === reference.number && servers.some((s) => s.id === p.server)).map((p) => p.url);
+          : known.filter((p) => p.repo.toLowerCase() === repo.toLowerCase() && p.number === reference.number && servers.some((s) => s.id === p.server)).map((p) => p.url);
       });
       const exact = distinct([...explicit, ...qualified]);
+      // Every repository the message names for this number, cached or not: two of them conflict, whichever has a PR here.
+      const named = new Set([
+        ...targets.filter(({ target }) => (target.kind === "issue" ? target.number : target.ref.number) === reference.number).map(({ target }) => target.repo.toLowerCase()),
+        ...qualifiedMentions.map((mention) => (parseKey(mention.token)?.repo ?? repoOf(mention.token)).toLowerCase()),
+      ]);
       const links = distinct(linked.filter((p) => p.number === reference.number && servers.some((s) => s.id === p.server)).map((p) => p.url));
       const repoTargets = new Set(targets.map(({ target }) => `${target.server}:${target.repo}`));
-      for (const mention of mentions.filter((r) => r.token.includes("/"))) {
+      for (const mention of qualifiedAll) {
         const key = parseKey(mention.token);
-        repoTargets.add(key ? `${key.server}:${key.repo}` : `?:${mention.token.split("#")[0]}`);
+        repoTargets.add(key ? `${key.server}:${key.repo}` : `?:${repoOf(mention.token)}`);
       }
       const inProject = known.filter((p) => {
         const server = servers.find((s) => s.id === p.server);
         if (!server || !remote || p.number !== reference.number) return false;
-        const scp = /^[^@]+@([^:]+):(.+)$/u.exec(remote);
+        const scp = /^[^@/:]+@([^/:]+):(.+)$/u.exec(remote);
         try {
           const url = new URL(scp ? `https://${scp[1]}/${scp[2]}` : remote);
           const repoPath = url.pathname.replace(/^\/|\/$/gu, "").replace(/\.git$/u, "");
@@ -87,12 +124,12 @@ export class References {
       const mixed = [...repoTargets].some((r) => !projectRepos.has(r));
       const candidates = exact.length ? exact : qualifiedMentions.length ? [] : links.length ? links : mixed ? [] : inProject.map((p) => p.url);
       const unique = distinct(candidates);
-      const ambiguous = unique.length > 1 || (!qualifiedMentions.length && !exact.length && !links.length && mixed);
+      const ambiguous = unique.length > 1 || named.size > 1 || (!qualifiedMentions.length && !exact.length && !links.length && mixed);
       const automaticUrl = !ambiguous && unique.length === 1 ? unique[0]! : null;
       const fills = old !== null && automaticUrl !== null && (old.record.status === "unresolved" || (old.record.status === "ambiguous" && exact.length > 0));
       if (old && old.record.messageId !== input.messageId && !fills) {
         // A message whose own links name another target, or a target on a disabled server, leaves this mention plain.
-        const conflicts = old.record.url !== null && (exact.some((url) => url !== old.record.url) || !parseGitLink(old.record.url, servers));
+        const conflicts = old.record.url !== null && (exact.some((url) => url.toLowerCase() !== old.record.url!.toLowerCase()) || !parseGitLink(old.record.url, servers));
         if (!conflicts) out.push(old.record);
         continue;
       }

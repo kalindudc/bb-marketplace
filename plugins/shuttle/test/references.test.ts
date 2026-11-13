@@ -1,9 +1,17 @@
 // @vitest-environment node
 import Database from "better-sqlite3";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { MIGRATIONS } from "../src/db/schema";
 import { References } from "../src/references";
-import { harness, pr } from "./helpers";
+import { searchIndex } from "../src/search";
+import { inboxCandidates } from "../src/views";
+import { harness, pr, type Harness } from "./helpers";
+
+/** A thread of its own in the same project, for a case that must not share the record of #90386 in another. */
+function inThread(h: Harness, input: { threadId: string; messageId: string; text: string; urls: string[] }, threadId: string) {
+  h.port.addThread(threadId);
+  return { ...input, threadId };
+}
 
 async function setup() {
   const h = harness();
@@ -17,6 +25,218 @@ async function setup() {
 }
 
 describe("reference resolution", () => {
+  it("does not read every cached PR to resolve bare numbers", async () => {
+    const { h, refs, input } = await setup();
+    const allPrs = vi.spyOn(h.store, "allPrs");
+    expect(await refs.resolve({ ...input, text: "PR #90386 and #99999" })).toMatchObject([
+      { number: 90386, status: "automatic", url: "https://forge.test/acme/app/pull/90386" },
+      { number: 99999, status: "unresolved", url: null },
+    ]);
+    expect(allPrs).not.toHaveBeenCalled();
+  });
+
+  it("reads keys and repository references written with ! as evidence, never a bare !number", async () => {
+    const { h, refs, input } = await setup();
+    expect(await refs.resolve({ ...inThread(h, input, "thr_bang_key"), text: "PR #90386, see forge:other/repo!90386" })).toMatchObject([{ status: "automatic", url: "https://forge.test/other/repo/pull/90386", reason: "Explicit reference in this message" }]);
+    expect(await refs.resolve({ ...inThread(h, input, "thr_bang_other"), text: "PR #90386, unlike forge:other/repo!12" })).toMatchObject([{ status: "ambiguous", url: null }]);
+    expect(await refs.resolve({ ...inThread(h, input, "thr_bang_repo"), text: "PR #90386, unlike other/repo!12" })).toMatchObject([{ status: "ambiguous", url: null }]);
+    expect(await refs.resolve({ ...inThread(h, input, "thr_bang_bare"), text: "Ship it!90386 and #90386" })).toMatchObject([{ status: "automatic", url: "https://forge.test/acme/app/pull/90386" }]);
+  });
+
+  it("matches a repository named in another case, as GitHub does", async () => {
+    const { h, refs, input } = await setup();
+    expect(await refs.resolve({ ...inThread(h, input, "thr_case"), text: "#90386 \u2014 see Acme/App#90386" })).toMatchObject([{ status: "automatic", url: "https://forge.test/acme/app/pull/90386" }]);
+    expect(await refs.resolve({ ...inThread(h, input, "thr_case_key"), text: "#90386: acme/app#90386 and forge:Acme/App#90386" })).toMatchObject([{ status: "automatic" }]);
+  });
+
+  it("shows the thread's record for a later message that names the same repository in another case", async () => {
+    const { refs, input } = await setup();
+    const [first] = await refs.resolve({ ...input, text: "#90386: acme/app#90386" });
+    expect(first).toMatchObject({ status: "automatic", url: "https://forge.test/acme/app/pull/90386" });
+    expect(await refs.resolve({ ...input, messageId: "msg_2", text: "#90386, again forge:Acme/App#90386" })).toEqual([first]);
+  });
+
+  it("treats two repositories named for one number as a conflict, even when only one has the PR cached", async () => {
+    const { refs, input } = await setup();
+    expect(await refs.resolve({ ...input, messageId: "msg_uncached", text: "#90386: acme/app#90386 versus other/repo#90386" })).toMatchObject([{ status: "ambiguous", url: null }]);
+    expect(await refs.resolve({ ...input, messageId: "msg_link", text: "#90386 versus other/repo#90386", urls: ["https://forge.test/acme/app/pull/90386"] })).toMatchObject([{ status: "ambiguous", url: null }]);
+    expect(await refs.resolve({ ...input, messageId: "msg_same", text: "#90386: acme/app#90386, also forge:acme/app#90386", urls: ["https://forge.test/acme/app/pull/90386"] })).toMatchObject([{ status: "automatic", url: "https://forge.test/acme/app/pull/90386" }]);
+  });
+
+  it("takes evidence from qualified references past the first hundred", async () => {
+    const { refs, input } = await setup();
+    const filler = Array.from({ length: 120 }, (_, i) => `#${i + 1}`).join(" ");
+    expect(await refs.resolve({ ...input, text: `PR #90386 is ready. ${filler} Not to be confused with forge:other/repo#7.` })).toEqual(expect.arrayContaining([expect.objectContaining({ number: 90386, status: "ambiguous", url: null })]));
+  });
+
+  it("takes repository evidence from links to a PR's comment, review, commit or check", async () => {
+    const { h, refs, input } = await setup();
+    for (const anchored of [
+      "https://forge.test/other/repo/pull/90386#discussion_r123",
+      "https://forge.test/other/repo/pull/90386#issuecomment-5",
+      "https://forge.test/other/repo/pull/90386#pullrequestreview-7",
+      "https://forge.test/other/repo/pull/90386/commits/abc1234",
+      "https://forge.test/other/repo/pull/90386/checks?check_run_id=9",
+    ]) {
+      expect(await refs.resolve({ ...inThread(h, input, `thr_${anchored}`), urls: [anchored] }), anchored).toMatchObject([{ status: "automatic", url: "https://forge.test/other/repo/pull/90386", reason: "Explicit reference in this message" }]);
+      expect(await refs.resolve({ ...inThread(h, input, `thr_${anchored}_other`), urls: [anchored.replace("90386", "12")] }), anchored).toMatchObject([{ status: "ambiguous", url: null }]);
+    }
+  });
+
+  it("keeps the PR indexes when resolving an unchanged, saved message", async () => {
+    const { h, refs, input } = await setup();
+    await refs.resolve(input);
+    const version = h.store.version;
+    const inbox = inboxCandidates(h.shuttle);
+    const search = searchIndex(h.shuttle);
+    await refs.resolve(input);
+    expect(h.store.version).toBe(version);
+    expect(inboxCandidates(h.shuttle)).toBe(inbox);
+    expect(searchIndex(h.shuttle)).toBe(search);
+  });
+
+  it("keeps the PR indexes when creating and updating reference records", async () => {
+    const { h, refs, input } = await setup();
+    h.store.saveThread(input.threadId, `Thread ${input.threadId}`, false);
+    const version = h.store.version;
+    const inbox = inboxCandidates(h.shuttle);
+    const search = searchIndex(h.shuttle);
+    const [row] = await refs.resolve(input);
+    expect(h.store.version).toBe(version);
+    await refs.resolve({ ...input, text: "Edited PR #90386" });
+    refs.read(row!.id);
+    refs.log(20, { query: "Edited", filter: "pending" });
+    expect(h.store.version).toBe(version);
+    expect(inboxCandidates(h.shuttle)).toBe(inbox);
+    expect(searchIndex(h.shuttle)).toBe(search);
+  });
+
+  it.each(["confirm", "dismiss", "flag", "correct", "suppress", "reset"] as const)("keeps the PR indexes when recording %s feedback", async (action) => {
+    const { h, refs, input } = await setup();
+    const [row] = await refs.resolve(input);
+    const version = h.store.version;
+    const inbox = inboxCandidates(h.shuttle);
+    const search = searchIndex(h.shuttle);
+    const record = refs.feedback(row!.id, action, action === "correct" ? "forge:other/repo#12" : null);
+    expect(refs.read(row!.id)).toEqual(record);
+    expect(refs.log(20).events).toMatchObject([{ action, referenceId: row!.id }]);
+    expect(h.store.version).toBe(version);
+    expect(inboxCandidates(h.shuttle)).toBe(inbox);
+    expect(searchIndex(h.shuttle)).toBe(search);
+  });
+
+  it.each([
+    { title: "Renamed source", archived: false },
+    { title: "Thread thr_rollout", archived: true },
+  ])("still saves thread changes: %j", async ({ title, archived }) => {
+    const { h, refs, input } = await setup();
+    await refs.resolve(input);
+    h.store.setThreadStatus(input.threadId, "active", true);
+    const version = h.store.version;
+    h.port.addThread(input.threadId, title, archived);
+    await refs.resolve(input);
+    expect(h.store.thread(input.threadId)).toMatchObject({ title, archived: archived ? 1 : 0, status: "active", waiting: 1 });
+    expect(h.store.version).toBeGreaterThan(version);
+  });
+
+  it.each(["getThread", "projects", "referenceContext"] as const)("does not overwrite a newer snapshot after waiting for %s", async (step) => {
+    const { h, refs, input } = await setup();
+    let release!: () => void;
+    let reached!: () => void;
+    const waiting = new Promise<void>((resolve) => { reached = resolve; });
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const pause = async <T>(value: Promise<T>): Promise<T> => {
+      reached();
+      await gate;
+      return value;
+    };
+    if (step === "getThread") {
+      const read = h.port.getThread.bind(h.port);
+      vi.spyOn(h.port, "getThread").mockImplementationOnce((id) => pause(read(id)));
+    } else if (step === "projects") {
+      const read = h.shuttle.projects.bind(h.shuttle);
+      vi.spyOn(h.shuttle, "projects").mockImplementationOnce(() => pause(read()));
+    } else {
+      const read = h.port.referenceContext.bind(h.port);
+      vi.spyOn(h.port, "referenceContext").mockImplementationOnce((id) => pause(read(id)));
+    }
+    const older = refs.resolve(input);
+    await waiting;
+    h.port.addThread(input.threadId, "Latest source");
+    const newer = await refs.resolve({ ...input, text: "PR #90386 in forge:other/repo#12" });
+    expect(newer).toMatchObject([{ status: "ambiguous", url: null }]);
+    const version = h.store.version;
+    const publish = vi.spyOn(h.port, "publish");
+    release();
+    expect(await older).toEqual(newer);
+    expect(refs.read(newer[0]!.id)).toEqual(newer[0]);
+    expect(h.store.thread(input.threadId)!.title).toBe("Latest source");
+    expect(h.store.version).toBe(version);
+    expect(publish).not.toHaveBeenCalled();
+  });
+
+  it("keeps an older resolution superseded when another starts after the newer one finished", async () => {
+    const { h, refs, input } = await setup();
+    const releases: Array<(ids: string[]) => void> = [];
+    const reached: Array<Promise<void>> = [];
+    const hold = () => {
+      let arrive!: () => void;
+      reached.push(new Promise<void>((resolve) => { arrive = resolve; }));
+      return () => { arrive(); return new Promise<string[]>((resolve) => { releases.push(resolve); }); };
+    };
+    vi.spyOn(h.port, "referenceContext").mockImplementationOnce(hold()).mockImplementationOnce(() => Promise.resolve([input.threadId])).mockImplementationOnce(hold());
+    const older = refs.resolve(input);
+    await reached[0];
+    const newer = await refs.resolve({ ...input, text: "PR #90386 in forge:other/repo#12" });
+    expect(newer).toMatchObject([{ status: "ambiguous", url: null }]);
+    const latest = refs.resolve({ ...input, text: "PR #90386 in forge:other/repo#12, still" });
+    await reached[1];
+    releases[0]!([input.threadId]);
+    expect(await older).toEqual(newer);
+    expect(refs.read(newer[0]!.id)).toEqual(newer[0]);
+    releases[1]!([input.threadId]);
+    expect(await latest).toMatchObject([{ status: "ambiguous", url: null }]);
+  });
+
+  it("supersedes a pending resolution even when the latest text has no bare references", async () => {
+    const { h, refs, input } = await setup();
+    let release!: (ids: string[]) => void;
+    let reached!: () => void;
+    const waiting = new Promise<void>((resolve) => { reached = resolve; });
+    vi.spyOn(h.port, "referenceContext").mockImplementationOnce(() => {
+      reached();
+      return new Promise<string[]>((resolve) => { release = resolve; });
+    });
+    const older = refs.resolve(input);
+    await waiting;
+    expect(await refs.resolve({ ...input, text: "No pull requests remain." })).toEqual([]);
+    const version = h.store.version;
+    release([input.threadId]);
+    expect(await older).toEqual([]);
+    expect(refs.log(20).rows).toEqual([]);
+    expect(h.store.version).toBe(version);
+  });
+
+  it.each(["threadId", "messageId"] as const)("does not supersede another %s's resolution", async (field) => {
+    const { h, refs, input } = await setup();
+    let release!: (ids: string[]) => void;
+    let reached!: () => void;
+    const waiting = new Promise<void>((resolve) => { reached = resolve; });
+    vi.spyOn(h.port, "referenceContext").mockImplementationOnce(() => {
+      reached();
+      return new Promise<string[]>((resolve) => { release = resolve; });
+    });
+    const older = refs.resolve(input);
+    await waiting;
+    h.port.addThread("thr_other");
+    // Another message of the same thread shares #90386's record, so it names another number to stay a record of its own.
+    const number = field === "threadId" ? 90386 : 90387;
+    expect(await refs.resolve({ ...input, [field]: field === "threadId" ? "thr_other" : "msg_other", text: `PR #${number} in forge:other/repo#12` })).toMatchObject([{ number, status: "ambiguous" }]);
+    release([input.threadId]);
+    expect(await older).toMatchObject([{ threadId: input.threadId, messageId: input.messageId, status: "automatic" }]);
+    expect(refs.log(20).rows).toHaveLength(2);
+  });
+
   it("uses a cached PR in the exact server/repository, never a global number lookup", async () => {
     const { h, refs, input } = await setup();
     const calls = h.runner.calls.length;
@@ -27,6 +247,32 @@ describe("reference resolution", () => {
     h.port.projects[0]!.gitRemoteUrl = "https://other.test/acme/app.git";
     h.shuttle.invalidateProjects();
     expect(await refs.resolve(input)).toMatchObject([{ status: "flagged", url: null }]);
+  });
+
+  it("distinguishes URL remotes from SCP-style remotes when resolving cached PRs", async () => {
+    for (const [remote, status] of [
+      ["ssh://git@forge.test:22/acme/app.git", "automatic"],
+      ["ssh://git@forge.test:2222/acme/app.git", "automatic"],
+      ["ssh://git@forge.test/acme/app.git", "automatic"],
+      ["ssh://forge.test:22/acme/app.git", "automatic"],
+      ["git@forge.test:acme/app.git", "automatic"],
+      ["https://user:password@forge.test/acme/app.git", "automatic"],
+      ["https://user:password@forge.test:443/acme/app.git", "automatic"],
+      ["https://forge.test/acme/app", "automatic"],
+      ["https://forge.test/acme/app.git/", "automatic"],
+      ["git://forge.test/acme/app.git", "unresolved"],
+      ["git://git@forge.test:9418/acme/app.git", "unresolved"],
+      ["https://user:password@forge.test:8443/acme/app.git", "unresolved"],
+      ["ssh://git@other.test:22/acme/app.git", "unresolved"],
+      ["ssh://git@forge.test:22/other/repo.git", "unresolved"],
+    ] as const) {
+      const { h, refs, input } = await setup();
+      h.port.projects[0]!.gitRemoteUrl = remote;
+      h.shuttle.invalidateProjects();
+      const calls = h.runner.calls.length;
+      expect(await refs.resolve(input), remote).toMatchObject([{ status, url: status === "automatic" ? "https://forge.test/acme/app/pull/90386" : null }]);
+      expect(h.runner.calls.length).toBe(calls);
+    }
   });
 
   it("refuses mixed repositories and conflicting number-specific links", async () => {

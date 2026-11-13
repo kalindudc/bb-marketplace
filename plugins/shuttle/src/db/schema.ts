@@ -368,4 +368,5 @@ export const MIGRATIONS: string[] = [
   // References became one record per thread and number; the per-message log kept before that starts over.
   `DELETE FROM reference_feedback`,
   `DELETE FROM reference_resolutions`,
+  `CREATE INDEX prs_number ON prs (number)`,
 ];

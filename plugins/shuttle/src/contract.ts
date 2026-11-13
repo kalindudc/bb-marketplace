@@ -1181,8 +1181,8 @@ export const rpcContract = defineContract({
     input: z.object({ keys: z.array(key).min(1).max(500).optional(), archive: z.boolean().optional() }),
     output: z.object({ stopped: z.array(prViewSchema), failed: z.array(z.object({ threadId: z.string(), step: z.enum(["stop", "find", "archive"]), error: z.string() })) }),
   },
-  /** Puts PRs on the list auto review never starts on, or takes them off with `on: false`; returns the list. */
-  skipAutoReview: { input: z.object({ keys: z.array(key).min(1).max(500), on: z.boolean() }), output: z.object({ skipPrs: z.array(z.string()) }) },
+  /** Puts PRs on the list auto review never starts on, or takes them off with `on: false`; returns the list and the keys it changed. */
+  skipAutoReview: { input: z.object({ keys: z.array(key).min(1).max(500), on: z.boolean() }), output: z.object({ skipPrs: z.array(z.string()), changed: z.array(z.string()) }) },
   /** You opened these PRs: they are no longer new. */
   markSeen: { input: z.object({ keys: z.array(key).min(1).max(500) }), output: ok },
   /** The same rule twice returns the existing one, with created false. */

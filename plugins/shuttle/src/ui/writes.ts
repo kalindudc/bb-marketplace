@@ -218,10 +218,13 @@ export function usePrWrites(threadIds: readonly string[]) {
 
   /** On or off the list auto review never starts on; a review you start yourself still runs. */
   const skipAutoReview = async (prs: readonly PrView[], on: boolean, undoable = true): Promise<boolean> => {
-    if (prs.length === 0 || (await skip.run({ keys: prs.map((pr) => pr.key), on })) === null) return false;
+    const out = prs.length === 0 ? null : await skip.run({ keys: prs.map((pr) => pr.key), on });
+    if (out === null) return false;
     const label = prsLabel(prs);
     const message = on ? `Auto review never starts on ${label} now.` : `Auto review can start on ${label} again.`;
-    if (undoable) offerUndo(message, () => void skipAutoReview(prs, !on, false));
+    // Undo takes back only what this changed: a PR already on the list before stays on it.
+    const changed = prs.filter((pr) => out.changed.some((key) => key.toLowerCase() === pr.key.toLowerCase()));
+    if (undoable && changed.length) offerUndo(message, () => void skipAutoReview(changed, !on, false));
     else toast.success(message);
     return true;
   };

@@ -1,6 +1,6 @@
 // @vitest-environment node
 import Database from "better-sqlite3";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { MIGRATIONS } from "../src/db/schema";
 import { SpawnUnavailableError } from "../src/ports";
 import { toSettings } from "../src/settings";
@@ -61,6 +61,78 @@ describe("archiving Shuttle's review threads", () => {
     expect(h.shuttle.view(KEY).reviewThread).toEqual({ threadId, title: "Review acme/app#3", archived: true });
     // A later sync finds nothing more to do.
     await h.shuttle.sync();
+    expect(h.port.lifecycle).toEqual([`archive ${threadId}`]);
+  });
+
+  it("checks a run again by its id rather than listing every run again", async () => {
+    const { h, threadId, draftId } = await reviewed();
+    await h.shuttle.submitReview(KEY, { verdict: "changes", body: "One race", findings: [{ path: "a.go", line: 3, body: "Race" }], draftId });
+    const listed = vi.spyOn(h.store, "unarchivedReviewRuns");
+    await finishCleanup(h, threadId);
+    expect(h.port.lifecycle).toEqual([`archive ${threadId}`]);
+    expect(listed).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps an earlier review's unconfirmed cleanup when a newer review in the same thread is discarded", async () => {
+    const { h, threadId, draftId } = await reviewed();
+    await h.shuttle.submitReview(KEY, { verdict: "changes", body: "One race", findings: [{ path: "a.go", line: 3, body: "Race" }], draftId });
+    expect(h.port.sent).toHaveLength(1);
+    const firstMarker = h.port.sent[0]!.text.match(/\[shuttle:review-cleanup:\d+\]/u)![0];
+    h.clock.now += 60_000;
+    h.views[3] = pr(3, { head: "h2" });
+    await h.shuttle.sync();
+    const again = await h.shuttle.review({ key: KEY });
+    expect(again.threadId).toBe(threadId);
+    await h.shuttle.saveDraft(threadId, KEY, { summary: "Fixed", verdict: "comment", findings: [] });
+    await h.shuttle.onThreadIdle(threadId);
+    await h.shuttle.discardDraft(KEY, h.shuttle.detail(KEY).draft!.id);
+    await h.shuttle.sync();
+    expect(h.port.lifecycle).toEqual([]);
+    expect(h.port.sent.filter((sent) => sent.text.includes("[shuttle:review-cleanup:"))).toHaveLength(1);
+    h.shuttle.onThreadActive(threadId);
+    await h.shuttle.onThreadIdle(threadId, null, firstMarker);
+    expect(h.port.lifecycle).toEqual([`archive ${threadId}`]);
+  });
+
+  it("does not archive a reused thread that started work while its earlier cleanup's output was read", async () => {
+    const { h, threadId, draftId } = await reviewed();
+    await h.shuttle.submitReview(KEY, { verdict: "changes", body: "One race", findings: [{ path: "a.go", line: 3, body: "Race" }], draftId });
+    const firstMarker = h.port.sent[0]!.text.match(/\[shuttle:review-cleanup:\d+\]/u)![0];
+    h.clock.now += 60_000;
+    h.views[3] = pr(3, { head: "h2" });
+    await h.shuttle.sync();
+    await h.shuttle.review({ key: KEY });
+    await h.shuttle.saveDraft(threadId, KEY, { summary: "Fixed", verdict: "comment", findings: [] });
+    await h.shuttle.onThreadIdle(threadId);
+    await h.shuttle.discardDraft(KEY, h.shuttle.detail(KEY).draft!.id);
+    expect(h.port.lifecycle).toEqual([]);
+    // The user starts a follow-up turn while Shuttle reads the output that confirms the earlier cleanup.
+    h.port.threadOutput = async () => {
+      h.port.threads.get(threadId)!.status = "active";
+      return firstMarker;
+    };
+    await h.shuttle.sync();
+    expect(h.port.lifecycle).toEqual([]);
+  });
+
+  it("still gives cleanup when a draft posted and a newer draft of the same run is then discarded", async () => {
+    const { h, threadId, draftId } = await reviewed();
+    const adapter = h.shuttle.adapter("forge");
+    const post = adapter.review.bind(adapter);
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    adapter.review = async (...args) => { await held; return post(...args); };
+    h.shuttle.queueReview(KEY, { verdict: "changes", body: "One race", findings: [{ path: "a.go", line: 3, body: "Race" }], draftId });
+    await h.shuttle.saveDraft(threadId, KEY, { summary: "One more", verdict: "comment", findings: [] });
+    release();
+    await h.shuttle.postsSettled();
+    expect(h.store.draftById(draftId)).toMatchObject({ state: "posted" });
+    expect(h.port.lifecycle).toEqual([]);
+    await h.shuttle.discardDraft(KEY, h.shuttle.detail(KEY).draft!.id);
+    expect(h.port.lifecycle).toEqual([]);
+    expect(h.port.sent.at(-1)).toMatchObject({ threadId });
+    expect(h.port.sent.at(-1)!.text).toContain("[shuttle:review-cleanup:");
+    await finishCleanup(h, threadId);
     expect(h.port.lifecycle).toEqual([`archive ${threadId}`]);
   });
 

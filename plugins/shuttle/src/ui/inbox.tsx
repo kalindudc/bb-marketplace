@@ -714,8 +714,8 @@ function ReviewingList({ data, layout, keywords }: { data: InboxData; layout: Ro
   const startNow = (pr: PrView) => void starter.start({ key: pr.key, ...(autoPreset === null ? {} : { presetId: autoPreset.id }) }, autoPreset?.name ?? "The review");
   const queue = (pr: PrView) => (
     <span className="flex items-center gap-1">
-      <Tip text={`Start it now${autoPreset === null ? "" : ` with ${autoPreset.name}`}, without waiting for a place`}>
-        <button type="button" className={BUTTON} disabled={starter.busy} onClick={() => startNow(pr)}>Start now</button>
+      <Tip text={autoPreset === null ? "Reading which preset auto review uses\u2026" : `Start it now with ${autoPreset.name}, without waiting for a place`}>
+        <button type="button" className={BUTTON} disabled={starter.busy || autoPreset === null} onClick={() => startNow(pr)}>Start now</button>
       </Tip>
       <Tip text="Auto review never starts on this PR; you can still start one yourself">
         <button type="button" aria-label={`Never auto review ${tinyKey(pr)}`} className={BUTTON_GHOST} onClick={() => void actions.writes.skipAutoReview([pr], true)}>Never</button>
@@ -759,8 +759,12 @@ function ReviewingList({ data, layout, keywords }: { data: InboxData; layout: Ro
         </section>
       )}
       {stopAll && <StopAllDialog count={data.reviewing.length} queued={data.autoQueue.length} paused={paused} onClose={() => setStopAll(false)} onStop={async (archive, alsoPause) => {
+        // Pause first: stopping frees places at once, and a sync meanwhile would start the queue's next reviews.
+        if (alsoPause) {
+          if ((await pause.run({ mode: "indefinite" })) === null) return;
+          toast.success("Automations are paused until you resume them.");
+        }
         if (!(await actions.writes.stopReviews(null, archive))) return;
-        if (alsoPause && (await pause.run({ mode: "indefinite" })) !== null) toast.success("Automations are paused until you resume them.");
         setStopAll(false);
       }} />}
     </>

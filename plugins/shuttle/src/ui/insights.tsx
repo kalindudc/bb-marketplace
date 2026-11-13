@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { experimental_Icon as Icon, experimental_usePluginId, UrlLink } from "@get-bb/plugin-sdk/app";
-import type { InsightsView as Insights } from "../contract";
+import type { InsightsView as Insights, ReferenceRecord } from "../contract";
 import { useActions } from "./actions";
 import { ActivityView, TONE_ICON } from "./activity";
 import { BUTTON, ErrorNote, PAGE, PageHeading, Segmented } from "./common";
@@ -174,7 +174,7 @@ function Overview({ data, phone, onAction }: { data: Insights; phone: boolean; o
 }
 
 /** How your PRs and reviews flow, with ideas that act on it; and the Automation log. */
-export function InsightsView({ tab, period, onTab, onPeriod, onAction, onOpenPr, selectedReference }: {
+export function InsightsView({ tab, period, onTab, onPeriod, onAction, onOpenPr, selectedReference, selectedRecord }: {
   tab: InsightsTab;
   period?: UsagePeriod;
   onTab(tab: InsightsTab): void;
@@ -182,6 +182,7 @@ export function InsightsView({ tab, period, onTab, onPeriod, onAction, onOpenPr,
   onAction(action: IdeaAction): void;
   onOpenPr(key: string | null, referenceId?: string): void;
   selectedReference?: string | null;
+  selectedRecord?: ReferenceRecord | null;
 }) {
   const actions = useActions();
   const [range, setRange] = useState<Range>("30d");
@@ -191,7 +192,7 @@ export function InsightsView({ tab, period, onTab, onPeriod, onAction, onOpenPr,
   const tabs = <Segmented label="Insights" value={tab} onChange={onTab} options={INSIGHTS_TABS.map((value) => ({ value, label: INSIGHTS_TAB_LABELS[value] }))} />;
   if (tab === "references") return <div className={PAGE}>
     <PageHeading title="Reference resolutions" description="Where bare PR numbers point, and the matches that need your review.">{tabs}</PageHeading>
-    <ReferenceInsights onOpenThread={actions.openThread} onOpenPr={onOpenPr} selectedReference={selectedReference} />
+    <ReferenceInsights onOpenThread={actions.openThread} onOpenPr={onOpenPr} selectedReference={selectedReference} selectedRecord={selectedRecord} />
   </div>;
   if (tab === "sync") {
     return (

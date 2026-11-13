@@ -440,10 +440,21 @@ export class Store {
     return statement;
   }
   private readonly usageStatements = new Map<string, Database.Statement>();
+
+  private referenceSql(text: string): Database.Statement {
+    let statement = this.referenceStatements.get(text);
+    if (statement === undefined) {
+      if (this.referenceStatements.size >= MAX_STATEMENTS) this.referenceStatements.clear();
+      statement = this.db.prepare(text);
+      this.referenceStatements.set(text, statement);
+    }
+    return statement;
+  }
+  private readonly referenceStatements = new Map<string, Database.Statement>();
   /** The config as last parsed; dropped when it is written. */
   private parsedConfig: Config | null = null;
 
-  /** Changes whenever anything is written, so what was read from the store can be kept until then. */
+  /** Changes whenever a write can affect a PR's view or search text. */
   get version(): number {
     return this.writes;
   }
@@ -637,6 +648,11 @@ export class Store {
   }
   private prColumns: string | undefined;
 
+  prsByNumbers(numbers: readonly number[]): Array<Pick<PrRow, "server" | "repo" | "number" | "url">> {
+    return this.sql("SELECT server, repo, number, url FROM prs WHERE number IN (SELECT value FROM json_each(?))")
+      .all(JSON.stringify(numbers)) as Array<Pick<PrRow, "server" | "repo" | "number" | "url">>;
+  }
+
   /** `at` null brings the PR back; `until` null keeps it out until the PR changes. */
   setSnooze(prId: number, at: number | null, until: number | null): void {
     this.sql("UPDATE prs SET snoozed_at = ?, snoozed_until = ? WHERE id = ?").run(at, at === null ? null : until, prId);
@@ -783,19 +799,19 @@ export class Store {
   }
 
   reference(id: string): { hash: string; record: ReferenceRecord } | null {
-    const row = this.sql("SELECT text_hash, value FROM reference_resolutions WHERE id = ?").get(id) as { text_hash: string; value: string } | undefined;
+    const row = this.referenceSql("SELECT text_hash, value FROM reference_resolutions WHERE id = ?").get(id) as { text_hash: string; value: string } | undefined;
     return row ? { hash: row.text_hash, record: JSON.parse(row.value) as ReferenceRecord } : null;
   }
 
   saveReference(record: ReferenceRecord, hash: string): void {
-    this.sql("INSERT INTO reference_resolutions(id, thread_id, message_id, text_hash, value, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET text_hash=excluded.text_hash, value=excluded.value, updated_at=excluded.updated_at")
+    this.referenceSql("INSERT INTO reference_resolutions(id, thread_id, message_id, text_hash, value, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET text_hash=excluded.text_hash, value=excluded.value, updated_at=excluded.updated_at")
       .run(record.id, record.threadId, record.messageId, hash, JSON.stringify(record), this.now());
-    this.sql("DELETE FROM reference_resolutions WHERE id IN (SELECT id FROM reference_resolutions WHERE id NOT IN (SELECT reference_id FROM reference_feedback) ORDER BY updated_at DESC LIMIT -1 OFFSET 2000)").run();
+    this.referenceSql("DELETE FROM reference_resolutions WHERE id IN (SELECT id FROM reference_resolutions WHERE id NOT IN (SELECT reference_id FROM reference_feedback) ORDER BY updated_at DESC LIMIT -1 OFFSET 2000)").run();
   }
 
   referenceFeedback(record: ReferenceRecord, hash: string, action: string, before: string | null): void {
     this.tx(() => {
-      this.sql("INSERT INTO reference_feedback(reference_id, action, before_url, after_url, at) VALUES (?, ?, ?, ?, ?)")
+      this.referenceSql("INSERT INTO reference_feedback(reference_id, action, before_url, after_url, at) VALUES (?, ?, ?, ?, ?)")
         .run(record.id, action, before, record.url, this.now());
       this.saveReference(record, hash);
     });
@@ -813,11 +829,11 @@ export class Store {
       where.push("instr(lower(json_extract(value, '$.excerpt') || ' ' || coalesce(json_extract(value, '$.url'), '') || ' ' || coalesce(json_extract(value, '$.automaticUrl'), '') || ' ' || json_extract(value, '$.reason') || ' ' || json_extract(value, '$.threadId') || ' ' || coalesce((SELECT title FROM threads WHERE threads.id = reference_resolutions.thread_id), '') || ' ' || json_extract(value, '$.number') || ' ' || json_extract(value, '$.candidates')), ?) > 0"); params.push(word);
     }
     const condition = where.length ? ` WHERE ${where.join(" AND ")}` : "";
-    const filteredTotal = (this.sql("SELECT count(*) AS n FROM reference_resolutions" + condition).get(...params) as { n: number }).n;
+    const filteredTotal = (this.referenceSql("SELECT count(*) AS n FROM reference_resolutions" + condition).get(...params) as { n: number }).n;
     const direction = options.sort === "oldest" ? "ASC" : "DESC";
-    const rows = (this.sql(`SELECT value FROM reference_resolutions${condition} ORDER BY json_extract(value, '$.at') ${direction}, id LIMIT ? OFFSET ?`).all(...params, limit, options.offset ?? 0) as Array<{ value: string }>).map((r) => JSON.parse(r.value) as ReferenceRecord);
-    const counts = Object.fromEntries((this.sql("SELECT json_extract(value, '$.status') AS status, count(*) AS n FROM reference_resolutions GROUP BY status").all() as Array<{ status: string; n: number }>).map((r) => [r.status, r.n]));
-    const events = this.sql("SELECT id, reference_id AS referenceId, action, before_url AS beforeUrl, after_url AS afterUrl, at FROM reference_feedback ORDER BY id DESC LIMIT ?").all(limit) as Array<{ id: number; referenceId: string; action: string; beforeUrl: string | null; afterUrl: string | null; at: number }>;
+    const rows = (this.referenceSql(`SELECT value FROM reference_resolutions${condition} ORDER BY json_extract(value, '$.at') ${direction}, id LIMIT ? OFFSET ?`).all(...params, limit, options.offset ?? 0) as Array<{ value: string }>).map((r) => JSON.parse(r.value) as ReferenceRecord);
+    const counts = Object.fromEntries((this.referenceSql("SELECT json_extract(value, '$.status') AS status, count(*) AS n FROM reference_resolutions GROUP BY status").all() as Array<{ status: string; n: number }>).map((r) => [r.status, r.n]));
+    const events = this.referenceSql("SELECT id, reference_id AS referenceId, action, before_url AS beforeUrl, after_url AS afterUrl, at FROM reference_feedback ORDER BY id DESC LIMIT ?").all(limit) as Array<{ id: number; referenceId: string; action: string; beforeUrl: string | null; afterUrl: string | null; at: number }>;
     return { rows: rows.map((row) => ({ ...row, threadTitle: this.threadTitle(row.threadId) ?? row.threadId })), counts, total: Object.values(counts).reduce((sum, n) => sum + n, 0), filteredTotal, events };
   }
 
@@ -1415,6 +1431,21 @@ export class Store {
          ORDER BY r.id`,
       )
       .all(filter.prId ?? null, filter.prId ?? null, filter.threadId ?? null, filter.threadId ?? null) as ReviewRow[];
+  }
+
+  /** One run, when it is still what `unarchivedReviewRuns` would list for its PR and thread. */
+  unarchivedReviewRun(id: number): ReviewRow | null {
+    return (this.sql(
+        `SELECT r.* FROM reviews r JOIN threads t ON t.id = r.thread_id
+         WHERE r.id = ? AND r.own_thread = 1 AND r.archived_at IS NULL AND t.archived = 0
+           AND r.id = (SELECT MAX(id) FROM reviews WHERE pr_id = r.pr_id AND thread_id = r.thread_id)`,
+      ).get(id) as ReviewRow | undefined) ?? null;
+  }
+
+  /** A thread's runs whose cleanup turn was sent and never confirmed, whichever run of the thread is latest. */
+  pendingReviewCleanups(threadId: string): ReviewRow[] {
+    return this.sql("SELECT * FROM reviews WHERE thread_id = ? AND cleanup_requested_at IS NOT NULL AND cleanup_finished_at IS NULL AND archived_at IS NULL ORDER BY id")
+      .all(threadId) as ReviewRow[];
   }
 
   setReviewArchived(id: number, at: number | null): void {

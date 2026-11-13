@@ -128,9 +128,10 @@ function learnState(ctx: Ctx, prId: number, seen: ActivityState | null): boolean
 export async function pollWatches(ctx: Ctx, serverId?: string, signal?: AbortSignal, prId?: number): Promise<void> {
   const enabled = new Set(ctx.config().servers.filter((s) => s.enabled).map((s) => s.id));
   const heard = JSON.stringify(heardNow(ctx));
-  const due = ctx.store.watches().flatMap((watch) => {
+  const one = prId === undefined ? null : ctx.store.watch(prId);
+  const due = (prId === undefined ? ctx.store.watches() : one ? [one] : []).flatMap((watch) => {
     const pr = ctx.store.prById(watch.pr_id);
-    if (!pr || !enabled.has(pr.server) || (serverId && pr.server !== serverId) || (prId !== undefined && pr.id !== prId)) return [];
+    if (!pr || !enabled.has(pr.server) || (serverId && pr.server !== serverId)) return [];
     return pr.state === "open" || pr.state === "draft" ? [{ watch, pr }] : [];
   });
   let changed = false;
@@ -241,9 +242,12 @@ export function formatMessage(ctx: Ctx, batch: ReadonlyArray<{ pr: PrRow; items:
  * window, or at once with `force` when it has one. Quiet items never make a message: they go with the next one their
  * thread gets. Every item of a PR that merged or closed is dropped, and so are items today's settings would not send. Each owner thread gets each item once; an item stays pending until every owner thread has it.
  */
-export async function deliver(ctx: Ctx, options: { force?: boolean; threadId?: string; signal?: AbortSignal } = {}): Promise<number> {
+export async function deliver(ctx: Ctx, options: { force?: boolean; threadId?: string; prId?: number; signal?: AbortSignal } = {}): Promise<number> {
   const watchConfig = ctx.config().watch;
-  if (!watchConfig.enabled || (ctx.settings().pauseAutomations && !options.force)) return 0;
+  const paused = ctx.settings().pauseAutomations;
+  if (!watchConfig.enabled || (paused && !options.force)) return 0;
+  // `prId` limits forcing to that PR: the others of its thread go only as they would anyway, and not while paused.
+  const forced = (pr: PrRow) => options.force === true && (options.prId === undefined || pr.id === options.prId);
   const windowMs = watchConfig.batchMinutes * 60_000;
   const byThread = new Map<string, Array<{ pr: PrRow; items: PendingItem[]; due: boolean }>>();
   const held: Array<{ pr: PrRow; items: PendingItem[]; owners: string[] }> = [];
@@ -257,10 +261,10 @@ export async function deliver(ctx: Ctx, options: { force?: boolean; threadId?: s
     const dropped = rows.filter((row) => done || !keepItem(ctx, pr, row.item));
     if (dropped.length) ctx.store.markSeen(pr.id, dropped.map((row) => row.item_id));
     const pending = rows.filter((row) => !dropped.includes(row));
-    if (!pending.length) continue;
+    if (!pending.length || (paused && !forced(pr))) continue;
     const firstWork = pending.find((row) => !isQuiet(ctx, pr, row.item));
     // Forcing skips the batch window, but quiet items still need something to act on to go with.
-    const due = firstWork !== undefined && (options.force === true || firstWork.first_seen_at <= ctx.now() - windowMs);
+    const due = firstWork !== undefined && (forced(pr) || firstWork.first_seen_at <= ctx.now() - windowMs);
     const owners = ctx.store.linksOf(pr.id).filter((l) => l.role === "owner" && !l.archived).map((l) => l.thread_id);
     if (!owners.length) continue;
     const items = pending.map((p) => p.item);
@@ -277,8 +281,10 @@ export async function deliver(ctx: Ctx, options: { force?: boolean; threadId?: s
     }
   }
   let sent = 0;
-  for (const [threadId, batch] of byThread) {
+  for (const [threadId, built] of byThread) {
     if (options.signal?.aborted) break;
+    // Sending to an earlier thread waits on bb, and a watch turned off, or a thread no longer its owner, meanwhile gets nothing.
+    const batch = built.filter(({ pr }) => ctx.store.watch(pr.id) !== null && ctx.store.linksOf(pr.id).some((l) => l.thread_id === threadId && l.role === "owner" && !l.archived));
     if (!batch.some((entry) => entry.due)) continue;
     try {
       await ctx.port.send(threadId, formatMessage(ctx, batch));

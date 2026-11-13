@@ -7,7 +7,7 @@ import type { PrView } from "../contract";
 import type { Tone } from "./common";
 import { useShuttleQuery } from "./data";
 import { plural, shortKey } from "./format";
-import { rememberPanelPr, threadPrsOpen } from "./prefs";
+import { rememberPanelPr, rememberPanelReference, threadPrsOpen } from "./prefs";
 import { useOpenShuttleTab } from "./tab";
 
 interface Attention {
@@ -43,6 +43,7 @@ function useThreadPrs(threadId: string): PrView[] {
 function useOpenPr(threadId: string) {
   const openTab = useOpenShuttleTab();
   return (pr: PrView) => {
+    rememberPanelReference(threadId, null);
     rememberPanelPr(threadId, pr.key);
     openTab(threadId);
   };

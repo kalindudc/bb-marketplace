@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { DEFAULT_CONFIG } from "../src/config";
 import { toSummary, prSummarySchema } from "../src/model";
 import { pollWatches } from "../src/watch";
@@ -90,6 +90,80 @@ describe("watched PRs", () => {
     expect(text).toContain("Fix finding");
     expect(text).not.toContain("Fix queue");
     expect(h.clock.now).toBe(Date.parse("2026-10-23T12:00:00Z"));
+  });
+
+  it("sends what comes after an Undo of Off, without the PR's history", async () => {
+    const h = await setup();
+    await h.shuttle.link("forge:acme/app#1", "thr_owner");
+    h.activity[1] = { items: [review("old")] };
+    await h.shuttle.setAgentMode("forge:acme/app#1", "off");
+    await h.shuttle.setAgentMode("forge:acme/app#1", "fix", false);
+    expect(h.port.sent).toEqual([]);
+    h.activity[1] = { items: [review("old"), review("after-undo", "ana", { at: h.clock.now + 1_000 })] };
+    h.clock.now += 3 * 60_000;
+    await h.shuttle.sync();
+    h.clock.now += 3 * 60_000;
+    await h.shuttle.tick();
+    const text = h.port.sent.map((sent) => sent.text).join("\n");
+    expect(text).toContain("Fix after-undo");
+    expect(text).not.toContain("Fix old");
+  });
+
+  it("reads only the PR whose watch changed, not every watched PR", async () => {
+    const h = await setup();
+    await h.shuttle.link("forge:acme/app#1", "thr_owner");
+    await h.shuttle.link("forge:acme/app#2", "thr_owner");
+    await h.shuttle.sync();
+    await h.shuttle.setAgentMode("forge:acme/app#1", "off");
+    const watches = vi.spyOn(h.store, "watches");
+    const read = vi.spyOn(h.store, "prById");
+    await h.shuttle.setAgentMode("forge:acme/app#1", "fix", false);
+    expect(watches).not.toHaveBeenCalled();
+    expect(new Set(read.mock.calls.map(([id]) => id))).toEqual(new Set([h.store.prByKey("forge:acme/app#1")!.id]));
+    expect(h.store.watch(h.store.prByKey("forge:acme/app#1")!.id)!.baselined).toBe(1);
+  });
+
+  it("turning one PR's watch on sends only that PR at once, and nothing of another PR while paused", async () => {
+    const h = await setup();
+    await h.shuttle.link("forge:acme/app#1", "thr_owner");
+    await h.shuttle.link("forge:acme/app#2", "thr_owner", "owner", false);
+    await h.shuttle.sync();
+    h.settings.pauseAutomations = true;
+    h.activity[1] = { items: [review("a1")] };
+    h.activity[2] = { items: [review("b1")] };
+    h.clock.now += 3 * 60_000;
+    await h.shuttle.sync();
+    h.clock.now += 3 * 60_000;
+    await h.shuttle.watch("forge:acme/app#2", "act");
+    const text = h.port.sent.map((sent) => sent.text).join("\n");
+    expect(text).toContain("Fix b1");
+    expect(text).not.toContain("Fix a1");
+  });
+
+  it("sends nothing to a thread whose watch went off while another thread's message was on its way", async () => {
+    const h = await setup();
+    h.port.addThread("thr_other", "Other work");
+    await h.shuttle.link("forge:acme/app#1", "thr_owner");
+    await h.shuttle.link("forge:acme/app#2", "thr_other");
+    await h.shuttle.sync();
+    h.activity[1] = { items: [review("one")] };
+    h.activity[2] = { items: [review("two")] };
+    h.clock.now += 3 * 60_000;
+    await h.shuttle.sync();
+    h.clock.now += 3 * 60_000;
+    const send = h.port.send.bind(h.port);
+    let turnedOff = false;
+    h.port.send = async (threadId, text, options) => {
+      if (!turnedOff) {
+        turnedOff = true;
+        const other = threadId === "thr_owner" ? "forge:acme/app#2" : "forge:acme/app#1";
+        await h.shuttle.setAgentMode(other, "off");
+      }
+      return send(threadId, text, options);
+    };
+    await h.shuttle.tick();
+    expect(h.port.sent).toHaveLength(1);
+    expect(h.port.sent[0]!.text).toContain("shuttle_feedback_done");
   });
 
   it("still sends what a PR had when the first read after the watch went on fails", async () => {
