@@ -7,7 +7,7 @@
   "light": {
     "paper": "#ebe8e1",
     "card": "#efede8",
-    "deep": "#ece7dc",
+    "deep": "#e1dcd2",
     "rule": "#b0aaa0",
     "ruleSoft": "#c4beb4",
     "ink": "#3a3633",
@@ -28,6 +28,7 @@
     "aquaStrong": "#3d624c",
     "orangeStrong": "#85491b",
     "redStrong": "#953a2e",
+    "blueStrong": "#3e6671",
     "onAccent": "#fbf9f4"
   },
   "dark": {

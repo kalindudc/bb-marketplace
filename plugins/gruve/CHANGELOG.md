@@ -2,6 +2,14 @@
 
 Notable changes to Gruve, newest first. Releases are tagged `gruve/vX.Y.Z` in this repository.
 
+## 0.4.3 (2026-11-14)
+
+### Fixed
+
+- In light House style, code blocks, segmented tracks, selected segments, chips and dividers no longer blend into the page. 0.4.1 dimmed the light paper and cards with 6% house ink but left the house deep fill at `#ece7dc`, which then matched the page at 1.01:1. Deep now takes the same 6% ink, `#e1dcd2`, so it sits 1.12:1 from the page and 1.17:1 from cards, the same step as on the house's own paper. Selected segments and highlighted items use the accent highlight that thread hover already uses, so they stand apart from the recessed track beneath them.
+- Light Blue, and Yellow, which maps to it, take 10% house ink, `#3e6671`, so links and file names stay at 4.5:1 on the deeper fill. Dark mode is unchanged.
+- Tests now hold light House style's wells, chips and accent highlights to contrast floors against the page, the cards and the recessed track.
+
 ## 0.4.2 (2026-11-12)
 
 ### Fixed

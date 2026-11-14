@@ -18,6 +18,8 @@ describe("House style", () => {
       "--card": colours.card,
       "--sidebar": colours.paper,
       "--surface-recessed-solid": colours.deep,
+      "--secondary": colours.deep,
+      "--muted": colours.deep,
       "--border": colours.rule,
       "--border-hairline": colours.ruleSoft,
       "--ink": colours.ink,
@@ -36,19 +38,34 @@ describe("House style", () => {
     for (const value of Object.values(palette.tokens)) {
       if (value.startsWith("#")) expect(Object.values(colours)).toContain(value);
     }
+    const blue = scheme === "light" ? house.light.blueStrong : colours.blue;
     for (const [accent, colour] of Object.entries({
-      yellow: colours.blue, blue: colours.blue, orange: colours.orange,
+      yellow: blue, blue, orange: colours.orange,
       red: colours.red, green: colours.green, aqua: colours.aqua, purple: colours.purple,
     })) expect(palette.accents[accent as keyof typeof palette.accents]).toEqual([colour, colours.onAccent]);
   });
 
-  it("uses dimmed light surfaces while keeping dark and accent colours unchanged", () => {
+  it("dims the light paper, cards and deep fill together while keeping dark colours unchanged", () => {
     expect(PALETTES.house.light.tokens["--canvas"]).toBe("#ebe8e1");
     expect(PALETTES.house.light.tokens["--card"]).toBe("#efede8");
     expect(PALETTES.house.light.tokens["--popover"]).toBe("#efede8");
     expect(PALETTES.house.light.tokens["--sidebar"]).toBe("#ebe8e1");
+    expect(PALETTES.house.light.tokens["--surface-recessed-solid"]).toBe("#e1dcd2");
     expect(PALETTES.house.dark.tokens["--canvas"]).toBe("#24221f");
-    expect(PALETTES.house.light.accents.blue[0]).toBe("#3f6b78");
+    expect(PALETTES.house.dark.tokens["--surface-recessed-solid"]).toBe("#2e2b27");
+    expect(PALETTES.house.dark.accents.blue[0]).toBe("#7daea3");
+  });
+
+  it("deepens light blue just enough to stay readable on the deep fill", () => {
+    for (const accent of ["yellow", "blue"] as const) expect(PALETTES.house.light.accents[accent][0]).toBe("#3e6671");
+    expect(PALETTES.house.light.tokens["--file-accent"]).toBe("#3e6671");
+    expect(PALETTES.house.light.tokens["--timeline-accent"]).toBe("#3e6671");
+    expect(PALETTES.house.light.tokens["--ansi-4"]).toBe(house.light.blue);
+  });
+
+  it("draws light selections in the accent highlight, apart from the recessed track they sit on", () => {
+    expect(PALETTES.house.light.tokens["--accent"]).toBe("var(--sidebar-accent)");
+    expect(PALETTES.house.dark.tokens["--accent"]).toBe(house.dark.deep);
   });
 
   it("uses visible house-palette thread hover fills in both schemes", () => {
@@ -132,7 +149,7 @@ describe("House style", () => {
     expect(css).toContain("--canvas: #ebe8e1;");
     expect(css).toContain(".dark {");
     expect(css).toContain("--canvas: #24221f;");
-    expect(css).toContain("--primary: #3f6b78;");
+    expect(css).toContain("--primary: #3e6671;");
     expect(css).toContain("--primary: #7daea3;");
     expect(css).not.toContain("--font-sans:");
     expect(css).not.toContain("--font-mono:");

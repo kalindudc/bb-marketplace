@@ -64,6 +64,7 @@ const HOUSE_TOKEN_MAP = {
 
 function housePalette(scheme: "light" | "dark"): Palette {
   const colours = house[scheme];
+  const blue = scheme === "light" ? house.light.blueStrong : colours.blue;
   const ansi = [
     scheme === "light" ? colours.ink : colours.deep,
     colours.red, colours.green, colours.orange, colours.blue, colours.purple, colours.aqua, colours.inkSoft,
@@ -76,6 +77,10 @@ function housePalette(scheme: "light" | "dark"): Palette {
       "--sidebar-accent": colours.blueSoft,
       "--surface-recessed": "var(--surface-recessed-solid)",
       ...(scheme === "light" ? {
+        // Selected segments sit on the recessed track, so the selection takes the accent highlight, not deep.
+        "--accent": "var(--sidebar-accent)",
+        "--timeline-accent": blue,
+        "--file-accent": blue,
         "--success": house.light.aquaStrong,
         "--warning-text": house.light.orangeStrong,
         "--attention": house.light.orangeStrong,
@@ -87,12 +92,12 @@ function housePalette(scheme: "light" | "dark"): Palette {
       ])),
     },
     accents: {
-      yellow: [colours.blue, colours.onAccent],
+      yellow: [blue, colours.onAccent],
       orange: [colours.orange, colours.onAccent],
       red: [colours.red, colours.onAccent],
       green: [colours.green, colours.onAccent],
       aqua: [colours.aqua, colours.onAccent],
-      blue: [colours.blue, colours.onAccent],
+      blue: [blue, colours.onAccent],
       purple: [colours.purple, colours.onAccent],
     },
   };

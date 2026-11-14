@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { accentColours } from "../src/appearance";
-import { PALETTES } from "../src/palettes";
+import { houseAccentTint, PALETTES } from "../src/palettes";
 import { DEFAULT_APPEARANCE, MODES, SETTING_DESCRIPTORS, type Accent, type Mode } from "../src/settings";
 
 const root = join(import.meta.dirname, "..");
@@ -166,13 +166,48 @@ const FIRM_DARK: Floor[] = [
   ["--input", "--canvas", 3.0],
 ];
 
+// House style keeps the house's own step from paper to deep, so wells, segmented tracks, chips and dividers
+// stand apart from the dimmed paper and the cards.
+const HOUSE_LIGHT: Floor[] = [
+  ["--card", "--canvas", 1.04],
+  ["--surface-recessed-solid", "--canvas", 1.1],
+  ["--surface-recessed-solid", "--card", 1.15],
+  ["--secondary", "--card", 1.15],
+  ["--muted", "--canvas", 1.1],
+  ["--border", "--canvas", 1.8],
+  ["--border-hairline", "--canvas", 1.4],
+  ["--input", "--canvas", 3.0],
+];
+
 describe.each<[string, Record<string, string>, Floor[]]>([
+  ["house light", painted("house", "light"), HOUSE_LIGHT],
   ...(["classic", "soft", "dim"] as const).map((mode): [string, Record<string, string>, Floor[]] => [`${mode} dark`, painted(mode, "dark"), DARK]),
   ["crisp dark", painted("crisp", "dark"), FIRM_DARK],
   ...(["crisp", "soft", "dim"] as const).map((mode): [string, Record<string, string>, Floor[]] => [`${mode} light`, painted(mode, "light"), FIRM_LIGHT]),
 ])("%s layers", (_name, tokens, floors) => {
   it.each(floors)("%s stands apart from %s by at least %s:1", (a, b, floor) => {
     expect(contrast(hex(tokens, a), hex(tokens, b))).toBeGreaterThanOrEqual(floor);
+  });
+});
+
+// The settings paint light hover and selection as 11% of the accent in its soft tint. A selected segment
+// sits on the recessed track, so the highlight has to stand apart from the track as well as the page.
+describe("house light accent highlight", () => {
+  const tokens = painted("house", "light");
+  const accents = SETTING_DESCRIPTORS.accent.options as Accent[];
+  const highlight = (accent: Accent) =>
+    over(accentColours(accent, "light", "house")[0], houseAccentTint(accent, "light"), 0.11);
+
+  it.each(accents)("%s stands apart from the page, the cards and the recessed track", (accent) => {
+    expect(contrast(highlight(accent), hex(tokens, "--canvas"))).toBeGreaterThanOrEqual(1.18);
+    expect(contrast(highlight(accent), hex(tokens, "--card"))).toBeGreaterThanOrEqual(1.24);
+    expect(contrast(highlight(accent), hex(tokens, "--surface-recessed-solid"))).toBeGreaterThanOrEqual(1.06);
+  });
+
+  it.each(accents)("%s keeps ink and secondary ink at 4.5:1", (accent) => {
+    for (const text of ["--ink", "--muted-foreground"]) {
+      expect(contrast(hex(tokens, text), highlight(accent))).toBeGreaterThanOrEqual(4.5);
+    }
   });
 });
 
