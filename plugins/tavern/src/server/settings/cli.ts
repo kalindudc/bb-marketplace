@@ -1,12 +1,25 @@
 import { cliCommand, PluginCliError, type BbPluginApi, type PluginCliContext } from "@get-bb/plugin-sdk";
 import { posix, win32 } from "node:path";
-import { exportToml } from "./toml";
+import { exportToml, previewToml } from "./toml";
 import { importSettings } from "./files";
 import type { SettingsStore } from "./store";
 import { LIMITS } from "../limits";
-import { importSummary } from "../../shared/settings";
+import { settingsPatchSchema, importSummary, isGuardrailSetting } from "../../shared/settings";
+
+import { KeeperStore } from "../keeper/store";
+
+function settingKeys(value: unknown, prefix = ""): string[] {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return [prefix];
+  return Object.entries(value).flatMap(([key, child]) => settingKeys(child, prefix ? `${prefix}.${key}` : key));
+}
 
 export function settingsCommands(bb: BbPluginApi, store: SettingsStore) {
+  const keepers = new KeeperStore(store.db);
+  function guardrails(ctx: PluginCliContext, keys: string[]) {
+    if (!ctx.threadId || !keepers.get("members", ctx.threadId)) return;
+    const blocked = [...new Set(keys.filter(isGuardrailSetting))].sort();
+    if (blocked.length) throw new PluginCliError(`Tavern-managed threads cannot change guardrail settings: ${blocked.join(", ")}. Change these on Tavern's Settings page, or ask from a plain thread.`);
+  }
   async function fileHost(host: string | undefined, ctx: PluginCliContext) {
     if (host) return host;
     if (ctx.threadId) {
@@ -22,7 +35,56 @@ export function settingsCommands(bb: BbPluginApi, store: SettingsStore) {
   function user(ctx: PluginCliContext) {
     if (ctx.threadId) throw new PluginCliError("Agents cannot change global Tavern settings or write the settings file. A Keeper can use tavern_tune for a bounded per-quest override.");
   }
+  function settingsAccess(ctx: PluginCliContext) {
+    if (ctx.threadId && !store.read().tavern.agentsMayChangeSettings) throw new PluginCliError('The user turned off "Agents may change settings". Preview settings and ask the user to enable it before applying.');
+  }
   return {
+    "settings get": cliCommand({
+      summary: "Read effective settings, optionally one dotted key",
+      positionals: [{ name: "key", description: "Dotted settings key", required: false }],
+      async run(input) {
+        let value: unknown = store.read();
+        for (const key of input.positionals.key?.split(".") ?? []) {
+          if (!value || typeof value !== "object" || !Object.prototype.hasOwnProperty.call(value, key)) throw new PluginCliError("Unknown settings key");
+          value = (value as Record<string, unknown>)[key];
+        }
+        return { exitCode: 0, stdout: JSON.stringify(value, null, 2) };
+      },
+    }),
+    "settings set": cliCommand({
+      summary: "Preview dotted key=value settings; --apply writes",
+      positionals: [{ name: "assignments", description: "Dotted key=value pairs", required: true, variadic: true }],
+      options: { apply: { type: "boolean", description: "Apply these changes" } },
+      async run(input, ctx) {
+        if (input.options.apply) settingsAccess(ctx);
+        const patch: Record<string, unknown> = {};
+        for (const assignment of input.positionals.assignments ?? []) {
+          const at = assignment.indexOf("=");
+          if (at < 1) throw new PluginCliError("Use key=value");
+          const keys = assignment.slice(0, at).split(".");
+          if (keys.some(k => !k || ["__proto__", "constructor", "prototype"].includes(k))) throw new PluginCliError("Invalid settings key");
+          const raw = assignment.slice(at + 1);
+          let value: unknown;
+          try { value = JSON.parse(raw); } catch { value = raw; }
+          let target = patch;
+          for (const key of keys.slice(0, -1)) {
+            if (target[key] === undefined) target[key] = {};
+            if (!target[key] || typeof target[key] !== "object" || Array.isArray(target[key])) throw new PluginCliError("Overlapping settings keys");
+            target = target[key] as Record<string, unknown>;
+          }
+          target[keys.at(-1)!] = value;
+        }
+        const checked = settingsPatchSchema.safeParse(patch);
+        if (!checked.success) throw new PluginCliError(checked.error.message);
+        const parsed = checked.data;
+        if (parsed.tavern?.ambientMotion !== undefined) parsed.tavern.hearthFlicker = parsed.tavern.ambientMotion !== "off";
+        const snapshot = store.snapshot();
+        for (const [id, value] of Object.entries(parsed.classes ?? {})) parsed.classes![id] = { ...snapshot.user.classes?.[id], ...value };
+        if (input.options.apply) guardrails(ctx, settingKeys(parsed));
+        if (input.options.apply) store.update({ revision: snapshot.revision, patch: parsed, why: "Changed settings through the CLI" }, ctx.threadId ?? null);
+        return { exitCode: 0, stdout: JSON.stringify({ applied: !!input.options.apply, patch: parsed }, null, 2) };
+      },
+    }),
     "settings export": cliCommand({
       summary: "Export explicit settings and pins as TOML; machine tuning is opt-in",
       options: {
@@ -48,7 +110,7 @@ export function settingsCommands(bb: BbPluginApi, store: SettingsStore) {
         toml: { type: "string", stdin: true, description: 'TOML content; use --toml "$(< settings.toml)" without a host' },
         stdin: { type: "boolean", description: "Explain the bb raw-stdin limitation" } },
       async run(input, ctx) {
-        if (input.options.apply) user(ctx);
+        if (input.options.apply) settingsAccess(ctx);
         if (input.options.stdin || input.positionals.path === "-")
           throw new PluginCliError('bb does not forward raw stdin to plugin commands. Use --toml "$(< settings.toml)" for multiline TOML, or bb\'s --toml-stdin adapter for a single-line value.');
         if (input.options.toml !== undefined && input.positionals.path)
@@ -61,7 +123,11 @@ export function settingsCommands(bb: BbPluginApi, store: SettingsStore) {
           if (file.sizeBytes > LIMITS.tomlBytes) throw new PluginCliError(`Settings files must be at most ${LIMITS.tomlBytes} UTF-8 bytes.`);
           source = file.contentEncoding === "base64" ? Buffer.from(file.content, "base64").toString("utf8") : file.content;
         }
-        const result = importSettings(store, source, input.options.apply === true, store.snapshot().revision, "Imported settings through the CLI");
+        if (input.options.apply) {
+          const preview = previewToml(source, store.snapshot());
+          guardrails(ctx, [...settingKeys(preview.user), ...settingKeys(preview.pinned, "pinned"), ...settingKeys(preview.tuned, "tuned"), ...preview.changes.map(c => c.key)]);
+        }
+        const result = importSettings(store, source, input.options.apply === true, store.snapshot().revision, "Imported settings through the CLI", ctx.threadId ?? null);
         const summary = result.code === "invalid" ? "Import was not applied: fix the reported problems."
           : result.code === "stale" ? "Settings changed: refresh the preview before applying. Nothing was applied."
           : importSummary(result.changes, result.applied);

@@ -83,7 +83,7 @@ export function KeeperNotice({ keeper, room, registry, api, lit, since }: { keep
       <span className="rm-nh-s"><StateMark tone={status.tone}>{status.label}</StateMark></span>
     </header>
     <QuietNotice threadId={id} since={keeper.quietSince} />
-    {party.length > 0 && <PartyPicture members={party} registry={registry} quests={all} mini />}
+    {party.length > 0 && <PartyPicture ambientMotion={room.ambientMotion} repeatSeconds={room.repeatSeconds} members={party} registry={registry} quests={all} mini />}
     <div className="rm-qs" ref={rows}>
       {(moreA ? active : active.slice(0, ACTIVE_CAP)).map((q) => <QuestRow key={q.id} quest={q} room={room} registry={registry} keeper={keeper} arrival={{ since }} />)}
       {active.length > ACTIVE_CAP && <button type="button" className="tv-fold act rm-more" aria-expanded={moreA} onClick={() => setMoreA(!moreA)}><ExpandsMark open={moreA} /><span>{moreA ? "Show fewer" : `+${active.length - ACTIVE_CAP} more active ${active.length - ACTIVE_CAP === 1 ? "quest" : "quests"}`}</span></button>}
@@ -126,8 +126,8 @@ export function useMasonry<T extends HTMLElement>(deps: unknown[]) {
 function BoardHearth({ room, flareKey }: { room: Room; flareKey: string | undefined }) {
   const now = useNow();
   const pluginId = experimental_usePluginId();
-  // The replay follows the "Hearth flicker while work runs" setting; an older server sends no flag, and it defaults on.
-  return <Hearth words={hearthWords(room.keepers.map(keeperStatus), { away: roomAway(room), now, onRoad: onTheRoad(room) })} surface="page" flareKey={flareKey} replay={room.hearthFlicker !== false} settingsHref={settingsHref(pluginId)} />;
+  // Ambient motion follows the Motion settings; older servers retain Calm with the legacy flicker switch.
+  return <Hearth words={hearthWords(room.keepers.map(keeperStatus), { away: roomAway(room), now, onRoad: onTheRoad(room) })} surface="page" flareKey={flareKey} replay={room.hearthFlicker !== false} ambientMotion={room.ambientMotion} repeatSeconds={room.repeatSeconds} settingsHref={settingsHref(pluginId)} />;
 }
 
 /**

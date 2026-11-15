@@ -807,8 +807,8 @@
     },
     {
       "command": "echo hi > /tmp/x",
-      "expected": "block",
-      "why": "shell-write: Keeper has no scratch writes",
+      "expected": "allow",
+      "note": "Keeper temporary records are now permitted",
       "observedR2": "BLOCK(shell-write)"
     },
     {
@@ -840,8 +840,8 @@
     },
     {
       "command": "echo x > ${threadStorage}/n.md",
-      "expected": "block",
-      "why": "shell-write: Keeper has no writes, thread storage included (docs: no native write/edit or scratch writes)",
+      "expected": "allow",
+      "note": "Keeper own-thread storage records are now permitted",
       "observedR2": "BLOCK(shell-write)"
     }
   ],

@@ -37,12 +37,14 @@ export function registerCli(bb: BbPluginApi, runtime: TavernRuntime, backups?: B
         ...(backups ? backupCommands(backups) : {}),
         status: cliCommand({
           summary: "Read the party and needs-you queue",
-          run: () =>
-            output({
+          run: () => {
+            const review = runtime.review();
+            return output({
               members: runtime.keeper.store.all("members"),
               asks: runtime.keeper.store.openAsks(),
-              review: runtime.review(),
-            }),
+              review: { ...review, items: review.items.map(({ title, url, boardQuestId }) => ({ title, url, boardQuestId })) },
+            });
+          },
         }),
         quests: cliCommand({
           summary: "List board quests",

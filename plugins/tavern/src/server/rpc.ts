@@ -16,7 +16,7 @@ import { awayHandlers, requireAwayClient } from "./away/rpc";
 import { classEditorHandlers, requireClassClient } from "./registry-rpc";
 import { classExecutionFacts } from "./class-execution";
 import { experimental_PluginRpcRefusal, type ExperimentalPluginRpcHandlerContext } from "@get-bb/plugin-sdk";
-import { memberCredits, readTale } from "./tale";
+import { backfillTaleDelivery, memberCredits, readTale } from "./tale";
 import { readCharacterPresentation } from "./character-presentation";
 import type { TavernRuntime } from "./runtime";
 
@@ -131,12 +131,15 @@ export function rpcHandlers(
       return {
         threadId,
         widgetRow: runtime.config().tavern.widgetRow,
+        ambientMotion: runtime.config().tavern.hearthFlicker ? runtime.config().tavern.ambientMotion : "off",
+        repeatSeconds: runtime.config().tavern.repeatSeconds,
         classNotice: k.store.runtime(threadId).classNotice ?? null,
         scope: runtime.scopes?.view(threadId) ?? null,
         violations: runtime.scopes?.violations([threadId]) ?? [],
         member: m,
         keeper: m?.keeperThreadId ? k.member(m.keeperThreadId) : null,
         boardQuest: m?.boardQuestId ? k.quest(m.boardQuestId) : null,
+        briefFields: k.store.runtime(threadId).brief ?? null,
         brief: k.store.runtime(threadId).brief
           ? JSON.stringify(k.store.runtime(threadId).brief, null, 2)
           : null,
@@ -221,13 +224,41 @@ export function rpcHandlers(
         }),
       };
     },
-    boardQuest: ({ id }): BoardQuestDetail => {
+    boardQuest: async ({ id }): Promise<BoardQuestDetail> => {
       const q = k.quest(id);
+      try { await backfillTaleDelivery(k, q, args => runtime.bb.sdk.threads.output(args)); }
+      catch (error) { runtime.bb.log.warn(`Tavern tale backfill ${id}: ${String(error)}`); }
       const summary = k.summary(id);
+      const tale: BoardQuestDetail["tale"] = readTale(k, summary);
+      if (tale?.delivery) {
+        try {
+          const thread = await runtime.bb.sdk.threads.get({ threadId: q.keeperThreadId });
+          if (thread.environmentId) {
+            const environment = await runtime.bb.sdk.environments.get({ environmentId: thread.environmentId });
+            if (environment.path) tale.document = { threadId: q.keeperThreadId, rootPath: environment.path, target: { kind: "workspace", environmentId: thread.environmentId, path: environment.path } };
+          }
+        } catch (error) { runtime.bb.log.warn(`Tavern tale document ${id}: ${String(error)}`); }
+      }
       const history = decisions.history({ keeperThreadId: q.keeperThreadId, boardQuestId: id });
       const ids = k.store
         .query("members", "boardQuestId", id, 500)
         .map((member) => member.threadId);
+      const events = k.store.events(q.keeperThreadId, 0, 500).filter(e => e.boardQuestId === id);
+      const stopped = q.phase === "stopped" || q.phase === "stopping";
+      const through = q.stoppingSince ?? q.endedAt ?? q.updatedAt;
+      const roadEvent = stopped ? k.store.questRoadEvent(id, through) : null;
+      if (roadEvent && !events.some(e => e.id === roadEvent.id)) {
+        events.push(roadEvent);
+        events.sort((a, b) => a.id - b.id);
+      }
+      let asks: BoardQuestDetail["asks"] = k.store.query("asks", "boardQuestId", id, 500);
+      if (stopped && q.planVersion > 0 && q.greenlitVersion !== q.planVersion && roadEvent?.type !== "quest.stopping") {
+        const greenlight = asks.find(a => a.kind === "greenlight" && a.createdAt <= through && (a.state === "open" || a.state === "withdrawn" && a.withdrawnCause === "quest-stopped"));
+        if (greenlight) {
+          const planVersion = k.store.get("askMeta", greenlight.id)?.planVersion;
+          if (planVersion !== undefined) asks = asks.map(a => a.id === greenlight.id ? { ...a, planVersion } : a);
+        }
+      }
       return {
         notes: k.memory.notes(q.keeperThreadId, 200, 0, id),
         gates: k.memory
@@ -236,19 +267,17 @@ export function rpcHandlers(
         scopes: runtime.scopes?.views(ids) ?? [],
         violations: runtime.scopes?.violations(ids) ?? [],
         quest: summary,
-        tale: readTale(k, summary),
+        tale,
         memberCredits: memberCredits(k, summary),
         plans: k.store.query("plans", "boardQuestId", id, 30),
-        asks: k.asks(q.keeperThreadId).filter((a) => a.boardQuestId === id),
+        asks,
         decisions: history.decisions,
         decisionsNextCursor: history.nextCursor,
         decisionsTotal: history.total,
         rules: k.rules(q.keeperThreadId, id, true),
         reports: k.store.query("reports", "boardQuestId", id, 100),
         routes: k.store.query("routes", "boardQuestId", id, 100),
-        events: k.store
-          .events(q.keeperThreadId, 0, 500)
-          .filter((e) => e.boardQuestId === id),
+        events,
       };
     },
     setTaleKept: (input, context?: ExperimentalPluginRpcHandlerContext) => {
@@ -261,6 +290,7 @@ export function rpcHandlers(
       ok: true,
       changed: k.archiveQuests(ids, archived),
     }),
+    mapHistory: () => k.store.mapHistory(),
     archivedBoardQuests: ({ cursor, limit }) => {
       const page = k.store.archivedQuestPage(cursor, limit);
       return {
@@ -272,6 +302,8 @@ export function rpcHandlers(
     room: (): Room => ({
       away: runtime.away.status(),
       hearthFlicker: runtime.config().tavern.hearthFlicker,
+      ambientMotion: runtime.config().tavern.hearthFlicker ? runtime.config().tavern.ambientMotion : "off",
+      repeatSeconds: runtime.config().tavern.repeatSeconds,
       archivedCount: k.store.archivedQuestCount(),
       keepers: k.store
         .all("members")

@@ -21,7 +21,7 @@ function fixture() {
 }
 it("switches modes live, restoring tools and disabling both preflight blocking and sandbox wrapping", () => {
   const f = fixture(); extension(f.pi); f.emit("session_start");
-  expect(f.pi.getActiveTools()).not.toContain("write");
+  expect(f.pi.getActiveTools()).toContain("write");
   for (const mode of ["watch", "off"] as const) {
     f.scope.mode = mode; f.store.write("t1", f.scope); f.emit("before_agent_start");
     expect(f.pi.getActiveTools()).toContain("write");

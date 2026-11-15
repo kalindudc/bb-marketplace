@@ -21,6 +21,18 @@ export const sparseTunablesSchema = tunablesSchema.partial();
 export type Tunables = z.infer<typeof tunablesSchema>;
 export type SparseTunables = Partial<Tunables>;
 
+export const GUARDRAIL_SETTING_KEYS = [
+  "scopes.*", "keepers.greenlight", "keepers.partyMax", "keepers.decisionTimerMax",
+  "machines.*", "tavern.agentsMayChangeSettings", "tavern.paused", "attention.reviewBudget", "attention.notify", "attention.quietHours", "tuning.mode",
+  "knobs.typingHoldSeconds", "knobs.afterMessageHoldSeconds", "knobs.rangerTimeboxMaxMinutes",
+] as const;
+export function isGuardrailSetting(key: string) {
+  const normalized = key.replace(/^(?:tuning\.pinned|pinned|tuned)\./, "knobs.");
+  return GUARDRAIL_SETTING_KEYS.some(rule => rule.endsWith(".*")
+    ? normalized === rule.slice(0, -2) || normalized.startsWith(rule.slice(0, -1))
+    : normalized === rule || normalized.startsWith(`${rule}.`));
+}
+
 export const ALWAYS_ASK = ["production", "merge", "delete", "sends-as-you", "credentials", "scope-widening"] as const;
 export const voiceModeSchema = z.enum(["full", "light", "off"]);
 export type VoiceMode = z.infer<typeof voiceModeSchema>;
@@ -35,7 +47,8 @@ const quietHoursSchema = z.object({
 
 const sections = {
   tavern: z.object({ paused: z.boolean(), defaultClass: z.union([z.literal("none"), classId]),
-    widgetRow: z.boolean(), voice: voiceModeSchema, levels: z.boolean(), hearthFlicker: z.boolean() }).strict(),
+    widgetRow: z.boolean(), voice: voiceModeSchema, levels: z.boolean(), hearthFlicker: z.boolean(), agentsMayChangeSettings: z.boolean().default(true),
+    ambientMotion: z.enum(["calm", "lively", "off"]).default("calm"), repeatSeconds: z.number().int().min(3).max(60).default(20) }).strict(),
   attention: z.object({ reviewBudget: z.number().int().min(1).max(30),
     notify: z.enum(["consequential", "all", "none"]), quietHours: quietHoursSchema.nullable() }).strict(),
   keepers: z.object({ greenlight: z.enum(["explicit", "by-size"]),
@@ -51,7 +64,7 @@ const sections = {
   knobs: tunablesSchema.extend({ rangerTimeboxMaxMinutes: z.number().int().min(3).max(30) }),
 };
 export const settingsSchema = z.object({
-  tavern: sections.tavern.default({ paused: false, defaultClass: "none", widgetRow: true, voice: "full", levels: true, hearthFlicker: true }),
+  tavern: sections.tavern.default({ paused: false, defaultClass: "none", widgetRow: true, voice: "full", levels: true, hearthFlicker: true, agentsMayChangeSettings: true, ambientMotion: "calm", repeatSeconds: 20 }),
   attention: sections.attention.default({ reviewBudget: 3, notify: "consequential", quietHours: null }),
   keepers: sections.keepers.default({ greenlight: "explicit", decisionTimerMax: 10080, partyMax: 5,
     staleStrikes: 2, ...MEMORY_LIMITS }),
@@ -63,7 +76,7 @@ export const settingsSchema = z.object({
 }).strict();
 export const DEFAULT_SETTINGS = settingsSchema.parse({});
 export const settingsPatchSchema = z.object({
-  tavern: sections.tavern.partial().optional(), attention: sections.attention.partial().optional(),
+  tavern: sections.tavern.partial().extend({ agentsMayChangeSettings: z.boolean().optional(), ambientMotion: z.enum(["calm", "lively", "off"]).optional(), repeatSeconds: z.number().int().min(3).max(60).optional() }).optional(), attention: sections.attention.partial().optional(),
   keepers: sections.keepers.omit({ restatementBytes: true, tickFactChars: true }).partial().optional(), classes: sections.classes.optional(),
   scopes: sections.scopes.partial().optional(), journal: sections.journal.partial().optional(),
   machines: placementSettingsPatchSchema.optional(),

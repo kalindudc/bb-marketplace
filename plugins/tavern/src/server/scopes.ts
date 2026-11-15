@@ -254,6 +254,7 @@ export class BackendScopes {
   ) {
     const k = this.runtime.keeper;
     k.require(keeperThreadId, "keeper");
+    memberThreadId = k.resolvePartyMember(keeperThreadId, memberThreadId).threadId;
     const member = k.member(memberThreadId);
     if (
       !member ||
@@ -293,7 +294,7 @@ export class BackendScopes {
     k.changed(memberThreadId, member.boardQuestId);
     return ask
       ? `Safe narrowing applied; awaiting scope approval.\n::tavern-ask{id="${ask.id}"}`
-      : "Scope updated within the user's policy.";
+      : JSON.stringify(current) === JSON.stringify(result.scope) ? "No change: these are already in effect; no scope ask is needed." : "Scope updated within the user's policy.";
   }
   private request(
     member: Member,

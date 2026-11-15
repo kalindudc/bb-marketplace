@@ -81,6 +81,8 @@ const APPENDED: string[] = [
    CREATE INDEX tavern_snapshot_descriptor_owner ON tavern_source_snapshots(json_extract(data,'$.ownerId'));`,
   // Opening receipt visibility must not scan every route when reading event history.
   `CREATE INDEX tavern_route_source ON tavern_records(json_extract(data,'$.sourceMessageId')) WHERE kind='routes';`,
+  // The stop-time lookup must not sort or scan a quest's full phase history.
+  `CREATE INDEX tavern_events_quest_phase_time ON tavern_events(board_quest_id,type,at DESC,id DESC);`,
 ];
 
 export const MIGRATIONS: string[] = [

@@ -22,7 +22,7 @@ function pathFilter(path: string): string {
   return "(regex " + regexLiteral(regex) + ")";
 }
 export function sandboxProfile(scope: Scope, checking = false): string {
-  let roots = scope.preset === "keeper" ? [] : [...scope.writes.allow];
+  let roots = [...scope.writes.allow];
   const protectedPaths: string[] = [], protectedAncestors: string[] = [], ignoredPaths: string[] = [], ignoredDirectories: string[] = [];
   if (scope.preset === "checker" && scope.checks?.worktree) {
     const root = scope.checks.worktree, policy = checkerWritePaths(scope);

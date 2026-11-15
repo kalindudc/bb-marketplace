@@ -92,6 +92,5 @@ export function writeAllowed(scope: Scope, path: string, cwd: string): boolean {
   const full = normalizeToolPath(path, cwd);
   if (isSink(full)) return true;
   if (writeDenied(scope, full, cwd)) return false;
-  if (scope.preset === "keeper") return false;
   return scope.writes.mode === "any" || scope.writes.allow.some(root => pathMatches(root, full));
 }

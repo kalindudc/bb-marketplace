@@ -46,6 +46,7 @@ export const SDK_CONTRACTS: Record<string, z.ZodType> = {
   }),
   "threads.send": thread.extend({ input: z.array(prompt).min(1), mode: z.enum(["auto", "steer", "queue-if-active"]), ...execution, pluginSubmission: submission, senderThreadId: id.optional(), sendAt: z.number().int().nonnegative().optional(), compactFirst: z.literal(true).optional() }),
   "threads.get": thread,
+  "threads.output": thread,
   "threads.update": thread.extend({ model: z.string().nullable().optional(), reasoningLevel: z.string().nullable().optional(), title: z.string().nullable().optional() }).strict(),
   "threads.stop": thread,
   // The voice check deletes only the hidden threads it recorded; childThreadsConfirmed false makes bb refuse one that has children.

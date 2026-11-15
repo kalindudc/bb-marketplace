@@ -164,7 +164,7 @@ export function registerScopes(bb: BbPluginApi, deps: ScopesDeps) {
       return enqueue(threadId, async check => {
         const record = store.records.get(threadId), current = record?.template ?? record?.scope;
         if (!current) throw new Error("No valid scope for thread " + threadId);
-        const result = policy.apply(current, deps.projectForThread?.(threadId) ?? {}, override, approval?.approvedRuleIds);
+        const result = policy.apply(current, deps.projectForThread?.(threadId) ?? {}, override, approval?.approvedRuleIds, record?.scope ?? undefined);
         const scope = await bindAndWrite(threadId, result.scope, check);
         return { scope, widenings: result.widenings, problems: result.problems };
       });

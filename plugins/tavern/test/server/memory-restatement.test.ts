@@ -140,6 +140,7 @@ describe("Complete Keeper restatement", () => {
       approve(f);
       for (let j = 0; j < 3; j++)
         f.k.bind(`member-${i}-${j}`, "smith", "juno", "project", {
+          displayName: `Juno ${i}-${j}`,
           keeperThreadId: "lead",
           boardQuestId: q.id,
           waypointId: `w${j}`,
@@ -211,7 +212,7 @@ describe("Complete Keeper restatement", () => {
         for (let j = 0; j < 6; j++)
           expect(output).toContain(`WAYPOINT-${i}-${j}-END`);
         for (let j = 0; j < 3; j++)
-          expect(output).toContain(`member-${i}-${j}`);
+          expect(output).toContain(`Juno ${i}-${j} (smith)`);
       }
       for (let i = 0; i < 6; i++) expect(output).toContain(`ASK-${i}-END`);
       for (const wanted of [
@@ -372,7 +373,7 @@ describe("Complete Keeper restatement", () => {
       .replace(/(?:ask|rule|note)_[0-9a-f-]+/g, "RECORD")
       .replaceAll(localClock(f.time()), "01:33 (local with offset)");
     expect(text).toContain("237,382 lines in 1,084 files");
-    expect(text).toContain("Lark (thr_z5k6x43jc2, stopped)");
+    expect(text).toContain("Lark (ranger, stopped)");
     expect(text).toContain("w1 [reported]");
     await expect(text).toMatchFileSnapshot("./fixtures/keeper-0133.txt");
   });

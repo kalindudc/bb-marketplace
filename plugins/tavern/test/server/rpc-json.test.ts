@@ -123,6 +123,7 @@ it("returns strict JSON from EVERY registered RPC with optional record fields ab
     widenRule: () => call("widenRule", { ruleId: f.rule.id, scope: "global" }),
     stopBoardQuest: () => call("stopBoardQuest", { id: f.q.id }),
     archiveBoardQuests: () => call("archiveBoardQuests", { ids: [f.q.id], archived: true }),
+    mapHistory: () => call("mapHistory", {}),
     archivedBoardQuests: () => call("archivedBoardQuests", {}),
     setHidden: () => call("setHidden", { threadId: "member", hidden: true }),
     saveCharacterVoice: () => call("saveCharacterVoice", { characterId: character.id, voice: { name, hue, charge, temper, style, quirks, lines } }),

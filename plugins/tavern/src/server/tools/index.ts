@@ -160,7 +160,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   register(
     "tavern_release",
     "Released a party member",
-    "Stop a member of your own party and free its allocation once stopping is confirmed. Give the reason. The reversible release appears under Decided for you; replacements still obey their per-slot budget.",
+    "Stop a member of your own party and free its allocation once stopping is confirmed. memberThreadId accepts its unique live display name or thread id. Give the reason. The reversible release appears under Decided for you; replacements still obey their per-slot budget.",
     z.object({ memberThreadId: id, reason: z.string().trim().min(1).max(500) }),
     async (input, threadId) =>
       (await runtime.release(threadId, input.memberThreadId, input.reason))
@@ -170,7 +170,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   register(
     "tavern_scope",
     "Updated a member scope",
-    "Narrow or request a wider scope for one member of your own party. Give the reason. Only grants covered by the user-controlled repo policy apply without an ask. Other widening requires an explicit, never-timed scope answer; scope permission never approves a merge, deploy, delete, send or production action. tools.allow accepts tool names or valid patterns, not shell commands such as npm test or node --test: commands are governed by the preset and shell rules. A denied widening means no widening, not a new ban on commands already allowed.",
+    "Narrow or request a wider scope for one member of your own party. memberThreadId accepts its unique live display name or thread id. Give the reason. Temporary paths (/tmp, /private/tmp and the host TMPDIR) and the member’s own thread storage are already writable with native write/edit and inspected shell writers; do not request them. Only grants covered by the user-controlled repo policy apply without an ask. Other widening requires an explicit, never-timed scope answer; scope permission never approves a merge, deploy, delete, send or production action. tools.allow accepts tool names or valid patterns, not shell commands such as npm test or node --test: commands are governed by the preset and shell rules. A denied widening means no widening, not a new ban on commands already allowed.",
     z.object({
       memberThreadId: id,
       override: scopeOverrideSchema,
@@ -189,7 +189,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   register(
     "tavern_tell",
     "Member brief",
-    "Re-brief one of your own members, including a member that already reported done. Start an idle thread or queue behind its active turn; never steer into a running tool. Stopped or released members cannot take new work. Read the result: delivered, queued awaiting dispatch, retrying after failure, or blocked after bounded attempts.",
+    "Re-brief one of your own members, including a member that already reported done. memberThreadId accepts its unique live display name or thread id. Start an idle thread or queue behind its active turn; never steer into a running tool. Stopped or released members cannot take new work. Read the result: delivered, queued awaiting dispatch, retrying after failure, or blocked after bounded attempts.",
     z.object({ memberThreadId: id, text: z.string().min(1).max(8000) }),
     async (input, threadId) => {
       const delivery = await runtime.tell(threadId, input.memberThreadId, input.text);
@@ -329,17 +329,18 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   register(
     "tavern_status",
     "Read the party\'s status",
-    "Read bounded board state and page through reports, answers, defaults, events or pending routes. Use reportId and character offset for a full report and its original brief. Use section=requests with memberThreadId to inspect that member\'s frozen user-source manifest; page with sourceIndex and character offset.",
+    "Read bounded board state and page through reports, answers, defaults, events or pending routes. Use reportId and character offset for a full report and its original brief. memberThreadId accepts a unique live display name or thread id from your own party. Use section=requests with memberThreadId to inspect that member\'s frozen user-source manifest; page with sourceIndex and character offset.",
     statusInput,
-    (input, threadId) => readStatus(runtime, threadId, input),
+    (input, threadId) => readStatus(runtime, threadId, { ...input, ...(input.memberThreadId ? { memberThreadId: k.resolvePartyMember(threadId, input.memberThreadId).threadId } : {}) }),
   );
   register(
     "tavern_wrap",
     "Wrote the tale",
-    "Wrap a verified board quest and archive its party. Every waypoint must be verified or explicitly skipped.",
+    "Wrap a verified board quest and archive its party; a returned quest is retold without wrap effects. Every waypoint must be verified or explicitly skipped. Give next actions for the user (empty if none). Your final message is the tale’s face: lead with the answer, show the result (a visual is welcome), say what the user should do, and end with the tale directive.",
     z.object({
       boardQuestId: id,
       outcome: z.string().min(1).max(4000),
+      next: z.array(z.string().trim().min(1).max(200)).max(5),
       left: z.string().max(4000),
       skipped: z
         .array(z.object({ waypointId: id, reason: z.string().min(1).max(500) }))
@@ -353,8 +354,9 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
         input.outcome,
         input.left,
         input.skipped,
+        input.next,
       );
-      return `Wrapped.${result.pendingArchives.length ? ` Archiving ${result.pendingArchives.length} member(s) remains pending and will retry automatically.` : ""} Write on its own line:\n::tavern-tale{quest="${input.boardQuestId}"}`;
+      return `Wrapped.${result.pendingArchives.length ? ` Archiving ${result.pendingArchives.length} member(s) remains pending and will retry automatically.` : ""} Your final message is the tale’s face: lead with the answer, show the result (a visual is welcome), say what the user should do, and end on its own line:\n::tavern-tale{quest="${input.boardQuestId}"}`;
     },
   );
   register(

@@ -1,4 +1,4 @@
-import type { BoardQuestSummary, Room } from "../../shared/contract";
+import type { BoardQuestSummary, MapHistory, Room } from "../../shared/contract";
 import { checkerHandoffHoldSchema, type Ask, type Member, type Phase, type Report, type TavernEvent } from "../../shared/schema";
 import { extractReportHeadline, type ReportHeadlineNames } from "../../shared/report-headline";
 import { memberName } from "../../shared/member-name";
@@ -179,6 +179,7 @@ function describeRaw(e: TavernEvent, ctx: EventContext): EventLine | null {
     case "quest.stopped": return { ...base, icon: "stop", tone: "bad", actor: you, head: "stopped the quest", detail: e.text };
     case "quest.stop-failed": return { ...base, icon: "failed", tone: "bad", actor: { kind: "tavern" }, head: "could not stop a thread", detail: e.text };
     case "waypoint.skipped": return { ...base, icon: "skip", actor: leadActor, head: "skipped a waypoint", detail: prefixed(e.text, "Skipped ").replace(/^w\d+: /, "") };
+    case "quest.retold": return { ...base, icon: "wrap", tone: "done", actor: leadActor, head: "retold the tale", detail: e.text };
     case "quest.wrapped": return { ...base, icon: "wrap", tone: "done", actor: leadActor, head: "returned with the loot", detail: e.text };
     case "tick.sent": return { ...base, icon: "tick", actor: { kind: "tavern" }, head: "sent a tick" };
     case "tick.held": return { ...base, icon: "tick", actor: { kind: "tavern" }, head: "held a tick while you typed", detail: e.text };
@@ -209,9 +210,9 @@ export function foldRuns(lines: EventLine[]): EventLine[] {
 
 // ---------- The map: who connects to whom ----------
 
-export type MapNode = { id: string; label: string; detail: string; layer: number; subPath?: string; threadId?: string; classId?: string; kind: "keeper" | "quest" | "returned" | "errand" | "member" | "ask" | "gate" | "outside" | "solo"; questId?: string; member?: Member; ask?: Ask; quest?: BoardQuestSummary };
-/** What the map leaves out: quests the person unchecked, and returned or stopped ones when Returned is off. Quests in the cellar are never drawn. */
-export type MapFilter = { hidden: ReadonlySet<string>; returned: boolean };
+export type MapNode = { id: string; label: string; detail: string; layer: number; subPath?: string; threadId?: string; classId?: string; kind: "keeper" | "quest" | "returned" | "more" | "errand" | "member" | "ask" | "gate" | "outside" | "solo"; quiet?: boolean; loading?: boolean; questId?: string; member?: Member; ask?: Ask; quest?: BoardQuestSummary };
+/** Archived history is opt-in; live Keepers' cellar quests remain off the map. */
+export type MapFilter = { hidden: ReadonlySet<string>; returned: boolean; archived?: boolean; history?: MapHistory };
 export const NO_MAP_FILTER: MapFilter = { hidden: new Set(), returned: true };
 /** Every quest the map can draw, active first, then returned and stopped ones, newest first: the Quests picker's list. */
 export function mapQuests(room: Room) {
@@ -228,10 +229,12 @@ export function graphFor(room: Room, registry: Parameters<typeof memberName>[1],
   const edges: [string, string][] = [];
   const add = (node: MapNode, parent?: string) => { nodes.set(node.id, node); if (parent) edges.push([parent, node.id]); };
   for (const keeper of room.keepers) {
+    if (keeper.archived && !filter.archived) continue;
     const k = `keeper:${keeper.member.threadId}`;
-    add({ id: k, kind: "keeper", label: name(keeper.member), detail: keeperStatus(keeper).word, classId: keeper.member.classId, layer: 0, threadId: keeper.member.threadId, member: keeper.member });
+    add({ id: k, kind: "keeper", label: name(keeper.member), detail: keeperStatus(keeper).word, classId: keeper.member.classId, layer: 0, threadId: keeper.member.threadId, member: keeper.member, quiet: keeper.archived, loading: keeper.archived && !filter.history });
+    if (keeper.archived && !filter.history) continue;
     const drawn = (q: BoardQuestSummary) => !q.archivedAt && !filter.hidden.has(q.id);
-    for (const quest of keeper.boardQuests.filter((q) => !isFinished(q.phase) && drawn(q))) {
+    for (const quest of keeper.boardQuests.filter((q) => !keeper.archived && !isFinished(q.phase) && drawn(q))) {
       const q = `quest:${quest.id}`;
       add({ id: q, kind: "quest", label: quest.title, detail: `${quest.phase} · ${quest.move.text}`, layer: 1, subPath: `quest/${quest.id}`, questId: quest.id, quest }, k);
       for (const member of quest.members) add({ id: `member:${member.threadId}`, kind: "member", label: name(member), detail: member.state, classId: member.classId, layer: 2, threadId: member.threadId, questId: quest.id, member }, q);
@@ -244,8 +247,17 @@ export function graphFor(room: Room, registry: Parameters<typeof memberName>[1],
         add({ id: `outside:${quest.id}:${waypoint.id}`, kind: "outside", label: waypoint.owner ?? "Outside owner not named", detail: `${waypoint.title} · ${waypoint.leadTime ?? "lead time unknown"}`, layer: 3, subPath: `quest/${quest.id}`, questId: quest.id }, parent);
       }
     }
-    const returned = filter.returned ? keeper.boardQuests.filter((q) => (q.phase === "done" || q.phase === "stopped") && drawn(q)).sort((a, b) => (b.endedAt ?? b.updatedAt) - (a.endedAt ?? a.updatedAt)) : [];
-    for (const quest of returned) add({ id: `returned:${quest.id}`, kind: "returned", label: quest.short, detail: quest.phase === "stopped" ? "Stopped" : "Returned", layer: 1, subPath: quest.phase === "stopped" ? `quest/${quest.id}` : `tale/${quest.id}`, questId: quest.id, quest }, k);
+    const history = keeper.archived ? filter.history?.keepers.find(h => h.threadId === keeper.member.threadId) : undefined;
+    const past = history ? history.quests.map(q => ({ ...q, plan: null, waypoints: [], openAsks: 0, move: { who: "nobody" as const, text: "" } })) : keeper.archived ? [] : keeper.boardQuests;
+    const ordered = past.filter(q => keeper.archived || (isFinished(q.phase) && drawn(q))).sort((a, b) => (b.endedAt ?? b.updatedAt) - (a.endedAt ?? a.updatedAt));
+    const returned = keeper.archived ? ordered.slice(0, 5).filter(q => !filter.hidden.has(q.id)) : filter.returned ? ordered : [];
+    for (const quest of returned) {
+      const q = `returned:${quest.id}`;
+      add({ id: q, kind: "returned", label: quest.short, detail: phaseWord(quest.phase), layer: 1, subPath: quest.phase === "done" ? `tale/${quest.id}` : `quest/${quest.id}`, questId: quest.id, quest, quiet: true }, k);
+      for (const member of quest.members) add({ id: `member:${quest.id}:${member.threadId}`, kind: "member", label: name(member), detail: member.state, classId: member.classId, layer: 2, threadId: member.threadId, questId: quest.id, member, quiet: true }, q);
+    }
+    const more = keeper.archived ? (history?.total ?? ordered.length) - Math.min(5, ordered.length) : 0;
+    if (more > 0) add({ id: `more:${keeper.member.threadId}`, kind: "more", label: `+${more} more`, detail: "Quests in the cellar", layer: 1, subPath: "archive", quiet: true }, k);
     for (const member of keeper.errands.filter((m) => m.state !== "done" && m.state !== "stopped")) add({ id: `member:${member.threadId}`, kind: "errand", label: member.title ?? name(member), detail: `Side quest (errand) · ${member.state}`, classId: member.classId, layer: 1, threadId: member.threadId, member }, k);
     for (const ask of room.asks.filter((a) => a.keeperThreadId === keeper.member.threadId && a.boardQuestId === null && a.state === "open")) add({ id: `ask:${ask.id}`, kind: "ask", label: ask.question, detail: `Needs you · ${ask.kind}`, layer: 2, threadId: keeper.member.threadId, ask }, k);
   }
@@ -257,7 +269,7 @@ export function oneHop(nodes: MapNode[], edges: [string, string][], focus: strin
   return new Set([focus, ...edges.flatMap(([a, b]) => a === focus ? [b] : b === focus ? [a] : [])]);
 }
 
-export type PictureNode = { id: string; col: number; row: number; kind: "keeper" | "quest" | "returned" | "errand" | "member" | "you" | "blocked" | "gate" | "outside" | "solo"; node?: MapNode; label: string; sub: string; asks?: Ask[]; folded?: number; questId?: string; hot: boolean };
+export type PictureNode = { id: string; col: number; row: number; kind: "keeper" | "quest" | "returned" | "more" | "errand" | "member" | "you" | "blocked" | "gate" | "outside" | "solo"; node?: MapNode; label: string; sub: string; asks?: Ask[]; folded?: number; questId?: string; hot: boolean; quiet?: boolean };
 /**
  * The picture: Keepers, their quests and side quests, then the focused quest's party, asks and gates, then who they wait on.
  * Other quests fold their party into a count but keep your asks. Laid out leaf by leaf, so no two edges cross.
@@ -274,14 +286,14 @@ export function mapPicture(graph: ReturnType<typeof graphFor>, focusQuestId: str
     const rows = ids.map((id) => nodes.find((n) => n.id === id)!.row);
     const at = rows.length ? (rows[0]! + rows[rows.length - 1]!) / 2 : row++;
     nodes.push({ ...p, row: at });
-    for (const id of ids) { const to = nodes.find((n) => n.id === id)!; edges.push({ from: p.id, to: id, hot: p.hot && to.hot, dashed: p.kind === "errand" || to.kind === "errand", quiet: to.kind === "returned" }); }
+    for (const id of ids) { const to = nodes.find((n) => n.id === id)!; edges.push({ from: p.id, to: id, hot: p.hot && to.hot, dashed: p.kind === "errand" || to.kind === "errand", quiet: p.quiet || to.quiet || to.kind === "returned" }); }
     return at;
   };
   const leafOrSubtree = (id: string, hot: boolean): string[] => {
     const n = byId.get(id)!;
     const kids = (children.get(id) ?? []).filter((c) => byId.get(c)!.kind === "outside");
     const kind = n.kind === "gate" ? "gate" : n.kind === "outside" ? "outside" : "member";
-    place({ id, col: n.layer, kind, node: n, label: n.label, sub: n.detail, questId: n.questId, hot }, kids.map((k) => () => { place({ id: k, col: 3, kind: "outside", node: byId.get(k)!, label: byId.get(k)!.label, sub: byId.get(k)!.detail, questId: n.questId, hot }, []); return [k]; }));
+    place({ id, col: n.layer, kind, node: n, label: n.label, sub: n.detail, questId: n.questId, hot, quiet: n.quiet }, kids.map((k) => () => { place({ id: k, col: 3, kind: "outside", node: byId.get(k)!, label: byId.get(k)!.label, sub: byId.get(k)!.detail, questId: n.questId, hot }, []); return [k]; }));
     return [id];
   };
   const asksNode = (parentId: string, asks: Ask[], hot: boolean, questId?: string): string[] => {
@@ -299,7 +311,7 @@ export function mapPicture(graph: ReturnType<typeof graphFor>, focusQuestId: str
     const errands = kids.map((id) => byId.get(id)!).filter((n) => n.kind === "errand");
     const wideAsks = kids.map((id) => byId.get(id)!).filter((n) => n.kind === "ask").map((n) => n.ask!);
     const keeperHot = quests.some((q) => q.questId === focusQuestId);
-    place({ id: keeper.id, col: 0, kind: "keeper", node: keeper, label: keeper.label, sub: keeper.detail, hot: keeperHot }, [
+    place({ id: keeper.id, col: 0, kind: "keeper", node: keeper, label: keeper.label, sub: keeper.detail, hot: keeperHot, quiet: keeper.quiet }, [
       ...quests.map((q) => () => {
         const focused = q.questId === focusQuestId;
         const qKids = (children.get(q.id) ?? []).map((id) => byId.get(id)!);
@@ -311,7 +323,7 @@ export function mapPicture(graph: ReturnType<typeof graphFor>, focusQuestId: str
         return [q.id];
       }),
       ...errands.map((e) => () => { place({ id: e.id, col: 1, kind: "errand", node: e, label: e.label, sub: e.detail, hot: false }, []); return [e.id]; }),
-      ...kids.map((id) => byId.get(id)!).filter((n) => n.kind === "returned").map((r) => () => { place({ id: r.id, col: 1, kind: "returned", node: r, label: r.label, sub: r.detail, questId: r.questId, hot: false }, []); return [r.id]; }),
+      ...kids.map((id) => byId.get(id)!).filter((n) => n.kind === "returned" || n.kind === "more").map((r) => () => { place({ id: r.id, col: 1, kind: r.kind === "more" ? "more" : "returned", node: r, label: r.label, sub: r.detail, questId: r.questId, hot: false, quiet: true }, (children.get(r.id) ?? []).map(id => () => leafOrSubtree(id, false))); return [r.id]; }),
       () => asksNode(keeper.id, wideAsks, false),
     ]);
     row += 0.35;

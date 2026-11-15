@@ -1,5 +1,5 @@
 import { useBbNavigate } from "@get-bb/plugin-sdk/app";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
 import { voiceShown, Crest, ExpandsMark, Hearth, OpensMark, rememberCount, PartyPicture as KitParty, Vocabulary, activeHold, onTheRoad, clockTime, glowVars, hearthWords, useNow } from "../kit";
 import type { BoardQuestSummary, Room } from "../../shared/contract";
 import type { Member } from "../../shared/schema";
@@ -14,18 +14,58 @@ import { Rail, jumpTo, takePendingJump } from "./rail";
 import { ReturnButton, RoomAwayNotes, usePendingStops } from "./away";
 import { SKEL } from "./skeletons";
 import { Board } from "./board";
+import { reportsTitle, useOpenReports } from "./reports";
 
 /** Where each member is, drawn by the kit; every crest opens its thread. */
-export function PartyPicture({ members, registry, mini = false, quests }: { members: Member[]; registry: Registry; mini?: boolean; quests: BoardQuestSummary[] }) {
+export function PartyPicture({ members, registry, mini = false, quests, ambientMotion, repeatSeconds }: { ambientMotion?: "calm" | "lively" | "off"; repeatSeconds?: number; members: Member[]; registry: Registry; mini?: boolean; quests: BoardQuestSummary[] }) {
   const navigate = useBbNavigate();
-  return <KitParty members={members} registry={registry} mini={mini} quests={quests} onOpen={(id) => navigate.toThread(id)} />;
+  return <KitParty ambientMotion={ambientMotion} repeatSeconds={repeatSeconds} members={members} registry={registry} mini={mini} quests={quests} onOpen={(id) => navigate.toThread(id)} />;
 }
 
 
+const reviewFolds = new Map<string, boolean>();
+type ReviewItem = Room["review"]["items"][number];
+const reviewKey = (item: ReviewItem) => item.reportId ?? `${item.boardQuestId ?? ""}:${item.waypoint?.id ?? item.title}:${item.member?.threadId ?? ""}`;
+
+function ReviewRow({ item, single }: { item: ReviewItem; single: boolean }) {
+  const key = reviewKey(item);
+  const [open, setOpen] = useState(() => reviewFolds.get(key) ?? single);
+  const bodyId = useId();
+  const openReports = useOpenReports();
+  const navigate = useBbNavigate();
+  const title = item.waypoint?.title ?? item.title;
+  const member = item.member;
+  const who = item.waitingFor;
+  const waiting = who?.who === "you" ? "you" : who?.who === "checker" ? `${who.name ?? "Checker"}${who.working === false ? " (assigned, not working)" : " checking"}` : who?.who === "keeper" ? "No checker working" : null;
+  const toggle = () => {
+    reviewFolds.delete(key);
+    reviewFolds.set(key, !open);
+    if (reviewFolds.size > 200) reviewFolds.delete(reviewFolds.keys().next().value!);
+    setOpen(!open);
+  };
+  return <li className="tv-rv">
+    <button type="button" className="tv-rv-head act" aria-label={`Review ${title}`} aria-expanded={open} aria-controls={bodyId} onClick={toggle}>
+      <PageGlyph name="pr" /><span className="tv-rv-copy"><span className="tv-rv-t" title={title}>{title}{member && <> · {member.displayName} <span className="m">({member.classId})</span></>}</span><span className="tv-rv-meta m">{item.questTitle && <span data-content>{item.questTitle}</span>}{item.reportedAt != null && <span>reported <Ago at={item.reportedAt} /></span>}</span></span>
+      <span className="tv-rv-tail">{waiting && <StateMark tone={who?.who === "you" ? "you" : who?.who === "checker" ? "work" : "keeper"}>{who?.who === "keeper" ? waiting : <>Waiting for {waiting}</>}</StateMark>}<ExpandsMark open={open} /></span>
+    </button>
+    {open && <div className="tv-rv-detail" id={bodyId}>
+      {item.headline && <p data-content>{item.headline}{item.headlineTruncated && "…"}</p>}
+      {item.headlineTruncated && <p className="m small">Read the rest in Open report.</p>}
+      {item.waypoint?.doneWhen && <p><b>Done when:</b> <span data-content>{item.waypoint.doneWhen}</span></p>}
+      {item.evidenceCount !== undefined && <p className="m">{item.evidenceCount} {item.evidenceCount === 1 ? "piece" : "pieces"} of evidence</p>}
+      <div className="tv-rv-actions">
+        {item.reportId && item.boardQuestId && member && <button type="button" className="btn sm" onClick={() => { if (!openReports({ questId: item.boardQuestId!, memberThreadId: member.threadId, reportId: item.reportId! }, reportsTitle(member.displayName, item.questTitle ?? title))) navigate.toPluginPanel("tavern", { subPath: `quest/${item.boardQuestId}` }); }}>Open report<OpensMark /></button>}
+        {item.boardQuestId && <PageButton path={`quest/${item.boardQuestId}`} className="sm">Open quest</PageButton>}
+        {item.url && <SafeLink href={item.url}>Open review</SafeLink>}
+        {!item.boardQuestId && !item.url && <span className="m small">No link recorded</span>}
+      </div>
+    </div>}
+  </li>;
+}
 export function ReviewQueue({ review }: { review: Room["review"] }) {
   if (!review.items.length) return null;
-  return <Section title="Review queue" count={`${review.waiting} of ${review.budget} waiting`} aside={<ReviewMeter review={review} />}>
-    <ul className="tv-card tv-rows">{review.items.map((item, i) => <li key={i} className="tv-rv"><PageGlyph name="pr" /><span className="tv-rv-t" title={item.title}>{item.title}</span>{item.url ? <SafeLink href={item.url}>Open review</SafeLink> : item.boardQuestId ? <PageButton path={`quest/${item.boardQuestId}`} className="sm">Open quest</PageButton> : <span className="m small">No link recorded</span>}</li>)}</ul>
+  return <Section title="Review queue" count={`${review.waiting} waiting of ${review.budget}`} aside={<ReviewMeter review={review} />}>
+    <ul className="tv-card tv-rows">{review.items.map(item => <ReviewRow key={reviewKey(item)} item={item} single={review.items.length === 1} />)}</ul>
     {review.waiting >= review.budget && <p className="tv-holdnote" role="status"><PageGlyph name="report" /><span>At the review budget: clear one before more review-bound work starts.</span></p>}
   </Section>;
 }

@@ -1,7 +1,7 @@
 import { experimental_ProviderModelPicker as ProviderModelPicker, experimental_copyToClipboard, experimental_useProviders, experimental_useRpcMutation, experimental_useRpcQuery, useBbNavigate, type ExperimentalProviderModelPickerValue } from "@get-bb/plugin-sdk/app";
 import { useEffect, useId, useRef, useState, type ComponentType, type ReactNode } from "react";
 import { importSummary, settingsContract, type SettingsChange, type SettingsPatch, type SettingsView, type TunableKey } from "../../shared/settings";
-import { Glyph, OpensMark, TimeAgo, plural, useRegistry } from "../kit";
+import { Glyph, OpensMark, TimeAgo, plural, useRegistry, useActorNames } from "../kit";
 import { ReadState, SegFilter } from "./common";
 import { PageGlyph } from "./glyphs";
 import { MachinesSettingsRow } from "./machines-row";
@@ -91,8 +91,38 @@ export function TavernSection() {
     <Row label="Widget row" help="Shows Tavern's row above the message box on every thread. Off hides it everywhere; when on, each thread can still hide its own." control={(id) => <Toggle id={id} checked={t.widgetRow} disabled={api.pending} onChange={(v) => void api.save({ tavern: { widgetRow: v } })} />} />
     <Row label="Character voice" help={VOICE_HELP[t.voice]} control={() => <SegFilter label="Character voice" value={t.voice} onChange={(v) => void api.save({ tavern: { voice: v } })} options={[{ id: "full", label: "Full" }, { id: "light", label: "Light" }, { id: "off", label: "Off" }]} />} />
     <Row label="Character levels" help="Shows each character's level and crest notches, earned from verified work. Agents never see levels. Off hides them everywhere." control={(id) => <Toggle id={id} checked={t.levels} disabled={api.pending} onChange={(v) => void api.save({ tavern: { levels: v } })} />} />
-    <Row label="Hearth flicker while work runs" help="Off keeps the hearth still." control={(id) => <Toggle id={id} checked={t.hearthFlicker} disabled={api.pending} onChange={(v) => void api.save({ tavern: { hearthFlicker: v } })} />} />
+    <Row label="Agents may change settings" help="Agent CLI changes are recorded with their thread and can be undone below." control={(id) => <Toggle id={id} checked={t.agentsMayChangeSettings} disabled={api.pending} onChange={(v) => void api.save({ tavern: { agentsMayChangeSettings: v } })} />} />
   </>; }}</Shell>;
+}
+
+export function MotionSection() {
+  const api = useTavernSettings();
+  return <Shell api={api}>{d => { const t = d.effective.tavern; return <>
+    <Row label="Ambient motion" help="Calm uses brief, budgeted cues. Lively repeats while work runs. Off keeps the hearth still and stops ambient repeats." control={() => <SegFilter label="Ambient motion" value={t.hearthFlicker ? t.ambientMotion : "off"} onChange={v => void api.save({ tavern: { ambientMotion: v, hearthFlicker: v !== "off" } })} options={[{id:"calm",label:"Calm"},{id:"lively",label:"Lively"},{id:"off",label:"Off"}]} />} />
+    <Row label="Repeat every" help="The repeat interval in Lively. Reduced motion, hidden pages, typing and trouble in view still hold animations." control={id => <NumberField id={id} value={t.repeatSeconds} min={3} max={60} unit="seconds" disabled={api.pending} onSave={v => void api.save({tavern:{repeatSeconds:v}})} />} />
+  </>; }}</Shell>;
+}
+
+function SettingsAuthors({ history, children }: { history: SettingsView["history"]; children: (names: ReturnType<typeof useActorNames>) => ReactNode }) {
+  const names = useActorNames(history.flatMap(c => c.threadId ? [c.threadId] : []));
+  return children(names);
+}
+
+export function SettingAuthor({ threadId, by, label = "another thread", sentenceStart = false }: { threadId?: string | null; by: "user" | "keeper" | "tavern"; label?: string; sentenceStart?: boolean }) {
+  const navigate = useBbNavigate();
+  if (!threadId) return <>{WHO[by]}</>;
+  const link = <button type="button" className="tv-ilink act" onClick={() => navigate.toThread(threadId)}>{label}</button>;
+  return by === "keeper" ? <>{link} (Keeper)</> : <>{sentenceStart ? "An" : "an"} agent in {link}</>;
+}
+
+export function SettingsHistorySection() {
+  const api = useTavernSettings();
+  const undo = experimental_useRpcMutation({contract:settingsContract,method:"settingsUndo"});
+  const [error,setError] = useState<string | null>(null);
+  return <Shell api={api}>{d => <SettingsAuthors history={d.history}>{names => <><ReadState error={error ? { message: error } : null} retry={() => setError(null)} /><ul>{d.history.map(c => <li key={c.id}>
+    <span>{c.reason} · by <SettingAuthor threadId={c.threadId} by={c.by} label={c.threadId ? names(c.threadId, {mid:true}) : undefined} /> · <TimeAgo at={c.at} /></span>
+    {c.undoable && <button type="button" className="lnk-btn act" disabled={undo.isPending} onClick={() => void undo.mutate({id:c.id,revision:d.revision,why:"Undo settings change"}).catch(e=>setError(String(e)))}>Undo</button>}
+  </li>)}</ul></>}</SettingsAuthors>}</Shell>;
 }
 
 export function AttentionSection() {
@@ -221,7 +251,7 @@ export function TunedSection() {
   const undo = experimental_useRpcMutation({ contract: settingsContract, method: "settingsUndo" });
   const apply = experimental_useRpcMutation({ contract: settingsContract, method: "settingsApplySuggestion" });
   const run = async (p: Promise<unknown>) => { await p; void api.refetch(); };
-  return <Shell api={api}>{(d) => <>
+  return <Shell api={api}>{(d) => <SettingsAuthors history={d.history}>{names => <>
     <p className="tv-set-intro">Tuning is <b>{d.effective.tuning.mode}</b>. A pinned value is yours and is never tuned.</p>
     <ul className="tv-tuned">{d.rows.filter((r) => !isUserKnob(r.key)).map((r) => {
       const suggestion = d.suggestions.find((s) => s.key === r.key);
@@ -229,7 +259,7 @@ export function TunedSection() {
       return <li key={r.key} className={`tv-tuned-row ${r.pinned ? "pinned" : ""}`}>
         <div className="tv-tuned-h"><b>{r.label}</b><span className="tv-tuned-v num">{formatValue(r.value, r.unit)}</span>{r.pinned && <span className="tag"><PageGlyph name="pin" size={11} /><span>pinned</span></span>}</div>
         <div className="tv-tuned-f"><span>default <b className="num">{formatValue(r.default, r.unit)}</b></span><span>bounds <b className="num">{formatValue(r.min, r.unit)} to {formatValue(r.max, r.unit)}</b></span><span>{r.source === "default" ? "using the default" : <>set by <b>{WHO[r.source]}</b></>}</span></div>
-        {c && <p className="tv-tuned-c"><span>{WHO[c.by]} changed it from <b className="num">{c.from === null ? "default" : formatValue(c.from, r.unit)}</b> to <b className="num">{c.to === null ? "default" : formatValue(c.to, r.unit)}</b> <TimeAgo at={c.at} />: {c.reason}</span>{c.evidence && <> <button type="button" className="tv-ilink act" onClick={() => navigate.toPluginPanel("tavern", { subPath: "insights" })}>See it in Insights</button></>}</p>}
+        {c && <p className="tv-tuned-c"><span><SettingAuthor threadId={d.history.find(h => h.id === c.id)?.threadId} by={c.by} label={names(d.history.find(h => h.id === c.id)?.threadId ?? null, {mid:true})} sentenceStart /> changed it from <b className="num">{c.from === null ? "default" : formatValue(c.from, r.unit)}</b> to <b className="num">{c.to === null ? "default" : formatValue(c.to, r.unit)}</b> <TimeAgo at={c.at} />: {c.reason}</span>{c.evidence && <> <button type="button" className="tv-ilink act" onClick={() => navigate.toPluginPanel("tavern", { subPath: "insights" })}>See it in Insights</button></>}</p>}
         {suggestion && <p className="tv-tuned-s"><PageGlyph name="you" size={12} className="tv-mn-you" /><span>Suggested: <b className="num">{formatValue(suggestion.value, r.unit)}</b>. {suggestion.reason}</span></p>}
         <div className="tv-tuned-a">
           {suggestion && <button type="button" className="btn pri sm" disabled={apply.isPending || r.pinned} onClick={() => void run(apply.mutate({ key: r.key, revision: d.revision }))}><span>Apply {formatValue(suggestion.value, r.unit)}</span></button>}
@@ -238,7 +268,7 @@ export function TunedSection() {
         </div>
       </li>;
     })}</ul>
-  </>}</Shell>;
+  </>}</SettingsAuthors>}</Shell>;
 }
 
 export function ChangeList({ changes, problems }: { changes: Change[]; problems: Problem[] }) {
@@ -311,6 +341,8 @@ export function settingsSection<P extends object>({ intro, component: Body, ...r
 /** bb's settings page for Tavern, in the spec's order: what you tune, what Tavern tunes, then TOML. */
 export const SETTINGS_SECTIONS = [
   { id: "tavern", title: "Tavern", intro: "Pause, how new threads start, and how much character shows.", component: TavernSection },
+  { id: "motion", title: "Motion", intro: "Ambient cues and their repeat interval.", component: MotionSection },
+  { id: "settings-history", title: "Settings history", intro: "Who changed settings and how to undo them.", component: SettingsHistorySection },
   { id: "attention", title: "Your attention", intro: "What reaches you and when.", component: AttentionSection },
   { id: "keepers", title: "Keepers and decisions", intro: "How much a Keeper may decide without you.", component: KeepersSection },
   { id: "classes", title: "Classes and models", intro: "The agent, model and thinking each class hires with.", component: ClassesSection },

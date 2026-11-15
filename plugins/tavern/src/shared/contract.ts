@@ -12,6 +12,7 @@ import { scopeSchema } from "../scope/schema";
 import { characterAuthorshipSchema, characterReportVoicesSchema } from "./character-presentation";
 import {
   askSchema,
+  briefSchema,
   keeperNoteSchema,
   gateRecordSchema,
   boardQuestSchema,
@@ -47,6 +48,7 @@ export const tags = {
   journal: (threadId: string) => `tavern:journal:${threadId}`,
   boardQuest: (id: string) => `tavern:quest:${id}`,
   room: () => "tavern:room",
+  mapHistory: () => "tavern:map-history",
   rows: () => "tavern:rows",
 };
 
@@ -85,6 +87,8 @@ export const boardQuestSummarySchema = boardQuestSchema.extend({
   move: z.object({ who: z.enum(["you", "keeper", "party", "outside", "nobody"]), text: z.string() }),
 });
 export type BoardQuestSummary = z.infer<typeof boardQuestSummarySchema>;
+export const mapHistorySchema = z.object({ keepers: z.array(z.object({ threadId: z.string(), total: z.number().int().nonnegative(), quests: z.array(boardQuestSchema.extend({ members: z.array(memberSchema) })).max(5) })) });
+export type MapHistory = z.infer<typeof mapHistorySchema>;
 
 // added by Builder B: scope state and evidence are additive so older UI fixtures remain valid.
 export const memberScopeSchema = z.object({
@@ -111,6 +115,7 @@ const decisionAttentionFields = {
 export const threadDecorSchema = z.object({
   threadId,
   widgetRow: z.boolean().optional(),
+  ambientMotion: z.enum(["calm", "lively", "off"]).optional(), repeatSeconds: z.number().optional(),
   classNotice: classNoticeSchema.nullable().optional(),
   // added by Builder B: show the live guardrail and any pending widening alongside member details.
   scope: memberScopeSchema.nullable().optional(),
@@ -121,6 +126,7 @@ export const threadDecorSchema = z.object({
   boardQuest: boardQuestSchema.nullable(),
   /** Member threads: the brief they were hired with. */
   brief: z.string().nullable(),
+  briefFields: briefSchema.nullable().optional(),
   progress: journalProgressSchema,
   /** Keeper threads only. */
   keeperView: z
@@ -147,6 +153,9 @@ export const boardQuestDetailSchema = z.object({
   // added by Builder B: the Keeper's wrap and journal-backed credits remain sparse-safe for old fixtures.
   tale: z.object({
     outcome: z.string(), left: z.string().nullable(),
+    delivery: z.object({ text: z.string().max(24000), capturedAt: z.number(), threadId: z.string(), truncated: z.boolean() }).optional(),
+    next: z.array(z.string().max(200)).max(5).optional(),
+    document: z.object({ threadId: z.string(), rootPath: z.string(), target: z.object({ kind: z.literal("workspace"), environmentId: z.string(), path: z.string() }) }).optional(),
     skipped: z.array(z.object({ waypointId: id, reason: z.string() })),
     wrappedAt: z.number().int().nonnegative(),
     levels: z.array(taleLevelSchema).nullable().optional(),
@@ -161,7 +170,7 @@ export const boardQuestDetailSchema = z.object({
   violations: z.array(scopeViolationSchema).optional(),
   quest: boardQuestSummarySchema,
   plans: z.array(planSchema),
-  asks: z.array(askSchema),
+  asks: z.array(askSchema.extend({ planVersion: z.number().int().nonnegative().optional() })),
   decisions: z.array(decisionSchema),
   // added by Builder B: history includes seen and cellared decisions, with bounded older pages.
   decisionsNextCursor: z.string().nullable().optional(),
@@ -201,6 +210,7 @@ export type Ledger = z.infer<typeof ledgerSchema>;
 
 export const roomSchema = z.object({
   hearthFlicker: z.boolean().optional(),
+  ambientMotion: z.enum(["calm", "lively", "off"]).optional(), repeatSeconds: z.number().optional(),
   away: awayStatusSchema.optional(),
   keepers: z.array(
     z.object({
@@ -221,7 +231,18 @@ export const roomSchema = z.object({
   decidedForYou: z.array(decisionSchema),
   ...decisionAttentionFields,
   /** Drafts and PRs waiting on the user's review, against the review budget. */
-  review: z.object({ waiting: z.number().int(), budget: z.number().int(), items: z.array(z.object({ title: z.string(), url: z.string().nullable(), boardQuestId: z.string().nullable() })) }),
+  review: z.object({ waiting: z.number().int(), budget: z.number().int(), items: z.array(z.object({
+    title: z.string(), url: z.string().nullable(), boardQuestId: z.string().nullable(),
+    questTitle: z.string().optional(),
+    waypoint: z.object({ id: z.string(), title: z.string(), doneWhen: z.string().nullable() }).optional(),
+    member: z.object({ threadId: z.string(), displayName: z.string(), classId: z.string() }).nullable().optional(),
+    reportId: z.string().nullable().optional(),
+    headline: z.string().max(500).optional(),
+    headlineTruncated: z.boolean().optional(),
+    evidenceCount: z.number().int().nonnegative().optional(),
+    reportedAt: z.number().nullable().optional(),
+    waitingFor: z.object({ who: z.enum(["checker", "keeper", "you"]), name: z.string().optional(), working: z.boolean().optional() }).optional(),
+  })) }),
   /** Solo typed threads (Wanderers and others the user started directly). */
   solos: z.array(memberSchema),
   recent: z.array(eventSchema),
@@ -395,6 +416,9 @@ export const rpcContract = defineContract({
     output: z.object({ ok: z.literal(true), changed: z.number().int() }),
   },
   /** The archive, newest first, paged; the common room leaves archived quests out. */
+  mapHistory: {
+    input: z.object({}).strict(), output: mapHistorySchema, tags: () => [tags.mapHistory()],
+  },
   archivedBoardQuests: {
     input: z.object({ cursor: z.string().nullable().default(null), limit: z.number().int().min(1).max(100).default(30) }).strict(),
     output: z.object({ boardQuests: z.array(boardQuestSummarySchema), nextCursor: z.string().nullable(), total: z.number().int() }),

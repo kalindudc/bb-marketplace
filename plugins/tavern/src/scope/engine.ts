@@ -142,8 +142,7 @@ export function evaluate(scope: Scope, call: ScopeCall): Decision {
     if (program === "kubectl" && !["get", "describe", "logs", "events", "version", "api-resources", "api-versions", "explain", "cluster-info", "top", "wait"].includes(sub) && !(sub === "auth" && action === "can-i") && !(sub === "config" && ["view", "get-contexts", "current-context"].includes(action))) return blocked(command.text, "kubectl-write", "cluster writes, exec and cp are outside this scope, including dry runs");
     if (scope.writes.mode === "none") {
       const knownWriter = ["tee", "mkdir", "cp", "mv", "touch", "rm", "rmdir"].includes(program) && knownWritePaths(argv).length > 0;
-      const outputOnly = program === "tee" && paths.length > 0 && paths.every(path => isSink(normalizeToolPath(path, command.cwd)));
-      if (!read && !check && !(knownWriter && (scope.preset !== "keeper" || outputOnly))) return blocked(command.text, "readonly-shell", "this scope permits inspected read programs, not arbitrary programs or opaque shell input");
+      if (!read && !check && !knownWriter) return blocked(command.text, "readonly-shell", "this scope permits inspected read programs, not arbitrary programs or opaque shell input");
     }
   }
   return checking ? { allow: true, check: true } : allowed;

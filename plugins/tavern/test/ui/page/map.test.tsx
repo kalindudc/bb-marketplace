@@ -21,7 +21,7 @@ const sizedWindow = () => vi.stubGlobal("ResizeObserver", class { observe() {} u
 beforeEach(() => { window.localStorage.clear(); sizedWindow(); });
 async function map(data: typeof live = live) {
   const plugin = await loadPluginApp(async () => ({ default: definePluginApp(registerPageSurfaces) }));
-  const slot = renderSlot(plugin.navPanels[0]!, { subPath: "map" }, { pluginId: "tavern", experimental_rpcContract: rpcContract, rpc: { room: () => structuredClone(data), registry: () => structuredClone(registry), archivedBoardQuests: () => ({ boardQuests: [], nextCursor: null, total: 0 }) } as Partial<Handlers> as Handlers });
+  const slot = renderSlot(plugin.navPanels[0]!, { subPath: "map" }, { pluginId: "tavern", experimental_rpcContract: rpcContract, rpc: { room: () => structuredClone(data), registry: () => structuredClone(registry), archivedBoardQuests: () => ({ boardQuests: [], nextCursor: null, total: 0 }), mapHistory: () => ({ keepers: data.keepers.filter(k => k.archived).map(k => ({ threadId: k.member.threadId, total: k.boardQuests.length, quests: k.boardQuests.slice(0, 5) })) }) } as Partial<Handlers> as Handlers });
   slots.push(slot);
   await slot.findByRole("heading", { name: "Everyone on the map" });
   return slot;
@@ -30,7 +30,7 @@ const list = (slot: RenderedSlot) => slot.getByRole("region", { name: /Everyone 
 
 describe("The map's Keepers", () => {
   it("gives every Keeper node the room's status word, so archived threads never read as listening", () => {
-    const nodes = graphFor(live, registry).nodes.filter((n) => n.kind === "keeper");
+    const nodes = graphFor(live, registry, { hidden: new Set(), returned: true, archived: true }).nodes.filter((n) => n.kind === "keeper");
     expect(nodes.map((n) => n.detail)).toEqual(live.keepers.map((k) => keeperStatus(k).word));
     expect(nodes.filter((n) => n.detail === "thread archived")).toHaveLength(8);
   });
@@ -50,8 +50,11 @@ describe("The map's Keepers", () => {
     expect(nodes.every((n) => n.label && n.label !== "null")).toBe(true);
   });
 
-  it("draws archived Keepers in the picture as thread archived", async () => {
+  it("draws archived Keepers as thread archived only when requested", async () => {
     const slot = await map();
+    expect(slot.container.querySelector(".tv-mappic")?.textContent).not.toContain("Thread archived");
+    fireEvent.click(slot.getByRole("button", { name: "Show archived Keepers (8)" }));
+    await slot.findAllByText("Thread archived");
     const picture = slot.container.querySelector(".tv-mappic") as HTMLElement;
     expect(within(picture).getAllByText("Thread archived")).toHaveLength(8);
     const word = keeperStatus(live.keepers[0]!).word;
@@ -118,7 +121,11 @@ describe("The map's layout", () => {
     sizedWindow();
     const width = vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(function (this: HTMLElement) { return this.classList.contains("tv-mv-box") ? 364 : 0; });
     try {
-      const slot = await map();
+      const twoColumns = structuredClone(live);
+      for (const k of twoColumns.keepers) for (const q of k.boardQuests) q.members = [];
+      const slot = await map(twoColumns);
+      fireEvent.click(slot.getByRole("button", { name: "Show archived Keepers (8)" }));
+      await slot.findAllByText("Thread archived");
       const picture = slot.container.querySelector(".tv-mappic") as HTMLElement;
       await waitFor(() => expect(picture.querySelectorAll(".tv-mn.tall")).toHaveLength(picture.querySelectorAll(".tv-mn").length));
       const nodes = [...picture.querySelectorAll<HTMLElement>(".tv-mn.k-keeper")];

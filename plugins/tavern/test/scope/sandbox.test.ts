@@ -33,7 +33,9 @@ it.skipIf(process.platform !== "darwin" || !existsSync("/usr/bin/sandbox-exec"))
     expect(globRun(join(allowed, "no.secret")).status).not.toBe(0);
     scope.preset = "keeper"; scope.writes.allow = [allowed]; scope.writes.deny = [];
     const keeper = spawnSync("/usr/bin/sandbox-exec", ["-p", sandboxProfile(scope), "/bin/bash", "-c", 'printf no > "$1"', "tavern-probe", join(allowed, "keeper")], { encoding: "utf8" });
-    expect(keeper.status).not.toBe(0);
+    expect(keeper.status).toBe(0);
+    const keeperOutside = spawnSync("/usr/bin/sandbox-exec", ["-p", sandboxProfile(scope), "/bin/bash", "-c", 'printf no > "$1"', "tavern-probe", join(denied, "keeper")], { encoding: "utf8" });
+    expect(keeperOutside.status).not.toBe(0);
     console.info("sandbox-exec probe: allowed root writable; outside root and protected scope directory denied");
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

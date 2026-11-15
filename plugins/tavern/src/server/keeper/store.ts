@@ -33,6 +33,8 @@ const eventQuestSql = `coalesce(tavern_events.board_quest_id, CASE tavern_events
 const visibleEventSql = `NOT EXISTS (SELECT 1 FROM tavern_records q WHERE q.kind='quests' AND q.id=${eventQuestSql} AND q.archived_at IS NOT NULL)`;
 
 export interface Records {
+  taleDeliveries: import("zod").infer<typeof import("../tale").taleDeliverySchema>;
+  taleDeliveryAttempts: import("zod").infer<typeof import("../tale").taleDeliveryAttemptSchema>;
   serviceRecords: import("../../shared/service-record").ServiceQuestRecord;
   serviceVerdicts: import("../../shared/service-record").ServiceVerdict;
   serviceRecordState: import("../../shared/service-record").ServiceRecordState;
@@ -174,6 +176,9 @@ export interface PendingBrief {
   blockerAskId?: string | null;
 }
 export interface Runtime {
+  keeperTitleSet?: string;
+  keeperTitleReplaced?: string;
+  keeperTitleRetired?: boolean;
   classDefinition?: import("../../shared/schema").ClassDef;
   classNotice?: import("../../shared/class-execution-contract").ClassNotice | null;
   classRootProblem?: string | null;
@@ -228,6 +233,7 @@ export interface Runtime {
   releasePending?: string | null;
   released?: { reason: string; decisionId: string };
   archivePending?: boolean;
+  partyArchiveRepairAt?: number;
   archiveError?: string | null;
   archivedAt?: number | null;
   deletedAt?: number | null;
@@ -331,6 +337,31 @@ export class KeeperStore {
       max(json_extract(m.data,'$.createdAt'),coalesce(json_extract(m.data,'$.lastReportAt'),0),coalesce(json_extract(m.data,'$.lastActiveAt'),0)) DESC,
       m.rowid DESC LIMIT ? OFFSET ?`).all(...params, limit, offset) as { data: string }[];
     return { ...counts, members: rows.map(row => JSON.parse(row.data) as Member) };
+  }
+  mapHistory() {
+    const rows = this.db.prepare(`WITH archived AS (
+      SELECT m.id AS thread_id FROM tavern_records m JOIN tavern_runtime t ON t.thread_id=m.id
+      WHERE m.kind='members' AND json_extract(m.data,'$.role')='keeper'
+      AND json_extract(t.data,'$.archivedAt') IS NOT NULL
+      ORDER BY json_extract(t.data,'$.archivedAt') DESC,m.id LIMIT 50
+    ), ranked AS (
+      SELECT q.id,q.data,json_extract(q.data,'$.keeperThreadId') AS keeper_id,
+      row_number() OVER (PARTITION BY json_extract(q.data,'$.keeperThreadId') ORDER BY
+        coalesce(json_extract(q.data,'$.endedAt'),json_extract(q.data,'$.updatedAt')) DESC,q.rowid DESC) AS position,
+      count(*) OVER (PARTITION BY json_extract(q.data,'$.keeperThreadId')) AS total
+      FROM tavern_records q JOIN archived a ON a.thread_id=json_extract(q.data,'$.keeperThreadId') WHERE q.kind='quests'
+    ) SELECT a.thread_id,r.data,coalesce(r.total,0) AS total,
+      (SELECT json_group_array(json(m.data)) FROM tavern_records m WHERE m.kind='members'
+       AND json_extract(m.data,'$.boardQuestId')=r.id) AS members
+      FROM archived a LEFT JOIN ranked r ON r.keeper_id=a.thread_id AND r.position<=5
+      ORDER BY a.thread_id,r.position`).all() as { thread_id: string; data: string | null; total: number; members: string }[];
+    const keepers = new Map<string, { threadId: string; total: number; quests: (BoardQuest & { members: Member[] })[] }>();
+    for (const row of rows) {
+      let keeper = keepers.get(row.thread_id);
+      if (!keeper) { keeper = { threadId: row.thread_id, total: row.total, quests: [] }; keepers.set(row.thread_id, keeper); }
+      if (row.data !== null) keeper.quests.push({ ...JSON.parse(row.data) as BoardQuest, members: JSON.parse(row.members) as Member[] });
+    }
+    return { keepers: [...keepers.values()] };
   }
   scopeViolations(threadIds: string[]) {
     if (!threadIds.length) return [];
@@ -689,6 +720,14 @@ export class KeeperStore {
         `Tavern ${type} keeper=${keeperThreadId ?? "-"} quest=${boardQuestId ?? "-"}: ${text.slice(0, 200)}`,
       );
     return Number(result.lastInsertRowid);
+  }
+  questRoadEvent(boardQuestId: string, through: number): TavernEvent | null {
+    return this.readEvents(`WHERE id=coalesce(
+      (SELECT CASE WHEN json_extract(data,'$.phaseBeforeStop') IN ('scout','greenlight','build','check','wrap') THEN id END
+        FROM tavern_events WHERE board_quest_id=? AND type='quest.stopping' AND at<=? ORDER BY at DESC,id DESC LIMIT 1),
+      (SELECT id FROM tavern_events WHERE board_quest_id=? AND type='quest.phase' AND at<=? ORDER BY at DESC,id DESC LIMIT 1),
+      (SELECT id FROM tavern_events WHERE board_quest_id=? AND type='quest.opened' AND at<=? ORDER BY at DESC,id DESC LIMIT 1)
+    )`, [boardQuestId, through, boardQuestId, through, boardQuestId, through])[0] ?? null;
   }
   roomEvents(limit = 60) {
     return this.readEvents(

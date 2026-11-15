@@ -12,14 +12,14 @@ export type SettingsPreview = z.infer<typeof settingsPreviewSchema>;
 export type SettingsFile = z.infer<typeof settingsFileSchema>;
 const missing = (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT";
 export const fileHash = (text: string) => createHash("sha256").update(text).digest("hex");
-export function importSettings(store: SettingsStore, toml: string, apply: boolean, revision?: number, why = "Imported settings TOML"): SettingsPreview {
+export function importSettings(store: SettingsStore, toml: string, apply: boolean, revision?: number, why = "Imported settings TOML", threadId: string | null = null): SettingsPreview {
   const snapshot = store.snapshot(), parsed = previewToml(toml, snapshot);
   const result: SettingsPreview = { code: parsed.problems.length ? "invalid" : "preview", revision: snapshot.revision,
     applied: false, changes: parsed.changes, problems: parsed.problems };
   if (!apply || parsed.problems.length) return result;
   if (revision === undefined) return { ...result, code: "invalid", problems: [{ line: 0, key: "revision", message: "Preview first and supply its settings revision." }] };
   try {
-    store.replace(parsed.user, parsed.pinned, parsed.tuned, revision, why);
+    store.replace(parsed.user, parsed.pinned, parsed.tuned, revision, why, threadId);
     return { ...result, code: "applied", applied: true, revision: store.snapshot().revision };
   } catch (error) {
     if (error instanceof SettingsConflict) return { ...result, code: "stale", revision: error.revision };

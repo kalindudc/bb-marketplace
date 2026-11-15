@@ -49,8 +49,9 @@ it("does not describe invalid input as a successful no-change preview", async ()
   const result = await run(["settings", "import", "--toml", "[tavern]\nunknown = true"]);
   expect(result.exitCode).toBe(1); expect(result.stdout?.split("\n")[0]).toBe("Import was not applied: fix the reported problems.");
 });
-it("refuses agent mutations and ambiguous CLI file hosts", async () => {
+it("refuses locked agent mutations and ambiguous CLI file hosts", async () => {
   const { store, run, write } = fixture();
+  store.update({ revision: 0, patch: { tavern: { agentsMayChangeSettings: false } }, why: "Lock agent changes" });
   expect((await run(["settings", "import", "/settings.toml", "--apply", "--host", "host-1"], { threadId: "agent" })).exitCode).not.toBe(0);
   expect((await run(["settings", "export", "--file", "/settings.toml"])).exitCode).not.toBe(0);
   expect(write).not.toHaveBeenCalled();
@@ -64,7 +65,7 @@ it("imports multiline TOML content without a host, using the same preview and ap
   expect((await run(["settings", "import", "--toml", toml, "--apply"])).exitCode).toBe(0);
   expect(store.read().attention.reviewBudget).toBe(4);
   expect(read).not.toHaveBeenCalled();
-  expect((await run(["settings", "import", "--toml", toml, "--apply"], { threadId: "agent" })).exitCode).not.toBe(0);
+  expect((await run(["settings", "import", "--toml", toml, "--apply"], { threadId: "agent" })).exitCode).toBe(0);
 });
 it("explains unsupported raw stdin instead of guessing a host or applying empty input", async () => {
   const { store, read, run } = fixture();

@@ -49,6 +49,41 @@ describe("the tale's reading helpers", () => {
 });
 
 describe("the tale page", () => {
+  it("shows delivery, next actions, figures and the folded record in order without a recursive directive", async () => {
+    const detail = structuredClone(scenes.readmeDetail);
+    detail.tale!.delivery = { text: `## Delivered answer\n\nRead the report.\n\n::tavern-tale{quest="${ID}"}`, capturedAt: 1, threadId: detail.quest.keeperThreadId, truncated: true };
+    detail.tale!.next = ["Read the report", "Apply the recommendation"];
+    const slot = await tale(detail);
+    const heading = await slot.findByText("What the Keeper brought back");
+    expect(slot.container.querySelector(".tv-tale-delivery")?.textContent).toContain("Delivered answer");
+    expect(slot.container.textContent).not.toContain("::tavern-tale");
+    const next = slot.getByText("What to do now");
+    expect(heading.compareDocumentPosition(next) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(slot.getByText("Apply the recommendation").closest("ol")).toBeTruthy();
+    expect(slot.getByText("The Keeper's record").closest("details")?.open).toBe(false);
+    expect(within(slot.container.querySelector(".tv-tale-delivery") as HTMLElement).getByRole("button", { name: "Open thread" }).textContent).toContain("The rest is in the Keeper's thread ›");
+  });
+  it("distinguishes an empty next list from an older tale and splits the fallback", async () => {
+    const detail = structuredClone(scenes.readmeDetail);
+    detail.tale!.outcome = "Answer. (1) Read this. (2) Then do that.";
+    detail.tale!.next = [];
+    const slot = await tale(detail);
+    expect(await slot.findByText("Nothing for you to do")).toBeTruthy();
+    expect(slot.getByText("Read this.").closest("ol")).toBeTruthy();
+    const older = await tale();
+    await older.findByText("Done when");
+    expect(within(older.container).queryByText("What to do now")).toBeNull();
+  });
+  it("opens a done cellar quest at its explicit tale route even when the room omits it", async () => {
+    const detail = structuredClone(scenes.readmeDetail);
+    detail.quest.phase = "done"; detail.quest.archivedAt = 123;
+    const room = structuredClone(scenes.richRoom);
+    for (const keeper of room.keepers) keeper.boardQuests = keeper.boardQuests.filter(q => q.id !== detail.quest.id);
+    const slot = await tale(detail, room);
+    expect(await slot.findByText("Done when")).toBeTruthy();
+    expect(slot.container.querySelector(".tv-tale-page")).not.toBeNull();
+    expect(slot.inspection.rpcCalls.some(call => call.method === "boardQuest")).toBe(true);
+  });
   it("leads with the Keeper's tale, then figures, the path, what is left and one card per member", async () => {
     const slot = await tale();
     const card = (await slot.findByRole("region", { name: /^List plugins/ })) as HTMLElement;

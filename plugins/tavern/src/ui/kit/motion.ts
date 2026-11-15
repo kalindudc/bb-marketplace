@@ -33,6 +33,7 @@ export const MAX_TRAVEL_PX = 160;
 export type Surface = "page" | `thread:${string}` | `journal:${string}`;
 
 export type CueOptions = {
+  repeat?: boolean;
   /** Semantic identity (a quest id, a member thread id), not the DOM node, so the rest survives a re-render or remount. */
   key: string;
   /** Planned length, for the window budget; at most BURST_MAX_MS. */
@@ -285,7 +286,9 @@ class Coordinator {
       if (surface.startsWith("journal:") && auto && this.held.get(surface)) return this.refuse(surface, kind, o.key, "held", o.onDone);
       for (const c of this.cues) if (c.id === id) return this.refuse(surface, kind, o.key, "merged"); // the running cue's onDone lands the state
     }
-    if (auto) {
+    if (auto && o.repeat && stuckInView()) return this.refuse(surface, kind, o.key, "ask", o.onDone);
+    if (auto && o.repeat && this.paused) return this.refuse(surface, kind, o.key, "paused", o.onDone);
+    if (auto && !o.repeat) {
       if (this.paused) return this.refuse(surface, kind, o.key, "paused", o.onDone);
       const last = this.last.get(id);
       if (last !== undefined && now - last < (o.yields ? o.restMs ?? BURST_REST_MS : BURST_REST_MS)) return this.refuse(surface, kind, o.key, "rest", o.onDone);
@@ -309,7 +312,7 @@ class Coordinator {
     const anims = [...new Set([...returned, ...animationsOf(el).filter(a => !before.has(a))])];
     const cue: Cue = { surface, kind, key: o.key, id, ambient: !!o.ambient, auto, moment: !!o.moment, region: o.region, el, className: o.className, anims, start: now, end: now + ms, onDone: o.onDone };
     this.cues.add(cue);
-    if (auto) { this.last.set(id, now); this.history.push({ surface, start: now, end: now + ms, own }); this.prune(now); }
+    if (auto && !o.repeat) { this.last.set(id, now); this.history.push({ surface, start: now, end: now + ms, own }); this.prune(now); }
     if (this.paused) for (const a of anims) a.pause();
     if (!anims.length) this.release(cue);
     else void Promise.allSettled(anims.map(a => a.finished)).then(() => this.release(cue));

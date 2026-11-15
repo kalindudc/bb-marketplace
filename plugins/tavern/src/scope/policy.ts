@@ -7,6 +7,8 @@ import { classScopeSchema, scopeOverrideSchema, type Scope, type ScopeOverride, 
 import { scopeForClass } from "./presets";
 import { normalizeRemote } from "./remote";
 import { atomicWrite } from "./store";
+import { realPath, writeAllowed } from "./paths";
+import { tmpdir } from "node:os";
 
 const classPolicySchema = z.object({ defaults: scopeOverrideSchema.optional(), keeperMayAllow: z.array(z.string()).optional() }).strict();
 export const policySchema = z.object({ v: z.literal(1), rules: z.array(z.object({ remote: z.string().optional(), classes: z.record(z.string(), classPolicySchema) }).strict()) }).strict();
@@ -86,14 +88,22 @@ export class ScopePolicy {
     const result = this.apply(base, context, override);
     return { ...result, problems: [...new Set([...problems, ...result.problems])] };
   }
-  apply(scope: Scope, context: ProjectContext, input: ScopeOverride, approved: readonly string[] = []): ScopeResolution {
+  apply(scope: Scope, context: ProjectContext, input: ScopeOverride, approved: readonly string[] = [], granted: Scope = scope): ScopeResolution {
     const override = scopeOverrideSchema.parse(input), policy = this.policy(context);
     mergeOverride(scope, override);
     const permits = policy.entries.filter(entry => entry.classId === scope.role);
     const existing = new Set(scope.shell.allow.filter(rule => !rule.remote).map(rule => rule.id));
-    const widenings = wideningIds(override).filter(id => !approved.includes(id) && !existing.has(id) && !permits.some(entry => entry.keeperMayAllow.includes(id)));
+    const alreadyWritable = (id: string) => {
+      if (!id.startsWith("write:")) return false;
+      const pattern = id.slice(6), path = pattern.replace(/\/\*\*?$/u, "");
+      if (path.includes("*") || path.split("/").includes("..") || !path.startsWith("/")) return false;
+      const roots = [...granted.writes.allow.flatMap(root => root === "${tmp}" ? ["/tmp", "/private/tmp", tmpdir()] : root.includes("${") ? [] : [root])];
+      const bound = { ...granted, writes: { ...granted.writes, allow: roots.map(root => root.includes("*") ? root : realPath(root)) } };
+      return writeAllowed(bound, realPath(path), "/");
+    };
+    const widenings = wideningIds(override).filter(id => !alreadyWritable(id) && !approved.includes(id) && !existing.has(id) && !permits.some(entry => entry.keeperMayAllow.includes(id)));
     if (widenings.length) return { scope: mergeOverride(scope, narrowing(override)), widenings: [...new Set(widenings)], problems: policy.problems };
-    let candidate = mergeOverride(scope, { ...override, allowRules: [] });
+    let candidate = mergeOverride(scope, { ...override, writes: { ...override.writes, allow: override.writes?.allow?.filter(path => !alreadyWritable("write:" + path)) }, allowRules: [] });
     for (const id of override.allowRules ?? []) {
       const permission = permits.filter(entry => entry.keeperMayAllow.includes(id));
       if (approved.includes(id) || existing.has(id) || permission.some(entry => !entry.remote)) candidate = mergeOverride(candidate, { allowRules: [id] });

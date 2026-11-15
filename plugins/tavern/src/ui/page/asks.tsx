@@ -64,7 +64,7 @@ function agoShort(at: number, now: number) { const m = Math.max(0, Math.floor((n
  * Reversible calls with Undo. With `seen` (the common room), each gets "OK ✓" and the header "Mark all seen";
  * `total` and `seen.throughId` come from the room so a clipped list stays honest. Without it (the quest page), every decision shows, seen ones muted.
  */
-export function DecidedForYou({ decisions, total, seen, headingId, limit }: { decisions: Decision[]; total?: number; seen?: { throughId: string | null | undefined }; headingId?: string; limit?: number }) {
+export function DecidedForYou({ decisions, total, seen, headingId, limit, expanded, onExpandedChange, readOnly = false, headless = false }: { decisions: Decision[]; total?: number; seen?: { throughId: string | null | undefined }; headingId?: string; limit?: number; expanded?: boolean; onExpandedChange?: (next: boolean) => void; readOnly?: boolean; headless?: boolean }) {
   const undo = experimental_useRpcMutation({ contract: rpcContract, method: "undoDecision" });
   const marks = useDecisionSeen({ throughId: seen?.throughId ?? null });
   const [undone, setUndone] = useState<string[]>([]);
@@ -73,5 +73,5 @@ export function DecidedForYou({ decisions, total, seen, headingId, limit }: { de
   useEffect(() => { if (decisions.length) setShown(true); }, [decisions.length]);
   const act = async (id: string) => { try { await undo.mutate({ decisionId: id }); setUndone((prev) => [...prev, id]); } catch { /* The hook keeps the refusal for the alert below. */ } };
   if (!decisions.length && !shown) return null;
-  return <div className="tv-decided"><KitDecided decisions={decisions.map((d) => undone.includes(d.id) ? { ...d, undone: true } : d)} total={total} onUndo={(id) => void act(id)} pending={undo.isPending} headingId={headingId} limit={limit} {...(seen ? marks : {})} />{undo.error && <p role="alert" className="tavern problem">Could not undo: {undo.error.message}</p>}</div>;
+  return <div className="tv-decided"><KitDecided decisions={decisions.map((d) => undone.includes(d.id) ? { ...d, undone: true } : d)} total={total} onUndo={readOnly ? undefined : (id) => void act(id)} pending={undo.isPending} headingId={headingId} limit={limit} headless={headless} expanded={expanded} onExpandedChange={onExpandedChange} {...(seen ? marks : {})} />{undo.error && <p role="alert" className="tavern problem">Could not undo: {undo.error.message}</p>}</div>;
 }

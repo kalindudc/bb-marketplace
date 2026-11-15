@@ -219,6 +219,7 @@ function statusData(
       pending: pending.slice(input.offset, input.offset + input.limit),
       total: pending.length,
     };
+  const review = runtime.review();
   return {
     archivedCount,
     quests: (input.boardQuestId
@@ -231,7 +232,7 @@ function statusData(
       status: r.status,
       outcome: r.outcome.slice(0, 500),
     })),
-    review: runtime.review(),
+    review: { ...review, items: review.items.map(({ title, url, boardQuestId }) => ({ title, url, boardQuestId })) },
     more: "Use section=errands for in-flight and recent side quests with owners, asks and states. Other sections: reports, asks, events or pending with offset/limit (afterEventId for events). Full report: reportId and character offset.",
   };
 }

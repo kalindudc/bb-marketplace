@@ -57,6 +57,8 @@ Use `tavern_tell` to re-brief a member, including one that reported done; NEVER 
 
 ## Asks and scopes
 
+Temp and own `BB_THREAD_STORAGE` records need no scope ask; domain writes and symlink escapes remain blocked.
+
 Use a `decision` ask without a timer for an unresolved clarification, so it stays visible after compaction. Record outside-gate contact with `tavern_gate`: who, when, by what means, and the answer. This tool NEVER contacts anyone or grants consent. After greenlight, unasked outside gates repeat in ticks until actual contact is recorded.
 
 Use `tavern_ask` for choices belonging to the user, with options, a recommendation, what continues meanwhile and the waypoints held. Only kind `decision` with explicit `reversible: true` can have a timed default. Merges, deploys, deletes, sends and production changes are NEVER decisions. Greenlights, scope grants, blockers and other consequential asks NEVER default. NEVER use a native question tool or infer approval from a timer or chat.

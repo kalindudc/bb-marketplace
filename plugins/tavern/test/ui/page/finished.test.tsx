@@ -70,7 +70,8 @@ describe("a stopped quest's record", () => {
     expect(slot.queryByRole("region", { name: "By whose move" })).toBeNull();
     expect(slot.container.textContent).not.toMatch(/By whose move|Left when stopped|ready ≈/);
     expect(slot.container.querySelector(".tv-record .lit, .tv-record.lit")).toBeNull();
-    expect(slot.container.querySelector(".tv-ggrid, .tv-ghead")).toBeNull();
+    expect(slot.container.querySelector(".tv-ggrid")).not.toBeNull();
+    expect(slot.container.querySelector(".tv-ghead")).not.toBeNull();
   });
   it("folds the map with 'as it was when stopped' and shows it on request, remembered", async () => {
     const slot = await open(`quest/${vault.quest.id}`, scenes.richRoom, stopped);
@@ -83,12 +84,12 @@ describe("a stopped quest's record", () => {
   });
   it("keeps the complete record, each part with its count; history and decisions open, the rest folded", async () => {
     const slot = await open(`quest/${vault.quest.id}`, scenes.richRoom, stopped);
-    const record = await slot.findByRole("group", { name: "The complete record" }, LOADED);
+    const record = await slot.findByRole("group", { name: "The quest sections" }, LOADED);
     const parts = [...record.querySelectorAll<HTMLButtonElement>(".tv-rec-ft")].map((b) => [b.querySelector(".tv-rec-tt")!.textContent, b.querySelector(".tv-count")?.textContent, b.getAttribute("aria-expanded")]);
-    expect(parts.map(([t]) => t)).toEqual(["History", "Decisions", "Asks and answers", "The plan", "Reports", ...(vault.scopes?.length || vault.violations?.length ? ["Guardrails"] : []), ...(vault.notes?.some((n) => n.kind !== "waiting-on-user") ? ["Kept in mind"] : []), "Wren’s rules and re-anchor"]);
+    expect(parts.map(([t]) => t)).toEqual(["Reports and evidence", "History", "The party team", "Kept in mind", "Guardrails", "Decided for you", "Asks and answers", "The plan", "Wren’s rules and re-anchor"]);
     for (const [, count] of parts) expect(count).toMatch(/^\d+ \w/);
     expect(parts.find(([t]) => t === "History")![2]).toBe("true");
-    expect(parts.find(([t]) => t === "Decisions")![2]).toBe("true");
+    expect(parts.find(([t]) => t === "Decided for you")![2]).toBe("true");
     expect(parts.find(([t]) => t === "Asks and answers")).toEqual(["Asks and answers", "2 asks", "false"]);
     fireEvent.click(within(record).getByRole("button", { name: /Asks and answers/ }));
     expect(within(record).getAllByText("withdrawn").length).toBe(2);
@@ -150,6 +151,7 @@ describe("truth on the record (Tony's review)", () => {
   });
   it("formatDuration's Rook, stopped mid-check, gets no stock wrap line; a member's own report voice still shows", async () => {
     const slot = await open(`quest/${live.quest.id}`, room, live);
+    fireEvent.click(await slot.findByRole("button", { name: /^The party/ }, LOADED));
     const cards = await waitFor(() => { const c = [...slot.container.querySelectorAll<HTMLElement>(".tv-credit")]; expect(c.length).toBe(3); return c; });
     const card = (name: string) => cards.find((c) => c.querySelector(".tv-credit-n b")!.textContent === name)!;
     const rook = scenes.registry.characters.find((c) => c.id === "rook")!;

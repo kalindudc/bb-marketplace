@@ -51,26 +51,26 @@ export const hearthReplayGap = (random: () => number = Math.random) => HEARTH_RE
  * The tavern's state in one glyph with its words, 24 to 40 px, inside a heading or a scene, never as its own card and never beside an ask count.
  * Its flames flicker once when the surface comes into view lit and when it becomes lit, flare once when `flareKey` changes (a quest returned),
  * and go out at closing time. The flames only move, never dim, so they keep 3:1 on every surface.
- * With `replay` (the "Hearth flicker while work runs" setting), a lit hearth also replays one shorter flicker at a jittered gap: Tavern's
+ * With `replay` (the Motion group’s Ambient motion setting), a lit hearth also replays one shorter flicker at a jittered gap: Tavern's
  * one repeating cue. It yields to every other cue and stop condition, and a replay re-renders nothing: plain timers, no state. Its words
  * then end with the flicker and a link to the setting (`settingsHref`), so the control is one step from the thing that moves.
  */
-export function Hearth({ words, surface, size = 24, flareKey, replay = false, settingsHref }: { words: HearthWords; surface: Surface; size?: number; flareKey?: string | number; replay?: boolean; settingsHref?: string }) {
+export function Hearth({ words, surface, size = 24, flareKey, replay = false, settingsHref, ambientMotion = "calm", repeatSeconds = 20 }: { ambientMotion?: "calm" | "lively" | "off"; repeatSeconds?: number; words: HearthWords; surface: Surface; size?: number; flareKey?: string | number; replay?: boolean; settingsHref?: string }) {
   const px = Math.min(40, Math.max(24, size));
   const ref = useRef<HTMLSpanElement>(null);
   const { cue, settle, reduced } = useTavernMotion(surface);
   const [first, ...rest] = words.detail.split(" · ");
-  const replaying = replay && words.state === "working" && !reduced;
+  const replaying = replay && ambientMotion !== "off" && words.state === "working" && !reduced;
   useEffect(() => {
     if (!replaying) return;
     let timer: ReturnType<typeof setTimeout>;
-    const next = () => { timer = setTimeout(() => { cue(ref.current, "hearth replay", { key: "hearth-replay", ms: HEARTH_REPLAY_MS, className: "mo-flick1", ambient: true, yields: true, restMs: HEARTH_REPLAY_MIN_MS }); next(); }, hearthReplayGap()); };
+    const next = () => { timer = setTimeout(() => { cue(ref.current, "hearth replay", { key: "hearth-replay", ms: HEARTH_REPLAY_MS, className: "mo-flick1", ambient: true, yields: true, repeat: ambientMotion === "lively", restMs: HEARTH_REPLAY_MIN_MS }); next(); }, ambientMotion === "lively" ? repeatSeconds * 1000 : hearthReplayGap()); };
     next();
     // Banked, switched off or gone: no more turns, and a replay in flight stills at once.
     return () => { clearTimeout(timer); settle(c => c.kind === "hearth replay"); };
-  }, [replaying, cue, settle]);
+  }, [replaying, cue, settle, ambientMotion, repeatSeconds]);
   // Every hearth cue counts toward the window only for itself (ownWindow), so the hearth never takes motion time from the party.
-  const flicker = () => cue(ref.current, "hearth flicker", { key: "hearth", ms: 3600, className: "mo-flick", ambient: true, ownWindow: true });
+  const flicker = () => ambientMotion !== "off" && cue(ref.current, "hearth flicker", { key: "hearth", ms: 3600, className: "mo-flick", ambient: true, ownWindow: true });
   // Arrival: once per view; the coordinator's rest stops a remount from replaying it.
   useLayoutEffect(() => { if (words.state === "working") flicker(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   useChangeCue(words.state, (_prev, next) => {
@@ -90,7 +90,7 @@ export function Hearth({ words, surface, size = 24, flareKey, replay = false, se
       {/* The words never wrap. The replay's line can, so a no-break space goes before each of its "·": a "·" ends a line and never starts one. */}
       {/* Each part stays whole with the "·" after it, and the line breaks only between parts: a state word is never cut, and a "·" never starts a line. */}
       <span className="hearth-w"><span className="hearth-p"><b>{words.lead}</b> <span className="m">· {first}{rest.length > 0 && " ·"}</span></span>{rest.map((part, i) => <Fragment key={i}>{" "}<span className="hearth-p m">{part}{i < rest.length - 1 && " ·"}</span></Fragment>)}{replay && settingsHref && <span className="hearth-dot m" aria-hidden="true">{"\u00a0·"}</span>}</span>
-      {replay && settingsHref && <span className="hearth-x m">{" "}Flickers while work runs{"\u00a0"}· <UrlLink href={settingsHref} className="hearth-set act" aria-label="Hearth flicker while work runs: open Tavern's settings" title="Turn the hearth's flicker off in Tavern's settings">Settings<span aria-hidden="true"> ›</span></UrlLink></span>}
+      {replay && settingsHref && <span className="hearth-x m">{" "}Flickers while work runs{"\u00a0"}· <UrlLink href={settingsHref} className="hearth-set act" aria-label="Ambient motion: open Tavern’s Motion settings" title="Choose Calm, Lively or Off in Tavern’s Motion settings">Settings<span aria-hidden="true"> ›</span></UrlLink></span>}
     </span>
   </span>;
 }

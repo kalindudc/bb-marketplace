@@ -127,7 +127,7 @@ export function LedgerTab({ threadId }: ExperimentalThreadTabProps) {
                 : <p className={`lg-move who-${q.move.who}`} title={q.move.text}><span className="lbl">{q.move.who === "you" ? "Your move" : q.move.who === "outside" ? "Waiting outside" : "Next"}</span><span className="mt">{q.move.text}</span></p>}
               {q.plan?.fromSteer && <Clamp className="lg-steer" lines={1} text={`From your steer, ${clockTime(q.plan.fromSteer.at)}: “${q.plan.fromSteer.text}”`} />}
               <GateRows waypoints={q.waypoints} />
-              {registry.data && q.members.length > 0 && <PartyPicture members={q.members} quests={[q]} registry={registry.data} mini onOpen={id => navigate.toThread(id)} />}
+              {registry.data && q.members.length > 0 && <PartyPicture ambientMotion={decor.data?.ambientMotion} repeatSeconds={decor.data?.repeatSeconds} members={q.members} quests={[q]} registry={registry.data} mini onOpen={id => navigate.toThread(id)} />}
               {q.members.filter(m => m.checkIndependence === "same-family" || m.checkIndependence === "not-established" || m.guardPosture?.mode === "detection-only").map(m => <p className="lg-indep" key={m.threadId}><b>{registry.data ? characterName(registry.data, m) : m.displayName ?? m.classId}</b><CheckIndependence member={m} /><GuardPosture member={m} /></p>)}
               <button type="button" className="fold" aria-expanded={mapOpen === q.id} onClick={() => setMapOpen(mapOpen === q.id ? null : q.id)}><Glyph name="chevron" size={12} className={mapOpen === q.id ? "down" : ""} /><span><Vocabulary word="map" /> · {q.waypoints.length} waypoints</span></button>
               {mapOpen === q.id && <QuestMap quest={q} mode="live" />}

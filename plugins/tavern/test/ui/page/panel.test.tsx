@@ -165,8 +165,9 @@ describe("the map: Returned, the Quests picker and Clear filters", () => {
     const picker = slot.getByRole("group", { name: "Quests the map draws" });
     fireEvent.click(within(picker).getByRole("checkbox", { name: /shopifycloud.com audit/ }));
     expect(slot.getByText("3 of 4 quests · 1 hidden")).toBeTruthy();
-    expect(slot.queryByRole("button", { name: /^Open Lark's thread/ })).toBeNull();
-    expect(slot.getByRole("button", { name: /^Open Juno's thread/ })).toBeTruthy();
+    expect(node(slot, "member:thr-lark")).toBeNull();
+    expect(node(slot, "member:thr-juno")).toBeTruthy();
+    expect(node(slot, "member:sfe:thr-lark-sfe")).toBeTruthy();
     expect(node(slot, "quest:audit")).toBeNull();
     fireEvent.click(within(slot.getByRole("group", { name: "Focus on a quest" })).getByRole("button", { name: /^Focus on shopifycloud.com audit/ }));
     expect((within(picker).getByRole("checkbox", { name: /shopifycloud.com audit/ }) as HTMLInputElement).checked).toBe(true);

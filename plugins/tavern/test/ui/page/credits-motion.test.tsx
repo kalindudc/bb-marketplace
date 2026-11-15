@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { definePluginApp } from "@get-bb/plugin-sdk/app";
 import { loadPluginApp, renderSlot, type PluginRpcTestHandlers, type RenderedSlot } from "@get-bb/plugin-sdk/testing/app";
-import { waitFor } from "@testing-library/react";
+import { fireEvent, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { rpcContract } from "../../../src/shared/contract";
 import { motion } from "../../../src/ui/kit/motion";
@@ -20,6 +20,7 @@ async function open(path: string) {
   const plugin = await loadPluginApp(async () => ({ default: definePluginApp(registerPageSurfaces) }));
   const slot = renderSlot(plugin.navPanels[0]!, { subPath: path }, { pluginId: "tavern", experimental_rpcContract: rpcContract, rpc: { registry: () => structuredClone(scenes.registry), room: () => structuredClone(scenes.richRoom), boardQuest: () => structuredClone(scenes.readmeDetail) } as Partial<Handlers> as Handlers });
   slots.push(slot);
+  if (path.startsWith("quest/")) fireEvent.click(await slot.findByRole("button", { name: /^The party/ }));
   await waitFor(() => expect(slot.container.querySelector(".tv-credits .tv-credit")).not.toBeNull());
   return slot;
 }

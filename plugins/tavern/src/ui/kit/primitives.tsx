@@ -183,10 +183,20 @@ export function memberSummary(member: Member, members: Member[], registry: Regis
  * Each member's place comes from its state (`memberPlace`): working is on the road, done or stopped is resting, anything else is at the
  * table. The stored `place` field is never read; it drifted on old rows (finished members stored at the table).
  * A member who sets out moves onto the road (a slide if it is short, otherwise a fade and an 8 px rise where it lands), then takes one step. A failed member never moves. */
-export function PartyPicture({ members, registry, onOpen, mini = false, quests = [], surface = "page" }: { members: Member[]; registry: Registry; onOpen?: (id: string) => void; mini?: boolean; quests?: BoardQuestSummary[]; surface?: Surface }) {
+export function PartyPicture({ members, registry, onOpen, mini = false, quests = [], surface = "page", ambientMotion = "calm", repeatSeconds = 20, renderMember }: { renderMember?: (member: Member, summary: string) => ReactNode; ambientMotion?: "calm" | "lively" | "off"; repeatSeconds?: number; members: Member[]; registry: Registry; onOpen?: (id: string) => void; mini?: boolean; quests?: BoardQuestSummary[]; surface?: Surface }) {
   const root = useRef<HTMLDivElement>(null);
   const seen = useRef(new Map<string, { place: string; x: number; y: number }>());
-  const { cue } = useTavernMotion(surface);
+  const { cue, settle } = useTavernMotion(surface);
+  const lively = ambientMotion === "lively";
+  const onRoad = members.some(m => memberPlace(m.state) === "road");
+  useEffect(() => {
+    if (!lively || !onRoad) return;
+    const timer = setInterval(() => {
+      for (const node of root.current?.querySelectorAll<HTMLElement>('[data-place="road"]:not(.fail)') ?? [])
+        cue(node, "road repeat", { key: node.dataset.member!, ms: 2800, className: "mo-walk", ambient: true, repeat: true });
+    }, repeatSeconds * 1000);
+    return () => { clearInterval(timer); settle(c => c.kind === "road repeat"); };
+  }, [lively, onRoad, repeatSeconds, cue, settle]);
   useLayoutEffect(() => {
     const el = root.current;
     if (!el) return;
@@ -208,7 +218,7 @@ export function PartyPicture({ members, registry, onOpen, mini = false, quests =
     }
     seen.current = next;
   });
-  return <div ref={root} className={`party ${mini ? "mini" : ""}`} role="group" aria-label="The party (team)">{(["road", "table", "rest"] as const).map(place => { const here = members.filter(m => memberPlace(m.state) === place); return <div className={`zone ${place}`} key={place}><div className="zh"><b><Vocabulary word={place} /></b><span className="num">{here.length}</span></div><div className="zm">{here.length === 0 ? <span className="m">Nobody</span> : here.map(m => { const summary = memberSummary(m, members, registry, quests); return <div className={`pm ${m.state === "failed" ? "fail" : ""}`} key={m.threadId} data-member={m.threadId} data-place={place}><MemberChip member={m} registry={registry} onOpen={onOpen} compact={mini} summary={summary} />{!mini && <CheckIndependence member={m} />}{!mini && <GuardPosture member={m} />}{!mini && <Clamp className="pm-s" text={summary} />}</div>; })}</div></div>; })}</div>;
+  return <div ref={root} className={`party ${mini ? "mini" : ""}`} role="group" aria-label="The party (team)">{(["road", "table", "rest"] as const).map(place => { const here = members.filter(m => memberPlace(m.state) === place); return <div className={`zone ${place}`} key={place}><div className="zh"><b><Vocabulary word={place} /></b><span className="num">{here.length}</span></div><div className="zm">{here.length === 0 ? <span className="m">Nobody</span> : here.map(m => { const summary = memberSummary(m, members, registry, quests); return <div className={`pm ${m.state === "failed" ? "fail" : ""}`} key={m.threadId} data-member={m.threadId} data-place={place}>{renderMember ? renderMember(m, summary) : <MemberChip member={m} registry={registry} onOpen={onOpen} compact={mini} summary={summary} />}{!mini && <CheckIndependence member={m} />}{!mini && <GuardPosture member={m} />}{!mini && <Clamp className="pm-s" text={summary} />}</div>; })}</div></div>; })}</div>;
 }
 
 /** Reversible calls, one line each: the title truncates and the why folds open in place; age and Undo stay on the row. */
@@ -224,13 +234,15 @@ export function useDecisionSeen({ keeperThreadId, throughId }: { keeperThreadId?
 type SeenDecision = Decision & { seenAt?: number | null };
 /** `total` is the uncapped count when the list is capped. With `onSeen`, each unseen row gets "OK ✓" and the header "Mark all seen": it passes the ids on screen, and `all` true when the list is clipped so the caller can mark through its snapshot watermark; the kit owns the receipt and its Undo. A row with `seenAt` renders muted as "Seen". */
 /** `limit` shows that many rows, then "Show all N" expands the rest in place. The heading is an h3 that takes focus, and `headingId` names it for a jump. */
-export function DecidedForYou({ decisions, total, onUndo, pending = false, onSeen, onUnseen, limit, headingId }: { decisions: Decision[]; total?: number; onUndo: (id: string) => void; pending?: boolean; limit?: number; headingId?: string; onSeen?: (ids: string[], all: boolean) => Promise<{ ids: string[]; undoToken: string | null }>; onUnseen?: (undoToken: string) => Promise<unknown> }) {
+export function DecidedForYou({ decisions, total, onUndo, pending = false, onSeen, onUnseen, limit, headingId, expanded, onExpandedChange, headless = false }: { decisions: Decision[]; total?: number; onUndo?: (id: string) => void; expanded?: boolean; onExpandedChange?: (next: boolean) => void; headless?: boolean; pending?: boolean; limit?: number; headingId?: string; onSeen?: (ids: string[], all: boolean) => Promise<{ ids: string[]; undoToken: string | null }>; onUnseen?: (undoToken: string) => Promise<unknown> }) {
   const [open, setOpen] = useState<string | null>(null);
   const [gone, setGone] = useState<ReadonlySet<string>>(new Set());
   const [receipt, setReceipt] = useState<{ ids: string[]; token: string | null; undone?: boolean } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<{ what: string; err: unknown } | null>(null);
-  const [all, setAll] = useState(false);
+  const [localAll, setLocalAll] = useState(false);
+  const all = expanded ?? localAll;
+  const setAll = onExpandedChange ?? setLocalAll;
   const shown = (decisions as SeenDecision[]).filter(d => !gone.has(d.id));
   const rows = limit != null && !all ? shown.slice(0, limit) : shown;
   const hiddenNow = decisions.length - shown.length;
@@ -239,14 +251,14 @@ export function DecidedForYou({ decisions, total, onUndo, pending = false, onSee
   const clipped = total != null && total > decisions.length;
   const mark = (ids: string[], all = false) => { if (!onSeen || ids.length === 0) return; setBusy(true); setError(null); void onSeen(ids, all).then(out => { setGone(g => new Set([...g, ...ids])); setReceipt({ ids: out.ids, token: out.ids.length > 0 ? out.undoToken : null }); }, err => setError({ what: "Couldn’t mark seen", err })).finally(() => setBusy(false)); };
   const unmark = (ids: string[], token: string) => { if (!onUnseen) return; setBusy(true); setError(null); void onUnseen(token).then(() => { setGone(g => new Set([...g].filter(id => !ids.includes(id)))); setReceipt({ ids, token: null, undone: true }); }, err => setError({ what: "Couldn’t undo", err })).finally(() => setBusy(false)); };
-  return <section className={`decided ${onSeen ? "seenable" : ""}`} aria-label="Decided for you (reversible calls)"><div className="dh"><h3 className="dh-t" id={headingId} tabIndex={-1}><Glyph name="decided" /><b><Vocabulary word="decided" /></b><span className="num" aria-label={plural(live, "decision")}>{live}</span></h3>{(unseen.length > 1 || (clipped && unseen.length > 0)) && <button type="button" className="btn sm ghost di-all" disabled={busy || pending} title={`Mark ${clipped ? `all ${live}` : "every decision shown here"} seen: they leave Decided for you and stay in the Ledger’s All decisions. Nothing is undone.`} onClick={() => mark(unseen, clipped)}>Mark all seen<Glyph name="check" size={12} /></button>}</div>
+  return <section className={`decided ${onSeen ? "seenable" : ""}`} aria-label="Decided for you (reversible calls)">{!headless && <div className="dh"><h3 className="dh-t" id={headingId} tabIndex={-1}><Glyph name="decided" /><b><Vocabulary word="decided" /></b><span className="num" aria-label={plural(live, "decision")}>{live}</span></h3>{(unseen.length > 1 || (clipped && unseen.length > 0)) && <button type="button" className="btn sm ghost di-all" disabled={busy || pending} title={`Mark ${clipped ? `all ${live}` : "every decision shown here"} seen: they leave Decided for you and stay in the Ledger’s All decisions. Nothing is undone.`} onClick={() => mark(unseen, clipped)}>Mark all seen<Glyph name="check" size={12} /></button>}</div>}
     {receipt && <p className="di-receipt" role="status">{receipt.undone ? <><Glyph name="undo" size={12} />{`Back in Decided for you: ${plural(receipt.ids.length, "decision")}`}</> : <><Glyph name="check" size={12} />{receipt.ids.length > 0 ? `Marked ${receipt.ids.length} seen` : "Already seen"}{onUnseen && receipt.token && <button type="button" className="btn sm ghost" disabled={busy} aria-label={`Undo: mark ${plural(receipt.ids.length, "decision")} unseen again`} onClick={() => unmark(receipt.ids, receipt.token!)}>Undo</button>}</>}</p>}
     {error && <p className="di-err" role="alert">{error.what}: {error.err instanceof Error ? error.err.message : String(error.err)}</p>}
     {shown.length === 0 ? <p className="m di-empty">{receipt && !receipt.undone ? "Nothing left to look at." : "Nothing decided for you yet."}</p> : <><ul>{rows.map(d => { const isOpen = open === d.id; const seen = d.seenAt != null; return <li className={`di ${d.undone ? "undone" : ""} ${seen ? "seen" : ""} ${isOpen ? "open" : ""}`} key={d.id}>
     {/* The title takes the row: two lines closed (all of it in the tooltip), all of it open, above the reason. The time sits under it, the actions to its right. */}
     <button type="button" className="dt act" aria-expanded={isOpen} title={isOpen ? undefined : `${d.text} · ${d.why}`} onClick={() => setOpen(isOpen ? null : d.id)}><b data-content className="clamp">{d.text}</b><ExpandsMark open={isOpen} /></button>
     <span className="di-acts">
-      {d.undone ? <span className="m">Undone</span> : d.reversible ? <button type="button" className="btn sm" disabled={pending} onClick={() => onUndo(d.id)} aria-label={`Undo: ${d.text}`}>Undo</button> : <span className="m">Final</span>}
+      {d.undone ? <span className="m">Undone</span> : d.reversible && onUndo ? <button type="button" className="btn sm" disabled={pending} onClick={() => onUndo(d.id)} aria-label={`Undo: ${d.text}`}>Undo</button> : !d.reversible ? <span className="m">Final</span> : null}
       {onSeen && (seen ? <span className="m di-seen">Seen</span> : <button type="button" className="btn sm ghost di-ok" disabled={busy || pending} title="Mark seen: it leaves Decided for you and stays in the Ledger’s All decisions. Nothing is undone." aria-label={`Mark seen: ${d.text}`} onClick={() => mark([d.id])}>OK<Glyph name="check" size={12} /></button>)}
     </span>
     <span className="di-meta m"><TimeAgo at={d.createdAt} /></span>

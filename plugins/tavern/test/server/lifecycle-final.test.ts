@@ -30,14 +30,16 @@ it.each(["stopped", "stopping"] as const)("wrap refuses a %s quest without rewri
   await expect(f.wrap()).rejects.toThrow(/stopped|stopping/);
   expect(f.k.quest(f.q.id).phase).toBe(phase);
 });
-it.each(["released", "failed", "stopped"] as const)("wrap leaves %s members and their threads alone", async state => {
+it.each(["released", "failed", "stopped"] as const)("wrap preserves %s members\u0027 state but archives their threads", async state => {
   const f = await fixture();
   if (state === "released") f.k.store.patch("child", { released: { reason: "Done here", decisionId: "d" } });
   else f.k.store.put("members", "child", { ...f.k.member("child")!, state });
   const before = f.k.member("child");
   await f.wrap();
   expect(f.k.member("child")?.state).toBe(before?.state);
-  expect(f.harness.inspection.sdk.callsTo("threads.archive")).toHaveLength(0);
+  expect(f.harness.inspection.sdk.callsTo("threads.archive")).toEqual([
+    { path: "threads.archive", args: [{ threadId: "child" }] },
+  ]);
 });
 it.each(["done", "stopped", "stopping"] as const)("all Keeper write paths refuse a %s quest", async phase => {
   const f = await fixture();

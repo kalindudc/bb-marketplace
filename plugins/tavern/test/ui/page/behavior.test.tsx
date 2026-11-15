@@ -36,7 +36,7 @@ describe("Tavern page surfaces", () => {
     expect(plugin.navPanels[0]?.experimental_sidebar).toBeTruthy();
     expect(plugin.navPanels[0]?.experimental_useBadge).toBe(useTavernBadge);
     expect(plugin.homepageSections).toHaveLength(1);
-    expect(plugin.settingsSections.map((s) => s.id)).toEqual(["tavern", "attention", "keepers", "classes", "scopes", "machines", "journal", "data", "tuning", "tuned", "import-export", "backup"]);
+    expect(plugin.settingsSections.map((s) => s.id)).toEqual(["tavern", "motion", "settings-history", "attention", "keepers", "classes", "scopes", "machines", "journal", "data", "tuning", "tuned", "import-export", "backup"]);
     const slot = await page();
     await slot.findByRole("heading", { name: /The quest board/ });
     expect(slot.container.querySelector('[data-thread-chat], [data-composer]')).toBeNull();
@@ -132,13 +132,14 @@ describe("Tavern page surfaces", () => {
   it("shows re-anchors, steers, current ledger and two-part report confidence", async () => {
     const slot = await page("quest/vault");
     await slot.findByRole("heading", { name: "Vault cutover" });
+    fireEvent.click(slot.getByRole("button", { name: /rules and re-anchor/ }));
     await slot.findByText("Vault first. Draft only.");
     const history = slot.getByRole("region", { name: /History/ });
     expect(history.textContent).toMatch(/re-anchored/i);
     expect(history.textContent).toContain("quest map v2 from your steer");
     const reports = slot.getByRole("region", { name: /Reports and evidence/ });
     expect(within(reports).queryByRole("img", { name: "Matches intent 95%, safe to ship 60%" })).toBeNull();
-    fireEvent.click(within(reports).getByRole("button", { name: "Show" }));
+    fireEvent.click(within(reports).getByRole("button", { name: /^Reports and evidence/ }));
     expect(within(reports).getAllByRole("img", { name: "Matches intent 95%, safe to ship 60%" }).length).toBeGreaterThan(0);
     fireEvent.click(within(history).getByRole("button", { name: /^Re-anchors/ }));
     expect(history.textContent).not.toContain("quest map v2 from your steer");
@@ -345,6 +346,7 @@ describe("Tavern page surfaces", () => {
       { id: "kept", scope: "keeper", scopeId: "keeper", text: "Ask before touching the shared staging cluster.", source: "keeper-proposed", active: false, createdAt: Date.now() },
     ];
     const slot = await page("quest/vault", { boardQuest: () => structuredClone(withRules), widenRule });
+    fireEvent.click(await slot.findByRole("button", { name: /rules and re-anchor/ }));
     expect(await slot.findByText("This quest")).toBeTruthy();
     expect(slot.queryByText(/This quest: /)).toBeNull();
     expect(slot.getByText("Proposed · This Keeper")).toBeTruthy();
@@ -367,6 +369,7 @@ describe("Tavern page surfaces", () => {
       { id: "kept2", scope: "keeper", scopeId: "keeper", text: "Batch reports every 10 minutes.", source: "keeper-proposed", active: false, createdAt: Date.now() },
     ];
     const slot = await page("quest/vault", { boardQuest: () => structuredClone(withRules), confirmRule });
+    fireEvent.click(await slot.findByRole("button", { name: /rules and re-anchor/ }));
     fireEvent.click(await slot.findByRole("button", { name: "Confirm the rule: Ask before touching the shared staging cluster." }));
     await waitFor(() => expect(confirmRule).toHaveBeenCalledWith(expect.objectContaining({ ruleId: "kept", active: true })));
     fireEvent.click(slot.getByRole("button", { name: "Dismiss the proposed rule: Batch reports every 10 minutes." }));
@@ -402,6 +405,7 @@ describe("Tavern page surfaces", () => {
       { id: "off", scope: "keeper", scopeId: "keeper", text: "Batch every report.", source: "user", active: false, createdAt: Date.now() },
     ];
     const slot = await page("quest/vault", { boardQuest: () => structuredClone(withRules) });
+    fireEvent.click(await slot.findByRole("button", { name: /rules and re-anchor/ }));
     expect(await slot.findByText("No docs-only PRs.")).toBeTruthy();
     expect(slot.queryByText("Batch every report.")).toBeNull();
     expect(slot.queryByText(/^Off · /)).toBeNull();

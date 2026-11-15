@@ -4,6 +4,9 @@ import { detail, emptyRoom, registry, room } from "../../../src/ui/page/fixtures
 import { boardQuestDetailSchema, registrySchema, roomSchema } from "../../../src/shared/contract";
 
 describe("Tavern page data", () => {
+  it("names a retelling in human words", () => {
+    expect(describeEvent({ id: 1, at: 1, keeperThreadId: null, boardQuestId: null, type: "quest.retold", text: "Updated delivery", data: {}, actor: { kind: "tavern" } }, eventContext(room, registry))?.head).toBe("retold the tale");
+  });
   it.each(["journal.changed", "questlog.changed"])("keeps %s churn out of the visible history", type => {
     expect(describeEvent({ id: 1, at: 1, keeperThreadId: null, boardQuestId: null, type, text: "changed", data: {}, actor: { kind: "tavern" } }, eventContext(room, { characters: [], classes: [] }))).toBeNull();
   });

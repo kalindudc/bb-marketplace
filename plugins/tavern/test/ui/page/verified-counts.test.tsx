@@ -45,14 +45,15 @@ describe("a verified count counts only verified waypoints, and names skipped one
     expect(row(ws.map((w) => ({ ...w, state: "skipped" as const })))).toBe(`all ${ws.length} skipped`);
   });
 
-  it("on the record page's Done count, never 1 of 1 for a skipped waypoint", async () => {
+  it("in Done and left and the facts line, never 1 of 1 for a skipped waypoint", async () => {
     const done = async (d: BoardQuestDetail) => {
       // Two mounted pages reading one quest id from different fixtures would fight over the shared cache.
       for (const slot of slots.splice(0)) slot.lifecycle.unmount();
       window.localStorage.clear();
       const slot = await open(`quest/${d.quest.id}`, { boardQuest: () => structuredClone(d) });
-      const h = await waitFor(() => { const el = slot.container.querySelector("#tv-rec-done-h"); expect(el).not.toBeNull(); return el!; }, LOADED);
-      return { count: h.closest("header")!.querySelector(".tv-count")!.textContent, text: slot.container.textContent!, facts: slot.container.querySelector("header .tv-facts")!.textContent! };
+      const section = await waitFor(() => slot.getByRole("region", { name: "Done and left" }), LOADED);
+      const facts = slot.container.querySelector("header .tv-facts")!;
+      return { count: facts.querySelector(".num")!.textContent, text: section.textContent!, facts: facts.textContent! };
     };
     const only = await done(stoppedReadme(skipOnly(scenes.readmeDetail.quest.waypoints)));
     expect(only.count).toBe("1 skipped");

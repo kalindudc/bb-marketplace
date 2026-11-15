@@ -154,6 +154,17 @@ export default async function tavern(bb: BbPluginApi) {
       };
     },
   });
+  bb.ui.registerMentionProvider({
+    id: "names",
+    label: "Tavern names",
+    triggers: ["@"],
+    search: async ctx => runtime.mentionNames(ctx.query),
+    resolve: itemId => {
+      const item = runtime.mentionNames("").find(item => item.id === itemId);
+      if (!item) throw new Error("This Tavern name is no longer live");
+      return { context: `${item.title} (${item.subtitle}) is a Tavern thread. Refer to it by name and role.` };
+    },
+  });
   bb.experimental_hooks.on("message.dispatch", (ctx) => runtime.dispatch(ctx));
   bb.onDispose(
     journal.onChange((threadId) => {

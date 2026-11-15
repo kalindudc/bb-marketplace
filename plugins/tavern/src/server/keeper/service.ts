@@ -152,6 +152,18 @@ export class Keeper {
   name(member: Member): string {
     return this.resolveMemberName?.(member) ?? member.displayName ?? (member.classId.charAt(0).toUpperCase() + member.classId.slice(1));
   }
+  resolvePartyMember(keeperThreadId: string, reference: string): Member {
+    const party = this.store.all("members").filter(member => member.role === "member" && member.keeperThreadId === keeperThreadId);
+    const direct = party.find(member => member.threadId === reference);
+    if (direct) return direct;
+    const live = party.filter(member => {
+      const state = this.store.runtime(member.threadId);
+      return state.archivedAt == null && state.deletedAt == null && !state.released;
+    });
+    const matches = live.filter(member => this.name(member).toLowerCase() === reference.trim().toLowerCase());
+    if (matches.length === 1) return matches[0]!;
+    throw new Error(`${matches.length ? "Ambiguous" : "Unknown"} member name in your own party. Members: ${live.map(member => `${this.name(member)} (${member.classId})`).join(", ") || "none"}.`);
+  }
   bind(
     threadId: string,
     classId: string,
@@ -245,6 +257,7 @@ export class Keeper {
     for (const q of changed) {
       this.changed(q.keeperThreadId, q.id);
     }
+    if (changed.length) this.invalidate([tags.mapHistory()]);
     return changed.length;
   }
   owned(threadId: string, id: string) {
@@ -895,7 +908,7 @@ export class Keeper {
         id,
         "quest.stopping",
         "Stop requested for every party member",
-        { reason: stopReason, withdrawnAskIds },
+        { reason: stopReason, withdrawnAskIds, phaseBeforeStop: quest.phase },
         { kind: "user" },
       );
       return stopped;

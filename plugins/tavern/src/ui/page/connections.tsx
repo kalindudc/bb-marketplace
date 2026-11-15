@@ -1,6 +1,6 @@
-import { experimental_copyToClipboard, experimental_saveFile, useBbNavigate } from "@get-bb/plugin-sdk/app";
+import { experimental_useRpcQuery, experimental_copyToClipboard, experimental_saveFile, useBbNavigate } from "@get-bb/plugin-sdk/app";
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { Room } from "../../shared/contract";
+import { rpcContract, type Room } from "../../shared/contract";
 import type { Member } from "../../shared/schema";
 import { verifiedOf, verifiedWords, CheckIndependence, ExpandsMark, GuardPosture, OpensMark, OverflowMenu, endedCounts, glowVars, keeperStartedLabel, keeperStatus, useToday, type StateTone } from "../kit";
 import { CrestOf, Section, StateMark, characterName, classLabel, type Registry, plural } from "./common";
@@ -71,11 +71,11 @@ function layoutMap(picture: ReturnType<typeof mapPicture>, registry: Registry, f
   const label = (n: PictureNode) => n.node?.member && n.kind !== "errand" ? characterName(registry, n.node.member) : n.kind === "errand" ? "Side quest" : n.label;
   const sub = (n: PictureNode) => {
     const m = n.node?.member;
-    if (n.kind === "keeper") return n.sub.charAt(0).toUpperCase() + n.sub.slice(1);
+    if (n.kind === "keeper") return n.sub.charAt(0).toUpperCase() + n.sub.slice(1) + (n.node?.loading ? " · Loading history…" : "");
     if (n.kind === "solo" && m) return `${classLabel(registry, m.classId)?.label ?? "Solo"} · ${m.state}`;
     if (n.kind === "member" && m) return memberSub(registry, m);
     if (n.kind === "errand" && m) return `${characterName(registry, m)} · ${m.title ?? m.state}`;
-    if (n.kind === "returned" && n.node?.quest) { const q = n.node.quest; const v = verifiedOf(q); return `${q.phase === "stopped" ? "Stopped" : "Returned"}${v ? ` · ${verifiedWords(v)}` : ""} · ${timeAgo(q.endedAt ?? q.updatedAt, now)}`; }
+    if (n.kind === "returned" && n.node?.quest) { const q = n.node.quest; const v = verifiedOf(q); return `${phaseWord(q.phase)}${v ? ` · ${verifiedWords(v)}` : ""} · ${timeAgo(q.endedAt ?? q.updatedAt, now)}`; }
     if (n.kind === "quest" && n.node?.quest) { const q = n.node.quest; const path = pathProgress(q); return `${phaseWord(q.phase)} · ${path ? `${path.done} of ${path.total}` : "no map yet"}${n.folded ? ` · +${n.folded} members` : ""}`; }
     if (n.kind === "outside" && n.node) return n.node.detail;
     if (n.kind === "gate") return "outside gate";
@@ -83,7 +83,7 @@ function layoutMap(picture: ReturnType<typeof mapPicture>, registry: Registry, f
   };
   const nodes: Laid[] = picture.nodes.map((n) => {
     const l = label(n), s = sub(n);
-    const title = n.kind === "quest" ? `Focus on ${n.node?.quest?.title ?? l}` : n.kind === "returned" ? `${n.node?.quest?.phase === "stopped" ? "Open the quest page" : "Open the tale"}: ${n.node?.quest?.title ?? l}` : n.kind === "you" || n.kind === "blocked" ? `${l}: ${n.asks!.map((a) => a.question).join(" · ")}` : n.node?.threadId ? `Open ${l}'s thread · ${s}` : `${l} · ${s}`;
+    const title = n.kind === "quest" ? `Focus on ${n.node?.quest?.title ?? l}` : n.kind === "returned" ? `${n.node?.quest?.phase === "done" ? "Open the tale" : "Open the quest page"}: ${n.node?.quest?.title ?? l}` : n.kind === "you" || n.kind === "blocked" ? `${l}: ${n.asks!.map((a) => a.question).join(" · ")}` : n.node?.threadId ? `Open ${l}'s thread · ${s}` : `${l} · ${s}`;
     return { n, x: x(n.col), y: y(n.row), w: wOf(n.col), h: nodeH, label: l, sub: s, title, focused: n.kind === "quest" && n.questId === focus, tall };
   });
   const edges = picture.edges.map((e) => { const a = byId.get(e.from)!, b = byId.get(e.to)!; const x1 = x(a.col) + wOf(a.col), y1 = y(a.row) + nodeH / 2, x2 = x(b.col), y2 = y(b.row) + nodeH / 2, mx = (x1 + x2) / 2; return { key: `${e.from}>${e.to}`, from: e.from, to: e.to, d: `M${x1} ${y1} C${mx} ${y1} ${mx} ${y2} ${x2} ${y2}`, hot: e.hot, dashed: e.dashed, quiet: e.quiet }; });
@@ -128,7 +128,7 @@ function MapPicture({ layout, registry, setFocus }: { layout: Layout; registry: 
   const navigate = useBbNavigate();
   const open = (n: PictureNode) => {
     if (n.kind === "quest" && n.questId) return setFocus(n.questId);
-    if (n.kind === "returned" && n.node?.subPath) return navigate.toPluginPanel("tavern", { subPath: n.node.subPath });
+    if ((n.kind === "returned" || n.kind === "more") && n.node?.subPath) return navigate.toPluginPanel("tavern", { subPath: n.node.subPath });
     if ((n.kind === "you" || n.kind === "blocked") && n.questId) return navigate.toPluginPanel("tavern", { subPath: `quest/${n.questId}` });
     if (n.kind === "you" || n.kind === "blocked") return navigate.toPluginPanel("tavern", { subPath: "room" });
     if (n.node?.threadId) return navigate.toThread(n.node.threadId);
@@ -145,7 +145,7 @@ function MapPicture({ layout, registry, setFocus }: { layout: Layout; registry: 
       const body = <>{mark}<span className="tv-mn-t"><b>{label}</b><span>{sub}</span></span>{clickable && n.kind !== "quest" && <OpensMark />}</>;
       const style = { left: x, top: y, width: w, height: h };
       return clickable
-        ? <button type="button" key={n.id} data-node={n.id} className={`tv-mn act k-${n.kind} ${focused ? "focus" : ""} ${mark ? "" : "nomark"} ${tall ? "tall" : ""}`} style={style} title={title} aria-pressed={n.kind === "quest" ? focused : undefined} onClick={() => open(n)}>{body}</button>
+        ? <button type="button" key={n.id} data-node={n.id} className={`tv-mn act k-${n.kind} ${focused ? "focus" : ""} ${mark ? "" : "nomark"} ${tall ? "tall" : ""} ${n.quiet ? "quiet" : ""}`} style={style} title={title} aria-pressed={n.kind === "quest" ? focused : undefined} onClick={() => open(n)}>{body}</button>
         : <div key={n.id} data-node={n.id} className={`tv-mn k-${n.kind} nomark ${tall ? "tall" : ""}`} style={style} title={title}>{body}</div>;
     })}
   </div>;
@@ -195,7 +195,10 @@ export function TheMap({ room, registry }: { room: Room; registry: Registry }) {
   const navigate = useBbNavigate();
   const day = useToday();
   const now = useNow();
-  const choices = useMemo(() => mapQuests(room), [room]);
+  const [showArchived, setShowArchived] = usePanelState("map.archivedPicture", false);
+  const history = experimental_useRpcQuery({ contract: rpcContract, method: "mapHistory", input: {}, enabled: showArchived });
+  const archivedCount = room.keepers.filter(k => k.archived).length;
+  const choices = useMemo(() => mapQuests({ ...room, keepers: room.keepers.filter(k => !k.archived) }), [room]);
   const drawable = useMemo(() => choices.flatMap((c) => [...c.active, ...c.done]), [choices]);
   const [hiddenIds, setHiddenIds] = usePanelState<string[]>("map.hidden", [], (v) => Array.isArray(v) && v.every((x) => typeof x === "string"));
   const [showReturned, setShowReturned] = usePanelState("map.returned", true);
@@ -203,7 +206,7 @@ export function TheMap({ room, registry }: { room: Room; registry: Registry }) {
   // Hidden ids, not shown ones, so a new quest appears by default; a quest that left the board drops out of the choice.
   const hidden = useMemo(() => new Set(hiddenIds.filter((id) => drawable.some((q) => q.id === id))), [hiddenIds, drawable]);
   const setHidden = (next: ReadonlySet<string>) => setHiddenIds(drawable.filter((q) => next.has(q.id)).map((q) => q.id));
-  const graph = useMemo(() => graphFor(room, registry, { hidden, returned: showReturned }), [room, registry, hidden, showReturned]);
+  const graph = useMemo(() => graphFor(room, registry, { hidden, returned: showReturned, archived: showArchived, history: history.data }), [room, registry, hidden, showReturned, showArchived, history.data]);
   const quests = choices.flatMap((c) => c.active);
   const shownActive = quests.filter((q) => !hidden.has(q.id));
   const drawnCount = drawable.filter((q) => !hidden.has(q.id) && (showReturned || !isFinished(q.phase))).length;
@@ -223,7 +226,7 @@ export function TheMap({ room, registry }: { room: Room; registry: Registry }) {
   const pickerId = useId();
   const picture = useMemo(() => mapPicture(graph, focus), [graph, focus]);
   const [boxWidth, setBoxWidth] = useState(0);
-  const cols = useMemo(() => fitColumns(COLS, [...new Set(picture.nodes.map((n) => n.col))], boxWidth - 24), [picture, boxWidth]);
+  const cols = useMemo(() => fitColumns(COLS, framed ? [0, 1] : [...new Set(picture.nodes.map((n) => n.col))], boxWidth - 24), [picture, boxWidth, framed]);
   const layout = useMemo(() => layoutMap(picture, registry, focus, cols, now), [picture, registry, focus, cols, now]);
   const [ref, width] = useWidth<HTMLDivElement>();
   const [receipt, setReceipt] = useState<string | null>(null);
@@ -319,11 +322,13 @@ export function TheMap({ room, registry }: { room: Room; registry: Registry }) {
         </select>}
       </div>}
     </div>
-    {drawable.length > 0 && <div className="tv-mapfilters">
-      <div className="segc" role="group" aria-label={`${finished} quests on the map`}><button type="button" className="seg" aria-pressed={showReturned} onClick={() => { setFramed(null); setShowReturned(!showReturned); }} title="Draw returned and stopped quests that are not in the cellar. Quests in the cellar are never on the map.">{finished}<span className="num">{doneCount}</span></button></div>
-      <button type="button" className="lnk-btn act" aria-expanded={picking} aria-controls={pickerId} onClick={() => setPicking(!picking)}><span>Quests</span><span className="num">{drawnCount} of {drawable.length}</span><ExpandsMark open={picking} /></button>
+    {(drawable.length > 0 || archivedCount > 0) && <div className="tv-mapfilters">
+      {archivedCount > 0 && <button type="button" className="seg" aria-pressed={showArchived} onClick={() => setShowArchived(!showArchived)}>Show archived Keepers ({archivedCount})</button>}
+      {drawable.length > 0 && <div className="segc" role="group" aria-label={`${finished} quests on the map`}><button type="button" className="seg" aria-pressed={showReturned} onClick={() => { setFramed(null); setShowReturned(!showReturned); }} title="Draw live Keepers’ returned and stopped quests that are not in the cellar. Archived Keeper history has its own toggle.">{finished}<span className="num">{doneCount}</span></button></div>}
+      {drawable.length > 0 && <button type="button" className="lnk-btn act" aria-expanded={picking} aria-controls={pickerId} onClick={() => setPicking(!picking)}><span>Quests</span><span className="num">{drawnCount} of {drawable.length}</span><ExpandsMark open={picking} /></button>}
       {filtered && <span className="tv-mapfilters-n" role="status"><span>{shownNote}</span><button type="button" className="lnk act tv-clear" onClick={clearFilters}>Clear filters</button></span>}
     </div>}
+    {showArchived && history.error && <p className="problem" role="alert">Could not read archived Keeper history: {history.error.message}<button type="button" className="lnk act" onClick={() => void history.refetch()}>Retry</button></p>}
     {picking && drawable.length > 0 && <div id={pickerId} className="tv-card tv-mappick" role="group" aria-label="Quests the map draws">{choices.filter((c) => c.active.length + c.done.length > 0).map((c) => <fieldset key={c.keeper.threadId}>
       <legend><CrestOf member={c.keeper} registry={registry} size={16} /><span>{characterName(registry, c.keeper)}</span></legend>
       {[...c.active, ...c.done].map((q) => { const done = isFinished(q.phase); const off = done && !showReturned; return <div className="tv-mappick-r" key={q.id}>

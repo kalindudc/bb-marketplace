@@ -64,6 +64,23 @@ describe("Hearth", () => {
   const lit = hearthWords(st("busy", "holding")), banked = hearthWords(st("holding")), out = hearthWords([], {});
   const mount = (words = lit, extra: { size?: number; flareKey?: string } = {}) => render(<div className="tavern"><Hearth words={words} surface="page" {...extra} /></div>);
 
+  it("uses the Lively interval and stops repeating when banked or Off", async () => {
+    vi.useFakeTimers();
+    const spy = vi.spyOn(motion, "cue");
+    try {
+      const v = render(<div className="tavern"><Hearth words={lit} surface="page" replay ambientMotion="lively" repeatSeconds={3} /></div>);
+      act(() => vi.advanceTimersByTime(3000));
+      expect(spy.mock.calls.some(c => c[2] === "hearth replay" && c[3].repeat)).toBe(true);
+      v.rerender(<div className="tavern"><Hearth words={banked} surface="page" replay ambientMotion="lively" repeatSeconds={3} /></div>);
+      const count = spy.mock.calls.length;
+      act(() => vi.advanceTimersByTime(6000));
+      expect(spy.mock.calls).toHaveLength(count);
+      v.unmount(); motion.reset(); spy.mockClear();
+      render(<div className="tavern"><Hearth words={lit} surface="page" replay ambientMotion="off" /></div>);
+      act(() => vi.advanceTimersByTime(60000));
+      expect(spy).not.toHaveBeenCalled();
+    } finally { spy.mockRestore(); vi.useRealTimers(); }
+  });
   it("always shows its words, and clamps its size to 24-40 px", () => {
     const v = mount(lit, { size: 12 });
     expect(v.container.textContent).toContain("Lit · 1 Keeper busy");
@@ -235,7 +252,7 @@ describe("the hearth replay", () => {
     vi.useRealTimers();
     const slot = (replay: boolean) => renderSlot({ id: "hearth", component: () => <div className="tavern"><Hearth words={lit} surface="page" replay={replay} settingsHref="/settings/plugins/tavern" /></div> } as never, {}, {});
     const on = slot(true);
-    const link = await on.findByRole("link", { name: /Hearth flicker while work runs/ });
+    const link = await on.findByRole("link", { name: /Ambient motion/ });
     expect(link.getAttribute("href")).toBe("/settings/plugins/tavern");
     // A no-break space before each "·", so a wrapped line never starts with one.
     // The leading space keeps the words apart when read as text; on screen the line's gap does that.

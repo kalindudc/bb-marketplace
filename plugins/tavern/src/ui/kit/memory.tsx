@@ -25,11 +25,12 @@ function NoteRow({ note, short, now }: { note: KeeperNote; short?: Short; now: n
 }
 
 /** One kind of Keeper note, the first three shown and the rest expanding in place. Read-only: the Keeper records and closes notes itself. */
-export function KeeperNoteRows({ notes, short, label }: { notes: KeeperNote[]; short?: Short; label: string }) {
+export function KeeperNoteRows({ notes, short, label, fold, newestFirst = false }: { notes: KeeperNote[]; short?: Short; label: string; fold?: [boolean, (next: boolean) => void]; newestFirst?: boolean }) {
   const now = useNow();
-  const [all, setAll] = useState(false);
+  const localFold = useState(false);
+  const [all, setAll] = fold ?? localFold;
   if (notes.length === 0) return null;
-  const list = sorted(notes);
+  const list = newestFirst ? [...notes].sort((a, b) => b.createdAt - a.createdAt) : sorted(notes);
   const shown = all ? list : list.slice(0, SHOWN);
   return <>
     <ul className="lg-rows mem-rows" aria-label={label}>{shown.map(n => <NoteRow key={n.id} note={n} short={short} now={now} />)}</ul>
@@ -38,16 +39,16 @@ export function KeeperNoteRows({ notes, short, label }: { notes: KeeperNote[]; s
 }
 
 /** What the Keeper promised and what it keeps word for word. `total` is the server's count when it returned fewer rows than it holds; `older` counts aged promises the server leaves out (over a day past due, or three days open with no due time), which only the Keeper can list. */
-export function KeptInMind({ notes, total, older = 0, short }: { notes: KeeperNote[]; total?: number; older?: number; short?: Short }) {
+export function KeptInMind({ notes, total, older = 0, short, folds, newestFirst = false, headless = false }: { notes: KeeperNote[]; total?: number; older?: number; short?: Short; folds?: { promises: [boolean, (next: boolean) => void]; facts: [boolean, (next: boolean) => void] }; newestFirst?: boolean; headless?: boolean }) {
   const promises = notes.filter(n => n.kind === "commitment" && n.state === "open");
   const facts = notes.filter(n => n.kind === "fact" && n.state === "open");
   if (promises.length + facts.length + older === 0) return null;
   const hidden = (total ?? notes.length) - notes.length;
   return <section className="lg-sec mem" aria-label="Kept in mind">
-    <h3><Glyph name="pin" size={13} /><span>Kept in mind</span><span className="num">{plural(promises.length, "promise")} · {plural(facts.length, "fact")}</span></h3>
-    {promises.length > 0 && <><p className="lbl">Promises <span className="anc">the Keeper owes you</span></p><KeeperNoteRows notes={promises} short={short} label="Promises the Keeper made" /></>}
+    {!headless && <h3><Glyph name="pin" size={13} /><span>Kept in mind</span><span className="num">{plural(promises.length, "promise")} · {plural(facts.length, "fact")}</span></h3>}
+    {promises.length > 0 && <><p className="lbl">Promises <span className="anc">the Keeper owes you</span></p><KeeperNoteRows notes={promises} short={short} fold={folds?.promises} newestFirst={newestFirst} label="Promises the Keeper made" /></>}
     {older > 0 && <p className="m small mem-older" title="Promises over a day past due, or open three days with no due time. The Keeper still holds them; ask it in the thread to list them.">Older promises: {older} <span className="anc">overdue by more than a day or open 3 days; ask the Keeper to list them</span></p>}
-    {facts.length > 0 && <><p className="lbl">Facts <span className="anc">kept word for word</span></p><KeeperNoteRows notes={facts} short={short} label="Facts the Keeper keeps" /></>}
+    {facts.length > 0 && <><p className="lbl">Facts <span className="anc">kept word for word</span></p><KeeperNoteRows notes={facts} short={short} fold={folds?.facts} newestFirst={newestFirst} label="Facts the Keeper keeps" /></>}
     {hidden > 0 && <p className="m small">{plural(hidden, "older note")} not shown here.</p>}
   </section>;
 }

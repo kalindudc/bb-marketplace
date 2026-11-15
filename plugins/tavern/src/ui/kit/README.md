@@ -265,6 +265,10 @@ Text beside an icon is centred on the icon by its cap height, not its line box. 
 
 ## Motion
 
+Ambient motion has three settings modes. Calm preserves the budgets below and the hearth's jittered replay. Lively repeats hearth flicker, road steps and the busy widget pulse at the configured interval (3 to 60 seconds, default 20), while their work condition holds. Those repeats bypass rest, slots and motion windows without consuming one-shot budgets. Off keeps the hearth still and disables ambient repeats; other one-shot cues keep their existing rules. The stored hearth-flicker switch remains compatible: false maps to Off.
+
+Every mode respects reduced motion, a hidden page, typing through two seconds after the last keystroke, and asks, blockers or failures in view. Lively timers stop on unmount or when their condition ends. They never trigger React state updates.
+
 Life comes in short bursts that a real Tavern change causes, then rests on a still mark. Nothing loops forever, and when nobody is at work, nothing moves. The one deliberate exception is the hearth's replay while work runs (under `Hearth`): a short flicker that repeats, yields to everything, and has its own off switch. The evidence and measurements are in the motion design notes (`design/motion/why.md`).
 
 ### Every cue goes through the coordinator

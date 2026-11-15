@@ -3,10 +3,11 @@ import { useId, type ReactNode, memo } from "react";
 import type { z } from "zod";
 import type { registrySchema, BoardQuestSummary } from "../../shared/contract";
 import type { Member, Phase } from "../../shared/schema";
-import { Crest, OpensMark, TimeAgo, clockTime, timeAgo, useNow } from "../kit";
+import { OpensMark, TimeAgo, clockTime, timeAgo, useNow } from "../kit";
 import { awayClock } from "../kit/hearth";
 import { PageGlyph, type PageGlyphName } from "./glyphs";
-import { PHASE_STEPS, closedWords, pathProgress, phaseIndex, phaseWord, type MoveTone } from "./model";
+import { QuestRoad } from "./quest-road";
+import { closedWords, pathProgress, type MoveTone } from "./model";
 import { memberName } from "../../shared/member-name";
 export { CrestOf, StateMark, PhaseMark } from "../kit";
 import { CrestOf, PhaseMark, StateMark } from "../kit";
@@ -63,13 +64,8 @@ export function Faces({ members, registry, size = 20, max = 6, still = false }: 
   if (still) return <span className="tv-faces still" aria-hidden="true">{members.slice(0, max).map((m) => <CrestOf key={m.threadId} member={m} registry={registry} size={size} />)}{members.length > max && <span className="tv-more">+{members.length - max}</span>}</span>;
   return <span className="tv-faces">{members.slice(0, max).map((m) => <button type="button" key={m.threadId} className="tv-face act" onClick={() => navigate.toThread(m.threadId)} title={`Open ${characterName(registry, m)}'s thread${m.title ? ` · ${m.title}` : ""}`} aria-label={`Open ${characterName(registry, m)}'s thread`}><CrestOf member={m} registry={registry} size={size} /></button>)}{members.length > max && <span className="tv-more">+{members.length - max} more</span>}</span>;
 }
-/** The quest page's phase strip: five segments with their themed words and plain anchors. */
-export function PhaseStrip({ phase, tone }: { phase: Phase; tone?: MoveTone }) {
-  const at = phaseIndex(phase);
-  return <div className="tv-phase" role="img" aria-label={`Phase: ${phaseWord(phase)}${at >= 0 && at < 5 ? `, ${at + 1} of 5` : ""}`}>
-    <span className="tv-ph lg" aria-hidden="true">{PHASE_STEPS.map((p, i) => <i key={p.id} className={i < at ? "d" : i === at ? `c ${tone === "you" ? "y" : tone === "bad" ? "x" : ""}` : phase === "stopped" || phase === "stopping" ? "s" : ""} />)}</span>
-    <span className="tv-ph-labels" aria-hidden="true">{PHASE_STEPS.map((p, i) => <span key={p.id} className={i === at ? "c" : ""}>{p.label}{p.plain && <> <span className="anc">{p.plain}</span></>}</span>)}</span>
-  </div>;
+export function PhaseStrip({ phase, stoppedAt, proven }: { phase: Phase; tone?: MoveTone; stoppedAt?: Phase | null; proven?: Phase | null }) {
+  return <QuestRoad phase={phase} stoppedAt={stoppedAt} proven={proven} />;
 }
 export function QuestRow({ quest }: { quest: BoardQuestSummary }) {
   const navigate = useBbNavigate();

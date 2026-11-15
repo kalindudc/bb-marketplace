@@ -1,42 +1,25 @@
-import { experimental_useRpcMutation, experimental_useRpcQuery, useBbNavigate } from "@get-bb/plugin-sdk/app";
+import { experimental_useRpcMutation, useBbNavigate } from "@get-bb/plugin-sdk/app";
 import { useId, useMemo, useState } from "react";
 import { rpcContract, type BoardQuestDetail, type Room } from "../../shared/contract";
-import type { Decision, Member, Report, Rule } from "../../shared/schema";
-import { AskCard, heldQuests, stoppingWords as kitStoppingWords, CELLAR, SkLines, CheckIndependence, Clamp, EvidenceList, ReportView, memberReportNames, ExpandsMark, GateRows, GuardPosture, KeeperNoteRows, KeptInMind, OpensMark, QuestMap, QuietNotice, RULE_SCOPE, Vocabulary, clockTime, glowVars, ruleScopeLabel, useWidenRule, vocab, QueryState } from "../kit";
+
+import { AskCard, verifiedOf, verifiedWords, questNames, readable, heldQuests, stoppingWords as kitStoppingWords, CELLAR, CheckIndependence, ExpandsMark, GateRows, GuardPosture, KeeperNoteRows, KeptInMind, OpensMark, QuestMap, QuietNotice, Vocabulary, clockTime, glowVars, vocab } from "../kit";
 import { DecidedForYou, KIND, heldTitles } from "./asks";
 import { ArchiveReceiptLine, ArchivedList, FinishedRow, finishedQuests, useArchive } from "./archive";
-import { Ago, CrestOf, Faces, MemberLink, PageButton, PhaseStrip, Section, SegFilter, StateMark, ThreadButton, Time, characterName, classLabel, type Registry, plural } from "./common";
+import { Ago, CrestOf, MemberLink, PageButton, PhaseStrip, Section, SegFilter, StateMark, ThreadButton, characterName, classLabel, type Registry, plural } from "./common";
 import { PageGlyph } from "./glyphs";
-import { taleHeadline, describeEvent, endedCounts, isFinished, keeperStatus, mapAside, pathProgress, phaseWord, questMove, questsIn, returnedQuests, visibleMembers, waypointMove, type EventLine } from "./model";
-import { EventList, PartyPicture, SafeLink } from "./room";
+import { durationWords, stopperOf, endedCounts, isFinished, keeperStatus, mapAside, pathProgress, phaseWord, questMove, visibleMembers, waypointMove } from "./model";
+
+import { MemberIdentity, PartyPicture as KitPartyPicture } from "../kit";
 import { CheckerHold } from "./hold";
 import { usePanelState } from "./panel-state";
-import { reportsTitle, useOpenReports } from "./reports";
-import { Confidence, DecisionLine, Guardrails, History, OlderDecisions, ReportItem, RuleRow } from "./record";
-import { FinishedQuestPage } from "./finished";
-import { FoldLoad } from "./skeletons";
+
+import { Confidence, Guardrails, History, OlderDecisions, ReportItem, useHistoryLines } from "./record";
+import { CreditCard, LeftRow, LootRow } from "./finished";
+import { AsksRecord, PlanRecord, RecordFold, RulesAndAnchor } from "./quest-record";
+import { QuestLead } from "./quest-lead";
+import { recordedStop } from "./quest-road";
 
 
-export function KeeperLedger({ detail, registry, keeper }: { detail: BoardQuestDetail; registry: Registry; keeper: Member | null }) {
-  const ledger = experimental_useRpcQuery({ contract: rpcContract, method: "ledger", input: { threadId: detail.quest.keeperThreadId } });
-  const plan = detail.quest.plan;
-  const plans = [...detail.plans].sort((a, b) => b.version - a.version);
-  const lastSteer = plans.find((p) => p.fromSteer)?.fromSteer;
-  const keeperName = keeper ? characterName(registry, keeper) : "the Keeper";
-  // Rules you turned off live in the Ledger, which can turn them back on; here only rules in force or waiting on you.
-  const shownRules = detail.rules.filter((r) => r.active || r.source === "keeper-proposed");
-  const [anchorOpen, setAnchorOpen] = usePanelState(`quest:${detail.quest.id}.anchor`, false);
-  return <section className="tv-ledger tv-card" aria-label={`The Keeper's ledger: what ${keeperName} knows`}>
-    <header className="tv-lg-h">{keeper && <CrestOf member={keeper} registry={registry} size={20} />}<h2><Vocabulary word="ledger" /></h2><span className="tv-sp" /><span className="tag">plan v{detail.quest.planVersion}</span></header>
-    {plan && <div className="tv-cell"><div className="lbl">Done when</div><p data-content>{plan.doneWhen}</p></div>}
-    {lastSteer && <div className="tv-cell steer"><div className="lbl"><PageGlyph name="steer" />Last steer · {clockTime(lastSteer.at)}</div><p data-content>“{lastSteer.text}”</p></div>}
-    <div className="tv-cell"><div className="lbl">Plan versions</div><ol className="tv-li-list">{plans.map((p) => <li key={p.version}><span><b>v{p.version}</b> <span data-content>{p.changeNote ?? (p.version === 1 ? "first quest map" : p.goal)}</span>{p.fromSteer && <> <span className="tag tv-steer-tag">from your steer</span></>}</span><Time at={p.createdAt} /></li>)}</ol>{!plans.length && <p className="tv-empty" data-empty>No quest map yet.</p>}</div>
-    {detail.asks.length > 0 && <div className="tv-cell"><div className="lbl">Asks · {detail.asks.filter((a) => a.state === "open").length} open</div><ol className="tv-li-list">{detail.asks.map((a) => <li key={a.id}><span data-content>{a.question} <span className="m">→ {a.state === "open" ? "open" : a.answer ? detail.asks.find((x) => x.id === a.id)?.options.find((o) => o.id === a.answer?.optionId)?.label ?? a.answer.optionId : a.state}</span></span><Ago at={a.answer?.at ?? a.createdAt} /></li>)}</ol></div>}
-    {(detail.decisions.length > 0 || (plan?.findings.length ?? 0) > 0) && <div className="tv-cell"><div className="lbl">Decisions, with why{detail.decisionsTotal ? ` · ${detail.decisionsTotal}` : ""}</div><ol className="tv-li-list">{detail.decisions.map((d) => <DecisionLine key={d.id} decision={d} />)}{detail.decisionsNextCursor && <OlderDecisions keeperThreadId={detail.quest.keeperThreadId} boardQuestId={detail.quest.id} cursor={detail.decisionsNextCursor} />}</ol>{plan && plan.findings.length > 0 && <><div className="lbl" style={{ marginTop: 8 }}>Findings</div><ul className="tv-li-list">{plan.findings.map((f, i) => <li key={i}><span data-content>{f}</span></li>)}</ul></>}{plan && plan.assumptions.length > 0 && <><div className="lbl" style={{ marginTop: 8 }}>Assumptions</div><ul className="tv-li-list">{plan.assumptions.map((f, i) => <li key={i}><span data-content>{f}</span></li>)}</ul></>}</div>}
-    <div className="tv-cell"><div className="lbl"><PageGlyph name="rule" />Standing rules · {detail.rules.filter((r) => r.active).length} · sent every tick</div>{shownRules.length ? <ul className="tv-rules">{shownRules.map((rule) => <RuleRow key={rule.id} rule={rule} />)}</ul> : <p className="tv-empty" data-empty>No standing rules.</p>}</div>
-    <details className="tv-cell tv-anchor" open={anchorOpen} onToggle={(event) => { const now = (event.currentTarget as HTMLDetailsElement).open; if (now !== anchorOpen) setAnchorOpen(now); }}><summary className="lbl act"><PageGlyph name="anchor" />What {keeperName} is re-anchored with{ledger.data?.lastReanchorAt ? <> · last <Time at={ledger.data.lastReanchorAt} /></> : ""}<ExpandsMark open={false} /></summary>{ledger.data ? <pre className="tv-code" data-content>{ledger.data.restatement || "No restatement recorded."}</pre> : ledger.error ? <p className="tv-problem" role="alert">Could not load the ledger: {ledger.error.message}</p> : <FoldLoad error={null} retry={ledger.refetch} label="the re-anchor text"><pre className="tv-code"><SkLines n={4} /></pre></FoldLoad>}</details>
-  </section>;
-}
 
 /** The stopping words the page and its tests share: how many stops wait on a confirmation. */
 export const stoppingWords = (unconfirmed: number) => `Stopping · ${kitStoppingWords({ stopUnconfirmed: unconfirmed })}`;
@@ -95,69 +78,75 @@ function StopQuest({ detail, registry }: { detail: BoardQuestDetail; registry: R
 }
 
 /** A quest's page: the live page while it is in play, the record once it has returned or stopped. */
-export function QuestPage(props: { detail: BoardQuestDetail; registry: Registry; room?: Room }) {
-  return isFinished(props.detail.quest.phase) ? <FinishedQuestPage {...props} /> : <LiveQuestPage {...props} />;
-}
-
-function LiveQuestPage({ detail, registry, room }: { detail: BoardQuestDetail; registry: Registry; room?: Room }) {
+export function QuestPage({ detail, registry, room }: { detail: BoardQuestDetail; registry: Registry; room?: Room }) {
   const navigate = useBbNavigate();
   const quest = detail.quest;
+  const roadStop = recordedStop(detail);
   const keeper = room?.keepers.find((k) => k.member.threadId === quest.keeperThreadId) ?? null;
   const keeperName = keeper ? characterName(registry, keeper.member) : "the Keeper";
   const move = questMove(quest, detail.asks, { keeper: keeperName, member: (m) => characterName(registry, m) }, { keeperArchived: !!keeper?.archived });
   const path = pathProgress(quest);
+  const names = useMemo(() => questNames(quest, registry, detail.reports), [quest, registry, detail.reports]);
+  const stopper = stopperOf(detail.events, quest.id, { name: id => names.threadNames?.get(id) ?? null });
+  const finishedPath = verifiedOf(quest);
   const stop = StopQuest({ detail, registry });
   const members = new Map([...(room ? visibleMembers(room) : []), ...quest.members].map((m) => [m.threadId, m]));
   const openAsks = detail.asks.filter((a) => a.state === "open");
   const finished = isFinished(quest.phase);
+  const [promisesMore, setPromisesMore] = usePanelState("quest.promises.more", false);
+  const [factsMore, setFactsMore] = usePanelState("quest.facts.more", false);
+  const [decisionsMore, setDecisionsMore] = usePanelState("quest.decisions.more", false);
   const status = keeper ? keeperStatus(keeper) : null;
   const groups = ["Your next moves", "Ready for review", "Blocked", "Working", "Waiting on others", "Left when stopped", "Done"] as const;
   const groupTone: Record<(typeof groups)[number], "you" | "done" | "bad" | "work" | "wait"> = { "Your next moves": "you", "Ready for review": "done", Blocked: "bad", Working: "work", "Waiting on others": "wait", "Left when stopped": "wait", Done: "done" };
   /** A stopped quest has no moves left: whatever was not done is what was left when it stopped. */
   const groupOf = (w: (typeof quest.waypoints)[number]) => { const move = waypointMove(w); return quest.phase === "stopped" && move !== "Done" ? "Left when stopped" : move; };
   const [mapOpen, setMapOpen] = usePanelState(`quest:${quest.id}.map`, false);
-  const showMap = quest.phase !== "done" || mapOpen;
+  const showMap = !isFinished(quest.phase) || mapOpen;
   const [showDone, setShowDone] = usePanelState(`quest:${quest.id}.done`, false);
-  const [showReports, setShowReports] = usePanelState(`quest:${quest.id}.reports`, false);
+
+  const history = useHistoryLines(detail, registry, room);
   const notes = detail.notes ?? [];
   const handBacks = notes.filter((n) => n.kind === "waiting-on-user" && n.state === "open");
   const keptNotes = notes.filter((n) => n.kind !== "waiting-on-user");
   const steer = quest.plan?.fromSteer;
-  return <div className="tv-quest">
-    <header className="tv-ghead lit" style={glowVars(`quest:${quest.id}`)}>
+  return <div className={`tv-quest ${finished ? "tv-record" : ""}`} data-phase={quest.phase}>
+    <header className={`tv-ghead ${finished ? "" : "lit"}`} style={finished ? undefined : glowVars(`quest:${quest.id}`)}>
       <div className="tv-gh-l">
         <h1 className="tv-qtitle" data-content>{quest.title}</h1>
-        <PhaseStrip phase={quest.phase} tone={move.tone} />
+        <PhaseStrip phase={quest.phase} tone={move.tone} stoppedAt={roadStop.position} proven={roadStop.proven} />
         <div className="tv-facts">
-          {finished ? <><StateMark tone={move.tone}><b>{quest.phase === "stopped" ? "Stopped by you" : "Returned"}</b></StateMark><span><Ago at={quest.endedAt ?? quest.updatedAt} /></span></>
+          {finished ? <><StateMark tone={move.tone}><b>{quest.phase === "stopped" ? stopper ? `Stopped by ${stopper}` : "Stopped" : "Returned"}</b></StateMark><span><Ago at={quest.endedAt ?? quest.updatedAt} /></span><span>{quest.phase === "done" ? "took" : "after"} <b>{durationWords((quest.endedAt ?? quest.updatedAt) - quest.createdAt)}</b></span></>
             : stop.stopping ? <><StateMark tone="warn"><b>{stoppingWords(stop.stopping.unconfirmed)}</b></StateMark>{stop.stopping.since && <span>since <b>{clockTime(stop.stopping.since)}</b></span>}</>
             : <><StateMark tone={move.tone}><b>{phaseWord(quest.phase)} · {move.who === "You" ? "your move" : move.who}</b>{move.next ? ` · ${move.next}` : ""}</StateMark><span>updated <b><Ago at={quest.updatedAt} /></b></span></>}
-          <span>path <b className="num">{path ? `${path.done} of ${path.total}` : "not mapped yet"}</b></span>
+          <span>path <b className="num">{finished ? finishedPath ? verifiedWords(finishedPath) : "not mapped" : path ? `${path.done} of ${path.total}` : "not mapped yet"}</b></span>
           <span>plan <b>v{quest.planVersion}</b>{steer && <span className="tag tv-steer-tag" title={`From your steer: ${steer.text}`}>steer {clockTime(steer.at)}</span>}</span>
           {room && !finished && <span>review <b className="num">{room.review.waiting} of {room.review.budget}</b></span>}
         </div>
-        {quest.phase === "done" && detail.tale?.outcome && <Clamp text={detail.tale.outcome} className="tv-outcome" />}
-        {keeper && !keeper.archived && <QuietNotice threadId={keeper.member.threadId} since={keeper.quietSince} />}
+
+        {!finished && keeper && !keeper.archived && <QuietNotice threadId={keeper.member.threadId} since={keeper.quietSince} />}
       </div>
       <div className="tv-gacts">
-        {keeper && status && <MemberLink member={keeper.member} registry={registry} size={28} sub={<StateMark tone={status.tone}>{status.label}</StateMark>} />}
+
         {quest.phase === "done" && <PageButton path={`tale/${quest.id}`} glyph="report">The tale</PageButton>}
+        {keeper && status && <MemberLink member={keeper.member} registry={registry} size={28} sub={<StateMark tone={status.tone}>{status.label}</StateMark>} />}
         <ThreadButton id={quest.keeperThreadId} name={keeperName} label={keeper ? `Open ${keeperName}'s thread` : "Open the Keeper's thread"} className={finished || keeper?.archived ? "" : "pri"} quiet={finished || !!keeper?.archived} />
         {stop.button}
       </div>
     </header>
     {stop.confirm}
+    {finished && <QuestLead detail={detail} registry={registry} />}
     <section className={`tv-card tv-qmapcard ${finished ? "" : "lit"} ${showMap ? "" : "folded"}`} aria-labelledby="tv-qmap-h" style={finished ? undefined : glowVars(`questmap:${quest.id}`)}>
-      <header className="tv-colh"><h2 id="tv-qmap-h"><Vocabulary word="map" /></h2><span className="tv-colh-aside">{mapAside(quest)}</span><span className="tv-sp" />{steer && showMap && <span className="tag tv-steer-tag" title={steer.text}><PageGlyph name="steer" /><span>v{quest.planVersion} from your steer, {clockTime(steer.at)}</span></span>}{quest.phase === "done" && <button type="button" className="tv-fold act" aria-expanded={mapOpen} aria-controls="tv-qmap-b" onClick={() => setMapOpen(!mapOpen)}><ExpandsMark open={mapOpen} /><span>{mapOpen ? "Hide" : "Show"}</span></button>}</header>
+      <header className="tv-colh"><h2 id="tv-qmap-h"><Vocabulary word="map" /></h2><span className="tv-colh-aside">{mapAside(quest)}</span><span className="tv-sp" />{steer && showMap && <span className="tag tv-steer-tag" title={steer.text}><PageGlyph name="steer" /><span>v{quest.planVersion} from your steer, {clockTime(steer.at)}</span></span>}{finished && <button type="button" className="tv-fold act" aria-label={`${vocab("map")} ${mapAside(quest)} ${mapOpen ? "Hide" : "Show"}`} aria-expanded={mapOpen} aria-controls="tv-qmap-b" onClick={() => setMapOpen(!mapOpen)}><ExpandsMark open={mapOpen} /><span>{mapOpen ? "Hide" : "Show"}</span></button>}</header>
       {showMap && <div id="tv-qmap-b">
         {steer && quest.plan?.changeNote && <ChangeNote text={quest.plan.changeNote} />}
         {quest.waypoints.length ? <QuestMap quest={quest} mode="live" /> : <p className="tv-empty tv-qmap-empty" data-empty><PageGlyph name="plan" />No quest map yet: {move.who}{move.next ? ` · ${move.next}` : ""}.</p>}
         <GateRows waypoints={quest.waypoints} />
       </div>}
     </section>
-    <div className="tv-ggrid">
+    <div className="tv-ggrid" role="group" aria-label="The quest sections">
       <div className="tv-col">
-        <Section title="By whose move" count={`${openAsks.length + heldQuests([quest], openAsks).length + quest.waypoints.filter((w) => waypointMove(w) !== "Done").length} ${quest.phase === "stopped" ? "left" : "open"}`}>
+        {!finished ? <Section title="By whose move" count={`${openAsks.length + heldQuests([quest], openAsks).length + quest.waypoints.filter((w) => waypointMove(w) !== "Done").length} ${quest.phase === "stopped" ? "left" : "open"}`}>
           {!finished && <CheckerHold quest={quest} asks={openAsks} />}
           {handBacks.length > 0 && <div className="tv-grp"><KeeperNoteRows notes={handBacks} label="Handed back to you" /></div>}
           {openAsks.length > 0 && <div className="tv-grp"><div className="tv-grp-h"><StateMark tone="you">Needs you</StateMark><span className="num m">{openAsks.length}</span></div>
@@ -173,16 +162,37 @@ function LiveQuestPage({ detail, registry, room }: { detail: BoardQuestDetail; r
             </li>;
           })}</ul></div>; })}
           {!openAsks.length && !quest.waypoints.length && <p className="tv-empty" data-empty>Nothing to move yet: {move.who}{move.next ? ` · ${move.next}` : ""}.</p>}
-        </Section>
-        {detail.reports.length > 0 && <Section title="Reports and evidence" count={`${plural(detail.reports.length, "report")}`} action={<button type="button" className="tv-fold act" aria-expanded={showReports} onClick={() => setShowReports(!showReports)}><ExpandsMark open={showReports} /><span>{showReports ? "Hide" : "Show"}</span></button>}>{showReports && <ul className="tv-items">{detail.reports.map((r) => <ReportItem key={r.id} report={r} registry={registry} detail={detail} />)}</ul>}</Section>}
-        <History detail={detail} registry={registry} room={room} />
+        </Section> : <Section title="Done and left"><div className="tv-rec-two">
+          <section className="tv-card tv-rec-sec" aria-label="Done"><header className="tv-colh"><h2>Done</h2></header>
+            {quest.waypoints.some(w => w.state === "verified") ? <ul className="tv-dw tv-loot">{quest.waypoints.filter(w => w.state === "verified").map(w => <LootRow key={w.id} waypoint={w} detail={detail} registry={registry} />)}</ul> : <p className="tv-empty" data-empty>Nothing was verified.</p>}
+          </section>
+          <section className="tv-card tv-rec-sec" aria-label="Left"><header className="tv-colh"><h2>Left</h2></header>
+            {handBacks.length > 0 && <KeeperNoteRows notes={handBacks} label="Handed back to you" />}
+            {quest.waypoints.some(w => w.state !== "verified") ? <ul className="tv-dw">{quest.waypoints.filter(w => w.state !== "verified").map(w => <LeftRow key={w.id} waypoint={w} skipped={detail.tale?.skipped.find(s => s.waypointId === w.id) ? readable(detail.tale.skipped.find(s => s.waypointId === w.id)!.reason, names) : undefined} />)}</ul> : !handBacks.length && <p className="tv-empty" data-empty>Nothing was left.</p>}
+          </section>
+        </div></Section>}
+        <RecordFold id="quest.reports" title="Reports and evidence" count={plural(detail.reports.length, "report")} open={false}>
+          {detail.reports.length ? <ul className="tv-items">{detail.reports.map(r => <ReportItem key={r.id} report={r} registry={registry} detail={detail} />)}</ul> : <p className="tv-empty" data-empty>No reports were filed.</p>}
+        </RecordFold>
+        <RecordFold id="quest.history" title="History" count={plural(history.length, "event")} open><History detail={detail} registry={registry} room={room} bare /></RecordFold>
       </div>
       <aside className="tv-col" aria-label="Party and ledger">
-        <Section title={<Vocabulary word="party" />} count={`${plural(quest.members.length, "member")}`} level={2}><PartyPicture members={quest.members} registry={registry} quests={[quest]} /></Section>
-        {keptNotes.length > 0 && <KeptInMind notes={keptNotes} />}
-        <Guardrails detail={detail} registry={registry} members={members} />
-        <DecidedForYou decisions={detail.decisions.filter((d) => d.source === "keeper")} />
-        <KeeperLedger detail={detail} registry={registry} keeper={keeper?.member ?? null} />
+        <RecordFold id="quest.party" title={<Vocabulary word="party" />} count={plural(quest.members.length, "member")} open={!finished}>
+          {finished ? <div className="tv-credits-w"><ol className="tv-credits n-1">{quest.members.map((member, i) => <CreditCard identity key={member.threadId} member={member} index={i} detail={detail} registry={registry} />)}</ol></div> : <KitPartyPicture members={quest.members} registry={registry} quests={[quest]} renderMember={(member, summary) => <div className="tv-party-identity"><CrestOf member={member} registry={registry} size={20} /><MemberIdentity member={member} registry={registry} compact scope={detail.scopes?.find(s => s.threadId === member.threadId)} violations={detail.violations?.filter(v => v.threadId === member.threadId)} /><button type="button" className="lnk-btn act" onClick={() => navigate.toThread(member.threadId)} aria-label={`Open ${characterName(registry, member)}’s thread`} title={summary}><OpensMark /></button></div>} />}
+        </RecordFold>
+        <RecordFold id="quest.kept" title="Kept in mind" count={plural(keptNotes.filter(n => n.state === "open").length, "note")} open={false}>
+          <KeptInMind headless notes={keptNotes} newestFirst folds={{ promises: [promisesMore, setPromisesMore], facts: [factsMore, setFactsMore] }} />
+        </RecordFold>
+        <RecordFold id="quest.guards" title="Guardrails" count={plural(detail.violations?.length ?? 0, "violation")} open={!finished} preview={!finished ? <Guardrails detail={detail} registry={registry} members={members} bare compact /> : undefined}>
+          <Guardrails detail={detail} registry={registry} members={members} bare compact={!finished} />
+        </RecordFold>
+        <RecordFold id="quest.decisions" title="Decided for you" count={plural(detail.decisionsTotal ?? detail.decisions.length, "decision")} open>
+          <DecidedForYou headless decisions={[...detail.decisions].sort((a, b) => b.createdAt - a.createdAt)} limit={3} expanded={decisionsMore} onExpandedChange={setDecisionsMore} readOnly={finished} />
+          {detail.decisionsNextCursor && <ol className="tv-li-list"><OlderDecisions keeperThreadId={quest.keeperThreadId} boardQuestId={quest.id} cursor={detail.decisionsNextCursor} /></ol>}
+        </RecordFold>
+        <RecordFold id="quest.asks" title="Asks and answers" count={plural(detail.asks.length, "ask")} open={false}><AsksRecord asks={detail.asks} /></RecordFold>
+        <RecordFold id="quest.plan" title="The plan" count={plural(detail.plans.length, "version")} open={false}><PlanRecord detail={detail} /></RecordFold>
+        <RecordFold id="quest.rules" title={`${keeperName === "the Keeper" ? "The Keeper’s" : `${keeperName}’s`} rules and re-anchor`} count={plural(detail.rules.filter(r => r.active).length, "rule")} open={false}><RulesAndAnchor detail={detail} keeperName={keeperName} /></RecordFold>
         <button type="button" className="btn ghost sm" onClick={() => navigate.toPluginPanel("tavern", { subPath: "map" })}><PageGlyph name="map" /><span>See it on the map</span><OpensMark /></button>
       </aside>
     </div>

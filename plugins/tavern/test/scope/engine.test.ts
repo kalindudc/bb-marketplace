@@ -24,7 +24,7 @@ describe("scope engine", () => {
   });
   it("keeps Keeper domain writes out, but permits Tavern coordination", () => {
     expect(evaluate(scope("keeper"), { kind: "tool", toolName: "tavern_hire", input: {}, cwd: "/repo" }).allow).toBe(true);
-    expect(evaluate(scope("keeper"), { kind: "write", toolName: "write", input: { path: "/tmp/note" }, cwd: "/repo" }).allow).toBe(false);
+    expect(evaluate(scope("keeper"), { kind: "write", toolName: "write", input: { path: "/tmp/note" }, cwd: "/repo" }).allow).toBe(true);
     expect(bash("keeper", "git status && ls src").allow).toBe(true);
     expect(bash("keeper", "npm test").allow).toBe(false);
   });
@@ -55,6 +55,6 @@ describe("scope engine", () => {
     const late = bindPaths(scopeForClass("smith"), { home: "/home/me", tmp: ["/tmp"], scopesDir: "/data/scopes" });
     expect(late.writes.allow).toContain("${worktree}");
     expect(evaluate(late, { kind: "write", toolName: "write", input: { path: "/repo/file" }, cwd: "/repo" })).toMatchObject({ allow: false, ruleId: "worktree-unresolved" });
-    expect(() => scopeForClass("ranger", { tools: { allow: ["write"] } })).toThrow();
+    expect(() => scopeForClass("ranger", { tools: { allow: ["spawn"] } })).toThrow();
   });
 });

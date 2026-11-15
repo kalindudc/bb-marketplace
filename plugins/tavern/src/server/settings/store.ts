@@ -216,8 +216,9 @@ export class SettingsStore {
     if (result) this.notifyChanged();
     return result;
   }
-  update(input: SettingsUpdate) {
+  update(input: SettingsUpdate, threadId: string | null = null) {
     const parsed = settingsUpdateSchema.parse(input), current = this.state();
+    if (parsed.patch.tavern?.ambientMotion !== undefined) parsed.patch.tavern.hearthFlicker = parsed.patch.tavern.ambientMotion !== "off";
     if (current.revision !== parsed.revision) throw new SettingsConflict(current.revision);
     if (current.policy.state === "invalid" && parsed.patch.machines && !own(parsed.patch.machines, "rules"))
       throw new Error("Repair machine placement with an explicit replacement rules array.");
@@ -234,11 +235,12 @@ export class SettingsStore {
       if (value === null) delete next.pinned[key as TunableKey];
       else if (value !== undefined) next.pinned[key as TunableKey] = value;
     }
-    return this.commit(parsed.revision, next, "user", parsed.why, parsed.evidence ?? null, null, null, true, parsed.patch.machines?.rules !== undefined);
+    return this.commit(parsed.revision, next, "user", parsed.why, parsed.evidence ?? null, null, threadId, true, parsed.patch.machines?.rules !== undefined);
   }
-  replace(user: SettingsPatch, pinned: SparseTunables, tuned: SparseTunables | undefined, revision: number, why: string) {
+  replace(user: SettingsPatch, pinned: SparseTunables, tuned: SparseTunables | undefined, revision: number, why: string, threadId: string | null = null) {
     const current = this.state();
-    return this.commit(revision, { ...current.value, user, pinned, tuned: tuned ?? current.value.tuned }, "user", why, null, null, null, true, true);
+    if (user.tavern?.ambientMotion !== undefined) user = { ...user, tavern: { ...user.tavern, hearthFlicker: user.tavern.ambientMotion !== "off" } };
+    return this.commit(revision, { ...current.value, user, pinned, tuned: tuned ?? current.value.tuned }, "user", why, null, null, threadId, true, true);
   }
   applyTuned(values: SparseTunables, why: string, evidence: SettingsEvidence, by: "tavern" | "user" = "tavern") {
     if (this.read().tuning.mode === "off") throw new Error("Tuning is off; only your settings and pins apply.");

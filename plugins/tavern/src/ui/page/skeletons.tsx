@@ -175,7 +175,7 @@ export function QuestSkeleton({ id, finished: known }: { id: string; finished?: 
 
 /** The phase strip with its five labels under it, as the page's PhaseStrip draws them. */
 function SkPhaseLabels() {
-  return <div className="tv-phase"><SkPhaseStrip className="lg" /><span className="tv-ph-labels">{repeat(5, (i) => <span key={i}><SkLine w="5ch" /></span>)}</span></div>;
+  return <div className="tv-phase"><SkPhaseStrip road /></div>;
 }
 
 /** The tale: its card with the title, the lead paragraph, the figures and the party's credit cards. */

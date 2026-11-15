@@ -139,16 +139,32 @@ describe("Tavern settings sections", () => {
     fireEvent.keyDown(budget, { key: "Enter" });
     await waitFor(() => expect(update).toHaveBeenLastCalledWith(expect.objectContaining({ patch: { attention: { reviewBudget: 6 } } })));
   });
-  it("offers the hearth's flicker as a toggle, on by default, saved as its own patch", async () => {
+  it("offers Calm, Lively and Off with a bounded repeat interval and synchronizes the legacy switch", async () => {
     const update = vi.fn((_input: { revision: number; patch: unknown; why: string }) => ok());
-    const tavern = await section("tavern", { settingsUpdate: update });
-    const flicker = await tavern.findByRole("switch", { name: "Hearth flicker while work runs" });
-    expect(flicker.getAttribute("aria-checked")).toBe("true");
-    expect(tavern.getByText("Off keeps the hearth still.")).toBeTruthy();
-    expect(tavern.getByText("Shows each character's level and crest notches, earned from verified work. Agents never see levels. Off hides them everywhere.")).toBeTruthy();
-    expect(tavern.getByText("Shows Tavern's row above the message box on every thread. Off hides it everywhere; when on, each thread can still hide its own.")).toBeTruthy();
-    fireEvent.click(flicker);
-    await waitFor(() => expect(update).toHaveBeenCalledWith(expect.objectContaining({ patch: { tavern: { hearthFlicker: false } } })));
+    const motion = await section("motion", { settingsUpdate: update });
+    const group = await motion.findByRole("group", { name: "Ambient motion" });
+    expect(within(group).getByRole("button", { name: "Calm" }).getAttribute("aria-pressed")).toBe("true");
+    expect(within(group).getByRole("button", { name: "Lively" })).toBeTruthy();
+    const interval = motion.getByRole("spinbutton", { name: "Repeat every" });
+    expect(interval.getAttribute("min")).toBe("3");
+    expect(interval.getAttribute("max")).toBe("60");
+    fireEvent.click(within(group).getByRole("button", { name: "Off" }));
+    await waitFor(() => expect(update).toHaveBeenCalledWith(expect.objectContaining({ patch: { tavern: { ambientMotion: "off", hearthFlicker: false } } })));
+  });
+  it("attributes agent history and tuned changes to a named thread link", async () => {
+    const settings = structuredClone(settingsView);
+    settings.history.find(c => c.id === "d-stale")!.threadId = "thr_agent";
+    const crests = vi.fn(() => ({crests:[{threadId:"thr_agent",classId:"keeper",characterId:null,label:"Moss II"}, {threadId:"keeper",classId:"keeper",characterId:null,label:"Moss"}]}));
+    const rpc = { settings: () => settings, crests } as Partial<Handlers>;
+    const history = await section("settings-history", rpc);
+    await history.findByRole("button", {name:"Moss II"});
+    expect(history.container.textContent).toContain("by an agent in Moss II");
+    expect(history.container.textContent).not.toContain("thr_agent");
+    await waitFor(() => expect(history.container.textContent).toContain("by Moss (Keeper)"));
+    expect(crests).toHaveBeenCalledTimes(1);
+    expect(crests).toHaveBeenCalledWith({threadIds:["keeper","thr_agent"]});
+    const tuned = await section("tuned", rpc);
+    await waitFor(() => expect(tuned.container.textContent).toContain("An agent in Moss II changed it"));
   });
   it("offers Character voice as three plain choices, each explained, saved as its own patch", async () => {
     const update = vi.fn((_input: { revision: number; patch: unknown; why: string }) => ok());

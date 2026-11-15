@@ -30,8 +30,8 @@ it.each(["mktemp -p OUTSIDE", "mktemp --tmpdir=OUTSIDE", "mktemp -pOUTSIDE", "mk
 it.each(['tmp=$(mktemp -d) && cp src/a.ts "$tmp/"', 'tmp="$(mktemp -d)" && cp src/a.ts "$tmp/report"', 'echo x > "$(mktemp)"'])("allows proven Ranger temporary outputs: %s", source => expect(fixture().check(source, "ranger").allow).toBe(true));
 it.each(['tmp=$(mktemp -d) && tmp[0]=OUTSIDE && cp src/a.ts "$tmp/"', "echo x > \"\"\x27$(mktemp)\x27", "tmp=\x27$(mktemp -d)\x27 && cp src/a.ts \"$tmp/\"", 'true || tmp=$(mktemp -d) && cp src/a.ts "$tmp/"', '! tmp=$(mktemp -d) && cp src/a.ts "$tmp/"', 'true | tmp=$(mktemp -d) && cp src/a.ts "$tmp/"', 'tmp=$(mktemp -d); cp src/a.ts "$tmp/"', 'false && tmp=$(mktemp -d) || cp src/a.ts "$tmp/"', 'tmp=$(mktemp -d) && tmp=OUTSIDE && cp src/a.ts "$tmp/"', 'tmp=$(mktemp -d) && printf -v tmp %s OUTSIDE && cp src/a.ts "$tmp/"', 'tmp=$(mktemp -u) && cp src/a.ts "$tmp/"', 'echo x > "\\$(mktemp)"', "echo x > '$(mktemp)'", 'tmp=$(mktemp -d -p OUTSIDE) && cp src/a.ts "$tmp/"'])("does not infer an unsafe temporary destination: %s", source => expect(fixture().check(source, "ranger").allow).toBe(false));
 it("taints a captured temp after a plain array assignment for Smith", () => expect(fixture().check('tmp=$(mktemp -d) && tmp[0]=OUTSIDE && cp src/a.ts "$tmp/"').allow).toBe(false));
-it("keeps Keeper writes and explicit scratch denies effective", () => {
-  expect(fixture().check('tmp=$(mktemp -d) && cp src/a.ts "$tmp/"', "keeper").allow).toBe(false);
+it("allows Keeper scratch copies and keeps explicit scratch denies effective", () => {
+  expect(fixture().check('tmp=$(mktemp -d) && cp src/a.ts "$tmp/"', "keeper").allow).toBe(true);
   const f = fixture();
   expect(f.check('echo x > "$(mktemp)"', "ranger", [join(f.root, "scratch", "*.secret")]).allow).toBe(false);
 });

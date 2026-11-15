@@ -1,5 +1,7 @@
 # Tavern scopes
 
+Every class, including the Keeper, may write temporary records under `/tmp/**`, `/private/tmp/**`, the host TMPDIR and its own `BB_THREAD_STORAGE`, using native write/edit tools or inspected shell writers and redirection. These paths are already granted and need no scope ask. Protected paths and symlink escapes remain blocked. The Keeper cannot write domain files elsewhere. These scratch and storage permissions are base grants: an explicit write-path narrowing retains exactly its requested paths, including a temporary subtree, rather than adding back all temporary or storage roots.
+
 Tavern agents run at bb permission mode `full`. Scopes add guardrails against mistakes and overreach, not against an agent deliberately defeating them. A scope grant never replaces the user's approvals for sends, merges, deploys or production writes.
 
 ## Personal repositories: let Smith push to main
@@ -40,7 +42,7 @@ The Keeper requests `{ "allowRules": ["git-push-main"] }`. The resulting grant r
 | Ranger | `readonly` | Read tools, reports, journal (and the deprecated quest alias), Flare and inspected read-only shell. Checked explicit writers may use scratch/storage roots. No pushes, GitHub writes, cluster writes or arbitrary programs. |
 | Warden | `checker` | Readonly permissions plus approved check runners and verbatim done-when commands, only from the maker worktree. On macOS, check calls cannot use the network and may write only verified ignored outputs and scratch; tracked files and Git metadata remain protected. |
 | Smith | `worktree` | Linked worktree, scratch and storage writes; explicit feature-branch pushes; draft PR creation and verified edits to the member’s own draft. Main/master, force/deletion pushes, merges, cluster writes and deploys require separate decisions. |
-| Keeper | `keeper` | Tavern coordination, journal (and the deprecated quest alias), reads and inspected read-only shell. No native write/edit or scratch writes; device output sinks remain usable. |
+| Keeper | `keeper` | Tavern coordination, journal (and the deprecated quest alias), reads and inspected read-only shell. Native write/edit and inspected shell writers may write temporary records and own thread storage, but not domain files elsewhere; device output sinks remain usable. |
 | User-started Wanderer, untyped thread | No scope file | The user’s own general agent; Tavern adds no guard. |
 | Keeper-hired Wanderer | `open` | No sandbox. Only the scope directory, pi extension roots and their real targets, SSH files and the user’s Claude settings files are protected. Claude skills and other ordinary files remain editable. |
 

@@ -8,12 +8,14 @@ import { awayHoldSchema, type AwayHold } from "../away/holds";
 import { awayCompletedWindowSchema, awayStateSchema, type AwayState, type AwayWindow } from "../../shared/away";
 import { actorSchema, askSchema, boardQuestSchema, decisionSchema, gateRecordSchema, journalEntrySchema, keeperNoteSchema, memberSchema, planSchema, reportSchema, routeSchema, ruleSchema } from "../../shared/schema";
 
+import { taleDeliverySchema, taleDeliveryAttemptSchema } from "../tale";
+
 const scalar = z.union([z.string(), z.number().finite(), z.null()]);
 const tableSchema = z.object({ columns: z.array(z.string()).min(1), rows: z.array(z.record(z.string(), scalar)) }).strict();
 export const recordsSnapshotSchema = z.object({ format: z.literal("tavern-records/1"), collectingSince: z.number().int().nonnegative(), overrides: z.record(z.string(), sparseTunablesSchema), sequences: z.record(z.string(), z.number().int().nonnegative()), tables: z.record(z.string(), tableSchema) }).strict();
 export type RecordsSnapshot = z.infer<typeof recordsSnapshotSchema>;
 type Column = { name: string; type: string; notnull: number; pk: number; dflt_value: unknown };
-const recordSchemas: Record<string, z.ZodType> = { taleKeeps: taleKeepSchema, serviceRecords: serviceQuestRecordSchema, serviceVerdicts: serviceVerdictSchema, serviceRecordState: serviceRecordStateSchema, members: memberSchema, quests: boardQuestSchema, plans: planSchema, asks: askSchema, decisions: decisionSchema, rules: ruleSchema, reports: reportSchema, routes: routeSchema, notes: keeperNoteSchema, gates: gateRecordSchema };
+const recordSchemas: Record<string, z.ZodType> = { taleDeliveries: taleDeliverySchema, taleDeliveryAttempts: taleDeliveryAttemptSchema, taleKeeps: taleKeepSchema, serviceRecords: serviceQuestRecordSchema, serviceVerdicts: serviceVerdictSchema, serviceRecordState: serviceRecordStateSchema, members: memberSchema, quests: boardQuestSchema, plans: planSchema, asks: askSchema, decisions: decisionSchema, rules: ruleSchema, reports: reportSchema, routes: routeSchema, notes: keeperNoteSchema, gates: gateRecordSchema };
 const jsonColumns = new Set(["data", "actor", "entry_ids", "before_data", "after_data", "snapshot", "changes", "undo_data", "evidence"]);
 const privateAuthorityTables = ["tavern_placements", "tavern_source_snapshots", "tavern_placement_discoveries", "tavern_snapshot_owners"];
 const excluded = new Set(["tavern_settings", "tavern_insight_meta", ...privateAuthorityTables]);

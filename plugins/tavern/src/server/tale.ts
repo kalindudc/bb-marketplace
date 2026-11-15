@@ -2,11 +2,82 @@ import { z } from "zod";
 import type { BoardQuestSummary } from "../shared/contract";
 import type { Keeper } from "./keeper/service";
 
+export const taleDeliverySchema = z.object({
+  text: z.string().max(24000), capturedAt: z.number().int().nonnegative(),
+  threadId: z.string(), truncated: z.boolean(),
+  questId: z.string().optional(), tellingId: z.number().int().optional(),
+});
+export const taleDeliveryAttemptSchema = z.object({ attemptedAt: z.number().int().nonnegative() });
+
+function hasDirective(text: string, questId: string) {
+  return text.split(/\r?\n/).some(line => line.trim() === `::tavern-tale{quest="${questId}"}`);
+}
+
+function latestTelling(k: Keeper, questId: string) {
+  return k.store.db.prepare("SELECT id,at,type,data FROM tavern_events WHERE board_quest_id=? AND type IN ('quest.wrapped','quest.retold') ORDER BY id DESC LIMIT 1").get(questId) as { id: number; at: number; type: string; data: string } | undefined;
+}
+
+function newestDelivery(k: Keeper, questId: string) {
+  const row = k.store.db.prepare("SELECT data FROM tavern_records WHERE kind='taleDeliveries' AND (id=? OR json_extract(data,'$.questId')=?) ORDER BY json_extract(data,'$.tellingId') DESC LIMIT 1").get(questId, questId) as { data: string } | undefined;
+  return row ? taleDeliverySchema.parse(JSON.parse(row.data)) : null;
+}
+
+function saveDelivery(k: Keeper, questId: string, threadId: string, text: string, telling: NonNullable<ReturnType<typeof latestTelling>>) {
+  const key = telling.type === "quest.wrapped" ? questId : `${questId}:${telling.id}`;
+  if (k.store.get("taleDeliveries", key)) return;
+  const truncated = text.length > 24000;
+  let end = Math.min(text.length, 24000), closingFence = "";
+  if (truncated) {
+    let fence: string | null = null, boundary = 0, offset = 0;
+    for (const line of text.split(/(?<=\n)/)) {
+      if (offset + line.length > 24000) break;
+      const marker = line.match(/^\s{0,3}(`{3,}|~{3,})/);
+      if (marker) {
+        if (!fence) fence = marker[1]!;
+        else if (marker[1]![0] === fence[0] && marker[1]!.length >= fence.length) fence = null;
+      }
+      offset += line.length;
+      if (!fence && !line.trim()) boundary = offset;
+    }
+    if (boundary) end = boundary;
+    else {
+      closingFence = fence ? `\n${fence}` : "";
+      const limit = 24000 - closingFence.length;
+      const lineBreak = text.lastIndexOf("\n", limit);
+      end = lineBreak > 0 && (!fence || lineBreak > text.indexOf("\n")) ? lineBreak : limit;
+    }
+  }
+  k.store.put("taleDeliveries", key, { text: text.slice(0, end).trimEnd() + closingFence, capturedAt: k.now(), threadId, truncated, questId, tellingId: telling.id });
+  k.changed(threadId, questId);
+}
+
+export function captureTaleDelivery(k: Keeper, threadId: string, text?: string | null) {
+  if (!text || k.member(threadId)?.role !== "keeper") return;
+  const ids = [...text.matchAll(/^\s*::tavern-tale\{quest="([^"\r\n]+)"\}\s*$/gm)].map(match => match[1]!);
+  for (const id of new Set(ids)) {
+    const quest = k.store.get("quests", id);
+    if (quest?.keeperThreadId !== threadId) continue;
+    const telling = latestTelling(k, id);
+    if (!telling || k.now() < telling.at || k.now() - telling.at > 86400000) continue;
+    saveDelivery(k, id, threadId, text, telling);
+  }
+}
+
+export async function backfillTaleDelivery(k: Keeper, quest: Pick<BoardQuestSummary, "id" | "keeperThreadId">, output: (args: { threadId: string }) => Promise<{ output: string | null }>) {
+  if (newestDelivery(k, quest.id) || k.store.get("taleDeliveryAttempts", quest.id)) return;
+  const telling = latestTelling(k, quest.id);
+  if (!telling) return;
+  k.store.put("taleDeliveryAttempts", quest.id, { attemptedAt: k.now() });
+  const result = await output({ threadId: quest.keeperThreadId });
+  if (result.output && hasDirective(result.output, quest.id)) saveDelivery(k, quest.id, quest.keeperThreadId, result.output, telling);
+}
+
 const skipSchema = z.object({ waypointId: z.string().min(1).max(120), reason: z.string().max(500) });
 const wrapDataSchema = z.object({
   outcome: z.string().min(1).max(4000),
   left: z.string().max(4000).nullish(),
   skipped: z.array(skipSchema).max(24).optional(),
+  next: z.array(z.string().max(200)).max(5).optional(),
 });
 
 export function readTale(k: Keeper, quest: BoardQuestSummary) {
@@ -15,8 +86,10 @@ export function readTale(k: Keeper, quest: BoardQuestSummary) {
       ORDER BY id DESC LIMIT 1`,
   ).get(quest.id) as { id: number; at: number; data: string } | undefined;
   if (!wrapped) return null;
-  const data = wrapDataSchema.parse(JSON.parse(wrapped.data));
-  const skipped = data.skipped ?? (k.store.db.prepare(
+  const telling = latestTelling(k, quest.id)!;
+  const data = wrapDataSchema.parse(JSON.parse(telling.data));
+  const wrapData = wrapDataSchema.parse(JSON.parse(wrapped.data));
+  const skipped = wrapData.skipped ?? (k.store.db.prepare(
     `SELECT data FROM tavern_events WHERE board_quest_id=? AND type='waypoint.skipped'
       AND id<? AND json_extract(data,'$.version')=? ORDER BY id DESC LIMIT 24`,
   ).all(quest.id, wrapped.id, quest.planVersion) as { data: string }[])
@@ -26,7 +99,8 @@ export function readTale(k: Keeper, quest: BoardQuestSummary) {
     characterId: credit.characterId, role: credit.role, before: credit.level.before, after: credit.level.after, historyComplete: credit.level.historyComplete === true,
   }] : []) ?? [];
   const keptCharacterIds = k.store.all("taleKeeps").filter(keep => keep.questId === quest.id && keep.kept).map(keep => keep.characterId).sort();
-  return { outcome: data.outcome, left: data.left?.trim() ? data.left : null, skipped, wrappedAt: wrapped.at, levels: levels.length ? levels : null, keptCharacterIds };
+  const delivery = newestDelivery(k, quest.id);
+  return { ...(delivery ? { delivery } : {}), ...(data.next ? { next: data.next } : {}), outcome: data.outcome, left: data.left?.trim() ? data.left : null, skipped, wrappedAt: wrapped.at, levels: levels.length ? levels : null, keptCharacterIds };
 }
 
 export function memberCredits(k: Keeper, quest: BoardQuestSummary) {

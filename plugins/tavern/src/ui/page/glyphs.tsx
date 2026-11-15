@@ -2,6 +2,9 @@ import { memo } from "react";
 import { Glyph, type GlyphName } from "../kit";
 // Page marks in the kit's line style (square caps, mitred joins, currentColor). Shape carries the state, so none relies on colour.
 const PATHS = {
+  "road-flag": "M6 21V3h12l-3 5 3 5H6",
+  "road-hammer": "M4 5h13v5H4ZM13 10v11H9V10",
+  "road-hearth": "M4 21V8l8-5 8 5v13M8 21v-7h8v7M10 17l2-3 2 3-2 3Z",
   you: "M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15ZM10 20.5h4",
   diamond: "M12 3.5 20.5 12 12 20.5 3.5 12Z",
   work: "M12 4a8 8 0 1 1-8 8",

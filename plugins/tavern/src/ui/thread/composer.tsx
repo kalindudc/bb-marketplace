@@ -7,9 +7,11 @@ import type { Ask, CheckerHandoffHold, ClassDef } from "../../shared/schema";
 import type { ClassNotice } from "../../shared/class-execution-contract";
 import { AskCard, Crest, KEEPER_STATE_HINT, DecidedForYou, useDecisionSeen, ExpandsMark, Glyph, IconButton, OpensMark, QueryState, Skeleton, SkCrest, SkLine, TimeAgo, Vocabulary, memberIdentity, plural, useRegistry, useSkeletonCount, useSkeletonDelay, type Registry, QuietNotice, useArmedNewQuest, activeHold, heldQuests, releaseWords, Clamp, localTime, useNow } from "../kit";
 import { LEDGER_TAB } from "./tabs";
-import { useWidgetReveal, threadDecorCache } from "./state";
+import { acknowledgeAskReveal, acknowledgeWidgetReveal, useWidgetPanel, useWidgetReveal, threadDecorCache } from "./state";
 import { useChangeCue, useTavernMotion } from "../kit/motion";
 import { takeArmedClass } from "../kit/remember";
+import { MemberBrief } from "./member-brief";
+import { MemberIdentity, memberIdentityWords } from "../kit/member-identity";
 
 export const CLASS_PROVIDER = "classes";
 
@@ -180,7 +182,7 @@ export function ThreadWidget({ threadId }: { threadId: string }) {
   const decor = experimental_useRpcQuery({ contract: rpcContract, method: "decor", input: { threadId } });
   const hide = experimental_useRpcMutation({ contract: rpcContract, method: "setHidden", optimistic: (input, cache) => cache.update("decor", { threadId: input.threadId }, d => ({ ...d, hidden: input.hidden })) });
   const typing = experimental_useRpcMutation({ contract: rpcContract, method: "typing" });
-  const [open, setOpen] = useState<Open>(null);
+  const [open, setOpen] = useWidgetPanel(threadId);
   const [error, setError] = useState<unknown>(null);
   const { revealAskId, revealVersion } = useWidgetReveal(threadId);
   const lastTyping = useRef(0);
@@ -194,16 +196,21 @@ export function ThreadWidget({ threadId }: { threadId: string }) {
   // Any successful send ends the arm: "Send as a new quest" goes through the same submit, and a plain send was the user's choice.
   useEffect(() => { if (!isArmed) return; return composer.onSubmitted(() => armed.disarm()); }, [isArmed, composer, armed.disarm]);
   useEffect(() => { if (data) threadDecorCache.set(threadId, data); return () => { threadDecorCache.delete(threadId); }; }, [threadId, data]);
-  useEffect(() => { if (revealVersion) setOpen("asks"); }, [revealVersion]);
+  useEffect(() => { if (acknowledgeWidgetReveal(threadId, revealVersion)) setOpen("asks"); }, [threadId, revealVersion]);
   // Motion: the row holds still while an ask is in it, and for 2 s after the user types (the coordinator's hold; a restored draft doesn't
   // count); the busy dot pulses twice when its Keeper turns busy or the row comes into view busy, then holds solid.
   const need = needsOf(keeper);
-  const { cue } = useTavernMotion(`thread:${threadId}`, { held: need.asks + need.holds > 0 });
+  const { cue, settle } = useTavernMotion(`thread:${threadId}`, { held: need.asks + need.holds > 0 });
   const dot = useRef<HTMLElement>(null);
   const pulsing = !!keeper && keeper.quietSince == null && keeper.status === "busy" && !!data?.member && !!registry.data;
   const pulse = () => cue(dot.current, "busy dot", { key: "dot", ms: 3200, className: "mo-pulse", ambient: true, region: "widget" });
   useLayoutEffect(() => { if (pulsing) pulse(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   useChangeCue(pulsing, (_prev, next) => { if (next) pulse(); });
+  useEffect(() => {
+    if (!pulsing || data?.ambientMotion !== "lively") return;
+    const timer = setInterval(() => cue(dot.current, "busy repeat", { key: "dot", ms: 3200, className: "mo-pulse", ambient: true, repeat: true, region: "widget" }), (data.repeatSeconds ?? 20) * 1000);
+    return () => { clearInterval(timer); settle(c => c.kind === "busy repeat"); };
+  }, [pulsing, data?.ambientMotion, data?.repeatSeconds, cue, settle]);
   useEffect(() => {
     if (!keeper || !composer.text.trim()) return;
     const ping = () => { lastTyping.current = Date.now(); void typing.mutate({ threadId }).catch(setError); };
@@ -226,7 +233,11 @@ export function ThreadWidget({ threadId }: { threadId: string }) {
   return (
     <section className={`tavern twidget v-${variant} ${open ? "is-open" : ""} ${keeper?.quietSince != null ? "is-quiet" : ""}`} aria-label="Tavern widget" data-part="TavernWidget">
       <div className="tw-row">
-        {identity && data.member && <span className={`tw-id ${keeper ? `st-${keeper.quietSince != null ? "quiet" : keeper.status}` : ""}`} title={`This thread: ${identity.character.name}, ${identity.cls.label} (${identity.cls.plain})${keeper ? ` · ${keeper.quietSince != null ? `quiet: ${KEEPER_STATE_HINT.quiet}` : `${STATUS_WORD[keeper.status]}: ${STATUS_HINT[keeper.status]}`}` : ""}`}><span className="tw-crest"><Crest {...identity} size={18} />{keeper && <i ref={dot} className="tw-dot" aria-hidden="true" />}</span>{!keeper && <span className="who-t tw-name"><b>{identity.character.name}</b><span className="anc">{identity.cls.label} · {identity.cls.plain}</span></span>}{keeper && <span className="sr">{identity.character.name}, Keeper, {STATUS_WORD[keeper.status]}</span>}</span>}
+        {identity && data.member && keeper && <span className={`tw-id ${keeper ? `st-${keeper.quietSince != null ? "quiet" : keeper.status}` : ""}`} title={`This thread: ${identity.character.name}, ${identity.cls.label} (${identity.cls.plain})${keeper ? ` · ${keeper.quietSince != null ? `quiet: ${KEEPER_STATE_HINT.quiet}` : `${STATUS_WORD[keeper.status]}: ${STATUS_HINT[keeper.status]}`}` : ""}`}><span className="tw-crest"><Crest {...identity} size={18} />{keeper && <i ref={dot} className="tw-dot" aria-hidden="true" />}</span>{<span className="who-t tw-name"><b>{identity.character.name}</b>{keeper ? <span aria-hidden="true"> · </span> : <span className="anc">{identity.cls.label} · {identity.cls.plain}</span>}</span>}{keeper && <span className="sr">Keeper, {STATUS_WORD[keeper.status]}</span>}</span>}
+        {!keeper && data.member && registry.data && <button type="button" className="tw-id tw-member-id act" title={memberIdentityWords(data.member, registry.data, data.scope)} aria-label={memberIdentityWords(data.member, registry.data, data.scope)} aria-expanded={open === "brief"} aria-controls={`tw-brief-${threadId}`} onClick={() => toggle("brief")}>
+          {identity && <span className="tw-crest"><Crest {...identity} size={18} /></span>}
+          <span className="who-t tw-name"><b>{identity?.character.name ?? data.member.displayName ?? data.member.classId}</b><span className="tw-member-class"> · {identity?.cls.label ?? data.member.classId}</span></span>
+        </button>}
         {keeper && <KeeperParts quiet={<QuietNotice threadId={threadId} since={keeper.quietSince} compact />} data={data} open={open} toggle={toggle} onLedger={() => panel.openTab({ tab: LEDGER_TAB })} onQuest={id => navigate.toPluginPanel("tavern", { subPath: `quest/${id}` })} />}
         {variant === "member" && <MemberParts data={data} registry={registry.data ?? null} open={open} toggle={toggle} onQuest={id => navigate.toPluginPanel("tavern", { subPath: `quest/${id}` })} onThread={id => navigate.toThread(id)} />}
         {hideBtn}
@@ -236,7 +247,7 @@ export function ThreadWidget({ threadId }: { threadId: string }) {
       <QueryState error={error} />
       {keeper && open === "asks" && <AsksPanel threadId={threadId} asks={keeper.openAsks} holds={heldQuests(keeper.boardQuests, keeper.openAsks)} quests={keeper.boardQuests} revealAskId={revealAskId} revealVersion={revealVersion} onClose={() => setOpen(null)} />}
       {keeper && open === "decided" && <DecidedPanel threadId={threadId} data={data} />}
-      {open === "brief" && (data.brief || data.scope) && <div className="tw-panel tw-brief" id={`tw-brief-${threadId}`}>{data.brief && <><pre>{data.brief}</pre><p className="m small">Messages you send here reach this member now and its Keeper in the next tick.</p></>}<ScopePanel data={data} /></div>}
+      {open === "brief" && !keeper && <div className="tw-panel tw-brief" id={`tw-brief-${threadId}`} aria-label="Member">{registry.data && <MemberIdentity member={data.member} registry={registry.data} scope={data.scope} violations={data.violations} />}{data.briefFields ? <MemberBrief brief={data.briefFields} classId={data.member.classId} /> : data.brief && <div className="tw-brief-fields"><p data-content>{data.brief}</p></div>}{(data.briefFields || data.brief) && <p className="m small">Messages you send here reach this member now and its Keeper in the next tick.</p>}<ScopePanel data={data} /></div>}
     </section>
   );
 }
@@ -248,7 +259,7 @@ export function ThreadWidget({ threadId }: { threadId: string }) {
 export function SkWidget({ keeper, shown }: { keeper: boolean; shown: boolean }) {
   return <Skeleton label="the Tavern row" shown={shown} className={`tavern twidget v-${keeper ? "keeper" : "member"} sk-widget`}>
     <div className="tw-row">
-      <span className="tw-id"><span className="tw-crest"><SkCrest size={18} /></span>{!keeper && <span className="who-t tw-name"><SkLine w="10ch" /></span>}</span>
+      <span className="tw-id"><span className="tw-crest"><SkCrest size={18} /></span><span className="who-t tw-name"><SkLine w="10ch" /></span></span>
       <span className="tw-chip"><SkLine w={keeper ? "9ch" : "12ch"} /></span>
       <span className="tw-chip"><SkLine w="6ch" /></span>
       <span className="tw-sp" />
@@ -334,20 +345,15 @@ function Phase({ phase }: { phase: string }) {
 }
 
 const scopeAlerts = (data: ThreadDecor) => (data.scope?.problems?.length ?? 0) + (data.violations?.length ?? 0) + (data.scope?.error ? 1 : 0);
-const MODE_WORDS = { enforce: ["Enforced", "rule breaks are stopped"], watch: ["Watch", "recorded only, nothing is stopped"], off: ["Off", "no guardrails"] } as const;
-const NET_WORDS = { any: "Any network", none: "No network" } as const;
-const GH_WORDS = { none: "No GitHub", read: "GitHub reads only", "draft-pr-only": "GitHub reads and draft pull requests" } as const;
-const WRITE_WORDS = { none: "Writes nothing", worktree: "Writes only in its worktree", paths: "Writes only to listed paths", any: "Writes anywhere" } as const;
 
 /** A member's guardrails in plain words: the mode, what it may touch, policy problems, and each rule break with whether it was stopped. */
 function ScopePanel({ data }: { data: ThreadDecor }) {
   const ms = data.scope; if (!ms) return null;
   const mode = ms.mode ?? "enforce"; const sc = ms.scope; const violations = data.violations ?? [];
-  const [word, plain] = MODE_WORDS[mode];
   return <section className="tw-scope" aria-label="Scope (guardrails)">
-    <h4><span>Scope</span> <span className="anc">guardrails</span><span className={`tag tw-mode m-${mode}`}>{word}</span><span className="m">{plain}</span></h4>
+    <h4>Scope details</h4>
     {ms.error && <p className="problem" role="alert">The scope could not be applied: {ms.error}</p>}
-    {sc && mode !== "off" && <ul className="tw-sfacts"><li>{WRITE_WORDS[sc.writes.mode]}{sc.writes.mode === "paths" && sc.writes.allow.length ? `: ${sc.writes.allow.slice(0, 3).join(", ")}${sc.writes.allow.length > 3 ? ` and ${sc.writes.allow.length - 3} more` : ""}` : ""}</li><li>{NET_WORDS[sc.network]}</li><li>{GH_WORDS[sc.github]}</li>{sc.shell.deny.length > 0 && <li>{plural(sc.shell.deny.length, "blocked command rule")}</li>}</ul>}
+    {sc && mode !== "off" && <ul className="tw-sfacts">{sc.writes.allow.length > 0 && <li>Allowed write paths: {sc.writes.allow.join(", ")}</li>}{sc.shell.deny.length > 0 && <li>{plural(sc.shell.deny.length, "blocked command rule")}</li>}</ul>}
     {ms.pendingAskId && <p className="m small">A wider scope is waiting for your answer in the Keeper’s thread.</p>}
     {(ms.problems ?? []).length > 0 && <ul className="tw-sprob" aria-label="Policy problems">{ms.problems!.map((pr, i) => <li key={i}><b>Policy problem</b> <span>{pr}</span></li>)}</ul>}
     {violations.length > 0 && <ul className="tw-viol" aria-label="Rule breaks">{violations.map(v => { const watch = v.mode === "watch"; return <li key={`${v.eventId}-${v.seq}`} className={watch ? "watch" : v.stopped ? "stopped" : "missed"}><span className="vs">{watch ? "Recorded, not stopped" : v.stopped ? "Stopped" : "Not stopped"}</span><span className="vr">{v.reason} <code>{v.ruleId}</code>{v.stopError ? <span className="m"> · {v.stopError}</span> : null}</span><TimeAgo at={v.at} /></li>; })}</ul>}
@@ -365,7 +371,7 @@ function MemberParts({ data, registry, open, toggle, onQuest, onThread }: { data
       : <button type="button" className="tw-chip tw-where act" title={`Open the quest page: ${data.boardQuest.title} · ${wp}${m.title ? ` · ${m.title}` : ""}`} aria-label={`Open the quest page for ${data.boardQuest.title}, ${wp}`} onClick={() => onQuest(data.boardQuest!.id)}><b>{data.boardQuest.short}</b><span className="tw-w">· {wp}</span><OpensMark /></button>}
     {keeperId && data.keeper && <button type="button" className="tw-chip tw-keeper act" title={`Open ${keeperId.character.name}’s thread: Keeper (lead) of this member`} aria-label={`Open ${keeperId.character.name}’s thread, the Keeper (lead) this member reports to`} onClick={() => onThread(data.keeper!.threadId)}><Crest {...keeperId} size={14} /><span className="tw-kn">{keeperId.character.name}</span><OpensMark /></button>}
     <span className="tw-sp" />
-    {(data.brief || data.scope) && (() => { const alerts = scopeAlerts(data); const label = `Brief and scope${alerts ? `, ${plural(alerts, "scope alert")}` : ""}: show the brief this member was hired with and its guardrails`; return <button type="button" className={`tw-chip act ${alerts ? "tw-alert" : ""}`} aria-expanded={open === "brief"} aria-controls={`tw-brief-${data.threadId}`} title={label} aria-label={label} onClick={() => toggle("brief")}><Glyph name="eye" size={13} /><span className="tw-brief-w">Brief</span>{alerts > 0 && <span className="tw-al">{plural(alerts, "alert")}</span>}<ExpandsMark open={open === "brief"} /></button>; })()}
+    {(() => { const alerts = scopeAlerts(data); const label = `Member${alerts ? `, ${plural(alerts, "scope alert")}` : ""}: show this member’s class, brief and guardrails`; return <button type="button" className={`tw-chip act ${alerts ? "tw-alert" : ""}`} aria-expanded={open === "brief"} aria-controls={`tw-brief-${data.threadId}`} title={label} aria-label={label} onClick={() => toggle("brief")}><Glyph name="eye" size={13} /><span className="tw-brief-w">Member</span>{alerts > 0 && <span className="tw-al">{plural(alerts, "alert")}</span>}<ExpandsMark open={open === "brief"} /></button>; })()}
   </>;
 }
 
@@ -378,10 +384,10 @@ const holdKey = (hold: CheckerHandoffHold) => `hold:${hold.id}`;
 
 function AsksPanel({ threadId, asks, holds, quests, revealAskId, revealVersion, onClose }: { threadId: string; asks: Ask[]; holds: HeldQuest[]; quests: KeeperView["boardQuests"]; revealAskId: string | null; revealVersion: number; onClose: () => void }) {
   const only = asks.length + holds.length === 1 ? asks[0]?.id ?? holdKey(activeHold(holds[0]!)!) : null;
-  const [expanded, setExpanded] = useState<string | null>(revealAskId ?? only);
+  const [expanded, setExpanded] = useState<string | null>(only);
   const [receipts, setReceipts] = useState<Ask[]>([]);
   const [released, setReleased] = useState<{ quest: HeldQuest; hold: CheckerHandoffHold }[]>([]);
-  useEffect(() => { if (revealAskId) setExpanded(revealAskId); }, [revealAskId, revealVersion]);
+  useEffect(() => { if (revealAskId && acknowledgeAskReveal(threadId, revealVersion)) setExpanded(revealAskId); }, [threadId, revealAskId, revealVersion]);
   const shown = [...asks, ...receipts.filter(r => !asks.some(a => a.id === r.id))];
   // A released hold keeps its receipt until the panel closes, even after the server's next read drops it.
   const waiting = holds.filter(q => !released.some(r => r.hold.id === activeHold(q)!.id));

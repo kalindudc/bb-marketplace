@@ -30,6 +30,13 @@ describe("a Tavern name mention becomes bb's thread mention", () => {
     expect(slot.container.textContent).toBe("");
   });
 
+  it("preserves a numeralled provider title as the thread mention label", () => {
+    const draft = { text: "ask @Juno II now", mentions: [{ ...juno, label: "Juno II", from: 4, to: 12 }], attachments: [] };
+    const swapped = swapNameMentions(draft, "test-plugin");
+    expect(swapped.text).toBe(draft.text);
+    expect(swapped.mentions[0]).toEqual({ kind: "thread", threadId: "thr_juno", label: "Juno II", from: 4, to: 12 });
+  });
+
   it("leaves the class pill, another plugin's pills and bb's own mentions alone", () => {
     const others: ComposerMention[] = [
       { kind: "plugin", pluginId: "test-plugin", provider: "classes", id: "keeper", label: "Keeper", from: 0, to: 3 },

@@ -123,7 +123,8 @@ export function SkReport({ section = false, confidence = false }: { section?: bo
 }
 
 /** `PhaseMark`'s five segments, empty. Pass the page's class for its large strip. */
-export function SkPhaseStrip({ className = "" }: { className?: string }) {
+export function SkPhaseStrip({ className = "", road = false }: { className?: string; road?: boolean }) {
+  if (road) return <ol className="tv-phase-road sk-road" aria-hidden="true">{[0, 1, 2, 3, 4].map(i => <li key={i}><span className="tv-phase-road-marker sk-el" /><span className="tv-phase-road-label"><SkLine w="8ch" /><SkLine w="5ch" /></span></li>)}</ol>;
   return <span className={`tv-ph sk-ph ${className}`}>{[0, 1, 2, 3, 4].map(i => <i key={i} />)}</span>;
 }
 

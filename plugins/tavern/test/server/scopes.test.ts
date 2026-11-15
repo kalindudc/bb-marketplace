@@ -91,6 +91,13 @@ async function fixture(installGuard = false) {
 }
 
 describe("backend scope integration", () => {
+  it("returns already in effect for scratch and own storage requests without opening an ask", async () => {
+    const f = await fixture();
+    await f.runtime.hire("lead", "project", f.input);
+    await expect(f.runtime.scopes!.override("lead", "child", { writes: { allow: ["/tmp/**", `${f.storage}/**`] } }, "Keep records")).resolves.toContain("already in effect");
+    expect(f.runtime.scopes!.pending("child")).toBeNull();
+    expect(f.k.store.openAsks("lead").filter(ask => ask.kind === "scope")).toHaveLength(0);
+  });
   it.each(["npm test", "node --test"])("rejects %s as a shell command, not a tool grant, without opening an ask", async command => {
     const f = await fixture();
     await f.runtime.hire("lead", "project", f.input);

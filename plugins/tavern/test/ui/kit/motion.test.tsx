@@ -16,6 +16,17 @@ const hide = (hidden: boolean) => { Object.defineProperty(document, "hidden", { 
 beforeEach(() => { motion.reset(); t = 1_000_000; motion.now = () => t; fx = installAnimations(); });
 afterEach(() => { cleanup(); fx.uninstall(); motion.reset(); document.body.innerHTML = ""; delete document.documentElement.dataset.motion; });
 
+it("lively repeats bypass rest and budgets but not typing or stuck items", async () => {
+ const e = el();
+ const repeat = () => motion.cue("page", e, "loop", {key:"loop",ms:3600,ambient:true,repeat:true,run:x=>slide(x,3600)});
+ expect(repeat()).not.toBeNull();
+ fx.running().forEach(a=>a.finish()); await flush(); t+=4000;
+ expect(repeat()).not.toBeNull();
+ motion.settle(); await flush();
+ const field = document.createElement("textarea"); document.body.append(field);
+ field.dispatchEvent(new Event("input", {bubbles:true}));
+ expect(repeat()).toBeNull();
+});
 describe("class cues", () => {
   beforeEach(() => { fx.uninstall(); fx = installAnimations({ "mo-flare": 500 }); });
   /** Each read of offsetWidth, with whether the cue's class was on the element at that moment. A reflow flushes style, as in the

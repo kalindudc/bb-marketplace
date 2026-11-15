@@ -98,7 +98,7 @@ function noteLine(note: KeeperNote) {
 function memberLines(k: Keeper, summary: BoardQuestSummary) {
   return summary.members.map(
     (m) =>
-      `${m.threadId}: ${k.name(m)} (${m.classId}), ${m.state}${m.checkIndependence === "same-family" ? "; same-family check (not independent)" : m.checkIndependence === "not-established" ? "; check independence not established" : ""}${m.guardPosture ? `; ${m.guardPosture.label}` : ""}; waypoint ${m.waypointId ?? (m.classId === "warden" ? k.checkerWaypoints(m.threadId).join(",") : "none")}; strikes ${m.strikes}; doing ${quoted(short(memberDoing(k, m.threadId, m.doing), needsAttention(k, m.threadId) ? 300 : 120))}${k.store.runtime(m.threadId).released ? "; released" : ""}`,
+      `${k.name(m)} (${m.classId}), ${m.state}${m.checkIndependence === "same-family" ? "; same-family check (not independent)" : m.checkIndependence === "not-established" ? "; check independence not established" : ""}${m.guardPosture ? `; ${m.guardPosture.label}` : ""}; waypoint ${m.waypointId ?? (m.classId === "warden" ? k.checkerWaypoints(m.threadId).join(",") : "none")}; strikes ${m.strikes}; doing ${quoted(short(memberDoing(k, m.threadId, m.doing), needsAttention(k, m.threadId) ? 300 : 120))}${k.store.runtime(m.threadId).released ? "; released" : ""}`,
   );
 }
 function needsAttention(k: Keeper, threadId: string) {
@@ -153,7 +153,7 @@ function questBlock(k: Keeper, summary: BoardQuestSummary) {
     !plan || !isOpenQuest(summary) || summary.phase === "wrap"
       ? summary.move.text
       : next
-        ? `${next.id}: ${short(next.title, 80)}; ${next.actor} ${next.actor === "agent" && next.ownerMember ? next.ownerMember.threadId : (next.owner ?? "unassigned")}; lead time ${next.leadTime ?? "unknown"}`
+        ? `${next.id}: ${short(next.title, 80)}; ${next.actor} ${next.actor === "agent" && next.ownerMember ? `${k.name(next.ownerMember)} (${next.ownerMember.classId})` : (next.owner ?? "unassigned")}; lead time ${next.leadTime ?? "unknown"}`
         : summary.move.text;
   const lines = [
     `${short(summary.title, 80)} (${summary.id}) — ${summary.phase}, plan v${summary.planVersion}, ${summary.greenlitVersion === null ? "not approved yet" : `approved v${summary.greenlitVersion}`}`,
@@ -162,7 +162,7 @@ function questBlock(k: Keeper, summary: BoardQuestSummary) {
     `Allocated party: ${plan?.party.map((p) => `${p.classId} for ${p.waypointIds.join(",") || p.purpose}`).join("; ") || "not planned"}`,
     ...waypoints.map(
       (w) =>
-        `${w.id} [${w.state}] ${quoted(short(w.title, 80))}; ${w.actor} owner ${w.actor === "agent" && w.ownerMember ? `${k.name(w.ownerMember)} (${w.ownerMember.threadId}, ${w.ownerMember.state})` : (w.owner ?? "unassigned")}; lead time ${w.leadTime ?? "unknown"}; after ${w.dependsOn.join(",") || "none"}${w.rejectedReason ? `; rejected: ${quoted(w.rejectedReason)}` : ""}${w.actor === "outside" ? (w.gate ? `; asked ${w.gate.askedWho} at ${clock(w.gate.askedAt)} via ${quoted(w.gate.via)}; answer ${quoted(w.gate.answer ?? "waiting")}` : "; not asked yet") : ""}`,
+        `${w.id} [${w.state}] ${quoted(short(w.title, 80))}; ${w.actor} owner ${w.actor === "agent" && w.ownerMember ? `${k.name(w.ownerMember)} (${w.ownerMember.classId}, ${w.ownerMember.state})` : (w.owner ?? "unassigned")}; lead time ${w.leadTime ?? "unknown"}; after ${w.dependsOn.join(",") || "none"}${w.rejectedReason ? `; rejected: ${quoted(w.rejectedReason)}` : ""}${w.actor === "outside" ? (w.gate ? `; asked ${w.gate.askedWho} at ${clock(w.gate.askedAt)} via ${quoted(w.gate.via)}; answer ${quoted(w.gate.answer ?? "waiting")}` : "; not asked yet") : ""}`,
     ),
     ...memberLines(k, summary),
   ];
@@ -290,25 +290,6 @@ export function renderRestatement(
       .filter(
         (m) => m.errand && !["done", "stopped", "failed"].includes(m.state),
       );
-    parts.push(
-      section(
-        "Steers still in force",
-        steers,
-        3200,
-        "more steers; call tavern_status section=steers",
-      ),
-    );
-    parts.push(
-      section(
-        "Answered asks",
-        answered.map(
-          (a) =>
-            `${a.id}: ${quoted(a.question)}; ${a.state} at ${a.answer ? clock(a.answer.at) : "unknown"}; ${a.options.find((o) => o.id === a.answer?.optionId)?.label ?? a.answer?.optionId}`,
-        ),
-        1500,
-        "more answers; call tavern_status section=asks",
-      ),
-    );
     const recent = decisions.filter(
       (d) =>
         d.source === "keeper" &&
@@ -323,7 +304,7 @@ export function renderRestatement(
         "Errands in flight",
         errands.map(
           (m) =>
-            `${m.threadId}: ${k.name(m)} (${m.classId}), ${m.state}${m.checkIndependence === "same-family" ? "; same-family check (not independent)" : m.checkIndependence === "not-established" ? "; check independence not established" : ""}${m.guardPosture ? `; ${m.guardPosture.label}` : ""}, strikes ${m.strikes}; ${quoted(m.title ?? "errand")}; doing ${quoted(short(m.doing ?? "none", 120))}`,
+            `${k.name(m)} (${m.classId}), ${m.state}${m.checkIndependence === "same-family" ? "; same-family check (not independent)" : m.checkIndependence === "not-established" ? "; check independence not established" : ""}${m.guardPosture ? `; ${m.guardPosture.label}` : ""}, strikes ${m.strikes}; ${quoted(m.title ?? "errand")}; doing ${quoted(short(m.doing ?? "none", 120))}`,
         ),
         1500,
         "more errands; call tavern_status section=errands",
@@ -331,6 +312,25 @@ export function renderRestatement(
     );
     const review = k.memory.review();
     parts.push(`Review queue: ${review.waiting} of ${review.budget}`);
+    parts.push(
+      section(
+        "Steers still in force",
+        steers,
+        3200,
+        "more steers; call tavern_status section=steers",
+      ),
+    );
+    parts.push(
+      section(
+        "Answered asks",
+        answered.map(
+          (a) =>
+            `${a.id}: ${quoted(short(a.question, 160))}; ${a.state} at ${a.answer ? clock(a.answer.at) : "unknown"}; ${a.options.find((o) => o.id === a.answer?.optionId)?.label ?? a.answer?.optionId}`,
+        ),
+        1500,
+        "more answers; call tavern_status section=asks",
+      ),
+    );
     parts.push(
       section(
         "Recent decisions",

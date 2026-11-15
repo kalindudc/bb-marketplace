@@ -45,5 +45,5 @@ it.each(["git add -A && git commit -m x && git push origin HEAD", "git commit -a
 it.each(["npm test && git push origin HEAD", "git switch main && git push origin HEAD", "git stash pop && git push origin HEAD", "git reset --hard main && git push origin HEAD"])("does not widen the branch-preserving list: %s", command => expect(fixture().check(command).decision.allow).toBe(false));
 it("allows mktemp -d only as a checked scratch writer", () => {
   for (const role of ["ranger", "smith"]) expect(fixture().check("tmp=$(mktemp -d); echo ok", role).decision.allow).toBe(true);
-  expect(fixture().check("mktemp -d", "keeper").decision.allow).toBe(false);
+  expect(fixture().check("mktemp -d", "keeper").decision.allow).toBe(true);
 });

@@ -4,11 +4,12 @@ import { cleanup, fireEvent, waitFor, within } from "@testing-library/react";
 import { definePluginApp } from "@get-bb/plugin-sdk/app";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { registerThreadSurfaces } from "../../../src/ui/thread/register";
+import { clearThreadState } from "../../../src/ui/thread/state";
 import { LedgerTab } from "../../../src/ui/thread/tabs";
 import { askSchema, checkerHandoffHoldSchema } from "../../../src/shared/schema";
 import { fixtureAsk, fixtureDecor, fixtureLedger, fixtureQuest, fixtureRegistry } from "../../../src/ui/thread/fixtures";
 
-afterEach(cleanup);
+afterEach(() => { cleanup(); clearThreadState(); });
 const hold = checkerHandoffHoldSchema.parse({ id: "hold-1", routeId: "route-1", sourceMessageId: "msg-1", sourceText: "Don't hand the vault check to a Warden until I've looked", reason: "You asked to look before any Warden checks the cutover", createdAt: Date.now() - 60_000, release: null });
 const heldQuest = { ...fixtureQuest, phase: "build" as const, checkerHandoffHold: hold };
 const releaseAsk = askSchema.parse({ ...fixtureAsk, id: "release-1", kind: "blocker", question: "Release the checker handoff on Vault?", draft: null, releaseHoldId: hold.id, options: [{ id: "release", label: "Release", detail: "", recommended: true }, { id: "keep-held", label: "Keep it held", detail: "", recommended: false }] });

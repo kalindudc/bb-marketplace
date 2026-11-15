@@ -1,0 +1,10 @@
+.tavern .tw-brief-fields { display: flex; flex-direction: column; gap: 12px; min-width: 0; color: var(--foreground); }
+.tavern .tw-brief-fields section { min-width: 0; }
+.tavern .tw-brief-fields header { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px; }
+.tavern .tw-brief-fields h4 { margin: 0 0 4px; font-size: 12px; }
+.tavern .tw-brief-fields :is(p, li) { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.tavern .tw-brief-fields :is(ol, ul) { margin: 0; padding-left: 20px; }
+.tavern .tw-brief-fields li + li { margin-top: 4px; }
+.tavern .tw-brief-fields code { white-space: pre-wrap; overflow-wrap: anywhere; }
+.tavern .tw-brief-fields .tw-brief-outcome { font-size: 14px; line-height: 1.5; }
+.tavern .tw-brief-fields .m { color: var(--tavern-muted); }
