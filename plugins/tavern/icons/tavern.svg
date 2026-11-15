@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square" stroke-linejoin="miter">
+  <!-- A tavern sign: a wall bracket with the board hung from two chains, a Keeper's shield on it.
+       bb paints a plugin icon as a mask of this file in the theme colour, so it is one silhouette. -->
+  <path d="M3.25 3.25v8.5M3.25 5.25h17.5M3.25 10.25l5-5M8.75 5.25v3.5M17.75 5.25v3.5"/>
+  <path d="M5.75 8.75h15v12h-15Z"/>
+  <path d="M10.75 11.75h5v3c0 1.6-1 2.7-2.5 3.3-1.5-.6-2.5-1.7-2.5-3.3Z" fill="currentColor" stroke="none"/>
+</svg>

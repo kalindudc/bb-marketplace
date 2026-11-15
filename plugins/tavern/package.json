@@ -1,0 +1,72 @@
+{
+  "name": "bb-plugin-tavern",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "bb": ">=0.49.0",
+    "bbPluginSdk": ">=0.6.132"
+  },
+  "bb": {
+    "name": "Tavern",
+    "description": "Hand a thin goal to a Keeper: it scouts, shows you a quest map to greenlight, forms a party of agents with characters, and keeps them on course while you steer, interrupt or drop asides as you like. Every thread gets a journal.",
+    "branding": {
+      "icon": "./icons/tavern.svg",
+      "experimental_icons": {
+        "tavern": "./icons/tavern.svg",
+        "journal": "./icons/journal.svg",
+        "ledger": "./icons/ledger.svg",
+        "board-quest": "./icons/board-quest.svg",
+        "side-quest": "./icons/side-quest.svg",
+        "quest-map": "./icons/quest-map.svg",
+        "ask": "./icons/ask.svg",
+        "decided": "./icons/decided.svg",
+        "party": "./icons/party.svg",
+        "report": "./icons/report.svg",
+        "wax-seal": "./icons/wax-seal.svg",
+        "tick": "./icons/tick.svg",
+        "verified": "./icons/verified.svg",
+        "rejected": "./icons/rejected.svg",
+        "route": "./icons/route.svg",
+        "rule": "./icons/rule.svg"
+      }
+    },
+    "server": "./server.ts",
+    "host": "./host.ts",
+    "app": "./app.tsx",
+    "skills": [
+      "./skills"
+    ]
+  },
+  "scripts": {
+    "build": "bb plugin build",
+    "test": "vitest run",
+    "typecheck": "tsc"
+  },
+  "dependencies": {
+    "@get-bb/plugin-sdk": "0.6.132",
+    "@radix-ui/react-slot": "1.5.0",
+    "smol-toml": "^1.9.1",
+    "yaml": "2.9.1",
+    "zod": "4.6.6"
+  },
+  "devDependencies": {
+    "@testing-library/react": "^16.3.3",
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "better-sqlite3": "^12.0.0",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "cron-parser": "^5.10.5",
+    "hono": "^4.13.18",
+    "jsdom": "^27.0.1",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "sonner": "^1.7.4",
+    "tailwind-merge": "^3.4.0",
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.12"
+  }
+}

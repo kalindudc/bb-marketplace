@@ -1,0 +1,160 @@
+/* The journal tab as a kept notebook (kit README "Journal tally and ribbon"). Header classes .journal-head and .journal-title live in the kit; the Ledger and rule tabs share them. */
+.tavern.journal { --jn-row: 28px; --jn-hit: 24px; --jn-pad: 12px; --jn-gutter: 14px; --jn-step: 22px; }
+/* The notebook is its own container, so narrow rules follow bb's side panel (360 px on a wide window) rather than the window. It creates no scroll container. */
+.tavern.journal.notebook { container: notebook / inline-size; }
+/*
+ * The page (plan idea 2, kit README "Journal paper"): a warm page below a plain header, a stitched spine in the panel's own 4 px edge,
+ * outside every row, its hover tint and the ribbon, and the rows' bottom edges as faint rule lines. No layer sits behind any text.
+ */
+/* Every mark is its own element: a text box keeps one plain colour behind it, so the contrast audit measures every entry. */
+.tavern.journal.notebook { position: relative; padding-left: 4px; background: var(--tavern-paper); }
+.tavern.journal.notebook::before { content: ""; position: absolute; left: 1px; top: 0; bottom: 0; width: 2px; background: repeating-linear-gradient(to bottom, var(--tavern-paper-spine) 0 5px, transparent 5px 10px); pointer-events: none; }
+/* The header stays plain and covers the spine's edge; in dark themes its lower padding carries the lantern's edge, never an entry row. */
+.tavern.journal.notebook > .journal-head { margin-left: -4px; padding-left: 16px; background: var(--background); }
+.tavern.journal.notebook > .journal-head::after, .tavern.journal.notebook > .journal-add::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 8px; background: linear-gradient(to top, var(--tavern-paper-lantern), transparent); pointer-events: none; }
+.tavern .journal-tools { display: inline-flex; align-items: center; gap: 2px; }
+
+/* Header: tally line, now line, filters */
+.tavern .journal-slate { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 10px; min-height: 16px; }
+/* With nothing done the tally draws no strokes; its empty slot keeps the label but gives back the gap, so "0 of N" starts at the edge. */
+.tavern .journal-slate > .tally-slot:empty { margin-inline-end: -10px; }
+.tavern .journal-count { font-size: 12px; color: var(--tavern-muted); white-space: nowrap; }
+.tavern .journal-count b { font-size: 13px; color: var(--foreground); }
+.tavern .journal-k { font-size: 12px; white-space: nowrap; }
+.tavern .journal-k.blk { color: var(--tavern-blocked); }
+.tavern .journal-k.bad { color: var(--tavern-bad); }
+/* Currency: when the journal last moved. Marked only with words beside the colour ("1 report waiting"). */
+.tavern .journal-cur { margin: 0; font-size: 12px; color: var(--tavern-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tavern .journal-cur.stale { color: var(--tavern-blocked); }
+/* The now line: where the pen is, always in the header, so a long journal never hides it below the fold. A mark and a tint, no glow. */
+.tavern .journal-now { display: flex; align-items: center; gap: 6px; min-width: 0; min-height: 26px; margin: 0 calc(-1 * var(--jn-pad)) 0 -4px; padding: 0 var(--jn-pad) 0 4px; border: 0; background: color-mix(in oklab, var(--primary) 8%, var(--background)); color: var(--foreground); font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
+.tavern .journal-now:hover { background: color-mix(in oklab, var(--primary) 14%, var(--background)); }
+.tavern .journal-now .lbl { flex: none; font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+.tavern .journal-now .id { flex: none; font-family: var(--font-mono); font-size: 11px; color: var(--tavern-muted); font-variant-numeric: tabular-nums; }
+.tavern .journal-now .t { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.tavern .journal-filters { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+
+.tavern .journal-empty { padding: 16px 12px; font-size: 12px; }
+.tavern .journal-alldone { display: flex; align-items: center; gap: 8px; padding: 14px var(--jn-pad) 6px 14px; font-size: 12px; color: var(--tavern-muted); }
+.tavern .journal-alldone b { color: var(--foreground); }
+.tavern .journal-receipt { margin: 6px var(--jn-pad) 0; font-size: 12px; }
+
+/* The list: a margin rule, one compact row per entry, the open entry raised in place */
+.tavern .journal-list { position: relative; display: flex; flex-direction: column; padding: 4px 0; }
+/* The rule runs through every checkbox's centre, a parent's and a step's alike; steps indent by their text. */
+.tavern.journal > .journal-list::before, .tavern .journal-group > .journal-list::before { content: ""; position: absolute; left: calc(var(--jn-gutter) + var(--jn-hit) / 2 - 0.5px); top: 0; bottom: 0; width: 1px; background: color-mix(in oklab, var(--primary) 32%, transparent); pointer-events: none; }
+.tavern .journal-item { min-width: 0; }
+.tavern .journal-steps { display: flex; flex-direction: column; }
+.tavern .journal-steps .journal-row .desc, .tavern .journal-steps .journal-stepfold .tal + span { margin-left: var(--jn-step); }
+.tavern .journal-steps :is(.journal-detail, .journal-confirm) { margin-left: calc(46px + var(--jn-step)); }
+.tavern .journal-steps .journal-edit { padding-left: calc(50px + var(--jn-step)); }
+.tavern .journal-entry { min-width: 0; }
+.tavern .journal-row { position: relative; display: flex; align-items: center; gap: 6px; min-height: var(--jn-row); padding: 0 var(--jn-pad) 0 var(--jn-gutter); min-width: 0; }
+.tavern .journal-row:hover, .tavern .journal-entry.open > .journal-row { background: var(--tavern-hover); }
+/* Rule lines: each row's own bottom edge, drawn inside its box, so the row keeps its height and the text has nothing behind it. */
+.tavern .journal-list .journal-row { box-shadow: inset 0 -1px 0 var(--tavern-paper-rule); }
+.tavern .journal-entry.now > .journal-row { background: color-mix(in oklab, var(--primary) 8%, var(--tavern-paper)); }
+.tavern .journal-entry.now > .journal-row .desc .t { font-weight: 600; }
+.tavern .journal-row .tick { display: grid; place-items: center; flex: none; width: var(--jn-hit); height: var(--jn-hit); margin-right: 6px; padding: 0; border: 0; background: none; cursor: pointer; }
+.tavern .journal-row .tick:disabled { cursor: default; }
+/* An empty box would show the rule through it; fill it with the page so the rule passes behind. */
+.tavern .journal-row .tick .smark:not(.s-verified) .box { fill: var(--tavern-paper); }
+.tavern .journal-row .desc { flex: 1 1 0; min-width: 40%; display: flex; align-items: center; gap: 6px; min-height: var(--jn-hit); padding: 0 2px; border: 0; background: none; text-align: left; cursor: pointer; font: inherit; font-size: 12px; color: var(--foreground); overflow: hidden; }
+.tavern .journal-row .desc .id { flex: none; font-family: var(--font-mono); font-size: 11px; color: var(--tavern-muted); font-variant-numeric: tabular-nums; }
+.tavern .journal-row .desc .t { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tavern .journal-entry:is(.s-done, .s-verified) .desc .t { color: var(--tavern-muted); text-decoration: line-through; text-decoration-color: color-mix(in oklab, currentColor 55%, transparent); }
+.tavern .journal-row .meta { display: inline-flex; align-items: center; gap: 6px; flex: none; font-size: 11px; color: var(--tavern-muted); }
+.tavern .journal-row .cnt { display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.tavern .journal-row .flag { font-size: 11px; color: var(--tavern-blocked); }
+.tavern .journal-row .flag.bad { color: var(--tavern-bad); }
+/* A quiet tag, not a control: no border, no box. */
+.tavern .journal-row .flag.rep { color: var(--foreground); font-weight: 600; }
+/* The user's own hand: a still pen, never a control. */
+.tavern .journal-row .pen { display: inline-flex; align-items: center; color: var(--tavern-muted); }
+.tavern .journal-row .own { max-width: 14ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tavern .journal-group > h3 { margin: 0; padding: 10px var(--jn-pad) 2px var(--jn-gutter); font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--tavern-muted); }
+.tavern .journal-group > h3 .num { font-weight: 600; letter-spacing: 0; }
+.tavern .journal-stepfold { width: 100%; border: 0; background: transparent; font: inherit; font-size: 11px; color: var(--tavern-muted); cursor: pointer; text-align: left; }
+.tavern .journal-stepfold .tal { display: inline-flex; justify-content: center; width: var(--jn-hit); margin-right: 6px; }
+/* Quick controls take no room until the row is hovered or focused, so the text uses the width; on phones the open entry carries them instead. */
+.tavern .journal-ctl { display: none; align-items: center; flex: none; }
+.tavern .journal-row:is(:hover, :focus-within) .journal-ctl, .tavern .journal-entry.open > .journal-row .journal-ctl { display: inline-flex; }
+.tavern .journal-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 var(--jn-pad) 4px 50px; font-size: 12px; }
+.tavern .journal-edit { display: flex; gap: 6px; align-items: center; min-height: var(--jn-row); padding: 2px var(--jn-pad) 2px 50px; }
+.tavern .journal-edit input { flex: 1; min-width: 0; }
+/* In a narrow panel the field takes the whole row and Save and Cancel wrap under it, Save first, so the Tab order holds. */
+@container notebook (max-width: 400px) {
+  .tavern .journal-edit { flex-wrap: wrap; justify-content: flex-end; }
+  .tavern .journal-edit input { flex-basis: 100%; }
+}
+.tavern .journal-reason { margin: -2px var(--jn-pad) 4px 50px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--tavern-muted); }
+
+.tavern .journal-detail { margin: 2px var(--jn-pad) 6px 46px; padding: 8px 10px; border: 1px solid var(--tavern-line); background: var(--tavern-elev-raised-bg); box-shadow: var(--tavern-elev-raised-shadow); display: flex; flex-direction: column; gap: 8px; font-size: 12px; }
+.tavern .journal-detail .full { line-height: 1.5; }
+.tavern .journal-verdict { display: flex; gap: 8px; align-items: flex-start; padding-left: 8px; }
+.tavern .journal-verdict > .tavern-glyph { flex: none; margin-top: 1px; }
+.tavern .journal-verdict > div { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.tavern .journal-verdict .why { line-height: 1.5; }
+.tavern .journal-verdict.ok { padding-left: 0; }
+.tavern .journal-verdict.ok > .tavern-glyph { color: var(--tavern-wax); }
+.tavern .journal-verdict.bad { box-shadow: inset 3px 0 0 var(--tavern-bad); }
+.tavern .journal-verdict.bad > .tavern-glyph, .tavern .journal-verdict.bad b { color: var(--tavern-bad); }
+.tavern .journal-verdict.blk { box-shadow: inset 3px 0 0 var(--tavern-blocked); }
+.tavern .journal-verdict.rep { box-shadow: inset 3px 0 0 var(--tavern-line); }
+.tavern .journal-verdict.rep .btn { align-self: flex-start; margin-top: 4px; }
+.tavern .journal-verdict.blk > .tavern-glyph, .tavern .journal-verdict.blk b { color: var(--tavern-blocked); }
+.tavern .journal-linkline { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 0 6px; align-items: baseline; padding: 5px 8px; border: 1px solid color-mix(in oklab, var(--tavern-teal) 50%, var(--tavern-line)); background: color-mix(in oklab, var(--tavern-teal) 7%, var(--card)); }
+.tavern .journal-linkline .tavern-glyph { color: var(--tavern-teal); }
+.tavern .journal-linkline .m { grid-column: 2; font-size: 11px; }
+.tavern .journal-note { white-space: pre-wrap; border-left: 2px solid var(--tavern-line); padding-left: 8px; }
+.tavern .journal-facts { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 11px; color: var(--tavern-muted); }
+.tavern .journal-ehist { display: flex; flex-direction: column; gap: 2px; font-size: 11px; color: var(--tavern-muted); border-top: 1px dashed var(--tavern-line); padding-top: 6px; }
+.tavern .journal-ehist .who-n, .tavern .journal-history .who-n { color: var(--foreground); font-weight: 600; }
+.tavern .journal-ask { display: flex; flex-direction: column; gap: 6px; padding: 8px; border: 1px solid var(--tavern-line); border-left: 3px solid var(--primary); background: var(--tavern-recessed); }
+.tavern .journal-ask label { display: flex; flex-direction: column; gap: 3px; }
+.tavern .journal-ask .ev-row { display: flex; gap: 6px; flex-wrap: wrap; }
+.tavern .journal-ask .ev-row .grow { flex: 1; min-width: 140px; }
+.tavern .journal-ask .acts, .tavern .journal-note-edit .acts { display: flex; gap: 6px; }
+.tavern .journal-note-edit { display: flex; flex-direction: column; gap: 6px; }
+.tavern .journal-note-edit label { display: flex; flex-direction: column; gap: 3px; }
+.tavern .journal-dacts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.tavern .journal-dacts .sp { flex: 1; }
+.tavern .journal-dacts .lnk, .tavern .journal-note .lnk { min-height: var(--jn-hit); }
+.tavern .journal-dacts .btn .tavern-glyph { flex: none; }
+.tavern .journal-stepadd { display: flex; gap: 6px; }
+.tavern .journal-stepadd input { flex: 1; min-width: 0; }
+.tavern .journal-parent { display: flex; gap: 6px; align-items: center; font-size: 11px; color: var(--tavern-muted); min-width: 0; max-width: 100%; white-space: nowrap; }
+.tavern .journal-parent select { min-width: 0; flex: 1; max-width: 260px; font-size: 12px; }
+
+.tavern .journal-add { position: relative; display: flex; gap: 6px; padding: 8px var(--jn-pad) 8px 12px; }
+.tavern .journal-add input { flex: 1; min-width: 0; }
+.tavern .journal-done { padding: 4px var(--jn-pad) 0 8px; }
+.tavern .journal-done .fold .tally-slot { margin-left: 4px; }
+.tavern .journal-history { margin-top: auto; padding: 6px 12px 12px; border-top: 1px solid var(--tavern-line); }
+.tavern .journal-history summary { display: inline-flex; align-items: center; gap: 4px; min-height: 26px; font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--tavern-muted); cursor: pointer; }
+.tavern .journal-history[open] summary .tavern-glyph { transform: rotate(90deg); }
+.tavern .journal-history ol { display: flex; flex-direction: column; gap: 3px; padding-top: 4px; }
+.tavern .journal-history li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; font-size: 11px; color: var(--tavern-muted); align-items: baseline; }
+.tavern .journal-history .tx { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tavern .journal-more { margin: 4px 0 0 4px; }
+
+/* On the open, hovered and asking tints, muted text moves closer to the foreground so it keeps 4.5:1 in every theme. */
+.tavern :is(.journal-ask, .journal-entry.open > .journal-row, .journal-row:hover, .journal-entry.now > .journal-row, .journal-now) { --tavern-muted: color-mix(in oklab, var(--muted-foreground) 45%, var(--foreground)); }
+
+/* Loading: the now line keeps its height but not its tint, which would claim a current entry before there is one. */
+.tavern .journal-now.sk-now { background: transparent; cursor: default; }
+
+/* Phones and touch: 44 px rows and targets; rows hide their quick controls and the open entry carries them. */
+@media (pointer: coarse), (max-width: 560px) {
+  .tavern.journal { --jn-row: 44px; --jn-hit: 44px; }
+  /* The open entry's detail carries them, so the row never shows them twice; this must outrank the hover and open rules above. */
+  .tavern .journal-row .journal-ctl, .tavern .journal-row:is(:hover, :focus-within) .journal-ctl, .tavern .journal-entry.open > .journal-row .journal-ctl { display: none; }
+  .tavern .journal-now { min-height: 44px; }
+  .tavern .journal-row .tick { margin-right: 0; }
+  .tavern .journal-title h2 .anc { display: none; }
+  .tavern.journal .btn.sm { min-height: 44px; min-width: 44px; }
+  .tavern :is(.journal-dacts, .journal-note) .lnk { min-width: 44px; }
+  .tavern .journal-history summary { min-height: 44px; }
+  .tavern :is(.journal-add, .journal-stepadd, .journal-ask, .journal-edit, .journal-note-edit, .journal-parent) :is(input, select, textarea) { font-size: 16px; min-height: 44px; }
+  .tavern .journal-row .meta .wide { display: none; }
+}

@@ -1,0 +1,49 @@
+/* Skeletons: static stand-ins for content still loading (README "Loading"). No animation of any kind; the swap is instant.
+   Beena's measurement (design/motion/skel-contrast.md), option B: the 1 px edge carries 3:1 against every surface (60%: 3.41:1 or
+   more on the card, the recessed lane, a notice and the glow's peak, in all three themes; 55% is the floor), and the 9% fill is
+   decoration. Both are mixed from the foreground over whatever surface they sit on. */
+.tavern { --tavern-skel: color-mix(in oklab, var(--foreground) 9%, transparent); --tavern-skel-edge: color-mix(in oklab, var(--foreground) 60%, transparent); }
+
+.tavern .sk-region { min-width: 0; }
+.tavern .sk-region[data-skeleton="held"] > .sk { visibility: hidden; }
+.tavern .sk { pointer-events: none; user-select: none; min-width: 0; }
+.tavern .sk-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+/* A line holds one invisible zero-width character (CSS content, not DOM text), so its height and baseline come from the font
+   exactly as the text's would; the bar sits in its middle at the height of a lowercase run. */
+.tavern .sk-l { position: relative; display: block; flex: none; inline-size: var(--sk-w, 100%); max-inline-size: 100%; min-inline-size: 0; overflow: hidden; }
+.tavern .sk-l::after { content: "\200B"; }
+.tavern .sk-l::before { content: ""; position: absolute; inset-inline: 0; top: calc(50% - .32em); height: .64em; background: var(--tavern-skel); box-shadow: inset 0 0 0 1px var(--tavern-skel-edge); }
+.tavern .sk-b { display: block; flex: none; inline-size: var(--sk-w, 100%); max-inline-size: 100%; block-size: var(--sk-h); background: var(--tavern-skel); box-shadow: inset 0 0 0 1px var(--tavern-skel-edge); }
+.tavern :is(.sk-crest, .sk-glyph) { display: block; flex: none; fill: var(--tavern-skel); stroke: var(--tavern-skel-edge); stroke-width: 1.5; }
+.tavern .sk-sp { flex: 1; }
+.tavern .sk-end { margin-inline-start: auto; }
+.tavern .sk-col { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+
+/* Kit components keep their own classes; only what would read as content changes. */
+.tavern .sk-row, .tavern .sk-row * { cursor: default; }
+.tavern .sk-row:hover, .tavern .sk-row .krow-who:hover { background: transparent; }
+.tavern .sk-btn { display: inline-block; min-width: 6ch; background: transparent; border-color: var(--tavern-skel-edge); box-shadow: none; }
+.tavern .qrow-x.sk-btn { box-shadow: inset 0 0 0 1px var(--tavern-skel-edge); }
+.tavern .sk-body { display: flex; flex-direction: column; min-width: 0; }
+.tavern .tcard.sk-nested { background: var(--tavern-elev-nested-bg); border-color: var(--tavern-line-nested); box-shadow: none; }
+.tavern .sk-ph i { border-color: var(--tavern-skel-edge); background: transparent; }
+.tavern .sk-chart .b { background: var(--tavern-skel); box-shadow: inset 0 0 0 1px var(--tavern-skel-edge); }
+.tavern .sk-segc .seg { cursor: default; }
+
+.tavern .sk-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; font-size: 12px; }
+.tavern .sk-ctl { display: block; height: 28px; box-shadow: inset 0 0 0 1px var(--tavern-skel-edge); }
+
+/* Shapes for page components; the page's own class in `className` gives them its container's size. */
+.tavern .sk-notice { display: flex; flex-direction: column; gap: 8px; min-width: 0; padding: 10px 12px; }
+.tavern .sk-nh { display: flex; align-items: center; gap: 10px; min-width: 0; font-size: 12px; }
+.tavern .sk-nh > .sk-col > :first-child { font-size: 14px; }
+.tavern .sk-party { display: flex; gap: 12px; min-width: 0; font-size: 11px; }
+.tavern .sk-zone { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 0; min-height: 44px; }
+.tavern .sk-qrows { display: flex; flex-direction: column; min-width: 0; }
+.tavern .sk-askrow { display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 6px 10px; font-size: 12px; }
+.tavern .sk-event { display: flex; align-items: flex-start; gap: 8px; padding: 4px 0; font-size: 12px; }
+.tavern .sk-node { display: flex; align-items: center; gap: 8px; width: var(--sk-w); max-width: 100%; padding: 8px; box-shadow: inset 0 0 0 1px var(--tavern-skel-edge); font-size: 12px; }
+.tavern .sk-credit { display: flex; flex-direction: column; gap: 6px; padding: 12px; background: var(--tavern-elev-nested-bg); border: 1px solid var(--tavern-line-nested); font-size: 12px; }
+
+@media (pointer: coarse), (max-width: 560px) { .tavern .sk-ctl { height: 44px; } }

@@ -1,0 +1,15 @@
+/* Page skeleton layouts. Shapes, colours and timing are the kit's (skeleton.css); these only lay the shapes out in the page's own
+   containers where a container needs help: the board's masonry rows are set by script, so its skeleton uses plain grid rows. */
+.tavern.tv-page .rm-board.sk-board { grid-auto-rows: auto; row-gap: 18px; }
+.tavern.tv-page .rm-board.sk-board > .rm-notice { margin-bottom: 0; }
+.tavern.tv-page .sk-record .tv-credits > .sk-li, .tavern.tv-page .sk-tale .tv-credits > .sk-li { list-style: none; min-width: 0; }
+.tavern.tv-page .sk-mapcol { display: flex; flex-direction: column; gap: 12px; padding: 12px 4px; }
+.tavern.tv-page .sk-mapcard { min-height: 320px; }
+.tavern.tv-page .sk-mapcols { display: flex; gap: 40px; padding: 48px 16px 16px; overflow: hidden; }
+.tavern.tv-page .sk-maprows { display: flex; flex-direction: column; }
+.tavern.tv-page .sk-maprow { display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 4px 10px; font-size: 12px; }
+.tavern.tv-page .sk-maprow + .sk-maprow { border-top: 1px dashed var(--tavern-line); }
+.tavern.tv-page .sk-fields { display: flex; flex-direction: column; gap: 12px; }
+.tavern.tv-page .sk-insights { display: flex; flex-direction: column; gap: 16px; }
+/* The sidebar's quests while the room loads: the space they last took, never more. */
+.tavern.tv-page .sk-sidenav { display: flex; flex-direction: column; gap: 2px; overflow: hidden; }

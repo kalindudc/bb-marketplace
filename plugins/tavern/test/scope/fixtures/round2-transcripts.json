@@ -1,0 +1,904 @@
+{
+  "description": "Everyday-command transcripts from the Tavern scopes round-2 review (scopes-logic-r2.md). expected is the reviewer's intended verdict; observedR2 is the engine result at the round-2 hashes (absent means ALLOW). Entries whose expected and observedR2 differ are false blocks or misses to fix.",
+  "reviewedAt": "2026-11-14T02:33-05:00",
+  "hashes": {
+    "src/scope/engine.ts": "1d6ea2e87df5",
+    "src/scope/shell.ts": "d66e0a46a2a6",
+    "src/scope/paths.ts": "f433046de3f5",
+    "src/scope/prepare.ts": "61fecf21aa54",
+    "src/scope/presets.ts": "8e61d6f8665d",
+    "src/scope/worktree.ts": "79dcf449276e"
+  },
+  "harness": {
+    "call": "evaluate(scope, prepareCall({ kind: 'tool', toolName: 'bash', input: { command }, cwd: wt }))",
+    "fixture": [
+      "Create base outside every scratch root (not under /private/tmp or $TMPDIR), or the readonly write results become artifacts.",
+      "git init -q -b main main && cd main && git -c user.email=a@b -c user.name=n commit -q --allow-empty -m init",
+      "git remote add origin git@github.com:kalindudc/world.git && git remote add upstream https://github.com/Shopify/world.git",
+      "git worktree add -q ../wt -b feature",
+      "cd ../wt && mkdir -p src packages/a && echo 'a' > src/a.ts && echo '{\"version\":\"1\"}' > package.json"
+    ],
+    "scope": "s = { ...scopeForClass(role), threadId: 't1', issuedAt: 1 }; if (s.writes.mode === 'worktree') s = bindWorktree(s, wt); s = bindPaths(s, { home: homedir(), tmp: ['/private/tmp', realpathSync(tmpdir())], scopesDir: base + '/scopes', threadStorage: base + '/storage' }, realPath)",
+    "policy": "No global or project scopes.yml, so Smith has no git-push-main grant.",
+    "placeholders": "${threadStorage} means base + '/storage'."
+  },
+  "counts": {
+    "ranger": {
+      "total": 88,
+      "expectedBlock": 3,
+      "mismatches": 19
+    },
+    "smith": {
+      "total": 79,
+      "expectedBlock": 4,
+      "mismatches": 15
+    },
+    "keeper": {
+      "total": 11,
+      "expectedBlock": 3,
+      "mismatches": 0
+    },
+    "regressions": {
+      "total": 8,
+      "expectedBlock": 6,
+      "mismatches": 5
+    }
+  },
+  "ranger": [
+    {
+      "command": "git status --short",
+      "expected": "allow"
+    },
+    {
+      "command": "git log --oneline -20",
+      "expected": "allow"
+    },
+    {
+      "command": "git log --oneline -5 -- src",
+      "expected": "allow"
+    },
+    {
+      "command": "git diff main...HEAD --stat",
+      "expected": "allow"
+    },
+    {
+      "command": "git show HEAD --stat",
+      "expected": "allow"
+    },
+    {
+      "command": "git branch -a",
+      "expected": "allow"
+    },
+    {
+      "command": "git remote -v",
+      "expected": "allow"
+    },
+    {
+      "command": "git rev-parse --show-toplevel",
+      "expected": "allow"
+    },
+    {
+      "command": "git stash list",
+      "expected": "allow"
+    },
+    {
+      "command": "git reflog -5",
+      "expected": "allow",
+      "observedR2": "BLOCK(git-alias)",
+      "note": "reflog show is read-only; still block reflog expire/delete"
+    },
+    {
+      "command": "git ls-remote origin",
+      "expected": "allow",
+      "observedR2": "BLOCK(git-alias)",
+      "note": "network read, no local write"
+    },
+    {
+      "command": "git show-ref --heads",
+      "expected": "allow",
+      "observedR2": "BLOCK(git-alias)"
+    },
+    {
+      "command": "git check-ignore -v node_modules",
+      "expected": "allow",
+      "observedR2": "BLOCK(git-alias)"
+    },
+    {
+      "command": "git --version",
+      "expected": "allow",
+      "observedR2": "BLOCK(git-alias)",
+      "note": "normalizeCommand strips --version, leaving no subcommand"
+    },
+    {
+      "command": "git grep -n TODO -- '*.ts'",
+      "expected": "allow"
+    },
+    {
+      "command": "git blame -L 1,1 src/a.ts",
+      "expected": "allow"
+    },
+    {
+      "command": "git worktree list",
+      "expected": "allow",
+      "observedR2": "BLOCK(shell-write)",
+      "note": "worktree list is read-only; add/remove/prune are not"
+    },
+    {
+      "command": "git config --get remote.origin.url",
+      "expected": "allow"
+    },
+    {
+      "command": "rg -n registerScopes src | head -20",
+      "expected": "allow"
+    },
+    {
+      "command": "grep -rn TODO src --include=*.ts | wc -l",
+      "expected": "allow"
+    },
+    {
+      "command": "find . -name '*.ts' -not -path './node_modules/*' | head",
+      "expected": "allow"
+    },
+    {
+      "command": "find . -name '*.ts' -exec grep -l foo {} +",
+      "expected": "allow",
+      "observedR2": "BLOCK(readonly-shell)",
+      "note": "allow when the -exec command is itself a read program (grep); keep blocking other -exec, -delete and -ok"
+    },
+    {
+      "command": "ls -la src/",
+      "expected": "allow"
+    },
+    {
+      "command": "cat package.json | jq '.version'",
+      "expected": "allow"
+    },
+    {
+      "command": "jq -r .version package.json",
+      "expected": "allow"
+    },
+    {
+      "command": "sed -n '1,40p' src/a.ts",
+      "expected": "allow"
+    },
+    {
+      "command": "sed -n 's/a/b/p' src/a.ts",
+      "expected": "allow",
+      "observedR2": "BLOCK(readonly-shell)",
+      "note": "substitution to stdout; block only the w/W/e flags, the e command, -i and -f"
+    },
+    {
+      "command": "sed 's/^/  /' src/a.ts",
+      "expected": "allow",
+      "observedR2": "BLOCK(readonly-shell)",
+      "note": "same as above; common pipeline transform"
+    },
+    {
+      "command": "awk '{print $1}' src/a.ts | sort | uniq -c | sort -rn | head",
+      "expected": "allow"
+    },
+    {
+      "command": "awk 'NR>1 {print $2}' src/a.ts",
+      "expected": "allow",
+      "observedR2": "BLOCK(readonly-shell)",
+      "note": "engine.ts:33 rejects any argument containing > or |; block print > file, print | cmd and system() instead"
+    },
+    {
+      "command": "awk -F, '$3 > 100' data.csv",
+      "expected": "allow",
+      "observedR2": "BLOCK(readonly-shell)",
+      "note": "comparison, not a redirection"
+    },
+    {
+      "command": "wc -l src/*.ts",
+      "expected": "allow"
+    },
+    {
+      "command": "head -50 README.md",
+      "expected": "allow"
+    },
+    {
+      "command": "tail -n 100 log.txt",
+      "expected": "allow"
+    },
+    {
+      "command": "diff -u src/a.ts src/a.ts",
+      "expected": "allow"
+    },
+    {
+      "command": "nl -ba src/a.ts | sed -n '1,20p'",
+      "expected": "allow"
+    },
+    {
+      "command": "[[ -f package.json ]] && echo yes",
+      "expected": "allow"
+    },
+    {
+      "command": "test -d node_modules || echo missing",
+      "expected": "allow"
+    },
+    {
+      "command": "command -v jq",
+      "expected": "allow"
+    },
+    {
+      "command": "which node",
+      "expected": "allow"
+    },
+    {
+      "command": "echo \"$HOME\"",
+      "expected": "allow"
+    },
+    {
+      "command": "env | grep BB_",
+      "expected": "allow",
+      "observedR2": "BLOCK(readonly-shell)",
+      "note": "bare env prints the environment; env with a command is already handled as a wrapper"
+    },
+    {
+      "command": "printenv PATH",
+      "expected": "allow",
+      "observedR2": "BLOCK(readonly-shell)"
+    },
+    {
+      "command": "date -u +%FT%TZ",
+      "expected": "allow"
+    },
+    {
+      "command": "ls ~/.pi/agent/extensions",
+      "expected": "allow"
+    },
+    {
+      "command": "cat ~/.agents/AGENTS.md | head -20",
+      "expected": "allow"
+    },
+    {
+      "command": "whoami",
+      "expected": "allow",
+      "observedR2": "BLOCK(readonly-shell)"
+    },
+    {
+      "command": "uname -a",
+      "expected": "allow"
+    },
+    {
+      "command": "ps aux | grep node",
+      "expected": "allow",
+      "observedR2": "BLOCK(readonly-shell)"
+    },
+    {
+      "command": "du -sh .",
+      "expected": "allow"
+    },
+    {
+      "command": "stat -f %m src/a.ts",
+      "expected": "allow"
+    },
+    {
+      "command": "sort -u src/a.ts | head",
+      "expected": "allow"
+    },
+    {
+      "command": "xargs -n1 echo < src/a.ts",
+      "expected": "allow"
+    },
+    {
+      "command": "time rg foo",
+      "expected": "allow"
+    },
+    {
+      "command": "gh pr view 123 --json title,body",
+      "expected": "allow"
+    },
+    {
+      "command": "gh pr list --state open --limit 10",
+      "expected": "allow"
+    },
+    {
+      "command": "gh pr diff 123 | head -100",
+      "expected": "allow"
+    },
+    {
+      "command": "gh api repos/o/r/pulls/1/comments",
+      "expected": "allow"
+    },
+    {
+      "command": "gh api graphql -f query='query { viewer { login } }'",
+      "expected": "allow",
+      "observedR2": "BLOCK(github)",
+      "note": "-f carries a query, not a mutation; allow graphql when the only field is query= and its text does not start with mutation"
+    },
+    {
+      "command": "gh run list --limit 5",
+      "expected": "allow"
+    },
+    {
+      "command": "gh run view 123 --log-failed | tail -50",
+      "expected": "allow"
+    },
+    {
+      "command": "gh search code foo --repo o/r",
+      "expected": "allow"
+    },
+    {
+      "command": "gh pr checks 123",
+      "expected": "allow"
+    },
+    {
+      "command": "kubectl --context staging get pods -n ns",
+      "expected": "allow"
+    },
+    {
+      "command": "kubectl logs deploy/x -n ns --tail=50",
+      "expected": "allow"
+    },
+    {
+      "command": "curl -s https://example.com/api | jq .",
+      "expected": "allow"
+    },
+    {
+      "command": "curl -sSfL -H 'Accept: application/json' https://example.com",
+      "expected": "allow"
+    },
+    {
+      "command": "bb thread list",
+      "expected": "allow"
+    },
+    {
+      "command": "bb thread show thr_x",
+      "expected": "allow"
+    },
+    {
+      "command": "bb status",
+      "expected": "allow"
+    },
+    {
+      "command": "cortex show 1162",
+      "expected": "allow"
+    },
+    {
+      "command": "npx vitest run test/scope",
+      "expected": "block",
+      "why": "readonly-shell: arbitrary program; test runners are not proven read-only (by design)",
+      "observedR2": "BLOCK(readonly-shell)"
+    },
+    {
+      "command": "node -e 'console.log(1)'",
+      "expected": "block",
+      "why": "readonly-shell: interpreter with inline code (by design)",
+      "observedR2": "BLOCK(readonly-shell)"
+    },
+    {
+      "command": "python3 -c 'print(1)'",
+      "expected": "block",
+      "why": "readonly-shell: interpreter with inline code (by design)",
+      "observedR2": "BLOCK(readonly-shell)"
+    },
+    {
+      "command": "cd src && ls",
+      "expected": "allow"
+    },
+    {
+      "command": "cd \"$(git rev-parse --show-toplevel)\" && git status",
+      "expected": "allow"
+    },
+    {
+      "command": "for f in src/*.ts; do wc -l \"$f\"; done",
+      "expected": "allow"
+    },
+    {
+      "command": "while read -r l; do echo \"$l\"; done < src/a.ts",
+      "expected": "allow",
+      "observedR2": "BLOCK(readonly-shell)",
+      "note": "read builtin is not in the read-program list"
+    },
+    {
+      "command": "echo notes > /tmp/ranger-notes.txt",
+      "expected": "allow"
+    },
+    {
+      "command": "tee /tmp/out.txt < src/a.ts",
+      "expected": "allow"
+    },
+    {
+      "command": "mkdir -p /tmp/ranger && cp src/a.ts /tmp/ranger/",
+      "expected": "allow"
+    },
+    {
+      "command": "cat <<'EOF' > /tmp/report.md\n# r\nEOF",
+      "expected": "allow"
+    },
+    {
+      "command": "git diff > /tmp/diff.patch",
+      "expected": "allow"
+    },
+    {
+      "command": "rg foo 2>/dev/null || true",
+      "expected": "allow"
+    },
+    {
+      "command": "ls nope 2>&1 | head",
+      "expected": "allow"
+    },
+    {
+      "command": "echo x > ${threadStorage}/notes.md",
+      "expected": "allow",
+      "note": "replace ${threadStorage} with the bound thread-storage root"
+    },
+    {
+      "command": "bash -c 'git status' | head",
+      "expected": "allow",
+      "observedR2": "BLOCK(readonly-shell)",
+      "note": "inline -c string is inspectable; shell.ts:80 marks any shell in a multi-command pipeline as opaque"
+    },
+    {
+      "command": "bash -euo pipefail -c 'git status'",
+      "expected": "allow",
+      "observedR2": "BLOCK(readonly-shell)",
+      "note": "shell.ts:80 accepts only -l/--login/--noprofile/--norc before -c; also accept -e, -u, -x and -o pipefail"
+    }
+  ],
+  "smith": [
+    {
+      "command": "git status",
+      "expected": "allow"
+    },
+    {
+      "command": "git checkout -b feature-x",
+      "expected": "allow"
+    },
+    {
+      "command": "git switch -c feature-y",
+      "expected": "allow"
+    },
+    {
+      "command": "git add -A && git commit -m 'fix: x'",
+      "expected": "allow"
+    },
+    {
+      "command": "git commit --amend --no-edit",
+      "expected": "allow"
+    },
+    {
+      "command": "git rebase origin/main",
+      "expected": "allow"
+    },
+    {
+      "command": "git fetch origin",
+      "expected": "allow"
+    },
+    {
+      "command": "git pull --rebase",
+      "expected": "allow"
+    },
+    {
+      "command": "git stash && git stash pop",
+      "expected": "allow"
+    },
+    {
+      "command": "git push -u origin feature",
+      "expected": "allow"
+    },
+    {
+      "command": "git push origin HEAD",
+      "expected": "allow",
+      "note": "HEAD resolves to the current branch, feature"
+    },
+    {
+      "command": "git push --force-with-lease origin feature",
+      "expected": "block",
+      "why": "git-push-force: force pushes need a separate decision",
+      "observedR2": "BLOCK(git-push-force)"
+    },
+    {
+      "command": "git push origin main",
+      "expected": "block",
+      "why": "git-push-main: no user policy grants main for this remote in the fixture",
+      "observedR2": "BLOCK(git-push-main)"
+    },
+    {
+      "command": "git apply /tmp/patch.diff",
+      "expected": "allow",
+      "observedR2": "BLOCK(git-alias)",
+      "note": "a worktree write like checkout or commit; treat as cwd write"
+    },
+    {
+      "command": "git apply --check patch.diff",
+      "expected": "allow",
+      "observedR2": "BLOCK(git-alias)",
+      "note": "read-only check"
+    },
+    {
+      "command": "git am < 0001.patch",
+      "expected": "allow",
+      "observedR2": "BLOCK(git-alias)"
+    },
+    {
+      "command": "git submodule update --init",
+      "expected": "allow",
+      "observedR2": "BLOCK(git-alias)",
+      "note": "writes the worktree plus shared .git/modules (common dir already sandbox-allowed)"
+    },
+    {
+      "command": "git reflog -5",
+      "expected": "allow",
+      "observedR2": "BLOCK(git-alias)"
+    },
+    {
+      "command": "git restore src/a.ts",
+      "expected": "allow"
+    },
+    {
+      "command": "git reset --hard HEAD~1",
+      "expected": "allow"
+    },
+    {
+      "command": "git tag v1.0",
+      "expected": "allow",
+      "note": "local tag only"
+    },
+    {
+      "command": "git push origin v1.0",
+      "expected": "block",
+      "why": "git-push-target: bare version-like ref is a tag push",
+      "observedR2": "BLOCK(git-push-target)"
+    },
+    {
+      "command": "git log -1 --format=%H",
+      "expected": "allow"
+    },
+    {
+      "command": "git --no-pager diff",
+      "expected": "allow"
+    },
+    {
+      "command": "git -c core.pager=cat log -1",
+      "expected": "allow"
+    },
+    {
+      "command": "git cherry-pick abc123",
+      "expected": "allow"
+    },
+    {
+      "command": "git format-patch -1",
+      "expected": "allow",
+      "observedR2": "BLOCK(git-alias)",
+      "note": "writes a patch file into cwd (the worktree)"
+    },
+    {
+      "command": "git bisect start",
+      "expected": "allow",
+      "observedR2": "BLOCK(git-alias)"
+    },
+    {
+      "command": "git lfs pull",
+      "expected": "allow",
+      "observedR2": "BLOCK(git-alias)"
+    },
+    {
+      "command": "git show-ref --verify refs/heads/feature",
+      "expected": "allow",
+      "observedR2": "BLOCK(git-alias)"
+    },
+    {
+      "command": "git ls-remote origin",
+      "expected": "allow",
+      "observedR2": "BLOCK(git-alias)"
+    },
+    {
+      "command": "git config core.hooksPath .husky",
+      "expected": "allow",
+      "note": "allowed today; it writes the shared .git/config of a linked worktree (review N8 trade-off)"
+    },
+    {
+      "command": "git config user.email",
+      "expected": "allow"
+    },
+    {
+      "command": "npm ci",
+      "expected": "allow"
+    },
+    {
+      "command": "npm install",
+      "expected": "allow"
+    },
+    {
+      "command": "npm test",
+      "expected": "allow"
+    },
+    {
+      "command": "npm run build",
+      "expected": "allow"
+    },
+    {
+      "command": "npx vitest run",
+      "expected": "allow"
+    },
+    {
+      "command": "npx tsc --noEmit",
+      "expected": "allow"
+    },
+    {
+      "command": "pnpm install",
+      "expected": "allow"
+    },
+    {
+      "command": "bundle exec rspec",
+      "expected": "allow"
+    },
+    {
+      "command": "go test ./...",
+      "expected": "allow"
+    },
+    {
+      "command": "make test",
+      "expected": "allow"
+    },
+    {
+      "command": "python3 -m pytest -q",
+      "expected": "allow"
+    },
+    {
+      "command": "node scripts/build.js",
+      "expected": "allow"
+    },
+    {
+      "command": "npm test 2>&1 | tail -20",
+      "expected": "allow"
+    },
+    {
+      "command": "npm test > /tmp/test.log 2>&1; tail -50 /tmp/test.log",
+      "expected": "allow"
+    },
+    {
+      "command": "cd \"$(git rev-parse --show-toplevel)\" && npm test",
+      "expected": "allow",
+      "observedR2": "BLOCK(shell-location)",
+      "note": "the substitution resolves to the bound worktree root; recognize this idiom (or resolve it with git) instead of marking cwd unknown"
+    },
+    {
+      "command": "cd packages/a && npm test",
+      "expected": "allow"
+    },
+    {
+      "command": "pushd packages/a && npm test && popd && npm run lint",
+      "expected": "allow",
+      "observedR2": "BLOCK(shell-location)",
+      "note": "popd returns to the known previous directory; track a directory stack instead of marking unknown"
+    },
+    {
+      "command": "mkdir -p src/new && touch src/new/index.ts",
+      "expected": "allow"
+    },
+    {
+      "command": "cp src/a.ts src/b.ts",
+      "expected": "allow"
+    },
+    {
+      "command": "mv src/b.ts src/c.ts",
+      "expected": "allow"
+    },
+    {
+      "command": "rm -rf dist build",
+      "expected": "allow"
+    },
+    {
+      "command": "sed -i '' 's/foo/bar/g' src/a.ts",
+      "expected": "allow"
+    },
+    {
+      "command": "perl -pi -e 's/a/b/' src/a.ts",
+      "expected": "allow"
+    },
+    {
+      "command": "cat > src/new.ts <<'EOF'\nexport const x = 1;\nEOF",
+      "expected": "allow"
+    },
+    {
+      "command": "echo 'x' >> .gitignore",
+      "expected": "allow"
+    },
+    {
+      "command": "chmod +x scripts/run.sh && ./scripts/run.sh",
+      "expected": "allow"
+    },
+    {
+      "command": "bash scripts/test.sh",
+      "expected": "allow"
+    },
+    {
+      "command": "gh pr create --draft --title t --body b",
+      "expected": "allow"
+    },
+    {
+      "command": "gh pr create --title t",
+      "expected": "block",
+      "why": "github: Smith pull requests must be drafts",
+      "observedR2": "BLOCK(github)"
+    },
+    {
+      "command": "gh pr view --json url",
+      "expected": "allow"
+    },
+    {
+      "command": "gh pr checks",
+      "expected": "allow"
+    },
+    {
+      "command": "gh pr edit 1 --body x",
+      "expected": "allow",
+      "observedR2": "BLOCK(github)",
+      "note": "preferred allow: updating the Smith's own draft PR body is ordinary work. Product decision: if the engine cannot tie the PR to the member, keeping the block is defensible"
+    },
+    {
+      "command": "gh run watch 123",
+      "expected": "allow",
+      "observedR2": "BLOCK(github)",
+      "note": "read-only CI watch; add watch to the gh read actions"
+    },
+    {
+      "command": "dev up",
+      "expected": "allow",
+      "note": "local environment setup, not a deploy"
+    },
+    {
+      "command": "dev test",
+      "expected": "allow"
+    },
+    {
+      "command": "/opt/homebrew/bin/rg foo",
+      "expected": "allow"
+    },
+    {
+      "command": "ln -sf ../x y && npm test",
+      "expected": "allow",
+      "observedR2": "BLOCK(shell-location)",
+      "note": "low priority: worktree preset allows arbitrary programs and the sandbox constrains writes; the conservative block after any ln -s is defensible"
+    },
+    {
+      "command": "export NODE_ENV=test && npm test",
+      "expected": "allow"
+    },
+    {
+      "command": "NODE_ENV=test npm test",
+      "expected": "allow"
+    },
+    {
+      "command": "timeout 300 npm test",
+      "expected": "allow"
+    },
+    {
+      "command": "echo $((1+2))",
+      "expected": "allow"
+    },
+    {
+      "command": "(( count = 1 )); echo ok",
+      "expected": "allow"
+    },
+    {
+      "command": "curl -fsSL https://example.com -o /tmp/x.json",
+      "expected": "allow"
+    },
+    {
+      "command": "tar -xzf /tmp/a.tgz -C /tmp/a",
+      "expected": "allow"
+    },
+    {
+      "command": "git diff --stat origin/main...HEAD",
+      "expected": "allow"
+    },
+    {
+      "command": "if [ -f package.json ]; then npm test; fi",
+      "expected": "allow"
+    }
+  ],
+  "keeper": [
+    {
+      "command": "git status",
+      "expected": "allow"
+    },
+    {
+      "command": "ls",
+      "expected": "allow"
+    },
+    {
+      "command": "cat src/a.ts",
+      "expected": "allow"
+    },
+    {
+      "command": "echo hi > /tmp/x",
+      "expected": "block",
+      "why": "shell-write: Keeper has no scratch writes",
+      "observedR2": "BLOCK(shell-write)"
+    },
+    {
+      "command": "echo hi | tee /dev/null",
+      "expected": "allow",
+      "note": "device sinks remain usable"
+    },
+    {
+      "command": "bb thread list",
+      "expected": "allow"
+    },
+    {
+      "command": "gh pr view 1",
+      "expected": "allow"
+    },
+    {
+      "command": "jq . package.json",
+      "expected": "allow"
+    },
+    {
+      "command": "rg foo src",
+      "expected": "allow"
+    },
+    {
+      "command": "npm publish > /tmp/log",
+      "expected": "block",
+      "why": "arbitrary program and a scratch write; either reason blocks",
+      "observedR2": "BLOCK(shell-write)"
+    },
+    {
+      "command": "echo x > ${threadStorage}/n.md",
+      "expected": "block",
+      "why": "shell-write: Keeper has no writes, thread storage included (docs: no native write/edit or scratch writes)",
+      "observedR2": "BLOCK(shell-write)"
+    }
+  ],
+  "regressions": [
+    {
+      "command": "echo $((1+1)); bash <<EOF\ngit push origin main\nEOF",
+      "expected": "block",
+      "why": "git-push-main: heredoc body must be inspected (N1; observed ALLOW because shell.ts:82 slices source with offsets from the rewritten string)",
+      "preset": "smith",
+      "observedR2": "ALLOW"
+    },
+    {
+      "command": "((n=1)); bash <<EOF\ngit push origin main\nEOF",
+      "expected": "block",
+      "why": "git-push-main (N1)",
+      "preset": "smith",
+      "observedR2": "ALLOW"
+    },
+    {
+      "command": "(( n = 1 )); bash <<EOF\ngit push --force origin feature\nEOF",
+      "expected": "block",
+      "why": "git-push-force (N1)",
+      "preset": "smith",
+      "observedR2": "ALLOW"
+    },
+    {
+      "command": "echo $((1+1)); bash <<'EOF'\ngit push origin main\nEOF",
+      "expected": "block",
+      "why": "git-push-main (N1; observed shell-parse, which fails closed by accident)",
+      "preset": "smith",
+      "observedR2": "BLOCK(shell-parse)"
+    },
+    {
+      "command": "gs ss",
+      "expected": "block",
+      "why": "stack publication shorthand (N7)",
+      "preset": "smith",
+      "observedR2": "ALLOW"
+    },
+    {
+      "command": "gs bs",
+      "expected": "block",
+      "why": "branch submit shorthand (N7)",
+      "preset": "smith",
+      "observedR2": "ALLOW"
+    },
+    {
+      "command": "git commit -m \"$(cat <<'EOF'\nfix: x\n\nbody\nEOF\n)\"",
+      "expected": "allow",
+      "preset": "smith",
+      "note": "heredoc commit message inside a substitution; must stay allowed"
+    },
+    {
+      "command": "gh pr create --draft --title t --body \"$(cat <<'EOF'\nbody\nEOF\n)\"",
+      "expected": "allow",
+      "preset": "smith",
+      "note": "must stay allowed"
+    }
+  ]
+}

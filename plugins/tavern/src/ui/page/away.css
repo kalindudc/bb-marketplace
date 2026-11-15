@@ -1,0 +1,35 @@
+/* Closing time on the page (away.tsx, closing.tsx). Plain: no glow on the sheet, its confirm or its notes. */
+.tavern.tv-page .tv-awaynotes { display: flex; flex-direction: column; gap: 4px; margin: 0 0 12px; padding: 0; list-style: none; }
+.tavern.tv-page .tv-awaynote { display: flex; align-items: baseline; gap: 8px; padding: 6px 10px; font-size: 12px; background: var(--tv-elev-recessed); }
+.tavern.tv-page .tv-awaynote > svg { flex: none; align-self: center; }
+.tavern.tv-page .tv-awaynote.warn { box-shadow: inset 3px 0 0 var(--tavern-blocked); }
+.tavern.tv-page .tv-awaynote.warn > svg { color: var(--tavern-blocked); }
+
+.tavern.tv-page .tv-return { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+.tavern.tv-page .tv-return .tv-receipt, .tavern.tv-page .tv-return .tv-problem { margin: 0; }
+.tavern.tv-page .tv-awaybar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 0 0 12px; }
+.tavern.tv-page .tv-formr { margin: 0 0 4px; }
+
+.tavern.tv-page .tv-confirm { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border: 1px solid var(--tavern-line); background: var(--tv-elev-recessed); }
+.tavern.tv-page .tv-confirm h3 { margin: 0; font-size: 13px; }
+.tavern.tv-page :is(.tv-confirm-q, .tv-confirm-l) { display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 0; list-style: none; font-size: 12px; }
+.tavern.tv-page .tv-confirm-q > li { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.tavern.tv-page .tv-confirm-n { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; min-width: 0; }
+.tavern.tv-page .tv-confirm-n > b { min-width: 0; overflow-wrap: anywhere; }
+.tavern.tv-page .tv-confirm-q + .tv-confirm-l { padding-top: 8px; border-top: 1px solid var(--tavern-line); }
+.tavern.tv-page .tv-awayout { display: flex; flex-direction: column; gap: 6px; padding: 8px 12px; font-size: 12px; background: var(--tv-elev-recessed); }
+.tavern.tv-page .tv-awayout.warn { box-shadow: inset 3px 0 0 var(--tavern-blocked); }
+.tavern.tv-page .tv-awayout .tv-awaynotes { margin: 0; }
+
+.tavern.tv-page .tv-dg-note { margin: 0 0 12px; font-size: 12px; }
+.tavern.tv-page .tv-dg-rows { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.tavern.tv-page .tv-dg-rh, .tavern.tv-page .tv-dg-ask { display: flex; align-items: center; gap: 4px 8px; flex-wrap: wrap; min-width: 0; }
+.tavern.tv-page .tv-dg-rh > b, .tavern.tv-page .tv-dg-q { min-width: 0; overflow-wrap: anywhere; }
+.tavern.tv-page .tv-dg-ask .tv-dg-q { flex: 1 1 100%; }
+.tavern.tv-page .tv-dg-ret { display: flex; flex-direction: column; gap: 4px; padding: 6px 0; border-top: 1px solid var(--tavern-line); }
+.tavern.tv-page .tv-dg-ret:first-child { border-top: 0; }
+.tavern.tv-page .tv-dg-clean { display: flex; flex-direction: column; gap: 2px; margin: 0; padding: 0 0 0 4px; list-style: none; font-size: 12px; }
+.tavern.tv-page .tv-dg-clean > li { display: flex; align-items: baseline; gap: 6px; }
+.tavern.tv-page .tv-dg-clean > li > svg { flex: none; align-self: center; }
+.tavern.tv-page .tv-dg-clean > li[data-cleanup="failed"] > svg, .tavern.tv-page .tv-dg-clean > li[data-cleanup="waits-problem"] > svg { color: var(--tavern-blocked); }
+.tavern.tv-page .tv-dg-acts { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; }

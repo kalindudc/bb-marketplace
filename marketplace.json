@@ -522,6 +522,38 @@
       }
     },
     {
+      "id": "tavern",
+      "displayName": "Tavern",
+      "description": "Hand a goal to a lead agent and keep the decisions. A Keeper scouts, proposes a quest map for your approval, then delegates to builders and a checker while you steer from one thread. Follow asks, reports, verified results and work left for you on the Tavern page, with a journal checklist in every thread, local standing rules, scope controls, settings and private backups.",
+      "icon": {
+        "url": "plugins/tavern/icons/tavern.svg"
+      },
+      "tags": [
+        "parallel-agents",
+        "orchestration",
+        "checklists",
+        "evidence",
+        "code-review",
+        "worktrees",
+        "side-panel",
+        "dashboard"
+      ],
+      "author": {
+        "name": "Kalindu De Costa",
+        "github": "kalindudc"
+      },
+      "category": "tasks-and-workflows",
+      "overview": "Hand a goal to a lead agent and keep the decisions. Tavern's Keeper scouts with a small team, proposes a quest map for your approval and delegates the work to builders and a checker. Keep steering in one thread rather than carrying messages between agents.\n\n## Follow the work\n\nThe common room brings together what needs you, quests, side quests and solos. Each quest has a map, party, Notebook, rules, decisions and history. Open a member's report in the side panel, answer an ask in place and read the returned tale for verified results, credits and work left for you.\n\nFive classes separate leading, scouting, building, checking and bounded side work. Characters add names, crests and short presentation lines, not permissions or expertise. A separate checker is labelled as same-family when an independent model-family check cannot be established.\n\n## A journal in every thread\n\nThe Journal checklist has steps, blockers, evidence and grouped Undo. Linked work needs evidence, and only an assigned Warden can verify or reject it. Journal reminders do not start agent turns. Keepers' board quests remain separate from these personal checklists.\n\n## You keep control\n\nExplicit plan approval is the default. Standing rules stay local to one Keeper unless you make them global. Scope presets constrain the work; Pi can use a pre-execution guard, while an approved detection-only exception on other providers can notice violations but does not prevent them. Production changes and other consequential actions still require your consent.\n\nSettings controls pacing, providers, notifications and presentation. Automatic pacing tuning is off by default. Inspect recorded changes, pin values, transfer settings as TOML and save private backups from the page or `bb tavern`. Insights shows recorded usage costs when Burn is installed. There is no hard dollar cap; these are ordinary provider-backed bb threads.\n\n## Current limits\n\nThis is draft release copy, not a published release. Closing time is a preview, Classes is read-only, and character voice previews are not automatic behavioral checks. The connection map can label archived Keepers as listening. Machine placement is under development; leave rules empty for existing behavior. The next live compaction and interruption reliability check is still pending.",
+      "source": {
+        "git": {
+          "url": "https://github.com/kalindudc/bb-marketplace.git",
+          "subdir": "plugins/tavern",
+          "range": ">=0.1.0 <1.0.0",
+          "tagPrefix": "tavern/"
+        }
+      }
+    },
+    {
       "id": "update-shelf",
       "displayName": "Update Shelf",
       "description": "Groups every plugin with a waiting update at the top of the Installed plugins page, with each one's changelog from its source and one-click Update or Update all.",

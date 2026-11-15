@@ -1,0 +1,302 @@
+/* ===== Tavern v2 · "a warm tavern at work": day in gruve light, lantern-lit at night ===== */
+:root {
+  --tavern-crest-edge: color-mix(in oklab, var(--foreground) 72%, transparent);
+  --tavern-blk-fill: color-mix(in oklab, var(--destructive) 10%, var(--card));
+  --tavern-wax: color-mix(in oklab, var(--primary) 86%, var(--pr-merged));
+  --tavern-board: color-mix(in oklab, var(--surface-recessed-solid) 88%, var(--attention));
+  --tavern-grain: color-mix(in oklab, var(--foreground) 5%, transparent);
+  --tavern-road: color-mix(in oklab, var(--foreground) 42%, transparent);
+  --tavern-road-done: color-mix(in oklab, var(--foreground) 80%, var(--tavern-teal));
+  --tavern-lantern: transparent;
+  --tavern-shadow: color-mix(in oklab, var(--foreground) 55%, transparent);
+}
+html.dark { --tavern-lantern: color-mix(in oklab, var(--attention) 13%, transparent); --tavern-shadow: color-mix(in oklab, black 70%, transparent); }
+
+.tavern .anc { font-size: .86em; font-weight: 400; color: var(--tavern-muted); text-transform: none; letter-spacing: 0; white-space: nowrap; }
+.tavern .anc::before { content: "("; } .tavern .anc::after { content: ")"; }
+.tavern .crest { flex: none; display: inline-block; vertical-align: middle; overflow: visible; }
+.tavern .sr, .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.tavern .plain-health { font-weight: 700; color: var(--foreground); }
+.msg-ai code, .msg-user code, .tavern .dcard code { overflow-wrap: anywhere; }
+
+/* switch: native checkbox, drawn square */
+.tavern .swi { appearance: none; -webkit-appearance: none; width: 38px; height: 24px; border: 1px solid var(--input); background: var(--card); position: relative; cursor: pointer; flex: none; margin: 0; }
+.tavern .swi::before { content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; background: var(--tavern-muted); transition: left .16s var(--tavern-ease); }
+.tavern .swi:checked { background: var(--primary); border-color: var(--primary); }
+.tavern .swi:checked::before { left: 17px; background: var(--primary-foreground); }
+.tavern .swi:disabled { cursor: not-allowed; border-style: dashed; }
+
+/* ---- The quest board: notices pinned on a warm board ---- */
+.tavern .board { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 18px 14px; padding: 18px 14px 14px; border: 1px solid var(--tavern-line); background-color: var(--tavern-board); position: relative; isolation: isolate; }
+.tavern .board::before { content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none; background: radial-gradient(120% 70% at 50% 0%, var(--tavern-lantern), transparent 65%), repeating-linear-gradient(90deg, transparent 0 63px, var(--tavern-grain) 63px 64px); }
+.tavern .notice { position: relative; background: var(--card); border: 1px solid var(--tavern-line); display: flex; flex-direction: column; min-width: 0; padding-top: 4px;
+  box-shadow: 0 14px 22px -18px var(--tavern-shadow); }
+.tavern .notice:nth-child(2n) { transform: rotate(.35deg); } .tavern .notice:nth-child(3n) { transform: rotate(-.3deg); }
+.tavern .notice.needs { border-top: 3px solid var(--attention); }
+html.dark .tavern .notice.needs { box-shadow: 0 0 0 1px color-mix(in oklab, var(--attention) 30%, transparent), 0 16px 34px -16px color-mix(in oklab, var(--attention) 55%, transparent); }
+.tavern .notice .tack { position: absolute; top: -7px; left: calc(50% - 6px); width: 12px; height: 12px; background: var(--tavern-wax); border: 1px solid var(--tavern-crest-edge); transform: rotate(45deg); }
+.tavern .notice .lh { display: flex; gap: 8px; align-items: center; padding: 8px 10px 6px; min-width: 0; }
+.tavern .notice .lh .nm { font-weight: 800; font-size: 14px; }
+.tavern .notice .lh .sp { flex: 1; }
+.tavern .notice .party { margin: 0 10px 6px; }
+.tavern .notice .lf { display: flex; gap: 8px; align-items: center; padding: 6px 10px; border-top: 1px solid var(--tavern-line); font-size: 11px; color: var(--tavern-muted); min-width: 0; margin-top: auto; }
+.tavern .notice .lf .tx { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tavern .notice .lf .btn { min-height: 26px; }
+.tavern .notice .lf .tag svg { width: 11px; height: 11px; color: var(--tavern-wax); }
+@media (prefers-reduced-motion: reduce) { .tavern .notice { transform: none !important; } }
+
+/* one row per Keeper when the board drops below the queue */
+.tavern .kminis { display: none; flex-direction: column; gap: 4px; }
+@container page (max-width: 900px) { .tavern .kminis { display: flex; } }
+.tavern.phone-page .kminis { display: flex; }
+.tavern .kmini { display: flex; gap: 8px; align-items: center; min-height: 44px; padding: 4px 10px; border: 1px solid var(--tavern-line); background: var(--card); font: inherit; font-size: 12px; color: var(--foreground); cursor: pointer; text-align: left; min-width: 0; }
+.tavern .kmini .m { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tavern .kmini .sp { flex: 1; }
+.tavern .kmini:hover { background: var(--state-hover); }
+
+/* ---- The party picture: on the road, at the table, resting ---- */
+.tavern .party { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border: 1px solid var(--tavern-line); background: var(--tavern-recessed); min-width: 0; }
+.tavern .party .zone { padding: 6px 8px 10px; min-width: 0; position: relative; }
+.tavern .party .zone + .zone { border-left: 1px dashed var(--tavern-line); }
+.tavern .party .zh { display: flex; gap: 4px; align-items: baseline; font-size: 11px; margin-bottom: 4px; white-space: nowrap; overflow: hidden; }
+.tavern .party .zh .num { margin-left: auto; }
+.tavern .party .zm { display: flex; flex-wrap: wrap; gap: 6px; min-height: 30px; align-items: center; }
+.tavern .party .zone.road::after { content: ""; position: absolute; left: 8px; right: 8px; bottom: 4px; height: 2px; background: repeating-linear-gradient(90deg, var(--tavern-road) 0 6px, transparent 6px 11px); }
+.tavern .party .zone.table .zm { background: var(--card); border-top: 3px solid color-mix(in oklab, var(--foreground) 55%, var(--tavern-plum)); padding: 4px 6px; }
+.tavern .party .pm { display: flex; gap: 6px; align-items: center; font-size: 11px; min-width: 0; color: var(--foreground); }
+.tavern .party .pm b { display: block; font-size: 12px; }
+.tavern .party .pm .m { display: block; }
+.tavern .party .pm.fail { outline: 2px solid var(--destructive); outline-offset: 1px; }
+.tavern .party .pm.stale { outline: 2px dashed var(--warning); outline-offset: 1px; }
+.tavern .party.mini .zone { padding: 4px 6px 8px; }
+.tavern .party.mini .zm { min-height: 24px; gap: 4px; }
+.tavern .party .zone.road .pm .crest { animation: tavern-walk 2.8s ease-in-out infinite; }
+@keyframes tavern-walk { 0%, 100% { transform: translateX(0); } 50% { transform: translateX(2px); } }
+html[data-motion="reduced"] .tavern .party .pm .crest { animation: none; }
+@media (prefers-reduced-motion: reduce) { .tavern .party .pm .crest { animation: none; } }
+
+/* ---- The quest map: one route; crests stand on the waypoints they own ---- */
+.tavern .qmap { position: relative; padding: 2px 10px 6px; }
+.tavern .qsvg { display: block; width: 100%; max-width: 940px; height: auto; margin: 0 auto; overflow: visible; }
+.tavern .qsvg .road { fill: none; stroke: var(--tavern-road); stroke-width: 3; stroke-dasharray: 2 7; stroke-linecap: square; }
+.tavern .qsvg .road.done { stroke: var(--tavern-road-done); stroke-dasharray: none; stroke-width: 3.5; }
+.tavern .qsvg .ring { transform-box: fill-box; transform-origin: center; }
+html.dark .tavern .qsvg .ring { filter: drop-shadow(0 0 5px color-mix(in oklab, var(--attention) 75%, transparent)); }
+.tavern .qsvg .wp.dealt, .tavern .gl.formed .qsvg .wp.dealt { animation: tavern-deal .62s var(--tavern-ease) both; animation-delay: calc(var(--i) * 110ms); transform-box: fill-box; transform-origin: center; }
+@keyframes tavern-deal { from { transform: translate(-60px, 70px) rotate(-16deg) scale(1.35); opacity: 0; } 55% { opacity: 1; } to { transform: none; opacity: 1; } }
+.tavern .tale.telling .qsvg .road.done { stroke-dasharray: 100; stroke-dashoffset: 100; animation: tavern-road .5s linear forwards; animation-delay: calc(var(--i) * 260ms); }
+@keyframes tavern-road { to { stroke-dashoffset: 0; } }
+.tavern .tale.telling .qsvg .told { animation: tavern-pop .4s var(--tavern-ease) both; animation-delay: calc(var(--i) * 260ms + 220ms); transform-box: fill-box; transform-origin: center; }
+@keyframes tavern-pop { from { transform: scale(.4); opacity: 0; } to { transform: none; opacity: 1; } }
+.tavern .qlist { display: none; list-style: none; margin: 0; padding: 4px 4px 8px; }
+.tavern .qlist li { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 6px 0; position: relative; font-size: 12px; min-height: 44px; }
+.tavern .qlist li::before { content: ""; position: absolute; left: 12px; top: 0; bottom: 0; border-left: 3px dotted var(--tavern-road); }
+.tavern .qlist li.done::before { border-left-style: solid; border-color: var(--tavern-road-done); }
+.tavern .qlist li:first-child::before { top: 50%; } .tavern .qlist li:last-child::before { bottom: 50%; }
+.tavern .qlist .vw { position: relative; display: grid; place-items: center; width: 28px; height: 28px; background: var(--card); }
+.tavern .qlist .vw svg { width: 16px; height: 16px; }
+.tavern .qlist .vw svg.crest { width: 22px; height: 22px; }
+.tavern .qlist li.cur .vw { outline: 2px solid var(--primary); }
+.tavern .qlist .ok { color: var(--success); width: 14px; height: 14px; }
+@container page (max-width: 760px) { .tavern .qsvg { display: none; } .tavern .qlist { display: block; } }
+html[data-motion="reduced"] .tavern .qsvg .wp, html[data-motion="reduced"] .tavern .qsvg .road, html[data-motion="reduced"] .tavern .qsvg .told { animation: none !important; stroke-dashoffset: 0 !important; }
+@media (prefers-reduced-motion: reduce) { .tavern .qsvg .wp, .tavern .qsvg .road, .tavern .qsvg .told { animation: none !important; stroke-dashoffset: 0 !important; } }
+
+/* ---- Form the party: the wax seal, cards dealt onto the table ---- */
+.tavern .seal-btn { background: var(--tavern-wax); border-color: var(--tavern-wax); color: var(--primary-foreground); }
+.tavern .seal-btn svg { width: 15px; height: 15px; }
+.tavern .sealmark { display: inline-flex; gap: 6px; align-items: center; font-size: 12px; padding: 2px 8px 2px 2px; border: 1px solid color-mix(in oklab, var(--tavern-wax) 55%, var(--tavern-line)); }
+.tavern .sealmark svg { width: 24px; height: 24px; color: var(--primary-foreground); background: var(--tavern-wax); padding: 3px; clip-path: polygon(30% 0, 70% 0, 100% 30%, 100% 70%, 70% 100%, 30% 100%, 0 70%, 0 30%); }
+.tavern .sealmark.stamp { animation: tavern-stamp .5s var(--tavern-ease) both; }
+@keyframes tavern-stamp { from { transform: scale(1.8) rotate(-14deg); opacity: 0; } 60% { transform: scale(.94) rotate(-3deg); opacity: 1; } to { transform: none; } }
+.tavern .table { border-top: 1px solid var(--tavern-line); padding-top: 8px; background: var(--tavern-recessed); }
+.tavern .table.deal .mcard { animation: tavern-card .6s var(--tavern-ease) both; animation-delay: calc(500ms + var(--i) * 140ms); }
+@keyframes tavern-card { from { transform: translate(-30px, -36px) rotate(-9deg); opacity: 0; } 60% { opacity: 1; } to { transform: none; opacity: 1; } }
+html[data-motion="reduced"] .tavern .sealmark, html[data-motion="reduced"] .tavern .table .mcard { animation: none !important; }
+@media (prefers-reduced-motion: reduce) { .tavern .sealmark, .tavern .table .mcard { animation: none !important; } }
+.tavern .gl-dec { padding: 8px 14px 4px; }
+.tavern .gl-dec .decided { background: var(--tavern-recessed); }
+.tavern .gl-f { flex-wrap: wrap; }
+
+/* ---- Decided for you ---- */
+.tavern.decided, .tavern .decided { border: 1px solid var(--tavern-line); background: var(--card); }
+.tavern .decided .dh { display: flex; gap: 8px; align-items: center; padding: 6px 10px; font-size: 12px; border-bottom: 1px solid var(--tavern-line); flex-wrap: wrap; }
+.tavern .decided .dh svg { width: 14px; height: 14px; color: var(--tavern-wax); }
+.tavern .decided .di { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; align-items: center; padding: 3px 6px 3px 10px; font-size: 12px; }
+.tavern .decided .di + .di { border-top: 1px dashed var(--tavern-line); }
+
+/* ---- Asks: pointer in chat, receipt everywhere ---- */
+.tavern.pointer { display: flex; gap: 8px; align-items: center; font-size: 12px; padding: 3px 4px 3px 8px; border: 1px solid color-mix(in oklab, var(--attention) 45%, var(--tavern-line)); border-left: 3px solid var(--attention); background: var(--card); min-width: 0; }
+.tavern.pointer > svg { width: 13px; height: 13px; color: var(--attention); flex: none; }
+.tavern.pointer > span:nth-of-type(1) { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tavern.pointer.done { border: 1px dashed var(--tavern-line); }
+.tavern.pointer.done > svg { color: var(--success); }
+.tavern.receipt { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; font-size: 12px; padding: 6px 10px; border: 1px solid color-mix(in oklab, var(--success) 55%, var(--tavern-line)); background: var(--card); box-shadow: inset 3px 0 0 var(--success); }
+.tavern.receipt svg { width: 14px; height: 14px; color: var(--success); }
+.tavern .sendbox { border: 1px solid var(--tavern-line); background: var(--tavern-recessed); padding: 8px 10px; margin: 2px 0; grid-template-columns: 76px minmax(0, 1fr); }
+.tavern .sendbox .draft { border-left: 3px solid var(--tavern-line); padding-left: 8px; }
+.tavern .scope { display: flex; gap: 8px; align-items: flex-start; font-size: 12px; padding: 6px 10px; border: 1px dashed var(--tavern-line); }
+.tavern .scope svg { width: 13px; height: 13px; flex: none; margin-top: 2px; }
+
+/* ---- The Keeper's thread: one compact bar above the composer ---- */
+.tavern.tbar { position: relative; display: flex; gap: 8px; align-items: center; min-height: 36px; padding: 3px 4px 3px 8px; border: 1px solid var(--tavern-line); background: var(--tavern-recessed); font-size: 12px; min-width: 0; }
+.tavern.tbar .qs { display: flex; gap: 6px; align-items: center; min-width: 0; overflow: hidden; }
+.tavern.tbar .g { font-weight: 700; white-space: nowrap; }
+.tavern.tbar .sp { flex: 1; }
+.tavern .askpill, .tavern .ledger-btn { display: inline-flex; gap: 6px; align-items: center; min-height: 28px; padding: 0 8px; font: inherit; font-size: 12px; cursor: pointer; white-space: nowrap; color: var(--foreground); }
+.tavern .askpill { border: 1px solid color-mix(in oklab, var(--attention) 60%, var(--tavern-line)); background: var(--surface-attention); }
+.tavern .askpill svg, .tavern .ledger-btn svg { width: 13px; height: 13px; }
+.tavern .askpill > svg:first-child { color: var(--attention); }
+.tavern .ledger-btn { border: 1px solid var(--tavern-line); background: var(--card); }
+.tavern .ledger-btn > svg:first-child { color: var(--tavern-wax); }
+.tavern .glance { right: 0; bottom: calc(100% + 6px); width: 420px; padding: 10px 12px; }
+.tavern.asksp { border: 1px solid color-mix(in oklab, var(--attention) 55%, var(--tavern-line)); background: var(--card); display: flex; flex-direction: column; max-height: 52vh; overflow: auto; }
+.tavern .arow2 { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto auto auto; gap: 8px; align-items: center; padding: 3px 6px 3px 10px; font-size: 12px; min-height: 34px; }
+.tavern .arow2 + .arow2, .tavern .arow2 + .ask, .tavern .ask + .arow2 { border-top: 1px solid var(--tavern-line); }
+.tavern .arow2 > svg { width: 13px; height: 13px; }
+.tavern .arow2 .q { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.tavern.asksp .ask { border: 0; box-shadow: none; }
+@container page (max-width: 560px) {
+  .tavern.tbar .qs, .tavern.tbar > b { display: none; }
+  .tavern .glance { width: calc(100cqw - 24px); }
+  .tavern .arow2 { grid-template-columns: 16px minmax(0, 1fr) auto; }
+  .tavern .arow2 .tag, .tavern .arow2 .m { display: none; }
+  .tavern .roster { grid-template-columns: minmax(0, 1fr) !important; }
+  .chat-scroll { padding: 12px 10px 8px; }
+  .composer-dock { padding: 0 8px 8px; }
+  .umsg { max-width: 92%; }
+}
+@container page (max-width: 360px) { .composer .modelchip { display: none; } }
+.composer .modelchip { max-width: 190px; overflow: hidden; text-overflow: ellipsis; }
+.frame.phone .tavern .askpill, .frame.phone .tavern .ledger-btn, .frame.phone .tavern .kmini, .frame.phone .send.split span { min-height: 44px; min-width: 44px; }
+.frame.phone .send.split span { height: 44px; }
+
+/* ---- Common room ---- */
+.tavern .tcards { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+.tavern .hprow { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto auto; gap: 10px; align-items: center; padding: 6px 10px; font-size: 12px; }
+.tavern .hprow + .hprow { border-top: 1px solid var(--tavern-line); }
+.tavern .hprow .t { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tavern .emptyhall { display: flex; flex-direction: column; gap: 12px; align-items: center; text-align: center; max-width: 720px; margin: 36px auto; }
+.tavern .hearth { display: flex; gap: 10px; padding: 18px 22px 22px; border: 1px solid var(--tavern-line); position: relative; isolation: isolate; background-color: var(--tavern-board); }
+.tavern .hearth::before { content: ""; position: absolute; inset: 0; z-index: -1; background: radial-gradient(70% 90% at 50% 100%, color-mix(in oklab, var(--attention) 22%, transparent), transparent 70%); }
+.tavern .hearth span { animation: tavern-bob 3.2s ease-in-out infinite; animation-delay: calc(var(--i) * -320ms); }
+@keyframes tavern-bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
+html[data-motion="reduced"] .tavern .hearth span { animation: none; }
+@media (prefers-reduced-motion: reduce) { .tavern .hearth span { animation: none; } }
+.tavern .emptyhall .tcards { width: 100%; }
+
+/* ---- Quest page and map ---- */
+.tavern .gh-l { min-width: 0; }
+.tavern .gh-ph { max-width: 560px; }
+.tavern .mapcard { overflow: hidden; }
+.tavern svg[data-part="MapGraph"] { display: block; width: 100%; height: auto; }
+.tavern svg[data-part="MapGraph"] .road { fill: none; stroke: var(--tavern-road); stroke-width: 1.6; }
+.tavern svg[data-part="MapGraph"] .road.hot { stroke: var(--primary); stroke-width: 2.2; }
+@container page (max-width: 640px) {
+  .tavern .ghead { grid-template-columns: minmax(0, 1fr); }
+  .tavern .gacts { justify-content: flex-start; }
+  .tavern .tag { white-space: normal; height: auto; min-height: 20px; }
+  .tavern .colh { flex-wrap: wrap; }
+  .tavern .ph-labels span { overflow-wrap: anywhere; }
+  .tavern .sline .hero b { font-size: 24px; }
+}
+.frame.phone .tavern.page { padding: 12px 12px 28px; }
+
+/* ---- The tale: the finished quest map ---- */
+.tavern .tale { border: 1px solid var(--tavern-line); background: var(--card); padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
+.tavern .tale .ch h2 { font-size: 18px; margin: 2px 0 0; }
+.tavern .tale .roll { display: flex; flex-direction: column; border-top: 1px solid var(--tavern-line); padding-top: 8px; }
+.tavern .tale.telling .cr { animation: tavern-rise .5s var(--tavern-ease) both; animation-delay: calc(1500ms + var(--i) * 150ms); }
+@keyframes tavern-rise { from { transform: translateY(8px); opacity: 0; } to { transform: none; opacity: 1; } }
+html[data-motion="reduced"] .tavern .tale .cr { animation: none !important; }
+@media (prefers-reduced-motion: reduce) { .tavern .tale .cr { animation: none !important; } }
+@container page (max-width: 640px) { .tavern .cr { grid-template-columns: auto minmax(0, 1fr); } .tavern .cr .l { justify-content: flex-start; text-align: left; flex-direction: row-reverse; grid-column: 1 / -1; } }
+
+/* ---- Character sheets ---- */
+.tavern .lvl { display: flex; gap: 8px; align-items: center; font-size: 11px; margin-top: 2px; }
+.tavern .xp { width: 80px; height: 6px; background: color-mix(in oklab, var(--foreground) 16%, transparent); position: relative; display: inline-block; }
+.tavern .xp i { position: absolute; inset: 0 auto 0 0; background: var(--tavern-wax); }
+.tavern .sheet-h { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; padding: 14px 16px; border: 1px solid var(--tavern-line); background: var(--card); }
+.tavern .crestpick { border: 0; padding: 0; margin: 0 0 10px; min-width: 0; }
+.tavern .crestpick legend { font-size: 11px; color: var(--tavern-muted); padding: 0; margin-bottom: 4px; }
+.tavern .crestpick .swatches button { width: 32px; height: 32px; }
+.tavern .inp.err { border-color: var(--destructive); }
+
+/* ---- Closing time and the digest ---- */
+.tavern .lantern { display: inline-grid; place-items: center; width: 32px; height: 32px; border: 1px solid var(--tavern-line); background: var(--card); flex: none; }
+.tavern .lantern svg { width: 18px; height: 18px; color: var(--attention); }
+html.dark .tavern .lantern { box-shadow: 0 0 22px -4px color-mix(in oklab, var(--attention) 60%, transparent); }
+.tavern.sheet.closing { width: min(640px, calc(100% - 24px)); max-height: calc(100% - 40px); display: flex; flex-direction: column; }
+.tavern .sh-h { display: flex; gap: 10px; align-items: center; padding: 12px 14px; border-bottom: 1px solid var(--tavern-line); }
+.tavern .sh-h h2 { font-size: 16px; margin: 0; }
+.tavern .sh-b { padding: 12px 14px; overflow: auto; display: flex; flex-direction: column; gap: 10px; }
+.tavern .sh-f { display: flex; gap: 8px; align-items: center; padding: 10px 14px; border-top: 1px solid var(--tavern-line); flex-wrap: wrap; }
+.tavern .sh-f .sp { flex: 1; }
+.tavern .row2 { display: flex; gap: 10px; flex-wrap: wrap; }
+.tavern .row2 .field { flex: 1; min-width: 160px; margin: 0; }
+.tavern .grpbox { border: 1px solid var(--tavern-line); padding: 6px 10px 8px; margin: 0; min-width: 0; }
+.tavern .grpbox legend { font-size: 12px; font-weight: 700; padding: 0 4px; }
+.tavern .grpbox .rules { display: flex; flex-wrap: wrap; gap: 0 14px; }
+.tavern .ctl { display: flex; gap: 8px; align-items: center; min-height: 32px; font-size: 12px; cursor: pointer; }
+.tavern .ctl input { width: 24px; height: 24px; margin: 0; accent-color: var(--primary); flex: none; }
+.tavern .ctl.off { cursor: not-allowed; }
+.tavern .ctl.off b { font-weight: 400; text-decoration: line-through; text-decoration-color: var(--tavern-muted); }
+.tavern .ctl.locked { cursor: default; }
+.tavern .ctl.locked svg { width: 12px; height: 12px; color: var(--tavern-muted); }
+.tavern .mayline { font-size: 12px; padding: 8px 10px; background: var(--tavern-recessed); border: 1px solid var(--tavern-line); }
+.tavern .attain { display: flex; gap: 8px; align-items: flex-start; font-size: 12px; padding: 8px 10px; border: 1px solid color-mix(in oklab, var(--success) 55%, var(--tavern-line)); box-shadow: inset 3px 0 0 var(--success); }
+.tavern .attain svg { width: 14px; height: 14px; color: var(--success); flex: none; margin-top: 1px; }
+.tavern .sline.night { padding: 10px 12px; border: 1px solid var(--tavern-line); background: var(--tavern-recessed); }
+.frame.phone .tavern.sheet.closing { width: 100%; max-height: 100%; }
+.tavern.tbar .pty { padding-left: 6px; border-left: 1px solid var(--tavern-line); display: inline-flex; }
+.tavern .faces { display: inline-flex; gap: 2px; align-items: center; }
+.tavern .party .zh { flex-wrap: wrap; }
+.tavern .party:not(.mini) .zh .anc { order: 3; flex-basis: 100%; }
+.btn.pri[aria-disabled="true"], .btn.pri:disabled { background: transparent; color: var(--foreground); border-color: var(--tavern-line); border-style: dashed; font-weight: 400; cursor: not-allowed; }
+.tavern.sheet.closing { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 31; background: var(--popover); color: var(--popover-foreground); border: 1px solid var(--tavern-line); box-shadow: 0 24px 60px -24px var(--tavern-shadow); }
+html.dark .tavern.sheet.closing { box-shadow: 0 0 0 1px color-mix(in oklab, var(--attention) 18%, transparent), 0 30px 80px -30px color-mix(in oklab, var(--attention) 35%, transparent); }
+.frame.phone .tavern.sheet.closing { left: 0; top: auto; bottom: 0; transform: none; max-height: 92%; }
+.chat { grid-template-columns: minmax(0, 1fr); }
+.chat-scroll, .composer-dock, .chat-col { min-width: 0; }
+@container page (max-width: 560px) {
+  .tavern.tbar .nw { display: none; }
+  .tavern.tbar .lst .st span { display: none; }
+  .tavern .conf { flex-wrap: wrap; white-space: normal; }
+}
+.composer .sendw { margin-left: auto; }
+.tavern .sendbox .draft { overflow-wrap: anywhere; }
+.tavern.phone-page .ask.phone { padding-bottom: 0; }
+.tavern .ask.phone .ask-f { position: sticky; bottom: 0; z-index: 2; background: var(--card); border-top: 1px solid var(--tavern-line); padding: 10px 0 calc(10px + env(safe-area-inset-bottom)); margin-top: 4px; flex-wrap: wrap; }
+.tavern .ask.phone .ask-f .btn { min-height: 48px; font-size: 14px; }
+.tavern .ask.phone .ask-f .btn.pri { flex: 1 1 100%; }
+html.dark .tavern .tale, html.dark .tavern .sheet-h, html.dark .tavern .sline.night { box-shadow: 0 0 0 1px color-mix(in oklab, var(--attention) 16%, transparent), 0 18px 46px -22px color-mix(in oklab, var(--attention) 45%, transparent); }
+.tavern .anc { font-size: 11px; }
+.tavern .pqlist { display: flex; flex-direction: column; gap: 8px; }
+.tavern .pqlist .qrow { min-height: 64px; }
+.tavern .grpbox .rules { gap: 4px 26px; }
+.frame.narrow .bb-pane.with-panel { grid-template-columns: minmax(0, 1fr); }
+.frame.narrow .bb-pane.with-panel > #titlebar, .frame.narrow .bb-pane.with-panel > #page { display: none; }
+.frame.narrow .bb-pane.with-panel > .bb-panel { grid-column: 1; grid-row: 1 / -1; }
+.tavern .arow2 .btn { min-height: 26px; }
+.frame.phone .tavern .arow2 .btn { min-height: 44px; }
+.tavern [aria-selected="true"] .anc, .tavern .trow.sel .anc, .tavern [aria-pressed="true"] .anc, .sb-row.on .anc, .tavern .sb-row.on .anc { color: var(--tavern-lift); }
+.frame.phone .tavern .seg button, .frame.phone .tavern .filters button { min-height: 44px; }
+.tavern .party .pm { overflow-wrap: anywhere; }
+@container page (max-width: 640px) {
+  .tavern .lbl { white-space: normal; }
+  .tavern .gl-h .t > div { white-space: normal; overflow-wrap: anywhere; }
+}
+@container page (max-width: 480px) {
+  .tavern .party:not(.mini) { grid-template-columns: minmax(0, 1fr); }
+  .tavern .party:not(.mini) .zone + .zone { border-left: 0; border-top: 1px dashed var(--tavern-line); }
+}
+@container page (max-width: 480px) { .tavern.gl .gl-h { flex-wrap: wrap; } .tavern.gl .gl-h .t { flex-basis: calc(100% - 40px); } }
+/* menus carry .tavern on themselves: give the compound form the same surface */
+.tavern.pop { position: absolute; z-index: 40; background: var(--popover); color: var(--popover-foreground); border: 1px solid var(--tavern-line); box-shadow: 0 12px 32px -12px var(--tavern-shadow); }
+.tavern.pop .pm { color: color-mix(in oklab, var(--muted-foreground) 60%, var(--foreground)); }
+.tavern.pop.typepop { top: calc(100% + 6px); left: 0; width: min(520px, calc(100cqw - 24px)); padding: 6px; }
+.tavern.phone-page .qrow .qq, .tavern.phone-page .qrow .qg { white-space: normal; }
+.tavern.phone-page .kmini b { flex: none; }
+.tavern.pop.typepop[popover] { position: absolute; inset: auto; margin: 0; overflow: visible; }
+.tavern .tcard .tn { flex-wrap: wrap; row-gap: 0; }
+.tavern .scope { flex-wrap: wrap; column-gap: 6px; }

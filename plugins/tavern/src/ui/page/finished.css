@@ -1,0 +1,51 @@
+/* The finished quest's record (returned and stopped share it). Plain cards: no glow, no side rail, one column of parts. */
+.tavern.tv-page .tv-record { container: tv-record / inline-size; }
+
+.tavern.tv-page .tv-rec-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px 24px; align-items: start; padding: 14px 16px; }
+.tavern.tv-page .tv-rec-head .tv-facts { row-gap: 2px; }
+/* Below 1000 px the actions move under the status line, so the phase strip keeps room for its labels. */
+@container tv-record (max-width: 999.98px) {
+  .tavern.tv-page .tv-rec-head { grid-template-columns: minmax(0, 1fr); }
+  .tavern.tv-page .tv-rec-head .tv-gacts { justify-content: flex-start; }
+}
+
+/* What happened: sentences one per line at a readable measure, the figures under them. */
+.tavern.tv-page .tv-rec-story { display: flex; flex-direction: column; gap: 10px; padding: 12px 16px 14px; }
+.tavern.tv-page .tv-rec-story > .tv-colh { margin-bottom: 0; }
+.tavern.tv-page .tv-rec-lines { display: flex; flex-direction: column; gap: 4px; max-width: 72ch; margin: 0; padding: 0; list-style: none; font-size: 13px; line-height: 1.5; }
+.tavern.tv-page .tv-rec-prose { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; max-width: 72ch; margin: 0; font-size: 13px; line-height: 1.5; }
+.tavern.tv-page .tv-rec-tale { margin-left: -6px; }
+.tavern.tv-page .tv-rec-story .tfig { margin: 2px 0 0; }
+
+/* Done and Left side by side once the record is wide enough for two readable columns. */
+.tavern.tv-page .tv-rec-two { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; align-items: stretch; }
+@container tv-record (min-width: 900px) { .tavern.tv-page .tv-rec-two { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.tavern.tv-page .tv-rec-sec { min-width: 0; padding: 10px 12px; font-size: 12px; }
+.tavern.tv-page .tv-rec-sec > .tv-colh { min-height: 24px; margin-bottom: 6px; }
+.tavern.tv-page .tv-rec-sec .tv-dw li > span { max-width: 72ch; }
+.tavern.tv-page .tv-rec-party { padding: 12px 16px 14px; }
+
+/* A fold: the whole heading is the button; the count sits beside the title; the body reads below a rule. */
+.tavern.tv-page .tv-rec-folds { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.tavern.tv-page .tv-rec-fold { min-width: 0; }
+.tavern.tv-page .tv-rec-fh { font-size: 14px; }
+.tavern.tv-page .tv-rec-ft { display: flex; align-items: center; flex-wrap: wrap; gap: 0 8px; width: 100%; min-height: 40px; padding: 6px 12px; border: 0; background: none; color: var(--foreground); font: inherit; font-weight: 700; text-align: left; cursor: pointer; }
+.tavern.tv-page .tv-rec-ft:hover { background: var(--tavern-hover); }
+.tavern.tv-page .tv-rec-ft:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+.tavern.tv-page .tv-rec-ft :is(.tv-count, .tv-colh-aside, .tv-rec-fw) { font-weight: 400; }
+.tavern.tv-page .tv-rec-fw { font-size: 12px; color: var(--tv-text-2); }
+.tavern.tv-page .tv-rec-fb { padding: 10px 12px 12px; border-top: 1px solid var(--tavern-line); font-size: 12px; min-width: 0; }
+.tavern.tv-page .tv-rec-fb > .tv-li-list li > span:first-child, .tavern.tv-page .tv-rec-fb .tv-cell p { max-width: 72ch; }
+.tavern.tv-page .tv-rec-fb .tv-cell { padding: 8px 0; }
+.tavern.tv-page .tv-rec-fb .tv-cell:first-child { padding-top: 0; }
+.tavern.tv-page .tv-rec-tools { margin-bottom: 8px; }
+.tavern.tv-page .tv-rec-map .tv-rec-fb { padding-top: 4px; }
+.tavern.tv-page .tv-rec-ask { display: flex; flex-direction: column; gap: 1px; max-width: 72ch; }
+.tavern.tv-page .tv-rec-note { font-style: italic; }
+
+@media (max-width: 560px), (pointer: coarse) { .tavern.tv-page .tv-rec-ft { min-height: 44px; } }
+@media (max-width: 560px) {
+  .tavern.tv-page :is(.tv-rec-head, .tv-rec-story, .tv-rec-party) { padding-inline: 12px; }
+}
+/* The page hides heading notes on narrow pages; the map's note says which moment the map shows, so it stays, on its own line. */
+@container tavern-page (max-width: 640px) { .tavern.tv-page .tv-rec-ft .tv-colh-aside { display: block; flex-basis: 100%; order: 1; padding-left: 20px; } }

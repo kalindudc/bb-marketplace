@@ -1,0 +1,54 @@
+/* The journal's segment in bb's thread context row and its section in the thread context card (one of the two at a time).
+   The summary sits among bb's own segments, so it takes their size (24 px, 12 px text) and its steps follow bb's promptbox-shell container. */
+.tavern.jseg-sum { display: inline-flex; align-items: center; gap: 5px; min-height: 24px; min-width: 0; max-width: max-content; flex: 1 1 auto; padding: 4px 6px; border: 0; border-radius: var(--radius); background: transparent; color: var(--tavern-muted); font-size: 12px; line-height: 1; white-space: nowrap; overflow: hidden; cursor: pointer; }
+.tavern.jseg-sum:hover { background: var(--tavern-hover); color: var(--foreground); }
+.tavern.jseg-sum:focus-visible { outline: 1px solid var(--ring, var(--primary)); outline-offset: 0; }
+.tavern.jseg-sum .jseg-icon { width: 14px; height: 14px; flex: none; color: var(--foreground); }
+.tavern .jseg-bar { display: inline-flex; flex: none; width: 34px; height: 4px; gap: 1px; background: color-mix(in oklab, var(--foreground) 14%, transparent); }
+.tavern .jseg-bar i { display: block; min-width: 0; flex-basis: 0; }
+.tavern .jseg-bar i.d { background: var(--primary); }
+.tavern .jseg-bar i.b { background: var(--tavern-blocked); }
+.tavern.jseg-sum .jseg-n { flex: none; font-weight: 600; color: var(--foreground); }
+.tavern.jseg-sum .jseg-short { display: none; }
+.tavern.jseg-sum .jseg-blk { display: inline-flex; align-items: center; gap: 3px; flex: none; color: var(--tavern-blocked); }
+.tavern.jseg-sum .jseg-chev { flex: none; }
+/* Loading: the region is the summary's box; the shapes take the width it last had, so the segments after it do not move at the swap. */
+.tavern.jseg-skel { cursor: default; }
+.tavern.jseg-skel:hover { background: transparent; }
+.tavern.jseg-skel > .sk { display: flex; min-width: 0; }
+.tavern .jseg-skel-in { display: inline-flex; align-items: center; gap: 5px; inline-size: calc(var(--jseg-w) - 12px); max-inline-size: 100%; min-width: 0; overflow: hidden; }
+/* bb's composer is narrower than 48rem in most panes, so the bar stays until the narrowest step, where the count shortens and the bar and chevron drop. */
+@container promptbox-shell (max-width: 34rem) {
+  .tavern.jseg-sum .jseg-long, .tavern.jseg-sum .jseg-chev, .tavern.jseg-sum .jseg-bar, .tavern.jseg-sum .jseg-skbar { display: none; }
+  .tavern.jseg-sum .jseg-short { display: inline; }
+}
+
+.tavern.jseg-det { padding: 2px 4px 4px; font-size: 12px; }
+.tavern.jseg-det ul { display: flex; flex-direction: column; }
+.tavern .jseg-row { display: flex; align-items: center; gap: 2px; min-height: 28px; }
+.tavern .jseg-row.cur { box-shadow: inset 2px 0 0 var(--primary); }
+.tavern .jseg-tick, .tavern .jseg-open, .tavern .jseg-all { border: 0; border-radius: var(--radius); background: transparent; color: inherit; cursor: pointer; }
+.tavern .jseg-tick { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 28px; min-height: 28px; }
+.tavern .jseg-open { display: flex; align-items: center; gap: 6px; flex: 1 1 0; min-width: 0; min-height: 28px; padding: 0 6px; text-align: left; }
+.tavern :is(.jseg-tick, .jseg-open, .jseg-all):hover:not(:disabled) { background: var(--tavern-hover); }
+.tavern :is(.jseg-tick, .jseg-open, .jseg-all):disabled { cursor: default; opacity: .6; }
+.tavern .jseg-open .id { flex: none; font-size: 11px; color: var(--tavern-muted); font-variant-numeric: tabular-nums; }
+.tavern .jseg-open .t { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tavern .jseg-open .cnt { flex: none; font-size: 11px; color: var(--tavern-muted); }
+.tavern .jseg-open .flag { flex: none; font-size: 11px; color: var(--tavern-blocked); }
+.tavern .jseg-open .flag.bad { color: var(--tavern-bad); }
+.tavern .jseg-none { padding: 4px 8px; font-size: 12px; }
+.tavern .jseg-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 2px 0 0 6px; font-size: 11px; }
+.tavern .jseg-all { display: inline-flex; align-items: center; gap: 3px; min-height: 28px; padding: 0 6px; font-size: 12px; font-weight: 600; }
+/* Phone-sized targets on touch and at phone widths, as the widget row does. */
+.tavern.jseg-card-bar { display: inline-flex; align-items: center; }
+.tavern.jseg-lead { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; }
+.tavern.jseg-tick { width: 24px; min-height: 24px; border: 0; background: transparent; color: var(--foreground); cursor: pointer; }
+@media (pointer: coarse) {
+  .tavern .jseg-row, .tavern .jseg-open, .tavern .jseg-all { min-height: 44px; }
+  .tavern .jseg-tick { width: 44px; min-height: 44px; }
+}
+@container promptbox-shell (max-width: 34rem) {
+  .tavern .jseg-row, .tavern .jseg-open, .tavern .jseg-all { min-height: 44px; }
+  .tavern .jseg-tick { width: 44px; min-height: 44px; }
+}

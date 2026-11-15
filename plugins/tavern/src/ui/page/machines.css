@@ -1,0 +1,167 @@
+/* Where work runs: the machine placement page. Tavern and bb tokens only; muted text reads var(--tavern-muted) so the kit's selected-fill lift applies. */
+.tavern.tv-page .mx { display: flex; flex-direction: column; gap: 12px; min-width: 0; font-size: 13px; }
+.tavern.tv-page .mx-head h1 { margin: 0; }
+.tavern.tv-page .mx-head .anc { margin-left: 6px; }
+.tavern.tv-page .mx-intro { margin: 2px 0 0; max-width: 80ch; font-size: 12px; color: var(--tavern-muted); }
+.tavern.tv-page .mx code { font-size: 12px; padding: 0 3px; background: color-mix(in oklab, var(--foreground) 7%, transparent); color: var(--foreground); }
+.tavern.tv-page .mx-f, .tavern.tv-page .mx-hint, .tavern.tv-page .mx-ml { color: var(--tavern-muted); font-weight: 400; }
+.tavern.tv-page .mx-hint { margin: 0; font-size: 12px; max-width: 70ch; line-height: 1.45; }
+.tavern.tv-page .mx-h { margin: 0; font-size: 14px; font-weight: 700; }
+.tavern.tv-page .mx-lh { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; margin: 0 0 8px; }
+.tavern.tv-page .mx-lh .mx-addr { margin-left: auto; align-self: center; }
+.tavern.tv-page .mx-from, .tavern.tv-page .mx-undo { display: flex; align-items: center; gap: 12px; padding: 8px 12px; box-shadow: inset 3px 0 0 var(--tavern-you); }
+.tavern.tv-page .mx-from p { flex: 1; margin: 0; }
+.tavern.tv-page .mx-undo { box-shadow: none; }
+.tavern.tv-page .mx-undo > span { flex: 1; }
+.tavern.tv-page .mx-done { margin: 0; font-size: 12px; }
+.tavern.tv-page .mx-block p, .tavern.tv-page .mx-block ul { margin: 0; }
+.tavern.tv-page .mx-block { flex-direction: column; align-items: flex-start; }
+.tavern.tv-page .mx-sum-l { display: inline-flex; flex-wrap: wrap; gap: 4px 12px; }
+.tavern.tv-page .mx-empty { padding: 14px 16px; border: 1px dashed var(--tavern-line); background: var(--tavern-elev-recessed-bg); }
+.tavern.tv-page .mx-empty p { margin: 0; max-width: 62ch; }
+.tavern.tv-page .mx-prob { display: flex; gap: 6px; align-items: flex-start; margin: 6px 0 0; font-size: 12px; }
+.tavern.tv-page .mx-prob svg { flex: none; margin-top: 2px; color: var(--tavern-bad); }
+.tavern.tv-page .mx-tag { height: auto; min-height: 20px; padding: 2px 6px; white-space: normal; line-height: 1.35; }
+.tavern.tv-page .tag.guard-detect.mx-tag { margin: 0; align-self: auto; }
+.tavern.tv-page .tag.mx-warn { background: color-mix(in oklab, var(--warning) 18%, transparent); }
+.tavern.tv-page .tag.mx-bad { background: color-mix(in oklab, var(--destructive) 14%, transparent); }
+.tavern.tv-page .mx-tag .tv-ilink { font-weight: 600; text-decoration: underline; text-underline-offset: 2px; }
+
+/* Layout: rules beside a sticky preview; one column, preview first, below a 900 px page. */
+.tavern.tv-page .mx-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(340px, 400px); gap: 24px; align-items: start; }
+.tavern.tv-page .mx-side { position: sticky; top: 0; max-height: calc(100vh - 96px); overflow: auto; }
+@container (max-width: 900px) {
+  .tavern.tv-page .mx-grid { grid-template-columns: minmax(0, 1fr); }
+  .tavern.tv-page .mx-side { position: static; max-height: none; overflow: visible; order: -1; }
+}
+
+/* Rules: an ordered list; the number is the order. */
+.tavern.tv-page .mx-rules { list-style: none; margin: 0; padding: 0; border: 1px solid var(--tavern-line); background: var(--card); }
+.tavern.tv-page .mx-rule { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; column-gap: 8px; padding: 10px 12px 8px 44px; border-top: 1px solid var(--tavern-line); }
+.tavern.tv-page .mx-rule:first-child { border-top: 0; }
+.tavern.tv-page .mx-rule > * { grid-column: 1 / -1; }
+.tavern.tv-page .mx-rule > .mx-rh { grid-column: 1; grid-row: 1; }
+.tavern.tv-page .mx-rule > .mx-ra { grid-column: 2; grid-row: 1; }
+.tavern.tv-page .mx-rule:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
+.tavern.tv-page .mx-rule.needs { box-shadow: inset 3px 0 0 var(--tavern-you); }
+.tavern.tv-page .mx-rule.hit { box-shadow: inset 3px 0 0 var(--primary); }
+.tavern.tv-page .mx-rule.bad, .tavern.tv-page .mx-rule.hit.blocked { box-shadow: inset 3px 0 0 var(--tavern-bad); }
+.tavern.tv-page .mx-rule[aria-current="true"] { background: var(--surface-selected); }
+.tavern.tv-page .mx-rule.off .mx-rd, .tavern.tv-page .mx-rule.off .mx-rt-b { color: var(--tavern-muted); }
+.tavern.tv-page .mx-rh { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.tavern.tv-page .mx-n { position: absolute; left: 12px; top: 12px; width: 22px; height: 22px; display: grid; place-items: center; border: 1px solid var(--tavern-line); font-size: 12px; font-weight: 700; background: var(--tavern-elev-raised-bg); }
+.tavern.tv-page .mx-rt { flex: 1; min-width: 0; margin: 0; font-size: 13px; }
+.tavern.tv-page .mx-rt-b { display: block; max-width: 100%; padding: 2px 0; border: 0; background: none; font: inherit; font-weight: 700; color: var(--foreground); text-align: left; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tavern.tv-page .mx-rt-b:hover, .tavern.tv-page .mx-rt-b:focus-visible { text-decoration: underline; text-underline-offset: 2px; }
+.tavern.tv-page .mx-ra { display: flex; align-items: center; gap: 2px; }
+.tavern.tv-page .mx-ra .tv-switch { margin-right: 6px; }
+.tavern.tv-page .mx-rd { margin: 4px 0 0; display: grid; gap: 2px; }
+.tavern.tv-page .mx-rd > div { display: grid; grid-template-columns: 6.2em minmax(0, 1fr); gap: 8px; }
+.tavern.tv-page .mx-rd dt { font-size: 12px; color: var(--tavern-muted); padding-top: 1px; }
+.tavern.tv-page .mx-rd dd { margin: 0; min-width: 0; line-height: 1.45; }
+.tavern.tv-page .mx-v b { font-weight: 600; }
+.tavern.tv-page .mx-mark { display: flex; gap: 6px; align-items: baseline; margin: 6px 0 0; padding: 3px 8px; font-size: 12px; background: color-mix(in oklab, var(--foreground) 5%, transparent); }
+.tavern.tv-page .mx-mark > .mx-sm { position: absolute; left: 12px; top: 40px; width: 22px; font-size: 14px; }
+.tavern.tv-page .mx-mark.matched { font-weight: 600; }
+.tavern.tv-page .mx-mark.unreached, .tavern.tv-page .mx-mark.off { color: var(--tavern-muted); }
+.tavern.tv-page .mx-sm { font-weight: 700; text-align: center; }
+.tavern.tv-page .mx-fall.hit .mx-sm { color: var(--primary); }
+.tavern.tv-page .mx-rule.hit.blocked .mx-mark .mx-sm { color: color-mix(in oklab, var(--tavern-bad) 70%, var(--foreground)); }
+.tavern.tv-page .mx-flags { display: flex; flex-wrap: wrap; gap: 4px 6px; margin-top: 6px; }
+.tavern.tv-page .mx-flags:empty { display: none; }
+.tavern.tv-page .mx-rf { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; margin-top: 4px; font-size: 12px; }
+.tavern.tv-page .mx-rf .lnk-btn { min-height: 24px; }
+.tavern.tv-page .mx-rf .mx-del { margin-left: auto; color: var(--tavern-muted); }
+.tavern.tv-page .mx-fall { display: flex; gap: 8px; align-items: baseline; margin: -1px 0 0; padding: 8px 12px 8px 20px; border: 1px solid var(--tavern-line); font-size: 12px; color: var(--tavern-muted); background: var(--tavern-elev-recessed-bg); }
+.tavern.tv-page .mx-fall.hit { color: var(--foreground); font-weight: 600; box-shadow: inset 3px 0 0 var(--primary); }
+
+/* Consent: in place under its rule; quiet, no glow, no voice. */
+.tavern.tv-page .mx-consent { margin: 10px 0 4px; padding: 12px 14px; border: 1px solid var(--tavern-line); box-shadow: inset 3px 0 0 var(--tavern-you); background: var(--tavern-elev-raised-bg); }
+.tavern.tv-page .mx-consent:focus { outline: none; }
+.tavern.tv-page .mx-consent h4 { margin: 0; font-size: 13px; }
+.tavern.tv-page .mx-c-lead { margin: 2px 0 8px; font-size: 12px; color: var(--tavern-muted); }
+.tavern.tv-page .mx-c-list { margin: 0; padding-left: 20px; display: grid; gap: 6px; font-size: 12px; line-height: 1.5; }
+.tavern.tv-page .mx-c-list .tag { display: inline; padding: 1px 5px; }
+.tavern.tv-page .mx-c-not, .tavern.tv-page .mx-c-dest { margin: 8px 0 0; font-size: 12px; line-height: 1.5; }
+.tavern.tv-page .mx-c-dest { color: var(--tavern-muted); }
+.tavern.tv-page .mx-c-acts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+
+/* Editor */
+.tavern.tv-page .mx-back { margin-bottom: 8px; }
+.tavern.tv-page .mx-editor { padding: 12px 14px; border: 1px solid var(--tavern-line); background: var(--card); display: grid; gap: 12px; }
+.tavern.tv-page .mx-eh { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; }
+.tavern.tv-page .mx-eh h3 { margin: 0; font-size: 14px; }
+.tavern.tv-page .mx-fs, .tavern.tv-page .mx-inputs { margin: 0; padding: 10px 0 0; border: 0; border-top: 1px solid var(--tavern-line); display: grid; gap: 10px; min-width: 0; }
+.tavern.tv-page .mx-fs > legend, .tavern.tv-page .mx-inputs > legend { float: left; width: 100%; padding: 0; font-weight: 700; font-size: 13px; }
+.tavern.tv-page .mx-inputs > legend { font-size: 12px; }
+.tavern.tv-page .mx-field { display: grid; gap: 4px; min-width: 0; }
+.tavern.tv-page .mx-field.bad :is(.tv-text, .tv-select) { border-color: var(--tavern-bad); }
+.tavern.tv-page .mx-fl { font-size: 12px; font-weight: 700; }
+.tavern.tv-page .mx-all { margin: 0; padding: 6px 10px; background: color-mix(in oklab, var(--warning) 12%, transparent); font-size: 12px; }
+.tavern.tv-page .mx-wide { width: 100%; box-sizing: border-box; }
+.tavern.tv-page .mx-row { display: flex; align-items: center; gap: 10px; min-width: 0; flex-wrap: wrap; }
+.tavern.tv-page .mx-row > .mx-wide { flex: 1; width: auto; min-width: 12em; }
+.tavern.tv-page .mx-two { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 10px 14px; }
+.tavern.tv-page .mx-igrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 180px), 1fr)); gap: 10px 14px; }
+.tavern.tv-page .mx-int { display: flex; align-items: center; gap: 6px; font-size: 11px; }
+.tavern.tv-page .mx-int input { width: 7ch; }
+.tavern.tv-page .mx-tpl { display: flex; flex-wrap: wrap; gap: 4px; }
+.tavern.tv-page .mx-json { min-height: 80px; font-family: var(--font-mono, inherit); }
+.tavern.tv-page .mx-chips { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px; }
+.tavern.tv-page .mx-chip { display: inline-flex; align-items: center; gap: 2px; padding-left: 8px; border: 1px solid var(--tavern-line); background: var(--tavern-elev-raised-bg); font-size: 12px; max-width: 100%; }
+.tavern.tv-page .mx-chip > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tavern.tv-page .mx-chip-x { flex: none; width: 24px; height: 24px; display: grid; place-items: center; border: 0; background: none; color: var(--foreground); cursor: pointer; }
+.tavern.tv-page .mx-chip-x:hover { background: var(--tavern-hover); }
+.tavern.tv-page .mx-add { display: grid; gap: 6px; justify-items: start; }
+.tavern.tv-page .mx-rm { font-size: 12px; color: var(--tavern-muted); }
+.tavern.tv-page .mx-ef { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; padding-top: 10px; border-top: 1px solid var(--tavern-line); }
+.tavern.tv-page .mx .tv-text, .tavern.tv-page .mx .tv-select { min-height: 30px; }
+
+/* Caps */
+.tavern.tv-page .mx-caps-h { margin-top: 26px; }
+.tavern.tv-page .mx-caps { display: grid; }
+.tavern.tv-page .mx-caps .tv-set-row:first-child { border-top: 0; }
+.tavern.tv-page .mx-cap.bad .tv-num input { border-color: var(--tavern-bad); }
+.tavern.tv-page .mx-ceiling { margin: 6px 0 0; font-size: 12px; color: var(--tavern-muted); }
+.tavern.tv-page .mx-ceiling .tv-ilink { font-weight: 400; text-decoration: underline; text-underline-offset: 2px; color: var(--foreground); }
+.tavern.tv-page .mx-ceiling .mx-nowrap { white-space: nowrap; }
+
+/* Preview */
+.tavern.tv-page .mx-pv[hidden] { display: none; }
+.tavern.tv-page .mx-pv { display: grid; gap: 10px; padding: 12px 14px; border: 1px solid var(--tavern-line); background: var(--tavern-elev-recessed-bg); }
+.tavern.tv-page .mx-unavail { margin: 0; font-size: 12px; line-height: 1.5; }
+.tavern.tv-page .mx-hire { display: grid; gap: 10px; }
+.tavern.tv-page .mx-verdict { padding: 10px 12px; border: 1px solid var(--tavern-line); background: var(--card); display: grid; gap: 4px; }
+.tavern.tv-page .mx-verdict.blocked { box-shadow: inset 3px 0 0 var(--tavern-bad); }
+/* Caught but waiting for the pipeline: the kit's wait tone (its wait mark is muted), never the red of a real block. */
+.tavern.tv-page .mx-verdict.waits { box-shadow: inset 3px 0 0 var(--tavern-muted); }
+.tavern.tv-page .mx-vl { margin: 0; font-size: 13px; line-height: 1.45; }
+.tavern.tv-page .mx-vk { font-size: 15px; font-weight: 700; }
+.tavern.tv-page .mx-vr { margin: 0; font-size: 12px; line-height: 1.45; }
+.tavern.tv-page .mx-vlink { justify-self: start; font-size: 12px; text-align: left; white-space: normal; }
+.tavern.tv-page .mx-vf { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-size: 12px; }
+.tavern.tv-page .mx-vn, .tavern.tv-page .mx-pv-n { margin: 0; font-size: 11px; color: var(--tavern-muted); }
+@container (min-width: 901px) { .tavern.tv-page .mx-hire .mx-plain { display: none; } }
+
+/* Touch and phones: 44 px targets, rows stack, and editing text at bb's 16 px so iOS doesn't zoom on focus. Desktop stays dense. */
+@media (pointer: coarse), (max-width: 560px) {
+  .tavern.tv-page .mx :is(.tv-switch, .btn, .btn.sm, .tv-text, .tv-select, .lnk-btn, .seg, .tv-num input) { min-height: 44px; }
+  .tavern.tv-page .mx :is(input, select, textarea) { font-size: 16px; }
+  .tavern.tv-page .mx :is(.ibtn, .mx-chip-x) { min-width: 44px; min-height: 44px; }
+  .tavern.tv-page .mx-rt-b { min-height: 44px; white-space: normal; }
+  .tavern.tv-page .mx-rf .lnk-btn { min-width: 44px; justify-content: center; }
+  .tavern.tv-page .mx-sum-l .tv-ilink { min-height: 44px; min-width: 44px; }
+  .tavern.tv-page .mx-rule { padding-left: 12px; }
+  .tavern.tv-page .mx-n { position: static; flex: none; }
+  .tavern.tv-page .mx-rd > div { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .tavern.tv-page .mx-rf .mx-del { margin-left: 0; }
+  .tavern.tv-page .mx-mark > .mx-sm { position: static; width: auto; }
+  .tavern.tv-page .mx-rule > .mx-ra { grid-column: 1 / -1; grid-row: auto; order: 5; margin-top: 4px; }
+  .tavern.tv-page .mx-rule > .mx-rd { order: 1; }
+  .tavern.tv-page .mx-rule > .mx-mark { order: 2; }
+  .tavern.tv-page .mx-rule > .mx-flags { order: 3; }
+  .tavern.tv-page .mx-rule > .mx-prob { order: 4; }
+  .tavern.tv-page .mx-rule > .mx-rf { order: 6; }
+  .tavern.tv-page .mx-rule > .mx-consent { order: 7; }
+}
+@container (max-width: 560px) { .tavern.tv-page .mx-sd { display: none; } }

@@ -1,0 +1,521 @@
+{
+ "scopes": [
+  {
+   "threadId": "thr_vqnj623sr8",
+   "scope": {
+    "v": 1,
+    "threadId": "thr_vqnj623sr8",
+    "role": "ranger",
+    "preset": "readonly",
+    "issuedAt": 1794675037970,
+    "failClosed": true,
+    "mode": "enforce",
+    "commandTools": [
+     "bash",
+     "Bash"
+    ],
+    "writes": {
+     "mode": "none",
+     "allow": [
+      "/private/tmp",
+      "/private/var/folders/2c/hlwr36nd3rx7j742yt2__mjm0000gn/T",
+      "/Users/me/.bb/thread-storage/thr_vqnj623sr8"
+     ],
+     "deny": [
+      "/Users/me/.ssh",
+      "/Users/me/.pi/agent/extensions",
+      "/Users/me/src/github.com/kalindudc/shell/home/.pi/agent/extensions/agents-context",
+      "/Users/me/.pi/agent/git/github.com/example/agent-kit/extensions/ai-proxy-credential-manager",
+      "/Users/me/src/github.com/kalindudc/shell/home/.pi/agent/extensions/auto-title",
+      "/Users/me/src/github.com/kalindudc/shell/home/.pi/agent/extensions/bash-guard",
+      "/Users/me/src/github.com/kalindudc/shell/home/.pi/agent/extensions/custom-tools",
+      "/Users/me/src/github.com/kalindudc/shell/home/.pi/agent/extensions/esc-guard",
+      "/Users/me/src/github.com/kalindudc/shell/home/.pi/agent/extensions/herdr-label",
+      "/Users/me/src/github.com/kalindudc/shell/home/.pi/agent/extensions/keep-awake",
+      "/Users/me/src/github.com/kalindudc/shell/home/.pi/agent/extensions/long-cache",
+      "/nix/store/ig8q9xkwbqbk1adbdr7sxw44b0ba4j5c-pi/config/event-export",
+      "/nix/store/ig8q9xkwbqbk1adbdr7sxw44b0ba4j5c-pi/config/extension",
+      "/Users/me/.claude",
+      "/Users/me/.agents/tavern/scopes.yml",
+      "/Users/me/.bb/plugins/tavern/scopes"
+     ]
+    },
+    "tools": {
+     "allow": [
+      "read",
+      "Read",
+      "grep",
+      "Grep",
+      "find",
+      "Glob",
+      "ls",
+      "bash",
+      "Bash",
+      "journal",
+      "quest",
+      "tavern_report",
+      "flare",
+      "flare_list",
+      "codemode",
+      "tool_search",
+      "web_search",
+      "web_fetch",
+      "web_extract",
+      "web_map",
+      "cortex_recall",
+      "recall_session",
+      "git_blame",
+      "git_diff_summary",
+      "ast_query",
+      "mcp__*__read_*",
+      "mcp__*__*_read_*",
+      "mcp__*__search_*",
+      "mcp__*__*_search_*",
+      "mcp__*__get_*",
+      "mcp__*__*_get_*",
+      "mcp__*__list_*",
+      "mcp__*__*_list_*"
+     ],
+     "deny": [
+      "*send*",
+      "*post*",
+      "*_*write*",
+      "*delete*",
+      "*create*",
+      "*update*",
+      "*publish*",
+      "*merge*",
+      "*deploy*",
+      "spawn",
+      "*spawn*",
+      "powershell",
+      "PowerShell",
+      "bb_workflow_run",
+      "ScheduleWakeup",
+      "update_environment_directory"
+     ],
+     "hide": true
+    },
+    "shell": {
+     "deny": [
+      {
+       "id": "gh-merge",
+       "argv": [
+        "gh",
+        "pr",
+        "merge"
+       ],
+       "why": "Merging pull requests needs the user's decision"
+      },
+      {
+       "id": "deploy",
+       "argv": [
+        "dev",
+        "deploy"
+       ],
+       "why": "Deployments are outside this scope"
+      },
+      {
+       "id": "deploy-fallback",
+       "regex": "\\b(terraform\\s+(apply|destroy|import)|helm\\s+(install|upgrade|uninstall)|kapp\\s+deploy|dt\\s+deploy)\\b",
+       "why": "Deployments are outside this scope"
+      },
+      {
+       "id": "git-push",
+       "argv": [
+        "git",
+        "push"
+       ],
+       "why": "This scope does not allow pushes"
+      }
+     ],
+     "allow": []
+    },
+    "network": "any",
+    "github": "read",
+    "env": {
+     "poisonGh": true,
+     "blockGitPush": true,
+     "variables": {
+      "HOME": "/Users/me",
+      "TMPDIR": "/private/var/folders/2c/hlwr36nd3rx7j742yt2__mjm0000gn/T",
+      "BB_THREAD_STORAGE": "/Users/me/.bb/thread-storage/thr_vqnj623sr8"
+     }
+    },
+    "sandbox": true,
+    "onViolation": "block"
+   },
+   "error": null,
+   "armed": false,
+   "pendingAskId": null,
+   "guardPosture": {
+    "providerId": "pi",
+    "mode": "pre-exec",
+    "label": "Pi pre-exec guard and watcher",
+    "approvalAskId": null
+   },
+   "mode": "enforce",
+   "problems": [],
+   "guard": {
+    "installed": true,
+    "stale": false,
+    "sandbox": "available",
+    "claude": "phase-2-not-installed"
+   }
+  },
+  {
+   "threadId": "thr_dakui5z2rx",
+   "scope": {
+    "v": 1,
+    "threadId": "thr_dakui5z2rx",
+    "role": "smith",
+    "preset": "worktree",
+    "issuedAt": 1794675155278,
+    "failClosed": true,
+    "mode": "enforce",
+    "commandTools": [
+     "bash",
+     "Bash"
+    ],
+    "expectedWorktree": "/Users/me/.bb/plugins/environment-git-worktree/host-data/worktrees/thr_dakui5z2rx-1/app",
+    "writes": {
+     "mode": "worktree",
+     "allow": [
+      "/Users/me/.bb/plugins/environment-git-worktree/host-data/worktrees/thr_dakui5z2rx-1/app",
+      "/private/tmp",
+      "/private/var/folders/2c/hlwr36nd3rx7j742yt2__mjm0000gn/T",
+      "/Users/me/.bb/thread-storage/thr_dakui5z2rx"
+     ],
+     "deny": [
+      "/Users/me/.ssh",
+      "/Users/me/.pi/agent/extensions",
+      "/Users/me/src/github.com/kalindudc/shell/home/.pi/agent/extensions/agents-context",
+      "/Users/me/.pi/agent/git/github.com/example/agent-kit/extensions/ai-proxy-credential-manager",
+      "/Users/me/src/github.com/kalindudc/shell/home/.pi/agent/extensions/auto-title",
+      "/Users/me/src/github.com/kalindudc/shell/home/.pi/agent/extensions/bash-guard",
+      "/Users/me/src/github.com/kalindudc/shell/home/.pi/agent/extensions/custom-tools",
+      "/Users/me/src/github.com/kalindudc/shell/home/.pi/agent/extensions/esc-guard",
+      "/Users/me/src/github.com/kalindudc/shell/home/.pi/agent/extensions/herdr-label",
+      "/Users/me/src/github.com/kalindudc/shell/home/.pi/agent/extensions/keep-awake",
+      "/Users/me/src/github.com/kalindudc/shell/home/.pi/agent/extensions/long-cache",
+      "/nix/store/ig8q9xkwbqbk1adbdr7sxw44b0ba4j5c-pi/config/event-export",
+      "/nix/store/ig8q9xkwbqbk1adbdr7sxw44b0ba4j5c-pi/config/extension",
+      "/Users/me/.claude",
+      "/Users/me/.agents/tavern/scopes.yml",
+      "/Users/me/.bb/plugins/tavern/scopes"
+     ]
+    },
+    "tools": {
+     "allow": [
+      "*"
+     ],
+     "deny": [
+      "*send*",
+      "*post*",
+      "*_*write*",
+      "*delete*",
+      "*create*",
+      "*update*",
+      "*publish*",
+      "*merge*",
+      "*deploy*",
+      "spawn",
+      "*spawn*",
+      "powershell",
+      "PowerShell",
+      "bb_workflow_run",
+      "ScheduleWakeup",
+      "update_environment_directory"
+     ],
+     "hide": true
+    },
+    "shell": {
+     "deny": [
+      {
+       "id": "gh-merge",
+       "argv": [
+        "gh",
+        "pr",
+        "merge"
+       ],
+       "why": "Merging pull requests needs the user's decision"
+      },
+      {
+       "id": "deploy",
+       "argv": [
+        "dev",
+        "deploy"
+       ],
+       "why": "Deployments are outside this scope"
+      },
+      {
+       "id": "deploy-fallback",
+       "regex": "\\b(terraform\\s+(apply|destroy|import)|helm\\s+(install|upgrade|uninstall)|kapp\\s+deploy|dt\\s+deploy)\\b",
+       "why": "Deployments are outside this scope"
+      }
+     ],
+     "allow": []
+    },
+    "network": "any",
+    "github": "draft-pr-only",
+    "env": {
+     "poisonGh": true,
+     "blockGitPush": false,
+     "variables": {
+      "HOME": "/Users/me",
+      "TMPDIR": "/private/var/folders/2c/hlwr36nd3rx7j742yt2__mjm0000gn/T",
+      "BB_THREAD_STORAGE": "/Users/me/.bb/thread-storage/thr_dakui5z2rx"
+     }
+    },
+    "sandbox": true,
+    "onViolation": "block"
+   },
+   "error": null,
+   "armed": false,
+   "pendingAskId": null,
+   "guardPosture": {
+    "providerId": "pi",
+    "mode": "pre-exec",
+    "label": "Pi pre-exec guard and watcher",
+    "approvalAskId": null
+   },
+   "mode": "enforce",
+   "problems": [],
+   "guard": {
+    "installed": true,
+    "stale": false,
+    "sandbox": "available",
+    "claude": "phase-2-not-installed"
+   }
+  },
+  {
+   "threadId": "thr_t7zqtmwfgx",
+   "scope": {
+    "v": 1,
+    "threadId": "thr_t7zqtmwfgx",
+    "role": "warden",
+    "preset": "checker",
+    "issuedAt": 1794675476312,
+    "failClosed": true,
+    "mode": "enforce",
+    "commandTools": [
+     "bash",
+     "Bash"
+    ],
+    "checks": {
+     "worktree": "/Users/me/.bb/plugins/environment-git-worktree/host-data/worktrees/thr_dakui5z2rx-1/app",
+     "commands": [
+      "npm test"
+     ]
+    },
+    "writes": {
+     "mode": "none",
+     "allow": [
+      "/private/tmp",
+      "/private/var/folders/2c/hlwr36nd3rx7j742yt2__mjm0000gn/T",
+      "/Users/me/.bb/thread-storage/thr_t7zqtmwfgx"
+     ],
+     "deny": [
+      "/Users/me/.ssh",
+      "/Users/me/.pi/agent/extensions",
+      "/Users/me/src/github.com/kalindudc/shell/home/.pi/agent/extensions/agents-context",
+      "/Users/me/.pi/agent/git/github.com/example/agent-kit/extensions/ai-proxy-credential-manager",
+      "/Users/me/src/github.com/kalindudc/shell/home/.pi/agent/extensions/auto-title",
+      "/Users/me/src/github.com/kalindudc/shell/home/.pi/agent/extensions/bash-guard",
+      "/Users/me/src/github.com/kalindudc/shell/home/.pi/agent/extensions/custom-tools",
+      "/Users/me/src/github.com/kalindudc/shell/home/.pi/agent/extensions/esc-guard",
+      "/Users/me/src/github.com/kalindudc/shell/home/.pi/agent/extensions/herdr-label",
+      "/Users/me/src/github.com/kalindudc/shell/home/.pi/agent/extensions/keep-awake",
+      "/Users/me/src/github.com/kalindudc/shell/home/.pi/agent/extensions/long-cache",
+      "/nix/store/ig8q9xkwbqbk1adbdr7sxw44b0ba4j5c-pi/config/event-export",
+      "/nix/store/ig8q9xkwbqbk1adbdr7sxw44b0ba4j5c-pi/config/extension",
+      "/Users/me/.claude",
+      "/Users/me/.agents/tavern/scopes.yml",
+      "/Users/me/.bb/plugins/tavern/scopes"
+     ]
+    },
+    "tools": {
+     "allow": [
+      "read",
+      "Read",
+      "grep",
+      "Grep",
+      "find",
+      "Glob",
+      "ls",
+      "bash",
+      "Bash",
+      "journal",
+      "quest",
+      "tavern_report",
+      "flare",
+      "flare_list",
+      "codemode",
+      "tool_search",
+      "web_search",
+      "web_fetch",
+      "web_extract",
+      "web_map",
+      "cortex_recall",
+      "recall_session",
+      "git_blame",
+      "git_diff_summary",
+      "ast_query",
+      "mcp__*__read_*",
+      "mcp__*__*_read_*",
+      "mcp__*__search_*",
+      "mcp__*__*_search_*",
+      "mcp__*__get_*",
+      "mcp__*__*_get_*",
+      "mcp__*__list_*",
+      "mcp__*__*_list_*"
+     ],
+     "deny": [
+      "*send*",
+      "*post*",
+      "*_*write*",
+      "*delete*",
+      "*create*",
+      "*update*",
+      "*publish*",
+      "*merge*",
+      "*deploy*",
+      "spawn",
+      "*spawn*",
+      "powershell",
+      "PowerShell",
+      "bb_workflow_run",
+      "ScheduleWakeup",
+      "update_environment_directory"
+     ],
+     "hide": true
+    },
+    "shell": {
+     "deny": [
+      {
+       "id": "gh-merge",
+       "argv": [
+        "gh",
+        "pr",
+        "merge"
+       ],
+       "why": "Merging pull requests needs the user's decision"
+      },
+      {
+       "id": "deploy",
+       "argv": [
+        "dev",
+        "deploy"
+       ],
+       "why": "Deployments are outside this scope"
+      },
+      {
+       "id": "deploy-fallback",
+       "regex": "\\b(terraform\\s+(apply|destroy|import)|helm\\s+(install|upgrade|uninstall)|kapp\\s+deploy|dt\\s+deploy)\\b",
+       "why": "Deployments are outside this scope"
+      },
+      {
+       "id": "git-push",
+       "argv": [
+        "git",
+        "push"
+       ],
+       "why": "This scope does not allow pushes"
+      }
+     ],
+     "allow": []
+    },
+    "network": "any",
+    "github": "read",
+    "env": {
+     "poisonGh": true,
+     "blockGitPush": true,
+     "variables": {
+      "HOME": "/Users/me",
+      "TMPDIR": "/private/var/folders/2c/hlwr36nd3rx7j742yt2__mjm0000gn/T",
+      "BB_THREAD_STORAGE": "/Users/me/.bb/thread-storage/thr_t7zqtmwfgx"
+     }
+    },
+    "sandbox": true,
+    "onViolation": "block"
+   },
+   "error": null,
+   "armed": false,
+   "pendingAskId": null,
+   "guardPosture": {
+    "providerId": "pi",
+    "mode": "pre-exec",
+    "label": "Pi pre-exec guard and watcher",
+    "approvalAskId": null
+   },
+   "mode": "enforce",
+   "problems": [],
+   "guard": {
+    "installed": true,
+    "stale": false,
+    "sandbox": "available",
+    "claude": "phase-2-not-installed"
+   }
+  }
+ ],
+ "violations": [
+  {
+   "threadId": "thr_t7zqtmwfgx",
+   "providerId": "pi",
+   "at": 1794675499405,
+   "eventId": "evt_4fatc65hzs",
+   "seq": 48,
+   "ruleId": "shell-location",
+   "reason": "[Tavern scope blocked] Blocked od -c: the command's working directory or symlinks cannot be proven. Report the need with tavern_report status needs-decision; do not try another route.",
+   "stopped": true,
+   "latencyMs": 1523,
+   "call": {
+    "kind": "bash",
+    "toolName": "bash",
+    "input": {
+     "command": "W=/Users/me/.bb/plugins/environment-git-worktree/host-data/worktrees/thr_dakui5z2rx-1/app; cd $W && tail -c 20 src/duration.js | od -c | tail -3; git diff --stat; S=$(mktemp -d); mkdir -p $S/src $S/test; cp package.json $S/; git show HEAD:src/duration.js > $S/src/duration.js; cp test/duration.test.js $S/test/; cd $S && node --test 2>&1 | grep -E \"SyntaxError|does not provide|\u2139 (pass|fail)\"; echo \"RED_EXIT=${PIPESTATUS[0]}\"; rm -rf $S"
+    },
+    "cwd": "/Users/me/tavern-live-r2/app"
+   },
+   "mode": "enforce"
+  }
+ ],
+ "members": [
+  {
+   "threadId": "thr_vqnj623sr8",
+   "characterId": "otto",
+   "classId": "ranger",
+   "state": "done",
+   "guardPosture": {
+    "providerId": "pi",
+    "mode": "pre-exec",
+    "label": "Pi pre-exec guard and watcher",
+    "approvalAskId": null
+   }
+  },
+  {
+   "threadId": "thr_dakui5z2rx",
+   "characterId": "juno",
+   "classId": "smith",
+   "state": "done",
+   "guardPosture": {
+    "providerId": "pi",
+    "mode": "pre-exec",
+    "label": "Pi pre-exec guard and watcher",
+    "approvalAskId": null
+   }
+  },
+  {
+   "threadId": "thr_t7zqtmwfgx",
+   "characterId": "vex",
+   "classId": "warden",
+   "state": "done",
+   "guardPosture": {
+    "providerId": "pi",
+    "mode": "pre-exec",
+    "label": "Pi pre-exec guard and watcher",
+    "approvalAskId": null
+   }
+  }
+ ]
+}

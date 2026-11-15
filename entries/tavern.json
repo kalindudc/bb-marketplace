@@ -1,0 +1,32 @@
+{
+  "id": "tavern",
+  "displayName": "Tavern",
+  "description": "Hand a goal to a lead agent and keep the decisions. A Keeper scouts, proposes a quest map for your approval, then delegates to builders and a checker while you steer from one thread. Follow asks, reports, verified results and work left for you on the Tavern page, with a journal checklist in every thread, local standing rules, scope controls, settings and private backups.",
+  "icon": {
+    "url": "plugins/tavern/icons/tavern.svg"
+  },
+  "tags": [
+    "parallel-agents",
+    "orchestration",
+    "checklists",
+    "evidence",
+    "code-review",
+    "worktrees",
+    "side-panel",
+    "dashboard"
+  ],
+  "author": {
+    "name": "Kalindu De Costa",
+    "github": "kalindudc"
+  },
+  "category": "tasks-and-workflows",
+  "overview": "./plugins/tavern/PLUGIN_OVERVIEW.md",
+  "source": {
+    "git": {
+      "url": "https://github.com/kalindudc/bb-marketplace.git",
+      "subdir": "plugins/tavern",
+      "range": ">=0.1.0 <1.0.0",
+      "tagPrefix": "tavern/"
+    }
+  }
+}

@@ -1,0 +1,34 @@
+/* Thread-surface skeletons (kit README "Loading"): layout only. Shapes and colours are the kit's (skeleton.css); each skeleton sits in its
+   surface's real classes, so the rules here only undo what would read as content or state, and place shapes the kit does not. */
+
+/* The quest map's nodes, in the map's place, wrapping as its lanes do on a narrow card. */
+.tavern .sk-qmap { display: flex; flex-wrap: wrap; gap: 8px; min-width: 0; }
+
+/* The ask pointer: its line without the attention colour, which would say the ask is open before that is known. */
+.tavern.pointer.sk-pointer { border-color: var(--tavern-skel-edge); }
+
+/* Ledger: the region stands in for the tab's children, so it takes their column and gap and they keep their own side margins. */
+.tavern.ledger > .sk-region { margin: 0; }
+.tavern.ledger > .sk-region > .sk { display: flex; flex-direction: column; gap: 10px; }
+.tavern.ledger > .sk-region > .sk > :not(.lg-card, .lg-now-line) { margin: 0 12px; }
+
+/* The voice line's quote marks are text; around a shape they would only add line boxes. */
+.tavern .sk .voice::before, .tavern .sk .voice::after { content: none; }
+
+/* Text that wraps on a narrow card: the party's waypoint line in the deal's narrow columns, and a report's headline and outcome on a
+   phone-wide card. The shapes take a second line exactly where the real text usually does. */
+.tavern .sk .deal, .tavern .sk .tcard { container-type: inline-size; }
+.tavern .sk .sk-wrap { display: none; }
+/* In the deal's columns, every other member's waypoint takes a second line, as most do, so a grid row is about the real one's height. */
+@container (min-width: 386px) { .tavern .sk .mcard:nth-child(odd) .sk-wrap { display: block; } }
+@container (max-width: 480px) { .tavern .sk :is(.report, .k-tavern-ledger) .sk-wrap { display: block; } }
+
+/* A ledger quest card's party, as its crests in a row (the mini party picture draws them at 28 px). */
+.tavern .lg-move.sk-crests { align-items: center; gap: 6px; padding: 4px 0; }
+
+/* The read-as line: the region is the line's box; its shapes lay out as the line's parts do (right-aligned, the summary on its own line). */
+.tavern.readas.sk-readas > .sk { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 4px 6px; flex-basis: 100%; }
+.tavern.readas.sk-readas .ra-sum { display: flex; justify-content: flex-end; }
+.tavern.readas.sk-readas .ra-fix { display: inline-flex; align-items: center; text-decoration: none; }
+/* The line's remembered width, on a plain box around the region, so the bubble around it keeps the width it will have. */
+.sk-readas-w { inline-size: var(--ra-w); max-inline-size: 100%; }

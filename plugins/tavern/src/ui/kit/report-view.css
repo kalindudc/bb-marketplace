@@ -1,0 +1,33 @@
+/* ReportView: one member report, with no card or panel around it. Tokens only; agent text wraps through [data-content]. */
+.tavern .rv { display: flex; flex-direction: column; gap: 8px; min-width: 0; font-size: 13px; line-height: 1.55; }
+.tavern .rv :is(p, ol, pre, h4) { margin: 0; }
+.tavern .rv-lead { font-size: 14px; font-weight: 600; line-height: 1.5; color: var(--foreground); }
+.tavern .rv-p, .tavern .rv-list { overflow-wrap: anywhere; }
+.tavern .rv-list { padding-left: 22px; display: flex; flex-direction: column; gap: 4px; list-style: decimal; }
+.tavern .rv-list > li { display: list-item; }
+.tavern .rv-list > li::marker { color: var(--tavern-muted); font-size: 12px; }
+.tavern .rv :is(.rv-p, .rv-list) code { font-size: 12px; padding: 0 3px; background: var(--tavern-recessed); overflow-wrap: anywhere; }
+.tavern .rv-code { padding: 8px 10px; background: var(--tavern-recessed); font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.tavern .rv-sec { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.tavern .rv-h { font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--tavern-muted); }
+.tavern .rv-voice { font-style: italic; color: var(--tavern-muted); }
+.tavern .rv.compact { gap: 4px; }
+.tavern .rv.compact .rv-lead { font-size: 13px; }
+.tavern .rv-foot { display: flex; align-items: center; gap: 10px; font-size: 12px; }
+/* MemberReports: one member's reports on one quest, the body of the reports tab in the page and in a thread. */
+.tavern .rv-reps { display: flex; flex-direction: column; gap: 16px; min-width: 0; font-size: 13px; line-height: 1.55; }
+.tavern .rv-reps-h { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: start; gap: 10px; padding-bottom: 10px; border-bottom: 1px solid var(--tavern-line); }
+.tavern .rv-reps-who { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.tavern .rv-reps-who > b { font-size: 15px; }
+.tavern .rv-reps-who .m, .tavern .rv-reps-did { font-size: 12px; color: var(--tavern-muted); overflow-wrap: anywhere; }
+/* One report per line: time, status and the start of its headline, cut with an ellipsis (the full line is the title). */
+.tavern .rv-reps-jump { display: flex; flex-direction: column; align-items: stretch; gap: 0; margin-left: -6px; font-size: 12px; }
+.tavern .rv-reps-jump > .lnk-btn { justify-content: flex-start; max-width: 100%; min-width: 0; }
+.tavern .rv-reps-jump > .lnk-btn > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tavern .rv-rep { display: flex; flex-direction: column; gap: 8px; min-width: 0; max-width: 90ch; scroll-margin-top: 8px; }
+.tavern .rv-rep + .rv-rep { padding-top: 14px; border-top: 1px solid var(--tavern-line); }
+.tavern .rv-rep-h { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; font-size: 12px; color: var(--tavern-muted); }
+.tavern .rv-rep-h > time { margin-left: auto; }
+.tavern .rv-rep-back { align-self: flex-start; margin-left: -6px; color: var(--tavern-muted); font-weight: 500; }
+.tavern .rv-rep-back:hover { color: var(--foreground); }
+.tavern .rv-none { margin: 0; font-size: 12px; color: var(--tavern-muted); }

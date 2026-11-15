@@ -1,0 +1,36 @@
+// @vitest-environment node
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { afterEach, expect, it, vi } from "vitest";
+import type { BbPluginApi } from "@get-bb/plugin-sdk";
+import extension from "../../adapters/pi/extension";
+import { ScopeStore } from "../../src/scope/store";
+import { scopeForClass } from "../../src/scope/presets";
+import { bindPaths, realPath } from "../../src/scope/paths";
+import { envForScope } from "../../src/scope/env";
+import { registerWatcher } from "../../src/scope/watch";
+const roots: string[] = [];
+afterEach(() => { vi.unstubAllEnvs(); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+it.each(["ranger", "wanderer"].flatMap(role => ['echo x > "$BB_THREAD_STORAGE/notes.md"', 'tmp=$(mktemp -d) && cp src/a.ts "$tmp/"', 'echo x > "$(mktemp)"'].map(command => ({ role, command }))))("guard and watcher agree for $role: $command", async ({ role, command }) => {
+  const root = mkdtempSync(join(tmpdir(), "tavern-r3-runtime-")); roots.push(root);
+  const storage = join(root, "storage"), target = join(root, "actual-storage");
+  mkdirSync(target); symlinkSync(target, storage);
+  const store = new ScopeStore(root);
+  const scope = bindPaths({ ...scopeForClass(role), threadId: "t1", issuedAt: 1 }, { home: root, tmp: [join(root, "scratch")], threadStorage: storage, scopesDir: store.directory }, realPath);
+  store.write("t1", scope);
+  const env = Object.fromEntries(envForScope(store.records, "t1").map(entry => [entry.name, entry.value]));
+  expect(env.BB_THREAD_STORAGE).toBe(storage); expect(env.HOME).toBe(root); expect(env.TMPDIR).toBe(join(root, "scratch"));
+  vi.stubEnv("TAVERN_SCOPE_FILE", store.file("t1")); vi.stubEnv("BB_THREAD_ID", "t1");
+  vi.stubEnv("BB_THREAD_STORAGE", "/different/server/storage"); vi.stubEnv("TMPDIR", "/different/server/tmp");
+  const handlers = new Map<string, Function>();
+  extension({ on: (name, fn) => { handlers.set(name, fn); }, getActiveTools: () => ["bash", "read", "journal", "tavern_report"], setActiveTools: () => {} });
+  handlers.get("session_start")!({}, { cwd: root }); expect(store.isArmed("t1")).toBe(true);
+  expect(handlers.get("tool_call")!({ toolName: "bash", input: { command } }, { cwd: root })).toBeUndefined();
+  const callbacks = new Map<string, Function>(), stop = vi.fn(), onViolation = vi.fn();
+  const row = { id: "completed", type: "item/completed", seq: 2, createdAt: Date.now(), data: { item: { id: "c1", type: "commandExecution", command, cwd: root, status: "completed", aggregatedOutput: "" } } };
+  const bb = { events: { on: (name: string, fn: Function) => callbacks.set(name, fn) }, onDispose: () => {}, log: { warn: vi.fn() }, sdk: { threads: { stop, events: { list: async () => [row] } } } } as unknown as BbPluginApi;
+  registerWatcher(bb, store, { onViolation });
+  await callbacks.get("experimental_thread.events")!({ thread: { id: "t1", providerId: "pi" }, sequence: 2 });
+  expect(stop).not.toHaveBeenCalled(); expect(onViolation).not.toHaveBeenCalled(); expect(store.violations()).toEqual([]);
+});

@@ -1,0 +1,373 @@
+import type { BbPluginApi, PluginRpcHandlers } from "@get-bb/plugin-sdk";
+import {
+  rpcContract,
+  tags,
+  type BoardQuestDetail,
+  type Ledger,
+  type Room,
+  type ThreadDecor,
+} from "../shared/contract";
+import type { Decision } from "../shared/schema";
+import { isLiveMember } from "./liveness";
+import { DecisionViews } from "./decisions";
+import { placementHandlers } from "./placement/rpc";
+import { voiceCheckHandlers } from "./voice-check/rpc";
+import { awayHandlers, requireAwayClient } from "./away/rpc";
+import { classEditorHandlers, requireClassClient } from "./registry-rpc";
+import { classExecutionFacts } from "./class-execution";
+import { experimental_PluginRpcRefusal, type ExperimentalPluginRpcHandlerContext } from "@get-bb/plugin-sdk";
+import { memberCredits, readTale } from "./tale";
+import { readCharacterPresentation } from "./character-presentation";
+import type { TavernRuntime } from "./runtime";
+
+export function rpcHandlers(
+  runtime: TavernRuntime,
+): PluginRpcHandlers<typeof rpcContract> {
+  const k = runtime.keeper;
+  const status = (threadId: string): "listening" | "busy" | "holding" => {
+    if (k.store.runtime(threadId).archivedAt != null) return "listening";
+    if (k.member(threadId)?.state === "working") return "busy";
+    return runtime.held(threadId) ? "holding" : "listening";
+  };
+  const quests = (threadId: string) =>
+    k.store
+      .visibleRecords("quests", threadId, 100)
+      .reverse()
+      .map((q) => k.summary(q.id));
+  const decisions = new DecisionViews(k.store);
+  const decisionsChanged = (changed: Decision[]) => {
+    if (!changed.length) return;
+    runtime.bb.rpc.experimental_invalidate([...new Set([
+      tags.room(),
+      ...changed.flatMap(decision => [
+        tags.thread(decision.keeperThreadId),
+        ...(decision.boardQuestId ? [tags.boardQuest(decision.boardQuestId)] : []),
+      ]),
+    ])]);
+  };
+  const errands = (threadId: string) => k.store.errandsPage(threadId, 100, 0).members;
+  const partyIds = (threadId: string) => [
+    threadId,
+    ...k.store
+      .query("members", "keeperThreadId", threadId, 500)
+      .map((member) => member.threadId),
+  ];
+  const wake = (threadId: string) => {
+    void runtime
+      .tick(threadId)
+      .then(() => runtime.recheckDispatch())
+      .catch((error) => runtime.bb.log.warn(`Tavern tick: ${String(error)}`));
+  };
+  return {
+    ...placementHandlers(runtime),
+    ...voiceCheckHandlers(() => runtime.voiceChecks),
+    ...awayHandlers(runtime),
+    registry: async ({ projectId }) => {
+      const snapshot = projectId ? await runtime.prepareRegistry(projectId) : runtime.snapshot();
+      const serviceRecords = runtime.serviceRecords.read();
+      return {
+        ...snapshot,
+        ...readCharacterPresentation(runtime.registry, snapshot, k.store),
+        serviceRecords,
+        levels: runtime.config().tavern.levels,
+        voice: runtime.config().tavern.voice,
+      };
+    },
+    reports: ({ ids, memberThreadId }) => ({
+      reports: (ids.length
+        ? ids.slice(0, 30).flatMap((id) => {
+            const report = k.store.get("reports", id);
+            return report ? [report] : [];
+          })
+        : memberThreadId
+          ? k.store.query("reports", "memberThreadId", memberThreadId, 30)
+          : k.store.latest("reports", 30)
+      ).filter(
+        (r) => memberThreadId === null || r.memberThreadId === memberThreadId,
+      ),
+    }),
+    classExecution: input => classExecutionFacts(runtime, input),
+    classExecutions: async ({ projectId }) => {
+      const snapshot = projectId ? await runtime.prepareRegistry(projectId) : runtime.snapshot();
+      return { classes: await Promise.all(snapshot.classes.map(async role => ({
+        classId: role.id,
+        start: await classExecutionFacts(runtime, { classId: role.id, projectId, mode: "start" }, snapshot),
+        hire: await classExecutionFacts(runtime, { classId: role.id, projectId, mode: "hire" }, snapshot),
+      }))) };
+    },
+    applyClassExecution: async ({ threadId }: { threadId: string }, context?: ExperimentalPluginRpcHandlerContext) => {
+      requireClassClient(context);
+      const requested = k.store.runtime(threadId).classNotice?.switchExecution;
+      if (!requested) throw new Error("There is no class execution change to apply.");
+      const thread = await runtime.bb.sdk.threads.get({ threadId });
+      if (thread.archivedAt !== null || thread.deletedAt !== null) throw new Error("This thread is archived or deleted.");
+      await runtime.bb.sdk.threads.update({ threadId, ...requested });
+      const applied = await runtime.bb.sdk.threads.defaultExecutionOptions({ threadId });
+      if (!applied || Object.entries(requested).some(([key, value]) => applied[key as "model" | "reasoningLevel"] !== value))
+        throw new Error("bb did not apply the class model and reasoning. The notice was kept; check the thread’s execution settings.");
+      k.store.patch(threadId, { classNotice: null });
+      runtime.bb.rpc.experimental_invalidate([tags.thread(threadId)]);
+      return { ...(applied.model ? { model: applied.model } : {}), ...(applied.reasoningLevel ? { reasoningLevel: applied.reasoningLevel } : {}) };
+    },
+    dismissClassNotice: ({ threadId }: { threadId: string }, context?: ExperimentalPluginRpcHandlerContext) => {
+      requireClassClient(context);
+      k.store.patch(threadId, { classNotice: null });
+      runtime.bb.rpc.experimental_invalidate([tags.thread(threadId)]);
+      return { ok: true as const };
+    },
+    ...classEditorHandlers(runtime),
+    saveCharacterVoice: ({ characterId, voice }) => {
+      const character = runtime.registry.saveVoice(characterId, voice);
+      runtime.bb.rpc.experimental_invalidate([
+        tags.registry(),
+        tags.rows(),
+        tags.room(),
+        ...k.store.all("members").map((m) => tags.thread(m.threadId)),
+      ]);
+      return character;
+    },
+    decor: ({ threadId }): ThreadDecor => {
+      const m = k.member(threadId);
+      return {
+        threadId,
+        widgetRow: runtime.config().tavern.widgetRow,
+        classNotice: k.store.runtime(threadId).classNotice ?? null,
+        scope: runtime.scopes?.view(threadId) ?? null,
+        violations: runtime.scopes?.violations([threadId]) ?? [],
+        member: m,
+        keeper: m?.keeperThreadId ? k.member(m.keeperThreadId) : null,
+        boardQuest: m?.boardQuestId ? k.quest(m.boardQuestId) : null,
+        brief: k.store.runtime(threadId).brief
+          ? JSON.stringify(k.store.runtime(threadId).brief, null, 2)
+          : null,
+        progress: k.journal.progress(threadId),
+        hidden: k.store.runtime(threadId).hidden,
+        keeperView:
+          m?.role === "keeper"
+            ? {
+                boardQuests: quests(threadId),
+                errands: errands(threadId),
+                openAsks: k.store.openAsks(threadId, undefined, true),
+                ...decisions.attention({ keeperThreadId: threadId }),
+                quietSince: k.store.runtime(threadId).manualStopAt ?? null,
+                archived: k.store.runtime(threadId).archivedAt != null,
+                status: status(threadId),
+              }
+            : null,
+      };
+    },
+    crests: ({ threadIds }) => ({
+      crests: threadIds.flatMap((threadId) => {
+        const m = k.member(threadId);
+        if (!m) return [];
+        const registry = runtime.snapshot(
+          k.store.runtime(threadId).projectId ?? undefined,
+        );
+        return [
+          {
+            threadId,
+            classId: m.classId,
+            characterId: m.characterId,
+            label: `${runtime.keeper.name(m)} · ${registry.classes.find((c) => c.id === m.classId)?.label ?? m.classId}`,
+          },
+        ];
+      }),
+    }),
+    journal: ({ threadId }) => k.journal.get(threadId),
+    journalEdit: async ({ threadId, edit }) => {
+      await k.journal.prepare(threadId);
+      const result = k.journal.edit(threadId, edit, { kind: "user" });
+      k.changed(threadId, k.member(threadId)?.boardQuestId);
+      return { ok: true, message: result.message };
+    },
+    resumeKeeper: ({ threadId }) => {
+      k.require(threadId, "keeper");
+      k.userAction(threadId, "explicit user resume after manual-stop", true);
+      wake(threadId);
+      return { ok: true };
+    },
+    ledger: ({ threadId }): Ledger => {
+      const history = decisions.history({ keeperThreadId: threadId });
+      return {
+        notes: k.memory.notes(threadId, 200),
+        notesTotal: k.memory.noteCount(threadId),
+        gates: k.memory.gates(threadId),
+        scopes: runtime.scopes?.views(partyIds(threadId)) ?? [],
+        violations: runtime.scopes?.violations(partyIds(threadId)) ?? [],
+        keeperThreadId: threadId,
+        quietSince: k.store.runtime(threadId).manualStopAt ?? null,
+        olderPromises: k.memory.olderPromiseCount(threadId),
+        boardQuests: quests(threadId),
+        ...decisions.attention({ keeperThreadId: threadId }),
+        decisions: history.decisions,
+        decisionsNextCursor: history.nextCursor,
+        decisionsTotal: history.total,
+        rules: k.rules(threadId, null, true),
+        asks: k.store.visibleRecords("asks", threadId, 100).reverse(),
+        routes: k.store.visibleRecords("routes", threadId, 100).reverse(),
+        restatement: k.restatement(threadId),
+        lastReanchorAt: k.store.runtime(threadId).lastReanchorAt,
+      };
+    },
+    routes: ({ threadId }) => {
+      const routes = k.store.query("routes", "keeperThreadId", threadId, 100);
+      const ids = new Set(routes.flatMap(route => route.ruleId ? [route.ruleId] : []));
+      return {
+        routes,
+        boardQuests: k.store.query("quests", "keeperThreadId", threadId, 100),
+        rules: [...ids].flatMap(id => {
+          const rule = k.store.get("rules", id);
+          return rule ? [rule] : [];
+        }),
+      };
+    },
+    boardQuest: ({ id }): BoardQuestDetail => {
+      const q = k.quest(id);
+      const summary = k.summary(id);
+      const history = decisions.history({ keeperThreadId: q.keeperThreadId, boardQuestId: id });
+      const ids = k.store
+        .query("members", "boardQuestId", id, 500)
+        .map((member) => member.threadId);
+      return {
+        notes: k.memory.notes(q.keeperThreadId, 200, 0, id),
+        gates: k.memory
+          .gates(q.keeperThreadId)
+          .filter((gate) => gate.boardQuestId === id),
+        scopes: runtime.scopes?.views(ids) ?? [],
+        violations: runtime.scopes?.violations(ids) ?? [],
+        quest: summary,
+        tale: readTale(k, summary),
+        memberCredits: memberCredits(k, summary),
+        plans: k.store.query("plans", "boardQuestId", id, 30),
+        asks: k.asks(q.keeperThreadId).filter((a) => a.boardQuestId === id),
+        decisions: history.decisions,
+        decisionsNextCursor: history.nextCursor,
+        decisionsTotal: history.total,
+        rules: k.rules(q.keeperThreadId, id, true),
+        reports: k.store.query("reports", "boardQuestId", id, 100),
+        routes: k.store.query("routes", "boardQuestId", id, 100),
+        events: k.store
+          .events(q.keeperThreadId, 0, 500)
+          .filter((e) => e.boardQuestId === id),
+      };
+    },
+    setTaleKept: (input, context?: ExperimentalPluginRpcHandlerContext) => {
+      if (context?.experimental_caller.kind !== "client") throw new experimental_PluginRpcRefusal({
+        code: "forbidden", message: "Keeping a tale requires an explicit client action; a plugin cannot set this preference.",
+      });
+      return runtime.serviceRecords.setTaleKept(input);
+    },
+    archiveBoardQuests: ({ ids, archived }) => ({
+      ok: true,
+      changed: k.archiveQuests(ids, archived),
+    }),
+    archivedBoardQuests: ({ cursor, limit }) => {
+      const page = k.store.archivedQuestPage(cursor, limit);
+      return {
+        boardQuests: page.quests.map((q) => k.summary(q.id)),
+        nextCursor: page.nextCursor,
+        total: page.total,
+      };
+    },
+    room: (): Room => ({
+      away: runtime.away.status(),
+      hearthFlicker: runtime.config().tavern.hearthFlicker,
+      archivedCount: k.store.archivedQuestCount(),
+      keepers: k.store
+        .all("members")
+        .filter((m) => m.role === "keeper")
+        .map((m) => {
+          const thread = k.store.runtime(m.threadId);
+          return {
+            member: m,
+            archived: thread.archivedAt != null,
+            threadTitle: thread.threadTitle ?? null,
+            threadCreatedAt: thread.threadCreatedAt ?? null,
+            quietSince: thread.manualStopAt ?? null,
+            boardQuests: quests(m.threadId),
+            errands: errands(m.threadId),
+            status: status(m.threadId),
+          };
+        }),
+      asks: k.store
+        .openAsks(undefined, undefined, true)
+        .sort((a, b) => a.createdAt - b.createdAt),
+      ...decisions.attention(),
+      review: runtime.review(),
+      solos: k.store.all("members").filter((m) => m.role === "solo" && isLiveMember(k.store, m, "occupy")),
+      recent: k.store.roomEvents(60),
+    }),
+    releaseCheckerHandoff: async ({ boardQuestId, holdId, via }, context?: ExperimentalPluginRpcHandlerContext) => {
+      if (context?.experimental_caller.kind !== "client") throw new experimental_PluginRpcRefusal({
+        code: "forbidden", message: "Releasing a checker-handoff hold requires an explicit client action; a plugin cannot release it.",
+      });
+      const quest = k.quest(boardQuestId);
+      const wasHeld = quest.checkerHandoffHold?.id === holdId && quest.checkerHandoffHold.release === null;
+      const checkerHandoffHold = k.releaseCheckerHandoff(boardQuestId, holdId, via);
+      if (wasHeld) {
+        await runtime.away.return({ kind: "explicit-return", threadId: quest.keeperThreadId, refId: holdId });
+        wake(quest.keeperThreadId);
+      }
+      return { checkerHandoffHold };
+    },
+    answerAsk: async ({ askId, optionId, note, via }, context?: ExperimentalPluginRpcHandlerContext) => {
+      if (runtime.away.store.snapshot().status.closed) requireAwayClient(context);
+      await runtime.answerAsk(askId, optionId, note, via, context?.experimental_caller.kind === "client");
+      const ask = k.store.get("asks", askId)!;
+      wake(ask.keeperThreadId);
+      return { ok: true };
+    },
+    markDecisionsSeen: (input) => {
+      const { changed, result } = decisions.mark(input, k.now());
+      decisionsChanged(changed);
+      return result;
+    },
+    markDecisionsUnseen: ({ undoToken }) => {
+      const { changed, result } = decisions.unseen(undoToken);
+      decisionsChanged(changed);
+      return result;
+    },
+    decisionHistory: ({ keeperThreadId, boardQuestId, cursor, limit }) =>
+      decisions.history({ keeperThreadId, boardQuestId }, cursor, limit),
+    undoDecision: async ({ decisionId }) => {
+      await runtime.undoDecision(decisionId);
+      k.userAction(k.store.get("decisions", decisionId)!.keeperThreadId);
+      wake(k.store.get("decisions", decisionId)!.keeperThreadId);
+      return { ok: true };
+    },
+    correctRoute: ({ routeId, kind, boardQuestId, boardQuestIds }) => {
+      k.correctRoute(routeId, kind, boardQuestId, boardQuestIds);
+      k.userAction(k.store.get("routes", routeId)!.keeperThreadId);
+      wake(k.store.get("routes", routeId)!.keeperThreadId);
+      return { ok: true };
+    },
+    addRule: (input) => {
+      k.addRule(input);
+      return { ok: true };
+    },
+    confirmRule: ({ ruleId, active }) => {
+      k.confirmRule(ruleId, active);
+      return { ok: true };
+    },
+    widenRule: ({ ruleId, scope }) => {
+      k.widenRule(ruleId, scope);
+      return { ok: true };
+    },
+    stopBoardQuest: ({ id, reason }) => runtime.stop(id, reason),
+    setHidden: ({ threadId, hidden }) => {
+      k.store.patch(threadId, { hidden });
+      k.changed(threadId);
+      return { ok: true };
+    },
+    typing: ({ threadId }) => {
+      if (k.member(threadId)?.role === "keeper" && k.store.runtime(threadId).archivedAt == null) {
+        k.store.patch(threadId, { typingAt: k.now() });
+        runtime.bb.rpc.experimental_invalidate([tags.thread(threadId)]);
+      }
+      return { ok: true };
+    },
+  };
+}
+export function registerRpc(bb: BbPluginApi, runtime: TavernRuntime) {
+  bb.rpc.register(rpcContract, rpcHandlers(runtime));
+}
