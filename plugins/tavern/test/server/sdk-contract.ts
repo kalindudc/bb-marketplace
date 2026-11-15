@@ -52,10 +52,13 @@ export const SDK_CONTRACTS: Record<string, z.ZodType> = {
   // The voice check deletes only the hidden threads it recorded; childThreadsConfirmed false makes bb refuse one that has children.
   "threads.delete": z.object({ threadId: id, childThreadsConfirmed: z.literal(false) }).strict(),
   "threads.archive": thread,
+  "threads.unarchive": thread,
   "threads.defaultExecutionOptions": thread,
   "threads.storageLocation": thread,
   "threads.queuedMessages.list": thread,
   "threads.queuedMessages.delete": thread.extend({ queuedMessageId: id }),
+  "threads.queuedMessages.update": thread.extend({ queuedMessageId: id, expectedUpdatedAt: z.number(), input: z.array(prompt).min(1) }),
+  "threads.queuedMessages.send": thread.extend({ queuedMessageId: id, mode: z.enum(["auto", "steer", "queue-if-active"]) }),
   "threads.getPluginMetadata": thread.extend({ pluginId: pluginId.optional() }),
   "threads.updatePluginMetadata": thread.extend({ pluginId: pluginId.optional(), set: metadata.optional(), remove: z.array(z.string()).optional() }).superRefine((value, ctx) => {
     if (value.remove && new Set(value.remove).size !== value.remove.length) ctx.addIssue({ code: "custom", message: "remove contains duplicate keys" });
@@ -77,6 +80,7 @@ export const SDK_CONTRACTS: Record<string, z.ZodType> = {
   "providers.models": z.object({ ...routing, providerId: id }),
   "plugins.list": z.object({ signal }).optional(),
   "plugins.callRpc": z.object({ pluginId, method: id, input: json.optional(), signal }),
+  "files.mkdir": z.object({ hostId: id, path: id, recursive: z.boolean().optional(), signal }),
   "files.read": z.object({ hostId: id, path: id, signal }),
   "files.write": z.object({ hostId: id, path: id, content: z.string(), contentEncoding: z.enum(["utf8", "base64"]).optional(), signal }),
 };

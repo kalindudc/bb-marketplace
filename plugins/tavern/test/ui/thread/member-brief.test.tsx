@@ -16,6 +16,10 @@ async function panel(classId: string, fields: Brief) {
   const decor = threadDecorSchema.parse({ ...fixtureDecor, member: { ...fixtureDecor.member!, role: "member", classId }, keeperView: null, scope: { threadId: "keeper-1", scope: null, error: null, armed: false, pendingAskId: null, mode: "off" }, brief: JSON.stringify(fields, null, 2), briefFields: fields });
   const slot = renderSlot({ component: ThreadWidget }, { threadId: "keeper-1" }, { rpc: { decor: () => decor, registry: () => registry } });
   fireEvent.click(await slot.findByRole("button", { name: /Member: show/ }));
+  for (const label of ["Outcome", "Done when", "Out of scope", "Context", "Questions", "Scope and guardrails"]) {
+    const fold = slot.queryByRole("button", { name: new RegExp(`^${label}`) });
+    if (fold && fold.getAttribute("aria-expanded") !== "true") fireEvent.click(fold);
+  }
   return slot;
 }
 it("renders a legacy-server brief as content with line breaks", async () => {
@@ -29,10 +33,10 @@ it("renders a legacy-server brief as content with line breaks", async () => {
 });
 it("renders a Smith brief as ordered readable sections, inline code and the existing messaging note", async () => {
   const slot = await panel("smith", brief);
-  expect(slot.getAllByRole("heading", { level: 4 }).map(h => h.textContent)).toEqual(["Outcome", "Done when", "Context", "Out of scope", "Scope details"]);
+  expect(slot.getAllByRole("heading", { level: 4 }).map(h => h.textContent)).toEqual(["At a glance", "Outcome", "Done when", "Out of scope", "Context 2", "Scope and guardrails", "Scope details"]);
   expect(slot.getByText("Make it work")).toBeTruthy();
   expect(slot.container.querySelector(".tw-brief-outcome code")?.textContent).toBe("parseDuration");
-  expect(slot.container.querySelector(".tw-brief-outcome")?.textContent).toContain("\nKeep the API stable.");
+  expect(slot.container.querySelector(".tw-brief-outcome")?.textContent).toContain("Keep the API stable.");
   expect(slot.getByText("Keep **literal markdown**.")).toBeTruthy();
   expect(slot.container.querySelectorAll("[data-content]").length).toBeGreaterThanOrEqual(5);
   expect(slot.container.querySelector("pre")).toBeNull();
@@ -40,16 +44,17 @@ it("renders a Smith brief as ordered readable sections, inline code and the exis
   expect(slot.getByText(/Messages you send here reach this member now/)).toBeTruthy();
   slot.lifecycle.unmount();
 });
-it("renders Ranger questions as a numbered list with a time box before context", async () => {
+it("renders Ranger questions as a numbered list and keeps their time box in the glance facts", async () => {
   const slot = await panel("ranger", { ...brief, mode: "make-it-better", questions: ["What exists?", "What is missing?"], timeboxMinutes: 6 });
-  expect(slot.getAllByRole("heading", { level: 4 }).map(h => h.textContent)).toEqual(["Outcome", "Done when", "Questions · 6 min", "Context", "Out of scope", "Scope details"]);
+  expect(slot.getAllByRole("heading", { level: 4 }).map(h => h.textContent)).toEqual(["At a glance", "Outcome", "Done when", "Out of scope", "Context 2", "Questions 2", "Scope and guardrails", "Scope details"]);
   expect(slot.getByText("Make it better")).toBeTruthy();
+  expect(slot.getByText(/time box 6 min/)).toBeTruthy();
   expect(slot.container.querySelectorAll("ol li")).toHaveLength(2);
   slot.lifecycle.unmount();
 });
 it("omits empty sections and keeps questions Ranger-only", async () => {
   const slot = await panel("smith", { ...brief, context: ["", "  "], outOfScope: "", questions: ["Not a Smith question"], timeboxMinutes: 6 });
-  expect(slot.getAllByRole("heading", { level: 4 }).map(h => h.textContent)).toEqual(["Outcome", "Done when", "Scope details"]);
+  expect(slot.getAllByRole("heading", { level: 4 }).map(h => h.textContent)).toEqual(["At a glance", "Outcome", "Done when", "Scope and guardrails", "Scope details"]);
   slot.lifecycle.unmount();
 });
 it("constrains narrow layout with wrapping prose, paths and headings, using theme tokens and the existing scroll panel", () => {

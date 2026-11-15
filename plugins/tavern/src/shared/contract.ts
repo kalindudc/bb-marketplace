@@ -1,3 +1,4 @@
+import { taleResultsSchema } from "./tale-results";
 import { characterServiceRecordSchema, taleLevelSchema } from "./service-record";
 import { executionFactsSchema } from "./class-execution";
 import { classExecutionInputSchema, classModeFactsSchema, classNoticeSchema } from "./class-execution-contract";
@@ -40,6 +41,8 @@ import {
 
 const threadId = z.string().min(1).max(100);
 const id = z.string().min(1).max(120);
+/** At most this many brief context lines reach the widget: every hire-time line, then the newest follow-ups. */
+export const DECOR_BRIEF_CONTEXT_MAX = 200;
 
 export const tags = {
   registry: () => "tavern:registry",
@@ -126,7 +129,8 @@ export const threadDecorSchema = z.object({
   boardQuest: boardQuestSchema.nullable(),
   /** Member threads: the brief they were hired with. */
   brief: z.string().nullable(),
-  briefFields: briefSchema.nullable().optional(),
+  /** The brief as hired, plus every follow-up the Keeper sent since; follow-ups outgrow the hire-time limits. */
+  briefFields: briefSchema.extend({ context: z.array(z.string().max(8200)).max(DECOR_BRIEF_CONTEXT_MAX) }).nullable().optional(),
   progress: journalProgressSchema,
   /** Keeper threads only. */
   keeperView: z
@@ -153,7 +157,9 @@ export const boardQuestDetailSchema = z.object({
   // added by Builder B: the Keeper's wrap and journal-backed credits remain sparse-safe for old fixtures.
   tale: z.object({
     outcome: z.string(), left: z.string().nullable(),
-    delivery: z.object({ text: z.string().max(24000), capturedAt: z.number(), threadId: z.string(), truncated: z.boolean() }).optional(),
+    results: taleResultsSchema.optional(),
+    fileHostId: z.string().optional(),
+    delivery: z.object({ text: z.string().max(24000), capturedAt: z.number(), threadId: z.string(), truncated: z.boolean(), companionThreadId: z.string().optional(), companionReady: z.boolean().optional(), companionFailed: z.boolean().optional() }).optional(),
     next: z.array(z.string().max(200)).max(5).optional(),
     document: z.object({ threadId: z.string(), rootPath: z.string(), target: z.object({ kind: z.literal("workspace"), environmentId: z.string(), path: z.string() }) }).optional(),
     skipped: z.array(z.object({ waypointId: id, reason: z.string() })),
@@ -413,13 +419,26 @@ export const rpcContract = defineContract({
   /** Archive or restore returned and stopped board quests; active quests are refused. */
   archiveBoardQuests: {
     input: z.object({ ids: z.array(id).min(1).max(200), archived: z.boolean() }).strict(),
-    output: z.object({ ok: z.literal(true), changed: z.number().int() }),
+    output: z.object({ ok: z.literal(true), changed: z.number().int(), notes: z.array(z.string()).default([]), pendingArchives: z.array(threadId).default([]) }),
   },
   /** The archive, newest first, paged; the common room leaves archived quests out. */
   mapHistory: {
     input: z.object({}).strict(), output: mapHistorySchema, tags: () => [tags.mapHistory()],
   },
   archivedBoardQuests: {
+    input: z.object({ cursor: z.string().nullable().default(null), limit: z.number().int().min(1).max(100).default(30) }).strict(),
+    output: z.object({ boardQuests: z.array(boardQuestSummarySchema), nextCursor: z.string().nullable(), total: z.number().int() }),
+    tags: () => [tags.room()],
+  },
+  deleteBoardQuest: {
+    input: z.object({ id }).strict(),
+    output: z.object({ ok: z.literal(true), changed: z.number().int(), notes: z.array(z.string()), pendingArchives: z.array(threadId) }),
+  },
+  restoreDeletedQuest: {
+    input: z.object({ id }).strict(),
+    output: z.object({ ok: z.literal(true), changed: z.number().int() }),
+  },
+  deletedBoardQuests: {
     input: z.object({ cursor: z.string().nullable().default(null), limit: z.number().int().min(1).max(100).default(30) }).strict(),
     output: z.object({ boardQuests: z.array(boardQuestSummarySchema), nextCursor: z.string().nullable(), total: z.number().int() }),
     tags: () => [tags.room()],

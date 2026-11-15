@@ -278,7 +278,7 @@ function RoomActivity({ room, registry }: { room: Room; registry: Registry }) {
     <RoomAwayNotes room={room} registry={registry} />
     {since !== null && <SinceYouLooked lines={lines} since={since} clear={clear} onFilter={(f) => { setFilter(f); jumpTo("rm-events"); }} />}
     <ArchiveReceiptLine api={api} />
-    <Rail
+    <Rail calm={!needYouCount(room) && !room.decidedForYou.length}
       attention={<>
         <div data-sec="needs"><NeedsYouQueue room={room} registry={registry} /></div>
         <div id="rm-decided" data-sec="decided"><DecidedForYou decisions={room.decidedForYou} total={room.decidedCount} seen={{ throughId: room.decidedThroughId }} headingId="room-decided" limit={5} /></div>

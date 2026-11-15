@@ -49,6 +49,95 @@ describe("the tale's reading helpers", () => {
 });
 
 describe("the tale page", () => {
+  it("mounts document ThreadChat only after a companion answers, keeping the results summary", async () => {
+    const detail = structuredClone(scenes.readmeDetail);
+    detail.tale!.results = { figures: [{ label: "Checks", value: "42" }] };
+    detail.tale!.delivery = { text: "Fallback answer. [File](/tmp/report.md)", capturedAt: 1, threadId: detail.quest.keeperThreadId, truncated: false, companionThreadId: "renderer", companionReady: false };
+    detail.tale!.fileHostId = "host";
+    const pending = await tale(detail);
+    expect(await pending.findByRole("list", { name: "Files in this delivery" })).toBeTruthy();
+    expect(within(pending.container).queryByTestId("bb-thread-chat")).toBeNull();
+    detail.tale!.delivery.companionReady = true;
+    const ready = await tale(detail);
+    const chat = await ready.findByTestId("bb-thread-chat");
+    expect(chat.getAttribute("data-thread-id")).toBe("renderer");
+    expect(chat.getAttribute("data-layout")).toBe("document");
+    expect(within(ready.container).queryByRole("list", { name: "Files in this delivery" })).toBeNull();
+    expect(within(ready.container).getByRole("group", { name: "Keeper results" }).compareDocumentPosition(chat) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    detail.tale!.delivery.companionFailed = true;
+    const failed = await tale(detail);
+    expect(await within(failed.container).findByRole("list", { name: "Files in this delivery" })).toBeTruthy();
+    expect(within(failed.container).queryByTestId("bb-thread-chat")).toBeNull();
+    delete detail.tale!.delivery.companionThreadId;
+    const missing = await tale(detail);
+    expect(await within(missing.container).findByRole("list", { name: "Files in this delivery" })).toBeTruthy();
+    expect(within(missing.container).queryByTestId("bb-thread-chat")).toBeNull();
+  });
+  it("lists only prose file mentions and explicit links, not fenced code or directories", async () => {
+    const detail = structuredClone(scenes.readmeDetail);
+    detail.tale!.fileHostId = "keeper-host";
+    detail.tale!.delivery = { text: "Read /tmp/report.md and `/tmp/check.txt`. /tmp and `/repo/project` are directories. [Executable](/tmp/run)\n\n```sh\ncat /tmp/secret.md\n[Hidden](/tmp/hidden)\n```\n~~~ui\n/tmp/visual.svg\n~~~", capturedAt: 1, threadId: detail.quest.keeperThreadId, truncated: false };
+    const slot = await tale(detail);
+    const files = await slot.findByRole("list", { name: "Files in this delivery" });
+    expect(within(files).getAllByRole("link").map(link => link.textContent)).toEqual(["report.md", "check.txt", "Executable"]);
+    expect(slot.container.querySelector(".tale-visual")?.tagName).toBe("DIV");
+  });
+  it("formats inline code around next-action file links", async () => {
+    const detail = structuredClone(scenes.readmeDetail);
+    detail.tale!.fileHostId = "keeper-host";
+    detail.tale!.next = ["Run `git status`, read /tmp/report.md, then `git diff`."];
+    const slot = await tale(detail);
+    const next = await slot.findByRole("region", { name: "What to do now" });
+    expect([...next.querySelectorAll("code")].map(code => code.textContent)).toEqual(["git status", "git diff"]);
+  });
+  it("keeps outcome lists and code blocks when results exist without a delivery", async () => {
+    const detail = structuredClone(scenes.readmeDetail);
+    detail.tale!.results = { figures: [{ label: "Checks", value: "2" }] };
+    detail.tale!.outcome = "Answer. (1) Read this. (2) Then do that. Command used: git status";
+    const slot = await tale(detail);
+    expect((await slot.findByText("Read this.")).closest("ol")).toBeTruthy();
+    expect(slot.container.querySelector(".tv-tale-delivery pre")?.textContent).toContain("git status");
+  });
+  it("draws fixed results before Markdown and next actions with an accessible named-series table", async () => {
+    const detail = structuredClone(scenes.readmeDetail);
+    detail.tale!.results = { figures: [{ label: "Checks passed", value: "42", note: "All checks" }], chart: { title: "Model cost", type: "trend", unit: "usd", labels: ["Before", "After"], series: [{ name: "Fast", values: [2, 1] }, { name: "Large", values: [5, 3] }] } };
+    detail.tale!.delivery = { text: "The delivered answer.", capturedAt: 1, threadId: detail.quest.keeperThreadId, truncated: false };
+    detail.tale!.next = ["Read the report"];
+    const slot = await tale(detail);
+    const results = await slot.findByRole("group", { name: "Keeper results" });
+    expect(within(results).getByText("Checks passed")).toBeTruthy();
+    expect(within(results).getByText("42")).toBeTruthy();
+    expect(within(results).getByRole("table", { name: "Model cost values" }).textContent).toMatch(/Before.*2.*5.*After.*1.*3/);
+    const markdown = slot.getByTestId("bb-markdown");
+    expect(results.compareDocumentPosition(markdown) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(markdown.compareDocumentPosition(slot.getByText("What to do now")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+  it("folds unsupported visuals but preserves ordinary code and its own directive is absent", async () => {
+    const detail = structuredClone(scenes.readmeDetail);
+    detail.tale!.delivery = { text: `Answer.\n\n\x60\x60\x60ui\nCard("Result")\n\x60\x60\x60\n\n\x60\x60\x60app\nwidget\n\x60\x60\x60\n\n::other{value="x"}\n\n\x60\x60\x60sh\necho good\n\x60\x60\x60\n::tavern-tale{quest="${ID}"}`, capturedAt: 1, threadId: detail.quest.keeperThreadId, truncated: false };
+    const slot = await tale(detail);
+    await slot.findAllByText(/A visual in .*message/);
+    const sources = within(slot.container).getAllByText("Show source");
+    expect(sources).toHaveLength(3);
+    expect(sources.every(source => !source.closest("details")!.open)).toBe(true);
+    expect(slot.getAllByTestId("bb-markdown").map(block => block.textContent).join("")).not.toContain('Card("Result")');
+    expect(slot.container.querySelector(".tv-tale-delivery")?.textContent).toContain("echo good");
+  });
+  it("opens delivery file destinations from a deduplicated link list and next paths inline", async () => {
+    const detail = structuredClone(scenes.readmeDetail);
+    detail.tale!.fileHostId = "keeper-host";
+    detail.tale!.delivery = { text: "[The verdict](file:///tmp/verdict.md) and [Again](file:///tmp/verdict.md) and [Chart]($BB_THREAD_STORAGE/chart.svg)", capturedAt: 1, threadId: detail.quest.keeperThreadId, truncated: false };
+    detail.tale!.next = ["Read /tmp/verdict.md and $BB_THREAD_STORAGE/chart.svg"];
+    const slot = await tale(detail);
+    const files = await slot.findByRole("list", { name: "Files in this delivery" });
+    expect(within(files).getAllByRole("link")).toHaveLength(2);
+    fireEvent.click(within(files).getByRole("link", { name: "The verdict" }));
+    expect(slot.inspection.navigateCalls).toContainEqual({ method: "experimental_openFilePreview", options: { target: { kind: "host", hostId: "keeper-host", path: "/tmp/verdict.md" }, location: null } });
+    const next = slot.getByRole("region", { name: "What to do now" });
+    expect(within(next).getAllByRole("link")).toHaveLength(2);
+    fireEvent.click(within(next).getByRole("link", { name: "chart.svg" }));
+    expect(slot.inspection.navigateCalls).toContainEqual({ method: "experimental_openFilePreview", options: { target: { kind: "thread-storage", threadId: detail.quest.keeperThreadId, path: "chart.svg" }, location: null } });
+  });
   it("shows delivery, next actions, figures and the folded record in order without a recursive directive", async () => {
     const detail = structuredClone(scenes.readmeDetail);
     detail.tale!.delivery = { text: `## Delivered answer\n\nRead the report.\n\n::tavern-tale{quest="${ID}"}`, capturedAt: 1, threadId: detail.quest.keeperThreadId, truncated: true };

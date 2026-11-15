@@ -29,6 +29,13 @@ async function map(data: typeof live = live) {
 const list = (slot: RenderedSlot) => slot.getByRole("region", { name: /Everyone on the map/ });
 
 describe("The map's Keepers", () => {
+  it("keeps the standalone list outside map-card containment when no map is drawn", async () => {
+    const data = structuredClone(live); data.keepers = []; data.asks = []; data.solos = [];
+    const slot = await map(data);
+    expect(slot.container.querySelector(".tv-mapcard")).toBeNull();
+    expect(slot.container.querySelector(".tv-maplist")).not.toBeNull();
+    expect(slot.container.querySelector(".tv-mapgrid:not(.narrow) .tv-mapcard + .tv-maplist")).toBeNull();
+  });
   it("gives every Keeper node the room's status word, so archived threads never read as listening", () => {
     const nodes = graphFor(live, registry, { hidden: new Set(), returned: true, archived: true }).nodes.filter((n) => n.kind === "keeper");
     expect(nodes.map((n) => n.detail)).toEqual(live.keepers.map((k) => keeperStatus(k).word));
@@ -147,10 +154,11 @@ describe("The map's layout", () => {
     } finally { for (const s of spies) s.mockRestore(); }
   });
 
-  it("puts the empty-board note above the window, never over the picture", async () => {
+  it("puts the empty-board note inside the map window, outside its moving layer", async () => {
     const slot = await map();
     const note = slot.getByText("No active quests.").closest(".tv-mv-note")!;
-    expect(note.closest(".tv-mv-box")).toBeNull();
+    expect(note.parentElement?.classList.contains("tv-mv-box")).toBe(true);
+    expect(note.closest(".tv-mv-layer")).toBeNull();
   });
 });
 

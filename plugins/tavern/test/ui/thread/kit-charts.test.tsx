@@ -7,6 +7,21 @@ afterEach(cleanup);
 const days = (ys: (number | null)[]) => ys.map((y, i) => ({ x: `2026-11-${String(i + 1).padStart(2, "0")}`, y }));
 
 describe("Kit charts", () => {
+  it.each([100,1])("separates three trend endpoints near %i", value => {
+    const view=render(<Chart type="trend" series={[0,1,2].map(i=>({id:String(i),label:`Model ${i}`,unit:"count",points:days([100,value+i*0.01])}))}/>);
+    const ys=[...view.container.querySelectorAll("svg text.val")].map(n=>Number(n.getAttribute("y"))).sort((a,b)=>a-b);
+    expect(ys).toHaveLength(3);
+    expect(ys[1]!-ys[0]!).toBeGreaterThanOrEqual(13);
+    expect(ys[2]!-ys[1]!).toBeGreaterThanOrEqual(13);
+    expect(ys[0]).toBeGreaterThanOrEqual(12);
+    expect(ys[2]).toBeLessThanOrEqual(112);
+  });
+  it("labels each named trend with its final value", () => {
+    const view = render(<Chart type="trend" series={[{id:"a",label:"Fast",unit:"USD",points:days([1,2])},{id:"b",label:"Large",unit:"USD",points:days([3,4])}]} format={(n,u)=>`${n} ${u}`} />);
+    const labels = [...view.container.querySelectorAll("svg text")].map(label=>label.textContent);
+    expect(labels).toContain("Fast: 2 USD");
+    expect(labels).toContain("Large: 4 USD");
+  });
   it("formats each unit in words people read", () => {
     expect(formatValue(0.82, "ratio")).toBe("82%");
     expect(formatValue(1320, "s")).toBe("22 min");

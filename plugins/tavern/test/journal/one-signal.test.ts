@@ -16,7 +16,7 @@ afterEach(async () => { try { for (const c of cleanups.splice(0)) await c(); } f
 async function server() {
   const root = mkdtempSync(join(tmpdir(), "tavern-one-signal-"));
   vi.stubEnv("HOME", root);
-  const host = createFakePluginHost({ pluginId: "tavern", dataDir: join(root, "data"), agentSkillIds: ["journal", "quest-management"], sdk: {
+  const host = createFakePluginHost({ pluginId: "tavern", experimental_declaredIconNames: ["tavern"], dataDir: join(root, "data"), agentSkillIds: ["journal", "quest-management"], sdk: {
     threads: { getPluginMetadata: async () => ({}), updatePluginMetadata: async () => ({}), get: async () => makeThreadResponse() },
     plugins: { list: async () => ({ plugins: [] }) },
   } as never });

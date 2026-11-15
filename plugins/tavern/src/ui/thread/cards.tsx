@@ -6,6 +6,8 @@ import { rpcContract, type BoardQuestDetail } from "../../shared/contract";
 import type { CharacterDef, ClassDef, Report } from "../../shared/schema";
 import { voiceShown, AskCard, Clamp, Crest, levelsShown, reachedInParty, reachedWords, DecidedForYou, EvidenceList, FigureRow, taleFigures, ExpandsMark, Glyph, OpensMark, QuestMap, QueryState, ReportView, SkCrest, SkFigureRow, SkGlyph, SkLine, SkLines, SkMapNode, StatusPill, TimeAgo, Vocabulary, clockTime, levelFor, memberIdentity, questNames, readable, summaryNames, useRegistry, useSkeletonCount } from "../kit";
 import type { ReportHeadlineNames } from "../../shared/report-headline";
+import { TaleAction } from "../kit/tale-delivery";
+import { TaleResults } from "../kit/tale-results";
 import { REPORTS_TAB } from "./reports-tab";
 import { glowVars } from "../kit";
 import { useMoment } from "../kit/moment";
@@ -252,6 +254,8 @@ function QuestDirective({ kind, questId, version }: { kind: DirectiveKind; quest
     content = <>
       <header className="qm-h"><span className="qm-t"><b><Vocabulary word="tale" /></b><span className="qm-q" title={detail.quest.title}>{detail.quest.title}</span></span><span className="tc-sp" />{openTale}</header>
       {detail.tale ? <Clamp className="tale-lead" lines={2} text={registry.data ? readable(detail.tale.outcome, questNames(detail.quest, registry.data, detail.reports)) : detail.tale.outcome} /> : <p className="m tale-lead">No tale was written for this quest; its reports are on the tale page.</p>}
+      <TaleResults results={detail.tale?.results} compact />
+      {detail.tale?.next?.length ? <div className="tale-next"><p><b>What to do now: </b><TaleAction text={detail.tale.next[0]!} tale={detail.tale} threadId={detail.quest.keeperThreadId} /></p>{detail.tale.next.length > 1 && <button type="button" className="lnk-btn act" onClick={() => navigate.toPluginPanel("tavern", { subPath: `tale/${detail.quest.id}` })}>{detail.tale.next.length - 1} more</button>}</div> : null}
       <div className="tale-foot">
         <FigureRow compact figures={taleFigures(detail)} />
         <ul className="tale-crests" aria-label="The party (team)">{party.map(m => { const idn = registry.data ? memberIdentity(registry.data, m) : null; const lv = registry.data ? levelFor(registry.data, m.characterId, m.classId) : null; return idn ? <li key={m.threadId}><button type="button" className="tc-crest act" title={`Open ${idn.character.name}’s thread · ${idn.cls.label} (${idn.cls.plain})${lv ? ` · ${lv.words}` : ""}`} aria-label={`Open ${idn.character.name}’s thread, ${idn.cls.label} (${idn.cls.plain})${lv && lv.notches ? `, level ${lv.level}` : ""}`} onClick={() => navigate.toThread(m.threadId)}><Crest {...idn} size={24} level={lv?.level} /></button></li> : null; })}</ul>

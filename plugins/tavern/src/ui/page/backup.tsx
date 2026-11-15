@@ -205,5 +205,4 @@ function ExportReceipt({ receipt, error }: { receipt: { text: string; copy?: str
   return <p className="tv-receipt" role="status"><Glyph name="check" size={14} className="tv-g" /><span>{receipt!.text}</span>{receipt!.copy && <button type="button" className="lnk-btn act" onClick={() => void experimental_copyToClipboard({ text: receipt!.copy! }).then(setCopied)}><span>{copied ? "Copied" : "Copy path"}</span></button>}</p>;
 }
 
-const BACKUP_INTRO = "Without records, a backup holds your settings, classes, characters and scopes file. Records add quests, plans, asks, decisions, journals and events; never secrets or transcripts.";
-export const BACKUP_SECTION = { id: "backup", title: "Backup", intro: BACKUP_INTRO, component: BackupSection } as const;
+export const BACKUP_INTRO = "Without records, a backup holds your settings, classes, characters and scopes file. Records add quests, plans, asks, decisions, journals and events; never secrets or transcripts.";

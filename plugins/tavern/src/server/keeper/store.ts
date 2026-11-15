@@ -18,6 +18,7 @@ import type {
   KeeperNote,
   GateRecord,
 } from "../../shared/schema";
+import { actorSchema, readStoredActor } from "../../shared/schema";
 
 import type { VoiceCheck } from "../../shared/voice-check";
 
@@ -233,6 +234,8 @@ export interface Runtime {
   releasePending?: string | null;
   released?: { reason: string; decisionId: string };
   archivePending?: boolean;
+  cellarArchiveRequested?: boolean;
+  cellarArchived?: boolean;
   partyArchiveRepairAt?: number;
   archiveError?: string | null;
   archivedAt?: number | null;
@@ -349,7 +352,7 @@ export class KeeperStore {
       row_number() OVER (PARTITION BY json_extract(q.data,'$.keeperThreadId') ORDER BY
         coalesce(json_extract(q.data,'$.endedAt'),json_extract(q.data,'$.updatedAt')) DESC,q.rowid DESC) AS position,
       count(*) OVER (PARTITION BY json_extract(q.data,'$.keeperThreadId')) AS total
-      FROM tavern_records q JOIN archived a ON a.thread_id=json_extract(q.data,'$.keeperThreadId') WHERE q.kind='quests'
+      FROM tavern_records q JOIN archived a ON a.thread_id=json_extract(q.data,'$.keeperThreadId') WHERE q.kind='quests' AND json_extract(q.data,'$.deletedAt') IS NULL
     ) SELECT a.thread_id,r.data,coalesce(r.total,0) AS total,
       (SELECT json_group_array(json(m.data)) FROM tavern_records m WHERE m.kind='members'
        AND json_extract(m.data,'$.boardQuestId')=r.id) AS members
@@ -423,7 +426,7 @@ export class KeeperStore {
   archivedQuestCount(keeperThreadId?: string) {
     const row = this.db
       .prepare(
-        `SELECT count(*) AS n FROM tavern_records WHERE kind='quests' AND archived_at IS NOT NULL
+        `SELECT count(*) AS n FROM tavern_records WHERE kind='quests' AND archived_at IS NOT NULL AND json_extract(data,'$.deletedAt') IS NULL
       ${keeperThreadId ? "AND json_extract(data,'$.keeperThreadId')=?" : ""}`,
       )
       .get(...(keeperThreadId ? [keeperThreadId] : [])) as { n: number };
@@ -454,7 +457,7 @@ export class KeeperStore {
     }
     const rows = this.db
       .prepare(
-        `SELECT data FROM tavern_records WHERE kind='quests' AND archived_at IS NOT NULL
+        `SELECT data FROM tavern_records WHERE kind='quests' AND archived_at IS NOT NULL AND json_extract(data,'$.deletedAt') IS NULL
       ${after ? "AND archived_at<=? AND (archived_at<? OR id<?)" : ""}
       ORDER BY archived_at DESC, id DESC LIMIT ?`,
       )
@@ -475,6 +478,24 @@ export class KeeperStore {
           : null,
       total: this.archivedQuestCount(),
     };
+  }
+  deletedQuestPage(cursor: string | null, limit: number) {
+    let after: [number, string] | null = null;
+    if (cursor !== null) {
+      try {
+        const value: unknown = JSON.parse(Buffer.from(cursor, "base64url").toString());
+        if (!Array.isArray(value) || value.length !== 2 || typeof value[0] !== "number" || !Number.isFinite(value[0]) || typeof value[1] !== "string") throw new Error("Invalid cursor");
+        after = value as [number, string];
+      } catch { throw new Error("Invalid deleted quest cursor"); }
+    }
+    const from = "FROM tavern_records WHERE kind='quests' AND json_extract(data,'$.deletedAt') IS NOT NULL";
+    const rows = this.db.prepare(`SELECT data ${from} ${after ? "AND (json_extract(data,'$.deletedAt')<? OR (json_extract(data,'$.deletedAt')=? AND id<?))" : ""}
+      ORDER BY json_extract(data,'$.deletedAt') DESC,id DESC LIMIT ?`)
+      .all(...(after ? [after[0], after[0], after[1]] : []), limit + 1) as { data: string }[];
+    const quests = rows.slice(0, limit).map(row => JSON.parse(row.data) as BoardQuest);
+    const last = quests.at(-1);
+    const total = (this.db.prepare(`SELECT count(*) AS n ${from}`).get() as { n: number }).n;
+    return { quests, total, nextCursor: rows.length > limit && last ? Buffer.from(JSON.stringify([last.deletedAt, last.id])).toString("base64url") : null };
   }
   openAsks(
     keeperThreadId?: string,
@@ -701,6 +722,7 @@ export class KeeperStore {
     data: Record<string, unknown> = {},
     actor: Actor = { kind: "tavern" },
   ) {
+    actor = actorSchema.parse(actor);
     const result = this.db
       .prepare(
         "INSERT INTO tavern_events(at,keeper_thread_id,board_quest_id,actor,type,text,data) VALUES(?,?,?,?,?,?,?)",
@@ -774,7 +796,7 @@ export class KeeperStore {
       at: row.at,
       keeperThreadId: row.keeper_thread_id,
       boardQuestId: row.resolved_quest_id,
-      actor: JSON.parse(row.actor) as Actor,
+      actor: readStoredActor(row.actor),
       type: row.type,
       text: row.text,
       data: JSON.parse(row.data) as Record<string, unknown>,
@@ -804,7 +826,7 @@ export class KeeperStore {
       at: row.at,
       keeperThreadId: row.keeper_thread_id,
       boardQuestId: row.board_quest_id,
-      actor: JSON.parse(row.actor) as Actor,
+      actor: readStoredActor(row.actor),
       type: row.type,
       text: row.text,
       data: JSON.parse(row.data) as Record<string, unknown>,

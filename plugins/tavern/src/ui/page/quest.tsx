@@ -77,6 +77,23 @@ function StopQuest({ detail, registry }: { detail: BoardQuestDetail; registry: R
   };
 }
 
+function CellarQuest({ quest }: { quest: BoardQuestDetail["quest"] }) {
+  const archive = useArchive();
+  const mutation = experimental_useRpcMutation({ contract: rpcContract, method: "deleteBoardQuest" });
+  const navigate = useBbNavigate();
+  const [armed, setArmed] = useState(false);
+  const pending = archive.pending || mutation.isPending;
+  const remove = async () => {
+    try { await mutation.mutate({ id: quest.id }); navigate.toPluginPanel("tavern", { subPath: "archive" }); }
+    catch { /* The refusal leaves the confirmation open. */ }
+  };
+  const down = archive.hidden.has(quest.id) || !!quest.archivedAt && !archive.shown.has(quest.id);
+  return <div className="tavern"><div className="tv-gacts">
+    <button type="button" className="btn" disabled={pending} onClick={() => void (down ? archive.restore([quest]) : archive.archive([quest]))}>{down ? CELLAR.restore : CELLAR.send}</button>
+    <button type="button" className="btn danger" aria-expanded={armed} disabled={pending} onClick={() => setArmed(!armed)}>Delete</button>
+  </div>{armed && <div className="tv-stop problem" role="group" aria-label="Confirm deleting quest"><span>Delete this quest? It leaves the board, the cellar and the map, and its threads are archived. You can restore it from the cellar's Deleted view.</span><button type="button" className="btn danger" disabled={pending} onClick={() => void remove()}>Delete</button><button type="button" className="btn" disabled={pending} onClick={() => setArmed(false)}>Cancel</button></div>}{mutation.error && <p role="alert">Could not delete: {mutation.error.message}</p>}<ArchiveReceiptLine api={archive} /></div>;
+}
+
 /** A quest's page: the live page while it is in play, the record once it has returned or stopped. */
 export function QuestPage({ detail, registry, room }: { detail: BoardQuestDetail; registry: Registry; room?: Room }) {
   const navigate = useBbNavigate();
@@ -129,6 +146,7 @@ export function QuestPage({ detail, registry, room }: { detail: BoardQuestDetail
       <div className="tv-gacts">
 
         {quest.phase === "done" && <PageButton path={`tale/${quest.id}`} glyph="report">The tale</PageButton>}
+        {finished && <CellarQuest key={quest.id} quest={quest} />}
         {keeper && status && <MemberLink member={keeper.member} registry={registry} size={28} sub={<StateMark tone={status.tone}>{status.label}</StateMark>} />}
         <ThreadButton id={quest.keeperThreadId} name={keeperName} label={keeper ? `Open ${keeperName}'s thread` : "Open the Keeper's thread"} className={finished || keeper?.archived ? "" : "pri"} quiet={finished || !!keeper?.archived} />
         {stop.button}

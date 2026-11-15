@@ -51,6 +51,7 @@ import { runTuner } from "./settings/tuner";
 import { LIMITS } from "./limits";
 import { createHostPort } from "../host/client";
 import { captureTaleDelivery } from "./tale";
+import type { TaleCompanions } from "./renderer/companion";
 import { DiscoveryStore, StaleDiscoveryError } from "./placement/discovery-store";
 import { SourceDiscovery, readSourceIdentity } from "./placement/source-discovery";
 import { resolvePlacementRoute } from "./placement/routing";
@@ -65,6 +66,7 @@ export const KEEPER_TOOLS = [
   "tavern_release",
   "tavern_scope",
   "tavern_tell",
+  "tavern_unarchive",
   "tavern_plan",
   "tavern_ask",
   "tavern_decide",
@@ -489,6 +491,7 @@ export class TavernRuntime {
     }
     void this.resetQuietQueue(ask.keeperThreadId).then(() => this.recheckDispatch()).catch(error => this.bb.log.warn(`Tavern resume: ${String(error)}`));
   }
+  taleRenderer?: TaleCompanions;
   constructor(
     readonly bb: BbPluginApi,
     readonly keeper: Keeper,
@@ -1628,15 +1631,88 @@ export class TavernRuntime {
     this.scopes?.clearScope(member.threadId);
     return true;
   }
+  private keeperStayReason(threadId: string) {
+    if (this.keeper.store.all("quests").some(q => q.keeperThreadId === threadId && q.deletedAt == null && q.archivedAt == null)) return "it has another quest on the board";
+    if (this.keeper.store.all("members").some(member => member.keeperThreadId === threadId && member.errand && isLiveMember(this.keeper.store, member))) return "it has a side quest out";
+    return null;
+  }
+  private async archiveQuestThreads(ids: string[]) {
+    const members = new Map<string, Member>();
+    const notes: string[] = [];
+    for (const id of ids) {
+      const quest = this.keeper.quest(id);
+      for (const member of this.keeper.store.query("members", "boardQuestId", id, 500)) members.set(member.threadId, member);
+      const keeper = this.keeper.member(quest.keeperThreadId);
+      if (!keeper) continue;
+      const reason = this.keeperStayReason(keeper.threadId);
+      if (reason) {
+        const note = `${this.keeper.name(keeper)} stays: ${reason}`;
+        if (!notes.includes(note)) notes.push(note);
+      } else members.set(keeper.threadId, keeper);
+    }
+    for (const member of members.values()) {
+      const state = this.keeper.store.runtime(member.threadId);
+      if (state.archivedAt == null && state.deletedAt == null) this.keeper.store.patch(member.threadId, { archivePending: true, cellarArchiveRequested: true });
+    }
+    const pendingArchives = await this.archiveMembers([...members.values()]);
+    return { notes, pendingArchives };
+  }
+  async archiveBoardQuests(ids: string[], archived: boolean) {
+    const changed = this.keeper.archiveQuests(ids, archived);
+    if (archived) return { ok: true as const, changed, ...await this.archiveQuestThreads(ids) };
+    for (const keeperId of new Set(ids.map(id => this.keeper.quest(id).keeperThreadId))) {
+      const state = this.keeper.store.runtime(keeperId);
+      if (state.cellarArchiveRequested) this.keeper.store.patch(keeperId, { archivePending: false, cellarArchiveRequested: false, archiveError: null });
+      if (!state.cellarArchived) continue;
+      const current = await this.bb.sdk.threads.get({ threadId: keeperId });
+      if (current.deletedAt !== null) throw new Error("This Keeper's thread was deleted and cannot be brought up.");
+      if (current.archivedAt !== null) await this.bb.sdk.threads.unarchive({ threadId: keeperId });
+      this.updateThread({ ...current, archivedAt: null });
+      this.keeper.store.patch(keeperId, { cellarArchived: false });
+      this.keeper.reanchor(keeperId, "quest brought up from the cellar");
+    }
+    return { ok: true as const, changed, notes: [] as string[], pendingArchives: [] as string[] };
+  }
+  async deleteBoardQuest(id: string) {
+    const changed = this.keeper.deleteQuest(id);
+    try { await this.taleRenderer?.deleteQuest(id); }
+    catch (error) { this.bb.log.warn(`Tavern renderer delete ${id}: ${String(error)}`); }
+    return { ok: true as const, changed: Number(changed), ...await this.archiveQuestThreads([id]) };
+  }
+  async unarchiveMember(keeperId: string, reference: string) {
+    this.keeper.require(keeperId, "keeper");
+    const member = this.keeper.resolvePartyMember(keeperId, reference, true);
+    const state = this.keeper.store.runtime(member.threadId);
+    const current = await this.bb.sdk.threads.get({ threadId: member.threadId });
+    if (state.deletedAt != null || current.deletedAt !== null) throw new Error("Deleted member threads cannot be unarchived.");
+    const wasArchived = current.archivedAt !== null;
+    if (wasArchived) await this.bb.sdk.threads.unarchive({ threadId: member.threadId });
+    this.updateThread({ ...current, archivedAt: null });
+    this.keeper.store.patch(member.threadId, { archivePending: false, archiveError: null, cellarArchiveRequested: false, cellarArchived: false });
+    this.keeper.changed(member.threadId, member.boardQuestId);
+    const inactiveQuest = member.boardQuestId !== null && !isOpenQuest(this.keeper.store.get("quests", member.boardQuestId));
+    return { member: this.keeper.name(member), threadId: member.threadId, released: !!state.released,
+      message: [wasArchived ? "Unarchived." : "Already open.", ...(inactiveQuest ? ["This member is back in the Keeper's roster."] : []), ...(state.released ? ["This member stays released."] : inactiveQuest ? [] : ["This member is available in your party."])].join(" ") };
+  }
   private async archiveMembers(members: Member[]) {
     const pending: string[] = [];
     for (const member of members) {
       const rt = this.keeper.store.runtime(member.threadId);
       if (!rt.archivePending) continue;
+      if (member.role === "keeper" && rt.cellarArchiveRequested && this.keeperStayReason(member.threadId)) {
+        this.keeper.store.patch(member.threadId, { archivePending: false, cellarArchiveRequested: false, archiveError: null });
+        continue;
+      }
       if (this.away.cleanupHeld()) { pending.push(member.threadId); continue; }
       try {
         const current = await this.bb.sdk.threads.get({ threadId: member.threadId });
-        if (current.archivedAt === null && current.deletedAt === null) await this.bb.sdk.threads.archive({ threadId: member.threadId });
+        if (current.archivedAt === null && current.deletedAt === null) {
+          await this.bb.sdk.threads.archive({ threadId: member.threadId });
+          if (rt.cellarArchiveRequested) {
+            this.updateThread({ ...current, archivedAt: this.keeper.now() });
+            this.keeper.store.patch(member.threadId, { cellarArchived: true });
+          }
+        }
         this.keeper.store.patch(member.threadId, {
           archivePending: false,
           archiveError: null,
@@ -1661,7 +1737,7 @@ export class TavernRuntime {
             member.keeperThreadId,
             member.boardQuestId,
             "quest.archive-failed",
-            `Wrapped; archive cleanup remains pending for ${this.keeper.name(member)}: ${message}`,
+            `Archive cleanup remains pending for ${this.keeper.name(member)}: ${message}`,
             { memberThreadId: member.threadId },
           );
         this.bb.log.warn(
@@ -1688,7 +1764,8 @@ export class TavernRuntime {
         );
       }
     }
-    await this.archiveMembers(members);
+    const keeper = this.keeper.member(keeperId);
+    await this.archiveMembers(keeper ? [...members, keeper] : members);
   }
   briefed(threadId: string) {
     const state = this.keeper.store.runtime(threadId);
@@ -1698,7 +1775,7 @@ export class TavernRuntime {
     });
   }
   memberEnded(thread: Thread, finalText?: string | null) {
-    captureTaleDelivery(this.keeper, thread.id, finalText);
+    for (const id of captureTaleDelivery(this.keeper, thread.id, finalText) ?? []) void this.taleRenderer?.ensure(id);
     const member = this.keeper.member(thread.id);
     if (member?.role !== "member" || !member.keeperThreadId) return;
     if (this.away.blocked(thread.id)) return;
@@ -2048,11 +2125,12 @@ export class TavernRuntime {
     left: string,
     skipped: { waypointId: string; reason: string }[] = [],
     next?: string[],
+    results?: import("../shared/tale-results").TaleResults,
   ) {
     const q = this.keeper.owned(threadId, id);
     if (q.phase === "stopped" || q.phase === "stopping") throw new Error("This board quest was stopped or is stopping");
     if (q.phase === "done") {
-      this.keeper.store.event(this.keeper.now(), threadId, id, "quest.retold", outcome, { outcome, left, ...(next ? { next } : {}) });
+      this.keeper.store.event(this.keeper.now(), threadId, id, "quest.retold", outcome, { outcome, left, ...(next ? { next } : {}), ...(results ? { results } : {}) });
       this.keeper.changed(threadId, id);
       return { pendingArchives: [] };
     }
@@ -2155,6 +2233,7 @@ export class TavernRuntime {
           left,
           skipped,
           ...(next ? { next } : {}),
+          ...(results ? { results } : {}),
           ...(awayWindow ? { awayWindowId: awayWindow.id, deferredMemberThreadIds: summary.members.map(member => member.threadId), withdrawnAskIds } : {}),
         },
       );
@@ -2311,9 +2390,13 @@ export class TavernRuntime {
     type: "thread.archived" | "thread.unarchived" | "thread.deleted",
     event: { thread: Thread; actor?: unknown },
   ) {
+    if (type === "thread.deleted") this.taleRenderer?.failed(event.thread.id);
+    else if (type === "thread.archived") this.taleRenderer?.archived(event.thread.id);
+    else this.taleRenderer?.unarchived(event.thread.id);
     const member = this.keeper.member(event.thread.id);
     if (!member) return;
     const actor = actorSchema.safeParse(event.actor);
+    if (type === "thread.unarchived") this.keeper.store.patch(member.threadId, { cellarArchived: false, cellarArchiveRequested: false });
     this.keeper.store.event(
       this.keeper.now(),
       member.keeperThreadId ?? member.threadId,
@@ -2330,6 +2413,10 @@ export class TavernRuntime {
     );
     this.keeper.changed(member.threadId, member.boardQuestId);
     this.updateThread(event.thread, actor.success ? actor.data : { kind: "tavern" });
+    if (type === "thread.deleted" && member.role === "keeper") {
+      try { await this.taleRenderer?.deleteKeeper(member.threadId); }
+      catch (error) { this.bb.log.warn(`Tavern renderer Keeper delete ${member.threadId}: ${String(error)}`); }
+    }
     if (
       type === "thread.unarchived" &&
       !this.keeper.store.runtime(member.threadId).released
@@ -2402,6 +2489,7 @@ export class TavernRuntime {
     this.keeper.store.patch(threadId, { deletedAt: state.deletedAt ?? this.keeper.now(), archivedAt: state.archivedAt ?? this.keeper.now(), heldAt: null, typingAt: null, userAt: null, failureCount: 0, tickRefusalCount: 0, tickRetryAt: null, failureAskId: null });
     if (state.deletedAt == null && !recordsChanged) this.bb.rpc.experimental_invalidate([tags.registry()]);
     if (member.role === "keeper") {
+      void this.taleRenderer?.deleteKeeper(threadId).catch(error => this.bb.log.warn(`Tavern renderer Keeper gone ${threadId}: ${String(error)}`));
       for (;;) {
         const asks = this.keeper.store.openAsks(threadId);
         if (!asks.length) break;
@@ -2685,6 +2773,9 @@ export class TavernRuntime {
         { name: "tick recovery", run: () => isLiveKeeper(this.keeper.store, this.keeper.member(m.threadId), "present") ? this.loop.recover(m.threadId) : undefined },
       ]);
     }));
-    if (this.scopes) await this.recheckDispatch();
+    if (this.scopes) {
+      await this.scopes.refreshPresets();
+      await this.recheckDispatch();
+    }
   }
 }

@@ -231,6 +231,12 @@ export class SettingsStore {
       }
       if (!Object.keys(next.user.classes).length) delete next.user.classes;
     }
+    for (const key of TUNABLE_KEYS) {
+      const value = parsed.patch.knobs?.[key];
+      if (value === undefined) continue;
+      delete next.tuned[key];
+      if (next.pinned[key] !== undefined) next.pinned[key] = value;
+    }
     for (const [key, value] of Object.entries(parsed.pins ?? {})) {
       if (value === null) delete next.pinned[key as TunableKey];
       else if (value !== undefined) next.pinned[key as TunableKey] = value;

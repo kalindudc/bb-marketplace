@@ -1,4 +1,4 @@
-import { Markdown, useBbNavigate } from "@get-bb/plugin-sdk/app";
+import { useBbNavigate } from "@get-bb/plugin-sdk/app";
 import { useRef } from "react";
 import type { BoardQuestDetail, Room } from "../../shared/contract";
 import { useMoment } from "../kit/moment";
@@ -6,6 +6,8 @@ import { verifiedOf, verifiedWords, FigureRow, OpensMark, Prose, QuestMap, quest
 import { Ago, PageButton, Section, StateMark, ThreadButton, Time, type Registry } from "./common";
 import { PageGlyph } from "./glyphs";
 import { leftNothing, reportBlocks } from "./model";
+import { TaleResults } from "../kit/tale-results";
+import { TaleAction, TaleDelivery } from "../kit/tale-delivery";
 import { CreditCard, LeftRow, LootRow } from "./finished";
 
 /** The Keeper's "left" note and the skipped waypoints, quietly; "Nothing left for you." when there is neither. */
@@ -51,16 +53,20 @@ export function TalePage({ detail, registry, room }: { detail: BoardQuestDetail;
         <div className="lbl">The tale is told <span className="anc">credits</span></div>
         <h2 id="tv-tale-h" className="tv-tale-title clamp" title={quest.title} data-content>{quest.title}</h2>
       </header>
-      {detail.tale?.delivery ? <section className="tv-tale-delivery" aria-label="What the Keeper brought back">
+      {detail.tale && (detail.tale.delivery || detail.tale.results) ? <section className="tv-tale-delivery" aria-label="What the Keeper brought back">
         <h3>What the Keeper brought back</h3>
-        <Markdown content={detail.tale.delivery.text.split(/\r?\n/).filter(line => line.trim() !== `::tavern-tale{quest="${quest.id}"}`).join("\n")} experimental_document={detail.tale.document} />
-        {detail.tale.delivery.truncated && <ThreadButton id={quest.keeperThreadId} label="The rest is in the Keeper's thread ›" />}
+        <TaleResults results={detail.tale.results} />
+        {!detail.tale.delivery && <div className="tv-tale-lead">{reportBlocks(readable(detail.tale.outcome, names)).map((block, i) => block.kind === "list"
+          ? <ol key={i}>{block.items.map((item, j) => <li key={j}><Prose text={item} /></li>)}</ol>
+          : block.kind === "code" ? <pre key={i}><code>{block.text}</code></pre> : <p key={i}><Prose text={block.text} /></p>)}</div>}
+        {detail.tale.delivery && <TaleDelivery tale={detail.tale} questId={quest.id} threadId={quest.keeperThreadId} keeperName={room?.keepers.find(keeper => keeper.member.threadId === quest.keeperThreadId)?.member.displayName ?? "the Keeper"} />}
+        {detail.tale.delivery?.truncated && <ThreadButton id={quest.keeperThreadId} label="The rest is in the Keeper's thread ›" />}
       </section> : detail.tale ? <div className="tv-tale-lead" data-content>{reportBlocks(readable(detail.tale.outcome, names)).map((block, i) => block.kind === "list"
         ? <ol key={i}>{block.items.map((item, j) => <li key={j}><Prose text={item} /></li>)}</ol>
         : block.kind === "code" ? <pre key={i}><code>{block.text}</code></pre> : <p key={i}><Prose text={block.text} /></p>)}</div> : <p className="tv-tale-lead none">The Keeper wrote no tale for this quest. The members' reports are below.</p>}
       {detail.tale?.next !== undefined && <section className="tv-tale-next" aria-label="What to do now">
         <h3>What to do now</h3>
-        {detail.tale.next.length ? <ol>{detail.tale.next.map((action, i) => <li key={i}><Prose text={action} /></li>)}</ol> : <p>Nothing for you to do</p>}
+        {detail.tale.next.length ? <ol>{detail.tale.next.map((action, i) => <li key={i}><TaleAction text={action} threadId={quest.keeperThreadId} tale={detail.tale!} /></li>)}</ol> : <p>Nothing for you to do</p>}
       </section>}
       {detail.tale?.delivery && <details className="tv-tale-record"><summary>The Keeper's record</summary><p><Prose text={readable(detail.tale.outcome, names)} /></p></details>}
       <FigureRow figures={taleFigures(detail)} />

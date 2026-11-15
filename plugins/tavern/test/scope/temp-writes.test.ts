@@ -9,7 +9,7 @@ import { evaluate } from "../../src/scope/engine";
 import { ScopePolicy } from "../../src/scope/policy";
 import { sandboxProfile } from "../../src/scope/sandbox";
 
-const bound = (role: string) => bindPaths(scopeForClass(role), { home: "/home/test", tmp: ["/tmp", "/private/tmp", "/native-tmp"], worktree: "/repo", threadStorage: "/storage/own", scopesDir: "/scopes" });
+const bound = (role: string) => bindPaths(scopeForClass(role, undefined, role === "keeper" ? "keeper" : undefined), { home: "/home/test", tmp: ["/tmp", "/private/tmp", "/native-tmp"], worktree: "/repo", threadStorage: "/storage/own", scopesDir: "/scopes" });
 const dirs: string[] = [];
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
 it.each(["keeper", "ranger", "warden", "smith", "wanderer"])("%s writes temp and own storage without permission changes", role => {
@@ -43,7 +43,7 @@ it("refuses a canonicalized temporary symlink escaping to protected files or the
   const root = mkdtempSync(join(tmpdir(), "tavern-temp-test-")); dirs.push(root);
   const home = join(root, "home"), repo = join(root, "repo"), temp = join(root, "tmp");
   mkdirSync(join(home, ".ssh"), { recursive: true }); mkdirSync(repo); mkdirSync(temp);
-  const scope = bindPaths(scopeForClass("keeper"), { home, tmp: [temp], threadStorage: join(root, "storage"), scopesDir: join(root, "scopes") }, realPath);
+  const scope = bindPaths(scopeForClass("keeper", undefined, "keeper"), { home, tmp: [temp], threadStorage: join(root, "storage"), scopesDir: join(root, "scopes") }, realPath);
   for (const [name, target] of [["secret", join(home, ".ssh")], ["repo", repo]]) {
     symlinkSync(target, join(temp, name));
     const path = join(temp, name, "record");

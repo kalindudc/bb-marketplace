@@ -23,7 +23,7 @@ export async function classExecutionFacts(runtime: TavernRuntime, input: ClassEx
     const file = runtime.registry.file("class", role.id, projectId ? runtime.projectPath(projectId) : null);
     const source = file.source === "project" ? "project-file" : file.source === "global" ? "user-file" : "shipped-file";
     const fileField = (field: string, value: string | null): ClassModeFacts["fields"][number] => ({ field, value, source, ...(file.path ? { path: file.path } : {}) });
-    const requestedPreset = typeof role.scope === "string" ? role.scope : role.scope?.preset ?? ({ keeper: "keeper", ranger: "readonly", smith: "worktree", warden: "checker" }[role.id] ?? "open");
+    const requestedPreset = typeof role.scope === "string" ? role.scope : role.scope?.preset ?? ({ keeper: "open", ranger: "readonly", smith: "worktree", warden: "checker" }[role.id] ?? "open");
     const scoped = !!runtime.scopes && runtime.scopes.api.shouldScope(role.id, input.mode === "hire" ? "hire" : "direct");
     const forcePermission = !!runtime.scopes && input.mode === "hire";
     const kind = input.mode === "hire" ? "member" : role.id === "keeper" ? "keeper" : "solo";

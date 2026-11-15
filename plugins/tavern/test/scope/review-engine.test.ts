@@ -6,7 +6,7 @@ import { evaluate } from "../../src/scope/engine";
 import { scopeForClass } from "../../src/scope/presets";
 import { bindPaths } from "../../src/scope/paths";
 import { prepareCall } from "../../src/scope/prepare";
-const scope = (role: string) => bindPaths(scopeForClass(role), { home: homedir(), tmp: [tmpdir()], worktree: process.cwd(), scopesDir: join(homedir(), ".bb/plugins/tavern/scopes") });
+const scope = (role: string) => bindPaths(scopeForClass(role, undefined, role === "keeper" ? "keeper" : undefined), { home: homedir(), tmp: [tmpdir()], worktree: process.cwd(), scopesDir: join(homedir(), ".bb/plugins/tavern/scopes") });
 const shell = (role: string, command: string) => evaluate(scope(role), prepareCall({ kind: "bash", toolName: "bash", input: { command }, cwd: process.cwd() }));
 it.each(["~/.zshrc", "@" + join(homedir(), ".ssh/config"), "file://" + join(homedir(), ".zshrc"), "~/.pi/agent/extensions/x.ts"])("normalizes native path before enforcing: %s", path => {
   expect(evaluate(scope("smith"), prepareCall({ kind: "write", toolName: "write", input: { path }, cwd: process.cwd() })).allow).toBe(false);

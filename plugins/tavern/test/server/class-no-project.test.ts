@@ -75,7 +75,7 @@ describe("class execution facts without a project", () => {
   });
 
   it.each([
-    ["keeper", "start", "Claude Opus 5.5"], ["ranger", "start", "Claude Sonnet 5.5"],
+    ["ranger", "start", "Claude Sonnet 5.5"],
     ["smith", "start", "GPT 6.1 Sol"], ["warden", "hire", "Claude Sonnet 5.5"],
   ] as const)("resolves %s's model label using its certain guard provider without a parent provider", async (classId, mode, label) => {
     const f = fixture();
@@ -86,6 +86,15 @@ describe("class execution facts without a project", () => {
     expect(f.harness.inspection.sdk.callsTo("providers.models")).toHaveLength(1);
   });
 
+  it("does not force an open Keeper onto Pi or guess its composer provider", async () => {
+    const f = fixture();
+    const facts = await classExecutionFacts(f.runtime, { classId: "keeper", projectId: "project", mode: "start" });
+    expect(facts.errors).toEqual([]);
+    expect(facts.requiresPi).toBe(false);
+    expect(facts.execution?.providerId).toBeUndefined();
+    expect(facts.fields.find(field => field.field === "model")?.valueLabel).toBeUndefined();
+    expect(f.harness.inspection.sdk.callsTo("providers.models")).toHaveLength(0);
+  });
   it.each(["watch", "off"] as const)("does not guess a provider or model label in %s mode", async mode => {
     const f = fixture(), config = f.runtime.config();
     f.runtime.config = () => ({ ...config, scopes: { mode } });

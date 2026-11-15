@@ -60,9 +60,41 @@ function useMeasuredWidth<T extends Element>(fallback: number) {
 }
 
 /** A chart for one series. Bars: categories with the value written at the end of each bar. Trend: days as a line, drawn at its measured width so its 11 px labels stay 11 px; first, last, lowest and highest are labelled, and a missing day breaks the line. */
-export function Chart({ type, series, limit, unit, format = formatValue }: { type: "bars" | "trend"; series: ChartSeries; limit?: number; unit?: string; format?: Format }) {
+export function Chart({ type, series, limit, unit, format = formatValue }: { type: "bars" | "trend"; series: ChartSeries | ChartSeries[]; limit?: number; unit?: string; format?: Format }) {
+  if (Array.isArray(series)) return <NamedChart type={type} series={series} unit={unit ?? series[0]?.unit ?? ""} format={format} />;
   const u = unit ?? series.unit;
   return type === "bars" ? <Bars series={series} unit={u} format={format} /> : <Trend series={series} unit={u} limit={limit} format={format} />;
+}
+
+function NamedChart({ type, series, unit, format }: { type: "bars" | "trend"; series: ChartSeries[]; unit: string; format: Format }) {
+  const [ref, width] = useMeasuredWidth<HTMLElement>(480);
+  const values = series.flatMap(item => item.points.map(point => point.y ?? 0));
+  const scale = Math.max(1, ...values.map(Math.abs));
+  const low = Math.min(0, ...values.map(value => value / scale));
+  const high = Math.max(0, ...values.map(value => value / scale));
+  const span = high - low || 1;
+  const position = (value: number) => ((value / scale - low) / span) * 100;
+  const baseline = position(0);
+  const count = series[0]?.points.length ?? 0;
+  const endings = series.flatMap((item, j) => {
+    const last = item.points.at(-1);
+    return last ? [{ item, j, last, y: Math.max(12, 94 - position(last.y ?? 0) * 0.8) }] : [];
+  }).sort((a, b) => a.y - b.y);
+  endings.forEach((label, i) => { if (i) label.y = Math.max(label.y, endings[i - 1]!.y + 14); });
+  const overflow = Math.max(0, (endings.at(-1)?.y ?? 0) - 112);
+  endings.forEach(label => { label.y -= overflow; });
+  return <figure ref={ref} className="tchart tchart-named" data-chart={type}>
+    <figcaption>{series.map(item => item.label).join(", ")}{unit ? ` in ${unit}` : ""}</figcaption>
+    {type === "bars" ? <ul className="tchart-bars">{Array.from({ length: count }, (_, i) => series.map((item, j) => {
+      const point = item.points[i]!, at = position(point.y ?? 0);
+      return <li key={`${i}:${j}`}><span className="l">{point.x}{series.length > 1 ? `: ${item.label}` : ""}</span><span className="t" aria-hidden="true"><span className={`b series-${j}`} style={{ marginLeft: `${Math.min(at, baseline)}%`, width: `${Math.abs(at - baseline)}%` }} /></span><span className="v num">{format(point.y, unit)}</span></li>;
+    }))}</ul> : <svg className="tchart-trend" width={width} height={136} viewBox={`0 0 ${width} 136`} role="img" aria-label={`Trend for ${series.map(item => item.label).join(", ")}; values in the accompanying table`}>
+      {series.map((item, j) => <polyline key={j} className={`line series-${j}`} strokeDasharray={j === 0 ? undefined : j === 1 ? "6 3" : "2 3"} points={item.points.map((point, i) => `${8 + i * (width - 16) / Math.max(1, count - 1)},${100 - position(point.y ?? 0) * 0.8}`).join(" ")} />)}
+      {endings.map(({ item, j, last, y }) => <text key={j} className={`val series-${j}`} x={width - 8} y={y} textAnchor="end">{item.label}: {format(last.y, unit)}</text>)}
+      <text className="ax" x={8} y={130}>{series[0]?.points[0]?.x}</text><text className="ax" x={width - 8} y={130} textAnchor="end">{series[0]?.points.at(-1)?.x}</text>
+    </svg>}
+    {type === "trend" && <ul className="tchart-legend">{series.map((item, j) => <li key={j}><svg width="28" height="10" aria-hidden="true"><line x1="0" x2="28" y1="5" y2="5" stroke="currentColor" strokeDasharray={j === 0 ? undefined : j === 1 ? "6 3" : "2 3"} /></svg>{item.label}</li>)}</ul>}
+  </figure>;
 }
 
 function Bars({ series, unit, format }: { series: ChartSeries; unit: string; format: Format }) {

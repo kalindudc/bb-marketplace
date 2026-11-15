@@ -31,12 +31,54 @@ async function sidebar(subPath = "", rpc: Partial<Handlers> = {}) {
 }
 
 describe("Tavern page surfaces", () => {
+  it("offers cellar and inline delete only on an ended quest, never applies on Cancel", async () => {
+    const archive = vi.fn(() => ({ ok: true as const, changed: 1, notes: ["Moss stays: it has another quest on the board"], pendingArchives: ["child"] }));
+    const remove = vi.fn(() => ({ ok: true as const, changed: 1, notes: [], pendingArchives: [] }));
+    const ended = { ...detail, quest: { ...detail.quest, phase: "done" as const } };
+    const slot = await page("quest/sfe", { boardQuest: () => ended, archiveBoardQuests: archive, deleteBoardQuest: remove });
+    fireEvent.click(await slot.findByRole("button", { name: "Delete" }));
+    const confirm = slot.getByRole("group", { name: "Confirm deleting quest" });
+    expect(confirm.textContent).toContain("You can restore it from the cellar's Deleted view.");
+    expect(confirm.textContent).not.toMatch(/30 days|purge|expires/);
+    fireEvent.click(within(confirm).getByRole("button", { name: "Cancel" }));
+    expect(remove).not.toHaveBeenCalled();
+    fireEvent.click(slot.getByRole("button", { name: /Send to the cellar/ }));
+    await waitFor(() => expect(archive).toHaveBeenCalledWith({ ids: [ended.quest.id], archived: true }));
+    await slot.findByText("Moss stays: it has another quest on the board");
+    await slot.findByText("Archiving 1 thread remains pending. Tavern retries automatically.");
+    const live = await page("quest/sfe");
+    await live.findByRole("heading", { name: detail.quest.title });
+    expect(within(live.container).queryByRole("button", { name: "Delete" })).toBeNull();
+    expect(within(live.container).queryByRole("button", { name: /Send to the cellar/ })).toBeNull();
+  });
+  it("brings a cellar quest up from its header and deletes only after inline confirmation", async () => {
+    const archive = vi.fn(() => ({ ok: true as const, changed: 1, notes: [], pendingArchives: [] }));
+    const remove = vi.fn(() => ({ ok: true as const, changed: 1, notes: [], pendingArchives: [] }));
+    const ended = { ...detail, quest: { ...detail.quest, phase: "stopped" as const, archivedAt: 123 } };
+    const slot = await page("quest/sfe", { boardQuest: () => ended, archiveBoardQuests: archive, deleteBoardQuest: remove });
+    fireEvent.click(await slot.findByRole("button", { name: /Bring up/ }));
+    await waitFor(() => expect(archive).toHaveBeenCalledWith({ ids: [ended.quest.id], archived: false }));
+    fireEvent.click(slot.getByRole("button", { name: "Delete" }));
+    fireEvent.click(within(slot.getByRole("group", { name: "Confirm deleting quest" })).getByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(remove).toHaveBeenCalledWith({ id: ended.quest.id }));
+  });
+  it("keeps a deleted-only cellar reachable and restores a deleted quest to the cellar", async () => {
+    const deleted = { ...detail.quest, phase: "done" as const, archivedAt: 123, deletedAt: 456 };
+    const restore = vi.fn(() => ({ ok: true as const, changed: 1 }));
+    const slot = await page("", { room: () => ({ ...room, archivedCount: 0 }), deletedBoardQuests: () => ({ boardQuests: [deleted], total: 1, nextCursor: null }), restoreDeletedQuest: restore });
+    fireEvent.click(await slot.findByRole("button", { name: /cellar.*1 deleted/i }));
+    fireEvent.click(slot.getByRole("button", { name: /Deleted/ }));
+    fireEvent.click(await slot.findByRole("button", { name: `Restore: ${deleted.short}` }));
+    await waitFor(() => expect(restore).toHaveBeenCalledWith({ id: deleted.id }));
+    await slot.findByText(/Restored .* to the cellar/);
+  });
+
   it("registers a page with sidebar, badge, home and settings, but never a chat", async () => {
     const plugin = await app();
     expect(plugin.navPanels[0]?.experimental_sidebar).toBeTruthy();
     expect(plugin.navPanels[0]?.experimental_useBadge).toBe(useTavernBadge);
     expect(plugin.homepageSections).toHaveLength(1);
-    expect(plugin.settingsSections.map((s) => s.id)).toEqual(["tavern", "motion", "settings-history", "attention", "keepers", "classes", "scopes", "machines", "journal", "data", "tuning", "tuned", "import-export", "backup"]);
+    expect(plugin.settingsSections.map((s) => s.id)).toEqual(["tavern", "attention", "keepers", "classes", "scopes", "machines", "motion", "journal", "tuning", "data", "settings-history"]);
     const slot = await page();
     await slot.findByRole("heading", { name: /The quest board/ });
     expect(slot.container.querySelector('[data-thread-chat], [data-composer]')).toBeNull();
@@ -427,11 +469,11 @@ describe("Tavern page surfaces", () => {
     expect(archiveTotal(after, new Set(), new Set(["sfe"]))).toBe(0);
     expect(archiveTotal(before, new Set(), new Set(["sfe"]))).toBe(0);
   });
-  it("sends a returned quest to the cellar in place, with an inline receipt and Undo", async () => {
+  it("sends a returned quest to the cellar in place, with an inline receipt and Bring up", async () => {
     const done = { ...detail.quest, id: "sfe", short: "SFE candidates", title: "Pick SFE candidates", phase: "done" as const, endedAt: detail.quest.updatedAt };
     const stopped = { ...detail.quest, id: "old", short: "Old audit", title: "Old audit", phase: "stopped" as const, endedAt: detail.quest.updatedAt };
     const withDone = { ...room, keepers: [{ ...room.keepers[0]!, boardQuests: [detail.quest, done, stopped] }], archivedCount: 3 };
-    const archive = vi.fn((_input: { ids: string[]; archived: boolean }) => ({ ok: true as const, changed: _input.ids.length }));
+    const archive = vi.fn((_input: { ids: string[]; archived: boolean }) => ({ ok: true as const, changed: _input.ids.length, notes: [], pendingArchives: [] }));
     const list = vi.fn((_input: { cursor?: string | null; limit?: number }) => ({ boardQuests: [{ ...done, id: "older", short: "Older quest", archivedAt: detail.quest.updatedAt }], nextCursor: null, total: 3 }));
     const slot = await page("", { room: () => withDone, archiveBoardQuests: archive, archivedBoardQuests: list });
     const row = await slot.findByRole("button", { name: "Send to the cellar (archive): SFE candidates" });
@@ -443,8 +485,9 @@ describe("Tavern page surfaces", () => {
     expect(receipt.textContent).toContain("SFE candidates sent to the cellar");
     expect(slot.queryByRole("button", { name: "Send to the cellar (archive): SFE candidates" })).toBeNull();
     expect(slot.queryByRole("dialog")).toBeNull();
-    fireEvent.click(within(receipt as HTMLElement).getByRole("button", { name: "Undo" }));
+    fireEvent.click(within(receipt as HTMLElement).getByRole("button", { name: "Bring up" }));
     await waitFor(() => expect(archive).toHaveBeenLastCalledWith({ ids: ["sfe"], archived: false }));
+    await waitFor(() => expect(slot.container.querySelector(".tv-receipt")!.textContent).toContain("Party threads stay archived; the Keeper can bring members back."));
     await slot.findByRole("button", { name: "Send to the cellar (archive): SFE candidates" });
     fireEvent.click(slot.getByRole("button", { name: "Send all returned to the cellar" }));
     await waitFor(() => expect(archive).toHaveBeenLastCalledWith({ ids: ["sfe", "old"], archived: true }));

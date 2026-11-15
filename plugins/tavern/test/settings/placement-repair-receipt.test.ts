@@ -16,7 +16,7 @@ afterEach(async () => { try { for (const dispose of cleanup.splice(0)) await dis
 async function fixture(combined = false) {
   const root = mkdtempSync(join(tmpdir(), "tavern-placement-repair-"));
   vi.stubEnv("HOME", root);
-  const f = createFakePluginHost({ pluginId: "tavern", dataDir: join(root, "data") });
+  const f = createFakePluginHost({ pluginId: "tavern", experimental_declaredIconNames: ["tavern"], dataDir: join(root, "data") });
   cleanup.push(async () => { await f.harness.lifecycle.dispose(); rmSync(root, { recursive: true, force: true }); });
   if (combined) await tavern(f.bb);
   const db = f.bb.storage.database();

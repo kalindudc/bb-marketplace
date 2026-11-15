@@ -3,9 +3,10 @@ import type { ThreadDecor } from "../../shared/contract";
 import { memberName } from "../../shared/member-name";
 import { Crest } from "./crest";
 import { memberIdentity, type Registry } from "./registry";
+import "./member-identity.css";
 
 type MemberScope = ThreadDecor["scope"];
-export type MemberIdentityProps = { member: Member; registry: Registry; scope?: MemberScope; compact?: boolean; finished?: boolean; violations?: ThreadDecor["violations"] };
+export type MemberIdentityProps = { member: Member; registry: Registry; scope?: MemberScope; compact?: boolean; finished?: boolean; violations?: ThreadDecor["violations"]; variant?: "chips"; onScopeDetails?: () => void };
 
 function guardWords(member: Member, scope: MemberScope, finished: boolean) {
   if (!scope && member.role === "solo") return "no Tavern guard (started by you)";
@@ -38,20 +39,27 @@ export function memberIdentityWords(member: Member, registry: Registry, scope?: 
   return `${name}, ${cls} · scope: ${scope?.scope?.preset ?? "not recorded"} · ${guardWords(member, scope, finished)}`;
 }
 
-export function MemberIdentity({ member, registry, scope, compact = false, finished = false, violations = [] }: MemberIdentityProps) {
+export function MemberIdentity({ member, registry, scope, compact = false, finished = false, violations = [], variant, onScopeDetails }: MemberIdentityProps) {
   const identity = memberIdentity(registry, member);
   const name = memberName(member, registry);
   const sc = scope?.scope;
   const guard = guardWords(member, scope, finished);
-  const alerts = (scope?.problems?.length ?? 0) + violations.length + (scope?.error ? 1 : 0);
-  return <div className={`member-identity ${compact ? "compact" : ""}`} data-part="MemberIdentity" aria-label={`${name}, member identity`}>
+  const alerts = (scope?.problems?.length ?? 0) + violations.length + (scope?.error ? 1 : 0) + (variant === "chips" && scope?.pendingAskId ? 1 : 0);
+  const chips = variant === "chips";
+  return <div className={`member-identity ${compact ? "compact" : ""}${chips ? " chips" : ""}`} role={chips ? "group" : undefined} data-part="MemberIdentity" aria-label={`${name}, member identity`}>
     {!compact && identity && <Crest {...identity} size={32} />}
     <div className="mi-words">
       <div className="mi-name"><b>{name}</b><span> · {identity?.cls.label ?? member.classId}{identity && ` (${identity.cls.plain})`}</span></div>
       {!compact && identity?.cls.description && <p className="mi-role">{identity.cls.description}</p>}
-      <p className="mi-scope">scope: {sc?.preset ?? "not recorded"} · {guard}</p>
+      {chips ? <div className="mi-chips" role="group" aria-label="Scope and guard state">{[
+        ["Scope", sc?.preset ?? "not recorded"], ["Guard", guard], ["Writes", writeWords(sc ?? null)],
+        ["Network", sc ? sc.network === "any" ? "allowed" : "none" : "not recorded"],
+        ["GitHub", sc ? ({none:"none",read:"reads only","draft-pr-only":"reads and draft pull requests"} as const)[sc.github] : "not recorded"],
+      ].map(([label, value]) => <span className="tag mi-chip" key={label}><span className="mi-chip-label">{label}</span><span>{value}</span></span>)}
+        {alerts > 0 && (onScopeDetails ? <button type="button" className="tag mi-chip mi-alert act" onClick={onScopeDetails} aria-label={`${alerts} scope ${alerts === 1 ? "alert" : "alerts"}. Open scope details`}>{alerts} scope {alerts === 1 ? "alert" : "alerts"}</button> : <span className="tag mi-chip mi-alert" role="status">{alerts} scope {alerts === 1 ? "alert" : "alerts"}</span>)}
+      </div> : <><p className="mi-scope">scope: {sc?.preset ?? "not recorded"} · {guard}</p>
       {!compact && <p className="mi-permissions">writes: {writeWords(sc ?? null)} · network: {sc ? sc.network === "any" ? "allowed" : "none" : "not recorded"} · GitHub: {sc ? ({none:"none",read:"reads only","draft-pr-only":"reads and draft pull requests"} as const)[sc.github] : "not recorded"}</p>}
-      {alerts > 0 && <p className="mi-alert" role="status">{alerts} scope {alerts === 1 ? "alert" : "alerts"}{scope?.error ? `: ${scope.error}` : ""}</p>}
+      {alerts > 0 && <p className="mi-alert" role="status">{alerts} scope {alerts === 1 ? "alert" : "alerts"}{scope?.error ? `: ${scope.error}` : ""}</p>}</>}
     </div>
   </div>;
 }

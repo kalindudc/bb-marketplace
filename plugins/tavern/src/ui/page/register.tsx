@@ -1,6 +1,6 @@
 import { UrlLink, experimental_usePluginId, experimental_useRpcQuery, useBbNavigate, useComposer, type ExperimentalPageTitle, type PluginAppBuilder, type PluginHomepageSectionProps, type PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
 import { rpcContract, type Room } from "../../shared/contract";
-import { OpensMark, rememberCount, useRegistry, vocab } from "../kit";
+import { Hearth, hearthWords, keeperStatus, onTheRoad, OpensMark, rememberCount, useRegistry, vocab } from "../kit";
 import { ClosingTimeSheet, ClosedDigest } from "./closing";
 import { ClassEditTab } from "./class-editor";
 import { CLASS_EDIT_TAB, CLOSING_TAB, CharacterVoiceTab, ClosingTimeTab, REPORTS_TAB, VOICE_TAB, useOpenPanelTab } from "./panels";
@@ -10,13 +10,12 @@ import { Ago, CrestOf, Empty, PageButton, PhaseMark, QuestRow, ReadState, type R
 import { TheMap } from "./connections";
 import { MobileQuestOptions, QuestNav, mobileQuestPaths } from "./nav";
 import { PageGlyph, type PageGlyphName } from "./glyphs";
-import { activeQuests, badgeLabel, decodePageRoute, heldForYou, isFinished, needYouCount, openAskCount, questsIn, restoreVerdict, type PageRoute } from "./model";
+import { activeQuests, badgeLabel, decodePageRoute, heldForYou, isFinished, needYouCount, openAskCount, questsIn, restoreVerdict, roomAway, type PageRoute } from "./model";
 import { QuestAwayNotes } from "./away";
 import { MapSkeleton, PageLoad, QuestSkeleton, RoomSkeleton, RouteSkeleton, SKEL, SideNavSkeleton, StartCardsSkeleton, TaleSkeleton, FoldLoad, useRememberSideNav, useRememberShape } from "./skeletons";
 import { PanelStateProvider, panelStorageKey, readPanel, rememberPath, useRestoreScroll } from "./panel-state";
 import { memo, useEffect, useRef, useState, type ReactNode } from "react";
 import { InsightsPage, settingsHref } from "./insights";
-import { BACKUP_SECTION } from "./backup";
 import { SETTINGS_SECTIONS, settingsSection } from "./settings";
 import { QuestPage, ReturnedList } from "./quest";
 import { TalePage } from "./tale";
@@ -35,11 +34,13 @@ const destinations: [string, string, PageGlyphName][] = [["room", vocab("commonR
 const pages = (): [string, string, PageGlyphName][] => PLACEMENT_RPC_LIVE ? [...destinations, ["machines", "Where work runs (machines)", "machine"]] : destinations;
 const isCurrent = (path: string, route: PageRoute) => path === route.kind || (path === "characters" && route.kind === "character") || (path === "classes" && route.kind === "class");
 
-function SideLink({ path, label, glyph, count, route }: { path: string; label: string; glyph: PageGlyphName; count?: React.ReactNode; route: PageRoute }) {
+function SideLink({ path, label, glyph, count, route, room }: { path: string; label: string; glyph: PageGlyphName; count?: React.ReactNode; route: PageRoute; room?: Room }) {
   const navigate = useBbNavigate();
   const [word, anchor] = label.split(" (");
-  return <button type="button" className="tv-snav act" aria-current={isCurrent(path, route) ? "page" : undefined} onClick={() => navigate.toPluginPanel("tavern", { subPath: path })}>
-    <PageGlyph name={glyph} /><span className="tv-snav-l" title={label}><span className="tv-snav-w">{word}</span>{anchor && <span className="anc">{anchor.replace(/\)$/, "")}</span>}</span>{count}
+  const words = room ? hearthWords(room.keepers.map(keeperStatus), { away: roomAway(room), onRoad: onTheRoad(room) }) : null;
+  const lit = words?.state === "working";
+  return <button type="button" className="tv-snav act" aria-label={lit && room ? `${label}, lit: ${words.detail.split(" · ").join(", ")}, ${needYouCount(room)} need you` : undefined} aria-current={isCurrent(path, route) ? "page" : undefined} onClick={() => navigate.toPluginPanel("tavern", { subPath: path })}>
+    {lit && room ? <Hearth words={words} surface="page" size={14} iconOnly replay={room.hearthFlicker !== false} ambientMotion={room.ambientMotion} repeatSeconds={room.repeatSeconds} /> : <PageGlyph name={glyph} />}<span className="tv-snav-l" title={label}><span className="tv-snav-w">{word}</span>{anchor && <span className="anc">{anchor.replace(/\)$/, "")}</span>}</span>{count}
   </button>;
 }
 
@@ -55,7 +56,7 @@ export function TavernSidebar({ subPath }: PluginNavPanelProps) {
   useRememberSideNav(navRef, !!data);
   const errands = data ? data.keepers.flatMap((k) => k.errands).filter((m) => m.state !== "done" && m.state !== "stopped") : [];
   return <PanelStateProvider value={panelStorageKey(pluginId)}><nav ref={navRef} className="tavern tv-page tv-sidebar" aria-label="Tavern navigation">
-    <SideLink path="room" label="Common room (home)" glyph="home" route={route} count={data ? <span className={`tv-snav-c ${asks ? "y" : ""}`}>{asks > 0 && <PageGlyph name="you" size={10} />}<span>{asks} need you</span></span> : undefined} />
+    <SideLink path="room" label="Common room (home)" glyph="home" route={route} room={data} count={data ? <span className={`tv-snav-c ${asks ? "y" : ""}`}>{asks > 0 && <PageGlyph name="you" size={10} />}<span>{asks} need you</span></span> : undefined} />
     {data ? <QuestNav room={data} registry={registry.data} route={route} /> : !room.error && <SideNavSkeleton />}
     {errands.length > 0 && <><div className="tv-shead">Side quests <span className="anc">errands</span><span className="tv-snav-c">{errands.length} out</span></div>
       {errands.map((m) => <button type="button" key={m.threadId} className="tv-squest act" onClick={() => navigate.toThread(m.threadId)} title={`Open the side quest thread: ${m.title ?? ""}`}>{registry.data ? <CrestOf member={m} registry={registry.data} size={18} /> : <span />}<span className="tv-squest-t">{m.title ?? m.doing ?? "Side quest"}</span><Ago at={m.lastActiveAt ?? m.createdAt} /></button>)}</>}
@@ -271,5 +272,5 @@ export function registerPageSurfaces(app: PluginAppBuilder) {
   app.slots.experimental_tab({ ...CLASS_EDIT_TAB, title: "Edit class", icon: "FilePen", layout: "flush", component: ClassEditTab });
   app.slots.experimental_tab({ ...REPORTS_TAB, title: "Reports", icon: "FileText", layout: "flush", component: ReportsTab });
   app.slots.homepageSection({ id: "tavern", title: "Tavern", component: TavernHomepage });
-  for (const section of [...SETTINGS_SECTIONS, BACKUP_SECTION]) app.slots.settingsSection(settingsSection(section));
+  for (const section of SETTINGS_SECTIONS) app.slots.settingsSection(settingsSection(section));
 }

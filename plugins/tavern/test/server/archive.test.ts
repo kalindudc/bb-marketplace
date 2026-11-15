@@ -75,6 +75,8 @@ describe("finished board quest archive", () => {
     expect(await f.archive([done.id, done.id])).toEqual({
       ok: true,
       changed: 1,
+      notes: [expect.stringContaining("stays: it has another quest on the board")],
+      pendingArchives: [],
     });
     const room = (await f.harness.invokeRpc("room", {})) as {
       archivedCount: number;
@@ -112,7 +114,7 @@ describe("finished board quest archive", () => {
     expect(f.bb.rpc.experimental_invalidate).toHaveBeenCalledWith(
       expect.arrayContaining(["tavern:room", `tavern:quest:${done.id}`]),
     );
-    expect(await f.archive([done.id], false)).toEqual({ ok: true, changed: 1 });
+    expect(await f.archive([done.id], false)).toEqual({ ok: true, changed: 1, notes: [], pendingArchives: [] });
     expect(f.k.quest(done.id).archivedAt).toBeNull();
     expect(
       f.k.store

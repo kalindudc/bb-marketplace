@@ -79,7 +79,7 @@ describe("bb 0.49 dispatch regressions", () => {
     expect(k.store.runtime("lead").classNotice?.message).toContain("broken port");
     expect(k.store.runtime("lead").classNotice?.message).toContain("existing scope");
     expect(ensure).not.toHaveBeenCalled();
-    expect(scope.preset).toBe("keeper");
+    expect(scope.preset).toBe("open");
   });
   it.each(["member", "hire", "tick", "plugin"] as const)("keeps a %s waiting after the generic failure deadline", async kind => {
     const { runtime, port, k, advance } = setup();

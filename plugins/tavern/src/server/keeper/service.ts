@@ -152,13 +152,13 @@ export class Keeper {
   name(member: Member): string {
     return this.resolveMemberName?.(member) ?? member.displayName ?? (member.classId.charAt(0).toUpperCase() + member.classId.slice(1));
   }
-  resolvePartyMember(keeperThreadId: string, reference: string): Member {
+  resolvePartyMember(keeperThreadId: string, reference: string, includeArchived = false): Member {
     const party = this.store.all("members").filter(member => member.role === "member" && member.keeperThreadId === keeperThreadId);
     const direct = party.find(member => member.threadId === reference);
     if (direct) return direct;
     const live = party.filter(member => {
       const state = this.store.runtime(member.threadId);
-      return state.archivedAt == null && state.deletedAt == null && !state.released;
+      return includeArchived || state.archivedAt == null && state.deletedAt == null && !state.released;
     });
     const matches = live.filter(member => this.name(member).toLowerCase() === reference.trim().toLowerCase());
     if (matches.length === 1) return matches[0]!;
@@ -230,6 +230,7 @@ export class Keeper {
     actor: Actor = { kind: "user" },
   ) {
     const quests = [...new Set(ids)].map((id) => this.quest(id));
+    if (quests.some(q => q.deletedAt != null)) throw new Error("Restore deleted quests to the cellar before bringing them up.");
     if (quests.some((q) => !["done", "stopped"].includes(q.phase)))
       throw new Error(
         "Only done or stopped board quests can be archived or restored",
@@ -259,6 +260,29 @@ export class Keeper {
     }
     if (changed.length) this.invalidate([tags.mapHistory()]);
     return changed.length;
+  }
+  deleteQuest(id: string, actor: Actor = { kind: "user" }) {
+    const q = this.quest(id);
+    if (!["done", "stopped"].includes(q.phase)) throw new Error("Only done or stopped board quests can be deleted");
+    if (q.deletedAt != null) return false;
+    this.store.atomic(() => {
+      this.store.put("quests", id, { ...q, archivedAt: q.archivedAt ?? this.now(), deletedAt: this.now(), updatedAt: this.now() });
+      this.store.event(this.now(), q.keeperThreadId, id, "quest.deleted", `Deleted ${q.title}; restorable from the cellar`, {}, actor);
+    });
+    this.changed(q.keeperThreadId, id);
+    this.invalidate([tags.mapHistory(), tags.registry()]);
+    return true;
+  }
+  restoreDeletedQuest(id: string, actor: Actor = { kind: "user" }) {
+    const q = this.quest(id);
+    if (q.deletedAt == null) return false;
+    this.store.atomic(() => {
+      this.store.put("quests", id, { ...q, deletedAt: null, archivedAt: q.archivedAt ?? this.now(), updatedAt: this.now() });
+      this.store.event(this.now(), q.keeperThreadId, id, "quest.delete-restored", `Restored ${q.title} to the cellar`, {}, actor);
+    });
+    this.changed(q.keeperThreadId, id);
+    this.invalidate([tags.mapHistory(), tags.registry()]);
+    return true;
   }
   owned(threadId: string, id: string) {
     this.require(threadId, "keeper");

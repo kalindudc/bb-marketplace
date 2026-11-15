@@ -15,9 +15,9 @@ import { bindWorktree, gitWorktreeRoot } from "../../src/scope/worktree";
 const dirs: string[] = [];
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
 const temp = () => { const dir = mkdtempSync(join(tmpdir(), "tavern-guard-")); dirs.push(dir); return realPath(dir); };
-function host() {
+function host(tools?: string[]) {
   const handlers = new Map<string, Function>();
-  let active = ["read", "write", "bash", "journal", "quest", "tavern_report", "slack_post"];
+  let active = tools ?? ["read", "write", "bash", "journal", "quest", "tavern_report", "slack_post"];
   const pi = { on: vi.fn((name: string, handler: Function) => { handlers.set(name, handler); return () => handlers.delete(name); }), getActiveTools: () => [...active], setActiveTools: vi.fn((names: string[]) => { active = [...names]; }) };
   return { pi, emit: (name: string, input: unknown = {}, cwd = process.cwd()) => handlers.get(name)?.(input, { cwd }) };
 }
@@ -46,6 +46,33 @@ it("arms, hides denied tools, checks symlink escapes and reloads policy on every
   expect(emit("tool_call", { toolName: "write", input: { path: "ok" } }, worktree)).toBeUndefined();
   scope.tools.deny.push("write"); store.write("t1", scope);
   expect(emit("tool_call", { toolName: "write", input: { path: "ok" } }, worktree)).toMatchObject({ block: true });
+});
+it.each(["ranger", "warden"])("keeps renderer checks visible without exposing external write tools for %s", role => {
+  const root = temp(), store = new ScopeStore(root);
+  const scope = bindPaths({ ...scopeForClass(role), threadId: "t1", issuedAt: 1, sandbox: false }, { home: root, tmp: ["/tmp"], threadStorage: join(root, "storage"), scopesDir: store.directory }, realPath);
+  expect(scope.tools.hide).toBe(true);
+  store.write("t1", scope);
+  vi.stubEnv("TAVERN_SCOPE_FILE", store.file("t1")); vi.stubEnv("BB_THREAD_ID", "t1");
+  const { pi, emit } = host(["read", "check_ui", "ui_examples", "flare", "web_fetch", "slack_post", "other_write_file", "spawn", "write"]);
+  extension(pi); emit("session_start");
+  for (const toolName of ["check_ui", "ui_examples"]) {
+    expect(pi.getActiveTools()).toContain(toolName);
+    expect(emit("tool_call", { toolName, input: {} })).toBeUndefined();
+  }
+  for (const toolName of ["slack_post", "other_write_file", "spawn"]) expect(pi.getActiveTools()).not.toContain(toolName);
+  expect(emit("tool_call", { toolName: "write", input: { path: "/repo/not-writable" } })).toMatchObject({ block: true });
+});
+it("keeps every Keeper tool visible and permits direct work except protected paths", () => {
+  const root = temp(), store = new ScopeStore(root);
+  const scope = bindPaths({ ...scopeForClass("keeper"), threadId: "t1", issuedAt: 1 }, { home: root, tmp: ["/tmp"], scopesDir: store.directory }, realPath);
+  store.write("t1", scope);
+  vi.stubEnv("TAVERN_SCOPE_FILE", store.file("t1")); vi.stubEnv("BB_THREAD_ID", "t1");
+  const { pi, emit } = host(["read", "check_ui", "ui_examples", "slack_post", "write"]);
+  extension(pi); emit("session_start");
+  expect(pi.getActiveTools()).toEqual(["read", "check_ui", "ui_examples", "slack_post", "write"]);
+  expect(emit("tool_call", { toolName: "write", input: { path: "/repo/direct-work" } })).toBeUndefined();
+  expect(emit("tool_call", { toolName: "write", input: { path: join(root, ".ssh/config") } })).toMatchObject({ block: true });
+  expect(emit("tool_call", { toolName: "write", input: { path: join(root, ".agents/tavern/scopes.yml") } })).toMatchObject({ block: true });
 });
 it("late-binds a saved Smith scope from process.cwd git toplevel, not ctx.cwd, and retains the template", () => {
   const { worktree } = linkedWorktree(temp()), storage = temp(), outside = temp();

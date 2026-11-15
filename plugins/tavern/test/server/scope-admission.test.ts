@@ -158,7 +158,12 @@ describe("scope admission across provisioning", () => {
     expect(partial.writes.allow).not.toContain(f.worktree);
     if (classId === "smith") expect(partial.writes.allow).toContain("${worktree}");
     const { scope, call } = await f.firstTurn(f.runtime, thread.id);
-    expect(scope.writes.allow).toContain(f.storage);
+    if (classId === "keeper") {
+      expect(scope.preset).toBe("open");
+      expect(scope.writes.mode).toBe("any");
+      expect(scope.env.variables.BB_THREAD_STORAGE).toBe(f.storage);
+      expect(call("write", { path: join(f.storage, "note"), content: "ok" })).toBeUndefined();
+    } else expect(scope.writes.allow).toContain(f.storage);
     if (classId === "smith") expect(call("write", { path: join(f.worktree, "new-file"), content: "ok" })).toBeUndefined();
   });
 

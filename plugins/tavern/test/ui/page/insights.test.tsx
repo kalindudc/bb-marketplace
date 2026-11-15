@@ -31,7 +31,7 @@ async function insightsPage(rpc: Partial<Handlers> = {}) {
 const providers: { status: "ready" | "loading"; providers: never } = { status: "ready", providers: [{ id: "codex", name: "Codex", available: true }] as never };
 async function section(id: string, rpc: Partial<Handlers> = {}, options: { providers?: typeof providers } = {}) {
   const plugin = await app();
-  const registration = plugin.settingsSections.find((s) => s.id === id)!;
+  const registration = plugin.settingsSections.find((s) => s.id === ({tuned:"tuning","import-export":"data"} as Record<string,string>)[id] || s.id === id)!;
   const slot = renderSlot(registration, {}, { pluginId: "tavern", experimental_rpcContract: contract, rpc: { ...base, ...rpc } as Handlers, providers: options.providers ?? providers });
   slots.push(slot); return slot;
 }
@@ -157,10 +157,11 @@ describe("Tavern settings sections", () => {
     const crests = vi.fn(() => ({crests:[{threadId:"thr_agent",classId:"keeper",characterId:null,label:"Moss II"}, {threadId:"keeper",classId:"keeper",characterId:null,label:"Moss"}]}));
     const rpc = { settings: () => settings, crests } as Partial<Handlers>;
     const history = await section("settings-history", rpc);
+    fireEvent.click(await history.findByRole("button", {name: /changes$/}));
     await history.findByRole("button", {name:"Moss II"});
-    expect(history.container.textContent).toContain("by an agent in Moss II");
+    expect(history.container.textContent).toContain("By an agent in Moss II");
     expect(history.container.textContent).not.toContain("thr_agent");
-    await waitFor(() => expect(history.container.textContent).toContain("by Moss (Keeper)"));
+    await waitFor(() => expect(history.container.textContent).toContain("By Moss (Keeper)"));
     expect(crests).toHaveBeenCalledTimes(1);
     expect(crests).toHaveBeenCalledWith({threadIds:["keeper","thr_agent"]});
     const tuned = await section("tuned", rpc);
@@ -247,7 +248,7 @@ describe("Tavern settings sections", () => {
     const view = structuredClone(settingsView);
     view.effective.classes.warden = { model: "gpt-6.1-sol", reasoning: null };
     const slot = await section("classes", { settings: () => structuredClone(view) }, { providers: { status: "loading", providers: [] as never } });
-    expect(await slot.findByText(/Set here: gpt-6.1-sol, the model's default thinking/)).toBeTruthy();
+    expect(await slot.findByText((_text, element) => element?.classList.contains("tv-exec-d") === true && element.textContent?.includes("Set here: gpt-6.1-sol, the model's default thinking") === true)).toBeTruthy();
     expect(slot.getByRole("button", { name: "Use the class file for Warden" })).toBeTruthy();
   });
   it("puts the Ranger time-box ceiling under Keepers as your own budget, not in Tavern tunes these", async () => {

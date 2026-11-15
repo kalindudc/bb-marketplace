@@ -1,10 +1,45 @@
-.tavern .tw-brief-fields { display: flex; flex-direction: column; gap: 12px; min-width: 0; color: var(--foreground); }
+.tavern .tw-member-panel, .tavern .tw-brief-fields { min-width: 0; color: var(--foreground); }
+.tavern .tw-brief-fields { display: flex; flex-direction: column; gap: 8px; }
 .tavern .tw-brief-fields section { min-width: 0; }
-.tavern .tw-brief-fields header { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px; }
-.tavern .tw-brief-fields h4 { margin: 0 0 4px; font-size: 12px; }
-.tavern .tw-brief-fields :is(p, li) { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
-.tavern .tw-brief-fields :is(ol, ul) { margin: 0; padding-left: 20px; }
-.tavern .tw-brief-fields li + li { margin-top: 4px; }
-.tavern .tw-brief-fields code { white-space: pre-wrap; overflow-wrap: anywhere; }
-.tavern .tw-brief-fields .tw-brief-outcome { font-size: 14px; line-height: 1.5; }
+.tavern .tw-brief-fields header { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; }
+.tavern .tw-brief-fields h4 { margin: 0; font-size: 13px; }
+.tavern .tw-brief-fields :is(p, li) { white-space: pre-wrap; overflow-wrap: anywhere; }
+.tavern .tw-brief-fields code { white-space: pre-wrap; overflow-wrap: anywhere; font-size: inherit; }
+.tavern .tw-brief-fields :is(ol, ul) { padding-left: 20px; }
+.tavern .tw-brief-fields .tw-prose { font-size: 13px; line-height: 1.65; max-width: 72ch; min-width: 0; }
+.tavern .tw-prose :is(p, ul, ol, pre) { margin: 0 0 8px; }
+.tavern .tw-prose :last-child { margin-bottom: 0; }
+.tavern .tw-prose li + li { margin-top: 4px; }
+.tavern .tw-prose ol > li { list-style: decimal; }
+.tavern .tw-prose ul > li { list-style: disc; }
+.tavern .tw-prose pre { max-width: 100%; white-space: pre-wrap; overflow-wrap: anywhere; }
+.tavern .tw-glance { border: 1px solid var(--tavern-line); border-radius: 6px; padding: 12px; background: var(--tavern-raised); container: member-glance / inline-size; font-size: 13px; line-height: 1.6; }
+.tavern .tw-glance header { margin-bottom: 8px; }
+.tavern .tw-glance p { margin: 6px 0 0; max-width: 72ch; }
+.tavern .tw-glance dl { display: grid; grid-template-columns: 84px minmax(0, 1fr); gap: 12px 16px; margin: 8px 0 0; }
+.tavern .tw-glance dt { padding-top: 3px; }
+.tavern .tw-glance dd { margin: 0; min-width: 0; max-width: 72ch; color: var(--foreground); overflow-wrap: anywhere; }
+.tavern .tw-glance .tw-glance-counts { border-top: 1px solid var(--tavern-line); margin-top: 12px; padding-top: 8px; color: var(--tavern-muted); font-size: 12px; max-width: none; }
+.tavern .tw-glance-counts > span { display: block; max-width: 72ch; }
+@container member-glance (max-width: 440px) {
+  .tavern .tw-glance dl { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+  .tavern .tw-glance dt:not(:first-child) { margin-top: 8px; }
+}
+.tavern .tw-glance-waypoint { margin: 0 0 4px; }
+.tavern .tw-member-fold { border-bottom: 1px solid var(--tavern-line); }
+.tavern .tw-fold-trigger { display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; min-height: 36px; padding: 7px 4px; border: 0; background: none; color: var(--foreground); text-align: left; font: inherit; cursor: pointer; }
+.tavern .tw-fold-trigger > .act-i { margin-left: auto; flex: none; }
+.tavern .tw-fold-trigger > .num { color: var(--tavern-muted); }
+.tavern .tw-fold-body { min-width: 0; overflow: hidden; }
+.tavern .tw-fold-body > :first-child { padding: 6px 4px 10px; }
+.tavern .tw-context-notes { margin: 0; }
+.tavern .tw-context-notes > li + li { margin-top: 12px; }
+.tavern .tw-follow-up { margin-left: 8px; }
+.tavern .tw-follow-up .tw-member-fold { border-bottom: 0; }
+.tavern .tw-follow-up-summary { position: relative; min-width: 0; flex: 1; font-size: 13px; font-weight: 400; line-height: 1.5; overflow-wrap: anywhere; }
+.tavern .tw-follow-up-chalk { position: absolute; left: 0; bottom: -3px; width: 100%; height: 4px; pointer-events: none; }
+.tavern .tw-follow-up-chalk path { fill: none; stroke: var(--foreground); stroke-width: 1; stroke-linecap: round; stroke-dasharray: 100; opacity: .7; }
+.tavern .tw-follow-up-meta { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; flex: none; }
+.tavern .tw-follow-up-version, .tavern .tw-member-new { flex: none; }
+.tavern .tw-brief-note { margin: 12px 0 0; max-width: 72ch; }
 .tavern .tw-brief-fields .m { color: var(--tavern-muted); }

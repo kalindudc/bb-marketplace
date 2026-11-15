@@ -17,6 +17,14 @@ function populate(f: ReturnType<typeof setup>) {
   f.db.prepare("INSERT INTO tavern_events(at,keeper_thread_id,board_quest_id,actor,type,text,data) VALUES(1,NULL,NULL,?,?,?,?)").run('{"kind":"tavern"}', "backup.fixture", "A private note", '{}');
 }
 describe("Tavern records snapshots", () => {
+  it("round-trips a soft-deleted quest until its purge", () => {
+    const source = setup(), target = setup();
+    const quest = { id: "deleted-quest", keeperThreadId: "keeper", title: "Private work", short: "Private work", phase: "done", planVersion: 0, greenlitVersion: null, createdAt: 1, updatedAt: 2, endedAt: 2, archivedAt: 3, deletedAt: 3 };
+    source.db.prepare("INSERT INTO tavern_records(kind,id,data,archived_at) VALUES('quests',?,?,?)").run(quest.id, JSON.stringify(quest), quest.archivedAt);
+    target.records.restore(source.records.capture());
+    const row = target.db.prepare("SELECT data FROM tavern_records WHERE kind='quests' AND id=?").get(quest.id) as { data: string };
+    expect(JSON.parse(row.data)).toEqual(quest);
+  });
   it("keeps discovery generations private and refuses restore beside existing discovery authority", () => {
     const source = setup(), target = setup(); populate(source);
     for (const fixture of [source, target]) fixture.db.exec(`CREATE TABLE IF NOT EXISTS tavern_placement_discoveries (

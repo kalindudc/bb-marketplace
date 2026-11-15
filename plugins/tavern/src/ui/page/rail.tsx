@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, type ReactNode } from "react";
+import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
 const reducedMotion = () => typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
@@ -164,15 +164,29 @@ export function useKeepPlaceOnResize<T extends HTMLElement>() {
  * The rail: two held columns at a page of 900 px and wider. Left: what needs you, the side lists, the history. Right: the
  * board, the cellar. Narrower, one column in why.md's order: needs, decided, review, board, side lists, history, cellar.
  */
-export function Rail({ attention, board, lists, events, cellar }: { attention: ReactNode; board: ReactNode; lists: ReactNode; events: ReactNode; cellar: ReactNode }) {
+export function Rail({ attention, board, lists, events, cellar, calm = false }: { attention: ReactNode; board: ReactNode; lists: ReactNode; events: ReactNode; cellar: ReactNode; calm?: boolean }) {
   const left = useHeldColumn<HTMLElement>();
   const right = useHeldColumn<HTMLDivElement>();
   const grid = useKeepPlaceOnResize<HTMLDivElement>();
+  const [wide, setWide] = useState(false);
+  useLayoutEffect(() => {
+    const page = grid.current?.closest<HTMLElement>(".tv-page");
+    if (!page) return;
+    const measure = () => {
+      const style = getComputedStyle(page);
+      setWide(page.clientWidth - (parseFloat(style.paddingLeft) || 0) - (parseFloat(style.paddingRight) || 0) > 900);
+    };
+    measure();
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    observer?.observe(page);
+    return () => observer?.disconnect();
+  }, [grid]);
+  const sideLists = <div key="lists" className="rm-o3 rm-stackcol">{lists}</div>;
+  const history = <div key="history" className="rm-o4">{events}</div>;
   return <div ref={grid} className="rm-a-grid">
     <aside ref={left} className="rm-a-rail" data-col="rail" aria-label="What needs you and what happened">
       <div className="rm-o1 rm-stackcol">{attention}</div>
-      <div className="rm-o3 rm-stackcol">{lists}</div>
-      <div className="rm-o4">{events}</div>
+      {calm && wide ? [history, sideLists] : [sideLists, history]}
     </aside>
     <div ref={right} className="rm-a-main" data-col="main">
       <div className="rm-o2">{board}</div>

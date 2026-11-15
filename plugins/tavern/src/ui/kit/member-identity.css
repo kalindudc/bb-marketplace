@@ -1,0 +1,5 @@
+.tavern .member-identity.chips .mi-role { max-width: 72ch; font-size: 13px; }
+.tavern .member-identity.chips .mi-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; min-width: 0; }
+.tavern .member-identity.chips .mi-chip { display: inline-flex; align-items: baseline; gap: 5px; max-width: 100%; white-space: normal; overflow-wrap: anywhere; font-size: 12px; line-height: 1.5; padding: 3px 7px; }
+.tavern .member-identity.chips button.mi-chip { min-height: 32px; }
+.tavern .member-identity.chips .mi-chip-label { color: var(--tavern-muted); }

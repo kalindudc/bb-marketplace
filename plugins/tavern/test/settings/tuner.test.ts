@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { SettingsStore } from "../../src/server/settings/store";
 import { evaluateRules, runTuner, TUNING_RULES, type TuningSignals } from "../../src/server/settings/tuner";
 import { TUNABLES, TUNABLE_KEYS, settingsSchema } from "../../src/shared/settings";
+import { LIMITS } from "../../src/server/limits";
 import { MIGRATIONS } from "../../src/server/migrations";
 import type { Database } from "../../src/server/ports";
 
@@ -23,6 +24,37 @@ function fixture(mode: "apply" | "suggest" | "off") {
 }
 
 describe("deterministic tuning", () => {
+  it("hand edits become the unpinned baseline and Undo restores a prior tuned override", () => {
+    const { store } = fixture("apply");
+    store.applyTuned({ tickSeconds: 120 }, "Earlier tuning", { section: "reliability", chart: "ticks" });
+    const edit = store.update({ revision: store.snapshot().revision, patch: { knobs: { tickSeconds: 80 } }, why: "My value" })!;
+    expect(store.read().knobs.tickSeconds).toBe(80);
+    expect(store.snapshot().pinned.tickSeconds).toBeUndefined();
+    expect(store.snapshot().tuned.tickSeconds).toBeUndefined();
+    expect(edit.by).toBe("user");
+    store.undo(edit.id, "Undo manual edit");
+    expect(store.read().knobs.tickSeconds).toBe(120);
+    expect(store.snapshot().tuned.tickSeconds).toBe(120);
+  });
+  it("editing an already pinned knob changes its value without unlocking it", () => {
+    const { store } = fixture("apply");
+    store.update({ revision: store.snapshot().revision, patch: {}, pins: { tickSeconds: 75 }, why: "Pin" });
+    store.update({ revision: store.snapshot().revision, patch: { knobs: { tickSeconds: 95 } }, why: "Edit pin" });
+    expect(store.read().knobs.tickSeconds).toBe(95);
+    expect(store.snapshot().pinned.tickSeconds).toBe(95);
+    runTuner(store, "after-pin-edit", signals());
+    expect(store.read().knobs.tickSeconds).toBe(95);
+  });
+  it("the next eligible tuner run adapts from a hand edit rather than the previous tuned value", () => {
+    const { store, advance } = fixture("apply");
+    store.applyTuned({ tickSeconds: 120 }, "Earlier tuning", { section: "reliability", chart: "ticks" });
+    store.update({ revision: store.snapshot().revision, patch: { knobs: { tickSeconds: 80 } }, why: "My value" });
+    advance(LIMITS.tuningCooldownMs);
+    const evidence = signals(); evidence.keeperTurnSeconds = [];
+    const proposals = runTuner(store, "after-edit", evidence);
+    expect(proposals.find(p => p.key === "tickSeconds")?.value).toBe(100);
+    expect(store.read().knobs.tickSeconds).toBe(100);
+  });
   it.each(TUNABLE_KEYS)("has a bounded, evidence-backed rule for %s", key => {
     const settings = settingsSchema.parse({});
     const proposal = evaluateRules(settings.knobs, signals()).find(row => row.key === key)!;

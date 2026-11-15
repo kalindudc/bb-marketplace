@@ -6,7 +6,7 @@ import { verifiedOf, verifiedWords, CheckIndependence, ExpandsMark, GuardPosture
 import { CrestOf, Section, StateMark, characterName, classLabel, type Registry, plural } from "./common";
 import { rememberCount, timeAgo, useNow } from "../kit";
 import { PageGlyph } from "./glyphs";
-import { MapViewport, mapSvg, svgToPng, textMeasurer, useRoomBelow, type Box } from "./mapview";
+import { MapViewport, mapSvg, svgToPng, textMeasurer, type Box } from "./mapview";
 import { graphFor, isFinished, mapPicture, mapQuests, pathProgress, phaseWord, type MapNode, type PictureNode } from "./model";
 import { usePanelState } from "./panel-state";
 import { SKEL } from "./skeletons";
@@ -231,8 +231,6 @@ export function TheMap({ room, registry }: { room: Room; registry: Registry }) {
   const [ref, width] = useWidth<HTMLDivElement>();
   const [receipt, setReceipt] = useState<string | null>(null);
   const listHeading = useId();
-  const rowsRef = useRef<HTMLUListElement>(null);
-  const listRoom = useRoomBelow(rowsRef, ".tv-maplist");
   useEffect(() => { if (!receipt) return; const t = setTimeout(() => setReceipt(null), 6000); return () => clearTimeout(t); }, [receipt]);
   const errands = room.keepers.flatMap((k) => k.errands).filter((m) => !isFinished(m.state));
   const open = room.asks.filter((a) => a.state === "open" && (a.boardQuestId === null || !hidden.has(a.boardQuestId))).sort((a, b) => a.createdAt - b.createdAt);
@@ -302,7 +300,7 @@ export function TheMap({ room, registry }: { room: Room; registry: Registry }) {
   </button></li>;
   const list = <section className="tv-card tv-maplist" aria-labelledby={listHeading}>
     <header className="tv-maplist-bar"><h2 id={listHeading}>Everyone on the map</h2><span className="tv-count">{plural(rows.length + archivedRows.length, "row")}</span></header>
-    {rows.length + archivedRows.length > 0 && <ul ref={rowsRef} className="tv-rows tv-maprows" style={!narrow && listRoom !== null ? { maxHeight: Math.max(240, listRoom) } : undefined}>
+    {rows.length + archivedRows.length > 0 && <ul className="tv-rows tv-maprows">
       {rows.map(row)}
       {archivedRows.length > 0 && <li className="tv-maprows-fold"><button type="button" className="tv-fold act" aria-expanded={archivedOpen} onClick={() => setArchivedOpen(!archivedOpen)}><ExpandsMark open={archivedOpen} /><span>{plural(archivedRows.length, "archived Keeper")}</span></button></li>}
       {archivedOpen && archivedRows.map(row)}

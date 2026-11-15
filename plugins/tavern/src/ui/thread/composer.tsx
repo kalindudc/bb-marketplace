@@ -1,17 +1,18 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type CSSProperties } from "react";
 import { experimental_useRpcQuery, experimental_useRpcMutation, experimental_usePluginId, experimental_useAppPanel, useBbNavigate, useComposer, UrlLink, type PluginComposerApi } from "@get-bb/plugin-sdk/app";
 import { settingsContract } from "../../shared/settings";
 import { classDifferences, composerProjectId, fieldWords, rearmClassSettings, startRefusal, useClassStart } from "./class-start";
 import { rpcContract, type ThreadDecor } from "../../shared/contract";
 import type { Ask, CheckerHandoffHold, ClassDef } from "../../shared/schema";
 import type { ClassNotice } from "../../shared/class-execution-contract";
-import { AskCard, Crest, KEEPER_STATE_HINT, DecidedForYou, useDecisionSeen, ExpandsMark, Glyph, IconButton, OpensMark, QueryState, Skeleton, SkCrest, SkLine, TimeAgo, Vocabulary, memberIdentity, plural, useRegistry, useSkeletonCount, useSkeletonDelay, type Registry, QuietNotice, useArmedNewQuest, activeHold, heldQuests, releaseWords, Clamp, localTime, useNow } from "../kit";
+import { AskCard, Crest, KEEPER_STATE_HINT, DecidedForYou, useDecisionSeen, ExpandsMark, Glyph, IconButton, OpensMark, QueryState, Skeleton, SkCrest, SkLine, TimeAgo, Vocabulary, memberIdentity, plural, useRegistry, useSkeletonCount, useSkeletonDelay, type Registry, glowVars, QuietNotice, useArmedNewQuest, activeHold, heldQuests, releaseWords, Clamp, localTime, useNow } from "../kit";
 import { LEDGER_TAB } from "./tabs";
 import { acknowledgeAskReveal, acknowledgeWidgetReveal, useWidgetPanel, useWidgetReveal, threadDecorCache } from "./state";
 import { useChangeCue, useTavernMotion } from "../kit/motion";
 import { takeArmedClass } from "../kit/remember";
-import { MemberBrief } from "./member-brief";
-import { MemberIdentity, memberIdentityWords } from "../kit/member-identity";
+import { MemberPanel, memberFinished } from "./member-brief";
+import { memberIdentityWords } from "../kit/member-identity";
+import { HUE_CSS } from "../../shared/heraldry";
 
 export const CLASS_PROVIDER = "classes";
 
@@ -200,7 +201,7 @@ export function ThreadWidget({ threadId }: { threadId: string }) {
   // Motion: the row holds still while an ask is in it, and for 2 s after the user types (the coordinator's hold; a restored draft doesn't
   // count); the busy dot pulses twice when its Keeper turns busy or the row comes into view busy, then holds solid.
   const need = needsOf(keeper);
-  const { cue, settle } = useTavernMotion(`thread:${threadId}`, { held: need.asks + need.holds > 0 });
+  const { cue, settle } = useTavernMotion(`thread:${threadId}`, { held: need.asks + need.holds > 0 || (!!data && !keeper && scopeAlerts(data) > 0) });
   const dot = useRef<HTMLElement>(null);
   const pulsing = !!keeper && keeper.quietSince == null && keeper.status === "busy" && !!data?.member && !!registry.data;
   const pulse = () => cue(dot.current, "busy dot", { key: "dot", ms: 3200, className: "mo-pulse", ambient: true, region: "widget" });
@@ -228,13 +229,15 @@ export function ThreadWidget({ threadId }: { threadId: string }) {
   const identity = data.member && registry.data ? memberIdentity(registry.data, data.member) : null;
   const toggle = (what: Exclude<Open, null>) => setOpen(open === what ? null : what);
   const variant = keeper ? "keeper" : data.member.role === "member" ? "member" : "solo";
+  const lit = !!identity && !identity.character.plain;
+  const surface: CSSProperties & { "--widget-edge": string } = { ...(lit ? glowVars(data.boardQuest ? `quest:${data.boardQuest.id}` : `keeper:${threadId}`) : {}), "--widget-edge": lit ? HUE_CSS[identity.character.hue] : "var(--tavern-line)" };
   const hideBtn = <IconButton glyph="close" className="tw-hide" label="Hide Tavern in this thread (⌥⌘T). The crest in the composer brings it back" onClick={() => void hide.mutate({ threadId, hidden: true }).catch(setError)} />;
 
   return (
-    <section className={`tavern twidget v-${variant} ${open ? "is-open" : ""} ${keeper?.quietSince != null ? "is-quiet" : ""}`} aria-label="Tavern widget" data-part="TavernWidget">
+    <section className={`tavern twidget v-${variant} ${lit ? "glow" : ""} ${open ? "is-open" : ""} ${keeper?.quietSince != null ? "is-quiet" : ""}`} style={surface} aria-label="Tavern widget" data-part="TavernWidget">
       <div className="tw-row">
         {identity && data.member && keeper && <span className={`tw-id ${keeper ? `st-${keeper.quietSince != null ? "quiet" : keeper.status}` : ""}`} title={`This thread: ${identity.character.name}, ${identity.cls.label} (${identity.cls.plain})${keeper ? ` · ${keeper.quietSince != null ? `quiet: ${KEEPER_STATE_HINT.quiet}` : `${STATUS_WORD[keeper.status]}: ${STATUS_HINT[keeper.status]}`}` : ""}`}><span className="tw-crest"><Crest {...identity} size={18} />{keeper && <i ref={dot} className="tw-dot" aria-hidden="true" />}</span>{<span className="who-t tw-name"><b>{identity.character.name}</b>{keeper ? <span aria-hidden="true"> · </span> : <span className="anc">{identity.cls.label} · {identity.cls.plain}</span>}</span>}{keeper && <span className="sr">Keeper, {STATUS_WORD[keeper.status]}</span>}</span>}
-        {!keeper && data.member && registry.data && <button type="button" className="tw-id tw-member-id act" title={memberIdentityWords(data.member, registry.data, data.scope)} aria-label={memberIdentityWords(data.member, registry.data, data.scope)} aria-expanded={open === "brief"} aria-controls={`tw-brief-${threadId}`} onClick={() => toggle("brief")}>
+        {!keeper && data.member && registry.data && <button type="button" className="tw-id tw-member-id act" title={memberIdentityWords(data.member, registry.data, data.scope, memberFinished(data))} aria-label={memberIdentityWords(data.member, registry.data, data.scope, memberFinished(data))} aria-expanded={open === "brief"} aria-controls={`tw-brief-${threadId}`} onClick={() => toggle("brief")}>
           {identity && <span className="tw-crest"><Crest {...identity} size={18} /></span>}
           <span className="who-t tw-name"><b>{identity?.character.name ?? data.member.displayName ?? data.member.classId}</b><span className="tw-member-class"> · {identity?.cls.label ?? data.member.classId}</span></span>
         </button>}
@@ -247,7 +250,7 @@ export function ThreadWidget({ threadId }: { threadId: string }) {
       <QueryState error={error} />
       {keeper && open === "asks" && <AsksPanel threadId={threadId} asks={keeper.openAsks} holds={heldQuests(keeper.boardQuests, keeper.openAsks)} quests={keeper.boardQuests} revealAskId={revealAskId} revealVersion={revealVersion} onClose={() => setOpen(null)} />}
       {keeper && open === "decided" && <DecidedPanel threadId={threadId} data={data} />}
-      {open === "brief" && !keeper && <div className="tw-panel tw-brief" id={`tw-brief-${threadId}`} aria-label="Member">{registry.data && <MemberIdentity member={data.member} registry={registry.data} scope={data.scope} violations={data.violations} />}{data.briefFields ? <MemberBrief brief={data.briefFields} classId={data.member.classId} /> : data.brief && <div className="tw-brief-fields"><p data-content>{data.brief}</p></div>}{(data.briefFields || data.brief) && <p className="m small">Messages you send here reach this member now and its Keeper in the next tick.</p>}<ScopePanel data={data} /></div>}
+      {open === "brief" && !keeper && <div className="tw-panel tw-brief" id={`tw-brief-${threadId}`} role="region" aria-label="Member"><MemberPanel key={threadId} data={data} cue={data.ambientMotion === "off" ? undefined : cue} registry={registry.data ?? null} scopeDetails={<ScopePanel data={data} />} onQuest={id => navigate.toPluginPanel("tavern", { subPath: `quest/${id}` })} /></div>}
     </section>
   );
 }
@@ -344,11 +347,11 @@ function Phase({ phase }: { phase: string }) {
   return <span className="tw-ph" aria-hidden="true">{phases.map((p, i) => <i key={p} className={i < at ? "d" : i === at ? "c" : ""} />)}<span className="tw-pw">{phase}</span></span>;
 }
 
-const scopeAlerts = (data: ThreadDecor) => (data.scope?.problems?.length ?? 0) + (data.violations?.length ?? 0) + (data.scope?.error ? 1 : 0);
+const scopeAlerts = (data: ThreadDecor) => (data.scope?.problems?.length ?? 0) + (data.violations?.length ?? 0) + (data.scope?.error ? 1 : 0) + (data.scope?.pendingAskId ? 1 : 0);
 
 /** A member's guardrails in plain words: the mode, what it may touch, policy problems, and each rule break with whether it was stopped. */
 function ScopePanel({ data }: { data: ThreadDecor }) {
-  const ms = data.scope; if (!ms) return null;
+  const ms = data.scope; if (!ms) return <p className="m">No scope details are recorded for this member.</p>;
   const mode = ms.mode ?? "enforce"; const sc = ms.scope; const violations = data.violations ?? [];
   return <section className="tw-scope" aria-label="Scope (guardrails)">
     <h4>Scope details</h4>

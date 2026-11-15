@@ -22,7 +22,7 @@ it("replays Billy's exact 88 Ranger, 79 Smith, 11 Keeper and 8 regression comman
     for (const path of ["src", "packages/a"]) mkdirSync(join(worktree, path), { recursive: true });
     writeFileSync(join(worktree, "src/a.ts"), "a\n"); writeFileSync(join(worktree, "package.json"), '{"version":"1"}');
     const scopes = Object.fromEntries(["ranger", "smith", "keeper"].map(role => {
-      let scope = { ...scopeForClass(role), threadId: "t1", issuedAt: 1 };
+      let scope = { ...scopeForClass(role, undefined, role === "keeper" ? "keeper" : undefined), threadId: "t1", issuedAt: 1 };
       if (scope.writes.mode === "worktree") scope = bindWorktree(scope, worktree);
       return [role, bindPaths(scope, { home: homedir(), tmp: scratch, scopesDir: join(base, "scopes"), threadStorage: join(base, "storage") }, realPath)];
     }));

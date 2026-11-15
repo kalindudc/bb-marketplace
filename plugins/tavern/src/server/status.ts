@@ -8,6 +8,7 @@ export const statusInput = z.object({
   section: z
     .enum([
       "summary",
+      "archived",
       "holds",
       "events",
       "reports",
@@ -40,6 +41,15 @@ function statusData(
 ) {
   const k = runtime.keeper;
   if (input.section === "requests") return readRequestSources(k, threadId, { memberThreadId: input.memberThreadId ?? undefined, manifestId: input.manifestId ?? undefined, sourceIndex: input.sourceIndex, offset: input.offset });
+  const archivedRows = k.store.all("members").filter(member => member.keeperThreadId === threadId && k.store.runtime(member.threadId).archivedAt != null).map(member => {
+    const state = k.store.runtime(member.threadId);
+    const quest = member.boardQuestId ? k.store.get("quests", member.boardQuestId) : null;
+    return { threadId: member.threadId, name: k.name(member), classId: member.classId, quest: quest?.deletedAt != null ? "a deleted quest" : quest?.short ?? null, released: !!state.released, deleted: state.deletedAt != null };
+  });
+  const archivedMembers = archivedRows.slice(input.offset, input.offset + input.limit);
+  const archivedMemberTotal = archivedRows.length;
+  const nextArchivedOffset = input.offset + archivedMembers.length < archivedMemberTotal ? input.offset + archivedMembers.length : null;
+  if (input.section === "archived") return { archivedMembers, archivedMemberTotal, nextArchivedOffset };
   const archivedCount = k.store.archivedQuestCount(threadId);
   const archived = {
     archivedCount,
@@ -222,6 +232,7 @@ function statusData(
   const review = runtime.review();
   return {
     archivedCount,
+    archivedMembers, archivedMemberTotal, nextArchivedOffset,
     quests: (input.boardQuestId
       ? [k.quest(input.boardQuestId)]
       : k.store.visibleRecords("quests", threadId, input.limit, input.offset)

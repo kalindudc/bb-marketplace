@@ -20,6 +20,8 @@ import { registerTools } from "../../src/server/tools";
 import { registerRpc } from "../../src/server/rpc";
 import { registerCli } from "../../src/server/cli";
 import { provider } from "./provider-fixture";
+import { scopeForClass } from "../../src/scope/presets";
+import { BackendScopes } from "../../src/server/scopes";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -91,6 +93,60 @@ async function fixture(installGuard = false) {
 }
 
 describe("backend scope integration", () => {
+  it("widens a live Keeper snapshot on load once, preserves grants and records a scope event", async () => {
+    const f = await fixture();
+    const scope = { ...scopeForClass("keeper", undefined, "keeper"), threadId: "lead", issuedAt: 1 };
+    scope.tools.allow = scope.tools.allow.filter(name => !["check_ui", "ui_examples", "write", "Write", "edit", "Edit"].includes(name));
+    scope.tools.deny.push("write", "Write", "edit", "Edit");
+    scope.writes.allow.push("/approved/grant");
+    const file = join(f.root, "scopes", "lead.json");
+    writeFileSync(file, JSON.stringify({ ...scope, bindingTemplate: scope }));
+    const restart = () => new BackendScopes(f.runtime, { dataDir: f.root, installGuard: false, policyOptions: { home: f.root } });
+    scope.shell.allow.push({ id: "approved", argv: ["git", "push"], why: "User approved" });
+    writeFileSync(file, JSON.stringify({ ...scope, bindingTemplate: scope }));
+    await restart().refreshPresets();
+    const saved = JSON.parse(readFileSync(file, "utf8"));
+    expect(saved.preset).toBe("open");
+    expect(saved.tools.hide).toBe(false);
+    expect(saved.tools.allow).toContain("*");
+    expect(saved.writes.mode).toBe("any");
+    expect(saved.writes.allow).toContain("/approved/grant");
+    expect(saved.shell.allow).toEqual(scope.shell.allow);
+    expect(saved.presetProvenance.id).toBe("open");
+    await restart().refreshPresets();
+    const events = f.k.store.events("lead").filter(event => event.type === "scope.refreshed");
+    expect(events).toHaveLength(1);
+    expect(events[0]!.text).toBe("Keeper scope widened to open by Tavern 0.1.2");
+  });
+  it("repairs an open snapshot with provenance once on load and records both the event and log", async () => {
+    const f = await fixture();
+    const open = scopeForClass("keeper");
+    open.writes.deny = open.writes.deny.filter(path => path !== "~/.agents/tavern/scopes.yml");
+    await f.runtime.scopes!.api.writeScope("lead", open);
+    const log = vi.spyOn(f.bb.log, "info");
+    const reload = new BackendScopes(f.runtime, { dataDir: f.root, installGuard: false, policyOptions: { home: f.root } });
+    await reload.refreshPresets();
+    await reload.refreshPresets();
+    expect(reload.api.status().threads.find(row => row.threadId === "lead")!.scope!.writes.deny).toContain(join(f.root, ".agents/tavern/scopes.yml"));
+    expect(f.k.store.events("lead").filter(event => event.text === "Protected the trusted scope policy in an open scope")).toHaveLength(1);
+    expect(log).toHaveBeenCalledWith("Tavern scope policy protection added lead: ~/.agents/tavern/scopes.yml");
+  });
+  it("refreshes matching member snapshots without widening their preset or grants", async () => {
+    const f = await fixture();
+    await f.runtime.hire("lead", "project", f.input);
+    const scope = { ...scopeForClass("smith", undefined, "readonly"), threadId: "child", issuedAt: 1 };
+    scope.tools.allow = scope.tools.allow.filter(name => !["check_ui", "ui_examples"].includes(name));
+    scope.writes.allow.push("/approved/grant");
+    const file = join(f.root, "scopes", "child.json");
+    writeFileSync(file, JSON.stringify({ ...scope, bindingTemplate: scope }));
+    const reload = new BackendScopes(f.runtime, { dataDir: f.root, installGuard: false, policyOptions: { home: f.root } });
+    await reload.refreshPresets();
+    const saved = JSON.parse(readFileSync(file, "utf8"));
+    expect(saved.preset).toBe("readonly");
+    expect(saved.tools).toEqual({ ...scope.tools, allow: [...scope.tools.allow, "check_ui", "ui_examples"] });
+    expect(saved.writes).toEqual(scope.writes);
+    expect(f.k.store.events("lead").find(event => event.type === "scope.refreshed")?.data.memberThreadId).toBe("child");
+  });
   it("returns already in effect for scratch and own storage requests without opening an ask", async () => {
     const f = await fixture();
     await f.runtime.hire("lead", "project", f.input);

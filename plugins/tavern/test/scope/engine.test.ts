@@ -5,7 +5,7 @@ import { scopeForClass } from "../../src/scope/presets";
 import { scopeSchema } from "../../src/scope/schema";
 import { bindPaths } from "../../src/scope/paths";
 
-const scope = (role: string) => bindPaths(scopeForClass(role), { home: "/home/me", tmp: ["/tmp", "/private/tmp"], worktree: "/repo", threadStorage: "/storage/t1", scopesDir: "/data/scopes" });
+const scope = (role: string) => bindPaths(scopeForClass(role, undefined, role === "keeper" ? "keeper" : undefined), { home: "/home/me", tmp: ["/tmp", "/private/tmp"], worktree: "/repo", threadStorage: "/storage/t1", scopesDir: "/data/scopes" });
 const bash = (role: string, command: string) => evaluate(scope(role), { kind: "bash", toolName: "bash", input: { command }, cwd: "/repo" });
 
 describe("scope engine", () => {

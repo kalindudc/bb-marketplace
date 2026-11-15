@@ -1,10 +1,10 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { existsSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { bindPaths, realPath, type ScopePaths } from "./paths";
-import { narrowScope } from "./presets";
+import { narrowScope, scopeForClass } from "./presets";
 import { scopeHostTargetSchema, scopeSchema, type ClassScope, type Scope, type ScopeNarrowing, type ScopeOverride } from "./schema";
 import { ScopeStore } from "./store";
 import { envForScope, registerEnv } from "./env";
@@ -79,7 +79,7 @@ export function registerScopes(bb: BbPluginApi, deps: ScopesDeps) {
     const state = hostStateForThread(threadId);
     if (state !== undefined) return store.markHostBinding(threadId, { kind: "host", placementId: state.kind === "ready" ? state.expected.placementId : null, generation: state.kind === "ready" ? state.expected.generation : null });
   };
-  const bindAndWrite = async (threadId: string, input: Scope, check: () => void) => {
+  const bindAndWrite = async (threadId: string, input: Scope, check: () => void, preserveProvenance = false) => {
     let template = scopeSchema.parse({ ...input, threadId, issuedAt: input.issuedAt || Date.now() });
     const paths = prepareBinding(threadId) ? undefined : await deps.pathsForThread(threadId);
     prepareBinding(threadId);
@@ -88,7 +88,7 @@ export function registerScopes(bb: BbPluginApi, deps: ScopesDeps) {
     template = { ...template, mode, ...(enforceFrom === undefined ? {} : { enforceFrom }) };
     if (current?.binding) {
       if (!current.error && JSON.stringify(current.scope) === JSON.stringify(template) && JSON.stringify(current.template) === JSON.stringify(template)) return current.scope!;
-      return store.write(threadId, template, template);
+      return store.write(threadId, template, template, undefined, preserveProvenance);
     }
     if (!paths) throw new Error("Local scope paths are unavailable");
     const prepared = paths.worktree && (needsWorktree(template) || template.writes.mode === "worktree") ? bindWorktree(template, paths.worktree) : template;
@@ -107,7 +107,7 @@ export function registerScopes(bb: BbPluginApi, deps: ScopesDeps) {
       check();
     }
     if (current?.scope && !current.error && JSON.stringify(current.scope) === JSON.stringify(scope) && JSON.stringify(current.template) === JSON.stringify(template)) return current.scope;
-    return store.write(threadId, scope, template);
+    return store.write(threadId, scope, template, undefined, preserveProvenance);
   };
   const writeScope = async (threadId: string, input: Scope, options?: ScopeWriteOptions) => {
     const template = scopeSchema.parse({ ...input, threadId });
@@ -123,7 +123,7 @@ export function registerScopes(bb: BbPluginApi, deps: ScopesDeps) {
         if (record.binding) throw new Error("No original host-bound template for thread " + threadId);
         return record.scope;
       }
-      return bindAndWrite(threadId, record.template, check);
+      return bindAndWrite(threadId, record.template, check, true);
     });
   };
   registerEnv(bb, store.records, rebindScope, (threadId, error) => {
@@ -137,6 +137,38 @@ export function registerScopes(bb: BbPluginApi, deps: ScopesDeps) {
   };
   return {
     shouldScope,
+    refreshPresetTools: (threadId: string) => store.refreshPresetTools(threadId),
+    protectOpenPolicy: (threadId: string) => {
+      prepareBinding(threadId);
+      return enqueue(threadId, async check => {
+        const record = store.records.get(threadId), current = record?.template ?? record?.scope;
+        if (!current || record?.error || current.preset !== "open") return false;
+        const deny = "~/.agents/tavern/scopes.yml";
+        const bound = realPath(join(deps.policyOptions?.home ?? homedir(), ".agents/tavern/scopes.yml"));
+        if (current.writes.deny.includes(deny) || current.writes.deny.includes(bound)) return false;
+        await bindAndWrite(threadId, { ...current, writes: { ...current.writes, deny: [...current.writes.deny, deny] } }, check);
+        return true;
+      });
+    },
+    openKeeperScope: (threadId: string) => {
+      prepareBinding(threadId);
+      return enqueue(threadId, async check => {
+        const record = store.records.get(threadId), current = record?.template ?? record?.scope;
+        if (!current || record?.error || record?.presetProvenance || current.preset === "open") return false;
+        const legacy = scopeForClass(current.role, undefined, "keeper").tools.allow;
+        const known = [[], ["check_ui", "ui_examples"], ["check_ui", "ui_examples", "write", "Write", "edit", "Edit"]].some(removed => {
+          const previous = legacy.filter(name => !removed.includes(name));
+          return previous.length === current.tools.allow.length && previous.every((name, index) => current.tools.allow[index] === name);
+        });
+        if (current.preset !== "keeper" && !known) return false;
+        const open = scopeForClass(current.role, undefined, "open");
+        open.tools.allow = [...new Set([...open.tools.allow, ...current.tools.allow])];
+        open.writes.allow = [...current.writes.allow];
+        open.shell.allow = structuredClone(current.shell.allow);
+        await bindAndWrite(threadId, { ...open, threadId, issuedAt: Date.now() }, check);
+        return true;
+      });
+    },
     scopeForHire: (classId: string, narrowing?: ScopeNarrowing) => narrowScope(policy.resolve(classId, {}, {}, deps.classScope?.(classId)).scope, narrowing),
     setMode: (value: ScopeMode) => {
       if (!["enforce", "watch", "off"].includes(value)) throw new Error("Unknown Tavern scope mode: " + value);

@@ -288,7 +288,8 @@
 
 /* ---------- The map of connections ---------- */
 .tavern.tv-page .tv-map { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
-.tavern.tv-page .tv-mapgrid { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 16px; align-items: start; min-width: 0; }
+.tavern.tv-page .tv-mapgrid { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 16px; align-items: stretch; min-width: 0; }
+.tavern.tv-page .tv-mapgrid:not(.narrow) .tv-mapcard + .tv-maplist { contain: size; min-height: 0; }
 .tavern.tv-page .tv-mapgrid.narrow { grid-template-columns: minmax(0, 1fr); }
 /* The map lights several times a notice's area, so it takes the kit's wide glow: softer by day, the same lantern at night. */
 .tavern.tv-page .tv-mapcard { --tavern-glow: var(--tavern-glow-wide); background: var(--tavern-grain), var(--tv-board); position: relative; isolation: isolate; margin: 0; min-width: 0; box-shadow: var(--tv-shadow-recessed); }
@@ -299,7 +300,7 @@
 .tavern.tv-page .tv-maplist { display: flex; flex-direction: column; min-width: 0; margin: 0; }
 .tavern.tv-page .tv-maplist-bar { box-sizing: border-box; min-height: 47px; display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--tavern-line); }
 .tavern.tv-page .tv-maplist-bar h2 { margin: 0; font-size: 13px; font-weight: 700; }
-.tavern.tv-page .tv-maplist .tv-maprows { margin: 0; border: 0; box-shadow: none; overflow-y: auto; overscroll-behavior: contain; }
+.tavern.tv-page .tv-maplist .tv-maprows { flex: 1; min-height: 0; margin: 0; border: 0; box-shadow: none; overflow-y: auto; overscroll-behavior: contain; }
 .tavern.tv-page .tv-maplist > .tv-empty { margin: 10px; }
 
 /* The map window: a fixed height onto a picture of any size. Paint containment clips it, so nothing is cut by accident. */
@@ -325,8 +326,7 @@
 .tavern.tv-page .tv-mv-pct { min-width: 50px !important; font-variant-numeric: tabular-nums; }
 .tavern.tv-page .tv-mv-export .menu-trigger { gap: 6px; height: 30px; padding: 0 10px; border: 1px solid var(--tavern-line); background: var(--tv-elev-raised); box-shadow: var(--tv-shadow-raised); color: var(--foreground); font: inherit; font-size: 12px; }
 .tavern.tv-page .tv-mv-export .menu-trigger:hover { background: var(--tavern-hover); }
-/* As tall as the picture, up to the panel's bottom edge (--mv-room, measured), never under a readable floor; --mv-cap is the fallback before measuring. */
-.tavern.tv-page .tv-mv-box { --mv-cap: clamp(380px, 62vh, 680px); --mv-floor: 320px; position: relative; height: min(var(--mv-need, var(--mv-cap)), max(var(--mv-floor), var(--mv-room, var(--mv-cap)))); contain: layout paint; touch-action: none; cursor: grab; user-select: none; }
+.tavern.tv-page .tv-mv-box { position: relative; height: max(360px, var(--mv-pane, 62vh)); contain: layout paint; touch-action: none; cursor: grab; user-select: none; }
 .tavern.tv-page .tv-mv-box.dragging { cursor: grabbing; }
 .tavern.tv-page .tv-mv-box.dragging .tv-mn { cursor: grabbing; }
 .tavern.tv-page .tv-mv-box:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
@@ -335,10 +335,8 @@
 .tavern.tv-page .tv-mv-layer.moving { will-change: transform; }
 .tavern.tv-page .tv-mv-layer.animate { transition: transform 180ms var(--tavern-ease, ease-out); }
 .tavern.tv-page .tv-mv-hint { color: var(--tv-text-2); }
-/* The note floats over the picture, which keeps flowing behind it; clicks and drags pass through to the map. */
-/* Above the window, not over it: on the user's room an overlaid note hid two to four nodes. */
-.tavern.tv-page .tv-mv-note { padding: 0 12px 8px; }
-.tavern.tv-page .tv-mv-note .tv-map-quiet { margin: 0; }
+.tavern.tv-page .tv-mv-note { position: absolute; left: 12px; bottom: 12px; right: 12px; z-index: 1; pointer-events: none; }
+.tavern.tv-page .tv-mv-note .tv-map-quiet { margin: 0; pointer-events: auto; cursor: auto; user-select: text; }
 .tavern.tv-page .tv-maprows-fold { padding: 2px 8px 4px; }
 .tavern.tv-page .tv-mn.tall .tv-mn-t > span { white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .tavern.tv-page .tv-mapmore { min-width: 0; max-width: 16ch; }
@@ -484,8 +482,23 @@
 .tavern.tv-page .tv-tale-lead { align-self: center; max-width: 70ch; margin: 0; font-family: var(--font-sans); font-size: 15px; line-height: 1.65; color: var(--foreground); overflow-wrap: anywhere; }
 .tavern.tv-page .tv-tale-delivery, .tavern.tv-page .tv-tale-next, .tavern.tv-page .tv-tale-record { min-width: 0; overflow-wrap: anywhere; }
 .tavern.tv-page .tv-tale-delivery h3, .tavern.tv-page .tv-tale-next h3 { margin: 0 0 10px; font-size: 14px; }
-.tavern.tv-page .tv-tale-next ol { margin: 0; padding-left: 24px; }
+.tavern.tv-page .tv-tale-delivery { display: flex; flex-direction: column; gap: 24px; }
+.tavern.tv-page .tv-tale-delivery > h3 { margin: 0; }
+.tavern.tv-page .tv-tale-next { margin-top: 8px; }
+.tavern.tv-page .tale-delivery-text { max-width: 80ch; min-width: 0; display: flex; flex-direction: column; gap: 24px; }
+.tavern.tv-page .tale-delivery-markdown { display: flow-root; }
+.tavern.tv-page .tale-delivery-markdown :where(p, ul, ol) + :where(p, ul, ol) { margin-top: 1em; }
+.tavern.tv-page .tale-files h4 { margin: 0 0 8px; }
+.tavern.tv-page .tale-files ul { margin: 0; padding-left: 24px; }
+.tavern.tv-page .tale-delivery-text ol { list-style: decimal; padding-left: 3ch; }
+.tavern.tv-page .tale-delivery-text ul { list-style: disc; padding-left: 3ch; }
+.tavern.tv-page .tale-files ul { list-style: disc; }
+.tavern.tv-page .tv-tale-next ol { list-style: decimal; margin: 0; padding-left: 24px; }
 .tavern.tv-page .tv-tale-next li + li { margin-top: 6px; }
+.tavern.tv-page .tale-visual { margin: 12px 0; padding: 12px; border: 1px solid var(--tavern-line); background: var(--tavern-elev-raised-bg); }
+.tavern.tv-page .tale-visual p { margin: 0 0 8px; }
+.tavern.tv-page .tale-visual details { margin-top: 8px; }
+.tavern.tv-page .tale-visual pre { max-height: 240px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 .tavern.tv-page .tv-tale-record summary { cursor: pointer; color: var(--tv-text-2); }
 .tavern.tv-page .tv-tale-lead.none { font-size: 13px; color: var(--tv-text-2); }
 .tavern.tv-page .tv-tale-lead code, .tavern.tv-page .tv-leftfor code { font-size: 12px; padding: 0 3px; background: var(--tavern-recessed); overflow-wrap: anywhere; }
@@ -576,7 +589,7 @@
   /* bb draws the breadcrumb beside these; icon-only actions leave it room for the route name. */
   .tavern.tv-page .tv-mv-bar { flex-wrap: wrap; }
   .tavern.tv-page .tv-mv-cap { flex-basis: 100%; white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
-  .tavern.tv-page .tv-mv-box { --mv-cap: clamp(320px, 56vh, 460px); --mv-floor: 280px; }
+  .tavern.tv-page .tv-mapgrid.narrow .tv-mv-box { height: max(360px, var(--mv-pane, 70vh)); }
   .tavern.tv-page .tv-mv-hint { display: none; }
   .tavern.tv-page .party .who-btn { min-width: 44px; justify-content: center; }
 }
@@ -942,6 +955,28 @@
 }
 
 /* Settings sections on bb's settings page */
+.tavern.tv-page .tv-settings-card { margin: 0 0 16px; min-width: 0; overflow: visible; }
+.tavern.tv-page .tv-settings-head { display: flex; align-items: flex-start; gap: 10px; padding: 16px; border-bottom: 1px solid var(--tavern-line); }
+.tavern.tv-page .tv-settings-head > svg { flex: 0 0 auto; margin-top: 2px; color: var(--primary); }
+.tavern.tv-page .tv-settings-head h3 { margin: 0; font-size: 14px; font-weight: 700; }
+.tavern.tv-page .tv-settings-hint { margin: 4px 0 0; color: var(--tv-text-2); font-size: 12px; max-width: 68ch; }
+.tavern.tv-page .tv-settings-body { padding: 4px 16px 12px; min-width: 0; }
+.tavern.tv-page .tv-settings-body > .tv-set { padding: 0; }
+.tavern.tv-page .tv-history-toggle { display: flex; gap: 8px; align-items: center; padding: 8px 0; min-height: 44px; width: 100%; border: 0; background: transparent; color: var(--foreground); font: inherit; text-align: left; cursor: pointer; }
+.tavern.tv-page .tv-settings-history { list-style: none; margin: 0; padding: 0; }
+.tavern.tv-page .tv-settings-change { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 12px; padding: 14px 0; border-top: 1px solid var(--tavern-line); overflow-wrap: anywhere; }
+.tavern.tv-page .tv-settings-change p { margin: 6px 0 0; font-size: 12px; }
+.tavern.tv-page .tv-settings-keys { margin: 0; padding: 0; list-style: none; font-weight: 700; }
+.tavern.tv-page .tv-settings-keys li + li { margin-top: 4px; }
+.tavern.tv-page .tv-history-more { margin-top: 8px; }
+.tavern.tv-page .tv-history-more > summary { cursor: pointer; min-height: 32px; color: var(--tv-text-2); }
+.tavern.tv-page .tv-history-author { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px; color: var(--tv-text-2); }
+@media (max-width: 480px) {
+  .tavern.tv-page .tv-settings-head { padding: 12px; }
+  .tavern.tv-page .tv-settings-body { padding: 4px 12px 12px; }
+  .tavern.tv-page .tv-settings-change { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+  .tavern.tv-page .tv-settings-change > button { justify-self: start; min-height: 44px; }
+}
 .tavern.tv-page.tv-set { display: flex; flex-direction: column; gap: 0; min-width: 0; font-size: 13px; }
 .tavern.tv-page .tv-set-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px 24px; padding: 10px 0; border-top: 1px solid var(--tavern-line); }
 .tavern.tv-page .tv-set-row:first-child { border-top: 0; }
@@ -1077,7 +1112,9 @@
 .tavern.tv-page :is(.rm-a-rail, .rm-a-main) { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
 .tavern.tv-page .rm-stackcol { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
 .tavern.tv-page .rm-stackcol:empty { display: none; }
-.tavern.tv-page .rm-calm { padding: 8px 0; }
+.tavern.tv-page .rm-o1:has(> .rm-calm) > [data-sec]:empty { display: none; }
+.tavern.tv-page .rm-calm { padding: 0; margin: 0; }
+.tavern.tv-page .rm-a-rail:has(> .rm-o1 > .rm-calm) { gap: 12px; }
 /* The held columns place themselves; the browser's scroll anchoring would fight them. */
 .tavern.tv-page .rm-a-grid, .tavern.tv-page .rm-a-grid * { overflow-anchor: none; }
 @container tavern-page (max-width: 900px) {

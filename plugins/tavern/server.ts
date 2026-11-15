@@ -1,4 +1,6 @@
 import { fileURLToPath } from "node:url";
+import { registerProvider } from "./src/server/renderer/provider";
+import { TaleCompanions } from "./src/server/renderer/companion";
 import { existsSync } from "node:fs";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { MIGRATIONS } from "./src/server/migrations";
@@ -41,6 +43,7 @@ export function pause(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 export default async function tavern(bb: BbPluginApi) {
+  registerProvider(bb);
   const db = bb.storage.database();
   bb.storage.migrate(db, MIGRATIONS);
   const store = new KeeperStore(db);
@@ -118,6 +121,8 @@ export default async function tavern(bb: BbPluginApi) {
   });
   runtime.voiceChecks = voiceChecks;
   void voiceChecks.recover().catch((error) => bb.log.warn(`Tavern voice check recovery failed: ${String(error)}`));
+  runtime.taleRenderer = new TaleCompanions(bb, keeper);
+  bb.onDispose(() => runtime.taleRenderer?.settled());
   registerTools(bb, runtime);
   const backups = createBackupService(bb, settings, runtime.registry);
   bb.rpc.register(rpcContract, { ...rpcHandlers(runtime), ...settingsHandlers(settings, new SettingsFiles(settings)), ...backupHandlers(backups),
@@ -191,11 +196,13 @@ export default async function tavern(bb: BbPluginApi) {
       ),
   );
   bb.events.on("thread.idle", ({ thread, lastAssistantText }) => {
+    runtime.taleRenderer?.idle(thread.id, lastAssistantText);
     runtime.updateThread(thread);
     runtime.keeper.memory.lastReply(thread.id, lastAssistantText);
     runtime.memberEnded(thread, lastAssistantText);
   });
   bb.events.on("thread.failed", ({ thread }) => {
+    runtime.taleRenderer?.failed(thread.id);
     runtime.updateThread(thread);
   });
   bb.events.on("turn.failed", (event) =>

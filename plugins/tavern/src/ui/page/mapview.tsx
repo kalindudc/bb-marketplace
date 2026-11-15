@@ -37,7 +37,7 @@ export function useRoomBelow(box: React.RefObject<HTMLElement | null>, cardSelec
       let below = 0;
       for (let e: HTMLElement | null = card; e && e !== panel; e = e.parentElement) { const cs = getComputedStyle(e); below += parseFloat(cs.marginBottom) || 0; if (e !== card) below += (parseFloat(cs.paddingBottom) || 0) + (parseFloat(cs.borderBottomWidth) || 0); }
       if (panel) below += parseFloat(getComputedStyle(panel).paddingBottom) || 0;
-      const next = Math.floor(height - (b.top - top + scrolled) - under - Math.max(below, BOTTOM_GAP));
+      const next = el.closest(".tv-mapgrid.narrow") ? Math.floor(height * 0.7) : Math.floor(height - (b.top - top + scrolled) - under - Math.max(below, BOTTOM_GAP));
       if (height > 0) setRoom((prev) => prev !== null && Math.abs(prev - next) < 2 ? prev : next);
     };
     const schedule = () => { if (!frame) frame = requestAnimationFrame(measure); };
@@ -63,6 +63,8 @@ export function useRoomBelow(box: React.RefObject<HTMLElement | null>, cardSelec
 export type Box = { x: number; y: number; w: number; h: number; lx: number; ay: number };
 export function MapViewport({ width, height, label, children, bar, controls, status, note, nodes = 0, focus, focusKey = "", onBoxWidth }: { width: number; height: number; label: string; children: ReactNode; bar?: ReactNode; controls?: ReactNode; status?: string | null; note?: ReactNode; nodes?: number; focus?: Box | null; focusKey?: string; onBoxWidth?: (width: number) => void }) {
   const box = useRef<HTMLDivElement>(null);
+  const noteBox = useRef<HTMLDivElement>(null);
+  const [noteHeight, setNoteHeight] = useState(0);
   const layer = useRef<HTMLDivElement>(null);
   const viewRef = useRef<View>({ x: 0, y: 0, k: 1 });
   const [k, setK] = useState(1);
@@ -74,6 +76,7 @@ export function MapViewport({ width, height, label, children, bar, controls, sta
   const pinch = useRef<{ d: number; k: number } | null>(null);
   const suppress = useRef(false);
   const fitted = useRef("");
+  const framedNote = useRef(0);
   const touched = useRef(false);
   const heavy = nodes > HEAVY_NODES;
   const room = useRoomBelow(box);
@@ -88,6 +91,18 @@ export function MapViewport({ width, height, label, children, bar, controls, sta
     observer.observe(el);
     return () => observer.disconnect();
   }, []);
+
+  useLayoutEffect(() => {
+    const el = noteBox.current;
+    if (!el) { setNoteHeight(0); return; }
+    const measure = () => setNoteHeight(el.clientHeight);
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [note]);
+  const availableHeight = useCallback((el: HTMLElement) => Math.max(24, el.clientHeight - (noteHeight ? noteHeight + 12 : 0)), [noteHeight]);
 
   const paint = useCallback(() => {
     frame.current = 0;
@@ -129,10 +144,11 @@ export function MapViewport({ width, height, label, children, bar, controls, sta
     const el = box.current;
     if (!el) return;
     touched.current = true;
-    const vw = el.clientWidth, vh = el.clientHeight;
-    const k = clampK(Math.min(1, (vw - 24) / width, (vh - 24) / height));
-    setView({ k, x: (vw - width * k) / 2, y: Math.max(12, (vh - height * k) / 2) }, "animate");
-  }, [width, height, setView]);
+    const vw = el.clientWidth, vh = availableHeight(el);
+    const fitted = Math.min(1, (vw - 24) / width, (vh - 24) / height);
+    const k = clampK(fitted);
+    setView({ k, x: (vw - width * k) / 2, y: k > fitted ? 12 : Math.max(12, (vh - height * k) / 2) }, "animate");
+  }, [width, height, setView, availableHeight, noteHeight]);
   /**
    * The first view: the whole map when it fits at 100%, else 100% centred on the focused quest and its one hop, so text
    * always opens at its own size (at 90% an 11 px label draws at 9.9 px). The fit button still gives the overview.
@@ -142,7 +158,7 @@ export function MapViewport({ width, height, label, children, bar, controls, sta
   const start = useCallback((smooth = false) => {
     const el = box.current;
     if (!el || !el.clientWidth || !el.clientHeight) return;
-    const vw = el.clientWidth, vh = el.clientHeight;
+    const vw = el.clientWidth, vh = availableHeight(el);
     const kFit = Math.min((vw - 24) / width, (vh - 24) / height);
     if (kFit >= 1) { setView({ k: 1, x: (vw - width) / 2, y: Math.max(8, (vh - height) / 2) }, smooth ? "animate" : "instant"); return; }
     const f = focusRef.current;
@@ -151,7 +167,7 @@ export function MapViewport({ width, height, label, children, bar, controls, sta
     const x = !f ? 12 : f.w + 24 <= vw ? vw / 2 - (f.x + f.w / 2) : 28 - f.lx;
     const y = !f ? 8 : f.h + 24 <= vh ? vh / 2 - (f.y + f.h / 2) : vh / 2 - f.ay;
     setView({ k: 1, x: clampAxis(vw, width, x), y: clampAxis(vh, height, y) }, smooth ? "animate" : "instant");
-  }, [width, height, setView]);
+  }, [width, height, setView, availableHeight, noteHeight]);
   const zoomAt = useCallback((factor: number, cx?: number, cy?: number, smooth = false) => {
     touched.current = true;
     const el = box.current;
@@ -173,10 +189,15 @@ export function MapViewport({ width, height, label, children, bar, controls, sta
 
   useLayoutEffect(() => {
     const key = `${width}x${height}:${focusKey}`;
-    if (fitted.current === key) return;
+    const changed = fitted.current !== key;
+    const noteChanged = framedNote.current !== noteHeight;
+    framedNote.current = noteHeight;
+    if (!changed && (!noteChanged || touched.current)) return;
     const first = fitted.current === "";
-    fitted.current = key; touched.current = false; start(!first);
-  }, [width, height, focusKey, start]);
+    fitted.current = key;
+    if (changed) touched.current = false;
+    start(!first);
+  }, [width, height, focusKey, noteHeight, start]);
   useEffect(() => {
     const el = box.current;
     if (!el || typeof ResizeObserver === "undefined") return;
@@ -188,6 +209,7 @@ export function MapViewport({ width, height, label, children, bar, controls, sta
     const el = box.current;
     if (!el) return;
     const wheel = (e: WheelEvent) => {
+      if ((e.target as Element).closest(".tv-mv-note")) return;
       const r = el.getBoundingClientRect();
       if (e.ctrlKey || e.metaKey) { e.preventDefault(); zoomAt(Math.exp(-e.deltaY * 0.0022), e.clientX - r.left, e.clientY - r.top); return; }
       // At the picture's edge the wheel scrolls the page instead of being swallowed.
@@ -237,7 +259,7 @@ export function MapViewport({ width, height, label, children, bar, controls, sta
   /** Tabbing to a node outside the window brings it into view. */
   const onFocus = (e: React.FocusEvent) => {
     const el = box.current;
-    if (!el || e.target === el) return;
+    if (!el || e.target === el || (e.target as Element).closest(".tv-mv-note")) return;
     const r = (e.target as HTMLElement).getBoundingClientRect(), b = el.getBoundingClientRect(), m = 16;
     const dx = r.left < b.left + m ? b.left + m - r.left : r.right > b.right - m ? b.right - m - r.right : 0;
     const dy = r.top < b.top + m ? b.top + m - r.top : r.bottom > b.bottom - m ? b.bottom - m - r.bottom : 0;
@@ -256,12 +278,12 @@ export function MapViewport({ width, height, label, children, bar, controls, sta
       </div>
       {controls}
     </div>
-    {note && <div className="tv-mv-note">{note}</div>}
-    <div ref={box} className={`tv-mv-box ${dragging ? "dragging" : ""}`} style={{ "--mv-need": `${Math.ceil(height + 24)}px`, ...(room !== null ? { "--mv-room": `${room}px` } : {}) } as React.CSSProperties} tabIndex={0} role="group" aria-label={`${label}. Drag or use the arrow keys to move; plus and minus zoom; 0 fits the whole map.`}
+    <div ref={box} className={`tv-mv-box ${dragging ? "dragging" : ""}`} style={room !== null ? { "--mv-pane": `${room}px` } as React.CSSProperties : undefined} tabIndex={0} role="group" aria-label={`${label}. Drag or use the arrow keys to move; plus and minus zoom; 0 fits the whole map.`}
       onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp} onKeyDown={onKeyDown} onFocus={onFocus}
-      onDoubleClick={(e) => { if ((e.target as HTMLElement).closest(".tv-mn")) return; const r = box.current!.getBoundingClientRect(); zoomAt(1.5, e.clientX - r.left, e.clientY - r.top, true); }}
+      onDoubleClick={(e) => { if ((e.target as HTMLElement).closest(".tv-mn, .tv-mv-note")) return; const r = box.current!.getBoundingClientRect(); zoomAt(1.5, e.clientX - r.left, e.clientY - r.top, true); }}
       onClickCapture={(e) => { if (suppress.current) { e.preventDefault(); e.stopPropagation(); suppress.current = false; } }}>
       <div ref={layer} className="tv-mv-layer" style={{ width, height }}>{children}</div>
+      {note && <div ref={noteBox} className="tv-mv-note" onPointerDown={event => { suppress.current = false; event.stopPropagation(); }}>{note}</div>}
     </div>
   </div>;
 }

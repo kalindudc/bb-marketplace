@@ -262,10 +262,10 @@ export class ServiceRecords {
     const characters = new Map<string, CharacterServiceRecord>();
     const undated = new Set<string>(), undatedRoles = new Set<string>();
     const keeps = new Set(this.k.store.all("taleKeeps").filter(row => row.kept).map(row => taleKeepKey(row.questId, row.characterId)));
-    const rows = this.k.store.db.prepare("SELECT r.data, q.id IS NOT NULL AS available, EXISTS(SELECT 1 FROM tavern_events e WHERE e.board_quest_id=r.id AND e.type='quest.wrapped') AS told FROM tavern_records r LEFT JOIN tavern_records q ON q.kind='quests' AND q.id=r.id WHERE r.kind='serviceRecords'").all() as { data: string; available: number; told: number }[];
+    const rows = this.k.store.db.prepare("SELECT r.data, (q.id IS NOT NULL AND json_extract(q.data,'$.deletedAt') IS NULL) AS available, json_extract(q.data,'$.deletedAt') IS NOT NULL AS deleted, EXISTS(SELECT 1 FROM tavern_events e WHERE e.board_quest_id=r.id AND e.type='quest.wrapped') AS told FROM tavern_records r LEFT JOIN tavern_records q ON q.kind='quests' AND q.id=r.id WHERE r.kind='serviceRecords'").all() as { data: string; available: number; deleted: number; told: number }[];
     const records = rows.map(row => ({ ...row, record: serviceQuestRecordSchema.parse(JSON.parse(row.data)) })).sort((a, b) => (b.record.endedAt ?? -1) - (a.record.endedAt ?? -1) || a.record.questId.localeCompare(b.record.questId));
     const recent = new Map<string, number>();
-    for (const { record, available, told } of records) for (const credit of record.credits) {
+    for (const { record, available, deleted, told } of records) for (const credit of record.credits) {
       let value = characters.get(credit.characterId);
       if (!value) {
         value = { characterId: credit.characterId, firstEarnedAt: null, lastEarnedAt: null, completeSince: null, backfilledAt: null, recordsTotal: 0, records: [] };
@@ -298,7 +298,7 @@ export class ServiceRecords {
       const position = recent.get(credit.characterId) ?? 0; recent.set(credit.characterId, position + 1);
       const kept = keeps.has(taleKeepKey(record.questId, credit.characterId));
       value.recordsTotal++;
-      if (position < 20 || kept) value.records.push({ questId: record.questId, title: record.title, short: record.short, phase: record.phase,
+      if (position < 20 || kept) value.records.push({ questId: record.questId, title: deleted ? "a deleted quest" : record.title, short: deleted ? "a deleted quest" : record.short, phase: record.phase,
         endedAt: record.endedAt, keeperThreadId: available ? record.keeperThreadId : null, role: credit.role, verifiedWaypoints: credit.verifiedWaypoints,
         told: record.phase === "done" && !!told, kept, available: !!available, waypoints: record.waypoints ?? null,
         ...(credit.role === "warden" ? { checks: credit.checks, caught: credit.caught, independentChecks: credit.independentChecks, sameFamilyChecks: credit.sameFamilyChecks } : {}), threadIds: available ? [...credit.threadIds] : [] });

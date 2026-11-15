@@ -161,7 +161,7 @@ export function createFakePluginHost(options: {
   }
   const bb = {
     pluginId: options.pluginId,
-    log: { warn: vi.fn(), info: vi.fn() },
+    log: { debug: vi.fn(), warn: vi.fn(), info: vi.fn() },
     agents: {
       registerTool: (tool: Tool) => tools.push(tool),
       configure: (callback: typeof configure) => {
@@ -169,7 +169,7 @@ export function createFakePluginHost(options: {
       },
     },
     cli: { register: (command: (typeof cli)[number]) => cli.push(command) },
-    providers: { experimental_contributeEnv: vi.fn() },
+    providers: { register: vi.fn(), experimental_contributeEnv: vi.fn() },
     experimental_hooks: { recheck: vi.fn(async () => {}) },
     events: { on: vi.fn() },
     onDispose: vi.fn(),
@@ -192,9 +192,9 @@ export function createFakePluginHost(options: {
         registrations: { agentTools: tools, cli, get rpcMethods() { return rpcHost?.harness.registrations.rpcMethods ?? []; } },
         sdk: { callsTo: (path: string) => calls.filter((c) => c.path === path) },
       },
-      invokeRpc: async (name: string, input: unknown) => {
+      invokeRpc: async (name: string, input: unknown, context?: Parameters<NonNullable<typeof rpcHost>["harness"]["behavior"]["callRpc"]>[2]) => {
         if (!rpcHost) throw new Error("No RPC methods registered");
-        return rpcHost.harness.behavior.callRpc(name, input);
+        return rpcHost.harness.behavior.callRpc(name, input, context);
       },
       behavior: {
         resolveAgentConfiguration: async (ctx: PluginAgentConfigurationContext) => {

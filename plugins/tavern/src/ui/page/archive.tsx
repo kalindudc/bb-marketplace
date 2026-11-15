@@ -19,11 +19,11 @@ export function archiveTotal(room: Room, hidden: ReadonlySet<string>, shown: Rea
   return Math.max(0, room.archivedCount + archiving - restoring);
 }
 
-export type ArchiveReceipt = { ids: string[]; archived: boolean; label: string };
+export type ArchiveReceipt = { ids: string[]; archived: boolean; label: string; notes: string[] };
 /** What the user reads for the archive action on one quest; the code keeps "archive". */
 export type CellarAction = typeof CELLAR.send | typeof CELLAR.restore;
 
-/** Archive and restore with one inline receipt and an Undo; rows hide at once and come back on undo or failure. */
+/** Cellar moves share one receipt; a failed move puts its rows back. */
 export function useArchive() {
   const mutation = experimental_useRpcMutation({ contract: rpcContract, method: "archiveBoardQuests" });
   const [receipt, setReceipt] = useState<ArchiveReceipt | null>(null);
@@ -32,25 +32,25 @@ export function useArchive() {
   const run = async (ids: string[], archived: boolean, label: string) => {
     const flip = (set: Set<string>, on: boolean) => { const next = new Set(set); for (const id of ids) on ? next.add(id) : next.delete(id); return next; };
     setHidden((h) => flip(h, archived)); setShown((s) => flip(s, !archived));
-    try { await mutation.mutate({ ids, archived }); setReceipt({ ids, archived, label }); }
+    try { const out = await mutation.mutate({ ids, archived }); setReceipt({ ids, archived, label, notes: [...out.notes, ...(out.pendingArchives.length ? [`Archiving ${plural(out.pendingArchives.length, "thread")} remains pending. Tavern retries automatically.`] : [])] }); }
     catch { setHidden((h) => flip(h, !archived)); setShown((s) => flip(s, archived)); setReceipt(null); }
   };
   return {
     archive: (quests: BoardQuestSummary[]) => run(quests.map((q) => q.id), true, quests.length === 1 ? quests[0]!.short : plural(quests.length, "quest")),
     restore: (quests: BoardQuestSummary[]) => run(quests.map((q) => q.id), false, quests.length === 1 ? quests[0]!.short : plural(quests.length, "quest")),
-    undo: () => { if (receipt) void run(receipt.ids, !receipt.archived, receipt.label).then(() => setReceipt(null)); },
+    undo: () => { if (receipt) void run(receipt.ids, !receipt.archived, receipt.label); },
     clear: () => setReceipt(null),
     receipt, hidden, shown, pending: mutation.isPending, error: mutation.error,
   };
 }
 export type ArchiveApi = ReturnType<typeof useArchive>;
 
-/** The inline receipt, in place of a toast: "2 sent to the cellar · Undo". */
+/** The inline receipt, in place of a toast: "2 sent to the cellar · Bring up". */
 export function ArchiveReceiptLine({ api }: { api: ArchiveApi }) {
   if (!api.receipt && !api.error) return null;
   if (api.error && !api.receipt) return <p className="tv-problem" role="alert">Could not change the cellar: {api.error.message}</p>;
   const r = api.receipt!;
-  return <p className="tv-receipt" role="status"><PageGlyph name={r.archived ? "archive" : "undo"} /><span>{r.archived ? r.ids.length === 1 ? <><b>{r.label}</b> sent to the cellar</> : <b>{CELLAR.sent(r.ids.length)}</b> : <><b>Brought up</b> {r.label} · back on the board</>}</span><span className="tv-sp" /><button type="button" className="lnk-btn act" onClick={api.undo} disabled={api.pending}><span>Undo</span></button><button type="button" className="tv-qbtn act" onClick={api.clear} aria-label="Dismiss" title="Dismiss"><Glyph name="close" size={12} /></button></p>;
+  return <p className="tv-receipt" role="status"><PageGlyph name={r.archived ? "archive" : "undo"} /><span>{r.archived ? r.ids.length === 1 ? <><b>{r.label}</b> sent to the cellar</> : <b>{CELLAR.sent(r.ids.length)}</b> : <><b>Brought up</b> {r.label} · back on the board</>}</span>{!r.archived && <span>Party threads stay archived; the Keeper can bring members back.</span>}{r.notes.map((note, i) => <span key={i}>{note}</span>)}<span className="tv-sp" /><button type="button" className="lnk-btn act" onClick={api.undo} disabled={api.pending}><span>{r.archived ? "Bring up" : "Undo"}</span></button><button type="button" className="tv-qbtn act" onClick={api.clear} aria-label="Dismiss" title="Dismiss"><Glyph name="close" size={12} /></button></p>;
 }
 
 /** One finished quest: the row opens its tale (or its quest page when stopped); a quiet action sends it to the cellar or brings it up. */
@@ -81,20 +81,42 @@ function ArchivePage({ cursor, registry, api, onMore, last }: { cursor: string |
   </>;
 }
 
+function DeletedPage({ cursor, restored, onRestore, pending, onMore, last }: { cursor: string | null; restored: ReadonlySet<string>; onRestore: (q: BoardQuestSummary) => void; pending: boolean; onMore: (next: string) => void; last: boolean }) {
+  const page = experimental_useRpcQuery({ contract: rpcContract, method: "deletedBoardQuests", input: { cursor, limit: 20 } });
+  if (!page.data) return <FoldLoad error={page.error} retry={page.refetch} label="deleted quests"><SkQuestRow /></FoldLoad>;
+  return <>{page.data.boardQuests.filter(q => !restored.has(q.id)).map(q => <div key={q.id} className="tv-frow">
+    <span className="tv-wrow"><span className="tv-wrow-t" title={q.title}><b>{q.short}</b></span><TimeAgo at={q.deletedAt!} /></span>
+    <button type="button" className="tv-qbtn act" disabled={pending} aria-label={`Restore: ${q.short}`} title="Restore this quest to the cellar; its threads stay archived" onClick={() => onRestore(q)}>Restore</button>
+  </div>)}{last && page.data.nextCursor && <button type="button" className="tv-fold act" onClick={() => onMore(page.data!.nextCursor!)}>Show older deleted quests</button>}</>;
+}
+function DeletedList() {
+  const [cursors, setCursors] = useState<(string | null)[]>([null]);
+  const [restored, setRestored] = useState<Set<string>>(new Set());
+  const [receipt, setReceipt] = useState<string | null>(null);
+  const mutation = experimental_useRpcMutation({ contract: rpcContract, method: "restoreDeletedQuest" });
+  const restore = async (q: BoardQuestSummary) => {
+    try { await mutation.mutate({ id: q.id }); setRestored(prev => new Set([...prev, q.id])); setReceipt(`Restored ${q.short} to the cellar. Its threads stay archived.`); }
+    catch { /* The mutation refusal remains beside the row. */ }
+  };
+  return <><p className="m">Deleted quests stay here until you restore them. There is no expiry.</p>{receipt && <p className="tv-receipt" role="status">{receipt}</p>}{mutation.error && <p role="alert">Could not restore: {mutation.error.message}</p>}{cursors.map((cursor, i) => <DeletedPage key={cursor ?? "first"} cursor={cursor} restored={restored} onRestore={q => void restore(q)} pending={mutation.isPending} last={i === cursors.length - 1} onMore={next => setCursors(prev => [...prev, next])} />)}</>;
+}
+
 /** The cellar (archive), newest first, paged on demand. */
 export function ArchivedList({ registry, api, total }: { registry: Registry; api: ArchiveApi; total: number }) {
   const [cursors, setCursors] = useState<(string | null)[]>([null]);
-  if (!total) return <p className="tv-empty" data-empty>The cellar is empty. A returned quest goes down when you send it to the cellar, which marks it done.</p>;
-  return <div className="tv-wrapped">{cursors.map((c, i) => <ArchivePage key={c ?? "first"} cursor={c} registry={registry} api={api} last={i === cursors.length - 1} onMore={(next) => setCursors((prev) => [...prev, next])} />)}</div>;
+  const [deleted, setDeleted] = useState(false);
+  const count = experimental_useRpcQuery({ contract: rpcContract, method: "deletedBoardQuests", input: { cursor: null, limit: 1 } });
+  return <><div className="tv-filters" role="group" aria-label="Cellar views"><button type="button" className="act" aria-pressed={!deleted} onClick={() => setDeleted(false)}>In the cellar ({total})</button><button type="button" className="act" aria-pressed={deleted} onClick={() => setDeleted(true)}>Deleted{count.data && ` (${count.data.total})`}</button></div>{deleted ? <DeletedList /> : !total ? <p className="tv-empty" data-empty>The cellar is empty. Returned and stopped quests go down when you send them to the cellar.</p> : <div className="tv-wrapped">{cursors.map((c, i) => <ArchivePage key={c ?? "first"} cursor={c} registry={registry} api={api} last={i === cursors.length - 1} onMore={(next) => setCursors((prev) => [...prev, next])} />)}</div>}</>;
 }
 
 /** The collapsed cellar (archive) at the end of the common room. */
 export function ArchiveFold({ room, registry, api }: { room: Room; registry: Registry; api: ArchiveApi }) {
   const [open, setOpen] = usePanelState("room.cellar", false);
   const total = archiveTotal(room, api.hidden, api.shown);
-  if (!total) return null;
+  const deleted = experimental_useRpcQuery({ contract: rpcContract, method: "deletedBoardQuests", input: { cursor: null, limit: 1 } });
+  if (!total && !deleted.data?.total && !deleted.error) return null;
   return <section className="tv-archive" aria-label={vocab("cellar")}>
-    <button type="button" className="tv-fold act tv-archive-h" aria-expanded={open} onClick={() => setOpen(!open)}><PageGlyph name="archive" /><span>{CELLAR.link(total)}</span><ExpandsMark open={open} /></button>
+    <button type="button" className="tv-fold act tv-archive-h" aria-expanded={open} onClick={() => setOpen(!open)}><PageGlyph name="archive" /><span>{CELLAR.link(total)}{deleted.data && deleted.data.total > 0 && ` · ${plural(deleted.data.total, "deleted quest")}`}</span><ExpandsMark open={open} /></button>
     {open && <div className="tv-card tv-archive-b"><ArchivedList registry={registry} api={api} total={total} /></div>}
   </section>;
 }

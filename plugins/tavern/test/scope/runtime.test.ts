@@ -41,7 +41,7 @@ function fixture() {
 describe("scope persistence and env", () => {
   it("writes atomically, restores the in-memory map, rejects traversal and clears markers", () => {
     const { store, s } = fixture();
-    expect(JSON.parse(readFileSync(store.file("t1"), "utf8"))).toEqual(s);
+    expect(JSON.parse(readFileSync(store.file("t1"), "utf8"))).toEqual({ ...s, presetProvenance: { id: s.preset, version: expect.stringMatching(/^[a-f0-9]{64}$/) } });
     expect(new ScopeStore(store.dataDir).records.get("t1")?.scope).toEqual(s);
     expect(() => store.file("../bad")).toThrow();
     store.arm(s); expect(store.isArmed("t1")).toBe(true);

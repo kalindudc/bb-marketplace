@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { taleResultsSchema } from "../shared/tale-results";
 import type { BoardQuestSummary } from "../shared/contract";
 import type { Keeper } from "./keeper/service";
 
@@ -6,6 +7,8 @@ export const taleDeliverySchema = z.object({
   text: z.string().max(24000), capturedAt: z.number().int().nonnegative(),
   threadId: z.string(), truncated: z.boolean(),
   questId: z.string().optional(), tellingId: z.number().int().optional(),
+  companionThreadId: z.string().optional(), companionReady: z.boolean().optional(), companionFailed: z.boolean().optional(),
+  companionArchived: z.boolean().optional(), companionReplacementAttempted: z.boolean().optional(),
 });
 export const taleDeliveryAttemptSchema = z.object({ attemptedAt: z.number().int().nonnegative() });
 
@@ -49,18 +52,21 @@ function saveDelivery(k: Keeper, questId: string, threadId: string, text: string
   }
   k.store.put("taleDeliveries", key, { text: text.slice(0, end).trimEnd() + closingFence, capturedAt: k.now(), threadId, truncated, questId, tellingId: telling.id });
   k.changed(threadId, questId);
+  return true;
 }
 
 export function captureTaleDelivery(k: Keeper, threadId: string, text?: string | null) {
   if (!text || k.member(threadId)?.role !== "keeper") return;
   const ids = [...text.matchAll(/^\s*::tavern-tale\{quest="([^"\r\n]+)"\}\s*$/gm)].map(match => match[1]!);
+  const captured: string[] = [];
   for (const id of new Set(ids)) {
     const quest = k.store.get("quests", id);
     if (quest?.keeperThreadId !== threadId) continue;
     const telling = latestTelling(k, id);
     if (!telling || k.now() < telling.at || k.now() - telling.at > 86400000) continue;
-    saveDelivery(k, id, threadId, text, telling);
+    if (saveDelivery(k, id, threadId, text, telling)) captured.push(id);
   }
+  return captured;
 }
 
 export async function backfillTaleDelivery(k: Keeper, quest: Pick<BoardQuestSummary, "id" | "keeperThreadId">, output: (args: { threadId: string }) => Promise<{ output: string | null }>) {
@@ -78,6 +84,7 @@ const wrapDataSchema = z.object({
   left: z.string().max(4000).nullish(),
   skipped: z.array(skipSchema).max(24).optional(),
   next: z.array(z.string().max(200)).max(5).optional(),
+  results: z.unknown().optional(),
 });
 
 export function readTale(k: Keeper, quest: BoardQuestSummary) {
@@ -89,6 +96,7 @@ export function readTale(k: Keeper, quest: BoardQuestSummary) {
   const telling = latestTelling(k, quest.id)!;
   const data = wrapDataSchema.parse(JSON.parse(telling.data));
   const wrapData = wrapDataSchema.parse(JSON.parse(wrapped.data));
+  const results = taleResultsSchema.safeParse(data.results);
   const skipped = wrapData.skipped ?? (k.store.db.prepare(
     `SELECT data FROM tavern_events WHERE board_quest_id=? AND type='waypoint.skipped'
       AND id<? AND json_extract(data,'$.version')=? ORDER BY id DESC LIMIT 24`,
@@ -100,7 +108,7 @@ export function readTale(k: Keeper, quest: BoardQuestSummary) {
   }] : []) ?? [];
   const keptCharacterIds = k.store.all("taleKeeps").filter(keep => keep.questId === quest.id && keep.kept).map(keep => keep.characterId).sort();
   const delivery = newestDelivery(k, quest.id);
-  return { ...(delivery ? { delivery } : {}), ...(data.next ? { next: data.next } : {}), outcome: data.outcome, left: data.left?.trim() ? data.left : null, skipped, wrappedAt: wrapped.at, levels: levels.length ? levels : null, keptCharacterIds };
+  return { ...(results.success ? { results: results.data } : {}), ...(delivery ? { delivery } : {}), ...(data.next ? { next: data.next } : {}), outcome: data.outcome, left: data.left?.trim() ? data.left : null, skipped, wrappedAt: wrapped.at, levels: levels.length ? levels : null, keptCharacterIds };
 }
 
 export function memberCredits(k: Keeper, quest: BoardQuestSummary) {

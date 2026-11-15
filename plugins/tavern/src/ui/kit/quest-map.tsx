@@ -65,7 +65,7 @@ function creditLine(w: WaypointView, owner: Owner, quest: BoardQuestSummary, reg
   return `${made} · ${checker ? `${checker} verified` : STATE_WORD[w.state]}`;
 }
 
-export type Figure = { label: string; value: string; title?: string };
+export type Figure = { label: string; value: string; title?: string; note?: string };
 const span = (ms: number) => { const m = Math.max(1, Math.round(ms / 60000)); if (m < 60) return `${m}m`; const h = Math.floor(m / 60); if (h < 24) return `${h}h ${String(m % 60).padStart(2, "0")}m`; return `${Math.floor(h / 24)}d ${h % 24}h`; };
 /** The tale's figures, from the data: path verified, party, pickup to return and checks. The page and the thread card both read these, so they agree. */
 export function taleFigures({ quest, tale, memberCredits: credits }: Pick<BoardQuestDetail, "quest" | "tale" | "memberCredits">): Figure[] {
@@ -90,7 +90,7 @@ export function taleFigures({ quest, tale, memberCredits: credits }: Pick<BoardQ
 }
 /** A row of figures, label over value as in `Kpi`: the value carries the weight, the label stays plain. */
 export function FigureRow({ figures, compact = false }: { figures: Figure[]; compact?: boolean }) {
-  return <dl className={`tfig ${compact ? "compact" : ""}`}>{figures.map(f => <div key={f.label} title={f.title}><dt>{f.label}</dt><dd>{f.value}</dd></div>)}</dl>;
+  return <dl className={`tfig ${compact ? "compact" : ""}`}>{figures.map(f => <div key={f.label} title={f.title}><dt>{f.label}</dt><dd>{f.value}{f.note && <span className="tfig-note">{f.note}</span>}</dd></div>)}</dl>;
 }
 
 function Mark({ w, owner, size = 30 }: { w: WaypointView; owner: Owner; size?: number }) {

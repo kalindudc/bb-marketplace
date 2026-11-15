@@ -15,7 +15,7 @@ function fixture(classId: string, label: string) {
  const scope: NonNullable<ThreadDecor["scope"]>={threadId:member.threadId,scope:scopeForClass(classId),armed:true,error:null,pendingAskId:null,mode:"enforce"};
  return {member,registry,scope};
 }
-it.each([["wanderer","Wanderer","open","anywhere"],["smith","Smith","worktree","its worktree, temp and its own storage"],["ranger","Ranger","readonly","temp and its own storage"]])("shows %s class, role and scope words",(id,label,preset,writes)=>{
+it.each([["keeper","Keeper","open","anywhere"],["wanderer","Wanderer","open","anywhere"],["smith","Smith","worktree","its worktree, temp and its own storage"],["ranger","Ranger","readonly","temp and its own storage"]])("shows %s class, role and scope words",(id,label,preset,writes)=>{
  const f=fixture(id!,label!); const v=render(<MemberIdentity {...f} />);
  expect(v.container.textContent).toContain("Pip II"); expect(v.container.textContent).toContain(label);
  expect(v.container.textContent).toContain("Keeps the work moving."); expect(v.container.textContent).toContain(`scope: ${preset}`);

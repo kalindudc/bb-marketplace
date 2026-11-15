@@ -53,6 +53,31 @@ export class BackendScopes {
       onViolation: (violation) => this.violation(violation),
     });
   }
+  async refreshPresets() {
+    const runtime = this.runtime;
+    for (const row of this.api.status().threads) {
+      const member = runtime.keeper.member(row.threadId), state = runtime.keeper.store.runtime(row.threadId);
+      try {
+        if (await this.api.protectOpenPolicy(row.threadId)) {
+          runtime.keeper.store.event(runtime.keeper.now(), member?.keeperThreadId ?? row.threadId, member?.boardQuestId ?? null,
+            "scope.refreshed", "Protected the trusted scope policy in an open scope",
+            { memberThreadId: row.threadId, deny: "~/.agents/tavern/scopes.yml" }, { kind: "tavern" });
+          runtime.bb.log.info(`Tavern scope policy protection added ${row.threadId}: ~/.agents/tavern/scopes.yml`);
+          if (member) runtime.keeper.changed(row.threadId, member.boardQuestId);
+        }
+        if (!member || state.archivedAt || state.deletedAt || state.released || (member.role === "keeper" && row.scope?.preset === "open")) continue;
+        const result = member.role === "keeper"
+          ? await this.api.openKeeperScope(row.threadId) ? "updated" : "skipped"
+          : this.api.refreshPresetTools(row.threadId);
+        if (result === "skipped") runtime.bb.log.info(`Tavern scope preset refresh skipped ${row.threadId}: allowlist is not an exact legacy preset`);
+        if (result !== "updated") continue;
+        runtime.keeper.store.event(runtime.keeper.now(), member.keeperThreadId ?? member.threadId, member.boardQuestId,
+          "scope.refreshed", member.role === "keeper" ? "Keeper scope widened to open by Tavern 0.1.2" : "Added read-only renderer helpers from the current preset",
+          { memberThreadId: row.threadId, ...(member.role === "keeper" ? { preset: "open" } : { tools: ["check_ui", "ui_examples"] }) }, { kind: "tavern" });
+        runtime.keeper.changed(row.threadId, member.boardQuestId);
+      } catch (error) { runtime.bb.log.warn(`Tavern scope preset refresh ${row.threadId}: ${String(error)}`); }
+    }
+  }
   context(threadId: string): ProjectContext {
     if (this.runtime.keeper.member(threadId)?.role === "keeper" && this.runtime.keeper.store.runtime(threadId).builtinKeeperFallback) return {};
     const projectId = this.runtime.keeper.store.runtime(threadId).projectId;

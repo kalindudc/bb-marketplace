@@ -6,7 +6,7 @@ import { LIMITS } from "../limits";
 import { sparseTunablesSchema } from "../../shared/settings";
 import { awayHoldSchema, type AwayHold } from "../away/holds";
 import { awayCompletedWindowSchema, awayStateSchema, type AwayState, type AwayWindow } from "../../shared/away";
-import { actorSchema, askSchema, boardQuestSchema, decisionSchema, gateRecordSchema, journalEntrySchema, keeperNoteSchema, memberSchema, planSchema, reportSchema, routeSchema, ruleSchema } from "../../shared/schema";
+import { actorSchema, readStoredActor, askSchema, boardQuestSchema, decisionSchema, gateRecordSchema, journalEntrySchema, keeperNoteSchema, memberSchema, planSchema, reportSchema, routeSchema, ruleSchema } from "../../shared/schema";
 
 import { taleDeliverySchema, taleDeliveryAttemptSchema } from "../tale";
 
@@ -59,6 +59,7 @@ export class BackupRecords {
       const sequences = this.db.prepare(`SELECT name,seq FROM sqlite_sequence WHERE name IN (${names.map(() => "?").join(",")}) ORDER BY name`).all(...names) as { name: string; seq: number }[];
       return { format: "tavern-records/1" as const, collectingSince: this.settings.collectingSince(), overrides: this.settings.questOverrides(), sequences: Object.fromEntries(sequences.map(row => [row.name, row.seq])), tables: Object.fromEntries(schema.map(([name, columns]) => [name, { columns: columns.map(column => column.name), rows: this.db.prepare(`SELECT * FROM ${identifier(name)}`).all() as RecordsSnapshot["tables"][string]["rows"] }])) };
     })();
+    for (const row of result.tables.tavern_events?.rows ?? []) if (typeof row.actor === "string") row.actor = JSON.stringify(readStoredActor(row.actor));
     return this.checkRows(result);
   }
   private portableDelivery(snapshot: RecordsSnapshot, restoredAt: number | null): RecordsSnapshot {

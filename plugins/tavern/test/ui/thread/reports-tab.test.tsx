@@ -63,6 +63,32 @@ describe("Report card and report tab", () => {
 });
 
 describe("Tale card", () => {
+  it.each([0, 1, 3])("shows the first of %i next actions and routes remaining actions to the tale", async count => {
+    const app = await load();
+    const card = app.messageDirectives.find(d => d.id === "tavern-tale")!;
+    const next = ["Run `git status`.", "Read the report.", "Apply it."].slice(0, count);
+    const done = {...detail, quest:{...detail.quest,phase:"done" as const},tale:{outcome:"Delivered.",left:null,skipped:[],wrappedAt:3000,next}};
+    const slot = renderSlot(card, {attributes:{quest:"vault"},source:"tale",message,openWorkspaceFile:null},{rpc:{boardQuest:()=>done,registry:()=>fixtureRegistry,crests:()=>({crests:[]})}});
+    await slot.findByText("Delivered.");
+    expect(slot.container.querySelector(".tale-next code")?.textContent ?? null).toBe(count ? "git status" : null);
+    expect(slot.queryByText("Read the report.")).toBeNull();
+    if(count > 1) {
+      fireEvent.click(slot.getByRole("button",{name:"2 more"}));
+      expect(slot.inspection.navigateCalls).toContainEqual({method:"toPluginPanel",path:"tavern",options:{subPath:`tale/${done.quest.id}`}});
+    } else expect(slot.queryByText(/more$/)).toBeNull();
+    slot.lifecycle.unmount();
+  });
+  it("draws the Keeper results compactly under the lead", async () => {
+    const app = await load();
+    const card = app.messageDirectives.find(d => d.id === "tavern-tale")!;
+    const done = { ...detail, quest: { ...detail.quest, phase: "done" as const }, tale: { outcome: "Delivered.", left: null, skipped: [], wrappedAt: 3000, results: { figures: [{ label: "Savings", value: "42%" }], chart: { title: "Cost", type: "bars" as const, labels: ["Before", "After"], series: [{ name: "Model", values: [4, 2] }] } } } };
+    const slot = renderSlot(card, { attributes: { quest: "vault" }, source: "tale", message, openWorkspaceFile: null }, { rpc: { boardQuest: () => done, registry: () => fixtureRegistry, crests: () => ({ crests: [] }) } });
+    const results = await slot.findByRole("group", { name: "Keeper results" });
+    expect(results.textContent).toContain("Savings");
+    expect(results.textContent).toContain("42%");
+    expect(results.classList.contains("compact")).toBe(true);
+    slot.lifecycle.unmount();
+  });
   it("names ids in the Keeper's tale: party members, waypoints and reports, and the Keeper itself", async () => {
     const app = await load();
     const card = app.messageDirectives.find(d => d.id === "tavern-tale")!;

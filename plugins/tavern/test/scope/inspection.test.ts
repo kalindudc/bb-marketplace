@@ -28,7 +28,7 @@ it.each([
 it.each(["ranger", "keeper", "warden"])("permits inspection but not writes with an unproven cwd for %s", role => {
   const root = realPath(mkdtempSync(join(tmpdir(), "tavern-inspection-"))); roots.push(root);
   const { worktree } = linkedWorktree(root), scratch = join(root, "scratch"); mkdirSync(scratch); writeFileSync(join(worktree, "input"), "inspect\n");
-  const scope = bindPaths(scopeForClass(role), { home: root, tmp: [scratch], scopesDir: join(root, "scopes") });
+  const scope = bindPaths(scopeForClass(role, undefined, role === "keeper" ? "keeper" : undefined), { home: root, tmp: [scratch], scopesDir: join(root, "scopes") });
   if (role === "warden") scope.checks = { worktree, commands: [] };
   const check = (source: string) => evaluate(scope, prepareCall({ kind: "bash", toolName: "bash", cwd: worktree, input: { command: source } }, { scope }));
   for (const source of inspections) expect(check(`W='${worktree}'; cd $W && ${source}`), source).toEqual({ allow: true });

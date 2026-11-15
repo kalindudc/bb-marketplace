@@ -65,6 +65,13 @@ export const actorSchema = z.union([
   z.object({ kind: z.literal("import"), from: z.string() }),
 ]);
 export type Actor = z.infer<typeof actorSchema>;
+/** Events are append-only, so an actor stored under an older or mistaken shape is read as Tavern's rather than failing every reader. */
+export function readStoredActor(raw: string): Actor {
+  let value: unknown;
+  try { value = JSON.parse(raw); } catch { return { kind: "tavern" }; }
+  const parsed = actorSchema.safeParse(value);
+  return parsed.success ? parsed.data : { kind: "tavern" };
+}
 
 export const evidenceSchema = z.object({
   kind: z.enum(["command", "file", "url", "pr", "query", "note"]),
@@ -329,6 +336,7 @@ export const boardQuestSchema = z.object({
   stopReason: z.string().trim().max(500).nullable().optional(),
   stoppingSince: epochMs.nullable().optional(),
   stopHireAskId: id.nullable().optional(),
+  deletedAt: epochMs.nullable().optional(),
   /** Set when the user archived a returned or stopped quest: hidden from the common room, kept in the archive. */
   archivedAt: epochMs.nullable().default(null),
 });

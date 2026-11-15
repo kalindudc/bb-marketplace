@@ -43,6 +43,17 @@ async function fixture() {
 }
 
 describe("lasting character service record", () => {
+  it("retains credits on a deleted quest without linking or naming it, and restores its presentation", async () => {
+    const f = await fixture(); f.review("verify"); await f.runtime.wrap("lead", f.q.id, "Proved", "");
+    const before = f.record("juno"), stored = f.k.store.get("serviceRecords", f.q.id);
+    f.k.deleteQuest(f.q.id);
+    const after = f.record("juno");
+    expect(after.maker).toEqual(before.maker);
+    expect(after.records[0]).toMatchObject({ title: "a deleted quest", short: "a deleted quest", available: false, keeperThreadId: null, threadIds: [] });
+    expect(f.k.store.get("serviceRecords", f.q.id)).toEqual(stored);
+    f.k.restoreDeletedQuest(f.q.id);
+    expect(f.record("juno").records[0]).toMatchObject({ title: before.records[0]!.title, available: true });
+  });
   it("writes once at return, counts verified waypoints rather than entries, and gives the Keeper its own record", async () => {
     const f = await fixture(); const verified = f.review("verify");
     f.setEntries([verified, { ...verified, id: "a2" }]);

@@ -20,7 +20,7 @@ afterEach(async () => {
 async function fixture() {
   const root = mkdtempSync(join(tmpdir(), "tavern-registration-authority-"));
   vi.stubEnv("HOME", root);
-  const host = createFakePluginHost({ pluginId: "tavern", dataDir: join(root, "data") });
+  const host = createFakePluginHost({ pluginId: "tavern", experimental_declaredIconNames: ["tavern"], dataDir: join(root, "data") });
   cleanups.push(async () => {
     try { await host.harness.lifecycle.dispose(); }
     finally { rmSync(root, { recursive: true, force: true }); }

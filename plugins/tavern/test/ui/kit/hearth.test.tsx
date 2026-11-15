@@ -58,8 +58,8 @@ describe("hearthWords", () => {
 describe("Hearth", () => {
   let fx: ReturnType<typeof installAnimations>;
   let t = 0;
-  beforeEach(() => { motion.reset(); t = 1_000_000; motion.now = () => t; fx = installAnimations({ "mo-flick": 3600, "mo-flare": 500, "mo-out": 600 }); });
-  afterEach(() => { cleanup(); fx.uninstall(); motion.reset(); });
+  beforeEach(() => { vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({ top: 10, bottom: 50, left: 0, right: 100, width: 100, height: 40 } as DOMRect); motion.reset(); t = 1_000_000; motion.now = () => t; fx = installAnimations({ "mo-flick": 3600, "mo-flick1": 1500, "mo-flare": 500, "mo-out": 600 }); });
+  afterEach(() => { cleanup(); fx.uninstall(); motion.reset(); vi.restoreAllMocks(); });
 
   const lit = hearthWords(st("busy", "holding")), banked = hearthWords(st("holding")), out = hearthWords([], {});
   const mount = (words = lit, extra: { size?: number; flareKey?: string } = {}) => render(<div className="tavern"><Hearth words={words} surface="page" {...extra} /></div>);
@@ -80,6 +80,73 @@ describe("Hearth", () => {
       act(() => vi.advanceTimersByTime(60000));
       expect(spy).not.toHaveBeenCalled();
     } finally { spy.mockRestore(); vi.useRealTimers(); }
+  });
+  it("draws a sidebar icon at14px and yields to a visible full hearth", async () => {
+    vi.useFakeTimers();
+    const random = vi.spyOn(Math, "random").mockReturnValue(0.5);
+    let update = (_visible: boolean) => {};
+    vi.stubGlobal("IntersectionObserver", class {
+      private el!: Element;
+      constructor(callback: (entries: IntersectionObserverEntry[]) => void) { update = visible => callback([{ target: this.el, isIntersecting: visible } as IntersectionObserverEntry]); }
+      observe(el: Element) { this.el = el; }
+      disconnect() {}
+    });
+    let visible = true;
+    const rect = vi.spyOn(HTMLElement.prototype,"getBoundingClientRect").mockImplementation(function(this:HTMLElement){
+      return {top:10,bottom:visible?50:-10,left:0,right:100,width:100,height:40} as DOMRect;
+    });
+    try {
+    const v=render(<div className="tavern"><Hearth words={lit} surface="page" /><Hearth words={lit} surface="page" iconOnly size={14} replay /></div>);
+    const icon=v.container.querySelector("[data-icon]")!;
+    expect(icon.querySelector("svg")?.getAttribute("width")).toBe("14");
+    expect([...motion.cues].some(c=>c.el===icon)).toBe(false);
+    visible=false;act(()=>update(false));
+    t += 60000;fx.tick(60000);
+    await act(async()=>{for(let i=0;i<5;i++) await Promise.resolve();});
+    act(()=>vi.advanceTimersByTime(22000));
+    expect([...motion.cues].some(c=>c.el===icon && c.kind==="hearth replay")).toBe(true);
+    visible=true;act(()=>update(true));
+    expect([...motion.cues].some(c=>c.el===icon)).toBe(false);
+    v.rerender(<div className="tavern">{null}<Hearth words={lit} surface="page" iconOnly size={14} replay /></div>);
+    t += 60000;
+    act(()=>vi.advanceTimersByTime(22000));
+    expect([...motion.cues].some(c=>c.el===icon && c.kind==="hearth replay")).toBe(true);
+    } finally { rect.mockRestore();random.mockRestore();vi.unstubAllGlobals();vi.useRealTimers(); }
+  });
+  it("adds no DOM observer or layout reads after registration with IO", async () => {
+    motion.install();
+    let report = (_visible: boolean) => {};
+    vi.stubGlobal("IntersectionObserver", class {
+      private el!: Element;
+      constructor(callback: (entries: IntersectionObserverEntry[]) => void) { report = visible => callback([{ target: this.el, isIntersecting: visible } as IntersectionObserverEntry]); }
+      observe(el: Element) { this.el = el; }
+      disconnect() {}
+    });
+    const mutations = vi.fn();
+    const NativeMutationObserver = globalThis.MutationObserver;
+    vi.stubGlobal("MutationObserver", class extends NativeMutationObserver {
+      constructor(callback: MutationCallback) { super(callback); mutations(); }
+    });
+    const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect");
+    const style = vi.spyOn(window, "getComputedStyle");
+    const events = vi.spyOn(window, "addEventListener");
+    const unrelated = document.createElement("div");
+    try {
+      render(<div className="tavern"><Hearth words={lit} surface="page" /><Hearth words={lit} surface="page" iconOnly /></div>);
+      expect(mutations).not.toHaveBeenCalled();
+      expect(rect).not.toHaveBeenCalled();
+      expect(events.mock.calls.filter(([name]) => name === "scroll" || name === "resize")).toHaveLength(0);
+      style.mockClear();
+      act(() => report(false));
+      act(() => report(true));
+      document.body.appendChild(unrelated);
+      unrelated.appendChild(document.createElement("span"));
+      await act(async () => { for (let i = 0; i < 5; i++) await Promise.resolve(); });
+      expect(rect).not.toHaveBeenCalled();
+      expect(style).not.toHaveBeenCalled();
+    } finally {
+      cleanup(); unrelated.remove(); rect.mockRestore(); style.mockRestore(); events.mockRestore(); vi.unstubAllGlobals();
+    }
   });
   it("always shows its words, and clamps its size to 24-40 px", () => {
     const v = mount(lit, { size: 12 });
@@ -130,13 +197,14 @@ describe("Hearth", () => {
   });
 });
 
-describe("the hearth replay", () => {
+describe.each([false, true])("the hearth replay (icon only=%s)", iconOnly => {
   let fx: ReturnType<typeof installAnimations>;
   const spyCue = () => vi.spyOn(motion, "cue");
   let cueSpy: ReturnType<typeof spyCue>;
   let renders = 0;
   beforeEach(() => {
     motion.reset(); renders = 0;
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({ top: 10, bottom: 50, left: 0, right: 100, width: 100, height: 40 } as DOMRect);
     // The coordinator's clock is the fake timers' Date, so a turn is judged at the moment it fires.
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] }); vi.setSystemTime(1_000_000); motion.now = () => Date.now();
     fx = installAnimations({ "mo-flick": 3600, "mo-flick1": 1500, "mo-flare": 500, "mo-out": 600 });
@@ -147,7 +215,7 @@ describe("the hearth replay", () => {
   afterEach(() => { cleanup(); fx.uninstall(); motion.reset(); vi.useRealTimers(); vi.restoreAllMocks(); document.body.innerHTML = ""; delete document.documentElement.dataset.motion; });
 
   const lit = hearthWords(st("busy", "holding")), banked = hearthWords(st("holding"));
-  const view = (words = lit, replay = true) => <Profiler id="hearth" onRender={() => { renders++; }}><div className="tavern"><Hearth words={words} surface="page" replay={replay} /></div></Profiler>;
+  const view = (words = lit, replay = true) => <Profiler id="hearth" onRender={() => { renders++; }}><div className="tavern"><Hearth words={words} surface="page" replay={replay} iconOnly={iconOnly} /></div></Profiler>;
   /** Ends the cues that have run their length, then moves the timers, so each turn finds the last one finished. */
   const advance = async (ms: number) => {
     fx.tick(ms);

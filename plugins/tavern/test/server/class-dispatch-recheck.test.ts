@@ -105,7 +105,7 @@ describe("registry dispatch recheck", () => {
     if (start === "new") ctx.experimental_submission = { pluginId: "tavern", data: { classId: "keeper" } };
     const receive = vi.spyOn(f.k, "receiveUser");
     const gate = vi.spyOn(f.runtime.away, "dispatch").mockImplementation(async () => {
-      expect(f.runtime.scopes!.api.status().threads.find(thread => thread.threadId === id)?.scope?.preset).toBe("keeper");
+      expect(f.runtime.scopes!.api.status().threads.find(thread => thread.threadId === id)?.scope?.preset).toBe("open");
       return null;
     });
     expect.soft(await f.runtime.dispatch(ctx)).toMatchObject({ action: "wait" });
@@ -114,11 +114,11 @@ describe("registry dispatch recheck", () => {
     expect(await f.runtime.dispatch(ctx)).toEqual({ action: "proceed" });
     expect(f.k.member(id)?.role).toBe("keeper");
     expect(f.k.store.runtime(id).classNotice?.message).toContain("built-in Keeper");
-    expect(f.runtime.scopes!.api.status().threads.find(thread => thread.threadId === id)?.scope?.preset).toBe("keeper");
+    expect(f.runtime.scopes!.api.status().threads.find(thread => thread.threadId === id)?.scope?.preset).toBe("open");
     expect(gate).toHaveBeenCalledTimes(1);
     expect(receive).toHaveBeenCalledTimes(1);
     mkdirSync(join(root, ".agents/tavern/classes"), { recursive: true });
-    writeFileSync(join(root, ".agents/tavern/classes/keeper.md"), readFileSync(new URL("../../classes/keeper.md", import.meta.url), "utf8").replace("scope: keeper", "scope: { preset: keeper, tools: { deny: [web_search] } }"));
+    writeFileSync(join(root, ".agents/tavern/classes/keeper.md"), readFileSync(new URL("../../classes/keeper.md", import.meta.url), "utf8").replace("scope: open", "scope: { preset: open, tools: { deny: [web_search] } }"));
     f.bb.sdk.projects.get = async () => ({ sources: [{ path: root, hostId: "host", isDefault: true }] }) as never;
     expect(await f.runtime.dispatch(ctx)).toEqual({ action: "proceed" });
     const restored = f.runtime.scopes!.api.status().threads.find(thread => thread.threadId === id)?.scope;

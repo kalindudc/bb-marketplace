@@ -1,5 +1,6 @@
 import type { BbPluginApi, PluginRpcHandlers } from "@get-bb/plugin-sdk";
 import {
+  DECOR_BRIEF_CONTEXT_MAX,
   rpcContract,
   tags,
   type BoardQuestDetail,
@@ -7,7 +8,7 @@ import {
   type Room,
   type ThreadDecor,
 } from "../shared/contract";
-import type { Decision } from "../shared/schema";
+import type { Brief, Decision } from "../shared/schema";
 import { isLiveMember } from "./liveness";
 import { DecisionViews } from "./decisions";
 import { placementHandlers } from "./placement/rpc";
@@ -19,6 +20,16 @@ import { experimental_PluginRpcRefusal, type ExperimentalPluginRpcHandlerContext
 import { backfillTaleDelivery, memberCredits, readTale } from "./tale";
 import { readCharacterPresentation } from "./character-presentation";
 import type { TavernRuntime } from "./runtime";
+
+/** The stored brief for the widget: every hire-time line, then as many of the newest follow-ups as fit. */
+function decorBrief(brief: Brief | null | undefined) {
+  if (!brief) return null;
+  const isFollowUp = (line: string) => /^Follow-up v\d+: /.test(line);
+  const hired = brief.context.filter(line => !isFollowUp(line)).slice(0, DECOR_BRIEF_CONTEXT_MAX);
+  const followUps = brief.context.filter(isFollowUp);
+  const room = DECOR_BRIEF_CONTEXT_MAX - hired.length;
+  return { ...brief, context: [...hired, ...(room > 0 ? followUps.slice(-room) : [])] };
+}
 
 export function rpcHandlers(
   runtime: TavernRuntime,
@@ -139,7 +150,7 @@ export function rpcHandlers(
         member: m,
         keeper: m?.keeperThreadId ? k.member(m.keeperThreadId) : null,
         boardQuest: m?.boardQuestId ? k.quest(m.boardQuestId) : null,
-        briefFields: k.store.runtime(threadId).brief ?? null,
+        briefFields: decorBrief(k.store.runtime(threadId).brief),
         brief: k.store.runtime(threadId).brief
           ? JSON.stringify(k.store.runtime(threadId).brief, null, 2)
           : null,
@@ -213,11 +224,11 @@ export function rpcHandlers(
       };
     },
     routes: ({ threadId }) => {
-      const routes = k.store.query("routes", "keeperThreadId", threadId, 100);
+      const routes = k.store.query("routes", "keeperThreadId", threadId, 100).filter(route => !route.boardQuestId || k.store.get("quests", route.boardQuestId)?.deletedAt == null);
       const ids = new Set(routes.flatMap(route => route.ruleId ? [route.ruleId] : []));
       return {
         routes,
-        boardQuests: k.store.query("quests", "keeperThreadId", threadId, 100),
+        boardQuests: k.store.query("quests", "keeperThreadId", threadId, 100).filter(quest => quest.deletedAt == null),
         rules: [...ids].flatMap(id => {
           const rule = k.store.get("rules", id);
           return rule ? [rule] : [];
@@ -226,8 +237,10 @@ export function rpcHandlers(
     },
     boardQuest: async ({ id }): Promise<BoardQuestDetail> => {
       const q = k.quest(id);
+      if (q.deletedAt != null) throw new experimental_PluginRpcRefusal({ code: "not_found", message: "This quest is deleted. Restore it from the cellar’s Deleted view." });
       try { await backfillTaleDelivery(k, q, args => runtime.bb.sdk.threads.output(args)); }
       catch (error) { runtime.bb.log.warn(`Tavern tale backfill ${id}: ${String(error)}`); }
+      void runtime.taleRenderer?.ensure(id);
       const summary = k.summary(id);
       const tale: BoardQuestDetail["tale"] = readTale(k, summary);
       if (tale?.delivery) {
@@ -235,6 +248,7 @@ export function rpcHandlers(
           const thread = await runtime.bb.sdk.threads.get({ threadId: q.keeperThreadId });
           if (thread.environmentId) {
             const environment = await runtime.bb.sdk.environments.get({ environmentId: thread.environmentId });
+            tale.fileHostId = environment.hostId;
             if (environment.path) tale.document = { threadId: q.keeperThreadId, rootPath: environment.path, target: { kind: "workspace", environmentId: thread.environmentId, path: environment.path } };
           }
         } catch (error) { runtime.bb.log.warn(`Tavern tale document ${id}: ${String(error)}`); }
@@ -286,10 +300,22 @@ export function rpcHandlers(
       });
       return runtime.serviceRecords.setTaleKept(input);
     },
-    archiveBoardQuests: ({ ids, archived }) => ({
-      ok: true,
-      changed: k.archiveQuests(ids, archived),
-    }),
+    archiveBoardQuests: ({ ids, archived }, context?: ExperimentalPluginRpcHandlerContext) => {
+      if (context?.experimental_caller.kind !== "client") throw new experimental_PluginRpcRefusal({ code: "forbidden", message: "Changing the cellar requires an explicit client action." });
+      return runtime.archiveBoardQuests(ids, archived);
+    },
+    deleteBoardQuest: ({ id }, context?: ExperimentalPluginRpcHandlerContext) => {
+      if (context?.experimental_caller.kind !== "client") throw new experimental_PluginRpcRefusal({ code: "forbidden", message: "Deleting a quest requires an explicit client action." });
+      return runtime.deleteBoardQuest(id);
+    },
+    restoreDeletedQuest: ({ id }, context?: ExperimentalPluginRpcHandlerContext) => {
+      if (context?.experimental_caller.kind !== "client") throw new experimental_PluginRpcRefusal({ code: "forbidden", message: "Restoring a deleted quest requires an explicit client action." });
+      return { ok: true, changed: Number(k.restoreDeletedQuest(id)) };
+    },
+    deletedBoardQuests: ({ cursor, limit }) => {
+      const page = k.store.deletedQuestPage(cursor, limit);
+      return { boardQuests: page.quests.map(q => k.summary(q.id)), nextCursor: page.nextCursor, total: page.total };
+    },
     mapHistory: () => k.store.mapHistory(),
     archivedBoardQuests: ({ cursor, limit }) => {
       const page = k.store.archivedQuestPage(cursor, limit);

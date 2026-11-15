@@ -60,9 +60,15 @@
 .tavern .lg-anchor pre { padding: 8px 10px; background: var(--tavern-recessed); border: 1px solid var(--tavern-line); }
 
 /* ---- The widget row: a Flare-weight composer banner, one line by default ---- */
-.tavern.twidget { container-type: inline-size; container-name: tavern-widget; min-width: 0; border: 1px solid var(--border); background: var(--card); color: var(--card-foreground, var(--foreground)); font-size: 12px; }
-.tavern.twidget.v-keeper { box-shadow: inset 2px 0 0 var(--tavern-wax); }
-html.dark .tavern.twidget.v-keeper { box-shadow: inset 2px 0 0 var(--tavern-wax), 0 -10px 24px -18px var(--tavern-lantern); }
+.tavern.twidget { container-type: inline-size; container-name: tavern-widget; min-width: 0; border: 1px solid var(--tavern-line); border-left: 3px solid var(--widget-edge, var(--tavern-line)); background: var(--tavern-paper); color: var(--foreground); font-size: 12px; }
+.tavern.twidget .tw-panel { background: transparent; }
+.tavern.twidget.glow::before { background: radial-gradient(ellipse calc(var(--glow-w, 90%) * .8) calc(var(--glow-h, 60%) * .75) at var(--glow-x, 46%) var(--glow-y, 10%), color-mix(in oklab, var(--tavern-glow) 50%, transparent), transparent 70%); }
+.tavern.twidget .tw-row { gap: 8px; }
+.tavern.twidget .tw-row .who-t { padding-top: 0; height: 18px; line-height: 18px; align-content: normal; }
+.tavern.twidget .tw-row :is(.tw-name, .tw-name > b, .tw-member-class, .tw-fact, .tw-fact > b, .tw-fact .anc, .tw-kn, .tw-where > b, .tw-w, .tw-quest > b) { text-box: normal; font-size: 12px; line-height: 18px; }
+.tavern.twidget .tw-row :is(.tw-id, .tw-chip, .tw-asks, .tw-quest) { padding: 0 6px; line-height: 18px; }
+.tavern.twidget .tw-fact { display: inline-flex; align-items: baseline; gap: 5px; }
+.tavern.twidget .tw-member-class { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .tavern .tw-row { display: flex; align-items: center; gap: 6px; min-height: 34px; padding: 4px 6px 4px 10px; min-width: 0; }
 .tavern .tw-id { display: inline-flex; align-items: center; gap: 6px; flex: none; }
 .tavern .tw-name { white-space: nowrap; font-size: 12px; }
@@ -481,6 +487,15 @@ html.dark .tavern .qsvg .wp.o-you .wp-fo { filter: drop-shadow(0 0 5px color-mix
 .tavern .tkpi-d.bad { color: var(--foreground); background: color-mix(in oklab, var(--destructive) 13%, transparent); }
 .tavern .tchart { --tchart-ink: var(--chart-1, var(--primary)); margin: 0; min-width: 0; padding: 10px 12px 12px; border: 1px solid var(--tavern-line); background: var(--tavern-elev-raised-bg); box-shadow: var(--tavern-elev-raised-shadow); }
 .tavern .tchart > figcaption { margin-bottom: 8px; font-size: 12px; font-weight: 600; color: var(--foreground); }
+.tavern .tale-results { display: grid; gap: 10px; min-width: 0; }
+.tavern .tale-results h4 { margin: 0 0 8px; font-size: 13px; }
+.tavern .tale-results > section { width: 100%; max-width: 720px; min-width: 0; }
+.tavern .tfig-note { display: block; margin-top: 4px; font-size: 12px; font-weight: 400; line-height: 1.5; white-space: normal; max-width: 36ch; color: var(--tavern-muted); }
+.tavern .tale-next { padding: 0 12px 12px; font-size: 12px; }
+.tavern .tale-next p { margin: 0 0 4px; }
+.tavern .tale-results.compact { padding: 0 12px 12px; }
+.tavern .tchart-legend { display: flex; flex-wrap: wrap; gap: 8px 16px; list-style: none; padding: 0; margin: 8px 0 0; font-size: 12px; }
+.tavern .tchart-legend li { display: flex; align-items: center; gap: 6px; }
 .tavern .tchart-empty { font-size: 12px; }
 .tavern .tchart-bars { display: grid; grid-template-columns: minmax(0, max-content) minmax(40px, 1fr) max-content; column-gap: 8px; row-gap: 6px; align-items: center; margin: 0; padding: 0; list-style: none; }
 .tavern .tchart-bars > li { display: contents; }

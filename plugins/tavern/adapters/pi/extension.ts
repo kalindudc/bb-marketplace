@@ -36,7 +36,7 @@ export default function tavernGuard(pi: PiGuardApi): void {
       const { bindingTemplate: _template, hostBinding, ...bound } = scopeRenderedFileSchema.parse(raw);
       scope = bound; nativeReceipt = { hostBinding, renderedDigest: createHash("sha256").update(json, "utf8").digest("hex") };
     } else {
-      const { bindingTemplate: _template, bindingError, controllerBinding, ...bound } = scopeFileSchema.parse(raw);
+      const { bindingTemplate: _template, bindingError, controllerBinding, presetProvenance: _provenance, ...bound } = scopeFileSchema.parse(raw);
       if (controllerBinding) throw new Error("This host-bound controller template is not an acknowledged native scope");
       if (bindingError) throw new Error(bindingError);
       scope = bound;

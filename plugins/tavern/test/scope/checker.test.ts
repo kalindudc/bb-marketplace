@@ -23,8 +23,8 @@ function fixture() {
   const run = (command: string, cwd = worktree) => evaluate(scope, call(command, cwd));
   return { root, main, worktree, scratch, outside, scope, git, call, run };
 }
-it("gives Wardens checker while preserving readonly Ranger and Keeper defaults", () => {
-  expect(scopeForClass("warden").preset).toBe("checker"); expect(scopeForClass("ranger").preset).toBe("readonly"); expect(scopeForClass("keeper").preset).toBe("keeper");
+it("gives Wardens checker while preserving readonly Ranger and open Keeper defaults", () => {
+  expect(scopeForClass("warden").preset).toBe("checker"); expect(scopeForClass("ranger").preset).toBe("readonly"); expect(scopeForClass("keeper").preset).toBe("open");
   const f = fixture(); expect(scopeSchema.safeParse(f.scope).success).toBe(true);
 });
 it.each([
@@ -55,7 +55,7 @@ it("requires an explicit maker root, canonical cwd and a proven directory for ch
 it("does not grant native writes to the worktree or change any other preset", () => {
   const f = fixture();
   expect(evaluate(f.scope, { kind: "write", toolName: "write", input: { path: join(f.worktree, "tracked") }, cwd: f.worktree }).allow).toBe(false);
-  for (const role of ["ranger", "keeper"]) { const s = bindPaths(scopeForClass(role), { home: f.root, tmp: [f.scratch], scopesDir: join(f.root, "scopes") }); expect(evaluate(s, prepareCall({ kind: "bash", toolName: "bash", input: { command: "npm test" }, cwd: f.worktree }, { scope: s })).allow).toBe(false); }
+  for (const role of ["ranger", "keeper"]) { const s = bindPaths(scopeForClass(role, undefined, role === "keeper" ? "keeper" : undefined), { home: f.root, tmp: [f.scratch], scopesDir: join(f.root, "scopes") }); expect(evaluate(s, prepareCall({ kind: "bash", toolName: "bash", input: { command: "npm test" }, cwd: f.worktree }, { scope: s })).allow).toBe(false); }
 });
 it("fails closed rather than allowing a pre-existing hardlink alias to a tracked file", () => {
   const f = fixture(); writeFileSync(join(f.worktree, "tracked"), "original"); writeFileSync(join(f.worktree, ".gitignore"), "coverage/\\n");

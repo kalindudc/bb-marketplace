@@ -64,7 +64,8 @@ export type ScopeBindingEndpoints = z.infer<typeof scopeBindingEndpointsSchema>;
 export type ScopeDeliveryFile = z.infer<typeof scopeDeliveryFileSchema>;
 export const scopeRenderedFileSchema = scopeSchema.extend({ bindingTemplate: scopeSchema, hostBinding: scopeHostBindingSchema }).strict().refine(value => value.bindingTemplate.threadId === value.threadId && value.bindingTemplate.issuedAt === value.issuedAt, "Rendered scope template identity must match its bound scope");
 export type ScopeRenderedFile = z.infer<typeof scopeRenderedFileSchema>;
-export const scopeFileSchema = scopeSchema.extend({ bindingTemplate: scopeSchema.optional(), bindingError: z.string().optional(), controllerBinding: scopeControllerBindingSchema.optional() }).refine(value => !value.bindingTemplate || value.bindingTemplate.threadId === value.threadId && value.bindingTemplate.issuedAt === value.issuedAt, "Scope template identity must match its bound scope");
+export const presetProvenanceSchema = z.object({ id: z.enum(PRESETS), version: z.string().regex(/^[a-f0-9]{64}$/) }).strict();
+export const scopeFileSchema = scopeSchema.extend({ presetProvenance: presetProvenanceSchema.optional(), bindingTemplate: scopeSchema.optional(), bindingError: z.string().optional(), controllerBinding: scopeControllerBindingSchema.optional() }).refine(value => !value.bindingTemplate || value.bindingTemplate.threadId === value.threadId && value.bindingTemplate.issuedAt === value.issuedAt, "Scope template identity must match its bound scope");
 export type Scope = z.infer<typeof scopeSchema>;
 export type ShellRule = z.infer<typeof shellRuleSchema>;
 

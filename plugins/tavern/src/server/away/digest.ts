@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { awayDigestInputSchema, type AwayDigest } from "../../shared/away-rpc";
-import { askSchema, eventSchema } from "../../shared/schema";
+import { askSchema, eventSchema, readStoredActor } from "../../shared/schema";
 import type { Keeper } from "../keeper/service";
 import type { AwayStore } from "./store";
 
@@ -47,7 +47,7 @@ export function readAwayDigest(k: Keeper, store: AwayStore, input: z.input<typeo
         events: group ? group.events : 0, reports: group ? group.reports : 0, decisions: group ? group.decisions : 0, asks: allAsks.filter(ask => ask.boardQuestId === questId).length };
     });
     const rows = db.prepare("SELECT * FROM tavern_events WHERE id>? AND id<=? AND type NOT LIKE 'away.%' ORDER BY id LIMIT ?").all(Math.max(range.after, parsed.cursor), range.through, parsed.limit + 1) as EventRow[];
-    const events = rows.slice(0, parsed.limit).map(row => eventSchema.parse({ id: row.id, at: row.at, keeperThreadId: row.keeper_thread_id, boardQuestId: row.board_quest_id, actor: JSON.parse(row.actor), type: row.type, text: row.text, data: JSON.parse(row.data) }));
+    const events = rows.slice(0, parsed.limit).map(row => eventSchema.parse({ id: row.id, at: row.at, keeperThreadId: row.keeper_thread_id, boardQuestId: row.board_quest_id, actor: readStoredActor(row.actor), type: row.type, text: row.text, data: JSON.parse(row.data) }));
     return { window, totalEvents: groups.reduce((sum, group) => sum + group.events, 0), nextCursor: rows.length > parsed.limit ? events.at(-1)!.id : null, events,
       totalAsks: allAsks.length, nextAskCursor: remainingAsks.length > parsed.limit ? asks.at(-1)!.ask.id : null, asks, quests };
   })();
