@@ -10,7 +10,7 @@ import { verifiedOf, verifiedWords } from "./rows";
 
 type WaypointView = BoardQuestSummary["waypoints"][number];
 const COL = 132;
-const LANE = 72;
+const LANE = 96;
 const PAD_X = 62;
 const TOP = 22;
 
@@ -121,7 +121,7 @@ export function QuestMap({ quest, mode, dealt = false, memberCredits: credits, s
   const pad = spread ? Math.max(PAD_X, wideLabel / 2 + 2) : PAD_X;
   const step = spread ? (columns > 1 ? (availableWidth - 2 * pad) / (columns - 1) : 0) : COL;
   const labelW = spread ? Math.max(COL - 8, Math.min(wideLabel, step - 12)) : COL - 8;
-  const labelH = stretch ? 64 : 48;
+  const labelH = 64;
   const visible = spread ? shown.map(n => ({ ...n, x: columns > 1 ? pad + n.column * step : availableWidth / 2 })) : shown;
   const width = spread ? availableWidth : natural;
   const height = Math.max(...visible.map(n => n.y)) + labelH + 20;

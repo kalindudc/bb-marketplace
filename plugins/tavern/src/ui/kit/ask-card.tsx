@@ -49,16 +49,18 @@ export function AskCard({ ask, via = "banner", onFold, onAnswered, headless = fa
   const [optionId, setOption] = useState<string | null>(ask.kind === "decision" ? ask.options.find(o => o.recommended)?.id ?? null : null);
   const [note, setNote] = useState("");
   const [error, setError] = useState<unknown>(null);
-  const [receipt, setReceipt] = useState<{ label: string; at: number } | null>(null);
+  const [receipt, setReceipt] = useState<{ label: string; at: number; note: string | null } | null>(null);
   const answer = experimental_useRpcMutation({ contract: rpcContract, method: "answerAsk" });
   if (ask.state !== "open" || receipt) {
     const label = receipt?.label ?? ask.options.find(o => o.id === ask.answer?.optionId)?.label ?? ask.answer?.optionId ?? "";
     const at = receipt?.at ?? ask.answer?.at ?? null;
+    const receiptNote = receipt?.note ?? ask.answer?.note ?? null;
     return (
       <div className="tavern receipt" role="status" aria-label={`Ask answered: ${ask.question}`}>
         <Glyph name="check" />
         <b>{ask.state === "withdrawn" ? "Withdrawn" : ask.state === "defaulted" ? "Default applied" : "Answered"}</b>
         {label && <span>“{label}”</span>}
+        {receiptNote && <span className="receipt-note" data-content>“{receiptNote}”</span>}
         <span className="m">{VIA[ask.answer?.via ?? via]}{at !== null ? ` at ${clockTime(at)}` : ""} · cleared everywhere</span>
       </div>
     );
@@ -72,7 +74,7 @@ export function AskCard({ ask, via = "banner", onFold, onAnswered, headless = fa
     try {
       await answer.mutate({ askId: ask.id, optionId, note: note.trim() || null, via });
       const at = Date.now();
-      setReceipt({ label: ask.options.find(o => o.id === optionId)!.label, at });
+      setReceipt({ label: ask.options.find(o => o.id === optionId)!.label, at, note: note.trim() || null });
       onAnswered?.({ ...ask, state: "answered", answer: { optionId, note: note.trim() || null, by: "user", via, at } });
     } catch (e) { setError(e); }
   }
@@ -98,8 +100,12 @@ export function AskCard({ ask, via = "banner", onFold, onAnswered, headless = fa
           </label>
         ))}
       </fieldset>
+      {/* Inline and visible, never a collapsed details: a decision answered without its note is a decision the Keeper cannot read. */}
+      <label className="ask-notefield">
+        <span>Add a note for the Keeper <span className="m">(optional)</span></span>
+        <input className="ask-note-in" type="text" maxLength={2000} value={note} placeholder="Read alongside your answer" onChange={e => setNote(e.target.value)} />
+      </label>
       <div className="facts"><span><b>Meanwhile</b> <span data-content>{ask.meanwhile || "nothing else waits"}</span></span><span><b>Holds</b> <span data-content>{holdsText(ask.holds)}</span></span>{ask.proceedAt !== null && <span><b>Default</b> applies at {clockTime(ask.proceedAt)}</span>}</div>
-      <details className="ask-note"><summary>Add a note for the Keeper</summary><textarea aria-label={`Optional note for ${ask.question}`} maxLength={2000} value={note} onChange={e => setNote(e.target.value)} /></details>
       <QueryState error={error} />
       <div className="ask-f">
         <button type="button" className={`btn ${ask.kind === "greenlight" ? "pri seal" : "pri"}`} disabled={!optionId || answer.isPending || !canSend} onClick={() => void submit()}>{ask.kind === "greenlight" && <Glyph name="wax-seal" />}{answer.isPending ? "Sending…" : action}</button>

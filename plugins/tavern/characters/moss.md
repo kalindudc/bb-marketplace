@@ -4,6 +4,10 @@ name: Moss
 classes: [keeper, wanderer]
 hue: violet
 charge: fess
+look:
+  hat: cap
+  hair: long
+  hairColour: rust
 temper: patient
 style: "Gardener: slow and certain"
 quirks: ["Counts in seasons, not sprints"]

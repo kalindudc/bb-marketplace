@@ -8,7 +8,7 @@ import { fixtureDecor, fixtureDetail, fixtureJournal, fixtureLedger, fixtureMemb
 import { JournalTab, LedgerTab } from "../../../src/ui/thread/tabs";
 import { ReportsTab } from "../../../src/ui/thread/reports-tab";
 import { ThreadWidget } from "../../../src/ui/thread/composer";
-import { JournalSegmentDetails, JournalSegmentSummary } from "../../../src/ui/thread/journal-segment";
+import { JournalSegmentSummary } from "../../../src/ui/thread/journal-segment";
 import { SKELETON_DELAY_MS, readRemembered, rememberCount, writeRemembered } from "../../../src/ui/kit";
 import { journalSchema, type JournalEntry } from "../../../src/shared/schema";
 
@@ -165,14 +165,6 @@ describe("journal segment skeleton", () => {
     rpc.release(plainDecor);
     await slot.findByRole("button", { name: /Journal \(checklist\): 1 of 5 done/ });
     expect(region()).toBeNull();
-  });
-
-  it("draws as many detail rows as the summary says are open, up to four", async () => {
-    const rpc = gate<typeof journal>();
-    renderSlot({ component: JournalSegmentDetails }, props(true), { rpc: { decor: () => plainDecor, journal: rpc.handler } });
-    await waitFor(() => expect(document.querySelectorAll(".sk .jseg-row")).toHaveLength(4));
-    const shapes = await expectSkeletonTiming("what is next in the journal");
-    expect(shapes.querySelectorAll(".jseg-row")).toHaveLength(4);
   });
 });
 

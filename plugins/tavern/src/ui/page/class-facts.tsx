@@ -7,6 +7,7 @@ import { modelLabel } from "../thread/composer";
 import { InlineLink, SegFilter, plural, type Registry } from "./common";
 import { PageGlyph } from "./glyphs";
 import { usePanelState } from "./panel-state";
+import { RecordFold } from "./quest-record";
 
 type Field = ClassModeFacts["fields"][number];
 export type ClassFactsEntry = { classId: string; start: ClassModeFacts; hire: ClassModeFacts };
@@ -122,10 +123,8 @@ export function ClassFacts({ entry, registry, label, hireable, startable, projec
   const facts = entry[mode];
   const overrides = facts.projectOverrides;
   const overridePath = overrides[0]?.path.replace(/^\/(Users|home)\/[^/]+/, "~");
-  return <section className="tv-card tv-cdsec tv-cfacts" aria-labelledby="tv-cf-h">
-    <header className="tv-colh"><h2 id="tv-cf-h">What it gets</h2><span className="tv-sp" />
-      <SegFilter label="What it gets when" value={mode} onChange={setMode} options={[{ id: "hire", label: "On hire" }, { id: "start", label: "When you start it" }]} />
-    </header>
+  return <RecordFold id={`class:${entry.classId}.facts`} title="What it gets" count={plural(facts.fields.length, "field")} open className="tv-cfacts">
+    <div className="tv-cf-modes"><SegFilter label="What it gets when" value={mode} onChange={setMode} options={[{ id: "hire", label: "On hire" }, { id: "start", label: "When you start it" }]} /></div>
     {!runs ? <CannotRun label={label} mode={mode} other={mode === "hire" ? startable : hireable} onOther={() => setMode(mode === "hire" ? "start" : "hire")} /> : <>
     {project && (dependsOnProject(facts).length > 0 || (project.id && !project.fromThread)) && <ProjectPick project={project} fields={dependsOnProject(facts).map((f) => f.field)} />}
     {facts.errors.length > 0 && <ul className="tv-problem tv-cf-errs" aria-label={mode === "hire" ? "Why it can't be hired" : "Why it can't be started"}>{facts.errors.map((e) => <li key={e} data-content>{e}</li>)}</ul>}
@@ -134,7 +133,7 @@ export function ClassFacts({ entry, registry, label, hireable, startable, projec
     <dl className="tv-dl tv-cf-dl">{facts.fields.map((f) => <FieldRow key={f.field} f={f} facts={facts} registry={registry} mode={mode} />)}</dl>
     {facts.notes.length > 0 && <ul className="tv-cf-notes m small" aria-label="Notes from resolving it">{facts.notes.map((n) => <li key={n} data-content>{n}</li>)}</ul>}
     </>}
-  </section>;
+  </RecordFold>;
 }
 
 /**

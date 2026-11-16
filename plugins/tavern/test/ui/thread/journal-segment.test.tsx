@@ -32,6 +32,8 @@ describe("journal context segment", () => {
     const app = await load();
     const segment = app.threadContextSegments.find(s => s.id === "journal")!;
     expect(segment).toMatchObject({ title: "Journal (checklist)", group: "2_tavern-journal" });
+    // No disclosure: the summary opens the journal panel itself.
+    expect(segment.details).toBeUndefined();
     expect(segment.group > "2_pullRequest" && segment.group < "3_git").toBe(true);
     expect(app.threadContextCardSections.find(s => s.id === "journal")?.title).toBe("Journal");
   });
@@ -92,18 +94,19 @@ describe("journal context segment", () => {
     });
   });
 
-  it("summarises with the mark, the count and blocked work, and toggles the details", async () => {
+  it("summarises with the mark, the count and blocked work, and opens the journal on click", async () => {
     const app = await load();
     const segment = app.threadContextSegments.find(s => s.id === "journal")!;
-    const p = props(false);
-    const slot = renderSlot({ component: segment.summary }, p, { rpc: { decor: () => plainDecor } });
+    const openTab = vi.fn(() => true);
+    const slot = renderSlot({ component: segment.summary }, props(false), { rpc: { decor: () => plainDecor }, experimental_panel: { openTab } });
     const button = await slot.findByRole("button", { name: "Journal (checklist): 1 of 7 done, 1 blocked" });
-    expect(button.getAttribute("aria-expanded")).toBe("false");
+    // The composer widget is no disclosure any more: the whole row takes you to the journal panel.
+    expect(button.hasAttribute("aria-expanded")).toBe(false);
     expect(button.hasAttribute("data-segment-summary")).toBe(true);
     expect(button.textContent).toContain("1 of 7");
     expect(button.textContent).toContain("1/7");
     fireEvent.click(button);
-    expect(p.onToggle).toHaveBeenCalledTimes(1);
+    expect(openTab).toHaveBeenLastCalledWith({ tab: expect.objectContaining({ id: "journal" }) });
     slot.lifecycle.unmount();
     const empty = renderSlot({ component: segment.summary }, props(false), { rpc: { decor: () => ({ ...plainDecor, progress: { ...progress, total: 0, done: 0 } }) } });
     await waitFor(() => expect(empty.inspection.rpcCalls.length).toBeGreaterThan(0));
@@ -117,30 +120,6 @@ describe("journal context segment", () => {
     expect(more).toBe(2);
   });
 
-  it("details tick an entry, open linked work in the journal, and open the journal", async () => {
-    const app = await load();
-    const segment = app.threadContextSegments.find(s => s.id === "journal")!;
-    const journalEdit = vi.fn(() => ({ ok: true, message: "Done" }));
-    const openTab = vi.fn(() => true);
-    const collapsed = renderSlot({ component: segment.details! }, props(false), { rpc: { journal: () => journal, journalEdit } });
-    expect(collapsed.container.textContent).toBe("");
-    collapsed.lifecycle.unmount();
-    const slot = renderSlot({ component: segment.details! }, props(true), { rpc: { journal: () => journal, journalEdit }, experimental_panel: { openTab } });
-    const list = await slot.findByRole("list", { name: "Next in the journal" });
-    expect(list.querySelectorAll("li")).toHaveLength(4);
-    expect(slot.getByText("+2 more open")).toBeTruthy();
-    fireEvent.click(slot.getByRole("button", { name: "Mark “Write the summary” done" }));
-    await waitFor(() => expect(journalEdit).toHaveBeenCalled());
-    expect(slot.inspection.rpcCalls.find(c => c.method === "journalEdit")?.input).toMatchObject({ threadId: "t", edit: { op: "status", entryIds: ["s1"], status: "done" } });
-    fireEvent.click(slot.getByRole("button", { name: /Mark “Linked work” done: add evidence/ }));
-    expect(journalEdit).toHaveBeenCalledTimes(1);
-    expect(openTab).toHaveBeenLastCalledWith(expect.objectContaining({ tab: expect.objectContaining({ id: "journal" }), params: { focus: "a3" } }));
-    fireEvent.click(slot.getByRole("button", { name: /Open “Entry a4” in the journal, blocked/ }));
-    expect(openTab).toHaveBeenLastCalledWith(expect.objectContaining({ params: { focus: "a4" } }));
-    fireEvent.click(slot.getByRole("button", { name: "Open the journal" }));
-    expect(openTab).toHaveBeenLastCalledWith({ tab: expect.objectContaining({ id: "journal" }) });
-    slot.lifecycle.unmount();
-  });
 });
 
 describe("Tavern's widget row without the journal", () => {
