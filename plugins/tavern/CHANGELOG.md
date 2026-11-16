@@ -9,8 +9,8 @@ A returned or stopped quest reopens for deviations without a new quest, the chec
 ### Added
 
 - Tavern's party is drawn as animated pixel-art characters. Every member is a small sprite with its own look (build, hair, hair colour, skin and a hat), seeded from the character's id and overridable in its character file's `look` block. The sprite walks, works and rests with the thread, follows the Keeper's state, and turns to face an ask.
-- Each character walks a strip above the composer at a readable size (2x, the same on-screen height as Calm's scene strip), its heraldic charge worn on its chest in pixel art, while the widget row keeps the class crest. The walk runs through the motion coordinator, so reduced motion, the typing hold and an ask in the row stop it and leave it standing at the start.
-- In the dark a character carries a light: a lantern or a lit torch in its free hand, seeded from its id or set in a character file's `look.light`, with a warm glow over the glass or flame and a halo past the sprite's frame. The light theme draws none of it.
+- Each character walks a strip directly under the widget row and above the composer, at a readable size (2x, the same on-screen height as Calm's scene strip), its heraldic charge worn on its chest in pixel art while the row keeps the class crest. The row and strip share one banner root, the walk paces the composer's own width at a calm amble (never the wider conversation view), and the sprite wears no ring or keyline. The walk moves every frame while the pixel art redraws at its own slower rate; the motion coordinator still stops it for reduced motion, the typing hold and an ask in the row, and leaves it standing at the start.
+- In the dark a character carries a light: a lantern or a lit torch in its free hand, seeded from its id or set in a character file's `look.light`. Two warm radial layers bleed out from the glass or flame and breathe with the fire's own flicker, so the glow animates like a source rather than a flat halo; the light theme draws none of it.
 - A continuous motion mode: with motion set to Lively, an unbounded ambient loop runs the sprites whenever their surface is visible. The strong stops still apply (reduced motion, a hidden or paused tab, and the typing hold), and an ask holds the widget row without freezing a standing sprite.
 - A returned or stopped quest can be re-opened for deviations and follow-up commits without opening a new quest. `tavern_reopen` returns it to build, keeps its plan version and greenlight, clears its end and stop state, records `quest.reopened`, and reanchors the Keeper's thread. A live quest is refused; an archived quest must be brought up from the cellar first, and a deleted one restored from there.
 
@@ -22,6 +22,7 @@ A returned or stopped quest reopens for deviations without a new quest, the chec
 
 ### Fixed
 
+- The walking strip sits where it should. Its CSS selector was a descendant rule that never matched the strip's own element (the element carries both classes), so the strip lost its height and position and the absolutely-placed sprite anchored to an ancestor and overlapped the composer and the ask row. The selector is corrected and the row plus strip share one banner root.
 - A dark-mode character's eyes are dark again. The sprite's ink is a fixed dark in both themes, not bb's near-white dark foreground, so the eyes no longer turn white in dark mode.
 
 ## 0.1.2 (2026-11-15)

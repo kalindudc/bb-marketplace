@@ -245,7 +245,7 @@ export function ThreadWidget({ threadId }: { threadId: string }) {
     : null;
 
   return (
-    <>
+    <div className="tavern-thread-stack">
     <section className={`tavern twidget v-${variant} ${lit ? "glow" : ""} ${open ? "is-open" : ""} ${keeper?.quietSince != null ? "is-quiet" : ""}`} style={surface} aria-label="Tavern widget" data-part="TavernWidget">
       <div className="tw-row">
         {identity && data.member && keeper && <span className={`tw-id ${keeper ? `st-${keeper.quietSince != null ? "quiet" : keeper.status}` : ""}`} title={`This thread: ${identity.character.name}, ${identity.cls.label} (${identity.cls.plain})${keeper ? ` · ${keeper.quietSince != null ? `quiet: ${KEEPER_STATE_HINT.quiet}` : `${STATUS_WORD[keeper.status]}: ${STATUS_HINT[keeper.status]}`}` : ""}`}><span className="tw-crest"><Crest {...identity} size={18} />{keeper && <i ref={dot} className="tw-dot" aria-hidden="true" />}</span>{<span className="who-t tw-name"><b>{identity.character.name}</b>{keeper ? <span aria-hidden="true"> · </span> : <span className="anc">{identity.cls.label} · {identity.cls.plain}</span>}</span>}{keeper && <span className="sr">Keeper, {STATUS_WORD[keeper.status]}</span>}</span>}
@@ -265,7 +265,7 @@ export function ThreadWidget({ threadId }: { threadId: string }) {
       {open === "brief" && !keeper && <div className="tw-panel tw-brief" id={`tw-brief-${threadId}`} role="region" aria-label="Member"><MemberPanel key={threadId} data={data} cue={data.ambientMotion === "off" ? undefined : cue} registry={registry.data ?? null} scopeDetails={<ScopePanel data={data} />} onQuest={id => navigate.toPluginPanel("tavern", { subPath: `quest/${id}` })} /></div>}
     </section>
     {walker}
-    </>
+    </div>
   );
 }
 

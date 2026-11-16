@@ -19,8 +19,25 @@ import "./characters.css";
 export const CHARACTER_GRID = { width: 24, height: 26, ground: 23, centre: 12 } as const;
 /** ~12 fps: chunky pixels read as pixel art at this rate, and a row of characters costs almost nothing. */
 export const CHARACTER_FRAME_MS = 80;
-/** The pace of a walking sprite on its strip, in px per second: kept in step with the sprite's size, so a bigger walker keeps the same cadence. */
-const WALK_SPEED = 52;
+/** The pace of a walking sprite on its strip, in px per second: a calm amble, so a wide composer is strolled across, never sprinted. */
+export const WALK_SPEED = 20;
+
+/**
+ * The walk's reach in px: the composer's own width when one is known, else the strip's, less the sprite — never the wider conversation view the
+ * composer sits in. `composerWidth` is null when no composer element is on the page (a test, another host).
+ */
+export function walkSpan(composerWidth: number | null, stripWidth: number, spriteWidth: number) {
+  const reach = composerWidth && composerWidth > 0 ? Math.min(composerWidth, stripWidth) : stripWidth;
+  return Math.max(0, reach - spriteWidth);
+}
+
+/**
+ * A fire's flicker, around 1: two detuned waves and a slow one, so a flame's reach and warmth never pulse like a metronome. `seed` is
+ * the character's own offset, so no two fires beat together, and the result stays in a calm band (about 0.62 to 1.18).
+ */
+export function fireFlicker(ts: number, seed: number) {
+  return 0.9 + 0.13 * Math.sin(ts / 90 + seed) + 0.09 * Math.sin(ts / 47 + seed * 1.7) + 0.06 * Math.sin(ts / 173 + seed * 0.3);
+}
 
 export const CHARACTER_STATES = ["idle", "working", "needs-you", "error"] as const;
 export type CharacterState = (typeof CHARACTER_STATES)[number];
@@ -321,10 +338,11 @@ export const CHARGE_PIXELS: Record<CharacterDef["charge"], readonly string[]> = 
 /**
  * One frame of pixel art, part by part, back to front: the shadow on the ground, the legs, the cloak a Keeper wears, the torso in the
  * character's hue, the arms (the right one swings a tool), the head with its hair and hat, the eyes, and the weather over it all. The
- * draw is pure: the same look, palette, pose and class always give the same pixels.
+ * draw is pure: the same look, palette, pose, class and `flame` always give the same pixels. In the dark it adds the charge, an in-hand
+ * light and its flickering glow; `flame` is that flicker at this instant (1 is a steady fire), so the caller owns the clock.
  */
-export function drawCharacter(input: { ctx: CanvasRenderingContext2D; hue: string; look: CharacterLook; palette: CharacterPalette; pose: CharacterPose; cls?: string | null; keeper?: boolean; charge?: CharacterDef["charge"] | null }): void {
-  const { ctx: g, hue: hueName, look, palette: p, pose, cls = null, keeper = false, charge = null } = input;
+export function drawCharacter(input: { ctx: CanvasRenderingContext2D; hue: string; look: CharacterLook; palette: CharacterPalette; pose: CharacterPose; cls?: string | null; keeper?: boolean; charge?: CharacterDef["charge"] | null; flame?: number }): void {
+  const { ctx: g, hue: hueName, look, palette: p, pose, cls = null, keeper = false, charge = null, flame = 1 } = input;
   const { width: GW, height: GH, ground: GROUND, centre: CX } = CHARACTER_GRID;
   const bw = bodyWidth(look);
   const hue = p.hue[hueName] ?? p.hue.ink!;
@@ -373,18 +391,26 @@ export function drawCharacter(input: { ctx: CanvasRenderingContext2D; hue: strin
   px(CX - 1, eyeY + 3, 2, 1, p.ink);
   /* a Keeper's ember, rising off its belt light */
   if (pose.ember > 0) { const rise = Math.round(pose.ember * 6); px(CX + 2, bodyTop - 2 - rise, 1, 1, p.hearth); if (rise > 3) px(CX, bodyTop - 2 - (rise - 3), 1, 1, p.hearth); }
-  /* In the dark a free hand carries a light: a lantern hung from it or a lit torch held up, with a warm glow over the glass or flame. */
+  /*
+   * In the dark a free hand carries a light: a lantern hung from it or a lit torch held up. Two warm radial layers bleed out from the
+   * glass or flame and breathe with the fire (`flame`, the flicker), so the light reads as a source that moves rather than a flat halo.
+   */
   if (p.dark && look.light !== "none") {
     const hx = lx - 1, hy = sy + armLen;
     const at = look.light === "torch" ? { x: hx, y: hy - 2 } : { x: hx, y: hy + 2 };
     if (typeof g.createRadialGradient === "function") {
-      const grd = g.createRadialGradient(at.x + 0.5, at.y + 0.5, 0, at.x + 0.5, at.y + 0.5, 8);
-      grd.addColorStop(0, "rgba(250,214,140,.55)");
-      grd.addColorStop(1, "rgba(250,214,140,0)");
+      const cx = at.x + 0.5, cy = at.y + 0.5;
       g.save();
       g.globalCompositeOperation = "lighter";
-      g.fillStyle = grd;
-      g.fillRect(0, 0, GW, GH);
+      const layer = (reach: number, alpha: number, rgb: string) => {
+        const grd = g.createRadialGradient(cx, cy, 0, cx, cy, Math.max(1, reach * flame));
+        grd.addColorStop(0, `rgba(${rgb},${Math.min(1, alpha * flame).toFixed(3)})`);
+        grd.addColorStop(1, `rgba(${rgb},0)`);
+        g.fillStyle = grd;
+        g.fillRect(0, 0, GW, GH);
+      };
+      layer(6, 0.55, "255,222,150");   // the hot core at the glass or flame
+      layer(14, 0.3, "255,150,70");    // the warm bleed, out past the sprite's edge
       g.restore();
     }
     drawLight(px, hx, hy, look.light, p);
@@ -441,12 +467,12 @@ export function TavernCharacter({
   const wrap = useRef<HTMLElement | null>(null);
   const context = useRef<CanvasRenderingContext2D | null>(null);
   const palette = useRef<CharacterPalette | null>(null);
+  const trackSpan = useRef(0);
   const bubbleTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const gags = useRef(0);
   const [bubble, setBubble] = useState<string | null>(null);
   const [gag, setGag] = useState<{ kind: CharacterGag; start: number; until: number } | null>(null);
   const [visible, setVisible] = useState(false);
-  const [dark, setDark] = useState(false);
 
   const reduced = useSyncExternalStore(motion.subscribe, motion.getReduced, () => false);
   const paused = useSyncExternalStore(motion.subscribe, motion.getPaused, () => false);
@@ -465,34 +491,45 @@ export function TavernCharacter({
     palette.current ??= readPalette(wrap.current);
     ctx.imageSmoothingEnabled = false;
     const pose = characterPose({ look, state, ts, mode: still ? "interval" : settings, keeper, walk: walking, gag: gag ? { kind: gag.kind, progress: (ts - gag.start) / Math.max(1, gag.until - gag.start) } : null });
-    drawCharacter({ ctx, hue: character.hue, look, palette: palette.current, pose, cls: classId, keeper, charge: character.charge });
+    drawCharacter({ ctx, hue: character.hue, look, palette: palette.current, pose, cls: classId, keeper, charge: character.charge, flame: fireFlicker(ts, look.blinkOff) });
   }, [look, state, settings, still, keeper, classId, gag, character.hue, character.charge, walking]);
 
   /**
    * A walker's place on its strip: it travels the whole track and back at a constant pace, eased at each end so it turns rather than
-   * snapping. The track is the sprite's parent, so any width (a phone, a wide composer) works with no measurement of its own.
+   * snapping. The reach was measured once (and on a resize), never per frame, so a moving sprite never forces a layout mid-walk.
    */
-  const walkTo = useCallback((ts: number) => {
+  const positionWalk = useCallback((ts: number) => {
     const el = wrap.current;
-    if (!el) return;
-    const span = Math.max(0, (el.parentElement?.clientWidth ?? 0) - el.offsetWidth);
+    const span = trackSpan.current;
+    if (!el || !span) return;
     const period = Math.max(1400, (2 * span / WALK_SPEED) * 1000);
     const x = span * (1 - Math.cos(2 * Math.PI * ((ts % period) / period))) / 2;
     el.style.translate = `${x.toFixed(1)}px 0px`;
   }, []);
+
+  // How far a walker may travel: the composer's own width (bb's [data-app-composer]) less the sprite, never the wider conversation view; the
+  // strip's width stands in when no composer is found. Read once and again only when either resizes, never per frame.
+  useLayoutEffect(() => {
+    if (!walking) return;
+    const el = wrap.current, strip = el?.parentElement;
+    if (!el || !strip) return;
+    const composer = el.closest("[data-app-composer]");
+    const measure = () => { trackSpan.current = walkSpan(composer && composer.clientWidth > 0 ? composer.clientWidth : null, strip.clientWidth, el.offsetWidth); };
+    measure();
+    if (typeof ResizeObserver !== "undefined") { const observer = new ResizeObserver(measure); observer.observe(strip); if (composer) observer.observe(composer); return () => observer.disconnect(); }
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, [walking]);
 
   // One still frame whenever anything the drawing depends on changes: that is the whole of reduced motion, and the first paint.
   useLayoutEffect(() => {
     if (canvas.current && context2d()) draw(performance.now());
   }, [draw, context2d, scale, visible]);
 
-  // Whether the page is dark decides the in-hand light and its halo: read it with the palette, and again on a theme switch.
-  useLayoutEffect(() => { palette.current ??= readPalette(wrap.current); setDark(!!palette.current?.dark); }, []);
-
   // The theme can change under us (bb's dark switch, a whole different theme): read the palette again and repaint.
   useEffect(() => {
     if (typeof MutationObserver === "undefined" || !canvas.current) return;
-    const observer = new MutationObserver(() => { palette.current = readPalette(wrap.current); setDark(!!palette.current?.dark); draw(performance.now()); });
+    const observer = new MutationObserver(() => { palette.current = readPalette(wrap.current); draw(performance.now()); });
     observer.observe(document.documentElement, { attributes: true, attributeFilter: ["class", "style", "data-theme"] });
     return () => observer.disconnect();
   }, [draw]);
@@ -552,22 +589,26 @@ export function TavernCharacter({
     if (visible) fireGag(state === "error" ? "drop" : state === "needs-you" ? "notice" : state === "working" ? "tap" : "wave", true);
   }, [state, visible, fireGag]);
 
-  // The loop: continuous mode runs it, interval mode runs it only while a gag is in flight. `mayLoop` is asked every frame, so a hold
-  // that begins mid-loop (you start typing, the tab hides) stops it, and one that ends lets it carry on.
-  const animating = !still && visible && (looping || gag !== null || walking);
+  // One loop for the life of the sprite. It moves a walker every frame (smooth) and redraws the pixel art at the art's own chunky rate.
+  // Nothing here is a prop, so a re-render or a gag never restarts it and never hitches; `mayLoop` is asked per frame, so a hold that
+  // begins mid-loop (you start typing, the tab hides) stops it and one that ends lets it carry on. Reduced motion or Motion off runs none.
+  const drawRef = useRef(draw); drawRef.current = draw;
+  const liveRef = useRef(false); liveRef.current = !still && visible && (looping || gag !== null || walking);
+  const walkRef = useRef(walking); walkRef.current = walking;
   useEffect(() => {
-    if (!animating) return;
+    if (still || typeof requestAnimationFrame !== "function") return;
     let raf = 0, last = 0;
     const step = (ts: number) => {
       raf = requestAnimationFrame(step);
-      if (!motion.mayLoop(surface) || ts - last < CHARACTER_FRAME_MS) return;
+      const live = liveRef.current && motion.mayLoop(surface);
+      if (walkRef.current && live) positionWalk(ts);
+      if (!live || ts - last < CHARACTER_FRAME_MS) return;
       last = ts;
-      if (walking) walkTo(ts);
-      draw(ts);
+      drawRef.current(ts);
     };
     raf = requestAnimationFrame(step);
     return () => cancelAnimationFrame(raf);
-  }, [animating, surface, draw, walking, walkTo]);
+  }, [still, surface, positionWalk]);
 
   // A still or resting sprite stands where it began, never frozen mid-stride by a hold that came and went.
   useLayoutEffect(() => { if (wrap.current && (!walking || still)) wrap.current.style.translate = ""; }, [walking, still]);
@@ -589,8 +630,7 @@ export function TavernCharacter({
     {bubble && <span className="tchar-say" role="status">{bubble}</span>}
   </>;
   const shell = `tchar st-${state} ${keeper ? "is-keeper" : ""} ${walking ? "tchar-walk" : ""} ${className ?? ""}`.trim();
-  const lit = dark && look.light !== "none";
-  const shared = { className: shell, style, "data-part": "TavernCharacter", "data-state": state, "data-keeper": keeper || undefined, "data-mode": settings, "data-lit": lit || undefined };
+  const shared = { className: shell, style, "data-part": "TavernCharacter", "data-state": state, "data-keeper": keeper || undefined, "data-mode": settings };
   if (!interactive) return <span ref={host} {...shared} title={label}>{body}</span>;
   return (
     <button

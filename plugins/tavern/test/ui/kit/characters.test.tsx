@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { parse } from "yaml";
 import {
   CHARACTER_GAG_MS, CHARACTER_PALETTE_FALLBACK, TavernCharacter, bodyWidth, characterLook, characterMode, characterPose,
-  characterState, darkTheme, drawCharacter, readPalette, CHARGE_PIXELS, type CharacterPalette, type CharacterState,
+  characterState, darkTheme, drawCharacter, fireFlicker, readPalette, walkSpan, WALK_SPEED, CHARGE_PIXELS, type CharacterPalette, type CharacterState,
 } from "../../../src/ui/kit/characters";
 import { characterDefSchema } from "../../../src/shared/schema";
 import { motion } from "../../../src/ui/kit/motion";
@@ -20,15 +20,21 @@ const SHIPPED = ["ada", "bram", "fern", "juno", "lark", "moss", "otto", "pip", "
 const wren = { id: "wren", name: "Wren", hue: "teal", charge: "chevron" } as const;
 const cls = { shape: "shield", label: "Keeper" } as const;
 
-/** A 2D context that records what was drawn, since jsdom has no canvas. */
+/** A 2D context that records what was drawn, since jsdom has no canvas. Gradients are captured too, for the fire's glow. */
 function recording() {
   const rects: { x: number; y: number; w: number; h: number; colour: string }[] = [];
+  const gradients: { x1: number; y1: number; r1: number; stops: [number, string][] }[] = [];
   const ctx = {
-    fillStyle: "", imageSmoothingEnabled: true,
-    clearRect: () => {},
-    fillRect(this: { fillStyle: string }, x: number, y: number, w: number, h: number) { rects.push({ x, y, w, h, colour: String(this.fillStyle) }); },
+    fillStyle: "" as unknown, imageSmoothingEnabled: true, globalCompositeOperation: "source-over",
+    clearRect: () => {}, save: () => {}, restore: () => {},
+    fillRect(this: { fillStyle: unknown }, x: number, y: number, w: number, h: number) { rects.push({ x, y, w, h, colour: String(this.fillStyle) }); },
+    createRadialGradient(_x0: number, _y0: number, _r0: number, x1: number, y1: number, r1: number) {
+      const g = { x1, y1, r1, stops: [] as [number, string][], addColorStop(this: { stops: [number, string][] }, offset: number, colour: string) { this.stops.push([offset, colour]); } };
+      gradients.push(g);
+      return g;
+    },
   };
-  return { ctx: ctx as unknown as CanvasRenderingContext2D, rects };
+  return { ctx: ctx as unknown as CanvasRenderingContext2D, rects, gradients };
 }
 
 describe("a character's look", () => {
@@ -115,6 +121,26 @@ describe("states and modes", () => {
   });
 });
 
+describe("the walk", () => {
+  it("bounds the reach by the composer's width, not the wider conversation view", () => {
+    // A composer narrower than the strip bounds the walk to the composer.
+    expect(walkSpan(300, 600, 24)).toBe(276);
+    // No composer element (a test, another host): the strip itself stands in.
+    expect(walkSpan(null, 600, 24)).toBe(576);
+    // A composer as wide as the strip changes nothing.
+    expect(walkSpan(600, 600, 24)).toBe(576);
+    // A composer whose width is not measured yet falls back to the strip.
+    expect(walkSpan(0, 600, 24)).toBe(576);
+    // Never a negative reach on a composer narrower than the sprite.
+    expect(walkSpan(10, 600, 24)).toBe(0);
+  });
+
+  it("keeps a calm pace: a wide strip is strolled across, not sprinted", () => {
+    // One full there-and-back over 900 px of travel takes well over half a minute at this pace.
+    expect((2 * 900 / WALK_SPEED) * 1000).toBeGreaterThan(30000);
+  });
+});
+
 describe("the pose", () => {
   const look = characterLook({ id: "wren" });
   const poseOf = (state: CharacterState, ts: number, mode: "interval" | "continuous", keeper = false, gag: { kind: "hop"; progress: number } | null = null) =>
@@ -189,6 +215,32 @@ describe("the drawing", () => {
       // On the torso, inside the grid: never over the belt, the legs or the arms.
       expect(chest.every(r => r.x >= 10 && r.x <= 14 && r.y >= 0 && r.y + r.h <= 26)).toBe(true);
     }
+  });
+
+  it("bleeds a flickering two-layer glow from the light in the dark, and none in the light", () => {
+    const look = characterLook({ id: "wren", look: { light: "lantern" } });
+    const pose = characterPose({ look, state: "idle", ts: 0, mode: "interval", keeper: false });
+    const lit = recording();
+    drawCharacter({ ctx: lit.ctx, hue: "teal", look, palette: { ...palette, dark: true }, pose, flame: 1 });
+    expect(lit.gradients).toHaveLength(2);
+    const [core, bleed] = lit.gradients;
+    // The core is small and hot; the bleed reaches further out, past the sprite's own width.
+    expect(bleed!.r1).toBeGreaterThan(core!.r1 * 1.5);
+    expect(core!.stops[1]![1]).toBe("rgba(255,222,150,0)");
+    // A stronger flame reaches further; a weaker one less far.
+    const hot = recording();
+    drawCharacter({ ctx: hot.ctx, hue: "teal", look, palette: { ...palette, dark: true }, pose, flame: 1.3 });
+    expect(hot.gradients[0]!.r1).toBeGreaterThan(core!.r1);
+    // The light theme paints no glow at all.
+    const off = recording();
+    drawCharacter({ ctx: off.ctx, hue: "teal", look, palette, pose, flame: 1 });
+    expect(off.gradients).toHaveLength(0);
+  });
+
+  it("flickers the fire on its own detuned beat, never a metronome", () => {
+    const vals = [0, 40, 90, 200, 350, 610].map(t => fireFlicker(t, 7));
+    expect(new Set(vals.map(v => v.toFixed(3))).size).toBeGreaterThan(3);
+    expect(vals.every(v => v > 0.6 && v < 1.2)).toBe(true);
   });
 
   it("carries a lantern or a torch only in the dark, its glass or flame lit", () => {
@@ -303,7 +355,8 @@ describe("TavernCharacter", () => {
     vi.useFakeTimers();
     const spy = vi.spyOn(motion, "cue");
     const v = sprite({ ambientMotion: "calm", repeatSeconds: 3, region: "widget" });
-    expect(vi.getTimerCount()).toBe(1);
+    // The interval timer plus the sprite's own animation loop; motion-off leaves neither (below).
+    expect(vi.getTimerCount()).toBeGreaterThanOrEqual(1);
     act(() => { vi.advanceTimersByTime(3000); });
     const gags = () => spy.mock.calls.filter(c => c[2] === "character gag");
     expect(gags()).toHaveLength(1);
@@ -401,6 +454,8 @@ describe("TavernCharacter", () => {
     expect(host.className).toContain("tchar-walk");
     Object.defineProperty(host.parentElement!, "clientWidth", { value: 200, configurable: true });
     Object.defineProperty(host, "offsetWidth", { value: 24, configurable: true });
+    // jsdom has no ResizeObserver, so the strip's reach is re-measured on a resize event.
+    act(() => { window.dispatchEvent(new Event("resize")); });
     act(() => { vi.advanceTimersByTime(1200); });
     expect(host.style.translate).not.toBe("");
     const first = host.style.translate;
@@ -414,6 +469,39 @@ describe("TavernCharacter", () => {
     act(() => { motion.setHeld("thread:t1", false); });
     act(() => { vi.advanceTimersByTime(1200); });
     expect(host.style.translate).not.toBe(held);
+    v.unmount();
+  });
+
+  it("bounds a walker by the composer element when the strip sits inside a wider one", () => {
+    vi.useFakeTimers();
+    const v = render(<div className="tavern" data-app-composer=""><div><TavernCharacter character={wren} cls={cls} surface="thread:t1" mode="continuous" placement="walk" /></div></div>);
+    const host = el(v.container) as HTMLElement;
+    const composer = v.container.querySelector("[data-app-composer]") as HTMLElement;
+    Object.defineProperty(composer, "clientWidth", { value: 120, configurable: true });
+    Object.defineProperty(host.parentElement!, "clientWidth", { value: 600, configurable: true });
+    Object.defineProperty(host, "offsetWidth", { value: 24, configurable: true });
+    act(() => { window.dispatchEvent(new Event("resize")); });
+    // The composer's 120 px bounds the reach to 96, so no sample ever reaches the strip's own 576 px.
+    let max = 0;
+    for (let i = 0; i < 120; i++) { act(() => { vi.advanceTimersByTime(200); }); max = Math.max(max, parseFloat(host.style.translate) || 0); }
+    expect(max).toBeLessThanOrEqual(96);
+    expect(max).toBeGreaterThan(0);
+    v.unmount();
+  });
+
+  it("moves the walker every frame, not only on the art's 12 fps beat", () => {
+    vi.useFakeTimers();
+    const v = sprite({ mode: "continuous", placement: "walk" });
+    const host = el(v.container) as HTMLElement;
+    Object.defineProperty(host.parentElement!, "clientWidth", { value: 200, configurable: true });
+    Object.defineProperty(host, "offsetWidth", { value: 24, configurable: true });
+    act(() => { window.dispatchEvent(new Event("resize")); });
+    act(() => { vi.advanceTimersByTime(100); });
+    const samples: number[] = [];
+    // Four samples 20 ms apart (all inside one 80 ms art frame) already move: the position is per-frame, never throttled to the art rate.
+    for (let i = 0; i < 4; i++) { act(() => { vi.advanceTimersByTime(20); }); samples.push(parseFloat(host.style.translate)); }
+    expect(samples.every(Number.isFinite)).toBe(true);
+    expect(new Set(samples).size).toBeGreaterThan(1);
     v.unmount();
   });
 

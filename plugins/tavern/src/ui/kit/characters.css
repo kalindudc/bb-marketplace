@@ -70,22 +70,17 @@ html.dark .tavern .tchar {
    transforms, so a hop or a wave still lands on top of the walk. The strip's own rules sit under the gags below. */
 .tavern .tchar-walk { position: absolute; bottom: 2px; left: 0; will-change: translate; }
 
-/* Needs you: the amber mark Tavern uses wherever an ask waits, and a ring in the same amber. */
-.tavern .tchar.st-needs-you { box-shadow: 0 0 0 1px color-mix(in oklab, var(--tavern-you) 55%, transparent); }
+/* Needs you: the amber mark Tavern uses wherever an ask waits. The sprite reads its state from its pose and this mark, never a ring: a
+   box-shadow keyline on a rectangular canvas reads as an unwanted border, so a walker carries none. */
 .tavern .tchar-need { position: absolute; top: -3px; right: -3px; display: grid; place-items: center; width: 13px; height: 13px; border-radius: 50%; background: var(--tavern-you); color: var(--attention-foreground); font-size: 10px; font-weight: 800; line-height: 1; box-shadow: 0 0 0 1px var(--tchar-card); }
-/* A failed step: the warning tint, never the destructive fill. */
-.tavern .tchar.st-error { box-shadow: 0 0 0 1px color-mix(in oklab, var(--tavern-bad) 45%, transparent); }
-
-/* The Keeper reads apart: a hearth-lit halo behind it and a warmer keyline. It is the one that talks to you most. */
-.tavern .tchar.is-keeper::before { content: ""; position: absolute; inset: -3px -4px 0; z-index: -1; background: radial-gradient(closest-side, color-mix(in oklab, var(--tchar-hearth) 26%, transparent), transparent); }
-.tavern .tchar.is-keeper { box-shadow: 0 0 0 1px color-mix(in oklab, var(--tchar-hearth) 42%, transparent); }
-.tavern .tchar.is-keeper.st-needs-you { box-shadow: 0 0 0 1px color-mix(in oklab, var(--tavern-you) 70%, transparent); }
 
 /* What a character says when clicked. It hangs above the sprite, on the card colour, and never takes the pointer. */
 .tavern .tchar-say { position: absolute; bottom: calc(100% + 5px); left: 50%; transform: translateX(-50%); z-index: 6; width: max-content; max-width: 200px; padding: 3px 8px; border: 1px solid var(--tchar-hearth); background: var(--tchar-card); color: var(--foreground); font-size: 11px; line-height: 1.35; text-align: left; white-space: normal; pointer-events: none; }
 
 /* A picture inside another control is not a target; a sprite that reacts is one. */
 .tavern button.tchar { cursor: pointer; }
+/* Focus brightens the sprite; the default focus ring would draw a box around the canvas, so it is dropped. */
+.tavern button.tchar:focus-visible { outline: none; }
 .tavern button.tchar:hover .tchar-art, .tavern button.tchar:focus-visible .tchar-art { filter: brightness(1.06); }
 
 /* ---- Gags ----
@@ -109,13 +104,12 @@ html.dark .tavern .tchar {
 /* The coordinator refuses every cue under reduced motion, so no class lands; this is the belt to that braces. */
 @media (prefers-reduced-motion: reduce) { .tavern .tchar[class*="mo-char-"] { animation: none; } }
 
-/* In the dark, a character carrying a lantern or a torch casts a warm halo past its frame; the in-canvas glow lights the sprite itself.
-   `data-lit` is set only when the theme reads dark and the character has a light, so the light theme stays exactly as it was. */
-.tavern .tchar[data-lit] .tchar-art { filter: drop-shadow(0 0 3px color-mix(in oklab, var(--tavern-hearth) 70%, transparent)) drop-shadow(0 0 8px color-mix(in oklab, var(--tavern-hearth) 45%, transparent)); }
-.tavern .tchar[data-lit]:hover .tchar-art, .tavern .tchar[data-lit]:focus-visible .tchar-art { filter: drop-shadow(0 0 3px color-mix(in oklab, var(--tavern-hearth) 70%, transparent)) drop-shadow(0 0 8px color-mix(in oklab, var(--tavern-hearth) 45%, transparent)) brightness(1.06); }
-
-/* The walking strip above the composer: the sprite at 2x (48x52), with room to walk and bob, a ground line under the feet. The scale is
-   Calm's own measure (its 16-row strip is 48 CSS px), so the party walks at the readable height the user asked for. The sprite paces the
-   track through the motion coordinator, so reduced motion, the typing hold and a held widget row all stop it, and it stands at rest. */
-.tavern .twalk { position: relative; height: 56px; margin-top: 2px; }
+/* The walking strip above the composer: the 2x sprite (48x52) with room to walk and bob, on a ground line, spanning the composer. The
+   scale is Calm's own measure (its 16-row strip is 48 CSS px). The selector is `.tavern.twalk`, not `.tavern .twalk`: the strip element
+   carries both classes itself, and a descendant selector would never match it, leaving the absolutely-placed sprite anchored to an ancestor. */
+.tavern.twalk { position: relative; width: 100%; min-width: 0; height: 56px; margin-top: 2px; }
 .tavern .twalk-ground { position: absolute; left: 0; right: 0; bottom: 6px; height: 1px; background: color-mix(in oklab, var(--tavern-line) 65%, transparent); }
+
+/* One banner root for the row and the walk strip: the host lays a composer banner out as a single item, so both live inside this block
+   and stack in order, the strip directly under the row and above the prompt box. */
+.tavern-thread-stack { display: flex; flex-direction: column; width: 100%; min-width: 0; }
