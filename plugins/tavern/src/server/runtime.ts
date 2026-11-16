@@ -67,6 +67,7 @@ export const KEEPER_TOOLS = [
   "tavern_scope",
   "tavern_tell",
   "tavern_unarchive",
+  "tavern_reopen",
   "tavern_plan",
   "tavern_ask",
   "tavern_decide",

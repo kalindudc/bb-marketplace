@@ -284,6 +284,30 @@ export class Keeper {
     this.invalidate([tags.mapHistory(), tags.registry()]);
     return true;
   }
+  /** A returned or stopped quest reopens for deviations; an archived one must be brought up from the cellar first. */
+  reopenQuest(id: string, actor: Actor = { kind: "user" }): BoardQuest {
+    const q = this.quest(id);
+    if (q.deletedAt != null) throw new Error("A deleted board quest is in the cellar; bring it back before re-opening it");
+    if (q.archivedAt != null) throw new Error("An archived board quest cannot be re-opened; bring it up from the cellar first");
+    if (!["done", "stopped"].includes(q.phase)) throw new Error("Only a returned or stopped board quest can be re-opened");
+    const reopened: BoardQuest = {
+      ...q,
+      phase: "build",
+      endedAt: null,
+      archivedAt: null,
+      stopReason: null,
+      stoppingSince: null,
+      updatedAt: this.now(),
+    };
+    this.store.atomic(() => {
+      this.store.put("quests", id, reopened);
+      this.store.event(this.now(), q.keeperThreadId, id, "quest.reopened", `Re-opened ${q.title} for deviations`, { planVersion: q.planVersion, phaseBeforeReopen: q.phase }, actor);
+    });
+    this.changed(q.keeperThreadId, id);
+    this.invalidate([tags.mapHistory()]);
+    this.reanchor(q.keeperThreadId, "quest reopened for deviations");
+    return reopened;
+  }
   owned(threadId: string, id: string) {
     this.require(threadId, "keeper");
     const q = this.quest(id);

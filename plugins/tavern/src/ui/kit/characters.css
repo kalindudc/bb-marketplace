@@ -1,0 +1,108 @@
+/* Tavern's characters: the pixel sprites the kit draws on a canvas, and the states around them.
+   The palette lives here, as Tavern's other art does: the character's hue, the hearth-light, the ink and the card come from the tavern
+   theme tokens, so a theme switch recolours every sprite, and the skin, hair and gear below are the same warm set in light and dark. */
+
+.tavern .tchar {
+  --tchar-teal: var(--tavern-teal);
+  --tchar-plum: var(--tavern-plum);
+  --tchar-violet: var(--tavern-violet);
+  --tchar-blue: var(--tavern-blue);
+  --tchar-rose: var(--tavern-rose);
+  --tchar-ink: var(--tavern-ink);
+  --tchar-hearth: var(--tavern-hearth);
+  --tchar-bad: var(--tavern-bad);
+  --tchar-card: var(--card);
+  --tchar-bg: var(--background);
+  --tchar-muted: var(--tavern-muted);
+  --tchar-cloak: #7c3040;
+  --tchar-shadow: rgba(59, 52, 42, .18);
+  --tchar-skin-1: #eac49b;
+  --tchar-skin-2: #d8a87e;
+  --tchar-skin-3: #b9835e;
+  --tchar-hair-1: #5b4632;
+  --tchar-hair-2: #2e2822;
+  --tchar-hair-3: #c9a24a;
+  --tchar-hair-4: #8a8378;
+  --tchar-hair-5: #a34f2e;
+  --tchar-pants: #4a4136;
+  --tchar-belt: #6b5a3e;
+  --tchar-wood: #8a6a3e;
+  --tchar-metal: #8d949c;
+  --tchar-cloud: #9a938a;
+  --tchar-drop: #5f88b5;
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  align-items: flex-end;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  line-height: 0;
+}
+
+/* The shadow under the feet and the cloak on the shoulders read on a dark field too, so light and dark part here. */
+html.dark .tavern .tchar {
+  --tchar-cloak: #8f4152;
+  --tchar-shadow: rgba(0, 0, 0, .45);
+  --tchar-skin-1: #d8a87e;
+  --tchar-skin-2: #c49268;
+  --tchar-skin-3: #a8744e;
+  --tchar-hair-1: #6b543c;
+  --tchar-hair-2: #3d362e;
+  --tchar-hair-3: #d4b264;
+  --tchar-hair-4: #9a9186;
+  --tchar-hair-5: #b35f38;
+  --tchar-pants: #5a5044;
+  --tchar-belt: #7a6748;
+  --tchar-wood: #9a7a4e;
+  --tchar-metal: #a5adb5;
+  --tchar-cloud: #7d766e;
+  --tchar-drop: #7aa2c8;
+}
+
+/* Whole pixels only: the canvas is drawn on a 24x26 grid and shown at a whole multiple of it, so pixelated rendering never has to guess. */
+.tavern .tchar-art { display: block; image-rendering: pixelated; image-rendering: crisp-edges; }
+
+/* The chest badge is the crest system's own crest, hung where a crest would sit. */
+.tavern .tchar-badge { position: absolute; right: -2px; bottom: 0; display: inline-flex; line-height: 0; filter: drop-shadow(0 0 1px var(--tchar-card)); }
+
+/* Needs you: the amber mark Tavern uses wherever an ask waits, and a ring in the same amber. */
+.tavern .tchar.st-needs-you { box-shadow: 0 0 0 1px color-mix(in oklab, var(--tavern-you) 55%, transparent); }
+.tavern .tchar-need { position: absolute; top: -3px; right: -3px; display: grid; place-items: center; width: 13px; height: 13px; border-radius: 50%; background: var(--tavern-you); color: var(--attention-foreground); font-size: 10px; font-weight: 800; line-height: 1; box-shadow: 0 0 0 1px var(--tchar-card); }
+/* A failed step: the warning tint, never the destructive fill. */
+.tavern .tchar.st-error { box-shadow: 0 0 0 1px color-mix(in oklab, var(--tavern-bad) 45%, transparent); }
+
+/* The Keeper reads apart: a hearth-lit halo behind it and a warmer keyline. It is the one that talks to you most. */
+.tavern .tchar.is-keeper::before { content: ""; position: absolute; inset: -3px -4px 0; z-index: -1; background: radial-gradient(closest-side, color-mix(in oklab, var(--tchar-hearth) 26%, transparent), transparent); }
+.tavern .tchar.is-keeper { box-shadow: 0 0 0 1px color-mix(in oklab, var(--tchar-hearth) 42%, transparent); }
+.tavern .tchar.is-keeper.st-needs-you { box-shadow: 0 0 0 1px color-mix(in oklab, var(--tavern-you) 70%, transparent); }
+
+/* What a character says when clicked. It hangs above the sprite, on the card colour, and never takes the pointer. */
+.tavern .tchar-say { position: absolute; bottom: calc(100% + 5px); left: 50%; transform: translateX(-50%); z-index: 6; width: max-content; max-width: 200px; padding: 3px 8px; border: 1px solid var(--tchar-hearth); background: var(--tchar-card); color: var(--foreground); font-size: 11px; line-height: 1.35; text-align: left; white-space: normal; pointer-events: none; }
+
+/* A picture inside another control is not a target; a sprite that reacts is one. */
+.tavern button.tchar { cursor: pointer; }
+.tavern button.tchar:hover .tchar-art, .tavern button.tchar:focus-visible .tchar-art { filter: brightness(1.06); }
+
+/* ---- Gags ----
+   The coordinator adds one of these classes for the length in CHARACTER_GAG_MS and takes it off when the cue ends; the drawing follows
+   the same clock. Each moves with transform only, and each duration must equal its entry in CHARACTER_GAG_MS. */
+.tavern .tchar.mo-char-hop { animation: tavern-char-hop 900ms var(--tavern-ease) 1 both; }
+.tavern .tchar.mo-char-notice { animation: tavern-char-notice 620ms var(--tavern-ease) 1 both; }
+.tavern .tchar.mo-char-wave { animation: tavern-char-wave 950ms var(--tavern-ease) 1 both; }
+.tavern .tchar.mo-char-blink { animation: tavern-char-blink 520ms var(--tavern-ease) 1 both; }
+.tavern .tchar.mo-char-tap { animation: tavern-char-tap 1100ms var(--tavern-ease) 1 both; }
+.tavern .tchar.mo-char-drop { animation: tavern-char-drop 1200ms var(--tavern-ease) 1 both; }
+.tavern .tchar.mo-char-flourish { animation: tavern-char-flourish 1300ms var(--tavern-ease) 1 both; }
+@keyframes tavern-char-hop { 0% { transform: translateY(0); } 30% { transform: translateY(-30%); } 60% { transform: translateY(-20%); } 85% { transform: translateY(-8%); } 100% { transform: translateY(0); } }
+@keyframes tavern-char-notice { 0% { transform: translateX(0); } 25% { transform: translateX(-2px); } 75% { transform: translateX(2px); } 100% { transform: translateX(0); } }
+@keyframes tavern-char-wave { 0% { transform: translateY(0); } 50% { transform: translateY(-2px); } 100% { transform: translateY(0); } }
+@keyframes tavern-char-blink { 0% { transform: translateY(0); } 50% { transform: translateY(1px); } 100% { transform: translateY(0); } }
+@keyframes tavern-char-tap { 0% { transform: translateY(0); } 55% { transform: translateY(1px); } 100% { transform: translateY(0); } }
+@keyframes tavern-char-drop { 0% { transform: translateY(0); } 40% { transform: translateY(2px); } 100% { transform: translateY(2px); } }
+@keyframes tavern-char-flourish { 0% { transform: translateY(0); } 35% { transform: translateY(-3px); } 70% { transform: translateY(-1px); } 100% { transform: translateY(0); } }
+
+/* The coordinator refuses every cue under reduced motion, so no class lands; this is the belt to that braces. */
+@media (prefers-reduced-motion: reduce) { .tavern .tchar[class*="mo-char-"] { animation: none; } }

@@ -4,6 +4,9 @@ name: Bram
 classes: [smith]
 hue: violet
 charge: saltire
+look:
+  build: broad
+  hat: cap
 temper: steady
 style: "Carpenter"
 quirks: ["Measures twice"]
