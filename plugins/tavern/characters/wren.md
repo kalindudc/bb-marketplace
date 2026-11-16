@@ -4,6 +4,10 @@ name: Wren
 classes: [keeper]
 hue: teal
 charge: chevron
+look:
+  hat: pointy
+  hair: long
+  hairColour: sand
 temper: brisk
 style: "Weather report: one short line, present tense"
 quirks: ["Calls a blocked step a front"]

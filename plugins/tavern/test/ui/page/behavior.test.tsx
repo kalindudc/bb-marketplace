@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { archiveTotal } from "../../../src/ui/page/archive";
 import { definePluginApp } from "@get-bb/plugin-sdk/app";
 import { loadPluginApp, renderSlot, type PluginRpcTestHandlers, type RenderedSlot } from "@get-bb/plugin-sdk/testing/app";
@@ -105,6 +106,15 @@ describe("Tavern page surfaces", () => {
     const oldest = slot.container.querySelector(".rm-sline .rm-oldest")!;
     expect(oldest.textContent).toMatch(/^oldest \d/);
     expect(oldest.getAttribute("title")).toBe(new Date(Math.min(...room.asks.filter((a) => a.state === "open").map((a) => a.createdAt))).toLocaleString());
+  });
+  it("shows an ask's full question in the common-room summary, wrapping once it is open and on a phone", async () => {
+    const slot = await page("", { room: () => ({ ...room, asks: [room.asks[0]!] }) });
+    await slot.findByRole("heading", { name: /Needs you/ });
+    expect(slot.container.querySelector(".tv-ask-disclosure .tv-askrow-q")!.textContent).toBe(room.asks[0]!.question);
+    // The summary truncates the question only while closed; open, or on a phone, it wraps in full.
+    const css = readFileSync("src/ui/page/page.css", "utf8");
+    expect(css).toMatch(/\.tavern\.tv-page \[open\] > \.tv-askrow \.tv-askrow-q \{ white-space: normal; \}/);
+    expect(css).toMatch(/\.tavern\.tv-page \.tv-askrow-q \{ white-space: normal; \}/);
   });
   it("never substitutes an internal id when an ask's quest or Keeper is unavailable", async () => {
     const slot = await page("", { room: () => ({ ...room, asks: [{ ...room.asks[0]!, boardQuestId: "bq_missing_123", keeperThreadId: "thr_missing_456" }] }) });

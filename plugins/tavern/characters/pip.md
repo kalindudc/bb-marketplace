@@ -4,6 +4,9 @@ name: Pip
 classes: [wanderer]
 hue: teal
 charge: dots
+look:
+  hair: spiky
+  hat: none
 temper: cheerful
 style: "Upbeat, one exclamation at most"
 quirks: ["Says “found it!” when it does"]

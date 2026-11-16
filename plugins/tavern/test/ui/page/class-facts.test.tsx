@@ -162,6 +162,26 @@ describe("the class page on one column", () => {
   });
 });
 
+describe("the class page rail", () => {
+  it("folds What it gets, Hiring and Characters like the quest page, with counts and a preview", async () => {
+    const slot = await page("class/warden");
+    await factsCard(slot);
+    const aside = slot.container.querySelector<HTMLElement>(".tv-classd .tv-ggrid > aside")!;
+    const folds = [...aside.querySelectorAll<HTMLElement>(".tv-rec-fold[data-fold]")];
+    expect(folds.map((f) => f.getAttribute("data-fold"))).toEqual(["class:warden.facts", "class:warden.hiring", "class:warden.characters"]);
+    // What it gets is the class page's main answer, so it opens; the two short cards fold, each saying how much it holds.
+    const expanded = (f: HTMLElement) => f.querySelector(".tv-rec-ft")!.getAttribute("aria-expanded");
+    expect(expanded(folds[0]!)).toBe("true");
+    expect(folds[0]!.querySelector(".tv-count")!.textContent).toContain("field");
+    expect(expanded(folds[1]!)).toBe("false");
+    expect(folds[1]!.querySelector(".tv-count")).not.toBeNull();
+    expect(expanded(folds[2]!)).toBe("false");
+    expect(folds[2]!.querySelector(".tv-count")!.textContent).toBe(`${warden.characters.length} characters`);
+    // A folded Characters keeps its members in the preview.
+    expect(folds[2]!.querySelector(".tv-cd-chars")).not.toBeNull();
+  });
+});
+
 describe("the Classes list", () => {
   it("shows the model a hire resolves to, not the class file's value", async () => {
     const slot = await page("classes");

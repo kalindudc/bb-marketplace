@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { experimental_ThreadContextCardRow as CardRow, experimental_useAppPanel, experimental_useRpcMutation, experimental_useRpcQuery, experimental_useThreadContextKind, type ExperimentalThreadContextCardProps, type ExperimentalThreadContextSegmentInput, type ExperimentalThreadContextSegmentProps } from "@get-bb/plugin-sdk/app";
 import { rpcContract } from "../../shared/contract";
 import type { JournalEntry, JournalProgress } from "../../shared/schema";
-import { Glyph, QueryState, SkBlock, SkGlyph, SkLine, Skeleton, StatusMark, readRemembered, skWidths, useSkeletonDelay, writeRemembered } from "../kit";
+import { Glyph, SkBlock, SkGlyph, SkLine, Skeleton, StatusMark, readRemembered, useSkeletonDelay, writeRemembered } from "../kit";
 import { JOURNAL_TAB } from "./tabs";
 import { useCardShown, useCardShownRef } from "./card-shown";
 import "./journal-segment.css";
@@ -75,8 +75,9 @@ function ProgressBar({ progress }: { progress: JournalProgress }) {
   return <span className="jseg-bar" aria-hidden="true"><i className="d" style={{ flexGrow: done }} /><i className="b" style={{ flexGrow: blocked }} /><i className="o" style={{ flexGrow: Math.max(0, total - done - blocked) }} /></span>;
 }
 
-export function JournalSegmentSummary({ threadId, isExpanded, onToggle }: ExperimentalThreadContextSegmentProps) {
+export function JournalSegmentSummary({ threadId }: ExperimentalThreadContextSegmentProps) {
   const decor = useDecor(threadId);
+  const { openJournal } = useJournalActions(threadId);
   const progress = decor.data?.progress;
   const [seenWidth] = useState(() => segmentSeenWidth(threadId));
   const loading = !decor.data && decor.isLoading && seenWidth > 0;
@@ -86,12 +87,12 @@ export function JournalSegmentSummary({ threadId, isExpanded, onToggle }: Experi
   if (!progress || progress.total === 0) return null;
   const label = journalSummaryLabel(progress);
   return (
-    <button ref={ref} type="button" data-segment-summary className="tavern jseg-sum" aria-expanded={isExpanded} aria-label={label} title={`${label}. ${isExpanded ? "Hide" : "Show"} what is next`} onClick={onToggle}>
+    <button ref={ref} type="button" data-segment-summary className="tavern jseg-sum" aria-label={label} title={`${label}. Open the journal`} onClick={() => openJournal()}>
       <JournalMark />
       <ProgressBar progress={progress} />
       <span className="jseg-n num"><span className="jseg-long">{progress.done} of {progress.total}</span><span className="jseg-short">{progress.done}/{progress.total}</span></span>
       {progress.blocked > 0 && <span className="jseg-blk"><StatusMark status="blocked" size={12} /><span className="num">{progress.blocked}</span></span>}
-      <Glyph name="chevron" size={11} className={`jseg-chev ${isExpanded ? "down" : ""}`} />
+      <Glyph name="chevron" size={11} className="jseg-chev" />
     </button>
   );
 }
@@ -110,54 +111,6 @@ function useJournalActions(threadId: string) {
   };
   const tickLabel = (e: JournalEntry) => e.boardQuestId ? `Open “${e.description}” in the journal: it follows its board quest’s phase` : needsJournal(e) ? `Mark “${e.description}” done: add evidence in the journal first` : `Mark “${e.description}” done`;
   return { openJournal, tick, tickLabel, pending: edit.isPending, error };
-}
-
-const DETAIL_LIMIT = 4;
-
-export function JournalSegmentDetails({ threadId, isExpanded }: ExperimentalThreadContextSegmentProps) {
-  if (!isExpanded) return null;
-  return <SegmentDetails threadId={threadId} />;
-}
-
-function SegmentDetails({ threadId }: { threadId: string }) {
-  const journal = experimental_useRpcQuery({ contract: rpcContract, method: "journal", input: { threadId } });
-  const { openJournal, tick, tickLabel, pending, error } = useJournalActions(threadId);
-  const data = journal.data;
-  const progress = useDecor(threadId).data?.progress;
-  if (!data) return <div className="tavern jseg-det"><QueryState error={journal.error} loading={journal.isLoading} retry={() => void journal.refetch()} label="what is next in the journal" skeleton={<SkSegmentDetails progress={progress} />} /></div>;
-  const { shown, more } = nextEntries(data.entries, data.progress.current?.id ?? null, DETAIL_LIMIT);
-  const stepsOf = (id: string) => data.entries.filter(s => s.parentId === id);
-  return (
-    <div className="tavern jseg-det">
-      {shown.length === 0 ? <p className="jseg-none m">All {data.progress.total} done.</p> : (
-        <ul aria-label="Next in the journal">
-          {shown.map(e => (
-            <li key={e.id} className={`jseg-row s-${e.status} ${e.id === data.progress.current?.id ? "cur" : ""}`}>
-              <button type="button" className="jseg-tick" disabled={pending} aria-label={tickLabel(e)} title={tickLabel(e)} onClick={() => tick(e)}><StatusMark status={e.status} size={14} /></button>
-              <button type="button" className="jseg-open" title={e.description} aria-label={`Open “${e.description}” in the journal${e.status === "todo" ? "" : `, ${e.status}`}`} onClick={() => openJournal(e.id)}>
-                <span className="id">{e.id}</span><span className="t" data-content>{e.description}</span>{e.status === "blocked" && <span className="flag">blocked</span>}{e.status === "rejected" && <span className="flag bad">rejected</span>}{(() => { const steps = stepsOf(e.id); return steps.length > 0 && <span className="cnt num" title={`${steps.filter(s => !isOpen(s)).length} of ${steps.length} steps done`}>{steps.filter(s => !isOpen(s)).length}/{steps.length}</span>; })()}
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-      <QueryState error={error} />
-      <div className="jseg-foot">
-        {more > 0 ? <span className="m num">+{more} more open</span> : <span />}
-        <button type="button" className="jseg-all" onClick={() => openJournal()}>Open the journal<Glyph name="chevron" size={11} /></button>
-      </div>
-    </div>
-  );
-}
-
-/** The details while the journal loads: the summary already knows how many open entries there are, so the rows are exact. */
-function SkSegmentDetails({ progress }: { progress: JournalProgress | undefined }) {
-  const open = progress ? progress.total - progress.done : DETAIL_LIMIT;
-  const rows = Math.min(DETAIL_LIMIT, open);
-  return <>
-    {rows === 0 ? <p className="jseg-none"><SkLine w="10ch" /></p> : <ul>{skWidths(rows).map((w, i) => <li key={i} className="jseg-row"><span className="jseg-tick"><SkGlyph size={14} /></span><span className="jseg-open"><span className="id"><SkLine w="2ch" /></span><span className="t"><SkLine w={w} /></span></span></li>)}</ul>}
-    <div className="jseg-foot">{open > DETAIL_LIMIT ? <span><SkLine w="10ch" /></span> : <span />}<span className="jseg-all"><SkLine w="14ch" /></span></div>
-  </>;
 }
 
 /** The thread context card's Journal section: the same glance as the segment, in bb's card rows. Its root tells the segment when the card is on screen. */

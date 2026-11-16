@@ -1,0 +1,353 @@
+// @vitest-environment jsdom
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import { renderSlot } from "@get-bb/plugin-sdk/testing/app";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { parse } from "yaml";
+import {
+  CHARACTER_GAG_MS, CHARACTER_PALETTE_FALLBACK, TavernCharacter, bodyWidth, characterLook, characterMode, characterPose,
+  characterState, drawCharacter, readPalette, type CharacterPalette, type CharacterState,
+} from "../../../src/ui/kit/characters";
+import { characterDefSchema } from "../../../src/shared/schema";
+import { motion } from "../../../src/ui/kit/motion";
+import { ThreadWidget } from "../../../src/ui/thread/composer";
+import { fixtureDecor, fixtureRegistry } from "../../../src/ui/thread/fixtures";
+import { clearThreadState } from "../../../src/ui/thread/state";
+import { installAnimations, installMatchMedia } from "./motion-fakes";
+
+const SHIPPED = ["ada", "bram", "fern", "juno", "lark", "moss", "otto", "pip", "rook", "tam", "vex", "wren"];
+const wren = { id: "wren", name: "Wren", hue: "teal", charge: "chevron" } as const;
+const cls = { shape: "shield", label: "Keeper" } as const;
+
+/** A 2D context that records what was drawn, since jsdom has no canvas. */
+function recording() {
+  const rects: { x: number; y: number; w: number; h: number; colour: string }[] = [];
+  const ctx = {
+    fillStyle: "", imageSmoothingEnabled: true,
+    clearRect: () => {},
+    fillRect(this: { fillStyle: string }, x: number, y: number, w: number, h: number) { rects.push({ x, y, w, h, colour: String(this.fillStyle) }); },
+  };
+  return { ctx: ctx as unknown as CanvasRenderingContext2D, rects };
+}
+
+describe("a character's look", () => {
+  it("is seeded from the id alone: same id, same character, anywhere", () => {
+    expect(characterLook({ id: "wren" })).toEqual(characterLook({ id: "wren" }));
+    const looks = SHIPPED.map(id => characterLook({ id }));
+    expect(new Set(looks.map(l => `${l.build}/${l.hair}/${l.hairColour}/${l.skin}/${l.hat}/${l.torso}/${l.head}`)).size).toBeGreaterThan(6);
+  });
+
+  it("keeps every body inside the drawn grid, whatever the seed", () => {
+    for (const id of SHIPPED) {
+      const look = characterLook({ id });
+      expect(bodyWidth(look)).toBeGreaterThanOrEqual(8);
+      expect(bodyWidth(look)).toBeLessThanOrEqual(10);
+      expect(look.torso).toBeGreaterThanOrEqual(7);
+      expect(look.torso).toBeLessThanOrEqual(9);
+      expect(look.head).toBeGreaterThanOrEqual(6);
+      expect(look.head).toBeLessThanOrEqual(7);
+    }
+  });
+
+  it("lets a character file's look override any trait it names, and keeps the rest seeded", () => {
+    const seeded = characterLook({ id: "wren" });
+    const edited = characterLook({ id: "wren", look: { hair: "bald", hat: "none", build: "broad" } });
+    expect(edited.hair).toBe("bald");
+    expect(edited.hat).toBe("none");
+    expect(edited.build).toBe("broad");
+    expect(edited.hairColour).toBe(seeded.hairColour);
+    expect(edited.skin).toBe(seeded.skin);
+    expect(edited.torso).toBe(seeded.torso);
+    expect(bodyWidth(edited)).toBe(10);
+  });
+
+  it("reads the shipped character files: an edited file changes the generated character", () => {
+    const file = (id: string) => {
+      const text = readFileSync(join(process.cwd(), "characters", `${id}.md`), "utf8");
+      const [, frontmatter = ""] = /^---\n([\s\S]*?)\n---/.exec(text) ?? [];
+      return characterDefSchema.parse({ ...(parse(frontmatter) as object), body: "", source: "test" });
+    };
+    const wren = file("wren");
+    expect(wren.look).toEqual({ hat: "pointy", hair: "long", hairColour: "sand" });
+    expect(characterLook(wren).hat).toBe("pointy");
+    expect(characterLook(wren).hair).toBe("long");
+    // The same id without the file's overrides: the file is what changed it, not the seed.
+    expect(characterLook({ id: "wren" }).hat).not.toBe("pointy");
+    // A file with no `look:` leaves the seed alone: the seed is the character.
+    expect(file("ada").look).toBeUndefined();
+    expect(characterLook(file("ada"))).toEqual(characterLook({ id: "ada" }));
+    // Every shipped character file parses (the schema is strict, so a typo in a trait fails here), and an override moves the look.
+    const parsed = SHIPPED.map(file);
+    expect(parsed.filter(c => c.look).map(c => c.id)).toEqual(["bram", "moss", "pip", "rook", "vex", "wren"]);
+    for (const c of parsed) if (c.look) expect(characterLook(c)).not.toEqual(characterLook({ id: c.id }));
+  });
+
+  it("changes the drawn body when a file overrides it", () => {
+    const palette = CHARACTER_PALETTE_FALLBACK;
+    const plain = recording(), broad = recording();
+    const a = characterLook({ id: "wren", look: { build: "slim", hair: "flat" } });
+    const b = characterLook({ id: "wren", look: { build: "broad", hair: "long" } });
+    drawCharacter({ ctx: plain.ctx, hue: "teal", look: a, palette, pose: characterPose({ look: a, state: "idle", ts: 0, mode: "interval", keeper: false }) });
+    drawCharacter({ ctx: broad.ctx, hue: "teal", look: b, palette, pose: characterPose({ look: b, state: "idle", ts: 0, mode: "interval", keeper: false }) });
+    expect(broad.rects).not.toEqual(plain.rects);
+  });
+});
+
+describe("states and modes", () => {
+  it("reads a thread's state as the character's own", () => {
+    expect(characterState("working")).toBe("working");
+    expect(characterState("busy")).toBe("working");
+    expect(characterState("idle")).toBe("idle");
+    expect(characterState("waiting")).toBe("idle");
+    expect(characterState("failed")).toBe("error");
+    expect(characterState("stopped")).toBe("error");
+    expect(characterState("idle", true)).toBe("needs-you");
+    expect(characterState(null)).toBe("idle");
+  });
+
+  it("takes its mode from the Motion setting unless a caller pins one", () => {
+    expect(characterMode("calm")).toBe("interval");
+    expect(characterMode("off")).toBe("interval");
+    expect(characterMode("lively")).toBe("continuous");
+    expect(characterMode("calm", "continuous")).toBe("continuous");
+    expect(characterMode("lively", "interval")).toBe("interval");
+  });
+});
+
+describe("the pose", () => {
+  const look = characterLook({ id: "wren" });
+  const poseOf = (state: CharacterState, ts: number, mode: "interval" | "continuous", keeper = false, gag: { kind: "hop"; progress: number } | null = null) =>
+    characterPose({ look, state, ts, mode, keeper, gag });
+
+  it("holds still in interval mode, at any instant", () => {
+    for (const ts of [0, 137, 5000]) expect(poseOf("idle", ts, "interval")).toEqual(poseOf("idle", 0, "interval"));
+    expect(poseOf("working", 900, "interval").arm).toBe(0);
+  });
+
+  it("loops in continuous mode: a breath at rest, a strike at work, rain when it failed", () => {
+    expect(poseOf("idle", 0, "continuous").bob).toBe(0);
+    expect(poseOf("idle", 600, "continuous").bob).toBe(1);
+    const arms = [0, 200, 500, 700, 900].map(ts => poseOf("working", ts, "continuous").arm);
+    expect(arms.some(a => a !== 0)).toBe(true);
+    expect(poseOf("error", 600, "continuous").err).toBe(true);
+    expect(poseOf("error", 600, "continuous").rain).toBeGreaterThan(0);
+  });
+
+  it("looks up when it needs you, and never moves a still pose under reduced motion", () => {
+    expect(poseOf("needs-you", 0, "interval").lookUp).toBe(true);
+    expect(poseOf("needs-you", 600, "continuous", false, null).bob).toBeGreaterThanOrEqual(0);
+  });
+
+  it("gives the Keeper an ember nobody else has, and only in continuous mode", () => {
+    const risen = [0, 4400, 4700, 5000].map(ts => poseOf("idle", ts, "continuous", true).ember);
+    expect(risen.some(e => e > 0)).toBe(true);
+    expect([0, 4400, 4700, 5000].map(ts => poseOf("idle", ts, "continuous", false).ember).every(e => e === 0)).toBe(true);
+    expect([0, 4400, 4700].map(ts => poseOf("idle", ts, "interval", true).ember).every(e => e === 0)).toBe(true);
+  });
+
+  it("draws every gag it is told to, from its own progress", () => {
+    expect(poseOf("idle", 0, "interval", false, { kind: "hop", progress: 0.1 }).jump).toBe(3);
+  });
+});
+
+describe("the drawing", () => {
+  const palette: CharacterPalette = CHARACTER_PALETTE_FALLBACK;
+  const look = characterLook({ id: "wren" });
+  const pose = characterPose({ look, state: "idle", ts: 0, mode: "interval", keeper: false });
+
+  it("draws the character in its own hue, and a Keeper as more than anyone else", () => {
+    const plain = recording(), keeper = recording();
+    drawCharacter({ ctx: plain.ctx, hue: "teal", look, palette, pose, cls: "smith" });
+    drawCharacter({ ctx: keeper.ctx, hue: "teal", look, palette, pose, cls: "keeper", keeper: true });
+    expect(plain.rects.some(r => r.colour === palette.hue.teal)).toBe(true);
+    // The cloak, the two belt lights and the ember: a Keeper's silhouette is its own.
+    expect(keeper.rects.length).toBeGreaterThan(plain.rects.length + 2);
+    expect(keeper.rects.some(r => r.colour === palette.cloak)).toBe(true);
+    expect([...keeper.rects, ...plain.rects].every(r => r.x >= 0 && r.y >= 0 && r.x + r.w <= 24 && r.y + r.h <= 26)).toBe(true);
+  });
+
+  it("carries a different tool by class, so a Smith and a Guardian never hold the same thing", () => {
+    const smith = recording(), warden = recording();
+    drawCharacter({ ctx: smith.ctx, hue: "violet", look, palette, pose, cls: "smith" });
+    drawCharacter({ ctx: warden.ctx, hue: "plum", look, palette, pose, cls: "warden" });
+    expect(smith.rects).not.toEqual(warden.rects);
+  });
+
+  it("paints the rain cloud only when it failed", () => {
+    const calm = recording(), failed = recording();
+    drawCharacter({ ctx: calm.ctx, hue: "teal", look: characterLook({ id: "wren" }), palette, pose, cls: "keeper" });
+    drawCharacter({ ctx: failed.ctx, hue: "teal", look: characterLook({ id: "wren" }), palette, pose: characterPose({ look, state: "error", ts: 0, mode: "interval", keeper: false }), cls: "keeper" });
+    expect(calm.rects.some(r => r.colour === palette.cloud)).toBe(false);
+    expect(failed.rects.some(r => r.colour === palette.cloud)).toBe(true);
+    expect(failed.rects.some(r => r.colour === palette.drop)).toBe(true);
+  });
+});
+
+describe("readPalette", () => {
+  it("falls back when there is no element to read a theme from", () => {
+    expect(readPalette(null)).toEqual(CHARACTER_PALETTE_FALLBACK);
+  });
+});
+
+describe("TavernCharacter", () => {
+  let animations: ReturnType<typeof installAnimations>;
+  let drawn: ReturnType<typeof recording>;
+  let rect: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    motion.reset();
+    drawn = recording();
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(drawn.ctx);
+    rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({ top: 10, bottom: 40, left: 0, right: 24, width: 24, height: 26 } as DOMRect);
+    animations = installAnimations({ "mo-char-hop": CHARACTER_GAG_MS.hop, "mo-char-notice": CHARACTER_GAG_MS.notice, "mo-char-wave": CHARACTER_GAG_MS.wave, "mo-char-tap": CHARACTER_GAG_MS.tap, "mo-char-blink": CHARACTER_GAG_MS.blink, "mo-char-drop": CHARACTER_GAG_MS.drop });
+  });
+  afterEach(() => { cleanup(); animations.uninstall(); rect.mockRestore(); vi.restoreAllMocks(); motion.reset(); vi.useRealTimers(); clearThreadState(); });
+
+  const sprite = (props: Partial<Parameters<typeof TavernCharacter>[0]> = {}) =>
+    render(<div className="tavern"><TavernCharacter character={wren} cls={cls} surface="thread:t1" {...props} /></div>);
+  const el = (container: HTMLElement) => container.querySelector("[data-part=TavernCharacter]")!;
+
+  it("draws the character with its class's crest and names its state out loud", () => {
+    const v = sprite({ state: "working" });
+    expect(el(v.container).getAttribute("data-state")).toBe("working");
+    expect(v.container.querySelector(".tchar-art")!.getAttribute("aria-label")).toBe("Wren, Keeper, at work");
+    expect(v.container.querySelector(".tchar-badge .tavern-crest")).not.toBeNull();
+    expect(drawn.rects.length).toBeGreaterThan(0);
+  });
+
+  it("marks a character that needs you, and never marks the others", () => {
+    expect(sprite({ state: "needs-you" }).container.querySelector(".tchar-need")).not.toBeNull();
+    expect(sprite({ state: "idle" }).container.querySelector(".tchar-need")).toBeNull();
+  });
+
+  it("hops and says its line when clicked, and turns its head when hovered", () => {
+    const spy = vi.spyOn(motion, "cue");
+    const v = sprite({ line: "Clear morning. Rangers out." });
+    const who = el(v.container);
+    expect(who.tagName).toBe("BUTTON");
+    act(() => { fireEvent.pointerOver(who); });
+    expect(spy.mock.calls.filter(c => c[2] === "character gag" && c[3].className === "mo-char-notice")).toHaveLength(1);
+    act(() => { fireEvent.click(who); });
+    expect(spy.mock.calls.some(c => c[2] === "character gag" && c[3].className === "mo-char-hop")).toBe(true);
+    expect(v.container.querySelector(".tchar-say")!.textContent).toBe("Clear morning. Rangers out.");
+  });
+
+  it("is a picture, not a control, inside another control", () => {
+    const v = sprite({ interactive: false });
+    expect(el(v.container).tagName).toBe("SPAN");
+    expect(v.container.querySelector("button")).toBeNull();
+  });
+
+  it("keeps still when motion is off: no timer, no gag", () => {
+    vi.useFakeTimers();
+    const spy = vi.spyOn(motion, "cue");
+    const v = sprite({ ambientMotion: "off", repeatSeconds: 3 });
+    expect(vi.getTimerCount()).toBe(0);
+    act(() => { vi.advanceTimersByTime(9000); });
+    expect(spy).not.toHaveBeenCalled();
+    expect(el(v.container).getAttribute("data-mode")).toBe("interval");
+  });
+
+  it("gags on its interval in interval mode, as an ambient cue its surface can hold", () => {
+    vi.useFakeTimers();
+    const spy = vi.spyOn(motion, "cue");
+    const v = sprite({ ambientMotion: "calm", repeatSeconds: 3, region: "widget" });
+    expect(vi.getTimerCount()).toBe(1);
+    act(() => { vi.advanceTimersByTime(3000); });
+    const gags = () => spy.mock.calls.filter(c => c[2] === "character gag");
+    expect(gags()).toHaveLength(1);
+    expect(gags()[0]![3].auto).toBe(true);
+    expect(gags()[0]![3].region).toBe("widget");
+    // The next interval brings another, so the sprite is alive for as long as it is on screen.
+    act(() => { vi.advanceTimersByTime(3000); });
+    expect(gags().length).toBeGreaterThan(1);
+    v.unmount();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("loops continuously in continuous mode, and only then", async () => {
+    vi.useFakeTimers();
+    const spy = vi.spyOn(motion, "mayLoop");
+    const continuous = sprite({ mode: "continuous" });
+    drawn.rects.length = 0;
+    act(() => { vi.advanceTimersByTime(400); });
+    expect(spy).toHaveBeenCalled();
+    expect(drawn.rects.length).toBeGreaterThan(0);
+    continuous.unmount();
+    drawn.rects.length = 0;
+    spy.mockClear();
+    const interval = sprite({ mode: "interval" });
+    act(() => { vi.advanceTimersByTime(400); });
+    expect(spy).not.toHaveBeenCalled();
+    // The still frame on mount is the whole of an interval-mode sprite at rest.
+    expect(drawn.rects.length).toBeGreaterThan(0);
+    interval.unmount();
+  });
+
+  it("loops on the Motion setting alone: Lively is continuous, Calm is not", () => {
+    const lively = sprite({ ambientMotion: "lively" });
+    expect(el(lively.container).getAttribute("data-mode")).toBe("continuous");
+    lively.unmount();
+    expect(el(sprite({ ambientMotion: "calm" }).container).getAttribute("data-mode")).toBe("interval");
+  });
+
+  it("keeps still under reduced motion, and still says its line", async () => {
+    const media = installMatchMedia();
+    try {
+      vi.useFakeTimers();
+      const spy = vi.spyOn(motion, "cue");
+      const v = sprite({ ambientMotion: "lively", line: "Fair skies." });
+      act(() => { media.set(true); });
+      expect(el(v.container).getAttribute("data-mode")).toBe("continuous");
+      expect(vi.getTimerCount()).toBe(0);
+      drawn.rects.length = 0;
+      act(() => { fireEvent.pointerOver(el(v.container)); fireEvent.click(el(v.container)); });
+      act(() => { vi.advanceTimersByTime(200); });
+      expect(spy).not.toHaveBeenCalled();
+      expect(drawn.rects.length).toBe(0);
+      expect(v.container.querySelector(".tchar-say")!.textContent).toBe("Fair skies.");
+      act(() => { vi.advanceTimersByTime(3000); });
+      expect(v.container.querySelector(".tchar-say")).toBeNull();
+    } finally { media.uninstall(); }
+  });
+
+  it("stands in the Tavern widget row where the crest stood, and takes the thread's own state", async () => {
+    const slot = renderSlot({ component: ThreadWidget }, { threadId: "keeper-1" }, { rpc: { registry: () => fixtureRegistry, decor: () => fixtureDecor } });
+    await waitFor(() => expect(slot.container.querySelector(".tw-crest [data-part=TavernCharacter]")).not.toBeNull());
+    const who = slot.container.querySelector("[data-part=TavernCharacter]")!;
+    // The fixture thread has one open ask, so its Keeper is the sprite that needs you, over the crest it replaced.
+    expect(who.getAttribute("data-state")).toBe("needs-you");
+    expect(who.getAttribute("data-keeper")).toBe("true");
+    expect(who.getAttribute("data-mode")).toBe("interval");
+    expect(slot.container.querySelector(".tw-crest .tchar-badge .tavern-crest")).not.toBeNull();
+    expect(slot.container.querySelector(".tw-id .tw-dot")).not.toBeNull();
+    slot.lifecycle.unmount();
+  });
+
+  it("is a picture, not a second control, inside a member's row button", async () => {
+    const decor = { ...fixtureDecor, member: { ...fixtureDecor.member!, role: "member" as const }, keeperView: null, boardQuest: fixtureDecor.keeperView!.boardQuests[0] };
+    const slot = renderSlot({ component: ThreadWidget }, { threadId: "keeper-1" }, { rpc: { registry: () => fixtureRegistry, decor: () => decor } });
+    await waitFor(() => expect(slot.container.querySelector(".tw-crest [data-part=TavernCharacter]")).not.toBeNull());
+    const who = slot.container.querySelector(".tw-crest [data-part=TavernCharacter]")!;
+    expect(who.tagName).toBe("SPAN");
+    expect(who.getAttribute("data-state")).toBe("idle");
+    expect(who.getAttribute("data-keeper")).toBeNull();
+    // The member's row is a button; the sprite inside it is a picture, so no button ever nests a button.
+    expect(slot.container.querySelector(".tw-member-id")!.tagName).toBe("BUTTON");
+    expect(slot.container.querySelectorAll("button[data-part=TavernCharacter]")).toHaveLength(0);
+    slot.lifecycle.unmount();
+  });
+
+  it("stops its loop while its surface is held, and carries on when it is released", () => {
+    vi.useFakeTimers();
+    const v = sprite({ mode: "continuous" });
+    act(() => { motion.setHeld("thread:t1", true); });
+    drawn.rects.length = 0;
+    act(() => { vi.advanceTimersByTime(400); });
+    expect(drawn.rects.length).toBe(0);
+    act(() => { motion.setHeld("thread:t1", false); });
+    act(() => { vi.advanceTimersByTime(400); });
+    expect(drawn.rects.length).toBeGreaterThan(0);
+    v.unmount();
+  });
+});

@@ -706,7 +706,7 @@
 .tavern.tv-page .tv-dl dt { color: var(--tv-text-2); }
 .tavern.tv-page .tv-dl dd { margin: 0; overflow-wrap: anywhere; }
 /* What a class gets: each value first, then where it comes from, then any substitution or rule, as quiet lines under it. */
-.tavern.tv-page .tv-cfacts .tv-colh { flex-wrap: wrap; row-gap: 6px; }
+.tavern.tv-page .tv-cfacts .tv-cf-modes { margin-bottom: 8px; }
 .tavern.tv-page .tv-cf-dl { gap: 8px 12px; }
 .tavern.tv-page .tv-cf-dl dd { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .tavern.tv-page .tv-cf-v { font-weight: 600; }

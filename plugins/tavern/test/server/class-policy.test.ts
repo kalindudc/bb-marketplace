@@ -56,6 +56,19 @@ describe("class character and quality policy", () => {
     expect(classRules("solo")).not.toContain("tick id");
   });
 
+  it("carries the commit-before-turn-end standard in every working-class contract and in the Smith body", () => {
+    for (const role of ["member", "solo"] as const) {
+      const rules = classRules(role);
+      expect(rules).toContain("when your work changes files");
+      expect(rules).toContain("commit it before your turn ends");
+      expect(rules).toContain("An uncommitted turn-end is a defect");
+    }
+    expect(classRules("keeper")).not.toContain("An uncommitted turn-end is a defect");
+    const smith = registry().read().classes.find(role => role.id === "smith")!;
+    expect(smith.body).toContain("commit before you end your turn");
+    expect(smith.body).toContain("An uncommitted turn-end is a defect");
+  });
+
   it("never widens settings limits through a project Keeper budget", () => {
     const f = setup();
     const keeper = f.runtime.snapshot().classes.find(role => role.id === "keeper")!;

@@ -50,6 +50,7 @@ import type { InsightsReader } from "./insights/index";
 import { runTuner } from "./settings/tuner";
 import { LIMITS } from "./limits";
 import { createHostPort } from "../host/client";
+import { memberWorktree, preserveMemberWork, worktreeState } from "./member-worktree";
 import { captureTaleDelivery } from "./tale";
 import type { TaleCompanions } from "./renderer/companion";
 import { DiscoveryStore, StaleDiscoveryError } from "./placement/discovery-store";
@@ -67,6 +68,7 @@ export const KEEPER_TOOLS = [
   "tavern_scope",
   "tavern_tell",
   "tavern_unarchive",
+  "tavern_reopen",
   "tavern_plan",
   "tavern_ask",
   "tavern_decide",
@@ -172,6 +174,47 @@ export class TavernRuntime {
   record(kind: string, data: Record<string, unknown>, keeperId: string | null = null, questId: string | null = null, id?: string, at?: number) {
     try { this.insights?.record(kind, data, keeperId, questId, id, at); }
     catch (error) { this.bb.log.warn(`Tavern optional Insights sample ${kind}: ${String(error)}`); }
+  }
+  /**
+   * Commit a member's uncommitted files just before its thread is archived. Null means the archive
+   * may proceed; a reason means the work could not be proven safe and nothing may be destroyed yet.
+   */
+  async preserveWorkOrRefuse(threadId: string): Promise<string | null> {
+    const preserved = await preserveMemberWork(this.bb, threadId);
+    if (preserved.status === "deferred") {
+      this.bb.log.warn(`Tavern keeps ${threadId} open: ${preserved.error}`);
+      return preserved.error;
+    }
+    if (preserved.status === "committed") {
+      const member = this.keeper.member(threadId);
+      if (member) this.keeper.store.event(
+        this.keeper.now(), member.keeperThreadId, member.boardQuestId, "member.work-preserved",
+        `Committed ${preserved.changed.length} uncommitted file(s) for ${this.keeper.name(member)} before cleanup`,
+        { memberThreadId: threadId, sha: preserved.sha, changed: preserved.changed.slice(0, 200) },
+      );
+    }
+    return null;
+  }
+  /** The standard is commit before the turn ends; a member reporting with a dirty worktree is told so. */
+  async uncommittedWarning(threadId: string): Promise<string | null> {
+    let changed: string[];
+    try {
+      const worktree = await memberWorktree(this.bb, threadId);
+      if (!worktree) return null;
+      const state = worktreeState(worktree.root);
+      if (!state.dirty) return null;
+      changed = state.changed;
+    } catch (error) {
+      this.bb.log.warn(`Tavern member worktree state ${threadId}: ${String(error)}`);
+      return null;
+    }
+    const member = this.keeper.member(threadId);
+    if (member?.role === "member") this.keeper.store.event(
+      this.keeper.now(), member.keeperThreadId, member.boardQuestId, "member.work-uncommitted",
+      `${this.keeper.name(member)} reported with ${changed.length} uncommitted file(s)`,
+      { memberThreadId: threadId, changed: changed.slice(0, 200) },
+    );
+    return `Warning: ${changed.length} uncommitted file(s) remain in your worktree. Keep your work on a branch and commit now, one or many appropriate commits, before this turn ends. Tavern preserves uncommitted files before cleanup, but an uncommitted turn-end is a defect.`;
   }
   reportBatchHeld(threadId: string) {
     const rt = this.keeper.store.runtime(threadId);
@@ -1705,6 +1748,8 @@ export class TavernRuntime {
       }
       if (this.away.cleanupHeld()) { pending.push(member.threadId); continue; }
       try {
+        const refused = await this.preserveWorkOrRefuse(member.threadId);
+        if (refused) throw new Error(refused);
         const current = await this.bb.sdk.threads.get({ threadId: member.threadId });
         if (current.archivedAt === null && current.deletedAt === null) {
           await this.bb.sdk.threads.archive({ threadId: member.threadId });

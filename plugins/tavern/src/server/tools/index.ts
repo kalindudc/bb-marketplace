@@ -124,6 +124,17 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
     (input, threadId) => k.openQuest(threadId, input.title, input.short),
   );
   register(
+    "tavern_reopen",
+    "Re-opened a board quest",
+    "Re-open one of your returned or stopped board quests to do deviations and follow-up commits without opening a new quest. The plan version and its greenlight are kept; the quest returns to build. Refused for a live quest, and for an archived quest: bring it up from the cellar first. A Warden still verifies the deviation work before the next wrap.",
+    z.object({ boardQuestId: id }),
+    (input, threadId) => {
+      const quest = k.owned(threadId, input.boardQuestId);
+      const reopened = k.reopenQuest(quest.id, { kind: "agent", threadId });
+      return `Re-opened ${reopened.title} for deviations; it is back in build at plan v${reopened.planVersion}.`;
+    },
+  );
+  register(
     "tavern_hire",
     "Hired a party member",
     "Hire a member with a bounded brief. title is a short task name without the class or character. Optional scope can narrow the class policy or request named grants. Uncovered widening opens a consequential, never-timed scope ask; the original spawn brief stays queued and the member cannot start until approval. At the review budget, Smith hiring is refused with the count; wait or record a reversible tavern_decide with reviewBudgetOverride: true to permit one hire. Rangers and errand helpers may start before greenlight; staffing the party requires the user's explicit approval. A waypoint Warden needs a known maker journal entry; its brief includes the maker thread, entry ids, trusted maker worktree and explicit plan check commands. The checker preset allows standard test/check/lint/typecheck runners there without widening or a user-run blocker. Do not request commands as tool names. Read its review posture: any class-model fallback is a same-family check (not independent), never an independent check. Scoped hires always prefer Pi when Pi offers the model. Otherwise refuse by default: requestDetectionOnly:true opens a consequential scope ask without hiring. After the user approves, repeat the same hire with detectionOnlyAskId. Detection only is not prevention. Unknown class models refuse: change classes.<classId>.model in Tavern settings. Never silently choose a provider default. If the first line reports an execution substitution, tell the user in this same turn.",
@@ -395,11 +406,13 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
           if (minutes >= 0) runtime.record("ranger.completed", { memberThreadId: threadId, minutes, overrun: timebox !== undefined && timebox !== null && minutes > timebox }, member.keeperThreadId, member.boardQuestId, `ranger-completed:${threadId}`, report.createdAt);
         }
       }
-      if (member.errand && report.status === "done") {
+      // An errand thread is archived here rather than through cleanup, so its uncommitted work needs the same protection.
+      if (member.errand && report.status === "done" && await runtime.preserveWorkOrRefuse(threadId) === null) {
         await bb.sdk.threads.archive({ threadId });
         k.activity(threadId, "done");
       }
-      return `Report written. End your turn.\nReport id: ${report.id}`;
+      const warning = report.status === "done" ? await runtime.uncommittedWarning(threadId) : null;
+      return `Report written. End your turn.\nReport id: ${report.id}${warning ? `\n${warning}` : ""}`;
     },
     "member",
   );

@@ -235,6 +235,18 @@ class Coordinator {
     if (held) this.settle(c => c.surface === surface && c.region === "widget");
   }
 
+  /**
+   * Whether an unbounded ambient loop (a drawn sprite, which has no end to schedule) may run on this surface now. The strong stops
+   * apply: reduced motion, a hidden or paused tab, the typing hold, and a surface that is held (an ask in its widget row). Reading is
+   * deliberately not one of them: a standing sprite that froze whenever an ask appeared would read as broken, and a loop draws no text
+   * and takes no cue slot and no window time.
+   */
+  mayLoop(surface: Surface): boolean {
+    if (this.ended || this.reduced || this.paused) return false;
+    if (this.composing || this.now() - this.lastInputAt < TYPING_HOLD_MS) return false;
+    return !this.held.get(surface);
+  }
+
   /** Typing holds new automatic cues everywhere, and cuts the widget rows' running cues at once: they sit beside the composer. */
   private typed() {
     this.lastInputAt = this.now();

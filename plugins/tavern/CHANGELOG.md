@@ -2,6 +2,22 @@
 
 Notable changes to Tavern, newest first. Releases are tagged `tavern/vX.Y.Z` in this repository.
 
+## Unreleased
+
+A returned or stopped quest reopens for deviations without a new quest, the checker recognises the check runners a repository actually uses, the pages and composer lose their rough edges, and the party is drawn as animated pixel art.
+
+### Added
+
+- Tavern's party is drawn as animated pixel-art characters. Every member is a small sprite with its own look (build, hair, hair colour, skin and a hat), seeded from the character's id and overridable in its character file's `look` block. The sprite walks, works and rests with the thread, follows the Keeper's state, and turns to face an ask.
+- A continuous motion mode: with motion set to Lively, an unbounded ambient loop runs the sprites whenever their surface is visible. The strong stops still apply (reduced motion, a hidden or paused tab, and the typing hold), and an ask holds the widget row without freezing a standing sprite.
+- A returned or stopped quest can be re-opened for deviations and follow-up commits without opening a new quest. `tavern_reopen` returns it to build, keeps its plan version and greenlight, clears its end and stop state, records `quest.reopened`, and reanchors the Keeper's thread. A live quest is refused; an archived quest must be brought up from the cellar first, and a deleted one restored from there.
+
+### Changed
+
+- The checker recognises the check runners a repository actually uses while keeping worktree confinement and the deny rules: any `npm`, `pnpm`, `yarn` or `bun run <script>`, `npx tsc` with or without `--noEmit`, a project binary reached directly (`tsc`, `vitest run`, `jest`), and a project binary reached through `node node_modules/…`. Other work (`npm install`, `npm publish`, `npx vitest` without `run`, `npx eslint`, scripts under `node scripts/…`, and path escapes) still needs exact-command metadata.
+- The class page's records fold and remember what is open, the quest map's notes float over the map instead of reserving a band, and the rail keeps its calm order.
+- The composer's ask row shows the whole question, a decision reads its note in place, and the composer no longer swallows the first click.
+
 ## 0.1.2 (2026-11-15)
 
 ### Added

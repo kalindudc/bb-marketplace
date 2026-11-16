@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { classScopeSchema, scopeOverrideSchema } from "../scope/schema";
 import { CLASS_BODY_LIMIT } from "./class-rules";
+import { LOOK_BUILDS, LOOK_HAIRS, LOOK_HAIR_COLOURS, LOOK_HATS, LOOK_SKINS } from "./look";
 
 // The one source of truth for Tavern's domain shapes, shared by the server, the RPC contract and the UI.
 // Words: a "board quest" is a goal a Keeper holds; a "journal" is any thread's own checklist.
@@ -41,12 +42,23 @@ export const classDefSchema = z.object({
 });
 export type ClassDef = z.infer<typeof classDefSchema>;
 
+export const characterLookSchema = z.object({
+  build: z.enum(LOOK_BUILDS).optional(),
+  hair: z.enum(LOOK_HAIRS).optional(),
+  hairColour: z.enum(LOOK_HAIR_COLOURS).optional(),
+  skin: z.enum(LOOK_SKINS).optional(),
+  hat: z.enum(LOOK_HATS).optional(),
+});
+export type CharacterLookFields = z.infer<typeof characterLookSchema>;
+
 export const characterDefSchema = z.object({
   id: z.string().regex(/^[a-z][a-z0-9-]{0,39}$/),
   name: z.string().min(1).max(40),
   classes: z.array(z.string()),
   hue: z.enum(HUES),
   charge: z.enum(CHARGES),
+  /** Overrides for the traits seeded from the id; anything left out is seeded. */
+  look: characterLookSchema.optional(),
   temper: z.string().max(40),
   style: z.string().max(200),
   quirks: z.array(z.string().max(200)).max(5),

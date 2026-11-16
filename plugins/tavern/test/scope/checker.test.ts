@@ -28,11 +28,11 @@ it("gives Wardens checker while preserving readonly Ranger and open Keeper defau
   const f = fixture(); expect(scopeSchema.safeParse(f.scope).success).toBe(true);
 });
 it.each([
-  "npm test", "pnpm test", "yarn test", "bun test", "npm run test", "npm run check", "npm run lint", "npm run typecheck", "pnpm run check", "yarn run lint", "bun run typecheck", "npx vitest run", "npx vitest run test/unit.test.ts", "npx tsc --noEmit", "npx tsc -p tsconfig.json --noEmit", "pytest", "pytest -q", "go test ./...", "cargo test", "cd nested && npm test",
+  "npm test", "pnpm test", "yarn test", "bun test", "npm run test", "npm run check", "npm run lint", "npm run typecheck", "pnpm run check", "yarn run lint", "bun run typecheck", "npm run build", "npm run verify:all", "npx vitest run", "npx vitest run test/unit.test.ts", "npx vitest run --reporter=dot", "npx tsc", "npx tsc --build", "npx tsc --noEmit false", "npx tsc --noEmit --noEmit=false", "npx tsc -p tsconfig.json --noEmit", "tsc", "tsc --noEmit", "node_modules/.bin/tsc", "vitest run", "node_modules/.bin/vitest run", "jest", "node_modules/.bin/jest --ci", "node node_modules/vitest/vitest.mjs run", "node node_modules/.bin/jest --ci", "pytest", "pytest -q", "go test ./...", "cargo test", "cd nested && npm test",
 ])("allows a project check only with check metadata: %s", command => {
   expect(fixture().run(command)).toMatchObject({ allow: true, check: true });
 });
-it.each(["npm install", "npm publish", "yarn publish", "pnpm publish", "bun publish", "npm run build", "npx vitest --update", "npx tsc", "npx tsc --noEmit false", "npx tsc --noEmit --noEmit=false", "git add .", "git commit -m no", "git push origin topic", "gh pr merge 1", "gh api -X POST repos/o/r/issues", "kubectl apply -f x.yaml", "dev deploy", "terraform apply", "curl -X POST https://example.invalid", "npm test --prefix ../outside", "npm --prefix ../outside test"])("does not authorize other work: %s", command => {
+it.each(["npm install", "npm publish", "yarn publish", "pnpm publish", "bun publish", "npx vitest --update", "npx vitest", "vitest --update", "npx eslint .", "node scripts/verify.mjs", "node node_modules/../evil.mjs", "npm run build --prefix ../outside", "npm run --prefix ../outside build", "npm --workspace ../outside run test", "git add .", "git commit -m no", "git push origin topic", "gh pr merge 1", "gh api -X POST repos/o/r/issues", "kubectl apply -f x.yaml", "dev deploy", "terraform apply", "curl -X POST https://example.invalid", "npm test --prefix ../outside", "npm --prefix ../outside test"])("does not authorize other work: %s", command => {
   expect(fixture().run(command).allow).toBe(false);
 });
 it("allows exact done-when commands and cd prefixes without making command prefixes into grants", () => {

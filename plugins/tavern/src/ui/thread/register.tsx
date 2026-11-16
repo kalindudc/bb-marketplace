@@ -7,7 +7,7 @@ import { MessageRouteTab, ReadAsTag, RuleTab } from "./metadata";
 import { REPORTS_TAB, ReportsTab } from "./reports-tab";
 import { registerRowCrests } from "./rows";
 import { NameMentionSwap } from "./mentions";
-import { JournalCardSection, JournalSegmentDetails, JournalSegmentSummary, useJournalSegmentVisible } from "./journal-segment";
+import { JournalCardSection, JournalSegmentSummary, useJournalSegmentVisible } from "./journal-segment";
 import { getRpc, threadDecorCache } from "./state";
 import { motion } from "../kit/motion";
 export function registerThreadSurfaces(app: PluginAppBuilder) {
@@ -49,7 +49,7 @@ export function registerThreadSurfaces(app: PluginAppBuilder) {
     app.commands.register({ id: "open-journal", title: "Open the journal", defaultShortcut: { key: "l", mod: true, shift: true }, isAvailable: ctx => ctx.threadId !== null, run: ctx => { ctx.experimental_panel.openTab({ tab: JOURNAL_TAB }); } });
     app.slots.experimental_tab({ ...JOURNAL_TAB, title: "Journal (checklist)", icon: "tavern/journal", layout: "flush", component: JournalTab });
     // The journal joins bb's context row beside Shuttle's pull requests (2_pullRequest) and before git (3_git), and the card's sections; it shows in the card only while the card is on screen (card-shown.ts).
-    app.slots.experimental_threadContextSegment({ id: "journal", title: "Journal (checklist)", group: "2_tavern-journal", summary: JournalSegmentSummary, details: JournalSegmentDetails, useVisible: useJournalSegmentVisible });
+    app.slots.experimental_threadContextSegment({ id: "journal", title: "Journal (checklist)", group: "2_tavern-journal", summary: JournalSegmentSummary, useVisible: useJournalSegmentVisible });
     app.slots.experimental_threadContextCardSection({ id: "journal", title: "Journal", group: "1_related", order: 10, component: JournalCardSection });
     app.slots.experimental_tab({ ...LEDGER_TAB, title: "Ledger", icon: "tavern/ledger", layout: "flush", useVisible: useKeeperVisible, component: LedgerTab });
     app.slots.experimental_tab({ id: "message-route", context: { kind: "thread" }, availability: "action", title: "Re-route message", icon: "tavern/route", useVisible: useKeeperVisible, component: MessageRouteTab });

@@ -68,7 +68,7 @@ export function QuestMapCard({ detail, version }: { detail: BoardQuestDetail; ve
         {sealed ? <span className="sealmark"><Glyph name="wax-seal" size={16} /><span>Sealed · party formed</span></span> : current ? <span className="qm-wait">Waits for your seal</span> : <StatusPill status="superseded">superseded</StatusPill>}
       </header>
       <p className="qm-goal"><b>{plan.goal}</b><span className="m"> · done when {plan.doneWhen.charAt(0).toLowerCase() + plan.doneWhen.slice(1)}</span></p>
-      <QuestMap quest={quest} mode={sealed ? "live" : "plan"} dealt={sealed} />
+      <QuestMap quest={quest} mode={sealed ? "live" : "plan"} dealt={sealed} stretch={!sealed} />
       <div className="qm-key m"><span><i className="k crest" />agent</span><span><i className="k you" />your move</span><span><i className="k gate" />outside owner</span><span>left to right is order, not a schedule</span></div>
       <div className="qm-cols">
         <section className="qm-qs" aria-label="Questions for you">

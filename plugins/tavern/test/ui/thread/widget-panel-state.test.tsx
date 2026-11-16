@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { readFileSync } from "node:fs";
 import { afterEach, expect, it } from "vitest";
 import { act, cleanup, fireEvent, waitFor } from "@testing-library/react";
 import { renderSlot } from "@get-bb/plugin-sdk/testing/app";
@@ -50,6 +51,19 @@ it("remembers a manually opened panel without a reveal", async () => {
   const back = row();
   expect(await back.findByRole("button", { name: "Close" })).toBeTruthy();
   back.lifecycle.unmount();
+});
+it("shows the ask's full question, wrapped, once its row is expanded", async () => {
+  const slot = row();
+  fireEvent.click(await slot.findByRole("button", { name: /1 ask needs you/ }));
+  // The expanded panel prints the question in full, wrapped, so the truncated row never hides it.
+  const full = await slot.findByText(fixtureAsk.question, { selector: ".tw-aq-open" });
+  expect(full.tagName).toBe("P");
+  // The row keeps the question to one line: it is the compact control, not the readable copy.
+  expect(slot.container.querySelector(".tw-ask-row .tw-aq")!.textContent).toBe(fixtureAsk.question);
+  expect(readFileSync("src/ui/kit/components.css", "utf8")).toMatch(/\.tavern \.tw-aq \{[^}]*white-space: nowrap/);
+  // The panel stays headless, so the row's own kind word stands (a checker handoff is not relabelled "Blocker").
+  expect(slot.container.querySelector(".tw-ask.open .ask-q")).toBeNull();
+  slot.lifecycle.unmount();
 });
 it("does not open for an arriving ask", async () => {
   let asks: typeof fixtureAsk[] = [];

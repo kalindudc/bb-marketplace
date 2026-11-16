@@ -133,6 +133,8 @@
 .tavern .tw-ag { font-size: 11px; padding: 0 5px; border: 1px solid var(--tavern-line); white-space: nowrap; }
 .tavern .tw-ago { display: inline-flex; align-items: center; gap: 3px; font-size: 12px; font-weight: 600; color: var(--foreground); white-space: nowrap; }
 .tavern .tw-ask .tavern.ask { border-width: 0 0 0 3px; margin: 0 10px 10px; padding: 8px 10px; }
+/* The expanded ask prints its question in full above the headless card: the row above is the compact, one-line control. */
+.tavern .tw-aq-open { margin: 0 10px; padding: 6px 10px 0; font-size: 13px; font-weight: 700; }
 .tavern .tw-ask .tavern.receipt { margin: 6px 10px; }
 .tavern .tw-pf { display: flex; align-items: center; gap: 8px; justify-content: space-between; padding: 6px 10px; border-top: 1px dashed var(--tavern-line); }
 .tavern .tw-none { padding: 8px 10px; }
@@ -165,7 +167,7 @@
 @container tavern-widget (max-width: 420px) { .tavern .tw-row:has(.tw-asks) .tw-dec { display: none; } }
 @container tavern-widget (max-width: 340px) { .tavern .tw-row:has(.tquiet) .tw-dec { display: none; } }
 @container tavern-widget (max-width: 340px) { .tavern .tw-ledger, .tavern .tw-id .tw-name { display: none; } }
-@media (pointer: coarse), (max-width: 560px) { .tavern .tw-chip, .tavern .tw-asks, .tavern .tw-quest { height: 44px; } .tavern .tw-ask-row { min-height: 44px; } .tavern .ask-note summary { display: flex; align-items: center; min-height: 44px; } .tavern .lnk-btn { min-height: 44px; } .tavern.readas .ra-fix { height: 44px; } }
+@media (pointer: coarse), (max-width: 560px) { .tavern .tw-chip, .tavern .tw-asks, .tavern .tw-quest { height: 44px; } .tavern .tw-ask-row { min-height: 44px; } .tavern .lnk-btn { min-height: 44px; } .tavern.readas .ra-fix { height: 44px; } }
 
 /* ---- The crest toggle in bb's composer actions: same 32 px box as bb's own icon buttons ---- */
 .tavern .crest-toggle { position: relative; display: inline-grid; place-items: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: var(--radius); background: transparent; color: var(--muted-foreground); cursor: pointer; }
@@ -324,8 +326,8 @@ html.dark .tavern .qsvg .wp.o-you .wp-fo { filter: drop-shadow(0 0 5px color-mix
 .tavern .lc-note { font-size: 13px; }
 @container page (max-width: 560px) { .tavern .qm-cols { grid-template-columns: minmax(0, 1fr); } .tavern .roll li { grid-template-columns: auto minmax(0, 1fr); } .tavern .roll .rl-w { grid-column: 2; } }
 
-/* Labels sit on the card colour so roads pass under them, never through the words. */
-.tavern .map-label b, .tavern .map-label .o { background: var(--card); }
+/* Labels sit on a translucent card fill under a text halo, so a dashed road passing beneath reads as a shade behind the words, never a slice through them. */
+.tavern .map-label b, .tavern .map-label .o { background: color-mix(in oklab, var(--card) 84%, transparent); text-shadow: 0 0 2px var(--card), 0 0 2px var(--card), 0 0 3px var(--card); }
 .tavern .qm-steer { border: 0; padding: 0; height: auto; color: var(--tavern-muted); }
 .tavern .qm-wait { border: 0; }
 /* Static chips: tinted, never bordered (borders mean controls). */

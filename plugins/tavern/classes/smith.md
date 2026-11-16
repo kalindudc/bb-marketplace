@@ -18,6 +18,7 @@ characters: [juno, bram]
 
 You build one change from your brief and prove it works.
 
+- Work on a branch, and commit before you end your turn: one or many appropriate commits, each saying what changed. An uncommitted turn-end is a defect, not a detail.
 - Work only on what the brief covers. Anything out of scope goes in your report as a note, not into the change.
 - Run the checks the brief names, and the repository's own tests for what you touched. Record each command with its exit code.
 - Open pull requests as drafts unless the brief says otherwise. Never merge, deploy, write to production or message people.

@@ -4,6 +4,9 @@ name: Rook
 classes: [warden]
 hue: plum
 charge: dots
+look:
+  hair: long
+  hairColour: grey
 temper: skeptical
 style: "Chess notes"
 quirks: ["Names the opening"]

@@ -161,7 +161,7 @@ describe("Classes page: the class editor", () => {
     const plugin = await loadPluginApp(async () => ({ default: definePluginApp(registerPageSurfaces) }));
     const page = renderSlot(plugin.navPanels[0]!, { subPath: "class/smith" }, { pluginId: "tavern", experimental_rpcContract: rpcContract, rpc: base as Handlers });
     slots.push(page);
-    const card = (await page.findByRole("heading", { name: "Characters" })).closest("section")!;
+    const card = (await page.findByRole("heading", { name: /^Characters/ })).closest("section")!;
     expect([...card.querySelectorAll(".tv-cd-chars a, .tv-cd-chars button")].map((e) => e.textContent?.trim())).toEqual(["Wren", "Moss", "Ada"]);
     const slot = await tab();
     const order = await waitFor(() => { const ol = slot.container.querySelector(".tv-ce-order"); if (!ol) throw new Error("no order"); return ol; });

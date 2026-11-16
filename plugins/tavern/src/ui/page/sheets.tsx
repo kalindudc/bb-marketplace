@@ -9,6 +9,7 @@ import { levelFromWins, questsIn, visibleMembers } from "./model";
 import { CharacterVoiceForm, VOICE_TAB, useOpenPanelTab } from "./panels";
 import { ClassEditForm, useOpenClassEditor } from "./class-editor";
 import { ClassFacts, ProjectPick, modelCell, useClassExecutions } from "./class-facts";
+import { RecordFold } from "./quest-record";
 import { FoldLoad } from "./skeletons";
 import { RegistryExport } from "./backup";
 import { usePanelState } from "./panel-state";
@@ -153,6 +154,7 @@ export function ClassDetail({ id, registry }: { id: string; registry: Registry }
 function ClassDetailView({ cls, registry }: { cls: Registry["classes"][number]; registry: Registry }) {
   const [inline, setInline] = useState(false);
   const chars = cls.characters.map((cid) => registry.characters.find((c) => c.id === cid)).filter((c): c is CharacterDef => !!c);
+  const charLinks = <div className="tv-cd-chars">{chars.map((c) => <PageButton key={c.id} path={`character/${c.id}`} className="ghost sm"><Crest cls={cls} character={c} size={18} /> {c.name}</PageButton>)}</div>;
   const facts = useClassExecutions();
   const entry = facts.data?.classes.find((e) => e.classId === cls.id);
   const opener = useRef<HTMLButtonElement>(null);
@@ -171,9 +173,12 @@ function ClassDetailView({ cls, registry }: { cls: Registry["classes"][number]; 
       <section className="tv-card tv-cdsec" aria-labelledby="tv-cd-lens"><header className="tv-colh"><h2 id="tv-cd-lens">Role prompt <span className="anc">lens</span></h2></header><pre className="tv-code">{cls.body}</pre></section>
       <aside className="tv-col" aria-label="Model, tools and hiring">
         {entry ? <ClassFacts key={cls.id} entry={entry} registry={registry} label={cls.label} hireable={cls.hireable} startable={cls.startable} project={facts.project} />
-          : <section className="tv-card tv-cdsec" aria-labelledby="tv-cf-h"><header className="tv-colh"><h2 id="tv-cf-h">What it gets</h2></header>{facts.data ? <p className="m small">Tavern has no facts for this class in this project.</p> : <FoldLoad error={facts.error} retry={facts.refetch} label="what it gets" lines={6} />}</section>}
-        <section className="tv-card tv-cdsec" aria-labelledby="tv-cd-tools"><header className="tv-colh"><h2 id="tv-cd-tools">Hiring</h2></header><dl className="tv-dl"><dt>May hire</dt><dd>{cls.hires.join(", ") || "Nobody"}</dd><dt>Staffing</dt><dd>{cls.greenlight === "explicit" ? <>Explicit <Vocabulary word="map" /></> : cls.greenlight ?? "No staffing policy"}</dd></dl><p className="m small">Consequential actions always need explicit approval. Production commands also need immediate confirmation.</p></section>
-        {chars.length > 0 && <section className="tv-card tv-cdsec" aria-labelledby="tv-cd-chars"><header className="tv-colh"><h2 id="tv-cd-chars">Characters</h2><span className="tv-count">{plural(chars.length, "character")}</span></header><div className="tv-cd-chars">{chars.map((c) => <PageButton key={c.id} path={`character/${c.id}`} className="ghost sm"><Crest cls={cls} character={c} size={18} /> {c.name}</PageButton>)}</div></section>}
+          : <RecordFold id={`class:${cls.id}.facts`} title="What it gets" open>{facts.data ? <p className="m small">Tavern has no facts for this class in this project.</p> : <FoldLoad error={facts.error} retry={facts.refetch} label="what it gets" lines={6} />}</RecordFold>}
+        <RecordFold id={`class:${cls.id}.hiring`} title="Hiring" count={plural(cls.hires.length, "class")} open={false} preview={<p className="m small">May hire {cls.hires.join(", ") || "nobody"}{cls.greenlight === "explicit" ? <> · staffing needs your OK</> : cls.greenlight ? <> · {cls.greenlight}</> : null}</p>}>
+          <dl className="tv-dl"><dt>May hire</dt><dd>{cls.hires.join(", ") || "Nobody"}</dd><dt>Staffing</dt><dd>{cls.greenlight === "explicit" ? <>Explicit <Vocabulary word="map" /></> : cls.greenlight ?? "No staffing policy"}</dd></dl>
+          <p className="m small">Consequential actions always need explicit approval. Production commands also need immediate confirmation.</p>
+        </RecordFold>
+        {chars.length > 0 && <RecordFold id={`class:${cls.id}.characters`} title="Characters" count={plural(chars.length, "character")} open={false} preview={charLinks}>{charLinks}</RecordFold>}
       </aside>
     </div>
   </div>;
