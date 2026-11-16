@@ -144,6 +144,7 @@ export function rpcHandlers(
         widgetRow: runtime.config().tavern.widgetRow,
         ambientMotion: runtime.config().tavern.hearthFlicker ? runtime.config().tavern.ambientMotion : "off",
         repeatSeconds: runtime.config().tavern.repeatSeconds,
+        characters: runtime.config().tavern.characters,
         classNotice: k.store.runtime(threadId).classNotice ?? null,
         scope: runtime.scopes?.view(threadId) ?? null,
         violations: runtime.scopes?.violations([threadId]) ?? [],

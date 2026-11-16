@@ -41,7 +41,7 @@ The Keeper restatement remains fixed at 28,000 UTF-8 bytes. Tick facts remain fi
 
 The following safety and plumbing values remain fixed in `src/server/limits.ts`: a five-second sweep, five-minute uncertain-hire grace, 60-second retry waits, two-second registry cache, 30-second journal ownership/import cache, five-second journal-read backoff, 60-second activity-write throttle, two replacements per slot, and Ranger capacity of three. Class files can retain their explicit class budgets. Durable rebrief delivery has five attempts with exponential waits from one to fifteen minutes, followed by a durable Retry/Release blocker. It never silently abandons the allocation.
 
-The additional configurable controls are pause, the default class, row visibility, presentation voice and levels, Ambient motion and its repeat interval in the Motion group, notification eligibility and quiet hours, explicit versus eligible by-size greenlight, class execution overrides, scope mode, journal reminders, archival, retention, and tuning mode. Presentation settings do not remove orchestration instructions or memory.
+The additional configurable controls are pause, the default class, row visibility, presentation voice and levels, drawn characters, Ambient motion and its repeat interval in the Motion group, notification eligibility and quiet hours, explicit versus eligible by-size greenlight, class execution overrides, scope mode, journal reminders, archival, retention, and tuning mode. Presentation settings do not remove orchestration instructions or memory.
 
 Character voice has three modes. Full is the unchanged default: one optional short greeting or closing line. Light permits at most one optional character line after successful completion, not in greetings or progress remarks. Off asks for plain replies, stores new reports with `voice: null`, and hides stored optional voice lines on the page without rewriting their history. Blockers, failures, asks and trouble stay plain in every mode. Work, checks, evidence, exact literals, class instructions, identity, scope, holds and orchestration stay the same. The instructions reserve the legacy Full-mode data budget in every mode so a shorter voice rule cannot change which ledger facts fit. Changes apply at the next instruction assembly and report write; existing chat messages are not rewritten.
 
@@ -49,15 +49,16 @@ The existing registry read carries `voice: "full" | "light" | "off"`; a missing 
 
 ### Display preferences on existing reads
 
-All three display switches default to on and are user preferences, not tuner knobs:
+These are user preferences, not tuner knobs; the switches default to on and Ambient motion to Calm:
 
 | Setting | UI read | Effect |
 | --- | --- | --- |
 | `tavern.levels` | `registry({projectId?}).levels` | Controls level notches, level words and the tale's level line without removing earned counts or frozen snapshots. |
+| `tavern.characters` | `decor({threadId}).characters` | Draws the animated pixel-art characters and the walking strip above the composer. Off leaves the class crest in the widget row, with no sprite, canvas or animation loop. |
 | `tavern.widgetRow` | `decor({threadId}).widgetRow` | Controls the widget row globally; the existing per-thread `hidden` flag still wins. |
 | `tavern.ambientMotion`, `tavern.repeatSeconds` | Room and decor motion fields | Motion’s Ambient motion control selects Calm, Lively or Off and a repeat interval; reduced-motion preferences still hold. `hearthFlicker` is the legacy compatibility flag. |
 
-The RPC fields are optional for older servers and fixtures; absent means the existing on behavior. The current backend always emits a boolean. These fields are added only to UI RPC responses, never to the registry snapshot used by agents, their configuration, briefs or restatements. Each read subscribes to the existing `tavern:settings` invalidation, so changes reach already-mounted views and untyped-thread decor without polling or reloading. TOML uses `levels`, `widget_row` and `hearth_flicker` in `[tavern]`.
+The RPC fields are optional for older servers and fixtures; absent means the existing on behavior. The current backend always emits a boolean. These fields are added only to UI RPC responses, never to the registry snapshot used by agents, their configuration, briefs or restatements. Each read subscribes to the existing `tavern:settings` invalidation, so changes reach already-mounted views and untyped-thread decor without polling or reloading. TOML uses `levels`, `widget_row`, `characters` and `hearth_flicker` in `[tavern]`.
 
 ## TOML and dotfiles
 
@@ -105,7 +106,7 @@ The CLI permits agent imports and dotted patches by default. `bb tavern settings
 
 `tavern.agentsMayChangeSettings` defaults to true. False refuses applied thread-origin imports and patches; previews remain available. Every applied agent import or patch records its calling thread in `tavern_setting_changes.thread_id`, uses the existing reversible user-change mechanism, and appears as "by an agent in <thread name or title>" with a thread link in Settings history. File export writes and backup restore with data remain user-only. RPC client-only mutation rules remain unchanged.
 
-Motion uses `tavern.ambientMotion` (Calm by default, Lively, Off) and `tavern.repeatSeconds` (integer seconds, 3 to 60, default 20). The legacy `hearthFlicker=false` maps to Off when no mode is explicitly set. Setting a mode through CLI patches, imports or the UI synchronizes the legacy switch, so an explicit mode wins; selecting a mode in the UI updates that legacy switch too. Room and decor reads carry the effective mode and interval through their existing settings invalidation.
+Motion uses `tavern.ambientMotion` (Calm by default, Lively, Off) and `tavern.repeatSeconds` (integer seconds, 3 to 60, default 20). The legacy `hearthFlicker=false` maps to Off when no mode is explicitly set. Setting a mode through CLI patches, imports or the UI synchronizes the legacy switch, so an explicit mode wins; selecting a mode in the UI updates that legacy switch too. Room and decor reads carry the effective mode and interval through their existing settings invalidation. `tavern.characters` (default on) rides the decor read too: it carries `characters: false` and the thread draws no walking strip, leaving the class crest in the row.
 
 ## Machine placement settings
 

@@ -118,7 +118,7 @@ const decisionAttentionFields = {
 export const threadDecorSchema = z.object({
   threadId,
   widgetRow: z.boolean().optional(),
-  ambientMotion: z.enum(["calm", "lively", "off"]).optional(), repeatSeconds: z.number().optional(),
+  ambientMotion: z.enum(["calm", "lively", "off"]).optional(), repeatSeconds: z.number().optional(), characters: z.boolean().optional(),
   classNotice: classNoticeSchema.nullable().optional(),
   // added by Builder B: show the live guardrail and any pending widening alongside member details.
   scope: memberScopeSchema.nullable().optional(),

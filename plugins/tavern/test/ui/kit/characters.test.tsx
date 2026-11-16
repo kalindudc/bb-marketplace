@@ -440,6 +440,17 @@ describe("TavernCharacter", () => {
     slot.lifecycle.unmount();
   });
 
+  it("draws no strip at all when the Characters setting is off, and keeps the class crest", async () => {
+    const decor = { ...fixtureDecor, characters: false };
+    const slot = renderSlot({ component: ThreadWidget }, { threadId: "keeper-1" }, { rpc: { registry: () => fixtureRegistry, decor: () => decor } });
+    await waitFor(() => expect(slot.container.querySelector(".tw-crest .tavern-crest")).not.toBeNull());
+    // No strip, no sprite, no canvas: the row falls back to the crest alone.
+    expect(slot.container.querySelector("[data-part=TavernWalk]")).toBeNull();
+    expect(slot.container.querySelector("[data-part=TavernCharacter]")).toBeNull();
+    expect(slot.container.querySelector("canvas")).toBeNull();
+    slot.lifecycle.unmount();
+  });
+
   it("keeps the member's row a single control: the walking sprite is never nested in its button", async () => {
     const decor = { ...fixtureDecor, member: { ...fixtureDecor.member!, role: "member" as const }, keeperView: null, boardQuest: fixtureDecor.keeperView!.boardQuests[0] };
     const slot = renderSlot({ component: ThreadWidget }, { threadId: "keeper-1" }, { rpc: { registry: () => fixtureRegistry, decor: () => decor } });

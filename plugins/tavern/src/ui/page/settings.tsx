@@ -17,7 +17,7 @@ export const VOICE_HELP = {
   off: "Plain replies only. New reports carry no voice line, and the page hides the ones already stored.",
 } as const;
 const LABELS: Record<string, string> = {
-  "tavern.ambientMotion": "Ambient motion", "tavern.repeatSeconds": "Repeat every", "tavern.agentsMayChangeSettings": "Agents may change settings", "tavern.paused": "Pause every Keeper", "tavern.defaultClass": "New threads start as", "tavern.voice": "Character voice", "tavern.widgetRow": "Widget row", "tavern.levels": "Character levels", "tavern.hearthFlicker": "Hearth flicker while work runs",
+  "tavern.ambientMotion": "Ambient motion", "tavern.repeatSeconds": "Repeat every", "tavern.agentsMayChangeSettings": "Agents may change settings", "tavern.paused": "Pause every Keeper", "tavern.defaultClass": "New threads start as", "tavern.voice": "Character voice", "tavern.widgetRow": "Widget row", "tavern.levels": "Character levels", "tavern.characters": "Characters", "tavern.hearthFlicker": "Hearth flicker while work runs",
   "attention.reviewBudget": "Review budget", "attention.notify": "Push to your devices", "attention.quietHours": "Quiet hours",
   "keepers.greenlight": "Greenlight", "keepers.decisionTimerMax": "Longest decision timer", "keepers.partyMax": "Party ceiling", "keepers.staleStrikes": "Strikes before release advice", "keepers.restatementBytes": "Keeper restatement limit", "keepers.tickFactChars": "Tick facts limit",
   "scopes.mode": "Scopes", "journal.journalReminders": "Journal reminders", "journal.journalQuietMinutes": "Quiet before a reminder",
@@ -111,6 +111,7 @@ export function TavernSection() {
 export function MotionSection() {
   const api = useTavernSettings();
   return <Shell api={api}>{d => { const t = d.effective.tavern; return <SettingsCard title="Ambient cues" hint="Choose how Tavern moves while work runs." glyph="lantern">
+    <Row label="Characters" help="Draws the animated pixel-art characters: the walking strip at the top of the composer. Off leaves the class crest in the widget row, with no sprite, no canvas and no animation." control={id => <Toggle id={id} checked={t.characters} disabled={api.pending} onChange={v => void api.save({ tavern: { characters: v } })} />} />
     <Row label="Ambient motion" help="Calm uses brief, budgeted cues. Lively repeats while work runs. Off keeps the hearth still and stops ambient repeats." control={() => <SegFilter label="Ambient motion" value={t.hearthFlicker ? t.ambientMotion : "off"} onChange={v => void api.save({ tavern: { ambientMotion: v, hearthFlicker: v !== "off" } })} options={[{id:"calm",label:"Calm"},{id:"lively",label:"Lively"},{id:"off",label:"Off"}]} />} />
     <Row label="Repeat every" help="The repeat interval in Lively. Reduced motion, hidden pages, typing and trouble in view still hold animations." control={id => <NumberField id={id} value={t.repeatSeconds} min={3} max={60} unit="seconds" disabled={api.pending} onSave={v => void api.save({tavern:{repeatSeconds:v}})} />} />
   </SettingsCard>; }}</Shell>;
@@ -131,7 +132,7 @@ export function SettingAuthor({ threadId, by, label = "another thread", sentence
 function historySection(key: string) {
   const path = key.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase());
   if (path === "knobs.rangerTimeboxMaxMinutes") return "Keepers and decisions";
-  if (/^tavern\.(ambientMotion|repeatSeconds|hearthFlicker)/.test(path)) return "Motion";
+  if (/^tavern\.(ambientMotion|repeatSeconds|hearthFlicker|characters)/.test(path)) return "Motion";
   if (/^(knobs|tuned|tuning\.pinned)\./.test(path)) return "Tuning";
   return ({tavern:"Tavern",attention:"Your attention",keepers:"Keepers and decisions",classes:"Classes and models",scopes:"Scopes",machines:"Where work runs",journal:"Journal",tuning:"Tuning",data:"Data and backups",backup:"Data and backups"} as Record<string,string>)[path.split(".")[0]!] ?? "Settings";
 }
