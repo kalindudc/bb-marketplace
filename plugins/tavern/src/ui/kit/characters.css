@@ -70,6 +70,11 @@ html.dark .tavern .tchar {
    transforms, so a hop or a wave still lands on top of the walk. The strip's own rules sit under the gags below. */
 .tavern .tchar-walk { position: absolute; bottom: 2px; left: 0; will-change: translate; }
 
+/* The halo: a big, soft warm bleed that reaches past the sprite's own 48x52 frame, so the light is never cut off in a square at the
+   canvas edge. Its centre is the character's glass or flame (`--tchar-glow-x/y`) and it breathes on `--tchar-flicker`, the same value the
+   painted core glow uses, so the two read as one moving source. Screen blending keeps it a light, never a pasted grey blob. */
+.tavern .tchar-glow { position: absolute; left: var(--tchar-glow-x, 26%); top: var(--tchar-glow-y, 72%); z-index: -1; width: calc(230% * var(--tchar-flicker, 1)); height: calc(230% * var(--tchar-flicker, 1)); transform: translate(-50%, -50%); border-radius: 50%; pointer-events: none; mix-blend-mode: screen; background: radial-gradient(closest-side, color-mix(in oklab, var(--tchar-hearth) calc(60% * var(--tchar-flicker, 1)), transparent), transparent); }
+
 /* Needs you: the amber mark Tavern uses wherever an ask waits. The sprite reads its state from its pose and this mark, never a ring: a
    box-shadow keyline on a rectangular canvas reads as an unwanted border, so a walker carries none. */
 .tavern .tchar-need { position: absolute; top: -3px; right: -3px; display: grid; place-items: center; width: 13px; height: 13px; border-radius: 50%; background: var(--tavern-you); color: var(--attention-foreground); font-size: 10px; font-weight: 800; line-height: 1; box-shadow: 0 0 0 1px var(--tchar-card); }
@@ -107,7 +112,7 @@ html.dark .tavern .tchar {
 /* The walking strip above the composer: the 2x sprite (48x52) with room to walk and bob, on a ground line, spanning the composer. The
    scale is Calm's own measure (its 16-row strip is 48 CSS px). The selector is `.tavern.twalk`, not `.tavern .twalk`: the strip element
    carries both classes itself, and a descendant selector would never match it, leaving the absolutely-placed sprite anchored to an ancestor. */
-.tavern.twalk { position: relative; width: 100%; min-width: 0; height: 56px; margin-top: 2px; }
+.tavern.twalk { position: relative; width: 100%; min-width: 0; height: 56px; margin: 0 0 2px; }
 .tavern .twalk-ground { position: absolute; left: 0; right: 0; bottom: 6px; height: 1px; background: color-mix(in oklab, var(--tavern-line) 65%, transparent); }
 
 /* One banner root for the row and the walk strip: the host lays a composer banner out as a single item, so both live inside this block

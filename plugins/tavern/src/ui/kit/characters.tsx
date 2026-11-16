@@ -132,6 +132,17 @@ export function characterLook(character: Pick<CharacterDef, "id" | "look">): Cha
 
 export const bodyWidth = (look: CharacterLook) => (look.build === "broad" ? 10 : 8);
 
+/**
+ * Where a character's in-hand light burns, in art px: the centre of its glow. Null when the character carries none. It mirrors the
+ * geometry `drawCharacter` uses, so the painted core and the CSS halo land on the same spot.
+ */
+export function lightSpot(look: CharacterLook): { x: number; y: number } | null {
+  if (look.light === "none") return null;
+  const x = CHARACTER_GRID.centre - bodyWidth(look) / 2 - 2;
+  // The free hand sits at the same height whatever the torso (bodyTop + 1 + torso - 3 = ground - 6); glass hangs below it, flame above.
+  return look.light === "torch" ? { x, y: CHARACTER_GRID.ground - 8 } : { x, y: CHARACTER_GRID.ground - 4 };
+}
+
 /** The colours one sprite is drawn with. Hue, hearth and card come from Tavern's theme tokens; the ink is a fixed dark in every theme, so the eyes never turn white in the dark; skin, hair and gear are the same warm set in light and dark. */
 export type CharacterPalette = {
   hue: Record<string, string>;
@@ -239,8 +250,9 @@ export function workAngle(phase: number) {
  * ember); interval mode holds still and only a gag moves it. Reduced motion asks for a constant `ts`, which lands every loop on one still
  * frame.
  */
-export function characterPose(input: { look: CharacterLook; state: CharacterState; ts: number; mode: CharacterMode; keeper: boolean; walk?: boolean; gag?: { kind: CharacterGag; progress: number } | null }): CharacterPose {
+export function characterPose(input: { look: CharacterLook; state: CharacterState; ts: number; mode: CharacterMode; keeper: boolean; walk?: boolean; strolling?: boolean; gag?: { kind: CharacterGag; progress: number } | null }): CharacterPose {
   const { look, state, ts, mode, keeper, walk = false, gag } = input;
+  const strolling = input.strolling ?? walk;
   const pose: CharacterPose = { ...STILL };
   const looping = mode === "continuous";
   if (state === "working") {
@@ -275,8 +287,12 @@ export function characterPose(input: { look: CharacterLook; state: CharacterStat
     else if (gag.kind === "notice") { pose.lookSide = p < 0.5 ? -1 : 1; pose.jump = p < 0.25 ? 1 : 0; }
     else if (gag.kind === "flourish") { pose.arm = 1; pose.spark = p > 0.3; pose.ember = p; }
   }
-  // A walker steps: a faster, even bob than the idle breath, whether or not the Motion setting loops it in place.
-  if (walk) pose.bob = Math.floor(ts / 240) % 2;
+  // A walker steps while it strolls; a hold that has it standing (you are typing, an ask is in the row) leaves a slow breath and a blink,
+  // so a paused walk never reads as a dead character.
+  if (walk) {
+    pose.bob = strolling ? Math.floor(ts / 240) % 2 : Math.floor(ts / 700) % 2;
+    if (!strolling && !gag) pose.blink = (ts + look.blinkOff) % 4200 < 150;
+  }
   return pose;
 }
 
@@ -409,8 +425,10 @@ export function drawCharacter(input: { ctx: CanvasRenderingContext2D; hue: strin
         g.fillStyle = grd;
         g.fillRect(0, 0, GW, GH);
       };
-      layer(6, 0.55, "255,222,150");   // the hot core at the glass or flame
-      layer(14, 0.3, "255,150,70");    // the warm bleed, out past the sprite's edge
+      // Kept short on purpose: this is the hot core that lights the pixels near the flame. The wide bleed lives on the CSS halo, so nothing
+      // is ever cut off in a square at the canvas edge.
+      layer(3, 0.5, "255,222,150");    // the hot core at the glass or flame
+      layer(5.5, 0.3, "255,150,70");   // a short warm spread, still short of the canvas edge
       g.restore();
     }
     drawLight(px, hx, hy, look.light, p);
@@ -473,6 +491,7 @@ export function TavernCharacter({
   const [bubble, setBubble] = useState<string | null>(null);
   const [gag, setGag] = useState<{ kind: CharacterGag; start: number; until: number } | null>(null);
   const [visible, setVisible] = useState(false);
+  const [dark, setDark] = useState(false);
 
   const reduced = useSyncExternalStore(motion.subscribe, motion.getReduced, () => false);
   const paused = useSyncExternalStore(motion.subscribe, motion.getPaused, () => false);
@@ -485,13 +504,16 @@ export function TavernCharacter({
 
   // The 2D context is asked for once: an environment without canvas (a test) answers "no" forever, and asking again is pure noise.
   const context2d = useCallback(() => (context.current ??= canvas.current?.getContext("2d") ?? null), []);
-  const draw = useCallback((ts: number) => {
+  const draw = useCallback((ts: number, strolling = walking) => {
     const ctx = context2d();
     if (!ctx) return;
     palette.current ??= readPalette(wrap.current);
     ctx.imageSmoothingEnabled = false;
-    const pose = characterPose({ look, state, ts, mode: still ? "interval" : settings, keeper, walk: walking, gag: gag ? { kind: gag.kind, progress: (ts - gag.start) / Math.max(1, gag.until - gag.start) } : null });
-    drawCharacter({ ctx, hue: character.hue, look, palette: palette.current, pose, cls: classId, keeper, charge: character.charge, flame: fireFlicker(ts, look.blinkOff) });
+    const flame = fireFlicker(ts, look.blinkOff);
+    const pose = characterPose({ look, state, ts, mode: still ? "interval" : settings, keeper, walk: walking, strolling, gag: gag ? { kind: gag.kind, progress: (ts - gag.start) / Math.max(1, gag.until - gag.start) } : null });
+    drawCharacter({ ctx, hue: character.hue, look, palette: palette.current, pose, cls: classId, keeper, charge: character.charge, flame });
+    // The CSS halo breathes on the same flicker as the painted core, so the two read as one light.
+    wrap.current?.style.setProperty("--tchar-flicker", flame.toFixed(3));
   }, [look, state, settings, still, keeper, classId, gag, character.hue, character.charge, walking]);
 
   /**
@@ -526,10 +548,22 @@ export function TavernCharacter({
     if (canvas.current && context2d()) draw(performance.now());
   }, [draw, context2d, scale, visible]);
 
+  // Whether the page is dark decides the in-hand light and its halo: read it with the palette, and again on a theme switch.
+  useLayoutEffect(() => { palette.current ??= readPalette(wrap.current); setDark(!!palette.current?.dark); }, []);
+
+  // The halo's centre is the character's own light, so the bleed sits on the glass or flame rather than the sprite's middle.
+  useLayoutEffect(() => {
+    const el = wrap.current;
+    if (!el) return;
+    const spot = lightSpot(look);
+    el.style.setProperty("--tchar-glow-x", spot ? `${(spot.x / CHARACTER_GRID.width) * 100}%` : "50%");
+    el.style.setProperty("--tchar-glow-y", spot ? `${(spot.y / CHARACTER_GRID.height) * 100}%` : "50%");
+  }, [look]);
+
   // The theme can change under us (bb's dark switch, a whole different theme): read the palette again and repaint.
   useEffect(() => {
     if (typeof MutationObserver === "undefined" || !canvas.current) return;
-    const observer = new MutationObserver(() => { palette.current = readPalette(wrap.current); draw(performance.now()); });
+    const observer = new MutationObserver(() => { palette.current = readPalette(wrap.current); setDark(!!palette.current?.dark); draw(performance.now()); });
     observer.observe(document.documentElement, { attributes: true, attributeFilter: ["class", "style", "data-theme"] });
     return () => observer.disconnect();
   }, [draw]);
@@ -600,11 +634,14 @@ export function TavernCharacter({
     let raf = 0, last = 0;
     const step = (ts: number) => {
       raf = requestAnimationFrame(step);
-      const live = liveRef.current && motion.mayLoop(surface);
-      if (walkRef.current && live) positionWalk(ts);
-      if (!live || ts - last < CHARACTER_FRAME_MS) return;
+      if (!liveRef.current) return;
+      // A hold (you are typing, an ask is in the row, the tab is hidden) pauses the walk but never the sprite: it keeps breathing, so a held
+      // walker reads as standing rather than dead.
+      const strolling = walkRef.current && motion.mayLoop(surface);
+      if (strolling) positionWalk(ts);
+      if (ts - last < CHARACTER_FRAME_MS) return;
       last = ts;
-      drawRef.current(ts);
+      drawRef.current(ts, strolling);
     };
     raf = requestAnimationFrame(step);
     return () => cancelAnimationFrame(raf);
@@ -624,13 +661,15 @@ export function TavernCharacter({
   const label = `${character.name}, ${cls?.label ?? "no class"}${keeper ? ", Keeper" : ""}, ${CHARACTER_STATE_WORD[state]}`;
   const style: CSSProperties = { "--tchar-w": `${CHARACTER_GRID.width * scale}px`, "--tchar-h": `${CHARACTER_GRID.height * scale}px` } as CSSProperties;
   const host: RefCallback<HTMLElement> = useCallback(el => { wrap.current = el; }, []);
+  const lit = dark && look.light !== "none";
   const body = <>
+    {lit && <span className="tchar-glow" aria-hidden="true" />}
     <canvas ref={canvas} className="tchar-art" width={CHARACTER_GRID.width} height={CHARACTER_GRID.height} style={{ width: "var(--tchar-w)", height: "var(--tchar-h)" }} role="img" aria-label={label} />
     {state === "needs-you" && <span className="tchar-need" aria-hidden="true">!</span>}
     {bubble && <span className="tchar-say" role="status">{bubble}</span>}
   </>;
   const shell = `tchar st-${state} ${keeper ? "is-keeper" : ""} ${walking ? "tchar-walk" : ""} ${className ?? ""}`.trim();
-  const shared = { className: shell, style, "data-part": "TavernCharacter", "data-state": state, "data-keeper": keeper || undefined, "data-mode": settings };
+  const shared = { className: shell, style, "data-part": "TavernCharacter", "data-state": state, "data-keeper": keeper || undefined, "data-mode": settings, "data-lit": lit || undefined };
   if (!interactive) return <span ref={host} {...shared} title={label}>{body}</span>;
   return (
     <button

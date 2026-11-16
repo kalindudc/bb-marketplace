@@ -7,7 +7,8 @@ import { join } from "node:path";
 import { parse } from "yaml";
 import {
   CHARACTER_GAG_MS, CHARACTER_PALETTE_FALLBACK, TavernCharacter, bodyWidth, characterLook, characterMode, characterPose,
-  characterState, darkTheme, drawCharacter, fireFlicker, readPalette, walkSpan, WALK_SPEED, CHARGE_PIXELS, type CharacterPalette, type CharacterState,
+  characterState, darkTheme, drawCharacter, fireFlicker, lightSpot, readPalette, walkSpan, WALK_SPEED, CHARACTER_GRID, CHARGE_PIXELS,
+  type CharacterPalette, type CharacterState,
 } from "../../../src/ui/kit/characters";
 import { characterDefSchema } from "../../../src/shared/schema";
 import { motion } from "../../../src/ui/kit/motion";
@@ -237,6 +238,17 @@ describe("the drawing", () => {
     expect(off.gradients).toHaveLength(0);
   });
 
+  it("puts the light's centre on the glass or flame", () => {
+    expect(lightSpot(characterLook({ id: "ada", look: { light: "none" } }))).toBeNull();
+    const lantern = lightSpot(characterLook({ id: "ada", look: { light: "lantern" } }))!;
+    const torch = lightSpot(characterLook({ id: "ada", look: { light: "torch" } }))!;
+    // A lantern's glass hangs below the hand; a torch's flame burns above it.
+    expect(lantern.y).toBeGreaterThan(torch.y);
+    // Left of the sprite's middle (the free hand carries it), on the grid, so the halo lands on the light.
+    expect(lantern.x).toBeLessThan(CHARACTER_GRID.width / 2);
+    expect(Number.isInteger(lantern.x)).toBe(true);
+  });
+
   it("flickers the fire on its own detuned beat, never a metronome", () => {
     const vals = [0, 40, 90, 200, 350, 610].map(t => fireFlicker(t, 7));
     expect(new Set(vals.map(v => v.toFixed(3))).size).toBeGreaterThan(3);
@@ -369,22 +381,19 @@ describe("TavernCharacter", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it("loops continuously in continuous mode, and only then", async () => {
+  it("loops continuously in continuous mode, and only then", () => {
     vi.useFakeTimers();
-    const spy = vi.spyOn(motion, "mayLoop");
     const continuous = sprite({ mode: "continuous" });
     drawn.rects.length = 0;
     act(() => { vi.advanceTimersByTime(400); });
-    expect(spy).toHaveBeenCalled();
     expect(drawn.rects.length).toBeGreaterThan(0);
     continuous.unmount();
     drawn.rects.length = 0;
-    spy.mockClear();
     const interval = sprite({ mode: "interval" });
+    const still = drawn.rects.length;
+    expect(still).toBeGreaterThan(0); // the still frame on mount
     act(() => { vi.advanceTimersByTime(400); });
-    expect(spy).not.toHaveBeenCalled();
-    // The still frame on mount is the whole of an interval-mode sprite at rest.
-    expect(drawn.rects.length).toBeGreaterThan(0);
+    expect(drawn.rects.length).toBe(still); // and nothing more at rest
     interval.unmount();
   });
 
@@ -489,14 +498,41 @@ describe("TavernCharacter", () => {
     v.unmount();
   });
 
-  it("moves the walker every frame, not only on the art's 12 fps beat", () => {
+  it("keeps breathing under the typing hold, while the walk pauses", () => {
     vi.useFakeTimers();
     const v = sprite({ mode: "continuous", placement: "walk" });
     const host = el(v.container) as HTMLElement;
     Object.defineProperty(host.parentElement!, "clientWidth", { value: 200, configurable: true });
     Object.defineProperty(host, "offsetWidth", { value: 24, configurable: true });
     act(() => { window.dispatchEvent(new Event("resize")); });
+    act(() => { vi.advanceTimersByTime(600); });
+    const moved = host.style.translate;
+    // A real text field takes the keyboard: that begins the coordinator's typing hold.
+    const field = document.createElement("input");
+    document.body.appendChild(field);
+    field.focus();
+    act(() => { field.dispatchEvent(new Event("input", { bubbles: true })); });
+    drawn.rects.length = 0;
+    act(() => { vi.advanceTimersByTime(600); });
+    // The walk pauses where it stood...
+    expect(host.style.translate).toBe(moved);
+    // ...but the sprite keeps drawing, so it never reads dead.
+    expect(drawn.rects.length).toBeGreaterThan(0);
+    field.remove();
+    v.unmount();
+  });
+
+  it("moves the walker every frame, not only on the art's 12 fps beat", () => {
+    vi.useFakeTimers();
+    const spy = vi.spyOn(motion, "mayLoop");
+    const v = sprite({ mode: "continuous", placement: "walk" });
+    const host = el(v.container) as HTMLElement;
+    Object.defineProperty(host.parentElement!, "clientWidth", { value: 200, configurable: true });
+    Object.defineProperty(host, "offsetWidth", { value: 24, configurable: true });
+    act(() => { window.dispatchEvent(new Event("resize")); });
     act(() => { vi.advanceTimersByTime(100); });
+    // The walk consults the coordinator every frame, so a hold reaches it.
+    expect(spy).toHaveBeenCalled();
     const samples: number[] = [];
     // Four samples 20 ms apart (all inside one 80 ms art frame) already move: the position is per-frame, never throttled to the art rate.
     for (let i = 0; i < 4; i++) { act(() => { vi.advanceTimersByTime(20); }); samples.push(parseFloat(host.style.translate)); }
@@ -505,16 +541,14 @@ describe("TavernCharacter", () => {
     v.unmount();
   });
 
-  it("stops its loop while its surface is held, and carries on when it is released", () => {
+  it("keeps drawing while its surface is held, so a held sprite never reads dead", () => {
     vi.useFakeTimers();
     const v = sprite({ mode: "continuous" });
     act(() => { motion.setHeld("thread:t1", true); });
     drawn.rects.length = 0;
     act(() => { vi.advanceTimersByTime(400); });
-    expect(drawn.rects.length).toBe(0);
-    act(() => { motion.setHeld("thread:t1", false); });
-    act(() => { vi.advanceTimersByTime(400); });
     expect(drawn.rects.length).toBeGreaterThan(0);
+    act(() => { motion.setHeld("thread:t1", false); });
     v.unmount();
   });
 });
