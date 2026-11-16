@@ -9,6 +9,8 @@ A returned or stopped quest reopens for deviations without a new quest, the chec
 ### Added
 
 - Tavern's party is drawn as animated pixel-art characters. Every member is a small sprite with its own look (build, hair, hair colour, skin and a hat), seeded from the character's id and overridable in its character file's `look` block. The sprite walks, works and rests with the thread, follows the Keeper's state, and turns to face an ask.
+- Each character walks a strip above the composer at a readable size (2x, the same on-screen height as Calm's scene strip), its heraldic charge worn on its chest in pixel art, while the widget row keeps the class crest. The walk runs through the motion coordinator, so reduced motion, the typing hold and an ask in the row stop it and leave it standing at the start.
+- In the dark a character carries a light: a lantern or a lit torch in its free hand, seeded from its id or set in a character file's `look.light`, with a warm glow over the glass or flame and a halo past the sprite's frame. The light theme draws none of it.
 - A continuous motion mode: with motion set to Lively, an unbounded ambient loop runs the sprites whenever their surface is visible. The strong stops still apply (reduced motion, a hidden or paused tab, and the typing hold), and an ask holds the widget row without freezing a standing sprite.
 - A returned or stopped quest can be re-opened for deviations and follow-up commits without opening a new quest. `tavern_reopen` returns it to build, keeps its plan version and greenlight, clears its end and stop state, records `quest.reopened`, and reanchors the Keeper's thread. A live quest is refused; an archived quest must be brought up from the cellar first, and a deleted one restored from there.
 
@@ -17,6 +19,10 @@ A returned or stopped quest reopens for deviations without a new quest, the chec
 - The checker recognises the check runners a repository actually uses while keeping worktree confinement and the deny rules: any `npm`, `pnpm`, `yarn` or `bun run <script>`, `npx tsc` with or without `--noEmit`, a project binary reached directly (`tsc`, `vitest run`, `jest`), and a project binary reached through `node node_modules/…`. Other work (`npm install`, `npm publish`, `npx vitest` without `run`, `npx eslint`, scripts under `node scripts/…`, and path escapes) still needs exact-command metadata.
 - The class page's records fold and remember what is open, the quest map's notes float over the map instead of reserving a band, and the rail keeps its calm order.
 - The composer's ask row shows the whole question, a decision reads its note in place, and the composer no longer swallows the first click.
+
+### Fixed
+
+- A dark-mode character's eyes are dark again. The sprite's ink is a fixed dark in both themes, not bb's near-white dark foreground, so the eyes no longer turn white in dark mode.
 
 ## 0.1.2 (2026-11-15)
 

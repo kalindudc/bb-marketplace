@@ -7,6 +7,8 @@ export const LOOK_HAIRS = ["flat", "spiky", "long", "bald"] as const;
 export const LOOK_HAIR_COLOURS = ["brown", "black", "sand", "grey", "rust"] as const;
 export const LOOK_SKINS = ["fair", "tan", "deep"] as const;
 export const LOOK_HATS = ["none", "cap", "pointy"] as const;
+// A light a character carries in the dark: a lantern or a torch in the free hand, or none. Seeded from the id, overridable per file.
+export const LOOK_LIGHTS = ["lantern", "torch", "none"] as const;
 
 export type LookFields = {
   build?: (typeof LOOK_BUILDS)[number];
@@ -14,4 +16,5 @@ export type LookFields = {
   hairColour?: (typeof LOOK_HAIR_COLOURS)[number];
   skin?: (typeof LOOK_SKINS)[number];
   hat?: (typeof LOOK_HATS)[number];
+  light?: (typeof LOOK_LIGHTS)[number];
 };

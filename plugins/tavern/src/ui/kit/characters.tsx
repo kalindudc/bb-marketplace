@@ -2,15 +2,14 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, use
 import type { CharacterDef, ClassDef } from "../../shared/schema";
 import { LOOK_HAIR_COLOURS, LOOK_HAIRS, LOOK_HATS, LOOK_SKINS, type LookFields } from "../../shared/look";
 import { HUE_CSS } from "../../shared/heraldry";
-import { Crest } from "./crest";
 import { motion, type Surface } from "./motion";
 import "./characters.css";
 
 /**
  * Tavern's characters as pixel art. One small record per character (its id, hue and charge, plus any `look:` traits its file names)
  * drives a 24x26 sprite: the id seeds the body, hair, skin and hat, so a character looks the same everywhere and needs no asset, and a
- * character file's `look:` overrides any trait it names, exactly as editing `hue` or `charge` redraws its crest. The badge on its chest
- * is the same `Crest` the rest of Tavern draws. The art comes from Pip's verified mock (thread-storage/tavern-character-mocks.html).
+ * character file's `look:` overrides any trait it names, exactly as editing `hue` or `charge` redraws its crest. Its chest wears the
+ * character's heraldic charge in pixels. The art comes from Pip's verified mock (thread-storage/tavern-character-mocks.html).
  *
  * Motion: every automatic cue goes through the motion coordinator, so reduced motion, the typing hold, a held widget row and the window
  * budgets reach the sprites too. Interval mode fires one short gag every `repeatSeconds`; continuous mode loops (a strike, a breath,
@@ -20,6 +19,8 @@ import "./characters.css";
 export const CHARACTER_GRID = { width: 24, height: 26, ground: 23, centre: 12 } as const;
 /** ~12 fps: chunky pixels read as pixel art at this rate, and a row of characters costs almost nothing. */
 export const CHARACTER_FRAME_MS = 80;
+/** The pace of a walking sprite on its strip, in px per second: kept in step with the sprite's size, so a bigger walker keeps the same cadence. */
+const WALK_SPEED = 52;
 
 export const CHARACTER_STATES = ["idle", "working", "needs-you", "error"] as const;
 export type CharacterState = (typeof CHARACTER_STATES)[number];
@@ -67,6 +68,7 @@ export type CharacterLook = LookFields & {
   hairColour: NonNullable<LookFields["hairColour"]>;
   skin: NonNullable<LookFields["skin"]>;
   hat: NonNullable<LookFields["hat"]>;
+  light: NonNullable<LookFields["light"]>;
   torso: number;
   head: number;
   blinkOff: number;
@@ -96,6 +98,8 @@ export function characterLook(character: Pick<CharacterDef, "id" | "look">): Cha
     torso: 7 + Math.floor(r() * 3),
     head: 6 + Math.floor(r() * 2),
     blinkOff: Math.floor(r() * 3600),
+    // Seeded last: a light for the dark, and the earlier traits stay exactly the mock's, whatever light an id draws.
+    light: r() < 0.5 ? "lantern" : r() < 0.5 ? "torch" : "none",
   };
   const over = character.look ?? {};
   return {
@@ -105,12 +109,13 @@ export function characterLook(character: Pick<CharacterDef, "id" | "look">): Cha
     hairColour: over.hairColour ?? seeded.hairColour,
     skin: over.skin ?? seeded.skin,
     hat: over.hat ?? seeded.hat,
+    light: over.light ?? seeded.light,
   };
 }
 
 export const bodyWidth = (look: CharacterLook) => (look.build === "broad" ? 10 : 8);
 
-/** The colours one sprite is drawn with. Hue, hearth, card and ink are Tavern's own tokens; skin, hair and gear are the same in every theme. */
+/** The colours one sprite is drawn with. Hue, hearth and card come from Tavern's theme tokens; the ink is a fixed dark in every theme, so the eyes never turn white in the dark; skin, hair and gear are the same warm set in light and dark. */
 export type CharacterPalette = {
   hue: Record<string, string>;
   hearth: string;
@@ -129,6 +134,8 @@ export type CharacterPalette = {
   cloud: string;
   drop: string;
   shadow: string;
+  /** True when the page background is dark: the sprite then carries its in-hand light. */
+  dark: boolean;
 };
 
 /** Used when the theme cannot be read (a detached node, a test): the light palette of Pip's mock. */
@@ -137,10 +144,19 @@ export const CHARACTER_PALETTE_FALLBACK: CharacterPalette = {
   hearth: "#e8930c", bad: "#b3402e", ink: "#3b342a", card: "#faf6ec", background: "#f3ecdc", muted: "#8a7e68",
   skin: ["#eac49b", "#d8a87e", "#b9835e"],
   hair: ["#5b4632", "#2e2822", "#c9a24a", "#8a8378", "#a34f2e"],
-  pants: "#4a4136", belt: "#6b5a3e", cloak: "#7c3040", wood: "#8a6a3e", metal: "#8d949c", cloud: "#9a938a", drop: "#5f88b5", shadow: "rgba(59,52,42,.18)",
+  pants: "#4a4136", belt: "#6b5a3e", cloak: "#7c3040", wood: "#8a6a3e", metal: "#8d949c", cloud: "#9a938a", drop: "#5f88b5", shadow: "rgba(59,52,42,.18)", dark: false,
 };
 
 const COLOUR = /^(rgb|rgba|hsl|hsla|hwb|lab|lch|oklab|oklch|color)\(|^#[0-9a-f]{3,8}$/i;
+
+/** A palette's theme from its page colour: the background's luminance decides dark, so a theme switch needs no class read. */
+export function darkTheme(background: string): boolean {
+  const m = /^rgba?\(([^)]+)\)$/.exec(background.trim());
+  if (!m) return false;
+  const [r, g, b] = m[1]!.split(/[\s,\/]+/).map(Number);
+  if (![r, g, b].every(Number.isFinite)) return false;
+  return (0.2126 * r! + 0.7152 * g! + 0.0722 * b!) / 255 < 0.4;
+}
 
 /**
  * The palette for one sprite, read from the element's own CSS custom properties. A throwaway probe is given `color: var(--tchar-name)`
@@ -168,6 +184,7 @@ export function readPalette(root: Element | null): CharacterPalette {
     ink: read("--tchar-ink", CHARACTER_PALETTE_FALLBACK.ink),
     card: read("--tchar-card", CHARACTER_PALETTE_FALLBACK.card),
     background: read("--tchar-bg", CHARACTER_PALETTE_FALLBACK.background),
+    dark: darkTheme(read("--tchar-bg", CHARACTER_PALETTE_FALLBACK.background)),
     muted: read("--tchar-muted", CHARACTER_PALETTE_FALLBACK.muted),
     skin: CHARACTER_PALETTE_FALLBACK.skin.map((f, i) => read(`--tchar-skin-${i + 1}`, f)),
     hair: CHARACTER_PALETTE_FALLBACK.hair.map((f, i) => read(`--tchar-hair-${i + 1}`, f)),
@@ -205,8 +222,8 @@ export function workAngle(phase: number) {
  * ember); interval mode holds still and only a gag moves it. Reduced motion asks for a constant `ts`, which lands every loop on one still
  * frame.
  */
-export function characterPose(input: { look: CharacterLook; state: CharacterState; ts: number; mode: CharacterMode; keeper: boolean; gag?: { kind: CharacterGag; progress: number } | null }): CharacterPose {
-  const { look, state, ts, mode, keeper, gag } = input;
+export function characterPose(input: { look: CharacterLook; state: CharacterState; ts: number; mode: CharacterMode; keeper: boolean; walk?: boolean; gag?: { kind: CharacterGag; progress: number } | null }): CharacterPose {
+  const { look, state, ts, mode, keeper, walk = false, gag } = input;
   const pose: CharacterPose = { ...STILL };
   const looping = mode === "continuous";
   if (state === "working") {
@@ -241,6 +258,8 @@ export function characterPose(input: { look: CharacterLook; state: CharacterStat
     else if (gag.kind === "notice") { pose.lookSide = p < 0.5 ? -1 : 1; pose.jump = p < 0.25 ? 1 : 0; }
     else if (gag.kind === "flourish") { pose.arm = 1; pose.spark = p > 0.3; pose.ember = p; }
   }
+  // A walker steps: a faster, even bob than the idle breath, whether or not the Motion setting loops it in place.
+  if (walk) pose.bob = Math.floor(ts / 240) % 2;
   return pose;
 }
 
@@ -266,13 +285,46 @@ export function drawTool(px: Pixel, x: number, y: number, dir: number, cls: stri
   }
 }
 
+/** A light in the free hand for the dark: a lantern hung from it or a lit torch held up, its glass or flame lit. */
+export function drawLight(px: Pixel, x: number, y: number, kind: "lantern" | "torch", p: CharacterPalette) {
+  if (kind === "lantern") {
+    px(x, y, 1, 1, p.metal);                        // the bail, in the hand
+    px(x - 1, y + 1, 3, 1, p.metal);                 // cap
+    px(x - 1, y + 2, 1, 2, p.metal); px(x + 1, y + 2, 1, 2, p.metal);
+    px(x, y + 2, 1, 2, p.card);                      // the glass, lit
+    px(x, y + 3, 1, 1, p.hearth);
+    px(x - 1, y + 4, 3, 1, p.metal);                 // base
+  } else {
+    px(x, y - 3, 1, 1, p.card);                      // the flame
+    px(x, y - 2, 1, 1, p.hearth);
+    px(x - 1, y - 1, 1, 1, p.hearth); px(x + 1, y - 1, 1, 1, p.hearth);
+    px(x, y, 1, 3, p.wood);                          // the handle, in the hand
+  }
+}
+
+/**
+ * The heraldic charge a character wears on its chest, 5x5 and centred, in the card colour on its torso: each walker carries its own badge,
+ * the same charge the crest cuts out of its field. `#` is a pixel. Characters with no charge ("no character") wear none.
+ */
+export const CHARGE_PIXELS: Record<CharacterDef["charge"], readonly string[]> = {
+  chevron: ["..#..", ".#.#.", "#...#", ".....", "....."],
+  fess: [".....", ".....", "#####", ".....", "....."],
+  cross: ["..#..", "..#..", "#####", "..#..", "..#.."],
+  bend: ["#....", ".#...", "..#..", "...#.", "....#"],
+  star: ["..#..", ".###.", "#####", ".#.#.", "#...#"],
+  pale: ["..#..", "..#..", "..#..", "..#..", "..#.."],
+  saltire: ["#...#", ".#.#.", "..#..", ".#.#.", "#...#"],
+  chief: ["#####", ".....", ".....", ".....", "....."],
+  dots: [".....", ".#.#.", ".....", "..#..", "....."],
+};
+
 /**
  * One frame of pixel art, part by part, back to front: the shadow on the ground, the legs, the cloak a Keeper wears, the torso in the
  * character's hue, the arms (the right one swings a tool), the head with its hair and hat, the eyes, and the weather over it all. The
  * draw is pure: the same look, palette, pose and class always give the same pixels.
  */
-export function drawCharacter(input: { ctx: CanvasRenderingContext2D; hue: string; look: CharacterLook; palette: CharacterPalette; pose: CharacterPose; cls?: string | null; keeper?: boolean }): void {
-  const { ctx: g, hue: hueName, look, palette: p, pose, cls = null, keeper = false } = input;
+export function drawCharacter(input: { ctx: CanvasRenderingContext2D; hue: string; look: CharacterLook; palette: CharacterPalette; pose: CharacterPose; cls?: string | null; keeper?: boolean; charge?: CharacterDef["charge"] | null }): void {
+  const { ctx: g, hue: hueName, look, palette: p, pose, cls = null, keeper = false, charge = null } = input;
   const { width: GW, height: GH, ground: GROUND, centre: CX } = CHARACTER_GRID;
   const bw = bodyWidth(look);
   const hue = p.hue[hueName] ?? p.hue.ink!;
@@ -292,6 +344,12 @@ export function drawCharacter(input: { ctx: CanvasRenderingContext2D; hue: strin
   px(CX - bw / 2, bodyTop + look.torso - 2, bw, 1, p.belt);
   /* the hearth-light a Keeper carries at its belt */
   if (keeper) { px(CX - bw / 2, bodyTop + look.torso - 3, 1, 2, p.hearth); px(CX + bw / 2 - 1, bodyTop + look.torso - 3, 1, 2, p.hearth); }
+  /* the character's charge on its chest, between the shoulders and the belt: the same badge its crest cuts out, drawn in pixels */
+  if (charge) {
+    const rows = CHARGE_PIXELS[charge];
+    const cy = bodyTop + Math.floor(Math.max(0, look.torso - 7) / 2);
+    for (let r = 0; r < rows.length; r++) for (let c = 0; c < 5; c++) if (rows[r]![c] === "#") px(CX - 2 + c, cy + r, 1, 1, p.card);
+  }
   const armLen = look.torso - 3, sy = bodyTop + 1, lx = CX - bw / 2 - 1, sxr = CX + bw / 2;
   if (pose.wave) { const s = pose.jump & 1; px(lx + s - 1, sy - 4, 1, 4, hue); px(lx + s - 1, sy - 5, 1, 1, skin); }
   else if (!pose.err) { px(lx, sy, 1, armLen, hue); px(lx, sy + armLen, 1, 1, skin); }
@@ -315,6 +373,22 @@ export function drawCharacter(input: { ctx: CanvasRenderingContext2D; hue: strin
   px(CX - 1, eyeY + 3, 2, 1, p.ink);
   /* a Keeper's ember, rising off its belt light */
   if (pose.ember > 0) { const rise = Math.round(pose.ember * 6); px(CX + 2, bodyTop - 2 - rise, 1, 1, p.hearth); if (rise > 3) px(CX, bodyTop - 2 - (rise - 3), 1, 1, p.hearth); }
+  /* In the dark a free hand carries a light: a lantern hung from it or a lit torch held up, with a warm glow over the glass or flame. */
+  if (p.dark && look.light !== "none") {
+    const hx = lx - 1, hy = sy + armLen;
+    const at = look.light === "torch" ? { x: hx, y: hy - 2 } : { x: hx, y: hy + 2 };
+    if (typeof g.createRadialGradient === "function") {
+      const grd = g.createRadialGradient(at.x + 0.5, at.y + 0.5, 0, at.x + 0.5, at.y + 0.5, 8);
+      grd.addColorStop(0, "rgba(250,214,140,.55)");
+      grd.addColorStop(1, "rgba(250,214,140,0)");
+      g.save();
+      g.globalCompositeOperation = "lighter";
+      g.fillStyle = grd;
+      g.fillRect(0, 0, GW, GH);
+      g.restore();
+    }
+    drawLight(px, hx, hy, look.light, p);
+  }
   /* the rain cloud that comes with a failed step */
   if (pose.err) {
     const cy = headTop - 7;
@@ -347,6 +421,8 @@ export type TavernCharacterProps = {
   interactive?: boolean;
   /** Set for a sprite in the widget row: the coordinator then holds it whenever the row is held. */
   region?: "widget";
+  /** Where the sprite stands: "crest" keeps it in place (a row, a card); "walk" paces it across its parent, a strip above the composer. */
+  placement?: "crest" | "walk";
   className?: string;
 };
 
@@ -357,7 +433,7 @@ export type TavernCharacterProps = {
  */
 export function TavernCharacter({
   character, cls = null, classId = null, state = "idle", size = 24, line, surface, mode, ambientMotion = "calm",
-  repeatSeconds = 7, keeper = false, interactive = true, region, className,
+  repeatSeconds = 7, keeper = false, interactive = true, region, placement = "crest", className,
 }: TavernCharacterProps) {
   // The coordinator's listeners must be up before the first reduced-motion read, so a character never starts moving and then stops.
   motion.install();
@@ -370,6 +446,7 @@ export function TavernCharacter({
   const [bubble, setBubble] = useState<string | null>(null);
   const [gag, setGag] = useState<{ kind: CharacterGag; start: number; until: number } | null>(null);
   const [visible, setVisible] = useState(false);
+  const [dark, setDark] = useState(false);
 
   const reduced = useSyncExternalStore(motion.subscribe, motion.getReduced, () => false);
   const paused = useSyncExternalStore(motion.subscribe, motion.getPaused, () => false);
@@ -378,6 +455,7 @@ export function TavernCharacter({
   const still = ambientMotion === "off" || reduced;
   const settings: CharacterMode = characterMode(ambientMotion, mode);
   const looping = settings === "continuous" && !still && visible && !paused;
+  const walking = placement === "walk";
 
   // The 2D context is asked for once: an environment without canvas (a test) answers "no" forever, and asking again is pure noise.
   const context2d = useCallback(() => (context.current ??= canvas.current?.getContext("2d") ?? null), []);
@@ -386,19 +464,35 @@ export function TavernCharacter({
     if (!ctx) return;
     palette.current ??= readPalette(wrap.current);
     ctx.imageSmoothingEnabled = false;
-    const pose = characterPose({ look, state, ts, mode: still ? "interval" : settings, keeper, gag: gag ? { kind: gag.kind, progress: (ts - gag.start) / Math.max(1, gag.until - gag.start) } : null });
-    drawCharacter({ ctx, hue: character.hue, look, palette: palette.current, pose, cls: classId, keeper });
-  }, [look, state, settings, still, keeper, classId, gag, character.hue]);
+    const pose = characterPose({ look, state, ts, mode: still ? "interval" : settings, keeper, walk: walking, gag: gag ? { kind: gag.kind, progress: (ts - gag.start) / Math.max(1, gag.until - gag.start) } : null });
+    drawCharacter({ ctx, hue: character.hue, look, palette: palette.current, pose, cls: classId, keeper, charge: character.charge });
+  }, [look, state, settings, still, keeper, classId, gag, character.hue, character.charge, walking]);
+
+  /**
+   * A walker's place on its strip: it travels the whole track and back at a constant pace, eased at each end so it turns rather than
+   * snapping. The track is the sprite's parent, so any width (a phone, a wide composer) works with no measurement of its own.
+   */
+  const walkTo = useCallback((ts: number) => {
+    const el = wrap.current;
+    if (!el) return;
+    const span = Math.max(0, (el.parentElement?.clientWidth ?? 0) - el.offsetWidth);
+    const period = Math.max(1400, (2 * span / WALK_SPEED) * 1000);
+    const x = span * (1 - Math.cos(2 * Math.PI * ((ts % period) / period))) / 2;
+    el.style.translate = `${x.toFixed(1)}px 0px`;
+  }, []);
 
   // One still frame whenever anything the drawing depends on changes: that is the whole of reduced motion, and the first paint.
   useLayoutEffect(() => {
     if (canvas.current && context2d()) draw(performance.now());
   }, [draw, context2d, scale, visible]);
 
+  // Whether the page is dark decides the in-hand light and its halo: read it with the palette, and again on a theme switch.
+  useLayoutEffect(() => { palette.current ??= readPalette(wrap.current); setDark(!!palette.current?.dark); }, []);
+
   // The theme can change under us (bb's dark switch, a whole different theme): read the palette again and repaint.
   useEffect(() => {
     if (typeof MutationObserver === "undefined" || !canvas.current) return;
-    const observer = new MutationObserver(() => { palette.current = null; draw(performance.now()); });
+    const observer = new MutationObserver(() => { palette.current = readPalette(wrap.current); setDark(!!palette.current?.dark); draw(performance.now()); });
     observer.observe(document.documentElement, { attributes: true, attributeFilter: ["class", "style", "data-theme"] });
     return () => observer.disconnect();
   }, [draw]);
@@ -460,7 +554,7 @@ export function TavernCharacter({
 
   // The loop: continuous mode runs it, interval mode runs it only while a gag is in flight. `mayLoop` is asked every frame, so a hold
   // that begins mid-loop (you start typing, the tab hides) stops it, and one that ends lets it carry on.
-  const animating = (looping || gag !== null) && !still;
+  const animating = !still && visible && (looping || gag !== null || walking);
   useEffect(() => {
     if (!animating) return;
     let raf = 0, last = 0;
@@ -468,11 +562,15 @@ export function TavernCharacter({
       raf = requestAnimationFrame(step);
       if (!motion.mayLoop(surface) || ts - last < CHARACTER_FRAME_MS) return;
       last = ts;
+      if (walking) walkTo(ts);
       draw(ts);
     };
     raf = requestAnimationFrame(step);
     return () => cancelAnimationFrame(raf);
-  }, [animating, surface, draw]);
+  }, [animating, surface, draw, walking, walkTo]);
+
+  // A still or resting sprite stands where it began, never frozen mid-stride by a hold that came and went.
+  useLayoutEffect(() => { if (wrap.current && (!walking || still)) wrap.current.style.translate = ""; }, [walking, still]);
 
   useEffect(() => () => clearTimeout(bubbleTimer.current), []);
 
@@ -483,17 +581,16 @@ export function TavernCharacter({
   }, []);
 
   const label = `${character.name}, ${cls?.label ?? "no class"}${keeper ? ", Keeper" : ""}, ${CHARACTER_STATE_WORD[state]}`;
-  const badgeSize = Math.max(8, Math.round(size / 3));
   const style: CSSProperties = { "--tchar-w": `${CHARACTER_GRID.width * scale}px`, "--tchar-h": `${CHARACTER_GRID.height * scale}px` } as CSSProperties;
   const host: RefCallback<HTMLElement> = useCallback(el => { wrap.current = el; }, []);
   const body = <>
     <canvas ref={canvas} className="tchar-art" width={CHARACTER_GRID.width} height={CHARACTER_GRID.height} style={{ width: "var(--tchar-w)", height: "var(--tchar-h)" }} role="img" aria-label={label} />
-    {cls && <span className="tchar-badge" aria-hidden="true"><Crest cls={cls} character={character} size={badgeSize} /></span>}
     {state === "needs-you" && <span className="tchar-need" aria-hidden="true">!</span>}
     {bubble && <span className="tchar-say" role="status">{bubble}</span>}
   </>;
-  const shell = `tchar st-${state} ${keeper ? "is-keeper" : ""} ${className ?? ""}`.trim();
-  const shared = { className: shell, style, "data-part": "TavernCharacter", "data-state": state, "data-keeper": keeper || undefined, "data-mode": settings };
+  const shell = `tchar st-${state} ${keeper ? "is-keeper" : ""} ${walking ? "tchar-walk" : ""} ${className ?? ""}`.trim();
+  const lit = dark && look.light !== "none";
+  const shared = { className: shell, style, "data-part": "TavernCharacter", "data-state": state, "data-keeper": keeper || undefined, "data-mode": settings, "data-lit": lit || undefined };
   if (!interactive) return <span ref={host} {...shared} title={label}>{body}</span>;
   return (
     <button

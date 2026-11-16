@@ -232,13 +232,25 @@ export function ThreadWidget({ threadId }: { threadId: string }) {
   const lit = !!identity && !identity.character.plain;
   const surface: CSSProperties & { "--widget-edge": string } = { ...(lit ? glowVars(data.boardQuest ? `quest:${data.boardQuest.id}` : `keeper:${threadId}`) : {}), "--widget-edge": lit ? HUE_CSS[identity.character.hue] : "var(--tavern-line)" };
   const hideBtn = <IconButton glyph="close" className="tw-hide" label="Hide Tavern in this thread (⌥⌘T). The crest in the composer brings it back" onClick={() => void hide.mutate({ threadId, hidden: true }).catch(setError)} />;
+  const memberState = keeper
+    ? characterState(keeper.status === "busy" ? "working" : keeper.status, need.asks + need.holds > 0)
+    : characterState(data.member.state, !!data.scope?.pendingAskId);
+  // The character walks a thin strip below the row and above the composer; the row keeps the class crest. The strip follows the row's
+  // own conditions (a member, a visible row) and its surface, so an ask in the row holds the walk without freezing a standing sprite.
+  const walker = identity && !identity.character.plain
+    ? <section className="tavern twalk" aria-label={`${identity.character.name} walking`} data-part="TavernWalk">
+        <span className="twalk-ground" aria-hidden="true" />
+        <TavernCharacter character={identity.character} cls={identity.cls} classId={data.member.classId} keeper={!!keeper} state={memberState} line={identity.character.lines.row} surface={`thread:${threadId}`} ambientMotion={data.ambientMotion ?? "calm"} repeatSeconds={data.repeatSeconds} size={48} placement="walk" region="widget" />
+      </section>
+    : null;
 
   return (
+    <>
     <section className={`tavern twidget v-${variant} ${lit ? "glow" : ""} ${open ? "is-open" : ""} ${keeper?.quietSince != null ? "is-quiet" : ""}`} style={surface} aria-label="Tavern widget" data-part="TavernWidget">
       <div className="tw-row">
-        {identity && data.member && keeper && <span className={`tw-id ${keeper ? `st-${keeper.quietSince != null ? "quiet" : keeper.status}` : ""}`} title={`This thread: ${identity.character.name}, ${identity.cls.label} (${identity.cls.plain})${keeper ? ` · ${keeper.quietSince != null ? `quiet: ${KEEPER_STATE_HINT.quiet}` : `${STATUS_WORD[keeper.status]}: ${STATUS_HINT[keeper.status]}`}` : ""}`}><span className="tw-crest">{lit ? <TavernCharacter character={identity.character} cls={identity.cls} classId={data.member.classId} keeper state={characterState(keeper.status === "busy" ? "working" : keeper.status, need.asks + need.holds > 0)} line={identity.character.lines.row} surface={`thread:${threadId}`} ambientMotion={data.ambientMotion ?? "calm"} repeatSeconds={data.repeatSeconds} region="widget" /> : <Crest {...identity} size={18} />}{keeper && <i ref={dot} className="tw-dot" aria-hidden="true" />}</span>{<span className="who-t tw-name"><b>{identity.character.name}</b>{keeper ? <span aria-hidden="true"> · </span> : <span className="anc">{identity.cls.label} · {identity.cls.plain}</span>}</span>}{keeper && <span className="sr">Keeper, {STATUS_WORD[keeper.status]}</span>}</span>}
+        {identity && data.member && keeper && <span className={`tw-id ${keeper ? `st-${keeper.quietSince != null ? "quiet" : keeper.status}` : ""}`} title={`This thread: ${identity.character.name}, ${identity.cls.label} (${identity.cls.plain})${keeper ? ` · ${keeper.quietSince != null ? `quiet: ${KEEPER_STATE_HINT.quiet}` : `${STATUS_WORD[keeper.status]}: ${STATUS_HINT[keeper.status]}`}` : ""}`}><span className="tw-crest"><Crest {...identity} size={18} />{keeper && <i ref={dot} className="tw-dot" aria-hidden="true" />}</span>{<span className="who-t tw-name"><b>{identity.character.name}</b>{keeper ? <span aria-hidden="true"> · </span> : <span className="anc">{identity.cls.label} · {identity.cls.plain}</span>}</span>}{keeper && <span className="sr">Keeper, {STATUS_WORD[keeper.status]}</span>}</span>}
         {!keeper && data.member && registry.data && <button type="button" className="tw-id tw-member-id act" title={memberIdentityWords(data.member, registry.data, data.scope, memberFinished(data))} aria-label={memberIdentityWords(data.member, registry.data, data.scope, memberFinished(data))} aria-expanded={open === "brief"} aria-controls={`tw-brief-${threadId}`} onClick={() => toggle("brief")}>
-          {identity && <span className="tw-crest">{identity.character.plain ? <Crest {...identity} size={18} /> : <TavernCharacter character={identity.character} cls={identity.cls} classId={data.member!.classId} state={characterState(data.member!.state, !!data.scope?.pendingAskId)} line={identity.character.lines.row} surface={`thread:${threadId}`} ambientMotion={data.ambientMotion ?? "calm"} repeatSeconds={data.repeatSeconds} interactive={false} region="widget" />}</span>}
+          {identity && <span className="tw-crest"><Crest {...identity} size={18} /></span>}
           <span className="who-t tw-name"><b>{identity?.character.name ?? data.member.displayName ?? data.member.classId}</b><span className="tw-member-class"> · {identity?.cls.label ?? data.member.classId}</span></span>
         </button>}
         {keeper && <KeeperParts quiet={<QuietNotice threadId={threadId} since={keeper.quietSince} compact />} data={data} open={open} toggle={toggle} onLedger={() => panel.openTab({ tab: LEDGER_TAB })} onQuest={id => navigate.toPluginPanel("tavern", { subPath: `quest/${id}` })} />}
@@ -252,6 +264,8 @@ export function ThreadWidget({ threadId }: { threadId: string }) {
       {keeper && open === "decided" && <DecidedPanel threadId={threadId} data={data} />}
       {open === "brief" && !keeper && <div className="tw-panel tw-brief" id={`tw-brief-${threadId}`} role="region" aria-label="Member"><MemberPanel key={threadId} data={data} cue={data.ambientMotion === "off" ? undefined : cue} registry={registry.data ?? null} scopeDetails={<ScopePanel data={data} />} onQuest={id => navigate.toPluginPanel("tavern", { subPath: `quest/${id}` })} /></div>}
     </section>
+    {walker}
+    </>
   );
 }
 

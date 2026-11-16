@@ -1,6 +1,7 @@
 /* Tavern's characters: the pixel sprites the kit draws on a canvas, and the states around them.
-   The palette lives here, as Tavern's other art does: the character's hue, the hearth-light, the ink and the card come from the tavern
-   theme tokens, so a theme switch recolours every sprite, and the skin, hair and gear below are the same warm set in light and dark. */
+   The palette lives here, as Tavern's other art does: the character's hue, the hearth-light and the card come from the tavern theme
+   tokens, so a theme switch recolours every sprite. The ink is a fixed dark in both themes, so the eyes never turn white in the dark;
+   the skin, hair and gear below are the same warm set in light and dark. */
 
 .tavern .tchar {
   --tchar-teal: var(--tavern-teal);
@@ -8,7 +9,7 @@
   --tchar-violet: var(--tavern-violet);
   --tchar-blue: var(--tavern-blue);
   --tchar-rose: var(--tavern-rose);
-  --tchar-ink: var(--tavern-ink);
+  --tchar-ink: #3b342a;
   --tchar-hearth: var(--tavern-hearth);
   --tchar-bad: var(--tavern-bad);
   --tchar-card: var(--card);
@@ -65,8 +66,9 @@ html.dark .tavern .tchar {
 /* Whole pixels only: the canvas is drawn on a 24x26 grid and shown at a whole multiple of it, so pixelated rendering never has to guess. */
 .tavern .tchar-art { display: block; image-rendering: pixelated; image-rendering: crisp-edges; }
 
-/* The chest badge is the crest system's own crest, hung where a crest would sit. */
-.tavern .tchar-badge { position: absolute; right: -2px; bottom: 0; display: inline-flex; line-height: 0; filter: drop-shadow(0 0 1px var(--tchar-card)); }
+/* Walking: on its strip the sprite is out of flow and paced along the track by the coordinator; `translate` composes with the gag
+   transforms, so a hop or a wave still lands on top of the walk. The strip's own rules sit under the gags below. */
+.tavern .tchar-walk { position: absolute; bottom: 2px; left: 0; will-change: translate; }
 
 /* Needs you: the amber mark Tavern uses wherever an ask waits, and a ring in the same amber. */
 .tavern .tchar.st-needs-you { box-shadow: 0 0 0 1px color-mix(in oklab, var(--tavern-you) 55%, transparent); }
@@ -106,3 +108,14 @@ html.dark .tavern .tchar {
 
 /* The coordinator refuses every cue under reduced motion, so no class lands; this is the belt to that braces. */
 @media (prefers-reduced-motion: reduce) { .tavern .tchar[class*="mo-char-"] { animation: none; } }
+
+/* In the dark, a character carrying a lantern or a torch casts a warm halo past its frame; the in-canvas glow lights the sprite itself.
+   `data-lit` is set only when the theme reads dark and the character has a light, so the light theme stays exactly as it was. */
+.tavern .tchar[data-lit] .tchar-art { filter: drop-shadow(0 0 3px color-mix(in oklab, var(--tavern-hearth) 70%, transparent)) drop-shadow(0 0 8px color-mix(in oklab, var(--tavern-hearth) 45%, transparent)); }
+.tavern .tchar[data-lit]:hover .tchar-art, .tavern .tchar[data-lit]:focus-visible .tchar-art { filter: drop-shadow(0 0 3px color-mix(in oklab, var(--tavern-hearth) 70%, transparent)) drop-shadow(0 0 8px color-mix(in oklab, var(--tavern-hearth) 45%, transparent)) brightness(1.06); }
+
+/* The walking strip above the composer: the sprite at 2x (48x52), with room to walk and bob, a ground line under the feet. The scale is
+   Calm's own measure (its 16-row strip is 48 CSS px), so the party walks at the readable height the user asked for. The sprite paces the
+   track through the motion coordinator, so reduced motion, the typing hold and a held widget row all stop it, and it stands at rest. */
+.tavern .twalk { position: relative; height: 56px; margin-top: 2px; }
+.tavern .twalk-ground { position: absolute; left: 0; right: 0; bottom: 6px; height: 1px; background: color-mix(in oklab, var(--tavern-line) 65%, transparent); }

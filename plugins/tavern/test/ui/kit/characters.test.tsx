@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { parse } from "yaml";
 import {
   CHARACTER_GAG_MS, CHARACTER_PALETTE_FALLBACK, TavernCharacter, bodyWidth, characterLook, characterMode, characterPose,
-  characterState, drawCharacter, readPalette, type CharacterPalette, type CharacterState,
+  characterState, darkTheme, drawCharacter, readPalette, CHARGE_PIXELS, type CharacterPalette, type CharacterState,
 } from "../../../src/ui/kit/characters";
 import { characterDefSchema } from "../../../src/shared/schema";
 import { motion } from "../../../src/ui/kit/motion";
@@ -174,6 +174,44 @@ describe("the drawing", () => {
     expect(smith.rects).not.toEqual(warden.rects);
   });
 
+  it("wears its heraldic charge on its chest, in pixels, and none without one", () => {
+    const look = characterLook({ id: "ada" });
+    const pose = characterPose({ look, state: "idle", ts: 0, mode: "interval", keeper: false });
+    const pixels = (charge: keyof typeof CHARGE_PIXELS) => CHARGE_PIXELS[charge].join("").split("#").length - 1;
+    const bare = recording();
+    drawCharacter({ ctx: bare.ctx, hue: "teal", look, palette, pose });
+    expect(bare.rects.some(r => r.colour === palette.card)).toBe(false);
+    for (const charge of Object.keys(CHARGE_PIXELS) as (keyof typeof CHARGE_PIXELS)[]) {
+      const rec = recording();
+      drawCharacter({ ctx: rec.ctx, hue: "teal", look, palette, pose, charge });
+      const chest = rec.rects.filter(r => r.colour === palette.card);
+      expect(chest).toHaveLength(pixels(charge));
+      // On the torso, inside the grid: never over the belt, the legs or the arms.
+      expect(chest.every(r => r.x >= 10 && r.x <= 14 && r.y >= 0 && r.y + r.h <= 26)).toBe(true);
+    }
+  });
+
+  it("carries a lantern or a torch only in the dark, its glass or flame lit", () => {
+    const look = characterLook({ id: "wren", look: { light: "lantern" } });
+    const pose = characterPose({ look, state: "idle", ts: 0, mode: "interval", keeper: false });
+    const lit = recording();
+    drawCharacter({ ctx: lit.ctx, hue: "teal", look, palette: { ...palette, dark: true }, pose });
+    const unlit = recording();
+    drawCharacter({ ctx: unlit.ctx, hue: "teal", look, palette, pose });
+    // Light theme: no lantern at all, whatever the look says.
+    expect(unlit.rects.some(r => r.colour === palette.metal)).toBe(false);
+    // Dark theme: the lantern's metal frame and base, and its lit glass.
+    expect(lit.rects.some(r => r.colour === palette.metal)).toBe(true);
+    expect(lit.rects.some(r => r.colour === palette.hearth)).toBe(true);
+    expect(lit.rects.some(r => r.colour === palette.wood)).toBe(false);
+    // A torch uses a wooden handle, not the lantern's metal frame.
+    const torch = characterLook({ id: "wren", look: { light: "torch" } });
+    const t = recording();
+    drawCharacter({ ctx: t.ctx, hue: "teal", look: torch, palette: { ...palette, dark: true }, pose });
+    expect(t.rects.some(r => r.colour === palette.wood)).toBe(true);
+    expect(t.rects.some(r => r.colour === palette.hearth)).toBe(true);
+  });
+
   it("paints the rain cloud only when it failed", () => {
     const calm = recording(), failed = recording();
     drawCharacter({ ctx: calm.ctx, hue: "teal", look: characterLook({ id: "wren" }), palette, pose, cls: "keeper" });
@@ -187,6 +225,18 @@ describe("the drawing", () => {
 describe("readPalette", () => {
   it("falls back when there is no element to read a theme from", () => {
     expect(readPalette(null)).toEqual(CHARACTER_PALETTE_FALLBACK);
+  });
+
+  it("reads dark from the page background's luminance", () => {
+    expect(darkTheme("rgb(20, 20, 22)")).toBe(true);
+    expect(darkTheme("rgb(243, 236, 220)")).toBe(false);
+    expect(darkTheme("not-a-colour")).toBe(false);
+  });
+
+  it("pins the eye ink to a dark literal, so the eyes never turn white in the dark", () => {
+    const css = readFileSync(join(process.cwd(), "src/ui/kit/characters.css"), "utf8");
+    expect(css).toMatch(/--tchar-ink:\s*#3b342a/);
+    expect(css).not.toMatch(/--tchar-ink:\s*var\(--tavern-ink\)/);
   });
 });
 
@@ -207,11 +257,12 @@ describe("TavernCharacter", () => {
     render(<div className="tavern"><TavernCharacter character={wren} cls={cls} surface="thread:t1" {...props} /></div>);
   const el = (container: HTMLElement) => container.querySelector("[data-part=TavernCharacter]")!;
 
-  it("draws the character with its class's crest and names its state out loud", () => {
+  it("draws the character and names its state out loud", () => {
     const v = sprite({ state: "working" });
     expect(el(v.container).getAttribute("data-state")).toBe("working");
     expect(v.container.querySelector(".tchar-art")!.getAttribute("aria-label")).toBe("Wren, Keeper, at work");
-    expect(v.container.querySelector(".tchar-badge .tavern-crest")).not.toBeNull();
+    // The charge is drawn on the sprite's chest now, not laid over it: no separate crest node in the row.
+    expect(v.container.querySelector(".tchar-badge")).toBeNull();
     expect(drawn.rects.length).toBeGreaterThan(0);
   });
 
@@ -311,31 +362,59 @@ describe("TavernCharacter", () => {
     } finally { media.uninstall(); }
   });
 
-  it("stands in the Tavern widget row where the crest stood, and takes the thread's own state", async () => {
+  it("walks the character on its own strip and leaves the class crest in the row", async () => {
     const slot = renderSlot({ component: ThreadWidget }, { threadId: "keeper-1" }, { rpc: { registry: () => fixtureRegistry, decor: () => fixtureDecor } });
-    await waitFor(() => expect(slot.container.querySelector(".tw-crest [data-part=TavernCharacter]")).not.toBeNull());
-    const who = slot.container.querySelector("[data-part=TavernCharacter]")!;
-    // The fixture thread has one open ask, so its Keeper is the sprite that needs you, over the crest it replaced.
+    await waitFor(() => expect(slot.container.querySelector("[data-part=TavernWalk] [data-part=TavernCharacter]")).not.toBeNull());
+    const who = slot.container.querySelector("[data-part=TavernWalk] [data-part=TavernCharacter]")!;
+    // The fixture thread has one open ask, so its Keeper is the sprite that needs you, walking above the composer.
     expect(who.getAttribute("data-state")).toBe("needs-you");
     expect(who.getAttribute("data-keeper")).toBe("true");
     expect(who.getAttribute("data-mode")).toBe("interval");
-    expect(slot.container.querySelector(".tw-crest .tchar-badge .tavern-crest")).not.toBeNull();
+    expect(who.className).toContain("tchar-walk");
+    // The row keeps the class crest where the sprite used to stand, and its busy dot.
+    expect(slot.container.querySelector(".tw-crest [data-part=TavernCharacter]")).toBeNull();
+    expect(slot.container.querySelector(".tw-crest .tavern-crest")).not.toBeNull();
     expect(slot.container.querySelector(".tw-id .tw-dot")).not.toBeNull();
     slot.lifecycle.unmount();
   });
 
-  it("is a picture, not a second control, inside a member's row button", async () => {
+  it("keeps the member's row a single control: the walking sprite is never nested in its button", async () => {
     const decor = { ...fixtureDecor, member: { ...fixtureDecor.member!, role: "member" as const }, keeperView: null, boardQuest: fixtureDecor.keeperView!.boardQuests[0] };
     const slot = renderSlot({ component: ThreadWidget }, { threadId: "keeper-1" }, { rpc: { registry: () => fixtureRegistry, decor: () => decor } });
-    await waitFor(() => expect(slot.container.querySelector(".tw-crest [data-part=TavernCharacter]")).not.toBeNull());
-    const who = slot.container.querySelector(".tw-crest [data-part=TavernCharacter]")!;
-    expect(who.tagName).toBe("SPAN");
+    await waitFor(() => expect(slot.container.querySelector("[data-part=TavernWalk] [data-part=TavernCharacter]")).not.toBeNull());
+    const who = slot.container.querySelector("[data-part=TavernWalk] [data-part=TavernCharacter]")!;
+    expect(who.tagName).toBe("BUTTON");
     expect(who.getAttribute("data-state")).toBe("idle");
     expect(who.getAttribute("data-keeper")).toBeNull();
-    // The member's row is a button; the sprite inside it is a picture, so no button ever nests a button.
+    // The member's row is a button holding only the crest; no button nests a button.
     expect(slot.container.querySelector(".tw-member-id")!.tagName).toBe("BUTTON");
-    expect(slot.container.querySelectorAll("button[data-part=TavernCharacter]")).toHaveLength(0);
+    expect(slot.container.querySelector(".tw-member-id [data-part=TavernCharacter]")).toBeNull();
+    expect(slot.container.querySelector(".tw-member-id .tavern-crest")).not.toBeNull();
+    expect(slot.container.querySelectorAll("button[data-part=TavernCharacter]")).toHaveLength(1);
     slot.lifecycle.unmount();
+  });
+
+  it("paces across its parent when placed in a strip, and stops for a held surface", () => {
+    vi.useFakeTimers();
+    const v = sprite({ mode: "continuous", placement: "walk" });
+    const host = el(v.container) as HTMLElement;
+    expect(host.className).toContain("tchar-walk");
+    Object.defineProperty(host.parentElement!, "clientWidth", { value: 200, configurable: true });
+    Object.defineProperty(host, "offsetWidth", { value: 24, configurable: true });
+    act(() => { vi.advanceTimersByTime(1200); });
+    expect(host.style.translate).not.toBe("");
+    const first = host.style.translate;
+    act(() => { vi.advanceTimersByTime(1200); });
+    expect(host.style.translate).not.toBe(first);
+    // An ask in the row holds the surface: the walk stops where it stands, and carries on when released.
+    act(() => { motion.setHeld("thread:t1", true); });
+    const held = host.style.translate;
+    act(() => { vi.advanceTimersByTime(1200); });
+    expect(host.style.translate).toBe(held);
+    act(() => { motion.setHeld("thread:t1", false); });
+    act(() => { vi.advanceTimersByTime(1200); });
+    expect(host.style.translate).not.toBe(held);
+    v.unmount();
   });
 
   it("stops its loop while its surface is held, and carries on when it is released", () => {

@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { classScopeSchema, scopeOverrideSchema } from "../scope/schema";
 import { CLASS_BODY_LIMIT } from "./class-rules";
-import { LOOK_BUILDS, LOOK_HAIRS, LOOK_HAIR_COLOURS, LOOK_HATS, LOOK_SKINS } from "./look";
+import { LOOK_BUILDS, LOOK_HAIRS, LOOK_HAIR_COLOURS, LOOK_HATS, LOOK_LIGHTS, LOOK_SKINS } from "./look";
 
 // The one source of truth for Tavern's domain shapes, shared by the server, the RPC contract and the UI.
 // Words: a "board quest" is a goal a Keeper holds; a "journal" is any thread's own checklist.
@@ -48,6 +48,7 @@ export const characterLookSchema = z.object({
   hairColour: z.enum(LOOK_HAIR_COLOURS).optional(),
   skin: z.enum(LOOK_SKINS).optional(),
   hat: z.enum(LOOK_HATS).optional(),
+  light: z.enum(LOOK_LIGHTS).optional(),
 });
 export type CharacterLookFields = z.infer<typeof characterLookSchema>;
 
