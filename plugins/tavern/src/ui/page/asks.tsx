@@ -8,7 +8,7 @@ import { PageGlyph } from "./glyphs";
 import { CheckerHold } from "./hold";
 import { heldForYou } from "./model";
 
-export const KIND: Record<Ask["kind"], string> = { greenlight: "greenlight", decision: "decision", production: "production", merge: "merge", destructive: "destructive", "sends-as-you": "sends as you", blocker: "blocker", credential: "credential", scope: "scope change" };
+export const KIND: Record<Ask["kind"], string> = { greenlight: "greenlight", decision: "decision", conclude: "conclude", production: "production", merge: "merge", destructive: "destructive", "sends-as-you": "sends as you", blocker: "blocker", credential: "credential", scope: "scope change" };
 export function heldTitles(ask: Ask, quest: BoardQuestSummary | null | undefined) { return ask.holds.map((id) => quest?.waypoints.find((w) => w.id === id)?.title ?? "Unlisted waypoint"); }
 
 function useWide(query: string) {

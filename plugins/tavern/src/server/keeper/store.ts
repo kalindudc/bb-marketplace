@@ -57,6 +57,8 @@ export interface Records {
     stopMemberThreadId?: string;
     stopHireTokens?: string[];
     guardHire?: { fingerprint: string; providerId: string; model: string; characterId: string | null; displayName: string; token?: string };
+    /** The summary the Keeper reported; the tale is told only from it, after the user's conclude answer. */
+    wrapDraft?: { outcome: string; left: string; skipped?: { waypointId: string; reason: string }[]; next?: string[]; results?: import("../../shared/tale-results").TaleResults };
   };
   scopeRequests: ScopeRequest;
   scopeViolations: Violation;

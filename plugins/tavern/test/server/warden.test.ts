@@ -82,6 +82,51 @@ describe("Warden model family evidence", () => {
     expect(result.notes.join(" ")).not.toContain("Independent checker model");
   });
 
+  it("refuses an unadvertised checker model before spawning, not after it fails", async () => {
+    const f = setup();
+    const role = { ...f.runtime.snapshot().classes.find(candidate => candidate.id === "warden")!, model: "anthropic/claude-opus-5-5" };
+    f.bb.sdk.providers.models = async () => ({ ...catalog([model("openai/gpt-6.1-sol")]), selectedOnlyModels: [model("anthropic/claude-opus-5-5")] });
+    await expect(resolveHireExecution(f.bb, role, {
+      providerId: "pi", environmentId: null, projectId: "project",
+      maker: { providerId: "pi", model: "openai/gpt-6.1-sol", environmentId: null },
+    })).rejects.toThrow(/claude-opus-5-5.*classes[.]warden[.]model/);
+  });
+
+  it("keeps a configured different-family class model instead of substituting another", async () => {
+    const f = execution([model(openai), model(anthropic, ["high"], false, "high")]);
+    const result = await f.resolve("pi", anthropic);
+    expect(result).toMatchObject({ model: openai, checkIndependence: "independent" });
+    expect(result.notes.join(" ")).toContain("Kept the configured checker model");
+    expect(result.notes.join(" ")).not.toContain("was replaced");
+  });
+
+  it("says so when a same-family class model is replaced to keep the check independent", async () => {
+    const f = execution([model(anthropic), model(openai, ["high"], false)]);
+    const result = await f.resolve("pi", anthropic);
+    expect(result).toMatchObject({ model: openai, checkIndependence: "independent" });
+    expect(result.notes.join(" ")).toContain("the configured class model " + anthropic + " was replaced");
+    expect(result.notes.join(" ")).toContain("model " + anthropic + " -> " + openai);
+  });
+
+  it("never counts the maker's own model as a different family, whatever the catalog calls it", async () => {
+    const f = setup();
+    const role = { ...f.runtime.snapshot().classes.find(candidate => candidate.id === "warden")!, model: "corp/dev" };
+    f.bb.sdk.providers.models = async ({ providerId }: { providerId: string }) => {
+      if (providerId === "corp-router-anthropic") throw new Error("maker catalog unavailable");
+      return catalog([
+        { ...model("corp/dev", ["high"], false), displayName: "GPT checker" },
+        { ...model("corp/third", ["high"], false), displayName: "Gemini helper" },
+      ]);
+    };
+    const result = await resolveHireExecution(f.bb, role, {
+      providerId: "pi", environmentId: null, projectId: "project",
+      maker: { providerId: "corp-router-anthropic", model: "corp/dev", environmentId: null },
+    });
+    expect(result.model).not.toBe("corp/dev");
+    expect(result).toMatchObject({ model: "corp/third", checkIndependence: "independent" });
+    expect(result.notes.join(" ")).toContain("the configured class model corp/dev was replaced");
+  });
+
   it("labels a fallback when only the maker family and opaque alternatives are available", async () => {
     const f = execution([model(anthropic), model("custom/dev", ["high"], false)]);
     const result = await f.resolve("pi", anthropic);

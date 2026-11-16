@@ -6,7 +6,7 @@ import { Glyph } from "./glyphs";
 import { MemberChip, QueryState, TimeAgo, clockTime } from "./primitives";
 import { useRegistry } from "./registry";
 
-const KIND: Record<Ask["kind"], string> = { greenlight: "Greenlight", decision: "Decision", production: "Production", merge: "Merge", destructive: "Destructive", "sends-as-you": "Sends as you", blocker: "Blocker", credential: "Credential", scope: "Scope change" };
+const KIND: Record<Ask["kind"], string> = { greenlight: "Greenlight", decision: "Decision", conclude: "Conclude", production: "Production", merge: "Merge", destructive: "Destructive", "sends-as-you": "Sends as you", blocker: "Blocker", credential: "Credential", scope: "Scope change" };
 const VIA: Record<string, string> = { banner: "in the thread", page: "in the common room", phone: "on the phone", chat: "in the chat", cli: "from the CLI", timer: "by its default" };
 const holdsText = (holds: string[]) => holds.length === 0 ? "No other work" : holds.map(h => /^w\d+$/.test(h) ? `waypoint ${h.slice(1)}` : h).join(", ");
 

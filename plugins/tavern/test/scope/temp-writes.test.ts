@@ -34,6 +34,23 @@ it("does not classify already-granted temporary paths as widenings", () => {
   expect(policy.apply(scope, {}, { writes: { allow: ["/tmp/**", "/private/tmp/x/**", "/storage/own/**"] } }).widenings).toEqual([]);
   expect(policy.apply(scope, {}, { writes: { allow: ["/storage/other/**", "/repo/**"] } }).widenings).toEqual(["write:/storage/other/**", "write:/repo/**"]);
 });
+it("treats both thread-storage spellings as already writable on an unbound template or a bound scope", () => {
+  const policy = new ScopePolicy({ home: "/missing-home" });
+  const scope = bound("smith");
+  expect(policy.apply(scope, {}, { writes: { allow: ["$BB_THREAD_STORAGE/**", "${threadStorage}", "${threadStorage}/notes/**"] } }).widenings).toEqual([]);
+  expect(policy.apply(scope, {}, { writes: { allow: ["${threadStorage}/../escape/**", "$BB_THREAD_STORAGE*/**"] } }).widenings).toEqual([
+    "write:${threadStorage}/../escape/**",
+    "write:$BB_THREAD_STORAGE*/**",
+  ]);
+});
+it("refuses threads storage spellings without a bound thread storage root", () => {
+  const policy = new ScopePolicy({ home: "/missing-home" });
+  const scope = scopeForClass("ranger");
+  expect(policy.apply(scope, {}, { writes: { allow: ["$BB_THREAD_STORAGE/**", "${threadStorage}/**"] } }).widenings).toEqual([
+    "write:$BB_THREAD_STORAGE/**",
+    "write:${threadStorage}/**",
+  ]);
+});
 it("keeps Keeper writes out of the repository and includes temp roots in its sandbox", () => {
   const scope = bound("keeper");
   expect(evaluate(scope, { kind: "write", toolName: "write", input: { path: "/repo/record" }, cwd: "/repo" }).allow).toBe(false);

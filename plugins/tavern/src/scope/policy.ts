@@ -14,6 +14,7 @@ const classPolicySchema = z.object({ defaults: scopeOverrideSchema.optional(), k
 export const policySchema = z.object({ v: z.literal(1), rules: z.array(z.object({ remote: z.string().optional(), classes: z.record(z.string(), classPolicySchema) }).strict()) }).strict();
 export interface ProjectContext { projectRoot?: string; remotes?: string[]; pushRemote?: string }
 export interface PolicyOptions { home?: string; shipped?: z.infer<typeof policySchema> }
+const threadStorageRoot = /^\$(?:BB_THREAD_STORAGE|\{threadStorage\})(?=\/|$)/u;
 export interface ScopeResolution { scope: Scope; widenings: string[]; problems: string[] }
 const builtinRules: Record<string, string[]> = { "git-push-main": ["git", "push"], "git-push-force": ["git", "push"], "git-push-target": ["git", "push"] };
 export function wideningIds(override: ScopeOverride): string[] {
@@ -93,11 +94,13 @@ export class ScopePolicy {
     mergeOverride(scope, override);
     const permits = policy.entries.filter(entry => entry.classId === scope.role);
     const existing = new Set(scope.shell.allow.filter(rule => !rule.remote).map(rule => rule.id));
+    const threadStorage = granted.env.variables.BB_THREAD_STORAGE ?? scope.env.variables.BB_THREAD_STORAGE;
     const alreadyWritable = (id: string) => {
       if (!id.startsWith("write:")) return false;
-      const pattern = id.slice(6), path = pattern.replace(/\/\*\*?$/u, "");
+      const pattern = threadStorage ? id.slice(6).replace(threadStorageRoot, threadStorage) : id.slice(6);
+      const path = pattern.replace(/\/\*\*?$/u, "");
       if (path.includes("*") || path.split("/").includes("..") || !path.startsWith("/")) return false;
-      const roots = [...granted.writes.allow.flatMap(root => root === "${tmp}" ? ["/tmp", "/private/tmp", tmpdir()] : root.includes("${") ? [] : [root])];
+      const roots = [...granted.writes.allow.flatMap(root => root === "${tmp}" ? ["/tmp", "/private/tmp", tmpdir()] : threadStorageRoot.test(root) ? threadStorage ? [threadStorage] : [] : root.includes("${") ? [] : [root])];
       const bound = { ...granted, writes: { ...granted.writes, allow: roots.map(root => root.includes("*") ? root : realPath(root)) } };
       return writeAllowed(bound, realPath(path), "/");
     };

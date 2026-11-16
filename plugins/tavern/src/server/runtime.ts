@@ -521,6 +521,25 @@ export class TavernRuntime {
         } else if (optionId === "release") await this.release(ask.keeperThreadId, brief.threadId, "User released an unbriefed member");
       }
     }
+    if (previousState === "open" && ask.kind === "conclude" && ask.boardQuestId) {
+      const draft = metadata?.wrapDraft;
+      if (optionId === "conclude" && draft) {
+        await this.wrap(ask.keeperThreadId, ask.boardQuestId, draft.outcome, draft.left, draft.skipped ?? [], draft.next, draft.results);
+      } else if (optionId === "hold" || optionId === "extensions") {
+        this.keeper.store.event(
+          this.keeper.now(),
+          ask.keeperThreadId,
+          ask.boardQuestId,
+          optionId === "hold" ? "quest.held" : "quest.extended",
+          optionId === "hold"
+            ? "You asked to hold this quest for other work; it stays open and nothing is told until you conclude it later."
+            : "You asked for extensions or side quests; keep this quest open and plan bounded follow-up work with a fresh hire, a re-brief or a new waypoint plan.",
+          { askId: ask.id, optionId },
+          { kind: "user" },
+        );
+        this.keeper.reanchor(ask.keeperThreadId, optionId === "hold" ? "user held the quest for other work" : "user asked for extensions or side quests");
+      }
+    }
     if (previousState === "open" && metadata?.stopHireTokens && ask.boardQuestId && optionId === "retry") {
       try { await loopCall(recoverHires(this.bb, this.keeper, ask.keeperThreadId), "retry stopping hires"); }
       catch (error) { this.bb.log.warn(`Tavern stopping hire recovery: ${String(error)}`); }
@@ -2162,6 +2181,61 @@ export class TavernRuntime {
       this.bb.rpc.experimental_invalidate([tags.registry()]);
     }
     this.keeper.changed(keeperId, q.id);
+  }
+  /** A quest never concludes itself: the Keeper reports the summary and this ask carries the user's decision. */
+  async proposeWrap(
+    threadId: string,
+    id: string,
+    outcome: string,
+    left: string,
+    skipped: { waypointId: string; reason: string }[] = [],
+    next?: string[],
+    results?: import("../shared/tale-results").TaleResults,
+  ) {
+    const q = this.keeper.owned(threadId, id);
+    if (q.phase === "stopped" || q.phase === "stopping")
+      throw new Error("This board quest was stopped or is stopping");
+    // A returned quest is only retold; there is nothing left for the user to conclude.
+    if (q.phase === "done") {
+      await this.wrap(threadId, id, outcome, left, skipped, next, results);
+      return { askId: null, retold: true, pendingArchives: [] as string[] };
+    }
+    this.keeper.guard(threadId, id);
+    const summary = this.keeper.summary(id);
+    for (const skip of skipped) {
+      const waypoint = summary.waypoints.find((w) => w.id === skip.waypointId);
+      if (!waypoint?.optional || !skip.reason.trim())
+        throw new Error("Only optional waypoints may be explicitly skipped, with a reason");
+    }
+    const proposed = new Set(skipped.map((skip) => skip.waypointId));
+    if (
+      !summary.plan ||
+      summary.waypoints.some(
+        (w) => !["verified", "skipped"].includes(w.state) && !proposed.has(w.id),
+      )
+    )
+      throw new Error("Every waypoint must be verified or explicitly skipped before wrapping");
+    for (const ask of this.keeper.store.openAsks(threadId, id).filter((ask) => ask.kind === "conclude"))
+      this.keeper.withdrawAsk(ask.id, "plan-superseded");
+    const ask = this.keeper.ask(threadId, {
+      kind: "conclude",
+      boardQuestId: id,
+      question: `Can “${q.title}” conclude?`,
+      why: "A quest returns only when you say so; the tale is told after your answer.",
+      options: [
+        { id: "conclude", label: "Conclude the quest", detail: "Tell the tale, archive the party and free its slots.", recommended: true },
+        { id: "hold", label: "Hold for other work", detail: "Keep the quest and its party open; nothing is told yet.", recommended: false },
+        { id: "extensions", label: "Open extensions or side quests", detail: "Keep this quest open and add bounded follow-up work.", recommended: false },
+      ],
+      meanwhile: "Nothing else runs for this quest until you answer.",
+      holds: summary.waypoints.filter((w) => w.state !== "verified" && w.state !== "skipped").map((w) => w.id),
+    });
+    this.keeper.store.put("askMeta", ask.id, {
+      ...(this.keeper.store.get("askMeta", ask.id) ?? {}),
+      wrapDraft: { outcome, left, skipped, ...(next ? { next } : {}), ...(results ? { results } : {}) },
+    });
+    this.keeper.changed(threadId, id);
+    return { askId: ask.id, pendingArchives: [] as string[] };
   }
   async wrap(
     threadId: string,

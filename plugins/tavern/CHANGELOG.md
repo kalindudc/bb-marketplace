@@ -20,12 +20,16 @@ A returned or stopped quest reopens for deviations without a new quest, the chec
 - The checker recognises the check runners a repository actually uses while keeping worktree confinement and the deny rules: any `npm`, `pnpm`, `yarn` or `bun run <script>`, `npx tsc` with or without `--noEmit`, a project binary reached directly (`tsc`, `vitest run`, `jest`), and a project binary reached through `node node_modules/…`. Other work (`npm install`, `npm publish`, `npx vitest` without `run`, `npx eslint`, scripts under `node scripts/…`, and path escapes) still needs exact-command metadata.
 - The class page's records fold and remember what is open, the quest map's notes float over the map instead of reserving a band, and the rail keeps its calm order.
 - The composer's ask row shows the whole question, a decision reads its note in place, and the composer no longer swallows the first click.
+- A quest never concludes itself. The Keeper's final summary opens a conclude ask with three options: conclude the quest, hold it for other work, or open extensions and side quests. The tale is told and the party archived only after your answer, and holding keeps the quest and its party open. Retelling an already returned quest asks nothing new.
+- A hire result names the resting party you could reuse, with thread ids, as advice rather than a refusal: re-brief a resting scout for a bounded follow-up, re-brief a resting builder only for the work it just finished, and never while a Warden is checking that work. A Warden is never re-briefed.
 
 ### Fixed
 
 - Hovering a walker no longer paints a square background behind it. The sprite is a button carrying Tavern's `act` marker, whose hover fill showed as a badge around the character; the fill is off, so the only hover cue is the sprite brightening.
 - The walking strip sits where it should. Its CSS selector was a descendant rule that never matched the strip's own element (the element carries both classes), so the strip lost its height and position and the absolutely-placed sprite anchored to an ancestor and overlapped the composer and the ask row. The selector is corrected and the row plus strip share one banner root.
 - A dark-mode character's eyes are dark again. The sprite's ink is a fixed dark in both themes, not bb's near-white dark foreground, so the eyes no longer turn white in dark mode.
+- A member's own thread storage no longer opens a spurious hire-time scope ask. A `$BB_THREAD_STORAGE/**` or `${threadStorage}/**` write grant is already in effect, the same way temporary paths are, while star patterns, `..` and relative paths are still refused and a scope with no bound storage still asks.
+- A Warden's checker model selection respects the configured class model: a model that is already a different family from the maker is kept, a replacement made to keep the check independent says so in the hire result, and a model the provider does not offer refuses before spawning with the class setting to change. The maker's own model is never counted as a different family, whatever the catalog calls it.
 
 ## 0.1.2 (2026-11-15)
 

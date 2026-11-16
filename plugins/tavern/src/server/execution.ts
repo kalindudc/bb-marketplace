@@ -162,15 +162,19 @@ export async function resolveHireExecution(
       }
     }
     const ownerFamily = modelFamily(maker?.providerId ?? null, maker?.model ?? null, metadata);
-    const independent = ownerFamily ? catalog?.models.filter(candidate => {
+    const independent = ownerFamily ? models.filter(candidate => {
+      if (maker?.model && candidate.model === maker.model) return false;
       const family = modelFamily(providerId, candidate.model, candidate);
       return family !== null && family !== ownerFamily;
-    }) ?? [] : [];
+    }) : [];
+    const configuredDifferent = requestedModel !== undefined && ownerFamily !== null && independent.includes(requestedModel);
     const alternative = independent.find(candidate => candidate === requestedModel) ?? independent.find(candidate => candidate.isDefault) ?? independent[0];
     if (alternative) {
       selected = alternative;
       result.checkIndependence = "independent";
-      notes.push(`Independent checker model ${alternative.model}: different family from maker ${maker!.model ?? maker!.providerId}.`);
+      notes.push(configuredDifferent
+        ? `Kept the configured checker model ${alternative.model}: already a different family from maker ${maker!.model ?? maker!.providerId}.`
+        : `Independent checker model ${alternative.model}: different family from maker ${maker!.model ?? maker!.providerId}; the configured class model ${role.model ?? "provider default"} was replaced to keep the check independent.`);
     } else {
       const checkerFamily = selected ? modelFamily(providerId, selected.model, selected) : null;
       result.checkIndependence = ownerFamily && checkerFamily === ownerFamily ? "same-family" : "not-established";

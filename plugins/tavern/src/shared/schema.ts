@@ -356,7 +356,7 @@ export const boardQuestSchema = z.object({
 export type BoardQuest = z.infer<typeof boardQuestSchema>;
 
 // Only "decision" may carry a timed default; every other kind waits for the user.
-export const ASK_KINDS = ["greenlight", "decision", "production", "merge", "destructive", "sends-as-you", "blocker", "credential", "scope"] as const;
+export const ASK_KINDS = ["greenlight", "decision", "conclude", "production", "merge", "destructive", "sends-as-you", "blocker", "credential", "scope"] as const;
 
 export const askOptionSchema = z.object({
   id: z.string().regex(/^[a-z0-9-]{1,20}$/),

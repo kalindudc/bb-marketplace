@@ -20,6 +20,7 @@ import { requestSourceReadSchema } from "../../shared/request-source";
 import { scopeOverrideSchema } from "../../scope/schema";
 import { sparseTunablesSchema } from "../../shared/settings";
 import { DetectionApprovalRequired } from "../guard-hire";
+import { restingMembers } from "../resting";
 import { agentData } from "../agent-data";
 
 const id = z.string().min(1).max(120);
@@ -166,7 +167,10 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
       const adjustments = m.executionNotes.length
         ? `\nExecution adjustments:\n${m.executionNotes.map((note) => `- ${note}`).join("\n")}\n`
         : "\n";
-      return `${firstLine}Hired ${runtime.keeper.name(m)}: ${m.threadId}.${m.briefPending ? " Hired, brief pending; Tavern will retry delivery. Do not hire a second member for this slot." : ""}${adjustments}Write on its own line:\n${m.errand ? `::tavern-errand{member="${m.threadId}"}` : `::tavern-party{quest="${m.boardQuestId}"}`}`;
+      const party = k.store.all("members");
+      const reviewedWaypoints = new Set(party.filter(member => member.classId === "warden" && member.state === "working" && member.checkerWaypointId).map(member => member.checkerWaypointId!));
+      const reuse = restingMembers(party.filter(member => member.threadId !== m.threadId), reviewedWaypoints, { classId: input.classId, boardQuestId: m.boardQuestId });
+      return `${firstLine}Hired ${runtime.keeper.name(m)}: ${m.threadId}.${m.briefPending ? " Hired, brief pending; Tavern will retry delivery. Do not hire a second member for this slot." : ""}${adjustments}${reuse ? `${reuse}\n` : ""}Write on its own line:\n${m.errand ? `::tavern-errand{member="${m.threadId}"}` : `::tavern-party{quest="${m.boardQuestId}"}`}`;
     },
   );
   register(
@@ -354,8 +358,8 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   );
   register(
     "tavern_wrap",
-    "Wrote the tale",
-    "Wrap a verified board quest and archive its party; a returned quest is retold without wrap effects. Every waypoint must be verified or explicitly skipped. Give next actions for the user (empty if none). Put a short summary in results.figures and results.chart. Rich visuals are welcome in your final message: check each renderer block with its check tool when available (for example check_ui), and fix every error before sending. If the check tool is absent, keep the block simple; do not ask the user for it. Your final message is only the tale: lead with the answer, use Markdown lists or tables, end with the directive. Do not repeat the next list; Tavern shows What to do now; no notes about your process or tools.",
+    "Reported the final summary",
+    "Report a verified board quest's final summary and ask the user to conclude. A quest NEVER concludes itself: this tool opens a never-timed conclude ask and the tale is told only after the user answers. Every waypoint must be verified or explicitly skipped. Give next actions for the user (empty if none). Put a short summary in results.figures and results.chart. Your final message is the summary: lead with the answer, state what changed and what was proved, and ask whether the quest can conclude, should hold for other work, or should open extensions or side quests. End with the ask directive. Do not write the tale directive, do not say the quest returned and do not archive anyone before the user answers. Rich visuals are welcome: check each renderer block with its check tool when available (for example check_ui), and fix every error before sending. If the check tool is absent, keep the block simple; do not ask the user for it. Do not repeat the next list; Tavern shows What to do now; no notes about your process or tools.",
     z.object({
       boardQuestId: id,
       outcome: z.string().min(1).max(4000),
@@ -368,7 +372,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
         .default([]),
     }),
     async (input, threadId) => {
-      const result = await runtime.wrap(
+      const result = await runtime.proposeWrap(
         threadId,
         input.boardQuestId,
         input.outcome,
@@ -377,7 +381,9 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
         input.next,
         input.results,
       );
-      return `Wrapped.${result.pendingArchives.length ? ` Archiving ${result.pendingArchives.length} member(s) remains pending and will retry automatically.` : ""} Keep results.figures and results.chart as the short summary. Rich visuals are welcome in the final message: check each renderer block with its check tool when available (for example check_ui), and fix every error before sending. If the check tool is absent, keep the block simple; do not ask the user for it. Your final message is only the tale: lead with the answer, use Markdown lists or tables if useful. Do not repeat the next list; Tavern shows What to do now. Include no notes about your process or tools, and end on its own line:\n::tavern-tale{quest="${input.boardQuestId}"}`;
+      if (!result.askId)
+        return `Retold the returned quest.${result.pendingArchives.length ? ` Archiving ${result.pendingArchives.length} member(s) remains pending and will retry automatically.` : ""} Keep results.figures and results.chart as the short summary. Rich visuals are welcome in the final message: check each renderer block with its check tool when available (for example check_ui), and fix every error before sending. If the check tool is absent, keep the block simple; do not ask the user for it. Your final message is only the tale: lead with the answer, use Markdown lists or tables if useful. Do not repeat the next list; Tavern shows What to do now. Include no notes about your process or tools, and end on its own line:\n::tavern-tale{quest="${input.boardQuestId}"}`;
+      return `Summary recorded. The quest has NOT concluded.\nYour final message reports that summary to the user and asks whether the quest can conclude, should hold for other work, or should open extensions or side quests. Keep results.figures and results.chart as the short summary. Do not say the quest returned, do not archive the party and do not write the tale directive until the user answers the ask. Rich visuals are welcome: check each renderer block with its check tool when available (for example check_ui), and fix every error before sending. Lead with the answer, use Markdown lists or tables if useful, and end on its own line:\n::tavern-ask{id="${result.askId}"}`;
     },
   );
   register(
