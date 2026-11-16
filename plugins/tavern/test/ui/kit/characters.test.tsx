@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { parse } from "yaml";
 import {
   CHARACTER_GAG_MS, CHARACTER_PALETTE_FALLBACK, TavernCharacter, bodyWidth, characterLook, characterMode, characterPose,
-  characterState, darkTheme, drawCharacter, fireFlicker, lightSpot, readPalette, walkSpan, WALK_SPEED, CHARACTER_GRID, CHARGE_PIXELS,
+  characterState, darkTheme, drawCharacter, fireFlicker, readPalette, walkSpan, WALK_SPEED, CHARACTER_GRID, CHARGE_PIXELS,
   type CharacterPalette, type CharacterState,
 } from "../../../src/ui/kit/characters";
 import { characterDefSchema } from "../../../src/shared/schema";
@@ -218,35 +218,35 @@ describe("the drawing", () => {
     }
   });
 
-  it("bleeds a flickering two-layer glow from the light in the dark, and none in the light", () => {
-    const look = characterLook({ id: "wren", look: { light: "lantern" } });
+  it("paints a chunky pixel pool on the road in the dark, never a smooth ball", () => {
+    const look = characterLook({ id: "ada", look: { light: "lantern" } });
     const pose = characterPose({ look, state: "idle", ts: 0, mode: "interval", keeper: false });
     const lit = recording();
     drawCharacter({ ctx: lit.ctx, hue: "teal", look, palette: { ...palette, dark: true }, pose, flame: 1 });
-    expect(lit.gradients).toHaveLength(2);
-    const [core, bleed] = lit.gradients;
-    // The core is small and hot; the bleed reaches further out, past the sprite's own width.
-    expect(bleed!.r1).toBeGreaterThan(core!.r1 * 1.5);
-    expect(core!.stops[1]![1]).toBe("rgba(255,222,150,0)");
-    // A stronger flame reaches further; a weaker one less far.
-    const hot = recording();
-    drawCharacter({ ctx: hot.ctx, hue: "teal", look, palette: { ...palette, dark: true }, pose, flame: 1.3 });
-    expect(hot.gradients[0]!.r1).toBeGreaterThan(core!.r1);
-    // The light theme paints no glow at all.
+    // No gradients at all: the glow is painted one pixel at a time.
+    expect(lit.gradients).toHaveLength(0);
+    const pool = lit.rects.filter(r => r.colour === palette.hearth && r.w === 1 && r.h === 1);
+    expect(pool.length).toBeGreaterThan(20);
+    const xs = pool.map(r => r.x), ys = pool.map(r => r.y);
+    // A flat pool, not a ball: much wider than it is deep, sitting on the ground line.
+    expect(Math.max(...xs) - Math.min(...xs)).toBeGreaterThan((Math.max(...ys) - Math.min(...ys)) * 2);
+    expect(Math.max(...ys)).toBeGreaterThanOrEqual(CHARACTER_GRID.ground);
+    // The light theme paints no pool.
     const off = recording();
     drawCharacter({ ctx: off.ctx, hue: "teal", look, palette, pose, flame: 1 });
-    expect(off.gradients).toHaveLength(0);
+    expect(off.rects.filter(r => r.colour === palette.hearth)).toHaveLength(0);
   });
 
-  it("puts the light's centre on the glass or flame", () => {
-    expect(lightSpot(characterLook({ id: "ada", look: { light: "none" } }))).toBeNull();
-    const lantern = lightSpot(characterLook({ id: "ada", look: { light: "lantern" } }))!;
-    const torch = lightSpot(characterLook({ id: "ada", look: { light: "torch" } }))!;
-    // A lantern's glass hangs below the hand; a torch's flame burns above it.
-    expect(lantern.y).toBeGreaterThan(torch.y);
-    // Left of the sprite's middle (the free hand carries it), on the grid, so the halo lands on the light.
-    expect(lantern.x).toBeLessThan(CHARACTER_GRID.width / 2);
-    expect(Number.isInteger(lantern.x)).toBe(true);
+  it("leans the road pool toward the way the walker travels", () => {
+    const look = characterLook({ id: "ada", look: { light: "lantern" } });
+    const pose = characterPose({ look, state: "idle", ts: 0, mode: "interval", keeper: false });
+    const centroid = (dir: number) => {
+      const rec = recording();
+      drawCharacter({ ctx: rec.ctx, hue: "teal", look, palette: { ...palette, dark: true }, pose, flame: 1, dir });
+      const pool = rec.rects.filter(r => r.colour === palette.hearth && r.w === 1 && r.h === 1);
+      return pool.reduce((n, r) => n + r.x, 0) / pool.length;
+    };
+    expect(centroid(1)).toBeGreaterThan(centroid(-1));
   });
 
   it("flickers the fire on its own detuned beat, never a metronome", () => {
@@ -295,6 +295,12 @@ describe("readPalette", () => {
     expect(darkTheme("rgb(20, 20, 22)")).toBe(true);
     expect(darkTheme("rgb(243, 236, 220)")).toBe(false);
     expect(darkTheme("not-a-colour")).toBe(false);
+  });
+
+  it("keeps a walker's hover to a brightening, never a background square", () => {
+    const css = readFileSync(join(process.cwd(), "src/ui/kit/characters.css"), "utf8");
+    // The sprite is a button with Tavern's `.act` marker, whose hover fill would show as a square behind the walker.
+    expect(css).toMatch(/\.tchar\.act:hover:not\(:disabled\)\s*\{\s*background:\s*none/);
   });
 
   it("pins the eye ink to a dark literal, so the eyes never turn white in the dark", () => {

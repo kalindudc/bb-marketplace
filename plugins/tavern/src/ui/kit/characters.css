@@ -70,10 +70,10 @@ html.dark .tavern .tchar {
    transforms, so a hop or a wave still lands on top of the walk. The strip's own rules sit under the gags below. */
 .tavern .tchar-walk { position: absolute; bottom: 2px; left: 0; will-change: translate; }
 
-/* The halo: a big, soft warm bleed that reaches past the sprite's own 48x52 frame, so the light is never cut off in a square at the
-   canvas edge. Its centre is the character's glass or flame (`--tchar-glow-x/y`) and it breathes on `--tchar-flicker`, the same value the
-   painted core glow uses, so the two read as one moving source. Screen blending keeps it a light, never a pasted grey blob. */
-.tavern .tchar-glow { position: absolute; left: var(--tchar-glow-x, 26%); top: var(--tchar-glow-y, 72%); z-index: -1; width: calc(230% * var(--tchar-flicker, 1)); height: calc(230% * var(--tchar-flicker, 1)); transform: translate(-50%, -50%); border-radius: 50%; pointer-events: none; mix-blend-mode: screen; background: radial-gradient(closest-side, color-mix(in oklab, var(--tchar-hearth) calc(60% * var(--tchar-flicker, 1)), transparent), transparent); }
+/* The road light: a flat ellipse centred at the character's feet, far wider than it is tall, that reaches past the sprite's frame along
+   the ground line. It is a pool on the road, not a ball around the character. It breathes on `--tchar-flicker`, the same value the pixel
+   pool is painted with, and screen blending keeps it a light, never a pasted grey blob. */
+.tavern .tchar-glow { position: absolute; left: 50%; top: 88%; z-index: -1; width: calc(300% * var(--tchar-flicker, 1)); height: calc(84% * var(--tchar-flicker, 1)); transform: translate(-50%, -50%); border-radius: 50%; pointer-events: none; mix-blend-mode: screen; background: radial-gradient(closest-side, color-mix(in oklab, var(--tchar-hearth) calc(32% * var(--tchar-flicker, 1)), transparent), transparent 80%); }
 
 /* Needs you: the amber mark Tavern uses wherever an ask waits. The sprite reads its state from its pose and this mark, never a ring: a
    box-shadow keyline on a rectangular canvas reads as an unwanted border, so a walker carries none. */
@@ -87,6 +87,9 @@ html.dark .tavern .tchar {
 /* Focus brightens the sprite; the default focus ring would draw a box around the canvas, so it is dropped. */
 .tavern button.tchar:focus-visible { outline: none; }
 .tavern button.tchar:hover .tchar-art, .tavern button.tchar:focus-visible .tchar-art { filter: brightness(1.06); }
+/* The sprite is a button, so Tavern's `.act` marker would give it a hover fill: a square badge behind a walker, which reads as an
+   artifact, not a target. Brightening the sprite is the whole hover cue; the fill is turned off. */
+.tavern button.tchar.act:hover:not(:disabled) { background: none; }
 
 /* ---- Gags ----
    The coordinator adds one of these classes for the length in CHARACTER_GAG_MS and takes it off when the cue ends; the drawing follows

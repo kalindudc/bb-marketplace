@@ -132,17 +132,6 @@ export function characterLook(character: Pick<CharacterDef, "id" | "look">): Cha
 
 export const bodyWidth = (look: CharacterLook) => (look.build === "broad" ? 10 : 8);
 
-/**
- * Where a character's in-hand light burns, in art px: the centre of its glow. Null when the character carries none. It mirrors the
- * geometry `drawCharacter` uses, so the painted core and the CSS halo land on the same spot.
- */
-export function lightSpot(look: CharacterLook): { x: number; y: number } | null {
-  if (look.light === "none") return null;
-  const x = CHARACTER_GRID.centre - bodyWidth(look) / 2 - 2;
-  // The free hand sits at the same height whatever the torso (bodyTop + 1 + torso - 3 = ground - 6); glass hangs below it, flame above.
-  return look.light === "torch" ? { x, y: CHARACTER_GRID.ground - 8 } : { x, y: CHARACTER_GRID.ground - 4 };
-}
-
 /** The colours one sprite is drawn with. Hue, hearth and card come from Tavern's theme tokens; the ink is a fixed dark in every theme, so the eyes never turn white in the dark; skin, hair and gear are the same warm set in light and dark. */
 export type CharacterPalette = {
   hue: Record<string, string>;
@@ -357,8 +346,8 @@ export const CHARGE_PIXELS: Record<CharacterDef["charge"], readonly string[]> = 
  * draw is pure: the same look, palette, pose, class and `flame` always give the same pixels. In the dark it adds the charge, an in-hand
  * light and its flickering glow; `flame` is that flicker at this instant (1 is a steady fire), so the caller owns the clock.
  */
-export function drawCharacter(input: { ctx: CanvasRenderingContext2D; hue: string; look: CharacterLook; palette: CharacterPalette; pose: CharacterPose; cls?: string | null; keeper?: boolean; charge?: CharacterDef["charge"] | null; flame?: number }): void {
-  const { ctx: g, hue: hueName, look, palette: p, pose, cls = null, keeper = false, charge = null, flame = 1 } = input;
+export function drawCharacter(input: { ctx: CanvasRenderingContext2D; hue: string; look: CharacterLook; palette: CharacterPalette; pose: CharacterPose; cls?: string | null; keeper?: boolean; charge?: CharacterDef["charge"] | null; flame?: number; dir?: number }): void {
+  const { ctx: g, hue: hueName, look, palette: p, pose, cls = null, keeper = false, charge = null, flame = 1, dir = 0 } = input;
   const { width: GW, height: GH, ground: GROUND, centre: CX } = CHARACTER_GRID;
   const bw = bodyWidth(look);
   const hue = p.hue[hueName] ?? p.hue.ink!;
@@ -366,6 +355,29 @@ export function drawCharacter(input: { ctx: CanvasRenderingContext2D; hue: strin
   const hair = p.hair[Math.max(0, LOOK_HAIR_COLOURS.indexOf(look.hairColour))] ?? p.hair[0]!;
   const px: Pixel = (x, y, w, h, colour) => { g.fillStyle = colour; g.fillRect(x, y, w || 1, h || 1); };
   g.clearRect(0, 0, GW, GH);
+  //
+  // The light's pool, in the dark: a flat, chunky ellipse on the road under the feet, painted one pixel at a time in three bands (dimmer
+  // outward), never a smooth ball and never a ring around the character. Drawn before the sprite, so the character stands in front of its
+  // own light. `dir` leans the pool a pixel toward the way it walks.
+  if (p.dark && look.light !== "none") {
+    const cx = CX + dir, cy = GROUND + 1;
+    const flick = Math.min(1.25, Math.max(0.7, flame));
+    const bands: readonly (readonly [number, number, number])[] = [[11.5, 3.6, 0.1], [7.5, 2.5, 0.16], [4.5, 1.6, 0.24]];
+    const before = typeof g.globalCompositeOperation === "string" ? g.globalCompositeOperation : null;
+    g.save();
+    g.globalCompositeOperation = "lighter";
+    g.fillStyle = p.hearth;
+    for (let y = 0; y < GH; y++) for (let x = 0; x < GW; x++) {
+      const dx = x + 0.5 - cx, dy = y + 0.5 - cy;
+      let alpha = 0;
+      for (const [rx, ry, a] of bands) if ((dx / rx) * (dx / rx) + (dy / ry) * (dy / ry) <= 1) alpha = a;
+      if (!alpha) continue;
+      g.globalAlpha = Math.min(1, alpha * flick);
+      g.fillRect(x, y, 1, 1);
+    }
+    g.restore();
+    if (before !== null) g.globalCompositeOperation = before;
+  }
   const lift = pose.bob + pose.jump;
   const gy = GROUND - lift, legTop = gy - 4, bodyTop = legTop - look.torso, headTop = bodyTop - look.head;
   const eyeY = headTop + Math.floor(look.head / 2) - 1 + (pose.lookUp ? -1 : 0);
@@ -408,29 +420,10 @@ export function drawCharacter(input: { ctx: CanvasRenderingContext2D; hue: strin
   /* a Keeper's ember, rising off its belt light */
   if (pose.ember > 0) { const rise = Math.round(pose.ember * 6); px(CX + 2, bodyTop - 2 - rise, 1, 1, p.hearth); if (rise > 3) px(CX, bodyTop - 2 - (rise - 3), 1, 1, p.hearth); }
   /*
-   * In the dark a free hand carries a light: a lantern hung from it or a lit torch held up. Two warm radial layers bleed out from the
-   * glass or flame and breathe with the fire (`flame`, the flicker), so the light reads as a source that moves rather than a flat halo.
-   */
+  /* In the dark a free hand carries a light: a lantern hung from it or a lit torch held up. Its pool on the road was painted before the
+     sprite; here only the light itself is drawn. */
   if (p.dark && look.light !== "none") {
     const hx = lx - 1, hy = sy + armLen;
-    const at = look.light === "torch" ? { x: hx, y: hy - 2 } : { x: hx, y: hy + 2 };
-    if (typeof g.createRadialGradient === "function") {
-      const cx = at.x + 0.5, cy = at.y + 0.5;
-      g.save();
-      g.globalCompositeOperation = "lighter";
-      const layer = (reach: number, alpha: number, rgb: string) => {
-        const grd = g.createRadialGradient(cx, cy, 0, cx, cy, Math.max(1, reach * flame));
-        grd.addColorStop(0, `rgba(${rgb},${Math.min(1, alpha * flame).toFixed(3)})`);
-        grd.addColorStop(1, `rgba(${rgb},0)`);
-        g.fillStyle = grd;
-        g.fillRect(0, 0, GW, GH);
-      };
-      // Kept short on purpose: this is the hot core that lights the pixels near the flame. The wide bleed lives on the CSS halo, so nothing
-      // is ever cut off in a square at the canvas edge.
-      layer(3, 0.5, "255,222,150");    // the hot core at the glass or flame
-      layer(5.5, 0.3, "255,150,70");   // a short warm spread, still short of the canvas edge
-      g.restore();
-    }
     drawLight(px, hx, hy, look.light, p);
   }
   /* the rain cloud that comes with a failed step */
@@ -486,6 +479,8 @@ export function TavernCharacter({
   const context = useRef<CanvasRenderingContext2D | null>(null);
   const palette = useRef<CharacterPalette | null>(null);
   const trackSpan = useRef(0);
+  const walkDir = useRef(0);
+  const lastX = useRef(0);
   const bubbleTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const gags = useRef(0);
   const [bubble, setBubble] = useState<string | null>(null);
@@ -511,7 +506,7 @@ export function TavernCharacter({
     ctx.imageSmoothingEnabled = false;
     const flame = fireFlicker(ts, look.blinkOff);
     const pose = characterPose({ look, state, ts, mode: still ? "interval" : settings, keeper, walk: walking, strolling, gag: gag ? { kind: gag.kind, progress: (ts - gag.start) / Math.max(1, gag.until - gag.start) } : null });
-    drawCharacter({ ctx, hue: character.hue, look, palette: palette.current, pose, cls: classId, keeper, charge: character.charge, flame });
+    drawCharacter({ ctx, hue: character.hue, look, palette: palette.current, pose, cls: classId, keeper, charge: character.charge, flame, dir: walking ? walkDir.current : 0 });
     // The CSS halo breathes on the same flicker as the painted core, so the two read as one light.
     wrap.current?.style.setProperty("--tchar-flicker", flame.toFixed(3));
   }, [look, state, settings, still, keeper, classId, gag, character.hue, character.charge, walking]);
@@ -526,6 +521,8 @@ export function TavernCharacter({
     if (!el || !span) return;
     const period = Math.max(1400, (2 * span / WALK_SPEED) * 1000);
     const x = span * (1 - Math.cos(2 * Math.PI * ((ts % period) / period))) / 2;
+    if (Math.abs(x - lastX.current) > 0.05) walkDir.current = Math.sign(x - lastX.current);
+    lastX.current = x;
     el.style.translate = `${x.toFixed(1)}px 0px`;
   }, []);
 
@@ -550,15 +547,6 @@ export function TavernCharacter({
 
   // Whether the page is dark decides the in-hand light and its halo: read it with the palette, and again on a theme switch.
   useLayoutEffect(() => { palette.current ??= readPalette(wrap.current); setDark(!!palette.current?.dark); }, []);
-
-  // The halo's centre is the character's own light, so the bleed sits on the glass or flame rather than the sprite's middle.
-  useLayoutEffect(() => {
-    const el = wrap.current;
-    if (!el) return;
-    const spot = lightSpot(look);
-    el.style.setProperty("--tchar-glow-x", spot ? `${(spot.x / CHARACTER_GRID.width) * 100}%` : "50%");
-    el.style.setProperty("--tchar-glow-y", spot ? `${(spot.y / CHARACTER_GRID.height) * 100}%` : "50%");
-  }, [look]);
 
   // The theme can change under us (bb's dark switch, a whole different theme): read the palette again and repaint.
   useEffect(() => {
