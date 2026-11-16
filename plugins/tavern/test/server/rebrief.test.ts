@@ -24,6 +24,9 @@ function reported(f: ReturnType<typeof party>) {
 function told(f: ReturnType<typeof party>) {
   return f.k.store.events("lead", 0, 200).filter(event => event.type === "member.told");
 }
+/** Brief sends target the member thread; Keeper ticks go to the lead thread, so count only the member's. */
+const briefSends = (send: { mock: { calls: { 0: { threadId: string } }[] } }) =>
+  send.mock.calls.filter(call => call[0].threadId === "child");
 function pending(f: ReturnType<typeof party>, attempts = 0) {
   f.k.store.patch("child", { pendingBrief: { id: "brief_old", text: instruction, attempts, nextAttemptAt: f.time(), attemptedAt: attempts ? f.time() : null, hostAfterSeq: null, error: null } });
 }
@@ -111,7 +114,7 @@ describe("member re-brief delivery through the strict host", () => {
     expect(told(f).at(-1)?.data).toMatchObject({ delivery: "retrying", briefPending: true, attempts: 1 });
     f.advance(60_001);
     await f.runtime.retryInitialBriefs("lead");
-    expect(send).toHaveBeenCalledTimes(2);
+    expect(briefSends(send)).toHaveLength(2);
     expect(f.k.store.runtime("child")).toMatchObject({ pendingBrief: null, briefVersion: 2 });
     expect(f.k.member("child")?.state).toBe("working");
     expect(told(f).at(-1)?.data).toMatchObject({ delivery: "delivered", briefPending: false });
@@ -140,13 +143,13 @@ describe("member re-brief delivery through the strict host", () => {
       f.advance(3_600_000);
       await f.runtime.retryInitialBriefs("lead");
     }
-    expect(send).toHaveBeenCalledTimes(5);
+    expect(briefSends(send)).toHaveLength(5);
     expect(f.k.store.runtime("child").pendingBrief).toMatchObject({ attempts: 5 });
     expect(f.k.store.openAsks("lead").filter(ask => ask.kind === "blocker")).toHaveLength(1);
     expect(await f.tell()).toContain("Automatic retries have stopped");
     f.advance(3_600_000);
     await f.runtime.retryInitialBriefs("lead");
-    expect(send).toHaveBeenCalledTimes(5);
+    expect(briefSends(send)).toHaveLength(5);
     expect(told(f).at(-1)?.data).toMatchObject({ delivery: "blocked", briefPending: true, attempts: 5 });
     expect(f.k.store.openAsks("lead").filter(ask => ask.kind === "blocker")).toHaveLength(1);
   });
@@ -159,7 +162,7 @@ describe("member re-brief delivery through the strict host", () => {
     });
     await expect(f.tell()).rejects.toThrow("Pip is stopped and can\u0027t take new work");
     expect(f.k.store.runtime("child").pendingBrief).toBeNull();
-    expect(f.harness.inspection.sdk.callsTo("threads.send")).toHaveLength(0);
+    expect(f.harness.inspection.sdk.callsTo("threads.send").filter(call => (call.args[0] as { threadId: string }).threadId === "child")).toHaveLength(0);
   });
 
   it("refuses a new brief while Tavern is paused instead of creating an unattempted retry", async () => {

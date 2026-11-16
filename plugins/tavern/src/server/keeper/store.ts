@@ -289,6 +289,8 @@ const initialRuntime = (): Runtime => ({
 
 export class KeeperStore {
   log?: (level: "info" | "warn", message: string) => void;
+  /** Set by the runtime: fires after an event is appended, so news can wake the Keeper it belongs to. */
+  onEvent?: (event: { keeperThreadId: string | null; boardQuestId: string | null; type: string; data: Record<string, unknown>; actor: Actor }) => void;
   constructor(readonly db: Database) {}
   id(prefix: string) {
     return `${prefix}_${randomUUID()}`;
@@ -743,6 +745,7 @@ export class KeeperStore {
         type === "scope.violation" ? "warn" : "info",
         `Tavern ${type} keeper=${keeperThreadId ?? "-"} quest=${boardQuestId ?? "-"}: ${text.slice(0, 200)}`,
       );
+    this.onEvent?.({ keeperThreadId, boardQuestId, type, data, actor });
     return Number(result.lastInsertRowid);
   }
   questRoadEvent(boardQuestId: string, through: number): TavernEvent | null {

@@ -22,6 +22,7 @@ A returned or stopped quest reopens for deviations without a new quest, the chec
 - The composer's ask row shows the whole question, a decision reads its note in place, and the composer no longer swallows the first click.
 - A quest never concludes itself. The Keeper's final summary opens a conclude ask with three options: conclude the quest, hold it for other work, or open extensions and side quests. The tale is told and the party archived only after your answer, and holding keeps the quest and its party open. Retelling an already returned quest asks nothing new.
 - A hire result names the resting party you could reuse, with thread ids, as advice rather than a refusal: re-brief a resting scout for a bounded follow-up, re-brief a resting builder only for the work it just finished, and never while a Warden is checking that work. A Warden is never re-briefed.
+- A Keeper is woken by its own news, not only by the sweep. Filing a report, dispatching a party's hires, or answering an ask runs the same gated tick the sweep uses, so a routine report no longer waits out the interval. The Keeper's widget gains a new-event bubble counting what it has not seen, and a Batch wake events setting (off by default) may hold a wake briefly to gather a burst. Batching now belongs to the wake path alone: a regular sweep tick ignores the setting and always carries every unread event up to the packet limit.
 
 ### Fixed
 
@@ -30,6 +31,7 @@ A returned or stopped quest reopens for deviations without a new quest, the chec
 - A dark-mode character's eyes are dark again. The sprite's ink is a fixed dark in both themes, not bb's near-white dark foreground, so the eyes no longer turn white in dark mode.
 - A member's own thread storage no longer opens a spurious hire-time scope ask. A `$BB_THREAD_STORAGE/**` or `${threadStorage}/**` write grant is already in effect, the same way temporary paths are, while star patterns, `..` and relative paths are still refused and a scope with no bound storage still asks.
 - A Warden's checker model selection respects the configured class model: a model that is already a different family from the maker is kept, a replacement made to keep the check independent says so in the hire result, and a model the provider does not offer refuses before spawning with the class setting to change. The maker's own model is never counted as a different family, whatever the catalog calls it.
+- A report's batch hold can no longer stack past one tick interval. The hold is capped at the Keeper's tick interval on the wake path, and every hold reason is logged, including the report batch that was previously silent. A report's reaction time from filing to delivery is now recorded.
 
 ## 0.1.2 (2026-11-15)
 

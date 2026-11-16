@@ -48,7 +48,9 @@ const quietHoursSchema = z.object({
 const sections = {
   tavern: z.object({ paused: z.boolean(), defaultClass: z.union([z.literal("none"), classId]),
     widgetRow: z.boolean(), voice: voiceModeSchema, levels: z.boolean(), characters: z.boolean().default(true), hearthFlicker: z.boolean(), agentsMayChangeSettings: z.boolean().default(true),
-    ambientMotion: z.enum(["calm", "lively", "off"]).default("calm"), repeatSeconds: z.number().int().min(3).max(60).default(20) }).strict(),
+    ambientMotion: z.enum(["calm", "lively", "off"]).default("calm"), repeatSeconds: z.number().int().min(3).max(60).default(20),
+    // Wake-delivered ticks may hold briefly to gather more events; regular sweep ticks ignore it. Off by default.
+    batchWakeEvents: z.boolean().default(false) }).strict(),
   attention: z.object({ reviewBudget: z.number().int().min(1).max(30),
     notify: z.enum(["consequential", "all", "none"]), quietHours: quietHoursSchema.nullable() }).strict(),
   keepers: z.object({ greenlight: z.enum(["explicit", "by-size"]),
@@ -64,7 +66,7 @@ const sections = {
   knobs: tunablesSchema.extend({ rangerTimeboxMaxMinutes: z.number().int().min(3).max(30) }),
 };
 export const settingsSchema = z.object({
-  tavern: sections.tavern.default({ paused: false, defaultClass: "none", widgetRow: true, voice: "full", levels: true, characters: true, hearthFlicker: true, agentsMayChangeSettings: true, ambientMotion: "calm", repeatSeconds: 20 }),
+  tavern: sections.tavern.default({ paused: false, defaultClass: "none", widgetRow: true, voice: "full", levels: true, characters: true, hearthFlicker: true, agentsMayChangeSettings: true, ambientMotion: "calm", repeatSeconds: 20, batchWakeEvents: false }),
   attention: sections.attention.default({ reviewBudget: 3, notify: "consequential", quietHours: null }),
   keepers: sections.keepers.default({ greenlight: "explicit", decisionTimerMax: 10080, partyMax: 5,
     staleStrikes: 2, ...MEMORY_LIMITS }),
@@ -76,7 +78,7 @@ export const settingsSchema = z.object({
 }).strict();
 export const DEFAULT_SETTINGS = settingsSchema.parse({});
 export const settingsPatchSchema = z.object({
-  tavern: sections.tavern.partial().extend({ agentsMayChangeSettings: z.boolean().optional(), characters: z.boolean().optional(), ambientMotion: z.enum(["calm", "lively", "off"]).optional(), repeatSeconds: z.number().int().min(3).max(60).optional() }).optional(), attention: sections.attention.partial().optional(),
+  tavern: sections.tavern.partial().extend({ agentsMayChangeSettings: z.boolean().optional(), characters: z.boolean().optional(), ambientMotion: z.enum(["calm", "lively", "off"]).optional(), repeatSeconds: z.number().int().min(3).max(60).optional(), batchWakeEvents: z.boolean().optional() }).optional(), attention: sections.attention.partial().optional(),
   keepers: sections.keepers.omit({ restatementBytes: true, tickFactChars: true }).partial().optional(), classes: sections.classes.optional(),
   scopes: sections.scopes.partial().optional(), journal: sections.journal.partial().optional(),
   machines: placementSettingsPatchSchema.optional(),

@@ -119,6 +119,10 @@ export const threadDecorSchema = z.object({
   threadId,
   widgetRow: z.boolean().optional(),
   ambientMotion: z.enum(["calm", "lively", "off"]).optional(), repeatSeconds: z.number().optional(), characters: z.boolean().optional(),
+  /** News events the Keeper has not received yet: the widget's available-events signal. */
+  pendingEvents: z.number().int().nonnegative().optional(),
+  /** Whether wake-delivered ticks may batch (an opt-in setting; sweep ticks never batch). */
+  wakeBatching: z.boolean().optional(),
   classNotice: classNoticeSchema.nullable().optional(),
   // added by Builder B: show the live guardrail and any pending widening alongside member details.
   scope: memberScopeSchema.nullable().optional(),

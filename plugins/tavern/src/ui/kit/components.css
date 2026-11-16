@@ -119,6 +119,8 @@
 .tavern .tw-asks.has .num { font-weight: 700; }
 .tavern .tw-asks.has .tw-w { color: var(--foreground); }
 .tavern .tw-dec .tavern-glyph { color: var(--tavern-wax); }
+.tavern .tw-events .tavern-glyph { color: var(--attention); }
+.tavern .tw-events .num { font-weight: 700; }
 .tavern .tw-keeper { display: inline-flex; align-items: center; gap: 5px; flex: none; white-space: nowrap; }
 .tavern .tw-kn { font-weight: 600; }
 .tavern .tw-panel { border-top: 1px solid var(--tavern-line); padding: 8px 10px 10px; display: flex; flex-direction: column; gap: 6px; max-height: min(58vh, 560px); overflow: auto; }
@@ -165,6 +167,8 @@
 @container tavern-widget (max-width: 420px) { .tavern .tw-brief-w, .tavern .tw-member-class, .tavern .tw-keeper .tw-kn { display: none; } }
 /* On a phone the decided count shows only while no ask waits: asks come first, and the Ledger holds the rest. */
 @container tavern-widget (max-width: 420px) { .tavern .tw-row:has(.tw-asks) .tw-dec { display: none; } }
+/* On a narrow row the events bubble yields to the asks; the Ledger keeps the count readable. */
+@container tavern-widget (max-width: 420px) { .tavern .tw-row:has(.tw-asks) .tw-events { display: none; } }
 @container tavern-widget (max-width: 340px) { .tavern .tw-row:has(.tquiet) .tw-dec { display: none; } }
 @container tavern-widget (max-width: 340px) { .tavern .tw-ledger, .tavern .tw-id .tw-name { display: none; } }
 @media (pointer: coarse), (max-width: 560px) { .tavern .tw-chip, .tavern .tw-asks, .tavern .tw-quest { height: 44px; } .tavern .tw-ask-row { min-height: 44px; } .tavern .lnk-btn { min-height: 44px; } .tavern.readas .ra-fix { height: 44px; } }

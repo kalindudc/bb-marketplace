@@ -68,7 +68,7 @@ describe("Keeper tick facts, sampling and admission", () => {
     expect(sent(f)[0]).toContain("The queued brief was dropped");
   });
 
-  it.each(["done", "blocked", "needs-decision"] as const)("batches a %s report only when it is routine", async status => {
+  it.each(["done", "blocked", "needs-decision"] as const)("delivers a %s report on a regular sweep tick, which never batches", async status => {
     const f = setup();
     const q = await seedQuest(f.k,"lead", "Build", "Build");
     const report = (id: string, deliveredAt: number | null) => reportSchema.parse({ id, memberThreadId: "maker", keeperThreadId: "lead", boardQuestId: q.id, waypointId: null, status, outcome: "Work outcome", evidence: [], artifacts: [], confidence: null, voice: null, createdAt: f.time(), deliveredAt });
@@ -76,10 +76,8 @@ describe("Keeper tick facts, sampling and admission", () => {
     f.k.store.put("reports", "new", report("new", null));
     f.k.store.patch("lead", { cursor: f.k.store.events("lead").at(-1)!.id, userAt: null });
     f.k.store.event(f.time(), "lead", q.id, "report.filed", "Report filed", { reportId: "new" });
-    expect(f.runtime.reportBatchHeld("lead")).toBe(status === "done");
     await f.runtime.tick("lead");
-    expect(sent(f)).toHaveLength(status === "done" ? 0 : 1);
-    if (status === "done") { f.advance(60_001); await f.runtime.tick("lead"); expect(sent(f)).toHaveLength(1); }
+    expect(sent(f)).toHaveLength(1);
   });
 
   it("does not tick or sample a hold for news belonging only to an archived quest", async () => {

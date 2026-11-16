@@ -17,6 +17,7 @@ import { checkerAssignments, validatePartyCharacters, validateCheckerMakers, mak
 import { Registry, type RegistrySnapshot } from "./registry";
 import { TickLoop } from "./tick";
 import { isNotFound } from "./host-errors";
+import { isNewsEvent, isWakeEvent } from "./news";
 import { loopCall } from "./loop-call";
 import { classSelectionOnly, inputText, isUser, tickId, userInputText } from "./dispatch";
 import {
@@ -128,6 +129,7 @@ export class TavernRuntime {
   private notifiedAsks = new Set<string>();
   private queueResets = new Map<string, Promise<void>>();
   private memberObservations = new Map<string, Promise<void>>();
+  private wakes = new Map<string, Promise<void>>();
   private maintenance = new Map<string, { work: Promise<void>; startedAt: number }>();
   placementSources(): SourceDiscovery {
     if (this.sourceInspection === null)
@@ -216,21 +218,67 @@ export class TavernRuntime {
     );
     return `Warning: ${changed.length} uncommitted file(s) remain in your worktree. Keep your work on a branch and commit now, one or many appropriate commits, before this turn ends. Tavern preserves uncommitted files before cleanup, but an uncommitted turn-end is a defect.`;
   }
-  reportBatchHeld(threadId: string) {
+  /**
+   * Whether wake-delivered ticks may batch. Off by default: only this opt-in setting lets a wake hold briefly so more
+   * events gather; a sweep-driven tick never batches and always carries every unread event.
+   */
+  wakeBatching(): boolean {
+    return this.config().tavern.batchWakeEvents;
+  }
+  /**
+   * Whether a wake should hold its report batch. "hold" waits out the batch window; "capped" means the wait is up and
+   * the batch must be released. It never waits longer than the tick interval since the oldest held report was filed.
+   */
+  wakeBatchHold(threadId: string): "none" | "hold" | "capped" {
     const rt = this.keeper.store.runtime(threadId);
-    if (rt.reanchor || rt.pending.length) return false;
+    if (rt.reanchor || rt.pending.length) return "none";
     const events = this.keeper.store.unreadEvents(threadId, rt.cursor, 100, true)
       .filter(event => !["journal.changed", "questlog.changed"].includes(event.type));
-    if (!events.length || events.some(event => event.type !== "report.filed")) return false;
+    if (!events.length || events.some(event => event.type !== "report.filed")) return "none";
     const reports = this.keeper.store.query("reports", "keeperThreadId", threadId, 500);
-    return events.every(event => {
+    const now = this.keeper.now();
+    const cap = this.config().knobs.tickSeconds * 1000;
+    let capped = false;
+    for (const event of events) {
       const report = reports.find(row => row.id === event.data.reportId);
-      if (!report || report.status === "blocked" || report.status === "needs-decision") return false;
+      if (!report || report.status === "blocked" || report.status === "needs-decision") return "none";
       const prior = reports.filter(row => row.boardQuestId === report.boardQuestId && row.deliveredAt !== null);
-      if (!prior.length) return false;
+      if (!prior.length) return "none";
       const last = Math.max(...prior.map(row => row.deliveredAt!));
-      return this.keeper.now() - last < this.config(report.boardQuestId).knobs.reportBatchSeconds * 1000;
-    });
+      const window = Math.min(this.config(report.boardQuestId).knobs.reportBatchSeconds * 1000, cap);
+      if (now - report.createdAt >= cap || now - last >= window) capped = true;
+    }
+    return capped ? "capped" : "hold";
+  }
+  /** News events a Keeper has not received yet, for the widget's available-events signal. */
+  pendingNews(threadId: string): number {
+    const rt = this.keeper.store.runtime(threadId);
+    return this.keeper.store.unreadEvents(threadId, rt.cursor, 200, true)
+      .filter(event => isNewsEvent(event, threadId)).length;
+  }
+  /**
+   * Wakes a Keeper for actionable news (a report filed, a party formed, an answer given): the attempt runs through the
+   * same gates as the sweep, so the cooldown and conversation holds still govern it. Single-flight per thread, so a
+   * burst of events wakes once.
+   */
+  wakeKeeper(threadId: string, reason: string): Promise<void> {
+    const existing = this.wakes.get(threadId);
+    if (existing) return existing;
+    let wake: Promise<void>;
+    wake = Promise.resolve()
+      .then(async () => {
+        this.record("tick.woken", { reason }, threadId, null, `tick-woken:${threadId}:${this.keeper.store.runtime(threadId).cursor}`);
+        await this.tick(threadId, "wake");
+        await this.recheckDispatch();
+      })
+      .catch(error => { this.bb.log.warn(`Tavern wake (${reason}) keeper=${threadId}: ${String(error)}`); })
+      .finally(() => { if (this.wakes.get(threadId) === wake) this.wakes.delete(threadId); });
+    this.wakes.set(threadId, wake);
+    return wake;
+  }
+  /** Await every in-flight event-driven wake (tests and shutdown). */
+  settleWakes(): Promise<void> {
+    return Promise.all([...this.wakes.values()]).then(() => undefined);
   }
   tune(threadId: string, questId: string, values: SparseTunables, why: string) {
     if (!this.settings) throw new Error("Tavern settings are not registered");
@@ -561,6 +609,12 @@ export class TavernRuntime {
   ) {
     this.serviceRecords = new ServiceRecords(keeper, stale => bb.rpc.experimental_invalidate(stale));
     keeper.store.log = (level, message) => this.bb.log[level](message);
+    // Actionable news wakes the Keeper it belongs to through the same gates as the sweep.
+    keeper.store.onEvent = ({ keeperThreadId, type, data, actor }) => {
+      if (!keeperThreadId) return;
+      if (!isWakeEvent({ type, data, actor }, keeperThreadId)) return;
+      void this.wakeKeeper(keeperThreadId, type);
+    };
     keeper.memory.review = () => this.review("automatic");
     keeper.resolveMemberName = member => memberName(member, this.snapshot(keeper.store.runtime(member.threadId).projectId ?? undefined));
   }
@@ -2000,10 +2054,10 @@ export class TavernRuntime {
     this.queueResets.set(threadId, reset);
     return reset;
   }
-  async tick(threadId: string) {
+  async tick(threadId: string, origin: "sweep" | "wake" = "sweep") {
     if (this.config().tavern.paused || !isLiveKeeper(this.keeper.store, this.keeper.member(threadId))) return;
     while (this.keeper.store.runtime(threadId).queuedTickResetId) await this.resetQuietQueue(threadId);
-    await this.loop.tick(threadId);
+    await this.loop.tick(threadId, origin);
   }
   acknowledgeTick(id: string) {
     this.loop.acknowledge(id);

@@ -8,44 +8,14 @@ import { MEMORY_LIMITS } from "../shared/settings";
 import { LIMITS } from "./limits";
 import { SCOPE_DENIAL_TEXT } from "../shared/text";
 import { dataFence, ledgerHeading } from "./instructions";
+import { isNewsEvent } from "./news";
 import { isDefiniteTickRefusal, isNotFound } from "./host-errors";
 import { isLiveKeeper } from "./liveness";
 import { LoopTimeout, loopCall } from "./loop-call";
 import { agentData } from "./agent-data";
 
-const NEWS = new Set([
-  "report.filed",
-  "promise.due",
-  "member.unreported",
-  "member.unbriefed",
-  "member.briefed",
-  "member.brief-refused",
-  "ask.answered",
-  "ask.defaulted",
-  "route.corrected",
-  "route.missed",
-  "route.cancelled",
-  "member.failed",
-  "member.stale",
-  "user.told-member",
-  "decision.undone",
-  "rule.confirmed",
-  "rules.changed",
-  "reanchor.requested",
-  "quest.stopped",
-  "quest.stop-failed",
-  "quest.archive-failed",
-  "hire.recovered",
-  "hire.expired",
-  "tick.failed",
-  "scope.violation",
-  "scope.applied",
-  "scope.declined",
-  "thread.archived",
-  "thread.unarchived",
-  "thread.deleted",
-]);
 const FACT_LIMIT = MEMORY_LIMITS.tickFactChars;
+export type TickOrigin = "sweep" | "wake";
 const RETRY_SUFFIX = "\nDelivery retry of the same tick id. Ignore it if you have already seen or acted on this id.";
 
 export class TickLoop {
@@ -177,6 +147,17 @@ export class TickLoop {
       if (batch.measurements.restatement)
         this.runtime.record("restatement.measured", batch.measurements.restatement, batch.threadId, null, `ledger:${batch.id}`);
     }
+    for (const reportId of batch.reportIds) {
+      const report = this.k.store.get("reports", reportId);
+      if (report)
+        this.runtime.record(
+          "report.reacted",
+          { reportId, seconds: Math.max(0, (this.k.now() - report.createdAt) / 1000), status: report.status },
+          batch.threadId,
+          report.boardQuestId,
+          `report-reacted:${reportId}`,
+        );
+    }
     this.runtime.record(
       "tick.sent",
       { at: this.k.now(), tickId: batch.id },
@@ -195,14 +176,7 @@ export class TickLoop {
   }
 
   private isNews(event: TavernEvent, keeperId: string) {
-    return (
-      NEWS.has(event.type) &&
-      !(event.actor.kind === "agent" && event.actor.threadId === keeperId) &&
-      !(
-        event.type === "thread.archived" &&
-        event.data.keeperArchiveRequested === true
-      )
-    );
+    return isNewsEvent(event, keeperId);
   }
 
   private fact(event: TavernEvent): { text: string; reportId?: string } {
@@ -404,7 +378,7 @@ export class TickLoop {
 
   private recordHeld(
     threadId: string,
-    reason: "typing" | "after-message" | "cooldown" | "busy" | "queue",
+    reason: "typing" | "after-message" | "cooldown" | "busy" | "queue" | "report-batch" | "batch-capped",
   ) {
     const state = this.k.store.runtime(threadId);
     if (
@@ -444,7 +418,7 @@ export class TickLoop {
       this.runtime.record("tick.rebuilt", { rowId: row.id, tickId: id }, threadId, null, `tick-reset:${row.id}`);
     }
   }
-  async tick(threadId: string) {
+  async tick(threadId: string, origin: TickOrigin = "sweep") {
     const running = this.running.get(threadId);
     if (running) return running;
     let complete!: () => void;
@@ -479,7 +453,23 @@ export class TickLoop {
         if (rt.heldAt !== null) this.k.store.patch(threadId, { heldAt: null });
         return;
       }
-      if (this.runtime.reportBatchHeld(threadId)) return;
+      // Batching belongs to the wake path only: a sweep-driven tick always carries every unread event. The hold is capped at the tick
+      // interval, so a wake can never wait longer than one cooldown for a batch.
+      if (origin === "wake" && this.runtime.wakeBatching()) {
+        const gate = this.runtime.wakeBatchHold(threadId);
+        if (gate === "hold") {
+          this.recordHeld(threadId, "report-batch");
+          if (rt.heldAt === null) {
+            this.k.store.patch(threadId, { heldAt: this.k.now() });
+            this.runtime.bb.log.info(`Tavern tick.held keeper=${threadId}: report batch`);
+          }
+          return;
+        }
+        if (gate === "capped") {
+          this.recordHeld(threadId, "batch-capped");
+          this.runtime.bb.log.info(`Tavern tick.batch-capped keeper=${threadId}: report batch released at the tick interval`);
+        }
+      }
       const thread = await loopCall(this.runtime.bb.sdk.threads.get({ threadId }), `tick thread ${threadId}`);
       if (thread.archivedAt !== null || thread.deletedAt !== null || this.k.store.runtime(threadId).archivedAt != null) return;
       const queued = await loopCall(this.runtime.bb.sdk.threads.queuedMessages.list({

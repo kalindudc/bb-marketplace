@@ -64,10 +64,7 @@ export function rpcHandlers(
       .map((member) => member.threadId),
   ];
   const wake = (threadId: string) => {
-    void runtime
-      .tick(threadId)
-      .then(() => runtime.recheckDispatch())
-      .catch((error) => runtime.bb.log.warn(`Tavern tick: ${String(error)}`));
+    void runtime.wakeKeeper(threadId, "user-action");
   };
   return {
     ...placementHandlers(runtime),
@@ -157,6 +154,8 @@ export function rpcHandlers(
           : null,
         progress: k.journal.progress(threadId),
         hidden: k.store.runtime(threadId).hidden,
+        pendingEvents: runtime.pendingNews(threadId),
+        wakeBatching: runtime.wakeBatching(),
         keeperView:
           m?.role === "keeper"
             ? {
