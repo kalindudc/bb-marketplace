@@ -1,11 +1,17 @@
-import { roomSchema, type Room } from "../../shared/contract";
-import { memberSchema } from "../../shared/schema";
-import { placementSettingsSchema, type PlacementSettings } from "../../shared/placement-settings";
-import type { PlacementCatalog, PlacementPreview, PlacementPreviewInput } from "./machines-contract";
+import Database from "better-sqlite3";
+import { roomSchema, type Room } from "../../../src/shared/contract";
+import { memberSchema } from "../../../src/shared/schema";
+import { placementSettingsSchema, type PlacementSettings } from "../../../src/shared/placement-settings";
+import type { PlacementCatalog, PlacementPreview, PlacementPreviewInput } from "../../../src/ui/page/machines-contract";
+import { placementHandlers } from "../../../src/server/placement/rpc";
+import type { TavernRuntime } from "../../../src/server/runtime";
+import { MIGRATIONS } from "../../../src/server/migrations";
+import { DEFAULT_SETTINGS } from "../../../src/shared/settings";
+import { registry } from "../../../src/ui/page/fixtures";
+import { createFakePluginHost, makeThreadResponse } from "../../server/host";
 
 // Fixtures for the machine placement page: this bb's real catalog (captured 2026-11-14 with `bb environment providers`,
 // `bb machine providers`, `bb machine list` and `bb project list`), the user's live Keepers, and rules at three volumes.
-// `previewFixture` stands in for the server's placementPreview in tests and the harness; the server is the authority.
 
 export const machinesCatalog: PlacementCatalog = {"hostId":"host_fiffwzr9t6","environments":[{"id":"project-checkout","displayName":"Project checkout","description":"Work in a project checkout on this machine.","machineProviderId":null,"environmentProviderId":null,"inputs":{"type":"object","properties":{"path":{"type":"string","minLength":1},"branch":{"oneOf":[{"type":"object","properties":{"kind":{"type":"string","const":"existing"},"name":{"type":"string","minLength":1}},"required":["kind","name"],"additionalProperties":false},{"type":"object","properties":{"kind":{"type":"string","const":"new"},"baseBranch":{"type":"string","minLength":1}},"required":["kind","baseBranch"],"additionalProperties":false}]}}},"acceptsEmptyInputs":true},{"id":"git-worktree","displayName":"Worktree","description":"Create an isolated Git worktree for your changes.","machineProviderId":null,"environmentProviderId":null,"inputs":{"default":{"branch":{"kind":"default"}},"anyOf":[{"type":"object","properties":{"kind":{"type":"string","const":"existing"},"path":{"type":"string","minLength":1}},"required":["kind","path"],"additionalProperties":false},{"type":"object","properties":{"branch":{"default":{"kind":"default"},"oneOf":[{"type":"object","properties":{"kind":{"type":"string","const":"named"},"name":{"type":"string","minLength":1}},"required":["kind","name"],"additionalProperties":false},{"type":"object","properties":{"kind":{"type":"string","const":"default"}},"required":["kind"],"additionalProperties":false}]}},"additionalProperties":false}]},"acceptsEmptyInputs":true},{"id":"aquifer-world-checkout","displayName":"Aquifer World checkout","description":"The Shopify World checkout of an Aquifer World sandbox, on a branch of its own: no clone, no worktree. One branch per machine.","machineProviderId":null,"environmentProviderId":null,"inputs":{"anyOf":[{"type":"object","properties":{"branch":{"type":"string","pattern":"^(?!-)(?!.*\\.\\.)(?!.*\\/\\/)(?!.*@\\{)(?!.*\\.lock$)(?!.*\\/$)(?!.*\\.$)[A-Za-z0-9._\\/-]{1,200}$"},"base":{"type":"string","pattern":"^(?!-)[A-Za-z0-9._\\/~^-]{1,200}$"},"fromLaptopBranch":{"type":"string","pattern":"^(?!-)(?!.*\\.\\.)(?!.*\\/\\/)(?!.*@\\{)(?!.*\\.lock$)(?!.*\\/$)(?!.*\\.$)[A-Za-z0-9._\\/-]{1,200}$"}},"additionalProperties":false},{"type":"null"}]},"acceptsEmptyInputs":true},{"id":"personal-workspace","displayName":"Personal workspace","description":"Create a personal directory without a project.","machineProviderId":null,"environmentProviderId":null,"inputs":null,"acceptsEmptyInputs":true},{"id":"world-tree","displayName":"World tree","description":"Attach a thread to the root of a Shopify World tree, creating the tree or adding the zones it needs to the sparse checkout.","machineProviderId":null,"environmentProviderId":null,"inputs":{"anyOf":[{"type":"object","properties":{"tree":{"type":"string","minLength":1},"zones":{"maxItems":50,"type":"array","items":{"type":"string","minLength":1}},"zone":{"type":"string","minLength":1},"branch":{"type":"string","minLength":1}},"required":["tree"],"additionalProperties":false},{"type":"object","properties":{"pool":{"type":"object","properties":{"branch":{"type":"string","minLength":1,"maxLength":200,"pattern":"^(?!-)(?!.*\\.\\.)(?!.*\\/\\/)[A-Za-z0-9._/-]+(?<![./])$"},"from":{"type":"string","minLength":1,"pattern":"^[A-Za-z0-9][A-Za-z0-9._-]*$"},"zones":{"minItems":1,"maxItems":50,"type":"array","items":{"type":"string","minLength":1}},"base":{"type":"string","minLength":1,"maxLength":200,"pattern":"^(?!-)[A-Za-z0-9._/@^~-]+$"},"mergeBaseBranch":{"type":"string","minLength":1,"maxLength":200},"waitForSlotSeconds":{"type":"integer","minimum":0,"maximum":1800}},"required":["from","zones"],"additionalProperties":false}},"required":["pool"],"additionalProperties":false}]},"acceptsEmptyInputs":false},{"id":"aquifer-world","displayName":"Aquifer World sandbox","description":"A new Aquifer sandbox with the Shopify World checkout (every zone, ready in seconds), on a branch of its own. Commits are authored as you; pushes go out as you.","machineProviderId":"aquifer-world","environmentProviderId":"aquifer-world-checkout","inputs":{"anyOf":[{"type":"object","properties":{"branch":{"type":"string","pattern":"^(?!-)(?!.*\\.\\.)(?!.*\\/\\/)(?!.*@\\{)(?!.*\\.lock$)(?!.*\\/$)(?!.*\\.$)[A-Za-z0-9._\\/-]{1,200}$"},"base":{"type":"string","pattern":"^(?!-)[A-Za-z0-9._\\/~^-]{1,200}$"},"fromLaptopBranch":{"type":"string","pattern":"^(?!-)(?!.*\\.\\.)(?!.*\\/\\/)(?!.*@\\{)(?!.*\\.lock$)(?!.*\\/$)(?!.*\\.$)[A-Za-z0-9._\\/-]{1,200}$"}},"additionalProperties":false},{"type":"null"}]},"acceptsEmptyInputs":true}],"machines":[{"id":"manual","displayName":"Manual machine setup","description":"Run one command on a machine you already have to connect it to this server.","inputs":null,"acceptsEmptyInputs":true},{"id":"aquifer","displayName":"Aquifer sandbox","description":"An Aquifer sandbox that runs bb's daemon and reaches this laptop through a tunnel the laptop opens. It moves to a fresh sandbox before Aquifer's 2-hour limit.","inputs":{"anyOf":[{"type":"object","properties":{"cores":{"type":"integer","minimum":1,"maximum":20},"memoryGb":{"type":"integer","minimum":1,"maximum":30},"diskGb":{"type":"integer","minimum":10,"maximum":50},"image":{"type":"string","pattern":"^[a-z0-9][a-z0-9._-]*$"},"world":{"type":"object","properties":{"revision":{"type":"string","pattern":"^[0-9a-f]{40}$"},"zones":{"maxItems":32,"type":"array","items":{"type":"string","pattern":"^(\\/\\/)?[A-Za-z0-9_.-]+(\\/[A-Za-z0-9_.-]+)*\\/?$"}}},"additionalProperties":false}},"additionalProperties":false},{"type":"null"}]},"acceptsEmptyInputs":true},{"id":"aquifer-world","displayName":"Aquifer World sandbox","description":"An Aquifer sandbox with the Shopify World checkout (all zones). Commits are authored as you; pushes go out as you through this laptop. Moves to a fresh sandbox before the 2-hour limit.","inputs":{"anyOf":[{"type":"object","properties":{"revision":{"type":"string","pattern":"^[0-9a-f]{40}$"},"zones":{"maxItems":32,"type":"array","items":{"type":"string","pattern":"^(\\/\\/)?[A-Za-z0-9_.-]+(\\/[A-Za-z0-9_.-]+)*\\/?$"}},"cores":{"type":"integer","minimum":1,"maximum":20},"memoryGb":{"type":"integer","minimum":1,"maximum":30},"diskGb":{"type":"integer","minimum":10,"maximum":50},"image":{"type":"string","pattern":"^[a-z0-9][a-z0-9._-]*$"}},"additionalProperties":false},{"type":"null"}]},"acceptsEmptyInputs":true}],"hosts":[{"id":"host_fiffwzr9t6","name":"MacBook Pro (30)","connected":true}],"projects":[{"id":"proj_3r67g96xxe","name":"infrastructure","remotes":["https://github.com/Shopify/infrastructure.git"],"path":"/Users/me/src/github.com/Shopify/infrastructure"},{"id":"proj_mddz3fcct5","name":"infra-central","remotes":["https://github.com/Shopify/infra-central.git"],"path":"/Users/me/src/github.com/Shopify/infra-central"},{"id":"proj_nxh8myi7jx","name":"terraform-the-cloud","remotes":["https://github.com/Shopify/terraform-the-cloud.git"],"path":"/Users/me/src/github.com/Shopify/terraform-the-cloud"},{"id":"proj_7epvwh9rjx","name":"edge-infrastructure","remotes":["https://github.com/Shopify/edge-infrastructure.git"],"path":"/Users/me/src/github.com/Shopify/edge-infrastructure"},{"id":"proj_4uv78tq7iw","name":"cortex","remotes":["https://github.com/kalindudc/cortex.git"],"path":"/Users/me/src/github.com/kalindudc/cortex"},{"id":"proj_zzfug9epa4","name":"shell","remotes":["https://github.com/kalindudc/shell.git"],"path":"/Users/me/src/github.com/kalindudc/shell"},{"id":"proj_chsa5edz4r","name":"pi-quests","remotes":["https://github.com/kalindudc/pi-quests.git"],"path":"/Users/me/src/github.com/kalindudc/pi-quests"},{"id":"proj_egmnek7bzk","name":"edgey","remotes":["https://github.com/Shopify/edgey.git"],"path":"/Users/me/src/github.com/Shopify/edgey"},{"id":"proj_2pqaghwyec","name":"pi-minions","remotes":["https://github.com/kalindudc/pi-minions.git"],"path":"/Users/me/src/github.com/kalindudc/pi-minions"},{"id":"proj_7przffsyfd","name":"bb-marketplace","remotes":["https://github.com/kalindudc/bb-marketplace.git"],"path":"/Users/me/src/github.com/kalindudc/bb-marketplace"},{"id":"proj_3m7ijbk6gx","name":"nginx-routing-modules","remotes":["https://delta.shopify.io/shop/world.git"],"path":"/Users/me/world/trees/root/src/areas/infra/routing/nginx-routing-modules"},{"id":"proj_v75cbnswyk","name":"ar-routing-events","remotes":[],"path":"/Users/me/src/ar-routing-events"},{"id":"proj_th5f77zwdq","name":"burn","remotes":["https://github.com/kalindudc/burn.git"],"path":"/Users/me/src/github.com/kalindudc/burn"},{"id":"proj_jq86jefbjt","name":"spy-v2","remotes":["https://github.com/Shopify/spy-v2.git"],"path":"/Users/me/src/github.com/Shopify/spy-v2"},{"id":"proj_kfjwr3uasq","name":"loom-live-check","remotes":[],"path":"/Users/me/src/loom-live-check"},{"id":"proj_t5p6zvp6s8","name":"wafflestack","remotes":["https://github.com/Shopify/wafflestack.git"],"path":"/Users/me/src/github.com/Shopify/wafflestack"},{"id":"proj_7p2evhzavc","name":"record-store","remotes":["https://github.com/Shopify/record-store.git"],"path":"/Users/me/src/github.com/Shopify/record-store"},{"id":"proj_uvw3nxmk6f","name":"bb-marketplace-shopify-playground","remotes":["https://github.com/shopify-playground/bb-marketplace.git"],"path":"/Users/me/src/github.com/shopify-playground/bb-marketplace"},{"id":"proj_sax5d3tixr","name":"ubertool","remotes":["https://github.com/Shopify/ubertool.git"],"path":"/Users/me/src/github.com/Shopify/ubertool"},{"id":"proj_6baw3a9yhq","name":"shop-js","remotes":["https://github.com/Shopify/shop-js.git"],"path":"/Users/me/src/github.com/Shopify/shop-js"},{"id":"proj_pgiupdzrn4","name":"production-platform","remotes":["https://github.com/Shopify/production-platform.git"],"path":"/Users/me/src/github.com/Shopify/production-platform"},{"id":"proj_bkr74dzrmd","name":"cdn-detective","remotes":["https://github.com/Shopify/cdn-detective.git"],"path":"/Users/me/src/github.com/Shopify/cdn-detective"},{"id":"proj_jzfgbwdidz","name":"edge-cache-service","remotes":["https://github.com/Shopify/edge-cache-service"],"path":"/Users/me/src/github.com/Shopify/edge-cache-service"},{"id":"proj_qebqir8dps","name":"ingress-nginx","remotes":["https://github.com/Shopify/ingress-nginx.git"],"path":"/Users/me/src/github.com/Shopify/ingress-nginx"},{"id":"proj_4vvitkw3p6","name":"shopify-terraform-modules","remotes":["https://github.com/Shopify/shopify-terraform-modules.git"],"path":"/Users/me/src/github.com/Shopify/shopify-terraform-modules"},{"id":"proj_jeyq3qaex5","name":"shopify-debug","remotes":["https://github.com/Shopify/shopify-debug"],"path":"/Users/me/src/github.com/Shopify/shopify-debug"},{"id":"proj_ttq967ke9y","name":"tavern-live-r2","remotes":["/Users/me/tavern-live-r2/origin.git"],"path":"/Users/me/tavern-live-r2/app"}]};
 
@@ -22,7 +28,7 @@ export const machinesRoom: Room = roomSchema.parse({
   ],
   asks: [], decidedForYou: [], review: { waiting: 0, budget: 3, items: [] }, solos: [], recent: [],
 });
-/** Where each fixture Keeper works, for the preview stand-in. */
+/** Where each fixture Keeper works. */
 export const keeperFacts: Record<string, { projectId: string; path: string; env: string }> = {
   thr_t3zru37rah: { projectId: "proj_7przffsyfd", path: "/Users/me/.bb/plugins/environment-git-worktree/host-data/worktrees/thr_t3zru37rah/bb-marketplace", env: "git-worktree" },
   thr_vhnrtdty72: { projectId: "proj_ttq967ke9y", path: "/Users/me/tavern-live-r2/app", env: "project-checkout" },
@@ -56,7 +62,7 @@ export const machineVolumes: Record<"empty" | "one" | "many", PlacementSettings>
 
 /** The contract's own messages at their keys, for the refused-save state. */
 export const machineProblems = [
-  { line: 0, key: "machines.rules.1.target.inputs.fromLaptopBranch", message: "Unknown template {keeper.brnch}. Use {keeper.branch}, {source.commit}, {member.branch} or {quest.id}." },
+  { line: 0, key: "machines.rules.1.target.inputs.fromLaptopBranch", message: "Unknown template {keeper.brnch}. Use {keeper.branch}, {source.commit}, {source.base}, {member.branch} or {quest.id}." },
   { line: 0, key: "machines.rules.2.target.workspace", message: "Dedicated-machine placement needs a new machine for this member." },
   { line: 0, key: "machines.rules.3.target.machine.inputs.cores", message: "Must be at most 20.", allowed: "1 to 20" },
   { line: 0, key: "machines.rules.4.consent", message: "Confirm this rule's marked guard install, remote detection-only execution and Linux checks without containment." },
@@ -65,46 +71,38 @@ export const machineProblems = [
   { line: 0, key: "machines.maxMakers", message: "Must be at most 1000.", allowed: "1 to 1000" },
 ];
 
-const glob = (g: string) => new RegExp(`^${g.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, "[^/]*")}(/.*)?$`);
-const remote = (url: string) => url.replace(/^[a-z]+:\/\//, "").replace(/^[^@/]+@/, "").replace(/\.git$/, "");
-/** A client-side stand-in for placementPreview: first enabled match wins, with the first failing field for each miss. */
-export function previewFixture(settings: PlacementSettings, input: PlacementPreviewInput, catalog: PlacementCatalog = machinesCatalog, inUse = 1, partyCeiling = 5): PlacementPreview {
-  const k = input.keeperThreadId ? keeperFacts[input.keeperThreadId] : undefined;
-  const projectId = input.projectId ?? k?.projectId ?? null;
-  const project = catalog.projects.find((p) => p.id === projectId);
-  const facts = { projectId, repoRemotes: project ? project.remotes.map(remote) : null, keeperPath: input.keeperPath ?? k?.path ?? project?.path ?? null,
-    keeperEnvironmentProvider: k?.env ?? (project?.path?.includes("/world/trees/") ? "world-tree" : "project-checkout"), classId: input.classId, questId: input.questId };
-  const steps: PlacementPreview["steps"] = [];
-  let verdict: PlacementPreview["verdict"] = { state: "compatibility", posture: "Pi pre-exec guard and watcher" };
-  for (const rule of settings.rules) {
-    if (verdict.state !== "compatibility") { steps.push({ ruleId: rule.id, outcome: "unreached", miss: null }); continue; }
-    if (!rule.enabled) { steps.push({ ruleId: rule.id, outcome: "off", miss: null }); continue; }
-    let miss: { field: string; value: string | null; pattern: string } | null = null;
-    const evidence: { field: string; value: string; pattern: string }[] = [];
-    for (const [field, patterns] of Object.entries(rule.match) as [string, string[]][]) {
-      const value = field === "projectIds" ? facts.projectId : field === "classes" ? facts.classId : field === "questIds" ? facts.questId : field === "keeperEnvironmentProviders" ? facts.keeperEnvironmentProvider : null;
-      const values = field === "repoRemotes" ? facts.repoRemotes : field === "keeperPathGlobs" ? (facts.keeperPath ? [facts.keeperPath] : null) : value === null ? null : [value];
-      const hit = values?.map((v) => ({ v, p: patterns.find((p) => field === "repoRemotes" || field === "keeperPathGlobs" ? glob(p.replace(/^~/, "/Users/me")).test(v) : p === v) })).find((x) => x.p !== undefined);
-      if (!hit) { miss = { field, value: values?.[0] ?? null, pattern: patterns.join(" or ") }; break; }
-      evidence.push({ field, value: hit.v, pattern: hit.p! });
-    }
-    if (miss) { steps.push({ ruleId: rule.id, outcome: "miss", miss }); continue; }
-    steps.push({ ruleId: rule.id, outcome: "matched", miss: null });
-    const t = rule.target;
-    const env = t.kind === "provider" ? catalog.environments.find((e) => e.id === t.environmentProviderId) : null;
-    const machine = t.kind === "provider" && t.machine.type === "new" ? catalog.machines.find((m) => m.id === (t.machine as { machineProviderId: string }).machineProviderId) : null;
-    const isNew = t.kind === "provider" && t.machine.type === "new";
-    const missing = t.kind === "provider" ? (!env ? t.environmentProviderId : isNew && !machine ? (t.machine as { machineProviderId: string }).machineProviderId : null) : null;
-    const blocked = missing ? { code: "provider-unavailable", message: `${missing} is not installed in this bb. The rule is kept; members it catches wait here until you repair it.` }
-      : isNew && !(rule.consent.guardInstall && rule.consent.remoteDetectionOnly && rule.consent.linuxUncontainedChecks) ? { code: "needs-rule-consent", message: "This rule needs your consent before it can place members." } : null;
-    const remoteTarget = t.kind === "provider" && (t.machine.type === "new" || t.machine.type === "existing");
-    const slot = t.kind === "provider" ? (input.classId === "warden" ? "checker" : "maker") : null;
-    void blocked; void remoteTarget;
-    // As the server answers until the pipeline lands: today's rule keeps today's guard and no slot; every machine rule waits with one blocker.
-    verdict = t.kind === "current"
-      ? { state: "matched", ruleId: rule.id, matchEvidence: evidence, blocked: null, posture: "Pi pre-exec guard and watcher", remote: null, slot: null, slotsInUse: null, slotCap: null, partyCeiling }
-      : { state: "matched", ruleId: rule.id, matchEvidence: evidence, posture: null, remote: null, slot, slotsInUse: input.keeperThreadId ? inUse : 0, slotCap: slot === "checker" ? settings.maxCheckers : settings.maxMakers, partyCeiling,
-        blocked: { code: "placement-setup-incomplete", message: `Machine placement is not ready in this build; rule "${rule.label}" (${rule.id}) cannot be applied. Wait for setup to finish, or disable machine rules in Settings.` } };
+export async function previewFixture(settings: PlacementSettings, input: PlacementPreviewInput): Promise<PlacementPreview> {
+  const keeper = input.keeperThreadId ? keeperFacts[input.keeperThreadId] : undefined;
+  const projectId = input.projectId ?? keeper?.projectId ?? null;
+  const project = machinesCatalog.projects.find(p => p.id === projectId);
+  const db = new Database(":memory:");
+  try {
+    for (const migration of MIGRATIONS) db.exec(migration);
+    const { bb } = createFakePluginHost({ pluginId: "tavern", sdk: {
+      projects: { get: async () => {
+        if (!project) throw new Error("Unknown fixture project.");
+        return { id: project.id, gitRemoteUrl: project.remotes[0] ?? null, sources: project.path ? [{ path: project.path, isDefault: true }] : [] };
+      } },
+      threads: { get: async ({ threadId }: { threadId: string }) => {
+        if (!projectId) throw new Error("Unknown fixture Keeper project.");
+        return makeThreadResponse({ id: threadId, projectId, environmentId: "env" });
+      } },
+      environments: { get: async () => ({ id: "env", projectId, hostId: "host", path: keeper?.path, environmentProviderId: keeper?.env,
+        status: "ready", hostLifecycle: "active", lifecycle: { phase: "active" } }) },
+    } });
+    const runtime = {
+      bb, settings: { placementPolicy: () => ({ state: "valid", revision: 12, settings }), hasUser: () => false },
+      config: () => DEFAULT_SETTINGS, snapshot: () => registry,
+      keeper: { member: (id: string) => machinesRoom.keepers.find(k => k.member.threadId === id)?.member,
+        store: { db, runtime: (id: string) => ({ projectId: keeperFacts[id]?.projectId }) } },
+      placementSources: () => ({ inspect: async () => {
+        if (!keeper || !project) throw new Error("Unknown fixture Keeper.");
+        return { state: "known", endpoint: { root: keeper.path }, environmentProviderId: keeper.env,
+          inspection: { home: "/Users/me", repoRemotes: project.remotes } };
+      } }),
+    } as unknown as TavernRuntime;
+    return await placementHandlers(runtime).placementPreview({ ...input, projectId });
+  } finally {
+    db.close();
   }
-  return { revision: 12, facts, steps, verdict };
 }

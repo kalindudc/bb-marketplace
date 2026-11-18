@@ -3,14 +3,14 @@ import { providerInputsSchema, settingsJsonValueSchema } from "../../shared/plac
 
 type Json = z.infer<typeof providerInputsSchema>;
 type Problem = { path: string; message: string };
-type Substitution = "keeper.branch" | "source.commit" | "member.branch" | "quest.id";
+type Substitution = "keeper.branch" | "source.commit" | "source.base" | "member.branch" | "quest.id";
 export type PlacementSubstitutions = Partial<Record<Substitution, string | null>>;
 export type PlacementInputsCheck =
   | { state: "valid"; inputs: Json; supplied: boolean; method: "advertised-empty" | "json-schema-subset" }
   | { state: "unsupported"; inputs: Json; supplied: true; issues: Problem[] }
   | { state: "invalid"; issues: Problem[] };
 
-const substitutions = new Set<Substitution>(["keeper.branch", "source.commit", "member.branch", "quest.id"]);
+const substitutions = new Set<Substitution>(["keeper.branch", "source.commit", "source.base", "member.branch", "quest.id"]);
 const annotations = new Set(["title", "description", "examples", "default", "readOnly", "writeOnly", "deprecated", "$comment"]);
 const schemaMaps = new Set(["properties", "$defs", "definitions"]);
 const schemaArrays = new Set(["prefixItems", "anyOf", "oneOf", "allOf"]);

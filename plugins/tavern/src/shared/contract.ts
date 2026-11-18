@@ -6,6 +6,7 @@ import { z } from "zod";
 import { defineContract } from "./define-contract";
 import { voiceModeSchema } from "./settings";
 import { placementContract } from "./placement-rpc";
+import { placementViewSchema } from "./placement-view";
 import { voiceCheckContract } from "./voice-check";
 import { awayContract } from "./away-rpc";
 import { awayStatusSchema } from "./away";
@@ -24,7 +25,7 @@ import {
   ENTRY_STATUSES,
   eventSchema,
   evidenceSchema,
-  memberSchema,
+  memberSchema as storedMemberSchema,
   planSchema,
   journalSchema,
   journalProgressSchema,
@@ -39,6 +40,7 @@ import {
 // The RPC contract between Tavern's server and its UI. Server handlers invalidate the tags below whenever the data
 // behind them changes, so every query stays live without polling.
 
+const memberSchema = storedMemberSchema.extend({ placement: placementViewSchema.nullable().optional() });
 const threadId = z.string().min(1).max(100);
 const id = z.string().min(1).max(120);
 /** At most this many brief context lines reach the widget: every hire-time line, then the newest follow-ups. */

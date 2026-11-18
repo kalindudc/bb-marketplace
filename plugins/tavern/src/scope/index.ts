@@ -31,15 +31,20 @@ export function shouldScope(classId: string | null | undefined, origin: "direct"
 export interface ScopesDeps extends WatchDeps {
   mode?: ScopeMode;
   hostScopeForThread?: HostScopeLookup;
+  hostTargetForThread?(threadId: string): import("./schema").ScopeHostTarget | undefined;
+  onHostTemplateChanged?(threadId: string): void;
   narrowBoundScope?(scope: Scope): Scope;
   dataDir?: string;
-  pathsForThread(threadId: string): Omit<ScopePaths, "home" | "tmp" | "scopesDir"> | Promise<Omit<ScopePaths, "home" | "tmp" | "scopesDir">>;
+  pathsForThread(threadId: string): ScopeThreadPaths | Promise<ScopeThreadPaths>;
   projectForThread?(threadId: string): ProjectContext;
   classScope?(classId: string): ClassScope | undefined;
   policyOptions?: PolicyOptions;
   guard?: GuardOptions;
   installGuard?: boolean;
 }
+export type ScopeThreadPaths = Omit<ScopePaths, "home" | "tmp" | "scopesDir"> & {
+  remoteOpen?: { hostId: string; cwd: string };
+};
 export function registerScopes(bb: BbPluginApi, deps: ScopesDeps) {
   const dataDir = deps.dataDir ?? dirname(bb.storage.database().name);
   const store = new ScopeStore(dataDir);
@@ -50,12 +55,14 @@ export function registerScopes(bb: BbPluginApi, deps: ScopesDeps) {
   const guard = { entryPath: extensionCandidates.find(path => existsSync(path)) ?? extensionCandidates[0], ...deps.guard };
   const installation = deps.installGuard === false ? "disabled" : ensureGuardInstalled(guard);
   const updates = new Map<string, Promise<unknown>>();
-  const enqueue = <T>(threadId: string, work: (check: () => void) => Promise<T>) => {
-    const revision = store.revision(threadId), deadlineAt = Date.now() + 2000;
+  const enqueue = <T>(threadId: string, work: (check: (bindingChanged?: boolean) => void) => Promise<T>) => {
+    let revision = store.revision(threadId);
+    const deadlineAt = Date.now() + 2000;
     let expired = false, timer: ReturnType<typeof setTimeout>;
     const timeoutError = () => new Error("Scope binding timed out after 2000 ms");
-    const check = () => {
+    const check = (bindingChanged = false) => {
       if (expired || Date.now() >= deadlineAt) throw timeoutError();
+      if (bindingChanged) revision = store.revision(threadId);
       if (store.revision(threadId) !== revision) throw new Error("Scope was released while binding " + threadId);
     };
     const run = () => { check(); return work(check); };
@@ -74,21 +81,31 @@ export function registerScopes(bb: BbPluginApi, deps: ScopesDeps) {
   };
   const prepareBinding = (threadId: string, options?: ScopeWriteOptions) => {
     if (options) return store.markHostBinding(threadId, scopeHostTargetSchema.parse(options.binding));
+    const target = deps.hostTargetForThread?.(threadId);
+    if (target) return store.markHostBinding(threadId, scopeHostTargetSchema.parse(target));
     const current = store.records.get(threadId)?.binding;
     if (current) return current;
     const state = hostStateForThread(threadId);
     if (state !== undefined) return store.markHostBinding(threadId, { kind: "host", placementId: state.kind === "ready" ? state.expected.placementId : null, generation: state.kind === "ready" ? state.expected.generation : null });
   };
-  const bindAndWrite = async (threadId: string, input: Scope, check: () => void, preserveProvenance = false) => {
+  const bindAndWrite = async (threadId: string, input: Scope, check: (bindingChanged?: boolean) => void, preserveProvenance = false) => {
     let template = scopeSchema.parse({ ...input, threadId, issuedAt: input.issuedAt || Date.now() });
     const paths = prepareBinding(threadId) ? undefined : await deps.pathsForThread(threadId);
-    prepareBinding(threadId);
     check();
+    const revision = store.revision(threadId);
+    if (paths?.remoteOpen) {
+      if (template.preset !== "open") throw new Error("Only an open Keeper scope can bind remotely without a native delivery");
+      store.markHostBinding(threadId, { kind: "host", placementId: null, generation: null });
+    } else prepareBinding(threadId);
+    check(store.revision(threadId) !== revision);
     const current = store.records.get(threadId), enforceFrom = current?.scope?.enforceFrom ?? template.enforceFrom;
     template = { ...template, mode, ...(enforceFrom === undefined ? {} : { enforceFrom }) };
     if (current?.binding) {
+      if (current.binding.placementId === null && current.scope?.preset === "open" && template.preset !== "open") throw new Error("Only an open Keeper scope can bind remotely without a native delivery");
       if (!current.error && JSON.stringify(current.scope) === JSON.stringify(template) && JSON.stringify(current.template) === JSON.stringify(template)) return current.scope!;
-      return store.write(threadId, template, template, undefined, preserveProvenance);
+      const scope = store.write(threadId, template, template, undefined, preserveProvenance);
+      deps.onHostTemplateChanged?.(threadId);
+      return scope;
     }
     if (!paths) throw new Error("Local scope paths are unavailable");
     const prepared = paths.worktree && (needsWorktree(template) || template.writes.mode === "worktree") ? bindWorktree(template, paths.worktree) : template;
@@ -137,12 +154,17 @@ export function registerScopes(bb: BbPluginApi, deps: ScopesDeps) {
   };
   return {
     shouldScope,
-    refreshPresetTools: (threadId: string) => store.refreshPresetTools(threadId),
+    refreshPresetTools: (threadId: string) => {
+      const result = store.refreshPresetTools(threadId);
+      if (result === "updated" && store.records.get(threadId)?.binding) deps.onHostTemplateChanged?.(threadId);
+      return result;
+    },
     protectOpenPolicy: (threadId: string) => {
       prepareBinding(threadId);
       return enqueue(threadId, async check => {
         const record = store.records.get(threadId), current = record?.template ?? record?.scope;
         if (!current || record?.error || current.preset !== "open") return false;
+        if (record?.binding) return false;
         const deny = "~/.agents/tavern/scopes.yml";
         const bound = realPath(join(deps.policyOptions?.home ?? homedir(), ".agents/tavern/scopes.yml"));
         if (current.writes.deny.includes(deny) || current.writes.deny.includes(bound)) return false;
@@ -174,7 +196,9 @@ export function registerScopes(bb: BbPluginApi, deps: ScopesDeps) {
       if (!["enforce", "watch", "off"].includes(value)) throw new Error("Unknown Tavern scope mode: " + value);
       mode = value;
       for (const threadId of store.records.keys()) {
+        const previous = store.records.get(threadId);
         store.setMode(threadId, mode);
+        if (previous?.binding && previous.template?.mode !== mode) deps.onHostTemplateChanged?.(threadId);
         if (mode !== "enforce") store.saveProgress(threadId, store.progress(threadId).cursor, false);
       }
       return mode;
@@ -186,7 +210,7 @@ export function registerScopes(bb: BbPluginApi, deps: ScopesDeps) {
     clearScope: (threadId: string) => store.clear(threadId),
     status: () => ({ mode, installation, guard: guardStatus(guard), threads: [...store.records.entries()].map(([threadId, record]) => {
       const state = hostStateForThread(threadId), hosted = !!record.binding || state !== undefined;
-      return { threadId, scope: record.scope, error: record.error, hasTemplate: !!record.template, armed: locallyArmed(threadId), ...(record.binding ? { binding: record.binding } : {}), ...(hosted ? { hostScope: state?.kind === "ready" && envForScope(store.records, threadId, { hostId: state.expected.hostId, hostScope: state }).length ? "acknowledged" as const : "unresolved" as const } : {}) };
+      return { threadId, scope: record.scope, error: record.error, hasTemplate: !!record.template, armed: locallyArmed(threadId), ...(record.binding ? { binding: record.binding } : {}), ...(hosted ? { hostScope: state?.kind === "ready" && envForScope(store.records, threadId, { hostId: state.expected.hostId, hostScope: state }).length ? "acknowledged" as const : "unresolved" as const } : {}), ...(record.binding && !record.binding.placementId && record.scope?.preset === "open" ? { observation: "unavailable (remote open scope)" as const } : {}), ...(store.observationHold(threadId) ? { observationHold: store.observationHold(threadId) } : {}) };
     }) }),
     violations: (threadId?: string) => store.violations(threadId),
     observationHolds: (threadId?: string) => (threadId ? [threadId] : [...store.records.keys()]).flatMap(id => { const hold = store.observationHold(id); return hold ? [hold] : []; }),

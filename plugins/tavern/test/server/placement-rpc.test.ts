@@ -76,10 +76,26 @@ describe("placement reads through the registered RPC contract", () => {
     new PlacementStore(f.k.store.db).reserve(placementRecord({ keeperThreadId: "lead", questId: null }), { maxMakers: 2, maxCheckers: 2 });
     const result = await f.preview();
     expect(result).toMatchObject({ verdict: { state: "matched", ruleId: "provider", slot: "maker", slotsInUse: 1, slotCap: 2,
-      blocked: { code: "placement-setup-incomplete", message: expect.stringMatching(/not ready.*provider/) } } });
+      blocked: { code: "unsupported-target", message: "This rule's target isn't supported in this version." } } });
     expect(f.harness.inspection.sdk.callsTo("threads.spawn")).toEqual([]);
     expect(f.k.store.db.prepare("SELECT count(*) AS n FROM tavern_placements").get()).toEqual({ n: 1 });
     expect(f.settings.snapshot().revision).toBe(1);
+  });
+
+  it("previews a consented new dedicated machine without allocating", async () => {
+    const f = fixture();
+    const target = { kind: "provider" as const, environmentProviderId: "vendor", machine: { type: "new" as const, machineProviderId: "vendor-machine" }, workspace: "dedicated-machine" as const };
+    f.rules([placementRuleSchema.parse({ ...providerRule, target, consent: { guardInstall: true, remoteDetectionOnly: true, linuxUncontainedChecks: true } })]);
+    expect(await f.preview()).toMatchObject({ verdict: { state: "matched", ruleId: "provider", blocked: null, remote: true, posture: "Detection only (remote)", slot: "maker", slotsInUse: 0, slotCap: 2 } });
+    expectNoAllocation(f);
+  });
+
+  it.each(["keeper", "existing", "linked-worktree"] as const)("blocks unsupported %s preview targets without allocating", async kind => {
+    const f = fixture();
+    const target = { kind: "provider" as const, environmentProviderId: "vendor", machine: kind === "existing" ? { type: "existing" as const, hostId: "host" } : kind === "linked-worktree" ? { type: "new" as const, machineProviderId: "vendor-machine" } : { type: "keeper" as const }, workspace: "linked-worktree" as const };
+    f.rules([placementRuleSchema.parse({ ...providerRule, target, consent: { guardInstall: true, remoteDetectionOnly: true, linuxUncontainedChecks: true } })]);
+    expect(await f.preview()).toMatchObject({ verdict: { state: "matched", blocked: { code: "unsupported-target", message: "This rule's target isn't supported in this version." }, remote: null, posture: null } });
+    expectNoAllocation(f);
   });
 
   it("reports the checker slot separately", async () => {

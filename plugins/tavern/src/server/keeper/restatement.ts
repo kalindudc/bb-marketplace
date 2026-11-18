@@ -5,6 +5,9 @@ import { boundedData, LEDGER_OVERFLOW } from "../instructions";
 import { localClock } from "../clock";
 import { MEMORY_LIMITS } from "../../shared/settings";
 import { isOpenQuest } from "../liveness";
+import { PLACEMENT_CLASSES, placementClassLine, placementGuidance } from "../placement/controller";
+import { matchPlacementRule } from "../placement/match";
+import { PlacementStore } from "../placement/store";
 
 export const clock = localClock;
 const quoted = (value: string) => JSON.stringify(value);
@@ -215,6 +218,18 @@ export function renderRestatement(
   );
   const lastReply = k.store.runtime(threadId).lastReply;
   const holds = k.activeCheckerHolds(threadId);
+  const machines = k.settings().machines;
+  const projectId = k.store.runtime(threadId).projectId ?? null;
+  const placementLines = PLACEMENT_CLASSES.map(classId => placementClassLine(classId, matchPlacementRule(
+    { state: "valid", revision: 0, settings: machines },
+    { projectId, classId, questId: null, repoRemotes: null, keeperPath: null, keeperHome: null, keeperEnvironmentProvider: null },
+  )));
+  if (machines.rules.some(rule => rule.enabled && (rule.match.repoRemotes || rule.match.keeperPathGlobs || rule.match.keeperEnvironmentProviders || rule.match.questIds)))
+    placementLines.push("Source-dependent and quest-specific rules need current facts; call tavern_status section=placement before hiring.");
+  const enabledRules = machines.rules.filter(rule => rule.enabled);
+  const guidance = !enabledRules.length ? null : enabledRules.some(rule => !rule.match.projectIds || projectId !== null && rule.match.projectIds.includes(projectId))
+    ? placementGuidance(placementLines, new PlacementStore(k.store.db).counts(threadId), machines)
+    : "Where your party runs: where you run; no machine rule matches this project (tavern_status section=placement).";
   const parts = [
     ...(holds.length ? [section(
       "Active user holds — checker handoff held, waiting for the user\'s release; Warden hire/re-task blocked; details: tavern_status section=holds",
@@ -237,6 +252,7 @@ export function renderRestatement(
       "older rules; call tavern_status section=rules",
       proposed.total,
     ),
+    ...(guidance ? [guidance] : []),
     questSection(k, summaries, priorities),
     section(
       "Open asks",

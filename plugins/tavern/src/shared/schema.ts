@@ -228,7 +228,7 @@ export const memberSchema = z.object({
   strikes: z.number().int(),
   verifiedWins: z.number().int(),
 });
-export type Member = z.infer<typeof memberSchema>;
+export type Member = z.infer<typeof memberSchema> & { placement?: import("./placement-view").PlacementView | null };
 
 export const briefSchema = z.object({
   outcome: z.string().min(1).max(2000),

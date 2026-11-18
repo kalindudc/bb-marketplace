@@ -21,7 +21,9 @@ import { scopeOverrideSchema } from "../../scope/schema";
 import { sparseTunablesSchema } from "../../shared/settings";
 import { DetectionApprovalRequired } from "../guard-hire";
 import { restingMembers } from "../resting";
+import { PlacementHireBlocked } from "../placement/controller";
 import { agentData } from "../agent-data";
+import { registerReady } from "./ready";
 
 const id = z.string().min(1).max(120);
 const optionalQuest = id.nullish();
@@ -138,7 +140,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   register(
     "tavern_hire",
     "Hired a party member",
-    "Hire a member with a bounded brief. title is a short task name without the class or character. Optional scope can narrow the class policy or request named grants. Uncovered widening opens a consequential, never-timed scope ask; the original spawn brief stays queued and the member cannot start until approval. At the review budget, Smith hiring is refused with the count; wait or record a reversible tavern_decide with reviewBudgetOverride: true to permit one hire. Rangers and errand helpers may start before greenlight; staffing the party requires the user's explicit approval. A waypoint Warden needs a known maker journal entry; its brief includes the maker thread, entry ids, trusted maker worktree and explicit plan check commands. The checker preset allows standard test/check/lint/typecheck runners there without widening or a user-run blocker. Do not request commands as tool names. Read its review posture: any class-model fallback is a same-family check (not independent), never an independent check. Scoped hires always prefer Pi when Pi offers the model. Otherwise refuse by default: requestDetectionOnly:true opens a consequential scope ask without hiring. After the user approves, repeat the same hire with detectionOnlyAskId. Detection only is not prevention. Unknown class models refuse: change classes.<classId>.model in Tavern settings. Never silently choose a provider default. If the first line reports an execution substitution, tell the user in this same turn.",
+    "Hire a member with a bounded brief. title is a short task name without the class or character. Optional scope can narrow the class policy or request named grants. Uncovered widening opens a consequential, never-timed scope ask; the original spawn brief stays queued and the member cannot start until approval. At the review budget, Smith hiring is refused with the count; wait or record a reversible tavern_decide with reviewBudgetOverride: true to permit one hire. Rangers and errand helpers may start before greenlight; staffing the party requires the user's explicit approval. A waypoint Warden needs a known maker journal entry; its brief includes the maker thread, entry ids, trusted maker worktree and explicit plan check commands. The checker preset allows standard test/check/lint/typecheck runners there without widening or a user-run blocker. Do not request commands as tool names. Read its review posture: any class-model fallback is a same-family check (not independent), never an independent check. Scoped hires always prefer Pi when Pi offers the model. Otherwise refuse by default: requestDetectionOnly:true opens a consequential scope ask without hiring. After the user approves, repeat the same hire with detectionOnlyAskId. Detection only is not prevention. Unknown class models refuse: change classes.<classId>.model in Tavern settings. Never silently choose a provider default. If the first line reports an execution substitution, tell the user in this same turn. Where each class runs comes from the user’s machine rules, shown under \"Where your party runs\" and in tavern_status section=placement; a lead runs where you run unless you pass placementRuleId; the result’s first line says where the member went and why.",
     z.object({
       classId: id,
       brief: briefSchema,
@@ -150,18 +152,22 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
       scope: scopeOverrideSchema.optional(),
       requestDetectionOnly: z.boolean().default(false),
       detectionOnlyAskId: id.optional(),
+      placementRuleId: id.optional(),
     }),
     async (input, threadId, projectId) => {
       let m: Awaited<ReturnType<TavernRuntime["hire"]>>;
       try {
         m = await runtime.hire(threadId, projectId, input);
       } catch (error) {
+        if (error instanceof PlacementHireBlocked && error.outcome === "unknown") return error.message;
+        if (error instanceof PlacementHireBlocked)
+          return `Not hired. ${error.message}\n${error.placement ? `Do not hire again; the user can press Retry on placement ${error.placement.placementId}.` : "Retry this exact hire after the blocker is resolved; no machine was allocated."}`;
         if (error instanceof DetectionApprovalRequired)
           return `Not hired. ${error.message}\nAsk the user, then repeat the exact hire with detectionOnlyAskId: "${error.askId}" only if approved.\n::tavern-ask{id="${error.askId}"}`;
         throw error;
       }
       const substitutions = m.executionNotes.filter(note => /^(?:provider|model|permission|reasoning) .+ -> /.test(note));
-      const firstLine = substitutions.length ? `Execution substitutions: ${substitutions.join(" ")} Tell the user in this turn.\n` : "";
+      const firstLine = m.placementSummary + (substitutions.length ? ` Execution substitutions: ${substitutions.join(" ")} Tell the user in this turn.` : "") + "\n";
       if (m.pendingScopeAsk)
         return `${firstLine}Created ${runtime.keeper.name(m)}: ${m.threadId}. Awaiting scope approval; the original brief is queued and the member has not started.\n::tavern-ask{id="${m.pendingScopeAsk}"}`;
       const adjustments = m.executionNotes.length
@@ -178,10 +184,21 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
     "Released a party member",
     "Stop a member of your own party and free its allocation once stopping is confirmed. memberThreadId accepts its unique live display name or thread id. Give the reason. The reversible release appears under Decided for you; replacements still obey their per-slot budget.",
     z.object({ memberThreadId: id, reason: z.string().trim().min(1).max(500) }),
-    async (input, threadId) =>
-      (await runtime.release(threadId, input.memberThreadId, input.reason))
-        ? `Released ${input.memberThreadId}; its allocation is free.`
-        : `Stop requested for ${input.memberThreadId}; its allocation stays held until the stop is confirmed. Tavern will retry confirmation.`,
+    async (input, threadId) => {
+      const member = k.resolvePartyMember(threadId, input.memberThreadId);
+      if (await runtime.release(threadId, member.threadId, input.reason)) {
+        const placement = runtime.placements().store.byMember(member.threadId);
+        if (placement && ["lost", "unknown", "unpreserved"].includes(placement.preservation.source))
+          return `Released ${k.name(member)}; its work was not saved: ${placement.preservation.reason}`;
+        if (placement?.preservation.source === "saved" && placement.preservation.artifacts === "unknown")
+          return `Released ${k.name(member)}; its source was saved; declared artifacts are unknown: ${placement.preservation.reason?.replace(/^Declared artifacts are unknown\. /, "")}`;
+        return `Released ${input.memberThreadId}; its allocation is free.${placement?.preservation.artifacts === "unpreserved" ? ` ${placement.preservation.reason}` : ""}`;
+      }
+      const blocker = k.store.runtime(member.threadId).archiveError;
+      return blocker
+        ? `Release pending for ${input.memberThreadId}: ${blocker} The thread and its allocation stay held. Retry release after resolving the blocker.`
+        : `Stop requested for ${input.memberThreadId}; its allocation stays held until the stop is confirmed. Tavern will retry confirmation.`;
+    },
   );
   register(
     "tavern_scope",
@@ -412,14 +429,14 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
           if (minutes >= 0) runtime.record("ranger.completed", { memberThreadId: threadId, minutes, overrun: timebox !== undefined && timebox !== null && minutes > timebox }, member.keeperThreadId, member.boardQuestId, `ranger-completed:${threadId}`, report.createdAt);
         }
       }
-      // An errand thread is archived here rather than through cleanup, so its uncommitted work needs the same protection.
-      if (member.errand && report.status === "done" && await runtime.preserveWorkOrRefuse(threadId) === null) {
-        await bb.sdk.threads.archive({ threadId });
-        k.activity(threadId, "done");
+      let archiveBlocker: string | null = null;
+      if (member.errand && report.status === "done") {
+        archiveBlocker = await runtime.archiveMember(threadId);
       }
       const warning = report.status === "done" ? await runtime.uncommittedWarning(threadId) : null;
-      return `Report written. End your turn.\nReport id: ${report.id}${warning ? `\n${warning}` : ""}`;
+      return `Report written. End your turn.\nReport id: ${report.id}${archiveBlocker ? `\nArchive pending: ${archiveBlocker} The thread and its allocation stay held. Tavern will retry preservation before cleanup.` : ""}${warning ? `\n${warning}` : ""}`;
     },
     "member",
   );
+  registerReady(bb, runtime);
 }

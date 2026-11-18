@@ -1,0 +1,10 @@
+.tavern .placement-facts { min-width: 0; max-width: 100%; margin-top: 6px; color: var(--tavern-muted); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.tavern .placement-facts.card { padding: 10px; border: 1px solid var(--tavern-line); border-radius: 6px; background: var(--tavern-raised); }
+.tavern .placement-facts :is(.pf-line, .pf-state, .pf-posture) { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.tavern .placement-facts .pf-where { color: var(--tavern-ink); }
+.tavern .placement-facts .pf-state { margin-top: 3px; }
+.tavern .placement-facts :is(p, .pf-posture) { margin-top: 3px; margin-bottom: 0; }
+.tavern .placement-facts .btn { min-height: 32px; }
+.tavern .placement-facts .tv-ilink { display: inline-flex; align-items: center; min-height: 24px; }
+.tavern .tv-item > .placement-facts { grid-column: 2 / -1; }
+@media (pointer: coarse) { .tavern .placement-facts :is(.btn, .tv-ilink) { min-height: 44px; } }

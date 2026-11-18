@@ -473,7 +473,7 @@ export function createJournalStore(bb: BbPluginApi, db: Database, deps: JournalD
     db.transaction(() => { for (const change of changes) mark.run(threadId, change.id); })();
     if (changes.length) deps.invalidate([tags.journal(threadId)]);
   }
-  async function executeTool(callerThreadId: string, input: JournalAction) {
+  async function executeTool(callerThreadId: string, input: JournalAction, assertVerdict?: () => string | void) {
     let unseen: JournalChange[] = [];
     const targetThreadId = input.threadId ?? callerThreadId;
     try {
@@ -506,12 +506,14 @@ export function createJournalStore(bb: BbPluginApi, db: Database, deps: JournalD
         text = JSON.stringify(entry, null, 2);
       } else if (action.action === "rules" || action.action === "skill") text = readJournalSkill();
       else {
+        const verdictNote = action.action === "verify" || action.action === "reject" ? assertVerdict?.() : undefined;
         text = mutate(threadId, action, actor).message;
         if (threadId === callerThreadId && text.startsWith(`Agent ${callerThreadId} `)) text = `You ${text.slice(`Agent ${callerThreadId} `.length)}`;
         if (threadId !== callerThreadId) {
           const ids = action.ids ?? (action.id ? [action.id] : []);
           text = localEntries(threadId).filter(e => ids.includes(e.id)).map(e => `[${e.id}] ${JSON.stringify(e.description)} ${e.status}${e.note ? `; ${JSON.stringify(e.note)}` : ""}`).join("\n");
         }
+        if (verdictNote) text += `\n${verdictNote}`;
       }
       acknowledge(threadId, unseen);
       return { text: clip(`${formatUserChanges(unseen)}${text}`, 28000), isError: false };
@@ -520,7 +522,17 @@ export function createJournalStore(bb: BbPluginApi, db: Database, deps: JournalD
       return { text: `${formatUserChanges(unseen)}Error: ${error instanceof Error ? error.message : String(error)}`, isError: true };
     }
   }
-  const runTool = (callerThreadId: string, input: JournalAction) => withThreadLock(input.threadId ?? callerThreadId, () => executeTool(callerThreadId, input));
+  async function runTool(callerThreadId: string, input: JournalAction) {
+    let assertVerdict: (() => string | void) | void;
+    if (input.action === "verify" || input.action === "reject") {
+      try {
+        const action = actionSchema.parse(input), threadId = action.threadId ?? callerThreadId;
+        await ready(threadId, false);
+        assertVerdict = await deps.beforeVerdict?.(callerThreadId, threadId, action.ids ?? (action.id ? [action.id] : []));
+      } catch (error) { return { text: `Error: ${error instanceof Error ? error.message : String(error)}`, isError: true }; }
+    }
+    return withThreadLock(input.threadId ?? callerThreadId, () => executeTool(callerThreadId, input, assertVerdict ?? undefined));
+  }
   /**
    * A follow-up brief reached this member (runtime.finishInitialBrief): its finished entries linked to the quest reopen, as one Tavern
    * history step that the member's or the user's undo can't reverse. A verified entry's receipt is marked superseded first, in the same

@@ -13,6 +13,7 @@ import type { Brief, Decision } from "../shared/schema";
 import { isLiveMember } from "./liveness";
 import { DecisionViews } from "./decisions";
 import { placementHandlers } from "./placement/rpc";
+import { PlacementStore } from "./placement/store";
 import { voiceCheckHandlers } from "./voice-check/rpc";
 import { awayHandlers, requireAwayClient } from "./away/rpc";
 import { classEditorHandlers, requireClassClient } from "./registry-rpc";
@@ -36,6 +37,12 @@ export function rpcHandlers(
   runtime: TavernRuntime,
 ): PluginRpcHandlers<typeof rpcContract> {
   const k = runtime.keeper;
+  const placementStore = new PlacementStore(k.store.db);
+  const projectMember = (member: import("../shared/schema").Member) => ({ ...member,
+    placement: placementStore.byMember(member.threadId) ? runtime.placements().controller.forMember(member.threadId) : null });
+  const projectQuest = (quest: import("../shared/contract").BoardQuestSummary) => ({ ...quest,
+    members: quest.members.map(projectMember),
+    waypoints: quest.waypoints.map(waypoint => ({ ...waypoint, ownerMember: waypoint.ownerMember ? projectMember(waypoint.ownerMember) : null })) });
   const status = (threadId: string): "listening" | "busy" | "holding" => {
     if (k.store.runtime(threadId).archivedAt != null) return "listening";
     if (k.member(threadId)?.state === "working") return "busy";
@@ -45,7 +52,7 @@ export function rpcHandlers(
     k.store
       .visibleRecords("quests", threadId, 100)
       .reverse()
-      .map((q) => k.summary(q.id));
+      .map((q) => projectQuest(k.summary(q.id)));
   const decisions = new DecisionViews(k.store);
   const decisionsChanged = (changed: Decision[]) => {
     if (!changed.length) return;
@@ -57,7 +64,7 @@ export function rpcHandlers(
       ]),
     ])]);
   };
-  const errands = (threadId: string) => k.store.errandsPage(threadId, 100, 0).members;
+  const errands = (threadId: string) => k.store.errandsPage(threadId, 100, 0).members.map(projectMember);
   const partyIds = (threadId: string) => [
     threadId,
     ...k.store
@@ -165,7 +172,7 @@ export function rpcHandlers(
         classNotice: thread.classNotice ?? null,
         scope: runtime.scopes?.view(threadId) ?? null,
         violations: runtime.scopes?.violations([threadId]) ?? [],
-        member: m,
+        member: m ? projectMember(m) : null,
         keeper: m?.keeperThreadId ? k.member(m.keeperThreadId) : null,
         boardQuest,
         briefFields: decorBrief(k.store.runtime(threadId).brief),
@@ -300,7 +307,7 @@ export function rpcHandlers(
           .filter((gate) => gate.boardQuestId === id),
         scopes: runtime.scopes?.views(ids) ?? [],
         violations: runtime.scopes?.violations(ids) ?? [],
-        quest: summary,
+        quest: projectQuest(summary),
         tale,
         memberCredits: memberCredits(k, summary),
         plans: k.store.query("plans", "boardQuestId", id, 30),
@@ -334,13 +341,13 @@ export function rpcHandlers(
     },
     deletedBoardQuests: ({ cursor, limit }) => {
       const page = k.store.deletedQuestPage(cursor, limit);
-      return { boardQuests: page.quests.map(q => k.summary(q.id)), nextCursor: page.nextCursor, total: page.total };
+      return { boardQuests: page.quests.map(q => projectQuest(k.summary(q.id))), nextCursor: page.nextCursor, total: page.total };
     },
     mapHistory: () => k.store.mapHistory(),
     archivedBoardQuests: ({ cursor, limit }) => {
       const page = k.store.archivedQuestPage(cursor, limit);
       return {
-        boardQuests: page.quests.map((q) => k.summary(q.id)),
+        boardQuests: page.quests.map((q) => projectQuest(k.summary(q.id))),
         nextCursor: page.nextCursor,
         total: page.total,
       };
@@ -357,7 +364,7 @@ export function rpcHandlers(
         .map((m) => {
           const thread = k.store.runtime(m.threadId);
           return {
-            member: m,
+            member: projectMember(m),
             archived: thread.archivedAt != null,
             threadTitle: thread.threadTitle ?? null,
             threadCreatedAt: thread.threadCreatedAt ?? null,
@@ -372,7 +379,7 @@ export function rpcHandlers(
         .sort((a, b) => a.createdAt - b.createdAt),
       ...decisions.attention(),
       review: runtime.review(),
-      solos: k.store.all("members").filter((m) => m.role === "solo" && isLiveMember(k.store, m, "occupy")),
+      solos: k.store.all("members").filter((m) => m.role === "solo" && isLiveMember(k.store, m, "occupy")).map(projectMember),
       recent: k.store.roomEvents(60),
     }),
     releaseCheckerHandoff: async ({ boardQuestId, holdId, via }, context?: ExperimentalPluginRpcHandlerContext) => {

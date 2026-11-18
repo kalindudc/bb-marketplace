@@ -105,6 +105,7 @@ it("returns strict JSON from EVERY registered RPC with optional record fields ab
     },
     dismissClassNotice: () => call("dismissClassNotice", { threadId: "lead" }),
     placementCatalog: () => call("placementCatalog", {}),
+    placementRetry: () => call("placementRetry", { placementId: "missing", generation: 1 }),
     placementPreview: () => call("placementPreview", { projectId: "project", keeperThreadId: "lead", keeperPath: null, classId: "ranger", questId: null }),
     decor: () => call("decor", { threadId: "member" }),
     crests: () => call("crests", { threadIds: ["lead", "member", "untyped"] }),

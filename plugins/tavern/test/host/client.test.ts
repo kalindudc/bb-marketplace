@@ -49,7 +49,9 @@ it("rejects delivery host metadata for a different authenticated target without 
   } finally { await harness.lifecycle.dispose(); }
 });
 it("bounds host-call budgets without placing transport inside the env contributor", () => {
-  expect(hostCallTimeoutMs("inspect", {})).toBe(30_000);
+  for (const method of ["inspect", "snapshotWorktree", "commitAll", "worktreeState", "carryFinish", "carryAbort"] as const)
+    expect(hostCallTimeoutMs(method, {})).toBe(180_000);
+  expect(hostCallTimeoutMs("registerEndpoint", {})).toBe(30_000);
   expect(hostCallTimeoutMs("importCommit", { networkTimeoutMs: 120_000 })).toBe(420_000);
   expect(hostCallTimeoutMs("carryStart", { networkTimeoutMs: 900_000 })).toBe(1_800_000);
   expect(hostCallTimeoutMs("carryFinish", {})).toBe(180_000);

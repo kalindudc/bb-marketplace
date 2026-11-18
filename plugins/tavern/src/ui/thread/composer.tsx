@@ -14,6 +14,8 @@ import { takeArmedClass } from "../kit/remember";
 import { MemberPanel, memberFinished } from "./member-brief";
 import { memberIdentityWords } from "../kit/member-identity";
 import { HUE_CSS } from "../../shared/heraldry";
+import { PlacementFacts } from "../kit/placement";
+import { memberName } from "../../shared/member-name";
 
 export const CLASS_PROVIDER = "classes";
 
@@ -254,6 +256,7 @@ export function ThreadWidget({ threadId }: { threadId: string }) {
         {variant === "member" && <MemberParts data={data} registry={registry.data ?? null} open={open} toggle={toggle} onQuest={id => navigate.toPluginPanel("tavern", { subPath: `quest/${id}` })} onThread={id => navigate.toThread(id)} />}
         {hideBtn}
       </div>
+      {open !== "brief" && <PlacementFacts placement={data.member.placement} memberName={memberName(data.member, registry.data ?? { classes: [], characters: [] })} />}
       <ClassNoticeLine threadId={threadId} notice={notice} />
       {armedLine}
       <QueryState error={error} />

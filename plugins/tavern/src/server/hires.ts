@@ -6,6 +6,7 @@ import { LIMITS } from "./limits";
 import { isOpenQuest } from "./liveness";
 import { isNotFound } from "./host-errors";
 import { loopCall } from "./loop-call";
+import { PlacementStore } from "./placement/store";
 
 export function rejectedSpawn(error: unknown) {
   if (error && typeof error === "object") {
@@ -39,7 +40,7 @@ export function releaseHire(k: Keeper, token: string, intent: HireIntent) {
 export function isHireCancelled(k: Keeper, intent: HireIntent) {
   return intent.cancelledAt != null || intent.owner.boardQuestId !== null && !isOpenQuest(k.store.get("quests", intent.owner.boardQuestId));
 }
-export async function settleCancelledHire(bb: BbPluginApi, k: Keeper, token: string, intent: HireIntent, threadId: string) {
+export async function settleCancelledHire(bb: BbPluginApi, k: Keeper, token: string, intent: HireIntent, threadId: string, beforeArchive?: (threadId: string) => Promise<void>) {
   k.store.put("hires", token, { ...intent, cancelledAt: intent.cancelledAt ?? k.now(), memberThreadId: threadId });
   k.store.put("members", threadId, { ...k.member(threadId)!, stopPending: true });
   let thread;
@@ -55,6 +56,7 @@ export async function settleCancelledHire(bb: BbPluginApi, k: Keeper, token: str
   }
   k.activity(threadId, "stopped");
   k.store.put("members", threadId, { ...k.member(threadId)!, stopPending: false, stopError: null });
+  if (beforeArchive) await beforeArchive(threadId);
   if (thread && thread.archivedAt == null && thread.deletedAt == null) {
     const current = await loopCall(bb.sdk.threads.get({ threadId }), `cancelled hire archive check ${threadId}`);
     if (current.archivedAt == null && current.deletedAt == null)
@@ -69,6 +71,7 @@ export async function recoverHires(
   k: Keeper,
   keeperId?: string,
   delivered?: (threadId: string) => void,
+  beforeArchive?: (threadId: string) => Promise<void>,
 ) {
   const rows = k.store.db
     .prepare(
@@ -79,6 +82,7 @@ export async function recoverHires(
     .all(...(keeperId ? [keeperId] : [])) as { id: string; data: string }[];
   for (const row of rows) {
     const intent = JSON.parse(row.data) as HireIntent;
+    if (new PlacementStore(k.store.db).byHireToken(row.id)) continue;
     try {
       let found =
         intent.memberThreadId && k.member(intent.memberThreadId)
@@ -133,7 +137,7 @@ export async function recoverHires(
         if (intent.classDefinition) k.store.patch(member.threadId, { classDefinition: intent.classDefinition });
         const latest = k.store.get("hires", row.id) ?? intent;
         if (isHireCancelled(k, latest)) {
-          await settleCancelledHire(bb, k, row.id, latest, member.threadId);
+          await settleCancelledHire(bb, k, row.id, latest, member.threadId, beforeArchive);
           k.changed(intent.owner.keeperThreadId, intent.owner.boardQuestId);
           continue;
         }
@@ -167,7 +171,7 @@ export async function recoverHires(
         }
         const current = k.store.get("hires", row.id) ?? intent;
         if (isHireCancelled(k, current)) {
-          await settleCancelledHire(bb, k, row.id, current, member.threadId);
+          await settleCancelledHire(bb, k, row.id, current, member.threadId, beforeArchive);
           continue;
         }
         if (intent.initialInput) delivered?.(member.threadId);

@@ -1,6 +1,6 @@
 import { experimental_defineHostEntry, type ExperimentalHostRpcContext } from "@get-bb/plugin-sdk";
 import { resolve } from "node:path";
-import { hostContract } from "../host-contract";
+import { hostContract, type HostOutput } from "../host-contract";
 import { createArtifacts } from "./artifacts";
 import { NativeGuard } from "./guard";
 import { inspectHost } from "./inspect";
@@ -8,6 +8,7 @@ import { abortError } from "./process";
 import { HostError, HostRegistry } from "./registry";
 import { NativeScopes, type NativeScopePaths } from "./scopes";
 import { createTransport } from "./transport";
+import { snapshotWorktree } from "./snapshot";
 
 export interface TavernHostEntryOptions { artifactPath: string; paths?: NativeScopePaths }
 export function createTavernHostEntry(options: TavernHostEntryOptions) {
@@ -56,6 +57,13 @@ export function createTavernHostEntry(options: TavernHostEntryOptions) {
       sessionStatus: (input, context) => call(context, (native, signal) => native.scopes.sessionStatus(input, signal)),
       releaseScope: (input, context) => call(context, (native, signal) => native.scopes.releaseScope(input, signal)),
       worktreeState: (input, context) => call(context, (native, signal) => native.transport.worktreeState(input, signal)),
+      snapshotWorktree: (input, context) => call(context, async (native, signal) => {
+        try { return await snapshotWorktree(native.registry, input, signal); }
+        catch (error) {
+          if (!(error instanceof HostError)) throw error;
+          return { outcome: "unavailable" as const, code: error.code, message: error.message, retryable: error.retryable };
+        }
+      }),
       commitAll: (input, context) => call(context, (native, signal) => native.transport.commitAll(input, signal)),
       exportChanges: (input, context) => call(context, (native, signal) => native.transport.exportChanges(input, signal)),
       readBlob: (input, context) => call(context, (native, signal) => native.transport.readBlob(input, signal)),
@@ -67,7 +75,19 @@ export function createTavernHostEntry(options: TavernHostEntryOptions) {
       carryDelete: (input, context) => call(context, (native, signal) => native.transport.carryDelete(input, signal)),
       carryFinish: (input, context) => call(context, (native, signal) => native.transport.carryFinish(input, signal)),
       carryAbort: (input, context) => call(context, (native, signal) => native.transport.carryAbort(input, signal)),
-      inspectArtifacts: (input, context) => call(context, (native, signal) => native.artifacts.inspectArtifacts(input, signal)),
+      inspectArtifacts: (input, context) => call(context, async (native, signal) => {
+        const files: HostOutput<"inspectArtifacts">["files"] = [], notPreserved: NonNullable<HostOutput<"inspectArtifacts">["notPreserved"]> = [];
+        for (const relativePath of input.relativePaths) {
+          try {
+            const inspected = await native.artifacts.inspectArtifacts({ ...input, relativePaths: [relativePath] }, signal);
+            files.push(...inspected.files);
+          } catch (error) {
+            if (!(error instanceof HostError) || error.code !== "artifact-unavailable" && error.code !== "unsafe-artifact") throw error;
+            notPreserved.push({ relativePath, code: error.code, message: error.message });
+          }
+        }
+        return { files, ...(notPreserved.length ? { notPreserved } : {}) };
+      }),
       readArtifact: (input, context) => call(context, (native, signal) => native.artifacts.readArtifact(input, signal)),
       artifactChunk: (input, context) => call(context, (native, signal) => native.artifacts.artifactChunk(input, signal)),
       finishArtifact: (input, context) => call(context, (native, signal) => native.artifacts.finishArtifact(input, signal)),

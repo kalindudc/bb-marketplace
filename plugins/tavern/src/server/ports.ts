@@ -38,6 +38,7 @@ export interface JournalPort {
 export type JournalReview = { before: JournalEntry; after: JournalEntry; sequence: number; undone?: boolean };
 
 export interface JournalDeps {
+  beforeVerdict?(callerThreadId: string, targetThreadId: string, entryIds: string[]): Promise<(() => string | void) | void>;
   /** Private proof receipt, inside the review transaction; never an agent-visible event. */
   reviewed?(review: JournalReview): void;
   /** A verified entry is about to reopen for a newer brief: its receipt no longer proves the maker's waypoint, though the Warden keeps the check. Inside the journal transaction; must not throw. */

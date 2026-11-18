@@ -1,5 +1,7 @@
 import type { BbPluginApi, ExperimentalPluginRpcHandlerContext, PluginRpcHandlers } from "@get-bb/plugin-sdk";
 import { placementContract, type PlacementCatalogView, type PlacementPreview, type PlacementPreviewInput, type PlacementWarning } from "../../shared/placement-rpc";
+import { tags } from "../../shared/contract";
+import { POSTURE } from "../../shared/placement-view";
 import { DEFAULT_SETTINGS } from "../../shared/settings";
 import type { PlacementPolicyRead, PlacementRule } from "../../shared/placement-settings";
 import { normalizeRemote } from "../../scope/remote";
@@ -154,18 +156,33 @@ async function preview(runtime: TavernRuntime, input: PlacementPreviewInput, sig
     state: "matched", ruleId: match.rule.id, matchEvidence: match.matchEvidence, blocked: null, posture: compatibilityPosture,
     remote: null, slot: null, slotsInUse: null, slotCap: null, partyCeiling,
   } };
+  const supported = match.rule.target.machine.type === "new" && match.rule.target.workspace === "dedicated-machine";
   const slot = input.classId === "warden" ? "checker" : "maker";
   const counts = input.keeperThreadId === null ? { makers: 0, checkers: 0 } : new PlacementStore(runtime.keeper.store.db).counts(input.keeperThreadId);
   return { ...base, verdict: {
     state: "matched", ruleId: match.rule.id, matchEvidence: match.matchEvidence,
-    blocked: { code: "placement-setup-incomplete", message: `Machine placement is not ready in this build; rule "${match.rule.label}" (${match.rule.id}) cannot be applied. Wait for setup to finish, or disable machine rules in Settings.` },
-    posture: null, remote: null, slot, slotsInUse: slot === "maker" ? counts.makers : counts.checkers,
+    blocked: supported ? null : { code: "unsupported-target", message: "This rule's target isn't supported in this version." },
+    posture: supported ? POSTURE.remote : null, remote: supported ? true : null, slot, slotsInUse: slot === "maker" ? counts.makers : counts.checkers,
     slotCap: slot === "maker" ? policy.settings.maxMakers : policy.settings.maxCheckers, partyCeiling,
   } };
 }
 
 export function placementHandlers(runtime: TavernRuntime): PluginRpcHandlers<typeof placementContract> {
   return {
+    placementRetry: async ({ placementId, generation }, context?: ExperimentalPluginRpcHandlerContext) => {
+      context?.experimental_signal?.throwIfAborted();
+      const record = new PlacementStore(runtime.keeper.store.db).get(placementId);
+      if (!record) return { ok: false, message: "This placement no longer exists." };
+      if (record.generation !== generation) return { ok: false, message: "This placement changed. Refresh before retrying." };
+      try {
+        await runtime.placements().controller.retry(placementId, generation);
+        return { ok: true, message: null };
+      } catch (error) {
+        return { ok: false, message: error instanceof Error ? error.message : String(error) };
+      } finally {
+        runtime.bb.rpc.experimental_invalidate([tags.room(), tags.rows(), ...(record.questId ? [tags.boardQuest(record.questId)] : []), ...(record.memberThreadId ? [tags.thread(record.memberThreadId)] : []), tags.thread(record.keeperThreadId)]);
+      }
+    },
     placementCatalog: (input, context?: ExperimentalPluginRpcHandlerContext) => catalog(runtime, input, context?.experimental_signal),
     placementPreview: (input, context?: ExperimentalPluginRpcHandlerContext) => preview(runtime, input, context?.experimental_signal),
   };

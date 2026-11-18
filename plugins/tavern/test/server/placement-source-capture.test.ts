@@ -24,7 +24,7 @@ function fixture() {
     environmentProviderId: "checkout", environmentProviderInstanceKey: null, environmentProviderSelection: null,
     branchName: "feature", baseBranch: null, defaultBranch: null, mergeBaseBranch: null, name: "Source", managed: false,
     workspaceProvisionType: "unmanaged", createdAt: 1, updatedAt: 1 };
-  const state: { environment: Environment; inspection: HostOutput<"inspect">; worktree: HostOutput<"worktreeState">; beforeState: () => void | Promise<void> } = {
+  const state: { environment: Environment; inspection: HostOutput<"inspect">; worktree: HostOutput<"worktreeState">; refusal?: { outcome: "unavailable"; code: string; message: string; retryable: boolean }; beforeState: () => void | Promise<void> } = {
     environment,
     inspection: { platform: "linux", home: "/source/home", tmp: ["/source/tmp"], piAgentDir: null, root: "/canonical/source",
       branch: "feature", head, tree, objectFormat: "sha1", linkedWorktree: false,
@@ -37,7 +37,14 @@ function fixture() {
   }, experimental_callHostRpc: async call => {
     if (call.method === "registerEndpoint") return { registered: true, generation: hostContract.registerEndpoint.input.parse(call.input).generation };
     if (call.method === "inspect") return structuredClone(state.inspection);
-    if (call.method === "worktreeState") { await state.beforeState(); return structuredClone(state.worktree); }
+    if (call.method === "snapshotWorktree") {
+      await state.beforeState();
+      if (state.refusal) return state.refusal;
+      if (state.worktree.unfinishedMerge) return { outcome: "unavailable", code: "unfinished-merge", message: "Resolve the unfinished merge", retryable: false };
+      const dirty = state.worktree.dirty;
+      return { head: state.worktree.head, headTree: state.worktree.tree, commit: dirty ? "d".repeat(40) : state.worktree.head,
+        tree: dirty ? "e".repeat(40) : state.worktree.tree, includesUncommitted: dirty, modifiedPaths: dirty ? 1 : 0, untrackedPaths: dirty ? 1 : 0 };
+    }
     throw new Error("Unexpected source mutation: " + call.method);
   } });
   hosts.add(host);
@@ -68,19 +75,32 @@ describe("read-only initial source capture", () => {
     expect(new PlacementStore(f.db).snapshot(snapshot.id)).toEqual(snapshot);
     const calls = f.harness.experimental_hostRpcCalls;
     expect(calls.map(call => [call.hostId, call.method])).toEqual([
-      ["source-host", "registerEndpoint"], ["source-host", "inspect"], ["source-host", "worktreeState"],
+      ["source-host", "registerEndpoint"], ["source-host", "inspect"], ["source-host", "snapshotWorktree"],
     ]);
     expect(calls[2].input).toMatchObject({ placementId: known.authorityId, generation: known.generation, endpointId: known.endpointId, base });
     expect(f.harness.inspection.sdk.calls.every(call => ["threads.get", "environments.get"].includes(call.path))).toBe(true);
     expect(f.db.prepare("SELECT count(*) AS n FROM tavern_placements").get()).toEqual({ n: 0 });
   });
 
-  it.each(["dirty", "unfinished-merge"])("blocks %s user content without ever committing it", async fault => {
-    const f = fixture();
-    f.state.worktree[fault === "dirty" ? "dirty" : "unfinishedMerge"] = true;
-    await expect(f.capture.initial(await f.known())).rejects.toThrow(/dirty|merge/i);
+  it("captures dirty user content with its real HEAD and origin without ever committing the checkout", async () => {
+    const f = fixture(); f.state.worktree.dirty = true;
+    expect(await f.capture.initial(await f.known())).toMatchObject({ includesUncommitted: true, userHead: head,
+      sourceHead: "d".repeat(40), tree: "e".repeat(40), modifiedPaths: 1, untrackedPaths: 1,
+      uncommittedOrigin: { hostId: "source-host", environmentId: "source-env", root: "/canonical/source" } });
+    expect(f.harness.experimental_hostRpcCalls.map(call => call.method)).not.toContain("commitAll");
+  });
+
+  it("blocks unfinished merges with the exact snapshot reason", async () => {
+    const f = fixture(); f.state.worktree.unfinishedMerge = true;
+    await expect(f.capture.initial(await f.known())).rejects.toMatchObject({ code: "unfinished-merge", message: "Resolve the unfinished merge" });
     expect(f.snapshots()).toEqual({ n: 0 });
     expect(f.harness.experimental_hostRpcCalls.map(call => call.method)).not.toContain("commitAll");
+  });
+
+  it("keeps a retryable unavailable snapshot reason across the host contract", async () => {
+    const f = fixture(); f.state.refusal = { outcome: "unavailable", code: "source-changed", message: "Source changed; retry", retryable: true };
+    await expect(f.capture.initial(await f.known())).rejects.toMatchObject({ code: "source-changed", message: "Source changed; retry", retryable: true });
+    expect(f.snapshots()).toEqual({ n: 0 });
   });
 
   it("blocks a zone-rooted source independently of source-base availability", async () => {
@@ -172,6 +192,10 @@ describe("snapshot fetch provenance", () => {
     for (const remoteUrl of ["git@example.com:team/repo.git", "ssh://git@example.com/team/repo.git", "https://example.com/team/repo.git", "/remote/owned/repo", "../repo"]) {
       expect(sourceSnapshotSchema.parse({ ...sourceSnapshot(), fetch: { ...fetch, remoteUrl } }).fetch?.remoteUrl).toBe(remoteUrl);
     }
+  });
+
+  it("validates the real HEAD against the snapshot object format", () => {
+    expect(sourceSnapshotSchema.safeParse({ ...sourceSnapshot(), userHead: "f".repeat(64) }).success).toBe(false);
   });
 
   it("rejects credentials or query/fragment accidentally returned as fetch provenance", () => {

@@ -6,6 +6,7 @@ import { dispatchCheck, watchRequests } from "./requests";
 import { createJournalStore } from "./store";
 import { watchOwners } from "./owners";
 import { formatUserChanges } from "./text";
+import { PlacementReview } from "../placement/review";
 
 export const JOURNAL_INSTRUCTIONS = [
   "The journal is this thread's live plan. The user can edit it too. A board quest is a goal a Keeper holds; your journal is your own checklist.",
@@ -19,7 +20,12 @@ export const JOURNAL_INSTRUCTIONS = [
 ].join("\n");
 
 export const registerJournal: RegisterJournal = (bb, db, deps) => {
-  const store = createJournalStore(bb, db, deps);
+  const store = createJournalStore(bb, db, { ...deps, beforeVerdict: async (...args) => {
+    const assertPlacement = await review.beforeVerdict(...args);
+    const assertCaller = await deps.beforeVerdict?.(...args);
+    return () => [assertPlacement?.(), assertCaller?.()].filter(Boolean).join("\n");
+  } });
+  const review = new PlacementReview(bb, db, store, deps);
   const tool = {
     description: "Manage this thread's journal: checklist entries, steps, progress, evidence, blockers, undo and redo. Use skill or rules for the complete journal guide. Only assigned Wardens can verify or reject linked entries; threadId targets the member's journal for Warden reads, verdicts and authorized reopening.",
     instructions: JOURNAL_INSTRUCTIONS,

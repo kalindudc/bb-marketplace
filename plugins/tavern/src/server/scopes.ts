@@ -43,6 +43,29 @@ export class BackendScopes {
     this.api = registerScopes(runtime.bb, {
       ...options,
       pathsForThread: (threadId) => this.paths(threadId),
+      hostTargetForThread: threadId => {
+        const record = runtime.placements().store.byMember(threadId);
+        return record ? { kind: "host", placementId: record.id, generation: record.generation } : undefined;
+      },
+      hostScopeForThread: threadId => {
+        const state = runtime.placements().deliveries.forThread(threadId);
+        return state?.kind === "ready" && state.templateDigest !== this.api.hostTemplate(threadId).templateDigest
+          ? { kind: "unavailable", reason: "Scope update pending; detection paused until the host acknowledges the effective scope." } : state;
+      },
+      onHostTemplateChanged: threadId => {
+        void runtime.placements().ready.reconcileForThread(threadId).catch(error => runtime.bb.log.warn(`Tavern scope delivery ${threadId}: ${String(error)}`));
+        runtime.keeper.changed(threadId);
+      },
+      remoteForThread: threadId => {
+        const services = runtime.placements();
+        const placed = services.store.byMember(threadId) ? services.deliveries.observationForThread(threadId, services.host) : undefined;
+        if (placed !== undefined) {
+          if (placed.kind === "ready" && services.deliveries.get(placed.binding.placementId)?.templateDigest !== this.api.hostTemplate(threadId).templateDigest)
+            return { kind: "unavailable", reason: "Scope update pending; detection paused until the host acknowledges the effective scope." };
+          return placed;
+        }
+        return undefined;
+      },
       narrowBoundScope: scope => runtime.away.narrowScope(scope),
       cwdForThread: (threadId) => this.cwd.get(threadId),
       projectForThread: (threadId) => this.context(threadId),
@@ -102,10 +125,19 @@ export class BackendScopes {
     const environment = await bb.sdk.environments.get({
       environmentId: thread.environmentId,
     });
-    if (environment && environment.hostId !== config.primaryHostId)
-      throw new Error(
-        "Tavern scopes currently require a server-local environment; remote prevention is not installed",
-      );
+    const placed = this.runtime.placements().store.byMember(threadId);
+    if (placed) {
+      if (placed.root) this.cwd.set(threadId, placed.root);
+      else this.cwd.delete(threadId);
+      return {};
+    }
+    if (environment && environment.hostId !== config.primaryHostId) {
+      if (!environment.path)
+        throw new Error("An unplaced scoped member on another host needs a machine rule; no controller-local scope paths can be used");
+      const remoteOpen = { hostId: environment.hostId, cwd: environment.path };
+      this.cwd.set(threadId, environment.path);
+      return { remoteOpen };
+    }
     const storage = await bb.sdk.threads.storageLocation({ threadId });
     if (storage.hostId !== config.primaryHostId)
       throw new Error("Tavern scopes require server-local thread storage");

@@ -211,7 +211,8 @@ describe("scope admission across provisioning", () => {
       ctx.input = { text: inputText(args.input), blocks: args.input };
       expect(await f.runtime.dispatch(ctx)).toMatchObject({ action: "wait", reason: "Awaiting the user's scope decision" });
       queued = { ...queued049("spawn-input", ctx.input.text, f.time(), { pluginId: "tavern" }), threadId: child.id, content: args.input };
-      expect(f.environment).toHaveBeenCalledExactlyOnceWith({ environmentId: "env" });
+      expect(f.environment).toHaveBeenCalledTimes(2);
+      expect(f.environment.mock.calls).toEqual([[{ environmentId: "env" }], [{ environmentId: "env" }]]);
       return child;
     });
     const member = await f.runtime.hire("lead", "project", {

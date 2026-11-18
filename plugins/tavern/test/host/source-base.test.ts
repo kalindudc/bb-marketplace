@@ -7,6 +7,8 @@ import { join, relative } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { hostContract, type Authority } from "../../src/host-contract";
 import * as gitHost from "../../src/host/git";
+import * as processModule from "../../src/host/process";
+import { hostCallTimeoutMs } from "../../src/host/client";
 import { inspectHost } from "../../src/host/inspect";
 import { HostRegistry } from "../../src/host/registry";
 
@@ -114,4 +116,77 @@ it("bounds strict base provenance and ties the base object format to inspection 
   expect(hostContract.inspect.output.safeParse({ ...result, sourceBase: { ...sourceBase, extra: true } }).success).toBe(false);
   expect(hostContract.inspect.output.safeParse({ ...result, sourceBase: { ...sourceBase, remoteUrl: "x".repeat(1025) } }).success).toBe(false);
   expect(hostContract.inspect.output.safeParse({ ...result, sourceBase: { ...sourceBase, base: "a".repeat(64) } }).success).toBe(false);
+});
+
+it("keeps merge-base timeouts distinct and names the step", async () => {
+  const f = fixture(); f.upstream(); const original = gitHost.runGit;
+  vi.spyOn(gitHost, "runGit").mockImplementation((root,args,options) => {
+    if (args[0] === "merge-base") {
+      expect(options.timeoutMs).toBeGreaterThanOrEqual(30_000);
+      return Promise.reject(Object.assign(new Error("Git merge-base exceeded its deadline."), { code: "git-timeout", retryable: true }));
+    }
+    return original(root,args,options);
+  });
+  await expect(f.inspect()).rejects.toMatchObject({ code: "git-timeout", message: expect.stringContaining("merge-base") });
+});
+
+it("caps cumulative Git work and names the slowest step before the host deadline", async () => {
+  const dataDir = mkdtempSync(join(tmpdir(), "budget-"));
+  mkdirSync(join(dataDir, "empty-hooks"));
+  let clock = 1000;
+  vi.spyOn(Date, "now").mockImplementation(() => clock);
+  const process = vi.spyOn(processModule, "runProcess").mockImplementation(async (_program, args, options) => {
+    if (args.includes("status")) clock += 140_000;
+    else if (args.includes("add")) { expect(options.timeoutMs).toBeLessThanOrEqual(30_000); clock += 31_000; }
+    return { code: 0, stdout: "", stderr: "", timedOut: false };
+  });
+  try {
+    const budget = (gitHost as typeof gitHost & { withGitDeadline: (work: () => Promise<void>) => Promise<void> }).withGitDeadline;
+    expect(budget).toBeTypeOf("function");
+    await expect(budget(async () => {
+      await gitHost.git(dataDir, ["status"], { dataDir, timeoutMs: 150_000 });
+      await gitHost.git(dataDir, ["add", "-A"], { dataDir, timeoutMs: 150_000 });
+    })).rejects.toMatchObject({ code: "git-timeout", message: expect.stringContaining("status") });
+    expect(process).toHaveBeenCalledTimes(2);
+  } finally { rmSync(dataDir, { recursive: true, force: true }); }
+});
+
+it("aborts the shared Git deadline even while waiting for the checkout lock", async () => {
+  vi.useFakeTimers();
+  try {
+    const work = (gitHost.withGitDeadline as (work: (signal?: AbortSignal) => Promise<void>) => Promise<void>)(signal => new Promise((_resolve,reject) => {
+      if (!signal) return reject(new Error("No operation deadline signal"));
+      signal.addEventListener("abort", () => reject(Object.assign(new Error("aborted"), { name: "AbortError" })), { once: true });
+    }));
+    const result = expect(work).rejects.toMatchObject({ code: "git-timeout", message: expect.stringContaining("metadata") });
+    await vi.advanceTimersByTimeAsync(170_000);
+    await result;
+  } finally { vi.useRealTimers(); }
+});
+
+it.each(["member-write","home-import"] as const)("keeps %s inspect usable after source metadata times out",async access=>{
+  const f=fixture();f.upstream();
+  f.registry.registerEndpoint({placementId:"other",generation:1,endpointId:"other",endpoint:{hostId:"other-host",environmentId:"other-env",root:f.repo},ownerThreadId:access==="member-write"?"member":null,access,workspaceKind:access==="member-write"?"dedicated-machine":null,objectFormat:"sha1",allowedRefs:access==="member-write"?["refs/heads/worker"]:[]});
+  const original=gitHost.runGit;
+  vi.spyOn(gitHost,"runGit").mockImplementation((root,args,options)=>args[0]==="remote"?Promise.reject(Object.assign(new Error("Git remote exceeded its deadline."),{code:"git-timeout",retryable:true})):original(root,args,options));
+  expect(await inspectHost(f.registry,{placementId:"other",generation:1,endpointId:"other",operationId:"inspect"})).toMatchObject({sourceBase:{outcome:"unavailable",code:"git-timeout"}});
+});
+it("suppresses ambient raw-diff ellipses",()=>{
+  const f=fixture();vi.stubEnv("GIT_PRINT_SHA1_ELLIPSIS","yes");
+  expect(gitHost.gitEnvironment(f.repo,f.registry.dataDir).GIT_PRINT_SHA1_ELLIPSIS).toBe("no");
+});
+
+it.each([["carryStart",200_000],["importCommit",900_000],["carryDelete",undefined],["carryFinish",undefined]] as const)("expires %s inside its own host budget",async(method,networkTimeoutMs)=>{
+  vi.useFakeTimers();
+  try {
+    const timeoutMs=hostCallTimeoutMs(method,{networkTimeoutMs})-10_000;
+    let bounded!:AbortSignal;
+    const outcome=gitHost.withGitDeadline(signal=>new Promise<void>((_resolve,reject)=>{
+      bounded=signal;signal.addEventListener("abort",()=>reject(new Error("operation aborted")),{once:true});
+    }),undefined,timeoutMs).catch(error=>error);
+    const first=Math.min(170_000,timeoutMs-1);
+    await vi.advanceTimersByTimeAsync(first);expect(bounded.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(timeoutMs-first);
+    expect(await outcome).toMatchObject({code:"git-timeout"});
+  } finally {vi.useRealTimers();}
 });

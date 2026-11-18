@@ -2,6 +2,8 @@ import type { CSSProperties } from "react";
 import { useRef, useState, type ReactNode } from "react";
 import { z } from "zod";
 import { experimental_useRpcQuery, experimental_useRpcMutation, experimental_useAppPanel, useBbNavigate, useComposer, type PluginMessageDirectiveProps } from "@get-bb/plugin-sdk/app";
+import { PlacementFacts } from "../kit/placement";
+import { memberName } from "../../shared/member-name";
 import { rpcContract, type BoardQuestDetail } from "../../shared/contract";
 import type { CharacterDef, ClassDef, Report } from "../../shared/schema";
 import { voiceShown, AskCard, Clamp, Crest, levelsShown, reachedInParty, reachedWords, DecidedForYou, EvidenceList, FigureRow, taleFigures, ExpandsMark, Glyph, OpensMark, QuestMap, QueryState, ReportView, SkCrest, SkFigureRow, SkGlyph, SkLine, SkLines, SkMapNode, StatusPill, TimeAgo, Vocabulary, clockTime, levelFor, memberIdentity, questNames, readable, summaryNames, useRegistry, useSkeletonCount } from "../kit";
@@ -243,6 +245,7 @@ function QuestDirective({ kind, questId, version }: { kind: DirectiveKind; quest
         <li key={m.threadId} className="mcard" style={{ ["--i" as string]: i }}>
           {idn ? <button type="button" className="who who-btn act" title={`Open ${idn.character.name}’s thread${lv ? ` · ${lv.words}` : ""}`} onClick={() => navigate.toThread(m.threadId)}><Crest {...idn} size={26} level={lv?.level} /><span className="who-t"><b>{idn.character.name}</b><span className="anc">{idn.cls.label} · {idn.cls.plain}</span></span><OpensMark /></button> : <b>{m.characterId}</b>}
           <span className="mc-w">{wp ? `Waypoint ${wp.id.replace(/^w/, "")} · ${wp.title}` : m.title ?? ""}</span>
+          <PlacementFacts placement={m.placement} memberName={memberName(m, registry.data ?? { classes: [], characters: [] })} variant="card" />
           {voiceShown(registry.data) && m.state !== "failed" && m.state !== "waiting" && m.strikes === 0 && idn && <span className="voice">{idn.character.lines.hired}</span>}
         </li>
       ); })}</ul>

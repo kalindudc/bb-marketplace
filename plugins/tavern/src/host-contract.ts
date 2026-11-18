@@ -121,6 +121,12 @@ export const hostContract = defineRpcContract({
     ...retryable, input: authoritySchema.extend({ base: baseBranch, trackedOnly: z.boolean().optional(), baseTree: gitOidSchema.optional() }).strict(),
     output: z.object({ branch: z.string().nullable(), head: gitOidSchema, tree: gitOidSchema, dirty: z.boolean(), changed: z.array(z.string()).max(100_000), unfinishedMerge: z.boolean().optional() }).strict(),
   },
+  snapshotWorktree: {
+    ...retryable, input: authoritySchema.extend({ base: gitOidSchema }).strict(),
+    output: z.union([z.object({ head: gitOidSchema, headTree: gitOidSchema, commit: gitOidSchema, tree: gitOidSchema,
+      includesUncommitted: z.boolean(), modifiedPaths: z.number().int().min(0).max(50_000), untrackedPaths: z.number().int().min(0).max(50_000),
+    }).strict(), unavailable]),
+  },
   commitAll: {
     input: authoritySchema.extend({ message: z.string().min(1).max(500) }).strict(),
     output: z.object({ sha: gitOidSchema, committed: z.boolean() }).strict(),
@@ -162,7 +168,12 @@ export const hostContract = defineRpcContract({
     input: transferAuthoritySchema.extend({ restore: gitOidSchema.optional() }).strict(),
     output: z.object({ clean: z.boolean().optional(), kept: z.array(z.string()).max(100_000).optional(), carried: z.array(z.object({ path: repoPathSchema, holds: z.enum(["carry", "before", "absent", "changed"]) }).strict()).max(100_000).optional() }).strict(),
   },
-  inspectArtifacts: { ...retryable, input: authoritySchema.extend({ relativePaths: z.array(repoPathSchema).max(50_000) }).strict(), output: z.object({ files: z.array(artifactFileSchema).max(50_000) }).strict() },
+  inspectArtifacts: {
+    ...retryable, input: authoritySchema.extend({ relativePaths: z.array(repoPathSchema).max(50_000) }).strict(),
+    output: z.object({ files: z.array(artifactFileSchema).max(50_000), notPreserved: z.array(z.object({
+      relativePath: repoPathSchema, code: z.enum(["artifact-unavailable", "unsafe-artifact"]), message: text,
+    }).strict()).max(50_000).optional() }).strict(),
+  },
   readArtifact: { ...retryable, input: transferAuthoritySchema.extend({ artifactId: id, offset, length: z.number().int().min(0).max(CHUNK_BYTES) }).strict(), output: z.object({ data: chunk }).strict() },
   artifactChunk: { input: transferAuthoritySchema.extend({ artifactId: id, offset, data: chunk }).strict(), output: z.object({ size }).strict() },
   finishArtifact: { input: transferAuthoritySchema.extend({ artifactId: id }).strict(), output: z.object({ storageKey: path, sha256: sha256Schema, size }).strict() },

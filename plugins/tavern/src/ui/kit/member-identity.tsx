@@ -3,6 +3,7 @@ import type { ThreadDecor } from "../../shared/contract";
 import { memberName } from "../../shared/member-name";
 import { Crest } from "./crest";
 import { memberIdentity, type Registry } from "./registry";
+import { PlacementFacts } from "./placement";
 import "./member-identity.css";
 
 type MemberScope = ThreadDecor["scope"];
@@ -60,6 +61,7 @@ export function MemberIdentity({ member, registry, scope, compact = false, finis
       </div> : <><p className="mi-scope">scope: {sc?.preset ?? "not recorded"} · {guard}</p>
       {!compact && <p className="mi-permissions">writes: {writeWords(sc ?? null)} · network: {sc ? sc.network === "any" ? "allowed" : "none" : "not recorded"} · GitHub: {sc ? ({none:"none",read:"reads only","draft-pr-only":"reads and draft pull requests"} as const)[sc.github] : "not recorded"}</p>}
       {alerts > 0 && <p className="mi-alert" role="status">{alerts} scope {alerts === 1 ? "alert" : "alerts"}{scope?.error ? `: ${scope.error}` : ""}</p>}</>}
+      <PlacementFacts placement={member.placement} memberName={name} variant={chips ? "card" : "row"} />
     </div>
   </div>;
 }

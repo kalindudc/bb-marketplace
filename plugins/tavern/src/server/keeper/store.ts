@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { JournalTarget } from "../../shared/placement";
 import type { RequestSources } from "../../shared/request-source";
 import { liveMemberSql } from "../liveness";
 import type { Database } from "../ports";
@@ -112,6 +113,12 @@ export interface ReviewTarget {
   makerThreadId: string;
   entryIds: string[];
   checks?: Scope["checks"];
+  snapshotId?: string;
+  expectedTree?: string;
+  makerSubmissionId?: string;
+  reviewKey?: string;
+  journalTargets?: JournalTarget[];
+  waypointFingerprint?: string;
 }
 export interface HireIntent {
   classDefinition?: import("../../shared/schema").ClassDef;
@@ -196,6 +203,7 @@ export interface Runtime {
   stopNextAttemptAt?: number;
   stopAskId?: string | null;
   reviewTarget?: ReviewTarget | null;
+  submissionTarget?: ReviewTarget | null;
   openingGoal?: { text: string; at: number };
   requestSources?: RequestSources | null;
   assignmentText?: string | null;

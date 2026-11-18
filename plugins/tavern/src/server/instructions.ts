@@ -20,7 +20,7 @@ export function utf8Limit(text: string, limit: number): string {
   return text.slice(0, end);
 }
 export const LEDGER_OVERFLOW =
-  "\n[Truncated; call tavern_status section=decisions for clipped history; call tavern_status section=errands for in-flight and recent errands; tavern_status for other sections.]";
+  "\n[Truncated; call tavern_status section=decisions for clipped history; call tavern_status section=errands for in-flight and recent errands; call tavern_status section=placement for where work runs; tavern_status for other sections.]";
 export function boundedData(
   text: string,
   limit: number,

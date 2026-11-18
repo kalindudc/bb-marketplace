@@ -4,7 +4,7 @@ import { isAbsolute, resolve } from "node:path";
 import { hostContract, type Authority, type HostOutput } from "../host-contract";
 import { piAgentDir } from "../scope/install";
 import { objectFormatSchema } from "../shared/placement";
-import { git, runGit, type GitOptions } from "./git";
+import { git, runGit, withGitDeadline, type GitOptions } from "./git";
 import { abortError } from "./process";
 import { HostError, HostRegistry } from "./registry";
 import { inspectSourceBase } from "./source-base";
@@ -26,7 +26,7 @@ function remoteIdentity(value: string): string | undefined {
   if (!scp || !path || path.startsWith(":")) return;
   return scp[1]!.toLowerCase() + ":" + path;
 }
-async function repositoryRemotes(root: string, options: GitOptions): Promise<string[] | undefined> {
+async function repositoryRemotes(root: string, options: GitOptions, sourceRead: boolean): Promise<string[] | undefined> {
   try {
     const namesResult = await runGit(root, ["remote"], { ...options, timeoutMs: 3000 });
     if (namesResult.code !== 0) return;
@@ -41,16 +41,18 @@ async function repositoryRemotes(root: string, options: GitOptions): Promise<str
       for (const value of values) { const identity = remoteIdentity(value); if (!identity) return; identities.add(identity); }
     }
     return [...identities].sort();
-  } catch {
+  } catch (error) {
     options.check?.();
+    if ((error as { code?: string })?.code === "git-timeout" && (sourceRead || options.signal?.aborted)) throw error;
     if (options.signal?.aborted) throw abortError();
     return;
   }
 }
 
 export async function inspectHost(registry: HostRegistry, authority: Authority, signal?: AbortSignal): Promise<HostOutput<"inspect">> {
+  return withGitDeadline(async bounded => {
   const endpoint = registry.endpoint(authority, ["source-read", "member-write", "home-import"]);
-  const options = { dataDir: registry.dataDir, signal, check: () => { registry.endpoint(authority); } };
+  const options = { dataDir: registry.dataDir, signal: bounded, check: () => { registry.endpoint(authority); } };
   const root = endpoint.realRoot;
   const bare = await git(root, ["rev-parse", "--is-bare-repository"], options);
   if (bare !== "true" && bare !== "false") throw new HostError("git-capability", "The host cannot identify its repository layout.");
@@ -64,9 +66,9 @@ export async function inspectHost(registry: HostRegistry, authority: Authority, 
     git(root, ["rev-parse", "--show-object-format"], options),
     runGit(root, ["symbolic-ref", "--short", "-q", "HEAD"], options),
     git(root, ["rev-parse", "--git-dir", "--git-common-dir"], options),
-    bare === "true" ? Promise.resolve(null) : runGit(root, ["status", "--porcelain", "-z"], options),
+    bare === "true" ? Promise.resolve(null) : runGit(root, ["status", "--porcelain", "-z"], { ...options, timeoutMs: 150_000 }),
     runGit(root, ["--list-cmds=builtins"], options),
-    repositoryRemotes(root, options),
+    repositoryRemotes(root, options, endpoint.registration.access === "source-read"),
   ]);
   const objectFormat = objectFormatSchema.safeParse(format);
   if (!objectFormat.success) throw new HostError("git-capability", "The host cannot establish the repository's object format.");
@@ -78,7 +80,12 @@ export async function inspectHost(registry: HostRegistry, authority: Authority, 
   const builtins = new Set(commands.code === 0 ? commands.stdout.split(/\s+/) : []);
   const porcelain = status?.code === 0;
   const objectImport = ["hash-object", "mktree", "commit-tree", "update-ref", "ls-tree", "cat-file"].every(name => builtins.has(name));
-  const sourceBase = await inspectSourceBase(root, head, options);
+  let sourceBase;
+  try { sourceBase = await inspectSourceBase(root, head, options); }
+  catch (error) {
+    if ((error as { code?: string })?.code !== "git-timeout" || endpoint.registration.access === "source-read" || bounded.aborted) throw error;
+    sourceBase = { outcome: "unavailable" as const, code: "git-timeout", message: (error as Error).message, retryable: true };
+  }
   const result = hostContract.inspect.output.parse({
     platform: process.platform, home: realpathSync(homedir()), tmp: [...new Set([tmpdir(), realpathSync(tmpdir())])], piAgentDir: piAgentDir(),
     root, artifactDirectory: registry.artifactDirectory, sourceBase, ...(repoRemotes === undefined ? {} : { repoRemotes }), branch: branchResult.code === 0 ? branchResult.stdout.trim() : null,
@@ -89,4 +96,5 @@ export async function inspectHost(registry: HostRegistry, authority: Authority, 
     throw new HostError("object-format-mismatch", "The repository returned object ids inconsistent with its declared object format.");
   registry.recordInspection(authority, { objectFormat: result.objectFormat, branch: result.branch, gitDir: normalized(gitDir), commonDir: normalized(commonDir) });
   return result;
+  }, signal);
 }

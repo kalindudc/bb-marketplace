@@ -1,7 +1,12 @@
 import type { ExecutionPosture } from "../shared/placement";
+import { postureText } from "../shared/placement-view";
 
 export function formatExecutionPosture(posture: ExecutionPosture): string {
   const remote = posture.aggregate === "remote-detection-only";
+  if (remote) {
+    const text = postureText(posture);
+    return text.label + (text.detail ? "; " + text.detail : "") + (posture.watcher === "degraded" ? "; watcher degraded" : "");
+  }
   const observed = !remote && posture.aggregate === "local-pre-exec" &&
     posture.guard === "armed" && posture.toolGate === "pi-observed" &&
     posture.checker !== "detection-only-no-containment";

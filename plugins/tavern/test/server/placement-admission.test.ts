@@ -1,11 +1,17 @@
 // @vitest-environment node
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { setup } from "./runtime-fixture";
 import { SettingsStore } from "../../src/server/settings/store";
 import { InsightsReader } from "../../src/server/insights";
 import { placementRuleSchema } from "../../src/shared/placement-settings";
 import { PlacementStore } from "../../src/server/placement/store";
 import { placementRecord } from "./placement-fixture";
+
+const roots: string[] = [];
+afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 
 const hire = {
   classId: "ranger", title: "Scout", errand: true,
@@ -44,14 +50,14 @@ describe("inert machine placement foundation", () => {
     expect(f.k.store.all("hires")).toEqual([]);
   });
 
-  it("does not silently use legacy placement while a winning provider rule awaits runtime wiring", async () => {
+  it("blocks unsupported provider targets instead of using a later current fallback", async () => {
     const f = fixture();
     const provider = placementRuleSchema.parse({ ...rule, target: {
       kind: "provider", environmentProviderId: "vendor-workspace", machine: { type: "keeper" }, workspace: "linked-worktree",
     } });
     f.settings.update({ revision: 0, patch: { machines: { rules: [provider, { ...rule, id: "fallback" }] } }, why: "Explicit route" });
     const spawn = vi.spyOn(f.bb.sdk.threads, "spawn");
-    await expect(f.runtime.hire("lead", "project", hire)).rejects.toThrow(/machine placement.*not.*ready/i);
+    await expect(f.runtime.hire("lead", "project", hire)).rejects.toMatchObject({ message: "This rule's target isn't supported in this version." });
     expect(spawn).not.toHaveBeenCalled();
     expect(f.k.store.all("hires")).toEqual([]);
   });
@@ -72,12 +78,16 @@ describe("inert machine placement foundation", () => {
     expect(f.harness.inspection.sdk.callsTo("environments.listProviders")).toEqual([]);
   });
 
-  it("current remains legacy for a Keeper on a remote host without adding machine-rule consent", async () => {
+  it("blocks a scoped current-rule member of a remote Keeper without pretending it is unruled", async () => {
     const f = fixture({ environments: { get: async () => ({ id: "env", hostId: "remote", isGitRepo: true, environmentProviderId: "vendor-workspace", branchName: "main" }) } });
+    const root = mkdtempSync(join(tmpdir(), "placement-scoped-admission-")); roots.push(root);
+    f.runtime.enableScopes({ dataDir: root, installGuard: false, policyOptions: { home: root } });
     f.settings.update({ revision: 0, patch: { machines: { rules: [rule] } }, why: "Use current behavior" });
     const spawn = vi.spyOn(f.bb.sdk.threads, "spawn");
-    await f.runtime.hire("lead", "project", hire);
-    expect(spawn.mock.calls[0][0].environment).toEqual({ type: "reuse", environmentId: "env" });
+    await expect(f.runtime.hire("lead", "project", hire)).rejects.toMatchObject({
+      message: "Rule Explicit local route keeps Ranger members where the Keeper runs, but this Keeper runs on another machine, and Tavern can't scope a member there in this version. Use a rule that gives members their own machines.",
+    });
+    expect(spawn).not.toHaveBeenCalled();
     expect(f.k.store.db.prepare("SELECT count(*) AS n FROM tavern_placements").get()).toEqual({ n: 0 });
     expect(f.k.store.all("asks")).toEqual([]);
   });

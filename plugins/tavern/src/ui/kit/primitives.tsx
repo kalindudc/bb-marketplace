@@ -1,5 +1,6 @@
 import { reviewLimitation } from "../../shared/check-posture";
 import { memberPlace } from "../../shared/member-place";
+import { memberName } from "../../shared/member-name";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode, type ButtonHTMLAttributes, memo } from "react";
 import { experimental_useRpcMutation, experimental_useRpcQuery, experimental_useSidebarThreads } from "@get-bb/plugin-sdk/app";
 import { rpcContract, type BoardQuestSummary } from "../../shared/contract";
@@ -9,6 +10,7 @@ import { Crest } from "./crest";
 import { ExpandsMark, Glyph, OpensMark } from "./glyphs";
 import { memberIdentity, type Registry } from "./registry";
 import { MAX_TRAVEL_PX, useTavernMotion, type Surface } from "./motion";
+import { PlacementFacts } from "./placement";
 
 export const VOCABULARY = {
   quest: ["Quest", "goal"], board: ["Board quest", "goal"], journal: ["Journal", "checklist"], party: ["The party", "team"], map: ["Quest map", "greenlight"],
@@ -218,7 +220,7 @@ export function PartyPicture({ members, registry, onOpen, mini = false, quests =
     }
     seen.current = next;
   });
-  return <div ref={root} className={`party ${mini ? "mini" : ""}`} role="group" aria-label="The party (team)">{(["road", "table", "rest"] as const).map(place => { const here = members.filter(m => memberPlace(m.state) === place); return <div className={`zone ${place}`} key={place}><div className="zh"><b><Vocabulary word={place} /></b><span className="num">{here.length}</span></div><div className="zm">{here.length === 0 ? <span className="m">Nobody</span> : here.map(m => { const summary = memberSummary(m, members, registry, quests); return <div className={`pm ${m.state === "failed" ? "fail" : ""}`} key={m.threadId} data-member={m.threadId} data-place={place}>{renderMember ? renderMember(m, summary) : <MemberChip member={m} registry={registry} onOpen={onOpen} compact={mini} summary={summary} />}{!mini && <CheckIndependence member={m} />}{!mini && <GuardPosture member={m} />}{!mini && <Clamp className="pm-s" text={summary} />}</div>; })}</div></div>; })}</div>;
+  return <div ref={root} className={`party ${mini ? "mini" : ""}`} role="group" aria-label="The party (team)">{(["road", "table", "rest"] as const).map(place => { const here = members.filter(m => memberPlace(m.state) === place); return <div className={`zone ${place}`} key={place}><div className="zh"><b><Vocabulary word={place} /></b><span className="num">{here.length}</span></div><div className="zm">{here.length === 0 ? <span className="m">Nobody</span> : here.map(m => { const summary = memberSummary(m, members, registry, quests); return <div className={`pm ${m.state === "failed" ? "fail" : ""}`} key={m.threadId} data-member={m.threadId} data-place={place}>{renderMember ? renderMember(m, summary) : <MemberChip member={m} registry={registry} onOpen={onOpen} compact={mini} summary={summary} />}{!mini && <CheckIndependence member={m} />}{!mini && <GuardPosture member={m} />}{!mini && <Clamp className="pm-s" text={summary} />}{!renderMember && <PlacementFacts placement={m.placement} memberName={memberName(m, registry)} variant={mini ? "compact" : "row"} />}</div>; })}</div></div>; })}</div>;
 }
 
 /** Reversible calls, one line each: the title truncates and the why folds open in place; age and Undo stay on the row. */

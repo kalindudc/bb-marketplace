@@ -21,6 +21,7 @@ export const statusInput = z.object({
       "decisions",
       "errands",
       "requests",
+      "placement",
     ])
     .default("summary"),
   reportId: z.string().min(1).max(120).nullish(),
@@ -32,6 +33,7 @@ export const statusInput = z.object({
   limit: z.number().int().min(1).max(10).default(3),
 });
 export function readStatus(runtime: TavernRuntime, threadId: string, input: z.output<typeof statusInput>) {
+  if (input.section === "placement") return runtime.placements().controller.status(threadId, input.boardQuestId ?? null).then(agentData);
   return agentData(statusData(runtime, threadId, input));
 }
 function statusData(

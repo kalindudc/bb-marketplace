@@ -1,5 +1,6 @@
 import { useBbNavigate } from "@get-bb/plugin-sdk/app";
-import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useId, useMemo, useState, type ReactNode } from "react";
+import { PlacementFacts } from "../kit/placement";
 import { voiceShown, Crest, ExpandsMark, Hearth, OpensMark, rememberCount, PartyPicture as KitParty, Vocabulary, activeHold, onTheRoad, clockTime, glowVars, hearthWords, useNow } from "../kit";
 import type { BoardQuestSummary, Room } from "../../shared/contract";
 import type { Member } from "../../shared/schema";
@@ -150,10 +151,10 @@ export function SideQuests({ room, registry }: { room: Room; registry: Registry 
   const [doneOpen, setDoneOpen] = usePanelState("room.errands.done", false);
   if (!errands.length) return null;
   return <Section title={<Vocabulary word="errand" plural />} count={`${live.length} out`} aside="kept apart from quests" level={3}>
-    <div className="tv-errands">{live.map(({ m, keeper }) => <button type="button" key={m.threadId} className="tv-erow act" onClick={() => navigate.toThread(m.threadId)} title={`Open ${characterName(registry, m)}'s thread`}>
+    <div className="tv-errands">{live.map(({ m, keeper }) => <Fragment key={m.threadId}><button type="button" className="tv-erow act" onClick={() => navigate.toThread(m.threadId)} title={`Open ${characterName(registry, m)}'s thread`}>
       <CrestOf member={m} registry={registry} size={16} /><span className="tv-erow-t"><b>{m.title ?? m.doing ?? "Side quest"}</b> <span className="m">· {characterName(registry, m)} for {characterName(registry, keeper)}</span></span><StateMark tone={m.state === "failed" ? "bad" : m.state === "working" ? "work" : "wait"}>{m.state}</StateMark><OpensMark />
-    </button>)}
-      {done.length > 0 && <details className="tv-fold-d" open={doneOpen} onToggle={(event) => { const now = (event.currentTarget as HTMLDetailsElement).open; if (now !== doneOpen) setDoneOpen(now); }}><summary className="tv-fold act"><ExpandsMark open={doneOpen} />{done.length} done · {done.map(({ m }) => m.title ?? characterName(registry, m)).join(", ")}</summary>{done.map(({ m }) => <button type="button" key={m.threadId} className="tv-erow done act" onClick={() => navigate.toThread(m.threadId)}><CrestOf member={m} registry={registry} size={16} /><span className="tv-erow-t"><b>{m.title ?? "Side quest"}</b> <span className="m" data-content>· {m.doing}</span></span><StateMark tone="done">done</StateMark><OpensMark /></button>)}</details>}
+    </button><PlacementFacts placement={m.placement} memberName={characterName(registry, m)} /></Fragment>)}
+      {done.length > 0 && <details className="tv-fold-d" open={doneOpen} onToggle={(event) => { const now = (event.currentTarget as HTMLDetailsElement).open; if (now !== doneOpen) setDoneOpen(now); }}><summary className="tv-fold act"><ExpandsMark open={doneOpen} />{done.length} done · {done.map(({ m }) => m.title ?? characterName(registry, m)).join(", ")}</summary>{done.map(({ m }) => <Fragment key={m.threadId}><button type="button" className="tv-erow done act" onClick={() => navigate.toThread(m.threadId)}><CrestOf member={m} registry={registry} size={16} /><span className="tv-erow-t"><b>{m.title ?? "Side quest"}</b> <span className="m" data-content>· {m.doing}</span></span><StateMark tone="done">done</StateMark><OpensMark /></button><PlacementFacts placement={m.placement} memberName={characterName(registry, m)} /></Fragment>)}</details>}
     </div>
   </Section>;
 }
@@ -162,9 +163,9 @@ export function Solos({ room, registry }: { room: Room; registry: Registry }) {
   const navigate = useBbNavigate();
   if (!room.solos.length) return null;
   return <Section title={<>Solos <span className="anc">your own typed threads</span></>} count={`${plural(room.solos.length, "thread")}`} level={3}>
-    <div className="tv-errands">{room.solos.map((m) => { const cls = classLabel(registry, m.classId); return <button type="button" key={m.threadId} className="tv-erow solo act" onClick={() => navigate.toThread(m.threadId)} title={`Open ${characterName(registry, m)}'s thread`}>
+    <div className="tv-errands">{room.solos.map((m) => { const cls = classLabel(registry, m.classId); return <Fragment key={m.threadId}><button type="button" className="tv-erow solo act" onClick={() => navigate.toThread(m.threadId)} title={`Open ${characterName(registry, m)}'s thread`}>
       <CrestOf member={m} registry={registry} size={16} /><span className="tv-erow-t"><b>{characterName(registry, m)}</b> <span className="m">· {cls ? cls.label : m.classId}{m.title ? ` · ${m.title}` : ""}</span></span><StateMark tone={m.state === "working" ? "work" : m.state === "failed" ? "bad" : m.state === "done" ? "done" : "wait"}>{m.state}</StateMark><OpensMark />
-    </button>; })}</div>
+    </button><PlacementFacts placement={m.placement} memberName={characterName(registry, m)} /></Fragment>; })}</div>
   </Section>;
 }
 

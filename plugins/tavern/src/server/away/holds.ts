@@ -8,7 +8,7 @@ export const contentHoldTokenSchema = z.string().max(100).regex(/^hold_[0-9a-z]+
 export type ContentHoldToken = z.infer<typeof contentHoldTokenSchema>;
 const holdReasonSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("away"), windowId: id }).strict(),
-  z.object({ kind: z.literal("content"), operationId: id, token: contentHoldTokenSchema }).strict(),
+  z.object({ kind: z.literal("content"), operationId: id, token: contentHoldTokenSchema, idleOnly: z.boolean().optional(), preservation: z.boolean().optional() }).strict(),
 ]);
 export const awayHoldSchema = z.object({
   threadId: id, keeperThreadId: id, questId: id.nullable(), windowId: id.nullable(),
@@ -18,6 +18,7 @@ export const awayHoldSchema = z.object({
   version: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
   token: contentHoldTokenSchema.nullable().optional(),
   reasons: z.array(holdReasonSchema).optional(),
+  resumeAfterContent: z.boolean().optional(),
 }).strict().superRefine((hold, ctx) => {
   if (hold.reasons === undefined) {
     if (hold.windowId === null || hold.version !== undefined || hold.token !== undefined) ctx.addIssue({ code: "custom", message: "Legacy hold needs its away window and no partial token state" });
@@ -65,10 +66,11 @@ export class AwayHolds {
       return this.write({ ...hold, version, token: token(version) });
     })();
   }
-  private request(owner: Owner, reason: { kind: "away"; windowId: string } | { kind: "content"; operationId: string }): Hold {
+  private request(owner: Owner, reason: { kind: "away"; windowId: string } | { kind: "content"; operationId: string; idleOnly?: boolean; preservation?: boolean }): Hold {
     return this.db.transaction(() => {
       const previous = this.get(owner.threadId);
       const found = previous?.reasons.find(value => reason.kind === "away" ? value.kind === "away" && value.windowId === reason.windowId : value.kind === "content" && value.operationId === reason.operationId);
+      if (found?.kind === "content" && reason.kind === "content" && (!!found.idleOnly !== !!reason.idleOnly || !!found.preservation !== !!reason.preservation)) throw new Error("A content hold cannot change its idle-only policy");
       if (found && previous?.resumeRequired) return previous;
       const version = (previous?.version ?? 0) + 1, nextToken = token(version);
       const reasons = previous?.reasons ?? [];
@@ -76,12 +78,16 @@ export class AwayHolds {
         cancelledBrief: previous?.resumeRequired ? previous.cancelledBrief : owner.cancelledBrief,
         windowId: reason.kind === "away" ? reason.windowId : (previous?.resumeRequired || previous?.stopPending) ? previous.windowId : null,
         version, token: nextToken, resumeRequired: true, stopPending: true, error: null,
+        resumeAfterContent: reason.kind === "content" && reason.idleOnly
+          ? previous?.resumeRequired || previous?.stopPending ? previous.resumeAfterContent ?? true : false
+          : true,
         reasons: found ? reasons : [...reasons, reason.kind === "away" ? reason : { ...reason, token: nextToken }] });
     })();
   }
   requestAway(owner: Owner, windowId: string) { return this.request(owner, { kind: "away", windowId: id.parse(windowId) }); }
-  requestContent(owner: Owner, operationId: string): ContentHoldToken {
-    const hold = this.request(owner, { kind: "content", operationId: id.parse(operationId) });
+  requestContent(owner: Owner, operationId: string, idleOnly?: boolean, preservation?: boolean): ContentHoldToken {
+    if (preservation && !idleOnly) throw new Error("Preservation content holds must be idle-only");
+    const hold = this.request(owner, { kind: "content", operationId: id.parse(operationId), ...(idleOnly === undefined ? {} : { idleOnly }), ...(preservation === undefined ? {} : { preservation }) });
     const reason = hold.reasons.find(reason => reason.kind === "content" && reason.operationId === operationId);
     if (reason?.kind !== "content") throw new Error("Content hold reason was not persisted");
     return reason.token;
@@ -106,7 +112,10 @@ export class AwayHolds {
   }
   finishContent(input: ContentHoldToken): boolean {
     const hold = this.findContent(input);
-    return hold !== null && this.compareAndSet(hold, { reasons: hold.reasons.filter(reason => reason.kind !== "content" || reason.token !== input) }) !== null;
+    if (!hold) return false;
+    const removed = hold.reasons.find(reason => reason.kind === "content" && reason.token === input);
+    const reasons = hold.reasons.filter(reason => reason.kind !== "content" || reason.token !== input);
+    return this.compareAndSet(hold, { reasons, ...(removed?.kind === "content" && removed.idleOnly && !reasons.length ? { stopPending: false, error: null, resumeRequired: hold.resumeAfterContent ?? true } : {}) }) !== null;
   }
   finishAway(windowId: string, eligibleThreadIds: ReadonlySet<string>) {
     for (const hold of this.all()) {

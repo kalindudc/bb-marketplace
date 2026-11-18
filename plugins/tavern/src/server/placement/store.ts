@@ -160,7 +160,8 @@ export class PlacementStore {
         phase: record.memberThreadId === null ? "releasing" : "preserving", blocked: null, resumePhase: null,
         preservation: {
           ...record.preservation,
-          source: record.memberThreadId === null ? record.preservation.source : "pending",
+          source: record.memberThreadId === null || ["lost", "unknown", "unpreserved"].includes(record.preservation.source) ||
+            record.preservation.source === "saved" && record.preservation.artifacts === "unknown" && record.preservation.liveOwnerThreadId === null ? record.preservation.source : "pending",
         },
         acknowledgedScopeRevision: null, updatedAt: this.now(),
       });
@@ -172,9 +173,12 @@ export class PlacementStore {
       const record = this.assertCurrent(id, generation, "released");
       if (record.phase === "released") return record;
       if (!resourcesReconciled) throw new Error("Reconcile possible children and machine resources before release");
-      const saved = ["not-needed", "saved"].includes(record.preservation.source) &&
-        ["not-declared", "saved"].includes(record.preservation.artifacts);
-      if (!saved || !record.preservation.stopConfirmed) throw new Error("Preservation and a confirmed stop are required before release");
+      const preserved = ["not-needed", "saved"].includes(record.preservation.source) &&
+        (["not-declared", "saved"].includes(record.preservation.artifacts) ||
+          record.preservation.artifacts === "unpreserved" && record.preservation.artifactManifestId !== null);
+      const lost = (["lost", "unknown"].includes(record.preservation.source) || record.preservation.source === "saved" && record.preservation.artifacts === "unknown") && record.phase === "releasing" &&
+        record.preservation.liveOwnerThreadId === null && record.preservation.reason !== null;
+      if ((!preserved && !lost) || !record.preservation.stopConfirmed) throw new Error("Preservation or reconciled loss and a confirmed stop are required before release");
       return this.persist({
         ...record, phase: "released", blocked: null, resumePhase: null,
         preservation: { ...record.preservation, liveOwnerThreadId: null }, updatedAt: this.now(),
@@ -196,6 +200,10 @@ export class PlacementStore {
       const draft = sourceSnapshotSchema.parse({ ...input, id: "pending", homeRef: "refs/tavern/pending", homeCommit: null, createdAt: this.now() });
       const owner = new SnapshotStore(this.db).retain(draft);
       const id = snapshotDescriptorId(draft), existing = this.snapshot(id);
+      if (existing) for (const key of ["modifiedPaths", "untrackedPaths"] as const) {
+        if (existing[key] === undefined) delete draft[key];
+        else draft[key] = existing[key];
+      }
       return this.saveSnapshot({ ...draft, id, ownerId: owner.id, homeRef: owner.homeRef, createdAt: existing?.createdAt ?? draft.createdAt });
     }).immediate();
   }
@@ -220,10 +228,10 @@ export class PlacementStore {
 
   completeHomeTransfer(
     id: string, generation: number, transferId: string,
-    homeCommit: string, observedTree: string, objectFormat: ObjectFormat,
+    homeCommit: string, observedTree: string, objectFormat: ObjectFormat, desiredState: PlacementRecord["desiredState"] = "running",
   ): SourceSnapshot {
     return this.db.transaction(() => {
-      const record = this.assertCurrent(id, generation);
+      const record = this.assertCurrent(id, generation, desiredState);
       const receipt = record.transfers?.find(transfer => transfer.id === transferId);
       if (!receipt || receipt.generation !== generation || !["applying", "verified"].includes(receipt.phase))
         throw new Error("The home transfer has no current applying receipt");
@@ -232,7 +240,7 @@ export class PlacementStore {
       this.update(id, generation, current => ({
         ...current, transfers: current.transfers!.map(transfer => transfer.id === transferId
           ? { ...transfer, phase: "verified", homeCommit } : transfer),
-      }));
+      }), desiredState);
       return snapshot;
     }).immediate();
   }

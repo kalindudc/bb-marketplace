@@ -18,6 +18,7 @@ import { CreditCard, LeftRow, LootRow } from "./finished";
 import { AsksRecord, PlanRecord, RecordFold, RulesAndAnchor } from "./quest-record";
 import { QuestLead } from "./quest-lead";
 import { recordedStop } from "./quest-road";
+import { PlacementFacts } from "../kit/placement";
 
 
 
@@ -177,6 +178,7 @@ export function QuestPage({ detail, registry, room }: { detail: BoardQuestDetail
               <span className="tv-item-t" data-content title={`${owner}: ${w.title}`}>{owner}: {w.title}</span>
               <span className="m small num">{w.leadTime ?? "lead time unknown"}</span>
               <span className="tv-item-s">{w.ownerMember && <><CheckIndependence member={w.ownerMember} /><GuardPosture member={w.ownerMember} /></>}<span>{w.doneWhen ? `done when ${w.doneWhen}` : "no done-when"}</span>{w.evidenceCount > 0 && <span>{w.evidenceCount} evidence</span>}{w.verifiedBy && <span>verified by the Warden</span>}{w.rejectedReason && <span className="tv-st-bad">rejected: {w.rejectedReason}</span>}{report && <Confidence report={report} />}</span>
+              {w.ownerMember && <PlacementFacts placement={w.ownerMember.placement} memberName={owner} variant="status" />}
             </li>;
           })}</ul></div>; })}
           {!openAsks.length && !quest.waypoints.length && <p className="tv-empty" data-empty>Nothing to move yet: {move.who}{move.next ? ` · ${move.next}` : ""}.</p>}

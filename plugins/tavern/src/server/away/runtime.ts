@@ -10,6 +10,7 @@ import { tags } from "../../shared/contract";
 import { isUser } from "../dispatch";
 import { isLiveKeeper, isLiveMember, isOpenQuest } from "../liveness";
 import { isHireCancelled } from "../hires";
+import { isQuiescentThread } from "../placement/quiescence";
 import type { TavernRuntime } from "../runtime";
 import { AwayConflict, AwayStore } from "./store";
 import { AwayHolds, type AwayHold, type ContentHoldToken, type HeldInspection } from "./holds";
@@ -31,6 +32,15 @@ export class AwayRuntime {
   private get k() { return this.runtime.keeper; }
   private eligible(member: Member | null): member is Member {
     return member?.role === "member" && isLiveMember(this.k.store, member, "work");
+  }
+  private preservationEligible(member: Member | null): member is Member {
+    if (member?.role !== "member") return false;
+    const state = this.k.store.runtime(member.threadId);
+    return !state.released && state.archivedAt == null && state.deletedAt == null;
+  }
+  private heldEligible(threadId: string): boolean {
+    const member = this.k.member(threadId);
+    return this.eligible(member) || !!this.holds.get(threadId)?.reasons.some(reason => reason.kind === "content" && reason.preservation && reason.idleOnly) && this.preservationEligible(member);
   }
   private members() { return this.k.store.all("members").filter(member => this.eligible(member)); }
   private keepers() { return this.k.store.all("members").filter(member => isLiveKeeper(this.k.store, member, "automatic")); }
@@ -119,21 +129,24 @@ export class AwayRuntime {
     return { threadId: member.threadId, keeperThreadId: member.keeperThreadId, questId: member.boardQuestId,
       heldAt: this.k.now(), cancelledBrief: pending ? { id: pending.id, text: pending.text } : null };
   }
-  requestContentHold(memberThreadId: string, identity: { operationId: string }): ContentHoldToken {
+  requestContentHold(memberThreadId: string, identity: { operationId: string; idleOnly?: boolean; preservation?: boolean }): ContentHoldToken {
     const member = this.k.member(memberThreadId);
-    if (!this.eligible(member)) throw new Error("A content hold requires an active party member; inactive, archived or finished work cannot be interrupted");
-    const token = this.holds.requestContent(this.holdOwner(member), identity.operationId);
+    if (identity.preservation && !identity.idleOnly) throw new Error("Preservation content holds must be idle-only");
+    if (!member || !(identity.preservation ? this.preservationEligible(member) : this.eligible(member))) throw new Error("A content hold requires an active party member; inactive, archived or finished work cannot be interrupted");
+    const token = this.holds.requestContent(this.holdOwner(member), identity.operationId, identity.idleOnly, identity.preservation);
     this.changed();
     return token;
   }
   inspectHeld(token: ContentHoldToken): HeldInspection {
     const hold = this.holds.findContent(token);
-    return !hold || !this.eligible(this.k.member(hold.threadId)) ? { state: "stale", error: null } : { state: hold.stopPending ? "pending" : "confirmed", error: hold.error };
+    return !hold || !this.heldEligible(hold.threadId) ? { state: "stale", error: null } : { state: hold.stopPending ? "pending" : "confirmed", error: hold.error };
   }
   async confirmHeld(token: ContentHoldToken): Promise<HeldInspection> {
     const hold = this.holds.findContent(token);
-    if (!hold || !this.eligible(this.k.member(hold.threadId))) return { state: "stale", error: null };
-    await this.interrupt(hold.threadId);
+    if (!hold || !this.heldEligible(hold.threadId)) return { state: "stale", error: null };
+    const reason = hold.reasons.find(reason => reason.kind === "content" && reason.token === token);
+    if (reason?.kind === "content" && reason.idleOnly) await this.confirmIdle(hold.threadId);
+    else await this.interrupt(hold.threadId);
     return this.inspectHeld(token);
   }
   finishContentHold(token: ContentHoldToken): { state: "finished" | "stale" } {
@@ -206,6 +219,27 @@ export class AwayRuntime {
       await this.runtime.bb.sdk.threads.queuedMessages.delete({ threadId, queuedMessageId: row.id });
     }
   }
+  private async confirmIdle(threadId: string) {
+    if (!this.heldEligible(threadId)) return;
+    const hold = this.holds.prepareStop(threadId);
+    if (!hold?.stopPending) return;
+    const current = () => {
+      const latest = this.holds.get(threadId);
+      return this.heldEligible(threadId) && latest?.version === hold.version && latest.token === hold.token;
+    };
+    try {
+      const thread = await this.runtime.bb.sdk.threads.get({ threadId });
+      if (!current() || thread.archivedAt !== null || thread.deletedAt !== null || !isQuiescentThread(thread)) return;
+      await this.clearOwnQueue(threadId, current);
+      const after = await this.runtime.bb.sdk.threads.get({ threadId });
+      if (current() && after.archivedAt === null && after.deletedAt === null && isQuiescentThread(after) && after.updatedAt === thread.updatedAt)
+        this.holds.compareAndSet(hold, { stopPending: false, error: null });
+    } catch (error) {
+      if (current()) this.holds.compareAndSet(hold, { error: String(error).slice(0, 1000) });
+      this.runtime.bb.log.warn(`Tavern idle-only content hold ${threadId}: ${String(error)}`);
+    }
+    this.changed();
+  }
   private async interrupt(threadId: string) {
     const existing = this.interrupting.get(threadId);
     if (existing) return existing;
@@ -217,6 +251,7 @@ export class AwayRuntime {
     if (!this.eligible(this.k.member(threadId))) return;
     const hold = this.holds.prepareStop(threadId);
     if (!hold?.stopPending) return;
+    if (hold.reasons.length && hold.reasons.every(reason => reason.kind === "content" && reason.idleOnly)) return this.confirmIdle(threadId);
     const current = () => {
       const latest = this.holds.get(threadId);
       return this.eligible(this.k.member(threadId)) && latest?.version === hold.version && latest.token === hold.token;

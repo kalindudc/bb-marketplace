@@ -101,7 +101,7 @@ export class PlacementProvisioner {
         input: [{ type: "text", mentions: [], visibility: "agent-only", text:
           "Call tavern_ready {} before substantive work. It binds the provisioned checkout and exact source tree; stop and report its blocker if setup fails. " +
           "Readiness is not a guard-loaded receipt. Remote execution is Detection only (remote), never prevention. " +
-          "Destination model availability must still be checked during readiness.\n\n" + (intent.initialInput ?? "") }],
+          "If the destination refuses this configured execution request, report its exact failure; do not substitute another provider or model.\n\n" + (intent.initialInput ?? "") }],
         pluginSubmission: { pluginId: this.bb.pluginId, data: { hireToken: record.hireToken } },
         pluginMetadata: { classId: intent.classId, characterId: intent.characterId, hireToken: record.hireToken },
       });

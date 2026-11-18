@@ -13,9 +13,9 @@ export type Machine = ProviderTarget["machine"];
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 export type Problem = { line?: number; key: string; message: string; allowed?: string };
 
-/** Contract section 3, verbatim; the server's formatter is the authority, these are for consent copy. */
-export const POSTURE = { remote: "Detection only (remote)", linuxPi: "pre-exec checks only, no containment", linuxNoPi: "detection only, no containment", localPi: "Pi pre-exec guard and watcher" } as const;
-export const TEMPLATES = ["{keeper.branch}", "{source.commit}", "{member.branch}", "{quest.id}"] as const;
+import { POSTURE } from "../../shared/placement-view";
+export { POSTURE } from "../../shared/placement-view";
+export const TEMPLATES = ["{keeper.branch}", "{source.commit}", "{source.base}", "{member.branch}", "{quest.id}"] as const;
 export const MAX_RULES = 50;
 export const MATCH_FIELDS: MatchField[] = ["projectIds", "repoRemotes", "keeperPathGlobs", "keeperEnvironmentProviders", "classes", "questIds"];
 const FIELD_WORDS: Record<MatchField, [string, string]> = {

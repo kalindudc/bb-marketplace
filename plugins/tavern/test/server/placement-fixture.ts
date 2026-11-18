@@ -15,7 +15,7 @@ export function placementRecord(overrides: Partial<PlacementRecord> = {}): Place
     },
     matchEvidence: [], target: { type: "reuse", environmentId: "env" },
     allocationKey: "allocation", ownsNewMachine: false, workspaceKind: "linked-worktree",
-    hostId: null, environmentId: null, root: null, sourceSnapshotId: null, reviewTarget: null,
+    hostId: null, environmentId: null, root: null, sourceSnapshotId: null, submissionSnapshotId: null, reviewTarget: null,
     phase: "reserved", resumePhase: null, blocked: null,
     preservation: {
       source: "not-needed", artifacts: "not-declared", snapshotId: null,

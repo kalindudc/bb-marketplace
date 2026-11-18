@@ -88,12 +88,15 @@ export const sourceSnapshotSchema = z.object({
   sourceThreadId: id.nullable(), makerThreadId: id.nullable(), makerSubmissionId: id.nullable(),
   journalTarget: journalTargetSchema.nullable(), objectFormat: objectFormatSchema,
   ownerId: sha256Schema.optional(),
+  journalTargets: z.array(journalTargetSchema).min(1).max(200).optional(),
+  includesUncommitted: z.boolean().optional(), userHead: gitOidSchema.optional(), uncommittedOrigin: endpointSchema.optional(),
+  modifiedPaths: z.number().int().min(0).max(50_000).optional(), untrackedPaths: z.number().int().min(0).max(50_000).optional(),
   base: gitOidSchema, sourceHead: gitOidSchema, tree: gitOidSchema, fetch: sourceFetchSchema.optional(),
   source: endpointSchema, home: endpointSchema, homeCommit: gitOidSchema.nullable(),
   homeRef: z.string().max(1024).regex(/^refs\/(?:heads\/)?tavern\/.+/), createdAt: epoch,
 }).strict().superRefine((snapshot, ctx) => {
   checkObjectFormat(snapshot.objectFormat, {
-    base: snapshot.base, sourceHead: snapshot.sourceHead, tree: snapshot.tree, homeCommit: snapshot.homeCommit,
+    base: snapshot.base, sourceHead: snapshot.sourceHead, tree: snapshot.tree, homeCommit: snapshot.homeCommit, userHead: snapshot.userHead ?? null,
   }, ctx);
   if (snapshot.purpose === "initial") {
     if (snapshot.makerThreadId !== null || snapshot.makerSubmissionId !== null || snapshot.journalTarget !== null) {
@@ -174,7 +177,7 @@ export const placementRecordSchema = z.object({
   matchEvidence: z.array(z.object({ field: id, value: text, pattern: text }).strict()).max(600),
   target: targetJson, allocationKey: id, ownsNewMachine: z.boolean(), workspaceKind: workspaceKindSchema.nullable(),
   hostId: id.nullable(), environmentId: id.nullable(), root: hostPath.nullable(),
-  sourceSnapshotId: id.nullable(),
+  sourceSnapshotId: id.nullable(), submissionSnapshotId: id.nullable().default(null),
   reviewTarget: z.object({
     makerThreadId: id, makerSubmissionId: id, snapshotId: id,
     expectedTree: gitOidSchema, journal: journalTargetSchema,

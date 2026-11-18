@@ -57,6 +57,13 @@ import type { TaleCompanions } from "./renderer/companion";
 import { DiscoveryStore, StaleDiscoveryError } from "./placement/discovery-store";
 import { SourceDiscovery, readSourceIdentity } from "./placement/source-discovery";
 import { resolvePlacementRoute } from "./placement/routing";
+import { explicitRuleMatch } from "./placement/match";
+import { PlacementServices } from "./placement/services";
+import { hasLostOwner, PlacementPreservation } from "./placement/preserve";
+import { isQuiescentThread } from "./placement/quiescence";
+import { PlacementStore } from "./placement/store";
+import { PlacementController } from "./placement/controller";
+import { reviewWaypointFingerprint } from "./placement/review";
 import { isVoiceCheckThread, type VoiceCheckRunner } from "./voice-check/run";
 
 export const KEEPER_TOOLS = [
@@ -98,13 +105,14 @@ type Hire = {
   scope?: ScopeOverride;
   requestDetectionOnly?: boolean;
   detectionOnlyAskId?: string;
+  placementRuleId?: string;
 };
 type Thread = PluginThreadEventPayloads["thread.active"]["thread"];
 type QueuedMessage = PluginThreadEventPayloads["message.queued"]["entry"];
 
 export class TavernRuntime {
   readonly serviceRecords: ServiceRecords;
-  readonly toolNames = [...KEEPER_TOOLS, "tavern_report", "tavern_request_sources"];
+  readonly toolNames = [...KEEPER_TOOLS, "tavern_report", "tavern_request_sources", "tavern_ready"];
   private readonly loop = new TickLoop(this);
   private sourceInspection: SourceDiscovery | null = null;
   private awayState: AwayRuntime | null = null;
@@ -131,6 +139,8 @@ export class TavernRuntime {
   private memberObservations = new Map<string, Promise<void>>();
   private wakes = new Map<string, Promise<void>>();
   private maintenance = new Map<string, { work: Promise<void>; startedAt: number }>();
+  private placementServices: PlacementServices | null = null;
+  placements(): PlacementServices { return this.placementServices ??= new PlacementServices(this); }
   placementSources(): SourceDiscovery {
     if (this.sourceInspection === null)
       this.sourceInspection = new SourceDiscovery(this.bb, createHostPort(this.bb), new DiscoveryStore(this.keeper.store.db, () => this.keeper.now()));
@@ -589,7 +599,7 @@ export class TavernRuntime {
       }
     }
     if (previousState === "open" && metadata?.stopHireTokens && ask.boardQuestId && optionId === "retry") {
-      try { await loopCall(recoverHires(this.bb, this.keeper, ask.keeperThreadId), "retry stopping hires"); }
+      try { await loopCall(recoverHires(this.bb, this.keeper, ask.keeperThreadId, undefined, id => this.preserveCancelledHire(id)), "retry stopping hires"); }
       catch (error) { this.bb.log.warn(`Tavern stopping hire recovery: ${String(error)}`); }
     }
     if (previousState === "open" && (metadata?.stopMemberThreadId || metadata?.stopHireTokens) && ask.boardQuestId && optionId === "retry")
@@ -608,6 +618,7 @@ export class TavernRuntime {
     readonly registry: Registry,
   ) {
     this.serviceRecords = new ServiceRecords(keeper, stale => bb.rpc.experimental_invalidate(stale));
+    PlacementPreservation.observe(bb, () => this.placements());
     keeper.store.log = (level, message) => this.bb.log[level](message);
     // Actionable news wakes the Keeper it belongs to through the same gates as the sweep.
     keeper.store.onEvent = ({ keeperThreadId, type, data, actor }) => {
@@ -839,7 +850,7 @@ export class TavernRuntime {
     if (isVoiceCheckThread(ctx.pluginMetadata)) return { tools: [] as string[], skills: [] as string[], instructions: "" };
     const m = this.keeper.member(ctx.thread.id);
     const common = {
-      tools: ["journal"],
+      tools: ["journal", ...(m && new PlacementStore(this.keeper.store.db).byMember(m.threadId) ? ["tavern_ready"] : [])],
       skills: ["journal", "quest-management"],
     };
     const journal = this.keeper.journal.instructions(ctx.thread.id);
@@ -860,6 +871,7 @@ export class TavernRuntime {
         ? snapshot!.text
         : JSON.stringify({
             brief: this.keeper.store.runtime(m.threadId).brief,
+            placement: new PlacementStore(this.keeper.store.db).byMember(m.threadId) ? this.placements().controller.forMember(m.threadId) : null,
             boardQuest: m.boardQuestId
               ? this.keeper.quest(m.boardQuestId).title
               : null,
@@ -1060,6 +1072,8 @@ export class TavernRuntime {
         hire.owner.keeperThreadId !== ctx.thread.parentThreadId
       )
         throw new Error("Unknown Tavern hire reservation");
+      const placement = new PlacementStore(this.keeper.store.db).byHireToken(hireToken);
+      if (placement) this.placements().controller.bindChild(placement, ctx.thread.id);
       member = this.keeper.bind(
         ctx.thread.id, hire.classId, hire.characterId, hire.projectId, hire.owner,
       );
@@ -1380,15 +1394,70 @@ export class TavernRuntime {
         ))
     )
       throw new Error("This waypoint already has a live member of that class");
-    const placementRoute = placementPolicy?.state === "valid" && placementPolicy.settings.rules.some(rule => rule.enabled)
+    if (input.placementRuleId && (placementPolicy?.state !== "valid" ||
+        !placementPolicy.settings.rules.some(rule => rule.id === input.placementRuleId && rule.enabled)))
+      throw new Error("placementRuleId must name an enabled rule in Settings, Where work runs.");
+    if (input.placementRuleId && role.id !== "keeper")
+      throw new Error("placementRuleId is only for a lead hire; working members use the first matching rule.");
+    let placementRoute = role.id !== "keeper" && placementPolicy?.state === "valid" && placementPolicy.settings.rules.some(rule => rule.enabled)
       ? await resolvePlacementRoute(placementPolicy, { keeperThreadId: threadId, projectId, classId: role.id, questId }, {
           readIdentity: () => readSourceIdentity(this.bb, threadId, projectId),
           inspectSource: () => this.placementSources().inspect(threadId, projectId),
         })
       : null;
+    if (input.placementRuleId && placementPolicy?.state === "valid") {
+      const rule = placementPolicy.settings.rules.find(rule => rule.id === input.placementRuleId)!;
+      const { classes: _classes, ...match } = rule.match;
+      const route = await resolvePlacementRoute({ ...placementPolicy, settings: { ...placementPolicy.settings, rules: [{ ...rule, match }] } },
+        { keeperThreadId: threadId, projectId, classId: role.id, questId }, {
+          readIdentity: () => readSourceIdentity(this.bb, threadId, projectId),
+          inspectSource: () => this.placementSources().inspect(threadId, projectId),
+        });
+      const explicit = explicitRuleMatch(placementPolicy, rule.id, route.facts);
+      if (explicit.state !== "matched") throw new Error(`Rule ${rule.label} (${rule.id}) does not match this hire\'s project, quest or source facts.`);
+      placementRoute = { ...route, match: explicit };
+    }
+    const providerPlacement = placementRoute?.match.state === "matched" && placementRoute.match.rule.target.kind === "provider";
     if (placementRoute?.match.state === "matched" && placementRoute.match.rule.target.kind === "provider") {
-      const rule = placementRoute.match.rule;
-      throw new Error(`Machine placement is not ready in this build; rule "${rule.label}" (${rule.id}) cannot be applied. Wait for setup to finish, or disable machine rules in Settings.`);
+      const target = placementRoute.match.rule.target;
+      if (target.machine.type !== "new" || target.workspace !== "dedicated-machine")
+        PlacementController.hold(this, threadId, questId, role.id, "This rule's target isn't supported in this version.");
+    }
+    if (reviewTarget) {
+      const makerPlacement = new PlacementStore(this.keeper.store.db).byMember(reviewTarget.makerThreadId);
+      if (makerPlacement && !providerPlacement)
+        PlacementController.hold(this, threadId, questId, role.id, "Add a Warden new-machine rule in Settings, Where work runs, to check this machine-placed maker on a separate machine.");
+      if (!makerPlacement && providerPlacement)
+        PlacementController.hold(this, threadId, questId, role.id, "This Warden rule requires a machine-placed maker submission. Add a maker new-machine rule in Settings, Where work runs, or keep both maker and Warden unplaced.");
+      if (makerPlacement) {
+        const submission = await this.placements().submissions.capture(reviewTarget.makerThreadId, reviewTarget.waypointId);
+        if (submission.state === "maker-busy") PlacementController.hold(this, threadId, questId, role.id, submission.message);
+        reviewTarget = submission.reviewTarget;
+      }
+    }
+    for (let after: string | null = null; ;) {
+      const page = new PlacementStore(this.keeper.store.db).activePage(after, 1000);
+      const unresolved = page.find(record => record.keeperThreadId === threadId && record.questId === questId && record.classId === role.id && record.blocked?.code === "spawn-outcome-unknown");
+      if (unresolved) PlacementController.hold(this, threadId, questId, role.id,
+        `Hire outcome unknown; placement ${unresolved.id} keeps its slot and no second machine will be allocated. Do not hire again; the user can press Retry on the placement.`, "unknown");
+      if (page.length < 1000) break;
+      after = page[page.length - 1].id;
+    }
+    const scopeResolution = this.scopes?.api.shouldScope(role.id, "hire")
+      ? await this.scopes.resolve(role.id, projectId, input.scope, role)
+      : null;
+    if (!providerPlacement && scopeResolution && scopeResolution.scope.preset !== "open") {
+      const parent = await this.bb.sdk.threads.get({ threadId });
+      if (parent.environmentId) {
+        const environment = await this.bb.sdk.environments.get({ environmentId: parent.environmentId });
+        const config = await this.bb.sdk.system.config();
+        if (environment.hostId !== config.primaryHostId) {
+          const currentRule = placementRoute?.match.state === "matched" ? placementRoute.match.rule : null;
+          PlacementController.hold(this, threadId, questId, role.id, currentRule
+            ? `Rule ${currentRule.label} keeps ${role.label} members where the Keeper runs, but this Keeper runs on another machine, and Tavern can\'t scope a member there in this version. Use a rule that gives members their own machines.`
+            : `No machine rule places ${role.label} members for this project, and this Keeper runs on another machine. Add a rule in Settings, Where work runs.`);
+        }
+      }
     }
     const hirePlan = q ? this.keeper.summary(q.id).plan : null;
     if (hirePlan) { validatePartyCharacters(hirePlan, snapshot); validateCheckerMakers(hirePlan, this.keeper.store.all("members").filter(member => member.boardQuestId === q?.id)); }
@@ -1418,9 +1487,6 @@ export class TavernRuntime {
       checkerPlan?.doneWhen, waypoint?.doneWhen,
       ...checkerPlan?.waypoints.filter(item => checkedWaypoints.has(item.id)).map(item => item.doneWhen) ?? [],
     ]);
-    const scopeResolution = this.scopes?.api.shouldScope(role.id, "hire")
-      ? await this.scopes.resolve(role.id, projectId, input.scope, role)
-      : null;
     const liveNames = this.mentionNames("").map(member => member.title);
     const reservedNames = this.keeper.store.all("hires").filter(i => !i.memberThreadId && !isHireCancelled(this.keeper, i))
       .map(
@@ -1489,18 +1555,15 @@ export class TavernRuntime {
       }
       this.keeper.store.put("hires", token, intent);
     });
+    let placement: import("../shared/placement").PlacementRecord | null = null;
     let attempted = false;
     let childCreated = false;
     let completed = false;
     let selectedExecution: { providerId: string; model?: string } | undefined;
     try {
       const parent = await this.bb.sdk.threads.get({ threadId });
-      const environment = await resolveHireEnvironment(
-        this.bb,
-        projectId,
-        parent.environmentId,
-        role.environment === "worktree",
-      );
+      let environment = providerPlacement ? undefined
+        : await resolveHireEnvironment(this.bb, projectId, parent.environmentId, role.id !== "keeper" && role.environment === "worktree");
       let maker: { providerId: string | null; model: string | null; environmentId: string | null } | undefined;
       if (reviewTarget) {
         maker = { providerId: null, model: null, environmentId: null };
@@ -1520,12 +1583,16 @@ export class TavernRuntime {
       if (scopeResolution?.scope.preset === "checker" && this.scopes) {
         if (checkerCommands.length > 100)
           throw new Error(`This plan records ${checkerCommands.length} check commands; a checker scope supports at most 100. Simplify its explicit done-when commands before hiring.`);
-        const checking = await this.scopes.checkerChecks(maker?.environmentId ?? null, checkerCommands);
+        const checking = reviewTarget?.snapshotId
+          ? { checks: { commands: checkerCommands }, problems: [] as string[] }
+          : await this.scopes.checkerChecks(maker?.environmentId ?? null, checkerCommands);
         scopeResolution.scope.checks = checking.checks;
         scopeResolution.problems.push(...checking.problems);
         if (reviewTarget) reviewTarget.checks = checking.checks;
-        brief += `\nTrusted checker execution:\n${JSON.stringify(checking.checks, null, 2)}\nDefault test/check/lint/typecheck runners accepted by the checker preset need no tool-name widening or user-run workaround. Additional commands above are verbatim from this plan, not the brief. Run checks inside the exact maker worktree (or change to it first), never the Warden/Keeper checkout. Tracked files, Git metadata, publishing and network writes remain protected.`;
-        if (!checking.checks.worktree) brief += `\n${checking.problems.join("\n")} Do not run checks until the trusted maker binding is repaired.`;
+        brief += reviewTarget?.snapshotId
+          ? `\nTrusted checker execution:\n${JSON.stringify(checking.checks, null, 2)}\nRun checks in your own checkout, using the cwd returned by tavern_ready. The pinned submitted tree is ${reviewTarget.expectedTree}, snapshot ${reviewTarget.snapshotId}. Default test/check/lint/typecheck runners accepted by the checker preset need no tool-name widening or user-run workaround. Additional commands above are verbatim from this plan, not the brief. The observed checker posture is shown once the machine is ready; use the posture returned by tavern_ready. Tracked files, Git metadata, publishing and network writes remain protected.`
+          : `\nTrusted checker execution:\n${JSON.stringify(checking.checks, null, 2)}\nDefault test/check/lint/typecheck runners accepted by the checker preset need no tool-name widening or user-run workaround. Additional commands above are verbatim from this plan, not the brief. Run checks inside the exact maker worktree (or change to it first), never the Warden/Keeper checkout. Tracked files, Git metadata, publishing and network writes remain protected.`;
+        if (!reviewTarget?.snapshotId && !checking.checks.worktree) brief += `\n${checking.problems.join("\n")} Do not run checks until the trusted maker binding is repaired.`;
         this.keeper.store.put("hires", token, { ...this.keeper.store.get("hires", token)!, owner, initialInput: brief, scopeResolution });
       }
       const { notes, checkIndependence, ...execution } = await resolveHireExecution(
@@ -1539,7 +1606,12 @@ export class TavernRuntime {
           maker,
         },
       );
-      if (placementRoute?.match.state === "matched")
+      if (providerPlacement && placementRoute) {
+        placement = await this.placements().controller.reserve(placementRoute, token, this.keeper.store.get("hires", token)!, reviewTarget);
+        environment = placement.target as Extract<NonNullable<Parameters<BbPluginApi["sdk"]["threads"]["spawn"]>[0]["environment"]>, { type: "provider" }>;
+      }
+      if (!environment) throw new Error("The hire has no authorized environment selection.");
+      if (placementRoute?.match.state === "matched" && !placement)
         notes.push(`Rule ${placementRoute.match.rule.id} matched: kept where its Keeper is.`);
       for (const warning of placementRoute?.warnings ?? []) notes.push(`Placement fact unavailable: ${warning}`);
       selectedExecution = execution;
@@ -1554,7 +1626,7 @@ export class TavernRuntime {
         });
       }
       if (scopeResolution && scopeResolution.scope.preset !== "open") {
-        owner.guardPosture = authorizeGuardedHire(
+        owner.guardPosture = placement ? this.placements().controller.admission(placement, execution.providerId) : authorizeGuardedHire(
           this.keeper, token, intent, execution.providerId, execution.model,
           { projectId, keeperThreadId: threadId, classId: role.id, characterId: input.characterId ?? null,
             boardQuestId: questId, waypointId: owner.waypointId, errand, title: input.title, brief: input.brief,
@@ -1572,7 +1644,7 @@ export class TavernRuntime {
       for (const problem of scopeResolution?.problems ?? [])
         notes.push(`Scope policy: ${problem}`);
       let guardedLocal = false;
-      if (this.away.store.snapshot().status.closed && this.away.canPrepareLocalHire() && execution.providerId === "pi" && scopeResolution && scopeResolution.scope.preset !== "open") {
+      if (!placement && this.away.store.snapshot().status.closed && this.away.canPrepareLocalHire() && execution.providerId === "pi" && scopeResolution && scopeResolution.scope.preset !== "open") {
         const primary = (await this.bb.sdk.system.config()).primaryHostId;
         guardedLocal = environment.type === "provider" && environment.environmentProviderId === "git-worktree" && environment.machine?.type === "existing" && environment.machine.hostId === primary;
         if (environment.type === "reuse") guardedLocal = (await this.bb.sdk.environments.get({ environmentId: environment.environmentId })).hostId === primary;
@@ -1580,26 +1652,40 @@ export class TavernRuntime {
       this.away.assertHire(questId, guardedLocal);
       this.keeper.assertCheckerHandoff(role.id, questId);
       if (isHireCancelled(this.keeper, this.keeper.store.get("hires", token) ?? intent)) throw new Error("This board quest has ended or is stopping; the hire was cancelled");
+      if (placement) {
+        brief = "Call tavern_ready {} before substantive work. It binds the provisioned checkout and exact source tree; stop and report its blocker if setup fails. Readiness is not a guard-loaded receipt. Remote execution is Detection only (remote), never prevention.\n\n" + brief;
+        this.keeper.store.put("hires", token, { ...this.keeper.store.get("hires", token)!, owner, initialInput: brief });
+        this.placements().controller.beginSpawn(placement);
+      }
       attempted = true;
-      const child = await this.bb.sdk.threads.spawn({
-        projectId,
-        parentThreadId: threadId,
-        parentNotifications: "off",
-        title: memberTitle(displayName, input.title, snapshot.classes),
-        input: [{ type: "text", text: brief, mentions: [], visibility: "agent-only" }],
-        environment,
-        pluginSubmission: {
-          pluginId: this.bb.pluginId,
-          data: { hireToken: token },
-        },
-        pluginMetadata: {
-          classId: role.id,
-          characterId: character?.id ?? null,
-          hireToken: token,
-        },
-        ...execution,
-      });
+      let child: { id: string };
+      try {
+        child = await this.bb.sdk.threads.spawn({
+          projectId,
+          parentThreadId: threadId,
+          parentNotifications: "off",
+          title: memberTitle(displayName, input.title, snapshot.classes),
+          input: [{ type: "text", text: brief, mentions: [], visibility: "agent-only" }],
+          environment,
+          pluginSubmission: {
+            pluginId: this.bb.pluginId,
+            data: { hireToken: token },
+          },
+          pluginMetadata: {
+            classId: role.id,
+            characterId: character?.id ?? null,
+            hireToken: token,
+          },
+          ...execution,
+        });
+      } catch (error) {
+        if (!placement || rejectedSpawn(error)) throw error;
+        const outcome = this.placements().controller.spawnFailed(placement, error);
+        if (outcome instanceof Error) throw outcome;
+        child = { id: outcome.memberThreadId! };
+      }
       childCreated = true;
+      if (placement) placement = this.placements().controller.bindChild(placement, child.id, true);
       const member = this.keeper.bind(
         child.id,
         role.id,
@@ -1613,7 +1699,8 @@ export class TavernRuntime {
         memberThreadId: child.id,
       });
       if (isHireCancelled(this.keeper, this.keeper.store.get("hires", token)!)) {
-        await settleCancelledHire(this.bb, this.keeper, token, this.keeper.store.get("hires", token)!, child.id);
+        if (placement) this.placements().controller.cancelChild(placement, child.id);
+        await settleCancelledHire(this.bb, this.keeper, token, this.keeper.store.get("hires", token)!, child.id, id => this.preserveCancelledHire(id));
         throw new Error("This board quest has ended or is stopping; the hire was cancelled");
       }
       this.keeper.store.patch(child.id, { executionNotes: notes, classDefinition: executionRole });
@@ -1630,6 +1717,9 @@ export class TavernRuntime {
           checkerWaypointId: waypoint!.id,
           checkerMakerThreadId: reviewTarget!.makerThreadId,
         });
+        if (reviewTarget?.snapshotId) this.keeper.store.patch(member.threadId, { reviewTarget: {
+          ...reviewTarget, waypointFingerprint: reviewWaypointFingerprint(this.keeper.store, reviewTarget),
+        } });
       }
       if (waypoint && q && role.id !== "warden") {
         await this.keeper.journal.prepare(member.threadId);
@@ -1665,7 +1755,8 @@ export class TavernRuntime {
           source: "keeper",
         });
       if (isHireCancelled(this.keeper, this.keeper.store.get("hires", token)!)) {
-        await settleCancelledHire(this.bb, this.keeper, token, this.keeper.store.get("hires", token)!, child.id);
+        if (placement) this.placements().controller.cancelChild(placement, child.id);
+        await settleCancelledHire(this.bb, this.keeper, token, this.keeper.store.get("hires", token)!, child.id, id => this.preserveCancelledHire(id));
         throw new Error("This board quest has ended or is stopping; the hire was cancelled");
       }
       this.spawnBriefDelivered(member.threadId);
@@ -1676,6 +1767,8 @@ export class TavernRuntime {
       completed = true;
       return {
         ...this.keeper.member(member.threadId)!,
+        placement: placement ? this.placements().controller.view(this.placements().store.get(placement.id)!) : null,
+        placementSummary: placement ? this.placements().controller.line(this.placements().store.get(placement.id)!) : `Where the Keeper runs; ${role.id === "keeper" ? "lead default" : "no new-machine rule"}.`,
         executionNotes: notes,
         pendingScopeAsk,
         briefPending: pendingScopeAsk !== null || this.keeper.store.runtime(member.threadId).pendingBrief != null || this.keeper.checkerHandoffProblem(role.id, questId) !== null,
@@ -1685,15 +1778,28 @@ export class TavernRuntime {
         `Tavern hire.failed keeper=${threadId} class=${role.id} token=${token}: ${String(error)}`,
       );
       if (attempted && !childCreated) this.record(rejectedSpawn(error) ? "spawn.failed" : "spawn.uncertain", { classId: role.id, error: String(error).slice(0, 2000), token }, threadId, questId, `spawn:${token}`);
+      if (placement && !childCreated) {
+        if (attempted && !rejectedSpawn(error)) throw error;
+        throw this.placements().controller.releaseUnstarted(placement, error);
+      }
       if (!childCreated && rejectedSpawn(error))
         releaseHire(this.keeper, token, intent);
       if (attempted && !childCreated && rejectedSpawn(error) && /model/i.test(String(error)))
         throw new Error(`Cannot hire ${role.id}: model ${selectedExecution?.model ?? role.model ?? "provider default"} was refused by ${selectedExecution?.providerId ?? role.provider ?? "the provider"}. Change classes.${role.id}.model in Tavern settings. No alternate model was hired. ${String(error)}`);
       throw error;
     } finally {
-      if (!attempted) releaseHire(this.keeper, token, intent);
+      if (!attempted && !placement) releaseHire(this.keeper, token, intent);
       else if (completed && !this.keeper.checkerHandoffProblem(role.id, questId)) this.keeper.store.remove("hires", token);
     }
+  }
+  private async preserveCancelledHire(threadId: string) {
+    if (!new PlacementStore(this.keeper.store.db).byMember(threadId)) {
+      const refused = await this.preserveWorkOrRefuse(threadId);
+      if (refused) throw new Error(refused);
+      return;
+    }
+    const result = await this.placements().preserve.beforeRelease(threadId, "Cancelled hire");
+    if (result.state === "waiting" || result.state === "blocked") throw new Error(result.message);
   }
   async release(threadId: string, memberThreadId: string, reason: string) {
     memberThreadId = this.keeper.resolvePartyMember(threadId, memberThreadId).threadId;
@@ -1713,7 +1819,9 @@ export class TavernRuntime {
     let current: Thread | null;
     try { current = await this.bb.sdk.threads.get({ threadId: memberThreadId }); }
     catch (error) { if (!isNotFound(error)) throw error; current = null; this.threadGone(memberThreadId); }
-    if (current && current.archivedAt === null && current.deletedAt === null) await this.bb.sdk.threads.stop({ threadId: memberThreadId });
+    const placement = new PlacementStore(this.keeper.store.db).byMember(memberThreadId);
+    if ((!placement || !hasLostOwner(placement)) && current && current.archivedAt === null && current.deletedAt === null)
+      await this.bb.sdk.threads.stop({ threadId: memberThreadId });
     this.keeper.store.patch(memberThreadId, { releasePending: reason });
     return this.finishRelease(member);
   }
@@ -1723,7 +1831,17 @@ export class TavernRuntime {
     let thread: Thread | null;
     try { thread = await this.bb.sdk.threads.get({ threadId: member.threadId }); }
     catch (error) { if (!isNotFound(error)) throw error; thread = null; this.threadGone(member.threadId); }
-    if (thread &&
+    const placement = new PlacementStore(this.keeper.store.db).byMember(member.threadId);
+    if (placement) {
+      const result = await this.placements().preserve.beforeRelease(member.threadId, thread && !isQuiescentThread(thread) ? `${reason} (stop unconfirmed)` : reason);
+      if (result.state === "waiting" || result.state === "blocked") {
+        this.keeper.store.patch(member.threadId, { archiveError: result.message });
+        this.keeper.changed(member.threadId, member.boardQuestId);
+        return false;
+      }
+      if (result.state !== "released" && result.state !== "lost") throw new Error("The member placement changed during preservation");
+    }
+    if (!placement && thread &&
       !["idle", "error"].includes(thread.status) &&
       thread.archivedAt === null &&
       thread.deletedAt === null
@@ -1739,6 +1857,7 @@ export class TavernRuntime {
       });
       this.keeper.store.patch(member.threadId, {
         releasePending: null,
+        archiveError: null,
         released: { reason, decisionId: decision.id },
       });
       this.keeper.activity(member.threadId, "stopped");
@@ -1810,6 +1929,13 @@ export class TavernRuntime {
     return { member: this.keeper.name(member), threadId: member.threadId, released: !!state.released,
       message: [wasArchived ? "Unarchived." : "Already open.", ...(inactiveQuest ? ["This member is back in the Keeper's roster."] : []), ...(state.released ? ["This member stays released."] : inactiveQuest ? [] : ["This member is available in your party."])].join(" ") };
   }
+  async archiveMember(threadId: string): Promise<string | null> {
+    const member = this.keeper.member(threadId);
+    if (!member || member.role !== "member") throw new Error("Only party members can be archived here");
+    this.keeper.store.patch(threadId, { archivePending: true });
+    const pending = await this.archiveMembers([member]);
+    return pending.length ? this.keeper.store.runtime(threadId).archiveError ?? "Member cleanup is held; Tavern will retry after the hold ends." : null;
+  }
   private async archiveMembers(members: Member[]) {
     const pending: string[] = [];
     for (const member of members) {
@@ -1821,6 +1947,18 @@ export class TavernRuntime {
       }
       if (this.away.cleanupHeld()) { pending.push(member.threadId); continue; }
       try {
+        if (new PlacementStore(this.keeper.store.db).byMember(member.threadId)) {
+          const result = await this.placements().preserve.beforeRelease(member.threadId, "Archive member");
+          if (result.state === "waiting") {
+            pending.push(member.threadId);
+            this.keeper.store.patch(member.threadId, { archiveError: result.message });
+            continue;
+          }
+          if (result.state === "blocked") throw new Error(result.message);
+          this.keeper.store.patch(member.threadId, { archivePending: false, archiveError: null, ...(rt.cellarArchiveRequested ? { cellarArchived: true } : {}) });
+          if (member.errand) this.keeper.activity(member.threadId, "done");
+          continue;
+        }
         const refused = await this.preserveWorkOrRefuse(member.threadId);
         if (refused) throw new Error(refused);
         const current = await this.bb.sdk.threads.get({ threadId: member.threadId });
@@ -1835,6 +1973,7 @@ export class TavernRuntime {
           archivePending: false,
           archiveError: null,
         });
+        if (member.errand) this.keeper.activity(member.threadId, "done");
       } catch (error) {
         if (isNotFound(error)) {
           try { this.updateThread(await this.bb.sdk.threads.get({ threadId: member.threadId })); }
@@ -2099,7 +2238,7 @@ export class TavernRuntime {
         const automatic = (run: () => unknown) => () => !this.config().tavern.paused && isLiveKeeper(this.keeper.store, this.keeper.member(id)) ? run() : undefined;
         await this.maintain(`Keeper ${id}`, id, [
           { name: "stops", run: () => this.retryStops(id) },
-          { name: "hires", run: () => recoverHires(this.bb, this.keeper, id, child => this.spawnBriefDelivered(child)) },
+          { name: "hires", run: () => recoverHires(this.bb, this.keeper, id, child => this.spawnBriefDelivered(child), child => this.preserveCancelledHire(child)) },
           { name: "cleanup", run: () => this.finishMemberCleanup(id) },
           { name: "thread", run: automatic(async () => this.updateThread(await loopCall(this.bb.sdk.threads.get({ threadId: id }), `Keeper thread ${id}`))) },
           { name: "hold display", run: automatic(() => this.expireHoldingDisplay(id)) },
@@ -2142,6 +2281,8 @@ export class TavernRuntime {
     if (q.phase !== "stopping") return;
     const members = this.keeper.store.query("members", "boardQuestId", q.id, 500);
     for (const member of members) {
+      const placement = new PlacementStore(this.keeper.store.db).byMember(member.threadId);
+      if (placement && hasLostOwner(placement)) continue;
       let state = this.keeper.store.runtime(member.threadId);
       let lookupFailure: { error: unknown } | null = null;
       if (!member.stopPending && member.state === "done" && !state.released) {
@@ -2222,7 +2363,17 @@ export class TavernRuntime {
       this.keeper.withdrawAsk(current.stopHireAskId, "turn-recovered");
       this.keeper.store.put("quests", q.id, { ...current, stopHireAskId: null });
     }
-    if (!this.keeper.store.query("members", "boardQuestId", q.id, 500).some(member => member.stopPending) && !pendingHires.length) {
+    let preservationPending = false;
+    for (const member of this.keeper.store.query("members", "boardQuestId", q.id, 500)) {
+      if (!new PlacementStore(this.keeper.store.db).byMember(member.threadId)) continue;
+      const result = await this.placements().preserve.beforeRelease(member.threadId, member.stopPending ? "Quest stop unconfirmed" : q.stopReason ?? "Quest stop");
+      if (result.state === "waiting" || result.state === "blocked") preservationPending = true;
+      if (result.state === "lost") {
+        this.keeper.activity(member.threadId, "stopped");
+        this.keeper.store.put("members", member.threadId, { ...this.keeper.member(member.threadId)!, stopPending: false, stopError: null });
+      }
+    }
+    if (!preservationPending && !this.keeper.store.query("members", "boardQuestId", q.id, 500).some(member => member.stopPending) && !pendingHires.length) {
       this.keeper.store.atomic(() => {
         for (const member of this.keeper.store.query("members", "boardQuestId", q.id, 500))
           this.keeper.store.patch(member.threadId, { archivePending: true });
@@ -2655,6 +2806,7 @@ export class TavernRuntime {
     this.bb.rpc.experimental_invalidate([tags.room()]);
   }
   threadGone(threadId: string) {
+    if (new PlacementStore(this.keeper.store.db).byMember(threadId)) this.placements().preserve.observeLoss(threadId, "The member thread was deleted or is missing before controlled release.");
     const recordsChanged = this.serviceRecords.dropThreadLinks(threadId);
     const member = this.keeper.member(threadId);
     if (!member) return;
@@ -2674,6 +2826,8 @@ export class TavernRuntime {
     this.keeper.changed(threadId, member.boardQuestId);
   }
   updateThread(thread: Thread, actor: Actor = { kind: "tavern" }) {
+    if ((thread.archivedAt !== null || thread.deletedAt !== null) && new PlacementStore(this.keeper.store.db).byMember(thread.id))
+      this.placements().preserve.observeLoss(thread.id, "The member thread was archived or deleted before controlled release.");
     const recordsChanged = thread.deletedAt !== null && this.serviceRecords.dropThreadLinks(thread.id);
     const member = this.keeper.member(thread.id);
     if (!member) return;
@@ -2914,7 +3068,7 @@ export class TavernRuntime {
     await this.maintain("party archive repair", null, [{ name: "repair", run: () => this.repairPartyArchives() }]);
     await this.maintain("service record backfill", null, [{ name: "history", run: () => this.serviceRecords.backfill() }]);
     this.keeper.store.pruneTicks();
-    await this.maintain("startup hires", null, [{ name: "recovery", run: () => recoverHires(this.bb, this.keeper, undefined, id => this.spawnBriefDelivered(id)) }]);
+    await this.maintain("startup hires", null, [{ name: "recovery", run: () => recoverHires(this.bb, this.keeper, undefined, id => this.spawnBriefDelivered(id), id => this.preserveCancelledHire(id)) }]);
     const projects = new Set(
       this.keeper.store
         .all("members")

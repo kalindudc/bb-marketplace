@@ -26,7 +26,7 @@ export function nativeCarry(context: TransferContext) {
 const PATH_BATCH = 500;
 const tail = (text: string) => text.trim().slice(-2000);
 const parseJson = <T>(text: string): T => JSON.parse(text) as T;
-const git = (_root: string, args: readonly string[], options?: { raw?: boolean; signal?: AbortSignal; env?: Record<string,string> }) => context.git(args, options);
+const git = (_root: string, args: readonly string[], options?: { raw?: boolean; signal?: AbortSignal; env?: Record<string,string>; timeoutMs?: number; input?: string }) => context.git(args, options);
 const run = (_root: string, args: readonly string[], _signal?: AbortSignal) => context.run(args);
 const tryGit = async (root: string, args: readonly string[], signal?: AbortSignal) => { const result = await run(root, args, signal); return result.code === 0 ? result.stdout.trim() : null; };
 const topLevel = (root: string, signal?: AbortSignal) => git(root, ["rev-parse", "--show-toplevel"], { signal });
@@ -164,7 +164,7 @@ async function treeEntries(top: string, rev: string, paths: readonly string[], s
  * is listed file by file from the filesystem, never through a symlink, so each file is judged on its own.
  */
 async function statusOf(top: string, signal?: AbortSignal): Promise<Map<string, string>> {
-  const fields = (await git(top, ["status", "--porcelain", "-z"], { raw: true, signal })).split("\0");
+  const fields = (await git(top, ["status", "--porcelain", "-z"], { raw: true, signal, timeoutMs: 150_000 })).split("\0");
   const entries = new Map<string, string>();
   for (let at = 0; at < fields.length; at++) {
     const entry = fields[at]!;
@@ -244,7 +244,15 @@ function clearCarry(mark: string, fm: boolean): void {
  * exactly what HEAD has, as the carry's reset or commit left it, content and mode, with no symlink on the way. Else
  * someone else changed it, and the carry stops, keeping it as it is.
  */
-async function guardPath(top: string, mark: string, path: string, fm: boolean, signal?: AbortSignal): Promise<{ pre: State; left: boolean }> {
+async function skippedPaths(top: string, paths: string[], signal?: AbortSignal): Promise<Set<string>> {
+  const skipped = new Set<string>();
+  for (let at = 0; at < paths.length; at += PATH_BATCH) {
+    const output = await git(top, ["ls-files", "-t", "-z", "--", ...paths.slice(at, at + PATH_BATCH)], { raw: true, signal, env: LITERAL });
+    for (const row of output.split("\0")) if (row.startsWith("S ")) skipped.add(row.slice(2));
+  }
+  return skipped;
+}
+async function guardPath(top: string, mark: string, path: string, fm: boolean, signal?: AbortSignal, skipped?: Set<string>): Promise<{ pre: State; left: boolean }> {
   if (!reach(top, path).safe) throw new Error(`${path} is reached through a symlink or a file now, so Tavern stops the carry and keeps it as it is`);
   const now = stateAt(top, path, fm);
   const intent = carryLog(mark).get(path);
@@ -252,6 +260,7 @@ async function guardPath(top: string, mark: string, path: string, fm: boolean, s
     if (!leftBy(intent).includes(now)) throw new Error(`${path} is not as the carry left it, so Tavern stops the carry and keeps the file as it is`);
     return { pre: now, left: true };
   }
+  if (now === null && (skipped ? skipped.has(path) : (await skippedPaths(top, [path], signal)).has(path))) return { pre: null, left: false };
   if (!holdsEntry(top, path, (await treeEntries(top, "HEAD", [path], signal)).get(path), fm)) throw new Error(`${path} is not as the carry started it, so Tavern stops the carry and keeps the file as it is`);
   return { pre: now, left: false };
 }
@@ -336,7 +345,7 @@ async function carryStart(input: NativeInput<"carryStart">, signal?: AbortSignal
       const intent = log.get(path);
       if (intent !== undefined && leftBy(intent).includes(stateAt(top, path, fm))) removeFile(top, path);
     }
-    await git(worktree, ["reset", "-q", "--hard", carried!.base], { signal });
+    await git(worktree, ["reset", "-q", "--hard", carried!.base], { signal, timeoutMs: 150_000 });
     head = await git(worktree, ["rev-parse", "HEAD"], { signal });
   }
   const [mergeHead = "", tree = ""] = (await git(worktree, ["rev-parse", "--git-path", "MERGE_HEAD", "HEAD^{tree}"], { signal })).split("\n");
@@ -376,7 +385,7 @@ async function carryStart(input: NativeInput<"carryStart">, signal?: AbortSignal
   removeOwnTemps(mark, fm);
   rmSync(logOf(mark), { force: true });
   writeCarryMark(mark, { base, tree: input.tree, heads: [], from, ...(temp === null ? {} : { temp }) });
-  if (head !== base) await git(worktree, ["reset", "-q", "--hard", base], { signal });
+  if (head !== base) await git(worktree, ["reset", "-q", "--hard", base], { signal, timeoutMs: 150_000 });
   return { outcome: "ok", present: false, from };
 }
 
@@ -499,9 +508,10 @@ async function carryDelete(input: NativeInput<"carryDelete">): Promise<HostOutpu
   const top = await topLevel(input.worktree);
   const fm = await fileModeOf(top);
   const mark = await carryMarkOf(input.worktree);
+  const skipped = await skippedPaths(top, input.paths.filter(path => stateAt(top, path, fm) === null));
   for (const path of input.paths) {
     insideWorktree(top, path, false);
-    const { pre, left } = await guardPath(top, mark, path, fm);
+    const { pre, left } = await guardPath(top, mark, path, fm, undefined, skipped);
     logIntent(mark, { d: path, pre });
     if (stateAt(top, path, fm) !== pre) throw changedSince(path, left);
     removeFile(top, path);
@@ -558,12 +568,12 @@ async function carryFinish(input: NativeInput<"carryFinish">, signal?: AbortSign
   const parent = await git(top, ["rev-parse", "HEAD"], { signal });
   const carried = readCarryMark(mark);
   if (carried !== null) writeCarryMark(mark, { ...carried, committing: { parent, tree } });
-  // As arguments: some machines' git has no --pathspec-from-file.
-  for (let at = 0; at < written.length; at += PATH_BATCH) await git(top, ["add", "-f", "--", ...written.slice(at, at + PATH_BATCH)], { signal, env: LITERAL });
-  for (let at = 0; at < deleted.length; at += PATH_BATCH) await git(top, ["rm", "-q", "--cached", "--", ...deleted.slice(at, at + PATH_BATCH)], { signal, env: LITERAL });
+  const skipped = await skippedPaths(top, written, signal);
+  if (skipped.size) await git(top, ["update-index", "-z", "--no-skip-worktree", "--stdin"], { signal, input: [...skipped].join("\0") + "\0", timeoutMs: 150_000 });
+  if (written.length || deleted.length) await git(top, ["update-index", "-z", "--add", "--remove", "--stdin"], { signal, input: [...written, ...deleted].join("\0") + "\0", timeoutMs: 150_000 });
   carryFaults.beforeCommit?.();
   if ((await stagedPaths(top, signal)).length > 0) {
-    await git(top, [...(await identityArgs(top, signal)), "commit", "--no-verify", "--no-gpg-sign", "-q", "-m", message], { signal, env: authorEnv(author) });
+    await git(top, ["-c", "gc.auto=0", "-c", "maintenance.auto=false", ...(await identityArgs(top, signal)), "commit", "--no-verify", "--no-gpg-sign", "-q", "-m", message], { signal, env: authorEnv(author), timeoutMs: 150_000 });
   }
   carryFaults.afterCommit?.();
   const [head = "", built = ""] = (await git(top, ["rev-parse", "HEAD", "HEAD^{tree}"], { signal })).split("\n");

@@ -13,6 +13,11 @@ import { PlacementStore } from "./store";
 const digest = (value: string) => createHash("sha256").update(value).digest("hex");
 type Holds = Pick<AwayRuntime, "requestContentHold" | "confirmHeld" | "inspectHeld" | "finishContentHold">;
 type Result = { snapshotId: string; tree: string; head: string; objectFormat: "sha1" | "sha256" };
+export interface ReadyTurn {
+  threadId: string;
+  toolName: "tavern_ready";
+  assertActive(): void;
+}
 
 export class PlacementCarry {
   private readonly pending = new Map<string, { key: string; promise: Promise<Result> }>();
@@ -45,8 +50,21 @@ export class PlacementCarry {
     return promise;
   }
 
-  private async run(placementId: string, generation: number, snapshotId: string, caller?: AbortSignal): Promise<Result> {
+  carryIntoOwnTurn(placementId: string, generation: number, snapshotId: string, turn: ReadyTurn, signal?: AbortSignal): Promise<Result> {
+    if (this.pending.has(placementId)) return Promise.reject(new Error("Another carry is in progress for this placement"));
+    const key = JSON.stringify([generation, snapshotId, turn.threadId, turn.toolName]);
+    const promise = this.run(placementId, generation, snapshotId, signal, turn).finally(() => {
+      if (this.pending.get(placementId)?.promise === promise) this.pending.delete(placementId);
+    });
+    this.pending.set(placementId, { key, promise });
+    return promise;
+  }
+
+  private async run(placementId: string, generation: number, snapshotId: string, caller?: AbortSignal, turn?: ReadyTurn): Promise<Result> {
     const record = this.placements.assertCurrent(placementId, generation), snapshot = this.placements.snapshot(snapshotId);
+    if (turn && (turn.toolName !== "tavern_ready" || turn.threadId !== record.memberThreadId))
+      throw new Error("Self-turn carry requires the placement member's own in-flight tavern_ready call");
+    turn?.assertActive();
     if (!record.memberThreadId || !record.workspaceKind || !record.hostId || !record.environmentId || !record.root ||
         record.workspaceKind === "dedicated-machine" && !record.ownsNewMachine)
       throw new Error("Carry requires the actual Tavern-owned member workspace");
@@ -63,6 +81,7 @@ export class PlacementCarry {
     const signal = AbortSignal.any([this.lifetime.signal, operation.controller.signal, ...(caller === undefined ? [] : [caller])]);
     const current = () => {
       signal.throwIfAborted();
+      turn?.assertActive();
       const live = this.placements.assertCurrent(placementId, generation);
       for (const key of ["sourceSnapshotId", "memberThreadId", "hostId", "environmentId", "root", "reviewTarget", "workspaceKind", "ownsNewMachine"] as const)
         if (!isDeepStrictEqual(live[key], record[key])) throw new Error("The placement carry assignment changed");
@@ -110,7 +129,10 @@ export class PlacementCarry {
       const existing = current().carries?.find(item => item.id === id);
       const prior = current().carries?.filter(item => item.generation === generation && item.phase === "verified" && item.id !== id &&
         isDeepStrictEqual(item.memberSdk, member.endpoint) && item.branch === branch).at(-1);
-      const token = existing && this.holds.inspectHeld(contentHoldTokenSchema.parse(existing.holdToken)).state !== "stale"
+      const ownToken = "ready-" + digest(JSON.stringify([placementId, generation, snapshotId, memberId]));
+      if (existing && turn && existing.holdToken !== ownToken) throw new Error("A background carry receipt cannot authorize this member's ready turn");
+      if (existing && !turn && existing.holdToken === ownToken) throw new Error("A ready-turn carry receipt cannot authorize a background carry");
+      const token = turn ? ownToken : existing && this.holds.inspectHeld(contentHoldTokenSchema.parse(existing.holdToken)).state !== "stale"
         ? contentHoldTokenSchema.parse(existing.holdToken)
         : !existing || existing.phase === "verified" ? this.holds.requestContentHold(memberId, { operationId: id }) : null;
       if (token === null) throw new Error("The persisted carry content hold is stale; reconcile it before retrying");
@@ -124,9 +146,12 @@ export class PlacementCarry {
       receipt = initial;
       this.placements.update(placementId, generation, value => ({ ...value, carries: existing
         ? value.carries!.map(item => item.id === id ? initial : item) : [...(value.carries ?? []), initial] }));
-      const confirmed = await this.holds.confirmHeld(token); hold();
-      if (confirmed.state !== "confirmed") throw new Error(confirmed.error ?? "The content hold stop is pending or stale");
-      held = true; await fence();
+      if (!turn) {
+        const confirmed = await this.holds.confirmHeld(contentHoldTokenSchema.parse(token)); hold();
+        if (confirmed.state !== "confirmed") throw new Error(confirmed.error ?? "The content hold stop is pending or stale");
+        held = true;
+      }
+      await fence();
       const update = (patch: Partial<CarryReceipt>) => {
         hold();
         const updated = this.placements.update(placementId, generation, value => ({ ...value, carries: value.carries!.map(item => item.id === id ? { ...item, ...patch } : item) }));
@@ -138,9 +163,11 @@ export class PlacementCarry {
         [from, home, snapshot.home.root, "source-read", []],
         [to, member, record.root, "member-write", ["refs/heads/" + branch]],
       ] as const) {
-        const ack = await call(identity.endpoint.hostId, "registerEndpoint", { placementId, generation, endpointId: native.endpointId, endpoint: identity.endpoint, ownerThreadId: identity.keeperThreadId,
-          access, workspaceKind: access === "member-write" ? record.workspaceKind : null, objectFormat: snapshot.objectFormat, allowedRefs: [...refs] });
-        if (ack.generation !== generation) throw new Error("The host acknowledged a stale carry endpoint");
+        if (!turn || access !== "member-write") {
+          const ack = await call(identity.endpoint.hostId, "registerEndpoint", { placementId, generation, endpointId: native.endpointId, endpoint: identity.endpoint, ownerThreadId: identity.keeperThreadId,
+            access, workspaceKind: access === "member-write" ? record.workspaceKind : null, objectFormat: snapshot.objectFormat, allowedRefs: [...refs] });
+          if (ack.generation !== generation) throw new Error("The host acknowledged a stale carry endpoint");
+        }
         const inspected = await call(identity.endpoint.hostId, "inspect", native);
         if (inspected.objectFormat !== snapshot.objectFormat) throw new Error("object-format-mismatch");
         if (inspected.root !== root || !inspected.features.exportChanges) throw new Error("The native carry root or export capability changed");
@@ -195,7 +222,7 @@ export class PlacementCarry {
       this.placements.completeCarry(placementId, generation, id, observed.head, observed.tree, snapshot.objectFormat);
       receipt = this.placements.get(placementId)!.carries!.find(item => item.id === id)!;
       hold();
-      if (this.holds.finishContentHold(token).state !== "finished") throw new Error("The verified carry hold changed before completion");
+      if (!turn && this.holds.finishContentHold(contentHoldTokenSchema.parse(token)).state !== "finished") throw new Error("The verified carry hold changed before completion");
       return { snapshotId, tree: snapshot.tree, head: observed.head, objectFormat: snapshot.objectFormat };
     } finally { this.operations.delete(operation); }
   }

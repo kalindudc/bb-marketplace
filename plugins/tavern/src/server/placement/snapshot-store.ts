@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import {
@@ -57,13 +57,31 @@ export type SnapshotOwner = z.infer<typeof ownerSchema>;
 
 function referenceIds(record: PlacementRecord): Set<string> {
   return new Set([
-    record.sourceSnapshotId, record.reviewTarget?.snapshotId, record.preservation.snapshotId,
+    record.sourceSnapshotId, record.submissionSnapshotId, record.reviewTarget?.snapshotId, record.preservation.snapshotId,
     ...(record.transfers ?? []).map(item => item.snapshotId), ...(record.carries ?? []).map(item => item.snapshotId),
   ].filter((id): id is string => typeof id === "string"));
 }
 
 export class SnapshotStore {
+  private readonly submissionReads = new Map<string, { token: string; assertHeld(): void }>();
   constructor(private readonly db: Database) {}
+
+  async withSubmissionReadReference<T>(placementId: string, generation: number, snapshotId: string, assertHeld: () => void, work: () => Promise<T>): Promise<T> {
+    const key = JSON.stringify([placementId, generation, snapshotId]);
+    if (this.submissionReads.has(key)) throw new Error("A submission capture already holds this read reference");
+    assertHeld();
+    const capture = { token: randomUUID(), assertHeld };
+    this.submissionReads.set(key, capture);
+    try { return await work(); }
+    finally { if (this.submissionReads.get(key)?.token === capture.token) this.submissionReads.delete(key); }
+  }
+
+  hasSubmissionReadReference(placementId: string, generation: number, snapshotId: string): boolean {
+    const capture = this.submissionReads.get(JSON.stringify([placementId, generation, snapshotId]));
+    if (!capture) return false;
+    capture.assertHeld();
+    return true;
+  }
 
   get(id: string): SnapshotOwner | null {
     const row = this.db.prepare("SELECT data FROM tavern_snapshot_owners WHERE id=?").get(id) as { data: string } | undefined;
@@ -113,7 +131,8 @@ export class SnapshotStore {
     const rows = this.db.prepare(`SELECT p.data FROM tavern_placements p
       WHERE json_extract(p.data,'$.phase')<>'released' AND EXISTS (
         SELECT 1 FROM tavern_source_snapshots s WHERE json_extract(s.data,'$.ownerId')=? AND (
-          s.id=json_extract(p.data,'$.sourceSnapshotId') OR s.id=json_extract(p.data,'$.reviewTarget.snapshotId') OR
+          s.id=json_extract(p.data,'$.sourceSnapshotId') OR s.id=json_extract(p.data,'$.submissionSnapshotId') OR
+          s.id=json_extract(p.data,'$.reviewTarget.snapshotId') OR
           s.id=json_extract(p.data,'$.preservation.snapshotId') OR
           EXISTS (SELECT 1 FROM json_each(p.data,'$.transfers') t WHERE json_extract(t.value,'$.snapshotId')=s.id) OR
           EXISTS (SELECT 1 FROM json_each(p.data,'$.carries') c WHERE json_extract(c.value,'$.snapshotId')=s.id)

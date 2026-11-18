@@ -7,7 +7,7 @@ import { prepareCall } from "./prepare";
 import { bindChecks } from "./checker";
 import { bindWorktree, checkedWorktreeRoot, gitWorktreeRoot, needsWorktree } from "./worktree";
 
-export type RemoteScopeObservation = { kind: "unavailable"; reason: string } | {
+export type RemoteScopeObservation = { kind: "unavailable"; reason: string } | { kind: "open"; reason: string } | {
   kind: "ready"; hostId: string; cwd: string; binding: ScopeHostBinding;
   prepare(call: ScopeCall): Promise<HostOutput<"prepareCall">>;
 };
@@ -61,8 +61,19 @@ export function registerWatcher(bb: BbPluginApi, store: ScopeStore, deps: WatchD
   const lookup = (threadId: string): RemoteScopeObservation | undefined => {
     try {
       const value = deps.remoteForThread?.(threadId);
-      if (value === undefined) return store.records.get(threadId)?.binding ? { kind: "unavailable", reason: "Host-bound scope observation is not configured; reconcile the host binding without controller-local probes" } : undefined;
+      if (value === undefined) {
+        const record = store.records.get(threadId);
+        if (record?.binding?.placementId === null && record.scope?.preset === "open" && !record.error)
+          return { kind: "open", reason: "Remote open scope; tool observation is not available" };
+        return record?.binding ? { kind: "unavailable", reason: "Host-bound scope observation is not configured; reconcile the host binding without controller-local probes" } : undefined;
+      }
       if (value.kind === "unavailable") return value;
+      if (value.kind === "open") {
+        const record = store.records.get(threadId);
+        if (!record?.binding || record.binding.placementId !== null || record.scope?.preset !== "open" || record.error)
+          throw new Error("Only an unplaced remote open scope can skip host observation");
+        return value;
+      }
       if (value.kind !== "ready" || typeof value.prepare !== "function") throw new Error("Invalid remote scope descriptor");
       identity(value);
       return value;
@@ -103,6 +114,12 @@ export function registerWatcher(bb: BbPluginApi, store: ScopeStore, deps: WatchD
   };
   const check = async (threadId: string, providerId: string, sequence: number) => {
     if (disposed || !store.records.has(threadId) || modeFor(threadId) === "off") return;
+    if (lookup(threadId)?.kind === "open") {
+      stopped.delete(threadId);
+      store.saveProgress(threadId, sequence, false);
+      store.clearObservationHold(threadId);
+      return;
+    }
     const stoppedAt = stopped.get(threadId);
     if (stoppedAt?.record !== store.records.get(threadId)) stopped.delete(threadId);
     else if (stoppedAt) {
@@ -123,7 +140,7 @@ export function registerWatcher(bb: BbPluginApi, store: ScopeStore, deps: WatchD
     if (progress.pendingStop && modeFor(threadId) === "enforce") {
       const remote = lookup(threadId);
       if (remote?.kind === "unavailable") { await hold(threadId, providerId, "stop:" + progress.cursor, progress.cursor, remote.reason, progress.pendingBinding); return; }
-      if (progress.pendingBinding && (remote === undefined || !sameBinding(identity(remote), progress.pendingBinding))) store.saveProgress(threadId, progress.cursor, false);
+      if (progress.pendingBinding && (remote?.kind !== "ready" || !sameBinding(identity(remote), progress.pendingBinding))) store.saveProgress(threadId, progress.cursor, false);
       else if (remote?.kind === "ready" && !progress.pendingBinding) {
         await hold(threadId, providerId, "stop:" + progress.cursor, progress.cursor, "The previous stop has no checked remote assignment; ask the Keeper to reconcile it rather than stopping a replacement.", identity(remote)); return;
       } else {
@@ -168,6 +185,7 @@ export function registerWatcher(bb: BbPluginApi, store: ScopeStore, deps: WatchD
         if (!rawCalls.length || rawCalls.every(call => emergency.has(call.toolName)) || providerId === "pi" && row.type === "item/completed" && guardBlocked(item)) { advance(); continue; }
         const remote = lookup(threadId);
         if (remote?.kind === "unavailable") { await hold(threadId, providerId, row.id, row.seq, remote.reason); return; }
+        if (remote?.kind === "open") { advance(); continue; }
         if (remote?.kind === "ready") {
           if (providerId === "pi" ? row.type !== "item/completed" : row.type !== "item/started") { advance(); continue; }
           const expected = identity(remote);

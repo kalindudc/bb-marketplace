@@ -45,6 +45,7 @@ export const placementPreviewSchema = z.object({
 export type PlacementPreview = z.infer<typeof placementPreviewSchema>;
 
 export const placementContract = defineContract({
+  placementRetry: { input: z.object({ placementId: id, generation: z.number().int().positive() }).strict(), output: z.discriminatedUnion("ok", [z.object({ ok: z.literal(true), message: z.null() }), z.object({ ok: z.literal(false), message: z.string().min(1) })]) },
   placementCatalog: { input: z.object({ projectId: id.optional(), hostId: id.optional() }).strict(), output: placementCatalogSchema, tags: () => ["tavern:settings"] },
   placementPreview: { input: placementPreviewInputSchema, output: placementPreviewSchema, tags: () => ["tavern:settings", "tavern:room"] },
 });

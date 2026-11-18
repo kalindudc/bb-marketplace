@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { sourceBaseSchema } from "../../host-contract";
+import { hostContract, sourceBaseSchema, type HostOutput } from "../../host-contract";
 import type { HostPort } from "../../host/client";
 import { sourceFetchSchema, type SourceFetch, type SourceSnapshot } from "../../shared/placement";
 import { SourceDiscovery, type KnownSource } from "./source-discovery";
@@ -37,20 +37,32 @@ export class SourceCapture {
       throw new SourceCaptureError(sourceBase.code, sourceBase.message, sourceBase.retryable);
     const { outcome: _outcome, base, ...provenance } = sourceBase;
     const fetch = sourceFetchSchema.parse(provenance);
-    const state = await this.host.call(source.endpoint.hostId, "worktreeState", {
-      placementId: source.authorityId, generation: source.generation, endpointId: source.endpointId,
-      operationId: randomUUID(), base,
-    }, signal === undefined ? undefined : { signal });
+    let state: HostOutput<"snapshotWorktree">;
+    try {
+      state = hostContract.snapshotWorktree.output.parse(await this.host.call(source.endpoint.hostId, "snapshotWorktree", {
+        placementId: source.authorityId, generation: source.generation, endpointId: source.endpointId,
+        operationId: randomUUID(), base,
+      }, signal === undefined ? undefined : { signal }));
+    } catch (error) {
+      signal?.throwIfAborted();
+      if (error instanceof Error) {
+        const reason = error as Error & { code?: string; retryable?: boolean };
+        throw new SourceCaptureError(reason.code ?? "source-snapshot-failed", reason.message, reason.retryable ?? false);
+      }
+      throw error;
+    }
     signal?.throwIfAborted();
     await this.discovery.revalidate(source, signal);
-    if (state.dirty || state.unfinishedMerge)
-      throw new SourceCaptureError("initial-source-dirty", "The user source has dirty files or an unfinished merge. Commit or resolve them yourself before capture; Tavern will not commit this checkout.");
-    if (state.head !== inspection.head || state.tree !== inspection.tree)
+    if ("outcome" in state) throw new SourceCaptureError(state.code, state.message, state.retryable);
+    if (state.head !== inspection.head || state.headTree !== inspection.tree)
       throw new SourceCaptureError("source-changed", "The source head or tree changed during capture; inspect it again before retrying.", true);
     return this.placements.captureSnapshot({
       purpose: "initial", keeperThreadId: source.keeperThreadId, projectId: source.projectId,
       sourceThreadId: source.keeperThreadId, makerThreadId: null, makerSubmissionId: null, journalTarget: null,
-      objectFormat: inspection.objectFormat, base, sourceHead: inspection.head, tree: inspection.tree, fetch,
+      objectFormat: inspection.objectFormat, base, sourceHead: state.commit, tree: state.tree, fetch,
+      includesUncommitted: state.includesUncommitted, userHead: state.head,
+      ...(state.includesUncommitted ? { uncommittedOrigin: source.endpoint } : {}),
+      modifiedPaths: state.modifiedPaths, untrackedPaths: state.untrackedPaths,
       source: source.endpoint, home: source.endpoint,
     });
   }

@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import { scopeDeliveryFileSchema } from "../../scope/schema";
@@ -6,6 +6,8 @@ import { hostScopeStateSchema, type HostScopeState } from "../../scope/host-env"
 import { scopeObservationBindingSchema, type ScopeObservationBinding } from "../../scope/store";
 import { sha256Schema, type PlacementRecord } from "../../shared/placement";
 import type { Database } from "../ports";
+import type { HostPort } from "../../host/client";
+import type { RemoteScopeObservation } from "../../scope/watch";
 import { PlacementStore, StalePlacementError } from "./store";
 
 const id = z.string().min(1).max(200);
@@ -114,6 +116,25 @@ export class PlacementDeliveries {
       this.placements.update(placementId, generation, value => ({ ...value, acknowledgedScopeRevision: expected.revision }));
       return saved;
     }).immediate();
+  }
+
+  observationForThread(threadId: string, host: HostPort): RemoteScopeObservation | undefined {
+    const state = this.forThread(threadId);
+    if (state === undefined || state.kind === "unavailable") return state;
+    const expected = state.expected;
+    const current = () => {
+      const next = this.forThread(threadId);
+      if (next?.kind !== "ready" || !isDeepStrictEqual(next, state))
+        throw new StalePlacementError("The remote scope acknowledgment changed during observation");
+    };
+    const { hostId, cwd, ...binding } = expected;
+    return { kind: "ready", hostId, cwd, binding, prepare: async call => {
+      current();
+      const reply = await host.call(hostId, "prepareCall", { placementId: binding.placementId, generation: binding.generation,
+        endpointId: binding.endpointId, operationId: randomUUID(), scopeRevision: binding.revision, call } as import("../../host-contract").HostInput<"prepareCall">);
+      current();
+      return reply;
+    } };
   }
 
   forThread(threadId: string): HostScopeState | undefined {

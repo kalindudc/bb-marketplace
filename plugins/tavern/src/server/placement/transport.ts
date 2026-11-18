@@ -3,7 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { CHUNK_BYTES, hostContract, type Authority, type HostInput, type HostMethod, type HostOutput, type TransferRegistration } from "../../host-contract";
 import type { HostPort } from "../../host/client";
-import { sourceTransferReceiptSchema, type SourceSnapshot, type SourceTransferReceipt } from "../../shared/placement";
+import { sourceTransferReceiptSchema, type PlacementRecord, type SourceSnapshot, type SourceTransferReceipt } from "../../shared/placement";
 import { requireSnapshotFetch } from "./capture";
 import { readSourceIdentity, type SdkSource } from "./source-discovery";
 import { PlacementStore } from "./store";
@@ -48,36 +48,43 @@ export class PlacementTransport {
     bb.onDispose(() => { this.lifetime.abort(new Error("Placement transport disposed")); unsubscribe(); });
   }
 
-  bringHome(placementId: string, generation: number, snapshotId: string, signal?: AbortSignal): Promise<SourceSnapshot> {
-    const key = JSON.stringify([generation, snapshotId]);
+  bringHome(placementId: string, generation: number, snapshotId: string, signal?: AbortSignal, desiredState: PlacementRecord["desiredState"] = "running"): Promise<SourceSnapshot> {
+    const key = JSON.stringify([generation, snapshotId, desiredState]);
     const pending = this.pending.get(placementId);
     if (pending) {
       if (pending.key !== key) return Promise.reject(new Error("Another content transfer is in progress for this placement"));
       if (signal?.aborted) return Promise.reject(signal.reason);
       return pending.promise;
     }
-    const promise = this.dispatch(placementId, generation, snapshotId, signal).finally(() => {
+    const promise = this.dispatch(placementId, generation, snapshotId, signal, desiredState).finally(() => {
       if (this.pending.get(placementId)?.promise === promise) this.pending.delete(placementId);
     });
     this.pending.set(placementId, { key, promise });
     return promise;
   }
 
-  private async dispatch(placementId: string, generation: number, snapshotId: string, caller?: AbortSignal): Promise<SourceSnapshot> {
+  private async dispatch(placementId: string, generation: number, snapshotId: string, caller: AbortSignal | undefined, desiredState: PlacementRecord["desiredState"]): Promise<SourceSnapshot> {
     const snapshot = this.placements.snapshot(snapshotId);
-    if (!snapshot?.ownerId) return this.run(placementId, generation, snapshotId, caller);
-    const record = this.placements.assertCurrent(placementId, generation), owners = this.placements.snapshotOwners;
+    if (desiredState === "released") {
+      const record = this.placements.assertCurrent(placementId, generation, desiredState);
+      if (record.preservation.snapshotId !== snapshotId || snapshot?.purpose !== "wip" ||
+          !(record.phase === "preserving" || record.phase === "blocked" && record.resumePhase === "preserving"))
+        throw new Error("A cancelled placement may transfer only its fenced preservation snapshot");
+    }
+    if (!snapshot?.ownerId) return this.run(placementId, generation, snapshotId, caller, desiredState);
+    const record = this.placements.assertCurrent(placementId, generation, desiredState), owners = this.placements.snapshotOwners;
     const owner = owners.forDescriptor(snapshot);
     const current = () => {
       this.lifetime.signal.throwIfAborted(); caller?.throwIfAborted();
-      const live = this.placements.assertCurrent(placementId, generation), retained = owners.forDescriptor(snapshot);
+      const live = this.placements.assertCurrent(placementId, generation, desiredState), retained = owners.forDescriptor(snapshot);
       if (retained.generation !== owner.generation || retained.phase !== "retained") throw new Error("Stale snapshot owner generation or lifecycle");
       for (const key of ["sourceSnapshotId", "memberThreadId", "hostId", "environmentId", "root", "reviewTarget", "preservation"] as const)
         if (!isDeepStrictEqual(live[key], record[key])) throw new Error("The placement content assignment changed");
       if (snapshot.keeperThreadId !== live.keeperThreadId || snapshot.projectId !== live.projectId ||
-          ![live.sourceSnapshotId, live.reviewTarget?.snapshotId, live.preservation.snapshotId].includes(snapshotId))
+          !([live.sourceSnapshotId, live.submissionSnapshotId, live.reviewTarget?.snapshotId, live.preservation.snapshotId].includes(snapshotId) ||
+            snapshot.purpose === "submission" && snapshot.makerThreadId === live.memberThreadId && owners.hasSubmissionReadReference(placementId, generation, snapshotId)))
         throw new Error("Snapshot ownership or read reference does not match this placement");
-      if (snapshot.purpose !== "initial" && (live.reviewTarget
+      if (!(snapshot.purpose === "wip" && live.preservation.snapshotId === snapshot.id) && snapshot.purpose !== "initial" && (live.reviewTarget
         ? live.reviewTarget.snapshotId !== snapshotId || live.reviewTarget.expectedTree !== snapshot.tree ||
           live.reviewTarget.makerSubmissionId !== snapshot.makerSubmissionId || !isDeepStrictEqual(live.reviewTarget.journal, snapshot.journalTarget)
         : snapshot.makerThreadId !== live.memberThreadId)) throw new Error("Snapshot maker or review assignment does not match this placement");
@@ -218,8 +225,8 @@ export class PlacementTransport {
     }
   }
 
-  private async run(placementId: string, generation: number, snapshotId: string, caller?: AbortSignal): Promise<SourceSnapshot> {
-    const record = this.placements.assertCurrent(placementId, generation);
+  private async run(placementId: string, generation: number, snapshotId: string, caller: AbortSignal | undefined, desiredState: PlacementRecord["desiredState"]): Promise<SourceSnapshot> {
+    const record = this.placements.assertCurrent(placementId, generation, desiredState);
     const snapshot = this.placements.snapshot(snapshotId);
     if (!snapshot || snapshot.keeperThreadId !== record.keeperThreadId || snapshot.projectId !== record.projectId ||
         snapshot.purpose === "initial" && snapshot.id !== record.sourceSnapshotId ||
@@ -232,7 +239,7 @@ export class PlacementTransport {
     const signal = AbortSignal.any([this.lifetime.signal, operation.controller.signal, ...(caller === undefined ? [] : [caller])]);
     const current = () => {
       signal.throwIfAborted();
-      const live = this.placements.assertCurrent(placementId, generation);
+      const live = this.placements.assertCurrent(placementId, generation, desiredState);
       for (const key of ["sourceSnapshotId", "memberThreadId", "hostId", "environmentId", "root", "reviewTarget"] as const)
         if (!isDeepStrictEqual(live[key], record[key])) throw new Error("The placement content assignment changed");
       return live;
@@ -269,7 +276,7 @@ export class PlacementTransport {
         for (const key of ["generation", "snapshotId", "direction", "sourceEndpointId", "homeEndpointId", "verifyEndpointId", "sourceSdk", "homeSdk"] as const)
           if (!isDeepStrictEqual(receipt[key], initial[key])) throw new Error("Immutable transfer endpoint identity changed");
       } else {
-        this.placements.update(placementId, generation, value => ({ ...value, transfers: [...(value.transfers ?? []), initial] }));
+        this.placements.update(placementId, generation, value => ({ ...value, transfers: [...(value.transfers ?? []), initial] }), desiredState);
         receipt = initial;
       }
       const authority = (endpointId: string): Authority => ({ placementId, generation, endpointId, operationId: randomUUID() });
@@ -307,7 +314,7 @@ export class PlacementTransport {
         current();
         const updated = this.placements.update(placementId, generation, value => ({ ...value,
           transfers: value.transfers!.map(item => item.id === id ? { ...item, ...change } : item),
-        }));
+        }), desiredState);
         receipt = updated.transfers!.find(item => item.id === id)!;
       };
       if (receipt.manifest === null) update({ manifest, uploads, phase: "uploading" });
@@ -339,7 +346,7 @@ export class PlacementTransport {
       validateManifest(snapshot, await call(snapshot.home.hostId, "exportChanges", { ...verify, transferId: verification.transferId }), made.sha);
       await call(snapshot.home.hostId, "dropUploads", { ...to, transferId: id, uploads });
       await fence(); current();
-      return this.placements.completeHomeTransfer(placementId, generation, id, made.sha, snapshot.tree, snapshot.objectFormat);
+      return this.placements.completeHomeTransfer(placementId, generation, id, made.sha, snapshot.tree, snapshot.objectFormat, desiredState);
     } finally { this.operations.delete(operation); }
   }
 }

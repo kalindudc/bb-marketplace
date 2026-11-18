@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { hostContract, type Authority, type TransferRegistration } from "../../src/host-contract";
 import * as gitHost from "../../src/host/git";
+import * as processModule from "../../src/host/process";
 import { inspectHost } from "../../src/host/inspect";
 import { HostRegistry } from "../../src/host/registry";
 import { createTransport } from "../../src/host/transport";
@@ -55,4 +56,15 @@ it.each(["import", "carry"] as const)("blocks %s when neither the requested full
 });
 it("validates full fetch refs at the wire boundary instead of silently treating malformed refs as short branches", async () => {
   const f = await fixture("carry"); expect(hostContract.carryStart.input.safeParse({ ...f.input, paths: [], baseBranch: "refs/heads/bad." }).success).toBe(false);
+});
+
+it.each(["import", "carry"] as const)("keeps the %s network allowance beyond 170 seconds", async method => {
+  const f = await fixture(method), original = processModule.runProcess;
+  let clock = Date.now(); vi.spyOn(Date, "now").mockImplementation(() => clock);
+  vi.spyOn(processModule, "runProcess").mockImplementation(async (program, args, options) => {
+    if (!args.includes("fetch")) return original(program, args, options);
+    expect(options.timeoutMs).toBe(200_000);
+    const result = await original(program, args, options); clock += 180_000; return result;
+  });
+  expect(await f.run({ networkTimeoutMs: 200_000 })).toMatchObject({ outcome: "ok" });
 });

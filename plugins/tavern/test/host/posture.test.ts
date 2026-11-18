@@ -12,8 +12,8 @@ it("does not upgrade a prepared or failed guard into session proof", () => {
   expect(formatExecutionPosture({ ...posture, guard: "failed" })).toBe("Local: detection only");
 });
 it("keeps remote execution detection-only even if host artifacts claim an armed guard", () => {
-  expect(formatExecutionPosture({ ...posture, aggregate: "remote-detection-only", filesystem: "macos-sandbox" })).toBe("Remote: detection only");
-  expect(formatExecutionPosture({ ...posture, aggregate: "remote-detection-only", checker: "contained", filesystem: "macos-sandbox", network: "macos-check-deny" })).toBe("Remote: detection only; checks have no verified containment");
+  expect(formatExecutionPosture({ ...posture, aggregate: "remote-detection-only", filesystem: "macos-sandbox" })).toBe("Detection only (remote)");
+  expect(formatExecutionPosture({ ...posture, aggregate: "remote-detection-only", checker: "contained", filesystem: "macos-sandbox", network: "macos-check-deny" })).toBe("Detection only (remote)");
 });
 it("labels Linux checks without containment", () => {
   expect(formatExecutionPosture({ ...posture, checker: "pre-exec-no-containment" })).toBe("Local: pre-exec checks only, no containment");

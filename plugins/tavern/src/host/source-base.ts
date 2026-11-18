@@ -42,7 +42,7 @@ function inverseFetchRef(trackingRef: string, specs: string[]): string | undefin
 }
 export async function inspectSourceBase(root: string, head: string, options: GitOptions): Promise<SourceBase> {
   const unavailable = (code: string, message: string, retryable = false): SourceBase => ({ outcome: "unavailable", code: "source-base-" + code, message, retryable });
-  const run = (args: string[]) => runGit(root, args, { ...options, timeoutMs: 3000 });
+  const run = (args: string[]) => runGit(root, args, { ...options, timeoutMs: args[0] === "merge-base" ? 30_000 : 3000 });
   const config = async (key: string): Promise<string[]> => {
     const result = await run(["config", "--get-all", key]);
     if (result.code === 1) return [];
@@ -83,8 +83,9 @@ export async function inspectSourceBase(root: string, head: string, options: Git
     const bases = merge.stdout.trim() ? merge.stdout.trim().split("\n") : [];
     if (merge.code !== 0 || bases.length !== 1 || !gitOidSchema.safeParse(bases[0]).success || bases[0]!.length !== head.length) return unavailable("no-merge-base", "The local source refs do not have one available common ancestor; choose an appropriate Keeper environment. Tavern will not fetch in the source checkout.");
     return sourceBaseSchema.parse({ outcome: "ok", via, base: bases[0], remoteName, remoteUrl, trackingRef, fetchRef });
-  } catch {
+  } catch (error) {
     options.check?.();
+    if ((error as { code?: string })?.code === "git-timeout") throw error;
     if (options.signal?.aborted) throw abortError();
     return unavailable("unavailable", "The source base/remote inspection is unavailable; retry or choose an appropriate Keeper environment.", true);
   }

@@ -7,9 +7,10 @@ import { settingsContract, settingsViewSchema, type SettingsView } from "../../.
 import type { PlacementSettings } from "../../../src/shared/placement-settings";
 import { registry } from "../../../src/ui/page/fixtures";
 import { settingsView } from "../../../src/ui/page/fixtures-insights";
-import { machineProblems, machineVolumes, machinesCatalog, machinesRoom, previewFixture } from "../../../src/ui/page/fixtures-machines";
+import { machineProblems, machineVolumes, machinesCatalog, machinesRoom, previewFixture } from "../fixtures/machines";
 import { machinesContract } from "../../../src/ui/page/machines-contract";
 import * as MM from "../../../src/ui/page/machines-model";
+import { validatePlacementInputs } from "../../../src/server/placement/inputs";
 import { registerPageSurfaces } from "../../../src/ui/page/register";
 
 // The page ships behind PLACEMENT_RPC_LIVE until the server serves its two reads; these tests run it as if they were live, except where they say not.
@@ -49,6 +50,19 @@ async function page(subPath: string, rpc: Partial<Handlers> = {}, machines: Plac
 const ruleRow = (slot: RenderedSlot, n: number) => slot.container.querySelector(`[data-rule="${n - 1}"]`) as HTMLElement;
 
 describe("Machine placement words", () => {
+  it("uses the server's supported and unsupported verdicts in the preview fixture", async () => {
+    const input = { projectId: "proj_3m7ijbk6gx", keeperThreadId: null, keeperPath: null, classId: "smith", questId: null };
+    expect(await previewFixture(machineVolumes.one, input)).toMatchObject({ verdict: { state: "matched", ruleId: "shop-world-remote", blocked: null, remote: true, posture: "Detection only (remote)" } });
+    const rule = machineVolumes.one.rules[0]!;
+    if (rule.target.kind !== "provider") throw new Error("Expected a provider fixture.");
+    const unsupported = { ...machineVolumes.one, rules: [{ ...rule, target: { ...rule.target, machine: { type: "keeper" as const }, workspace: "linked-worktree" as const } }] };
+    expect(await previewFixture(unsupported, input)).toMatchObject({ verdict: { state: "matched", blocked: { code: "unsupported-target", message: "This rule's target isn't supported in this version." }, remote: null, posture: null } });
+  });
+  it("offers the pushed source base template and validates it as a provider input", () => {
+    expect(MM.TEMPLATES).toContain("{source.base}");
+    const provider = { id: "checkout", inputs: { type: "object", properties: { base: { type: "string" } }, required: ["base"] }, acceptsEmptyInputs: false };
+    expect(validatePlacementInputs(provider, { base: "{source.base}" }, { "source.base": "a".repeat(40) })).toMatchObject({ state: "valid", inputs: { base: "a".repeat(40) } });
+  });
   it("says what each rule catches and where it sends members, by name", () => {
     const [local, shop, trees, wardens, , devbox, all] = machineVolumes.many.rules;
     expect(MM.catches(names, shop!)).toEqual([{ field: "repoRemotes", word: "Repository", values: ["delta.shopify.io/shop/world"] }]);
@@ -181,34 +195,35 @@ describe("Where work runs page", () => {
     await waitFor(() => expect(placementPreview).toHaveBeenCalledWith({ projectId: null, keeperThreadId: "thr_t3zru37rah", keeperPath: null, classId: "smith", questId: null }));
     fireEvent.click(slot.getByRole("button", { name: "A project" }));
     fireEvent.change(slot.getByLabelText("Project"), { target: { value: "proj_3m7ijbk6gx" } });
-    const verdict = await slot.findByText(/Would run on a new Aquifer World sandbox/);
+    const verdict = await slot.findByText(/Runs on a new Aquifer World sandbox/);
     expect(verdict.closest("[data-verdict]")!.textContent).toMatch(/Because repository is delta\.shopify\.io\/shop\/world/);
     expect(within(ruleRow(slot, 2)).getByText("catches it")).toBeTruthy();
     expect(within(ruleRow(slot, 1)).getByText("no quest yet")).toBeTruthy();
   });
 
-  it("says a caught machine rule would run there but waits today, never that it runs there", async () => {
-    const pick = async (slot: RenderedSlot) => {
-      fireEvent.click(slot.getByRole("button", { name: "A project" }));
-      fireEvent.change(slot.getByLabelText("Project"), { target: { value: "proj_3m7ijbk6gx" } });
-      return (await slot.findByText(/Would run on a new Aquifer World sandbox/)).closest("[data-verdict]") as HTMLElement;
-    };
-    // The server's answer today: blocked with placement-setup-incomplete, and no posture or destination.
-    const real = await pick(await page("machines"));
-    expect(real.textContent).toContain("Today it waits with a blocker: machine rules can't run work yet.");
-    expect(real.textContent).not.toMatch(/Runs on|Machine placement is not ready/);
-    expect(real.querySelector(".mx-whenruns")!.textContent).toBe("When it runs: Detection only (remote)");
-    expect(within(real).getByRole("button", { name: /Rule 2 · Shop\/world on an Aquifer machine/ })).toBeTruthy();
-    expect(real.textContent).toContain("Preview only: nothing is created.");
-    expect(real.classList.contains("waits")).toBe(true);
-    expect(real.classList.contains("blocked")).toBe(false);
-    expect(real.textContent).toContain("Would take a maker slot:");
-    expect(real.textContent).not.toMatch(/(^|[^d] )Takes a/);
-    for (const s of slots.splice(0)) s.lifecycle.unmount();
-    // Even if the server stops blocking before the pipeline lands, the page does not claim the work runs there.
-    const unblocked = await pick(await page("machines", { placementPreview: (input) => { const p = previewFixture(machineVolumes.many, input); return p.verdict.state === "matched" ? { ...p, verdict: { ...p.verdict, blocked: null, remote: true, posture: "Detection only (remote)" } } : p; } }));
-    expect(unblocked.textContent).toContain("Today it waits with a blocker");
-    expect(unblocked.textContent).not.toMatch(/Runs on/);
+  it("shows a supported machine rule's destination, posture and slot from the preview", async () => {
+    const slot = await page("machines");
+    fireEvent.click(slot.getByRole("button", { name: "A project" }));
+    fireEvent.change(slot.getByLabelText("Project"), { target: { value: "proj_3m7ijbk6gx" } });
+    const verdict = (await slot.findByText(/Runs on a new Aquifer World sandbox/)).closest("[data-verdict]") as HTMLElement;
+    expect(verdict.dataset.verdict).toBe("caught");
+    expect(within(verdict).getByText("Detection only (remote)")).toBeTruthy();
+    expect(within(verdict).getByRole("button", { name: /Rule 2 · Shop\/world on an Aquifer machine/ })).toBeTruthy();
+    expect(verdict.textContent).toContain("Preview only: nothing is created.");
+    expect(verdict.textContent).toContain("Takes a maker slot: 0 of 4 in use. Party ceiling 5.");
+    expect(verdict.textContent).not.toMatch(/Blocked|waits with a blocker|When it runs/);
+    expect(within(ruleRow(slot, 2)).getByText("catches it")).toBeTruthy();
+  });
+
+  it("shows the server's unsupported-target refusal on the verdict and matched rule", async () => {
+    const rule = machineVolumes.many.rules[1]!;
+    if (rule.target.kind !== "provider") throw new Error("Expected a provider fixture.");
+    const unsupported = { ...machineVolumes.many, rules: [{ ...rule, match: {}, target: { ...rule.target, machine: { type: "keeper" as const }, workspace: "linked-worktree" as const } }] };
+    const slot = await page("machines", {}, unsupported);
+    const message = await slot.findByText("This rule's target isn't supported in this version.");
+    expect(message.closest('[data-verdict="blocked"]')).not.toBeNull();
+    expect(within(ruleRow(slot, 1)).getByText("catches it, blocked")).toBeTruthy();
+    expect(slot.queryByText(/Today it waits.*can't run work yet/)).toBeNull();
   });
 
   it("keeps a rule that sends work where it runs today unchanged", async () => {
@@ -220,9 +235,11 @@ describe("Where work runs page", () => {
 
   it("says where a hire no rule catches runs today in plain words, never the server's posture sentence", async () => {
     // Live on b2080590: the server's compatibility posture and its no-Keeper warning were printed raw, and "'s machine" followed a thread title.
-    const posture = "Today's placement and guard rules apply; this preview does not establish an execution posture.";
     const warning = "Without a Keeper, project metadata and the optional path are hypothetical, not admission proof.";
-    const compat = (input: Parameters<Handlers["placementPreview"]>[0]) => ({ ...previewFixture(machineVolumes.empty, input), verdict: { state: "compatibility" as const, posture }, warnings: [warning] });
+    const compat = async (input: Parameters<Handlers["placementPreview"]>[0]) => {
+      const { warningDetails: _details, ...preview } = await previewFixture(machineVolumes.empty, input);
+      return { ...preview, warnings: [warning] };
+    };
     const slot = await page("machines", { placementPreview: compat }, machineVolumes.empty);
     const verdict = (await slot.findByText("No rule catches it.")).closest("[data-verdict]") as HTMLElement;
     expect(verdict.textContent).toContain("Runs where it runs today: on Wren's machine (Find plugins missing from README table).");
@@ -232,7 +249,7 @@ describe("Where work runs page", () => {
   });
 
   it("words each coded preview warning, keeping the server's text as detail only where it says something new", async () => {
-    const coded = (input: Parameters<Handlers["placementPreview"]>[0]) => ({ ...previewFixture(machineVolumes.empty, input),
+    const coded = async (input: Parameters<Handlers["placementPreview"]>[0]) => ({ ...await previewFixture(machineVolumes.empty, input),
       warnings: ["Without a Keeper, project metadata and the optional path are hypothetical, not admission proof.", "ENOENT: /work/vault"],
       warningDetails: [{ code: "no-keeper" as const, text: "Without a Keeper, project metadata and the optional path are hypothetical, not admission proof." }, { code: "source-unreadable" as const, text: "ENOENT: /work/vault" }] });
     const slot = await page("machines", { placementPreview: coded }, machineVolumes.empty);
@@ -251,15 +268,18 @@ describe("Where work runs page", () => {
 
   it("names the Keeper alone when no other Keeper shares its name", async () => {
     const one = { ...structuredClone(machinesRoom), keepers: [structuredClone(machinesRoom.keepers[0]!), structuredClone(machinesRoom.keepers[3]!)] };
-    const slot = await page("machines", { room: () => one, placementPreview: (input) => ({ ...previewFixture(machineVolumes.empty, input), verdict: { state: "compatibility" as const, posture: MM.POSTURE.localPi } }) }, machineVolumes.empty);
+    const slot = await page("machines", { room: () => one }, machineVolumes.empty);
     const verdict = (await slot.findByText("No rule catches it.")).closest("[data-verdict]") as HTMLElement;
     expect(verdict.textContent).toContain("on Wren's machine.");
-    expect(verdict.textContent).toContain(`${MM.POSTURE.localPi} still applies, as it does today.`);
+    expect(verdict.textContent).toContain("The guard this hire gets today still applies.");
   });
 
   it("shows the server's preview warnings with the verdict", async () => {
     const warning = "No Keeper works in this project yet, so the Keeper's path and environment are unknown.";
-    const slot = await page("machines", { placementPreview: (input) => ({ ...previewFixture(machineVolumes.many, input), warnings: [warning] }) });
+    const slot = await page("machines", { placementPreview: async (input) => {
+      const { warningDetails: _details, ...preview } = await previewFixture(machineVolumes.many, input);
+      return { ...preview, warnings: [warning] };
+    } });
     const verdict = (await slot.findByText(warning)).closest("[data-verdict]");
     expect(verdict).toBeTruthy();
   });
@@ -279,7 +299,7 @@ describe("Where work runs page", () => {
   it("opens at a rule from a blocked hire and focuses it", async () => {
     const slot = await page("machines/devbox-rangers");
     await waitFor(() => expect(document.activeElement).toBe(ruleRow(slot, 6)));
-    expect(slot.getByText(/Opened from a blocked hire/)).toBeTruthy();
+    expect(slot.getByText(/Opened from a placement rule/)).toBeTruthy();
   });
 
   it("blocks every hire while the stored rules can't be read, and repairs with a full replacement", async () => {
@@ -413,11 +433,10 @@ describe("Where work runs page", () => {
     expect((within(await again.findByRole("form", { name: "Edit rule 2" })).getByLabelText("Name") as HTMLInputElement).value).toBe("Second raw");
   });
 
-  it("shows the preview banner while machine rules can't run work", async () => {
+  it("does not show the retired machine-rules preview banner", async () => {
     const slot = await page("machines");
-    const banner = slot.getByRole("status", { name: "Preview" });
-    expect(banner.textContent).toBe("Preview: rules are saved and previewed, but work can't run on other machines yet. A hire that a machine rule catches waits with a blocker until then.");
-    expect(banner.closest(".lit, .glow")).toBeNull();
+    expect(slot.queryByRole("status", { name: "Preview" })).toBeNull();
+    expect(slot.queryByText(/work can't run on other machines yet/)).toBeNull();
   });
 
   it("is on: in the sidebar, the phone page picker and settings", async () => {

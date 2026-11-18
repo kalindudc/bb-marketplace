@@ -409,7 +409,7 @@ describe("backend scope integration", () => {
     const f = await fixture();
     f.bb.sdk.environments.get = async () =>
       ({ hostId: "remote", path: f.work, isGitRepo: true, isWorktree: true, environmentProviderId: "git-worktree", branchName: "main" }) as never;
-    await expect(f.runtime.hire("lead", "project", f.input)).rejects.toThrow("server-local");
+    await expect(f.runtime.hire("lead", "project", f.input)).rejects.toThrow("No machine rule places Smith members for this project, and this Keeper runs on another machine. Add a rule in Settings, Where work runs.");
     expect(f.harness.inspection.sdk.callsTo("threads.send")).toHaveLength(0);
   });
   it("records a violation as an external tick fact, opens only one blocker and exposes scope state in RPCs", async () => {

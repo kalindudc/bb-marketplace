@@ -127,6 +127,8 @@
 .tavern.tv-page .mx-ceiling .mx-nowrap { white-space: nowrap; }
 
 /* Preview */
+.tavern.tv-page .mx-members { margin-bottom: 12px; }
+.tavern.tv-page .mx-members > ul { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
 .tavern.tv-page .mx-pv[hidden] { display: none; }
 .tavern.tv-page .mx-pv { display: grid; gap: 10px; padding: 12px 14px; border: 1px solid var(--tavern-line); background: var(--tavern-elev-recessed-bg); }
 .tavern.tv-page .mx-unavail { margin: 0; font-size: 12px; line-height: 1.5; }

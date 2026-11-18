@@ -7,13 +7,13 @@ import { settingsContract } from "../../shared/settings";
 import { ExpandsMark, Glyph, SkCard, IconButton, OpensMark, plural, useRegistry, useRemembered } from "../kit";
 import { ReadState } from "./common";
 import { settingsHref } from "./insights";
-import { MACHINE_RULES_RUN, machinesContract, PLACEMENT_RPC_LIVE, type PlacementCatalog, type PlacementPreview } from "./machines-contract";
+import { machinesContract, PLACEMENT_RPC_LIVE, type PlacementCatalog, type PlacementPreview } from "./machines-contract";
 import * as M from "./machines-model";
-import { PageGlyph } from "./glyphs";
 import { usePanelState } from "./panel-state";
 import { NumberField } from "./settings";
 import "./machines.css";
 import { FoldLoad } from "./skeletons";
+import { PlacementFacts } from "../kit/placement";
 
 const WHY = "Changed on the Where work runs page";
 const reducedMotion = () => typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -91,8 +91,7 @@ function RuleList({ api, rules, n, preview, editing, onEdit, consentFor, setCons
   consentFor: number | null; setConsentFor: (i: number | null) => void; invalidTarget: Set<number>;
 }) {
   const placed = M.placeProblems(api.saved.problems);
-  // The pipeline's own blocker means "waits", not a fault, so the row keeps "catches it"; a missing provider is caught below.
-  const blockedId = preview?.verdict.state === "matched" && preview.verdict.blocked && preview.verdict.blocked.code !== "placement-setup-incomplete" ? preview.verdict.ruleId : null;
+  const blockedId = preview?.verdict.state === "matched" && preview.verdict.blocked ? preview.verdict.ruleId : null;
   const saveRules = (next: M.Rule[], words: string, undo = false) => api.save({ rules: next }, words, { undo });
   // Focus follows the moved rule: the same arrow at its new number, or the other one once it reaches an end.
   const move = async (i: number, d: -1 | 1) => {
@@ -380,7 +379,7 @@ function Inputs({ title, schema, value, onChange, probAt, templates }: { title: 
         {templates && f.kind === "string" && focus === f.key && <div className="mx-tpl" role="group" aria-label={`Insert into ${f.key}`}>{M.TEMPLATES.map((t) => <button type="button" key={t} className="btn sm" onClick={() => onChange(M.writeInput(value, f.key, `${typeof v === "string" ? v : ""}${t}`))}>{t}</button>)}</div>}
         {p && <ProblemLine p={p} />}
       </div>; })}</div>
-    {templates && shape.fields.some((f) => f.kind === "string") && <p className="mx-hint">Text inputs may use <code>{"{keeper.branch}"}</code>, <code>{"{source.commit}"}</code>, <code>{"{member.branch}"}</code> and <code>{"{quest.id}"}</code>, filled in at each hire.</p>}
+    {templates && shape.fields.some((f) => f.kind === "string") && <p className="mx-hint">Text inputs may use <code>{"{keeper.branch}"}</code>, <code>{"{source.commit}"}</code>, <code>{"{source.base}"}</code>, <code>{"{member.branch}"}</code> and <code>{"{quest.id}"}</code>, filled in at each hire.</p>}
     {probAt("") && <ProblemLine p={probAt("")!} />}
   </fieldset>;
 }
@@ -440,26 +439,22 @@ function Verdict({ p, rules, n, keeperPlace, hire }: { p: PlacementPreview; rule
   const d = rule ? M.sendsTo(n, rule.target) : null;
   const evidence = v.matchEvidence.map((e) => { const f = e.field as M.MatchField; return { field: f, value: M.MATCH_FIELDS.includes(f) && f !== "repoRemotes" && f !== "keeperPathGlobs" ? M.valueWord(n, f, e.value) : e.value }; });
   const current = rule?.target.kind === "current";
-  // The server blocks every machine rule until the pipeline lands; that one blocker is the "waits" below, not a fault. A missing provider still is.
   const missing = d?.unavailable ? { code: "provider-unavailable", message: `${d.unavailable} is not installed in this bb. The rule is kept; members it catches wait here until you repair it.` } : null;
-  const fault = missing ?? (v.blocked && v.blocked.code !== "placement-setup-incomplete" ? v.blocked : null);
-  const waits = !current && !fault && (!MACHINE_RULES_RUN || v.blocked !== null);
+  const fault = v.blocked ?? missing;
   const where = d ? d.place.replace(/^.*? on /, "on ") : "elsewhere";
   const head = fault ? <><span className="mx-vk">Blocked.</span> It would wait here, not run anywhere else.</>
     : current ? <><span className="mx-vk">Runs where it runs today.</span> Rule {i + 1} keeps it there.</>
-      : waits ? <><span className="mx-vk">Would run {where}.</span> Today it waits with a blocker: machine rules can't run work yet.</>
-        : <><span className="mx-vk">Runs {where}.</span>{d && <> {d.place.replace(/ on .*$/, "")}{d.detail ? `, ${d.detail.split(" · ")[0]}` : ""}.</>}</>;
-  return <div className={`mx-verdict ${fault ? "blocked" : waits ? "waits" : ""}`} role="status" data-verdict={fault ? "blocked" : waits ? "waits" : "caught"}>
+      : <><span className="mx-vk">Runs {where}.</span>{d && <> {d.place.replace(/ on .*$/, "")}{d.detail ? `, ${d.detail.split(" · ")[0]}` : ""}.</>}</>;
+  return <div className={`mx-verdict ${fault ? "blocked" : ""}`} role="status" data-verdict={fault ? "blocked" : "caught"}>
     <p className="mx-vl">{head}</p>
     <p className="mx-vr">{evidence.length ? <>Because {evidence.map((e, k) => <Fragment key={e.field}>{k > 0 && " and "}{M.MATCH_FIELDS.includes(e.field) ? M.fieldWord(e.field).toLowerCase() : e.field} is <b>{e.value}</b></Fragment>)}.</> : <>Rule {i + 1} catches every hire.</>}</p>
     {i >= 0 && <button type="button" className="lnk-btn act mx-vlink" onClick={() => focusRule(i)}>Rule {i + 1} · {rule!.label}<OpensMark /></button>}
     {fault && <ProblemLine p={{ key: fault.code, message: fault.message }} />}
     {!fault && <div className="mx-vf">
-      {waits && d?.remote && <span className="mx-f mx-whenruns">When it runs: <span className="tag guard-detect mx-tag">{M.POSTURE.remote}</span></span>}
-      {!waits && v.remote === true && v.posture && <span className="tag guard-detect mx-tag">{v.posture}</span>}
+      {v.remote === true && v.posture && <span className="tag guard-detect mx-tag">{v.posture}</span>}
       {current && <span className="mx-f">{M.todayGuard(v.posture)}</span>}
-      {!current && !waits && v.remote === null && <span className="mx-f">Where it lands depends on the Keeper, so the guard can't be named yet.</span>}
-      <span className="mx-f">{v.slot === null ? "No machine slot is taken; today's party and guard rules apply." : `${waits ? "Would take" : "Takes"} a ${v.slot} slot: ${v.slotsInUse === null ? `${v.slotCap} per Keeper` : `${v.slotsInUse} of ${v.slotCap} in use`}. Party ceiling ${v.partyCeiling}.`}</span>
+      {!current && v.remote === null && <span className="mx-f">Where it lands depends on the Keeper, so the guard can't be named yet.</span>}
+      <span className="mx-f">{v.slot === null ? "No machine slot is taken; today's party and guard rules apply." : `Takes a ${v.slot} slot: ${v.slotsInUse === null ? `${v.slotCap} per Keeper` : `${v.slotsInUse} of ${v.slotCap} in use`}. Party ceiling ${v.partyCeiling}.`}</span>
     </div>}
     {note}
   </div>;
@@ -521,16 +516,16 @@ export function MachinesPage({ rule: ruleParam }: { rule?: string; hire?: string
   const summaryRules = [...new Set(M.placeProblems(api.saved.problems).filter((p) => p.rule !== null).map((p) => p.rule!))].sort((a, b) => a - b);
   const loose = M.placeProblems(api.saved.problems).filter((p) => p.rule === null && p.field !== "maxMakers" && p.field !== "maxCheckers");
 
+  const placedMembers = [...new Map([...(room.data?.keepers.flatMap(k => [k.member, ...k.boardQuests.flatMap(q => q.members), ...k.errands]) ?? []), ...(room.data?.solos ?? [])].filter(m => m.placement && m.placement.phase !== "released").map(m => [m.threadId, m])).values()];
   const wide = useWide(gridRef);
   const editor = editing !== null && data ? <div className="mx-edit-wrap"><Editor key={editKey!} api={api} rules={rules} saved={saved} index={editing} keptKey={editKey!} n={n} room={room.data} classes={classes} onDone={() => setEditing(null)} /></div> : null;
   return <div className="mx">
     <header className="mx-head">
       <h1 className="mx-t">Where work runs <span className="anc">machines</span></h1>
-      <p className="mx-intro">Rules send members to other machines. The first enabled rule that catches a hire wins; with none, it runs where it runs today.</p>
+      <p className="mx-intro">Rules send newly hired working members to other machines. The first enabled rule that catches a hire wins; with none, it runs where it runs today. Keepers stay where you run them. A lead runs where its hiring Keeper runs, unless the Keeper names an enabled rule.</p>
     </header>
-    {!MACHINE_RULES_RUN && <p className="tv-holdnote mx-banner" role="status" aria-label="Preview"><PageGlyph name="note" /><span>Preview: rules are saved and previewed, but work can't run on other machines yet. A hire that a machine rule catches waits with a blocker until then.</span></p>}
     <p className="sr" role="status" aria-live="polite">{api.undoable || api.announce.endsWith("deleted. Saved.") ? "" : api.announce}</p>
-    {from && ruleIndex >= 0 && <div className="tcard mx-from" role="status"><p><b>Opened from a blocked hire.</b> Rule {ruleIndex + 1}, {rules[ruleIndex]!.label}, is the rule that caught it.</p><button type="button" className="lnk-btn act" onClick={() => setFrom(false)}>Hide</button></div>}
+    {from && ruleIndex >= 0 && <div className="tcard mx-from" role="status"><p><b>Opened from a placement rule.</b> Rule {ruleIndex + 1}, {rules[ruleIndex]!.label}, placed this member or caught the hire.</p><button type="button" className="lnk-btn act" onClick={() => setFrom(false)}>Hide</button></div>}
     {api.undoable && <div className="tcard mx-undo" role="status"><span>{api.undoable.text}</span><button type="button" className="btn sm" onClick={() => void api.runUndo()}><Glyph name="undo" size={12} />Undo</button></div>}
     {!api.undoable && api.announce.endsWith("deleted. Saved.") && <p className="mx-done" role="status">{api.announce}</p>}
     {api.stale && <p className="tv-problem" role="alert">Settings changed somewhere else, so nothing was saved. The latest values are shown; make the change again.</p>}
@@ -548,6 +543,7 @@ export function MachinesPage({ rule: ruleParam }: { rule?: string; hire?: string
     </div>}
     {!data ? <FoldLoad error={api.query.error} retry={api.query.refetch} label="the placement rules"><div className="mx-grid"><div className="mx-main">{[0, 1, 2].map((i) => <SkCard key={i} lines={3} />)}</div></div></FoldLoad> : <div className="mx-grid" ref={gridRef}>
       <div className="mx-main">
+        {placedMembers.length > 0 && <section className="mx-pv mx-members" aria-labelledby="mx-members-h"><h2 id="mx-members-h" className="mx-h">Where members run now</h2><ul>{placedMembers.map(member => <li key={member.threadId}><b>{memberName(member, registry.data ?? { classes: [], characters: [] })}</b><PlacementFacts placement={member.placement} memberName={memberName(member, registry.data ?? { classes: [], characters: [] })} variant="card" /></li>)}</ul></section>}
         <div className="mx-lh"><h2 className="mx-h">Rules <span className="num mx-f">{rules.length}</span></h2><span className="mx-f">checked top to bottom</span>
           <button type="button" className="btn sm mx-addr" onClick={() => setEditing(-1)} disabled={editing !== null || rules.length >= M.MAX_RULES} title={rules.length >= M.MAX_RULES ? "Tavern keeps at most 50 rules." : undefined}><Glyph name="plus" size={12} />Add a rule</button></div>
         {rules.length === 0 && editing === null && <div className="mx-empty"><p><b>Every hire runs where it runs today.</b> Add a rule to send some work elsewhere, for example any work in shop/world to a new Aquifer World sandbox.</p></div>}
