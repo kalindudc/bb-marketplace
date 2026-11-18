@@ -26,6 +26,7 @@ A returned or stopped quest reopens for deviations without a new quest, the chec
 
 ### Fixed
 
+- Changing a class model no longer floods settings with repeated saves or leaves every class picker disabled. Each completed choice saves once after its menu closes, keeps the picker mounted and shows progress only on that row.
 - Hovering a walker no longer paints a square background behind it. The sprite is a button carrying Tavern's `act` marker, whose hover fill showed as a badge around the character; the fill is off, so the only hover cue is the sprite brightening.
 - The walking strip sits where it should. Its CSS selector was a descendant rule that never matched the strip's own element (the element carries both classes), so the strip lost its height and position and the absolutely-placed sprite anchored to an ancestor and overlapped the composer and the ask row. The selector is corrected and the row plus strip share one banner root.
 - A dark-mode character's eyes are dark again. The sprite's ink is a fixed dark in both themes, not bb's near-white dark foreground, so the eyes no longer turn white in dark mode.

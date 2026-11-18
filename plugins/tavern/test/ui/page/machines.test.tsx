@@ -312,6 +312,13 @@ describe("Where work runs page", () => {
     fireEvent.click(slot.getByRole("button", { name: "Add a rule" }));
     const form = await slot.findByRole("form", { name: "New rule 2" });
     fireEvent.change(within(form).getByLabelText("Name"), { target: { value: "Keep cortex local" } });
+    fireEvent.click(within(form).getByRole("button", { name: "Another machine" }));
+    fireEvent.change(within(form).getByRole("combobox", { name: "Machine and checkout" }), { target: { value: "custom" } });
+    const machine = within(form).getByRole<HTMLSelectElement>("combobox", { name: "Machine" });
+    fireEvent.change(machine, { target: { value: "project-checkout" } });
+    expect(machine.disabled).toBe(false);
+    expect(settingsUpdate).not.toHaveBeenCalled();
+    fireEvent.click(within(form).getByRole("button", { name: "Where it runs today" }));
     fireEvent.click(within(form).getByRole("button", { name: "Save rule" }));
     await waitFor(() => expect(settingsUpdate).toHaveBeenCalled());
     expect(settingsUpdate.mock.calls[0]![0].patch.machines!.rules![1]).toMatchObject({ id: "keep-cortex-local", label: "Keep cortex local", match: {}, target: { kind: "current" } });

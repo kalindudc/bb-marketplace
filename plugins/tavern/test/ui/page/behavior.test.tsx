@@ -242,6 +242,10 @@ describe("Tavern page surfaces", () => {
     fireEvent.click(await slot.findByRole("button", { name: /Edit Wren's voice/ }));
     const input = await slot.findByRole("textbox", { name: "Voice style" });
     fireEvent.change(input, { target: { value: "A short weather report." } });
+    const hue = slot.getByRole("combobox", { name: "Hue" }) as HTMLSelectElement;
+    fireEvent.change(hue, { target: { value: "plum" } });
+    expect(save).not.toHaveBeenCalled();
+    expect(hue.disabled).toBe(false);
     fireEvent.click(slot.getByRole("button", { name: "Save Wren" }));
     await slot.findByText("Voice saved to your character override.");
     expect(save.mock.calls[0]?.[0].voice.style).toBe("A short weather report.");

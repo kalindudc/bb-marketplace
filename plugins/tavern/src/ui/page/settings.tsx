@@ -1,5 +1,5 @@
 import { experimental_ProviderModelPicker as ProviderModelPicker, experimental_copyToClipboard, experimental_useProviders, experimental_useRpcMutation, experimental_useRpcQuery, useBbNavigate, type ExperimentalProviderModelPickerValue } from "@get-bb/plugin-sdk/app";
-import { useEffect, useId, useRef, useState, type ComponentType, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type ComponentType, type ReactNode } from "react";
 import { importSummary, isGuardrailSetting, settingsContract, type SettingsChange, type SettingsPatch, type SettingsView, type TunableKey } from "../../shared/settings";
 import { Glyph, OpensMark, TimeAgo, plural, useRegistry, useActorNames, useRemembered, ExpandsMark } from "../kit";
 import { ReadState, SegFilter } from "./common";
@@ -231,40 +231,70 @@ type ClassDefaults = { provider: string | null; model: string | null; reasoning:
 const describeExecution = (e: ClassDefaults | ClassOverride, providers: DisplayProviders, chosen = false) => <>{e.model ? <ModelName value={e.model} /> : "the agent's default model"}{e.reasoning ? `, ${e.reasoning} thinking` : chosen && e.reasoning === null ? ", the model's default thinking" : null}{e.provider && `, on ${providers.find(p => p.id === e.provider)?.displayName ?? e.provider}`}</>;
 
 /** bb's own agent, model and thinking picker for one class; until one is chosen, the class file decides. */
-function ClassExecution({ label, defaults, override, onSave, disabled }: { label: string; defaults: ClassDefaults; override: ClassOverride; onSave: (next: ClassOverride | null) => void; disabled?: boolean }) {
+function ClassExecution({ label, defaults, override, onSave }: { label: string; defaults: ClassDefaults; override: ClassOverride; onSave: (next: ClassOverride | null) => void | Promise<void> }) {
   const providers = experimental_useProviders();
   const [seed, setSeed] = useState<ExperimentalProviderModelPickerValue | null>(null);
-  // bb's picker reports its own correction of the starting value through onChange as it appears; only a person's input may save.
+  const [draft, setDraft] = useState<ExperimentalProviderModelPickerValue | null>(null);
+  const [saving, setSaving] = useState(0);
+  const [error, setError] = useState<string | null>(null);
+  const root = useRef<HTMLDivElement>(null);
+  const pending = useRef<ExperimentalProviderModelPickerValue | null>(null);
+  const save = useRef(onSave);
+  save.current = onSave;
   const touched = useRef(false);
   const touch = () => { touched.current = true; };
   const firstAvailable = providers.providers.find((p) => p.available)?.id ?? null;
   const chosen = override.model !== undefined || override.provider !== undefined || override.reasoning !== undefined;
   const providerId = override.provider ?? defaults.provider ?? firstAvailable;
-  const toOverride = (next: ExperimentalProviderModelPickerValue): ClassOverride => ({ provider: next.providerId, ...(next.model ? { model: next.model } : {}), reasoning: next.reasoningLevel || null });
-  if (chosen && !providerId) return <div className="tv-exec"><span className="tv-exec-d">Set here: {describeExecution(override, providers.providers, true)}{providers.status === "loading" ? " (loading agents)" : ""}</span><button type="button" className="lnk-btn act" disabled={disabled} onClick={() => onSave(null)} aria-label={`Use the class file for ${label}`}><span>Use the class file</span></button></div>;
-  if (chosen && providerId) {
-    const value = { providerId, model: override.model ?? "", reasoningLevel: override.reasoning ?? "" };
-    return <div className="tv-exec" onPointerDownCapture={touch} onClickCapture={touch} onKeyDownCapture={(e) => { if (e.key !== "Tab" && e.key !== "Shift" && e.key !== "Escape") touch(); }}>
-      <ProviderModelPicker value={value} onChange={(next) => { if (touched.current) onSave(toOverride(next)); }} disabled={disabled} align="end" />
-      <button type="button" className="lnk-btn act" disabled={disabled} onClick={() => { touched.current = false; onSave(null); }} aria-label={`Use the class file for ${label}`}><span>Use the class file</span></button>
-    </div>;
-  }
+  const persist = useCallback(async (next: ExperimentalProviderModelPickerValue | null) => {
+    pending.current = null;
+    touched.current = false;
+    setSaving(n => n + 1);
+    setError(null);
+    try {
+      await save.current(next ? { provider: next.providerId, ...(next.model ? { model: next.model } : {}), reasoning: next.reasoningLevel || null } : null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(n => n - 1);
+    }
+  }, []);
+  const commit = useCallback(() => {
+    if (!touched.current || !pending.current || root.current?.querySelector('[aria-expanded="true"]')) return;
+    void persist(pending.current);
+  }, [persist]);
+  const change = useCallback((next: ExperimentalProviderModelPickerValue) => {
+    setDraft(next);
+    if (!touched.current) return;
+    pending.current = next;
+    commit();
+  }, [commit]);
+  useEffect(() => {
+    if (!root.current) return;
+    commit();
+    // The host picker exposes its open state through its trigger, but has no onOpenChange prop.
+    const observer = new MutationObserver(commit);
+    observer.observe(root.current, { subtree: true, attributes: true, attributeFilter: ["aria-expanded"], childList: true });
+    return () => observer.disconnect();
+  });
+  useEffect(() => { if (!touched.current && !pending.current) setDraft(null); }, [override.provider, override.model, override.reasoning]);
   const fileLine = <span className="tv-exec-d">Class file: {describeExecution(defaults, providers.providers)}</span>;
-  if (!seed) {
-    const start = defaults.provider ?? firstAvailable;
-    return <div className="tv-exec">
-      {fileLine}
-      <button type="button" className="btn sm" disabled={disabled || !start} aria-label={`Choose model and thinking for ${label}`}
-        title={!start ? (providers.status === "loading" ? "Loading agents" : "No agent is available") : undefined}
-        onClick={() => start && setSeed({ providerId: start, model: defaults.model ?? "", reasoningLevel: defaults.reasoning ?? "" })}><span>Choose model and thinking</span></button>
-    </div>;
-  }
-  // A draft: picking only changes what is shown; nothing is stored until Save.
-  return <div className="tv-exec tv-exec-draft">
-    {fileLine}
-    <ProviderModelPicker value={seed} onChange={setSeed} disabled={disabled} align="end" />
-    <button type="button" className="btn sm pri" disabled={disabled || !seed.model} aria-label={`Save model and thinking for ${label}`} title={!seed.model ? "Pick a model first" : undefined} onClick={() => { const next = seed; setSeed(null); onSave(toOverride(next)); }}><span>Save</span></button>
-    <button type="button" className="lnk-btn act" onClick={() => setSeed(null)} aria-label={`Cancel choosing for ${label}`}><span>Cancel</span></button>
+  const editing = chosen || seed !== null;
+  const value = draft ?? (chosen ? { providerId: providerId ?? "", model: override.model ?? "", reasoningLevel: override.reasoning ?? "" } : seed!);
+  return <div ref={root} className={`tv-exec${!chosen && seed ? " tv-exec-draft" : ""}`}
+    onPointerDownCapture={touch} onClickCapture={touch} onKeyDownCapture={(e) => { if (e.key !== "Tab" && e.key !== "Shift" && e.key !== "Escape") touch(); }}>
+    {!chosen && fileLine}
+    {chosen && !providerId && <span className="tv-exec-d">Set here: {describeExecution(override, providers.providers, true)}{providers.status === "loading" ? " (loading agents)" : ""}</span>}
+    {editing && providerId && <ProviderModelPicker key="picker" value={value} onChange={chosen ? change : setSeed} align="end" />}
+    {saving > 0 && <span role="status">Saving {label}…</span>}
+    {error && <span role="alert">{error}</span>}
+    {chosen ? <button type="button" className="lnk-btn act" disabled={saving > 0} onClick={() => { setDraft(null); setSeed(null); void persist(null); }} aria-label={`Use the class file for ${label}`}><span>Use the class file</span></button>
+      : seed ? <>
+        <button type="button" className="btn sm pri" disabled={saving > 0 || !seed.model} aria-label={`Save model and thinking for ${label}`} title={!seed.model ? "Pick a model first" : undefined} onClick={() => { setDraft(seed); void persist(seed); }}><span>Save</span></button>
+        <button type="button" className="lnk-btn act" onClick={() => { touched.current = false; pending.current = null; setSeed(null); setDraft(null); }} aria-label={`Cancel choosing for ${label}`}><span>Cancel</span></button>
+      </> : <button type="button" className="btn sm" disabled={!providerId} aria-label={`Choose model and thinking for ${label}`}
+        title={!providerId ? (providers.status === "loading" ? "Loading agents" : "No agent is available") : undefined}
+        onClick={() => { touched.current = false; if (providerId) setSeed({ providerId, model: defaults.model ?? "", reasoningLevel: defaults.reasoning ?? "" }); }}><span>Choose model and thinking</span></button>}
   </div>;
 }
 
@@ -279,8 +309,8 @@ export function ClassesSection() {
       const override: ClassOverride = { ...d.effective.classes[c.id] };
       return <div key={c.id} className="tv-set-row tv-set-class">
         <div className="tv-set-l"><span className="tv-set-lbl">{c.label} <span className="anc">{c.plain}</span></span></div>
-        <div className="tv-set-c"><ClassExecution label={c.label} defaults={{ provider: c.provider, model: c.model, reasoning: c.reasoning }} override={override} disabled={api.pending}
-          onSave={(next) => { const entry: ClassOverride = next ?? {}; void api.save({ classes: { [c.id]: entry } }); }} /></div>
+        <div className="tv-set-c"><ClassExecution label={c.label} defaults={{ provider: c.provider, model: c.model, reasoning: c.reasoning }} override={override}
+          onSave={(next) => { const entry: ClassOverride = next ?? {}; return api.save({ classes: { [c.id]: entry } }); }} /></div>
       </div>;
     })}
   </SettingsCard>}</Shell>;

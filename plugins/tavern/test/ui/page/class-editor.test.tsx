@@ -78,7 +78,8 @@ describe("Classes page: the class editor", () => {
   });
 
   it("warns before widening the scope and asks to save and allow; narrowing needs no confirm", async () => {
-    const slot = await tab();
+    const saveClass = vi.fn();
+    const slot = await tab({ saveClass });
     const select = await slot.findByRole("combobox", { name: /Scope preset/ });
     fireEvent.change(select, { target: { value: "open" } });
     expect(await slot.findByText(/will be able to touch more: scope worktree to open, with no Tavern limits/)).toBeTruthy();
@@ -86,6 +87,8 @@ describe("Classes page: the class editor", () => {
     fireEvent.change(select, { target: { value: "readonly" } });
     await waitFor(() => expect(slot.queryByRole("button", { name: "Save and allow" })).toBeNull());
     expect(slot.getByRole("button", { name: "Save" })).toBeTruthy();
+    expect(saveClass).not.toHaveBeenCalled();
+    expect((select as HTMLSelectElement).disabled).toBe(false);
   });
 
   it("keeps the draft when the class changed underneath, and Discard restores the loaded class", async () => {
