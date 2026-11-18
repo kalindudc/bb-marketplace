@@ -62,7 +62,7 @@ async function leadFixture() {
   vi.spyOn(f.runtime, "prepareRegistry").mockResolvedValue({ ...registry, classes });
   const quest = await seedQuest(f.k, "lead", "Hire a lead", "LEAD");
   f.k.plan("lead", { ...planInput(quest.id), party: [{ classId: "keeper", characterId: null, model: null, purpose: "Lead", waypointIds: [] }] });
-  f.k.answerAsk(f.k.asks("lead").find(ask => ask.state === "open" && ask.kind === "greenlight")!.id, "approve", null, "page");
+  f.k.answerAsk(f.k.asks("lead").find(ask => ask.state === "open" && ask.kind === "greenlight")!.id, "approve", null, "page", "user");
   return { ...f, leadHire: { ...hire, classId: "keeper", errand: false, boardQuestId: quest.id } };
 }
 
@@ -256,7 +256,7 @@ describe("rule-driven member hires", () => {
   it("finishes the normal waypoint hire after dispatch binds the child and the spawn reply is lost", async () => {
     const f = fixture(), quest = await seedQuest(f.k, "lead", "Build after a lost reply", "LOST");
     f.k.plan("lead", { ...planInput(quest.id), party: [{ classId: "smith", characterId: null, model: null, purpose: "Build", waypointIds: ["w1"] }] });
-    f.k.answerAsk(f.k.asks("lead").find(ask => ask.state === "open" && ask.kind === "greenlight")!.id, "approve", null, "page");
+    f.k.answerAsk(f.k.asks("lead").find(ask => ask.state === "open" && ask.kind === "greenlight")!.id, "approve", null, "page", "user");
     const prepare = vi.spyOn(f.port, "prepare"), link = vi.spyOn(f.port, "linkWaypoint");
     const delivered = vi.spyOn(f.runtime, "spawnBriefDelivered");
     const spawn = vi.spyOn(f.bb.sdk.threads, "spawn").mockImplementation(async args => {

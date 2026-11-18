@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { putQuestFixture } from "./support";
 import { seedQuest } from "./support";
 import { expect, it, vi } from "vitest";
 import { setup } from "./runtime-fixture";
@@ -21,7 +22,7 @@ it.each(["released", "release-pending", "archive-pending", "deleted", "archived"
   if (state === "archive-pending") f.k.store.patch("child", { archivePending: true });
   if (state === "deleted") f.k.store.patch("child", { deletedAt: f.time() });
   if (state === "archived") f.k.store.patch("child", { archivedAt: f.time() });
-  if (state === "ended") f.k.store.put("quests", f.q.id, { ...f.q, phase: "done", endedAt: f.time() });
+  if (state === "ended") putQuestFixture(f.k.store, f.q.id, { ...f.q, phase: "done", endedAt: f.time() });
   const occupied = state === "release-pending" ? 1 : 0;
   expect(f.k.store.activeStaffing("lead")).toHaveLength(occupied);
   expect(f.k.store.allocated(f.q.id, "smith")).toBe(occupied);

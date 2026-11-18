@@ -11,7 +11,7 @@ import { createFakePluginHost, makeThreadResponse } from "./host";
 import { providerSdk } from "./provider-fixture";
 import { worktreeProvider } from "./environment-fixture";
 
-export function setup(sdkOverrides: Record<string, unknown> = {}) {
+export function setup(sdkOverrides: Record<string, unknown> = {}, pluginRoot = fileURLToPath(new URL("../../", import.meta.url))) {
   let now = 1_000_000;
   const db = new Database(":memory:");
   for (const sql of MIGRATIONS) db.exec(sql);
@@ -51,7 +51,7 @@ export function setup(sdkOverrides: Record<string, unknown> = {}) {
   const runtime = new TavernRuntime(
     host.bb,
     k,
-    new Registry(fileURLToPath(new URL("../../", import.meta.url)), "/nonexistent"),
+    new Registry(pluginRoot, "/nonexistent"),
   );
   k.bind("lead", "keeper", "wren", "project");
   return {

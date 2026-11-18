@@ -129,12 +129,12 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   register(
     "tavern_reopen",
     "Re-opened a board quest",
-    "Re-open one of your returned or stopped board quests to do deviations and follow-up commits without opening a new quest. The plan version and its greenlight are kept; the quest returns to build. Refused for a live quest, and for an archived quest: bring it up from the cellar first. A Warden still verifies the deviation work before the next wrap.",
-    z.object({ boardQuestId: id }),
+    "Re-open one of your returned or stopped board quests to do deviations and follow-up commits without opening a new quest. Cite messageId of the user’s uncancelled, unused routed message, newer than the last phase transition; its quoted text is the receipt. The quest's plan version and its greenlight are kept. It returns to build with a greenlit plan, or scout without one. Refused for a live quest, and for an archived quest: bring it up from the cellar first. A Warden still verifies the deviation work before the next wrap.",
+    z.object({ boardQuestId: id, messageId: id }),
     (input, threadId) => {
       const quest = k.owned(threadId, input.boardQuestId);
-      const reopened = k.reopenQuest(quest.id, { kind: "agent", threadId });
-      return `Re-opened ${reopened.title} for deviations; it is back in build at plan v${reopened.planVersion}.`;
+      const reopened = k.reopenQuest(quest.id, { kind: "agent", threadId }, input.messageId);
+      return `Re-opened ${reopened.title} for deviations; it is back in ${reopened.phase} at plan v${reopened.planVersion}.`;
     },
   );
   register(
@@ -238,6 +238,8 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
       }
     },
   );
+  register("tavern_hold", "Held the quest", "Hold only by citing messageId of the user’s uncancelled, unused message routed to this quest, newer than its last phase transition; its quoted text is the receipt.", z.object({ boardQuestId: id, messageId: id }), (input, threadId) => runtime.setQuestHeld(input.boardQuestId, true, { kind: "agent", threadId }, input.messageId));
+  register("tavern_resume", "Resumed the quest", "Resume only by citing messageId of the user’s uncancelled, unused message routed to this quest, newer than its last phase transition; its quoted text is the receipt.", z.object({ boardQuestId: id, messageId: id }), (input, threadId) => runtime.setQuestHeld(input.boardQuestId, false, { kind: "agent", threadId }, input.messageId));
   register(
     "tavern_plan",
     "Wrote the quest map",

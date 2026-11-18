@@ -113,7 +113,7 @@ describe("scope admission across provisioning", () => {
     if (classId === "smith") {
       const quest = await seedQuest(f.k,"lead", "Build", "Build");
       f.k.plan("lead", { ...planInput(quest.id), party: [{ classId, characterId: null, model: null, purpose: "Build", waypointIds: ["w1"] }] });
-      f.k.answerAsk(f.k.asks("lead")[0]!.id, "approve", null, "page");
+      f.k.answerAsk(f.k.asks("lead")[0]!.id, "approve", null, "page", "user");
       boardQuestId = quest.id;
     }
     f.bb.sdk.threads.spawn = vi.fn(async args => {
@@ -171,7 +171,7 @@ describe("scope admission across provisioning", () => {
     const f = fixture();
     const q = await seedQuest(f.k,"lead", "Build", "Tests pass");
     f.k.plan("lead", { ...planInput(q.id), party: [{ classId: "smith", characterId: null, model: null, purpose: "Build", waypointIds: ["w1"] }] });
-    f.k.answerAsk(f.k.asks("lead")[0]!.id, "approve", null, "page");
+    f.k.answerAsk(f.k.asks("lead")[0]!.id, "approve", null, "page", "user");
     f.bb.sdk.threads.spawn = vi.fn(async () => f.pending("child"));
     f.bb.sdk.threads.send = vi.fn(async () => ({ ok: true as const, delivery: "sent" as const }));
     await f.runtime.hire("lead", "project", {
@@ -198,7 +198,7 @@ describe("scope admission across provisioning", () => {
     const f = fixture();
     const q = await seedQuest(f.k,"lead", "Build", "Build");
     f.k.plan("lead", { ...planInput(q.id), party: [{ classId: "smith", characterId: null, model: null, purpose: "Build", waypointIds: ["w1"] }] });
-    f.k.answerAsk(f.k.asks("lead")[0]!.id, "approve", null, "page");
+    f.k.answerAsk(f.k.asks("lead")[0]!.id, "approve", null, "page", "user");
     const send = vi.spyOn(f.bb.sdk.threads, "send");
     let queued: ReturnType<typeof queued049> | null = null;
     let started = false;
@@ -247,7 +247,7 @@ describe("scope admission across provisioning", () => {
     const f = fixture();
     const q = await seedQuest(f.k,"lead", "Build", "Build");
     f.k.plan("lead", { ...planInput(q.id), party: [{ classId: "smith", characterId: null, model: null, purpose: "Build", waypointIds: ["w1"] }] });
-    f.k.answerAsk(f.k.asks("lead")[0]!.id, "approve", null, "page");
+    f.k.answerAsk(f.k.asks("lead")[0]!.id, "approve", null, "page", "user");
     let queued: ReturnType<typeof queued049>;
     f.bb.sdk.threads.spawn = vi.fn(async args => {
       if (!args.input?.length) throw new Error("HTTP 400: input must contain at least one entry");

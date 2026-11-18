@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { concludeQuest, putQuestFixture } from "./support";
 import { seedQuest } from "./support";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BoardQuestDetail, Room, ThreadDecor } from "../../src/shared/contract";
@@ -59,7 +60,7 @@ describe("quest tale and credits", () => {
   it("snapshots skipped reasons in a new wrap and retains the story after cellar", async () => {
     const f = await fixture();
     f.k.plan("lead", { ...planInput(f.q.id), waypoints: [{ ...planInput(f.q.id).waypoints[0]!, optional: true }] });
-    await f.runtime.wrap("lead", f.q.id, "The smoke check is complete.", "Nothing", [{ waypointId: "w1", reason: "No implementation was needed" }]);
+    await concludeQuest(f.runtime, "lead", f.q.id, "The smoke check is complete.", "Nothing", [{ waypointId: "w1", reason: "No implementation was needed" }]);
     const wrapped = f.k.store.events("lead", 0, 200).find(e => e.type === "quest.wrapped")!;
     expect(wrapped.data.skipped).toEqual([{ waypointId: "w1", reason: "No implementation was needed" }]);
     await f.call("archiveBoardQuests", { ids: [f.q.id], archived: true });
@@ -183,7 +184,7 @@ describe("archived Keepers and current holding state", () => {
 
   it("keeps archived rows and their uncellared quests but never holds or accepts typing for them", async () => {
     const f = await fixture();
-    f.k.store.put("quests", f.q.id, { ...f.k.quest(f.q.id), phase: "done", endedAt: f.time() });
+    putQuestFixture(f.k.store, f.q.id, { ...f.k.quest(f.q.id), phase: "done", endedAt: f.time() });
     f.k.store.patch("lead", { heldAt: f.time(), typingAt: f.time(), userAt: f.time() });
     await f.runtime.threadLifecycle("thread.archived", { thread: makeThreadResponse({ id: "lead", archivedAt: f.time() }) });
     const room = await f.call<Room>("room", {});

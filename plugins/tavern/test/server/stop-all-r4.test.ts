@@ -5,7 +5,7 @@ import { makeThreadResponse } from "./host";
 import { StopAll } from "../../src/server/stop-all";
 import { TavernRuntime } from "../../src/server/runtime";
 import { stopAllHandlers } from "../../src/server/stop-all-rpc";
-import { seedQuest } from "./support";
+import { putQuestFixture, seedQuest } from "./support";
 
 const client = { experimental_caller: { kind: "client" } } as const;
 afterEach(() => vi.useRealTimers());
@@ -91,7 +91,7 @@ describe("R4 brake regressions", () => {
     const f = setup(), q = await seedQuest(f.k, "lead", "Hold", "Draft");
     f.k.bind("member", "ranger", "lark", "project", { keeperThreadId: "lead", boardQuestId: q.id, waypointId: null, errand: false, title: "Scout", brief: { outcome: "Scout", doneWhen: "Findings", mode: "make-it-work", outOfScope: "Production", context: [], questions: [], timeboxMinutes: null } });
     f.k.store.patch("member", { releasePending: "Pending release", archivePending: true });
-    f.k.store.put("quests", q.id, { ...q, phase: "stopping" });
+    putQuestFixture(f.k.store, q.id, { ...q, phase: "stopping" });
     f.k.store.put("stopAll", "tavern", { state: "stopped", since: f.time(), by: { kind: "user" }, receipt: { startedAt: f.time(), completedAt: null, elapsedMs: 0, stopped: 0, keepersStopped: 0, membersStopped: 0, stillStopping: 1, failed: 0, alreadyIdle: 0, entries: [{ threadId: "member", role: "member", status: "still-stopping", error: null, confirmedAt: null }] } });
     const restarted = new TavernRuntime(f.bb, f.k, f.runtime.registry);
     const pinWorktree = vi.fn(async () => {}), refreshPresets = vi.fn(async () => {});

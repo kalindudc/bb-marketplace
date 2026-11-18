@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { putQuestFixture } from "./support";
 import { seedQuest } from "./support";
 import { describe, expect, it, vi } from "vitest";
 import { makeMessageDispatchHookContext, makeQueueEntry } from "@get-bb/plugin-sdk/testing";
@@ -22,9 +23,9 @@ async function fixture() {
     const member = f.k.member("child")!;
     if (kind === "done" || kind === "failed") f.k.store.put("members", member.threadId, { ...member, state: kind });
     else if (kind === "deleted") f.k.store.patch(member.threadId, { deletedAt: f.time() });
-    else if (kind === "ended-quest") f.k.store.put("quests", quest.id, { ...quest, endedAt: f.time() });
+    else if (kind === "ended-quest") putQuestFixture(f.k.store, quest.id, { ...quest, endedAt: f.time() });
     else if (kind === "archived") f.k.store.patch(member.threadId, { archivedAt: f.time() });
-    else if (kind === "finished-quest") f.k.store.put("quests", quest.id, { ...quest, phase: "done", endedAt: f.time() });
+    else if (kind === "finished-quest") putQuestFixture(f.k.store, quest.id, { ...quest, phase: "done", endedAt: f.time() });
     else throw new Error(`Unknown inactive fixture: ${kind}`);
   };
   return { ...f, quest, stop, send, remove, hold, close, inactive };
@@ -175,7 +176,7 @@ describe("inactive queued briefs", () => {
 describe("away lifecycle boundaries", () => {
   it.each(["stopping", "ended"])("refuses a %s quest in the Closing time finish selection", async kind => {
     const f = await fixture();
-    f.k.store.put("quests", f.quest.id, { ...f.quest, ...(kind === "stopping" ? { phase: "stopping" as const } : { endedAt: f.time() }) });
+    putQuestFixture(f.k.store, f.quest.id, { ...f.quest, ...(kind === "stopping" ? { phase: "stopping" as const } : { endedAt: f.time() }) });
     await expect(f.runtime.away.close({ revision: 0, until: f.time() + 60_000, quests: [{ questId: f.quest.id, endState: "drafts-ready" }] })).rejects.toThrow("live quests");
     expect(f.runtime.away.store.snapshot().window).toBeNull();
     expect(f.stop).not.toHaveBeenCalled(); expect(f.remove).not.toHaveBeenCalled(); expect(f.send).not.toHaveBeenCalled();

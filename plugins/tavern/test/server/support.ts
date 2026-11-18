@@ -41,6 +41,19 @@ export async function seedQuest(keeper: Keeper, threadId: string, title: string,
   keeper.route(threadId, { kind: "new-quest", summary: title, notes: [] });
   return keeper.openQuest(threadId, title, short);
 }
+export function putQuestFixture(store: import("../../src/server/keeper/store").KeeperStore, id: string, quest: import("../../src/shared/schema").BoardQuest) {
+  store.db.prepare("INSERT INTO tavern_records(kind,id,data,archived_at) VALUES('quests',?,?,?) ON CONFLICT(kind,id) DO UPDATE SET data=excluded.data,archived_at=excluded.archived_at").run(id, JSON.stringify(quest), quest.archivedAt ?? null);
+  return quest;
+}
+export async function concludeQuest(runtime: import("../../src/server/runtime").TavernRuntime, ...args: Parameters<import("../../src/server/runtime").TavernRuntime["wrap"]>) {
+  const [threadId, id] = args;
+  const quest = runtime.keeper.quest(id);
+  if (quest.phase === "done") return runtime.wrap(...args);
+  if (quest.phase === "greenlight") runtime.keeper.answerAsk(runtime.keeper.store.openAsks(threadId, id).find(ask => ask.kind === "greenlight")!.id, "approve", null, "page", "user");
+  const ask = await runtime.proposeWrap(...args);
+  runtime.keeper.answerAsk(ask.askId!, "conclude", null, "page", "user");
+  return runtime.wrap(...args);
+}
 export function planInput(boardQuestId: string) {
   return {
     boardQuestId,

@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { putQuestFixture } from "./support";
 import { seedQuest } from "./support";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { describe, expect, it, vi } from "vitest";
@@ -107,7 +108,7 @@ describe("Closing time re-anchors only Keepers with window work", () => {
     expect(f.runtime.away.snapshot().heldCount).toBe(0);
     await f.runtime.tick("lead");
     expect(f.k.store.runtime("lead").reanchor).toBeNull();
-    f.k.store.put("quests", quest.id, { ...quest, phase: "done", endedAt: f.time() });
+    putQuestFixture(f.k.store, quest.id, { ...quest, phase: "done", endedAt: f.time() });
     f.k.store.put("members", child.threadId, { ...child, state: "done" });
     const restarted = new TavernRuntime(f.bb, f.k, f.runtime.registry);
     f.anchors.mockClear(); f.send.mockClear();
@@ -128,9 +129,9 @@ describe("Closing time re-anchors only Keepers with window work", () => {
 
   it.each(["finishes", "becomes-live"])("retains relevant work if it %s before Close requests its anchors", async change => {
     const f = fixture(), quest = await seedQuest(f.k,"lead", "Changing work", "Private draft");
-    if (change === "becomes-live") f.k.store.put("quests", quest.id, { ...quest, archivedAt: f.time() });
+    if (change === "becomes-live") putQuestFixture(f.k.store, quest.id, { ...quest, archivedAt: f.time() });
     vi.spyOn(f.bb.rpc, "experimental_invalidate").mockImplementationOnce(() => {
-      f.k.store.put("quests", quest.id, change === "finishes" ? { ...quest, phase: "done", endedAt: f.time() } : quest);
+      putQuestFixture(f.k.store, quest.id, change === "finishes" ? { ...quest, phase: "done", endedAt: f.time() } : quest);
     });
     await f.close();
     expect(anchorsFor(f)).toEqual([expect.stringContaining("Closing time changed")]);
@@ -143,7 +144,7 @@ describe("Closing time re-anchors only Keepers with window work", () => {
   it("does not carry an earlier window's work cohort into a later empty window", async () => {
     const f = fixture(), quest = await seedQuest(f.k,"lead", "First window", "Draft");
     await f.close(); await f.runtime.tick("lead");
-    f.k.store.put("quests", quest.id, { ...quest, phase: "done", endedAt: f.time() });
+    putQuestFixture(f.k.store, quest.id, { ...quest, phase: "done", endedAt: f.time() });
     await f.runtime.away.return(returned); await f.runtime.tick("lead");
     f.anchors.mockClear(); f.send.mockClear();
     await f.close(); await f.runtime.tick("lead");
@@ -184,7 +185,7 @@ describe("Closing time re-anchors only Keepers with window work", () => {
 
   it.each(["done", "stopped", "archived"])("does not count an old %s quest as window work", async state => {
     const f = fixture(), quest = await seedQuest(f.k,"lead", "Old work", "Past result");
-    f.k.store.put("quests", quest.id, { ...quest, ...(state === "archived" ? { archivedAt: f.time() } : { phase: state as "done" | "stopped", endedAt: f.time() }) });
+    putQuestFixture(f.k.store, quest.id, { ...quest, ...(state === "archived" ? { archivedAt: f.time() } : { phase: state as "done" | "stopped", endedAt: f.time() }) });
     await f.close(); await f.runtime.away.return(returned);
     expect(f.anchors).not.toHaveBeenCalled();
   });
@@ -216,7 +217,7 @@ describe("Closing time re-anchors only Keepers with window work", () => {
     if (state === "release" || state === "ended-release") f.k.store.patch(member.threadId, { releasePending: "Confirm release" });
     if (state === "ended-release") {
       const quest = await seedQuest(f.k,"lead", "Ended work", "Past draft");
-      f.k.store.put("quests", quest.id, { ...quest, phase: "done", endedAt: f.time() });
+      putQuestFixture(f.k.store, quest.id, { ...quest, phase: "done", endedAt: f.time() });
       f.k.store.put("members", member.threadId, { ...f.k.member(member.threadId)!, boardQuestId: quest.id });
     }
     if (state === "cleanup") f.k.store.patch(member.threadId, { archivePending: true });

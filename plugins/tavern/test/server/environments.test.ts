@@ -19,7 +19,7 @@ async function smith(environmentProviderId: string | null, branchName: string | 
     ...planInput(q.id),
     party: [{ classId: "smith", characterId: null, model: null, purpose: "Build", waypointIds: ["w1"] }],
   });
-  f.k.answerAsk(f.k.asks("lead").find(ask => ask.kind === "greenlight")!.id, "approve", null, "page");
+  f.k.answerAsk(f.k.asks("lead").find(ask => ask.kind === "greenlight")!.id, "approve", null, "page", "user");
   const hire = () => f.runtime.hire("lead", "project", {
     classId: "smith", boardQuestId: q.id, waypointId: "w1", title: "Build",
     brief: { outcome: "Build", mode: "make-it-work", outOfScope: "Deploy", doneWhen: "Tests pass", context: [], questions: [], timeboxMinutes: null },

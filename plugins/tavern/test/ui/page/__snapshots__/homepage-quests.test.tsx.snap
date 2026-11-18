@@ -2,7 +2,7 @@
 
 exports[`homepage quest rows > leaves the room and Ledger rows unchanged without showKeeper > loaded Ledger rows 1`] = `
 [
-  "<div class="lg-qh"><button type="button" class="lg-qt act" title="Open the quest page: Vault cutover"><b>Vault cutover</b><svg class="tavern-glyph act-i" width="11" height="11" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="square" stroke-linejoin="miter"><path d="M9 6l6 6-6 6"></path></svg></button><span class="m">plan v1</span><span class="phw"><span class="ph" role="img" aria-label="Phase: greenlight, 2 of 5"><i class="d"></i><i class="c"></i><i class=""></i><i class=""></i><i class=""></i></span><span class="w">greenlight</span></span></div>",
+  "<div class="lg-qh"><button type="button" class="lg-qt act" title="Open the quest page: Vault cutover"><b class="clamp">Vault cutover</b><svg class="tavern-glyph act-i" width="11" height="11" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="square" stroke-linejoin="miter"><path d="M9 6l6 6-6 6"></path></svg></button><span class="m">plan v1</span><span class="phw"><span class="ph" role="img" aria-label="Phase: greenlight, 2 of 5"><i class="d"></i><i class="c"></i><i class=""></i><i class=""></i><i class=""></i></span><span class="w">greenlight</span></span></div>",
 ]
 `;
 

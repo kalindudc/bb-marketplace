@@ -345,6 +345,7 @@ export { inlineCode, reportBlocks, type ReportBlock } from "../kit";
 export const leftNothing = (left: string | null | undefined) => !left || /^\s*(?:nothing|none)\.?\s*$/i.test(left);
 /** The quest map's aside: a ready estimate only while the quest is active, never "≈ ~"; a finished map says it is the map as the quest ended. */
 export function mapAside(quest: Pick<BoardQuestSummary, "phase" | "plan">): string {
+  if (quest.phase === "held") return "held by you";
   if (quest.phase === "done") return "as it returned";
   if (quest.phase === "stopped") return "as it was when stopped";
   const eta = quest.plan?.eta?.replace(/^\s*(?:~|≈|about|approximately|around|roughly)\s*/i, "").trim();
@@ -375,7 +376,7 @@ export type StoryNames = { name(threadId: string): string | null; headline(repor
 
 /** Who stopped the quest, from its quest.stopped event: "you", an agent's name, or null when unknown. */
 export function stopperOf(events: StoryDetail["events"], questId: string, names: Pick<StoryNames, "name">): string | null {
-  const stop = [...events].reverse().find((e) => e.type === "quest.stopped" && (e.boardQuestId === null || e.boardQuestId === questId));
+  const stop = [...events].reverse().find((e) => e.type === "quest.stopping" && (e.boardQuestId === null || e.boardQuestId === questId));
   if (!stop) return null;
   if (stop.actor.kind === "user") return "you";
   if (stop.actor.kind === "agent") return names.name(stop.actor.threadId);

@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { concludeQuest } from "./support";
 import { seedQuest } from "./support";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import Database from "better-sqlite3";
@@ -121,10 +122,10 @@ describe("asks and consent", () => {
     k.plan("lead", planInput(q.id));
     const old = k.asks("lead")[0]!;
     k.plan("lead", planInput(q.id));
-    expect(() => k.answerAsk(old.id, "approve", null, "page")).toThrow(/no longer open/);
+    expect(() => k.answerAsk(old.id, "approve", null, "page", "user")).toThrow(/no longer open/);
     const ask = k.asks("lead").find((a) => a.state === "open")!;
-    k.answerAsk(ask.id, "approve", null, "banner");
-    k.answerAsk(ask.id, "approve", null, "page");
+    k.answerAsk(ask.id, "approve", null, "banner", "user");
+    k.answerAsk(ask.id, "approve", null, "page", "user");
     expect(k.quest(q.id)).toMatchObject({ phase: "build", greenlitVersion: 2 });
   });
   it("does not let an agent forge a user decision or an answered ask", () => {
@@ -348,7 +349,7 @@ describe("host boundaries", () => {
     };
     await expect(runtime.hire("lead", "project", input)).rejects.toThrow(/greenlight/);
     const ask = k.asks("lead").find((a) => a.state === "open")!;
-    k.answerAsk(ask.id, "approve", null, "page");
+    k.answerAsk(ask.id, "approve", null, "page", "user");
     await runtime.hire("lead", "project", input);
     expect(k.member("child")).toMatchObject({
       role: "member",
@@ -455,14 +456,13 @@ describe("host boundaries", () => {
     const q = await seedQuest(k,"lead", "A", "A");
     const plan = planInput(q.id);
     k.plan("lead", plan);
-    await expect(runtime.wrap("lead", q.id, "Done", "")).rejects.toThrow(/verified/);
+    await expect(concludeQuest(runtime, "lead", q.id, "Done", "")).rejects.toThrow(/verified/);
     await expect(
-      runtime.wrap("lead", q.id, "Done", "", [{ waypointId: "w1", reason: "Not needed" }]),
+      concludeQuest(runtime, "lead", q.id, "Done", "", [{ waypointId: "w1", reason: "Not needed" }]),
     ).rejects.toThrow(/optional/);
     k.plan("lead", { ...plan, waypoints: plan.waypoints.map((w) => ({ ...w, optional: true })) });
-    await runtime.wrap("lead", q.id, "Done", "Optional work left", [
-      { waypointId: "w1", reason: "Not needed" },
-    ]);
+    const close = await runtime.proposeWrap("lead", q.id, "Done", "Optional work left", [{ waypointId: "w1", reason: "Not needed" }]);
+    await runtime.answerAsk(close.askId!, "conclude", null, "page", true);
     expect(k.summary(q.id).waypoints[0]!.state).toBe("skipped");
     expect(k.quest(q.id).phase).toBe("done");
   });
@@ -493,7 +493,7 @@ describe("host boundaries", () => {
     const { k, port } = setup();
     const q = await seedQuest(k,"lead", "A", "A");
     k.plan("lead", planInput(q.id));
-    k.answerAsk(k.asks("lead")[0]!.id, "approve", null, "page");
+    k.answerAsk(k.asks("lead")[0]!.id, "approve", null, "page", "user");
     const entry = journalEntrySchema.parse({
       threadId: "child",
       id: "a1",
@@ -511,12 +511,12 @@ describe("host boundaries", () => {
       updatedBy: { kind: "agent", threadId: "warden" },
     });
     port.linkedEntries = () => [entry];
-    k.refreshPhase(q.id);
-    expect(k.quest(q.id).phase).toBe("check");
+    expect(k.quest(q.id).phase).toBe("build");
+    expect(k.summary(q.id).phase).toBe("check");
     expect(k.summary(q.id).waypoints[0]!.state).toBe("reported");
     entry.status = "verified";
-    k.refreshPhase(q.id);
-    expect(k.quest(q.id).phase).toBe("wrap");
+    expect(k.quest(q.id).phase).toBe("build");
+    expect(k.summary(q.id).phase).toBe("wrap");
     expect(k.summary(q.id).waypoints[0]).toMatchObject({
       state: "verified",
       evidenceCount: 1,

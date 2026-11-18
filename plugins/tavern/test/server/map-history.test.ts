@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { putQuestFixture } from "./support";
 import { afterEach, expect, it, vi } from "vitest";
 import { rpcContract, type MapHistory } from "../../src/shared/contract";
 import { registerRpc } from "../../src/server/rpc";
@@ -26,8 +27,8 @@ it("uses a dedicated tag and invalidates it on quest and Keeper archive transiti
   const signal = vi.spyOn(f.bb.rpc, "experimental_invalidate").mockImplementation(values => { invalidated.push(...values); });
   f.k.changed("lead");
   expect(invalidated).not.toContain("tavern:map-history");
-  f.k.store.put("quests", "ended", { ...fixtureBoard, id: "ended", keeperThreadId: "lead", phase: "done" });
-  f.k.archiveQuests(["ended"], true);
+  putQuestFixture(f.k.store, "ended", { ...fixtureBoard, id: "ended", keeperThreadId: "lead", phase: "done" });
+  f.k.archiveQuests(["ended"], true, { kind: "user" });
   expect(invalidated).toContain("tavern:map-history");
   invalidated.length = 0;
   const thread = await f.bb.sdk.threads.get({ threadId: "lead" });
@@ -46,7 +47,7 @@ it("returns five newest quests per archived Keeper, exact totals and parties inc
     const count = threadId === "empty" ? 0 : threadId === "old-b" ? 2 : 8;
     for (let i = 0; i < count; i++) {
       const id = `${threadId}-${i}`;
-      f.k.store.put("quests", id, { ...fixtureBoard, id, keeperThreadId: threadId, phase: "done", endedAt: 1000 + i, archivedAt: i % 2 ? 800 : null });
+      putQuestFixture(f.k.store, id, { ...fixtureBoard, id, keeperThreadId: threadId, phase: "done", endedAt: 1000 + i, archivedAt: i % 2 ? 800 : null });
       f.k.store.put("members", `member-${id}`, { ...fixtureMember, threadId: `member-${id}`, role: "member", keeperThreadId: threadId, boardQuestId: id });
     }
   }

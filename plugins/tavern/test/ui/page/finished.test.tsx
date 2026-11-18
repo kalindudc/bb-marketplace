@@ -27,7 +27,7 @@ async function open(subPath: string, room: Room, detail: BoardQuestDetail) {
 
 const vault = scenes.richDetails.vault!;
 const stopEvent = { id: 9001, at: scenes.min(360), keeperThreadId: "thr-wren", boardQuestId: "vault", actor: { kind: "user" as const }, type: "quest.stopped", text: "Stop requested for every party member", data: {} };
-const stopped: BoardQuestDetail = { ...vault, asks: vault.asks.map((a) => ({ ...a, state: "withdrawn" as const, answer: null })), events: [...vault.events, stopEvent], quest: { ...vault.quest, phase: "stopped", endedAt: scenes.min(360) } };
+const stopped: BoardQuestDetail = { ...vault, asks: vault.asks.map((a) => ({ ...a, state: "withdrawn" as const, answer: null })), events: [...vault.events, { ...stopEvent, id: 9000, type: "quest.stopping" }, { ...stopEvent, actor: { kind: "tavern" as const } }], quest: { ...vault.quest, phase: "stopped", endedAt: scenes.min(360) } };
 const returned = scenes.readmeDetail;
 
 // A page waits on three RPCs before its first element; under a loaded full run that can pass testing-library's 1 s default.

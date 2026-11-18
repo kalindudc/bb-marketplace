@@ -446,7 +446,7 @@ html.dark .tavern .qsvg .wp.o-you .wp-fo { filter: drop-shadow(0 0 5px color-mix
 .tavern .lg-card.lg-quest { gap: 5px; }
 .tavern .lg-qh { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .tavern .lg-qt { display: inline-flex; align-items: center; gap: 3px; min-width: 0; padding: 0; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; }
-.tavern .lg-qt b { min-width: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; text-overflow: ellipsis; white-space: normal; overflow-wrap: anywhere; text-align: left; }
+.tavern .lg-qt b.clamp { min-width: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; text-overflow: ellipsis; white-space: normal; overflow-wrap: anywhere; text-align: left; }
 .tavern .lg-qt > svg { flex: none; }
 @container tavern-ledger (max-width: 420px) { .tavern .lg-qt { flex: 1 0 100%; } }
 .tavern .lg-qt:hover b { text-decoration: underline; }

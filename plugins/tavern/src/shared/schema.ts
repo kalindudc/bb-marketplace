@@ -244,7 +244,7 @@ export type Brief = z.infer<typeof briefSchema>;
 
 // ---------- Board quests and the Keeper's ledger ----------
 
-export const PHASES = ["scout", "greenlight", "build", "check", "wrap", "done", "stopping", "stopped"] as const;
+export const PHASES = ["scout", "greenlight", "build", "check", "wrap", "held", "closing", "done", "stopping", "stopped"] as const;
 export type Phase = (typeof PHASES)[number];
 
 export const WAYPOINT_STATES = ["planned", "todo", "doing", "blocked", "reported", "verified", "rejected", "skipped"] as const;
@@ -346,6 +346,7 @@ export const boardQuestSchema = z.object({
   title: z.string().min(1).max(200),
   short: z.string().min(1).max(40),
   phase: z.enum(PHASES),
+  held: z.object({ from: z.enum(["scout", "greenlight", "build"]), since: epochMs }).optional(),
   planVersion: z.number().int().nonnegative(),
   greenlitVersion: z.number().int().nullable(),
   createdAt: epochMs,
@@ -392,7 +393,7 @@ export const askSchema = z.object({
   draft: z.object({ to: z.string().max(300), body: z.string().max(8000) }).nullable(),
   state: z.enum(["open", "answered", "defaulted", "withdrawn"]),
   withdrawnAt: epochMs.nullable().optional(),
-  withdrawnCause: z.enum(["quest-stopped", "quest-returned", "plan-superseded", "keeper-archived", "turn-recovered", "scope-cleared", "backup-restored"]).nullable().optional(),
+  withdrawnCause: z.enum(["quest-stopped", "quest-returned", "plan-superseded", "keeper-archived", "turn-recovered", "scope-cleared", "backup-restored", "conclude-stale-at-upgrade"]).nullable().optional(),
   answer: z
     .object({
       optionId: z.string(),

@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { putQuestFixture } from "./support";
 import { seedQuest } from "./support";
 import { expect, it, vi } from "vitest";
 import { setup } from "./runtime-fixture";
@@ -20,7 +21,7 @@ it("keeps a stop progressing, backs off, and confirms it on a later sweep", asyn
   expect(await f.runtime.stop(f.q.id)).toEqual({ phase: "stopping", unconfirmed: 1 });
   expect(f.k.quest(f.q.id)).toMatchObject({ phase: "stopping", endedAt: null });
   expect(f.k.member("child")).toMatchObject({ stopPending: true, lastStopAttemptAt: f.time() });
-  expect(() => f.k.archiveQuests([f.q.id], true)).toThrow(/Only done or stopped/);
+  expect(() => f.k.archiveQuests([f.q.id], true, { kind: "user" })).toThrow(/Only done or stopped/);
   await f.runtime.retryStops("lead");
   expect(f.bb.sdk.threads.stop).toHaveBeenCalledTimes(1);
   f.advance(5000);
@@ -61,7 +62,7 @@ it("counts a bound pending hire only once among unconfirmed members", async () =
 });
 it("a returned quest refuses Stop without changing its final timestamp or touching members", async () => {
   const f = await party();
-  f.k.store.put("quests", f.q.id, { ...f.q, phase: "done", endedAt: 99 });
+  putQuestFixture(f.k.store, f.q.id, { ...f.q, phase: "done", endedAt: 99 });
   await expect(f.runtime.stop(f.q.id)).rejects.toThrow(/already returned/);
   expect(f.k.quest(f.q.id).endedAt).toBe(99);
   expect(f.bb.sdk.threads.stop).not.toHaveBeenCalled();

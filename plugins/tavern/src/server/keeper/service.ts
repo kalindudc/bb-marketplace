@@ -53,18 +53,7 @@ export type AskInput = Pick<
   releaseCheckerHandoff?: boolean;
   reversible?: boolean;
 };
-export function partyCounts(plan: Plan): Map<string, number> {
-  const counts = new Map<string, number>();
-  for (const slot of plan.party)
-    counts.set(slot.classId, (counts.get(slot.classId) ?? 0) + 1);
-  return counts;
-}
-function partyFits(plan: Plan, approved: Plan) {
-  const capacity = partyCounts(approved);
-  return [...partyCounts(plan)].every(
-    ([classId, count]) => count <= (capacity.get(classId) ?? 0),
-  );
-}
+export { partyCounts } from "./quest-lifecycle";
 export const routeQuestIds = (
   route: Pick<Route, "boardQuestId"> & { boardQuestIds?: string[] },
 ) => [
@@ -73,6 +62,10 @@ export const routeQuestIds = (
     ...(route.boardQuestIds ?? []),
   ]),
 ];
+
+import { localClock } from "../clock";
+import { moveTime } from "../../shared/time";
+import { assertQuestTransition, transitionQuest, displayStage, nextNewsBy, storedPhase, partyFits, approvedPartyReceipt } from "./quest-lifecycle";
 
 export class Keeper {
   settings: (questId?: string | null) => TavernSettings = () =>
@@ -219,15 +212,50 @@ export class Keeper {
     this.changed(threadId, m.boardQuestId);
     return m;
   }
+  assertQuestNotHeld(id: string) {
+    const quest = this.quest(id);
+    if (quest.phase === "held") throw new Error(`${quest.title} is held by you since ${localClock(quest.held!.since)}; resume it first.`);
+  }
+  private questActReceipt(quest: BoardQuest, actor: Actor, messageId?: string) {
+    if (actor.kind === "user") return { kind: "user-act", id: this.store.id("act"), surface: "quest-page", at: this.now() };
+    if (actor.kind !== "agent" || !messageId) throw new Error("Cite the user's own routed message for this quest");
+    this.owned(actor.threadId, quest.id);
+    const route = this.store.db.prepare("SELECT data FROM tavern_records WHERE kind='routes' AND json_extract(data,'$.keeperThreadId')=? AND json_extract(data,'$.sourceMessageId')=?").all(actor.threadId, messageId) as { data: string }[];
+    const routed = route.map(row => JSON.parse(row.data) as Route).some(route => routeQuestIds(route).includes(quest.id) && !route.classSelectionOnly);
+    const message = this.store.db.prepare("SELECT text,at FROM tavern_messages WHERE id=? AND thread_id=? AND accepted=2 AND length(trim(text))>0").get(messageId, actor.threadId) as { text: string; at: number } | undefined;
+    if (!routed || !message) throw new Error("Cite the user's own routed message for this quest");
+    if (this.store.db.prepare("SELECT 1 FROM tavern_events WHERE json_extract(data,'$.receipt.kind')='user-message' AND json_extract(data,'$.receipt.id')=?").get(messageId)) throw new Error("This message is already a lifecycle receipt");
+    if (this.store.db.prepare("SELECT 1 FROM tavern_events WHERE type='route.cancelled' AND json_extract(data,'$.receiptId')=?").get(messageId)) throw new Error("This message was cancelled");
+    const last = this.store.db.prepare("SELECT at FROM tavern_events WHERE board_quest_id=? AND json_type(data,'$.phase')='object' ORDER BY id DESC LIMIT 1").get(quest.id) as { at: number } | undefined;
+    const legacy = !last ? this.store.db.prepare(`SELECT e.at FROM tavern_events e WHERE e.board_quest_id=? AND
+      (e.type IN ('quest.opened','plan.proposed','quest.phase','quest.stopping','quest.stopped','quest.wrapped','quest.reopened') OR
+       e.type='ask.answered' AND json_extract(e.data,'$.optionId')='approve' AND EXISTS
+       (SELECT 1 FROM tavern_records a WHERE a.kind='asks' AND a.id=json_extract(e.data,'$.askId') AND json_extract(a.data,'$.kind')='greenlight'))
+      ORDER BY e.id DESC LIMIT 1`).get(quest.id) as { at: number } | undefined : undefined;
+    if (message.at <= (last?.at ?? legacy?.at ?? quest.updatedAt)) throw new Error("Cite a user message newer than the last quest phase transition");
+    return { kind: "user-message", id: messageId, text: message.text };
+  }
+  setQuestHeld(id: string, hold: boolean, actor: Actor, messageId?: string) {
+    const result = this.store.atomic(() => {
+      const quest = this.quest(id);
+      const receipt = this.questActReceipt(quest, actor, messageId);
+      const to = hold ? "held" : quest.held?.from;
+      if (!to) throw new Error("This quest is not held");
+      return transitionQuest(this.store, quest, to, hold ? "hold" : "resume", actor, receipt, this.now());
+    });
+    this.userAction(result.keeperThreadId);
+    this.changed(result.keeperThreadId, id);
+    return result;
+  }
   quest(id: string) {
     const q = this.store.get("quests", id);
     if (!q) throw new Error(`Unknown board quest: ${id}`);
-    return q;
+    return { ...q, phase: storedPhase(q.phase) };
   }
   archiveQuests(
     ids: string[],
     archived: boolean,
-    actor: Actor = { kind: "user" },
+    actor: Actor,
   ) {
     const quests = [...new Set(ids)].map((id) => this.quest(id));
     if (quests.some(q => q.deletedAt != null)) throw new Error("Restore deleted quests to the cellar before bringing them up.");
@@ -261,7 +289,7 @@ export class Keeper {
     if (changed.length) this.invalidate([tags.mapHistory()]);
     return changed.length;
   }
-  deleteQuest(id: string, actor: Actor = { kind: "user" }) {
+  deleteQuest(id: string, actor: Actor) {
     const q = this.quest(id);
     if (!["done", "stopped"].includes(q.phase)) throw new Error("Only done or stopped board quests can be deleted");
     if (q.deletedAt != null) return false;
@@ -273,7 +301,7 @@ export class Keeper {
     this.invalidate([tags.mapHistory(), tags.registry()]);
     return true;
   }
-  restoreDeletedQuest(id: string, actor: Actor = { kind: "user" }) {
+  restoreDeletedQuest(id: string, actor: Actor) {
     const q = this.quest(id);
     if (q.deletedAt == null) return false;
     this.store.atomic(() => {
@@ -285,14 +313,13 @@ export class Keeper {
     return true;
   }
   /** A returned or stopped quest reopens for deviations; an archived one must be brought up from the cellar first. */
-  reopenQuest(id: string, actor: Actor = { kind: "user" }): BoardQuest {
+  reopenQuest(id: string, actor: Actor, messageId?: string): BoardQuest {
     const q = this.quest(id);
     if (q.deletedAt != null) throw new Error("A deleted board quest is in the cellar; bring it back before re-opening it");
     if (q.archivedAt != null) throw new Error("An archived board quest cannot be re-opened; bring it up from the cellar first");
     if (!["done", "stopped"].includes(q.phase)) throw new Error("Only a returned or stopped board quest can be re-opened");
     const reopened: BoardQuest = {
       ...q,
-      phase: "build",
       endedAt: null,
       archivedAt: null,
       stopReason: null,
@@ -300,13 +327,12 @@ export class Keeper {
       updatedAt: this.now(),
     };
     this.store.atomic(() => {
-      this.store.put("quests", id, reopened);
-      this.store.event(this.now(), q.keeperThreadId, id, "quest.reopened", `Re-opened ${q.title} for deviations`, { planVersion: q.planVersion, phaseBeforeReopen: q.phase }, actor);
+      transitionQuest(this.store, q, q.greenlitVersion === null ? "scout" : "build", "reopen", actor, this.questActReceipt(q, actor, messageId), this.now(), { patch: reopened, text: `Re-opened ${q.title} for deviations`, data: { planVersion: q.planVersion } });
     });
     this.changed(q.keeperThreadId, id);
     this.invalidate([tags.mapHistory()]);
     this.reanchor(q.keeperThreadId, "quest reopened for deviations");
-    return reopened;
+    return this.quest(id);
   }
   owned(threadId: string, id: string) {
     this.require(threadId, "keeper");
@@ -519,7 +545,7 @@ export class Keeper {
     });
   }
   activeCheckerHolds(threadId: string) {
-    return this.store.checkerHeldQuests(threadId);
+    return this.store.checkerHeldQuests(threadId).filter(quest => quest.phase !== "held");
   }
   checkerHandoffProblem(classId: string, questId: string | null | undefined): string | null {
     if (classId !== "warden" || !questId) return null;
@@ -583,7 +609,7 @@ export class Keeper {
       ...(route && this.store.get("routes", route)?.checkerHandoffHold ? { checkerHandoffHold: this.checkerHoldFromRoute(this.store.get("routes", route)!) } : {}),
     };
     this.store.atomic(() => {
-      this.store.put("quests", q.id, q);
+      transitionQuest(this.store, q, "scout", "open", { kind: "agent", threadId }, { kind: "user-message", id: source.sourceMessageId! }, this.now(), { text: `Opened ${title}` });
       const routed = route ? this.store.get("routes", route) : null;
       if (routed?.kind === "new-quest" && routed.boardQuestId === null)
         this.store.put("routes", routed.id, {
@@ -591,15 +617,6 @@ export class Keeper {
           boardQuestId: q.id,
           boardQuestIds: [q.id],
         });
-      this.store.event(
-        this.now(),
-        threadId,
-        q.id,
-        "quest.opened",
-        `Opened ${title}`,
-        {},
-        { kind: "agent", threadId },
-      );
       this.journal.edit(
         threadId,
         {
@@ -714,7 +731,10 @@ export class Keeper {
     if (kind === "steer" && !questId)
       throw new Error("A steer must name a board quest");
     for (const id of questIds) {
-      if (kind === "steer" || kind === "new-quest") this.liveQuest(threadId, id);
+      if (kind === "steer") {
+        const quest = this.owned(threadId, id);
+        if (quest.phase === "stopping") throw new Error("This board quest is stopping");
+      } else if (kind === "new-quest") this.liveQuest(threadId, id);
       else this.owned(threadId, id);
     }
   }
@@ -753,6 +773,7 @@ export class Keeper {
   }
   plan(threadId: string, input: PlanInput) {
     const q = this.owned(threadId, input.boardQuestId);
+    this.assertQuestNotHeld(q.id);
     if (!isOpenQuest(q)) throw new Error("This board quest has ended or is stopping");
     const r = input.fromSteer
       ? this.store.get("routes", input.fromSteer)
@@ -808,27 +829,18 @@ export class Keeper {
       !this.store.openAsks(threadId).length;
     this.store.atomic(() => {
       this.store.put("plans", `${q.id}:${plan.version}`, plan);
-      this.store.put("quests", q.id, {
-        ...q,
-        planVersion: plan.version,
-        greenlitVersion: automatic ? plan.version : q.greenlitVersion,
-        phase:
-          needsGreenlight && !automatic
-            ? "greenlight"
-            : automatic || q.phase === "greenlight"
-              ? "build"
-              : q.phase,
-        updatedAt: this.now(),
-      });
-      this.store.event(
-        this.now(),
-        threadId,
-        q.id,
-        "plan.proposed",
-        `Plan v${plan.version}${r ? " from your steer" : ""}`,
-        { version: plan.version, routeId: r?.id ?? null },
-        { kind: "agent", threadId },
-      );
+      const updated = { ...q, planVersion: plan.version, greenlitVersion: q.greenlitVersion, updatedAt: this.now() };
+      const data = { version: plan.version, routeId: r?.id ?? null };
+      if (needsGreenlight && storedPhase(q.phase) !== "greenlight") {
+        transitionQuest(this.store, q, "greenlight", "plan", { kind: "agent", threadId }, { kind: "plan", id: `${q.id}:${plan.version}` }, this.now(), { patch: updated, text: `Plan v${plan.version}`, data });
+      } else if (!needsGreenlight && q.phase === "greenlight") {
+        const receipt = approvedPartyReceipt(this.store, q);
+        if (!receipt) throw new Error("Replacement plan requires this quest\'s earlier party approval");
+        transitionQuest(this.store, q, "build", "replacement-plan", { kind: "agent", threadId }, receipt, this.now(), { patch: updated, text: `Plan v${plan.version}`, data });
+      } else {
+        this.store.put("quests", q.id, updated);
+        this.store.event(this.now(), threadId, q.id, "plan.proposed", `Plan v${plan.version}`, data, { kind: "agent", threadId });
+      }
       for (const ask of this.asks(threadId).filter(
         (a) =>
           a.boardQuestId === q.id &&
@@ -843,7 +855,7 @@ export class Keeper {
           why: "By-size policy permits one party slot, with no unresolved asks, questions or outside/user gates. Undo returns this plan to awaiting greenlight and releases members that have not reported.",
           reversible: true,
           source: "keeper",
-        });
+        }, { questId: q.id, planVersion: plan.version });
         this.store.put("autoGreenlights", decision.id, {
           keeperThreadId: threadId,
           boardQuestId: q.id,
@@ -907,11 +919,10 @@ export class Keeper {
   ): Ask | null {
     const ask = this.store.get("asks", id);
     if (!ask || ask.state !== "open") return null;
-    return this.store.put("asks", id, {
-      ...ask,
-      state: "withdrawn",
-      withdrawnAt: at,
-      withdrawnCause: cause,
+    return this.store.atomic(() => {
+      if (ask.kind === "conclude" && ask.boardQuestId && this.quest(ask.boardQuestId).phase === "closing")
+        transitionQuest(this.store, this.quest(ask.boardQuestId), "build", "conclude-withdrawn", { kind: "tavern" }, { kind: "ask", id }, at);
+      return this.store.put("asks", id, { ...ask, state: "withdrawn", withdrawnAt: at, withdrawnCause: cause });
     });
   }
   pendingStopHires(id: string) {
@@ -927,38 +938,22 @@ export class Keeper {
     if (quest.phase === "stopped" || quest.phase === "stopping") return quest;
     const at = this.now();
     return this.store.atomic(() => {
-      const stopped = this.store.put("quests", id, {
+      const stopPatch = {
         ...quest,
-        phase: "stopping",
         endedAt: null,
         stoppingSince: at,
         updatedAt: at,
         stopReason,
-      });
+      };
+      const withdrawnAskIds = (this.store.db.prepare("SELECT id FROM tavern_records WHERE kind='asks' AND json_extract(data,'$.keeperThreadId')=? AND json_extract(data,'$.boardQuestId')=? AND json_extract(data,'$.state')='open'").all(quest.keeperThreadId, id) as { id: string }[]).map(ask => ask.id);
+      const stopped = transitionQuest(this.store, quest, "stopping", "stop", { kind: "user" }, { kind: "user-act", id: this.store.id("act"), surface: "stopBoardQuest", at }, at, { patch: stopPatch, text: "Stop requested for every party member", data: { reason: stopReason, withdrawnAskIds } });
       this.store.db.prepare("UPDATE tavern_records SET data=json_set(data,\'$.cancelledAt\',?) WHERE kind=\'hires\' AND json_extract(data,\'$.owner.boardQuestId\')=?").run(at, id);
       for (const member of this.store.query("members", "boardQuestId", id, 500)) {
         if (["done", "stopped"].includes(member.state) || this.store.runtime(member.threadId).released) continue;
         this.store.put("members", member.threadId, { ...member, stopPending: true, stopError: null });
       }
       this.memory.closeQuest(quest.keeperThreadId, id);
-      const withdrawnAskIds: string[] = [];
-      for (;;) {
-        const asks = this.store.openAsks(quest.keeperThreadId, id);
-        if (!asks.length) break;
-        for (const ask of asks) {
-          const withdrawn = this.withdrawAsk(ask.id, "quest-stopped", at);
-          if (withdrawn) withdrawnAskIds.push(withdrawn.id);
-        }
-      }
-      this.store.event(
-        at,
-        quest.keeperThreadId,
-        id,
-        "quest.stopping",
-        "Stop requested for every party member",
-        { reason: stopReason, withdrawnAskIds, phaseBeforeStop: quest.phase },
-        { kind: "user" },
-      );
+      for (const askId of withdrawnAskIds) this.withdrawAsk(askId, "quest-stopped", at);
       return stopped;
     });
   }
@@ -1039,7 +1034,9 @@ export class Keeper {
           : {}),
         reversible: input.reversible === true,
       });
-      this.store.event(
+      if (ask.kind === "conclude" && questId && this.quest(questId).phase !== "closing") {
+        transitionQuest(this.store, this.quest(questId), "closing", "close", { kind: "agent", threadId }, { kind: "ask", id: ask.id }, this.now(), { text: ask.question, data: { askId: ask.id, ...eventData } });
+      } else this.store.event(
         this.now(),
         threadId,
         questId,
@@ -1065,7 +1062,7 @@ export class Keeper {
     optionId: string,
     note: string | null,
     via: NonNullable<Ask["answer"]>["via"],
-    by: "user" | "default" = "user",
+    by: "user" | "default",
   ) {
     const ask = this.store.get("asks", askId);
     if (!ask) throw new Error("Unknown ask");
@@ -1077,6 +1074,15 @@ export class Keeper {
       throw new Error("This ask is no longer open");
     }
     const metadata = this.store.get("askMeta", askId);
+    if (ask.boardQuestId && (ask.kind === "conclude" || ask.kind === "greenlight" && optionId === "approve")) {
+      const quest = this.quest(ask.boardQuestId);
+      if (quest.phase === "held") throw new Error("This quest is held; resume it first");
+      if (ask.kind === "greenlight") {
+        assertQuestTransition(this.store, quest, "build", "approve", { kind: "user" }, { kind: "ask-answer", id: askId });
+        if (metadata?.planVersion !== quest.planVersion) throw new Error("This greenlight belongs to an old plan version");
+      } else
+        assertQuestTransition(this.store, quest, optionId === "conclude" ? "done" : "build", optionId === "conclude" ? "conclude" : optionId === "hold" ? "keep-open" : "extensions", { kind: "user" }, { kind: "ask-answer", id: askId });
+    }
     if (ask.boardQuestId && !metadata?.stopMemberThreadId && !metadata?.stopHireTokens) this.liveQuest(ask.keeperThreadId, ask.boardQuestId);
     if (!ask.options.some((o) => o.id === optionId))
       throw new Error("Unknown option");
@@ -1110,14 +1116,9 @@ export class Keeper {
         const opened = this.store.get("askMeta", askId);
         if (opened?.planVersion !== q.planVersion)
           throw new Error("This greenlight belongs to an old plan version");
-        this.store.put("quests", q.id, {
-          ...q,
-          greenlitVersion: q.planVersion,
-          phase: "build",
-          updatedAt: this.now(),
-        });
+        transitionQuest(this.store, q, "build", "approve", { kind: "user" }, { kind: "ask-answer", id: askId }, this.now(), { patch: { greenlitVersion: q.planVersion }, text: "Party approved: hire it now, critical path first.", data: { askId, optionId } });
       }
-      this.store.event(
+      if (!(ask.kind === "greenlight" && optionId === "approve")) this.store.event(
         this.now(),
         ask.keeperThreadId,
         ask.boardQuestId,
@@ -1145,6 +1146,7 @@ export class Keeper {
       source: "keeper" | "steer" | "ask" | "user";
       sourceRef?: string | null;
     },
+    autoApproval?: { questId: string; planVersion: number },
   ) {
     this.require(threadId, "keeper");
     const questId = input.boardQuestId ?? null;
@@ -1204,6 +1206,9 @@ export class Keeper {
     });
     this.store.atomic(() => {
       this.store.put("decisions", decision.id, decision);
+      if (autoApproval) {
+        transitionQuest(this.store, this.quest(autoApproval.questId), "build", "auto-approve", { kind: "agent", threadId }, { kind: "decision", id: decision.id }, this.now(), { patch: { greenlitVersion: autoApproval.planVersion }, text: decision.text, data: { decisionId: decision.id } });
+      } else {
       this.store.event(
         this.now(),
         threadId,
@@ -1213,6 +1218,7 @@ export class Keeper {
         { decisionId: decision.id },
         { kind: "agent", threadId },
       );
+      }
     });
     this.changed(threadId, questId);
     return decision;
@@ -1222,7 +1228,10 @@ export class Keeper {
     if (!d) throw new Error("Unknown decision");
     if (!d.reversible) throw new Error("This decision is not reversible");
     if (d.undone) return;
+    const approval = this.store.get("autoGreenlights", id);
+    if (approval && this.quest(approval.boardQuestId).phase === "held") throw new Error("This quest is held; resume it first");
     this.store.atomic(() => {
+      let phaseChanged = false;
       this.store.put("decisions", id, { ...d, undone: true });
       const approval = this.store.get("autoGreenlights", id);
       if (approval) {
@@ -1231,12 +1240,8 @@ export class Keeper {
           q.greenlitVersion === approval.planVersion &&
           isOpenQuest(q)
         ) {
-          this.store.put("quests", q.id, {
-            ...q,
-            phase: "greenlight",
-            greenlitVersion: null,
-            updatedAt: this.now(),
-          });
+          transitionQuest(this.store, q, "greenlight", "undo", { kind: "user" }, { kind: "undo", id }, this.now(), { patch: { greenlitVersion: null }, text: `Undo this decision and reconcile its effects: ${d.text}`, data: { decisionId: id } });
+          phaseChanged = true;
           this.ask(
             d.keeperThreadId,
             {
@@ -1267,7 +1272,7 @@ export class Keeper {
           );
         }
       }
-      this.store.event(
+      if (!phaseChanged) this.store.event(
         this.now(),
         d.keeperThreadId,
         d.boardQuestId,
@@ -1640,18 +1645,27 @@ export class Keeper {
     const progress = waypoints.length
       ? ` · verified ${verified} of ${waypoints.length}${skippedCount ? ` · skipped ${skippedCount}` : ""}`
       : "";
+    const phase = displayStage(q.phase, waypoints, plan !== null);
+    const newsBy = nextNewsBy(phase, members.filter(member => member.classId === "ranger" && isLiveMember(this.store, member, "work")).flatMap(member => {
+      const runtime = this.store.runtime(member.threadId);
+      return runtime.brief?.timeboxMinutes != null ? [(runtime.initialBriefAt ?? member.createdAt) + runtime.brief.timeboxMinutes * 60_000] : [];
+    }), this.memory.notes(q.keeperThreadId, 500, 0, id).filter(note => note.kind === "commitment" && note.state === "open" && note.dueAt != null).map(note => note.dueAt!));
+    const clock = (at: number) => moveTime(at, this.now());
     const outcome =
+      q.phase === "held" ? `Held by you since ${clock(q.held!.since)} · Resume` :
       q.phase === "done"
         ? `Returned${progress}`
         : q.phase === "stopping"
           ? "Stopping"
           : q.phase === "stopped"
           ? `Stopped${progress}`
-          : q.phase === "wrap"
+          : phase === "wrap"
             ? `Wrapping${progress}`
             : null;
     return {
       ...q,
+      phase,
+      nextNewsBy: newsBy,
       stopUnconfirmed: members.filter(member => member.stopPending).length + this.pendingQuestHires(id),
       stopPendingHires: q.phase === "stopping" ? this.pendingStopHires(id) : [],
       plan,
@@ -1660,9 +1674,9 @@ export class Keeper {
       openAsks: asks.length,
       move: {
         who:
-          !isOpenQuest(q)
+          q.phase === "held" || !isOpenQuest(q)
             ? "nobody"
-            : q.phase === "wrap" || !plan
+            : phase === "wrap" || !plan
               ? "keeper"
               : asks.length
                 ? "you"
@@ -1677,32 +1691,9 @@ export class Keeper {
           outcome ??
           (!plan
             ? "Propose the quest map"
-            : (asks[0]?.question ?? next?.title ?? "Review the done-when")),
+            : (asks[0]?.question ?? next?.title ?? "Review the done-when")) + (newsBy === null ? "" : ` · ${newsBy < this.now() ? "news overdue since" : "next news by"} ${clock(newsBy)}`),
       },
     };
-  }
-  refreshPhase(id: string) {
-    const q = this.quest(id);
-    if (!["build", "check", "wrap"].includes(q.phase)) return;
-    const summary = this.summary(id);
-    if (!summary.plan) return;
-    const phase = summary.waypoints.every((w) =>
-      ["verified", "skipped"].includes(w.state),
-    )
-      ? "wrap"
-      : summary.waypoints.some((w) => w.state === "reported")
-        ? "check"
-        : "build";
-    if (phase === q.phase) return;
-    this.store.put("quests", id, { ...q, phase, updatedAt: this.now() });
-    this.store.event(
-      this.now(),
-      q.keeperThreadId,
-      id,
-      "quest.phase",
-      `Board quest moved to ${phase}`,
-    );
-    this.changed(q.keeperThreadId, id);
   }
   restatement(threadId: string) {
     return renderRestatement(this, threadId);

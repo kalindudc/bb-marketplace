@@ -1,3 +1,5 @@
+import { KeeperStore } from "../keeper/store";
+import { transitionQuest } from "../keeper/quest-lifecycle";
 import { z } from "zod";
 import { serviceQuestRecordSchema, serviceVerdictSchema, serviceRecordStateSchema, taleKeepSchema, taleKeepKey } from "../../shared/service-record";
 import type { Database } from "../ports";
@@ -201,6 +203,12 @@ export class BackupRecords {
     this.db.transaction(() => {
       if (!this.empty()) throw new Error("Records restore requires an empty Tavern database");
       this.insert(snapshot);
+      const store = new KeeperStore(this.db);
+      for (const ask of store.all("asks")) {
+        if (ask.kind !== "conclude" || ask.state !== "withdrawn" || ask.withdrawnCause !== "backup-restored" || !ask.boardQuestId) continue;
+        const quest = store.get("quests", ask.boardQuestId);
+        if (quest?.phase === "closing") transitionQuest(store, quest, "build", "conclude-withdrawn", { kind: "tavern" }, { kind: "ask", id: ask.id }, this.now());
+      }
     })();
   }
 }

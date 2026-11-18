@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { writeFileSync } from "node:fs";
+import { putQuestFixture } from "./support";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { reviewFixture, reviewGit, proveCarryStage, proveWardenStage, proveCheckStage } from "./placement-e2e-review";
@@ -33,7 +34,7 @@ describe("independently placed Warden reviews", () => {
       await f.runtime.placements().submissions.capture("maker", "w1");
     }
     if (stale === "waypoint") { const plan = f.keeper.summary(f.quest.id).plan!; f.keeper.store.put("plans", `${f.quest.id}:${plan.version}`, { ...plan, waypoints: plan.waypoints.map(waypoint => ({ ...waypoint, title: "Changed waypoint" })) }); }
-    if (stale === "inactive-waypoint") f.keeper.store.put("quests", f.quest.id, { ...f.keeper.quest(f.quest.id), phase: "stopped" });
+    if (stale === "inactive-waypoint") putQuestFixture(f.keeper.store, f.quest.id, { ...f.keeper.quest(f.quest.id), phase: "stopped" });
     if (stale === "assignment") f.keeper.store.put("members", "checker", { ...f.keeper.member("checker")!, checkerMakerThreadId: "other-maker" });
     if (stale === "maker-generation") f.intercept(method => { if (method === "worktreeState") { const maker=placements.byMember("maker")!; placements.cancel(maker.id,maker.generation); } });
     if (stale === "maker-released") { const maker=placements.byMember("maker")!; placements.cancel(maker.id,maker.generation); }

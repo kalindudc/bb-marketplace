@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { putQuestFixture } from "./support";
 import { describe, expect, it, vi } from "vitest";
 import { setup } from "./runtime-fixture";
 import { seedQuest } from "./support";
@@ -14,7 +15,7 @@ async function fixture() {
   const unarchive = vi.fn(async ({ threadId }: { threadId: string }) => { threads.set(threadId, { ...threads.get(threadId)!, archivedAt: null }); return { ok: true }; });
   const f = setup({ threads: { get: async ({ threadId }: { threadId: string }) => threads.get(threadId)!, archive, unarchive, queuedMessages: { list: async () => [] } } });
   const q = await seedQuest(f.k, "lead", "Private work", "Private work");
-  f.k.store.put("quests", q.id, { ...q, phase: "done", endedAt: f.time() });
+  putQuestFixture(f.k.store, q.id, { ...q, phase: "done", endedAt: f.time() });
   f.k.bind("child", "smith", "vale", "project", { keeperThreadId: "lead", boardQuestId: q.id, waypointId: null, errand: false, title: "Private work", displayName: "Vale", brief: { outcome: "Draft", mode: "make-it-work", doneWhen: "Tests pass", outOfScope: "Production", context: [], questions: [], timeboxMinutes: null } });
   return { ...f, q, threads, archive, unarchive };
 }
@@ -51,7 +52,7 @@ describe("quest cellar threads", () => {
   it.each(["done", "deleted"])("describes an unarchived member of a %s quest as back in the roster", async phase => {
     const f = await fixture();
     await f.runtime.archiveBoardQuests([f.q.id], true);
-    if (phase === "deleted") f.k.deleteQuest(f.q.id);
+    if (phase === "deleted") f.k.deleteQuest(f.q.id, { kind: "user" });
     const result = await f.runtime.unarchiveMember("lead", "child");
     expect(result.message).toContain("back in the Keeper's roster");
     expect(result.message).not.toContain("available");
@@ -62,7 +63,7 @@ describe("quest cellar threads", () => {
   });
   it("reports an already-open live member without an SDK unarchive", async () => {
     const f = await fixture();
-    f.k.store.put("quests", f.q.id, { ...f.k.quest(f.q.id), phase: "build", endedAt: null });
+    putQuestFixture(f.k.store, f.q.id, { ...f.k.quest(f.q.id), phase: "build", endedAt: null });
     const result = await f.runtime.unarchiveMember("lead", "child");
     expect(result.message).toContain("Already open");
     expect(f.unarchive).not.toHaveBeenCalled();
@@ -72,7 +73,7 @@ describe("quest cellar threads", () => {
     const f = await fixture(); registerTools(f.bb, f.runtime);
     await f.runtime.archiveBoardQuests([f.q.id], true);
     f.k.store.patch("child", { released: { reason: "Finished", decisionId: "release" } });
-    f.k.deleteQuest(f.q.id);
+    f.k.deleteQuest(f.q.id, { kind: "user" });
     const status = readStatus(f.runtime, "lead", statusInput.parse({}));
     expect(status).toMatchObject({ archivedMembers: [{ name: "Vale", classId: "smith", quest: "a deleted quest", released: true }] });
     const result = await f.harness.behavior.invokeAgentTool("tavern_unarchive", { memberThreadId: "Vale" }, { threadId: "lead" });
@@ -84,7 +85,7 @@ describe("quest cellar threads", () => {
   it("bulk cellar archives the Keeper once after all its quests leave the board", async () => {
     const f = await fixture();
     const second = await seedQuest(f.k, "lead", "Other goal", "Other goal");
-    f.k.store.put("quests", second.id, { ...second, phase: "stopped" });
+    putQuestFixture(f.k.store, second.id, { ...second, phase: "stopped" });
     const result = await f.runtime.archiveBoardQuests([f.q.id, second.id], true);
     expect(result).toMatchObject({ changed: 2, notes: [], pendingArchives: [] });
     expect(f.archive.mock.calls.filter(([input]) => input.threadId === "lead")).toHaveLength(1);

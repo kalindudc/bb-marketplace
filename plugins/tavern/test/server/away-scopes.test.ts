@@ -28,7 +28,7 @@ async function fixture() {
   f.runtime.enableScopes({ dataDir: root, installGuard: true, policyOptions: { home: root }, guard: { agentDir: join(root, ".pi/agent") } });
   const q = await seedQuest(f.k,"lead", "Draft", "Tests pass");
   f.k.plan("lead", { ...planInput(q.id), party: [{ classId: "smith", characterId: null, model: null, purpose: "Build", waypointIds: ["w1"] }] });
-  f.k.answerAsk(f.k.asks("lead")[0]!.id, "approve", null, "page");
+  f.k.answerAsk(f.k.asks("lead")[0]!.id, "approve", null, "page", "user");
   const input = { classId: "smith", boardQuestId: q.id, waypointId: "w1", title: "Draft", brief: { outcome: "Build a draft", mode: "make-it-work" as const, outOfScope: "Production", doneWhen: "Tests pass", context: [], questions: [], timeboxMinutes: null } };
   const close = () => f.runtime.away.close({ revision: 0, until: f.time() + 60_000, quests: [{ questId: q.id, endState: "drafts-ready" }] });
   return { ...f, root, work, q, input, close, stop };

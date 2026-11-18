@@ -128,7 +128,7 @@ describe("durable Keeper memory", () => {
         },
       ],
     });
-    f.k.answerAsk(f.k.asks("lead")[0]!.id, "approve", null, "page");
+    f.k.answerAsk(f.k.asks("lead")[0]!.id, "approve", null, "page", "user");
     expect(f.k.memory.unaskedGates("lead")).toContainEqual(
       expect.stringContaining(
         "Outside gate Approval not asked yet (lead time Thursday 10:00)",

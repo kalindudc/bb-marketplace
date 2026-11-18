@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { putQuestFixture } from "./support";
 import { seedQuest } from "./support";
 import { expect, it, vi } from "vitest";
 import { setup } from "./runtime-fixture";
@@ -20,7 +21,7 @@ it("refuses a new release on an ended quest without stopping its finished member
   const f = setup();
   const q = await seedQuest(f.k,"lead", "Build", "Build");
   f.k.bind("child", "smith", "juno", "project", { keeperThreadId: "lead", boardQuestId: q.id, waypointId: null, errand: false, title: "Build", brief });
-  f.k.store.put("quests", q.id, { ...q, phase: "done", endedAt: f.time() });
+  putQuestFixture(f.k.store, q.id, { ...q, phase: "done", endedAt: f.time() });
   f.bb.sdk.threads.stop = vi.fn(async () => ({ ok: true as const }));
   await expect(f.runtime.release("lead", "child", "Late")).rejects.toThrow(/ended|stopping/);
   expect(f.bb.sdk.threads.stop).not.toHaveBeenCalled();
@@ -30,7 +31,7 @@ it("finishes an already requested release after its quest ends without new write
   const q = await seedQuest(f.k,"lead", "Build", "Build");
   f.k.bind("child", "smith", "juno", "project", { keeperThreadId: "lead", boardQuestId: q.id, waypointId: null, errand: false, title: "Build", brief });
   f.k.store.patch("child", { releasePending: "Not needed" });
-  f.k.store.put("quests", q.id, { ...q, phase: "done", endedAt: f.time() });
+  putQuestFixture(f.k.store, q.id, { ...q, phase: "done", endedAt: f.time() });
   await f.runtime.sweep();
   expect(f.k.store.runtime("child").released?.reason).toBe("Not needed");
   expect(f.k.quest(q.id)).toMatchObject({ phase: "done", endedAt: f.time() });

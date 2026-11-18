@@ -54,7 +54,7 @@ export function KeeperNotice({ keeper, room, registry, api, lit, since }: { keep
   const name = characterName(registry, keeper.member);
   const title = keeper.threadTitle ?? null;
   const all = inRoom(keeper, api);
-  const order = (q: BoardQuestSummary) => { const t = questMove(q, room.asks, names(registry, keeper.member)).tone; return t === "you" ? 0 : t === "bad" ? 1 : 2; };
+  const order = (q: BoardQuestSummary) => { const t = questMove(q, room.asks, names(registry, keeper.member), { now: day }).tone; return t === "you" ? 0 : t === "bad" ? 1 : 2; };
   const active = all.filter((q) => !isFinished(q.phase)).sort((a, b) => order(a) - order(b) || b.updatedAt - a.updatedAt);
   const done = all.filter((q) => isFinished(q.phase)).sort((a, b) => (b.endedAt ?? b.updatedAt) - (a.endedAt ?? a.updatedAt));
   const [moreA, setMoreA] = usePanelState(`room.notice.${id}.active`, false);

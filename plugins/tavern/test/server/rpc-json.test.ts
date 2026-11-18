@@ -147,6 +147,8 @@ it("returns strict JSON from EVERY registered RPC with optional record fields ab
     addRule: () => call("addRule", { scope: "keeper", scopeId: "lead", text: "Keep drafts private", source: "user" }),
     confirmRule: () => call("confirmRule", { ruleId: f.rule.id, active: true }),
     widenRule: () => call("widenRule", { ruleId: f.rule.id, scope: "global" }),
+    holdBoardQuest: () => call("holdBoardQuest", { id: f.q.id }),
+    resumeBoardQuest: () => call("resumeBoardQuest", { id: f.q.id }),
     stopBoardQuest: () => call("stopBoardQuest", { id: f.q.id }),
     archiveBoardQuests: () => call("archiveBoardQuests", { ids: [f.q.id], archived: true }),
     deleteBoardQuest: () => call("deleteBoardQuest", { id: f.q.id }),

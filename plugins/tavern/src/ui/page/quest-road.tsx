@@ -10,26 +10,16 @@ export function recordedStop(detail: BoardQuestDetail): { position: Phase | null
   const through = stopped ? detail.quest.stoppingSince ?? detail.quest.endedAt ?? detail.quest.updatedAt : Infinity;
   const events = [...detail.events].filter(e => e.boardQuestId === detail.quest.id && e.at <= through).sort((a, b) => b.at - a.at || b.id - a.id);
   for (const event of events) {
-    if (event.type !== "quest.stopping") continue;
-    const step = PHASE_STEPS.find(p => p.id === event.data.phaseBeforeStop);
-    if (step) return { position: step.id, proven: step.id };
+    const phase = event.data.phase as { from?: Phase; to?: Phase } | undefined;
+    let position = phase?.to === "stopping" ? phase.from : phase?.to;
+    if (position === "held") {
+      const hold = events.find(previous => previous.id < event.id && (previous.data.phase as { to?: Phase } | undefined)?.to === "held");
+      position = (hold?.data.phase as { from?: Phase } | undefined)?.from;
+      if (!position) return { position: null, proven: null };
+    }
+    if (position && !["stopped", "done", "stopping"].includes(position)) return { position, proven: position };
   }
-  let lastPhase: Phase | null = null;
-  for (const event of events) {
-    if (event.type !== "quest.phase") continue;
-    const data = event.data as { phase?: unknown };
-    const phase = typeof data.phase === "string" ? data.phase : /^Board quest moved to (scout|greenlight|build|check|wrap)$/.exec(event.text)?.[1];
-    const step = PHASE_STEPS.find(p => p.id === phase);
-    if (step) { lastPhase = step.id; break; }
-  }
-  const quest = detail.quest;
-  const greenlight = detail.asks.some(a => a.boardQuestId === quest.id && a.kind === "greenlight" && a.planVersion === quest.planVersion && a.createdAt <= through && (a.state === "open" || a.state === "withdrawn" && a.withdrawnCause === "quest-stopped"));
-  const position = quest.planVersion === 0 ? "scout"
-    : quest.planVersion > 0 && quest.greenlitVersion !== quest.planVersion && greenlight ? "greenlight"
-    : lastPhase === "check" || lastPhase === "wrap" ? lastPhase
-    : quest.planVersion > 0 && quest.greenlitVersion === quest.planVersion ? "build"
-    : null;
-  return { position, proven: position };
+  return { position: null, proven: null };
 }
 
 export function QuestRoad({ phase, stoppedAt = null, proven = null }: { phase: Phase; stoppedAt?: Phase | null; proven?: Phase | null }) {

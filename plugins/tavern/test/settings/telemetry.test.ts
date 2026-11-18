@@ -50,7 +50,7 @@ it("records definite failed spawns and review-budget holds as measured events", 
   await expect(f.runtime.hire("lead", "project", { classId: "ranger", title: "Read", errand: true, brief })).rejects.toThrow("Invalid request");
   expect(insights.data(0).events.filter(event => event.type === "spawn.failed")).toHaveLength(1);
   const quest = await seedQuest(f.k,"lead", "Build", "Build"); f.k.plan("lead", planInput(quest.id));
-  f.k.answerAsk(f.k.asks("lead").find(ask => ask.kind === "greenlight")!.id, "approve", null, "page");
+  f.k.answerAsk(f.k.asks("lead").find(ask => ask.kind === "greenlight")!.id, "approve", null, "page", "user");
   vi.spyOn(f.runtime, "review").mockReturnValue({ waiting: 3, budget: 3, items: [] });
   await expect(f.runtime.hire("lead", "project", { classId: "smith", title: "Build", boardQuestId: quest.id, waypointId: "w1", brief })).rejects.toThrow(/review budget/);
   expect(insights.data(0).events.filter(event => event.type === "review-budget.held")).toHaveLength(1);

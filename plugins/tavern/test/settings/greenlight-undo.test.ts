@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { putQuestFixture } from "../server/support";
 import { expect, it, vi } from "vitest";
 import { setup } from "../server/runtime-fixture";
 import { planInput } from "../server/support";
@@ -19,7 +20,7 @@ async function fixture() {
 }
 it("does not release a later explicitly approved party when Undo targets an old automatic approval", async () => {
   const f = await fixture(), release = vi.spyOn(f.runtime, "release").mockResolvedValue(true);
-  f.k.store.put("quests", f.quest.id, { ...f.k.quest(f.quest.id), planVersion: 2, greenlitVersion: 2, phase: "build" });
+  putQuestFixture(f.k.store, f.quest.id, { ...f.k.quest(f.quest.id), planVersion: 2, greenlitVersion: 2, phase: "build" });
   await f.runtime.undoDecision(f.decision.id);
   expect(release).not.toHaveBeenCalled();
   expect(f.k.quest(f.quest.id).greenlitVersion).toBe(2);
@@ -31,7 +32,7 @@ it("records the actual reset version so a failed release can be retried without 
   expect(release).toHaveBeenCalledTimes(1);
   await f.runtime.undoDecision(f.decision.id);
   expect(release).toHaveBeenCalledTimes(2);
-  f.k.store.put("quests", f.quest.id, { ...f.k.quest(f.quest.id), planVersion: 2, greenlitVersion: 2, phase: "build" });
+  putQuestFixture(f.k.store, f.quest.id, { ...f.k.quest(f.quest.id), planVersion: 2, greenlitVersion: 2, phase: "build" });
   await f.runtime.undoDecision(f.decision.id);
   expect(release).toHaveBeenCalledTimes(2);
 });

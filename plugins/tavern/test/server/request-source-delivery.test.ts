@@ -21,7 +21,7 @@ async function fixture(classId = "smith") {
     f.port.get = id => ({ ...get(id), entries: id === "maker" ? [entry] : [] }); f.port.linkedEntries = () => [entry];
   }
   f.k.plan("lead", { ...plan, ...(classId === "warden" ? { waypoints: [{ ...plan.waypoints[0]!, owner: "maker" }] } : {}), party: [{ classId, characterId: null, model: null, purpose: "Work", waypointIds: ["w1"] }] });
-  f.k.answerAsk(f.k.store.openAsks("lead").find(ask => ask.kind === "greenlight")!.id, "approve", null, "page");
+  f.k.answerAsk(f.k.store.openAsks("lead").find(ask => ask.kind === "greenlight")!.id, "approve", null, "page", "user");
   return { ...f, q, input: { classId, title: "Work", boardQuestId: q.id, waypointId: "w1", brief } };
 }
 

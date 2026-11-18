@@ -24,7 +24,7 @@ function approve(f: ReturnType<typeof setup>) {
   for (const ask of f.k.store
     .openAsks("lead")
     .filter((a) => a.kind === "greenlight"))
-    f.k.answerAsk(ask.id, "approve", null, "page");
+    f.k.answerAsk(ask.id, "approve", null, "page", "user");
 }
 
 describe("Complete Keeper restatement", () => {

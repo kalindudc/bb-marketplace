@@ -120,7 +120,7 @@ describe("additional dispatch and policy coverage", () => {
         waypointIds: [],
       })),
     });
-    k.answerAsk(k.asks("lead")[0]!.id, "approve", null, "page");
+    k.answerAsk(k.asks("lead")[0]!.id, "approve", null, "page", "user");
     const entries = [1, 2, 3].map((i) =>
       journalEntrySchema.parse({
         id: "a1",
@@ -192,7 +192,7 @@ describe("additional dispatch and policy coverage", () => {
     expect(String(first).length).toBeLessThan(9000);
     expect(String(next)).toContain("8000-16000");
     const opened = k.ask("lead", ask);
-    k.answerAsk(opened.id, "yes", "Choice", "page");
+    k.answerAsk(opened.id, "yes", "Choice", "page", "user");
     expect(readStatus(runtime, "lead", statusInput.parse({ section: "asks" }))).toMatchObject({
       asks: [{ state: "answered", answer: { note: "Choice" } }],
     });

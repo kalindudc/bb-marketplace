@@ -1,3 +1,6 @@
+import { clockTime } from "../../shared/time";
+export { clockTime, moveTime } from "../../shared/time";
+import { PHASE_STEPS, phaseIndex, phaseWord } from "./phase";
 import { reviewLimitation } from "../../shared/check-posture";
 import { memberPlace } from "../../shared/member-place";
 import { memberName } from "../../shared/member-name";
@@ -62,11 +65,11 @@ export function StatusMark({ status, size = 16 }: { status: EntryStatus; size?: 
 
 /** Stopping and stopped strike every segment and say no step number: the quest left its path. */
 export function PhaseStrip({ phase, label = true }: { phase: Phase; label?: boolean }) {
-  const phases = ["scout", "greenlight", "build", "check", "wrap"];
+  const phases = PHASE_STEPS.map(step => step.id);
   const off = phase === "stopping" || phase === "stopped";
-  const at = phase === "done" ? 5 : phases.indexOf(phase);
-  const name = phase === "done" ? "returned" : phase;
-  return <span className="phw"><span className="ph" role="img" aria-label={off ? `Phase: ${phase}` : `Phase: ${name}${phase === "done" ? "" : `, ${at + 1} of 5`}`}>{phases.map((p, i) => <i key={p} className={off ? "s" : i < at ? "d" : i === at ? "c" : ""} />)}</span>{label && <span className="w">{name}</span>}</span>;
+  const at = phaseIndex(phase);
+  const name = phase === "closing" || phase === "held" ? phaseWord(phase) : phase === "done" ? "returned" : phase;
+  return <span className="phw"><span className="ph" role="img" aria-label={off || phase === "held" ? `Phase: ${name}` : `Phase: ${name}${phase === "done" ? "" : `, ${at + 1} of 5`}`}>{phases.map((p, i) => <i key={p} className={off ? "s" : i < at ? "d" : i === at ? "c" : ""} />)}</span>{label && <span className="w">{name}</span>}</span>;
 }
 
 export function safeHref(ref: string) { try { const url = new URL(ref); return ["http:", "https:"].includes(url.protocol) ? url.href : null; } catch { return null; } }
@@ -281,7 +284,6 @@ export function timeAgo(at: number, now = Date.now()) {
   return dateLabel(at, now);
 }
 function dateLabel(at: number, now: number) { const d = new Date(at); const sameYear = d.getFullYear() === new Date(now).getFullYear(); return `${d.getDate()} ${MONTHS[d.getMonth()]}${sameYear ? "" : ` ${d.getFullYear()}`}`; }
-export function clockTime(at: number) { const d = new Date(at); return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; }
 /** Wall-clock time in the viewer's zone, with the date when it is not today: "03:12", "Nov 13 22:40". `now` comes from the caller's useToday (or useNow), never from render, so the text turns at midnight. */
 export function localTime(at: number, now: number) {
   const d = new Date(at);

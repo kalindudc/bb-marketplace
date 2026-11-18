@@ -176,7 +176,7 @@ export function rpcHandlers(
         violations: runtime.scopes?.violations([threadId]) ?? [],
         member: m ? projectMember(m) : null,
         keeper: m?.keeperThreadId ? k.member(m.keeperThreadId) : null,
-        boardQuest,
+        boardQuest: m?.boardQuestId ? k.summary(m.boardQuestId) : null,
         briefFields: decorBrief(k.store.runtime(threadId).brief),
         brief: k.store.runtime(threadId).brief
           ? JSON.stringify(k.store.runtime(threadId).brief, null, 2)
@@ -294,14 +294,14 @@ export function rpcHandlers(
         events.push(roadEvent);
         events.sort((a, b) => a.id - b.id);
       }
-      let asks: BoardQuestDetail["asks"] = k.store.query("asks", "boardQuestId", id, 500);
-      if (stopped && q.planVersion > 0 && q.greenlitVersion !== q.planVersion && roadEvent?.type !== "quest.stopping") {
-        const greenlight = asks.find(a => a.kind === "greenlight" && a.createdAt <= through && (a.state === "open" || a.state === "withdrawn" && a.withdrawnCause === "quest-stopped"));
-        if (greenlight) {
-          const planVersion = k.store.get("askMeta", greenlight.id)?.planVersion;
-          if (planVersion !== undefined) asks = asks.map(a => a.id === greenlight.id ? { ...a, planVersion } : a);
+      if ((roadEvent?.data.phase as { from?: string } | undefined)?.from === "held") {
+        const hold = k.store.questHeldEvent(id, roadEvent!.id);
+        if (hold && !events.some(e => e.id === hold.id)) {
+          events.push(hold);
+          events.sort((a, b) => a.id - b.id);
         }
       }
+      const asks: BoardQuestDetail["asks"] = k.store.query("asks", "boardQuestId", id, 500);
       return {
         notes: k.memory.notes(q.keeperThreadId, 200, 0, id),
         gates: k.memory
@@ -323,6 +323,14 @@ export function rpcHandlers(
         events,
       };
     },
+    holdBoardQuest: ({ id }, context?: ExperimentalPluginRpcHandlerContext) => {
+      if (context?.experimental_caller.kind !== "client") throw new experimental_PluginRpcRefusal({ code: "forbidden", message: "Holding a quest requires an explicit client action." });
+      return runtime.setQuestHeld(id, true, { kind: "user" });
+    },
+    resumeBoardQuest: ({ id }, context?: ExperimentalPluginRpcHandlerContext) => {
+      if (context?.experimental_caller.kind !== "client") throw new experimental_PluginRpcRefusal({ code: "forbidden", message: "Resuming a quest requires an explicit client action." });
+      return runtime.setQuestHeld(id, false, { kind: "user" });
+    },
     setTaleKept: (input, context?: ExperimentalPluginRpcHandlerContext) => {
       if (context?.experimental_caller.kind !== "client") throw new experimental_PluginRpcRefusal({
         code: "forbidden", message: "Keeping a tale requires an explicit client action; a plugin cannot set this preference.",
@@ -339,7 +347,7 @@ export function rpcHandlers(
     },
     restoreDeletedQuest: ({ id }, context?: ExperimentalPluginRpcHandlerContext) => {
       if (context?.experimental_caller.kind !== "client") throw new experimental_PluginRpcRefusal({ code: "forbidden", message: "Restoring a deleted quest requires an explicit client action." });
-      return { ok: true, changed: Number(k.restoreDeletedQuest(id)) };
+      return { ok: true, changed: Number(k.restoreDeletedQuest(id, { kind: "user" })) };
     },
     deletedBoardQuests: ({ cursor, limit }) => {
       const page = k.store.deletedQuestPage(cursor, limit);

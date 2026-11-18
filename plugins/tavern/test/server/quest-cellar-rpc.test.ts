@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { putQuestFixture } from "./support";
 import { describe, expect, it } from "vitest";
 import { setup } from "./runtime-fixture";
 import { seedQuest } from "./support";
@@ -8,7 +9,7 @@ import { readStatus, statusInput } from "../../src/server/status";
 async function fixture() {
   const f = setup();
   const q = await seedQuest(f.k, "lead", "Private work", "Private work");
-  f.k.store.put("quests", q.id, { ...q, phase: "done", endedAt: f.time() });
+  putQuestFixture(f.k.store, q.id, { ...q, phase: "done", endedAt: f.time() });
   registerRpc(f.bb, f.runtime);
   const call = (method: string, input: unknown, plugin = false) => f.harness.invokeRpc(method, input, { experimental_caller: plugin ? { kind: "plugin", pluginId: "other-plugin" } : { kind: "client" } });
   return { ...f, q, call };
@@ -31,7 +32,7 @@ describe("quest cellar RPC", () => {
     const route = { id: "deleted-route", keeperThreadId: "lead", messageKey: "message", messageAt: f.time(), kind: "aside" as const, boardQuestId: f.q.id, boardQuestIds: [], summary: "Private route text", corrected: false, createdAt: f.time() };
     f.k.store.put("routes", route.id, route);
     f.k.store.put("routes", "ordinary-route", { ...route, id: "ordinary-route", boardQuestId: null, summary: "Ordinary route text" });
-    f.k.deleteQuest(f.q.id);
+    f.k.deleteQuest(f.q.id, { kind: "user" });
     const result = await f.call("routes", { threadId: "lead" });
     expect(result).toMatchObject({ routes: [{ id: "ordinary-route" }], boardQuests: [] });
     expect(JSON.stringify(result)).not.toContain("Private route text");

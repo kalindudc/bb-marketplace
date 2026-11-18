@@ -289,6 +289,7 @@ export class KeeperMemory {
             !["verified", "skipped"].includes(w.state),
         )
         .map((w) => ({
+          boardQuestId: q.id,
           key: `${q.id}:${w.id}:${this.gateIdentity(w)}`,
           ready: w.dependsOn.every((id) =>
             waypoints.some(

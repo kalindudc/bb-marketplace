@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { putQuestFixture } from "./support";
 import { afterEach, expect, it, vi } from "vitest";
 import { setup } from "./runtime-fixture";
 import { seedQuest } from "./support";
@@ -26,7 +27,7 @@ async function fixture() {
   }, files: { read: async () => ({ content: "image", contentEncoding: "utf8", sizeBytes: 5 }), mkdir: async () => ({}), write } });
   dbs.push(f.k.store.db);
   const q = await seedQuest(f.k, "lead", "Render", "Deliver");
-  f.k.store.put("quests", q.id, { ...f.k.quest(q.id), phase: "done" });
+  putQuestFixture(f.k.store, q.id, { ...f.k.quest(q.id), phase: "done" });
   const text = `# Answer\n\n${"$BB_THREAD_STORAGE"}/figure.svg\n\n::tavern-tale{quest="${q.id}"}`;
   const tell = () => f.k.store.event(f.time(), "lead", q.id, "quest.retold", "Retold", { outcome: "Done" });
   f.k.store.event(f.time(), "lead", q.id, "quest.wrapped", "Done", { outcome: "Done" });

@@ -95,15 +95,24 @@ describe("Insights aggregation", () => {
   });
   it("calculates phase intervals from transitions and does not double-count outside gates", async () => {
     const f = fixture(); f.quest("q1");
-    f.event("quest.phase", f.now - 3 * HOUR, { phase: "greenlight" }, "q1");
-    f.event("quest.phase", f.now - 2 * HOUR, { phase: "build" }, "q1");
-    f.event("quest.phase", f.now - HOUR, { phase: "check" }, "q1");
+    f.event("quest.opened", f.now - 4 * HOUR, { phase: { from: null, to: "scout" } }, "q1");
+    f.event("plan.proposed", f.now - 3 * HOUR, { phase: { from: "scout", to: "greenlight" } }, "q1");
+    f.event("ask.answered", f.now - 2 * HOUR, { phase: { from: "greenlight", to: "build" } }, "q1");
+    f.event("ask.opened", f.now - HOUR, { phase: { from: "build", to: "closing" } }, "q1");
     f.put("gates", "gate", { boardQuestId: "q1", waypointId: "w1", keeperThreadId: "keeper", planVersion: 1,
       askedWho: "Team", via: "ticket", askedAt: f.now - 2 * HOUR, answer: "Ready", answeredAt: f.now - HOUR });
     const phases = (await f.reader.view("7d")).phases.series;
     const get = (id: string) => { const row = phases.find(row => row.id === id)!; return "value" in row ? row.value : null; };
     expect(get("scout")).toBe(3600); expect(get("greenlight")).toBe(3600);
-    expect(get("build")).toBe(0); expect(get("check")).toBe(3600); expect(get("outside")).toBe(3600);
+    expect(get("build")).toBe(0); expect(get("closing")).toBe(3600); expect(get("outside")).toBe(3600);
+  });
+  it("labels old phase time as not recorded rather than inferring scout or build", async () => {
+    const f = fixture(); f.quest("q1");
+    f.event("quest.phase", f.now - HOUR, { phase: "build" }, "q1");
+    const phases = (await f.reader.view("7d")).phases.series;
+    expect(phases.find(row => row.id === "unrecorded")).toMatchObject({ label: "Phases not recorded", value: 4 * 3600 });
+    expect(phases.find(row => row.id === "scout")).toMatchObject({ value: 0 });
+    expect(phases.find(row => row.id === "build")).toMatchObject({ value: 0 });
   });
   it("shows a Warden with nine independent checks at level two, not a level from member wins", async () => {
     const f = fixture();

@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { concludeQuest } from "./support";
 import { seedQuest } from "./support";
 import { describe, expect, it, vi } from "vitest";
 import { setup } from "./runtime-fixture";
@@ -72,7 +73,7 @@ function approve(k: ReturnType<typeof setup>["k"]) {
   const ask = k
     .asks("lead")
     .find((a) => a.state === "open" && a.kind === "greenlight")!;
-  k.answerAsk(ask.id, "approve", null, "page");
+  k.answerAsk(ask.id, "approve", null, "page", "user");
 }
 function linked(
   threadId: string,
@@ -118,7 +119,7 @@ describe("tick delivery regressions", () => {
   it("H4 preserves typed answers and defaults ahead of more than 1000 churn events", async () => {
     const { k, runtime, harness, advance } = setup();
     const answer = k.ask("lead", askInput);
-    k.answerAsk(answer.id, "yes", "User chose the fixture", "page");
+    k.answerAsk(answer.id, "yes", "User chose the fixture", "page", "user");
     const timer = k.ask("lead", {
       ...askInput,
       question: "Default fixture?",
@@ -462,7 +463,7 @@ describe("staffing and policy regressions", () => {
       throw new Error("full scan forbidden");
     });
     approve(k);
-    await runtime.wrap("lead", q.id, "Done", "", [
+    await concludeQuest(runtime, "lead", q.id, "Done", "", [
       { waypointId: "w1", reason: "Not needed" },
     ]);
     expect(k.summary(q.id).waypoints[0]?.state).toBe("skipped");
@@ -545,7 +546,7 @@ describe("remaining review coverage", () => {
       ],
     });
     await expect(
-      runtime.wrap("lead", q.id, "Done", "", [
+      concludeQuest(runtime, "lead", q.id, "Done", "", [
         { waypointId: "w2", reason: "No need" },
       ]),
     ).rejects.toThrow(/verified/);

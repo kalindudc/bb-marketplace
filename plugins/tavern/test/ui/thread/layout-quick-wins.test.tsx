@@ -43,7 +43,7 @@ it("keeps the full Ledger title in a tooltip and marks its clamp for optical tri
 });
 
 it("clamps the title to two lines and guards the other constrained Ledger labels", () => {
-  expect(css).toMatch(/\.lg-qt b\s*\{[^}]*min-width: 0[^}]*-webkit-line-clamp: 2[^}]*white-space: normal/s);
+  expect(css).toMatch(/\.lg-qt b\.clamp\s*\{[^}]*min-width: 0[^}]*-webkit-line-clamp: 2[^}]*white-space: normal/s);
   expect(trim).toMatch(/:not\([^)]*\.lg-qt > b/);
   expect(css).toMatch(/\.lg-card h3\s*\{[^}]*flex-wrap: wrap/);
   expect(css).toMatch(/\.lg-card h3 \.num\s*\{[^}]*white-space: normal/);

@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { concludeQuest, putQuestFixture } from "./support";
 import { afterEach, expect, it, vi } from "vitest";
 import { makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { registerTools } from "../../src/server/tools";
@@ -17,6 +18,7 @@ async function fixture(placed = true) {
   fixtures.push(f);
   const quest = await seedQuest(f.k, "lead", "Draft", "Tested draft");
   f.k.plan("lead", { ...planInput(quest.id), waypoints: [{ ...planInput(quest.id).waypoints[0]!, optional: true }] });
+  f.k.answerAsk(f.k.store.openAsks("lead", quest.id)[0]!.id, "approve", null, "page", "user");
   const owner = { keeperThreadId: "lead", boardQuestId: quest.id, waypointId: null, errand: false, title: "Draft", brief };
   f.k.bind("child", "smith", "vale", "project", owner);
   f.runtime.spawnBriefDelivered("child");
@@ -24,7 +26,7 @@ async function fixture(placed = true) {
   const local = vi.spyOn(f.runtime, "preserveWorkOrRefuse").mockResolvedValue(null);
   vi.spyOn(f.runtime.placements(), "host", "get").mockReturnValue({ call: vi.fn(), onWorkerExit: () => () => {} });
   const save = vi.spyOn(f.runtime.placements().preserve, "beforeRelease").mockResolvedValue({ state: "blocked", message: "save refused" });
-  const wrap = () => f.runtime.wrap("lead", quest.id, "Draft tested", "", [{ waypointId: "w1", reason: "Optional" }]);
+  const wrap = () => concludeQuest(f.runtime, "lead", quest.id, "Draft tested", "", [{ waypointId: "w1", reason: "Optional" }]);
   return { ...f, quest, owner, archive, archived, local, save, wrap };
 }
 
@@ -38,7 +40,7 @@ it.each(["wrap", "conclude", "cellar", "delete"] as const)("preserves a placed m
     await f.runtime.answerAsk(proposed.askId!, "conclude", null, "page", true);
     pending = f.k.store.runtime("child").archivePending ? ["child"] : [];
   } else {
-    f.k.store.put("quests", f.quest.id, { ...f.k.quest(f.quest.id), phase: "done", endedAt: f.time() });
+    putQuestFixture(f.k.store, f.quest.id, { ...f.k.quest(f.quest.id), phase: "done", endedAt: f.time() });
     pending = path === "cellar" ? (await f.runtime.archiveBoardQuests([f.quest.id], true)).pendingArchives : (await f.runtime.deleteBoardQuest(f.quest.id)).pendingArchives;
   }
   expect(pending).toContain("child");

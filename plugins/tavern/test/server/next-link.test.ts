@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { putQuestFixture } from "./support";
 import { seedQuest } from "./support";
 import { describe, expect, it } from "vitest";
 import type { JournalEntry } from "../../src/shared/schema";
@@ -63,7 +64,7 @@ describe("quest next-link summaries", () => {
         entry(q.id, "w1", "verified"),
         entry(q.id, "w2", phase === "stopped" ? "todo" : "verified"),
       ];
-      f.k.store.put("quests", q.id, {
+      putQuestFixture(f.k.store, q.id, {
         ...f.k.quest(q.id),
         phase,
         endedAt: phase === "wrap" ? null : f.time(),

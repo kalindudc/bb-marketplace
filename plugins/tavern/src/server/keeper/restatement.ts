@@ -126,6 +126,7 @@ function questSection(
     "Board quests:\n" +
     summaries
       .map((summary) => {
+        if (summary.phase === "held") return `${short(summary.title, 80)} (${summary.id}): held by you since ${clock(summary.held!.since)}`;
         const full = priorities
           ? `${short(summary.title, 80)} (${summary.id}): ${summary.move.text}`
           : questBlock(k, summary);
@@ -193,7 +194,7 @@ export function renderRestatement(
   const asks = k.store
     .openAsks(threadId, undefined, true)
     .sort((a, b) => (a.proceedAt ?? Infinity) - (b.proceedAt ?? Infinity));
-  const notes = k.memory.notes(threadId, 100);
+  const notes = k.memory.notes(threadId, 100).filter(note => !note.boardQuestId || k.quest(note.boardQuestId).phase !== "held");
   const urgency = (summary: BoardQuestSummary) =>
     (summary.waypoints.some(
       (w) =>

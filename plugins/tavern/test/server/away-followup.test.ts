@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { putQuestFixture } from "./support";
 import { seedQuest } from "./support";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Room } from "../../src/shared/contract";
@@ -58,7 +59,7 @@ describe("Closing time follow-up", () => {
     const f = await fixture(); await f.close();
     if (variant === "done-member") f.k.store.put("members", "child", { ...f.k.member("child")!, state: "done" });
     if (variant === "archived-member") f.k.store.patch("child", { archivedAt: f.time() });
-    if (variant === "finished-quest") f.k.store.put("quests", f.quest.id, { ...f.k.quest(f.quest.id), phase: "done", endedAt: f.time() });
+    if (variant === "finished-quest") putQuestFixture(f.k.store, f.quest.id, { ...f.k.quest(f.quest.id), phase: "done", endedAt: f.time() });
     expect(f.runtime.away.snapshot()).toMatchObject({ pendingStops: [], resumeRequired: [] });
     expect(await f.room()).toHaveProperty("followUp", false);
   });

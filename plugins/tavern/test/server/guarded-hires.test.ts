@@ -41,7 +41,7 @@ async function fixture(classId = "smith", piOffersModel = true) {
     const q = await seedQuest(f.k,"lead", "Build", "Build");
     questId = q.id;
     f.k.plan("lead", { ...planInput(q.id), party: [{ classId, characterId: null, model: null, purpose: "Build", waypointIds: ["w1"] }] });
-    f.k.answerAsk(f.k.asks("lead").find(ask => ask.kind === "greenlight")!.id, "approve", null, "page");
+    f.k.answerAsk(f.k.asks("lead").find(ask => ask.kind === "greenlight")!.id, "approve", null, "page", "user");
   }
   const input = {
     classId, boardQuestId: questId, waypointId: questId ? "w1" : null,
@@ -198,7 +198,7 @@ describe("scoped provider admission through the strict host", () => {
     const resolve = f.runtime.scopes!.api.resolve;
     vi.spyOn(f.runtime.scopes!.api, "resolve").mockImplementation((...args) => {
       const result = resolve(...args);
-      return { ...result, scope: { ...result.scope, tools: { ...result.scope.tools, deny: [] } } };
+      return { ...result, scope: { ...result.scope, tools: { ...result.scope.tools, deny: [...result.scope.tools.deny, "test_scope_change"] } } };
     });
     await expect(f.hire({ detectionOnlyAskId: ask.id })).rejects.toThrow(/exact hire|does not match/i);
     expect(f.spawns()).toHaveLength(0);

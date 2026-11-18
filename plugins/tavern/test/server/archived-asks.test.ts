@@ -13,7 +13,7 @@ describe("archived Keeper asks", () => {
     const f = setup();
     const q = await seedQuest(f.k,"lead", "A", "A");
     const local = ask(f), questAsk = ask(f, "lead", q.id), answered = ask(f);
-    f.k.answerAsk(answered.id, "yes", "Approved", "page");
+    f.k.answerAsk(answered.id, "yes", "Approved", "page", "user");
     f.k.bind("other", "keeper", "moss", "project");
     const other = ask(f, "other");
     vi.mocked(f.bb.rpc.experimental_invalidate).mockClear();
@@ -39,7 +39,7 @@ describe("archived Keeper asks", () => {
     f.k.defaults();
     await f.runtime.threadLifecycle("thread.unarchived", { thread: makeThreadResponse({ id: "lead", archivedAt: null }) });
     expect(f.k.store.get("asks", entry.id)).toMatchObject({ state: "withdrawn", answer: null });
-    expect(() => f.k.answerAsk(entry.id, "yes", null, "page")).toThrow("no longer open");
+    expect(() => f.k.answerAsk(entry.id, "yes", null, "page", "user")).toThrow("no longer open");
     expect(f.k.store.events("lead").filter(event => event.type === "ask.defaulted")).toEqual([]);
     expect(ask(f).state).toBe("open");
   });

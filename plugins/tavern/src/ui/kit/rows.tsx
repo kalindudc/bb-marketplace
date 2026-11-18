@@ -1,3 +1,4 @@
+import { PHASE_STEPS, phaseIndex, phaseWord } from "./phase";
 import { memberName } from "../../shared/member-name";
 import { useBbNavigate } from "@get-bb/plugin-sdk/app";
 import { memo, type ReactNode } from "react";
@@ -5,7 +6,8 @@ import type { BoardQuestSummary, Room } from "../../shared/contract";
 import type { Ask, CheckerHandoffHold, Member, Phase } from "../../shared/schema";
 import { Crest } from "./crest";
 import { Glyph, OpensMark, type GlyphName } from "./glyphs";
-import { CELLAR, TimeAgo, clockTime, useToday } from "./primitives";
+import { moveTime } from "../../shared/time";
+import { CELLAR, TimeAgo, clockTime, useToday, useNow } from "./primitives";
 import { memberIdentity, type Registry } from "./registry";
 import { ArrivalMark } from "./arrival";
 import { memberPlace } from "../../shared/member-place";
@@ -14,13 +16,7 @@ import { memberPlace } from "../../shared/member-place";
 
 export const isFinished = (phase: string) => phase === "done" || phase === "stopped";
 
-export const PHASE_STEPS: { id: Phase; label: string; plain: string | null }[] = [
-  { id: "scout", label: "Rangers out", plain: "scout" }, { id: "greenlight", label: "Form the party", plain: "greenlight" }, { id: "build", label: "Build", plain: null },
-  { id: "check", label: "Warden's trial", plain: "check" }, { id: "wrap", label: "Return", plain: "wrap" },
-];
-/** Stopping and stopped light no segment: the path's strip is struck instead. */
-export const phaseIndex = (phase: Phase) => phase === "done" ? 5 : phase === "stopped" || phase === "stopping" ? -1 : PHASE_STEPS.findIndex((p) => p.id === phase);
-export const phaseWord = (phase: Phase) => phase === "done" ? "Returned" : phase === "stopped" ? "Stopped" : phase === "stopping" ? "Stopping" : phase.charAt(0).toUpperCase() + phase.slice(1);
+export { PHASE_STEPS, phaseIndex, phaseWord } from "./phase";
 /** A stopping quest's state: Tavern has asked every member to stop and retries the ones it hasn't confirmed. Never finished, never archivable. */
 export function stoppingWords(quest: Pick<BoardQuestSummary, "stopUnconfirmed">): string {
   const n = quest.stopUnconfirmed ?? 0;
@@ -33,7 +29,7 @@ export function stoppingWords(quest: Pick<BoardQuestSummary, "stopUnconfirmed">)
  */
 export const activeHold = (quest: Pick<BoardQuestSummary, "checkerHandoffHold" | "phase">): CheckerHandoffHold | null => {
   const h = quest.checkerHandoffHold;
-  return h && h.release === null && quest.phase !== "stopping" && !isFinished(quest.phase) ? h : null;
+  return h && h.release === null && quest.phase !== "held" && quest.phase !== "stopping" && !isFinished(quest.phase) ? h : null;
 };
 /** The open ask the Keeper raised to have this hold released, if any: it stands for the hold, so the two count once. */
 const releaseAskOf = (hold: CheckerHandoffHold | null, asks: readonly Ask[]) => hold ? asks.find((a) => a.state === "open" && a.releaseHoldId === hold.id) ?? null : null;
@@ -81,7 +77,15 @@ export function pathProgress(quest: BoardQuestSummary) {
 
 export type MoveTone = "you" | "work" | "wait" | "keeper" | "done" | "bad" | "archived";
 /** Whose move a quest waits on. `next` is the whole phrase; where it ends in a waypoint's title, `verb` and `task` split it, so a narrow row cuts the task and never the state. An archived Keeper's thread can move nothing, so its unfinished quests say so instead of naming a next step; `next` is then empty. */
-export function questMove(quest: BoardQuestSummary, asks: Ask[], names: { keeper: string; member: (m: Member) => string }, opts: { keeperArchived?: boolean } = {}): { tone: MoveTone; who: string; next: string; verb?: string; task?: string } {
+export function questMove(...args: Parameters<typeof baseQuestMove>): ReturnType<typeof baseQuestMove> {
+  const [quest] = args;
+  if (quest.phase === "held") return { tone: "wait", who: quest.move.text.replace(/ · Resume$/, ""), next: "Resume" };
+  const move = baseQuestMove(...args);
+  const now = args[3]?.now ?? quest.updatedAt;
+  if (quest.phase === "scout" && quest.nextNewsBy != null) move.next += ` · ${quest.nextNewsBy < now ? "news overdue since" : "next news by"} ${moveTime(quest.nextNewsBy, now)}`;
+  return move;
+}
+function baseQuestMove(quest: BoardQuestSummary, asks: Ask[], names: { keeper: string; member: (m: Member) => string }, opts: { keeperArchived?: boolean; now?: number } = {}): { tone: MoveTone; who: string; next: string; verb?: string; task?: string } {
   // An active hold is the user's move too. The Keeper's ask to release it reads as the hold, never as a blocker of its own.
   const hold = activeHold(quest), releaseAsk = releaseAskOf(hold, asks);
   const open = asks.filter((a) => a.state === "open" && a.boardQuestId === quest.id && a !== releaseAsk).sort((a, b) => a.createdAt - b.createdAt);
@@ -188,6 +192,7 @@ const moveNames = (registry: Registry, keeper: Member) => ({ keeper: characterNa
 export function QuestRow({ quest, room, registry, keeper, showKeeper = false, onArchive, pending = false, arrival }: { quest: BoardQuestSummary; room: Pick<Room, "asks">; registry: Registry; keeper: Keeper; showKeeper?: boolean; onArchive?: (quest: BoardQuestSummary) => void; pending?: boolean; arrival?: { since: number | undefined } }) {
   const navigate = useBbNavigate();
   const open = (sub: string) => navigate.toPluginPanel("tavern", { subPath: sub });
+  const now = useNow();
   const path = pathProgress(quest), verified = verifiedOf(quest);
   const name = <button type="button" className="qrow-name act" data-quest-name onClick={() => open(`quest/${quest.id}`)} title={`${isFinished(quest.phase) ? "Open the quest record" : "Open the quest page"}: ${quest.title}`}><b data-content>{quest.short}</b></button>;
   if (isFinished(quest.phase)) {
@@ -202,7 +207,7 @@ export function QuestRow({ quest, room, registry, keeper, showKeeper = false, on
       {onArchive && <button type="button" className="qrow-x act" onClick={() => onArchive(quest)} disabled={pending} aria-label={`${CELLAR.send}: ${quest.short}`} title={`${CELLAR.send}: ${quest.short}`}><Glyph name="archive" size={13} /><span className="qrow-xl">Cellar</span></button>}
     </div>;
   }
-  const move = questMove(quest, room.asks, moveNames(registry, keeper.member), { keeperArchived: keeper.archived === true });
+  const move = questMove(quest, room.asks, moveNames(registry, keeper.member), { keeperArchived: keeper.archived === true, now });
   const need = questNeedYouCount(quest, room.asks);
   const yours = move.tone === "you";
   // showKeeper adds mixed-Keeper labels and ask/hold tags; every row keeps questMove’s edge rule.

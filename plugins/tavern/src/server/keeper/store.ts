@@ -156,6 +156,7 @@ export interface TickBatch {
   threadId: string;
   text: string;
   cursor: number;
+  heldNewsProgress?: Record<string, number>;
   continuation?: { eventId: number; offset: number } | null;
   reportIds: string[];
   ledger?: { hash: string; version: number; asOf: number };
@@ -271,6 +272,7 @@ export interface Runtime {
   lastRouteId: string | null;
   tickAt: number | null;
   cursor: number;
+  heldNewsCursors?: Record<string, { cursor: number; through?: number }>;
   factContinuation?: { eventId: number; offset: number } | null;
   heldAt: number | null;
   holdExpiredAt?: number;
@@ -295,6 +297,8 @@ const initialRuntime = (): Runtime => ({
   eventSequence: 0,
   lastStrikeAt: null,
 });
+
+import { consumesQuestWrite } from "./quest-lifecycle";
 
 export class KeeperStore {
   log?: (level: "info" | "warn", message: string) => void;
@@ -694,6 +698,15 @@ export class KeeperStore {
     ).map((row) => JSON.parse(row.data) as Records[K]);
   }
   put<K extends keyof Records>(kind: K, id: string, data: Records[K]) {
+    if (kind === "quests") {
+      const previous = this.get("quests", id);
+      const authorised = consumesQuestWrite(data);
+      // Normalized reads must not migrate legacy phases during unrelated record updates.
+      if (!authorised && previous && ["check", "wrap"].includes(previous.phase) && (data as BoardQuest).phase === "build") {
+        data = { ...data, phase: previous.phase };
+      }
+      if ((!previous || previous.phase !== (data as BoardQuest).phase || JSON.stringify(previous.held) !== JSON.stringify((data as BoardQuest).held)) && !authorised) throw new Error("Quest phase writes require the quest lifecycle");
+    }
     this.db
       .prepare(
         "INSERT INTO tavern_records(kind,id,data,archived_at) VALUES(?,?,?,?) ON CONFLICT(kind,id) DO UPDATE SET data=excluded.data,archived_at=excluded.archived_at",
@@ -758,12 +771,32 @@ export class KeeperStore {
     return Number(result.lastInsertRowid);
   }
   questRoadEvent(boardQuestId: string, through: number): TavernEvent | null {
-    return this.readEvents(`WHERE id=coalesce(
-      (SELECT CASE WHEN json_extract(data,'$.phaseBeforeStop') IN ('scout','greenlight','build','check','wrap') THEN id END
-        FROM tavern_events WHERE board_quest_id=? AND type='quest.stopping' AND at<=? ORDER BY at DESC,id DESC LIMIT 1),
-      (SELECT id FROM tavern_events WHERE board_quest_id=? AND type='quest.phase' AND at<=? ORDER BY at DESC,id DESC LIMIT 1),
-      (SELECT id FROM tavern_events WHERE board_quest_id=? AND type='quest.opened' AND at<=? ORDER BY at DESC,id DESC LIMIT 1)
-    )`, [boardQuestId, through, boardQuestId, through, boardQuestId, through])[0] ?? null;
+    return this.readEvents("WHERE board_quest_id=? AND at<=? AND json_type(data,\'$.phase\')=\'object\' AND json_extract(data,\'$.phase.to\') NOT IN (\'done\',\'stopped\') ORDER BY at DESC,id DESC LIMIT 1", [boardQuestId, through])[0] ?? null;
+  }
+  questHeldEvent(questId: string, before: number): TavernEvent | null {
+    return this.readEvents("WHERE board_quest_id=? AND id<? AND json_type(data,'$.phase')='object' AND json_extract(data,'$.phase.to')='held' ORDER BY id DESC LIMIT 1", [questId, before])[0] ?? null;
+  }
+  latestQuestEvent(questId: string, type: string): TavernEvent | null {
+    return this.readEvents("WHERE board_quest_id=? AND type=? ORDER BY id DESC LIMIT 1", [questId, type])[0] ?? null;
+  }
+  eventSequence(keeperId: string): number {
+    return (this.db.prepare("SELECT COALESCE(MAX(id),0) AS id FROM tavern_events WHERE keeper_thread_id=?").get(keeperId) as { id: number }).id;
+  }
+  heldNews(questId: string, cursor: number, through: number, limit = 100): TavernEvent[] {
+    return this.readEvents(`WHERE board_quest_id=? AND id>? AND id<=? AND ${visibleEventSql} AND type NOT IN ('user.message','route.recorded','route.corrected','journal.changed','questlog.changed') ORDER BY id ASC LIMIT ?`, [questId, cursor, through, limit]);
+  }
+  heldJournalChurn(questId: string, cursor: number, through: number): number {
+    return (this.db.prepare(`SELECT COUNT(*) AS n FROM tavern_events WHERE board_quest_id=? AND id>? AND id<=? AND type IN ('journal.changed','questlog.changed') AND ${visibleEventSql}`).get(questId, cursor, through) as { n: number }).n;
+  }
+  acknowledgeHeldNews(threadId: string, progress: Record<string, number>) {
+    const cursors = { ...this.runtime(threadId).heldNewsCursors };
+    for (const [questId, cursor] of Object.entries(progress)) {
+      const window = cursors[questId];
+      if (!window) continue;
+      if (window.through !== undefined && cursor >= window.through) delete cursors[questId];
+      else cursors[questId] = { ...window, cursor: Math.max(window.cursor, cursor) };
+    }
+    this.patch(threadId, { heldNewsCursors: cursors });
   }
   roomEvents(limit = 60) {
     return this.readEvents(
@@ -811,7 +844,7 @@ export class KeeperStore {
       keeperThreadId: row.keeper_thread_id,
       boardQuestId: row.resolved_quest_id,
       actor: readStoredActor(row.actor),
-      type: row.type,
+      type: row.type === "quest.held" && JSON.parse(row.data).phase?.to !== "held" ? "quest.kept-open" : row.type,
       text: row.text,
       data: JSON.parse(row.data) as Record<string, unknown>,
     }));
@@ -841,7 +874,7 @@ export class KeeperStore {
       keeperThreadId: row.keeper_thread_id,
       boardQuestId: row.board_quest_id,
       actor: readStoredActor(row.actor),
-      type: row.type,
+      type: row.type === "quest.held" && JSON.parse(row.data).phase?.to !== "held" ? "quest.kept-open" : row.type,
       text: row.text,
       data: JSON.parse(row.data) as Record<string, unknown>,
     }));

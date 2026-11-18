@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { putQuestFixture, concludeQuest } from "../server/support";
 import { seedQuest } from "../server/support";
 import { afterEach, describe, expect, it } from "vitest";
 import { BackupRecords } from "../../src/server/backup/records";
@@ -23,9 +24,9 @@ async function source(withdrawn = false, superseded = false) {
     if (withdrawn) f.runtime.serviceRecords.reviewed({ before, after, sequence: 2, undone: true });
     if (superseded) f.runtime.serviceRecords.superseded({ entry: after, version: 2, at: f.time() });
     f.port.linkedEntries = () => [before];
-    f.k.store.put("quests", q.id, { ...f.k.quest(q.id), phase: "stopped", endedAt: f.time() });
+    putQuestFixture(f.k.store, q.id, { ...f.k.quest(q.id), phase: "stopped", endedAt: f.time() });
     f.k.store.atomic(() => f.runtime.serviceRecords.record(q.id));
-  } else await f.runtime.wrap("lead", q.id, "Proved", "");
+  } else await concludeQuest(f.runtime, "lead", q.id, "Proved", "");
   f.runtime.serviceRecords.backfill();
   return f;
 }

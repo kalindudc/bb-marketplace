@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { putQuestFixture } from "./support";
 import { describe, expect, it } from "vitest";
 import { setup } from "./runtime-fixture";
 
@@ -17,7 +18,7 @@ describe("Opening receipt event projection", () => {
       expect.objectContaining({ type: "route.recorded", boardQuestId: q.id }),
     ]));
     f.k.store.event(f.time(), "lead", null, "note.added", "An independent fact");
-    f.k.store.put("quests", q.id, { ...q, phase: "done", endedAt: f.time(), archivedAt: f.time() });
+    putQuestFixture(f.k.store, q.id, { ...q, phase: "done", endedAt: f.time(), archivedAt: f.time() });
     const visible = f.k.store.unreadEvents("lead", 0, 100, true);
     expect(visible.some(event => event.text.includes("private"))).toBe(false);
     expect(f.k.store.roomEvents().some(event => event.text.includes("private"))).toBe(false);

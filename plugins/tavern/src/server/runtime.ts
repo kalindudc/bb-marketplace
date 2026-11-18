@@ -72,6 +72,8 @@ export const KEEPER_TOOLS = [
   "tavern_note",
   "tavern_gate",
   "tavern_quest",
+  "tavern_hold",
+  "tavern_resume",
   "tavern_hire",
   "tavern_release",
   "tavern_scope",
@@ -110,6 +112,8 @@ type Hire = {
 };
 type Thread = PluginThreadEventPayloads["thread.active"]["thread"];
 type QueuedMessage = PluginThreadEventPayloads["message.queued"]["entry"];
+
+import { transitionQuest } from "./keeper/quest-lifecycle";
 
 export class TavernRuntime {
   readonly stopAll = new StopAll(this);
@@ -371,6 +375,7 @@ export class TavernRuntime {
   async sendRebrief(threadId: string, text: string): Promise<{ briefPending: boolean }> {
     this.stopAll.assertRunning();
     const member = this.requireBriefableMember(threadId);
+    if (member.boardQuestId) this.keeper.assertQuestNotHeld(member.boardQuestId);
     if (this.config().tavern.paused) throw new Error("Tavern is paused; no new brief was queued. Resume it before sending new work.");
     if (this.scopes?.pending(threadId)) throw new Error("The member is waiting for a scope decision; no new brief was queued.");
     if (!text.trim()) throw new Error("A brief cannot be empty");
@@ -468,7 +473,7 @@ export class TavernRuntime {
     const pending: PendingBrief = state.pendingBrief ?? { id: `brief_${randomUUID()}`, text, ...(state.initialBriefAt === undefined && state.requestSources ? { assignmentText: state.assignmentText ?? state.brief?.outcome ?? text, requestSources: state.requestSources } : {}), attempts: 0, nextAttemptAt: this.keeper.now(), attemptedAt: null, hostAfterSeq: null, error: null };
     if (pending.text !== text) throw new Error("A different initial brief is already pending; do not overwrite an uncertain delivery.");
     if (!state.pendingBrief) this.keeper.store.patch(threadId, { pendingBrief: pending });
-    if (this.stopAll.reason() || this.config().tavern.paused || this.scopes?.pending(threadId)) return { briefPending: true };
+    if (this.stopAll.reason() || this.config().tavern.paused || this.scopes?.pending(threadId) || member.boardQuestId && this.keeper.quest(member.boardQuestId).phase === "held") return { briefPending: true };
     if (this.keeper.now() < pending.nextAttemptAt) return { briefPending: true };
     const attempt: PendingBrief = { ...pending, attempts: pending.attempts + 1,
       nextAttemptAt: this.keeper.now() + Math.min(LIMITS.briefRetryMaxMs, LIMITS.briefRetryMs * 2 ** pending.attempts), error: null };
@@ -495,7 +500,7 @@ export class TavernRuntime {
         this.keeper.store.patch(threadId, { deletedAt: this.keeper.now(), archivedAt: this.keeper.now() });
       }
       this.requireBriefableMember(threadId);
-      if (this.away.blocked(threadId) || this.keeper.checkerHandoffProblem(member.classId, member.boardQuestId)) return { briefPending: true };
+      if (this.away.blocked(threadId) || this.keeper.checkerHandoffProblem(member.classId, member.boardQuestId) || member.boardQuestId && this.keeper.quest(member.boardQuestId).phase === "held") return { briefPending: true };
       attempt.hostAfterSeq = latest[0]?.seq ?? 0;
       attempt.attemptedAt = this.keeper.now();
       this.keeper.store.patch(threadId, { pendingBrief: attempt });
@@ -517,6 +522,11 @@ export class TavernRuntime {
       this.ensureBriefBlocker(threadId);
       return { briefPending: true };
     }
+  }
+  async setQuestHeld(id: string, hold: boolean, actor: Actor, messageId?: string) {
+    const quest = this.keeper.setQuestHeld(id, hold, actor, messageId);
+    if (!hold) await this.retryInitialBriefs(quest.keeperThreadId);
+    return quest;
   }
   async retryInitialBriefs(keeperId: string) {
     if (this.config().tavern.paused || !isLiveKeeper(this.keeper.store, this.keeper.member(keeperId))) return;
@@ -555,7 +565,20 @@ export class TavernRuntime {
     const previousState = previousAsk?.state;
     const metadata = this.keeper.store.get("askMeta", askId);
     const brief = metadata?.briefDelivery;
-    this.keeper.answerAsk(askId, optionId, note, via);
+    let archiveMembers: Member[] = [];
+    this.keeper.store.atomic(() => {
+      this.keeper.answerAsk(askId, optionId, note, via, "user");
+      if (previousState === "open" && previousAsk?.kind === "conclude" && previousAsk.boardQuestId) {
+        if (optionId === "conclude") {
+          const draft = metadata?.wrapDraft;
+          if (!draft) throw new Error("This conclude ask has no wrap draft");
+          archiveMembers = this.completeWrap(previousAsk.keeperThreadId, previousAsk.boardQuestId, draft.outcome, draft.left, draft.skipped ?? [], draft.next, draft.results);
+        } else if (optionId === "hold" || optionId === "extensions") {
+          transitionQuest(this.keeper.store, this.keeper.quest(previousAsk.boardQuestId), "build", optionId === "hold" ? "keep-open" : "extensions", { kind: "user" }, { kind: "ask-answer", id: askId }, this.keeper.now(), { text: optionId === "hold" ? "You kept this quest open for other work." : "You asked for extensions or side quests.", data: { askId, optionId } });
+        }
+      }
+    });
+    if (archiveMembers.length) await this.archiveMembers(archiveMembers);
     const ask = this.keeper.store.get("asks", askId)!;
     if (clientAction && previousState === "open" && ask.state === "answered")
       await this.away.return({ kind: "ask-answer", threadId: ask.keeperThreadId, refId: ask.id });
@@ -585,25 +608,8 @@ export class TavernRuntime {
         } else if (optionId === "release") await this.release(ask.keeperThreadId, brief.threadId, "User released an unbriefed member");
       }
     }
-    if (previousState === "open" && ask.kind === "conclude" && ask.boardQuestId) {
-      const draft = metadata?.wrapDraft;
-      if (optionId === "conclude" && draft) {
-        await this.wrap(ask.keeperThreadId, ask.boardQuestId, draft.outcome, draft.left, draft.skipped ?? [], draft.next, draft.results);
-      } else if (optionId === "hold" || optionId === "extensions") {
-        this.keeper.store.event(
-          this.keeper.now(),
-          ask.keeperThreadId,
-          ask.boardQuestId,
-          optionId === "hold" ? "quest.held" : "quest.extended",
-          optionId === "hold"
-            ? "You asked to hold this quest for other work; it stays open and nothing is told until you conclude it later."
-            : "You asked for extensions or side quests; keep this quest open and plan bounded follow-up work with a fresh hire, a re-brief or a new waypoint plan.",
-          { askId: ask.id, optionId },
-          { kind: "user" },
-        );
-        this.keeper.reanchor(ask.keeperThreadId, optionId === "hold" ? "user held the quest for other work" : "user asked for extensions or side quests");
-      }
-    }
+    if (previousState === "open" && ask.kind === "conclude" && (optionId === "hold" || optionId === "extensions"))
+      this.keeper.reanchor(ask.keeperThreadId, optionId === "hold" ? "user kept the quest open for other work" : "user asked for extensions or side quests");
     if (previousState === "open" && metadata?.stopHireTokens && ask.boardQuestId && optionId === "retry") {
       try { await loopCall(recoverHires(this.bb, this.keeper, ask.keeperThreadId, undefined, id => this.preserveCancelledHire(id)), "retry stopping hires"); }
       catch (error) { this.bb.log.warn(`Tavern stopping hire recovery: ${String(error)}`); }
@@ -1260,13 +1266,16 @@ export class TavernRuntime {
           checkerMakerThreadId: member.checkerMakerThreadId ?? (assignment?.waypointIds[0] ? makerForWaypoint(plan, members, assignment.waypointIds[0]) : null),
         });
       }
-      this.keeper.refreshPhase(q.id);
       this.keeper.changed(threadId, q.id);
       return plan;
     });
   }
   async hire(threadId: string, projectId: string, input: Hire) {
     this.stopAll.assertRunning();
+    if (input.boardQuestId) {
+      this.keeper.owned(threadId, input.boardQuestId);
+      this.keeper.assertQuestNotHeld(input.boardQuestId);
+    }
     await this.reconcileNames();
     if (this.config().tavern.paused) throw new Error("Tavern is paused; resume it before hiring.");
     const leader = this.keeper.require(threadId, "keeper");
@@ -1287,6 +1296,7 @@ export class TavernRuntime {
     const legacyPlacement = !placementPolicy || placementPolicy.state === "valid" && !placementPolicy.settings.rules.some(rule => rule.enabled);
     this.away.assertHire(questId, this.away.store.snapshot().status.closed && legacyPlacement && this.away.canPrepareLocalHire());
     const q = questId ? this.keeper.owned(threadId, questId) : null;
+    if (q) this.keeper.assertQuestNotHeld(q.id);
     this.keeper.assertCheckerHandoff(role.id, questId);
     if (q && !isOpenQuest(q))
       throw new Error("This board quest has ended");
@@ -1562,6 +1572,7 @@ export class TavernRuntime {
           token,
         );
       }
+      if (questId) this.keeper.assertQuestNotHeld(questId);
       this.keeper.store.put("hires", token, intent);
     });
     let placement: import("../shared/placement").PlacementRecord | null = null;
@@ -1907,7 +1918,7 @@ export class TavernRuntime {
     return { notes, pendingArchives };
   }
   async archiveBoardQuests(ids: string[], archived: boolean) {
-    const changed = this.keeper.archiveQuests(ids, archived);
+    const changed = this.keeper.archiveQuests(ids, archived, { kind: "user" });
     if (archived) return { ok: true as const, changed, ...await this.archiveQuestThreads(ids) };
     for (const keeperId of new Set(ids.map(id => this.keeper.quest(id).keeperThreadId))) {
       const state = this.keeper.store.runtime(keeperId);
@@ -1923,7 +1934,7 @@ export class TavernRuntime {
     return { ok: true as const, changed, notes: [] as string[], pendingArchives: [] as string[] };
   }
   async deleteBoardQuest(id: string) {
-    const changed = this.keeper.deleteQuest(id);
+    const changed = this.keeper.deleteQuest(id, { kind: "user" });
     try { await this.taleRenderer?.deleteQuest(id); }
     catch (error) { this.bb.log.warn(`Tavern renderer delete ${id}: ${String(error)}`); }
     return { ok: true as const, changed: Number(changed), ...await this.archiveQuestThreads([id]) };
@@ -2097,6 +2108,7 @@ export class TavernRuntime {
     const member = this.keeper.member(memberThreadId);
     if (member?.keeperThreadId !== threadId)
       throw new Error("Only tell members of your own party");
+    if (member.boardQuestId) this.keeper.assertQuestNotHeld(member.boardQuestId);
     this.requireBriefableMember(memberThreadId);
     this.keeper.assertCheckerHandoff(member.classId, member.boardQuestId);
     if (member.boardQuestId) this.keeper.guard(threadId, member.boardQuestId);
@@ -2397,10 +2409,9 @@ export class TavernRuntime {
       this.keeper.store.atomic(() => {
         for (const member of this.keeper.store.query("members", "boardQuestId", q.id, 500))
           this.keeper.store.patch(member.threadId, { archivePending: true });
-        this.keeper.store.put("quests", q.id, { ...this.keeper.quest(q.id), phase: "stopped", endedAt: this.keeper.now(), updatedAt: this.keeper.now() });
+        const request = this.keeper.store.latestQuestEvent(q.id, "quest.stopping");
+        transitionQuest(this.keeper.store, this.keeper.quest(q.id), "stopped", "stopped", { kind: "tavern" }, { kind: "members-stopped", id: this.keeper.store.id("act"), surface: "retryQuestStop", at: this.keeper.now() }, this.keeper.now(), { patch: { endedAt: this.keeper.now() }, text: "Every party member is confirmed stopped or gone", data: { ...request?.data, reason: q.stopReason ?? null } });
         this.serviceRecords.record(q.id);
-        const request = this.keeper.store.db.prepare("SELECT data FROM tavern_events WHERE board_quest_id=? AND type='quest.stopping' ORDER BY id LIMIT 1").get(q.id) as { data: string } | undefined;
-        this.keeper.store.event(this.keeper.now(), keeperId, q.id, "quest.stopped", "Every party member is confirmed stopped or gone", request ? JSON.parse(request.data) : { reason: q.stopReason ?? null }, { kind: "user" });
       });
       await this.archiveMembers(this.keeper.store.query("members", "boardQuestId", q.id, 500));
       this.bb.rpc.experimental_invalidate([tags.registry()]);
@@ -2418,6 +2429,7 @@ export class TavernRuntime {
     results?: import("../shared/tale-results").TaleResults,
   ) {
     const q = this.keeper.owned(threadId, id);
+    this.keeper.assertQuestNotHeld(id);
     if (q.phase === "stopped" || q.phase === "stopping")
       throw new Error("This board quest was stopped or is stopping");
     // A returned quest is only retold; there is nothing left for the user to conclude.
@@ -2449,7 +2461,7 @@ export class TavernRuntime {
       why: "A quest returns only when you say so; the tale is told after your answer.",
       options: [
         { id: "conclude", label: "Conclude the quest", detail: "Tell the tale, archive the party and free its slots.", recommended: true },
-        { id: "hold", label: "Hold for other work", detail: "Keep the quest and its party open; nothing is told yet.", recommended: false },
+        { id: "hold", label: "Keep open for other work", detail: "Keep the quest and its party open; nothing is told yet.", recommended: false },
         { id: "extensions", label: "Open extensions or side quests", detail: "Keep this quest open and add bounded follow-up work.", recommended: false },
       ],
       meanwhile: "Nothing else runs for this quest until you answer.",
@@ -2462,7 +2474,7 @@ export class TavernRuntime {
     this.keeper.changed(threadId, id);
     return { askId: ask.id, pendingArchives: [] as string[] };
   }
-  async wrap(
+  private completeWrap(
     threadId: string,
     id: string,
     outcome: string,
@@ -2476,7 +2488,7 @@ export class TavernRuntime {
     if (q.phase === "done") {
       this.keeper.store.event(this.keeper.now(), threadId, id, "quest.retold", outcome, { outcome, left, ...(next ? { next } : {}), ...(results ? { results } : {}) });
       this.keeper.changed(threadId, id);
-      return { pendingArchives: [] };
+      return [];
     }
     const awayWindow = this.away.wrapWindow(id);
     this.keeper.guard(threadId, id);
@@ -2550,13 +2562,6 @@ export class TavernRuntime {
           { kind: "agent", threadId },
         );
       }
-      this.keeper.store.put("quests", id, {
-        ...q,
-        phase: "done",
-        endedAt: this.keeper.now(),
-        updatedAt: this.keeper.now(),
-      });
-      this.serviceRecords.record(id);
       this.keeper.memory.closeQuest(threadId, id);
       const withdrawnAskIds: string[] = [];
       {
@@ -2566,25 +2571,29 @@ export class TavernRuntime {
           if (withdrawn) withdrawnAskIds.push(withdrawn.id);
         }
       }
-      this.keeper.store.event(
-        this.keeper.now(),
-        threadId,
-        id,
-        "quest.wrapped",
-        outcome,
-        {
+      const answer = this.keeper.store.query("asks", "boardQuestId", id, 500).filter(ask => ask.kind === "conclude" && ask.answer?.by === "user" && ask.answer.optionId === "conclude").at(-1);
+      if (!answer) throw new Error("Concluding requires the user's conclude answer");
+      transitionQuest(this.keeper.store, q, "done", "conclude", { kind: "user" }, { kind: "ask-answer", id: answer.id }, this.keeper.now(), { patch: { endedAt: this.keeper.now() }, text: outcome, data: {
           outcome,
           left,
           skipped,
           ...(next ? { next } : {}),
           ...(results ? { results } : {}),
           ...(awayWindow ? { awayWindowId: awayWindow.id, deferredMemberThreadIds: summary.members.map(member => member.threadId), withdrawnAskIds } : {}),
-        },
-      );
+        } });
+      this.serviceRecords.record(id);
     });
     this.bb.rpc.experimental_invalidate([tags.registry()]);
     this.keeper.changed(threadId, id);
-    return { pendingArchives: await this.archiveMembers(summary.members) };
+    return summary.members;
+  }
+  async wrap(
+    threadId: string, id: string, outcome: string, left: string,
+    skipped: { waypointId: string; reason: string }[] = [], next?: string[],
+    results?: import("../shared/tale-results").TaleResults,
+  ) {
+    const members = this.completeWrap(threadId, id, outcome, left, skipped, next, results);
+    return { pendingArchives: await this.archiveMembers(members) };
   }
   async push(threadId: string, title: string, body: string, askId?: string) {
     const attention = this.config().attention;
@@ -3110,6 +3119,17 @@ export class TavernRuntime {
   async reconcile() {
     if (this.stopAll.reason()) this.startupDeferred = true;
     this.stopAll.recoverReceipt();
+    this.keeper.store.atomic(() => {
+      for (const ask of this.keeper.store.all("asks")) {
+        if (ask.kind !== "conclude" || ask.state !== "open" || !ask.boardQuestId) continue;
+        const quest = this.keeper.quest(ask.boardQuestId);
+        if (quest.phase === "build") transitionQuest(this.keeper.store, quest, "closing", "conclude-open-at-upgrade", { kind: "tavern" }, { kind: "ask", id: ask.id }, this.keeper.now());
+        else if (quest.phase === "done" || quest.phase === "stopped") {
+          this.keeper.withdrawAsk(ask.id, "conclude-stale-at-upgrade");
+          this.keeper.store.event(this.keeper.now(), ask.keeperThreadId, quest.id, "ask.withdrawn", "Withdrew a stale conclude ask on a finished quest", { askId: ask.id, cause: "conclude-stale-at-upgrade" }, { kind: "tavern" });
+        }
+      }
+    });
     await this.maintain("party archive repair", null, [{ name: "repair", run: () => this.stopAll.reason() ? undefined : this.repairPartyArchives() }]);
     await this.maintain("service record backfill", null, [{ name: "history", run: () => this.serviceRecords.backfill() }]);
     this.keeper.store.pruneTicks();

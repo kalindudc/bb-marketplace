@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { concludeQuest } from "./support";
 import { seedQuest } from "./support";
 import { describe, expect, it, vi } from "vitest";
 import { setup } from "./runtime-fixture";
@@ -37,7 +38,7 @@ async function approved() {
       { classId: "smith", characterId: null, model: null, purpose: "Build", waypointIds: ["w1"] },
     ],
   });
-  f.k.answerAsk(f.k.asks("lead")[0]!.id, "approve", null, "page");
+  f.k.answerAsk(f.k.asks("lead")[0]!.id, "approve", null, "page", "user");
   return {
     ...f,
     q,
@@ -330,7 +331,7 @@ describe("round 2 release, ask and scout policies", () => {
     const old = f.k.ask("lead", ask);
     for (let n = 0; n < 205; n++) {
       const recent = f.k.ask("lead", { ...ask, question: `Ask ${n}` });
-      f.k.answerAsk(recent.id, "small", null, "page");
+      f.k.answerAsk(recent.id, "small", null, "page", "user");
     }
     const room = (await f.harness.invokeRpc("room", {})) as { asks: { id: string }[] };
     expect(room.asks.map((a) => a.id)).toContain(old.id);
@@ -377,7 +378,7 @@ describe("round 2 delivery and cleanup", () => {
       .fn()
       .mockRejectedValueOnce(new Error("archive unavailable"))
       .mockResolvedValue({ ok: true });
-    await f.runtime.wrap("lead", f.q.id, "Done", "");
+    await concludeQuest(f.runtime, "lead", f.q.id, "Done", "");
     expect(f.k.quest(f.q.id).phase).toBe("done");
     expect(f.k.member(member.threadId)?.state).toBe("done");
     await f.runtime.sweep();

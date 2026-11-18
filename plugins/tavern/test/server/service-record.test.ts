@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { concludeQuest, putQuestFixture } from "./support";
 import { seedQuest } from "./support";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { setup } from "./runtime-fixture";
@@ -44,33 +45,33 @@ async function fixture() {
 
 describe("lasting character service record", () => {
   it("retains credits on a deleted quest without linking or naming it, and restores its presentation", async () => {
-    const f = await fixture(); f.review("verify"); await f.runtime.wrap("lead", f.q.id, "Proved", "");
+    const f = await fixture(); f.review("verify"); await concludeQuest(f.runtime, "lead", f.q.id, "Proved", "");
     const before = f.record("juno"), stored = f.k.store.get("serviceRecords", f.q.id);
-    f.k.deleteQuest(f.q.id);
+    f.k.deleteQuest(f.q.id, { kind: "user" });
     const after = f.record("juno");
     expect(after.maker).toEqual(before.maker);
     expect(after.records[0]).toMatchObject({ title: "a deleted quest", short: "a deleted quest", available: false, keeperThreadId: null, threadIds: [] });
     expect(f.k.store.get("serviceRecords", f.q.id)).toEqual(stored);
-    f.k.restoreDeletedQuest(f.q.id);
+    f.k.restoreDeletedQuest(f.q.id, { kind: "user" });
     expect(f.record("juno").records[0]).toMatchObject({ title: before.records[0]!.title, available: true });
   });
   it("writes once at return, counts verified waypoints rather than entries, and gives the Keeper its own record", async () => {
     const f = await fixture(); const verified = f.review("verify");
     f.setEntries([verified, { ...verified, id: "a2" }]);
     expect(f.records()).toEqual([]);
-    await f.runtime.wrap("lead", f.q.id, "Proved", "");
+    await concludeQuest(f.runtime, "lead", f.q.id, "Proved", "");
     expect(f.record("juno")).toMatchObject({ maker: { verifiedWaypoints: 1, quests: 1 }, recordsTotal: 1 });
     expect(f.record("vex")).toMatchObject({ warden: { checks: 1, independentChecks: 1, sameFamilyChecks: 0, caughtDefects: 0 } });
     expect(f.record("wren")).toMatchObject({ keeper: { returnedQuests: 1, verifiedReturns: 1, stoppedQuests: 0, verifiedWaypoints: 1 } });
     expect(f.k.store.get("serviceRecords", f.q.id)!.waypoints).toEqual({ verified: 1, total: 1, skipped: 0 });
     expect(f.record("juno")).not.toHaveProperty("warden");
-    const before = f.records(); await f.runtime.wrap("lead", f.q.id, "Proved", "");
+    const before = f.records(); await concludeQuest(f.runtime, "lead", f.q.id, "Proved", "");
     expect(f.records()).toEqual(before);
   });
   it("does not award a verified return when every optional waypoint was skipped", async () => {
     const f = await fixture();
     f.k.plan("lead", { ...planInput(f.q.id), waypoints: [{ ...planInput(f.q.id).waypoints[0]!, optional: true }] });
-    await f.runtime.wrap("lead", f.q.id, "Nothing needed making", "", [{ waypointId: "w1", reason: "Not needed" }]);
+    await concludeQuest(f.runtime, "lead", f.q.id, "Nothing needed making", "", [{ waypointId: "w1", reason: "Not needed" }]);
     expect(f.record("wren").keeper).toEqual({ returnedQuests: 1, verifiedReturns: 0, stoppedQuests: 0, verifiedWaypoints: 0, firstEarnedAt: f.k.quest(f.q.id).endedAt, completeSince: null });
     const stored = serviceQuestRecordSchema.parse(f.k.store.get("serviceRecords", f.q.id));
     expect(stored.waypoints).toEqual({ verified: 0, total: 1, skipped: 1 });
@@ -80,7 +81,7 @@ describe("lasting character service record", () => {
     const f = await fixture(), plan = planInput(f.q.id);
     f.k.plan("lead", { ...plan, waypoints: [...plan.waypoints, { ...plan.waypoints[0]!, id: "w2", optional: true }] });
     f.review("verify");
-    await f.runtime.wrap("lead", f.q.id, "One checked, one not needed", "", [{ waypointId: "w2", reason: "Not needed" }]);
+    await concludeQuest(f.runtime, "lead", f.q.id, "One checked, one not needed", "", [{ waypointId: "w2", reason: "Not needed" }]);
     const expected = { verified: 1, total: 2, skipped: 1 };
     expect(serviceQuestRecordSchema.parse(f.k.store.get("serviceRecords", f.q.id)).waypoints).toEqual(expected);
     registerRpc(f.bb, f.runtime);
@@ -97,7 +98,7 @@ describe("lasting character service record", () => {
   it("leaves a stored legacy skipped count unknown through reads and startup backfill", async () => {
     const f = await fixture();
     f.k.plan("lead", { ...planInput(f.q.id), waypoints: [{ ...planInput(f.q.id).waypoints[0]!, optional: true }] });
-    await f.runtime.wrap("lead", f.q.id, "Not needed", "", [{ waypointId: "w1", reason: "Not needed" }]);
+    await concludeQuest(f.runtime, "lead", f.q.id, "Not needed", "", [{ waypointId: "w1", reason: "Not needed" }]);
     const legacy = { ...f.k.store.get("serviceRecords", f.q.id)!, waypoints: { verified: 0, total: 1 } };
     f.k.store.put("serviceRecords", f.q.id, legacy);
     expect(serviceQuestRecordSchema.parse(legacy).waypoints).toEqual({ verified: 0, total: 1 });
@@ -109,7 +110,7 @@ describe("lasting character service record", () => {
   it("does not turn an all-skipped legacy return into a verified return during backfill", async () => {
     const f = await fixture();
     f.k.plan("lead", { ...planInput(f.q.id), waypoints: [{ ...planInput(f.q.id).waypoints[0]!, optional: true }] });
-    await f.runtime.wrap("lead", f.q.id, "Nothing needed making", "", [{ waypointId: "w1", reason: "Not needed" }]);
+    await concludeQuest(f.runtime, "lead", f.q.id, "Nothing needed making", "", [{ waypointId: "w1", reason: "Not needed" }]);
     f.k.store.db.prepare("DELETE FROM tavern_records WHERE kind LIKE 'service%'").run();
     f.runtime.serviceRecords.backfill();
     expect(f.record("wren").keeper).toEqual({ returnedQuests: 1, verifiedReturns: 0, stoppedQuests: 0, verifiedWaypoints: 0, firstEarnedAt: f.k.quest(f.q.id).endedAt, completeSince: f.time() });
@@ -125,15 +126,15 @@ describe("lasting character service record", () => {
     expect(f.k.store.get("serviceRecords", f.q.id)!.waypoints).toEqual({ verified: 1, total: 1, skipped: 0 });
   });
   it("archiving members and cellaring the quest leave the entire service record unchanged", async () => {
-    const f = await fixture(); f.review("verify"); await f.runtime.wrap("lead", f.q.id, "Proved", "");
+    const f = await fixture(); f.review("verify"); await concludeQuest(f.runtime, "lead", f.q.id, "Proved", "");
     const before = f.records();
     f.runtime.updateThread(makeThreadResponse({ id: "maker", archivedAt: f.time() }));
     f.runtime.updateThread(makeThreadResponse({ id: "checker", archivedAt: f.time() }));
-    f.k.archiveQuests([f.q.id], true);
+    f.k.archiveQuests([f.q.id], true, { kind: "user" });
     expect(f.records()).toEqual(before);
   });
   it("deletion preserves counts and dates but removes maker, checker and Keeper links, including receipts", async () => {
-    const f = await fixture(); f.review("verify"); await f.runtime.wrap("lead", f.q.id, "Proved", "");
+    const f = await fixture(); f.review("verify"); await concludeQuest(f.runtime, "lead", f.q.id, "Proved", "");
     const before = f.record("juno");
     for (const id of ["maker", "checker", "lead"]) f.runtime.threadGone(id);
     expect(f.record("juno")).toMatchObject({ maker: before.maker, firstEarnedAt: before.firstEarnedAt, lastEarnedAt: before.lastEarnedAt });
@@ -141,25 +142,25 @@ describe("lasting character service record", () => {
     for (const receipt of f.k.store.all("serviceVerdicts")) { expect(receipt.maker.threadId).toBeNull(); expect(receipt.checker.threadId).toBeNull(); }
   });
   it("a deleted keeper payload redacts links even when it arrives through updateThread", async () => {
-    const f = await fixture(); f.review("verify"); await f.runtime.wrap("lead", f.q.id, "Proved", "");
+    const f = await fixture(); f.review("verify"); await concludeQuest(f.runtime, "lead", f.q.id, "Proved", "");
     f.runtime.updateThread(makeThreadResponse({ id: "lead", deletedAt: f.time() }));
     expect(f.record("wren").records[0]!.keeperThreadId).toBeNull();
     expect(f.record("wren").keeper?.returnedQuests).toBe(1);
   });
   it.each(["same-family", "not-established"] as const)("does not call a recorded %s check independent", async independence => {
     const f = await fixture(); f.k.store.put("members", "checker", { ...f.k.member("checker")!, checkIndependence: independence });
-    f.review("verify"); await f.runtime.wrap("lead", f.q.id, "Proved", "");
+    f.review("verify"); await concludeQuest(f.runtime, "lead", f.q.id, "Proved", "");
     expect(f.record("vex").warden).toMatchObject({ checks: 1, independentChecks: 0, sameFamilyChecks: independence === "same-family" ? 1 : 0 });
   });
   it("backfills a legacy stopped quest before a later return without claiming complete history", async () => {
     const f = await fixture(); f.review("verify");
     f.k.store.db.prepare("DELETE FROM tavern_records WHERE kind LIKE 'service%'").run();
-    f.k.store.put("quests", f.q.id, { ...f.k.quest(f.q.id), phase: "stopped", endedAt: f.time() });
+    putQuestFixture(f.k.store, f.q.id, { ...f.k.quest(f.q.id), phase: "stopped", endedAt: f.time() });
     f.advance(1000); const boundary = f.time(); f.runtime.serviceRecords.backfill();
     f.setEntries([]); f.advance(1000);
     const later = await seedQuest(f.k,"lead", "A later quest", "New work");
     f.k.plan("lead", { ...planInput(later.id), waypoints: [{ ...planInput(later.id).waypoints[0]!, optional: true }] });
-    await f.runtime.wrap("lead", later.id, "No implementation needed", "", [{ waypointId: "w1", reason: "Not needed" }]);
+    await concludeQuest(f.runtime, "lead", later.id, "No implementation needed", "", [{ waypointId: "w1", reason: "Not needed" }]);
     expect(f.record("wren")).toMatchObject({ completeSince: boundary, keeper: { stoppedQuests: 1, returnedQuests: 1, verifiedReturns: 0 } });
     expect(f.record("juno")).toMatchObject({ completeSince: boundary, maker: { verifiedWaypoints: 1, quests: 1 } });
     expect(f.record("vex")).toMatchObject({ completeSince: boundary, warden: { checks: 1, caughtSince: boundary } });
@@ -172,7 +173,7 @@ describe("lasting character service record", () => {
     ctx.requestedExecution = { ...ctx.requestedExecution, providerId: "pi", model: "claude-opus-4" };
     expect(await f.runtime.dispatch(ctx)).toEqual({ action: "proceed" });
     expect(f.k.store.runtime("checker").classExecutionChoice).toMatchObject({ providerId: "pi", model: "claude-opus-4", recordedAt: f.time() });
-    f.review("verify"); await f.runtime.wrap("lead", f.q.id, "Proved", "");
+    f.review("verify"); await concludeQuest(f.runtime, "lead", f.q.id, "Proved", "");
     expect(f.record("vex").warden).toMatchObject({ independentChecks: 0, sameFamilyChecks: 1 });
   });
   it("treats an admitted provider-default model as unknown rather than reusing its superseded hire family", async () => {
@@ -181,7 +182,7 @@ describe("lasting character service record", () => {
     const ctx = makeMessageDispatchHookContext({ thread: { id: "checker", status: "idle" } });
     ctx.requestedExecution = { ...ctx.requestedExecution, providerId: "pi", model: null }; f.advance(1000);
     expect(await f.runtime.dispatch(ctx)).toEqual({ action: "proceed" });
-    f.review("verify"); await f.runtime.wrap("lead", f.q.id, "Proved", "");
+    f.review("verify"); await concludeQuest(f.runtime, "lead", f.q.id, "Proved", "");
     expect(f.k.store.all("serviceVerdicts")[0]).toMatchObject({ checker: { family: null }, independence: "not-established" });
     expect(f.record("vex").warden).toMatchObject({ independentChecks: 0 });
   });
@@ -189,7 +190,7 @@ describe("lasting character service record", () => {
     const f = await fixture();
     for (const [threadId, providerId, model] of [["maker", "codex", "gpt-5"], ["checker", "claude-code", "claude-opus-4"]]) f.k.store.event(f.time(), "lead", f.q.id, "member.hired", "Hired", { memberThreadId: threadId, execution: { providerId, model } });
     f.advance(1000); f.k.store.patch("maker", { classExecutionChoice: { providerId: "claude-code", model: null, recordedAt: f.time(), reasoningLevel: null, modelSource: null, reasoningSource: null } });
-    f.review("verify"); await f.runtime.wrap("lead", f.q.id, "Proved", "");
+    f.review("verify"); await concludeQuest(f.runtime, "lead", f.q.id, "Proved", "");
     expect(f.k.store.all("serviceVerdicts")[0]).toMatchObject({ maker: { family: null }, independence: "not-established" });
     expect(f.record("vex").warden).toMatchObject({ independentChecks: 0 });
   });
@@ -240,7 +241,7 @@ describe("lasting character service record", () => {
     f.k.store.event(f.time(), "lead", f.q.id, "member.hired", "Maker", { memberThreadId: "maker", execution: { providerId: "claude-code", model: "claude-sonnet-4" } });
     f.k.store.event(f.time(), "lead", f.q.id, "member.hired", "Checker", { memberThreadId: "checker", execution: { providerId: "codex", model: "gpt-5" } });
     f.k.store.patch("checker", { classExecutionChoice: { providerId: "claude-code", model: "claude-opus-4", recordedAt: f.time(), reasoningLevel: null, modelSource: null, reasoningSource: null } });
-    f.review("verify"); await f.runtime.wrap("lead", f.q.id, "Proved", "");
+    f.review("verify"); await concludeQuest(f.runtime, "lead", f.q.id, "Proved", "");
     expect(f.record("vex").warden).toMatchObject({ independentChecks: 0, sameFamilyChecks: 1 });
     expect(f.k.store.all("serviceVerdicts")[0]).toMatchObject({ maker: { family: "anthropic" }, checker: { family: "anthropic" } });
   });
@@ -249,7 +250,7 @@ describe("lasting character service record", () => {
     for (const threadId of ["maker", "checker"]) f.k.store.event(f.time(), "lead", f.q.id, "member.hired", "Hired", { memberThreadId: threadId, execution: { providerId: "claude-code", model: "claude-sonnet-4" } });
     f.k.store.patch("maker", { classExecutionChoice: { model: "gpt-5", reasoningLevel: null, modelSource: null, reasoningSource: null } });
     f.k.store.patch("checker", { classExecutionChoice: { providerId: "codex", model: "gpt-5", recordedAt: f.time() + 1000, reasoningLevel: null, modelSource: null, reasoningSource: null } });
-    f.review("verify"); await f.runtime.wrap("lead", f.q.id, "Proved", "");
+    f.review("verify"); await concludeQuest(f.runtime, "lead", f.q.id, "Proved", "");
     expect(f.record("vex").warden).toMatchObject({ independentChecks: 0, sameFamilyChecks: 1 });
   });
   it("does not guess families from partial execution records or a provider default", async () => {
@@ -259,14 +260,14 @@ describe("lasting character service record", () => {
       f.k.store.patch(threadId, { classExecutionChoice: { model: "claude-sonnet-4", reasoningLevel: null, modelSource: null, reasoningSource: null } });
     }
     f.k.store.put("members", "checker", { ...f.k.member("checker")!, checkIndependence: "not-established" });
-    f.review("verify"); await f.runtime.wrap("lead", f.q.id, "Proved", "");
+    f.review("verify"); await concludeQuest(f.runtime, "lead", f.q.id, "Proved", "");
     expect(f.k.store.all("serviceVerdicts")[0]).toMatchObject({ maker: { family: null }, checker: { family: null }, independence: "not-established" });
     expect(f.record("vex").warden).toMatchObject({ independentChecks: 0, sameFamilyChecks: 0 });
   });
   it("known matching recorded model families never count as independent even with a stale independent label", async () => {
     const f = await fixture();
     for (const id of ["maker", "checker"]) f.k.store.patch(id, { classExecutionChoice: { providerId: "pi", model: "claude-sonnet-4", recordedAt: f.time(), reasoningLevel: null, modelSource: null, reasoningSource: null } });
-    f.review("verify"); await f.runtime.wrap("lead", f.q.id, "Proved", "");
+    f.review("verify"); await concludeQuest(f.runtime, "lead", f.q.id, "Proved", "");
     expect(f.record("vex").warden).toMatchObject({ independentChecks: 0, sameFamilyChecks: 1 });
   });
   it("a recorded rejection with no verified fix is a check, not a catch, when stopped", async () => {
@@ -296,7 +297,7 @@ describe("lasting character service record", () => {
     f.runtime.serviceRecords.superseded({ entry: old, version: 3, at: at + 1 });
     expect(f.k.store.get("serviceVerdicts", receipt.id)).toMatchObject({ withdrawn: false, superseded: { at, reason: "superseded by brief v2" } });
     f.review("verify", { ...f.entry, evidence: [{ kind: "command", ref: "node fresh-tests.js", detail: "Fresh brief proved", exitCode: 0 }] });
-    await f.runtime.wrap("lead", f.q.id, "New brief proved", "");
+    await concludeQuest(f.runtime, "lead", f.q.id, "New brief proved", "");
     expect(f.record("vex").warden).toMatchObject({ checks: 2, independentChecks: 2 });
     expect(f.record("juno").maker?.verifiedWaypoints).toBe(1);
     expect(f.k.store.get("serviceVerdicts", receipt.id)).toHaveProperty("superseded");
@@ -310,7 +311,7 @@ describe("lasting character service record", () => {
     history.run("maker", JSON.stringify([fixed]), JSON.stringify([verified]), "verify", JSON.stringify({ kind: "agent", threadId: "checker" }));
     f.runtime.serviceRecords.superseded({ entry: verified, version: 2, at: f.time() });
     f.setEntries([{ ...verified, status: "doing", review: null }]);
-    f.k.store.put("quests", f.q.id, { ...f.k.quest(f.q.id), phase: "stopped", endedAt: f.time() });
+    putQuestFixture(f.k.store, f.q.id, { ...f.k.quest(f.q.id), phase: "stopped", endedAt: f.time() });
     f.runtime.serviceRecords.record(f.q.id);
     expect(f.record("vex").warden).toMatchObject({ checks: 2, caughtDefects: 1 });
     expect(f.records().find(row => row.characterId === "juno")).toBeUndefined();
@@ -319,7 +320,7 @@ describe("lasting character service record", () => {
     const f = await fixture(), fixed = f.fixed(f.review("reject")), old = f.review("verify", fixed);
     f.runtime.serviceRecords.superseded({ entry: old, version: 2, at: f.time() });
     f.setEntries([{ ...old, status: "doing", review: null }]);
-    f.k.store.put("quests", f.q.id, { ...f.k.quest(f.q.id), phase: "stopped", endedAt: f.time() });
+    putQuestFixture(f.k.store, f.q.id, { ...f.k.quest(f.q.id), phase: "stopped", endedAt: f.time() });
     f.runtime.serviceRecords.record(f.q.id);
     expect(f.record("vex").warden).toMatchObject({ checks: 2, caughtDefects: 1 });
     expect(f.records().find(row => row.characterId === "juno")).toBeUndefined();
@@ -333,7 +334,7 @@ describe("lasting character service record", () => {
     const old = f.review("verify");
     f.runtime.serviceRecords.superseded({ entry: old, version: 2, at: f.time() });
     expect(f.k.store.all("serviceVerdicts")[0]).toMatchObject({ independence: "same-family", superseded: { reason: "superseded by brief v2" } });
-    f.review("verify"); await f.runtime.wrap("lead", f.q.id, "Proved", "");
+    f.review("verify"); await concludeQuest(f.runtime, "lead", f.q.id, "Proved", "");
     const records = f.records(), receipts = f.k.store.all("serviceVerdicts");
     expect(() => f.runtime.serviceRecords.superseded({ entry: old, version: 3, at: f.time() })).not.toThrow();
     expect(f.records()).toEqual(records); expect(f.k.store.all("serviceVerdicts")).toEqual(receipts);
@@ -341,7 +342,7 @@ describe("lasting character service record", () => {
   it("does not award maker proof from a superseded entry restored by old history", async () => {
     const f = await fixture(), old = f.review("verify");
     f.runtime.serviceRecords.superseded({ entry: old, version: 2, at: f.time() });
-    f.k.store.put("quests", f.q.id, { ...f.k.quest(f.q.id), phase: "stopped", endedAt: f.time() });
+    putQuestFixture(f.k.store, f.q.id, { ...f.k.quest(f.q.id), phase: "stopped", endedAt: f.time() });
     f.runtime.serviceRecords.record(f.q.id);
     expect(f.records().find(row => row.characterId === "juno")).toBeUndefined();
     expect(f.record("vex").warden).toMatchObject({ independentChecks: 1 });
@@ -352,7 +353,7 @@ describe("lasting character service record", () => {
     f.runtime.threadGone("maker");
     f.k.bind("replacement", "smith", "mira", "project", { keeperThreadId: "lead", boardQuestId: f.q.id, waypointId: "w1", errand: false, title: "New work", brief: f.k.store.runtime("maker").brief! });
     f.review("verify", { ...f.entry, threadId: "replacement" });
-    f.k.store.put("quests", f.q.id, { ...f.k.quest(f.q.id), phase: "done", endedAt: f.time() });
+    putQuestFixture(f.k.store, f.q.id, { ...f.k.quest(f.q.id), phase: "done", endedAt: f.time() });
     f.runtime.serviceRecords.record(f.q.id);
     expect(f.records().find(row => row.characterId === "juno")).toBeUndefined();
     expect(f.record("mira").maker?.verifiedWaypoints).toBe(1);
@@ -374,7 +375,7 @@ describe("lasting character service record", () => {
     expect(f.k.store.all("serviceVerdicts")).toHaveLength(1);
   });
   it.each([true, false])("refuses linked review history changes after its terminal record is written (undo=%s)", async undone => {
-    const f = await fixture(), verified = f.review("verify"); await f.runtime.wrap("lead", f.q.id, "Proved", "");
+    const f = await fixture(), verified = f.review("verify"); await concludeQuest(f.runtime, "lead", f.q.id, "Proved", "");
     const before = f.records(), receipts = f.k.store.all("serviceVerdicts");
     expect(() => f.runtime.serviceRecords.reviewed({ before: f.entry, after: verified, sequence: 2, undone })).toThrow("This quest has ended and its record is written, so this verdict can\'t be undone.");
     expect(f.records()).toEqual(before); expect(f.k.store.all("serviceVerdicts")).toEqual(receipts);
@@ -382,27 +383,27 @@ describe("lasting character service record", () => {
   it("does not count a withdrawn verification or a catch whose verification was undone", async () => {
     const f = await fixture(), fixed = f.fixed(f.review("reject")), verified = f.review("verify", fixed);
     f.runtime.serviceRecords.reviewed({ before: fixed, after: verified, sequence: 3, undone: true });
-    f.setEntries([fixed]); f.k.store.put("quests", f.q.id, { ...f.k.quest(f.q.id), phase: "stopped", endedAt: f.time() });
+    f.setEntries([fixed]); putQuestFixture(f.k.store, f.q.id, { ...f.k.quest(f.q.id), phase: "stopped", endedAt: f.time() });
     f.k.store.atomic(() => f.runtime.serviceRecords.record(f.q.id));
     expect(f.record("vex").warden).toMatchObject({ checks: 1, caughtDefects: 0 });
   });
   it("does not count a catch whose rejection has been withdrawn", async () => {
     const f = await fixture(), rejected = f.review("reject"), fixed = f.fixed(rejected);
     f.review("verify", fixed); f.runtime.serviceRecords.reviewed({ before: f.entry, after: rejected, sequence: 3, undone: true });
-    await f.runtime.wrap("lead", f.q.id, "Proved", "");
+    await concludeQuest(f.runtime, "lead", f.q.id, "Proved", "");
     expect(f.record("vex").warden).toMatchObject({ checks: 1, caughtDefects: 0 });
   });
   it("credits a catch only after new maker evidence and a Warden verification, even after undo history is gone", async () => {
     const f = await fixture(); f.review("verify", f.fixed(f.review("reject")));
     f.k.store.db.exec("DELETE FROM questlog_history; DELETE FROM questlog_changes;");
-    await f.runtime.wrap("lead", f.q.id, "Fixed and proved", "");
+    await concludeQuest(f.runtime, "lead", f.q.id, "Fixed and proved", "");
     expect(f.record("vex").warden).toMatchObject({ checks: 2, independentChecks: 2, caughtDefects: 1 });
   });
   it.each(["no-new-evidence", "not-maker", "no-rejection"])("does not infer a catch from %s", async mode => {
     const f = await fixture(); const rejected = f.review("reject"); const before = f.fixed(rejected, mode !== "no-new-evidence");
     if (mode === "not-maker") before.doneBy = { kind: "user" };
     if (mode === "no-rejection") before.review = null;
-    f.review("verify", before); await f.runtime.wrap("lead", f.q.id, "Proved", "");
+    f.review("verify", before); await concludeQuest(f.runtime, "lead", f.q.id, "Proved", "");
     expect(f.record("vex").warden?.caughtDefects).toBe(0);
   });
   it("backs up legacy returned quests once without double counting surviving entries and stored wins", async () => {
@@ -410,7 +411,7 @@ describe("lasting character service record", () => {
     f.k.store.db.prepare("DELETE FROM tavern_records WHERE kind LIKE 'service%'").run();
     f.setEntries([verified, { ...verified, id: "a2" }]);
     f.k.store.put("members", "maker", { ...f.k.member("maker")!, verifiedWins: 1 });
-    f.k.store.put("quests", f.q.id, { ...f.k.quest(f.q.id), phase: "done", endedAt: f.time() });
+    putQuestFixture(f.k.store, f.q.id, { ...f.k.quest(f.q.id), phase: "done", endedAt: f.time() });
     f.advance(1000); f.runtime.serviceRecords.backfill();
     expect(f.record("juno")).toMatchObject({ maker: { verifiedWaypoints: 1 }, backfilledAt: f.time(), completeSince: f.time() });
     expect(f.record("vex").warden).toMatchObject({ checks: 1, caughtDefects: 0, caughtSince: f.time() });
@@ -423,13 +424,13 @@ describe("lasting character service record", () => {
     f.k.bind("other-maker", "smith", "juno", "project", { keeperThreadId: "lead", boardQuestId: f.q.id, waypointId: "w1", errand: false, title: "Help", brief: f.k.store.runtime("maker").brief! });
     for (const id of ["maker", "other-maker"]) f.k.store.put("members", id, { ...f.k.member(id)!, verifiedWins: 1 });
     f.setEntries([verified, { ...verified, threadId: "other-maker" }]);
-    f.k.store.put("quests", f.q.id, { ...f.k.quest(f.q.id), phase: "done", endedAt: f.time() });
+    putQuestFixture(f.k.store, f.q.id, { ...f.k.quest(f.q.id), phase: "done", endedAt: f.time() });
     f.runtime.serviceRecords.backfill();
     expect(f.record("juno").maker).toEqual({ verifiedWaypoints: 1, quests: 1, firstEarnedAt: f.k.quest(f.q.id).endedAt, completeSince: f.time() });
   });
   it("preserves recorded legacy maker wins when the old thread and its journal have gone", async () => {
     const f = await fixture(); f.setEntries([]); f.k.store.put("members", "maker", { ...f.k.member("maker")!, verifiedWins: 3 });
-    f.k.store.put("quests", f.q.id, { ...f.k.quest(f.q.id), phase: "done", endedAt: f.time() });
+    putQuestFixture(f.k.store, f.q.id, { ...f.k.quest(f.q.id), phase: "done", endedAt: f.time() });
     f.runtime.threadGone("maker"); f.runtime.serviceRecords.backfill();
     expect(f.record("juno").maker).toEqual({ verifiedWaypoints: 3, quests: 1, firstEarnedAt: f.k.quest(f.q.id).endedAt, completeSince: f.time() });
     expect(f.record("juno").records[0]!.threadIds).toEqual([]);
@@ -437,7 +438,7 @@ describe("lasting character service record", () => {
   });
   it("reads service history only through registry RPC, with no changes to agent snapshots, configuration, reports or journal text", async () => {
     const f = await fixture(); f.review("verify");
-    f.k.store.put("quests", f.q.id, { ...f.k.quest(f.q.id), phase: "done", endedAt: f.time() });
+    putQuestFixture(f.k.store, f.q.id, { ...f.k.quest(f.q.id), phase: "done", endedAt: f.time() });
     const context = makePluginAgentConfigurationContext({ thread: { id: "lead" } });
     const before = { snapshot: f.runtime.snapshot(), config: f.runtime.configure(context), journal: f.port.instructions("maker"), reports: f.k.store.all("reports"), events: f.k.store.events("lead") };
     f.runtime.serviceRecords.backfill();
@@ -450,7 +451,7 @@ describe("lasting character service record", () => {
     const f = await fixture(); f.review("verify");
     for (let i = 0; i < 23; i++) {
       const id = `${f.q.id}-${i}`;
-      f.k.store.put("quests", id, { ...f.k.quest(f.q.id), id, short: `Q${i}`, title: `Quest ${i}`, phase: "done", endedAt: f.time() + i });
+      putQuestFixture(f.k.store, id, { ...f.k.quest(f.q.id), id, short: `Q${i}`, title: `Quest ${i}`, phase: "done", endedAt: f.time() + i });
     }
     f.runtime.serviceRecords.backfill(); const row = f.record("wren");
     expect(row.keeper?.returnedQuests).toBe(23); expect(row.recordsTotal).toBe(23); expect(row.records).toHaveLength(20);
@@ -462,7 +463,7 @@ describe("lasting character service record", () => {
     f.advance(1);
     const after = { ...fixed, status: "verified" as const, review: { ...fixed.review!, actor: { kind: "agent" as const, threadId: "second" }, at: f.time(), reason: null, memberEvidenceAt: null } };
     f.runtime.serviceRecords.reviewed({ before: fixed, after, sequence: 3 }); f.setEntries([after]);
-    await f.runtime.wrap("lead", f.q.id, "Fixed and proved", "");
+    await concludeQuest(f.runtime, "lead", f.q.id, "Fixed and proved", "");
     expect(f.record("vex").warden).toMatchObject({ checks: 1, caughtDefects: 1 });
     expect(f.record("maeve").warden).toMatchObject({ checks: 1, caughtDefects: 0 });
   });
@@ -473,15 +474,15 @@ describe("lasting character service record", () => {
     const insert = f.k.store.db.prepare("INSERT INTO questlog_history(thread_id,before_data,after_data,action,actor,state) VALUES(?,?,?,?,?,'undo')");
     insert.run("maker", JSON.stringify([f.entry]), JSON.stringify([rejected]), "reject", JSON.stringify({ kind: "agent", threadId: "checker" }));
     insert.run("maker", JSON.stringify([fixed]), JSON.stringify([verified]), "verify", JSON.stringify({ kind: "agent", threadId: "checker" }));
-    f.k.store.put("quests", f.q.id, { ...f.k.quest(f.q.id), phase: "done", endedAt: f.time() });
+    putQuestFixture(f.k.store, f.q.id, { ...f.k.quest(f.q.id), phase: "done", endedAt: f.time() });
     f.runtime.serviceRecords.backfill();
     expect(f.record("vex").warden).toMatchObject({ checks: 2, caughtDefects: 1, caughtSince: f.time() });
   });
   it("preserves undated legacy counts without turning an update or backfill timestamp into an earned date", async () => {
     const f = await fixture(); f.setEntries([]);
     f.k.store.put("members", "maker", { ...f.k.member("maker")!, verifiedWins: 3 });
-    f.k.store.put("quests", f.q.id, { ...f.k.quest(f.q.id), phase: "done", endedAt: null, updatedAt: f.time() + 999 });
-    f.k.store.put("quests", "dated", { ...f.k.quest(f.q.id), id: "dated", endedAt: f.time() + 100 });
+    putQuestFixture(f.k.store, f.q.id, { ...f.k.quest(f.q.id), phase: "done", endedAt: null, updatedAt: f.time() + 999 });
+    putQuestFixture(f.k.store, "dated", { ...f.k.quest(f.q.id), id: "dated", endedAt: f.time() + 100 });
     f.runtime.serviceRecords.backfill();
     expect(f.record("juno")).toMatchObject({ maker: { verifiedWaypoints: 3 }, firstEarnedAt: null, lastEarnedAt: null, backfilledAt: f.time() });
     expect(f.record("juno").records[0]!.endedAt).toBeNull();
@@ -494,7 +495,7 @@ describe("lasting character service record", () => {
     f.k.store.db.prepare("DELETE FROM tavern_records WHERE kind LIKE 'service%'").run();
     f.k.store.db.prepare("INSERT INTO questlog_logs(thread_id) VALUES(?)").run("maker");
     f.k.store.db.prepare("INSERT INTO questlog_history(thread_id,before_data,after_data,action,actor,state) VALUES(?,?,?,?,?,'redo')").run("maker", JSON.stringify([f.entry]), JSON.stringify([verified]), "verify", JSON.stringify({ kind: "agent", threadId: "checker" }));
-    f.setEntries([f.entry]); f.k.store.put("quests", f.q.id, { ...f.k.quest(f.q.id), phase: "stopped", endedAt: f.time() });
+    f.setEntries([f.entry]); putQuestFixture(f.k.store, f.q.id, { ...f.k.quest(f.q.id), phase: "stopped", endedAt: f.time() });
     f.runtime.serviceRecords.backfill();
     expect(f.k.store.all("serviceVerdicts")).toHaveLength(1);
     expect(f.k.store.all("serviceVerdicts")[0]).toMatchObject({ withdrawn: true, verdict: "verified" });
@@ -514,14 +515,18 @@ describe("lasting character service record", () => {
     expect(f.harness.inspection.sdk.callsTo("threads.get").length).toBeGreaterThan(0);
   });
   it("rolls back quest completion and member wins if its terminal service write fails", async () => {
-    const f = await fixture(); f.review("verify"); const quest = f.k.quest(f.q.id), member = f.k.member("maker");
+    const f = await fixture(); f.review("verify");
+    f.k.answerAsk(f.k.store.openAsks("lead", f.q.id).find(ask => ask.kind === "greenlight")!.id, "approve", null, "page", "user");
+    const closing = await f.runtime.proposeWrap("lead", f.q.id, "Proved", "");
+    f.k.answerAsk(closing.askId!, "conclude", null, "page", "user");
+    const quest = f.k.quest(f.q.id), member = f.k.member("maker");
     vi.spyOn(f.runtime.serviceRecords, "record").mockImplementation(() => { throw new Error("Service write failed"); });
     await expect(f.runtime.wrap("lead", f.q.id, "Proved", "")).rejects.toThrow("Service write failed");
     expect(f.k.quest(f.q.id)).toEqual(quest); expect(f.k.member("maker")).toEqual(member); expect(f.records()).toEqual([]);
   });
   it("keeps its captured names and earned counts when the source quest is later renamed or missing", async () => {
-    const f = await fixture(); f.review("verify"); await f.runtime.wrap("lead", f.q.id, "Proved", ""); const before = f.records();
-    f.k.store.put("quests", f.q.id, { ...f.k.quest(f.q.id), title: "Renamed", short: "new" });
+    const f = await fixture(); f.review("verify"); await concludeQuest(f.runtime, "lead", f.q.id, "Proved", ""); const before = f.records();
+    putQuestFixture(f.k.store, f.q.id, { ...f.k.quest(f.q.id), title: "Renamed", short: "new" });
     expect(f.records()).toEqual(before);
     f.k.store.remove("quests", f.q.id);
     expect(f.records()).toEqual(before.map(character => ({ ...character, records: character.records.map(record => ({ ...record, available: false, keeperThreadId: null, threadIds: [] })) })));

@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { putQuestFixture } from "./support";
 import { seedQuest } from "./support";
 import { describe, expect, it } from "vitest";
 import { isLiveKeeper, isLiveMember, isOpenQuest } from "../../src/server/liveness";
@@ -25,7 +26,7 @@ describe("shared lifecycle purposes", () => {
   });
   it.each(["done", "stopped", "stopping"] as const)("excludes linked %s quests for every purpose", async phase => {
     const { k, q, member } = await fixture();
-    k.store.put("quests", q.id, { ...q, phase } as typeof q);
+    putQuestFixture(k.store, q.id, { ...q, phase } as typeof q);
     for (const purpose of ["work", "brief", "occupy"] as const) expect(isLiveMember(k.store, member, purpose)).toBe(false);
     expect(isOpenQuest(k.quest(q.id))).toBe(false);
   });
@@ -33,7 +34,7 @@ describe("shared lifecycle purposes", () => {
     const { k, q, member } = await fixture();
     const solo = k.bind("solo", "smith", "juno", "project");
     const errand = k.bind("errand", "ranger", "juno", "project", { keeperThreadId: "lead", boardQuestId: null, waypointId: null, errand: true, title: "Scout", brief });
-    k.store.put("quests", q.id, { ...q, phase: "done", endedAt: k.now() });
+    putQuestFixture(k.store, q.id, { ...q, phase: "done", endedAt: k.now() });
     expect(isLiveMember(k.store, solo)).toBe(true);
     expect(isLiveMember(k.store, errand)).toBe(true);
     expect(isLiveMember(k.store, { ...member, errand: true })).toBe(false);

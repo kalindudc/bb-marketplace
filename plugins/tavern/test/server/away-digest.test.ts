@@ -31,10 +31,10 @@ describe("Closing time digest", () => {
     const f = setup(), q = await seedQuest(f.k,"lead", "Draft", "Draft"), before = ask(f, q.id, "Already waiting?");
     f.runtime.away.store.close({ revision: 0, until: f.time() + 60_000, quests: [{ questId: q.id, endState: "pause" }] });
     const during = ask(f, q.id, "Waiting during?");
-    f.k.answerAsk(before.id, "wait", null, "page");
+    f.k.answerAsk(before.id, "wait", null, "page", "user");
     f.runtime.away.store.finish(f.runtime.away.store.snapshot().window!.id, explicit);
     ask(f, q.id, "Asked after return?");
-    f.k.answerAsk(during.id, "wait", null, "page");
+    f.k.answerAsk(during.id, "wait", null, "page", "user");
     const result = readAwayDigest(f.k, f.runtime.away.store, {});
     expect(result.totalAsks).toBe(2);
     expect(result.asks.find(row => row.ask.id === before.id)).toMatchObject({ waitingAtEnd: false });

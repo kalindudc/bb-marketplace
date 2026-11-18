@@ -34,14 +34,14 @@ describe("quest stop history", () => {
   it("persists a trimmed reason and exactly the open asks withdrawn by that stop", async () => {
     const f = setup(), q = await seedQuest(f.k,"lead", "A", "A"), other = await seedQuest(f.k,"lead", "B", "B");
     const first = ask(f, q.id), second = ask(f, q.id), answered = ask(f, q.id), unrelated = ask(f, other.id), local = ask(f, null);
-    f.k.answerAsk(answered.id, "yes", "Keep the answer", "page");
+    f.k.answerAsk(answered.id, "yes", "Keep the answer", "page", "user");
     f.advance(1000);
     registerRpc(f.bb, f.runtime);
     await f.harness.invokeRpc("stopBoardQuest", { id: q.id, reason: "  Superseded by the smaller plan.  " });
     const detail = await f.harness.invokeRpc("boardQuest", { id: q.id }) as BoardQuestDetail;
     expect(detail.quest).toMatchObject({ phase: "stopped", stopReason: "Superseded by the smaller plan.", endedAt: f.time() });
     const event = detail.events.find(e => e.type === "quest.stopped")!;
-    expect(event.actor).toEqual({ kind: "user" });
+    expect(event.actor).toEqual({ kind: "tavern" });
     expect(event.data).toMatchObject({ reason: "Superseded by the smaller plan.", withdrawnAskIds: [first.id, second.id] });
     for (const entry of [first, second]) expect(f.k.store.get("asks", entry.id)).toMatchObject({ state: "withdrawn", withdrawnAt: event.at, withdrawnCause: "quest-stopped", answer: null });
     expect(f.k.store.get("asks", answered.id)).toMatchObject({ state: "answered", answer: { note: "Keep the answer" } });
@@ -127,7 +127,7 @@ describe("quest stop history", () => {
 
   it.each(causes)("stamps %s once, without replacing answered history", async cause => {
     const f = setup(), entry = ask(f, null), answered = ask(f, null);
-    f.k.answerAsk(answered.id, "yes", "Original", "page");
+    f.k.answerAsk(answered.id, "yes", "Original", "page", "user");
     f.advance(1000);
     expect(f.k.withdrawAsk(entry.id, cause)).toMatchObject({ id: entry.id, state: "withdrawn", withdrawnAt: f.time(), withdrawnCause: cause });
     const original = f.k.store.get("asks", entry.id);

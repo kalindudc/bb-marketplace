@@ -46,7 +46,7 @@ export function legacyAct(command: ShellCommand): boolean {
   if (program === "wget") return argv.some(arg => /^--(?:post|body|method|input-file)/.test(arg));
   return false;
 }
-const clientOnlyMethods = ["answerAsk", "applyClassExecution", "archiveBoardQuests", "awayClose", "awayReturn", "deleteBoardQuest", "dismissClassNotice", "releaseCheckerHandoff", "removeClassOverride", "restoreDeletedQuest", "saveClass", "setTaleKept", "settingsApplySuggestion", "settingsFile", "settingsImport", "settingsUndo", "settingsUpdate", "voiceCheckCancel", "voiceCheckStart"];
+const clientOnlyMethods = ["holdBoardQuest", "resumeBoardQuest", "answerAsk", "applyClassExecution", "archiveBoardQuests", "awayClose", "awayReturn", "deleteBoardQuest", "dismissClassNotice", "releaseCheckerHandoff", "removeClassOverride", "restoreDeletedQuest", "saveClass", "setTaleKept", "settingsApplySuggestion", "settingsFile", "settingsImport", "settingsUndo", "settingsUpdate", "voiceCheckCancel", "voiceCheckStart"];
 const namedUserMethods = ["resumeAll", "releaseHold", "backupRestore", "confirmRule", "stopBoardQuest", "addRule", "widenRule", "undoDecision", "correctRoute", "resumeKeeper", "journalEdit", "saveCharacterVoice"];
 const userMethods = new Set([...clientOnlyMethods, ...namedUserMethods]);
 export function userControl(command: ShellCommand): boolean {

@@ -88,7 +88,7 @@ export async function reviewFixture(checkerCount = 1) {
     { classId: "smith", characterId: null, model: null, purpose: "Build", waypointIds: ["w1"] },
     ...Array.from({ length: checkerCount }, () => ({ classId: "warden", characterId: null, model: null, purpose: "Check", waypointIds: ["w1"] })),
   ] });
-  keeper.answerAsk(keeper.asks("keeper").find(ask => ask.kind === "greenlight" && ask.state === "open")!.id, "approve", null, "page");
+  keeper.answerAsk(keeper.asks("keeper").find(ask => ask.kind === "greenlight" && ask.state === "open")!.id, "approve", null, "page", "user");
   runtime.enableScopes({ dataDir: join(root, "controller-scopes"), installGuard: false }); registerReady(host.bb, runtime);
   const spawn = vi.fn(async (args: Parameters<BbPluginApi["sdk"]["threads"]["spawn"]>[0]) => {
     const classId = (args.pluginMetadata as { classId: string }).classId, checkers = [...threads.keys()].filter(id => id.startsWith("checker")).length;

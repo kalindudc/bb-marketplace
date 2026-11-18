@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { putQuestFixture } from "./support";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -25,7 +26,7 @@ async function fixture(path: string, phase: "done" | "build" = "done") {
     environments: { get: async () => ({ id: "env", hostId: "host", path, isWorktree: true }) },
   });
   const q = await seedQuest(f.k, "lead", "Private work", "Private work");
-  f.k.store.put("quests", q.id, { ...q, phase, endedAt: phase === "done" ? f.time() : null });
+  putQuestFixture(f.k.store, q.id, { ...q, phase, endedAt: phase === "done" ? f.time() : null });
   f.k.bind("child", "smith", "bram", "project", {
     keeperThreadId: "lead", boardQuestId: q.id, waypointId: null, errand: false, title: "Private work", displayName: "Bram",
     brief: { outcome: "Draft", mode: "make-it-work", doneWhen: "Tests pass", outOfScope: "Production", context: [], questions: [], timeboxMinutes: null },

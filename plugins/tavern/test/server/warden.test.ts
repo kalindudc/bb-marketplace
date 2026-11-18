@@ -37,7 +37,7 @@ async function review(classId = "smith") {
   f.port.linkedEntries = id => id === q.id ? entries : [];
   const base = planInput(q.id);
   f.k.plan("lead", { ...base, waypoints: [{ ...base.waypoints[0]!, owner: "maker" }], party: [{ classId: "warden", characterId: null, model: null, purpose: "Check", waypointIds: ["w1"] }] });
-  f.k.answerAsk(f.k.store.openAsks("lead").find(ask => ask.kind === "greenlight")!.id, "approve", null, "page");
+  f.k.answerAsk(f.k.store.openAsks("lead").find(ask => ask.kind === "greenlight")!.id, "approve", null, "page", "user");
   f.bb.sdk.threads.get = async ({ threadId }) => makeThreadResponse({ id: threadId, providerId: threadId === "maker" ? "corp-router-anthropic" : "pi" });
   f.bb.sdk.threads.defaultExecutionOptions = async () => ({ model: anthropic, permissionMode: "full", reasoningLevel: "high", serviceTier: "standard", source: "client/turn/start" });
   const input = { classId: "warden", boardQuestId: q.id, waypointId: "w1", title: "Check", brief };

@@ -111,7 +111,7 @@ async function fixture() {
   const quest = await seedQuest(k, "keeper", "Implement", "IMP");
   k.plan("keeper", { ...planInput(quest.id), party: [{ classId: "smith", characterId: null, model: null, purpose: "Build", waypointIds: ["w1"] }] });
   const ask = k.asks("keeper").find(ask => ask.kind === "greenlight" && ask.state === "open")!;
-  k.answerAsk(ask.id, "approve", null, "page");
+  k.answerAsk(ask.id, "approve", null, "page", "user");
   runtime.enableScopes({ dataDir: join(f.source, "../scopes"), installGuard: false });
   const spawn = vi.fn(async (args: Parameters<BbPluginApi["sdk"]["threads"]["spawn"]>[0]) => {
     trace.push("provision");

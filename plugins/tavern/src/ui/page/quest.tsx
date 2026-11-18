@@ -1,8 +1,8 @@
 import { experimental_useRpcMutation, useBbNavigate } from "@get-bb/plugin-sdk/app";
 import { useId, useMemo, useState } from "react";
-import { rpcContract, type BoardQuestDetail, type Room } from "../../shared/contract";
+import { rpcContract, type BoardQuestDetail, type BoardQuestSummary, type Room } from "../../shared/contract";
 
-import { AskCard, verifiedOf, verifiedWords, questNames, readable, heldQuests, stoppingWords as kitStoppingWords, CELLAR, CheckIndependence, ExpandsMark, GateRows, GuardPosture, KeeperNoteRows, KeptInMind, OpensMark, QuestMap, QuietNotice, Vocabulary, clockTime, glowVars, vocab } from "../kit";
+import { AskCard, verifiedOf, verifiedWords, questNames, readable, heldQuests, stoppingWords as kitStoppingWords, CELLAR, CheckIndependence, ExpandsMark, GateRows, GuardPosture, KeeperNoteRows, KeptInMind, OpensMark, QuestMap, QuietNotice, Vocabulary, clockTime, useNow, glowVars, vocab } from "../kit";
 import { DecidedForYou, KIND, heldTitles } from "./asks";
 import { ArchiveReceiptLine, ArchivedList, FinishedRow, finishedQuests, useArchive } from "./archive";
 import { Ago, CrestOf, MemberLink, PageButton, PhaseStrip, Section, SegFilter, StateMark, ThreadButton, characterName, classLabel, type Registry, plural } from "./common";
@@ -24,6 +24,12 @@ import { PlacementFacts } from "../kit/placement";
 
 /** The stopping words the page and its tests share: how many stops wait on a confirmation. */
 export const stoppingWords = (unconfirmed: number) => `Stopping · ${kitStoppingWords({ stopUnconfirmed: unconfirmed })}`;
+function QuestHold({ quest }: { quest: BoardQuestSummary }) {
+  const hold = experimental_useRpcMutation({ contract: rpcContract, method: "holdBoardQuest" });
+  const resume = experimental_useRpcMutation({ contract: rpcContract, method: "resumeBoardQuest" });
+  const action = quest.phase === "held" ? resume : hold;
+  return <><button type="button" className="btn" onClick={() => { void action.mutate({ id: quest.id }).catch(() => {}); }}>{quest.phase === "held" ? "Resume" : "Hold"}</button>{action.error && <span role="alert">{action.error.message}</span>}</>;
+}
 const PHASE_RANK = (phase: string) => phase === "stopped" || phase === "done" ? 2 : phase === "stopping" ? 1 : 0;
 
 /**
@@ -99,10 +105,11 @@ function CellarQuest({ quest }: { quest: BoardQuestDetail["quest"] }) {
 export function QuestPage({ detail, registry, room }: { detail: BoardQuestDetail; registry: Registry; room?: Room }) {
   const navigate = useBbNavigate();
   const quest = detail.quest;
+  const now = useNow();
   const roadStop = recordedStop(detail);
   const keeper = room?.keepers.find((k) => k.member.threadId === quest.keeperThreadId) ?? null;
   const keeperName = keeper ? characterName(registry, keeper.member) : "the Keeper";
-  const move = questMove(quest, detail.asks, { keeper: keeperName, member: (m) => characterName(registry, m) }, { keeperArchived: !!keeper?.archived });
+  const move = questMove(quest, detail.asks, { keeper: keeperName, member: (m) => characterName(registry, m) }, { keeperArchived: !!keeper?.archived, now });
   const path = pathProgress(quest);
   const names = useMemo(() => questNames(quest, registry, detail.reports), [quest, registry, detail.reports]);
   const stopper = stopperOf(detail.events, quest.id, { name: id => names.threadNames?.get(id) ?? null });
@@ -132,10 +139,11 @@ export function QuestPage({ detail, registry, room }: { detail: BoardQuestDetail
     <header className={`tv-ghead ${finished ? "" : "lit"}`} style={finished ? undefined : glowVars(`quest:${quest.id}`)}>
       <div className="tv-gh-l">
         <h1 className="tv-qtitle" data-content>{quest.title}</h1>
-        <PhaseStrip phase={quest.phase} tone={move.tone} stoppedAt={roadStop.position} proven={roadStop.proven} />
+        {quest.phase !== "held" && <PhaseStrip phase={quest.phase} tone={move.tone} stoppedAt={roadStop.position} proven={roadStop.proven} />}
         <div className="tv-facts">
           {finished ? <><StateMark tone={move.tone}><b>{quest.phase === "stopped" ? stopper ? `Stopped by ${stopper}` : "Stopped" : "Returned"}</b></StateMark><span><Ago at={quest.endedAt ?? quest.updatedAt} /></span><span>{quest.phase === "done" ? "took" : "after"} <b>{durationWords((quest.endedAt ?? quest.updatedAt) - quest.createdAt)}</b></span></>
             : stop.stopping ? <><StateMark tone="warn"><b>{stoppingWords(stop.stopping.unconfirmed)}</b></StateMark>{stop.stopping.since && <span>since <b>{clockTime(stop.stopping.since)}</b></span>}</>
+            : quest.phase === "held" ? <StateMark tone={move.tone}>{quest.move.text.replace(/ · Resume$/, "")}</StateMark>
             : <><StateMark tone={move.tone}><b>{phaseWord(quest.phase)} · {move.who === "You" ? "your move" : move.who}</b>{move.next ? ` · ${move.next}` : ""}</StateMark><span>updated <b><Ago at={quest.updatedAt} /></b></span></>}
           <span>path <b className="num">{finished ? finishedPath ? verifiedWords(finishedPath) : "not mapped" : path ? `${path.done} of ${path.total}` : "not mapped yet"}</b></span>
           <span>plan <b>v{quest.planVersion}</b>{steer && <span className="tag tv-steer-tag" title={`From your steer: ${steer.text}`}>steer {clockTime(steer.at)}</span>}</span>
@@ -150,6 +158,7 @@ export function QuestPage({ detail, registry, room }: { detail: BoardQuestDetail
         {finished && <CellarQuest key={quest.id} quest={quest} />}
         {keeper && status && <MemberLink member={keeper.member} registry={registry} size={28} sub={<StateMark tone={status.tone}>{status.label}</StateMark>} />}
         <ThreadButton id={quest.keeperThreadId} name={keeperName} label={keeper ? `Open ${keeperName}'s thread` : "Open the Keeper's thread"} className={finished || keeper?.archived ? "" : "pri"} quiet={finished || !!keeper?.archived} />
+        {!finished && quest.phase !== "stopping" && quest.phase !== "closing" && <QuestHold quest={quest} />}
         {stop.button}
       </div>
     </header>

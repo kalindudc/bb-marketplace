@@ -40,7 +40,7 @@ async function fixture(linked = true, doneWhen = "Run `npm test` and `./bin/chec
   f.port.linkedEntries = () => [entry];
   const plan = planInput(q.id);
   f.k.plan("lead", { ...plan, doneWhen, waypoints: [{ ...plan.waypoints[0]!, owner: "maker", doneWhen: "`node --test` passes" }], party: [{ classId: "warden", characterId: null, model: null, purpose: "Verify", waypointIds: ["w1"] }] });
-  f.k.answerAsk(f.k.store.openAsks("lead").find(ask => ask.kind === "greenlight")!.id, "approve", null, "page");
+  f.k.answerAsk(f.k.store.openAsks("lead").find(ask => ask.kind === "greenlight")!.id, "approve", null, "page", "user");
   const input = { classId: "warden", boardQuestId: q.id, waypointId: "w1", title: "Check", brief };
   const scope = () => f.runtime.scopes!.api.status().threads.find(row => row.threadId === "child")!.scope!;
   const spawnedBrief = () => (f.harness.inspection.sdk.callsTo("threads.spawn")[0]!.args[0] as { input: { text: string }[] }).input[0]!.text;

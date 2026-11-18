@@ -101,6 +101,7 @@ export class TickLoop {
     this.k.store.atomic(() => {
       const now = this.k.now();
       this.k.store.putTick({ ...batch, state: "delivered", sendPending: false });
+      if (batch.heldNewsProgress) this.k.store.acknowledgeHeldNews(batch.threadId, batch.heldNewsProgress);
       const rt = this.k.store.runtime(batch.threadId);
       if (rt.tickDeliveryAskId && this.k.store.get("asks", rt.tickDeliveryAskId)?.state === "open")
         this.k.withdrawAsk(rt.tickDeliveryAskId, "turn-recovered");
@@ -219,7 +220,19 @@ export class TickLoop {
   private batch(threadId: string): TickBatch | null {
     this.k.memory.due(threadId);
     const rt = this.k.store.runtime(threadId);
-    const events = this.k.store.unreadEvents(threadId, rt.cursor, 100, true);
+    const windows = rt.heldNewsCursors ?? {};
+    const resumed = Object.entries(windows).flatMap(([questId, window]) => window.through === undefined ? [] : this.k.store.heldNews(questId, window.cursor, window.through));
+    const replayed = new Set(resumed.map(event => event.id));
+    const heldNewsProgress: Record<string, number> = {};
+    const consumed = (event: { id: number; boardQuestId: string | null }) => {
+      const window = event.boardQuestId ? windows[event.boardQuestId] : undefined;
+      if (replayed.has(event.id) && window?.through !== undefined && event.id <= window.through) heldNewsProgress[event.boardQuestId!] = event.id;
+    };
+    const unread = this.k.store.unreadEvents(threadId, rt.cursor, 100, true).filter(event => {
+      const window = event.boardQuestId ? windows[event.boardQuestId] : undefined;
+      return window?.through === undefined || event.id > window.through || replayed.has(event.id) || ["user.message", "route.recorded", "route.corrected"].includes(event.type);
+    });
+    const events = [...new Map([...resumed, ...unread].map(event => [event.id, event])).values()].sort((a, b) => a.id - b.id);
     const facts: string[] = [];
     const reportIds: string[] = [];
     let cursor = rt.cursor;
@@ -228,13 +241,18 @@ export class TickLoop {
     let churn = 0;
     let continuation: TickBatch["continuation"] = null;
     for (const event of events) {
+      if (event.boardQuestId && this.k.quest(event.boardQuestId).phase === "held" && !["user.message", "route.recorded", "route.corrected"].includes(event.type)) {
+        cursor = Math.max(cursor, event.id);
+        continue;
+      }
       if (!this.isNews(event, threadId)) {
         if (
           event.type === "journal.changed" ||
           event.type === "questlog.changed"
         )
           churn++;
-        cursor = event.id;
+        cursor = Math.max(cursor, event.id);
+        consumed(event);
         continue;
       }
       const fact = this.fact(event);
@@ -259,11 +277,17 @@ export class TickLoop {
           : remainingText,
       );
       length += remainingText.length;
-      cursor = event.id;
+      cursor = Math.max(cursor, event.id);
+      consumed(event);
       news++;
       if (fact.reportId) reportIds.push(fact.reportId);
     }
-    const gateEntries = this.k.memory.unaskedGateEntries(threadId);
+    for (const [questId, window] of Object.entries(windows)) {
+      if (window.through !== undefined && !this.k.store.heldNews(questId, heldNewsProgress[questId] ?? window.cursor, window.through, 1).length)
+        heldNewsProgress[questId] = window.through;
+      if (heldNewsProgress[questId] !== undefined) churn += this.k.store.heldJournalChurn(questId, window.cursor, heldNewsProgress[questId]!);
+    }
+    const gateEntries = this.k.memory.unaskedGateEntries(threadId).filter(gate => this.k.quest(gate.boardQuestId).phase !== "held");
     const ready = new Set(
       gateEntries
         .filter((g) => g.ready && !this.k.store.get("gateReminders", g.key))
@@ -277,7 +301,8 @@ export class TickLoop {
       .filter((g) => ready.has(g.key))
       .map((g) => g.key);
     if (!news && !rt.reanchor && !gateReminderKeys.length) {
-      if (cursor !== rt.cursor) this.k.store.patch(threadId, { cursor });
+      this.k.store.patch(threadId, { cursor });
+      this.k.store.acknowledgeHeldNews(threadId, heldNewsProgress);
       return null;
     }
     const remaining = this.k.store.eventCount(threadId, cursor, true);
@@ -360,6 +385,7 @@ export class TickLoop {
       text,
       measurements,
       cursor,
+      heldNewsProgress,
       continuation,
       reportIds,
       gateReminderKeys,

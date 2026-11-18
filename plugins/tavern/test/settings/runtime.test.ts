@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { putQuestFixture } from "../server/support";
 import { describe, expect, it, vi } from "vitest";
 import { setup } from "../server/runtime-fixture";
 import { SettingsStore } from "../../src/server/settings/store";
@@ -69,9 +70,9 @@ describe("live settings integration", () => {
   it("automatically archives only ended quests through the reversible archive path", () => {
     const f = fixture(); f.advance(40 * LIMITS.dayMs);
     const base = { keeperThreadId: "lead", title: "Old", short: "Old", planVersion: 0, greenlitVersion: null, createdAt: 1_000_000, updatedAt: 1_000_000, archivedAt: null };
-    f.k.store.put("quests", "done", { ...base, id: "done", phase: "done", endedAt: f.time() - 10 * LIMITS.dayMs });
-    f.k.store.put("quests", "stopped", { ...base, id: "stopped", phase: "stopped", endedAt: f.time() - 10 * LIMITS.dayMs });
-    f.k.store.put("quests", "active", { ...base, id: "active", phase: "scout", endedAt: null });
+    putQuestFixture(f.k.store, "done", { ...base, id: "done", phase: "done", endedAt: f.time() - 10 * LIMITS.dayMs });
+    putQuestFixture(f.k.store, "stopped", { ...base, id: "stopped", phase: "stopped", endedAt: f.time() - 10 * LIMITS.dayMs });
+    putQuestFixture(f.k.store, "active", { ...base, id: "active", phase: "scout", endedAt: null });
     f.runtime.settingsMaintenance();
     expect(f.k.quest("done").archivedAt).toBeNull();
     f.settings.update({ revision: 0, patch: { data: { autoArchiveDays: 7 } }, why: "Archive old ended quests" });
@@ -80,7 +81,7 @@ describe("live settings integration", () => {
     expect(f.k.quest("stopped").archivedAt).not.toBeNull();
     expect(f.k.quest("active").archivedAt).toBeNull();
     expect(f.k.store.events("lead").filter(event => event.type === "quest.archived").every(event => event.actor.kind === "tavern")).toBe(true);
-    f.k.archiveQuests(["done"], false); expect(f.k.quest("done").archivedAt).toBeNull();
+    f.k.archiveQuests(["done"], false, { kind: "user" }); expect(f.k.quest("done").archivedAt).toBeNull();
   });
   it("holds new hires while paused and re-anchors exactly once when resumed", async () => {
     const f = fixture(), reanchor = vi.spyOn(f.k, "reanchor");

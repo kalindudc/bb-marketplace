@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { putQuestFixture } from "./support";
 import { seedQuest } from "./support";
 import { describe, expect, it, vi } from "vitest";
 import { setup } from "./runtime-fixture";
@@ -83,7 +84,7 @@ describe("Keeper tick facts, sampling and admission", () => {
   it("does not tick or sample a hold for news belonging only to an archived quest", async () => {
     const f = fixture();
     const q = await seedQuest(f.k,"lead", "Archived", "Old");
-    f.k.store.put("quests", q.id, { ...q, archivedAt: f.time() });
+    putQuestFixture(f.k.store, q.id, { ...q, archivedAt: f.time() });
     f.k.store.event(f.time(), "lead", q.id, "member.failed", "Archived-only news");
     await f.runtime.tick("lead");
     expect(sent(f)).toHaveLength(0);
@@ -94,7 +95,7 @@ describe("Keeper tick facts, sampling and admission", () => {
   it("reads visible facts past100 archived quest events without counting hidden overflow", async () => {
     const f = setup(); const q = await seedQuest(f.k, "lead", "Archived", "Old");
     f.k.store.patch("lead", { userAt: null });
-    f.k.store.put("quests", q.id, { ...q, archivedAt: f.time() });
+    putQuestFixture(f.k.store, q.id, { ...q, archivedAt: f.time() });
     for (let i = 0; i < 101; i++) f.k.store.event(f.time(), "lead", q.id, "member.failed", `Hidden-${i}`);
     news(f, "Visible fact");
     await f.runtime.tick("lead");

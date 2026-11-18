@@ -1,3 +1,4 @@
+import { putQuestFixture } from "./support";
 import { makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -59,7 +60,7 @@ export async function proveStopStage() {
     const keeper = new Keeper(stopped.keepers, port, () => 1_000_000);
     keeper.bind("keeper", "keeper", "wren", "project");
     const quest = await seedQuest(keeper, "keeper", "Save before stop", "Source and evidence survive");
-    keeper.store.put("quests", "quest", { ...quest, id: "quest" }); keeper.store.remove("quests", quest.id);
+    putQuestFixture(keeper.store, "quest", { ...quest, id: "quest" }); keeper.store.remove("quests", quest.id);
     const runtime = new TavernRuntime(stopped.bb, keeper, new Registry(fileURLToPath(new URL("../../", import.meta.url)), "/nonexistent"));
     stopped.state.intercept = method => { if (method === "snapshotWorktree") throw new Error("source refused"); };
     expect(await runtime.stop("quest", "Stop fixture")).toMatchObject({ phase: "stopping" });

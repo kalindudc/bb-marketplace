@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { putQuestFixture } from "./support";
 import { seedQuest } from "./support";
 import { afterEach, describe, expect, it } from "vitest";
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
@@ -47,8 +48,8 @@ describe("Closing time RPC", () => {
     const f = fixture(), quest = await seedQuest(f.k,"lead", "Old quest", "Draft"), member = bind(f, "old-member", variant === "missing-quest" ? "missing" : quest.id);
     if (variant === "done-member" || variant === "stopped-member") f.k.store.put("members", member.threadId, { ...member, state: variant === "done-member" ? "done" : "stopped" });
     if (variant === "archived-member") f.k.store.patch(member.threadId, { archivedAt: 0 });
-    if (variant === "done-quest" || variant === "stopped-quest") f.k.store.put("quests", quest.id, { ...quest, phase: variant === "done-quest" ? "done" : "stopped", endedAt: f.time() });
-    if (variant === "archived-quest") f.k.store.put("quests", quest.id, { ...quest, archivedAt: f.time() });
+    if (variant === "done-quest" || variant === "stopped-quest") putQuestFixture(f.k.store, quest.id, { ...quest, phase: variant === "done-quest" ? "done" : "stopped", endedAt: f.time() });
+    if (variant === "archived-quest") putQuestFixture(f.k.store, quest.id, { ...quest, archivedAt: f.time() });
     expect(await f.call("away", {})).toMatchObject({ watchedCount: 0, watchedByQuest: [], eligibleByQuest: [], soloCount: 0 });
     expect(f.runtime.away.store.snapshot().window).toBeNull();
     expect(f.harness.inspection.sdk.callsTo("threads.stop")).toEqual([]);
@@ -85,8 +86,8 @@ describe("Closing time RPC", () => {
     const f = fixture(), quest = await seedQuest(f.k,"lead", "Old quest", "Draft"), member = bind(f, "old-member", quest.id);
     if (variant === "failed") f.k.store.put("members", member.threadId, { ...member, state: "failed" });
     if (variant === "deleted") f.k.store.patch(member.threadId, { deletedAt: f.time() });
-    if (variant === "ended") f.k.store.put("quests", quest.id, { ...quest, endedAt: f.time() });
-    if (variant === "stopping") f.k.store.put("quests", quest.id, { ...quest, phase: "stopping" });
+    if (variant === "ended") putQuestFixture(f.k.store, quest.id, { ...quest, endedAt: f.time() });
+    if (variant === "stopping") putQuestFixture(f.k.store, quest.id, { ...quest, phase: "stopping" });
     expect(await f.call("away", {})).toMatchObject({ watchedCount: 0, watchedByQuest: [], eligibleByQuest: [] });
   });
   it.each(["awayClose", "awayReturn"])("refuses plugin-origin %s before any mutation", async method => {

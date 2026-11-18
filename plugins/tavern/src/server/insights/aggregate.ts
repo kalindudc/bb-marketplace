@@ -38,26 +38,17 @@ function union(intervals: [number, number][]): [number, number][] {
 }
 const overlap = (a: number, b: number, intervals: [number, number][]) => intervals.reduce((sum, [start, end]) => sum + Math.max(0, Math.min(b, end) - Math.max(a, start)), 0);
 export function phaseSeconds(data: InsightData, from: number, to: number) {
-  const result: Record<string, number> = { scout: 0, greenlight: 0, build: 0, check: 0, wrap: 0, outside: 0 };
+  const result: Record<string, number> = { scout: 0, greenlight: 0, build: 0, held: 0, closing: 0, stopping: 0, unrecorded: 0, outside: 0 };
   for (const quest of data.quests) {
     const end = Math.min(quest.endedAt ?? to, to);
     if (end < from || quest.createdAt > to) continue;
     const gates = union(data.gates.filter(gate => gate.boardQuestId === quest.id)
       .map(gate => [Math.max(gate.askedAt, from, quest.createdAt), Math.min(gate.answeredAt ?? end, end)]));
     result.outside! += gates.reduce((sum, [a, b]) => sum + b - a, 0) / 1000;
-    const transitions: { at: number; phase: string | null }[] = [{ at: quest.createdAt, phase: "scout" }];
+    const transitions: { at: number; phase: string | null }[] = [{ at: quest.createdAt, phase: "unrecorded" }];
     for (const event of data.events.filter(event => event.questId === quest.id)) {
-      const phase = event.data.phase;
-      if (event.type === "quest.phase") {
-        const recorded = typeof phase === "string" ? phase : /\b(scout|greenlight|build|check|wrap|done|stopped)$/.exec(event.text)?.[1];
-        if (recorded && Object.prototype.hasOwnProperty.call(result, recorded)) transitions.push({ at: event.at, phase: recorded });
-      }
-      if (event.type === "plan.proposed" && typeof phase !== "string") transitions.push({ at: event.at, phase: null });
-      if (event.type === "plan.proposed" && typeof phase === "string") transitions.push({ at: event.at, phase });
-    }
-    for (const ask of data.asks.filter(ask => ask.boardQuestId === quest.id && ask.kind === "greenlight")) {
-      transitions.push({ at: ask.createdAt, phase: "greenlight" });
-      if (ask.answer?.optionId === "approve") transitions.push({ at: ask.answer.at, phase: "build" });
+      const phase = event.data.phase as { to?: unknown } | undefined;
+      if (typeof phase?.to === "string") transitions.push({ at: event.at, phase: phase.to });
     }
     transitions.sort((a, b) => a.at - b.at);
     for (const [index, transition] of transitions.entries()) {
@@ -134,7 +125,7 @@ export function aggregateInsights(data: InsightData, settings: SettingsSnapshot,
       metric("commitments-recorded", "Commitments recorded", events.filter(event => event.type === "note.recorded" && noteKind(event) === "commitment").length),
       metric("promises-due", "Promises due", count("promise.due")), metric("members-unreported", "Unreported member completions", count("member.unreported")),
     ]),
-    phases: section("Recorded phase and outside-gate time, summed across quests. Concurrent gates within one quest count once. Missing historical transitions are not inferred.", Object.entries(phases).map(([id, value]) => metric(id, ({ scout: "Scouting", greenlight: "Waiting for greenlight", build: "Building", check: "In review", wrap: "Wrapping", outside: "Outside gates" } as Record<string, string>)[id]!, value, "s"))),
+    phases: section("Recorded phase and outside-gate time, summed across quests. Concurrent gates within one quest count once. Missing historical transitions are not inferred.", Object.entries(phases).map(([id, value]) => metric(id, ({ scout: "Scouting", greenlight: "Waiting for greenlight", build: "Building", held: "Held by you", closing: "Waiting to conclude", stopping: "Stopping", unrecorded: "Phases not recorded", outside: "Outside gates" } as Record<string, string>)[id]!, value, "s"))),
     attention: section("Asks are grouped by kind and outcome. Waits include asks answered in this range even when they were opened earlier.", [
       categories("asks-by-kind", "Asks opened by kind", requested.map(ask => ask.kind)),
       categories("asks-per-week", "Asks opened per UTC week", requested.map(ask => { const day = new Date(ask.createdAt); day.setUTCDate(day.getUTCDate() - (day.getUTCDay() + 6) % 7); return day.toISOString().slice(0, 10); })),

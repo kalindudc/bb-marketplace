@@ -122,13 +122,13 @@ it("covers every RPC handler that checks for a client caller", () => {
   expect(methods.size).toBeGreaterThan(0);
   for (const method of methods) expect(userControl(shellCommands(`bb plugin rpc call --json tavern ${method}`, "/workspace")[0]), method).toBe(true);
 });
-it.each(["confirmRule", "stopBoardQuest", "addRule", "widenRule", "undoDecision", "correctRoute", "resumeKeeper", "journalEdit", "saveCharacterVoice"])("refuses user controls even when their RPC handlers have no client check: %s", method => {
+it.each(["holdBoardQuest", "resumeBoardQuest", "confirmRule", "stopBoardQuest", "addRule", "widenRule", "undoDecision", "correctRoute", "resumeKeeper", "journalEdit", "saveCharacterVoice"])("refuses user controls even when their RPC handlers have no client check: %s", method => {
   for (const role of ["ranger", "warden", "smith", "wanderer", "keeper"]) for (const mode of ["watch", "enforce"] as const) for (const contained of [true, false]) {
     for (const command of [`bb plugin rpc call tavern ${method}`, `bb plugin rpc call --input-file a.json --json tavern ${method}`, `bb --x=y plugin rpc call tavern ${method} --json`]) expect(check(role, command, contained, mode)).toMatchObject({ allow: false, reason: "Tavern's controls are the user's; ask the user." });
     expect(check(role, `bb thread tell thr_x 'tavern ${method}'`, contained, mode).allow).toBe(true);
     expect(evaluate(scope(role, mode), { kind: "tool", toolName: "tavern_rule", cwd: "/workspace", input: {} }).allow).toBe(true);
   }
-});
+}, 60_000);
 it("does not grant sandbox leniency to an unwrapped command tool", () => {
   const s = scope("ranger"); s.commandTools.push("other_shell");
   expect(evaluate(s, { kind: "tool", toolName: "other_shell", cwd: "/workspace", input: { command: "python3 -c 'print(1)'" }, containment: "sandbox" }).allow).toBe(false);
@@ -143,7 +143,7 @@ it.each(["ranger", "warden", "smith", "keeper", "wanderer"])("refuses user-only 
     store.write("t1", s);
     const handlers = new Map<string, Parameters<PiGuardApi["on"]>[1]>();
     extension({ on: (name, handler) => handlers.set(name, handler), getActiveTools: () => ["bash"], setActiveTools: () => {} });
-    for (const command of ["bb tavern ask ask_fixture approve", "bb tavern settings set x=y --apply", "bb tavern guard install", "bb tavern backup restore fixture --apply", ...["answerAsk", "resumeAll", "releaseHold", "settingsUpdate", "settingsUndo", "settingsImport", "settingsFile", "settingsApplySuggestion", "backupRestore", "applyClassExecution", "dismissClassNotice", "setTaleKept", "archiveBoardQuests", "deleteBoardQuest", "restoreDeletedQuest", "saveClass", "removeClassOverride", "awayClose", "awayReturn", "releaseCheckerHandoff", "confirmRule", "stopBoardQuest", "addRule", "widenRule", "undoDecision", "correctRoute", "resumeKeeper", "journalEdit", "saveCharacterVoice"].map(method => `bb plugin rpc call tavern ${method}`)]) {
+    for (const command of ["bb tavern ask ask_fixture approve", "bb tavern settings set x=y --apply", "bb tavern guard install", "bb tavern backup restore fixture --apply", ...["holdBoardQuest", "resumeBoardQuest", "answerAsk", "resumeAll", "releaseHold", "settingsUpdate", "settingsUndo", "settingsImport", "settingsFile", "settingsApplySuggestion", "backupRestore", "applyClassExecution", "dismissClassNotice", "setTaleKept", "archiveBoardQuests", "deleteBoardQuest", "restoreDeletedQuest", "saveClass", "removeClassOverride", "awayClose", "awayReturn", "releaseCheckerHandoff", "confirmRule", "stopBoardQuest", "addRule", "widenRule", "undoDecision", "correctRoute", "resumeKeeper", "journalEdit", "saveCharacterVoice"].map(method => `bb plugin rpc call tavern ${method}`)]) {
       for (const prefix of ["", "env -u TAVERN_SCOPE_FILE ", "env TAVERN_SCOPE_MODE=off "]) {
         expect(handlers.get("tool_call")!({ toolName: "bash", input: { command: prefix + command.replace(/^bb /, "bb --json --server example.test ") } }, { cwd: root })).toEqual({ block: true, reason: "Tavern's controls are the user's; ask the user." });
       }

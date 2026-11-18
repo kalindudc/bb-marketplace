@@ -17,7 +17,7 @@ async function planned(characterId: string | null = "bram", modelName: string | 
   const f = setup();
   const q = await seedQuest(f.k,"lead", "Build", "Build");
   f.k.plan("lead", { ...planInput(q.id), party: [{ classId: "smith", characterId, model: modelName, purpose: "Build", waypointIds: ["w1"] }] });
-  f.k.answerAsk(f.k.asks("lead").find(ask => ask.kind === "greenlight")!.id, "approve", null, "page");
+  f.k.answerAsk(f.k.asks("lead").find(ask => ask.kind === "greenlight")!.id, "approve", null, "page", "user");
   return { ...f, q, input: { classId: "smith", boardQuestId: q.id, waypointId: "w1", title: "Build", brief } };
 }
 

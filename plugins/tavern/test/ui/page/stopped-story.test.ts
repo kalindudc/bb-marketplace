@@ -23,10 +23,11 @@ describe("stoppedStory", () => {
     expect(lines[0]).toBe("The reason given: the window closed.");
   });
   it("names the stopper: you, an agent by name, or nobody when unknown", () => {
-    expect(stopperOf([stopEvent({ kind: "user" })], "vault", names)).toBe("you");
-    expect(stopperOf([stopEvent({ kind: "agent", threadId: "thr-wren" })], "vault", names)).toBe("the Keeper");
-    expect(stopperOf([stopEvent({ kind: "agent", threadId: "thr-gone" })], "vault", names)).toBeNull();
-    expect(stopperOf([stopEvent({ kind: "tavern" })], "vault", names)).toBeNull();
+    const request = (actor: Record<string, unknown>) => ({ type: "quest.stopping", boardQuestId: "vault", actor, data: {} }) as never;
+    expect(stopperOf([request({ kind: "user" })], "vault", names)).toBe("you");
+    expect(stopperOf([request({ kind: "agent", threadId: "thr-wren" })], "vault", names)).toBe("the Keeper");
+    expect(stopperOf([request({ kind: "agent", threadId: "thr-gone" })], "vault", names)).toBeNull();
+    expect(stopperOf([request({ kind: "tavern" })], "vault", names)).toBeNull();
     expect(stopperOf([], "vault", names)).toBeNull();
   });
   it("nothing verified: what was made says so, with its evidence, and is not listed again as left", () => {

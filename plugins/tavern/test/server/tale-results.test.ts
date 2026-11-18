@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { putQuestFixture, concludeQuest } from "./support";
 import { afterEach, expect, it } from "vitest";
 import { taleResultsSchema } from "../../src/shared/tale-results";
 import { readTale } from "../../src/server/tale";
@@ -34,7 +35,7 @@ it("explains mismatched labels and values", () => {
 it("refuses malformed tool results before changing a tale and gives the final-message guidance", async () => {
   const f = setup(); dbs.push(f.k.store.db); registerTools(f.bb, f.runtime);
   const q = await seedQuest(f.k, "lead", "Build", "Build");
-  f.k.store.put("quests", q.id, { ...f.k.quest(q.id), phase: "done", endedAt: f.time() });
+  putQuestFixture(f.k.store, q.id, { ...f.k.quest(q.id), phase: "done", endedAt: f.time() });
   const input = { boardQuestId: q.id, outcome: "Retold", left: "", next: [], results: { ...results, chart: { ...results.chart, series: [{ name: "Model", values: [1, 2, 3] }] } } };
   await expect(f.harness.behavior.invokeAgentTool("tavern_wrap", input, { threadId: "lead" })).rejects.toThrow(/one value per label/);
   expect(f.k.store.events("lead").some(event => event.type === "quest.retold")).toBe(false);
@@ -69,11 +70,11 @@ it("stores results on wrap and retell, reads the newest and permits old events",
   const f = setup(); dbs.push(f.k.store.db);
   const q = await seedQuest(f.k, "lead", "Build", "Build");
   f.k.plan("lead", { ...planInput(q.id), waypoints: [{ ...planInput(q.id).waypoints[0]!, optional: true }] });
-  await f.runtime.wrap("lead", q.id, "First", "", [{ waypointId: "w1", reason: "Optional" }], [], results);
+  await concludeQuest(f.runtime, "lead", q.id, "First", "", [{ waypointId: "w1", reason: "Optional" }], [], results);
   expect(readTale(f.k, f.k.summary(q.id))?.results).toEqual(results);
   const next = { figures: [{ label: "Now", value: "43" }] };
-  await f.runtime.wrap("lead", q.id, "Second", "", [], [], next);
+  await concludeQuest(f.runtime, "lead", q.id, "Second", "", [], [], next);
   expect(readTale(f.k, f.k.summary(q.id))?.results).toEqual(next);
-  await f.runtime.wrap("lead", q.id, "Legacy", "", [], []);
+  await concludeQuest(f.runtime, "lead", q.id, "Legacy", "", [], []);
   expect(readTale(f.k, f.k.summary(q.id))?.results).toBeUndefined();
 });

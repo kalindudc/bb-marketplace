@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { concludeQuest, putQuestFixture } from "./support";
 import { afterEach, expect, it, vi } from "vitest";
 import { setup } from "./runtime-fixture";
 import { seedQuest, planInput } from "./support";
@@ -33,7 +34,7 @@ it("captures from the idle runtime path and backfills only on explicit detail re
 it("stores next actions on the wrap event and requires the bounded tool field", async () => {
   const f = await fixture(); registerTools(f.bb, f.runtime);
   f.k.plan("lead", { ...planInput(f.q.id), waypoints: [{ ...planInput(f.q.id).waypoints[0]!, optional: true }] });
-  await f.runtime.wrap("lead", f.q.id, "Delivered", "", [{ waypointId: "w1", reason: "Not needed" }], ["Read the report"]);
+  await concludeQuest(f.runtime, "lead", f.q.id, "Delivered", "", [{ waypointId: "w1", reason: "Not needed" }], ["Read the report"]);
   expect(f.k.store.events("lead", 0, 200).find(event => event.type === "quest.wrapped")?.data.next).toEqual(["Read the report"]);
   const tool = f.harness.inspection.registrations.agentTools.find(tool => tool.name === "tavern_wrap")!;
   const parameters = (tool as unknown as { parameters: { required: string[]; properties: Record<string, unknown> } }).parameters;
@@ -54,12 +55,12 @@ it("preserves deliveries and backfill attempts through a records backup", async 
 });
 it("retells without wrap effects and retains each telling's frozen delivery", async () => {
   const f = await fixture();
-  f.k.store.put("quests", f.q.id, { ...f.k.quest(f.q.id), phase: "done" });
+  putQuestFixture(f.k.store, f.q.id, { ...f.k.quest(f.q.id), phase: "done" });
   f.wrap(); captureTaleDelivery(f.k, "lead", `First delivery\n${f.directive}`);
   const old = f.k.store.get("taleDeliveries", f.q.id);
   const before = f.k.store.all("members"), record = f.k.store.all("serviceRecords");
   const events = f.k.store.events("lead", 0, 200).length;
-  await f.runtime.wrap("lead", f.q.id, "New record", "Nothing", [], ["Read the new report"]);
+  await concludeQuest(f.runtime, "lead", f.q.id, "New record", "Nothing", [], ["Read the new report"]);
   expect(f.k.store.events("lead", 0, 200)).toHaveLength(events + 1);
   expect(f.k.store.events("lead", 0, 200).at(-1)?.type).toBe("quest.retold");
   expect(f.k.store.all("members")).toEqual(before);
@@ -70,7 +71,7 @@ it("retells without wrap effects and retains each telling's frozen delivery", as
   registerRpc(f.bb, f.runtime);
   const detail = await f.harness.invokeRpc("boardQuest", { id: f.q.id }) as { tale: { delivery: { text: string }; outcome: string; next: string[] } };
   expect(detail.tale).toMatchObject({ outcome: "New record", next: ["Read the new report"], delivery: { text: `Second delivery\n${f.directive}` } });
-  await expect(f.runtime.wrap("outsider", f.q.id, "Wrong", "", [], [])).rejects.toThrow();
+  await expect(concludeQuest(f.runtime, "outsider", f.q.id, "Wrong", "", [], [])).rejects.toThrow();
 });
 it("captures only the owning Keeper's own directive after wrapping, once", async () => {
   const f = await fixture();

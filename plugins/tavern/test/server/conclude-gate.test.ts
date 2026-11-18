@@ -15,6 +15,7 @@ async function fixture() {
   const q = await seedQuest(f.k, "lead", "Build", "Build");
   const optional = { ...planInput(q.id).waypoints[0]!, optional: true };
   f.k.plan("lead", { ...planInput(q.id), waypoints: [optional] });
+  f.k.answerAsk(f.k.store.openAsks("lead", q.id)[0]!.id, "approve", null, "page", "user");
   const entry = waypointEntry("maker", q.id);
   const get = f.port.get;
   f.port.get = id => ({ ...get(id), entries: id === "maker" ? [entry] : [] });
@@ -40,7 +41,9 @@ it("reports the summary and asks the user instead of concluding the quest", asyn
   expect(reply).toContain("The quest has NOT concluded");
   expect(reply).not.toContain("::tavern-tale");
   const ask = f.k.store.openAsks("lead", f.q.id).find(candidate => candidate.kind === "conclude")!;
+  expect(f.k.quest(f.q.id).phase).toBe("closing");
   expect(ask.options.map(option => option.id)).toEqual(["conclude", "hold", "extensions"]);
+  expect(ask.options.find(option => option.id === "hold")!.label).toBe("Keep open for other work");
   expect(ask.proceedAt).toBeNull();
   expect(reply).toContain(`::tavern-ask{id="${ask.id}"}`);
   expect(f.k.store.get("askMeta", ask.id)).toMatchObject({ wrapDraft: { outcome: "Built it" } });
@@ -65,7 +68,7 @@ it.each(["hold", "extensions"] as const)("keeps the quest open and tells no tale
   const ask = f.k.store.all("asks").find(candidate => candidate.boardQuestId === f.q.id && candidate.kind === "conclude")!;
   expect(ask.state).toBe("answered");
   const events = f.k.store.events("lead").map(event => event.type);
-  expect(events).toContain(optionId === "hold" ? "quest.held" : "quest.extended");
+  expect(events).toContain(optionId === "hold" ? "quest.kept-open" : "quest.extended");
 });
 
 it("refuses a second conclusion while the first answer is still open", async () => {

@@ -79,7 +79,7 @@ describe("cold journal write preparation", () => {
         },
       ],
     });
-    k.answerAsk(k.asks("lead")[0]!.id, "approve", null, "page");
+    k.answerAsk(k.asks("lead")[0]!.id, "approve", null, "page", "user");
     let ready: string | null = null;
     port.prepare = async (threadId) => {
       await Promise.resolve();

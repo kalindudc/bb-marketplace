@@ -20,7 +20,7 @@ it("keeps a failed child's slot occupied while a later rebrief is pending until 
       },
     ],
   });
-  f.k.answerAsk(f.k.store.openAsks("lead")[0]!.id, "approve", null, "page");
+  f.k.answerAsk(f.k.store.openAsks("lead")[0]!.id, "approve", null, "page", "user");
   const originalSend = f.bb.sdk.threads.send;
   f.bb.sdk.threads.send = vi
     .fn()

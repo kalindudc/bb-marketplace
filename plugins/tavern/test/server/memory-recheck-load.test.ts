@@ -20,7 +20,7 @@ const approve = (f: ReturnType<typeof setup>) => {
   for (const a of f.k.store
     .openAsks("lead")
     .filter((a) => a.kind === "greenlight"))
-    f.k.answerAsk(a.id, "approve", null, "page");
+    f.k.answerAsk(a.id, "approve", null, "page", "user");
 };
 describe("Re-check load, last reply and paused ticks", () => {
   it("N-7 keeps all four quests and 40 waypoint markers at Samson's R1a load", async () => {

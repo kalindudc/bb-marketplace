@@ -9,7 +9,7 @@ async function fixture() {
   const f = setup();
   const q = await seedQuest(f.k, "lead", "Review the environment rules", "Environment");
   f.k.plan("lead", { ...planInput(q.id), waypoints: [{ ...planInput(q.id).waypoints[0]!, title: "Check the approved environment", doneWhen: "The sandbox checks pass" }] });
-  f.k.answerAsk(f.k.asks("lead")[0]!.id, "approve", null, "page");
+  f.k.answerAsk(f.k.asks("lead")[0]!.id, "approve", null, "page", "user");
   f.k.bind("maker", "smith", "juno", "project", { keeperThreadId: "lead", boardQuestId: q.id, waypointId: "w1", errand: false, title: "Environment rules", displayName: "Juno II", brief: { outcome: "Rules", mode: "make-it-work", outOfScope: "Production", doneWhen: "Checks pass", context: [], questions: [], timeboxMinutes: null } });
   const entry = waypointEntry("maker", q.id);
   f.port.linkedEntries = () => [entry];

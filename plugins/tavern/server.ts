@@ -174,7 +174,6 @@ export default async function tavern(bb: BbPluginApi) {
   bb.onDispose(
     journal.onChange((threadId) => {
       const member = keeper.member(threadId);
-      if (member?.boardQuestId) keeper.refreshPhase(member.boardQuestId);
       // The journal sends these with its own signal: one room refetch per change.
       const stale = keeper.changedTags(threadId, member?.boardQuestId);
       if (member?.keeperThreadId)

@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { putQuestFixture } from "./support";
 import { seedQuest } from "./support";
 import { expect, it, vi } from "vitest";
 import { setup } from "./runtime-fixture";
@@ -10,7 +11,7 @@ async function hired() {
   const f = setup();
   const q = await seedQuest(f.k,"lead", "Build", "Build");
   f.k.plan("lead", { ...planInput(q.id), party: [{ classId: "smith", characterId: null, model: null, purpose: "Build", waypointIds: ["w1"] }] });
-  f.k.answerAsk(f.k.store.openAsks("lead")[0]!.id, "approve", null, "page");
+  f.k.answerAsk(f.k.store.openAsks("lead")[0]!.id, "approve", null, "page", "user");
   const rebriefed = vi.spyOn(f.port, "rebriefed");
   registerTools(f.bb, f.runtime);
   await f.harness.behavior.invokeAgentTool("tavern_hire", { classId: "smith", title: "Build", boardQuestId: q.id, waypointId: "w1",
@@ -44,7 +45,7 @@ it("leaves an ended quest's journal alone when a retried brief lands after the q
     const send = f.bb.sdk.threads.send;
     f.bb.sdk.threads.send = vi.fn().mockRejectedValueOnce(new Error("socket hang up")).mockImplementation(send);
     expect(await f.runtime.tell("lead", f.member.threadId, "Also cover NaN")).toMatchObject({ status: "retrying" });
-    f.k.store.put("quests", f.q.id, { ...f.k.store.get("quests", f.q.id)!, phase });
+    putQuestFixture(f.k.store, f.q.id, { ...f.k.store.get("quests", f.q.id)!, phase });
     f.advance(61_000);
     await f.runtime.retryInitialBriefs("lead").catch(() => null);
     expect(f.rebriefed, phase).not.toHaveBeenCalled();

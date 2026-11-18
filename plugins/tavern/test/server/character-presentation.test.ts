@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { putQuestFixture } from "./support";
 import { seedQuest } from "./support";
 import Database from "better-sqlite3";
 import * as fs from "node:fs";
@@ -189,7 +190,7 @@ describe("UI-only character presentation", () => {
   });
   it("keeps a cellar quest reference and removes a missing quest's link", async () => {
     const f = fixture(); f.member(); const quest = await seedQuest(f.k,"lead", "Retained work", "Result");
-    f.k.store.put("quests", quest.id, { ...quest, phase: "done", endedAt: f.time() }); f.k.archiveQuests([quest.id], true);
+    putQuestFixture(f.k.store, quest.id, { ...quest, phase: "done", endedAt: f.time() }); f.k.archiveQuests([quest.id], true, { kind: "user" });
     f.report({ boardQuestId: quest.id });
     expect((await f.read()).characterReportVoices?.[0]?.voices[0]?.questId).toBe(quest.id);
     f.k.store.db.prepare("DELETE FROM tavern_records WHERE kind='quests' AND id=?").run(quest.id);

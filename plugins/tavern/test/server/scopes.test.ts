@@ -81,7 +81,7 @@ async function fixture(installGuard = false) {
       { classId: "smith", characterId: null, model: null, purpose: "Build", waypointIds: ["w1"] },
     ],
   });
-  f.k.answerAsk(f.k.asks("lead")[0]!.id, "approve", null, "page");
+  f.k.answerAsk(f.k.asks("lead")[0]!.id, "approve", null, "page", "user");
   return {
     ...f,
     root,

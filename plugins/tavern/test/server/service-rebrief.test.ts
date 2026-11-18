@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { putQuestFixture } from "./support";
 import { afterEach, expect, it } from "vitest";
 import { Keeper } from "../../src/server/keeper/service";
 import { registerJournal } from "../../src/server/journal";
@@ -40,7 +41,7 @@ it("a real accepted rebrief removes maker proof but keeps the Warden's independe
   expect(await runtime.tell("lead", "maker", "Also cover infinity.")).toMatchObject({ status: "delivered" });
   expect(journal.get("maker").entries.find(entry => entry.id === id)).toMatchObject({ status: "doing", review: null, evidence: [] });
   expect(k.store.all("serviceVerdicts").find(row => row.verdict === "verified")).toHaveProperty("superseded");
-  k.store.put("quests", q.id, { ...k.quest(q.id), phase: "stopped", endedAt: f.time() }); runtime.serviceRecords.record(q.id);
+  putQuestFixture(k.store, q.id, { ...k.quest(q.id), phase: "stopped", endedAt: f.time() }); runtime.serviceRecords.record(q.id);
   const records = runtime.serviceRecords.read();
   expect(records.find(row => row.characterId === "vex")?.warden).toMatchObject({ checks: 2, independentChecks: 2, caughtDefects: 1 });
   expect(records.find(row => row.characterId === "juno")).toBeUndefined();

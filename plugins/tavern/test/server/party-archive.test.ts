@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { concludeQuest, putQuestFixture } from "./support";
 import { afterEach, expect, it, vi } from "vitest";
 import { setup } from "./runtime-fixture";
 import { seedQuest, planInput } from "./support";
@@ -23,7 +24,7 @@ async function fixture() {
 it("wrap archives the whole party without crediting released, failed or stopped members", async () => {
   const f = await fixture();
   const excluded = ["released", "failed", "stopped"].map(id => f.k.member(id));
-  await f.runtime.wrap("lead", f.q.id, "Done", "", [{ waypointId: "w1", reason: "Not needed" }], []);
+  await concludeQuest(f.runtime, "lead", f.q.id, "Done", "", [{ waypointId: "w1", reason: "Not needed" }], []);
   expect([...f.archived].sort()).toEqual(["current", "failed", "released", "stopped"]);
   expect(["released", "failed", "stopped"].map(id => f.k.member(id))).toEqual(excluded);
   expect(f.k.member("current")?.state).toBe("done");
@@ -41,7 +42,7 @@ it("queues archives for released members only after Stop has completed", async (
 });
 it.each(["done", "stopped"] as const)("repairs stranded %s parties once, preserves user-unarchived threads, and retries failures", async phase => {
   const f = await fixture();
-  f.k.store.put("quests", f.q.id, { ...f.k.quest(f.q.id), phase, endedAt: f.time() });
+  putQuestFixture(f.k.store, f.q.id, { ...f.k.quest(f.q.id), phase, endedAt: f.time() });
   f.k.store.event(f.time(), "lead", f.q.id, "thread.archived", "Previously archived", { memberThreadId: "current", keeperArchiveRequested: true });
   f.k.store.event(f.time(), "lead", f.q.id, "thread.unarchived", "User restored", { memberThreadId: "current" });
   f.k.store.event(f.time(), "lead", f.q.id, "thread.unarchived", "User restored without an archive receipt", { memberThreadId: "stopped" });
@@ -70,7 +71,7 @@ it("leaves active quests and errands outside the startup repair", async () => {
 });
 it("holds repaired archives during closing time and later resumes cleanup", async () => {
   const f = await fixture();
-  f.k.store.put("quests", f.q.id, { ...f.k.quest(f.q.id), phase: "done", endedAt: f.time() });
+  putQuestFixture(f.k.store, f.q.id, { ...f.k.quest(f.q.id), phase: "done", endedAt: f.time() });
   const held = vi.spyOn(f.runtime.away, "cleanupHeld").mockReturnValue(true);
   await f.runtime.reconcile();
   expect(f.bb.sdk.threads.archive).not.toHaveBeenCalled();
@@ -82,7 +83,7 @@ it("holds repaired archives during closing time and later resumes cleanup", asyn
 it("holds whole-party archive cleanup during closing time", async () => {
   const f = await fixture();
   vi.spyOn(f.runtime.away, "cleanupHeld").mockReturnValue(true);
-  await f.runtime.wrap("lead", f.q.id, "Done", "", [{ waypointId: "w1", reason: "Not needed" }], []);
+  await concludeQuest(f.runtime, "lead", f.q.id, "Done", "", [{ waypointId: "w1", reason: "Not needed" }], []);
   expect(f.bb.sdk.threads.archive).not.toHaveBeenCalled();
   for (const id of ["released", "failed", "stopped", "current"]) expect(f.k.store.runtime(id).archivePending).toBe(true);
 });

@@ -54,60 +54,19 @@ it("keeps the position unknown when opening and phase receipts are absent", () =
   expect(slot.container.querySelector(".barrier")).toBeNull();
   expect(slot.getAllByRole("listitem").every(s => s.getAttribute("aria-label")!.includes("not reached"))).toBe(true);
 });
-it("uses plan version zero to establish a scouting stop", () => {
-  const event = { id: 499, at: railDetail.quest.updatedAt - 100, keeperThreadId: railDetail.quest.keeperThreadId, boardQuestId: railDetail.quest.id, actor: { kind: "tavern" as const }, type: "quest.opened", text: "Quest opened", data: {} };
-  const detail = { ...railDetail, quest: { ...railDetail.quest, phase: "stopped" as const, planVersion: 0, greenlitVersion: null }, events: [event] };
-  const stop = recordedStop(detail);
-  expect(stop).toEqual({ position: "scout", proven: "scout" });
-  const slot = render(<PhaseStrip phase="stopped" stoppedAt={stop.position} proven={stop.proven} />);
-  expect(slot.getAllByRole("listitem")[0]!.getAttribute("aria-label")).toBe("Rangers out, stopped here");
-  expect(slot.queryByText(/position was not recorded/)).toBeNull();
-});
-it("uses the newest recorded phase belonging to the quest, not an unrelated phase", () => {
-  const event = { id: 501, at: railDetail.quest.updatedAt - 100, keeperThreadId: railDetail.quest.keeperThreadId, boardQuestId: railDetail.quest.id, actor: { kind: "tavern" as const }, type: "quest.phase", text: "Board quest moved to check", data: {} };
-  expect(recordedStop({ ...railDetail, events: [{ ...event, id: 502, boardQuestId: "other", at: event.at + 10, text: "Board quest moved to wrap" }, event] })).toEqual({ position: "check", proven: "check" });
-  expect(recordedStop({ ...railDetail, events: [] })).toEqual({ position: null, proven: null });
-});
-it("uses receipt order when two phase moves share a timestamp", () => {
-  const event = { id: 600, at: railDetail.quest.updatedAt - 10, keeperThreadId: railDetail.quest.keeperThreadId, boardQuestId: railDetail.quest.id, actor: { kind: "tavern" as const }, type: "quest.phase", text: "Board quest moved to build", data: { phase: "build" } };
-  expect(recordedStop({ ...railDetail, events: [event, { ...event, id: 601, text: "Board quest moved to check", data: { phase: "check" } }] })).toEqual({ position: "check", proven: "check" });
-});
-it("does not treat an unscoped phase event or a phase recorded after stopping as proof", () => {
-  const event = { id: 601, at: railDetail.quest.updatedAt - 10, keeperThreadId: railDetail.quest.keeperThreadId, boardQuestId: null, actor: { kind: "tavern" as const }, type: "quest.phase", text: "Board quest moved to check", data: {} };
-  expect(recordedStop({ ...railDetail, events: [event] })).toEqual({ position: null, proven: null });
-  const detail = { ...railDetail, quest: { ...railDetail.quest, phase: "stopped" as const, endedAt: railDetail.quest.updatedAt }, events: [{ ...event, boardQuestId: railDetail.quest.id, at: railDetail.quest.updatedAt + 10 }] };
-  expect(recordedStop(detail)).toEqual({ position: null, proven: null });
-});
-it.each([["scout", 0, null], ["greenlight", 1, null], ["build", 1, 1], ["check", 1, 1]] as const)("derives a legacy %s stop from the record and eligible phase receipts without an opening", (phase, planVersion, greenlitVersion) => {
-  const event = { id: 700, at: railDetail.quest.updatedAt - 10, keeperThreadId: railDetail.quest.keeperThreadId, boardQuestId: railDetail.quest.id, actor: { kind: "tavern" as const }, type: "quest.phase", text: "Board quest moved to check", data: {} };
-  const detail = { ...railDetail, quest: { ...railDetail.quest, phase: "stopped" as const, planVersion, greenlitVersion }, events: phase === "check" ? [event] : [], asks: phase === "greenlight" ? [{ ...railDetail.asks[0]!, kind: "greenlight" as const, state: "open" as const, planVersion, createdAt: event.at }] : [] };
-  const stop = recordedStop(detail);
-  expect(stop).toEqual({ position: phase, proven: phase });
-  const slot = render(<PhaseStrip phase="stopped" stoppedAt={stop.position} proven={stop.proven} />);
-  expect(slot.getByRole("listitem", { name: /stopped here/ }).getAttribute("aria-label")).toContain(phase === "scout" ? "Rangers out" : phase === "greenlight" ? "Form the party" : phase === "build" ? "Build" : "Warden's trial");
-});
-it.each(["scout", "greenlight", "build", "check"] as const)("uses the recorded %s phase before stopping rather than stale phase or plan evidence", phase => {
-  const event = { id: 800, at: railDetail.quest.updatedAt - 10, keeperThreadId: railDetail.quest.keeperThreadId, boardQuestId: railDetail.quest.id, actor: { kind: "tavern" as const }, type: "quest.phase", text: "Board quest moved to wrap", data: {} };
-  const detail = { ...railDetail, quest: { ...railDetail.quest, phase: "stopped" as const }, events: [event, { ...event, id: 801, type: "quest.stopping", data: { phaseBeforeStop: phase } }] };
+it.each(["scout", "greenlight", "build", "check", "wrap"] as const)("uses only data.phase for a recorded %s stop", phase => {
+  const event = { id: 800, at: railDetail.quest.updatedAt - 10, keeperThreadId: railDetail.quest.keeperThreadId, boardQuestId: railDetail.quest.id, actor: { kind: "user" as const }, type: "quest.stopping", text: "Stop", data: { phase: { from: phase, to: "stopping" } } };
+  const detail = { ...railDetail, quest: { ...railDetail.quest, phase: "stopped" as const }, events: [event] };
   expect(recordedStop(detail)).toEqual({ position: phase, proven: phase });
 });
-it.each([null, 1])("does not guess greenlight or build from approval version %s for a newer plan", greenlitVersion => {
-  expect(recordedStop({ ...railDetail, quest: { ...railDetail.quest, phase: "stopped", planVersion: 3, greenlitVersion }, events: [], asks: [] })).toEqual({ position: null, proven: null });
+it.each(["scout", "greenlight", "build", "check", "wrap"] as const)("does not infer an old %s phase from text, plans, asks or phaseBeforeStop", phase => {
+  const event = { id: 800, at: railDetail.quest.updatedAt - 10, keeperThreadId: railDetail.quest.keeperThreadId, boardQuestId: railDetail.quest.id, actor: { kind: "user" as const }, type: "quest.stopping", text: `Board quest moved to ${phase}`, data: { phaseBeforeStop: phase } };
+  expect(recordedStop({ ...railDetail, quest: { ...railDetail.quest, phase: "stopped", planVersion: phase === "scout" ? 0 : 1, greenlitVersion: 1 }, events: [event] })).toEqual({ position: null, proven: null });
 });
-it.each(["open", "withdrawn"] as const)("uses a current-plan greenlight ask that was %s at the stop", state => {
-  const detail = { ...railDetail, quest: { ...railDetail.quest, phase: "stopped" as const, planVersion: 2, greenlitVersion: 1 }, events: [], asks: [{ ...railDetail.asks[0]!, kind: "greenlight" as const, state, planVersion: 2, createdAt: railDetail.quest.updatedAt - 10, withdrawnCause: "quest-stopped" as const }] };
-  expect(recordedStop(detail)).toEqual({ position: "greenlight", proven: "greenlight" });
-});
-it.each(["older-plan", "answered", "superseded", "future", "missing-version"] as const)("rejects a %s greenlight ask as stop evidence", invalid => {
-  const ask = { ...railDetail.asks[0]!, kind: "greenlight" as const, state: "open" as "open" | "answered" | "withdrawn", planVersion: invalid === "older-plan" ? 1 : invalid === "missing-version" ? undefined : 2, createdAt: railDetail.quest.updatedAt - 10, withdrawnCause: "plan-superseded" as const };
-  if (invalid === "answered") ask.state = "answered";
-  if (invalid === "superseded") ask.state = "withdrawn";
-  if (invalid === "future") ask.createdAt = railDetail.quest.updatedAt + 10;
-  expect(recordedStop({ ...railDetail, quest: { ...railDetail.quest, phase: "stopped", planVersion: 2, greenlitVersion: null }, events: [], asks: [ask] })).toEqual({ position: null, proven: null });
-});
-it.each(["check", "wrap"] as const)("uses an eligible %s receipt even when the approval does not match", phase => {
-  const event = { id: 900, at: railDetail.quest.updatedAt - 10, keeperThreadId: railDetail.quest.keeperThreadId, boardQuestId: railDetail.quest.id, actor: { kind: "tavern" as const }, type: "quest.phase", text: `Board quest moved to ${phase}`, data: { phase } };
-  expect(recordedStop({ ...railDetail, quest: { ...railDetail.quest, phase: "stopped", planVersion: 2, greenlitVersion: null }, events: [event], asks: [] })).toEqual({ position: phase, proven: phase });
+it("uses receipt order, excluding unrelated and future receipts", () => {
+  const event = { id: 800, at: railDetail.quest.updatedAt - 10, keeperThreadId: railDetail.quest.keeperThreadId, boardQuestId: railDetail.quest.id, actor: { kind: "user" as const }, type: "plan.proposed", text: "Plan", data: { phase: { from: "scout", to: "greenlight" } } };
+  const events = [event, { ...event, id: 801, data: { phase: { from: "greenlight", to: "build" } } }, { ...event, id: 802, boardQuestId: "other", data: { phase: { from: "build", to: "closing" } } }, { ...event, id: 803, at: railDetail.quest.updatedAt + 1, data: { phase: { from: "build", to: "closing" } } }];
+  expect(recordedStop({ ...railDetail, quest: { ...railDetail.quest, phase: "stopped", stoppingSince: railDetail.quest.updatedAt }, events })).toEqual({ position: "build", proven: "build" });
 });
 it("keeps only the current narrow label visible, with all five accessible and no motion", () => {
   const css = readFileSync("src/ui/page/page.css", "utf8");

@@ -29,7 +29,7 @@ async function approvedParty(slots = 1) {
     })),
   };
   fixture.k.plan("lead", plan);
-  fixture.k.answerAsk(fixture.k.asks("lead")[0]!.id, "approve", null, "page");
+  fixture.k.answerAsk(fixture.k.asks("lead")[0]!.id, "approve", null, "page", "user");
   const input = { classId: "smith", boardQuestId: q.id, title: "Build", brief };
   return { ...fixture, q, plan, input };
 }

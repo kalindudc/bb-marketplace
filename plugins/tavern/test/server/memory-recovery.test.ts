@@ -216,7 +216,7 @@ describe("Keeper context-loss recovery", () => {
         },
       ],
     });
-    f.k.answerAsk(f.k.store.openAsks("lead")[0]!.id, "approve", null, "page");
+    f.k.answerAsk(f.k.store.openAsks("lead")[0]!.id, "approve", null, "page", "user");
     for (let i = 0; i < 2; i++) {
       f.advance(61_000);
       f.k.store.event(

@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { concludeQuest, putQuestFixture } from "./support";
 import { seedQuest } from "./support";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { rpcHandlers, registerRpc } from "../../src/server/rpc";
@@ -30,7 +31,7 @@ async function fixture() {
   const call = (method: string, input: unknown) => f.harness.invokeRpc(method, input);
   const detail = async () => await call("boardQuest", { id: q.id }) as BoardQuestDetail;
   const keep = (kept: boolean, characterId = "juno") => call("setTaleKept", { questId: q.id, characterId, kept });
-  const wrap = () => f.runtime.wrap("lead", q.id, "The proof is kept.", "");
+  const wrap = () => concludeQuest(f.runtime, "lead", q.id, "The proof is kept.", "");
   const record = (id = "juno") => f.runtime.serviceRecords.read().find(row => row.characterId === id)!;
   return { ...f, q, call, detail, keep, wrap, record };
 }
@@ -90,7 +91,7 @@ describe("terminal tale level snapshots", () => {
   it.each([["maker", false], ["warden", false], ["maker", true], ["warden", true]] as const)("keeps %s confidence incomplete with no surviving credit (quest deleted: %s)", async (role, deletedQuest) => {
     const f = await fixture(), plan = planInput(f.q.id), first = waypointEntry("maker", f.q.id);
     const legacyId = `legacy-${role}`, oldThread = `old-${role}`, characterId = role === "warden" ? "vex" : "juno";
-    f.k.store.put("quests", legacyId, { ...f.k.quest(f.q.id), id: legacyId, phase: "done", createdAt: f.time() - 500, endedAt: f.time() - 100, archivedAt: f.time() - 50 });
+    putQuestFixture(f.k.store, legacyId, { ...f.k.quest(f.q.id), id: legacyId, phase: "done", createdAt: f.time() - 500, endedAt: f.time() - 100, archivedAt: f.time() - 50 });
     f.k.bind(oldThread, role === "warden" ? "warden" : "smith", characterId, "project", { keeperThreadId: "lead", boardQuestId: legacyId, waypointId: "w1", title: "Legacy work", errand: false, brief: { outcome: "Legacy work", mode: "make-it-work", outOfScope: "Publish", doneWhen: "Proof", context: [], questions: [], timeboxMinutes: null } });
     f.k.store.patch(oldThread, { archivedAt: f.time(), deletedAt: f.time() });
     if (deletedQuest) f.k.store.remove("quests", legacyId);
@@ -151,9 +152,9 @@ describe("kept tales", () => {
   it("refuses live, stopped, untold and uncredited targets", async () => {
     const f = await fixture(); await expect(f.keep(true)).rejects.toThrow();
     await f.wrap(); await expect(f.keep(true, "someone-else")).rejects.toThrow();
-    f.k.store.put("quests", f.q.id, { ...f.k.quest(f.q.id), phase: "stopped" }); await expect(f.keep(true)).rejects.toThrow();
+    putQuestFixture(f.k.store, f.q.id, { ...f.k.quest(f.q.id), phase: "stopped" }); await expect(f.keep(true)).rejects.toThrow();
     const untold = await fixture();
-    untold.k.store.put("quests", untold.q.id, { ...untold.k.quest(untold.q.id), phase: "done", endedAt: untold.time() });
+    putQuestFixture(untold.k.store, untold.q.id, { ...untold.k.quest(untold.q.id), phase: "done", endedAt: untold.time() });
     untold.k.store.atomic(() => untold.runtime.serviceRecords.record(untold.q.id));
     await expect(untold.keep(true)).rejects.toThrow();
   });
@@ -162,7 +163,7 @@ describe("kept tales", () => {
     for (let n = 0; n < 25; n++) history(f, [credit("maker", 1)], `new-${n}`, f.time() + n + 1);
     expect(f.record().records).toHaveLength(21);
     expect(f.record().records.find(row => row.questId === f.q.id)?.kept).toBe(true);
-    f.k.archiveQuests([f.q.id], true); expect((await f.detail()).tale).not.toBeNull();
+    f.k.archiveQuests([f.q.id], true, { kind: "user" }); expect((await f.detail()).tale).not.toBeNull();
     f.k.store.remove("quests", f.q.id);
     expect(f.record().records.find(row => row.questId === f.q.id)).toMatchObject({ kept: true, available: false });
     await expect(f.keep(true)).rejects.toThrow(); expect(await f.keep(false)).toEqual({ kept: false });

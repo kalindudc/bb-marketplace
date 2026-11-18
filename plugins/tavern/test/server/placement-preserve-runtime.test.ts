@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { putQuestFixture } from "./support";
 import { expect, it, vi } from "vitest";
 import { makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { setup } from "./runtime-fixture";
@@ -49,7 +50,7 @@ it("blocks archiveMembers on preservation failure and skips duplicate native arc
 });
 it("allows an idle preservation hold after a quest stops without allowing ordinary content holds", async () => {
   const f = await fixture();
-  f.k.store.put("quests", f.quest.id, { ...f.k.quest(f.quest.id), phase: "stopped", endedAt: 1 });
+  putQuestFixture(f.k.store, f.quest.id, { ...f.k.quest(f.quest.id), phase: "stopped", endedAt: 1 });
   expect(() => f.runtime.away.requestContentHold("child", { operationId: "submission", idleOnly: true })).toThrow(/active party/);
   const token = f.runtime.away.requestContentHold("child", { operationId: "preserve", idleOnly: true, preservation: true });
   expect(await f.runtime.away.confirmHeld(token)).toMatchObject({ state: "confirmed" });

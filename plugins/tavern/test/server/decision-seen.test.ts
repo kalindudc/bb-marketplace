@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { putQuestFixture } from "./support";
 import { seedQuest } from "./support";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -26,7 +27,7 @@ function fixture() {
   });
   const quest = async (phase: BoardQuest["phase"], archived = false) => {
     const q = await seedQuest(f.k,"lead", phase, phase);
-    f.k.store.put("quests", q.id, { ...q, phase, endedAt: f.time(), archivedAt: archived ? f.time() : null });
+    putQuestFixture(f.k.store, q.id, { ...q, phase, endedAt: f.time(), archivedAt: archived ? f.time() : null });
     return q.id;
   };
   const mark = (input: unknown) => call<Mark>("markDecisionsSeen", input);

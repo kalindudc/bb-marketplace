@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { putQuestFixture } from "./support";
 import { seedQuest } from "./support";
 import { expect, it, vi } from "vitest";
 import { setup } from "./runtime-fixture";
@@ -24,7 +25,7 @@ it.each(["confirm", "widen"] as const)("%s a broad rule only resumes its own Kee
 it.each(["done", "stopped"] as const)("drops pending briefs after a quest is %s", async phase => {
   const f = await party();
   f.k.store.patch("child", { pendingBrief: { id: "old", text: "Again", attempts: 0, nextAttemptAt: 0, attemptedAt: null, hostAfterSeq: null, error: null } });
-  f.k.store.put("quests", f.q.id, { ...f.q, phase, endedAt: f.time() });
+  putQuestFixture(f.k.store, f.q.id, { ...f.q, phase, endedAt: f.time() });
   await f.runtime.retryInitialBriefs("lead");
   expect(f.k.store.runtime("child").pendingBrief).toBeNull();
   expect(f.harness.inspection.sdk.callsTo("threads.send")).toHaveLength(0);

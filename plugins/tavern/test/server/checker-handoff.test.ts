@@ -47,7 +47,7 @@ async function ready() {
   const plan = planInput(f.q.id);
   f.k.plan("lead", { ...plan, waypoints: [{ ...plan.waypoints[0]!, owner: "maker" }], party: [{ classId: "warden", characterId: null, model: null, purpose: "Check labels", waypointIds: ["w1"] }] });
   const ask = f.k.store.openAsks("lead", f.q.id).find(ask => ask.kind === "greenlight")!;
-  f.k.answerAsk(ask.id, "approve", null, "page");
+  f.k.answerAsk(ask.id, "approve", null, "page", "user");
   return { ...f, input: { classId: "warden", boardQuestId: f.q.id, waypointId: "w1", title: "Check labels", brief } };
 }
 const askInput = { kind: "blocker" as const, question: "Release?", why: "User words may release", options: [{ id: "release", label: "Release", detail: "", recommended: false }], holds: [], meanwhile: "Maker continues" };

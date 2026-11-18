@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { putQuestFixture } from "./support";
 import { afterEach, expect, it } from "vitest";
 import { makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { join } from "node:path";
@@ -65,7 +66,7 @@ it("finishes a quest stop when its failed member never received an environment",
   const keeper = new Keeper(f.keepers, port, () => 1_000_000);
   keeper.bind("keeper", "keeper", "wren", "project");
   const quest = await seedQuest(keeper, "keeper", "Failed machine", "Save declared evidence");
-  keeper.store.put("quests", "quest", { ...quest, id: "quest" }); keeper.store.remove("quests", quest.id);
+  putQuestFixture(keeper.store, "quest", { ...quest, id: "quest" }); keeper.store.remove("quests", quest.id);
   const runtime = new TavernRuntime(f.bb, keeper, new Registry(fileURLToPath(new URL("../../", import.meta.url)), "/nonexistent"));
   expect(await runtime.stop("quest", "Stop failed machine")).toEqual({ phase: "stopped", unconfirmed: 0 });
   expect(f.placements.byMember("maker")).toMatchObject({ phase: "released", preservation: { source: "not-needed", artifacts: "saved", reason: "never provisioned" } });

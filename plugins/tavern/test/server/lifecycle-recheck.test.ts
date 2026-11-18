@@ -67,7 +67,7 @@ it("a stopping quest projects no next step or unasked outside-gate reminder", as
   const f = await fixture();
   const plan = planInput(f.q.id);
   f.k.plan("lead", { ...plan, party: [], waypoints: plan.waypoints.map(w => ({ ...w, actor: "outside" as const })) });
-  f.k.answerAsk(f.k.store.openAsks("lead")[0]!.id, "approve", null, "page");
+  f.k.answerAsk(f.k.store.openAsks("lead")[0]!.id, "approve", null, "page", "user");
   expect(f.k.memory.unaskedGateEntries("lead")).toHaveLength(1);
   f.k.recordStop(f.q.id);
   expect(f.k.summary(f.q.id).move).toEqual({ who: "nobody", text: "Stopping" });
@@ -245,7 +245,7 @@ it("a cancelled reservation does not consume the live party budget", async () =>
   const f = await fixture();
   settings(f).update({ revision: 0, patch: { keepers: { partyMax: 1 } }, why: "One live member" });
   f.k.plan("lead", { ...planInput(f.q.id), party: [slot] });
-  f.k.answerAsk(f.k.store.openAsks("lead")[0]!.id, "approve", null, "page");
+  f.k.answerAsk(f.k.store.openAsks("lead")[0]!.id, "approve", null, "page", "user");
   f.k.store.put("hires", "cancelled", { classId: "smith", characterId: null, projectId: "project", createdAt: f.time(), cancelledAt: f.time(), owner: { keeperThreadId: "lead", boardQuestId: f.q.id, waypointId: "w1", errand: false, title: "Old cancelled hire", brief } });
   await expect(f.runtime.hire("lead", "project", { classId: "smith", title: "Build", boardQuestId: f.q.id, waypointId: "w1", brief })).resolves.toMatchObject({ role: "member" });
 });

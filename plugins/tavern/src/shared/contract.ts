@@ -84,6 +84,7 @@ export const waypointViewSchema = waypointSchema.extend({
 });
 
 export const boardQuestSummarySchema = boardQuestSchema.extend({
+  nextNewsBy: z.number().nullable().optional(),
   stopUnconfirmed: z.number().int().nonnegative().optional(),
   stopPendingHires: z.array(z.object({ token: id, classId: z.string(), title: z.string() })).optional(),
   plan: planSchema.nullable(),
@@ -429,6 +430,12 @@ export const rpcContract = defineContract({
   widenRule: {
     input: z.object({ ruleId: id, scope: z.enum(["global", "project", "keeper"]) }).strict(),
     output: ok,
+  },
+  holdBoardQuest: {
+    input: z.object({ id }).strict(), output: boardQuestSchema,
+  },
+  resumeBoardQuest: {
+    input: z.object({ id }).strict(), output: boardQuestSchema,
   },
   stopBoardQuest: {
     input: z.object({ id, reason: boardQuestSchema.shape.stopReason }).strict(),

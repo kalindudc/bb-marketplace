@@ -28,7 +28,7 @@ async function approved() {
     })),
   });
   const ask = f.k.asks("lead")[0]!;
-  f.k.answerAsk(ask.id, "approve", null, "page");
+  f.k.answerAsk(ask.id, "approve", null, "page", "user");
   return {
     ...f,
     q,

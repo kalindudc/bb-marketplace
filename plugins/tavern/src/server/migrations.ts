@@ -83,6 +83,7 @@ const APPENDED: string[] = [
   `CREATE INDEX tavern_route_source ON tavern_records(json_extract(data,'$.sourceMessageId')) WHERE kind='routes';`,
   // The stop-time lookup must not sort or scan a quest's full phase history.
   `CREATE INDEX tavern_events_quest_phase_time ON tavern_events(board_quest_id,type,at DESC,id DESC);`,
+  `CREATE INDEX tavern_events_phase_receipts ON tavern_events(board_quest_id,at DESC,id DESC) WHERE json_type(data,\'$.phase\')=\'object\';`,
 ];
 
 export const MIGRATIONS: string[] = [

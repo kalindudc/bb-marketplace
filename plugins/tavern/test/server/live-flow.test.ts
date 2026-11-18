@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { concludeQuest } from "./support";
 import { seedQuest } from "./support";
 import { describe, expect, it, vi } from "vitest";
 import { setup } from "./runtime-fixture";
@@ -161,7 +162,7 @@ describe("live Keeper flow regressions", () => {
         },
       ],
     });
-    f.k.answerAsk(f.k.asks("lead")[0]!.id, "approve", null, "page");
+    f.k.answerAsk(f.k.asks("lead")[0]!.id, "approve", null, "page", "user");
     const member = await f.runtime.hire("lead", "project", {
       classId: "warden",
       boardQuestId: q.id,
@@ -361,12 +362,7 @@ describe("live Keeper flow regressions", () => {
         },
       ],
     });
-    f.k.answerAsk(
-      f.k.asks("lead").find((ask) => ask.kind === "greenlight")!.id,
-      "approve",
-      null,
-      "page",
-    );
+    f.k.answerAsk(f.k.asks("lead").find((ask) => ask.kind === "greenlight")!.id, "approve", null, "page", "user");
     f.bb.sdk.threads.defaultExecutionOptions = async () => ({
       model: "anthropic/claude-sonnet-5-5",
       permissionMode: "full",
@@ -409,12 +405,7 @@ describe("live Keeper flow regressions", () => {
         },
       ],
     });
-    f.k.answerAsk(
-      f.k.asks("lead").find((ask) => ask.kind === "greenlight")!.id,
-      "approve",
-      null,
-      "page",
-    );
+    f.k.answerAsk(f.k.asks("lead").find((ask) => ask.kind === "greenlight")!.id, "approve", null, "page", "user");
     f.bb.sdk.threads.defaultExecutionOptions = async () => ({
       model: "anthropic/claude-opus-4",
       permissionMode: "full",
@@ -568,12 +559,7 @@ describe("live Keeper flow regressions", () => {
     bind(f, "checker", "warden", q.id, "rook");
     const base = planInput(q.id);
     const plan = f.k.plan("lead", base);
-    f.k.answerAsk(
-      f.k.asks("lead").find((ask) => ask.kind === "greenlight")!.id,
-      "approve",
-      null,
-      "page",
-    );
+    f.k.answerAsk(f.k.asks("lead").find((ask) => ask.kind === "greenlight")!.id, "approve", null, "page", "user");
     f.port.linkedEntries = () => [
       journalEntrySchema.parse({
         threadId: "maker",
@@ -594,7 +580,7 @@ describe("live Keeper flow regressions", () => {
         updatedAt: f.time(),
       }),
     ];
-    await f.runtime.wrap("lead", q.id, "Verified result", "");
+    await concludeQuest(f.runtime, "lead", q.id, "Verified result", "");
     expect(f.k.member("maker")?.verifiedWins).toBe(1);
     expect(f.k.member("checker")?.verifiedWins).toBe(0);
   });

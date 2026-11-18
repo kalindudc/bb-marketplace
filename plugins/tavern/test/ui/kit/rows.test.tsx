@@ -5,6 +5,7 @@ import type { ReactElement } from "react";
 import { definePluginApp } from "@get-bb/plugin-sdk/app";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { KeeperRow, QuestRow, characterName, keeperStatus, keeperStartedLabel } from "../../../src/ui/kit";
+import { questMove } from "../../../src/ui/kit/rows";
 import { liveRoom, registry, richRoom } from "../page/scenes";
 import type { Room } from "../../../src/shared/contract";
 
@@ -19,6 +20,11 @@ async function mount(node: () => ReactElement) {
 
 const keeper = richRoom.keepers[0]!;
 const live = keeper.boardQuests.find(q => q.phase !== "done" && q.phase !== "stopped")!;
+it("N2 uses the shared human time on a scouting move", () => {
+  const now = new Date(2026, 10, 19, 21).getTime(), due = new Date(2026, 10, 17, 20, 24).getTime();
+  const quest = { ...live, phase: "scout" as const, nextNewsBy: due };
+  expect(questMove(quest, [], { keeper: "Wren", member: () => "Member" }, { now }).next).toContain("news overdue since Tue 20:24");
+});
 const returned = { ...live, id: "ret-1", short: "Returned one", title: "A returned quest", phase: "done" as const, endedAt: Date.now() - 60_000 };
 const stopped = { ...live, id: "stop-1", short: "Stopped one", title: "A stopped quest", phase: "stopped" as const, endedAt: Date.now() - 60_000 };
 

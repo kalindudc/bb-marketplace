@@ -12,7 +12,7 @@ async function planned() {
   f.k.route("lead", { kind: "new-quest", summary: "Build", notes: [] });
   const quest = await f.k.openQuest("lead", "Build the test", "Build");
   await f.runtime.plan("lead", { ...planInput(quest.id), party: [{ classId: "smith", characterId: null, model: null, purpose: "Build", waypointIds: ["w1"] }] });
-  f.k.answerAsk(f.k.asks("lead").find(ask => ask.kind === "greenlight")!.id, "approve", null, "page");
+  f.k.answerAsk(f.k.asks("lead").find(ask => ask.kind === "greenlight")!.id, "approve", null, "page", "user");
   const input = { classId: "smith", boardQuestId: quest.id, waypointId: "w1", title: "Build the test", brief };
   return { ...f, input };
 }

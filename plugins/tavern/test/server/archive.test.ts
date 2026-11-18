@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { putQuestFixture } from "./support";
 import { seedQuest } from "./support";
 import { describe, expect, it } from "vitest";
 import { registerRpc } from "../../src/server/rpc";
@@ -16,7 +17,7 @@ function fixture() {
     keeper = "lead",
   ) => {
     const opened = await seedQuest(f.k,keeper, title, title);
-    return f.k.store.put("quests", opened.id, {
+    return putQuestFixture(f.k.store, opened.id, {
       ...opened,
       phase,
       endedAt: ["done", "stopped"].includes(phase) ? f.time() : null,
@@ -44,7 +45,7 @@ describe("finished board quest archive", () => {
       meanwhile: "Nothing",
       holds: [],
     });
-    f.k.store.put("quests", done.id, { ...done, phase: "done", endedAt: f.time() });
+    putQuestFixture(f.k.store, done.id, { ...done, phase: "done", endedAt: f.time() });
     f.k.store.put("decisions", "old-decision", {
       id: "old-decision",
       keeperThreadId: "lead",
@@ -262,7 +263,7 @@ describe("finished board quest archive", () => {
       boardQuestIds: [first.id, remaining.id],
       summary: "Keep the rollback",
     });
-    f.k.store.put("quests", first.id, {
+    putQuestFixture(f.k.store, first.id, {
       ...first,
       phase: "done",
       endedAt: f.time(),
