@@ -1,5 +1,6 @@
 import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
+import { forgeProfileSchema } from "./shared/placement-settings";
 import { nativeScopeVariablesSchema } from "./scope/host-env";
 import { artifactFileSchema, endpointSchema, gitOidSchema, objectFormatSchema, sha256Schema, workspaceKindSchema } from "./shared/placement";
 
@@ -35,6 +36,7 @@ export const transferAuthoritySchema = authoritySchema.extend({ transferId: id }
 export const endpointRegistrationSchema = z.object({
   placementId: id, generation, endpointId: id, endpoint: endpointSchema,
   ownerThreadId: id.nullable(), access: z.enum(["source-read", "member-write", "home-import", "artifact-read", "artifact-store"]),
+  draft: z.object({ branch: baseBranch, base: baseBranch, sourceBase: baseBranch, remote }).strict().optional(),
   workspaceKind: workspaceKindSchema.nullable(), objectFormat: objectFormatSchema.nullable(), allowedRefs: z.array(gitRefSchema).max(4),
 }).strict();
 export const transferRegistrationSchema = transferAuthoritySchema.extend({
@@ -126,6 +128,14 @@ export const hostContract = defineRpcContract({
     output: z.union([z.object({ head: gitOidSchema, headTree: gitOidSchema, commit: gitOidSchema, tree: gitOidSchema,
       includesUncommitted: z.boolean(), modifiedPaths: z.number().int().min(0).max(50_000), untrackedPaths: z.number().int().min(0).max(50_000),
     }).strict(), unavailable]),
+  },
+  draftPush: {
+    input: authoritySchema.extend({ sha: gitOidSchema, tree: gitOidSchema, previous: gitOidSchema.nullable() }).strict(),
+    output: z.object({ pushed: z.boolean(), code: z.number().nullable(), stdout: text, stderr: text, timedOut: z.boolean() }).strict(),
+  },
+  draftOpen: {
+    input: authoritySchema.extend({ profile: forgeProfileSchema, title: z.string().min(1).max(500), body: z.string().max(100_000) }).strict(),
+    output: z.discriminatedUnion("ok", [z.object({ ok: z.literal(true), url: z.string().url(), state: z.enum(["open", "merged", "closed"]).optional() }).strict(), z.object({ ok: z.literal(false), failureClass: z.enum(["temporary", "lasting", "broken contract"]), lines: text }).strict()]),
   },
   commitAll: {
     input: authoritySchema.extend({ message: z.string().min(1).max(500) }).strict(),

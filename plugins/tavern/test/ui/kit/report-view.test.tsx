@@ -15,6 +15,12 @@ const vex = quest.members.find((m) => m.threadId === vexReport.memberThreadId)!;
 const names = summaryNames(vex, quest.members, scenes.registry, [quest]);
 
 describe("ReportView", () => {
+  it.each([false, true])("renders PR state and owner from records, not report text (compact: %s)", compact => {
+    const pr = { id: "pr", keeperThreadId: "keeper", boardQuestId: null, projectId: "project", memberThreadId: vexReport.memberThreadId, owner: "keeper", url: "https://forge.example/pr/12", forge: null, head: "topic", base: "main", memberHead: "a".repeat(40), pushedHead: null, verifiedCommit: null, state: "ready" as const };
+    const { container } = render(<ReportView report={vexReport} pullRequests={[pr]} compact={compact} />);
+    expect(container.textContent).toContain("Draft PR: https://forge.example/pr/12 (ready; owner: keeper; head not verified)");
+    expect(container.querySelector('a[href="https://forge.example/pr/12"]')).not.toBeNull();
+  });
   it("names the live report's ids and shows none raw, with its numbered lines as a list", () => {
     const { container } = render(<ReportView report={vexReport} names={names} member={vex} />);
     // Paths keep the ids they contain (worktree folders); everywhere else no raw id shows.

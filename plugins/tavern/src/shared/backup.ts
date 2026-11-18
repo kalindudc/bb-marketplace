@@ -23,6 +23,7 @@ export type BackupManifest = z.infer<typeof backupManifestSchema>;
 export const backupBundleSchema = z.object({ manifest: backupManifestSchema, files: z.record(z.string(), z.string()) }).strict();
 export type BackupBundle = z.infer<typeof backupBundleSchema>;
 export const backupRestoreSchema = z.object({
+  skippedForgeProfiles: z.array(z.string()).optional(),
   code: z.enum(["preview", "applied", "stale", "invalid"]), previewHash: z.string(),
   settings: z.object({ changes: z.array(settingsChangeSchema) }),
   files: z.array(z.object({ path: z.string(), kind: z.enum(["class", "character", "scopes"]), action: z.enum(["add", "change", "same"]) })),

@@ -16,6 +16,13 @@ Resume is intended for the user on the common room. There is no CLI resume comma
 The stop scope is Keeper and member turns. Already-running hidden tale-renderer companions and character voice checks are outside that scope and can finish; new renderer and voice-check spawns are held. A placed hire stopped before spawning may free its unstarted reservation; no member or machine exists to release. See `docs/stop-all.md` for the receipt and caller limits.
 
 Pause every Keeper is a separate setting on the common room and Settings page: it pauses new Keeper work while running turns finish.
+## Draft pull requests
+
+Smiths use `tavern_draft_pr` to keep the quest’s pull request record current. When the hire brief says pull requests open from home, commit the work and pass `title`, `body` and optional `base`; Tavern carries only the committed tree, pushes the member’s own branch and opens a draft. It never marks ready or merges. Read the result for excluded uncommitted files and the pushed commit.
+
+When pull requests open on the member’s machine, open a draft with your own tools as your scope allows, then call `tavern_draft_pr` with `url`, `title` and optional `base`. This records it without pushing. Pass `forge` as `gh` or an enabled forge profile ID when known; omit it to record unknown. Reuse the same PR for the same head. Releasing the Smith hands open PR ownership to its Keeper without closing it.
+
+The user configures profiles in Where work runs under `machines.forges`. These are guardrails; Tavern-managed threads MUST NOT change them. See `../../docs/forges.md` for the command contract.
 
 ## Tune settings
 

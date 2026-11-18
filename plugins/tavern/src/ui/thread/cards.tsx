@@ -21,7 +21,7 @@ type Identity = { cls: ClassDef; character: CharacterDef };
 const REPORT_WORD = { done: "done", "needs-decision": "needs your decision", blocked: "blocked" } as const;
 
 /** A member's report in short: the headline, two lines of outcome, the evidence count with "View report ›", and the two-part confidence. Voice appears only on good news. */
-export function ReportCard({ report, who, onOpen, names, onView, voice = true }: { report: Report; who?: Identity | null; onOpen?: (threadId: string) => void; names?: ReportHeadlineNames; onView?: () => void; voice?: boolean }) {
+export function ReportCard({ report, who, onOpen, names, onView, voice = true, pullRequests }: { pullRequests?: import("../../shared/pull-request").PullRequest[]; report: Report; who?: Identity | null; onOpen?: (threadId: string) => void; names?: ReportHeadlineNames; onView?: () => void; voice?: boolean }) {
   const name = who ? `${who.character.name}` : "A member";
   return (
     <article className={`tavern tcard report r-${report.status}`} data-tavern-report-at={report.deliveredAt ?? report.createdAt} aria-label={`Report from ${name}: ${REPORT_WORD[report.status]}`}>
@@ -33,7 +33,7 @@ export function ReportCard({ report, who, onOpen, names, onView, voice = true }:
         <StatusPill status={report.status}>{REPORT_WORD[report.status]}</StatusPill>
         <TimeAgo at={report.createdAt} />
       </header>
-      <ReportView report={report} names={names ?? {}} compact voice={voice} {...(onView ? { onView } : {})} />
+      <ReportView report={report} pullRequests={pullRequests} names={names ?? {}} compact voice={voice} {...(onView ? { onView } : {})} />
       {report.confidence && <div className="conf"><span className="conf-l">Confidence</span><span className="conf-t">matches intent {report.confidence.intent}% · safe to ship {report.confidence.safe}%</span><span className="conf-b" aria-hidden="true"><i style={{ width: `${report.confidence.intent}%` }} /></span><span className="conf-b safe" aria-hidden="true"><i style={{ width: `${report.confidence.safe}%` }} /></span></div>}
       {voice && report.status === "done" && report.voice && <p className="voice">{report.voice}</p>}
     </article>
@@ -211,18 +211,18 @@ function ReportDigest({ threadId, ids, memberThreadId }: { threadId: string; ids
     <section className="tavern digest" data-tavern-report-thread={threadId} aria-label={memberThreadId ? "Side quest result (errand)" : `${count} report${count === 1 ? "" : "s"} from the party`}>
       <h3 className="dg-h">{memberThreadId ? <><Vocabulary word="errand" /> · result</> : <>{count} report{count === 1 ? "" : "s"} from the party</>}</h3>
       <QueryState error={query.error} loading={query.isLoading} retry={() => void query.refetch()} label={memberThreadId ? "the errand result" : "the reports"} skeleton={<>{Array.from({ length: Math.min(8, rows) }, (_, i) => <SkReportCard key={i} confidence={i < confident} />)}</>} />
-      {questIds.map(qid => <QuestReports key={qid ?? "errand"} questId={qid} reports={reports.filter(r => r.boardQuestId === qid)} who={who} onOpen={tid => navigate.toThread(tid)} onView={r => panel.openTab({ tab: REPORTS_TAB, params: { memberThreadId: r.memberThreadId, questId: r.boardQuestId, reportId: r.id } })} />)}
+      {questIds.map(qid => <QuestReports pullRequests={query.data?.pullRequests} key={qid ?? "errand"} questId={qid} reports={reports.filter(r => r.boardQuestId === qid)} who={who} onOpen={tid => navigate.toThread(tid)} onView={r => panel.openTab({ tab: REPORTS_TAB, params: { memberThreadId: r.memberThreadId, questId: r.boardQuestId, reportId: r.id } })} />)}
       {query.data && reports.length === 0 && <p className="m small">0 reports are available yet.</p>}
     </section>
   );
 }
 
 /** Reports about one board quest (or errands, with no quest), named from that quest's party so no raw id shows. */
-function QuestReports({ questId, reports, who, onOpen, onView }: { questId: string | null; reports: Report[]; who: (threadId: string) => Identity | null; onOpen: (threadId: string) => void; onView: (report: Report) => void }) {
+function QuestReports({ questId, reports, who, onOpen, onView, pullRequests }: { pullRequests?: import("../../shared/pull-request").PullRequest[]; questId: string | null; reports: Report[]; who: (threadId: string) => Identity | null; onOpen: (threadId: string) => void; onView: (report: Report) => void }) {
   const detail = experimental_useRpcQuery({ contract: rpcContract, method: "boardQuest", input: { id: questId ?? "" }, enabled: questId !== null });
   const registry = useRegistry();
   const quest = detail.data?.quest ?? null;
-  return <>{reports.map(r => <ReportCard key={r.id} report={r} who={who(r.memberThreadId)} onOpen={onOpen} onView={() => onView(r)} voice={voiceShown(registry.data)} names={registry.data ? summaryNames({ threadId: r.memberThreadId }, quest?.members ?? [], registry.data, quest ? [quest] : [], detail.data?.reports ?? reports) : {}} />)}</>;
+  return <>{reports.map(r => <ReportCard key={r.id} report={r} pullRequests={pullRequests} who={who(r.memberThreadId)} onOpen={onOpen} onView={() => onView(r)} voice={voiceShown(registry.data)} names={registry.data ? summaryNames({ threadId: r.memberThreadId }, quest?.members ?? [], registry.data, quest ? [quest] : [], detail.data?.reports ?? reports) : {}} />)}</>;
 }
 
 function QuestDirective({ kind, questId, version }: { kind: DirectiveKind; questId: string; version: number | null }) {

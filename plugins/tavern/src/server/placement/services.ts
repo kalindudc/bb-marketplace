@@ -10,6 +10,7 @@ import type { SourceDiscovery } from "./source-discovery";
 import { PlacementStore } from "./store";
 import { PlacementTransport } from "./transport";
 import { PlacementSubmissions } from "./submission";
+import { PlacementForge } from "./forge";
 import { PlacementPreservation } from "./preserve";
 
 export class PlacementServices {
@@ -19,7 +20,7 @@ export class PlacementServices {
   readonly controller;
   private readonly built: {
     host?: HostPort; sources?: SourceDiscovery; capture?: SourceCapture;
-    transport?: PlacementTransport; carry?: PlacementCarry; ready?: PlacementReady; submissions?: PlacementSubmissions; preserve?: PlacementPreservation;
+    forge?: PlacementForge; transport?: PlacementTransport; carry?: PlacementCarry; ready?: PlacementReady; submissions?: PlacementSubmissions; preserve?: PlacementPreservation;
   } = {};
 
   constructor(private readonly runtime: TavernRuntime) {
@@ -29,6 +30,7 @@ export class PlacementServices {
     this.controller = new PlacementController(runtime, this);
   }
 
+  get forge(): PlacementForge { return this.built.forge ??= new PlacementForge(this.runtime); }
   get host(): HostPort { return this.built.host ??= createHostPort(this.runtime.bb); }
   get sources(): SourceDiscovery { return this.built.sources ??= this.runtime.placementSources(); }
   get capture(): SourceCapture { return this.built.capture ??= new SourceCapture(this.sources, this.host, this.store); }

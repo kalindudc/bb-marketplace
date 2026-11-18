@@ -34,6 +34,19 @@ it("reports the data estimate and refuses an over-8-MiB RPC export without parti
   expect(result.code).toBe("too-large");
   if (result.code === "too-large") { expect(result.bytes).toBeGreaterThan(result.limit); expect(result.limit).toBe(8 * 1024 * 1024); expect(result.json).toBeNull(); }
 });
+it("refuses non-client backup restores and skips forge profiles even for a client", async () => {
+  const source = setup(), target = setup();
+  source.settings.update({ revision: 0, patch: { machines: { forges: [{ id: "incoming", name: "Incoming", enabled: true, kind: "command", open: "incoming" }] }, tavern: { repeatSeconds: 7 } }, why: "Page" });
+  target.settings.update({ revision: 0, patch: { machines: { forges: [{ id: "current", name: "Current", enabled: true, kind: "command", open: "current" }] } }, why: "Page" });
+  const exported = await source.backup.export({}), from = { bundle: exported.json! };
+  await expect(target.harness.invokeRpc("backupRestore", { from, apply: false }, { experimental_caller: { kind: "plugin", pluginId: "other" } })).rejects.toThrow("Backup restores require an explicit client action");
+  const preview = backupContract.backupRestore.output.parse(await target.harness.invokeRpc("backupRestore", { from, apply: false }));
+  expect(preview.skippedForgeProfiles).toContain("incoming");
+  const applied = backupContract.backupRestore.output.parse(await target.harness.invokeRpc("backupRestore", { from, apply: true, previewHash: preview.previewHash }));
+  expect(applied.code).toBe("applied");
+  expect(target.settings.read().machines.forges.map(profile => profile.id)).toEqual(["current"]);
+  expect(target.settings.read().tavern.repeatSeconds).toBe(7);
+});
 it("returns stale-safe restore previews through the registered RPC shape", async () => {
   const source = setup(); override(source);
   const exported = await source.backup.export({}), target = setup(), from = { bundle: exported.json! };

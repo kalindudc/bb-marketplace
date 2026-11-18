@@ -28,7 +28,7 @@ afterEach(() => databases.splice(0).forEach(db => db.close()));
 describe("placement settings persistence", () => {
   it("reads legacy absent policy without rewriting the database or changing authorization budgets", () => {
     const { store, row } = fixture(), before = row();
-    expect(store.placementPolicy()).toEqual({ state: "valid", revision: 0, settings: { maxMakers: 2, maxCheckers: 2, rules: [] } });
+    expect(store.placementPolicy()).toEqual({ state: "valid", revision: 0, settings: { maxMakers: 2, maxCheckers: 2, rules: [], forges: [] } });
     expect(store.read().keepers.partyMax).toBe(5); expect(row()).toBe(before);
   });
   it("atomically reorders rules without resetting caps or budgets and undoes only that array", () => {

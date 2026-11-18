@@ -16,8 +16,8 @@ function opaque() {
 
 describe("machine placement settings contract", () => {
   it("keeps placement inert by default and retains the existing party budget", () => {
-    expect(placementSettingsSchema.parse({})).toEqual({ maxMakers: 2, maxCheckers: 2, rules: [] });
-    expect(settingsSchema.parse({}).machines).toEqual({ maxMakers: 2, maxCheckers: 2, rules: [] });
+    expect(placementSettingsSchema.parse({})).toEqual({ maxMakers: 2, maxCheckers: 2, rules: [], forges: [] });
+    expect(settingsSchema.parse({}).machines).toEqual({ maxMakers: 2, maxCheckers: 2, rules: [], forges: [] });
     expect(settingsSchema.parse({}).keepers.partyMax).toBe(5);
     expect(settingsPatchSchema.parse({ keepers: { partyMax: 1000 } })).toEqual({ keepers: { partyMax: 1000 } });
     expect(settingsPatchSchema.safeParse({ keepers: { partyMax: 1001 } }).success).toBe(false);

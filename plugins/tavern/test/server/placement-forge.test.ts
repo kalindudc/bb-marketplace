@@ -1,0 +1,106 @@
+// @vitest-environment node
+import Sqlite from "better-sqlite3";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { createFakePluginHost, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
+import { afterEach, expect, it, vi } from "vitest";
+import { HostRegistry } from "../../src/host/registry";
+import { inspectHost } from "../../src/host/inspect";
+import { createTransport } from "../../src/host/transport";
+import { draftPush, draftOpen } from "../../src/host/forge";
+import { hostContract } from "../../src/host-contract";
+import { createHostPort } from "../../src/host/client";
+import { PlacementStore } from "../../src/server/placement/store";
+import { PlacementTransport } from "../../src/server/placement/transport";
+import { PlacementForge, MEMBER_PR_REFUSAL } from "../../src/server/placement/forge";
+import { KeeperStore } from "../../src/server/keeper/store";
+import { MIGRATIONS } from "../../src/server/migrations";
+import { placementRecord } from "./placement-fixture";
+import type { TavernRuntime } from "../../src/server/runtime";
+const cleanup: (() => void | Promise<void>)[] = [];
+afterEach(async () => { for (const f of cleanup.splice(0).reverse()) await f(); });
+const git = (root: string, ...args: string[]) => execFileSync("git", ["-C", root, ...args], { encoding: "utf8" }).trim();
+it.each([undefined, "release"])("carries committed trees, pins the target and leases pushes (base: %s)", async baseOverride => {
+  const root = mkdtempSync(join(tmpdir(), "placement-forge-")); cleanup.push(() => rmSync(root, { recursive: true, force: true }));
+  const home = join(root, "home"), source = join(root, "member"), remote = join(root, "remote.git");
+  mkdirSync(home); git(home, "init", "-qb", "main"); git(home, "config", "user.name", "Fixture"); git(home, "config", "user.email", "fixture@example.invalid");
+  writeFileSync(join(home, "work.txt"), "base"); git(home, "add", "."); git(home, "commit", "-qm", "base");
+  git(root, "clone", "--bare", home, remote); git(root, "clone", remote, source); git(source, "config", "user.name", "Maker"); git(source, "config", "user.email", "maker@example.invalid"); git(source, "checkout", "-qb", "member-work");
+  git(home, "remote", "add", "origin", remote); git(home, "fetch", "origin"); git(home, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main");
+  const base = git(home, "rev-parse", "HEAD");
+  writeFileSync(join(source, "work.txt"), "committed"); git(source, "commit", "-qam", "Member subject\n\nMember body"); const memberHead = git(source, "rev-parse", "HEAD");
+  writeFileSync(join(source, "work.txt"), "dirty"); writeFileSync(join(source, "untracked.txt"), "untracked");
+  const registries = new Map(["home", "member"].map(name => { const dir = join(root, name + "-data"); mkdirSync(dir); return [name, new HostRegistry(dir)] as const; }));
+  const env = (name: string) => ({ id: name, projectId: "project", hostId: name, path: name === "home" ? home : source, status: "ready", hostLifecycle: "active", lifecycle: { phase: "active" }, branchName: name === "home" ? "main" : "member-work", environmentProviderId: "checkout" });
+  const calls: string[] = [];
+  let corruptTree = false;
+  const host = createFakePluginHost({ pluginId: "tavern", experimental_hostEntry: true, sdk: {
+    threads: { get: async ({ threadId }: { threadId: string }) => makeThreadResponse({ id: threadId, projectId: "project", environmentId: threadId === "keeper" ? "home" : "member" }) },
+    environments: { get: async ({ environmentId }: { environmentId: string }) => env(environmentId) },
+  }, experimental_callHostRpc: async call => {
+    const registry = registries.get(call.hostId!)!, transport = createTransport(registry); calls.push(call.method);
+    if (call.method === "registerEndpoint") return registry.registerEndpoint(hostContract.registerEndpoint.input.parse(call.input));
+    if (call.method === "registerTransfer") return registry.registerTransfer(hostContract.registerTransfer.input.parse(call.input));
+    if (call.method === "inspect") return inspectHost(registry, hostContract.inspect.input.parse(call.input), call.signal);
+    if (call.method === "draftPush") { const input = hostContract.draftPush.input.parse(call.input); return draftPush(registry, { ...input, tree: corruptTree ? "c".repeat(40) : input.tree }, call.signal!); }
+    if (call.method === "draftOpen") return draftOpen(registry, hostContract.draftOpen.input.parse(call.input), call.signal!);
+    if (call.method in transport) return (transport[call.method as keyof typeof transport] as Function)(call.input, call.signal);
+    throw new Error(call.method);
+  } }); cleanup.push(() => host.harness.lifecycle.dispose());
+  const db = new Sqlite(":memory:"); db.exec(MIGRATIONS.join("\n")); cleanup.push(() => { db.close(); });
+  const store = new PlacementStore(db as never), port = createHostPort(host.bb), transport = new PlacementTransport(host.bb, port, store);
+  const endpoint = (name: string) => ({ hostId: name, environmentId: name, root: name === "home" ? home : source });
+  const snapshot = store.captureSnapshot({ purpose: "initial", keeperThreadId: "keeper", projectId: "project", sourceThreadId: "keeper", makerThreadId: null, makerSubmissionId: null, journalTarget: null, objectFormat: "sha1", base, sourceHead: base, tree: git(home, "rev-parse", "HEAD^{tree}"), source: endpoint("home"), home: endpoint("home"), fetch: { via: "remote-head", remoteName: "origin", remoteUrl: remote, trackingRef: "refs/remotes/origin/main", fetchRef: "refs/heads/main" } });
+  store.reserve(placementRecord({ memberThreadId: "member", phase: "reserved", hostId: "member", environmentId: "member", root: source, memberBranch: "member-work", sourceSnapshotId: snapshot.id, pullRequests: { at: "home", profile: "forge" } }), { maxMakers: 2, maxCheckers: 2 });
+  store.update("placement", 1, value => ({ ...value, phase: "running" }));
+  const keepers = new KeeperStore(db as never);
+  keepers.put("members", "member", { threadId: "member", classId: "smith", boardQuestId: "quest" } as never);
+  const member = () => keepers.get("members", "member")!;
+  const profile = { id: "forge", name: "Forge", enabled: true, kind: "command", open: `test "$FORGE_HEAD" = member-work && test "$LOOM_DRAFT" = 1 && test "$(cat)" = description && echo https://forge.example/pr/12` };
+  const runtime = { scopes: { api: { hostTemplate: () => ({ template: { github: "draft-pr-only", preset: "worktree" } }) } }, bb: host.bb, placements: () => ({ store, host: port, transport }), settings: { placementPolicy: () => ({ state: "valid", settings: { forges: [profile] } }) }, keeper: { member, now: () => 1, changed: vi.fn(), store: keepers } } as unknown as TavernRuntime;
+  const forge = new PlacementForge(runtime);
+  const result = await forge.forThread("member", { title: "Draft", body: "description", base: baseOverride });
+  expect(result).toContain("Draft PR: https://forge.example/pr/12"); expect(result).toContain("untracked.txt"); expect(result).toContain("work.txt");
+  expect(member().draftPush!.memberHead).toBe(memberHead);
+  const pushed = git(remote, "rev-parse", "refs/heads/member-work"); expect(member().draftPush!.homeHead).toBe(pushed);
+  expect(git(remote, "show", "member-work:work.txt")).toBe("committed");
+  expect(git(remote, "rev-parse", "member-work^")).toBe(base);
+  expect(git(remote, "show", "-s", "--format=%B", "member-work")).toBe("Member subject\n\nMember body");
+  expect(git(remote, "show", "-s", "--format=%an", "member-work")).toBe("Maker");
+  expect(keepers.roomEvents().some(event => event.type === "member.draft-pr-opened" && event.data.memberHead === memberHead && event.data.homeHead === pushed)).toBe(true);
+  expect(await forge.forThread("member", { title: "Draft", body: "description", base: "other" })).toBe(`This branch's draft targets ${baseOverride ?? "main"}; moving it comes later`);
+  profile.open = profile.open.replace("/pr/12", "/pr/13");
+  git(source, "add", "work.txt"); git(source, "commit", "-qm", "next");
+  expect(await forge.forThread("member", { title: "Draft", body: "description", base: baseOverride })).toContain("https://forge.example/pr/13");
+  expect(keepers.all("pullRequests")).toHaveLength(1);
+  expect(keepers.all("pullRequests")[0]?.url).toBe("https://forge.example/pr/13");
+  expect(calls.filter(name => name === "draftPush")).toHaveLength(2);
+  const beforeDefaultRefusal = git(remote, "rev-parse", "refs/heads/member-work");
+  git(remote, "symbolic-ref", "HEAD", "refs/heads/member-work");
+  expect(await forge.forThread("member", { title: "Draft", body: "description", base: baseOverride })).toContain("Tavern could not open the draft: Tavern never pushes to the base branch");
+  expect(git(remote, "rev-parse", "refs/heads/member-work")).toBe(beforeDefaultRefusal);
+  git(remote, "symbolic-ref", "HEAD", "refs/heads/main");
+  corruptTree = true;
+  expect(await forge.forThread("member", { title: "Draft", body: "description", base: baseOverride })).toContain("Tavern could not open the draft: Broken contract");
+  corruptTree = false;
+  git(remote, "update-ref", "refs/heads/member-work", base);
+  expect(await forge.forThread("member", { title: "Draft", body: "description", base: baseOverride })).toContain("lasting");
+  expect(git(remote, "rev-parse", "refs/heads/member-work")).toBe(base);
+  expect(store.byMember("member")?.phase).toBe("running");
+  const pushCount = calls.filter(name => name === "draftPush").length;
+  store.update("placement", 1, value => ({ ...value, memberBranch: "main" }));
+  git(source, "checkout", "-B", "main");
+  expect(await forge.forThread("member", { title: "Draft", body: "description", base: "release" })).toContain("Tavern never pushes to the base branch");
+  expect(calls.filter(name => name === "draftPush")).toHaveLength(pushCount);
+}, 90_000);
+it.each(["none", "read"])("refuses draft creation under GitHub scope %s", async github => {
+  const runtime = { placements: () => ({ store: { byMember: () => ({ pullRequests: { at: "home", profile: "forge" } }) } }), scopes: { api: { hostTemplate: () => ({ template: { github, preset: "worktree" } }) } }, keeper: { member: () => ({ classId: "smith" }) } } as unknown as TavernRuntime;
+  expect(await new PlacementForge(runtime).forThread("member", { title: "Draft", body: "" })).toBe(`Your worktree scope has GitHub access ${github}; it does not allow opening draft pull requests.`);
+});
+it.each(["warden", "smith"])("refuses %s when drafts do not open from home", async classId => {
+  const runtime = { placements: () => ({ store: { byMember: () => ({ pullRequests: { at: "member" } }) } }), keeper: { member: () => ({ classId }) } } as unknown as TavernRuntime;
+  const result = await new PlacementForge(runtime).forThread("member", { title: "Draft", body: "" });
+  expect(result).toBe(classId === "smith" ? "Your pull requests open on your own machine; open a draft with your own tools as your scope allows, then call tavern_draft_pr with its URL, title and base to record it." : MEMBER_PR_REFUSAL);
+});

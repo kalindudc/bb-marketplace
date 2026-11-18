@@ -71,7 +71,7 @@ export const settingsSchema = z.object({
   keepers: sections.keepers.default({ greenlight: "explicit", decisionTimerMax: 10080, partyMax: 5,
     staleStrikes: 2, ...MEMORY_LIMITS }),
   classes: sections.classes.default({}), scopes: sections.scopes.default({ mode: "enforce" }),
-  machines: placementSettingsSchema.default({ maxMakers: 2, maxCheckers: 2, rules: [] }),
+  machines: placementSettingsSchema.default({ maxMakers: 2, maxCheckers: 2, rules: [], forges: [] }),
   journal: sections.journal.default({ journalReminders: true, journalQuietMinutes: 10 }),
   data: sections.data.default({ historyDays: 0, autoArchiveDays: 0, backupKeep: 14 }), tuning: sections.tuning.default({ mode: "off" }),
   knobs: sections.knobs.default({ ...Object.fromEntries(TUNABLE_KEYS.map(key => [key, TUNABLES[key].default])), rangerTimeboxMaxMinutes: 12 } as z.infer<typeof sections.knobs>),

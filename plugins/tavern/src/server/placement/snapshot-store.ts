@@ -57,7 +57,7 @@ export type SnapshotOwner = z.infer<typeof ownerSchema>;
 
 function referenceIds(record: PlacementRecord): Set<string> {
   return new Set([
-    record.sourceSnapshotId, record.submissionSnapshotId, record.reviewTarget?.snapshotId, record.preservation.snapshotId,
+    record.draftSnapshotId, record.sourceSnapshotId, record.submissionSnapshotId, record.reviewTarget?.snapshotId, record.preservation.snapshotId,
     ...(record.transfers ?? []).map(item => item.snapshotId), ...(record.carries ?? []).map(item => item.snapshotId),
   ].filter((id): id is string => typeof id === "string"));
 }
@@ -131,7 +131,7 @@ export class SnapshotStore {
     const rows = this.db.prepare(`SELECT p.data FROM tavern_placements p
       WHERE json_extract(p.data,'$.phase')<>'released' AND EXISTS (
         SELECT 1 FROM tavern_source_snapshots s WHERE json_extract(s.data,'$.ownerId')=? AND (
-          s.id=json_extract(p.data,'$.sourceSnapshotId') OR s.id=json_extract(p.data,'$.submissionSnapshotId') OR
+          s.id=json_extract(p.data,'$.draftSnapshotId') OR s.id=json_extract(p.data,'$.sourceSnapshotId') OR s.id=json_extract(p.data,'$.submissionSnapshotId') OR
           s.id=json_extract(p.data,'$.reviewTarget.snapshotId') OR
           s.id=json_extract(p.data,'$.preservation.snapshotId') OR
           EXISTS (SELECT 1 FROM json_each(p.data,'$.transfers') t WHERE json_extract(t.value,'$.snapshotId')=s.id) OR

@@ -40,6 +40,7 @@ export function rpcHandlers(
   const k = runtime.keeper;
   const placementStore = new PlacementStore(k.store.db);
   const projectMember = (member: import("../shared/schema").Member) => ({ ...member,
+    pullRequests: runtime.keeper.store.pullRequestsForMember(member.threadId),
     placement: placementStore.byMember(member.threadId) ? runtime.placements().controller.forMember(member.threadId) : null });
   const projectQuest = (quest: import("../shared/contract").BoardQuestSummary) => ({ ...quest,
     members: quest.members.map(projectMember),
@@ -95,6 +96,7 @@ export function rpcHandlers(
       };
     },
     reports: ({ ids, memberThreadId }) => ({
+      pullRequests: k.store.all("pullRequests").filter(pr => memberThreadId === null || pr.memberThreadId === memberThreadId || pr.owner === memberThreadId),
       reports: (ids.length
         ? ids.slice(0, 30).flatMap((id) => {
             const report = k.store.get("reports", id);

@@ -6,6 +6,7 @@ import type { SettingsStore } from "./store";
 import { LIMITS } from "../limits";
 import { settingsPatchSchema, importSummary, isGuardrailSetting } from "../../shared/settings";
 
+import { FORGE_SETTINGS_PAGE_ONLY, withoutForgeCommands } from "./forge-cli";
 import { KeeperStore } from "../keeper/store";
 
 function settingKeys(value: unknown, prefix = ""): string[] {
@@ -74,6 +75,7 @@ export function settingsCommands(bb: BbPluginApi, store: SettingsStore) {
           }
           target[keys.at(-1)!] = value;
         }
+        if (input.options.apply && settingKeys(patch).some(key => key === "machines.forges" || key.startsWith("machines.forges."))) throw new PluginCliError(FORGE_SETTINGS_PAGE_ONLY);
         const checked = settingsPatchSchema.safeParse(patch);
         if (!checked.success) throw new PluginCliError(checked.error.message);
         const parsed = checked.data;
@@ -123,16 +125,18 @@ export function settingsCommands(bb: BbPluginApi, store: SettingsStore) {
           if (file.sizeBytes > LIMITS.tomlBytes) throw new PluginCliError(`Settings files must be at most ${LIMITS.tomlBytes} UTF-8 bytes.`);
           source = file.contentEncoding === "base64" ? Buffer.from(file.content, "base64").toString("utf8") : file.content;
         }
+        const filtered = withoutForgeCommands(source, store.snapshot());
+        source = filtered.toml;
         if (input.options.apply) {
           const preview = previewToml(source, store.snapshot());
-          guardrails(ctx, [...settingKeys(preview.user), ...settingKeys(preview.pinned, "pinned"), ...settingKeys(preview.tuned, "tuned"), ...preview.changes.map(c => c.key)]);
+          guardrails(ctx, [...settingKeys(preview.user), ...settingKeys(preview.pinned, "pinned"), ...settingKeys(preview.tuned, "tuned"), ...preview.changes.map(c => c.key)].filter(key => key !== "machines.forges" && !key.startsWith("machines.forges.")));
         }
         const result = importSettings(store, source, input.options.apply === true, store.snapshot().revision, "Imported settings through the CLI", ctx.threadId ?? null);
         const summary = result.code === "invalid" ? "Import was not applied: fix the reported problems."
           : result.code === "stale" ? "Settings changed: refresh the preview before applying. Nothing was applied."
           : importSummary(result.changes, result.applied);
         return { exitCode: result.code === "invalid" || result.code === "stale" ? 1 : 0,
-          stdout: input.options.json ? JSON.stringify({ summary, ...result }, null, 2) : `${summary}\n${JSON.stringify(result, null, 2)}` };
+          stdout: input.options.json ? JSON.stringify({ summary, ...result, skippedForgeProfiles: filtered.skipped, keptForgeProfiles: filtered.kept, notice: FORGE_SETTINGS_PAGE_ONLY }, null, 2) : `${summary}\n${FORGE_SETTINGS_PAGE_ONLY}\nSkipped forge profiles: ${filtered.skipped.join(", ") || "none"}.\nKept forge profiles: ${filtered.kept.join(", ") || "none"}.\n${JSON.stringify(result, null, 2)}` };
       },
     }),
   };

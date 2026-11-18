@@ -37,6 +37,18 @@ it("previews named restores, applies explicitly, and refuses agent restore mutat
   expect(denied.exitCode).toBe(2); expect(JSON.parse(denied.stdout!).code).toBe("forbidden");
   expect(JSON.parse((await f.run(["backup", "restore", saved.backup!.name, "--apply", "--json"])).stdout!).code).toBe("applied");
 });
+it.each([{}, { threadId: "agent" }])("skips forge commands in CLI backup previews and preserves current profiles: %j", async ctx => {
+  const f = cli();
+  f.settings.update({ revision: 0, patch: { machines: { forges: [{ id: "old", name: "Old", enabled: true, kind: "command", open: "old" }] }, tavern: { repeatSeconds: 7 } }, why: "Page" });
+  const saved = await f.backup.save({});
+  f.settings.update({ revision: 1, patch: { machines: { forges: [{ id: "current", name: "Current", enabled: true, kind: "command", open: "current" }] }, tavern: { repeatSeconds: 9 } }, why: "Page" });
+  const preview = await f.run(["backup", "restore", saved.backup!.name, "--json"], ctx);
+  expect(preview.stdout).toContain("old"); expect(preview.stdout).toContain("Forge profiles run commands on this machine");
+  const applied = await f.run(["backup", "restore", saved.backup!.name, "--apply", "--json"], ctx);
+  expect(applied.exitCode).toBe(ctx.threadId ? 2 : 0);
+  expect(f.settings.read().machines.forges.map(profile => profile.id)).toEqual(["current"]);
+  expect(f.settings.read().tavern.repeatSeconds).toBe(ctx.threadId ? 9 : 7);
+});
 it("returns exit 3 for stale preview hashes and exit 2 for ambiguous or invalid input", async () => {
   const f = cli(), exported = await f.backup.export({});
   const stale = await f.run(["backup", "restore", "--bundle", exported.json!, "--apply", "--preview-hash", "old", "--json"]);

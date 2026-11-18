@@ -2,6 +2,7 @@ import { useBbNavigate } from "@get-bb/plugin-sdk/app";
 import { useEffect, useRef } from "react";
 import type { BoardQuestDetail } from "../../shared/contract";
 import { extractReportHeadline, nameReportIds, type ReportHeadlineNames } from "../../shared/report-headline";
+import { pullRequestLine, type PullRequest } from "../../shared/pull-request";
 import type { Evidence, Member, Report } from "../../shared/schema";
 import { Glyph, OpensMark } from "./glyphs";
 import { CheckIndependence, Clamp, EvidenceList, StatusPill, clockTime, plural, summaryNames, useToday } from "./primitives";
@@ -89,15 +90,17 @@ export function readableEvidence(evidence: readonly Evidence[], names: ReportHea
  * `member` supplies the independence label, which the report itself does not carry.
  */
 /** `voice` is `voiceShown(registry)` at the caller: with Character voice off, the report's voice line isn't drawn. */
-export function ReportView({ report, names = {}, compact = false, member, onView, voice = true }: { report: Report; names?: ReportHeadlineNames; compact?: boolean; member?: Pick<Member, "checkIndependence">; onView?: () => void; voice?: boolean }) {
+export function ReportView({ report, names = {}, compact = false, member, onView, voice = true, pullRequests = member?.pullRequests ?? [] }: { report: Report; names?: ReportHeadlineNames; compact?: boolean; pullRequests?: PullRequest[]; member?: Pick<Member, "checkIndependence"> & { pullRequests?: PullRequest[] }; onView?: () => void; voice?: boolean }) {
   const headline = extractReportHeadline(report, names);
   let outcome = readable(report.outcome, names);
   // A headline taken from the outcome is its first sentence: the body starts after it rather than repeating it.
   if (headline && !report.headline?.trim()) { const at = outcome.indexOf(headline); if (at >= 0 && at < 80) outcome = outcome.slice(at + headline.length).trim(); }
   const evidence = readableEvidence(report.evidence, names);
+  const prs = pullRequests.filter(pr => pr.memberThreadId === report.memberThreadId || pr.owner === report.memberThreadId).map(pr => <p key={pr.id} className="rv-p" data-content><a href={pr.url} target="_blank" rel="noreferrer">{pullRequestLine(pr)}</a></p>);
   if (compact) return <div className={`rv compact r-${report.status}`}>
     {headline && <p className="rv-lead" data-content>{headline}</p>}
     {outcome && <Clamp text={outcome} lines={2} className="rv-out" />}
+    {prs}
     {(evidence.length > 0 || onView) && <p className="rv-foot">{evidence.length > 0 && <span className="m">{plural(evidence.length, "piece")} of evidence</span>}{onView && <button type="button" className="lnk-btn act" onClick={onView}><span>View report</span><OpensMark /></button>}</p>}
   </div>;
   return <div className={`rv r-${report.status}`} data-tavern-report="">
@@ -107,6 +110,7 @@ export function ReportView({ report, names = {}, compact = false, member, onView
       : block.kind === "list"
         ? <ol key={i} className="rv-list" data-content>{block.items.map((item, j) => <li key={j}><Prose text={item} /></li>)}</ol>
         : <p key={i} className="rv-p" data-content><Prose text={block.text} /></p>)}
+    {prs}
     {evidence.length > 0 && <div className="rv-sec"><h4 className="rv-h">Evidence</h4><EvidenceList evidence={evidence} fold /></div>}
     {report.artifacts.length > 0 && <div className="rv-sec"><h4 className="rv-h">Artifacts</h4><EvidenceList evidence={report.artifacts.map((ref) => ({ kind: /^https?:\/\//i.test(ref) ? "url" : "file", ref, detail: "", exitCode: null }))} /></div>}
     {report.confidence && <div className="conf"><span className="conf-l">Confidence</span><span className="conf-t">matches intent {report.confidence.intent}% · safe to ship {report.confidence.safe}%</span></div>}

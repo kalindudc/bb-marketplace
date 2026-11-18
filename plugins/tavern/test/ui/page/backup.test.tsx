@@ -79,6 +79,11 @@ describe("Backup settings section", () => {
     expect(await other.findByText(/about 9.0 MB, over the 8.4 MB a download allows/)).toBeTruthy();
   });
 
+  it("names skipped forge profiles even when the rest of a restore matches", async () => {
+    const slot = await section({ backupRestore: () => preview({ skippedForgeProfiles: ["imported"], settings: { changes: [] }, files: [], records: { action: "none", counts: {}, reason: null } }) });
+    fireEvent.click((await slot.findAllByRole("button", { name: /Restore the backup from/, expanded: false }))[0]!);
+    expect(await slot.findByText(/Skipped forge profiles: imported\./)).toBeTruthy();
+  });
   it("previews a restore in place, applies exactly that preview, and asks again when it went stale", async () => {
     const backupRestore = vi.fn((input: Parameters<Handlers["backupRestore"]>[0]) => input.apply ? preview({ code: "stale" }) : preview());
     const slot = await section({ backupRestore });

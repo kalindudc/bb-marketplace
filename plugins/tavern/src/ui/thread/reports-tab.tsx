@@ -65,7 +65,7 @@ function ErrandReports({ memberThreadId }: { memberThreadId: string }) {
     {reports.data && list.length === 0 && <p className="m">0 reports from {name} yet.</p>}
     {list.map(r => <section key={r.id} className="rv-rep" aria-label={`Report, ${STATUS_WORD[r.status]}`}>
       <header className="rv-rep-h"><StatusPill status={r.status}>{STATUS_WORD[r.status]}</StatusPill><TimeAgo at={r.createdAt} /></header>
-      <ReportView report={r} names={names} voice={voiceShown(registry.data)} />
+      <ReportView report={r} pullRequests={reports.data?.pullRequests} names={names} voice={voiceShown(registry.data)} />
     </section>)}
   </div></div>;
 }

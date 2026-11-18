@@ -8,6 +8,7 @@ import { abortError } from "./process";
 import { HostError, HostRegistry } from "./registry";
 import { NativeScopes, type NativeScopePaths } from "./scopes";
 import { createTransport } from "./transport";
+import { draftPush, draftOpen } from "./forge";
 import { snapshotWorktree } from "./snapshot";
 
 export interface TavernHostEntryOptions { artifactPath: string; paths?: NativeScopePaths }
@@ -64,6 +65,8 @@ export function createTavernHostEntry(options: TavernHostEntryOptions) {
           return { outcome: "unavailable" as const, code: error.code, message: error.message, retryable: error.retryable };
         }
       }),
+      draftPush: (input, context) => call(context, (native, signal) => draftPush(native.registry, input, signal)),
+      draftOpen: (input, context) => call(context, (native, signal) => draftOpen(native.registry, input, signal)),
       commitAll: (input, context) => call(context, (native, signal) => native.transport.commitAll(input, signal)),
       exportChanges: (input, context) => call(context, (native, signal) => native.transport.exportChanges(input, signal)),
       readBlob: (input, context) => call(context, (native, signal) => native.transport.readBlob(input, signal)),

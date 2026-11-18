@@ -118,7 +118,7 @@ import { transitionQuest } from "./keeper/quest-lifecycle";
 export class TavernRuntime {
   readonly stopAll = new StopAll(this);
   readonly serviceRecords: ServiceRecords;
-  readonly toolNames = [...KEEPER_TOOLS, "tavern_report", "tavern_request_sources", "tavern_ready"];
+  readonly toolNames = [...KEEPER_TOOLS, "tavern_report", "tavern_request_sources", "tavern_ready", "tavern_draft_pr"];
   private readonly loop = new TickLoop(this);
   private sourceInspection: SourceDiscovery | null = null;
   private awayState: AwayRuntime | null = null;
@@ -862,7 +862,7 @@ export class TavernRuntime {
     if (isVoiceCheckThread(ctx.pluginMetadata)) return { tools: [] as string[], skills: [] as string[], instructions: "" };
     const m = this.keeper.member(ctx.thread.id);
     const common = {
-      tools: ["journal", ...(m && new PlacementStore(this.keeper.store.db).byMember(m.threadId) ? ["tavern_ready"] : [])],
+      tools: ["journal", ...(m?.classId === "smith" ? ["tavern_draft_pr"] : []), ...(m && new PlacementStore(this.keeper.store.db).byMember(m.threadId) ? ["tavern_ready"] : [])],
       skills: ["journal", "quest-management"],
     };
     const journal = this.keeper.journal.instructions(ctx.thread.id);
@@ -883,6 +883,7 @@ export class TavernRuntime {
         ? snapshot!.text
         : JSON.stringify({
             brief: this.keeper.store.runtime(m.threadId).brief,
+            pullRequests: this.keeper.store.pullRequestsForMember(m.threadId),
             placement: new PlacementStore(this.keeper.store.db).byMember(m.threadId) ? this.placements().controller.forMember(m.threadId) : null,
             boardQuest: m.boardQuestId
               ? this.keeper.quest(m.boardQuestId).title
@@ -1672,11 +1673,14 @@ export class TavernRuntime {
       this.away.assertHire(questId, guardedLocal);
       this.keeper.assertCheckerHandoff(role.id, questId);
       if (isHireCancelled(this.keeper, this.keeper.store.get("hires", token) ?? intent)) throw new Error("This board quest has ended or is stopping; the hire was cancelled");
+      if (role.id === "smith" && placement?.pullRequests?.at !== "home") brief = "Your pull requests open on your own machine. Open drafts with your own tools as your scope allows, then call tavern_draft_pr with url, title and optional base to record each draft.\n\n" + brief;
       if (placement) {
+        if (role.id === "smith" && placement.pullRequests?.at === "home") brief = "Your pull requests open from home. Use tavern_draft_pr with title, body and optional base after committing your work. It opens drafts only; uncommitted files are not included.\n\n" + brief;
         brief = "Call tavern_ready {} before substantive work. It binds the provisioned checkout and exact source tree; stop and report its blocker if setup fails. Readiness is not a guard-loaded receipt. Remote execution is Detection only (remote), never prevention.\n\n" + brief;
         this.keeper.store.put("hires", token, { ...this.keeper.store.get("hires", token)!, owner, initialInput: brief });
         this.placements().controller.beginSpawn(placement);
       }
+      if (!placement) this.keeper.store.put("hires", token, { ...this.keeper.store.get("hires", token)!, owner, initialInput: brief });
       this.stopAll.assertRunning();
       attempted = true;
       let child: { id: string };
@@ -1884,7 +1888,7 @@ export class TavernRuntime {
         releasePending: null,
         archiveError: null,
         released: { reason, decisionId: decision.id },
-      });
+      }, this.keeper.now());
       this.keeper.activity(member.threadId, "stopped");
       this.keeper.store.event(this.keeper.now(), member.keeperThreadId, member.boardQuestId, "member.released", reason, { memberThreadId: member.threadId, decisionId: decision.id });
     });

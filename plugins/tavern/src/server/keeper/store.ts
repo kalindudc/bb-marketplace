@@ -1,4 +1,5 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { pullRequestSchema, type PullRequest } from "../../shared/pull-request";
 import type { JournalTarget } from "../../shared/placement";
 import type { RequestSources } from "../../shared/request-source";
 import { liveMemberSql } from "../liveness";
@@ -36,6 +37,7 @@ const visibleEventSql = `NOT EXISTS (SELECT 1 FROM tavern_records q WHERE q.kind
 
 export interface Records {
   stopAll: import("../../shared/stop-all").StopAllState;
+  pullRequests: PullRequest;
   taleDeliveries: import("zod").infer<typeof import("../tale").taleDeliverySchema>;
   taleDeliveryAttempts: import("zod").infer<typeof import("../tale").taleDeliveryAttemptSchema>;
   serviceRecords: import("../../shared/service-record").ServiceQuestRecord;
@@ -727,7 +729,33 @@ export class KeeperStore {
       ? initialRuntime()
       : { ...initialRuntime(), ...(JSON.parse(row.data) as Runtime) };
   }
-  patch(threadId: string, patch: Partial<Runtime>) {
+  pullRequestsForMember(threadId: string): PullRequest[] {
+    return this.all("pullRequests").filter(pr => pr.memberThreadId === threadId || pr.owner === threadId);
+  }
+  recordPullRequest(input: Omit<PullRequest, "id" | "memberThreadId"> & { memberThreadId?: string }, at: number): PullRequest {
+    return this.atomic(() => {
+      const id = "pr-" + createHash("sha256").update(JSON.stringify([input.projectId, input.head])).digest("hex");
+      const previous = this.get("pullRequests", id);
+      if (previous && (previous.owner !== input.owner || previous.boardQuestId !== input.boardQuestId || previous.keeperThreadId !== input.keeperThreadId)) throw new Error("This branch already has a pull request and an owner; reuse that record.");
+      if (previous && previous.base !== input.base) throw new Error(`This branch's draft targets ${previous.base}; moving it comes later`);
+      const state = previous && previous.url !== input.url ? "draft" : previous?.state ?? input.state;
+      const next = pullRequestSchema.parse({ ...input, state, memberThreadId: previous?.memberThreadId ?? input.memberThreadId ?? input.owner, id });
+      if (JSON.stringify(previous) !== JSON.stringify(next)) this.changePullRequest(next, at);
+      return next;
+    });
+  }
+  private changePullRequest(pr: PullRequest, at: number) {
+    this.put("pullRequests", pr.id, pr);
+    this.event(at, pr.keeperThreadId, pr.boardQuestId, "pull-request.changed", `Pull request ${pr.state}: ${pr.url}; owner ${pr.owner}`, pr);
+  }
+  transferPullRequests(threadId: string, at: number) {
+    const member = this.get("members", threadId);
+    if (member?.classId !== "smith" || !member.keeperThreadId) return;
+    for (const pr of this.all("pullRequests")) if (pr.owner === threadId && ["draft", "ready"].includes(pr.state))
+      this.changePullRequest({ ...pr, owner: member.keeperThreadId }, at);
+  }
+  patch(threadId: string, patch: Partial<Runtime>, at = patch.deletedAt ?? patch.archivedAt ?? Date.now()) {
+    if (patch.released || patch.archivedAt != null || patch.deletedAt != null) this.transferPullRequests(threadId, at);
     const data = { ...this.runtime(threadId), ...patch };
     this.db
       .prepare(

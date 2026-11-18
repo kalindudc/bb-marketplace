@@ -31,7 +31,7 @@ These are core capabilities or fixes Tavern needs, not APIs Tavern already has. 
 ## 4. Offer a core exclusive-machine lease
 
 - Ask: Provide a machine lease or exclusivity capability with a trusted owner and lifetime, so core can prevent another thread or plugin from using a checkout promised to one member.
-- Why Tavern needs it: World and other provider-owned dedicated checkouts need one-member ownership. Tavern can avoid sharing within its own allocations but cannot enforce that promise against other users or plugins.
+- Why Tavern needs it: Provider-owned dedicated checkouts need one-member ownership. Tavern can avoid sharing within its own allocations but cannot enforce that promise against other users or plugins.
 - Evidence: The coordinator's `design/machines/design.md`, dedicated-machine and host sections, distinguishes a fresh per-member machine from a shared checkout. The inspected generic host/machine APIs do not advertise an exclusive lease; provider identity is not proof of exclusivity.
 - Today's workaround: Allocate one new machine per rule-placed member and enforce Tavern-only ownership. Wardens receive their own placement and carried source. This does not claim core-enforced exclusivity or survival after an external archive, deletion or provider loss.
 - Raised by: Frank.

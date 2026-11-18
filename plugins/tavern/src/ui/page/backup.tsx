@@ -51,6 +51,7 @@ function RestorePreview({ from, onDone, onCancel }: { from: From; onDone: (recei
     {stale && <p className="tv-problem" role="alert">The backup or Tavern changed after this preview, so nothing was restored. <button type="button" className="lnk-btn act" onClick={() => void ask()}><span>Preview again</span></button></p>}
     {error && <p className="tv-problem" role="alert">{error}</p>}
     {preview && <>
+      {!!preview.skippedForgeProfiles?.length && <p className="tv-warn">Skipped forge profiles: {preview.skippedForgeProfiles.join(", ")}. Current profiles were kept. Edit forge commands on Tavern’s Settings page, Where work runs.</p>}
       {preview.problems.length > 0 && <ul className="tv-problem" role="alert">{preview.problems.map((p) => <li key={p}>{p}</li>)}</ul>}
       {nothing ? <p className="m small">Everything already matches this backup.</p> : <>
         <div className="tv-bk-part"><b>Settings</b>{preview.settings.changes.length ? <ChangeList changes={preview.settings.changes} problems={[]} /> : <span className="m small">no change</span>}</div>

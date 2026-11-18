@@ -195,6 +195,7 @@ export const guardPostureSchema = z.object({
   providerId: z.string(), mode: z.enum(["pre-exec", "detection-only"]), label: z.string(), approvalAskId: id.nullable(),
 });
 export const memberSchema = z.object({
+  draftPush: z.object({ branch: z.string(), remote: z.string(), memberHead: z.string(), homeHead: z.string(), profile: z.string() }).optional(),
   stopPending: z.boolean().optional(),
   stopError: z.string().nullable().optional(),
   lastStopAttemptAt: epochMs.nullable().optional(),
@@ -228,7 +229,7 @@ export const memberSchema = z.object({
   strikes: z.number().int(),
   verifiedWins: z.number().int(),
 });
-export type Member = z.infer<typeof memberSchema> & { placement?: import("./placement-view").PlacementView | null };
+export type Member = z.infer<typeof memberSchema> & { pullRequests?: import("./pull-request").PullRequest[]; placement?: import("./placement-view").PlacementView | null };
 
 export const briefSchema = z.object({
   outcome: z.string().min(1).max(2000),

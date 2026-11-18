@@ -15,6 +15,7 @@ import "./machines.css";
 import { FoldLoad } from "./skeletons";
 import { PlacementFacts } from "../kit/placement";
 
+import { ForgeProfiles } from "./machines-forges";
 const WHY = "Changed on the Where work runs page";
 const reducedMotion = () => typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
 /** Brings a rule into view and gives it focus, so a jump from a link or a blocked hire lands where keyboard users can act on it. */
@@ -268,7 +269,7 @@ function Editor({ api, rules, saved, index, keptKey, n, room, classes, onDone }:
   return <form ref={form} className="mx-editor" aria-label={index < 0 ? `New rule ${rules.length + 1}` : `Edit rule ${index + 1}`} onSubmit={(e) => { e.preventDefault(); void save(); }} onFocus={track} onSelect={track} onInput={track} onBlur={untrack}>
     <div className="mx-eh"><h3>{index < 0 ? `New rule ${rules.length + 1}` : `Rule ${index + 1}`}</h3><span className="mx-hint">First enabled match wins; a new rule goes last.</span></div>
     {changed && <p className="tv-problem mx-changed" role="status">This rule changed since you started editing, so the editor shows it as saved now.</p>}
-    <Field id={`${uid}-l`} label="Name" problem={probAt("label")}><input id={`${uid}-l`} className="tv-text mx-wide" value={r.label} maxLength={200} placeholder="Shop/world on an Aquifer machine" onChange={(e) => setR({ ...r, label: e.target.value })} required /></Field>
+    <Field id={`${uid}-l`} label="Name" problem={probAt("label")}><input id={`${uid}-l`} className="tv-text mx-wide" value={r.label} maxLength={200} placeholder="Project work on a separate machine" onChange={(e) => setR({ ...r, label: e.target.value })} required /></Field>
     <fieldset className="mx-fs">
       <legend>Catches</legend>
       <p className="mx-hint">A hire must meet every condition. Within one condition, any value is enough.</p>
@@ -324,6 +325,7 @@ function Editor({ api, rules, saved, index, keptKey, n, room, classes, onDone }:
         {newMachine && <Inputs title={`${cat.machines.find((m) => m.id === newMachine.machineProviderId)?.displayName ?? newMachine.machineProviderId} inputs`} schema={cat.machines.find((m) => m.id === newMachine.machineProviderId)?.inputs ?? null} value={newMachine.inputs as M.Json | undefined} onChange={(v) => setProv({ machine: { ...newMachine, inputs: v } })} probAt={(k) => probAt(k ? `target.machine.inputs.${k}` : "target.machine.inputs")} />}
       </>}
     </fieldset>
+    <Field id={`${uid}-pr`} label="Pull requests open" problem={probAt("pullRequests")}><select id={`${uid}-pr`} className="tv-select" value={r.pullRequests?.at === "home" ? r.pullRequests.profile : ""} onChange={event => setR({ ...r, pullRequests: event.target.value ? { at: "home", profile: event.target.value } : { at: "member" } })}><option value="">On the member’s machine</option>{api.query.data?.effective.machines.forges.map(profile => <option key={profile.id} value={profile.id} disabled={!profile.enabled}>From home with {profile.name}</option>)}</select></Field>
     {M.needsConsent(r) && <div className={`mx-field ${probAt("consent") ? "bad" : ""}`}>
       <span className="mx-fl">Consent</span>
       <p className="mx-hint">{M.consented(r) ? "Accepted for this rule. Changing the machine or checkout keeps it; a copy of the rule asks again." : "After you save, the rule stays off until you accept its consent: one confirmation, never per hire."}</p>
@@ -340,15 +342,15 @@ function MatchField({ f, values, n, room, classes, onChange, problem }: { f: M.M
   const options = f === "projectIds" ? (n.catalog?.projects ?? []).map((p) => ({ id: p.id, label: `${p.name} · ${p.remotes[0] ? p.remotes[0].replace(/^[a-z]+:\/\//, "").replace(/\.git$/, "") : "no remote"}` }))
     : f === "questIds" ? (room?.keepers ?? []).flatMap((k) => k.boardQuests).filter((q) => !q.archivedAt).map((q) => ({ id: q.id, label: n.quests.get(q.id) ?? q.title }))
     : f === "keeperEnvironmentProviders" ? [...n.envs.entries()].filter(([, e]) => e.machineProviderId === null).map(([eid, e]) => ({ id: eid, label: e.displayName })) : null;
-  const hint = f === "repoRemotes" ? <>Without <code>https://</code> or <code>.git</code>. <code>*</code> matches inside one part, for example <code>delta.shopify.io/shop/world</code>.</>
-    : f === "keeperPathGlobs" ? <><code>~</code> is your home and <code>*</code> one folder: <code>~/world/trees/*/src</code> matches every World tree and everything inside it.</>
+  const hint = f === "repoRemotes" ? <>Without <code>https://</code> or <code>.git</code>. <code>*</code> matches inside one part, for example <code>forge.example/team/project</code>.</>
+    : f === "keeperPathGlobs" ? <><code>~</code> is your home and <code>*</code> one folder: <code>~/projects/*/src</code> matches each project’s src folder and everything inside it.</>
     : f === "projectIds" && !n.catalog ? "Project names arrive with Tavern's catalog; until then, type a project id." : undefined;
   const typed = !options || (f === "projectIds" && !n.catalog);
   return <div className={`mx-field ${problem ? "bad" : ""}`}>
     <label className="mx-fl" htmlFor={id}>{M.fieldWord(f, values.length || 1)}</label>
     {values.length > 0 && <ul className="mx-chips" aria-label={`${M.fieldWord(f, 2)} in this condition`}>{values.map((v) => <li key={v} className="mx-chip"><span>{M.valueWord(n, f, v)}</span><button type="button" className="mx-chip-x" aria-label={`Remove ${M.valueWord(n, f, v)}`} title={`Remove ${M.valueWord(n, f, v)}`} onClick={() => onChange(values.filter((x) => x !== v))}><Glyph name="close" size={11} /></button></li>)}</ul>}
     <div className="mx-row">
-      {typed ? <input id={id} className="tv-text mx-wide" value={text} placeholder={f === "repoRemotes" ? "github.com/Shopify/*" : f === "keeperPathGlobs" ? "~/src/github.com/Shopify/*" : "Type and press Enter"} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && text.trim()) { e.preventDefault(); if (!values.includes(text.trim())) onChange([...values, text.trim()]); setText(""); } }} />
+      {typed ? <input id={id} className="tv-text mx-wide" value={text} placeholder={f === "repoRemotes" ? "forge.example/team/*" : f === "keeperPathGlobs" ? "~/projects/*" : "Type and press Enter"} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && text.trim()) { e.preventDefault(); if (!values.includes(text.trim())) onChange([...values, text.trim()]); setText(""); } }} />
         : <select id={id} className="tv-select mx-wide" value="" onChange={(e) => e.target.value && onChange([...values, e.target.value])}><option value="">Add {M.fieldWord(f).toLowerCase()}…</option>{options!.filter((o) => !values.includes(o.id)).map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}</select>}
       {remove}
     </div>
@@ -528,6 +530,7 @@ export function MachinesPage({ rule: ruleParam }: { rule?: string; hire?: string
     {from && ruleIndex >= 0 && <div className="tcard mx-from" role="status"><p><b>Opened from a placement rule.</b> Rule {ruleIndex + 1}, {rules[ruleIndex]!.label}, placed this member or caught the hire.</p><button type="button" className="lnk-btn act" onClick={() => setFrom(false)}>Hide</button></div>}
     {api.undoable && <div className="tcard mx-undo" role="status"><span>{api.undoable.text}</span><button type="button" className="btn sm" onClick={() => void api.runUndo()}><Glyph name="undo" size={12} />Undo</button></div>}
     {!api.undoable && api.announce.endsWith("deleted. Saved.") && <p className="mx-done" role="status">{api.announce}</p>}
+    {data && !invalid && <ForgeProfiles profiles={data.effective.machines.forges} pending={api.pending} save={forges => api.save({ forges }, "Forge profiles saved.")} />}
     {api.stale && <p className="tv-problem" role="alert">Settings changed somewhere else, so nothing was saved. The latest values are shown; make the change again.</p>}
     {invalid && <div className="tv-problem mx-block" role="alert">
       <p><b>Placement is blocked.</b> Tavern can't read the saved rules, so new members wait instead of running anywhere. Members already running are untouched.</p>
@@ -546,7 +549,7 @@ export function MachinesPage({ rule: ruleParam }: { rule?: string; hire?: string
         {placedMembers.length > 0 && <section className="mx-pv mx-members" aria-labelledby="mx-members-h"><h2 id="mx-members-h" className="mx-h">Where members run now</h2><ul>{placedMembers.map(member => <li key={member.threadId}><b>{memberName(member, registry.data ?? { classes: [], characters: [] })}</b><PlacementFacts placement={member.placement} memberName={memberName(member, registry.data ?? { classes: [], characters: [] })} variant="card" /></li>)}</ul></section>}
         <div className="mx-lh"><h2 className="mx-h">Rules <span className="num mx-f">{rules.length}</span></h2><span className="mx-f">checked top to bottom</span>
           <button type="button" className="btn sm mx-addr" onClick={() => setEditing(-1)} disabled={editing !== null || rules.length >= M.MAX_RULES} title={rules.length >= M.MAX_RULES ? "Tavern keeps at most 50 rules." : undefined}><Glyph name="plus" size={12} />Add a rule</button></div>
-        {rules.length === 0 && editing === null && <div className="mx-empty"><p><b>Every hire runs where it runs today.</b> Add a rule to send some work elsewhere, for example any work in shop/world to a new Aquifer World sandbox.</p></div>}
+        {rules.length === 0 && editing === null && <div className="mx-empty"><p><b>Every hire runs where it runs today.</b> Add a rule to send some work elsewhere, for example project work to a new machine.</p></div>}
         {rules.length > 0 && <RuleList api={api} rules={rules} n={n} preview={invalid ? null : preview} editing={editing} onEdit={setEditing} consentFor={consentFor} setConsentFor={setConsentFor} invalidTarget={invalidTarget} />}
         {rules.length > 0 && preview && !invalid && <p className={`mx-fall ${preview.verdict.state === "compatibility" ? "hit" : ""}`}><span className="mx-sm" aria-hidden="true">{preview.verdict.state === "compatibility" ? "✓" : "·"}</span><span>No rule caught it: runs where it runs today</span></p>}
         {!wide && editor}

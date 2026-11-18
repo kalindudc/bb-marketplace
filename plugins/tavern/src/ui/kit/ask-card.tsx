@@ -15,7 +15,7 @@ const RULE_WORDS: Record<string, string> = {
   "git-push-force": "Force, mirror or deletion pushes",
   "git-push-target": "Push without naming a branch",
   "kubectl-write": "Write to a Kubernetes cluster, including dry runs, exec and cp",
-  "deploy-fallback": "Run deploy commands (terraform apply, helm, kapp, dt deploy)",
+  "deploy-fallback": "Run deploy commands (terraform apply, helm, kapp)",
   github: "Use GitHub beyond reads and draft pull requests",
   "git-global-config": "Change global or system git configuration",
 };

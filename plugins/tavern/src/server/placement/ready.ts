@@ -205,7 +205,7 @@ export class PlacementReady {
       if (!carried) await verifyTree(); current();
       if (!isDeepStrictEqual(this.deps.scopeForThread(memberId), original) || !isDeepStrictEqual(deliveries.get(placementId)?.binding, delivery.binding))
         throw new StalePlacementError("The effective scope or delivery changed before readiness");
-      const ready = placements.update(placementId, generation, value => ({ ...value, phase: completedPhase, posture: { ...value.posture,
+      const ready = placements.update(placementId, generation, value => ({ ...value, phase: completedPhase, memberBranch: sdk.branch, posture: { ...value.posture,
         aggregate: "remote-detection-only", toolGate: piObserved ? "pi-observed" : "not-established", filesystem: "none", network: "not-enforced",
         checker: original.template.preset === "checker" ? piObserved ? "pre-exec-no-containment" : "detection-only-no-containment" : "not-a-checker" } }));
       this.deps.changed?.(memberId);

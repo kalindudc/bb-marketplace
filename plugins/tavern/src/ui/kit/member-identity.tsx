@@ -61,6 +61,7 @@ export function MemberIdentity({ member, registry, scope, compact = false, finis
       </div> : <><p className="mi-scope">scope: {sc?.preset ?? "not recorded"} · {guard}</p>
       {!compact && <p className="mi-permissions">writes: {writeWords(sc ?? null)} · network: {sc ? sc.network === "any" ? "allowed" : "none" : "not recorded"} · GitHub: {sc ? ({none:"none",read:"reads only","draft-pr-only":"reads and draft pull requests"} as const)[sc.github] : "not recorded"}</p>}
       {alerts > 0 && <p className="mi-alert" role="status">{alerts} scope {alerts === 1 ? "alert" : "alerts"}{scope?.error ? `: ${scope.error}` : ""}</p>}</>}
+      {member.pullRequests?.map(pr => <p key={pr.id}>Draft PR: <a href={pr.url} target="_blank" rel="noreferrer">{pr.url}</a> ({pr.state}; owner: {pr.owner}; {pr.verifiedCommit ? "head verified" : "head not verified"})</p>)}
       <PlacementFacts placement={member.placement} memberName={name} variant={chips ? "card" : "row"} />
     </div>
   </div>;

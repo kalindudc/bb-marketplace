@@ -84,7 +84,7 @@ export const sourceFetchSchema = z.object({
 export type SourceFetch = z.infer<typeof sourceFetchSchema>;
 
 export const sourceSnapshotSchema = z.object({
-  id, purpose: z.enum(["initial", "submission", "wip"]), keeperThreadId: id, projectId: id,
+  id, purpose: z.enum(["initial", "submission", "wip", "draft-pr"]), keeperThreadId: id, projectId: id,
   sourceThreadId: id.nullable(), makerThreadId: id.nullable(), makerSubmissionId: id.nullable(),
   journalTarget: journalTargetSchema.nullable(), objectFormat: objectFormatSchema,
   ownerId: sha256Schema.optional(),
@@ -177,6 +177,9 @@ export const placementRecordSchema = z.object({
   matchEvidence: z.array(z.object({ field: id, value: text, pattern: text }).strict()).max(600),
   target: targetJson, allocationKey: id, ownsNewMachine: z.boolean(), workspaceKind: workspaceKindSchema.nullable(),
   hostId: id.nullable(), environmentId: id.nullable(), root: hostPath.nullable(),
+  draftSnapshotId: id.nullable().optional(),
+  memberBranch: z.string().min(1).max(1000).optional(),
+  pullRequests: z.discriminatedUnion("at", [z.object({ at: z.literal("member") }).strict(), z.object({ at: z.literal("home"), profile: id }).strict()]).optional(),
   sourceSnapshotId: id.nullable(), submissionSnapshotId: id.nullable().default(null),
   reviewTarget: z.object({
     makerThreadId: id, makerSubmissionId: id, snapshotId: id,

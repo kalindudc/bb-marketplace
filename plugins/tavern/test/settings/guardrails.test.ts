@@ -24,10 +24,10 @@ it.each(["member", "keeper"] as const)("blocks guardrail applies from a persiste
  expect(denied.stderr).toContain("scopes.mode");
  expect(denied.stderr).toContain("Change these on Tavern's Settings page, or ask from a plain thread.");
  expect(store.snapshot().revision).toBe(0);
- for (const key of ["attention.notify=none", "attention.quietHours=null", 'attention.quietHours={"start":"00:00","end":"23:59","timeZone":"UTC"}', "tuning.mode=apply","keepers.greenlight=by-size","keepers.partyMax=8","keepers.decisionTimerMax=10","machines.maxMakers=3","machines.rules=[]","tavern.agentsMayChangeSettings=false","tavern.paused=true","attention.reviewBudget=4","knobs.typingHoldSeconds=15","knobs.afterMessageHoldSeconds=15","knobs.rangerTimeboxMaxMinutes=30"]) {
+ for (const key of ["attention.notify=none", "attention.quietHours=null", 'attention.quietHours={"start":"00:00","end":"23:59","timeZone":"UTC"}', "tuning.mode=apply","keepers.greenlight=by-size","keepers.partyMax=8","keepers.decisionTimerMax=10","machines.maxMakers=3","machines.rules=[]", 'machines.forges=[{"id":"forge","name":"Forge","kind":"command","open":"forge open"}]',"tavern.agentsMayChangeSettings=false","tavern.paused=true","attention.reviewBudget=4","knobs.typingHoldSeconds=15","knobs.afterMessageHoldSeconds=15","knobs.rangerTimeboxMaxMinutes=30"]) {
    const result=await cli.run(["settings","set",key,"--apply"],scoped);
    expect(result.exitCode, key).toBe(1);
-   expect(result.stderr, key).toContain(key.split("=")[0]);
+   expect(result.stderr, key).toContain(key.startsWith("machines.forges=") ? "Forge profiles run commands on this machine" : key.split("=")[0]);
  }
  for (const toml of ["[attention]\nnotify='none'", "[attention.quiet_hours]\nstart='00:00'\nend='23:59'\ntime_zone='UTC'"]) {
    const result=await cli.run(["settings","import","--toml",toml,"--apply"],scoped);

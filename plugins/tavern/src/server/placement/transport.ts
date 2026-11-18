@@ -81,7 +81,7 @@ export class PlacementTransport {
       for (const key of ["sourceSnapshotId", "memberThreadId", "hostId", "environmentId", "root", "reviewTarget", "preservation"] as const)
         if (!isDeepStrictEqual(live[key], record[key])) throw new Error("The placement content assignment changed");
       if (snapshot.keeperThreadId !== live.keeperThreadId || snapshot.projectId !== live.projectId ||
-          !([live.sourceSnapshotId, live.submissionSnapshotId, live.reviewTarget?.snapshotId, live.preservation.snapshotId].includes(snapshotId) ||
+          !([live.draftSnapshotId, live.sourceSnapshotId, live.submissionSnapshotId, live.reviewTarget?.snapshotId, live.preservation.snapshotId].includes(snapshotId) ||
             snapshot.purpose === "submission" && snapshot.makerThreadId === live.memberThreadId && owners.hasSubmissionReadReference(placementId, generation, snapshotId)))
         throw new Error("Snapshot ownership or read reference does not match this placement");
       if (!(snapshot.purpose === "wip" && live.preservation.snapshotId === snapshot.id) && snapshot.purpose !== "initial" && (live.reviewTarget

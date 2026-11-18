@@ -269,7 +269,7 @@ describe("host boundaries", () => {
     const member = await harness.behavior.resolveAgentConfiguration(
       makePluginAgentConfigurationContext({ thread: { id: "child" } }),
     );
-    expect(member.tools.map((t) => t.name)).toEqual(["journal", "tavern_request_sources", "tavern_report"]);
+    expect(member.tools.map((t) => t.name)).toEqual(["journal", "tavern_request_sources", "tavern_report", "tavern_draft_pr"]);
     expect(member.instructions).toContain("Never use the voice for blockers");
   });
   it("binds from an actual plugin mention before configuration, never metadata", async () => {
@@ -392,6 +392,9 @@ describe("host boundaries", () => {
       confidence: null,
       voice: "Nope.",
     };
+    k.store.recordPullRequest({ keeperThreadId: "lead", boardQuestId: q.id, projectId: "project", url: "https://forge.example/pr/12", forge: null, head: "topic", base: "main", owner: "child", memberHead: "a".repeat(40), pushedHead: "a".repeat(40), verifiedCommit: null, state: "draft" }, 1);
+    report.outcome = "x".repeat(4000);
+    expect(k.report("child", report).outcome).toBe(report.outcome);
     expect(k.report("child", report).voice).toBeNull();
     expect(k.report("child", report).id).toBe(k.store.all("reports")[0]!.id);
     const get = port.get;

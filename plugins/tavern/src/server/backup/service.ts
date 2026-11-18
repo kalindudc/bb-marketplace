@@ -8,6 +8,7 @@ import { parseRegistryDefinition } from "../registry-file";
 import type { SettingsStore } from "../settings/store";
 import { SettingsConflict } from "../settings/store";
 import { fileHash } from "../settings/files";
+import { withoutForgeCommands } from "../settings/forge-cli";
 import { exportToml, previewToml } from "../settings/toml";
 import { MIGRATIONS } from "../migrations";
 import { LIMITS } from "../limits";
@@ -227,7 +228,8 @@ export class BackupService {
   private async plan(bundle: BackupBundle) {
     const settings = this.options.settings.snapshot(), targets: Target[] = [], problems: string[] = [];
     const settingsFile = bundle.manifest.files.find(file => file.kind === "settings");
-    const parsed = settingsFile ? previewToml(bundle.files[settingsFile.path]!, settings) : null;
+    const filtered = settingsFile ? withoutForgeCommands(bundle.files[settingsFile.path]!, settings) : null;
+    const parsed = settingsFile ? previewToml(filtered?.toml ?? bundle.files[settingsFile.path]!, settings) : null;
     if (parsed) problems.push(...parsed.problems.map(issue => `Settings line ${issue.line}, ${issue.key}: ${issue.message}`));
     const needsProjects = bundle.manifest.files.some(file => !file.effective && file.source === "project"), projects = needsProjects ? (await this.projects()).projects : [];
     for (const file of bundle.manifest.files) {
@@ -259,7 +261,7 @@ export class BackupService {
       } catch (error) { problems.push(`Records: ${problem(error)}`); }
     }
     const previewHash = fileHash(JSON.stringify({ bundle: bundleHash(bundle), revision: settings.revision, files: targets.map(target => ({ path: target.path, logical: target.logical, before: target.before === null ? null : fileHash(target.before) })), records: data ? this.records.counts() : null }));
-    const result: BackupRestore = { code: problems.length ? "invalid" : "preview", previewHash, settings: { changes: parsed?.changes ?? [] }, files: targets.map(target => ({ path: target.path, kind: target.kind, action: target.before === target.text ? "same" : target.before === null ? "add" : "change" })), records, problems };
+    const result: BackupRestore = { code: problems.length ? "invalid" : "preview", previewHash, settings: { changes: parsed?.changes ?? [] }, ...(filtered ? { skippedForgeProfiles: filtered.skipped } : {}), files: targets.map(target => ({ path: target.path, kind: target.kind, action: target.before === target.text ? "same" : target.before === null ? "add" : "change" })), records, problems };
     return { result, targets, parsed, revision: settings.revision, data };
   }
   async restore(input: { from: { name: string } | { bundle: string }; apply: boolean; previewHash?: string }): Promise<BackupRestore> {

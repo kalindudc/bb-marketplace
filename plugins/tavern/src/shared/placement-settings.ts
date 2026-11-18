@@ -93,6 +93,16 @@ const noConsent = {
   guardInstall: false, remoteDetectionOnly: false, linuxUncontainedChecks: false,
 };
 
+export const forgeProfileSchema = z.discriminatedUnion("kind", [
+  z.object({ id: id.regex(/^[a-z][a-z0-9-]{0,31}$/), name: z.string().min(1).max(200), enabled: z.boolean().default(true), kind: z.literal("github") }).strict(),
+  z.object({ id: id.regex(/^[a-z][a-z0-9-]{0,31}$/), name: z.string().min(1).max(200), enabled: z.boolean().default(true), kind: z.literal("command"), open: z.string().trim().min(1).max(16000), state: z.string().trim().min(1).max(16000).optional() }).strict(),
+]);
+export type ForgeProfile = z.infer<typeof forgeProfileSchema>;
+export const pullRequestsSchema = z.discriminatedUnion("at", [
+  z.object({ at: z.literal("member") }).strict(),
+  z.object({ at: z.literal("home"), profile: id }).strict(),
+]);
+
 export const placementRuleSchema = z.object({
   id: id.regex(/^[a-z][a-z0-9-]{0,63}$/),
   label: z.string().min(1).max(200),
@@ -100,6 +110,7 @@ export const placementRuleSchema = z.object({
   match: placementMatchSchema,
   target: placementTargetSchema,
   consent: placementConsentSchema.default(noConsent),
+  pullRequests: pullRequestsSchema.default({ at: "member" }),
 }).strict().superRefine((rule, ctx) => {
   const target = rule.target;
   if (target.kind === "provider" && target.workspace === "dedicated-machine" &&
@@ -124,20 +135,35 @@ function uniqueRuleIds(value: { rules?: Array<{ id: string }> }, ctx: z.Refineme
     seen.add(rule.id);
   });
 }
+function validForges(value: { rules?: z.infer<typeof placementRuleSchema>[]; forges?: ForgeProfile[] }, ctx: z.RefinementCtx) {
+  const ids = new Set<string>();
+  value.forges?.forEach((forge, index) => {
+    if (ids.has(forge.id)) ctx.addIssue({ code: "custom", path: ["forges", index, "id"], message: "Forge IDs must be unique." });
+    ids.add(forge.id);
+  });
+  if (value.forges === undefined) return;
+  value.rules?.forEach((rule, index) => {
+    const location = rule.pullRequests;
+    if (location.at === "home" && !value.forges?.some(forge => forge.id === location.profile && forge.enabled))
+      ctx.addIssue({ code: "custom", path: ["rules", index, "pullRequests"], message: "Choose an enabled forge profile that exists." });
+  });
+}
 export const placementSettingsSchema = z.object({
   maxMakers: cap.default(2),
   maxCheckers: cap.default(2),
   rules: rules.default([]),
-}).strict().superRefine(uniqueRuleIds);
+  forges: z.array(forgeProfileSchema).max(50).default([]),
+}).strict().superRefine(uniqueRuleIds).superRefine(validForges);
 export const placementSettingsPatchSchema = z.object({
   maxMakers: cap.optional(),
   maxCheckers: cap.optional(),
   rules: rules.optional(),
+  forges: z.array(forgeProfileSchema).max(50).optional(),
 }).strict().superRefine(uniqueRuleIds);
 
-export type PlacementRule = z.infer<typeof placementRuleSchema>;
+export type PlacementRule = Omit<z.infer<typeof placementRuleSchema>, "pullRequests"> & { pullRequests?: z.infer<typeof pullRequestsSchema> };
 export type PlacementSettings = z.infer<typeof placementSettingsSchema>;
-export type PlacementSettingsPatch = z.infer<typeof placementSettingsPatchSchema>;
+export type PlacementSettingsPatch = Omit<z.infer<typeof placementSettingsPatchSchema>, "rules"> & { rules?: PlacementRule[] };
 
 export const placementPolicyReadSchema = z.discriminatedUnion("state", [
   z.object({ state: z.literal("valid"), revision: z.number().int().nonnegative(), settings: placementSettingsSchema }).strict(),

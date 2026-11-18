@@ -3,6 +3,7 @@ import { characterServiceRecordSchema, taleLevelSchema } from "./service-record"
 import { executionFactsSchema } from "./class-execution";
 import { classExecutionInputSchema, classModeFactsSchema, classNoticeSchema } from "./class-execution-contract";
 import { z } from "zod";
+import { pullRequestSchema } from "./pull-request";
 import { defineContract } from "./define-contract";
 import { stopAllContract } from "./stop-all";
 import { voiceModeSchema } from "./settings";
@@ -41,7 +42,7 @@ import {
 // The RPC contract between Tavern's server and its UI. Server handlers invalidate the tags below whenever the data
 // behind them changes, so every query stays live without polling.
 
-const memberSchema = storedMemberSchema.extend({ placement: placementViewSchema.nullable().optional() });
+const memberSchema = storedMemberSchema.extend({ pullRequests: z.array(pullRequestSchema).optional(), placement: placementViewSchema.nullable().optional() });
 const threadId = z.string().min(1).max(100);
 const id = z.string().min(1).max(120);
 /** At most this many brief context lines reach the widget: every hire-time line, then the newest follow-ups. */
@@ -379,7 +380,7 @@ export const rpcContract = defineContract({
   // added by Builder C: directive digests and side quests need reports without a board quest.
   reports: {
     input: z.object({ ids: z.array(id).max(30).default([]), memberThreadId: threadId.nullable().default(null) }).strict(),
-    output: z.object({ reports: z.array(reportSchema) }),
+    output: z.object({ reports: z.array(reportSchema), pullRequests: z.array(pullRequestSchema).optional() }),
     tags: () => [tags.room(), tags.rows()],
   },
   releaseCheckerHandoff: {

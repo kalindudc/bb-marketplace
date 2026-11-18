@@ -101,6 +101,7 @@ export class PlacementController {
         id: randomUUID(), generation: 1, desiredState: "running", hireToken: token,
         keeperThreadId: intent.owner.keeperThreadId, memberThreadId: null, projectId: intent.projectId,
         questId: intent.owner.boardQuestId, classId: intent.classId, slot: checker ? "checker" : "maker",
+        pullRequests: rule.pullRequests ?? { at: "member" },
         rule: { id: rule.id, settingsRevision: policy.revision, definitionDigest: route.match.definitionDigest, acceptedConsent: rule.consent },
         matchEvidence: route.match.matchEvidence, target: normalized.environment, allocationKey: token,
         ownsNewMachine: normalized.ownsNewMachine, workspaceKind: normalized.workspaceKind,

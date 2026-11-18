@@ -18,7 +18,7 @@ const source: KnownSource = {
     head: "1".repeat(40), tree: "2".repeat(40), branch: "main", objectFormat: "sha1", linkedWorktree: false,
     features: { porcelain: true, exportChanges: true, objectImport: true } },
 };
-function policy(rules: typeof current[]): PlacementPolicyRead { return { state: "valid", revision: 3, settings: { maxMakers: 2, maxCheckers: 2, rules } }; }
+function policy(rules: typeof current[]): PlacementPolicyRead { return { state: "valid", revision: 3, settings: { maxMakers: 2, maxCheckers: 2, rules, forges: [] } }; }
 function deps() {
   return { readIdentity: vi.fn(async () => structuredClone(identity)), inspectSource: vi.fn(async (): Promise<SourceDiscoveryResult> => structuredClone(source)) };
 }

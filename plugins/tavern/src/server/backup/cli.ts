@@ -1,5 +1,6 @@
 import { cliCommand } from "@get-bb/plugin-sdk";
 import { backupPartSchema } from "../../shared/backup";
+import { FORGE_SETTINGS_PAGE_ONLY } from "../settings/forge-cli";
 import { LIMITS } from "../limits";
 import type { BackupService } from "./service";
 
@@ -58,7 +59,7 @@ export function backupCommands(service: BackupService) {
           result = await service.restore({ from, apply: false });
           if (input.options.apply && result.code === "preview") result = await service.restore({ from, apply: true, previewHash: result.previewHash });
         }
-        return emit(result, json, result.code === "stale" ? 3 : result.code === "invalid" ? 2 : 0);
+        return emit({ ...result, notice: FORGE_SETTINGS_PAGE_ONLY }, json, result.code === "stale" ? 3 : result.code === "invalid" ? 2 : 0);
       }),
     }),
   };
