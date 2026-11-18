@@ -100,6 +100,13 @@ const depsOf = (f: ReturnType<typeof fixture>) => f.deps();
 const spawns = (f: ReturnType<typeof fixture>) => f.calls.filter(([c]) => c === "spawn").map(([, a]) => a as Record<string, unknown>);
 
 describe("the voice check run", () => {
+  it("refuses a new check while Tavern is stopped without spawning or deleting threads", () => {
+    const f = fixture();
+    f.store.put("stopAll", "tavern", { state: "stopped", since: 1_800_000_000_000, by: { kind: "user" }, receipt: null });
+    expect(() => f.runner.start("wren", draft)).toThrow(/Tavern is stopped/);
+    expect(f.calls).toEqual([]);
+    expect(f.store.all("voiceChecks")).toEqual([]);
+  });
   it("runs the draft on the character's model as a hidden child of one hidden Tavern parent, then deletes only its own children", async () => {
     const f = fixture();
     const id = (await f.runner.start("wren", draft)).running!.id;

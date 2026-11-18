@@ -4,6 +4,7 @@ import { executionFactsSchema } from "./class-execution";
 import { classExecutionInputSchema, classModeFactsSchema, classNoticeSchema } from "./class-execution-contract";
 import { z } from "zod";
 import { defineContract } from "./define-contract";
+import { stopAllContract } from "./stop-all";
 import { voiceModeSchema } from "./settings";
 import { placementContract } from "./placement-rpc";
 import { placementViewSchema } from "./placement-view";
@@ -299,6 +300,7 @@ export const classEditSchema = classDefSchema.pick({ label: true, plain: true, d
 export type ClassEditInput = z.infer<typeof classEditSchema>;
 
 export const rpcContract = defineContract({
+  ...stopAllContract,
   ...placementContract,
   ...awayContract,
   ...voiceCheckContract,

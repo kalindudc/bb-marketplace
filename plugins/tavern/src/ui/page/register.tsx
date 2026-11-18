@@ -23,6 +23,7 @@ import { CommonRoom } from "./room";
 import { ClassStartCards, withClassPill } from "./start";
 import { armClassSettings } from "../kit/remember";
 import { CharacterSheetEditor, CharacterSheets, ClassDetail, ClassesList } from "./sheets";
+import { StopAllControls } from "./stop-all";
 import { StartQuest } from "./start-quest";
 import { MachinesPage } from "./machines";
 import { PLACEMENT_RPC_LIVE } from "./machines-contract";
@@ -139,6 +140,7 @@ export function TavernHeader({ subPath }: PluginNavPanelProps) {
   const narrow = useNarrowTitle(), folded = useFoldedHeader();
   return <div className={`tavern tv-page tv-head${folded ? " fold" : ""}`}>
     {!narrow && <button type="button" className="btn ghost" onClick={() => { if (!openTab(CLOSING_TAB)) navigate.toPluginPanel("tavern", { subPath: "closing" }); }} title="Closing time (away): opens the sheet in the side panel, beside the page" aria-label="Closing time"><PageGlyph name="lantern" /><span>Closing time</span></button>}
+    {decodePageRoute(subPath).kind === "room" && <StopAllControls />}
     <StartQuest registry={registry.data} startKeeper={start} onRoom={decodePageRoute(subPath).kind === "room"} />
   </div>;
 }

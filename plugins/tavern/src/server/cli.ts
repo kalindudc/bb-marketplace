@@ -35,6 +35,14 @@ export function registerCli(bb: BbPluginApi, runtime: TavernRuntime, backups?: B
       commands: {
         ...(runtime.settings ? settingsCommands(bb, runtime.settings) : {}),
         ...(backups ? backupCommands(backups) : {}),
+        "stop-all": cliCommand({
+          summary: "Stop every Keeper and member turn and hold new Tavern work",
+          run: async (_input, ctx) => output(await runtime.stopAll.stop(ctx.threadId ? { kind: "agent", threadId: ctx.threadId } : { kind: "user" }, { surface: "CLI" })),
+        }),
+        "stop-all status": cliCommand({
+          summary: "Read the stored Stop all state and last receipt; resume only on the common room",
+          run: () => output(runtime.stopAll.snapshot()),
+        }),
         status: cliCommand({
           summary: "Read the party and needs-you queue",
           run: () => {

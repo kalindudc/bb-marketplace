@@ -12,6 +12,7 @@ import { currentMoodReport, waypointMoodVerdict } from "../shared/mood";
 import type { Brief, Decision } from "../shared/schema";
 import { isLiveMember } from "./liveness";
 import { DecisionViews } from "./decisions";
+import { stopAllHandlers } from "./stop-all-rpc";
 import { placementHandlers } from "./placement/rpc";
 import { PlacementStore } from "./placement/store";
 import { voiceCheckHandlers } from "./voice-check/rpc";
@@ -78,6 +79,7 @@ export function rpcHandlers(
     tags.registry(), tags.rows(), tags.room(), ...k.store.all("members").map(m => tags.thread(m.threadId)),
   ]);
   return {
+    ...stopAllHandlers(runtime),
     ...placementHandlers(runtime),
     ...voiceCheckHandlers(() => runtime.voiceChecks),
     ...awayHandlers(runtime),

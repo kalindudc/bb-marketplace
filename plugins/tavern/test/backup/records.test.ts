@@ -17,6 +17,16 @@ function populate(f: ReturnType<typeof setup>) {
   f.db.prepare("INSERT INTO tavern_events(at,keeper_thread_id,board_quest_id,actor,type,text,data) VALUES(1,NULL,NULL,?,?,?,?)").run('{"kind":"tavern"}', "backup.fixture", "A private note", '{}');
 }
 describe("Tavern records snapshots", () => {
+  it("excludes the live brake from capture and refuses a portable brake on restore", () => {
+    const source = setup(), target = setup();
+    source.db.prepare("INSERT INTO tavern_records(kind,id,data) VALUES('stopAll','tavern',?)")
+      .run(JSON.stringify({ state: "stopped", since: 1, by: { kind: "user" }, receipt: null }));
+    const snapshot = source.records.capture();
+    expect(snapshot.tables.tavern_records!.rows.some(row => row.kind === "stopAll")).toBe(false);
+    snapshot.tables.tavern_records!.rows.push({ kind: "stopAll", id: "tavern", data: JSON.stringify({ state: "running" }), archived_at: null });
+    expect(() => target.records.restore(snapshot)).toThrow(/private|Private/);
+    expect(target.db.prepare("SELECT * FROM tavern_records WHERE kind='stopAll'").all()).toEqual([]);
+  });
   it("round-trips a soft-deleted quest until its purge", () => {
     const source = setup(), target = setup();
     const quest = { id: "deleted-quest", keeperThreadId: "keeper", title: "Private work", short: "Private work", phase: "done", planVersion: 0, greenlitVersion: null, createdAt: 1, updatedAt: 2, endedAt: 2, archivedAt: 3, deletedAt: 3 };

@@ -17,7 +17,7 @@ export type RecordsSnapshot = z.infer<typeof recordsSnapshotSchema>;
 type Column = { name: string; type: string; notnull: number; pk: number; dflt_value: unknown };
 const recordSchemas: Record<string, z.ZodType> = { taleDeliveries: taleDeliverySchema, taleDeliveryAttempts: taleDeliveryAttemptSchema, taleKeeps: taleKeepSchema, serviceRecords: serviceQuestRecordSchema, serviceVerdicts: serviceVerdictSchema, serviceRecordState: serviceRecordStateSchema, members: memberSchema, quests: boardQuestSchema, plans: planSchema, asks: askSchema, decisions: decisionSchema, rules: ruleSchema, reports: reportSchema, routes: routeSchema, notes: keeperNoteSchema, gates: gateRecordSchema };
 const jsonColumns = new Set(["data", "actor", "entry_ids", "before_data", "after_data", "snapshot", "changes", "undo_data", "evidence"]);
-const privateRecordKinds = new Set(["placementArtifactManifests"]);
+const privateRecordKinds = new Set(["placementArtifactManifests", "stopAll"]);
 const privateAuthorityTables = ["tavern_placements", "tavern_source_snapshots", "tavern_placement_discoveries", "tavern_snapshot_owners"];
 const excluded = new Set(["tavern_settings", "tavern_insight_meta", ...privateAuthorityTables]);
 const supported = new Set(["tavern_records", "tavern_runtime", "tavern_events", "tavern_messages", "tavern_outbox", "tavern_setting_changes", "tavern_tuning_runs", "tavern_tuning_suggestions", "tavern_insight_samples", "questlog_logs", "questlog_entries", "questlog_reserved", "questlog_changes", "questlog_history", "questlog_imports", "questlog_archive", "questlog_mirrors"]);
@@ -121,7 +121,7 @@ export class BackupRecords {
         }
         if (typeof row.actor === "string") actorSchema.parse(JSON.parse(row.actor));
         if (name === "tavern_records") {
-          if (privateRecordKinds.has(String(row.kind))) throw new Error("Private placement preservation manifests cannot be restored from portable records");
+          if (privateRecordKinds.has(String(row.kind))) throw new Error("Private placement preservation manifests and live brake state cannot be restored from portable records");
           const data = JSON.parse(String(row.data));
           z.record(z.string(), z.json()).parse(data);
           if (row.kind === "away") {

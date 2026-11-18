@@ -62,6 +62,7 @@ import { PlacementServices } from "./placement/services";
 import { hasLostOwner, PlacementPreservation } from "./placement/preserve";
 import { isQuiescentThread } from "./placement/quiescence";
 import { PlacementStore } from "./placement/store";
+import { StopAll } from "./stop-all";
 import { PlacementController } from "./placement/controller";
 import { reviewWaypointFingerprint } from "./placement/review";
 import { isVoiceCheckThread, type VoiceCheckRunner } from "./voice-check/run";
@@ -111,6 +112,7 @@ type Thread = PluginThreadEventPayloads["thread.active"]["thread"];
 type QueuedMessage = PluginThreadEventPayloads["message.queued"]["entry"];
 
 export class TavernRuntime {
+  readonly stopAll = new StopAll(this);
   readonly serviceRecords: ServiceRecords;
   readonly toolNames = [...KEEPER_TOOLS, "tavern_report", "tavern_request_sources", "tavern_ready"];
   private readonly loop = new TickLoop(this);
@@ -119,6 +121,8 @@ export class TavernRuntime {
   get away(): AwayRuntime { return this.awayState ??= new AwayRuntime(this); }
   private reviewCache: ReturnType<TavernRuntime["review"]> | null = null;
   private stopFlights = new Map<string, Promise<void>>();
+  private startupDeferred = false;
+  private deferredStartupFlight: Promise<void> | null = null;
   private projectPaths = new Map<string, string>();
   private registryProblems = new Map<string, string>();
   private registryLoadedAt = new Map<string, number>();
@@ -365,6 +369,7 @@ export class TavernRuntime {
     return member;
   }
   async sendRebrief(threadId: string, text: string): Promise<{ briefPending: boolean }> {
+    this.stopAll.assertRunning();
     const member = this.requireBriefableMember(threadId);
     if (this.config().tavern.paused) throw new Error("Tavern is paused; no new brief was queued. Resume it before sending new work.");
     if (this.scopes?.pending(threadId)) throw new Error("The member is waiting for a scope decision; no new brief was queued.");
@@ -463,7 +468,7 @@ export class TavernRuntime {
     const pending: PendingBrief = state.pendingBrief ?? { id: `brief_${randomUUID()}`, text, ...(state.initialBriefAt === undefined && state.requestSources ? { assignmentText: state.assignmentText ?? state.brief?.outcome ?? text, requestSources: state.requestSources } : {}), attempts: 0, nextAttemptAt: this.keeper.now(), attemptedAt: null, hostAfterSeq: null, error: null };
     if (pending.text !== text) throw new Error("A different initial brief is already pending; do not overwrite an uncertain delivery.");
     if (!state.pendingBrief) this.keeper.store.patch(threadId, { pendingBrief: pending });
-    if (this.config().tavern.paused || this.scopes?.pending(threadId)) return { briefPending: true };
+    if (this.stopAll.reason() || this.config().tavern.paused || this.scopes?.pending(threadId)) return { briefPending: true };
     if (this.keeper.now() < pending.nextAttemptAt) return { briefPending: true };
     const attempt: PendingBrief = { ...pending, attempts: pending.attempts + 1,
       nextAttemptAt: this.keeper.now() + Math.min(LIMITS.briefRetryMaxMs, LIMITS.briefRetryMs * 2 ** pending.attempts), error: null };
@@ -494,6 +499,7 @@ export class TavernRuntime {
       attempt.hostAfterSeq = latest[0]?.seq ?? 0;
       attempt.attemptedAt = this.keeper.now();
       this.keeper.store.patch(threadId, { pendingBrief: attempt });
+      if (this.stopAll.reason()) return { briefPending: true };
       const result = await this.bb.sdk.threads.send({ threadId, mode: "queue-if-active", input: [{ type: "text", text: `[Tavern brief] id=${pending.id}\n${text}`, mentions: [], visibility: "agent-only" }] });
       if (result.delivery === "sent") { this.finishInitialBrief(threadId, pending.id); return { briefPending: false }; }
       return { briefPending: true };
@@ -979,6 +985,8 @@ export class TavernRuntime {
     return { action: "proceed" as const };
   }
   async dispatch(ctx: MessageDispatchHookContext) {
+    const stopped = this.stopAll.dispatch(ctx);
+    if (stopped) return stopped;
     const startedAt = this.keeper.now();
     let protectedThread = true;
     let binding: ReturnType<TavernRuntime["dispatchBinding"]> | undefined;
@@ -1258,6 +1266,7 @@ export class TavernRuntime {
     });
   }
   async hire(threadId: string, projectId: string, input: Hire) {
+    this.stopAll.assertRunning();
     await this.reconcileNames();
     if (this.config().tavern.paused) throw new Error("Tavern is paused; resume it before hiring.");
     const leader = this.keeper.require(threadId, "keeper");
@@ -1657,6 +1666,7 @@ export class TavernRuntime {
         this.keeper.store.put("hires", token, { ...this.keeper.store.get("hires", token)!, owner, initialInput: brief });
         this.placements().controller.beginSpawn(placement);
       }
+      this.stopAll.assertRunning();
       attempted = true;
       let child: { id: string };
       try {
@@ -1793,6 +1803,7 @@ export class TavernRuntime {
     }
   }
   private async preserveCancelledHire(threadId: string) {
+    this.stopAll.assertRunning();
     if (!new PlacementStore(this.keeper.store.db).byMember(threadId)) {
       const refused = await this.preserveWorkOrRefuse(threadId);
       if (refused) throw new Error(refused);
@@ -1802,6 +1813,7 @@ export class TavernRuntime {
     if (result.state === "waiting" || result.state === "blocked") throw new Error(result.message);
   }
   async release(threadId: string, memberThreadId: string, reason: string) {
+    this.stopAll.assertRunning();
     memberThreadId = this.keeper.resolvePartyMember(threadId, memberThreadId).threadId;
     this.keeper.require(threadId, "keeper");
     const member = this.keeper.member(memberThreadId);
@@ -1826,11 +1838,13 @@ export class TavernRuntime {
     return this.finishRelease(member);
   }
   private async finishRelease(member: Member) {
+    if (this.stopAll.reason()) return false;
     const reason = this.keeper.store.runtime(member.threadId).releasePending;
     if (!reason || this.away.cleanupHeld() && this.keeper.store.runtime(member.threadId).archivePending) return false;
     let thread: Thread | null;
     try { thread = await this.bb.sdk.threads.get({ threadId: member.threadId }); }
     catch (error) { if (!isNotFound(error)) throw error; thread = null; this.threadGone(member.threadId); }
+    if (this.stopAll.reason()) return false;
     const placement = new PlacementStore(this.keeper.store.db).byMember(member.threadId);
     if (placement) {
       const result = await this.placements().preserve.beforeRelease(member.threadId, thread && !isQuiescentThread(thread) ? `${reason} (stop unconfirmed)` : reason);
@@ -1945,7 +1959,7 @@ export class TavernRuntime {
         this.keeper.store.patch(member.threadId, { archivePending: false, cellarArchiveRequested: false, archiveError: null });
         continue;
       }
-      if (this.away.cleanupHeld()) { pending.push(member.threadId); continue; }
+      if (this.stopAll.reason() || this.away.cleanupHeld()) { pending.push(member.threadId); continue; }
       try {
         if (new PlacementStore(this.keeper.store.db).byMember(member.threadId)) {
           const result = await this.placements().preserve.beforeRelease(member.threadId, "Archive member");
@@ -1962,6 +1976,7 @@ export class TavernRuntime {
         const refused = await this.preserveWorkOrRefuse(member.threadId);
         if (refused) throw new Error(refused);
         const current = await this.bb.sdk.threads.get({ threadId: member.threadId });
+        if (this.stopAll.reason()) { pending.push(member.threadId); continue; }
         if (current.archivedAt === null && current.deletedAt === null) {
           await this.bb.sdk.threads.archive({ threadId: member.threadId });
           if (rt.cellarArchiveRequested) {
@@ -2005,6 +2020,7 @@ export class TavernRuntime {
     return pending;
   }
   private async finishMemberCleanup(keeperId: string) {
+    if (this.stopAll.reason()) return;
     const members = this.keeper.store.query(
       "members",
       "keeperThreadId",
@@ -2033,6 +2049,7 @@ export class TavernRuntime {
   }
   memberEnded(thread: Thread, finalText?: string | null) {
     for (const id of captureTaleDelivery(this.keeper, thread.id, finalText) ?? []) void this.taleRenderer?.ensure(id);
+    if (this.stopAll.reason()) return;
     const member = this.keeper.member(thread.id);
     if (member?.role !== "member" || !member.keeperThreadId) return;
     if (this.away.blocked(thread.id)) return;
@@ -2194,7 +2211,7 @@ export class TavernRuntime {
     return reset;
   }
   async tick(threadId: string, origin: "sweep" | "wake" = "sweep") {
-    if (this.config().tavern.paused || !isLiveKeeper(this.keeper.store, this.keeper.member(threadId))) return;
+    if (this.stopAll.reason() || this.config().tavern.paused || !isLiveKeeper(this.keeper.store, this.keeper.member(threadId))) return;
     while (this.keeper.store.runtime(threadId).queuedTickResetId) await this.resetQuietQueue(threadId);
     await this.loop.tick(threadId, origin);
   }
@@ -2226,6 +2243,7 @@ export class TavernRuntime {
     finally { active = false; }
   }
   async sweep() {
+    if (this.stopAll.reason()) return;
     try { this.settingsMaintenance(); }
     catch (error) { this.bb.log.warn(`Tavern settings maintenance: ${String(error)}`); }
     await this.maintain("Closing time maintenance", null, [{ name: "sweep", run: () => this.away.sweep() }]);
@@ -2265,6 +2283,7 @@ export class TavernRuntime {
     return { phase: current.phase as "stopping" | "stopped", unconfirmed: current.stopUnconfirmed ?? 0 };
   }
   async retryStops(keeperId: string, questId?: string, force = false) {
+    if (this.stopAll.reason()) return;
     const quests = this.keeper.store.query("quests", "keeperThreadId", keeperId, 500)
       .filter(q => q.phase === "stopping" && (!questId || q.id === questId));
     for (const q of quests) {
@@ -2277,6 +2296,7 @@ export class TavernRuntime {
     }
   }
   private async retryQuestStop(keeperId: string, questId: string, force: boolean) {
+    if (this.stopAll.reason()) return;
     const q = this.keeper.quest(questId);
     if (q.phase !== "stopping") return;
     const members = this.keeper.store.query("members", "boardQuestId", q.id, 500);
@@ -2826,6 +2846,7 @@ export class TavernRuntime {
     this.keeper.changed(threadId, member.boardQuestId);
   }
   updateThread(thread: Thread, actor: Actor = { kind: "tavern" }) {
+    this.stopAll.observeThread(thread);
     if ((thread.archivedAt !== null || thread.deletedAt !== null) && new PlacementStore(this.keeper.store.db).byMember(thread.id))
       this.placements().preserve.observeLoss(thread.id, "The member thread was archived or deleted before controlled release.");
     const recordsChanged = thread.deletedAt !== null && this.serviceRecords.dropThreadLinks(thread.id);
@@ -2959,7 +2980,7 @@ export class TavernRuntime {
         });
         this.record("turn.interrupted", { reason: event.data.reason, threadId: thread.id }, thread.id, null, `native:${thread.id}:${event.seq}`, event.createdAt);
         if (event.data.reason === "manual-stop") {
-          if (current.userAt === null || current.userAt <= event.createdAt)
+          if (!this.stopAll.ownsInterruption(thread.id, event.createdAt) && (current.userAt === null || current.userAt <= event.createdAt))
             this.keeper.store.patch(thread.id, {
               manualStopAt: event.createdAt,
             });
@@ -3064,11 +3085,35 @@ export class TavernRuntime {
       }
     });
   }
+  resumeDeferredStartup(): Promise<void> {
+    if (this.deferredStartupFlight) return this.deferredStartupFlight;
+    if (!this.startupDeferred || this.stopAll.reason()) return Promise.resolve();
+    this.startupDeferred = false;
+    const run = async () => {
+      await this.maintain("party archive repair", null, [{ name: "repair", run: () => this.stopAll.reason() ? undefined : this.repairPartyArchives() }]);
+      await this.maintain("startup hires", null, [{ name: "recovery", run: () => this.stopAll.reason() ? undefined : recoverHires(this.bb, this.keeper, undefined, id => this.spawnBriefDelivered(id), id => this.preserveCancelledHire(id)) }]);
+      await Promise.all(this.keeper.store.all("members").filter(m => m.role === "keeper").map(m =>
+        this.maintain(`deferred startup ${m.threadId}`, m.threadId, [
+          { name: "stops", run: () => this.retryStops(m.threadId) },
+          { name: "cleanup", run: () => this.finishMemberCleanup(m.threadId) },
+        ]),
+      ));
+      if (this.stopAll.reason()) {
+        this.startupDeferred = true;
+        return;
+      }
+      this.keeper.store.event(this.keeper.now(), null, null, "tavern.startup-reconciled", "Deferred startup recovery ran after Resume.", { steps: ["archive repair", "hire recovery", "quest stops", "cleanup"] });
+    };
+    this.deferredStartupFlight = run().finally(() => { this.deferredStartupFlight = null; });
+    return this.deferredStartupFlight;
+  }
   async reconcile() {
-    await this.maintain("party archive repair", null, [{ name: "repair", run: () => this.repairPartyArchives() }]);
+    if (this.stopAll.reason()) this.startupDeferred = true;
+    this.stopAll.recoverReceipt();
+    await this.maintain("party archive repair", null, [{ name: "repair", run: () => this.stopAll.reason() ? undefined : this.repairPartyArchives() }]);
     await this.maintain("service record backfill", null, [{ name: "history", run: () => this.serviceRecords.backfill() }]);
     this.keeper.store.pruneTicks();
-    await this.maintain("startup hires", null, [{ name: "recovery", run: () => recoverHires(this.bb, this.keeper, undefined, id => this.spawnBriefDelivered(id), id => this.preserveCancelledHire(id)) }]);
+    await this.maintain("startup hires", null, [{ name: "recovery", run: () => this.stopAll.reason() ? undefined : recoverHires(this.bb, this.keeper, undefined, id => this.spawnBriefDelivered(id), id => this.preserveCancelledHire(id)) }]);
     const projects = new Set(
       this.keeper.store
         .all("members")
@@ -3095,8 +3140,8 @@ export class TavernRuntime {
         } },
         { name: "observe", run: () => thread && isLiveKeeper(this.keeper.store, this.keeper.member(m.threadId), "present") ? this.observe(thread) : undefined },
         { name: "worktree", run: () => thread && thread.archivedAt === null && thread.deletedAt === null ? this.scopes?.pinWorktree(thread.id) : undefined },
-        { name: "stops", run: () => m.role === "keeper" ? this.retryStops(m.threadId) : undefined },
-        { name: "cleanup", run: () => m.role === "keeper" ? this.finishMemberCleanup(m.threadId) : undefined },
+        { name: "stops", run: () => !this.stopAll.reason() && m.role === "keeper" ? this.retryStops(m.threadId) : undefined },
+        { name: "cleanup", run: () => !this.stopAll.reason() && m.role === "keeper" ? this.finishMemberCleanup(m.threadId) : undefined },
         { name: "tick recovery", run: () => isLiveKeeper(this.keeper.store, this.keeper.member(m.threadId), "present") ? this.loop.recover(m.threadId) : undefined },
       ]);
     }));

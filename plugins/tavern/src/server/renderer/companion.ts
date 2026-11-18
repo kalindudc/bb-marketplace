@@ -1,3 +1,4 @@
+import { assertTavernRunning, stopAllReason } from "../stop-all";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import type { Keeper } from "../keeper/service";
@@ -72,6 +73,7 @@ export class TaleCompanions {
   }
   ensure(questId: string): Promise<void> { return this.enqueue(questId, () => this.sync(questId)); }
   private async sync(questId: string) {
+    if (stopAllReason(this.k.store)) return;
     const quest = this.k.store.get("quests", questId);
     if (!quest || quest.deletedAt != null || quest.phase !== "done") return;
     const rows = this.rows(questId).sort((a, b) => (b.delivery.tellingId ?? 0) - (a.delivery.tellingId ?? 0));
@@ -129,6 +131,7 @@ export class TaleCompanions {
         files.push({ path, content: file.content, contentEncoding: file.contentEncoding });
       } catch (error) { this.bb.log.warn(`Tavern renderer file ${path}: ${message(error)}`); }
     }
+    assertTavernRunning(this.k.store);
     const companion = await this.bb.sdk.threads.spawn({
       projectId: keeper.projectId, environment: { type: "reuse", environmentId: keeper.environmentId },
       providerId: PROVIDER_ID, model: MODEL_ID, reasoningLevel: REASONING_LEVEL,

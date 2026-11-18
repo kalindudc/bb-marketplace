@@ -1,3 +1,4 @@
+import { assertTavernRunning } from "../stop-all";
 import { randomUUID } from "node:crypto";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
@@ -90,6 +91,7 @@ export class VoiceCheckRunner {
    * editor names the model from the first moment. The result arrives through the view.
    */
   start(characterId: string, draft: VoiceDraft): Promise<VoiceCheckView> {
+    assertTavernRunning(this.deps.store);
     const all = this.deps.store.all("voiceChecks");
     if (this.active || all.some((r) => r.state === "running")) throw new Error("Another voice check is running. Try again when it finishes.");
     const cap = this.cap(all);
@@ -272,6 +274,7 @@ export class VoiceCheckRunner {
         return kept.threadId;
       } catch (e) { if (!notFound(e)) throw e; this.deps.store.remove("voiceCheckParent", "parent"); }
     } else if (kept) { await this.deleteOwn([kept.threadId], "parent"); this.deps.store.remove("voiceCheckParent", "parent"); }
+    assertTavernRunning(this.deps.store);
     const thread = await this.deps.bb.sdk.threads.spawn({ projectId, visibility: "hidden", parentNotifications: "off", title: PARENT_TITLE, environment: PERSONAL,
       input: [{ type: "text", text: "Use no tools. Reply with only: ok", mentions: [] }], pluginMetadata: { voiceCheck: "parent" }, sendAt: this.deps.now() + MUTE_LEAD_MS, ...model });
     (run.costThreadIds ??= []).push(thread.id);
@@ -296,6 +299,7 @@ export class VoiceCheckRunner {
   /** One hidden child turn; its id is recorded before anything else. Returns the agent's messages in order. */
   private async turn(run: Run, parent: string, projectId: string, model: VoiceModel, title: string, prompt: string, signal: AbortSignal) {
     signal.throwIfAborted();
+    assertTavernRunning(this.deps.store);
     const child = await this.deps.bb.sdk.threads.spawn({ projectId, parentThreadId: parent, parentNotifications: "off", visibility: "hidden", title, environment: PERSONAL,
       input: [{ type: "text", text: prompt, mentions: [] }], pluginMetadata: { voiceCheck: run.id }, ...model });
     run.threadIds.push(child.id);

@@ -41,6 +41,8 @@ export class TickLoop {
 
   admit(ctx: MessageDispatchHookContext) {
     if (!this.isTick(ctx)) return null;
+    const stopped = this.runtime.stopAll.reason();
+    if (stopped) return { action: "wait" as const, reason: stopped };
     if (this.runtime.config().tavern.paused)
       return { action: "wait" as const, reason: "Tavern is paused" };
     const state = this.k.store.runtime(ctx.thread.id);
@@ -424,7 +426,7 @@ export class TickLoop {
     let complete!: () => void;
     this.running.set(threadId, new Promise<void>(resolve => { complete = resolve; }));
     try {
-      if (this.runtime.config().tavern.paused) return;
+      if (this.runtime.stopAll.reason() || this.runtime.config().tavern.paused) return;
       const member = this.k.member(threadId);
       if (!isLiveKeeper(this.k.store, member)) return;
       const rt = this.k.store.runtime(threadId);
@@ -508,7 +510,7 @@ export class TickLoop {
         order: "desc",
       }), `tick history ${threadId}`);
       const currentThread = await loopCall(this.runtime.bb.sdk.threads.get({ threadId }), `tick send thread ${threadId}`);
-      if (currentThread.archivedAt !== null || currentThread.deletedAt !== null || this.runtime.config().tavern.paused || !isLiveKeeper(this.k.store, this.k.member(threadId))) return;
+      if (currentThread.archivedAt !== null || currentThread.deletedAt !== null || (this.runtime.stopAll.reason() || this.runtime.config().tavern.paused) || !isLiveKeeper(this.k.store, this.k.member(threadId))) return;
       batch.hostAfterSeq = latest[0]?.seq ?? 0;
       await this.deliver(batch);
     } finally {
@@ -558,7 +560,7 @@ export class TickLoop {
   }
 
   async recover(threadId: string, force = false) {
-    if (this.runtime.config().tavern.paused || !isLiveKeeper(this.k.store, this.k.member(threadId), "present")) return;
+    if ((this.runtime.stopAll.reason() || this.runtime.config().tavern.paused) || !isLiveKeeper(this.k.store, this.k.member(threadId), "present")) return;
     const batch = this.k.store.pendingTick(threadId);
     if (!batch) return;
     const queued = await loopCall(this.runtime.bb.sdk.threads.queuedMessages.list({
@@ -610,7 +612,7 @@ export class TickLoop {
     } else if (batch.sendPending && (force || this.k.now() - (batch.lastSendAt ?? batch.createdAt) >= 2 * LIMITS.retryMs)) {
       const thread = await loopCall(this.runtime.bb.sdk.threads.get({ threadId }), `tick resend thread ${threadId}`);
       if (!queued.length && !this.runtime.held(threadId) && ["idle", "error"].includes(thread.status) &&
-        thread.archivedAt === null && thread.deletedAt === null && !this.runtime.config().tavern.paused &&
+        thread.archivedAt === null && thread.deletedAt === null && !(this.runtime.stopAll.reason() || this.runtime.config().tavern.paused) &&
         isLiveKeeper(this.k.store, this.k.member(threadId))) await this.deliver(batch, true);
     } else if (!batch.sendPending && !this.sending.has(threadId) && this.k.now() - batch.createdAt >= LIMITS.retryMs) {
       const thread = await loopCall(this.runtime.bb.sdk.threads.get({ threadId }), `tick recovery thread ${threadId}`);

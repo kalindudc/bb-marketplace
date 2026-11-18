@@ -35,6 +35,15 @@ async function fixture() {
   f.runtime.taleRenderer = companions;
   return { ...f, q, text, tell, companions, spawn, remove, archive, unarchive, update, write, send };
 }
+it("holds renderer spawns while Tavern is stopped without discarding the saved tale", async () => {
+  const f = await fixture();
+  const deliveries = f.k.store.all("taleDeliveries");
+  f.k.store.put("stopAll", "tavern", { state: "stopped", since: f.time(), by: { kind: "user" }, receipt: null });
+  await f.companions.ensure(f.q.id);
+  expect(f.spawn).not.toHaveBeenCalled();
+  expect(f.remove).not.toHaveBeenCalled();
+  expect(f.k.store.all("taleDeliveries")).toEqual(deliveries);
+});
 it("copies storage files and sends a marked delivery in a hidden no-model thread", async () => {
   const f = await fixture();
   const members = f.k.store.all("members");

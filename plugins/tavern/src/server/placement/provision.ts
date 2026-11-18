@@ -5,6 +5,7 @@ import type { PlacementRecord } from "../../shared/placement";
 import { providerInputsSchema } from "../../shared/placement-settings";
 import { rejectedSpawn } from "../hires";
 import type { KeeperStore, HireIntent } from "../keeper/store";
+import { assertTavernRunning } from "../stop-all";
 import { PlacementStore, StalePlacementError } from "./store";
 
 const id = z.string().min(1);
@@ -85,6 +86,7 @@ export class PlacementProvisioner {
   }
 
   private async spawnOnce(placementId: string, generation: number, execution: Execution): Promise<PlacementRecord> {
+    assertTavernRunning(this.hires);
     const record = this.placements.assertCurrent(placementId, generation);
     const intent = this.hires.get("hires", record.hireToken);
     if (!intent) throw new Error("The private placement hire intent is missing; reconcile before provisioning");

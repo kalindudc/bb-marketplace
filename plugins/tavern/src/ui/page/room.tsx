@@ -1,3 +1,4 @@
+import { StopAllNotice } from "./stop-all";
 import { useBbNavigate } from "@get-bb/plugin-sdk/app";
 import { Fragment, useEffect, useId, useMemo, useState, type ReactNode } from "react";
 import { PlacementFacts } from "../kit/placement";
@@ -180,6 +181,10 @@ const EMPTY_SECTIONS = [
 ] as const;
 
 export function CommonRoom({ room, registry }: { room: Room; registry: Registry }) {
+  return <><StopAllNotice /><RoomContents room={room} registry={registry} /></>;
+}
+
+function RoomContents({ room, registry }: { room: Room; registry: Registry }) {
   const empty = !room.keepers.length && !room.asks.length && !room.solos.length && !room.decidedForYou.length && !room.recent.length && !room.review.waiting && !room.review.items.length && !room.archivedCount;
   if (!empty) return <RoomActivity room={room} registry={registry} />;
   const keeper = registry.classes.find((cls) => cls.id === "keeper");

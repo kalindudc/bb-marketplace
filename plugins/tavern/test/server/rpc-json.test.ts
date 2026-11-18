@@ -117,6 +117,9 @@ it("returns strict JSON from EVERY registered RPC with optional record fields ab
     boardQuest: () => call("boardQuest", { id: f.q.id }),
     setTaleKept: () => call("setTaleKept", { questId: f.q.id, characterId: character.id, kept: false }),
     room: () => call("room", {}),
+    stopAllStatus: () => call("stopAllStatus", {}),
+    stopAll: () => call("stopAll", {}),
+    resumeAll: () => call("resumeAll", {}),
     away: () => call("away", {}),
     awayDigest: () => call("awayDigest", {}),
     awayClose: async () => {

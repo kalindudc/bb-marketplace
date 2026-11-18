@@ -35,6 +35,7 @@ const eventQuestSql = `coalesce(tavern_events.board_quest_id, CASE tavern_events
 const visibleEventSql = `NOT EXISTS (SELECT 1 FROM tavern_records q WHERE q.kind='quests' AND q.id=${eventQuestSql} AND q.archived_at IS NOT NULL)`;
 
 export interface Records {
+  stopAll: import("../../shared/stop-all").StopAllState;
   taleDeliveries: import("zod").infer<typeof import("../tale").taleDeliverySchema>;
   taleDeliveryAttempts: import("zod").infer<typeof import("../tale").taleDeliveryAttemptSchema>;
   serviceRecords: import("../../shared/service-record").ServiceQuestRecord;

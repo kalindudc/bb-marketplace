@@ -1,0 +1,8 @@
+.tavern.tv-page .tv-brake-controls { display: flex; gap: 6px; align-items: center; position: relative; }
+.tavern.tv-page .tv-brake-confirm, .tavern.tv-page .tv-brake-error { position: absolute; z-index: 20; top: calc(100% + 8px); right: 0; width: min(380px, calc(100vw - 32px)); box-sizing: border-box; box-shadow: 0 6px 20px var(--tv-elev-recessed); }
+.tavern.tv-page .tv-brake-confirm p, .tavern.tv-page .tv-brake-notice p { margin: 0; font-size: 12px; line-height: 1.5; }
+.tavern.tv-page .tv-brake-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.tavern.tv-page .tv-brake-notice { margin-bottom: 12px; overflow-wrap: anywhere; }
+.tavern.tv-page .tv-brake-notice summary { cursor: pointer; }
+.tavern.tv-page .tv-brake-notice li { font-size: 12px; line-height: 1.5; }
+.tavern.tv-page.tv-head .tv-brake-confirm .btn > span { position: static; width: auto; height: auto; clip-path: none; }
