@@ -49,7 +49,7 @@
 .tavern .lg-list li + li { border-top: 1px dashed var(--tavern-line); }
 .tavern .lg-list .t { min-width: 0; overflow-wrap: anywhere; }
 .tavern .lg-list .t .m { font-size: 11px; }
-.tavern .lg-list .src { font-size: 11px; color: var(--tavern-muted); white-space: nowrap; }
+.tavern .lg-list .src { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 11px; color: var(--tavern-muted); white-space: nowrap; }
 .tavern .lg-list li.proposed { background: var(--tavern-you-fill); }
 .tavern .lg-list li.undone .t b { text-decoration: line-through; font-weight: 400; }
 .tavern .route-chip { display: inline-flex; align-items: center; height: 20px; padding: 0 6px; border: 1px solid var(--tavern-line); font-size: 11px; white-space: nowrap; }
@@ -162,15 +162,19 @@
 .tavern .tw-quest { padding: 0 5px 0 7px; }
 /* Collapse order when the row narrows: anchors and words, then task text, then secondary controls. Counts keep their nouns. */
 @container tavern-widget (max-width: 720px) { .tavern .tw-ledger .tw-anc, .tavern .tw-keeper .tw-w { display: none; } }
-@container tavern-widget (max-width: 600px) { .tavern .tw-quest .tw-ph, .tavern .tw-where .tw-w { display: none; } }
-@container tavern-widget (max-width: 520px) { .tavern .tw-quests { display: none; } .tavern .tw-ask-row { grid-template-columns: minmax(0, 1fr) auto; } .tavern .tw-ak, .tavern .tw-ag, .tavern .tw-ask-row .ago { display: none; } }
+@container tavern-widget (max-width: 600px) { .tavern .tw-quest .tw-ph, .tavern .tw-where .tw-w { display: none; } .tavern.twidget .tw-quest { min-width: calc(6ch + 26px); } }
+@container tavern-widget (max-width: 520px) { .tavern .tw-chip.tw-quests-count { display: inline-flex; } .tavern .tw-quests { display: none; } .tavern .tw-ask-row { grid-template-columns: minmax(0, 1fr) auto; } .tavern .tw-ak, .tavern .tw-ag, .tavern .tw-ask-row .ago { display: none; } }
 @container tavern-widget (max-width: 420px) { .tavern .tw-brief-w, .tavern .tw-member-class, .tavern .tw-keeper .tw-kn { display: none; } }
 /* On a phone the decided count shows only while no ask waits: asks come first, and the Ledger holds the rest. */
 @container tavern-widget (max-width: 420px) { .tavern .tw-row:has(.tw-asks) .tw-dec { display: none; } }
 /* On a narrow row the events bubble yields to the asks; the Ledger keeps the count readable. */
 @container tavern-widget (max-width: 420px) { .tavern .tw-row:has(.tw-asks) .tw-events { display: none; } }
 @container tavern-widget (max-width: 340px) { .tavern .tw-row:has(.tquiet) .tw-dec { display: none; } }
-@container tavern-widget (max-width: 340px) { .tavern .tw-ledger, .tavern .tw-id .tw-name { display: none; } }
+@container tavern-widget (max-width: 340px) { .tavern.v-member .tw-id .tw-name { display: none; } }
+@container tavern-widget (max-width: 339px) { .tavern.v-keeper .tw-row .tw-w { display: none; } }
+@container tavern-widget (max-width: 520px) {
+  .tavern.v-keeper .tw-free, .tavern.v-keeper .tw-ledger > span, .tavern.v-keeper .tw-ledger > svg:last-child, .tavern.v-keeper .tw-asks > svg { display: none; }
+}
 @media (pointer: coarse), (max-width: 560px) { .tavern .tw-chip, .tavern .tw-asks, .tavern .tw-quest { height: 44px; } .tavern .tw-ask-row { min-height: 44px; } .tavern .lnk-btn { min-height: 44px; } .tavern.readas .ra-fix { height: 44px; } }
 
 /* ---- The crest toggle in bb's composer actions: same 32 px box as bb's own icon buttons ---- */
@@ -368,20 +372,44 @@ html.dark .tavern .qsvg .wp.o-you .wp-fo { filter: drop-shadow(0 0 5px color-mix
 .tavern .sendbox.grant .grants code, .tavern .sendbox.grant code.wrap { font-size: 11px; color: var(--tavern-muted); overflow-wrap: anywhere; }
 .tavern .sendbox.grant code.wrap { display: block; }
 .tavern .sendbox.grant dd .who { margin: 0; }
-/* Two long board-quest names share the row: each name truncates, the phase strip and › never do. */
-.tavern .tw-quests { flex: 0 1 auto; }
-.tavern .tw-quest { flex: 0 1 auto; min-width: 0; max-width: 26ch; }
-.tavern .tw-quest b { min-width: 9ch; }
-.tavern .tw-quest b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tavern.v-keeper .tw-id { flex: none; }
+.tavern.v-keeper .tw-id .tw-name { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.tavern :where(.tw-chip).tw-quests-count { display: none; }
+.tavern .tw-quests { flex: 0 1 auto; overflow: visible; }
+.tavern .tw-quest { flex: 0 1 auto; min-width: calc(6ch + 56px); }
+.tavern .tw-quest b { min-width: 6ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tavern .tw-quest > :not(b) { flex: none; }
 .tavern .tw-same { margin: 4px 10px 0; }
 .tavern .lg-rules li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 6px; align-items: start; }
 .tavern .lg-rules li.off .t { color: var(--tavern-muted); }
 .tavern .lg-rules .lg-acts { display: inline-flex; gap: 4px; }
 @container (max-width: 360px) { .tavern .lg-rules li { grid-template-columns: auto minmax(0, 1fr); } .tavern .lg-rules .lg-acts { grid-column: 2; } }
-/* Width order: anchors and "for you" go first, then the phase strips; names keep at least 9 characters. */
+/* Quest titles yield before the Keeper's name; the count chip replaces them below 520 px. */
 @container tavern-widget (max-width: 900px) { .tavern .tw-anc, .tavern .tw-for { display: none; } }
-@container tavern-widget (max-width: 760px) { .tavern .tw-quests.long .tw-quest .tw-ph { display: none; } }
+@container tavern-widget (max-width: 760px) { .tavern .tw-quests.long .tw-quest .tw-ph { display: none; } .tavern .tw-quests.long .tw-quest { min-width: calc(6ch + 26px); } }
+@container tavern-widget (max-width: 611px) {
+  .tavern .tw-quest:only-child .tw-ph { display: none; }
+  .tavern .tw-quest:only-child { min-width: calc(6ch + 26px); }
+}
+@container tavern-widget (max-width: 810px) {
+  .tavern .tw-quests:has(.tw-quest:nth-child(3)) .tw-quest .tw-ph { display: none; }
+  .tavern .tw-quests:has(.tw-quest:nth-child(3)) .tw-quest { min-width: calc(6ch + 26px); }
+}
+@container tavern-widget (max-width: 715px) {
+  .tavern .tw-row:has(.tw-quest:nth-child(3)) .tw-quests { display: none; }
+  .tavern .tw-row:has(.tw-quest:nth-child(3)) .tw-quests-count { display: inline-flex; }
+  .tavern .tw-row:has(.tw-quest:nth-child(3)) :is(.tw-free, .tw-ledger > span, .tw-ledger > svg:last-child) { display: none; }
+}
+@container tavern-widget (max-width: 645px) {
+  .tavern .tw-row:has(.tw-quest:nth-child(2)) .tw-quests { display: none; }
+  .tavern .tw-row:has(.tw-quest:nth-child(2)) .tw-quests-count { display: inline-flex; }
+  .tavern .tw-row:has(.tw-quest:nth-child(2)) :is(.tw-free, .tw-ledger > span, .tw-ledger > svg:last-child) { display: none; }
+}
+@container tavern-widget (max-width: 576px) {
+  .tavern .tw-row:has(.tw-quest:only-child) .tw-quests { display: none; }
+  .tavern .tw-row:has(.tw-quest:only-child) .tw-quests-count { display: inline-flex; }
+  .tavern .tw-row:has(.tw-quest:only-child) :is(.tw-free, .tw-ledger > span, .tw-ledger > svg:last-child) { display: none; }
+}
 
 /* bb's tab host is a fixed-height box with overflow hidden, so every Tavern tab is its own scroll container. */
 .tavern:is(.journal, .ledger, .rtab) { height: 100%; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
@@ -413,12 +441,14 @@ html.dark .tavern .qsvg .wp.o-you .wp-fo { filter: drop-shadow(0 0 5px color-mix
 .tavern .lg-now-line { margin: 0 12px; font-size: 12px; color: var(--tavern-muted); }
 .tavern .lg-card { margin: 0 12px; padding: 8px 10px; border: 1px solid var(--tavern-line); background: var(--card); box-shadow: var(--tavern-elev-raised-shadow); display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .tavern .lg-card.lg-needs { box-shadow: inset 3px 0 0 var(--tavern-you), var(--tavern-elev-raised-shadow); }
-.tavern .lg-card h3 { display: flex; align-items: center; gap: 6px; font-size: 12px; }
-.tavern .lg-card h3 .num { margin-left: auto; color: var(--tavern-muted); font-weight: 400; }
+.tavern .lg-card h3 { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; font-size: 12px; }
+.tavern .lg-card h3 .num { min-width: 0; white-space: normal; overflow-wrap: anywhere; margin-left: auto; color: var(--tavern-muted); font-weight: 400; }
 .tavern .lg-card.lg-quest { gap: 5px; }
 .tavern .lg-qh { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .tavern .lg-qt { display: inline-flex; align-items: center; gap: 3px; min-width: 0; padding: 0; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; }
-.tavern .lg-qt b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tavern .lg-qt b { min-width: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; text-overflow: ellipsis; white-space: normal; overflow-wrap: anywhere; text-align: left; }
+.tavern .lg-qt > svg { flex: none; }
+@container tavern-ledger (max-width: 420px) { .tavern .lg-qt { flex: 1 0 100%; } }
 .tavern .lg-qt:hover b { text-decoration: underline; }
 .tavern .lg-qh .phw { margin-left: auto; }
 .tavern .lg-move { display: flex; align-items: baseline; gap: 6px; min-width: 0; margin: 0; padding: 3px 6px; font-size: 12px; }
@@ -433,11 +463,11 @@ html.dark .tavern .qsvg .wp.o-you .wp-fo { filter: drop-shadow(0 0 5px color-mix
 .tavern .lg-row .t { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tavern .lg-row .lg-q { flex: none; font-size: 11px; padding: 1px 5px; background: var(--tavern-recessed); }
 .tavern .lg-row .lg-go { flex: none; display: inline-flex; align-items: center; gap: 2px; font-size: 11px; color: var(--tavern-muted); }
-.tavern .lg-rows .src { font-size: 11px; color: var(--tavern-muted); white-space: nowrap; }
+.tavern .lg-rows .src { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 11px; color: var(--tavern-muted); white-space: nowrap; }
 .tavern .lg-rules > li .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .tavern .lg-rules > li.proposed .src { color: var(--foreground); font-weight: 700; }
 .tavern .lg-done { margin: 0 12px; border: 1px solid var(--tavern-line); background: var(--tavern-elev-recessed-bg); }
-.tavern .lg-done .lg-row .m { flex: none; font-size: 11px; }
+.tavern .lg-done .lg-row .m { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
 .tavern.ledger > .decided, .tavern.ledger > .lg-sec { margin: 0 12px; }
 .tavern .lg-clamp { display: flex; align-items: flex-start; gap: 4px; min-width: 0; padding: 2px 0; border: 0; background: none; color: inherit; font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
 .tavern .lg-clamp .ct { min-width: 0; display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
@@ -470,8 +500,8 @@ html.dark .tavern .qsvg .wp.o-you .wp-fo { filter: drop-shadow(0 0 5px color-mix
 .tavern .mem-rows { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; column-gap: 8px; }
 .tavern .mem-rows > li { grid-column: 1 / -1; grid-template-columns: subgrid; column-gap: 8px; }
 .tavern .mem-rows .lg-clamp { font-size: 12px; }
-.tavern .mem-meta { font-size: 11px; white-space: nowrap; }
-.tavern .mem-rows .lg-q { font-size: 11px; padding: 1px 5px; background: var(--tavern-recessed); white-space: nowrap; }
+.tavern .mem-meta { min-width: 0; max-width: 16ch; overflow: hidden; text-overflow: ellipsis; font-size: 11px; white-space: nowrap; }
+.tavern .mem-rows .lg-q { min-width: 0; max-width: 12ch; overflow: hidden; text-overflow: ellipsis; font-size: 11px; padding: 1px 5px; background: var(--tavern-recessed); white-space: nowrap; }
 .tavern .mem-row.late .ct { font-weight: 600; }
 .tavern :is(.mem, .lg-needs) > .lbl { margin: 6px 0 0; font-size: 11px; font-weight: 600; color: var(--tavern-muted); }
 .tavern :is(.mem, .lg-needs) > .lbl .anc { font-weight: 400; }
@@ -479,7 +509,7 @@ html.dark .tavern .qsvg .wp.o-you .wp-fo { filter: drop-shadow(0 0 5px color-mix
 .tavern .mem-gates { margin: 2px 0 0; }
 .tavern .mem-gt { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 12px; white-space: nowrap; }
 .tavern .mem-gt .tavern-glyph { flex: none; color: var(--tavern-muted); }
-.tavern .mem-gt b { flex: none; }
+.tavern .mem-gt b { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .tavern .mem-gt .m { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .tavern .mem-gates .mem-ans { grid-column: 1 / -1; padding-left: 18px; color: var(--tavern-muted); font-size: 11px; }
 /* Charts and headline numbers (Insights). Charts are raised cards without glow: metrics are history, not what matters now. Bars and the trend line use the theme's first chart colour. */
@@ -505,7 +535,7 @@ html.dark .tavern .qsvg .wp.o-you .wp-fo { filter: drop-shadow(0 0 5px color-mix
 .tavern .tchart-empty { font-size: 12px; }
 .tavern .tchart-bars { display: grid; grid-template-columns: minmax(0, max-content) minmax(40px, 1fr) max-content; column-gap: 8px; row-gap: 6px; align-items: center; margin: 0; padding: 0; list-style: none; }
 .tavern .tchart-bars > li { display: contents; }
-.tavern .tchart-bars .l { max-width: 18em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.tavern .tchart-bars .l { min-width: 0; max-width: 18em; white-space: normal; overflow-wrap: anywhere; font-size: 12px; }
 .tavern .tchart-bars .t { height: 10px; background: var(--tavern-elev-recessed-bg); box-shadow: var(--tavern-elev-recessed-shadow); }
 .tavern .tchart-bars .b { display: block; height: 100%; min-width: 1px; background: var(--tchart-ink); }
 .tavern .tchart-bars .v { font-size: 12px; text-align: right; }
@@ -570,9 +600,8 @@ html.dark .tavern .qsvg .wp.o-you .wp-fo { filter: drop-shadow(0 0 5px color-mix
   .tavern .lg-done .lg-row > .m { grid-area: m; }
   .tavern .lg-done .lg-row > .act-i { grid-area: go; }
 }
-/* History folds: the label never breaks; its plain anchor wraps, then moves to its own line on a narrow Ledger. */
 .tavern .lg-fold > summary { flex-wrap: wrap; column-gap: 6px; row-gap: 0; }
-.tavern .lg-fold > summary > span:not(.num, .anc) { white-space: nowrap; }
+.tavern .lg-fold > summary > span:not(.num, .anc) { min-width: 0; white-space: normal; overflow-wrap: anywhere; }
 .tavern .lg-fold > summary .anc { white-space: normal; text-align: right; }
 @container tavern-ledger (max-width: 420px) { .tavern .lg-fold > summary .anc { flex: 1 0 100%; margin-left: 0; padding-left: 18px; box-sizing: border-box; text-align: left; } }
 /* A stated rule's reach on the read-as line; its widen confirm takes the full width under the receipt, right-aligned like the receipt. */
@@ -585,12 +614,13 @@ html.dark .tavern .qsvg .wp.o-you .wp-fo { filter: drop-shadow(0 0 5px color-mix
 .tavern .tag:is(.check-same, .guard-detect) { align-self: flex-start; height: auto; min-height: 18px; padding: 2px 6px; margin: 2px 0 2px 28px; line-height: 1.35; background: color-mix(in oklab, var(--warning) 16%, transparent); color: var(--foreground); white-space: normal; }
 .tavern .lg-indep { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 4px 0 0; font-size: 12px; }
 .tavern .lg-indep .tag:is(.check-same, .guard-detect) { margin: 0; }
-/* Narrow rows. Every part either fits or drops whole, in this order, so nothing ever draws under the next control; only a quest name truncates. */
-.tavern .tw-row > .tw-id { overflow: clip; overflow-clip-margin: 4px; }
+@container tavern-widget (max-width: 520px) { .tavern.v-keeper .tw-id { flex: 0 1 auto; } }
 .tavern .tquiet.compact { flex: none; }
 .tavern .tw-chip.tw-where { flex: 0 1 auto; min-width: 0; }
 .tavern .tw-chip.tw-where > b { min-width: 4ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tavern.v-member .tw-row > .tw-id { overflow: clip; overflow-clip-margin: 4px; }
 @container tavern-widget (max-width: 420px) { .tavern .tw-row { gap: 4px; } }
+@container tavern-widget (max-width: 520px) { .tavern.twidget.v-keeper .tw-row { gap: 4px; } }
 /* Armed by the page's "Start a quest": one line under the row, the action carried by the line (bb's plain send can't be redirected). */
 .tavern .tw-armed { display: flex; align-items: center; gap: 8px; min-height: 34px; padding: 4px 6px 4px 10px; border-top: 1px solid var(--tavern-line); box-shadow: inset 3px 0 0 var(--tavern-you); background: var(--tavern-you-fill); min-width: 0; }
 .tavern .tw-armed > .tavern-glyph { flex: none; color: var(--tavern-wax); }
@@ -699,7 +729,7 @@ html.dark .tavern .qsvg .wp.o-you .wp-fo { filter: drop-shadow(0 0 5px color-mix
 .tavern .qrow-k > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tavern .qrow-k .tavern-crest { flex: none; }
 .tavern .qrow-p { display: inline-flex; align-items: center; gap: 10px; min-width: 0; font-size: 12px; }
-.tavern .qrow-path { font-size: 11px; white-space: nowrap; color: var(--tavern-muted); }
+.tavern .qrow-path { flex: none; font-size: 11px; white-space: nowrap; color: var(--tavern-muted); }
 .tavern .qrow-m { margin-left: auto; min-width: 0; max-width: 100%; overflow: hidden; font-size: 12px; }
 .tavern .qrow-m .tv-st { max-width: 100%; }
 .tavern .qrow-m .tv-st > span { display: flex; min-width: 0; white-space: nowrap; }
@@ -714,7 +744,7 @@ html.dark .tavern .qsvg .wp.o-you .wp-fo { filter: drop-shadow(0 0 5px color-mix
 .tavern.qrow-done > .qrow-f { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .tavern .qrow-g { color: var(--success); }
 .tavern.qrow-done.stopped .qrow-g { color: var(--tavern-muted); }
-.tavern .qrow-f { color: var(--tavern-muted); font-size: 11px; white-space: nowrap; }
+.tavern .qrow-f { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--tavern-muted); font-size: 11px; white-space: nowrap; }
 .tavern :is(.qrow-tale, .qrow-x) { position: relative; z-index: 1; }
 .tavern .qrow-tale { min-height: 24px; font-size: 12px; }
 .tavern .qrow-x { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-width: 24px; min-height: 24px; padding: 0 6px; border: 0; background: transparent; color: var(--tavern-muted); font: inherit; font-size: 11px; cursor: pointer; }
@@ -741,10 +771,10 @@ html.dark .tavern .qsvg .wp.o-you .wp-fo { filter: drop-shadow(0 0 5px color-mix
 .tavern.krow:hover:not(.sk-row) { background-image: linear-gradient(var(--tavern-hover), var(--tavern-hover)); }
 .tavern .krow-go { flex: none; display: inline-flex; width: 12px; color: var(--tavern-muted); }
 .tavern .krow-who b { flex: none; }
-.tavern .krow-st { flex: none; white-space: nowrap; color: var(--tavern-muted); font-size: 11px; }
+.tavern .krow-st { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--tavern-muted); font-size: 11px; }
 .tavern .krow-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--tavern-muted); }
-.tavern :is(.krow-s, .krow-n, .krow-dec) { flex: none; white-space: nowrap; }
-.tavern .krow-dec { display: inline-flex; align-items: center; gap: 4px; }
+.tavern :is(.krow-s, .krow-n) { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tavern .krow-dec { flex: none; white-space: nowrap; display: inline-flex; align-items: center; gap: 4px; }
 .tavern .krow-n { font-size: 11px; }
 .tavern .krow-sw { display: none; }
 .tavern .krow-l2 { display: contents; }

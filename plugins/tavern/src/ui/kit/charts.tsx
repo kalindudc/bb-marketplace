@@ -52,7 +52,7 @@ function useMeasuredWidth<T extends Element>(fallback: number) {
   useEffect(() => {
     const el = ref.current;
     if (!el || typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver(([entry]) => { const next = Math.round(entry!.contentRect.width); if (next > 0) setWidth(next); });
+    const ro = new ResizeObserver(([entry]) => { const next = Math.floor(entry!.contentRect.width); if (next > 0) setWidth(next); });
     ro.observe(el);
     return () => ro.disconnect();
   }, []);

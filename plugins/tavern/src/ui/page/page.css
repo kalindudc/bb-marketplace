@@ -946,7 +946,7 @@
 .tavern.tv-page .tv-ifacts > div { display: flex; flex-direction: column; gap: 2px; }
 .tavern.tv-page .tv-ifacts dt { font-size: 11px; color: var(--tv-text-2); }
 .tavern.tv-page .tv-ifacts dd { margin: 0; font-size: 16px; font-weight: 700; }
-.tavern.tv-page .tv-icharts { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px 24px; }
+.tavern.tv-page .tv-icharts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 14px 24px; }
 .tavern.tv-page .tv-ideas { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; }
 .tavern.tv-page .tv-idea { position: relative; isolation: isolate; display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; align-items: start; gap: 10px; padding: 10px 12px; border: 1px solid var(--tavern-line); background: var(--tv-elev-raised); box-shadow: var(--tv-shadow-raised); }
 .tavern.tv-page .tv-idea.act { box-shadow: inset 3px 0 0 var(--tavern-you), var(--tv-shadow-raised); }

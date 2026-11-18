@@ -18,10 +18,10 @@ function NoteRow({ note, short, now }: { note: KeeperNote; short?: Short; now: n
   const late = note.kind === "commitment" && note.dueAt !== null && note.dueAt < now;
   const text = note.kind === "fact" ? `“${note.text}”` : note.condition ? `${note.text} · when ${note.condition}` : note.text;
   const meta = note.kind === "commitment"
-    ? late ? <span title={`Was due ${at(note.dueAt!, now)}`}><StatusPill status="blocked">overdue</StatusPill></span> : note.dueAt !== null ? <span className="m">by {at(note.dueAt, now)}</span> : <span className="m">on a condition</span>
+    ? late ? <span title={`Was due ${at(note.dueAt!, now)}`}><StatusPill status="blocked">overdue</StatusPill></span> : note.dueAt !== null ? <span className="m" title={`by ${at(note.dueAt, now)}`}>by {at(note.dueAt, now)}</span> : <span className="m" title={`on a condition: ${note.condition}`}>on a condition</span>
     : note.kind === "fact" && note.validUntil !== null ? <span className="m" title={`Kept until ${new Date(note.validUntil).toLocaleString()}`}>until {at(note.validUntil, now)}</span>
     : <TimeAgo at={note.createdAt} />;
-  return <li className={`mem-row k-${note.kind} ${late ? "late" : ""}`}><Clamp lines={1} text={text} /><span className="mem-meta">{meta}</span>{q ? <span className="lg-q">{q}</span> : <span />}</li>;
+  return <li className={`mem-row k-${note.kind} ${late ? "late" : ""}`}><Clamp lines={1} text={text} /><span className="mem-meta">{meta}</span>{q ? <span className="lg-q" title={q}>{q}</span> : <span />}</li>;
 }
 
 /** One kind of Keeper note, the first three shown and the rest expanding in place. Read-only: the Keeper records and closes notes itself. */

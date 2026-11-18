@@ -345,6 +345,7 @@ function KeeperParts({ data, open, toggle, onLedger, onQuest, quiet }: { data: T
     {keeper.quietSince == null && <span className={`tw-quests ${keeper.boardQuests.reduce((n, q) => n + q.short.length, 0) > 18 ? "long" : ""}`} role="group" aria-label="Board quests (goals)">
       {keeper.boardQuests.map(q => <button type="button" key={q.id} className="tw-quest act" title={`Open the quest page: ${q.title} · ${q.phase} · plan v${q.planVersion} · ${q.move.text}`} aria-label={`Open the quest page for ${q.title}: ${q.phase}, plan v${q.planVersion}`} onClick={() => onQuest(q.id)}><b>{q.short}</b><Phase phase={q.phase} /><OpensMark /></button>)}
     </span>}
+    {keeper.quietSince == null && keeper.boardQuests.length > 0 && <button type="button" className="tw-chip tw-quests-count act" title={keeper.boardQuests.map(q => q.title).join(" · ")} aria-label={`${plural(keeper.boardQuests.length, "quest")}: open the Ledger`} onClick={onLedger}>{plural(keeper.boardQuests.length, "quest")}</button>}
     {/* The free space carries the status words and measures itself, so they show only when the whole phrase fits; the dot, the crest's tooltip and the hidden name carry it otherwise. */}
     <span className="tw-sp tw-free">{keeper.status === "holding" && keeper.quietSince == null && <span className="tw-sw" aria-hidden="true">holding<span className="tw-sw-x"> while you type</span></span>}</span>
     {/* Events the Keeper has not received yet: a bubble so the widget never reads as silent, and the ledger item is one click away. */}

@@ -121,7 +121,7 @@ export function LedgerTab({ threadId }: ExperimentalThreadTabProps) {
           </section>}
           {live.map((q, i) => (
             <section className={`lg-card lg-quest ${i === 0 && needsYou === 0 ? "glow" : ""}`} style={i === 0 && needsYou === 0 ? glowVars(`ledger:${q.id}`) as CSSProperties : undefined} key={q.id} aria-label={`Board quest: ${q.title}`}>
-              <div className="lg-qh"><button type="button" className="lg-qt act" title={`Open the quest page: ${q.title}`} onClick={() => navigate.toPluginPanel("tavern", { subPath: `quest/${q.id}` })}><b>{q.title}</b><OpensMark /></button><span className="m">plan v{q.planVersion}</span><PhaseStrip phase={q.phase} /></div>
+              <div className="lg-qh"><button type="button" className="lg-qt act" title={`Open the quest page: ${q.title}`} onClick={() => navigate.toPluginPanel("tavern", { subPath: `quest/${q.id}` })}><b className="clamp">{q.title}</b><OpensMark /></button><span className="m">plan v{q.planVersion}</span><PhaseStrip phase={q.phase} /></div>
               {q.phase === "stopping"
                 ? <p className="lg-move who-nobody lg-stopping" title={`Stopping · ${stoppingWords(q)}`}><span className="lbl">Stopping</span><span className="mt">{stoppingWords(q)}</span></p>
                 : <p className={`lg-move who-${q.move.who}`} title={q.move.text}><span className="lbl">{q.move.who === "you" ? "Your move" : q.move.who === "outside" ? "Waiting outside" : "Next"}</span><span className="mt">{q.move.text}</span></p>}
