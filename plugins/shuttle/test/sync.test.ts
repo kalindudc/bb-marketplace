@@ -2,7 +2,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { SyncStep } from "../src/contract";
 import { SpawnUnavailableError } from "../src/ports";
-import { testConfig, harness, pr, TEST_SERVER } from "./helpers";
+import { testConfig, harness, pr, TEST_SERVER, type Harness } from "./helpers";
 
 describe("sync", () => {
   it("stores every list with its reason and marks authored PRs as mine", async () => {
@@ -289,7 +289,7 @@ describe("auto review", () => {
   });
 
   it("reviews again on a new head only when rerun is new_head", async () => {
-    const h = harness(testConfig({ autoReview: { enabled: true, when: ["requested"], drafts: false, preset: "", repos: [], maxPerDay: 8, rerun: "new_head" } }));
+    const h = harness(testConfig({ autoReview: { enabled: true, when: ["requested"], drafts: false, preset: "", repos: [], maxPerDay: 8, rerun: "new_head", settleMinutes: 0 } }));
     await h.shuttle.sync();
     h.clock.now += 60_000;
     h.lists.review_requested = [pr(3)];
@@ -300,6 +300,75 @@ describe("auto review", () => {
     expect(h.port.spawned).toHaveLength(1);
     expect(h.store.reviewsOf(h.store.prByKey("forge:acme/app#3")!.id).map((r) => [r.thread_id, r.head])).toEqual([[h.port.spawned[0]!.threadId, "head3"], [h.port.spawned[0]!.threadId, "newhead"]]);
     expect(h.port.sent.map((s) => s.threadId)).toEqual([h.port.spawned[0]!.threadId]);
+  });
+
+  describe("letting a new head settle", () => {
+    const auto = { enabled: true, when: ["requested" as const], drafts: false, preset: "", repos: [], maxPerDay: 8, rerun: "new_head" as const };
+    const heads = (h: Harness) => h.store.reviewsOf(h.store.prByKey("forge:acme/app#3")!.id).map((r) => r.head);
+    const started = async (settleMinutes?: number) => {
+      const h = harness(testConfig({ autoReview: settleMinutes === undefined ? auto : { ...auto, settleMinutes } }));
+      await h.shuttle.sync();
+      h.clock.now += 60_000;
+      h.lists.review_requested = [pr(3)];
+      await h.shuttle.sync();
+      return h;
+    };
+
+    it("starts a PR's first review at once", async () => {
+      const h = await started();
+      expect(heads(h)).toEqual(["head3"]);
+    });
+
+    it("waits 15 minutes by default for a head that comes while the review runs, and starts over when the head moves again", async () => {
+      const h = await started();
+      h.lists.review_requested = [pr(3, { head: "h2" })];
+      await h.shuttle.sync();
+      expect(heads(h)).toEqual(["head3"]);
+      expect(h.shuttle.inbox().autoQueue).toEqual([]);
+      h.clock.now += 10 * 60_000;
+      h.lists.review_requested = [pr(3, { head: "h3" })];
+      await h.shuttle.sync();
+      h.clock.now += 14 * 60_000;
+      await h.shuttle.sync();
+      expect(heads(h)).toEqual(["head3"]);
+      h.clock.now += 60_000;
+      await h.shuttle.sync();
+      expect(heads(h)).toEqual(["head3", "h3"]);
+      expect(h.shuttle.activity().filter((e) => e.kind === "auto_settling").map((e) => e.text)).toEqual([
+        "acme/app#3 has a new head while its review runs: auto review starts again once the head stays the same for 15 minutes.",
+        "acme/app#3 has a new head while its review runs: auto review starts again once the head stays the same for 15 minutes.",
+      ]);
+      expect(h.store.kv(`auto_settle:${h.store.prByKey("forge:acme/app#3")!.id}:h3`)).toBeNull();
+    });
+
+    it("waits while the draft waits to be posted, and not once it is gone", async () => {
+      const h = await started(5);
+      await h.shuttle.saveDraft(h.port.spawned[0]!.threadId, "forge:acme/app#3", { summary: "Looks fine", verdict: "comment", findings: [] });
+      h.lists.review_requested = [pr(3, { head: "h2" })];
+      await h.shuttle.sync();
+      expect(heads(h)).toEqual(["head3"]);
+      expect(h.shuttle.activity().find((e) => e.kind === "auto_settling")?.text).toBe("acme/app#3 has a new head while its draft waits: auto review starts again once the head stays the same for 5 minutes.");
+      await h.shuttle.discardDraft("forge:acme/app#3", h.shuttle.detail("forge:acme/app#3").draft!.id);
+      await h.shuttle.sync();
+      expect(heads(h)).toEqual(["head3", "h2"]);
+    });
+
+    it("reviews a head that comes after the draft was posted at once", async () => {
+      const h = await started();
+      await h.shuttle.saveDraft(h.port.spawned[0]!.threadId, "forge:acme/app#3", { summary: "Looks fine", verdict: "comment", findings: [] });
+      h.store.setDraftState(h.shuttle.detail("forge:acme/app#3").draft!.id, "posted");
+      h.lists.review_requested = [pr(3, { head: "h2" })];
+      await h.shuttle.sync();
+      expect(heads(h)).toEqual(["head3", "h2"]);
+      expect(h.shuttle.activity().filter((e) => e.kind === "auto_settling")).toEqual([]);
+    });
+
+    it("never waits with 0 minutes", async () => {
+      const h = await started(0);
+      h.lists.review_requested = [pr(3, { head: "h2" })];
+      await h.shuttle.sync();
+      expect(heads(h)).toEqual(["head3", "h2"]);
+    });
   });
 
   it("reviews again when your dismissed review is on an older head, as a request by name", async () => {

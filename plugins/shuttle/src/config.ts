@@ -125,6 +125,12 @@ export const autoReviewSchema = z
     maxRunning: z.number().int().min(1).max(50).default(5),
     rerun: z.enum(["never", "new_head"]).default("never"),
     /**
+     * With rerun on new heads: a head that comes while the PR's review runs, or while its draft waits to be posted, starts
+     * the next review only once it has stayed the same this many minutes, so a burst of pushes gets one review. A PR's first
+     * review never waits, nor one after its draft was posted or discarded; 0 never waits.
+     */
+    settleMinutes: z.number().int().min(0).max(240).default(15),
+    /**
      * A PR with no update for longer than this, whose request is as old, is not reviewed: a request Shuttle sees again,
      * such as after a server listed nothing for a sync, is not a new one. 0 reviews such PRs too.
      */

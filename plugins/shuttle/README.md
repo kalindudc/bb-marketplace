@@ -280,6 +280,11 @@ with the rules in **Settings › Automations › Auto review**:
 - **Skip idle PRs after** (14 days by default): a PR with no update for longer, whose request is as
   old, is left to you, and its activity says so once. A PR asked of you within that time is still
   reviewed, however old it is. 0 turns this off.
+- **Let a new head settle** (15 minutes by default, `settleMinutes`), with **Again on new commits**
+  on every new head: a head that comes while the PR's review runs, or while its draft waits to be
+  posted, starts the next review only once it has stayed the same that long, so a burst of pushes
+  gets one review, and its activity says so once a head. A PR's first review never waits, nor one
+  after its draft was posted or discarded. 0 starts at once.
 - **Never auto review** lists PRs it never starts on, one key a line. A PR's ⋯ menu, the Inbox's
   selection bar, **Never** in the queue and `bb shuttle skip <pr>… [--off]` add to it or take
   from it. A review you start yourself still runs.

@@ -5,7 +5,7 @@ import { AdapterError, type ListResult } from "./adapters/adapter";
 import { LIST_OPERATIONS, skipsPr, type ListOperation, type ServerConfig } from "./config";
 import { SYNC_STEPS, type Reason, type SyncFailure, type SyncState, type SyncStep, type SyncStepName } from "./contract";
 import { errText, type Ctx } from "./ctx";
-import type { PrRow, ReasonRow, ServerRow } from "./db/store";
+import type { PrRow, ReasonRow, ReviewRow, ServerRow } from "./db/store";
 import { describeFailure, primaryStep, RETRYABLE, STEP_LABELS } from "./failures";
 import { linkFor } from "./keys";
 import type { PrSummary } from "./model";
@@ -538,6 +538,8 @@ export interface AutoReviewCandidates {
   due: PrRow[];
   /** Left out because they are idle: see `idleDays`. */
   idle: Array<{ pr: PrRow } & Idle>;
+  /** New heads waiting to stay the same, until the time given: see `settleMinutes`. */
+  settling: Array<{ pr: PrRow; until: number }>;
 }
 
 /**
@@ -549,7 +551,7 @@ export interface AutoReviewCandidates {
 export function autoReviewCandidates(ctx: Ctx, serverId: string, passed?: ReadonlySet<SyncStepName>, peek = false): AutoReviewCandidates {
   const config = ctx.config().autoReview;
   const baseline = ctx.store.server(serverId)?.baseline_at;
-  if (!baseline) return { due: [], idle: [] };
+  if (!baseline) return { due: [], idle: [], settling: [] };
   const ids = new Set<number>();
   for (const trigger of config.when) {
     if (passed !== undefined && !passed.has(STEP_OF_REASON[TRIGGER_REASON[trigger]])) continue;
@@ -565,7 +567,7 @@ export function autoReviewCandidates(ctx: Ctx, serverId: string, passed?: Readon
   if (config.when.includes("requested") && (passed === undefined || passed.has(STEP_OF_REASON.reviewed))) {
     for (const id of dismissedWithNewCommits(ctx, serverId, peek)) ids.add(id);
   }
-  const out: AutoReviewCandidates = { due: [], idle: [] };
+  const out: AutoReviewCandidates = { due: [], idle: [], settling: [] };
   for (const id of ids) {
     const pr = ctx.store.prById(id);
     if (!pr || pr.mine || skipsPr(config, pr.key)) continue;
@@ -577,13 +579,42 @@ export function autoReviewCandidates(ctx: Ctx, serverId: string, passed?: Readon
     if (config.rerun === "never" && reviews.some((r) => r.trigger === "auto")) continue;
     if (ctx.store.kv(`auto_failed:${pr.id}:${pr.head ?? ""}`)) continue;
     const idle = idleFor(ctx, pr, config.idleDays);
-    if (idle === null) out.due.push(pr);
-    else out.idle.push({ pr, ...idle });
+    if (idle !== null) {
+      out.idle.push({ pr, ...idle });
+      continue;
+    }
+    const until = settlingUntil(ctx, pr, reviews, config.settleMinutes, peek);
+    if (until === null) out.due.push(pr);
+    else out.settling.push({ pr, until });
   }
   const queued = new Map(out.due.map((pr) => [pr.id, queuedAt(ctx, pr)]));
   out.due.sort((a, b) => queued.get(a.id)! - queued.get(b.id)! || a.id - b.id);
   return out;
 }
+
+/**
+ * A new head that comes while the PR's last review runs, or while its draft waits to be posted, waits until it has stayed
+ * the same for `minutes`. Shuttle notes when it first saw each head, which is within a sync of the push. With `peek`,
+ * a look that starts nothing, a head not seen yet counts as just seen and nothing is noted.
+ */
+function settlingUntil(ctx: Ctx, pr: PrRow, reviews: ReviewRow[], minutes: number, peek: boolean): number | null {
+  const last = reviews.at(-1);
+  if (minutes === 0 || last === undefined || pr.head === null) return null;
+  const running = last.state === "running";
+  if (!running && ctx.store.liveDraft(pr.id) === null) return null;
+  const key = settleKey(pr);
+  const stored = ctx.store.kv(key);
+  const seen = stored === null ? ctx.now() : Number(stored);
+  if (stored === null && !peek) {
+    ctx.store.setKv(key, String(seen));
+    const why = running ? "while its review runs" : "while its draft waits";
+    ctx.store.addEvent("auto_settling", `${shortKey(ctx, pr)} has a new head ${why}: auto review starts again once the head stays the same for ${minutes} minutes.`, pr.id);
+  }
+  const until = seen + minutes * 60_000;
+  return ctx.now() < until ? until : null;
+}
+
+const settleKey = (pr: PrRow) => `auto_settle:${pr.id}:${pr.head ?? ""}`;
 
 /**
  * When the PR joined the auto review queue: when the user was asked, when Shuttle saw the mention, or for a dismissed
@@ -638,6 +669,7 @@ export async function runAutoReviews(ctx: Ctx, serverId: string, signal?: AbortS
       await startAutoReview(ctx, { key: pr.key });
       started++;
       ctx.store.deleteKv(`auto_waiting:${head}`);
+      ctx.store.deleteKv(settleKey(pr));
     } catch (error) {
       if (error instanceof SpawnUnavailableError) {
         const stored = ctx.store.kv(`auto_waiting:${head}`);

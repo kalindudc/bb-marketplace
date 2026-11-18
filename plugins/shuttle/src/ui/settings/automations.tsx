@@ -141,6 +141,16 @@ export function AutomationsSection() {
               <option value="new_head">On every new head</option>
             </select>
           </label>
+          {auto.rerun === "new_head" && (
+            <label className={row}>
+              <span className={label}>Let a new head settle</span>
+              <span className="flex items-center gap-2">
+                <input aria-label="Minutes a new head settles" type="number" min={0} max={240} className={`${FIELD} w-20`} value={Number.isNaN(auto.settleMinutes) ? "" : auto.settleMinutes}
+                  onChange={(event) => setAuto({ settleMinutes: number(event.target.value) })} />
+                <span className="text-xs text-muted-foreground">minutes unchanged before reviewing again while a review runs or its draft waits; 0 starts at once</span>
+              </span>
+            </label>
+          )}
         </div>
       </Card>
 
