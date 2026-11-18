@@ -64,19 +64,19 @@ it("gives new Keepers the open preset without changing member presets", () => {
   expect(scopeForClass("keeper")).toMatchObject({ preset: "open", tools: { allow: ["*"], hide: false }, writes: { mode: "any" } });
   expect(["ranger", "warden", "smith", "wanderer"].map(role => scopeForClass(role).preset)).toEqual(["readonly", "checker", "worktree", "open"]);
 });
-it.each(["keeper", "ranger", "warden"])("refreshes the exact previous %s list atomically, retaining restrictions and grants", role => {
+it.each(["keeper", "ranger", "warden"])("keeps current %s wildcard availability, restrictions and grants", role => {
   const f = fixture(role), before = structuredClone(f.scope);
-  expect(f.store.refreshPresetTools("t1")).toBe("updated");
+  expect(f.store.refreshPresetTools("t1")).toBe("current");
   const refreshed = new ScopeStore(f.root).records.get("t1")!;
-  expect(refreshed.scope).toEqual({ ...before, tools: { ...before.tools, allow: [...before.tools.allow, "check_ui", "ui_examples"] } });
+  expect(refreshed.scope).toEqual(before);
   expect(refreshed.template).toEqual(refreshed.scope);
   expect(f.store.refreshPresetTools("t1")).toBe("current");
 });
-it("recognizes the older native-write-free list without restoring writers", () => {
+it("does not erase explicit native-tool denies from a current wildcard list", () => {
   const f = fixture("keeper", true);
-  expect(f.store.refreshPresetTools("t1")).toBe("updated");
+  expect(f.store.refreshPresetTools("t1")).toBe("current");
   const scope = f.store.records.get("t1")!.scope!;
-  expect(scope.tools.allow).toContain("check_ui");
+  expect(scope.tools.allow).toContain("*");
   expect(scope.tools.allow).not.toContain("write");
   expect(scope.tools.deny).toEqual(f.scope.tools.deny);
 });
@@ -87,7 +87,7 @@ it.each(["narrowed", "custom grant"])("leaves a %s tool list untouched", kind =>
   else scope.tools.allow.push("approved_custom_tool");
   f.store.write("t1", scope, scope);
   const before = readFileSync(f.store.file("t1"), "utf8");
-  expect(f.store.refreshPresetTools("t1")).toBe("skipped");
+  expect(f.store.refreshPresetTools("t1")).toBe(kind === "narrowed" ? "skipped" : "current");
   expect(readFileSync(f.store.file("t1"), "utf8")).toBe(before);
 });
 it("records deterministic preset provenance on writes and reloads it outside the effective policy", () => {

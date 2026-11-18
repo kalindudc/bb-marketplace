@@ -1,4 +1,6 @@
 import type { Scope } from "./schema";
+import { agentProgram, bbPositionals, legacyAct, nestedCommands, userControl } from "./legacy";
+import { readerFallback } from "./worktree";
 import { checkInvocation } from "./checker";
 import { glob, isSink, normalizeToolPath, within, writeAllowed, writeDenied } from "./paths";
 import { normalizeRemote, pushSpec } from "./remote";
@@ -6,7 +8,7 @@ import { awkRead, fileRead, findRead, sedRead, xxdRead } from "./reads";
 import { draftEditKey, githubApiRead } from "./github";
 import { commandWritePaths, knownWritePaths, ruleMatches, shellCommands, type ShellCommand } from "./shell";
 
-export interface ScopeCall { kind: "tool" | "bash" | "write" | "read"; toolName: string; input: Record<string, unknown>; cwd: string; resolvedPaths?: Record<string, string>; pushTargets?: Record<string, string[]>; pushHeads?: Record<string, string>; gitRoots?: Record<string, string>; directories?: string[]; ownedDraftPrs?: string[] }
+export interface ScopeCall { containment?: "sandbox"; fetchWriteRoots?: string[]; kind: "tool" | "bash" | "write" | "read"; toolName: string; input: Record<string, unknown>; cwd: string; resolvedPaths?: Record<string, string>; pushTargets?: Record<string, string[]>; pushHeads?: Record<string, string>; gitRoots?: Record<string, string>; directories?: string[]; ownedDraftPrs?: string[] }
 export type Decision = { allow: true; check?: boolean } | { allow: false; ruleId: string; reason: string };
 const allowed: Decision = { allow: true };
 export const BLOCK_MARKER = "[Tavern scope blocked]";
@@ -28,12 +30,15 @@ function gitRead(argv: string[]): boolean {
   if (argv[1] === "branch") return argv.length === 2 || (argv.slice(2).some(arg => ["-v", "-vv", "--list", "-a", "-r", "--show-current", "--contains", "--no-contains", "--merged", "--no-merged"].includes(arg)) && !argv.some(arg => /^--(?:delete|move|copy|force|edit-description|set-upstream-to|unset-upstream)(?:=|$)|^-[^-]*[dDmMcCfut]/.test(arg)));
   return argv[1] === "config" && argv.some(arg => /^--(?:get(?:-all|-regexp|-urlmatch)?|list)$/.test(arg)) && !argv.some(arg => /^(?:--edit|--add|--replace-all|--unset|--remove-section|--rename-section)/.test(arg));
 }
-export function readonlyProgram(command: ShellCommand): boolean {
+export const readonlyProgram = (command: ShellCommand): boolean => inspectedProgram(command, false);
+export const containmentRead = (command: ShellCommand): boolean => inspectedProgram(command, true);
+function inspectedProgram(command: ShellCommand, contained: boolean): boolean {
   const [program, sub, action] = command.argv;
   const argv = command.argv;
   if (!argv.length) return true;
   if (program === "git") return gitRead(argv);
-  if (program === "gh") return ["view", "list", "status", "diff", "checks"].includes(action) || sub === "run" && action === "watch" || ["status", "search", "version", "help"].includes(sub) || sub === "api" && githubApiRead(argv);
+  if (program === "gh") return ["view", "list", "status", "diff", "checks"].includes(action) || sub === "run" && action === "watch" || ["status", "search", "version", "help"].includes(sub) || contained && sub === "auth" && action === "status" || sub === "api" && githubApiRead(argv);
+  if (program === "gcloud") return contained && sub === "storage" && action === "cat";
   if (program === "kubectl") return ["get", "describe", "logs", "events", "version", "api-resources", "api-versions", "explain", "cluster-info", "top", "wait"].includes(sub) || sub === "auth" && action === "can-i" || sub === "config" && ["view", "get-contexts", "current-context"].includes(action);
   if (program === "sed") return sedRead(argv);
   if (program === "awk") return awkRead(argv);
@@ -42,8 +47,7 @@ export function readonlyProgram(command: ShellCommand): boolean {
   if (program === "file") return fileRead(argv);
   if (program === "sort") return !argv.some(arg => /^--(?:output|compress-program)(?:=|$)|^-[^-]*o/.test(arg));
   if (program === "rg") return !argv.some(arg => /^--(?:pre|hostname-bin)(?:=|$)/.test(arg));
-  if (program === "bb") return ["status", "guide", "help"].includes(sub) || (["thread", "plugin", "provider", "project", "environment", "flare"].includes(sub) && ["show", "list", "log", "logs", "context", "status"].includes(action));
-  if (program === "cortex") return ["ls", "show", "search", "recall"].includes(sub);
+  if (["bb", "cortex"].includes(program)) return agentProgram(argv);
   if (program === "curl") return !argv.some((arg, i) => /^--(?:data|json|form|upload|request-target|config)|^-[^-]*[dFTK]/.test(arg) || arg === "--next" || ((arg === "-X" || arg === "--request") && !["GET", "HEAD", "OPTIONS"].includes(argv[i + 1])) || /^--request=/.test(arg) && !/^--request=(GET|HEAD|OPTIONS)$/.test(arg) || /^-X.+/.test(arg) && !/^-X(GET|HEAD|OPTIONS)$/.test(arg) || ["-O", "--remote-name", "--output-dir"].includes(arg) || ["-o", "--output"].includes(arg) && !isSink(argv[i + 1] ?? "") || /^(?:--output=|-o.)/.test(arg) && !isSink(arg.replace(/^--output=|^-o/, "")));
   if (program === "wget") return argv.includes("--spider") || argv.some((arg, i) => arg === "-O" && argv[i + 1] === "-") ? !argv.some(arg => /^--(?:post|body|method|input-file)/.test(arg)) : false;
   if (program === "node") return argv.length === 2 && ["--version", "-v"].includes(sub);
@@ -64,7 +68,33 @@ export function temporaryRoot(scope: Scope): string | undefined {
   })) return;
   return root;
 }
+export function authorityDecision(scope: Scope, call: ScopeCall): Decision | undefined {
+  if (scope.role !== "keeper" && ["spawn", "bb_workflow_run"].includes(call.toolName)) return { allow: false, ruleId: "member-spawn", reason: "Members don't start threads; ask your Keeper to hire." };
+  const source = call.input.command ?? call.input.cmd;
+  if (typeof source !== "string") return;
+  let commands: ShellCommand[];
+  try { commands = shellCommands(source, call.cwd); } catch {
+    if (/\bbb\s+(?:tavern\s+(?:ask|release|return|rule|stop|settings|guard\s+(?:install|uninstall)|backup\s+restore)|plugin\s+rpc\s+call\s+tavern\s+(?:answerAsk|resumeAll|releaseHold|settings\w+|backupRestore))\b/.test(source)) return { allow: false, ruleId: "tavern-control", reason: "Tavern's controls are the user's; ask the user." };
+    return;
+  }
+  for (const command of commands) {
+    if (userControl(command)) return { allow: false, ruleId: "tavern-control", reason: "Tavern's controls are the user's; ask the user." };
+    const words = bbPositionals(command.argv);
+    if (scope.role !== "keeper" && words[0] === "bb" && words[1] === "thread") {
+      if (words[2] === "spawn") return { allow: false, ruleId: "member-spawn", reason: "Members don't start threads; ask your Keeper to hire." };
+      if (words[2] === "archive" && !agentProgram(command.argv)) return { allow: false, ruleId: "member-archive", reason: "Members don't archive threads; ask your Keeper." };
+    }
+    for (const source of nestedCommands(command)) {
+      const decision = authorityDecision(scope, { ...call, input: { command: source } });
+      if (decision) return decision;
+    }
+  }
+}
 export function evaluate(scope: Scope, call: ScopeCall): Decision {
+  const authority = authorityDecision(scope, call);
+  if (authority) return authority;
+  const contained = call.containment === "sandbox" && scope.sandbox && ["bash", "Bash"].includes(call.toolName);
+  if (contained) scope = readerFallback(scope);
   if ([...scope.writes.allow, ...scope.writes.deny].some(path => path.includes("${")) && !["tavern_report", "journal", "quest", "tavern_ready"].includes(call.toolName)) return blocked(call.toolName, "worktree-unresolved", "the worktree root must be bound from the provisioned environment");
   if (!toolAllowed(scope, call.toolName)) return blocked(`tool ${call.toolName}`, "tool", "the thread's scope does not allow this tool");
   const name = call.toolName.toLowerCase();
@@ -80,14 +110,19 @@ export function evaluate(scope: Scope, call: ScopeCall): Decision {
   if (typeof source !== "string") return call.kind === "bash" ? blocked("shell call", "shell-input", "the command cannot be checked") : allowed;
   if (scope.preset !== "open" && !(scope.commandTools ?? ["bash", "Bash"]).includes(call.toolName)) return blocked(call.toolName, "command-tool", "command-running tools require an explicit scope allowlist and a guarded execution backend");
   let commands;
-  try { commands = shellCommands(source, call.cwd, { temporaryRoot: temporaryRoot(scope), isRead: readonlyProgram, gitRoots: call.gitRoots, directories: call.directories, env: scope.env.variables }); } catch {
+  try { commands = shellCommands(source, call.cwd, { temporaryRoot: temporaryRoot(scope), isRead: contained ? containmentRead : readonlyProgram, gitRoots: call.gitRoots, directories: call.directories, env: scope.env.variables, containment: contained ? "sandbox" : undefined }); } catch {
     if (scope.preset === "open") return allowed;
     for (const rule of scope.shell.deny) if (rule.regex && new RegExp(rule.regex).test(source)) return blocked("shell command", rule.id, rule.why);
+    if (contained) return allowed;
     return blocked("shell command", "shell-parse", "unsupported shell syntax cannot be checked safely");
   }
   let checking = false;
   for (const command of commands) {
-    const read = readonlyProgram(command), check = checkInvocation(scope, command, source, read);
+    for (const source of nestedCommands(command)) {
+      const result = evaluate(scope, { ...call, input: { command: source }, cwd: command.cwd });
+      if (!result.allow) return result;
+    }
+    const read = (contained ? containmentRead : readonlyProgram)(command), check = checkInvocation(scope, command, source, read);
     if (check) {
       const root = scope.checks?.worktree, location = call.resolvedPaths?.[normalizeToolPath(command.cwd, call.cwd)] ?? command.cwd;
       if (!root?.startsWith("/") || root === "/" || root === scope.env.variables.HOME || !within(location, root) || command.uncertain) return blocked(command.text, "checker-worktree", "checks must run in the trusted maker worktree; ask the Keeper to bind checks.worktree or use that directory");
@@ -107,18 +142,18 @@ export function evaluate(scope: Scope, call: ScopeCall): Decision {
     const paths = commandWritePaths(command);
     if (scope.preset !== "open" && command.gitEnvironment) return blocked(command.text, "git-environment", "GIT_DIR and GIT_WORK_TREE can redirect writes outside the bound checkout");
     if (scope.preset !== "open" && ["gs", "git-spice"].includes(program) && (["ss", "bs", "rs", "us", "uss", "bss", "dss"].includes(sub) || ["submit", "sync", "publish", "land"].includes(action))) return blocked(command.text, "git-stack-write", "stack publication needs an explicit scope decision");
-    if (scope.preset === "checker" && (program === "git" || ["curl", "wget"].includes(program)) && !read) return blocked(command.text, "checker-write", "checker permissions do not allow Git or network writes, even in done-when commands");
+    if (scope.preset === "checker" && (program === "git" || ["curl", "wget"].includes(program)) && !read && !(contained && program === "git" && sub === "fetch" && call.fetchWriteRoots?.length)) return blocked(command.text, "checker-write", "checker permissions do not allow Git or network writes, even in done-when commands");
     if (scope.preset !== "open" && program === "git") {
       const known = [...gitReads, "config", "branch", "remote", "stash", "push", "add", "commit", "checkout", "switch", "restore", "reset", "fetch", "pull", "merge", "rebase", "cherry-pick", "revert", "tag", "clean", "rm", "mv", "worktree", "init", "clone", "reflog", "apply", "am", "submodule", "lfs", "format-patch", "bisect"];
       if (!known.includes(sub)) return blocked(command.text, "git-alias", "unknown git subcommands or aliases cannot be checked");
-      if (!gitRead(argv) && sub !== "push") paths.push(command.cwd);
+      if (!gitRead(argv) && sub !== "push" && !(contained && sub === "fetch" && call.fetchWriteRoots?.length)) paths.push(command.cwd);
       if (sub === "config" && argv.some(arg => ["--global", "--system"].includes(arg)) && !gitRead(argv)) return blocked(command.text, "git-global-config", "global git configuration is outside the member worktree");
     }
-    for (const path of paths) if (!isSink(normalizeToolPath(path, command.cwd)) && (scope.preset !== "open" && (/[\$`]/.test(path) || path.startsWith("~") || command.uncertain) || !canWrite(path, command.cwd))) return blocked(`shell write to ${path}`, "shell-write", "the write target is protected, outside allowed roots or cannot be proven");
+    for (const path of paths) if (!(contained && (/[$`]/.test(path) || command.uncertain || command.cwdAlternative)) && !isSink(normalizeToolPath(path, command.cwd)) && (scope.preset !== "open" && (/[\$`]/.test(path) || path.startsWith("~") || command.uncertain) || !canWrite(path, command.cwd))) return blocked(`shell write to ${path}`, "shell-write", "the write target is protected, outside allowed roots or cannot be proven");
     if (scope.preset === "open") continue;
-    if (command.fedInput && command.scriptInput === "opaque") return blocked(command.text, "shell-input", "shell input from a pipe or redirect cannot be inspected");
-    if (scope.preset === "worktree" && command.cwdAlternative && !readonlyProgram(command) && !canWrite(command.cwd, command.cwd)) return blocked(command.text, "shell-location", "one possible working directory is outside allowed roots");
-    if (command.uncertain && !readonlyProgram(command)) return blocked(command.text, "shell-location", "the command's working directory or symlinks cannot be proven");
+    if (!contained && command.fedInput && command.scriptInput === "opaque") return blocked(command.text, "shell-input", "shell input from a pipe or redirect cannot be inspected");
+    if (!contained && scope.preset === "worktree" && command.cwdAlternative && !readonlyProgram(command) && !canWrite(command.cwd, command.cwd)) return blocked(command.text, "shell-location", "one possible working directory is outside allowed roots");
+    if (!contained && command.uncertain && !readonlyProgram(command)) return blocked(command.text, "shell-location", "the command's working directory or symlinks cannot be proven");
     if (program === "git" && sub === "push" && scope.preset === "worktree") {
       const dangerous = argv.some(arg => /^--(?:force(?:-with-lease|-if-includes)?|mirror|delete|all|tags|follow-tags|prune)(?:=|$)/.test(arg) || /^-[^-]*[fd]/.test(arg) || arg.startsWith("+") || arg.startsWith(":"));
       const rawRefs = pushSpec(argv)?.refs ?? [];
@@ -134,13 +169,14 @@ export function evaluate(scope: Scope, call: ScopeCall): Decision {
     if ((["npm", "yarn", "pnpm", "bun", "cargo"].includes(program) && argv.slice(1).includes("publish") || program === "gem" && sub === "push" || program === "twine" && sub === "upload")) return blocked(command.text, "package-publish", "publishing packages requires the user\u0027s decision");
     if (program === "gh") {
       const api = sub === "api" && githubApiRead(argv);
-      const read = ["view", "list", "status", "diff", "checks"].includes(action) || (sub === "run" && action === "watch") || ["status", "search", "version", "help"].includes(sub) || api;
+      const read = ["view", "list", "status", "diff", "checks"].includes(action) || (sub === "run" && action === "watch") || ["status", "search", "version", "help"].includes(sub) || sub === "auth" && action === "status" || api;
       const draft = scope.github === "draft-pr-only" && sub === "pr" && action === "create" && argv.some(arg => ["--draft", "--draft=true", "-d"].includes(arg)) && !argv.includes("--draft=false");
       const edit = scope.github === "draft-pr-only" && sub === "pr" && action === "edit" && !command.githubEnvironment && call.ownedDraftPrs?.includes(draftEditKey(command));
       if (scope.github === "none" || (!read && !draft && !edit && !(sub === "pr" && action === "merge" && excepted("gh-merge")))) return blocked(command.text, "github", "GitHub writes require an explicit grant; Smith pull requests must be drafts");
     }
     if (program === "kubectl" && !["get", "describe", "logs", "events", "version", "api-resources", "api-versions", "explain", "cluster-info", "top", "wait"].includes(sub) && !(sub === "auth" && action === "can-i") && !(sub === "config" && ["view", "get-contexts", "current-context"].includes(action))) return blocked(command.text, "kubectl-write", "cluster writes, exec and cp are outside this scope, including dry runs");
-    if (scope.writes.mode === "none") {
+    if (contained && scope.writes.mode === "none" && legacyAct(command)) return blocked(command.text, "legacy-act", "this consequential command requires a scope decision");
+    if (scope.writes.mode === "none" && !contained) {
       const knownWriter = ["tee", "mkdir", "cp", "mv", "touch", "rm", "rmdir"].includes(program) && knownWritePaths(argv).length > 0;
       if (!read && !check && !knownWriter) return blocked(command.text, "readonly-shell", "this scope permits inspected read programs, not arbitrary programs or opaque shell input");
     }

@@ -11,6 +11,6 @@ const root = process.env.TAVERN_TEST_ROOT, realHome = process.env.TAVERN_TEST_RE
 if (!root || !realHome) throw new Error("Vitest must initialize Tavern test environment isolation");
 const checkout = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const violations: string[] = [];
-const restore = installFilesystemGuard({ root, realHome, readRoots: [checkout, process.env.TAVERN_TEST_PI_MODULES!] }, message => violations.push(message));
+const restore = installFilesystemGuard({ root, realHome, readRoots: [checkout, process.env.TAVERN_TEST_PI_MODULES!, ...(process.env.TAVERN_SCOPE_REPLAY ? [process.env.TAVERN_SCOPE_REPLAY] : [])] }, message => violations.push(message));
 afterEach(() => { if (violations.length) throw new Error(violations.splice(0).join("\n")); });
 afterAll(restore);

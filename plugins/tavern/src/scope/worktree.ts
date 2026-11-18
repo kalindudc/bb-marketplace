@@ -9,6 +9,12 @@ const variable = "${worktree}";
 export function needsWorktree(scope: Scope): boolean {
   return [...scope.writes.allow, ...scope.writes.deny].some(path => path.includes(variable));
 }
+export function readerFallback(scope: Scope): Scope {
+  if (scope.preset !== "worktree" || scope.expectedWorktree || !needsWorktree(scope)) return scope;
+  return { ...scope, preset: "readonly", expectedWorktree: undefined,
+    writes: { ...scope.writes, mode: "none", allow: scope.writes.allow.filter(path => !path.includes(variable)) },
+    shell: { ...scope.shell, deny: [...scope.shell.deny, { id: "git-push", argv: ["git", "push"], why: "An unbound Smith runs as a Ranger" }] } };
+}
 export function checkedWorktreeRoot(path: string, home = homedir()): string {
   if (!isAbsolute(path)) throw new Error("The worktree root must be absolute");
   const root = realpathSync(path);

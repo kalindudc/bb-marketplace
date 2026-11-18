@@ -85,17 +85,22 @@ describe("provider-neutral watcher", () => {
     expect(store.records.get("t1")?.scope?.writes.allow).toContain("${worktree}");
     await harness.lifecycle.dispose();
   });
-  it.each([null, "/", homedir(), "lookup-error"])("fails closed if late worktree environment resolution fails: %s", async path => {
+  it.each([null, "/", homedir(), "lookup-error"])("allows reader work when late worktree resolution fails, but still catches writes: %s", async path => {
     const store = new ScopeStore(temp());
+    let writing = false;
     store.write("t1", bindPaths({ ...scopeForClass("smith"), threadId: "t1", issuedAt: 1 }, { home: temp(), tmp: [join(store.dataDir, "scratch")], scopesDir: store.directory }));
     const { bb, harness } = createFakePluginHost({ pluginId: "tavern", sdk: { threads: {
       get: async () => { if (path === "lookup-error") throw new Error("environment unavailable"); return { environmentId: path === null ? null : "env1" }; },
       stop: async () => ({}),
-      events: { list: async () => [{ id: "e1", seq: 1, type: "item/started", createdAt: Date.now(), data: { item: { type: "fileRead", path: "/tmp/x" } } }] },
+      events: { list: async () => [{ id: writing ? "e2" : "e1", seq: writing ? 2 : 1, type: "item/started", createdAt: Date.now(), data: { item: writing ? { type: "fileChange", changes: [{ path: "/outside/file" }] } : { type: "fileRead", path: "/tmp/x" } } }] },
     }, environments: { get: async () => ({ path }) } } });
     registerWatcher(bb, store, { onViolation: vi.fn() });
     await harness.behavior.emitThreadEvent("experimental_thread.events", { thread: makeThreadResponse({ id: "t1" }), sequence: 1 });
-    expect(store.violations()[0]).toMatchObject({ ruleId: "worktree-unresolved", stopped: true });
+    expect(store.violations()).toEqual([]);
+    expect(harness.inspection.sdk.callsTo("threads.stop")).toHaveLength(0);
+    writing = true;
+    await harness.behavior.emitThreadEvent("experimental_thread.events", { thread: makeThreadResponse({ id: "t1" }), sequence: 2 });
+    expect(store.violations()[0]).toMatchObject({ ruleId: "write-path", stopped: true });
     await harness.lifecycle.dispose();
   });
   it.each(["pi", "claude-code", "codex"])("stops and records a %s violation through the fake host", async providerId => {
@@ -124,8 +129,20 @@ describe("provider-neutral watcher", () => {
     await harness.behavior.emitThreadEvent("experimental_thread.events", { thread: makeThreadResponse({ id: "t1", providerId: "codex" }), sequence: 1 });
     expect(store.violations()[0]).toMatchObject({ ruleId: "scope-invalid", stopped: true }); await harness.lifecycle.dispose();
   });
+  it.each(["dt pr merge 17", "dt pr comment 17 -b fixture", "quick deploy ./site example-site", "security find-generic-password -s fixture -w", "vault read secret/fixture", "echo 'git push origin main' | sh", "find . -exec git push origin main \\;", "parallel gh pr merge ::: 17", "watch -n1 gh pr merge 17"])("records legacy acts in Watch without stopping the Pi member: %s", async command => {
+    const { store, s } = fixture(); store.setMode("t1", "watch"); store.arm(s);
+    const onViolation = vi.fn();
+    const { bb, harness } = createFakePluginHost({ pluginId: "tavern", sdk: { threads: { stop: async () => ({}), events: { list: async () => [{ id: "e1", seq: 1, type: "item/completed", createdAt: Date.now(), data: { item: { type: "commandExecution", command, cwd: "/workspace" } } }] } } } });
+    registerWatcher(bb, store, { onViolation });
+    await harness.behavior.emitThreadEvent("experimental_thread.events", { thread: makeThreadResponse({ id: "t1", providerId: "pi" }), sequence: 1 });
+    expect(store.violations()).toHaveLength(1);
+    expect(store.violations()[0]).toMatchObject({ mode: "watch", stopped: false });
+    expect(harness.inspection.sdk.callsTo("threads.stop")).toHaveLength(0);
+    expect(onViolation).not.toHaveBeenCalled();
+    await harness.lifecycle.dispose();
+  });
   it("does not read unscoped events, deduplicates notifications and measures event-to-stop latency", async () => {
-    const { store, s } = fixture(); store.arm(s);
+    const { store, s } = fixture(); s.tools.deny.push("mcp__tool_gateway__slack_post_message"); store.write("t1", s); store.arm(s);
     const start = Date.now();
     const rows = [{ id: "e1", seq: 1, type: "item/started", createdAt: start, data: { item: { type: "toolCall", tool: "mcp__tool_gateway__slack_post_message", arguments: { text: "not sent" } } } }];
     const { bb, harness } = createFakePluginHost({ pluginId: "tavern", sdk: { threads: { stop: async () => ({}), events: { list: async () => rows } } } });

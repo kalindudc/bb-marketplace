@@ -5,7 +5,7 @@ import { scopeObservationBindingSchema, ScopeStore, type ScopeObservationBinding
 import type { ScopeHostBinding } from "./schema";
 import { prepareCall } from "./prepare";
 import { bindChecks } from "./checker";
-import { bindWorktree, checkedWorktreeRoot, gitWorktreeRoot, needsWorktree } from "./worktree";
+import { bindWorktree, checkedWorktreeRoot, gitWorktreeRoot, needsWorktree, readerFallback } from "./worktree";
 
 export type RemoteScopeObservation = { kind: "unavailable"; reason: string } | { kind: "open"; reason: string } | {
   kind: "ready"; hostId: string; cwd: string; binding: ScopeHostBinding;
@@ -233,14 +233,21 @@ export function registerWatcher(bb: BbPluginApi, store: ScopeStore, deps: WatchD
             scope = bindWorktree(scope, root);
             for (const call of calls) if (typeof item.cwd !== "string") call.cwd = root;
           } catch (error) {
-            await contain(threadId, providerId, row.id, row.seq, row.createdAt, blocked("tool call", "worktree-unresolved", "the provisioned worktree could not be resolved: " + String(error)));
-            if (stopped.has(threadId)) break;
-            continue;
+            if (needsWorktree(scope) && !record.binding) scope = readerFallback(scope);
+            else {
+              await contain(threadId, providerId, row.id, row.seq, row.createdAt, blocked("tool call", "worktree-unresolved", "the provisioned worktree could not be resolved: " + String(error)));
+              if (stopped.has(threadId)) break;
+              continue;
+            }
           }
         }
         for (const call of calls) {
           let decision: Decision;
-          try { scope = bindChecks(scope); decision = evaluate(scope, prepareCall(call, { scope })); }
+          try {
+            scope = bindChecks(scope);
+            const local = { ...call, containment: providerId === "pi" && process.platform === "darwin" && scope.sandbox ? "sandbox" as const : undefined };
+            decision = evaluate(scope, prepareCall(local, { scope }));
+          }
           catch (error) { decision = blocked(call.toolName, "path-unresolved", "the call paths could not be resolved: " + String(error)); }
           if (!decision.allow) { await contain(threadId, providerId, row.id, row.seq, row.createdAt, decision, call); break; }
         }

@@ -7,7 +7,7 @@ import { classScopeSchema, scopeOverrideSchema, type Scope, type ScopeOverride, 
 import { scopeForClass } from "./presets";
 import { normalizeRemote } from "./remote";
 import { atomicWrite } from "./store";
-import { realPath, writeAllowed } from "./paths";
+import { glob, realPath, writeAllowed } from "./paths";
 import { tmpdir } from "node:os";
 
 const classPolicySchema = z.object({ defaults: scopeOverrideSchema.optional(), keeperMayAllow: z.array(z.string()).optional() }).strict();
@@ -104,9 +104,10 @@ export class ScopePolicy {
       const bound = { ...granted, writes: { ...granted.writes, allow: roots.map(root => root.includes("*") ? root : realPath(root)) } };
       return writeAllowed(bound, realPath(path), "/");
     };
-    const widenings = wideningIds(override).filter(id => !alreadyWritable(id) && !approved.includes(id) && !existing.has(id) && !permits.some(entry => entry.keeperMayAllow.includes(id)));
+    const alreadyAvailable = (id: string) => id.startsWith("tool:") && granted.tools.allow.some(pattern => pattern === id.slice(5) || pattern === "*" || !id.slice(5).includes("*") && glob(pattern, id.slice(5)));
+    const widenings = wideningIds(override).filter(id => !alreadyAvailable(id) && !alreadyWritable(id) && !approved.includes(id) && !existing.has(id) && !permits.some(entry => entry.keeperMayAllow.includes(id)));
     if (widenings.length) return { scope: mergeOverride(scope, narrowing(override)), widenings: [...new Set(widenings)], problems: policy.problems };
-    let candidate = mergeOverride(scope, { ...override, writes: { ...override.writes, allow: override.writes?.allow?.filter(path => !alreadyWritable("write:" + path)) }, allowRules: [] });
+    let candidate = mergeOverride(scope, { ...override, tools: { ...override.tools, allow: override.tools?.allow?.filter(name => !alreadyAvailable("tool:" + name)) }, writes: { ...override.writes, allow: override.writes?.allow?.filter(path => !alreadyWritable("write:" + path)) }, allowRules: [] });
     for (const id of override.allowRules ?? []) {
       const permission = permits.filter(entry => entry.keeperMayAllow.includes(id));
       if (approved.includes(id) || existing.has(id) || permission.some(entry => !entry.remote)) candidate = mergeOverride(candidate, { allowRules: [id] });

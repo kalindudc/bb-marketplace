@@ -1,13 +1,13 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, rmSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { evaluate, blocked, toolAllowed } from "../../src/scope/engine";
+import { authorityDecision, evaluate, blocked, toolAllowed } from "../../src/scope/engine";
 import { scopeFileSchema, scopeRenderedFileSchema, type Scope } from "../../src/scope/schema";
-import { armScope, type NativeScopeReceipt } from "../../src/scope/store";
+import { armedFile, armScope, type NativeScopeReceipt } from "../../src/scope/store";
 import { prepareCall } from "../../src/scope/prepare";
 import { realPath } from "../../src/scope/paths";
 import { sandboxCommand } from "../../src/scope/sandbox";
 import { bindChecks } from "../../src/scope/checker";
-import { bindWorktree, gitWorktreeRoot, needsWorktree } from "../../src/scope/worktree";
+import { bindWorktree, gitWorktreeRoot, needsWorktree, readerFallback } from "../../src/scope/worktree";
 
 // Structural API keeps the installed shim independent of a second copy of pi.
 interface PiContext { cwd: string }
@@ -25,6 +25,7 @@ export default function tavernGuard(pi: PiGuardApi): void {
   let worktreeKind: Scope["workspaceKind"];
   let nativeReceipt: NativeScopeReceipt | undefined;
   const enforcementNotes = new Set<string>();
+  const containmentNotes = new Map<string, string>();
   const modeNote = "[Tavern scope] Enforcement enabled; this call and subsequent calls use the current scope. Earlier calls made while off were not enforced.";
   let mode: Scope["mode"] = process.env.TAVERN_SCOPE_MODE === "off" ? "off" : process.env.TAVERN_SCOPE_MODE === "watch" ? "watch" : "enforce";
   const load = (): Scope => {
@@ -46,9 +47,10 @@ export default function tavernGuard(pi: PiGuardApi): void {
     if (mode === "off") return scope;
     if (needsWorktree(scope) || scope.writes.mode === "worktree") {
       if (worktreeKind !== scope.workspaceKind) { worktree = undefined; worktreeKind = scope.workspaceKind; }
-      worktree ??= gitWorktreeRoot(undefined, scope.workspaceKind);
-      if (!needsWorktree(scope) && realPath(scope.expectedWorktree ?? scope.writes.allow[0]) !== worktree) throw new Error("Scope root differs from the provisioned linked worktree");
-      scope = bindWorktree(scope, worktree);
+      try { worktree ??= gitWorktreeRoot(undefined, scope.workspaceKind); }
+      catch (error) { if (!nativeReceipt && needsWorktree(scope)) scope = readerFallback(scope); else throw error; }
+      if (worktree && !needsWorktree(scope) && scope.preset === "worktree" && realPath(scope.expectedWorktree ?? scope.writes.allow[0]) !== worktree) throw new Error("Scope root differs from the provisioned linked worktree");
+      if (worktree) scope = bindWorktree(scope, worktree);
     }
     scope = bindChecks(scope);
     if ([...scope.writes.allow, ...scope.writes.deny].some(path => path.includes("${"))) throw new Error("Unbound scope paths");
@@ -65,7 +67,7 @@ export default function tavernGuard(pi: PiGuardApi): void {
   };
   const refresh = () => {
     let scope: Scope;
-    try { scope = load(); } catch { hide(null); return; }
+    try { scope = load(); } catch { rmSync(armedFile(file), { force: true }); hide(null); return; }
     hide(scope);
     armScope(file, scope, nativeReceipt);
   };
@@ -80,15 +82,19 @@ export default function tavernGuard(pi: PiGuardApi): void {
       const decision = blocked("tool " + name, "scope-invalid", "the scope file is missing, invalid or its worktree cannot be resolved: " + String(error) + "; ask the Keeper to repair it");
       return { block: true, reason: !decision.allow ? decision.reason : "" };
     }
+    const authority = authorityDecision(scope, { kind: "tool", toolName: name, input: event.input ?? {}, cwd: ctx.cwd });
+    if (authority && !authority.allow) return { block: true, reason: authority.reason };
     if (mode !== "enforce") return;
     const switched = previousMode === "off";
     try {
       armScope(file, scope, nativeReceipt);
-      const call = prepareCall({ kind: "tool", toolName: name, input: event.input ?? {}, cwd: ctx.cwd }, { scope });
+      const contained = !nativeReceipt && process.platform === "darwin" && scope.sandbox && ["bash", "Bash"].includes(name);
+      const call = prepareCall({ kind: "tool", toolName: name, input: event.input ?? {}, cwd: ctx.cwd, containment: contained ? "sandbox" : undefined }, { scope });
       const decision = evaluate(scope, call);
       if (!decision.allow) return { block: true, reason: decision.reason + (switched ? "\n" + modeNote : "") };
       if (switched) enforcementNotes.add(event.toolCallId ?? name);
-      if (name.toLowerCase() === "bash" && typeof event.input?.command === "string") event.input.command = sandboxCommand(scope, event.input.command, decision.check === true);
+      if (name.toLowerCase() === "bash" && typeof event.input?.command === "string") event.input.command = sandboxCommand(scope, event.input.command, decision.check === true, call.fetchWriteRoots);
+      if (!nativeReceipt && process.platform === "darwin" && scope.sandbox && name.toLowerCase() === "bash") containmentNotes.set(event.toolCallId ?? name, `Tavern: a ${scope.preset === "worktree" ? "Smith writes only to its worktree, " : scope.preset === "checker" ? "Warden writes only to " : "Ranger writes only to "}$BB_THREAD_STORAGE and temp. Save there instead.`);
     } catch (error) {
       if (emergency.includes(name)) return;
       const decision = blocked("tool " + name, "guard-error", "the guard could not safely check this call: " + String(error));
@@ -96,7 +102,12 @@ export default function tavernGuard(pi: PiGuardApi): void {
     }
   });
   pi.on("tool_result", event => {
-    if (!enforcementNotes.delete(event.toolCallId ?? event.toolName ?? "unknown")) return;
-    return { content: [...event.content ?? [], { type: "text", text: modeNote }], ...(event.structuredContent === undefined ? {} : { structuredContent: event.structuredContent }) };
+    const key = event.toolCallId ?? event.toolName ?? "unknown";
+    const hint = containmentNotes.get(key); containmentNotes.delete(key);
+    const notes: string[] = [];
+    if (hint && (event.content ?? []).some(part => typeof part === "object" && part !== null && "text" in part && typeof part.text === "string" && part.text.includes("Operation not permitted"))) notes.push(hint);
+    if (enforcementNotes.delete(key)) notes.push(modeNote);
+    if (!notes.length) return;
+    return { content: [...event.content ?? [], ...notes.map(text => ({ type: "text", text }))], ...(event.structuredContent === undefined ? {} : { structuredContent: event.structuredContent }) };
   });
 }

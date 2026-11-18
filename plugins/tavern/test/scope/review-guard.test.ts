@@ -38,12 +38,13 @@ it("arms a session started off and reports its first newly enforced call in the 
   expect(f.emit("tool_call", { toolName: "read", toolCallId: "c1", input: {} })).toBeUndefined();
   expect(f.emit("tool_result", { toolName: "read", toolCallId: "c1", content: [{ type: "text", text: "ok" }] })).toMatchObject({ content: [{ type: "text", text: "ok" }, { type: "text", text: expect.stringContaining("Enforcement enabled") }] });
 });
-it("rejects a shared checkout even with an unresolved worktree template, and rejects a known wrong root", () => {
+it("uses a reader in a shared checkout until bound, but rejects a known wrong root", () => {
   const f = fixture(), { main, worktree } = linkedWorktree(f.root);
   const template = bindPaths({ ...scopeForClass("smith"), threadId: "t1", issuedAt: 1 }, { home: f.root, tmp: [join(f.root, "scratch")], scopesDir: f.store.directory }, realPath);
   f.store.write("t1", template); const cwd = vi.spyOn(process, "cwd").mockReturnValue(main);
-  extension(f.pi); f.emit("session_start"); expect(f.store.isArmed("t1")).toBe(false);
-  expect(f.emit("tool_call", { toolName: "read", input: {} })).toMatchObject({ block: true, reason: expect.stringContaining("linked Git worktree") });
+  extension(f.pi); f.emit("session_start"); expect(f.store.isArmed("t1")).toBe(true);
+  expect(f.emit("tool_call", { toolName: "read", input: {} })).toBeUndefined();
+  expect(f.emit("tool_call", { toolName: "write", input: { path: join(main, "outside") } })).toMatchObject({ block: true });
   f.store.write("t1", { ...template, expectedWorktree: main }); cwd.mockReturnValue(worktree); f.emit("session_start");
   expect(f.store.isArmed("t1")).toBe(false);
   expect(f.emit("tool_call", { toolName: "read", input: {} })).toMatchObject({ block: true, reason: expect.stringContaining("expected root") });

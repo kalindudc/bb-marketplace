@@ -18,9 +18,9 @@ describe("scope engine", () => {
     expect(bash("wanderer", "git push --force origin main").allow).toBe(true);
     expect(evaluate(scope("unknown"), { kind: "tool", toolName: "anything", input: {}, cwd: "/repo" }).allow).toBe(true);
   });
-  it("allows reads, reports, quest and flare but denies other plugin sends", () => {
+  it("makes reads, reports and other plugin tools available", () => {
     for (const name of ["read", "quest", "tavern_report", "flare", "mcp__tool_gateway__slack_read_thread"]) expect(evaluate(scope("ranger"), { kind: "tool", toolName: name, input: {}, cwd: "/repo" }).allow).toBe(true);
-    for (const role of ["ranger", "smith", "keeper"]) for (const name of ["mcp__tool_gateway__slack_post_message", "slack_send", "other_write_file", "spawn"]) expect(evaluate(scope(role), { kind: "tool", toolName: name, input: {}, cwd: "/repo" }).allow).toBe(false);
+    for (const role of ["ranger", "smith", "keeper"]) for (const name of ["mcp__tool_gateway__slack_post_message", "slack_send", "other_write_file", "spawn"]) expect(evaluate(scope(role), { kind: "tool", toolName: name, input: {}, cwd: "/repo" }).allow).toBe(name !== "spawn" || role === "keeper");
   });
   it("keeps Keeper domain writes out, but permits Tavern coordination", () => {
     expect(evaluate(scope("keeper"), { kind: "tool", toolName: "tavern_hire", input: {}, cwd: "/repo" }).allow).toBe(true);
@@ -55,6 +55,6 @@ describe("scope engine", () => {
     const late = bindPaths(scopeForClass("smith"), { home: "/home/me", tmp: ["/tmp"], scopesDir: "/data/scopes" });
     expect(late.writes.allow).toContain("${worktree}");
     expect(evaluate(late, { kind: "write", toolName: "write", input: { path: "/repo/file" }, cwd: "/repo" })).toMatchObject({ allow: false, ruleId: "worktree-unresolved" });
-    expect(() => scopeForClass("ranger", { tools: { allow: ["spawn"] } })).toThrow();
+    expect(scopeForClass("ranger", { tools: { allow: ["spawn"] } }).tools.allow).toEqual(["spawn"]);
   });
 });

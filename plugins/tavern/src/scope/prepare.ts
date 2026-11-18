@@ -3,8 +3,9 @@ import { statSync } from "node:fs";
 import { normalizeRemote, pushSpec } from "./remote";
 import { draftEditKey, draftEditSelector } from "./github";
 import { isSink, normalizeToolPath, realPath } from "./paths";
-import { readonlyProgram, temporaryRoot, type ScopeCall } from "./engine";
+import { containmentRead, readonlyProgram, temporaryRoot, type ScopeCall } from "./engine";
 import type { Scope } from "./schema";
+import { gitWriteRoots } from "./sandbox";
 import { commandWritePaths, shellCommands } from "./shell";
 
 export interface PrepareDeps { scope?: Scope; readCommand?(program: string, args: string[], cwd?: string): string }
@@ -17,6 +18,7 @@ export function prepareCall(call: ScopeCall, deps: PrepareDeps = {}): ScopeCall 
   const gitRoots: Record<string, string> = {};
   const directories: string[] = [];
   const ownedDraftPrs: string[] = [];
+  const fetchWriteRoots: string[] = [];
   const add = (path: string, base: string) => {
     if (!/[\$`]/.test(path)) {
       const full = normalizeToolPath(path, base);
@@ -32,7 +34,7 @@ export function prepareCall(call: ScopeCall, deps: PrepareDeps = {}): ScopeCall 
     }
     let commands;
     try {
-      const facts = { temporaryRoot: deps.scope ? temporaryRoot(deps.scope) : undefined, isRead: readonlyProgram, gitRoots, directories, env: deps.scope?.env.variables };
+      const facts = { temporaryRoot: deps.scope ? temporaryRoot(deps.scope) : undefined, isRead: call.containment === "sandbox" ? containmentRead : readonlyProgram, gitRoots, directories, env: deps.scope?.env.variables, containment: call.containment };
       commands = shellCommands(command, cwd, facts);
       for (const path of new Set(commands.map(cmd => cmd.cwd))) {
         try { if (statSync(path).isDirectory()) directories.push(path); }
@@ -40,6 +42,9 @@ export function prepareCall(call: ScopeCall, deps: PrepareDeps = {}): ScopeCall 
       }
       commands = shellCommands(command, cwd, facts);
     } catch { return { ...call, cwd, resolvedPaths }; }
+    if (call.containment === "sandbox" && commands.every(cmd => !cmd.uncertain && commandWritePaths(cmd).length === 0 && (containmentRead(cmd) || cmd.argv[0] === "git" && cmd.argv[1] === "fetch" && !cmd.gitEnvironment))) {
+      for (const cmd of commands) if (cmd.argv[0] === "git" && cmd.argv[1] === "fetch") fetchWriteRoots.push(...gitWriteRoots(cmd.cwd));
+    }
     let branchStable = true;
     const redirectedGithub = commands.some(cmd => cmd.githubEnvironment);
     for (const cmd of commands) {
@@ -75,5 +80,5 @@ export function prepareCall(call: ScopeCall, deps: PrepareDeps = {}): ScopeCall 
       for (const path of commandWritePaths(cmd)) add(path, cmd.cwd);
     }
   }
-  return { ...call, cwd, resolvedPaths, pushTargets, pushHeads, gitRoots, directories, ownedDraftPrs };
+  return { ...call, cwd, resolvedPaths, pushTargets, pushHeads, gitRoots, directories, ownedDraftPrs, ...(call.containment === "sandbox" ? { fetchWriteRoots: [...new Set(fetchWriteRoots)] } : {}) };
 }

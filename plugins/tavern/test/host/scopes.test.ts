@@ -253,7 +253,7 @@ it("native session status distinguishes delivered policy from a real guard-loade
   const f = await fixture(), ack = await f.service.bindScope(f.input()), input = { ...f.authority, revision: 1, scopeDigest: ack.scopeDigest };
   expect(await f.service.sessionStatus(input)).toMatchObject({ state: "not-observed" });
   const pi = guarded(ack.scopeFile, f.repo); pi.emit("session_start");
-  expect(pi.tools()).not.toContain("private_tool"); expect(pi.emit("tool_call", { toolName: "read", input: { path: "tracked" } })).toBeUndefined();
+  expect(pi.tools()).toContain("private_tool"); expect(pi.emit("tool_call", { toolName: "read", input: { path: "tracked" } })).toBeUndefined();
   expect(await f.service.sessionStatus(input)).toEqual({ state: "armed", revision: 1, scopeDigest: ack.scopeDigest });
   const marker = JSON.parse(readFileSync(store.armedFile(ack.scopeFile), "utf8")); expect(marker).toMatchObject({ threadId: "member", pid: process.pid, hostBinding: { placementId: "placement", generation: 1, endpointId: "member-workspace", revision: 1, scopeDigest: ack.scopeDigest }, renderedDigest: digest(readFileSync(ack.scopeFile, "utf8")) });
 });

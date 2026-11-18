@@ -31,13 +31,13 @@ it("arms in the Warden environment but checks and sandboxes against the differen
   expect(handlers.get("tool_call")!(event, { cwd: f.ownCwd })).toBeUndefined();
   if (process.platform === "darwin" && existsSync("/usr/bin/sandbox-exec")) { expect(event.input.command).toContain("/usr/bin/sandbox-exec"); expect(event.input.command).toContain("(deny network*)"); expect(event.input.command).toContain(f.worktree); }
 });
-it("allows byte inspection through the pi guard with an unproven cd but denies output-file modes", () => {
+it("allows byte inspection and leaves opaque output-file modes to the macOS sandbox", () => {
   const f = fixture(); vi.stubEnv("TAVERN_SCOPE_FILE", f.store.file("t1")); vi.stubEnv("BB_THREAD_ID", "t1");
   const handlers = new Map<string, Function>(); extension({ on: (name, fn) => { handlers.set(name, fn); }, getActiveTools: () => ["bash", "read", "journal", "tavern_report"], setActiveTools: vi.fn() });
   handlers.get("session_start")!({}, { cwd: f.ownCwd });
   const event = { toolName: "bash", input: { command: "W='" + f.worktree + "'; cd $W && tail -c 20 input | od -c | tail -3; xxd -g 1 input; hexdump -C input; file input; stat input" } };
   expect(handlers.get("tool_call")!(event, { cwd: f.ownCwd })).toBeUndefined();
-  for (const command of ["xxd input output", "file -C -m magic"]) expect(handlers.get("tool_call")!({ toolName: "bash", input: { command } }, { cwd: f.ownCwd })).toMatchObject({ block: true });
+  for (const command of ["xxd input output", "file -C -m magic"]) expect(handlers.get("tool_call")!({ toolName: "bash", input: { command } }, { cwd: f.ownCwd })).toEqual(process.platform === "darwin" ? undefined : expect.objectContaining({ block: true }));
 });
 it("does not create a watcher violation for routine checks, but still contains Git writes", async () => {
   const f = fixture(), callbacks = new Map<string, Function>(), stop = vi.fn(), onViolation = vi.fn();

@@ -17,7 +17,6 @@ import {
   uninstallGuard,
 } from "../scope/install";
 import { gitWorktreeRoot, needsWorktree } from "../scope/worktree";
-import { glob } from "../scope/paths";
 import { normalizeRemote } from "../scope/remote";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import type { Ask, Member } from "../shared/schema";
@@ -184,15 +183,6 @@ export class BackendScopes {
     }
   }
   private validateTools(override: ScopeOverride, scope: Scope) {
-    const known = new Set([
-      "read", "Read", "write", "Write", "edit", "Edit", "MultiEdit", "multiedit", "apply_patch",
-      "bash", "Bash", "shell", "shell_command", "exec_command", "write_stdin", "powershell", "PowerShell",
-      "grep", "Grep", "find", "Glob", "ls", "codemode", "tool_search", "journal", "quest",
-      "web_search", "web_fetch", "web_extract", "web_map", "git_blame", "git_diff_summary", "ast_query",
-      ...this.runtime.toolNames,
-      ...this.api.violations(scope.threadId).flatMap(violation => violation.call?.toolName ? [violation.call.toolName] : []),
-    ]);
-    const existing = [...scope.tools.allow, ...scope.tools.deny];
     const commands = new Set(["npm", "npx", "node", "pnpm", "yarn", "bun", "git", "gh", "cargo", "go", "python", "python3", "ruby", "bundle", "make"]);
     for (const name of Object.values(override.tools ?? {}).flatMap(names => names ?? [])) {
       if (/\s|[|;&<>`$]/.test(name) || commands.has(name)) {
@@ -203,8 +193,6 @@ export class BackendScopes {
           throw new Error(`${name} is a shell command; the ${label} preset already allows it. No tool grant or scope ask is needed.`);
         throw new Error(`${name} is a shell command, not a tool name; ${decision && !decision.allow ? `blocked by ${decision.ruleId}: ${decision.reason}` : "commands are governed by the preset and shell rules, not tools.allow"}. No tool-name grant can authorize a shell command.`);
       }
-      if (!known.has(name) && !existing.includes(name) && ![...known].some(tool => glob(name, tool)))
-        throw new Error(`Tavern cannot verify tool name ${name}. Use a known built-in, a registered Tavern tool, an existing valid pattern, or the exact tool name from its scope violation. MCP and other-plugin names are not a complete discovered catalog.`);
     }
   }
   async pinWorktree(threadId: string) {
@@ -226,8 +214,22 @@ export class BackendScopes {
     )
       return;
     const paths = await this.paths(threadId);
-    if (!paths.worktree) return;
+    if (!paths.worktree) {
+      if (!this.runtime.keeper.store.runtime(threadId).scopeProblems?.includes("The Smith runs as a Ranger until its worktree is bound.")) {
+        this.recordProblems(threadId, [...this.runtime.keeper.store.runtime(threadId).scopeProblems ?? [], "The Smith runs as a Ranger until its worktree is bound."]);
+        this.runtime.keeper.store.event(this.runtime.keeper.now(), member?.keeperThreadId ?? threadId, member?.boardQuestId ?? null,
+          "scope.reader", "The Smith runs as a Ranger until its worktree is bound.", { memberThreadId: threadId }, { kind: "tavern" });
+        this.runtime.keeper.changed(threadId, member?.boardQuestId);
+      }
+      return;
+    }
     await this.api.rebindScope(threadId);
+    const problems = this.runtime.keeper.store.runtime(threadId).scopeProblems ?? [];
+    if (problems.includes("The Smith runs as a Ranger until its worktree is bound.")) {
+      this.recordProblems(threadId, problems.filter(problem => problem !== "The Smith runs as a Ranger until its worktree is bound."));
+      this.runtime.keeper.store.event(this.runtime.keeper.now(), member?.keeperThreadId ?? threadId, member?.boardQuestId ?? null,
+        "scope.bound", "The Smith’s worktree is bound; its worktree scope is active.", { memberThreadId: threadId }, { kind: "tavern" });
+    }
     this.runtime.keeper.changed(threadId, member?.boardQuestId);
   }
   private recordProblems(threadId: string, problems: string[]) {

@@ -21,8 +21,8 @@ function pathFilter(path: string): string {
   const regex = "^" + path.split("*").map(part => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join(".*") + "$";
   return "(regex " + regexLiteral(regex) + ")";
 }
-export function sandboxProfile(scope: Scope, checking = false): string {
-  let roots = [...scope.writes.allow];
+export function sandboxProfile(scope: Scope, checking = false, fetchRoots: string[] = []): string {
+  let roots = [...scope.writes.allow, ...fetchRoots];
   const protectedPaths: string[] = [], protectedAncestors: string[] = [], ignoredPaths: string[] = [], ignoredDirectories: string[] = [];
   if (scope.preset === "checker" && scope.checks?.worktree) {
     const root = scope.checks.worktree, policy = checkerWritePaths(scope);
@@ -32,7 +32,7 @@ export function sandboxProfile(scope: Scope, checking = false): string {
     });
     ignoredPaths.push(...policy.allow);
     ignoredDirectories.push(...policy.directories);
-    protectedPaths.push(...policy.deny, join(root, ".git"), ...gitWriteRoots(root));
+    protectedPaths.push(...policy.deny, ...[join(root, ".git"), ...gitWriteRoots(root)].filter(path => checking || !fetchRoots.includes(realPath(path))));
     protectedAncestors.push(...policy.ancestors);
   } else if (scope.preset === "checker" && checking) throw new Error("The checker has no maker worktree");
   if (scope.writes.mode === "worktree") roots.push(...gitWriteRoots(scope.expectedWorktree ?? roots[0]));
@@ -49,8 +49,8 @@ export function sandboxProfile(scope: Scope, checking = false): string {
     ...(scope.network === "none" || scope.preset === "checker" && checking ? ["(deny network*)"] : []),
   ].join("\n");
 }
-export function sandboxCommand(scope: Scope, command: string, checking = false): string {
+export function sandboxCommand(scope: Scope, command: string, checking = false, fetchRoots: string[] = []): string {
   if (!scope.sandbox || scope.mode !== "enforce" || process.platform !== "darwin") return command;
   if (!existsSync("/usr/bin/sandbox-exec")) throw new Error("macOS sandbox-exec is unavailable");
-  return "/usr/bin/sandbox-exec -p " + shellQuote(sandboxProfile(scope, checking)) + " /bin/bash -c " + shellQuote(command);
+  return "/usr/bin/sandbox-exec -p " + shellQuote(sandboxProfile(scope, checking, fetchRoots)) + " /bin/bash -c " + shellQuote(command);
 }

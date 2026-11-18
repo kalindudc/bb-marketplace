@@ -5,7 +5,7 @@ import type { ShellRule } from "./schema";
 import { glob } from "./paths";
 
 export interface ShellCommand { argv: string[]; cwd: string; writes: string[]; text: string; source?: string; uncertain?: boolean; scriptInput?: "inline" | "heredoc" | "opaque"; gitEnvironment?: boolean; aliases?: Record<string, string>; repository?: string; sequence?: number; cwdAlternative?: boolean; githubEnvironment?: boolean; fedInput?: boolean }
-export interface ShellFacts { temporaryRoot?: string; isRead?(command: ShellCommand): boolean; directories?: string[]; gitRoots?: Record<string, string>; env?: Record<string, string> }
+export interface ShellFacts { containment?: "sandbox"; temporaryRoot?: string; isRead?(command: ShellCommand): boolean; directories?: string[]; gitRoots?: Record<string, string>; env?: Record<string, string> }
 export function unquote(value: string): string {
   return value.replace(/\\\n/g, "").replace(/'([^']*)'|"((?:\\.|[^"\\])*)"|\\(.)/gs, (_all, single, double, escaped) => single ?? (double !== undefined ? double.replace(/\\([\\"$`])/g, "$1") : escaped));
 }
@@ -16,6 +16,7 @@ export function stripWrappers(words: string[], chdir?: (path: string) => void): 
     if (!argv.length) break;
     argv[0] = basename(argv[0]);
     const wrapper = argv[0];
+    if (wrapper === "command" && ["-v", "-V"].includes(argv[1])) return ["which", ...argv.slice(2)];
     if (!["sudo", "env", "command", "exec", "nohup", "timeout", "gtimeout", "nice", "time", "xargs"].includes(wrapper)) break;
     if (wrapper === "env" && (argv.length === 1 || argv.slice(1).every(arg => ["-0", "-i", "--null", "--ignore-environment"].includes(arg) || /^[A-Za-z_][A-Za-z0-9_]*=/.test(arg)))) break;
     argv.shift();
@@ -35,7 +36,7 @@ export function stripWrappers(words: string[], chdir?: (path: string) => void): 
 }
 export function normalizeCommand(argv: string[]): { argv: string[]; directory?: string; repository?: string } {
   let directory: string | undefined, repository: string | undefined;
-  const values: Record<string, string[]> = { git: ["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env"], gh: ["-R", "--repo", "--hostname"], kubectl: ["--context", "--namespace", "-n", "--kubeconfig", "--cluster", "--user", "--server", "-s", "--token"], helm: ["--kube-context", "--namespace", "-n", "--kubeconfig"], terraform: ["-chdir"], kapp: ["-a", "--app", "-n", "--namespace"], dev: ["--context", "--namespace", "--project"], dt: ["--cluster", "--context"] };
+  const values: Record<string, string[]> = { bb: ["--project", "--host", "--server", "--url", "--token"], git: ["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env"], gh: ["-R", "--repo", "--hostname"], kubectl: ["--context", "--namespace", "-n", "--kubeconfig", "--cluster", "--user", "--server", "-s", "--token"], helm: ["--kube-context", "--namespace", "-n", "--kubeconfig"], terraform: ["-chdir"], kapp: ["-a", "--app", "-n", "--namespace"], dev: ["--context", "--namespace", "--project"], dt: ["--cluster", "--context", "-R", "--repo"] };
   const name = argv[0];
   if (!values[name]) return { argv };
   if (name === "gh") {
@@ -74,10 +75,11 @@ function changeDirectory(loc: Location, path: string): Location {
 export function shellCommands(source: string, cwd: string, facts: ShellFacts = {}): ShellCommand[] {
   const out: ShellCommand[] = [], aliases: Record<string, string> = {};
   let unknownLinks = false, directoriesStable = true;
+  const values: Record<string, string> = {};
   const assigned = new Set<string>(), unsafeTemps = new Set<string>(), activeTemps = new Set<string>();
   let dynamicTargets = false, controlDepth = 0;
   const capture = (value: string) => /^\$\(\s*(?:\/usr\/bin\/)?mktemp(?:\s+(?:-d|--directory|-q|--quiet))*\s*\)$/.test(value);
-  const markAssigned = (name: string, temporary = false) => { assigned.add(name); if (!temporary) unsafeTemps.add(name); };
+  const markAssigned = (name: string, temporary = false) => { assigned.add(name); delete values[name]; if (!temporary) unsafeTemps.add(name); };
   const taintAll = () => {
     dynamicTargets = true;
     for (const name of [...Object.keys(facts.env ?? {}), "HOME", "PWD", "TMPDIR", "BB_THREAD_STORAGE", "IFS"]) markAssigned(name);
@@ -90,7 +92,7 @@ export function shellCommands(source: string, cwd: string, facts: ShellFacts = {
       const quoted = raw.slice(0, offset).replace(/\x27[^\x27]*\x27|\\[\s\S]/g, "").split('"').length % 2 === 0;
       if (assigned.has("IFS") && !quoted) return token;
       const name = braced ?? plain;
-      const value = activeTemps.has(name) && !unsafeTemps.has(name) ? tempValue(name) : assigned.has(name) ? undefined : name === "PWD" ? loc.known && !loc.alternates?.length ? loc.cwd : undefined : facts.env?.[name];
+      const value = facts.containment === "sandbox" && values[name] !== undefined ? values[name] : activeTemps.has(name) && !unsafeTemps.has(name) ? tempValue(name) : assigned.has(name) ? undefined : name === "PWD" ? loc.known && !loc.alternates?.length ? loc.cwd : undefined : facts.env?.[name];
       if (value === undefined) return token;
       replacements.push(value); return "\0" + (replacements.length - 1) + "\0";
     });
@@ -124,7 +126,9 @@ export function shellCommands(source: string, cwd: string, facts: ShellFacts = {
         const assignment = /^([A-Za-z_]\w*)=/.exec(raw[i]);
         if (assignment) {
           const temporary = controlDepth === 0 && raw.length === 1 && node.words[i].subs.some(sub => sub.kind === "command") && capture(raw[i].slice(assignment[0].length));
+          const resolved = facts.containment === "sandbox" && controlDepth === 0 && raw.length === 1 ? valueOf(node.words[i].text.slice(assignment[0].length), loc, node.words[i].subs) : undefined;
           markAssigned(assignment[1], temporary);
+          if (resolved !== undefined && !/[$`]/.test(resolved)) values[assignment[1]] = resolved;
           if (temporary) temporaryAssignment = assignment[1];
           if (["declare", "local", "typeset"].includes(raw[0]) && raw.some(value => /^-[^-]*n/.test(value)) && /^[A-Za-z_]\w*$/.test(raw[i].slice(assignment[0].length))) markAssigned(raw[i].slice(assignment[0].length));
         }
@@ -198,7 +202,14 @@ export function shellCommands(source: string, cwd: string, facts: ShellFacts = {
     controlDepth++;
     const ends: Location[] = [loc];
     if (node.type === "while") { ends.push(visit(node.cond, loc, text), visit(node.body, loc, text)); }
-    if (node.type === "for") { markAssigned(node.name); words(node.words ?? [], loc); ends.push(visit(node.body, loc, text)); }
+    if (node.type === "for") {
+      markAssigned(node.name); words(node.words ?? [], loc);
+      const iterations = (node.words ?? []).map(word => valueOf(word.text, loc, word.subs));
+      if (facts.containment === "sandbox" && iterations.length > 0 && iterations.every(value => /^[a-zA-Z0-9_.-]+$/.test(value))) {
+        for (const value of iterations) { values[node.name] = value; ends.push(visit(node.body, loc, text)); }
+        delete values[node.name];
+      } else ends.push(visit(node.body, loc, text));
+    }
     if (node.type === "if") { for (const clause of node.clauses) ends.push(visit(clause.body, visit(clause.cond, loc, text), text)); if (node.elseBody) ends.push(visit(node.elseBody, loc, text)); }
     if (node.type === "case") { words([node.subject], loc); for (const item of node.items) ends.push(visit(item.body, loc, text)); }
     controlDepth--;
@@ -236,7 +247,13 @@ export function shellCommands(source: string, cwd: string, facts: ShellFacts = {
         for (let i = 0; i < pipeline.commands.length; i++) {
           const previous = pipeline.commands[i - 1];
           const docs = previous?.type === "simple" && previous.words.length === 1 && unquote(previous.words[0].text) === "cat" ? previous.redirects.filter(value => value.heredoc) : [];
-          const input = docs.length ? docs.map(doc => text.slice(doc.heredoc!.bodyStart, doc.heredoc!.bodyEnd)).join("\n") : undefined;
+          let literal: string | undefined;
+          if (previous?.type === "simple" && ["echo", "printf"].includes(unquote(previous.words[0]?.text ?? ""))) {
+            const args = previous.words.slice(1).map(word => valueOf(word.text, loc, word.subs));
+            let argument = 1;
+            literal = unquote(previous.words[0].text) === "echo" ? args.join(" ") : args[0]?.replace(/%s/g, () => args[argument++] ?? "").replace(/\\n/g, "\n");
+          }
+          const input = docs.length ? docs.map(doc => text.slice(doc.heredoc!.bodyStart, doc.heredoc!.bodyEnd)).join("\n") : literal;
           const end = run(pipeline.commands[i], loc, text, i > 0, input);
           if (pipeline.commands.length === 1) {
             const moved = end.cwd !== loc.cwd || end.known !== loc.known;
@@ -254,6 +271,7 @@ export function shellCommands(source: string, cwd: string, facts: ShellFacts = {
     return loc;
   };
   inspect(source, { cwd, known: true, stack: [] });
+  if (facts.containment === "sandbox") { assigned.clear(); unsafeTemps.clear(); dynamicTargets = false; for (const name of Object.keys(values)) delete values[name]; }
   out.length = 0; unknownLinks = false; directoriesStable = true; activeTemps.clear();
   for (const path of Object.keys(aliases)) delete aliases[path];
   inspect(source, { cwd, known: true, stack: [] });

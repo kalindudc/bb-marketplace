@@ -131,7 +131,7 @@ describe("backend scope integration", () => {
     expect(f.k.store.events("lead").filter(event => event.text === "Protected the trusted scope policy in an open scope")).toHaveLength(1);
     expect(log).toHaveBeenCalledWith("Tavern scope policy protection added lead: ~/.agents/tavern/scopes.yml");
   });
-  it("refreshes matching member snapshots without widening their preset or grants", async () => {
+  it("leaves current wildcard member snapshots and their grants unchanged", async () => {
     const f = await fixture();
     await f.runtime.hire("lead", "project", f.input);
     const scope = { ...scopeForClass("smith", undefined, "readonly"), threadId: "child", issuedAt: 1 };
@@ -143,9 +143,9 @@ describe("backend scope integration", () => {
     await reload.refreshPresets();
     const saved = JSON.parse(readFileSync(file, "utf8"));
     expect(saved.preset).toBe("readonly");
-    expect(saved.tools).toEqual({ ...scope.tools, allow: [...scope.tools.allow, "check_ui", "ui_examples"] });
+    expect(saved.tools).toEqual(scope.tools);
     expect(saved.writes).toEqual(scope.writes);
-    expect(f.k.store.events("lead").find(event => event.type === "scope.refreshed")?.data.memberThreadId).toBe("child");
+    expect(f.k.store.events("lead").find(event => event.type === "scope.refreshed")).toBeUndefined();
   });
   it("returns already in effect for scratch and own storage requests without opening an ask", async () => {
     const f = await fixture();
@@ -172,10 +172,10 @@ describe("backend scope integration", () => {
     expect(f.runtime.scopes!.pending("child")).toBeNull();
   });
 
-  it("refuses an unverified tool name and retains a valid existing tool pattern", async () => {
+  it("accepts an undiscovered tool without an availability grant and retains explicit narrowing", async () => {
     const f = await fixture();
     await f.runtime.hire("lead", "project", f.input);
-    await expect(f.runtime.scopes!.override("lead", "child", { tools: { allow: ["unknown_checking_tool"] } }, "Checks")).rejects.toThrow(/cannot verify.*unknown_checking_tool/i);
+    await expect(f.runtime.scopes!.override("lead", "child", { tools: { allow: ["unknown_checking_tool"] } }, "Checks")).resolves.toContain("No change");
     await expect(f.runtime.scopes!.override("lead", "child", { tools: { deny: ["web_*"] } }, "No web")).resolves.toContain("Scope updated");
     expect(f.runtime.scopes!.pending("child")).toBeNull();
   });
