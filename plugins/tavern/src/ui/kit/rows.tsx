@@ -41,6 +41,8 @@ const releaseAskOf = (hold: CheckerHandoffHold | null, asks: readonly Ask[]) => 
 export function heldQuests<Q extends Pick<BoardQuestSummary, "checkerHandoffHold" | "phase">>(quests: readonly Q[], asks: readonly Ask[]): Q[] {
   return quests.filter((q) => { const h = activeHold(q); return h !== null && !releaseAskOf(h, asks); });
 }
+export const questNeedYouCount = (quest: BoardQuestSummary, asks: readonly Ask[]) => asks.filter(a => a.state === "open" && a.boardQuestId === quest.id).length + heldQuests([quest], asks).length;
+
 type Release = NonNullable<CheckerHandoffHold["release"]>;
 const RELEASE_VIA: Record<Release["via"], string> = { banner: "from the ask banner", page: "from the Tavern page", phone: "from your phone", chat: "in chat", cli: "from the command line" };
 /** How a checker-handoff hold was released, in words: the path, and the Keeper's ask when answering it was the release. */
@@ -183,7 +185,7 @@ const moveNames = (registry: Registry, keeper: Member) => ({ keeper: characterNa
 
 /** One quest, in a notice, the Ledger or a list. The quest's name opens its quest page and the whole row is that target; "Tale ›" and the cellar action sit above it. At most one bordered control (none). */
 /** `arrival` gives the row a still "new" mark when the quest changed since the last look (the room's `since`); a your-move row's mark never fades in. */
-export function QuestRow({ quest, room, registry, keeper, onArchive, pending = false, arrival }: { quest: BoardQuestSummary; room: Pick<Room, "asks">; registry: Registry; keeper: Keeper; onArchive?: (quest: BoardQuestSummary) => void; pending?: boolean; arrival?: { since: number | undefined } }) {
+export function QuestRow({ quest, room, registry, keeper, showKeeper = false, onArchive, pending = false, arrival }: { quest: BoardQuestSummary; room: Pick<Room, "asks">; registry: Registry; keeper: Keeper; showKeeper?: boolean; onArchive?: (quest: BoardQuestSummary) => void; pending?: boolean; arrival?: { since: number | undefined } }) {
   const navigate = useBbNavigate();
   const open = (sub: string) => navigate.toPluginPanel("tavern", { subPath: sub });
   const path = pathProgress(quest), verified = verifiedOf(quest);
@@ -201,14 +203,16 @@ export function QuestRow({ quest, room, registry, keeper, onArchive, pending = f
     </div>;
   }
   const move = questMove(quest, room.asks, moveNames(registry, keeper.member), { keeperArchived: keeper.archived === true });
+  const need = questNeedYouCount(quest, room.asks);
   const yours = move.tone === "you";
-  return <div className={`tavern qrow qrow-live t-${move.tone}`} data-variant={yours ? "your-move" : move.tone === "archived" ? "archived" : quest.phase === "stopping" ? "stopping" : "active"} data-quest={quest.id} {...(yours ? { "data-ask": "" } : {})} data-part="QuestRow">
+  // showKeeper adds mixed-Keeper labels and ask/hold tags; every row keeps questMove’s edge rule.
+  return <div className={`tavern qrow qrow-live t-${move.tone}${showKeeper ? " qrow-home" : ""}`} data-variant={yours ? "your-move" : move.tone === "archived" ? "archived" : quest.phase === "stopping" ? "stopping" : "active"} data-quest={quest.id} {...(yours ? { "data-ask": "" } : {})} data-part="QuestRow">
     {name}
     {/* A stopping quest gets no "new" cue: nothing new is happening on it. */}
     {arrival && quest.phase !== "stopping" && <ArrivalMark at={quest.updatedAt} since={arrival.since} surface="page" cueKey={`row:${quest.id}`} still={yours || move.tone === "bad"} />}
     <TimeAgo at={quest.updatedAt} />
     <OpensMark />
-    <span className="qrow-l2"><span className="qrow-p"><PhaseMark phase={quest.phase} tone={move.tone} /><span className="qrow-path num">{path ? `${path.done} of ${path.total}` : "no map yet"}</span></span>
+    <span className="qrow-l2">{showKeeper && <span className="qrow-k"><CrestOf member={keeper.member} registry={registry} size={12} /><span title={characterName(registry, keeper.member)}>{characterName(registry, keeper.member)}</span></span>}{showKeeper && need > 0 && <span className="tag status-needs-decision">{need} {need === 1 ? "needs" : "need"} you</span>}<span className="qrow-p"><PhaseMark phase={quest.phase} tone={move.tone} /><span className="qrow-path num">{path ? `${path.done} of ${path.total}` : "no map yet"}</span></span>
     <span className="qrow-m"><StateMark tone={move.tone} title={`${move.who}${move.next ? ` · ${move.next}` : ""}`}>
       {/* Whose move and the verb are the state and never cut; only the waypoint's title truncates, with the whole phrase in the tooltip. */}
       <span className="qrow-mv"><b>{move.who}</b>{move.task !== undefined ? ` ·${move.verb ? ` ${move.verb}` : ""}\u00a0` : move.next ? ` · ${move.next}` : ""}</span>{move.task !== undefined && <span className="qrow-mt" data-content>{move.task}</span>}

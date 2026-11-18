@@ -1,16 +1,16 @@
 import { useBbNavigate } from "@get-bb/plugin-sdk/app";
 import { useId, type ReactNode, memo } from "react";
 import type { z } from "zod";
-import type { registrySchema, BoardQuestSummary } from "../../shared/contract";
+import type { registrySchema } from "../../shared/contract";
 import type { Member, Phase } from "../../shared/schema";
 import { OpensMark, TimeAgo, clockTime, timeAgo, useNow } from "../kit";
 import { awayClock } from "../kit/hearth";
 import { PageGlyph, type PageGlyphName } from "./glyphs";
 import { QuestRoad } from "./quest-road";
-import { closedWords, pathProgress, type MoveTone } from "./model";
+import { closedWords, type MoveTone } from "./model";
 import { memberName } from "../../shared/member-name";
 export { CrestOf, StateMark, PhaseMark } from "../kit";
-import { CrestOf, PhaseMark, StateMark } from "../kit";
+import { CrestOf, StateMark } from "../kit";
 
 export type Registry = z.infer<typeof registrySchema>;
 /** A member's name on the page: its display name, its character's name, then its class; never blank and never a raw id (a member may have no character). */
@@ -66,14 +66,6 @@ export function Faces({ members, registry, size = 20, max = 6, still = false }: 
 }
 export function PhaseStrip({ phase, stoppedAt, proven }: { phase: Phase; tone?: MoveTone; stoppedAt?: Phase | null; proven?: Phase | null }) {
   return <QuestRoad phase={phase} stoppedAt={stoppedAt} proven={proven} />;
-}
-export function QuestRow({ quest }: { quest: BoardQuestSummary }) {
-  const navigate = useBbNavigate();
-  const path = pathProgress(quest);
-  return <button type="button" className="tv-qrow act" onClick={() => navigate.toPluginPanel("tavern", { subPath: `${quest.phase === "done" ? "tale" : "quest"}/${quest.id}` })} title={quest.title}>
-    <span className="tv-qrow-t">{quest.short}</span><Ago at={quest.updatedAt} />
-    <span className="tv-qrow-s"><PhaseMark phase={quest.phase} />{path && <span className="tv-dim num">{path.done} of {path.total} on the path</span>}</span><OpensMark />
-  </button>;
 }
 /** One segmented control for filters: a single bordered group, one pressed segment. */
 export function SegFilter<T extends string>({ label, options, value, onChange }: { label: string; options: { id: T; label: string; count?: number }[]; value: T; onChange: (v: T) => void }) {

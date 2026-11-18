@@ -33,6 +33,7 @@ Machine rules put a project's party members on their own new machines (for examp
 ### Fixed
 
 - Changing a class model no longer floods settings with repeated saves or leaves every class picker disabled. Each completed choice saves once after its menu closes, keeps the picker mounted and shows progress only on that row.
+- Quests on the new-thread page use the same styled rows as the common room, with their Keeper, phase, path progress and whose move comes next. Quests with open asks or checker-handoff holds come first, newest first, and show how many things need you; greenlights count too, and a hold with a release ask counts once. The header includes holds in its count. Keeper labels stay off in the room and Ledger, and the homepage rows fit a phone without sideways scrolling.
 - Hovering a walker no longer paints a square background behind it. The strip has a transparent button that follows the actor and provides a visible focus outline for keyboard users.
 - The walking strip sits where it should. Its CSS selector was a descendant rule that never matched the strip's own element (the element carries both classes), so the strip lost its height and position and the absolutely-placed sprite anchored to an ancestor and overlapped the composer and the ask row. The selector is corrected and the row plus strip share one banner root.
 - A dark-mode character's eyes are dark again. The sprite's ink is a fixed dark in both themes, not bb's near-white dark foreground, so the eyes no longer turn white in dark mode.

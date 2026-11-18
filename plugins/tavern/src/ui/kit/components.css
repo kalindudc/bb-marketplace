@@ -695,6 +695,9 @@ html.dark .tavern .qsvg .wp.o-you .wp-fo { filter: drop-shadow(0 0 5px color-mix
 .tavern.qrow-live > time { grid-area: a; justify-self: end; }
 .tavern.qrow-live > .act-i { grid-area: i; }
 .tavern .qrow-l2 { grid-area: l; display: flex; align-items: center; flex-wrap: wrap; gap: 2px 12px; min-width: 0; }
+.tavern .qrow-k { display: inline-flex; align-items: center; gap: 5px; min-width: 0; max-width: 100%; font-size: 11px; color: var(--tavern-muted); }
+.tavern .qrow-k > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tavern .qrow-k .tavern-crest { flex: none; }
 .tavern .qrow-p { display: inline-flex; align-items: center; gap: 10px; min-width: 0; font-size: 12px; }
 .tavern .qrow-path { font-size: 11px; white-space: nowrap; color: var(--tavern-muted); }
 .tavern .qrow-m { margin-left: auto; min-width: 0; max-width: 100%; overflow: hidden; font-size: 12px; }
@@ -718,6 +721,9 @@ html.dark .tavern .qsvg .wp.o-you .wp-fo { filter: drop-shadow(0 0 5px color-mix
 /* Its own box on hover: an inset edge in the muted text colour (3:1 or more on the row in every theme) and a fill stronger than the row's hover. */
 .tavern.qrow :is(.qrow-tale, .qrow-x).act:is(:hover, :focus-visible):not(:disabled) { color: var(--foreground); background: var(--tavern-inner-hover); box-shadow: inset 0 0 0 1px var(--tavern-muted); cursor: pointer; }
 @container qrow (max-width: 420px) {
+  .tavern.qrow-home .qrow-l2 { display: grid; grid-template-columns: minmax(0, 1fr) auto; }
+  .tavern.qrow-home .qrow-l2:has(> .tag) { grid-template-columns: minmax(0, 1fr) auto auto; }
+  .tavern.qrow-home .qrow-m { grid-column: 1 / -1; }
   .tavern .qrow-v, .tavern .qrow-xl { display: none; }
   .tavern.qrow-live { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "n a" "l l"; }
   .tavern.qrow-live > .act-i { display: none; }

@@ -1,16 +1,16 @@
 import { UrlLink, experimental_usePluginId, experimental_useRpcQuery, useBbNavigate, useComposer, type ExperimentalPageTitle, type PluginAppBuilder, type PluginHomepageSectionProps, type PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
 import { rpcContract, type Room } from "../../shared/contract";
-import { Hearth, hearthWords, keeperStatus, onTheRoad, OpensMark, rememberCount, useRegistry, vocab } from "../kit";
+import { Hearth, hearthWords, keeperStatus, onTheRoad, OpensMark, QuestRow, questNeedYouCount, rememberCount, useRegistry, vocab } from "../kit";
 import { ClosingTimeSheet, ClosedDigest } from "./closing";
 import { ClassEditTab } from "./class-editor";
 import { CLASS_EDIT_TAB, CLOSING_TAB, CharacterVoiceTab, ClosingTimeTab, REPORTS_TAB, VOICE_TAB, useOpenPanelTab } from "./panels";
 import { ReportsTab } from "./reports";
 import { isPresentationProblem } from "./authorship";
-import { Ago, CrestOf, Empty, PageButton, PhaseMark, QuestRow, ReadState, type Registry, plural } from "./common";
+import { Ago, CrestOf, Empty, PageButton, PhaseMark, ReadState, type Registry, plural } from "./common";
 import { TheMap } from "./connections";
 import { MobileQuestOptions, QuestNav, mobileQuestPaths } from "./nav";
 import { PageGlyph, type PageGlyphName } from "./glyphs";
-import { activeQuests, badgeLabel, decodePageRoute, heldForYou, isFinished, needYouCount, openAskCount, questsIn, restoreVerdict, roomAway, type PageRoute } from "./model";
+import { badgeLabel, decodePageRoute, heldForYou, isFinished, needYouCount, openAskCount, questsIn, restoreVerdict, roomAway, type PageRoute } from "./model";
 import { QuestAwayNotes } from "./away";
 import { MapSkeleton, PageLoad, QuestSkeleton, RoomSkeleton, RouteSkeleton, SKEL, SideNavSkeleton, StartCardsSkeleton, TaleSkeleton, FoldLoad, useRememberSideNav, useRememberShape } from "./skeletons";
 import { PanelStateProvider, panelStorageKey, readPanel, rememberPath, useRestoreScroll } from "./panel-state";
@@ -258,11 +258,12 @@ export function useTavernBadge() {
 export function TavernHomepage(_props: PluginHomepageSectionProps) {
   const registry = useRegistry();
   const room = experimental_useRpcQuery({ contract: rpcContract, method: "room", input: {} });
-  const quests = room.data ? activeQuests(room.data) : [];
+  const data = room.data;
+  const quests = data ? data.keepers.flatMap(keeper => keeper.boardQuests.filter(quest => !isFinished(quest.phase)).map(quest => ({ quest, keeper }))).sort((a, b) => Number(questNeedYouCount(b.quest, data.asks) > 0) - Number(questNeedYouCount(a.quest, data.asks) > 0) || b.quest.updatedAt - a.quest.updatedAt) : [];
   return <section className="tavern tv-page tv-homepage" aria-label="Tavern">
-    <header className="tv-colh"><h2>Start with a class <span className="anc">thread type</span></h2><span className="tv-colh-aside">your draft stays here until you send</span><span className="tv-sp" /><PageButton path="room" className="ghost sm" glyph="home">{room.data ? `${openAskCount(room.data)} need you` : "The common room"}</PageButton></header>
+    <header className="tv-colh"><h2>Start with a class <span className="anc">thread type</span></h2><span className="tv-colh-aside">your draft stays here until you send</span><span className="tv-sp" /><PageButton path="room" className="ghost sm" glyph="home">{room.data ? `${needYouCount(room.data)} need you` : "The common room"}</PageButton></header>
     {registry.data ? <ClassStartCards registry={registry.data} /> : <FoldLoad error={registry.error} retry={registry.refetch} label="the classes"><StartCardsSkeleton /></FoldLoad>}
-    {room.data ? quests.length > 0 && <><header className="tv-colh" style={{ marginTop: 12 }}><h3>Quests on the board <span className="anc">goals</span></h3><span className="tv-count">{plural(quests.length, "quest")}</span></header><div className="tv-card tv-homequests">{quests.map((quest) => <QuestRow key={quest.id} quest={quest} />)}</div></> : <ReadState error={room.error} retry={room.refetch} />}
+    {room.data ? quests.length > 0 && <><header className="tv-colh" style={{ marginTop: 12 }}><h3>Quests on the board <span className="anc">goals</span></h3><span className="tv-count">{plural(quests.length, "quest")}</span></header><div className="tv-card tv-homequests">{registry.data ? quests.map(({ quest, keeper }) => <QuestRow key={quest.id} quest={quest} room={room.data!} registry={registry.data!} keeper={keeper} showKeeper />) : <ReadState error={registry.error} retry={registry.refetch} />}</div></> : <ReadState error={room.error} retry={room.refetch} />}
   </section>;
 }
 export function registerPageSurfaces(app: PluginAppBuilder) {

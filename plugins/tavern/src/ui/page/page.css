@@ -193,6 +193,9 @@
 .tavern.tv-page .tv-first-voice { font-size: 13px; }
 .tavern.tv-page .tv-first-invitation { max-width: 620px; color: var(--tv-text-2); }
 .tavern.tv-page .tv-first-links { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+.tavern.tv-page .tv-homequests > .tavern.qrow:first-child { border-top: 0; }
+.tavern.tv-page .tv-homequests > .tavern.qrow:last-child { border-bottom: 0; }
+.tavern.tv-page .tv-homequests .qrow-l2 { gap: 4px 10px; }
 .tavern.tv-page .tv-start-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 168px), 1fr)); gap: 8px; width: 100%; }
 .tavern.tv-page .tv-start-card { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; min-width: 0; padding: 10px 12px; border: 1px solid var(--tavern-line); background: var(--card); text-align: left; cursor: pointer; }
 .tavern.tv-page .tv-start-card:hover:not(:disabled) { background: var(--tavern-hover); border-color: color-mix(in oklab, var(--foreground) 40%, var(--tavern-line)); }
