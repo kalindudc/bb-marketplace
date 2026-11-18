@@ -14,7 +14,7 @@ const context = (id: string) => ({ ...makePluginAgentConfigurationContext({ thre
 function projectRoot(marker: string) {
   const root = mkdtempSync(join(tmpdir(), "tavern-configure-")); roots.push(root);
   mkdirSync(join(root, ".agents/tavern/classes"), { recursive: true });
-  writeFileSync(join(root, ".agents/tavern/classes/keeper.md"), readFileSync(new URL("../../classes/keeper.md", import.meta.url), "utf8").replace("You lead in Tavern.", marker));
+  writeFileSync(join(root, ".agents/tavern/classes/keeper.md"), readFileSync(new URL("../../classes/keeper.md", import.meta.url), "utf8").replace("# You are a Keeper", marker));
   return root;
 }
 

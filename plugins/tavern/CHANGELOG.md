@@ -23,6 +23,7 @@ Machine rules put a project's party members on their own new machines (for examp
 
 ### Changed
 
+- The Keeper's shorter class instructions leave more room for the live ledger. Its operating guide now covers judgment, briefs, checks, steers and recovery in short sections; tool descriptions carry their calling rules, and a reference document keeps the detailed guard and tick mechanics.
 - The checker recognises the check runners a repository actually uses while keeping worktree confinement and the deny rules: any `npm`, `pnpm`, `yarn` or `bun run <script>`, `npx tsc` with or without `--noEmit`, a project binary reached directly (`tsc`, `vitest run`, `jest`), and a project binary reached through `node node_modules/…`. Other work (`npm install`, `npm publish`, `npx vitest` without `run`, `npx eslint`, scripts under `node scripts/…`, and path escapes) still needs exact-command metadata.
 - The class page's records fold and remember what is open, the quest map's notes float over the map instead of reserving a band, and the rail keeps its calm order.
 - The composer's ask row shows the whole question, a decision reads its note in place, and the composer no longer swallows the first click.
