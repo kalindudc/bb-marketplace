@@ -58,8 +58,9 @@ export const characterDefSchema = z.object({
   classes: z.array(z.string()),
   hue: z.enum(HUES),
   charge: z.enum(CHARGES),
-  /** Overrides for the traits seeded from the id; anything left out is seeded. */
+  /** Overrides for the traits seeded from the avatar or id; anything left out is seeded. */
   look: characterLookSchema.optional(),
+  avatar: z.string().min(1).optional(),
   temper: z.string().max(40),
   style: z.string().max(200),
   quirks: z.array(z.string().max(200)).max(5),
