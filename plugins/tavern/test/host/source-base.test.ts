@@ -22,7 +22,7 @@ function fixture(format: "sha1" | "sha256" = "sha1") {
   writeFileSync(join(repo, "tracked"), "base"); git("add", "tracked"); git("commit", "-qm", "base"); const base = git("rev-parse", "HEAD");
   writeFileSync(join(repo, "tracked"), "head"); git("commit", "-qam", "head"); const head = git("rev-parse", "HEAD");
   const registry = new HostRegistry(join(root, "data")), authority: Authority = { placementId: "source-placement", generation: 1, endpointId: "source", operationId: "inspect-source" };
-  registry.registerEndpoint({ placementId: authority.placementId, generation: 1, endpointId: authority.endpointId, endpoint: { hostId: "source-host", environmentId: "source-environment", root: repo }, access: "source-read", workspaceKind: null, ownerThreadId: null, objectFormat: format, allowedRefs: [] });
+  registry.registerEndpoint({ placementId: authority.placementId, generation: 1, endpointId: authority.endpointId, endpoint: { hostId: "source-host", environmentId: "source-environment", root: repo }, git: "full", access: "source-read", workspaceKind: null, ownerThreadId: null, objectFormat: format, allowedRefs: [] });
   const remote = (url = "https://code.example/team/repo.git", name = "origin") => { git("remote", "add", name, url); return name; };
   const upstream = (url?: string) => {
     remote(url); git("update-ref", "refs/remotes/origin/main", base); git("config", "branch.worker.remote", "origin"); git("config", "branch.worker.merge", "refs/heads/main");
@@ -136,7 +136,7 @@ it("caps cumulative Git work and names the slowest step before the host deadline
   let clock = 1000;
   vi.spyOn(Date, "now").mockImplementation(() => clock);
   const process = vi.spyOn(processModule, "runProcess").mockImplementation(async (_program, args, options) => {
-    if (args.includes("status")) clock += 140_000;
+    if (args.includes("status")) clock += 270_000;
     else if (args.includes("add")) { expect(options.timeoutMs).toBeLessThanOrEqual(30_000); clock += 31_000; }
     return { code: 0, stdout: "", stderr: "", timedOut: false };
   });
@@ -144,8 +144,8 @@ it("caps cumulative Git work and names the slowest step before the host deadline
     const budget = (gitHost as typeof gitHost & { withGitDeadline: (work: () => Promise<void>) => Promise<void> }).withGitDeadline;
     expect(budget).toBeTypeOf("function");
     await expect(budget(async () => {
-      await gitHost.git(dataDir, ["status"], { dataDir, timeoutMs: 150_000 });
-      await gitHost.git(dataDir, ["add", "-A"], { dataDir, timeoutMs: 150_000 });
+      await gitHost.git(dataDir, ["status"], { dataDir, timeoutMs: 300_000 });
+      await gitHost.git(dataDir, ["add", "-A"], { dataDir, timeoutMs: 300_000 });
     })).rejects.toMatchObject({ code: "git-timeout", message: expect.stringContaining("status") });
     expect(process).toHaveBeenCalledTimes(2);
   } finally { rmSync(dataDir, { recursive: true, force: true }); }
@@ -159,14 +159,14 @@ it("aborts the shared Git deadline even while waiting for the checkout lock", as
       signal.addEventListener("abort", () => reject(Object.assign(new Error("aborted"), { name: "AbortError" })), { once: true });
     }));
     const result = expect(work).rejects.toMatchObject({ code: "git-timeout", message: expect.stringContaining("metadata") });
-    await vi.advanceTimersByTimeAsync(170_000);
+    await vi.advanceTimersByTimeAsync(300_000);
     await result;
   } finally { vi.useRealTimers(); }
 });
 
 it.each(["member-write","home-import"] as const)("keeps %s inspect usable after source metadata times out",async access=>{
   const f=fixture();f.upstream();
-  f.registry.registerEndpoint({placementId:"other",generation:1,endpointId:"other",endpoint:{hostId:"other-host",environmentId:"other-env",root:f.repo},ownerThreadId:access==="member-write"?"member":null,access,workspaceKind:access==="member-write"?"dedicated-machine":null,objectFormat:"sha1",allowedRefs:access==="member-write"?["refs/heads/worker"]:[]});
+  f.registry.registerEndpoint({placementId:"other",generation:1,endpointId:"other",endpoint:{hostId:"other-host",environmentId:"other-env",root:f.repo},ownerThreadId:access==="member-write"?"member":null,git:"full",access,workspaceKind:access==="member-write"?"dedicated-machine":null,objectFormat:"sha1",allowedRefs:access==="member-write"?["refs/heads/worker"]:[]});
   const original=gitHost.runGit;
   vi.spyOn(gitHost,"runGit").mockImplementation((root,args,options)=>args[0]==="remote"?Promise.reject(Object.assign(new Error("Git remote exceeded its deadline."),{code:"git-timeout",retryable:true})):original(root,args,options));
   expect(await inspectHost(f.registry,{placementId:"other",generation:1,endpointId:"other",operationId:"inspect"})).toMatchObject({sourceBase:{outcome:"unavailable",code:"git-timeout"}});
@@ -184,7 +184,7 @@ it.each([["carryStart",200_000],["importCommit",900_000],["carryDelete",undefine
     const outcome=gitHost.withGitDeadline(signal=>new Promise<void>((_resolve,reject)=>{
       bounded=signal;signal.addEventListener("abort",()=>reject(new Error("operation aborted")),{once:true});
     }),undefined,timeoutMs).catch(error=>error);
-    const first=Math.min(170_000,timeoutMs-1);
+    const first=Math.min(300_000,timeoutMs-1);
     await vi.advanceTimersByTimeAsync(first);expect(bounded.aborted).toBe(false);
     await vi.advanceTimersByTimeAsync(timeoutMs-first);
     expect(await outcome).toMatchObject({code:"git-timeout"});

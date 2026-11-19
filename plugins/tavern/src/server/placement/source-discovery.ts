@@ -130,7 +130,7 @@ export class SourceDiscovery {
       };
       const acknowledgement = await this.host.call(sdk.endpoint.hostId, "registerEndpoint", {
         placementId: authority.placementId, generation: authority.generation, endpointId: authority.endpointId,
-        endpoint: sdk.endpoint, ownerThreadId: null, access: "source-read", workspaceKind: null,
+        endpoint: sdk.endpoint, ownerThreadId: null, access: "source-read", git: "full", workspaceKind: null,
         objectFormat: null, allowedRefs: [],
       }, { signal });
       signal.throwIfAborted();

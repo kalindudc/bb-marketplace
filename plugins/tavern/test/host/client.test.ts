@@ -28,13 +28,13 @@ it("rejects endpoint metadata for a different authenticated target before dispat
   const { bb, harness } = createFakePluginHost({ pluginId: "tavern", experimental_hostEntry: true, experimental_callHostRpc: async () => ({ registered: true, generation: 1 }) });
   try {
     const port = createHostPort(bb);
-    await expect(port.call("guest-a", "registerEndpoint", { placementId: "placement", generation: 1, endpointId: "endpoint", endpoint: { hostId: "guest-b", environmentId: null, root: "/source" }, ownerThreadId: null, access: "source-read", workspaceKind: null, objectFormat: null, allowedRefs: [] })).rejects.toThrow(/host|target/i);
+    await expect(port.call("guest-a", "registerEndpoint", { placementId: "placement", generation: 1, endpointId: "endpoint", endpoint: { hostId: "guest-b", environmentId: null, root: "/source" }, ownerThreadId: null, access: "source-read", git: "full", workspaceKind: null, objectFormat: null, allowedRefs: [] })).rejects.toThrow(/host|target/i);
     expect(harness.experimental_hostRpcCalls).toHaveLength(0);
   } finally { await harness.lifecycle.dispose(); }
 });
 it("validates every batched endpoint against the authenticated target before any dispatch", async () => {
   const {bb,harness}=createFakePluginHost({pluginId:"tavern",experimental_hostEntry:true,experimental_callHostRpc:async()=>({outcome:"registered",generation:1,endpointIds:["a","b"]})});
-  const endpoint=(endpointId:string,hostId:string)=>({placementId:"placement",generation:1,endpointId,endpoint:{hostId,environmentId:null,root:"/source"},ownerThreadId:null,access:"source-read" as const,workspaceKind:null,objectFormat:null,allowedRefs:[]});
+  const endpoint=(endpointId:string,hostId:string)=>({placementId:"placement",generation:1,endpointId,endpoint:{hostId,environmentId:null,root:"/source"},ownerThreadId:null,git:"full" as const,access:"source-read" as const,workspaceKind:null,objectFormat:null,allowedRefs:[]});
   try{const port=createHostPort(bb);await expect(port.call("guest-a","registerEndpoints",{placementId:"placement",generation:1,operationId:"batch",endpoints:[endpoint("a","guest-a"),endpoint("b","guest-b")]})).rejects.toThrow(/host|target/i);expect(harness.experimental_hostRpcCalls).toHaveLength(0);
     expect(await port.call("guest-a","registerEndpoints",{placementId:"placement",generation:1,operationId:"batch",endpoints:[endpoint("a","guest-a"),endpoint("b","guest-a")]})).toMatchObject({outcome:"registered"});expect(harness.experimental_hostRpcCalls).toHaveLength(1);
   }finally{await harness.lifecycle.dispose();}
@@ -50,10 +50,10 @@ it("rejects delivery host metadata for a different authenticated target without 
 });
 it("bounds host-call budgets without placing transport inside the env contributor", () => {
   for (const method of ["inspect", "snapshotWorktree", "commitAll", "worktreeState", "carryFinish", "carryAbort"] as const)
-    expect(hostCallTimeoutMs(method, {})).toBe(180_000);
+    expect(hostCallTimeoutMs(method, {})).toBe(330_000);
   expect(hostCallTimeoutMs("registerEndpoint", {})).toBe(30_000);
-  expect(hostCallTimeoutMs("importCommit", { networkTimeoutMs: 120_000 })).toBe(420_000);
-  expect(hostCallTimeoutMs("carryStart", { networkTimeoutMs: 900_000 })).toBe(1_800_000);
-  expect(hostCallTimeoutMs("carryFinish", {})).toBe(180_000);
-  expect(hostCallTimeoutMs("releaseSnapshotRef", {})).toBe(180_000);
+  expect(hostCallTimeoutMs("importCommit", { networkTimeoutMs: 120_000 })).toBe(570_000);
+  expect(hostCallTimeoutMs("carryStart", { networkTimeoutMs: 900_000 })).toBe(330_000);
+  expect(hostCallTimeoutMs("carryFinish", {})).toBe(330_000);
+  expect(hostCallTimeoutMs("releaseSnapshotRef", {})).toBe(330_000);
 });

@@ -129,6 +129,9 @@ export class PlacementCarry {
       const existing = current().carries?.find(item => item.id === id);
       const prior = current().carries?.filter(item => item.generation === generation && item.phase === "verified" && item.id !== id &&
         isDeepStrictEqual(item.memberSdk, member.endpoint) && item.branch === branch).at(-1);
+      const deltaBase = prior ? this.placements.snapshot(prior.snapshotId)!.homeCommit : snapshot.base;
+      if (!deltaBase) throw new Error("The previous carry has no home commit; preserve and reconcile before retrying.");
+      const expectedHead = prior?.head ?? snapshot.base;
       const ownToken = "ready-" + digest(JSON.stringify([placementId, generation, snapshotId, memberId]));
       if (existing && turn && existing.holdToken !== ownToken) throw new Error("A background carry receipt cannot authorize this member's ready turn");
       if (existing && !turn && existing.holdToken === ownToken) throw new Error("A ready-turn carry receipt cannot authorize a background carry");
@@ -164,8 +167,8 @@ export class PlacementCarry {
         [to, member, record.root, "member-write", ["refs/heads/" + branch]],
       ] as const) {
         if (!turn || access !== "member-write") {
-          const ack = await call(identity.endpoint.hostId, "registerEndpoint", { placementId, generation, endpointId: native.endpointId, endpoint: identity.endpoint, ownerThreadId: identity.keeperThreadId,
-            access, workspaceKind: access === "member-write" ? record.workspaceKind : null, objectFormat: snapshot.objectFormat, allowedRefs: [...refs] });
+          const ack = await call(identity.endpoint.hostId, "registerEndpoint", { placementId, generation, endpointId: native.endpointId, endpoint: { ...identity.endpoint, root }, ownerThreadId: identity.keeperThreadId,
+            access, git: access === "member-write" ? "porcelain" : "full", workspaceKind: access === "member-write" ? record.workspaceKind : null, objectFormat: snapshot.objectFormat, allowedRefs: [...refs] });
           if (ack.generation !== generation) throw new Error("The host acknowledged a stale carry endpoint");
         }
         const inspected = await call(identity.endpoint.hostId, "inspect", native);
@@ -175,12 +178,12 @@ export class PlacementCarry {
       update({ phase: "exporting" });
       for (const [native, hostId, refs] of [[from, snapshot.home.hostId, []], [to, record.hostId, ["refs/heads/" + branch]]] as const) {
         const ack = await call(hostId, "registerTransfer", { ...native, transferId: id, snapshotId, direction: "carry-out", objectFormat: snapshot.objectFormat,
-          base: snapshot.base, head: snapshot.homeCommit, tree: snapshot.tree, fromEndpointId: from.endpointId, toEndpointId: to.endpointId,
+          base: deltaBase, head: snapshot.homeCommit, tree: snapshot.tree, fromEndpointId: from.endpointId, toEndpointId: to.endpointId,
           allowedRefs: [...refs], uploads: [], artifacts: [] });
         if (ack.transferId !== id) throw new Error("The host acknowledged another carry transfer");
       }
       const exported = await call(snapshot.home.hostId, "exportChanges", { ...from, transferId: id });
-      if (exported.base !== snapshot.base || exported.head !== snapshot.homeCommit || exported.tree !== snapshot.tree)
+      if (exported.base !== deltaBase || exported.head !== snapshot.homeCommit || exported.tree !== snapshot.tree)
         throw new Error("The home manifest does not match the immutable snapshot");
       const paths = new Set<string>();
       for (const file of exported.changes) {
@@ -192,10 +195,12 @@ export class PlacementCarry {
       const json = JSON.stringify(exported), manifest = { json, digest: digest(json) };
       if (receipt.manifest !== null && !isDeepStrictEqual(receipt.manifest, manifest)) throw new Error("The immutable carry manifest changed on retry");
       update({ phase: "carrying", manifest });
-      const start = await call(record.hostId, "carryStart", { ...to, transferId: id, remote: fetch.remoteUrl, baseBranch: fetch.fetchRef,
+      const start = await call(record.hostId, "carryStart", { ...to, transferId: id, remote: fetch.remoteUrl, baseBranch: fetch.fetchRef, expectedHead,
         ...(receipt.replacesTree === null ? {} : { replaces: receipt.replacesTree }), paths: [...paths], networkTimeoutMs: 120_000 });
       if (start.outcome !== "ok") throw new Error(`Carry blocked [${start.code}]: ${start.message}`);
       if (!start.present) {
+        const deleted = exported.changes.filter(file => file.status === "D").map(file => file.path);
+        for (let at = 0; at < deleted.length; at += 500) await call(record.hostId, "carryDelete", { ...to, transferId: id, paths: deleted.slice(at, at + 500) });
         for (const file of exported.changes.filter(file => file.status !== "D")) {
           const hash = createHash(snapshot.objectFormat).update(`blob ${file.size}\0`);
           for (let offset = 0; offset < file.size! || offset === 0; offset += CHUNK_BYTES) {
@@ -209,12 +214,11 @@ export class PlacementCarry {
           }
           if (hash.digest("hex") !== file.blob) throw new Error("The carry blob bytes do not match the immutable Git hash");
         }
-        const deleted = exported.changes.filter(file => file.status === "D").map(file => file.path);
-        if (deleted.length) await call(record.hostId, "carryDelete", { ...to, transferId: id, paths: deleted });
       }
       const finished = await call(record.hostId, "carryFinish", { ...to, transferId: id, message: exported.message, author: exported.author,
         paths: exported.changes.filter(file => file.status !== "D").map(file => file.path) });
-      if (finished.outcome !== "ok" || finished.tree !== snapshot.tree) throw new Error("The carried tree mismatched or contains foreign changes; content was preserved for reconciliation");
+      if (finished.outcome === "mismatch" || finished.outcome === "ok" && finished.tree !== snapshot.tree) throw new Error("The carried tree mismatched. Tavern kept the commit and files; preserve them and provision a fresh checkout before retrying. Tavern will not reset the member branch.");
+      if (finished.outcome !== "ok") throw new Error("The carry contains foreign changes. Tavern kept the files; preserve and reconcile them before retrying.");
       const observed = await call(record.hostId, "worktreeState", { ...to, base: snapshot.base });
       if (observed.dirty || observed.unfinishedMerge || observed.head !== finished.head || observed.tree !== snapshot.tree)
         throw new Error("The carried checkout is not the exact clean pinned tree");

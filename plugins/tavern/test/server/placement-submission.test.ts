@@ -39,7 +39,7 @@ it.each(["sha1", "sha256"] as const)("binds all done entries, reuses unchanged i
 }, 60_000);
 it("retains the original carried source when a maker calls tavern_ready after submission", async () => {
   const f = await submissionFixture(); fixtures.push(f);
-  const original = f.placements.captureSnapshot(sourceSnapshot({ id: "initial", fetch: { via: "upstream", remoteName: "origin", remoteUrl: f.home, trackingRef: "refs/remotes/origin/main", fetchRef: "refs/heads/main" }, source: { hostId: "home", environmentId: "home-env", root: f.home }, home: { hostId: "home", environmentId: "home-env", root: f.home } }));
+  const original = f.placements.captureSnapshot(sourceSnapshot({ id: "initial", base: f.base, sourceHead: f.base, tree: submissionGit(f.home, "rev-parse", "HEAD^{tree}"), fetch: { via: "upstream", remoteName: "origin", remoteUrl: f.home, trackingRef: "refs/remotes/origin/main", fetchRef: "refs/heads/main" }, source: { hostId: "home", environmentId: "home-env", root: f.home }, home: { hostId: "home", environmentId: "home-env", root: f.home } }));
   f.bb.storage.database().prepare("UPDATE tavern_placements SET data=json_set(data,'$.rule.acceptedConsent.remoteDetectionOnly',json('true')) WHERE id=?").run("placement");
   f.placements.update("placement", 1, value => ({ ...value, sourceSnapshotId: original.id, carries: [{ id: "carried", generation: 1, snapshotId: original.id, homeEndpointId: "home", memberEndpointId: "maker", homeSdk: original.home, memberSdk: { hostId: "maker", environmentId: "maker-env", root: f.maker }, branch: "main", holdToken: "held", replacesTree: null, phase: "verified", manifest: { json: "{}", digest: "a".repeat(64) }, head: f.base }] }));
   const bb = { onDispose: f.bb.onDispose, sdk: { threads: f.bb.sdk.threads, environments: f.bb.sdk.environments, hosts: { get: async ({ hostId }: { hostId: string }) => makeHostResponse({ id: hostId, status: "connected" }) } } };
@@ -49,7 +49,7 @@ it("retains the original carried source when a maker calls tavern_ready after su
   const delivery = deliveries.prepare("placement", 1, { endpointId: "carry-member", templateDigest,
     scopeFileJson: JSON.stringify({ ...template, bindingTemplate: template, workspaceBinding: { kind: "dedicated-machine", hostId: "maker", environmentId: "maker-env", root: f.maker, placementId: "placement", generation: 1, snapshotId: original.id, expectedTree: original.tree } }) });
   deliveries.acknowledge("placement", 1, delivery.binding, { revision: 1, scopeDigest: delivery.binding.scopeDigest, scopeFile: f.maker + "/scope.json", variables: {} });
-  f.registries.get("maker")!.registerEndpoint({ placementId: "placement", generation: 1, endpointId: "carry-member", endpoint: { hostId: "maker", environmentId: "maker-env", root: f.maker }, ownerThreadId: "maker", access: "member-write", workspaceKind: "dedicated-machine", objectFormat: "sha1", allowedRefs: ["refs/heads/main"] });
+  f.registries.get("maker")!.registerEndpoint({ placementId: "placement", generation: 1, endpointId: "carry-member", endpoint: { hostId: "maker", environmentId: "maker-env", root: f.maker }, ownerThreadId: "maker", access: "member-write", git: "full", workspaceKind: "dedicated-machine", objectFormat: "sha1", allowedRefs: ["refs/heads/main"] });
   const deps = { bb, host: f.port, placements: f.placements, deliveries, scopeForThread: () => ({ template, templateDigest }) } as unknown as PlacementReadyDeps;
   const ready = new PlacementReady(deps), before = await ready.forThread("maker");
   expect(before).toContain("Ready.");

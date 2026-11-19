@@ -15,7 +15,7 @@ function fixture(source = "export function tavernGuard(pi) { pi.on('tool_call', 
   const data = join(root, "data"), repo = join(root, "repo"), agentDir = join(root, "pi-agent"), artifactPath = join(root, "host.js");
   mkdirSync(data); mkdirSync(repo); writeFileSync(artifactPath, source);
   const registry = new HostRegistry(data), authority = { placementId:"placement", generation:1, endpointId:"member", operationId:"prepare" };
-  registry.registerEndpoint({ placementId:authority.placementId,generation:authority.generation,endpointId:authority.endpointId, endpoint:{hostId:"native", environmentId:"env", root:repo}, ownerThreadId:"thread", access:"member-write", workspaceKind:"dedicated-machine", objectFormat:null, allowedRefs:["refs/heads/worker"] });
+  registry.registerEndpoint({ placementId:authority.placementId,generation:authority.generation,endpointId:authority.endpointId, endpoint:{hostId:"native", environmentId:"env", root:repo}, ownerThreadId:"thread", git:"full" as const,access:"member-write", workspaceKind:"dedicated-machine", objectFormat:null, allowedRefs:["refs/heads/worker"] });
   const guard = new NativeGuard(registry, { artifactPath, agentDir }), input = { ...authority, ruleId:"rule", allowMarkedInstall:true };
   return { root, data, repo, registry, authority, artifactPath, agentDir, guard, input, shim:join(agentDir,"extensions/tavern-guard/index.ts"), source };
 }

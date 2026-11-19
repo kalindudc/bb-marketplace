@@ -1,3 +1,4 @@
+// Ported from plugins/loom/src/host/tree.ts.
 // Rewrites a git tree for a few changed paths. Only the trees on the way to a changed path are read and written; the rest
 // of a monorepo's tree is shared with the base by sha, which a whole-index read-tree and write-tree cannot do.
 export interface TreeEntry {

@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { hostContract, type Authority, type TransferRegistration } from "../../src/host-contract";
+import * as porcelain from "../../src/host/porcelain";
 import * as gitHost from "../../src/host/git";
 import * as processModule from "../../src/host/process";
 import { inspectHost } from "../../src/host/inspect";
@@ -25,7 +26,7 @@ async function fixture(method: "import" | "carry", format: "sha1" | "sha256" = "
   writeFileSync(join(source, "tracked"), "newer remote tip"); git(source, "commit", "-qam", "tip"); const tip = git(source, "rev-parse", "HEAD");
   const seed = git(target, "rev-parse", "HEAD"), seedTree = git(target, "rev-parse", "HEAD^{tree}"), registry = new HostRegistry(data), port = createTransport(registry);
   const authority: Authority = { placementId: "placement", generation: 1, endpointId: "target", operationId: "operation" };
-  registry.registerEndpoint({ placementId: "placement", generation: 1, endpointId: "target", endpoint: { hostId: "target-host", environmentId: "target-env", root: target }, ownerThreadId: method === "carry" ? "member-thread" : null, access: method === "carry" ? "member-write" : "home-import", workspaceKind: method === "carry" ? "dedicated-machine" : null, objectFormat: format, allowedRefs: method === "carry" ? ["refs/heads/member"] : ["refs/tavern/keeper/snapshot"] });
+  registry.registerEndpoint({ placementId: "placement", generation: 1, endpointId: "target", endpoint: { hostId: "target-host", environmentId: "target-env", root: target }, ownerThreadId: method === "carry" ? "member-thread" : null, access: method === "carry" ? "member-write" : "home-import", git: "full", workspaceKind: method === "carry" ? "dedicated-machine" : null, objectFormat: format, allowedRefs: method === "carry" ? ["refs/heads/member"] : ["refs/tavern/keeper/snapshot"] });
   await inspectHost(registry, authority);
   const transfer: TransferRegistration = { ...authority, transferId: "transfer", snapshotId: "snapshot", direction: method === "carry" ? "carry-out" : "bring-home", objectFormat: format, base, head: base, tree, fromEndpointId: "source", toEndpointId: "target", allowedRefs: method === "carry" ? [] : ["refs/tavern/keeper/snapshot"], uploads: [], artifacts: [] };
   registry.registerTransfer(transfer); const input = { ...authority, transferId: "transfer", remote: source, baseBranch: "refs/heads/release", networkTimeoutMs: 3000 };
@@ -34,7 +35,7 @@ async function fixture(method: "import" | "carry", format: "sha1" | "sha256" = "
   const run = (extra: Record<string, unknown> = {}) => method === "carry" ? port.carryStart({ ...input, paths: [], replaces: seedTree, ...extra }) : port.importCommit({ ...input, author, message: "pinned snapshot", entries: [], refs: ["refs/tavern/keeper/snapshot"], ...extra });
   return { source, target, base, tree, tip, seed, seedTree, port, input, fetches, run };
 }
-it.each([["import", "sha1"], ["import", "sha256"], ["carry", "sha1"], ["carry", "sha256"]] as const)("uses the full ref verbatim for %s/%s and materializes the pinned base, not the newer remote tip", async (method, format) => {
+it.each([["import", "sha1"], ["import", "sha256"]] as const)("uses the full ref verbatim for %s/%s and materializes the pinned base, not the newer remote tip", async (method, format) => {
   const f = await fixture(method, format), index = readFileSync(join(f.target, ".git/index"));
   expect(await f.run()).toMatchObject({ outcome: "ok" }); expect(f.fetches[0]?.at(-1)).toBe("refs/heads/release"); expect(f.fetches).toHaveLength(1);
   expect(existsSync(join(f.target, ".git/FETCH_HEAD"))).toBe(false); expect(git(f.target, "for-each-ref", "refs/remotes")).toBe(""); expect(git(f.source, "rev-parse", "HEAD")).toBe(f.tip);
@@ -43,13 +44,18 @@ it.each([["import", "sha1"], ["import", "sha256"], ["carry", "sha1"], ["carry", 
     expect(git(f.target, "rev-parse", "HEAD")).toBe(f.seed); expect(readFileSync(join(f.target, ".git/index"))).toEqual(index); expect(readFileSync(join(f.target, "tracked"), "utf8")).toBe("seed");
   } else { expect(git(f.target, "rev-parse", "HEAD")).toBe(f.base); expect(readFileSync(join(f.target, "tracked"), "utf8")).toBe("base"); }
 });
+it.each(["sha1", "sha256"] as const)("refuses a %s carry at a different provider base without fetching or changing HEAD", async format => {
+  const f = await fixture("carry", format), index = readFileSync(join(f.target, ".git/index"));
+  expect(await f.run()).toMatchObject({ outcome: "unavailable", code: "carry-blocked" });
+  expect(f.fetches).toEqual([]); expect(git(f.target, "rev-parse", "HEAD")).toBe(f.seed); expect(readFileSync(join(f.target, ".git/index"))).toEqual(index);
+});
 it("keeps short legacy import refs compatible", async () => {
   const f = await fixture("import"); expect(await f.run({ baseBranch: "release" })).toMatchObject({ outcome: "ok" }); expect(f.fetches[0]?.at(-1)).toBe("refs/heads/release");
 });
 it("holds an exact-ref carry that would drop an unproven existing checkout instead of guessing tracking refs", async () => {
   const f = await fixture("carry"); const result = await f.run({ replaces: undefined }); expect(result).toMatchObject({ outcome: "unavailable", code: "carry-blocked", message: expect.stringMatching(/trusted|preserv/i) }); expect(f.fetches).toEqual([]); expect(git(f.target, "rev-parse", "HEAD")).toBe(f.seed); expect(readFileSync(join(f.target, "tracked"), "utf8")).toBe("seed");
 });
-it.each(["import", "carry"] as const)("blocks %s when neither the requested full ref nor exact SHA provides the registered base", async method => {
+it.each(["import"] as const)("blocks %s when neither the requested full ref nor exact SHA provides the registered base", async method => {
   const f = await fixture(method), index = readFileSync(join(f.target, ".git/index"));
   expect(await f.run({ remote: f.target })).toMatchObject({ outcome: "unavailable", code: "base-unavailable" }); expect(f.fetches.map(args => args.at(-1))).toEqual(["refs/heads/release", f.base]);
   expect(git(f.target, "rev-parse", "HEAD")).toBe(f.seed); expect(readFileSync(join(f.target, ".git/index"))).toEqual(index); expect(readFileSync(join(f.target, "tracked"), "utf8")).toBe("seed"); expect(existsSync(join(f.target, ".git/FETCH_HEAD"))).toBe(false);
@@ -58,7 +64,7 @@ it("validates full fetch refs at the wire boundary instead of silently treating 
   const f = await fixture("carry"); expect(hostContract.carryStart.input.safeParse({ ...f.input, paths: [], baseBranch: "refs/heads/bad." }).success).toBe(false);
 });
 
-it.each(["import", "carry"] as const)("keeps the %s network allowance beyond 170 seconds", async method => {
+it.each(["import"] as const)("keeps the %s network allowance beyond 170 seconds", async method => {
   const f = await fixture(method), original = processModule.runProcess;
   let clock = Date.now(); vi.spyOn(Date, "now").mockImplementation(() => clock);
   vi.spyOn(processModule, "runProcess").mockImplementation(async (program, args, options) => {
@@ -67,4 +73,18 @@ it.each(["import", "carry"] as const)("keeps the %s network allowance beyond 170
     const result = await original(program, args, options); clock += 180_000; return result;
   });
   expect(await f.run({ networkTimeoutMs: 200_000 })).toMatchObject({ outcome: "ok" });
+});
+it("keeps the home tree rebuild inside 300 seconds after the separately budgeted fetch", async () => {
+  const f = await fixture("import"), original = processModule.runProcess;
+  let clock = Date.now(); vi.spyOn(Date, "now").mockImplementation(() => clock);
+  const readTree = porcelain.readTreeBytes;
+  vi.spyOn(porcelain, "readTreeBytes").mockImplementation(async (...args) => { const result = await readTree(...args); clock += 270_000; return result; });
+  vi.spyOn(processModule, "runProcess").mockImplementation(async (program, args, options) => {
+    const result = await original(program, args, options);
+    if (args.includes("fetch")) clock += 180_000;
+    if (args.includes("mktree")) { expect(options.timeoutMs).toBeLessThanOrEqual(30_000); clock += 31_000; }
+    return result;
+  });
+  await expect(f.run({ networkTimeoutMs: 200_000 })).rejects.toMatchObject({ code: "git-timeout" });
+  expect(git(f.target, "rev-parse", "HEAD")).toBe(f.seed);
 });

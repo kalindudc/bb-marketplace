@@ -1,11 +1,12 @@
 // @vitest-environment node
 import Sqlite from "better-sqlite3";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createFakePluginHost, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { afterEach, expect, it, vi } from "vitest";
+import { emulatedGit, realGit } from "../host/emulated-git";
 import { HostRegistry } from "../../src/host/registry";
 import { inspectHost } from "../../src/host/inspect";
 import { createTransport } from "../../src/host/transport";
@@ -20,9 +21,9 @@ import { MIGRATIONS } from "../../src/server/migrations";
 import { placementRecord } from "./placement-fixture";
 import type { TavernRuntime } from "../../src/server/runtime";
 const cleanup: (() => void | Promise<void>)[] = [];
-afterEach(async () => { for (const f of cleanup.splice(0).reverse()) await f(); });
-const git = (root: string, ...args: string[]) => execFileSync("git", ["-C", root, ...args], { encoding: "utf8" }).trim();
-it.each([undefined, "release"])("carries committed trees, pins the target and leases pushes (base: %s)", async baseOverride => {
+afterEach(async () => { vi.unstubAllEnvs(); for (const f of cleanup.splice(0).reverse()) await f(); });
+const git = (root: string, ...args: string[]) => execFileSync(realGit, ["-C", root, ...args], { encoding: "utf8" }).trim();
+it.each([[undefined, false, false], ["release", false, false], [undefined, true, false], ["release", true, false], [undefined, true, true]] as const)("carries committed trees, pins the target and leases pushes (base: %s, emulation: %s, private: %s)", async (baseOverride, emulate, pushedOnly) => {
   const root = mkdtempSync(join(tmpdir(), "placement-forge-")); cleanup.push(() => rmSync(root, { recursive: true, force: true }));
   const home = join(root, "home"), source = join(root, "member"), remote = join(root, "remote.git");
   mkdirSync(home); git(home, "init", "-qb", "main"); git(home, "config", "user.name", "Fixture"); git(home, "config", "user.email", "fixture@example.invalid");
@@ -32,8 +33,9 @@ it.each([undefined, "release"])("carries committed trees, pins the target and le
   const base = git(home, "rev-parse", "HEAD");
   writeFileSync(join(source, "work.txt"), "committed"); git(source, "commit", "-qam", "Member subject\n\nMember body"); const memberHead = git(source, "rev-parse", "HEAD");
   writeFileSync(join(source, "work.txt"), "dirty"); writeFileSync(join(source, "untracked.txt"), "untracked");
+  if (emulate) vi.stubEnv("PATH", emulatedGit(root) + ":" + process.env.PATH);
   const registries = new Map(["home", "member"].map(name => { const dir = join(root, name + "-data"); mkdirSync(dir); return [name, new HostRegistry(dir)] as const; }));
-  const env = (name: string) => ({ id: name, projectId: "project", hostId: name, path: name === "home" ? home : source, status: "ready", hostLifecycle: "active", lifecycle: { phase: "active" }, branchName: name === "home" ? "main" : "member-work", environmentProviderId: "checkout" });
+  const env = (name: string) => ({ id: name, projectId: "project", hostId: name, path: name === "home" ? home : source, status: "ready", hostLifecycle: "active", lifecycle: { phase: "active" }, branchName: name === "home" ? "main" : "member-work", baseBranch: "wrong-environment-base", environmentProviderId: "checkout" });
   const calls: string[] = [];
   let corruptTree = false;
   const host = createFakePluginHost({ pluginId: "tavern", experimental_hostEntry: true, sdk: {
@@ -52,18 +54,34 @@ it.each([undefined, "release"])("carries committed trees, pins the target and le
   const db = new Sqlite(":memory:"); db.exec(MIGRATIONS.join("\n")); cleanup.push(() => { db.close(); });
   const store = new PlacementStore(db as never), port = createHostPort(host.bb), transport = new PlacementTransport(host.bb, port, store);
   const endpoint = (name: string) => ({ hostId: name, environmentId: name, root: name === "home" ? home : source });
-  const snapshot = store.captureSnapshot({ purpose: "initial", keeperThreadId: "keeper", projectId: "project", sourceThreadId: "keeper", makerThreadId: null, makerSubmissionId: null, journalTarget: null, objectFormat: "sha1", base, sourceHead: base, tree: git(home, "rev-parse", "HEAD^{tree}"), source: endpoint("home"), home: endpoint("home"), fetch: { via: "remote-head", remoteName: "origin", remoteUrl: remote, trackingRef: "refs/remotes/origin/main", fetchRef: "refs/heads/main" } });
+  const importRoot = pushedOnly ? join(root, "private.git") : home;
+  if (pushedOnly) git(root, "clone", "--no-checkout", remote, importRoot);
+  writeFileSync(join(home, "work.txt"), "user staged"); git(home, "add", "work.txt"); writeFileSync(join(home, "work.txt"), "user unstaged");
+  const userBefore = { head: git(home, "rev-parse", "HEAD"), refs: git(home, "show-ref"), objects: git(home, "count-objects", "-v"), index: readFileSync(join(home, ".git/index")) };
+  const snapshot = store.captureSnapshot({ purpose: "initial", keeperThreadId: "keeper", projectId: "project", sourceThreadId: "keeper", makerThreadId: null, makerSubmissionId: null, journalTarget: null, objectFormat: "sha1", base, sourceHead: base, tree: git(home, "rev-parse", "HEAD^{tree}"), source: endpoint("home"), home: { ...endpoint("home"), root: importRoot }, fetch: { via: "remote-head", remoteName: "origin", remoteUrl: remote, trackingRef: "refs/remotes/origin/main", fetchRef: "refs/heads/main" } });
   store.reserve(placementRecord({ memberThreadId: "member", phase: "reserved", hostId: "member", environmentId: "member", root: source, memberBranch: "member-work", sourceSnapshotId: snapshot.id, pullRequests: { at: "home", profile: "forge" } }), { maxMakers: 2, maxCheckers: 2 });
   store.update("placement", 1, value => ({ ...value, phase: "running" }));
   const keepers = new KeeperStore(db as never);
-  keepers.put("members", "member", { threadId: "member", classId: "smith", boardQuestId: "quest" } as never);
+  keepers.put("members", "member", { threadId: "member", classId: "smith", keeperThreadId: "keeper", boardQuestId: "quest" } as never);
+  keepers.patch("member", { projectId: "project" });
   const member = () => keepers.get("members", "member")!;
-  const profile = { id: "forge", name: "Forge", enabled: true, kind: "command", open: `test "$FORGE_HEAD" = member-work && test "$LOOM_DRAFT" = 1 && test "$(cat)" = description && echo https://forge.example/pr/12` };
+  const profile = { id: "forge", name: "Forge", enabled: true, kind: "command", open: `test "$GIT_OPTIONAL_LOCKS" = 0 && git status --porcelain >/dev/null && test "$(git rev-parse --show-toplevel)" = ${JSON.stringify(home)} && test "$(git remote get-url origin)" = ${JSON.stringify(remote)} && test "$FORGE_HEAD" = member-work && test "$LOOM_DRAFT" = 1 && test "$(cat)" = description && echo https://forge.example/pr/12` };
   const runtime = { scopes: { api: { hostTemplate: () => ({ template: { github: "draft-pr-only", preset: "worktree" } }) } }, bb: host.bb, placements: () => ({ store, host: port, transport }), settings: { placementPolicy: () => ({ state: "valid", settings: { forges: [profile] } }) }, keeper: { member, now: () => 1, changed: vi.fn(), store: keepers } } as unknown as TavernRuntime;
   const forge = new PlacementForge(runtime);
   const result = await forge.forThread("member", { title: "Draft", body: "description", base: baseOverride });
   expect(result).toContain("Draft PR: https://forge.example/pr/12"); expect(result).toContain("untracked.txt"); expect(result).toContain("work.txt");
   expect(member().draftPush!.memberHead).toBe(memberHead);
+  if (pushedOnly) {
+    expect(git(home, "rev-parse", "HEAD")).toBe(userBefore.head); expect(git(home, "show-ref")).toBe(userBefore.refs);
+    expect(git(home, "count-objects", "-v")).toBe(userBefore.objects); expect(readFileSync(join(home, ".git/index"))).toEqual(userBefore.index);
+    expect(readFileSync(join(home, "work.txt"), "utf8")).toBe("user unstaged");
+  }
+  if (!baseOverride) {
+    store.update("placement", 1, value => ({ ...value, pullRequests: { at: "member" } }));
+    expect(await forge.forThread("member", { title: "Recorded", url: "https://forge.example/pr/12" })).toContain("Draft PR: https://forge.example/pr/12");
+    expect(keepers.all("pullRequests")[0]?.base).toBe("main");
+    store.update("placement", 1, value => ({ ...value, pullRequests: { at: "home", profile: "forge" } }));
+  }
   const pushed = git(remote, "rev-parse", "refs/heads/member-work"); expect(member().draftPush!.homeHead).toBe(pushed);
   expect(git(remote, "show", "member-work:work.txt")).toBe("committed");
   expect(git(remote, "rev-parse", "member-work^")).toBe(base);

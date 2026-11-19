@@ -8,7 +8,7 @@ import { runProcess, type ProcessOptions } from "./process";
 export interface GitOptions {
   dataDir: string;
   signal?: AbortSignal;
-  input?: string;
+  input?: string | Buffer;
   raw?: boolean;
   timeoutMs?: number;
   check?(): void;
@@ -38,9 +38,9 @@ export function gitEnvironment(root: string, dataDir: string, extra?: Record<str
 }
 
 const budgets = new AsyncLocalStorage<{ until: number; slowest: string; elapsed: number; signal: AbortSignal }>();
-export async function withGitDeadline<T>(work: (signal: AbortSignal) => Promise<T>, signal?: AbortSignal, timeoutMs = 170_000): Promise<T> {
+export async function withGitDeadline<T>(work: (signal: AbortSignal) => Promise<T>, signal?: AbortSignal, timeoutMs = 300_000, separateBudget = false): Promise<T> {
   const existing = budgets.getStore();
-  if (existing) return work(existing.signal);
+  if (existing && !separateBudget) return work(existing.signal);
   const controller = new AbortController(), combined = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
   const budget = { until: Date.now() + timeoutMs, slowest: "metadata", elapsed: 0, signal: combined };
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -66,7 +66,7 @@ export async function runGitProcess(argv: readonly string[], options: ProcessOpt
   } catch (error) {
     const elapsed = Date.now() - start;
     if (budget && elapsed > budget.elapsed) { budget.elapsed = elapsed; budget.slowest = command; }
-    if (argv.includes("ls-files") && argv.includes("--others") && error instanceof Error && error.message.includes("maxBuffer"))
+    if ((argv.includes("status") || argv.includes("ls-files") && argv.includes("--others")) && error instanceof Error && error.message.includes("maxBuffer"))
       throw new HostError("too-many-paths", "The untracked file listing was too large to transfer safely.");
     throw error;
   }
@@ -77,14 +77,14 @@ export async function requireSparseGit(context: { git(args: readonly string[], o
   if (!match || Number(match[1]) < 2 || Number(match[1]) === 2 && Number(match[2]) < 35)
     throw new HostError("git-capability", "Sparse staging requires Git 2.35 or later; this host reports " + version + ".");
 }
-export function rawChanges(text: string): { status: "A" | "M" | "T" | "D"; path: string }[] {
-  const fields = text.split("\0").filter(Boolean), changes: { status: "A" | "M" | "T" | "D"; path: string }[] = [];
+export function rawChanges(text: string): { status: "A" | "M" | "T" | "D"; path: string; mode?: "100644" | "100755" | "120000"; blob?: string }[] {
+  const fields = text.split("\0").filter(Boolean), changes: ReturnType<typeof rawChanges> = [];
   for (let at = 0; at < fields.length; at += 2) {
-    const match = /^:(\d{6}) (\d{6}) [a-f0-9]+ [a-f0-9]+ ([AMTD])$/.exec(fields[at]!);
+    const match = /^:(\d{6}) (\d{6}) [a-f0-9]+ ([a-f0-9]+) ([AMTD])$/.exec(fields[at]!);
     if (!match || !fields[at + 1]) throw new HostError("unsupported-change", "The source diff contains an unsupported change kind.");
     if (match[1] === "160000" || match[2] === "160000")
       throw new HostError("submodule-unsupported", "Submodules cannot be transferred between machines in this version: " + fields[at + 1]);
-    changes.push({ status: match[3] as "A" | "M" | "T" | "D", path: fields[at + 1]! });
+    changes.push({ status: match[4] as "A" | "M" | "T" | "D", path: fields[at + 1]!, ...(match[4] === "D" ? {} : { mode: match[2] as "100644" | "100755" | "120000", blob: match[3]! }) });
   }
   return changes;
 }

@@ -18,7 +18,17 @@ export async function repositoryObjectFormat(root: string, options: GitOptions, 
 }
 const unsupported = (command: string, reason: string) => new HostError("git-unsupported", `This machine's Git can't carry Tavern's work (${(`${command}: ${reason}`).replace(/\s+/g, " ").trim().slice(0, 200)}). Members can't be placed on it yet.`);
 
-export async function inspectGitCapabilities(root: string, options: GitOptions, bare: boolean): Promise<Set<string>> {
+export async function inspectGitCapabilities(root: string, options: GitOptions, bare: boolean, kind: "porcelain" | "full"): Promise<Set<string>> {
+  if (kind === "porcelain") {
+    if (bare) throw unsupported("git status", "a member needs a non-bare checkout");
+    const status = await runGit(root, ["status", "--porcelain", "-z"], { ...options, timeoutMs: 300_000 });
+    if (status.code !== 0) throw unsupported("git status --porcelain", status.stderr || status.stdout);
+    for (const args of [["diff", "--name-status", "--no-renames", "-z", "HEAD", "HEAD"], ["ls-files", "--unmerged", "-z"], ["cat-file", "-t", "HEAD"]]) {
+      const result = await runGit(root, args, options);
+      if (result.code !== 0) throw unsupported("git " + args.join(" "), result.stderr || result.stdout);
+    }
+    return new Set();
+  }
   const commands = await runGit(root, ["--list-cmds=builtins"], options);
   if (commands.code !== 0) throw unsupported("git --list-cmds=builtins", commands.stderr || commands.stdout);
   const builtins = new Set(commands.stdout.split(/\s+/));
@@ -33,7 +43,7 @@ export async function inspectGitCapabilities(root: string, options: GitOptions, 
       const argv = ["-C", root, ...(bare ? ["--work-tree=" + temporary] : []), ...args];
       const result = await experimental_runVcsProcess("git", argv, () => {
         options.check?.();
-        return runGitProcess(argv, { env: { ...gitEnvironment(root, options.dataDir), GIT_INDEX_FILE: index }, signal: options.signal, timeoutMs: 150_000, maxBuffer: 64 * 1024 * 1024 });
+        return runGitProcess(argv, { env: { ...gitEnvironment(root, options.dataDir), GIT_INDEX_FILE: index }, signal: options.signal, timeoutMs: 300_000, maxBuffer: 64 * 1024 * 1024 });
       }, { priority: "background", signal: options.signal });
       options.check?.();
       if (result.timedOut) throw new HostError("git-timeout", "The temporary-index Git probe exceeded its deadline.", true);

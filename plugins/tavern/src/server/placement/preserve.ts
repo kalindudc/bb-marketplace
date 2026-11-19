@@ -209,6 +209,10 @@ export class PlacementPreservation {
         if (!neverProvisioned && initialThread.environmentId === null) throw new Error("The member has no provisioned environment; retry once its state is confirmed");
         const source = neverProvisioned ? null : await readSourceIdentity(this.bb, threadId, record.projectId, signal); current();
         const home = await readSourceIdentity(this.bb, record.keeperThreadId, record.projectId, signal); current();
+        const original = record.sourceSnapshotId ? this.placements.snapshot(record.sourceSnapshotId) : null;
+        if (record.sourceSnapshotId && (!original || original.home.hostId !== home.endpoint.hostId || original.home.environmentId !== home.endpoint.environmentId))
+          throw new Error("The member's recorded home snapshot is missing or no longer matches its Keeper");
+        const homeEndpoint = original?.home ?? home.endpoint;
         if (source && !record.hostId && !record.environmentId && !record.root) {
           update(value => ({ ...value, hostId: source.endpoint.hostId, environmentId: source.endpoint.environmentId, root: source.endpoint.root }));
           Object.assign(record, { hostId: source.endpoint.hostId, environmentId: source.endpoint.environmentId, root: source.endpoint.root });
@@ -232,19 +236,18 @@ export class PlacementPreservation {
           return hostContract[method].output.parse(reply) as HostOutput<M>;
         };
         const authority = (endpointId: string): Authority => ({ placementId: record.id, generation: record.generation, endpointId, operationId: randomUUID() });
-        const register = async (endpointId: string, endpoint: Endpoint, ownerThreadId: string, access: "source-read" | "artifact-read" | "artifact-store") => {
-          const ack = await call(endpoint.hostId, "registerEndpoint", { placementId: record.id, generation: record.generation, endpointId, endpoint, ownerThreadId, access, workspaceKind: null, objectFormat: null, allowedRefs: [] });
+        const register = async (endpointId: string, endpoint: Endpoint, ownerThreadId: string, access: "source-read" | "artifact-read" | "artifact-store", git: "porcelain" | "full") => {
+          const ack = await call(endpoint.hostId, "registerEndpoint", { placementId: record.id, generation: record.generation, endpointId, endpoint, ownerThreadId, access, git, workspaceKind: null, objectFormat: null, allowedRefs: [] });
           if (ack.generation !== record.generation) throw new Error("The preservation endpoint acknowledged a stale generation");
           return authority(endpointId);
         };
         let snapshot: SourceSnapshot | null = null;
         if (source) {
-          const from = await register("preserve-source", source.endpoint, threadId, "source-read");
+          const from = await register("preserve-source", source.endpoint, threadId, "source-read", "porcelain");
           const inspection = await call(source.endpoint.hostId, "inspect", from);
           if (inspection.root !== source.endpoint.root || !inspection.features.exportChanges) throw new Error("Preservation requires the member's complete repository root");
-          const base = inspection.sourceBase;
-          if (!base || base.outcome !== "ok") throw new Error(base?.message ?? "The member has no fetchable source base for preservation");
-          const captured = await call(source.endpoint.hostId, "snapshotWorktree", { ...from, base: base.base });
+          if (!original?.fetch) throw new Error("The member has no recorded source base and remote for preservation; reconcile its placement.");
+          const captured = await call(source.endpoint.hostId, "snapshotWorktree", { ...from, base: original.base });
           if ("outcome" in captured) {
             block(captured.message, captured.code, "preserve", captured.retryable);
             return { state: "blocked", message: captured.message };
@@ -253,14 +256,13 @@ export class PlacementPreservation {
           const pinned = [record.preservation.snapshotId, record.submissionSnapshotId, record.sourceSnapshotId]
             .map(id => id ? this.placements.snapshot(id) : null)
             .find(snapshot => snapshot?.homeCommit && snapshot.objectFormat === inspection.objectFormat && snapshot.tree === captured.tree &&
-              isDeepStrictEqual(snapshot.home, home.endpoint));
+              isDeepStrictEqual(snapshot.home, homeEndpoint));
           if (pinned) snapshot = pinned;
           else {
-            const { outcome: _outcome, base: _base, ...fetch } = base;
             snapshot = this.placements.captureSnapshot({ purpose: "wip", keeperThreadId: record.keeperThreadId, projectId: record.projectId,
               sourceThreadId: threadId, makerThreadId: threadId, makerSubmissionId: null, journalTarget: null,
-              objectFormat: inspection.objectFormat, base: base.base, sourceHead: captured.commit, tree: captured.tree,
-              fetch: sourceFetchSchema.parse(fetch), source: { ...source.endpoint, root: inspection.root }, home: home.endpoint,
+              objectFormat: inspection.objectFormat, base: original.base, sourceHead: captured.commit, tree: captured.tree,
+              fetch: sourceFetchSchema.parse(original.fetch), source: { ...source.endpoint, root: inspection.root }, home: homeEndpoint,
               includesUncommitted: captured.includesUncommitted, userHead: captured.head,
               ...(captured.includesUncommitted ? { uncommittedOrigin: source.endpoint } : {}), modifiedPaths: captured.modifiedPaths, untrackedPaths: captured.untrackedPaths });
           }
@@ -272,15 +274,15 @@ export class PlacementPreservation {
         const snapshotId = snapshot?.id ?? null;
         update(value => ({ ...value, preservation: { ...value.preservation, source: neverProvisioned ? "not-needed" : "saved", snapshotId,
           reason: neverProvisioned ? "never provisioned" : reason } }));
-        const homeAuthority = await register("preserve-home", home.endpoint, record.keeperThreadId, "source-read");
-        const homeInspection = await call(home.endpoint.hostId, "inspect", homeAuthority);
+        const homeAuthority = await register("preserve-home", homeEndpoint, record.keeperThreadId, "source-read", "full");
+        const homeInspection = await call(homeEndpoint.hostId, "inspect", homeAuthority);
         await this.journal.prepare(threadId); held();
         const declared = [...new Set(this.journal.get(threadId).entries.flatMap(entry => entry.evidence.filter(item => item.kind === "file").map(item => item.ref)))];
         if (declared.length > 50_000) throw new Error("The declared evidence exceeds the 50,000-file preservation limit");
         const roots = [...(source ? [{ endpointId: "preserve-artifacts-workspace", endpoint: source.endpoint }] : []), { endpointId: "preserve-artifacts-storage", endpoint: { hostId: storage.hostId, environmentId: null, root: storage.storageRootPath } }];
         const artifactBatch = snapshot ?? { id: "preserve-artifacts-" + digest([record.id, record.generation]), objectFormat: homeInspection.objectFormat,
           base: homeInspection.head, sourceHead: homeInspection.head, tree: homeInspection.tree };
-        const manifest: SavedManifest = { home: home.endpoint, activityBaseline: activitySchema.parse({ updatedAt: baseline[0], latestAttentionAt: baseline[1], queuedMessageCount: baseline[2] }), id: "preserve-" + digest([record.id, record.generation, artifactBatch.id]), placementId: record.id,
+        const manifest: SavedManifest = { home: homeEndpoint, activityBaseline: activitySchema.parse({ updatedAt: baseline[0], latestAttentionAt: baseline[1], queuedMessageCount: baseline[2] }), id: "preserve-" + digest([record.id, record.generation, artifactBatch.id]), placementId: record.id,
           placementGeneration: record.generation, snapshotId: artifactBatch.id, files: [], saved: [], notPreserved: [] };
         const registered = new Set<string>();
         for (const path of declared) {
@@ -291,7 +293,7 @@ export class PlacementPreservation {
           if (!root) { manifest.notPreserved.push(`${path}: outside the allowed checkout and thread-storage roots`); continue; }
           const relativePath = posix.relative(root.endpoint.root, absolute);
           if (!repoPathSchema.safeParse(relativePath).success) { manifest.notPreserved.push(`${path}: unsafe artifact path`); continue; }
-          if (!registered.has(root.endpointId)) { await register(root.endpointId, root.endpoint, threadId, "artifact-read"); registered.add(root.endpointId); }
+          if (!registered.has(root.endpointId)) { await register(root.endpointId, root.endpoint, threadId, "artifact-read", "porcelain"); registered.add(root.endpointId); }
           try {
             const inspected = await call(root.endpoint.hostId, "inspectArtifacts", { ...authority(root.endpointId), relativePaths: [relativePath] });
             if (inspected.notPreserved?.length) {
@@ -311,7 +313,7 @@ export class PlacementPreservation {
         update(value => ({ ...value, preservation: { ...value.preservation, artifactManifestId: manifest.id, artifacts: declared.length ? "pending" : "not-declared" } }));
         if (manifest.files.length) {
           if (!homeInspection.artifactDirectory) throw new Error("The home host did not report durable artifact storage");
-          const to = await register("preserve-artifact-store", { hostId: home.endpoint.hostId, environmentId: null, root: homeInspection.artifactDirectory }, record.keeperThreadId, "artifact-store");
+          const to = await register("preserve-artifact-store", { hostId: home.endpoint.hostId, environmentId: null, root: homeInspection.artifactDirectory }, record.keeperThreadId, "artifact-store", "full");
           for (const file of manifest.files) {
             const root = roots.find(root => root.endpointId === file.sourceEndpointId)!;
             const transferId = "artifact-" + digest([manifest.id, file.id]);

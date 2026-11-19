@@ -4,16 +4,18 @@ import { existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, sym
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "node:net";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { scopeForClass } from "../../src/scope/presets";
 import { evaluate } from "../../src/scope/engine";
 import { prepareCall } from "../../src/scope/prepare";
 import { bindPaths, realPath } from "../../src/scope/paths";
 import { scopeSchema, type Scope } from "../../src/scope/schema";
 import { sandboxCommand, sandboxProfile } from "../../src/scope/sandbox";
+import { emulatedGit } from "../host/emulated-git";
+import { checkerWritePaths } from "../../src/scope/checker";
 import { linkedWorktree } from "./git-fixture";
 const roots: string[] = [];
-afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+afterEach(() => { vi.unstubAllEnvs(); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 function fixture() {
   const root = realPath(mkdtempSync(join(tmpdir(), "tavern-checker-"))); roots.push(root);
   const { main, worktree, git } = linkedWorktree(root), scratch = join(root, "scratch"), outside = join(root, "outside");
@@ -23,6 +25,11 @@ function fixture() {
   const run = (command: string, cwd = worktree) => evaluate(scope, call(command, cwd));
   return { root, main, worktree, scratch, outside, scope, git, call, run };
 }
+it("reports a refused Git listing to the Warden instead of treating it as an empty list", () => {
+  const f = fixture();
+  vi.stubEnv("PATH", emulatedGit(f.root, true) + ":" + process.env.PATH);
+  expect(() => checkerWritePaths(f.scope)).toThrow(/git .*ls-files --cached -z[\s\S]*ls-files --cached refused/);
+});
 it("gives Wardens checker while preserving readonly Ranger and open Keeper defaults", () => {
   expect(scopeForClass("warden").preset).toBe("checker"); expect(scopeForClass("ranger").preset).toBe("readonly"); expect(scopeForClass("keeper").preset).toBe("open");
   const f = fixture(); expect(scopeSchema.safeParse(f.scope).success).toBe(true);

@@ -11,14 +11,14 @@ import * as processModule from "../../src/host/process";
 
 const roots: string[] = [];
 afterEach(() => { vi.restoreAllMocks(); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
-function fixture(format: "sha1" | "sha256" = "sha1") {
+function fixture(format: "sha1" | "sha256" = "sha1", kind: "porcelain" | "full" = "full") {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "git-capabilities-"))); roots.push(root);
   const repo = join(root, "repo"), data = join(root, "data"); mkdirSync(repo); mkdirSync(data);
   const git = (...args: string[]) => execFileSync("git", ["-C", repo, ...args], { encoding: "utf8", stdio: "pipe" }).trim();
   git("init", "-q", "-b", "worker", "--object-format=" + format); git("config", "user.name", "Fixture"); git("config", "user.email", "fixture@example.invalid");
   writeFileSync(join(repo, "tracked"), "base"); git("add", "tracked"); git("commit", "-qm", "base");
   const registry = new HostRegistry(data), authority = { placementId: "placement", generation: 1, endpointId: "source", operationId: "inspect" };
-  registry.registerEndpoint({ placementId: authority.placementId, generation: authority.generation, endpointId: authority.endpointId, endpoint: { hostId: "host", environmentId: "env", root: repo }, access: "source-read", workspaceKind: null, ownerThreadId: null, objectFormat: format, allowedRefs: [] });
+  registry.registerEndpoint({ placementId: authority.placementId, generation: authority.generation, endpointId: authority.endpointId, endpoint: { hostId: "host", environmentId: "env", root: repo }, git: kind, access: "source-read", workspaceKind: null, ownerThreadId: null, objectFormat: format, allowedRefs: [] });
   return { repo, data, git, registry, authority, inspect: () => inspectHost(registry, authority) };
 }
 const refused = (stderr: string) => ({ code: 129, stdout: "", stderr, timedOut: false });
@@ -52,6 +52,15 @@ it.each(["--list-cmds=builtins", "commit-tree", "write-tree", "update-index", "r
   expect(failure.message).toContain(command);
   if (["status", "--list-cmds=builtins"].includes(command)) expect(failure.message).toContain("not yet implemented");
   expect(readdirSync(f.data).filter(name => name.startsWith("git-probe-"))).toEqual([]);
+});
+it("keeps a member source-read endpoint porcelain and refuses plumbing before execution", async () => {
+  const f = fixture("sha1", "porcelain"), process = vi.spyOn(processModule, "runProcess");
+  expect(await f.inspect()).toMatchObject({ features: { porcelain: true, exportChanges: true, objectImport: false } });
+  const context = hostContext(f.registry, f.authority, ["source-read"], new AbortController().signal);
+  await assertRepository(context);
+  for (const command of ["write-tree", "commit-tree", "update-index", "read-tree", "hash-object", "mktree", "ls-tree", "merge-base", "reset"])
+    expect(() => context.git([command])).toThrow(/porcelain Git only/);
+  expect(process.mock.calls.some(([, args, options]) => args.includes("--list-cmds=builtins") || !!options.env?.GIT_INDEX_FILE)).toBe(false);
 });
 it("rejects an object format that contradicts the verified HEAD length", async () => {
   const f = fixture(), original = processModule.runProcess;

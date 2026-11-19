@@ -1,6 +1,7 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { createFakePluginHost, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { execFileSync } from "node:child_process";
+import { realGit } from "../host/emulated-git";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,6 +10,7 @@ import { hostContract, type HostMethod } from "../../src/host-contract";
 import { createHostPort } from "../../src/host/client";
 import { inspectHost } from "../../src/host/inspect";
 import { HostRegistry } from "../../src/host/registry";
+import { pushedBase } from "../../src/host/pushed-base";
 import { snapshotWorktree } from "../../src/host/snapshot";
 import { createTransport } from "../../src/host/transport";
 import { createArtifacts } from "../../src/host/artifacts";
@@ -21,7 +23,7 @@ import { PlacementTransport } from "../../src/server/placement/transport";
 import { journalEntrySchema, memberSchema } from "../../src/shared/schema";
 import { placementRecord } from "./placement-fixture";
 
-export const submissionGit = (root: string, ...args: string[]) => execFileSync("git", ["-C", root, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+export const submissionGit = (root: string, ...args: string[]) => execFileSync(realGit, ["-C", root, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 export async function submissionFixture(format: "sha1" | "sha256" = "sha1") {
   const git = submissionGit, root = realpathSync(mkdtempSync(join(tmpdir(), "submission-")));
   const home = join(root, "home"), maker = join(root, "maker"), storage = join(root, "storage"); mkdirSync(home); mkdirSync(storage);
@@ -56,6 +58,7 @@ export async function submissionFixture(format: "sha1" | "sha256" = "sha1") {
     }
     else if (call.method === "inspect") result = await inspectHost(registry, hostContract.inspect.input.parse(call.input), call.signal);
     else if (call.method === "registerTransfer") result = registry.registerTransfer(hostContract.registerTransfer.input.parse(call.input));
+    else if (call.method === "pushedBase") result = await pushedBase(registry, hostContract.pushedBase.input.parse(call.input), call.signal);
     else if (call.method === "snapshotWorktree") result = await snapshotWorktree(registry, hostContract.snapshotWorktree.input.parse(call.input), call.signal);
     else {
       const transport = createTransport(registry), method = call.method as keyof typeof transport;
@@ -77,7 +80,10 @@ export async function submissionFixture(format: "sha1" | "sha256" = "sha1") {
     confirmHeld: vi.fn(async (token: Parameters<AwayHolds["findContent"]>[0]) => { const row = rows.findContent(token)!; if (state.status === "idle") rows.compareAndSet(row, { stopPending: false }); return holds.inspectHeld(token); }),
     finishContentHold: vi.fn((token: Parameters<AwayHolds["findContent"]>[0]) => ({ state: rows.finishContent(token) ? "finished" as const : "stale" as const })),
   };
-  const draft = placementRecord({ memberThreadId: "maker", ownsNewMachine: true, workspaceKind: "dedicated-machine", posture: { ...placementRecord().posture, aggregate: "remote-detection-only" } });
+  const original = placements.captureSnapshot({ purpose: "initial", keeperThreadId: "keeper", projectId: "project", sourceThreadId: "keeper", makerThreadId: null, makerSubmissionId: null, journalTarget: null,
+    objectFormat: format, base, sourceHead: base, tree: git(home, "rev-parse", "HEAD^{tree}"),
+    fetch: { via: "upstream", remoteName: "origin", remoteUrl: home, trackingRef: "refs/remotes/origin/main", fetchRef: "refs/heads/main" }, source: endpoint("home"), home: endpoint("home") });
+  const draft = placementRecord({ sourceSnapshotId: original.id, memberThreadId: "maker", ownsNewMachine: true, workspaceKind: "dedicated-machine", posture: { ...placementRecord().posture, aggregate: "remote-detection-only" } });
   placements.reserve(draft, { maxMakers: 2, maxCheckers: 2 });
   placements.update(draft.id, 1, value => ({ ...value, phase: "running", hostId: "maker", environmentId: "maker-env", root: maker }));
   const submissions = new PlacementSubmissions(host.bb, port, placements, holds, keepers, journal, new PlacementTransport(host.bb, port, placements));

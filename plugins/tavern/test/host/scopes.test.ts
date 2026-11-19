@@ -28,7 +28,7 @@ async function fixture(role = "smith", format: "sha1" | "sha256" = "sha1") {
   git("init", "-q", "-b", "tavern/member", "--object-format=" + format); git("config", "user.name", "Fixture"); git("config", "user.email", "fixture@example.invalid");
   writeFileSync(join(repo, "tracked"), "initial"); git("add", "tracked"); git("commit", "-qm", "initial");
   const registry = new HostRegistry(data), authority: Authority = { placementId: "placement", generation: 1, endpointId: "member-workspace", operationId: "scope" };
-  registry.registerEndpoint({ placementId: authority.placementId, generation: authority.generation, endpointId: authority.endpointId, endpoint: { hostId: "guest", environmentId: "guest-env", root: repo }, ownerThreadId: "member", access: "member-write", workspaceKind: "dedicated-machine", objectFormat: format, allowedRefs: ["refs/heads/tavern/member"] });
+  registry.registerEndpoint({ placementId: authority.placementId, generation: authority.generation, endpointId: authority.endpointId, endpoint: { hostId: "guest", environmentId: "guest-env", root: repo }, ownerThreadId: "member", access: "member-write", git: "full", workspaceKind: "dedicated-machine", objectFormat: format, allowedRefs: ["refs/heads/tavern/member"] });
   await inspectHost(registry, authority);
   const service = new NativeScopes(registry, { paths: { home, tmp: [scratch], piAgentDir: agent } });
   const template = { ...scopeForClass(role), threadId: "member", issuedAt: 1234 };
@@ -37,7 +37,7 @@ async function fixture(role = "smith", format: "sha1" | "sha256" = "sha1") {
   template.tools.deny.push("private_tool");
   const delivery: ScopeDeliveryFile = { ...template, bindingTemplate: structuredClone(template), workspaceBinding: { kind: "dedicated-machine", hostId: "guest", environmentId: "guest-env", root: repo, placementId: authority.placementId, generation: 1, snapshotId: "snapshot", expectedTree: git("rev-parse", "HEAD^{tree}") } };
   const input = (value = delivery, revision = 1, suffix = ""): HostInput<"bindScope"> => { const scopeFileJson = JSON.stringify(value) + suffix; return { ...authority, revision, scopeDigest: digest(scopeFileJson), scopeFileJson }; };
-  const registerStorage = (ownerThreadId = "member", hostId = "guest") => registry.registerEndpoint({ placementId: authority.placementId, generation: 1, endpointId: "storage", endpoint: { hostId, environmentId: null, root: storage }, ownerThreadId, access: "artifact-read", workspaceKind: null, objectFormat: null, allowedRefs: [] });
+  const registerStorage = (ownerThreadId = "member", hostId = "guest") => registry.registerEndpoint({ placementId: authority.placementId, generation: 1, endpointId: "storage", endpoint: { hostId, environmentId: null, root: storage }, ownerThreadId, access: "artifact-read", git: "full", workspaceKind: null, objectFormat: null, allowedRefs: [] });
   return { root, repo, home, scratch, data, storage, agent, git, registry, authority, service, template, delivery, input, registerStorage };
 }
 function guarded(file: string, cwd: string) {

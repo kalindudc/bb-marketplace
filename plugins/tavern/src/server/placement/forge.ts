@@ -50,7 +50,7 @@ export class PlacementForge {
         return hostContract[method].output.parse(result) as HostOutput<M>;
       };
       const from = { placementId: record.id, generation: record.generation, endpointId: "draft-source", operationId: randomUUID() };
-      await call(source.endpoint.hostId, "registerEndpoint", { placementId: from.placementId, generation: from.generation, endpointId: from.endpointId, endpoint: source.endpoint, ownerThreadId: threadId, access: "source-read", workspaceKind: null, objectFormat: null, allowedRefs: [] });
+      await call(source.endpoint.hostId, "registerEndpoint", { placementId: from.placementId, generation: from.generation, endpointId: from.endpointId, endpoint: source.endpoint, ownerThreadId: threadId, access: "source-read", git: "porcelain", workspaceKind: null, objectFormat: null, allowedRefs: [] });
       const inspection = await call(source.endpoint.hostId, "inspect", from);
       if (inspection.branch !== branch) throw new Error("The member is not on its own SDK branch.");
       const original = record.sourceSnapshotId ? services.store.snapshot(record.sourceSnapshotId) : null;
@@ -70,7 +70,7 @@ export class PlacementForge {
       if (!pinned.homeCommit) throw new Error("Broken contract: the carried draft has no verified home commit.");
       const to = { ...from, endpointId: "draft-home", operationId: randomUUID() };
       await call(home.endpoint.hostId, "registerEndpoint", { placementId: to.placementId, generation: to.generation, endpointId: to.endpointId, endpoint: { ...home.endpoint, root: original.home.root }, ownerThreadId: record.keeperThreadId,
-        access: "home-import", workspaceKind: null, objectFormat: inspection.objectFormat, allowedRefs: [], draft: { branch, base, sourceBase, remote: original.fetch.remoteUrl } });
+        access: "home-import", git: "full", workspaceKind: null, objectFormat: inspection.objectFormat, allowedRefs: [], draft: { branch, base, sourceBase, remote: original.fetch.remoteUrl } });
       await call(home.endpoint.hostId, "inspect", to);
       const previous = runtime.keeper.member(threadId)?.draftPush;
       if (previous && (previous.branch !== branch || previous.remote !== original.fetch.remoteUrl)) throw new Error("The member's draft push destination changed.");
@@ -85,7 +85,11 @@ export class PlacementForge {
       event("member.draft-pushed", "Draft branch pushed from home", draftPush);
       const existing = runtime.keeper.store.all("pullRequests").find(pr => pr.projectId === record.projectId && pr.head === branch);
       if (existing) runtime.keeper.store.recordPullRequest({ ...existing, memberHead: inspection.head, pushedHead: pinned.homeCommit, verifiedCommit: null }, runtime.keeper.now());
-      const opened = await call(home.endpoint.hostId, "draftOpen", { ...to, profile, title: input.title, body: input.body });
+      const forgeEndpoint = { ...to, endpointId: "draft-forge", operationId: randomUUID() };
+      await call(home.endpoint.hostId, "registerEndpoint", { placementId: forgeEndpoint.placementId, generation: forgeEndpoint.generation, endpointId: forgeEndpoint.endpointId, endpoint: home.endpoint, ownerThreadId: record.keeperThreadId,
+        access: "source-read", git: "full", workspaceKind: null, objectFormat: inspection.objectFormat, allowedRefs: [], draft: { branch, base, sourceBase, remote: original.fetch.remoteUrl } });
+      await call(home.endpoint.hostId, "inspect", forgeEndpoint);
+      const opened = await call(home.endpoint.hostId, "draftOpen", { ...forgeEndpoint, profile, title: input.title, body: input.body });
       if (!opened.ok) {
         event("member.draft-pr-failed", `Draft PR: ${profile.name}, ${opened.failureClass}`, opened);
         return `Forge ${profile.name}: ${opened.failureClass}.\n${opened.lines}`;
@@ -116,13 +120,15 @@ export class PlacementForge {
     const env = await runtime.bb.sdk.environments.get({ environmentId: source.endpoint.environmentId! });
     if (!env.branchName) throw new Error("The member has no private branch.");
     if (runtime.keeper.store.all("pullRequests").some(pr => pr.projectId === projectId && pr.head === env.branchName && pr.owner !== threadId)) throw new Error("Another owner already has this branch’s pull request.");
-    const host = runtime.placements().host;
+    const services = runtime.placements(), placement = services.store.byMember(threadId);
+    const original = placement?.sourceSnapshotId ? services.store.snapshot(placement.sourceSnapshotId) : null;
+    const host = services.host;
     const authority = { placementId: "draft-record-" + threadId, generation: 1, endpointId: "source", operationId: randomUUID() };
-    await host.call(source.endpoint.hostId, "registerEndpoint", { placementId: authority.placementId, generation: 1, endpointId: authority.endpointId, endpoint: source.endpoint, ownerThreadId: threadId, access: "source-read", workspaceKind: null, objectFormat: null, allowedRefs: [] }, { signal });
+    await host.call(source.endpoint.hostId, "registerEndpoint", { placementId: authority.placementId, generation: 1, endpointId: authority.endpointId, endpoint: source.endpoint, ownerThreadId: threadId, access: "source-read", git: placement ? "porcelain" : "full", workspaceKind: null, objectFormat: null, allowedRefs: [] }, { signal });
     const inspection = hostContract.inspect.output.parse(await host.call(source.endpoint.hostId, "inspect", authority, { signal }));
     if (inspection.branch !== env.branchName) throw new Error("The member is not on its own SDK branch.");
-    const sourceBase = inspection.sourceBase;
-    const base = input.base ?? (sourceBase?.outcome === "ok" ? sourceBase.fetchRef.replace(/^refs\/heads\//, "") : env.baseBranch);
+    const sourceBase = original?.fetch?.fetchRef ?? (!placement && inspection.sourceBase?.outcome === "ok" ? inspection.sourceBase.fetchRef : undefined);
+    const base = input.base ?? sourceBase?.replace(/^refs\/heads\//, "");
     if (!base || base === env.branchName) throw new Error("Name a base branch distinct from the member's own branch.");
     const existing = runtime.keeper.store.all("pullRequests").find(pr => pr.projectId === projectId && pr.head === env.branchName);
     if (existing && existing.base !== base) return `This branch's draft targets ${existing.base}; moving it comes later`;

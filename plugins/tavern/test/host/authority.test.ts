@@ -19,7 +19,7 @@ function fixture() {
   git("init", "-q", "-b", "worker"); git("config", "user.name", "Fixture"); git("config", "user.email", "fixture@example.invalid");
   writeFileSync(join(repo, "tracked"), "initial\n"); git("add", "tracked"); git("commit", "-qm", "fixture");
   const registry = new HostRegistry(data);
-  const endpoint: HostInput<"registerEndpoint"> = { placementId: "placement-a", generation: 1, endpointId: "member-a", endpoint: { hostId: "guest-a", environmentId: "environment-a", root: repo }, ownerThreadId: "member-thread", access: "member-write", workspaceKind: "dedicated-machine", objectFormat: "sha1", allowedRefs: ["refs/heads/worker"] };
+  const endpoint: HostInput<"registerEndpoint"> = { placementId: "placement-a", generation: 1, endpointId: "member-a", endpoint: { hostId: "guest-a", environmentId: "environment-a", root: repo }, ownerThreadId: "member-thread", access: "member-write", git: "full", workspaceKind: "dedicated-machine", objectFormat: "sha1", allowedRefs: ["refs/heads/worker"] };
   const authority = { placementId: endpoint.placementId, generation: endpoint.generation, endpointId: endpoint.endpointId, operationId: "operation-a" };
   const transfer = { ...authority, transferId: "transfer-a", snapshotId: "snapshot-a", direction: "carry-out" as const, objectFormat: "sha1" as const, base: git("rev-parse", "HEAD"), head: git("rev-parse", "HEAD"), tree: git("rev-parse", "HEAD^{tree}"), fromEndpointId: "home-a", toEndpointId: endpoint.endpointId, allowedRefs: [], uploads: ["upload-a"], artifacts: [] };
   return { root, repo, data, registry, endpoint, authority, transfer, git };

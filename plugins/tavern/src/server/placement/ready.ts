@@ -144,13 +144,13 @@ export class PlacementReady {
       const previousDelivery = deliveries.get(placementId);
       let bindingEndpoints = previousDelivery ? scopeDeliveryFileSchema.parse(JSON.parse(previousDelivery.scopeFileJson)).bindingEndpoints : undefined;
       const endpoints: EndpointRegistration[] = [{ placementId, generation, endpointId: "carry-member", endpoint: sdk.endpoint,
-        ownerThreadId: memberId, access: "member-write", workspaceKind: record.workspaceKind, objectFormat: snapshot.objectFormat,
+        ownerThreadId: memberId, access: "member-write", git: "porcelain", workspaceKind: record.workspaceKind, objectFormat: snapshot.objectFormat,
         allowedRefs: ["refs/heads/" + sdk.branch] }];
       if (!carried) {
         const storage = await awaited(() => bb.sdk.threads.storageLocation({ threadId: memberId, signal }));
         if (storage.hostId === sdk.endpoint.hostId) endpoints.push({ placementId, generation, endpointId: "ready-storage",
           endpoint: { hostId: storage.hostId, environmentId: null, root: storage.storageRootPath }, ownerThreadId: memberId,
-          access: "artifact-read", workspaceKind: null, objectFormat: null, allowedRefs: [] });
+          access: "artifact-read", git: "porcelain", workspaceKind: null, objectFormat: null, allowedRefs: [] });
         const batch = await call("registerEndpoints", { placementId, generation, operationId: randomUUID(), endpoints });
         if (batch.generation !== generation) throw new StalePlacementError("The endpoint batch acknowledged a stale generation");
         if (batch.outcome === "waiting") throw new Error(`Waiting for transfer slots: ${batch.active} in use (limit 32)`);

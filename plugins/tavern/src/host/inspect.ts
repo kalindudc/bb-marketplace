@@ -26,8 +26,20 @@ function remoteIdentity(value: string): string | undefined {
   if (!scp || !path || path.startsWith(":")) return;
   return scp[1]!.toLowerCase() + ":" + path;
 }
-async function repositoryRemotes(root: string, options: GitOptions, sourceRead: boolean): Promise<string[] | undefined> {
+async function repositoryRemotes(root: string, options: GitOptions, sourceRead: boolean, kind: "full" | "porcelain"): Promise<string[] | undefined> {
   try {
+    if (kind === "porcelain") {
+      const result = await runGit(root, ["remote", "-v"], { ...options, timeoutMs: 3000 });
+      if (result.code !== 0) return;
+      const identities = new Set<string>();
+      for (const line of result.stdout.split("\n").filter(Boolean)) {
+        const match = /^[^\t]+\t(.+) \((?:fetch|push)\)$/u.exec(line);
+        const identity = match && remoteIdentity(match[1]!);
+        if (!identity || identities.size >= 200) return;
+        identities.add(identity);
+      }
+      return [...identities].sort();
+    }
     const namesResult = await runGit(root, ["remote"], { ...options, timeoutMs: 3000 });
     if (namesResult.code !== 0) return;
     const names = namesResult.stdout.split("\n").filter(Boolean), identities = new Set<string>();
@@ -60,25 +72,29 @@ export async function inspectHost(registry: HostRegistry, authority: Authority, 
   const gitRoot = realpathSync(isAbsolute(actualRoot) ? actualRoot : resolve(root, actualRoot));
   if (endpoint.registration.access === "member-write" && gitRoot !== root)
     throw new HostError("endpoint-root-mismatch", "A writable member endpoint must name its complete private checkout, not a subdirectory.");
-  const builtins = await inspectGitCapabilities(root, options, bare === "true");
+  const builtins = await inspectGitCapabilities(root, options, bare === "true", endpoint.registration.git);
   const [head, tree, branchResult, dirs, status, repoRemotes] = await Promise.all([
     git(root, ["rev-parse", "--verify", "HEAD"], options),
     git(root, ["rev-parse", "--verify", "HEAD^{tree}"], options),
     runGit(root, ["symbolic-ref", "--short", "-q", "HEAD"], options),
-    git(root, ["rev-parse", "--git-dir", "--git-common-dir"], options),
-    bare === "true" ? Promise.resolve(null) : runGit(root, ["status", "--porcelain", "-z"], { ...options, timeoutMs: 150_000 }),
-    repositoryRemotes(root, options, endpoint.registration.access === "source-read"),
+    git(root, ["rev-parse", "--git-dir", ...(endpoint.registration.git === "full" ? ["--git-common-dir"] : [])], options),
+    bare === "true" ? Promise.resolve(null) : runGit(root, ["status", "--porcelain", "-z"], { ...options, timeoutMs: 300_000 }),
+    repositoryRemotes(root, options, endpoint.registration.access === "source-read", endpoint.registration.git),
   ]);
   const objectFormat = await repositoryObjectFormat(root, options, head);
   if (branchResult.code !== 0 && branchResult.code !== 1)
     throw new HostError("git-capability", "The host cannot establish the repository's current branch.");
-  const [gitDir, commonDir] = dirs.split("\n");
+  const [gitDir, reportedCommonDir] = dirs.split("\n");
+  const commonDir = endpoint.registration.git === "porcelain" ? gitDir : reportedCommonDir;
+  const sparseResult = await runGit(root, ["config", "--type=bool", "--get", "core.sparseCheckout"], options);
+  if (![0, 1].includes(sparseResult.code)) throw new HostError("git-capability", "Cannot determine the checkout's sparse setting.");
+  const sparse = sparseResult.stdout.trim() === "true";
   if (!gitDir || !commonDir) throw new HostError("git-capability", "The host cannot identify its Git metadata directories.");
   const normalized = (path: string) => realpathSync(resolve(root, path));
   const porcelain = status?.code === 0;
   const objectImport = ["hash-object", "mktree", "commit-tree", "update-ref", "ls-tree", "cat-file"].every(name => builtins.has(name));
   let sourceBase;
-  try { sourceBase = await inspectSourceBase(root, head, options); }
+  try { sourceBase = await inspectSourceBase(root, head, options, endpoint.registration.git); }
   catch (error) {
     if ((error as { code?: string })?.code !== "git-timeout" || endpoint.registration.access === "source-read" || bounded.aborted) throw error;
     sourceBase = { outcome: "unavailable" as const, code: "git-timeout", message: (error as Error).message, retryable: true };
@@ -91,7 +107,7 @@ export async function inspectHost(registry: HostRegistry, authority: Authority, 
   });
   if (result.head.length !== (result.objectFormat === "sha1" ? 40 : 64) || result.tree.length !== result.head.length)
     throw new HostError("object-format-mismatch", "The repository returned object ids inconsistent with its declared object format.");
-  registry.recordInspection(authority, { objectFormat: result.objectFormat, branch: result.branch, gitDir: normalized(gitDir), commonDir: normalized(commonDir) });
+  registry.recordInspection(authority, { objectFormat: result.objectFormat, branch: result.branch, gitDir: normalized(gitDir), commonDir: normalized(commonDir), sparse });
   return result;
   }, signal);
 }

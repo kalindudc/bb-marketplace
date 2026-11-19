@@ -21,7 +21,7 @@ export interface ProcessOptions {
   /** Most characters of stdout or stderr kept; the process is killed past it. */
   maxBuffer?: number;
   /** Written to stdin, which closes after it; stdin is empty otherwise. */
-  input?: string;
+  input?: string | Buffer;
   /** How long a group has after SIGTERM before SIGKILL. */
   graceMs?: number;
 }

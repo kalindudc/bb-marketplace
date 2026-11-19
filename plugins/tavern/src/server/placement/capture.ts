@@ -24,12 +24,24 @@ export class SourceCapture {
     private readonly placements: PlacementStore,
   ) {}
 
-  async initial(source: KnownSource, signal?: AbortSignal): Promise<SourceSnapshot> {
+  async initial(source: KnownSource, signal?: AbortSignal, options?: { pushedBaseOnly?: boolean }): Promise<SourceSnapshot> {
     signal?.throwIfAborted();
     await this.discovery.revalidate(source, signal);
     const inspection = source.inspection;
     if (!inspection.features.exportChanges)
       throw new SourceCaptureError("source-root-required", "Use a Keeper environment at the repository root. Tavern cannot carry a folder inside a larger Git repository without copying files outside that folder.");
+    if (options?.pushedBaseOnly) {
+      const pushed = hostContract.pushedBase.output.parse(await this.host.call(source.endpoint.hostId, "pushedBase", {
+        placementId: source.authorityId, generation: source.generation, endpointId: source.endpointId, operationId: randomUUID(),
+      }, signal === undefined ? undefined : { signal }));
+      signal?.throwIfAborted();
+      await this.discovery.revalidate(source, signal);
+      const endpoint = { ...source.endpoint, root: pushed.root };
+      return this.placements.captureSnapshot({ purpose: "initial", keeperThreadId: source.keeperThreadId, projectId: source.projectId,
+        sourceThreadId: source.keeperThreadId, makerThreadId: null, makerSubmissionId: null, journalTarget: null,
+        objectFormat: inspection.objectFormat, base: pushed.base, sourceHead: pushed.base, tree: pushed.tree, fetch: pushed.fetch,
+        includesUncommitted: false, userHead: pushed.base, modifiedPaths: 0, untrackedPaths: 0, source: endpoint, home: endpoint });
+    }
     if (inspection.sourceBase === undefined)
       throw new SourceCaptureError("source-base-unavailable", "The source worker did not supply a read-only source base; update or reconnect it before capturing source.", true);
     const sourceBase = sourceBaseSchema.parse(inspection.sourceBase);

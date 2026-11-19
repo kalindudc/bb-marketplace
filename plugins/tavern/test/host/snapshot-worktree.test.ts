@@ -24,7 +24,7 @@ async function fixture(format: "sha1" | "sha256" = "sha1") {
   writeFileSync(join(repo, "tracked"), "base\n"); writeFileSync(join(repo, ".gitignore"), "ignored\n");
   git(repo, "add", "-A"); git(repo, "commit", "-qm", "base");
   const registry = new HostRegistry(data), authority: Authority = { placementId: "source", generation: 1, endpointId: "source", operationId: "snapshot" };
-  registry.registerEndpoint({ placementId: authority.placementId, generation: authority.generation, endpointId: authority.endpointId, endpoint: { hostId: "source-host", environmentId: "source-env", root: repo }, ownerThreadId: "keeper", access: "source-read", workspaceKind: null, objectFormat: format, allowedRefs: [] });
+  registry.registerEndpoint({ placementId: authority.placementId, generation: authority.generation, endpointId: authority.endpointId, endpoint: { hostId: "source-host", environmentId: "source-env", root: repo }, ownerThreadId: "keeper", access: "source-read", git: "full", workspaceKind: null, objectFormat: format, allowedRefs: [] });
   await inspectHost(registry, authority);
   return { repo, registry, authority, base: git(repo, "rev-parse", "HEAD") };
 }
@@ -99,7 +99,7 @@ it("gives inspection and temporary-index scans World-sized Git deadlines without
   const scans = process.mock.calls.filter(([program, args]) => program === "git" &&
     (args.includes("status") || args.includes("add") || args.includes("ls-files") && args.includes("--others")));
   expect(scans.length).toBeGreaterThanOrEqual(4);
-  for (const [, , options] of scans) expect(options.timeoutMs).toBe(150_000);
+  for (const [, , options] of scans) { expect(options.timeoutMs).toBeGreaterThanOrEqual(150_000); expect(options.timeoutMs).toBeLessThanOrEqual(300_000); }
   const metadata = process.mock.calls.filter(([, args]) => args.includes("rev-parse") || args.includes("symbolic-ref") || args.includes("config"));
   expect(metadata.length).toBeGreaterThan(0);
   for (const [, , options] of metadata) expect(options.timeoutMs).toBeLessThanOrEqual(30_000);

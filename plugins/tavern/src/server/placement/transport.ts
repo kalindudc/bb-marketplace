@@ -159,7 +159,7 @@ export class PlacementTransport {
       ];
       for (const item of registrations) {
         const registered = await call(item.endpoint.hostId, "registerEndpoint", { placementId: item.native.placementId, generation, endpointId: item.native.endpointId,
-          endpoint: item.endpointSdk, ownerThreadId: item.ownerThreadId, access: item.access, workspaceKind: null, objectFormat: snapshot.objectFormat, allowedRefs: item.refs }); current();
+          endpoint: { ...item.endpointSdk, root: item.endpoint.root }, ownerThreadId: item.ownerThreadId, access: item.access, git: item.native.endpointId === from.endpointId && snapshot.purpose !== "initial" ? "porcelain" : "full", workspaceKind: null, objectFormat: snapshot.objectFormat, allowedRefs: item.refs }); current();
         if (registered.generation !== generation) throw new Error("The host acknowledged a stale snapshot owner generation");
         const inspected = await call(item.endpoint.hostId, "inspect", item.native); current();
         if (inspected.objectFormat !== snapshot.objectFormat) throw new Error("object-format-mismatch");
@@ -287,7 +287,7 @@ export class PlacementTransport {
         [verify, home, snapshot.home, "source-read", []],
       ] as const) {
         const registered = await call(endpoint.hostId, "registerEndpoint", { placementId, generation, endpointId: native.endpointId,
-          endpoint: identity.endpoint, ownerThreadId: identity.keeperThreadId, access, workspaceKind: null, objectFormat: snapshot.objectFormat, allowedRefs: [...refs] });
+          endpoint: { ...identity.endpoint, root: endpoint.root }, ownerThreadId: identity.keeperThreadId, access, git: native.endpointId === from.endpointId && snapshot.purpose !== "initial" ? "porcelain" : "full", workspaceKind: null, objectFormat: snapshot.objectFormat, allowedRefs: [...refs] });
         if (registered.generation !== generation) throw new Error("The host acknowledged a stale endpoint generation");
         const inspected = await call(endpoint.hostId, "inspect", native);
         if (inspected.objectFormat !== snapshot.objectFormat) throw new Error("object-format-mismatch");

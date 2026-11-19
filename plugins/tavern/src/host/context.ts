@@ -17,7 +17,16 @@ export function hostContext(registry: HostRegistry, authority: Authority, access
   const endpoint = registry.endpoint(authorityOf(authority), access), root = endpoint.realRoot;
   const active = () => { if (signal.aborted) throw abortError(); registry.endpoint(authorityOf(authority), access); };
   const options = (extra?: Partial<GitOptions>): GitOptions => ({ ...extra, dataDir: registry.dataDir, signal, check: active });
-  return { registry, authority, signal, endpoint, root, active, git: (args, extra) => git(root, args, options(extra)), run: (args, extra) => runGit(root, args, options(extra)) };
+  const portable = (args: readonly string[]) => {
+    if (endpoint.registration.git === "full") return;
+    const commands = new Set(["rev-parse", "symbolic-ref", "status", "diff", "show", "cat-file", "ls-files", "add", "commit", "remote", "for-each-ref", "fetch", "push", "config"]);
+    const command = args.find((arg, at) => !arg.startsWith("-") && (at === 0 || args[at - 1] !== "-c"));
+    const sparseRemoval = command === "rm" && endpoint.inspection?.sparse && args.includes("--cached") && args.includes("--sparse");
+    const treeRead = command === "ls-tree" && args.includes("-z");
+    if (!command || !commands.has(command) && !sparseRemoval && !treeRead || command === "ls-files" && !args.includes("--unmerged") && !args.includes("--stage"))
+      throw new HostError("git-unsupported", "This endpoint grants porcelain Git only; refused " + (command ?? args[0]) + ".");
+  };
+  return { registry, authority, signal, endpoint, root, active, git: (args, extra) => { portable(args); return git(root, args, options(extra)); }, run: (args, extra) => { portable(args); return runGit(root, args, options(extra)); } };
 }
 export function transferContext(registry: HostRegistry, authority: TransferAuthority, access: EndpointRegistration["access"][], signal: AbortSignal): TransferContext {
   const context = hostContext(registry, authority, access, signal), { registration } = registry.transfer(authority);
@@ -31,10 +40,11 @@ export async function assertRepository(context: HostContext): Promise<void> {
   if (realpathSync(resolve(root, actualRoot)) !== root)
     throw new HostError("source-root-required", "The source checkout must be a repository root; choose an appropriate Keeper environment. Tavern will not expand it to a parent repository.");
   const [paths, format, branch] = await Promise.all([
-    context.git(["rev-parse", "--git-dir", "--git-common-dir"]), repositoryObjectFormat(root, { dataDir: context.registry.dataDir, signal: context.signal, check: context.active }),
+    context.git(["rev-parse", "--git-dir", ...(endpoint.registration.git === "full" ? ["--git-common-dir"] : [])]), repositoryObjectFormat(root, { dataDir: context.registry.dataDir, signal: context.signal, check: context.active }),
     endpoint.registration.access === "member-write" ? context.git(["symbolic-ref", "--short", "-q", "HEAD"]) : Promise.resolve(null),
   ]);
-  const [gitDir, commonDir] = paths.split("\n");
+  const [gitDir, reportedCommonDir] = paths.split("\n");
+  const commonDir = endpoint.registration.git === "porcelain" ? gitDir : reportedCommonDir;
   if (!gitDir || !commonDir || realpathSync(resolve(root, gitDir)) !== inspection.gitDir || realpathSync(resolve(root, commonDir)) !== inspection.commonDir)
     throw new HostError("repository-replaced", "The endpoint's Git metadata changed after inspection.");
   if (format !== inspection.objectFormat) throw new HostError("object-format-mismatch", "The repository object format changed after inspection.");

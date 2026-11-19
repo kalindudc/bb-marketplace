@@ -83,7 +83,7 @@ describe("controller-owned source discovery", () => {
     expect(registration).toMatchObject({
       placementId: f.store.get("keeper")!.authorityId, generation: 1,
       endpoint: { hostId: "guest", environmentId: "env", root: "/guest/checkout" }, ownerThreadId: null,
-      access: "source-read", workspaceKind: null, objectFormat: null, allowedRefs: [],
+      access: "source-read", git: "full", workspaceKind: null, objectFormat: null, allowedRefs: [],
     });
     expect(f.db.prepare("SELECT count(*) AS n FROM tavern_placements").get()).toEqual({ n: 0 });
     expect(f.db.prepare("SELECT count(*) AS n FROM tavern_source_snapshots").get()).toEqual({ n: 0 });

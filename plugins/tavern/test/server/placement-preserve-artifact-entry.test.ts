@@ -14,7 +14,7 @@ it("round-trips per-file missing and unsafe declarations through the real host e
   const authority = { placementId: "entry", generation: 1, endpointId: "artifacts", operationId: "inspect" };
   try {
     symlinkSync(join(f.storage, "report.txt"), join(f.storage, "unsafe"));
-    await harness.experimental_call("registerEndpoint", { placementId: authority.placementId, generation: authority.generation, endpointId: authority.endpointId, endpoint: { hostId: "storage", environmentId: null, root: f.storage }, ownerThreadId: "maker", access: "artifact-read", workspaceKind: null, objectFormat: null, allowedRefs: [] });
+    await harness.experimental_call("registerEndpoint", { placementId: authority.placementId, generation: authority.generation, endpointId: authority.endpointId, endpoint: { hostId: "storage", environmentId: null, root: f.storage }, ownerThreadId: "maker", access: "artifact-read", git: "full", workspaceKind: null, objectFormat: null, allowedRefs: [] });
     const result = await harness.experimental_call("inspectArtifacts", { ...authority, relativePaths: ["report.txt", "missing.txt", "unsafe"] });
     expect(result).toMatchObject({ files: [{ relativePath: "report.txt" }], notPreserved: [
       { relativePath: "missing.txt", code: "artifact-unavailable", message: expect.stringContaining("missing") },

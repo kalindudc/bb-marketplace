@@ -7,8 +7,8 @@ export interface HostPort {
   onWorkerExit(listener: (event: { hostId: string }) => void): () => void;
 }
 export function hostCallTimeoutMs(method: HostMethod, input: { networkTimeoutMs?: number }): number {
-  if (method === "importCommit" || method === "carryStart") return Math.min(1_800_000, 2 * (input.networkTimeoutMs ?? 120_000) + 180_000);
-  return ["inspect", "snapshotWorktree", "commitAll", "exportChanges", "carryFinish", "carryAbort", "worktreeState", "revokePlacement", "releaseSnapshotRef"].includes(method) ? 180_000 : 30_000;
+  if (method === "importCommit" || method === "pushedBase") return Math.min(1_800_000, 2 * (input.networkTimeoutMs ?? 120_000) + 330_000);
+  return ["inspect", "snapshotWorktree", "commitAll", "exportChanges", "carryStart", "carryFinish", "carryAbort", "worktreeState", "revokePlacement", "releaseSnapshotRef"].includes(method) ? 330_000 : 30_000;
 }
 export function createHostPort(bb: Pick<BbPluginApi, "hosts">): HostPort {
   const client = bb.hosts.experimental_client({ contract: hostContract });

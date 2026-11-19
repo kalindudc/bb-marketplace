@@ -9,6 +9,7 @@ import { HostError, HostRegistry } from "./registry";
 import { NativeScopes, type NativeScopePaths } from "./scopes";
 import { createTransport } from "./transport";
 import { draftPush, draftOpen } from "./forge";
+import { pushedBase } from "./pushed-base";
 import { snapshotWorktree } from "./snapshot";
 
 export interface TavernHostEntryOptions { artifactPath: string; paths?: NativeScopePaths }
@@ -58,6 +59,7 @@ export function createTavernHostEntry(options: TavernHostEntryOptions) {
       sessionStatus: (input, context) => call(context, (native, signal) => native.scopes.sessionStatus(input, signal)),
       releaseScope: (input, context) => call(context, (native, signal) => native.scopes.releaseScope(input, signal)),
       worktreeState: (input, context) => call(context, (native, signal) => native.transport.worktreeState(input, signal)),
+      pushedBase: (input, context) => call(context, (native, signal) => pushedBase(native.registry, input, signal)),
       snapshotWorktree: (input, context) => call(context, async (native, signal) => {
         try { return await snapshotWorktree(native.registry, input, signal); }
         catch (error) {

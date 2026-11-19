@@ -3,7 +3,7 @@ import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { forgeProfileSchema } from "./shared/placement-settings";
 import { nativeScopeVariablesSchema } from "./scope/host-env";
-import { artifactFileSchema, endpointSchema, gitOidSchema, objectFormatSchema, sha256Schema, workspaceKindSchema } from "./shared/placement";
+import { artifactFileSchema, endpointSchema, gitOidSchema, objectFormatSchema, sha256Schema, sourceFetchSchema, workspaceKindSchema } from "./shared/placement";
 
 export const CHUNK_BYTES = 4 * 1024 * 1024;
 export const BLOB_MAX_BYTES = 100 * 1024 * 1024;
@@ -36,6 +36,7 @@ export const authoritySchema = z.object({ placementId: id, generation, endpointI
 export const transferAuthoritySchema = authoritySchema.extend({ transferId: id }).strict();
 export const endpointRegistrationSchema = z.object({
   placementId: id, generation, endpointId: id, endpoint: endpointSchema,
+  git: z.enum(["porcelain", "full"]),
   ownerThreadId: id.nullable(), access: z.enum(["source-read", "member-write", "home-import", "artifact-read", "artifact-store"]),
   draft: z.object({ branch: baseBranch, base: baseBranch, sourceBase: baseBranch, remote }).strict().optional(),
   workspaceKind: workspaceKindSchema.nullable(), objectFormat: objectFormatSchema.nullable(), allowedRefs: z.array(gitRefSchema).max(4),
@@ -125,6 +126,10 @@ export const hostContract = defineRpcContract({
     ...retryable, input: authoritySchema.extend({ base: baseBranch, trackedOnly: z.boolean().optional(), baseTree: gitOidSchema.optional() }).strict(),
     output: z.object({ branch: z.string().nullable(), head: gitOidSchema, tree: gitOidSchema, dirty: z.boolean(), changed: z.array(z.string()).max(100_000), unfinishedMerge: z.boolean().optional() }).strict(),
   },
+  pushedBase: {
+    input: authoritySchema,
+    output: z.object({ base: gitOidSchema, tree: gitOidSchema, root: path, fetch: sourceFetchSchema }).strict(),
+  },
   snapshotWorktree: {
     ...retryable, input: authoritySchema.extend({ base: gitOidSchema }).strict(),
     output: z.union([z.object({ head: gitOidSchema, headTree: gitOidSchema, commit: gitOidSchema, tree: gitOidSchema,
@@ -165,7 +170,7 @@ export const hostContract = defineRpcContract({
     output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok"), sha: gitOidSchema }).strict(), z.object({ outcome: z.literal("mismatch"), tree: gitOidSchema }).strict(), unavailable]),
   },
   carryStart: {
-    input: transferAuthoritySchema.extend({ remote, baseBranch, replaces: gitOidSchema.optional(), paths: z.array(repoPathSchema).max(100_000), networkTimeoutMs }).strict(),
+    input: transferAuthoritySchema.extend({ remote, baseBranch, replaces: gitOidSchema.optional(), expectedHead: gitOidSchema.optional(), paths: z.array(repoPathSchema).max(100_000), networkTimeoutMs }).strict(),
     output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok"), present: z.boolean(), from: gitOidSchema.optional() }).strict(), unavailable]),
   },
   carryWrite: {

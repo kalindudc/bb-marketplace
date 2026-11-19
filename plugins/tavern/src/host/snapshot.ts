@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { BLOB_MAX_BYTES, hostContract, repoPathSchema, type HostInput, type HostOutput } from "../host-contract";
 import { assertRepository, hostContext, onCheckout, type HostContext } from "./context";
 import { gitEnvironment, rawChanges, requireSparseGit, runGitProcess, withGitDeadline } from "./git";
+import { porcelainSnapshot } from "./porcelain";
 import { authorityOf, HostError, type HostRegistry } from "./registry";
 
 const config = ["-c", "gc.auto=0", "-c", "maintenance.auto=false", "-c", "core.splitIndex=false"];
@@ -12,6 +13,7 @@ type Snapshot = Extract<HostOutput<"snapshotWorktree">, { commit: string }>;
 
 async function capture(context: HostContext, input: HostInput<"snapshotWorktree">): Promise<Snapshot> {
   await assertRepository(context);
+  if (context.endpoint.registration.git === "porcelain") return porcelainSnapshot(context, input.base);
   await requireSparseGit(context);
   const git = (args: string[], options?: Parameters<HostContext["git"]>[1]) => context.git([...config, ...args], options);
   const head = await git(["rev-parse", "HEAD"]), headTree = await git(["rev-parse", "HEAD^{tree}"]);
@@ -35,7 +37,7 @@ async function capture(context: HostContext, input: HostInput<"snapshotWorktree"
       const argv = ["-C", context.root, ...config, ...args];
       const result = await experimental_runVcsProcess("git", argv, () => {
         context.active();
-        return runGitProcess(argv, { env: { ...gitEnvironment(context.root, context.registry.dataDir, extra), GIT_INDEX_FILE: index }, input, signal: context.signal, timeoutMs: ["read-tree", "diff-files", "diff-index", "ls-files", "update-index", "add", "write-tree"].includes(args[0]!) ? 150_000 : 30_000, maxBuffer: 64 * 1024 * 1024 });
+        return runGitProcess(argv, { env: { ...gitEnvironment(context.root, context.registry.dataDir, extra), GIT_INDEX_FILE: index }, input, signal: context.signal, timeoutMs: ["read-tree", "diff-files", "diff-index", "ls-files", "update-index", "add", "write-tree"].includes(args[0]!) ? 300_000 : 30_000, maxBuffer: 64 * 1024 * 1024 });
       }, { priority: "background", signal: context.signal });
       context.active();
       if (result.timedOut) throw new HostError("git-timeout", "Git " + args[0] + " exceeded the source snapshot deadline.", true);

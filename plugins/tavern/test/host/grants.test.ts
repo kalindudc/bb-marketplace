@@ -11,7 +11,7 @@ afterEach(()=>{vi.restoreAllMocks();for(const root of roots.splice(0))rmSync(roo
 function fixture(){
   const root=realpathSync(mkdtempSync(join(process.env.TAVERN_TEST_FIXTURES??tmpdir(),"tavern-grants-")));roots.push(root);const data=join(root,"data"),repo=join(root,"repo");mkdirSync(data);mkdirSync(repo);
   const registry=new HostRegistry(data),authority=(endpointId="source",generation=1)=>({placementId:"placement",generation,endpointId,operationId:"op"});
-  const endpoint=(endpointId="source",generation=1):EndpointRegistration=>({placementId:"placement",generation,endpointId,endpoint:{hostId:"host",environmentId:null,root:repo},ownerThreadId:null,access:"source-read",workspaceKind:null,objectFormat:null,allowedRefs:[]});
+  const endpoint=(endpointId="source",generation=1):EndpointRegistration=>({placementId:"placement",generation,endpointId,endpoint:{hostId:"host",environmentId:null,root:repo},ownerThreadId:null,git:"full" as const,access:"source-read",workspaceKind:null,objectFormat:null,allowedRefs:[]});
   const batch=(endpoints:EndpointRegistration[],generation=1)=>({placementId:"placement",generation,operationId:"batch",endpoints});
   const bytes=()=>readdirSync(join(data,"authority")).sort().map(file=>[file,readFileSync(join(data,"authority",file),"utf8")]);
   return{root,data,repo,registry,authority,endpoint,batch,bytes};
@@ -37,7 +37,7 @@ it("retains the legacy single-endpoint cap error and permits an existing retry a
 });
 it("preflights every root and ownership claim before publishing any new endpoint",()=>{
   const f=fixture();expect(()=>f.registry.registerEndpoints(f.batch([f.endpoint("a"),{...f.endpoint("bad"),endpoint:{...f.endpoint().endpoint,root:join(f.root,"missing")}}]))).toThrow();expect(()=>f.registry.endpoint(f.authority("a"))).toThrow(/placement-missing|endpoint-missing/);
-  const member=(id:string)=>({...f.endpoint(id),access:"member-write" as const,ownerThreadId:"thread",workspaceKind:"dedicated-machine" as const,endpoint:{...f.endpoint().endpoint,environmentId:"env"},allowedRefs:["refs/heads/worker"]});
+  const member=(id:string)=>({...f.endpoint(id),git:"full" as const,access:"member-write" as const,ownerThreadId:"thread",workspaceKind:"dedicated-machine" as const,endpoint:{...f.endpoint().endpoint,environmentId:"env"},allowedRefs:["refs/heads/worker"]});
   expect(()=>f.registry.registerEndpoints(f.batch([member("m1"),member("m2")]))).toThrow(/workspace-ownership/);expect(()=>f.registry.endpoint(f.authority("m1"))).toThrow(/placement-missing|endpoint-missing/);
 });
 it("does not admit identity changes or revive a tombstone even when the batch would otherwise wait",()=>{
@@ -70,8 +70,8 @@ it("does not release files or claims when the caller cancelled the request",()=>
 });
 it("does not publish partial grants if private claim preparation succeeds but the final state write fails",()=>{
   const f=fixture(),writer=f.registry as unknown as {write(file:string,value:unknown,check?:()=>void):void},original=writer.write.bind(writer);
-  const member={...f.endpoint("member"),access:"member-write" as const,ownerThreadId:"thread",workspaceKind:"dedicated-machine" as const,endpoint:{...f.endpoint().endpoint,environmentId:"env"},allowedRefs:["refs/heads/worker"]};
-  const home={...f.endpoint("home"),access:"home-import" as const,allowedRefs:["refs/tavern/snapshot"]},endpoints=[member,home];
+  const member={...f.endpoint("member"),git:"full" as const,access:"member-write" as const,ownerThreadId:"thread",workspaceKind:"dedicated-machine" as const,endpoint:{...f.endpoint().endpoint,environmentId:"env"},allowedRefs:["refs/heads/worker"]};
+  const home={...f.endpoint("home"),git:"full" as const,access:"home-import" as const,allowedRefs:["refs/tavern/snapshot"]},endpoints=[member,home];
   const spy=vi.spyOn(writer,"write").mockImplementation((file,value,check)=>{if(!file.endsWith("workspaces.json")&&!file.endsWith("refs.json"))throw new Error("fixture disk failure");return original(file,value,check);});
   expect(()=>f.registry.registerEndpoints(f.batch(endpoints))).toThrow("fixture disk failure");for(const endpoint of endpoints)expect(()=>f.registry.endpoint(f.authority(endpoint.endpointId))).toThrow(/placement-missing|endpoint-missing/);
   spy.mockRestore();expect(f.registry.registerEndpoints(f.batch(endpoints))).toMatchObject({outcome:"registered",endpointIds:["member","home"]});
@@ -82,7 +82,7 @@ it("fences cancellation immediately before the atomic batch publication rename",
   expect(()=>f.registry.registerEndpoints(f.batch([f.endpoint("a"),f.endpoint("b")]),controller.signal)).toThrow(/aborted/);expect(()=>f.registry.endpoint(f.authority("a"))).toThrow(/placement-missing|endpoint-missing/);expect(readdirSync(join(f.data,"authority"))).toEqual([]);
 });
 it("endpoint release leaves its explicit scope files and workspace claim intact",()=>{
-  const f=fixture(),member={...f.endpoint(),access:"member-write" as const,ownerThreadId:"thread",workspaceKind:"dedicated-machine" as const,endpoint:{...f.endpoint().endpoint,environmentId:"env"},allowedRefs:["refs/heads/worker"]};f.registry.registerEndpoint(member);
+  const f=fixture(),member={...f.endpoint(),git:"full" as const,access:"member-write" as const,ownerThreadId:"thread",workspaceKind:"dedicated-machine" as const,endpoint:{...f.endpoint().endpoint,environmentId:"env"},allowedRefs:["refs/heads/worker"]};f.registry.registerEndpoint(member);
   const file=f.registry.scopeStatePath(f.authority(),"scope.json");writeFileSync(file,"owned policy");const claim=readFileSync(join(f.data,"authority/workspaces.json"),"utf8");f.registry.releaseEndpoint(f.authority());expect(readFileSync(file,"utf8")).toBe("owned policy");expect(f.registry.scopeStatePath(f.authority(),"scope.json")).toBe(file);expect(readFileSync(join(f.data,"authority/workspaces.json"),"utf8")).toBe(claim);
 });
 it("keeps old generation grants intact when a newer batch cannot fit or is invalid",()=>{

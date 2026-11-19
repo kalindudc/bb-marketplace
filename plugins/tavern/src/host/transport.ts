@@ -1,6 +1,5 @@
 import { spawn } from "node:child_process";
-import { existsSync, lstatSync, realpathSync, rmSync, statSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, lstatSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
 import { experimental_runVcsProcess } from "@get-bb/plugin-sdk/host";
 import { z } from "zod";
 import { BLOB_MAX_BYTES, hostContract, type Authority, type EndpointRegistration, type HostInput, type HostOutput, type TransferAuthority } from "../host-contract";
@@ -9,21 +8,22 @@ import { hostCallTimeoutMs } from "./client";
 import { assertRepository, hostContext, onCheckout, transferContext, type HostContext, type TransferContext } from "./context";
 import { decodeChunk, digest, writeChunk } from "./files";
 import { git, gitEnvironment, rawChanges, requireSparseGit, runGit, withGitDeadline } from "./git";
+import { objectCache, parseTreeEntries, readTreeBytes, virtualSnapshotSchema } from "./porcelain";
 import { abortError } from "./process";
 import { authorityOf, completedImportSchema, HostError, HostRegistry, transferAuthorityOf } from "./registry";
-import { rewriteTree, type TreeEntry, type TreeIO } from "./tree";
+import { rewriteTree, type TreeIO } from "./tree";
 export { carryFaults } from "./carry";
 
 type TransportMethod = "worktreeState" | "commitAll" | "exportChanges" | "readBlob" | "importChunk" | "dropUploads" | "importCommit" | "releaseSnapshotRef" | "carryStart" | "carryWrite" | "carryDelete" | "carryFinish" | "carryAbort";
 export type Transport = { [M in TransportMethod]: (input: HostInput<M>, signal?: AbortSignal) => Promise<HostOutput<M>> };
-const literal = { GIT_LITERAL_PATHSPECS: "1" };
-const carryPlanSchema = z.object({ paths: z.array(z.string()), replaces: z.string().optional() }).strict();
+const carryPlanSchema = z.object({ paths: z.array(z.string()), replaces: z.string().optional(), expectedHead: z.string().optional() }).strict();
+const carryResultSchema = z.object({ outcome: z.literal("ok"), head: z.string(), tree: z.string() }).strict();
 const uploadFile = (context: TransferContext, upload: string) => {
   if (!context.transfer.uploads.includes(upload)) throw new HostError("upload-not-granted", "This upload handle does not belong to the registered transfer.");
   return context.registry.transferPath(context.authority, "upload-" + digest(upload));
 };
 const inputDigest = (input: Authority) => { const { operationId: _operationId, ...value } = input; return digest(JSON.stringify(value)); };
-const hasCommit = async (context: HostContext, sha: string) => (await context.run(["cat-file", "-e", sha + "^{commit}"])).code === 0;
+const hasCommit = async (context: Pick<HostContext, "run">, sha: string) => (await context.run(["cat-file", "-e", sha + "^{commit}"])).code === 0;
 const treeOf = (context: HostContext, sha: string) => context.git(["rev-parse", "--verify", sha + "^{tree}"]);
 async function firstParentWithTree(context: HostContext, head: string, tree: string): Promise<string | null> {
   let sha: string | undefined = head;
@@ -42,9 +42,9 @@ function requireDirection(context: TransferContext, direction: "bring-home" | "c
   if (context.transfer.direction !== direction || context.transfer.toEndpointId !== context.authority.endpointId)
     throw new HostError("transfer-endpoint", "This operation is not permitted on the transfer's source/destination.");
 }
-async function fetchBase(context: TransferContext, remote: string, branch: string, timeoutMs: number): Promise<boolean> {
+export async function fetchBase(context: Pick<HostContext, "run"> & { transfer: { base: string } }, remote: string, branch: string, timeoutMs: number, pinnedOnly = false): Promise<boolean> {
   if (await hasCommit(context, context.transfer.base)) return true;
-  for (const ref of [branch.startsWith("refs/") ? branch : "refs/heads/" + branch, context.transfer.base]) {
+  for (const ref of pinnedOnly ? [context.transfer.base] : [branch.startsWith("refs/") ? branch : "refs/heads/" + branch, context.transfer.base]) {
     await context.run(["-c", "fetch.uriprotocols=", "-c", "transfer.bundleURI=false", "fetch", "--no-tags", "--no-write-fetch-head", "--no-recurse-submodules", "--refmap=", remote, ref], { timeoutMs });
     if (await hasCommit(context, context.transfer.base)) return true;
   }
@@ -55,36 +55,73 @@ function parseCommit(raw: string): Pick<HostOutput<"exportChanges">, "author" | 
   if (!match) throw new HostError("invalid-commit", "The pinned source commit has no readable author identity.");
   return { author: { name: match[1]!, email: match[2]!, date: match[3]! }, message: split < 0 ? "" : raw.slice(split + 2) };
 }
+async function memberChanges(context: TransferContext, base: string, head: string): Promise<ReturnType<typeof rawChanges>> {
+  const fields = (await context.git(["diff", "--name-status", "--no-renames", "-z", base, head], { raw: true })).split("\0").filter(Boolean);
+  const changes: ReturnType<typeof rawChanges> = [];
+  for (let at = 0; at < fields.length; at += 2) {
+    const status = fields[at], path = fields[at + 1];
+    if (!status || !["A", "M", "T", "D"].includes(status) || !path)
+      throw new HostError("unsupported-change", "The source diff contains an unsupported change kind.");
+    changes.push({ status: status as "A" | "M" | "T" | "D", path });
+  }
+  const paths = changes.map(change => change.path), wanted = new Set(paths);
+  const entries = new Map<string, { mode: "100644" | "100755" | "120000"; blob: string }>();
+  for (const commit of new Set([base, head])) {
+    for (let at = 0; at < paths.length; at += 500) {
+      const rows = await context.git(["ls-tree", "-r", "-z", "--full-tree", commit, "--", ...paths.slice(at, at + 500)], { raw: true, env: { GIT_LITERAL_PATHSPECS: "1" } });
+      for (const row of rows.split("\0").filter(Boolean)) {
+        const match = /^(\d{6}) (blob|commit) ([a-f0-9]{40}|[a-f0-9]{64})\t([\s\S]+)$/u.exec(row);
+        if (!match) throw new HostError("invalid-tree", "Git ls-tree returned an unreadable pinned entry.");
+        const [, mode, type, blob, path] = match;
+        if (!wanted.has(path!)) continue;
+        if (mode === "160000") throw new HostError("submodule-unsupported", "Submodules cannot be transferred between machines in this version: " + path);
+        if (type !== "blob" || !["100644", "100755", "120000"].includes(mode!) || blob!.length !== head.length)
+          throw new HostError("invalid-tree", "The pinned tree contains an unsupported entry.");
+        if (commit === head) entries.set(path!, { mode: mode as "100644" | "100755" | "120000", blob: blob! });
+      }
+    }
+  }
+  for (const change of changes) {
+    if (change.status === "D") continue;
+    const entry = entries.get(change.path);
+    if (!entry) throw new HostError("invalid-tree", "The pinned tree does not contain a declared changed path.");
+    Object.assign(change, entry);
+  }
+  return changes;
+}
+// Ported from plugins/loom/src/host/ops.ts.
 async function exportChanges(context: TransferContext): Promise<HostOutput<"exportChanges">> {
   if (context.transfer.fromEndpointId !== context.authority.endpointId) throw new HostError("transfer-endpoint", "Only the pinned source endpoint may export this snapshot.");
   const { base, head, tree } = context.transfer;
-  if (await context.git(["merge-base", base, head]) !== base || await treeOf(context, head) !== tree)
+  const cached = objectCache(context, head) + ".json";
+  const virtual = existsSync(cached) ? virtualSnapshotSchema.parse(JSON.parse(readFileSync(cached, "utf8"))) : null;
+  if (virtual ? virtual.head !== head || virtual.tree !== tree : await treeOf(context, head) !== tree)
     throw new HostError("snapshot-mismatch", "The registered source base/head/tree do not match the immutable repository objects.");
-  const metadata = parseCommit(await context.git(["cat-file", "commit", head], { raw: true }));
-  const changes: HostOutput<"exportChanges">["changes"] = rawChanges(await context.git(["diff", "--raw", "--no-renames", "--no-ext-diff", "--no-textconv", "-z", base, head, "--"], { raw: true }));
-  const kept = changes.filter(change => change.status !== "D"), entries = new Map<string, { mode: string; type: string; blob: string }>();
-  for (let at = 0; at < kept.length; at += 500) {
-    const output = await context.git(["ls-tree", "-z", "--full-tree", head, "--", ...kept.slice(at, at + 500).map(change => change.path)], { raw: true, env: literal });
-    for (const row of output.split("\0")) {
-      if (!row) continue;
-      const match = /^(\d+) (\w+) ([a-f0-9]+)\t(.*)$/su.exec(row);
-      if (!match) throw new HostError("invalid-tree", "The source tree contains an unreadable entry.");
-      entries.set(match[4]!, { mode: match[1]!, type: match[2]!, blob: match[3]! });
-    }
+  const metadata = virtual ?? parseCommit(await context.git(["cat-file", "commit", head], { raw: true }));
+  const changes: HostOutput<"exportChanges">["changes"] = context.endpoint.registration.git === "porcelain"
+    ? await memberChanges(context, base, virtual?.committedHead ?? head)
+    : rawChanges(await context.git(["diff", "--raw", "--no-renames", "--no-ext-diff", "--no-textconv", "--no-abbrev", "-z", base, virtual?.committedHead ?? head, "--"], { raw: true }));
+  if (virtual) for (const edit of virtual.edits) {
+    const at = changes.findIndex(change => change.path === edit.path);
+    if (at >= 0) changes.splice(at, 1);
+    changes.push(edit.sha ? { path: edit.path, status: "M", mode: edit.mode!, blob: edit.sha, size: edit.size! } : { path: edit.path, status: "D" });
   }
+  const kept = changes.filter(change => change.status !== "D"), entries = new Map<string, { mode: string; type: string; blob: string }>();
+  for (const change of kept) if (change.mode && change.blob) entries.set(change.path, { mode: change.mode, type: "blob", blob: change.blob });
   for (const change of kept) {
     const entry = entries.get(change.path);
     if (!entry) throw new HostError("invalid-tree", "The pinned tree does not contain a declared changed path.");
     if (entry.type !== "blob") throw new HostError("submodule-unsupported", "Submodules cannot be transferred between machines in this version.");
     change.mode = entry.mode as typeof change.mode; change.blob = entry.blob;
   }
-  const blobs = [...new Set(kept.map(change => change.blob!))], sizes = new Map<string, number>();
+  const sizes = new Map<string, number>(kept.filter(change => change.size !== undefined).map(change => [change.blob!, change.size!]));
+  const blobs = [...new Set(kept.map(change => change.blob!))].filter(blob => !sizes.has(blob));
   if (blobs.length) for (const row of (await context.git(["cat-file", "--batch-check"], { input: blobs.join("\n") + "\n" })).split("\n")) {
     const [blob, type, size] = row.split(" "); if (type === "blob") sizes.set(blob!, Number(size));
   }
   for (const change of kept) { const size = sizes.get(change.blob!); if (size === undefined) throw new HostError("invalid-blob", "A pinned source blob could not be sized."); change.size = size; }
   changes.sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
-  const value = hostContract.exportChanges.output.parse({ base, head, tree, ...metadata, changes });
+  const value = hostContract.exportChanges.output.parse({ base, head, tree, author: metadata.author, message: metadata.message, changes });
   if (Buffer.byteLength(JSON.stringify(value)) > 8 * 1024 * 1024) throw new HostError("manifest-too-large", "This snapshot's changed-file manifest exceeds the host response limit.");
   context.registry.writeTransferState(context.authority, "export.json", hostContract.exportChanges.output, value);
   return value;
@@ -123,10 +160,12 @@ async function readBlob(context: TransferContext, input: HostInput<"readBlob">):
   const file = manifest?.changes.find(change => change.blob === input.sha);
   if (!file || context.transfer.fromEndpointId !== context.authority.endpointId) throw new HostError("blob-not-exported", "The blob does not belong to this transfer's exported manifest.");
   if (input.offset + input.length > file.size!) throw new HostError("invalid-range", "The requested bytes exceed the pinned source blob.");
-  return { data: (await blobRange(context, input.sha, input.offset, input.length)).toString("base64") };
+  const cached = objectCache(context, input.sha);
+  return { data: (existsSync(cached) ? readFileSync(cached).subarray(input.offset, input.offset + input.length) : await blobRange(context, input.sha, input.offset, input.length)).toString("base64") };
 }
 async function importCommit(context: TransferContext, input: HostInput<"importCommit">): Promise<HostOutput<"importCommit">> {
   requireDirection(context, "bring-home");
+  if (context.endpoint.registration.git !== "full") throw new HostError("git-unsupported", "Home import requires a full Git endpoint.");
   if (input.refs.some(ref => !context.transfer.allowedRefs.includes(ref))) throw new HostError("ref-ownership", "This transfer cannot write the requested refs.");
   const requestDigest = inputDigest(input), previous = context.registry.readTransferState(context.authority, "import.json", completedImportSchema);
   if (previous) {
@@ -140,30 +179,24 @@ async function importCommit(context: TransferContext, input: HostInput<"importCo
     if (!existsSync(path) || !lstatSync(path).isFile() || lstatSync(path).isSymbolicLink() || lstatSync(path).size > BLOB_MAX_BYTES) throw new HostError("upload-missing", "A declared upload is absent, unsafe or too large.");
   }
   if (!await fetchBase(context, input.remote, input.baseBranch, input.networkTimeoutMs)) return { outcome: "unavailable", code: "base-unavailable", retryable: true, message: "The pinned base commit is not available on the home host." };
+  return withGitDeadline(async localSignal => {
   const hashed = new Map<string, string>();
-  for (const upload of files) hashed.set(upload, await context.git(["hash-object", "-w", "--no-filters", "--", uploadFile(context, upload)]));
+  for (const upload of files) hashed.set(upload, await context.git(["hash-object", "-w", "--no-filters", "--", uploadFile(context, upload)], { timeoutMs: 300_000 }));
   const io: TreeIO = {
-    async list(tree) {
-      const entries = new Map<string, TreeEntry>();
-      for (const line of (await context.git(["ls-tree", "-z", "--full-tree", tree], { raw: true })).split("\0")) {
-        if (!line) continue; const match = /^(\d+) (\w+) ([a-f0-9]+)\t(.*)$/su.exec(line);
-        if (!match) throw new HostError("invalid-tree", "A base tree entry cannot be read.");
-        entries.set(match[4]!, { mode: match[1]!, type: match[2]!, sha: match[3]! });
-      }
-      return entries;
-    },
-    write: entries => context.git(["mktree", "-z"], { input: [...entries].map(([name, entry]) => `${entry.mode} ${entry.type} ${entry.sha}\t${name}\0`).join("") }),
+    async list(tree) { return parseTreeEntries(await readTreeBytes({ ...context, signal: localSignal }, tree), context.transfer.base.length / 2); },
+    write: entries => context.git(["mktree", "-z"], { timeoutMs: 300_000, input: Buffer.concat([...entries].flatMap(([name, entry]) => [Buffer.from(`${entry.mode} ${entry.type} ${entry.sha}\t`), Buffer.from(name, "latin1"), Buffer.from([0])])) }),
   };
-  const written = await rewriteTree(io, await treeOf(context, context.transfer.base), input.entries.map(entry => [entry.path, "upload" in entry ? { mode: entry.mode, sha: hashed.get(entry.upload)! } : null] as const));
+  const written = await rewriteTree(io, await treeOf(context, context.transfer.base), input.entries.map(entry => [Buffer.from(entry.path).toString("latin1"), "upload" in entry ? { mode: entry.mode, sha: hashed.get(entry.upload)! } : null] as const));
   if (written !== context.transfer.tree) return { outcome: "mismatch", tree: written };
   const { author } = input;
   const env = { GIT_AUTHOR_NAME: author.name, GIT_AUTHOR_EMAIL: author.email, GIT_AUTHOR_DATE: author.date, GIT_COMMITTER_NAME: author.name, GIT_COMMITTER_EMAIL: author.email, GIT_COMMITTER_DATE: author.date };
-  const sha = await context.git(["commit-tree", written, "-p", input.parent ?? context.transfer.base, "--no-gpg-sign", "-F", "-"], { input: input.message, env });
+  const sha = await context.git(["commit-tree", written, "-p", input.parent ?? context.transfer.base, "--no-gpg-sign", "-F", "-"], { input: input.message, env, timeoutMs: 300_000 });
   context.active();
   if (input.refs.length) await context.git(["update-ref", "--stdin"], { input: "start\n" + input.refs.map(ref => `update ${ref} ${sha}\n`).join("") + "prepare\ncommit\n" });
   context.registry.writeTransferState(context.authority, "import.json", completedImportSchema, { digest: requestDigest, sha, tree: written, refs: input.refs });
   for (const upload of files) rmSync(uploadFile(context, upload), { force: true });
-  return { outcome: "ok", sha };
+  return { outcome: "ok" as const, sha };
+  }, context.signal, 300_000, true);
 }
 async function releaseSnapshotRef(registry: HostRegistry, input: TransferAuthority, signal: AbortSignal): Promise<HostOutput<"releaseSnapshotRef">> {
   const intent = registry.beginSnapshotRefRelease(input, signal);
@@ -203,7 +236,7 @@ export function createTransport(registry: HostRegistry): Transport {
           const context = "transferId" in input ? transferContext(registry, transferAuthorityOf(input), access, bounded) : hostContext(registry, authority, access, bounded);
           if (repository) await assertRepository(context);
           return work(context as TransferContext, input);
-        }), combined, hostCallTimeoutMs(name, "networkTimeoutMs" in input ? input : {}) - 10_000);
+        }), combined, Math.min(hostCallTimeoutMs(name, "networkTimeoutMs" in input ? input : {}) - 10_000, name === "importCommit" && "networkTimeoutMs" in input ? 2 * input.networkTimeoutMs + 300_000 : 300_000));
       });
     }) as Transport[M];
   }
@@ -212,7 +245,7 @@ export function createTransport(registry: HostRegistry): Transport {
     if (name === "carryStart") {
       registry.carryLease(context.authority, "claim");
       const start = input as HostInput<"carryStart">;
-      const plan = { paths: [...new Set(start.paths)].sort(), ...(start.replaces === undefined ? {} : { replaces: start.replaces }) };
+      const plan = { paths: [...new Set(start.paths)].sort(), ...(start.replaces === undefined ? {} : { replaces: start.replaces }), ...(start.expectedHead === undefined ? {} : { expectedHead: start.expectedHead }) };
       const previous = registry.readTransferState(context.authority, "carry-plan.json", carryPlanSchema);
       if (previous && JSON.stringify(previous) !== JSON.stringify(plan)) throw new HostError("transfer-conflict", "A repeated carry start cannot change its initial paths or replacement tree.");
       if (!previous) registry.writeTransferState(context.authority, "carry-plan.json", carryPlanSchema, plan);
@@ -224,13 +257,16 @@ export function createTransport(registry: HostRegistry): Transport {
     }
     if (name === "carryFinish") registry.carryLease(context.authority, "claim");
     else if (name !== "carryStart" && (name !== "carryAbort" || registry.endpoint(authorityOf(context.authority)).activeTransfer)) registry.carryLease(context.authority, "check");
-    if (name === "carryFinish" && await treeOf(context, "HEAD") === context.transfer.tree && (await context.git(["status", "--porcelain"], { timeoutMs: 150_000 })).length === 0) {
-      const result = { outcome: "ok", head: await context.git(["rev-parse", "HEAD"]), tree: context.transfer.tree };
+    const completed = registry.readTransferState(context.authority, "carry-result.json", carryResultSchema);
+    if ((name === "carryStart" || name === "carryFinish") && completed && await context.git(["rev-parse", "--verify", "HEAD"]) === completed.head && await treeOf(context, "HEAD") === context.transfer.tree && (await context.git(["status", "--porcelain"], { timeoutMs: 300_000 })).length === 0) {
+      const result = name === "carryStart" ? { outcome: "ok", present: true, from: completed.head } : completed;
       registry.carryLease(context.authority, "release");
       return result as HostOutput<M>;
     }
     const native = nativeCarry(context), command = native[name] as (input: unknown, signal?: AbortSignal) => Promise<HostOutput<M>>;
     const result = await command({ ...input, worktree: context.root, base: context.transfer.base, tree: context.transfer.tree }, context.signal);
+    if (name === "carryStart" && "present" in result && result.present || name === "carryFinish" && "outcome" in result && result.outcome === "ok")
+      registry.writeTransferState(context.authority, "carry-result.json", carryResultSchema, { outcome: "ok", head: name === "carryFinish" ? carryResultSchema.parse(result).head : z.string().parse("from" in result ? result.from : undefined), tree: context.transfer.tree });
     if (name === "carryFinish" && "outcome" in result && result.outcome === "ok" || name === "carryStart" && "present" in result && result.present || name === "carryAbort" && !existsSync(registry.transferPath(context.authority, "carry.json"))) registry.carryLease(context.authority, "release");
     return result;
   });
@@ -255,25 +291,23 @@ export function createTransport(registry: HostRegistry): Transport {
     },
     carryStart: carryMethod("carryStart"), carryWrite: carryMethod("carryWrite"), carryDelete: carryMethod("carryDelete"), carryFinish: carryMethod("carryFinish"), carryAbort: carryMethod("carryAbort"),
     commitAll: method("commitAll", ["member-write"], async (context, input) => {
-      const sparse = await context.run(["config", "--bool", "--get", "core.sparseCheckout"]);
-      if (sparse.code !== 0 && sparse.code !== 1) throw new HostError("git-failed", "Cannot determine the member checkout sparsity.");
-      const sparseCheckout = sparse.stdout.trim() === "true";
-      if (sparseCheckout) await requireSparseGit(context);
-      await context.git(["add", "-A", ...(sparseCheckout ? ["--sparse"] : [])], { timeoutMs: 150_000 }); const diff = await context.run(["diff", "--cached", "--quiet"]);
+      const sparseCheckout = context.endpoint.inspection!.sparse;
+      if (sparseCheckout && context.endpoint.registration.git === "full") await requireSparseGit(context);
+      await context.git(["add", "-A", ...(sparseCheckout ? ["--sparse"] : [])], { timeoutMs: 300_000 }); const diff = await context.run(["diff", "--cached", "--quiet"]);
       if (diff.code !== 0 && diff.code !== 1) throw new HostError("git-failed", "Cannot determine the member's staged snapshot.");
-      if (diff.code === 1) await context.git(["-c", "gc.auto=0", "-c", "maintenance.auto=false", ...(await identity(context)), "commit", "--no-verify", "--no-gpg-sign", "-q", "-m", input.message], { timeoutMs: 150_000 });
-      return { sha: await context.git(["rev-parse", "HEAD"]), committed: diff.code === 1 };
+      if (diff.code === 1) await context.git(["-c", "gc.auto=0", "-c", "maintenance.auto=false", ...(await identity(context)), "commit", "--no-verify", "--no-gpg-sign", "-q", "-m", input.message], { timeoutMs: 300_000 });
+      return { sha: await context.git(["rev-parse", "--verify", "HEAD"]), committed: diff.code === 1 };
     }),
     worktreeState: method("worktreeState", ["source-read", "member-write", "home-import"], async (context, input) => {
-      const branch = await context.run(["symbolic-ref", "--short", "-q", "HEAD"]), head = await context.git(["rev-parse", "HEAD"]), tree = await treeOf(context, "HEAD");
-      const status = await context.git(["status", "--porcelain", ...(input.trackedOnly ? ["--untracked-files=no"] : [])], { timeoutMs: 150_000 });
+      const branch = await context.run(["symbolic-ref", "--short", "-q", "HEAD"]), head = await context.git(["rev-parse", "--verify", "HEAD"]), tree = await treeOf(context, "HEAD");
+      const status = await context.git(["status", "--porcelain", ...(input.trackedOnly ? ["--untracked-files=no"] : [])], { timeoutMs: 300_000 });
       const onBase = input.baseTree === undefined ? null : await firstParentWithTree(context, head, input.baseTree);
-      const base = onBase ?? await context.git(["merge-base", input.base, head]);
+      const base = onBase ?? input.base;
       const tracked = await context.git(["diff", "--name-only", "-z", "--no-renames", base], { raw: true });
-      const untracked = await context.git(["ls-files", "--others", "--exclude-standard", "-z"], { raw: true, timeoutMs: 150_000 });
+      const untracked = (await context.git(["status", "--porcelain", "-z", "--untracked-files=all", "--no-renames"], { raw: true, timeoutMs: 300_000 })).split("\0").filter(row => row.startsWith("?? ")).map(row => row.slice(3)).join("\0");
       const changed = [...new Set([...tracked.split("\0"), ...untracked.split("\0")].filter(Boolean))].sort();
-      const merge = resolve(context.root, await context.git(["rev-parse", "--git-path", "MERGE_HEAD"]));
-      return { branch: branch.code === 0 ? branch.stdout.trim() : null, head, tree, dirty: !!status, changed, unfinishedMerge: existsSync(merge) };
+      const unmerged = await context.git(["ls-files", "--unmerged", "-z"], { raw: true });
+      return { branch: branch.code === 0 ? branch.stdout.trim() : null, head, tree, dirty: !!status, changed, unfinishedMerge: !!unmerged };
     }),
   };
 }

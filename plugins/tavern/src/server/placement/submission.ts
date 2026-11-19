@@ -127,15 +127,14 @@ export class PlacementSubmissions {
         throw new Error("A maker submission needs done journal entries with evidence for this waypoint");
       const authority = { placementId: record.id, generation: record.generation, endpointId: "submission-source", operationId: randomUUID() };
       const ack = await call("registerEndpoint", { placementId: authority.placementId, generation: authority.generation, endpointId: authority.endpointId,
-        endpoint: source.endpoint, ownerThreadId: makerThreadId, access: "source-read", workspaceKind: null, objectFormat: null, allowedRefs: [] });
+        endpoint: source.endpoint, ownerThreadId: makerThreadId, access: "source-read", git: "porcelain", workspaceKind: null, objectFormat: null, allowedRefs: [] });
       if (ack.generation !== record.generation) throw new Error("The submission endpoint acknowledged a stale generation");
       const inspection = await call("inspect", authority);
       if (inspection.root !== record.root || !inspection.features.exportChanges)
         throw new SourceCaptureError("source-root-required", "Use a maker environment at the repository root before capturing its submission.");
-      const base = inspection.sourceBase;
-      if (!base || base.outcome !== "ok") throw new SourceCaptureError(base?.code ?? "source-base-unavailable", base?.message ?? "The maker has no pinned fetchable source base", true);
-      const { outcome: _outcome, base: _base, ...provenance } = base;
-      const captured = await call("snapshotWorktree", { ...authority, base: base.base });
+      const original = record.sourceSnapshotId ? this.placements.snapshot(record.sourceSnapshotId) : null;
+      if (!original?.fetch) throw new SourceCaptureError("source-base-unavailable", "The maker has no recorded source base and remote; reconcile its placement before capture.");
+      const captured = await call("snapshotWorktree", { ...authority, base: original.base });
       if ("outcome" in captured) throw new SourceCaptureError(captured.code, captured.message, captured.retryable);
       if (captured.head !== inspection.head || captured.headTree !== inspection.tree) throw new SourceCaptureError("source-changed", "The maker source changed during capture; retry when it is idle.", true);
       const previous = this.keepers.runtime(makerThreadId).submissionTarget;
@@ -155,15 +154,14 @@ export class PlacementSubmissions {
       await fence();
       let homeEndpoint: Endpoint = home.endpoint;
       if (record.sourceSnapshotId) {
-        const original = this.placements.snapshot(record.sourceSnapshotId);
         if (!original || original.home.hostId !== home.endpoint.hostId || original.home.environmentId !== home.endpoint.environmentId)
           throw new Error("The maker's original home snapshot is missing or no longer matches its Keeper");
         homeEndpoint = original.home;
       }
       const snapshot = this.placements.captureSnapshot({ purpose: "submission", keeperThreadId: record.keeperThreadId, projectId: record.projectId,
         sourceThreadId: makerThreadId, makerThreadId, makerSubmissionId, journalTarget: journalTargets[0]!, journalTargets,
-        objectFormat: inspection.objectFormat, base: base.base, sourceHead: captured.commit, tree: captured.tree,
-        fetch: sourceFetchSchema.parse(provenance), source: { ...source.endpoint, root: inspection.root },
+        objectFormat: inspection.objectFormat, base: original.base, sourceHead: captured.commit, tree: captured.tree,
+        fetch: sourceFetchSchema.parse(original.fetch), source: { ...source.endpoint, root: inspection.root },
         home: homeEndpoint,
         includesUncommitted: captured.includesUncommitted, userHead: captured.head,
         ...(captured.includesUncommitted ? { uncommittedOrigin: { ...source.endpoint, root: inspection.root } } : {}), modifiedPaths: captured.modifiedPaths, untrackedPaths: captured.untrackedPaths });

@@ -20,7 +20,7 @@ function fixture(format: "sha1" | "sha256" = "sha1") {
   writeFileSync(join(repo, "outside.txt"), "after"); writeFileSync(join(sub, "inside.txt"), "after"); git("add", "-A"); git("commit", "-qm", "head");
   const registry = new HostRegistry(data), authority: Authority = { placementId: "source-placement", generation: 1, endpointId: "source", operationId: "inspect-source" };
   const transfer: TransferRegistration = { ...authority, transferId: "source-transfer", snapshotId: "source-snapshot", direction: "bring-home", objectFormat: format, base, head: git("rev-parse", "HEAD"), tree: git("rev-parse", "HEAD^{tree}"), fromEndpointId: "source", toEndpointId: "home", allowedRefs: [], uploads: [], artifacts: [] };
-  const register = (path: string) => registry.registerEndpoint({ placementId: authority.placementId, generation: authority.generation, endpointId: authority.endpointId, endpoint: { hostId: "source-host", environmentId: "source-environment", root: path }, access: "source-read", workspaceKind: null, ownerThreadId: null, objectFormat: format, allowedRefs: [] });
+  const register = (path: string) => registry.registerEndpoint({ placementId: authority.placementId, generation: authority.generation, endpointId: authority.endpointId, endpoint: { hostId: "source-host", environmentId: "source-environment", root: path }, git: "full", access: "source-read", workspaceKind: null, ownerThreadId: null, objectFormat: format, allowedRefs: [] });
   return { root, repo, sub, git, registry, authority, transfer, register, port: createTransport(registry) };
 }
 it("keeps exact subdirectory metadata preview without claiming repository export support", async () => {

@@ -4,7 +4,7 @@ import { gitRefSchema, sourceBaseSchema, type SourceBase } from "../host-contrac
 import { runGit, type GitOptions } from "./git";
 import { abortError } from "./process";
 
-function fetchUrl(value: string): string | undefined {
+export function fetchUrl(value: string): string | undefined {
   if (!value || value.length > 1024 || value.startsWith("-") || /[\0\r\n]/.test(value) || value !== value.trim()) return;
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(value)) {
     try {
@@ -40,8 +40,9 @@ function inverseFetchRef(trackingRef: string, specs: string[]): string | undefin
   const candidate = [...candidates][0]!;
   return gitRefSchema.safeParse(candidate).success ? candidate : undefined;
 }
-export async function inspectSourceBase(root: string, head: string, options: GitOptions): Promise<SourceBase> {
+export async function inspectSourceBase(root: string, head: string, options: GitOptions, kind: "porcelain" | "full" = "full"): Promise<SourceBase> {
   const unavailable = (code: string, message: string, retryable = false): SourceBase => ({ outcome: "unavailable", code: "source-base-" + code, message, retryable });
+  if (kind === "porcelain") return unavailable("record-required", "Member source bases come from Tavern's placement record, never from member refs.");
   const run = (args: string[]) => runGit(root, args, { ...options, timeoutMs: args[0] === "merge-base" ? 30_000 : 3000 });
   const config = async (key: string): Promise<string[]> => {
     const result = await run(["config", "--get-all", key]);

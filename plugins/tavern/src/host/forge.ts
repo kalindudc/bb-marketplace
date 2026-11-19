@@ -23,7 +23,7 @@ export async function draftPush(registry: HostRegistry, input: HostInput<"draftP
 }
 export async function draftOpen(registry: HostRegistry, input: HostInput<"draftOpen">, signal: AbortSignal): Promise<HostOutput<"draftOpen">> {
   return registry.operation(input, signal, async combined => {
-    const ctx = hostContext(registry, input, ["home-import"], combined);
+    const ctx = hostContext(registry, input, ["source-read", "home-import"], combined);
     await assertRepository(ctx);
     const grant = ctx.endpoint.registration.draft;
     if (!grant) throw new Error("This endpoint has no draft pull request grant.");
@@ -34,7 +34,7 @@ export async function draftOpen(registry: HostRegistry, input: HostInput<"draftO
 export interface DraftInput { remote: string; base: string; head: string; title: string; body: string }
 const githubOpen = 'existing=$(gh pr list --repo "$FORGE_REMOTE" --head "$FORGE_HEAD" --state open --json url --jq \'.[0].url // empty\') || exit $?; if [ -n "$existing" ]; then printf "%s\\n" "$existing"; else gh pr create --repo "$FORGE_REMOTE" --base "$FORGE_BASE" --head "$FORGE_HEAD" --title "$FORGE_TITLE" --body-file - --draft; fi';
 export async function openDraft(root: string, profile: ForgeProfile, input: DraftInput, signal?: AbortSignal): Promise<ForgeResult> {
-  const env: NodeJS.ProcessEnv = { ...process.env };
+  const env: NodeJS.ProcessEnv = { ...process.env, GIT_OPTIONAL_LOCKS: "0" };
   for (const [key, value] of Object.entries({ REMOTE: input.remote, BASE: input.base, HEAD: input.head, TITLE: input.title, DRAFT: "1" })) {
     env[`FORGE_${key}`] = value; env[`LOOM_${key}`] = value;
   }

@@ -17,7 +17,7 @@ function fixture() {
   const workspace = join(root, "workspace"), sourceData = join(root, "source-data"), homeData = join(root, "home-data");
   for (const directory of [workspace, sourceData, homeData]) mkdirSync(directory);
   const source = new HostRegistry(sourceData), home = new HostRegistry(homeData);
-  const registration = (id: string, path: string, access: EndpointRegistration["access"]): EndpointRegistration => ({ placementId: "placement-a", generation: 1, endpointId: id, endpoint: { hostId: id + "-host", environmentId: null, root: path }, ownerThreadId: "member-thread", access, workspaceKind: null, objectFormat: null, allowedRefs: [] });
+  const registration = (id: string, path: string, access: EndpointRegistration["access"]): EndpointRegistration => ({ placementId: "placement-a", generation: 1, endpointId: id, endpoint: { hostId: id + "-host", environmentId: null, root: path }, ownerThreadId: "member-thread", access, git: "full", workspaceKind: null, objectFormat: null, allowedRefs: [] });
   const authority = (id: string): Authority => ({ placementId: "placement-a", generation: 1, endpointId: id, operationId: "operation-a" });
   source.registerEndpoint(registration("reports", workspace, "artifact-read"));
   home.registerEndpoint(registration("home", home.artifactDirectory, "artifact-store"));

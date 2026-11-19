@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { appendFileSync, chmodSync, closeSync, constants as fsConstants, existsSync, fchmodSync, fstatSync, openSync, unlinkSync, writeSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import { z } from "zod";
 import { BLOB_MAX_BYTES, type HostInput, type HostOutput } from "../host-contract";
 import { gitOidSchema } from "../shared/placement";
@@ -30,12 +30,7 @@ const git = (_root: string, args: readonly string[], options?: { raw?: boolean; 
 const run = (_root: string, args: readonly string[], _signal?: AbortSignal) => context.run(args);
 const tryGit = async (root: string, args: readonly string[], signal?: AbortSignal) => { const result = await run(root, args, signal); return result.code === 0 ? result.stdout.trim() : null; };
 const topLevel = (root: string, signal?: AbortSignal) => git(root, ["rev-parse", "--show-toplevel"], { signal });
-const hasCommit = async (root: string, sha: string, signal?: AbortSignal) => (await tryGit(root, ["cat-file", "-e", sha+"^{commit}"], signal)) !== null;
-const runRemote = (_root: string, args: readonly string[], timeoutMs: number, _signal?: AbortSignal) => context.run(args, { timeoutMs });
-const networkTimeout = (input: {networkTimeoutMs: number}) => input.networkTimeoutMs;
 const failure = (args: readonly string[], result: {stderr:string;stdout:string}) => new HostError("git-failed", "Git "+args[0]+" failed: "+tail(result.stderr || result.stdout));
-const authorEnv = (author: {name:string;email:string;date:string}) => ({ GIT_AUTHOR_NAME:author.name,GIT_AUTHOR_EMAIL:author.email,GIT_AUTHOR_DATE:author.date });
-const identityArgs = async (root:string,signal?:AbortSignal) => (await tryGit(root,["config","--get","user.email"],signal)) ? [] : ["-c","user.name=Tavern","-c","user.email=tavern@localhost"];
 function insideWorktree(top:string,path:string,_create:boolean) { const value=reach(top,path); if(!value.safe) throw new HostError("unsafe-path","The carry path traverses a symlink or file."); return value.file; }
 interface CarryMark {
   base: string;
@@ -92,7 +87,7 @@ function writeCarryMark(path: string, mark: CarryMark): void {
 }
 
 /**
- * The carry's private directory: next to its mark in the git directory, or else a hidden sibling of the worktree's top
+ * The carry's private directory: next to its private mark, or else a hidden sibling of the worktree's top
  * level, the first whose parent is on the worktree's filesystem, so a rename from it is atomic. Null when neither is.
  */
 function carryTempOf(top: string, mark: string): string | null {
@@ -103,7 +98,7 @@ function carryTempOf(top: string, mark: string): string | null {
 }
 
 /** Whether git tracks the executable bit here; where it does not, the carry ignores it too. */
-const fileModeOf = async (top: string, signal?: AbortSignal) => (await tryGit(top, ["config", "--get", "core.filemode"], signal)) !== "false";
+const fileModeOf = async (top: string, signal?: AbortSignal) => (await tryGit(top, ["config", "--type=bool", "--get", "core.filemode"], signal)) !== "false";
 
 /** The path's file, and whether it is reached through real directories only: no parent is a symlink or a file. */
 function reach(top: string, path: string): { file: string; safe: boolean } {
@@ -124,39 +119,11 @@ function stateOfFile(file: string, fm: boolean): State {
   if (stat.isSymbolicLink()) return `l:${contentSha(readlinkSync(file))}`;
   if (stat.isDirectory()) return "dir";
   if (!stat.isFile()) return "other";
-  return `f:${fm && (stat.mode & 0o111) !== 0 ? 1 : 0}:${contentSha(readFileSync(file))}`;
+  return `f:${fm && (stat.mode & 0o100) !== 0 ? 1 : 0}:${contentSha(readFileSync(file))}`;
 }
 function stateAt(top: string, path: string, fm: boolean): State {
   const { file, safe } = reach(top, path);
   return safe ? stateOfFile(file, fm) : UNREACHABLE;
-}
-
-/** A tree entry: its git mode, type and object id. */
-type Entry = { mode: string; type: string; id: string };
-
-/** Whether the path's file holds exactly `entry`, a blob, or is absent where `entry` is undefined: content as git hashes it, and mode. */
-function holdsEntry(top: string, path: string, entry: Entry | undefined, fm: boolean): boolean {
-  const { file, safe } = reach(top, path);
-  if (!safe) return false;
-  const stat = lstatOrNull(file);
-  if (stat === null || entry === undefined) return stat === null && entry === undefined;
-  if (entry.type !== "blob" || (entry.mode === "120000" ? !stat.isSymbolicLink() : !stat.isFile())) return false;
-  if (fm && entry.mode !== "120000" && ((stat.mode & 0o111) !== 0) !== (entry.mode === "100755")) return false;
-  const bytes = stat.isSymbolicLink() ? Buffer.from(readlinkSync(file)) : readFileSync(file);
-  return createHash(entry.id.length === 64 ? "sha256" : "sha1").update(`blob ${bytes.length}\0`).update(bytes).digest("hex") === entry.id;
-}
-
-/** What `rev` has at each path, by path, a directory as a tree; a path it lacks is not in it. */
-async function treeEntries(top: string, rev: string, paths: readonly string[], signal?: AbortSignal): Promise<Map<string, Entry>> {
-  const entries = new Map<string, Entry>();
-  for (let at = 0; at < paths.length; at += PATH_BATCH) {
-    const out = await git(top, ["ls-tree", "-z", "--full-tree", rev, "--", ...paths.slice(at, at + PATH_BATCH)], { raw: true, signal, env: LITERAL });
-    for (const line of out.split("\0")) {
-      const match = /^(\d+) (\w+) ([0-9a-f]+)\t(.+)$/su.exec(line);
-      if (match !== null) entries.set(match[4]!, { mode: match[1]!, type: match[2]!, id: match[3]! });
-    }
-  }
-  return entries;
 }
 
 /**
@@ -164,7 +131,7 @@ async function treeEntries(top: string, rev: string, paths: readonly string[], s
  * is listed file by file from the filesystem, never through a symlink, so each file is judged on its own.
  */
 async function statusOf(top: string, signal?: AbortSignal): Promise<Map<string, string>> {
-  const fields = (await git(top, ["status", "--porcelain", "-z"], { raw: true, signal, timeoutMs: 150_000 })).split("\0");
+  const fields = (await git(top, ["status", "--porcelain", "-z"], { raw: true, signal, timeoutMs: 300_000 })).split("\0");
   const entries = new Map<string, string>();
   for (let at = 0; at < fields.length; at++) {
     const entry = fields[at]!;
@@ -195,14 +162,6 @@ async function stagedPaths(top: string, signal?: AbortSignal): Promise<string[]>
   // hold a newline. The names only say what is staged; --quiet decided.
   const out = await git(top, ["diff", "--cached", "--name-only", "-z"], { raw: true, signal });
   return out.split(out.includes("\0") ? "\0" : "\n").filter((path) => path !== "");
-}
-
-/** The paths that differ between two commits, as a reset from one to the other writes or removes them. */
-async function pathsBetween(top: string, from: string, to: string, signal?: AbortSignal): Promise<string[]> {
-  const fields = (await git(top, ["diff", "--name-status", "--no-renames", "-z", from, to, "--"], { raw: true, signal })).split("\0");
-  const paths: string[] = [];
-  for (let at = 1; at < fields.length; at += 2) if (fields[at] !== "") paths.push(fields[at]!);
-  return paths;
 }
 
 function logIntent(mark: string, line: Intent): void {
@@ -241,72 +200,26 @@ function clearCarry(mark: string, fm: boolean): void {
 
 /**
  * Before the carry changes a path: it must hold what the carry left there, or, for a path the carry has not changed yet,
- * exactly what HEAD has, as the carry's reset or commit left it, content and mode, with no symlink on the way. Else
+ * exactly what the carry recorded before writing, content and mode, with no symlink on the way. Else
  * someone else changed it, and the carry stops, keeping it as it is.
  */
-async function skippedPaths(top: string, paths: string[], signal?: AbortSignal): Promise<Set<string>> {
-  const skipped = new Set<string>();
-  for (let at = 0; at < paths.length; at += PATH_BATCH) {
-    const output = await git(top, ["ls-files", "-t", "-z", "--", ...paths.slice(at, at + PATH_BATCH)], { raw: true, signal, env: LITERAL });
-    for (const row of output.split("\0")) if (row.startsWith("S ")) skipped.add(row.slice(2));
-  }
-  return skipped;
-}
-async function guardPath(top: string, mark: string, path: string, fm: boolean, signal?: AbortSignal, skipped?: Set<string>): Promise<{ pre: State; left: boolean }> {
+async function guardPath(top: string, mark: string, path: string, fm: boolean, cached?: { log: Map<string, Intent>; initial: Record<string, string | null> | null }): Promise<{ pre: State; left: boolean }> {
   if (!reach(top, path).safe) throw new Error(`${path} is reached through a symlink or a file now, so Tavern stops the carry and keeps it as it is`);
   const now = stateAt(top, path, fm);
-  const intent = carryLog(mark).get(path);
+  const log = cached ? cached.log : carryLog(mark);
+  const intent = log.get(path);
   if (intent !== undefined) {
     if (!leftBy(intent).includes(now)) throw new Error(`${path} is not as the carry left it, so Tavern stops the carry and keeps the file as it is`);
     return { pre: now, left: true };
   }
-  if (now === null && (skipped ? skipped.has(path) : (await skippedPaths(top, [path], signal)).has(path))) return { pre: null, left: false };
-  if (!holdsEntry(top, path, (await treeEntries(top, "HEAD", [path], signal)).get(path), fm)) throw new Error(`${path} is not as the carry started it, so Tavern stops the carry and keeps the file as it is`);
+  const initial = cached ? cached.initial : context.registry.readTransferState(context.authority, "carry-initial.json", z.record(z.string(), z.string().nullable()));
+  const structuralDeletion = now === null && initial && (initial[path] === UNREACHABLE
+    ? [...log.values()].some(intent => "d" in intent && path.startsWith(intent.d + "/"))
+    : initial[path] === "dir" && [...log.values()].some(intent => "d" in intent && intent.d.startsWith(path + "/")));
+  if (!initial || !(path in initial) || initial[path] !== now && !structuralDeletion) throw changedSince(path, false);
   return { pre: now, left: false };
 }
 const changedSince = (path: string, left: boolean) => new Error(`${path} is not as the carry ${left ? "left" : "started"} it, so Tavern stops the carry and keeps the file as it is`);
-
-/**
- * The paths a write or a reset would replace that hold something git does not show as a change: an ignored file or
- * directory where HEAD has nothing, or a path reached through a symlink or a file. A path holding what HEAD has, or what the
- * carry's log left there, is not one.
- */
-async function obstructions(top: string, mark: string, paths: readonly string[], fm: boolean, signal?: AbortSignal): Promise<string[]> {
-  const unique = [...new Set(paths)];
-  const log = carryLog(mark);
-  const atHead = await treeEntries(top, "HEAD", unique, signal);
-  return unique.filter((path) => {
-    if (!reach(top, path).safe) return true;
-    const now = stateAt(top, path, fm);
-    if (now === null) return false;
-    const intent = log.get(path);
-    if (intent !== undefined && leftBy(intent).includes(now)) return false;
-    const entry = atHead.get(path);
-    if (now === "dir") return entry?.type !== "tree";
-    return !holdsEntry(top, path, entry, fm);
-  });
-}
-
-/**
- * What of a carry cut short the worktree still has, and whether it is all the carry's: each changed path holds a state the
- * carry's log left it in, or, with no intent, what HEAD has; and the index differs from HEAD only where the worktree's
- * file is the carry's and matches it. Anything else is someone else's.
- */
-async function carryLeftovers(top: string, mark: string, fm: boolean, signal?: AbortSignal): Promise<{ foreign: string[]; untracked: string[] }> {
-  const log = carryLog(mark);
-  const status = await statusOf(top, signal);
-  const atHead = await treeEntries(top, "HEAD", [...status.keys()], signal);
-  const foreign: string[] = [];
-  const untracked: string[] = [];
-  for (const [path, xy] of status) {
-    const intent = log.get(path);
-    const worktreeOwned = intent !== undefined ? leftBy(intent).includes(stateAt(top, path, fm)) : holdsEntry(top, path, atHead.get(path), fm);
-    const indexOwned = xy[0] === " " || xy[0] === "?" || (intent !== undefined && xy[1] === " ");
-    if (!worktreeOwned || !indexOwned) foreign.push(path);
-    else if (xy === "??") untracked.push(path);
-  }
-  return { foreign, untracked };
-}
 
 const refusal = (message: string): HostOutput<"carryStart"> => ({ outcome: "unavailable", code: "carry-blocked", retryable: false, message });
 const named = (paths: readonly string[]) => {
@@ -314,79 +227,35 @@ const named = (paths: readonly string[]) => {
   return `${files.join(", ")}${paths.length > files.length ? ", …" : ""}`;
 };
 
+// Ported from plugins/loom/src/host/ops.ts. A retry takes over only the carry's journaled files.
 async function carryStart(input: NativeInput<"carryStart">, signal?: AbortSignal): Promise<HostOutput<"carryStart">> {
-  const { worktree, remote, baseBranch, base } = input;
-  const mark = await carryMarkOf(worktree, signal);
-  const top = await topLevel(worktree, signal);
-  const fm = await fileModeOf(top, signal);
-  let carried = readCarryMark(mark);
-  let head = await git(worktree, ["rev-parse", "HEAD"], { signal });
-  if (carried?.mismatched === head) {
-    return refusal(`The worktree ${worktree} is at ${head.slice(0, 12)}, a commit Tavern's last carry made whose tree is not the one it sent, so it may hold changes the carry did not make. Tavern left it as it is: look at it, keep what is yours, and reset the branch, then try again`);
+  const top = await topLevel(input.worktree, signal), mark = await carryMarkOf(input.worktree), fm = await fileModeOf(top, signal);
+  const head = await git(top, ["rev-parse", "--verify", "HEAD"]), tree = await git(top, ["rev-parse", "--verify", "HEAD^{tree}"]);
+  const carried = readCarryMark(mark);
+  if (carried?.committing && head !== carried.committing.parent && tree === input.tree && /^parent ([a-f0-9]+)$/mu.exec((await git(top, ["cat-file", "commit", head], { raw: true })).split("\n\n")[0]!)?.[1] === carried.committing.parent) {
+    if ((await statusOf(top)).size) return dirtyRefusal(top, [...(await statusOf(top)).keys()], "");
+    clearCarry(mark, fm); return { outcome: "ok", present: true, from: head };
   }
-  // A commit the carry journaled is its own when its parent and tree say so, the first of a stacked carry too. HEAD still at
-  // the journaled parent means the commit never happened; that parent's own parent is never asked for, as a root has none.
-  const committing = carried?.committing;
-  if (carried !== null && committing !== undefined && head !== committing.parent && !carried.heads.includes(head)) {
-    const parent = await tryGit(worktree, ["rev-parse", "--verify", "HEAD^"], signal);
-    const tree = await git(worktree, ["rev-parse", "HEAD^{tree}"], { signal });
-    if (parent === committing.parent && tree === committing.tree) carried = { ...carried, heads: [...carried.heads, head] };
+  if (head !== (input.expectedHead ?? input.base)) return refusal("The member HEAD differs from Tavern's recorded commit. Preserve its commits and provision a fresh checkout before retrying; Tavern will not reset this branch.");
+  if (await git(top, ["ls-files", "--unmerged", "-z"], { raw: true })) return refusal("Resolve the member's unmerged entries before carrying work.");
+  const status = await statusOf(top, signal), log = carryLog(mark);
+  if (carried) {
+    const foreign = [...status.keys()].filter(path => { const intent = log.get(path); return !intent || !leftBy(intent).includes(stateAt(top, path, fm)); });
+    foreign.push(...await foreignStaged(top, mark, fm));
+    if (foreign.length) return dirtyRefusal(top, foreign, " that an earlier carry did not make");
+    return { outcome: "ok", present: tree === input.tree && status.size === 0, from: carried.from ?? head };
   }
-  // A carry cut short, by a crash, a lost answer, or a carry that failed and left its files, is taken over when all the
-  // worktree's changes are its own and nothing ignored sits where its reset writes; else it touches nothing.
-  const cutShort = carried !== null && carried.from !== undefined && (carried.base === head || carried.heads.includes(head));
-  if (cutShort) {
-    const { foreign, untracked } = await carryLeftovers(top, mark, fm, signal);
-    if (foreign.length > 0) return dirtyRefusal(worktree, foreign, " that an earlier carry did not make");
-    const blocked = await obstructions(top, mark, [...(await pathsBetween(top, head, carried!.base, signal)), ...carryLog(mark).keys()], fm, signal);
-    if (blocked.length > 0) return obstructed(worktree, blocked);
-    const log = carryLog(mark);
-    for (const path of untracked) {
-      const intent = log.get(path);
-      if (intent !== undefined && leftBy(intent).includes(stateAt(top, path, fm))) removeFile(top, path);
-    }
-    await git(worktree, ["reset", "-q", "--hard", carried!.base], { signal, timeoutMs: 150_000 });
-    head = await git(worktree, ["rev-parse", "HEAD"], { signal });
+  if (status.size) return dirtyRefusal(top, [...status.keys()], "");
+  if (tree === input.tree) return { outcome: "ok", present: true, from: head };
+  for (let at = 0; at < input.paths.length; at += PATH_BATCH) {
+    const paths = input.paths.slice(at, at + PATH_BATCH);
+    if (await git(top, ["status", "--porcelain", "--ignored", "-z", "--", ...paths], { raw: true, env: LITERAL, timeoutMs: 300_000 })) return obstructed(top, paths);
   }
-  const [mergeHead = "", tree = ""] = (await git(worktree, ["rev-parse", "--git-path", "MERGE_HEAD", "HEAD^{tree}"], { signal })).split("\n");
-  const from = cutShort ? carried!.from! : head;
-  if (tree === input.tree) {
-    const dirty = [...(await statusOf(top, signal)).keys()];
-    if (dirty.length) return dirtyRefusal(worktree, dirty, "");
-    clearCarry(mark, fm);
-    return { outcome: "ok", present: true, from: head };
-  }
-  if (existsSync(resolve(worktree, mergeHead))) {
-    return refusal(`The worktree ${worktree} has a merge that is not finished, so Tavern left it as it is. Finish it with git commit, or abort it with git merge --abort, then try again`);
-  }
-  const dirty = [...(await statusOf(top, signal)).keys()];
-  if (dirty.length > 0) return dirtyRefusal(worktree, dirty, "");
-  // merge-base rather than --is-ancestor, which a machine's git may not have.
-  const fullRef = baseBranch.startsWith("refs/"), tracking = fullRef ? null : `refs/remotes/${remote}/${baseBranch}`;
-  if (!cutShort && head !== base && tree !== input.replaces && (tracking === null || (await tryGit(worktree, ["merge-base", head, tracking], signal)) !== head)) {
-    return refusal(fullRef
-      ? `The worktree ${worktree} is not at the pinned base and has no matching trusted previous tree. Preserve its work before retrying; Tavern will not guess a tracking ref or drop unknown commits.`
-      : `The worktree ${worktree} has commits that are not on ${remote}/${baseBranch}, so putting the work in would drop them: ${head.slice(0, 12)}. Stash them or move them to another branch, then try again`);
-  }
-  // The base is a commit of the remote's base branch. One that branch lacks here, as after the pull request's branch took
-  // a newer base, moves it up, so the worker's changes are measured from that base and not from an older one.
-  const fetchArgs = fullRef ? ["-c", "fetch.uriprotocols=", "-c", "transfer.bundleURI=false", "fetch", "--no-tags", "--no-write-fetch-head", "--no-recurse-submodules", "--refmap="] : ["fetch", "--no-tags"];
-  if (tracking === null ? !(await hasCommit(worktree, base, signal)) : (await tryGit(worktree, ["merge-base", base, tracking], signal)) !== base) await runRemote(worktree, [...fetchArgs, remote, baseBranch], networkTimeout(input), signal);
-  if (!(await hasCommit(worktree, base, signal))) {
-    const fetched = await runRemote(worktree, [...fetchArgs, remote, base], networkTimeout(input), signal);
-    if (!(await hasCommit(worktree, base, signal))) {
-      return { outcome: "unavailable", message: `The base commit ${base.slice(0, 12)} is not on this machine, and git fetch ${remote} ${base.slice(0, 12)} did not bring it: ${tail(fetched.stderr || fetched.stdout)}`, code: "base-unavailable", retryable: true };
-    }
-  }
+  const initial = Object.fromEntries(input.paths.map(path => [path, stateAt(top, path, fm)]));
+  context.registry.writeTransferState(context.authority, "carry-initial.json", z.record(z.string(), z.string().nullable()), initial);
   const temp = carryTempOf(top, mark);
-  const blocked = await obstructions(top, mark, [...(input.paths ?? []), ...(head === base ? [] : await pathsBetween(top, head, base, signal))], fm, signal);
-  if (blocked.length > 0) return obstructed(worktree, blocked);
-  // The mark first, so a carry cut short during the reset is known as one.
-  removeOwnTemps(mark, fm);
-  rmSync(logOf(mark), { force: true });
-  writeCarryMark(mark, { base, tree: input.tree, heads: [], from, ...(temp === null ? {} : { temp }) });
-  if (head !== base) await git(worktree, ["reset", "-q", "--hard", base], { signal, timeoutMs: 150_000 });
-  return { outcome: "ok", present: false, from };
+  writeCarryMark(mark, { base: input.base, tree: input.tree, heads: [], from: head, ...(temp === null ? {} : { temp }) });
+  return { outcome: "ok", present: false, from: head };
 }
 
 function dirtyRefusal(worktree: string, paths: readonly string[], whose: string): HostOutput<"carryStart"> {
@@ -422,7 +291,8 @@ async function carryWrite(input: NativeInput<"carryWrite">): Promise<HostOutput<
   const bytes = decodeChunk(input.data);
   if (offset + bytes.length > BLOB_MAX_BYTES) throw new HostError("file-too-large", "Files over 100 MiB cannot move between machines.");
   if (symlinkOffset(mode, offset)) throw new HostError("chunk-offset", "A symlink target must be sent as one range at offset zero.");
-  if (left) {
+  const intent = carryLog(mark).get(path);
+  if (left && intent && "w" in intent && pre === intent.post) {
     const existing = mode === "120000" ? Buffer.from(readlinkSync(file)) : pre?.startsWith("f:") ? readFileSync(file) : null;
     if (existing && offset + bytes.length <= existing.length && existing.subarray(offset, offset + bytes.length).equals(bytes)) return { size: existing.length };
     if (offset === 0) throw new HostError("chunk-conflict", "A retried carry range differs from the bytes already accepted.");
@@ -508,11 +378,13 @@ async function carryDelete(input: NativeInput<"carryDelete">): Promise<HostOutpu
   const top = await topLevel(input.worktree);
   const fm = await fileModeOf(top);
   const mark = await carryMarkOf(input.worktree);
-  const skipped = await skippedPaths(top, input.paths.filter(path => stateAt(top, path, fm) === null));
+  const cached = { log: carryLog(mark), initial: context.registry.readTransferState(context.authority, "carry-initial.json", z.record(z.string(), z.string().nullable())) };
   for (const path of input.paths) {
+    context.active();
     insideWorktree(top, path, false);
-    const { pre, left } = await guardPath(top, mark, path, fm, undefined, skipped);
-    logIntent(mark, { d: path, pre });
+    const { pre, left } = await guardPath(top, mark, path, fm, cached);
+    const intent = { d: path, pre };
+    logIntent(mark, intent); cached.log.set(path, intent);
     if (stateAt(top, path, fm) !== pre) throw changedSince(path, left);
     removeFile(top, path);
   }
@@ -543,42 +415,68 @@ async function carryAbort(input: NativeInput<"carryAbort">, signal?: AbortSignal
   return { clean: kept.length === 0, kept, carried };
 }
 
-/**
- * Commits the carry's own paths with git add and git commit: the files it wrote, each still holding what it wrote, and
- * the ones it deleted, still gone. Refused ("foreign") before anything is staged when a carry path holds anything else or
- * the worker's index differs from HEAD anywhere, as a worker's staged change. The commit is journaled first. A commit
- * whose tree is not `tree` is a mismatch: it stays as it is, and is never the carry's own, so the next carry refuses it.
- */
+async function foreignStaged(top: string, mark: string, fm: boolean): Promise<string[]> {
+  const log = carryLog(mark), foreign: string[] = [];
+  const paths = await stagedPaths(top), entries = new Map<string, { mode: string; sha: string }>();
+  for (let at = 0; at < paths.length; at += PATH_BATCH) {
+    const rows = await git(top, ["ls-files", "--stage", "-z", "--", ...paths.slice(at, at + PATH_BATCH)], { raw: true, env: LITERAL });
+    for (const row of rows.split("\0").filter(Boolean)) {
+      const match = /^(\d{6}) ([a-f0-9]{40}|[a-f0-9]{64}) ([0-3])\t([\s\S]+)$/u.exec(row);
+      if (!match) throw new HostError("invalid-index", "Git ls-files returned an unreadable staged entry.");
+      if (match[3] !== "0") foreign.push(match[4]!);
+      else entries.set(match[4]!, { mode: match[1]!, sha: match[2]! });
+    }
+  }
+  for (const path of paths) {
+    const intent = log.get(path), entry = entries.get(path);
+    if (!intent) { foreign.push(path); continue; }
+    if ("d" in intent) { if (entry) foreign.push(path); continue; }
+    const file = join(top, path), stat = lstatOrNull(file);
+    if (!stat || stateAt(top, path, fm) !== intent.post) { foreign.push(path); continue; }
+    if (!entry && context.endpoint.inspection!.sparse && readCarryMark(mark)?.committing) continue;
+    if (!entry) { foreign.push(path); continue; }
+    const bytes = stat.isSymbolicLink() ? Buffer.from(readlinkSync(file)) : readFileSync(file);
+    const sha = createHash(entry.sha.length === 40 ? "sha1" : "sha256").update(`blob ${bytes.length}\0`).update(bytes).digest("hex");
+    if (sha !== entry.sha || intent.m !== entry.mode) foreign.push(path);
+  }
+  return foreign;
+}
+
+/** A mismatched commit stays on the branch for reconciliation; it is never claimed as a completed carry. */
 async function carryFinish(input: NativeInput<"carryFinish">, signal?: AbortSignal): Promise<HostOutput<"carryFinish">> {
-  const { worktree, message, author, tree, paths } = input;
+  const { worktree, tree, paths } = input;
   const top = await topLevel(worktree, signal);
   const fm = await fileModeOf(top, signal);
   const mark = await carryMarkOf(worktree, signal);
   const log = carryLog(mark);
   const written = [...new Set(paths)];
   const deleted = [...log.values()].flatMap((intent) => ("d" in intent && !written.includes(intent.d) ? [intent.d] : []));
-  const foreign = new Set<string>(await stagedPaths(top, signal));
+  const foreign = new Set<string>(await foreignStaged(top, mark, fm));
   for (const path of written) {
     const intent = log.get(path);
     if (intent === undefined || !("w" in intent) || stateAt(top, path, fm) !== intent.post) foreign.add(path);
   }
-  for (const path of deleted) if (stateAt(top, path, fm) !== null) foreign.add(path);
+  const replaced = (path: string) => written.some(file => path.startsWith(file + "/") || file.startsWith(path + "/"));
+  for (const path of deleted) if (stateAt(top, path, fm) !== null && !replaced(path)) foreign.add(path);
   if (foreign.size > 0) return { outcome: "foreign", paths: [...foreign].sort() };
 
-  const parent = await git(top, ["rev-parse", "HEAD"], { signal });
+  const parent = await git(top, ["rev-parse", "--verify", "HEAD"], { signal });
   const carried = readCarryMark(mark);
-  if (carried !== null) writeCarryMark(mark, { ...carried, committing: { parent, tree } });
-  const skipped = await skippedPaths(top, written, signal);
-  if (skipped.size) await git(top, ["update-index", "-z", "--no-skip-worktree", "--stdin"], { signal, input: [...skipped].join("\0") + "\0", timeoutMs: 150_000 });
-  if (written.length || deleted.length) await git(top, ["update-index", "-z", "--add", "--remove", "--stdin"], { signal, input: [...written, ...deleted].join("\0") + "\0", timeoutMs: 150_000 });
+  if (carried === null || parent !== carried.from) throw new HostError("carry-head-changed", "The member HEAD changed after the carry started; preserve and reconcile before retrying.");
+  writeCarryMark(mark, { ...carried, committing: { parent, tree } });
+  const sparse = context.endpoint.inspection!.sparse;
+  const removed = deleted.filter(path => !replaced(path));
+  const staged = [...new Set([...written, ...(sparse ? [] : removed)])];
+  const unstaged = [...new Set([...written, ...removed])];
+  if (sparse) for (let at = 0; at < unstaged.length; at += PATH_BATCH) await git(top, ["rm", "--cached", "--sparse", "--ignore-unmatch", "--", ...unstaged.slice(at, at + PATH_BATCH)], { signal, env: LITERAL, timeoutMs: 300_000 });
+  for (let at = 0; at < staged.length; at += PATH_BATCH) await git(top, ["add", "-A", ...(sparse ? ["--sparse"] : []), "--", ...staged.slice(at, at + PATH_BATCH)], { signal, env: LITERAL, timeoutMs: 300_000 });
   carryFaults.beforeCommit?.();
   if ((await stagedPaths(top, signal)).length > 0) {
-    await git(top, ["-c", "gc.auto=0", "-c", "maintenance.auto=false", ...(await identityArgs(top, signal)), "commit", "--no-verify", "--no-gpg-sign", "-q", "-m", message], { signal, env: authorEnv(author), timeoutMs: 150_000 });
+    await git(top, ["-c", "gc.auto=0", "-c", "maintenance.auto=false", "-c", "user.name=Tavern", "-c", "user.email=tavern@localhost", "commit", "--no-verify", "--no-gpg-sign", "-q", "-m", "Tavern carried snapshot"], { signal, env: { GIT_AUTHOR_NAME: "Tavern", GIT_AUTHOR_EMAIL: "tavern@localhost" }, timeoutMs: 300_000 });
   }
   carryFaults.afterCommit?.();
-  const [head = "", built = ""] = (await git(top, ["rev-parse", "HEAD", "HEAD^{tree}"], { signal })).split("\n");
-  // The mark ends with the tree the carry started for; a commit on the way to it, as a stacked ticket's first, joins it. A
-  // commit whose tree is not the one sent never does: the next carry refuses it, touching nothing.
+  const head = await git(top, ["rev-parse", "--verify", "HEAD"], { signal });
+  const built = await git(top, ["rev-parse", "--verify", head + "^{tree}"], { signal });
   const now = readCarryMark(mark);
   if (now === null || (now.tree === built && built === tree)) clearCarry(mark, fm);
   else {
