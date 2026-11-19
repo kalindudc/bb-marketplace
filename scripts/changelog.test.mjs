@@ -107,11 +107,18 @@ test("keeps the spacing and the ending", () => {
   assert.match(check(`${VALID}\n`).join("\n"), /ends with a blank line/);
 });
 
+test("allows Unreleased notes to exceed the length limit for a version", () => {
+  const pending = "x".repeat(MAX_VERSION_CHARACTERS + 1);
+  assert.deepEqual(check(`${HEAD}## Unreleased\n\n### Added\n\n- ${pending}\n\n${VALID.slice(HEAD.length)}`), []);
+});
+
 test("keeps a version inside what Update Shelf shows", () => {
   // What's new reads a version's whole body, so two sections are measured together.
   const half = `- ${"x".repeat(MAX_VERSION_CHARACTERS / 2)}`;
-  const text = HEAD + block("0.2.0", "2026-10-29", "Fixed", `${half}\n\n### Added\n\n${half}`);
-  reject(text, /What's new cuts a version at 12000/);
+  const text = replace("### Fixed\n\n- A bullet.", `### Added\n\n${half}\n\n### Fixed\n\n${half}`);
+  const problems = check(text);
+  assert.equal(problems.length, 1);
+  assert.match(problems[0], /0\.2\.0 is \d+ characters; What's new cuts a version at 12000/);
 });
 
 test("passes a checkout with no tags, and skips only the history rules", () => {

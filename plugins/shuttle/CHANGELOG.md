@@ -8,6 +8,10 @@ Notable changes to Shuttle, newest first. Releases are tagged `shuttle/vX.Y.Z` i
 
 - Auto review lets a new head settle before it reviews again (**Let a new head settle** in Settings › Automations, `settleMinutes`, 15 minutes by default). With **Again on new commits** on every new head, a head that comes while the PR's review runs, or while its draft waits to be posted, starts the next review only once it has stayed the same that long, so a burst of pushes gets one review instead of one each, and the PR's activity says so once a head. A PR's first review never waits, nor one after its draft was posted or discarded; 0 starts at once, as before.
 
+### Fixed
+
+- The PR’s ⋯ menu on desktop grows to show all its actions when there’s room. It scrolls only when the window is too short.
+
 ## 0.10.2 (2026-11-13)
 
 ### Fixed

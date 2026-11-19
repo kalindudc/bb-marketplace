@@ -43,7 +43,7 @@ export function PrMenu({ pr, triggerClassName = ICON_GHOST }: { pr: PrView; trig
   const states = pr.mine ? STATE_ACTIONS.filter((entry) => entry.when(pr) && pr.actions.includes(entry.action)) : [];
   const missing = pr.mine ? STATE_ACTIONS.filter((entry) => entry.when(pr) && !pr.actions.includes(entry.action)) : [];
   return (
-    <Picker phone={actions.phone} title="More" triggerLabel={`More for ${pr.repo}${pr.sep}${pr.number}`} triggerClassName={triggerClassName}
+    <Picker phone={actions.phone} title="More" triggerLabel={`More for ${pr.repo}${pr.sep}${pr.number}`} triggerClassName={triggerClassName} heightLimit="viewport"
       trigger={<Icon name="MoreHorizontal" className="size-4" aria-hidden />}>
       <PickerAction onSelect={() => copy(pr.url, "the link")}><Icon name="Link" className="size-3.5" aria-hidden />Copy link</PickerAction>
       <PickerAction onSelect={() => copy(pr.key, pr.key)}><Icon name="Copy" className="size-3.5" aria-hidden />Copy key</PickerAction>

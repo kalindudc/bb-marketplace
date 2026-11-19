@@ -135,6 +135,21 @@ describe("history", () => {
   });
 });
 
+describe("the desktop PR menu", () => {
+  it("allows its actions to use the available viewport height", async () => {
+    setViewport(1400);
+    const { slot } = await layoutPage(reviewSelected(second.key));
+    const detail = await find(slot.container, `[data-detail="${second.key}"]`);
+    const trigger = within(detail).getByRole("button", { name: "More for acme/deploy-v2#88" });
+    fireEvent.keyDown(trigger, { key: "Enter" });
+    const menu = await screen.findByRole("menu", { name: "More for acme/deploy-v2#88" });
+    expect(within(menu).getByRole("menuitem", { name: "Never auto review" })).toBeTruthy();
+    expect([...menu.classList].filter((name) => name.startsWith("max-h-")))
+      .toEqual(["max-h-[var(--radix-dropdown-menu-content-available-height)]"]);
+    expect(menu.classList.contains("overflow-y-auto")).toBe(true);
+  });
+});
+
 describe("the PR panel's width", () => {
   const STORED = "bb-plugin-shuttle:panel-width";
   const frameOf = async (slot: Awaited<ReturnType<typeof layoutPage>>["slot"], selector: string) => (await find(slot.container, selector)).closest<HTMLElement>("[data-panel-frame]")!;

@@ -185,8 +185,9 @@ export function changelogProblems(text, meta = {}) {
     }
   }
 
-  // What's new shows a whole version at once and cuts its body at MAX_VERSION_CHARACTERS, headings included.
+  // What's new truncates release notes but never shows the Unreleased block.
   for (const [index, entry] of blocks.entries()) {
+    if (entry.version === UNRELEASED) continue;
     const end = blocks[index + 1]?.index ?? lines.length;
     const size = lines.slice(entry.index + 1, end).join("\n").trim().length;
     if (size > MAX_VERSION_CHARACTERS) {
