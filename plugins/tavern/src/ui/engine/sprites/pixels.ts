@@ -7,7 +7,7 @@ export const GROUND = 26;
 
 export const enum Ink {
   Empty, Shadow, Outline, Garment, Secondary, Skin, Hair, Boot, Leather, Wood,
-  Metal, Paper, Flame, Seal, DarkCloth, Cloud, Rain, Cream,
+  Metal, Paper, Flame, Seal, DarkCloth, Cloud, Rain, Cream, Glint, Cheek,
 }
 
 type Run = Uint8Array;
@@ -67,9 +67,10 @@ export function spriteColours(hue: string, traits: SeedTraits): readonly Colour[
   return [
     () => "transparent", p => p.shadow, p => p.ink,
     p => p.hue[hue] ?? p.hue.teal ?? p.ink, MATERIAL_COLOURS[materialIndex(traits.secondary)]!,
-    p => p.skin[traits.skin]!, p => p.hair[traits.hairColour]!, p => p.pants,
+    p => p.skin[traits.skin]!, p => traits.hairColour === 3 && p.silver ? p.silver : p.hair[traits.hairColour]!, p => p.pants,
     p => p.belt, p => p.wood, p => p.metal, p => p.dark ? p.metal : p.card,
     p => p.hearth, p => p.bad, p => p.cloak, p => p.cloud, p => p.drop, p => p.skin[0]!,
+    p => p.dark ? p.metal : p.card, p => p.cheeks?.[traits.skin] ?? p.skin[traits.skin]!,
   ];
 }
 

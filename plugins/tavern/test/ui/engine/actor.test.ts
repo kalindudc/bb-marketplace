@@ -2,7 +2,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { Actor } from "../../../src/ui/engine/actor";
 import type { CharacterArt } from "../../../src/ui/engine/art";
-import { legacyArt } from "../../../src/ui/engine/legacy-art";
+import { createArt } from "../../../src/ui/engine/sprites";
 import { walkSpan } from "../../../src/ui/engine/strip";
 import { motion } from "../../../src/ui/kit/motion";
 
@@ -84,9 +84,11 @@ it("measures travel within the composer and falls back to the strip", () => {
   expect(walkSpan(10, 600, 48)).toBe(0);
 });
 
-it("keeps the prototype's quiet idle names in the legacy adapter", () => {
-  const legacy = legacyArt({ seed: "wren", classId: "keeper", hue: "teal", charge: null, keeper: true });
-  expect([legacy.quietIdle("working"), legacy.quietIdle("waiting"), legacy.quietIdle("resting")]).toEqual([
-    "reads a scroll", "tends the lantern", "leans on the tool",
-  ]);
+it("delegates quiet idle names to the generated character's class kit", () => {
+  const wanderer = createArt({ seed: "tam", classId: "wanderer", hue: "rose", charge: null, keeper: false });
+  const a = new Actor("tam", wanderer, "working");
+  expect(a.quietIdle).toBe("tends the lantern");
+  a.setMood("idle");
+  expect(a.quietIdle).toBe("checks the satchel");
+  expect(a.setMood("reported")).toBe("wave");
 });

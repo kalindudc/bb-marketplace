@@ -82,6 +82,56 @@ describe("seeded character art", () => {
     for (const part of Object.values(PARTS).flat()) expect(part).not.toMatch(deny);
   });
 
+  it("covers the top two face rows with hair or cloth across every seeded style and kit", () => {
+    const seen = new Set<string>();
+    const { ctx, pixels } = recorder();
+    for (const classId of Object.keys(KITS)) {
+      for (let i = 0; i < 40; i++) {
+        const roll = { ...input, classId, seed: `roll-${i}` };
+        const traits = seedTraits(roll);
+        const art = createArt(roll);
+        seen.add(traits.hair);
+        art.draw(ctx, rest, palette);
+        const crown = art.ground - traits.height;
+        for (const y of [crown, crown + 1]) {
+          const middle = pixels.slice(y * art.width + 9, y * art.width + 15);
+          expect(middle, `${classId} ${roll.seed} ${traits.hair} at y=${y}`).not.toContain(palette.skin[traits.skin]);
+          expect(middle).not.toContain("");
+        }
+      }
+    }
+    expect(seen).toEqual(new Set(HAIR));
+  });
+
+  it("keeps silver hair independent of style and varies Wanderer hat fabric", () => {
+    const hills = Array.from({ length: 512 }, (_, i) => seedTraits({ seed: `roll-${i}`, classId: "wanderer" }));
+    const silver = hills.filter(t => t.hairColour === 3);
+    expect(new Set(silver.map(t => t.hair))).toEqual(new Set(HAIR));
+    const long = silver.filter(t => ["shoulder-length", "long-straight", "braid", "tied-tail", "bun"].includes(t.hair));
+    expect(long.length / silver.length).toBeGreaterThan(0.45);
+    const { ctx, pixels } = recorder();
+    const hats = new Set<string>();
+    for (let i = 0; i < 40; i++) {
+      const art = createArt({ ...input, seed: `roll-${i}`, classId: "wanderer" });
+      art.draw(ctx, rest, palette);
+      hats.add(pixels[(art.ground - hills[i]!.height - 3) * art.width + 11]!);
+    }
+    expect(hats.size).toBeGreaterThanOrEqual(4);
+  });
+
+  it("holds the Smith's hammer visibly higher in the verified rest pose", () => {
+    const art = createArt({ ...input, classId: "smith" });
+    const { ctx, pixels } = recorder();
+    const hammerTop = (mood: ArtFrame["mood"]) => {
+      art.draw(ctx, { ...rest, mood }, palette);
+      return Math.floor(pixels.findIndex((p, i) => i % art.width >= 18 && p === palette.metal) / art.width);
+    };
+    const idleTop = hammerTop("idle");
+    const verifiedTop = hammerTop("verified");
+    expect(verifiedTop).toBeGreaterThan(0);
+    expect(idleTop - verifiedTop).toBeGreaterThanOrEqual(3);
+  });
+
   it("maps legacy pins to period parts without changing shoulders", () => {
     expect(seedTraits({ seed: "roll", classId: "smith", look: { build: "broad", hair: "bald", hat: "cap", skin: "deep", hairColour: "rust" } }))
       .toMatchObject({ shoulders: 9, hips: 9, hem: 13, hair: "fringe-crop", hat: "kerchief", skin: 2, hairColour: 4 });

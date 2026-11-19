@@ -20,6 +20,10 @@
   --tchar-skin-1: #eac49b;
   --tchar-skin-2: #d8a87e;
   --tchar-skin-3: #b9835e;
+  --tchar-cheek-1: color-mix(in oklab, var(--tchar-skin-1) 78%, var(--tchar-hair-5));
+  --tchar-cheek-2: color-mix(in oklab, var(--tchar-skin-2) 76%, var(--tchar-hair-5));
+  --tchar-cheek-3: color-mix(in oklab, var(--tchar-skin-3) 75%, var(--tchar-bad));
+  --tchar-silver: #a6a29d;
   --tchar-hair-1: #5b4632;
   --tchar-hair-2: #2e2822;
   --tchar-hair-3: #c9a24a;
@@ -50,6 +54,7 @@ html.dark .tavern .tchar {
   --tchar-skin-1: #d8a87e;
   --tchar-skin-2: #c49268;
   --tchar-skin-3: #a8744e;
+  --tchar-silver: #c2bdba;
   --tchar-hair-1: #6b543c;
   --tchar-hair-2: #3d362e;
   --tchar-hair-3: #d4b264;

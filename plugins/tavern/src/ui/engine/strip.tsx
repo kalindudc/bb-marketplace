@@ -3,10 +3,10 @@ import type { CharacterDef } from "../../shared/schema";
 import { readPalette, type CharacterPalette } from "../kit/characters";
 import { motion, type Surface } from "../kit/motion";
 import { Actor } from "./actor";
-import { CUE_MS, type Cue, type Mood } from "./art";
-import { legacyArt } from "./legacy-art";
+import { CUE_MS, type Cue, type LightAnchor, type Mood } from "./art";
 import type { MotionMode } from "./rules";
 import { observeWorld, scheduler, type EngineWorld } from "./scheduler";
+import { createArt } from "./sprites";
 import "./engine.css";
 
 const SCALE = 2;
@@ -25,7 +25,7 @@ export function walkSpan(composerWidth: number | null, stripWidth: number, sprit
 export type StripSpeech = { actorId: string; text: string };
 
 type PartyStripProps = {
-  character: Pick<CharacterDef, "id" | "name" | "hue" | "charge" | "look">;
+  character: Pick<CharacterDef, "id" | "avatar" | "name" | "hue" | "charge" | "look">;
   classId: string | null;
   classLabel: string;
   mood: Mood;
@@ -42,9 +42,10 @@ type PartyStripProps = {
 
 export function PartyStrip(props: PartyStripProps) {
   const { character, classId, classLabel, keeper, mood, speech } = props;
-  const art = useMemo(() => legacyArt({
-    seed: character.id, classId, hue: character.hue, charge: character.charge, look: character.look, keeper,
-  }), [character.id, classId, character.hue, character.charge, character.look, keeper]);
+  const seed = character.avatar ?? character.id;
+  const art = useMemo(() => createArt({
+    seed, classId, hue: character.hue, charge: character.charge, look: character.look, keeper,
+  }), [seed, classId, character.hue, character.charge, character.look, keeper]);
   const actor = useMemo(() => new Actor(character.id, art, mood), [character.id]);
   const strip = useRef<HTMLElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -74,6 +75,9 @@ export function PartyStrip(props: PartyStripProps) {
     let span = 0;
     let lastPosition = "";
     let cueNumber = 0;
+    let drawnLight: LightAnchor | null = null;
+    let drawnX = 0;
+    let drawnY = 0;
     const holds = () => {
       const { surface, held } = latest.current;
       const current = motion.getHolds(surface);
@@ -86,7 +90,7 @@ export function PartyStrip(props: PartyStripProps) {
         const spriteWidth = actor.art.width * SCALE;
         const spriteHeight = actor.art.height * SCALE;
         const x = Math.round(Math.min(span, actor.body.x) / SCALE) * SCALE;
-        const y = GROUND - actor.art.ground * SCALE - (still ? 0 : Math.round(actor.body.lift / SCALE) * SCALE);
+        const y = Math.max(0, GROUND - actor.art.ground * SCALE - (still ? 0 : Math.round(actor.body.lift / SCALE) * SCALE));
         const speechEl = bubble.current;
         if (speechEl) {
           const left = x - BUBBLE_GAP;
@@ -106,6 +110,9 @@ export function PartyStrip(props: PartyStripProps) {
         if (control.dataset.activity !== frame.activity) control.dataset.activity = frame.activity;
         const quiet = frame.activity === "quiet" ? actor.quietIdle : "";
         if (control.dataset.quietIdle !== quiet) control.dataset.quietIdle = quiet;
+        drawnLight = actor.art.lightAnchor(frame);
+        drawnX = x;
+        drawnY = y;
         if (!ctx) return;
         ctx.clearRect(0, 0, width, HEIGHT);
         ctx.save();
@@ -116,6 +123,15 @@ export function PartyStrip(props: PartyStripProps) {
         ctx.scale(SCALE, SCALE);
         actor.art.draw(ctx, frame, palette);
         ctx.restore();
+      },
+      lightAnchors() {
+        if (!drawnLight) return [];
+        const { left, top } = el.getBoundingClientRect();
+        return [{
+          kind: drawnLight.kind,
+          x: window.scrollX + left + drawnX + (drawnLight.x + 0.5) * SCALE,
+          y: window.scrollY + top + drawnY + (drawnLight.y + 0.5) * SCALE,
+        }];
       },
       suspend(reason) {
         if (reason === "hidden") return;

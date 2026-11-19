@@ -16,13 +16,21 @@ const HAIRSTYLES: Record<SeedTraits["hair"], { back: readonly string[]; fringe: 
   curls: { back: ["..##.###..", ".########.", "##########", "###########", "##########", "###########", "###....###", ".##.....##"], fringe: ["##########", "##.###.###", "#..##....#"] },
 };
 
+const HAT_HEADROOM: Record<NonNullable<SeedTraits["hat"]>, number> = {
+  "soft-cap": 3, coif: 2, kerchief: 2, "folded-hat": 4, "wide-brim": 5, "round-brim": 4, hood: 2, "tall-hood": 4,
+};
+
 function head(p: PixelGrid, x: number, top: number, t: SeedTraits, pose: SpritePose) {
   const hair = HAIRSTYLES[t.hair];
   const hairY = top - (t.hair === "tousled-crop" || t.hair === "bun" ? 2 : 1);
   p.mask(x, hairY, hair.back, Ink.Hair);
   if (t.ears === "pointed") p.mask(x - 2, top + 3, ["#............#", "###........###", ".####....####.", "..###....###.."], Ink.Skin);
   else p.mask(x - 1, top + 4, ["##........##", ".##......##."], Ink.Skin);
-  p.mask(x, top, ["..######..", ".########.", "##########", "##########", "##########", "##########", ".########.", t.face === "round" ? "..######.." : "...####...", "...####..."], Ink.Skin);
+  p.mask(x, top, ["..######..", ".########."], Ink.Hair);
+  p.mask(x, top + 2, ["##########", "##########", "##########", "##########", ".########.", t.face === "round" ? "..######.." : "...####...", "...####..."], Ink.Skin);
+  p.mask(x, top + 2, [hair.fringe[1]!], Ink.Hair);
+  if (hair.fringe[2]?.startsWith("#")) p.rect(x, top + 3, 1, 1, Ink.Hair);
+  if (hair.fringe[2]?.endsWith("#")) p.rect(x + 9, top + 3, 1, 1, Ink.Hair);
   const eyes = top + 4 + pose.glance;
   const left = x + (t.eyes === "wide" ? 1 : 2);
   const right = x + 6;
@@ -32,14 +40,13 @@ function head(p: PixelGrid, x: number, top: number, t: SeedTraits, pose: SpriteP
   } else {
     p.rect(left, eyes, 2, 2, Ink.Outline);
     p.rect(right, eyes, 2, 2, Ink.Outline);
-    if (t.eyes !== "gentle") {
-      p.rect(left + 1, eyes, 1, 1, Ink.Cream);
-      p.rect(right + 1, eyes, 1, 1, Ink.Cream);
-    }
+    p.rect(left + 1, eyes, 1, 1, Ink.Glint);
+    p.rect(right + 1, eyes, 1, 1, Ink.Glint);
   }
-  p.rect(x + 4, top + (pose.glance === 1 ? 8 : 7), 1, 1, Ink.Leather);
-  p.rect(x + 1, top - 1, 8, 1, Ink.Hair);
-  for (let i = 1; i < hair.fringe.length; i++) p.mask(x, top + i - 1, [hair.fringe[i]!], Ink.Hair);
+  const cheek = Math.min(top + 6, eyes + 2);
+  p.rect(x + 1, cheek, 1, 1, Ink.Cheek);
+  p.rect(x + 8, cheek, 1, 1, Ink.Cheek);
+  if (pose.slump || pose.glance === -1) p.rect(x + 4, top + 7, 1, 1, Ink.Cheek);
   if (t.hair === "braid") p.mask(x + 9, top + 7, ["#", ".#", "#", ".#", "#"], Ink.Leather);
   if (t.hair === "tied-tail") p.rect(x + 10, top + 3, 1, 1, Ink.Secondary);
   hat(p, x, top, t.hat);
@@ -67,8 +74,8 @@ function hat(p: PixelGrid, x: number, y: number, part: SeedTraits["hat"]) {
     case "round-brim":
       p.mask(x - 3, y - 5, part === "wide-brim"
         ? [".......###......", ".....#####......", ".....######.....", "....########....", "...##########...", "################"]
-        : ["................", "......####......", "....########....", "...##########...", "...##########...", "################"], Ink.DarkCloth);
-      p.rect(x, y - 1, 10, 1, Ink.Secondary);
+        : ["................", "......####......", "....########....", "...##########...", "...##########...", "################"], Ink.Secondary);
+      p.rect(x, y - 1, 10, 1, Ink.Garment);
       p.rect(x + 7, y - 1, 1, 1, Ink.Flame);
       p.rect(x - 2, y + 1, 14, 1, Ink.Outline);
       break;
@@ -112,8 +119,11 @@ function garment(p: PixelGrid, t: SeedTraits, pose: SpritePose, top: number, bot
   }
   if (t.outfit === "tunic" || t.outfit === "travel-cloak" || t.outfit === "long-coat") p.rect(x + 1, bottom - 3, 7, 1, Ink.Leather);
   const emblem = charge && Object.hasOwn(CHARGE_PIXELS, charge) ? CHARGE_PIXELS[charge as keyof typeof CHARGE_PIXELS] : null;
-  if (emblem) p.mask(x + 2, top + 1, emblem, pose.glow ? Ink.Flame : Ink.Cream);
-  if (pose.glow) p.mask(x + 7, top + 1, [".#.", "###", ".#."], Ink.Flame);
+  if (emblem) p.mask(x + 2, top + 1, emblem, pose.glow ? Ink.Glint : Ink.Cream);
+  if (pose.glow) {
+    p.mask(x + 7, top + 1, [".#.", "###", ".#."], Ink.Flame);
+    p.rect(x + 8, top + 2, 1, 1, Ink.Glint);
+  }
 }
 
 function folio(p: PixelGrid, x: number, y: number, kind: "map" | "scroll" | "ledger", turn: boolean) {
@@ -170,7 +180,8 @@ export function actor(t: SeedTraits, pose: SpritePose, charge: string | null) {
   const bootTop = GROUND - 2 - pose.lift;
   const bottom = bootTop + (pose.seated ? 0 : t.outfit === "robe" ? 0 : -1);
   const top = GROUND - t.height + 8 + (pose.seated ? 3 : pose.slump ? 2 : 0) - pose.lift;
-  const headTop = top - (pose.slump ? 7 : 8);
+  const headroom = t.hat ? HAT_HEADROOM[t.hat] : 2;
+  const headTop = Math.max(headroom, top - (pose.slump ? 6 : pose.glance === -1 ? 9 : 8));
   p.rect(7, GROUND, 12, 1, Ink.Shadow);
   const fast = pose.stride === 2;
   if (pose.seated) {
@@ -184,10 +195,11 @@ export function actor(t: SeedTraits, pose: SpritePose, charge: string | null) {
   if (pose.seated) p.mask(15, bottom - 3, ["##...", "####.", "#####"], Ink.Secondary);
   const lampLimit = t.light && t.tool !== "staff-lantern" ? GROUND - 8 : GROUND;
   const tendsLight = pose.gesture === "lantern" || (pose.gesture === "work" && t.tool === "staff-lantern");
-  const leftHand = Math.min(bottom - 2, top + 4, lampLimit) - Number(tendsLight && pose.beat);
+  const liftLight = pose.raised && t.tool === "staff-lantern" ? 3 : Number(tendsLight && pose.beat);
+  const leftHand = Math.min(bottom - 2, top + 4, lampLimit) - liftLight;
   p.rect(7, top + 2, 1, leftHand - top - 1, Ink.Garment);
   p.rect(6, leftHand, 2, 1, Ink.Skin);
-  let rightHand = Math.min(bottom - 1, top + 5);
+  let rightHand = Math.min(bottom - 1, top + (pose.raised ? 1 : 5));
   if (pose.gesture === "wave") {
     p.rect(17, top + 1, 1, 3, Ink.Garment);
     p.rect(18, top + 1, pose.beat ? 2 : 1, 1, Ink.Garment);
@@ -210,7 +222,7 @@ export function actor(t: SeedTraits, pose: SpritePose, charge: string | null) {
       if (gesture === "satchel") p.rect(17 + Number(pose.beat), rightHand - 1, 2, 1, Ink.Skin);
     }
   }
-  head(p, pose.slump ? 8 : 7, headTop, t, pose);
+  head(p, pose.slump ? 9 : 7, headTop, t, pose);
   let anchor: LightAnchor | null = null;
   if (t.light === "lantern" && t.tool === "staff-lantern") {
     p.rect(3, leftHand - 5, 1, 9, Ink.Wood);

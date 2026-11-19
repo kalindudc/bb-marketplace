@@ -130,6 +130,8 @@ export type CharacterPalette = {
   muted: string;
   skin: string[];
   hair: string[];
+  silver?: string;
+  cheeks?: string[];
   pants: string;
   belt: string;
   cloak: string;
@@ -148,6 +150,7 @@ export const CHARACTER_PALETTE_FALLBACK: CharacterPalette = {
   hearth: "#e8930c", bad: "#b3402e", ink: "#3b342a", card: "#faf6ec", background: "#f3ecdc", muted: "#8a7e68",
   skin: ["#eac49b", "#d8a87e", "#b9835e"],
   hair: ["#5b4632", "#2e2822", "#c9a24a", "#8a8378", "#a34f2e"],
+  silver: "#a6a29d", cheeks: ["#dca784", "#c99374", "#a66e57"],
   pants: "#4a4136", belt: "#6b5a3e", cloak: "#7c3040", wood: "#8a6a3e", metal: "#8d949c", cloud: "#9a938a", drop: "#5f88b5", shadow: "rgba(59,52,42,.18)", dark: false,
 };
 
@@ -192,6 +195,8 @@ export function readPalette(root: Element | null): CharacterPalette {
     muted: read("--tchar-muted", CHARACTER_PALETTE_FALLBACK.muted),
     skin: CHARACTER_PALETTE_FALLBACK.skin.map((f, i) => read(`--tchar-skin-${i + 1}`, f)),
     hair: CHARACTER_PALETTE_FALLBACK.hair.map((f, i) => read(`--tchar-hair-${i + 1}`, f)),
+    silver: read("--tchar-silver", CHARACTER_PALETTE_FALLBACK.silver!),
+    cheeks: CHARACTER_PALETTE_FALLBACK.cheeks!.map((f, i) => read(`--tchar-cheek-${i + 1}`, f)),
     pants: read("--tchar-pants", CHARACTER_PALETTE_FALLBACK.pants),
     belt: read("--tchar-belt", CHARACTER_PALETTE_FALLBACK.belt),
     cloak: read("--tchar-cloak", CHARACTER_PALETTE_FALLBACK.cloak),

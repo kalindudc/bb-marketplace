@@ -8,12 +8,13 @@ type Pose = {
   seated: boolean;
   slump: boolean;
   glow: boolean;
+  raised: boolean;
   stride: number;
   gesture: Handwork | "wave" | "work" | null;
   beat: boolean;
 };
 
-const upright: Pose = { lift: 0, glance: 0, blink: false, seated: false, slump: false, glow: false, stride: 0, gesture: null, beat: false };
+const upright: Pose = { lift: 0, glance: 0, blink: false, seated: false, slump: false, glow: false, raised: false, stride: 0, gesture: null, beat: false };
 export type SpritePose = Readonly<Pose>;
 
 function restPose(mood: Mood): Pose {
@@ -23,6 +24,7 @@ function restPose(mood: Mood): Pose {
     seated: mood === "resting",
     slump: mood === "blocked" || mood === "error",
     glow: mood === "verified",
+    raised: mood === "verified",
   };
 }
 
