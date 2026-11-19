@@ -60,6 +60,7 @@ export function AskCard({ ask, via = "banner", onFold, onAnswered, headless = fa
         <Glyph name="check" />
         <b>{ask.state === "withdrawn" ? "Withdrawn" : ask.state === "defaulted" ? "Default applied" : "Answered"}</b>
         {label && <span>“{label}”</span>}
+        {(receipt || ask.answer?.surface === "client (unattested)") && <span className="m">answered from a client Tavern could not attribute</span>}
         {receiptNote && <span className="receipt-note" data-content>“{receiptNote}”</span>}
         <span className="m">{VIA[ask.answer?.via ?? via]}{at !== null ? ` at ${clockTime(at)}` : ""} · cleared everywhere</span>
       </div>
@@ -75,7 +76,7 @@ export function AskCard({ ask, via = "banner", onFold, onAnswered, headless = fa
       await answer.mutate({ askId: ask.id, optionId, note: note.trim() || null, via });
       const at = Date.now();
       setReceipt({ label: ask.options.find(o => o.id === optionId)!.label, at, note: note.trim() || null });
-      onAnswered?.({ ...ask, state: "answered", answer: { optionId, note: note.trim() || null, by: "user", via, at } });
+      onAnswered?.({ ...ask, state: "answered", answer: { optionId, note: note.trim() || null, by: "user", via, at, surface: "client (unattested)" } });
     } catch (e) { setError(e); }
   }
   return (

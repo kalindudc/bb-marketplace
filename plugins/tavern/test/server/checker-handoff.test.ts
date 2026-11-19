@@ -176,7 +176,7 @@ describe("user checker-handoff holds", () => {
   it("never gives hold control ids or self-release instructions to agents", async () => {
     const f = await goal();
     const id = f.q.checkerHandoffHold!.id;
-    const ask = f.k.ask("lead", { ...askInput, boardQuestId: f.q.id, releaseHoldId: id });
+    const ask = f.k.ask("lead", { effect: {type:"release-hold",holdId:id}, ...askInput, boardQuestId: f.q.id, releaseHoldId: id });
     const outputs = [f.k.restatement("lead"), f.k.priorities("lead"), JSON.stringify(f.k.ledger("lead")),
       f.runtime.configure(makePluginAgentConfigurationContext({ thread: { id: "lead" } })).instructions,
       ...["summary", "holds", "asks", "events"].map(section => JSON.stringify(readStatus(f.runtime, "lead", statusInput.parse({ section }))))];
@@ -236,7 +236,7 @@ describe("user checker-handoff holds", () => {
 
   it("lets the Keeper offer a never-timed release ask, not answer it", async () => {
     const f = await goal();
-    const ask = f.k.ask("lead", { ...askInput, boardQuestId: f.q.id, releaseHoldId: f.q.checkerHandoffHold!.id });
+    const ask = f.k.ask("lead", { effect: {type:"release-hold",holdId:f.q.checkerHandoffHold!.id}, ...askInput, boardQuestId: f.q.id, releaseHoldId: f.q.checkerHandoffHold!.id });
     expect(ask).toMatchObject({ kind: "blocker", proceedAt: null, releaseHoldId: f.q.checkerHandoffHold!.id, question: 'Release the checker handoff for “Add labelCount”?' });
     expect(ask.options.map(option => option.id)).toEqual(["release", "keep-held"]);
     await expect(f.runtime.answerAsk(ask.id, "release", null, "chat", false)).rejects.toThrow(/explicit client action/i);
@@ -247,8 +247,8 @@ describe("user checker-handoff holds", () => {
 
   it("keep-held, withdrawal and attempts to default do not release", async () => {
     const f = await goal();
-    const input = { ...askInput, boardQuestId: f.q.id, releaseHoldId: f.q.checkerHandoffHold!.id };
-    expect(() => f.k.ask("lead", { ...input, kind: "decision", reversible: true, proceedInMinutes: 1 })).toThrow(/never-timed blocker/i);
+    const input = { effect: {type:"release-hold" as const,holdId:f.q.checkerHandoffHold!.id}, ...askInput, boardQuestId: f.q.id, releaseHoldId: f.q.checkerHandoffHold!.id };
+    expect(() => f.k.ask("lead", { ...input, effect: {type:"decision"}, kind: "decision", reversible: true, proceedInMinutes: 1 })).toThrow(/never-timed blocker/i);
     const ask = f.k.ask("lead", input);
     expect(() => f.k.answerAsk(ask.id, "release", null, "timer", "default")).toThrow();
     await f.runtime.answerAsk(ask.id, "keep-held", null, "page", true);

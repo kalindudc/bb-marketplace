@@ -6,7 +6,7 @@ import { readAwayDigest } from "../../src/server/away/digest";
 
 const explicit = { kind: "explicit-return" as const, threadId: null, refId: null };
 function ask(f: ReturnType<typeof setup>, questId: string, question: string) {
-  return f.k.ask("lead", { boardQuestId: questId, kind: "production", question, why: "Needs you", options: [{ id: "wait", label: "Wait", detail: "Stay safe", recommended: true }], meanwhile: "Private drafts", holds: [] });
+  return f.k.ask("lead", { effect: {type:"decision"}, boardQuestId: questId, kind: "production", question, why: "Needs you", options: [{ id: "wait", label: "Wait", detail: "Stay safe", recommended: true }], meanwhile: "Private drafts", holds: [] });
 }
 
 describe("Closing time digest", () => {

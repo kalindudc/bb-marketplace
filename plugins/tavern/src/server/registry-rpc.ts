@@ -1,4 +1,5 @@
-import { experimental_PluginRpcRefusal, type ExperimentalPluginRpcHandlerContext } from "@get-bb/plugin-sdk";
+import type { ExperimentalPluginRpcHandlerContext } from "@get-bb/plugin-sdk";
+import { requireUserAct, commitUserAct, type UserActReceipt } from "./authority";
 import { homedir } from "node:os";
 import { z } from "zod";
 import { effectiveExecution } from "../shared/class-execution";
@@ -16,9 +17,7 @@ const historyValue = (field: string, value: unknown) => field === "body" && type
 
 /** Only the person at the client may change a class: no agent tool or plugin call reaches these writes (as settings and away). */
 export function requireClassClient(context?: ExperimentalPluginRpcHandlerContext) {
-  if (context?.experimental_caller.kind !== "client") throw new experimental_PluginRpcRefusal({
-    code: "forbidden", message: "Changing a class requires an explicit client action on the Classes page; plugins and agents cannot change what a class may do.",
-  });
+  return requireUserAct(context, "saveClass");
 }
 
 export function classEditorHandlers(runtime: TavernRuntime) {
@@ -46,30 +45,34 @@ export function classEditorHandlers(runtime: TavernRuntime) {
         return { code: "ok" as const, path: out.path, shadowedBy: out.shadowedBy, changes: out.changes, widening: out.widening };
       } catch (error) { return { code: "invalid" as const, problems: problemsOf(error) }; }
     },
-    saveClass: async ({ classId, projectId, target, edit, revision }: Where & { edit: ClassEditInput; revision: string }, context?: ExperimentalPluginRpcHandlerContext) => {
+    saveClass: async ({ classId, projectId, target, edit, revision }: Where & { edit: ClassEditInput; revision: string }, context?: ExperimentalPluginRpcHandlerContext, receipt?: UserActReceipt) => {
       requireClassClient(context);
       const path = await projectPath(projectId);
       try {
+        return commitUserAct(runtime.keeper.store, () => runtime.keeper.now(), receipt, () => {
         const preview = runtime.registry.previewClass(classId, edit, { target, projectPath: path });
         const saved = runtime.registry.saveClass(classId, edit, { target, projectPath: path, revision });
         record(`Classes page: saved the ${saved.label} class to ${tilde(preview.path)} (${where(target, projectId)}).`,
           preview.changes.map(c => ({ key: `class.${classId}.${c.field}`, from: historyValue(c.field, c.from) as never, to: historyValue(c.field, c.to) as never, kind: "set" as const })));
         changed();
         return { code: "ok" as const, class: saved, path: preview.path };
+        });
       } catch (error) {
         if (error instanceof RegistryConflict) return { code: "stale" as const };
         return { code: "invalid" as const, problems: problemsOf(error) };
       }
     },
-    removeClassOverride: async ({ classId, projectId, target, revision }: Where & { revision: string }, context?: ExperimentalPluginRpcHandlerContext) => {
+    removeClassOverride: async ({ classId, projectId, target, revision }: Where & { revision: string }, context?: ExperimentalPluginRpcHandlerContext, receipt?: UserActReceipt) => {
       requireClassClient(context);
       const path = await projectPath(projectId);
       try {
+        return commitUserAct(runtime.keeper.store, () => runtime.keeper.now(), receipt, () => {
         const removed = runtime.registry.removeClassOverride(classId, { target, projectPath: path, revision });
         record(`Classes page: removed the ${target} override of ${classId} (${tilde(removed)}); the class falls back to the layer below.`,
           [{ key: `class.${classId}`, from: tilde(removed), to: null, kind: "unset" }]);
         changed();
         return { code: "ok" as const, path: removed };
+        });
       } catch (error) {
         if (error instanceof RegistryConflict) return { code: "stale" as const };
         return { code: "invalid" as const, problems: problemsOf(error) };

@@ -6,6 +6,7 @@ import { LIMITS } from "./limits";
 import { isOpenQuest } from "./liveness";
 import { isNotFound } from "./host-errors";
 import { loopCall } from "./loop-call";
+import { LimitPolicy } from "./limit-policy";
 import { PlacementStore } from "./placement/store";
 
 export function rejectedSpawn(error: unknown) {
@@ -21,17 +22,12 @@ export function rejectedSpawn(error: unknown) {
 export function releaseHire(k: Keeper, token: string, intent: HireIntent) {
   k.store.atomic(() => {
     settleStaffing(k, intent.staffing, token, null);
-    if (
-      !intent.memberThreadId &&
-      intent.reviewDecisionId &&
-      k.store.get("reviewPermits", intent.reviewDecisionId)?.token === token
-    )
-      k.store.remove("reviewPermits", intent.reviewDecisionId);
+    if (!intent.memberThreadId) new LimitPolicy(k).release(token, intent.owner.boardQuestId, intent.limitDecisionIds ?? []);
     if (!intent.memberThreadId && intent.guardApprovalAskId) {
-      const metadata = k.store.get("askMeta", intent.guardApprovalAskId);
-      if (metadata?.guardHire?.token === token) {
-        const { token: _token, ...guardHire } = metadata.guardHire;
-        k.store.put("askMeta", intent.guardApprovalAskId, { ...metadata, guardHire });
+      const ask = k.store.get("asks", intent.guardApprovalAskId);
+      if (ask?.effect?.type === "detection-hire" && ask.effect.binding.token === token) {
+        const { token: _token, ...binding } = ask.effect.binding;
+        k.store.put("asks", ask.id, { ...ask, effect: { type: "detection-hire", binding } });
       }
     }
     k.store.remove("hires", token);

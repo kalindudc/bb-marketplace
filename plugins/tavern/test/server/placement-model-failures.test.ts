@@ -18,7 +18,7 @@ it("exposes explicit model failures and clears one from the Settings RPC", async
   f.k.store.put("placementModelFailures", "failure", { id: "failure", target: "machine/env", model: "provider/model", detail: "Failed to resolve Pi model provider/model", at: 1 });
   const handlers = placementHandlers(f.runtime);
   expect(await handlers.placementModelFailures({})).toHaveLength(1);
-  await handlers.placementModelFailureClear({ id: "failure" });
+  await handlers.placementModelFailureClear({ id: "failure" }, { experimental_caller: { kind: "client" }, experimental_signal: new AbortController().signal });
   expect(await handlers.placementModelFailures({})).toEqual([]);
   expect(placementContract.placementModelFailureClear.input.safeParse({ id: "failure", model: "invented" }).success).toBe(false);
 });

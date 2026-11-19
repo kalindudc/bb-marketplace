@@ -1,4 +1,5 @@
 // @vitest-environment node
+import type { ExperimentalPluginRpcHandlerContext } from "@get-bb/plugin-sdk";
 import { putQuestFixture } from "./support";
 import { seedQuest } from "./support";
 import Database from "better-sqlite3";
@@ -137,7 +138,7 @@ describe("UI-only character presentation", () => {
     const f = fixture(), original = f.registry.read().characters.find(c => c.id === "wren")!;
     const { name, hue, charge, temper, style, quirks, lines } = original;
     const says = { greet: ["Clear morning for {quest}."] };
-    await f.rpc.saveCharacterVoice({ characterId: "wren", voice: { name, hue, charge, temper, style, quirks, lines, says } });
+    await f.rpc.saveCharacterVoice({ characterId: "wren", voice: { name, hue, charge, temper, style, quirks, lines, says } }, { experimental_caller: { kind: "client" } } as ExperimentalPluginRpcHandlerContext);
     const refreshed = await f.read();
     expect(refreshed.characters.find(c => c.id === "wren")?.says).toEqual(says);
     const result = refreshed.characterAuthorship?.find(row => row.characterId === "wren");
@@ -149,7 +150,7 @@ describe("UI-only character presentation", () => {
     f.member("worker", "juno");
     expect((await f.read()).characters.find(c => c.id === "juno")?.avatar).toBeUndefined();
     const invalidate = vi.spyOn(f.bb.rpc, "experimental_invalidate");
-    const kept = await f.rpc.saveCharacterAvatar({ characterId: "juno", avatar: "7gqda" });
+    const kept = await f.rpc.saveCharacterAvatar({ characterId: "juno", avatar: "7gqda" }, { experimental_caller: { kind: "client" } } as ExperimentalPluginRpcHandlerContext);
     expect(kept.avatar).toBe("7gqda");
     expect(invalidate).toHaveBeenCalledWith(expect.arrayContaining([tags.registry(), tags.rows(), tags.room(), tags.thread("worker")]));
     expect((await f.read()).characters.find(c => c.id === "juno")?.avatar).toBe("7gqda");

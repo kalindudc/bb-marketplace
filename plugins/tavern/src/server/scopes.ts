@@ -405,7 +405,7 @@ export class BackendScopes {
       : {};
     const ask = k.ask(
       member.keeperThreadId!,
-      {
+      { effect: { type: "grant-scope", memberThreadId: member.threadId },
         boardQuestId: member.boardQuestId,
         kind: "scope",
         question: `Widen ${this.runtime.keeper.name(member)}'s scope?`,
@@ -632,12 +632,12 @@ export class BackendScopes {
         .find(
           (ask) =>
             ask.kind === "blocker" &&
-            k.store.get("askMeta", ask.id)?.scopeThreadId === member.threadId,
+            ask.effect?.type === "scope-blocker" && ask.effect.memberThreadId === member.threadId,
         );
       if (!open) {
         const ask = k.ask(
           keeperThreadId,
-          {
+          { effect: { type: "scope-blocker", memberThreadId: member.threadId },
             boardQuestId: member.boardQuestId,
             kind: "blocker",
             question: `Scope blocked ${this.runtime.keeper.name(member)}`,
@@ -661,10 +661,7 @@ export class BackendScopes {
           { scopeThreadId: member.threadId },
           true,
         );
-        k.store.put("askMeta", ask.id, {
-          ...k.store.get("askMeta", ask.id),
-          scopeThreadId: member.threadId,
-        });
+
       }
       await this.runtime.push(
         keeperThreadId,

@@ -41,7 +41,7 @@ it("H2 defers held news until the first resumed tick", async () => {
 });
 it("H3 keeps held production asks on every RPC surface", async () => {
   const f = setup(); registerRpc(f.bb, f.runtime); const q = await seedQuest(f.k, "lead", "Watch", "Watch");
-  const ask = f.k.ask("lead", { kind: "production", boardQuestId: q.id, question: "Deploy?", why: "Approval", meanwhile: "Wait", holds: [], options: [{ id: "yes", label: "Yes", detail: "Deploy", recommended: true }] });
+  const ask = f.k.ask("lead", { effect: {type:"decision"}, kind: "production", boardQuestId: q.id, question: "Deploy?", why: "Approval", meanwhile: "Wait", holds: [], options: [{ id: "yes", label: "Yes", detail: "Deploy", recommended: true }] });
   f.k.setQuestHeld(q.id, true, { kind: "user" });
   for (const [method, input, key] of [["room", {}, "asks"], ["boardQuest", { id: q.id }, "asks"], ["ledger", { threadId: "lead" }, "asks"]] as const) {
     const result = await f.harness.invokeRpc(method, input) as Record<string, { id: string }[]>;

@@ -15,7 +15,8 @@ function fixture() {
   const invalidate = vi.fn();
   const placements = vi.fn(() => ({ store, controller: { retry } }));
   const runtime = { keeper: f.k, placements, bb: { rpc: { experimental_invalidate: invalidate } } } as unknown as TavernRuntime;
-  return { retry, invalidate, placements, handler: placementHandlers(runtime).placementRetry };
+  const handler = placementHandlers(runtime).placementRetry;
+  return { retry, invalidate, placements, handler: (input: Parameters<typeof handler>[0]) => handler(input, { experimental_caller: { kind: "client" }, experimental_signal: new AbortController().signal }) };
 }
 
 describe("placement retry RPC", () => {

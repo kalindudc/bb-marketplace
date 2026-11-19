@@ -7,8 +7,8 @@ import { pushSpec } from "./remote";
 import type { ShellCommand } from "./shell";
 
 const clientOnlyMethods = ["holdBoardQuest", "resumeBoardQuest", "answerAsk", "applyClassExecution", "archiveBoardQuests", "awayClose", "awayReturn", "deleteBoardQuest", "dismissClassNotice", "releaseCheckerHandoff", "removeClassOverride", "restoreDeletedQuest", "saveClass", "setTaleKept", "settingsApplySuggestion", "settingsFile", "settingsImport", "settingsUndo", "settingsUpdate", "voiceCheckCancel", "voiceCheckStart"];
-const namedUserMethods = ["resumeAll", "releaseHold", "backupRestore", "confirmRule", "stopBoardQuest", "addRule", "widenRule", "undoDecision", "correctRoute", "resumeKeeper", "journalEdit", "saveCharacterVoice"];
-const userMethods = new Set([...clientOnlyMethods, ...namedUserMethods]);
+const namedUserMethods = ["resumeAll", "releaseHold", "backupRestore", "confirmRule", "stopBoardQuest", "addRule", "widenRule", "undoDecision", "correctRoute", "resumeKeeper", "journalEdit", "saveCharacterVoice", "saveCharacterAvatar"];
+const userMethods = new Set([...clientOnlyMethods, ...namedUserMethods, "greenlight", "conclude", "closeEarly", "allowReview", "guardInstall", "guardUninstall", "placementRetry", "placementModelFailureClear"]);
 export function userControl(command: ShellCommand): boolean {
   const words = bbPositionals(command.argv);
   if (words[0] !== "bb" || !words.includes("tavern")) return false;

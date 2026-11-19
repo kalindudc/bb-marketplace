@@ -46,7 +46,7 @@ it("reports the summary and asks the user instead of concluding the quest", asyn
   expect(ask.options.find(option => option.id === "hold")!.label).toBe("Keep open for other work");
   expect(ask.proceedAt).toBeNull();
   expect(reply).toContain(`::tavern-ask{id="${ask.id}"}`);
-  expect(f.k.store.get("askMeta", ask.id)).toMatchObject({ wrapDraft: { outcome: "Built it" } });
+  expect(f.k.store.get("asks", ask.id)?.effect).toMatchObject({ type: "conclude", draft: { outcome: "Built it" } });
 });
 
 it("concludes only after the user answers, then tells the tale", async () => {
@@ -77,7 +77,7 @@ it("refuses a second conclusion while the first answer is still open", async () 
   await f.wrap("Second summary");
   const open = f.k.store.openAsks("lead", f.q.id).filter(candidate => candidate.kind === "conclude");
   expect(open).toHaveLength(1);
-  expect(f.k.store.get("askMeta", open[0]!.id)).toMatchObject({ wrapDraft: { outcome: "Second summary" } });
+  expect(f.k.store.get("asks", open[0]!.id)?.effect).toMatchObject({ type: "conclude", draft: { outcome: "Second summary" } });
   expect(first).toContain("The quest has NOT concluded");
 });
 

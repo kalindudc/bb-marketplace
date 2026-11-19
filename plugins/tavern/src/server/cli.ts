@@ -1,4 +1,5 @@
 import { cliCommand, defineCli, PluginCliError, type BbPluginApi, type PluginCliContext } from "@get-bb/plugin-sdk";
+import { terminalUserAct } from "./authority";
 import type { TavernRuntime } from "./runtime";
 import { settingsCommands } from "./settings/cli";
 import { backupCommands } from "./backup/cli";
@@ -22,7 +23,7 @@ export function registerCli(bb: BbPluginApi, runtime: TavernRuntime, backups?: B
   const guard = (action: "status" | "install" | "uninstall", ctx: PluginCliContext) => {
     if (ctx.threadId && action !== "status")
       throw new PluginCliError("Agents cannot install or remove the guard. Use an ordinary terminal.");
-    const result = scopes().guard(action);
+    const result = action === "status" ? scopes().guard(action) : terminalUserAct(ctx, action === "install" ? "guardInstall" : "guardUninstall", runtime.keeper.store, () => runtime.keeper.now(), () => scopes().guard(action));
     return {
       ...output(result),
       exitCode: result === "unmarked" || result === "no-agent-dir" ? 1 : 0,
@@ -72,10 +73,10 @@ export function registerCli(bb: BbPluginApi, runtime: TavernRuntime, backups?: B
           ],
           run: async (input, ctx) => {
             if (ctx.threadId)
-              throw new Error(
+              throw new PluginCliError(
                 "Agents cannot answer the user's asks. Use the banner, page, phone or an ordinary terminal.",
               );
-            await runtime.answerAsk(input.positionals.id, input.positionals.option, null, "cli");
+            await terminalUserAct(ctx, "answerAsk", runtime.keeper.store, () => runtime.keeper.now(), receipt => runtime.answerAsk(input.positionals.id, input.positionals.option, null, "cli", true, "terminal", receipt));
             void runtime
               .tick(runtime.keeper.store.get("asks", input.positionals.id)!.keeperThreadId)
               .catch((error) => bb.log.warn(String(error)));

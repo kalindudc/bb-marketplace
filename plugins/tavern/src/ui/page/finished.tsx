@@ -99,6 +99,7 @@ const WITHDRAWN: Record<string, string> = { "quest-stopped": "withdrawn when it 
 /** How an ask ended, in words: the option chosen, by whom and how; withdrawn or still open otherwise. */
 export function askOutcome(ask: Ask): string {
   const label = ask.answer ? ask.options.find((o) => o.id === ask.answer!.optionId)?.label ?? "an option no longer listed" : null;
+  if (ask.answer?.surface === "client (unattested)" && label) return `You chose “${label}”; answered from a client Tavern could not attribute`;
   if (ask.answer && label) return ask.answer.by === "user" ? `You chose “${label}” ${VIA[ask.answer.via]}` : `“${label}” applied by itself ${VIA[ask.answer.via]}`;
   if (ask.state === "withdrawn") return (ask.withdrawnCause && WITHDRAWN[ask.withdrawnCause]) || "withdrawn";
   if (ask.state === "defaulted") return "applied its recommendation";

@@ -9,9 +9,10 @@ function project(value: unknown, hold: boolean, eventData: boolean): unknown {
   if (Array.isArray(value)) return value.map(item => project(item, hold, eventData));
   if (value === null || typeof value !== "object") return value;
   const record = value as Record<string, unknown>;
-  const releaseAsk = record.kind === "blocker" && typeof record.keeperThreadId === "string" && Array.isArray(record.options);
+  const ask = typeof record.keeperThreadId === "string" && Array.isArray(record.options);
+  const releaseAsk = record.kind === "blocker" && ask;
   const heldEvent = typeof record.type === "string" && holdEvents.has(record.type);
   return Object.fromEntries(Object.entries(record)
-    .filter(([key]) => !(eventData && key === "holdId") && !(releaseAsk && key === "releaseHoldId") && !(hold && key === "id"))
+    .filter(([key]) => !(eventData && key === "holdId") && !(ask && key === "effect") && !(releaseAsk && key === "releaseHoldId") && !(hold && key === "id"))
     .map(([key, item]) => [key, project(item, key === "checkerHandoffHold", key === "data" && heldEvent)]));
 }

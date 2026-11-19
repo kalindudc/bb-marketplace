@@ -118,9 +118,9 @@ describe("tick delivery regressions", () => {
   });
   it("H4 preserves typed answers and defaults ahead of more than 1000 churn events", async () => {
     const { k, runtime, harness, advance } = setup();
-    const answer = k.ask("lead", askInput);
+    const answer = k.ask("lead", { ...askInput, effect: { type: "decision" } });
     k.answerAsk(answer.id, "yes", "User chose the fixture", "page", "user");
-    const timer = k.ask("lead", {
+    const timer = k.ask("lead", { effect: {type:"decision"},
       ...askInput,
       question: "Default fixture?",
       proceedInMinutes: 1,
@@ -174,7 +174,7 @@ describe("tick delivery regressions", () => {
     k.bind("next", "keeper", "wren", "project");
     k.reanchor("lead", "failed");
     k.reanchor("next", "failed");
-    const bad = k.ask("lead", { ...askInput, proceedInMinutes: 1 });
+    const bad = k.ask("lead", { effect: {type:"decision"}, ...askInput, proceedInMinutes: 1 });
     k.store.put("asks", bad.id, { ...bad, options: [] });
     advance(61_000);
     runtime.bb.sdk.threads.get = async ({ threadId }) => {
@@ -339,11 +339,11 @@ describe("staffing and policy regressions", () => {
     const { k } = setup();
     for (const kind of ASK_KINDS.filter((kind) => kind !== "decision")) {
       expect(() =>
-        k.ask("lead", { ...askInput, kind, proceedInMinutes: 1 }),
+        k.ask("lead", { effect: {type:"decision"}, ...askInput, kind, proceedInMinutes: 1 }),
       ).toThrow(/Only decision/);
     }
     expect(
-      k.ask("lead", { ...askInput, proceedInMinutes: 1 }).proceedAt,
+      k.ask("lead", { effect: {type:"decision"}, ...askInput, proceedInMinutes: 1 }).proceedAt,
     ).not.toBeNull();
   });
   it("M9 allows a same-party re-plan as a reversible decision but gates expansion", async () => {

@@ -181,7 +181,7 @@ describe("Closing time runtime", () => {
   it("sends an opted-in production wake after two hours under consequential notifications, once across restart", async () => {
     const f = await party();
     await f.runtime.away.close({ revision: 0, until: f.time() + 60_000, quests: [{ questId: f.quest.id, endState: "pause" }], wakeRules: { blockers: false, productionAsksAfterTwoHours: true } });
-    f.k.ask("lead", { boardQuestId: f.quest.id, kind: "production", question: "Production?", why: "Needs you", options: [{ id: "no", label: "No", detail: "Wait", recommended: true }], meanwhile: "Drafts", holds: [] });
+    f.k.ask("lead", { effect: {type:"decision"}, boardQuestId: f.quest.id, kind: "production", question: "Production?", why: "Needs you", options: [{ id: "no", label: "No", detail: "Wait", recommended: true }], meanwhile: "Drafts", holds: [] });
     f.advance(2 * 60 * 60_000 - 1);
     await f.runtime.away.sweep();
     expect(f.harness.inspection.sdk.callsTo("plugins.callRpc")).toHaveLength(0);
@@ -197,7 +197,7 @@ describe("Closing time runtime", () => {
     let attention = { ...base.attention, notify: "none" as const };
     const config = vi.spyOn(f.runtime, "config").mockImplementation(() => ({ ...base, attention }));
     await f.close();
-    const ask = f.k.ask("lead", { boardQuestId: f.quest.id, kind: "blocker", question: "Blocked?", why: "Needs you", options: [{ id: "no", label: "Wait", detail: "Wait", recommended: true }], meanwhile: "Wait", holds: [] });
+    const ask = f.k.ask("lead", { effect: {type:"answer-blocker"}, boardQuestId: f.quest.id, kind: "blocker", question: "Blocked?", why: "Needs you", options: [{ id: "no", label: "Wait", detail: "Wait", recommended: true }], meanwhile: "Wait", holds: [] });
     await f.runtime.push("lead", ask.question, ask.why, ask.id);
     expect(f.harness.inspection.sdk.callsTo("plugins.callRpc")).toHaveLength(0);
     config.mockImplementation(() => ({ ...base, attention: { ...base.attention, quietHours: { start: "00:00", end: "23:59", timeZone: "UTC" } } }));
@@ -207,7 +207,7 @@ describe("Closing time runtime", () => {
   it("honors wake choices in the existing push path", async () => {
     const f = await party();
     await f.close();
-    const ask = f.k.ask("lead", { boardQuestId: f.quest.id, kind: "production", question: "Production?", why: "Needs you", options: [{ id: "no", label: "No", detail: "Wait", recommended: true }], meanwhile: "Drafts", holds: [] });
+    const ask = f.k.ask("lead", { effect: {type:"decision"}, boardQuestId: f.quest.id, kind: "production", question: "Production?", why: "Needs you", options: [{ id: "no", label: "No", detail: "Wait", recommended: true }], meanwhile: "Drafts", holds: [] });
     await f.runtime.push("lead", ask.question, ask.why, ask.id);
     expect(f.harness.inspection.sdk.callsTo("plugins.callRpc")).toHaveLength(0);
   });

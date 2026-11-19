@@ -1,4 +1,5 @@
 // @vitest-environment node
+import type { ExperimentalPluginRpcHandlerContext } from "@get-bb/plugin-sdk";
 import { afterEach, describe, expect, it } from "vitest";
 import { makeHost } from "./host";
 import { MIGRATIONS } from "../../src/server/migrations";
@@ -24,7 +25,7 @@ describe("quest RPC JSON values",()=>{
     f.journal.edit("t",{op:"add",descriptions:["ordinary chore"],parentId:null},{kind:"agent",threadId:"t"});
     const log=await f.handlers.journal({threadId:"t"});expect(log).not.toHaveProperty("problem");
     expect(rpcContract.journal.output.parse(wire(log))).toStrictEqual(log);
-    const edit=await f.handlers.journalEdit({threadId:"t",edit:{op:"status",entryIds:["00"],status:"done"}});
+    const edit=await f.handlers.journalEdit({threadId:"t",edit:{op:"status",entryIds:["00"],status:"done"}}, {experimental_caller:{kind:"client"}} as ExperimentalPluginRpcHandlerContext);
     expect(rpcContract.journalEdit.output.parse(wire(edit))).toStrictEqual(edit);
     const decor=await f.handlers.decor({threadId:"t"});expect(rpcContract.decor.output.parse(wire(decor))).toStrictEqual(decor);
   });

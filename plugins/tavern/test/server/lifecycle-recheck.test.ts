@@ -170,7 +170,7 @@ it("an unidentified pending hire is listed and raises one retryable Stop blocker
   expect(asks[0]?.options.map(option => option.id)).toEqual(["retry"]);
   f.advance(LIMITS.hireGraceMs);
   f.bb.sdk.threads.list = vi.fn(async () => { throw new Error("Child scan limit reached; reservation retained"); });
-  await expect(f.runtime.answerAsk(asks[0]!.id, "retry", null, "page")).resolves.toBeUndefined();
+  await expect(f.runtime.answerAsk(asks[0]!.id, "retry", null, "page")).resolves.toEqual({ pendingArchives: [] });
   expect(f.bb.sdk.threads.list).toHaveBeenCalled();
   expect(f.k.quest(f.q.id).phase).toBe("stopping");
 });
@@ -202,7 +202,7 @@ it.each(["member", "hire"] as const)("the real sweep retains a %s Stop blocker t
   const asks = f.k.store.openAsks("lead", f.q.id);
   expect(asks).toHaveLength(1);
   const ask = asks[0]!;
-  expect(f.k.store.get("askMeta", ask.id)).toMatchObject(kind === "member" ? { stopMemberThreadId: "child" } : { stopHireTokens: ["unidentified"] });
+  expect(f.k.store.get("asks", ask.id)?.effect).toMatchObject(kind === "member" ? { type: "retry-stop", memberThreadId: "child" } : { type: "retry-stop", hireTokens: ["unidentified"] });
   f.advance(10_000);
   await f.runtime.sweep();
   expect(defaults).toHaveBeenCalledTimes(2);

@@ -518,10 +518,10 @@ describe("lasting character service record", () => {
     const f = await fixture(); f.review("verify");
     f.k.answerAsk(f.k.store.openAsks("lead", f.q.id).find(ask => ask.kind === "greenlight")!.id, "approve", null, "page", "user");
     const closing = await f.runtime.proposeWrap("lead", f.q.id, "Proved", "");
-    f.k.answerAsk(closing.askId!, "conclude", null, "page", "user");
     const quest = f.k.quest(f.q.id), member = f.k.member("maker");
     vi.spyOn(f.runtime.serviceRecords, "record").mockImplementation(() => { throw new Error("Service write failed"); });
-    await expect(f.runtime.wrap("lead", f.q.id, "Proved", "")).rejects.toThrow("Service write failed");
+    await expect(f.runtime.answerAsk(closing.askId!, "conclude", null, "page", true)).rejects.toThrow("Service write failed");
+    expect(f.k.store.get("asks", closing.askId!)?.state).toBe("open");
     expect(f.k.quest(f.q.id)).toEqual(quest); expect(f.k.member("maker")).toEqual(member); expect(f.records()).toEqual([]);
   });
   it("keeps its captured names and earned counts when the source quest is later renamed or missing", async () => {

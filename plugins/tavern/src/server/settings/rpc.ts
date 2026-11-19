@@ -1,4 +1,6 @@
-import { experimental_PluginRpcRefusal, type BbPluginApi, type ExperimentalPluginRpcHandlersWithContext, type ExperimentalPluginRpcHandlerContext } from "@get-bb/plugin-sdk";
+import type { BbPluginApi, ExperimentalPluginRpcHandlersWithContext, ExperimentalPluginRpcHandlerContext } from "@get-bb/plugin-sdk";
+import { KeeperStore } from "../keeper/store";
+import { userActHandlers, requireUserAct } from "../authority";
 import { z } from "zod";
 import { ALWAYS_ASK, MEMORY_LIMITS, settingsContract, type SettingDecision, type TavernSettings } from "../../shared/settings";
 import { exportToml } from "./toml";
@@ -8,9 +10,7 @@ import { importSettings, type SettingsFiles, type SettingsPreview } from "./file
 export function settingsHandlers(store: SettingsStore, files: SettingsFiles, validate?: (settings: TavernSettings) => void): ExperimentalPluginRpcHandlersWithContext<typeof settingsContract> {
   if (validate) store.setValidator(validate);
   const requireClient = (context?: ExperimentalPluginRpcHandlerContext) => {
-    if (context?.experimental_caller.kind !== "client") throw new experimental_PluginRpcRefusal({
-      code: "forbidden", message: "Settings changes require an explicit client action; plugins cannot change your routing, consent or budgets.",
-    });
+    return requireUserAct(context, "settingsUpdate");
   };
   const view = () => ({ ...store.snapshot(), ...store.placementRepair(), file: files.status(), alwaysAsk: [...ALWAYS_ASK], readOnlyLimits: [
     { key: "restatementBytes" as const, label: "Keeper restatement limit", value: MEMORY_LIMITS.restatementBytes, unit: "bytes" as const, reason: "Fixed at the audited memory allowance; reducing it can lose rules, facts and commitments." },
@@ -34,7 +34,7 @@ export function settingsHandlers(store: SettingsStore, files: SettingsFiles, val
     catch (error) { return { code: error instanceof SettingsConflict ? "stale" : "invalid", revision: store.snapshot().revision,
       applied: false, changes: [], problems: error instanceof SettingsConflict ? [] : [{ line: 0, key: "", message: String(error) }] }; }
   }
-  return {
+  return userActHandlers({
     settings: () => view(),
     settingsUpdate: (input, context) => { requireClient(context); return mutate(() => store.update(input)); },
     settingsUndo: (input, context) => { requireClient(context); return mutate(() => store.undo(input.id, input.why, input.revision)); },
@@ -67,7 +67,7 @@ export function settingsHandlers(store: SettingsStore, files: SettingsFiles, val
         store.saveSuggestions(snapshot.suggestions.filter(row => row.key !== input.key).map(row => ({ ...row, revision: store.snapshot().revision })));
       });
     },
-  };
+  }, new KeeperStore(store.db), () => store.now());
 }
 export function registerSettingsRpc(bb: BbPluginApi, store: SettingsStore, files: SettingsFiles, validate?: (settings: TavernSettings) => void) {
   bb.rpc.register(settingsContract, settingsHandlers(store, files, validate));

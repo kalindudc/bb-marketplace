@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Registry, RegistryConflict } from "../../src/server/registry";
+import { setup } from "./runtime-fixture";
 
 const dirs: string[] = [];
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
@@ -108,9 +109,11 @@ describe("class editor: handlers", () => {
     const home = directory();
     const recordExternal = vi.fn(() => "rec-1");
     const invalidate = vi.fn();
+    const f = setup();
+    vi.spyOn(f.k.store, "all").mockReturnValue([{ threadId: "a", classId: "smith", state: "working" }, { threadId: "b", classId: "smith", state: "done" }, { threadId: "c", classId: "ranger", state: "idle" }] as never);
     const runtime = {
       registry: new Registry(root, home), settings: { recordExternal }, config: () => ({ classes: { smith: { model: "openai/gpt-x" } } }),
-      keeper: { store: { all: () => [{ threadId: "a", classId: "smith", state: "working" }, { threadId: "b", classId: "smith", state: "done" }, { threadId: "c", classId: "ranger", state: "idle" }] } },
+      keeper: f.k, now: f.time,
       bb: { rpc: { experimental_invalidate: invalidate } }, prepareRegistry: async () => undefined, projectPath: () => null, ...over,
     };
     return { h: classEditorHandlers(runtime as never), home, recordExternal, invalidate };

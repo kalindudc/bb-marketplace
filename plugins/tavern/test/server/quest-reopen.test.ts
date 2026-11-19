@@ -29,7 +29,10 @@ describe("quest re-open", () => {
     const invalidated: string[] = [];
     const signal = vi.spyOn(f.bb.rpc, "experimental_invalidate").mockImplementation(values => { invalidated.push(...values); });
     const before = f[which];
-    const reopened = f.k.reopenQuest(before.id, { kind: "user" });
+    f.advance(1);
+    f.k.receiveUser("lead", "Reopen this quest");
+    const route = f.k.route("lead", { kind: "steer", boardQuestId: before.id, summary: "Reopen", notes: [] });
+    const reopened = f.k.reopenQuest(before.id, { kind: "agent", threadId: "lead" }, route.sourceMessageId!);
     expect(reopened).toMatchObject({
       phase: "build", planVersion: before.planVersion, greenlitVersion: before.greenlitVersion,
       endedAt: null, archivedAt: null, stopReason: null, stoppingSince: null,
@@ -62,7 +65,10 @@ describe("quest re-open", () => {
     expect(() => f.k.reopenQuest(f.returned.id, { kind: "user" })).toThrow(/archived.*cellar/);
     expect(f.k.quest(f.returned.id)).toMatchObject({ phase: "done", archivedAt: f.time() });
     f.k.archiveQuests([f.returned.id], false, { kind: "user" });
-    expect(f.k.reopenQuest(f.returned.id, { kind: "user" })).toMatchObject({ phase: "build", archivedAt: null });
+    f.advance(1);
+    f.k.receiveUser("lead", "Reopen the returned quest");
+    const route = f.k.route("lead", { kind: "steer", boardQuestId: f.returned.id, summary: "Reopen", notes: [] });
+    expect(f.k.reopenQuest(f.returned.id, { kind: "agent", threadId: "lead" }, route.sourceMessageId!)).toMatchObject({ phase: "build", archivedAt: null });
   });
 
   it("wires a Keeper-only reopen tool that changes only the Keeper's own quest", async () => {

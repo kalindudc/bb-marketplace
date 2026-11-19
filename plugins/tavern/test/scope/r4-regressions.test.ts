@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import ts from "typescript";
+import { AUTHORITY } from "../../src/server/authority";
 import { userControl } from "../../src/scope/legacy";
 import { shellCommands } from "../../src/scope/shell";
 import { tmpdir } from "node:os";
@@ -100,8 +101,8 @@ it("covers every RPC handler that checks for a client caller", () => {
     }
   };
   walk(join(import.meta.dirname, "../../src/server"));
-  const clientCheck = (node: ts.Node) => /experimental_caller\.kind\s*!==\s*["']client["']/.test(node.getText());
-  const guards = new Set<string>();
+  const clientCheck = (node: ts.Node) => /requireUserAct\(|experimental_caller\.kind\s*!==\s*["']client["']/.test(node.getText());
+  const guards = new Set<string>(["requireUserAct"]);
   const visitGuards = (node: ts.Node) => {
     if (ts.isFunctionDeclaration(node) && node.name && node.body && clientCheck(node.body)) guards.add(node.name.text);
     if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer && ts.isArrowFunction(node.initializer) && clientCheck(node.initializer.body)) guards.add(node.name.text);
@@ -117,12 +118,17 @@ it("covers every RPC handler that checks for a client caller", () => {
         ts.forEachChild(child, visitCalls);
       };
       visitCalls(node.initializer.body);
-      if (guarded) methods.add(node.name.getText());
+      if (guarded || node.name.getText() in AUTHORITY && AUTHORITY[node.name.getText() as keyof typeof AUTHORITY].level === "user-explicit") methods.add(node.name.getText());
     }
     ts.forEachChild(node, visitMethods);
   };
   files.forEach(visitMethods);
   expect(methods.size).toBeGreaterThan(0);
+  for (const method of methods) expect(userControl(shellCommands(`bb plugin rpc call --json tavern ${method}`, "/workspace")[0]), method).toBe(true);
+});
+it("keeps the isolated shell deny catalogue aligned with every user-explicit act", () => {
+  const methods = Object.entries(AUTHORITY).filter(([, row]) => row.level === "user-explicit").map(([act]) => act);
+  expect(methods.length).toBeGreaterThan(0);
   for (const method of methods) expect(userControl(shellCommands(`bb plugin rpc call --json tavern ${method}`, "/workspace")[0]), method).toBe(true);
 });
 it.each(["holdBoardQuest", "resumeBoardQuest", "confirmRule", "stopBoardQuest", "addRule", "widenRule", "undoDecision", "correctRoute", "resumeKeeper", "journalEdit", "saveCharacterVoice"])("refuses user controls even when their RPC handlers have no client check: %s", method => {

@@ -1,4 +1,4 @@
-import type { BbPluginApi, ExperimentalPluginRpcHandlerContext, PluginRpcHandlers } from "@get-bb/plugin-sdk";
+import type { BbPluginApi, ExperimentalPluginRpcHandlerContext, ExperimentalPluginRpcHandlersWithContext } from "@get-bb/plugin-sdk";
 import { placementContract, type PlacementCatalogView, type PlacementPreview, type PlacementPreviewInput, type PlacementWarning } from "../../shared/placement-rpc";
 import { tags } from "../../shared/contract";
 import { POSTURE } from "../../shared/placement-view";
@@ -6,6 +6,7 @@ import { DEFAULT_SETTINGS } from "../../shared/settings";
 import type { PlacementPolicyRead, PlacementRule } from "../../shared/placement-settings";
 import { normalizeRemote } from "../../scope/remote";
 import type { TavernRuntime } from "../runtime";
+import { requireUserAct, type OptionalRpcContext } from "../authority";
 import { discoverPlacementCatalog } from "./catalog";
 import { evidenceFor, matchPlacementRule, type PlacementFacts } from "./match";
 import { readSourceIdentity } from "./source-discovery";
@@ -167,11 +168,13 @@ async function preview(runtime: TavernRuntime, input: PlacementPreviewInput, sig
   } };
 }
 
-export function placementHandlers(runtime: TavernRuntime): PluginRpcHandlers<typeof placementContract> {
+export function placementHandlers(runtime: TavernRuntime): OptionalRpcContext<ExperimentalPluginRpcHandlersWithContext<typeof placementContract>> {
   return {
     placementModelFailures: () => runtime.keeper.store.all("placementModelFailures"),
-    placementModelFailureClear: ({ id }) => { runtime.clearPlacementModelFailure(id); return { ok: true }; },
-    placementRetry: async ({ placementId, generation }, context?: ExperimentalPluginRpcHandlerContext) => {
+    placementModelFailureClear: (input, context?: ExperimentalPluginRpcHandlerContext) => { requireUserAct(context, "placementModelFailureClear"); runtime.clearPlacementModelFailure(input.id); return { ok: true }; },
+    placementRetry: async (input, context?: ExperimentalPluginRpcHandlerContext) => {
+      requireUserAct(context, "placementRetry");
+      const { placementId, generation } = input;
       context?.experimental_signal?.throwIfAborted();
       const record = new PlacementStore(runtime.keeper.store.db).get(placementId);
       if (!record) return { ok: false, message: "This placement no longer exists." };

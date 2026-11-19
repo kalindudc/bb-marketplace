@@ -1,4 +1,6 @@
+import { authorize, commitUserAct, type UserActReceipt } from "../authority";
 import { randomUUID } from "node:crypto";
+import { applyAskEffect, type EffectHandlers, type AskEffect } from "../ask-effects";
 import type { RequestSources } from "../../shared/request-source";
 import { LIMITS } from "../limits";
 import { isLiveKeeper, isLiveMember, isOpenQuest } from "../liveness";
@@ -216,8 +218,12 @@ export class Keeper {
     const quest = this.quest(id);
     if (quest.phase === "held") throw new Error(`${quest.title} is held by you since ${localClock(quest.held!.since)}; resume it first.`);
   }
-  private questActReceipt(quest: BoardQuest, actor: Actor, messageId?: string) {
-    if (actor.kind === "user") return { kind: "user-act", id: this.store.id("act"), surface: "quest-page", at: this.now() };
+  private questActReceipt(quest: BoardQuest, actor: Actor, messageId: string | undefined, act: "hold" | "resume" | "reopen") {
+    if (actor.kind === "user") {
+      if (act === "reopen") throw new Error("Reopening is user-in-words; cite the user’s own routed message for this quest.");
+      authorize(act === "hold" ? "holdBoardQuest" : "resumeBoardQuest", { level: "user-explicit", receipt: "quest-page" });
+      return { kind: "user-act", id: this.store.id("act"), surface: "client (unattested)", at: this.now() };
+    }
     if (actor.kind !== "agent" || !messageId) throw new Error("Cite the user's own routed message for this quest");
     this.owned(actor.threadId, quest.id);
     const route = this.store.db.prepare("SELECT data FROM tavern_records WHERE kind='routes' AND json_extract(data,'$.keeperThreadId')=? AND json_extract(data,'$.sourceMessageId')=?").all(actor.threadId, messageId) as { data: string }[];
@@ -233,12 +239,13 @@ export class Keeper {
        (SELECT 1 FROM tavern_records a WHERE a.kind='asks' AND a.id=json_extract(e.data,'$.askId') AND json_extract(a.data,'$.kind')='greenlight'))
       ORDER BY e.id DESC LIMIT 1`).get(quest.id) as { at: number } | undefined : undefined;
     if (message.at <= (last?.at ?? legacy?.at ?? quest.updatedAt)) throw new Error("Cite a user message newer than the last quest phase transition");
+    authorize(act === "reopen" ? "reopenQuest" : act === "hold" ? "holdQuestFromMessage" : "resumeQuestFromMessage", { level: "user-in-words", receipt: messageId });
     return { kind: "user-message", id: messageId, text: message.text };
   }
   setQuestHeld(id: string, hold: boolean, actor: Actor, messageId?: string) {
     const result = this.store.atomic(() => {
       const quest = this.quest(id);
-      const receipt = this.questActReceipt(quest, actor, messageId);
+      const receipt = this.questActReceipt(quest, actor, messageId, hold ? "hold" : "resume");
       const to = hold ? "held" : quest.held?.from;
       if (!to) throw new Error("This quest is not held");
       return transitionQuest(this.store, quest, to, hold ? "hold" : "resume", actor, receipt, this.now());
@@ -327,7 +334,7 @@ export class Keeper {
       updatedAt: this.now(),
     };
     this.store.atomic(() => {
-      transitionQuest(this.store, q, q.greenlitVersion === null ? "scout" : "build", "reopen", actor, this.questActReceipt(q, actor, messageId), this.now(), { patch: reopened, text: `Re-opened ${q.title} for deviations`, data: { planVersion: q.planVersion } });
+      transitionQuest(this.store, q, q.greenlitVersion === null ? "scout" : "build", "reopen", actor, this.questActReceipt(q, actor, messageId, "reopen"), this.now(), { patch: reopened, text: `Re-opened ${q.title} for deviations`, data: { planVersion: q.planVersion } });
     });
     this.changed(q.keeperThreadId, id);
     this.invalidate([tags.mapHistory()]);
@@ -594,6 +601,7 @@ export class Keeper {
     const source = this.store.get("routes", route)!;
     const receipt = source.sourceMessageId && this.store.db.prepare("SELECT id FROM tavern_messages WHERE id=? AND thread_id=? AND accepted=2 AND length(trim(text))>0").get(source.sourceMessageId, threadId);
     if (!receipt || source.classSelectionOnly) throw new Error("The new-quest route needs its genuine accepted user receipt containing a goal; class selection is not a goal.");
+    authorize("openQuest", { level: "user-in-words", receipt: source.sourceMessageId! });
     const q: BoardQuest = {
       id: this.store.id("quest"),
       keeperThreadId: threadId,
@@ -872,7 +880,7 @@ export class Keeper {
           this.withdrawAsk(ask.id, "plan-superseded");
         this.ask(
           threadId,
-          {
+          { effect: { type: "greenlight", planVersion: plan.version },
             boardQuestId: q.id,
             kind: "greenlight",
             question: `Form the party for ${q.title}, plan v${plan.version}?`,
@@ -916,12 +924,17 @@ export class Keeper {
     id: string,
     cause: NonNullable<Ask["withdrawnCause"]>,
     at = this.now(),
+    actor: Actor = { kind: "tavern" },
+    text?: string,
+    data: Record<string, unknown> = {},
   ): Ask | null {
     const ask = this.store.get("asks", id);
     if (!ask || ask.state !== "open") return null;
     return this.store.atomic(() => {
-      if (ask.kind === "conclude" && ask.boardQuestId && this.quest(ask.boardQuestId).phase === "closing")
-        transitionQuest(this.store, this.quest(ask.boardQuestId), "build", "conclude-withdrawn", { kind: "tavern" }, { kind: "ask", id }, at);
+      const closing = ask.kind === "conclude" && ask.boardQuestId && this.quest(ask.boardQuestId).phase === "closing";
+      if (closing)
+        transitionQuest(this.store, this.quest(ask.boardQuestId!), "build", "conclude-withdrawn", { kind: "tavern" }, { kind: "ask", id }, at, { text, data: { ...data, askId: id, withdrawnCause: cause } });
+      if (!closing) this.store.event(at, ask.keeperThreadId, ask.boardQuestId, "ask.withdrawn", text ?? ask.question, { ...data, askId: id, cause }, actor);
       return this.store.put("asks", id, { ...ask, state: "withdrawn", withdrawnAt: at, withdrawnCause: cause });
     });
   }
@@ -959,7 +972,7 @@ export class Keeper {
   }
   ask(
     threadId: string,
-    input: AskInput,
+    input: AskInput & { effect: AskEffect },
     eventData: Record<string, unknown> = {},
     trusted = false,
   ) {
@@ -969,7 +982,7 @@ export class Keeper {
       if (!questId) throw new Error("A checker-handoff release ask needs its quest");
       const hold = this.liveQuest(threadId, questId).checkerHandoffHold;
       if (!hold || hold.release !== null) throw new Error("This quest has no active checker-handoff hold");
-      input = { ...input, releaseHoldId: hold.id };
+      input = { ...input, releaseHoldId: hold.id, effect: { type: "release-hold", holdId: hold.id } };
     }
     if (input.releaseHoldId) {
       if (!questId || input.kind !== "blocker" || input.proceedInMinutes != null) throw new Error("A checker-handoff release ask must be a never-timed blocker for its quest");
@@ -977,14 +990,14 @@ export class Keeper {
       if (quest.checkerHandoffHold?.id !== input.releaseHoldId || quest.checkerHandoffHold.release !== null) throw new Error("This checker-handoff hold is no longer current");
       const existing = this.store.openAsks(threadId, questId).find(ask => ask.releaseHoldId === input.releaseHoldId);
       if (existing) return existing;
-      input = { ...input, question: `Release the checker handoff for “${quest.title}”?`,
+      input = { ...input, effect: { type: "release-hold", holdId: input.releaseHoldId }, question: `Release the checker handoff for “${quest.title}”?`,
         why: "Only your explicit answer releases this hold. A request for a check result is not a release.",
         options: [{ id: "release", label: "Release checker handoff", detail: "Allow this quest's checker handoff; other guards still apply.", recommended: false },
           { id: "keep-held", label: "Keep held", detail: "Keep waiting for your explicit release.", recommended: false }],
         holds: [], meanwhile: "Maker work and the Keeper conversation can continue; checker handoff stays held." };
     }
     if (questId) {
-      if (trusted && (typeof eventData.stopMemberThreadId === "string" || Array.isArray(eventData.stopHireTokens))) this.owned(threadId, questId);
+      if (trusted && input.effect.type === "retry-stop") this.owned(threadId, questId);
       else this.liveQuest(threadId, questId);
       if (!trusted && !input.releaseHoldId) this.guard(threadId, questId);
     }
@@ -1012,8 +1025,12 @@ export class Keeper {
       throw new Error(
         "A timed default needs one recommendation and a time within seven days",
       );
+    if (input.kind === "greenlight" && input.effect.type !== "greenlight") throw new Error("A greenlight ask needs its typed plan version; propose the plan instead.");
+    if (input.kind === "conclude" && input.effect.type !== "conclude") throw new Error("A conclude ask needs its typed draft; tell the quest result instead.");
     const ask = askSchema.parse({
       ...input,
+      effect: input.effect,
+      reversible: input.reversible === true,
       id: this.store.id("ask"),
       keeperThreadId: threadId,
       boardQuestId: questId,
@@ -1028,12 +1045,6 @@ export class Keeper {
     });
     this.store.atomic(() => {
       this.store.put("asks", ask.id, ask);
-      this.store.put("askMeta", ask.id, {
-        ...(typeof eventData.planVersion === "number"
-          ? { planVersion: eventData.planVersion }
-          : {}),
-        reversible: input.reversible === true,
-      });
       if (ask.kind === "conclude" && questId && this.quest(questId).phase !== "closing") {
         transitionQuest(this.store, this.quest(questId), "closing", "close", { kind: "agent", threadId }, { kind: "ask", id: ask.id }, this.now(), { text: ask.question, data: { askId: ask.id, ...eventData } });
       } else this.store.event(
@@ -1063,6 +1074,9 @@ export class Keeper {
     note: string | null,
     via: NonNullable<Ask["answer"]>["via"],
     by: "user" | "default",
+    surface?: string,
+    effects: Partial<EffectHandlers> = {},
+    receipt?: UserActReceipt,
   ) {
     const ask = this.store.get("asks", askId);
     if (!ask) throw new Error("Unknown ask");
@@ -1073,52 +1087,53 @@ export class Keeper {
       }
       throw new Error("This ask is no longer open");
     }
-    const metadata = this.store.get("askMeta", askId);
-    if (ask.boardQuestId && (ask.kind === "conclude" || ask.kind === "greenlight" && optionId === "approve")) {
+    const effect = ask.effect!;
+    if (ask.kind === "greenlight" && effect.type !== "greenlight") throw new Error("This old ask has no plan version; ask the Keeper to propose the plan again.");
+    if (ask.kind === "conclude" && effect.type !== "conclude") throw new Error("This old ask has no conclusion draft; ask the Keeper to tell the result again.");
+    if (ask.boardQuestId && (effect.type === "conclude" || effect.type === "greenlight" && optionId === "approve")) {
       const quest = this.quest(ask.boardQuestId);
       if (quest.phase === "held") throw new Error("This quest is held; resume it first");
-      if (ask.kind === "greenlight") {
+      if (effect.type === "greenlight") {
         assertQuestTransition(this.store, quest, "build", "approve", { kind: "user" }, { kind: "ask-answer", id: askId });
-        if (metadata?.planVersion !== quest.planVersion) throw new Error("This greenlight belongs to an old plan version");
+        if ((effect.type !== "greenlight" || effect.planVersion !== quest.planVersion)) throw new Error("This greenlight belongs to an old plan version");
       } else
         assertQuestTransition(this.store, quest, optionId === "conclude" ? "done" : "build", optionId === "conclude" ? "conclude" : optionId === "hold" ? "keep-open" : "extensions", { kind: "user" }, { kind: "ask-answer", id: askId });
     }
-    if (ask.boardQuestId && !metadata?.stopMemberThreadId && !metadata?.stopHireTokens) this.liveQuest(ask.keeperThreadId, ask.boardQuestId);
+    if (ask.boardQuestId && effect.type !== "retry-stop") this.liveQuest(ask.keeperThreadId, ask.boardQuestId);
     if (!ask.options.some((o) => o.id === optionId))
       throw new Error("Unknown option");
     if (
       by === "default" &&
       (ask.kind !== "decision" ||
-        this.store.get("askMeta", ask.id)?.reversible !== true ||
+        ask.reversible !== true ||
         ask.proceedAt === null ||
         ask.proceedAt > this.now())
     )
       throw new Error("This ask cannot default");
     if (ask.releaseHoldId && (by !== "user" || via === "timer")) throw new Error("A checker-handoff hold needs an explicit user answer");
-    this.store.atomic(() => {
-      if (ask.releaseHoldId && optionId === "release") {
-        if (!ask.boardQuestId) throw new Error("A checker-handoff release ask needs its quest");
-        this.releaseCheckerHandoff(ask.boardQuestId, ask.releaseHoldId, via as NonNullable<CheckerHandoffHold["release"]>["via"], ask.id);
-      }
+    commitUserAct(this.store, () => this.now(), receipt, () => {
       this.store.put("asks", ask.id, {
         ...ask,
         state: by === "default" ? "defaulted" : "answered",
-        answer: { optionId, note, via, by, at: this.now() },
+        answer: { optionId, note, via, by, at: this.now(), ...(surface ? { surface } : {}) },
       });
-      if (
-        ask.kind === "greenlight" &&
-        ask.boardQuestId &&
-        optionId === "approve"
-      ) {
-        const q = this.quest(ask.boardQuestId);
-        if (q.phase !== "greenlight")
-          throw new Error("This plan is no longer waiting for greenlight");
-        const opened = this.store.get("askMeta", askId);
-        if (opened?.planVersion !== q.planVersion)
-          throw new Error("This greenlight belongs to an old plan version");
-        transitionQuest(this.store, q, "build", "approve", { kind: "user" }, { kind: "ask-answer", id: askId }, this.now(), { patch: { greenlitVersion: q.planVersion }, text: "Party approved: hire it now, critical path first.", data: { askId, optionId } });
-      }
-      if (!(ask.kind === "greenlight" && optionId === "approve")) this.store.event(
+      applyAskEffect(effect, {
+        ...effects,
+        greenlight: effect => {
+          if (effect.type !== "greenlight" || optionId !== "approve") return;
+          if (!ask.boardQuestId) throw new Error("A greenlight needs its quest");
+          const q = this.quest(ask.boardQuestId);
+          if (q.phase !== "greenlight") throw new Error("This plan is no longer waiting for greenlight");
+          if (effect.planVersion !== q.planVersion) throw new Error("This greenlight belongs to an old plan version");
+          transitionQuest(this.store, q, "build", "approve", { kind: "user" }, { kind: "ask-answer", id: askId }, this.now(), { patch: { greenlitVersion: q.planVersion }, text: "Party approved: hire it now, critical path first.", data: { askId, optionId, ...(receipt ? { authority: receipt } : {}) } });
+        },
+        "release-hold": effect => {
+          if (effect.type !== "release-hold" || optionId !== "release") return;
+          if (!ask.boardQuestId) throw new Error("A checker-handoff release ask needs its quest");
+          this.releaseCheckerHandoff(ask.boardQuestId, effect.holdId, via as NonNullable<CheckerHandoffHold["release"]>["via"], ask.id);
+        },
+      }, { by, id: ask.id });
+      if (!(effect.type === "greenlight" && optionId === "approve")) this.store.event(
         this.now(),
         ask.keeperThreadId,
         ask.boardQuestId,
@@ -1128,7 +1143,7 @@ export class Keeper {
           : ask.kind === "scope" && optionId === "deny"
             ? `${SCOPE_DENIAL_TEXT}${note ? ` User note: ${note}` : ""}`
             : `${by === "default" ? "Default applied to a reversible choice" : "Answered"}: ${ask.question} — ${optionId}${note ? `: ${note}` : ""}`,
-        { askId, optionId },
+        { askId, optionId, ...(receipt ? { authority: receipt } : {}) },
         by === "user" ? { kind: "user" } : { kind: "tavern" },
       );
     });
@@ -1142,7 +1157,7 @@ export class Keeper {
       text: string;
       why: string;
       reversible: boolean;
-      reviewBudgetOverride?: boolean;
+      exceeds?: "party" | "rangers";
       source: "keeper" | "steer" | "ask" | "user";
       sourceRef?: string | null;
     },
@@ -1193,8 +1208,9 @@ export class Keeper {
       if (!input.reversible)
         throw new Error("Consequential decisions require an answered user ask");
     }
-    if (input.reviewBudgetOverride && !input.reversible)
-      throw new Error("A review-budget exception must be reversible");
+    if (input.exceeds && !input.reversible)
+      throw new Error("A soft limit decision must be reversible");
+    authorize(input.source === "steer" ? "steerDecision" : input.source === "ask" ? "answerAsk" : "defaultDecision", { level: input.source === "steer" ? "user-in-words" : input.source === "ask" ? "user-explicit" : "keeper", receipt: input.sourceRef ?? input.text });
     const decision = decisionSchema.parse({
       ...input,
       id: this.store.id("decision"),
@@ -1244,7 +1260,7 @@ export class Keeper {
           phaseChanged = true;
           this.ask(
             d.keeperThreadId,
-            {
+            { effect: { type: "greenlight", planVersion: q.planVersion },
               boardQuestId: q.id,
               kind: "greenlight",
               question: `Form the party for ${q.title}, plan v${q.planVersion}?`,
@@ -1744,8 +1760,7 @@ export class Keeper {
     for (const ask of asks) {
       if (!isLiveKeeper(this.store, this.member(ask.keeperThreadId))) continue;
       if (ask.boardQuestId && !isOpenQuest(this.store.get("quests", ask.boardQuestId))) {
-        const metadata = this.store.get("askMeta", ask.id);
-        if (!metadata?.stopMemberThreadId && !metadata?.stopHireTokens) this.withdrawAsk(ask.id, "quest-returned");
+        if (ask.effect?.type !== "retry-stop") this.withdrawAsk(ask.id, "quest-returned");
         continue;
       }
       if (

@@ -1,4 +1,5 @@
 import { assertTavernRunning } from "../stop-all";
+import { commitUserAct, type UserActReceipt } from "../authority";
 import { randomUUID } from "node:crypto";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
@@ -90,7 +91,7 @@ export class VoiceCheckRunner {
    * Starts a check. Throws at once, in the editor's words, when a cap refuses it; otherwise resolves once the writer is known, so the
    * editor names the model from the first moment. The result arrives through the view.
    */
-  start(characterId: string, draft: VoiceDraft): Promise<VoiceCheckView> {
+  start(characterId: string, draft: VoiceDraft, receipt?: UserActReceipt): Promise<VoiceCheckView> {
     assertTavernRunning(this.deps.store);
     const all = this.deps.store.all("voiceChecks");
     if (this.active || all.some((r) => r.state === "running")) throw new Error("Another voice check is running. Try again when it finishes.");
@@ -98,7 +99,7 @@ export class VoiceCheckRunner {
     if (cap.used >= cap.max) throw new Error(`${cap.max} checks this hour; the next can run at ${clock(cap.nextAt!)}.`);
     const run: Run = { id: `vc_${randomUUID()}`, characterId, draft: { name: draft.name, style: draft.style }, state: "running", startedAt: this.deps.now(), finishedAt: null,
       writer: null, judge: null, judgeNote: null, tone: null, situations: [], reason: null, fault: null, detail: null, cost: null, threadIds: [] };
-    this.deps.store.put("voiceChecks", run.id, run);
+    commitUserAct(this.deps.store, this.deps.now, receipt, () => this.deps.store.put("voiceChecks", run.id, run));
     const controller = new AbortController();
     let writerReady!: () => void;
     const writerKnown = new Promise<void>((resolve) => { writerReady = resolve; });

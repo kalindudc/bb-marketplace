@@ -1,4 +1,5 @@
 import { cliCommand, PluginCliError, type BbPluginApi, type PluginCliContext } from "@get-bb/plugin-sdk";
+import { terminalUserAct, commitUserAct, settingsCliReceipt } from "../authority";
 import { posix, win32 } from "node:path";
 import { exportToml, previewToml } from "./toml";
 import { importSettings } from "./files";
@@ -37,7 +38,7 @@ export function settingsCommands(bb: BbPluginApi, store: SettingsStore) {
     if (ctx.threadId) throw new PluginCliError("Agents cannot change global Tavern settings or write the settings file. A Keeper can use tavern_tune for a bounded per-quest override.");
   }
   function settingsAccess(ctx: PluginCliContext) {
-    if (ctx.threadId && !store.read().tavern.agentsMayChangeSettings) throw new PluginCliError('The user turned off "Agents may change settings". Preview settings and ask the user to enable it before applying.');
+    return settingsCliReceipt(ctx, store.read().tavern.agentsMayChangeSettings);
   }
   return {
     "settings get": cliCommand({
@@ -83,7 +84,7 @@ export function settingsCommands(bb: BbPluginApi, store: SettingsStore) {
         const snapshot = store.snapshot();
         for (const [id, value] of Object.entries(parsed.classes ?? {})) parsed.classes![id] = { ...snapshot.user.classes?.[id], ...value };
         if (input.options.apply) guardrails(ctx, settingKeys(parsed));
-        if (input.options.apply) store.update({ revision: snapshot.revision, patch: parsed, why: "Changed settings through the CLI" }, ctx.threadId ?? null);
+        if (input.options.apply) commitUserAct(keepers, () => store.now(), settingsAccess(ctx), () => store.update({ revision: snapshot.revision, patch: parsed, why: "Changed settings through the CLI" }, ctx.threadId ?? null));
         return { exitCode: 0, stdout: JSON.stringify({ applied: !!input.options.apply, patch: parsed }, null, 2) };
       },
     }),
@@ -100,8 +101,8 @@ export function settingsCommands(bb: BbPluginApi, store: SettingsStore) {
         if (!input.options.file) return { exitCode: 0, stdout: toml };
         user(ctx);
         const hostId = await fileHost(input.options.host, ctx);
-        await bb.sdk.files.write({ hostId, path: absolute(input.options.file), content: toml, contentEncoding: "utf8",
-          createParents: true, mode: 0o600, ...(input.options.overwrite ? {} : { expectedSha256: null }) });
+        await terminalUserAct(ctx, "settingsFile", keepers, () => store.now(), receipt => bb.sdk.files.write({ hostId, path: absolute(input.options.file!), content: toml, contentEncoding: "utf8",
+          createParents: true, mode: 0o600, ...(input.options.overwrite ? {} : { expectedSha256: null }) }).then(result => commitUserAct(keepers, () => store.now(), receipt, () => result)));
         return { exitCode: 0, stdout: `Exported settings to ${input.options.file} on ${hostId}.` };
       },
     }),
@@ -131,7 +132,8 @@ export function settingsCommands(bb: BbPluginApi, store: SettingsStore) {
           const preview = previewToml(source, store.snapshot());
           guardrails(ctx, [...settingKeys(preview.user), ...settingKeys(preview.pinned, "pinned"), ...settingKeys(preview.tuned, "tuned"), ...preview.changes.map(c => c.key)].filter(key => key !== "machines.forges" && !key.startsWith("machines.forges.")));
         }
-        const result = importSettings(store, source, input.options.apply === true, store.snapshot().revision, "Imported settings through the CLI", ctx.threadId ?? null);
+        const apply = () => importSettings(store, source, input.options.apply === true, store.snapshot().revision, "Imported settings through the CLI", ctx.threadId ?? null);
+        const result = input.options.apply ? commitUserAct(keepers, () => store.now(), { ...settingsAccess(ctx), ...(ctx.threadId ? {} : { act: "settingsImport" as const }) }, apply) : apply();
         const summary = result.code === "invalid" ? "Import was not applied: fix the reported problems."
           : result.code === "stale" ? "Settings changed: refresh the preview before applying. Nothing was applied."
           : importSummary(result.changes, result.applied);

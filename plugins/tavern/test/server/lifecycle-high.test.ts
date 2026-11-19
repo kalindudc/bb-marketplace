@@ -40,7 +40,7 @@ it.each(["archivedAt", "deletedAt"] as const)("checks current host %s immediatel
 });
 it("a deleted Keeper withdraws asks, records deletion and clears failure state", () => {
   const f = setup();
-  const ask = f.k.ask("lead", { kind: "blocker", question: "Retry?", why: "Failed", options: [{ id: "retry", label: "Retry", detail: "", recommended: true }], meanwhile: "Wait", holds: [] });
+  const ask = f.k.ask("lead", { effect: {type:"answer-blocker"}, kind: "blocker", question: "Retry?", why: "Failed", options: [{ id: "retry", label: "Retry", detail: "", recommended: true }], meanwhile: "Wait", holds: [] });
   f.k.store.patch("lead", { failureCount: 2, tickRefusalCount: 2, failureAskId: ask.id });
   f.runtime.updateThread(makeThreadResponse({ id: "lead", deletedAt: f.time(), archivedAt: null }));
   expect(f.k.store.runtime("lead")).toMatchObject({ deletedAt: f.time(), archivedAt: f.time(), failureCount: 0, tickRefusalCount: 0, failureAskId: null });
@@ -48,7 +48,7 @@ it("a deleted Keeper withdraws asks, records deletion and clears failure state",
 });
 it("withdraws a Keeper's asks when fresh host reads confirm it is not found", async () => {
   const f = setup();
-  const ask = f.k.ask("lead", { kind: "blocker", question: "Retry?", why: "Failed", options: [{ id: "retry", label: "Retry", detail: "", recommended: true }], meanwhile: "Wait", holds: [] });
+  const ask = f.k.ask("lead", { effect: {type:"answer-blocker"}, kind: "blocker", question: "Retry?", why: "Failed", options: [{ id: "retry", label: "Retry", detail: "", recommended: true }], meanwhile: "Wait", holds: [] });
   f.k.store.patch("lead", { failureCount: 2, failureAskId: ask.id });
   f.bb.sdk.threads.get = vi.fn(async () => { throw Object.assign(new Error("thread missing"), { status: 404 }); });
   await f.runtime.sweep();

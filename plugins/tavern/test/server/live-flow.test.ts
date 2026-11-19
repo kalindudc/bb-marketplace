@@ -589,7 +589,7 @@ describe("live Keeper flow regressions", () => {
     f.bb.log.info = vi.fn();
     f.bb.log.warn = vi.fn();
     await seedQuest(f.k,"lead", "A", "A");
-    f.k.ask("lead", {
+    f.k.ask("lead", { effect: {type:"decision"},
       kind: "decision",
       question: "Pick",
       why: "Choice",

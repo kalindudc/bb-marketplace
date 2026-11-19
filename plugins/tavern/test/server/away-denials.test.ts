@@ -28,7 +28,8 @@ describe("Closing time local denials", () => {
   });
   it.each(["git merge feature", "gh pr merge 12", "git push origin feature", "dev deploy", "terraform apply", "kubectl --context production apply -f prod.yml", "slack send channel text", "rm -rf build", "find . -delete", "gh pr create --draft", "curl -X POST https://example.test"])("blocks named stop-list action before execution: %s", command => {
     const decision = evaluate(narrowAwayScope(bound(), window), { kind: "bash", toolName: "bash", input: { command }, cwd });
-    expect(decision).toMatchObject({ allow: false, ruleId: expect.stringMatching(/^away:/) });
+    const ruleId = ["git merge feature", "rm -rf build", "find . -delete"].includes(command) ? expect.stringMatching(/^away:/) : "closing-act";
+    expect(decision).toMatchObject({ allow: false, ruleId });
   });
   it.each(["slack_send", "deploy_service", "delete_file", "merge_pr"])("blocks an outward or destructive tool: %s", toolName => {
     expect(evaluate(narrowAwayScope(bound(), window), { kind: "tool", toolName, input: {}, cwd }).allow).toBe(false);

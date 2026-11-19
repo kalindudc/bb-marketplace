@@ -37,10 +37,10 @@ export function authorizeGuardedHire(
     if (!requestApproval) throw new Error(reason);
     const existing = k.store.openAsks(keeperId).find(candidate =>
       candidate.kind === "scope" &&
-      k.store.get("askMeta", candidate.id)?.guardHire?.fingerprint === fingerprint,
+      candidate.effect?.type === "detection-hire" && candidate.effect.binding.fingerprint === fingerprint,
     );
     const ask = existing ?? k.store.atomic(() => {
-      const created = k.ask(keeperId, {
+      const created = k.ask(keeperId, { effect: { type: "detection-hire", binding: { fingerprint, providerId, model, characterId: intent.characterId, displayName: intent.owner.displayName ?? (intent.classId.charAt(0).toUpperCase() + intent.classId.slice(1)) } },
         boardQuestId: intent.owner.boardQuestId,
         kind: "scope",
         question: `Hire ${intent.owner.displayName ?? (intent.classId.charAt(0).toUpperCase() + intent.classId.slice(1))} on ${providerId} with detection only? Tavern can stop the turn after a push or merge, but can't prevent it.`,
@@ -62,23 +62,13 @@ export function authorizeGuardedHire(
         meanwhile: "Do not hire this member or send its brief. Choose a Pi model, or wait for the user's answer.",
         holds: intent.owner.waypointId ? [intent.owner.waypointId] : [],
       });
-      k.store.put("askMeta", created.id, {
-        ...k.store.get("askMeta", created.id),
-        guardHire: {
-          fingerprint,
-          providerId,
-          model,
-          characterId: intent.characterId,
-          displayName: intent.owner.displayName ?? (intent.classId.charAt(0).toUpperCase() + intent.classId.slice(1)),
-        },
-      });
+
       return created;
     });
     throw new DetectionApprovalRequired(ask.id, reason);
   }
   const ask = k.store.get("asks", approvalAskId);
-  const metadata = k.store.get("askMeta", approvalAskId);
-  const binding = metadata?.guardHire;
+  const binding = ask?.effect?.type === "detection-hire" ? ask.effect.binding : null;
   if (
     !binding || binding.fingerprint !== fingerprint ||
     ask?.keeperThreadId !== keeperId || ask.boardQuestId !== intent.owner.boardQuestId ||
@@ -95,7 +85,7 @@ export function authorizeGuardedHire(
   if (binding.token && binding.token !== token)
     throw new Error("This detection-only approval was already used for a hire.");
   k.store.atomic(() => {
-    k.store.put("askMeta", ask.id, { ...metadata, guardHire: { ...binding, token } });
+    k.store.put("asks", ask.id, { ...ask, effect: { type: "detection-hire", binding: { ...binding, token } } });
     intent.guardApprovalAskId = ask.id;
     k.store.put("hires", token, intent);
   });

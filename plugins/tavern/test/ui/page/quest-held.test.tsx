@@ -23,7 +23,7 @@ beforeAll(async () => {
   const q = await seedQuest(f.k, "lead", "Held work", "Held work");
   f.k.plan("lead", planInput(q.id));
   f.k.answerAsk(f.k.store.openAsks("lead", q.id)[0]!.id, "approve", null, "page", "user");
-  askId = f.k.ask("lead", { kind: "production", boardQuestId: q.id, question: "Deploy this change?", why: "Production needs approval", meanwhile: "Wait", holds: [], options: [{ id: "yes", label: "Deploy", detail: "Approve", recommended: true }] }).id;
+  askId = f.k.ask("lead", { effect: {type:"decision"}, kind: "production", boardQuestId: q.id, question: "Deploy this change?", why: "Production needs approval", meanwhile: "Wait", holds: [], options: [{ id: "yes", label: "Deploy", detail: "Approve", recommended: true }] }).id;
   f.k.setQuestHeld(q.id, true, { kind: "user" });
   heldDetail = await f.harness.invokeRpc("boardQuest", { id: q.id }) as BoardQuestDetail;
   room = await f.harness.invokeRpc("room", {}) as Room;
@@ -52,6 +52,13 @@ it("the widget displays the server's held line and keeps its production ask coun
   const widget = renderSlot({ component: ThreadWidget }, { threadId: "lead" }, { rpc: { decor: () => decor, registry: () => scenes.registry } }); slots.push(widget);
   await waitFor(() => assertHeld(widget.container.querySelector(".tw-quest")?.textContent));
   expect(decor.keeperView!.openAsks).toHaveLength(1);
+});
+it.each([false, true])("offers a review allowance only when the review budget is reached: %s", async reached => {
+  const plugin = await loadPluginApp(async () => ({ default: definePluginApp(registerPageSurfaces) }));
+  const currentRoom = { ...room, review: { ...room.review, waiting: reached ? room.review.budget : 0 } };
+  const page = renderSlot(plugin.navPanels[0]!, { subPath: `quest/${quest.id}` }, { pluginId: "tavern", experimental_rpcContract: rpcContract, rpc: { registry: () => scenes.registry, room: () => currentRoom, boardQuest: () => heldDetail } }); slots.push(page);
+  await page.findByRole("heading", { level: 1, name: quest.title });
+  expect(page.queryByRole("button", { name: "Allow one more review" }) !== null).toBe(reached);
 });
 it("the full held page retains the production ask, suggests no new hire and Resume calls the user RPC", async () => {
   const resume = vi.fn(() => { const resumed = { ...quest, phase: "build" as const }; delete resumed.held; return resumed; });

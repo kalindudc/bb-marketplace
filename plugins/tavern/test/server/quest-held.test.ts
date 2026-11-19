@@ -31,7 +31,7 @@ describe("held quests", () => {
     expect(f.k.restatement("lead")).not.toContain("Allocated party");
     f.k.setQuestHeld(q.id, false, { kind: "user" });
     expect(f.k.quest(q.id).phase).toBe(phase);
-    expect(f.k.store.events("lead").filter(event => ["quest.held", "quest.resumed"].includes(event.type)).map(event => event.data.receipt)).toEqual([expect.objectContaining({ kind: "user-act", id: expect.stringMatching(/^act_/), surface: "quest-page" }), expect.objectContaining({ kind: "user-act", id: expect.stringMatching(/^act_/), surface: "quest-page" })]);
+    expect(f.k.store.events("lead").filter(event => ["quest.held", "quest.resumed"].includes(event.type)).map(event => event.data.receipt)).toEqual([expect.objectContaining({ kind: "user-act", id: expect.stringMatching(/^act_/), surface: "client (unattested)" }), expect.objectContaining({ kind: "user-act", id: expect.stringMatching(/^act_/), surface: "client (unattested)" })]);
   });
   it("ticks skip held quest news while unrelated news and user messages remain live", async () => {
     const f = setup();
@@ -78,7 +78,10 @@ describe("held quests", () => {
     f.k.setQuestHeld(q.id, true, { kind: "user" });
     await f.runtime.stop(q.id, "Stop");
     expect(f.k.quest(q.id).phase).toBe("stopped");
-    expect(f.k.reopenQuest(q.id, { kind: "user" }).phase).toBe("scout");
+    f.advance(1);
+    f.k.receiveUser("lead", "Reopen the watch");
+    const route = f.k.route("lead", { kind: "steer", boardQuestId: q.id, summary: "Reopen", notes: [] });
+    expect(f.k.reopenQuest(q.id, { kind: "agent", threadId: "lead" }, route.sourceMessageId!).phase).toBe("scout");
   });
   it("reads an old conclude hold as kept-open, not a lifecycle hold", async () => {
     const f = setup();

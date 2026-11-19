@@ -71,8 +71,8 @@ describe("additional dispatch and policy coverage", () => {
   });
   it("M2 defaults later asks even if an earlier default is malformed", () => {
     const { k, advance } = setup();
-    const bad = k.ask("lead", { ...ask, reversible: true, proceedInMinutes: 1 });
-    const good = k.ask("lead", { ...ask, reversible: true, proceedInMinutes: 1 });
+    const bad = k.ask("lead", { effect: {type:"decision"}, ...ask, reversible: true, proceedInMinutes: 1 });
+    const good = k.ask("lead", { effect: {type:"decision"}, ...ask, reversible: true, proceedInMinutes: 1 });
     k.store.put("asks", bad.id, { ...bad, options: [] });
     advance(61_000);
     const errors = vi.fn();
@@ -191,7 +191,7 @@ describe("additional dispatch and policy coverage", () => {
     expect(String(first)).toContain("offset=8000");
     expect(String(first).length).toBeLessThan(9000);
     expect(String(next)).toContain("8000-16000");
-    const opened = k.ask("lead", ask);
+    const opened = k.ask("lead", { ...ask, effect: { type: "decision" } });
     k.answerAsk(opened.id, "yes", "Choice", "page", "user");
     expect(readStatus(runtime, "lead", statusInput.parse({ section: "asks" }))).toMatchObject({
       asks: [{ state: "answered", answer: { note: "Choice" } }],

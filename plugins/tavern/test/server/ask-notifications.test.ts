@@ -14,7 +14,7 @@ it("observes a new ask only after its containing transaction commits", async () 
     opened = vi.fn();
   f.k.askOpened = opened;
   const saved = f.k.store.atomic(() => {
-    const saved = f.k.ask("lead", ask);
+    const saved = f.k.ask("lead", { ...ask, effect: { type: "decision" } });
     expect(opened).not.toHaveBeenCalled();
     return saved;
   });
@@ -28,7 +28,7 @@ it("does not notify about an ask rolled back by its containing plan transaction"
   f.k.askOpened = opened;
   expect(() =>
     f.k.store.atomic(() => {
-      f.k.ask("lead", ask);
+      f.k.ask("lead", { ...ask, effect: { type: "decision" } });
       throw new Error("Rollback plan");
     }),
   ).toThrow("Rollback plan");

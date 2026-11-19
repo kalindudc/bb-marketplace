@@ -110,7 +110,7 @@ describe("Closing time RPC", () => {
   });
   it("returns only after an accepted explicit-client ask answer", async () => {
     const f = fixture();
-    const ask = f.k.ask("lead", { kind: "production", question: "Production?", why: "Needs you", options: [{ id: "wait", label: "Wait", detail: "Stay safe", recommended: true }], meanwhile: "Drafts", holds: [] });
+    const ask = f.k.ask("lead", { effect: {type:"decision"}, kind: "production", question: "Production?", why: "Needs you", options: [{ id: "wait", label: "Wait", detail: "Stay safe", recommended: true }], meanwhile: "Drafts", holds: [] });
     await f.call("awayClose", input);
     await expect(f.call("answerAsk", { askId: ask.id, optionId: "wait", via: "page" }, true)).rejects.toMatchObject({ code: "forbidden" });
     expect(f.runtime.away.snapshot().status.closed).toBe(true);

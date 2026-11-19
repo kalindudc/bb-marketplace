@@ -39,7 +39,7 @@ it("refuses non-client backup restores and skips forge profiles even for a clien
   source.settings.update({ revision: 0, patch: { machines: { forges: [{ id: "incoming", name: "Incoming", enabled: true, kind: "command", open: "incoming" }] }, tavern: { repeatSeconds: 7 } }, why: "Page" });
   target.settings.update({ revision: 0, patch: { machines: { forges: [{ id: "current", name: "Current", enabled: true, kind: "command", open: "current" }] } }, why: "Page" });
   const exported = await source.backup.export({}), from = { bundle: exported.json! };
-  await expect(target.harness.invokeRpc("backupRestore", { from, apply: false }, { experimental_caller: { kind: "plugin", pluginId: "other" } })).rejects.toThrow("Backup restores require an explicit client action");
+  await expect(target.harness.invokeRpc("backupRestore", { from, apply: false }, { experimental_caller: { kind: "plugin", pluginId: "other" } })).rejects.toThrow("backupRestore requires an explicit client action");
   const preview = backupContract.backupRestore.output.parse(await target.harness.invokeRpc("backupRestore", { from, apply: false }));
   expect(preview.skippedForgeProfiles).toContain("incoming");
   const applied = backupContract.backupRestore.output.parse(await target.harness.invokeRpc("backupRestore", { from, apply: true, previewHash: preview.previewHash }));

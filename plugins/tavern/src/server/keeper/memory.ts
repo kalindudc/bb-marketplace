@@ -380,44 +380,7 @@ export class KeeperMemory {
       route.summary
     ).slice(0, 200);
   }
-  reviewPermit(threadId: string, questId: string | null) {
-    const row = this.k.store.db
-      .prepare(
-        `SELECT r.id FROM tavern_records r WHERE r.kind=\'decisions\' AND json_extract(r.data,\'$.keeperThreadId\')=?
-      AND json_extract(r.data,'$.createdAt')>=${this.k.now() - 86400_000} AND json_extract(r.data,'$.reviewBudgetOverride')=1 AND json_extract(r.data,\'$.reversible\')=1 AND json_extract(r.data,\'$.undone\')=0
-      AND (json_extract(r.data,\'$.boardQuestId\') IS NULL OR json_extract(r.data,\'$.boardQuestId\')=?)
-      AND NOT EXISTS(SELECT 1 FROM tavern_records p WHERE p.kind=\'reviewPermits\' AND p.id=r.id) ORDER BY r.rowid DESC LIMIT 1`,
-      )
-      .get(threadId, questId) as { id: string } | undefined;
-    return row?.id ?? null;
-  }
-  claimReview(
-    threadId: string,
-    questId: string | null,
-    decisionId: string,
-    token: string,
-  ) {
-    const decision = this.k.store.get("decisions", decisionId);
-    if (
-      !decision ||
-      decision.keeperThreadId !== threadId ||
-      decision.undone ||
-      !decision.reversible ||
-      this.k.now() - decision.createdAt > 86400_000 ||
-      !decision.reviewBudgetOverride ||
-      (decision.boardQuestId !== null && decision.boardQuestId !== questId) ||
-      this.k.store.get("reviewPermits", decisionId)
-    )
-      throw new Error(
-        "The review-budget exception is no longer available; record another decision or wait",
-      );
-    this.k.store.put("reviewPermits", decisionId, {
-      keeperThreadId: threadId,
-      token,
-      decisionId,
-      usedAt: this.k.now(),
-    });
-  }
+
   snapshot(threadId: string, text: string) {
     const hash = createHash("sha256").update(text).digest("hex");
     const previous = this.k.store.runtime(threadId).ledger;

@@ -296,11 +296,11 @@ describe("round 2 release, ask and scout policies", () => {
   });
   it("L-a requires an explicit reversible declaration for a timed decision, including after reload", () => {
     const f = setup();
-    expect(() => f.k.ask("lead", { ...ask, proceedInMinutes: 1 })).toThrow(/reversible/);
-    expect(() => f.k.ask("lead", { ...ask, reversible: false, proceedInMinutes: 1 })).toThrow(
+    expect(() => f.k.ask("lead", { effect: {type:"decision"}, ...ask, proceedInMinutes: 1 })).toThrow(/reversible/);
+    expect(() => f.k.ask("lead", { effect: {type:"decision"}, ...ask, reversible: false, proceedInMinutes: 1 })).toThrow(
       /reversible/,
     );
-    const created = f.k.ask("lead", { ...ask, reversible: true, proceedInMinutes: 1 });
+    const created = f.k.ask("lead", { effect: {type:"decision"}, ...ask, reversible: true, proceedInMinutes: 1 });
     f.advance(60_000);
     new Keeper(f.k.store, f.port, f.time).defaults();
     expect(f.k.store.get("asks", created.id)?.state).toBe("defaulted");
@@ -328,9 +328,9 @@ describe("round 2 release, ask and scout policies", () => {
   it("L-c keeps an old open ask in the room after more than 200 newer closed asks", async () => {
     const f = setup();
     registerRpc(f.bb, f.runtime);
-    const old = f.k.ask("lead", ask);
+    const old = f.k.ask("lead", { ...ask, effect: { type: "decision" } });
     for (let n = 0; n < 205; n++) {
-      const recent = f.k.ask("lead", { ...ask, question: `Ask ${n}` });
+      const recent = f.k.ask("lead", { effect: {type:"decision"}, ...ask, question: `Ask ${n}` });
       f.k.answerAsk(recent.id, "small", null, "page", "user");
     }
     const room = (await f.harness.invokeRpc("room", {})) as { asks: { id: string }[] };
@@ -387,7 +387,7 @@ describe("round 2 delivery and cleanup", () => {
   it("L-f keeps quests and asks ahead of many standing rules and marks any cap", async () => {
     const f = setup();
     const q = await seedQuest(f.k,"lead", "Important board", "Board");
-    f.k.ask("lead", { ...ask, boardQuestId: q.id, question: "Important open ask?" });
+    f.k.ask("lead", { effect: {type:"decision"}, ...ask, boardQuestId: q.id, question: "Important open ask?" });
     for (let n = 0; n < 100; n++)
       f.k.addRule({
         scope: "keeper",

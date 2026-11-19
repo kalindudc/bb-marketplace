@@ -57,7 +57,7 @@ describe("R11 tool rules remain at the tool boundary", () => {
     tavern_note: [/fact verbatim/, /dueAt/, /not make promises only in chat/],
     tavern_gate: [/never contacts a person/, /grants approval/],
     tavern_quest: [/scout phase/, /journal/],
-    tavern_reopen: [/returned or stopped/, /plan version and its greenlight are kept/i, /Warden still verifies/],
+    tavern_reopen: [/returned or stopped/, /build with a greenlit plan, or scout without one/i, /Warden still verifies/],
     tavern_hire: [/bounded brief/, /never-timed scope ask/, /brief stays queued/, /review budget/, /explicit approval/, /known maker journal entry/, /not request commands as tool names/],
     tavern_release: [/your own party/, /reason/, /reversible release.*Decided for you/],
     tavern_scope: [/Temporary paths/, /own thread storage/, /explicit, never-timed scope answer/, /never approves a merge, deploy, delete, send or production action/],

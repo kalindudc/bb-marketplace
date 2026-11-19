@@ -24,6 +24,7 @@ describe("thread UI", () => {
         fireEvent.click(slot.getByRole("button", { name: "Send as you" }));
         await waitFor(() => expect(mutate).toHaveBeenCalledTimes(1));
         await slot.findByText("Answered");
+        expect(slot.getByText("answered from a client Tavern could not attribute")).toBeTruthy();
         slot.lifecycle.unmount();
     });
     it("surfaces a visible note field on a decision, sends the note, and shows it on the receipt", async () => {

@@ -21,7 +21,6 @@ export const QUEST_TRANSITIONS: readonly Row[] = [
   ...rows(["closing"], ["done"], "conclude", ["user"], "ask-answer", "quest.wrapped"),
   ...rows(["scout", "greenlight", "build", "held", "closing"], ["stopping"], "stop", ["user"], "user-act", "quest.stopping"),
   ...rows(["stopping"], ["stopped"], "stopped", ["tavern"], "members-stopped", "quest.stopped"),
-  ...rows(["done", "stopped"], ["scout", "build"], "reopen", ["user"], "user-act", "quest.reopened"),
   ...rows(["done", "stopped"], ["scout", "build"], "reopen", ["agent"], "user-message", "quest.reopened"),
   ...rows(["scout", "greenlight", "build"], ["held"], "hold", ["user"], "user-act", "quest.held"),
   ...rows(["scout", "greenlight", "build"], ["held"], "hold", ["agent"], "user-message", "quest.held"),
@@ -39,7 +38,7 @@ export function partyFits(plan: Plan, approved: Plan) {
 }
 export function approvedPartyReceipt(store: KeeperStore, quest: BoardQuest): { kind: string; id: string } | null {
   if (quest.greenlitVersion === null) return null;
-  const ask = store.query("asks", "boardQuestId", quest.id, 500).find(ask => ask.kind === "greenlight" && ask.answer?.by === "user" && ask.answer.optionId === "approve" && store.get("askMeta", ask.id)?.planVersion === quest.greenlitVersion);
+  const ask = store.query("asks", "boardQuestId", quest.id, 500).find(ask => ask.kind === "greenlight" && ask.answer?.by === "user" && ask.answer.optionId === "approve" && ask.effect?.type === "greenlight" && ask.effect.planVersion === quest.greenlitVersion);
   if (ask) return { kind: "ask-answer", id: ask.id };
   const decision = store.query("decisions", "boardQuestId", quest.id, 500).find(decision => {
     const approval = store.get("autoGreenlights", decision.id);
@@ -70,6 +69,7 @@ export function transitionQuest(store: KeeperStore, quest: BoardQuest, to: Phase
     const { current, from, row } = assertQuestTransition(store, quest, to, cause, actor, receipt, options);
     const result: BoardQuest = { ...(current ?? quest), ...options.patch, phase: to, updatedAt: at, ...(to === "held" ? { held: { from: from as "scout" | "greenlight" | "build", since: at } } : {}) };
     if (to !== "held") delete result.held;
+    if (to === "done" || to === "stopping" || to === "stopped") result.reviewAllowance = result.reviewAllowance?.filter(grant => grant.usedBy !== null);
     const cursors = { ...store.runtime(quest.keeperThreadId).heldNewsCursors };
     if (to === "held") cursors[quest.id] = { cursor: cursors[quest.id]?.cursor ?? store.eventSequence(quest.keeperThreadId) };
     if (from === "held" && !cursors[quest.id]) {

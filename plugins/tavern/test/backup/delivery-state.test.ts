@@ -14,9 +14,9 @@ function fixture(empty = false) {
   return { ...f, records: new BackupRecords(f.k.store.db, settings, f.time) };
 }
 function seed(f: ReturnType<typeof fixture>, state: TickBatch["state"] = "prepared") {
-  const ask = f.k.ask("lead", { kind: "blocker", question: "Old update delivery is uncertain", why: "The old host did not confirm the update.",
+  const ask = f.k.ask("lead", { effect: {type:"answer-blocker"}, kind: "blocker", question: "Old update delivery is uncertain", why: "The old host did not confirm the update.",
     options: [{ id: "retry", label: "Check", detail: "Check delivery", recommended: true }], meanwhile: "Other work continues.", holds: [] });
-  const other = f.k.ask("lead", { kind: "blocker", question: "An unrelated question", why: "Keep this question.",
+  const other = f.k.ask("lead", { effect: {type:"answer-blocker"}, kind: "blocker", question: "An unrelated question", why: "Keep this question.",
     options: [{ id: "wait", label: "Wait", detail: "Wait", recommended: true }], meanwhile: "Other work continues.", holds: [] });
   f.k.store.patch("lead", { cursor: 0, tickDeliveryAskId: ask.id, tickRefusalCount: 2, queuedTickResetId: "old-reset" });
   const batch: TickBatch = { id: "tick_f00d", threadId: "lead", text: "[Tavern tick] id=tick_f00d\nOLD UPDATE MUST NOT REPLAY", cursor: 9, reportIds: [],
@@ -115,7 +115,7 @@ describe("nonportable tick delivery state", () => {
   it("does not withdraw another Keeper's ask through a stale delivery reference", () => {
     const source = fixture(), { ask } = seed(source);
     source.k.bind("other", "keeper", "moss", "project");
-    const otherAsk = source.k.ask("other", { kind: "blocker", question: "Other Keeper's question", why: "Keep this question.",
+    const otherAsk = source.k.ask("other", { effect: {type:"answer-blocker"}, kind: "blocker", question: "Other Keeper's question", why: "Keep this question.",
       options: [{ id: "wait", label: "Wait", detail: "Wait", recommended: true }], meanwhile: "Other work continues.", holds: [] });
     source.k.store.patch("lead", { tickDeliveryAskId: otherAsk.id });
     const target = fixture(true); target.records.restore(legacy(source));

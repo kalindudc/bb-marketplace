@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { taleResultsSchema } from "./tale-results";
 import { classScopeSchema, scopeOverrideSchema } from "../scope/schema";
 import { CLASS_BODY_LIMIT } from "./class-rules";
 import { LOOK_BUILDS, LOOK_HAIRS, LOOK_HAIR_COLOURS, LOOK_HATS, LOOK_LIGHTS, LOOK_SKINS } from "./look";
@@ -357,6 +358,7 @@ export const boardQuestSchema = z.object({
   stopReason: z.string().trim().max(500).nullable().optional(),
   stoppingSince: epochMs.nullable().optional(),
   stopHireAskId: id.nullable().optional(),
+  reviewAllowance: z.array(z.object({ id, surface: z.string(), at: epochMs, usedBy: z.string().nullable() })).optional(),
   deletedAt: epochMs.nullable().optional(),
   /** Set when the user archived a returned or stopped quest: hidden from the common room, kept in the archive. */
   archivedAt: epochMs.nullable().default(null),
@@ -373,7 +375,21 @@ export const askOptionSchema = z.object({
   recommended: z.boolean().default(false),
 });
 
+export const askEffectSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("greenlight"), planVersion: z.number().int().nonnegative() }),
+  z.object({ type: z.literal("conclude"), draft: z.object({ outcome: z.string(), left: z.string(), skipped: z.array(z.object({ waypointId: z.string(), reason: z.string() })).optional(), next: z.array(z.string()).optional(), results: taleResultsSchema.optional() }) }),
+  z.object({ type: z.literal("release-hold"), holdId: id }),
+  z.object({ type: z.literal("retry-stop"), memberThreadId: threadId.optional(), hireTokens: z.array(z.string()).optional() }),
+  z.object({ type: z.literal("retry-brief"), threadId, briefId: id }),
+  z.object({ type: z.literal("grant-scope"), memberThreadId: threadId }),
+  z.object({ type: z.literal("scope-blocker"), memberThreadId: threadId }),
+  z.object({ type: z.literal("detection-hire"), binding: z.object({ fingerprint: z.string(), providerId: z.string(), model: z.string(), characterId: z.string().nullable(), displayName: z.string(), token: z.string().optional() }) }),
+  ...(["retry-provider", "retry-tick", "answer-blocker", "decision"] as const).map(type => z.object({ type: z.literal(type) })),
+]);
+export type AskEffect = z.infer<typeof askEffectSchema>;
 export const askSchema = z.object({
+  effect: askEffectSchema.optional(),
+  reversible: z.boolean().optional(),
   releaseHoldId: id.optional(),
   // added by Builder B: scope consent must show the exact grants, override, member and trusted repository, not a truncated summary.
   scopeChange: z.object({ memberThreadId: threadId, override: scopeOverrideSchema, widenings: z.array(z.string()), reason: z.string(), projectRoot: z.string().optional(), remotes: z.array(z.string()).optional(), pushRemote: z.string().optional() }).optional(),
@@ -398,6 +414,7 @@ export const askSchema = z.object({
   withdrawnCause: z.enum(["quest-stopped", "quest-returned", "plan-superseded", "keeper-archived", "turn-recovered", "scope-cleared", "backup-restored", "conclude-stale-at-upgrade"]).nullable().optional(),
   answer: z
     .object({
+      surface: z.string().optional(),
       optionId: z.string(),
       note: z.string().max(2000).nullable(),
       by: z.enum(["user", "default"]),
@@ -411,8 +428,8 @@ export type Ask = z.infer<typeof askSchema>;
 
 /** A call recorded in the ledger. Reversible calls the Keeper made alone show under "Decided for you" with an Undo. */
 export const decisionSchema = z.object({
-  // added by Builder B: an explicit reversible decision can authorize one review-budget exception.
-  reviewBudgetOverride: z.boolean().optional(),
+  exceeds: z.enum(["party", "rangers"]).optional(),
+  usedBy: z.string().nullable().optional(),
   // added by Builder B: acknowledgement is cross-device display state; missing means unseen.
   seenAt: epochMs.nullable().optional(),
   id,

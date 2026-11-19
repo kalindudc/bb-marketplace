@@ -89,7 +89,7 @@ describe("Re-check load, last reply and paused ticks", () => {
         "lead",
       );
     for (let i = 0; i < 6; i++)
-      f.k.ask("lead", {
+      f.k.ask("lead", { effect: {type:"decision"},
         boardQuestId: ids[i % 4],
         kind: "decision",
         question: pad(`ASK-${i}-END`, 300),

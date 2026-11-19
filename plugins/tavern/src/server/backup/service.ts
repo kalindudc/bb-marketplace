@@ -1,3 +1,5 @@
+import { commitUserAct, type UserActReceipt } from "../authority";
+import { KeeperStore } from "../keeper/store";
 import { lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { arch, hostname, platform } from "node:os";
 import { basename, dirname, join } from "node:path";
@@ -264,7 +266,7 @@ export class BackupService {
     const result: BackupRestore = { code: problems.length ? "invalid" : "preview", previewHash, settings: { changes: parsed?.changes ?? [] }, ...(filtered ? { skippedForgeProfiles: filtered.skipped } : {}), files: targets.map(target => ({ path: target.path, kind: target.kind, action: target.before === target.text ? "same" : target.before === null ? "add" : "change" })), records, problems };
     return { result, targets, parsed, revision: settings.revision, data };
   }
-  async restore(input: { from: { name: string } | { bundle: string }; apply: boolean; previewHash?: string }): Promise<BackupRestore> {
+  async restore(input: { from: { name: string } | { bundle: string }; apply: boolean; previewHash?: string }, receipt?: UserActReceipt): Promise<BackupRestore> {
     const invalid = (error: unknown): BackupRestore => ({ code: "invalid", previewHash: "", settings: { changes: [] }, files: [], records: { action: "none", counts: {}, reason: null }, problems: [problem(error)] });
     try {
       const request = backupContract.backupRestore.input.parse(input);
@@ -274,7 +276,7 @@ export class BackupService {
       if (request.previewHash !== plan.result.previewHash) return { ...plan.result, code: "stale" };
       const written: Target[] = [];
       try {
-        this.options.settings.atomic(() => {
+        commitUserAct(new KeeperStore(this.options.settings.db), () => this.options.settings.now(), receipt, () => this.options.settings.atomic(() => {
           if (plan.result.records.action === "restore" && plan.data) this.records.restore(plan.data);
           for (const target of plan.targets) {
             const latest = this.target(target.logical, target.text, target.kind);
@@ -284,7 +286,7 @@ export class BackupService {
           }
           this.options.registry.invalidate();
           if (plan.parsed) this.options.settings.replace(plan.parsed.user, plan.parsed.pinned, plan.parsed.tuned, plan.revision, "Restored Tavern backup");
-        });
+        }));
       } catch (error) {
         const rollbackProblems: string[] = [];
         for (const target of written.reverse()) {

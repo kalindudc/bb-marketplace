@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { concludeQuest } from "./support";
+
 import { seedQuest } from "./support";
 import { describe, expect, it, vi } from "vitest";
 import { makeMessageDispatchHookContext } from "@get-bb/plugin-sdk/testing";
@@ -17,11 +17,19 @@ async function fixture(endState: "drafts-ready" | "pause" = "drafts-ready", allo
   f.k.answerAsk(f.k.asks("lead")[0]!.id, "approve", null, "page", "user");
   f.k.bind("child", "smith", "vale", "project", { keeperThreadId: "lead", boardQuestId: q.id, waypointId: "w1", errand: false, title: "Draft", displayName: "Vale", brief: { outcome: "Draft", mode: "make-it-work", doneWhen: "Tests pass", outOfScope: "Production", context: [], questions: [], timeboxMinutes: null } });
   f.port.linkedEntries = () => [{ ...waypointEntry("child", q.id), status: "verified" }];
-  const ask = f.k.ask("lead", { boardQuestId: q.id, kind: "production", question: "Publish later?", why: "Needs you", options: [{ id: "wait", label: "Wait", detail: "Wait for return", recommended: true }], meanwhile: "Private drafts", holds: [] });
+  const ask = f.k.ask("lead", { effect: {type:"decision"}, boardQuestId: q.id, kind: "production", question: "Publish later?", why: "Needs you", options: [{ id: "wait", label: "Wait", detail: "Wait for return", recommended: true }], meanwhile: "Private drafts", holds: [] });
   await f.runtime.away.close({ revision: 0, until: f.time() + 60_000, quests: [{ questId: q.id, endState }], allowWatched });
   return { ...f, q, ask, archive };
 }
-describe("Closing time internal wrapping", () => {
+async function concludeQuest(runtime: TavernRuntime, ...args: Parameters<TavernRuntime["wrap"]>) {
+  const [threadId, id] = args;
+  if (runtime.keeper.quest(id).phase === "done") return runtime.wrap(...args);
+  const opened = await runtime.proposeWrap(...args);
+  const ask = runtime.keeper.store.get("asks", opened.askId!)!;
+  runtime.keeper.store.put("asks", ask.id, { ...ask, state: "answered", answer: { optionId: "conclude", note: null, by: "user", via: "page", at: runtime.keeper.now(), surface: "client (unattested)" } });
+  return runtime.wrap(...args);
+}
+describe("Closing time cleanup of a previously answered conclusion", () => {
   it("returns a finished draft and closes its asks without archiving members while closed", async () => {
     const f = await fixture();
     expect(await concludeQuest(f.runtime, "lead", f.q.id, "Draft tested", "Publication waits")).toEqual({ pendingArchives: ["child"] });

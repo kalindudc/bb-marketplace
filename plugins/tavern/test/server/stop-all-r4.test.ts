@@ -83,9 +83,9 @@ describe("R4 brake regressions", () => {
     await handlers.stopAll({}, { experimental_caller: { kind: "plugin", pluginId: "other" } } as never);
     expect(f.runtime.stopAll.reason()).toContain("plugin other");
     const resumed = handlers.resumeAll({}, client as never);
-    expect(resumed).toHaveProperty("resumeReceipt.surface", "client RPC (unattested)");
+    expect(resumed).toHaveProperty("resumeReceipt.surface", "client (unattested)");
     expect(resumed).toHaveProperty("resumeReceipt.notice", "Tavern can't prove a person pressed Resume");
-    expect(f.k.store.events().find(e => e.type === "tavern.resumed")).toMatchObject({ actor: { kind: "tavern" }, data: { surface: "client RPC (unattested)" } });
+    expect(f.k.store.events().find(e => e.type === "tavern.resumed")).toMatchObject({ actor: { kind: "tavern" }, data: { surface: "client (unattested)" } });
   });
   it("closes incomplete receipt collection and holds pending releases, archives and quest stops across restart", async () => {
     const f = setup(), q = await seedQuest(f.k, "lead", "Hold", "Draft");

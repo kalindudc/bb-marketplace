@@ -45,7 +45,7 @@ async function fixture() {
   const plan = planInput(q.id);
   k.plan("lead", { ...plan, waypoints: [...plan.waypoints, { ...plan.waypoints[0]!, id: "w2", title: "Outside contact", actor: "outside", owner: "Other team" }] });
   k.bind("member", "ranger", "pip", "project", { keeperThreadId: "lead", boardQuestId: q.id, waypointId: null, errand: true, title: "Scout", brief: { outcome: "Read", mode: "make-it-work", outOfScope: "Changes", doneWhen: "Answer", context: [], questions: [], timeboxMinutes: null } });
-  const ask = k.ask("lead", { kind: "decision", question: "Which reversible draft?", why: "Your choice", options: [{ id: "yes", label: "First draft", detail: "", recommended: false }], meanwhile: "Read", holds: [] });
+  const ask = k.ask("lead", { effect: {type:"decision"}, kind: "decision", question: "Which reversible draft?", why: "Your choice", options: [{ id: "yes", label: "First draft", detail: "", recommended: false }], meanwhile: "Read", holds: [] });
   const decision = k.decide("lead", { text: "Use a private draft", why: "Reversible", reversible: true, source: "keeper" });
   const rule = k.addRule({ scope: "keeper", scopeId: "lead", text: "Do not publish", source: "user" });
   const route = routeSchema.parse({ id: "route_sparse", keeperThreadId: "lead", messageKey: "sparse", messageAt: Date.now(), kind: "aside", boardQuestId: null, boardQuestIds: [], summary: "A short answer", corrected: false, createdAt: Date.now() });
@@ -147,6 +147,7 @@ it("returns strict JSON from EVERY registered RPC with optional record fields ab
     addRule: () => call("addRule", { scope: "keeper", scopeId: "lead", text: "Keep drafts private", source: "user" }),
     confirmRule: () => call("confirmRule", { ruleId: f.rule.id, active: true }),
     widenRule: () => call("widenRule", { ruleId: f.rule.id, scope: "global" }),
+    allowReview: () => call("allowReview", { id: f.q.id }),
     holdBoardQuest: () => call("holdBoardQuest", { id: f.q.id }),
     resumeBoardQuest: () => call("resumeBoardQuest", { id: f.q.id }),
     stopBoardQuest: () => call("stopBoardQuest", { id: f.q.id }),

@@ -6,7 +6,7 @@ import { setup } from "./runtime-fixture";
 import { makeThreadResponse } from "./host";
 
 function ask(f: ReturnType<typeof setup>, keeperId = "lead", boardQuestId: string | null = null) {
-  return f.k.ask(keeperId, { boardQuestId, kind: "decision", question: "Use the private draft?", why: "A reversible choice", options: [{ id: "yes", label: "Use it", detail: "", recommended: true }], meanwhile: "Keep reading", holds: [], reversible: true, proceedInMinutes: 1 });
+  return f.k.ask(keeperId, { effect: {type:"decision"}, boardQuestId, kind: "decision", question: "Use the private draft?", why: "A reversible choice", options: [{ id: "yes", label: "Use it", detail: "", recommended: true }], meanwhile: "Keep reading", holds: [], reversible: true, proceedInMinutes: 1 });
 }
 describe("archived Keeper asks", () => {
   it("withdraws every open ask with an attributed receipt, preserving answered history and other Keepers", async () => {

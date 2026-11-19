@@ -51,8 +51,7 @@ export async function concludeQuest(runtime: import("../../src/server/runtime").
   if (quest.phase === "done") return runtime.wrap(...args);
   if (quest.phase === "greenlight") runtime.keeper.answerAsk(runtime.keeper.store.openAsks(threadId, id).find(ask => ask.kind === "greenlight")!.id, "approve", null, "page", "user");
   const ask = await runtime.proposeWrap(...args);
-  runtime.keeper.answerAsk(ask.askId!, "conclude", null, "page", "user");
-  return runtime.wrap(...args);
+  return runtime.answerAsk(ask.askId!, "conclude", null, "page", true);
 }
 export function planInput(boardQuestId: string) {
   return {

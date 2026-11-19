@@ -1,4 +1,5 @@
 // @vitest-environment node
+import type { ExperimentalPluginRpcHandlerContext } from "@get-bb/plugin-sdk";
 import { concludeQuest, putQuestFixture } from "./support";
 import { seedQuest } from "./support";
 import { expect, it } from "vitest";
@@ -18,7 +19,7 @@ async function fixture() {
 }
 it("wrap withdraws every open ask without an away window and never defaults it", async () => {
   const f = await fixture();
-  const ask = f.k.ask("lead", { ...askInput, boardQuestId: f.q.id, proceedInMinutes: 1 });
+  const ask = f.k.ask("lead", { effect: {type:"decision"}, ...askInput, boardQuestId: f.q.id, proceedInMinutes: 1 });
   await f.wrap();
   expect(f.k.store.get("asks", ask.id)?.state).toBe("withdrawn");
   f.advance(120_000);
@@ -46,7 +47,7 @@ it.each(["done", "stopped", "stopping"] as const)("all Keeper write paths refuse
   const f = await fixture();
   putQuestFixture(f.k.store, f.q.id, { ...f.k.quest(f.q.id), phase });
   const actions = [
-    () => f.k.ask("lead", { ...askInput, boardQuestId: f.q.id }),
+    () => f.k.ask("lead", { effect: {type:"decision"}, ...askInput, boardQuestId: f.q.id }),
     () => f.k.decide("lead", { boardQuestId: f.q.id, text: "Do it", why: "Small", reversible: true, source: "keeper" }),
     () => f.k.memory.note("lead", { boardQuestId: f.q.id, kind: "commitment", text: "Later", dueAt: f.time() + 1000 }),
     () => f.k.memory.gate("lead", { boardQuestId: f.q.id, waypointId: "w1", askedWho: "Human", via: "chat" }),
@@ -84,6 +85,6 @@ it("archive and journal housekeeping do not resume a manually stopped Keeper", a
   f.k.store.patch("lead", { manualStopAt: f.time() });
   f.k.archiveQuests([f.q.id], true, { kind: "user" });
   expect(f.k.store.runtime("lead").manualStopAt).toBe(f.time());
-  await rpcHandlers(f.runtime).journalEdit({ threadId: "child", edit: { op: "add", descriptions: ["Keep notes"], parentId: null } });
+  await rpcHandlers(f.runtime).journalEdit({ threadId: "child", edit: { op: "add", descriptions: ["Keep notes"], parentId: null } }, { experimental_caller: { kind: "client" } } as ExperimentalPluginRpcHandlerContext);
   expect(f.k.store.runtime("lead").manualStopAt).toBe(f.time());
 });

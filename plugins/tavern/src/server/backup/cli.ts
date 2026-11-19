@@ -1,4 +1,6 @@
 import { cliCommand } from "@get-bb/plugin-sdk";
+import { terminalUserAct } from "../authority";
+import { KeeperStore } from "../keeper/store";
 import { backupPartSchema } from "../../shared/backup";
 import { FORGE_SETTINGS_PAGE_ONLY } from "../settings/forge-cli";
 import { LIMITS } from "../limits";
@@ -53,11 +55,14 @@ export function backupCommands(service: BackupService) {
         if (input.options.apply && ctx.threadId) return failure(json, "forbidden", "Agents can save, export and preview backups, but cannot restore global configuration or data. Apply from an ordinary terminal or the settings page.", 2);
         if ((input.positionals.name !== undefined) === (input.options.bundle !== undefined)) return failure(json, "invalid", "Choose exactly one backup name or --bundle JSON.", 2);
         const from = input.positionals.name !== undefined ? { name: input.positionals.name } : { bundle: input.options.bundle! };
+        const restore = (request: Parameters<BackupService["restore"]>[0]) => request.apply
+          ? terminalUserAct(ctx, "backupRestore", new KeeperStore(service.options.settings.db), () => service.options.settings.now(), receipt => service.restore(request, receipt))
+          : service.restore(request);
         let result;
-        if (input.options.apply && input.options["preview-hash"]) result = await service.restore({ from, apply: true, previewHash: input.options["preview-hash"] });
+        if (input.options.apply && input.options["preview-hash"]) result = await restore({ from, apply: true, previewHash: input.options["preview-hash"] });
         else {
           result = await service.restore({ from, apply: false });
-          if (input.options.apply && result.code === "preview") result = await service.restore({ from, apply: true, previewHash: result.previewHash });
+          if (input.options.apply && result.code === "preview") result = await restore({ from, apply: true, previewHash: result.previewHash });
         }
         return emit({ ...result, notice: FORGE_SETTINGS_PAGE_ONLY }, json, result.code === "stale" ? 3 : result.code === "invalid" ? 2 : 0);
       }),

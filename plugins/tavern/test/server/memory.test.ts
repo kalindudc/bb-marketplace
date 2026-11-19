@@ -153,7 +153,7 @@ describe("durable Keeper memory", () => {
   });
   it("supports clarification asks without a default", async () => {
     const f = await goal();
-    const ask = f.k.ask("lead", {
+    const ask = f.k.ask("lead", { effect: {type:"decision"},
       kind: "decision",
       question: "What should become faster?",
       why: "The target is ambiguous",

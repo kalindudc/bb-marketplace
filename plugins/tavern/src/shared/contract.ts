@@ -432,6 +432,9 @@ export const rpcContract = defineContract({
     input: z.object({ ruleId: id, scope: z.enum(["global", "project", "keeper"]) }).strict(),
     output: ok,
   },
+  allowReview: {
+    input: z.object({ id }).strict(), output: ok,
+  },
   holdBoardQuest: {
     input: z.object({ id }).strict(), output: boardQuestSchema,
   },

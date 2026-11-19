@@ -27,10 +27,12 @@ it("keeps an explicit member rule unchanged through settings parsing", () => {
 it("contains no machine provider or private forge integration in source", () => {
   const walk = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap(entry => entry.isDirectory() ? walk(join(dir, entry.name)) : [join(dir, entry.name)]);
   const forbidden = /\baquifer\b|delta\.shopify|github\.com\/Shopify|shop\/world|\bWorld\b|["']dt (?:pr|deploy|status)\b/i;
+  const animationWorldFiles = ["ui/engine/avatar.tsx", "ui/engine/scheduler.ts", "ui/engine/strip.tsx", "ui/kit/characters.tsx", "ui/kit/README.md"].map(path => join(import.meta.dirname, "../../src", path));
   const matches = walk(join(import.meta.dirname, "../../src")).filter(path => {
     if (!/\.(?:ts|tsx|md|css)$/.test(path)) return false;
     const source = readFileSync(path, "utf8");
-    let checked = source;
+    // These animation files use lowercase world for scene state, not a machine provider.
+    let checked = animationWorldFiles.includes(path) ? source.replaceAll(/\bworld\b/g, "scene") : source;
     if (path === join(import.meta.dirname, "../../src/scope/acts.ts")) {
       // The scope catalogue classifies these command names; they are not provider coupling.
       checked = checked.replaceAll(/(?<![\w-])aquifer-machines(?![\w-])/g, "classified-command");

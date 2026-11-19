@@ -61,9 +61,9 @@ describe("live settings integration", () => {
     const f = fixture(), push = vi.spyOn(f.bb.sdk.plugins, "callRpc");
     const input = { reversible: true, kind: "decision" as const, question: "Use a small fixture?", why: "Reversible",
       options: [{ id: "small", label: "Small", detail: "", recommended: true }], meanwhile: "Keep scouting", holds: [] };
-    f.k.ask("lead", input); await Promise.resolve(); expect(push).not.toHaveBeenCalled();
+    f.k.ask("lead", { ...input, effect: { type: "decision" } }); await Promise.resolve(); expect(push).not.toHaveBeenCalled();
     f.settings.update({ revision: 0, patch: { attention: { notify: "all" } }, why: "Notify for all asks" });
-    const ask = f.k.ask("lead", { ...input, question: "Use the second fixture?" });
+    const ask = f.k.ask("lead", { effect: {type:"decision"}, ...input, question: "Use the second fixture?" });
     await vi.waitFor(() => expect(push).toHaveBeenCalledTimes(1));
     await f.runtime.push("lead", ask.question, ask.why, ask.id); expect(push).toHaveBeenCalledTimes(1);
   });

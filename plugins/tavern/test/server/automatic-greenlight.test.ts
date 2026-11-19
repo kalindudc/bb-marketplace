@@ -68,7 +68,7 @@ describe("Explicitly selected by-size greenlights", () => {
       policy(f);
       const q = await seedQuest(f.k,"lead", "Small", "Small");
       if (condition === "ask")
-        f.k.ask("lead", {
+        f.k.ask("lead", { effect: {type:"decision"},
           question: "Clarify?",
           why: "Unresolved",
           kind: "decision",

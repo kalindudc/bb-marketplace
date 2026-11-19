@@ -12,7 +12,7 @@ import { planInput } from "./support";
 import { makeThreadResponse } from "./host";
 
 function ask(f: ReturnType<typeof setup>, boardQuestId: string | null) {
-  return f.k.ask("lead", {
+  return f.k.ask("lead", { effect: {type:"decision"},
     boardQuestId, kind: "decision", question: "Use the private draft?", why: "Your choice",
     options: [{ id: "yes", label: "Use it", detail: "", recommended: true }],
     meanwhile: "Keep reading", holds: [], reversible: true,

@@ -79,12 +79,6 @@ export interface Records {
   voiceChecks: VoiceCheck & { threadIds: string[] };
   voiceCheckParent: { threadId: string; ready: boolean; createdAt: number; muted?: boolean };
   voiceCheckUnreachable: { providerId: string; model: string; at: number; detail: string };
-  reviewPermits: {
-    keeperThreadId: string;
-    token: string;
-    decisionId: string;
-    usedAt: number;
-  };
 }
 export interface ScopeRequest {
   keeperThreadId: string;
@@ -133,7 +127,7 @@ export interface HireIntent {
   scopeResolution?: ScopeResolution | null;
   scopeOverride?: ScopeOverride;
   scopePrepared?: boolean;
-  reviewDecisionId?: string;
+  limitDecisionIds?: string[];
   guardApprovalAskId?: string;
   staffing?: StaffingReservation;
   classId: string;
@@ -307,6 +301,7 @@ const initialRuntime = (): Runtime => ({
   lastStrikeAt: null,
 });
 
+import { legacyAskEffect } from "../ask-effects";
 import { consumesQuestWrite } from "./quest-lifecycle";
 
 export class KeeperStore {
@@ -317,11 +312,20 @@ export class KeeperStore {
   id(prefix: string) {
     return `${prefix}_${randomUUID()}`;
   }
+  private decode<K extends keyof Records>(kind: K, data: string): Records[K] {
+    const record = JSON.parse(data);
+    if (kind === "asks" && (!record.effect || record.reversible === undefined)) {
+      const meta = this.get("askMeta", record.id);
+      record.effect ??= legacyAskEffect(record, meta, this.runtime(record.keeperThreadId));
+      record.reversible ??= meta?.reversible === true;
+    }
+    return record;
+  }
   get<K extends keyof Records>(kind: K, id: string): Records[K] | null {
     const row = this.db
       .prepare("SELECT data FROM tavern_records WHERE kind=? AND id=?")
       .get(kind, id) as { data: string } | undefined;
-    return row === undefined ? null : (JSON.parse(row.data) as Records[K]);
+    return row === undefined ? null : (this.decode(kind, row.data));
   }
   query<K extends keyof Records>(
     kind: K,
@@ -334,7 +338,7 @@ export class KeeperStore {
         `SELECT data FROM tavern_records WHERE kind=? AND json_extract(data, '$.${field}')=? ORDER BY rowid DESC LIMIT ?`,
       )
       .all(kind, value, limit) as { data: string }[];
-    return rows.map((row) => JSON.parse(row.data) as Records[K]).reverse();
+    return rows.map((row) => this.decode(kind, row.data)).reverse();
   }
   hireForMember(memberThreadId: string): (HireIntent & { id: string }) | null {
     const row = this.db.prepare(
@@ -447,7 +451,7 @@ export class KeeperStore {
       ) as {
       data: string;
     }[];
-    return rows.map((row) => JSON.parse(row.data) as Records[K]);
+    return rows.map((row) => this.decode(kind, row.data));
   }
   archivedQuestCount(keeperThreadId?: string) {
     const row = this.db
@@ -540,7 +544,7 @@ export class KeeperStore {
            ORDER BY r.rowid LIMIT 500`,
         )
         .all(...args) as { data: string }[]
-    ).map((row) => JSON.parse(row.data) as Ask);
+    ).map((row) => this.decode("asks", row.data));
   }
   activeRules(
     keeperId: string,
@@ -607,7 +611,7 @@ export class KeeperStore {
         .all(kind, limit) as { data: string }[]
     )
       .reverse()
-      .map((row) => JSON.parse(row.data) as Records[K]);
+      .map((row) => this.decode(kind, row.data));
   }
   messageText(receiptId: string) {
     return (
@@ -704,7 +708,7 @@ export class KeeperStore {
         .all(kind) as {
         data: string;
       }[]
-    ).map((row) => JSON.parse(row.data) as Records[K]);
+    ).map((row) => this.decode(kind, row.data));
   }
   put<K extends keyof Records>(kind: K, id: string, data: Records[K]) {
     if (kind === "quests") {

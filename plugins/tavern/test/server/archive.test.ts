@@ -36,7 +36,7 @@ describe("finished board quest archive", () => {
     const f = fixture();
     const live = await f.quest("Live goal", "scout");
     const done = await f.quest("Returned goal", "scout");
-    f.k.ask("lead", {
+    f.k.ask("lead", { effect: {type:"decision"},
       boardQuestId: done.id,
       kind: "decision",
       question: "Old question",

@@ -1,4 +1,6 @@
-import type { BbPluginApi, PluginRpcHandlers } from "@get-bb/plugin-sdk";
+import { LimitPolicy } from "./limit-policy";
+import { userActHandlers, requireUserAct, type OptionalRpcContext, commitUserAct, type UserActReceipt } from "./authority";
+import type { BbPluginApi, ExperimentalPluginRpcHandlersWithContext } from "@get-bb/plugin-sdk";
 import {
   DECOR_BRIEF_CONTEXT_MAX,
   rpcContract,
@@ -16,7 +18,7 @@ import { stopAllHandlers } from "./stop-all-rpc";
 import { placementHandlers } from "./placement/rpc";
 import { PlacementStore } from "./placement/store";
 import { voiceCheckHandlers } from "./voice-check/rpc";
-import { awayHandlers, requireAwayClient } from "./away/rpc";
+import { awayHandlers } from "./away/rpc";
 import { classEditorHandlers, requireClassClient } from "./registry-rpc";
 import { classExecutionFacts } from "./class-execution";
 import { experimental_PluginRpcRefusal, type ExperimentalPluginRpcHandlerContext } from "@get-bb/plugin-sdk";
@@ -36,7 +38,7 @@ function decorBrief(brief: Brief | null | undefined) {
 
 export function rpcHandlers(
   runtime: TavernRuntime,
-): PluginRpcHandlers<typeof rpcContract> {
+): OptionalRpcContext<ExperimentalPluginRpcHandlersWithContext<typeof rpcContract>> {
   const k = runtime.keeper;
   const placementStore = new PlacementStore(k.store.db);
   const projectMember = (member: import("../shared/schema").Member) => ({ ...member,
@@ -79,7 +81,7 @@ export function rpcHandlers(
   const invalidateCharacter = () => runtime.bb.rpc.experimental_invalidate([
     tags.registry(), tags.rows(), tags.room(), ...k.store.all("members").map(m => tags.thread(m.threadId)),
   ]);
-  return {
+  return userActHandlers({
     ...stopAllHandlers(runtime),
     ...placementHandlers(runtime),
     ...voiceCheckHandlers(() => runtime.voiceChecks),
@@ -118,7 +120,7 @@ export function rpcHandlers(
         hire: await classExecutionFacts(runtime, { classId: role.id, projectId, mode: "hire" }, snapshot),
       }))) };
     },
-    applyClassExecution: async ({ threadId }: { threadId: string }, context?: ExperimentalPluginRpcHandlerContext) => {
+    applyClassExecution: async ({ threadId }: { threadId: string }, context?: ExperimentalPluginRpcHandlerContext, receipt?: UserActReceipt) => {
       requireClassClient(context);
       const requested = k.store.runtime(threadId).classNotice?.switchExecution;
       if (!requested) throw new Error("There is no class execution change to apply.");
@@ -128,7 +130,7 @@ export function rpcHandlers(
       const applied = await runtime.bb.sdk.threads.defaultExecutionOptions({ threadId });
       if (!applied || Object.entries(requested).some(([key, value]) => applied[key as "model" | "reasoningLevel"] !== value))
         throw new Error("bb did not apply the class model and reasoning. The notice was kept; check the thread’s execution settings.");
-      k.store.patch(threadId, { classNotice: null });
+      commitUserAct(k.store, () => k.now(), receipt, () => k.store.patch(threadId, { classNotice: null }));
       runtime.bb.rpc.experimental_invalidate([tags.thread(threadId)]);
       return { ...(applied.model ? { model: applied.model } : {}), ...(applied.reasoningLevel ? { reasoningLevel: applied.reasoningLevel } : {}) };
     },
@@ -219,9 +221,9 @@ export function rpcHandlers(
       }),
     }),
     journal: ({ threadId }) => k.journal.get(threadId),
-    journalEdit: async ({ threadId, edit }) => {
+    journalEdit: async ({ threadId, edit }, _context?: ExperimentalPluginRpcHandlerContext, receipt?: UserActReceipt) => {
       await k.journal.prepare(threadId);
-      const result = k.journal.edit(threadId, edit, { kind: "user" });
+      const result = commitUserAct(k.store, () => k.now(), receipt, () => k.journal.edit(threadId, edit, { kind: "user" }));
       k.changed(threadId, k.member(threadId)?.boardQuestId);
       return { ok: true, message: result.message };
     },
@@ -325,30 +327,23 @@ export function rpcHandlers(
         events,
       };
     },
-    holdBoardQuest: ({ id }, context?: ExperimentalPluginRpcHandlerContext) => {
-      if (context?.experimental_caller.kind !== "client") throw new experimental_PluginRpcRefusal({ code: "forbidden", message: "Holding a quest requires an explicit client action." });
-      return runtime.setQuestHeld(id, true, { kind: "user" });
+    allowReview: ({ id }, context?: ExperimentalPluginRpcHandlerContext) => new LimitPolicy(k).allowReview(id, requireUserAct(context, "allowReview").surface),
+    holdBoardQuest: ({ id }, context?: ExperimentalPluginRpcHandlerContext, receipt?: UserActReceipt) => {
+      return runtime.setQuestHeld(id, true, { kind: "user" }, undefined, receipt);
     },
-    resumeBoardQuest: ({ id }, context?: ExperimentalPluginRpcHandlerContext) => {
-      if (context?.experimental_caller.kind !== "client") throw new experimental_PluginRpcRefusal({ code: "forbidden", message: "Resuming a quest requires an explicit client action." });
-      return runtime.setQuestHeld(id, false, { kind: "user" });
+    resumeBoardQuest: ({ id }, context?: ExperimentalPluginRpcHandlerContext, receipt?: UserActReceipt) => {
+      return runtime.setQuestHeld(id, false, { kind: "user" }, undefined, receipt);
     },
     setTaleKept: (input, context?: ExperimentalPluginRpcHandlerContext) => {
-      if (context?.experimental_caller.kind !== "client") throw new experimental_PluginRpcRefusal({
-        code: "forbidden", message: "Keeping a tale requires an explicit client action; a plugin cannot set this preference.",
-      });
       return runtime.serviceRecords.setTaleKept(input);
     },
-    archiveBoardQuests: ({ ids, archived }, context?: ExperimentalPluginRpcHandlerContext) => {
-      if (context?.experimental_caller.kind !== "client") throw new experimental_PluginRpcRefusal({ code: "forbidden", message: "Changing the cellar requires an explicit client action." });
-      return runtime.archiveBoardQuests(ids, archived);
+    archiveBoardQuests: ({ ids, archived }, context?: ExperimentalPluginRpcHandlerContext, receipt?: UserActReceipt) => {
+      return runtime.archiveBoardQuests(ids, archived, receipt);
     },
-    deleteBoardQuest: ({ id }, context?: ExperimentalPluginRpcHandlerContext) => {
-      if (context?.experimental_caller.kind !== "client") throw new experimental_PluginRpcRefusal({ code: "forbidden", message: "Deleting a quest requires an explicit client action." });
-      return runtime.deleteBoardQuest(id);
+    deleteBoardQuest: ({ id }, context?: ExperimentalPluginRpcHandlerContext, receipt?: UserActReceipt) => {
+      return runtime.deleteBoardQuest(id, receipt);
     },
     restoreDeletedQuest: ({ id }, context?: ExperimentalPluginRpcHandlerContext) => {
-      if (context?.experimental_caller.kind !== "client") throw new experimental_PluginRpcRefusal({ code: "forbidden", message: "Restoring a deleted quest requires an explicit client action." });
       return { ok: true, changed: Number(k.restoreDeletedQuest(id, { kind: "user" })) };
     },
     deletedBoardQuests: ({ cursor, limit }) => {
@@ -394,22 +389,18 @@ export function rpcHandlers(
       solos: k.store.all("members").filter((m) => m.role === "solo" && isLiveMember(k.store, m, "occupy")).map(projectMember),
       recent: k.store.roomEvents(60),
     }),
-    releaseCheckerHandoff: async ({ boardQuestId, holdId, via }, context?: ExperimentalPluginRpcHandlerContext) => {
-      if (context?.experimental_caller.kind !== "client") throw new experimental_PluginRpcRefusal({
-        code: "forbidden", message: "Releasing a checker-handoff hold requires an explicit client action; a plugin cannot release it.",
-      });
+    releaseCheckerHandoff: async ({ boardQuestId, holdId, via }, context?: ExperimentalPluginRpcHandlerContext, receipt?: UserActReceipt) => {
       const quest = k.quest(boardQuestId);
       const wasHeld = quest.checkerHandoffHold?.id === holdId && quest.checkerHandoffHold.release === null;
-      const checkerHandoffHold = k.releaseCheckerHandoff(boardQuestId, holdId, via);
+      const checkerHandoffHold = commitUserAct(k.store, () => k.now(), receipt, () => k.releaseCheckerHandoff(boardQuestId, holdId, via));
       if (wasHeld) {
         await runtime.away.return({ kind: "explicit-return", threadId: quest.keeperThreadId, refId: holdId });
         wake(quest.keeperThreadId);
       }
       return { checkerHandoffHold };
     },
-    answerAsk: async ({ askId, optionId, note, via }, context?: ExperimentalPluginRpcHandlerContext) => {
-      if (runtime.away.store.snapshot().status.closed) requireAwayClient(context);
-      await runtime.answerAsk(askId, optionId, note, via, context?.experimental_caller.kind === "client");
+    answerAsk: async ({ askId, optionId, note, via }, context?: ExperimentalPluginRpcHandlerContext, receipt?: UserActReceipt) => {
+      await runtime.answerAsk(askId, optionId, note, via, context?.experimental_caller.kind === "client", receipt?.surface, receipt);
       const ask = k.store.get("asks", askId)!;
       wake(ask.keeperThreadId);
       return { ok: true };
@@ -426,8 +417,8 @@ export function rpcHandlers(
     },
     decisionHistory: ({ keeperThreadId, boardQuestId, cursor, limit }) =>
       decisions.history({ keeperThreadId, boardQuestId }, cursor, limit),
-    undoDecision: async ({ decisionId }) => {
-      await runtime.undoDecision(decisionId);
+    undoDecision: async ({ decisionId }, _context?: ExperimentalPluginRpcHandlerContext, receipt?: UserActReceipt) => {
+      await runtime.undoDecision(decisionId, receipt);
       k.userAction(k.store.get("decisions", decisionId)!.keeperThreadId);
       wake(k.store.get("decisions", decisionId)!.keeperThreadId);
       return { ok: true };
@@ -450,7 +441,7 @@ export function rpcHandlers(
       k.widenRule(ruleId, scope);
       return { ok: true };
     },
-    stopBoardQuest: ({ id, reason }) => runtime.stop(id, reason),
+    stopBoardQuest: ({ id, reason }, _context?: ExperimentalPluginRpcHandlerContext, receipt?: UserActReceipt) => runtime.stop(id, reason, receipt),
     setHidden: ({ threadId, hidden }) => {
       k.store.patch(threadId, { hidden });
       k.changed(threadId);
@@ -463,7 +454,7 @@ export function rpcHandlers(
       }
       return { ok: true };
     },
-  };
+  }, k.store, () => k.now());
 }
 export function registerRpc(bb: BbPluginApi, runtime: TavernRuntime) {
   bb.rpc.register(rpcContract, rpcHandlers(runtime));

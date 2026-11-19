@@ -242,17 +242,9 @@ describe("Memory re-check regressions", () => {
     await f.runtime.tick("lead");
     expect(sends(f)).toHaveLength(2);
   });
-  it("expires unused review-budget decisions after one day", () => {
+  it("does not turn an ordinary Keeper decision into a review allowance", () => {
     const f = setup();
-    f.k.decide("lead", {
-      text: "Exceed once",
-      why: "Thin work",
-      source: "keeper",
-      reversible: true,
-      reviewBudgetOverride: true,
-    });
-    expect(f.k.memory.reviewPermit("lead", null)).toBeTruthy();
-    f.advance(86400_001);
-    expect(f.k.memory.reviewPermit("lead", null)).toBeNull();
+    const decision = f.k.decide("lead", { text: "Exceed once", why: "Thin work", source: "keeper", reversible: true });
+    expect(decision).not.toHaveProperty("reviewBudgetOverride");
   });
 });

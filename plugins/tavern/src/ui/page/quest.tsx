@@ -24,6 +24,10 @@ import { PlacementFacts } from "../kit/placement";
 
 /** The stopping words the page and its tests share: how many stops wait on a confirmation. */
 export const stoppingWords = (unconfirmed: number) => `Stopping · ${kitStoppingWords({ stopUnconfirmed: unconfirmed })}`;
+function AllowReview({ id }: { id: string }) {
+  const action = experimental_useRpcMutation({ contract: rpcContract, method: "allowReview" });
+  return <><button type="button" className="btn" onClick={() => { void action.mutate({ id }).catch(() => {}); }}>Allow one more review</button>{action.error && <span role="alert">{action.error.message}</span>}</>;
+}
 function QuestHold({ quest }: { quest: BoardQuestSummary }) {
   const hold = experimental_useRpcMutation({ contract: rpcContract, method: "holdBoardQuest" });
   const resume = experimental_useRpcMutation({ contract: rpcContract, method: "resumeBoardQuest" });
@@ -158,6 +162,7 @@ export function QuestPage({ detail, registry, room }: { detail: BoardQuestDetail
         {finished && <CellarQuest key={quest.id} quest={quest} />}
         {keeper && status && <MemberLink member={keeper.member} registry={registry} size={28} sub={<StateMark tone={status.tone}>{status.label}</StateMark>} />}
         <ThreadButton id={quest.keeperThreadId} name={keeperName} label={keeper ? `Open ${keeperName}'s thread` : "Open the Keeper's thread"} className={finished || keeper?.archived ? "" : "pri"} quiet={finished || !!keeper?.archived} />
+        {!finished && quest.phase !== "stopping" && room && room.review.waiting >= room.review.budget && <AllowReview id={quest.id} />}
         {!finished && quest.phase !== "stopping" && quest.phase !== "closing" && <QuestHold quest={quest} />}
         {stop.button}
       </div>

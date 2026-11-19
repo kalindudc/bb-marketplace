@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { LimitPolicy } from "./limit-policy";
 import { isLiveKeeper, isLiveMember, isOpenQuest } from "./liveness";
 import { AwayRuntime } from "./away/runtime";
 import { isDeepStrictEqual } from "node:util";
@@ -117,6 +118,7 @@ type Hire = {
 type Thread = PluginThreadEventPayloads["thread.active"]["thread"];
 type QueuedMessage = PluginThreadEventPayloads["message.queued"]["entry"];
 
+import { commitUserAct, type UserActReceipt } from "./authority";
 import { transitionQuest } from "./keeper/quest-lifecycle";
 
 export class TavernRuntime {
@@ -328,10 +330,10 @@ export class TavernRuntime {
       if (ids.length) this.keeper.archiveQuests(ids, true, { kind: "tavern" });
     }
   }
-  async undoDecision(id: string) {
+  async undoDecision(id: string, receipt?: UserActReceipt) {
     const approval = this.keeper.store.get("autoGreenlights", id), decision = this.keeper.store.get("decisions", id);
-    if (!approval || !decision) { this.keeper.undoDecision(id); return; }
-    const release = this.keeper.store.atomic(() => {
+    if (!approval || !decision) { commitUserAct(this.keeper.store, () => this.keeper.now(), receipt, () => this.keeper.undoDecision(id)); return; }
+    const release = commitUserAct(this.keeper.store, () => this.keeper.now(), receipt, () => {
       const before = this.keeper.quest(approval.boardQuestId);
       this.keeper.undoDecision(id);
       const after = this.keeper.quest(approval.boardQuestId);
@@ -436,7 +438,7 @@ export class TavernRuntime {
     const member = this.keeper.member(threadId);
     if (!member?.keeperThreadId) throw new Error("An unbriefed member needs its owning Keeper");
     this.keeper.store.atomic(() => {
-      const ask = this.keeper.ask(member.keeperThreadId!, {
+      const ask = this.keeper.ask(member.keeperThreadId!, { effect: { type: "retry-brief", threadId, briefId: pending.id },
         boardQuestId: member.boardQuestId, kind: "blocker",
         question: `${this.keeper.name(member)}'s brief needs help`,
         why: `Delivery or confirmation failed after ${LIMITS.briefRetryAttempts} attempts. The member and its slot are retained. ${pending.error ?? "No acceptance receipt was found."}`,
@@ -444,7 +446,7 @@ export class TavernRuntime {
           { id: "release", label: "Release the member", detail: "Stop it and free its slot after confirmation", recommended: false }],
         holds: member.waypointId ? [member.waypointId] : [], meanwhile: "Do not hire a duplicate for this slot; other work may continue.",
       }, undefined, true);
-      this.keeper.store.put("askMeta", ask.id, { ...this.keeper.store.get("askMeta", ask.id), briefDelivery: { threadId, briefId: pending.id } });
+
       this.keeper.store.patch(threadId, { pendingBrief: { ...pending, blockerAskId: ask.id } });
       void this.push(member.keeperThreadId!, ask.question, ask.why);
     });
@@ -527,8 +529,8 @@ export class TavernRuntime {
       return { briefPending: true };
     }
   }
-  async setQuestHeld(id: string, hold: boolean, actor: Actor, messageId?: string) {
-    const quest = this.keeper.setQuestHeld(id, hold, actor, messageId);
+  async setQuestHeld(id: string, hold: boolean, actor: Actor, messageId?: string, receipt?: UserActReceipt) {
+    const quest = commitUserAct(this.keeper.store, () => this.keeper.now(), receipt, () => this.keeper.setQuestHeld(id, hold, actor, messageId));
     if (!hold) await this.retryInitialBriefs(quest.keeperThreadId);
     return quest;
   }
@@ -551,6 +553,10 @@ export class TavernRuntime {
     if (this.scopes) throw new Error("Tavern scopes are already registered");
     this.scopes = new BackendScopes(this, options);
   }
+  private detectionCharacter(askId?: string) {
+    const effect = askId ? this.keeper.store.get("asks", askId)?.effect : null;
+    return effect?.type === "detection-hire" ? effect.binding.characterId : undefined;
+  }
   scopeProjectContext(projectId: string) {
     const context = this.projectContexts.get(projectId);
     if (!context) throw new Error("Project scope policy was not prepared");
@@ -562,70 +568,63 @@ export class TavernRuntime {
     note: string | null,
     via: NonNullable<Ask["answer"]>["via"],
     clientAction = false,
+    surface = "client (unattested)",
+    receipt?: UserActReceipt,
   ) {
     if (this.away.store.snapshot().status.closed && !clientAction) throw new Error("An away ask answer needs an explicit client action.");
-    const previousAsk = this.keeper.store.get("asks", askId);
-    if (previousAsk?.releaseHoldId && !clientAction) throw new Error("Releasing a checker-handoff hold requires an explicit client action; the Keeper cannot answer it.");
-    const previousState = previousAsk?.state;
-    const metadata = this.keeper.store.get("askMeta", askId);
-    const brief = metadata?.briefDelivery;
-    let archiveMembers: Member[] = [];
-    this.keeper.store.atomic(() => {
-      this.keeper.answerAsk(askId, optionId, note, via, "user");
-      if (previousState === "open" && previousAsk?.kind === "conclude" && previousAsk.boardQuestId) {
+    const ask = this.keeper.store.get("asks", askId);
+    if (!ask) throw new Error("Unknown ask");
+    if (ask.effect?.type === "release-hold" && !clientAction) throw new Error("Releasing a checker-handoff hold requires an explicit client action; the Keeper cannot answer it.");
+    const wasOpen = ask.state === "open";
+    const after: (() => Promise<unknown>)[] = [];
+    let pendingArchives: string[] = [];
+    this.keeper.answerAsk(askId, optionId, note, via, "user", surface, {
+      conclude: effect => {
+        if (effect.type !== "conclude" || !ask.boardQuestId) throw new Error("A conclude effect needs its quest and draft");
         if (optionId === "conclude") {
-          const draft = metadata?.wrapDraft;
-          if (!draft) throw new Error("This conclude ask has no wrap draft");
-          archiveMembers = this.completeWrap(previousAsk.keeperThreadId, previousAsk.boardQuestId, draft.outcome, draft.left, draft.skipped ?? [], draft.next, draft.results);
+          const draft = effect.draft;
+          const members = this.completeWrap(ask.keeperThreadId, ask.boardQuestId, draft.outcome, draft.left, draft.skipped ?? [], draft.next, draft.results, receipt);
+          after.push(async () => { pendingArchives = await this.archiveMembers(members); });
         } else if (optionId === "hold" || optionId === "extensions") {
-          transitionQuest(this.keeper.store, this.keeper.quest(previousAsk.boardQuestId), "build", optionId === "hold" ? "keep-open" : "extensions", { kind: "user" }, { kind: "ask-answer", id: askId }, this.keeper.now(), { text: optionId === "hold" ? "You kept this quest open for other work." : "You asked for extensions or side quests.", data: { askId, optionId } });
+          transitionQuest(this.keeper.store, this.keeper.quest(ask.boardQuestId), "build", optionId === "hold" ? "keep-open" : "extensions", { kind: "user" }, { kind: "ask-answer", id: askId }, this.keeper.now(), { text: optionId === "hold" ? "You kept this quest open for other work." : "You asked for extensions or side quests.", data: { askId, optionId, ...(receipt ? { authority: receipt } : {}) } });
+          this.keeper.reanchor(ask.keeperThreadId, optionId === "hold" ? "user kept the quest open for other work" : "user asked for extensions or side quests");
         }
-      }
-    });
-    if (archiveMembers.length) await this.archiveMembers(archiveMembers);
-    const ask = this.keeper.store.get("asks", askId)!;
-    if (clientAction && previousState === "open" && ask.state === "answered")
-      await this.away.return({ kind: "ask-answer", threadId: ask.keeperThreadId, refId: ask.id });
-    const state = this.keeper.store.runtime(ask.keeperThreadId);
-    if (
-      previousState === "open" &&
-      state.failureAskId === askId &&
-      optionId === "retry"
-    ) {
-      this.keeper.store.patch(ask.keeperThreadId, {
-        failureCount: 0,
-        tickRefusalCount: 0,
-        tickRetryAt: null,
-        failureAskId: null,
-      });
-      this.keeper.reanchor(
-        ask.keeperThreadId,
-        "explicit retry after provider failures",
-      );
-    }
-    if (previousState === "open" && brief) {
-      const pending = this.keeper.store.runtime(brief.threadId).pendingBrief;
-      if (pending?.id === brief.briefId) {
+      },
+      "retry-provider": () => {
+        if (optionId !== "retry") return;
+        this.keeper.store.patch(ask.keeperThreadId, { failureCount: 0, tickRefusalCount: 0, tickRetryAt: null, failureAskId: null });
+        this.keeper.reanchor(ask.keeperThreadId, "explicit retry after provider failures");
+      },
+      "retry-brief": effect => {
+        if (effect.type !== "retry-brief") return;
+        const pending = this.keeper.store.runtime(effect.threadId).pendingBrief;
+        if (pending?.id !== effect.briefId) return;
         if (optionId === "retry") {
-          this.keeper.store.patch(brief.threadId, { pendingBrief: { ...pending, attempts: 0, nextAttemptAt: this.keeper.now(), error: null, blockerAskId: null } });
-          await this.sendInitialBrief(brief.threadId, pending.text);
-        } else if (optionId === "release") await this.release(ask.keeperThreadId, brief.threadId, "User released an unbriefed member");
-      }
-    }
-    if (previousState === "open" && ask.kind === "conclude" && (optionId === "hold" || optionId === "extensions"))
-      this.keeper.reanchor(ask.keeperThreadId, optionId === "hold" ? "user kept the quest open for other work" : "user asked for extensions or side quests");
-    if (previousState === "open" && metadata?.stopHireTokens && ask.boardQuestId && optionId === "retry") {
-      try { await loopCall(recoverHires(this.bb, this.keeper, ask.keeperThreadId, undefined, id => this.preserveCancelledHire(id)), "retry stopping hires"); }
-      catch (error) { this.bb.log.warn(`Tavern stopping hire recovery: ${String(error)}`); }
-    }
-    if (previousState === "open" && (metadata?.stopMemberThreadId || metadata?.stopHireTokens) && ask.boardQuestId && optionId === "retry")
-      await this.retryStops(ask.keeperThreadId, ask.boardQuestId, true);
-    if (this.scopes) await this.scopes.answer(ask);
-    if (previousState === "open" && state.tickDeliveryAskId === askId && optionId === "retry") {
-      await this.resetQuietQueue(ask.keeperThreadId);
-      await this.loop.recover(ask.keeperThreadId, true);
-    }
+          this.keeper.store.patch(effect.threadId, { pendingBrief: { ...pending, attempts: 0, nextAttemptAt: this.keeper.now(), error: null, blockerAskId: null } });
+          after.push(() => this.sendInitialBrief(effect.threadId, pending.text));
+        } else if (optionId === "release") after.push(() => this.release(ask.keeperThreadId, effect.threadId, "User released an unbriefed member"));
+      },
+      "retry-stop": effect => {
+        if (effect.type !== "retry-stop" || !ask.boardQuestId || optionId !== "retry") return;
+        const questId = ask.boardQuestId;
+        if (effect.hireTokens) after.push(async () => {
+          try { await loopCall(recoverHires(this.bb, this.keeper, ask.keeperThreadId, undefined, id => this.preserveCancelledHire(id)), "retry stopping hires"); }
+          catch (error) { this.bb.log.warn(`Tavern stopping hire recovery: ${String(error)}`); }
+        });
+        after.push(() => this.retryStops(ask.keeperThreadId, questId, true));
+      },
+      "grant-scope": () => {
+        if (this.scopes) after.push(() => this.scopes!.answer(this.keeper.store.get("asks", askId)!));
+      },
+      "retry-tick": () => {
+        if (optionId !== "retry") return;
+        after.push(async () => { await this.resetQuietQueue(ask.keeperThreadId); await this.loop.recover(ask.keeperThreadId, true); });
+      },
+    }, receipt);
+    for (const apply of after) await apply();
+    if (clientAction && wasOpen) await this.away.return({ kind: "ask-answer", threadId: ask.keeperThreadId, refId: ask.id });
     void this.resetQuietQueue(ask.keeperThreadId).then(() => this.recheckDispatch()).catch(error => this.bb.log.warn(`Tavern resume: ${String(error)}`));
+    return { pendingArchives };
   }
   taleRenderer?: TaleCompanions;
   constructor(
@@ -800,7 +799,7 @@ export class TavernRuntime {
     const state = this.keeper.store.runtime(threadId);
     if (state.registryFailureAskId && this.keeper.store.get("asks", state.registryFailureAskId)?.state === "open") return;
     const name = member ? this.keeper.name(member) : hire?.owner.displayName ?? "The hired member";
-    const ask = this.keeper.ask(keeperId, { kind: "blocker", question: `${name} is waiting for its project class files`, why: problem.slice(0, 200), options: [{ id: "retry", label: "Retry", detail: "Repair the project lookup or class files; admission retries without running unscoped.", recommended: true }], meanwhile: "This member remains held. Other admitted work may continue.", holds: [] }, undefined, true);
+    const ask = this.keeper.ask(keeperId, { effect: { type: "answer-blocker" }, kind: "blocker", question: `${name} is waiting for its project class files`, why: problem.slice(0, 200), options: [{ id: "retry", label: "Retry", detail: "Repair the project lookup or class files; admission retries without running unscoped.", recommended: true }], meanwhile: "This member remains held. Other admitted work may continue.", holds: [] }, undefined, true);
     this.keeper.store.patch(threadId, { registryFailureAskId: ask.id });
   }
   private projectClassNotice(threadId: string, classId: string, projectId: string) {
@@ -1340,15 +1339,15 @@ export class TavernRuntime {
     const reserved = this.keeper.store
       .all("hires")
       .filter((i) => !i.memberThreadId && i.owner.keeperThreadId === threadId && !isHireCancelled(this.keeper, i));
-    if (party.length + reserved.length >= partyLimit)
-      throw new Error("The live party budget is full");
-    if (
-      role.id === "ranger" &&
-      party.filter((m) => m.classId === "ranger").length +
-        reserved.filter((i) => i.classId === "ranger").length >=
-        (lead.budget?.rangers ?? LIMITS.rangerCapacity)
-    )
-      throw new Error("The Ranger budget is full");
+    const limits = new LimitPolicy(this.keeper);
+    const count = party.length + reserved.length;
+    if (count >= config.keepers.partyMax) throw new Error("The live party budget is full");
+    const partyDecision = count >= partyLimit ? limits.softDecision(threadId, questId, "party") : null;
+    if (count >= partyLimit && !partyDecision) throw new Error("The live party budget is full");
+    const rangerFull = role.id === "ranger" && party.filter(m => m.classId === "ranger").length + reserved.filter(i => i.classId === "ranger").length >= (lead.budget?.rangers ?? LIMITS.rangerCapacity);
+    const rangerDecision = rangerFull ? limits.softDecision(threadId, questId, "rangers") : null;
+    const limitDecisionIds = [partyDecision, rangerDecision].filter((id): id is string => id !== null);
+    if (rangerFull && !rangerDecision) throw new Error("The Ranger budget is full");
     if (
       role.id === "ranger" &&
       (input.brief.timeboxMinutes === null ||
@@ -1359,18 +1358,15 @@ export class TavernRuntime {
         `Rangers need numbered questions and a time box of at most ${rangerLimit} minutes`,
       );
     const review = this.review("automatic");
-    const reviewDecisionId =
-      role.id === "smith" && review.waiting >= review.budget
-        ? this.keeper.memory.reviewPermit(threadId, questId)
-        : null;
+    const reviewAllowance = role.id === "smith" && review.waiting >= review.budget && limits.reviewAvailable(questId);
     if (
       role.id === "smith" &&
       review.waiting >= review.budget &&
-      !reviewDecisionId
+      !reviewAllowance
     ) {
       this.record("review-budget.held", { waiting: review.waiting, budget: review.budget, classId: role.id }, threadId, questId);
       throw new Error(
-        `The review budget is full: ${review.waiting} of ${review.budget}; wait, or record a decision to exceed it with reversible: true and reviewBudgetOverride: true`,
+        `The review budget is full: ${review.waiting} of ${review.budget}; wait, or use Allow one more review on the quest page. Only the user can lift this limit.`,
       );
     }
     const waypoint =
@@ -1521,7 +1517,7 @@ export class TavernRuntime {
         ...this.busyCharacters(projectId),
         ...this.keeper.store.all("hires").filter(i => !i.memberThreadId && !isHireCancelled(this.keeper, i)).map(i => i.characterId),
       ],
-      input.characterId ?? slot?.characterId ?? (input.detectionOnlyAskId ? this.keeper.store.get("askMeta", input.detectionOnlyAskId)?.guardHire?.characterId : undefined),
+      input.characterId ?? slot?.characterId ?? this.detectionCharacter(input.detectionOnlyAskId),
     );
     const checkerPlan = role.id === "warden" && q ? this.keeper.summary(q.id).plan : null;
     const checkedWaypoints = new Set(checkerPlan?.party
@@ -1568,7 +1564,7 @@ export class TavernRuntime {
       projectId,
       owner,
       createdAt: this.keeper.now(),
-      ...(reviewDecisionId ? { reviewDecisionId } : {}),
+      limitDecisionIds,
     };
     if (placementRoute !== null) {
       if (placementRoute.source !== null) await this.placementSources().revalidate(placementRoute.source);
@@ -1581,13 +1577,8 @@ export class TavernRuntime {
     }
     this.keeper.assertCheckerHandoff(role.id, questId);
     this.keeper.store.atomic(() => {
-      if (reviewDecisionId)
-        this.keeper.memory.claimReview(
-          threadId,
-          questId,
-          reviewDecisionId,
-          token,
-        );
+      if (reviewAllowance && questId) limits.claimReview(questId, token);
+      for (const id of limitDecisionIds) limits.claimSoft(id, token);
       if (q && staffingCapacity !== null) {
         intent.staffing = reserveStaffing(
           this.keeper,
@@ -1693,10 +1684,7 @@ export class TavernRuntime {
         brief += `\nGuard posture: ${owner.guardPosture.label}. A watcher can stop a turn only after an observed action. Existing user approval requirements still apply.`;
         this.keeper.store.put("hires", token, { ...this.keeper.store.get("hires", token)!, owner, initialInput: brief });
       }
-      if (reviewDecisionId)
-        notes.push(
-          `Review-budget exception used once: ${reviewDecisionId} (${review.waiting} of ${review.budget}).`,
-        );
+      if (reviewAllowance) notes.push("The user allowed one more review; this allowance has been used.");
       for (const problem of scopeResolution?.problems ?? [])
         notes.push(`Scope policy: ${problem}`);
       let guardedLocal = false;
@@ -1975,8 +1963,8 @@ export class TavernRuntime {
     const pendingArchives = await this.archiveMembers([...members.values()]);
     return { notes, pendingArchives };
   }
-  async archiveBoardQuests(ids: string[], archived: boolean) {
-    const changed = this.keeper.archiveQuests(ids, archived, { kind: "user" });
+  async archiveBoardQuests(ids: string[], archived: boolean, receipt?: UserActReceipt) {
+    const changed = commitUserAct(this.keeper.store, () => this.keeper.now(), receipt, () => this.keeper.archiveQuests(ids, archived, { kind: "user" }));
     if (archived) return { ok: true as const, changed, ...await this.archiveQuestThreads(ids) };
     for (const keeperId of new Set(ids.map(id => this.keeper.quest(id).keeperThreadId))) {
       const state = this.keeper.store.runtime(keeperId);
@@ -1991,8 +1979,8 @@ export class TavernRuntime {
     }
     return { ok: true as const, changed, notes: [] as string[], pendingArchives: [] as string[] };
   }
-  async deleteBoardQuest(id: string) {
-    const changed = this.keeper.deleteQuest(id, { kind: "user" });
+  async deleteBoardQuest(id: string, receipt?: UserActReceipt) {
+    const changed = commitUserAct(this.keeper.store, () => this.keeper.now(), receipt, () => this.keeper.deleteQuest(id, { kind: "user" }));
     try { await this.taleRenderer?.deleteQuest(id); }
     catch (error) { this.bb.log.warn(`Tavern renderer delete ${id}: ${String(error)}`); }
     return { ok: true as const, changed: Number(changed), ...await this.archiveQuestThreads([id]) };
@@ -2346,8 +2334,8 @@ export class TavernRuntime {
       this.reviewCache = null;
     }
   }
-  async stop(id: string, reason: string | null = null) {
-    const q = this.keeper.recordStop(id, reason);
+  async stop(id: string, reason: string | null = null, receipt?: UserActReceipt) {
+    const q = commitUserAct(this.keeper.store, () => this.keeper.now(), receipt, () => this.keeper.recordStop(id, reason));
     await this.retryStops(q.keeperThreadId, id, true);
     const current = this.keeper.summary(id);
     return { phase: current.phase as "stopping" | "stopped", unconfirmed: current.stopUnconfirmed ?? 0 };
@@ -2426,13 +2414,13 @@ export class TavernRuntime {
       state = this.keeper.store.runtime(member.threadId);
       if (this.keeper.member(member.threadId)?.stopPending && this.keeper.now() - (q.stoppingSince ?? q.updatedAt) >= 120000 &&
         !state.stopAskId) {
-        const ask = this.keeper.ask(keeperId, {
+        const ask = this.keeper.ask(keeperId, { effect: { type: "retry-stop", memberThreadId: member.threadId },
           boardQuestId: q.id, kind: "blocker", question: `Stop is not confirmed for ${this.keeper.name(member)}`,
           why: `Tavern keeps retrying. Inspect @thread:${member.threadId} or retry now.`,
           options: [{ id: "retry", label: "Retry now", detail: "Ask Tavern to retry this stop immediately", recommended: true }],
           meanwhile: "This quest accepts no new work while it is stopping.", holds: [],
         }, { stopMemberThreadId: member.threadId }, true);
-        this.keeper.store.put("askMeta", ask.id, { stopMemberThreadId: member.threadId });
+
         this.keeper.store.patch(member.threadId, { stopAskId: ask.id });
       }
     }
@@ -2441,13 +2429,13 @@ export class TavernRuntime {
     if (current.phase !== "stopping") return;
     if (pendingHires.length && this.keeper.now() - (q.stoppingSince ?? q.updatedAt) >= 120000 && !current.stopHireAskId) {
       const stopHireTokens = pendingHires.map(hire => hire.token);
-      const ask = this.keeper.ask(keeperId, {
+      const ask = this.keeper.ask(keeperId, { effect: { type: "retry-stop", hireTokens: stopHireTokens },
         boardQuestId: q.id, kind: "blocker", question: `Stop is waiting for ${pendingHires.length} unconfirmed hire(s)`,
         why: `A hire may have started a thread Tavern cannot find yet: ${pendingHires.map(hire => hire.title).join(", ").slice(0, 80)}. Retry checks again.`,
         options: [{ id: "retry", label: "Retry now", detail: "Check again for the thread this hire may have started; retain the reservation until it is identified", recommended: true }],
         meanwhile: "Tavern keeps the quest stopping and its reservation intact until recovery confirms the child or that no child exists.", holds: [],
       }, { stopHireTokens }, true);
-      this.keeper.store.put("askMeta", ask.id, { stopHireTokens });
+
       this.keeper.store.put("quests", q.id, { ...this.keeper.quest(q.id), stopHireAskId: ask.id });
     } else if (!pendingHires.length && current.stopHireAskId) {
       this.keeper.withdrawAsk(current.stopHireAskId, "turn-recovered");
@@ -2512,7 +2500,7 @@ export class TavernRuntime {
       throw new Error("Every waypoint must be verified or explicitly skipped before wrapping");
     for (const ask of this.keeper.store.openAsks(threadId, id).filter((ask) => ask.kind === "conclude"))
       this.keeper.withdrawAsk(ask.id, "plan-superseded");
-    const ask = this.keeper.ask(threadId, {
+    const ask = this.keeper.ask(threadId, { effect: { type: "conclude", draft: { outcome, left, skipped, ...(next ? { next } : {}), ...(results ? { results } : {}) } },
       kind: "conclude",
       boardQuestId: id,
       question: `Can “${q.title}” conclude?`,
@@ -2525,10 +2513,7 @@ export class TavernRuntime {
       meanwhile: "Nothing else runs for this quest until you answer.",
       holds: summary.waypoints.filter((w) => w.state !== "verified" && w.state !== "skipped").map((w) => w.id),
     });
-    this.keeper.store.put("askMeta", ask.id, {
-      ...(this.keeper.store.get("askMeta", ask.id) ?? {}),
-      wrapDraft: { outcome, left, skipped, ...(next ? { next } : {}), ...(results ? { results } : {}) },
-    });
+
     this.keeper.changed(threadId, id);
     return { askId: ask.id, pendingArchives: [] as string[] };
   }
@@ -2540,6 +2525,7 @@ export class TavernRuntime {
     skipped: { waypointId: string; reason: string }[] = [],
     next?: string[],
     results?: import("../shared/tale-results").TaleResults,
+    receipt?: UserActReceipt,
   ) {
     const q = this.keeper.owned(threadId, id);
     if (q.phase === "stopped" || q.phase === "stopping") throw new Error("This board quest was stopped or is stopping");
@@ -2632,6 +2618,7 @@ export class TavernRuntime {
       const answer = this.keeper.store.query("asks", "boardQuestId", id, 500).filter(ask => ask.kind === "conclude" && ask.answer?.by === "user" && ask.answer.optionId === "conclude").at(-1);
       if (!answer) throw new Error("Concluding requires the user's conclude answer");
       transitionQuest(this.keeper.store, q, "done", "conclude", { kind: "user" }, { kind: "ask-answer", id: answer.id }, this.keeper.now(), { patch: { endedAt: this.keeper.now() }, text: outcome, data: {
+        ...(receipt ? { authority: receipt } : {}),
           outcome,
           left,
           skipped,
@@ -2740,7 +2727,7 @@ export class TavernRuntime {
     const state = this.keeper.store.runtime(threadId);
     if (this.config().tavern.paused || Math.max(state.failureCount ?? 0, state.tickRefusalCount ?? 0) < 2) return;
     if (state.failureAskId && this.keeper.store.get("asks", state.failureAskId)?.state === "open") return;
-    const ask = this.keeper.ask(threadId, {
+    const ask = this.keeper.ask(threadId, { effect: { type: "retry-provider" },
       kind: "blocker",
       question: (state.tickRefusalCount ?? 0) >= 2 ? "The host refused two Keeper ticks in a row" : "The Keeper's provider failed two turns in a row",
       why: (state.lastFailure ?? "Provider turn failed").slice(0, 200),
@@ -2751,6 +2738,7 @@ export class TavernRuntime {
       meanwhile: "Members keep working; their reports wait in the mailbox.",
       holds: [],
     }, undefined, true);
+
     this.keeper.store.patch(threadId, { failureAskId: ask.id });
     void this.push(threadId, ask.question, ask.why);
   }
@@ -2769,7 +2757,7 @@ export class TavernRuntime {
     if (count < 2) return;
     const state = this.keeper.store.runtime(threadId);
     if (state.tickDeliveryAskId && this.keeper.store.get("asks", state.tickDeliveryAskId)?.state === "open") return;
-    const ask = this.keeper.ask(threadId, {
+    const ask = this.keeper.ask(threadId, { effect: { type: "retry-tick" },
       kind: "blocker",
       question: "The host has not confirmed this Keeper tick after two delivery retries",
       why: `Tick ${tickId} is still the same batch. Its facts remain unread until the host confirms delivery; retries keep the same id so duplicate admission is refused.`,
@@ -2777,6 +2765,7 @@ export class TavernRuntime {
       meanwhile: "Members keep working; their reports remain in the mailbox.",
       holds: [],
     }, undefined, true);
+
     this.keeper.store.patch(threadId, { tickDeliveryAskId: ask.id });
   }
   clearPlacementModelFailure(id: string) {
@@ -2994,12 +2983,9 @@ export class TavernRuntime {
           const asks = this.keeper.store.openAsks(thread.id);
           if (!asks.length) break;
           for (const ask of asks) {
-            this.keeper.withdrawAsk(ask.id, "keeper-archived");
-            this.keeper.store.event(
-              this.keeper.now(), thread.id, ask.boardQuestId, "ask.withdrawn",
+            this.keeper.withdrawAsk(ask.id, "keeper-archived", this.keeper.now(), actor,
               `Withdrawn because this Keeper was archived: ${ask.question}`,
-              { askId: ask.id, reason: "keeper-archived", archivedAt: thread.archivedAt }, actor,
-            );
+              { reason: "keeper-archived", archivedAt: thread.archivedAt });
             affectedQuests.add(ask.boardQuestId);
           }
         }
@@ -3238,7 +3224,6 @@ export class TavernRuntime {
         if (quest.phase === "build") transitionQuest(this.keeper.store, quest, "closing", "conclude-open-at-upgrade", { kind: "tavern" }, { kind: "ask", id: ask.id }, this.keeper.now());
         else if (quest.phase === "done" || quest.phase === "stopped") {
           this.keeper.withdrawAsk(ask.id, "conclude-stale-at-upgrade");
-          this.keeper.store.event(this.keeper.now(), ask.keeperThreadId, quest.id, "ask.withdrawn", "Withdrew a stale conclude ask on a finished quest", { askId: ask.id, cause: "conclude-stale-at-upgrade" }, { kind: "tavern" });
         }
       }
     });

@@ -125,6 +125,6 @@ it("fails closed when the shared factory is called without trusted caller contex
   const handlers = settingsHandlers(store, new SettingsFiles(store, join(f.root, "settings.toml")));
   expect(() => Reflect.apply(handlers.settingsUpdate, undefined, [{
     revision: 0, patch: { machines: { maxMakers: 9 } }, why: "Missing context",
-  }])).toThrow("Settings changes require an explicit client action");
+  }])).toThrow("requires an explicit client action");
   expect((await f.view()).revision).toBe(0);
 });

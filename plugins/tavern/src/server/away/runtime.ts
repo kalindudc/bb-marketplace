@@ -1,3 +1,4 @@
+import { commitUserAct, type UserActReceipt } from "../authority";
 import { randomUUID } from "node:crypto";
 import { hasAwayDenials, localAwayPrevention, narrowAwayScope } from "./denials";
 import type { Scope } from "../../scope";
@@ -155,7 +156,7 @@ export class AwayRuntime {
     return { state: finished ? "finished" : "stale" };
   }
   private changed() { this.runtime.bb.rpc.experimental_invalidate([tags.room(), ...this.k.store.all("members").filter(member => member.role === "keeper").map(member => tags.thread(member.threadId))]); }
-  async close(input: AwayCloseInput) {
+  async close(input: AwayCloseInput, receipt?: UserActReceipt) {
     const revision = this.store.snapshot().revision;
     if (revision !== input.revision) throw new AwayConflict(revision);
     for (const selected of input.quests) {
@@ -163,7 +164,7 @@ export class AwayRuntime {
       if (!isOpenQuest(quest)) throw new Error("Closing time can only include live quests");
     }
     const affected = this.keepersWithWork();
-    this.store.close(input);
+    commitUserAct(this.k.store, () => this.k.now(), receipt, () => this.store.close(input));
     await this.refreshLocalScopes();
     for (const member of this.members()) this.stage(member);
     this.changed();
@@ -176,10 +177,10 @@ export class AwayRuntime {
     const state = this.snapshot();
     return { code: state.pendingStops.length ? "pending" as const : "closed" as const, state };
   }
-  async return(cause: AwayReturnCause, windowId?: string) {
+  async return(cause: AwayReturnCause, windowId?: string, receipt?: UserActReceipt) {
     const current = this.store.snapshot();
     if (!current.window) return { code: "unchanged" as const, state: this.snapshot() };
-    const result = this.store.finish(windowId ?? current.window.id, cause);
+    const result = commitUserAct(this.k.store, () => this.k.now(), receipt, () => this.store.finish(windowId ?? current.window!.id, cause));
     if (result.changed) {
       const affected = this.keepersWithWork();
       const cohort = this.k.store.db.prepare("SELECT DISTINCT keeper_thread_id AS threadId FROM tavern_events WHERE type='reanchor.requested' AND keeper_thread_id IS NOT NULL AND id>? AND id<=? AND json_extract(data,'$.cause')=?")

@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { rpcHandlers } from "../../src/server/rpc";
 import { seedQuest } from "./support";
 import { describe, expect, it, vi } from "vitest";
 import { setup } from "./runtime-fixture";
@@ -134,77 +135,27 @@ describe("Durable member and review memory", () => {
       f.k.store.query("reports", "memberThreadId", member.threadId),
     ).toHaveLength(2);
   });
-  it("refuses new review-bound work with the review count, then consumes an explicit exception once", async () => {
+  it("refuses Keeper review overrides and consumes the user's allowance once", async () => {
     const f = await approved();
-    vi.spyOn(f.runtime, "review").mockReturnValue({
-      waiting: 3,
-      budget: 3,
-      items: [],
-    });
-    await expect(f.runtime.hire("lead", "project", f.input)).rejects.toThrow(
-      "3 of 3; wait, or record a decision to exceed it",
-    );
-    f.k.decide("lead", {
-      boardQuestId: f.q.id,
-      text: "Exceed the review budget for this thin slice",
-      why: "The user can undo the extra work",
-      source: "keeper",
-      reversible: true,
-      reviewBudgetOverride: true,
-    });
-    await expect(
-      f.runtime.hire("lead", "project", f.input),
-    ).resolves.toBeTruthy();
-    await expect(f.runtime.hire("lead", "project", f.input)).rejects.toThrow(
-      "3 of 3; wait, or record a decision to exceed it",
-    );
+    vi.spyOn(f.runtime, "review").mockReturnValue({ waiting: 3, budget: 3, items: [] });
+    await expect(f.runtime.hire("lead", "project", f.input)).rejects.toThrow("Only the user can lift this limit");
+    f.k.decide("lead", { boardQuestId: f.q.id, text: "Extra work", why: "Bounded", source: "keeper", reversible: true });
+    await expect(f.runtime.hire("lead", "project", f.input)).rejects.toThrow("Only the user can lift this limit");
+    await rpcHandlers(f.runtime).allowReview({ id: f.q.id }, { experimental_caller: { kind: "client" } } as never);
+    await expect(f.runtime.hire("lead", "project", f.input)).resolves.toBeTruthy();
+    await expect(f.runtime.hire("lead", "project", f.input)).rejects.toThrow("Only the user can lift this limit");
   });
-  it("does not accept undone or other-quest decisions, and returns a permit after a definite spawn refusal", async () => {
+  it("does not use another quest's allowance and restores an allowance after a definite spawn refusal", async () => {
     const f = await approved();
-    vi.spyOn(f.runtime, "review").mockReturnValue({
-      waiting: 3,
-      budget: 3,
-      items: [],
-    });
-    const other = await seedQuest(f.k,"lead", "Other", "Other");
-    f.k.decide("lead", {
-      boardQuestId: other.id,
-      text: "Other",
-      why: "Other",
-      source: "keeper",
-      reversible: true,
-      reviewBudgetOverride: true,
-    });
-    const undone = f.k.decide("lead", {
-      boardQuestId: f.q.id,
-      text: "Undone",
-      why: "Undone",
-      source: "keeper",
-      reversible: true,
-      reviewBudgetOverride: true,
-    });
-    f.k.undoDecision(undone.id);
-    await expect(f.runtime.hire("lead", "project", f.input)).rejects.toThrow(
-      /review/,
-    );
-    f.k.decide("lead", {
-      boardQuestId: f.q.id,
-      text: "A usable exception",
-      why: "One attempt",
-      source: "keeper",
-      reversible: true,
-      reviewBudgetOverride: true,
-    });
+    vi.spyOn(f.runtime, "review").mockReturnValue({ waiting: 3, budget: 3, items: [] });
+    const other = await seedQuest(f.k, "lead", "Other", "Other");
+    const handlers = rpcHandlers(f.runtime), client = { experimental_caller: { kind: "client" } } as never;
+    await handlers.allowReview({ id: other.id }, client);
+    await expect(f.runtime.hire("lead", "project", f.input)).rejects.toThrow(/review/);
+    await handlers.allowReview({ id: f.q.id }, client);
     const spawn = f.bb.sdk.threads.spawn;
-    f.bb.sdk.threads.spawn = vi
-      .fn()
-      .mockRejectedValueOnce(new Error("HTTP 400 refused"))
-      .mockImplementation(spawn);
-    await expect(f.runtime.hire("lead", "project", f.input)).rejects.toThrow(
-      "HTTP 400 refused",
-    );
-    await expect(
-      f.runtime.hire("lead", "project", f.input),
-    ).resolves.toBeTruthy();
+    f.bb.sdk.threads.spawn = vi.fn().mockRejectedValueOnce(new Error("HTTP 400 refused")).mockImplementation(spawn);
+    await expect(f.runtime.hire("lead", "project", f.input)).rejects.toThrow("HTTP 400 refused");
+    await expect(f.runtime.hire("lead", "project", f.input)).resolves.toBeTruthy();
   });
 });

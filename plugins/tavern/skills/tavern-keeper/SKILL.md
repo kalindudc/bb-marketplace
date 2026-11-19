@@ -49,7 +49,7 @@ Call `tavern_placements` with the member's `repo` (a bb project id), `classId` a
 3. Link each member to its waypoint, so its journal entry is what gets checked.
 4. Stay within the approved party. A re-plan within it is your decision; a bigger party needs a new greenlight.
 5. Explain why the original member cannot finish; Tavern records replacements as reversible decisions within the slot budget.
-6. Respect the user's review budget. Exceed it only with a recorded decision and a reason.
+6. Respect the user's hard review budget. Only the user's Allow one more review control can lift it; a Keeper decision cannot.
 
 ## Write a brief
 

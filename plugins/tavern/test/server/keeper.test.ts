@@ -100,12 +100,12 @@ describe("asks and consent", () => {
   it("refuses consequential timers and incomplete sends-as-you drafts", () => {
     const { k } = setup();
     for (const kind of ["production", "sends-as-you", "credential", "greenlight"] as const)
-      expect(() => k.ask("lead", { ...askInput, kind, proceedInMinutes: 5 })).toThrow(/never/);
-    expect(() => k.ask("lead", { ...askInput, kind: "sends-as-you" })).toThrow(/complete/);
+      expect(() => k.ask("lead", { effect: {type:"decision"}, ...askInput, kind, proceedInMinutes: 5 })).toThrow(/never/);
+    expect(() => k.ask("lead", { effect: {type:"decision"}, ...askInput, kind: "sends-as-you" })).toThrow(/complete/);
   });
   it("applies the recommended reversible default once and records attribution", () => {
     const { k } = setup();
-    const ask = k.ask("lead", { ...askInput, proceedInMinutes: 5 });
+    const ask = k.ask("lead", { effect: {type:"decision"}, ...askInput, proceedInMinutes: 5 });
     now += 300_000;
     k.defaults();
     k.defaults();
@@ -445,7 +445,7 @@ describe("host boundaries", () => {
           timeboxMinutes: null,
         },
       });
-    const ask = k.ask("lead", { ...askInput, boardQuestId: q.id });
+    const ask = k.ask("lead", { effect: {type:"decision"}, ...askInput, boardQuestId: q.id });
     await runtime.stop(q.id);
     expect(k.quest(q.id).phase).toBe("stopped");
     expect(k.member("a")?.state).toBe("stopped");

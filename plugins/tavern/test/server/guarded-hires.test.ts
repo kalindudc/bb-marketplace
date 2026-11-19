@@ -163,7 +163,7 @@ describe("scoped provider admission through the strict host", () => {
   });
   it("does not treat a generic scope answer as a provider exception", async () => {
     const f = await fixture("ranger", false);
-    const ask = f.k.ask("lead", { kind: "scope", question: "Allow a path?", why: "A different request", options: [{ id: "approve", label: "Yes", detail: "A path", recommended: false }], meanwhile: "Scout", holds: [] });
+    const ask = f.k.ask("lead", { effect: {type:"decision"}, kind: "scope", question: "Allow a path?", why: "A different request", options: [{ id: "approve", label: "Yes", detail: "A path", recommended: false }], meanwhile: "Scout", holds: [] });
     await f.runtime.answerAsk(ask.id, "approve", null, "page");
     await expect(f.hire({ detectionOnlyAskId: ask.id })).rejects.toThrow(/exact hire|does not match/i);
     expect(f.spawns()).toHaveLength(0);
