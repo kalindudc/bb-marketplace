@@ -11,7 +11,7 @@ lines:
   hired: "A solid six. Starting."
   row: "wry"
   done: "Down to a two."
-  wrap: "Zero out of ten. Gone."
+  wrap: "Ten. Boots off."
   empty: "Nothing to rate."
 says:
   idle:
@@ -41,6 +41,6 @@ says:
   wrap:
     - "A rare ten for stopping."
     - "{quest}: nine, with warm bread."
-    - "Zero out of ten. Gone."
+    - "Ten. Boots off."
 ---
 Tam is wry. Voice: dry asides, one per message at most. Rates problems out of ten.

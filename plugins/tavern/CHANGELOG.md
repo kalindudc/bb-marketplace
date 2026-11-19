@@ -8,7 +8,7 @@ A returned or stopped quest reopens for deviations without a new quest, the chec
 
 ### Added
 
-- The composer party reacts to reports and waypoint verdicts and says short, authored lines from its character files. Full voice adds occasional words and greetings; Light speaks after a verification, at a quest’s wrap or on a click. Off keeps the party quiet. Typing, asks and blockers silence the strip.
+- The composer party reacts to reports and waypoint verdicts and says short, authored lines from its character files. Full voice adds occasional words and greetings; Light speaks after a verification, at a quest’s wrap or on a click. Off keeps the party quiet. Typing, asks and blockers silence the strip. Automatic speech also gives reports and evidence room to read, including the first minute after a report arrives; clicking can still speak.
 - The composer draws its character on a single pixel-art canvas above the widget row, which keeps its class crest. Calm idles in place; Lively walks across the composer when the character is idle or working. Typing or an ask stops travel without freezing the character. Motion Off and reduced motion show a still pose.
 - Characters on the page share one animation scheduler. It pauses off screen and in hidden tabs and reduces physics updates if drawing and updating go over budget. The Characters setting still removes the strip without removing the class crest.
 - The live character strip draws seeded avatars with rounded faces, varied hairstyles, and period clothing and tools chosen by class. The character file's avatar seed, or its id when no seed is set, keeps each look stable. Characters look up when waiting, lift their tools when verified, and slump when blocked.

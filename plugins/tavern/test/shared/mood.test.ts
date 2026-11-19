@@ -38,7 +38,7 @@ it("reads the member's linked verdict, not another member's or a partial verific
   const entry = { ...fixtureJournal.entries[0]!, threadId: maker.threadId, status: "verified" as const,
     link: { boardQuestId: "vault", waypointId: "w1" }, updatedAt: now,
     review: { actor: { kind: "user" as const }, at: now - 1, evidence: [], reason: null, previousNote: null, memberEvidenceAt: null } };
-  expect(waypointMoodVerdict(maker, [entry])).toEqual(verified);
+  expect(waypointMoodVerdict(maker, [entry])).toEqual({ ...verified, waypointId: "w1", checkerThreadId: null });
   expect(waypointMoodVerdict(maker, [entry, { ...entry, status: "done" }])).toBeNull();
   expect(waypointMoodVerdict(maker, [{ ...entry, threadId: "other" }])).toBeNull();
 });

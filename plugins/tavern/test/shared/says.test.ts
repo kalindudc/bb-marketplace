@@ -15,6 +15,9 @@ describe("authored lines", () => {
   it.each(files)("%s parses with three to five on-theme lines per key", name => {
     const char = parseRegistryDefinition("character", raw(name), name);
     expect(Object.keys(char.says ?? {}).sort()).toEqual([...SPEECH_KEYS].sort());
+    const plainVerified = char.says!.verified!.filter(line => !line.includes("{checker}"));
+    expect(plainVerified.length).toBeGreaterThanOrEqual(2);
+    expect(plainVerified.filter(line => !line.includes("{waypoint}")).length).toBeGreaterThanOrEqual(2);
     for (const key of SPEECH_KEYS) {
       const lines = char.says![key]!;
       expect(lines.length).toBeGreaterThanOrEqual(3);
@@ -47,6 +50,11 @@ describe("pickLine", () => {
     expect(pickLine(lines, key, null, {})).toBe(first);
     expect(lines).toContain(pickLine(lines, key, first, {}));
     expect(pickLine([first!], key, first, {})).toBeNull();
+  });
+
+  it.each(["Waypoint 1", "waypoint 1", "w1", " W12 "])("skips the generic waypoint %s", waypoint => {
+    expect(pickLine(["{waypoint} held firm."], key, null, { waypoint })).toBeNull();
+    expect(pickLine(["{waypoint} held firm."], key, null, { waypoint: "Stone Bridge" })).toBe("Stone Bridge held firm.");
   });
 
   it("fills only known facts and skips lines without all of their facts", () => {

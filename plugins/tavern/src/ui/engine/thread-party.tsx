@@ -5,7 +5,8 @@ import { pickLine, type LineFacts } from "../../shared/says";
 import type { CharacterDef } from "../../shared/schema";
 import type { VoiceMode } from "../../shared/settings";
 import { motion, STUCK_IN_VIEW, stuckInView, type Surface } from "../kit/motion";
-import { BUBBLE_MS, planSpeech, speechDecision, speechSlot } from "./speech";
+import { REPORT_READING, reportReading } from "./report-reading";
+import { BUBBLE_MS, planSpeech, reportSpeechHeld, speechDecision, speechSlot } from "./speech";
 import { PartyStrip, type StripSpeech } from "./strip";
 
 function useWidgetMood(data: ThreadDecor) {
@@ -25,21 +26,22 @@ function useWidgetMood(data: ThreadDecor) {
   return characterMood(facts);
 }
 
-function watchSpeechHold(surface: Surface, dismiss: () => void) {
+function watchSpeechHold(surface: Surface, dismiss: () => void, readingHold?: () => boolean) {
+  const selector = readingHold ? `${STUCK_IN_VIEW}, ${REPORT_READING}` : STUCK_IN_VIEW;
   const check = () => {
     const { typing, held } = motion.getHolds(surface);
-    if (typing || held || document.hidden || stuckInView()) dismiss();
+    if (typing || held || document.hidden || stuckInView() || readingHold?.()) dismiss();
   };
   const io = typeof IntersectionObserver === "function" ? new IntersectionObserver(check) : null;
   const inspect = () => {
     check();
     if (io) {
       io.disconnect();
-      for (const el of document.querySelectorAll(STUCK_IN_VIEW)) io.observe(el);
+      for (const el of document.querySelectorAll(selector)) io.observe(el);
     }
   };
   const dom = new MutationObserver(inspect);
-  dom.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ["class", "role", "hidden", "data-ask", "data-stuck"] });
+  dom.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ["class", "role", "hidden", "data-ask", "data-stuck", "data-tavern-report", "data-tavern-report-at"] });
   const events = ["input", "keydown", "compositionstart", "compositionupdate", "visibilitychange", "scroll"];
   for (const event of events) document.addEventListener(event, check, true);
   window.addEventListener("resize", check);
@@ -71,11 +73,22 @@ export function ThreadPartyStrip({ data, character, classLabel, voice, held, pag
   const [cueEnd, setCueEnd] = useState<{ transition: typeof transition; at: number } | null>(null);
   const [last, setLast] = useState<{ text: string; at: number } | null>(null);
   const [tried, setTried] = useState<{ event?: number; ambient?: number }>({});
-  const [bubble, setBubble] = useState<{ line: StripSpeech; transition: typeof transition; at: number } | null>(null);
+  const [bubble, setBubble] = useState<{ line: StripSpeech; transition: typeof transition; at: number; automatic: boolean } | null>(null);
+  const latestReport = useRef(-Infinity);
+  const ownReportAt = Math.max(member.lastReportAt ?? -Infinity, data.moodSignals?.report?.createdAt ?? -Infinity);
+  const reading = () => {
+    const { reportInView, latestReportAt } = reportReading(data.threadId);
+    latestReport.current = Math.max(latestReport.current, ownReportAt, latestReportAt);
+    return { reportInView, latestReportAt: latestReport.current };
+  };
   const wrapped = [data.boardQuest, ...(data.keeperView?.boardQuests ?? [])].reduce<typeof data.boardQuest>((latest, quest) =>
     quest?.phase === "done" && quest.endedAt != null && (!latest || quest.endedAt > latest.endedAt!) ? quest : latest, null);
-  const waypoint = member.waypointId && /^w\d+$/.test(member.waypointId) ? `Waypoint ${member.waypointId.slice(1)}` : null;
-  const facts: LineFacts = { quest: data.boardQuest?.title ?? member.title, waypoint };
+  const verdict = mood === "verified" ? data.moodSignals?.verdict : null;
+  const facts: LineFacts = {
+    quest: data.boardQuest?.title ?? member.title,
+    waypoint: verdict?.waypointTitle ?? data.moodSignals?.waypointTitle,
+    checker: verdict?.checkerName,
+  };
   const visible = bubble?.transition === transition && voice !== "off" && !held && speechSlot(mood) ? bubble : null;
   const cueEndsAt = cueEnd?.transition === transition ? cueEnd.at : undefined;
   const input = {
@@ -91,12 +104,13 @@ export function ThreadPartyStrip({ data, character, classLabel, voice, held, pag
       const scheduled = planSpeech({ ...input, now, click });
       if (!scheduled || scheduled.at > now) return;
       const holds = motion.getHolds(surface);
-      const decision = speechDecision({ ...input, now, click, typing: holds.typing, held: held || holds.held, stuckInView: document.hidden || stuckInView() });
+      const decision = speechDecision({ ...input, now, click, typing: holds.typing, held: held || holds.held,
+        stuckInView: document.hidden || stuckInView(), ...(click ? {} : reading()) });
       const lineFacts = decision?.slot === "wrap" ? { ...facts, quest: wrapped?.title } : facts;
       const text = decision && pickLine(character.says?.[decision.slot], decision.key, last?.text ?? null, lineFacts);
       if (text) {
         setLast({ text, at: now });
-        setBubble({ line: { actorId: character.id, text }, transition, at: now });
+        setBubble({ line: { actorId: character.id, text }, transition, at: now, automatic: !click });
       } else if (!click) {
         setTried(prior => ({ ...prior, [scheduled.kind === "ambient" ? "ambient" : "event"]: now }));
       }
@@ -112,10 +126,10 @@ export function ThreadPartyStrip({ data, character, classLabel, voice, held, pag
     if (bubble && !visible) setBubble(null);
     if (!visible) return;
     const dismiss = () => setBubble(null);
-    const stop = watchSpeechHold(surface, dismiss);
+    const stop = watchSpeechHold(surface, dismiss, visible.automatic ? () => reportSpeechHeld({ now: Date.now(), ...reading() }) : undefined);
     const timer = setTimeout(dismiss, Math.max(0, visible.at + BUBBLE_MS - Date.now()));
     return () => { stop(); clearTimeout(timer); };
-  }, [bubble, visible, surface]);
+  }, [bubble, visible, surface, ownReportAt]);
 
   if (mood === "released") return null;
   return <PartyStrip

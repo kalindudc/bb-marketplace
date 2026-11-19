@@ -12,7 +12,7 @@ import "./engine.css";
 const SCALE = 2;
 const HEIGHT = 64;
 const GROUND = 58;
-const BUBBLE_GAP = 6;
+const BUBBLE_GAP = 8;
 const MOOD_WORD: Record<Mood, string> = {
   idle: "idle", working: "at work", waiting: "needs you", reported: "just reported",
   verified: "verified", blocked: "blocked", resting: "resting", error: "failed",
@@ -199,6 +199,6 @@ export function PartyStrip(props: PartyStripProps) {
       }}>
       {mood === "waiting" && <span className="tchar-need" aria-hidden="true">!</span>}
     </button>
-    {words && <span ref={bubble} className="twalk-speech" role="status" hidden>{words}</span>}
+    {words && <span ref={bubble} className="twalk-speech" role="status" hidden><span className="twalk-speech-text">{words}</span></span>}
   </section>;
 }

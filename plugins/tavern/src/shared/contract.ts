@@ -126,7 +126,8 @@ export const threadDecorSchema = z.object({
     archived: z.boolean(),
     handBack: z.boolean(),
     report: reportSchema.pick({ status: true, createdAt: true }).nullable(),
-    verdict: z.object({ status: z.enum(["verified", "rejected"]), at: z.number() }).nullable(),
+    waypointTitle: z.string().nullable().optional(),
+    verdict: z.object({ status: z.enum(["verified", "rejected"]), at: z.number(), checkerName: z.string().nullable().optional(), waypointTitle: z.string().nullable().optional() }).nullable(),
   }).optional(),
   /** News events the Keeper has not received yet: the widget's available-events signal. */
   pendingEvents: z.number().int().nonnegative().optional(),

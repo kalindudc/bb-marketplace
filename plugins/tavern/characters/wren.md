@@ -33,7 +33,7 @@ says:
   verified:
     - "{checker} sets the seal. Clear skies."
     - "Fair weather confirmed."
-    - "No cloud over {waypoint}."
+    - "Not a cloud from here."
   resting:
     - "Wind drops with the dusk."
     - "Hearth warm. Night clear."

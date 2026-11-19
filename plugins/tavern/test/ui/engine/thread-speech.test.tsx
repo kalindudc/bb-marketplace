@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ThreadDecor } from "../../../src/shared/contract";
@@ -7,7 +7,9 @@ import { CUE_MS } from "../../../src/ui/engine/art";
 import { BUBBLE_MS } from "../../../src/ui/engine/speech";
 import { motion } from "../../../src/ui/kit/motion";
 import { ThreadWidget } from "../../../src/ui/thread/composer";
-import { fixtureBoard, fixtureDecor, fixtureMember, fixtureRegistry } from "../../../src/ui/thread/fixtures";
+import { EvidenceList } from "../../../src/ui/kit";
+import { ReportCard } from "../../../src/ui/thread/cards";
+import { fixtureBoard, fixtureDecor, fixtureMember, fixtureRegistry, fixtureReport } from "../../../src/ui/thread/fixtures";
 import { installAnimations } from "../kit/motion-fakes";
 
 let fx: ReturnType<typeof installAnimations>;
@@ -29,7 +31,7 @@ afterEach(() => {
 });
 
 const signals = { archived: false, released: false, handBack: false, report: null, verdict: null };
-const says = { working: ["Lantern high.", "Good footing."], verified: ["A seal for {waypoint} in {quest}."], wrap: ["{quest} ends by the hearth."], greet: ["The lantern is ready."], reported: ["Road clear."] };
+const says = { working: ["Lantern high.", "Good footing."], verified: ["{checker} set a seal for {waypoint} in {quest}."], wrap: ["{quest} ends by the hearth."], greet: ["The lantern is ready."], reported: ["Road clear."] };
 
 async function widget(patch: Partial<ThreadDecor> = {}) {
   let data: ThreadDecor = {
@@ -51,7 +53,7 @@ async function widget(patch: Partial<ThreadDecor> = {}) {
     });
   };
   const mood = (state: NonNullable<ThreadDecor["member"]>["state"]) => update({ member: { ...data.member!, state } });
-  const verify = () => update({ moodSignals: { ...signals, verdict: { status: "verified", at: Date.now() } } });
+  const verify = () => update({ moodSignals: { ...signals, verdict: { status: "verified", at: Date.now(), checkerName: "Vex", waypointTitle: "Stone Bridge" } } });
   const click = () => { fireEvent.click(actor()!); };
   return { actor, speech, update, mood, verify, click };
 }
@@ -90,7 +92,7 @@ describe("thread strip speech", () => {
     await tick(999);
     expect(w.speech()).toBeNull();
     await tick(1);
-    expect(w.speech()).toBe("A seal for Waypoint 1 in Vault cutover.");
+    expect(w.speech()).toBe("Vex set a seal for Stone Bridge in Vault cutover.");
     await tick(BUBBLE_MS);
     expect(w.speech()).toBeNull();
   });
@@ -164,6 +166,46 @@ describe("thread strip speech", () => {
     expect(w.speech()).toBeNull();
   });
 
+  it.each(["report", "evidence"] as const)("suppresses and clears automatic speech beside visible %s, but lets a click speak", async kind => {
+    const w = await widget({ voice: "light" });
+    const mountReading = () => kind === "report"
+      ? render(<ReportCard report={{ ...fixtureReport, createdAt: Date.now() - 120_000 }} />)
+      : render(<EvidenceList evidence={fixtureReport.evidence} />);
+    const reading = mountReading();
+    vi.useFakeTimers();
+    await w.verify();
+    await act(async () => { fx.all.at(-1)?.finish(); });
+    await tick(1_000);
+    expect(w.speech()).toBeNull();
+    w.click();
+    expect(w.speech()).toBe("Vex set a seal for Stone Bridge in Vault cutover.");
+    reading.unmount();
+    await tick(BUBBLE_MS);
+    await w.update({ boardQuest: { ...fixtureBoard, phase: "done", endedAt: Date.now() } });
+    await tick(1);
+    expect(w.speech()).toBe("Vault cutover ends by the hearth.");
+    mountReading();
+    await act(async () => {});
+    expect(w.speech()).toBeNull();
+  });
+
+  it("uses report delivery time for the one-minute hold even offscreen", async () => {
+    const w = await widget({ voice: "light" });
+    vi.useFakeTimers();
+    const now = Date.now();
+    const reading = render(<div data-tavern-report-thread="keeper-1"><ReportCard report={{ ...fixtureReport, createdAt: now - 120_000, deliveredAt: now }} /></div>);
+    const card = reading.container.querySelector("article")!;
+    vi.spyOn(card, "getBoundingClientRect").mockReturnValue(new DOMRect(0, -280, 360, 64));
+    await w.verify();
+    await act(async () => { fx.all.at(-1)?.finish(); });
+    await tick(1_000);
+    expect(w.speech()).toBeNull();
+    await tick(60_000 - (Date.now() - now));
+    await w.update({ boardQuest: { ...fixtureBoard, phase: "done", endedAt: Date.now() } });
+    await tick(1);
+    expect(w.speech()).toBe("Vault cutover ends by the hearth.");
+  });
+
   it("allows light to speak on click and wrap, not on arrival or a report", async () => {
     const w = await widget({ voice: "light" });
     vi.useFakeTimers();
@@ -178,6 +220,7 @@ describe("thread strip speech", () => {
     await tick(1_000);
     expect(w.actor()?.dataset.mood).toBe("reported");
     expect(w.speech()).toBeNull();
+    await tick(60_000);
     await w.update({ boardQuest: { ...fixtureBoard, phase: "done", endedAt: Date.now() } });
     await tick(1);
     expect(w.speech()).toBe("Vault cutover ends by the hearth.");

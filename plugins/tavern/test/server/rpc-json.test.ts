@@ -74,10 +74,13 @@ it("returns compact mood signals and the voice setting in the thread widget", as
     released: false, archived: false, handBack: false,
     report: { status: "blocked", createdAt: f.report.createdAt }, verdict: null,
   } });
-  const entry = { ...waypointEntry("member", f.q.id), status: "verified", updatedAt: f.report.createdAt + 1 };
+  f.k.bind("reviewer", "warden", "vex", "project");
+  const at = f.report.createdAt + 1;
+  const entry = { ...waypointEntry("member", f.q.id), status: "verified", updatedAt: at + 1,
+    review: { actor: { kind: "agent", threadId: "reviewer" }, at, evidence: [], reason: null, previousNote: null, memberEvidenceAt: null } };
   f.k.store.db.prepare("INSERT INTO questlog_entries(thread_id, id, board_quest_id, data) VALUES (?, ?, ?, ?)")
     .run(entry.threadId, entry.id, f.q.id, JSON.stringify(entry));
-  expect(await decor()).toMatchObject({ moodSignals: { verdict: { status: "verified", at: entry.updatedAt } } });
+  expect(await decor()).toMatchObject({ moodSignals: { verdict: { status: "verified", at, checkerName: "Vex", waypointTitle: planInput(f.q.id).waypoints[0]!.title } } });
   f.k.store.patch("member", { archivedAt: Date.now(), lastBriefAt: f.report.createdAt + 1, released: { decisionId: f.decision.id, reason: "Returned" } });
   expect(await decor()).toMatchObject({ moodSignals: { released: true, archived: true, report: null } });
   f.k.memory.note("lead", { kind: "waiting-on-user", text: "Choose the next trail" });

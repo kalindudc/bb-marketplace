@@ -4,6 +4,7 @@ import type { VoiceMode } from "../../shared/settings";
 
 export const BUBBLE_MS = 4_500;
 const CUE_SETTLE_MS = 1_000;
+const REPORT_HOLD_MS = 60_000;
 const MIN_GAP_MS = 180_000;
 const GAP_SPAN_MS = 240_000;
 
@@ -25,7 +26,13 @@ export type SpeechInput = {
   typing?: boolean;
   held?: boolean;
   stuckInView?: boolean;
+  reportInView?: boolean;
+  latestReportAt?: number;
 };
+
+export function reportSpeechHeld({ now, latestReportAt = -Infinity, reportInView }: Pick<SpeechInput, "now" | "latestReportAt" | "reportInView">) {
+  return !!reportInView || (now >= latestReportAt && now - latestReportAt < REPORT_HOLD_MS);
+}
 
 export function speechSlot(mood: MoodOrGone): mood is Exclude<SpeechKey, "greet" | "wrap"> {
   return mood === "idle" || mood === "working" || mood === "resting" || mood === "reported" || mood === "verified";
@@ -40,6 +47,7 @@ export function planSpeech(input: SpeechInput) {
     eventAt >= pageSince && now - at < BUBBLE_MS && Math.max(lastLineAt ?? -Infinity, input.lastEventAttemptAt ?? -Infinity) < at;
 
   if (input.click) return line(mood, "click", now);
+  if (reportSpeechHeld(input)) return null;
   if (wrappedAt !== undefined && eligible(wrappedAt)) return line("wrap", "wrap", wrappedAt);
   if (arrivedAt !== undefined && voice === "full" && eligible(arrivedAt)) return line("greet", "arrival", arrivedAt);
   if (mood === "verified" || mood === "reported") {

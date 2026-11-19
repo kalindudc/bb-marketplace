@@ -28,7 +28,7 @@ says:
     - "Examine that seal."
   reported:
     - "Holds under strain."
-    - "Clasp did not."
+    - "Clasp held. Barely."
     - "Nothing broke. Fine."
   verified:
     - "Verdict: seal sound."

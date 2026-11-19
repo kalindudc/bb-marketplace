@@ -22,7 +22,7 @@ const REPORT_WORD = { done: "done", "needs-decision": "needs your decision", blo
 export function ReportCard({ report, who, onOpen, names, onView, voice = true }: { report: Report; who?: Identity | null; onOpen?: (threadId: string) => void; names?: ReportHeadlineNames; onView?: () => void; voice?: boolean }) {
   const name = who ? `${who.character.name}` : "A member";
   return (
-    <article className={`tavern tcard report r-${report.status}`} aria-label={`Report from ${name}: ${REPORT_WORD[report.status]}`}>
+    <article className={`tavern tcard report r-${report.status}`} data-tavern-report-at={report.deliveredAt ?? report.createdAt} aria-label={`Report from ${name}: ${REPORT_WORD[report.status]}`}>
       <header className="tc-h">
         {who && onOpen ? <button type="button" className="who who-btn act" title={`Open ${name}’s thread`} onClick={() => onOpen(report.memberThreadId)}><Crest {...who} size={18} /><span className="who-t"><b>{name}</b><span className="anc">{who.cls.label} · {who.cls.plain}</span></span><OpensMark /></button>
           : who ? <span className="who"><Crest {...who} size={18} /><span className="who-t"><b>{name}</b><span className="anc">{who.cls.label} · {who.cls.plain}</span></span></span> : <b>Report</b>}
@@ -113,7 +113,7 @@ export function DirectiveCard({ kind, ...props }: PluginMessageDirectiveProps & 
   const parsed = directiveAttributes(kind, props.attributes);
   if (!parsed.success) return <code>{props.source}</code>;
   if (kind === "tavern-ask") return <AskPointer threadId={props.message.threadId} askId={props.attributes.id!} />;
-  if (kind === "tavern-reports" || kind === "tavern-errand") return <ReportDigest ids={kind === "tavern-reports" ? props.attributes.ids!.split(",").map(s => s.trim()) : []} memberThreadId={kind === "tavern-errand" ? props.attributes.member! : null} />;
+  if (kind === "tavern-reports" || kind === "tavern-errand") return <ReportDigest threadId={props.message.threadId} ids={kind === "tavern-reports" ? props.attributes.ids!.split(",").map(s => s.trim()) : []} memberThreadId={kind === "tavern-errand" ? props.attributes.member! : null} />;
   return <QuestDirective kind={kind} questId={props.attributes.quest!} version={props.attributes.version ? Number(props.attributes.version) : null} />;
 }
 
@@ -192,7 +192,7 @@ function useIdentities(threadIds: string[]) {
   return (threadId: string): Identity | null => { const c = crests.data?.crests.find(x => x.threadId === threadId); return c && registry.data ? memberIdentity(registry.data, c) : null; };
 }
 
-function ReportDigest({ ids, memberThreadId }: { ids: string[]; memberThreadId: string | null }) {
+function ReportDigest({ threadId, ids, memberThreadId }: { threadId: string; ids: string[]; memberThreadId: string | null }) {
   const query = experimental_useRpcQuery({ contract: rpcContract, method: "reports", input: { ids, memberThreadId } });
   const navigate = useBbNavigate();
   const reports = query.data?.reports ?? [];
@@ -206,7 +206,7 @@ function ReportDigest({ ids, memberThreadId }: { ids: string[]; memberThreadId: 
   // How many of the card's reports carried a confidence line, so those report shapes draw it too.
   const confident = useSkeletonCount(memberThreadId ? "skel:thread:card:errand:conf" : `skel:thread:card:reports:${ids[0] ?? ""}:${ids.length}:conf`, query.data ? reports.filter(r => r.confidence).length : undefined, 0);
   return (
-    <section className="tavern digest" aria-label={memberThreadId ? "Side quest result (errand)" : `${count} report${count === 1 ? "" : "s"} from the party`}>
+    <section className="tavern digest" data-tavern-report-thread={threadId} aria-label={memberThreadId ? "Side quest result (errand)" : `${count} report${count === 1 ? "" : "s"} from the party`}>
       <h3 className="dg-h">{memberThreadId ? <><Vocabulary word="errand" /> · result</> : <>{count} report{count === 1 ? "" : "s"} from the party</>}</h3>
       <QueryState error={query.error} loading={query.isLoading} retry={() => void query.refetch()} label={memberThreadId ? "the errand result" : "the reports"} skeleton={<>{Array.from({ length: Math.min(8, rows) }, (_, i) => <SkReportCard key={i} confidence={i < confident} />)}</>} />
       {questIds.map(qid => <QuestReports key={qid ?? "errand"} questId={qid} reports={reports.filter(r => r.boardQuestId === qid)} who={who} onOpen={tid => navigate.toThread(tid)} onView={r => panel.openTab({ tab: REPORTS_TAB, params: { memberThreadId: r.memberThreadId, questId: r.boardQuestId, reportId: r.id } })} />)}

@@ -38,15 +38,18 @@ export function characterMood({ now, activity, released, archived, openAsk, hand
   return "idle";
 }
 
-export function waypointMoodVerdict(member: Member, entries: readonly JournalEntry[]): { status: Verdict["status"]; at: number } | null {
+export function waypointMoodVerdict(member: Member, entries: readonly JournalEntry[]): { status: Verdict["status"]; at: number; waypointId: string; checkerThreadId: string | null } | null {
   if (member.classId === "warden" || !member.boardQuestId) return null;
   const linked = entries.filter(e => e.threadId === member.threadId && e.link?.boardQuestId === member.boardQuestId);
   const verdictAt = (e: JournalEntry) => e.review?.at ?? e.updatedAt;
   const rejected = linked.filter(e => e.status === "rejected");
-  if (rejected.length) return { status: "rejected", at: Math.max(...rejected.map(verdictAt)) };
   const pending = new Set(linked.filter(e => e.status !== "verified").map(e => e.link?.waypointId));
-  const checked = linked.filter(e => e.status === "verified" && !pending.has(e.link?.waypointId));
-  return checked.length ? { status: "verified", at: Math.max(...checked.map(verdictAt)) } : null;
+  const candidates = rejected.length ? rejected : linked.filter(e => e.status === "verified" && !pending.has(e.link?.waypointId));
+  const latest = candidates.reduce<JournalEntry | null>((best, entry) => !best || verdictAt(entry) > verdictAt(best) ? entry : best, null);
+  if (!latest?.link) return null;
+  const actor = latest.review?.actor ?? latest.updatedBy;
+  return { status: rejected.length ? "rejected" : "verified", at: verdictAt(latest), waypointId: latest.link.waypointId,
+    checkerThreadId: actor.kind === "agent" ? actor.threadId : null };
 }
 
 export function currentMoodReport(report: MoodReport | undefined, briefAt?: number | null): MoodReport | null {

@@ -140,6 +140,13 @@ export function rpcHandlers(
     },
     decor: ({ threadId }): ThreadDecor => {
       const m = k.member(threadId), thread = k.store.runtime(threadId);
+      const boardQuest = m?.boardQuestId ? k.quest(m.boardQuestId) : null;
+      const plan = boardQuest ? k.store.get("plans", `${boardQuest.id}:${boardQuest.planVersion}`) : null;
+      const verdict = m && boardQuest ? waypointMoodVerdict(m, k.journal.linkedEntries(boardQuest.id)) : null;
+      const reviewer = verdict?.checkerThreadId ? k.member(verdict.checkerThreadId) : null;
+      const checkerName = reviewer?.classId === "warden" && reviewer.characterId
+        ? reviewer.displayName ?? runtime.snapshot(k.store.runtime(reviewer.threadId).projectId ?? undefined).characters.find(c => c.id === reviewer.characterId)?.name ?? null : null;
+      const titleOf = (id: string | null) => plan?.waypoints.find(w => w.id === id)?.title ?? null;
       return {
         threadId,
         widgetRow: runtime.config().tavern.widgetRow,
@@ -152,14 +159,15 @@ export function rpcHandlers(
           archived: thread.archivedAt != null || thread.deletedAt != null,
           handBack: m.role === "keeper" && k.memory.notes(threadId, 200).some(note => note.kind === "waiting-on-user"),
           report: currentMoodReport(k.store.query("reports", "memberThreadId", threadId, 1)[0], thread.lastBriefAt),
-          verdict: m.boardQuestId ? waypointMoodVerdict(m, k.journal.linkedEntries(m.boardQuestId)) : null,
+          waypointTitle: titleOf(m.waypointId ?? m.checkerWaypointId ?? null),
+          verdict: verdict ? { status: verdict.status, at: verdict.at, waypointTitle: titleOf(verdict.waypointId), checkerName } : null,
         } } : {}),
         classNotice: thread.classNotice ?? null,
         scope: runtime.scopes?.view(threadId) ?? null,
         violations: runtime.scopes?.violations([threadId]) ?? [],
         member: m,
         keeper: m?.keeperThreadId ? k.member(m.keeperThreadId) : null,
-        boardQuest: m?.boardQuestId ? k.quest(m.boardQuestId) : null,
+        boardQuest,
         briefFields: decorBrief(k.store.runtime(threadId).brief),
         brief: k.store.runtime(threadId).brief
           ? JSON.stringify(k.store.runtime(threadId).brief, null, 2)

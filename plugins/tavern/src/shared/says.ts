@@ -17,7 +17,7 @@ export function pickLine(lines: readonly string[] | undefined, key: string, prev
     const filled = line.replace(/\{([^{}]+)\}/g, (_, field: string) => {
       const value = fields.find(f => f === field);
       const fact = value === undefined ? null : facts[value];
-      if (fact != null && String(fact).trim()) return String(fact);
+      if (fact != null && String(fact).trim() && !(field === "waypoint" && /^(?:waypoint\s+|w)\d+$/i.test(String(fact).trim()))) return String(fact);
       missing = true;
       return "";
     });

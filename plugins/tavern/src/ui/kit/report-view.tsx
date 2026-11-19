@@ -100,7 +100,7 @@ export function ReportView({ report, names = {}, compact = false, member, onView
     {outcome && <Clamp text={outcome} lines={2} className="rv-out" />}
     {(evidence.length > 0 || onView) && <p className="rv-foot">{evidence.length > 0 && <span className="m">{plural(evidence.length, "piece")} of evidence</span>}{onView && <button type="button" className="lnk-btn act" onClick={onView}><span>View report</span><OpensMark /></button>}</p>}
   </div>;
-  return <div className={`rv r-${report.status}`}>
+  return <div className={`rv r-${report.status}`} data-tavern-report="">
     {headline && <p className="rv-lead" data-content>{headline}</p>}
     {reportBlocks(outcome).map((block, i) => block.kind === "code"
       ? <pre key={i} className="rv-code" data-content><code>{block.text}</code></pre>
