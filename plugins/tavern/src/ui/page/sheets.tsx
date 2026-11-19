@@ -100,7 +100,7 @@ export function CharacterSheetEditor({ character, registry, room }: { character:
         <BubbleLines says={character.says} />
         {character.quirks.length > 0 && <><div className="lbl" style={{ marginTop: 10 }}>Quirks</div><ul className="tv-li-list">{character.quirks.map((q, i) => <li key={i}><span>{q}</span></li>)}</ul></>}
         <p className="m small" style={{ marginTop: 10 }}>Asks, blockers, findings, evidence and numbers stay plain.</p>
-        {!voiceShown(registry) && <p className="m small" data-voice-off>Character voice is off in Settings: agents write plainly, and these lines aren't used.</p>}
+        {!voiceShown(registry) && <p className="m small" data-voice-off>Speech bubbles are off in Atmosphere. Agents write plainly, and saved voice lines are hidden.</p>}
         {voiceShown(registry) && <ReportVoices voices={registry.characterReportVoices?.find((v) => v.characterId === character.id)?.voices ?? []} name={character.name} questShort={(id) => questsIn(room).find((q) => q.id === id)?.short ?? service?.records.find((r) => r.questId === id)?.short ?? "a quest"} />}
         <VoiceCheckSummary character={character} />
       </section>

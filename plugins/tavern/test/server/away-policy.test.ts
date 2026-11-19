@@ -1,12 +1,12 @@
 // @vitest-environment node
 import { makeMessageDispatchHookContext, makeQueueEntry } from "@get-bb/plugin-sdk/testing";
 import { describe, expect, it } from "vitest";
-import { AWAY_STOP_LIST, awayWindowSchema } from "../../src/shared/away";
+import { LEGACY_AWAY_STOP_LIST, awayWindowSchema } from "../../src/shared/away";
 import { awayExecutionPolicy, awayReturnFromDispatch, awayShouldNotify } from "../../src/server/away/policy";
 
 const window = awayWindowSchema.parse({ id: "away-1", version: 1, closedAt: 1_000_000, until: 2_000_000,
   note: null, quests: [{ questId: "draft", endState: "drafts-ready" }, { questId: "pause", endState: "pause" }],
-  allowWatched: false, wakeRules: { blockers: true, productionAsksAfterTwoHours: false }, stopList: [...AWAY_STOP_LIST],
+  allowWatched: false, wakeRules: { blockers: true, productionAsksAfterTwoHours: false }, stopList: [...LEGACY_AWAY_STOP_LIST],
   eventFloor: 1, eventCeiling: null, returnedAt: null, returnCause: null });
 const returned = awayWindowSchema.parse({ ...window, version: 2, eventCeiling: 2, returnedAt: 1_100_000,
   returnCause: { kind: "explicit-return", threadId: null, refId: null } });

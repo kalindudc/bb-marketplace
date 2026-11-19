@@ -1,7 +1,8 @@
 import { z } from "zod";
+import { KNOB_FIELDS } from "./settings";
 
 export const VOICE_CHECK_SITUATIONS = ["blocker", "ask", "failed", "report", "wrap"] as const;
-export const VOICE_CHECK_PER_HOUR = 10;
+export const VOICE_CHECK_PER_HOUR = KNOB_FIELDS.tavern.voiceChecksPerHour.default;
 export const voiceCheckTag = (characterId: string) => `tavern:voice-check:${characterId}`;
 
 /** The draft a check runs. Only name and style reach an agent; quirks feed the rule that looks for the style's own words. */
@@ -71,7 +72,7 @@ export type VoiceCheckView = z.infer<typeof voiceCheckViewSchema>;
 
 const characterId = z.string().regex(/^[a-z][a-z0-9-]{0,39}$/);
 export const voiceCheckContract = {
-  voiceCheck: { input: z.object({ characterId }).strict(), output: voiceCheckViewSchema, tags: ({ characterId }: { characterId: string }) => [voiceCheckTag(characterId)] },
+  voiceCheck: { input: z.object({ characterId }).strict(), output: voiceCheckViewSchema, tags: ({ characterId }: { characterId: string }) => [voiceCheckTag(characterId), "tavern:settings"] },
   // Client-only: the server refuses any caller that isn't the person in the app.
   voiceCheckStart: { input: z.object({ characterId, draft: voiceDraftSchema }).strict(), output: voiceCheckViewSchema },
   voiceCheckCancel: { input: z.object({ characterId, runId: z.string().min(1).max(100) }).strict(), output: voiceCheckViewSchema },

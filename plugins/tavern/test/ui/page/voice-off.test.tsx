@@ -27,14 +27,14 @@ async function open(subPath: string, voice: "full" | "light" | "off" | undefined
 }
 const ready = (slot: RenderedSlot, sel: string) => waitFor(() => expect([...slot.container.querySelectorAll(sel)].some((e) => !e.closest(".sk"))).toBe(true), LOADED);
 
-describe("with Character voice off in Settings, the page hides stored voice lines and keeps the data", () => {
+describe("with Speech bubbles off in Atmosphere, the page hides stored voice lines and keeps the data", () => {
   it("drops Said in a report from the sheet, keeps the character's own lines to edit, and says voice is off", async () => {
     const off = await open("character/wren", "off");
     await ready(off, ".tv-sheet-head h1");
     await waitFor(() => expect(off.container.querySelector(".tv-voiceed")).not.toBeNull(), LOADED);
     expect(off.queryByRole("region", { name: "Said in a report" })).toBeNull();
     expect(off.container.querySelectorAll(".tv-voiceed .tv-preview dd").length).toBeGreaterThan(0);
-    expect(off.container.querySelector("[data-voice-off]")!.textContent).toBe("Character voice is off in Settings: agents write plainly, and these lines aren't used.");
+    expect(off.container.querySelector("[data-voice-off]")!.textContent).toBe("Speech bubbles are off in Atmosphere. Agents write plainly, and saved voice lines are hidden.");
     for (const voice of ["full", "light", undefined] as const) {
       const on = await open("character/wren", voice);
       await on.findByRole("region", { name: "Said in a report" }, LOADED);

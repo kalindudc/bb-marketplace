@@ -2,6 +2,10 @@ import { experimental_useRpcMutation, experimental_useRpcQuery, useBbNavigate } 
 import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
 import { rpcContract, type BoardQuestSummary, type Room } from "../../shared/contract";
 import type { AwayControl } from "../../shared/away-rpc";
+import { DEFAULT_SETTINGS } from "../../shared/settings";
+import type { AwayStopKind } from "../../shared/away";
+import { AwayStopChoices, stopListWords, windowStopWords } from "./away-preferences";
+import { useTavernSettings } from "./settings";
 import type { Member } from "../../shared/schema";
 import { OpensMark, Vocabulary, plural, readable, useNow } from "../kit";
 import { AwayTime, ClosedWords, characterName, type Registry } from "./common";
@@ -15,7 +19,6 @@ import "./away.css";
  */
 
 export type EndChoice = "drafts-ready" | "pause" | "hold";
-export const STOP_LIST_WORDS = ["Merge", "Deploy or release train", "Production write", "Send as you", "Delete"];
 export const REOPEN_LINE = "Answering an ask or messaging any Tavern thread, a solo included, reopens the tavern.";
 export const NOTHING_ENDED_LINE = "Nothing is ended; paused work waits for your return.";
 export const NOTHING_RUNNING_LINE = "Nothing is running now. Closing changes only what starts while you're away: new work waits until you return.";
@@ -50,7 +53,7 @@ export type ClosePlan = {
  * The server's eligibleByQuest and soloCount are the members and solos Close acts on, so they win over counting the room's member states,
  * which can't see a released, archived or deleted member. Without them (an older server) the page counts states, as before.
  */
-export function closePlan(room: Room, control: Pick<AwayControl, "watchedCount" | "watchedByQuest" | "eligibleByQuest" | "soloCount"> | null | undefined, input: { choices: Record<string, EndChoice>; allowWatched: boolean; wakeRules: { blockers: boolean; productionAsksAfterTwoHours: boolean } }): ClosePlan {
+export function closePlan(room: Room, control: Pick<AwayControl, "watchedCount" | "watchedByQuest" | "eligibleByQuest" | "soloCount"> | null | undefined, input: { choices: Record<string, EndChoice>; allowWatched: boolean; wakeRules: { blockers: boolean; productionAsksAfterTwoHours: boolean }; defaultEndState?: EndChoice; productionWakeHours?: number }): ClosePlan {
   const byQuest = control?.watchedByQuest;
   const eligible = control?.eligibleByQuest;
   const watchedIn = (questId: string | null) => (byQuest ? byQuest.find((w) => w.questId === questId)?.watchedCount ?? 0 : null);
@@ -59,7 +62,7 @@ export function closePlan(room: Room, control: Pick<AwayControl, "watchedCount" 
   const split = !eligible || eligible.every((r) => typeof (r as { errands?: unknown }).errands === "number");
   const errands = room.keepers.flatMap((k) => k.errands).filter(inPlay);
   const quests = workingQuests(room).map((q) => {
-    const choice = input.choices[q.id] ?? "drafts-ready";
+    const choice = input.choices[q.id] ?? input.defaultEndState ?? "drafts-ready";
     const row = eligible ? eligibleIn(q.id) : null;
     const counts = row ? { members: row.members - (row.errands ?? 0), watched: row.watched } : { members: q.members.filter((m) => m.role === "member" && !m.errand && inPlay(m)).length, watched: watchedIn(q.id) ?? 0 };
     const detail = questLine(choice, counts, input.allowWatched);
@@ -74,7 +77,7 @@ export function closePlan(room: Room, control: Pick<AwayControl, "watchedCount" 
   const open = room.asks.filter((a) => a.state === "open").length;
   const solos = control?.soloCount ?? room.solos.filter(inPlay).length;
   const stopping = stoppingQuests(room).length;
-  const wakes = [input.wakeRules.blockers ? "A blocker wakes you." : "Nothing wakes you for a blocker.", input.wakeRules.productionAsksAfterTwoHours ? "So does a production ask that waits 2 hours." : ""].filter(Boolean).join(" ");
+  const wakes = [input.wakeRules.blockers ? "A blocker wakes you." : "Nothing wakes you for a blocker.", input.wakeRules.productionAsksAfterTwoHours ? `So does a production ask that waits ${plural(input.productionWakeHours ?? DEFAULT_SETTINGS.away.productionWakeHours, "hour")}.` : ""].filter(Boolean).join(" ");
   return {
     quests,
     watchedTotal: byQuest || eligible || !control || !control.watchedCount ? null : `${plural(control.watchedCount, "watched member")} ${input.allowWatched ? s(control.watchedCount, "keeps drafting, watched", "keep drafting, watched") : s(control.watchedCount, "holds", "hold")} across all quests.`,
@@ -213,8 +216,8 @@ export function ReturnButton({ room, registry, className = "", action }: { room:
 }
 
 /** A datetime-local value for the next 08:00 at least an hour away. */
-export function defaultBackAt(now = new Date()) {
-  const d = new Date(now); d.setHours(8, 0, 0, 0);
+export function defaultBackAt(now = new Date(), hour = DEFAULT_SETTINGS.away.defaultBackAtHour) {
+  const d = new Date(now); d.setHours(hour, 0, 0, 0);
   if (d.getTime() - now.getTime() < 60 * 60_000) d.setDate(d.getDate() + 1);
   const p = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
@@ -232,27 +235,43 @@ export function AwayForm({ room, registry }: { room: Room; registry: Registry })
   const control = useAwayControl(room, true);
   const close = experimental_useRpcMutation({ contract: rpcContract, method: "awayClose" });
   const live = workingQuests(room);
-  const [backAt, setBackAt] = useState(() => defaultBackAt());
+  const settings = useTavernSettings();
+  const defaults = settings.data?.effective.away ?? DEFAULT_SETTINGS.away;
+  const [openedAt] = useState(() => new Date());
+  const [backAtInput, setBackAt] = useState<string | null>(null);
+  const backAt = backAtInput ?? defaultBackAt(openedAt, defaults.defaultBackAtHour);
   const [note, setNote] = useState("");
   const [choices, setChoices] = useState<Record<string, EndChoice>>({});
-  const [allowWatched, setAllowWatched] = useState(false);
-  const [wake, setWake] = useState({ blockers: true, productionAsksAfterTwoHours: false });
+  const [watchedChoice, setAllowWatched] = useState<boolean | null>(null);
+  const allowWatched = watchedChoice ?? defaults.defaultAllowWatched;
+  const [wakeChoice, setWake] = useState<Partial<{blockers: boolean; productionAsksAfterTwoHours: boolean}>>({});
+  const wake = useMemo(() => ({ blockers: wakeChoice.blockers ?? defaults.defaultWakeBlockers, productionAsksAfterTwoHours: wakeChoice.productionAsksAfterTwoHours ?? defaults.defaultWakeProduction }), [wakeChoice, defaults]);
+  const [selection, setSelection] = useState<AwayStopKind[] | null>(null);
+  const stopList = selection ?? defaults.neverWhileClosed;
   const [confirming, setConfirming] = useState(false);
   const [outcome, setOutcome] = useState<{ tone: "done" | "warn" | "bad"; text: ReactNode } | null>(null);
   const until = new Date(backAt).getTime();
   // The sheet may sit open past its Back at time with no input: the minute clock re-checks it.
   useNow();
   const badTime = !Number.isFinite(until) || until <= Date.now();
-  const plan = useMemo(() => closePlan(room, control.data, { choices, allowWatched, wakeRules: wake }), [room, control.data, choices, allowWatched, wake]);
+  const plan = useMemo(() => {
+    const preview = control.data && !stopList.length ? {
+      ...control.data, watchedCount: 0, watchedByQuest: [],
+      eligibleByQuest: control.data.eligibleByQuest?.map(row => ({ ...row, watchedCount: 0 })),
+    } : control.data;
+    return closePlan(room, preview, { choices, allowWatched, wakeRules: wake, defaultEndState: defaults.defaultEndState, productionWakeHours: defaults.productionWakeHours });
+  }, [room, control.data, choices, allowWatched, wake, defaults, stopList.length]);
   const away = roomAway(room);
   const ret = useReturn(room, registry);
   // Close's own receipt is for the moment before the room says closed; once it does, the closed view says so, and a receipt kept
   // past that would reappear, stale, when the form opens again after Return.
-  useEffect(() => { if (away?.closed) setOutcome(null); }, [away?.closed]);
+  useEffect(() => { if (away?.closed) { setOutcome(null); setSelection(null); } }, [away?.closed]);
+  useEffect(() => setConfirming(false), [settings.data?.revision]);
 
   if (away?.closed) return <div className="tv-form" aria-labelledby={`${id}-h`}>
     <header className="tv-form-h"><PageGlyph name="lantern" size={18} /><h2 id={`${id}-h`}><Vocabulary word="closing" /></h2></header>
     <p><b><ClosedWords away={away} /></b>{control.data?.window?.note ? <> · <span data-content>“{control.data.window.note}”</span></> : null}</p>
+    {control.data?.window && <p>{windowStopWords(control.data.window)}</p>}
     <AwayNotes room={room} registry={registry} control={control.data} />
     <p className="m small">{REOPEN_LINE}</p>
     <footer className="tv-formf"><ReturnButton room={room} registry={registry} action={ret} /></footer>
@@ -260,12 +279,12 @@ export function AwayForm({ room, registry }: { room: Room; registry: Registry })
 
   const submit = async () => {
     const state = control.data;
-    if (!state) return;
+    if (!state || !settings.data || settings.pending) return;
     setOutcome(null);
-    const quests = live.flatMap((q) => { const c = choices[q.id] ?? "drafts-ready"; return c === "hold" ? [] : [{ questId: q.id, endState: c }]; });
+    const quests = live.flatMap((q) => { const c = choices[q.id] ?? defaults.defaultEndState; return c === "hold" ? [] : [{ questId: q.id, endState: c }]; });
     try {
-      const out = await close.mutate({ revision: state.revision, until, note: note.trim() || null, quests, allowWatched, wakeRules: wake });
-      if (out.code === "stale") { setOutcome({ tone: "warn", text: "Closing time changed since you opened this sheet. Nothing has closed; check the lines again." }); void control.refetch(); return; }
+      const out = await close.mutate({ revision: state.revision, settingsRevision: settings.data.revision, stopList, until, note: note.trim() || null, quests, allowWatched, wakeRules: wake });
+      if (out.code === "stale") { setOutcome({ tone: "warn", text: "Closing time or its settings changed. Nothing has closed; check the lines again." }); void control.refetch(); void settings.refetch(); return; }
       const words = closedWords(out.state.status) ?? "Closed";
       if (out.code === "pending") setOutcome({ tone: "warn", text: <>{words}, but {plural(out.state.pendingStops.length, "stop")} {s(out.state.pendingStops.length, "isn’t", "aren’t")} confirmed yet. Tavern retries {s(out.state.pendingStops.length, "it", "them")}.<AwayNotes room={room} registry={registry} control={out.state} /></> });
       else setOutcome({ tone: "done", text: `${words}. Return from the status line or here.` });
@@ -278,26 +297,30 @@ export function AwayForm({ room, registry }: { room: Room; registry: Registry })
   return <form className="tv-form tv-awayform" aria-labelledby={`${id}-h`} onSubmit={(e) => { e.preventDefault(); if (!badTime) setConfirming(true); }}>
     <header className="tv-form-h"><PageGlyph name="lantern" size={18} /><h2 id={`${id}-h`}><Vocabulary word="closing" /></h2></header>
     {(ret.receipt || ret.problem) && <div className="tv-formr"><ReturnButton room={room} registry={registry} action={ret} /></div>}
-    <p className="m">The Keepers keep private work moving where the guard holds. Every step on the stop list waits for you.</p>
+    <p className="m">Choose what keeps going and what waits for your return.</p>
     <fieldset className="tv-fields" disabled={close.isPending}><legend className="sr">When you are back</legend>
       <label className="tv-field" htmlFor={`${id}-back`}>Back at<input className="tv-inp" id={`${id}-back`} type="datetime-local" value={backAt} onChange={(e) => { setBackAt(e.target.value); setConfirming(false); }} aria-invalid={badTime || undefined} aria-describedby={badTime ? `${id}-backerr` : undefined} required /></label>
       <label className="tv-field wide" htmlFor={`${id}-note`}>Note to the Keepers <span className="m">{note.length} of 500</span><textarea className="tv-inp" id={`${id}-note`} rows={2} maxLength={500} value={note} onChange={(e) => setNote(e.target.value)} /></label>
     </fieldset>
     {badTime && <p id={`${id}-backerr`} className="tv-problem" role="alert">Back at has to be later than now.</p>}
     {live.map((q) => <fieldset key={q.id} className="opts tv-grpbox" disabled={close.isPending}><legend title={q.title}>{q.short || q.title}</legend>
-      {CHOICES.map((c) => <label className="opt" key={c.id}><input type="radio" name={`${id}-end-${q.id}`} checked={(choices[q.id] ?? "drafts-ready") === c.id} onChange={() => setChoices((prev) => ({ ...prev, [q.id]: c.id }))} /><span className="ol"><b>{c.label}</b><span className="m"> · {c.hint}</span></span></label>)}
+      {CHOICES.map((c) => <label className="opt" key={c.id}><input type="radio" name={`${id}-end-${q.id}`} checked={(choices[q.id] ?? defaults.defaultEndState) === c.id} onChange={() => setChoices((prev) => ({ ...prev, [q.id]: c.id }))} /><span className="ol"><b>{c.label}</b><span className="m"> · {c.hint}</span></span></label>)}
     </fieldset>)}
     {!live.length && <p className="tv-empty" data-empty>No live quests: nothing would keep going while you are away.</p>}
     <fieldset className="tv-grpbox" disabled={close.isPending}><legend>Watched members</legend>
-      <label className="tv-chk"><input type="checkbox" checked={allowWatched} onChange={(e) => setAllowWatched(e.target.checked)} /><span>Let watched members keep drafting (watched, not prevented){control.data ? <span className="m"> · {plural(control.data.watchedCount, "watched member")} now</span> : null}</span></label>
+      <label className="tv-chk"><input type="checkbox" checked={allowWatched} onChange={(e) => setAllowWatched(e.target.checked)} /><span>Let watched members keep drafting (watched, not prevented){control.data ? <span className="m"> · {plural(stopList.length ? control.data.watchedCount : 0, "watched member")} now</span> : null}</span></label>
     </fieldset>
     <fieldset className="tv-grpbox" disabled={close.isPending}><legend>Wake me for</legend>
       <label className="tv-chk"><input type="checkbox" checked={wake.blockers} onChange={(e) => setWake((w) => ({ ...w, blockers: e.target.checked }))} /><span>Blockers</span></label>
-      <label className="tv-chk"><input type="checkbox" checked={wake.productionAsksAfterTwoHours} onChange={(e) => setWake((w) => ({ ...w, productionAsksAfterTwoHours: e.target.checked }))} /><span>Production asks waiting 2 hours</span></label>
+      <label className="tv-chk"><input type="checkbox" checked={wake.productionAsksAfterTwoHours} onChange={(e) => setWake((w) => ({ ...w, productionAsksAfterTwoHours: e.target.checked }))} /><span>Production asks waiting {plural(defaults.productionWakeHours, "hour")}</span></label>
     </fieldset>
-    <fieldset className="tv-grpbox"><legend>Never while closed · locked for every class</legend>{STOP_LIST_WORDS.map((item) => <label className="tv-chk locked" key={item}><input type="checkbox" checked disabled readOnly /><span>{item}</span></label>)}</fieldset>
+    {settings.data && <>
+      <AwayStopChoices items={stopList} disabled={close.isPending} onChange={items => { setSelection(items); setConfirming(false); }} />
+      <p className="m small">These choices apply only to this window. Change the default in Tavern Settings.</p>
+    </>}
+    {settings.error && <p className="tv-problem" role="alert">{settings.error.message}</p>}
     {control.error && !control.data && <p className="tv-problem" role="alert"><span>Couldn’t read Closing time: {control.error.message}</span><button type="button" className="btn sm" onClick={() => void control.refetch()}>Retry</button></p>}
-    {!confirming && <footer className="tv-formf"><button type="submit" className="btn pri" disabled={badTime || !control.data || close.isPending}><span>Review before closing</span></button></footer>}
+    {!confirming && <footer className="tv-formf"><button type="submit" className="btn pri" disabled={badTime || !control.data || !settings.data || settings.pending || close.isPending}><span>Review before closing</span></button></footer>}
     {confirming && <section className="tv-confirm" aria-labelledby={`${id}-c`}>
       <h3 id={`${id}-c`}>Before you close, until {Number.isFinite(until) ? <AwayTime at={until} /> : "—"}</h3>
       {plan.quests.length > 0 && <ul className="tv-confirm-q" aria-label="Each quest">
@@ -311,6 +334,7 @@ export function AwayForm({ room, registry }: { room: Room; registry: Registry })
         {plan.unattached && <li data-line="unattached"><span>{plan.unattached}</span></li>}
         {plan.solos.running > 0 && <li data-line="solos"><span>{plan.solos.text} <b className="num">{plan.solos.running}</b> {s(plan.solos.running, "solo running", "solos running")}.</span></li>}
         {plan.asks && <li data-line="asks"><span>{plan.asks}</span></li>}
+        <li data-line="stop-policy"><span>{stopListWords(stopList)}</span></li>
         <li data-line="reopen"><span>{REOPEN_LINE}</span></li>
         <li data-line="nothing-ended"><span>{NOTHING_ENDED_LINE}</span></li>
       </ul>

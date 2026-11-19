@@ -1,3 +1,4 @@
+import { selectedAwayGuards } from "./away-policy";
 import type { Scope, ShellRule } from "./schema";
 import { writeAllowed } from "./paths";
 import type { ScopeCall } from "./engine";
@@ -6,7 +7,7 @@ import { draftEditKey, githubApiRead } from "./github";
 import { pushSpec } from "./remote";
 import type { ShellCommand } from "./shell";
 
-const clientOnlyMethods = ["holdBoardQuest", "resumeBoardQuest", "answerAsk", "applyClassExecution", "archiveBoardQuests", "awayClose", "awayReturn", "deleteBoardQuest", "dismissClassNotice", "releaseCheckerHandoff", "removeClassOverride", "restoreDeletedQuest", "saveClass", "setTaleKept", "settingsApplySuggestion", "settingsFile", "settingsImport", "settingsUndo", "settingsUpdate", "voiceCheckCancel", "voiceCheckStart"];
+const clientOnlyMethods = ["holdBoardQuest", "resumeBoardQuest", "answerAsk", "applyClassExecution", "archiveBoardQuests", "awayClose", "awayReturn", "deleteBoardQuest", "dismissClassNotice", "releaseCheckerHandoff", "removeClassOverride", "restoreDeletedQuest", "saveClass", "setTaleKept", "settingsApplySuggestion", "settingsEndOverride", "settingsFile", "settingsImport", "settingsUndo", "settingsUpdate", "voiceCheckCancel", "voiceCheckStart"];
 const namedUserMethods = ["delegateQuest", "preapproveQuest", "revokeQuestAuthority", "resumeAll", "releaseHold", "backupRestore", "confirmRule", "stopBoardQuest", "addRule", "widenRule", "undoDecision", "correctRoute", "resumeKeeper", "journalEdit", "resolveHandBack", "saveCharacterVoice", "saveCharacterAvatar"];
 const userMethods = new Set([...clientOnlyMethods, ...namedUserMethods, "greenlight", "conclude", "closeEarly", "allowReview", "guardInstall", "guardUninstall", "placementRetry", "placementModelFailureClear"]);
 export function userControl(command: ShellCommand): boolean {
@@ -82,6 +83,10 @@ function controlAct(command: ShellCommand): "configure" | "delete" | undefined {
     if (cloudVerb === "delete" || cloudVerb === "remove") return "delete";
   }
 }
+const deployFallback = /\bgcloud\b[^;\n]*\b(?:run|app|functions)\s+deploy\b|\b(?:terraform\s+(?:apply|destroy|import)|helm\s+(?:install|upgrade|uninstall)|(?:kapp|dev|dt|quick)\s+deploy)\b/;
+const productionFallback = /\bkubectl\b[^;\n]*\b(?:apply|create|replace|patch|edit|delete|scale|exec|cp|drain|cordon|annotate|label|set|taint)\b/;
+const httpWriteFallback = /\b(?:curl|wget)\b[^;\n]*(?:--(?:data|json|form|upload|post|body|method)|-[dFT]|-X\s*(?:POST|PUT|PATCH|DELETE))/;
+const sendFallback = /\b(?:slack|slack-cli|mail|mailx|sendmail|mutt)\b/;
 export const ACT_CATALOGUE: readonly ActDefinition[] = [
   { kind: "merge", ruleId: "gh-merge", why: "Merging needs the user's grant", commands: ["gh pr merge", "dt pr merge", "git push main|master"], matches: c => pr(c, ["merge"]) || c.argv[0] === "git" && c.argv[1] === "push" && (pushSpec(c.argv)?.refs ?? []).some(ref => /^(?:refs\/heads\/)?(?:main|master)$/.test(ref.split(":").at(-1)!)), fallback: /\b(?:gh|dt)\b[^;\n]*\bpr\s+merge\b|\bgit\s+push\b[^;\n]*\b(?:main|master)\b/ },
   ...(["ready", "close", "review"] as const).map(kind => ({ kind, ruleId: "pr-" + kind, why: `Pull request ${kind} needs a grant`, commands: [`gh pr ${kind}`, `dt pr ${kind}`, ...(kind === "review" ? ["dt pr approve"] : [])], matches: (c: ShellCommand) => pr(c, kind === "review" ? ["review", "approve"] : [kind]), fallback: new RegExp(`\\b(?:gh|dt)\\b[^;\\n]*\\bpr\\s+(?:${kind}${kind === "review" ? "|approve" : ""})\\b`) })),
@@ -89,8 +94,8 @@ export const ACT_CATALOGUE: readonly ActDefinition[] = [
     const [p, s, a] = c.argv;
     return p === "git" && s === "push" || p === "gh" && !githubRead(c.argv) && !(s === "auth" && a === "token") && !pr(c, ["merge", "ready", "close", "review", "approve"]) || pr(c, ["create", "edit", "comment"]) || cloudWrite(c.argv) || ["npm", "yarn", "pnpm", "bun", "cargo"].includes(p) && c.argv.slice(1).includes("publish") || p === "gem" && s === "push" || p === "twine" && s === "upload" || ["gs", "git-spice"].includes(p) && (["ss", "bs", "rs", "us", "uss", "bss", "dss"].includes(s) || ["submit", "sync", "publish", "land"].includes(a));
   }, fallback: /\bgit\s+push\b|\b(?:gh|dt)\b[^;\n]*\b(?:create|edit|comment|publish|upload|dispatch)\b|\b(?:npm|yarn|pnpm|bun|cargo)\s+publish\b|\b(?:gem\s+push|twine\s+upload)\b|\bgcloud\s+storage\s+(?:cp|mv|rm|rsync)\b/ },
-  { kind: "deploy", ruleId: "deploy", why: "Deployments and cluster writes need a grant", commands: ["kubectl writes", "terraform apply|destroy|import", "helm install|upgrade|uninstall", "kapp deploy", "dev deploy", "dt deploy", "quick deploy", "gcloud run|app|functions deploy"], matches: c => { const [p, s] = c.argv; return p === "kubectl" && !kubectlRead(c.argv) && !["--help", "--version"].includes(s) || p === "terraform" && ["apply", "destroy", "import"].includes(s) || p === "helm" && ["install", "upgrade", "uninstall"].includes(s) || ["kapp", "dev", "dt"].includes(p) && s === "deploy" || p === "quick" && c.argv.includes("deploy") || p === "gcloud" && ["run", "app", "functions"].includes(s) && c.argv[2] === "deploy"; }, fallback: /\bgcloud\b[^;\n]*\b(?:run|app|functions)\s+deploy\b|\b(?:terraform\s+(?:apply|destroy|import)|helm\s+(?:install|upgrade|uninstall)|(?:kapp|dev|dt|quick)\s+deploy)\b|\bkubectl\b[^;\n]*\b(?:apply|create|replace|patch|edit|delete|scale|exec|cp|drain|cordon|annotate|label|set|taint)\b/ },
-  { kind: "send", ruleId: "send", why: "Sending as the user needs a grant", commands: ["curl writes", "wget writes", "Slack and mail sends"], matches: c => httpWrite(c.argv) && !localHttp(c.argv) || ["slack", "slack-cli", "mail", "mailx", "sendmail", "mutt"].includes(c.argv[0]) || ["hermes", "gog"].includes(c.argv[0]) && c.argv.some(a => ["send", "post", "publish", "create", "update", "delete"].includes(a)), fallback: /\b(?:curl|wget)\b[^;\n]*(?:--(?:data|json|form|upload|post|body|method)|-[dFT]|-X\s*(?:POST|PUT|PATCH|DELETE))|\b(?:slack|slack-cli|mail|mailx|sendmail|mutt)\b/ },
+  { kind: "deploy", ruleId: "deploy", why: "Deployments and cluster writes need a grant", commands: ["kubectl writes", "terraform apply|destroy|import", "helm install|upgrade|uninstall", "kapp deploy", "dev deploy", "dt deploy", "quick deploy", "gcloud run|app|functions deploy"], matches: c => { const [p, s] = c.argv; return p === "kubectl" && !kubectlRead(c.argv) && !["--help", "--version"].includes(s) || p === "terraform" && ["apply", "destroy", "import"].includes(s) || p === "helm" && ["install", "upgrade", "uninstall"].includes(s) || ["kapp", "dev", "dt"].includes(p) && s === "deploy" || p === "quick" && c.argv.includes("deploy") || p === "gcloud" && ["run", "app", "functions"].includes(s) && c.argv[2] === "deploy"; }, fallback: new RegExp(`${deployFallback.source}|${productionFallback.source}`) },
+  { kind: "send", ruleId: "send", why: "Sending as the user needs a grant", commands: ["curl writes", "wget writes", "Slack and mail sends"], matches: c => httpWrite(c.argv) && !localHttp(c.argv) || ["slack", "slack-cli", "mail", "mailx", "sendmail", "mutt"].includes(c.argv[0]) || ["hermes", "gog"].includes(c.argv[0]) && c.argv.some(a => ["send", "post", "publish", "create", "update", "delete"].includes(a)), fallback: new RegExp(`${httpWriteFallback.source}|${sendFallback.source}`) },
   { kind: "delete", ruleId: "delete", why: "Deleting the user's things needs a grant", commands: ["bb thread|project|environment delete", "bb machine remove", "cortex rm", "gcloud resource delete"], matches: c => controlAct(c) === "delete", fallback: /\bbb\b[^;\n]*\b(?:thread|project|environment|machine)\s+(?:delete|archive|remove)\b|\bcortex\s+(?:rm|delete|remove)\b|\bgcloud\b[^;\n]*\b(?:delete|remove)\b/ },
   { kind: "configure", ruleId: "configure", why: "Changing the user's tools or settings needs a grant", commands: ["bb plugin install|uninstall|enable|disable|dev|settings", "bb settings set", "bb lan on|off|pair|revoke", "bb loom approve|start|land|live|archive|pause|resume", "bb automations create|update|delete|enable|disable", "bb aquifer-machines rotate|park|remove", "bb machine rotate|env set|env unset", "bb secrets except request", "cortex agents|reset|restore", "Tavern settings writes"], matches: c => controlAct(c) === "configure", fallback: /\bbb\b[^;\n]*\b(?:plugin\s+(?:install|uninstall|enable|disable|dev|settings)|loom\s+(?:approve|start|land|live|archive|pause|resume)|automations?\s+(?:create|update|delete|enable|disable)|lan\s+(?:on|off|pair|revoke)|settings\s+set|aquifer-machines\s+(?:rotate|park|remove)|machine\s+(?:rotate|env\s+(?:set|unset))|secrets(?!\s+request\b))\b|\bcortex\s+(?:agents|reset|restore)\b/ },
   { kind: "credential", ruleId: "credential", why: "Revealing a credential needs the user's grant", commands: ["gh auth token", "security find-password -w|-g", "vault read|kv get", "gcloud secrets versions access"], matches: c => { const [p, s, a] = c.argv; return p === "gh" && s === "auth" && a === "token" || p === "security" && /^find-.*password$/.test(s ?? "") && c.argv.some(arg => /^-[^-]*[wg]/.test(arg)) || p === "gcloud" && s === "auth" && /^print-(?:access|identity)-token$/.test(a ?? "") || p === "gcloud" && s === "secrets" && a === "versions" && c.argv[3] === "access" || p === "vault" && (c.argv.includes("read") || c.argv.includes("kv") && c.argv.includes("get")); }, fallback: /\bgcloud\b[^;\n]*\bsecrets\s+versions\s+access\b|\bgh\s+auth\s+token\b|\bsecurity\s+find-[^;\n]*-[wg]\b|\bvault\s+(?:read|kv\s+get)\b/ },
@@ -136,4 +141,28 @@ export const LEGACY_CATALOGUE_RULES: ShellRule[] = [
   { id: "git-push", argv: ["git", "push"], why: "This scope does not allow pushes" },
 ];
 export const isCatalogueRule = (rule: ShellRule) => LEGACY_CATALOGUE_RULES.some(legacy => Object.keys(rule).length === Object.keys(legacy).length && Object.entries(legacy).every(([key, value]) => JSON.stringify(rule[key as keyof ShellRule]) === JSON.stringify(value)));
-export const closingTime = (scope: Scope) => scope.shell.deny.some(rule => rule.id.startsWith("away:"));
+const mainDestination = /^(?:refs\/heads\/)?(?:main|master)$/;
+const mainRef = (ref: string) => mainDestination.test(ref.replace(/^\+/, "").split(":").at(-1)!);
+const onlyMainPush = /^\s*git\s+push\s+(?:--(?:force-with-lease|force-if-includes|force|set-upstream)\s+|-u\s+)*[a-zA-Z0-9_.-]+(?:\s+\+?(?:[\w./-]*:)?(?:refs\/heads\/)?(?:main|master))+\s*$/;
+
+export function closingAct(scope: Scope, act: Act, command: ShellCommand | string): boolean {
+  const selected = selectedAwayGuards(scope);
+  if (!selected) return scope.shell.deny.some(rule => rule.id.startsWith("away:"));
+  const has = (kind: typeof selected[number]) => selected.includes(kind);
+  if (act.kind === "publish" || act.kind === "merge") {
+    if (typeof command === "string" && onlyMainPush.test(command)) return has("merge");
+    const refs = typeof command === "string" ? null : pushSpec(command.argv)?.refs;
+    if (refs?.some(mainRef)) return has("merge") || (has("other-writes") && refs.some(ref => !mainRef(ref)));
+  }
+  if (act.kind === "merge") return has("merge");
+  if (act.kind === "delete") return has("delete");
+  if (act.kind === "send") {
+    if (typeof command !== "string") return has(["curl", "wget"].includes(command.argv[0]) ? "other-writes" : "sends-as-you");
+    return (has("other-writes") && httpWriteFallback.test(command)) || (has("sends-as-you") && sendFallback.test(command));
+  }
+  if (act.kind === "deploy") {
+    if (typeof command !== "string") return has(command.argv[0] === "kubectl" ? "production" : "deploy");
+    return (has("production") && productionFallback.test(command)) || (has("deploy") && deployFallback.test(command));
+  }
+  return has("other-writes");
+}

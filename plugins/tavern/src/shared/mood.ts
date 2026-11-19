@@ -1,4 +1,5 @@
 import type { Room, ThreadDecor } from "./contract";
+import { KNOB_FIELDS } from "./settings";
 import type { BoardQuest, JournalEntry, KeeperNote, Member, Report } from "./schema";
 
 /** What a member is doing, as the party shows it. `released` is not drawn on the strip at all. */
@@ -8,8 +9,8 @@ export type MoodOrGone = Mood | "released";
 type MoodReport = Pick<Report, "status" | "createdAt">;
 type Verdict = { status: "verified" | "rejected"; at: number | null };
 
-export const REPORTED_MS = 60_000;
-export const VERIFIED_MS = 600_000;
+export const REPORTED_MS = KNOB_FIELDS.tavern.reportedPoseSeconds.default * 1000;
+export const VERIFIED_MS = KNOB_FIELDS.tavern.verifiedPoseMinutes.default * 60_000;
 
 export type MoodFacts = {
   now: number;
@@ -21,18 +22,20 @@ export type MoodFacts = {
   report?: MoodReport | null;
   verdict?: Verdict | null;
   settled?: boolean;
+  reportedMs?: number;
+  verifiedMs?: number;
 };
 
 const recent = (now: number, at: number, window: number) => now >= at && now - at < window;
 
-export function characterMood({ now, activity, released, archived, openAsk, handBack, report, verdict, settled }: MoodFacts): MoodOrGone {
+export function characterMood({ now, activity, released, archived, openAsk, handBack, report, verdict, settled, reportedMs = REPORTED_MS, verifiedMs = VERIFIED_MS }: MoodFacts): MoodOrGone {
   if (released || archived || activity === "stopped") return "released";
   if (activity === "failed") return "error";
   if (openAsk || handBack || report?.status === "needs-decision") return "waiting";
   if (verdict?.status === "rejected") return "blocked";
   if (report?.status === "blocked" && !(verdict?.status === "verified" && verdict.at !== null && verdict.at >= report.createdAt && verdict.at <= now)) return "blocked";
-  if (verdict?.status === "verified" && verdict.at !== null && recent(now, verdict.at, VERIFIED_MS)) return "verified";
-  if (report?.status === "done" && recent(now, report.createdAt, REPORTED_MS)) return "reported";
+  if (verdict?.status === "verified" && verdict.at !== null && recent(now, verdict.at, verifiedMs)) return "verified";
+  if (report?.status === "done" && recent(now, report.createdAt, reportedMs)) return "reported";
   if (activity === "working") return "working";
   if (activity === "done" || (activity === "idle" && settled)) return "resting";
   return "idle";
@@ -70,6 +73,8 @@ export function widgetMoodFacts(data: ThreadDecor, now: number): MoodFacts {
     handBack: moodSignals?.handBack === true || !!keeperView?.boardQuests.some(holds),
     report: moodSignals?.report ?? null,
     verdict: moodSignals?.verdict ?? null,
+    reportedMs: (data.reportedPoseSeconds ?? KNOB_FIELDS.tavern.reportedPoseSeconds.default) * 1000,
+    verifiedMs: (data.verifiedPoseMinutes ?? KNOB_FIELDS.tavern.verifiedPoseMinutes.default) * 60_000,
     settled: progress.total > 0 && progress.done === progress.total,
   };
 }

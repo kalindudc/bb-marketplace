@@ -1,6 +1,6 @@
 import { experimental_ProviderModelPicker as ProviderModelPicker, experimental_copyToClipboard, experimental_useProviders, experimental_useRpcMutation, experimental_useRpcQuery, useBbNavigate, type ExperimentalProviderModelPickerValue } from "@get-bb/plugin-sdk/app";
-import { useCallback, useEffect, useId, useRef, useState, type ComponentType, type ReactNode } from "react";
-import { importSummary, isGuardrailSetting, settingsContract, type SettingsChange, type SettingsPatch, type SettingsView, type TunableKey } from "../../shared/settings";
+import { createContext, useContext, useCallback, useEffect, useId, useRef, useState, type ComponentType, type ReactNode } from "react";
+import { DEFAULT_SETTINGS, KNOB_FIELDS, importSummary, isGuardrailSetting, settingsContract, type TavernSettings, type SettingsChange, type SettingsPatch, type ResettableSetting, type SettingsView, type TunableKey } from "../../shared/settings";
 import { Glyph, OpensMark, TimeAgo, plural, useRegistry, useActorNames, useRemembered, ExpandsMark } from "../kit";
 import { ReadState, SegFilter } from "./common";
 import { BACKUP_INTRO, BackupSection } from "./backup";
@@ -8,16 +8,19 @@ import { PageGlyph, type PageGlyphName } from "./glyphs";
 import { MachinesSettingsRow } from "./machines-row";
 import { PLACEMENT_RPC_LIVE } from "./machines-contract";
 import { formatValue, isUserKnob, knobLabel, knobValue } from "./insights";
+import { AwayStopChoices } from "./away-preferences";
+import { AWAY_STOP_LABELS } from "../../shared/away";
+import { DELEGATABLE_KINDS } from "../../shared/quest-authority";
 
 const WHY = "Changed on the settings page";
-/** Character voice, in the server's terms: what agents may write in a character's voice. Trouble reads plain in every mode. */
+export const ATMOSPHERE_ANCHOR = "tavern-settings-atmosphere";
 export const VOICE_HELP = {
-  full: "Each character may open or wrap a reply with one short line in its voice. Asks, blockers and evidence stay plain.",
-  light: "One short line at most, only when a character finishes successfully; no greetings or progress lines. Asks, blockers and evidence stay plain.",
-  off: "Plain replies only. New reports carry no voice line, and the page hides the ones already stored.",
+  full: "See speech bubbles at greetings, milestones and intervals or on a click, and allow a short character line in replies and successful reports.",
+  light: "See bubbles after a verification, at a quest wrap or on a click, and allow a short character line in a reply or report only after success.",
+  off: "Turn off speech bubbles, keep new replies and reports plain, and hide saved voice lines in reports and character sheets.",
 } as const;
 const LABELS: Record<string, string> = {
-  "tavern.ambientMotion": "Ambient motion", "tavern.repeatSeconds": "Repeat every", "tavern.agentsMayChangeSettings": "Agents may change settings", "tavern.paused": "Pause every Keeper", "tavern.defaultClass": "New threads start as", "tavern.voice": "Character voice", "tavern.widgetRow": "Widget row", "tavern.batchWakeEvents": "Batch wake events", "tavern.levels": "Character levels", "tavern.characters": "Characters", "tavern.hearthFlicker": "Hearth flicker while work runs",
+  "tavern.ambientMotion": "Ambient motion", "tavern.repeatSeconds": "Repeat every", "tavern.agentsMayChangeSettings": "Agents may change settings", "tavern.paused": "Pause every Keeper", "tavern.defaultClass": "New threads start as", "tavern.voice": "Speech bubbles", "tavern.widgetRow": "Widget row", "tavern.batchWakeEvents": "Batch wake events", "tavern.levels": "Levels and crest notches", "tavern.characters": "Show characters", "tavern.hearthFlicker": "Hearth flicker while work runs",
   "attention.reviewBudget": "Review budget", "attention.notify": "Push to your devices", "attention.quietHours": "Quiet hours",
   "keepers.restMinutes": "Rest before reminder", "keepers.greenlight": "Greenlight", "keepers.decisionTimerMax": "Longest decision timer", "keepers.partyMax": "Party ceiling", "keepers.staleStrikes": "Strikes before release advice", "keepers.restatementBytes": "Keeper restatement limit", "keepers.tickFactChars": "Tick facts limit",
   "scopes.mode": "Scopes", "journal.journalReminders": "Journal reminders", "journal.journalQuietMinutes": "Quiet before a reminder",
@@ -26,6 +29,9 @@ const LABELS: Record<string, string> = {
 /** A settings path in words: TOML's snake_case and the RPC's camelCase both map to the label the row uses. */
 export function settingLabel(key: string) {
   const camel = key.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase()).replace(/^(?:tuning\.pinned|tuned)\./, "knobs.");
+  const [group, field] = camel.split(".");
+  const known = (KNOB_FIELDS[group as keyof typeof KNOB_FIELDS] as Record<string, {label:string}> | undefined)?.[field!];
+  if (known) return known.label;
   if (camel.startsWith("knobs.")) return knobLabel(camel);
   const cls = camel.match(/^classes\.([^.]+)\.(provider|model|reasoning)$/);
   const words = (word: string) => word.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[-_]/g, " ");
@@ -41,23 +47,39 @@ export function useTavernSettings() {
   const update = experimental_useRpcMutation({ contract: settingsContract, method: "settingsUpdate" });
   const [problems, setProblems] = useState<Problem[]>([]);
   const [note, setNote] = useState<string | null>(null);
-  const save = async (patch: SettingsPatch, pins?: Partial<Record<TunableKey, number | null>>) => {
+  const save = async (patch: SettingsPatch, pins?: Partial<Record<TunableKey, number | null>>, reset?: ResettableSetting[]) => {
     if (!query.data) return;
     setProblems([]); setNote(null);
-    const out = await update.mutate({ revision: query.data.revision, patch, ...(pins ? { pins } : {}), why: WHY });
+    const out = await update.mutate({ revision: query.data.revision, patch, ...(pins ? { pins } : {}), ...(reset ? { reset } : {}), why: reset ? "Reset to default on the settings page" : WHY });
     if (out.code === "stale") setNote("Settings changed somewhere else, so nothing was saved. The latest values are shown; make the change again.");
     if (out.code === "invalid") setProblems(out.problems);
     void query.refetch();
   };
-  return { data: query.data, error: query.error, refetch: query.refetch, save, pending: update.isPending, problems, note };
+  return { data: query.data, error: query.error, refetch: query.refetch, save, reset: (key: ResettableSetting) => save({}, undefined, [key]), pending: update.isPending, problems, note };
 }
 type Api = ReturnType<typeof useTavernSettings>;
+type SettingsGroup = Exclude<keyof TavernSettings, "classes">;
+type SettingKey = ResettableSetting;
+const SettingsBody = createContext<Api | null>(null);
+const settingsValue = (settings: TavernSettings, path: SettingKey): unknown => {
+  const [section, key] = path.split(".") as [SettingsGroup, string];
+  return (settings[section] as Record<string, unknown>)[key];
+};
+function differsFromDefault(effective: TavernSettings, key: SettingKey) {
+  const current = settingsValue(effective, key), fallback = settingsValue(DEFAULT_SETTINGS, key);
+  if (Array.isArray(current) && Array.isArray(fallback)) return current.length !== fallback.length || current.some(value => !fallback.includes(value));
+  return JSON.stringify(current) !== JSON.stringify(fallback) || (key === "tavern.ambientMotion" && !effective.tavern.hearthFlicker);
+}
+const settingsPatch = (path: SettingKey, value: unknown): SettingsPatch => {
+  const [section, key] = path.split(".");
+  return { [section!]: { [key!]: value } };
+};
 
-function Shell({ api, children }: { api: Api; children: (data: SettingsView) => ReactNode }) {
-  return <div className="tavern tv-page tv-set">
+function Shell({ api, children, className = "" }: { api: Api; children: (data: SettingsView) => ReactNode; className?: string }) {
+  return <div className={`tavern tv-page tv-set ${className}`}>
     {api.note && <p className="tv-problem" role="alert">{api.note}</p>}
     {api.problems.length > 0 && <ul className="tv-problem" role="alert">{api.problems.map((p) => <li key={`${p.key}${p.line}`}><b>{p.key}</b>: {p.message}{p.allowed ? ` (allowed: ${p.allowed})` : ""}</li>)}</ul>}
-    {api.data ? children(api.data) : <ReadState error={api.error} retry={api.refetch} />}
+    {api.data ? <SettingsBody.Provider value={api}>{children(api.data)}</SettingsBody.Provider> : <ReadState error={api.error} retry={api.refetch} />}
   </div>;
 }
 
@@ -66,9 +88,73 @@ export function SettingsCard({ title, hint, glyph, guardrail = false, children }
   return <section className="tv-card tv-settings-card" aria-labelledby={id}><header className="tv-settings-head"><PageGlyph name={glyph} size={18} /><div><h3 id={id}>{title}</h3><p className="tv-settings-hint">{hint}{guardrail && " Agents in Tavern threads can't change these; only you can."}</p></div></header><div className="tv-settings-body">{children}</div></section>;
 }
 
-function Row({ label, help, children, control }: { label: string; help?: ReactNode; children?: ReactNode; control: (id: string) => ReactNode }) {
+export function SettingDefault({ setting, api: provided, managed = false }: { setting: SettingKey; api?: Api; managed?: boolean }) {
+  const inherited = useContext(SettingsBody);
+  const api = provided ?? inherited;
+  const context = api?.data;
+  const value = settingsValue(DEFAULT_SETTINGS, setting);
+  const changed = !!context && differsFromDefault(context.effective, setting);
+  const last = context?.lastChangers?.[setting] ?? context?.history.find(change => change.changes.some(c => c.key === setting));
+  return <div className="tv-set-default">
+    <span data-setting-changed={changed || undefined}>{changed ? "Changed from " : "Default: "}<b>{defaultWords(setting, value)}</b></span>
+    {managed && last && <span>Last changed by <SettingAuthor threadId={last.threadId} by={last.by} /> <TimeAgo at={last.at} /></span>}
+    {changed && api && <button type="button" className="tv-ilink act" aria-label={`Reset ${settingLabel(setting)} to default`} disabled={api.pending} onClick={() => void api.reset(setting)}>Reset to default</button>}
+  </div>;
+}
+
+function Row({ label, help, children, control, setting, managed = false, coveredBy = [] }: { label: string; help?: ReactNode; children?: ReactNode; control: (id: string) => ReactNode; setting?: SettingKey; managed?: boolean; coveredBy?: SettingKey[] }) {
   const id = useId();
-  return <div className="tv-set-row"><div className="tv-set-l"><label htmlFor={id}>{label}</label>{help && <p>{help}</p>}{children}</div><div className="tv-set-c">{control(id)}</div></div>;
+  return <div className="tv-set-row" data-setting-keys={setting ? [setting, ...coveredBy].join(" ") : undefined}><div className="tv-set-l"><label htmlFor={id}>{label}</label>{help && <p>{help}</p>}{children}{setting && <SettingDefault setting={setting} managed={managed} />}</div><div className="tv-set-c">{control(id)}</div></div>;
+}
+
+const NUMBER_HELP: Record<{ [G in keyof typeof KNOB_FIELDS]: keyof typeof KNOB_FIELDS[G] }[keyof typeof KNOB_FIELDS], string> = {
+  reportedPoseSeconds: "How long a character holds its finished pose above the composer.",
+  verifiedPoseMinutes: "How long a character holds its verified pose above the composer.",
+  voiceChecksPerHour: "How many voice checks you can run from a character sheet in an hour. Each check runs a model and can cost money.",
+  productionWakeHours: "How long a production ask waits before waking you, if that option is on for the window.",
+  defaultBackAtHour: "Prefills Back at with the next time at this local hour that's at least an hour away.",
+  restatementBytes: "Caps the Keeper's restatement. Lower limits make Keepers forget what you told them.",
+  tickFactChars: "Caps the facts in each routine Keeper check-in. Lower limits make Keepers forget what you told them.",
+  failuresBeforeAsk: "How many provider failures or refused check-ins in a row trigger a question for you.",
+  stopAskAfterSeconds: "How long Tavern retries an unconfirmed stop before asking you for help.",
+  retryAfterSeconds: "How long Tavern waits before retrying a routine Keeper check-in the host refused.",
+  briefRetryAttempts: "How many times Tavern tries to deliver a member's brief before asking you.",
+  replacementsPerSlot: "How many fresh members may take the same party slot on one version of the plan.",
+  rangerMax: "The fallback limit when the Keeper's class file has no Ranger budget.",
+  keepMaxHours: "How far ahead a Keeper may reserve a resting member for follow-up.",
+  registryWaitSeconds: "How long Tavern waits for class files before letting your message through with the built-in Keeper.",
+  registryBlockerMinutes: "How long a member's class files can stay unavailable before Tavern asks the Keeper.",
+  remindEveryMinutes: "The shortest gap between reminders for the same journal.",
+  reportGraceMinutes: "How long a delegate's unchecked report waits before the journal calls it out.",
+  minSamples: "How much recorded work Tavern needs before it can suggest a change.",
+  windowDays: "How far back Tavern looks for evidence when tuning.",
+  cooldownDays: "How long Tavern waits before automatically changing the same knob again.",
+  ledgerRefreshMinutes: "How often the Keeper gets the full ledger even when nothing has changed.",
+};
+
+function AgentLimits({ title, hint, groups }: { title: string; hint: string; groups: (keyof typeof KNOB_FIELDS)[] }) {
+  const api = useContext(SettingsBody);
+  if (!api?.data) throw new Error("Agent limits must be inside the Settings body");
+  const effective = api.data.effective;
+  const changed = groups.flatMap(group => Object.keys(KNOB_FIELDS[group]).map(key => `${group}.${key}` as SettingKey))
+    .filter(key => differsFromDefault(effective, key)).length;
+  return <details className="tv-set-advanced">
+    <summary><strong>{title}</strong><span className="tag">{changed} changed</span></summary>
+    <p className="tv-set-intro">{hint}</p>
+    {groups.map(group => <NumberKnobRows key={group} group={group} managed />)}
+  </details>;
+}
+
+function NumberKnobRows({ group, managed = false }: { group: keyof typeof KNOB_FIELDS; managed?: boolean }) {
+  const api = useContext(SettingsBody);
+  if (!api?.data) throw new Error("Number knobs must be inside the Settings body");
+  return Object.entries(KNOB_FIELDS[group]).map(([key, rule]) => {
+    const setting = `${group}.${key}` as SettingKey;
+    const value = settingsValue(api.data!.effective, setting) as number;
+    const help = NUMBER_HELP[key as keyof typeof NUMBER_HELP];
+    return <Row key={setting} setting={setting} label={rule.label} managed={managed} help={help}
+      control={id => <NumberField id={id} value={value} min={rule.min} max={rule.max} unit={rule.unit} disabled={api.pending} onSave={v => void api.save(settingsPatch(setting, v))} />} />;
+  });
 }
 
 function Toggle({ id, checked, onChange, disabled }: { id: string; checked: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
@@ -85,7 +171,7 @@ export function NumberField({ id, value, min, max, unit, onSave, disabled }: { i
     <input id={id} type="number" inputMode="numeric" min={min} max={max} step={1} value={text} disabled={disabled} aria-invalid={!valid} aria-describedby={`${id}-b`}
       onChange={(e) => setText(e.target.value)} onBlur={commit} onKeyDown={(e) => { if (e.key === "Enter") commit(); if (e.key === "Escape") setText(String(value)); }} />
     {unit && <span className="m">{unit}</span>}
-    <span id={`${id}-b`} className={`tv-num-b ${valid ? "" : "bad"}`}>{min} to {max.toLocaleString("en")}</span>
+    <span id={`${id}-b`} className={`tv-num-b ${valid ? "" : "bad"}`}>{min.toLocaleString("en")} to {max.toLocaleString("en")}</span>
   </span>;
 }
 
@@ -95,27 +181,46 @@ export function TavernSection() {
   const registry = useRegistry();
   return <Shell api={api}>{(d) => { const t = d.effective.tavern; return <>
 <SettingsCard title="Control of Tavern" hint="Pause work or choose whether agents can change settings." glyph="lock" guardrail>
-    <Row label="Pause every Keeper" help="No ticks, hires or timers while paused. Asks stay answerable." control={(id) => <Toggle id={id} checked={t.paused} disabled={api.pending} onChange={(v) => void api.save({ tavern: { paused: v } })} />} />
-    <Row label="Agents may change settings" help="Agent CLI changes are recorded with their thread and can be undone below." control={(id) => <Toggle id={id} checked={t.agentsMayChangeSettings} disabled={api.pending} onChange={(v) => void api.save({ tavern: { agentsMayChangeSettings: v } })} />} />
+    <Row label="Pause every Keeper" setting="tavern.paused" help="No ticks, hires or timers while paused. Asks stay answerable." control={(id) => <Toggle id={id} checked={t.paused} disabled={api.pending} onChange={(v) => void api.save({ tavern: { paused: v } })} />} />
+    <Row label="Agents may change settings" setting="tavern.agentsMayChangeSettings" help="Agent CLI changes are recorded with their thread and can be undone below." control={(id) => <Toggle id={id} checked={t.agentsMayChangeSettings} disabled={api.pending} onChange={(v) => void api.save({ tavern: { agentsMayChangeSettings: v } })} />} />
 </SettingsCard>
 <SettingsCard title="New threads" hint="Choose how a thread starts and where Tavern appears." glyph="file">
-    <Row label="New threads start as" help="The class a new thread starts with. None is an ordinary thread." control={(id) => <select id={id} className="tv-select" value={t.defaultClass} disabled={api.pending} onChange={(e) => void api.save({ tavern: { defaultClass: e.target.value } })}><option value="none">None (an ordinary thread)</option>{registry.data?.classes.map((c) => <option key={c.id} value={c.id}>{c.label} ({c.plain})</option>)}</select>} />
-    <Row label="Widget row" help="Shows Tavern's row above the message box on every thread. Off hides it everywhere; when on, each thread can still hide its own." control={(id) => <Toggle id={id} checked={t.widgetRow} disabled={api.pending} onChange={(v) => void api.save({ tavern: { widgetRow: v } })} />} />
-    <Row label="Batch wake events" help="Off by default. When on, a wake the Keeper gets from a new event waits a short window so a burst gathers into one turn. Regular sweep ticks ignore this and always carry every unread event." control={(id) => <Toggle id={id} checked={t.batchWakeEvents} disabled={api.pending} onChange={(v) => void api.save({ tavern: { batchWakeEvents: v } })} />} />
-</SettingsCard>
-<SettingsCard title="Character" hint="Choose how much character shows in reports and records." glyph="shield">
-    <Row label="Character voice" help={VOICE_HELP[t.voice]} control={() => <SegFilter label="Character voice" value={t.voice} onChange={(v) => void api.save({ tavern: { voice: v } })} options={[{ id: "full", label: "Full" }, { id: "light", label: "Light" }, { id: "off", label: "Off" }]} />} />
-    <Row label="Character levels" help="Shows each character's level and crest notches, earned from verified work. Agents never see levels. Off hides them everywhere." control={(id) => <Toggle id={id} checked={t.levels} disabled={api.pending} onChange={(v) => void api.save({ tavern: { levels: v } })} />} />
+    <Row label="New threads start as" setting="tavern.defaultClass" help="The class a new thread starts with. None is an ordinary thread." control={(id) => <select id={id} className="tv-select" value={t.defaultClass} disabled={api.pending} onChange={(e) => void api.save({ tavern: { defaultClass: e.target.value } })}><option value="none">None (an ordinary thread)</option>{registry.data?.classes.map((c) => <option key={c.id} value={c.id}>{c.label} ({c.plain})</option>)}</select>} />
+    <Row label="Widget row" setting="tavern.widgetRow" help="Shows Tavern's row above the message box on every thread. Off hides it everywhere; when on, each thread can still hide its own." control={(id) => <Toggle id={id} checked={t.widgetRow} disabled={api.pending} onChange={(v) => void api.save({ tavern: { widgetRow: v } })} />} />
+    <Row label="Batch wake events" setting="tavern.batchWakeEvents" help="Off by default. When on, a wake the Keeper gets from a new event waits a short window so a burst gathers into one turn. Regular sweep ticks ignore this and always carry every unread event." control={(id) => <Toggle id={id} checked={t.batchWakeEvents} disabled={api.pending} onChange={(v) => void api.save({ tavern: { batchWakeEvents: v } })} />} />
 </SettingsCard>
   </>; }}</Shell>;
 }
-export function MotionSection() {
+
+export function AtmosphereSection() {
   const api = useTavernSettings();
-  return <Shell api={api}>{d => { const t = d.effective.tavern; return <SettingsCard title="Ambient cues" hint="Choose how Tavern moves while work runs." glyph="lantern">
-    <Row label="Characters" help="Draws the animated pixel-art characters: the walking strip at the top of the composer. Off leaves the class crest in the widget row, with no sprite, no canvas and no animation." control={id => <Toggle id={id} checked={t.characters} disabled={api.pending} onChange={v => void api.save({ tavern: { characters: v } })} />} />
-    <Row label="Ambient motion" help="Calm uses brief, budgeted cues. Lively repeats while work runs. Off keeps the hearth still and stops ambient repeats." control={() => <SegFilter label="Ambient motion" value={t.hearthFlicker ? t.ambientMotion : "off"} onChange={v => void api.save({ tavern: { ambientMotion: v, hearthFlicker: v !== "off" } })} options={[{id:"calm",label:"Calm"},{id:"lively",label:"Lively"},{id:"off",label:"Off"}]} />} />
-    <Row label="Repeat every" help="The repeat interval in Lively. Reduced motion, hidden pages, typing and trouble in view still hold animations." control={id => <NumberField id={id} value={t.repeatSeconds} min={3} max={60} unit="seconds" disabled={api.pending} onSave={v => void api.save({tavern:{repeatSeconds:v}})} />} />
-  </SettingsCard>; }}</Shell>;
+  const navigate = useBbNavigate();
+  return <Shell api={api} className="tv-set-atmosphere">{d => { const t = d.effective.tavern; return <>
+    <SettingsCard title="The party" hint="Choose how characters appear and open their sheets to roll new avatars." glyph="shield">
+      <Row label="Show characters" setting="tavern.characters" help="Draws the pixel-art characters above the composer. Off leaves the class crest in the widget row." control={id => <Toggle id={id} checked={t.characters} disabled={api.pending} onChange={v => void api.save({ tavern: { characters: v } })} />} />
+      <Row label="Speech bubbles" setting="tavern.voice" help={VOICE_HELP[t.voice]} control={() => <SegFilter label="Speech bubbles" value={t.voice} onChange={v => void api.save({ tavern: { voice: v } })} options={[{ id: "full", label: "Full" }, { id: "light", label: "Light" }, { id: "off", label: "Off" }]} />} />
+      <Row label="Levels and crest notches" setting="tavern.levels" help="Shows levels and crest notches earned from verified work. Off hides them without changing what characters have earned." control={id => <Toggle id={id} checked={t.levels} disabled={api.pending} onChange={v => void api.save({ tavern: { levels: v } })} />} />
+      <div className="tv-set-links"><button type="button" className="tv-ilink act" onClick={() => navigate.toPluginPanel("tavern", { subPath: "characters" })}><span>Character sheets</span><OpensMark /></button></div>
+    </SettingsCard>
+    <SettingsCard title="Motion" hint="Choose how the tavern moves while work runs." glyph="lantern">
+      <Row label="Ambient motion" setting="tavern.ambientMotion" coveredBy={["tavern.hearthFlicker"]} help="Calm uses brief cues and keeps characters in place. Lively lets characters walk and repeats ambient cues. Off keeps the characters and hearth still and stops ambient repeats." control={() => <SegFilter label="Ambient motion" value={t.hearthFlicker ? t.ambientMotion : "off"} onChange={v => void api.save({ tavern: { ambientMotion: v, hearthFlicker: v !== "off" } })} options={[{ id: "calm", label: "Calm" }, { id: "lively", label: "Lively" }, { id: "off", label: "Off" }]} />} />
+      <Row label="Repeat every" setting="tavern.repeatSeconds" help="In Lively, sets how often the hearth flickers, the party takes steps on the board and the widget pulses." control={id => <NumberField id={id} value={t.repeatSeconds} min={3} max={60} unit="seconds" disabled={api.pending} onSave={v => void api.save({ tavern: { repeatSeconds: v } })} />} />
+    </SettingsCard>
+    <SettingsCard title="Character cues and checks" hint="Choose how long poses last and how often a voice check can run." glyph="shield"><NumberKnobRows group="tavern" /></SettingsCard>
+  </>; }}</Shell>;
+}
+
+export function AwaySettingsSection() {
+  const api = useTavernSettings();
+  return <Shell api={api}>{d => {
+    const a = d.effective.away;
+    return <SettingsCard title="Defaults for Closing time" hint="Changes prepare your next window. They do not widen ordinary scopes or alter a stop list already in force." glyph="lantern" guardrail>
+      <div className="tv-set-row tv-set-ro" data-setting-keys="away.neverWhileClosed"><AwayStopChoices items={a.neverWhileClosed} disabled={api.pending} onChange={items => void api.save({ away: { neverWhileClosed: items } })} /><SettingDefault setting="away.neverWhileClosed" /></div>
+      <NumberKnobRows group="away" />
+      <Row label="Default quest end" setting="away.defaultEndState" control={id => <select id={id} className="tv-select" value={a.defaultEndState} disabled={api.pending} onChange={e => void api.save({ away: { defaultEndState: e.target.value as "pause" | "drafts-ready" } })}><option value="drafts-ready">Drafts ready</option><option value="pause">Pause</option></select>} />
+      {([["defaultAllowWatched","Let watched members keep drafting by default"],["defaultWakeBlockers","Wake me for blockers by default"],["defaultWakeProduction","Wake me for waiting production asks by default"]] as const).map(([key,label]) => <Row key={key} setting={`away.${key}`} label={label} control={id => <Toggle id={id} checked={a[key]} disabled={api.pending} onChange={v => void api.save({ away: { [key]: v } })} />} />)}
+    </SettingsCard>;
+  }}</Shell>;
 }
 
 function SettingsAuthors({ history, children }: { history: SettingsView["history"]; children: (names: ReturnType<typeof useActorNames>) => ReactNode }) {
@@ -133,18 +238,31 @@ export function SettingAuthor({ threadId, by, label = "another thread", sentence
 function historySection(key: string) {
   const path = key.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase());
   if (path === "knobs.rangerTimeboxMaxMinutes") return "Keepers and decisions";
-  if (/^tavern\.(ambientMotion|repeatSeconds|hearthFlicker|characters)/.test(path)) return "Motion";
-  if (/^(knobs|tuned|tuning\.pinned)\./.test(path)) return "Tuning";
-  return ({tavern:"Tavern",attention:"Your attention",keepers:"Keepers and decisions",classes:"Classes and models",scopes:"Scopes",machines:"Where work runs",journal:"Journal",tuning:"Tuning",data:"Data and backups",backup:"Data and backups"} as Record<string,string>)[path.split(".")[0]!] ?? "Settings";
+  if (/^tavern\.(characters|voice|levels|ambientMotion|hearthFlicker|repeatSeconds|reportedPoseSeconds|verifiedPoseMinutes|voiceChecksPerHour)$/.test(path)) return "Atmosphere";
+  if (/^(knobs|tuned|overrides|tuning\.pinned)\./.test(path)) return "Tuning";
+  return ({tavern:"Tavern",away:"Closing time",attention:"Your attention",keepers:"Keepers and decisions",classes:"Classes and models",scopes:"Scopes",machines:"Where work runs",journal:"Journal",tuning:"Tuning",data:"Data and backups",backup:"Data and backups"} as Record<string,string>)[path.split(".")[0]!] ?? "Settings";
+}
+
+function defaultWords(key: SettingKey, value: unknown): string {
+  if (key === "keepers.greenlight") return value === "explicit" ? "Always ask me" : "By size";
+  if (key === "away.defaultEndState") return value === "drafts-ready" ? "Drafts ready" : "Pause";
+  if (key === "tavern.defaultClass" && value === "none") return "None (an ordinary thread)";
+  if (key === "attention.quietHours" && value === null) return "Off";
+  if (key === "away.defaultBackAtHour") return `${String(value).padStart(2, "0")}:00`;
+  const [group, field] = key.split(".");
+  const numberRule = (KNOB_FIELDS[group as keyof typeof KNOB_FIELDS] as Record<string, {unit: string}> | undefined)?.[field!];
+  if (numberRule && typeof value === "number") return `${value.toLocaleString("en")} ${numberRule.unit}`;
+  return historyValue(key, value);
 }
 
 function historyValue(key: string, value: unknown): string {
   if (value === null) return "Default";
   if (typeof value === "boolean") return value ? "On" : "Off";
+  if (Array.isArray(value)) return value.length ? value.map(item => key === "away.neverWhileClosed" ? AWAY_STOP_LABELS[item as keyof typeof AWAY_STOP_LABELS] : ALWAYS_WORDS[item as keyof typeof ALWAYS_WORDS] ?? String(item)).join(", ") : "None";
   if (typeof value === "object") return Object.entries(value).map(([k,v]) => `${settingLabel(`${key}.${k}`)}: ${historyValue(`${key}.${k}`,v)}`).join(", ");
   if (key === "knobs.rangerTimeboxMaxMinutes") return `${value} min`;
   if (key === "tavern.repeatSeconds") return `${value} s`;
-  if (key.startsWith("data.") || key === "backup.keep") return `${value} ${key === "backup.keep" ? "backups" : "days"}`;
+  if (key.startsWith("data.") || key === "backup.keep") return `${value} ${key === "backup.keep" || key === "data.backupKeep" ? "backups" : "days"}`;
   if (/^(knobs|tuned|tuning\.pinned)\./.test(key)) return knobValue(key.replace(/^(?:tuning\.pinned|tuned)\./,"knobs."),value);
   return typeof value === "string" && ["full","light","off","all","none","calm","lively","apply","suggest","enforce","watch","consequential"].includes(value) ? value.charAt(0).toUpperCase() + value.slice(1) : String(value);
 }
@@ -201,28 +319,36 @@ export function SettingsHistorySection() {
 export function AttentionSection() {
   const api = useTavernSettings();
   return <Shell api={api}>{(d) => { const a = d.effective.attention; const q = a.quietHours; return <SettingsCard title="What reaches you" hint="Set your review capacity and when asks reach your devices." glyph="you" guardrail>
-    <Row label="Review budget" help="Items waiting on your review before Keepers stop opening new work." control={(id) => <NumberField id={id} value={a.reviewBudget} min={1} max={30} unit="items" disabled={api.pending} onSave={(v) => void api.save({ attention: { reviewBudget: v } })} />} />
-    <Row label="Push to your devices" help="Which asks send a notification." control={() => <SegFilter label="Push to your devices" value={a.notify} onChange={(v) => void api.save({ attention: { notify: v } })} options={[{ id: "consequential", label: "Consequential" }, { id: "all", label: "All" }, { id: "none", label: "None" }]} />} />
-    <Row label="Quiet hours" help="No pushes in this window. Keepers keep working and timers still run." control={(id) => <span className="tv-quiet">
+    <Row label="Review budget" setting="attention.reviewBudget" help="Items waiting on your review before Keepers stop opening new work." control={(id) => <NumberField id={id} value={a.reviewBudget} min={1} max={30} unit="items" disabled={api.pending} onSave={(v) => void api.save({ attention: { reviewBudget: v } })} />} />
+    <Row label="Push to your devices" setting="attention.notify" help="Which asks send a notification." control={() => <SegFilter label="Push to your devices" value={a.notify} onChange={(v) => void api.save({ attention: { notify: v } })} options={[{ id: "consequential", label: "Consequential" }, { id: "all", label: "All" }, { id: "none", label: "None" }]} />} />
+    <Row label="Quiet hours" setting="attention.quietHours" help="No pushes in this window. Keepers keep working and timers still run." control={(id) => <span className="tv-quiet">
       <Toggle id={id} checked={!!q} disabled={api.pending} onChange={(v) => void api.save({ attention: { quietHours: v ? { start: "22:00", end: "07:30", timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone } : null } })} />
       {q && <><label className="sr" htmlFor={`${id}-s`}>Quiet from</label><input id={`${id}-s`} type="time" className="tv-text tv-time" value={q.start} disabled={api.pending} onChange={(e) => e.target.value && void api.save({ attention: { quietHours: { ...q, start: e.target.value } } })} /><span className="m">to</span><label className="sr" htmlFor={`${id}-e`}>Quiet until</label><input id={`${id}-e`} type="time" className="tv-text tv-time" value={q.end} disabled={api.pending} onChange={(e) => e.target.value && void api.save({ attention: { quietHours: { ...q, end: e.target.value } } })} /><span className="m small">{q.timeZone}</span></>}
     </span>} />
   </SettingsCard>; }}</Shell>;
 }
 
-const ALWAYS_WORDS: Record<SettingsView["alwaysAsk"][number], string> = { production: "production", merge: "merge", delete: "delete", "sends-as-you": "sends as you", credentials: "credentials", "scope-widening": "scope widening" };
+const ALWAYS_WORDS: Record<typeof DELEGATABLE_KINDS[number], string> = { production: "Production", merge: "Merge", credential: "Credentials", "sends-as-you": "Send as you", destructive: "Delete what the quest did not make" };
 export function KeepersSection() {
   const api = useTavernSettings();
   return <Shell api={api}>{(d) => { const k = d.effective.keepers; return <><SettingsCard title="Delegated decisions" hint="Set the decisions and staffing a Keeper may handle." glyph="you" guardrail>
-    <Row label="Greenlight" help={k.greenlight === "explicit" ? "You approve every quest map before work starts." : "Plans with one member and only reversible steps start and tell you; bigger ones wait for you."} control={() => <SegFilter label="Greenlight" value={k.greenlight} onChange={(v) => void api.save({ keepers: { greenlight: v } })} options={[{ id: "explicit", label: "Always ask me" }, { id: "by-size", label: "By size" }]} />} />
-    <Row label="Longest decision timer" help={`The longest a Keeper may wait before a reversible decision applies its recommendation: now ${formatValue(k.decisionTimerMax * 60, "s")}. Timers stay opt-in per ask.`} control={(id) => <NumberField id={id} value={k.decisionTimerMax} min={1} max={10080} unit="min" disabled={api.pending} onSave={(v) => void api.save({ keepers: { decisionTimerMax: v } })} />} />
-    <Row label="Party ceiling" help="Most live party members across all of a Keeper's quests at once, not a per-quest limit. A quest map still holds at most 8, and class files set per-class budgets beneath it." control={(id) => <NumberField id={id} value={k.partyMax} min={1} max={1000} unit="members" disabled={api.pending} onSave={(v) => void api.save({ keepers: { partyMax: v } })} />} />
-    <Row label="Ranger time-box ceiling" help="The longest a Ranger may scout before it must report. A budget that is yours to set; the tuner never changes it." control={(id) => <NumberField id={id} value={d.effective.knobs.rangerTimeboxMaxMinutes} min={3} max={30} unit="min" disabled={api.pending} onSave={(v) => void api.save({ knobs: { rangerTimeboxMaxMinutes: v } })} />} />
-    </SettingsCard><SettingsCard title="Check-ins and memory" hint="Keep members accountable and preserve what you told the Keeper." glyph="file">
-    <Row label="Rest before reminder" help="Remind the Keeper once after this much settled rest. The Keeper decides whether to release or keep the member; Tavern never releases on a timer." control={(id) => <NumberField id={id} value={k.restMinutes} min={1} max={10080} unit="min" disabled={api.pending} onSave={(v) => void api.save({ keepers: { restMinutes: v } })} />} />
-    <Row label="Strikes before release advice" help="Missed check-ins before Tavern advises releasing a quiet member. Yours to set; the tuner never changes this safety threshold." control={(id) => <NumberField id={id} value={k.staleStrikes} min={1} max={4} unit="strikes" disabled={api.pending} onSave={(v) => void api.save({ keepers: { staleStrikes: v } })} />} />
-    <div className="tv-set-row tv-set-ro"><div className="tv-set-l"><span className="tv-set-lbl">Memory limits</span><p>Fixed, not tunable: lowering them would make Keepers forget what you told them.</p></div><div className="tv-set-c"><dl className="tv-limits">{(d.readOnlyLimits ?? [{ key: "restatementBytes" as const, label: "Keeper restatement limit", value: k.restatementBytes, unit: "bytes" as const, reason: "" }, { key: "tickFactChars" as const, label: "Tick facts limit", value: k.tickFactChars, unit: "chars" as const, reason: "" }]).map((l) => <div key={l.key}><dt>{l.label}</dt><dd className="num">{formatValue(l.value, l.unit)}</dd>{l.reason && <dd className="m small">{l.reason}</dd>}</div>)}</dl></div></div>
-    <div className="tv-set-row tv-set-ro"><div className="tv-set-l"><span className="tv-set-lbl">Always ask</span><p>These always wait for you and cannot be tuned.</p></div><div className="tv-set-c"><ul className="tv-chips">{d.alwaysAsk.map((a) => <li key={a} className="tag"><PageGlyph name="lock" size={11} /><span>{ALWAYS_WORDS[a]}</span></li>)}</ul></div></div>
+    <Row label="Greenlight" setting="keepers.greenlight" help={k.greenlight === "explicit" ? "You approve every quest map before work starts." : "Plans with one member and only reversible steps start and tell you; bigger ones wait for you."} control={() => <SegFilter label="Greenlight" value={k.greenlight} onChange={(v) => void api.save({ keepers: { greenlight: v } })} options={[{ id: "explicit", label: "Always ask me" }, { id: "by-size", label: "By size" }]} />} />
+    <Row label="Longest decision timer" setting="keepers.decisionTimerMax" help={`The longest a Keeper may wait before a reversible decision applies its recommendation: now ${formatValue(k.decisionTimerMax * 60, "s")}. Timers stay opt-in per ask.`} control={(id) => <NumberField id={id} value={k.decisionTimerMax} min={1} max={10080} unit="min" disabled={api.pending} onSave={(v) => void api.save({ keepers: { decisionTimerMax: v } })} />} />
+    <Row label="Party ceiling" setting="keepers.partyMax" help="Most live party members across all of a Keeper's quests at once, not a per-quest limit. A quest map still holds at most 8, and class files set per-class budgets beneath it." control={(id) => <NumberField id={id} value={k.partyMax} min={1} max={1000} unit="members" disabled={api.pending} onSave={(v) => void api.save({ keepers: { partyMax: v } })} />} />
+    <Row label="Ranger time-box ceiling" setting="knobs.rangerTimeboxMaxMinutes" help="The longest a Ranger may scout before it must report. A budget that is yours to set; the tuner never changes it." control={(id) => <NumberField id={id} value={d.effective.knobs.rangerTimeboxMaxMinutes} min={3} max={30} unit="min" disabled={api.pending} onSave={(v) => void api.save({ knobs: { rangerTimeboxMaxMinutes: v } })} />} />
+    <div className="tv-set-row tv-set-ro" data-setting-keys="keepers.alwaysAsk">
+      <fieldset className="tv-grpbox tv-away-stops" disabled={api.pending}><legend>Always ask</legend>
+        <p className="m small">Unchecked kinds go to the Keeper on every quest. It decides and records each one, or asks you when unsure. A merge or production change still needs a Warden’s check of the exact commit or command.</p>
+        {DELEGATABLE_KINDS.map(kind => <label key={kind} className="tv-chk"><input type="checkbox" checked={k.alwaysAsk.includes(kind)}
+          onChange={e => void api.save({ keepers: { alwaysAsk: DELEGATABLE_KINDS.filter(item => item === kind ? e.target.checked : k.alwaysAsk.includes(item)) } })} /><span>{ALWAYS_WORDS[kind]}</span></label>)}
+      </fieldset><SettingDefault setting="keepers.alwaysAsk" />
+    </div>
+    </SettingsCard><SettingsCard title="Check-ins and memory" hint="Set reminders and open the advanced limits to adjust Keeper pacing and memory." glyph="file">
+    <Row label="Rest before reminder" setting="keepers.restMinutes" help="Remind the Keeper once after this much settled rest. The Keeper decides whether to release or keep the member; Tavern never releases on a timer." control={(id) => <NumberField id={id} value={k.restMinutes} min={1} max={10080} unit="min" disabled={api.pending} onSave={(v) => void api.save({ keepers: { restMinutes: v } })} />} />
+    <Row label="Strikes before release advice" setting="keepers.staleStrikes" help="Missed check-ins before Tavern advises releasing a quiet member. Yours to set; the tuner never changes this safety threshold." control={(id) => <NumberField id={id} value={k.staleStrikes} min={1} max={4} unit="strikes" disabled={api.pending} onSave={(v) => void api.save({ keepers: { staleStrikes: v } })} />} />
+
+
+    <AgentLimits title="Keeper pacing and memory" hint="These limits guide Keepers and Tavern. They are not auto-tuned." groups={["keepers"]} />
   </SettingsCard></>; }}</Shell>;
 }
 
@@ -320,7 +446,7 @@ export function ClassesSection() {
 export function ScopesSection() {
   const api = useTavernSettings();
   return <Shell api={api}>{(d) => <SettingsCard title="Member guardrails" hint="Choose whether scope rules stop actions or only record them." glyph="lock" guardrail>
-    <Row label="Scopes" help={d.effective.scopes.mode === "enforce" ? "A turn that breaks its scope rules is stopped." : d.effective.scopes.mode === "watch" ? "Violations are recorded, not stopped." : "No guardrail."} control={() => <SegFilter label="Scopes" value={d.effective.scopes.mode} onChange={(v) => void api.save({ scopes: { mode: v } })} options={[{ id: "enforce", label: "Enforce" }, { id: "watch", label: "Watch" }, { id: "off", label: "Off" }]} />} />
+    <Row label="Scopes" setting="scopes.mode" help={d.effective.scopes.mode === "enforce" ? "A turn that breaks its scope rules is stopped." : d.effective.scopes.mode === "watch" ? "Violations are recorded, not stopped." : "No guardrail."} control={() => <SegFilter label="Scopes" value={d.effective.scopes.mode} onChange={(v) => void api.save({ scopes: { mode: v } })} options={[{ id: "enforce", label: "Enforce" }, { id: "watch", label: "Watch" }, { id: "off", label: "Off" }]} />} />
     <p className="tv-set-intro">Keepers and hired Wanderers use open access; only protected files are guarded. Rangers read, Wardens check, and Smiths build in their worktree. Settings guardrails and user approvals still apply.</p>
     <p className="tv-set-intro">Running agents pick up the environment speed bumps (no GH_TOKEN, the git push block) only after their session restarts. Policy files live in <code>~/.agents/tavern/scopes.yml</code> and each project's <code>.agents/tavern/</code>.</p>
   </SettingsCard>}</Shell>;
@@ -329,8 +455,9 @@ export function ScopesSection() {
 export function JournalSection() {
   const api = useTavernSettings();
   return <Shell api={api}>{(d) => { const j = d.effective.journal; return <SettingsCard title="Journal reminders" hint="Choose when a quiet journal gets a reminder." glyph="file">
-    <Row label="Journal reminders" help="Nudge a thread that has worked a while without updating its journal." control={(id) => <Toggle id={id} checked={j.journalReminders} disabled={api.pending} onChange={(v) => void api.save({ journal: { journalReminders: v } })} />} />
-    <Row label="Quiet before a reminder" control={(id) => <NumberField id={id} value={j.journalQuietMinutes} min={1} max={120} unit="min" disabled={api.pending || !j.journalReminders} onSave={(v) => void api.save({ journal: { journalQuietMinutes: v } })} />} />
+    <Row label="Journal reminders" setting="journal.journalReminders" help="Nudge a thread that has worked a while without updating its journal." control={(id) => <Toggle id={id} checked={j.journalReminders} disabled={api.pending} onChange={(v) => void api.save({ journal: { journalReminders: v } })} />} />
+    <Row label="Quiet before a reminder" setting="journal.journalQuietMinutes" control={(id) => <NumberField id={id} value={j.journalQuietMinutes} min={1} max={120} unit="min" disabled={api.pending || !j.journalReminders} onSave={(v) => void api.save({ journal: { journalQuietMinutes: v } })} />} />
+    <NumberKnobRows group="journal" />
     <p className="tv-set-intro">Old pi-quests logs are imported on first touch, and the originals are kept. Turn pi-quests off when you adopt Tavern, so only one plugin owns the journal tool.</p>
   </SettingsCard>; }}</Shell>;
 }
@@ -338,15 +465,15 @@ export function JournalSection() {
 export function DataSection() {
   const api = useTavernSettings();
   return <Shell api={api}>{(d) => { const x = d.effective.data; return <SettingsCard title="Retention" hint="Choose how long records stay and when quests leave the board." glyph="archive">
-    <Row label="Keep history" help={x.historyDays === 0 ? "0 keeps everything, as today." : `Events older than ${x.historyDays} days are removed.`} control={(id) => <NumberField id={id} value={x.historyDays} min={0} max={3650} unit="days" disabled={api.pending} onSave={(v) => void api.save({ data: { historyDays: v } })} />} />
-    <Row label="Send returned quests to the cellar after" help={x.autoArchiveDays === 0 ? "0 = never. Sending a quest to the cellar marks it done, so by default only you do it." : `Returned quests go to the cellar after ${plural(x.autoArchiveDays, "day")}. 0 = never.`} control={(id) => <NumberField id={id} value={x.autoArchiveDays} min={0} max={3650} unit="days" disabled={api.pending} onSave={(v) => void api.save({ data: { autoArchiveDays: v } })} />} />
+    <Row label="Keep history" setting="data.historyDays" help={x.historyDays === 0 ? "0 keeps everything, as today." : `Events older than ${x.historyDays} days are removed.`} control={(id) => <NumberField id={id} value={x.historyDays} min={0} max={3650} unit="days" disabled={api.pending} onSave={(v) => void api.save({ data: { historyDays: v } })} />} />
+    <Row label="Send returned quests to the cellar after" setting="data.autoArchiveDays" help={x.autoArchiveDays === 0 ? "0 = never. Sending a quest to the cellar marks it done, so by default only you do it." : `Returned quests go to the cellar after ${plural(x.autoArchiveDays, "day")}. 0 = never.`} control={(id) => <NumberField id={id} value={x.autoArchiveDays} min={0} max={3650} unit="days" disabled={api.pending} onSave={(v) => void api.save({ data: { autoArchiveDays: v } })} />} />
   </SettingsCard>; }}</Shell>;
 }
 
 const TUNING_HELP = { apply: "Tavern changes the settings below within their bounds and records each change in Decided for you, with Undo.", suggest: "Insights shows each change with an Apply button; nothing changes on its own.", off: "Defaults and your own values only." } as const;
 export function TuningSection() {
   const api = useTavernSettings();
-  return <Shell api={api}>{(d) => <Row label="Tuning" help={TUNING_HELP[d.effective.tuning.mode]} control={() => <SegFilter label="Tuning" value={d.effective.tuning.mode} onChange={(v) => void api.save({ tuning: { mode: v } })} options={[{ id: "apply", label: "Apply" }, { id: "suggest", label: "Suggest" }, { id: "off", label: "Off" }]} />} />}</Shell>;
+  return <Shell api={api}>{(d) => <Row label="Tuning" setting="tuning.mode" help={TUNING_HELP[d.effective.tuning.mode]} control={() => <SegFilter label="Tuning" value={d.effective.tuning.mode} onChange={(v) => void api.save({ tuning: { mode: v } })} options={[{ id: "apply", label: "Apply" }, { id: "suggest", label: "Suggest" }, { id: "off", label: "Off" }]} />} />}</Shell>;
 }
 
 const WHO: Record<SettingsView["rows"][number]["source"], string> = { default: "Default", user: "You", tavern: "Tavern", keeper: "A Keeper" };
@@ -368,26 +495,47 @@ export function TunedSection() {
   const navigate = useBbNavigate();
   const undo = experimental_useRpcMutation({ contract: settingsContract, method: "settingsUndo" });
   const apply = experimental_useRpcMutation({ contract: settingsContract, method: "settingsApplySuggestion" });
-  const run = async (p: Promise<unknown>) => { await p; void api.refetch(); };
+  const end = experimental_useRpcMutation({ contract: settingsContract, method: "settingsEndOverride" });
+  const [problem, setProblem] = useState<string | null>(null);
+  const run = async (p: Promise<{code: string; problems: Problem[]}>) => {
+    setProblem(null);
+    try {
+      const out = await p;
+      if (out.code === "stale") setProblem("Settings changed. Review the latest values and try again.");
+      else if (out.code === "invalid") setProblem(out.problems.map(p => p.message).join(" "));
+    } catch(e) { setProblem(e instanceof Error ? e.message : String(e)); }
+    void api.refetch();
+  };
   const id = useId();
   return <Shell api={api}>{(d) => <SettingsAuthors history={d.history}>{names => <>
     <p className="tv-set-intro">{TUNING_MODE_WORDS[d.effective.tuning.mode]}</p>
     <ul className="tv-tuned">{d.rows.filter((r) => !isUserKnob(r.key)).map((r) => {
       const suggestion = d.suggestions.find((s) => s.key === r.key);
       const c = r.lastChange;
-      return <li key={r.key} className={`tv-tuned-row ${r.pinned ? "pinned" : ""}`}>
+      return <li key={r.key} data-setting-keys={`knobs.${r.key}`} className={`tv-tuned-row ${r.pinned ? "pinned" : ""}`}>
         <div className="tv-tuned-h"><label htmlFor={`${id}-${r.key}`}><b>{r.label}</b></label><NumberField id={`${id}-${r.key}`} value={r.value} min={r.min} max={r.max} unit={r.unit} disabled={api.pending} onSave={value=>void api.save({knobs:{[r.key]:value}})} />{r.pinned && <span className="tag"><PageGlyph name="pin" size={11} /><span>pinned</span></span>}</div>
         <p className="tv-tuned-help">{TUNED_HELP[r.key]}{isGuardrailSetting(`knobs.${r.key}`) && " Agents in Tavern threads can't change these; only you can."}</p>
-        <div className="tv-tuned-f"><span>default <b className="num">{formatValue(r.default, r.unit)}</b></span><span>bounds <b className="num">{formatValue(r.min, r.unit)} to {formatValue(r.max, r.unit)}</b></span><span>{r.source === "default" ? "using the default" : <>set by <b>{r.source === "user" ? "you" : WHO[r.source]}</b>{c && <> <TimeAgo at={c.at} /></>}</>}</span></div>
+        <div className="tv-tuned-f"><span data-setting-changed={r.value !== r.default || undefined}>{r.value === r.default ? "default " : "Changed from "}<b className="num">{formatValue(r.default, r.unit)}</b></span><span>bounds <b className="num">{formatValue(r.min, r.unit)} to {formatValue(r.max, r.unit)}</b></span><span>{r.source === "default" ? "using the default" : <>set by <b>{r.source === "user" ? "you" : WHO[r.source]}</b>{c && <> <TimeAgo at={c.at} /></>}</>}</span></div>
         {c && <p className="tv-tuned-c"><span><SettingAuthor threadId={d.history.find(h => h.id === c.id)?.threadId} by={c.by} label={names(d.history.find(h => h.id === c.id)?.threadId ?? null, {mid:true})} sentenceStart /> changed it from <b className="num">{c.from === null ? "default" : formatValue(c.from, r.unit)}</b> to <b className="num">{c.to === null ? "default" : formatValue(c.to, r.unit)}</b> <TimeAgo at={c.at} />: {c.reason}</span>{c.evidence && <> <button type="button" className="tv-ilink act" onClick={() => navigate.toPluginPanel("tavern", { subPath: "insights" })}>See it in Insights</button></>}</p>}
         {suggestion && <p className="tv-tuned-s"><PageGlyph name="you" size={12} className="tv-mn-you" /><span>Suggested: <b className="num">{formatValue(suggestion.value, r.unit)}</b>. {suggestion.reason}</span></p>}
         <div className="tv-tuned-a">
           {suggestion && <button type="button" className="btn pri sm" disabled={apply.isPending || r.pinned} onClick={() => void run(apply.mutate({ key: r.key, revision: d.revision }))}><span>Apply {formatValue(suggestion.value, r.unit)}</span></button>}
           {c?.undoable && <button type="button" className="lnk-btn act" disabled={undo.isPending} onClick={() => void run(undo.mutate({ id: c.id, revision: d.revision, why: WHY }))}><PageGlyph name="undo" size={12} /><span>Undo</span></button>}
+          {r.value !== r.default && <button type="button" className="lnk-btn act" aria-label={`Reset ${r.label} to default`} disabled={api.pending}
+            title={r.pinned ? "Resetting also removes the pin." : undefined} onClick={() => void api.reset(`knobs.${r.key}`)}>Reset to default</button>}
           <button type="button" className="lnk-btn act" aria-pressed={r.pinned} disabled={api.pending} onClick={() => void api.save({}, { [r.key]: r.pinned ? null : r.value })}><PageGlyph name="pin" size={12} /><span>{r.pinned ? "Unpin" : "Pin"}</span></button>
         </div>
       </li>;
     })}</ul>
+    <AgentLimits title="Ledger and tuner limits" hint="These limits control ledger refresh and the tuner’s evidence. They are not auto-tuned." groups={["knobs", "tuning"]} />
+    <h4>Live quest overrides</h4>
+    <p className="tv-set-intro">A Keeper’s override ends with its quest and is not exported to TOML.</p>
+    {d.liveOverrides?.length ? <ul className="tv-settings-keys">{d.liveOverrides.map(o => <li className="tv-set-row" key={`${o.questId}:${o.key}`}>
+      <div><b>{o.questTitle}</b><p>{knobLabel(`knobs.${o.key}`)}: {knobValue(`knobs.${o.key}`, o.value)}. {o.applied ? "Set by" : "Not applying; set by"} <button type="button" className="tv-ilink act" onClick={() => navigate.toThread(o.keeperThreadId)}>{o.keeperName}</button>.</p></div>
+      <button type="button" className="btn sm" aria-label={`End ${knobLabel(`knobs.${o.key}`)} override for ${o.questTitle}`} disabled={end.isPending}
+        onClick={() => void run(end.mutate({ revision: d.revision, boardQuestId: o.questId, key: o.key }))}>End now</button>
+    </li>)}</ul> : <p className="tv-set-intro">No live quest overrides.</p>}
+    {problem && <p className="tv-problem" role="alert">{problem}</p>}
   </>}</SettingsAuthors>}</Shell>;
 }
 
@@ -450,26 +598,43 @@ export function TransferSection() {
 
 // Host descriptions miss text contrast; draw the intro inside Tavern instead (docs/host-asks.md, entry 6).
 export function settingsSection<P extends object>({ intro, component: Body, ...rest }: { id: string; title: string; intro: string; component: ComponentType<P> }) {
-  const component = (props: P) => <><div className="tavern tv-page tv-set-introwrap"><p className="tv-set-intro">{intro}</p></div><Body {...props} /></>;
+  const atmosphere = rest.id === "atmosphere";
+  function component(props: P) {
+    const introRef = useRef<HTMLDivElement>(null);
+    useEffect(() => {
+      if (!atmosphere || ![`#${ATMOSPHERE_ANCHOR}`, "#motion"].includes(window.location.hash)) return;
+      const frame = requestAnimationFrame(() => introRef.current?.scrollIntoView({ block: "start" }));
+      return () => cancelAnimationFrame(frame);
+    }, []);
+    return <><div ref={introRef} id={atmosphere ? ATMOSPHERE_ANCHOR : undefined} className="tavern tv-page tv-set-introwrap"><p id={atmosphere ? "motion" : undefined} className="tv-set-intro">{intro}</p></div><Body {...props} /></>;
+  }
   return { ...rest, component };
 }
 
 function TuningCards() {
-  return <><div className="tavern tv-page"><SettingsCard title="Automatic tuning" hint="Choose whether Tavern applies measured changes or suggests them." glyph="rule" guardrail><TuningSection /></SettingsCard><SettingsCard title="Tavern tunes these" hint="Set a value, undo a change, or pin it so Tavern stops tuning it." glyph="pin"><TunedSection /></SettingsCard></div></>;
+  return <><div className="tavern tv-page"><SettingsCard title="Automatic tuning" hint="Choose whether Tavern applies measured changes or suggests them." glyph="rule" guardrail><TuningSection /></SettingsCard><SettingsCard title="Tuned by Tavern" hint="Set a value, undo a change, or pin it so Tavern stops tuning it." glyph="pin"><TunedSection /></SettingsCard></div></>;
 }
 function DataCards() {
   return <><DataSection /><div className="tavern tv-page"><SettingsCard title="Import and export" hint="Move settings as TOML through ~/.agents/tavern/settings.toml, with a preview before applying." glyph="file"><TransferSection /></SettingsCard><SettingsCard title="Backups" hint={BACKUP_INTRO} glyph="archive" guardrail><BackupSection /></SettingsCard></div></>;
 }
-function MachineCard() { return <div className="tavern tv-page"><SettingsCard title="Work placement" hint="Choose where members may run." glyph="machine" guardrail><MachinesSettingsRow /></SettingsCard></div>; }
+function MachineCard() {
+  const api = useTavernSettings();
+  return <Shell api={api}>{d => <SettingsCard title="Work placement" hint="Choose where members may run and how many a Keeper can place at once." glyph="machine" guardrail>
+    <MachinesSettingsRow />
+    {([["maxMakers","Makers per Keeper"],["maxCheckers","Checkers per Keeper"]] as const).map(([key,label]) => <Row key={key} setting={`machines.${key}`} label={label}
+      control={id => <NumberField id={id} value={d.effective.machines[key]} min={1} max={1000} unit="at once" disabled={api.pending} onSave={v => void api.save({ machines: { [key]: v } })} />} />)}
+  </SettingsCard>}</Shell>;
+}
 
 export const SETTINGS_SECTIONS = [
-  { id: "tavern", title: "Tavern", intro: "Pause work and choose how new threads and characters behave.", component: TavernSection },
+  { id: "tavern", title: "Tavern", intro: "Pause work and choose how new threads start.", component: TavernSection },
   { id: "attention", title: "Your attention", intro: "Choose your review budget, notifications and quiet hours.", component: AttentionSection },
   { id: "keepers", title: "Keepers and decisions", intro: "Set what Keepers may decide and how they check in.", component: KeepersSection },
   { id: "classes", title: "Classes and models", intro: "Choose the agent, model and thinking each class uses.", component: ClassesSection },
   { id: "scopes", title: "Scopes", intro: "Set the guardrails on what members may touch.", component: ScopesSection },
   ...(PLACEMENT_RPC_LIVE ? [{ id: "machines", title: "Where work runs", intro: "Choose the machines and environments that may host work.", component: MachineCard }] as const : []),
-  { id: "motion", title: "Motion", intro: "Choose ambient cues and their repeat interval.", component: MotionSection },
+  { id: "atmosphere", title: "Atmosphere", intro: "How the tavern looks and feels: its characters, their speech and its motion.", component: AtmosphereSection },
+  { id: "away", title: "Closing time", intro: "Choose what the next window starts with.", component: AwaySettingsSection },
   { id: "journal", title: "Journal", intro: "Choose reminders for each thread's checklist.", component: JournalSection },
   { id: "tuning", title: "Tuning", intro: "Control automatic tuning and inspect the values Tavern tunes.", component: TuningCards },
   { id: "data", title: "Data and backups", intro: "Manage record retention, settings files and backups.", component: DataCards },

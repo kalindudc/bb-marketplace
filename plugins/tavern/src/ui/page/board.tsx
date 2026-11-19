@@ -12,6 +12,7 @@ import { usePanelState } from "./panel-state";
 import { SKEL } from "./skeletons";
 import { PartyPicture } from "./room";
 import { settingsHref } from "./insights";
+import { ATMOSPHERE_ANCHOR } from "./settings";
 
 type K = Room["keepers"][number];
 const names = (registry: Registry, keeper: Member) => ({ keeper: characterName(registry, keeper), member: (m: Member) => characterName(registry, m) });
@@ -128,8 +129,8 @@ export function useMasonry<T extends HTMLElement>(deps: unknown[]) {
 function BoardHearth({ room, flareKey }: { room: Room; flareKey: string | undefined }) {
   const now = useNow();
   const pluginId = experimental_usePluginId();
-  // Ambient motion follows the Motion settings; older servers retain Calm with the legacy flicker switch.
-  return <Hearth words={hearthWords(room.keepers.map(keeperStatus), { away: roomAway(room), now, onRoad: onTheRoad(room) })} surface="page" flareKey={flareKey} replay={room.hearthFlicker !== false} ambientMotion={room.ambientMotion} repeatSeconds={room.repeatSeconds} settingsHref={settingsHref(pluginId)} />;
+  // Older servers retain Calm with the legacy flicker switch.
+  return <Hearth words={hearthWords(room.keepers.map(keeperStatus), { away: roomAway(room), now, onRoad: onTheRoad(room) })} surface="page" flareKey={flareKey} replay={room.hearthFlicker !== false} ambientMotion={room.ambientMotion} repeatSeconds={room.repeatSeconds} settingsHref={`${settingsHref(pluginId)}#${ATMOSPHERE_ANCHOR}`} />;
 }
 
 /**

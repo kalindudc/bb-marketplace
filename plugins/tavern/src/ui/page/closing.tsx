@@ -4,7 +4,9 @@ import { rpcContract, type Room } from "../../shared/contract";
 import type { AwayDigest } from "../../shared/away-rpc";
 import type { AwayWindow } from "../../shared/away";
 import { OpensMark, SkLines, Vocabulary, plural, glowVars } from "../kit";
-import { CLOSING_TAB, NEVER_WHILE_CLOSED, useOpenPanelTab } from "./panels";
+import { CLOSING_TAB, useOpenPanelTab } from "./panels";
+import { AwayStopChoices, windowStopWords } from "./away-preferences";
+import { useTavernSettings } from "./settings";
 import { AwayForm, AwayNotes, REOPEN_LINE, ReturnButton, idFree, roomNames, useAwayControl, useReturn } from "./away";
 import { AwayTime, ClosedWords, Empty, PageButton, PhaseMark, StateMark, characterName, type Registry } from "./common";
 import { PageGlyph } from "./glyphs";
@@ -18,20 +20,27 @@ export function ClosingTimeSheet({ room, registry }: { room: Room; registry: Reg
   const live = workingQuests(room);
   const open = () => { if (!openTab(CLOSING_TAB)) setInline(true); };
   const control = useAwayControl(room);
+  const settings = useTavernSettings();
   const isClosed = !!roomAway(room)?.closed;
   const ret = useReturn(room, registry);
   return <div className="tv-closing">
     <header className="tv-sheet-head tv-card lit" style={glowVars("closing")}>
       <PageGlyph name="lantern" size={40} />
-      <div className="tv-sh-t"><h1><Vocabulary word="closing" /></h1><p className="tv-cc-r">Leave the Keepers a window: they keep reversible work moving and hold every production step for you.</p><div className="tv-facts">{isClosed && <StateMark tone="wait"><b><ClosedWords away={roomAway(room)} /></b></StateMark>}<span><b className="num">{live.length}</b> live {live.length === 1 ? "quest" : "quests"} would keep going</span><span><b className="num">{NEVER_WHILE_CLOSED.length}</b> actions locked for every class</span></div></div>
+      <div className="tv-sh-t"><h1><Vocabulary word="closing" /></h1><p className="tv-cc-r">Choose what keeps going and what waits for your return.</p><div className="tv-facts">{isClosed && <StateMark tone="wait"><b><ClosedWords away={roomAway(room)} /></b></StateMark>}<span><b className="num">{live.length}</b> live {live.length === 1 ? "quest" : "quests"} would keep going</span></div></div>
       <button type="button" className="btn pri" onClick={open} aria-expanded={inline || undefined} title="Opens the sheet in the side panel, beside this page"><PageGlyph name="lantern" /><span>{isClosed ? "Open the Closing time sheet" : "Close the tavern…"}</span><OpensMark /></button>
     </header>
     {(isClosed || ret.receipt || ret.problem) && <div className="tv-awaybar"><ReturnButton room={room} registry={registry} action={ret} />{isClosed && <span className="m small">{REOPEN_LINE}</span>}</div>}
     <AwayNotes room={room} registry={registry} control={control.data} />
     {inline && <section className="tv-card tv-inlineform" aria-label="Closing-time sheet"><AwayForm room={room} registry={registry} /><button type="button" className="btn sm" onClick={() => setInline(false)}><span>Hide the sheet</span></button></section>}
     <div className="tv-tgrid">
-      <section className="tv-card tv-tsec" aria-labelledby="tv-cl-q"><header className="tv-colh"><h3 id="tv-cl-q">What keeps going</h3><span className="tv-count">{plural(live.length, "quest")}</span></header>{live.length ? <ul className="tv-dw">{live.map((q) => <li key={q.id}><PhaseMark phase={q.phase} /><span><b>{q.short}</b><span className="m"> · drafts ready unless you choose Pause or Hold in the sheet</span></span></li>)}</ul> : <p className="tv-empty" data-empty>No live quests. The tavern is quiet.</p>}</section>
-      <section className="tv-card tv-tsec" aria-labelledby="tv-cl-never"><header className="tv-colh"><h3 id="tv-cl-never">Never while closed</h3><span className="tv-count">locked for every class</span></header><ul className="tv-dw">{NEVER_WHILE_CLOSED.map((n) => <li key={n}><PageGlyph name="lock" /><span>{n}</span></li>)}</ul></section>
+      <section className="tv-card tv-tsec" aria-labelledby="tv-cl-q"><header className="tv-colh"><h3 id="tv-cl-q">What keeps going</h3><span className="tv-count">{plural(live.length, "quest")}</span></header>{live.length ? <ul className="tv-dw">{live.map((q) => <li key={q.id}><PhaseMark phase={q.phase} /><span><b>{q.short}</b><span className="m"> · choose what happens in the sheet</span></span></li>)}</ul> : <p className="tv-empty" data-empty>No live quests. The tavern is quiet.</p>}</section>
+      <section className="tv-card tv-tsec" aria-label="Closing time guard settings">
+        {isClosed && control.data?.window && <p>{windowStopWords(control.data.window)}</p>}
+        <p className="m small">Changes here set your default for future windows. The sheet lets you choose for one window.</p>
+        {settings.data ? <AwayStopChoices label={isClosed ? "Never while closed next time" : undefined} items={settings.data.effective.away.neverWhileClosed}
+          disabled={settings.pending} onChange={items => void settings.save({ away: { neverWhileClosed: items } })} /> : <PageLoad error={settings.error} retry={settings.refetch} skeleton={<SkLines n={4} />} label="the Closing time settings" />}
+        {(settings.note || settings.problems[0]) && <p className="tv-problem" role="alert">{settings.note ?? settings.problems[0]?.message}</p>}
+      </section>
       <section className="tv-card tv-tsec" aria-labelledby="tv-cl-after"><header className="tv-colh"><h3 id="tv-cl-after">When you are back</h3></header><p>A digest of what moved, grouped by quest, with every ask that waited.</p><div className="tv-first-links" style={{ justifyContent: "flex-start", marginTop: 10 }}><PageButton path="digest" className="ghost sm">While closed <span className="anc">digest</span></PageButton></div></section>
     </div>
   </div>;

@@ -1,7 +1,8 @@
 import type { JournalEntry } from "./schema";
+import { KNOB_FIELDS } from "./settings";
 
 /** A delegate's report gets this long to be looked at before the reminder names it and the panel's currency says so. */
-export const REPORT_GRACE_MS = 10 * 60_000;
+export const REPORT_GRACE_MS = KNOB_FIELDS.journal.reportGraceMinutes.default * 60_000;
 
 const closed = (e: Pick<JournalEntry, "status">) => e.status === "done" || e.status === "verified";
 /** Another thread's work this thread waits on; a member's own linked waypoint is its own work. */
@@ -28,7 +29,7 @@ export function trackerGroups(entries: readonly JournalEntry[]): { id: TrackerGr
 
 export type Currency = { lastDoneAt: number | null; oldestOpenAt: number | null; reported: number; delegated: number; stale: boolean };
 /** How current the journal is: the last close, the oldest open entry (board mirrors aside), and delegates' reports not yet looked at. */
-export function currency(entries: readonly JournalEntry[], now: number): Currency {
+export function currency(entries: readonly JournalEntry[], now: number, reportGraceMs = REPORT_GRACE_MS): Currency {
   const done = entries.filter(closed).map(e => e.doneAt ?? e.updatedAt);
   const open = entries.filter(e => !closed(e));
   const own = open.filter(e => !e.boardQuestId).map(e => e.createdAt);
@@ -38,6 +39,6 @@ export function currency(entries: readonly JournalEntry[], now: number): Currenc
     oldestOpenAt: own.length ? Math.min(...own) : null,
     reported: waiting.length,
     delegated: open.filter(delegated).length,
-    stale: waiting.some(e => now - e.report!.at >= REPORT_GRACE_MS),
+    stale: waiting.some(e => now - e.report!.at >= reportGraceMs),
   };
 }

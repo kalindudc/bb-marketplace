@@ -62,6 +62,14 @@ describe("no-wake journal notes", () => {
     expect(await f.store.deliverNote("t", 300, send)).toBe(false);
     expect(send).toHaveBeenCalledTimes(1);
   });
+  it("uses the chosen repeat and unchecked-report intervals", async () => {
+    const f = await staleFixture(), entries = f.store.get("t").entries, now = 10_000_000;
+    const state = {stateChangedAt:null,notedAt:now-6*60_000,reportAt:now-3*60_000,now};
+    expect(reminderDue(state, entries, null)).toBe(false);
+    expect(reminderDue(state, entries, null, 5*60_000, 3*60_000)).toBe(true);
+    expect(reminderDue(state, entries, null, 7*60_000, 3*60_000)).toBe(false);
+    expect(reminderDue(state, entries, null, 5*60_000, 4*60_000)).toBe(false);
+  });
   it("treats any visible inbound message as a request, but not retries or agent-only plugin context", () => {
     const req = (data: Record<string, unknown>) => ({ seq: 1, createdAt: 1, type: "client/turn/requested", data: { input: [{ type: "text", text: "x" }], ...data } });
     expect(isInboundRequest(req({ initiator: "user" }))).toBe(true);

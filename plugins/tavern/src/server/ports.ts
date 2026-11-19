@@ -43,7 +43,7 @@ export interface JournalDeps {
   reviewed?(review: JournalReview): void;
   /** A verified entry is about to reopen for a newer brief: its receipt no longer proves the maker's waypoint, though the Warden keeps the check. Inside the journal transaction; must not throw. */
   superseded?(input: { entry: JournalEntry; version: number; at: number }): void;
-  settings?(): { journalReminders: boolean; journalQuietMinutes: number };
+  settings?(): { journalReminders: boolean; journalQuietMinutes: number; remindEveryMinutes?: number; reportGraceMinutes?: number };
   // added by Builder A: the Keeper store is authoritative for board-mirror phases, including old unmarked entries.
   boardQuestsOf?(threadId: string): readonly BoardQuestMirror[];
   /** The caller's Tavern role, from the members table (never from metadata). */

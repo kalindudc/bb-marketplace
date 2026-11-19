@@ -18,7 +18,10 @@ function settingKeys(value: unknown, prefix = ""): string[] {
 export function settingsCommands(bb: BbPluginApi, store: SettingsStore) {
   const keepers = new KeeperStore(store.db);
   function guardrails(ctx: PluginCliContext, keys: string[]) {
-    if (!ctx.threadId || !keepers.get("members", ctx.threadId)) return;
+    if (!ctx.threadId) return;
+    const consent = [...new Set(keys.filter(key => key === "keepers.alwaysAsk" || key === "away.neverWhileClosed"))];
+    if (consent.length) throw new PluginCliError(`Only you can change ${consent.join(", ")}. Use Tavern Settings or a terminal outside an agent thread.`);
+    if (!keepers.get("members", ctx.threadId)) return;
     const blocked = [...new Set(keys.filter(isGuardrailSetting))].sort();
     if (blocked.length) throw new PluginCliError(`Tavern-managed threads cannot change guardrail settings: ${blocked.join(", ")}. Change these on Tavern's Settings page, or ask from a plain thread.`);
   }

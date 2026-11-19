@@ -220,10 +220,22 @@ export class SettingsStore {
     const parsed = settingsUpdateSchema.parse(input), current = this.state();
     if (parsed.patch.tavern?.ambientMotion !== undefined) parsed.patch.tavern.hearthFlicker = parsed.patch.tavern.ambientMotion !== "off";
     if (current.revision !== parsed.revision) throw new SettingsConflict(current.revision);
-    if (current.policy.state === "invalid" && parsed.patch.machines && !own(parsed.patch.machines, "rules"))
+    if (current.policy.state === "invalid" && (parsed.patch.machines && !own(parsed.patch.machines, "rules") || parsed.reset?.some(key => key.startsWith("machines."))))
       throw new Error("Repair machine placement with an explicit replacement rules array.");
     const next = structuredClone(current.value);
     next.user = settingsPatchSchema.parse(mergeSettings(next.user, parsed.patch));
+    for (const key of parsed.reset ?? []) {
+      setPath(next, `user.${key}`, null, false);
+      if (key === "tavern.ambientMotion" || key === "tavern.hearthFlicker") {
+        setPath(next, "user.tavern.ambientMotion", null, false);
+        setPath(next, "user.tavern.hearthFlicker", null, false);
+      }
+      const knob = key.startsWith("knobs.") ? key.slice(6) as TunableKey : null;
+      if (knob && TUNABLE_KEYS.includes(knob)) {
+        delete next.tuned[knob];
+        delete next.pinned[knob];
+      }
+    }
     if (parsed.patch.classes && next.user.classes) {
       for (const [id, override] of Object.entries(parsed.patch.classes)) {
         if (Object.keys(override).length) next.user.classes[id] = structuredClone(override);
@@ -268,6 +280,24 @@ export class SettingsStore {
     }
     next.overrides[questId] = { ...next.overrides[questId], ...parsed };
     return this.commit(current.revision, next, "keeper", why, null, questId, threadId);
+  }
+  endOverride(questId: string, key: typeof QUEST_TUNABLE_KEYS[number], revision: number) {
+    const current = this.state();
+    if (current.revision !== revision) throw new SettingsConflict(current.revision);
+    if (current.value.overrides[questId]?.[key] === undefined) throw new Error("This quest override has already ended.");
+    const next = structuredClone(current.value), values = next.overrides[questId]!;
+    delete values[key];
+    if (!Object.keys(values).length) delete next.overrides[questId];
+    return this.commit(revision, next, "user", "Ended the quest override on the settings page.", null, questId, null, false);
+  }
+  lastChangers(): Record<string, Pick<SettingDecision, "at" | "by" | "threadId">> {
+    const rows = this.db.prepare(`WITH changes AS (
+      SELECT json_extract(change.value,'$.key') AS key, at, by, thread_id AS threadId,
+        ROW_NUMBER() OVER (PARTITION BY json_extract(change.value,'$.key') ORDER BY at DESC, audit.rowid DESC) AS position
+      FROM tavern_setting_changes audit, json_each(audit.changes) change
+      WHERE json_extract(change.value,'$.key') NOT LIKE 'overrides.%'
+    ) SELECT key, at, by, threadId FROM changes WHERE position=1`).all() as (Pick<SettingDecision, "at" | "by" | "threadId"> & {key: string})[];
+    return Object.fromEntries(rows.map(({key, ...row}) => [key, row]));
   }
   expire(questId: string) {
     const current = this.state();

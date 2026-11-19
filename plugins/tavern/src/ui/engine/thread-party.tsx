@@ -17,12 +17,12 @@ function useWidgetMood(data: ThreadDecor) {
   useLayoutEffect(() => { setNow(Date.now()); }, [reportAt, verifiedAt]);
   useEffect(() => {
     const due = (at: number | null, window: number) => at === null ? Infinity : now < at ? at : at + window;
-    const next = [due(reportAt, REPORTED_MS), due(verifiedAt, VERIFIED_MS)].filter(at => at > now);
+    const next = [due(reportAt, facts.reportedMs ?? REPORTED_MS), due(verifiedAt, facts.verifiedMs ?? VERIFIED_MS)].filter(at => at > now);
     const at = Math.min(...next);
     if (!Number.isFinite(at)) return;
     const timer = setTimeout(() => setNow(Date.now()), Math.max(0, at - Date.now()));
     return () => clearTimeout(timer);
-  }, [now, reportAt, verifiedAt]);
+  }, [now, reportAt, verifiedAt, facts.reportedMs, facts.verifiedMs]);
   return characterMood(facts);
 }
 

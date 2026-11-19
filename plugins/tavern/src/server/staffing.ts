@@ -1,5 +1,5 @@
 import type { BoardQuest } from "../shared/schema";
-import { LIMITS } from "./limits";
+
 import type { Keeper } from "./keeper/service";
 import type { Staffing, StaffingReservation } from "./keeper/store";
 
@@ -46,11 +46,12 @@ export function reserveStaffing(
   }
   while (allocation.slots.length < capacity)
     allocation.slots.push({ memberThreadId: null, uses: 0 });
+  const replacements = k.settings(quest.id).keepers.replacementsPerSlot;
   const slot = allocation.slots
     .slice(0, capacity)
     .findIndex(
       (candidate) =>
-        candidate.uses < 1 + LIMITS.replacements && !occupied(k, candidate.memberThreadId),
+        candidate.uses < 1 + replacements && !occupied(k, candidate.memberThreadId),
     );
   if (
     slot < 0 &&
@@ -68,7 +69,7 @@ export function reserveStaffing(
     );
   if (slot < 0)
     throw new Error(
-      `Only two replacements are allowed per party slot per plan version. Re-plan before another ${classId} attempt.`,
+      `Only ${replacements === 2 ? "two" : replacements} ${replacements === 1 ? "replacement is" : "replacements are"} allowed per party slot per plan version. Re-plan before another ${classId} attempt.`,
     );
   const previous = allocation.slots[slot]!;
   const reservation = { id, slot, replacement: previous.uses, previous };

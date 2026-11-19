@@ -1,5 +1,5 @@
 import type { MessageDispatchHookContext } from "@get-bb/plugin-sdk";
-import type { AwayReturnCause, AwayWindow } from "../../shared/away";
+import { PRODUCTION_WAKE_HOURS, type AwayReturnCause, type AwayWindow } from "../../shared/away";
 import { isUser } from "../dispatch";
 
 type InputBlocks = MessageDispatchHookContext["queuedMessages"][number]["content"];
@@ -27,12 +27,12 @@ export function awayExecutionPolicy(window: AwayWindow | null, questId: string |
   const quest = window.quests.find(item => item.questId === questId);
   if (quest === undefined) return { mode: "held", reason: "not-pinned" };
   if (quest.endState === "pause") return { mode: "held", reason: "paused" };
-  if (prevention) return { mode: "guarded", reason: null };
+  if (prevention || window.stopList.length === 0) return { mode: "guarded", reason: null };
   return window.allowWatched ? { mode: "watched", reason: null } : { mode: "held", reason: "not-prevented" };
 }
 
 export function awayShouldNotify(window: AwayWindow | null, kind: string, openedAt: number, now: number): boolean {
   if (window === null || window.returnedAt !== null) return true;
   if (kind === "blocker") return window.wakeRules.blockers;
-  return kind === "production" && window.wakeRules.productionAsksAfterTwoHours && now - openedAt >= 2 * 60 * 60 * 1000;
+  return kind === "production" && window.wakeRules.productionAsksAfterTwoHours && now - openedAt >= (window.productionWakeHours ?? PRODUCTION_WAKE_HOURS.default) * 60 * 60 * 1000;
 }

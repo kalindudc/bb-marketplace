@@ -95,7 +95,7 @@ it("round-trips completed windows and preserves the recorded return cause", () =
 it("rejects forged current-window controls before restoring any records", () => {
   const source = closed(), target = setup(), snapshot = source.records.capture();
   const row = snapshot.tables.tavern_records!.rows.find(row => row.kind === "away")!;
-  const data = JSON.parse(String(row.data)); data.window.stopList = []; row.data = JSON.stringify(data);
+  const data = JSON.parse(String(row.data)); data.window.stopList = ["unknown-kind"]; row.data = JSON.stringify(data);
   expect(() => target.records.restore(snapshot)).toThrow();
   expect(target.records.empty()).toBe(true);
 });

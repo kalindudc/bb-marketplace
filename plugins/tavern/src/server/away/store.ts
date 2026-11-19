@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { Database } from "../ports";
-import { AWAY_STOP_LIST, awayCloseSchema, awayCompletedWindowSchema, awayReturnCauseSchema, awayStateSchema, awayWindowSchema, type AwayCloseInput, type AwayReturnCause, type AwaySnapshot, type AwayState, type AwayWindow } from "../../shared/away";
+import { AWAY_STOP_LIST, PRODUCTION_WAKE_HOURS, awayCloseSchema, awayCompletedWindowSchema, awayReturnCauseSchema, awayStateSchema, awayWindowSchema, type AwayCloseInput, type AwayReturnCause, type AwaySnapshot, type AwayStopKind, type AwayState, type AwayWindow } from "../../shared/away";
 
 export class AwayConflict extends Error {
   constructor(readonly revision: number) { super("Closing time changed; refresh before trying again."); }
@@ -48,7 +48,7 @@ export class AwayStore {
   }
   snapshot(): AwaySnapshot { return this.view(this.state()); }
 
-  close(input: AwayCloseInput): AwaySnapshot {
+  close(input: AwayCloseInput, stopList: readonly AwayStopKind[] = AWAY_STOP_LIST, productionWakeHours: number = PRODUCTION_WAKE_HOURS.default): AwaySnapshot {
     const parsed = awayCloseSchema.parse(input);
     return this.db.transaction(() => {
       const current = this.state();
@@ -60,8 +60,8 @@ export class AwayStore {
       const eventFloor = this.event(at, "away.closed", "Closed the tavern", { windowId: id, until: parsed.until, quests: parsed.quests, allowWatched: parsed.allowWatched, openAskIds: this.openAskIds() });
       const trimmed = parsed.note?.trim();
       const window = awayWindowSchema.parse({ id, version, closedAt: at, until: parsed.until,
-        quests: parsed.quests, allowWatched: parsed.allowWatched, wakeRules: parsed.wakeRules,
-        note: trimmed ? trimmed : null, stopList: [...AWAY_STOP_LIST], eventFloor, eventCeiling: null, returnedAt: null, returnCause: null });
+        quests: parsed.quests, allowWatched: parsed.allowWatched, wakeRules: parsed.wakeRules, productionWakeHours,
+        note: trimmed ? trimmed : null, guardPolicy: "selected", stopList: AWAY_STOP_LIST.filter(kind => (parsed.stopList ?? stopList).includes(kind)), eventFloor, eventCeiling: null, returnedAt: null, returnCause: null });
       const state = { revision: version, window };
       this.save(state);
       return this.view(state);

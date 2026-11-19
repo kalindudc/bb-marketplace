@@ -129,6 +129,7 @@ export const threadDecorSchema = z.object({
   widgetRow: z.boolean().optional(),
   ambientMotion: z.enum(["calm", "lively", "off"]).optional(), repeatSeconds: z.number().optional(), characters: z.boolean().optional(),
   voice: voiceModeSchema.optional(),
+  reportedPoseSeconds: z.number().int().positive().optional(), verifiedPoseMinutes: z.number().int().positive().optional(),
   moodSignals: z.object({
     released: z.boolean(),
     archived: z.boolean(),
@@ -353,7 +354,7 @@ export const rpcContract = defineContract({
   journal: {
     input: z.object({ threadId }).strict(),
     output: journalSchema,
-    tags: ({ threadId }: { threadId: string }) => [tags.journal(threadId)],
+    tags: ({ threadId }: { threadId: string }) => [tags.journal(threadId), tags.settings()],
   },
   journalEdit: {
     input: z.object({ threadId, edit: journalEditSchema }).strict(),

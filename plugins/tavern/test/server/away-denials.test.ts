@@ -1,17 +1,21 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
-import { AWAY_STOP_LIST, awayWindowSchema } from "../../src/shared/away";
+import { LEGACY_AWAY_STOP_LIST, awayWindowSchema } from "../../src/shared/away";
 import { scopeForClass } from "../../src/scope/presets";
 import { bindPaths } from "../../src/scope/paths";
+import { scopeFileSchema } from "../../src/scope/schema";
 import { evaluate } from "../../src/scope/engine";
+import { closingAct, fallbackActs } from "../../src/scope/acts";
 import { setup } from "./runtime-fixture";
 import { hasAwayDenials, localAwayPrevention, narrowAwayScope } from "../../src/server/away/denials";
 
 const window = awayWindowSchema.parse({ id: "away-test", version: 1, closedAt: 1000, until: 2000, note: null, quests: [], allowWatched: false,
-  wakeRules: { blockers: true, productionAsksAfterTwoHours: false }, stopList: [...AWAY_STOP_LIST], eventFloor: 1, eventCeiling: null, returnedAt: null, returnCause: null });
+  wakeRules: { blockers: true, productionAsksAfterTwoHours: false }, stopList: [...LEGACY_AWAY_STOP_LIST], eventFloor: 1, eventCeiling: null, returnedAt: null, returnCause: null });
+const selected = (stopList: string[]) => awayWindowSchema.parse({ ...window, guardPolicy: "selected", stopList });
+const current = () => selected(["merge", "deploy", "production", "sends-as-you", "delete", "other-writes"]);
 const cwd = "/tmp/tavern-away-denials/worktree";
-function bound() {
-  const scope = scopeForClass("smith");
+function bound(role = "smith") {
+  const scope = scopeForClass(role);
   scope.shell.allow = structuredClone(scope.shell.deny);
   return bindPaths(scope, { home: "/tmp/tavern-away-denials/home", tmp: ["/tmp"], scopesDir: "/tmp/tavern-away-denials/scopes", worktree: cwd, threadStorage: "/tmp/tavern-away-denials/thread" }, value => value);
 }
@@ -28,11 +32,73 @@ describe("Closing time local denials", () => {
   });
   it.each(["git merge feature", "gh pr merge 12", "git push origin feature", "dev deploy", "terraform apply", "kubectl --context production apply -f prod.yml", "slack send channel text", "rm -rf build", "find . -delete", "gh pr create --draft", "curl -X POST https://example.test"])("blocks named stop-list action before execution: %s", command => {
     const decision = evaluate(narrowAwayScope(bound(), window), { kind: "bash", toolName: "bash", input: { command }, cwd });
+    expect(evaluate(narrowAwayScope(bound(), current()), { kind: "bash", toolName: "bash", input: { command }, cwd })).toEqual(decision);
     const ruleId = ["git merge feature", "rm -rf build", "find . -delete"].includes(command) ? expect.stringMatching(/^away:/) : "closing-act";
     expect(decision).toMatchObject({ allow: false, ruleId });
   });
   it.each(["slack_send", "deploy_service", "delete_file", "merge_pr"])("blocks an outward or destructive tool: %s", toolName => {
-    expect(evaluate(narrowAwayScope(bound(), window), { kind: "tool", toolName, input: {}, cwd }).allow).toBe(false);
+    const call = { kind: "tool" as const, toolName, input: {}, cwd };
+    const legacy = evaluate(narrowAwayScope(bound(), window), call);
+    expect(legacy.allow).toBe(false);
+    expect(evaluate(narrowAwayScope(bound(), current()), call)).toEqual(legacy);
+  });
+  it.each(["keeper", "smith", "ranger", "warden", "wanderer"])("writes the exact legacy scope bytes at the six-item default for %s", role => {
+    const base = { ...bound(role), threadId: "sample" };
+    const legacy = narrowAwayScope(base, window), all = narrowAwayScope(base, current());
+    expect(JSON.stringify(all)).toBe(JSON.stringify(legacy));
+    expect(scopeFileSchema.parse(JSON.parse(JSON.stringify(all)))).toEqual(all);
+    expect(hasAwayDenials(all, current())).toBe(true);
+    expect(hasAwayDenials(legacy, current())).toBe(true);
+  });
+  it("narrows the scope only for selected kinds and checks that same policy", () => {
+    const selection = selected(["merge", "deploy", "delete"]);
+    const base = bound(), scope = narrowAwayScope(base, selection);
+    expect(hasAwayDenials(scope, selection)).toBe(true);
+    expect(scope).not.toHaveProperty("awayPolicy");
+    expect(scope.shell.deny.filter(rule => rule.id.startsWith("away:")).some(rule => rule.id.includes(":policy:"))).toBe(true);
+    expect(scopeFileSchema.safeParse({ ...scope, threadId: "sample" }).success).toBe(true);
+    expect(hasAwayDenials(scope, selected(["production", "sends-as-you", "other-writes"]))).toBe(false);
+    expect(scope.tools.deny.slice(base.tools.deny.length)).toEqual(["*merge*", "*deploy*", "*delete*", "*remove*"]);
+    const run = (s: typeof scope, command: string) => evaluate(s, { kind: "bash", toolName: "bash", input: { command }, cwd });
+    for (const command of ["git merge feature", "dev deploy", "rm build.log"]) expect(run(scope, command).allow).toBe(false);
+    for (const command of ["git push origin feature", "slack send channel text", "kubectl scale testing", "gh pr create --draft"]) expect(run(scope, command)).toEqual(run(base, command));
+  });
+  it("classifies the fallback command using the same selected policy", () => {
+    const blocked = (items: string[], source: string) => {
+      const scope = narrowAwayScope(bound(), selected(items));
+      return fallbackActs(source).some(act => closingAct(scope, act, source));
+    };
+    expect(blocked(["production"], "kubectl scale dev")).toBe(true);
+    expect(blocked(["deploy"], "kubectl scale dev")).toBe(false);
+    expect(blocked(["deploy"], "helm upgrade sample")).toBe(true);
+    expect(blocked(["sends-as-you"], "curl -X POST https://example.test")).toBe(false);
+    expect(blocked(["other-writes"], "curl -X POST https://example.test")).toBe(true);
+    expect(blocked(["sends-as-you"], "slack send channel text")).toBe(true);
+  });
+  it("puts unambiguous merges and pushes to main under Merge, not Other writes", () => {
+    const base = bound("keeper"), merge = narrowAwayScope(base, selected(["merge"]));
+    const others = narrowAwayScope(base, selected(["deploy", "production", "sends-as-you", "delete", "other-writes"]));
+    const call = (command: string) => ({kind:"bash" as const, toolName:"bash", input:{command}, cwd});
+    const fallback = (scope: typeof base, source: string) => fallbackActs(source).some(act => closingAct(scope, act, source));
+    for (const command of ["gh pr merge 12", "git push origin main", "git push origin HEAD:main", "git push origin HEAD:refs/heads/master"]) {
+      expect(evaluate(base, call(command)).allow, command).toBe(true);
+      expect(evaluate(merge, call(command)).allow, command).toBe(false);
+      expect(evaluate(others, call(command)).allow, command).toBe(true);
+      expect(fallback(merge, command), command).toBe(true);
+      expect(fallback(others, command), command).toBe(false);
+    }
+    expect(evaluate(others, call("git push origin feature")).allow).toBe(false);
+    expect(evaluate(others, call("git push origin main feature")).allow).toBe(false);
+    expect(fallback(others, "git push origin feature")).toBe(true);
+    expect(fallback(others, "git push origin main feature")).toBe(true);
+    expect(narrowAwayScope(base, selected(["sends-as-you"])).tools.deny).not.toContain("*post*");
+    expect(others.tools.deny).toContain("*post*");
+  });
+  it("adds no policy when all items are unchecked", () => {
+    const base = bound(), empty = selected([]);
+    expect(narrowAwayScope(base, empty)).toEqual(base);
+    expect(hasAwayDenials(base, empty)).toBe(true);
+    expect(hasAwayDenials(narrowAwayScope(base, current()), empty)).toBe(false);
   });
   it("requires the exact current local policy before claiming prevention", () => {
     const f = setup(), member = { ...f.k.bind("child", "ranger", "pip", "project"), guardPosture: { providerId: "pi", mode: "pre-exec" as const, label: "Pi", approvalAskId: null } };
@@ -57,6 +123,10 @@ describe("Closing time local denials", () => {
   it("keeps ordinary reads and private writes available", () => {
     const scope = narrowAwayScope(bound(), window);
     expect(evaluate(scope, { kind: "bash", toolName: "bash", input: { command: "git status" }, cwd }).allow).toBe(true);
-    expect(evaluate(scope, { kind: "write", toolName: "write", input: { path: cwd + "/draft.md" }, cwd }).allow).toBe(true);
+    const call = { kind: "write" as const, toolName: "write", input: { path: cwd + "/draft.md" }, cwd };
+    expect(evaluate(scope, call).allow).toBe(true);
+    expect(evaluate(narrowAwayScope(bound(), current()), call)).toEqual(evaluate(scope, call));
+    const patch = { ...call, toolName: "apply_patch" };
+    expect(evaluate(narrowAwayScope(bound(), current()), patch)).toEqual(evaluate(scope, patch));
   });
 });

@@ -26,7 +26,8 @@ describe("the board's hearth replay", () => {
     const on = await open("room", scenes.richRoom);
     await boardReady(on);
     const link = on.container.querySelector<HTMLAnchorElement>("[data-slot=hearth] .hearth-set")!;
-    expect(link.getAttribute("href")).toBe("/settings/plugins/tavern");
+    expect(link.getAttribute("href")).toBe("/settings/plugins/tavern#tavern-settings-atmosphere");
+    expect(link.getAttribute("aria-label")).toBe("Ambient motion: open Tavern’s Atmosphere settings");
     const off = await open("room", { ...scenes.richRoom, hearthFlicker: false });
     await boardReady(off);
     expect(off.container.querySelector("[data-slot=hearth] .hearth-x")).toBeNull();

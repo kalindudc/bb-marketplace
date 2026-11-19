@@ -21,7 +21,7 @@ describe("settings compatibility and validation", () => {
   it("keeps today's defaults, units, opt-in timers and unlimited history", () => {
     const settings = settingsSchema.parse({});
     expect(settings.knobs).toEqual({ tickSeconds: 60, typingHoldSeconds: 45, afterMessageHoldSeconds: 60,
-      staleMinutes: 20, reportBatchSeconds: 60, rangerTimeboxMaxMinutes: 12 });
+      staleMinutes: 20, reportBatchSeconds: 60, rangerTimeboxMaxMinutes: 12, ledgerRefreshMinutes: 10 });
     expect(settings.keepers).toMatchObject({ staleStrikes: 2, restatementBytes: 28000, tickFactChars: 14000 });
     expect(settings.data).toEqual({ historyDays: 0, autoArchiveDays: 0, backupKeep: 14 });
     expect(settings.keepers.decisionTimerMax).toBe(10080);
@@ -56,11 +56,35 @@ describe("settings compatibility and validation", () => {
       expect(() => settingsPatchSchema.parse({ knobs: { [key]: rule.max + 1 } })).toThrow();
     }
   });
-  it("keeps memory limits out of user patches, pins and machine tuning", () => {
-    expect(() => settingsPatchSchema.parse({ keepers: { restatementBytes: 8000 } })).toThrow();
-    expect(() => settingsPatchSchema.parse({ knobs: { tickFactChars: 6000 } })).toThrow();
+  it("bounds memory limits and accepts them in patches and TOML, not in quest tuning", () => {
     const { store } = fixture();
-    expect(previewToml("[keepers]\nrestatement_bytes = 8000", store.snapshot()).problems[0]!.line).toBe(2);
+    expect(settingsPatchSchema.parse({ keepers: { restatementBytes: 8000, tickFactChars: 4000 } })).toEqual({ keepers: { restatementBytes: 8000, tickFactChars: 4000 } });
+    for (const [key, values] of [["restatementBytes", [7999, 32001]], ["tickFactChars", [3999, 32001]]] as const)
+      for (const value of values) expect(() => settingsPatchSchema.parse({ keepers: { [key]: value } })).toThrow();
+    expect(() => settingsPatchSchema.parse({ knobs: { tickFactChars: 6000 } })).toThrow();
+    expect(previewToml("[keepers]\nrestatement_bytes = 8000", store.snapshot()).problems).toEqual([]);
+  });
+  it("round-trips non-default knobs and choices across all Settings sections", () => {
+    const { store } = fixture();
+    const patch = settingsPatchSchema.parse({
+      tavern: { paused: true, agentsMayChangeSettings: false, defaultClass: "smith", widgetRow: false, voice: "light", levels: false, characters: false, ambientMotion: "off", hearthFlicker: false, repeatSeconds: 43, batchWakeEvents: true, reportedPoseSeconds: 87, verifiedPoseMinutes: 23, voiceChecksPerHour: 7 },
+      attention: { reviewBudget: 7, notify: "all", quietHours: { start: "22:00", end: "06:00", timeZone: "UTC" } },
+      away: { neverWhileClosed: ["merge", "production", "delete"], productionWakeHours: 3, defaultBackAtHour: 7, defaultEndState: "pause", defaultAllowWatched: true, defaultWakeBlockers: false, defaultWakeProduction: true },
+      keepers: { restMinutes: 42, greenlight: "by-size", decisionTimerMax: 90, partyMax: 14, staleStrikes: 4, restatementBytes: 9300, tickFactChars: 8400, alwaysAsk: [], failuresBeforeAsk: 4, stopAskAfterSeconds: 190, retryAfterSeconds: 82, briefRetryAttempts: 7, replacementsPerSlot: 1, rangerMax: 6, keepMaxHours: 36, registryWaitSeconds: 48, registryBlockerMinutes: 9 },
+      classes: { smith: { provider: "agent", model: "model", reasoning: "high" } }, scopes: { mode: "watch" },
+      journal: { journalReminders: false, journalQuietMinutes: 24, remindEveryMinutes: 42, reportGraceMinutes: 18 },
+      data: { historyDays: 90, autoArchiveDays: 14, backupKeep: 42 },
+      tuning: { mode: "apply", minSamples: 42, windowDays: 17, cooldownDays: 3 },
+      knobs: { tickSeconds: 95, typingHoldSeconds: 60, afterMessageHoldSeconds: 72, staleMinutes: 24, reportBatchSeconds: 95, rangerTimeboxMaxMinutes: 17, ledgerRefreshMinutes: 8 },
+      machines: { maxMakers: 8, maxCheckers: 4 },
+    });
+    store.update({ patch, revision: 0, why: "Exercise every control" });
+    const target = fixture().store;
+    const preview = previewToml(exportToml(store.snapshot()), target.snapshot());
+    expect(preview.problems).toEqual([]);
+    expect(preview.user).toEqual(patch);
+    target.replace(preview.user, preview.pinned, preview.tuned, 0, "Restore settings");
+    expect(target.read()).toEqual(store.read());
   });
   it("replaces a class picker value and clears an override with an empty object", () => {
     const { store } = fixture();
@@ -83,6 +107,28 @@ describe("settings compatibility and validation", () => {
     const preview = previewToml(toml, store.snapshot());
     expect(preview.problems).toEqual([]); expect(preview.changes).toEqual([]);
     expect(preview.user.classes?.smith?.reasoning).toBeNull(); expect(preview.user.attention?.quietHours).toBeNull();
+  });
+  it("records a default reset on the same save path and can undo it", () => {
+    const { store } = fixture();
+    store.update({ revision: 0, patch: { tavern: { repeatSeconds: 43 } }, why: "Lengthen interval" });
+    const reset=store.update({ revision: 1, patch: {}, reset: ["tavern.repeatSeconds"], why: "Reset to default" })!;
+    expect(store.read().tavern.repeatSeconds).toBe(20);
+    expect(reset.changes).toEqual([{key:"tavern.repeatSeconds",from:43,to:null,kind:"unset"}]);
+    expect(exportToml(store.snapshot())).not.toContain("repeat_seconds");
+    store.undo(reset.id,"Undo reset",2);
+    expect(store.read().tavern.repeatSeconds).toBe(43);
+  });
+  it("clears tuned and pinned overrides or a legacy motion flag during reset", () => {
+    const { store } = fixture();
+    store.update({ revision: 0, patch: { tavern: { ambientMotion: "off" }, tuning: { mode: "suggest" } }, why: "Edit motion" });
+    store.applyTuned({ tickSeconds: 90, staleMinutes: 25 }, "Tune", { section: "ticks", chart: "history" });
+    store.update({ revision: 2, patch: {}, pins: { staleMinutes: 30 }, why: "Pin" });
+    store.update({ revision: 3, patch: {}, reset: ["tavern.ambientMotion", "knobs.tickSeconds", "knobs.staleMinutes"], why: "Reset" });
+    expect(store.read().tavern).toMatchObject({ambientMotion:"calm",hearthFlicker:true});
+    expect(store.read().knobs).toMatchObject({tickSeconds:60,staleMinutes:20});
+    expect(store.snapshot().pinned).toEqual({});
+    expect(store.snapshot().tuned).toEqual({});
+    expect(exportToml(store.snapshot(), true)).not.toMatch(/ambient_motion|hearth_flicker|tick_seconds|stale_minutes/);
   });
   it("stores partial user settings, audits changes and applies them live", () => {
     const { store } = fixture();

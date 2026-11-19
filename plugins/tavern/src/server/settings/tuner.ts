@@ -1,4 +1,4 @@
-import { TUNABLES, TUNABLE_KEYS, type Tunables, type TunableKey, type SettingsEvidence, type TuningSuggestion } from "../../shared/settings";
+import { KNOB_FIELDS, TUNABLES, TUNABLE_KEYS, type Tunables, type TunableKey, type SettingsEvidence, type TuningSuggestion } from "../../shared/settings";
 import { LIMITS } from "../limits";
 import type { SettingsStore } from "./store";
 
@@ -22,16 +22,16 @@ function percentile(values: number[], share: number) {
   const sorted = [...values].sort((a, b) => a - b);
   return sorted[Math.max(0, Math.ceil(sorted.length * share) - 1)]!;
 }
-export function evaluateRules(current: Tunables, signals: TuningSignals): TuningProposal[] {
+export function evaluateRules(current: Tunables, signals: TuningSignals, minSamples: number = KNOB_FIELDS.tuning.minSamples.default): TuningProposal[] {
   const proposals: TuningProposal[] = [];
   function add(key: TunableKey, target: number, chart: string, facts: NonNullable<SettingsEvidence["facts"]>) {
     const value = Math.min(TUNABLES[key].max, Math.max(TUNABLES[key].min, Math.ceil(target), current[key]));
     if (value === current[key]) return;
-    proposals.push({ key, value, reason: `${TUNING_RULES[key]} Measured data supports ${current[key]} to ${value} ${TUNABLES[key].unit}.`,
+    proposals.push({ key, value, reason: `${TUNING_RULES[key].replace(/\b20\b/g, String(minSamples))} Measured data supports ${current[key]} to ${value} ${TUNABLES[key].unit}.`,
       evidence: { section: "reliability", chart, facts } });
   }
-  const enoughTicks = signals.ticks >= LIMITS.tuningSamples;
-  const longTurns = signals.keeperTurnSeconds.length >= LIMITS.tuningSamples && percentile(signals.keeperTurnSeconds, 0.9) > current.tickSeconds * 0.75;
+  const enoughTicks = signals.ticks >= minSamples;
+  const longTurns = signals.keeperTurnSeconds.length >= minSamples && percentile(signals.keeperTurnSeconds, 0.9) > current.tickSeconds * 0.75;
   if (enoughTicks && ((signals.held + signals.deferred) / signals.ticks >= 0.3 || longTurns))
     add("tickSeconds", Math.max(current.tickSeconds * 1.25, percentile(signals.keeperTurnSeconds, 0.9) + 5), "ticks", {
       attempts: signals.ticks, held: signals.held, deferred: signals.deferred, turnP90Seconds: percentile(signals.keeperTurnSeconds, 0.9),
@@ -42,26 +42,26 @@ export function evaluateRules(current: Tunables, signals: TuningSignals): Tuning
     add("afterMessageHoldSeconds", current.afterMessageHoldSeconds + 15, "ticks", { attempts: signals.ticks, afterMessageHolds: signals.afterMessageHolds });
   const byClass = new Map<string, number[]>();
   for (const interval of signals.reportIntervals) byClass.set(interval.classId, [...(byClass.get(interval.classId) ?? []), interval.seconds]);
-  const observed = [...byClass].filter(([, values]) => values.length >= LIMITS.tuningSamples);
+  const observed = [...byClass].filter(([, values]) => values.length >= minSamples);
   if (observed.length) add("staleMinutes", Math.max(...observed.map(([, values]) => percentile(values, 0.95) * 2 / 60)), "report-intervals", {
     classes: observed.length, intervals: observed.reduce((sum, [, values]) => sum + values.length, 0),
     longestP95Seconds: Math.max(...observed.map(([, values]) => percentile(values, 0.95))),
   });
-  if (signals.reportsPerMinute.length >= LIMITS.tuningSamples && percentile(signals.reportsPerMinute, 0.95) >= 4)
+  if (signals.reportsPerMinute.length >= minSamples && percentile(signals.reportsPerMinute, 0.95) >= 4)
     add("reportBatchSeconds", current.reportBatchSeconds * 1.25, "reports", { minutes: signals.reportsPerMinute.length, peakP95: percentile(signals.reportsPerMinute, 0.95) });
   return proposals;
 }
-export function runTuner(store: SettingsStore, trigger: string, signals: TuningSignals): TuningProposal[] {
+export function runTuner(store: SettingsStore, trigger: string, signals: TuningSignals, minSamples: number = KNOB_FIELDS.tuning.minSamples.default): TuningProposal[] {
   const settings = store.read();
   if (settings.tuning.mode === "off") return [];
   return store.db.transaction(() => {
     if (store.db.prepare("SELECT id FROM tavern_tuning_runs WHERE id=?").get(trigger)) return [];
     const snapshot = store.snapshot(), now = store.now();
-    const proposals = evaluateRules(settings.knobs, signals).filter(proposal => {
+    const proposals = evaluateRules(settings.knobs, signals, settings.tuning.minSamples).filter(proposal => {
       if (snapshot.pinned[proposal.key] !== undefined) return false;
       const last = store.db.prepare("SELECT at FROM tavern_setting_changes WHERE by='tavern' AND EXISTS (SELECT 1 FROM json_each(changes) WHERE json_extract(value,'$.key')=?) ORDER BY at DESC LIMIT 1")
         .get(`tuned.${proposal.key}`) as { at: number } | undefined;
-      return last === undefined || now - last.at >= LIMITS.tuningCooldownMs;
+      return last === undefined || now - last.at >= settings.tuning.cooldownDays * LIMITS.dayMs;
     });
     if (settings.tuning.mode === "apply") {
       for (const proposal of proposals) store.applyTuned({ [proposal.key]: proposal.value }, proposal.reason, proposal.evidence);

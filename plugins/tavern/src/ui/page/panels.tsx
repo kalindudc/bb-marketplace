@@ -23,7 +23,6 @@ export function useOpenPanelTab() {
   return (tab: NavTab, params?: JsonValue, title?: string) => panel.openTab({ tab, ...(params === undefined ? {} : { params }), ...(title ? { title } : {}) });
 }
 
-export const NEVER_WHILE_CLOSED = ["Merge", "Deploy or release train", "Production write", "Send as you", "Delete"];
 
 /** The closing-time form: drawn in the side panel, or in place on the page when no panel is available (AwayForm, in away.tsx). */
 export function ClosingTimeForm({ room }: { room: Room }) {

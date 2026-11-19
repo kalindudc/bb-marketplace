@@ -4,6 +4,8 @@ import { setup } from "./runtime-fixture";
 import { seedQuest, planInput } from "./support";
 import { QuestAuthority } from "../../src/server/quest-authority";
 import { requireUserAct } from "../../src/server/authority";
+import { SettingsStore } from "../../src/server/settings/store";
+import { InsightsReader } from "../../src/server/insights/index";
 const client = { experimental_caller: { kind: "client" } } as never;
 const receipt = () => requireUserAct(client, "delegateQuest");
 const request = (q: string, kind: "merge" | "credential" = "credential") => ({ boardQuestId: q, kind, effect: { type: "decision" } as const, question: "Allow this act?", why: "Your authority", options: [{ id: "approve", label: "Approve", detail: "", recommended: false }, { id: "deny", label: "Deny", detail: "", recommended: false }], meanwhile: "Other work continues", holds: [] });
@@ -34,6 +36,26 @@ it("refuses a delegated merge without a Warden verdict and compares exact commit
   expect(QuestAuthority.sameTarget({ commit: "b", patchId: "p", cleanRebase: true }, { commit: "a", patchId: "p" })).toBe(true);
   expect(QuestAuthority.sameTarget({ commit: "b", patchId: "p" }, { commit: "a", patchId: "p" })).toBe(false);
   expect(QuestAuthority.sameTarget({ command: "deploy a" }, { command: "deploy b" })).toBe(false);
+});
+it("routes an unlisted merge without delegation but still requires the assigned Warden's exact verdict", async () => {
+  const f = await fixture();
+  const settings = new SettingsStore(f.k.store.db, f.time);
+  f.runtime.enableSettings(settings, new InsightsReader(f.k.store.db, settings, f.time));
+  settings.update({ revision: 0, patch: { keepers: { alwaysAsk: ["production", "credential", "sends-as-you", "destructive"] } }, why: "Keeper decides merge" });
+  const input = { ...request(f.q.id, "merge"), target: { commit: "a".repeat(40) } };
+  const ask = f.k.ask("lead", input);
+  expect(ask.lane).toBe("keeper");
+  expect(f.k.quest(f.q.id).delegations ?? []).toEqual([]);
+  expect(() => f.k.decide("lead", { boardQuestId: f.q.id, askId: ask.id, optionId: "approve", source: "keeper", text: "Merge", why: "Safe", reversible: true })).toThrow(/Warden/);
+  expect(f.k.ask("lead", { ...input, unsure: true }).lane).toBe("user");
+  const decision = f.k.decide("lead", { boardQuestId: f.q.id, askId: ask.id, optionId: "deny", source: "keeper", text: "Do not merge", why: "Needs work", reversible: true });
+  expect(f.k.store.get("asks", ask.id)?.answer).toMatchObject({ keeperAuthority: "keepers.alwaysAsk" });
+  for (const type of ["ask.answered", "decision.made"]) {
+    const event = f.k.store.events().find(e => e.type === type && e.data.askId === ask.id);
+    expect(event?.data).toMatchObject({ keeperAuthority: "keepers.alwaysAsk" });
+    expect(event?.data.delegation).toBeUndefined();
+  }
+  expect(decision.undone).toBe(false);
 });
 it("matches only fitting greenlights and records the pre-approval provenance", async () => {
   const f = await fixture(); f.a.preapprove(f.q.id, { greenlight: { maxMembers: 1, classes: ["smith"] }, placement: false, conclude: false, endsAt: null }, requireUserAct(client, "preapproveQuest"));

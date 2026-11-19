@@ -344,6 +344,16 @@ describe("the voice check run", () => {
     expect(charged.runner.view("wren").cap.used).toBe(1);
   });
 
+  it("reads the configured voice-check rate before taking another run", async () => {
+    const f = fixture();
+    let max = 2;
+    const runner = new VoiceCheckRunner({ ...f.deps(), checksPerHour: () => max });
+    runner.start("wren", draft); await runner.settled();
+    expect(runner.view("wren").cap).toMatchObject({used:1,max:2,nextAt:null});
+    max = 1;
+    expect(runner.view("wren").cap).toMatchObject({used:1,max:1,nextAt: expect.any(Number)});
+    expect(() => runner.start("wren", draft)).toThrow();
+  });
   it("counts the parent's setup turn in the cost of the run that made it", async () => {
     const f = fixture();
     f.runner.start("wren", draft); await f.runner.settled();

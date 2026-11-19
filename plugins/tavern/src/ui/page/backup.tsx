@@ -3,7 +3,7 @@ import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { backupBundleSchema, backupContract, type BackupEntry, type BackupManifest, type BackupRestore } from "../../shared/backup";
 import { ExpandsMark, Glyph, OverflowMenu, TimeAgo, localTime, plural, useToday } from "../kit";
 import { PageGlyph } from "./glyphs";
-import { ChangeList, NumberField, useTavernSettings } from "./settings";
+import { ChangeList, NumberField, SettingDefault, useTavernSettings } from "./settings";
 import { FoldLoad, SettingsSkeleton } from "./skeletons";
 
 const size = (b: number) => b < 1000 ? `${b} B` : b < 1e6 ? `${(b / 1000).toFixed(b < 1e4 ? 1 : 0)} KB` : `${(b / 1e6).toFixed(b < 1e7 ? 1 : 0)} MB`;
@@ -160,12 +160,13 @@ function KeepField({ fallback }: { fallback: number }) {
   const id = useId();
   if (!api.data) return <span className="m small">{fallback === 0 ? "keeps every backup" : `keeps the newest ${fallback}`}</span>;
   const keep = api.data.effective.data.backupKeep;
-  return <span className="tv-bk-keep">
+  return <div className="tv-bk-keep" data-setting-keys="data.backupKeep">
     <label htmlFor={id} className="m small">Keep the newest</label>
     <NumberField id={id} value={keep} min={0} max={365} unit={keep === 1 ? "backup" : "backups"} disabled={api.pending} onSave={(v) => void api.save({ data: { backupKeep: v } })} />
     <span className="m small">0 keeps every backup</span>
+    <SettingDefault setting="data.backupKeep" api={api} />
     {api.note && <span className="tv-problem" role="alert">{api.note}</span>}
-  </span>;
+  </div>;
 }
 
 function FolderLine({ dir }: { dir: string }) {

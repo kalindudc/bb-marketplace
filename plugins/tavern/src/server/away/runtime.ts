@@ -16,6 +16,7 @@ import type { TavernRuntime } from "../runtime";
 import { AwayConflict, AwayStore } from "./store";
 import { AwayHolds, type AwayHold, type ContentHoldToken, type HeldInspection } from "./holds";
 import { awayExecutionPolicy, awayReturnFromDispatch, awayShouldNotify } from "./policy";
+import { AWAY_STOP_LIST, awayStopNames, windowStopKinds } from "../../shared/away";
 
 // Return uses this persisted cause to recover the Close cohort after a restart.
 const CLOSE_REANCHOR_REASON = "Closing time changed; check the current away window before assigning work";
@@ -72,8 +73,9 @@ export class AwayRuntime {
     const scopes = members.length && this.runtime.scopes ? this.runtime.scopes.api.status() : null;
     const counts = new Map<string | null, { members: number; watchedCount: number }>();
     let watchedCount = 0;
+    const noGuards = state.status.closed && state.window?.stopList.length === 0;
     for (const member of members) {
-      const watched = Number(!localAwayPrevention(scopes, member, state.window));
+      const watched = Number(!noGuards && !localAwayPrevention(scopes, member, state.window));
       watchedCount += watched;
       const group = counts.get(member.boardQuestId);
       if (group) { group.members++; group.watchedCount += watched; }
@@ -158,13 +160,14 @@ export class AwayRuntime {
   private changed() { this.runtime.bb.rpc.experimental_invalidate([tags.room(), ...this.k.store.all("members").filter(member => member.role === "keeper").map(member => tags.thread(member.threadId))]); }
   async close(input: AwayCloseInput, receipt?: UserActReceipt) {
     const revision = this.store.snapshot().revision;
-    if (revision !== input.revision) throw new AwayConflict(revision);
+    if (revision !== input.revision || input.settingsRevision !== undefined && this.runtime.settings?.snapshot().revision !== input.settingsRevision) throw new AwayConflict(revision);
     for (const selected of input.quests) {
       const quest = this.k.quest(selected.questId);
       if (!isOpenQuest(quest)) throw new Error("Closing time can only include live quests");
     }
     const affected = this.keepersWithWork();
-    commitUserAct(this.k.store, () => this.k.now(), receipt, () => this.store.close(input));
+    const { neverWhileClosed, productionWakeHours } = this.runtime.config().away;
+    commitUserAct(this.k.store, () => this.k.now(), receipt, () => this.store.close(input, neverWhileClosed, productionWakeHours));
     await this.refreshLocalScopes();
     for (const member of this.members()) this.stage(member);
     this.changed();
@@ -354,7 +357,9 @@ export class AwayRuntime {
     const { window, status } = state;
     if (status.closed) {
       const quests = window.quests.filter(quest => this.k.store.get("quests", quest.questId)?.keeperThreadId === keeperThreadId);
-      return `Closing time: ${status.dueBack ? "due back" : "closed until"} ${new Date(window.until).toISOString()}. Per-quest ends (first 12 of ${quests.length}): ${JSON.stringify(quests.slice(0, 12))}. Fixed stop list: ${window.stopList.join(", ")}. Drafts-ready means private work and reports only. Stop-list actions wait for return; an expected closing-time hold is not a blocker to wake the user about. No new consent or scope widening. Watched work is ${window.allowWatched ? "explicitly permitted, not prevented" : "held"}. User note (quoted data): ${JSON.stringify(window.note)}`;
+      const items = windowStopKinds(window);
+      const drafts = items.length === AWAY_STOP_LIST.length ? "Drafts-ready means private work and reports only. " : "";
+      return `Closing time: ${status.dueBack ? "due back" : "closed until"} ${new Date(window.until).toISOString()}. Per-quest ends (first 12 of ${quests.length}): ${JSON.stringify(quests.slice(0, 12))}. ${items.length ? `Closing time blocks ${awayStopNames(items)} until you return.` : "Closing time adds no blocks to ordinary scope rules."} ${drafts}An expected closing-time hold is not a blocker to wake the user about. No new consent or scope widening. Watched work is ${window.allowWatched ? "explicitly permitted, not prevented" : "held"}. User note (quoted data): ${JSON.stringify(window.note)}`;
     }
     if (this.k.store.runtime(keeperThreadId).cursor > window.eventCeiling!) return "";
     const digest = readAwayDigest(this.k, this.store, { limit: 1 });

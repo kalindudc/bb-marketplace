@@ -37,13 +37,29 @@ There is no implicit decision timer. Each eligible reversible decision ask must 
 
 The party ceiling retains the existing counting across a Keeper's live party, including reservations. Custom class-file budgets still apply. Ranger briefs must choose their own time box; the ceiling is not a default brief duration.
 
-The Keeper restatement remains fixed at 28,000 UTF-8 bytes. Tick facts remain fixed at 14,000 characters. Both appear read-only with an explanation. The outer configure packet has its existing 32,000-byte bound.
+The Keeper restatement defaults to 28,000 UTF-8 bytes and the per-tick fact budget to 14,000 characters. Both are editable under Keepers and decisions; the former controls what fits in a restatement, and the latter leaves oversized facts to continue in later ticks. The outer configure packet still has a 32,000-byte bound. Lowering a memory limit can lose context in a Keeper's turn.
 
-The following safety and plumbing values remain fixed in `src/server/limits.ts`: a five-second sweep, five-minute uncertain-hire grace, 60-second retry waits, two-second registry cache, 30-second journal ownership/import cache, five-second journal-read backoff, 60-second activity-write throttle, two replacements per slot, and Ranger capacity of three. Class files can retain their explicit class budgets. Durable rebrief delivery has five attempts with exponential waits from one to fifteen minutes, followed by a durable Retry/Release blocker. It never silently abandons the allocation.
+Always ask covers production, merge, credentials, sending as you, and deleting what a quest did not make. Only a Settings client or a terminal outside an agent thread can change Always ask or the default Closing time stop list. Unchecking a kind puts it in the Keeper's lane, with a recorded decision and Undo, unless the Keeper is unsure. The Warden's exact-target verdict is still required. Closing time's stop list is a separate window policy.
 
-The additional configurable controls are pause, the default class, row visibility, presentation voice and levels, drawn characters, Ambient motion and its repeat interval in the Motion group, notification eligibility and quiet hours, explicit versus eligible by-size greenlight, class execution overrides, scope mode, journal reminders, archival, retention, and tuning mode. Presentation settings do not remove orchestration instructions or memory.
+Settings rows show the default and offer Reset only when the value differs. Reset clears the saved choice through the ordinary audited settings save, so it follows future defaults. For a tuner knob it also clears the tuned value and any pin; Undo restores those layers. A Keeper's quest overrides appear under Tuning with an End now action. They are not in TOML: they end with the quest. The new agent knobs set pacing and limits; Tavern's tuner only changes its existing five tunables.
 
-Character voice has three modes. Full is the unchanged default: one optional short greeting or closing line. Light permits at most one optional character line after successful completion, not in greetings or progress remarks. Off asks for plain replies, stores new reports with `voice: null`, and hides stored optional voice lines on the page without rewriting their history. Blockers, failures, asks and trouble stay plain in every mode. Work, checks, evidence, exact literals, class instructions, identity, scope, holds and orchestration stay the same. The instructions reserve the legacy Full-mode data budget in every mode so a shorter voice rule cannot change which ledger facts fit. Changes apply at the next instruction assembly and report write; existing chat messages are not rewritten.
+### Constants kept in code
+
+| Area | Why it stays in code |
+| --- | --- |
+| Five-second loop sweep, unfinished hire grace, caches and activity write throttle | Internal cadence, recovery and storage overhead. The visible tick interval and failed-tick retry gap are separate controls. |
+| Stop and brief exponential backoff steps; registry retry granularity | Retry plumbing. The escalation delay or attempt limit is a separate control. |
+| Evidence pages, child scans and other bounded lookup loops | Pagination and implementation work limits. |
+| Configure packet, class body, voice and journal block budgets | Transport and sizing constraints. The Keeper's restatement total and the tick's facts are tunable; per-section restatement caps distribute that budget. |
+| Due-soon sort order, list limits, status and CLI output ceilings | Sorting, paging and transport limits; agents can ask for the rest by page or section. |
+| Plan party, waypoint, finding and question array bounds | Stored record shapes, not the live party or review budget. |
+| Audit history page size, TOML and backup size limits, Insights cost cache and notification dedupe | Transport, storage and duplicated-notice protection. |
+| Guard and subprocess timeouts, Stop all confirmation timeout, voice-check turn timeout, tale capture window | Fences for hangs and incomplete flows; changing them does not make the operation succeed. |
+| Same-maker Warden exclusions, what counts as verified, character level credit and user-only authority | These preserve the meaning of records, not presentation or pacing. |
+
+The additional configurable controls are pause, the default class, row visibility, presentation voice and levels, drawn characters, Ambient motion and its repeat interval in Atmosphere, notification eligibility and quiet hours, explicit versus eligible by-size greenlight, class execution overrides, scope mode, journal reminders, archival, retention, and tuning mode. Presentation settings do not remove orchestration instructions or memory.
+
+Speech bubbles in Atmosphere controls both the composer bubbles and the existing character voice for replies and reports. For replies and reports, Full is the unchanged default: one optional short greeting or closing line. Light permits at most one optional character line after successful completion, not in greetings or progress remarks. Off asks for plain replies, stores new reports with `voice: null`, and hides stored optional voice lines on the page without rewriting their history. Blockers, failures, asks and trouble stay plain in every mode. Work, checks, evidence, exact literals, class instructions, identity, scope, holds and orchestration stay the same. The instructions reserve the legacy Full-mode data budget in every mode so a shorter voice rule cannot change which ledger facts fit. Changes apply at the next instruction assembly and report write; existing chat messages are not rewritten.
 
 The existing registry read carries `voice: "full" | "light" | "off"`; a missing field from an older server means Full. It subscribes to the existing settings-change signal. An Off-mode duplicate report returns its existing identity and proof with `voice: null` while preserving deduplication, the saved row and its old voice. The manual voice check remains an explicit preview of the selected character's style.
 
@@ -56,7 +72,7 @@ These are user preferences, not tuner knobs; the switches default to on and Ambi
 | `tavern.levels` | `registry({projectId?}).levels` | Controls level notches, level words and the tale's level line without removing earned counts or frozen snapshots. |
 | `tavern.characters` | `decor({threadId}).characters` | Draws the animated pixel-art characters and the walking strip above the composer. Off leaves the class crest in the widget row, with no sprite, canvas or animation loop. |
 | `tavern.widgetRow` | `decor({threadId}).widgetRow` | Controls the widget row globally; the existing per-thread `hidden` flag still wins. |
-| `tavern.ambientMotion`, `tavern.repeatSeconds` | Room and decor motion fields | Motion’s Ambient motion control selects Calm, Lively or Off and a repeat interval; reduced-motion preferences still hold. `hearthFlicker` is the legacy compatibility flag. |
+| `tavern.ambientMotion`, `tavern.repeatSeconds` | Room and decor motion fields | Atmosphere offers Calm, Lively or Off and a repeat interval; reduced-motion preferences still hold. `hearthFlicker` is the legacy compatibility flag. |
 
 The RPC fields are optional for older servers and fixtures; absent means the existing on behavior. The current backend always emits a boolean. These fields are added only to UI RPC responses, never to the registry snapshot used by agents, their configuration, briefs or restatements. Each read subscribes to the existing `tavern:settings` invalidation, so changes reach already-mounted views and untyped-thread decor without polling or reloading. TOML uses `levels`, `widget_row`, `characters` and `hearth_flicker` in `[tavern]`.
 
@@ -128,7 +144,7 @@ Provider inputs cannot contain the reserved keys `__proto__`, `constructor` or `
 
 ## Deterministic tuning
 
-The background maintenance checks daily and after each returned quest. Trigger ids are stored transactionally, so a restart does not repeat the same run. Rules use the previous 30 days, require at least 20 relevant observations, respect pins and declared bounds, and apply at most one automatic change per knob in seven days. They only increase pacing allowances.
+The background maintenance checks daily and after each returned quest. Trigger ids are stored transactionally, so a restart does not repeat the same run. Rules respect pins and declared bounds and only increase pacing allowances. The defaults are a 30-day lookback, at least 20 relevant observations and seven days between automatic changes to a knob. You can change those three limits under Tuning.
 
 | Knob | Written rule |
 | --- | --- |

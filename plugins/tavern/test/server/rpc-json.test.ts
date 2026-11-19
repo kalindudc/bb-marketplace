@@ -188,6 +188,7 @@ it("returns strict JSON from EVERY registered RPC with optional record fields ab
     settingsExport: () => call("settingsExport", {}),
     settingsImport: () => call("settingsImport", { toml: "" }),
     settingsFile: () => call("settingsFile", { action: "status" }),
+    settingsEndOverride: () => call("settingsEndOverride", { revision: 0, boardQuestId: "missing", key: "staleMinutes" }),
     settingsApplySuggestion: () => call("settingsApplySuggestion", { key: "staleMinutes", revision: 0 }),
     insights: () => call("insights", { range: "7d" }),
     backupList: () => call("backupList", {}),

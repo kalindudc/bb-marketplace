@@ -13,7 +13,7 @@ Party members of quests left out of the closing selection are held. Side quests 
 
 Solo threads are not interrupted or held by Closing time. Locally guarded solos still receive the temporary stop-list checks, but unguarded or watched solos keep running without that prevention promise. Solos are not included in the party's watched-member counts. The closing confirmation must not describe them as paused.
 
-The fixed stop list is merge, deploy, production, sends-as-you and delete. Closing time never grants new consent or widens a scope.
+The default stop list is merge, deploy, production, sends-as-you, delete, and other writes Tavern cannot attribute. The last choice keeps the broad create, update, and patch tool denials, Git pushes to branches other than main or master, GitHub and HTTP writes that cannot be attributed to a named kind, and catalogue acts outside the named kinds. It can also block tools that can perform an unchecked kind. The Closing time page and Settings edit the default. The sheet starts from that default and edits only the window you are about to close. The selection and production wake delay are recorded with a new window; an existing window does not change after a settings edit. Older windows keep their legacy guards until return. An empty stop list adds no guards; the quest's Pause and Hold choices and all ordinary scope and user-only authority rules still apply.
 
 Back at is not an automatic reopening time. After it passes the window is due back, with the same holds and stop list. Explicit Return, a genuine new user message in a Tavern thread, or an accepted client ask answer ends the window and records its cause. Ticks, plugin messages, agent-only messages and page reads do not end it. Old queued user rows do not count as a new return.
 
@@ -21,7 +21,7 @@ The SDK labels the app, CLI and agents alike as client. RPC mutations refuse plu
 
 ## Guarded and watched work
 
-A local Pi member counts as guarded only with an installed, non-stale shim, enforce mode, pre-exec posture, a local scope record, and the exact current-window denials. The contributor appends tool and shell denials to the final bound copy. It does not change the base template, original grants, roots or environment. Closing and returning await local rebinding; failed binds are logged and retried. Without the current restrictions, the member is watched and held by default.
+A local Pi member counts as guarded only with an installed, non-stale shim, enforce mode, pre-exec posture, a local scope record, and the exact current-window denials. The contributor appends tool and shell denials to the final bound copy. It does not change the base template, original grants, roots or environment. The full default still emits the old scope bytes. A subset uses the old rule format too. A guard that was loaded before the update may hold additional shell actions, but still reads the scope without restarting the session. Closing and returning await local rebinding; failed binds are logged and retried. Without the current restrictions, the member is watched and held by default.
 
 The closing form can explicitly permit watched work, labelled watched, not prevented. That choice is off by default and does not change a scope. Native host-bound members remain watched even when an older native policy has an ACK. A separate delivery revision and receipt for the exact current-away policy are not implemented here.
 

@@ -177,6 +177,8 @@ export function rpcHandlers(
         repeatSeconds: runtime.config().tavern.repeatSeconds,
         characters: runtime.config().tavern.characters,
         voice: runtime.config().tavern.voice,
+        reportedPoseSeconds: runtime.config().tavern.reportedPoseSeconds,
+        verifiedPoseMinutes: runtime.config().tavern.verifiedPoseMinutes,
         ...(m ? { moodSignals: {
           released: thread.released != null,
           archived: thread.archivedAt != null || thread.deletedAt != null,

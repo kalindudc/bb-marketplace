@@ -1,6 +1,6 @@
 import type { Scope } from "./schema";
 import { agentProgram, bbPositionals, nestedCommands, userControl } from "./legacy";
-import { actsForCommand, baselineHolds, isCatalogueRule, closingTime, fallbackActs, readerNeedsDecision, type Act } from "./acts";
+import { actsForCommand, baselineHolds, isCatalogueRule, closingAct, fallbackActs, readerNeedsDecision, type Act } from "./acts";
 import { readerFallback } from "./worktree";
 import { checkInvocation } from "./checker";
 import { glob, isSink, normalizeToolPath, within, writeAllowed, writeDenied } from "./paths";
@@ -113,7 +113,7 @@ export function evaluate(scope: Scope, call: ScopeCall): Decision {
   let commands;
   try { commands = shellCommands(source, call.cwd, { temporaryRoot: temporaryRoot(scope), isRead: contained ? containmentRead : readonlyProgram, gitRoots: call.gitRoots, directories: call.directories, env: scope.env.variables, containment: contained ? "sandbox" : undefined }); } catch {
     const acts = fallbackActs(source);
-    const refused = acts.find(act => closingTime(scope) || !(scope.role === "keeper" || scope.role === "wanderer" && scope.preset === "open") || act.kind === "tavern-control");
+    const refused = acts.find(act => closingAct(scope, act, source) || !(scope.role === "keeper" || scope.role === "wanderer" && scope.preset === "open") || act.kind === "tavern-control");
     if (refused) return blocked("shell command", refused.kind === "deploy" ? "deploy-fallback" : refused.ruleId, refused.why);
     if (scope.preset === "open") return acts.length ? { allow: true, acts } : allowed;
     for (const rule of scope.shell.deny) if (rule.regex && new RegExp(rule.regex).test(source)) return blocked("shell command", rule.id, rule.why);
@@ -146,7 +146,7 @@ export function evaluate(scope: Scope, call: ScopeCall): Decision {
     });
     for (const act of actsForCommand(command)) {
       observed.push(act);
-      if (closingTime(scope)) return blocked(command.text, "closing-act", "Closing time: " + act.kind + " waits for your return");
+      if (closingAct(scope, act, command)) return blocked(command.text, "closing-act", "Closing time: " + act.kind + " waits for your return");
       if (!baselineHolds(scope, call, command, act) && !excepted(act.ruleId)) return blocked(command.text, act.ruleId, act.why);
     }
     for (const rule of scope.shell.deny) if (!isCatalogueRule(rule) && ruleMatches(rule, command) && !excepted(rule.id)) return blocked(command.text, rule.id, rule.why);

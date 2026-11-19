@@ -2,7 +2,56 @@ import { z } from "zod";
 import { defineContract } from "./define-contract";
 import { placementSettingsSchema, placementSettingsPatchSchema, placementPolicyReadSchema, settingsJsonValueSchema } from "./placement-settings";
 
-export const MEMORY_LIMITS = { restatementBytes: 28000, tickFactChars: 14000 } as const;
+import { AWAY_STOP_LIST, PRODUCTION_WAKE_HOURS, awayQuestSchema, awayStopListSchema } from "./away";
+import { DELEGATABLE_KINDS, delegationKindSchema } from "./quest-authority";
+
+export const KNOB_FIELDS = {
+  tavern: {
+    reportedPoseSeconds: { default: 60, min: 10, max: 600, unit: "seconds", label: "Reported pose lasts" },
+    verifiedPoseMinutes: { default: 10, min: 1, max: 60, unit: "minutes", label: "Verified pose lasts" },
+    voiceChecksPerHour: { default: 10, min: 1, max: 60, unit: "per hour", label: "Voice checks" },
+  },
+  away: {
+    productionWakeHours: { ...PRODUCTION_WAKE_HOURS, unit: "hours", label: "Wake me for production asks after" },
+    defaultBackAtHour: { default: 8, min: 0, max: 23, unit: "local hour", label: "Default Back at hour" },
+  },
+  keepers: {
+    restatementBytes: { default: 28000, min: 8000, max: 32000, unit: "bytes", label: "Keeper memory limit" },
+    tickFactChars: { default: 14000, min: 4000, max: 32000, unit: "characters", label: "Tick facts limit" },
+    failuresBeforeAsk: { default: 2, min: 1, max: 5, unit: "failures", label: "Failures before the Keeper asks me" },
+    stopAskAfterSeconds: { default: 120, min: 30, max: 900, unit: "seconds", label: "Ask me about an unconfirmed stop after" },
+    retryAfterSeconds: { default: 60, min: 10, max: 600, unit: "seconds", label: "Retry a refused tick after" },
+    briefRetryAttempts: { default: 5, min: 1, max: 10, unit: "tries", label: "Brief delivery tries" },
+    replacementsPerSlot: { default: 2, min: 0, max: 5, unit: "replacements", label: "Replacements per party slot" },
+    rangerMax: { default: 3, min: 1, max: 20, unit: "Rangers", label: "Rangers at once when the class file is silent" },
+    keepMaxHours: { default: 24, min: 1, max: 168, unit: "hours", label: "Longest keep for a resting member" },
+    registryWaitSeconds: { default: 30, min: 5, max: 120, unit: "seconds", label: "Wait for class files" },
+    registryBlockerMinutes: { default: 5, min: 1, max: 60, unit: "minutes", label: "Ask me about a class-file problem after" },
+  },
+  journal: {
+    remindEveryMinutes: { default: 15, min: 5, max: 240, unit: "minutes", label: "Remind at most every" },
+    reportGraceMinutes: { default: 10, min: 1, max: 120, unit: "minutes", label: "Report may wait unchecked for" },
+  },
+  tuning: {
+    minSamples: { default: 20, min: 5, max: 200, unit: "samples", label: "Tuner minimum samples" },
+    windowDays: { default: 30, min: 7, max: 90, unit: "days", label: "Tuner reads the last" },
+    cooldownDays: { default: 7, min: 1, max: 30, unit: "days", label: "Wait between automatic changes" },
+  },
+  knobs: {
+    ledgerRefreshMinutes: { default: 10, min: 2, max: 60, unit: "minutes", label: "Full ledger refresh" },
+  },
+} as const;
+
+type NumberBounds = { min: number; max: number; default: number };
+function numberFields<T extends Record<string, NumberBounds>>(fields: T) {
+  return Object.fromEntries(Object.entries(fields).map(([key, rule]) => [key, z.number().int().min(rule.min).max(rule.max)])) as { [K in keyof T]: z.ZodNumber };
+}
+function defaultNumbers<T extends Record<string, NumberBounds>>(fields: T) {
+  const numbers = numberFields(fields);
+  return Object.fromEntries(Object.keys(fields).map(key => [key, numbers[key]!.default(fields[key]!.default)])) as { [K in keyof T]: z.ZodDefault<z.ZodNumber> };
+}
+const alwaysAskSchema = z.array(delegationKindSchema).max(DELEGATABLE_KINDS.length)
+  .refine(items => new Set(items).size === items.length, "Include each kind only once");
 export const TUNABLES = {
   tickSeconds: { label: "Keeper tick interval", default: 60, min: 30, max: 300, unit: "s" },
   typingHoldSeconds: { label: "Hold while you type", default: 45, min: 15, max: 180, unit: "s" },
@@ -22,7 +71,7 @@ export type Tunables = z.infer<typeof tunablesSchema>;
 export type SparseTunables = Partial<Tunables>;
 
 export const GUARDRAIL_SETTING_KEYS = [
-  "scopes.*", "keepers.greenlight", "keepers.partyMax", "keepers.decisionTimerMax",
+  "scopes.*", "away.*", "keepers.alwaysAsk", "keepers.greenlight", "keepers.partyMax", "keepers.decisionTimerMax",
   "machines.*", "tavern.agentsMayChangeSettings", "tavern.paused", "attention.reviewBudget", "attention.notify", "attention.quietHours", "tuning.mode",
   "knobs.typingHoldSeconds", "knobs.afterMessageHoldSeconds", "knobs.rangerTimeboxMaxMinutes",
 ] as const;
@@ -33,7 +82,6 @@ export function isGuardrailSetting(key: string) {
     : normalized === rule || normalized.startsWith(`${rule}.`));
 }
 
-export const ALWAYS_ASK = ["production", "merge", "delete", "sends-as-you", "credentials", "scope-widening"] as const;
 export const voiceModeSchema = z.enum(["full", "light", "off"]);
 export type VoiceMode = z.infer<typeof voiceModeSchema>;
 const classId = z.string().regex(/^[a-z][a-z0-9-]{0,39}$/);
@@ -50,42 +98,52 @@ const sections = {
     widgetRow: z.boolean(), voice: voiceModeSchema, levels: z.boolean(), characters: z.boolean().default(true), hearthFlicker: z.boolean(), agentsMayChangeSettings: z.boolean().default(true),
     ambientMotion: z.enum(["calm", "lively", "off"]).default("calm"), repeatSeconds: z.number().int().min(3).max(60).default(20),
     // Wake-delivered ticks may hold briefly to gather more events; regular sweep ticks ignore it. Off by default.
-    batchWakeEvents: z.boolean().default(false) }).strict(),
+    batchWakeEvents: z.boolean().default(false), ...numberFields(KNOB_FIELDS.tavern) }).strict(),
+  away: z.object({ neverWhileClosed: awayStopListSchema, defaultEndState: awayQuestSchema.shape.endState,
+    defaultAllowWatched: z.boolean(), defaultWakeBlockers: z.boolean(), defaultWakeProduction: z.boolean(), ...numberFields(KNOB_FIELDS.away) }).strict(),
   attention: z.object({ reviewBudget: z.number().int().min(1).max(30),
     notify: z.enum(["consequential", "all", "none"]), quietHours: quietHoursSchema.nullable() }).strict(),
   keepers: z.object({ restMinutes: z.number().int().min(1).max(10080).default(30), greenlight: z.enum(["explicit", "by-size"]),
     decisionTimerMax: z.number().int().min(1).max(10080), partyMax: z.number().int().min(1).max(1000),
-    staleStrikes: z.number().int().min(1).max(4), restatementBytes: z.literal(MEMORY_LIMITS.restatementBytes),
-    tickFactChars: z.literal(MEMORY_LIMITS.tickFactChars) }).strict(),
+    staleStrikes: z.number().int().min(1).max(4), alwaysAsk: alwaysAskSchema, ...numberFields(KNOB_FIELDS.keepers) }).strict(),
   classes: z.record(classId, z.object({ provider: z.string().trim().min(1).max(100).optional(), model: z.string().trim().min(1).max(200).optional(),
     reasoning: z.string().trim().min(1).max(40).nullable().optional() }).strict()),
   scopes: z.object({ mode: z.enum(["enforce", "watch", "off"]) }).strict(),
-  journal: z.object({ journalReminders: z.boolean(), journalQuietMinutes: z.number().int().min(1).max(120) }).strict(),
+  journal: z.object({ journalReminders: z.boolean(), journalQuietMinutes: z.number().int().min(1).max(120), ...numberFields(KNOB_FIELDS.journal) }).strict(),
   data: z.object({ historyDays: z.number().int().min(0).max(3650).describe("Retains optional Insights samples only. Zero keeps them forever; orchestration records are never pruned."), autoArchiveDays: z.number().int().min(0).max(3650), backupKeep: z.number().int().min(0).max(365).describe("Saved backups to keep. Zero keeps every backup; this never prunes live Tavern records.") }).strict(),
-  tuning: z.object({ mode: z.enum(["apply", "suggest", "off"]) }).strict(),
-  knobs: tunablesSchema.extend({ rangerTimeboxMaxMinutes: z.number().int().min(3).max(30) }),
+  tuning: z.object({ mode: z.enum(["apply", "suggest", "off"]), ...numberFields(KNOB_FIELDS.tuning) }).strict(),
+  knobs: tunablesSchema.extend({ rangerTimeboxMaxMinutes: z.number().int().min(3).max(30), ...numberFields(KNOB_FIELDS.knobs) }),
 };
 export const settingsSchema = z.object({
-  tavern: sections.tavern.default({ paused: false, defaultClass: "none", widgetRow: true, voice: "full", levels: true, characters: true, hearthFlicker: true, agentsMayChangeSettings: true, ambientMotion: "calm", repeatSeconds: 20, batchWakeEvents: false }),
+  tavern: sections.tavern.extend(defaultNumbers(KNOB_FIELDS.tavern)).prefault({ paused: false, defaultClass: "none", widgetRow: true, voice: "full", levels: true, characters: true, hearthFlicker: true, agentsMayChangeSettings: true, ambientMotion: "calm", repeatSeconds: 20, batchWakeEvents: false }),
+  away: sections.away.extend(defaultNumbers(KNOB_FIELDS.away)).prefault({ neverWhileClosed: [...AWAY_STOP_LIST],
+    defaultEndState: "drafts-ready", defaultAllowWatched: false, defaultWakeBlockers: true, defaultWakeProduction: false }),
   attention: sections.attention.default({ reviewBudget: 3, notify: "consequential", quietHours: null }),
-  keepers: sections.keepers.default({ greenlight: "explicit", decisionTimerMax: 10080, partyMax: 5,
-    staleStrikes: 2, restMinutes: 30, ...MEMORY_LIMITS }),
+  keepers: sections.keepers.extend({ ...defaultNumbers(KNOB_FIELDS.keepers), alwaysAsk: alwaysAskSchema.default([...DELEGATABLE_KINDS]) })
+    .prefault({ greenlight: "explicit", decisionTimerMax: 10080, partyMax: 5, staleStrikes: 2, restMinutes: 30 }),
   classes: sections.classes.default({}), scopes: sections.scopes.default({ mode: "enforce" }),
   machines: placementSettingsSchema.default({ maxMakers: 2, maxCheckers: 2, rules: [], forges: [] }),
-  journal: sections.journal.default({ journalReminders: true, journalQuietMinutes: 10 }),
-  data: sections.data.default({ historyDays: 0, autoArchiveDays: 0, backupKeep: 14 }), tuning: sections.tuning.default({ mode: "off" }),
-  knobs: sections.knobs.default({ ...Object.fromEntries(TUNABLE_KEYS.map(key => [key, TUNABLES[key].default])), rangerTimeboxMaxMinutes: 12 } as z.infer<typeof sections.knobs>),
+  journal: sections.journal.extend(defaultNumbers(KNOB_FIELDS.journal)).prefault({ journalReminders: true, journalQuietMinutes: 10 }),
+  data: sections.data.default({ historyDays: 0, autoArchiveDays: 0, backupKeep: 14 }),
+  tuning: sections.tuning.extend(defaultNumbers(KNOB_FIELDS.tuning)).prefault({ mode: "off" }),
+  knobs: sections.knobs.extend(defaultNumbers(KNOB_FIELDS.knobs)).prefault({ ...Object.fromEntries(TUNABLE_KEYS.map(key => [key, TUNABLES[key].default])), rangerTimeboxMaxMinutes: 12 } as Tunables & { rangerTimeboxMaxMinutes: number }),
 }).strict();
 export const DEFAULT_SETTINGS = settingsSchema.parse({});
 export const settingsPatchSchema = z.object({
   tavern: sections.tavern.partial().extend({ agentsMayChangeSettings: z.boolean().optional(), characters: z.boolean().optional(), ambientMotion: z.enum(["calm", "lively", "off"]).optional(), repeatSeconds: z.number().int().min(3).max(60).optional(), batchWakeEvents: z.boolean().optional() }).optional(), attention: sections.attention.partial().optional(),
-  keepers: sections.keepers.omit({ restatementBytes: true, tickFactChars: true }).partial().extend({ restMinutes: sections.keepers.shape.restMinutes.removeDefault().optional() }).optional(), classes: sections.classes.optional(),
+  away: sections.away.partial().optional(),
+  keepers: sections.keepers.partial().extend({ restMinutes: sections.keepers.shape.restMinutes.removeDefault().optional() }).optional(), classes: sections.classes.optional(),
   scopes: sections.scopes.partial().optional(), journal: sections.journal.partial().optional(),
   machines: placementSettingsPatchSchema.optional(),
   data: sections.data.partial().optional(), tuning: sections.tuning.partial().optional(), knobs: sections.knobs.partial().optional(),
 }).strict();
 export type TavernSettings = z.infer<typeof settingsSchema>;
 export type SettingsPatch = z.infer<typeof settingsPatchSchema>;
+type EditableGroup = Exclude<keyof TavernSettings, "classes">;
+type SettingPath = { [G in EditableGroup]: `${G}.${Extract<keyof TavernSettings[G], string>}` }[EditableGroup];
+export type ResettableSetting = Exclude<SettingPath, "machines.rules" | "machines.forges">;
+const resettable = Object.entries(DEFAULT_SETTINGS).flatMap(([group, values]) => group === "classes" ? [] : Object.keys(values).map(key => `${group}.${key}`))
+  .filter(key => key !== "machines.rules" && key !== "machines.forges") as ResettableSetting[];
 export const settingsEvidenceSchema = z.object({ section: z.string().max(100), chart: z.string().max(100),
   figure: z.number().finite().optional(), facts: z.record(z.string(), z.union([z.number().finite(), z.string().max(500), z.null()])).optional(),
 }).strict();
@@ -122,13 +180,18 @@ export const settingsSnapshotSchema = z.object({ revision: z.number().int(), eff
 });
 export type SettingsSnapshot = z.infer<typeof settingsSnapshotSchema>;
 export const settingsFileSchema = z.object({ path: z.string(), exists: z.boolean(), differs: z.boolean(), error: z.string().nullable(), changedKeys: z.array(z.string()), hash: z.string().nullable().optional() });
-export const settingsViewSchema = settingsSnapshotSchema.extend({ file: settingsFileSchema, alwaysAsk: z.array(z.enum(ALWAYS_ASK)),
-  readOnlyLimits: z.array(z.object({ key: z.enum(["restatementBytes", "tickFactChars"]), label: z.string(), value: z.number(), unit: z.enum(["bytes", "chars"]), reason: z.string() })).optional(),
+const settingAuthorSchema = settingDecisionSchema.pick({ at: true, by: true, threadId: true });
+export const settingsViewSchema = settingsSnapshotSchema.extend({ file: settingsFileSchema,
+  lastChangers: z.record(z.string(), settingAuthorSchema).optional(),
+  liveOverrides: z.array(z.object({ questId: z.string(), questTitle: z.string(), keeperThreadId: z.string(), keeperName: z.string(),
+    key: z.enum(QUEST_TUNABLE_KEYS), value: z.number(), applied: z.boolean() })).optional(),
 });
 export type SettingsView = z.infer<typeof settingsViewSchema>;
 const pinsPatchSchema = z.object(Object.fromEntries(TUNABLE_KEYS.map(key => [key, tunablesSchema.shape[key].nullable().optional()])) as { [K in TunableKey]: z.ZodOptional<z.ZodNullable<z.ZodNumber>> }).strict();
 export const settingsUpdateSchema = z.object({ revision: z.number().int().nonnegative(), patch: settingsPatchSchema,
-  pins: pinsPatchSchema.optional(), why: z.string().trim().min(1).max(2000), evidence: settingsEvidenceSchema.optional() }).strict();
+  pins: pinsPatchSchema.optional(), reset: z.array(z.enum(resettable)).min(1).max(resettable.length).optional(),
+  why: z.string().trim().min(1).max(2000), evidence: settingsEvidenceSchema.optional() }).strict()
+  .refine(input => !input.reset || (Object.keys(input.patch).length === 0 && !input.pins), "Save a reset separately from other edits");
 export type SettingsUpdate = z.infer<typeof settingsUpdateSchema>;
 export const settingsMutationSchema = z.object({ code: z.enum(["ok", "stale", "invalid"]), revision: z.number().int(),
   problems: z.array(settingsProblemSchema), settings: settingsViewSchema.nullable(), decisionId: z.string().optional() });
@@ -142,5 +205,6 @@ export const settingsContract = defineContract({
   settingsImport: { input: z.object({ toml: z.string().max(131072), apply: z.boolean().default(false), revision: z.number().int().optional(), why: z.string().max(2000).optional() }).strict(), output: settingsPreviewSchema },
   settingsFile: { input: z.object({ action: z.enum(["status", "load", "save"]), apply: z.boolean().optional(), revision: z.number().int().optional(), withTuned: z.boolean().optional(), expectedHash: z.string().nullable().optional(), why: z.string().max(2000).optional() }).strict(),
     output: z.object({ file: settingsFileSchema, preview: settingsPreviewSchema.nullable() }) },
+  settingsEndOverride: { input: z.object({ revision: z.number().int().nonnegative(), boardQuestId: z.string().min(1).max(120), key: z.enum(QUEST_TUNABLE_KEYS) }).strict(), output: settingsMutationSchema },
   settingsApplySuggestion: { input: z.object({ key: tunableKeySchema, revision: z.number().int() }).strict(), output: settingsMutationSchema },
 });

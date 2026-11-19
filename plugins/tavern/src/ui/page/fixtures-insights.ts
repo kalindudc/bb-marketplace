@@ -33,11 +33,6 @@ export const settingsView: SettingsView = settingsViewSchema.parse({
   ],
   suggestions: [{ key: "typingHoldSeconds", value: 75, reason: "A tick landed within 45 s of your typing 9 times this week.", evidence: { section: "reliability", chart: "ticks", figure: 9 }, at: NOW - DAY, revision: 12 }],
   file: { path: "~/.agents/tavern/settings.toml", exists: true, differs: true, error: null, changedKeys: ["attention.review_budget", "tuning.pinned.stale_minutes"], hash: "a1b2c3" },
-  alwaysAsk: ["production", "merge", "delete", "sends-as-you", "credentials", "scope-widening"],
-  readOnlyLimits: [
-    { key: "restatementBytes", label: "Keeper restatement limit", value: 28000, unit: "bytes", reason: "What a Keeper re-reads after a restart; lowering it drops what you told it." },
-    { key: "tickFactChars", label: "Tick facts limit", value: 14000, unit: "chars", reason: "Facts carried into each tick; lowering it clips them." },
-  ],
 });
 
 export const settingsToml = `[tavern]

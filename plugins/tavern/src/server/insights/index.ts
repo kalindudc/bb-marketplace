@@ -46,7 +46,7 @@ export class InsightsReader {
       routes: this.records<Route>("routes"), gates: this.records<GateRecord>("gates"), notes: this.records<KeeperNote>("notes") };
   }
   signals() {
-    const to = this.now(), from = to - LIMITS.tuningWindowDays * LIMITS.dayMs;
+    const to = this.now(), from = to - this.settings.read().tuning.windowDays * LIMITS.dayMs;
     return tuningSignals(this.data(from, to), from, to);
   }
   async view(range: InsightsView["range"]): Promise<InsightsView> {

@@ -141,11 +141,11 @@ describe("Tavern settings sections", () => {
   });
   it("offers Calm, Lively and Off with a bounded repeat interval and synchronizes the legacy switch", async () => {
     const update = vi.fn((_input: { revision: number; patch: unknown; why: string }) => ok());
-    const motion = await section("motion", { settingsUpdate: update });
-    const group = await motion.findByRole("group", { name: "Ambient motion" });
+    const atmosphere = await section("atmosphere", { settingsUpdate: update });
+    const group = await atmosphere.findByRole("group", { name: "Ambient motion" });
     expect(within(group).getByRole("button", { name: "Calm" }).getAttribute("aria-pressed")).toBe("true");
     expect(within(group).getByRole("button", { name: "Lively" })).toBeTruthy();
-    const interval = motion.getByRole("spinbutton", { name: "Repeat every" });
+    const interval = atmosphere.getByRole("spinbutton", { name: "Repeat every" });
     expect(interval.getAttribute("min")).toBe("3");
     expect(interval.getAttribute("max")).toBe("60");
     fireEvent.click(within(group).getByRole("button", { name: "Off" }));
@@ -167,32 +167,35 @@ describe("Tavern settings sections", () => {
     const tuned = await section("tuned", rpc);
     await waitFor(() => expect(tuned.container.textContent).toContain("An agent in Moss II changed it"));
   });
-  it("offers Character voice as three plain choices, each explained, saved as its own patch", async () => {
+  it("saves Speech bubbles as the existing voice setting", async () => {
     const update = vi.fn((_input: { revision: number; patch: unknown; why: string }) => ok());
-    const tavern = await section("tavern", { settingsUpdate: update });
-    const group = await tavern.findByRole("group", { name: "Character voice" });
+    const atmosphere = await section("atmosphere", { settingsUpdate: update });
+    const group = await atmosphere.findByRole("group", { name: "Speech bubbles" });
     const choices = within(group).getAllByRole("button");
     expect(choices.map((b) => b.textContent)).toEqual(["Full", "Light", "Off"]);
     expect(choices.map((b) => b.getAttribute("aria-pressed"))).toEqual(["true", "false", "false"]);
-    expect(tavern.getByText("Each character may open or wrap a reply with one short line in its voice. Asks, blockers and evidence stay plain.")).toBeTruthy();
+    expect(atmosphere.getByText(VOICE_HELP.full)).toBeTruthy();
     fireEvent.click(within(group).getByRole("button", { name: "Off" }));
     await waitFor(() => expect(update).toHaveBeenCalledWith(expect.objectContaining({ patch: { tavern: { voice: "off" } } })));
   });
-  it("words each Character voice choice", () => {
+  it("explains the bubble and report effects of all three voice choices", () => {
     expect(VOICE_HELP).toEqual({
-      full: "Each character may open or wrap a reply with one short line in its voice. Asks, blockers and evidence stay plain.",
-      light: "One short line at most, only when a character finishes successfully; no greetings or progress lines. Asks, blockers and evidence stay plain.",
-      off: "Plain replies only. New reports carry no voice line, and the page hides the ones already stored.",
+      full: "See speech bubbles at greetings, milestones and intervals or on a click, and allow a short character line in replies and successful reports.",
+      light: "See bubbles after a verification, at a quest wrap or on a click, and allow a short character line in a reply or report only after success.",
+      off: "Turn off speech bubbles, keep new replies and reports plain, and hide saved voice lines in reports and character sheets.",
     });
   });
-  it("shows Always ask read-only, and tuned rows with default, bounds, who set it, Undo and Pin", async () => {
-    const keepers = await section("keepers");
-    await keepers.findByText("scope widening");
-    expect(keepers.queryByRole("button", { name: /scope widening/ })).toBeNull();
+  it("edits Always ask and shows tuned rows with default, bounds, who set it, Undo and Pin", async () => {
+    const save = vi.fn(() => ok());
+    const keepers = await section("keepers", { settingsUpdate: save });
+    const group = within(await keepers.findByRole("group", {name:"Always ask"}));
+    expect(group.getAllByRole("checkbox")).toHaveLength(5);
+    fireEvent.click(group.getByRole("checkbox", {name:"Merge"}));
+    await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({patch:{keepers:{alwaysAsk:["production","credential","sends-as-you","destructive"]}}})));
     const update = vi.fn((_input: { revision: number; patch: unknown; pins?: unknown; why: string }) => ok());
     const tuned = await section("tuned", { settingsUpdate: update });
     const row = (await tuned.findByText("Keeper tick interval")).closest("li")!;
-    expect(row.textContent).toContain("default 60 s");
+    expect(row.textContent).toContain("Changed from 60 s");
     expect(row.textContent).toContain("bounds 30 s to 5 min");
     expect(row.textContent).toContain("set by Tavern");
     expect(within(row as HTMLElement).getByRole("button", { name: "Undo" })).toBeTruthy();

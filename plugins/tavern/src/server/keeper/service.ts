@@ -1036,10 +1036,10 @@ export class Keeper {
     if (input.kind === "conclude" && input.effect.type !== "conclude") throw new Error("A conclude ask needs its typed draft; tell the quest result instead.");
     if (input.effect.type === "placement-blocker" && !trusted) throw new Error("Only Tavern may open a typed placement blocker");
     if (input.options.some(o => o.id === "delegate")) throw new Error("The delegation answer is reserved for Tavern");
-    if (["merge", "production"].includes(input.kind)) input = { ...input, options: [{ id: "approve", label: "Approve the act", detail: "Authorize the exact act; delegated approval needs a current Warden verdict.", recommended: false }, { id: "deny", label: "Decline the act", detail: "Do not authorize this act.", recommended: false }], effect: { type: "decision", outcomes: [{ optionId: "approve", outcome: "approve" }, { optionId: "deny", outcome: "decline" }] } };
+    if (["merge", "production"].includes(input.kind)) input = { ...input, options: [{ id: "approve", label: "Approve the act", detail: "Authorize the exact act; Keeper approval needs a current Warden verdict.", recommended: false }, { id: "deny", label: "Decline the act", detail: "Do not authorize this act.", recommended: false }], effect: { type: "decision", outcomes: [{ optionId: "approve", outcome: "approve" }, { optionId: "deny", outcome: "decline" }] } };
     const lane = this.authority.lane({ kind: input.kind, boardQuestId: questId, unsure: input.unsure });
     if (questId && lane === "user" && ["production", "merge", "credential", "sends-as-you", "destructive"].includes(input.kind)) {
-      input = { ...input, options: [...input.options, { id: "delegate", label: `Let ${this.name(this.require(threadId, "keeper"))} decide these for the rest of this quest`, detail: "Records a revocable grant for this kind on this quest only. This act still needs a decision.", recommended: false }] };
+      input = { ...input, options: [...input.options, this.authority.delegationOption(threadId)] };
     }
     const ask = askSchema.parse({
       ...input,
@@ -1144,13 +1144,14 @@ export class Keeper {
     )
       throw new Error("This ask cannot default");
     if (ask.releaseHoldId && (by !== "user" || via === "timer")) throw new Error("A checker-handoff hold needs an explicit user answer");
-    const answerData = { askId, optionId, answeredBy: by, ...(standing ? { preapproval: { id: standing.grant.id, at: standing.grant.at, surface: standing.grant.surface } } : {}), ...(by === "keeper" ? { keeperName: this.name(this.require(ask.keeperThreadId, "keeper")), delegation: this.quest(ask.boardQuestId!).delegations?.find(g => g.kind === ask.kind && g.endedAt === null && g.revokedAt === null) } : {}), ...(receipt ? { authority: receipt } : {}) };
+    const keeperSource = by === "keeper" ? this.authority.keeperDecisionSource(ask) : {};
+    const answerData = { askId, optionId, answeredBy: by, ...(standing ? { preapproval: { id: standing.grant.id, at: standing.grant.at, surface: standing.grant.surface } } : {}), ...(by === "keeper" ? { keeperName: this.name(this.require(ask.keeperThreadId, "keeper")), ...keeperSource } : {}), ...(receipt ? { authority: receipt } : {}) };
     commitUserAct(this.store, () => this.now(), receipt, () => {
       if (standing) this.authority.consume(standing);
       this.store.put("asks", ask.id, {
         ...ask,
         state: by === "default" ? "defaulted" : "answered",
-        answer: { optionId, note, via, by, at: this.now(), ...(surface ? { surface } : {}), ...(standing ? { preapproval: { id: standing.grant.id, at: standing.grant.at, surface: standing.grant.surface } } : {}) },
+        answer: { optionId, note, via, by, at: this.now(), ...(keeperSource.keeperAuthority ? { keeperAuthority: keeperSource.keeperAuthority } : {}), ...(surface ? { surface } : {}), ...(standing ? { preapproval: { id: standing.grant.id, at: standing.grant.at, surface: standing.grant.surface } } : {}) },
       });
       applyAskEffect(effect, {
         ...effects,
@@ -1272,7 +1273,7 @@ export class Keeper {
         questId,
         "decision.made",
         decision.text,
-        { decisionId: decision.id, ...(input.askId ? { askId: input.askId, answeredBy: "keeper", keeperName: this.name(this.require(threadId, "keeper")), delegation: this.quest(questId!).delegations?.find(g => g.kind === this.store.get("asks", input.askId!)?.kind && g.endedAt === null && g.revokedAt === null) } : {}) },
+        { decisionId: decision.id, ...(input.askId ? { askId: input.askId, answeredBy: "keeper", keeperName: this.name(this.require(threadId, "keeper")), ...this.authority.keeperDecisionSource(this.store.get("asks", input.askId)!) } : {}) },
         { kind: "agent", threadId },
       );
       }

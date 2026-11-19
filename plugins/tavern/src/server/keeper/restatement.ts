@@ -5,7 +5,6 @@ import type { KeeperNote, Rule } from "../../shared/schema";
 import { boundedData, LEDGER_OVERFLOW } from "../instructions";
 import { localClock } from "../clock";
 import { restingParty } from "../resting";
-import { MEMORY_LIMITS } from "../../shared/settings";
 import { isOpenQuest } from "../liveness";
 import { PLACEMENT_CLASSES, placementClassLine, placementGuidance } from "../placement/controller";
 import { matchPlacementRule } from "../placement/match";
@@ -260,7 +259,7 @@ export function renderRestatement(
     ),
     ...(guidance ? [guidance] : []),
     questSection(k, summaries, priorities),
-    ...(delegated.length ? [section("Yours to decide (delegated)", delegated.map(a => `${a.id} [${a.kind}]: ${quoted(short(a.question, 160))}; holds ${a.holds.join(",") || "none"}; answer with tavern_decide askId and optionId, or tavern_ask unsure:true`), priorities ? 1200 : 2400, "more delegated asks; call tavern_status section=asks", delegated.length)] : []),
+    ...(delegated.length ? [section(delegated.every(a => k.settings(a.boardQuestId).keepers.alwaysAsk.includes(a.kind as never)) ? "Yours to decide (delegated)" : "Yours to decide", delegated.map(a => `${a.id} [${a.kind}]: ${quoted(short(a.question, 160))}; holds ${a.holds.join(",") || "none"}; answer with tavern_decide askId and optionId, or tavern_ask unsure:true`), priorities ? 1200 : 2400, "more delegated asks; call tavern_status section=asks", delegated.length)] : []),
     section(
       "Open asks",
       asks.map(
@@ -386,7 +385,7 @@ export function renderRestatement(
   }
   return boundedData(
     parts.join("\n\n"),
-    MEMORY_LIMITS.restatementBytes,
+    k.settings().keepers.restatementBytes,
     LEDGER_OVERFLOW,
   );
 }

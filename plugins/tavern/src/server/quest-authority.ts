@@ -53,7 +53,37 @@ export class QuestAuthority {
   lane(ask: Pick<Ask, "kind" | "boardQuestId"> & { unsure?: boolean }): "user" | "keeper" {
     if (ask.unsure || !ask.boardQuestId || !DELEGATABLE_KINDS.includes(ask.kind as DelegationKind)) return "user";
     const q = this.keeper.store.get("quests", ask.boardQuestId);
-    return q && !["done", "stopping", "stopped"].includes(q.phase) && q.delegations?.some(g => g.kind === ask.kind && this.active(g)) ? "keeper" : "user";
+    if (!q || ["done", "stopping", "stopped"].includes(q.phase)) return "user";
+    const kind = ask.kind as DelegationKind;
+    return !this.keeper.settings(q.id).keepers.alwaysAsk.includes(kind) || q.delegations?.some(g => g.kind === kind && this.active(g)) ? "keeper" : "user";
+  }
+  keeperDecisionSource(ask: Pick<Ask, "kind" | "boardQuestId">) {
+    if (!ask.boardQuestId) return {};
+    const delegation = this.keeper.quest(ask.boardQuestId).delegations?.find(g => g.kind === ask.kind && this.active(g));
+    if (delegation) return { delegation };
+    return DELEGATABLE_KINDS.includes(ask.kind as DelegationKind) && !this.keeper.settings(ask.boardQuestId).keepers.alwaysAsk.includes(ask.kind as DelegationKind)
+      ? { keeperAuthority: "keepers.alwaysAsk" as const } : {};
+  }
+  applyAskPolicy(prior: readonly DelegationKind[], next: readonly DelegationKind[]) {
+    const k = this.keeper;
+    if (DELEGATABLE_KINDS.every(kind => prior.includes(kind) === next.includes(kind))) return;
+    k.store.atomic(() => {
+      for (const ask of k.store.openAsks()) {
+        const kind = ask.kind as DelegationKind;
+        if (prior.includes(kind) === next.includes(kind)) continue;
+        const lane = this.lane(ask);
+        if (lane === (ask.lane ?? "user")) continue;
+        const options = ask.options.filter(option => option.id !== "delegate");
+        if (lane === "user" && ask.boardQuestId) options.push(this.delegationOption(ask.keeperThreadId));
+        k.store.put("asks", ask.id, { ...ask, options, lane });
+        k.store.event(k.now(), ask.keeperThreadId, ask.boardQuestId, "ask.lane-changed", "Always ask changed the decision lane", { askId: ask.id, from: ask.lane ?? "user", to: lane }, { kind: "tavern" });
+      }
+    });
+  }
+  delegationOption(keeperThreadId: string) {
+    const k = this.keeper;
+    return { id: "delegate", label: `Let ${k.name(k.require(keeperThreadId, "keeper"))} decide these for the rest of this quest`,
+      detail: "Records a revocable grant for this kind on this quest only. This act still needs a decision.", recommended: false };
   }
   private routinePlan(plan: Plan) {
     const check = (command: string) => /^(?:(?:npm|pnpm|yarn|bun)(?: run)? (?:test|check|lint|typecheck|verify)(?::[\w-]+)?|node --(?:test|check)|(?:npx )?tsc --noEmit)$/.test(command.trim());

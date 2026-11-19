@@ -23,7 +23,7 @@ export function readJournalSkill(moduleUrl = import.meta.url): string {
 }
 export type Times = { agentChangedAt: number | null; notedAt: number | null };
 /** At most one reminder per thread in this time, however many messages arrive. */
-export const REMIND_EVERY_MS = 15 * 60_000;
+export const REMIND_EVERY_MS = DEFAULT_SETTINGS.journal.remindEveryMinutes * 60_000;
 /** Shared with the panel's currency line, so the reminder and the panel name a waiting report at the same moment. */
 export { REPORT_GRACE_MS };
 /** The agent's own actions that change what the journal says about the work; rewording, notes and reordering don't. */
@@ -33,11 +33,11 @@ export type ReminderState = { stateChangedAt: number | null; notedAt: number | n
  * A reminder is due when the journal has open entries and either no status changed since the previous message (once per such
  * stretch), or a delegate's report has waited unchecked past the grace period. Never twice within REMIND_EVERY_MS.
  */
-export function reminderDue(t: ReminderState, entries: JournalEntry[], previousRequestAt: number | null): boolean {
+export function reminderDue(t: ReminderState, entries: JournalEntry[], previousRequestAt: number | null, remindMs = REMIND_EVERY_MS, graceMs = REPORT_GRACE_MS): boolean {
   if (!entries.some(e => !closed(e))) return false;
-  if (t.notedAt !== null && t.now - t.notedAt < REMIND_EVERY_MS) return false;
+  if (t.notedAt !== null && t.now - t.notedAt < remindMs) return false;
   const byRequest = t.stateChangedAt !== null && previousRequestAt !== null && t.stateChangedAt < previousRequestAt && (t.notedAt === null || t.notedAt < t.stateChangedAt);
-  const byReport = t.reportAt !== null && t.now - t.reportAt >= REPORT_GRACE_MS && (t.notedAt === null || t.notedAt < t.reportAt);
+  const byReport = t.reportAt !== null && t.now - t.reportAt >= graceMs && (t.notedAt === null || t.notedAt < t.reportAt);
   return byRequest || byReport;
 }
 const FINISHED = /\b(live since|settled|shipped|merged|landed|approved|green|\(done\)|done:)/i;
@@ -336,6 +336,7 @@ export function createJournalStore(bb: BbPluginApi, db: Database, deps: JournalD
   }
   const isKeeper = (threadId: string) => deps.roleOf(threadId)?.role === "keeper";
   const minimal = (threadId: string): Journal => ({ threadId, entries: [], changes: [], progress: progress([]), canUndo: false, canRedo: false, toolOwnedElsewhere: ownedElsewhere, ...(errors.has(threadId) ? {problem: errors.get(threadId)!.text} : {}) });
+  const journalPacing = () => ({ remindEveryMinutes: deps.settings?.().remindEveryMinutes ?? DEFAULT_SETTINGS.journal.remindEveryMinutes, reportGraceMinutes: deps.settings?.().reportGraceMinutes ?? DEFAULT_SETTINGS.journal.reportGraceMinutes });
   const quietMs = () => deps.settings ? deps.settings().journalQuietMinutes * 60_000 : QUIET_AFTER_MS;
   /** When the thread's own doing work last moved: a tool, a journal change or a doing entry's edit. Null with nothing doing. */
   function activeAt(threadId: string, entries: JournalEntry[]): number | null {
@@ -379,7 +380,7 @@ export function createJournalStore(bb: BbPluginApi, db: Database, deps: JournalD
       initialize(threadId); scheduleRead(threadId); syncBoardQuests(threadId);
       const entries = ownedElsewhere && readOnly.has(threadId) ? readOnly.get(threadId)! : localEntries(threadId);
       const can = (state: string) => !!db.prepare("SELECT 1 FROM questlog_history WHERE thread_id = ? AND state = ? LIMIT 1").get(threadId, state);
-      return { threadId, entries, changes: db.prepare("SELECT * FROM (SELECT * FROM questlog_changes WHERE thread_id = ? ORDER BY id DESC LIMIT 200) ORDER BY id").all(threadId).map(changeOf), progress: safeProgress(threadId), canUndo: can("undo"), canRedo: can("redo"), toolOwnedElsewhere: ownedElsewhere, ...(errors.has(threadId) ? {problem: errors.get(threadId)!.text} : {}) };
+      return { threadId, entries, changes: db.prepare("SELECT * FROM (SELECT * FROM questlog_changes WHERE thread_id = ? ORDER BY id DESC LIMIT 200) ORDER BY id").all(threadId).map(changeOf), progress: safeProgress(threadId), canUndo: can("undo"), canRedo: can("redo"), reportGraceMinutes: journalPacing().reportGraceMinutes, toolOwnedElsewhere: ownedElsewhere, ...(errors.has(threadId) ? {problem: errors.get(threadId)!.text} : {}) };
     } catch (error) { reportReadError(threadId, error); return minimal(threadId); }
   }
   const trusted = (actor: Actor) => canManageLinks(actor, deps.roleOf);
@@ -588,6 +589,7 @@ export function createJournalStore(bb: BbPluginApi, db: Database, deps: JournalD
   }
   const store = {
     get, edit, runTool, ready, prepare, linkWaypoint, syncBoardQuests, isKeeper,
+    journalPacing,
     reminders: () => deps.settings ? deps.settings().journalReminders : DEFAULT_SETTINGS.journal.journalReminders,
     deleteThread(threadId: string) {
       const rows = db.prepare("SELECT id,board_quest_id FROM questlog_entries WHERE thread_id = ?").all(threadId) as { id: string; board_quest_id: string | null }[];
@@ -636,8 +638,9 @@ export function createJournalStore(bb: BbPluginApi, db: Database, deps: JournalD
         const entries = localEntries(threadId).filter(e => !over(e)), changes = pending(threadId), now = Date.now();
         const reports = entries.filter(e => !closed(e) && e.report).map(e => e.report!.at);
         const state: ReminderState = { stateChangedAt: stateChangedAt(threadId) ?? row.agent_changed_at, notedAt: row.noted_at, reportAt: reports.length ? Math.max(...reports) : null, now };
-        const stale = store.reminders() && reminderDue(state, entries, previousRequestAt);
-        if (!stale && !changes.length) { skipped(store.reminders() ? "no reminder is due (statuses changed since the previous message, or one went out in the last 15 minutes), and no user edits are waiting" : "reminders are off in Tavern's settings, and no user edits are waiting"); return false; }
+        const { remindEveryMinutes, reportGraceMinutes } = store.journalPacing();
+        const stale = store.reminders() && reminderDue(state, entries, previousRequestAt, remindEveryMinutes * 60_000, reportGraceMinutes * 60_000);
+        if (!stale && !changes.length) { skipped(store.reminders() ? `no reminder is due (statuses changed since the previous message, or one went out in the last ${remindEveryMinutes} minutes), and no user edits are waiting` : "reminders are off in Tavern's settings, and no user edits are waiting"); return false; }
         const named = stale ? [awaitingSummary(entries, { ...show, now }), ...staleLines(entries, { ...show, now })].filter(Boolean).join("\n") : "";
         const text = clip(`${JOURNAL_NOTE_PREFIX} ${planLine(entries, show)}\n${clip(openSummary(entries, 5, show), 750)}\n${formatUserChanges(changes)}${named ? `${named}\n` : ""}${stale ? "You have not updated the journal's statuses since the previous message. If this request changes the plan, or a delegate reported, start, close, block, reopen, settle or wait on its entry; if not, carry on." : ""}`, MAX_NOTE_TEXT);
         await send(text);

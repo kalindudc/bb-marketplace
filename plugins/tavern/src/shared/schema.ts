@@ -182,6 +182,7 @@ export const journalSchema = z.object({
   canRedo: z.boolean(),
   /** Set while another plugin owns the `quest` tool (pi-quests installed and loaded first). */
   toolOwnedElsewhere: z.boolean(),
+  reportGraceMinutes: z.number().int().positive().optional(),
   // added by Builder A: failed imports remain visible without failing every Tavern capability.
   problem: z.string().max(500).optional(),
 });
@@ -433,6 +434,7 @@ export const askSchema = z.object({
       note: z.string().max(2000).nullable(),
       by: z.enum(["user", "default", "keeper", "preapproval"]),
       preapproval: z.object({ id: z.string(), at: epochMs, surface: z.string() }).optional(),
+      keeperAuthority: z.literal("keepers.alwaysAsk").optional(),
       via: z.enum(["banner", "page", "phone", "chat", "cli", "timer"]),
       at: epochMs,
     })

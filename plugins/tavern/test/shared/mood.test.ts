@@ -11,6 +11,16 @@ const blocked = { status: "blocked", createdAt: now - 80_000 } as const;
 const verified = { status: "verified", at: now - 1 } as const;
 const rejected = { status: "rejected", at: now - 80_000 } as const;
 
+it("uses the reported and verified durations sent on the decor read", () => {
+  const data = { ...fixtureDecor, member: { ...fixtureMember, state: "working" as const } };
+  const report = { ...data, moodSignals: { archived:false,released:false,handBack:false, report:{...done,createdAt:now-30_000}, verdict:null } };
+  const verdict = { ...data, moodSignals: { archived:false,released:false,handBack:false, report:null, verdict:{...verified,at:now-120_000} } };
+  expect(characterMood({...widgetMoodFacts(report,now),openAsk:false})).toBe("reported");
+  expect(characterMood({...widgetMoodFacts({...report,reportedPoseSeconds:10},now),openAsk:false})).toBe("working");
+  expect(characterMood({...widgetMoodFacts(verdict,now),openAsk:false})).toBe("verified");
+  expect(characterMood({...widgetMoodFacts({...verdict,verifiedPoseMinutes:1},now),openAsk:false})).toBe("working");
+});
+
 describe("character mood precedence", () => {
   it.each([
     [{ ...failed, released: true }, "released"],

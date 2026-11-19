@@ -4,7 +4,6 @@ import type { TavernRuntime } from "./runtime";
 import type { TickBatch } from "./keeper/store";
 import { inputText, tickId } from "./dispatch";
 import { localClock } from "./clock";
-import { MEMORY_LIMITS } from "../shared/settings";
 import { LIMITS } from "./limits";
 import { SCOPE_DENIAL_TEXT } from "../shared/text";
 import { dataFence, ledgerHeading } from "./instructions";
@@ -14,7 +13,6 @@ import { isLiveKeeper } from "./liveness";
 import { LoopTimeout, loopCall } from "./loop-call";
 import { agentData } from "./agent-data";
 
-const FACT_LIMIT = MEMORY_LIMITS.tickFactChars;
 export type TickOrigin = "sweep" | "wake";
 const RETRY_SUFFIX = "\nDelivery retry of the same tick id. Ignore it if you have already seen or acted on this id.";
 
@@ -49,7 +47,7 @@ export class TickLoop {
     if (state.archivedAt != null || ctx.thread.archivedAt !== null || ctx.thread.deletedAt !== null)
       return { action: "reject" as const, message: "Tavern dropped a tick for an archived or deleted Keeper." };
     if (state.queuedTickResetId) return { action: "wait" as const, reason: "Tavern is rebuilding the queued tick from current facts" };
-    if (state.manualStopAt != null || Math.max(state.failureCount ?? 0, state.tickRefusalCount ?? 0) >= 2)
+    if (state.manualStopAt != null || Math.max(state.failureCount ?? 0, state.tickRefusalCount ?? 0) >= this.runtime.config().keepers.failuresBeforeAsk)
       return {
         action: "wait" as const,
         reason:
@@ -61,12 +59,12 @@ export class TickLoop {
       const waiting = tickId(ctx.input.text);
       const batch = waiting ? this.k.store.tick(waiting) : null;
       if (batch && ctx.queuedMessages.some(row => tickId(inputText(row.content)) === batch.id) &&
-        !["delivered", "cancelled"].includes(batch.state) && this.k.now() - batch.createdAt >= 2 * LIMITS.retryMs)
+        !["delivered", "cancelled"].includes(batch.state) && this.k.now() - batch.createdAt >= 2 * (this.runtime.config().keepers.retryAfterSeconds * 1000))
         this.k.store.patch(ctx.thread.id, { queuedTickResetId: batch.id });
       return {
         action: "wait" as const,
         reason: "Tavern yields to your conversation",
-        sendAt: this.k.now() + LIMITS.retryMs,
+        sendAt: this.k.now() + (this.runtime.config().keepers.retryAfterSeconds * 1000),
       };
     }
     const id = tickId(ctx.input.text);
@@ -233,6 +231,7 @@ export class TickLoop {
       return window?.through === undefined || event.id > window.through || replayed.has(event.id) || ["user.message", "route.recorded", "route.corrected"].includes(event.type);
     });
     const events = [...new Map([...resumed, ...unread].map(event => [event.id, event])).values()].sort((a, b) => a.id - b.id);
+    const factLimit = this.runtime.config().keepers.tickFactChars;
     const facts: string[] = [];
     const reportIds: string[] = [];
     let cursor = rt.cursor;
@@ -261,9 +260,9 @@ export class TickLoop {
           ? rt.factContinuation.offset
           : 0;
       const remainingText = fact.text.slice(offset);
-      if (length + remainingText.length > FACT_LIMIT) {
+      if (length + remainingText.length > factLimit) {
         if (facts.length) break;
-        const end = offset + FACT_LIMIT - 200;
+        const end = offset + factLimit - 200;
         facts.push(
           `Oversized fact ${event.id}, characters ${offset + 1} to ${end} (data, continued next tick):\n${fact.text.slice(offset, end)}`,
         );
@@ -368,7 +367,7 @@ export class TickLoop {
     const fullLedger =
       !!rt.reanchor ||
       rt.lastLedger?.hash !== snapshot.hash ||
-      this.k.now() - rt.lastLedger.at >= 600_000;
+      this.k.now() - rt.lastLedger.at >= this.runtime.config().knobs.ledgerRefreshMinutes * 60_000;
     const ledger = fullLedger
       ? `${ledgerHeading(snapshot.asOf, snapshot.version)}\n${dataFence(snapshot.text)}`
       : `Ledger unchanged since ${localClock(rt.lastLedger!.at)} (version ${snapshot.version})\nPriorities (quoted data):\n${dataFence(this.k.priorities(threadId))}`;
@@ -456,7 +455,7 @@ export class TickLoop {
       const member = this.k.member(threadId);
       if (!isLiveKeeper(this.k.store, member)) return;
       const rt = this.k.store.runtime(threadId);
-      if (Math.max(rt.failureCount ?? 0, rt.tickRefusalCount ?? 0) >= 2 || (rt.tickRetryAt ?? 0) > this.k.now()) return;
+      if (Math.max(rt.failureCount ?? 0, rt.tickRefusalCount ?? 0) >= this.runtime.config().keepers.failuresBeforeAsk || (rt.tickRetryAt ?? 0) > this.k.now()) return;
       if (
         rt.tickAt !== null &&
         this.k.now() - rt.tickAt <
@@ -635,12 +634,12 @@ export class TickLoop {
       this.acknowledge(batch.id);
     } else if (events.length === 100 && batch.hostAfterSeq !== undefined) {
       this.k.store.putTick({ ...current, hostAfterSeq: events.at(-1)!.seq });
-    } else if (batch.sendPending && (force || this.k.now() - (batch.lastSendAt ?? batch.createdAt) >= 2 * LIMITS.retryMs)) {
+    } else if (batch.sendPending && (force || this.k.now() - (batch.lastSendAt ?? batch.createdAt) >= 2 * (this.runtime.config().keepers.retryAfterSeconds * 1000))) {
       const thread = await loopCall(this.runtime.bb.sdk.threads.get({ threadId }), `tick resend thread ${threadId}`);
       if (!queued.length && !this.runtime.held(threadId) && ["idle", "error"].includes(thread.status) &&
         thread.archivedAt === null && thread.deletedAt === null && !(this.runtime.stopAll.reason() || this.runtime.config().tavern.paused) &&
         isLiveKeeper(this.k.store, this.k.member(threadId))) await this.deliver(batch, true);
-    } else if (!batch.sendPending && !this.sending.has(threadId) && this.k.now() - batch.createdAt >= LIMITS.retryMs) {
+    } else if (!batch.sendPending && !this.sending.has(threadId) && this.k.now() - batch.createdAt >= (this.runtime.config().keepers.retryAfterSeconds * 1000)) {
       const thread = await loopCall(this.runtime.bb.sdk.threads.get({ threadId }), `tick recovery thread ${threadId}`);
       if (["idle", "error"].includes(thread.status))
         this.k.store.putTick({ ...batch, state: "cancelled" });

@@ -7,6 +7,13 @@ import { evaluate } from "../../src/scope/engine";
 import { bindPaths } from "../../src/scope/paths";
 import { scopeForClass } from "../../src/scope/presets";
 import { narrowAwayScope } from "../../src/server/away/denials";
+import { LEGACY_AWAY_STOP_LIST, awayWindowSchema } from "../../src/shared/away";
+
+const closed = awayWindowSchema.parse({
+  id: "window", version: 1, closedAt: 1000, until: 2000, returnedAt: null, returnCause: null, note: null, quests: [],
+  stopList: [...LEGACY_AWAY_STOP_LIST], allowWatched: false, wakeRules: { blockers: true, productionAsksAfterTwoHours: false },
+  eventFloor: 0, eventCeiling: null,
+});
 
 const scope = (role: string) => bindPaths({ ...scopeForClass(role), ...(role === "smith" ? { assignedBranch: "feature" } : {}) }, { home: "/home/me", tmp: ["/tmp"], threadStorage: "/storage", worktree: "/repo", scopesDir: "/scopes" });
 const call = (command: string) => ({ kind: "bash" as const, toolName: "bash", cwd: "/repo", input: { command }, containment: "sandbox" as const });
@@ -45,7 +52,6 @@ it("allows only lease-protected own branch rewrites", () => {
   expect(evaluate({ ...scope("smith"), assignedBranch: undefined }, call("git push origin feature")).allow).toBe(false);
 });
 it.each(commands)("refuses %s during Closing time for every class: %s", (_kind, command) => {
-  const closed = { id: "window", version: 1, returnedAt: null } as Parameters<typeof narrowAwayScope>[1];
   expect(new Set(commands.map(([kind]) => kind)).size).toBe(ACT_CATALOGUE.filter(act => act.kind !== "tavern-control").length);
   for (const role of ["keeper", "smith", "ranger", "warden", "wanderer"]) expect(evaluate(narrowAwayScope(scope(role), closed), call(command)).allow, role + command).toBe(false);
 });

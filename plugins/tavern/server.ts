@@ -110,7 +110,7 @@ export default async function tavern(bb: BbPluginApi) {
   applySettings = () => runtime.settingsChanged();
   await registerScopeSettings(bb, runtime);
   const voiceChecks = new VoiceCheckRunner({
-    bb, store, pluginId: bb.pluginId, now: Date.now, sleep: pause,
+    bb, store, pluginId: bb.pluginId, now: Date.now, sleep: pause, checksPerHour: () => settings.read().tavern.voiceChecksPerHour,
     log: (level, message) => bb.log[level](message), invalidate: (tags) => bb.rpc.experimental_invalidate(tags),
     writer: async (characterId) => {
       const personal = (await bb.sdk.projects.list({ includePersonal: true })).find((p) => p.kind === "personal");

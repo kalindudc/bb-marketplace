@@ -913,6 +913,7 @@
 /* A section's description, drawn by Tavern in its muted text because bb's own description style is below 4.5:1 (settings.tsx settingsSection). */
 .tavern.tv-page.tv-set-introwrap { display: block; min-width: 0; }
 .tavern.tv-page.tv-set-introwrap > .tv-set-intro { margin: 0 0 10px; }
+.tavern.tv-page.tv-set-introwrap[id], .tavern.tv-page.tv-set-introwrap > .tv-set-intro[id] { scroll-margin-block-start: 2rem; }
 /* A file skipped inside a backup is a warning: only the mark takes the colour. */
 .tavern.tv-page .tv-bk-prob { display: flex; align-items: flex-start; gap: 5px; font-size: 12px; min-width: 0; }
 .tavern.tv-page .tv-bk-prob > .tv-g { flex: none; margin-top: 2px; color: var(--tavern-blocked); }
@@ -1001,6 +1002,14 @@
 .tavern.tv-page .tv-set-row:first-child { border-top: 0; }
 .tavern.tv-page .tv-set-l label, .tavern.tv-page .tv-set-lbl { font-weight: 700; }
 .tavern.tv-page .tv-set-l p { margin: 2px 0 0; max-width: 64ch; font-size: 12px; color: var(--tv-text-2); }
+.tavern.tv-page .tv-set-default { display: flex; align-items: baseline; flex-wrap: wrap; gap: 2px 10px; margin-top: 3px; font-size: 12px; color: var(--tv-text-2); }
+.tavern.tv-page [data-setting-changed] { color: var(--foreground); font-weight: 700; }
+.tavern.tv-page .tv-set-advanced { border-top: 1px solid var(--tavern-line); padding: 4px 0; margin: 10px 0; }
+.tavern.tv-page .tv-set-advanced > summary { cursor: pointer; padding: 8px 0; min-height: 44px; font-size: 13px; }
+.tavern.tv-page .tv-set-advanced > summary .tag { margin-inline-start: 8px; }
+.tavern.tv-page .tv-settings-body h4 { font-size: 13px; font-weight: 700; margin: 12px 0 4px; }
+.tavern.tv-page .tv-away-stops { min-width: 0; margin: 0; }
+.tavern.tv-page .tv-away-stops > p { margin: 5px 0; }
 .tavern.tv-page .tv-set-c { display: flex; justify-content: flex-end; min-width: 0; }
 .tavern.tv-page .tv-set-ro { grid-template-columns: minmax(0, 1fr); }
 .tavern.tv-page .tv-set-ro .tv-set-c, .tavern.tv-page .tv-set-ro .tv-chips { justify-content: flex-start; }
@@ -1068,6 +1077,7 @@
   .tavern.tv-page .tv-filediff { grid-template-columns: 16px minmax(0, 1fr); }
   .tavern.tv-page .tv-filediff-a { grid-column: 2; }
   .tavern.tv-page :is(.tv-switch, .tv-text, .tv-select, .tv-num input, .tv-set-check) { min-height: 44px; }
+  .tavern.tv-page.tv-set-atmosphere .tv-num input { font-size: 16px; }
   .tavern.tv-page .tv-set-table thead { display: none; }
   .tavern.tv-page .tv-set-table tr { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 6px 0; border-top: 1px solid var(--tavern-line); }
   .tavern.tv-page .tv-set-table th { grid-column: 1 / -1; border: 0; }

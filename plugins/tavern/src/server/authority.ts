@@ -20,7 +20,7 @@ export const AUTHORITY = {
   applyClassExecution: explicit, dismissClassNotice: explicit,
   settingsAgentChange: { level: "keeper", proof: "recorded user grant and calling thread", grant: "tavern.agentsMayChangeSettings" },
   settingsUpdate: explicit, settingsUndo: explicit, settingsImport: explicit,
-  settingsFile: explicit, settingsApplySuggestion: explicit, backupRestore: explicit,
+  settingsFile: explicit, settingsApplySuggestion: explicit, settingsEndOverride: explicit, backupRestore: explicit,
   guardInstall: explicit, guardUninstall: explicit,
   voiceCheckStart: explicit, voiceCheckCancel: explicit, releaseHold: explicit,
   openQuest: words, reopenQuest: words, weakenChecks: words, steerDecision: words,

@@ -25,12 +25,12 @@ describe("Closing time contracts", () => {
   it("defaults to guarded drafts, locked stop actions and opt-in watched work", () => {
     const input = awayCloseSchema.parse({ revision: 0, until: 2000, quests: [] });
     expect(input).toMatchObject({ note: null, allowWatched: false, wakeRules: { blockers: true, productionAsksAfterTwoHours: false } });
-    expect(AWAY_STOP_LIST).toEqual(["merge", "deploy", "production", "sends-as-you", "delete"]);
+    expect(AWAY_STOP_LIST).toEqual(["merge", "deploy", "production", "sends-as-you", "delete", "other-writes"]);
   });
 
   it("rejects unknown controls, duplicate quests, long notes and unsupported end states", () => {
     const base = { revision: 0, until: 2000, quests: [] };
-    for (const value of [{ ...base, stopList: [] }, { ...base, note: "x".repeat(501) },
+    for (const value of [{ ...base, stopList: ["unknown"] }, { ...base, stopList: ["merge", "merge"] }, { ...base, note: "x".repeat(501) },
       { ...base, quests: [{ questId: "q", endState: "merge" }] },
       { ...base, quests: [{ questId: "q", endState: "pause" }, { questId: "q", endState: "drafts-ready" }] },
       { ...base, until: Infinity }, { ...base, until: -1 }]) expect(awayCloseSchema.safeParse(value).success).toBe(false);
@@ -69,6 +69,15 @@ describe("Closing time store", () => {
     expect(f.store.window(snapshot.window!.id)).toEqual(snapshot.window);
   });
 
+  it("keeps a selected policy as a window snapshot and permits the empty selection", () => {
+    const f = fixture(), selection = ["merge", "deploy", "delete"] as ("merge" | "deploy" | "delete")[];
+    const first = f.store.close(f.input(), selection);
+    selection.pop();
+    expect(f.store.snapshot().window?.stopList).toEqual(["merge", "deploy", "delete"]);
+    expect(first.window?.guardPolicy).toBe("selected");
+    f.store.finish(first.window!.id, explicit);
+    expect(f.store.close(f.input(), []).window?.stopList).toEqual([]);
+  });
   it("marks due back without reopening, even after a restart", () => {
     const f = fixture(), closed = f.store.close(f.input());
     f.advance(3_600_001);

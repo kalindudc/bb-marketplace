@@ -141,7 +141,7 @@ export function Hearth({ words, surface, size = 24, flareKey, replay = false, se
       {/* The words never wrap. The replay's line can, so a no-break space goes before each of its "·": a "·" ends a line and never starts one. */}
       {/* Each part stays whole with the "·" after it, and the line breaks only between parts: a state word is never cut, and a "·" never starts a line. */}
       <span className="hearth-w"><span className="hearth-p"><b>{words.lead}</b> <span className="m">· {first}{rest.length > 0 && " ·"}</span></span>{rest.map((part, i) => <Fragment key={i}>{" "}<span className="hearth-p m">{part}{i < rest.length - 1 && " ·"}</span></Fragment>)}{replay && settingsHref && <span className="hearth-dot m" aria-hidden="true">{"\u00a0·"}</span>}</span>
-      {replay && settingsHref && <span className="hearth-x m">{" "}Flickers while work runs{"\u00a0"}· <UrlLink href={settingsHref} className="hearth-set act" aria-label="Ambient motion: open Tavern’s Motion settings" title="Choose Calm, Lively or Off in Tavern’s Motion settings">Settings<span aria-hidden="true"> ›</span></UrlLink></span>}
+      {replay && settingsHref && <span className="hearth-x m">{" "}Flickers while work runs{"\u00a0"}· <UrlLink href={settingsHref} className="hearth-set act" aria-label="Ambient motion: open Tavern’s Atmosphere settings" title="Choose Calm, Lively or Off in Tavern’s Atmosphere settings">Settings<span aria-hidden="true"> ›</span></UrlLink></span>}
     </span>}
   </span>;
 }

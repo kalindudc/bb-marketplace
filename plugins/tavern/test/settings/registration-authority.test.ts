@@ -70,6 +70,7 @@ const writes = [
   { method: "settingsImport", label: "apply", input: (s: SettingsView) => ({ toml: "[machines]\nmax_makers=5\n", apply: true, revision: s.revision }) },
   { method: "settingsFile", label: "load", input: (s: SettingsView) => ({ action: "load", apply: true, revision: s.revision, expectedHash: s.file.hash! }) },
   { method: "settingsFile", label: "save", input: (s: SettingsView) => ({ action: "save", revision: s.revision }) },
+  { method: "settingsEndOverride", label: "end override", input: (s: SettingsView) => ({ boardQuestId: "quest", key: "staleMinutes", revision: s.revision }) },
   { method: "settingsApplySuggestion", label: "apply", input: (s: SettingsView) => ({ key: "tickSeconds", revision: s.revision }) },
 ];
 

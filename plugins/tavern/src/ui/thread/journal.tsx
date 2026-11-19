@@ -67,9 +67,9 @@ function blockReason(entry: JournalEntry, changes: Journal["changes"]): string |
 }
 const reasonOf = (entry: JournalEntry, changes: Journal["changes"]) => entry.status === "rejected" ? entry.review?.reason ?? null : blockReason(entry, changes);
 /** When the journal last moved. It owns the minute clock, so a tick re-renders this line alone, not the tally or the list. */
-function JournalCurrency({ entries }: { entries: JournalEntry[] }) {
+function JournalCurrency({ entries, graceMinutes }: { entries: JournalEntry[]; graceMinutes?: number }) {
   const now = useNow();
-  const cur = currency(entries, now);
+  const cur = currency(entries, now, graceMinutes === undefined ? undefined : graceMinutes * 60_000);
   if (cur.lastDoneAt === null) return null;
   return (
     <p className={`journal-cur num${cur.stale ? " stale" : ""}`} title={cur.oldestOpenAt !== null ? `Oldest open entry: ${timeAgo(cur.oldestOpenAt, now).replace(/ ago$/, "")}` : undefined}>
@@ -229,7 +229,7 @@ export function JournalTab({ threadId, params }: ExperimentalThreadTabProps & { 
             {rejected > 0 && <span className="journal-k bad num" aria-hidden="true">{rejected} rejected</span>}
           </div>
         )}
-        {total > 0 && <JournalCurrency entries={data.entries} />}
+        {total > 0 && <JournalCurrency entries={data.entries} graceMinutes={data.reportGraceMinutes} />}
         {current && (
           <button type="button" className="journal-now" aria-label={`${current.status === "doing" ? "Doing" : "Next"}: ${current.description}. Show it in the list`} title={current.description}
             onClick={() => { reveal(current.id); setJump(current.id); }}>

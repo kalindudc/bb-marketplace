@@ -5,10 +5,12 @@ import { act, fireEvent, waitFor, within } from "@testing-library/react";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { rpcContract, type Room } from "../../../src/shared/contract";
 import type { AwayControl, AwayDigest } from "../../../src/shared/away-rpc";
+import { settingsContract } from "../../../src/shared/settings";
+import { settingsView } from "../../../src/ui/page/fixtures-insights";
 import type { Ask } from "../../../src/shared/schema";
 import { NOTHING_ENDED_LINE, NOTHING_RUNNING_LINE, REOPEN_LINE, closePlan, returnReceipt } from "../../../src/ui/page/away";
 import { askOutcome } from "../../../src/ui/page/finished";
-import { activeQuests } from "../../../src/ui/page/model";
+import { activeQuests, workingQuests } from "../../../src/ui/page/model";
 import { registerPageSurfaces } from "../../../src/ui/page/register";
 import { StatusLine } from "../../../src/ui/page/room";
 import * as scenes from "./scenes";
@@ -21,7 +23,8 @@ afterAll(() => { vi.useRealTimers(); });
 const slots: RenderedSlot[] = [];
 afterEach(() => { for (const slot of slots.splice(0)) slot.lifecycle.unmount(); });
 beforeEach(() => window.localStorage.clear());
-type Handlers = PluginRpcTestHandlers<typeof rpcContract>;
+const contract = {...rpcContract,...settingsContract};
+type Handlers = PluginRpcTestHandlers<typeof contract>;
 
 const LOADED = { timeout: 3000 };
 const open: Room = { ...scenes.richRoom, away: { closed: false, until: null, dueBack: false, windowId: null } };
@@ -111,7 +114,7 @@ describe("what closing would do (the confirm's lines)", () => {
 async function tab(rpc: Partial<Handlers>, room: Room = open) {
   const plugin = await loadPluginApp(async () => ({ default: definePluginApp(registerPageSurfaces) }));
   const t = plugin.tabs.find((x) => x.id === "closing-time")!;
-  const slot = renderSlot(t as never, { subPath: "closing", params: null } as never, { pluginId: "tavern", experimental_rpcContract: rpcContract, rpc: { registry: () => structuredClone(scenes.registry), room: () => structuredClone(room), away: () => control({ watchedByQuest: [{ questId: "vault", watchedCount: 1 }] }), ...rpc } as Partial<Handlers> as Handlers });
+  const slot = renderSlot(t as never, { subPath: "closing", params: null } as never, { pluginId: "tavern", experimental_rpcContract: contract, rpc: { registry: () => structuredClone(scenes.registry), room: () => structuredClone(room), settings: () => settingsView, away: () => control({ watchedByQuest: [{ questId: "vault", watchedCount: 1 }] }), ...rpc } as Partial<Handlers> as Handlers });
   slots.push(slot);
   return slot;
 }
@@ -124,6 +127,30 @@ async function review(slot: RenderedSlot) {
 }
 
 describe("the Closing time sheet", () => {
+  it("uses changed sheet defaults and allows an empty stop list", async () => {
+    const view = structuredClone(settingsView);
+    view.effective.away = { neverWhileClosed: [], defaultEndState: "pause", defaultAllowWatched: true, defaultBackAtHour: 16, defaultWakeBlockers: false, defaultWakeProduction: true, productionWakeHours: 5 };
+    const save = vi.fn(() => ({code:"ok" as const,revision:view.revision+1,settings:view,problems:[]}));
+    const awayClose = vi.fn(() => ({code:"closed" as const,state:closedState(1)}));
+    const slot = await tab({ settings:()=>view, settingsUpdate:save, awayClose });
+    const stop = within(await slot.findByRole("group",{name:"Never while closed"}));
+    expect(stop.getAllByRole("checkbox",{checked:false})).toHaveLength(6);
+    expect(stop.getAllByRole("checkbox").every(input => !(input as HTMLInputElement).disabled)).toBe(true);
+    const confirm = await review(slot);
+    expect(confirm.textContent).toContain("Nothing is blocked while closed.");
+    expect(confirm.textContent).toContain("waits 5 hours");
+    expect(confirm.querySelectorAll(".tv-confirm-c.c-pause")).toHaveLength(workingQuests(open).length);
+    expect((slot.getByLabelText("Back at") as HTMLInputElement).value).toMatch(/T16:00$/);
+    expect((slot.getByRole("checkbox",{name:/Let watched/}) as HTMLInputElement).checked).toBe(true);
+    expect(slot.container.textContent).toContain("These choices apply only to this window.");
+    fireEvent.click(stop.getByRole("checkbox",{name:"Merge"}));
+    const amended = await review(slot);
+    expect(amended.textContent).toContain("Closing time blocks merge.");
+    fireEvent.click(within(amended).getByRole("button",{name:"Close the tavern"}));
+    await waitFor(()=>expect(awayClose).toHaveBeenCalledWith(expect.objectContaining({stopList:["merge"]})));
+    expect(save).not.toHaveBeenCalled();
+    expect(view.effective.away.neverWhileClosed).toEqual([]);
+  });
   it("with nothing live, leads with one line and shows no zero-count lines and no empty divider", async () => {
     const quiet: Room = { ...open, asks: [], solos: open.solos.map((m) => ({ ...m, state: "stopped" as const })), keepers: open.keepers.map((k) => ({ ...k, errands: k.errands.map((m) => ({ ...m, state: "done" as const })), boardQuests: k.boardQuests.map((q) => ({ ...q, phase: "done" as const })) })) };
     const slot = await tab({}, quiet);
@@ -131,7 +158,7 @@ describe("the Closing time sheet", () => {
     expect(confirm.querySelector(".tv-confirm-q")).toBeNull();
     expect(confirm.querySelectorAll("ul")).toHaveLength(1);
     const lines = [...confirm.querySelectorAll<HTMLElement>("li[data-line]")];
-    expect(lines.map((l) => l.dataset.line)).toEqual(["nothing-running", "reopen", "nothing-ended"]);
+    expect(lines.map((l) => l.dataset.line)).toEqual(["nothing-running", "stop-policy", "reopen", "nothing-ended"]);
     expect(lines[0]!.textContent).toBe(NOTHING_RUNNING_LINE);
     for (const l of lines) expect(l.textContent).not.toMatch(/\b0\b|: 0\./);
     // The divider belongs between the quest list and the rest, so with no quest list there is none.
@@ -174,7 +201,7 @@ describe("the Closing time sheet", () => {
   it("on a stale revision, says nothing has closed and keeps the choices", async () => {
     const slot = await tab({ awayClose: () => ({ code: "stale" as const, state: closedState(3) }) });
     fireEvent.click(within(await review(slot)).getByRole("button", { name: "Close the tavern" }));
-    expect((await slot.findByRole("status", {}, LOADED)).textContent).toMatch(/changed since you opened this sheet\. Nothing has closed/);
+    expect((await slot.findByRole("status", {}, LOADED)).textContent).toMatch(/settings changed\. Nothing has closed/);
   });
   it("when closing fails, keeps every field and offers Retry", async () => {
     const slot = await tab({ awayClose: () => { throw new Error("guard unreachable"); } });
@@ -189,7 +216,7 @@ describe("the Closing time sheet", () => {
 describe("Return and the stops that haven't confirmed", () => {
   it("puts a real Return button on the status line, and its receipt says who waits for their Keeper", async () => {
     const awayReturn = vi.fn(() => ({ code: "returned" as const, state: control({ revision: 2, window: win(2, { eventCeiling: 5, returnedAt: Date.now(), returnCause: { kind: "explicit-return", threadId: null, refId: null } }), status: { closed: false, until: null, dueBack: false, windowId: "w1" }, resumeRequired: [{ threadId: "thr-lark", keeperThreadId: "thr-wren", questId: "audit" }] }) }));
-    const slot = renderSlot({ component: () => <StatusLine room={closedRoom} registry={scenes.registry} /> }, {}, { pluginId: "tavern", experimental_rpcContract: rpcContract, rpc: { away: () => closedState(1), awayReturn } as Partial<Handlers> as Handlers });
+    const slot = renderSlot({ component: () => <StatusLine room={closedRoom} registry={scenes.registry} /> }, {}, { pluginId: "tavern", experimental_rpcContract: contract, rpc: { away: () => closedState(1), awayReturn } as Partial<Handlers> as Handlers });
     slots.push(slot);
     const button = await slot.findByRole("button", { name: /^Return/ });
     expect(button.tagName).toBe("BUTTON");
@@ -207,7 +234,7 @@ describe("Return and the stops that haven't confirmed", () => {
     const plugin = await loadPluginApp(async () => ({ default: definePluginApp(registerPageSurfaces) }));
     const rpc = { registry: () => structuredClone(scenes.registry), room: () => structuredClone(returned ? reopened : closedRoom), boardQuest: () => structuredClone(scenes.richDetails.vault!), away: () => returned ? control({ revision: 2 }) : closedState(1), awayReturn } as Partial<Handlers> as Handlers;
     const target = panel ? plugin.tabs.find((x) => x.id === "closing-time")! : plugin.navPanels[0]!;
-    const slot = renderSlot(target as never, { subPath, params: null } as never, { pluginId: "tavern", experimental_rpcContract: rpcContract, rpc });
+    const slot = renderSlot(target as never, { subPath, params: null } as never, { pluginId: "tavern", experimental_rpcContract: contract, rpc });
     slots.push(slot);
     fireEvent.click(await slot.findByRole("button", { name: /^Return/ }, LOADED));
     await waitFor(() => expect(awayReturn).toHaveBeenCalledTimes(1), LOADED);
@@ -234,7 +261,7 @@ describe("Return and the stops that haven't confirmed", () => {
     const rooms: Record<Phase, Room> = { open, closed: closedRoom, back: { ...scenes.richRoom, away: { closed: false, until: null, dueBack: false, windowId: "w1" } } };
     const plugin = await loadPluginApp(async () => ({ default: definePluginApp(registerPageSurfaces) }));
     const t = plugin.tabs.find((x) => x.id === "closing-time")!;
-    const slot = renderSlot(t as never, { subPath: "closing", params: null } as never, { pluginId: "tavern", experimental_rpcContract: rpcContract, rpc: { registry: () => structuredClone(scenes.registry), room: () => structuredClone(rooms[phase]), away: () => phase === "open" ? control() : phase === "closed" ? closedState(1) : back, awayClose, awayReturn } as Partial<Handlers> as Handlers });
+    const slot = renderSlot(t as never, { subPath: "closing", params: null } as never, { pluginId: "tavern", experimental_rpcContract: contract, rpc: { registry: () => structuredClone(scenes.registry), room: () => structuredClone(rooms[phase]), settings: () => settingsView, away: () => phase === "open" ? control() : phase === "closed" ? closedState(1) : back, awayClose, awayReturn } as Partial<Handlers> as Handlers });
     slots.push(slot);
     const confirm = await review(slot);
     fireEvent.click(within(confirm).getByRole("button", { name: "Close the tavern" }));
@@ -249,7 +276,7 @@ describe("Return and the stops that haven't confirmed", () => {
     expect(said[0]).toMatch(/^Back\. /);
   });
   it("says nothing on the status line while open with no Return to report", async () => {
-    const slot = renderSlot({ component: () => <StatusLine room={open} registry={scenes.registry} /> }, {}, { pluginId: "tavern", experimental_rpcContract: rpcContract, rpc: { away: () => control() } as Partial<Handlers> as Handlers });
+    const slot = renderSlot({ component: () => <StatusLine room={open} registry={scenes.registry} /> }, {}, { pluginId: "tavern", experimental_rpcContract: contract, rpc: { away: () => control() } as Partial<Handlers> as Handlers });
     slots.push(slot);
     await slot.findByText(/need you/);
     expect(slot.container.querySelector(".tv-return")).toBeNull();
@@ -268,11 +295,11 @@ describe("Return and the stops that haven't confirmed", () => {
   it("names unconfirmed stops on the room and on the member's quest page, with the count on the status line", async () => {
     const plugin = await loadPluginApp(async () => ({ default: definePluginApp(registerPageSurfaces) }));
     const rpc = { registry: () => structuredClone(scenes.registry), room: () => structuredClone(closedRoom), boardQuest: () => structuredClone(scenes.richDetails.vault!), away: () => closedState(1, { pendingStops: [{ threadId: "thr-juno", error: null }] }) } as Partial<Handlers> as Handlers;
-    const room = renderSlot(plugin.navPanels[0]!, { subPath: "room" }, { pluginId: "tavern", experimental_rpcContract: rpcContract, rpc });
+    const room = renderSlot(plugin.navPanels[0]!, { subPath: "room" }, { pluginId: "tavern", experimental_rpcContract: contract, rpc });
     slots.push(room);
     expect((await room.findByRole("button", { name: /1 stop not confirmed/ }, LOADED))).toBeTruthy();
     expect(room.container.querySelector("[data-pending-stop]")!.textContent).toBe("Juno’s stop isn’t confirmed yet. Tavern retries it.");
-    const quest = renderSlot(plugin.navPanels[0]!, { subPath: "quest/vault" }, { pluginId: "tavern", experimental_rpcContract: rpcContract, rpc });
+    const quest = renderSlot(plugin.navPanels[0]!, { subPath: "quest/vault" }, { pluginId: "tavern", experimental_rpcContract: contract, rpc });
     slots.push(quest);
     await waitFor(() => expect(quest.container.querySelector("[data-pending-stop]")).not.toBeNull(), LOADED);
   });
@@ -293,7 +320,7 @@ describe("While closed (the digest)", () => {
   it("leads with what waits on you, then the quests that returned (with the tale and the full quest) and their cleanup, then the rest", async () => {
     const plugin = await loadPluginApp(async () => ({ default: definePluginApp(registerPageSurfaces) }));
     const room: Room = { ...scenes.richRoom, away: { closed: false, until: null, dueBack: false, windowId: "w1" } };
-    const slot = renderSlot(plugin.navPanels[0]!, { subPath: "digest" }, { pluginId: "tavern", experimental_rpcContract: rpcContract, rpc: { registry: () => structuredClone(scenes.registry), room: () => structuredClone(room), away: () => control(), awayDigest: () => structuredClone(digest) } as Partial<Handlers> as Handlers });
+    const slot = renderSlot(plugin.navPanels[0]!, { subPath: "digest" }, { pluginId: "tavern", experimental_rpcContract: contract, rpc: { registry: () => structuredClone(scenes.registry), room: () => structuredClone(room), away: () => control(), awayDigest: () => structuredClone(digest) } as Partial<Handlers> as Handlers });
     slots.push(slot);
     await slot.findByRole("heading", { name: "Returned while you were away" }, LOADED);
     expect([...slot.container.querySelectorAll<HTMLElement>(".tv-digest-grid > [data-sec]")].map((s) => s.dataset.sec)).toEqual(["asks", "returned", "other", "events"]);
@@ -317,7 +344,7 @@ describe("While closed (the digest)", () => {
     const room: Room = { ...scenes.richRoom, away: { closed: false, until: null, dueBack: false, windowId: "w1" } };
     const three = [ask("a1", 1), ask("a2", 2), ask("a3", 3)].map((a) => ({ ask: a, waitingAtEnd: false }));
     const paged = vi.fn((input: { askCursor?: string | null }) => input.askCursor === "c2" ? { ...digest, asks: [{ ask: ask("a4", 4), waitingAtEnd: false }], nextAskCursor: null } : { ...digest, totalAsks: 4, asks: three, nextAskCursor: "c2" });
-    const slot = renderSlot(plugin.navPanels[0]!, { subPath: "digest" }, { pluginId: "tavern", experimental_rpcContract: rpcContract, rpc: { registry: () => structuredClone(scenes.registry), room: () => structuredClone(room), away: () => control(), awayDigest: paged } as Partial<Handlers> as Handlers });
+    const slot = renderSlot(plugin.navPanels[0]!, { subPath: "digest" }, { pluginId: "tavern", experimental_rpcContract: contract, rpc: { registry: () => structuredClone(scenes.registry), room: () => structuredClone(room), away: () => control(), awayDigest: paged } as Partial<Handlers> as Handlers });
     slots.push(slot);
     const asks = await waitFor(() => { const sec = slot.container.querySelector<HTMLElement>('[data-sec="asks"]'); expect(sec).not.toBeNull(); return sec!; }, LOADED);
     expect(asks.querySelector(".tv-count")!.textContent).toBe("4 asks");
@@ -330,14 +357,14 @@ describe("While closed (the digest)", () => {
   it("says how many it shows when the server holds more asks than it sent and offers no next page", async () => {
     const plugin = await loadPluginApp(async () => ({ default: definePluginApp(registerPageSurfaces) }));
     const room: Room = { ...scenes.richRoom, away: { closed: false, until: null, dueBack: false, windowId: "w1" } };
-    const slot = renderSlot(plugin.navPanels[0]!, { subPath: "digest" }, { pluginId: "tavern", experimental_rpcContract: rpcContract, rpc: { registry: () => structuredClone(scenes.registry), room: () => structuredClone(room), away: () => control(), awayDigest: () => ({ ...digest, totalAsks: 4, nextAskCursor: null }) } as Partial<Handlers> as Handlers });
+    const slot = renderSlot(plugin.navPanels[0]!, { subPath: "digest" }, { pluginId: "tavern", experimental_rpcContract: contract, rpc: { registry: () => structuredClone(scenes.registry), room: () => structuredClone(room), away: () => control(), awayDigest: () => ({ ...digest, totalAsks: 4, nextAskCursor: null }) } as Partial<Handlers> as Handlers });
     slots.push(slot);
     const rest = await waitFor(() => { const r = slot.container.querySelector<HTMLElement>('[data-sec="asks"] [data-rest]'); expect(r).not.toBeNull(); return r!; }, LOADED);
     expect(rest.textContent).toBe("2 of 4 shown");
   });
   it("says the tavern hasn't closed yet when there is no window", async () => {
     const plugin = await loadPluginApp(async () => ({ default: definePluginApp(registerPageSurfaces) }));
-    const slot = renderSlot(plugin.navPanels[0]!, { subPath: "digest" }, { pluginId: "tavern", experimental_rpcContract: rpcContract, rpc: { registry: () => structuredClone(scenes.registry), room: () => structuredClone(open) } as Partial<Handlers> as Handlers });
+    const slot = renderSlot(plugin.navPanels[0]!, { subPath: "digest" }, { pluginId: "tavern", experimental_rpcContract: contract, rpc: { registry: () => structuredClone(scenes.registry), room: () => structuredClone(open) } as Partial<Handlers> as Handlers });
     slots.push(slot);
     expect(await slot.findByText(/hasn’t closed yet/, undefined, LOADED)).toBeTruthy();
   });

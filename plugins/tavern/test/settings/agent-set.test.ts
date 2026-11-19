@@ -5,6 +5,26 @@ import { settingsCommands } from "../../src/server/settings/cli";
 import { SettingsStore } from "../../src/server/settings/store";
 import { MIGRATIONS } from "../../src/server/migrations";
 import type { Database } from "../../src/server/ports";
+it.each([["keepers.alwaysAsk", "[keepers]\\nalways_ask = []"], ["away.neverWhileClosed", "[away]\\nnever_while_closed = []"]])("reserves %s for the user anywhere settings can be applied", async (key, toml) => {
+ const db = new Sqlite(":memory:"); db.exec(MIGRATIONS.join("\n"));
+ try {
+  const store = new SettingsStore(db as unknown as Database);
+  const cli = defineCli({name:"tavern",summary:"Test",commands:settingsCommands({} as BbPluginApi,store)});
+  const set = ["settings","set",`${key}=[]`], agent = {threadId:"plain-agent"};
+  expect((await cli.run(set, agent)).exitCode).toBe(0);
+  for(const cmd of [set, ["settings","import","--toml",toml.replace(/\\n/g,"\n")]]) {
+   const refused = await cli.run([...cmd,"--apply"],agent);
+   expect(refused.exitCode).toBe(1);
+   expect(refused.stderr).toContain(key);
+   expect(store.snapshot().revision).toBe(0);
+  }
+  expect((await cli.run([...set,"--apply"],{})).exitCode).toBe(0);
+  const importingOtherKeys = await cli.run(["settings","import","--toml","[tavern]\nrepeat_seconds = 23","--apply"],agent);
+  expect(importingOtherKeys.exitCode).toBe(1);
+  expect(importingOtherKeys.stderr).toContain(key);
+  expect(store.snapshot().revision).toBe(1);
+ } finally {db.close();}
+});
 it("previews multiple keys, audits an agent apply and allows undo", async () => {
  const db = new Sqlite(":memory:"); db.exec(MIGRATIONS.join("\n"));
  try {

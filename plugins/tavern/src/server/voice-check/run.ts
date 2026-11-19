@@ -24,6 +24,7 @@ export type VoiceCheckDeps = {
   store: KeeperStore;
   pluginId: string;
   now: () => number;
+  checksPerHour?: () => number;
   sleep: (ms: number, signal: AbortSignal) => Promise<void>;
   log: (level: "info" | "warn", message: string) => void;
   invalidate: (tags: string[]) => void;
@@ -130,7 +131,8 @@ export class VoiceCheckRunner {
 
   private cap(all: Run[]) {
     const since = this.deps.now() - HOUR, recent = all.filter((r) => r.startedAt > since && voiceCheckCharged(r)).sort((a, b) => a.startedAt - b.startedAt);
-    return { used: recent.length, max: VOICE_CHECK_PER_HOUR, nextAt: recent.length >= VOICE_CHECK_PER_HOUR ? recent[0]!.startedAt + HOUR : null };
+    const max = this.deps.checksPerHour?.() ?? VOICE_CHECK_PER_HOUR;
+    return { used: recent.length, max, nextAt: recent.length >= max ? recent[recent.length - max]!.startedAt + HOUR : null };
   }
 
   /** Writes the run unless something else (a restart's recovery) has already finished it. */

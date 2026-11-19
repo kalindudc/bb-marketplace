@@ -2,7 +2,7 @@ import Sqlite from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import { SettingsStore } from "../../src/server/settings/store";
 import { evaluateRules, runTuner, TUNING_RULES, type TuningSignals } from "../../src/server/settings/tuner";
-import { TUNABLES, TUNABLE_KEYS, settingsSchema } from "../../src/shared/settings";
+import { DEFAULT_SETTINGS, TUNABLES, TUNABLE_KEYS, settingsSchema } from "../../src/shared/settings";
 import { LIMITS } from "../../src/server/limits";
 import { MIGRATIONS } from "../../src/server/migrations";
 import type { Database } from "../../src/server/ports";
@@ -49,7 +49,7 @@ describe("deterministic tuning", () => {
     const { store, advance } = fixture("apply");
     store.applyTuned({ tickSeconds: 120 }, "Earlier tuning", { section: "reliability", chart: "ticks" });
     store.update({ revision: store.snapshot().revision, patch: { knobs: { tickSeconds: 80 } }, why: "My value" });
-    advance(LIMITS.tuningCooldownMs);
+    advance(DEFAULT_SETTINGS.tuning.cooldownDays * LIMITS.dayMs);
     const evidence = signals(); evidence.keeperTurnSeconds = [];
     const proposals = runTuner(store, "after-edit", evidence);
     expect(proposals.find(p => p.key === "tickSeconds")?.value).toBe(100);
@@ -72,6 +72,17 @@ describe("deterministic tuning", () => {
     store.update({ revision: store.snapshot().revision, patch: { knobs: { rangerTimeboxMaxMinutes: 24 } }, why: "User budget" });
     runTuner(store, "daily:budget", signals());
     expect(store.read().knobs.rangerTimeboxMaxMinutes).toBe(24); expect(store.snapshot().rows.some(row => String(row.key) === "rangerTimeboxMaxMinutes")).toBe(false);
+  });
+  it("uses the chosen evidence minimum and cooldown", () => {
+    const { store, advance } = fixture("apply");
+    const evidence = { ...signals(), ticks: 5, held: 5, deferred: 0, reportIntervals: [], reportsPerMinute: [] };
+    expect(runTuner(store, "not-enough-samples", evidence)).toEqual([]);
+    store.update({ revision: store.snapshot().revision, patch: { tuning: { minSamples: 5, cooldownDays: 1 } }, why: "Faster checks" });
+    expect(runTuner(store, "initial", evidence)[0]?.reason).toContain("After 5 tick attempts");
+    advance(86_400_000 - 1);
+    expect(runTuner(store, "held", evidence)).toEqual([]);
+    advance(1);
+    expect(runTuner(store, "allowed", evidence)).not.toEqual([]);
   });
   it("never tunes from insufficient data or reduces a reliability allowance", () => {
     const input = signals();

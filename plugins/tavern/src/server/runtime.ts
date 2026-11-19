@@ -182,6 +182,7 @@ export class TavernRuntime {
   settingsChanged() {
     const next = this.config(), previous = this.previousSettings;
     this.previousSettings = next;
+    if (previous) this.keeper.authority.applyAskPolicy(previous.keepers.alwaysAsk, next.keepers.alwaysAsk);
     this.reviewCache = null;
     if (this.scopes && this.scopes.api.mode() !== next.scopes.mode)
       this.scopes.api.setMode(next.scopes.mode);
@@ -439,7 +440,7 @@ export class TavernRuntime {
   }
   private ensureBriefBlocker(threadId: string) {
     const pending = this.keeper.store.runtime(threadId).pendingBrief;
-    if (!pending || pending.attempts < LIMITS.briefRetryAttempts || this.config().tavern.paused) return;
+    if (!pending || pending.attempts < this.config().keepers.briefRetryAttempts || this.config().tavern.paused) return;
     if (pending.blockerAskId && this.keeper.store.get("asks", pending.blockerAskId)?.state === "open") return;
     const member = this.keeper.member(threadId);
     if (!member?.keeperThreadId) throw new Error("An unbriefed member needs its owning Keeper");
@@ -447,7 +448,7 @@ export class TavernRuntime {
       const ask = this.keeper.ask(member.keeperThreadId!, { effect: { type: "retry-brief", threadId, briefId: pending.id },
         boardQuestId: member.boardQuestId, kind: "blocker",
         question: `${this.keeper.name(member)}'s brief needs help`,
-        why: `Delivery or confirmation failed after ${LIMITS.briefRetryAttempts} attempts. The member and its slot are retained. ${pending.error ?? "No acceptance receipt was found."}`,
+        why: `Delivery or confirmation failed after ${this.config().keepers.briefRetryAttempts} ${this.config().keepers.briefRetryAttempts === 1 ? "attempt" : "attempts"}. The member and its slot are retained. ${pending.error ?? "No acceptance receipt was found."}`,
         options: [{ id: "retry", label: "Retry the brief", detail: "Allow another bounded delivery attempt", recommended: true },
           { id: "release", label: "Release the member", detail: "Stop it and free its slot after confirmation", recommended: false }],
         holds: member.waypointId ? [member.waypointId] : [], meanwhile: "Do not hire a duplicate for this slot; other work may continue.",
@@ -498,7 +499,7 @@ export class TavernRuntime {
           return { briefPending: true };
         }
       }
-      if (pending.attempts >= LIMITS.briefRetryAttempts) {
+      if (pending.attempts >= this.config().keepers.briefRetryAttempts) {
         this.keeper.store.patch(threadId, { pendingBrief: { ...pending, nextAttemptAt: this.keeper.now() + LIMITS.briefRetryMaxMs } });
         this.ensureBriefBlocker(threadId);
         return { briefPending: true };
@@ -522,13 +523,13 @@ export class TavernRuntime {
       return { briefPending: true };
     } catch (error) {
       this.requireBriefableMember(threadId);
-      attempt.attempts = Math.min(attempt.attempts, LIMITS.briefRetryAttempts);
+      attempt.attempts = Math.min(attempt.attempts, this.config().keepers.briefRetryAttempts);
       attempt.error = String(error).slice(0, 1000);
       this.keeper.store.atomic(() => {
         this.keeper.store.patch(threadId, { pendingBrief: attempt });
         this.keeper.store.event(this.keeper.now(), member.keeperThreadId, member.boardQuestId, "member.unbriefed",
           `${this.keeper.name(member)}'s brief delivery failed on attempt ${attempt.attempts}: ${attempt.error}`,
-          { memberThreadId: threadId, attempts: attempt.attempts, nextAttemptAt: attempt.nextAttemptAt, exhausted: attempt.attempts >= LIMITS.briefRetryAttempts });
+          { memberThreadId: threadId, attempts: attempt.attempts, nextAttemptAt: attempt.nextAttemptAt, exhausted: attempt.attempts >= this.config().keepers.briefRetryAttempts });
       });
       this.keeper.changed(threadId, member.boardQuestId);
       this.ensureBriefBlocker(threadId);
@@ -834,7 +835,7 @@ export class TavernRuntime {
     this.bb.rpc.experimental_invalidate([tags.thread(threadId)]);
   }
   private registryFailureBlocker(threadId: string, member: Member | null, hire: HireIntent | null | undefined, problem: string, since: number) {
-    if (this.keeper.now() - since < LIMITS.registryBlockerMs || this.config().tavern.paused) return;
+    if (this.keeper.now() - since < this.config().keepers.registryBlockerMinutes * 60_000 || this.config().tavern.paused) return;
     const keeperId = member?.keeperThreadId ?? hire?.owner.keeperThreadId;
     if (!keeperId || this.keeper.member(keeperId)?.role !== "keeper") return;
     const state = this.keeper.store.runtime(threadId);
@@ -1031,7 +1032,7 @@ export class TavernRuntime {
       }
     }
     const scopeNote = requiredScope ? `the ${label}'s existing scope still applies` : "the current scope settings are unchanged";
-    this.keeper.store.patch(ctx.thread.id, { classNotice: { message: `Tavern's checks failed: ${reason}. Your message was allowed through after 30 seconds; ${scopeNote}.${issues.size ? " " + [...issues].join(". ") : ""}`, settings: true, switchExecution: null } });
+    this.keeper.store.patch(ctx.thread.id, { classNotice: { message: `Tavern's checks failed: ${reason}. Your message was allowed through after ${this.config().keepers.registryWaitSeconds} seconds; ${scopeNote}.${issues.size ? " " + [...issues].join(". ") : ""}`, settings: true, switchExecution: null } });
     this.bb.rpc.experimental_invalidate([tags.thread(ctx.thread.id)]);
     return { action: "proceed" as const };
   }
@@ -1064,7 +1065,7 @@ export class TavernRuntime {
       if (binding && this.humanThread(ctx, binding)) {
         const since = this.keeper.store.runtime(ctx.thread.id).dispatchFailureSince ?? startedAt;
         this.keeper.store.patch(ctx.thread.id, { dispatchFailureSince: since });
-        const remaining = LIMITS.registryKeeperWaitMs - (this.keeper.now() - since);
+        const remaining = this.config().keepers.registryWaitSeconds * 1000 - (this.keeper.now() - since);
         if (remaining <= 0) return this.admitHumanFallback(ctx, binding, (error instanceof Error ? error.message : String(error)).slice(0, 1000));
         return { action: "wait" as const, reason: "Tavern could not safely admit this message", sendAt: this.keeper.now() + Math.min(LIMITS.registryKeeperRetryMs, remaining) };
       }
@@ -1102,7 +1103,7 @@ export class TavernRuntime {
     const soloStart = !keeperStart && this.humanThread(ctx, binding);
     const boundedRegistry = keeperStart || soloStart;
     const since = this.keeper.store.runtime(ctx.thread.id).registryWaitSince ?? this.keeper.now();
-    const lookupMs = boundedRegistry ? Math.max(0, Math.min(20_000, LIMITS.registryKeeperWaitMs - (this.keeper.now() - since))) : 20_000;
+    const lookupMs = boundedRegistry ? Math.max(0, Math.min(20_000, this.config().keepers.registryWaitSeconds * 1000 - (this.keeper.now() - since))) : 20_000;
     let registryProblem: string | null = null;
     let fallbackRegistry: RegistrySnapshot | null = null;
     try { await loopCall(this.prepareRegistry(ctx.project.id), "dispatch project class lookup", lookupMs); }
@@ -1111,9 +1112,9 @@ export class TavernRuntime {
       this.bb.log.warn(registryProblem);
       this.keeper.store.patch(ctx.thread.id, { registryWaitSince: since });
       if (member?.role === "keeper") this.recordRegistryFailure(member.threadId, registryProblem);
-      const remaining = LIMITS.registryKeeperWaitMs - (this.keeper.now() - since);
+      const remaining = this.config().keepers.registryWaitSeconds * 1000 - (this.keeper.now() - since);
       if (soloStart) {
-        this.keeper.store.patch(ctx.thread.id, { classRootProblem: registryProblem, classNotice: { message: `${registryProblem} Retrying for up to 30 seconds.`, settings: true, switchExecution: null } });
+        this.keeper.store.patch(ctx.thread.id, { classRootProblem: registryProblem, classNotice: { message: `${registryProblem} Retrying for up to ${this.config().keepers.registryWaitSeconds} seconds.`, settings: true, switchExecution: null } });
         this.bb.rpc.experimental_invalidate([tags.thread(ctx.thread.id)]);
         if (remaining <= 0) return this.admitHumanFallback(ctx, binding, registryProblem);
       }
@@ -1385,7 +1386,7 @@ export class TavernRuntime {
     if (count >= config.keepers.partyMax) throw new Error("The live party budget is full");
     const partyDecision = count >= partyLimit ? limits.softDecision(threadId, questId, "party") : null;
     if (count >= partyLimit && !partyDecision) throw new Error("The live party budget is full");
-    const rangerFull = role.id === "ranger" && party.filter(m => m.classId === "ranger").length + reserved.filter(i => i.classId === "ranger").length >= (lead.budget?.rangers ?? LIMITS.rangerCapacity);
+    const rangerFull = role.id === "ranger" && party.filter(m => m.classId === "ranger").length + reserved.filter(i => i.classId === "ranger").length >= (lead.budget?.rangers ?? this.config().keepers.rangerMax);
     const rangerDecision = rangerFull ? limits.softDecision(threadId, questId, "rangers") : null;
     const limitDecisionIds = [partyDecision, rangerDecision].filter((id): id is string => id !== null);
     if (rangerFull && !rangerDecision) throw new Error("The Ranger budget is full");
@@ -1909,7 +1910,8 @@ export class TavernRuntime {
     this.keeper.liveQuest(threadId, member.boardQuestId);
     this.keeper.assertQuestNotHeld(member.boardQuestId);
     if (!restingEngagement(this.keeper, member)) throw new Error("Only a resting member can be kept");
-    if (!Number.isSafeInteger(until) || until <= this.keeper.now() || until > this.keeper.now() + 24 * 60 * 60_000) throw new Error("Keep needs a future time within 24 hours");
+    const maxHours = this.config().keepers.keepMaxHours;
+    if (!Number.isSafeInteger(until) || until <= this.keeper.now() || until > this.keeper.now() + maxHours * 60 * 60_000) throw new Error(`Keep needs a future time within ${maxHours} hours`);
     if (!why.trim()) throw new Error("Keep needs a reason");
     this.keeper.guard(threadId, member.boardQuestId);
     return this.keeper.store.atomic(() => {
@@ -2275,7 +2277,7 @@ export class TavernRuntime {
     const delivery = await this.sendRebrief(memberThreadId, text);
     const pending = this.keeper.store.runtime(memberThreadId).pendingBrief;
     const status = !delivery.briefPending ? "delivered"
-      : pending!.error && pending!.attempts >= LIMITS.briefRetryAttempts ? "blocked"
+      : pending!.error && pending!.attempts >= this.config().keepers.briefRetryAttempts ? "blocked"
       : pending!.error ? "retrying" : "queued";
     if (delivery.briefPending) {
       this.keeper.store.event(
@@ -2518,7 +2520,7 @@ export class TavernRuntime {
         }
       }
       state = this.keeper.store.runtime(member.threadId);
-      if (this.keeper.member(member.threadId)?.stopPending && this.keeper.now() - (q.stoppingSince ?? q.updatedAt) >= 120000 &&
+      if (this.keeper.member(member.threadId)?.stopPending && this.keeper.now() - (q.stoppingSince ?? q.updatedAt) >= this.config(q.id).keepers.stopAskAfterSeconds * 1000 &&
         !state.stopAskId) {
         const ask = this.keeper.ask(keeperId, { effect: { type: "retry-stop", memberThreadId: member.threadId },
           boardQuestId: q.id, kind: "blocker", question: `Stop is not confirmed for ${this.keeper.name(member)}`,
@@ -2533,7 +2535,7 @@ export class TavernRuntime {
     const pendingHires = this.keeper.pendingStopHires(q.id);
     const current = this.keeper.quest(q.id);
     if (current.phase !== "stopping") return;
-    if (pendingHires.length && this.keeper.now() - (q.stoppingSince ?? q.updatedAt) >= 120000 && !current.stopHireAskId) {
+    if (pendingHires.length && this.keeper.now() - (q.stoppingSince ?? q.updatedAt) >= this.config(q.id).keepers.stopAskAfterSeconds * 1000 && !current.stopHireAskId) {
       const stopHireTokens = pendingHires.map(hire => hire.token);
       const ask = this.keeper.ask(keeperId, { effect: { type: "retry-stop", hireTokens: stopHireTokens },
         boardQuestId: q.id, kind: "blocker", question: `Stop is waiting for ${pendingHires.length} unconfirmed hire(s)`,
@@ -2824,18 +2826,19 @@ export class TavernRuntime {
       this.cancelTick(text);
       const pending = this.keeper.store.runtime(entry.threadId).pendingBrief;
       if (pending && text.startsWith(`[Tavern brief] id=${pending.id}\n`)) {
-        this.keeper.store.patch(entry.threadId, { pendingBrief: { ...pending, attempts: LIMITS.briefRetryAttempts, nextAttemptAt: this.keeper.now(), error: "The queued brief was cancelled. It will not be sent again without an explicit retry." } });
+        this.keeper.store.patch(entry.threadId, { pendingBrief: { ...pending, attempts: this.config().keepers.briefRetryAttempts, nextAttemptAt: this.keeper.now(), error: "The queued brief was cancelled. It will not be sent again without an explicit retry." } });
         this.ensureBriefBlocker(entry.threadId);
       }
     } else if (isUser(entry)) this.keeper.cancelUser(entry.threadId, entry.id);
   }
   private ensureFailureBlocker(threadId: string) {
     const state = this.keeper.store.runtime(threadId);
-    if (this.config().tavern.paused || Math.max(state.failureCount ?? 0, state.tickRefusalCount ?? 0) < 2) return;
+    const config = this.config(), failures = config.keepers.failuresBeforeAsk;
+    if (config.tavern.paused || Math.max(state.failureCount ?? 0, state.tickRefusalCount ?? 0) < failures) return;
     if (state.failureAskId && this.keeper.store.get("asks", state.failureAskId)?.state === "open") return;
     const ask = this.keeper.ask(threadId, { effect: { type: "retry-provider" },
       kind: "blocker",
-      question: (state.tickRefusalCount ?? 0) >= 2 ? "The host refused two Keeper ticks in a row" : "The Keeper's provider failed two turns in a row",
+      question: (state.tickRefusalCount ?? 0) >= failures ? `The host refused ${failures === 2 ? "two" : failures} Keeper ${failures === 1 ? "tick" : "ticks"} in a row` : `The Keeper's provider failed ${failures === 2 ? "two" : failures} ${failures === 1 ? "turn" : "turns"} in a row`,
       why: (state.lastFailure ?? "Provider turn failed").slice(0, 200),
       options: [
         { id: "retry", label: "Retry", detail: "Allow another recovery attempt", recommended: true },
@@ -2852,7 +2855,7 @@ export class TavernRuntime {
     const state = this.keeper.store.runtime(threadId);
     this.keeper.store.patch(threadId, {
       tickRefusalCount: (state.tickRefusalCount ?? 0) + 1,
-      tickRetryAt: this.keeper.now() + LIMITS.retryMs,
+      tickRetryAt: this.keeper.now() + this.config().keepers.retryAfterSeconds * 1000,
       lastFailure: String(error).slice(0, 2000),
     });
     this.ensureFailureBlocker(threadId);
@@ -2939,7 +2942,7 @@ export class TavernRuntime {
       failedRequests: requestId ? [...(state.failedRequests ?? []), requestId].slice(-50) : state.failedRequests,
     });
     if (this.config().tavern.paused) return;
-    if (count >= 2) { this.ensureFailureBlocker(threadId); return; }
+    if (count >= this.config().keepers.failuresBeforeAsk) { this.ensureFailureBlocker(threadId); return; }
     this.keeper.reanchor(threadId, "failed turn");
   }
   async threadStarted(thread: Thread) {
