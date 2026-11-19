@@ -16,7 +16,7 @@ export interface TransferContext extends HostContext { authority: TransferAuthor
 export function hostContext(registry: HostRegistry, authority: Authority, access: EndpointRegistration["access"][], signal: AbortSignal): HostContext {
   const endpoint = registry.endpoint(authorityOf(authority), access), root = endpoint.realRoot;
   const active = () => { if (signal.aborted) throw abortError(); registry.endpoint(authorityOf(authority), access); };
-  const options = (extra?: Partial<GitOptions>): GitOptions => ({ ...extra, dataDir: registry.dataDir, signal, check: active });
+  const options = (extra?: Partial<GitOptions>): GitOptions => ({ ...extra, dataDir: registry.dataDir, signal, check: active, kind: endpoint.registration.git, metadata: endpoint.inspection });
   const portable = (args: readonly string[]) => {
     if (endpoint.registration.git === "full") return;
     const commands = new Set(["rev-parse", "symbolic-ref", "status", "diff", "show", "cat-file", "ls-files", "add", "commit", "remote", "for-each-ref", "fetch", "push", "config"]);
@@ -40,7 +40,7 @@ export async function assertRepository(context: HostContext): Promise<void> {
   if (realpathSync(resolve(root, actualRoot)) !== root)
     throw new HostError("source-root-required", "The source checkout must be a repository root; choose an appropriate Keeper environment. Tavern will not expand it to a parent repository.");
   const [paths, format, branch] = await Promise.all([
-    context.git(["rev-parse", "--git-dir", ...(endpoint.registration.git === "full" ? ["--git-common-dir"] : [])]), repositoryObjectFormat(root, { dataDir: context.registry.dataDir, signal: context.signal, check: context.active }),
+    context.git(["rev-parse", "--git-dir", ...(endpoint.registration.git === "full" ? ["--git-common-dir"] : [])]), repositoryObjectFormat(root, { dataDir: context.registry.dataDir, signal: context.signal, check: context.active, kind: endpoint.registration.git, metadata: endpoint.inspection }),
     endpoint.registration.access === "member-write" ? context.git(["symbolic-ref", "--short", "-q", "HEAD"]) : Promise.resolve(null),
   ]);
   const [gitDir, reportedCommonDir] = paths.split("\n");

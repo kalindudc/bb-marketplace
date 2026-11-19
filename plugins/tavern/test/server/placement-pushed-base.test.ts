@@ -4,6 +4,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { realGit } from "../host/emulated-git";
+import { serveGit } from "../host/git-daemon";
 import { inspectHost } from "../../src/host/inspect";
 import { SourceCapture } from "../../src/server/placement/capture";
 import type { KnownSource, SourceDiscovery } from "../../src/server/placement/source-discovery";
@@ -13,8 +14,9 @@ import { submissionFixture } from "./placement-e2e-submission";
 import { preservationFixture } from "./placement-e2e-preserve";
 const git = (root: string, ...args: string[]) => execFileSync(realGit, ["-C", root, ...args], { encoding: "utf8", stdio: "pipe" }).trim();
 it.each([false, true])("captures only the advertised default tip without source writes (missing objects %s)", async missing => {
-  const f = await submissionFixture();
+  const f = await submissionFixture(), network = await serveGit(f.home);
   try {
+    git(f.maker, "remote", "set-url", "origin", network.url);
     writeFileSync(join(f.maker, "local-only"), "unpushed"); git(f.maker, "add", "local-only");
     git(f.maker, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "unpushed");
     writeFileSync(join(f.maker, "local-only"), "dirty local bytes");
@@ -41,12 +43,12 @@ it.each([false, true])("captures only the advertised default tip without source 
     expect(git(f.maker, "rev-parse", "HEAD")).toBe(before.head); expect(git(f.maker, "show-ref")).toBe(before.refs);
     expect(git(f.maker, "count-objects", "-v")).toBe(before.objects); expect(readFileSync(join(f.maker, ".git/index"))).toEqual(before.index);
     expect(readFileSync(join(f.maker, "local-only"), "utf8")).toBe("dirty local bytes");
-  } finally { await f.close(); }
+  } finally { await network.close(); await f.close(); }
 }, 120_000);
 it("preserves pushed-only work in the recorded private repository without changing the user's checkout", async () => {
-  const f = await preservationFixture();
+  const f = await preservationFixture(), network = await serveGit(f.home);
   try {
-    git(f.home, "remote", "add", "origin", f.home);
+    git(f.home, "remote", "add", "origin", network.url);
     writeFileSync(join(f.home, "tracked"), "user staged"); git(f.home, "add", "tracked");
     writeFileSync(join(f.home, "tracked"), "user unstaged");
     const authority = { placementId: "pushed-preserve-source", generation: 1, endpointId: "source", operationId: "inspect" };
@@ -65,5 +67,5 @@ it("preserves pushed-only work in the recorded private repository without changi
     expect(git(f.home, "rev-parse", "HEAD")).toBe(before.head); expect(git(f.home, "show-ref")).toBe(before.refs);
     expect(git(f.home, "count-objects", "-v")).toBe(before.objects); expect(readFileSync(join(f.home, ".git/index"))).toEqual(before.index);
     expect(readFileSync(join(f.home, "tracked"), "utf8")).toBe("user unstaged");
-  } finally { await f.close(); }
+  } finally { await network.close(); await f.close(); }
 }, 120_000);

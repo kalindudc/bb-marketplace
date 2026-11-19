@@ -16,7 +16,7 @@ export class HostError extends Error {
     this.name = "TavernHostError";
   }
 }
-const inspectionSchema = z.object({ objectFormat: objectFormatSchema, branch: z.string().nullable(), gitDir: z.string(), commonDir: z.string(), sparse: z.boolean() }).strict();
+const inspectionSchema = z.object({ objectFormat: objectFormatSchema, branch: z.string().nullable(), gitDir: z.string(), commonDir: z.string(), sparse: z.boolean(), fetchRemote: z.string().optional() }).strict();
 export const completedImportSchema = z.object({ digest: z.string(), sha: z.string(), tree: z.string(), refs: z.array(gitRefSchema).max(4).optional() }).strict();
 const snapshotRefReleaseSchema = z.object({ transferId: z.string(), ref: gitRefSchema, sha: z.string(), phase: z.enum(["releasing", "released"]) }).strict();
 const registeredEndpointSchema = z.object({

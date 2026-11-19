@@ -1,6 +1,6 @@
 import { dirname, isAbsolute, join } from "node:path";
 import { readFileSync, statSync } from "node:fs";
-import { execFileSync } from "node:child_process";
+import { execGitSync } from "../shared/git-safety";
 import { realPath, within } from "./paths";
 import { gitWorktreeRoot } from "./worktree";
 import type { Scope } from "./schema";
@@ -18,7 +18,7 @@ export function bindChecks(scope: Scope): Scope {
 export function checkerWritePaths(scope: Scope): { allow: string[]; directories: string[]; deny: string[]; ancestors: string[] } {
   const root = bindChecks(scope).checks?.worktree;
   if (!root) throw new Error("The checker has no maker worktree");
-  const git = (args: string[], input?: string) => execFileSync("git", ["-C", root, "-c", "core.fsmonitor=false", ...args], { input, encoding: "utf8", timeout: 3000, maxBuffer: 8 * 1024 * 1024, stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" } });
+  const git = (args: string[], input?: string) => execGitSync(root, args, { input, readOnly: true, encoding: "utf8", timeout: 3000, maxBuffer: 8 * 1024 * 1024, stdio: ["pipe", "pipe", "pipe"] });
   const entries = (value: string) => value.split("\0").filter(Boolean);
   const tracked = entries(git(["ls-files", "--cached", "-z"])).map(path => join(root, path));
   for (const path of tracked) {

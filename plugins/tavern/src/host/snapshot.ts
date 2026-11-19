@@ -1,13 +1,13 @@
-import { experimental_runVcsProcess } from "@get-bb/plugin-sdk/host";
 import { copyFileSync, existsSync, lstatSync, mkdtempSync, readlinkSync, rmSync, statSync, utimesSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { BLOB_MAX_BYTES, hostContract, repoPathSchema, type HostInput, type HostOutput } from "../host-contract";
 import { assertRepository, hostContext, onCheckout, type HostContext } from "./context";
-import { gitEnvironment, rawChanges, requireSparseGit, runGitProcess, withGitDeadline } from "./git";
+import { rawChanges, requireSparseGit, withGitDeadline } from "./git";
+import { dirtySubmodules } from "./submodules";
 import { porcelainSnapshot } from "./porcelain";
 import { authorityOf, HostError, type HostRegistry } from "./registry";
 
-const config = ["-c", "gc.auto=0", "-c", "maintenance.auto=false", "-c", "core.splitIndex=false"];
+const config = ["-c", "core.splitIndex=false"];
 const paths = (text: string) => text.split("\0").filter(Boolean);
 type Snapshot = Extract<HostOutput<"snapshotWorktree">, { commit: string }>;
 
@@ -33,14 +33,7 @@ async function capture(context: HostContext, input: HostInput<"snapshotWorktree"
       utimesSync(index, stat.atime, stat.mtime);
     }
     const indexed = async (args: string[], input?: string, extra?: Record<string, string>): Promise<string> => {
-      context.active();
-      const argv = ["-C", context.root, ...config, ...args];
-      const result = await experimental_runVcsProcess("git", argv, () => {
-        context.active();
-        return runGitProcess(argv, { env: { ...gitEnvironment(context.root, context.registry.dataDir, extra), GIT_INDEX_FILE: index }, input, signal: context.signal, timeoutMs: ["read-tree", "diff-files", "diff-index", "ls-files", "update-index", "add", "write-tree"].includes(args[0]!) ? 300_000 : 30_000, maxBuffer: 64 * 1024 * 1024 });
-      }, { priority: "background", signal: context.signal });
-      context.active();
-      if (result.timedOut) throw new HostError("git-timeout", "Git " + args[0] + " exceeded the source snapshot deadline.", true);
+      const result = await context.run([...config, ...args], { env: { ...extra, GIT_INDEX_FILE: index }, privateIndex: index, input, timeoutMs: ["read-tree", "diff-files", "diff-index", "ls-files", "update-index", "add", "write-tree"].includes(args[0]!) ? 300_000 : 30_000 });
       if (result.code !== 0) throw new HostError("snapshot-failed", "Git " + args[0] + " failed while taking a read-only source snapshot: " + (result.stderr.trim() || result.stdout.trim()).slice(-2000));
       return args.includes("-z") ? result.stdout : result.stdout.trim();
     };
@@ -61,7 +54,10 @@ async function capture(context: HostContext, input: HostInput<"snapshotWorktree"
     }
     rawChanges(await indexed(["diff-index", "--cached", "--raw", "-z", "--no-renames", "HEAD", "--"]));
     await indexed(["update-index", "--no-split-index"]);
-    await indexed(["add", "-A", "--sparse", "--", "."]);
+    if (changed.length) {
+      // An unrestricted add asks child Git processes to inspect even unchanged Gitlinks.
+      await indexed(["add", "-A", "--sparse", "--pathspec-from-file=-", "--pathspec-file-nul"], changed.join("\0") + "\0", { GIT_LITERAL_PATHSPECS: "1" });
+    }
     const untrackedSet = new Set(untracked);
     const modified = paths(await indexed(["diff-index", "--cached", "--name-only", "--no-ext-diff", "--no-textconv", "-z", "HEAD", "--"])).filter(path => !untrackedSet.has(path));
     const tree = await indexed(["write-tree"]);
@@ -82,7 +78,9 @@ async function capture(context: HostContext, input: HostInput<"snapshotWorktree"
         entries.set(match[5]!, { mode: match[1]!, blob: match[3]!, size: Number(match[4]) });
       }
     }
-    const changedAfterAdd = await indexed(["diff-files", "--name-only", "--no-ext-diff", "--no-textconv", "-z", "--ignore-submodules=none", "--"]);
+    const dirtyModules = await dirtySubmodules(context.root, { dataDir: context.registry.dataDir, signal: context.signal, check: context.active, metadata: context.endpoint.inspection, timeoutMs: 300_000 });
+    if (dirtyModules.length) throw new HostError("submodule-unsupported", "Submodule changes cannot be transferred between machines: " + dirtyModules[0]);
+    const changedAfterAdd = await indexed(["diff-files", "--name-only", "--no-ext-diff", "--no-textconv", "-z", "--"]);
     if (changedAfterAdd || paths(await indexed(["ls-files", "--others", "--exclude-standard", "-z"])).length || await git(["rev-parse", "HEAD"]) !== head)
       throw new HostError("source-changed", "The source changed during its read-only snapshot; retry when it is idle.", true);
     const [name, email, authorDate, committerName, committerEmail, committerDate] = (await git(["show", "-s", "--format=%an%x00%ae%x00%at %ai%x00%cn%x00%ce%x00%ct %ci", head], { raw: true })).trimEnd().split("\0");

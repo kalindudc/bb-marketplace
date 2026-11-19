@@ -7,7 +7,7 @@ import { gitOidSchema } from "../shared/placement";
 import { experimental_runVcsProcess } from "@get-bb/plugin-sdk/host";
 import { BLOB_MAX_BYTES, hostContract, repoPathSchema, type HostOutput } from "../host-contract";
 import type { HostContext } from "./context";
-import { gitEnvironment } from "./git";
+import { gitEnvironment, gitInvocation } from "../shared/git-safety";
 import { HostError } from "./registry";
 import { rewriteTree, type TreeEntry } from "./tree";
 
@@ -42,15 +42,21 @@ export function treeObjectBytes(entries: ReadonlyMap<string, TreeEntry>): Buffer
 
 export async function readTreeBytes(context: HostContext, tree: string): Promise<Buffer> {
   const args = ["-C", context.root, "cat-file", "tree", tree];
-  return experimental_runVcsProcess("git", args, () => new Promise<Buffer>((resolve, reject) => {
-    const child = spawn("git", args, { env: gitEnvironment(context.root, context.registry.dataDir), signal: context.signal, stdio: ["ignore", "pipe", "pipe"] });
-    const chunks: Buffer[] = []; let size = 0, stderr = "";
-    const timer = setTimeout(() => child.kill("SIGKILL"), 30_000);
-    child.stdout.on("data", (bytes: Buffer) => { size += bytes.length; if (size > 64 * 1024 * 1024) child.kill("SIGKILL"); else chunks.push(bytes); });
-    child.stderr.on("data", bytes => { stderr = (stderr + bytes.toString()).slice(-2000); });
-    child.on("error", error => { clearTimeout(timer); reject(error); });
-    child.on("close", code => { clearTimeout(timer); try { context.active(); if (code !== 0 || size > 64 * 1024 * 1024) reject(new HostError("tree-read-failed", "Cannot read the pinned tree: " + stderr)); else resolve(Buffer.concat(chunks)); } catch (error) { reject(error); } });
-  }), { priority: "background", signal: context.signal });
+  return experimental_runVcsProcess("git", args, async () => {
+    const setup = { kind: context.endpoint.registration.git, metadata: context.endpoint.inspection, signal: context.signal };
+    const env = await gitEnvironment(context.root, setup);
+    const command = await gitInvocation(context.root, args, env, setup);
+    context.active();
+    return new Promise<Buffer>((resolve, reject) => {
+      const child = spawn(command.file, command.args, { env, signal: context.signal, stdio: ["ignore", "pipe", "pipe"] });
+      const chunks: Buffer[] = []; let size = 0, stderr = "";
+      const timer = setTimeout(() => child.kill("SIGKILL"), 30_000);
+      child.stdout.on("data", (bytes: Buffer) => { size += bytes.length; if (size > 64 * 1024 * 1024) child.kill("SIGKILL"); else chunks.push(bytes); });
+      child.stderr.on("data", bytes => { stderr = (stderr + bytes.toString()).slice(-2000); });
+      child.on("error", error => { clearTimeout(timer); reject(error); });
+      child.on("close", code => { clearTimeout(timer); try { context.active(); if (code !== 0 || size > 64 * 1024 * 1024) reject(new HostError("tree-read-failed", "Cannot read the pinned tree: " + stderr)); else resolve(Buffer.concat(chunks)); } catch (error) { reject(error); } });
+    });
+  }, { priority: "background", signal: context.signal });
 }
 
 // Ported from plugins/loom/src/host/ops.ts. The member hashes trees without writing Git objects or an index.

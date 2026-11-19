@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { execFileSync } from "node:child_process";
+import { execGitSync } from "../shared/git-safety";
 import { realPath, within } from "./paths";
 import { checkerWritePaths } from "./checker";
 import { join } from "node:path";
@@ -11,7 +11,7 @@ export function gitWriteRoots(root: string): string[] {
   const path = realPath(root);
   const cached = metadata.get(path);
   if (cached) return cached;
-  const roots = ["--git-dir", "--git-common-dir"].map(flag => realPath(execFileSync("git", ["-C", path, "rev-parse", "--path-format=absolute", flag], { encoding: "utf8", timeout: 3000, stdio: ["ignore", "pipe", "pipe"] }).trim()));
+  const roots = ["--git-dir", "--git-common-dir"].map(flag => realPath(execGitSync(path, ["rev-parse", "--path-format=absolute", flag], { encoding: "utf8", timeout: 3000, stdio: ["ignore", "pipe", "pipe"] }).trim()));
   metadata.set(path, [...new Set(roots)]);
   return metadata.get(path)!;
 }

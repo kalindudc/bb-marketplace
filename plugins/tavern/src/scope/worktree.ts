@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execGitSync } from "../shared/git-safety";
 import { lstatSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, parse } from "node:path";
@@ -25,9 +25,8 @@ export function checkedWorktreeRoot(path: string, home = homedir()): string {
 export function gitWorktreeRoot(cwd = process.cwd(), kind: Scope["workspaceKind"] = "linked-worktree"): string {
   let root: string;
   try {
-    root = execFileSync("git", ["-C", cwd, "rev-parse", "--show-toplevel"], {
+    root = execGitSync(cwd, ["rev-parse", "--show-toplevel"], {
       encoding: "utf8", timeout: 3000, stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
     }).trim();
   } catch { throw new Error("Cannot resolve the scoped worktree from the session's git toplevel"); }
   const checked = checkedWorktreeRoot(root);

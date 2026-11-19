@@ -15,7 +15,8 @@ import { atomicWrite, scopeArmedSchema } from "../scope/store";
 import { bindWorktree } from "../scope/worktree";
 import { assertRepository, hostContext, onCheckout, type HostContext } from "./context";
 import { abortError, runProcess } from "./process";
-import { gitEnvironment, runGit } from "./git";
+import { runGit } from "./git";
+import { gitEnvironment } from "../shared/git-safety";
 import { authorityOf, HostError, HostRegistry, type RegisteredEndpoint } from "./registry";
 
 const digest = (value: string) => createHash("sha256").update(value, "utf8").digest("hex");
@@ -160,6 +161,7 @@ export class NativeScopes {
     for (let pass = 0; pass < 8; pass++) {
       check(); const pending = new Map<string, Query>();
       const prepared = prepareFacts(call, { scope, readCommand: (program, args, cwd = call.cwd) => {
+        if (program === "git" && args[0] === "-C") { cwd = args[1]!; args = args.slice(2); }
         const key = JSON.stringify([program, args, cwd]), result = cached.get(key);
         if (result?.code === 0) return result.stdout;
         if (!result) pending.set(key, { program, args, cwd });
@@ -171,11 +173,11 @@ export class NativeScopes {
       for (const [key, query] of pending) {
         check(); const timeoutMs = Math.min(3000, deadline - Date.now());
         if (timeoutMs <= 0) throw new HostError("scope-facts-timeout", "Native scope fact preparation exceeded its deadline; retry after the host is available.", true);
-        const options = { dataDir: this.registry.dataDir, signal, check: active, timeoutMs, env: scope.env.variables };
+        const options = { dataDir: this.registry.dataDir, signal, check: active, timeoutMs, env: scope.env.variables, kind: context.endpoint.registration.git, metadata: realPath(query.cwd) === context.root ? context.endpoint.inspection : undefined };
         let result: Awaited<ReturnType<typeof runProcess>> | Awaited<ReturnType<typeof runGit>> | undefined;
         try {
           result = query.program === "git" ? await runGit(query.cwd, query.args, options)
-            : query.program === "gh" ? await runProcess("gh", query.args, { cwd: query.cwd, env: gitEnvironment(query.cwd, this.registry.dataDir, scope.env.variables), signal, timeoutMs, maxBuffer: 1024 * 1024 })
+            : query.program === "gh" ? await runProcess("gh", query.args, { cwd: query.cwd, env: await gitEnvironment(query.cwd, { kind: options.kind, extra: options.env, timeoutMs, signal, childGit: true }), signal, timeoutMs, maxBuffer: 1024 * 1024 })
             : undefined;
         } catch (error) { active(); throw error; }
         active();

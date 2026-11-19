@@ -199,7 +199,7 @@ describe("remote placement activation gate — incomplete until every pending ph
     expect(git(f.source, "rev-parse", pinned.homeRef + "^{tree}")).toBe(dirty.tree);
     expect(readFileSync(join(f.source, ".git/index"))).toEqual(stagedIndex);
     expect(git(f.source, "rev-parse", "HEAD")).toBe(f.head);
-  });
+  }, 60_000);
   it("DELIVER — prepares the marked artifact, retains unmarked files, and acknowledges exact host-bound scope bytes without controller paths", deliverGate, 60_000);
   it("READY — calls registered tavern_ready through authenticated context, carries initial content, and publishes the exact generation and tree without claiming arming", readyGate, 60_000);
   it("SMITH — snapshot a quiescent maker’s modified tracked and untracked source, pin its exact tree at home, and retain remote detection-only labels", proveSubmissionStage, 60_000);

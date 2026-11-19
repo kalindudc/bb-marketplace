@@ -8,6 +8,7 @@ import { git, runGit, withGitDeadline } from "./git";
 import { HostError, type HostRegistry } from "./registry";
 import { fetchUrl } from "./source-base";
 import { fetchBase } from "./transport";
+import { assertEffectiveRemote } from "./remote";
 
 export async function pushedBase(registry: HostRegistry, input: Authority, signal?: AbortSignal): Promise<HostOutput<"pushedBase">> {
   return registry.operation(input, signal, combined => withGitDeadline(async bounded => {
@@ -17,8 +18,10 @@ export async function pushedBase(registry: HostRegistry, input: Authority, signa
     const names = (await context.git(["remote"])).split("\n").filter(Boolean);
     if (names.length !== 1) throw new HostError("source-remote-ambiguous", "Pushed-only capture needs exactly one source remote; configure the selected repository's remote explicitly.");
     const remoteName = names[0]!, remoteUrl = fetchUrl(await context.git(["remote", "get-url", "--", remoteName]));
-    if (!remoteUrl) throw new HostError("source-remote-invalid", "The source remote has no safe fetch URL.");
-    const advertised = await context.git(["ls-remote", "--symref", "--exit-code", remoteUrl, "HEAD"], { timeoutMs: 120_000 });
+    if (!remoteUrl || remoteUrl !== context.endpoint.inspection?.fetchRemote)
+      throw new HostError("source-remote-invalid", "The source remote no longer matches the URL recorded at inspection.");
+    await assertEffectiveRemote(context, remoteUrl, "fetch");
+    const advertised = await context.git(["ls-remote", "--symref", "--exit-code", "--", remoteUrl, "HEAD"], { timeoutMs: 120_000, networkRemote: true });
     const rows = advertised.split("\n"), symbolic = rows.filter(row => row.startsWith("ref: ") && row.endsWith("\tHEAD")), tips = rows.filter(row => /^[a-f0-9]+\tHEAD$/u.test(row));
     if (symbolic.length !== 1 || tips.length !== 1) throw new HostError("source-default-unavailable", "The remote did not advertise one symbolic default branch and tip.");
     const fetchRef = gitRefSchema.parse(symbolic[0]!.slice(5, -5)), base = gitOidSchema.parse(tips[0]!.split("\t")[0]);
@@ -29,7 +32,7 @@ export async function pushedBase(registry: HostRegistry, input: Authority, signa
     await onCheckout(root, bounded, async () => {
       context.active(); mkdirSync(root, { recursive: true, mode: 0o700 });
       if (!existsSync(join(root, ".git"))) await git(root, ["init", "-q", "-b", "tavern-pushed-base", "--object-format=" + context.endpoint.inspection!.objectFormat], options);
-      const imported = { transfer: { base }, run: (args: string[], extra?: Parameters<typeof runGit>[2]) => runGit(root, args, { ...options, ...extra }) };
+      const imported = { transfer: { base }, run: (args: readonly string[], extra?: Partial<Parameters<typeof runGit>[2]>) => runGit(root, args, { ...options, ...extra }) };
       if (!await fetchBase(imported, present ? context.root : remoteUrl, present ? base : fetchRef, 120_000, present)) throw new HostError("base-unavailable", "Home could not fetch the advertised default tip into its private import repository.", true);
       await git(root, ["update-ref", "refs/tavern/pushed-bases/" + base, base], options);
       await git(root, ["update-ref", "refs/heads/tavern-pushed-base", base], options);

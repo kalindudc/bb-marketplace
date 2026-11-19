@@ -7,7 +7,7 @@ import { inspectGitCapabilities, repositoryObjectFormat } from "./git-capabiliti
 import { git, runGit, withGitDeadline, type GitOptions } from "./git";
 import { abortError } from "./process";
 import { HostError, HostRegistry } from "./registry";
-import { inspectSourceBase } from "./source-base";
+import { fetchUrl, inspectSourceBase } from "./source-base";
 
 function remoteIdentity(value: string): string | undefined {
   if (!value || value.length > 4096 || /[\0\r\n]/.test(value) || value !== value.trim()) return;
@@ -26,7 +26,7 @@ function remoteIdentity(value: string): string | undefined {
   if (!scp || !path || path.startsWith(":")) return;
   return scp[1]!.toLowerCase() + ":" + path;
 }
-async function repositoryRemotes(root: string, options: GitOptions, sourceRead: boolean, kind: "full" | "porcelain"): Promise<string[] | undefined> {
+async function repositoryRemotes(root: string, options: GitOptions, sourceRead: boolean, kind: "full" | "porcelain"): Promise<{ identities: string[]; fetchRemote?: string } | undefined> {
   try {
     if (kind === "porcelain") {
       const result = await runGit(root, ["remote", "-v"], { ...options, timeoutMs: 3000 });
@@ -38,21 +38,22 @@ async function repositoryRemotes(root: string, options: GitOptions, sourceRead: 
         if (!identity || identities.size >= 200) return;
         identities.add(identity);
       }
-      return [...identities].sort();
+      return { identities: [...identities].sort() };
     }
     const namesResult = await runGit(root, ["remote"], { ...options, timeoutMs: 3000 });
     if (namesResult.code !== 0) return;
     const names = namesResult.stdout.split("\n").filter(Boolean), identities = new Set<string>();
     if (names.length > 50) return;
-    let count = 0;
+    let count = 0, fetchRemote: string | undefined;
     for (const name of names) for (const push of [false, true]) {
       const result = await runGit(root, ["remote", "get-url", "--all", ...(push ? ["--push"] : []), "--", name], { ...options, timeoutMs: 3000 });
       if (result.code !== 0) return;
       const values = result.stdout.split("\n").filter(Boolean);
       if (!values.length || (count += values.length) > 200) return;
+      if (!push && names.length === 1 && values.length === 1) fetchRemote = fetchUrl(values[0]!);
       for (const value of values) { const identity = remoteIdentity(value); if (!identity) return; identities.add(identity); }
     }
-    return [...identities].sort();
+    return { identities: [...identities].sort(), fetchRemote };
   } catch (error) {
     options.check?.();
     if ((error as { code?: string })?.code === "git-timeout" && (sourceRead || options.signal?.aborted)) throw error;
@@ -64,7 +65,7 @@ async function repositoryRemotes(root: string, options: GitOptions, sourceRead: 
 export async function inspectHost(registry: HostRegistry, authority: Authority, signal?: AbortSignal): Promise<HostOutput<"inspect">> {
   return withGitDeadline(async bounded => {
   const endpoint = registry.endpoint(authority, ["source-read", "member-write", "home-import"]);
-  const options = { dataDir: registry.dataDir, signal: bounded, check: () => { registry.endpoint(authority); } };
+  const options = { dataDir: registry.dataDir, signal: bounded, kind: endpoint.registration.git, metadata: endpoint.inspection, check: () => { registry.endpoint(authority); } };
   const root = endpoint.realRoot;
   const bare = await git(root, ["rev-parse", "--is-bare-repository"], options);
   if (bare !== "true" && bare !== "false") throw new HostError("git-capability", "The host cannot identify its repository layout.");
@@ -101,13 +102,13 @@ export async function inspectHost(registry: HostRegistry, authority: Authority, 
   }
   const result = hostContract.inspect.output.parse({
     platform: process.platform, home: realpathSync(homedir()), tmp: [...new Set([tmpdir(), realpathSync(tmpdir())])], piAgentDir: piAgentDir(),
-    root, artifactDirectory: registry.artifactDirectory, sourceBase, ...(repoRemotes === undefined ? {} : { repoRemotes }), branch: branchResult.code === 0 ? branchResult.stdout.trim() : null,
+    root, artifactDirectory: registry.artifactDirectory, sourceBase, ...(repoRemotes === undefined ? {} : { repoRemotes: repoRemotes.identities }), branch: branchResult.code === 0 ? branchResult.stdout.trim() : null,
     head, tree, objectFormat, linkedWorktree: normalized(gitDir) !== normalized(commonDir),
     features: { porcelain, exportChanges: porcelain && gitRoot === root, objectImport: objectImport && gitRoot === root },
   });
   if (result.head.length !== (result.objectFormat === "sha1" ? 40 : 64) || result.tree.length !== result.head.length)
     throw new HostError("object-format-mismatch", "The repository returned object ids inconsistent with its declared object format.");
-  registry.recordInspection(authority, { objectFormat: result.objectFormat, branch: result.branch, gitDir: normalized(gitDir), commonDir: normalized(commonDir), sparse });
+  registry.recordInspection(authority, { objectFormat: result.objectFormat, branch: result.branch, gitDir: normalized(gitDir), commonDir: normalized(commonDir), sparse, fetchRemote: repoRemotes?.fetchRemote });
   return result;
   }, signal);
 }

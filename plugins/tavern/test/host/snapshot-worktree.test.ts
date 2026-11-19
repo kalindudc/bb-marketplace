@@ -200,17 +200,26 @@ it.each(["removed", "replaced", "file-to-module", "staged-missing", "dirty"])("r
   } else {
     git(f.repo, "clone", "-q", "--no-hardlinks", ".", "module");
     git(f.repo, "update-index", "--add", "--cacheinfo", "160000," + f.base + ",module");
-    if (kind !== "staged-missing") git(f.repo, "commit", "-qm", "module base");
+    if (kind !== "staged-missing") {
+      writeFileSync(join(f.repo, ".gitmodules"), '[submodule "module"]\n\tpath = module\n\turl = .\n');
+      git(f.repo, "add", ".gitmodules"); git(f.repo, "commit", "-qm", "module base");
+    }
   }
   const base = git(f.repo, "rev-parse", "HEAD");
-  if (kind === "dirty") writeFileSync(join(f.repo, "module/tracked"), "dirty");
-  else {
+  const sentinel = join(f.registry.dataDir, "submodule-filter");
+  if (kind === "dirty") {
+    const module = join(f.repo, "module");
+    git(module, "config", "filter.fixture.clean", `touch "${sentinel}"; cat`);
+    writeFileSync(join(module, ".git/info/attributes"), "tracked filter=fixture\n");
+    writeFileSync(join(module, "tracked"), "dirty");
+  } else {
     rmSync(join(f.repo, "module"), { recursive: true, force: true });
     if (kind === "replaced") writeFileSync(join(f.repo, "module"), "plain");
     if (kind === "file-to-module") { git(f.repo, "clone", "-q", "--no-hardlinks", ".", "module"); git(f.repo, "update-index", "--add", "--cacheinfo", "160000," + f.base + ",module"); }
   }
   const original = before(f.repo);
   await expect(snapshotWorktree(f.registry, { ...f.authority, base })).rejects.toMatchObject({ code: "submodule-unsupported" });
+  expect(existsSync(sentinel)).toBe(false);
   expect(before(f.repo)).toEqual(original);
 });
 it("names the untracked listing when its output overflows", async () => {
@@ -234,4 +243,15 @@ it.each([[["ls-files", "--stage", "-z", "--"]], [["ls-files", "-s", "-z"]], [["l
   vi.spyOn(processModule, "runProcess").mockImplementation((program,args,options) => { if (program === "git") guardWholeIndex(args); return original(program,args,options); });
   writeFileSync(join(f.repo, "tracked"), "dirty");
   expect(await snapshotWorktree(f.registry, { ...f.authority, base: f.base })).toMatchObject({ includesUncommitted: true });
+});
+
+it("does not run repository filters when staging a private snapshot", async () => {
+  const f = await fixture(), sentinel = join(f.registry.dataDir, "ran");
+  git(f.repo, "config", "filter.fixture.clean", `touch "${sentinel}"; cat`);
+  writeFileSync(join(f.repo, ".git/info/attributes"), "tracked filter=fixture\n");
+  writeFileSync(join(f.repo, "tracked"), "changed snapshot\n");
+  const snapshot = await snapshotWorktree(f.registry, { ...f.authority, base: f.base });
+  expect(snapshot).toMatchObject({ includesUncommitted: true, modifiedPaths: 1 });
+  expect(git(f.repo, "show", snapshot.commit + ":tracked")).toBe("changed snapshot");
+  expect(existsSync(sentinel)).toBe(false);
 });

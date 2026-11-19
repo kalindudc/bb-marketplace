@@ -1,4 +1,4 @@
-import { cliCommand, defineCli, PluginCliError, type BbPluginApi, type PluginCliContext } from "@get-bb/plugin-sdk";
+import { cliCommand, defineCli, PLUGIN_CLI_OUTPUT_MAX_BYTES, PluginCliError, type BbPluginApi, type PluginCliContext } from "@get-bb/plugin-sdk";
 import { terminalUserAct } from "./authority";
 import type { TavernRuntime } from "./runtime";
 import { settingsCommands } from "./settings/cli";
@@ -6,14 +6,43 @@ import { backupCommands } from "./backup/cli";
 import type { BackupService } from "./backup/service";
 
 function output(value: unknown) {
-  const text = JSON.stringify(value, null, 2);
-  return {
-    exitCode: 0,
-    stdout:
-      text.length <= 60000
-        ? text
-        : `${text.slice(0, 59800)}\nOutput truncated; request one thread or a narrower result.`,
+  return { exitCode: 0, stdout: JSON.stringify(value, null, 2) };
+}
+
+function statusOutput(runtime: TavernRuntime, thread?: string) {
+  const { items, ...review } = runtime.review();
+  const members = runtime.keeper.store.all("members").filter(m => !thread || m.threadId === thread || m.keeperThreadId === thread);
+  const selected = new Set(members.map(m => m.threadId));
+  const asks = runtime.keeper.store.openAsks().filter(a => !thread || a.keeperThreadId === thread || a.scopeChange?.memberThreadId === thread);
+  const reviews = items.filter(i => !thread || i.member && selected.has(i.member.threadId));
+  const project = ({ title, url, boardQuestId }: typeof items[number]) => ({ title, url, boardQuestId });
+  const status = { members, asks, review: { ...review, items: reviews.map(project) } };
+  const result = output(status);
+  if (Buffer.byteLength(result.stdout) <= PLUGIN_CLI_OUTPUT_MAX_BYTES) return result;
+
+  const list = <T,>(rows: T[], stamp: (value: T, index: number) => number) => {
+    const sorted = rows.map((value, index) => ({ index, age: stamp(value, index), bytes: Buffer.byteLength(JSON.stringify(value)) + 1 }));
+    return { sorted: sorted.sort((a, b) => a.age - b.age || a.index - b.index), bytes: sorted.reduce((sum, row) => sum + row.bytes, 0), omitted: new Set<number>() };
   };
+  const byMember = list(members, m => m.createdAt), byAsk = list(asks, a => a.createdAt);
+  const byReview = list(status.review.items, (_, i) => reviews[i]?.reportedAt ?? 0);
+  const lists = [byMember, byAsk, byReview];
+  const narrow = "Use bb tavern status --thread <id> to narrow the result.";
+  const overhead = Buffer.byteLength(JSON.stringify({ members: [], asks: [], review: { ...review, items: [] }, truncated: { members: members.length, asks: asks.length, reviewItems: reviews.length, narrow } }));
+  let bytes = overhead + lists.reduce((sum, group) => sum + group.bytes, 0);
+  while (bytes > PLUGIN_CLI_OUTPUT_MAX_BYTES) {
+    const largest = lists.reduce((a, b) => a.bytes >= b.bytes ? a : b);
+    const row = largest.sorted[largest.omitted.size];
+    if (!row) throw new PluginCliError("The fixed status fields are too large. Use bb tavern status --thread <id> to narrow the result.");
+    largest.omitted.add(row.index); largest.bytes -= row.bytes; bytes -= row.bytes;
+  }
+  const truncated = { members: byMember.omitted.size, asks: byAsk.omitted.size, reviewItems: byReview.omitted.size, narrow };
+  return { exitCode: 0, stdout: JSON.stringify({
+    members: members.filter((_, i) => !byMember.omitted.has(i)),
+    asks: asks.filter((_, i) => !byAsk.omitted.has(i)),
+    review: { ...review, items: status.review.items.filter((_, i) => !byReview.omitted.has(i)) },
+    ...(lists.some(group => group.omitted.size) ? { truncated } : {}),
+  }) };
 }
 export function registerCli(bb: BbPluginApi, runtime: TavernRuntime, backups?: BackupService) {
   const scopes = () => {
@@ -46,14 +75,8 @@ export function registerCli(bb: BbPluginApi, runtime: TavernRuntime, backups?: B
         }),
         status: cliCommand({
           summary: "Read the party and needs-you queue",
-          run: () => {
-            const review = runtime.review();
-            return output({
-              members: runtime.keeper.store.all("members"),
-              asks: runtime.keeper.store.openAsks(),
-              review: { ...review, items: review.items.map(({ title, url, boardQuestId }) => ({ title, url, boardQuestId })) },
-            });
-          },
+          options: { thread: { type: "string", description: "Show one thread and its party" } },
+          run: input => statusOutput(runtime, input.options.thread),
         }),
         quests: cliCommand({
           summary: "List board quests",

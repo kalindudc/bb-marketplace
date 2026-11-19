@@ -11,9 +11,11 @@ import * as processModule from "../../src/host/process";
 import { inspectHost } from "../../src/host/inspect";
 import { HostRegistry } from "../../src/host/registry";
 import { createTransport } from "../../src/host/transport";
+import { serveGit } from "./git-daemon";
 
 const roots: string[] = [];
-afterEach(() => { vi.restoreAllMocks(); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+const servers: (() => Promise<void>)[] = [];
+afterEach(async () => { await Promise.all(servers.splice(0).map(close => close())); vi.restoreAllMocks(); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 const git = (root: string, ...args: string[]) => execFileSync("git", ["-C", root, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 async function fixture(method: "import" | "carry", format: "sha1" | "sha256" = "sha1") {
   const root = mkdtempSync(join(process.env.TAVERN_TEST_FIXTURES ?? tmpdir(), "fetch-base-")); roots.push(root);
@@ -29,7 +31,8 @@ async function fixture(method: "import" | "carry", format: "sha1" | "sha256" = "
   registry.registerEndpoint({ placementId: "placement", generation: 1, endpointId: "target", endpoint: { hostId: "target-host", environmentId: "target-env", root: target }, ownerThreadId: method === "carry" ? "member-thread" : null, access: method === "carry" ? "member-write" : "home-import", git: "full", workspaceKind: method === "carry" ? "dedicated-machine" : null, objectFormat: format, allowedRefs: method === "carry" ? ["refs/heads/member"] : ["refs/tavern/keeper/snapshot"] });
   await inspectHost(registry, authority);
   const transfer: TransferRegistration = { ...authority, transferId: "transfer", snapshotId: "snapshot", direction: method === "carry" ? "carry-out" : "bring-home", objectFormat: format, base, head: base, tree, fromEndpointId: "source", toEndpointId: "target", allowedRefs: method === "carry" ? [] : ["refs/tavern/keeper/snapshot"], uploads: [], artifacts: [] };
-  registry.registerTransfer(transfer); const input = { ...authority, transferId: "transfer", remote: source, baseBranch: "refs/heads/release", networkTimeoutMs: 3000 };
+  const network = await serveGit(source); servers.push(network.close);
+  registry.registerTransfer(transfer); const input = { ...authority, transferId: "transfer", remote: network.url, baseBranch: "refs/heads/release", networkTimeoutMs: 3000 };
   const author = { name: "Fixture", email: "fixture@example.invalid", date: "1700000000 +0000" }, fetches: string[][] = [], original = gitHost.runGit;
   vi.spyOn(gitHost, "runGit").mockImplementation((path, args, options) => { if (args.includes("fetch")) fetches.push([...args]); return original(path, args, options); });
   const run = (extra: Record<string, unknown> = {}) => method === "carry" ? port.carryStart({ ...input, paths: [], replaces: seedTree, ...extra }) : port.importCommit({ ...input, author, message: "pinned snapshot", entries: [], refs: ["refs/tavern/keeper/snapshot"], ...extra });
@@ -57,8 +60,15 @@ it("holds an exact-ref carry that would drop an unproven existing checkout inste
 });
 it.each(["import"] as const)("blocks %s when neither the requested full ref nor exact SHA provides the registered base", async method => {
   const f = await fixture(method), index = readFileSync(join(f.target, ".git/index"));
-  expect(await f.run({ remote: f.target })).toMatchObject({ outcome: "unavailable", code: "base-unavailable" }); expect(f.fetches.map(args => args.at(-1))).toEqual(["refs/heads/release", f.base]);
+  const other = await serveGit(f.target); servers.push(other.close);
+  expect(await f.run({ remote: other.url })).toMatchObject({ outcome: "unavailable", code: "base-unavailable" }); expect(f.fetches.map(args => args.at(-1))).toEqual(["refs/heads/release", f.base]);
   expect(git(f.target, "rev-parse", "HEAD")).toBe(f.seed); expect(readFileSync(join(f.target, ".git/index"))).toEqual(index); expect(readFileSync(join(f.target, "tracked"), "utf8")).toBe("seed"); expect(existsSync(join(f.target, ".git/FETCH_HEAD"))).toBe(false);
+});
+it("refuses a base fetch redirected to a local file repository", async () => {
+  const f = await fixture("import");
+  git(f.target, "config", `url.${f.source}.insteadOf`, f.input.remote);
+  await expect(f.run()).rejects.toMatchObject({ code: "remote-rewrite" });
+  expect(f.fetches).toEqual([]);
 });
 it("validates full fetch refs at the wire boundary instead of silently treating malformed refs as short branches", async () => {
   const f = await fixture("carry"); expect(hostContract.carryStart.input.safeParse({ ...f.input, paths: [], baseBranch: "refs/heads/bad." }).success).toBe(false);

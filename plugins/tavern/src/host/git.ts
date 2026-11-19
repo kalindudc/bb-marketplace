@@ -1,9 +1,8 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { existsSync, lstatSync, mkdirSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { gitArguments, gitContainmentStderr, gitEnvironment, gitInvocation, type GitKind, type GitMetadata } from "../shared/git-safety";
 import { experimental_runVcsProcess } from "@get-bb/plugin-sdk/host";
 import { HostError } from "./registry";
-import { runProcess, type ProcessOptions } from "./process";
+import { abortError, runProcess, type ProcessOptions } from "./process";
 
 export interface GitOptions {
   dataDir: string;
@@ -13,29 +12,13 @@ export interface GitOptions {
   timeoutMs?: number;
   check?(): void;
   env?: Record<string, string>;
+  kind?: GitKind;
+  privateIndex?: string;
+  metadata?: GitMetadata | null;
+  networkRemote?: boolean;
+  readOnly?: boolean;
 }
 export interface GitResult { code: number; stdout: string; stderr: string }
-
-export function gitEnvironment(root: string, dataDir: string, extra?: Record<string, string>): NodeJS.ProcessEnv {
-  const hooks = join(dataDir, "empty-hooks");
-  if (existsSync(hooks)) {
-    if (lstatSync(hooks).isSymbolicLink() || !lstatSync(hooks).isDirectory() || readdirSync(hooks).length)
-      throw new HostError("host-hooks-invalid", "Tavern's private hooks directory is no longer empty and safe.");
-  } else mkdirSync(hooks, { mode: 0o700 });
-  const env: NodeJS.ProcessEnv = { ...process.env, ...extra, PWD: root, LC_ALL: "C", GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0", GIT_NO_LAZY_FETCH: "1", GIT_PRINT_SHA1_ELLIPSIS: "no" };
-  for (const name of ["GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE", "GIT_PREFIX", "GIT_CONFIG_PARAMETERS"])
-    delete (env as NodeJS.ProcessEnv)[name];
-  const count = Number(env.GIT_CONFIG_COUNT ?? "0");
-  if (!Number.isSafeInteger(count) || count < 0 || count > 1024)
-    throw new HostError("git-environment", "The host's inherited Git config count is invalid.");
-  const config = [["core.fsmonitor", "false"], ["core.hooksPath", hooks], ["commit.gpgsign", "false"]];
-  for (const [index, [key, value]] of config.entries()) {
-    (env as NodeJS.ProcessEnv)[`GIT_CONFIG_KEY_${count + index}`] = key;
-    (env as NodeJS.ProcessEnv)[`GIT_CONFIG_VALUE_${count + index}`] = value;
-  }
-  (env as NodeJS.ProcessEnv).GIT_CONFIG_COUNT = String(count + config.length);
-  return env;
-}
 
 const budgets = new AsyncLocalStorage<{ until: number; slowest: string; elapsed: number; signal: AbortSignal }>();
 export async function withGitDeadline<T>(work: (signal: AbortSignal) => Promise<T>, signal?: AbortSignal, timeoutMs = 300_000, separateBudget = false): Promise<T> {
@@ -51,18 +34,35 @@ export async function withGitDeadline<T>(work: (signal: AbortSignal) => Promise<
     throw error;
   } finally { clearTimeout(timer); }
 }
-export async function runGitProcess(argv: readonly string[], options: ProcessOptions) {
+async function runGitProcess(root: string, argv: readonly string[], options: ProcessOptions, git: GitOptions) {
   const budget = budgets.getStore(), start = Date.now();
   const command = argv.find((arg, at) => at > 1 && !arg.startsWith("-") && argv[at - 1] !== "-c") ?? argv.at(-1) ?? "operation";
   const remaining = budget ? budget.until - start : options.timeoutMs;
   const timeout = () => new HostError("git-timeout", `Git ${command} exceeded its deadline; the slowest step was ${budget?.slowest ?? command}.`, true);
   if (remaining <= 0) throw timeout();
   try {
-    const result = await runProcess("git", argv, { ...options, timeoutMs: Math.min(options.timeoutMs, remaining), signal: budget ? AbortSignal.any([budget.signal, ...(options.signal ? [options.signal] : [])]) : options.signal });
+    const signal = budget ? AbortSignal.any([budget.signal, ...(options.signal ? [options.signal] : [])]) : options.signal;
+    const timeoutMs = Math.min(options.timeoutMs, remaining);
+    const setup = { kind: git.kind, extra: git.env, privateIndex: git.privateIndex, metadata: git.metadata, networkRemote: git.networkRemote, readOnly: git.readOnly, signal, timeoutMs };
+    const { env, invocation } = await (async () => {
+      try {
+        const env = await gitEnvironment(root, setup);
+        return { env, invocation: await gitInvocation(root, argv, env, setup) };
+      } catch (error) {
+        const failure = error as Error & { killed?: boolean; stderr?: string | Buffer; code?: string };
+        if (signal?.aborted || failure.code === "ABORT_ERR") throw abortError();
+        if (failure.killed || failure.code === "ETIMEDOUT") throw timeout();
+        throw new HostError("git-preflight", "Tavern could not prepare Git safely: " + (failure.stderr?.toString().trim() || failure.message).slice(0, 1200));
+      }
+    })();
+    git.check?.();
+    const left = timeoutMs - (Date.now() - start);
+    if (left <= 0) throw timeout();
+    const result = await runProcess("git", argv, { ...options, env, invocation, timeoutMs: left, signal });
     const elapsed = Date.now() - start;
     if (budget && elapsed > budget.elapsed) { budget.elapsed = elapsed; budget.slowest = command; }
     if (result.timedOut || budget && Date.now() >= budget.until) throw timeout();
-    return result;
+    return { ...result, stderr: gitContainmentStderr(invocation, result.stderr) };
   } catch (error) {
     const elapsed = Date.now() - start;
     if (budget && elapsed > budget.elapsed) { budget.elapsed = elapsed; budget.slowest = command; }
@@ -91,10 +91,10 @@ export function rawChanges(text: string): { status: "A" | "M" | "T" | "D"; path:
 
 export async function runGit(root: string, args: readonly string[], options: GitOptions): Promise<GitResult> {
   options.check?.();
-  const argv = ["-C", root, ...args];
+  const argv = ["-C", root, ...gitArguments(args, options.kind)];
   const result = await experimental_runVcsProcess("git", argv, async () => {
     options.check?.();
-    return runGitProcess(argv, { env: gitEnvironment(root, options.dataDir, options.env), input: options.input, signal: options.signal, timeoutMs: options.timeoutMs ?? 30_000, maxBuffer: 64 * 1024 * 1024 });
+    return runGitProcess(root, argv, { input: options.input, signal: options.signal, timeoutMs: options.timeoutMs ?? 30_000, maxBuffer: 64 * 1024 * 1024 }, options);
   }, { priority: "background", signal: options.signal });
   options.check?.();
   if (result.timedOut) throw new HostError("git-timeout", `Git ${args[0] ?? "operation"} exceeded its deadline.`, true);

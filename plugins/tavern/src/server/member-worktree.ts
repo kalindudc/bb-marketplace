@@ -1,8 +1,9 @@
-import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { isNotFound } from "./host-errors";
+import { execGitSync } from "../shared/git-safety";
+import { missingSubmoduleConfig, populatedSubmodules, submoduleConfigReads } from "../shared/submodules";
 
 /** The subject a preservation commit carries, so the user can find it later. */
 export const PRESERVE_MESSAGE = "tavern: preserve uncommitted member work before cleanup";
@@ -15,6 +16,7 @@ export interface WorktreeState {
   tree: string;
   dirty: boolean;
   changed: string[];
+  dirtySubmodules?: string[];
   unfinishedMerge: boolean;
 }
 
@@ -25,9 +27,8 @@ export type PreserveResult =
   | { status: "deferred"; root: string; error: string };
 
 function git(root: string, args: string[]): string {
-  return execFileSync("git", ["-C", root, "-c", "core.fsmonitor=false", ...args], {
+  return execGitSync(root, args, {
     encoding: "utf8", timeout: 15_000, maxBuffer: 8 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
   });
 }
 function optional(root: string, args: string[]): string | null {
@@ -60,16 +61,33 @@ export async function memberWorktree(
   return { environmentId: environment.id, hostId: environment.hostId, root: environment.path };
 }
 
+function dirtySubmodules(root: string): string[] {
+  const configs: string[] = [];
+  for (const { args, blob } of submoduleConfigReads(root)) {
+    try {
+      configs.push(execGitSync(root, args, { readOnly: true, encoding: "utf8", timeout: 15_000, stdio: ["ignore", "pipe", "pipe"] }));
+    } catch (error) {
+      const failure = error as { status?: number; stderr?: string | Buffer };
+      if (!missingSubmoduleConfig(blob, failure.status, failure.stderr?.toString() ?? "")) throw error;
+    }
+  }
+  return populatedSubmodules(root, configs)
+    .filter(module => git(module.root, ["status", "--porcelain", "-z"]).length > 0 || dirtySubmodules(module.root).length > 0)
+    .map(module => module.path);
+}
+
 /** Read a worktree's Git state. Throws when the path is not a usable repository. */
 export function worktreeState(root: string): WorktreeState {
   const status = git(root, ["status", "--porcelain"]);
+  const nested = dirtySubmodules(root);
   const mergeHead = git(root, ["rev-parse", "--git-path", "MERGE_HEAD"]).trim();
   return {
     branch: optional(root, ["symbolic-ref", "--short", "-q", "HEAD"])?.trim() || null,
     head: git(root, ["rev-parse", "HEAD"]).trim(),
     tree: git(root, ["rev-parse", "HEAD^{tree}"]).trim(),
-    dirty: status.trim().length > 0,
-    changed: status.split("\n").filter(Boolean).map(line => line.slice(3)),
+    dirty: status.trim().length > 0 || nested.length > 0,
+    changed: [...new Set([...status.split("\n").filter(Boolean).map(line => line.slice(3)), ...nested])],
+    ...(nested.length ? { dirtySubmodules: nested } : {}),
     unfinishedMerge: existsSync(resolve(root, mergeHead)),
   };
 }
@@ -104,6 +122,7 @@ export function preserveWorktree(root: string): PreserveResult {
   try { state = worktreeState(root); }
   catch (error) { return { status: "deferred", root, error: `cannot read the member worktree: ${message(error)}` }; }
   if (!state.dirty) return { status: "clean", root };
+  if (state.dirtySubmodules?.length) return { status: "deferred", root, error: "a submodule still has uncommitted work: " + state.dirtySubmodules[0] };
   if (state.unfinishedMerge) return { status: "deferred", root, error: "the member worktree has an unfinished merge; commit or resolve it before cleanup" };
   let sha: string;
   try { sha = commitWorktree(root, PRESERVE_MESSAGE).sha; }

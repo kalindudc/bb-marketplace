@@ -67,3 +67,14 @@ it("rejects an object format that contradicts the verified HEAD length", async (
   vi.spyOn(processModule, "runProcess").mockImplementation((program, args, options) => args.includes("extensions.objectformat") ? Promise.resolve({ code: 0, stdout: "sha256\n", stderr: "", timedOut: false }) : original(program, args, options));
   await expect(f.inspect()).rejects.toMatchObject({ code: "object-format-mismatch" });
 });
+
+it("does not run a repository filter against a stat-dirty file in the private-index probe", async () => {
+  const f = fixture(), sentinel = join(f.data, "ran");
+  f.git("config", "filter.fixture.clean", `touch "${sentinel}"; cat`);
+  writeFileSync(join(f.repo, ".git/info/attributes"), "tracked filter=fixture\n");
+  writeFileSync(join(f.repo, "tracked"), "different length");
+  const run = vi.spyOn(processModule, "runProcess");
+  expect(await f.inspect()).toMatchObject({ features: { objectImport: true } });
+  expect(run.mock.calls.some(([, args, options]) => args.includes("status") && !!options.env?.GIT_INDEX_FILE)).toBe(true);
+  expect(readdirSync(f.data)).not.toContain("ran");
+});

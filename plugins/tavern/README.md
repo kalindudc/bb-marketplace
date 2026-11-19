@@ -111,6 +111,15 @@ No preset or guard grants permission for a production change, merge,
 deployment, deletion or message sent as you. Those still need your explicit
 consent; production commands also need immediate confirmation.
 
+On macOS, Git that Tavern starts directly in a checkout runs in an OS sandbox.
+It can write to the checkout and the Git metadata and private files its call
+needs. Only fetch, push and remote discovery can use the network; those calls
+can update `~/.ssh/known_hosts`, but cannot create SSH control sockets outside
+allowed paths. A push to a file remote cannot write to a sibling checkout.
+Forge profile commands and `gh` run outside this sandbox. Their Git children
+still receive Tavern’s Git config guards. On other platforms Tavern uses the
+config guards without the macOS sandbox.
+
 ## Settings, backups and the terminal
 
 Settings controls pacing, providers, presentation, notifications and

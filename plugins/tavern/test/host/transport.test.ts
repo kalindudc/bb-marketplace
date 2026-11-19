@@ -13,12 +13,18 @@ import { HostRegistry } from "../../src/host/registry";
 import { snapshotWorktree } from "../../src/host/snapshot";
 import { createTransport, carryFaults } from "../../src/host/transport";
 
+function expectNoAutoMaintenance({ env }: processModule.ProcessOptions) {
+  const config = new Map(Array.from({ length: Number(env?.GIT_CONFIG_COUNT) }, (_, i) => [env?.[`GIT_CONFIG_KEY_${i}`]?.toLowerCase(), env?.[`GIT_CONFIG_VALUE_${i}`]]));
+  expect(config.get("gc.auto")).toBe("0");
+  expect(config.get("maintenance.auto")).toBe("false");
+}
+
 const roots: string[] = [];
 afterEach(() => { vi.restoreAllMocks(); for (const key of Object.keys(carryFaults)) delete carryFaults[key as keyof typeof carryFaults]; for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 const git = (root: string, ...args: string[]) => execFileSync(realGit, ["-C", root, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 describe.each([false, true])("member emulation: %s", emulate => {
 afterEach(() => vi.unstubAllEnvs());
-async function fixture(format: "sha1" | "sha256" = "sha1") {
+async function fixture(format: "sha1" | "sha256" = "sha1", full = false) {
   const root = mkdtempSync(join(process.env.TAVERN_TEST_FIXTURES ?? tmpdir(), "transport-")); roots.push(root);
   if (emulate) vi.stubEnv("PATH", emulatedGit(root) + ":" + process.env.PATH);
   const home = join(root, "home"), maker = join(root, "maker"), checker = join(root, "checker"); mkdirSync(home);
@@ -32,7 +38,7 @@ async function fixture(format: "sha1" | "sha256" = "sha1") {
   const endpoint = async (id: string, path: string, access: EndpointRegistration["access"], placementId: string, refs: string[]) => {
     const data = join(root, id + "-data"); mkdirSync(data);
     const registry = new HostRegistry(data), port = createTransport(registry);
-    const registration: EndpointRegistration = { placementId, generation: 1, endpointId: id, endpoint: { hostId: id + "-host", environmentId: id + "-environment", root: path }, ownerThreadId: access === "member-write" ? id + "-thread" : null, access, git: path === home ? "full" : "porcelain", workspaceKind: access === "member-write" ? "dedicated-machine" : null, objectFormat: format, allowedRefs: refs };
+    const registration: EndpointRegistration = { placementId, generation: 1, endpointId: id, endpoint: { hostId: id + "-host", environmentId: id + "-environment", root: path }, ownerThreadId: access === "member-write" ? id + "-thread" : null, access, git: full || path === home ? "full" : "porcelain", workspaceKind: access === "member-write" ? "dedicated-machine" : null, objectFormat: format, allowedRefs: refs };
     const authority: Authority = { placementId, generation: 1, endpointId: id, operationId: "operation-a" };
     registry.registerEndpoint(registration); await inspectHost(registry, authority);
     return { registry, port, authority, data, path };
@@ -200,8 +206,8 @@ it("refuses submodule transport and controller commits in a source-read checkout
   await expect(initial.port.commitAll({ ...initial.authority, message: "must not commit user source" })).rejects.toThrow(/endpoint-access/);
   expect(git(f.home, "rev-parse", "HEAD")).toBe(f.base);
 });
-async function startedCarry(path = "tracked", contents = "carried\n") {
-  const f = await fixture();
+async function startedCarry(path = "tracked", contents = "carried\n", full = false) {
+  const f = await fixture("sha1", full);
   mkdirSync(dirname(join(f.maker, path)), { recursive: true }); writeFileSync(join(f.maker, path), contents);
   git(f.maker, "add", "-A"); git(f.maker, "commit", "-qm", "carry source");
   const { value } = await exported(f);
@@ -368,8 +374,7 @@ it.skipIf(emulate).each([false, true])("finishes outside-cone carry writes and d
   expect(stages[0]![1]).toContain("--sparse");
   expect(stages[0]![1]).toEqual(expect.arrayContaining(["rm", "--cached", "--sparse", "--ignore-unmatch", "outside/gone", "outside/edit", "outside/new"]));
   expect(stages[1]![1]).toEqual(expect.arrayContaining(["add", "-A", "--sparse", "outside/edit", "outside/new"]));
-  const commit = spy.mock.calls.find(([,args]) => args.includes("commit"))![1];
-  expect(commit).toContain("gc.auto=0"); expect(commit).toContain("maintenance.auto=false");
+  expectNoAutoMaintenance(spy.mock.calls.find(([,args]) => args.includes("commit"))![2]);
 }, 60_000);
 it.skipIf(emulate)("commits new files outside a sparse cone without auto-maintenance", async () => {
   const f = await fixture(); git(f.maker, "sparse-checkout", "set", "--cone", "inside");
@@ -378,8 +383,7 @@ it.skipIf(emulate)("commits new files outside a sparse cone without auto-mainten
   const spy = vi.spyOn(processModule, "runProcess");
   expect(await f.source.port.commitAll({ ...f.source.authority, message: "sparse" })).toMatchObject({ committed: true });
   expect(git(f.maker, "show", "HEAD:outside/new")).toBe("new");
-  const commit = spy.mock.calls.find(([,args]) => args.includes("commit"))![1];
-  expect(commit).toContain("gc.auto=0"); expect(commit).toContain("maintenance.auto=false");
+  expectNoAutoMaintenance(spy.mock.calls.find(([,args]) => args.includes("commit"))![2]);
 });
 it("names oversized untracked listings in worktreeState", async () => {
   const f = await fixture(), original = processModule.runProcess;
@@ -395,7 +399,7 @@ it("disables auto-maintenance on both member commits", async () => {
   await f.source.port.commitAll({ ...f.source.authority, message: "next" });
   const commits = spy.mock.calls.filter(([,args]) => args.includes("commit"));
   expect(commits).toHaveLength(2);
-  for (const [,args] of commits) { expect(args).toContain("gc.auto=0"); expect(args).toContain("maintenance.auto=false"); }
+  for (const [, , options] of commits) expectNoAutoMaintenance(options);
 }, 60_000);
 it("refuses an unexpected committed HEAD without resetting the branch", async () => {
   const f = await fixture();
@@ -428,5 +432,14 @@ it("does not require new Git for carries or nonsparse commitAll",async()=>{
   writeFileSync(join(f.maker,"tracked"),"next");
   expect(await f.source.port.commitAll({...f.source.authority,message:"next"})).toMatchObject({committed:true});
 },60_000);
+it.skipIf(emulate)("stages and commits a full Git carry without repository programs", async () => {
+  const f = await startedCarry("tracked", "carried bytes\n", true), filtered = join(f.root, "filtered"), hooked = join(f.root, "hooked");
+  await f.checked.port.carryWrite({ ...f.authority, path: f.path, mode: "100644", offset: 0, data: Buffer.from(f.contents).toString("base64") });
+  git(f.checker, "config", "filter.fixture.clean", `touch "${filtered}"; cat`);
+  writeFileSync(join(f.checker, ".git/info/attributes"), "tracked filter=fixture\n");
+  writeFileSync(join(f.checker, ".git/hooks/post-commit"), `#!/bin/sh\ntouch "${hooked}"\n`, { mode: 0o755 });
+  expect(await f.checked.port.carryFinish({ ...f.authority, paths: [f.path], message: f.value.message, author: f.value.author })).toMatchObject({ outcome: "ok", tree: f.value.tree });
+  expect([filtered, hooked].filter(existsSync)).toEqual([]);
+});
 
 });

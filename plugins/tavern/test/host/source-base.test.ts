@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { gitEnvironmentSync } from "../../src/shared/git-safety";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync, writeFileSync } from "node:fs";
@@ -67,10 +68,13 @@ it("uses Git's exact configured tracking ref rather than assuming the remote bra
 });
 it("does not lazily fetch a missing promised commit or change the source even under hostile ambient fetch settings", async () => {
   const f = fixture(); f.upstream(join(f.root, "unavailable-origin.git")); f.git("config", "core.repositoryformatversion", "1"); f.git("config", "extensions.partialclone", "origin"); f.git("config", "remote.origin.promisor", "true");
-  rmSync(join(f.repo, ".git/objects", f.base.slice(0, 2), f.base.slice(2))); const before = sourceState(f.repo), trace = join(f.root, "git-trace.jsonl");
+  rmSync(join(f.repo, ".git/objects", f.base.slice(0, 2), f.base.slice(2))); const before = sourceState(f.repo), trace = join(f.repo, ".git", "git-trace.jsonl");
   vi.stubEnv("GIT_NO_LAZY_FETCH", "0"); vi.stubEnv("GIT_TRACE2_EVENT", trace);
-  expect((await f.inspect()).sourceBase).toMatchObject({ outcome: "unavailable" }); expect(sourceState(f.repo)).toEqual(before);
+  expect((await f.inspect()).sourceBase).toMatchObject({ outcome: "unavailable" });
+  const { [".git/git-trace.jsonl"]: _trace, ...after } = sourceState(f.repo);
+  expect(after).toEqual(before);
   const events = readFileSync(trace, "utf8").trim().split("\n").map(line => JSON.parse(line));
+  expect(events.some(event => event.event === "start")).toBe(true);
   expect(events.filter(event => event.event === "child_start" && event.argv?.includes("fetch"))).toEqual([]);
 });
 it("accepts stale local tracking facts without fetching or contacting the configured remote", async () => {
@@ -173,7 +177,7 @@ it.each(["member-write","home-import"] as const)("keeps %s inspect usable after 
 });
 it("suppresses ambient raw-diff ellipses",()=>{
   const f=fixture();vi.stubEnv("GIT_PRINT_SHA1_ELLIPSIS","yes");
-  expect(gitHost.gitEnvironment(f.repo,f.registry.dataDir).GIT_PRINT_SHA1_ELLIPSIS).toBe("no");
+  expect(gitEnvironmentSync(f.repo).GIT_PRINT_SHA1_ELLIPSIS).toBe("no");
 });
 
 it.each([["carryStart",200_000],["importCommit",900_000],["carryDelete",undefined],["carryFinish",undefined]] as const)("expires %s inside its own host budget",async(method,networkTimeoutMs)=>{

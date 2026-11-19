@@ -1,19 +1,14 @@
-import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { sourceFetchSchema, gitOidSchema } from "../shared/placement";
 import { gitRefSchema } from "../host-contract";
 import { worktreeState } from "./member-worktree";
+import { execGitSync } from "../shared/git-safety";
 
-function environment(index?: string) {
-  const env: NodeJS.ProcessEnv = { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0", GIT_NO_LAZY_FETCH: "1", GIT_NO_REPLACE_OBJECTS: "1" };
-  for (const key of ["GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE", "GIT_CONFIG_PARAMETERS"]) delete env[key];
-  if (index) env.GIT_INDEX_FILE = index;
-  return env;
-}
+const extra = { GIT_NO_REPLACE_OBJECTS: "1" };
 function git(root: string, args: string[], input?: string | Buffer, index?: string, cwd = root) {
-  return execFileSync("git", ["--git-dir", root, "-c", "core.fsmonitor=false", "-c", "gc.auto=0", "-c", "maintenance.auto=false", ...args], {
-    cwd, encoding: "utf8", input, timeout: 15_000, maxBuffer: 8 * 1024 * 1024, stdio: ["pipe", "pipe", "pipe"], env: environment(index),
+  return execGitSync(root, args, {
+    cwd, encoding: "utf8", input, timeout: 15_000, maxBuffer: 8 * 1024 * 1024, stdio: ["pipe", "pipe", "pipe"], gitDir: root, extra: { ...extra, ...(index ? { GIT_INDEX_FILE: index } : {}) },
   }).trim();
 }
 export function cleanRebaseMatches(repository: string, verifiedCommit: string, commit: string, destination?: string) {
@@ -54,7 +49,7 @@ export function homeRebaseMatches(maker: string, home: RebaseHome, verifiedCommi
     mkdirSync(home.dataDir, { recursive: true, mode: 0o700 });
     directory = mkdtempSync(join(home.dataDir, "merge-home-"));
     const repository = join(directory, "objects.git");
-    execFileSync("git", ["init", "--quiet", "--bare", repository], { env: environment(), stdio: ["ignore", "pipe", "pipe"], timeout: 15_000 });
+    execGitSync(directory, ["init", "--quiet", "--bare", repository], { cwd: directory, extra, stdio: ["ignore", "pipe", "pipe"], timeout: 15_000 });
     // Keep the Git config private too: linked worktrees share their repository config with the maker.
     const cwd = home.root ?? repository;
     const advertised = git(repository, ["ls-remote", "--symref", "--", home.remoteUrl, "HEAD"], undefined, undefined, cwd);
@@ -69,11 +64,11 @@ export function homeRebaseMatches(maker: string, home: RebaseHome, verifiedCommi
     };
     const destination = resolve();
     if (!advertised.split("\n").includes(`${destination}\tHEAD`)) return false;
-    git(repository, ["-c", "fetch.uriprotocols=", "-c", "transfer.bundleURI=false", "fetch", "--no-tags", "--no-write-fetch-head", "--no-recurse-submodules", "--refmap=", "--", home.remoteUrl, branch]);
+    git(repository, ["fetch", "--no-tags", "--no-write-fetch-head", "--no-recurse-submodules", "--refmap=", "--", home.remoteUrl, branch]);
     git(repository, ["cat-file", "-e", `${destination}^{commit}`]);
-    const common = execFileSync("git", ["-C", maker, "merge-base", verifiedCommit, commit], { env: environment(), encoding: "utf8", timeout: 15_000, stdio: ["pipe", "pipe", "pipe"] }).trim();
+    const common = execGitSync(maker, ["merge-base", verifiedCommit, commit], { extra, encoding: "utf8", timeout: 15_000, stdio: ["pipe", "pipe", "pipe"] }).trim();
     git(repository, ["cat-file", "-e", `${common}^{commit}`]);
-    const pack = execFileSync("git", ["-C", maker, "pack-objects", "--stdout", "--revs"], { env: environment(), input: `${verifiedCommit}\n${commit}\n^${common}\n`, timeout: 15_000, maxBuffer: 32 * 1024 * 1024, stdio: ["pipe", "pipe", "pipe"] });
+    const pack = execGitSync(maker, ["pack-objects", "--stdout", "--revs"], { extra, input: `${verifiedCommit}\n${commit}\n^${common}\n`, timeout: 15_000, maxBuffer: 32 * 1024 * 1024, stdio: ["pipe", "pipe", "pipe"] });
     git(repository, ["index-pack", "--stdin"], pack);
     const matches = cleanRebaseMatches(repository, verifiedCommit, commit, destination);
     const final = worktreeState(maker);

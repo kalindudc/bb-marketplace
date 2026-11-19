@@ -106,3 +106,13 @@ console.log('CHECKER_OK');`);
     expect(network.status).toBe(0); expect(network.stdout).toMatch(/EPERM|EACCES/);
   } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
 }, 30_000);
+
+it("uses the maker root despite a local Git worktree redirect", () => {
+  const f = fixture(), tracked = join(f.worktree, "tracked");
+  writeFileSync(tracked, "tracked"); f.git(f.worktree, "add", "tracked");
+  f.git(f.worktree, "config", "extensions.worktreeConfig", "true");
+  f.git(f.worktree, "config", "--worktree", "core.worktree", f.outside);
+  expect(checkerWritePaths(f.scope).deny).toContain(tracked);
+  const facts = f.call("cat $(git rev-parse --show-toplevel)/tracked", join(f.worktree, "nested"));
+  expect(facts.gitRoots?.[join(f.worktree, "nested")]).toBe(f.worktree);
+});

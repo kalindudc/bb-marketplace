@@ -7,7 +7,10 @@ import { nativeCarry } from "./carry";
 import { hostCallTimeoutMs } from "./client";
 import { assertRepository, hostContext, onCheckout, transferContext, type HostContext, type TransferContext } from "./context";
 import { decodeChunk, digest, writeChunk } from "./files";
-import { git, gitEnvironment, rawChanges, requireSparseGit, runGit, withGitDeadline } from "./git";
+import { git, rawChanges, requireSparseGit, runGit, withGitDeadline } from "./git";
+import { gitEnvironment, gitInvocation } from "../shared/git-safety";
+import { dirtySubmodules } from "./submodules";
+import { assertEffectiveRemote } from "./remote";
 import { objectCache, parseTreeEntries, readTreeBytes, virtualSnapshotSchema } from "./porcelain";
 import { abortError } from "./process";
 import { authorityOf, completedImportSchema, HostError, HostRegistry, transferAuthorityOf } from "./registry";
@@ -42,10 +45,11 @@ function requireDirection(context: TransferContext, direction: "bring-home" | "c
   if (context.transfer.direction !== direction || context.transfer.toEndpointId !== context.authority.endpointId)
     throw new HostError("transfer-endpoint", "This operation is not permitted on the transfer's source/destination.");
 }
-export async function fetchBase(context: Pick<HostContext, "run"> & { transfer: { base: string } }, remote: string, branch: string, timeoutMs: number, pinnedOnly = false): Promise<boolean> {
+export async function fetchBase(context: Pick<HostContext, "run"> & { transfer: { base: string } }, remote: string, branch: string, timeoutMs: number, privateFile = false): Promise<boolean> {
   if (await hasCommit(context, context.transfer.base)) return true;
-  for (const ref of pinnedOnly ? [context.transfer.base] : [branch.startsWith("refs/") ? branch : "refs/heads/" + branch, context.transfer.base]) {
-    await context.run(["-c", "fetch.uriprotocols=", "-c", "transfer.bundleURI=false", "fetch", "--no-tags", "--no-write-fetch-head", "--no-recurse-submodules", "--refmap=", remote, ref], { timeoutMs });
+  for (const ref of privateFile ? [context.transfer.base] : [branch.startsWith("refs/") ? branch : "refs/heads/" + branch, context.transfer.base]) {
+    await assertEffectiveRemote(context, remote, "fetch", privateFile);
+    await context.run(["fetch", "--no-tags", "--no-write-fetch-head", "--no-recurse-submodules", "--refmap=", "--", remote, ref], { timeoutMs, networkRemote: !privateFile });
     if (await hasCommit(context, context.transfer.base)) return true;
   }
   return false;
@@ -129,31 +133,37 @@ async function exportChanges(context: TransferContext): Promise<HostOutput<"expo
 async function blobRange(context: TransferContext, sha: string, offset: number, length: number): Promise<Buffer> {
   if (length === 0) return Buffer.alloc(0);
   const args = ["-C", context.root, "cat-file", "blob", sha];
-  return experimental_runVcsProcess("git", args, () => new Promise<Buffer>((resolvePromise, reject) => {
+  return experimental_runVcsProcess("git", args, async () => {
     context.active();
-    const child = spawn("git", args, { env: gitEnvironment(context.root, context.registry.dataDir), detached: true, stdio: ["ignore", "pipe", "pipe"] });
-    let seen = 0, kept = 0, enough = false, timedOut = false, stderr = ""; const parts: Buffer[] = [];
-    const stop = () => { if (child.pid) { try { process.kill(process.platform === "win32" ? child.pid : -child.pid, "SIGKILL"); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") child.kill("SIGKILL"); } } };
-    const timer = setTimeout(() => { timedOut = true; stop(); }, 30_000);
-    const abort = () => stop(); context.signal.addEventListener("abort", abort, { once: true });
-    child.stdout.on("data", (bytes: Buffer) => {
-      if (enough) return;
-      const start = Math.max(0, offset - seen), end = Math.min(bytes.length, offset + length - seen); seen += bytes.length;
-      if (end > start) { parts.push(bytes.subarray(start, end)); kept += end - start; }
-      if (kept === length) { enough = true; stop(); }
+    const setup = { kind: context.endpoint.registration.git, metadata: context.endpoint.inspection, signal: context.signal };
+    const env = await gitEnvironment(context.root, setup);
+    const command = await gitInvocation(context.root, args, env, setup);
+    context.active();
+    return new Promise<Buffer>((resolvePromise, reject) => {
+      const child = spawn(command.file, command.args, { env, detached: true, stdio: ["ignore", "pipe", "pipe"] });
+      let seen = 0, kept = 0, enough = false, timedOut = false, stderr = ""; const parts: Buffer[] = [];
+      const stop = () => { if (child.pid) { try { process.kill(process.platform === "win32" ? child.pid : -child.pid, "SIGKILL"); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") child.kill("SIGKILL"); } } };
+      const timer = setTimeout(() => { timedOut = true; stop(); }, 30_000);
+      const abort = () => stop(); context.signal.addEventListener("abort", abort, { once: true });
+      child.stdout.on("data", (bytes: Buffer) => {
+        if (enough) return;
+        const start = Math.max(0, offset - seen), end = Math.min(bytes.length, offset + length - seen); seen += bytes.length;
+        if (end > start) { parts.push(bytes.subarray(start, end)); kept += end - start; }
+        if (kept === length) { enough = true; stop(); }
+      });
+      child.stderr.on("data", (bytes: Buffer) => { stderr = (stderr + bytes.toString("utf8")).slice(-2000); });
+      const cleanup = () => { clearTimeout(timer); context.signal.removeEventListener("abort", abort); };
+      child.on("error", error => { cleanup(); reject(error); });
+      child.on("close", code => {
+        cleanup();
+        if (context.signal.aborted) return reject(abortError());
+        if (timedOut) return reject(new HostError("git-timeout", "Reading a pinned blob exceeded its deadline.", true));
+        if (!enough && (code !== 0 || kept !== length)) return reject(new HostError("blob-read-failed", "The pinned blob range could not be read: " + stderr));
+        resolvePromise(Buffer.concat(parts, kept));
+      });
+      if (context.signal.aborted) stop();
     });
-    child.stderr.on("data", (bytes: Buffer) => { stderr = (stderr + bytes.toString("utf8")).slice(-2000); });
-    const cleanup = () => { clearTimeout(timer); context.signal.removeEventListener("abort", abort); };
-    child.on("error", error => { cleanup(); reject(error); });
-    child.on("close", code => {
-      cleanup();
-      if (context.signal.aborted) return reject(abortError());
-      if (timedOut) return reject(new HostError("git-timeout", "Reading a pinned blob exceeded its deadline.", true));
-      if (!enough && (code !== 0 || kept !== length)) return reject(new HostError("blob-read-failed", "The pinned blob range could not be read: " + stderr));
-      resolvePromise(Buffer.concat(parts, kept));
-    });
-    if (context.signal.aborted) stop();
-  }), { priority: "background", signal: context.signal });
+  }, { priority: "background", signal: context.signal });
 }
 async function readBlob(context: TransferContext, input: HostInput<"readBlob">): Promise<HostOutput<"readBlob">> {
   const manifest = context.registry.readTransferState(context.authority, "export.json", hostContract.exportChanges.output);
@@ -210,7 +220,7 @@ async function releaseSnapshotRef(registry: HostRegistry, input: TransferAuthori
     catch { throw new HostError("endpoint-replaced", "The snapshot repository disappeared or changed during cleanup; preserve its pending release."); }
     if (actual !== root || device !== endpoint.device || inode !== endpoint.inode) throw new HostError("endpoint-replaced", "The snapshot repository changed during cleanup; reconcile its exact owning host.");
   };
-  const options = (extra?: Partial<Parameters<typeof git>[2]>) => ({ ...extra, dataDir: registry.dataDir, signal, check: active });
+  const options = (extra?: Partial<Parameters<typeof git>[2]>) => ({ ...extra, dataDir: registry.dataDir, signal, check: active, kind: endpoint.registration.git, metadata: endpoint.inspection });
   const context: HostContext = { registry, authority: input, signal, endpoint, root, active, git: (args, extra) => git(root, args, options(extra)), run: (args, extra) => runGit(root, args, options(extra)) };
   await assertRepository(context);
   const symbolic = await context.run(["symbolic-ref", "-q", intent.ref]);
@@ -295,7 +305,7 @@ export function createTransport(registry: HostRegistry): Transport {
       if (sparseCheckout && context.endpoint.registration.git === "full") await requireSparseGit(context);
       await context.git(["add", "-A", ...(sparseCheckout ? ["--sparse"] : [])], { timeoutMs: 300_000 }); const diff = await context.run(["diff", "--cached", "--quiet"]);
       if (diff.code !== 0 && diff.code !== 1) throw new HostError("git-failed", "Cannot determine the member's staged snapshot.");
-      if (diff.code === 1) await context.git(["-c", "gc.auto=0", "-c", "maintenance.auto=false", ...(await identity(context)), "commit", "--no-verify", "--no-gpg-sign", "-q", "-m", input.message], { timeoutMs: 300_000 });
+      if (diff.code === 1) await context.git([...(await identity(context)), "commit", "--no-verify", "--no-gpg-sign", "-q", "-m", input.message], { timeoutMs: 300_000 });
       return { sha: await context.git(["rev-parse", "--verify", "HEAD"]), committed: diff.code === 1 };
     }),
     worktreeState: method("worktreeState", ["source-read", "member-write", "home-import"], async (context, input) => {
@@ -305,9 +315,11 @@ export function createTransport(registry: HostRegistry): Transport {
       const base = onBase ?? input.base;
       const tracked = await context.git(["diff", "--name-only", "-z", "--no-renames", base], { raw: true });
       const untracked = (await context.git(["status", "--porcelain", "-z", "--untracked-files=all", "--no-renames"], { raw: true, timeoutMs: 300_000 })).split("\0").filter(row => row.startsWith("?? ")).map(row => row.slice(3)).join("\0");
-      const changed = [...new Set([...tracked.split("\0"), ...untracked.split("\0")].filter(Boolean))].sort();
+      const nested = context.endpoint.registration.git === "full"
+        ? await dirtySubmodules(context.root, { dataDir: registry.dataDir, signal: context.signal, check: context.active, metadata: context.endpoint.inspection, timeoutMs: 300_000 }) : [];
+      const changed = [...new Set([...tracked.split("\0"), ...untracked.split("\0"), ...nested].filter(Boolean))].sort();
       const unmerged = await context.git(["ls-files", "--unmerged", "-z"], { raw: true });
-      return { branch: branch.code === 0 ? branch.stdout.trim() : null, head, tree, dirty: !!status, changed, unfinishedMerge: !!unmerged };
+      return { branch: branch.code === 0 ? branch.stdout.trim() : null, head, tree, dirty: !!status || nested.length > 0, changed, unfinishedMerge: !!unmerged };
     }),
   };
 }

@@ -472,7 +472,7 @@ async function carryFinish(input: NativeInput<"carryFinish">, signal?: AbortSign
   for (let at = 0; at < staged.length; at += PATH_BATCH) await git(top, ["add", "-A", ...(sparse ? ["--sparse"] : []), "--", ...staged.slice(at, at + PATH_BATCH)], { signal, env: LITERAL, timeoutMs: 300_000 });
   carryFaults.beforeCommit?.();
   if ((await stagedPaths(top, signal)).length > 0) {
-    await git(top, ["-c", "gc.auto=0", "-c", "maintenance.auto=false", "-c", "user.name=Tavern", "-c", "user.email=tavern@localhost", "commit", "--no-verify", "--no-gpg-sign", "-q", "-m", "Tavern carried snapshot"], { signal, env: { GIT_AUTHOR_NAME: "Tavern", GIT_AUTHOR_EMAIL: "tavern@localhost" }, timeoutMs: 300_000 });
+    await git(top, ["-c", "user.name=Tavern", "-c", "user.email=tavern@localhost", "commit", "--no-verify", "--no-gpg-sign", "-q", "-m", "Tavern carried snapshot"], { signal, env: { GIT_AUTHOR_NAME: "Tavern", GIT_AUTHOR_EMAIL: "tavern@localhost" }, timeoutMs: 300_000 });
   }
   carryFaults.afterCommit?.();
   const head = await git(top, ["rev-parse", "--verify", "HEAD"], { signal });

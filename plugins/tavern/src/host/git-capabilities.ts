@@ -1,7 +1,6 @@
-import { experimental_runVcsProcess } from "@get-bb/plugin-sdk/host";
 import { copyFileSync, existsSync, mkdtempSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { git, gitEnvironment, runGit, runGitProcess, type GitOptions } from "./git";
+import { git, runGit, type GitOptions } from "./git";
 import { HostError } from "./registry";
 
 export async function repositoryObjectFormat(root: string, options: GitOptions, head?: string): Promise<"sha1" | "sha256"> {
@@ -39,14 +38,7 @@ export async function inspectGitCapabilities(root: string, options: GitOptions, 
     const realIndex = resolve(root, await git(root, ["rev-parse", "--git-path", "index"], options));
     if (existsSync(realIndex)) copyFileSync(realIndex, index);
     const indexed = async (args: string[]) => {
-      options.check?.();
-      const argv = ["-C", root, ...(bare ? ["--work-tree=" + temporary] : []), ...args];
-      const result = await experimental_runVcsProcess("git", argv, () => {
-        options.check?.();
-        return runGitProcess(argv, { env: { ...gitEnvironment(root, options.dataDir), GIT_INDEX_FILE: index }, signal: options.signal, timeoutMs: 300_000, maxBuffer: 64 * 1024 * 1024 });
-      }, { priority: "background", signal: options.signal });
-      options.check?.();
-      if (result.timedOut) throw new HostError("git-timeout", "The temporary-index Git probe exceeded its deadline.", true);
+      const result = await runGit(root, [...(bare ? ["--work-tree=" + temporary] : []), ...args], { ...options, env: { ...options.env, GIT_INDEX_FILE: index }, privateIndex: index, timeoutMs: 300_000 });
       if (result.code !== 0) throw unsupported("GIT_INDEX_FILE=<temporary> git " + args.join(" "), result.stderr || result.stdout);
     };
     if (!existsSync(index)) await indexed(["read-tree", "--empty"]);

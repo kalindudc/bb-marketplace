@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { createFakePluginHost, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { afterEach, expect, it, vi } from "vitest";
 import { emulatedGit, realGit } from "../host/emulated-git";
+import { serveGit } from "../host/git-daemon";
 import { HostRegistry } from "../../src/host/registry";
 import { inspectHost } from "../../src/host/inspect";
 import { createTransport } from "../../src/host/transport";
@@ -25,11 +26,15 @@ afterEach(async () => { vi.unstubAllEnvs(); for (const f of cleanup.splice(0).re
 const git = (root: string, ...args: string[]) => execFileSync(realGit, ["-C", root, ...args], { encoding: "utf8" }).trim();
 it.each([[undefined, false, false], ["release", false, false], [undefined, true, false], ["release", true, false], [undefined, true, true]] as const)("carries committed trees, pins the target and leases pushes (base: %s, emulation: %s, private: %s)", async (baseOverride, emulate, pushedOnly) => {
   const root = mkdtempSync(join(tmpdir(), "placement-forge-")); cleanup.push(() => rmSync(root, { recursive: true, force: true }));
-  const home = join(root, "home"), source = join(root, "member"), remote = join(root, "remote.git");
+  const home = join(root, "home"), source = join(root, "member"), remote = join(root, "remote.git"), importRoot = pushedOnly ? join(root, "private.git") : home;
   mkdirSync(home); git(home, "init", "-qb", "main"); git(home, "config", "user.name", "Fixture"); git(home, "config", "user.email", "fixture@example.invalid");
   writeFileSync(join(home, "work.txt"), "base"); git(home, "add", "."); git(home, "commit", "-qm", "base");
-  git(root, "clone", "--bare", home, remote); git(root, "clone", remote, source); git(source, "config", "user.name", "Maker"); git(source, "config", "user.email", "maker@example.invalid"); git(source, "checkout", "-qb", "member-work");
+  git(root, "clone", "--bare", home, remote);
+  const network = await serveGit(remote); cleanup.push(network.close);
+  if (pushedOnly) git(root, "clone", "--no-checkout", remote, importRoot);
+  git(root, "clone", remote, source); git(source, "config", "user.name", "Maker"); git(source, "config", "user.email", "maker@example.invalid"); git(source, "checkout", "-qb", "member-work");
   git(home, "remote", "add", "origin", remote); git(home, "fetch", "origin"); git(home, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main");
+  git(home, "remote", "set-url", "origin", network.url);
   const base = git(home, "rev-parse", "HEAD");
   writeFileSync(join(source, "work.txt"), "committed"); git(source, "commit", "-qam", "Member subject\n\nMember body"); const memberHead = git(source, "rev-parse", "HEAD");
   writeFileSync(join(source, "work.txt"), "dirty"); writeFileSync(join(source, "untracked.txt"), "untracked");
@@ -54,18 +59,16 @@ it.each([[undefined, false, false], ["release", false, false], [undefined, true,
   const db = new Sqlite(":memory:"); db.exec(MIGRATIONS.join("\n")); cleanup.push(() => { db.close(); });
   const store = new PlacementStore(db as never), port = createHostPort(host.bb), transport = new PlacementTransport(host.bb, port, store);
   const endpoint = (name: string) => ({ hostId: name, environmentId: name, root: name === "home" ? home : source });
-  const importRoot = pushedOnly ? join(root, "private.git") : home;
-  if (pushedOnly) git(root, "clone", "--no-checkout", remote, importRoot);
   writeFileSync(join(home, "work.txt"), "user staged"); git(home, "add", "work.txt"); writeFileSync(join(home, "work.txt"), "user unstaged");
   const userBefore = { head: git(home, "rev-parse", "HEAD"), refs: git(home, "show-ref"), objects: git(home, "count-objects", "-v"), index: readFileSync(join(home, ".git/index")) };
-  const snapshot = store.captureSnapshot({ purpose: "initial", keeperThreadId: "keeper", projectId: "project", sourceThreadId: "keeper", makerThreadId: null, makerSubmissionId: null, journalTarget: null, objectFormat: "sha1", base, sourceHead: base, tree: git(home, "rev-parse", "HEAD^{tree}"), source: endpoint("home"), home: { ...endpoint("home"), root: importRoot }, fetch: { via: "remote-head", remoteName: "origin", remoteUrl: remote, trackingRef: "refs/remotes/origin/main", fetchRef: "refs/heads/main" } });
+  const snapshot = store.captureSnapshot({ purpose: "initial", keeperThreadId: "keeper", projectId: "project", sourceThreadId: "keeper", makerThreadId: null, makerSubmissionId: null, journalTarget: null, objectFormat: "sha1", base, sourceHead: base, tree: git(home, "rev-parse", "HEAD^{tree}"), source: endpoint("home"), home: { ...endpoint("home"), root: importRoot }, fetch: { via: "remote-head", remoteName: "origin", remoteUrl: network.url, trackingRef: "refs/remotes/origin/main", fetchRef: "refs/heads/main" } });
   store.reserve(placementRecord({ memberThreadId: "member", phase: "reserved", hostId: "member", environmentId: "member", root: source, memberBranch: "member-work", sourceSnapshotId: snapshot.id, pullRequests: { at: "home", profile: "forge" } }), { maxMakers: 2, maxCheckers: 2 });
   store.update("placement", 1, value => ({ ...value, phase: "running" }));
   const keepers = new KeeperStore(db as never);
   keepers.put("members", "member", { threadId: "member", classId: "smith", keeperThreadId: "keeper", boardQuestId: "quest" } as never);
   keepers.patch("member", { projectId: "project" });
   const member = () => keepers.get("members", "member")!;
-  const profile = { id: "forge", name: "Forge", enabled: true, kind: "command", open: `test "$GIT_OPTIONAL_LOCKS" = 0 && git status --porcelain >/dev/null && test "$(git rev-parse --show-toplevel)" = ${JSON.stringify(home)} && test "$(git remote get-url origin)" = ${JSON.stringify(remote)} && test "$FORGE_HEAD" = member-work && test "$LOOM_DRAFT" = 1 && test "$(cat)" = description && echo https://forge.example/pr/12` };
+  const profile = { id: "forge", name: "Forge", enabled: true, kind: "command", open: `test "$GIT_OPTIONAL_LOCKS" = 0 && git status --porcelain >/dev/null && test "$(git rev-parse --show-toplevel)" = ${JSON.stringify(home)} && test "$(git remote get-url origin)" = ${JSON.stringify(network.url)} && test "$FORGE_HEAD" = member-work && test "$LOOM_DRAFT" = 1 && test "$(cat)" = description && echo https://forge.example/pr/12` };
   const runtime = { scopes: { api: { hostTemplate: () => ({ template: { github: "draft-pr-only", preset: "worktree" } }) } }, bb: host.bb, placements: () => ({ store, host: port, transport }), settings: { placementPolicy: () => ({ state: "valid", settings: { forges: [profile] } }) }, keeper: { member, now: () => 1, changed: vi.fn(), store: keepers } } as unknown as TavernRuntime;
   const forge = new PlacementForge(runtime);
   const result = await forge.forThread("member", { title: "Draft", body: "description", base: baseOverride });
@@ -112,7 +115,7 @@ it.each([[undefined, false, false], ["release", false, false], [undefined, true,
   git(source, "checkout", "-B", "main");
   expect(await forge.forThread("member", { title: "Draft", body: "description", base: "release" })).toContain("Tavern never pushes to the base branch");
   expect(calls.filter(name => name === "draftPush")).toHaveLength(pushCount);
-}, 90_000);
+}, 180_000);
 it.each(["none", "read"])("refuses draft creation under GitHub scope %s", async github => {
   const runtime = { placements: () => ({ store: { byMember: () => ({ pullRequests: { at: "home", profile: "forge" } }) } }), scopes: { api: { hostTemplate: () => ({ template: { github, preset: "worktree" } }) } }, keeper: { member: () => ({ classId: "smith" }) } } as unknown as TavernRuntime;
   expect(await new PlacementForge(runtime).forThread("member", { title: "Draft", body: "" })).toBe(`Your worktree scope has GitHub access ${github}; it does not allow opening draft pull requests.`);

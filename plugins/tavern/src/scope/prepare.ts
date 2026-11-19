@@ -1,4 +1,5 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, type ExecFileSyncOptionsWithStringEncoding } from "node:child_process";
+import { execGitSync, gitEnvironmentSync } from "../shared/git-safety";
 import { statSync } from "node:fs";
 import { normalizeRemote, pushSpec } from "./remote";
 import { draftEditKey, draftEditSelector } from "./github";
@@ -10,7 +11,15 @@ import { commandWritePaths, shellCommands } from "./shell";
 
 export interface PrepareDeps { scope?: Scope; readCommand?(program: string, args: string[], cwd?: string): string }
 export function prepareCall(call: ScopeCall, deps: PrepareDeps = {}): ScopeCall {
-  const read = deps.readCommand ?? ((program: string, args: string[], cwd = call.cwd) => execFileSync(program, args, { cwd, encoding: "utf8", timeout: 3000, stdio: ["ignore", "pipe", "pipe"] }));
+  const read = deps.readCommand ?? ((program: string, args: string[], cwd = call.cwd) => {
+    const options: ExecFileSyncOptionsWithStringEncoding & { cwd: string; timeout: number } = { cwd, encoding: "utf8", timeout: 3000, stdio: ["ignore", "pipe", "pipe"] };
+    if (program === "git") {
+      const read = { ...options, readOnly: true };
+      return args[0] === "-C" ? execGitSync(args[1]!, args.slice(2), read) : execGitSync(cwd, args, read);
+    }
+    const env = program === "gh" || program === "dt" ? gitEnvironmentSync(cwd, { childGit: true }) : undefined;
+    return execFileSync(program, args, { ...options, env });
+  });
   const cwd = realPath(call.cwd);
   const resolvedPaths: Record<string, string> = {};
   const pushTargets: Record<string, string[]> = {};

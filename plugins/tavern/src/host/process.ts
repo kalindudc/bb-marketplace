@@ -3,6 +3,7 @@
 // orphans that keep loading the machine.
 import { spawn } from "node:child_process";
 import { AsyncLocalStorage } from "node:async_hooks";
+import type { GitInvocation } from "../shared/git-safety";
 
 export interface ProcessResult {
   /** The exit code, or null when a signal ended the process. */
@@ -16,6 +17,7 @@ export interface ProcessResult {
 export interface ProcessOptions {
   cwd?: string;
   env?: NodeJS.ProcessEnv;
+  invocation?: GitInvocation;
   timeoutMs: number;
   signal?: AbortSignal;
   /** Most characters of stdout or stderr kept; the process is killed past it. */
@@ -51,7 +53,7 @@ export function runProcess(file: string, args: readonly string[], options: Proce
   const { graceMs = KILL_GRACE_MS, maxBuffer = DEFAULT_MAX_BUFFER } = options;
   const pending = new Promise<ProcessResult>((resolve, reject) => {
     if (signal?.aborted === true) return reject(abortError());
-    const child = spawn(file, [...args], { cwd: options.cwd, env: options.env, detached: true, stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn(options.invocation?.file ?? file, options.invocation?.args ?? [...args], { cwd: options.cwd, env: options.env, detached: true, stdio: ["pipe", "pipe", "pipe"] });
     const out: Buffer[] = [];
     const err: Buffer[] = [];
     let outBytes = 0;

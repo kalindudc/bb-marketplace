@@ -304,3 +304,11 @@ it("native session status respects cancellation before any receipt/PID probe", a
   const f = await fixture(), ack = await f.service.bindScope(f.input()), controller = new AbortController(); controller.abort(); const kill = vi.spyOn(process, "kill");
   await expect(f.service.sessionStatus({ ...f.authority, revision: 1, scopeDigest: ack.scopeDigest }, controller.signal)).rejects.toThrow(/abort|cancel/i); expect(kill).not.toHaveBeenCalled();
 });
+
+it("uses the registered worktree for native Git facts even with a local core.worktree redirect", async () => {
+  const f = await fixture();
+  await f.service.bindScope(f.input());
+  f.git("config", "core.worktree", f.home);
+  const result = await f.service.prepareCall({ ...f.authority, scopeRevision: 1, call: { kind: "bash", toolName: "bash", input: { command: "cat $(git rev-parse --show-toplevel)/tracked" }, cwd: f.repo } });
+  expect(result.call.gitRoots?.[f.repo]).toBe(f.repo);
+});
