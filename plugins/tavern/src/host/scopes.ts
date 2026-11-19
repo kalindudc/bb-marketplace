@@ -71,6 +71,13 @@ export class NativeScopes {
         throw new HostError("scope-storage", "The declared thread storage endpoint belongs to another member or host; reconcile core storage before binding.");
       threadStorage = storage.realRoot;
     }
+    if (template.role === "smith") {
+      const refs = endpoint.registration.allowedRefs;
+      if (refs.length !== 1 || !refs[0].startsWith("refs/heads/")) throw new HostError("scope-branch", "A Smith needs one recorded assigned branch.");
+      const branch = refs[0].slice("refs/heads/".length);
+      if (template.assignedBranch && template.assignedBranch !== branch) throw new HostError("scope-branch", "The scope and placement assigned branches differ.");
+      template.assignedBranch = branch;
+    }
     delete template.env.variables.BB_THREAD_STORAGE;
     const core = { ...template, workspaceKind: delivery.workspaceBinding.kind, expectedWorktree: endpoint.realRoot,
       ...(template.checks ? { checks: { ...template.checks, worktree: endpoint.realRoot } } : {}),

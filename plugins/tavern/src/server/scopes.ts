@@ -42,6 +42,7 @@ export class BackendScopes {
     this.api = registerScopes(runtime.bb, {
       ...options,
       pathsForThread: (threadId) => this.paths(threadId),
+      assignedBranchForThread: threadId => this.assignedBranch(threadId),
       hostTargetForThread: threadId => {
         const record = runtime.placements().store.byMember(threadId);
         return record ? { kind: "host", placementId: record.id, generation: record.generation } : undefined;
@@ -111,6 +112,23 @@ export class BackendScopes {
     const thread = await this.runtime.bb.sdk.threads.get({ threadId });
     await this.runtime.prepareRegistry(thread.projectId);
     return thread;
+  }
+  async assignedBranch(threadId: string): Promise<string | undefined> {
+    const member = this.runtime.keeper.member(threadId);
+    if (member?.classId !== "smith") return;
+    const pinned = this.runtime.keeper.store.runtime(threadId).scopeAssignedBranch;
+    if (pinned) return pinned.branch;
+    const thread = await this.runtime.bb.sdk.threads.get({ threadId });
+    if (!thread.environmentId) return;
+    const placement = this.runtime.placements().store.byMember(threadId);
+    const carry = placement?.carries?.find(receipt => receipt.generation === placement.generation && receipt.phase === "verified");
+    const existing = this.api.status().threads.find(row => row.threadId === threadId)?.scope;
+    if (!carry && existing?.expectedWorktree && !existing.assignedBranch) return;
+    const environment = await this.runtime.bb.sdk.environments.get({ environmentId: thread.environmentId });
+    const branch = carry?.branch ?? environment.branchName;
+    if (!branch) return;
+    this.runtime.keeper.store.patch(threadId, { scopeAssignedBranch: { environmentId: thread.environmentId, branch } });
+    return branch;
   }
   async paths(threadId: string) {
     const bb = this.runtime.bb;

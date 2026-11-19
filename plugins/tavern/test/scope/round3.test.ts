@@ -12,10 +12,10 @@ function check(command: string, role = "smith") {
     if (program === "git" && args.includes("get-url")) return "git@github.com:kalindudc/world.git";
     if (program === "git" && args.includes("--show-toplevel")) return cwd;
     if (program === "gh" && args[0] === "api") return '{"login":"tester"}';
-    if (program === "gh" && args[0] === "pr") return JSON.stringify({ isDraft: true, author: { login: args[2] === "5" ? "someone-else" : "tester" }, headRefName: "feature", headRepositoryOwner: { login: "kalindudc" }, headRepository: { name: "world" } });
+    if (program === "gh" && args[0] === "pr") return JSON.stringify({ isDraft: true, author: { login: args[2] === "5" ? "someone-else" : "tester" }, headRefName: args[2] === "5" ? "someone-else" : "feature", headRepositoryOwner: { login: "kalindudc" }, headRepository: { name: "world" } });
     throw new Error("Unexpected lookup");
   });
-  const scope = bindPaths(scopeForClass(role), paths);
+  const scope = bindPaths({ ...scopeForClass(role), assignedBranch: "feature" }, paths);
   return { decision: evaluate(scope, prepareCall({ kind: "bash", toolName: "bash", cwd, input: { command } }, { readCommand, scope })), readCommand };
 }
 it.each(["gh pr edit --body x 5", "gh pr edit --title=x --body x 5", "gh pr edit -b x 5", "gh pr edit --body x -- 5"])("verifies the actual positional selector: %s", command => {
@@ -45,5 +45,5 @@ it.each(['cd "$(git rev-parse --show-toplevel)/packages/a" && npm test', 'for ((
 it.each(["tree -o /outside/file", "fd --exec sh -c bad", "fd -x sh -c bad", "hostname changed", "node --version -e bad", "npm version patch", "mktemp /outside/file.XXXX", "awk 'BEGIN{x=1 / system(\"bad\") / 2}'", "sed -n '/x/{p;e bad}'", "gh api graphql -f query='mutation{bad}' -F owner=o", "git branch --contains HEAD -D feature", "git tag --list -d v1", "gh api -X POST search/issues -f q=bug"])("does not turn read additions into unchecked writers: %s", command => expect(check(command, "ranger").decision.allow).toBe(false));
 it.each(["mkdir '$TMPDIR'", "export PWD=/outside; touch \"$PWD/x\"", "env --unset TMPDIR mkdir \"$TMPDIR/x\"", "env --unset=TMPDIR bash -c 'echo x > \"$TMPDIR/x\"'", "env -i bash -c 'echo x > \"$TMPDIR/x\"'", "for TMPDIR in /outside; do echo x > \"$TMPDIR/x\"; done"])("does not expand quoted or reassigned bindings: %s", command => expect(check(command, "ranger").decision.allow).toBe(false));
 it.each(["tavern_note", "tavern_gate"])("makes Keeper memory tools available to Rangers too: %s", toolName => {
-  for (const role of ["keeper", "ranger"]) expect(evaluate(bindPaths(scopeForClass(role), paths), { kind: "tool", toolName, cwd, input: {} }).allow).toBe(true);
+  for (const role of ["keeper", "ranger"]) expect(evaluate(bindPaths({ ...scopeForClass(role), assignedBranch: "feature" }, paths), { kind: "tool", toolName, cwd, input: {} }).allow).toBe(true);
 });

@@ -1,13 +1,8 @@
-import { classScopeSchema, scopeNarrowingSchema, scopeSchema, type ClassScope, type Scope, type ScopeNarrowing, type ShellRule } from "./schema";
+import { classScopeSchema, scopeNarrowingSchema, scopeSchema, type ClassScope, type Scope, type ScopeNarrowing } from "./schema";
 import { glob, pathMatches, realPath } from "./paths";
 import { tmpdir } from "node:os";
+import { LEGACY_CATALOGUE_RULES } from "./acts";
 
-const rule = (id: string, argv: ShellRule["argv"], why: string): ShellRule => ({ id, argv, why });
-const common: ShellRule[] = [
-  rule("gh-merge", ["gh", "pr", "merge"], "Merging pull requests needs the user's decision"),
-  rule("deploy", ["dev", "deploy"], "Deployments are outside this scope"),
-  { id: "deploy-fallback", regex: "\\b(terraform\\s+(apply|destroy|import)|helm\\s+(install|upgrade|uninstall)|kapp\\s+deploy|dt\\s+deploy)\\b", why: "Deployments are outside this scope" },
-];
 export function scopeForClass(classId: string, narrowing?: ScopeNarrowing, definition?: ClassScope): Scope {
   const chosen = definition === undefined ? undefined : classScopeSchema.parse(definition);
   const preset = typeof chosen === "string" ? chosen : chosen?.preset ?? ({ ranger: "readonly", warden: "checker", smith: "worktree", keeper: "open" } as const)[classId as "ranger"] ?? "open";
@@ -18,7 +13,7 @@ export function scopeForClass(classId: string, narrowing?: ScopeNarrowing, defin
       allow: open ? [] : [...(preset === "worktree" ? ["${worktree}"] : []), "${tmp}", "${threadStorage}"],
       deny: ["~/.ssh", "~/.pi/agent/extensions", "~/.agents/tavern/scopes.yml", ...(open ? ["~/.claude/settings.json", "~/.claude/settings.local.json"] : ["~/.claude"]), "${scopesDir}"] },
     tools: { allow: ["*"], deny: [], hide: false },
-    shell: { deny: open ? [] : [...common, ...(preset !== "worktree" ? [rule("git-push", ["git", "push"], "This scope does not allow pushes")] : [])], allow: [] },
+    shell: { deny: open ? [] : LEGACY_CATALOGUE_RULES.filter(rule => rule.id !== "git-push" || preset !== "worktree"), allow: [] },
     ...(preset === "checker" ? { checks: { commands: [] } } : {}),
     network: "any", github: open || preset === "worktree" ? "draft-pr-only" : "read",
     env: { poisonGh: true, blockGitPush: !open && preset !== "worktree" }, sandbox: !open, onViolation: "block",

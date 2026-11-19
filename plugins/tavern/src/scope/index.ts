@@ -31,6 +31,7 @@ export function shouldScope(classId: string | null | undefined, origin: "direct"
 export interface ScopesDeps extends WatchDeps {
   mode?: ScopeMode;
   hostScopeForThread?: HostScopeLookup;
+  assignedBranchForThread?(threadId: string): Promise<string | undefined>;
   hostTargetForThread?(threadId: string): import("./schema").ScopeHostTarget | undefined;
   onHostTemplateChanged?(threadId: string): void;
   narrowBoundScope?(scope: Scope): Scope;
@@ -90,6 +91,10 @@ export function registerScopes(bb: BbPluginApi, deps: ScopesDeps) {
   };
   const bindAndWrite = async (threadId: string, input: Scope, check: (bindingChanged?: boolean) => void, preserveProvenance = false) => {
     let template = scopeSchema.parse({ ...input, threadId, issuedAt: input.issuedAt || Date.now() });
+    if (template.role === "smith" && !template.assignedBranch) {
+      const assignedBranch = await deps.assignedBranchForThread?.(threadId);
+      if (assignedBranch) template = { ...template, assignedBranch };
+    }
     const paths = prepareBinding(threadId) ? undefined : await deps.pathsForThread(threadId);
     check();
     const revision = store.revision(threadId);

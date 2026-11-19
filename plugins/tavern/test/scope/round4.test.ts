@@ -22,7 +22,7 @@ function fixture() {
   });
   const check = (source: string, role = "smith") => {
     const command = source.replaceAll("OUTSIDE", join(root, "outside"));
-    const scope = bindPaths(scopeForClass(role, undefined, role === "keeper" ? "keeper" : undefined), { home: root, worktree: cwd, tmp: [join(root, "scratch")], threadStorage: join(root, "storage"), scopesDir: join(root, "scopes") });
+    const scope = bindPaths({ ...scopeForClass(role, undefined, role === "keeper" ? "keeper" : undefined), assignedBranch: "feature" }, { home: root, worktree: cwd, tmp: [join(root, "scratch")], threadStorage: join(root, "storage"), scopesDir: join(root, "scopes") });
     const call = prepareCall({ kind: "bash", toolName: "bash", cwd, input: { command } }, { scope, readCommand });
     return { decision: evaluate(scope, call), call };
   };

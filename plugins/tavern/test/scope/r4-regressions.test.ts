@@ -14,6 +14,7 @@ import extension, { type PiGuardApi } from "../../adapters/pi/extension";
 
 const scope = (role: string, mode: "watch" | "enforce" = "enforce") => bindPaths({ ...scopeForClass(role), mode }, { home: "/home/fixture", tmp: ["/tmp"], threadStorage: "/storage", worktree: "/workspace", scopesDir: "/scopes" });
 const check = (role: string, command: string, contained = true, mode: "watch" | "enforce" = "enforce") => evaluate(scope(role, mode), { kind: "bash", toolName: "bash", input: { command }, cwd: "/workspace", containment: contained ? "sandbox" : undefined });
+// Cloud config set, machine reads and secure credential requests are approved exceptions to SC1’s reader floor.
 const probe: [string, string, "act" | "authority" | "allow" | "research" | "agent" | "gap"][] = [
   ["ranger", "dt pr merge 17", "act"], ["warden", "dt pr merge 17", "act"],
   ["ranger", "dt pr comment 17 -b fixture", "act"], ["ranger", "quick deploy ./site example-site", "act"],
@@ -27,6 +28,8 @@ const probe: [string, string, "act" | "authority" | "allow" | "research" | "agen
   ["ranger", "gcloud compute instances list", "research"], ["ranger", "bb loom approve project", "authority"],
   ["ranger", "bb automations create --name fixture", "authority"], ["ranger", "bb lan on", "authority"], ["ranger", "bb settings set x y", "authority"],
   ["ranger", "bb aquifer-machines rotate", "authority"], ["ranger", "bb thread archive thr_fixture", "authority"],
+  ["ranger", "gcloud compute instances delete vm", "authority"], ["ranger", "bb machine env set TOKEN fixture", "authority"],
+  ["ranger", "gcloud config set project fixture", "research"], ["ranger", "bb machine providers", "research"], ["ranger", "bb machine env", "research"],
   ["ranger", "cortex rm 17", "authority"], ["ranger", "cortex agents reset", "authority"], ["ranger", "bb thread tell thr_fixture fixture", "agent"],
   ["ranger", "cortex update 17 -m fixture", "agent"], ["ranger", "dig example.test", "research"], ["ranger", "python3 -c 'print(1)'", "research"],
   ["ranger", "git push origin feature", "act"], ["ranger", "echo fixture > /home/fixture/src/x", "act"],

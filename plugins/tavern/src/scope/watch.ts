@@ -200,6 +200,7 @@ export function registerWatcher(bb: BbPluginApi, store: ScopeStore, deps: WatchD
             if (disposed || store.records.get(threadId) !== record || after?.kind !== "ready" || !sameBinding(identity(after), expected) || reply.scopeRevision !== expected.revision || reply.scopeDigest !== expected.scopeDigest) {
               await hold(threadId, providerId, row.id, row.seq, "The remote scope or assignment changed during inspection; keep this event pending and ask the Keeper to reconcile its current binding.", expected); return;
             }
+            if (reply.decision.allow) for (const act of reply.decision.acts ?? []) store.recordAct({ threadId, providerId, at: Date.now(), eventId: row.id, seq: row.seq, kind: act.kind, call: reply.call, mode: modeFor(threadId) === "watch" ? "watch" : "enforce" });
             if (!reply.decision.allow) { violation = await contain(threadId, providerId, row.id, row.seq, row.createdAt, reply.decision, reply.call, expected); break; }
           }
           if (violation) { advance(false); if (violation.mode === "enforce") return; }
@@ -250,6 +251,7 @@ export function registerWatcher(bb: BbPluginApi, store: ScopeStore, deps: WatchD
           }
           catch (error) { decision = blocked(call.toolName, "path-unresolved", "the call paths could not be resolved: " + String(error)); }
           if (!decision.allow) { await contain(threadId, providerId, row.id, row.seq, row.createdAt, decision, call); break; }
+          for (const act of decision.acts ?? []) store.recordAct({ threadId, providerId, at: Date.now(), eventId: row.id, seq: row.seq, kind: act.kind, call, mode: modeFor(threadId) === "watch" ? "watch" : "enforce" });
         }
         if (stopped.has(threadId)) break;
       }

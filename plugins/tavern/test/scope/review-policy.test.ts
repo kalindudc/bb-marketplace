@@ -41,7 +41,7 @@ it("uses Git's actual push URLs and URL rewrites without contacting a remote", (
   const f = fixture(), { worktree, git, main } = linkedWorktree(f.projectRoot);
   writeFileSync(f.global, "v: 1\nrules:\n - remote: github.com/kalindudc/*\n   classes:\n     smith:\n       defaults: {allowRules: [git-push-main]}\n");
   const bind = (scope: ReturnType<typeof scopeForClass>) => bindPaths(scope, { home: f.home, tmp: [tmpdir()], scopesDir: join(f.home, "scopes"), worktree });
-  const scoped = bind(f.policy.resolve("smith", {}).scope), standard = bind(scopeForClass("smith"));
+  const scoped = bind(f.policy.resolve("smith", {}).scope), standard = bind({ ...scopeForClass("smith"), assignedBranch: "topic" });
   const call = (command: string) => prepareCall({ kind: "bash", toolName: "bash", input: { command }, cwd: worktree });
   git(worktree, "remote", "add", "origin", "https://github.com/kalindudc/personal.git");
   git(worktree, "remote", "set-url", "--push", "origin", "https://github.com/Shopify/world.git");

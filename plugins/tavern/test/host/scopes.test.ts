@@ -191,7 +191,7 @@ it("native call preparation discards forged path facts and denies a real symlink
 it("native call preparation uses native push remotes and branch rather than caller-supplied facts", async () => {
   const f = await fixture(); f.git("remote", "add", "origin", "https://github.com/owner/repo.git"); await f.service.bindScope(f.input());
   const result = await f.service.prepareCall({ ...f.authority, scopeRevision: 1, call: { kind: "bash", toolName: "bash", input: { command: "git push origin HEAD" }, cwd: f.repo, pushTargets: { fake: ["forged"] }, pushHeads: { fake: "main" }, gitRoots: { fake: "/forged" }, directories: ["/forged"], ownedDraftPrs: ["forged"] } });
-  expect(result.decision).toEqual({ allow: true }); expect(Object.values(result.call.pushTargets!)).toEqual([["https://github.com/owner/repo.git"]]); expect(Object.values(result.call.pushHeads!)).toContain("tavern/member"); expect(JSON.stringify(result)).not.toContain("forged");
+  expect(result.decision).toMatchObject({ allow: true, acts: [expect.objectContaining({ kind: "publish" })] }); expect(Object.values(result.call.pushTargets!)).toEqual([["https://github.com/owner/repo.git"]]); expect(Object.values(result.call.pushHeads!)).toContain("tavern/member"); expect(JSON.stringify(result)).not.toContain("forged");
 });
 it("native call preparation evaluates denied tools against the rendered effective policy", async () => {
   const f = await fixture(); await f.service.bindScope(f.input());
@@ -216,7 +216,7 @@ it("native facts resolve draft ownership through cancellable native read process
   const f = await fixture(); f.git("remote", "add", "origin", "https://github.com/owner/repo.git"); await f.service.bindScope(f.input()); const original = nativeProcess.runProcess;
   const spy = vi.spyOn(nativeProcess, "runProcess").mockImplementation((program, args, options) => program !== "gh" ? original(program, args, options) : Promise.resolve({ code: 0, timedOut: false, stderr: "", stdout: JSON.stringify(args[0] === "pr" ? { isDraft: true, author: { login: "viewer" }, headRefName: "tavern/member", headRepositoryOwner: { login: "owner" }, headRepository: { name: "repo" } } : { login: "viewer" }) }));
   const result = await f.service.prepareCall({ ...f.authority, scopeRevision: 1, call: { kind: "bash", toolName: "bash", input: { command: "gh pr edit --title Updated" }, cwd: f.repo } });
-  expect(result.decision).toEqual({ allow: true }); expect(result.call.ownedDraftPrs).toHaveLength(1);
+  expect(result.decision).toMatchObject({ allow: true, acts: [expect.objectContaining({ kind: "publish" })] }); expect(result.call.ownedDraftPrs).toHaveLength(1);
   const queries = spy.mock.calls.filter(([program]) => program === "gh"); expect(queries).toHaveLength(2); for (const [, , options] of queries) expect(options.signal).toBeInstanceOf(AbortSignal);
 });
 it("native facts abort while awaiting a read and never return an allow", async () => {

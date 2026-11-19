@@ -28,4 +28,9 @@ it("Keeper cannot write to scratch but can use dev-null sinks", () => { expect(s
 it("allows tool availability without guessing effect from target/budget/widget names", () => { for (const name of ["mcp__jira__target", "mcp__jira__budget", "mcp__jira__widget", "mcp__jira__jira_update_target"]) expect(evaluate(scope("keeper"), { kind: "tool", toolName: name, input: {}, cwd: process.cwd() }).allow).toBe(true); });
 it("rejects parent traversal in all template narrowings", () => expect(() => scopeForClass("ranger", { writes: { allow: ["${tmp}/.."] } })).toThrow());
 it("does not mistake local dev up for a deployment", () => expect(shell("smith", "dev up").allow).toBe(true));
-it("blocks bare version tags, permits HEAD branch pushes", () => { expect(shell("smith", "git push origin v1.2.3").allow).toBe(false); expect(shell("smith", "git push origin HEAD").allow).toBe(true); });
+it("blocks bare version tags and allows HEAD only when it resolves to the recorded assignment", () => {
+  expect(shell("smith", "git push origin v1.2.3").allow).toBe(false);
+  expect(shell("smith", "git push origin HEAD").allow).toBe(false);
+  const s = { ...scope("smith"), assignedBranch: "assigned" };
+  expect(evaluate(s, { kind: "bash", toolName: "bash", input: { command: "git push origin HEAD" }, cwd: process.cwd(), pushHeads: { [process.cwd() + "\0" + "0"]: "assigned" } }).allow).toBe(true);
+});

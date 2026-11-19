@@ -9,7 +9,7 @@ import { readyFixture, readyGit } from "./placement-e2e-ready";
 async function fixture() {
   const f = await readyFixture();
   const services = { store: f.placements, deliveries: f.deliveries, host: f.port, ready: undefined as unknown as ReturnType<typeof f.make> };
-  const runtime = { bb: f.bb, placements: () => services, keeper: { changed: vi.fn() }, config: () => ({ machines: { rules: [] } }),
+  const runtime = { bb: f.bb, placements: () => services, keeper: { changed: vi.fn(), member: () => null }, config: () => ({ machines: { rules: [] } }),
     scopes: undefined as unknown as BackendScopes };
   const scopes = new BackendScopes(runtime as never, { dataDir: join(f.root, "controller"), installGuard: false });
   runtime.scopes = scopes;

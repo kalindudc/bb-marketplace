@@ -93,6 +93,17 @@ async function fixture(installGuard = false) {
 }
 
 describe("backend scope integration", () => {
+  it("pins the hire assignment and ignores later SDK checkout changes", async () => {
+    const f = await fixture();
+    const get = f.bb.sdk.environments.get;
+    f.bb.sdk.environments.get = async args => ({ ...await get(args), branchName: "assigned-at-hire" });
+    await f.runtime.hire("lead", "project", f.input);
+    expect(f.runtime.scopes!.view("child")!.scope?.assignedBranch).toBe("assigned-at-hire");
+    expect(f.k.store.runtime("child").scopeAssignedBranch?.branch).toBe("assigned-at-hire");
+    f.bb.sdk.environments.get = async args => ({ ...await get(args), branchName: "colleague" });
+    await f.runtime.scopes!.api.rebindScope("child");
+    expect(f.runtime.scopes!.view("child")!.scope?.assignedBranch).toBe("assigned-at-hire");
+  });
   it("widens a live Keeper snapshot on load once, preserves grants and records a scope event", async () => {
     const f = await fixture();
     const scope = { ...scopeForClass("keeper", undefined, "keeper"), threadId: "lead", issuedAt: 1 };

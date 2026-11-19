@@ -67,6 +67,23 @@ describe("scope persistence and env", () => {
   });
 });
 describe("provider-neutral watcher", () => {
+  it.each(["enforce", "watch"] as const)("records Keeper acts without stopping in %s", async mode => {
+    const { store } = fixture();
+    const s = bindPaths({ ...scopeForClass("keeper"), mode, threadId: "t1", issuedAt: 1 }, { home: temp(), tmp: [tmpdir()], scopesDir: store.directory });
+    store.write("t1", s);
+    const { bb, harness } = createFakePluginHost({ pluginId: "tavern", sdk: { threads: {
+      get: async () => ({}), stop: async () => ({}),
+      events: { list: async () => [{ id: "e1", seq: 1, type: "item/started", createdAt: Date.now(), data: { item: { type: "commandExecution", command: "dt pr merge 1", cwd: process.cwd() } } }] },
+    }, environments: {} } });
+    const onViolation = vi.fn();
+    registerWatcher(bb, store, { onViolation });
+    await harness.behavior.emitThreadEvent("experimental_thread.events", { thread: makeThreadResponse({ id: "t1" }), sequence: 1 });
+    expect(store.violations()).toEqual([]);
+    expect(store.acts()).toEqual([expect.objectContaining({ kind: "merge", mode })]);
+    expect(onViolation).not.toHaveBeenCalled();
+    expect(harness.inspection.sdk.callsTo("threads.stop")).toHaveLength(0);
+    await harness.lifecycle.dispose();
+  });
   it("binds a late worktree from SDK environment data once and checks relative writes against it", async () => {
     const store = new ScopeStore(temp()), { worktree } = linkedWorktree(temp()), outside = temp();
     store.write("t1", bindPaths({ ...scopeForClass("smith"), threadId: "t1", issuedAt: Date.now() - 1 }, { home: temp(), tmp: [join(store.dataDir, "scratch")], scopesDir: store.directory }));
@@ -110,7 +127,7 @@ describe("provider-neutral watcher", () => {
     registerWatcher(bb, store, { onViolation });
     await harness.behavior.emitThreadEvent("experimental_thread.events", { thread: makeThreadResponse({ id: "t1", providerId }), sequence: 1 });
     expect(harness.inspection.sdk.callsTo("threads.stop")).toHaveLength(1);
-    expect(onViolation).toHaveBeenCalledOnce(); expect(store.violations("t1")[0].ruleId).toBe("git-push");
+    expect(onViolation).toHaveBeenCalledOnce(); expect(store.violations("t1")[0].ruleId).toBe("git-push-main");
     expect(new ScopeStore(store.dataDir).violations()).toHaveLength(1);
     await harness.lifecycle.dispose();
   });

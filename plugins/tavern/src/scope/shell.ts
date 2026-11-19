@@ -4,7 +4,7 @@ import { parseScript, type Command, type List, type Redirect, type Word } from "
 import type { ShellRule } from "./schema";
 import { glob } from "./paths";
 
-export interface ShellCommand { argv: string[]; cwd: string; writes: string[]; text: string; source?: string; uncertain?: boolean; scriptInput?: "inline" | "heredoc" | "opaque"; gitEnvironment?: boolean; aliases?: Record<string, string>; repository?: string; sequence?: number; cwdAlternative?: boolean; githubEnvironment?: boolean; fedInput?: boolean }
+export interface ShellCommand { argv: string[]; originalArgv?: string[]; cwd: string; writes: string[]; text: string; source?: string; uncertain?: boolean; scriptInput?: "inline" | "heredoc" | "opaque"; gitEnvironment?: boolean; aliases?: Record<string, string>; repository?: string; sequence?: number; cwdAlternative?: boolean; githubEnvironment?: boolean; fedInput?: boolean }
 export interface ShellFacts { containment?: "sandbox"; temporaryRoot?: string; isRead?(command: ShellCommand): boolean; directories?: string[]; gitRoots?: Record<string, string>; env?: Record<string, string> }
 export function unquote(value: string): string {
   return value.replace(/\\\n/g, "").replace(/'([^']*)'|"((?:\\.|[^"\\])*)"|\\(.)/gs, (_all, single, double, escaped) => single ?? (double !== undefined ? double.replace(/\\([\\"$`])/g, "$1") : escaped));
@@ -36,16 +36,17 @@ export function stripWrappers(words: string[], chdir?: (path: string) => void): 
 }
 export function normalizeCommand(argv: string[]): { argv: string[]; directory?: string; repository?: string } {
   let directory: string | undefined, repository: string | undefined;
-  const values: Record<string, string[]> = { bb: ["--project", "--host", "--server", "--url", "--token"], git: ["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env"], gh: ["-R", "--repo", "--hostname"], kubectl: ["--context", "--namespace", "-n", "--kubeconfig", "--cluster", "--user", "--server", "-s", "--token"], helm: ["--kube-context", "--namespace", "-n", "--kubeconfig"], terraform: ["-chdir"], kapp: ["-a", "--app", "-n", "--namespace"], dev: ["--context", "--namespace", "--project"], dt: ["--cluster", "--context", "-R", "--repo"] };
+  const values: Record<string, string[]> = { gcloud: ["--project", "--account", "--configuration", "--impersonate-service-account", "--billing-project", "--access-token-file", "--flags-file"], bb: ["--project", "--host", "--server", "--url", "--token", "--new-machine", "--machine", "--environment-provider"], git: ["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env"], gh: ["-R", "--repo", "--hostname"], kubectl: ["--context", "--namespace", "-n", "--kubeconfig", "--cluster", "--user", "--server", "-s", "--token"], helm: ["--kube-context", "--namespace", "-n", "--kubeconfig"], terraform: ["-chdir"], kapp: ["-a", "--app", "-n", "--namespace"], dev: ["--context", "--namespace", "--project"], dt: ["--cluster", "--context", "-R", "--repo"] };
   const name = argv[0];
   if (!values[name]) return { argv };
-  if (name === "gh") {
+  if (name === "gh" || name === "dt") {
     const normalized = [name];
     for (let i = 1; i < argv.length; i++) {
       if (["-R", "--repo"].includes(argv[i])) repository = argv[++i];
       else if (argv[i].startsWith("--repo=")) repository = argv[i].slice(7);
       else if (argv[i].startsWith("-R") && argv[i].length > 2) repository = argv[i].slice(2);
-      else normalized.push(argv[i]);
+      else if (["--hostname", "--cluster", "--context"].includes(argv[i])) i++;
+      else if (!/^(?:--hostname|--cluster|--context)=/.test(argv[i])) normalized.push(argv[i]);
     }
     return { argv: normalized, repository };
   }
@@ -173,7 +174,7 @@ export function shellCommands(source: string, cwd: string, facts: ShellFacts = {
       }
       if (argv[0] === "eval") { scriptInput = "inline"; inspect(argv.slice(1).join(" "), local); }
       if (argv[0] === "mktemp") targets.push(assigned.has("TMPDIR") ? "$TMPDIR" : facts.env?.TMPDIR ?? "$TMPDIR");
-      for (const cwd of locations(local)) { const command: ShellCommand = { argv, cwd, cwdAlternative: !!local.alternates?.length, writes: targets, text: argv.join(" "), source: text.slice(node.start, node.end), repository: normalized.repository, githubEnvironment: ["GH_REPO", "GH_HOST"].some(name => assigned.has(name) || facts.env?.[name] !== undefined), fedInput: pipeInput || node.redirects.some(value => ["<", "<<<"].includes(value.op)), aliases: { ...aliases }, uncertain: !local.known || unknownLinks || (original.some(value => basename(value) === "env") && original.some(value => /^--split-string(?:=|$)|^-S/.test(value))), scriptInput, gitEnvironment: original.some((value, index) => /^(?:GIT_DIR|GIT_WORK_TREE|GIT_COMMON_DIR|GIT_CONFIG\w*)=/.test(value) || original[index - 1] === "-c" && /^(?:remote\.|url\.|alias\.)/.test(unquote(value)) || value === "--config-env" || value.startsWith("--config-env=")) };
+      for (const cwd of locations(local)) { const command: ShellCommand = { argv, originalArgv: stripped, cwd, cwdAlternative: !!local.alternates?.length, writes: targets, text: argv.join(" "), source: text.slice(node.start, node.end), repository: normalized.repository, githubEnvironment: original.some(value => /^--hostname(?:=|$)/.test(value)) || ["GH_REPO", "GH_HOST"].some(name => assigned.has(name) || facts.env?.[name] !== undefined), fedInput: pipeInput || node.redirects.some(value => ["<", "<<<"].includes(value.op)), aliases: { ...aliases }, uncertain: !local.known || unknownLinks || (original.some(value => basename(value) === "env") && original.some(value => /^--split-string(?:=|$)|^-S/.test(value))), scriptInput, gitEnvironment: original.some((value, index) => /^(?:GIT_DIR|GIT_WORK_TREE|GIT_COMMON_DIR|GIT_CONFIG\w*)=/.test(value) || original[index - 1] === "-c" && /^(?:remote\.|url\.|alias\.)/.test(unquote(value)) || value === "--config-env" || value.startsWith("--config-env=")) };
         out.push(command);
         directoriesStable &&= !!facts.isRead?.(command) || ["mkdir", "touch", "tee", "mktemp"].includes(argv[0]);
       }

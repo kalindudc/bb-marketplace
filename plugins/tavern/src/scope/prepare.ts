@@ -18,6 +18,7 @@ export function prepareCall(call: ScopeCall, deps: PrepareDeps = {}): ScopeCall 
   const gitRoots: Record<string, string> = {};
   const directories: string[] = [];
   const ownedDraftPrs: string[] = [];
+  const ownedPrs: string[] = [];
   const fetchWriteRoots: string[] = [];
   const add = (path: string, base: string) => {
     if (!/[\$`]/.test(path)) {
@@ -62,23 +63,30 @@ export function prepareCall(call: ScopeCall, deps: PrepareDeps = {}): ScopeCall 
           catch { /* A detached or unresolved HEAD is not an explicit branch destination. */ }
         }
       }
-      if (cmd.argv[0] === "gh" && cmd.argv[1] === "pr" && cmd.argv[2] === "edit" && stableHead && !redirectedGithub && (!deps.scope || deps.scope.github === "draft-pr-only" && deps.scope.preset !== "open")) {
+      if (["gh", "dt"].includes(cmd.argv[0]) && cmd.argv[1] === "pr" && ["create", "edit", "comment"].includes(cmd.argv[2]) && stableHead && !redirectedGithub && (!deps.scope || deps.scope.github === "draft-pr-only" && deps.scope.preset !== "open")) {
         try {
           const branch = read("git", ["-C", cmd.cwd, "symbolic-ref", "--quiet", "--short", "HEAD"]).trim();
-          const selector = draftEditSelector(cmd.argv);
-          if (selector === null) throw new Error("Ambiguous pull request selector");
-          const identifier = selector ?? branch;
-          const repository = cmd.repository ? ["--repo", cmd.repository] : [];
-          const pr = JSON.parse(read("gh", ["pr", "view", identifier, ...repository, "--json", "isDraft,author,headRefName,headRepository,headRepositoryOwner"], cmd.cwd));
-          const viewer = JSON.parse(read("gh", ["api", "user"], cmd.cwd));
-          const remotes = read("git", ["-C", cmd.cwd, "remote", "get-url", "--push", "--all", "origin"]).trim().split("\n");
-          const head = "github.com/" + pr.headRepositoryOwner?.login + "/" + pr.headRepository?.name;
-          if (pr.isDraft === true && typeof viewer.login === "string" && pr.author?.login === viewer.login && pr.headRefName === branch && typeof pr.headRepositoryOwner?.login === "string" && typeof pr.headRepository?.name === "string" && remotes.every(url => normalizeRemote(url) === head)) { ownedDraftPrs.push(draftEditKey(cmd)); preservesBranch = true; }
+          pushHeads[cmd.cwd + "\0" + cmd.sequence] = branch;
+          if (deps.scope?.assignedBranch && branch === deps.scope.assignedBranch && cmd.argv[2] !== "create") {
+            const selector = draftEditSelector(cmd.argv);
+            if (selector === null) throw new Error("Ambiguous pull request selector");
+            const identifier = selector ?? branch;
+            const repository = cmd.repository ? ["--repo", cmd.repository] : [];
+            const pr = JSON.parse(read(cmd.argv[0], ["pr", "view", identifier, ...repository, "--json", "isDraft,author,headRefName,headRepository,headRepositoryOwner"], cmd.cwd));
+            const viewer = JSON.parse(read("gh", ["api", "user"], cmd.cwd));
+            const remotes = read("git", ["-C", cmd.cwd, "remote", "get-url", "--push", "--all", "origin"]).trim().split("\n");
+            const head = "github.com/" + pr.headRepositoryOwner?.login + "/" + pr.headRepository?.name;
+            if (pr.headRefName === deps.scope.assignedBranch && typeof viewer.login === "string" && pr.author?.login === viewer.login && typeof pr.headRepositoryOwner?.login === "string" && typeof pr.headRepository?.name === "string" && remotes.length > 0 && remotes.every(url => normalizeRemote(url) === head)) {
+              ownedPrs.push(draftEditKey(cmd));
+              if (pr.isDraft === true) ownedDraftPrs.push(draftEditKey(cmd));
+              preservesBranch = true;
+            }
+          }
         } catch { /* Missing ownership, draft or branch facts require a decision, not an inferred grant. */ }
       }
       branchStable &&= preservesBranch;
       for (const path of commandWritePaths(cmd)) add(path, cmd.cwd);
     }
   }
-  return { ...call, cwd, resolvedPaths, pushTargets, pushHeads, gitRoots, directories, ownedDraftPrs, ...(call.containment === "sandbox" ? { fetchWriteRoots: [...new Set(fetchWriteRoots)] } : {}) };
+  return { ...call, cwd, resolvedPaths, pushTargets, pushHeads, gitRoots, directories, ownedDraftPrs, ownedPrs, ...(call.containment === "sandbox" ? { fetchWriteRoots: [...new Set(fetchWriteRoots)] } : {}) };
 }

@@ -1,3 +1,4 @@
+import { ACT_KINDS } from "./scope/acts";
 import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { forgeProfileSchema } from "./shared/placement-settings";
@@ -58,9 +59,10 @@ const scopeCall = z.object({
   resolvedPaths: z.record(z.string(), z.string()).optional(), pushTargets: z.record(z.string(), z.array(z.string())).optional(),
   pushHeads: z.record(z.string(), z.string()).optional(), gitRoots: z.record(z.string(), z.string()).optional(),
   directories: z.array(path).optional(), ownedDraftPrs: z.array(z.string()).optional(),
+  ownedPrs: z.array(z.string()).optional(),
 }).strict();
 export const scopeDecisionSchema = z.discriminatedUnion("allow", [
-  z.object({ allow: z.literal(true), check: z.boolean().optional() }).strict(),
+  z.object({ allow: z.literal(true), check: z.boolean().optional(), acts: z.array(z.object({ kind: z.enum(ACT_KINDS), ruleId: id, why: text }).strict()).optional() }).strict(),
   z.object({ allow: z.literal(false), ruleId: id, reason: text }).strict(),
 ]);
 const empty = z.object({}).strict();

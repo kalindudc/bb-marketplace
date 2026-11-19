@@ -1,4 +1,8 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { ScopeStore } from "../../../src/scope/store";
+import { scopeForClass } from "../../../src/scope/presets";
 import { archiveTotal } from "../../../src/ui/page/archive";
 import { definePluginApp } from "@get-bb/plugin-sdk/app";
 import { loadPluginApp, renderSlot, type PluginRpcTestHandlers, type RenderedSlot } from "@get-bb/plugin-sdk/testing/app";
@@ -640,6 +644,19 @@ describe("Tavern page surfaces", () => {
     const fold = await slot.findByRole("button", { name: /1 event from quests in the cellar folded out/ });
     fireEvent.click(fold);
     expect(slot.getByRole("button", { name: /Fold the cellar's events/ })).toBeTruthy();
+  });
+  it("does not flag recorded allowed acts as violations or attention", async () => {
+    const root = mkdtempSync(join(tmpdir(), "scope-act-ui-"));
+    try {
+      const store = new ScopeStore(root), member = detail.quest.members[0]!;
+      store.recordAct({ threadId: member.threadId, providerId: "pi", at: 1, eventId: "e1", seq: 1, kind: "publish", call: { kind: "bash", toolName: "bash", cwd: root, input: { command: "git push origin assigned" } }, mode: "enforce" });
+      const scoped = { ...detail, scopes: [{ threadId: member.threadId, scope: scopeForClass("smith"), error: null, armed: true, pendingAskId: null, mode: "enforce" as const, problems: [] }], violations: store.violations(member.threadId) };
+      const slot = await page("quest/vault", { boardQuest: () => scoped });
+      const guards = await slot.findByRole("region", { name: /Guardrails/ });
+      expect(guards.textContent).toContain("0 violations");
+      expect(guards.textContent).not.toContain("need attention");
+      expect(guards.textContent).not.toContain("tripped a rule");
+    } finally { rmSync(root, { recursive: true, force: true }); }
   });
   it("shows each member's scope mode, policy problems and watch-mode violations as recorded, not stopped", async () => {
     const member = detail.quest.members[0]!;

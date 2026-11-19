@@ -24,6 +24,7 @@ export const scopeSchema = z.object({
   mode: z.enum(["enforce", "watch", "off"]).default("enforce"),
   commandTools: patterns.default(["bash", "Bash"]),
   expectedWorktree: z.string().optional(),
+  assignedBranch: z.string().min(1).max(1000).optional(),
   workspaceKind: workspaceKindSchema.optional(),
   checks: z.object({ worktree: z.string().min(1).optional(), commands: z.array(z.string().min(1).max(8000)).max(100) }).strict().optional(),
   enforceFrom: z.number().int().nonnegative().optional(),

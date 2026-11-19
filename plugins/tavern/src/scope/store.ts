@@ -5,6 +5,8 @@ import { scopeForClass } from "./presets";
 import { z } from "zod";
 import { scopeControllerBindingSchema, scopeFileSchema, scopeHostBindingSchema, scopeSchema, type Scope, type ScopeControllerBinding, type ScopeHostBinding } from "./schema";
 import type { ScopeCall } from "./engine";
+import type { ActKind } from "./acts";
+export interface ActAudit { threadId: string; providerId: string; at: number; eventId: string; seq: number; kind: ActKind; call: ScopeCall; mode: "watch" | "enforce" }
 
 export interface ScopeRecord { file: string; scope: Scope | null; template?: Scope; error?: string; mode?: Scope["mode"]; binding?: ScopeControllerBinding; presetProvenance?: { id: Scope["preset"]; version: string } }
 export interface Violation { threadId: string; providerId: string; at: number; eventId: string; seq: number; ruleId: string; reason: string; call?: ScopeCall; latencyMs: number; stopped: boolean; stopError?: string; mode?: "enforce" | "watch" }
@@ -164,11 +166,18 @@ export class ScopeStore {
   saveProgress(threadId: string, cursor: number, pendingStop = this.progress(threadId).pendingStop, pendingBinding?: ScopeObservationBinding): void {
     atomicWrite(this.file(threadId) + ".cursor", JSON.stringify(progressSchema.parse({ cursor, pendingStop, ...(pendingStop && pendingBinding ? { pendingBinding } : {}) })));
   }
+  recordAct(act: ActAudit): void { appendFileSync(join(this.dataDir, "scope-acts.jsonl"), JSON.stringify(act) + "\n", { mode: 0o600 }); }
+  acts(threadId?: string): ActAudit[] {
+    let source: string;
+    try { source = readFileSync(join(this.dataDir, "scope-acts.jsonl"), "utf8"); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return []; throw error; }
+    return source.split("\n").filter(Boolean).map(line => JSON.parse(line) as ActAudit).filter(row => !threadId || row.threadId === threadId);
+  }
   record(violation: Violation): void { appendFileSync(join(this.dataDir, "scope-violations.jsonl"), JSON.stringify(violation) + "\n", { mode: 0o600 }); }
   violations(threadId?: string): Violation[] {
     let source: string;
     try { source = readFileSync(join(this.dataDir, "scope-violations.jsonl"), "utf8"); }
     catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return []; throw error; }
-    return source.split("\n").filter(Boolean).map(line => JSON.parse(line) as Violation).filter(row => !threadId || row.threadId === threadId);
+    return source.split("\n").filter(Boolean).map(line => JSON.parse(line) as Violation).filter(row => !row.ruleId.startsWith("act:") && (!threadId || row.threadId === threadId));
   }
 }
