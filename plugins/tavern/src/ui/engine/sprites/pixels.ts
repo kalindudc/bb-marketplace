@@ -1,5 +1,6 @@
 import type { CharacterPalette } from "../../kit/characters";
-import { materialIndex, type SeedTraits } from "./traits";
+import { spriteFabric } from "./palette";
+import type { SeedTraits } from "./traits";
 
 export const WIDTH = 24;
 export const HEIGHT = 28;
@@ -8,6 +9,7 @@ export const GROUND = 26;
 export const enum Ink {
   Empty, Shadow, Outline, Garment, Secondary, Skin, Hair, Boot, Leather, Wood,
   Metal, Paper, Flame, Seal, DarkCloth, Cloud, Rain, Cream, Glint, Cheek,
+  Edge, TopEdge, Brass, Lens, Crystal, Facet, Charge, ChargeGlint, PaperShade,
 }
 
 type Run = Uint8Array;
@@ -40,7 +42,8 @@ export class PixelGrid {
         const i = y * WIDTH + x;
         if (art[i]! > Ink.Shadow) continue;
         if ((x > 0 && art[i - 1]! > Ink.Shadow) || (x < WIDTH - 1 && art[i + 1]! > Ink.Shadow) ||
-            (y > 0 && art[i - WIDTH]! > Ink.Shadow)) this.cells[i] = Ink.Outline;
+            (y > 0 && art[i - WIDTH]! > Ink.Shadow)) this.cells[i] = Ink.Edge;
+        else if (y + 1 < HEIGHT && art[i + WIDTH]! > Ink.Shadow) this.cells[i] = Ink.TopEdge;
       }
     }
   }
@@ -60,25 +63,23 @@ export class PixelGrid {
   }
 }
 
-type Colour = (p: CharacterPalette) => string;
-const MATERIAL_COLOURS: readonly Colour[] = [p => p.card, p => p.muted, p => p.hue.teal ?? p.muted, p => p.cloak, p => p.metal, p => p.wood];
-
-export function spriteColours(hue: string, traits: SeedTraits): readonly Colour[] {
+export function spriteColours(hue: string, traits: SeedTraits, p: CharacterPalette): readonly string[] {
+  const cloth = spriteFabric(hue, traits.secondary, p);
   return [
-    () => "transparent", p => p.shadow, p => p.ink,
-    p => p.hue[hue] ?? p.hue.teal ?? p.ink, MATERIAL_COLOURS[materialIndex(traits.secondary)]!,
-    p => p.skin[traits.skin]!, p => traits.hairColour === 3 && p.silver ? p.silver : p.hair[traits.hairColour]!, p => p.pants,
-    p => p.belt, p => p.wood, p => p.metal, p => p.dark ? p.metal : p.card,
-    p => p.hearth, p => p.bad, p => p.cloak, p => p.cloud, p => p.drop, p => p.skin[0]!,
-    p => p.dark ? p.metal : p.card, p => p.cheeks?.[traits.skin] ?? p.skin[traits.skin]!,
+    "transparent", p.shadow, p.ink, cloth.garment, cloth.secondary,
+    p.skin[traits.skin]!, traits.hairColour === 3 && p.silver ? p.silver : p.hair[traits.hairColour]!, p.pants,
+    cloth.leather, p.wood, p.metal, p.dark ? p.metal : p.card,
+    p.hearth, p.bad, cloth.fold, p.cloud, p.drop, p.skin[0]!, p.dark ? p.metal : p.card, p.cheeks?.[traits.skin] ?? p.skin[traits.skin]!,
+    cloth.rim, cloth.topRim, "#b68a42", "#bad4cf", "#a792cc", "#6b5799", "#96bbc4", "#e4f2f5", "#a5987b",
   ];
 }
 
-export function blit(ctx: CanvasRenderingContext2D, runs: Run, colours: readonly Colour[], palette: CharacterPalette, facing: 1 | -1, ox = 0, oy = 0) {
+export function blit(ctx: CanvasRenderingContext2D, runs: Run, colours: readonly string[], facing: 1 | -1, ox = 0, oy = 0) {
   let last = -1;
   for (let i = 0; i < runs.length; i += 4) {
     const ink = runs[i]!;
-    if (last !== ink) ctx.fillStyle = colours[last = ink]!(palette);
+    if (colours[ink] === "transparent") continue;
+    if (last !== ink) ctx.fillStyle = colours[last = ink]!;
     const x = runs[i + 1]! + ox;
     const w = runs[i + 3]!;
     ctx.fillRect(facing === 1 ? x : WIDTH - x - w, runs[i + 2]! + oy, w, 1);

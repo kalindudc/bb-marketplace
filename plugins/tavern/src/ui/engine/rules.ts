@@ -4,20 +4,24 @@ export type MotionMode = "off" | "calm" | "lively";
 export type ActorRules = { mode: MotionMode; typing: boolean; held: boolean };
 
 const MOOD_CUE: Record<Mood, Cue | null> = {
-  idle: null, working: "tap", waiting: "notice", reported: "wave", verified: "flourish",
-  blocked: "drop", resting: "blink", error: "drop",
+  idle: null, working: "tap", waiting: null, reported: "wave", verified: "flourish",
+  blocked: null, resting: null, error: null,
 };
 
 export function enteringMood(mood: Mood) {
   return MOOD_CUE[mood];
 }
 
+export function isStillMood(mood: Mood): boolean {
+  return mood === "waiting" || mood === "blocked" || mood === "error";
+}
+
 export function actorActivity(mood: Mood, rules: ActorRules): Exclude<Activity, "cue"> {
-  if (rules.mode === "off") return "stand";
-  if (rules.held || rules.typing) return "quiet";
+  if (rules.mode === "off" || rules.held || isStillMood(mood)) return "stand";
+  if (rules.typing) return "quiet";
   return rules.mode === "lively" && (mood === "working" || mood === "idle") ? "walk" : "stand";
 }
 
-export function allowsCue(rules: ActorRules, auto: boolean) {
-  return rules.mode !== "off" && !rules.held && !(auto && rules.typing);
+export function allowsCue(rules: ActorRules, auto: boolean, mood: Mood) {
+  return rules.mode !== "off" && (!auto || !(rules.held || rules.typing || isStillMood(mood)));
 }

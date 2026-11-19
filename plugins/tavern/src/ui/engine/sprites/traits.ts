@@ -7,7 +7,7 @@ const MATERIALS = ["linen", "undyed-wool", "moss", "wine", "slate", "ochre"] as 
 export const PARTS = {
   hair: HAIR,
   ears: ["rounded", "pointed"],
-  hat: ["soft-cap", "coif", "kerchief", "folded-hat", "wide-brim", "round-brim", "hood", "tall-hood"],
+  hat: ["soft-cap", "coif", "kerchief", "folded-hat", "wide-brim", "round-brim", "hood", "tall-hood", "warden-felt"],
   outfit: ["long-coat", "tabard", "travel-cloak", "short-cape", "leather-apron", "robe", "tunic"],
   tool: ["ledger-quill", "staff-lantern", "spyglass", "hammer", "crystal-staff"],
   accessory: ["satchel", "sealed-scroll", "map", "hearth-lamp", "torch"],
@@ -44,7 +44,7 @@ export const KITS = {
   wanderer: { outfits: ["travel-cloak"], hats: ["wide-brim", "round-brim"], tool: "staff-lantern", light: "lantern", idle: "satchel", quiet: { working: "lantern", waiting: "lantern", resting: "lantern" } },
   ranger: { outfits: ["short-cape"], hats: ["hood", "tall-hood"], tool: "spyglass", light: null, idle: "spyglass", quiet: { working: "map", resting: "hands" } },
   smith: { outfits: ["leather-apron"], hats: ["kerchief"], tool: "hammer", light: null, idle: "apron", quiet: { waiting: "hammer", resting: "hammer" } },
-  warden: { outfits: ["robe"], hats: ["tall-hood", "coif", null], tool: "crystal-staff", light: null, idle: "scroll", quiet: { waiting: "staff", resting: "staff" } },
+  warden: { outfits: ["robe"], hats: ["warden-felt", null], tool: "crystal-staff", light: null, idle: "scroll", quiet: { waiting: "staff", resting: "staff" } },
   none: { outfits: ["tunic"], hats: [null], tool: null, light: null, idle: "hands", quiet: {} },
 } as const satisfies Record<string, Kit>;
 
@@ -79,10 +79,6 @@ const BODY_WIDTH = 9;
 
 export function classKit(classId: string | null): Kit {
   return classId && Object.hasOwn(KITS, classId) ? KITS[classId as keyof typeof KITS] : KITS.none;
-}
-
-export function materialIndex(material: Part<"materials">): number {
-  return MATERIALS.indexOf(material);
 }
 
 export function seedTraits({ seed, classId, look }: Pick<ArtInput, "seed" | "classId" | "look">): SeedTraits {

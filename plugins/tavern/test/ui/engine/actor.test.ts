@@ -51,29 +51,48 @@ it("never travels in Calm, walks in Lively at work, and stands when waiting", ()
   step(a);
   expect(a.body.x).toBeGreaterThan(0);
   const at = a.body.x;
-  expect(a.setMood("waiting")).toBe("notice");
+  expect(a.setMood("waiting")).toBeNull();
+  expect(a.setMood("blocked")).toBeNull();
+  expect(a.setMood("error")).toBeNull();
   expect(a.setMood("waiting")).toBeNull();
   step(a);
   expect(a.frame(false).activity).toBe("stand");
   expect(a.body.x).toBe(at);
 });
 
-it("cuts travel and cues under a held widget row but keeps the quiet idle clock moving", () => {
+it("holds the rest pose without automatic motion, but accepts deliberate cues", () => {
   const a = actor();
   step(a);
   const at = a.body.x;
-  a.playCue("hop", false, clear);
-  expect(a.frame(false).cue).toBe("hop");
+  a.playCue("tap", true, clear);
+  expect(a.frame(false).cue).toBe("tap");
   const held = { ...clear, held: true };
   step(a, held, 1);
   const frame = a.frame(false);
-  expect(frame).toMatchObject({ activity: "quiet", cue: null });
+  expect(frame).toMatchObject({ activity: "stand", cue: null, still: true, t: 0, swing: 0, flame: 1 });
   expect(a.body.lift).toBe(0);
-  expect(a.playCue("notice", false, held)).toBeNull();
+  expect(a.playCue("tap", true, held)).toBeNull();
   step(a, held);
-  expect(a.frame(false).t).toBeGreaterThan(frame.t);
+  expect(a.frame(false)).toEqual(frame);
   expect(a.body.x).toBe(at);
-  expect(a.frame(true)).toMatchObject({ still: true, t: 0, activity: "stand", swing: 0, flame: 1 });
+  for (const cue of ["notice", "hop"] as const) {
+    const end = a.playCue(cue, false, held);
+    expect(a.frame(false)).toMatchObject({ activity: "cue", still: false, cue });
+    expect(a.frame(true)).toMatchObject({ still: true, t: 0, activity: "stand", swing: 0, flame: 1 });
+    end?.();
+  }
+  expect(a.frame(false)).toEqual(frame);
+});
+
+it("clears an automatic cue when an attention mood arrives, without swallowing a direct interaction", () => {
+  const a = actor();
+  a.playCue("tap", true, clear);
+  expect(a.setMood("waiting")).toBeNull();
+  expect(a.frame(false)).toMatchObject({ still: true, cue: null, flame: 1 });
+  expect(a.playCue("notice", true, clear)).toBeNull();
+  a.playCue("notice", false, clear);
+  step(a, clear, 10);
+  expect(a.frame(false)).toMatchObject({ still: false, cue: "notice" });
 });
 
 it("measures travel within the composer and falls back to the strip", () => {

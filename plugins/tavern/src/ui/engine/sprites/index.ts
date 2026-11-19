@@ -2,7 +2,7 @@ import { readPalette, type CharacterPalette } from "../../kit/characters";
 import type { ArtFactory, ArtInput, LightAnchor, Mood } from "../art";
 import { actor, lamp, rainCloud } from "./parts";
 import { blit, GROUND, HEIGHT, spriteColours, WIDTH } from "./pixels";
-import { poseBook } from "./poses";
+import { poseBook, restOnly } from "./poses";
 import { classKit, HANDWORK, seedTraits } from "./traits";
 
 const SWING = [-2, -1, 0, 1, 2];
@@ -26,25 +26,34 @@ export const createArt: ArtFactory = input => {
     const { runs, anchor } = actor(traits, pose, input.charge);
     return { runs, anchor, mirrored: mirror(anchor) };
   });
-  const colours = spriteColours(input.hue, traits);
+  const palettes = new WeakMap<CharacterPalette, readonly string[]>();
+  function coloursFor(palette: CharacterPalette) {
+    const known = palettes.get(palette);
+    if (known) return known;
+    const colours = spriteColours(input.hue, traits, palette);
+    palettes.set(palette, colours);
+    return colours;
+  }
   return {
     width: WIDTH, height: HEIGHT, ground: GROUND,
     quietIdle: mood => HANDWORK[handwork(mood)],
     lightAnchor(frame) {
       const pose = drawings[index(frame)]!;
-      return frame.facing === -1 && !frame.still ? pose.mirrored : pose.anchor;
+      return frame.facing === -1 ? pose.mirrored : pose.anchor;
     },
     draw(ctx, frame, palette) {
       const { runs, anchor } = drawings[index(frame)]!;
-      const facing = frame.still ? 1 : frame.facing;
+      const { facing } = frame;
+      const colours = coloursFor(palette);
       ctx.clearRect(0, 0, WIDTH, HEIGHT);
-      blit(ctx, runs, colours, palette, facing);
+      blit(ctx, runs, colours, facing);
       if (anchor) {
-        const swing = frame.still ? 2 : 2 + Math.round(2 * Math.sin(frame.swing));
-        const bright = !frame.still && frame.flame > 1.04 ? 1 : 0;
-        blit(ctx, LIGHTS[anchor.kind][swing]![bright], colours, palette, facing, anchor.x - 4, anchor.y - (anchor.kind === "torch" ? 7 : 0));
+        const still = restOnly(frame);
+        const swing = still ? 2 : 2 + Math.round(2 * Math.sin(frame.swing));
+        const bright = !still && frame.flame > 1.04 ? 1 : 0;
+        blit(ctx, LIGHTS[anchor.kind][swing]![bright], colours, facing, anchor.x - 4, anchor.y - (anchor.kind === "torch" ? 7 : 0));
       }
-      if (frame.mood === "error") blit(ctx, RAIN, colours, palette, facing);
+      if (frame.mood === "error") blit(ctx, RAIN, colours, facing);
     },
   };
 };

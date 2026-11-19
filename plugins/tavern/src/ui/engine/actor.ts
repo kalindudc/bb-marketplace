@@ -1,6 +1,6 @@
 import { CUE_MS, type ArtFrame, type CharacterArt, type Cue, type Mood } from "./art";
 import { createBody, hop, stepBody } from "./physics";
-import { actorActivity, allowsCue, enteringMood, type ActorRules } from "./rules";
+import { actorActivity, allowsCue, enteringMood, isStillMood, type ActorRules } from "./rules";
 
 export class Actor {
   readonly body = createBody();
@@ -10,6 +10,7 @@ export class Actor {
   private facing: 1 | -1 = 1;
   private distance = 0;
   private activity: "stand" | "walk" | "quiet" = "stand";
+  private held = false;
   private cue: { kind: Cue; start: number; auto: boolean } | null = null;
 
   constructor(readonly id: string, public art: CharacterArt, public mood: Mood) {}
@@ -22,11 +23,12 @@ export class Actor {
     if (this.mood === mood) return null;
     this.mood = mood;
     this.moodSince = this.time;
+    if (this.cue?.auto && isStillMood(mood)) this.clearCue();
     return enteringMood(mood);
   }
 
   playCue(kind: Cue, auto: boolean, rules: ActorRules) {
-    if (!allowsCue(rules, auto)) return null;
+    if (!allowsCue(rules, auto, this.mood)) return null;
     const cue = this.cue = { kind, start: this.time, auto };
     if (kind === "hop") hop(this.body);
     return () => { if (this.cue === cue) this.clearCue(); };
@@ -44,8 +46,9 @@ export class Actor {
 
   update(dt: number, span: number, rules: ActorRules) {
     this.time += dt * 1000;
+    this.held = rules.held;
     this.activity = actorActivity(this.mood, rules);
-    if (this.cue && (!allowsCue(rules, this.cue.auto) || this.time - this.cue.start >= CUE_MS[this.cue.kind])) this.clearCue();
+    if (this.cue && (!allowsCue(rules, this.cue.auto, this.mood) || this.time - this.cue.start >= CUE_MS[this.cue.kind])) this.clearCue();
 
     this.body.x = Math.min(span, Math.max(0, this.body.x));
     const previous = this.body.x;
@@ -57,8 +60,9 @@ export class Actor {
     }
   }
 
-  frame(still: boolean): ArtFrame {
-    const cue = still ? null : this.cue;
+  frame(forceStill: boolean): ArtFrame {
+    const cue = forceStill ? null : this.cue;
+    const still = forceStill || (!cue && (this.held || isStillMood(this.mood)));
     return {
       activity: still ? "stand" : cue ? "cue" : this.activity,
       cue: cue?.kind ?? null, progress: cue ? (this.time - cue.start) / CUE_MS[cue.kind] : 0,

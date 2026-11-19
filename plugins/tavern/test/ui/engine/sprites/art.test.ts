@@ -9,7 +9,10 @@ import { Registry } from "../../../../src/server/registry";
 import { parseRegistryDefinition } from "../../../../src/server/registry-file";
 import { CUES, MOODS, type ArtFrame, type ArtInput, type CharacterArt } from "../../../../src/ui/engine/art";
 import { createArt, drawStillAvatar } from "../../../../src/ui/engine/sprites";
-import { HAIR, KITS, PARTS, seedTraits } from "../../../../src/ui/engine/sprites/traits";
+import { actor } from "../../../../src/ui/engine/sprites/parts";
+import { Ink, spriteColours } from "../../../../src/ui/engine/sprites/pixels";
+import { poseBook } from "../../../../src/ui/engine/sprites/poses";
+import { HAIR, KITS, PARTS, classKit, seedTraits } from "../../../../src/ui/engine/sprites/traits";
 import { CHARACTER_PALETTE_FALLBACK as palette } from "../../../../src/ui/kit/characters";
 
 const input: ArtInput = { seed: "wren", classId: "keeper", hue: "teal", charge: "chevron", keeper: false };
@@ -122,6 +125,55 @@ describe("seeded character art", () => {
     expect(seen).toEqual(new Set(HAIR));
   });
 
+  it("never paints a hair strand on or below the chin in any compiled pose", () => {
+    for (const classId of Object.keys(KITS)) {
+      const kit = classKit(classId);
+      const { poses } = poseBook(mood => kit.quiet[mood] ?? kit.idle, 0);
+      for (let i = 0; i < 40; i++) {
+        const t = seedTraits({ seed: `roll-${i}`, classId });
+        for (const hair of HAIR) for (const pose of poses) {
+          const { runs, chin } = actor({ ...t, hair }, pose, null);
+          for (let j = 0; j < runs.length; j += 4) {
+            if (runs[j] === Ink.Hair && runs[j + 2]! >= chin) {
+              throw new Error(`${classId} roll-${i} ${hair}: hair row ${runs[j + 2]} reaches chin ${chin} (slump=${pose.slump})`);
+            }
+          }
+        }
+      }
+    }
+  });
+
+  it("separates every dyed cloth shade from the page in each target theme", () => {
+    const luminance = (hex: string) => {
+      const srgb = hex.match(/[a-f0-9]{2}/gi)!.map(value => parseInt(value, 16) / 255);
+      const linear = srgb.map(value => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4);
+      return linear[0]! * 0.2126 + linear[1]! * 0.7152 + linear[2]! * 0.0722;
+    };
+    for (const background of ["#e7e3d8", "#25211e", "#282828", "#786653", "#a9898f"]) {
+      const themed = { ...palette, dark: luminance(background) < 0.24, background, card: background, hue: { ...palette.hue, ink: background } };
+      for (const hue of Object.keys(palette.hue)) for (const secondary of PARTS.materials) {
+        const traits = { ...seedTraits(input), secondary };
+        const colours = spriteColours(hue, traits, themed);
+        for (const ink of [Ink.Garment, Ink.Secondary, Ink.DarkCloth, Ink.Leather]) {
+          const rendered = colours[ink]!;
+          const levels = [luminance(rendered), luminance(background)].sort((a, b) => b - a);
+          expect((levels[0]! + 0.05) / (levels[1]! + 0.05), `${ink}, ${hue}, ${secondary} on ${background}: ${rendered}`).toBeGreaterThanOrEqual(1.48);
+        }
+      }
+    }
+  });
+
+  it("draws attention moods the same at rest, during typing, and with swinging light inputs", () => {
+    const art = createArt(input);
+    for (const mood of ["waiting", "blocked", "error"] as const) {
+      const base = hash(art, { ...rest, mood });
+      for (const activity of ["stand", "quiet"] as const) for (const t of [0, 1250, 5000]) {
+        expect(hash(art, { ...rest, activity, still: false, mood, t, swing: 1, flame: 1.2 })).toBe(base);
+      }
+      expect(hash(art, { ...rest, activity: "cue", still: false, mood, cue: "hop", progress: 0.5 })).not.toBe(base);
+    }
+  });
+
   it("keeps silver hair independent of style and varies Wanderer hat fabric", () => {
     const hills = Array.from({ length: 512 }, (_, i) => seedTraits({ seed: `roll-${i}`, classId: "wanderer" }));
     const silver = hills.filter(t => t.hairColour === 3);
@@ -195,6 +247,6 @@ describe("seeded character art", () => {
     const canvas = { width: 0, height: 0, getContext: () => ctx } as unknown as HTMLCanvasElement;
     drawStillAvatar(canvas, input, "waiting", 3, palette);
     expect([canvas.width, canvas.height]).toEqual([72, 84]);
-    expect(pixels).toContain(palette.hue.teal);
+    expect(pixels).toContain(spriteColours(input.hue, seedTraits(input), palette)[Ink.Garment]);
   });
 });

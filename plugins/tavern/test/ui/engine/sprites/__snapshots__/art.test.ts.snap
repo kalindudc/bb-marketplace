@@ -189,7 +189,7 @@ exports[`seeded character art > has stable shipped ids and snapshots traits for 
     "face": "soft-oval",
     "hair": "fringe-crop",
     "hairColour": 1,
-    "hat": "tall-hood",
+    "hat": "warden-felt",
     "height": 19,
     "hem": 11,
     "hips": 9,
@@ -221,4 +221,4 @@ exports[`seeded character art > has stable shipped ids and snapshots traits for 
 }
 `;
 
-exports[`seeded character art > hashes to the same pixels across calls, instances, and a fresh module 1`] = `"64662f774a6a8d7f14f3ba5f1c48de6779de1799dfeccbfed8b4a2ff221e22aa"`;
+exports[`seeded character art > hashes to the same pixels across calls, instances, and a fresh module 1`] = `"c51a07780bacf467bae6e0e2d4a6796d0b6ee275f17f2d5b2dceafd51883ea9a"`;
