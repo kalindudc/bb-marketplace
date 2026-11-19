@@ -26,6 +26,14 @@ function remote(id: string, inputs: unknown) {
 afterEach(() => databases.splice(0).forEach(db => db.close()));
 
 describe("placement settings persistence", () => {
+  it("round trips partial and complete class model choices through TOML", () => {
+    const { store } = fixture();
+    const classModels = { smith: { model: "vendor/model" }, warden: { provider: "pi", model: "vendor/checker", reasoning: "high" } };
+    store.update({ revision: 0, patch: { machines: { rules: [{ ...local("models"), classModels }] } }, why: "Models on machines" });
+    const preview = previewToml(exportToml(store.snapshot()), store.snapshot());
+    expect(preview.problems).toEqual([]);
+    expect(preview.user.machines?.rules?.[0]?.classModels).toEqual(classModels);
+  });
   it("reads legacy absent policy without rewriting the database or changing authorization budgets", () => {
     const { store, row } = fixture(), before = row();
     expect(store.placementPolicy()).toEqual({ state: "valid", revision: 0, settings: { maxMakers: 2, maxCheckers: 2, rules: [], forges: [] } });

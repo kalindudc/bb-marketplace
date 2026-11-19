@@ -1489,7 +1489,10 @@ export class TavernRuntime {
       throw new Error("Every waypoint in this Warden slot must name the same maker as its review target. Assign those maker threads first; a different maker needs its own Warden.");
     if (slot?.characterId && input.characterId && slot.characterId !== input.characterId)
       throw new Error(`This plan slot requires character ${slot.characterId}; propose a new plan to change it.`);
-    const executionRole = slot?.model ? { ...role, model: slot.model } : role;
+    const modelRule = providerPlacement && placementRoute?.match.state === "matched" ? placementRoute.match.rule : null;
+    const ruleModel = modelRule?.classModels?.[role.id];
+    const beforeRuleRole = slot?.model ? { ...role, model: slot.model } : role;
+    const executionRole = { ...beforeRuleRole, ...ruleModel };
     const character = this.pickCharacter(
       role.id,
       projectId,
@@ -1624,9 +1627,13 @@ export class TavernRuntime {
           environmentId: parent.environmentId,
           projectId,
           scoped: !!scopeResolution && scopeResolution.scope.preset !== "open",
+          ...(ruleModel ? { modelRuleId: modelRule!.id } : {}),
           maker,
         },
       );
+      if (ruleModel) notes.unshift(...(["provider", "model", "reasoning"] as const)
+        .filter(field => ruleModel[field] !== undefined)
+        .map(field => `${field} ${beforeRuleRole[field] ?? (field === "provider" ? parent.providerId : "provider default")} -> ${ruleModel[field]} (rule ${modelRule!.id})`));
       if (providerPlacement && placementRoute) {
         placement = await this.placements().controller.reserve(placementRoute, token, this.keeper.store.get("hires", token)!, reviewTarget);
         environment = placement.target as Extract<NonNullable<Parameters<BbPluginApi["sdk"]["threads"]["spawn"]>[0]["environment"]>, { type: "provider" }>;

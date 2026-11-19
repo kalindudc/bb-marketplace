@@ -72,6 +72,57 @@ async function blocked(promise: Promise<unknown>) {
 }
 
 describe("rule-driven member hires", () => {
+  it.each([false, true])("uses the rule model for a placed Smith (full override: %s)", async full => {
+    const f = fixture(), registry = await f.runtime.prepareRegistry("project");
+    vi.spyOn(f.runtime, "prepareRegistry").mockResolvedValue({ ...registry, classes: registry.classes.map(role => role.id === "smith" ? { ...role, provider: "pi", model: "anthropic/claude-sonnet-5-5", reasoning: "high" } : role) });
+    const override = full ? { provider: "other", model: "openai/gpt-6.1-sol", reasoning: "low" } : { model: "openai/gpt-6.1-sol" };
+    f.settings.update({ revision: 1, patch: { machines: { rules: [{ ...rule, classModels: { smith: override } }] } }, why: "Choose remote model" });
+    const quest = await seedQuest(f.k, "lead", "Build with rule model", "MODEL");
+    f.k.plan("lead", { ...planInput(quest.id), party: [{ classId: "smith", characterId: null, model: "slot/model", purpose: "Build", waypointIds: ["w1"] }] });
+    f.k.answerAsk(f.k.asks("lead").find(ask => ask.state === "open" && ask.kind === "greenlight")!.id, "approve", null, "page", "user");
+    const spawn = vi.spyOn(f.bb.sdk.threads, "spawn");
+    const member = await f.runtime.hire("lead", "project", { ...hire, classId: "smith", errand: false, boardQuestId: quest.id, waypointId: "w1" });
+    expect(spawn.mock.calls[0][0]).toMatchObject({ providerId: full ? "other" : "pi", model: override.model, reasoningLevel: full ? "low" : "high" });
+    expect(f.k.store.runtime(member.threadId).classDefinition).toMatchObject({ provider: full ? "other" : "pi", model: override.model, reasoning: full ? "low" : "high" });
+    expect(member.executionNotes).toContain("model slot/model -> openai/gpt-6.1-sol (rule shop)");
+    expect(member.executionNotes.filter(note => note.startsWith("provider ") && note.endsWith("(rule shop)"))).toEqual(full ? ["provider pi -> other (rule shop)"] : []);
+    expect(member.executionNotes.filter(note => note.startsWith("reasoning ") && note.endsWith("(rule shop)"))).toEqual(full ? ["reasoning high -> low (rule shop)"] : []);
+    expect((await f.runtime.prepareRegistry("project")).classes.find(role => role.id === "smith")?.model).toBe("anthropic/claude-sonnet-5-5");
+  });
+  it.each(["unplaced", "current"])("does not use a rule override for a %s hire", async route => {
+    const f = fixture();
+    f.settings.update({ revision: 1, patch: { machines: { rules: [{ ...rule, ...(route === "current" ? { target: { kind: "current" as const } } : { match: { classes: ["smith"] } }), classModels: { ranger: { model: "missing/model" } } }] } }, why: "No machine override" });
+    const spawn = vi.spyOn(f.bb.sdk.threads, "spawn");
+    const member = await f.runtime.hire("lead", "project", hire);
+    expect(member.placement).toBeNull();
+    expect(spawn.mock.calls[0][0].model).not.toBe("missing/model");
+    expect(member.executionNotes.some(note => note.includes("(rule shop)"))).toBe(false);
+  });
+  it("puts the rule-model clause on the hire result\u0027s first line", async () => {
+    const f = fixture(), registry = await f.runtime.prepareRegistry("project");
+    const from = registry.classes.find(role => role.id === "ranger")!.model ?? "provider default";
+    f.settings.update({ revision: 1, patch: { machines: { rules: [{ ...rule, classModels: { ranger: { model: "openai/gpt-6.1-sol" } } }] } }, why: "Rule model" });
+    registerTools(f.bb, f.runtime);
+    const result = await f.harness.behavior.invokeAgentTool("tavern_hire", hire, { threadId: "lead" });
+    expect(String(result).split("\n")[0]).toContain(`model ${from} -> openai/gpt-6.1-sol (rule shop)`);
+  });
+  it("puts provider and reasoning changes from inherited defaults on the hire result's first line", async () => {
+    const f = fixture(), registry = await f.runtime.prepareRegistry("project");
+    vi.spyOn(f.runtime, "prepareRegistry").mockResolvedValue({ ...registry, classes: registry.classes.map(role => role.id === "ranger" ? { ...role, provider: null, reasoning: null } : role) });
+    f.settings.update({ revision: 1, patch: { machines: { rules: [{ ...rule, classModels: { ranger: { provider: "other", model: "openai/gpt-6.1-sol", reasoning: "low" } } }] } }, why: "Rule execution" });
+    registerTools(f.bb, f.runtime);
+    const result = await f.harness.behavior.invokeAgentTool("tavern_hire", hire, { threadId: "lead" });
+    const line = String(result).split("\n")[0];
+    expect(line).toContain("provider pi -> other (rule shop)");
+    expect(line).toContain("reasoning provider default -> low (rule shop)");
+  });
+  it("refuses an unverified rule model without allocating or substituting", async () => {
+    const f = fixture();
+    f.settings.update({ revision: 1, patch: { machines: { rules: [{ ...rule, classModels: { ranger: { model: "missing/model" } } }] } }, why: "Unknown model" });
+    await expect(f.runtime.hire("lead", "project", hire)).rejects.toThrow("Cannot hire ranger: rule shop model missing/model is not offered or could not be verified");
+    expect(f.harness.inspection.sdk.callsTo("threads.spawn")).toEqual([]);
+    expect(f.services.store.activePage(null, 100)).toEqual([]);
+  });
   it("spawns once with the exact SDK selection, binds the placement, and explains the source of admission", async () => {
     const f = fixture(), spawn = vi.spyOn(f.bb.sdk.threads, "spawn");
     const member = await f.runtime.hire("lead", "project", hire);

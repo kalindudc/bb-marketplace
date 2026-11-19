@@ -72,6 +72,7 @@ export async function resolveHireExecution(
     projectId: string;
     scoped?: boolean;
     dryRun?: boolean;
+    modelRuleId?: string;
     onModelResolved?: (model: Pick<Catalog["models"][number], "model" | "displayName">) => void;
     maker?: { providerId: string | null; model: string | null; environmentId: string | null };
   },
@@ -141,8 +142,11 @@ export async function resolveHireExecution(
   const requestedModel = role.model
     ? models.find(candidate => candidate.model === role.model) ?? models.find(candidate => candidate.id === role.model) ?? (providerId !== requestedProviderId ? models.find(candidate => candidate.model === wantedModel) : undefined)
     : undefined;
-  if (role.model && !requestedModel)
-    throw new Error(`Cannot hire ${role.id}: class model ${role.model} is not offered or could not be verified on ${providerId}. Change classes.${role.id}.model in Tavern settings to an available model. No model substitution was made.`);
+  if (role.model && !requestedModel) {
+    const source = parent.modelRuleId ? `rule ${parent.modelRuleId} model` : "class model";
+    const setting = parent.modelRuleId ? `the ${role.id} model on rule ${parent.modelRuleId} in Settings, Where work runs,` : `classes.${role.id}.model in Tavern settings`;
+    throw new Error(`Cannot hire ${role.id}: ${source} ${role.model} is not offered or could not be verified on ${providerId}. Change ${setting} to an available model. No model substitution was made.`);
+  }
   const defaultModel = models.find((candidate) => candidate.isDefault);
   let selected = role.model || role.reasoning || parent.scoped
     ? requestedModel ?? (providerId !== requestedProviderId ? models.find(candidate => candidate.model === wantedModel) : defaultModel)

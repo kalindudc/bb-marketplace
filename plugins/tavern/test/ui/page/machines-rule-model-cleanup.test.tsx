@@ -1,0 +1,40 @@
+import { definePluginApp } from "@get-bb/plugin-sdk/app";
+import { loadPluginApp, renderSlot, type RenderedSlot } from "@get-bb/plugin-sdk/testing/app";
+import { fireEvent, waitFor, within } from "@testing-library/react";
+import { afterEach, expect, it, vi } from "vitest";
+import { settingsContract, settingsViewSchema } from "../../../src/shared/settings";
+import { rpcContract } from "../../../src/shared/contract";
+import { settingsView } from "../../../src/ui/page/fixtures-insights";
+import { registry } from "../../../src/ui/page/fixtures";
+import { machinesCatalog, machinesRoom } from "../fixtures/machines";
+import { machinesContract } from "../../../src/ui/page/machines-contract";
+import { registerPageSurfaces } from "../../../src/ui/page/register";
+
+let slot: RenderedSlot;
+afterEach(() => { slot?.lifecycle.unmount(); window.localStorage.clear(); });
+it.each(["existing", "edited", "all"])("drops unmatched overrides only on Save rule (%s class condition)", async mode => {
+  const classModels = { smith: { model: "vendor/model" }, ranger: { model: "vendor/ranger" }, warden: { model: "vendor/checker" } };
+  const rule = { id: "models", label: "Models", enabled: true, match: { classes: mode === "edited" ? ["smith", "ranger"] : ["smith"] }, target: { kind: "current" }, classModels };
+  const view = settingsViewSchema.parse({ ...structuredClone(settingsView), effective: { ...structuredClone(settingsView.effective), machines: { rules: [rule] } }, placementPolicy: { state: "valid", revision: 1, settings: { rules: [rule] } } });
+  const update = vi.fn(async () => ({ code: "ok" as const, revision: 2, problems: [], settings: view }));
+  const plugin = await loadPluginApp(async () => ({ default: definePluginApp(registerPageSurfaces) }));
+  slot = renderSlot(plugin.navPanels[0]!, { subPath: "machines" }, { pluginId: "tavern", experimental_rpcContract: { ...rpcContract, ...settingsContract, ...machinesContract }, rpc: { room: () => machinesRoom, registry: () => registry, settings: () => view, settingsUpdate: update, placementCatalog: () => machinesCatalog } });
+  fireEvent.click(await slot.findByRole("button", { name: "Edit rule 1" }));
+  if (mode === "edited") fireEvent.click(within(within(slot.getByRole("form", { name: "Edit rule 1" })).getByRole("group", { name: "Class" })).getByRole("button", { name: /Ranger/ }));
+  if (mode === "all") fireEvent.click(slot.getByRole("button", { name: "Remove the class condition" }));
+  expect(update).not.toHaveBeenCalled();
+  fireEvent.click(slot.getByRole("button", { name: "Save rule" }));
+  await waitFor(() => expect(update).toHaveBeenCalledOnce());
+  const saved = update.mock.calls[0] as unknown as [{ patch: { machines: { rules: Array<{ classModels: unknown }> } } }];
+  expect(saved[0].patch.machines.rules[0].classModels).toEqual(mode === "all" ? classModels : { smith: classModels.smith });
+});
+it("explains home verification and removal of unmatched overrides", async () => {
+  const rule = { id: "models", label: "Models", enabled: true, match: {}, target: { kind: "current" } };
+  const view = settingsViewSchema.parse({ ...structuredClone(settingsView), effective: { ...structuredClone(settingsView.effective), machines: { rules: [rule] } }, placementPolicy: { state: "valid", revision: 1, settings: { rules: [rule] } } });
+  const plugin = await loadPluginApp(async () => ({ default: definePluginApp(registerPageSurfaces) }));
+  slot = renderSlot(plugin.navPanels[0]!, { subPath: "machines" }, { pluginId: "tavern", experimental_rpcContract: { ...rpcContract, ...settingsContract, ...machinesContract }, rpc: { room: () => machinesRoom, registry: () => registry, settings: () => view, placementCatalog: () => machinesCatalog } });
+  fireEvent.click(await slot.findByRole("button", { name: "Edit rule 1" }));
+  const models = slot.getByRole("group", { name: "Models on these machines" });
+  expect(models.textContent).toContain("Pick a model the target machine's agent also offers. Tavern checks it here before hiring, and the machine reports a model it lacks on the member's first turn.");
+  expect(models.textContent).toContain("Save rule removes model overrides for classes this rule no longer matches.");
+});

@@ -103,6 +103,11 @@ export const pullRequestsSchema = z.discriminatedUnion("at", [
   z.object({ at: z.literal("home"), profile: id }).strict(),
 ]);
 
+export const classModelSchema = z.object({
+  provider: z.string().min(1).max(200).optional(),
+  model: z.string().min(1).max(1000),
+  reasoning: z.string().trim().min(1).max(100).optional(),
+}).strict();
 export const placementRuleSchema = z.object({
   id: id.regex(/^[a-z][a-z0-9-]{0,63}$/),
   label: z.string().min(1).max(200),
@@ -111,6 +116,7 @@ export const placementRuleSchema = z.object({
   target: placementTargetSchema,
   consent: placementConsentSchema.default(noConsent),
   pullRequests: pullRequestsSchema.default({ at: "member" }),
+  classModels: z.record(z.string().regex(/^[a-z][a-z0-9-]{0,39}$/), classModelSchema).default({}),
 }).strict().superRefine((rule, ctx) => {
   const target = rule.target;
   if (target.kind === "provider" && target.workspace === "dedicated-machine" &&
@@ -161,7 +167,7 @@ export const placementSettingsPatchSchema = z.object({
   forges: z.array(forgeProfileSchema).max(50).optional(),
 }).strict().superRefine(uniqueRuleIds);
 
-export type PlacementRule = Omit<z.infer<typeof placementRuleSchema>, "pullRequests"> & { pullRequests?: z.infer<typeof pullRequestsSchema> };
+export type PlacementRule = Omit<z.infer<typeof placementRuleSchema>, "pullRequests" | "classModels"> & { pullRequests?: z.infer<typeof pullRequestsSchema>; classModels?: Record<string, z.infer<typeof classModelSchema>> };
 export type PlacementSettings = z.infer<typeof placementSettingsSchema>;
 export type PlacementSettingsPatch = Omit<z.infer<typeof placementSettingsPatchSchema>, "rules"> & { rules?: PlacementRule[] };
 

@@ -15,6 +15,16 @@ function opaque() {
 }
 
 describe("machine placement settings contract", () => {
+  it("loads a saved rule from before model overrides and preserves partial or full entries", () => {
+    expect(placementRuleSchema.parse(JSON.parse(JSON.stringify(local))).classModels).toEqual({});
+    const classModels = { smith: { model: "vendor/model" }, warden: { provider: "pi", model: "vendor/checker", reasoning: "high" } };
+    expect(placementRuleSchema.parse({ ...remote, classModels }).classModels).toEqual(classModels);
+    expect(placementRuleSchema.safeParse({ ...remote, classModels: { smith: { model: "" } } }).success).toBe(false);
+  });
+  it("refuses empty reasoning but permits an omitted value or explicit none", () => {
+    for (const reasoning of ["", "   "]) expect(placementRuleSchema.safeParse({ ...remote, classModels: { smith: { model: "vendor/model", reasoning } } }).success).toBe(false);
+    for (const entry of [{ model: "vendor/model" }, { model: "vendor/model", reasoning: "none" }]) expect(placementRuleSchema.parse({ ...remote, classModels: { smith: entry } }).classModels.smith).toEqual(entry);
+  });
   it("keeps placement inert by default and retains the existing party budget", () => {
     expect(placementSettingsSchema.parse({})).toEqual({ maxMakers: 2, maxCheckers: 2, rules: [], forges: [] });
     expect(settingsSchema.parse({}).machines).toEqual({ maxMakers: 2, maxCheckers: 2, rules: [], forges: [] });

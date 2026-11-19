@@ -4,6 +4,12 @@ A source capture now has two identities. The content owner identifies immutable 
 
 This is a dormant controller transport boundary. Owner-backed descriptors share one native import authority, receipt and private home ref. It does not activate machine routing, free native refs or endpoints, or implement transfer-slot waiting. Full member delivery still needs native cleanup, capacity waiting, ready and lifecycle integration.
 
+## Models on placed members
+
+A placement rule can set `classModels`, a map from class ID to a required `model` and optional `provider` and `reasoning`. The default is empty, including rules saved before this setting existed. A stated field replaces the class value for that placed member only; omitted provider and reasoning fields retain the class values. A rule that keeps the hire with its Keeper, or does not match the hire, does not change its model.
+
+On Where work runs, the rule editor shows Models on these machines for matching classes. The picker changes a local draft. Closing it saves nothing; Save rule persists the choices once. Use the class’s model removes that class’s override. Model verification and checker independence use the effective choice, and an unverified rule model refuses the hire without choosing an alternative. Save rule removes overrides for classes the rule no longer matches. Pick a model the target machine's agent also offers. Tavern checks it here before hiring, and the machine reports a model it lacks on the member's first turn. The hire result’s first line names each provider, model and reasoning value the rule replaced, including a plan slot’s model, and the rule ID. Empty reasoning is refused; an omitted reasoning field keeps the class value. Scoped hires still prefer Pi when it offers the model, and the first line shows that provider substitution. Runtime state retains the effective class definition; class files and defaults are unchanged.
+
 ## Read-only working-tree capture
 
 Initial and submission captures include the working versions of tracked files, tracked deletions, and untracked files that Git does not ignore. A staged file whose working version differs contributes its working version. Ignored, untracked build output and scratch files outside the repository are not included. Declared artifacts have a separate preservation path; source capture is not a promise to save them.

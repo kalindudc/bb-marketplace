@@ -15,6 +15,8 @@ import "./machines.css";
 import { FoldLoad } from "./skeletons";
 import { PlacementFacts } from "../kit/placement";
 
+import type { ClassDef } from "../../shared/schema";
+import { RuleModels } from "./machines-models";
 import { ForgeProfiles } from "./machines-forges";
 const WHY = "Changed on the Where work runs page";
 const reducedMotion = () => typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -212,7 +214,7 @@ const isKeptDraft = (v: unknown): boolean => {
 };
 const DRAFT = "machines.draft", EDITING = "machines.editing";
 
-function Editor({ api, rules, saved, index, keptKey, n, room, classes, onDone }: { api: Api; rules: M.Rule[]; saved: M.Rule[]; index: number; keptKey: string; n: M.Names; room: Room | undefined; classes: { id: string; label: string; plain: string }[]; onDone: () => void }) {
+function Editor({ api, rules, saved, index, keptKey, n, room, classes, onDone }: { api: Api; rules: M.Rule[]; saved: M.Rule[]; index: number; keptKey: string; n: M.Names; room: Room | undefined; classes: ClassDef[]; onDone: () => void }) {
   const [kept, keep] = usePanelState<KeptDraft | null>(DRAFT, null, isKeptDraft);
   // The rule as stored, not as last sent: after a failed save `rules` holds the draft itself, which is no change made elsewhere.
   const base = index < 0 ? null : saved[index] ?? rules[index]!;
@@ -260,7 +262,8 @@ function Editor({ api, rules, saved, index, keptKey, n, room, classes, onDone }:
   const save = async () => {
     const label = r.label.trim();
     const next = [...rules];
-    const rule = { ...r, label, id: index < 0 ? M.ruleId(label, rules.map((x) => x.id)) : r.id };
+    const classModels = Object.fromEntries(Object.entries(r.classModels ?? {}).filter(([classId]) => !r.match.classes || r.match.classes.includes(classId)));
+    const rule = { ...r, label, classModels, id: index < 0 ? M.ruleId(label, rules.map((x) => x.id)) : r.id };
     // A new rule that needs consent is saved off: turning it on asks for consent.
     if (M.needsConsent(rule) && !M.consented(rule)) rule.enabled = false;
     if (index < 0) next.push(rule); else next[index] = rule;
@@ -325,6 +328,11 @@ function Editor({ api, rules, saved, index, keptKey, n, room, classes, onDone }:
         {newMachine && <Inputs title={`${cat.machines.find((m) => m.id === newMachine.machineProviderId)?.displayName ?? newMachine.machineProviderId} inputs`} schema={cat.machines.find((m) => m.id === newMachine.machineProviderId)?.inputs ?? null} value={newMachine.inputs as M.Json | undefined} onChange={(v) => setProv({ machine: { ...newMachine, inputs: v } })} probAt={(k) => probAt(k ? `target.machine.inputs.${k}` : "target.machine.inputs")} />}
       </>}
     </fieldset>
+    <RuleModels classes={classes.filter(role => !r.match.classes || r.match.classes.includes(role.id))} models={r.classModels ?? {}} onChange={(classId, value) => setR(previous => {
+      const classModels = { ...previous.classModels };
+      if (value) classModels[classId] = value; else delete classModels[classId];
+      return { ...previous, classModels };
+    })} />
     <Field id={`${uid}-pr`} label="Pull requests open" problem={probAt("pullRequests")}><select id={`${uid}-pr`} className="tv-select" value={r.pullRequests?.at === "home" ? r.pullRequests.profile : ""} onChange={event => setR({ ...r, pullRequests: event.target.value ? { at: "home", profile: event.target.value } : { at: "member" } })}><option value="">On the member’s machine</option>{api.query.data?.effective.machines.forges.map(profile => <option key={profile.id} value={profile.id} disabled={!profile.enabled}>From home with {profile.name}</option>)}</select></Field>
     {M.needsConsent(r) && <div className={`mx-field ${probAt("consent") ? "bad" : ""}`}>
       <span className="mx-fl">Consent</span>
