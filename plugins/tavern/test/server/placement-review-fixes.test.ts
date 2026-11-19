@@ -60,6 +60,19 @@ describe("Review B submission fixes", () => {
     const result = await verdict(f, id);
     expect(result).toMatchObject({ isError: true }); expect(JSON.stringify(result)).toContain("Only reported done entries can be verified.");
   }, 60_000);
+  it("hires the Warden after the placed maker reports done", async () => {
+    const f = await fixture(), id = await f.make();
+    f.keeper.report("maker", { status: "done", outcome: "Built", evidence: [], artifacts: [], confidence: { intent: 100, safe: 100 }, voice: null });
+    expect(f.keeper.store.get("members", "maker")!.state).toBe("done");
+    await f.check();
+    expect(f.runtime.placements().store.byMember("checker")!.reviewTarget).toBeTruthy();
+    expect(await verdict(f, id)).not.toMatchObject({ isError: true });
+  }, 60_000);
+  it("refuses capture from a released maker", async () => {
+    const f = await fixture(); await f.make();
+    f.keeper.store.patch("maker", { released: { reason: "test", decisionId: "d1" } });
+    await expect(f.runtime.placements().submissions.capture("maker", "w1")).rejects.toThrow("content-ready active maker");
+  }, 60_000);
   it("captures a failed maker turn once it is quiescent", async () => {
     const f = await fixture(); await f.make(); f.threads.set("maker", { ...f.threads.get("maker")!, status: "error" });
     expect(await f.runtime.placements().submissions.capture("maker", "w1")).toMatchObject({ state: "captured" }); expect(f.stop).not.toHaveBeenCalled();

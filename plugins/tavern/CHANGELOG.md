@@ -51,6 +51,7 @@ Machine rules put a project's party members on their own new machines through th
 
 ### Fixed
 
+- A Warden can now be hired for a machine-placed maker that has reported done. Tavern refused to capture a finished maker's submission, so no placed maker could ever be checked. A released or archived maker is still refused.
 - Submission and preservation use Tavern's recorded source base, never the member's moving remote-tracking refs. Pushed-only preservation and draft imports stay in the private home repository, while forge commands read the user's checkout with optional Git locks disabled. PR records use the recorded fetch ref instead of an environment default. Uncommitted file/directory replacements and Git's executable-mode rules are preserved. Large carries batch their path queries and deletions, and cancelled deletion calls stop before changing more paths.
 - Pushed-only source capture reads the remote's advertised default branch, not the local branch's upstream. It excludes local commits and dirty files. Missing objects are fetched only into Tavern's private home-import repository, never into the user's checkout.
 - Machine placement checks that Git can carry the work before setup. Member endpoints probe porcelain only; home endpoints still require object and index plumbing. A machine missing the Git operations its role needs is a lasting blocker with Git’s reason, not a retry loop. Object formats are read from the verified commit and checked against repository configuration without requiring an optional Git query.
