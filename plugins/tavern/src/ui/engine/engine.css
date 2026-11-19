@@ -58,15 +58,24 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.tavern .twalk-speech::before {
+.tavern .twalk-speech::before,
+.tavern .twalk-speech::after {
   content: "";
   position: absolute;
   top: 8px;
   left: -8px;
   width: 8px;
-  height: 8px;
+  height: 10px;
+}
+.tavern .twalk-speech::before {
   background: var(--tavern-hearth);
-  clip-path: polygon(6px 0, 8px 0, 8px 6px, 4px 6px, 4px 8px, 0 8px, 0 6px, 2px 6px, 2px 4px, 4px 4px, 4px 2px, 6px 2px);
+  clip-path: polygon(6px 0, 8px 0, 8px 10px, 0 10px, 0 6px, 2px 6px, 2px 4px, 4px 4px, 4px 2px, 6px 2px);
+}
+.tavern .twalk-speech::after {
+  width: 10px;
+  background: var(--card);
+  clip-path: polygon(6px 2px, 10px 2px, 10px 8px, 2px 8px, 2px 6px, 4px 6px, 4px 4px, 6px 4px);
 }
 .tavern .twalk-speech[data-side="left"] { transform: translateX(-100%); }
-.tavern .twalk-speech[data-side="left"]::before { left: auto; right: -8px; transform: scaleX(-1); }
+.tavern .twalk-speech[data-side="left"]::before,
+.tavern .twalk-speech[data-side="left"]::after { left: auto; right: -8px; transform: scaleX(-1); }
