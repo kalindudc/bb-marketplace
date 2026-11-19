@@ -54,6 +54,32 @@ describe("class and character registry", () => {
     expect(registry.read().classes.find((c) => c.id === "ranger")?.label).toBe("Global");
     expect(registry.read().problems[0]?.message).toContain("frontmatter");
   });
+  it("adds a seed to a user override without changing the built-in source", () => {
+    const home = directory(), source = join(root, "characters/wren.md");
+    const raw = readFileSync(source, "utf8");
+    const registry = new Registry(root, home);
+    const before = registry.read().characters.find(c => c.id === "wren")!;
+    const saved = registry.saveAvatar("wren", "1bcabc");
+    expect(saved).toEqual({ ...before, avatar: "1bcabc", source: join(home, "characters/wren.md") });
+    expect(readFileSync(source, "utf8")).toBe(raw);
+    expect(registry.read().characters.find(c => c.id === "wren")).toEqual(saved);
+    expect(new Registry(root, home).read().characters.find(c => c.id === "wren")).toEqual(saved);
+  });
+  it("changes only avatar in an authored file, retaining formatting, comments and body", () => {
+    const home = directory();
+    mkdirSync(join(home, "characters"));
+    const path = join(home, "characters/wren-local.md");
+    const raw = readFileSync(join(root, "characters/wren.md"), "utf8")
+      .replace("id: wren", "# Keep this comment\nid: wren\navatar: 'old' # The saved roll")
+      .replaceAll("\n", "\r\n") + "\r\n  ";
+    writeFileSync(path, raw);
+    const registry = new Registry(root, home);
+    expect(registry.read().characters.find(c => c.id === "wren")?.avatar).toBe("old");
+    const result = registry.saveAvatar("wren", "7gqda");
+    expect(readFileSync(path, "utf8")).toBe(raw.replace("'old'", '"7gqda"'));
+    expect(result.avatar).toBe("7gqda");
+    expect(registry.read().characters.find(c => c.id === "wren")).toEqual(result);
+  });
   it("saves only validated voice fields to the character override and reloads", () => {
     const home = directory(),
       registry = new Registry(root, home);

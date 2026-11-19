@@ -149,6 +149,7 @@ it("returns strict JSON from EVERY registered RPC with optional record fields ab
     archivedBoardQuests: () => call("archivedBoardQuests", {}),
     setHidden: () => call("setHidden", { threadId: "member", hidden: true }),
     saveCharacterVoice: () => call("saveCharacterVoice", { characterId: character.id, voice: { name, hue, charge, temper, style, quirks, lines } }),
+    saveCharacterAvatar: () => call("saveCharacterAvatar", { characterId: character.id, avatar: "3v41" }),
     classEditor: () => call("classEditor", { classId: "smith", projectId: null }),
     classPreview: () => call("classPreview", { classId: "smith", projectId: null, target: "global", edit: { label: "Mason" } }),
     // A revision that cannot match: the write path is exercised without touching any override file.

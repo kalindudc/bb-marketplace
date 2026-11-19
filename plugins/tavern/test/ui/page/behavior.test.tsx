@@ -236,6 +236,74 @@ describe("Tavern page surfaces", () => {
     expect(slot.queryByRole("textbox", { name: "Voice style" })).toBeNull();
     expect(slot.queryByRole("dialog")).toBeNull();
   });
+  it("rolls privately, puts back the saved avatar, and keeps exactly the shown seed", async () => {
+    const character = { ...registry.characters.find(c => c.id === "wren")!, look: { hat: "cap" as const, hair: "long" as const } };
+    const keep = vi.fn(({ avatar }: { characterId: string; avatar: string }) => ({ ...character, avatar }));
+    const saveVoice = vi.fn();
+    const random = vi.spyOn(crypto, "getRandomValues");
+    try {
+      const slot = await page("character/wren", {
+        registry: () => ({ ...registry, characters: [character] }),
+        saveCharacterAvatar: keep, saveCharacterVoice: saveVoice,
+      });
+      const sheet = await slot.findByRole("img", { name: "Wren's avatar" });
+      expect(sheet.getAttribute("data-avatar-seed")).toBe("wren");
+      fireEvent.click(slot.getByRole("button", { name: /Edit Wren's voice/ }));
+      const group = within(slot.getByRole("group", { name: "Avatar" }));
+      const shown = () => group.getByRole("img", { name: "Wren's avatar" }).getAttribute("data-avatar-seed");
+      const roll = () => fireEvent.click(group.getByRole("button", { name: "Roll" }));
+      expect(group.getByText(/Pinned in the file:.*hat.*hair|Pinned in the file:.*hair.*hat/)).toBeTruthy();
+      expect(shown()).toBe("wren");
+      random.mockImplementationOnce(array => { (array as Uint32Array)[0] = 1234567; return array; });
+      roll();
+      expect(shown()).toBe((1234567).toString(36));
+      expect(group.getByRole("status").textContent).toBe("This roll is not saved.");
+      expect(sheet.getAttribute("data-avatar-seed")).toBe("wren");
+      fireEvent.click(group.getByRole("button", { name: "Put back" }));
+      expect(shown()).toBe("wren");
+      expect(keep).not.toHaveBeenCalled();
+
+      fireEvent.change(slot.getByRole("textbox", { name: "Voice style" }), { target: { value: "Unsaved voice draft" } });
+      random.mockImplementationOnce(array => { (array as Uint32Array)[0] = 2345678; return array; });
+      roll();
+      const previous = shown();
+      random.mockImplementationOnce(array => { (array as Uint32Array)[0] = 3456789; return array; });
+      roll();
+      const seed = shown();
+      expect(seed).not.toBe(previous);
+      expect(keep).not.toHaveBeenCalled();
+      fireEvent.click(group.getByRole("button", { name: "Keep" }));
+      await group.findByText("Avatar kept.");
+      expect(keep).toHaveBeenCalledExactlyOnceWith({ characterId: "wren", avatar: seed });
+      expect(shown()).toBe(seed);
+      expect(saveVoice).not.toHaveBeenCalled();
+      expect((slot.getByRole("textbox", { name: "Voice style" }) as HTMLInputElement).value).toBe("Unsaved voice draft");
+    } finally { random.mockRestore(); }
+  });
+
+  it.each(["reduced", "off"] as const)("draws the sheet avatar once without a loop with %s motion", async (mode) => {
+    const clearRect = vi.fn();
+    const context = vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+      setTransform: vi.fn(), clearRect, fillRect: vi.fn(),
+    } as unknown as CanvasRenderingContext2D);
+    const bounds = vi.spyOn(HTMLCanvasElement.prototype, "getBoundingClientRect").mockReturnValue(new DOMRect(16, 16, 96, 112));
+    const raf = vi.spyOn(window, "requestAnimationFrame");
+    if (mode === "reduced") document.documentElement.dataset.motion = "reduced";
+    try {
+      const slot = await page("character/wren", { registry: () => ({ ...registry, ambientMotion: mode === "off" ? "off" : "calm" }) });
+      const avatar = await slot.findByRole("img", { name: "Wren's avatar" });
+      expect(avatar.getAttribute("width")).toBe("96");
+      expect(avatar.getAttribute("height")).toBe("112");
+      expect(clearRect).toHaveBeenCalledTimes(1);
+      expect(raf).not.toHaveBeenCalled();
+      slot.lifecycle.unmount();
+      slots.pop();
+    } finally {
+      delete document.documentElement.dataset.motion;
+      context.mockRestore(); bounds.mockRestore(); raf.mockRestore();
+    }
+  });
+
   it("saves only the editable character presentation fields", async () => {
     const save = vi.fn((input: { characterId: string; voice: Partial<typeof registry.characters[0]> }) => ({ ...registry.characters[0]!, ...input.voice }));
     const slot = await page("character/wren", { saveCharacterVoice: save });

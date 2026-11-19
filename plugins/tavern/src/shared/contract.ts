@@ -56,6 +56,7 @@ export const tags = {
 };
 
 export const registrySchema = z.object({
+  ambientMotion: z.enum(["calm", "lively", "off"]).optional(),
   voice: voiceModeSchema.optional(),
   levels: z.boolean().optional(),
   serviceRecords: z.array(characterServiceRecordSchema).optional(),
@@ -462,6 +463,10 @@ export const rpcContract = defineContract({
   // added by Builder D: persist the character sheet's presentation fields to the user's character override.
   saveCharacterVoice: {
     input: z.object({ characterId: id, voice: characterDefSchema.pick({ name: true, hue: true, charge: true, temper: true, style: true, quirks: true, lines: true }) }).strict(),
+    output: characterDefSchema,
+  },
+  saveCharacterAvatar: {
+    input: z.object({ characterId: id, avatar: characterDefSchema.shape.avatar.unwrap() }).strict(),
     output: characterDefSchema,
   },
   // The Classes page editor (registry-rpc.ts). Reading and previewing are open; saving and removing an override are client-only.

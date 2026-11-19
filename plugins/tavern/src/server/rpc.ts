@@ -67,6 +67,9 @@ export function rpcHandlers(
   const wake = (threadId: string) => {
     void runtime.wakeKeeper(threadId, "user-action");
   };
+  const invalidateCharacter = () => runtime.bb.rpc.experimental_invalidate([
+    tags.registry(), tags.rows(), tags.room(), ...k.store.all("members").map(m => tags.thread(m.threadId)),
+  ]);
   return {
     ...placementHandlers(runtime),
     ...voiceCheckHandlers(() => runtime.voiceChecks),
@@ -74,12 +77,12 @@ export function rpcHandlers(
     registry: async ({ projectId }) => {
       const snapshot = projectId ? await runtime.prepareRegistry(projectId) : runtime.snapshot();
       const serviceRecords = runtime.serviceRecords.read();
+      const { levels, voice, ambientMotion, hearthFlicker } = runtime.config().tavern;
       return {
         ...snapshot,
         ...readCharacterPresentation(runtime.registry, snapshot, k.store),
         serviceRecords,
-        levels: runtime.config().tavern.levels,
-        voice: runtime.config().tavern.voice,
+        levels, voice, ambientMotion: hearthFlicker ? ambientMotion : "off",
       };
     },
     reports: ({ ids, memberThreadId }) => ({
@@ -127,12 +130,12 @@ export function rpcHandlers(
     ...classEditorHandlers(runtime),
     saveCharacterVoice: ({ characterId, voice }) => {
       const character = runtime.registry.saveVoice(characterId, voice);
-      runtime.bb.rpc.experimental_invalidate([
-        tags.registry(),
-        tags.rows(),
-        tags.room(),
-        ...k.store.all("members").map((m) => tags.thread(m.threadId)),
-      ]);
+      invalidateCharacter();
+      return character;
+    },
+    saveCharacterAvatar: ({ characterId, avatar }) => {
+      const character = runtime.registry.saveAvatar(characterId, avatar);
+      invalidateCharacter();
       return character;
     },
     decor: ({ threadId }): ThreadDecor => {

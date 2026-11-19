@@ -5,7 +5,7 @@ import { LIMITS } from "./limits";
 import { join } from "node:path";
 import { stringify } from "yaml";
 import { characterDefSchema, classDefSchema, type CharacterDef, type ClassDef } from "../shared/schema";
-import { parseRegistryDefinition } from "./registry-file";
+import { parseRegistryDefinition, withCharacterAvatar } from "./registry-file";
 
 export interface RegistrySnapshot { classes: ClassDef[]; characters: CharacterDef[]; problems: { path: string; message: string }[] }
 export interface RegistryFile { filename: string; source: "shipped" | "global" | "project"; path: string | null; text: string }
@@ -88,6 +88,21 @@ export class Registry {
     renameSync(tmp, path);
     this.cache.clear();
     return { ...parsed, source: path };
+  }
+  saveAvatar(characterId: string, avatar: string): CharacterDef {
+    const file = this.file("character", characterId);
+    const dir = join(this.home, "characters");
+    const path = file.path ?? join(dir, `${characterId}.md`);
+    const seed = characterDefSchema.shape.avatar.unwrap().parse(avatar);
+    const text = withCharacterAvatar(file.path ? readFileSync(path, "utf8") : file.text, seed);
+    const parsed = parseRegistryDefinition("character", text, path);
+    if (parsed.id !== characterId || parsed.avatar !== seed) throw new Error("The character file changed. Reopen the editor before keeping an avatar.");
+    mkdirSync(dir, { recursive: true });
+    const tmp = `${path}.tmp`;
+    writeFileSync(tmp, text, { mode: 0o600 });
+    renameSync(tmp, path);
+    this.cache.clear();
+    return parsed;
   }
   private classPath(target: ClassTarget["target"], id: string, projectPath?: string | null) {
     if (target === "project" && !projectPath) throw new Error("A project override needs a local project checkout.");

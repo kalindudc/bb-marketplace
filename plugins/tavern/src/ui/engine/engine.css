@@ -12,6 +12,10 @@
   height: 1px;
   background: color-mix(in oklab, var(--tavern-line) 65%, transparent);
 }
+.tavern .tv-avatar-art { display: block; image-rendering: pixelated; }
+.tavern .tv-avatar-greet { position: absolute; inset: 0; border: 0; background: none; cursor: pointer; }
+.tavern .tv-avatar-greet:focus-visible { outline: 2px solid var(--tavern-hearth); outline-offset: -3px; }
+
 .tavern .twalk-canvas {
   position: absolute;
   inset: 0;

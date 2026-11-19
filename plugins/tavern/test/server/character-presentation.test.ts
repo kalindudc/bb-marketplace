@@ -15,6 +15,7 @@ import { MIGRATIONS } from "../../src/server/migrations";
 import { Registry } from "../../src/server/registry";
 import { LIMITS } from "../../src/server/limits";
 import { rpcHandlers } from "../../src/server/rpc";
+import { tags } from "../../src/shared/contract";
 import { TavernRuntime } from "../../src/server/runtime";
 import { SettingsStore } from "../../src/server/settings/store";
 import { setup } from "./runtime-fixture";
@@ -138,6 +139,16 @@ describe("UI-only character presentation", () => {
     const result = (await f.read()).characterAuthorship?.find(row => row.characterId === "wren");
     expect(result?.source).toBe("global"); expect(result?.changedAt).toEqual(expect.any(Number));
     expect(fs.readFileSync(join(f.home, "characters/wren.md"), "utf8")).not.toMatch(/changedAt|editedAt|characterAuthorship/);
+  });
+  it("refreshes the registry and character surfaces after keeping an avatar", async () => {
+    const f = fixture();
+    f.member("worker", "juno");
+    expect((await f.read()).characters.find(c => c.id === "juno")?.avatar).toBeUndefined();
+    const invalidate = vi.spyOn(f.bb.rpc, "experimental_invalidate");
+    const kept = await f.rpc.saveCharacterAvatar({ characterId: "juno", avatar: "7gqda" });
+    expect(kept.avatar).toBe("7gqda");
+    expect(invalidate).toHaveBeenCalledWith(expect.arrayContaining([tags.registry(), tags.rows(), tags.room(), tags.thread("worker")]));
+    expect((await f.read()).characters.find(c => c.id === "juno")?.avatar).toBe("7gqda");
   });
   it("returns prototype-like character ids as array values through strict JSON", async () => {
     const f = fixture(); f.override("constructor", "global", "constructor.md", "juno");

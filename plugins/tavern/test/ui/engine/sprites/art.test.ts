@@ -1,7 +1,11 @@
 // @vitest-environment node
 import { createHash } from "node:crypto";
-import { readFileSync, readdirSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
+import { Registry } from "../../../../src/server/registry";
 import { parseRegistryDefinition } from "../../../../src/server/registry-file";
 import { CUES, MOODS, type ArtFrame, type ArtInput, type CharacterArt } from "../../../../src/ui/engine/art";
 import { createArt, drawStillAvatar } from "../../../../src/ui/engine/sprites";
@@ -51,6 +55,21 @@ describe("seeded character art", () => {
     const wren = parseRegistryDefinition("character", raw.replace("id: wren", "id: wren\navatar: another-roll"), "builtin");
     expect(wren).toMatchObject({ id: "wren", avatar: "another-roll" });
     expect(hash(createArt({ ...input, seed: wren.avatar ?? wren.id }))).not.toBe(hash(createArt(input)));
+  });
+
+  it("hashes the kept preview and the reloaded character to the same pixels", () => {
+    const home = mkdtempSync(join(tmpdir(), "tavern-avatar-"));
+    try {
+      const root = fileURLToPath(new URL("../../../../", import.meta.url));
+      const registry = new Registry(root, home);
+      const character = registry.read().characters.find(c => c.id === "wren")!;
+      const seed = "7gqda";
+      const preview = hash(createArt({ ...input, hue: character.hue, charge: character.charge, look: character.look, seed }));
+      registry.saveAvatar(character.id, seed);
+      const loaded = new Registry(root, home).read().characters.find(c => c.id === character.id)!;
+      expect(loaded.avatar).toBe(seed);
+      expect(hash(createArt({ ...input, hue: loaded.hue, charge: loaded.charge, look: loaded.look, seed: loaded.avatar! }))).toBe(preview);
+    } finally { rmSync(home, { recursive: true, force: true }); }
   });
 
   it("hashes to the same pixels across calls, instances, and a fresh module", async () => {

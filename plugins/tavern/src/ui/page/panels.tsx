@@ -8,6 +8,7 @@ import { AwayForm } from "./away";
 import { type Registry } from "./common";
 import { PageGlyph } from "./glyphs";
 import { VoiceCheckBox } from "./voice-check";
+import { AvatarRoll } from "./avatar-roll";
 
 type NavTab = ExperimentalTabReference & { availability: "action"; context: { kind: "nav-panel"; panelId: string } };
 export const CLOSING_TAB: NavTab = { id: "closing-time", context: { kind: "nav-panel", panelId: "tavern" }, availability: "action" };
@@ -40,7 +41,7 @@ export function CharacterVoiceForm({ character, registry }: { character: Charact
   const [saved, setSaved] = useState(false);
   const [invalid, setInvalid] = useState<string | null>(null);
   const save = experimental_useRpcMutation({ contract: rpcContract, method: "saveCharacterVoice" });
-  const cls = registry.classes.find((c) => character.classes.includes(c.id));
+  const cls = registry.classes.find((c) => c.id === character.classes[0]);
   const edit = <K extends keyof CharacterDef,>(key: K, value: CharacterDef[K]) => { setDraft((prev) => ({ ...prev, [key]: value })); setSaved(false); setInvalid(null); };
   const persist = async () => {
     const parsed = characterDefSchema.safeParse(draft);
@@ -49,7 +50,8 @@ export function CharacterVoiceForm({ character, registry }: { character: Charact
     try { const result = await save.mutate({ characterId: character.id, voice: { name, hue, charge, temper, style, quirks, lines } }); setDraft(result); setSaved(true); } catch { /* Server failures leave the edited fields intact. */ }
   };
   return <form className="tv-form" aria-label={`Edit ${character.name}'s voice`} onSubmit={(event) => { event.preventDefault(); void persist(); }}>
-    <header className="tv-form-h">{cls && <Crest cls={cls} character={draft} size={28} />}<h2>{draft.name}'s voice</h2></header>
+    <header className="tv-form-h">{cls && <Crest cls={cls} character={draft} size={28} />}<h2>{draft.name}'s voice and avatar</h2></header>
+    <AvatarRoll character={character} mode={registry.ambientMotion} />
     <p className="m small">Presentation only: short threshold lines, no identity, emotion or expertise claims. Asks, blockers, findings, evidence and numbers stay plain.{levelsShown(registry) && " Agents never see levels."}</p>
     <fieldset disabled={save.isPending} className="tv-fields"><legend className="sr">Character voice</legend>
       <label className="tv-field">Name<input className="tv-inp" maxLength={40} required value={draft.name} onChange={(e) => edit("name", e.target.value)} /></label>

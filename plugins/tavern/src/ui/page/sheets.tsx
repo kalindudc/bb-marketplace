@@ -7,6 +7,7 @@ import { Empty, PageButton, SegFilter, StateMark, type Registry } from "./common
 import { PageGlyph } from "./glyphs";
 import { levelFromWins, questsIn, visibleMembers } from "./model";
 import { CharacterVoiceForm, VOICE_TAB, useOpenPanelTab } from "./panels";
+import { CharacterAvatar } from "../engine/avatar";
 import { ClassEditForm, useOpenClassEditor } from "./class-editor";
 import { ClassFacts, ProjectPick, modelCell, useClassExecutions } from "./class-facts";
 import { RecordFold } from "./quest-record";
@@ -64,7 +65,7 @@ export function CharacterSheetEditor({ character, registry, room }: { character:
   const openTab = useOpenPanelTab();
   const [inline, setInline] = useState(false);
   const classes = registry.classes.filter((c) => character.classes.includes(c.id));
-  const cls = classes[0];
+  const cls = classes.find(c => c.id === character.classes[0]);
   const rec = recordOf(visibleMembers(room), character.id);
   // An older server sends no record: the sheet then keeps the count it can see, and says so.
   const service = serviceRecordOf(registry, character.id);
@@ -72,16 +73,16 @@ export function CharacterSheetEditor({ character, registry, room }: { character:
   const edit = () => { if (!openTab(VOICE_TAB, { characterId: character.id })) setInline(true); };
   return <div className="tv-sheet">
     <header className="tv-sheet-head tv-card lit" style={glowVars(`sheet:${character.id}`)}>
-      {cls && <Crest cls={cls} character={character} size={80} level={lv?.level} />}
+      <CharacterAvatar character={character} mode={registry.ambientMotion ?? room.ambientMotion ?? "calm"} />
       <div className="tv-sh-t">
-        <h1>{character.name}</h1>
+        <div className="tv-sheet-name">{cls && <Crest cls={cls} character={character} size={40} level={lv?.level} />}<h1>{character.name}</h1></div>
         <span className="tv-cc-r">{cls ? <>{cls.label} <span className="anc">{cls.plain}</span></> : "No class"} · {character.temper}</span>
         {service !== undefined && levelsShown(registry) && <Level lv={lv} role={roleOf(character.classes)} detail />}
         {service !== undefined && <ServiceRecord record={service} name={character.name} />}
         <PresentationProblems problems={registry.problems} characters={registry.characters} only={character} />
         <div className="tv-facts">{service === undefined && <span><b className="num">{rec.wins}</b> verified wins in visible threads</span>}<YourCharacter authorship={registry.characterAuthorship?.find((a) => a.characterId === character.id)} /><VoiceSeal character={character} />{levelsShown(registry) && <span>Agents never see levels.</span>}<code className="tv-sh-src" title={`~/.agents/tavern/characters/${character.id}.md`}>~/.agents/tavern/characters/{character.id}.md</code></div>
       </div>
-      <button type="button" className="btn pri" onClick={edit} aria-expanded={inline || undefined} title="Opens the voice editor in the side panel, beside this sheet"><PageGlyph name="told" /><span>Edit {character.name}'s voice</span><OpensMark /></button>
+      <button type="button" className="btn pri" onClick={edit} aria-expanded={inline || undefined} title="Opens the editor in the side panel, beside this sheet"><PageGlyph name="told" /><span>Edit {character.name}'s voice and avatar</span><OpensMark /></button>
       <RegistryExport kind="character" id={character.id} name={`${character.name}'s sheet`} />
     </header>
     {service !== undefined && <TaleList record={service} characterId={character.id} name={character.name} />}
