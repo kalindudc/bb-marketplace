@@ -4,6 +4,7 @@ import type { PlacementPolicyRead } from "../../shared/placement-settings";
 import { matchPlacementRule, type PlacementFacts, type PlacementMatch } from "./match";
 import { resolvePlacementRoute } from "./routing";
 import { readSourceIdentity } from "./source-discovery";
+import { isQuiescentThread } from "./quiescence";
 import { boundedData } from "../instructions";
 import { placementLine, postureText, type PlacementView } from "../../shared/placement-view";
 import type { Member } from "../../shared/schema";
@@ -24,7 +25,7 @@ export const PLACEMENT_CLASSES = ["keeper", "ranger", "smith", "warden", "wander
 
 export function placementClassLine(classId: string, match: PlacementMatch, providerName?: string): string {
   const label = classId === "keeper" ? "Lead" : classId[0].toUpperCase() + classId.slice(1);
-  if (classId === "keeper") return "Lead: where you run, unless you name an enabled placementRuleId";
+  if (classId === "keeper") return "Lead: where you run, unless you pick a placement with tavern_placements";
   if (match.state === "blocked") return `${label}: machine policy is invalid; repair it in Settings`;
   if (match.state !== "matched") return `${label}: where you run (no matching rule)`;
   const target = match.rule.target;
@@ -34,7 +35,7 @@ export function placementClassLine(classId: string, match: PlacementMatch, provi
 }
 
 export function placementGuidance(lines: string[], counts: { makers: number; checkers: number }, limits: { maxMakers: number; maxCheckers: number }): string {
-  return boundedData(`Where your party runs:\n${lines.join("\n")}\nMaker slots: ${counts.makers} of ${limits.maxMakers} in use. Checker slots: ${counts.checkers} of ${limits.maxCheckers} in use.`,
+  return boundedData(`Where your party runs:\n${lines.join("\n")}\nCall tavern_placements for a member's repo before choosing its placement.\nMaker slots: ${counts.makers} of ${limits.maxMakers} in use. Checker slots: ${counts.checkers} of ${limits.maxCheckers} in use.`,
     1800, "\nMore: call tavern_status section=placement");
 }
 
@@ -72,7 +73,12 @@ export class PlacementController {
     try {
       const source = route.source ?? await this.services.sources.inspect(intent.owner.keeperThreadId, intent.projectId);
       if (source.state !== "known") return hold(source.message);
-      const snapshot = review?.snapshotId ? this.services.store.snapshot(review.snapshotId) : await this.services.capture.initial(source);
+      const keeperRepo = this.runtime.keeper.store.runtime(intent.owner.keeperThreadId).projectId
+        ?? (await this.runtime.bb.sdk.threads.get({ threadId: intent.owner.keeperThreadId })).projectId;
+      if (!keeperRepo) return hold("The Keeper's repo binding is unavailable; repair it before hiring.");
+      const snapshot = review?.snapshotId ? this.services.store.snapshot(review.snapshotId)
+        : intent.projectId !== keeperRepo ? await this.services.capture.initial(source, undefined, { pushedBaseOnly: true })
+        : await this.services.capture.initial(source);
       if (!snapshot) return hold("The pinned maker submission is unavailable; capture a new submission before review.");
       const reviewCurrent = () => {
         if (!review) return;
@@ -145,6 +151,18 @@ export class PlacementController {
     this.services.store.update(record.id, record.generation, value => ({ ...value, phase: "provisioning" }));
   }
 
+  async releaseModelFailure(record: PlacementRecord, reason: string): Promise<boolean> {
+    const threadId = record.memberThreadId;
+    if (!threadId) throw new Error("The failed model placement has no member.");
+    const thread = await this.runtime.bb.sdk.threads.get({ threadId });
+    if (!isQuiescentThread(thread)) return false;
+    if (thread.archivedAt === null && thread.deletedAt === null) await this.runtime.bb.sdk.threads.archive({ threadId });
+    this.services.store.update(record.id, record.generation, value => ({ ...value, phase: "releasing", blocked: null, resumePhase: null,
+      preservation: { ...value.preservation, source: "not-needed", artifacts: "not-declared", snapshotId: null,
+        liveOwnerThreadId: null, stopConfirmed: true, reason } }));
+    return true;
+  }
+
   releaseUnstarted(record: PlacementRecord, error: unknown): PlacementHireBlocked {
     this.runtime.keeper.store.atomic(() => {
       const current = this.services.store.get(record.id);
@@ -173,6 +191,8 @@ export class PlacementController {
       throw new PlacementHireBlocked("The hire was cancelled; its pending child remains held for resource reconciliation.", this.view(retained));
     }
     return this.runtime.keeper.store.atomic(() => {
+      const execution = this.runtime.keeper.store.get("hires", record.hireToken)?.placementExecution;
+      if (execution) this.runtime.keeper.store.patch(threadId, { placementExecution: execution });
       const current = this.services.store.assertCurrent(record.id, record.generation);
       if (current.blocked?.code === "spawn-outcome-unknown" && current.memberThreadId === null)
         this.services.store.retry(record.id, record.generation);
@@ -321,6 +341,11 @@ export class PlacementController {
     const candidate = this.services.store.get(placementId);
     if (!candidate) throw new Error("Unknown placement.");
     let record = this.services.store.assertCurrent(placementId, generation, candidate.desiredState);
+    if (record.memberThreadId && this.runtime.keeper.store.runtime(record.memberThreadId).placementModelFailureRelease) {
+      if (!await this.runtime.retryModelFailureRelease(record.memberThreadId))
+        throw new Error(this.runtime.keeper.store.runtime(record.memberThreadId).archiveError ?? "Model-failure release is still pending.");
+      return this.view(this.services.store.get(record.id)!);
+    }
     if (record.memberThreadId && (record.desiredState === "released" || record.blocked?.stage === "preserve" || record.blocked?.stage === "release")) {
       const result = await this.services.preserve.beforeRelease(record.memberThreadId, record.preservation.reason ?? "Retry preservation");
       if (result.state === "waiting" || result.state === "blocked") throw new Error(result.message);

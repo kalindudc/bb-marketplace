@@ -11,6 +11,8 @@ export const PLACEMENT_RPC_LIVE = true;
 export const machinesContract = defineContract({
   settings: settingsContract.settings,
   settingsUpdate: settingsContract.settingsUpdate,
+  placementModelFailures: placementContract.placementModelFailures,
+  placementModelFailureClear: placementContract.placementModelFailureClear,
   placementCatalog: placementContract.placementCatalog,
   placementPreview: placementContract.placementPreview,
 });

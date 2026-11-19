@@ -68,6 +68,8 @@ export interface Records {
   scopeViolations: Violation;
   skips: { boardQuestId: string; version: number; waypointId: string };
   hires: HireIntent;
+  placementPicks: { remote: string; projectId: string; ruleId: string; at: number };
+  placementModelFailures: { id: string; target: string; providerId?: string; model: string; detail: string; at: number };
   staffing: Staffing;
   notes: KeeperNote;
   gates: GateRecord;
@@ -124,6 +126,7 @@ export interface ReviewTarget {
   waypointFingerprint?: string;
 }
 export interface HireIntent {
+  placementExecution?: { target: import("../../shared/placement-settings").PlacementRule["target"]; providerId: string; model?: string };
   classDefinition?: import("../../shared/schema").ClassDef;
   cancelledAt?: number;
   initialInput?: string;
@@ -190,6 +193,7 @@ export interface PendingBrief {
   blockerAskId?: string | null;
 }
 export interface Runtime {
+  placementExecution?: HireIntent["placementExecution"];
   keeperTitleSet?: string;
   keeperTitleReplaced?: string;
   keeperTitleRetired?: boolean;
@@ -214,6 +218,8 @@ export interface Runtime {
   assignmentText?: string | null;
   pendingBrief?: PendingBrief | null;
   lastFailure?: string;
+  placementFirstTurnSettled?: boolean;
+  placementModelFailureRelease?: string | null;
   turnStartedAt?: number | null;
   ledger?: { hash: string; version: number; asOf: number };
   lastLedger?: { hash: string; version: number; at: number };

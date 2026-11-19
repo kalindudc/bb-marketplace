@@ -170,6 +170,8 @@ it("returns strict JSON from EVERY registered RPC with optional record fields ab
     saveClass: () => call("saveClass", { classId: "smith", projectId: null, target: "global", edit: { label: "Mason" }, revision: "stale" }),
     removeClassOverride: () => call("removeClassOverride", { classId: "smith", projectId: null, target: "global", revision: "stale" }),
     typing: () => call("typing", { threadId: "lead" }),
+    placementModelFailures: () => call("placementModelFailures", {}),
+    placementModelFailureClear: () => call("placementModelFailureClear", { id: "missing" }),
     settings: () => call("settings", null),
     settingsUpdate: () => call("settingsUpdate", { revision: 0, patch: {}, why: "Sparse fixture" }),
     settingsUndo: () => call("settingsUndo", { id: "missing", revision: 0, why: "Sparse fixture" }),

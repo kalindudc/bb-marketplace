@@ -83,8 +83,7 @@ export function explicitRuleMatch(policy: PlacementPolicyRead, ruleId: string, f
   if (policy.state === "invalid") return { state: "blocked", revision: policy.revision, code: "invalid-machine-policy", problems: policy.problems };
   const rule = policy.settings.rules.find(rule => rule.enabled && rule.id === ruleId);
   if (!rule) return { state: "compatibility", revision: policy.revision };
-  const { classes: _classes, ...match } = rule.match;
-  const evidence = evidenceFor({ ...rule, match }, facts);
+  const evidence = evidenceFor(rule, facts);
   return evidence === null ? { state: "compatibility", revision: policy.revision }
     : { state: "matched", revision: policy.revision, rule, definitionDigest: definitionDigest(rule),
       matchEvidence: [...evidence, { field: "placementRuleId", value: rule.id, pattern: rule.id }] };

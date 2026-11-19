@@ -101,7 +101,7 @@ function noteLine(note: KeeperNote) {
 function memberLines(k: Keeper, summary: BoardQuestSummary) {
   return summary.members.map(
     (m) =>
-      `${k.name(m)} (${m.classId}), ${m.state}${m.checkIndependence === "same-family" ? "; same-family check (not independent)" : m.checkIndependence === "not-established" ? "; check independence not established" : ""}${m.guardPosture ? `; ${m.guardPosture.label}` : ""}; waypoint ${m.waypointId ?? (m.classId === "warden" ? k.checkerWaypoints(m.threadId).join(",") : "none")}; strikes ${m.strikes}; doing ${quoted(short(memberDoing(k, m.threadId, m.doing), needsAttention(k, m.threadId) ? 300 : 120))}${k.store.runtime(m.threadId).released ? "; released" : ""}`,
+      `${k.name(m)} (${m.classId})${m.repo ? `, repo ${m.repo}` : ""}, ${m.state}${m.checkIndependence === "same-family" ? "; same-family check (not independent)" : m.checkIndependence === "not-established" ? "; check independence not established" : ""}${m.guardPosture ? `; ${m.guardPosture.label}` : ""}; waypoint ${m.waypointId ?? (m.classId === "warden" ? k.checkerWaypoints(m.threadId).join(",") : "none")}; strikes ${m.strikes}; doing ${quoted(short(memberDoing(k, m.threadId, m.doing), needsAttention(k, m.threadId) ? 300 : 120))}${k.store.runtime(m.threadId).released ? "; released" : ""}`,
   );
 }
 function needsAttention(k: Keeper, threadId: string) {
@@ -321,7 +321,7 @@ export function renderRestatement(
         "Errands in flight",
         errands.map(
           (m) =>
-            `${k.name(m)} (${m.classId}), ${m.state}${m.checkIndependence === "same-family" ? "; same-family check (not independent)" : m.checkIndependence === "not-established" ? "; check independence not established" : ""}${m.guardPosture ? `; ${m.guardPosture.label}` : ""}, strikes ${m.strikes}; ${quoted(m.title ?? "errand")}; doing ${quoted(short(m.doing ?? "none", 120))}`,
+            `${k.name(m)} (${m.classId})${m.repo ? `, repo ${m.repo}` : ""}, ${m.state}${m.checkIndependence === "same-family" ? "; same-family check (not independent)" : m.checkIndependence === "not-established" ? "; check independence not established" : ""}${m.guardPosture ? `; ${m.guardPosture.label}` : ""}, strikes ${m.strikes}; ${quoted(m.title ?? "errand")}; doing ${quoted(short(m.doing ?? "none", 120))}`,
         ),
         1500,
         "more errands; call tavern_status section=errands",

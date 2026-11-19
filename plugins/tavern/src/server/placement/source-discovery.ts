@@ -38,8 +38,25 @@ export async function readSourceIdentity(
   signal?.throwIfAborted();
   const thread = await bb.sdk.threads.get({ threadId: keeperThreadId, ...(signal === undefined ? {} : { signal }) });
   signal?.throwIfAborted();
-  if (thread.id !== keeperThreadId || thread.projectId !== projectId || thread.archivedAt !== null || thread.deletedAt !== null)
+  if (thread.id !== keeperThreadId || thread.archivedAt !== null || thread.deletedAt !== null)
     throw new Error("The source Keeper is not an active thread in this project.");
+  if (thread.projectId !== projectId) {
+    const hostId = (await bb.sdk.system.config()).primaryHostId;
+    if (!hostId) throw new Error("The server has no primary host configured.");
+    const project = await bb.sdk.projects.get({ projectId, ...(signal === undefined ? {} : { signal }) });
+    signal?.throwIfAborted();
+    if (project.id !== projectId) throw new Error("The repo identity changed.");
+    const sources = project.sources.filter(source => source.hostId === hostId && source.projectId === projectId);
+    const source = sources.find(source => source.isDefault) ?? sources[0];
+    if (!source) throw new Error(`Repo ${projectId} has no checkout on this host (${hostId}).`);
+    const environments = await bb.sdk.environments.list({ projectId, hostId, path: source.path, environmentProviderId: "project-checkout", ...(signal === undefined ? {} : { signal }) });
+    signal?.throwIfAborted();
+    const environment = environments.find(environment => environment.projectId === projectId && environment.hostId === hostId && environment.path === source.path &&
+      environment.environmentProviderId === "project-checkout" && environment.status === "ready" && environment.lifecycle.phase === "active" && environment.hostLifecycle === "active");
+    if (!environment) throw new Error(`Repo ${projectId} has no ready checkout environment on this host (${hostId}).`);
+    return { keeperThreadId, projectId, environmentProviderId: environment.environmentProviderId,
+      endpoint: { hostId, environmentId: environment.id, root: source.path } };
+  }
   if (!thread.environmentId) throw new Error("The source Keeper has no provisioned environment.");
   const environment = await bb.sdk.environments.get({ environmentId: thread.environmentId, ...(signal === undefined ? {} : { signal }) });
   signal?.throwIfAborted();

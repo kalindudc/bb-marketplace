@@ -211,7 +211,7 @@ export default async function tavern(bb: BbPluginApi) {
         ? `${event.errorInfo.category}; HTTP ${event.errorInfo.httpStatusCode ?? "unknown"}; provider code ${event.errorInfo.providerCode ?? "unknown"}`
         : "Provider turn failed",
       event.requestId,
-    ),
+    ).catch(error => bb.log.warn(`Tavern failed-turn handling ${event.threadId}: ${String(error)}`)),
   );
   for (const type of [
     "thread.archived",

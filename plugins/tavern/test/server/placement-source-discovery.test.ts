@@ -6,7 +6,7 @@ import { hostContract, type EndpointRegistration, type HostInput, type HostMetho
 import type { HostPort } from "../../src/host/client";
 import { MIGRATIONS } from "../../src/server/migrations";
 import { DiscoveryStore } from "../../src/server/placement/discovery-store";
-import { SourceDiscovery } from "../../src/server/placement/source-discovery";
+import { SourceDiscovery, readSourceIdentity } from "../../src/server/placement/source-discovery";
 import { createFakePluginHost, makeThreadResponse } from "./host";
 
 type Environment = Awaited<ReturnType<BbPluginApi["sdk"]["environments"]["get"]>>;
@@ -71,6 +71,15 @@ function deferred() {
 }
 
 describe("controller-owned source discovery", () => {
+  it("uses another repo's own checkout environment on the laptop, not the Keeper's environment", async () => {
+    const f = setup();
+    Object.assign(f.bb.sdk, { system: { config: async () => ({ primaryHostId: "laptop" }) }, projects: { get: async () => ({ id: "other", sources: [{ projectId: "other", hostId: "laptop", path: "/other", isDefault: true }] }) } });
+    Object.assign(f.bb.sdk.environments, { list: async () => [{ ...f.state.env, id: "other-env", hostId: "laptop", projectId: "other", path: "/other", environmentProviderId: "project-checkout" }] });
+    expect(await readSourceIdentity(f.bb, "keeper", "other")).toMatchObject({ projectId: "other", endpoint: { hostId: "laptop", root: "/other", environmentId: "other-env" } });
+    const result = await f.source.inspect("keeper", "other");
+    expect(result).toMatchObject({ state: "known", projectId: "other", inspection: { branch: "actual-branch" } });
+    expect(f.host.calls.every(call => call.hostId === "laptop")).toBe(true);
+  });
   it("uses only actual SDK identity and explicit read-only host authority, with no local path probes or placement slots", async () => {
     const f = setup();
     const result = await f.source.inspect("keeper", "project");

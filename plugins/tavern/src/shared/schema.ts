@@ -195,6 +195,7 @@ export const guardPostureSchema = z.object({
   providerId: z.string(), mode: z.enum(["pre-exec", "detection-only"]), label: z.string(), approvalAskId: id.nullable(),
 });
 export const memberSchema = z.object({
+  repo: z.string().min(1).optional(),
   draftPush: z.object({ branch: z.string(), remote: z.string(), memberHead: z.string(), homeHead: z.string(), profile: z.string() }).optional(),
   stopPending: z.boolean().optional(),
   stopError: z.string().nullable().optional(),

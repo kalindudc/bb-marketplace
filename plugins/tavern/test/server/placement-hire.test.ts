@@ -36,10 +36,10 @@ const hire = { classId: "ranger", title: "Scout", errand: true,
 
 function fixture() {
   const f = setup({
-    projects: { get: async () => ({ id: "project", sources: [], gitRemoteUrl: "https://example.invalid/team/repo.git" }) },
-    environments: { listProviders: async () => [worktreeProvider({ id: "vendor-checkout", displayName: "Vendor checkout", availability: null,
+    projects: { get: async ({ projectId }: { projectId: string }) => ({ id: projectId, sources: [], gitRemoteUrl: "https://example.invalid/team/repo.git" }) },
+    environments: { list: async () => [], listProviders: async () => [worktreeProvider({ id: "vendor-checkout", displayName: "Vendor checkout", availability: null,
       inputs: { type: "object", properties: { base: { type: "string" }, branch: { type: "string" } }, required: ["base", "branch"] }, acceptsEmptyInputs: false })] },
-    hosts: { get: async ({ hostId }: { hostId: string }) => ({ id: hostId, name: "Home" }),
+    hosts: { list: async () => [], get: async ({ hostId }: { hostId: string }) => ({ id: hostId, name: "Home" }),
       experimental_listProviders: async () => [{ id: "vendor-compute", displayName: "Vendor compute", inputs: { type: "object", properties: { size: { type: "number" } }, required: ["size"] }, acceptsEmptyInputs: false }] },
   });
   const hostEntry = createFakePluginHost({ pluginId: "tavern", experimental_hostEntry: true });
@@ -70,6 +70,167 @@ async function blocked(promise: Promise<unknown>) {
   try { await promise; throw new Error("Expected a visible placement blocker"); }
   catch (error) { expect(error).toBeInstanceOf(PlacementHireBlocked); return error as PlacementHireBlocked; }
 }
+
+describe("target model failures", () => {
+  it.each(["running", "stop-error", "archive-error"])("keeps a visible release hold after a %s first-turn model failure and retries", async fault => {
+    const f = fixture();
+    f.settings.update({ revision: 1, patch: { machines: { rules: [{ ...rule, classModels: { ranger: { model: "anthropic/claude-sonnet-5-5" } } }] } }, why: "Set target model" });
+    const member = await f.runtime.hire("lead", "project", hire);
+    let stopped = false, archived = false;
+    vi.spyOn(f.bb.sdk.threads, "get").mockImplementation(async ({ threadId }) => makeThreadResponse({ id: threadId, projectId: "project", status: stopped ? "error" : "active", archivedAt: archived ? 1 : null }));
+    const stop = f.bb.sdk.threads.stop = vi.fn(async () => { if (fault === "stop-error") throw new Error("Stop failed"); if (fault === "archive-error") stopped = true; return {} as never; });
+    const archive = vi.spyOn(f.bb.sdk.threads, "archive").mockImplementation(async () => { if (fault === "archive-error") throw new Error("Archive failed"); archived = true; return {} as never; });
+    await expect(f.runtime.failed(member.threadId, "Failed to resolve Pi model anthropic/claude-sonnet-5-5", "first")).resolves.toBeUndefined();
+    expect(stop).toHaveBeenCalled();
+    expect(f.k.store.all("placementModelFailures")).toHaveLength(1);
+    const record = f.services.store.byMember(member.threadId)!;
+    expect(record.blocked).toMatchObject({ stage: "release", retryable: true });
+    expect(f.k.store.runtime(member.threadId).releasePending).toBeTruthy();
+    stopped = true;
+    stop.mockResolvedValue({} as never);
+    archive.mockImplementation(async () => { archived = true; return {} as never; });
+    await f.services.controller.retry(record.id, record.generation);
+    expect(f.services.store.byMember(member.threadId)?.phase).toBe("released");
+    expect(f.k.store.runtime(member.threadId).released).toBeTruthy();
+  });
+  it("does not settle the first turn from an idle event before its failed turn event", async () => {
+    const f = fixture();
+    f.settings.update({ revision: 1, patch: { machines: { rules: [{ ...rule, classModels: { ranger: { model: "anthropic/claude-sonnet-5-5" } } }] } }, why: "Set target model" });
+    const member = await f.runtime.hire("lead", "project", hire);
+    vi.spyOn(f.runtime, "release").mockResolvedValue(true);
+    f.runtime.memberEnded(makeThreadResponse({ id: member.threadId, status: "idle" }));
+    await f.runtime.failed(member.threadId, "Failed to resolve Pi model anthropic/claude-sonnet-5-5", "first");
+    expect(f.k.store.all("placementModelFailures")).toHaveLength(1);
+  });
+  it("records a first-turn resolution failure, releases, and refuses the next hire before reservation", async () => {
+    const f = fixture();
+    f.settings.update({ revision: 1, patch: { machines: { rules: [{ ...rule, classModels: { ranger: { model: "anthropic/claude-sonnet-5-5" } } }] } }, why: "Set target model" });
+    const member = await f.runtime.hire("lead", "project", hire);
+    const model = "anthropic/claude-sonnet-5-5";
+    const release = vi.spyOn(f.runtime, "release").mockResolvedValue(true);
+    vi.spyOn(f.bb.sdk.threads, "archive").mockResolvedValue({} as never);
+    await f.runtime.failed(member.threadId, `Failed to resolve Pi model ${model}`, "request-1");
+    expect(release).toHaveBeenCalledWith("lead", member.threadId, expect.stringContaining("can't run"));
+    const reserve = vi.spyOn(f.services.controller, "reserve");
+    await expect(f.runtime.hire("lead", "project", hire)).rejects.toThrow(/can't run.*set this rule's model for ranger/);
+    expect(reserve).not.toHaveBeenCalled();
+    expect(f.k.store.all("placementModelFailures")).toHaveLength(1);
+    const record = f.k.store.all("placementModelFailures")[0];
+    f.runtime.clearPlacementModelFailure(record.id);
+    expect(f.k.store.all("placementModelFailures")).toEqual([]);
+  });
+  it("uses the first turn's actual failure text and completes normal release without preservation", async () => {
+    const f = fixture();
+    f.settings.update({ revision: 1, patch: { machines: { rules: [{ ...rule, classModels: { ranger: { model: "anthropic/claude-sonnet-5-5" } } }] } }, why: "Set target model" });
+    const member = await f.runtime.hire("lead", "project", hire);
+    let archived = false;
+    vi.spyOn(f.bb.sdk.threads, "get").mockImplementation(async ({ threadId }) => makeThreadResponse({ id: threadId, projectId: "project", status: "error", archivedAt: archived ? 1 : null }));
+    vi.spyOn(f.bb.sdk.threads, "archive").mockImplementation(async () => { archived = true; return {} as never; });
+    f.bb.sdk.threads.stop = vi.fn().mockResolvedValue({} as never);
+    vi.spyOn(f.bb.sdk.threads.events, "list").mockResolvedValue([{ type: "turn/completed", data: { status: "failed", error: { message: "Failed to resolve Pi model anthropic/claude-sonnet-5-5" } } }] as never);
+    const capture = vi.spyOn(f.services.capture, "initial").mockClear();
+    await f.runtime.failed(member.threadId, "Provider turn failed", "first");
+    expect(f.services.store.byMember(member.threadId)).toMatchObject({ phase: "released", preservation: { source: "not-needed" } });
+    expect(f.k.store.runtime(member.threadId).released).toBeTruthy();
+    expect(capture).not.toHaveBeenCalled();
+  });
+  it("does not treat a later model error as a first-turn failure", async () => {
+    const f = fixture(), member = await f.runtime.hire("lead", "project", hire);
+    vi.spyOn(f.bb.sdk.threads.events, "list").mockResolvedValue([{ type: "turn/completed", data: { status: "completed" } }] as never);
+    await f.runtime.failed(member.threadId, "Failed to resolve Pi model anthropic/test", "later");
+    expect(f.k.store.all("placementModelFailures")).toEqual([]);
+  });
+  it("does not record ordinary failures or failures after the first turn", async () => {
+    const f = fixture(), member = await f.runtime.hire("lead", "project", hire);
+    await f.runtime.failed(member.threadId, "Network timed out", "one");
+    await f.runtime.failed(member.threadId, "Failed to resolve Pi model anthropic/test", "two");
+    expect(f.k.store.all("placementModelFailures")).toEqual([]);
+  });
+});
+
+describe("repo picks", () => {
+  it.each([{ provider: "vendor-checkout", machine: { provider: "vendor-compute", inputs: { size: 64 } } }, { ruleId: "shop", inputs: { base: "invented" } }])("rejects untrusted placement inputs without borrowing consent", async placement => {
+    const f = fixture(), spawn = vi.spyOn(f.bb.sdk.threads, "spawn");
+    await expect(f.runtime.hire("lead", "project", { ...hire, placement: placement as never })).rejects.toThrow();
+    expect(spawn).not.toHaveBeenCalled();
+  });
+  it.each([{ projectIds: ["other"] }, { projectIds: ["project"], classes: ["warden"] }, { repoRemotes: ["github.com/other/repo"] }, { keeperPathGlobs: ["/not/the/repo/**"] }, { questIds: ["other-quest"] }])("refuses a rule outside the repo or class choices", async match => {
+    const f = fixture(), spawn = vi.spyOn(f.bb.sdk.threads, "spawn");
+    f.settings.update({ revision: 1, patch: { machines: { rules: [{ ...rule, match }] } }, why: "Scoped rule" });
+    const choices = await f.runtime.placementChoices("lead", "project", "ranger");
+    expect(choices).not.toContain('placement={"ruleId":"shop"}');
+    await expect(f.runtime.hire("lead", "project", { ...hire, placement: { ruleId: "shop" } })).rejects.toThrow(/not offered/);
+    expect(spawn).not.toHaveBeenCalled();
+  });
+  it("offers a quest-scoped rule only with that quest's matching facts", async () => {
+    const f = fixture(), quest = await seedQuest(f.k, "lead", "Scoped discovery", "SCOPED");
+    f.settings.update({ revision: 1, patch: { machines: { rules: [{ ...rule, match: { projectIds: ["project"], classes: ["ranger"], questIds: [quest.id] } }] } }, why: "Quest rule" });
+    expect(await f.runtime.placementChoices("lead", "project", "ranger")).not.toContain('placement={"ruleId":"shop"}');
+    expect(await f.runtime.placementChoices("lead", "project", "ranger", quest.id)).toContain('placement={"ruleId":"shop"}');
+  });
+  it("does not keep consent on an earlier pick after its rule is turned off", async () => {
+    const f = fixture();
+    await f.runtime.hire("lead", "project", hire);
+    f.settings.update({ revision: 1, patch: { machines: { rules: [{ ...rule, enabled: false }] } }, why: "Revoke" });
+    expect(f.k.store.all("placementPicks")[0]).toMatchObject({ ruleId: "shop" });
+    expect(f.k.store.all("placementPicks")[0]).not.toHaveProperty("target");
+    expect(await f.runtime.placementChoices("lead", "project", "ranger")).toContain('Earlier picks for this remote: rule shop (not currently offered)');
+    await expect(f.runtime.hire("lead", "project", { ...hire, placement: { ruleId: "shop" } })).rejects.toThrow(/not offered/);
+  });
+  it("lists choices when another repo has no rule or pick", async () => {
+    const f = fixture();
+    vi.spyOn(f.bb.sdk.projects, "get").mockResolvedValue({ id: "other", sources: [{ projectId: "other", hostId: "host", path: "/other", isDefault: true }], gitRemoteUrl: "https://example.invalid/other.git" } as never);
+    vi.spyOn(f.bb.sdk.environments, "list").mockResolvedValue([{ id: "other-env", projectId: "other", hostId: "host", path: "/other", environmentProviderId: "project-checkout", status: "ready", hostLifecycle: "active", lifecycle: { phase: "active" } }] as never);
+    await expect(f.runtime.hire("lead", "project", { ...hire, repo: "other" })).rejects.toThrow(/needs a rule or the Keeper's placement pick.*\nRepo other/s);
+  });
+  it("defaults the repo and names it on the first line", async () => {
+    const f = fixture();
+    const member = await f.runtime.hire("lead", "project", hire);
+    expect(member.repo).toBe("project");
+    expect(member.placementSummary).toMatch(/^Repo project; rule Shop members \(shop\);/);
+  });
+  it("lets a working member pick a rule", async () => {
+    const f = fixture();
+    const member = await f.runtime.hire("lead", "project", { ...hire, placement: { ruleId: "shop" } });
+    expect(member.placementSummary).toContain("Keeper's pick: rule shop");
+  });
+  it("lets the Keeper explicitly stay in its own repo without taking a machine rule", async () => {
+    const f = fixture();
+    const member = await f.runtime.hire("lead", "project", { ...hire, placement: { kind: "current" } });
+    expect(member.placement).toBeNull();
+    expect(member.placementSummary).toContain("Keeper's pick: where the Keeper runs");
+    expect(await f.runtime.placementChoices("lead", "project", "ranger")).toContain('placement={"kind":"current"}');
+  });
+  it("matches an old saved rule against the member repo and spawns there", async () => {
+    const f = fixture(), spawn = vi.spyOn(f.bb.sdk.threads, "spawn");
+    f.settings.update({ revision: 1, patch: { machines: { rules: [{ ...rule, match: { projectIds: ["other"] } }] } }, why: "Repo rule" });
+    const source = await f.services.sources.inspect("lead", "project");
+    vi.spyOn(f.bb.sdk.projects, "get").mockResolvedValue({ id: "other", sources: [{ projectId: "other", hostId: "host", path: "/other", isDefault: true }], gitRemoteUrl: "https://example.invalid/other.git" } as never);
+    vi.spyOn(f.services.sources, "inspect").mockResolvedValue({ ...source, projectId: "other", endpoint: { hostId: "host", environmentId: "other-env", root: "/other" } } as KnownSource);
+    vi.spyOn(f.bb.sdk.environments, "list").mockResolvedValue([{ id: "other-env", projectId: "other", hostId: "host", path: "/other", environmentProviderId: "project-checkout", status: "ready", hostLifecycle: "active", lifecycle: { phase: "active" } }] as never);
+    vi.spyOn(f.services.capture, "initial").mockImplementation(async () => f.services.store.saveSnapshot(sourceSnapshot({ projectId: "other", keeperThreadId: "lead", sourceThreadId: "lead", source: { hostId: "host", environmentId: "other-env", root: "/other" }, home: { hostId: "host", environmentId: "other-env", root: "/other" } })));
+    const member = await f.runtime.hire("lead", "project", { ...hire, repo: "other" });
+    expect(member.repo).toBe("other");
+    expect(spawn.mock.calls[0][0]).toMatchObject({ projectId: "other", environment: { inputs: { base: sourceSnapshot().base } } });
+    const placed = f.services.store.byMember(member.threadId)!;
+    expect(f.services.store.snapshot(placed.sourceSnapshotId!)).toMatchObject({ projectId: "other", source: { root: "/other" }, home: { root: "/other" } });
+    expect(f.services.sources.inspect).toHaveBeenCalledWith("lead", "other");
+    expect(f.services.capture.initial).toHaveBeenCalledWith(expect.objectContaining({ projectId: "other" }), undefined, { pushedBaseOnly: true });
+  });
+  it("refuses a repo without a laptop checkout", async () => {
+    const f = fixture(), spawn = vi.spyOn(f.bb.sdk.threads, "spawn");
+    await expect(f.runtime.hire("lead", "project", { ...hire, repo: "other" })).rejects.toThrow(/no checkout on this host/);
+    expect(spawn).not.toHaveBeenCalled();
+  });
+  it("lists the matching rule and earlier picks for the same remote", async () => {
+    const f = fixture();
+    await f.runtime.hire("lead", "project", hire);
+    const text = await f.runtime.placementChoices("lead", "project", "ranger");
+    expect(text).toContain("Recommendation: rule Shop members (shop)");
+    expect(text).toContain("Earlier picks");
+    expect(text).toContain("vendor-checkout");
+  });
+});
 
 describe("rule-driven member hires", () => {
   it.each([false, true])("uses the rule model for a placed Smith (full override: %s)", async full => {
@@ -279,13 +440,13 @@ describe("rule-driven member hires", () => {
     expect(f.harness.inspection.sdk.callsTo("threads.send")).toEqual([]);
   });
 
-  it("refuses a lead rule that names another project, but ignores only its classes", async () => {
+  it("refuses a lead rule outside its project or classes", async () => {
     const f = await leadFixture();
     f.settings.update({ revision: 1, patch: { machines: { rules: [{ ...rule, match: { projectIds: ["other"], classes: ["smith"] } }] } }, why: "Other project" });
-    await expect(f.runtime.hire("lead", "project", { ...f.leadHire, placementRuleId: "shop" })).rejects.toThrow(/does not match.*project/);
+    await expect(f.runtime.hire("lead", "project", { ...f.leadHire, placementRuleId: "shop" })).rejects.toThrow(/not offered/);
     expect(f.harness.inspection.sdk.callsTo("threads.spawn")).toEqual([]);
     f.settings.update({ revision: 2, patch: { machines: { rules: [{ ...rule, match: { projectIds: ["project"], classes: ["smith"] } }] } }, why: "This project" });
-    expect((await f.runtime.hire("lead", "project", { ...f.leadHire, placementRuleId: "shop" })).placement?.rule?.id).toBe("shop");
+    await expect(f.runtime.hire("lead", "project", { ...f.leadHire, placementRuleId: "shop" })).rejects.toThrow(/not offered/);
   });
 
   it("reconciles a late child arrival after an unknown spawn outcome without a user retry", async () => {
@@ -356,7 +517,7 @@ describe("rule-driven member hires", () => {
   it("puts the placement summary first even when a lead stays with the Keeper", async () => {
     const f = await leadFixture(); registerTools(f.bb, f.runtime);
     const result = await f.harness.behavior.invokeAgentTool("tavern_hire", f.leadHire, { threadId: "lead" });
-    expect(result).toMatch(/^Where the Keeper runs; lead default\./);
+    expect(result).toMatch(/^Repo project; lead default; where the Keeper runs\./);
   });
 
   it("does not put match facts inside a rule label containing the setup delimiter", async () => {

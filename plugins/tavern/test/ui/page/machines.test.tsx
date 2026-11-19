@@ -37,6 +37,8 @@ async function page(subPath: string, rpc: Partial<Handlers> = {}, machines: Plac
   let current = viewWith(machines);
   const base: Partial<Handlers> = {
     room: () => structuredClone(machinesRoom), registry: () => structuredClone(registry), settings: () => current,
+    placementModelFailures: () => [],
+    placementModelFailureClear: () => ({ ok: true }),
     placementCatalog: () => structuredClone(machinesCatalog),
     placementPreview: (input) => previewFixture(current.effective.machines, input),
     settingsUpdate: (input) => { const m = { ...current.effective.machines, ...input.patch.machines } as PlacementSettings; current = viewWith(m, current.revision + 1, [{ id: `d${current.revision + 1}`, at: NOW, by: "user", reason: input.why, evidence: null, questId: null, threadId: null, changes: [], undoable: true, undoneAt: null }]); return { code: "ok" as const, revision: current.revision, problems: [], settings: current, decisionId: `d${current.revision}` }; },
@@ -50,6 +52,16 @@ async function page(subPath: string, rpc: Partial<Handlers> = {}, machines: Plac
 const ruleRow = (slot: RenderedSlot, n: number) => slot.container.querySelector(`[data-rule="${n - 1}"]`) as HTMLElement;
 
 describe("Machine placement words", () => {
+  it("shows failed models on the target's rule and clears the explicit record", async () => {
+    let failures = [{ id: "failed", target: "aquifer-world/aquifer-world-checkout", providerId: "pi", model: "openai-1m/gpt-test", detail: "Failed to resolve Pi model", at: 1 }];
+    const clear = vi.fn(() => { failures = []; return { ok: true as const }; });
+    const slot = await page("machines", { placementModelFailures: () => failures, placementModelFailureClear: clear }, machineVolumes.one);
+    const button = await slot.findByRole("button", { name: "Clear failed model openai-1m/gpt-test for rule 1" });
+    expect(ruleRow(slot, 1).textContent).toContain("This target can't run openai-1m/gpt-test through pi");
+    fireEvent.click(button);
+    await waitFor(() => expect(clear).toHaveBeenCalledWith({ id: "failed" }));
+    await waitFor(() => expect(slot.queryByRole("button", { name: "Clear failed model openai-1m/gpt-test for rule 1" })).toBeNull());
+  });
   it("uses the server's supported and unsupported verdicts in the preview fixture", async () => {
     const input = { projectId: "proj_3m7ijbk6gx", keeperThreadId: null, keeperPath: null, classId: "smith", questId: null };
     expect(await previewFixture(machineVolumes.one, input)).toMatchObject({ verdict: { state: "matched", ruleId: "shop-world-remote", blocked: null, remote: true, posture: "Detection only (remote)" } });
@@ -193,8 +205,8 @@ describe("Where work runs page", () => {
     const placementPreview = vi.fn((input: Parameters<Handlers["placementPreview"]>[0]) => previewFixture(machineVolumes.many, input));
     const slot = await page("machines", { placementPreview });
     await waitFor(() => expect(placementPreview).toHaveBeenCalledWith({ projectId: null, keeperThreadId: "thr_t3zru37rah", keeperPath: null, classId: "smith", questId: null }));
-    fireEvent.click(slot.getByRole("button", { name: "A project" }));
-    fireEvent.change(slot.getByLabelText("Project"), { target: { value: "proj_3m7ijbk6gx" } });
+    fireEvent.click(slot.getByRole("button", { name: "A repo" }));
+    fireEvent.change(slot.getByLabelText("Repo"), { target: { value: "proj_3m7ijbk6gx" } });
     const verdict = await slot.findByText(/Runs on a new Aquifer World sandbox/);
     expect(verdict.closest("[data-verdict]")!.textContent).toMatch(/Because repository is delta\.shopify\.io\/shop\/world/);
     expect(within(ruleRow(slot, 2)).getByText("catches it")).toBeTruthy();
@@ -203,8 +215,8 @@ describe("Where work runs page", () => {
 
   it("shows a supported machine rule's destination, posture and slot from the preview", async () => {
     const slot = await page("machines");
-    fireEvent.click(slot.getByRole("button", { name: "A project" }));
-    fireEvent.change(slot.getByLabelText("Project"), { target: { value: "proj_3m7ijbk6gx" } });
+    fireEvent.click(slot.getByRole("button", { name: "A repo" }));
+    fireEvent.change(slot.getByLabelText("Repo"), { target: { value: "proj_3m7ijbk6gx" } });
     const verdict = (await slot.findByText(/Runs on a new Aquifer World sandbox/)).closest("[data-verdict]") as HTMLElement;
     expect(verdict.dataset.verdict).toBe("caught");
     expect(within(verdict).getByText("Detection only (remote)")).toBeTruthy();
@@ -286,8 +298,8 @@ describe("Where work runs page", () => {
 
   it("previews a hire caught by a rule with a missing provider as blocked, never as the laptop", async () => {
     const slot = await page("machines");
-    fireEvent.click(slot.getByRole("button", { name: "A project" }));
-    fireEvent.change(slot.getByLabelText("Project"), { target: { value: "proj_mddz3fcct5" } });
+    fireEvent.click(slot.getByRole("button", { name: "A repo" }));
+    fireEvent.change(slot.getByLabelText("Repo"), { target: { value: "proj_mddz3fcct5" } });
     fireEvent.click(slot.getByRole("button", { name: /^Ranger/ }));
     const verdict = (await slot.findByText("Blocked.")).closest("[data-verdict]")!;
     expect(verdict.textContent).toMatch(/devbox-checkout is not installed/);

@@ -48,6 +48,21 @@ async function fixture(linked = true, doneWhen = "Run `npm test` and `./bin/chec
 }
 
 describe("Warden checker scope at strict-host hire", () => {
+  it("defaults to the maker's other repo before selecting any environment", async () => {
+    const f = await fixture();
+    f.k.store.patch("maker", { projectId: "other" });
+    f.k.store.put("members", "maker", { ...f.k.member("maker")!, repo: "other" });
+    f.bb.sdk.projects.get = async ({ projectId }) => ({ id: projectId, sources: [] }) as never;
+    await expect(f.runtime.hire("lead", "project", f.input)).rejects.toThrow("Repo other has no checkout on this host");
+    expect(f.harness.inspection.sdk.callsTo("threads.spawn")).toHaveLength(0);
+  });
+  it("refuses an explicit Warden repo that differs from its maker", async () => {
+    const f = await fixture();
+    f.k.store.patch("maker", { projectId: "other" });
+    f.k.store.put("members", "maker", { ...f.k.member("maker")!, repo: "other" });
+    await expect(f.runtime.hire("lead", "project", { ...f.input, repo: "project" })).rejects.toThrow(/Warden.*maker.*other/);
+    expect(f.harness.inspection.sdk.callsTo("threads.spawn")).toHaveLength(0);
+  });
   it("binds plan commands to the maker’s real linked worktree before its first brief", async () => {
     const f = await fixture();
     await f.runtime.hire("lead", "project", f.input);

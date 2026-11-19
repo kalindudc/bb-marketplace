@@ -93,6 +93,8 @@ function RuleList({ api, rules, n, preview, editing, onEdit, consentFor, setCons
   api: Api; rules: M.Rule[]; n: M.Names; preview: PlacementPreview | null; editing: number | null; onEdit: (i: number) => void;
   consentFor: number | null; setConsentFor: (i: number | null) => void; invalidTarget: Set<number>;
 }) {
+  const failures = experimental_useRpcQuery({ contract: machinesContract, method: "placementModelFailures", input: {} });
+  const clearFailure = experimental_useRpcMutation({ contract: machinesContract, method: "placementModelFailureClear" });
   const placed = M.placeProblems(api.saved.problems);
   const blockedId = preview?.verdict.state === "matched" && preview.verdict.blocked ? preview.verdict.ruleId : null;
   const saveRules = (next: M.Rule[], words: string, undo = false) => api.save({ rules: next }, words, { undo });
@@ -146,6 +148,8 @@ function RuleList({ api, rules, n, preview, editing, onEdit, consentFor, setCons
           {d.unavailable && <span className="tag mx-tag mx-bad">{d.unavailable} isn't installed in this bb: hires it catches wait</span>}
           {sh !== null && <span className="tag mx-tag mx-warn">Never reached: <button type="button" className="tv-ilink" onClick={() => focusRule(sh)}>rule {sh + 1}</button> catches all of it first</span>}
         </div>
+        {failures.data?.filter(failure => r.target.kind === "provider" && r.target.machine.type === "new" && failure.target === `${r.target.machine.machineProviderId}/${r.target.environmentProviderId}`).map(failure => <p key={failure.id} className="mx-hint" role="status">This target can't run {failure.model}{failure.providerId ? ` through ${failure.providerId}` : ""}. Set this rule's model for the class, or <button type="button" className="lnk-btn act" disabled={clearFailure.isPending} onClick={() => void clearFailure.mutate({ id: failure.id }).then(() => failures.refetch())} aria-label={`Clear failed model ${failure.model} for rule ${i + 1}`}>clear this record</button>.</p>)}
+        {clearFailure.error && <p role="alert">Couldn't clear the failed model: {clearFailure.error.message}</p>}
         {probs.map((p) => <ProblemLine key={p.problem.key} p={p.problem} field={M.problemField(p.field)} />)}
         <div className="mx-rf">
           {needs && <button type="button" className="btn sm" onClick={() => setConsentFor(i)}>Review consent</button>}
@@ -352,7 +356,7 @@ function MatchField({ f, values, n, room, classes, onChange, problem }: { f: M.M
     : f === "keeperEnvironmentProviders" ? [...n.envs.entries()].filter(([, e]) => e.machineProviderId === null).map(([eid, e]) => ({ id: eid, label: e.displayName })) : null;
   const hint = f === "repoRemotes" ? <>Without <code>https://</code> or <code>.git</code>. <code>*</code> matches inside one part, for example <code>forge.example/team/project</code>.</>
     : f === "keeperPathGlobs" ? <><code>~</code> is your home and <code>*</code> one folder: <code>~/projects/*/src</code> matches each project’s src folder and everything inside it.</>
-    : f === "projectIds" && !n.catalog ? "Project names arrive with Tavern's catalog; until then, type a project id." : undefined;
+    : f === "projectIds" && !n.catalog ? "Repo names arrive with Tavern's catalog; until then, type a bb project id." : undefined;
   const typed = !options || (f === "projectIds" && !n.catalog);
   return <div className={`mx-field ${problem ? "bad" : ""}`}>
     <label className="mx-fl" htmlFor={id}>{M.fieldWord(f, values.length || 1)}</label>
@@ -418,7 +422,7 @@ function HirePicker({ hire, setHire, room, catalog, classes, keeperName }: { hir
   return <div className="mx-hire">
     <div className="segc" role="group" aria-label="Which hire">
       <button type="button" className="seg" aria-pressed={hire.mode === "keeper"} disabled={!live.length} onClick={() => live[0] && setHire({ mode: "keeper", keeperThreadId: live[0].member.threadId, questId: null, classId: hire.classId })}>A Keeper's quest</button>
-      <button type="button" className="seg" aria-pressed={hire.mode === "project"} disabled={!catalog?.projects.length} onClick={() => catalog?.projects[0] && setHire({ mode: "project", projectId: [...catalog.projects].sort((a, b) => a.name.localeCompare(b.name))[0]!.id, keeperPath: "", classId: hire.classId })}>A project</button>
+      <button type="button" className="seg" aria-pressed={hire.mode === "project"} disabled={!catalog?.projects.length} onClick={() => catalog?.projects[0] && setHire({ mode: "project", projectId: [...catalog.projects].sort((a, b) => a.name.localeCompare(b.name))[0]!.id, keeperPath: "", classId: hire.classId })}>A repo</button>
     </div>
     {hire.mode === "keeper" ? <div className="mx-field"><label className="mx-fl" htmlFor={`${uid}-q`}>Quest</label>
       <select id={`${uid}-q`} className="tv-select mx-wide" value={keeperValue} onChange={(e) => { const [k, q] = e.target.value.split("|"); setHire({ mode: "keeper", keeperThreadId: k!, questId: q || null, classId: hire.classId }); }}>
@@ -428,7 +432,7 @@ function HirePicker({ hire, setHire, room, catalog, classes, keeperName }: { hir
         </optgroup>)}
       </select></div>
       : <>
-        <div className="mx-field"><label className="mx-fl" htmlFor={`${uid}-pr`}>Project</label>
+        <div className="mx-field"><label className="mx-fl" htmlFor={`${uid}-pr`}>Repo</label>
           <select id={`${uid}-pr`} className="tv-select mx-wide" value={hire.projectId} onChange={(e) => setHire({ ...hire, projectId: e.target.value })}>{[...(catalog?.projects ?? [])].sort((a, b) => a.name.localeCompare(b.name)).map((p) => <option key={p.id} value={p.id}>{p.name} · {p.remotes[0]?.replace(/^[a-z]+:\/\//, "").replace(/\.git$/, "") ?? "no remote"}</option>)}</select>
           <p className="mx-hint">No Keeper needed: this asks before any work starts there.</p></div>
         <div className="mx-field"><label className="mx-fl" htmlFor={`${uid}-pa`}>Keeper path <span className="mx-f">optional</span></label>
@@ -532,7 +536,7 @@ export function MachinesPage({ rule: ruleParam }: { rule?: string; hire?: string
   return <div className="mx">
     <header className="mx-head">
       <h1 className="mx-t">Where work runs <span className="anc">machines</span></h1>
-      <p className="mx-intro">Rules send newly hired working members to other machines. The first enabled rule that catches a hire wins; with none, it runs where it runs today. Keepers stay where you run them. A lead runs where its hiring Keeper runs, unless the Keeper names an enabled rule.</p>
+      <p className="mx-intro">Rules match the member's repo. The Keeper can pick a matching rule; its consent, inputs, models and forge apply unchanged. Otherwise the first enabled rule that catches the hire wins. With no rule or pick, only the Keeper's own repo can stay where the Keeper runs. Keepers stay where you run them. A lead runs where its hiring Keeper says.</p>
     </header>
     <p className="sr" role="status" aria-live="polite">{api.undoable || api.announce.endsWith("deleted. Saved.") ? "" : api.announce}</p>
     {from && ruleIndex >= 0 && <div className="tcard mx-from" role="status"><p><b>Opened from a placement rule.</b> Rule {ruleIndex + 1}, {rules[ruleIndex]!.label}, placed this member or caught the hire.</p><button type="button" className="lnk-btn act" onClick={() => setFrom(false)}>Hide</button></div>}

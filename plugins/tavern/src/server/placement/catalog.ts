@@ -9,6 +9,7 @@ export interface PlacementCatalog {
   hostId: string;
   hostEnvironments: EnvironmentProviderInfo[];
   compositions: EnvironmentProviderInfo[];
+  newMachineEnvironments: EnvironmentProviderInfo[];
   machines: MachineProviderInfo[];
   hosts: PlacementHostInfo[];
 }
@@ -32,6 +33,7 @@ export async function discoverPlacementCatalog(
     hostId,
     hostEnvironments,
     compositions: unscopedEnvironments.filter(provider => provider.machineProviderId !== null),
+    newMachineEnvironments: unscopedEnvironments,
     machines,
     hosts,
   };

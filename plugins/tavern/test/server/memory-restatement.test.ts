@@ -197,6 +197,8 @@ describe("Complete Keeper restatement", () => {
       title: "Lunch menus",
       brief,
     });
+    for (const member of f.k.store.all("members").filter(member => member.role === "member"))
+      f.k.store.put("members", member.threadId, { ...member, repo: "repo-" + "r".repeat(95) });
     const text = f.k.restatement("lead");
     const configured = f.runtime.configure(
       makePluginAgentConfigurationContext({ thread: { id: "lead" } }),

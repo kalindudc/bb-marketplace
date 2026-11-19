@@ -19,7 +19,7 @@ export const TEMPLATES = ["{keeper.branch}", "{source.commit}", "{source.base}",
 export const MAX_RULES = 50;
 export const MATCH_FIELDS: MatchField[] = ["projectIds", "repoRemotes", "keeperPathGlobs", "keeperEnvironmentProviders", "classes", "questIds"];
 const FIELD_WORDS: Record<MatchField, [string, string]> = {
-  projectIds: ["Project", "Projects"], repoRemotes: ["Repository", "Repositories"], keeperPathGlobs: ["Keeper path", "Keeper paths"],
+  projectIds: ["Repo", "Repos"], repoRemotes: ["Repository", "Repositories"], keeperPathGlobs: ["Keeper path", "Keeper paths"],
   keeperEnvironmentProviders: ["Keeper environment", "Keeper environments"], classes: ["Class", "Classes"], questIds: ["Quest", "Quests"],
 };
 export const fieldWord = (f: MatchField, n = 1) => FIELD_WORDS[f][n === 1 ? 0 : 1];

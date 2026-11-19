@@ -57,7 +57,9 @@ import type { TaleCompanions } from "./renderer/companion";
 import { DiscoveryStore, StaleDiscoveryError } from "./placement/discovery-store";
 import { SourceDiscovery, readSourceIdentity } from "./placement/source-discovery";
 import { resolvePlacementRoute } from "./placement/routing";
-import { explicitRuleMatch } from "./placement/match";
+import { pickedRoute, repoPlacements, placementPickSchema, type PlacementPick } from "./placement/picks";
+import { targetModelKey, targetModelName, modelResolutionFailure } from "./placement/models";
+import { normalizeRemote } from "../scope/remote";
 import { PlacementServices } from "./placement/services";
 import { hasLostOwner, PlacementPreservation } from "./placement/preserve";
 import { isQuiescentThread } from "./placement/quiescence";
@@ -109,6 +111,8 @@ type Hire = {
   requestDetectionOnly?: boolean;
   detectionOnlyAskId?: string;
   placementRuleId?: string;
+  repo?: string;
+  placement?: PlacementPick;
 };
 type Thread = PluginThreadEventPayloads["thread.active"]["thread"];
 type QueuedMessage = PluginThreadEventPayloads["message.queued"]["entry"];
@@ -1271,8 +1275,28 @@ export class TavernRuntime {
       return plan;
     });
   }
+  async placementChoices(threadId: string, repo: string, classId = "smith", boardQuestId?: string | null) {
+    if (boardQuestId) this.keeper.owned(threadId, boardQuestId);
+    return (await repoPlacements(this, threadId, repo, classId, boardQuestId ?? null)).text;
+  }
+
   async hire(threadId: string, projectId: string, input: Hire) {
     this.stopAll.assertRunning();
+    const keeperProjectId = projectId;
+    this.keeper.require(threadId, "keeper");
+    if (input.placement) placementPickSchema.parse(input.placement);
+    let makerRepo: string | null = null;
+    if (input.classId === "warden" && input.boardQuestId && input.waypointId) {
+      this.keeper.owned(threadId, input.boardQuestId);
+      const maker = this.keeper.summary(input.boardQuestId).waypoints.find(waypoint => waypoint.id === input.waypointId)?.ownerMember;
+      if (maker) {
+        makerRepo = maker.repo ?? this.keeper.store.runtime(maker.threadId).projectId;
+        if (!makerRepo) throw new Error("The Warden's maker has no trusted repo binding.");
+        if (input.repo && input.repo !== makerRepo) throw new Error(`The Warden's repo must match its maker's repo ${makerRepo}.`);
+      }
+    }
+    projectId = input.repo ?? makerRepo ?? projectId;
+    if (projectId !== keeperProjectId) await readSourceIdentity(this.bb, threadId, projectId);
     if (input.boardQuestId) {
       this.keeper.owned(threadId, input.boardQuestId);
       this.keeper.assertQuestNotHeld(input.boardQuestId);
@@ -1418,26 +1442,23 @@ export class TavernRuntime {
         !placementPolicy.settings.rules.some(rule => rule.id === input.placementRuleId && rule.enabled)))
       throw new Error("placementRuleId must name an enabled rule in Settings, Where work runs.");
     if (input.placementRuleId && role.id !== "keeper")
-      throw new Error("placementRuleId is only for a lead hire; working members use the first matching rule.");
+      throw new Error("Use placement.ruleId to pick a rule for a working member.");
+    if (input.placement && input.placementRuleId) throw new Error("Name only one placement pick.");
     let placementRoute = role.id !== "keeper" && placementPolicy?.state === "valid" && placementPolicy.settings.rules.some(rule => rule.enabled)
       ? await resolvePlacementRoute(placementPolicy, { keeperThreadId: threadId, projectId, classId: role.id, questId }, {
           readIdentity: () => readSourceIdentity(this.bb, threadId, projectId),
           inspectSource: () => this.placementSources().inspect(threadId, projectId),
         })
       : null;
-    if (input.placementRuleId && placementPolicy?.state === "valid") {
-      const rule = placementPolicy.settings.rules.find(rule => rule.id === input.placementRuleId)!;
-      const { classes: _classes, ...match } = rule.match;
-      const route = await resolvePlacementRoute({ ...placementPolicy, settings: { ...placementPolicy.settings, rules: [{ ...rule, match }] } },
-        { keeperThreadId: threadId, projectId, classId: role.id, questId }, {
-          readIdentity: () => readSourceIdentity(this.bb, threadId, projectId),
-          inspectSource: () => this.placementSources().inspect(threadId, projectId),
-        });
-      const explicit = explicitRuleMatch(placementPolicy, rule.id, route.facts);
-      if (explicit.state !== "matched") throw new Error(`Rule ${rule.label} (${rule.id}) does not match this hire\'s project, quest or source facts.`);
-      placementRoute = { ...route, match: explicit };
-    }
+    if (input.placementRuleId && placementPolicy?.state === "valid")
+      placementRoute = await pickedRoute(this, threadId, projectId, role.id, questId, { ruleId: input.placementRuleId });
+    if (input.placement) placementRoute = await pickedRoute(this, threadId, projectId, role.id, questId, input.placement);
+    if (projectId !== keeperProjectId && placementRoute?.match.state !== "matched")
+      throw new Error(`Repo ${projectId} needs a rule or the Keeper's placement pick.\n${await this.placementChoices(threadId, projectId, role.id, input.boardQuestId)}`);
+    if (projectId !== keeperProjectId && placementRoute?.match.state === "matched" && placementRoute.match.rule.target.kind === "current")
+      throw new Error(`Repo ${projectId} cannot run where the Keeper runs; pick a matching rule from tavern_placements.`);
     const providerPlacement = placementRoute?.match.state === "matched" && placementRoute.match.rule.target.kind === "provider";
+    const placementRemote = providerPlacement ? (await this.bb.sdk.projects.get({ projectId })).gitRemoteUrl : null;
     if (placementRoute?.match.state === "matched" && placementRoute.match.rule.target.kind === "provider") {
       const target = placementRoute.match.rule.target;
       if (target.machine.type !== "new" || target.workspace !== "dedicated-machine")
@@ -1634,6 +1655,13 @@ export class TavernRuntime {
       if (ruleModel) notes.unshift(...(["provider", "model", "reasoning"] as const)
         .filter(field => ruleModel[field] !== undefined)
         .map(field => `${field} ${beforeRuleRole[field] ?? (field === "provider" ? parent.providerId : "provider default")} -> ${ruleModel[field]} (rule ${modelRule!.id})`));
+      if (providerPlacement && placementRoute?.match.state === "matched") {
+        const target = placementRoute.match.rule.target;
+        this.keeper.store.put("hires", token, { ...this.keeper.store.get("hires", token)!, placementExecution: { target, providerId: execution.providerId, model: execution.model } });
+        const key = targetModelKey(target, execution.model, execution.providerId);
+        if (key && this.keeper.store.get("placementModelFailures", key))
+          throw new Error(`${targetModelName(target)} can't run ${execution.model}; set this rule's model for ${role.id} in Settings, Where work runs.`);
+      }
       if (providerPlacement && placementRoute) {
         placement = await this.placements().controller.reserve(placementRoute, token, this.keeper.store.get("hires", token)!, reviewTarget);
         environment = placement.target as Extract<NonNullable<Parameters<BbPluginApi["sdk"]["threads"]["spawn"]>[0]["environment"]>, { type: "provider" }>;
@@ -1725,6 +1753,7 @@ export class TavernRuntime {
         projectId,
         owner,
       );
+      this.keeper.store.put("members", member.threadId, { ...member, repo: projectId });
       this.keeper.store.put("hires", token, {
         ...intent,
         ...this.keeper.store.get("hires", token),
@@ -1735,7 +1764,8 @@ export class TavernRuntime {
         await settleCancelledHire(this.bb, this.keeper, token, this.keeper.store.get("hires", token)!, child.id, id => this.preserveCancelledHire(id));
         throw new Error("This board quest has ended or is stopping; the hire was cancelled");
       }
-      this.keeper.store.patch(child.id, { executionNotes: notes, classDefinition: executionRole });
+      this.keeper.store.patch(child.id, { executionNotes: notes, classDefinition: executionRole,
+        placementExecution: this.keeper.store.get("hires", token)?.placementExecution });
       await this.prepareHiredScope(member, token, this.keeper.store.get("hires", token)!);
       settleStaffing(this.keeper, intent.staffing, token, member.threadId);
       if (role.id === "warden") {
@@ -1746,6 +1776,7 @@ export class TavernRuntime {
         }
         this.keeper.store.put("members", member.threadId, {
           ...member,
+          repo: projectId,
           checkerWaypointId: waypoint!.id,
           checkerMakerThreadId: reviewTarget!.makerThreadId,
         });
@@ -1797,10 +1828,14 @@ export class TavernRuntime {
         : null;
       this.keeper.changed(child.id, questId);
       completed = true;
+      if (placement && placementRoute?.match.state === "matched" && placementRemote)
+        this.keeper.store.put("placementPicks", placement.id, {
+          remote: normalizeRemote(placementRemote), projectId, ruleId: placementRoute.match.rule.id, at: this.keeper.now(),
+        });
       return {
         ...this.keeper.member(member.threadId)!,
         placement: placement ? this.placements().controller.view(this.placements().store.get(placement.id)!) : null,
-        placementSummary: placement ? this.placements().controller.line(this.placements().store.get(placement.id)!) : `Where the Keeper runs; ${role.id === "keeper" ? "lead default" : "no new-machine rule"}.`,
+        placementSummary: `Repo ${projectId}; ${input.placement ? `Keeper's pick: ${"ruleId" in input.placement ? `rule ${input.placement.ruleId}` : "where the Keeper runs"}` : input.placementRuleId ? `Keeper's pick: rule ${input.placementRuleId}` : placementRoute?.match.state === "matched" ? `rule ${placementRoute.match.rule.label} (${placementRoute.match.rule.id})` : role.id === "keeper" ? "lead default" : "no matching rule"}; ${placement ? this.placements().controller.line(this.placements().store.get(placement.id)!) : "where the Keeper runs"}.`,
         executionNotes: notes,
         pendingScopeAsk,
         briefPending: pendingScopeAsk !== null || this.keeper.store.runtime(member.threadId).pendingBrief != null || this.keeper.checkerHandoffProblem(role.id, questId) !== null,
@@ -1854,9 +1889,9 @@ export class TavernRuntime {
     try { current = await this.bb.sdk.threads.get({ threadId: memberThreadId }); }
     catch (error) { if (!isNotFound(error)) throw error; current = null; this.threadGone(memberThreadId); }
     const placement = new PlacementStore(this.keeper.store.db).byMember(memberThreadId);
+    this.keeper.store.patch(memberThreadId, { releasePending: reason });
     if ((!placement || !hasLostOwner(placement)) && current && current.archivedAt === null && current.deletedAt === null)
       await this.bb.sdk.threads.stop({ threadId: memberThreadId });
-    this.keeper.store.patch(memberThreadId, { releasePending: reason });
     return this.finishRelease(member);
   }
   private async finishRelease(member: Member) {
@@ -1869,6 +1904,17 @@ export class TavernRuntime {
     if (this.stopAll.reason()) return false;
     const placement = new PlacementStore(this.keeper.store.db).byMember(member.threadId);
     if (placement) {
+      if (this.keeper.store.runtime(member.threadId).placementModelFailureRelease) {
+        try {
+          if (!await this.placements().controller.releaseModelFailure(placement, reason)) {
+            this.holdModelFailureRelease(member.threadId, "Waiting for the failed first turn to stop.");
+            return false;
+          }
+        } catch (error) {
+          this.holdModelFailureRelease(member.threadId, String(error));
+          return false;
+        }
+      }
       const result = await this.placements().preserve.beforeRelease(member.threadId, thread && !isQuiescentThread(thread) ? `${reason} (stop unconfirmed)` : reason);
       if (result.state === "waiting" || result.state === "blocked") {
         this.keeper.store.patch(member.threadId, { archiveError: result.message });
@@ -1893,6 +1939,7 @@ export class TavernRuntime {
       });
       this.keeper.store.patch(member.threadId, {
         releasePending: null,
+        placementModelFailureRelease: null,
         archiveError: null,
         released: { reason, decisionId: decision.id },
       }, this.keeper.now());
@@ -2732,8 +2779,62 @@ export class TavernRuntime {
     }, undefined, true);
     this.keeper.store.patch(threadId, { tickDeliveryAskId: ask.id });
   }
-  failed(threadId: string, error = "Provider turn failed", requestId?: string) {
-    if (this.keeper.member(threadId)?.role !== "keeper") return;
+  clearPlacementModelFailure(id: string) {
+    this.keeper.store.remove("placementModelFailures", id);
+    this.bb.rpc.experimental_invalidate(["tavern:placements"]);
+  }
+
+  private holdModelFailureRelease(threadId: string, message: string): void {
+    const record = new PlacementStore(this.keeper.store.db).byMember(threadId);
+    this.keeper.store.patch(threadId, { archiveError: message });
+    if (record && record.phase !== "released") this.placements().store.block(record.id, record.generation,
+      { stage: "release", code: "model-failure-release-pending", message, retryable: true });
+    const member = this.keeper.member(threadId);
+    if (member) this.keeper.changed(threadId, member.boardQuestId);
+  }
+
+  async retryModelFailureRelease(threadId: string): Promise<boolean> {
+    const member = this.keeper.member(threadId);
+    const reason = this.keeper.store.runtime(threadId).placementModelFailureRelease;
+    if (!member?.keeperThreadId || !reason) throw new Error("This member has no pending model-failure release.");
+    try { return await this.release(member.keeperThreadId, threadId, reason); }
+    catch (error) {
+      this.bb.log.warn(`Tavern model-failure release ${threadId}: ${String(error)}`);
+      this.holdModelFailureRelease(threadId, String(error));
+      return false;
+    }
+  }
+
+  async failed(threadId: string, error = "Provider turn failed", requestId?: string) {
+    const member = this.keeper.member(threadId);
+    if (member?.role !== "keeper") {
+      try {
+        if (!member || this.keeper.store.runtime(threadId).placementFirstTurnSettled) return;
+        const placement = new PlacementStore(this.keeper.store.db).byMember(threadId);
+        if (!placement || placement.phase === "released") return;
+        const events = await this.bb.sdk.threads.events.list({ threadId, types: ["turn/completed", "client/turn/rejected"], limit: "100", order: "asc" });
+        if (this.keeper.store.runtime(threadId).placementFirstTurnSettled) return;
+        this.keeper.store.patch(threadId, { placementFirstTurnSettled: true });
+        const first = events.find(event => event.type === "turn/completed" || event.type === "client/turn/rejected");
+        if (first?.type === "turn/completed" && first.data.status !== "failed") return;
+        const detail = first?.type === "turn/completed" ? first.data.error?.message ?? error
+          : first?.type === "client/turn/rejected" ? first.data.message : error;
+        if (!modelResolutionFailure(detail)) return;
+        const execution = this.keeper.store.runtime(threadId).placementExecution ?? this.keeper.store.get("hires", placement.hireToken)?.placementExecution;
+        if (!execution?.model || execution.target.kind !== "provider") return;
+        const { model, target, providerId } = execution;
+        const id = targetModelKey(target, model, providerId)!;
+        this.keeper.store.put("placementModelFailures", id, { id, target: targetModelName(target), providerId, model, detail, at: this.keeper.now() });
+        this.bb.rpc.experimental_invalidate(["tavern:placements"]);
+        const reason = `${targetModelName(target)} can't run ${model}; set this rule's model for ${member.classId} in Settings, Where work runs. ${detail}`;
+        this.keeper.store.patch(threadId, { placementModelFailureRelease: reason, releasePending: reason });
+        await this.retryModelFailureRelease(threadId);
+      } catch (failure) {
+        this.bb.log.warn(`Tavern failed turn ${threadId}: ${String(failure)}`);
+        if (this.keeper.store.runtime(threadId).placementModelFailureRelease) this.holdModelFailureRelease(threadId, String(failure));
+      }
+      return;
+    }
     const state = this.keeper.store.runtime(threadId);
     if (requestId && state.failedRequests?.includes(requestId)) return;
     if (!state.turnEventsObserved) this.keeper.endTurn(threadId);

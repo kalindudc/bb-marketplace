@@ -65,8 +65,9 @@ export const SDK_CONTRACTS: Record<string, z.ZodType> = {
     if (value.remove?.some(key => value.set && Object.hasOwn(value.set, key))) ctx.addIssue({ code: "custom", message: "set and remove overlap" });
   }),
   "threads.list": z.object({ ...routing, parentThreadId: id.optional(), originPluginId: id.optional(), archived: z.boolean().optional(), includeHidden: z.boolean().optional(), limit: z.number().int().nonnegative().optional(), offset: z.number().int().nonnegative().optional() }).optional(),
-  "threads.events.list": thread.extend({ afterSeq: digits.optional(), beforeSeq: digits.optional(), limit: digits.refine(value => Number(value) <= 100, "Thread event limit cannot exceed 100").optional(), order: z.enum(["asc", "desc"]).optional(), types: z.array(z.enum(["item/started", "item/completed", "client/turn/requested", "system/thread/interrupted", "thread/compacted", "turn/started", "turn/mainRun/updated", "turn/completed"])).optional() }),
+  "threads.events.list": thread.extend({ afterSeq: digits.optional(), beforeSeq: digits.optional(), limit: digits.refine(value => Number(value) <= 100, "Thread event limit cannot exceed 100").optional(), order: z.enum(["asc", "desc"]).optional(), types: z.array(z.enum(["item/started", "item/completed", "client/turn/requested", "client/turn/rejected", "system/thread/interrupted", "thread/compacted", "turn/started", "turn/mainRun/updated", "turn/completed"])).optional() }),
   "environments.get": z.object({ environmentId: id, signal }),
+  "environments.list": z.object({ projectId: id.optional(), hostId: id.optional(), path: id.optional(), environmentProviderId: id.optional(), signal }).optional(),
   "environments.listProviders": z.object({ projectId: id.optional(), hostId: id.optional(), signal }).superRefine((value, ctx) => {
     if (value.hostId !== undefined && value.projectId === undefined) ctx.addIssue({ code: "custom", message: "hostId requires projectId", path: ["hostId"] });
   }).optional(),

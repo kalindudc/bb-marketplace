@@ -41,7 +41,7 @@ describe("read-only placement catalog discovery", () => {
     const result = await discoverPlacementCatalog(f.bb, { projectId: "project", hostId: "destination" });
     expect(result).toEqual({
       projectId: "project", hostId: "destination", hostEnvironments: [f.environment],
-      compositions: [f.composition], machines: [f.machine], hosts: [f.host],
+      compositions: [f.composition], newMachineEnvironments: [f.environment, f.composition], machines: [f.machine], hosts: [f.host],
     });
     expect(f.listProviders.mock.calls.map(([args]) => args)).toEqual([
       { projectId: "project", hostId: "destination" }, { projectId: "project" },

@@ -169,6 +169,8 @@ async function preview(runtime: TavernRuntime, input: PlacementPreviewInput, sig
 
 export function placementHandlers(runtime: TavernRuntime): PluginRpcHandlers<typeof placementContract> {
   return {
+    placementModelFailures: () => runtime.keeper.store.all("placementModelFailures"),
+    placementModelFailureClear: ({ id }) => { runtime.clearPlacementModelFailure(id); return { ok: true }; },
     placementRetry: async ({ placementId, generation }, context?: ExperimentalPluginRpcHandlerContext) => {
       context?.experimental_signal?.throwIfAborted();
       const record = new PlacementStore(runtime.keeper.store.db).get(placementId);

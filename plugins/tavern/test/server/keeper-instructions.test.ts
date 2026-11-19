@@ -78,5 +78,6 @@ describe("R11 tool rules remain at the tool boundary", () => {
 });
 
 it("keeps the placement sentence at the end of hire instructions", () => {
-  expect(tools.get("tavern_hire")).toMatch(/Where your party runs.*tavern_status section=placement.*placementRuleId.*where the member went and why\.$/);
+  expect(tools.get("tavern_hire")).toMatch(/tavern_placements with repo.*repo defaults to your own project.*placement is \{ruleId\}.*no fallback model.*first line names the repo, rule or pick and target\.$/);
+  expect(tools.get("tavern_placements")).toMatch(/input schemas.*New machine per thread.*earlier Tavern picks.*recommendation.*allocates nothing/);
 });
