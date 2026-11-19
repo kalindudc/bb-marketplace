@@ -48,7 +48,7 @@ function head(p: PixelGrid, x: number, top: number, chin: number, t: SeedTraits,
   const cheek = Math.min(top + 6, eyes + 2);
   p.rect(x + 1, cheek, 1, 1, Ink.Cheek);
   p.rect(x + 8, cheek, 1, 1, Ink.Cheek);
-  if (pose.face === "delighted" || pose.face === "pleased") p.rect(x + 4, chin, 2, 1, Ink.Outline);
+  if (pose.face === "delighted" || pose.face === "pleased") p.mask(x + 3, chin - 1, ["#.#", ".#."], Ink.Lip);
   if (pose.face === "frown") p.mask(x + 3, chin - 1, [".#.", "#.#"], Ink.Cheek);
   if (t.hair === "braid") p.mask(x + 9, top + 4, [".##", "..#", ".#."], Ink.Leather);
   if (t.hair === "tied-tail") p.rect(x + 10, top + 3, 1, 1, Ink.Secondary);
@@ -62,8 +62,7 @@ function hat(p: PixelGrid, x: number, y: number, part: SeedTraits["hat"]) {
       p.mask(x - 1, y - 2, ["###", ".###"], Ink.DarkCloth);
       break;
     case "coif":
-      p.mask(x - 1, y - 3, ["...######...", "..########..", ".##########.", ".##......##.", "##........##", "##........##", ".#........#.", ".#........#.", "..#......#..", "...#....#...", ".......#...."], Ink.Garment);
-      p.rect(x + 6, y + 8, 2, 1, Ink.DarkCloth);
+      p.mask(x - 1, y - 3, ["...######...", "..########..", ".##########.", ".##......##.", "##........##", "##........##", ".#........#.", ".#........#."], Ink.Garment);
       break;
     case "kerchief":
       p.mask(x - 1, y - 2, ["...#######..", "..#########.", ".###########", ".#........##", "...........##", "............#"], Ink.Secondary);
@@ -133,25 +132,25 @@ function garment(p: PixelGrid, t: SeedTraits, pose: SpritePose, top: number, bot
 }
 
 function folio(p: PixelGrid, x: number, y: number, kind: "map" | "scroll" | "ledger", turn: boolean) {
-  p.rect(x, y, 8, 4, kind === "ledger" ? Ink.Leather : Ink.Wood);
+  if (kind === "ledger") {
+    p.mask(x, y, ["....###", "#######", "#######", "#######", "####..."], Ink.Leather);
+    p.rect(x, y + 1, 3, 3, Ink.PaperShade);
+    p.rect(x + 4, y, 3, 3, Ink.Paper);
+    p.rect(x + 3, y + 1, 1, 3, Ink.Outline);
+    p.mask(x + 5, y - 2, turn ? ["#.", "##"] : [".#", "##"], Ink.Glint);
+    return;
+  }
+  p.rect(x, y, 8, 4, Ink.Wood);
   p.rect(x + 1, y, 6, 3, Ink.Paper);
   if (kind === "scroll") p.rect(x + 5, y + 2, 1, 2, Ink.Seal);
-  else if (kind === "map") p.mask(x + 1, y, turn ? [".....#", "..###.", "##...."] : ["..##..", ".#..##", "#....."], Ink.Wood);
-  else {
-    p.rect(x + 4, y + 1, 3, 2, Ink.PaperShade);
-    p.rect(x + 4, y, 1, 3, Ink.Wood);
-    p.mask(x + 5, y - 2, turn ? [".#", "##"] : ["..#", ".#.", "#.."], Ink.Glint);
-  }
+  else p.mask(x + 1, y, turn ? [".....#", "..###.", "##...."] : ["..##..", ".#..##", "#....."], Ink.Wood);
 }
 
 function handTool(p: PixelGrid, t: SeedTraits, hand: number, pose: SpritePose) {
   const active = pose.gesture === "work" && pose.beat;
   switch (t.tool) {
     case "ledger-quill":
-      p.mask(17, hand - 2, ["##..##", "######", "######", ".####.", "..##.."], Ink.Leather);
-      p.mask(17, hand - 2, ["##....", "###...", ".##..."], Ink.Paper);
-      p.mask(17, hand - 2, ["....##", "...###", "...##."], Ink.PaperShade);
-      p.mask(19, hand - 4, ["..#", ".##", "#.."], Ink.Glint);
+      folio(p, 16, hand - 2, "ledger", false);
       break;
     case "staff-lantern":
       p.mask(15, hand, [".###", "#####", "#####", "####."], Ink.Leather);

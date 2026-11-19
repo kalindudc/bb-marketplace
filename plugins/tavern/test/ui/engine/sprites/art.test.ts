@@ -143,6 +143,35 @@ describe("seeded character art", () => {
     }
   });
 
+  it("never uses the outline colour for any painted mouth", () => {
+    const { poses } = poseBook(() => "hands", 0);
+    const at = (runs: Uint8Array, x: number, y: number): Ink => {
+      for (let i = 0; i < runs.length; i += 4) {
+        if (runs[i + 2] === y && x >= runs[i + 1]! && x < runs[i + 1]! + runs[i + 3]!) return runs[i]!;
+      }
+      return Ink.Empty;
+    };
+    for (const character of shipped()) {
+      const traits = seedTraits({ seed: character.avatar ?? character.id, classId: character.classes[0] ?? null, look: character.look });
+      const colours = spriteColours(character.hue, traits, palette);
+      for (const pose of poses.filter(pose => pose.face !== "calm")) {
+        const { runs, chin } = actor(traits, pose, null);
+        const plain = actor(traits, { ...pose, face: "calm" }, null).runs;
+        const centre = pose.slump ? 13 : 11;
+        const mouth: [number, number][] = [];
+        for (let y = chin - 1; y <= chin; y++) for (let x = centre - 1; x <= centre + 1; x++) {
+          const ink = at(runs, x, y);
+          if (ink === at(plain, x, y)) continue;
+          mouth.push([x, y]);
+          expect(colours[ink], `${character.id}, ${pose.face}: mouth at ${x},${y}`).not.toBe(palette.ink);
+        }
+        if (pose.face === "pleased" || pose.face === "delighted") {
+          expect(mouth).toEqual([[centre - 1, chin - 1], [centre + 1, chin - 1], [centre, chin]]);
+        }
+      }
+    }
+  });
+
   it("separates every dyed cloth shade from the page in each target theme", () => {
     const luminance = (hex: string) => {
       const srgb = hex.match(/[a-f0-9]{2}/gi)!.map(value => parseInt(value, 16) / 255);

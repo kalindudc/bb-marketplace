@@ -9,8 +9,10 @@ export const GROUND = 26;
 export const enum Ink {
   Empty, Shadow, Outline, Garment, Secondary, Skin, Hair, Boot, Leather, Wood,
   Metal, Paper, Flame, Seal, DarkCloth, Cloud, Rain, Cream, Glint, Cheek,
-  Edge, TopEdge, Brass, Lens, Crystal, Facet, Charge, ChargeGlint, PaperShade,
+  Edge, TopEdge, Brass, Lens, Crystal, Facet, Charge, ChargeGlint, PaperShade, Lip,
 }
+
+const LIP = ["#bb806d", "#a96f5b", "#8e5848"];
 
 type Run = Uint8Array;
 
@@ -70,7 +72,7 @@ export function spriteColours(hue: string, traits: SeedTraits, p: CharacterPalet
     p.skin[traits.skin]!, traits.hairColour === 3 && p.silver ? p.silver : p.hair[traits.hairColour]!, p.pants,
     cloth.leather, p.wood, p.metal, p.dark ? p.metal : p.card,
     p.hearth, p.bad, cloth.fold, p.cloud, p.drop, p.skin[0]!, p.dark ? p.metal : p.card, p.cheeks?.[traits.skin] ?? p.skin[traits.skin]!,
-    cloth.rim, cloth.topRim, "#b68a42", "#bad4cf", "#a792cc", "#6b5799", "#96bbc4", "#e4f2f5", "#a5987b",
+    cloth.rim, cloth.topRim, "#b68a42", "#bad4cf", "#a792cc", "#6b5799", "#96bbc4", "#e4f2f5", "#a5987b", LIP[traits.skin]!,
   ];
 }
 
