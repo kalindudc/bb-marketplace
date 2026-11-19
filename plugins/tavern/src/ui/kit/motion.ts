@@ -85,7 +85,7 @@ export type Cue = {
 const TEXT_FIELD = "input:not([type=checkbox]):not([type=radio]):not([type=button]):not([type=submit]), textarea, [contenteditable=''], [contenteditable='true']";
 const inTextField = (e: Event) => { const t = e.composedPath?.()[0] ?? e.target; return t instanceof Element && !!t.closest(TEXT_FIELD); };
 
-function stuckInView() {
+export function stuckInView() {
   for (const e of document.querySelectorAll(STUCK_IN_VIEW)) {
     const r = e.getBoundingClientRect();
     if (r.width > 0 && r.height > 0 && r.bottom > 0 && r.right > 0 && r.top < innerHeight && r.left < innerWidth) return true;

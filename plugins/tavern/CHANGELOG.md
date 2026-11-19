@@ -8,7 +8,7 @@ A returned or stopped quest reopens for deviations without a new quest, the chec
 
 ### Added
 
-- All twelve characters have short, authored tavern lines in their character files. The thread widget supplies report, waypoint and lifecycle facts for character moods, and Tavern can select lines from those facts without asking a model to write them.
+- The composer party reacts to reports and waypoint verdicts and says short, authored lines from its character files. Full voice adds occasional words and greetings; Light speaks after a verification, at a quest’s wrap or on a click. Off keeps the party quiet. Typing, asks and blockers silence the strip.
 - The composer draws its character on a single pixel-art canvas above the widget row, which keeps its class crest. Calm idles in place; Lively walks across the composer when the character is idle or working. Typing or an ask stops travel without freezing the character. Motion Off and reduced motion show a still pose.
 - Characters on the page share one animation scheduler. It pauses off screen and in hidden tabs and reduces physics updates if drawing and updating go over budget. The Characters setting still removes the strip without removing the class crest.
 - Character files accept an optional avatar seed. Tavern's new sprite renderer uses that seed, or the character's id, to draw rounded faces, tunics and cloaks, and period tools chosen by class. The renderer is ready for the character strip and form; the live strip is unchanged.

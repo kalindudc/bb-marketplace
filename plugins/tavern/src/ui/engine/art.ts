@@ -1,12 +1,9 @@
-// src/ui/engine/art.ts: the contract between the engine (scheduler, physics, strip) and the generator (sprites).
-// Copy this file verbatim into plugins/tavern/src/ui/engine/art.ts. Both lanes create it with identical content.
+// The contract between the engine (scheduler, physics, strip) and the generator (sprites). The moods live in shared, which never imports the UI.
 import type { LookFields } from "../../shared/look";
+import type { Mood } from "../../shared/mood";
 import type { CharacterPalette } from "../kit/characters";
 
-/** What a member is doing, as the party shows it. `released` is not drawn on the strip at all. */
-export const MOODS = ["idle", "working", "waiting", "reported", "verified", "blocked", "resting", "error"] as const;
-export type Mood = (typeof MOODS)[number];
-export type MoodOrGone = Mood | "released";
+export { MOODS, type Mood, type MoodOrGone } from "../../shared/mood";
 
 /** One-shot animations. Each lasts `CUE_MS[cue]`. */
 export const CUES = ["tap", "notice", "wave", "flourish", "drop", "blink", "hop"] as const;

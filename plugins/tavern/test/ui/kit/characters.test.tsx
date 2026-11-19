@@ -453,7 +453,8 @@ describe("TavernCharacter", () => {
 
   it("sends mood, hover and hop cues through the coordinator and keeps speech in the strip", () => {
     const cue = vi.spyOn(motion, "cue");
-    const props = { character: wren, classId: "keeper", classLabel: "Keeper", keeper: true, surface: "thread:t1", region: "widget", line: "Clear skies." } as const;
+    const onActorClick = vi.fn();
+    const props = { character: wren, classId: "keeper", classLabel: "Keeper", keeper: true, surface: "thread:t1", region: "widget", onActorClick } as const;
     const v = render(<PartyStrip {...props} mood="idle" />);
     const strip = v.container.querySelector<HTMLElement>(".twalk")!;
     Object.defineProperty(strip, "clientWidth", { value: 320 });
@@ -467,10 +468,13 @@ describe("TavernCharacter", () => {
     const actor = strip.querySelector("button")!;
     act(() => { fireEvent.pointerOver(actor); fireEvent.click(actor); });
     expect(cue.mock.calls.slice(1).map(c => [c[3].key, c[3].auto])).toEqual([["wren:notice:2", false], ["wren:hop:3", false]]);
+    expect(onActorClick).toHaveBeenCalledWith("wren");
+    const speech = { actorId: "wren", text: "Clear skies." };
+    v.rerender(<PartyStrip {...props} mood="working" speech={speech} />);
     expect(strip.querySelector('[role="status"]')).toHaveProperty("hidden", false);
     expect(strip.querySelector('[role="status"]')?.textContent).toBe("Clear skies.");
-    v.rerender(<PartyStrip {...props} mood="working" held />);
-    expect(strip.querySelector('[role="status"]')).toHaveProperty("hidden", true);
+    v.rerender(<PartyStrip {...props} mood="working" speech={speech} held />);
+    expect(strip.querySelector('[role="status"]')).toBeNull();
     act(() => { fireEvent.pointerOver(actor); fireEvent.click(actor); });
     expect(cue).toHaveBeenCalledTimes(3);
   });

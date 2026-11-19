@@ -37,17 +37,17 @@
   top: 5px;
   left: var(--speech-origin);
   width: max-content;
-  max-width: min(200px, var(--speech-room));
-  max-height: 54px;
+  max-width: var(--speech-room);
   overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   box-sizing: border-box;
   padding: 4px 7px;
-  border: 1px solid var(--tavern-line);
+  border: 1px solid var(--tavern-hearth);
   background: var(--card);
   color: var(--foreground);
   font-size: 11px;
   line-height: 1.3;
-  overflow-wrap: anywhere;
   pointer-events: none;
 }
 .tavern .twalk-speech[data-side="left"] { transform: translateX(-100%); }

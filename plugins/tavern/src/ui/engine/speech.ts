@@ -1,4 +1,4 @@
-import type { MoodOrGone } from "../../shared/mood";
+import type { MoodOrGone } from "./art";
 import { speechSeed, type SpeechKey } from "../../shared/says";
 import type { VoiceMode } from "../../shared/settings";
 
@@ -16,6 +16,9 @@ export type SpeechInput = {
   now: number;
   lastLineAt: number | null;
   cueEndsAt?: number;
+  milestone?: boolean;
+  lastAmbientAttemptAt?: number;
+  lastEventAttemptAt?: number;
   arrivedAt?: number;
   wrappedAt?: number;
   click?: boolean;
@@ -24,25 +27,33 @@ export type SpeechInput = {
   stuckInView?: boolean;
 };
 
-export function speechDecision(input: SpeechInput): { slot: SpeechKey; key: string } | null {
-  const { actorId, voice, mood, moodSince, pageSince, now, lastLineAt, wrappedAt, arrivedAt } = input;
-  if (voice === "off" || input.typing || input.held || input.stuckInView) return null;
-  if (mood === "waiting" || mood === "blocked" || mood === "error" || mood === "released") return null;
+export function speechSlot(mood: MoodOrGone): mood is Exclude<SpeechKey, "greet" | "wrap"> {
+  return mood === "idle" || mood === "working" || mood === "resting" || mood === "reported" || mood === "verified";
+}
 
-  const line = (slot: SpeechKey, moment: string, at: number) => ({ slot, key: `${actorId}:${slot}:${moment}:${at}` });
-  const due = (eventAt: number, at = eventAt) =>
-    eventAt >= pageSince && now >= at && now - at < BUBBLE_MS && (lastLineAt === null || lastLineAt < at);
+export function planSpeech(input: SpeechInput) {
+  const { actorId, voice, mood, moodSince, pageSince, now, lastLineAt, wrappedAt, arrivedAt } = input;
+  if (voice === "off" || input.typing || input.held || input.stuckInView || !speechSlot(mood)) return null;
+
+  const line = (slot: SpeechKey, kind: string, stamp: number, at = stamp) => ({ slot, key: `${actorId}:${slot}:${kind}:${stamp}`, kind, at });
+  const eligible = (eventAt: number, at = eventAt) =>
+    eventAt >= pageSince && now - at < BUBBLE_MS && Math.max(lastLineAt ?? -Infinity, input.lastEventAttemptAt ?? -Infinity) < at;
 
   if (input.click) return line(mood, "click", now);
-  if (wrappedAt !== undefined && due(wrappedAt)) return line("wrap", "wrap", wrappedAt);
-  if (arrivedAt !== undefined && voice === "full" && due(arrivedAt)) return line("greet", "arrival", arrivedAt);
+  if (wrappedAt !== undefined && eligible(wrappedAt)) return line("wrap", "wrap", wrappedAt);
+  if (arrivedAt !== undefined && voice === "full" && eligible(arrivedAt)) return line("greet", "arrival", arrivedAt);
   if (mood === "verified" || mood === "reported") {
     const at = Math.max(moodSince, input.cueEndsAt ?? moodSince) + CUE_SETTLE_MS;
-    return (mood === "verified" || voice === "full") && due(moodSince, at) ? line(mood, "entry", moodSince) : null;
+    return input.milestone !== false && (mood === "verified" || voice === "full") && eligible(moodSince, at)
+      ? line(mood, "entry", moodSince, at) : null;
   }
   if (voice !== "full") return null;
-  const since = Math.max(pageSince, moodSince, lastLineAt ?? pageSince);
+  const since = Math.max(pageSince, moodSince, lastLineAt ?? pageSince, input.lastAmbientAttemptAt ?? pageSince);
   const next = line(mood, "ambient", since);
-  const gap = MIN_GAP_MS + speechSeed(next.key) % (GAP_SPAN_MS + 1);
-  return now >= since + gap ? next : null;
+  return { ...next, at: since + MIN_GAP_MS + speechSeed(next.key) % (GAP_SPAN_MS + 1) };
+}
+
+export function speechDecision(input: SpeechInput): { slot: SpeechKey; key: string } | null {
+  const next = planSpeech(input);
+  return next && next.at <= input.now ? { slot: next.slot, key: next.key } : null;
 }

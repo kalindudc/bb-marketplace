@@ -1,7 +1,9 @@
 import type { Room, ThreadDecor } from "./contract";
 import type { BoardQuest, JournalEntry, KeeperNote, Member, Report } from "./schema";
 
-export type Mood = "idle" | "working" | "waiting" | "reported" | "verified" | "blocked" | "resting" | "error";
+/** What a member is doing, as the party shows it. `released` is not drawn on the strip at all. */
+export const MOODS = ["idle", "working", "waiting", "reported", "verified", "blocked", "resting", "error"] as const;
+export type Mood = (typeof MOODS)[number];
 export type MoodOrGone = Mood | "released";
 type MoodReport = Pick<Report, "status" | "createdAt">;
 type Verdict = { status: "verified" | "rejected"; at: number | null };

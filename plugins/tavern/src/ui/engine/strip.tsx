@@ -1,7 +1,7 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useLayoutEffect, useMemo, useRef } from "react";
 import type { CharacterDef } from "../../shared/schema";
-import { readPalette, type CharacterPalette, type CharacterState } from "../kit/characters";
-import { motion, STUCK_IN_VIEW, type Surface } from "../kit/motion";
+import { readPalette, type CharacterPalette } from "../kit/characters";
+import { motion, type Surface } from "../kit/motion";
 import { Actor } from "./actor";
 import { CUE_MS, type Cue, type Mood } from "./art";
 import { legacyArt } from "./legacy-art";
@@ -13,14 +13,9 @@ const SCALE = 2;
 const HEIGHT = 64;
 const GROUND = 58;
 const BUBBLE_GAP = 6;
-const SPEECH_MS = 4500;
-
-export const STRIP_MOOD: Record<CharacterState, Mood> = {
-  idle: "idle", working: "working", "needs-you": "waiting", error: "error",
-};
 const MOOD_WORD: Record<Mood, string> = {
   idle: "idle", working: "at work", waiting: "needs you", reported: "just reported",
-  verified: "verified", blocked: "blocked", resting: "resting", error: "stopped",
+  verified: "verified", blocked: "blocked", resting: "resting", error: "failed",
 };
 
 export function walkSpan(composerWidth: number | null, stripWidth: number, spriteWidth: number) {
@@ -39,21 +34,14 @@ type PartyStripProps = {
   region?: "widget";
   mode?: MotionMode;
   held?: boolean;
-  line?: string | undefined;
   speech?: StripSpeech | null;
+  canClickSpeak?: boolean;
   onActorClick?: (actorId: string) => void;
+  onMoodCueEnd?: () => void;
 };
 
-function attentionInView() {
-  for (const el of document.querySelectorAll(STUCK_IN_VIEW)) {
-    const r = el.getBoundingClientRect();
-    if (r.width > 0 && r.height > 0 && r.bottom > 0 && r.right > 0 && r.top < innerHeight && r.left < innerWidth) return true;
-  }
-  return false;
-}
-
 export function PartyStrip(props: PartyStripProps) {
-  const { character, classId, classLabel, keeper, mood, line } = props;
+  const { character, classId, classLabel, keeper, mood, speech } = props;
   const art = useMemo(() => legacyArt({
     seed: character.id, classId, hue: character.hue, charge: character.charge, look: character.look, keeper,
   }), [character.id, classId, character.hue, character.charge, character.look, keeper]);
@@ -62,19 +50,19 @@ export function PartyStrip(props: PartyStripProps) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const button = useRef<HTMLButtonElement>(null);
   const bubble = useRef<HTMLSpanElement>(null);
-  const runtime = useRef<{ invalidate(): void; cue(kind: Cue, auto: boolean): void }>(null);
+  const runtime = useRef<{ invalidate(): void; cue(kind: Cue, auto: boolean, onEnd?: () => void): void }>(null);
   const latest = useRef(props);
-  const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
-  const [localSpeech, setLocalSpeech] = useState<StripSpeech | null>(null);
-  const speech = props.speech === undefined ? localSpeech : props.speech;
-  const words = speech?.actorId === actor.id ? speech.text : null;
+  const words = !props.held && speech?.actorId === actor.id ? speech.text : null;
 
   useLayoutEffect(() => { latest.current = props; });
   useLayoutEffect(() => {
     actor.art = art;
     const cue = actor.setMood(mood);
     runtime.current?.invalidate();
-    if (cue) runtime.current?.cue(cue, true);
+    if (cue) {
+      if (runtime.current) runtime.current.cue(cue, true, props.onMoodCueEnd);
+      else props.onMoodCueEnd?.();
+    }
   }, [actor, art, mood, props.mode, props.held, words]);
 
   useLayoutEffect(() => {
@@ -101,10 +89,9 @@ export function PartyStrip(props: PartyStripProps) {
         const y = GROUND - actor.art.ground * SCALE - (still ? 0 : Math.round(actor.body.lift / SCALE) * SCALE);
         const speechEl = bubble.current;
         if (speechEl) {
-          const { typing, held } = holds();
           const left = x - BUBBLE_GAP;
           const right = width - x - spriteWidth - BUBBLE_GAP;
-          speechEl.hidden = typing || held || attentionInView() || Math.max(left, right) < 48;
+          speechEl.hidden = Math.max(left, right) < 48;
           const onRight = right >= left;
           speechEl.style.setProperty("--speech-origin", `${onRight ? x + spriteWidth + BUBBLE_GAP : left}px`);
           speechEl.style.setProperty("--speech-room", `${Math.max(left, right)}px`);
@@ -158,19 +145,20 @@ export function PartyStrip(props: PartyStripProps) {
     theme.observe(document.documentElement, { attributes: true, attributeFilter: ["class", "style", "data-theme"] });
     runtime.current = {
       invalidate: handle.invalidate,
-      cue(kind, auto) {
-        if (!scheduler.isActive(world)) return;
+      cue(kind, auto, onEnd) {
+        if (!scheduler.isActive(world)) { onEnd?.(); return; }
         const rules = { mode: world.mode(), ...holds() };
         if (rules.held && !auto) return;
         const { surface, region } = latest.current;
         let cancel: (() => void) | null = null;
+        let ended = false;
         const accepted = motion.cue(surface, control, "character cue", {
           key: `${actor.id}:${kind}:${++cueNumber}`, auto, ms: CUE_MS[kind], ...(region ? { region } : {}),
           // Canvas owns the pixels; the empty animation keeps the cue in the coordinator's slots until it ends.
           run: el => typeof el.animate === "function" ? [el.animate([], { duration: CUE_MS[kind] })] : [],
-          onDone: () => cancel?.(),
+          onDone: () => { ended = true; cancel?.(); onEnd?.(); },
         });
-        if (accepted) cancel = actor.playCue(kind, auto, rules);
+        if (accepted && !ended) cancel = actor.playCue(kind, auto, rules);
       },
     };
     return () => {
@@ -182,35 +170,19 @@ export function PartyStrip(props: PartyStripProps) {
     };
   }, [actor]);
 
-  useEffect(() => () => clearTimeout(timer.current), []);
-  useEffect(() => {
-    if (!words) return;
-    const hide = () => { if (bubble.current && motion.getHolds(props.surface).typing) bubble.current.hidden = true; };
-    const events = ["input", "keydown", "compositionstart"];
-    for (const event of events) document.addEventListener(event, hide);
-    return () => { for (const event of events) document.removeEventListener(event, hide); };
-  }, [words, props.surface]);
-
-  const canSpeak = mood !== "waiting" && mood !== "blocked" && mood !== "error";
   const label = `${character.name}, ${classLabel}${keeper ? ", Keeper" : ""}, ${MOOD_WORD[mood]}`;
   return <section ref={strip} className="tavern twalk" data-part="TavernWalk" aria-label={`${character.name} walking`}>
     <span className="twalk-ground" aria-hidden="true" />
     <canvas ref={canvas} className="twalk-canvas" height={HEIGHT} aria-hidden="true" />
     <button ref={button} type="button" className="tchar twalk-actor" data-actor={actor.id} data-mood={mood}
-      aria-label={line && canSpeak ? `${label}. Click for a word.` : label}
+      aria-label={props.canClickSpeak ? `${label}. Click for a word.` : label}
       onPointerEnter={() => runtime.current?.cue("notice", false)}
       onClick={() => {
         runtime.current?.cue("hop", false);
-        const { typing, held } = motion.getHolds(props.surface);
-        if (!canSpeak || typing || held || props.held || attentionInView()) return;
         props.onActorClick?.(actor.id);
-        if (!line || props.speech !== undefined) return;
-        setLocalSpeech({ actorId: actor.id, text: line });
-        clearTimeout(timer.current);
-        timer.current = setTimeout(() => setLocalSpeech(null), SPEECH_MS);
       }}>
       {mood === "waiting" && <span className="tchar-need" aria-hidden="true">!</span>}
     </button>
-    {canSpeak && words && <span ref={bubble} className="twalk-speech" role="status" hidden>{words}</span>}
+    {words && <span ref={bubble} className="twalk-speech" role="status" hidden>{words}</span>}
   </section>;
 }
