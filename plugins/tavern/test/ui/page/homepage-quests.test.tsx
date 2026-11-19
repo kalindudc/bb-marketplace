@@ -24,6 +24,11 @@ const keeper = richRoom.keepers[0]!;
 const mount = (component: () => React.ReactElement) => renderSlot({ component }, {}, { pluginId: "tavern", experimental_rpcContract: rpcContract });
 
 describe("homepage quest rows", () => {
+  it("shows the free hands count for each Keeper", async () => {
+    const data = { ...room, keepers: room.keepers.map(k => ({ ...k, freeHands: 2 })) };
+    const slot = mount(() => <Board room={data} registry={registry} api={{ hidden: new Set(), shown: new Set(), pending: false, receipt: null, error: null, archive: async () => {}, restore: async () => {}, undo: () => {}, clear: () => {} }} />);
+    expect(await slot.findAllByText("2 free hands")).toHaveLength(room.keepers.length);
+  });
   it("gives narrow Keeper labels the free space beside their tag and phase", () => {
     const css = readFileSync("src/ui/kit/components.css", "utf8");
     expect(css).not.toContain(".tavern.qrow-home .qrow-k { max-width: 10ch; }");

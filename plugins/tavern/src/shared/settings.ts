@@ -53,7 +53,7 @@ const sections = {
     batchWakeEvents: z.boolean().default(false) }).strict(),
   attention: z.object({ reviewBudget: z.number().int().min(1).max(30),
     notify: z.enum(["consequential", "all", "none"]), quietHours: quietHoursSchema.nullable() }).strict(),
-  keepers: z.object({ greenlight: z.enum(["explicit", "by-size"]),
+  keepers: z.object({ restMinutes: z.number().int().min(1).max(10080).default(30), greenlight: z.enum(["explicit", "by-size"]),
     decisionTimerMax: z.number().int().min(1).max(10080), partyMax: z.number().int().min(1).max(1000),
     staleStrikes: z.number().int().min(1).max(4), restatementBytes: z.literal(MEMORY_LIMITS.restatementBytes),
     tickFactChars: z.literal(MEMORY_LIMITS.tickFactChars) }).strict(),
@@ -69,7 +69,7 @@ export const settingsSchema = z.object({
   tavern: sections.tavern.default({ paused: false, defaultClass: "none", widgetRow: true, voice: "full", levels: true, characters: true, hearthFlicker: true, agentsMayChangeSettings: true, ambientMotion: "calm", repeatSeconds: 20, batchWakeEvents: false }),
   attention: sections.attention.default({ reviewBudget: 3, notify: "consequential", quietHours: null }),
   keepers: sections.keepers.default({ greenlight: "explicit", decisionTimerMax: 10080, partyMax: 5,
-    staleStrikes: 2, ...MEMORY_LIMITS }),
+    staleStrikes: 2, restMinutes: 30, ...MEMORY_LIMITS }),
   classes: sections.classes.default({}), scopes: sections.scopes.default({ mode: "enforce" }),
   machines: placementSettingsSchema.default({ maxMakers: 2, maxCheckers: 2, rules: [], forges: [] }),
   journal: sections.journal.default({ journalReminders: true, journalQuietMinutes: 10 }),
@@ -79,7 +79,7 @@ export const settingsSchema = z.object({
 export const DEFAULT_SETTINGS = settingsSchema.parse({});
 export const settingsPatchSchema = z.object({
   tavern: sections.tavern.partial().extend({ agentsMayChangeSettings: z.boolean().optional(), characters: z.boolean().optional(), ambientMotion: z.enum(["calm", "lively", "off"]).optional(), repeatSeconds: z.number().int().min(3).max(60).optional(), batchWakeEvents: z.boolean().optional() }).optional(), attention: sections.attention.partial().optional(),
-  keepers: sections.keepers.omit({ restatementBytes: true, tickFactChars: true }).partial().optional(), classes: sections.classes.optional(),
+  keepers: sections.keepers.omit({ restatementBytes: true, tickFactChars: true }).partial().extend({ restMinutes: sections.keepers.shape.restMinutes.removeDefault().optional() }).optional(), classes: sections.classes.optional(),
   scopes: sections.scopes.partial().optional(), journal: sections.journal.partial().optional(),
   machines: placementSettingsPatchSchema.optional(),
   data: sections.data.partial().optional(), tuning: sections.tuning.partial().optional(), knobs: sections.knobs.partial().optional(),

@@ -84,6 +84,9 @@ export function transitionQuest(store: KeeperStore, quest: BoardQuest, to: Phase
           return { ...grant, endedAt: at };
         }) as never;
       }
+      for (const member of store.query("members", "boardQuestId", quest.id, 500)) {
+        if (store.runtime(member.threadId).kept) store.patch(member.threadId, { kept: null });
+      }
     }
     authorised.add(result);
     store.put("quests", quest.id, result);

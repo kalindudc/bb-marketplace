@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { freeHands } from "./resting";
+import { restingParty } from "./resting";
 import { agentData } from "./agent-data";
 import type { TavernRuntime } from "./runtime";
 import { readRequestSources } from "./request-sources";
@@ -232,11 +232,13 @@ function statusData(
       pending: pending.slice(input.offset, input.offset + input.limit),
       total: pending.length,
     };
+  const resting = restingParty(k, threadId);
   const review = runtime.review();
   return {
     archivedCount,
     archivedMembers, archivedMemberTotal, nextArchivedOffset,
-    freeHands: freeHands(k, threadId),
+    freeHands: resting.filter(m => m.mayRebriefFor !== null),
+    restingMembers: resting.filter(m => m.settled),
     quests: (input.boardQuestId
       ? [k.quest(input.boardQuestId)]
       : k.store.visibleRecords("quests", threadId, input.limit, input.offset)

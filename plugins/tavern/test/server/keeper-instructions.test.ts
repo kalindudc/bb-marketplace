@@ -1,6 +1,8 @@
 // @vitest-environment node
 import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { setup } from "./runtime-fixture";
+import { registerTools } from "../../src/server/tools";
 
 const read = (path: string) => readFileSync(new URL(`../../${path}`, import.meta.url), "utf8");
 const body = read("classes/keeper.md").split(/^---\s*$/m).slice(2).join("---").trim();
@@ -9,6 +11,17 @@ const tools = new Map([...read("src/server/tools/index.ts").matchAll(/register\(
 const sections = new Map([...skill.matchAll(/^## (.+)\n([\s\S]*?)(?=^## |$(?![\s\S]))/gm)].map(match => [match[1]!, match[0]]));
 const sentences = (text: string) => text.replace(/^---\n[\s\S]*?\n---\n/, "").replace(/^#+ .*$/gm, "").replace(/^\d+\.\s*/gm, "").split(/[.!?](?:\s|$)/).map(s => s.replace(/^[\s-]+/, "").replace(/\s+/g, " ").trim()).filter(s => s.split(/\s+/).length >= 8);
 
+it("does not grow the integrated pre-F1 loaded instruction budget, including the keep schema", () => {
+  const f = setup();
+  const registered = vi.spyOn(f.bb.agents, "registerTool");
+  registerTools(f.bb, f.runtime);
+  const keep = registered.mock.calls.find(([tool]) => tool.name === "tavern_keep")![0];
+  const source = read("src/server/tools/index.ts");
+  const metadata = [...source.matchAll(/register\(\s*"(tavern_\w+)",\s*"((?:[^"\\]|\\.)*)",\s*("(?:[^"\\]|\\.)*")/g)].map(match => match[1]! + match[2]! + JSON.parse(match[3]!)).join("");
+  const structure = Buffer.byteLength(JSON.stringify(keep)) - Buffer.byteLength(keep.name + keep.description + "Kept a resting member");
+  const bytes = Buffer.byteLength(metadata + read("classes/keeper.md") + skill) + structure + Buffer.byteLength("\n\nFree hands:\nNone");
+  expect(bytes).toBeLessThanOrEqual(34754);
+});
 it("keeps the Keeper body within 6,000 bytes", () => {
   expect(Buffer.byteLength(body)).toBeLessThanOrEqual(6000);
 });
@@ -75,6 +88,11 @@ describe("R11 tool rules remain at the tool boundary", () => {
     expect(tools.has(name)).toBe(true);
     for (const pattern of patterns) expect(tools.get(name)).toMatch(pattern);
   });
+});
+
+it("names the user as the greenlight and detection-only approval authority", () => {
+  expect(tools.get("tavern_hire")).toContain("by default the user\'s explicit approval");
+  expect(tools.get("tavern_hire")).toContain("After the user approves, repeat with detectionOnlyAskId");
 });
 
 it("keeps the placement sentence at the end of hire instructions", () => {

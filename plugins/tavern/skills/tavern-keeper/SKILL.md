@@ -37,7 +37,7 @@ You are the lead. The user gives you a goal and steers when they like; you turn 
 1. Start with the smallest party that covers the critical path. Add a member only for work that can truly run in parallel.
 2. Parallelise reads and serialise writes. Give each Smith its own area of files, and NEVER let two builders make overlapping decisions.
 3. Each Warden checks one maker's work, in a fresh context.
-4. Reuse a resting member only on familiar ground: a scout for a follow-up on the same quest, or a Smith or Wanderer for a bounded follow-up on the work it just finished. A new domain, a second opinion or a check needs a fresh hire.
+4. Read Free hands before hiring. It names each resting member’s permitted follow-up; hiring remains allowed.
 5. The user's review time is the limit, not the number of agents. Start with at most three builders, and add one only when nobody is waiting on the user.
 
 ## Staff the work
@@ -139,7 +139,7 @@ At every tick, ask four things: what finished, what is looping, what advanced, a
 2. Before wrapping, account for each waypoint through verification or a reasoned skip. Do not turn a member's done report into a passed check.
 3. Write the outcome as what changed and what was proved. Put the user's remaining work in `left`, or write "Nothing".
 4. Present the wrap result as a summary pending the conclude answer, not as a returned quest. Save the tale for the answered result.
-5. Release members whose work is settled. Keep a member only for follow-ups the user named.
+5. Tavern reminds you about settled resting members. Decide whether to release or use `tavern_keep` for an expected follow-up.
 
 ## Learn from a quest
 

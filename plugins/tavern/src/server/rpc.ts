@@ -25,6 +25,7 @@ import { experimental_PluginRpcRefusal, type ExperimentalPluginRpcHandlerContext
 import { backfillTaleDelivery, memberCredits, readTale } from "./tale";
 import { readCharacterPresentation } from "./character-presentation";
 import type { TavernRuntime } from "./runtime";
+import { freeHands, restingContext } from "./resting";
 
 /** The stored brief for the widget: every hire-time line, then as many of the newest follow-ups as fit. */
 function decorBrief(brief: Brief | null | undefined) {
@@ -41,12 +42,18 @@ export function rpcHandlers(
 ): OptionalRpcContext<ExperimentalPluginRpcHandlersWithContext<typeof rpcContract>> {
   const k = runtime.keeper;
   const placementStore = new PlacementStore(k.store.db);
-  const projectMember = (member: import("../shared/schema").Member) => ({ ...member,
+  const projectMember = (member: import("../shared/schema").Member, context = restingContext(k)) => ({ ...member, restNote: runtime.restNote(member, context),
     pullRequests: runtime.keeper.store.pullRequestsForMember(member.threadId),
     placement: placementStore.byMember(member.threadId) ? runtime.placements().controller.forMember(member.threadId) : null });
-  const projectQuest = (quest: import("../shared/contract").BoardQuestSummary) => ({ ...quest,
-    members: quest.members.map(projectMember),
-    waypoints: quest.waypoints.map(waypoint => ({ ...waypoint, ownerMember: waypoint.ownerMember ? projectMember(waypoint.ownerMember) : null })) });
+  const projectMembers = (members: import("../shared/schema").Member[]) => {
+    const context = restingContext(k);
+    return members.map(member => projectMember(member, context));
+  };
+  const projectQuest = (quest: import("../shared/contract").BoardQuestSummary) => {
+    const context = restingContext(k);
+    return { ...quest, members: quest.members.map(member => projectMember(member, context)),
+      waypoints: quest.waypoints.map(waypoint => ({ ...waypoint, ownerMember: waypoint.ownerMember ? projectMember(waypoint.ownerMember, context) : null })) };
+  };
   const status = (threadId: string): "listening" | "busy" | "holding" => {
     if (k.store.runtime(threadId).archivedAt != null) return "listening";
     if (k.member(threadId)?.state === "working") return "busy";
@@ -68,7 +75,7 @@ export function rpcHandlers(
       ]),
     ])]);
   };
-  const errands = (threadId: string) => k.store.errandsPage(threadId, 100, 0).members.map(projectMember);
+  const errands = (threadId: string) => projectMembers(k.store.errandsPage(threadId, 100, 0).members);
   const partyIds = (threadId: string) => [
     threadId,
     ...k.store
@@ -372,6 +379,7 @@ export function rpcHandlers(
           const thread = k.store.runtime(m.threadId);
           return {
             member: projectMember(m),
+            freeHands: freeHands(k, m.threadId).length,
             archived: thread.archivedAt != null,
             threadTitle: thread.threadTitle ?? null,
             threadCreatedAt: thread.threadCreatedAt ?? null,
@@ -386,7 +394,7 @@ export function rpcHandlers(
         .sort((a, b) => a.createdAt - b.createdAt),
       ...decisions.attention(),
       review: runtime.review(),
-      solos: k.store.all("members").filter((m) => m.role === "solo" && isLiveMember(k.store, m, "occupy")).map(projectMember),
+      solos: projectMembers(k.store.all("members").filter((m) => m.role === "solo" && isLiveMember(k.store, m, "occupy"))),
       recent: k.store.roomEvents(60),
     }),
     releaseCheckerHandoff: async ({ boardQuestId, holdId, via }, context?: ExperimentalPluginRpcHandlerContext, receipt?: UserActReceipt) => {

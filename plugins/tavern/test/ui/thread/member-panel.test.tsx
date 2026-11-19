@@ -24,6 +24,11 @@ async function panel(decor: ThreadDecor = memberPanelDecor) {
   if (trigger.getAttribute("aria-expanded") !== "true") fireEvent.click(trigger);
   return slot;
 }
+it("shows the rest duration and keep reason in the Member panel", async () => {
+  const restNote = "resting 40 min; machine held; work settled. kept until 13:00: expect a follow-up.";
+  const slot = await panel({ ...memberPanelDecor, member: { ...memberPanelDecor.member!, restNote } });
+  expect(slot.getByText(restNote)).toBeTruthy();
+});
 it("draws identity chips, a glance card and collapsed counted sections", async () => {
   const slot = await panel();
   expect(slot.container.querySelector('[data-part="MemberIdentity"].chips')).not.toBeNull();

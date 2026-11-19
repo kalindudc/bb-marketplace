@@ -5,6 +5,7 @@ export const NEWS = new Set([
   "tavern.members-interrupted",
   "report.filed",
   "promise.due",
+  "member.rest-reminder",
   "member.unreported",
   "member.unbriefed",
   "member.briefed",

@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, waitFor, within } from "@testing-library/re
 import { renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { fixtureDecor, fixtureJournal, fixtureLedger, fixtureMember, fixtureQuest, fixtureRegistry } from "../../../src/ui/thread/fixtures";
 import { JournalTab, LedgerTab } from "../../../src/ui/thread/tabs";
+import type { Ledger } from "../../../src/shared/contract";
 import { PartyPicture } from "../../../src/ui/kit";
 afterEach(cleanup);
 
@@ -31,9 +32,15 @@ const ledgerAt = (now: number) => ({
   notesTotal: 7,
 });
 const ledger = ledgerAt(now);
-const renderLedger = (data = ledger) => renderSlot({ component: LedgerTab }, { threadId: "keeper-1", environment: null }, { rpc: { ledger: () => data, decor: () => fixtureDecor, registry: () => fixtureRegistry } });
+const renderLedger = (data: Ledger = ledger) => renderSlot({ component: LedgerTab }, { threadId: "keeper-1", environment: null }, { rpc: { ledger: () => data, decor: () => fixtureDecor, registry: () => fixtureRegistry } });
 
 describe("Ledger: what the Keeper keeps in mind", () => {
+  it("shows each resting member’s keep reason and time", async () => {
+    const restNote = "kept until 13:00: expect a follow-up.";
+    const slot = renderLedger({ ...ledger, boardQuests: [{ ...ledger.boardQuests[0]!, members: [{ ...fixtureMember, restNote }] }] });
+    expect(await slot.findByText(restNote, { exact: false })).toBeTruthy();
+    slot.lifecycle.unmount();
+  });
   it("counts hand-backs under Needs you by kind, so the number never reads as more asks", async () => {
     const slot = renderLedger();
     const needs = await slot.findByRole("region", { name: "Needs you" });

@@ -1566,6 +1566,7 @@ export class Keeper {
       this.store.put("reports", report.id, report);
       this.store.patch(threadId, {
         reportedBriefVersion: this.store.runtime(threadId).briefVersion ?? 0,
+        ...(!late && input.status === "done" ? { restSince: this.store.runtime(threadId).restSince ?? this.now() } : {}),
       });
       const state = late ? m.state : input.status === "done" ? "done" : "waiting";
       this.store.put("members", threadId, {
@@ -1836,6 +1837,8 @@ export class Keeper {
       : member.state === "done" && ["idle", "stopped", "waiting"].includes(state) ? "done"
       : ended ? member.state === "done" ? "done" : "stopped" : state;
     if (member.state === next) return;
+    if (next === "done") this.store.patch(threadId, { restSince: this.now() });
+    if (next === "working") this.store.patch(threadId, { restSince: null, restReminderFor: null, kept: null });
     this.store.put("members", threadId, {
       ...member,
       state: next,

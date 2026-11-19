@@ -6,7 +6,8 @@ import { isLiveKeeper, isLiveMember, isOpenQuest } from "./liveness";
 import { AwayRuntime } from "./away/runtime";
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
-import { restingCandidates } from "./resting";
+import { restingCandidates, restingEngagement, restingMember, restingParty, restingContext } from "./resting";
+import { localClock } from "./clock";
 import type {
   BbPluginApi,
   MessageDispatchHookContext,
@@ -82,6 +83,7 @@ export const KEEPER_TOOLS = [
   "tavern_resume",
   "tavern_hire",
   "tavern_release",
+  "tavern_keep",
   "tavern_scope",
   "tavern_tell",
   "tavern_unarchive",
@@ -121,7 +123,7 @@ type Hire = {
 type Thread = PluginThreadEventPayloads["thread.active"]["thread"];
 type QueuedMessage = PluginThreadEventPayloads["message.queued"]["entry"];
 
-import { commitUserAct, type UserActReceipt } from "./authority";
+import { authorize, commitUserAct, type UserActReceipt } from "./authority";
 import { transitionQuest } from "./keeper/quest-lifecycle";
 
 export class TavernRuntime {
@@ -129,6 +131,7 @@ export class TavernRuntime {
   readonly serviceRecords: ServiceRecords;
   readonly toolNames = [...KEEPER_TOOLS, "tavern_report", "tavern_request_sources", "tavern_ready", "tavern_draft_pr", "tavern_act_verdict"];
   private readonly loop = new TickLoop(this);
+  private readonly releaseLocks = new Map<string, Promise<boolean>>();
   private sourceInspection: SourceDiscovery | null = null;
   private awayState: AwayRuntime | null = null;
   get away(): AwayRuntime { return this.awayState ??= new AwayRuntime(this); }
@@ -667,6 +670,9 @@ export class TavernRuntime {
     readonly registry: Registry,
   ) {
     keeper.routineAskOpened = async ask => { if (ask.boardQuestId) await this.applyStandingAnswers(ask.boardQuestId); };
+    for (const member of keeper.store.all("members")) {
+      if (member.state === "done" && keeper.store.runtime(member.threadId).restSince == null) keeper.store.patch(member.threadId, { restSince: keeper.now() });
+    }
     this.serviceRecords = new ServiceRecords(keeper, stale => bb.rpc.experimental_invalidate(stale));
     PlacementPreservation.observe(bb, () => this.placements());
     keeper.store.log = (level, message) => this.bb.log[level](message);
@@ -1895,7 +1901,55 @@ export class TavernRuntime {
     const result = await this.placements().preserve.beforeRelease(threadId, "Cancelled hire");
     if (result.state === "waiting" || result.state === "blocked") throw new Error(result.message);
   }
+  keep(threadId: string, reference: string, until: number, why: string) {
+    this.stopAll.assertRunning();
+    this.keeper.require(threadId, "keeper");
+    const member = this.keeper.resolvePartyMember(threadId, reference);
+    if (!member.boardQuestId) throw new Error("Keep needs an active quest");
+    this.keeper.liveQuest(threadId, member.boardQuestId);
+    this.keeper.assertQuestNotHeld(member.boardQuestId);
+    if (!restingEngagement(this.keeper, member)) throw new Error("Only a resting member can be kept");
+    if (!Number.isSafeInteger(until) || until <= this.keeper.now() || until > this.keeper.now() + 24 * 60 * 60_000) throw new Error("Keep needs a future time within 24 hours");
+    if (!why.trim()) throw new Error("Keep needs a reason");
+    this.keeper.guard(threadId, member.boardQuestId);
+    return this.keeper.store.atomic(() => {
+      const decision = this.keeper.decide(threadId, { boardQuestId: member.boardQuestId, text: `Keep ${this.keeper.name(member)} until ${localClock(until)}`, why, reversible: true, source: "keeper" });
+      authorize("keepMember", { level: "keeper", receipt: decision.id });
+      this.keeper.store.patch(member.threadId, { kept: { until, why, decisionId: decision.id } });
+      this.keeper.changed(member.threadId, member.boardQuestId);
+      return decision;
+    });
+  }
+  restNote(member: Member, context = restingContext(this.keeper)): string | null {
+    const state = this.keeper.store.runtime(member.threadId);
+    if (state.released) return `Released${state.released.at === undefined ? "" : ` at ${localClock(state.released.at)}`}: ${state.released.reason}.`;
+    const row = restingMember(this.keeper, member, context);
+    if (!row) return null;
+    return `resting ${row.restedMinutes} min; ${row.machineHeld ? "machine held; " : ""}${row.settled ? "work settled" : "unchecked or rejected work"}. Last work: ${row.lastWork}.${row.kept ? ` kept until ${localClock(row.kept.until)}: ${row.kept.why}.` : ""}`;
+  }
+  remindResting(keeperId: string) {
+    if (this.stopAll.reason() || this.config().tavern.paused || !isLiveKeeper(this.keeper.store, this.keeper.member(keeperId))) return;
+    for (const row of restingParty(this.keeper, keeperId)) {
+      if (!row.settled || row.kept || row.boardQuestId && this.keeper.quest(row.boardQuestId).phase === "held" || row.restedMinutes < this.config(row.boardQuestId).keepers.restMinutes) continue;
+      this.keeper.store.atomic(() => {
+        const state = this.keeper.store.runtime(row.threadId);
+        if (state.restReminderFor === row.since) return;
+        this.keeper.store.patch(row.threadId, { restReminderFor: row.since });
+        this.keeper.store.event(this.keeper.now(), keeperId, row.boardQuestId, "member.rest-reminder", `${row.name}: resting ${row.restedMinutes} min; work settled${row.machineHeld ? "; machine held" : ""}. Release or keep this member.`, { memberThreadId: row.threadId, restSince: row.since, machineHeld: row.machineHeld });
+      });
+    }
+  }
+  private async withReleaseLock(keeperId: string, run: () => Promise<boolean>) {
+    const previous = this.releaseLocks.get(keeperId);
+    const work = (previous ? previous.then(() => {}, () => {}) : Promise.resolve()).then(run);
+    this.releaseLocks.set(keeperId, work);
+    try { return await work; }
+    finally { if (this.releaseLocks.get(keeperId) === work) this.releaseLocks.delete(keeperId); }
+  }
   async release(threadId: string, memberThreadId: string, reason: string) {
+    return this.withReleaseLock(threadId, () => this.releaseMember(threadId, memberThreadId, reason));
+  }
+  private async releaseMember(threadId: string, memberThreadId: string, reason: string) {
     this.stopAll.assertRunning();
     memberThreadId = this.keeper.resolvePartyMember(threadId, memberThreadId).threadId;
     this.keeper.require(threadId, "keeper");
@@ -1907,10 +1961,13 @@ export class TavernRuntime {
     )
       throw new Error("Only release a member of your own party");
     if (!reason.trim()) throw new Error("Release needs a reason");
-    if (member.boardQuestId) this.keeper.liveQuest(threadId, member.boardQuestId);
+    if (this.keeper.store.runtime(memberThreadId).released) return true;
+    if (member.boardQuestId) {
+      this.keeper.liveQuest(threadId, member.boardQuestId);
+      this.keeper.assertQuestNotHeld(member.boardQuestId);
+    }
     this.away.assertWork(member.boardQuestId, memberThreadId);
     if (member.boardQuestId) this.keeper.guard(threadId, member.boardQuestId);
-    if (this.keeper.store.runtime(memberThreadId).released) return true;
     let current: Thread | null;
     try { current = await this.bb.sdk.threads.get({ threadId: memberThreadId }); }
     catch (error) { if (!isNotFound(error)) throw error; current = null; this.threadGone(memberThreadId); }
@@ -1918,16 +1975,20 @@ export class TavernRuntime {
     this.keeper.store.patch(memberThreadId, { releasePending: reason });
     if ((!placement || !hasLostOwner(placement)) && current && current.archivedAt === null && current.deletedAt === null)
       await this.bb.sdk.threads.stop({ threadId: memberThreadId });
-    return this.finishRelease(member);
+    return this.finishReleaseLocked(member);
   }
   private async finishRelease(member: Member) {
-    if (this.stopAll.reason()) return false;
+    return this.withReleaseLock(member.keeperThreadId!, () => this.finishReleaseLocked(member));
+  }
+  private async finishReleaseLocked(member: Member) {
+    if (this.keeper.store.runtime(member.threadId).released) return true;
+    if (this.stopAll.reason() || member.boardQuestId && this.keeper.quest(member.boardQuestId).phase === "held") return false;
     const reason = this.keeper.store.runtime(member.threadId).releasePending;
     if (!reason || this.away.cleanupHeld() && this.keeper.store.runtime(member.threadId).archivePending) return false;
     let thread: Thread | null;
     try { thread = await this.bb.sdk.threads.get({ threadId: member.threadId }); }
     catch (error) { if (!isNotFound(error)) throw error; thread = null; this.threadGone(member.threadId); }
-    if (this.stopAll.reason()) return false;
+    if (this.stopAll.reason() || member.boardQuestId && this.keeper.quest(member.boardQuestId).phase === "held") return false;
     const placement = new PlacementStore(this.keeper.store.db).byMember(member.threadId);
     if (placement) {
       if (this.keeper.store.runtime(member.threadId).placementModelFailureRelease) {
@@ -1955,7 +2016,11 @@ export class TavernRuntime {
       thread.deletedAt === null
     )
       return false;
-    this.keeper.store.atomic(() => {
+    if (this.stopAll.reason() || member.boardQuestId && this.keeper.quest(member.boardQuestId).phase === "held") return false;
+    const released = this.keeper.store.atomic(() => {
+      const state = this.keeper.store.runtime(member.threadId);
+      if (state.released) return true;
+      if (state.releasePending !== reason) return false;
       const decision = this.keeper.decide(member.keeperThreadId!, {
         boardQuestId: member.boardQuestId && isOpenQuest(this.keeper.store.get("quests", member.boardQuestId)) ? member.boardQuestId : null,
         text: `Release ${this.keeper.name(member)}: ${reason}`,
@@ -1963,17 +2028,19 @@ export class TavernRuntime {
         reversible: true,
         source: "keeper",
       });
+      authorize("releaseMember", { level: "keeper", receipt: decision.id });
       this.keeper.store.patch(member.threadId, {
         releasePending: null,
         placementModelFailureRelease: null,
         archiveError: null,
-        released: { reason, decisionId: decision.id },
+        released: { reason, decisionId: decision.id, at: this.keeper.now() },
       }, this.keeper.now());
       this.keeper.activity(member.threadId, "stopped");
       this.keeper.store.event(this.keeper.now(), member.keeperThreadId, member.boardQuestId, "member.released", reason, { memberThreadId: member.threadId, decisionId: decision.id });
+      return true;
     });
-    this.scopes?.clearScope(member.threadId);
-    return true;
+    if (released) this.scopes?.clearScope(member.threadId);
+    return released;
   }
   private keeperStayReason(threadId: string) {
     if (this.keeper.store.all("quests").some(q => q.keeperThreadId === threadId && q.deletedAt == null && q.archivedAt == null)) return "it has another quest on the board";
@@ -2308,6 +2375,7 @@ export class TavernRuntime {
   }
   async tick(threadId: string, origin: "sweep" | "wake" = "sweep") {
     if (this.stopAll.reason() || this.config().tavern.paused || !isLiveKeeper(this.keeper.store, this.keeper.member(threadId))) return;
+    this.remindResting(threadId);
     while (this.keeper.store.runtime(threadId).queuedTickResetId) await this.resetQuietQueue(threadId);
     await this.loop.tick(threadId, origin);
   }

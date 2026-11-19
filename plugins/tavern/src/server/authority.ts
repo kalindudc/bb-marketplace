@@ -24,7 +24,7 @@ export const AUTHORITY = {
   voiceCheckStart: explicit, voiceCheckCancel: explicit, releaseHold: explicit,
   openQuest: words, reopenQuest: words, weakenChecks: words, steerDecision: words,
   holdQuestFromMessage: words, resumeQuestFromMessage: words,
-  defaultDecision: keeper, acceptWaypoint: keeper, skipWaypoint: keeper, exceedParty: keeper, exceedRangers: keeper,
+  keepMember: keeper, releaseMember: keeper, defaultDecision: keeper, acceptWaypoint: keeper, skipWaypoint: keeper, exceedParty: keeper, exceedRangers: keeper,
   verifyOwnWork: invariant, upgradeResolution: invariant, changeClosedCredits: invariant,
 } as const;
 export const QUEST_LANES = {

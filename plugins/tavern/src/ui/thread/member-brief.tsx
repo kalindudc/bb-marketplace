@@ -128,6 +128,7 @@ export function MemberPanel({ data, registry, scopeDetails, onQuest, cue }: { da
   return <div className="tw-member-panel">
     {registry && <MemberIdentity member={member} registry={registry} scope={data.scope} violations={data.violations} finished={finished} variant="chips" onScopeDetails={() => setMemberFold(data.threadId, "scope", true)} />}
     {!registry && <PlacementFacts placement={member.placement} memberName={memberName(member, { classes: [], characters: [] })} variant="card" />}
+    {member.restNote && <p className="m small" data-content>{member.restNote}</p>}
     {data.briefFields ? <MemberBrief brief={data.briefFields} classId={member.classId} threadId={data.threadId} waypoint={waypoint} onQuest={data.boardQuest ? () => onQuest(data.boardQuest!.id) : undefined} scopeDetails={scopeDetails} scopeAlerts={alerts} cue={cue} /> : <div className="tw-brief-fields">{data.brief && <p data-content><Prose text={data.brief} /></p>}<MemberFold threadId={data.threadId} cue={cue} section="scope" label="Scope and guardrails" count={alerts || undefined}>{scopeDetails}</MemberFold></div>}
     {(data.briefFields || data.brief) && <p className="m small tw-brief-note">{finished ? "This brief records the assignment and its guardrails." : "Messages you send here reach this member now and its Keeper in the next tick."}</p>}
   </div>;

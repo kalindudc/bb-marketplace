@@ -43,7 +43,7 @@ import {
 // The RPC contract between Tavern's server and its UI. Server handlers invalidate the tags below whenever the data
 // behind them changes, so every query stays live without polling.
 
-const memberSchema = storedMemberSchema.extend({ pullRequests: z.array(pullRequestSchema).optional(), placement: placementViewSchema.nullable().optional() });
+const memberSchema = storedMemberSchema.extend({ restNote: z.string().nullable().optional(), pullRequests: z.array(pullRequestSchema).optional(), placement: placementViewSchema.nullable().optional() });
 const threadId = z.string().min(1).max(100);
 const id = z.string().min(1).max(120);
 /** At most this many brief context lines reach the widget: every hire-time line, then the newest follow-ups. */
@@ -241,6 +241,7 @@ export const roomSchema = z.object({
   keepers: z.array(
     z.object({
       member: memberSchema,
+      freeHands: z.number().int().nonnegative().optional(),
       // added by Builder B: archived Keepers remain available for folding and uncellared quests.
       archived: z.boolean().optional(),
       // added by Builder B: bb metadata distinguishes same-name Keepers without inventing dates.

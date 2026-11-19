@@ -83,6 +83,7 @@ export function KeeperNotice({ keeper, room, registry, api, lit, since }: { keep
       <span className="rm-nh-s"><StateMark tone={status.tone}>{status.label}</StateMark></span>
     </header>
     <QuietNotice threadId={id} since={keeper.quietSince} />
+    {(keeper.freeHands ?? 0) > 0 && <p className="m small">{keeper.freeHands} free {keeper.freeHands === 1 ? "hand" : "hands"}</p>}
     {party.length > 0 && <PartyPicture ambientMotion={room.ambientMotion} repeatSeconds={room.repeatSeconds} members={party} registry={registry} quests={all} mini />}
     <div className="rm-qs" ref={rows}>
       {(moreA ? active : active.slice(0, ACTIVE_CAP)).map((q) => <QuestRow key={q.id} quest={q} room={room} registry={registry} keeper={keeper} arrival={{ since }} />)}

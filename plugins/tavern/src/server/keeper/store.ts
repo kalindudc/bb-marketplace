@@ -247,8 +247,11 @@ export interface Runtime {
   mainTurnId?: string;
   endedMainTurns?: string[];
   interruptedMainTurns?: { id: string; at: number }[];
+  restSince?: number | null;
+  restReminderFor?: number | null;
+  kept?: { until: number; why: string; decisionId: string } | null;
   releasePending?: string | null;
-  released?: { reason: string; decisionId: string };
+  released?: { reason: string; decisionId: string; at?: number };
   archivePending?: boolean;
   cellarArchiveRequested?: boolean;
   cellarArchived?: boolean;
