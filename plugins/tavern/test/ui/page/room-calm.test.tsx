@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { withAttention } from "../attention-fixture";
 import { definePluginApp } from "@get-bb/plugin-sdk/app";
 import { loadPluginApp, renderSlot, type RenderedSlot } from "@get-bb/plugin-sdk/testing/app";
 import { readFileSync } from "node:fs";
@@ -12,7 +13,7 @@ async function mount(calm: boolean) {
   const room = structuredClone(scenes.richRoom);
   if(calm) { room.asks=[];room.decidedForYou=[];room.decidedCount=0;room.review={waiting:0,budget:3,items:[]}; for(const k of room.keepers)for(const q of k.boardQuests) delete q.checkerHandoffHold; }
   const app = await loadPluginApp(definePluginApp(registerPageSurfaces));
-  const slot=renderSlot(app.navPanels[0]!,{subPath:"room"},{pluginId:"tavern",rpc:{room:()=>room,registry:()=>scenes.registry}});
+  const slot=renderSlot(app.navPanels[0]!,{subPath:"room"},{pluginId:"tavern",rpc:{room:()=>withAttention(room),registry:()=>scenes.registry}});
   slots.push(slot);return slot;
 }
 it("collapses empty attention containers only around the calm line", async()=>{

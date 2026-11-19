@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
-import { renderSlot } from "@get-bb/plugin-sdk/testing/app";
+import { renderAttentionSlot as renderSlot, withAttention } from "../attention-fixture";
 import type { Decision } from "../../../src/shared/schema";
 import { DecidedForYou, useRemembered } from "../../../src/ui/kit";
 import { fixtureDecor, fixtureJournal, fixtureLedger, fixtureRegistry } from "../../../src/ui/thread/fixtures";
@@ -117,7 +117,8 @@ describe("Thread tabs remember their view per thread", () => {
 describe("Ledger and widget use the server's attention list and counts", () => {
   const attention = [decision("d1", "Hired a Ranger for the DNS check"), decision("d2", "Picked staging first")];
   const history = [...attention, decision("h3", "Asked Luc about the window", { source: "steer" })];
-  const ledger = { ...fixtureLedger, decidedForYou: attention, decidedCount: 7, decidedThroughId: "d1", decisions: history, decisionsTotal: 150, decisionsNextCursor: "c1" };
+  const ledger = withAttention({ ...fixtureLedger, decidedForYou: attention, decidedCount: 7, decidedThroughId: "d1", decisions: history, decisionsTotal: 150, decisionsNextCursor: "c1" });
+  ledger.attention = { ...ledger.attention!, new: 7, decided: 7 };
   const older = { decisions: [decision("o1", "Kept the old cookie")], nextCursor: null, total: 150 };
 
   it("marks a row and a clipped list through the server, and counts the uncapped total", async () => {

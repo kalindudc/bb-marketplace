@@ -5,7 +5,8 @@ import { afterEach } from "vitest";
 import { fixtureAsk, fixtureDecor, fixtureQuest, fixtureRegistry, fixtureReport } from "../../../src/ui/thread/fixtures";
 import { AskCard, layoutWaypoints } from "../../../src/ui/kit";
 import { ReportCard } from "../../../src/ui/thread/cards";
-import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
+import { loadPluginApp } from "@get-bb/plugin-sdk/testing/app";
+import { renderAttentionSlot as renderSlot } from "../attention-fixture";
 import { definePluginApp } from "@get-bb/plugin-sdk/app";
 import { registerThreadSurfaces } from "../../../src/ui/thread/register";
 afterEach(cleanup);
@@ -74,7 +75,7 @@ describe("thread UI", () => {
         expect(slot.queryByLabelText("Tavern widget")).toBeNull();
         slot.lifecycle.unmount();
         const toggle = renderSlot(thread.actions![0]!, {}, options);
-        await toggle.findByRole("button", { name: /Show Tavern.*1 open ask/ });
+        await toggle.findByRole("button", { name: /Show Tavern.*1 need you/ });
         toggle.lifecycle.unmount();
     });
 });

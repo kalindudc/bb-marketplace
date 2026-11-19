@@ -359,6 +359,10 @@ export const rpcContract = defineContract({
     input: z.object({ threadId, edit: journalEditSchema }).strict(),
     output: z.object({ ok: z.literal(true), message: z.string() }),
   },
+  resolveHandBack: {
+    input: z.object({ noteId: id, how: z.enum(["done", "replied"]), reply: z.string().max(24000).optional() }).strict(),
+    output: ok,
+  },
   resumeKeeper: {
     input: z.object({ threadId }).strict(),
     output: z.object({ ok: z.literal(true) }),

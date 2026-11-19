@@ -238,6 +238,11 @@ export function rpcHandlers(
       k.changed(threadId, k.member(threadId)?.boardQuestId);
       return { ok: true, message: result.message };
     },
+    resolveHandBack: ({ noteId, how, reply }, _context, receipt?: UserActReceipt) => {
+      const result = k.memory.resolveByUser(noteId, how, reply);
+      if (result.changed) { k.userAction(result.note.keeperThreadId); wake(result.note.keeperThreadId); }
+      return { ok: true as const };
+    },
     resumeKeeper: ({ threadId }) => {
       k.require(threadId, "keeper");
       k.userAction(threadId, "explicit user resume after manual-stop", true);

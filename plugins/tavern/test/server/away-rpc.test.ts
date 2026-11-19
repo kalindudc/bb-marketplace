@@ -116,7 +116,7 @@ describe("Closing time RPC", () => {
     expect(f.runtime.away.snapshot().status.closed).toBe(true);
     await expect(f.call("answerAsk", { askId: ask.id, optionId: "missing", via: "page" })).rejects.toThrow();
     expect(f.runtime.away.snapshot().status.closed).toBe(true);
-    await f.call("answerAsk", { askId: ask.id, optionId: "wait", via: "page" });
+    await f.call("answerAsk", { askId: ask.id, optionId: "deny", via: "page" });
     expect(f.runtime.away.snapshot().window?.returnCause).toEqual({ kind: "ask-answer", threadId: "lead", refId: ask.id });
   });
 });

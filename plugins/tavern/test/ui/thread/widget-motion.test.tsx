@@ -2,7 +2,8 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { act, cleanup, waitFor } from "@testing-library/react";
 import { definePluginApp } from "@get-bb/plugin-sdk/app";
-import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
+import { loadPluginApp } from "@get-bb/plugin-sdk/testing/app";
+import { renderAttentionSlot as renderSlot } from "../attention-fixture";
 import { fixtureDecor, fixtureRegistry } from "../../../src/ui/thread/fixtures";
 import { registerThreadSurfaces } from "../../../src/ui/thread/register";
 import { TYPING_HOLD_MS, motion } from "../../../src/ui/kit/motion";

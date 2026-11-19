@@ -1,5 +1,6 @@
 import { definePluginApp } from "@get-bb/plugin-sdk/app";
-import { loadPluginApp, renderSlot, type PluginRpcTestHandlers, type RenderedSlot } from "@get-bb/plugin-sdk/testing/app";
+import { loadPluginApp, type PluginRpcTestHandlers, type RenderedSlot } from "@get-bb/plugin-sdk/testing/app";
+import { renderAttentionSlot as renderSlot } from "../attention-fixture";
 import { fireEvent, within } from "@testing-library/react";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";

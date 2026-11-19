@@ -90,6 +90,8 @@ export class KeeperMemory {
       boardQuestId: draft.boardQuestId ?? null,
       kind: draft.kind,
       text: draft.text,
+      ...(draft.action ? { action: draft.action } : {}),
+      ...(draft.why ? { why: draft.why } : {}),
       dueAt: draft.dueAt ?? null,
       condition: draft.condition ?? null,
       validUntil: draft.validUntil ?? null,
@@ -115,6 +117,21 @@ export class KeeperMemory {
     });
     this.k.changed(threadId, note.boardQuestId);
     return note;
+  }
+  resolveByUser(id: string, how: "done" | "replied", reply?: string) {
+    const note = this.k.store.get("notes", id);
+    if (!note || note.kind !== "waiting-on-user") throw new Error("This hand-back does not exist.");
+    if (note.state === "done") return { note, changed: false };
+    const at = this.k.now();
+    const done: KeeperNote = { ...note, state: "done", doneAt: at, updatedAt: at, resolution: { by: "user", how, at, ...(reply ? { reply } : {}) } };
+    this.k.store.atomic(() => {
+      this.k.store.put("notes", id, done);
+      this.k.store.event(at, note.keeperThreadId, note.boardQuestId, "handback.resolved",
+        `You ${how === "done" ? "marked" : "replied to"} '${note.action ?? note.text}'${how === "done" ? " done" : ""}`,
+        { noteId: id, by: "user", how, ...(reply ? { reply } : {}) }, { kind: "user" });
+    });
+    this.k.changed(note.keeperThreadId, note.boardQuestId);
+    return { note: done, changed: true };
   }
   complete(threadId: string, id: string) {
     this.k.require(threadId, "keeper");

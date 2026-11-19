@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { withAttention } from "../attention-fixture";
 import { afterEach, expect, it } from "vitest";
 import { cleanup } from "@testing-library/react";
 import { definePluginApp } from "@get-bb/plugin-sdk/app";
@@ -12,20 +13,20 @@ async function keeperRow(keeperView: Partial<NonNullable<typeof fixtureDecor.kee
   const app = await loadPluginApp(definePluginApp(registerThreadSurfaces));
   const banner = app.composerCustomizations.find(c => c.id === "tavern-thread")!.banners![0]!;
   const decor = { ...fixtureDecor, keeperView: { ...fixtureDecor.keeperView!, ...keeperView } };
-  return renderSlot(banner, {}, { composer: { scope: { kind: "thread", threadId: "keeper-1" } }, rpc: { decor: () => decor } });
+  return renderSlot(banner, {}, { composer: { scope: { kind: "thread", threadId: "keeper-1" } }, rpc: { decor: () => withAttention(decor) } });
 }
 it("shows no asks or decided chip at zero, and puts holding words in the row's free space, never beside a control", async () => {
   const slot = await keeperRow({ status: "holding", openAsks: [], decidedForYou: [] });
   const words = await slot.findByText((_, e) => e?.classList.contains("tw-sw") === true && e.textContent === "holding while you type");
   expect(words.parentElement?.classList.contains("tw-free")).toBe(true);
   expect(slot.queryByRole("button", { name: /need you|No asks/ })).toBeNull();
-  expect(slot.queryByRole("button", { name: /decided for you/i })).toBeNull();
+  expect(slot.queryByRole("button", { name: /new: open the Ledger/i })).toBeNull();
   expect(slot.container.textContent).not.toMatch(/0\s*need you/);
   slot.lifecycle.unmount();
 });
 it("still shows the asks chip with its count when an ask waits", async () => {
   const slot = await keeperRow({ status: "holding" });
-  const chip = await slot.findByRole("button", { name: /1 ask needs you/ });
+  const chip = await slot.findByRole("button", { name: /1 need you/ });
   expect(chip.textContent).toContain("need you");
   slot.lifecycle.unmount();
 });
@@ -37,12 +38,12 @@ it("draws the user's desktop state, holding with two long board quests, no asks 
   expect(words.closest("button, .tw-quests, .tw-id")).toBeNull();
   expect(words.parentElement?.classList.contains("tw-free")).toBe(true);
   expect(slot.getAllByRole("button", { name: /Open the quest page for/ })).toHaveLength(2);
-  expect((await slot.findByRole("button", { name: /decided for you/i })).textContent).toMatch(/1\s*decided/);
+  expect((await slot.findByRole("button", { name: /new: open the Ledger/i })).textContent).toMatch(/1\s*new/);
   expect(slot.queryByRole("button", { name: /need you|No asks/ })).toBeNull();
   slot.lifecycle.unmount();
 });
 it("counts the uncapped decidedCount on the widget row, not the clipped list", async () => {
-  const slot = await keeperRow({ status: "listening", openAsks: [], decidedForYou: [decisionSchema.parse({ id: "d1", keeperThreadId: "keeper-1", boardQuestId: null, text: "Picked staging first", why: "Reversible", source: "keeper", sourceRef: null, reversible: true, undone: false, createdAt: 1000 })], decidedCount: 12 });
-  expect((await slot.findByRole("button", { name: /12 decided for you/ })).textContent).toMatch(/12\s*decided/);
+  const slot = await keeperRow({ status: "listening", openAsks: [], decidedForYou: [decisionSchema.parse({ id: "d1", keeperThreadId: "keeper-1", boardQuestId: null, text: "Picked staging first", why: "Reversible", source: "keeper", sourceRef: null, reversible: true, undone: false, createdAt: 1000 })], attention: { items: [], needYou: 0, new: 12, heldByYou: 0 } });
+  expect((await slot.findByRole("button", { name: /12 new/ })).textContent).toMatch(/12\s*new/);
   slot.lifecycle.unmount();
 });

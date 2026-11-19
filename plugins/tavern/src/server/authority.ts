@@ -8,6 +8,7 @@ const invariant = { level: "tavern", proof: "invariant" } as const;
 export const AUTHORITY = {
   delegateQuest: explicit, preapproveQuest: explicit, revokeQuestAuthority: explicit,
   answerAsk: explicit, greenlight: explicit, conclude: explicit, closeEarly: explicit,
+  resolveHandBack: explicit,
   releaseCheckerHandoff: explicit, awayClose: explicit, awayReturn: explicit,
   addRule: explicit, widenRule: explicit, confirmRule: explicit, undoDecision: explicit,
   correctRoute: explicit, stopBoardQuest: explicit, resumeAll: explicit,

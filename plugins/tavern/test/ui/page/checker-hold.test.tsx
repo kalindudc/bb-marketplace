@@ -1,5 +1,6 @@
 import { definePluginApp } from "@get-bb/plugin-sdk/app";
-import { loadPluginApp, renderSlot, type PluginRpcTestHandlers, type RenderedSlot } from "@get-bb/plugin-sdk/testing/app";
+import { loadPluginApp, type PluginRpcTestHandlers, type RenderedSlot } from "@get-bb/plugin-sdk/testing/app";
+import { renderAttentionSlot as renderSlot } from "../attention-fixture";
 import { act, fireEvent, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { rpcContract, type BoardQuestDetail, type Room } from "../../../src/shared/contract";
@@ -186,15 +187,15 @@ describe("a checker-handoff hold in the common room", () => {
     expect(row.querySelector("button.tv-hold-release")!.textContent).toBe("Release checker handoff");
     // The quest is named once, as a quiet link to its page.
     expect(row.querySelector<HTMLButtonElement>("button.tv-hold-quest")!.textContent).toBe(live.quest.short);
-    expect(queue.querySelector(".tv-count")!.textContent).toBe(`${openAsks} asks and 1 hold, oldest first`);
+    expect(queue.querySelector(".tv-count")!.textContent).toBe(`${openAsks + 1} need you, oldest first`);
   });
 
-  it("counts the hold on bb's Tavern badge too, and names it there", async () => {
+  it("counts the hold in bb's canonical Tavern attention badge too", async () => {
     const Badge = () => { const b = useTavernBadge(); return <span data-badge>{b ? `${b.count}|${b.label}` : "none"}</span>; };
     const room = roomWith(hold());
     const slot = renderSlot({ component: Badge }, {}, { pluginId: "tavern", experimental_rpcContract: rpcContract, rpc: { room: () => structuredClone(room) } as Partial<Handlers> as Handlers });
     slots.push(slot);
-    await waitFor(() => expect(slot.container.querySelector("[data-badge]")!.textContent).toBe(`${openAsks + 1}|${openAsks} open Tavern asks and 1 checker handoff to release need you`), LOADED);
+    await waitFor(() => expect(slot.container.querySelector("[data-badge]")!.textContent).toBe(`${openAsks + 1}|${openAsks + 1} need you`), LOADED);
   });
 
   it("counts a hold the Keeper also asked about once, as its ask, and lists only the ask", async () => {

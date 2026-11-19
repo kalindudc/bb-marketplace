@@ -1,5 +1,6 @@
 import { definePluginApp } from "@get-bb/plugin-sdk/app";
-import { loadPluginApp, renderSlot, type PluginRpcTestHandlers, type RenderedSlot } from "@get-bb/plugin-sdk/testing/app";
+import { loadPluginApp, type PluginRpcTestHandlers, type RenderedSlot } from "@get-bb/plugin-sdk/testing/app";
+import { renderAttentionSlot as renderSlot, withAttention } from "../attention-fixture";
 import { act, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { rpcContract, type Room } from "../../../src/shared/contract";
@@ -39,7 +40,9 @@ describe("the status line under Keeper ticks", () => {
     act(() => jump.focus());
     const changed = structuredClone(scenes.richRoom);
     changed.decidedCount = (changed.decidedCount ?? changed.decidedForYou.filter((d) => !d.undone).length) + 3;
-    r.set(changed);
+    const next = withAttention(changed);
+    next.attention = { ...next.attention!, new: changed.decidedCount, decided: changed.decidedCount };
+    r.set(next);
     await act(async () => { await r.slot.experimental_invalidateRpc(null); });
     await waitFor(() => expect(r.line().textContent).toContain(`${changed.decidedCount} decided`));
     expect(document.activeElement).toBe(jump);

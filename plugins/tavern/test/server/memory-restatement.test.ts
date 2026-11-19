@@ -199,6 +199,7 @@ describe("Complete Keeper restatement", () => {
     });
     for (const member of f.k.store.all("members").filter(member => member.role === "member"))
       f.k.store.put("members", member.threadId, { ...member, repo: "repo-" + "r".repeat(95) });
+    for (let i = 0; i < 12; i++) f.k.memory.note("lead", { kind: "waiting-on-user", text: pad(`HAND-BACK-${i}`, 1000), action: pad(`ACTION-${i}`, 300), why: pad("External access needed", 1000) });
     const text = f.k.restatement("lead");
     const configured = f.runtime.configure(
       makePluginAgentConfigurationContext({ thread: { id: "lead" } }),

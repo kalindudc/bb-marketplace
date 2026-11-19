@@ -170,6 +170,7 @@ describe("Memory re-check regressions", () => {
     f.advance(3 * 86400_000);
     f.k.memory.note("lead", {
       kind: "waiting-on-user",
+      action: "NEW-HANDBACK send one line",
       text: "NEW-HANDBACK send one line",
     });
     f.k.memory.note("lead", { kind: "fact", text: "NEW-FACT Luc is online" });

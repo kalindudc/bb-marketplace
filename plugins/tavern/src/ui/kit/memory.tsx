@@ -1,3 +1,6 @@
+import { experimental_useRpcMutation, useBbNavigate } from "@get-bb/plugin-sdk/app";
+import { rpcContract } from "../../shared/contract";
+import { replyToHandBack } from "../thread/handback-reply";
 import { useState } from "react";
 import type { GateRecord, KeeperNote } from "../../shared/schema";
 import { Glyph } from "./glyphs";
@@ -16,22 +19,37 @@ function sorted(notes: KeeperNote[]) {
 function NoteRow({ note, short, now }: { note: KeeperNote; short?: Short; now: number }) {
   const q = short?.(note.boardQuestId) ?? null;
   const late = note.kind === "commitment" && note.dueAt !== null && note.dueAt < now;
-  const text = note.kind === "fact" ? `“${note.text}”` : note.condition ? `${note.text} · when ${note.condition}` : note.text;
+  const text = note.kind === "waiting-on-user" ? note.action ?? note.text : note.kind === "fact" ? `“${note.text}”` : note.condition ? `${note.text} · when ${note.condition}` : note.text;
   const meta = note.kind === "commitment"
     ? late ? <span title={`Was due ${at(note.dueAt!, now)}`}><StatusPill status="blocked">overdue</StatusPill></span> : note.dueAt !== null ? <span className="m" title={`by ${at(note.dueAt, now)}`}>by {at(note.dueAt, now)}</span> : <span className="m" title={`on a condition: ${note.condition}`}>on a condition</span>
     : note.kind === "fact" && note.validUntil !== null ? <span className="m" title={`Kept until ${new Date(note.validUntil).toLocaleString()}`}>until {at(note.validUntil, now)}</span>
     : <TimeAgo at={note.createdAt} />;
-  return <li className={`mem-row k-${note.kind} ${late ? "late" : ""}`}><Clamp lines={1} text={text} /><span className="mem-meta">{meta}</span>{q ? <span className="lg-q" title={q}>{q}</span> : <span />}</li>;
+  return <li className={`mem-row k-${note.kind} ${late ? "late" : ""}`}><Clamp lines={1} text={text} /><span className="mem-meta">{meta}</span>{q ? <span className="lg-q" title={q}>{q}</span> : <span />}{note.kind === "waiting-on-user" && <HandBackActions note={note} />}</li>;
 }
 
-/** One kind of Keeper note, the first three shown and the rest expanding in place. Read-only: the Keeper records and closes notes itself. */
+function HandBackActions({ note }: { note: KeeperNote }) {
+  const resolve = experimental_useRpcMutation({ contract: rpcContract, method: "resolveHandBack" });
+  const navigate = useBbNavigate();
+  const [error, setError] = useState<unknown>(null);
+  const [done, setDone] = useState(false);
+  return <div className="mem-handback">
+    {note.validUntil != null && note.validUntil < Date.now() && <p>expired, Done to clear</p>}
+    {note.why && <p>{note.why}</p>}
+    {note.action && note.text !== note.action && <p className="m small">{note.text}</p>}
+    {note.sourceMessageId && <button type="button" className="lnk-btn" onClick={() => navigate.toThread(note.keeperThreadId)} title={`Source receipt: ${note.sourceMessageId}`}>Keeper thread</button>}
+    {done ? <span role="status">Done. The Keeper has been told.</span> : <><button type="button" className="btn sm" disabled={resolve.isPending} onClick={() => void resolve.mutate({ noteId: note.id, how: "done" }).then(() => setDone(true)).catch(setError)}>Done</button><button type="button" className="btn sm" onClick={() => { replyToHandBack(note); navigate.toThread(note.keeperThreadId); }}>Reply</button></>}
+    {error != null && <p role="alert">{error instanceof Error ? error.message : String(error)}</p>}
+  </div>;
+}
+
+/** One kind of Keeper note, the first three shown and the rest expanding in place. */
 export function KeeperNoteRows({ notes, short, label, fold, newestFirst = false }: { notes: KeeperNote[]; short?: Short; label: string; fold?: [boolean, (next: boolean) => void]; newestFirst?: boolean }) {
   const now = useNow();
   const localFold = useState(false);
   const [all, setAll] = fold ?? localFold;
   if (notes.length === 0) return null;
   const list = newestFirst ? [...notes].sort((a, b) => b.createdAt - a.createdAt) : sorted(notes);
-  const shown = all ? list : list.slice(0, SHOWN);
+  const shown = all || list.every(note => note.kind === "waiting-on-user") ? list : list.slice(0, SHOWN);
   return <>
     <ul className="lg-rows mem-rows" aria-label={label}>{shown.map(n => <NoteRow key={n.id} note={n} short={short} now={now} />)}</ul>
     {list.length > SHOWN && <button type="button" className="lnk-btn mem-more" aria-expanded={all} onClick={() => setAll(!all)}>{all ? "Show fewer" : `Show all ${list.length}`}<Glyph name="chevron" size={11} className={`act-i ${all ? "up" : "down"}`} /></button>}

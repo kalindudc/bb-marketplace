@@ -100,7 +100,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   register(
     "tavern_note",
     "Recorded Keeper memory",
-    "Record a fact verbatim, a commitment with dueAt or condition, or a waiting-on-user hand-back. Close a resolved note with op done and noteId; facts may carry validUntil. Wrapping or stopping closes that quest's promises and hand-backs. Page older notes with tavern_status section=notes. These records survive compaction; do not make promises only in chat.",
+    "Record a fact verbatim (validUntil optional), a commitment with dueAt or condition, or a waiting-on-user hand-back with a one-line action only the user can do and optional why. Use facts or summaries for information. Done and Reply resolve it; op done closes notes. Quest end closes promises and hand-backs. Do not make promises only in chat.",
     z.union([
       noteDraftSchema.safeExtend({ op: z.literal("add") }),
       z.object({ op: z.literal("done"), noteId: id }).strict(),

@@ -1,5 +1,6 @@
 import { definePluginApp } from "@get-bb/plugin-sdk/app";
-import { loadPluginApp, renderSlot, type PluginRpcTestHandlers, type RenderedSlot } from "@get-bb/plugin-sdk/testing/app";
+import { loadPluginApp, type PluginRpcTestHandlers, type RenderedSlot } from "@get-bb/plugin-sdk/testing/app";
+import { renderAttentionSlot as renderSlot, withAttention } from "../attention-fixture";
 import { waitFor } from "@testing-library/react";
 import { useLayoutEffect } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -166,7 +167,7 @@ describe("nothing grows after the first paint", () => {
       // A layout effect runs at the first commit, before any passive effect, so it sees what the first paint will show.
       let atFirstCommit: boolean | undefined;
       const Probe = () => { useLayoutEffect(() => { atFirstCommit = document.querySelector<HTMLDetailsElement>("details[data-ask]")?.open; }, []); return null; };
-      const slot = renderSlot({ component: () => <><NeedsYouQueue room={scenes.richRoom} registry={scenes.registry} /><Probe /></> }, {}, { pluginId: "tavern", experimental_rpcContract: rpcContract });
+      const slot = renderSlot({ component: () => <><NeedsYouQueue room={withAttention(scenes.richRoom)} registry={scenes.registry} /><Probe /></> }, {}, { pluginId: "tavern", experimental_rpcContract: rpcContract });
       slots.push(slot);
       expect(atFirstCommit).toBe(true);
     } finally { Object.defineProperty(window, "matchMedia", { configurable: true, value: was }); }

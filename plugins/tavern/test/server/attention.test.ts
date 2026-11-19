@@ -12,7 +12,7 @@ async function fixture() {
   const f = setup();
   const q = await seedQuest(f.k, "lead", "Attention", "Attention");
   const ask = f.k.ask("lead", { boardQuestId: q.id, effect: { type: "decision" }, question: "Pick a region", why: "Your call", kind: "decision", options: [{ id: "yes", label: "Yes", detail: "", recommended: true }], meanwhile: "Wait", holds: [] });
-  const note = f.k.memory.note("lead", { kind: "waiting-on-user", text: "Approve access", boardQuestId: q.id } as any);
+  const note = f.k.memory.note("lead", { kind: "waiting-on-user", text: "Approve access", action: "Approve access", boardQuestId: q.id } as any);
   f.k.addRule({ scope: "quest", scopeId: q.id, text: "Confirm this rule", source: "keeper-proposed" }, "lead");
   f.k.store.put("quests", q.id, { ...f.k.quest(q.id), checkerHandoffHold: { id: "hold", reason: "Review", createdAt: f.time(), routeId: "route", sourceMessageId: "message", sourceText: "Hold", release: null } });
   return { ...f, q, ask, note, rpc: rpcHandlers(f.runtime) };

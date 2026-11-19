@@ -76,6 +76,7 @@ describe("Re-check load, last reply and paused ticks", () => {
     for (let i = 0; i < 8; i++)
       f.k.memory.note("lead", {
         kind: i % 2 ? "fact" : "waiting-on-user",
+      action: "Finish the external check",
         text: pad(`NOTE-${i}`, 300),
         boardQuestId: ids[i % 4],
       });

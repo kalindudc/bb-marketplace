@@ -22,6 +22,9 @@ it("does not grow the integrated pre-F1 loaded instruction budget, including the
   const bytes = Buffer.byteLength(metadata + read("classes/keeper.md") + skill) + structure + Buffer.byteLength("\n\nFree hands:\nNone");
   expect(bytes).toBeLessThanOrEqual(34754);
 });
+it("keeps the hand-back tool within the original 354-byte description budget", () => {
+  expect(Buffer.byteLength(tools.get("tavern_note")!)).toBeLessThanOrEqual(354);
+});
 it("keeps the Keeper body within 6,000 bytes", () => {
   expect(Buffer.byteLength(body)).toBeLessThanOrEqual(6000);
 });

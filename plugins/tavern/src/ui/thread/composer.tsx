@@ -1,3 +1,4 @@
+import { useHandBackReply } from "./handback-reply";
 import { attentionView, attentionTitle } from "../../shared/attention";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type CSSProperties } from "react";
 import { experimental_useRpcQuery, experimental_useRpcMutation, experimental_usePluginId, experimental_useAppPanel, useBbNavigate, useComposer, UrlLink, type PluginComposerApi } from "@get-bb/plugin-sdk/app";
@@ -190,6 +191,7 @@ export function ThreadWidget({ threadId }: { threadId: string }) {
   const typing = experimental_useRpcMutation({ contract: rpcContract, method: "typing" });
   const [open, setOpen] = useWidgetPanel(threadId);
   const [error, setError] = useState<unknown>(null);
+  useHandBackReply(threadId, composer, setError);
   const { revealAskId, revealVersion } = useWidgetReveal(threadId);
   const lastTyping = useRef(0);
   const [pageSince] = useState(Date.now);

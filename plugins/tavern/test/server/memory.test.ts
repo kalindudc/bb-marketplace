@@ -80,6 +80,7 @@ describe("durable Keeper memory", () => {
     });
     f.k.memory.note("lead", {
       kind: "waiting-on-user",
+      action: "Send the missing-plugins acceptance line",
       text: "Send the missing-plugins acceptance line",
     });
     f.advance(61_000);

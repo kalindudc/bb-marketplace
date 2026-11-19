@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { definePluginApp } from "@get-bb/plugin-sdk/app";
-import { loadPluginApp, renderSlot, type RenderedSlot } from "@get-bb/plugin-sdk/testing/app";
+import { loadPluginApp, type RenderedSlot } from "@get-bb/plugin-sdk/testing/app";
+import { renderAttentionSlot as renderSlot } from "../attention-fixture";
 import { afterEach, expect, it } from "vitest";
 import { registerPageSurfaces } from "../../../src/ui/page/register";
 import * as scenes from "./scenes";
