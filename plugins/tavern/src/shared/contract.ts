@@ -1,4 +1,5 @@
 import { delegationKindSchema, preapprovalInputSchema, questAuthorityViewSchema } from "./quest-authority";
+import { attentionSchema } from "./attention";
 import { taleResultsSchema } from "./tale-results";
 import { characterServiceRecordSchema, taleLevelSchema } from "./service-record";
 import { executionFactsSchema } from "./class-execution";
@@ -86,6 +87,7 @@ export const waypointViewSchema = waypointSchema.extend({
 });
 
 export const boardQuestSummarySchema = boardQuestSchema.extend({
+  attention: attentionSchema.optional(),
   nextNewsBy: z.number().nullable().optional(),
   stopUnconfirmed: z.number().int().nonnegative().optional(),
   stopPendingHires: z.array(z.object({ token: id, classId: z.string(), title: z.string() })).optional(),
@@ -135,7 +137,7 @@ export const threadDecorSchema = z.object({
     waypointTitle: z.string().nullable().optional(),
     verdict: z.object({ status: z.enum(["verified", "rejected"]), at: z.number(), checkerName: z.string().nullable().optional(), waypointTitle: z.string().nullable().optional() }).nullable(),
   }).optional(),
-  /** News events the Keeper has not received yet: the widget's available-events signal. */
+  /** Internal Keeper backlog, shown only in its status tooltip. */
   pendingEvents: z.number().int().nonnegative().optional(),
   /** Whether wake-delivered ticks may batch (an opt-in setting; sweep ticks never batch). */
   wakeBatching: z.boolean().optional(),
@@ -155,6 +157,7 @@ export const threadDecorSchema = z.object({
   /** Keeper threads only. */
   keeperView: z
     .object({
+      attention: attentionSchema.optional(),
       boardQuests: z.array(boardQuestSummarySchema),
       errands: z.array(memberSchema),
       openAsks: z.array(askSchema),
@@ -174,6 +177,7 @@ export const threadDecorSchema = z.object({
 export type ThreadDecor = z.infer<typeof threadDecorSchema>;
 
 export const boardQuestDetailSchema = z.object({
+  attention: attentionSchema.optional(),
   // added by Builder B: the Keeper's wrap and journal-backed credits remain sparse-safe for old fixtures.
   tale: z.object({
     outcome: z.string(), left: z.string().nullable(),
@@ -209,6 +213,8 @@ export const boardQuestDetailSchema = z.object({
 export type BoardQuestDetail = z.infer<typeof boardQuestDetailSchema>;
 
 export const ledgerSchema = z.object({
+  asksNextCursor: z.string().nullable().optional(),
+  attention: attentionSchema.optional(),
   // added by Builder B: durable facts/promises and gate contact are visible in the Ledger.
   notes: z.array(keeperNoteSchema).optional(), gates: z.array(gateRecordSchema).optional(), notesTotal: z.number().int().optional(),
   // added by Builder B: keep live guardrails and violation evidence in the Keeper ledger.
@@ -235,6 +241,8 @@ export const ledgerSchema = z.object({
 export type Ledger = z.infer<typeof ledgerSchema>;
 
 export const roomSchema = z.object({
+  notes: z.array(keeperNoteSchema).optional(),
+  attention: attentionSchema.optional(),
   hearthFlicker: z.boolean().optional(),
   ambientMotion: z.enum(["calm", "lively", "off"]).optional(), repeatSeconds: z.number().optional(),
   away: awayStatusSchema.optional(),
@@ -242,6 +250,7 @@ export const roomSchema = z.object({
     z.object({
       member: memberSchema,
       freeHands: z.number().int().nonnegative().optional(),
+      attention: attentionSchema.optional(),
       // added by Builder B: archived Keepers remain available for folding and uncellared quests.
       archived: z.boolean().optional(),
       // added by Builder B: bb metadata distinguishes same-name Keepers without inventing dates.
@@ -353,6 +362,11 @@ export const rpcContract = defineContract({
   resumeKeeper: {
     input: z.object({ threadId }).strict(),
     output: z.object({ ok: z.literal(true) }),
+  },
+  askHistory: {
+    input: z.object({ threadId, cursor: z.string().nullable().default(null) }).strict(),
+    output: z.object({ asks: z.array(askSchema), nextCursor: z.string().nullable() }),
+    tags: ({ threadId }: { threadId: string }) => [tags.thread(threadId)],
   },
   ledger: {
     input: z.object({ threadId }).strict(),

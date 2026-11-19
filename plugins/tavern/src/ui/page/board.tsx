@@ -1,3 +1,4 @@
+import { attentionView } from "../../shared/attention";
 import { experimental_usePluginId, useBbNavigate } from "@get-bb/plugin-sdk/app";
 import { useEffect, useLayoutEffect, useRef } from "react";
 import { onTheRoad, CELLAR, ExpandsMark, Hearth, rememberCount, KeeperRow, OpensMark, QuestRow, QuietNotice, Vocabulary, clockTime, glowVars, hearthWords, keeperStartedLabel, keeperStatus, plural, useNow, useReturnCue, useToday } from "../kit";
@@ -16,8 +17,8 @@ type K = Room["keepers"][number];
 const names = (registry: Registry, keeper: Member) => ({ keeper: characterName(registry, keeper), member: (m: Member) => characterName(registry, m) });
 /** A Keeper's quests still in the room: not in the cellar, and not just sent there (the receipt's Undo can bring them back). */
 export const inRoom = (k: K, api: Pick<ArchiveApi, "hidden">) => k.boardQuests.filter((q) => !q.archivedAt && !api.hidden.has(q.id));
-export const needsYou = (room: Room, k: K) => room.asks.some((a) => a.state === "open" && a.keeperThreadId === k.member.threadId);
-const unseenDecided = (room: Room, k: K) => room.decidedForYou.filter((d) => d.keeperThreadId === k.member.threadId && !d.undone && d.seenAt == null).length;
+export const needsYou = (_room: Room, k: K) => attentionView(k.attention).needYou > 0;
+const unseenDecided = (_room: Room, k: K) => attentionView(k.attention).decided ?? attentionView(k.attention).new;
 
 /**
  * Who gets a notice and in what order: a Keeper with a quest in the room or an open ask. Yours first, then a failed member,

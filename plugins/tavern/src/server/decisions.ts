@@ -1,3 +1,4 @@
+import { AttentionSnapshot } from "./attention";
 import type { Decision } from "../shared/schema";
 import type { KeeperStore, Records } from "./keeper/store";
 
@@ -17,8 +18,9 @@ export class DecisionViews {
       "json_extract(r.data,'$.reversible')=1",
       "json_extract(r.data,'$.undone')=0",
       "json_extract(r.data,'$.seenAt') IS NULL",
+      "NOT EXISTS (SELECT 1 FROM tavern_records seen WHERE seen.kind='attentionSeen' AND seen.id=r.id)",
       `NOT EXISTS (SELECT 1 FROM tavern_records q WHERE q.kind='quests'
-        AND q.id=json_extract(r.data,'$.boardQuestId') AND q.archived_at IS NOT NULL)`,
+        AND q.id=json_extract(r.data,'$.boardQuestId') AND (q.archived_at IS NOT NULL OR json_extract(q.data,'$.deletedAt') IS NOT NULL))`,
     ];
     const args: Query["args"] = [];
     for (const field of ["keeperThreadId", "boardQuestId"] as const) {
@@ -51,16 +53,7 @@ export class DecisionViews {
   }
 
   attention(filter: Filter = {}) {
-    const query = this.attentionQuery(filter);
-    const count = this.store.db.prepare(
-      `SELECT count(*) AS n FROM tavern_records r WHERE ${query.sql}`,
-    ).get(...query.args) as { n: number };
-    const decisions = this.attentionRows(query, 100);
-    return {
-      decidedForYou: decisions,
-      decidedCount: count.n,
-      decidedThroughId: decisions[0]?.id ?? null,
-    };
+    return new AttentionSnapshot(this.store, filter).calls(filter, 100);
   }
 
   mark(input: MarkInput, at: number) {
@@ -74,7 +67,7 @@ export class DecisionViews {
         if (!page.length) break;
         for (const decision of page) {
           this.store.put("decisions", decision.id, { ...decision, seenAt: at });
-          this.store.put("decisionSeen", decision.id, { token, seenAt: at });
+          this.store.put("attentionSeen", decision.id, { token, seenAt: at });
           changed.push(decision);
         }
         if ("ids" in input) break;
@@ -95,17 +88,18 @@ export class DecisionViews {
     this.store.atomic(() => {
       for (;;) {
         const page = this.store.db.prepare(
-          `SELECT id,data FROM tavern_records WHERE kind='decisionSeen'
+          `SELECT id,data FROM tavern_records WHERE kind IN ('attentionSeen','decisionSeen')
             AND json_extract(data,'$.token')=? ORDER BY rowid LIMIT 200`,
         ).all(token) as (Row & { id: string })[];
         if (!page.length) break;
         for (const row of page) {
-          const mark = JSON.parse(row.data) as Records["decisionSeen"];
+          const mark = JSON.parse(row.data) as Records["attentionSeen"];
           const decision = this.store.get("decisions", row.id);
           if (decision && decision.seenAt === mark.seenAt) {
             this.store.put("decisions", row.id, { ...decision, seenAt: null });
             changed.push(decision);
           }
+          this.store.remove("attentionSeen", row.id);
           this.store.remove("decisionSeen", row.id);
         }
       }

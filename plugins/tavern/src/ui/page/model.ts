@@ -1,4 +1,5 @@
 import { moveTime } from "../../shared/time";
+import { attentionView } from "../../shared/attention";
 import type { BoardQuestSummary, MapHistory, Room } from "../../shared/contract";
 import { checkerHandoffHoldSchema, type Ask, type Member, type Phase, type Report, type TavernEvent } from "../../shared/schema";
 import { extractReportHeadline, type ReportHeadlineNames } from "../../shared/report-headline";
@@ -98,7 +99,7 @@ export function namedDetail(detail: string | null, questId: string | null, ctx: 
 /** Quests in the room whose checker-handoff hold waits on the user: the kit's rule (heldQuests) over the room's quests. */
 export const heldForYou = (room: Room) => heldQuests(questsIn(room), room.asks);
 /** What waits on the user in the common room: open asks and checker-handoff holds to release. */
-export const needYouCount = (room: Room) => openAskCount(room) + heldForYou(room).length;
+export const needYouCount = (room: Pick<Room, "attention">) => attentionView(room.attention).needYou;
 /** bb's Tavern badge label: the nouns follow their own counts, the verb follows the total. */
 export function badgeLabel(asks: number, holds: number) {
   const parts = [asks ? `${asks} open Tavern ${asks === 1 ? "ask" : "asks"}` : null, holds ? `${holds} checker ${holds === 1 ? "handoff" : "handoffs"} to release` : null].filter(Boolean).join(" and ");

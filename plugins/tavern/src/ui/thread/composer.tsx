@@ -1,3 +1,4 @@
+import { attentionView, attentionTitle } from "../../shared/attention";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type CSSProperties } from "react";
 import { experimental_useRpcQuery, experimental_useRpcMutation, experimental_usePluginId, experimental_useAppPanel, useBbNavigate, useComposer, UrlLink, type PluginComposerApi } from "@get-bb/plugin-sdk/app";
 import { settingsContract } from "../../shared/settings";
@@ -248,12 +249,12 @@ export function ThreadWidget({ threadId }: { threadId: string }) {
     {walker}
     <section className={`tavern twidget v-${variant} ${lit ? "glow" : ""} ${open ? "is-open" : ""} ${keeper?.quietSince != null ? "is-quiet" : ""}`} style={surface} aria-label="Tavern widget" data-part="TavernWidget">
       <div className="tw-row">
-        {identity && data.member && keeper && <span className={`tw-id ${keeper ? `st-${keeper.quietSince != null ? "quiet" : keeper.status}` : ""}`} title={`This thread: ${identity.character.name}, ${identity.cls.label} (${identity.cls.plain})${keeper ? ` · ${keeper.quietSince != null ? `quiet: ${KEEPER_STATE_HINT.quiet}` : `${STATUS_WORD[keeper.status]}: ${STATUS_HINT[keeper.status]}`}` : ""}`}><span className="tw-crest"><Crest {...identity} size={18} />{keeper && <i ref={dot} className="tw-dot" aria-hidden="true" />}</span>{<span className="who-t tw-name"><b>{identity.character.name}</b>{keeper ? <span aria-hidden="true"> · </span> : <span className="anc">{identity.cls.label} · {identity.cls.plain}</span>}</span>}{keeper && <span className="sr">Keeper, {STATUS_WORD[keeper.status]}</span>}</span>}
+        {identity && data.member && keeper && <span className={`tw-id ${keeper ? `st-${keeper.quietSince != null ? "quiet" : keeper.status}` : ""}`} title={`This thread: ${identity.character.name}, ${identity.cls.label} (${identity.cls.plain})${keeper ? ` · ${data.pendingEvents ?? 0} updates waiting for the Keeper’s next turn · ${keeper.quietSince != null ? `quiet: ${KEEPER_STATE_HINT.quiet}` : `${STATUS_WORD[keeper.status]}: ${STATUS_HINT[keeper.status]}`}` : ""}`}><span className="tw-crest"><Crest {...identity} size={18} />{keeper && <i ref={dot} className="tw-dot" aria-hidden="true" />}</span>{<span className="who-t tw-name"><b>{identity.character.name}</b>{keeper ? <span aria-hidden="true"> · </span> : <span className="anc">{identity.cls.label} · {identity.cls.plain}</span>}</span>}{keeper && <span className="sr">Keeper, {STATUS_WORD[keeper.status]}</span>}</span>}
         {!keeper && data.member && registry.data && <button type="button" className="tw-id tw-member-id act" title={memberIdentityWords(data.member, registry.data, data.scope, memberFinished(data))} aria-label={memberIdentityWords(data.member, registry.data, data.scope, memberFinished(data))} aria-expanded={open === "brief"} aria-controls={`tw-brief-${threadId}`} onClick={() => toggle("brief")}>
           {identity && <span className="tw-crest"><Crest {...identity} size={18} /></span>}
           <span className="who-t tw-name"><b>{identity?.character.name ?? data.member.displayName ?? data.member.classId}</b><span className="tw-member-class"> · {identity?.cls.label ?? data.member.classId}</span></span>
         </button>}
-        {keeper && <KeeperParts quiet={<QuietNotice threadId={threadId} since={keeper.quietSince} compact />} data={data} open={open} toggle={toggle} onLedger={() => panel.openTab({ tab: LEDGER_TAB })} onQuest={id => navigate.toPluginPanel("tavern", { subPath: `quest/${id}` })} />}
+        {keeper && <KeeperParts quiet={<QuietNotice threadId={threadId} since={keeper.quietSince} compact />} data={data} open={open} toggle={toggle} onLedger={group => panel.openTab({ tab: LEDGER_TAB, ...(group ? { params: { attentionGroup: group } } : {}) })} onQuest={id => navigate.toPluginPanel("tavern", { subPath: `quest/${id}` })} />}
         {variant === "member" && <MemberParts data={data} registry={registry.data ?? null} open={open} toggle={toggle} onQuest={id => navigate.toPluginPanel("tavern", { subPath: `quest/${id}` })} onThread={id => navigate.toThread(id)} />}
         {hideBtn}
       </div>
@@ -336,25 +337,24 @@ function ArmedLine({ onCancel, onError }: { onCancel: () => void; onError: (e: u
 /** The widget's words for the server's Keeper status; "listening" reads as "idle" (keeperStatus says why). */
 const STATUS_WORD = { listening: "idle", busy: "busy", holding: "holding while you type" } as const;
 const STATUS_HINT = { listening: KEEPER_STATE_HINT.idle, busy: KEEPER_STATE_HINT.busy, holding: KEEPER_STATE_HINT.holding } as const;
-function KeeperParts({ data, open, toggle, onLedger, onQuest, quiet }: { data: ThreadDecor; open: Open; toggle: (o: "asks" | "decided") => void; onLedger: () => void; onQuest: (id: string) => void; quiet: ReactNode }) {
+function KeeperParts({ data, open, toggle, onLedger, onQuest, quiet }: { data: ThreadDecor; open: Open; toggle: (o: "asks" | "decided") => void; onLedger: (group?: "need" | "new") => void; onQuest: (id: string) => void; quiet: ReactNode }) {
   const keeper = data.keeperView!;
-  const { asks, holds } = needsOf(keeper), need = asks + holds;
-  const decided = keeper.decidedCount ?? keeper.decidedForYou.filter(d => !d.undone).length;
+  const list = attentionView(keeper.attention), need = list.needYou;
+  const decided = list.new;
   // A quiet Keeper moves no quest until resumed, so the notice takes the quests' place; the quest pages stay one click away in the Ledger.
   return <>
     {quiet}
     {keeper.quietSince == null && <span className={`tw-quests ${keeper.boardQuests.reduce((n, q) => n + q.short.length, 0) > 18 ? "long" : ""}`} role="group" aria-label="Board quests (goals)">
       {keeper.boardQuests.map(q => <button type="button" key={q.id} className="tw-quest act" title={`Open the quest page: ${q.title} · ${q.phase} · plan v${q.planVersion} · ${q.move.text}`} aria-label={`Open the quest page for ${q.title}: ${q.phase}, plan v${q.planVersion}`} onClick={() => onQuest(q.id)}><b>{q.short}</b>{q.phase === "held" ? <span>{q.move.text}</span> : <><Phase phase={q.phase} />{q.phase === "scout" && q.nextNewsBy != null && <span>{q.move.text}</span>}</>}<OpensMark /></button>)}
     </span>}
-    {keeper.quietSince == null && keeper.boardQuests.length > 0 && <button type="button" className="tw-chip tw-quests-count act" title={keeper.boardQuests.map(q => q.title).join(" · ")} aria-label={`${plural(keeper.boardQuests.length, "quest")}: open the Ledger`} onClick={onLedger}>{plural(keeper.boardQuests.length, "quest")}</button>}
+    {keeper.quietSince == null && keeper.boardQuests.length > 0 && <button type="button" className="tw-chip tw-quests-count act" title={keeper.boardQuests.map(q => q.title).join(" · ")} aria-label={`${plural(keeper.boardQuests.length, "quest")}: open the Ledger`} onClick={() => onLedger()}>{plural(keeper.boardQuests.length, "quest")}</button>}
     {/* The free space carries the status words and measures itself, so they show only when the whole phrase fits; the dot, the crest's tooltip and the hidden name carry it otherwise. */}
     <span className="tw-sp tw-free">{keeper.status === "holding" && keeper.quietSince == null && <span className="tw-sw" aria-hidden="true">holding<span className="tw-sw-x"> while you type</span></span>}</span>
-    {/* Events the Keeper has not received yet: a bubble so the widget never reads as silent, and the ledger item is one click away. */}
-    {(data.pendingEvents ?? 0) > 0 && keeper.quietSince == null && <button type="button" className="tw-chip tw-events act" aria-label={`${data.pendingEvents} new ${data.pendingEvents === 1 ? "event" : "events"} for the Keeper${data.wakeBatching ? ", batched until the window closes" : ""}: open the Ledger`} title={`${data.pendingEvents} new ${data.pendingEvents === 1 ? "event" : "events"} the Keeper has not seen yet${data.wakeBatching ? ". Wake batching is on, so they gather until the window closes." : "."}`} onClick={onLedger}><Glyph name="bell" size={13} /><span className="num">{data.pendingEvents}</span><span className="tw-w">new</span><OpensMark /></button>}
+
     {/* A count of nothing is not shown: no asks chip and no decided chip at zero, unless its panel is open, so Close stays reachable after the last answer. */}
-    {(need > 0 || open === "asks") && <button type="button" className={`tw-asks act ${need ? "has" : ""}`} {...(need ? { "data-ask": "" } : {})} aria-expanded={open === "asks"} aria-label={need ? `${needWords(asks, holds)} ${need === 1 ? "needs" : "need"} you: show and answer here` : "No asks need you: show answered asks"} title={need ? `${needWords(asks, holds)} ${need === 1 ? "needs" : "need"} you · answer here` : "Nothing needs you"} onClick={() => toggle("asks")}><Glyph name="ask" size={13} /><span className="num">{need}</span><span className="tw-w">need you</span><ExpandsMark open={open === "asks"} /></button>}
-    {(decided > 0 || open === "decided") && <button type="button" className="tw-chip tw-dec act" aria-expanded={open === "decided"} aria-label={`${decided} decided for you (reversible calls): show, with Undo`} title="Decided for you: reversible calls the Keeper made alone, each with Undo" onClick={() => toggle("decided")}><Glyph name="decided" size={13} /><span className="num">{decided}</span><span className="tw-w">decided<span className="tw-for"> for you</span></span><ExpandsMark open={open === "decided"} /></button>}
-    <button type="button" className="tw-chip tw-ledger act" aria-label="Open the Keeper’s ledger (what the lead knows)" title="Open the Keeper’s ledger (what the lead knows)" onClick={onLedger}><Glyph name="book" size={13} /><span>Ledger</span><span className="anc tw-anc">lead state</span><OpensMark /></button>
+    {need > 0 && <button type="button" className="tw-asks act has" data-ask title={attentionTitle(list, "need")} aria-label={`${need} need you: open the Ledger`} onClick={() => onLedger("need")}><Glyph name="ask" size={13} /><span className="num">{need}</span><span className="tw-w">need you</span><OpensMark /></button>}
+    {decided > 0 && <button type="button" className="tw-chip tw-new act" title={attentionTitle(list, "new")} aria-label={`${decided} new: open the Ledger`} onClick={() => onLedger("new")}><Glyph name="bell" size={13} /><span className="num">{decided}</span><span className="tw-w">new</span><OpensMark /></button>}
+    <button type="button" className="tw-chip tw-ledger act" aria-label="Open the Keeper’s ledger (what the lead knows)" title="Open the Keeper’s ledger (what the lead knows)" onClick={() => onLedger()}><Glyph name="book" size={13} /><span>Ledger</span><span className="anc tw-anc">lead state</span><OpensMark /></button>
   </>;
 }
 
@@ -397,9 +397,8 @@ function MemberParts({ data, registry, open, toggle, onQuest, onThread }: { data
 
 type KeeperView = NonNullable<ThreadDecor["keeperView"]>;
 type HeldQuest = KeeperView["boardQuests"][number];
-/** What needs the user in a Keeper's thread: its open asks, and the checker-handoff holds to release that no release ask stands for (one thing, counted once). */
-const needsOf = (keeper: KeeperView | null | undefined) => ({ asks: keeper?.openAsks.length ?? 0, holds: keeper ? heldQuests(keeper.boardQuests, keeper.openAsks).length : 0 });
-const needWords = (asks: number, holds: number) => [asks ? `${asks} ${asks === 1 ? "ask" : "asks"}` : null, holds ? `${holds} checker ${holds === 1 ? "handoff" : "handoffs"} to release` : null].filter(Boolean).join(" and ");
+/** Attention holds the row still until the underlying user actions finish. */
+const needsOf = (keeper: KeeperView | null | undefined) => ({ asks: attentionView(keeper?.attention).needYou, holds: 0 });
 const holdKey = (hold: CheckerHandoffHold) => `hold:${hold.id}`;
 
 function AsksPanel({ threadId, asks, holds, quests, revealAskId, revealVersion, onClose }: { threadId: string; asks: Ask[]; holds: HeldQuest[]; quests: KeeperView["boardQuests"]; revealAskId: string | null; revealVersion: number; onClose: () => void }) {
@@ -501,7 +500,7 @@ function ThreadToggle({ threadId }: { threadId: string }) {
   if (!data?.member || data.widgetRow === false) return null;
   const identity = data.member && registry.data ? memberIdentity(registry.data, data.member) : null;
   const { asks: openAsks, holds } = needsOf(data.keeperView), asks = openAsks + holds;
-  const counted = [openAsks || !holds ? `${openAsks} open ask${openAsks === 1 ? "" : "s"}` : null, holds ? `${holds} checker handoff${holds === 1 ? "" : "s"} to release` : null].filter(Boolean).join(" and ");
+  const counted = `${asks} need you`;
   return (
     <span className="tavern">
       <button type="button" className={`crest-toggle ${data.hidden ? "is-hidden" : ""}`} aria-label={`${data.hidden ? "Show" : "Hide"} Tavern · ${counted}`} title={data.hidden ? `Show Tavern (⌥⌘T)${asks ? ` · ${asks} need you` : ""}` : "Hide Tavern (⌥⌘T)"} aria-pressed={!data.hidden} disabled={hide.isPending} onClick={() => void hide.mutate({ threadId, hidden: !data.hidden }).catch(setError)}>

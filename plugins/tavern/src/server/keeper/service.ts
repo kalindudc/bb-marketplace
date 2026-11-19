@@ -1410,7 +1410,7 @@ export class Keeper {
   confirmRule(id: string, active: boolean) {
     const r = this.store.get("rules", id);
     if (!r) throw new Error("Unknown rule");
-    this.store.put("rules", id, { ...r, active });
+    this.store.put("rules", id, { ...r, active, confirmedAt: this.now() });
     this.store.event(
       this.now(),
       r.scope === "keeper" ? r.scopeId : null,

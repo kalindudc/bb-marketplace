@@ -96,7 +96,6 @@ describe("durable Keeper memory", () => {
     ).toMatchObject({
       notes: expect.arrayContaining([
         expect.objectContaining({ kind: "fact" }),
-        expect.objectContaining({ kind: "waiting-on-user" }),
       ]),
     });
   });

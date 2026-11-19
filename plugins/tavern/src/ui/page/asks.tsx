@@ -1,8 +1,9 @@
+import { attentionView, attentionNotes } from "../../shared/attention";
 import { experimental_useRpcMutation } from "@get-bb/plugin-sdk/app";
 import { useEffect, useId, useState } from "react";
 import { rpcContract, type BoardQuestSummary, type Room } from "../../shared/contract";
 import type { Ask, Decision } from "../../shared/schema";
-import { AskCard, DecidedForYou as KitDecided, ExpandsMark, activeHold, useDecisionSeen, useNow } from "../kit";
+import { AskCard, DecidedForYou as KitDecided, ExpandsMark, activeHold, KeeperNoteRows, TimeAgo, useDecisionSeen, useNow } from "../kit";
 import { characterName, type Registry } from "./common";
 import { PageGlyph } from "./glyphs";
 import { CheckerHold } from "./hold";
@@ -28,13 +29,16 @@ function useWide(query: string) {
 export function NeedsYouQueue({ room, registry }: { room: Room; registry: Registry }) {
   const wide = useWide("(min-width: 1200px)");
   const heading = useId();
-  const open = room.asks.filter((a) => a.state === "open").sort((a, b) => a.createdAt - b.createdAt);
+  const list = attentionView(room.attention);
+  const confirm = experimental_useRpcMutation({ contract: rpcContract, method: "confirmRule" });
+  const [error, setError] = useState<unknown>(null);
+  const open = room.asks.filter(a => list.items.some(item => item.kind === "ask" && item.id === a.id)).sort((a, b) => a.createdAt - b.createdAt);
   const holds = heldForYou(room);
   const [shut, setShut] = useState<Record<string, boolean>>({});
-  if (!open.length && !holds.length) return null;
-  const counted = [open.length ? `${open.length} ask${open.length === 1 ? "" : "s"}` : null, holds.length ? `${holds.length} hold${holds.length === 1 ? "" : "s"}` : null].filter(Boolean).join(" and ");
+  if (!list.needYou && !list.heldByYou) return null;
+  const counted = `${list.needYou} need you`;
   // Holds sit among the asks by age; each is its own calm row with its release control.
-  const holdRows = holds.map((q) => ({ at: activeHold(q)!.createdAt, node: <CheckerHold key={`hold:${q.id}`} quest={q} asks={open} queue /> }));
+  const holdRows = holds.filter(q => q.phase !== "held").map((q) => ({ at: activeHold(q)!.createdAt, node: <CheckerHold key={`hold:${q.id}`} quest={q} asks={open} queue /> }));
   let placed = 0;
   return <section aria-labelledby={heading} className="tv-sec tv-queue" id="tv-needs-you">
     <header className="tv-colh"><h2 id={heading}>Needs you</h2><span className="tv-count">{counted}, oldest first</span></header>
@@ -55,7 +59,16 @@ export function NeedsYouQueue({ room, registry }: { room: Room; registry: Regist
         <AskCard ask={ask} via="page" headless onFold={() => setShut((prev) => ({ ...prev, [ask.id]: true }))} />
       </details>];
     })}{holdRows.slice(placed).map((h) => h.node)}</div>
+    <KeeperNoteRows notes={attentionNotes(list)} label="Handed back to you" short={id => room.keepers.flatMap(keeper => keeper.boardQuests).find(quest => quest.id === id)?.short ?? null} />
+    {list.items.filter(item => item.kind === "rule").map(item => <div className="lg-row" key={item.id}><span>{item.title}</span><button type="button" className="btn sm" onClick={() => void confirm.mutate({ ruleId: item.id, active: true }).catch(setError)}>Confirm</button><button type="button" className="btn sm" onClick={() => void confirm.mutate({ ruleId: item.id, active: false }).catch(setError)}>Dismiss</button></div>)}
+    {list.heldByYou > 0 && <section aria-label="Held by you"><h3>Held by you · {list.heldByYou} quests</h3>{holds.filter(q => q.phase === "held").map(q => <CheckerHold key={q.id} quest={q} asks={open} queue />)}{list.items.filter(item => item.kind === "held").map(item => <HeldByYou key={item.id} id={item.id} title={item.title} since={item.since} />)}</section>}
+    {error != null && <p role="alert">{error instanceof Error ? error.message : String(error)}</p>}
   </section>;
+}
+function HeldByYou({ id, title, since }: { id: string; title: string; since: number }) {
+  const resume = experimental_useRpcMutation({ contract: rpcContract, method: "resumeBoardQuest" });
+  const [error, setError] = useState<unknown>(null);
+  return <div className="lg-row"><span>{title}</span><TimeAgo at={since} /><button type="button" className="btn sm" disabled={resume.isPending} onClick={() => void resume.mutate({ id }).catch(setError)}>Resume</button>{error != null && <span role="alert">{String(error)}</span>}</div>;
 }
 function AgoShort({ at }: { at: number }) { const now = useNow(); return <>{agoShort(at, now)}</>; }
 function agoShort(at: number, now: number) { const m = Math.max(0, Math.floor((now - at) / 60000)); return m < 60 ? `${m}m` : m < 1440 ? `${Math.floor(m / 60)}h` : `${Math.floor(m / 1440)}d`; }

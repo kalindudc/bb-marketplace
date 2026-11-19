@@ -84,6 +84,9 @@ const APPENDED: string[] = [
   // The stop-time lookup must not sort or scan a quest's full phase history.
   `CREATE INDEX tavern_events_quest_phase_time ON tavern_events(board_quest_id,type,at DESC,id DESC);`,
   `CREATE INDEX tavern_events_phase_receipts ON tavern_events(board_quest_id,at DESC,id DESC) WHERE json_type(data,\'$.phase\')=\'object\';`,
+  `CREATE INDEX tavern_handback_attention ON tavern_records(json_extract(data,\'$.keeperThreadId\'),json_extract(data,\'$.boardQuestId\')) WHERE kind=\'notes\' AND json_extract(data,\'$.state\')=\'open\' AND json_extract(data,\'$.kind\')=\'waiting-on-user\';
+   CREATE INDEX tavern_rule_attention ON tavern_records(json_extract(data,\'$.keeperThreadId\'),json_extract(data,\'$.scopeId\')) WHERE kind=\'rules\' AND json_extract(data,\'$.active\')=0 AND json_extract(data,\'$.source\')=\'keeper-proposed\' AND json_extract(data,\'$.confirmedAt\') IS NULL;
+   CREATE INDEX tavern_rule_origin ON tavern_events(json_extract(data,\'$.ruleId\'),id DESC) WHERE type=\'rule.added\';`,
 ];
 
 export const MIGRATIONS: string[] = [

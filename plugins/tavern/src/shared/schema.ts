@@ -459,6 +459,7 @@ export type Decision = z.infer<typeof decisionSchema>;
 
 export const ruleSchema = z.object({
   keeperThreadId: threadId.nullable().optional(),
+  confirmedAt: epochMs.optional(),
   id,
   scope: z.enum(["global", "project", "keeper", "quest"]),
   /** Project id, Keeper thread id or board quest id; null for global. */

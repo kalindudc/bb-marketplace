@@ -1,3 +1,4 @@
+import { attentionView } from "../../shared/attention";
 import { StopAllNotice } from "./stop-all";
 import { useBbNavigate } from "@get-bb/plugin-sdk/app";
 import { Fragment, useEffect, useId, useMemo, useState, type ReactNode } from "react";
@@ -235,9 +236,9 @@ export function StatusLine({ room, registry }: { room: Room; registry?: Registry
   const away = roomAway(room), closed = !!away?.closed;
   const pending = usePendingStops(room);
   const asks = needYouCount(room);
-  const oldest = Math.min(...room.asks.filter((a) => a.state === "open").map((a) => a.createdAt), ...heldForYou(room).map((q) => activeHold(q)!.createdAt));
+  const oldest = attentionView(room.attention).oldest ?? null;
   const quests = activeQuests(room);
-  const decided = room.decidedCount ?? room.decidedForYou.filter((d) => !d.undone).length;
+  const decided = attentionView(room.attention).decided ?? attentionView(room.attention).new;
   const failed = quests.flatMap((q) => q.members).filter((m) => m.state === "failed").length;
   const stale = quests.flatMap((q) => q.members).filter((m) => m.strikes > 0).length;
   const errands = errandsOf(room).length, solos = room.solos.length;
@@ -246,7 +247,7 @@ export function StatusLine({ room, registry }: { room: Room; registry?: Registry
   return <div className="tv-sline rm-sline" role="group" aria-label="Status" data-sec="status">
     <div className="rm-sl1">
       {asks > 0 ? <button type="button" className="tv-hero act" onClick={() => jumpTo("tv-needs-you")} title="Scroll to what needs you"><b className="num">{asks}</b><span>need you</span></button> : <div className="tv-hero"><b className="num">0</b><span>need you</span></div>}
-      {asks > 0 && <span className="rm-oldest" title={new Date(oldest).toLocaleString()}>oldest <Waited at={oldest} /></span>}
+      {asks > 0 && oldest !== null && <span className="rm-oldest" title={new Date(oldest).toLocaleString()}>oldest <Waited at={oldest} /></span>}
       {closed && <button type="button" className="act rm-jump rm-closed" onClick={() => navigate.toPluginPanel("tavern", { subPath: "closing" })} title="Closing time (away): open the page"><PageGlyph name="lantern" /><span><ClosedWords away={away} /></span><OpensMark /></button>}
       {/* Mounted while open too, so its receipt outlives the room reopening; it draws nothing when there is nothing to say. */}
       {registry && <ReturnButton room={room} registry={registry} className="rm-return" />}
@@ -276,7 +277,8 @@ function RoomActivity({ room, registry }: { room: Room; registry: Registry }) {
   const [filter, setFilter] = usePanelState<Filter>("room.events.filter", "all", (v) => FILTERS.some(([f]) => f === v));
   const { since, clear } = useSinceLastVisit();
   useEffect(() => { const id = takePendingJump(); if (id) requestAnimationFrame(() => jumpTo(id)); }, []);
-  const asks = needYouCount(room), decided = Math.min(5, room.decidedForYou.filter((d) => !d.undone).length);
+  const navigate = useBbNavigate();
+  const asks = needYouCount(room), decided = Math.min(5, attentionView(room.attention).new);
   useEffect(() => { rememberCount(SKEL.asks, asks); rememberCount(SKEL.decided, decided); rememberCount(SKEL.events, Math.min(8, lines.length)); }, [asks, decided, lines.length]);
   return <div className="tv-room rm-a" data-room>
     <h1 className="sr">The common room (home)</h1>
@@ -284,12 +286,12 @@ function RoomActivity({ room, registry }: { room: Room; registry: Registry }) {
     <RoomAwayNotes room={room} registry={registry} />
     {since !== null && <SinceYouLooked lines={lines} since={since} clear={clear} onFilter={(f) => { setFilter(f); jumpTo("rm-events"); }} />}
     <ArchiveReceiptLine api={api} />
-    <Rail calm={!needYouCount(room) && !room.decidedForYou.length}
+    <Rail calm={!needYouCount(room) && !attentionView(room.attention).new}
       attention={<>
         <div data-sec="needs"><NeedsYouQueue room={room} registry={registry} /></div>
         <div id="rm-decided" data-sec="decided"><DecidedForYou decisions={room.decidedForYou} total={room.decidedCount} seen={{ throughId: room.decidedThroughId }} headingId="room-decided" limit={5} /></div>
         <div id="rm-review" data-sec="review"><ReviewQueue review={room.review} /></div>
-        {!needYouCount(room) && !room.decidedForYou.length && <p className="tv-empty rm-calm" data-empty>Nothing needs you.</p>}
+        {!needYouCount(room) && !attentionView(room.attention).new && <p className="tv-empty rm-calm" data-empty>Nothing needs you.</p>}
       </>}
       board={<div data-sec="board"><Board room={room} registry={registry} api={api} since={since ?? undefined} /></div>}
       lists={(room.solos.length > 0 || errandsOf(room).length > 0) && <div id="rm-lists" className="rm-stackcol"><div data-sec="errands"><SideQuests room={room} registry={registry} /></div><div data-sec="solos"><Solos room={room} registry={registry} /></div></div>}

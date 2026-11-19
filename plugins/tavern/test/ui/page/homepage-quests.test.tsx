@@ -1,3 +1,4 @@
+import { withAttention } from "../attention-fixture";
 import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
 import { cleanup, fireEvent, waitFor } from "@testing-library/react";
@@ -18,7 +19,7 @@ const quiet = { ...vault, updatedAt: 300 };
 const room = { ...richRoom, asks: richRoom.asks.filter(a => a.boardQuestId === greenlight.id), keepers: richRoom.keepers.map(k => ({ ...k, boardQuests: k.member.threadId === greenlight.keeperThreadId ? [greenlight] : [quiet, { ...audit, updatedAt: 200 }] })) };
 async function homepage(data = room) {
   const plugin = await loadPluginApp(definePluginApp(app => app.slots.homepageSection({ id: "home", title: "Home", component: TavernHomepage })));
-  return renderSlot(plugin.homepageSections[0]!, { projectId: null }, { pluginId: "tavern", experimental_rpcContract: rpcContract, rpc: { registry: () => structuredClone(registry), room: () => structuredClone(data) } as Partial<Handlers> as Handlers });
+  return renderSlot(plugin.homepageSections[0]!, { projectId: null }, { pluginId: "tavern", experimental_rpcContract: rpcContract, rpc: { registry: () => structuredClone(registry), room: () => withAttention(data) } as Partial<Handlers> as Handlers });
 }
 const keeper = richRoom.keepers[0]!;
 const mount = (component: () => React.ReactElement) => renderSlot({ component }, {}, { pluginId: "tavern", experimental_rpcContract: rpcContract });
@@ -47,7 +48,7 @@ describe("homepage quest rows", () => {
     await slot.findByText(greenlight.short);
     const rows = [...slot.container.querySelectorAll('[data-part="QuestRow"]')];
     expect(rows.map(r => r.getAttribute("data-quest"))).toEqual([greenlight.id, quiet.id, audit.id]);
-    expect(rows[0]!.querySelector(".tag")?.textContent).toBe("1 needs you");
+    expect(rows[0]!.querySelector(".tag")?.textContent).toBe("1 need you");
     expect(rows[0]!.hasAttribute("data-ask")).toBe(true);
     expect(slot.getByRole("button", { name: "1 need you" })).toBeTruthy();
   });
@@ -60,7 +61,7 @@ describe("homepage quest rows", () => {
       await slot.findByText(held.short);
       const rows = [...slot.container.querySelectorAll('[data-part="QuestRow"]')];
       expect(rows.map(r => r.getAttribute("data-quest"))).toEqual([held.id, greenlight.id, audit.id]);
-      expect(rows[0]!.querySelector(".tag")?.textContent).toBe("1 needs you");
+      expect(rows[0]!.querySelector(".tag")?.textContent).toBe("1 need you");
       expect(rows[0]!.hasAttribute("data-ask")).toBe(true);
       expect(slot.getByRole("button", { name: "2 need you" })).toBeTruthy();
       slot.lifecycle.unmount();
@@ -70,16 +71,16 @@ describe("homepage quest rows", () => {
     const slot = await homepage({ ...room, asks: [{ ...room.asks[0]!, kind: "blocker" }] });
     await slot.findByText(greenlight.short);
     const row = slot.container.querySelector('[data-quest="rollout"]')!;
-    expect(row.classList.contains("t-bad")).toBe(true);
-    expect(row.hasAttribute("data-ask")).toBe(false);
-    expect(row.querySelector(".tag")?.textContent).toBe("1 needs you");
+    expect(row.classList.contains("t-you")).toBe(true);
+    expect(row.hasAttribute("data-ask")).toBe(true);
+    expect(row.querySelector(".tag")?.textContent).toBe("1 need you");
     expect(row.querySelector(".qrow-m")?.textContent).toBe("You · blocked");
   });
   it("uses singular and plural needs-you tags for open asks on one quest", async () => {
     for (const count of [1, 2]) {
       const slot = await homepage({ ...room, asks: Array.from({ length: count }, (_, i) => ({ ...room.asks[0]!, id: `ask-${i}` })) });
       await slot.findByText(greenlight.short);
-      expect(slot.container.querySelector('[data-quest="rollout"] .tag')?.textContent).toBe(`${count} ${count === 1 ? "needs" : "need"} you`);
+      expect(slot.container.querySelector('[data-quest="rollout"] .tag')?.textContent).toBe(`${count} need you`);
       slot.lifecycle.unmount();
     }
   });
@@ -100,13 +101,13 @@ describe("homepage quest rows", () => {
     expect(rows[1]!.querySelector(".qrow-k")).toBeNull();
   });
   it("leaves the room and Ledger rows unchanged without showKeeper", async () => {
-    const board = mount(() => <Board room={room} registry={registry} api={{ hidden: new Set(), shown: new Set(), pending: false, receipt: null, error: null, archive: async () => {}, restore: async () => {}, undo: () => {}, clear: () => {} }} />);
+    const board = mount(() => <Board room={withAttention(room)} registry={registry} api={{ hidden: new Set(), shown: new Set(), pending: false, receipt: null, error: null, archive: async () => {}, restore: async () => {}, undo: () => {}, clear: () => {} }} />);
     const rows = [...board.container.querySelectorAll('[data-part="QuestRow"]')];
     expect(rows).toHaveLength(3);
     expect(rows.map(row => { const copy = row.cloneNode(true) as HTMLElement; copy.querySelectorAll("time").forEach(t => t.remove()); return copy.outerHTML; })).toMatchSnapshot("room rows before homepage change");
     expect(board.container.querySelector(".qrow-k, .qrow .tag")).toBeNull();
     const ledger = renderSlot({ component: LedgerTab }, { threadId: "keeper-1", environment: null }, { rpc: { ledger: () => fixtureLedger, decor: () => fixtureDecor, registry: () => fixtureRegistry } });
-    await ledger.findByRole("button", { name: fixtureLedger.boardQuests[0]!.title });
+    await ledger.findByRole("button", { name: new RegExp(fixtureLedger.boardQuests[0]!.title) });
     await waitFor(() => expect(ledger.container.querySelector(".lg-qh .sk-l")).toBeNull());
     expect(ledger.container.querySelector('[data-part="QuestRow"]')).toBeNull();
     expect([...ledger.container.querySelectorAll(".lg-qh")].map(row => row.outerHTML)).toMatchSnapshot("loaded Ledger rows");

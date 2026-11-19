@@ -113,6 +113,7 @@ it("returns strict JSON from EVERY registered RPC with optional record fields ab
     journalEdit: () => call("journalEdit", { threadId: "member", edit: { op: "add", descriptions: ["Check sparse output"] } }),
     resumeKeeper: () => call("resumeKeeper", { threadId: "lead" }),
     ledger: () => call("ledger", { threadId: "lead" }),
+    askHistory: () => call("askHistory", { threadId: "lead", cursor: null }),
     routes: () => call("routes", { threadId: "lead" }),
     boardQuest: () => call("boardQuest", { id: f.q.id }),
     setTaleKept: () => call("setTaleKept", { questId: f.q.id, characterId: character.id, kept: false }),

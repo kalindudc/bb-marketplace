@@ -1,3 +1,4 @@
+import { withAttention } from "../attention-fixture";
 // @vitest-environment jsdom
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, waitFor, within } from "@testing-library/react";
@@ -32,7 +33,7 @@ const ledgerAt = (now: number) => ({
   notesTotal: 7,
 });
 const ledger = ledgerAt(now);
-const renderLedger = (data: Ledger = ledger) => renderSlot({ component: LedgerTab }, { threadId: "keeper-1", environment: null }, { rpc: { ledger: () => data, decor: () => fixtureDecor, registry: () => fixtureRegistry } });
+const renderLedger = (data: Ledger = ledger) => renderSlot({ component: LedgerTab }, { threadId: "keeper-1", environment: null }, { rpc: { ledger: () => withAttention(data), decor: () => fixtureDecor, registry: () => fixtureRegistry } });
 
 describe("Ledger: what the Keeper keeps in mind", () => {
   it("shows each resting member’s keep reason and time", async () => {
@@ -44,7 +45,7 @@ describe("Ledger: what the Keeper keeps in mind", () => {
   it("counts hand-backs under Needs you by kind, so the number never reads as more asks", async () => {
     const slot = renderLedger();
     const needs = await slot.findByRole("region", { name: "Needs you" });
-    expect(within(needs).getByText("1 ask · 1 hand-back")).toBeTruthy();
+    expect(within(needs).getByText("2 need you")).toBeTruthy();
     expect(within(within(needs).getByRole("list", { name: "Waiting on you" })).getByText("Share the on-call doc link")).toBeTruthy();
     slot.lifecycle.unmount();
   });
@@ -109,7 +110,7 @@ describe("Ledger: older promises", () => {
 describe("Ledger: text you act on", () => {
   it("shows a proposed rule in full beside Confirm, never as a truncated tooltip", async () => {
     const rule = { id: "r9", scope: "keeper" as const, scopeId: "keeper-1", text: "Keep every Ranger time box to 20 minutes, and report what was found before asking for more time", source: "keeper-proposed" as const, active: false, createdAt: now - 60_000 };
-    const slot = renderSlot({ component: LedgerTab }, { threadId: "keeper-1", environment: null }, { rpc: { ledger: () => ({ ...ledger, rules: [rule] }), decor: () => fixtureDecor, registry: () => fixtureRegistry } });
+    const slot = renderSlot({ component: LedgerTab }, { threadId: "keeper-1", environment: null }, { rpc: { ledger: () => withAttention({ ...ledger, rules: [rule] }), decor: () => fixtureDecor, registry: () => fixtureRegistry } });
     const needs = await slot.findByRole("region", { name: "Needs you" });
     const text = within(needs).getByText(rule.text);
     expect(text.getAttribute("title")).toBeNull();

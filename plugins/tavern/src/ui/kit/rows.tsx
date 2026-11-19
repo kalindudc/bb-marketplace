@@ -1,3 +1,4 @@
+import { attentionView } from "../../shared/attention";
 import { PHASE_STEPS, phaseIndex, phaseWord } from "./phase";
 import { memberName } from "../../shared/member-name";
 import { useBbNavigate } from "@get-bb/plugin-sdk/app";
@@ -29,15 +30,15 @@ export function stoppingWords(quest: Pick<BoardQuestSummary, "stopUnconfirmed">)
  */
 export const activeHold = (quest: Pick<BoardQuestSummary, "checkerHandoffHold" | "phase">): CheckerHandoffHold | null => {
   const h = quest.checkerHandoffHold;
-  return h && h.release === null && quest.phase !== "held" && quest.phase !== "stopping" && !isFinished(quest.phase) ? h : null;
+  return h && h.release === null && quest.phase !== "stopping" && !isFinished(quest.phase) ? h : null;
 };
 /** The open ask the Keeper raised to have this hold released, if any: it stands for the hold, so the two count once. */
-const releaseAskOf = (hold: CheckerHandoffHold | null, asks: readonly Ask[]) => hold ? asks.find((a) => a.state === "open" && a.releaseHoldId === hold.id) ?? null : null;
+const releaseAskOf = (hold: CheckerHandoffHold | null, asks: readonly Ask[]) => hold ? asks.find((a) => a.state === "open" && (a.effect?.type === "release-hold" ? a.effect.holdId : a.releaseHoldId) === hold.id) ?? null : null;
 /** Quests whose hold waits on the user with no open release ask standing for it: each is one more thing that needs the user. */
 export function heldQuests<Q extends Pick<BoardQuestSummary, "checkerHandoffHold" | "phase">>(quests: readonly Q[], asks: readonly Ask[]): Q[] {
   return quests.filter((q) => { const h = activeHold(q); return h !== null && !releaseAskOf(h, asks); });
 }
-export const questNeedYouCount = (quest: BoardQuestSummary, asks: readonly Ask[]) => asks.filter(a => a.state === "open" && a.boardQuestId === quest.id).length + heldQuests([quest], asks).length;
+export const questNeedYouCount = (quest: Pick<BoardQuestSummary, "attention">, _asks?: readonly Ask[]) => attentionView(quest.attention).needYou;
 
 type Release = NonNullable<CheckerHandoffHold["release"]>;
 const RELEASE_VIA: Record<Release["via"], string> = { banner: "from the ask banner", page: "from the Tavern page", phone: "from your phone", chat: "in chat", cli: "from the command line" };
@@ -209,7 +210,8 @@ export function QuestRow({ quest, room, registry, keeper, showKeeper = false, on
   }
   const move = questMove(quest, room.asks, moveNames(registry, keeper.member), { keeperArchived: keeper.archived === true, now });
   const need = questNeedYouCount(quest, room.asks);
-  const yours = move.tone === "you";
+  const yours = need > 0 || move.tone === "you";
+  if (yours) move.tone = "you";
   // showKeeper adds mixed-Keeper labels and ask/hold tags; every row keeps questMove’s edge rule.
   return <div className={`tavern qrow qrow-live t-${move.tone}${showKeeper ? " qrow-home" : ""}`} data-variant={yours ? "your-move" : move.tone === "archived" ? "archived" : quest.phase === "stopping" ? "stopping" : "active"} data-quest={quest.id} {...(yours ? { "data-ask": "" } : {})} data-part="QuestRow">
     {name}
@@ -217,7 +219,7 @@ export function QuestRow({ quest, room, registry, keeper, showKeeper = false, on
     {arrival && quest.phase !== "stopping" && <ArrivalMark at={quest.updatedAt} since={arrival.since} surface="page" cueKey={`row:${quest.id}`} still={yours || move.tone === "bad"} />}
     <TimeAgo at={quest.updatedAt} />
     <OpensMark />
-    <span className="qrow-l2">{showKeeper && <span className="qrow-k"><CrestOf member={keeper.member} registry={registry} size={12} /><span title={characterName(registry, keeper.member)}>{characterName(registry, keeper.member)}</span></span>}{showKeeper && need > 0 && <span className="tag status-needs-decision">{need} {need === 1 ? "needs" : "need"} you</span>}<span className="qrow-p"><PhaseMark phase={quest.phase} tone={move.tone} /><span className="qrow-path num">{path ? `${path.done} of ${path.total}` : "no map yet"}</span></span>
+    <span className="qrow-l2">{showKeeper && <span className="qrow-k"><CrestOf member={keeper.member} registry={registry} size={12} /><span title={characterName(registry, keeper.member)}>{characterName(registry, keeper.member)}</span></span>}{showKeeper && need > 0 && <span className="tag status-needs-decision">{need} need you</span>}<span className="qrow-p"><PhaseMark phase={quest.phase} tone={move.tone} /><span className="qrow-path num">{path ? `${path.done} of ${path.total}` : "no map yet"}</span></span>
     <span className="qrow-m"><StateMark tone={move.tone} title={`${move.who}${move.next ? ` · ${move.next}` : ""}`}>
       {/* Whose move and the verb are the state and never cut; only the waypoint's title truncates, with the whole phrase in the tooltip. */}
       <span className="qrow-mv"><b>{move.who}</b>{move.task !== undefined ? ` ·${move.verb ? ` ${move.verb}` : ""}\u00a0` : move.next ? ` · ${move.next}` : ""}</span>{move.task !== undefined && <span className="qrow-mt" data-content>{move.task}</span>}

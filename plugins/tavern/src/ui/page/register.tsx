@@ -254,7 +254,7 @@ function currentPageName(route: { kind: string; id?: string }, registry: { class
 export function useTavernBadge() {
   const query = experimental_useRpcQuery({ contract: rpcContract, method: "room", input: {} });
   const count = query.data ? needYouCount(query.data) : 0;
-  const label = query.data ? badgeLabel(openAskCount(query.data), heldForYou(query.data).length) : "";
+  const label = query.data ? `${count} need you` : "";
   return count > 0 ? { count, tone: "critical" as const, label } : null;
 }
 export function TavernHomepage(_props: PluginHomepageSectionProps) {

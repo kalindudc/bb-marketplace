@@ -1,4 +1,5 @@
-import { useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { attentionView, attentionNotes } from "../../shared/attention";
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { experimental_useRpcQuery, experimental_useRpcMutation, experimental_useAppPanel, useBbNavigate, type ExperimentalTabReference, type ExperimentalThreadTabProps } from "@get-bb/plugin-sdk/app";
 import { rpcContract } from "../../shared/contract";
 import type { Decision, Rule } from "../../shared/schema";
@@ -33,6 +34,12 @@ function OlderDecisions({ keeperThreadId, cursor, shown, total }: { keeperThread
   if (!open) return <li className="lg-more"><button type="button" className="btn sm ghost act" onClick={() => setOpen(true)} aria-label={`Show older decisions: ${shown} of ${total} shown`}>Show more<span className="m">{shown} of {total}</span><ExpandsMark open={false} /></button></li>;
   return <HistoryPage keeperThreadId={keeperThreadId} cursor={cursor} shown={shown} total={total} />;
 }
+function AskHistoryPage({ threadId, cursor }: { threadId: string; cursor: string }) {
+  const [open, setOpen] = useState(false);
+  const query = experimental_useRpcQuery({ contract: rpcContract, method: "askHistory", input: { threadId, cursor }, enabled: open });
+  if (!open) return <li><button type="button" className="btn sm" onClick={() => setOpen(true)}>Show older</button></li>;
+  return <>{query.data?.asks.map(ask => <li key={ask.id}><span className="t">{ask.question}</span><StatusPill status={ask.state}>{ask.state}</StatusPill></li>)}{query.data?.nextCursor && <AskHistoryPage threadId={threadId} cursor={query.data.nextCursor} />}<QueryState error={query.error} /></>;
+}
 function HistoryPage({ keeperThreadId, cursor, shown, total }: { keeperThreadId: string; cursor: string; shown: number; total: number }) {
   const page = experimental_useRpcQuery({ contract: rpcContract, method: "decisionHistory", input: { keeperThreadId, cursor, limit: 100 } });
   if (!page.data) return <li className="lg-more"><QueryState error={page.error} loading={page.isLoading} retry={() => void page.refetch()} label="older decisions" skeleton={<SkLines n={3} />} /></li>;
@@ -43,7 +50,7 @@ function HistoryPage({ keeperThreadId, cursor, shown, total }: { keeperThreadId:
 /** The ledger while it loads: the now line, a card per live quest this device last saw, Decided for you and the standing rules, in their own classes. */
 function SkLedger({ quests }: { quests: number }) {
   return <>
-    <p className="lg-now-line"><SkLine w="58%" /></p>
+    <p className="lg-now-line"><SkLine w="44%" /></p>
     {Array.from({ length: quests }, (_, i) => <section key={i} className="lg-card lg-quest">
       <div className="lg-qh"><span className="lg-qt"><b><SkLine w="20ch" /></b></span><span className="m"><SkLine w="5ch" /></span><SkPhaseStrip /></div>
       <p className="lg-move"><span className="lbl"><SkLine w="4ch" /></span><span className="mt"><SkLine w="66%" /></span></p>
@@ -55,7 +62,14 @@ function SkLedger({ quests }: { quests: number }) {
   </>;
 }
 
-export function LedgerTab({ threadId }: ExperimentalThreadTabProps) {
+function HeldResume({ quest, showHold }: { quest: import("../../shared/contract").BoardQuestSummary; showHold: boolean }) {
+  const resume = experimental_useRpcMutation({ contract: rpcContract, method: "resumeBoardQuest" });
+  const release = experimental_useRpcMutation({ contract: rpcContract, method: "releaseCheckerHandoff" });
+  const [error, setError] = useState<unknown>(null);
+  return <div className="lg-row"><span>{quest.title}</span><TimeAgo at={quest.held!.since} /><button type="button" className="btn sm" disabled={resume.isPending} onClick={() => void resume.mutate({ id: quest.id }).catch(setError)}>Resume</button>{showHold && activeHold(quest) && <button type="button" className="btn sm" disabled={release.isPending} onClick={() => void release.mutate({ boardQuestId: quest.id, holdId: activeHold(quest)!.id, via: "banner" }).catch(setError)}>Release checker handoff</button>}<QueryState error={error} /></div>;
+}
+
+export function LedgerTab({ threadId, params }: ExperimentalThreadTabProps & { params?: import("@get-bb/plugin-sdk/app").JsonValue | null }) {
   const query = experimental_useRpcQuery({ contract: rpcContract, method: "ledger", input: { threadId } });
   const decor = experimental_useRpcQuery({ contract: rpcContract, method: "decor", input: { threadId } });
   const registry = useRegistry();
@@ -71,12 +85,19 @@ export function LedgerTab({ threadId }: ExperimentalThreadTabProps) {
   const data = query.data;
   const root = useRef<HTMLDivElement>(null);
   useRememberedView(root, `ledger:${threadId}:view`, !!data);
+  const attentionGroup = params && typeof params === "object" && !Array.isArray(params) ? params.attentionGroup : null;
+  useEffect(() => {
+    if (!data || (attentionGroup !== "need" && attentionGroup !== "new")) return;
+    const target = root.current?.querySelector(`[data-attention-group="${attentionGroup}"]`);
+    target?.scrollIntoView({ block: "start" });
+  }, [threadId, attentionGroup, !!data]);
   const seen = useDecisionSeen({ keeperThreadId: threadId, throughId: data?.decidedThroughId });
   const liveCount = data?.boardQuests.filter(q => q.archivedAt === null && q.phase !== "done" && q.phase !== "stopped").length;
   const skeletonQuests = useSkeletonCount(`skel:thread:ledger:${threadId}`, liveCount, 1);
   const skeletonLate = useSkeletonDelay(!data && query.isLoading);
   if (decor.data && decor.data.member?.role !== "keeper") return <div className="tavern ledger" ref={root}><p className="m">The ledger belongs to Keeper threads.</p></div>;
-  const openAsks = data?.asks.filter(a => a.state === "open" && a.lane !== "keeper") ?? [];
+  const list = attentionView(data?.attention);
+  const openAsks = data?.asks.filter(a => list.items.some(item => item.kind === "ask" && item.id === a.id)) ?? [];
   return (
     <div className="tavern ledger" data-part="LedgerTab" ref={root}>
       <header className="journal-head">
@@ -90,7 +111,7 @@ export function LedgerTab({ threadId }: ExperimentalThreadTabProps) {
         const live = data.boardQuests.filter(q => q.archivedAt === null && q.phase !== "done" && q.phase !== "stopped");
         const returned = data.boardQuests.filter(q => q.archivedAt === null && (q.phase === "done" || q.phase === "stopped"));
         const archived = data.boardQuests.filter(q => q.archivedAt !== null);
-        const proposed = data.rules.filter(r => !r.active && r.source === "keeper-proposed" && !dismissed.includes(r.id));
+        const proposed = data.rules.filter(r => list.items.some(item => item.kind === "rule" && item.id === r.id));
         const activeRules = data.rules.filter(r => r.active);
         const offRules = data.rules.filter(r => !r.active && r.source !== "keeper-proposed");
         const answered = data.asks.filter(a => a.state !== "open");
@@ -105,15 +126,17 @@ export function LedgerTab({ threadId }: ExperimentalThreadTabProps) {
         const questTitle = (r: Rule) => r.scope === "quest" ? data.boardQuests.find(q => q.id === r.scopeId)?.title ?? null : null;
         const widen = (r: Rule) => () => widenRule.mutate({ ruleId: r.id, scope: "global" });
         const notes = (data.notes ?? []).filter(n => n.state === "open");
-        const waiting = notes.filter(n => n.kind === "waiting-on-user");
+        const waiting = attentionNotes(list);
         const promises = notes.filter(n => n.kind === "commitment");
         // A hold the Keeper asked about is listed once, as its ask; the rest are released in the widget row, like an ask is answered there.
-        const held = heldQuests(live, openAsks);
-        const needsYou = openAsks.length + held.length + proposed.length + waiting.length;
+        const held = heldQuests(live, openAsks).filter(q => q.phase !== "held");
+        const needsYou = list.needYou;
+        const heldByYou = live.filter(q => list.items.some(item => item.kind === "held" && item.id === q.id));
         return <>
-          <p className="lg-now-line" aria-label="What the Keeper knows now">{plural(live.length, "active quest")} · {plural(openAsks.length, "ask")} open{held.length > 0 && <> · {plural(held.length, "hold")} to release</>}{proposed.length > 0 && <> · {plural(proposed.length, "rule")} to confirm</>}{promises.length > 0 && <> · {plural(promises.length, "promise")} kept</>} · {decidedCount} decided for you</p>
-          {needsYou > 0 && <section className="lg-card lg-needs glow" style={glowVars(`needs:${threadId}`) as CSSProperties} aria-label="Needs you">
-            <h3><Glyph name="ask" size={13} /><span>Needs you</span><span className="num">{[openAsks.length > 0 && plural(openAsks.length, "ask"), held.length > 0 && plural(held.length, "hold"), proposed.length > 0 && plural(proposed.length, "rule"), waiting.length > 0 && plural(waiting.length, "hand-back")].filter(Boolean).join(" · ")}</span></h3>
+          <p className="lg-now-line" aria-label="What the Keeper knows now">{plural(live.length, "active quest")} · {needsYou} need you · {list.new} new ({list.decided ?? list.new} decided for you)</p>
+          {heldByYou.length > 0 && <section className="lg-card" aria-label="Held by you"><h3>Held by you · {plural(list.heldByYou, "quest")}</h3>{heldByYou.map(q => <HeldResume key={q.id} quest={q} showHold={list.items.some(item => item.kind === "hold" && item.questId === q.id)} />)}</section>}
+          {needsYou > 0 && <section className="lg-card lg-needs glow" style={glowVars(`needs:${threadId}`) as CSSProperties} aria-label="Needs you" data-attention-group="need">
+            <h3><Glyph name="ask" size={13} /><span>Needs you</span><span className="num">{needsYou} need you</span></h3>
             {openAsks.length > 0 && <ul className="lg-rows">{openAsks.map(a => <li key={a.id}><button type="button" className="lg-row act" title={`${a.question} · answer in the Tavern row above the composer`} onClick={() => revealAsk(threadId, a.id)}><span className="t">{a.question}</span>{short(a.boardQuestId) && <span className="lg-q">{short(a.boardQuestId)}</span>}<TimeAgo at={a.createdAt} /><span className="lg-go">Answer<ExpandsMark open={false} /></span></button></li>)}</ul>}
             {held.length > 0 && <ul className="lg-rows">{held.map(q => { const hold = activeHold(q)!; return <li key={hold.id} data-ask><button type="button" className="lg-row act" title={`Checker handoff on hold: ${hold.reason} · release it in the Tavern row above the composer`} onClick={() => revealAsk(threadId, `hold:${hold.id}`)}><span className="t">Checker handoff on hold: {hold.reason}</span><span className="lg-q">{q.short}</span><TimeAgo at={hold.createdAt} /><span className="lg-go">Review<ExpandsMark open={false} /></span></button></li>; })}</ul>}
             {waiting.length > 0 && <><p className="lbl">Waiting on you <span className="anc">the Keeper handed back</span></p><KeeperNoteRows notes={waiting} short={short} label="Waiting on you" /></>}
@@ -135,6 +158,7 @@ export function LedgerTab({ threadId }: ExperimentalThreadTabProps) {
             </section>
           ))}
           <KeptInMind notes={notes} total={data.notesTotal} older={data.olderPromises} short={short} />
+          <h3 data-attention-group="new">New for you</h3>
           <DecidedForYou decisions={attention} total={decidedCount} pending={undo.isPending} onUndo={id => void undo.mutate({ decisionId: id }).catch(setError)} {...seen} />
           {data.boardQuests.map(q => <QuestAuthority key={q.id} questId={q.id} via="banner" compact />)}
           <section className="lg-sec" aria-label="Standing rules">
@@ -145,7 +169,7 @@ export function LedgerTab({ threadId }: ExperimentalThreadTabProps) {
           {returned.length > 0 && <ul className="lg-rows lg-done" aria-label="Returned quests">{returned.map(q => { const verified = q.waypoints.filter(w => w.verifiedBy !== null).length; return <li key={q.id}><button type="button" className="lg-row act" title={`Open the quest page: ${q.title}`} onClick={() => navigate.toPluginPanel("tavern", { subPath: `quest/${q.id}` })}><span className="t">{q.title}</span><span className="m">{q.phase === "stopped" ? "Stopped" : "Returned"} · verified {verified} of {q.waypoints.length}</span><OpensMark /></button></li>; })}</ul>}
           <div className="lg-history" role="group" aria-label="History">
             <h3 className="lbl">History</h3>
-            {answered.length > 0 && <details className="lg-fold" data-fold="answered"><summary><Glyph name="chevron" size={12} /><span>Answered asks</span><span className="num">{answered.length}</span></summary><ul className="lg-rows">{answered.map(a => <li key={a.id}><span className="lg-row"><StatusPill status={a.state === "answered" ? "answered" : a.state}>{a.state}</StatusPill><span className="t" title={a.question}>{a.question}</span><TimeAgo at={a.answer?.at ?? a.createdAt} /></span></li>)}</ul></details>}
+            {answered.length > 0 && <details className="lg-fold" data-fold="answered"><summary><Glyph name="chevron" size={12} /><span>Past asks</span><span className="num">{answered.length}</span></summary><ul className="lg-rows">{answered.map(a => <li key={a.id}><span className="lg-row"><StatusPill status={a.state === "answered" ? "answered" : a.state}>{a.state}</StatusPill><span className="t" title={a.question}>{a.question}</span><TimeAgo at={a.answer?.at ?? a.createdAt} /></span></li>)}{data.asksNextCursor && <AskHistoryPage threadId={threadId} cursor={data.asksNextCursor} />}</ul></details>}
             <details className="lg-fold" data-fold="decisions"><summary><Glyph name="chevron" size={12} /><span>All decisions</span><span className="num">{historyTotal}</span><span className="anc">{historyTotal > data.decisions.length ? "newest first" : `${keeperCalls.length} by the Keeper alone · ${data.decisions.length - keeperCalls.length} from you`}</span></summary><ul className="lg-rows">{data.decisions.map(d => <DecisionRow key={d.id} d={d} />)}{data.decisionsNextCursor && <OlderDecisions keeperThreadId={threadId} cursor={data.decisionsNextCursor} shown={data.decisions.length} total={historyTotal} />}</ul></details>
             {offRules.length > 0 && <details className="lg-fold" data-fold="rules-off"><summary><Glyph name="chevron" size={12} /><span>Rules turned off</span><span className="num">{offRules.length}</span></summary><ul className="lg-rows lg-rules">{offRules.map(r => <RuleRow key={r.id} rule={r} variant="off" quest={questTitle(r)} actions={<button type="button" className="btn sm" disabled={confirm.isPending} aria-label={`Turn on the rule: ${r.text}`} onClick={() => setRule(r.id, true)}>Turn on</button>} />)}</ul></details>}
             {data.routes.length > 0 && <details className="lg-fold" data-fold="routes"><summary><Glyph name="chevron" size={12} /><span>Read as</span><span className="num">{data.routes.length}</span><span className="anc">how the Keeper took your messages</span></summary><ul className="lg-rows">{data.routes.map(r => <li key={r.id}><span className={`route-chip k-${r.kind}`}>{r.kind === "new-quest" ? "new quest" : r.kind}</span><Clamp lines={1} text={`${r.summary}${r.corrected ? " · corrected" : ""}`} /><TimeAgo at={r.createdAt} /></li>)}</ul></details>}

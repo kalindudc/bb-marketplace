@@ -134,7 +134,7 @@ describe("decision acknowledgement", () => {
     const f = fixture();
     for (let i = 0; i < 205; i++) f.decide(`old-${i}`);
     const before = await f.call<Room>("room", {});
-    expect(before.decidedForYou).toHaveLength(100); expect(before.decidedCount).toBe(205);
+    expect(before.decidedForYou).toHaveLength(20); expect(before.decidedCount).toBe(205);
     const decor = await f.call<ThreadDecor>("decor", { threadId: "lead" });
     const ledger = await f.call<Ledger>("ledger", { threadId: "lead" });
     expect(decor.keeperView).toMatchObject({ decidedCount: 205, decidedThroughId: before.decidedThroughId });
@@ -171,9 +171,9 @@ describe("decision acknowledgement", () => {
     const f = fixture(); f.decide("one");
     const prepare = vi.spyOn(f.k.store.db, "prepare");
     await f.call("room", {});
-    const query = prepare.mock.calls.find(([sql]) => sql.startsWith("SELECT count(*) AS n FROM tavern_records r WHERE"))![0];
+    const query = prepare.mock.calls.find(([sql]) => sql.startsWith("SELECT r.data") && sql.includes("WHERE r.kind=?") && sql.includes("$.reversible"))![0];
     prepare.mockRestore();
-    const plan = f.k.store.db.prepare(`EXPLAIN QUERY PLAN ${query}`).all() as { detail: string }[];
+    const plan = f.k.store.db.prepare(`EXPLAIN QUERY PLAN ${query}`).all("decisions") as { detail: string }[];
     expect(plan.map(step => step.detail)).toEqual(expect.arrayContaining([
       expect.stringContaining("tavern_decision_attention"),
     ]));

@@ -2,6 +2,7 @@ import { experimental_useRpcMutation, useBbNavigate } from "@get-bb/plugin-sdk/a
 import { useId, useMemo, useState } from "react";
 import { rpcContract, type BoardQuestDetail, type BoardQuestSummary, type Room } from "../../shared/contract";
 
+import { attentionView, attentionNotes } from "../../shared/attention";
 import { QuestAuthority, AskCard, verifiedOf, verifiedWords, questNames, readable, heldQuests, stoppingWords as kitStoppingWords, CELLAR, CheckIndependence, ExpandsMark, GateRows, GuardPosture, KeeperNoteRows, KeptInMind, OpensMark, QuestMap, QuietNotice, Vocabulary, clockTime, useNow, glowVars, vocab } from "../kit";
 import { DecidedForYou, KIND, heldTitles } from "./asks";
 import { ArchiveReceiptLine, ArchivedList, FinishedRow, finishedQuests, useArchive } from "./archive";
@@ -120,7 +121,8 @@ export function QuestPage({ detail, registry, room }: { detail: BoardQuestDetail
   const finishedPath = verifiedOf(quest);
   const stop = StopQuest({ detail, registry });
   const members = new Map([...(room ? visibleMembers(room) : []), ...quest.members].map((m) => [m.threadId, m]));
-  const openAsks = detail.asks.filter((a) => a.state === "open" && a.lane !== "keeper");
+  const attention = attentionView(detail.attention);
+  const openAsks = detail.asks.filter(a => attention.items.some(item => item.kind === "ask" && item.id === a.id));
   const finished = isFinished(quest.phase);
   const [promisesMore, setPromisesMore] = usePanelState("quest.promises.more", false);
   const [factsMore, setFactsMore] = usePanelState("quest.facts.more", false);
@@ -136,7 +138,7 @@ export function QuestPage({ detail, registry, room }: { detail: BoardQuestDetail
 
   const history = useHistoryLines(detail, registry, room);
   const notes = detail.notes ?? [];
-  const handBacks = notes.filter((n) => n.kind === "waiting-on-user" && n.state === "open");
+  const handBacks = attentionNotes(attention);
   const keptNotes = notes.filter((n) => n.kind !== "waiting-on-user");
   const steer = quest.plan?.fromSteer;
   return <div className={`tv-quest ${finished ? "tv-record" : ""}`} data-phase={quest.phase}>
@@ -179,10 +181,10 @@ export function QuestPage({ detail, registry, room }: { detail: BoardQuestDetail
     </section>
     <div className="tv-ggrid" role="group" aria-label="The quest sections">
       <div className="tv-col">
-        {!finished ? <Section title="By whose move" count={`${openAsks.length + heldQuests([quest], openAsks).length + quest.waypoints.filter((w) => waypointMove(w) !== "Done").length} ${quest.phase === "stopped" ? "left" : "open"}`}>
+        {!finished ? <Section title="By whose move" count={`${attention.needYou} need you`}>
           {!finished && <CheckerHold quest={quest} asks={openAsks} />}
           {handBacks.length > 0 && <div className="tv-grp"><KeeperNoteRows notes={handBacks} label="Handed back to you" /></div>}
-          {openAsks.length > 0 && <div className="tv-grp"><div className="tv-grp-h"><StateMark tone="you">Needs you</StateMark><span className="num m">{openAsks.length}</span></div>
+          {attention.needYou > 0 && <div className="tv-grp"><div className="tv-grp-h"><StateMark tone="you">Needs you</StateMark><span className="num m">{attention.needYou} need you</span></div>
             <div className="tv-asks">{openAsks.map((ask) => <details key={ask.id} open className={`tv-ask-disclosure ${ask.kind === "blocker" ? "blk" : ""}`}><summary className="tv-askrow"><PageGlyph name={ask.kind === "blocker" ? "fail" : "you"} size={13} className="tv-askrow-g" /><span className="tv-askrow-t"><span className="tv-askrow-q" data-content>{ask.question}</span><span className="tv-askrow-s">{KIND[ask.kind]} · {heldTitles(ask, quest).length ? `holds ${heldTitles(ask, quest).join(", ")}` : ask.why}</span></span><span className="tv-askrow-a"><Ago at={ask.createdAt} /></span></summary><AskCard ask={ask} via="page" headless /></details>)}</div></div>}
           {groups.map((group) => { const items = quest.waypoints.filter((w) => groupOf(w) === group); if (!items.length) return null; if (group === "Done" && !showDone) return <button key={group} type="button" className="tv-fold act" aria-expanded={false} onClick={() => setShowDone(true)}><ExpandsMark open={false} />Done · {items.length}</button>; return <div className="tv-grp" key={group}><div className="tv-grp-h"><StateMark tone={groupTone[group]}>{group}</StateMark><span className="num m">{items.length}</span></div><ul className="tv-items">{items.map((w) => {
             const owner = w.actor === "user" ? "You" : w.ownerMember ? characterName(registry, w.ownerMember) : w.owner ?? "Unassigned";
