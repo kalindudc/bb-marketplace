@@ -2,7 +2,7 @@ import { useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { experimental_useRpcQuery, experimental_useRpcMutation, experimental_useAppPanel, useBbNavigate, type ExperimentalTabReference, type ExperimentalThreadTabProps } from "@get-bb/plugin-sdk/app";
 import { rpcContract } from "../../shared/contract";
 import type { Decision, Rule } from "../../shared/schema";
-import { activeHold, heldQuests, CheckIndependence, GuardPosture, Clamp, characterName, stoppingWords, useToday, RULE_SCOPE, localTime, ruleScopeLabel, useWidenRule, DecidedForYou, useDecisionSeen, QuietNotice, useRemembered, useRememberedView, GateRows, KeeperNoteRows, KeptInMind, ExpandsMark, Glyph, OpensMark, PartyPicture, PhaseStrip, QueryState, QuestMap, SkCrest, SkDecided, SkLine, SkLines, SkPhaseStrip, StatusPill, TimeAgo, Vocabulary, clockTime, glowVars, plural, useRegistry, useSkeletonCount, useSkeletonDelay } from "../kit";
+import { QuestAuthority, activeHold, heldQuests, CheckIndependence, GuardPosture, Clamp, characterName, stoppingWords, useToday, RULE_SCOPE, localTime, ruleScopeLabel, useWidenRule, DecidedForYou, useDecisionSeen, QuietNotice, useRemembered, useRememberedView, GateRows, KeeperNoteRows, KeptInMind, ExpandsMark, Glyph, OpensMark, PartyPicture, PhaseStrip, QueryState, QuestMap, SkCrest, SkDecided, SkLine, SkLines, SkPhaseStrip, StatusPill, TimeAgo, Vocabulary, clockTime, glowVars, plural, useRegistry, useSkeletonCount, useSkeletonDelay } from "../kit";
 import { revealAsk } from "./state";
 import "./skeletons.css";
 export { JournalTab } from "./journal";
@@ -76,7 +76,7 @@ export function LedgerTab({ threadId }: ExperimentalThreadTabProps) {
   const skeletonQuests = useSkeletonCount(`skel:thread:ledger:${threadId}`, liveCount, 1);
   const skeletonLate = useSkeletonDelay(!data && query.isLoading);
   if (decor.data && decor.data.member?.role !== "keeper") return <div className="tavern ledger" ref={root}><p className="m">The ledger belongs to Keeper threads.</p></div>;
-  const openAsks = data?.asks.filter(a => a.state === "open") ?? [];
+  const openAsks = data?.asks.filter(a => a.state === "open" && a.lane !== "keeper") ?? [];
   return (
     <div className="tavern ledger" data-part="LedgerTab" ref={root}>
       <header className="journal-head">
@@ -135,6 +135,7 @@ export function LedgerTab({ threadId }: ExperimentalThreadTabProps) {
           ))}
           <KeptInMind notes={notes} total={data.notesTotal} older={data.olderPromises} short={short} />
           <DecidedForYou decisions={attention} total={decidedCount} pending={undo.isPending} onUndo={id => void undo.mutate({ decisionId: id }).catch(setError)} {...seen} />
+          {data.boardQuests.map(q => <QuestAuthority key={q.id} questId={q.id} via="banner" compact />)}
           <section className="lg-sec" aria-label="Standing rules">
             <h3>Standing rules <span className="num">{activeRules.length} on</span></h3>
             {activeRules.length === 0 ? <p className="m small">No standing rules yet. Use “Make this a rule” on any message.</p>

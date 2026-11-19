@@ -1,3 +1,4 @@
+import { preapprovalWords } from "../../shared/quest-authority";
 import { z } from "zod";
 import { placementPickSchema } from "../placement/picks";
 import { taleResultsSchema } from "../../shared/tale-results";
@@ -170,6 +171,10 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
         m = await runtime.hire(threadId, projectId, input);
       } catch (error) {
         if (error instanceof PlacementHireBlocked && error.outcome === "unknown") return error.message;
+        if (error instanceof PlacementHireBlocked && input.boardQuestId) {
+          const ask = k.ask(threadId, { boardQuestId: input.boardQuestId, kind: "blocker", effect: { type: "placement-blocker" }, question: "Placement blocked this hire", why: error.message.slice(0, 200), options: [{ id: "retry", label: "Retry once", detail: "Repeat this exact hire without changing its placement.", recommended: false }, { id: "stop", label: "Stop the quest", detail: "Stop rather than bypass placement.", recommended: false }], meanwhile: "No alternate placement is approved.", holds: input.waypointId ? [input.waypointId] : [] }, {}, true);
+          return `Not hired. ${error.message}\n::tavern-ask{id="${ask.id}"}`;
+        }
         if (error instanceof PlacementHireBlocked)
           return `Not hired. ${error.message}\n${error.placement ? `Do not hire again; the user can press Retry on placement ${error.placement.placementId}.` : "Retry this exact hire after the blocker is resolved; no machine was allocated."}`;
         if (error instanceof DetectionApprovalRequired)
@@ -253,14 +258,15 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   register(
     "tavern_plan",
     "Wrote the quest map",
-    "Write a versioned quest map with done-when, critical path, at most three questions and the proposed party. fromSteer names a recorded steer route. Set reversible:true only for fully reversible work. The default requires explicit greenlight; an enabled by-size policy may automatically approve one party slot without unresolved asks/questions or outside/user gates, as a reversible decision. Include findings and evidence, assumptions, owners, dependencies, lead times and the user's review load. Existing member thread ids prepare and link their journals; each Warden slot names its assigned waypointIds from one maker. Emit the exact quest-map directive returned, on its own line. Read the approval result rather than inferring consent from chat. While approval waits, do only reversible scouting, private briefs and drafts. Re-plans within approved counts are reversible decisions; a larger party needs a new greenlight. Do not fabricate another greenlight with tavern_ask.",
+    "Write a versioned quest map with done-when, critical path, at most three questions and the proposed party. fromSteer names a recorded steer route. Set reversible:true only for fully reversible work and inventory each waypoint’s acts with kind and command or path; Tavern classifies them for routine pre-approval and refuses unknown acts. read and workspace-write require relative paths; check requires a recognised check command. Production, merge, credential, sends-as-you and destructive acts never match routine pre-approval. The default requires explicit greenlight; an enabled by-size policy may automatically approve one party slot without unresolved asks/questions or outside/user gates, as a reversible decision. Include findings and evidence, assumptions, owners, dependencies, lead times and the user's review load. Existing member thread ids prepare and link their journals; each Warden slot names its assigned waypointIds from one maker. Emit the exact quest-map directive returned, on its own line. Read the approval result rather than inferring consent from chat. While approval waits, do only reversible scouting, private briefs and drafts. Re-plans within approved counts are reversible decisions; a larger party needs a new greenlight. Do not fabricate another greenlight with tavern_ask.",
     planSchema
       .omit({ version: true, createdAt: true, fromSteer: true })
       .extend({ fromSteer: id.nullish() }),
     async (input, threadId) => {
       const plan = await runtime.plan(threadId, input);
       const quest = k.quest(plan.boardQuestId);
-      const approval =
+      const standing = k.store.query("asks", "boardQuestId", quest.id, 500).find(ask => ask.effect?.type === "greenlight" && ask.effect.planVersion === plan.version && ask.answer?.preapproval)?.answer?.preapproval;
+      const approval = standing ? ` ${preapprovalWords(standing)}.` :
         quest.greenlitVersion === plan.version
           ? " Automatically greenlit by the configured by-size policy; Undo is in Decided for you."
           : quest.greenlitVersion !== null
@@ -287,6 +293,8 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
         releaseCheckerHandoff: z.literal(true).optional(),
         proceedInMinutes: z.number().int().min(1).max(10080).nullish(),
         reversible: z.boolean().optional(),
+        unsure: z.boolean().optional(),
+        target: askSchema.shape.target.optional(),
         draft: askSchema.shape.draft.optional(),
       }),
     (input, threadId) => {
@@ -307,7 +315,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   register(
     "tavern_decide",
     "Recorded a decision",
-    "Record a reversible decision with its reason. Never claim the user's consent without an answered ask. source:user is not allowed; sourceRef must reference a real user-answered ask to attribute consent. exceeds: party or rangers permits one extra hire at that soft limit and is consumed once. The review budget and keepers.partyMax are hard limits only the user lifts.",
+    "Delegated asks arrive in your Keeper lane; answer with askId and optionId, recorded with Undo, or ask the user when unsure. Quest pre-approval answers matching routine asks in code and its receipt names the user record, not your decision. Record a reversible decision with its reason. Never claim the user's consent without an answered ask. source:user is not allowed; sourceRef must reference a real user-answered ask to attribute consent. exceeds: party or rangers permits one extra hire at that soft limit and is consumed once. The review budget and keepers.partyMax are hard limits only the user lifts.",
     decisionSchema
       .pick({
         text: true,
@@ -315,10 +323,12 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
         reversible: true,
         source: true,
         exceeds: true,
+        askId: true, optionId: true, kind: true,
       })
       .extend({ boardQuestId: optionalQuest, sourceRef: id.nullish() }),
-    (input, threadId) => k.decide(threadId, input),
+    async (input, threadId) => { if (input.askId) await runtime.prepareActDecision(input.askId); return k.decide(threadId, input); },
   );
+  register("tavern_act_verdict", "Verified an exact act", "An assigned Warden records a verdict for a delegated merge or production change from a verified maker journal entry whose review evidence names the exact commit or command.", z.object({ askId: id, entryId: id, target: askSchema.shape.target.unwrap() }), (input, threadId) => { k.authority.recordVerdict(threadId, input.askId, input.entryId, input.target); return "Exact act verdict recorded."; }, "member");
   register(
     "tavern_rule",
     "Proposed a standing rule",

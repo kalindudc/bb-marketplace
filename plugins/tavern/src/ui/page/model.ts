@@ -1,3 +1,4 @@
+import { moveTime } from "../../shared/time";
 import type { BoardQuestSummary, MapHistory, Room } from "../../shared/contract";
 import { checkerHandoffHoldSchema, type Ask, type Member, type Phase, type Report, type TavernEvent } from "../../shared/schema";
 import { extractReportHeadline, type ReportHeadlineNames } from "../../shared/report-headline";
@@ -150,14 +151,17 @@ function describeRaw(e: TavernEvent, ctx: EventContext): EventLine | null {
     case "quest.opened": return { ...base, icon: "quest", actor: leadActor, head: "pinned a quest", detail: (e.boardQuestId && ctx.questShort(e.boardQuestId)) ?? prefixed(e.text, "Opened ") };
     case "plan.proposed": { const v = data.version; return { ...base, icon: "plan", tone: str("routeId") ? "steer" : "plain", filter: str("routeId") ? "steers" : "other", actor: leadActor, head: `drew quest map v${typeof v === "number" ? v : "?"}${str("routeId") ? " from your steer" : ""}` }; }
     case "quest.phase": return { ...base, icon: "phase", actor: leadActor, head: `moved the quest to ${prefixed(e.text, "Board quest moved to ")}` };
-    case "ask.opened": return { ...base, icon: "ask", tone: "you", filter: "asks", actor: leadActor, head: "asks you", detail: e.text };
+    case "ask.opened": if (data.lane === "keeper") return { ...base, icon: "ask", filter: "asks", actor: leadActor, head: `is waiting on ${str("keeperName") ?? "the Keeper"}`, detail: e.text }; return { ...base, icon: "ask", tone: "you", filter: "asks", actor: leadActor, head: "asks you", detail: e.text };
     case "ask.answered": case "ask.defaulted": {
+      const preapproval = data.preapproval as { at?: unknown; surface?: unknown } | undefined;
+      if (typeof preapproval?.at === "number" && typeof preapproval.surface === "string") return { ...base, icon: "answer", tone: "done", filter: "asks", actor: { kind: "tavern" }, head: `Pre-approved by you at ${moveTime(preapproval.at, Date.now())} (${preapproval.surface.replace("client (unattested)", "client, unattested")})`, detail: e.text };
+      if (data.answeredBy === "keeper" && data.delegation) return { ...base, icon: "answer", tone: "done", filter: "asks", actor: leadActor, head: `${lead ? "" : `${str("keeperName") ?? "The Keeper"} `}decided (delegated by you)`, detail: e.text };
       const option = str("optionId");
       if (e.text.startsWith("Party approved")) return { ...base, icon: "answer", tone: "done", filter: "asks", actor: you, head: "formed the party" };
       const question = option ? prefixed(e.text, e.type === "ask.answered" ? "Answered: " : "Default applied to a reversible choice: ").split(` — ${option}`)[0]! : e.text;
       return { ...base, icon: "answer", tone: "done", filter: "asks", actor: e.type === "ask.answered" ? you : { kind: "tavern" }, head: e.type === "ask.answered" ? "answered" : "applied the default", detail: question };
     }
-    case "decision.made": return { ...base, icon: "decided", filter: "decided", actor: leadActor, head: "decided for you", detail: e.text };
+    case "decision.made": return { ...base, icon: "decided", filter: "decided", actor: leadActor, head: data.delegation ? `${lead ? "" : `${str("keeperName") ?? "The Keeper"} `}decided (delegated by you)` : "decided for you", detail: e.text };
     case "decision.undone": { const id = str("decisionId"); return { ...base, icon: "undo", filter: "decided", actor: you, head: "undid a decision", detail: (id && ctx.decisions.get(id)) ?? prefixed(e.text, "Undo this decision and reconcile its effects: ") }; }
     case "rule.added": return { ...base, icon: "rule", actor: leadActor, head: "added a standing rule", detail: e.text };
     case "rule.confirmed": return { ...base, icon: "rule", actor: you, head: e.text.startsWith("Deactivated") ? "turned a rule off" : "turned a rule on", detail: prefixed(prefixed(e.text, "Activated: "), "Deactivated: ") };

@@ -239,6 +239,7 @@ function statusData(
       ? [k.quest(input.boardQuestId)]
       : k.store.visibleRecords("quests", threadId, input.limit, input.offset)
     ).map((q) => k.summary(q.id)),
+    delegatedAsks: k.store.openAsks(threadId).filter(a => k.authority.lane(a) === "keeper" && (!a.boardQuestId || k.quest(a.boardQuestId).archivedAt === null)).slice(0, 5),
     asks: k.store.openAsks(threadId, undefined, true).slice(0, 5),
     recentReports: k.store.visibleRecords("reports", threadId, 3).map((r) => ({
       id: r.id,

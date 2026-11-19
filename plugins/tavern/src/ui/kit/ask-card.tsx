@@ -4,6 +4,8 @@ import { rpcContract } from "../../shared/contract";
 import type { Ask } from "../../shared/schema";
 import { Glyph } from "./glyphs";
 import { MemberChip, QueryState, TimeAgo, clockTime } from "./primitives";
+import { preapprovalWords } from "../../shared/quest-authority";
+import { QuestAuthority } from "./quest-authority";
 import { useRegistry } from "./registry";
 
 const KIND: Record<Ask["kind"], string> = { greenlight: "Greenlight", decision: "Decision", conclude: "Conclude", production: "Production", merge: "Merge", destructive: "Destructive", "sends-as-you": "Sends as you", blocker: "Blocker", credential: "Credential", scope: "Scope change" };
@@ -60,9 +62,11 @@ export function AskCard({ ask, via = "banner", onFold, onAnswered, headless = fa
         <Glyph name="check" />
         <b>{ask.state === "withdrawn" ? "Withdrawn" : ask.state === "defaulted" ? "Default applied" : "Answered"}</b>
         {label && <span>“{label}”</span>}
-        {(receipt || ask.answer?.surface === "client (unattested)") && <span className="m">answered from a client Tavern could not attribute</span>}
+        {ask.answer?.preapproval && <span>{preapprovalWords(ask.answer.preapproval)}</span>}
+        {ask.answer?.by === "keeper" && <span>Decided by the Keeper, with Undo in the ledger</span>}
+        {(receipt || ask.answer?.by === "user" && ask.answer?.surface === "client (unattested)") && <span className="m">answered from a client Tavern could not attribute</span>}
         {receiptNote && <span className="receipt-note" data-content>“{receiptNote}”</span>}
-        <span className="m">{VIA[ask.answer?.via ?? via]}{at !== null ? ` at ${clockTime(at)}` : ""} · cleared everywhere</span>
+        <span className="m">{ask.answer?.by === "preapproval" ? "from your quest pre-approval" : VIA[ask.answer?.via ?? via]}{at !== null ? ` at ${clockTime(at)}` : ""} · cleared everywhere</span>
       </div>
     );
   }
@@ -82,6 +86,8 @@ export function AskCard({ ask, via = "banner", onFold, onAnswered, headless = fa
   return (
     <section className={`tavern ask k-${ask.kind}`} aria-label={`Ask: ${ask.question}`} data-ask>
       {headless ? ask.why && <p className="ask-why">Yours because {ask.why.charAt(0).toLowerCase() + ask.why.slice(1)}</p> : <><div className="ask-h"><span className="kind">{KIND[ask.kind]}</span><span>asked <TimeAgo at={ask.createdAt} /></span>{ask.why && <span>· yours because {ask.why.charAt(0).toLowerCase() + ask.why.slice(1)}</span>}</div><h3 className="ask-q">{ask.question}</h3></>}
+      {ask.kind === "greenlight" && ask.boardQuestId && <QuestAuthority questId={ask.boardQuestId} via={via} />}
+      {ask.lane === "keeper" && <p role="status">This kind is delegated to the Keeper. You can still answer here or revoke it in the ledger.</p>}
       {ask.draft && (
         <dl className="sendbox" aria-label="Exactly what would be sent">
           <dt>Sends as</dt><dd className="warn">You</dd>

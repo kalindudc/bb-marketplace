@@ -1,3 +1,4 @@
+import { preapprovalWords } from "../../shared/quest-authority";
 import type { Keeper } from "./service";
 import type { BoardQuestSummary } from "../../shared/contract";
 import type { KeeperNote, Rule } from "../../shared/schema";
@@ -170,6 +171,8 @@ function questBlock(k: Keeper, summary: BoardQuestSummary) {
     ),
     ...memberLines(k, summary),
   ];
+  const authority = k.authority.view(summary.id);
+  if (authority.delegations.length || authority.preapprovals.length) lines.push(`Quest authority: Keeper decides ${authority.rows.filter(r => r.lane === "keeper").map(r => r.kind).join(", ")}; Tavern answers ${authority.rows.filter(r => r.lane === "tavern").map(r => r.kind).join(", ") || "none"} within pre-approval. Exact act verdicts still gate delegated merges and production changes. Unsure choices go to the user.`);
   if (plan?.assumptions.length)
     lines.push(
       `${plan.assumptions.length} assumptions; call tavern_status boardQuestId=${summary.id}`,
@@ -191,6 +194,7 @@ export function renderRestatement(
     .visibleRecords("quests", threadId, 100)
     .filter((q) => !["done", "stopped"].includes(q.phase));
   const summaries = quests.map((q) => k.summary(q.id));
+  const delegated = k.store.openAsks(threadId).filter(a => k.authority.lane(a) === "keeper" && (!a.boardQuestId || k.quest(a.boardQuestId).archivedAt === null));
   const asks = k.store
     .openAsks(threadId, undefined, true)
     .sort((a, b) => (a.proceedAt ?? Infinity) - (b.proceedAt ?? Infinity));
@@ -255,6 +259,7 @@ export function renderRestatement(
     ),
     ...(guidance ? [guidance] : []),
     questSection(k, summaries, priorities),
+    ...(delegated.length ? [section("Yours to decide (delegated)", delegated.map(a => `${a.id} [${a.kind}]: ${quoted(short(a.question, 160))}; holds ${a.holds.join(",") || "none"}; answer with tavern_decide askId and optionId, or tavern_ask unsure:true`), priorities ? 1200 : 2400, "more delegated asks; call tavern_status section=asks", delegated.length)] : []),
     section(
       "Open asks",
       asks.map(
@@ -342,7 +347,7 @@ export function renderRestatement(
         "Answered asks",
         answered.map(
           (a) =>
-            `${a.id}: ${quoted(short(a.question, 160))}; ${a.state} at ${a.answer ? clock(a.answer.at) : "unknown"}; ${a.options.find((o) => o.id === a.answer?.optionId)?.label ?? a.answer?.optionId}`,
+            `${a.id}: ${quoted(short(a.question, 160))}; ${a.answer?.preapproval ? preapprovalWords(a.answer.preapproval) : a.state} at ${a.answer ? clock(a.answer.at) : "unknown"}; ${a.options.find((o) => o.id === a.answer?.optionId)?.label ?? a.answer?.optionId}`,
         ),
         1500,
         "more answers; call tavern_status section=asks",

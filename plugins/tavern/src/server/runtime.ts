@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { dirname, join } from "node:path";
+import { homeRebaseMatches } from "./act-patch";
 import { LimitPolicy } from "./limit-policy";
 import { isLiveKeeper, isLiveMember, isOpenQuest } from "./liveness";
 import { AwayRuntime } from "./away/runtime";
@@ -124,7 +126,7 @@ import { transitionQuest } from "./keeper/quest-lifecycle";
 export class TavernRuntime {
   readonly stopAll = new StopAll(this);
   readonly serviceRecords: ServiceRecords;
-  readonly toolNames = [...KEEPER_TOOLS, "tavern_report", "tavern_request_sources", "tavern_ready", "tavern_draft_pr"];
+  readonly toolNames = [...KEEPER_TOOLS, "tavern_report", "tavern_request_sources", "tavern_ready", "tavern_draft_pr", "tavern_act_verdict"];
   private readonly loop = new TickLoop(this);
   private sourceInspection: SourceDiscovery | null = null;
   private awayState: AwayRuntime | null = null;
@@ -570,15 +572,16 @@ export class TavernRuntime {
     clientAction = false,
     surface = "client (unattested)",
     receipt?: UserActReceipt,
+    preapproved = false,
   ) {
-    if (this.away.store.snapshot().status.closed && !clientAction) throw new Error("An away ask answer needs an explicit client action.");
+    if (this.away.store.snapshot().status.closed && !clientAction && !preapproved) throw new Error("An away ask answer needs an explicit client action.");
     const ask = this.keeper.store.get("asks", askId);
     if (!ask) throw new Error("Unknown ask");
     if (ask.effect?.type === "release-hold" && !clientAction) throw new Error("Releasing a checker-handoff hold requires an explicit client action; the Keeper cannot answer it.");
     const wasOpen = ask.state === "open";
     const after: (() => Promise<unknown>)[] = [];
     let pendingArchives: string[] = [];
-    this.keeper.answerAsk(askId, optionId, note, via, "user", surface, {
+    this.keeper.answerAsk(askId, optionId, note, via, preapproved ? "preapproval" : "user", surface, {
       conclude: effect => {
         if (effect.type !== "conclude" || !ask.boardQuestId) throw new Error("A conclude effect needs its quest and draft");
         if (optionId === "conclude") {
@@ -589,6 +592,11 @@ export class TavernRuntime {
           transitionQuest(this.keeper.store, this.keeper.quest(ask.boardQuestId), "build", optionId === "hold" ? "keep-open" : "extensions", { kind: "user" }, { kind: "ask-answer", id: askId }, this.keeper.now(), { text: optionId === "hold" ? "You kept this quest open for other work." : "You asked for extensions or side quests.", data: { askId, optionId, ...(receipt ? { authority: receipt } : {}) } });
           this.keeper.reanchor(ask.keeperThreadId, optionId === "hold" ? "user kept the quest open for other work" : "user asked for extensions or side quests");
         }
+      },
+      "placement-blocker": () => {
+        if (!ask.boardQuestId) throw new Error("A placement blocker needs its quest");
+        if (optionId === "stop") after.push(() => this.stop(ask.boardQuestId!));
+        else if (optionId === "retry") this.keeper.reanchor(ask.keeperThreadId, "One pre-approved placement retry; repeat the exact failed hire");
       },
       "retry-provider": () => {
         if (optionId !== "retry") return;
@@ -626,12 +634,38 @@ export class TavernRuntime {
     void this.resetQuietQueue(ask.keeperThreadId).then(() => this.recheckDispatch()).catch(error => this.bb.log.warn(`Tavern resume: ${String(error)}`));
     return { pendingArchives };
   }
+  async prepareActDecision(askId: string) {
+    const ask = this.keeper.store.get("asks", askId), verdict = this.keeper.store.get("actVerdicts", askId);
+    const warden = verdict && this.keeper.member(verdict.wardenThreadId);
+    this.keeper.authority.rebaseMatches.delete(askId);
+    if (!warden?.checkerMakerThreadId || ask?.kind !== "merge" || !ask.target?.commit || !verdict?.target.commit || ask.target.commit === verdict.target.commit) return;
+    const worktree = await memberWorktree(this.bb, warden.checkerMakerThreadId);
+    if (!worktree) return;
+    const maker = await this.bb.sdk.threads.get({ threadId: warden.checkerMakerThreadId });
+    const keeper = await this.bb.sdk.threads.get({ threadId: ask.keeperThreadId });
+    const project = await this.bb.sdk.projects.get({ projectId: maker.projectId });
+    if (!project.gitRemoteUrl) return;
+    const sameRepo = maker.projectId === keeper.projectId;
+    const local = project.sources.filter(s => s.hostId === worktree.hostId);
+    const home = local.find(s => s.isDefault) ?? (local.length === 1 ? local[0] : undefined);
+    if (sameRepo && (!home || home.path === worktree.root)) return;
+    const dataDir = join(dirname(this.bb.storage.database().name), "merge-proofs");
+    if (homeRebaseMatches(worktree.root, { root: sameRepo ? home!.path : null, remoteUrl: project.gitRemoteUrl, dataDir }, verdict.target.commit, ask.target.commit))
+      this.keeper.authority.rebaseMatches.set(askId, { verifiedCommit: verdict.target.commit, commit: ask.target.commit });
+  }
+  async applyStandingAnswers(questId: string) {
+    for (const ask of this.keeper.store.query("asks", "boardQuestId", questId, 500).filter(a => a.state === "open")) {
+      const answer = this.keeper.authority.match(ask);
+      if (answer && ask.options.some(o => o.id === answer.optionId)) await this.answerAsk(ask.id, answer.optionId, null, "timer", false, answer.grant.surface, undefined, true);
+    }
+  }
   taleRenderer?: TaleCompanions;
   constructor(
     readonly bb: BbPluginApi,
     readonly keeper: Keeper,
     readonly registry: Registry,
   ) {
+    keeper.routineAskOpened = async ask => { if (ask.boardQuestId) await this.applyStandingAnswers(ask.boardQuestId); };
     this.serviceRecords = new ServiceRecords(keeper, stale => bb.rpc.experimental_invalidate(stale));
     PlacementPreservation.observe(bb, () => this.placements());
     keeper.store.log = (level, message) => this.bb.log[level](message);
@@ -916,7 +950,7 @@ export class TavernRuntime {
         ...(m.role === "keeper"
           ? KEEPER_TOOLS
           : m.role === "member"
-            ? ["tavern_report", "tavern_request_sources"]
+            ? ["tavern_report", "tavern_request_sources", ...(m.classId === "warden" ? ["tavern_act_verdict"] : [])]
             : []),
       ],
       skills: [
@@ -2615,7 +2649,7 @@ export class TavernRuntime {
           if (withdrawn) withdrawnAskIds.push(withdrawn.id);
         }
       }
-      const answer = this.keeper.store.query("asks", "boardQuestId", id, 500).filter(ask => ask.kind === "conclude" && ask.answer?.by === "user" && ask.answer.optionId === "conclude").at(-1);
+      const answer = this.keeper.store.query("asks", "boardQuestId", id, 500).filter(ask => ask.kind === "conclude" && (ask.answer?.by === "user" || ask.answer?.by === "preapproval") && ask.answer.optionId === "conclude").at(-1);
       if (!answer) throw new Error("Concluding requires the user's conclude answer");
       transitionQuest(this.keeper.store, q, "done", "conclude", { kind: "user" }, { kind: "ask-answer", id: answer.id }, this.keeper.now(), { patch: { endedAt: this.keeper.now() }, text: outcome, data: {
         ...(receipt ? { authority: receipt } : {}),

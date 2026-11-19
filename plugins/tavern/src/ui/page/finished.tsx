@@ -93,6 +93,7 @@ export function LeftRow({ waypoint: w, skipped }: { waypoint: Waypoint; skipped?
   return <li><PageGlyph name={w.actor === "user" ? "diamond" : w.actor === "outside" ? "gate" : "wait"} className={w.actor === "user" ? "tv-mn-you" : ""} /><span><b data-content>{w.title}</b><span className="m"> · <span data-content>{leftWord(w, skipped)}</span></span></span></li>;
 }
 
+import { preapprovalWords } from "../../shared/quest-authority";
 const VIA: Record<NonNullable<Ask["answer"]>["via"], string> = { banner: "from the banner", page: "on the Tavern page", phone: "on your phone", chat: "in chat", cli: "from the CLI", timer: "by its timer" };
 /** Why Tavern withdrew an ask, where the server recorded it. Keyed by string so a cause the schema adds later still reads "withdrawn". */
 const WITHDRAWN: Record<string, string> = { "quest-stopped": "withdrawn when it stopped", "quest-returned": "withdrawn when the quest returned", "backup-restored": "withdrawn when this backup was restored" };
@@ -100,6 +101,8 @@ const WITHDRAWN: Record<string, string> = { "quest-stopped": "withdrawn when it 
 export function askOutcome(ask: Ask): string {
   const label = ask.answer ? ask.options.find((o) => o.id === ask.answer!.optionId)?.label ?? "an option no longer listed" : null;
   if (ask.answer?.surface === "client (unattested)" && label) return `You chose “${label}”; answered from a client Tavern could not attribute`;
+  if (ask.answer?.preapproval) return `${label}: ${preapprovalWords(ask.answer.preapproval)}`;
+  if (ask.answer?.by === "keeper") return `${label}: decided by the Keeper`;
   if (ask.answer && label) return ask.answer.by === "user" ? `You chose “${label}” ${VIA[ask.answer.via]}` : `“${label}” applied by itself ${VIA[ask.answer.via]}`;
   if (ask.state === "withdrawn") return (ask.withdrawnCause && WITHDRAWN[ask.withdrawnCause]) || "withdrawn";
   if (ask.state === "defaulted") return "applied its recommendation";

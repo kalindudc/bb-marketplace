@@ -2,7 +2,7 @@ import { experimental_useRpcMutation, useBbNavigate } from "@get-bb/plugin-sdk/a
 import { useId, useMemo, useState } from "react";
 import { rpcContract, type BoardQuestDetail, type BoardQuestSummary, type Room } from "../../shared/contract";
 
-import { AskCard, verifiedOf, verifiedWords, questNames, readable, heldQuests, stoppingWords as kitStoppingWords, CELLAR, CheckIndependence, ExpandsMark, GateRows, GuardPosture, KeeperNoteRows, KeptInMind, OpensMark, QuestMap, QuietNotice, Vocabulary, clockTime, useNow, glowVars, vocab } from "../kit";
+import { QuestAuthority, AskCard, verifiedOf, verifiedWords, questNames, readable, heldQuests, stoppingWords as kitStoppingWords, CELLAR, CheckIndependence, ExpandsMark, GateRows, GuardPosture, KeeperNoteRows, KeptInMind, OpensMark, QuestMap, QuietNotice, Vocabulary, clockTime, useNow, glowVars, vocab } from "../kit";
 import { DecidedForYou, KIND, heldTitles } from "./asks";
 import { ArchiveReceiptLine, ArchivedList, FinishedRow, finishedQuests, useArchive } from "./archive";
 import { Ago, CrestOf, MemberLink, PageButton, PhaseStrip, Section, SegFilter, StateMark, ThreadButton, characterName, classLabel, type Registry, plural } from "./common";
@@ -120,7 +120,7 @@ export function QuestPage({ detail, registry, room }: { detail: BoardQuestDetail
   const finishedPath = verifiedOf(quest);
   const stop = StopQuest({ detail, registry });
   const members = new Map([...(room ? visibleMembers(room) : []), ...quest.members].map((m) => [m.threadId, m]));
-  const openAsks = detail.asks.filter((a) => a.state === "open");
+  const openAsks = detail.asks.filter((a) => a.state === "open" && a.lane !== "keeper");
   const finished = isFinished(quest.phase);
   const [promisesMore, setPromisesMore] = usePanelState("quest.promises.more", false);
   const [factsMore, setFactsMore] = usePanelState("quest.facts.more", false);
@@ -220,6 +220,7 @@ export function QuestPage({ detail, registry, room }: { detail: BoardQuestDetail
         <RecordFold id="quest.guards" title="Guardrails" count={plural(detail.violations?.length ?? 0, "violation")} open={!finished} preview={!finished ? <Guardrails detail={detail} registry={registry} members={members} bare compact /> : undefined}>
           <Guardrails detail={detail} registry={registry} members={members} bare compact={!finished} />
         </RecordFold>
+        <QuestAuthority questId={quest.id} />
         <RecordFold id="quest.decisions" title="Decided for you" count={plural(detail.decisionsTotal ?? detail.decisions.length, "decision")} open>
           <DecidedForYou headless decisions={[...detail.decisions].sort((a, b) => b.createdAt - a.createdAt)} limit={3} expanded={decisionsMore} onExpandedChange={setDecisionsMore} readOnly={finished} />
           {detail.decisionsNextCursor && <ol className="tv-li-list"><OlderDecisions keeperThreadId={quest.keeperThreadId} boardQuestId={quest.id} cursor={detail.decisionsNextCursor} /></ol>}

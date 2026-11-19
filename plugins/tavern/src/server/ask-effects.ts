@@ -30,15 +30,17 @@ export const ASK_EFFECTS: Record<AskEffect["type"], { act: Act; handler: keyof E
   "grant-scope": { act: "answerAsk", handler: "grant-scope" },
   "retry-provider": { act: "answerAsk", handler: "retry-provider" },
   "retry-tick": { act: "answerAsk", handler: "retry-tick" },
+  "placement-blocker": { act: "answerAsk", handler: "placement-blocker", answerOnly: true },
   "answer-blocker": { act: "answerAsk", handler: "answer-blocker", answerOnly: true },
   decision: { act: "answerAsk", handler: "decision", answerOnly: true },
   "scope-blocker": { act: "answerAsk", handler: "scope-blocker", answerOnly: true },
   "detection-hire": { act: "answerAsk", handler: "detection-hire", answerOnly: true },
 };
-export function applyAskEffect(effect: AskEffect, handlers: Partial<EffectHandlers>, receipt: { by: "user" | "default"; id: string }) {
+export function applyAskEffect(effect: AskEffect, handlers: Partial<EffectHandlers>, receipt: { by: "user" | "default" | "keeper" | "preapproval"; id: string }) {
   if (receipt.by === "default" && effect.type !== "decision") throw new Error("Only a reversible plain decision may default");
   const row = ASK_EFFECTS[effect.type];
-  authorize(receipt.by === "default" ? "defaultDecision" : row.act, { level: receipt.by === "default" ? "keeper" : "user-explicit", receipt: receipt.id });
+  if (receipt.by === "keeper" && effect.type !== "decision") throw new Error("Keeper answers cannot apply user-only transitions");
+  authorize(receipt.by === "default" || receipt.by === "keeper" ? "defaultDecision" : row.act, { level: receipt.by === "default" || receipt.by === "keeper" ? "keeper" : "user-explicit", receipt: receipt.id });
   const handler = handlers[row.handler];
   if (!handler) {
     if (row.answerOnly) return;

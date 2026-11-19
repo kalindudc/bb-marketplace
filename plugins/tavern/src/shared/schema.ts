@@ -286,6 +286,7 @@ export type GateRecord = z.infer<typeof gateRecordSchema>;
 export const waypointSchema = z.object({
   id: z.string().regex(/^w[0-9]{1,3}$/),
   title: z.string().min(1).max(200),
+  acts: z.array(z.object({ kind: z.string().min(1).max(120), path: z.string().max(4096).optional(), command: z.string().max(8000).optional() }).strict()).max(30).optional(),
   /** agent: a party member; user: the human; outside: a named person or team (a gate). */
   actor: z.enum(["agent", "user", "outside"]),
   /** Member thread id once staffed; a class id while planned; a person or team name for outside gates. */
@@ -328,6 +329,7 @@ export const planSchema = z.object({
   questions: z.array(planQuestionSchema).max(3),
   waypoints: z.array(waypointSchema).min(1).max(24),
   party: z.array(partySlotSchema).max(8),
+  alwaysAskKinds: z.array(z.enum(["production", "merge", "credential", "sends-as-you", "destructive"])).default([]),
   reviewLoad: z.string().max(300),
   eta: z.string().max(120).nullable(),
   changeNote: z.string().max(500).nullable(),
@@ -342,7 +344,11 @@ export const checkerHandoffHoldSchema = z.object({
 });
 export type CheckerHandoffHold = z.infer<typeof checkerHandoffHoldSchema>;
 
+import { delegationSchema, preapprovalSchema, delegationKindSchema, actTargetSchema } from "./quest-authority";
+
 export const boardQuestSchema = z.object({
+  delegations: z.array(delegationSchema).max(100).optional(),
+  preapprovals: z.array(preapprovalSchema).max(100).optional(),
   checkerHandoffHold: checkerHandoffHoldSchema.optional(),
   id,
   keeperThreadId: threadId,
@@ -384,10 +390,14 @@ export const askEffectSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("grant-scope"), memberThreadId: threadId }),
   z.object({ type: z.literal("scope-blocker"), memberThreadId: threadId }),
   z.object({ type: z.literal("detection-hire"), binding: z.object({ fingerprint: z.string(), providerId: z.string(), model: z.string(), characterId: z.string().nullable(), displayName: z.string(), token: z.string().optional() }) }),
-  ...(["retry-provider", "retry-tick", "answer-blocker", "decision"] as const).map(type => z.object({ type: z.literal(type) })),
+  z.object({ type: z.literal("decision"), outcomes: z.array(z.object({ optionId: z.string(), outcome: z.enum(["approve", "decline"]) })).optional() }),
+  ...(["retry-provider", "retry-tick", "placement-blocker", "answer-blocker"] as const).map(type => z.object({ type: z.literal(type) })),
 ]);
 export type AskEffect = z.infer<typeof askEffectSchema>;
 export const askSchema = z.object({
+  unsure: z.boolean().optional(),
+  target: actTargetSchema.optional(),
+  lane: z.enum(["user", "keeper", "tavern"]).optional(),
   effect: askEffectSchema.optional(),
   reversible: z.boolean().optional(),
   releaseHoldId: id.optional(),
@@ -417,7 +427,8 @@ export const askSchema = z.object({
       surface: z.string().optional(),
       optionId: z.string(),
       note: z.string().max(2000).nullable(),
-      by: z.enum(["user", "default"]),
+      by: z.enum(["user", "default", "keeper", "preapproval"]),
+      preapproval: z.object({ id: z.string(), at: epochMs, surface: z.string() }).optional(),
       via: z.enum(["banner", "page", "phone", "chat", "cli", "timer"]),
       at: epochMs,
     })
@@ -428,6 +439,7 @@ export type Ask = z.infer<typeof askSchema>;
 
 /** A call recorded in the ledger. Reversible calls the Keeper made alone show under "Decided for you" with an Undo. */
 export const decisionSchema = z.object({
+  askId: id.optional(), optionId: z.string().optional(), kind: delegationKindSchema.optional(),
   exceeds: z.enum(["party", "rangers"]).optional(),
   usedBy: z.string().nullable().optional(),
   // added by Builder B: acknowledgement is cross-device display state; missing means unseen.

@@ -6,6 +6,7 @@ const words = { level: "user-in-words", proof: "routed user message, quoted exac
 const keeper = { level: "keeper", proof: "recorded reversible decision" } as const;
 const invariant = { level: "tavern", proof: "invariant" } as const;
 export const AUTHORITY = {
+  delegateQuest: explicit, preapproveQuest: explicit, revokeQuestAuthority: explicit,
   answerAsk: explicit, greenlight: explicit, conclude: explicit, closeEarly: explicit,
   releaseCheckerHandoff: explicit, awayClose: explicit, awayReturn: explicit,
   addRule: explicit, widenRule: explicit, confirmRule: explicit, undoDecision: explicit,
@@ -25,6 +26,13 @@ export const AUTHORITY = {
   holdQuestFromMessage: words, resumeQuestFromMessage: words,
   defaultDecision: keeper, acceptWaypoint: keeper, skipWaypoint: keeper, exceedParty: keeper, exceedRangers: keeper,
   verifyOwnWork: invariant, upgradeResolution: invariant, changeClosedCredits: invariant,
+} as const;
+export const QUEST_LANES = {
+  production: { lane: "user", delegatable: true }, merge: { lane: "user", delegatable: true },
+  credential: { lane: "user", delegatable: true }, "sends-as-you": { lane: "user", delegatable: true }, destructive: { lane: "user", delegatable: true },
+  greenlight: { lane: "user", delegatable: false }, conclude: { lane: "user", delegatable: false },
+  "scope widenings": { lane: "keeper", delegatable: false }, replacements: { lane: "keeper", delegatable: false },
+  "re-plans within the party": { lane: "keeper", delegatable: false }, "optional waypoint skips": { lane: "keeper", delegatable: false },
 } as const;
 export type OptionalRpcContext<T> = { [K in keyof T]: T[K] extends (input: infer I, context: infer C) => infer R ? (input: I, context?: C) => R : never };
 export type Act = keyof typeof AUTHORITY;

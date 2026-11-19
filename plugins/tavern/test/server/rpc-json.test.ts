@@ -134,6 +134,10 @@ it("returns strict JSON from EVERY registered RPC with optional record fields ab
       f.k.route("lead", { kind: "steer", boardQuestId: f.q.id, summary: "Hold checking", notes: [], checkerHandoffHold: { reason: "Wait for my signal" } });
       return call("releaseCheckerHandoff", { boardQuestId: f.q.id, holdId: f.k.quest(f.q.id).checkerHandoffHold!.id, via: "page" });
     },
+    questAuthority: () => call("questAuthority", { boardQuestId: f.q.id }),
+    delegateQuest: () => call("delegateQuest", { boardQuestId: f.q.id, kind: "merge", via: "page" }),
+    preapproveQuest: () => call("preapproveQuest", { boardQuestId: f.q.id, greenlight: null, placement: false, conclude: false, endsAt: null, via: "page" }),
+    revokeQuestAuthority: () => call("revokeQuestAuthority", { boardQuestId: f.q.id, id: f.k.quest(f.q.id).delegations![0]!.id, via: "page" }),
     answerAsk: () => call("answerAsk", { askId: f.ask.id, optionId: "yes", via: "page" }),
     markDecisionsSeen: async () => {
       const result = await call("markDecisionsSeen", { ids: [f.decision.id] }) as { undoToken: string | null };

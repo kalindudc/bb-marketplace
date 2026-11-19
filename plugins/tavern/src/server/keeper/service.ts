@@ -1,4 +1,6 @@
 import { authorize, commitUserAct, type UserActReceipt } from "../authority";
+import { QuestAuthority } from "../quest-authority";
+import { preapprovalWords } from "../../shared/quest-authority";
 import { randomUUID } from "node:crypto";
 import { applyAskEffect, type EffectHandlers, type AskEffect } from "../ask-effects";
 import type { RequestSources } from "../../shared/request-source";
@@ -38,8 +40,9 @@ import { memberPlace } from "../../shared/member-place";
 
 export type PlanInput = Omit<
   Plan,
-  "version" | "createdAt" | "fromSteer" | "reversible"
+  "version" | "createdAt" | "fromSteer" | "reversible" | "alwaysAskKinds"
 > & {
+  alwaysAskKinds?: Plan["alwaysAskKinds"];
   reversible?: boolean;
   fromSteer?: string | null;
 };
@@ -50,6 +53,8 @@ export type AskInput = Pick<
   boardQuestId?: string | null;
   proceedInMinutes?: number | null;
   draft?: Ask["draft"];
+  unsure?: boolean;
+  target?: Ask["target"];
   scopeChange?: Ask["scopeChange"];
   releaseHoldId?: string;
   releaseCheckerHandoff?: boolean;
@@ -73,6 +78,8 @@ export class Keeper {
   settings: (questId?: string | null) => TavernSettings = () =>
     DEFAULT_SETTINGS;
   askOpened: (ask: Ask) => void = () => {};
+  routineAskOpened: (ask: Ask) => Promise<void> = async () => {};
+  readonly authority = new QuestAuthority(this);
   readonly memory = new KeeperMemory(this);
   private readonly syncing = new Set<string>();
   constructor(
@@ -1027,8 +1034,16 @@ export class Keeper {
       );
     if (input.kind === "greenlight" && input.effect.type !== "greenlight") throw new Error("A greenlight ask needs its typed plan version; propose the plan instead.");
     if (input.kind === "conclude" && input.effect.type !== "conclude") throw new Error("A conclude ask needs its typed draft; tell the quest result instead.");
+    if (input.effect.type === "placement-blocker" && !trusted) throw new Error("Only Tavern may open a typed placement blocker");
+    if (input.options.some(o => o.id === "delegate")) throw new Error("The delegation answer is reserved for Tavern");
+    if (["merge", "production"].includes(input.kind)) input = { ...input, options: [{ id: "approve", label: "Approve the act", detail: "Authorize the exact act; delegated approval needs a current Warden verdict.", recommended: false }, { id: "deny", label: "Decline the act", detail: "Do not authorize this act.", recommended: false }], effect: { type: "decision", outcomes: [{ optionId: "approve", outcome: "approve" }, { optionId: "deny", outcome: "decline" }] } };
+    const lane = this.authority.lane({ kind: input.kind, boardQuestId: questId, unsure: input.unsure });
+    if (questId && lane === "user" && ["production", "merge", "credential", "sends-as-you", "destructive"].includes(input.kind)) {
+      input = { ...input, options: [...input.options, { id: "delegate", label: `Let ${this.name(this.require(threadId, "keeper"))} decide these for the rest of this quest`, detail: "Records a revocable grant for this kind on this quest only. This act still needs a decision.", recommended: false }] };
+    }
     const ask = askSchema.parse({
       ...input,
+      lane,
       effect: input.effect,
       reversible: input.reversible === true,
       id: this.store.id("ask"),
@@ -1053,15 +1068,19 @@ export class Keeper {
         questId,
         "ask.opened",
         ask.question,
-        { askId: ask.id, ...eventData },
+        { askId: ask.id, lane, keeperName: this.name(this.require(threadId, "keeper")), ...eventData },
         { kind: "agent", threadId },
       );
     });
+    const standing = this.authority.match(ask);
+    if (standing && ask.effect?.type === "greenlight") this.answerAsk(ask.id, standing.optionId, null, "timer", "preapproval");
     this.changed(threadId, questId);
     void Promise.resolve()
       .then(() => {
-        if (this.store.get("asks", ask.id)?.state === "open")
-          return this.askOpened(ask);
+        const current = this.store.get("asks", ask.id);
+        if (current?.state !== "open") return;
+        if (this.authority.match(current)) return this.routineAskOpened(current);
+        if (this.authority.lane(current) === "user") return this.askOpened(current);
       })
       .catch((error) =>
         console.warn(`Tavern ask notification ${ask.id}: ${String(error)}`),
@@ -1073,7 +1092,7 @@ export class Keeper {
     optionId: string,
     note: string | null,
     via: NonNullable<Ask["answer"]>["via"],
-    by: "user" | "default",
+    by: "user" | "default" | "keeper" | "preapproval",
     surface?: string,
     effects: Partial<EffectHandlers> = {},
     receipt?: UserActReceipt,
@@ -1086,6 +1105,20 @@ export class Keeper {
         return;
       }
       throw new Error("This ask is no longer open");
+    }
+    const standing = by === "preapproval" ? this.authority.match(ask) : null;
+    if (by === "preapproval" && (!standing || standing.optionId !== optionId)) throw new Error("No matching quest pre-approval");
+    if (optionId === "delegate") {
+      if (by !== "user" || !ask.boardQuestId || !ask.options.some(o => o.id === "delegate")) throw new Error("Only the user may delegate this quest kind");
+      this.authority.delegate(ask.boardQuestId, ask.kind as import("../../shared/quest-authority").DelegationKind, receipt ? { ...receipt, surface: via === "cli" ? receipt.surface : `${via} (client, unattested)` } : receipt!);
+      this.store.put("asks", ask.id, { ...ask, lane: "keeper", options: ask.options.filter(o => o.id !== "delegate") });
+      this.userAction(ask.keeperThreadId);
+      this.changed(ask.keeperThreadId, ask.boardQuestId); return;
+    }
+    if (by === "keeper") {
+      if (this.authority.lane(ask) !== "keeper") throw new Error("This ask belongs to the user");
+      const outcome = ask.effect?.type === "decision" ? ask.effect.outcomes?.find(answer => answer.optionId === optionId)?.outcome : undefined;
+      if (outcome !== "decline") this.authority.assertVerdict(ask);
     }
     const effect = ask.effect!;
     if (ask.kind === "greenlight" && effect.type !== "greenlight") throw new Error("This old ask has no plan version; ask the Keeper to propose the plan again.");
@@ -1111,11 +1144,13 @@ export class Keeper {
     )
       throw new Error("This ask cannot default");
     if (ask.releaseHoldId && (by !== "user" || via === "timer")) throw new Error("A checker-handoff hold needs an explicit user answer");
+    const answerData = { askId, optionId, answeredBy: by, ...(standing ? { preapproval: { id: standing.grant.id, at: standing.grant.at, surface: standing.grant.surface } } : {}), ...(by === "keeper" ? { keeperName: this.name(this.require(ask.keeperThreadId, "keeper")), delegation: this.quest(ask.boardQuestId!).delegations?.find(g => g.kind === ask.kind && g.endedAt === null && g.revokedAt === null) } : {}), ...(receipt ? { authority: receipt } : {}) };
     commitUserAct(this.store, () => this.now(), receipt, () => {
+      if (standing) this.authority.consume(standing);
       this.store.put("asks", ask.id, {
         ...ask,
         state: by === "default" ? "defaulted" : "answered",
-        answer: { optionId, note, via, by, at: this.now(), ...(surface ? { surface } : {}) },
+        answer: { optionId, note, via, by, at: this.now(), ...(surface ? { surface } : {}), ...(standing ? { preapproval: { id: standing.grant.id, at: standing.grant.at, surface: standing.grant.surface } } : {}) },
       });
       applyAskEffect(effect, {
         ...effects,
@@ -1125,7 +1160,7 @@ export class Keeper {
           const q = this.quest(ask.boardQuestId);
           if (q.phase !== "greenlight") throw new Error("This plan is no longer waiting for greenlight");
           if (effect.planVersion !== q.planVersion) throw new Error("This greenlight belongs to an old plan version");
-          transitionQuest(this.store, q, "build", "approve", { kind: "user" }, { kind: "ask-answer", id: askId }, this.now(), { patch: { greenlitVersion: q.planVersion }, text: "Party approved: hire it now, critical path first.", data: { askId, optionId, ...(receipt ? { authority: receipt } : {}) } });
+          transitionQuest(this.store, q, "build", "approve", { kind: "user" }, { kind: "ask-answer", id: askId }, this.now(), { patch: { greenlitVersion: q.planVersion }, text: standing ? `Party approved: ${preapprovalWords(standing.grant)}. Hire it now, critical path first.` : "Party approved: hire it now, critical path first.", data: answerData });
         },
         "release-hold": effect => {
           if (effect.type !== "release-hold" || optionId !== "release") return;
@@ -1142,9 +1177,9 @@ export class Keeper {
           ? "Party approved: hire it now, critical path first."
           : ask.kind === "scope" && optionId === "deny"
             ? `${SCOPE_DENIAL_TEXT}${note ? ` User note: ${note}` : ""}`
-            : `${by === "default" ? "Default applied to a reversible choice" : "Answered"}: ${ask.question} — ${optionId}${note ? `: ${note}` : ""}`,
-        { askId, optionId, ...(receipt ? { authority: receipt } : {}) },
-        by === "user" ? { kind: "user" } : { kind: "tavern" },
+            : `${standing ? preapprovalWords(standing.grant) : by === "keeper" ? "Keeper decided" : by === "default" ? "Default applied to a reversible choice" : "Answered"}: ${ask.question} — ${optionId}${note ? `: ${note}` : ""}`,
+        answerData,
+        by === "keeper" ? { kind: "agent", threadId: ask.keeperThreadId } : by === "user" ? { kind: "user" } : { kind: "tavern" },
       );
     });
     if (by === "user") this.userAction(ask.keeperThreadId);
@@ -1153,6 +1188,7 @@ export class Keeper {
   decide(
     threadId: string,
     input: {
+      askId?: string; optionId?: string; kind?: import("../../shared/quest-authority").DelegationKind;
       boardQuestId?: string | null;
       text: string;
       why: string;
@@ -1221,6 +1257,11 @@ export class Keeper {
       createdAt: this.now(),
     });
     this.store.atomic(() => {
+      if (input.askId) {
+        const ask = this.store.get("asks", input.askId);
+        if (!ask || ask.keeperThreadId !== threadId || ask.boardQuestId !== questId || input.source !== "keeper" || !input.optionId) throw new Error("A Keeper answer needs its own quest ask and option");
+        this.answerAsk(ask.id, input.optionId, input.why, "chat", "keeper");
+      } else if (input.kind) throw new Error("A delegated kind needs its exact askId and optionId");
       this.store.put("decisions", decision.id, decision);
       if (autoApproval) {
         transitionQuest(this.store, this.quest(autoApproval.questId), "build", "auto-approve", { kind: "agent", threadId }, { kind: "decision", id: decision.id }, this.now(), { patch: { greenlitVersion: autoApproval.planVersion }, text: decision.text, data: { decisionId: decision.id } });
@@ -1231,7 +1272,7 @@ export class Keeper {
         questId,
         "decision.made",
         decision.text,
-        { decisionId: decision.id },
+        { decisionId: decision.id, ...(input.askId ? { askId: input.askId, answeredBy: "keeper", keeperName: this.name(this.require(threadId, "keeper")), delegation: this.quest(questId!).delegations?.find(g => g.kind === this.store.get("asks", input.askId!)?.kind && g.endedAt === null && g.revokedAt === null) } : {}) },
         { kind: "agent", threadId },
       );
       }
@@ -1249,6 +1290,10 @@ export class Keeper {
     this.store.atomic(() => {
       let phaseChanged = false;
       this.store.put("decisions", id, { ...d, undone: true });
+      if (d.askId) {
+        const ask = this.store.get("asks", d.askId);
+        if (ask?.answer?.by === "keeper" && ask.answer.optionId === d.optionId && (!ask.boardQuestId || isOpenQuest(this.quest(ask.boardQuestId)))) this.store.put("asks", ask.id, { ...ask, state: "open", answer: null, unsure: true, lane: "user" });
+      }
       const approval = this.store.get("autoGreenlights", id);
       if (approval) {
         const q = this.quest(approval.boardQuestId);
@@ -1687,15 +1732,17 @@ export class Keeper {
       plan,
       waypoints,
       members,
-      openAsks: asks.length,
+      openAsks: asks.filter(a => this.authority.lane(a) !== "keeper").length,
       move: {
         who:
           q.phase === "held" || !isOpenQuest(q)
             ? "nobody"
             : phase === "wrap" || !plan
               ? "keeper"
-              : asks.length
+              : asks.some(a => this.authority.lane(a) === "user")
                 ? "you"
+                : asks.some(a => this.authority.lane(a) === "keeper")
+                  ? "keeper"
                 : next?.actor === "outside"
                   ? "outside"
                   : next?.actor === "user"
@@ -1705,7 +1752,9 @@ export class Keeper {
                       : "keeper",
         text:
           outcome ??
-          (!plan
+          (asks.some(a => this.authority.lane(a) === "keeper") && !asks.some(a => this.authority.lane(a) === "user")
+            ? `Waiting on ${this.name(this.require(q.keeperThreadId, "keeper"))}: ${asks.find(a => this.authority.lane(a) === "keeper")!.question}`
+            : !plan
             ? "Propose the quest map"
             : (asks[0]?.question ?? next?.title ?? "Review the done-when")) + (newsBy === null ? "" : ` · ${newsBy < this.now() ? "news overdue since" : "next news by"} ${clock(newsBy)}`),
       },

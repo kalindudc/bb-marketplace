@@ -29,6 +29,7 @@ describe("Re-check load, last reply and paused ticks", () => {
     for (let i = 0; i < 4; i++) {
       const q = await seedQuest(f.k,"lead", pad(`QUEST-${i}`, 120), `Q${i}`);
       ids.push(q.id);
+      f.k.store.put("quests", q.id, { ...f.k.quest(q.id), delegations: Array.from({ length: 100 }, (_, n) => ({ id: `delegation-${n}`, kind: "credential", at: f.time(), surface: "client (unattested)", endedAt: null, revokedAt: n < 99 ? f.time() : null })), preapprovals: Array.from({ length: 100 }, (_, n) => ({ id: `preapproval-${n}`, at: f.time(), surface: "client (unattested)", endedAt: null, revokedAt: n < 99 ? f.time() : null, greenlight: null, placement: true, conclude: true, endsAt: null, retriesUsed: 0 })) });
       f.k.resetRoutes("lead");
       f.k.plan("lead", {
         ...planInput(q.id),

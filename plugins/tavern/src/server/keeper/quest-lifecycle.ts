@@ -38,7 +38,7 @@ export function partyFits(plan: Plan, approved: Plan) {
 }
 export function approvedPartyReceipt(store: KeeperStore, quest: BoardQuest): { kind: string; id: string } | null {
   if (quest.greenlitVersion === null) return null;
-  const ask = store.query("asks", "boardQuestId", quest.id, 500).find(ask => ask.kind === "greenlight" && ask.answer?.by === "user" && ask.answer.optionId === "approve" && ask.effect?.type === "greenlight" && ask.effect.planVersion === quest.greenlitVersion);
+  const ask = store.query("asks", "boardQuestId", quest.id, 500).find(ask => ask.kind === "greenlight" && (ask.answer?.by === "user" || ask.answer?.by === "preapproval") && ask.answer.optionId === "approve" && ask.effect?.type === "greenlight" && ask.effect.planVersion === quest.greenlitVersion);
   if (ask) return { kind: "ask-answer", id: ask.id };
   const decision = store.query("decisions", "boardQuestId", quest.id, 500).find(decision => {
     const approval = store.get("autoGreenlights", decision.id);
@@ -75,6 +75,15 @@ export function transitionQuest(store: KeeperStore, quest: BoardQuest, to: Phase
     if (from === "held" && !cursors[quest.id]) {
       const hold = store.questHeldEvent(quest.id, Number.MAX_SAFE_INTEGER);
       cursors[quest.id] = { cursor: hold ? hold.id - 1 : 0 };
+    }
+    if (to === "done" || to === "stopping" || to === "stopped") {
+      for (const field of ["delegations", "preapprovals"] as const) {
+        result[field] = result[field]?.map(grant => {
+          if (grant.endedAt !== null || grant.revokedAt !== null) return grant;
+          store.event(at, quest.keeperThreadId, quest.id, field === "delegations" ? "delegation.ended" : "preapproval.ended", "Quest authority ended with the quest", { id: grant.id }, { kind: "tavern" });
+          return { ...grant, endedAt: at };
+        }) as never;
+      }
     }
     authorised.add(result);
     store.put("quests", quest.id, result);

@@ -1,3 +1,4 @@
+import { delegationKindSchema, preapprovalInputSchema, questAuthorityViewSchema } from "./quest-authority";
 import { taleResultsSchema } from "./tale-results";
 import { characterServiceRecordSchema, taleLevelSchema } from "./service-record";
 import { executionFactsSchema } from "./class-execution";
@@ -387,6 +388,10 @@ export const rpcContract = defineContract({
     input: z.object({ boardQuestId: id, holdId: id, via: z.enum(["page", "banner"]) }).strict(),
     output: z.object({ checkerHandoffHold: checkerHandoffHoldSchema }),
   },
+  questAuthority: { input: z.object({ boardQuestId: id }).strict(), output: questAuthorityViewSchema, tags: ({ boardQuestId }: { boardQuestId: string }) => [tags.boardQuest(boardQuestId), tags.room(), tags.registry()] },
+  delegateQuest: { input: z.object({ boardQuestId: id, kind: delegationKindSchema, via: z.enum(["page", "banner", "phone", "chat"]) }).strict(), output: ok },
+  preapproveQuest: { input: preapprovalInputSchema.extend({ boardQuestId: id, via: z.enum(["page", "banner", "phone", "chat"]) }).strict(), output: ok },
+  revokeQuestAuthority: { input: z.object({ boardQuestId: id, id, via: z.enum(["page", "banner", "phone", "chat"]) }).strict(), output: ok },
   answerAsk: {
     input: z.object({ askId: id, optionId: z.string(), note: z.string().max(2000).nullable().default(null), via: z.enum(["banner", "page", "phone", "chat"]) }).strict(),
     output: ok,

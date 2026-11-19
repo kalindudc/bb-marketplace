@@ -849,3 +849,14 @@ html.dark .tavern .qsvg .wp.o-you .wp-fo { filter: drop-shadow(0 0 5px color-mix
 .tavern .arrival-mark i { width: 6px; height: 6px; background: var(--primary); }
 .tavern .arrival-mark.mo-arrive { animation: tavern-arrive var(--tavern-dur-cue, 300ms) var(--tavern-ease) 1 both; }
 @keyframes tavern-arrive { from { opacity: 0; } to { opacity: 1; } }
+
+.tavern.gl-blocks { display: flex; flex-direction: column; gap: 8px; padding-top: 8px; border-top: 1px solid var(--tavern-line); overflow-wrap: anywhere; }
+.tavern.gl-blocks details > * { margin-block: 8px; }
+.tavern.gl-blocks .grants { display: grid; gap: 8px; }
+.tavern.gl-blocks .grants li { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.tavern.gl-blocks input[type="number"] { width: 5em; }
+.tavern.gl-blocks input[type="datetime-local"] { max-width: 100%; }
+@media (max-width: 520px) {
+  .tavern.gl-blocks .btn, .tavern.gl-blocks summary, .tavern.gl-blocks .opt { min-height: 44px; }
+  .tavern.gl-blocks .sendbox { grid-template-columns: minmax(0, 1fr); }
+}

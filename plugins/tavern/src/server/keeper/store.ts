@@ -48,6 +48,7 @@ export interface Records {
   quests: BoardQuest;
   plans: Plan;
   asks: Ask;
+  actVerdicts: { wardenThreadId: string; entryId: string; target: import("../../shared/quest-authority").ActTarget; at: number };
   decisions: Decision;
   decisionSeen: { token: string; seenAt: number };
   rules: Rule;
@@ -540,7 +541,7 @@ export class KeeperStore {
       this.db
         .prepare(
           `SELECT r.data FROM tavern_records r WHERE kind='asks' AND json_extract(data,'$.state')='open'${clause}
-           ${visibleOnly ? "AND NOT EXISTS (SELECT 1 FROM tavern_records q WHERE q.kind='quests' AND q.id=json_extract(r.data,'$.boardQuestId') AND q.archived_at IS NOT NULL)" : ""}
+           ${visibleOnly ? "AND COALESCE(json_extract(r.data,'$.lane'),'user') != 'keeper' AND NOT EXISTS (SELECT 1 FROM tavern_records q WHERE q.kind='quests' AND q.id=json_extract(r.data,'$.boardQuestId') AND q.archived_at IS NOT NULL)" : ""}
            ORDER BY r.rowid LIMIT 500`,
         )
         .all(...args) as { data: string }[]

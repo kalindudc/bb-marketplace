@@ -3,6 +3,7 @@ import "./components.css";
 export { Crest } from "./crest";
 export { MemberIdentity, memberIdentityWords, type MemberIdentityProps } from "./member-identity";
 export { RESULTS_PER_LEVEL, MAX_NOTCHES, LEVEL_BASIS, levelRole, earnedCount, levelOf, levelFor, levelsShown, noLevelWords, reachedInParty, reachedLevel, reachedWords, type Level, type LevelRole, type ReachedLevel } from "./level";
+export { QuestAuthority } from "./quest-authority";
 export { AskCard, wideningWords } from "./ask-card";
 export { QuestMap, layoutWaypoints, taleFigures, FigureRow, type Figure } from "./quest-map";
 export { KeptInMind, KeeperNoteRows, GateRows } from "./memory";
