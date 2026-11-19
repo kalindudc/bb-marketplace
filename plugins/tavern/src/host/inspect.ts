@@ -3,7 +3,7 @@ import { homedir, tmpdir } from "node:os";
 import { isAbsolute, resolve } from "node:path";
 import { hostContract, type Authority, type HostOutput } from "../host-contract";
 import { piAgentDir } from "../scope/install";
-import { objectFormatSchema } from "../shared/placement";
+import { inspectGitCapabilities, repositoryObjectFormat } from "./git-capabilities";
 import { git, runGit, withGitDeadline, type GitOptions } from "./git";
 import { abortError } from "./process";
 import { HostError, HostRegistry } from "./registry";
@@ -60,24 +60,21 @@ export async function inspectHost(registry: HostRegistry, authority: Authority, 
   const gitRoot = realpathSync(isAbsolute(actualRoot) ? actualRoot : resolve(root, actualRoot));
   if (endpoint.registration.access === "member-write" && gitRoot !== root)
     throw new HostError("endpoint-root-mismatch", "A writable member endpoint must name its complete private checkout, not a subdirectory.");
-  const [head, tree, format, branchResult, dirs, status, commands, repoRemotes] = await Promise.all([
+  const builtins = await inspectGitCapabilities(root, options, bare === "true");
+  const [head, tree, branchResult, dirs, status, repoRemotes] = await Promise.all([
     git(root, ["rev-parse", "--verify", "HEAD"], options),
     git(root, ["rev-parse", "--verify", "HEAD^{tree}"], options),
-    git(root, ["rev-parse", "--show-object-format"], options),
     runGit(root, ["symbolic-ref", "--short", "-q", "HEAD"], options),
     git(root, ["rev-parse", "--git-dir", "--git-common-dir"], options),
     bare === "true" ? Promise.resolve(null) : runGit(root, ["status", "--porcelain", "-z"], { ...options, timeoutMs: 150_000 }),
-    runGit(root, ["--list-cmds=builtins"], options),
     repositoryRemotes(root, options, endpoint.registration.access === "source-read"),
   ]);
-  const objectFormat = objectFormatSchema.safeParse(format);
-  if (!objectFormat.success) throw new HostError("git-capability", "The host cannot establish the repository's object format.");
+  const objectFormat = await repositoryObjectFormat(root, options, head);
   if (branchResult.code !== 0 && branchResult.code !== 1)
     throw new HostError("git-capability", "The host cannot establish the repository's current branch.");
   const [gitDir, commonDir] = dirs.split("\n");
   if (!gitDir || !commonDir) throw new HostError("git-capability", "The host cannot identify its Git metadata directories.");
   const normalized = (path: string) => realpathSync(resolve(root, path));
-  const builtins = new Set(commands.code === 0 ? commands.stdout.split(/\s+/) : []);
   const porcelain = status?.code === 0;
   const objectImport = ["hash-object", "mktree", "commit-tree", "update-ref", "ls-tree", "cat-file"].every(name => builtins.has(name));
   let sourceBase;
@@ -89,7 +86,7 @@ export async function inspectHost(registry: HostRegistry, authority: Authority, 
   const result = hostContract.inspect.output.parse({
     platform: process.platform, home: realpathSync(homedir()), tmp: [...new Set([tmpdir(), realpathSync(tmpdir())])], piAgentDir: piAgentDir(),
     root, artifactDirectory: registry.artifactDirectory, sourceBase, ...(repoRemotes === undefined ? {} : { repoRemotes }), branch: branchResult.code === 0 ? branchResult.stdout.trim() : null,
-    head, tree, objectFormat: objectFormat.data, linkedWorktree: normalized(gitDir) !== normalized(commonDir),
+    head, tree, objectFormat, linkedWorktree: normalized(gitDir) !== normalized(commonDir),
     features: { porcelain, exportChanges: porcelain && gitRoot === root, objectImport: objectImport && gitRoot === root },
   });
   if (result.head.length !== (result.objectFormat === "sha1" ? 40 : 64) || result.tree.length !== result.head.length)

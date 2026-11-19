@@ -42,6 +42,7 @@ Machine rules put a project's party members on their own new machines through th
 
 ### Fixed
 
+- Machine placement checks that Git can carry the work before setup. A machine missing the required plumbing or temporary-index support is a lasting blocker with Git’s reason, not a retry loop. Object formats are read from the verified commit and checked against repository configuration without requiring an optional Git query.
 - Changing a class model no longer floods settings with repeated saves or leaves every class picker disabled. Each completed choice saves once after its menu closes, keeps the picker mounted and shows progress only on that row.
 - Quests on the new-thread page use the same styled rows as the common room, with their Keeper, phase, path progress and whose move comes next. Quests with open asks or checker-handoff holds come first, newest first, and show how many things need you; greenlights count too, and a hold with a release ask counts once. The header includes holds in its count. Keeper labels stay off in the room and Ledger, and the homepage rows fit a phone without sideways scrolling.
 - Long quest titles in the Ledger wrap to two lines with an ellipsis and a full-title tooltip. Heading counts wrap, and long gate names and row metadata no longer push past their cards.

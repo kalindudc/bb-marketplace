@@ -115,7 +115,7 @@ export class PlacementReady {
     try {
       current();
       if (initial.phase === "blocked") {
-        if (!initial.blocked?.retryable) return `Blocked at ${initial.blocked?.stage}: ${initial.blocked?.message}. Retry will not help; ask the Keeper to repair the placement.`;
+        if (!initial.blocked?.retryable) return `Blocked at ${initial.blocked?.stage}: ${initial.blocked?.message}. ${initial.blocked?.code === "git-unsupported" ? "Stop this placement or hire without placement; retrying will not help because it cannot add the required Git capabilities." : "Retry will not help; ask the Keeper to repair the placement."}`;
         placements.retry(placementId, generation);
       }
       if (!initial.rule || !initial.rule.acceptedConsent.remoteDetectionOnly) throw new Error("This placement has no enabled rule consent for remote detection-only work");
@@ -216,10 +216,11 @@ export class PlacementReady {
       const live = placements.get(placementId);
       if (live?.generation !== generation || live.desiredState !== "running") return `Readiness not published: ${message}`;
       if (!setupState(live)) return unavailable(live);
-      const retryable = (!(error instanceof StalePlacementError) || message.startsWith("The effective scope")) && !["object-format-mismatch", "This rule's target isn't supported in this version."].includes(message);
-      placements.block(placementId, generation, { stage, code: stage === "carry" ? "carry-unavailable" : "binding-unavailable", message, retryable });
+      const unsupportedGit = (error as { code?: string })?.code === "git-unsupported" || message.includes("This machine's Git can't carry Tavern's work (");
+      const retryable = !unsupportedGit && (!(error instanceof StalePlacementError) || message.startsWith("The effective scope")) && !["object-format-mismatch", "This rule's target isn't supported in this version."].includes(message);
+      placements.block(placementId, generation, { stage, code: unsupportedGit ? "git-unsupported" : stage === "carry" ? "carry-unavailable" : "binding-unavailable", message, retryable });
       this.deps.changed?.(memberId);
-      return `Blocked at ${stage}: ${message}\n${retryable ? "Retry after the problem is resolved." : "Retry will not help; ask the Keeper to repair the placement."}`;
+      return `Blocked at ${stage}: ${message}\n${unsupportedGit ? "Stop this placement or hire without placement; retrying will not help because it cannot add the required Git capabilities." : retryable ? "Retry after the problem is resolved." : "Retry will not help; ask the Keeper to repair the placement."}`;
     } finally { active = false; unsubscribe(); }
   }
 }

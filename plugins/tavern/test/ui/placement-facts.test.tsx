@@ -83,6 +83,12 @@ describe.each(surfaces)("%s placement facts", surface => {
     await waitFor(() => expect(retry).toHaveBeenCalledWith({ placementId: "placement-juno", generation: 3 }));
     expect(slot.container.querySelector("button button")).toBeNull();
   });
+  it("shows unsupported Git as a lasting blocker with no Retry control", async () => {
+    const message = "This machine's Git can't carry Tavern's work (git --list-cmds=builtins: unknown option). Members can't be placed on it yet.";
+    const slot = await surfaceMount({ ...blockedPlacement, blocker: { stage: "bind", message, retryable: false } });
+    await slot.findByText(message);
+    expect(slot.queryByRole("button", { name: /Retry placement/ })).toBeNull();
+  });
   it.each(placementHolds)("shows $kind as a hold, not an error", async hold => {
     const slot = await surfaceMount({ ...pendingPlacement, phase: "blocked", hold });
     const text = await slot.findByText(hold.message);

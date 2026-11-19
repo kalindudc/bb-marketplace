@@ -4,6 +4,7 @@ import type { Authority, EndpointRegistration, TransferAuthority, TransferRegist
 import { git, runGit, type GitOptions } from "./git";
 import { authorityOf, HostError, HostRegistry, type RegisteredEndpoint } from "./registry";
 import { abortError } from "./process";
+import { repositoryObjectFormat } from "./git-capabilities";
 
 export interface HostContext {
   registry: HostRegistry; authority: Authority; signal: AbortSignal; endpoint: RegisteredEndpoint; root: string;
@@ -30,7 +31,7 @@ export async function assertRepository(context: HostContext): Promise<void> {
   if (realpathSync(resolve(root, actualRoot)) !== root)
     throw new HostError("source-root-required", "The source checkout must be a repository root; choose an appropriate Keeper environment. Tavern will not expand it to a parent repository.");
   const [paths, format, branch] = await Promise.all([
-    context.git(["rev-parse", "--git-dir", "--git-common-dir"]), context.git(["rev-parse", "--show-object-format"]),
+    context.git(["rev-parse", "--git-dir", "--git-common-dir"]), repositoryObjectFormat(root, { dataDir: context.registry.dataDir, signal: context.signal, check: context.active }),
     endpoint.registration.access === "member-write" ? context.git(["symbolic-ref", "--short", "-q", "HEAD"]) : Promise.resolve(null),
   ]);
   const [gitDir, commonDir] = paths.split("\n");
