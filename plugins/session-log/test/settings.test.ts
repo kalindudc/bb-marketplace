@@ -22,6 +22,12 @@ describe("settings", () => {
       expect(validate("outputHeadLines", bad)).toEqual({ issues: [{ message: "Enter a whole number from 0 to 50." }] });
     }
     expect(validate("thinkingLines", 21)).toEqual({ issues: [{ message: "Enter a whole number from 0 to 20." }] });
+    const rows = (value: unknown) => SETTING_DESCRIPTORS.rowsPerPage.experimental_schema["~standard"].validate(value);
+    expect(rows(10)).toEqual({ value: 10 });
+    expect(rows(500)).toEqual({ value: 500 });
+    for (const bad of [9, 501, 20.5, "50"]) {
+      expect(rows(bad)).toEqual({ issues: [{ message: "Enter a whole number from 10 to 500." }] });
+    }
   });
 
   it("reads stored values and keeps the default for any missing or invalid one", () => {
@@ -29,15 +35,19 @@ describe("settings", () => {
     expect(parseSettings({
       outputHeadLines: 2, outputTailLines: 0, thinkingLines: 0, expandFailures: false,
       showMessages: false, showThinking: false, showTools: false, showHidden: false, timeFormat: "12h", tintRows: false,
+      rowsPerPage: 10,
     })).toEqual({
       outputHeadLines: 2, outputTailLines: 0, thinkingLines: 0, expandFailures: false,
       showMessages: false, showThinking: false, showTools: false, showHidden: false, timeFormat: "12h", tintRows: false,
+      rowsPerPage: 10,
     });
     expect(parseSettings({
       outputHeadLines: 3.5, thinkingLines: 99, expandFailures: "yes", timeFormat: "auto", tintRows: "yes",
-      showHidden: "no",
+      showHidden: "no", rowsPerPage: 9,
     }))
       .toEqual(DEFAULT_SETTINGS);
+    expect(parseSettings({ rowsPerPage: 501 }).rowsPerPage).toBe(50);
+    expect(parseSettings({ rowsPerPage: 12.5 }).rowsPerPage).toBe(50);
   });
 });
 

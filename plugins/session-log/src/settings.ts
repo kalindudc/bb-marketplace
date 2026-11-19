@@ -16,6 +16,7 @@ export interface SessionLogSettings {
   showHidden: boolean;
   timeFormat: TimeFormat;
   tintRows: boolean;
+  rowsPerPage: number;
 }
 
 export const DEFAULT_SETTINGS: SessionLogSettings = {
@@ -29,23 +30,26 @@ export const DEFAULT_SETTINGS: SessionLogSettings = {
   showHidden: true,
   timeFormat: "24h",
   tintRows: true,
+  rowsPerPage: 50,
 };
 
 const OUTPUT_LINES_MAX = 50;
 const THINKING_LINES_MAX = 20;
+const ROWS_PER_PAGE_MIN = 10;
+const ROWS_PER_PAGE_MAX = 500;
 const TIME_FORMATS: readonly TimeFormat[] = ["24h", "12h"];
 
-const isWholeNumber = (value: unknown, max: number): value is number =>
-  typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= max;
+const isWholeNumber = (value: unknown, max: number, min = 0): value is number =>
+  typeof value === "number" && Number.isInteger(value) && value >= min && value <= max;
 
-function wholeNumber(max: number): StandardSchemaV1<number, number> {
+function wholeNumber(max: number, min = 0): StandardSchemaV1<number, number> {
   return {
     "~standard": {
       version: 1,
       vendor: "session-log",
-      validate: (value) => isWholeNumber(value, max)
+      validate: (value) => isWholeNumber(value, max, min)
         ? { value }
-        : { issues: [{ message: `Enter a whole number from 0 to ${max}.` }] },
+        : { issues: [{ message: `Enter a whole number from ${min} to ${max}.` }] },
     },
   };
 }
@@ -112,6 +116,13 @@ export const SETTING_DESCRIPTORS = {
     description: "Give agent replies, tool calls, commands, file changes and failures a faint background and a left rail in your theme's colors.",
     default: DEFAULT_SETTINGS.tintRows,
   },
+  rowsPerPage: {
+    type: "number",
+    label: "Rows drawn at a time",
+    description: `The log opens on this many of the newest rows and draws this many more as you scroll toward older or newer ones. Fewer rows keep very long threads fast. From ${ROWS_PER_PAGE_MIN} to ${ROWS_PER_PAGE_MAX}.`,
+    default: DEFAULT_SETTINGS.rowsPerPage,
+    experimental_schema: wholeNumber(ROWS_PER_PAGE_MAX, ROWS_PER_PAGE_MIN),
+  },
 } satisfies PluginSettingDescriptors;
 
 /** Reads stored setting values, keeping the default for any value that is missing or invalid. */
@@ -137,5 +148,7 @@ export function parseSettings(values: Readonly<Record<string, unknown>> | undefi
     showHidden: flag("showHidden"),
     timeFormat,
     tintRows: flag("tintRows"),
+    rowsPerPage: isWholeNumber(read.rowsPerPage, ROWS_PER_PAGE_MAX, ROWS_PER_PAGE_MIN)
+      ? read.rowsPerPage : DEFAULT_SETTINGS.rowsPerPage,
   };
 }

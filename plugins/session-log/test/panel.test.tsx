@@ -38,6 +38,7 @@ afterEach(() => {
   delete (Range.prototype as unknown as { getBoundingClientRect?: () => DOMRect }).getBoundingClientRect;
   highlights.clear();
   rangeTop.mockReset().mockReturnValue(0);
+  vi.restoreAllMocks();
 });
 
 function rowProps(entry: LogRowProps["entry"], overrides: Partial<LogRowProps> = {}): LogRowProps {
@@ -248,6 +249,74 @@ function renderPanel(fake: ReturnType<typeof panelFake>, threadId = "thr_1", tab
   });
   mounts.push(slot);
   return slot;
+}
+
+/** Rows of `count` agent replies, one seq apart. */
+function manyRows(count: number, text = (index: number) => `reply ${index}`, prefix = "row") {
+  return Array.from({ length: count }, (_, index) => assistantRow(`${prefix}-${index}`, {
+    sourceSeqStart: index + 1, sourceSeqEnd: index + 1, messageSeq: index + 1, text: text(index),
+  }));
+}
+
+/** A timeline page that says bb holds older rows before `anchorSeq`, or none when it is null. */
+function pageOf(rows: ReturnType<typeof manyRows>, anchorSeq: number | null): TimelineResponse {
+  return timelineResponse(rows, {
+    timelinePage: {
+      historySnapshot: "snap",
+      olderCursor: anchorSeq === null ? null : { anchorId: `anchor-${anchorSeq}`, anchorSeq },
+      olderRowsSourceSeqEnd: null,
+      returnedSegmentCount: 1,
+    },
+  });
+}
+
+/** Answers the latest window with `latest` and each older page by its anchor. */
+function withOlderPages(fake: ReturnType<typeof panelFake>, latest: TimelineResponse, older: Record<string, TimelineResponse>) {
+  fake.timeline.mockImplementation(async (args: TimelineArgs) => {
+    if (args.beforeAnchorId) return older[args.beforeAnchorId]!;
+    return args.afterTag ? timelineDelta({ afterTag: args.afterTag, tag: args.afterTag, maxSeq: latest.maxSeq }) : latest;
+  });
+  return fake;
+}
+
+function drawnIds(container: HTMLElement): Array<string | null> {
+  return [...container.querySelectorAll("[data-entry-id]")].map((node) => node.getAttribute("data-entry-id"));
+}
+
+/**
+ * jsdom lays nothing out, so this gives the list a 100px viewport and every drawn row 50px, enough
+ * for scroll positions and for the log to keep the row in view in place when rows are added above it.
+ */
+function fakeLayout(container: HTMLElement) {
+  const list = container.querySelector("[data-session-log-list]") as HTMLElement;
+  const rowHeight = 50;
+  const clientHeight = 100;
+  const rows = () => [...list.querySelectorAll("[data-entry-id]")];
+  let top = 0;
+  const height = () => rows().length * rowHeight;
+  Object.defineProperties(list, {
+    scrollHeight: { configurable: true, get: height },
+    clientHeight: { configurable: true, get: () => clientHeight },
+    scrollTop: {
+      configurable: true, get: () => top,
+      set: (value: number) => { top = Math.max(0, Math.min(height() - clientHeight, value)); },
+    },
+  });
+  const rect = (y: number, size: number) => ({ top: y, bottom: y + size, height: size }) as DOMRect;
+  vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+    if (this === list) return rect(0, clientHeight);
+    const index = rows().indexOf(this);
+    return rect(index < 0 ? 0 : index * rowHeight - top, index < 0 ? 0 : rowHeight);
+  });
+  return {
+    list,
+    /** Scrolls as the reader would, with the wheel. */
+    scrollTo(value: number) {
+      fireEvent.wheel(list);
+      list.scrollTop = value;
+      fireEvent.scroll(list);
+    },
+  };
 }
 
 function cursorId(container: HTMLElement): string | null {
@@ -838,5 +907,140 @@ describe("SessionLogPanel", () => {
     await waitFor(() => expect(cursorId(slot.container)).toBe("first"));
     expect(slot.container.querySelectorAll("[data-entry-id]")).toHaveLength(1);
     expect(painted("sl-search-current")).toEqual(["unrelated"]);
+  });
+
+  it("opens on the newest page of rows, draws earlier pages as the reader scrolls up, and trims them at the bottom", async () => {
+    const slot = renderPanel(panelFake(timelineResponse(manyRows(35)), undefined, "proj_1", { rowsPerPage: 10 }));
+    await waitFor(() => expect(drawnIds(slot.container)).toHaveLength(10));
+    expect(drawnIds(slot.container)[0]).toBe("row-25");
+    expect(cursorId(slot.container)).toBe("row-34");
+    expect(slot.container.textContent).toContain("35 rows");
+    const layout = fakeLayout(slot.container);
+    FakeResizeObserver.resizeAll();
+    expect(layout.list.scrollTop).toBe(400);
+
+    layout.scrollTo(50);
+    expect(within(slot.container).getByRole("button", { name: /Latest/ })).toBeTruthy();
+    expect(drawnIds(slot.container)).toHaveLength(20);
+    expect(drawnIds(slot.container)[0]).toBe("row-15");
+    // The row that was at the top of the view is still there.
+    expect(layout.list.scrollTop).toBe(550);
+
+    layout.scrollTo(0);
+    layout.scrollTo(0);
+    expect(drawnIds(slot.container)).toHaveLength(35);
+    expect(within(slot.container).queryByRole("button", { name: "Show earlier rows" })).toBeNull();
+
+    layout.scrollTo(10_000);
+    expect(within(slot.container).queryByRole("button", { name: /Latest/ })).toBeNull();
+    expect(drawnIds(slot.container)).toEqual(manyRows(35).slice(25).map((row) => row.id));
+  });
+
+  it("reads older pages from bb only when the reader scrolls up to the oldest loaded row", async () => {
+    const latest = pageOf(manyRows(5).map((row, index) => ({ ...row, sourceSeqStart: 20 + index, sourceSeqEnd: 20 + index })), 20);
+    const older = pageOf(manyRows(5, undefined, "older"), null);
+    const fake = withOlderPages(panelFake(latest, undefined, "proj_1", { rowsPerPage: 10 }), latest, { "anchor-20": older });
+    const slot = renderPanel(fake);
+    await waitFor(() => expect(drawnIds(slot.container)).toHaveLength(5));
+    expect(fake.timeline.mock.calls.some(([args]) => args.beforeAnchorId)).toBe(false);
+    expect(slot.container.textContent).toContain("5+ rows");
+    expect(within(slot.container).getByRole("button", { name: "Load older rows" })).toBeTruthy();
+    const layout = fakeLayout(slot.container);
+    FakeResizeObserver.resizeAll();
+
+    layout.scrollTo(0);
+    await waitFor(() => expect(drawnIds(slot.container)).toHaveLength(10));
+    expect(fake.timeline).toHaveBeenCalledWith(expect.objectContaining({ beforeAnchorId: "anchor-20", beforeAnchorSeq: "20" }));
+    expect(drawnIds(slot.container)).toEqual([...manyRows(5, undefined, "older"), ...manyRows(5)].map((row) => row.id));
+    expect(layout.list.scrollTop).toBe(250);
+    expect(slot.container.textContent).toContain("10 rows");
+    expect(slot.container.querySelector('[data-sl-edge="earlier"]')).toBeNull();
+  });
+
+  it("keeps an older-page error at the top with a Retry that reads it again", async () => {
+    const latest = pageOf(manyRows(3).map((row, index) => ({ ...row, sourceSeqStart: 20 + index, sourceSeqEnd: 20 + index })), 20);
+    const fake = withOlderPages(panelFake(latest), latest, {});
+    fake.timeline.mockImplementation(async (args: TimelineArgs) => {
+      if (args.beforeAnchorId) throw new Error("HTTP 500 server busy");
+      return args.afterTag ? timelineDelta({ afterTag: args.afterTag, tag: args.afterTag }) : latest;
+    });
+    const slot = renderPanel(fake);
+    await waitFor(() => expect(drawnIds(slot.container)).toHaveLength(3));
+    fireEvent.click(within(slot.container).getByRole("button", { name: "Load older rows" }));
+    await waitFor(() => expect(slot.container.querySelector('[data-sl-edge="earlier"]')?.textContent)
+      .toContain("Could not load older rows: HTTP 500 server busy"));
+    withOlderPages(fake, latest, { "anchor-20": pageOf(manyRows(2, undefined, "older"), null) });
+    fireEvent.click(within(slot.container.querySelector('[data-sl-edge="earlier"]') as HTMLElement).getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(drawnIds(slot.container)).toEqual(["older-0", "older-1", "row-0", "row-1", "row-2"]));
+  });
+
+  it("jumps to a far row with a page around it and draws further pages as keys move past the drawn ones", async () => {
+    const slot = renderPanel(panelFake(timelineResponse(manyRows(60)), undefined, "proj_1", { rowsPerPage: 10 }));
+    await waitFor(() => expect(drawnIds(slot.container)).toHaveLength(10));
+    const root = slot.container.querySelector("[data-session-log-panel]") as HTMLElement;
+    root.focus();
+    fireEvent.keyDown(root, { key: "g" });
+    await waitFor(() => expect((document.activeElement as HTMLElement).dataset.entryId).toBe("row-0"));
+    expect(drawnIds(slot.container)).toEqual(manyRows(10).map((row) => row.id));
+    expect(within(slot.container).getByRole("button", { name: "Show later rows" })).toBeTruthy();
+    expect(within(slot.container).getByRole("button", { name: /Latest/ })).toBeTruthy();
+
+    for (let step = 0; step < 10; step++) fireEvent.keyDown(document.activeElement!, { key: "j" });
+    await waitFor(() => expect((document.activeElement as HTMLElement).dataset.entryId).toBe("row-10"));
+    expect(drawnIds(slot.container)).toHaveLength(20);
+
+    fireEvent.keyDown(document.activeElement!, { key: "G" });
+    await waitFor(() => expect((document.activeElement as HTMLElement).dataset.entryId).toBe("row-59"));
+    expect(drawnIds(slot.container)).toEqual(manyRows(60).slice(50).map((row) => row.id));
+    for (let step = 0; step < 10; step++) fireEvent.keyDown(document.activeElement!, { key: "k" });
+    await waitFor(() => expect((document.activeElement as HTMLElement).dataset.entryId).toBe("row-49"));
+    expect(drawnIds(slot.container)[0]).toBe("row-40");
+  });
+
+  it("loads the whole session before g moves to its first row", async () => {
+    const latest = pageOf(manyRows(3).map((row, index) => ({ ...row, sourceSeqStart: 20 + index, sourceSeqEnd: 20 + index })), 20);
+    const fake = withOlderPages(panelFake(latest), latest, {
+      "anchor-20": pageOf(manyRows(2, undefined, "middle").map((row, index) => ({ ...row, sourceSeqStart: 10 + index, sourceSeqEnd: 10 + index })), 10),
+      "anchor-10": pageOf(manyRows(2, undefined, "first"), null),
+    });
+    const slot = renderPanel(fake);
+    await waitFor(() => expect(drawnIds(slot.container)).toHaveLength(3));
+    const root = slot.container.querySelector("[data-session-log-panel]") as HTMLElement;
+    root.focus();
+    fireEvent.keyDown(root, { key: "g" });
+    await waitFor(() => expect((document.activeElement as HTMLElement).dataset.entryId).toBe("first-0"));
+    expect(fake.timeline.mock.calls.map(([args]) => args.beforeAnchorId).filter(Boolean)).toEqual(["anchor-20", "anchor-10"]);
+  });
+
+  it("searches older pages too, and steps to matches past the drawn rows, wrapping at both ends", async () => {
+    const latest = pageOf(manyRows(25, (index) => `marker ${index}`).map((row, index) => ({
+      ...row, sourceSeqStart: 20 + index, sourceSeqEnd: 20 + index,
+    })), 20);
+    const older = pageOf([
+      assistantRow("old-unrelated", { sourceSeqStart: 1, sourceSeqEnd: 1, text: "nothing" }),
+      assistantRow("old-match", { sourceSeqStart: 2, sourceSeqEnd: 2, text: "an old marker" }),
+    ], null);
+    const fake = withOlderPages(panelFake(latest, undefined, "proj_1", { rowsPerPage: 10 }), latest, { "anchor-20": older });
+    const slot = renderPanel(fake);
+    await waitFor(() => expect(drawnIds(slot.container)).toHaveLength(10));
+    const search = within(slot.container).getByRole("searchbox") as HTMLInputElement;
+    search.focus();
+    fireEvent.change(search, { target: { value: "marker" } });
+    await waitFor(() => expect(fake.timeline).toHaveBeenCalledWith(expect.objectContaining({ beforeAnchorId: "anchor-20" })));
+    await waitFor(() => expect(slot.container.textContent).toContain("26 of 27 rows"));
+    expect(slot.container.textContent).toContain("10+ matches");
+    expect(drawnIds(slot.container)).toHaveLength(10);
+
+    fireEvent.keyDown(search, { key: "Enter" });
+    await waitFor(() => expect(cursorId(slot.container)).toBe("old-match"));
+    expect(slot.container.textContent).toContain("1 of 10+");
+    expect(painted("sl-search-current")).toEqual(["marker"]);
+    fireEvent.keyDown(search, { key: "Enter", shiftKey: true });
+    await waitFor(() => expect(cursorId(slot.container)).toBe("row-24"));
+    fireEvent.keyDown(search, { key: "Enter" });
+    await waitFor(() => expect(cursorId(slot.container)).toBe("old-match"));
+    for (let step = 0; step < 10; step++) fireEvent.keyDown(search, { key: "Enter" });
+    await waitFor(() => expect(cursorId(slot.container)).toBe("row-9"));
+    expect(document.activeElement).toBe(search);
   });
 });

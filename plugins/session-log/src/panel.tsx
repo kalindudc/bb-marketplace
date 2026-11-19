@@ -18,9 +18,14 @@ import {
 import { DEFAULT_SETTINGS } from "./settings";
 import { createSessionLogStore, type SessionLogSnapshot, type SessionLogStore } from "./store";
 import { useSessionLogSettings } from "./use-settings";
+import {
+  LATEST_WINDOW, holdWindow, resolveRange, rowsAfter, sameWindow, windowAround, windowDown, windowUp,
+  windowWith, type RenderWindow,
+} from "./window";
 
 const EMPTY_SNAPSHOT: SessionLogSnapshot = {
   status: "loading", rows: [], hidden: [], activeThinking: null, projectId: null, error: null, hiddenError: null,
+  hasOlder: false, loadingOlder: false, olderError: null,
 };
 
 const CHIPS: ReadonlyArray<[EntryCategory, string]> = [
@@ -32,6 +37,8 @@ const STICKY_BOTTOM_THRESHOLD_PX = 4;
 const USER_SCROLL_INTENT_MS = 350;
 const SCROLL_KEYS = new Set(["PageUp", "PageDown", "Home", "End", " "]);
 const NO_MATCH = { count: 0, index: null, entryId: null } as const;
+// The log never draws more than this many pages of rows; reading further drops rows from the far end.
+const MAX_PAGES_DRAWN = 4;
 
 interface MatchState {
   count: number;
@@ -39,9 +46,11 @@ interface MatchState {
   entryId: string | null;
 }
 
-function matchLabel({ count, index }: MatchState): string {
-  if (count === 0) return "No matches";
-  return index === null ? `${count} ${count === 1 ? "match" : "matches"}` : `${index + 1} of ${count}`;
+// `more` says some matching rows are not drawn or not loaded yet, so the count is a floor.
+function matchLabel({ count, index }: MatchState, more: boolean): string {
+  if (count === 0) return more ? "Searching…" : "No matches";
+  const total = more ? `${count}+` : String(count);
+  return index === null ? `${total} ${count === 1 && !more ? "match" : "matches"}` : `${index + 1} of ${total}`;
 }
 
 const isReply = (entry: LogEntry) => entry.row.kind === "conversation" && entry.row.role === "assistant";
@@ -105,10 +114,24 @@ export function SessionLogPanel({ threadId, preference }: { threadId: string; pr
   tabVisibleRef.current = tabVisible;
   const [mountedStore, setMountedStore] = useState<{ threadId: string; store: SessionLogStore } | null>(null);
   const store = mountedStore?.threadId === threadId ? mountedStore.store : null;
+  const storeRef = useRef(store);
+  storeRef.current = store;
+
+  const [renderWindow, setRenderWindow] = useState<RenderWindow>(LATEST_WINDOW);
+  const windowRef = useRef(renderWindow);
+  const [following, setFollowing] = useState(true);
+  const followingRef = useRef(true);
+  const trackNewestRef = useRef(true);
 
   useEffect(() => {
     const next = createSessionLogStore({ sdk: sdkRef.current, threadId, visible: tabVisibleRef.current });
     setMountedStore({ threadId, store: next });
+    // Another thread's log opens on its newest rows.
+    windowRef.current = LATEST_WINDOW;
+    setRenderWindow(LATEST_WINDOW);
+    followingRef.current = true;
+    trackNewestRef.current = true;
+    setFollowing(true);
     return () => next.dispose();
   }, [threadId]);
   useEffect(() => { store?.setVisible(tabVisible); }, [store, tabVisible]);
@@ -118,6 +141,12 @@ export function SessionLogPanel({ threadId, preference }: { threadId: string; pr
   const expandedView = useSyncExternalStore(preference.subscribe, preference.isExpanded);
   const settings = useSessionLogSettings();
   const effectiveSettings = settings ?? DEFAULT_SETTINGS;
+  const pageRows = effectiveSettings.rowsPerPage;
+  const maxRows = pageRows * MAX_PAGES_DRAWN;
+  const pageRowsRef = useRef(pageRows);
+  pageRowsRef.current = pageRows;
+  const maxRowsRef = useRef(maxRows);
+  maxRowsRef.current = maxRows;
 
   // The chips start from the settings; once the reader toggles one, their choice wins.
   const [chosenFilters, setChosenFilters] = useState<Record<EntryCategory, boolean> | null>(null);
@@ -133,11 +162,10 @@ export function SessionLogPanel({ threadId, preference }: { threadId: string; pr
   const [highlightOwner] = useState(() => ({}));
   const [overrides, setOverrides] = useState<Map<string, boolean>>(() => new Map());
   const [focusedId, setFocusedId] = useState<string | null>(null);
-  const [following, setFollowing] = useState(true);
   const [newCount, setNewCount] = useState(0);
-  const trackNewestRef = useRef(true);
-  const followingRef = useRef(true);
-  const pausedIdsRef = useRef<Set<string> | null>(null);
+  // `g` waits for the whole session to load before it moves to the first row.
+  const [wantFirst, setWantFirst] = useState(false);
+  const pausedNewestIdRef = useRef<string | null>(null);
   const rootRef = useRef<HTMLElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -149,6 +177,7 @@ export function SessionLogPanel({ threadId, preference }: { threadId: string; pr
   const pointerScrollRef = useRef(false);
   const scrollIntentUntilRef = useRef(0);
   const trackingFocusRef = useRef(false);
+  const afterDrawRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     const timer = window.setTimeout(() => setQuery(rawQuery.trim()), 150);
@@ -165,6 +194,9 @@ export function SessionLogPanel({ threadId, preference }: { threadId: string; pr
   }, [threadId]);
 
   const entries = useMemo(() => toLogEntries(snapshot.rows, snapshot.hidden), [snapshot.rows, snapshot.hidden]);
+  const entryOrder = useMemo(() => new Map(entries.map((entry, index) => [entry.id, index])), [entries]);
+  const entryOrderRef = useRef(entryOrder);
+  entryOrderRef.current = entryOrder;
   const turnStatsRef = useRef<ReadonlyMap<string, TurnStats>>(new Map());
   // Reuses each divider's stats object while its numbers hold, so a refresh does not redraw every divider.
   const turnStats = useMemo(() => collectTurnStats(entries, turnStatsRef.current), [entries]);
@@ -176,6 +208,16 @@ export function SessionLogPanel({ threadId, preference }: { threadId: string; pr
   );
   const visibleRef = useRef(visible);
   visibleRef.current = visible;
+  const range = useMemo(
+    () => resolveRange(renderWindow, visible, entryOrder, pageRows, maxRows),
+    [renderWindow, visible, entryOrder, pageRows, maxRows],
+  );
+  const rangeRef = useRef(range);
+  rangeRef.current = range;
+  const drawn = useMemo(() => visible.slice(range.start, range.end), [visible, range.start, range.end]);
+  const drawnRef = useRef(drawn);
+  drawnRef.current = drawn;
+  const drawsNewest = range.end >= visible.length;
   const focusedIdRef = useRef(focusedId);
   focusedIdRef.current = focusedId;
   const expandedRef = useRef(expandedView);
@@ -203,6 +245,44 @@ export function SessionLogPanel({ threadId, preference }: { threadId: string; pr
     }
   }, [visible]);
 
+  const setWindow = useCallback((next: RenderWindow): boolean => {
+    if (sameWindow(next, windowRef.current)) return false;
+    windowRef.current = next;
+    setRenderWindow(next);
+    return true;
+  }, []);
+  // Draws `next`, then runs `after` once its rows are in the DOM, or straight away when nothing changes.
+  const redraw = useCallback((next: RenderWindow | null, after?: () => void) => {
+    if (next !== null && setWindow(next)) afterDrawRef.current = after ?? null;
+    else after?.();
+  }, [setWindow]);
+  useLayoutEffect(() => {
+    const after = afterDrawRef.current;
+    if (after === null) return;
+    afterDrawRef.current = null;
+    after();
+  });
+  // Notes where the top row in view sits, and returns what puts it back after rows above it change.
+  const keepInPlace = useCallback((): (() => void) => {
+    const list = listRef.current;
+    if (!list) return () => {};
+    const listTop = list.getBoundingClientRect().top;
+    for (const entry of drawnRef.current) {
+      const element = elementsRef.current.get(entry.id);
+      if (!element) continue;
+      const rect = element.getBoundingClientRect();
+      if (rect.bottom - listTop <= 0) continue;
+      const offset = rect.top - listTop;
+      return () => {
+        const moved = elementsRef.current.get(entry.id);
+        if (!moved || followingRef.current) return;
+        const delta = moved.getBoundingClientRect().top - list.getBoundingClientRect().top - offset;
+        if (Math.abs(delta) >= 1) list.scrollTop += delta;
+      };
+    }
+    return () => {};
+  }, []);
+
   const pinToBottom = useCallback(() => {
     const list = listRef.current;
     if (list) list.scrollTop = list.scrollHeight;
@@ -210,16 +290,31 @@ export function SessionLogPanel({ threadId, preference }: { threadId: string; pr
   const pauseFollow = useCallback(() => {
     if (!followingRef.current) return;
     followingRef.current = false;
-    pausedIdsRef.current = new Set(visibleRef.current.map((entry) => entry.id));
+    pausedNewestIdRef.current = visibleRef.current.at(-1)?.id ?? null;
+    // The drawn rows stay put while new ones arrive below them.
+    if (windowRef.current.startId === null) setWindow(holdWindow(rangeRef.current, visibleRef.current));
     setFollowing(false);
-  }, []);
+  }, [setWindow]);
   const resumeFollow = useCallback(() => {
     if (followingRef.current) return;
     followingRef.current = true;
-    pausedIdsRef.current = null;
+    pausedNewestIdRef.current = null;
+    setWindow(LATEST_WINDOW);
     setFollowing(true);
     setNewCount(0);
-  }, []);
+  }, [setWindow]);
+  const jumpLatest = useCallback(() => {
+    trackNewestRef.current = true;
+    const newestId = visibleRef.current.at(-1)?.id ?? null;
+    focusedIdRef.current = newestId;
+    setFocusedId(newestId);
+    followingRef.current = true;
+    pausedNewestIdRef.current = null;
+    setWindow(LATEST_WINDOW);
+    setFollowing(true);
+    setNewCount(0);
+    pinToBottom();
+  }, [pinToBottom, setWindow]);
 
   useLayoutEffect(() => {
     const list = listRef.current;
@@ -228,11 +323,11 @@ export function SessionLogPanel({ threadId, preference }: { threadId: string; pr
       list.scrollTop = list.scrollHeight;
       setNewCount((count) => count === 0 ? count : 0);
     } else {
-      const seen = pausedIdsRef.current;
-      const added = seen ? visible.filter((entry) => !seen.has(entry.id)).length : 0;
+      const seen = pausedNewestIdRef.current;
+      const added = seen === null ? 0 : rowsAfter(visible, entryOrder, seen);
       setNewCount((count) => count === added ? count : added);
     }
-  }, [visible, snapshot.activeThinking, expandedView, overrides]);
+  }, [visible, entryOrder, drawn, snapshot.activeThinking, expandedView, overrides]);
 
   useEffect(() => {
     const list = listRef.current;
@@ -253,6 +348,35 @@ export function SessionLogPanel({ threadId, preference }: { threadId: string; pr
     };
   }, [pinToBottom]);
 
+  /** Draws a page of earlier rows, reading older ones from bb as the drawn rows near the oldest loaded one. */
+  const showEarlier = useCallback((): boolean => {
+    const range = rangeRef.current;
+    const next = windowUp(windowRef.current, range, visibleRef.current, pageRowsRef.current, maxRowsRef.current);
+    if (next) redraw(next, keepInPlace());
+    const start = next ? Math.max(0, range.start - pageRowsRef.current) : range.start;
+    const current = storeRef.current?.getSnapshot();
+    if (start < pageRowsRef.current && current?.hasOlder && !current.loadingOlder && current.olderError === null) {
+      storeRef.current?.loadOlder();
+    }
+    return next !== null;
+  }, [keepInPlace, redraw]);
+  const showLater = useCallback((): boolean => {
+    const next = windowDown(rangeRef.current, visibleRef.current, pageRowsRef.current, maxRowsRef.current);
+    if (next) redraw(next, keepInPlace());
+    return next !== null;
+  }, [keepInPlace, redraw]);
+
+  useLayoutEffect(() => {
+    const list = listRef.current;
+    // A list with no height is not laid out (a hidden tab), so it says nothing about what is in view.
+    if (!list || settings === null || snapshot.status !== "ready" || list.clientHeight === 0) return;
+    const edge = list.clientHeight;
+    const short = list.scrollHeight <= list.clientHeight;
+    const paused = !followingRef.current;
+    if ((short || (paused && list.scrollTop <= edge)) && showEarlier()) return;
+    if (short || (paused && list.scrollHeight - list.clientHeight - list.scrollTop <= edge)) showLater();
+  }, [drawn, settings, snapshot.status, snapshot.hasOlder, snapshot.loadingOlder, showEarlier, showLater]);
+
   const registerElement = useCallback((id: string, element: HTMLElement | null) => {
     if (element) elementsRef.current.set(id, element);
     else elementsRef.current.delete(id);
@@ -270,9 +394,22 @@ export function SessionLogPanel({ threadId, preference }: { threadId: string; pr
     focusedIdRef.current = id;
     setFocusedId(id);
     const element = elementsRef.current.get(id);
-    element?.focus();
-    element?.scrollIntoView({ block: "nearest" });
-  }, [pauseFollow]);
+    if (element) {
+      element.focus();
+      element.scrollIntoView({ block: "nearest" });
+      return;
+    }
+    const range = rangeRef.current;
+    const index = visibleRef.current.findIndex((entry) => entry.id === id);
+    if (index < 0) return;
+    const next = windowWith(index, windowRef.current, range, visibleRef.current, pageRowsRef.current, maxRowsRef.current);
+    const nextTo = index === range.start - 1 || index === range.end;
+    redraw(next, () => {
+      const drawnElement = elementsRef.current.get(id);
+      drawnElement?.focus({ preventScroll: true });
+      drawnElement?.scrollIntoView({ block: nextTo ? "nearest" : "center" });
+    });
+  }, [pauseFollow, redraw]);
   const showMatches = useCallback((matches: SearchMatch[], index: number | null) => {
     matchesRef.current = matches;
     currentMatchRef.current = index === null ? null : positionOf(matches, index);
@@ -295,19 +432,10 @@ export function SessionLogPanel({ threadId, preference }: { threadId: string; pr
     // Rows that scroll into view grow from their placeholder height, which can move the match.
     window.requestAnimationFrame(place);
   }, []);
-  const goToMatch = useCallback((direction: 1 | -1, focusRow: boolean): boolean => {
+  const selectMatch = useCallback((target: number, focusRow: boolean) => {
     const matches = matchesRef.current;
-    if (matches.length === 0) return false;
-    const current = indexOfMatch(matches, currentMatchRef.current);
-    let target: number;
-    if (current !== null && matches[current]!.entryId === focusedIdRef.current) {
-      target = (current + direction + matches.length) % matches.length;
-    } else {
-      const rows = new Map(visibleRef.current.map((entry, index) => [entry.id, index]));
-      const cursor = trackNewestRef.current ? undefined : rows.get(focusedIdRef.current ?? "");
-      target = firstMatchFrom(matches, (match) => rows.get(match.entryId) ?? -1, cursor, direction);
-    }
-    const match = matches[target]!;
+    const match = matches[target];
+    if (!match) return;
     showMatches(matches, target);
     trackNewestRef.current = false;
     pauseFollow();
@@ -315,14 +443,79 @@ export function SessionLogPanel({ threadId, preference }: { threadId: string; pr
     setFocusedId(match.entryId);
     if (focusRow) elementsRef.current.get(match.entryId)?.focus({ preventScroll: true });
     scrollToMatch(match);
-    return true;
   }, [pauseFollow, scrollToMatch, showMatches]);
+  // Draws `next`, then finds the matches in the rows it added and goes on from there.
+  const drawMatches = useCallback((next: RenderWindow, then: () => void) => {
+    redraw(next, () => { refreshMatches(); then(); });
+  }, [redraw, refreshMatches]);
+  const goToMatchRef = useRef<(direction: 1 | -1, focusRow: boolean) => boolean>(() => false);
+  const goToMatch = useCallback((direction: 1 | -1, focusRow: boolean): boolean => {
+    const matches = matchesRef.current;
+    if (matches.length === 0) return false;
+    const rows = visibleRef.current;
+    const range = rangeRef.current;
+    const pages = pageRowsRef.current;
+    const current = indexOfMatch(matches, currentMatchRef.current);
+    if (current !== null && matches[current]!.entryId === focusedIdRef.current) {
+      const target = current + direction;
+      if (target >= 0 && target < matches.length) {
+        selectMatch(target, focusRow);
+        return true;
+      }
+      // Every visible row matches, so rows past the drawn ones hold the next match.
+      const further = direction < 0
+        ? windowUp(windowRef.current, range, rows, pages, maxRowsRef.current)
+        : windowDown(range, rows, pages, maxRowsRef.current);
+      if (further) {
+        drawMatches(further, () => goToMatchRef.current(direction, focusRow));
+        return true;
+      }
+      const otherEnd = direction < 0 ? range.end < rows.length : range.start > 0;
+      if (otherEnd) {
+        drawMatches(windowAround(direction < 0 ? rows.length - 1 : 0, rows, pages),
+          () => selectMatch(direction < 0 ? matchesRef.current.length - 1 : 0, focusRow));
+        return true;
+      }
+      selectMatch((target + matches.length) % matches.length, focusRow);
+      return true;
+    }
+    const indexes = new Map(rows.map((entry, index) => [entry.id, index]));
+    const cursor = trackNewestRef.current ? undefined : indexes.get(focusedIdRef.current ?? "");
+    if (cursor === undefined && direction > 0 && range.start > 0) {
+      drawMatches(windowAround(0, rows, pages), () => selectMatch(0, focusRow));
+      return true;
+    }
+    selectMatch(firstMatchFrom(matches, (match) => indexes.get(match.entryId) ?? -1, cursor, direction), focusRow);
+    return true;
+  }, [drawMatches, selectMatch]);
+  goToMatchRef.current = goToMatch;
+  // A new filter or search keeps the reader on their row when it still shows, and otherwise follows the newest.
+  const shownKey = `${normalizedQuery}\u0000${errorsOnly}\u0000${CHIPS.map(([category]) => filters[category]).join()}`;
+  const shownKeyRef = useRef(shownKey);
+  useLayoutEffect(() => {
+    if (shownKeyRef.current === shownKey) return;
+    shownKeyRef.current = shownKey;
+    const rows = visibleRef.current;
+    const id = focusedIdRef.current;
+    const index = followingRef.current || id === null ? -1 : rows.findIndex((entry) => entry.id === id);
+    if (index < 0 || id === null) {
+      // The empty follow-up still marks a draw as pending, so a search step waits for these rows.
+      redraw(LATEST_WINDOW, () => {});
+      if (!followingRef.current) jumpLatest();
+      return;
+    }
+    redraw(windowAround(index, rows, pageRowsRef.current),
+      () => elementsRef.current.get(id)?.scrollIntoView({ block: "center" }));
+  }, [shownKey, jumpLatest, redraw]);
   useLayoutEffect(() => {
     currentMatchRef.current = null;
     refreshMatches();
     const step = pendingMatchStepRef.current;
     pendingMatchStepRef.current = null;
-    if (step) goToMatch(step, false);
+    if (!step) return;
+    const drawing = afterDrawRef.current;
+    if (drawing === null) goToMatch(step, false);
+    else afterDrawRef.current = () => { drawing(); refreshMatches(); goToMatch(step, false); };
   }, [query, refreshMatches, goToMatch]);
   useEffect(() => {
     const content = contentRef.current;
@@ -359,7 +552,9 @@ export function SessionLogPanel({ threadId, preference }: { threadId: string; pr
   const onScroll = useCallback(() => {
     const list = listRef.current;
     if (!list) return;
-    if (list.scrollHeight - list.clientHeight - list.scrollTop <= STICKY_BOTTOM_THRESHOLD_PX) {
+    const fromBottom = list.scrollHeight - list.clientHeight - list.scrollTop;
+    const newestDrawn = rangeRef.current.end >= visibleRef.current.length;
+    if (fromBottom <= STICKY_BOTTOM_THRESHOLD_PX && newestDrawn) {
       resumeFollow();
     } else if (pointerScrollRef.current || performance.now() <= scrollIntentUntilRef.current) {
       pauseFollow();
@@ -367,22 +562,19 @@ export function SessionLogPanel({ threadId, preference }: { threadId: string; pr
       // Layout moved the view (a row grew past its placeholder height), not the reader.
       pinToBottom();
     }
-  }, [pauseFollow, pinToBottom, resumeFollow]);
-  const jumpLatest = useCallback(() => {
-    trackNewestRef.current = true;
-    const newestId = visibleRef.current.at(-1)?.id ?? null;
-    focusedIdRef.current = newestId;
-    setFocusedId(newestId);
-    followingRef.current = true;
-    pausedIdsRef.current = null;
-    setFollowing(true);
-    setNewCount(0);
-    pinToBottom();
-  }, [pinToBottom]);
+    if (followingRef.current || list.clientHeight === 0) return;
+    // Rows are drawn a screen before the reader reaches the edge of the drawn ones.
+    if (list.scrollTop <= list.clientHeight) showEarlier();
+    else if (fromBottom <= list.clientHeight && !newestDrawn) showLater();
+  }, [pauseFollow, pinToBottom, resumeFollow, showEarlier, showLater]);
   const move = useCallback((direction: 1 | -1): boolean => {
     const rows = visibleRef.current;
     if (rows.length === 0) return false;
     const index = rows.findIndex((entry) => entry.id === focusedIdRef.current);
+    if (index === 0 && direction < 0) {
+      const current = storeRef.current?.getSnapshot();
+      if (current?.hasOlder && !current.loadingOlder) storeRef.current?.loadOlder();
+    }
     const next = index < 0 ? (direction > 0 ? 0 : rows.length - 1)
       : Math.max(0, Math.min(rows.length - 1, index + direction));
     focusEntry(rows[next]!.id);
@@ -400,12 +592,25 @@ export function SessionLogPanel({ threadId, preference }: { threadId: string; pr
     return false;
   }, [focusEntry]);
   const focusEdge = useCallback((last: boolean): boolean => {
+    setWantFirst(!last && storeRef.current?.getSnapshot().hasOlder === true);
     const rows = visibleRef.current;
     if (!rows.length) return false;
     focusEntry(rows[last ? rows.length - 1 : 0]!.id);
     if (last) jumpLatest();
     return true;
   }, [focusEntry, jumpLatest]);
+
+  useEffect(() => {
+    if (!wantFirst || snapshot.status !== "ready") return;
+    if (snapshot.olderError !== null) setWantFirst(false);
+    else if (!snapshot.hasOlder) {
+      setWantFirst(false);
+      const first = visibleRef.current[0];
+      if (first) focusEntry(first.id);
+    }
+  }, [wantFirst, snapshot.status, snapshot.hasOlder, snapshot.olderError, focusEntry]);
+  // Search covers the whole session, so it reads the older pages too; only the matching rows are drawn.
+  useEffect(() => { store?.setLoadAll(query !== "" || wantFirst); }, [store, query, wantFirst]);
 
   const onKeyDown = useCallback((event: KeyboardEvent<HTMLElement>) => {
     if (event.ctrlKey || event.metaKey || event.altKey) return;
@@ -465,6 +670,14 @@ export function SessionLogPanel({ threadId, preference }: { threadId: string; pr
     setChosenFilters({ ...filters, [category]: !filters[category] });
   }, [filters]);
 
+  const ready = settings !== null && snapshot.status === "ready";
+  const olderPending = snapshot.hasOlder && snapshot.olderError === null;
+  const loadedRows = `${entries.length}${snapshot.hasOlder ? "+" : ""}`;
+  const rowsLabel = visible.length === entries.length ? `${loadedRows} rows` : `${visible.length} of ${loadedRows} rows`;
+  const loadingAll = olderPending && (query !== "" || wantFirst);
+  const edgeClass = "flex min-h-8 flex-wrap items-center justify-center gap-x-2 border-b border-border-seam px-3 py-1 text-xs text-muted-foreground";
+  const edgeButton = "rounded px-2 py-0.5 text-foreground hover:bg-state-hover";
+
   return (
     <section ref={rootRef} data-session-log-panel tabIndex={-1} onKeyDown={onKeyDown}
       className="flex h-full min-h-0 min-w-0 flex-col bg-surface-recessed text-foreground">
@@ -490,7 +703,9 @@ export function SessionLogPanel({ threadId, preference }: { threadId: string; pr
             placeholder="Search the whole session" className="min-w-0 flex-1 rounded border border-border-seam bg-surface-recessed px-2 py-1 text-sm text-foreground" />
           {query && (
             <div className="flex shrink-0 items-center gap-0.5">
-              <span aria-live="polite" className="mr-1 text-xs tabular-nums text-muted-foreground">{matchLabel(matchState)}</span>
+              <span aria-live="polite" className="mr-1 text-xs tabular-nums text-muted-foreground">
+                {matchLabel(matchState, olderPending || range.start > 0 || !drawsNewest)}
+              </span>
               {([[-1, "Previous match", "ChevronUp", "Shift+Enter"], [1, "Next match", "ChevronDown", "Enter"]] as const)
                 .map(([direction, label, icon, key]) => (
                   <button key={label} type="button" aria-label={label} title={`${label} (${key}, or ${direction > 0 ? "n" : "N"} in the log)`}
@@ -503,8 +718,9 @@ export function SessionLogPanel({ threadId, preference }: { threadId: string; pr
                 ))}
             </div>
           )}
-          <span aria-live="polite" className="shrink-0 text-xs text-muted-foreground">
-            {visible.length === entries.length ? `${entries.length} rows` : `${visible.length} of ${entries.length} rows`}
+          <span aria-live="polite" className="shrink-0 text-xs text-muted-foreground"
+            title={snapshot.hasOlder ? "Older rows load as you scroll up" : undefined}>
+            {loadingAll ? `${rowsLabel} · loading older` : rowsLabel}
           </span>
           <button type="button" aria-label="Keyboard help" aria-expanded={helpVisible}
             onClick={() => setHelpVisible((shown) => !shown)} className="text-muted-foreground hover:text-foreground">?</button>
@@ -531,14 +747,32 @@ export function SessionLogPanel({ threadId, preference }: { threadId: string; pr
           {(settings === null || (snapshot.status === "loading" && entries.length === 0)) && (
             <p className="p-3 text-sm text-muted-foreground">Loading session…</p>
           )}
-          {settings !== null && snapshot.status === "ready" && entries.length === 0 && !snapshot.activeThinking && (
+          {ready && entries.length === 0 && !snapshot.activeThinking && !snapshot.hasOlder && (
             <p className="p-3 text-sm text-muted-foreground">Nothing has happened in this thread yet.</p>
           )}
-          {settings !== null && snapshot.status === "ready" && entries.length > 0 && visible.length === 0 && (
-            <p className="p-3 text-sm text-muted-foreground">No rows match these filters.</p>
+          {ready && (range.start > 0 || snapshot.hasOlder) && (
+            <div data-sl-edge="earlier" className={edgeClass}>
+              {range.start > 0 ? (
+                <button type="button" className={edgeButton} onClick={() => showEarlier()}>Show earlier rows</button>
+              ) : snapshot.olderError !== null ? (
+                <span role="alert" className="text-warning-text">
+                  Could not load older rows: {snapshot.olderError}
+                  <button type="button" className="ml-2 underline" onClick={() => store?.loadOlder()}>Retry</button>
+                </span>
+              ) : snapshot.loadingOlder ? (
+                <span>Loading older rows…</span>
+              ) : (
+                <button type="button" className={edgeButton} onClick={() => store?.loadOlder()}>Load older rows</button>
+              )}
+            </div>
+          )}
+          {ready && entries.length > 0 && visible.length === 0 && (
+            <p className="p-3 text-sm text-muted-foreground">
+              {olderPending ? "No loaded rows match these filters yet." : "No rows match these filters."}
+            </p>
           )}
           <div role="list" aria-label="Session log entries">
-            {settings !== null && visible.map((entry) => (
+            {settings !== null && drawn.map((entry) => (
               <LogRow key={entry.id} entry={entry} focused={entry.id === focusedId} searchCurrent={entry.id === matchState.entryId}
                 expanded={overrides.get(entry.id) ?? (expandedView || !!query || isDefaultExpanded(entry, effectiveSettings.expandFailures))}
                 turnStats={entry.divider ? turnStats.get(entry.id) : undefined}
@@ -547,7 +781,12 @@ export function SessionLogPanel({ threadId, preference }: { threadId: string; pr
                 onOpenThread={onOpenThread} registerElement={registerElement} />
             ))}
           </div>
-          {settings !== null && snapshot.activeThinking && filters.thinking && !errorsOnly && !query && (
+          {ready && !drawsNewest && (
+            <div data-sl-edge="later" className={edgeClass}>
+              <button type="button" className={edgeButton} onClick={() => showLater()}>Show later rows</button>
+            </div>
+          )}
+          {settings !== null && drawsNewest && snapshot.activeThinking && filters.thinking && !errorsOnly && !query && (
             <div data-live-thinking className="border-b border-border-seam px-3 py-2 text-sm text-muted-foreground"
               style={{ contentVisibility: "auto", containIntrinsicSize: "auto 48px" }}>
               <div className="flex items-center gap-2"><Icon name="AiBrain01" className="size-4" aria-hidden />Thinking…</div>

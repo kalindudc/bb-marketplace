@@ -21,8 +21,16 @@ automatic retry, and tool results delivered with their presentation
 suppressed. Each one sits where the agent received it, with a dashed rail and
 a “Hidden” label: “Hidden steer” and “Hidden message” for whole messages,
 “Hidden context” for the hidden part of a message the chat shows. The Hidden
-chip, or the `showHidden` setting, turns them off. The log follows new output until you scroll up or move to an older
-row with the keyboard; “↓ Latest” or `G` resumes it.
+chip, or the `showHidden` setting, turns them off.
+
+The log always opens on the newest rows and follows new output until you
+scroll up or move to an older row with the keyboard; “↓ Latest” or `G`
+resumes it. It draws 50 rows at a time (the `rowsPerPage` setting), so even a
+thread with thousands of steps opens at once. Scrolling toward the top draws
+the next page of earlier rows, and reads older rows from bb when you reach
+the oldest one it has, without moving what you are reading. The log draws at
+most four pages at once; scrolling back down draws the later rows again, and
+reaching the bottom resumes follow.
 
 Rows are tinted by type in your bb theme's colors, so they stand apart at a
 glance: agent replies, tool calls and subagents, commands, file changes and
@@ -36,12 +44,12 @@ Thinking and incoming messages stay neutral.
 | Key | Action |
 | --- | --- |
 | Mod+Shift+L | Open the Session Log tab for this thread |
-| j / ↓, k / ↑ | Move between visible rows |
+| j / ↓, k / ↑ | Move between visible rows; moving past the drawn rows draws the next page, and `k` on the oldest loaded row reads older ones |
 | Enter / o | Expand or collapse the focused row (buttons keep Enter) |
 | x | Toggle the expanded view; the choice persists on this device |
 | n / N | Next / previous agent reply; while a search is active, next / previous match |
 | e / E | Next / previous error |
-| g / G | First / latest row; G resumes live follow |
+| g / G | First / latest row; `g` first reads the rest of the session, G resumes live follow |
 | / | Focus search |
 | c | Copy the focused row |
 | s | Show the focused message in bb's chat |
@@ -51,13 +59,19 @@ Thinking and incoming messages stay neutral.
 | Escape in search | Clear the query; when empty, return to the log |
 
 Search filters the log to the rows that match and paints every match in
-amber, inside rendered Markdown too. The match you are on is orange and
-underlined, and its row gets an orange frame. A counter beside the search box
-says which match you are on (“3 of 17”), and its arrows, Enter and Shift+Enter,
-or `n` and `N` in the log step through them, wrapping at either end. With no
-current match, stepping starts from the row you moved to, or from the first or
-last match while the log follows the newest row. Stepping to a match scrolls it
-to the middle of the log and pauses follow.
+amber, inside rendered Markdown too. To cover the whole session it reads the
+older rows from bb in the background, while the row count says “loading
+older”, and it still draws only a page of matching rows at a time.
+
+The match you are on is orange and underlined, and its row gets an orange
+frame. A counter beside the search box says which match you are on (“3 of
+17”), and its arrows, Enter and Shift+Enter, or `n` and `N` in the log step
+through them, wrapping at either end. The counter counts the matches in the
+drawn rows, so it shows “3 of 17+” while some matching rows are not drawn or
+not loaded yet; stepping past the drawn rows draws the next page and carries
+on. With no current match, stepping starts from the row you moved to, or from
+the first or last match while the log follows the newest row. Stepping to a
+match scrolls it to the middle of the log and pauses follow.
 
 Use the row's “Open thread” action to open a child or sender thread in a
 split. “Show in chat” links user and agent messages to their message anchors.
@@ -76,6 +90,7 @@ Changes reach open panels straight away.
 | `showMessages`, `showThinking`, `showTools`, `showHidden` | true | Which rows the filter chips show, until you toggle a chip yourself |
 | `timeFormat` | `24h` | Row timestamps: `24h` (14:02:31) or `12h` (2:02:31 PM) |
 | `tintRows` | true | Tint agent replies, tool calls, commands, file changes and failures in your theme's colors; icons stay colored either way |
+| `rowsPerPage` | 50 | Rows the log draws when it opens, and how many more it draws each time you scroll past them (10 to 500); fewer keep very long threads fast |
 
 ## Install
 
@@ -89,8 +104,10 @@ bb plugin install session-log@kalindudc
 ## How it works
 
 The panel reads bb's public `threads.timeline` API with nested rows. It
-loads every page when opened, then keeps the server's latest window separate
-from the complete list. Each refresh passes that window's `afterTag`, so bb
+reads only the latest window when opened, and reads older pages one at a time
+as the reader scrolls up to them, or all of them for a search or `g`, leaving
+at least as long as the last request took between pages. It keeps the
+server's latest window separate from the rows loaded so far. Each refresh passes that window's `afterTag`, so bb
 answers with only the rows and fields that changed, and the panel splices
 them into the list; rows that did not change keep their objects and are not
 redrawn. Thread events and reconnects trigger refreshes; rewritten history
@@ -107,10 +124,27 @@ Follow works like bb's own sticky scrollers: only a scroll by the
 reader (a wheel, touch, drag or scroll key within 350 ms) pauses it, and any
 other change in size or position re-pins the newest row.
 
+The panel draws a window of the visible rows, held by entry id so it stays
+put while rows arrive at either end or a filter changes. While it follows,
+the window is the newest page. When follow pauses, the window keeps its first
+row, so new output adds below it. Scrolling within a screen of the top or the
+bottom of the drawn rows adds a page there; when rows are added above, the
+panel puts the row that was at the top of the view back where it was. A jump
+to a far row (`g`, `e`, a search match) draws a page around that row instead.
+When the drawn rows do not fill the panel, as with a narrow filter, the panel
+draws more and reads older pages until they do or the session runs out.
+
+bb refuses a pagination cursor once the thread's title or working directory
+changes. The panel then walks a fresh chain of pages back to the oldest row it
+has and carries on from there; if that fails too, the top of the log says why
+and offers Retry.
+
 bb's timeline leaves out prompt parts marked `agent-only` and suppressed
 tool-result messages, so the panel also reads the thread's request events
 (`client/turn/requested`, `turn/input/accepted` and `client/turn/rejected`)
-with `threads.events.list`, 100 at a time, on load and with each refresh. A
+with `threads.events.list`, 100 at a time: newest first and only back to the
+oldest loaded row when the log opens, further back with each older page, and
+forward with each refresh. A
 hidden steer takes its place from the event that accepted it, as bb places a
 visible steer; anything else takes it from its request. If those events cannot
 be read, the rest of the log still loads and a notice says why.
@@ -133,8 +167,10 @@ The icon is “Logs” from [Hugeicons](https://hugeicons.com) core free icons
   on its row and frames it. Search also stops at the row: a match in text the
   row does not show, such as a collapsed command's later lines, frames the row
   the same way.
-- The whole session loads when the tab opens, so very large threads need
-  an initial fetch before search is complete.
+- Only loaded rows can be reached by `n`/`N` between replies and `e`/`E`
+  between errors. Scroll up, search or press `g` to load older rows first.
+- A search on a very large thread reads every older page before its results
+  are complete; the counter says “loading older” until then.
 - bb's events do not record which plugin sent a hidden message, so the log
   labels it by kind (steer, message, retry, tool result) rather than by
   sender. Hidden images and files appear by path or name.

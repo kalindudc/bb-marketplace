@@ -2,6 +2,20 @@
 
 Notable changes to Session Log, newest first. Releases are tagged `session-log/vX.Y.Z` in this repository.
 
+## 0.6.0 (2026-11-19)
+
+### Added
+
+- A `rowsPerPage` setting ("Rows drawn at a time", 50 by default, from 10 to 500) sets how many rows the log draws when it opens and how many more it draws each time.
+- The top of the log offers “Show earlier rows” or “Load older rows”, says when older rows are loading, and shows an error with Retry if bb could not send them. When bb refuses an old pagination cursor, because the thread's title or working directory changed, the log finds its place again from a fresh one.
+
+### Changed
+
+- The log opens at once on very long threads. It used to read every page of the timeline and every request event, then draw every row: on a thread with 8,790 rows that was 167 requests, about 20 MB and all 8,790 rows. It now reads the newest window and the request events back to its oldest row, 2 requests and about 0.4 MB on that thread, and draws only the newest 50 rows.
+- Scrolling toward the top draws the next page of earlier rows, keeping the row you were reading where it was, and reads older rows from bb when you reach the oldest one loaded. The log draws at most four pages at once; scrolling back down draws the later rows again, and reaching the bottom resumes follow.
+- Search reads the older rows in the background so it still covers the whole session, and draws a page of matching rows at a time. Its counter shows “3 of 17+” while some matching rows are not drawn or loaded yet, and stepping past the drawn rows draws the next page.
+- `g` reads the rest of the session, then moves to its first row with a page around it. `j` and `k` past the drawn rows draw the next page, and `k` on the oldest loaded row reads older ones.
+
 ## 0.5.0 (2026-11-05)
 
 ### Changed
