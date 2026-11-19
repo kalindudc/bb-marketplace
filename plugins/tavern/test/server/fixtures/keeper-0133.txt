@@ -29,6 +29,9 @@ Last thing you told the user (01:33 (local with offset)):
 Facts, promises and hand-backs:
 None
 
+Free hands:
+None
+
 Decided for you since the last tick: None
 
 Errands in flight:

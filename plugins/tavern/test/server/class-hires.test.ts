@@ -59,8 +59,9 @@ describe("class hire snapshots", () => {
   });
 
   it("names a resting member in the hire result as advice, never as a refusal", async () => {
-    const f = await planned();
-    const first = await f.runtime.hire("lead", "project", f.input);
+    const f = setup();
+    const input = { classId: "ranger", errand: true, title: "Scout", brief: { ...brief, questions: ["What changed?"], timeboxMinutes: 5 } };
+    const first = await f.runtime.hire("lead", "project", input);
     f.k.store.put("members", first.threadId, { ...f.k.store.get("members", first.threadId)!, state: "done", place: "rest" });
     registerTools(f.bb, f.runtime);
     const text = await f.harness.behavior.invokeAgentTool("tavern_hire", {
@@ -68,9 +69,9 @@ describe("class hire snapshots", () => {
       brief: { ...brief, questions: ["What changed?"], timeboxMinutes: 5 },
     }, { threadId: "lead" });
     expect(text).toContain("Hired");
-    expect(text).toContain("Resting builders:");
+    expect(text).toContain("Free hands:");
     expect(text).toContain(first.threadId);
-    expect(text).toContain("advisory, never a refusal");
+    expect(text).toContain("this hire was allowed");
   });
 
   it("never reads a member worktree as the project's class source", async () => {

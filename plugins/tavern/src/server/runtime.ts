@@ -6,6 +6,7 @@ import { isLiveKeeper, isLiveMember, isOpenQuest } from "./liveness";
 import { AwayRuntime } from "./away/runtime";
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
+import { restingCandidates } from "./resting";
 import type {
   BbPluginApi,
   MessageDispatchHookContext,
@@ -1816,6 +1817,7 @@ export class TavernRuntime {
           { kind: "agent", threadId },
         );
       }
+      const candidates = restingCandidates(this.keeper, threadId, { classId: input.classId, boardQuestId: questId, waypointId: input.waypointId });
       this.keeper.store.event(
         this.keeper.now(),
         threadId,
@@ -1828,6 +1830,7 @@ export class TavernRuntime {
           execution,
           ...(checkIndependence ? { checkIndependence } : {}),
           adjustments: notes,
+          restingCandidates: candidates,
         },
         { kind: "agent", threadId },
       );
@@ -1857,6 +1860,7 @@ export class TavernRuntime {
       return {
         ...this.keeper.member(member.threadId)!,
         placement: placement ? this.placements().controller.view(this.placements().store.get(placement.id)!) : null,
+        restingCandidates: candidates,
         placementSummary: `Repo ${projectId}; ${input.placement ? `Keeper's pick: ${"ruleId" in input.placement ? `rule ${input.placement.ruleId}` : "where the Keeper runs"}` : input.placementRuleId ? `Keeper's pick: rule ${input.placementRuleId}` : placementRoute?.match.state === "matched" ? `rule ${placementRoute.match.rule.label} (${placementRoute.match.rule.id})` : role.id === "keeper" ? "lead default" : "no matching rule"}; ${placement ? this.placements().controller.line(this.placements().store.get(placement.id)!) : "where the Keeper runs"}.`,
         executionNotes: notes,
         pendingScopeAsk,

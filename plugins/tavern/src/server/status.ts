@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { freeHands } from "./resting";
 import { agentData } from "./agent-data";
 import type { TavernRuntime } from "./runtime";
 import { readRequestSources } from "./request-sources";
@@ -235,6 +236,7 @@ function statusData(
   return {
     archivedCount,
     archivedMembers, archivedMemberTotal, nextArchivedOffset,
+    freeHands: freeHands(k, threadId),
     quests: (input.boardQuestId
       ? [k.quest(input.boardQuestId)]
       : k.store.visibleRecords("quests", threadId, input.limit, input.offset)

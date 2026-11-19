@@ -4,6 +4,7 @@ import type { BoardQuestSummary } from "../../shared/contract";
 import type { KeeperNote, Rule } from "../../shared/schema";
 import { boundedData, LEDGER_OVERFLOW } from "../instructions";
 import { localClock } from "../clock";
+import { freeHands } from "../resting";
 import { MEMORY_LIMITS } from "../../shared/settings";
 import { isOpenQuest } from "../liveness";
 import { PLACEMENT_CLASSES, placementClassLine, placementGuidance } from "../placement/controller";
@@ -290,6 +291,7 @@ export function renderRestatement(
         : k.memory.noteCount(threadId),
     ),
   ];
+  parts.push(section("Free hands", freeHands(k, threadId).map(m => `${m.name} (${m.classId}, ${m.threadId}); quest ${m.quest}; rested ${m.restedMinutes} min; last work ${quoted(short(m.lastWork, 160))}; may be re-briefed for: ${m.mayRebriefFor}`), 2200, "more free hands; call tavern_status"));
   if (!priorities) {
     const steers = summaries.flatMap((q) =>
       k.memory.steers(threadId, q.id).map((route) => {
