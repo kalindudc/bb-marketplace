@@ -7,11 +7,12 @@ import { join } from "node:path";
 import { parse } from "yaml";
 import {
   CHARACTER_GAG_MS, CHARACTER_PALETTE_FALLBACK, TavernCharacter, bodyWidth, characterLook, characterMode, characterPose,
-  characterState, darkTheme, drawCharacter, fireFlicker, readPalette, walkSpan, WALK_SPEED, CHARACTER_GRID, CHARGE_PIXELS,
+  characterState, darkTheme, drawCharacter, fireFlicker, readPalette, CHARACTER_GRID, CHARGE_PIXELS,
   type CharacterPalette, type CharacterState,
 } from "../../../src/ui/kit/characters";
 import { characterDefSchema } from "../../../src/shared/schema";
 import { motion } from "../../../src/ui/kit/motion";
+import { PartyStrip } from "../../../src/ui/engine";
 import { ThreadWidget } from "../../../src/ui/thread/composer";
 import { fixtureDecor, fixtureRegistry } from "../../../src/ui/thread/fixtures";
 import { clearThreadState } from "../../../src/ui/thread/state";
@@ -27,7 +28,8 @@ function recording() {
   const gradients: { x1: number; y1: number; r1: number; stops: [number, string][] }[] = [];
   const ctx = {
     fillStyle: "" as unknown, imageSmoothingEnabled: true, globalCompositeOperation: "source-over",
-    clearRect: () => {}, save: () => {}, restore: () => {},
+    clearRect: () => {}, save: () => {}, restore: () => {}, translate: () => {}, scale: () => {},
+    beginPath: () => {}, rect: () => {}, clip: () => {},
     fillRect(this: { fillStyle: unknown }, x: number, y: number, w: number, h: number) { rects.push({ x, y, w, h, colour: String(this.fillStyle) }); },
     createRadialGradient(_x0: number, _y0: number, _r0: number, x1: number, y1: number, r1: number) {
       const g = { x1, y1, r1, stops: [] as [number, string][], addColorStop(this: { stops: [number, string][] }, offset: number, colour: string) { this.stops.push([offset, colour]); } };
@@ -119,26 +121,6 @@ describe("states and modes", () => {
     expect(characterMode("lively")).toBe("continuous");
     expect(characterMode("calm", "continuous")).toBe("continuous");
     expect(characterMode("lively", "interval")).toBe("interval");
-  });
-});
-
-describe("the walk", () => {
-  it("bounds the reach by the composer's width, not the wider conversation view", () => {
-    // A composer narrower than the strip bounds the walk to the composer.
-    expect(walkSpan(300, 600, 24)).toBe(276);
-    // No composer element (a test, another host): the strip itself stands in.
-    expect(walkSpan(null, 600, 24)).toBe(576);
-    // A composer as wide as the strip changes nothing.
-    expect(walkSpan(600, 600, 24)).toBe(576);
-    // A composer whose width is not measured yet falls back to the strip.
-    expect(walkSpan(0, 600, 24)).toBe(576);
-    // Never a negative reach on a composer narrower than the sprite.
-    expect(walkSpan(10, 600, 24)).toBe(0);
-  });
-
-  it("keeps a calm pace: a wide strip is strolled across, not sprinted", () => {
-    // One full there-and-back over 900 px of travel takes well over half a minute at this pace.
-    expect((2 * 900 / WALK_SPEED) * 1000).toBeGreaterThan(30000);
   });
 });
 
@@ -430,15 +412,13 @@ describe("TavernCharacter", () => {
     } finally { media.uninstall(); }
   });
 
-  it("walks the character on its own strip and leaves the class crest in the row", async () => {
+  it("draws one canvas on its own strip, with a focusable actor and a separate class crest", async () => {
     const slot = renderSlot({ component: ThreadWidget }, { threadId: "keeper-1" }, { rpc: { registry: () => fixtureRegistry, decor: () => fixtureDecor } });
-    await waitFor(() => expect(slot.container.querySelector("[data-part=TavernWalk] [data-part=TavernCharacter]")).not.toBeNull());
-    const who = slot.container.querySelector("[data-part=TavernWalk] [data-part=TavernCharacter]")!;
-    // The fixture thread has one open ask, so its Keeper is the sprite that needs you, walking above the composer.
-    expect(who.getAttribute("data-state")).toBe("needs-you");
-    expect(who.getAttribute("data-keeper")).toBe("true");
-    expect(who.getAttribute("data-mode")).toBe("interval");
-    expect(who.className).toContain("tchar-walk");
+    await waitFor(() => expect(slot.container.querySelector("[data-part=TavernWalk] button[data-actor]")).not.toBeNull());
+    const who = slot.container.querySelector("[data-part=TavernWalk] button[data-actor]")!;
+    expect(who.getAttribute("aria-label")).toContain("needs you");
+    expect(slot.container.querySelector("[data-part=TavernWalk]")!.getAttribute("aria-label")).toMatch(/walking$/);
+    expect(slot.container.querySelectorAll("[data-part=TavernWalk] canvas")).toHaveLength(1);
     // The row keeps the class crest where the sprite used to stand, and its busy dot.
     expect(slot.container.querySelector(".tw-crest [data-part=TavernCharacter]")).toBeNull();
     expect(slot.container.querySelector(".tw-crest .tavern-crest")).not.toBeNull();
@@ -460,102 +440,39 @@ describe("TavernCharacter", () => {
   it("keeps the member's row a single control: the walking sprite is never nested in its button", async () => {
     const decor = { ...fixtureDecor, member: { ...fixtureDecor.member!, role: "member" as const }, keeperView: null, boardQuest: fixtureDecor.keeperView!.boardQuests[0] };
     const slot = renderSlot({ component: ThreadWidget }, { threadId: "keeper-1" }, { rpc: { registry: () => fixtureRegistry, decor: () => decor } });
-    await waitFor(() => expect(slot.container.querySelector("[data-part=TavernWalk] [data-part=TavernCharacter]")).not.toBeNull());
-    const who = slot.container.querySelector("[data-part=TavernWalk] [data-part=TavernCharacter]")!;
-    expect(who.tagName).toBe("BUTTON");
-    expect(who.getAttribute("data-state")).toBe("idle");
-    expect(who.getAttribute("data-keeper")).toBeNull();
+    await waitFor(() => expect(slot.container.querySelector("[data-part=TavernWalk] button[data-actor]")).not.toBeNull());
+    const who = slot.container.querySelector("[data-part=TavernWalk] button[data-actor]")!;
+    expect(who.getAttribute("data-mood")).toBe("idle");
     // The member's row is a button holding only the crest; no button nests a button.
     expect(slot.container.querySelector(".tw-member-id")!.tagName).toBe("BUTTON");
     expect(slot.container.querySelector(".tw-member-id [data-part=TavernCharacter]")).toBeNull();
     expect(slot.container.querySelector(".tw-member-id .tavern-crest")).not.toBeNull();
-    expect(slot.container.querySelectorAll("button[data-part=TavernCharacter]")).toHaveLength(1);
+    expect(slot.container.querySelectorAll("button[data-actor]")).toHaveLength(1);
     slot.lifecycle.unmount();
   });
 
-  it("paces across its parent when placed in a strip, and stops for a held surface", () => {
-    vi.useFakeTimers();
-    const v = sprite({ mode: "continuous", placement: "walk" });
-    const host = el(v.container) as HTMLElement;
-    expect(host.className).toContain("tchar-walk");
-    Object.defineProperty(host.parentElement!, "clientWidth", { value: 200, configurable: true });
-    Object.defineProperty(host, "offsetWidth", { value: 24, configurable: true });
-    // jsdom has no ResizeObserver, so the strip's reach is re-measured on a resize event.
+  it("sends mood, hover and hop cues through the coordinator and keeps speech in the strip", () => {
+    const cue = vi.spyOn(motion, "cue");
+    const props = { character: wren, classId: "keeper", classLabel: "Keeper", keeper: true, surface: "thread:t1", region: "widget", line: "Clear skies." } as const;
+    const v = render(<PartyStrip {...props} mood="idle" />);
+    const strip = v.container.querySelector<HTMLElement>(".twalk")!;
+    Object.defineProperty(strip, "clientWidth", { value: 320 });
     act(() => { window.dispatchEvent(new Event("resize")); });
-    act(() => { vi.advanceTimersByTime(1200); });
-    expect(host.style.translate).not.toBe("");
-    const first = host.style.translate;
-    act(() => { vi.advanceTimersByTime(1200); });
-    expect(host.style.translate).not.toBe(first);
-    // An ask in the row holds the surface: the walk stops where it stands, and carries on when released.
-    act(() => { motion.setHeld("thread:t1", true); });
-    const held = host.style.translate;
-    act(() => { vi.advanceTimersByTime(1200); });
-    expect(host.style.translate).toBe(held);
-    act(() => { motion.setHeld("thread:t1", false); });
-    act(() => { vi.advanceTimersByTime(1200); });
-    expect(host.style.translate).not.toBe(held);
-    v.unmount();
-  });
+    expect(cue).not.toHaveBeenCalled();
+    v.rerender(<PartyStrip {...props} mood="working" />);
+    v.rerender(<PartyStrip {...props} mood="working" />);
+    expect(cue).toHaveBeenCalledTimes(1);
+    expect(cue.mock.lastCall?.[3]).toMatchObject({ auto: true, key: "wren:tap:1", region: "widget" });
 
-  it("bounds a walker by the composer element when the strip sits inside a wider one", () => {
-    vi.useFakeTimers();
-    const v = render(<div className="tavern" data-app-composer=""><div><TavernCharacter character={wren} cls={cls} surface="thread:t1" mode="continuous" placement="walk" /></div></div>);
-    const host = el(v.container) as HTMLElement;
-    const composer = v.container.querySelector("[data-app-composer]") as HTMLElement;
-    Object.defineProperty(composer, "clientWidth", { value: 120, configurable: true });
-    Object.defineProperty(host.parentElement!, "clientWidth", { value: 600, configurable: true });
-    Object.defineProperty(host, "offsetWidth", { value: 24, configurable: true });
-    act(() => { window.dispatchEvent(new Event("resize")); });
-    // The composer's 120 px bounds the reach to 96, so no sample ever reaches the strip's own 576 px.
-    let max = 0;
-    for (let i = 0; i < 120; i++) { act(() => { vi.advanceTimersByTime(200); }); max = Math.max(max, parseFloat(host.style.translate) || 0); }
-    expect(max).toBeLessThanOrEqual(96);
-    expect(max).toBeGreaterThan(0);
-    v.unmount();
-  });
-
-  it("keeps breathing under the typing hold, while the walk pauses", () => {
-    vi.useFakeTimers();
-    const v = sprite({ mode: "continuous", placement: "walk" });
-    const host = el(v.container) as HTMLElement;
-    Object.defineProperty(host.parentElement!, "clientWidth", { value: 200, configurable: true });
-    Object.defineProperty(host, "offsetWidth", { value: 24, configurable: true });
-    act(() => { window.dispatchEvent(new Event("resize")); });
-    act(() => { vi.advanceTimersByTime(600); });
-    const moved = host.style.translate;
-    // A real text field takes the keyboard: that begins the coordinator's typing hold.
-    const field = document.createElement("input");
-    document.body.appendChild(field);
-    field.focus();
-    act(() => { field.dispatchEvent(new Event("input", { bubbles: true })); });
-    drawn.rects.length = 0;
-    act(() => { vi.advanceTimersByTime(600); });
-    // The walk pauses where it stood...
-    expect(host.style.translate).toBe(moved);
-    // ...but the sprite keeps drawing, so it never reads dead.
-    expect(drawn.rects.length).toBeGreaterThan(0);
-    field.remove();
-    v.unmount();
-  });
-
-  it("moves the walker every frame, not only on the art's 12 fps beat", () => {
-    vi.useFakeTimers();
-    const spy = vi.spyOn(motion, "mayLoop");
-    const v = sprite({ mode: "continuous", placement: "walk" });
-    const host = el(v.container) as HTMLElement;
-    Object.defineProperty(host.parentElement!, "clientWidth", { value: 200, configurable: true });
-    Object.defineProperty(host, "offsetWidth", { value: 24, configurable: true });
-    act(() => { window.dispatchEvent(new Event("resize")); });
-    act(() => { vi.advanceTimersByTime(100); });
-    // The walk consults the coordinator every frame, so a hold reaches it.
-    expect(spy).toHaveBeenCalled();
-    const samples: number[] = [];
-    // Four samples 20 ms apart (all inside one 80 ms art frame) already move: the position is per-frame, never throttled to the art rate.
-    for (let i = 0; i < 4; i++) { act(() => { vi.advanceTimersByTime(20); }); samples.push(parseFloat(host.style.translate)); }
-    expect(samples.every(Number.isFinite)).toBe(true);
-    expect(new Set(samples).size).toBeGreaterThan(1);
-    v.unmount();
+    const actor = strip.querySelector("button")!;
+    act(() => { fireEvent.pointerOver(actor); fireEvent.click(actor); });
+    expect(cue.mock.calls.slice(1).map(c => [c[3].key, c[3].auto])).toEqual([["wren:notice:2", false], ["wren:hop:3", false]]);
+    expect(strip.querySelector('[role="status"]')).toHaveProperty("hidden", false);
+    expect(strip.querySelector('[role="status"]')?.textContent).toBe("Clear skies.");
+    v.rerender(<PartyStrip {...props} mood="working" held />);
+    expect(strip.querySelector('[role="status"]')).toHaveProperty("hidden", true);
+    act(() => { fireEvent.pointerOver(actor); fireEvent.click(actor); });
+    expect(cue).toHaveBeenCalledTimes(3);
   });
 
   it("keeps drawing while its surface is held, so a held sprite never reads dead", () => {

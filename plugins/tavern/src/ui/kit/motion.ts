@@ -198,6 +198,9 @@ class Coordinator {
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
   getReduced = () => this.reduced;
   getPaused = () => this.paused;
+  getHolds(surface: Surface) {
+    return { typing: this.composing || this.now() - this.lastInputAt < TYPING_HOLD_MS, held: this.held.get(surface) ?? false };
+  }
   private emit() { for (const l of [...this.listeners]) l(); }
 
   private readReduced() {

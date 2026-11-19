@@ -5,10 +5,11 @@ import { classDifferences, composerProjectId, fieldWords, rearmClassSettings, st
 import { rpcContract, type ThreadDecor } from "../../shared/contract";
 import type { Ask, CheckerHandoffHold, ClassDef } from "../../shared/schema";
 import type { ClassNotice } from "../../shared/class-execution-contract";
-import { AskCard, Crest, TavernCharacter, characterState, KEEPER_STATE_HINT, DecidedForYou, useDecisionSeen, ExpandsMark, Glyph, IconButton, OpensMark, QueryState, Skeleton, SkCrest, SkLine, TimeAgo, Vocabulary, memberIdentity, plural, useRegistry, useSkeletonCount, useSkeletonDelay, type Registry, glowVars, QuietNotice, useArmedNewQuest, activeHold, heldQuests, releaseWords, Clamp, localTime, useNow } from "../kit";
+import { AskCard, Crest, characterState, voiceShown, KEEPER_STATE_HINT, DecidedForYou, useDecisionSeen, ExpandsMark, Glyph, IconButton, OpensMark, QueryState, Skeleton, SkCrest, SkLine, TimeAgo, Vocabulary, memberIdentity, plural, useRegistry, useSkeletonCount, useSkeletonDelay, type Registry, glowVars, QuietNotice, useArmedNewQuest, activeHold, heldQuests, releaseWords, Clamp, localTime, useNow } from "../kit";
 import { LEDGER_TAB } from "./tabs";
 import { acknowledgeAskReveal, acknowledgeWidgetReveal, useWidgetPanel, useWidgetReveal, threadDecorCache } from "./state";
 import { useChangeCue, useTavernMotion } from "../kit/motion";
+import { PartyStrip, STRIP_MOOD } from "../engine";
 import { takeArmedClass } from "../kit/remember";
 import { MemberPanel, memberFinished } from "./member-brief";
 import { memberIdentityWords } from "../kit/member-identity";
@@ -235,13 +236,11 @@ export function ThreadWidget({ threadId }: { threadId: string }) {
   const memberState = keeper
     ? characterState(keeper.status === "busy" ? "working" : keeper.status, need.asks + need.holds > 0)
     : characterState(data.member.state, !!data.scope?.pendingAskId);
-  // The character walks a thin strip below the row and above the composer; the row keeps the class crest. The strip follows the row's
-  // own conditions (a member, a visible row) and its surface, so an ask in the row holds the walk without freezing a standing sprite.
   const walker = data.characters !== false && identity && !identity.character.plain
-    ? <section className="tavern twalk" aria-label={`${identity.character.name} walking`} data-part="TavernWalk">
-        <span className="twalk-ground" aria-hidden="true" />
-        <TavernCharacter character={identity.character} cls={identity.cls} classId={data.member.classId} keeper={!!keeper} state={memberState} line={identity.character.lines.row} surface={`thread:${threadId}`} ambientMotion={data.ambientMotion ?? "calm"} repeatSeconds={data.repeatSeconds} size={48} placement="walk" region="widget" />
-      </section>
+    ? <PartyStrip character={identity.character} classLabel={identity.cls.label} classId={data.member.classId}
+        keeper={!!keeper} mood={STRIP_MOOD[memberState]} line={voiceShown(registry.data) ? identity.character.lines.row : undefined}
+        surface={`thread:${threadId}`} mode={data.ambientMotion ?? "calm"} region="widget"
+        held={need.asks + need.holds > 0 || (!keeper && scopeAlerts(data) > 0)} />
     : null;
 
   return (

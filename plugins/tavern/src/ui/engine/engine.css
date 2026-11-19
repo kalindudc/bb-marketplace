@@ -1,0 +1,53 @@
+.tavern.twalk {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+  height: 64px;
+  margin: 0 0 2px;
+  overflow: hidden;
+}
+.tavern .twalk-ground {
+  position: absolute;
+  inset: auto 0 6px;
+  height: 1px;
+  background: color-mix(in oklab, var(--tavern-line) 65%, transparent);
+}
+.tavern .twalk-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  image-rendering: pixelated;
+}
+.tavern button.twalk-actor {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 48px;
+  height: 56px;
+}
+.tavern button.twalk-actor:focus-visible {
+  outline: 2px solid var(--tavern-hearth);
+  outline-offset: -3px;
+}
+.tavern .twalk-actor .tchar-need { top: 4px; right: 3px; }
+.tavern .twalk-speech {
+  position: absolute;
+  top: 5px;
+  left: var(--speech-origin);
+  width: max-content;
+  max-width: min(200px, var(--speech-room));
+  max-height: 54px;
+  overflow: hidden;
+  box-sizing: border-box;
+  padding: 4px 7px;
+  border: 1px solid var(--tavern-line);
+  background: var(--card);
+  color: var(--foreground);
+  font-size: 11px;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+}
+.tavern .twalk-speech[data-side="left"] { transform: translateX(-100%); }

@@ -1,0 +1,68 @@
+// src/ui/engine/art.ts: the contract between the engine (scheduler, physics, strip) and the generator (sprites).
+// Copy this file verbatim into plugins/tavern/src/ui/engine/art.ts. Both lanes create it with identical content.
+import type { LookFields } from "../../shared/look";
+import type { CharacterPalette } from "../kit/characters";
+
+/** What a member is doing, as the party shows it. `released` is not drawn on the strip at all. */
+export const MOODS = ["idle", "working", "waiting", "reported", "verified", "blocked", "resting", "error"] as const;
+export type Mood = (typeof MOODS)[number];
+export type MoodOrGone = Mood | "released";
+
+/** One-shot animations. Each lasts `CUE_MS[cue]`. */
+export const CUES = ["tap", "notice", "wave", "flourish", "drop", "blink", "hop"] as const;
+export type Cue = (typeof CUES)[number];
+export const CUE_MS: Record<Cue, number> = { tap: 1100, notice: 620, wave: 950, flourish: 1300, drop: 1200, blink: 520, hop: 900 };
+
+/** stand: the mood's resting pose with its slow breath; walk: travelling; quiet: the class's quiet idle while the user types; cue: a one-shot. */
+export type Activity = "stand" | "walk" | "quiet" | "cue";
+
+/** Everything the art needs to draw one frame. The engine owns time and physics; the art is a pure function of this. */
+export type ArtFrame = {
+  activity: Activity;
+  /** Set when activity is "cue". */
+  cue: Cue | null;
+  /** 0 to 1 through the cue; unused otherwise. */
+  progress: number;
+  /** ms on the engine clock, for loops the art owns (breath, blink, the class idle). */
+  t: number;
+  mood: Mood;
+  facing: 1 | -1;
+  /** Walk step index, a whole number that advances while walking. */
+  step: number;
+  /** The hanging light's pendulum angle in radians, from the engine's physics; 0 hangs straight. */
+  swing: number;
+  /** The flame's flicker around 1; exactly 1 when still. */
+  flame: number;
+  /** Reduced motion or Motion off: draw the mood's rest pose and nothing time-based. */
+  still: boolean;
+};
+
+export type LightAnchor = { x: number; y: number; kind: "lantern" | "hearth" | "torch" };
+
+export interface CharacterArt {
+  /** The art's grid in art pixels; the engine draws it at a whole multiple. */
+  readonly width: number;
+  readonly height: number;
+  /** The row the feet stand on. */
+  readonly ground: number;
+  /** Pure: the same frame and palette always give the same pixels. Clears its own width by height first. */
+  draw(ctx: CanvasRenderingContext2D, frame: ArtFrame, palette: CharacterPalette): void;
+  /** Where a carried light hangs from, in art pixels, for this frame; null when the character carries none. */
+  lightAnchor(frame: ArtFrame): LightAnchor | null;
+  /** The name of the class's quiet idle for a mood (for example "reads a scroll"), for tests and the debug readout. */
+  quietIdle(mood: Mood): string;
+}
+
+export type ArtInput = {
+  /** The avatar seed: the character's `avatar:` when set, else its id. */
+  seed: string;
+  /** The class it was hired as; null for no class. */
+  classId: string | null;
+  hue: string;
+  charge: string | null;
+  /** Traits the character file pins on top of the seed. */
+  look?: LookFields;
+  keeper: boolean;
+};
+
+export type ArtFactory = (input: ArtInput) => CharacterArt;

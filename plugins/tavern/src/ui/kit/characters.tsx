@@ -3,6 +3,7 @@ import type { CharacterDef, ClassDef } from "../../shared/schema";
 import { LOOK_HAIR_COLOURS, LOOK_HAIRS, LOOK_HATS, LOOK_SKINS, type LookFields } from "../../shared/look";
 import { HUE_CSS } from "../../shared/heraldry";
 import { motion, type Surface } from "./motion";
+import { observeWorld } from "../engine/scheduler";
 import "./characters.css";
 
 /**
@@ -13,24 +14,10 @@ import "./characters.css";
  *
  * Motion: every automatic cue goes through the motion coordinator, so reduced motion, the typing hold, a held widget row and the window
  * budgets reach the sprites too. Interval mode fires one short gag every `repeatSeconds`; continuous mode loops (a strike, a breath,
- * falling rain). `mayLoop` gates the loop per frame under the same stop conditions.
+ * falling rain). The shared engine schedules the drawing.
  */
 
 export const CHARACTER_GRID = { width: 24, height: 26, ground: 23, centre: 12 } as const;
-/** ~12 fps: chunky pixels read as pixel art at this rate, and a row of characters costs almost nothing. */
-export const CHARACTER_FRAME_MS = 80;
-/** The pace of a walking sprite on its strip, in px per second: a calm amble, so a wide composer is strolled across, never sprinted. */
-export const WALK_SPEED = 20;
-
-/**
- * The walk's reach in px: the composer's own width when one is known, else the strip's, less the sprite — never the wider conversation view the
- * composer sits in. `composerWidth` is null when no composer element is on the page (a test, another host).
- */
-export function walkSpan(composerWidth: number | null, stripWidth: number, spriteWidth: number) {
-  const reach = composerWidth && composerWidth > 0 ? Math.min(composerWidth, stripWidth) : stripWidth;
-  return Math.max(0, reach - spriteWidth);
-}
-
 /**
  * A fire's flicker, around 1: two detuned waves and a slow one, so a flame's reach and warmth never pulse like a metronome. `seed` is
  * the character's own offset, so no two fires beat together, and the result stays in a calm band (about 0.62 to 1.18).
@@ -239,9 +226,8 @@ export function workAngle(phase: number) {
  * ember); interval mode holds still and only a gag moves it. Reduced motion asks for a constant `ts`, which lands every loop on one still
  * frame.
  */
-export function characterPose(input: { look: CharacterLook; state: CharacterState; ts: number; mode: CharacterMode; keeper: boolean; walk?: boolean; strolling?: boolean; gag?: { kind: CharacterGag; progress: number } | null }): CharacterPose {
-  const { look, state, ts, mode, keeper, walk = false, gag } = input;
-  const strolling = input.strolling ?? walk;
+export function characterPose(input: { look: CharacterLook; state: CharacterState; ts: number; mode: CharacterMode; keeper: boolean; gag?: { kind: CharacterGag; progress: number } | null }): CharacterPose {
+  const { look, state, ts, mode, keeper, gag } = input;
   const pose: CharacterPose = { ...STILL };
   const looping = mode === "continuous";
   if (state === "working") {
@@ -275,12 +261,6 @@ export function characterPose(input: { look: CharacterLook; state: CharacterStat
     else if (gag.kind === "drop") pose.rain = p * 5;
     else if (gag.kind === "notice") { pose.lookSide = p < 0.5 ? -1 : 1; pose.jump = p < 0.25 ? 1 : 0; }
     else if (gag.kind === "flourish") { pose.arm = 1; pose.spark = p > 0.3; pose.ember = p; }
-  }
-  // A walker steps while it strolls; a hold that has it standing (you are typing, an ask is in the row) leaves a slow breath and a blink,
-  // so a paused walk never reads as a dead character.
-  if (walk) {
-    pose.bob = strolling ? Math.floor(ts / 240) % 2 : Math.floor(ts / 700) % 2;
-    if (!strolling && !gag) pose.blink = (ts + look.blinkOff) % 4200 < 150;
   }
   return pose;
 }
@@ -458,8 +438,6 @@ export type TavernCharacterProps = {
   interactive?: boolean;
   /** Set for a sprite in the widget row: the coordinator then holds it whenever the row is held. */
   region?: "widget";
-  /** Where the sprite stands: "crest" keeps it in place (a row, a card); "walk" paces it across its parent, a strip above the composer. */
-  placement?: "crest" | "walk";
   className?: string;
 };
 
@@ -470,7 +448,7 @@ export type TavernCharacterProps = {
  */
 export function TavernCharacter({
   character, cls = null, classId = null, state = "idle", size = 24, line, surface, mode, ambientMotion = "calm",
-  repeatSeconds = 7, keeper = false, interactive = true, region, placement = "crest", className,
+  repeatSeconds = 7, keeper = false, interactive = true, region, className,
 }: TavernCharacterProps) {
   // The coordinator's listeners must be up before the first reduced-motion read, so a character never starts moving and then stops.
   motion.install();
@@ -478,9 +456,6 @@ export function TavernCharacter({
   const wrap = useRef<HTMLElement | null>(null);
   const context = useRef<CanvasRenderingContext2D | null>(null);
   const palette = useRef<CharacterPalette | null>(null);
-  const trackSpan = useRef(0);
-  const walkDir = useRef(0);
-  const lastX = useRef(0);
   const bubbleTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const gags = useRef(0);
   const [bubble, setBubble] = useState<string | null>(null);
@@ -495,50 +470,19 @@ export function TavernCharacter({
   const still = ambientMotion === "off" || reduced;
   const settings: CharacterMode = characterMode(ambientMotion, mode);
   const looping = settings === "continuous" && !still && visible && !paused;
-  const walking = placement === "walk";
 
   // The 2D context is asked for once: an environment without canvas (a test) answers "no" forever, and asking again is pure noise.
   const context2d = useCallback(() => (context.current ??= canvas.current?.getContext("2d") ?? null), []);
-  const draw = useCallback((ts: number, strolling = walking) => {
+  const draw = useCallback((ts: number) => {
     const ctx = context2d();
     if (!ctx) return;
     palette.current ??= readPalette(wrap.current);
     ctx.imageSmoothingEnabled = false;
-    const flame = fireFlicker(ts, look.blinkOff);
-    const pose = characterPose({ look, state, ts, mode: still ? "interval" : settings, keeper, walk: walking, strolling, gag: gag ? { kind: gag.kind, progress: (ts - gag.start) / Math.max(1, gag.until - gag.start) } : null });
-    drawCharacter({ ctx, hue: character.hue, look, palette: palette.current, pose, cls: classId, keeper, charge: character.charge, flame, dir: walking ? walkDir.current : 0 });
-    // The CSS halo breathes on the same flicker as the painted core, so the two read as one light.
+    const flame = still ? 1 : fireFlicker(ts, look.blinkOff);
+    const pose = characterPose({ look, state, ts, mode: still ? "interval" : settings, keeper, gag: gag ? { kind: gag.kind, progress: (ts - gag.start) / Math.max(1, gag.until - gag.start) } : null });
+    drawCharacter({ ctx, hue: character.hue, look, palette: palette.current, pose, cls: classId, keeper, charge: character.charge, flame });
     wrap.current?.style.setProperty("--tchar-flicker", flame.toFixed(3));
-  }, [look, state, settings, still, keeper, classId, gag, character.hue, character.charge, walking]);
-
-  /**
-   * A walker's place on its strip: it travels the whole track and back at a constant pace, eased at each end so it turns rather than
-   * snapping. The reach was measured once (and on a resize), never per frame, so a moving sprite never forces a layout mid-walk.
-   */
-  const positionWalk = useCallback((ts: number) => {
-    const el = wrap.current;
-    const span = trackSpan.current;
-    if (!el || !span) return;
-    const period = Math.max(1400, (2 * span / WALK_SPEED) * 1000);
-    const x = span * (1 - Math.cos(2 * Math.PI * ((ts % period) / period))) / 2;
-    if (Math.abs(x - lastX.current) > 0.05) walkDir.current = Math.sign(x - lastX.current);
-    lastX.current = x;
-    el.style.translate = `${x.toFixed(1)}px 0px`;
-  }, []);
-
-  // How far a walker may travel: the composer's own width (bb's [data-app-composer]) less the sprite, never the wider conversation view; the
-  // strip's width stands in when no composer is found. Read once and again only when either resizes, never per frame.
-  useLayoutEffect(() => {
-    if (!walking) return;
-    const el = wrap.current, strip = el?.parentElement;
-    if (!el || !strip) return;
-    const composer = el.closest("[data-app-composer]");
-    const measure = () => { trackSpan.current = walkSpan(composer && composer.clientWidth > 0 ? composer.clientWidth : null, strip.clientWidth, el.offsetWidth); };
-    measure();
-    if (typeof ResizeObserver !== "undefined") { const observer = new ResizeObserver(measure); observer.observe(strip); if (composer) observer.observe(composer); return () => observer.disconnect(); }
-    window.addEventListener("resize", measure);
-    return () => window.removeEventListener("resize", measure);
-  }, [walking]);
+  }, [look, state, settings, still, keeper, classId, gag, character.hue, character.charge]);
 
   // One still frame whenever anything the drawing depends on changes: that is the whole of reduced motion, and the first paint.
   useLayoutEffect(() => {
@@ -611,32 +555,18 @@ export function TavernCharacter({
     if (visible) fireGag(state === "error" ? "drop" : state === "needs-you" ? "notice" : state === "working" ? "tap" : "wave", true);
   }, [state, visible, fireGag]);
 
-  // One loop for the life of the sprite. It moves a walker every frame (smooth) and redraws the pixel art at the art's own chunky rate.
-  // Nothing here is a prop, so a re-render or a gag never restarts it and never hitches; `mayLoop` is asked per frame, so a hold that
-  // begins mid-loop (you start typing, the tab hides) stops it and one that ends lets it carry on. Reduced motion or Motion off runs none.
   const drawRef = useRef(draw); drawRef.current = draw;
-  const liveRef = useRef(false); liveRef.current = !still && visible && (looping || gag !== null || walking);
-  const walkRef = useRef(walking); walkRef.current = walking;
+  const drawing = looping || gag !== null;
   useEffect(() => {
-    if (still || typeof requestAnimationFrame !== "function") return;
-    let raf = 0, last = 0;
-    const step = (ts: number) => {
-      raf = requestAnimationFrame(step);
-      if (!liveRef.current) return;
-      // A hold (you are typing, an ask is in the row, the tab is hidden) pauses the walk but never the sprite: it keeps breathing, so a held
-      // walker reads as standing rather than dead.
-      const strolling = walkRef.current && motion.mayLoop(surface);
-      if (strolling) positionWalk(ts);
-      if (ts - last < CHARACTER_FRAME_MS) return;
-      last = ts;
-      drawRef.current(ts, strolling);
-    };
-    raf = requestAnimationFrame(step);
-    return () => cancelAnimationFrame(raf);
-  }, [still, surface, positionWalk]);
-
-  // A still or resting sprite stands where it began, never frozen mid-stride by a hold that came and went.
-  useLayoutEffect(() => { if (wrap.current && (!walking || still)) wrap.current.style.translate = ""; }, [walking, still]);
+    const el = wrap.current;
+    if (!el || still || !drawing) return;
+    const world = observeWorld(el, {
+      mode: () => "lively",
+      update: () => {},
+      draw: () => drawRef.current(performance.now()),
+    });
+    return world.remove;
+  }, [still, drawing]);
 
   useEffect(() => () => clearTimeout(bubbleTimer.current), []);
 
@@ -656,7 +586,7 @@ export function TavernCharacter({
     {state === "needs-you" && <span className="tchar-need" aria-hidden="true">!</span>}
     {bubble && <span className="tchar-say" role="status">{bubble}</span>}
   </>;
-  const shell = `tchar st-${state} ${keeper ? "is-keeper" : ""} ${walking ? "tchar-walk" : ""} ${className ?? ""}`.trim();
+  const shell = `tchar st-${state} ${keeper ? "is-keeper" : ""} ${className ?? ""}`.trim();
   const shared = { className: shell, style, "data-part": "TavernCharacter", "data-state": state, "data-keeper": keeper || undefined, "data-mode": settings, "data-lit": lit || undefined };
   if (!interactive) return <span ref={host} {...shared} title={label}>{body}</span>;
   return (

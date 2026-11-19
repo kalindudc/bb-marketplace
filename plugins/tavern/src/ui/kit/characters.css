@@ -66,10 +66,6 @@ html.dark .tavern .tchar {
 /* Whole pixels only: the canvas is drawn on a 24x26 grid and shown at a whole multiple of it, so pixelated rendering never has to guess. */
 .tavern .tchar-art { display: block; image-rendering: pixelated; image-rendering: crisp-edges; }
 
-/* Walking: on its strip the sprite is out of flow and paced along the track by the coordinator; `translate` composes with the gag
-   transforms, so a hop or a wave still lands on top of the walk. The strip's own rules sit under the gags below. */
-.tavern .tchar-walk { position: absolute; bottom: 2px; left: 0; will-change: translate; }
-
 /* The road light: a flat ellipse centred at the character's feet, far wider than it is tall, that reaches past the sprite's frame along
    the ground line. It is a pool on the road, not a ball around the character. It breathes on `--tchar-flicker`, the same value the pixel
    pool is painted with, and screen blending keeps it a light, never a pasted grey blob. */
@@ -111,12 +107,6 @@ html.dark .tavern .tchar {
 
 /* The coordinator refuses every cue under reduced motion, so no class lands; this is the belt to that braces. */
 @media (prefers-reduced-motion: reduce) { .tavern .tchar[class*="mo-char-"] { animation: none; } }
-
-/* The walking strip above the composer: the 2x sprite (48x52) with room to walk and bob, on a ground line, spanning the composer. The
-   scale is Calm's own measure (its 16-row strip is 48 CSS px). The selector is `.tavern.twalk`, not `.tavern .twalk`: the strip element
-   carries both classes itself, and a descendant selector would never match it, leaving the absolutely-placed sprite anchored to an ancestor. */
-.tavern.twalk { position: relative; width: 100%; min-width: 0; height: 56px; margin: 0 0 2px; }
-.tavern .twalk-ground { position: absolute; left: 0; right: 0; bottom: 6px; height: 1px; background: color-mix(in oklab, var(--tavern-line) 65%, transparent); }
 
 /* One banner root for the row and the walk strip: the host lays a composer banner out as a single item, so both live inside this block
    and stack in order, the strip directly under the row and above the prompt box. */
