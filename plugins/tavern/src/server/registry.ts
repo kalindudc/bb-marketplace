@@ -3,9 +3,10 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, unlinkSyn
 import { homedir } from "node:os";
 import { LIMITS } from "./limits";
 import { join } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { stringify } from "yaml";
-import { characterDefSchema, classDefSchema, type CharacterDef, type ClassDef } from "../shared/schema";
-import { parseRegistryDefinition, withCharacterAvatar } from "./registry-file";
+import { characterDefSchema, characterVoiceSchema, classDefSchema, type CharacterDef, type CharacterVoice, type ClassDef } from "../shared/schema";
+import { parseRegistryDefinition, withCharacterField } from "./registry-file";
 
 export interface RegistrySnapshot { classes: ClassDef[]; characters: CharacterDef[]; problems: { path: string; message: string }[] }
 export interface RegistryFile { filename: string; source: "shipped" | "global" | "project"; path: string | null; text: string }
@@ -75,28 +76,28 @@ export class Registry {
     if (!file) throw new Error(`Unknown character source: ${character.id}`);
     return { ...file };
   }
-  saveVoice(characterId: string, voice: Pick<CharacterDef, "name" | "hue" | "charge" | "temper" | "style" | "quirks" | "lines">): CharacterDef {
-    const existing = this.read().characters.find(c => c.id === characterId);
-    if (!existing) throw new Error("Unknown character");
-    const parsed = characterDefSchema.parse({ ...existing, ...voice });
-    const dir = join(this.home, "characters");
-    mkdirSync(dir, { recursive: true });
-    const path = join(dir, `${parsed.id}.md`);
-    const { body, source: _source, ...frontmatter } = parsed;
-    const tmp = `${path}.tmp`;
-    writeFileSync(tmp, `---\n${stringify(frontmatter)}---\n${body}\n`, { mode: 0o600 });
-    renameSync(tmp, path);
-    this.cache.clear();
-    return { ...parsed, source: path };
+  saveVoice(characterId: string, voice: CharacterVoice): CharacterDef {
+    return this.saveCharacterFields(characterId, characterVoiceSchema.parse(voice));
   }
   saveAvatar(characterId: string, avatar: string): CharacterDef {
+    return this.saveCharacterFields(characterId, { avatar: characterDefSchema.shape.avatar.unwrap().parse(avatar) });
+  }
+  private saveCharacterFields(characterId: string, fields: Partial<CharacterVoice> & Pick<CharacterDef, "avatar">): CharacterDef {
     const file = this.file("character", characterId);
     const dir = join(this.home, "characters");
     const path = file.path ?? join(dir, `${characterId}.md`);
-    const seed = characterDefSchema.shape.avatar.unwrap().parse(avatar);
-    const text = withCharacterAvatar(file.path ? readFileSync(path, "utf8") : file.text, seed);
+    let text = file.path ? readFileSync(path, "utf8") : file.text;
+    const existing = parseRegistryDefinition("character", text, path);
+    if (existing.id !== characterId) throw new Error("The character file changed. Reopen the editor before saving.");
+    const expected = { ...existing };
+    for (const key of Object.keys(fields) as (keyof typeof fields)[]) {
+      const value = fields[key];
+      if (value === undefined || isDeepStrictEqual(existing[key], value)) continue;
+      text = withCharacterField(text, key, value);
+      Object.assign(expected, { [key]: value });
+    }
     const parsed = parseRegistryDefinition("character", text, path);
-    if (parsed.id !== characterId || parsed.avatar !== seed) throw new Error("The character file changed. Reopen the editor before keeping an avatar.");
+    if (!isDeepStrictEqual(parsed, expected)) throw new Error("The edit would change other character fields. No changes were saved.");
     mkdirSync(dir, { recursive: true });
     const tmp = `${path}.tmp`;
     writeFileSync(tmp, text, { mode: 0o600 });

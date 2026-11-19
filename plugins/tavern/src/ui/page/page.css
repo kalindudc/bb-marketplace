@@ -684,7 +684,18 @@
 .tavern.tv-page .tv-zone-h .m { font-size: 11px; }
 .tavern.tv-page .tv-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 12px; margin: 0; padding: 0; border: 0; min-width: 0; }
 .tavern.tv-page .tv-field { display: flex; flex-direction: column; gap: 4px; font-size: 11px; font-weight: 700; color: var(--tv-text-2); min-width: 0; }
-.tavern.tv-page .tv-field.wide { grid-column: 1 / -1; }
+.tavern.tv-page :is(.tv-field, .tv-bubble-fields).wide { grid-column: 1 / -1; }
+.tavern.tv-page .tv-bubbles { border-top: 1px solid var(--tavern-line); margin: 12px 0; padding-top: 12px; }
+.tavern.tv-page .tv-bubbles h3 { font-size: 13px; margin: 0 0 4px; }
+.tavern.tv-page .tv-bubble-guide p { margin: 0 0 4px; }
+.tavern.tv-page :is(.tv-bubble-guide, .tv-bubble-moods) code { font-family: var(--font-mono); color: var(--foreground); background: var(--tv-elev-recessed); padding: 0 2px; white-space: nowrap; }
+.tavern.tv-page .tv-bubble-moods { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr)); gap: 10px 14px; margin-top: 10px; }
+.tavern.tv-page .tv-bubble-moods h4 { margin: 0 0 3px; }
+.tavern.tv-page .tv-bubble-moods ul { margin: 0; padding-left: 16px; overflow-wrap: anywhere; }
+.tavern.tv-page .tv-bubble-fields > p { margin: 6px 0 10px; }
+.tavern.tv-page .tv-bubble-fields textarea { field-sizing: content; min-height: 76px; max-height: 168px; }
+.tavern.tv-page .tv-bubble-fields [aria-invalid="true"] { border-color: var(--tavern-bad); }
+.tavern.tv-page .tv-bubble-fields .tv-problem { margin: 0; font-weight: 400; }
 .tavern.tv-page .tv-inp { min-height: 30px; width: 100%; padding: 5px 8px; border: 1px solid var(--input, var(--border)); background: var(--background); color: var(--foreground); font: inherit; font-size: 12px; font-weight: 400; }
 .tavern.tv-page textarea.tv-inp { min-height: 52px; resize: vertical; }
 .tavern.tv-page .tv-formf { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 12px; }

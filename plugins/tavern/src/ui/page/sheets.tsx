@@ -8,6 +8,7 @@ import { PageGlyph } from "./glyphs";
 import { levelFromWins, questsIn, visibleMembers } from "./model";
 import { CharacterVoiceForm, VOICE_TAB, useOpenPanelTab } from "./panels";
 import { CharacterAvatar } from "../engine/avatar";
+import { BubbleLines } from "./bubble-lines";
 import { ClassEditForm, useOpenClassEditor } from "./class-editor";
 import { ClassFacts, ProjectPick, modelCell, useClassExecutions } from "./class-facts";
 import { RecordFold } from "./quest-record";
@@ -96,6 +97,7 @@ export function CharacterSheetEditor({ character, registry, room }: { character:
       <section className="tv-voiceed" aria-labelledby="tv-voice-h">
         <div className="tv-zone-h"><PageGlyph name="told" size={16} /><span><b id="tv-voice-h">Voice</b><span className="m">presentation only · {character.style}</span></span></div>
         <dl className="tv-preview">{Object.entries(character.lines).map(([slot, line]) => <div key={slot}><dt>{slot}</dt><dd className="tv-voice">{line}</dd></div>)}</dl>
+        <BubbleLines says={character.says} />
         {character.quirks.length > 0 && <><div className="lbl" style={{ marginTop: 10 }}>Quirks</div><ul className="tv-li-list">{character.quirks.map((q, i) => <li key={i}><span>{q}</span></li>)}</ul></>}
         <p className="m small" style={{ marginTop: 10 }}>Asks, blockers, findings, evidence and numbers stay plain.</p>
         {!voiceShown(registry) && <p className="m small" data-voice-off>Character voice is off in Settings: agents write plainly, and these lines aren't used.</p>}

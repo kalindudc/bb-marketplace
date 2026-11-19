@@ -173,7 +173,9 @@ describe("with character levels turned off in Settings", () => {
     expect(lines(el)[0]).toBe("11 checks, 9 independent, 2 same-family, 2 caught a defect before return, on record since 12 Nov.");
     expect(slot.container.querySelector(".tv-lvl, .tv-lvl-none, .tv-lvl-d, [data-level]")).toBeNull();
     expect(notched(slot)).toEqual([]);
-    expect(slot.container.textContent).not.toMatch(/\blevels?\b/i);
+    const withoutAuthoredBubbles = slot.container.cloneNode(true) as HTMLElement;
+    withoutAuthoredBubbles.querySelector(".tv-bubbles")?.remove();
+    expect(withoutAuthoredBubbles.textContent).not.toMatch(/\blevels?\b/i);
   });
 
   it("says no level on the sheets page or a class page either; the cards keep their record", async () => {

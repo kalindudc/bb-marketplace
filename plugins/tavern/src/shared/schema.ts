@@ -2,6 +2,7 @@ import { z } from "zod";
 import { classScopeSchema, scopeOverrideSchema } from "../scope/schema";
 import { CLASS_BODY_LIMIT } from "./class-rules";
 import { LOOK_BUILDS, LOOK_HAIRS, LOOK_HAIR_COLOURS, LOOK_HATS, LOOK_LIGHTS, LOOK_SKINS } from "./look";
+import { SPEECH_KEYS } from "./says";
 
 // The one source of truth for Tavern's domain shapes, shared by the server, the RPC contract and the UI.
 // Words: a "board quest" is a goal a Keeper holds; a "journal" is any thread's own checklist.
@@ -66,11 +67,13 @@ export const characterDefSchema = z.object({
   quirks: z.array(z.string().max(200)).max(5),
   /** Voice lines for presentation slots only. Never fed to reasoning. */
   lines: z.object({ hired: z.string(), row: z.string(), done: z.string(), wrap: z.string(), empty: z.string() }),
-  says: z.partialRecord(z.enum(["idle", "working", "reported", "verified", "resting", "greet", "wrap"]), z.array(z.string().min(1).max(60)).max(5)).optional(),
+  says: z.partialRecord(z.enum(SPEECH_KEYS), z.array(z.string().min(1).max(60, "Use 60 characters or fewer.")).max(5, "Use at most five lines.")).optional(),
   body: z.string(),
   source: z.string(),
 });
 export type CharacterDef = z.infer<typeof characterDefSchema>;
+export const characterVoiceSchema = characterDefSchema.pick({ name: true, hue: true, charge: true, temper: true, style: true, quirks: true, lines: true, says: true });
+export type CharacterVoice = z.infer<typeof characterVoiceSchema>;
 
 /** Who did something. "user" is the human; agents are named by thread id. */
 export const actorSchema = z.union([

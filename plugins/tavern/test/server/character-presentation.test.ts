@@ -135,8 +135,11 @@ describe("UI-only character presentation", () => {
   it("recognises a voice saved through the existing editor without adding persisted metadata", async () => {
     const f = fixture(), original = f.registry.read().characters.find(c => c.id === "wren")!;
     const { name, hue, charge, temper, style, quirks, lines } = original;
-    await f.rpc.saveCharacterVoice({ characterId: "wren", voice: { name, hue, charge, temper, style, quirks, lines } });
-    const result = (await f.read()).characterAuthorship?.find(row => row.characterId === "wren");
+    const says = { greet: ["Clear morning for {quest}."] };
+    await f.rpc.saveCharacterVoice({ characterId: "wren", voice: { name, hue, charge, temper, style, quirks, lines, says } });
+    const refreshed = await f.read();
+    expect(refreshed.characters.find(c => c.id === "wren")?.says).toEqual(says);
+    const result = refreshed.characterAuthorship?.find(row => row.characterId === "wren");
     expect(result?.source).toBe("global"); expect(result?.changedAt).toEqual(expect.any(Number));
     expect(fs.readFileSync(join(f.home, "characters/wren.md"), "utf8")).not.toMatch(/changedAt|editedAt|characterAuthorship/);
   });

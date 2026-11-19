@@ -1,25 +1,26 @@
-import { isMap, isNode, parse, parseDocument } from "yaml";
+import { isCollection, isMap, isNode, parse, parseDocument, stringify } from "yaml";
 import { characterDefSchema, classDefSchema, type CharacterDef, type ClassDef } from "../shared/schema";
 
 const FRONTMATTER = /^(---(\r?\n))([\s\S]*?)\r?\n---(?:\r?\n|$)([\s\S]*)$/;
 
-export function withCharacterAvatar(raw: string, avatar: string): string {
+export function withCharacterField(raw: string, key: string, value: unknown): string {
   const match = FRONTMATTER.exec(raw);
   if (!match) throw new Error("Expected YAML frontmatter");
   const opening = match[1]!, newline = match[2]!, frontmatter = match[3]!;
   const map = parseDocument(frontmatter).contents;
   if (!isMap(map) || !map.range) throw new Error("Frontmatter must be an object");
-  const node = map.get("avatar", true);
-  const value = JSON.stringify(avatar);
+  const indentAt = (start: number) => frontmatter.slice(frontmatter.lastIndexOf("\n", start - 1) + 1, start);
+  const block = (data: unknown, indent: string) => stringify(data, { lineWidth: 0 }).trimEnd().replaceAll("\n", newline + indent);
+  const node = map.get(key, true);
   if (isNode(node) && node.range) {
     const [start, end] = node.range;
     const lineBreak = frontmatter.slice(start, end).match(/\r?\n$/)?.[0] ?? "";
-    return raw.slice(0, opening.length + start) + value + lineBreak + raw.slice(opening.length + end);
+    const replacement = isCollection(node) && !node.flow ? block(value, indentAt(start)) : JSON.stringify(value);
+    return raw.slice(0, opening.length + start) + replacement + lineBreak + raw.slice(opening.length + end);
   }
-  const start = map.range[0];
-  const indent = frontmatter.slice(frontmatter.lastIndexOf("\n", start - 1) + 1, start);
+  const start = map.range[0], indent = indentAt(start);
   const offset = opening.length + start + (map.flow ? 1 : 0);
-  const field = `avatar: ${value}${map.flow ? ", " : newline + indent}`;
+  const field = map.flow ? `${key}: ${JSON.stringify(value)}, ` : `${block({ [key]: value }, indent)}${newline}${indent}`;
   return raw.slice(0, offset) + field + raw.slice(offset);
 }
 

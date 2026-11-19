@@ -18,7 +18,7 @@ import {
   gateRecordSchema,
   boardQuestSchema,
   checkerHandoffHoldSchema,
-  characterDefSchema,
+  characterDefSchema, characterVoiceSchema,
   classDefSchema,
   decisionSchema,
   ENTRY_STATUSES,
@@ -463,7 +463,7 @@ export const rpcContract = defineContract({
   },
   // added by Builder D: persist the character sheet's presentation fields to the user's character override.
   saveCharacterVoice: {
-    input: z.object({ characterId: id, voice: characterDefSchema.pick({ name: true, hue: true, charge: true, temper: true, style: true, quirks: true, lines: true }) }).strict(),
+    input: z.object({ characterId: id, voice: characterVoiceSchema }).strict(),
     output: characterDefSchema,
   },
   saveCharacterAvatar: {

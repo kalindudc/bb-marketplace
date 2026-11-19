@@ -80,6 +80,28 @@ describe("class and character registry", () => {
     expect(result.avatar).toBe("7gqda");
     expect(registry.read().characters.find(c => c.id === "wren")).toEqual(result);
   });
+  it("round-trips bubble lines without rewriting other frontmatter or the body", () => {
+    const home = directory(), source = join(root, "characters/wren.md");
+    mkdirSync(join(home, "characters"));
+    const path = join(home, "characters/wren-local.md");
+    const raw = readFileSync(source, "utf8")
+      .replace("id: wren", "# A note about this character\nid: wren")
+      .replace("\n---\n", "\navatar: '3v41' # Keep this seed\n---\n")
+      .replaceAll("\n", "\r\n") + "\r\n  ";
+    writeFileSync(path, raw);
+    const registry = new Registry(root, home);
+    const original = registry.read().characters.find(c => c.id === "wren")!;
+    const { name, hue, charge, temper, style, quirks, lines } = original;
+    const says = { working: ["Wind steady.", "Fair road as far as {waypoint}."], verified: [] };
+    const saved = registry.saveVoice("wren", { name, hue, charge, temper, style, quirks, lines, says });
+    expect(saved).toEqual({ ...original, says });
+    expect(new Registry(root, home).read().characters.find(c => c.id === "wren")).toEqual(saved);
+    const edited = readFileSync(path, "utf8");
+    expect(edited.split("says:")[0]).toBe(raw.split("says:")[0]);
+    expect(edited.slice(edited.indexOf("avatar:"))).toBe(raw.slice(raw.indexOf("avatar:")));
+    const legacySave = registry.saveVoice("wren", { name, hue, charge, temper, style, quirks, lines });
+    expect(legacySave.says).toEqual(says);
+  });
   it("saves only validated voice fields to the character override and reloads", () => {
     const home = directory(),
       registry = new Registry(root, home);

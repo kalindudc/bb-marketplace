@@ -9,6 +9,7 @@ import { type Registry } from "./common";
 import { PageGlyph } from "./glyphs";
 import { VoiceCheckBox } from "./voice-check";
 import { AvatarRoll } from "./avatar-roll";
+import { BubbleFields, readBubbleDraft, type BubbleEdits } from "./bubble-lines";
 
 type NavTab = ExperimentalTabReference & { availability: "action"; context: { kind: "nav-panel"; panelId: string } };
 export const CLOSING_TAB: NavTab = { id: "closing-time", context: { kind: "nav-panel", panelId: "tavern" }, availability: "action" };
@@ -40,16 +41,29 @@ export function CharacterVoiceForm({ character, registry }: { character: Charact
   const [draft, setDraft] = useState(character);
   const [saved, setSaved] = useState(false);
   const [invalid, setInvalid] = useState<string | null>(null);
+  const [bubbleEdits, setBubbleEdits] = useState<BubbleEdits>({});
+  const [checkedBubbles, setCheckedBubbles] = useState(false);
+  const { says, errors } = readBubbleDraft(draft.says, bubbleEdits);
   const save = experimental_useRpcMutation({ contract: rpcContract, method: "saveCharacterVoice" });
   const cls = registry.classes.find((c) => c.id === character.classes[0]);
   const edit = <K extends keyof CharacterDef,>(key: K, value: CharacterDef[K]) => { setDraft((prev) => ({ ...prev, [key]: value })); setSaved(false); setInvalid(null); };
-  const persist = async () => {
+  const persist = async (form: HTMLFormElement) => {
+    const first = Object.keys(errors)[0];
+    if (first) {
+      setCheckedBubbles(true);
+      const field = form.elements.namedItem(`says-${first}`);
+      if (field instanceof HTMLTextAreaElement) field.focus();
+      return;
+    }
     const parsed = characterDefSchema.safeParse(draft);
     if (!parsed.success) { setInvalid(parsed.error.issues.map((issue) => issue.message).join(" ")); return; }
     const { name, hue, charge, temper, style, quirks, lines } = parsed.data;
-    try { const result = await save.mutate({ characterId: character.id, voice: { name, hue, charge, temper, style, quirks, lines } }); setDraft(result); setSaved(true); } catch { /* Server failures leave the edited fields intact. */ }
+    try {
+      const result = await save.mutate({ characterId: character.id, voice: { name, hue, charge, temper, style, quirks, lines, ...(Object.keys(bubbleEdits).length ? { says } : {}) } });
+      setDraft(result); setBubbleEdits({}); setCheckedBubbles(false); setSaved(true);
+    } catch { /* Server failures leave the edited fields intact. */ }
   };
-  return <form className="tv-form" aria-label={`Edit ${character.name}'s voice`} onSubmit={(event) => { event.preventDefault(); void persist(); }}>
+  return <form className="tv-form" aria-label={`Edit ${character.name}'s voice`} onSubmit={(event) => { event.preventDefault(); void persist(event.currentTarget); }}>
     <header className="tv-form-h">{cls && <Crest cls={cls} character={draft} size={28} />}<h2>{draft.name}'s voice and avatar</h2></header>
     <AvatarRoll character={character} mode={registry.ambientMotion} />
     <p className="m small">Presentation only: short threshold lines, no identity, emotion or expertise claims. Asks, blockers, findings, evidence and numbers stay plain.{levelsShown(registry) && " Agents never see levels."}</p>
@@ -61,10 +75,13 @@ export function CharacterVoiceForm({ character, registry }: { character: Charact
       <label className="tv-field wide">Voice style<input className="tv-inp" maxLength={200} value={draft.style} onChange={(e) => edit("style", e.target.value)} /></label>
       <label className="tv-field wide">Quirks (one per line, at most five)<textarea className="tv-inp" aria-label="Quirks (one per line, at most five)" value={draft.quirks.join("\n")} onChange={(e) => edit("quirks", e.target.value ? e.target.value.split("\n") : [])} /></label>
       {(Object.keys(draft.lines) as (keyof CharacterDef["lines"])[]).map((slot) => <label key={slot} className="tv-field wide">{slot} line<textarea className="tv-inp" aria-label={`${slot} line`} value={draft.lines[slot]} maxLength={140} onChange={(e) => edit("lines", { ...draft.lines, [slot]: e.target.value })} /></label>)}
+      <BubbleFields saved={draft.says} edits={bubbleEdits} errors={checkedBubbles ? errors : {}} onEdit={(key, text) => {
+        setBubbleEdits(previous => ({ ...previous, [key]: text })); setSaved(false); setInvalid(null);
+      }} />
     </fieldset>
     <section className="tv-grpbox" aria-label="Voice preview"><div className="lbl">Preview · your draft</div><dl className="tv-preview">{Object.entries(draft.lines).map(([slot, line]) => <div key={slot}><dt>{slot}</dt><dd className="tv-voice">{line}</dd></div>)}</dl></section>
     <VoiceCheckBox characterId={character.id} draft={{ name: draft.name, style: draft.style, quirks: draft.quirks }} voice={registry.voice} />
-    <footer className="tv-formf"><button className="btn pri" type="submit" disabled={save.isPending}><span>{save.isPending ? "Saving…" : `Save ${character.name}`}</span></button><button className="btn" type="button" disabled={save.isPending} onClick={() => { setDraft(character); setSaved(false); setInvalid(null); }}><span>Discard draft</span></button>{saved && <span role="status" className="tv-saved"><PageGlyph name="done" /><span>Voice saved to your character override.</span></span>}</footer>
+    <footer className="tv-formf"><button className="btn pri" type="submit" disabled={save.isPending}><span>{save.isPending ? "Saving…" : `Save ${character.name}`}</span></button><button className="btn" type="button" disabled={save.isPending} onClick={() => { setDraft(character); setBubbleEdits({}); setCheckedBubbles(false); setSaved(false); setInvalid(null); }}><span>Discard draft</span></button>{saved && <span role="status" className="tv-saved"><PageGlyph name="done" /><span>Voice saved to your character override.</span></span>}</footer>
     {invalid && <p className="tv-problem" role="alert">{invalid}</p>}
     {save.error && <p className="tv-problem" role="alert">Voice not saved: {save.error.message}</p>}
   </form>;

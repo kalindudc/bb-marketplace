@@ -5,6 +5,7 @@ import { loadPluginApp, renderSlot, type PluginRpcTestHandlers, type RenderedSlo
 import { fireEvent, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { rpcContract } from "../../../src/shared/contract";
+import type { CharacterVoice } from "../../../src/shared/schema";
 import { detail, emptyRoom, registry, room } from "../../../src/ui/page/fixtures";
 import { registerPageSurfaces, useTavernBadge } from "../../../src/ui/page/register";
 import * as scenes from "./scenes";
@@ -302,6 +303,57 @@ describe("Tavern page surfaces", () => {
       delete document.documentElement.dataset.motion;
       context.mockRestore(); bounds.mockRestore(); raf.mockRestore();
     }
+  });
+
+  it("shows authored bubble lines by mood in the Voice panel without replacing the old slots", async () => {
+    const character = { ...registry.characters.find(c => c.id === "wren")!, says: {
+      idle: ["The hearth is warm."],
+      working: ["Fair road as far as {waypoint}.", "Lantern lit."],
+    } };
+    const slot = await page("character/wren", { registry: () => ({ ...registry, characters: [character] }) });
+    const bubble = within(await slot.findByRole("region", { name: "Bubble lines" }));
+    expect(bubble.getByRole("heading", { name: "Idle" })).toBeTruthy();
+    expect(bubble.getByRole("heading", { name: "Working" })).toBeTruthy();
+    expect(bubble.getByRole("list", { name: "Working" }).textContent).toBe("Fair road as far as {waypoint}.Lantern lit.");
+    expect(bubble.getByRole("list", { name: "Working" }).querySelector("code")?.textContent).toBe("{waypoint}");
+    expect(bubble.getByText(/Never sent to the model/)).toBeTruthy();
+    expect(bubble.getByText(/when Tavern knows them/)).toBeTruthy();
+    expect(slot.getByText(character.lines.hired)).toBeTruthy();
+  });
+
+  it("sends the edited bubble lines with the voice and keeps other moods and legacy slots", async () => {
+    const character = { ...registry.characters.find(c => c.id === "wren")!, says: { idle: ["The hearth is warm."], working: ["Lantern lit."] } };
+    const save = vi.fn(({ voice }: { voice: CharacterVoice }) => ({ ...character, ...voice }));
+    const slot = await page("character/wren", {
+      registry: () => ({ ...registry, characters: [character] }), saveCharacterVoice: save,
+    });
+    fireEvent.click(await slot.findByRole("button", { name: /Edit Wren's voice/ }));
+    const working = await slot.findByRole("textbox", { name: "Working bubble lines" }) as HTMLTextAreaElement;
+    expect(working.value).toBe("Lantern lit.");
+    fireEvent.change(working, { target: { value: "Fair road as far as {waypoint}.\n\nWind steady." } });
+    fireEvent.click(slot.getByRole("button", { name: "Save Wren" }));
+    await slot.findByText("Voice saved to your character override.");
+    expect(save).toHaveBeenCalledExactlyOnceWith({ characterId: "wren", voice: expect.objectContaining({
+      lines: character.lines,
+      says: { idle: ["The hearth is warm."], working: ["Fair road as far as {waypoint}.", "Wind steady."] },
+    }) });
+  });
+
+  it.each([
+    ["a long line", "Wind steady.\n" + "a".repeat(61), "Line 2 is too long. Use 60 characters or fewer."],
+    ["a sixth line", ["One", "Two", "Three", "Four", "Five", "Six"].join("\n"), "Use at most five lines."],
+  ])("refuses %s with a message beside the mood field", async (_test, input, message) => {
+    const save = vi.fn();
+    const slot = await page("character/wren", { saveCharacterVoice: save });
+    fireEvent.click(await slot.findByRole("button", { name: /Edit Wren's voice/ }));
+    const working = await slot.findByRole("textbox", { name: "Working bubble lines" });
+    fireEvent.change(working, { target: { value: input } });
+    fireEvent.click(slot.getByRole("button", { name: "Save Wren" }));
+    const alert = await slot.findByText(message);
+    expect(alert.previousElementSibling).toBe(working);
+    expect(working.getAttribute("aria-invalid")).toBe("true");
+    expect(working.getAttribute("aria-describedby")?.split(" ")).toContain(alert.id);
+    expect(save).not.toHaveBeenCalled();
   });
 
   it("saves only the editable character presentation fields", async () => {

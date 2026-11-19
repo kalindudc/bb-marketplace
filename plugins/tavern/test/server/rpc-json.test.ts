@@ -151,7 +151,12 @@ it("returns strict JSON from EVERY registered RPC with optional record fields ab
     mapHistory: () => call("mapHistory", {}),
     archivedBoardQuests: () => call("archivedBoardQuests", {}),
     setHidden: () => call("setHidden", { threadId: "member", hidden: true }),
-    saveCharacterVoice: () => call("saveCharacterVoice", { characterId: character.id, voice: { name, hue, charge, temper, style, quirks, lines } }),
+    saveCharacterVoice: async () => {
+      const says = { working: ["Fair road as far as {waypoint}."] };
+      const result = await call("saveCharacterVoice", { characterId: character.id, voice: { name, hue, charge, temper, style, quirks, lines, says } });
+      expect(result).toMatchObject({ says });
+      return result;
+    },
     saveCharacterAvatar: () => call("saveCharacterAvatar", { characterId: character.id, avatar: "3v41" }),
     classEditor: () => call("classEditor", { classId: "smith", projectId: null }),
     classPreview: () => call("classPreview", { classId: "smith", projectId: null, target: "global", edit: { label: "Mason" } }),
