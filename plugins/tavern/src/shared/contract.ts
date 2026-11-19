@@ -119,6 +119,14 @@ export const threadDecorSchema = z.object({
   threadId,
   widgetRow: z.boolean().optional(),
   ambientMotion: z.enum(["calm", "lively", "off"]).optional(), repeatSeconds: z.number().optional(), characters: z.boolean().optional(),
+  voice: voiceModeSchema.optional(),
+  moodSignals: z.object({
+    released: z.boolean(),
+    archived: z.boolean(),
+    handBack: z.boolean(),
+    report: reportSchema.pick({ status: true, createdAt: true }).nullable(),
+    verdict: z.object({ status: z.enum(["verified", "rejected"]), at: z.number() }).nullable(),
+  }).optional(),
   /** News events the Keeper has not received yet: the widget's available-events signal. */
   pendingEvents: z.number().int().nonnegative().optional(),
   /** Whether wake-delivered ticks may batch (an opt-in setting; sweep ticks never batch). */

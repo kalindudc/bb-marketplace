@@ -8,6 +8,7 @@ import {
   type Room,
   type ThreadDecor,
 } from "../shared/contract";
+import { currentMoodReport, waypointMoodVerdict } from "../shared/mood";
 import type { Brief, Decision } from "../shared/schema";
 import { isLiveMember } from "./liveness";
 import { DecisionViews } from "./decisions";
@@ -135,14 +136,22 @@ export function rpcHandlers(
       return character;
     },
     decor: ({ threadId }): ThreadDecor => {
-      const m = k.member(threadId);
+      const m = k.member(threadId), thread = k.store.runtime(threadId);
       return {
         threadId,
         widgetRow: runtime.config().tavern.widgetRow,
         ambientMotion: runtime.config().tavern.hearthFlicker ? runtime.config().tavern.ambientMotion : "off",
         repeatSeconds: runtime.config().tavern.repeatSeconds,
         characters: runtime.config().tavern.characters,
-        classNotice: k.store.runtime(threadId).classNotice ?? null,
+        voice: runtime.config().tavern.voice,
+        ...(m ? { moodSignals: {
+          released: thread.released != null,
+          archived: thread.archivedAt != null || thread.deletedAt != null,
+          handBack: m.role === "keeper" && k.memory.notes(threadId, 200).some(note => note.kind === "waiting-on-user"),
+          report: currentMoodReport(k.store.query("reports", "memberThreadId", threadId, 1)[0], thread.lastBriefAt),
+          verdict: m.boardQuestId ? waypointMoodVerdict(m, k.journal.linkedEntries(m.boardQuestId)) : null,
+        } } : {}),
+        classNotice: thread.classNotice ?? null,
         scope: runtime.scopes?.view(threadId) ?? null,
         violations: runtime.scopes?.violations([threadId]) ?? [],
         member: m,

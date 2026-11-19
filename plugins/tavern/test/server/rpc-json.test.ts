@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { seedQuest } from "./support";
+import { seedQuest, waypointEntry } from "./support";
 import Database from "better-sqlite3";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -64,6 +64,25 @@ async function fixture() {
   }
   return { ...f, k, q, ask, decision, rule, route, report };
 }
+
+it("returns compact mood signals and the voice setting in the thread widget", async () => {
+  const f = await fixture();
+  const decor = () => f.harness.invokeRpc("decor", { threadId: "member" });
+  await f.harness.invokeRpc("settingsUpdate", { revision: 0, patch: { tavern: { voice: "light" } }, why: "Test voice" },
+    { experimental_caller: { kind: "client" } });
+  expect(await decor()).toMatchObject({ voice: "light", moodSignals: {
+    released: false, archived: false, handBack: false,
+    report: { status: "blocked", createdAt: f.report.createdAt }, verdict: null,
+  } });
+  const entry = { ...waypointEntry("member", f.q.id), status: "verified", updatedAt: f.report.createdAt + 1 };
+  f.k.store.db.prepare("INSERT INTO questlog_entries(thread_id, id, board_quest_id, data) VALUES (?, ?, ?, ?)")
+    .run(entry.threadId, entry.id, f.q.id, JSON.stringify(entry));
+  expect(await decor()).toMatchObject({ moodSignals: { verdict: { status: "verified", at: entry.updatedAt } } });
+  f.k.store.patch("member", { archivedAt: Date.now(), lastBriefAt: f.report.createdAt + 1, released: { decisionId: f.decision.id, reason: "Returned" } });
+  expect(await decor()).toMatchObject({ moodSignals: { released: true, archived: true, report: null } });
+  f.k.memory.note("lead", { kind: "waiting-on-user", text: "Choose the next trail" });
+  expect(await f.harness.invokeRpc("decor", { threadId: "lead" })).toMatchObject({ moodSignals: { handBack: true } });
+});
 
 it("returns strict JSON from EVERY registered RPC with optional record fields absent", async () => {
   const f = await fixture();

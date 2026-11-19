@@ -65,6 +65,7 @@ export const characterDefSchema = z.object({
   quirks: z.array(z.string().max(200)).max(5),
   /** Voice lines for presentation slots only. Never fed to reasoning. */
   lines: z.object({ hired: z.string(), row: z.string(), done: z.string(), wrap: z.string(), empty: z.string() }),
+  says: z.partialRecord(z.enum(["idle", "working", "reported", "verified", "resting", "greet", "wrap"]), z.array(z.string().min(1).max(60)).max(5)).optional(),
   body: z.string(),
   source: z.string(),
 });
