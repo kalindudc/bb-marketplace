@@ -4,7 +4,8 @@ import type { PluginSidebarThread, PluginThreadActionTarget, PluginThreadActions
 import {
   ThreadTitle, experimental_Icon as Icon, experimental_THREAD_ACTION_GROUPS as ACTION_GROUPS, experimental_ThreadActionsContextMenu as ThreadActionsContextMenu,
   experimental_ThreadActionsMenu as ThreadActionsMenu, experimental_ThreadStatusGlyph as ThreadStatusGlyph,
-  experimental_ThreadRowMetadata as ThreadRowMetadata, experimental_useSidebarThreadSplit,
+  experimental_ThreadRowMetadata as ThreadRowMetadata, experimental_ProviderIcon as ProviderIcon,
+  experimental_useProviders, experimental_useSidebarThreadSplit,
   experimental_useThreadActions, useBbNavigate, useSidebarThreadDraft,
   useSidebarThreadRowStatus, useSidebarThreadShortcut,
 } from "@get-bb/plugin-sdk/app";
@@ -59,6 +60,16 @@ export function toActionTarget(thread: PluginSidebarThread): PluginThreadActionT
     environment: environment?.id ? { id: environment.id, path: environment.path } : null };
 }
 
+function ProviderMark({ providerId }: { providerId: string }) {
+  const { providers } = experimental_useProviders();
+  const provider = providers.find((entry) => entry.id === providerId);
+  const label = provider?.displayName ?? providerId;
+  return <span role="img" aria-label={label} title={label}
+    className="switchboard-provider pointer-events-auto relative z-1 grid shrink-0 place-items-center text-subtle-foreground">
+    <ProviderIcon providerKind="agent" provider={provider ?? { id: providerId }} className="size-3" aria-hidden />
+  </span>;
+}
+
 function ThreadRowView({ row, isActive, settings, now, projectName, onNavigate, onToggle,
   drag, isSelected, selectedRun, isDragging, dropState, flash, onSelect, onKeyboardMove,
   variant = "tree", parentTitle, hue, stale, wakeLabel, onSnooze, onWake, bulk }: ThreadRowProps) {
@@ -96,9 +107,12 @@ function ThreadRowView({ row, isActive, settings, now, projectName, onNavigate, 
   const label = thread.indicatorLabel ?? STATE_LABEL[state];
   const emphasis = variant === "archived" ? "text-muted-foreground" :
     `${state === "failed" || state === "needs" || state === "unread" ? "font-semibold" : ""} ${state === "idle" ? "text-muted-foreground" : ""}`;
-  const title = <span className={`relative z-1 min-w-24 flex-1 truncate ${emphasis}`}>
-    <ThreadTitle threadId={thread.id} />
-  </span>;
+  const title = <>
+    {settings.showProviderIcons && <ProviderMark providerId={thread.providerId} />}
+    <span className={`relative z-1 min-w-24 flex-1 truncate ${emphasis}`}>
+      <ThreadTitle threadId={thread.id} />
+    </span>
+  </>;
   const branch = settings.showBranch && thread.environment?.branchName;
   const age = variant !== "snoozed" && (settings.showAge || (shortcut && variant === "tree")) && <span className={`${shortcut && variant === "tree" ? "switchboard-shortcut" : "switchboard-age"} switchboard-meta relative z-1 shrink-0 font-mono tabular-nums text-subtle-foreground`}>
     {shortcut && variant === "tree" ? shortcut.label : ageLabel(now, variant === "archived" ? thread.archivedAt ?? lastActivity(thread) : lastActivity(thread))}

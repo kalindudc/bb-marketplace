@@ -48,7 +48,8 @@ export function ViewMenu({ settings, onChange, onNewSection }: {
     { key: "statusChips", label: "Status chips" }, { key: "needsYouShelf", label: "Needs-you shelf" },
     { key: "showArchived", label: "Archived threads" },
     { key: "treeGuides", label: "Tree lines" }, { key: "showBranch", label: "Branch names" },
-    { key: "showPullRequests", label: "Pull request badges" }, { key: "showAge", label: "Ages" },
+    { key: "showPullRequests", label: "Pull request badges" }, { key: "showProviderIcons", label: "Provider icons" },
+    { key: "showAge", label: "Ages" },
   ];
   return <DropdownMenu.Root>
     <Hint label="View options: new section, view, density, colours and row details">
