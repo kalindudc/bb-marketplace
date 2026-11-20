@@ -69,6 +69,30 @@ it("cannot weaken a deny by submitting another deny with its id", () => {
   const narrowed = mergeOverride(original, { denyRules: [{ id: "git-push", argv: ["git", "push", "only-this"], why: "narrow" }] });
   expect(narrowed.shell.deny.filter(rule => rule.id === "git-push")).toHaveLength(2);
 });
+const clusterRule = { id: "cluster-write", argv: ["kubectl", "apply"], why: "Cluster write" };
+const clusterReason = /Cluster writes can.t be granted as scope; ask the user/;
+it("refuses both requested and explicitly approved cluster scope grants", () => {
+  const { policy, context } = setup();
+  const scope = mergeOverride(scopeForClass("smith"), { denyRules: [clusterRule] });
+  const override = { allowRules: ["cluster-write"] };
+  expect(() => mergeOverride(scope, override)).toThrow(clusterReason);
+  expect(() => policy.apply(scope, context, override)).toThrow(clusterReason);
+  expect(() => policy.apply(scope, context, override, ["cluster-write"])).toThrow(clusterReason);
+  expect(() => policy.rememberWidening(context, "smith", ["cluster-write"])).toThrow(clusterReason);
+});
+it.each(["defaults: { allowRules: [cluster-write] }", "keeperMayAllow: [cluster-write]"])("ignores a standing cluster grant from scopes.yml: %s", entry => {
+  const { policy, context, globalFile } = setup();
+  writeFileSync(globalFile, `v: 1\nrules:\n  - classes:\n      smith:\n        ${entry}\n`);
+  const result = policy.resolve("smith", context);
+  expect(result.problems.join("\n")).toMatch(clusterReason);
+  expect(result.scope.shell.allow).not.toContainEqual(expect.objectContaining({ id: "cluster-write" }));
+  expect(policy.policy(context).classes.smith?.keeperMayAllow).not.toContain("cluster-write");
+});
+it("does not honour a cluster exception already stored on a scope", () => {
+  const scope = bindPaths(scopeForClass("smith"), { home: "/home/me", worktree: "/repo", tmp: ["/tmp"], scopesDir: "/data/scopes" });
+  scope.shell.allow.push(clusterRule);
+  expect(evaluate(scope, { kind: "bash", toolName: "bash", input: { command: "kubectl apply -f demo.yaml" }, cwd: "/repo" })).toMatchObject({ allow: false, ruleId: "cluster-write" });
+});
 it("fails visibly on malformed policy and rejects unknown rule ids", () => {
   const { policy, context, globalFile } = setup();
   expect(() => policy.resolve("smith", context, { allowRules: ["no-such-rule"] })).toThrow("Unknown");

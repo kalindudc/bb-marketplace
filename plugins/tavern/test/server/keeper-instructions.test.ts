@@ -87,7 +87,7 @@ describe("R11 tool rules remain at the tool boundary", () => {
     tavern_scope: [/Temporary paths/, /own thread storage/, /explicit, never-timed scope answer/, /never approves a merge, deploy, delete, send or production action/],
     tavern_tell: [/your own members/, /never steer into a running tool/, /delivered, queued.*retrying.*blocked/],
     tavern_plan: [/explicit greenlight/, /at most three questions/, /reversible:true only for fully reversible work/, /by-size.*one party slot/],
-    tavern_ask: [/Only kind decision with explicit reversible: true may carry a timed default/, /Merge, destructive, production, sends-as-you, credential, blocker and greenlight asks require an explicit answer/],
+    tavern_ask: [/Only kind decision with explicit reversible: true may carry a timed default/, /Merge, destructive, production, sends-as-you, credential, blocker, greenlight and cluster-write asks require an explicit answer/],
     tavern_decide: [/reversible decision/, /Never claim the user's consent without an answered ask/],
     tavern_rule: [/verbatim/, /active immediately/, /stay inactive until the user confirms/],
     tavern_status: [/bounded board state/, /reportId and character offset/],

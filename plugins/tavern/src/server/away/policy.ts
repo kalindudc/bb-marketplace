@@ -34,5 +34,5 @@ export function awayExecutionPolicy(window: AwayWindow | null, questId: string |
 export function awayShouldNotify(window: AwayWindow | null, kind: string, openedAt: number, now: number): boolean {
   if (window === null || window.returnedAt !== null) return true;
   if (kind === "blocker") return window.wakeRules.blockers;
-  return kind === "production" && window.wakeRules.productionAsksAfterTwoHours && now - openedAt >= (window.productionWakeHours ?? PRODUCTION_WAKE_HOURS.default) * 60 * 60 * 1000;
+  return (kind === "production" || kind === "cluster-write") && window.wakeRules.productionAsksAfterTwoHours && now - openedAt >= (window.productionWakeHours ?? PRODUCTION_WAKE_HOURS.default) * 60 * 60 * 1000;
 }

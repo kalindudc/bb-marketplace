@@ -12,7 +12,7 @@ export const KNOB_FIELDS = {
     voiceChecksPerHour: { default: 10, min: 1, max: 60, unit: "per hour", label: "Voice checks" },
   },
   away: {
-    productionWakeHours: { ...PRODUCTION_WAKE_HOURS, unit: "hours", label: "Wake me for production asks after" },
+    productionWakeHours: { ...PRODUCTION_WAKE_HOURS, unit: "hours", label: "Wake me for production or cluster write asks after" },
     defaultBackAtHour: { default: 8, min: 0, max: 23, unit: "local hour", label: "Default Back at hour" },
   },
   keepers: {

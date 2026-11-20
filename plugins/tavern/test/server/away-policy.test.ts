@@ -88,11 +88,11 @@ describe("Closing time wake policy", () => {
       expect(awayShouldNotify(window, kind, 0, 10_000_000)).toBe(false);
     expect(awayShouldNotify({ ...window, wakeRules: { ...window.wakeRules, blockers: false } }, "blocker", 0, 1)).toBe(false);
   });
-  it("only wakes for a production ask after two hours when explicitly selected", () => {
+  it.each(["production", "cluster-write"])("only wakes for a %s ask after two hours when selected", kind => {
     const selected = { ...window, wakeRules: { ...window.wakeRules, productionAsksAfterTwoHours: true } };
-    expect(awayShouldNotify(selected, "production", 1000, 7_200_999)).toBe(false);
-    expect(awayShouldNotify(selected, "production", 1000, 7_201_000)).toBe(true);
-    expect(awayShouldNotify(selected, "production", 5000, 1000)).toBe(false);
+    expect(awayShouldNotify(selected, kind, 1000, 7_200_999)).toBe(false);
+    expect(awayShouldNotify(selected, kind, 1000, 7_201_000)).toBe(true);
+    expect(awayShouldNotify(selected, kind, 5000, 1000)).toBe(false);
     expect(awayShouldNotify(selected, "decision", 1000, 7_201_000)).toBe(false);
   });
 });

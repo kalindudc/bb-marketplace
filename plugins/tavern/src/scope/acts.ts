@@ -29,12 +29,42 @@ export function userControl(command: ShellCommand): boolean {
     (!spec.option || command.argv.some(arg => arg === spec.option || arg.startsWith(spec.option + "="))));
 }
 
-export const ACT_KINDS = ["merge", "publish", "ready", "close", "review", "deploy", "send", "delete", "configure", "credential", "tavern-control", "allocate"] as const;
+export const ACT_KINDS = ["merge", "publish", "ready", "close", "review", "deploy", "cluster-write", "send", "delete", "configure", "credential", "tavern-control", "allocate"] as const;
 export type ActKind = typeof ACT_KINDS[number];
 export interface Act { kind: ActKind; ruleId: string; why: string }
 interface ActDefinition extends Act { commands: string[]; matches(command: ShellCommand): boolean; fallback: RegExp }
 const pr = (command: ShellCommand, actions: string[]) => ["gh", "dt"].includes(command.argv[0]) && command.argv[1] === "pr" && actions.includes(command.argv[2]);
-const kubectlRead = (a: string[]) => ["get", "describe", "logs", "events", "version", "api-resources", "api-versions", "explain", "cluster-info", "top", "wait"].includes(a[1]) || a[1] === "auth" && a[2] === "can-i" || a[1] === "config" && ["view", "get-contexts", "current-context"].includes(a[2]);
+export const kubectlRead = (a: string[]) => ["get", "describe", "logs", "events", "version", "api-resources", "api-versions", "explain", "cluster-info", "top", "wait"].includes(a[1]) || a[1] === "auth" && a[2] === "can-i" || a[1] === "config" && ["view", "get-contexts", "current-context"].includes(a[2]) || a[1] === "rollout" && ["status", "history"].includes(a[2]);
+const terraformWrites = "apply|destroy|import|refresh|taint|untaint|force-unlock";
+const helmWrites = "install|upgrade|uninstall|rollback|test";
+const terraformStateWrite = "mv|rm|push|replace-provider";
+const terraformWorkspaceWrite = "new|delete";
+const hasVerb = (pattern: string, verb: string) => pattern.split("|").includes(verb);
+function clusterWrite(c: ShellCommand): boolean {
+  const [program, verb, sub] = c.argv;
+  return program === "kubectl" && !!verb && !kubectlRead(c.argv)
+    || program === "terraform" && (hasVerb(terraformWrites, verb) || verb === "state" && hasVerb(terraformStateWrite, sub) || verb === "workspace" && hasVerb(terraformWorkspaceWrite, sub))
+    || program === "helm" && hasVerb(helmWrites, verb)
+    || program === "kapp" && ["deploy", "delete"].includes(verb);
+}
+export function clusterCommandTarget(command: ShellCommand) {
+  const [program, ...args] = command.originalArgv ?? command.argv;
+  const readFlag = (...flags: string[]): string | undefined => {
+    let value: string | undefined;
+    for (let i = 0; i < args.length && args[i] !== "--"; i++) {
+      for (const flag of flags) {
+        if (args[i] === flag && args[i + 1] && !args[i + 1].startsWith("-")) { value = args[++i]; break; }
+        if (args[i].startsWith(flag + "=")) value = args[i].slice(flag.length + 1);
+        else if (flag === "-n" && args[i].startsWith("-n") && args[i].length > 2) value = args[i].slice(2);
+      }
+    }
+    return value || undefined;
+  };
+  if (!["kubectl", "helm", "kapp"].includes(program)) return undefined;
+  const context = readFlag(program === "helm" ? "--kube-context" : program === "kapp" ? "--kubeconfig-context" : "--context");
+  const namespace = readFlag("--namespace", "-n");
+  return context || namespace ? { context, namespace } : undefined;
+}
 const githubRead = (a: string[]) => ["view", "list", "status", "diff", "checks"].includes(a[2]) || a[1] === "run" && a[2] === "watch" || ["status", "search", "version", "help", "--help", "--version"].includes(a[1]) || a[1] === "auth" && a[2] === "status" || a[1] === "api" && githubApiRead(a);
 const httpWrite = (a: string[]) => a[0] === "curl" ? a.some((arg, i) => /^--(?:data|json|form|upload|config)|^-[^-]*[dFTK]/.test(arg) || /^(?:--request=|-X)(?!GET$|HEAD$|OPTIONS$).+/.test(arg) || ["-X", "--request"].includes(arg) && !["GET", "HEAD", "OPTIONS"].includes(a[i + 1])) : a[0] === "wget" && a.some(arg => /^--(?:post|body|method|input-file)/.test(arg));
 const cloudWrite = (a: string[]) => a[0] === "gcloud" && a[1] === "storage" && ["cp", "mv", "rm", "rsync"].includes(a[2]);
@@ -89,8 +119,9 @@ function controlAct(command: ShellCommand): "configure" | "delete" | undefined {
     if (cloudVerb === "delete" || cloudVerb === "remove") return "delete";
   }
 }
-const deployFallback = /\bgcloud\b[^;\n]*\b(?:run|app|functions)\s+deploy\b|\b(?:terraform\s+(?:apply|destroy|import)|helm\s+(?:install|upgrade|uninstall)|(?:kapp|dev|dt|quick)\s+deploy)\b/;
-const productionFallback = /\bkubectl\b[^;\n]*\b(?:apply|create|replace|patch|edit|delete|scale|exec|cp|drain|cordon|annotate|label|set|taint)\b/;
+const deployFallback = /\bgcloud\b[^;\n]*\b(?:run|app|functions)\s+deploy\b|\b(?:dev|dt|quick)\s+deploy\b/;
+const kubectlWriteFallback = /\bkubectl\b[^;\n]*\b(?:apply|create|replace|patch|edit|delete|scale|exec|cp|drain|cordon|uncordon|annotate|label|set|taint|restart|undo|port-forward)\b/;
+const otherClusterWriteFallback = new RegExp(String.raw`\b(?:terraform\s+(?:-chdir=\S+\s+)?(?:${terraformWrites}|state\s+(?:${terraformStateWrite})|workspace\s+(?:${terraformWorkspaceWrite}))|helm\b[^;\n]*\b(?:${helmWrites})|kapp\b[^;\n]*\b(?:deploy|delete))\b`);
 const httpWriteFallback = /\b(?:curl|wget)\b[^;\n]*(?:--(?:data|json|form|upload|post|body|method)|-[dFT]|-X\s*(?:POST|PUT|PATCH|DELETE))/;
 const sendFallback = /\b(?:slack|slack-cli|mail|mailx|sendmail|mutt)\b/;
 export const ACT_CATALOGUE: readonly ActDefinition[] = [
@@ -100,7 +131,8 @@ export const ACT_CATALOGUE: readonly ActDefinition[] = [
     const [p, s, a] = c.argv;
     return p === "git" && s === "push" || p === "gh" && !githubRead(c.argv) && !(s === "auth" && a === "token") && !pr(c, ["merge", "ready", "close", "review", "approve"]) || pr(c, ["create", "edit", "comment"]) || cloudWrite(c.argv) || ["npm", "yarn", "pnpm", "bun", "cargo"].includes(p) && c.argv.slice(1).includes("publish") || p === "gem" && s === "push" || p === "twine" && s === "upload" || ["gs", "git-spice"].includes(p) && (["ss", "bs", "rs", "us", "uss", "bss", "dss"].includes(s) || ["submit", "sync", "publish", "land"].includes(a));
   }, fallback: /\bgit\s+push\b|\b(?:gh|dt)\b[^;\n]*\b(?:create|edit|comment|publish|upload|dispatch)\b|\b(?:npm|yarn|pnpm|bun|cargo)\s+publish\b|\b(?:gem\s+push|twine\s+upload)\b|\bgcloud\s+storage\s+(?:cp|mv|rm|rsync)\b/ },
-  { kind: "deploy", ruleId: "deploy", why: "Deployments and cluster writes need a grant", commands: ["kubectl writes", "terraform apply|destroy|import", "helm install|upgrade|uninstall", "kapp deploy", "dev deploy", "dt deploy", "quick deploy", "gcloud run|app|functions deploy"], matches: c => { const [p, s] = c.argv; return p === "kubectl" && !kubectlRead(c.argv) && !["--help", "--version"].includes(s) || p === "terraform" && ["apply", "destroy", "import"].includes(s) || p === "helm" && ["install", "upgrade", "uninstall"].includes(s) || ["kapp", "dev", "dt"].includes(p) && s === "deploy" || p === "quick" && c.argv.includes("deploy") || p === "gcloud" && ["run", "app", "functions"].includes(s) && c.argv[2] === "deploy"; }, fallback: new RegExp(`${deployFallback.source}|${productionFallback.source}`) },
+  { kind: "cluster-write", ruleId: "cluster-write", why: "Cluster writes always need the user's answer for the exact command", commands: ["kubectl writes", "terraform writes", "helm writes", "kapp deploy|delete"], matches: clusterWrite, fallback: new RegExp(`${kubectlWriteFallback.source}|${otherClusterWriteFallback.source}`) },
+  { kind: "deploy", ruleId: "deploy", why: "Deployments need a grant", commands: ["dev deploy", "dt deploy", "quick deploy", "gcloud run|app|functions deploy"], matches: c => { const [p, s] = c.argv; return ["dev", "dt"].includes(p) && s === "deploy" || p === "quick" && c.argv.includes("deploy") || p === "gcloud" && ["run", "app", "functions"].includes(s) && c.argv[2] === "deploy"; }, fallback: deployFallback },
   { kind: "send", ruleId: "send", why: "Sending as the user needs a grant", commands: ["curl writes", "wget writes", "Slack and mail sends"], matches: c => httpWrite(c.argv) && !localHttp(c.argv) || ["slack", "slack-cli", "mail", "mailx", "sendmail", "mutt"].includes(c.argv[0]) || ["hermes", "gog"].includes(c.argv[0]) && c.argv.some(a => ["send", "post", "publish", "create", "update", "delete"].includes(a)), fallback: new RegExp(`${httpWriteFallback.source}|${sendFallback.source}`) },
   { kind: "delete", ruleId: "delete", why: "Deleting the user's things needs a grant", commands: ["bb thread|project|environment delete", "bb machine remove", "cortex rm", "gcloud resource delete"], matches: c => controlAct(c) === "delete", fallback: /\bbb\b[^;\n]*\b(?:thread|project|environment|machine)\s+(?:delete|archive|remove)\b|\bcortex\s+(?:rm|delete|remove)\b|\bgcloud\b[^;\n]*\b(?:delete|remove)\b/ },
   { kind: "configure", ruleId: "configure", why: "Changing the user's tools or settings needs a grant", commands: ["bb plugin install|uninstall|enable|disable|dev|settings", "bb settings set", "bb lan on|off|pair|revoke", "bb loom approve|start|land|live|archive|pause|resume", "bb automations create|update|delete|enable|disable", "bb aquifer-machines rotate|park|remove", "bb machine rotate|env set|env unset", "bb secrets except request", "cortex agents|reset|restore", "Tavern settings writes"], matches: c => controlAct(c) === "configure", fallback: /\bbb\b[^;\n]*\b(?:plugin\s+(?:install|uninstall|enable|disable|dev|settings)|loom\s+(?:approve|start|land|live|archive|pause|resume)|automations?\s+(?:create|update|delete|enable|disable)|lan\s+(?:on|off|pair|revoke)|settings\s+set|aquifer-machines\s+(?:rotate|park|remove)|machine\s+(?:rotate|env\s+(?:set|unset))|secrets(?!\s+request\b))\b|\bcortex\s+(?:agents|reset|restore)\b/ },
@@ -109,7 +141,9 @@ export const ACT_CATALOGUE: readonly ActDefinition[] = [
   { kind: "allocate", ruleId: "allocate", why: "Machines come only from rules; ask the Keeper", commands: ["bb machine", "bb thread spawn with placement flags"], matches: c => { const [p, s, a] = bbPositionals(c.argv); return p === "bb" && ((s === "machine" && ["create", "enroll"].includes(a) || s === "aquifer-machines" && a === "create") || s === "thread" && a === "spawn" && (c.originalArgv ?? c.argv).some((arg, i, args) => /^(?:--new-machine|--machine|--host|--environment-provider|--project)(?:=|$)/.test(arg) && !["--task", "--title", "--message"].includes(args[i - 1]))); }, fallback: /\bbb\b[^;\n]*\b(?:machine|aquifer-machines)\s+(?:create|enroll)\b|\bbb\b(?=[^;\n]*\bthread\s+spawn\b)[^;\n]*--(?:new-machine|machine|host|environment-provider|project)\b/ },
 ];
 export const actsForCommand = (command: ShellCommand): Act[] => {
-  if (command.argv.includes("--help") || command.argv.includes("--version")) return [];
+  const flagEnd = command.argv.indexOf("--");
+  const flags = flagEnd === -1 ? command.argv : command.argv.slice(0, flagEnd);
+  if (flags.includes("--help") || flags.includes("--version")) return [];
   const acts = ACT_CATALOGUE.filter(act => act.matches(command)).map(({ kind, ruleId, why }) => ({ kind, ruleId, why }));
   if (command.argv[0] === "git" && command.argv[1] === "push") {
     const dangerous = dangerousPush(command.argv);
@@ -184,9 +218,10 @@ export function closingAct(scope: Scope, act: Act, command: ShellCommand | strin
     if (typeof command !== "string") return has(["curl", "wget"].includes(command.argv[0]) ? "other-writes" : "sends-as-you");
     return (has("other-writes") && httpWriteFallback.test(command)) || (has("sends-as-you") && sendFallback.test(command));
   }
-  if (act.kind === "deploy") {
+  if (act.kind === "deploy") return has("deploy");
+  if (act.kind === "cluster-write") {
     if (typeof command !== "string") return has(command.argv[0] === "kubectl" ? "production" : "deploy");
-    return (has("production") && productionFallback.test(command)) || (has("deploy") && deployFallback.test(command));
+    return (has("production") && kubectlWriteFallback.test(command)) || (has("deploy") && otherClusterWriteFallback.test(command));
   }
   return has("other-writes");
 }

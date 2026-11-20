@@ -20,9 +20,11 @@ const builtinRules: Record<string, string[]> = { "git-push-main": ["git", "push"
 export function wideningIds(override: ScopeOverride): string[] {
   return [...override.allowRules ?? [], ...override.tools?.allow?.map(name => "tool:" + name) ?? [], ...override.tools?.removeDeny?.map(name => "tool-deny:" + name) ?? [], ...override.writes?.allow?.map(path => "write:" + path) ?? []];
 }
+const clusterScopeRefusal = "Cluster writes can't be granted as scope; ask the user with kind cluster-write for each run.";
 export function mergeOverride(base: Scope, input: ScopeOverride, remote?: string): Scope {
   const override = scopeOverrideSchema.parse(input), scope = structuredClone(base);
   for (const id of override.allowRules ?? []) {
+    if (id === "cluster-write") throw new Error(clusterScopeRefusal);
     const denied = scope.shell.deny.find(rule => rule.id === id), argv = denied?.argv ?? builtinRules[id];
     if (!denied && !argv) throw new Error("Unknown scope rule id: " + id);
     scope.shell.allow = scope.shell.allow.filter(rule => rule.id !== id || rule.remote !== remote);
@@ -54,14 +56,18 @@ export class ScopePolicy {
     }
     const problems: string[] = [];
     const entries = sources.flatMap(source => source.policy.rules.flatMap(rule => Object.entries(rule.classes).map(([classId, policy]) => {
+      if (policy.defaults?.allowRules?.includes("cluster-write") || policy.keeperMayAllow?.includes("cluster-write"))
+        problems.push(`${source.path}: ${classId}: ${clusterScopeRefusal}`);
       if (!source.trusted) {
         if (wideningIds(policy.defaults ?? {}).length || policy.keeperMayAllow?.length) problems.push(source.path + ": ignored widening for " + classId + "; project policies may only narrow");
         return { classId, path: source.path, remote: rule.remote, defaults: narrowing(policy.defaults ?? {}), keeperMayAllow: [] as string[] };
       }
       if (rule.remote && [...policy.defaults?.tools?.allow ?? [], ...policy.defaults?.tools?.removeDeny ?? [], ...policy.defaults?.writes?.allow ?? []].length) problems.push(source.path + ": remote-scoped tool and path widening ignored; only Git push rule grants can bind a destination");
-      const remoteGrants = [...policy.defaults?.allowRules ?? [], ...policy.keeperMayAllow ?? []];
-      if (rule.remote && remoteGrants.some(id => !id.startsWith("git-push"))) problems.push(source.path + ": remote-scoped non-push grants ignored; use an explicit global rule for other capabilities");
-      return { classId, path: source.path, remote: rule.remote, defaults: rule.remote ? { ...narrowing(policy.defaults ?? {}), allowRules: policy.defaults?.allowRules?.filter(id => id.startsWith("git-push")) } : policy.defaults ?? {}, keeperMayAllow: (policy.keeperMayAllow ?? []).filter(id => !rule.remote || id.startsWith("git-push")) };
+      const allowRules = policy.defaults?.allowRules?.filter(id => id !== "cluster-write");
+      const keeperMayAllow = (policy.keeperMayAllow ?? []).filter(id => id !== "cluster-write");
+      if (rule.remote && [...allowRules ?? [], ...keeperMayAllow].some(id => !id.startsWith("git-push"))) problems.push(source.path + ": remote-scoped non-push grants ignored; use an explicit global rule for other capabilities");
+      const defaults = { ...policy.defaults, ...(allowRules ? { allowRules } : {}) };
+      return { classId, path: source.path, remote: rule.remote, defaults: rule.remote ? { ...narrowing(defaults), allowRules: allowRules?.filter(id => id.startsWith("git-push")) } : defaults, keeperMayAllow: keeperMayAllow.filter(id => !rule.remote || id.startsWith("git-push")) };
     })));
     const classes: Record<string, z.infer<typeof classPolicySchema>> = {};
     for (const entry of entries) {
@@ -116,6 +122,7 @@ export class ScopePolicy {
     return { scope: candidate, widenings: [], problems: policy.problems };
   }
   rememberWidening(context: ProjectContext, classId: string, ruleIds: string[], _target?: "project" | "global"): string {
+    if (ruleIds.includes("cluster-write")) throw new Error(clusterScopeRefusal);
     if (ruleIds.some(id => !id.startsWith("git-push"))) throw new Error("Only Git push grants can be remembered by remote; edit the global policy explicitly for other capabilities");
     const remotes = [...new Set((context.remotes ?? []).map(normalizeRemote))];
     const remote = context.pushRemote ? normalizeRemote(context.pushRemote) : remotes.length === 1 ? remotes[0] : undefined;

@@ -5,6 +5,7 @@ import { AUTHORITY, type Act, type AuthorityLevel } from "../shared/authority";
 export { AUTHORITY, type Act, type AuthorityLevel } from "../shared/authority";
 
 export const QUEST_LANES = {
+  "cluster-write": { lane: "user", delegatable: false },
   production: { lane: "user", delegatable: true }, merge: { lane: "user", delegatable: true },
   credential: { lane: "user", delegatable: true }, "sends-as-you": { lane: "user", delegatable: true }, destructive: { lane: "user", delegatable: true },
   greenlight: { lane: "user", delegatable: false }, conclude: { lane: "user", delegatable: false },

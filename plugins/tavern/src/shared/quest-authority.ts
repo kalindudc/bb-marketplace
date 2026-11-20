@@ -1,6 +1,7 @@
 import { moveTime } from "./time";
 import { z } from "zod";
 export const DELEGATABLE_KINDS = ["production", "merge", "credential", "sends-as-you", "destructive"] as const;
+export const CONSEQUENTIAL_ASK_KINDS = ["cluster-write", ...DELEGATABLE_KINDS] as const;
 export const delegationKindSchema = z.enum(DELEGATABLE_KINDS);
 export type DelegationKind = z.infer<typeof delegationKindSchema>;
 const grant = { id: z.string(), surface: z.string(), at: z.number(), endedAt: z.number().nullable(), revokedAt: z.number().nullable() };

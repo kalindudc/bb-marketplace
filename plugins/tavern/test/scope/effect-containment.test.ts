@@ -69,7 +69,7 @@ it("extends only a read-and-fetch call with the external repository git dir", ()
 });
 it("allows unparsable research but retains the raw deploy fallback", () => {
   expect(evaluate(scope(), call("echo 'unfinished")).allow).toBe(true);
-  expect(evaluate(scope(), call("terraform apply 'unfinished"))).toMatchObject({ allow: false, ruleId: "deploy-fallback" });
+  expect(evaluate(scope(), call("terraform apply 'unfinished"))).toMatchObject({ allow: false, ruleId: "cluster-write" });
 });
 it("lets an unbound Smith use reader storage without stopping it or granting repository writes", () => {
   const s = scope("smith", null);

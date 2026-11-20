@@ -1,6 +1,6 @@
 import type { Scope } from "./schema";
 import { agentProgram, bbPositionals, nestedCommands } from "./legacy";
-import { actsForCommand, baselineHolds, isCatalogueRule, closingAct, fallbackActs, fallbackPullRequestRoute, pullRequestRoute, readerNeedsDecision, userControl, type Act } from "./acts";
+import { actsForCommand, baselineHolds, isCatalogueRule, closingAct, fallbackActs, fallbackPullRequestRoute, pullRequestRoute, readerNeedsDecision, userControl, kubectlRead, type Act } from "./acts";
 import { readerFallback } from "./worktree";
 import { checkInvocation } from "./checker";
 import { glob, isSink, normalizeToolPath, within, writeAllowed, writeDenied } from "./paths";
@@ -41,7 +41,8 @@ function inspectedProgram(command: ShellCommand, contained: boolean): boolean {
   if (program === "git") return gitRead(argv);
   if (program === "gh") return ["view", "list", "status", "diff", "checks"].includes(action) || sub === "run" && action === "watch" || ["status", "search", "version", "help"].includes(sub) || contained && sub === "auth" && action === "status" || sub === "api" && githubApiRead(argv);
   if (program === "gcloud") return contained && sub === "storage" && action === "cat";
-  if (program === "kubectl") return ["get", "describe", "logs", "events", "version", "api-resources", "api-versions", "explain", "cluster-info", "top", "wait"].includes(sub) || sub === "auth" && action === "can-i" || sub === "config" && ["view", "get-contexts", "current-context"].includes(action);
+  if (program === "kubectl") return kubectlRead(argv);
+  if (program === "helm") return sub === "template" && !argv.some(arg => /^--output-dir(?:=|$)/.test(arg));
   if (program === "sed") return sedRead(argv);
   if (program === "awk") return awkRead(argv);
   if (program === "find") return findRead(command, readonlyProgram);
@@ -138,7 +139,7 @@ export function evaluate(scope: Scope, call: ScopeCall): Decision {
     }
     const argv = command.argv;
     const [program, sub, action] = argv;
-    const excepted = (id: string) => scope.shell.allow.some(rule => {
+    const excepted = (id: string) => id !== "cluster-write" && scope.shell.allow.some(rule => {
       if (rule.id !== id || !ruleMatches(rule, command)) return false;
       if (!rule.remote) return true;
       const push = pushSpec(argv);

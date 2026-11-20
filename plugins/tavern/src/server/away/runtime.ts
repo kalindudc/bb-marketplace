@@ -344,7 +344,7 @@ export class AwayRuntime {
     const state = this.store.snapshot();
     if (state.status.dueBack !== this.dueBack) { this.dueBack = state.status.dueBack; this.changed(); }
     if (!state.status.closed || this.runtime.config().tavern.paused) return;
-    const rows = this.k.store.db.prepare("SELECT data FROM tavern_records WHERE kind='asks' AND json_extract(data,'$.state')='open' AND json_extract(data,'$.kind') IN ('blocker','production')").all() as { data: string }[];
+    const rows = this.k.store.db.prepare("SELECT data FROM tavern_records WHERE kind='asks' AND json_extract(data,'$.state')='open' AND json_extract(data,'$.kind') IN ('blocker','production','cluster-write')").all() as { data: string }[];
     for (const row of rows) {
       const ask = askSchema.parse(JSON.parse(row.data));
       if (!this.shouldNotify(ask.kind, ask.createdAt)) continue;

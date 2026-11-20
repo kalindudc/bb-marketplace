@@ -1,16 +1,16 @@
-import { useId, useState } from "react";
+import { Fragment, useId, useState } from "react";
 import { experimental_useRpcMutation, experimental_useRpcQuery, useBbNavigate } from "@get-bb/plugin-sdk/app";
 import { rpcContract } from "../../shared/contract";
 import type { Ask } from "../../shared/schema";
 import { Glyph } from "./glyphs";
 import { MemberChip, QueryState, TimeAgo, clockTime } from "./primitives";
-import { preapprovalWords } from "../../shared/quest-authority";
+import { CONSEQUENTIAL_ASK_KINDS, preapprovalWords } from "../../shared/quest-authority";
 import { QuestAuthority } from "./quest-authority";
 import { useRegistry } from "./registry";
 import { isCloseEffect, type PullRequestChoices } from "../../shared/closing";
 import { WaiverRows } from "./waiver-rows";
 
-const KIND: Record<Ask["kind"], string> = { greenlight: "Greenlight", decision: "Decision", conclude: "Conclude", production: "Production", merge: "Merge", destructive: "Destructive", "sends-as-you": "Sends as you", blocker: "Blocker", credential: "Credential", scope: "Scope change" };
+const KIND: Record<Ask["kind"], string> = { greenlight: "Greenlight", decision: "Decision", conclude: "Conclude", production: "Production", "cluster-write": "Cluster write", merge: "Merge", destructive: "Destructive", "sends-as-you": "Sends as you", blocker: "Blocker", credential: "Credential", scope: "Scope change" };
 const VIA: Record<string, string> = { banner: "in the thread", page: "in the common room", phone: "on the phone", chat: "in the chat", cli: "from the CLI", timer: "by its default" };
 const holdsText = (holds: string[]) => holds.length === 0 ? "No other work" : holds.map(h => /^w\d+$/.test(h) ? `waypoint ${h.slice(1)}` : h).join(", ");
 
@@ -18,8 +18,8 @@ const RULE_WORDS: Record<string, string> = {
   "git-push-main": "Push to main or master",
   "git-push-force": "Force, mirror or deletion pushes",
   "git-push-target": "Push without naming a branch",
-  "kubectl-write": "Write to a Kubernetes cluster, including dry runs, exec and cp",
-  "deploy-fallback": "Run deploy commands (terraform apply, helm, kapp)",
+  "cluster-write": "Cluster writes need a separate answer for each run",
+  "deploy-fallback": "Run a deployment pipeline",
   github: "Use GitHub beyond reads and draft pull requests",
   "git-global-config": "Change global or system git configuration",
 };
@@ -93,7 +93,17 @@ export function AskCard({ ask, via = "banner", onFold, onAnswered, headless = fa
   return (
     <section className={`tavern ask k-${ask.kind}`} aria-label={`Ask: ${ask.question}`} data-ask>
       {headless ? ask.why && <p className="ask-why">Yours because {ask.why.charAt(0).toLowerCase() + ask.why.slice(1)}</p> : <><div className="ask-h"><span className="kind">{early ? "Close early" : KIND[ask.kind]}</span><span>asked <TimeAgo at={ask.createdAt} /></span>{ask.why && <span>· yours because {ask.why.charAt(0).toLowerCase() + ask.why.slice(1)}</span>}</div><h3 className="ask-q">{ask.question}</h3></>}
+      {ask.kind === "greenlight" && <p className="m small">Cluster writes always ask you, even after you approve the quest map.</p>}
       {ask.kind === "greenlight" && ask.boardQuestId && <QuestAuthority questId={ask.boardQuestId} via={via} />}
+      {ask.kind === "cluster-write" && ask.target?.command && <dl className="sendbox" aria-label="Exactly what would change">
+        <dt>Command</dt><dd><code className="draft">{ask.target.command}</code></dd>
+        {ask.clusterTargets?.map(({ context, namespace }) => <Fragment key={JSON.stringify([context, namespace])}>
+          {context && <><dt>Context</dt><dd>{context}</dd></>}
+          {namespace && <><dt>Namespace</dt><dd>{namespace}</dd></>}
+        </Fragment>)}
+        {ask.change && <><dt>Change</dt><dd>{ask.change}</dd></>}
+      </dl>}
+      {ask.undo && CONSEQUENTIAL_ASK_KINDS.some(kind => kind === ask.kind) && <dl className="sendbox"><dt>Undo</dt><dd>{ask.undo}</dd></dl>}
       {ask.lane === "keeper" && <p role="status">This kind is delegated to the Keeper. You can still answer here or revoke it in the ledger.</p>}
       {ask.draft && (
         <dl className="sendbox" aria-label="Exactly what would be sent">

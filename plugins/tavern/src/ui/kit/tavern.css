@@ -283,6 +283,7 @@ html[data-motion="reduced"] .tavern, html[data-motion="reduced"] .tavern::before
 .tavern .ask-note-in { width: 100%; min-height: 30px; padding: 5px 8px; border: 1px solid var(--input, var(--border)); background: var(--background); color: var(--foreground); font: inherit; font-size: 12px; }
 .tavern .ask-note-in::placeholder { color: var(--tavern-muted); }
 .tavern .ask-f { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+@media (pointer: coarse), (max-width: 560px) { .tavern.k-cluster-write :is(.ask-f .btn, .ask-note-in), .tavern.k-greenlight .ask-note-in { min-height: 44px; } }
 .tavern.receipt, .tavern .receipt { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; font-size: 12px; padding: 5px 10px; border: 1px solid color-mix(in oklab, var(--success) 55%, var(--tavern-line)); background: var(--card); box-shadow: inset 3px 0 0 var(--success); }
 .tavern.receipt .tavern-glyph, .tavern .receipt .tavern-glyph { color: var(--success); }
 .tavern .receipt-note { font-style: italic; }

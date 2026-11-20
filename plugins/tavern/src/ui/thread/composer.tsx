@@ -499,7 +499,7 @@ function HoldReceipt({ quest, hold }: { quest: HeldQuest; hold: CheckerHandoffHo
   const r = hold.release; if (!r) return null;
   return <div className="tw-ask k-hold"><div className="tavern receipt" role="status" aria-label={`Checker handoff released: ${quest.short}`}><Glyph name="check" /><b>Checker handoff released</b><span className="m">at {localTime(r.at, now)}, {releaseWords(r)}. The Keeper can hand the work to a Warden now.</span></div></div>;
 }
-const KIND_WORD: Record<Ask["kind"], string> = { greenlight: "Quest map (greenlight)", decision: "Decision", conclude: "Conclude", production: "Production", merge: "Merge", destructive: "Destructive", "sends-as-you": "Sends as you", blocker: "Blocker", credential: "Credential", scope: "Scope change" };
+const KIND_WORD: Record<Ask["kind"], string> = { greenlight: "Quest map (greenlight)", decision: "Decision", conclude: "Conclude", production: "Production", "cluster-write": "Cluster write", merge: "Merge", destructive: "Destructive", "sends-as-you": "Sends as you", blocker: "Blocker", credential: "Credential", scope: "Scope change" };
 
 function DecidedPanel({ threadId, data }: { threadId: string; data: ThreadDecor }) {
   const undo = experimental_useRpcMutation({ contract: rpcContract, method: "undoDecision" });

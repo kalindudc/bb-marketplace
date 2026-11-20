@@ -48,6 +48,7 @@ Machine rules put a project's party members on their own new machines through th
 
 ### Changed
 
+- Cluster writes always ask you, even when you have delegated other production decisions. A scope cannot grant them. The ask shows the exact command, any contexts and namespaces it names, and what would change. Consequential asks also show undo instructions when the Keeper provides them. A Kubernetes port-forward is not treated as a read, and read-only host scopes still do not run `terraform plan`.
 - Every Tavern settings row shows its default and lets you reset it. Keeper pacing and memory knobs show who last changed them, and live quest overrides can be ended from Settings. Always ask routes the kinds you choose, without weakening verdict requirements. Closing time saves the guard selection with each window; the default keeps the previous protections.
 - Atmosphere in Settings brings character visibility, speech bubbles, levels and ambient motion together, and links to the character sheets for rolling avatars. It keeps the existing settings and explains when speech also affects replies and reports.
 - A rule that places a Keeper must name keeper in its classes, or name no classes.

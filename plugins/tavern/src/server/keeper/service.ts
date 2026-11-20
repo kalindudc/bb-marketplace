@@ -1,6 +1,8 @@
 import { authorize, commitUserAct, type UserActReceipt } from "../authority";
 import { QuestAuthority } from "../quest-authority";
-import { preapprovalWords } from "../../shared/quest-authority";
+import { DELEGATABLE_KINDS, preapprovalWords, type DelegationKind } from "../../shared/quest-authority";
+import { actsForCommand, clusterCommandTarget, fallbackActs } from "../../scope/acts";
+import { shellCommands } from "../../scope/shell";
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import type { KeeperCallKind } from "../../shared/undo-lane";
@@ -62,6 +64,8 @@ export type AskInput = Pick<
   draft?: Ask["draft"];
   unsure?: boolean;
   target?: Ask["target"];
+  change?: Ask["change"];
+  undo?: Ask["undo"];
   scopeChange?: Ask["scopeChange"];
   releaseHoldId?: string;
   releaseCheckerHandoff?: boolean;
@@ -1130,14 +1134,38 @@ export class Keeper {
     if (input.kind === "conclude" && !isCloseEffect(input.effect)) throw new Error("A conclude ask needs its typed draft; tell the quest result instead.");
     if (input.effect.type === "placement-blocker" && !trusted) throw new Error("Only Tavern may open a typed placement blocker");
     if (input.options.some(o => o.id === "delegate")) throw new Error("The delegation answer is reserved for Tavern");
-    if (["merge", "production"].includes(input.kind)) input = { ...input, options: [{ id: "approve", label: "Approve the act", detail: "Authorize the exact act; Keeper approval needs a current Warden verdict.", recommended: false }, { id: "deny", label: "Decline the act", detail: "Do not authorize this act.", recommended: false }], effect: { type: "decision", outcomes: [{ optionId: "approve", outcome: "approve" }, { optionId: "deny", outcome: "decline" }] } };
+    const exactCommand = input.target?.command;
+    let clusterTargets: Ask["clusterTargets"];
+    if (exactCommand) {
+      let commands: ReturnType<typeof shellCommands> | undefined = undefined;
+      try { commands = shellCommands(exactCommand, "/"); } catch (error) {
+        if (input.kind === "cluster-write" || fallbackActs(exactCommand).some(act => act.kind === "cluster-write")) {
+          const cause = error instanceof Error ? error.message : String(error);
+          throw new Error(`Tavern can't parse this command (${cause}). Send the literal command with supported shell syntax.`);
+        }
+      }
+      const writes = commands?.filter(command => actsForCommand(command).some(act => act.kind === "cluster-write"));
+      if (writes?.length && input.kind !== "cluster-write") throw new Error("Use kind cluster-write for a cluster write command.");
+      if (input.kind === "cluster-write") {
+        if (!writes?.length) throw new Error("Give the exact command that performs the cluster write.");
+        const targets = writes.map(clusterCommandTarget).filter(target => target !== undefined);
+        clusterTargets = [...new Map(targets.map(target => [JSON.stringify(target), target])).values()];
+      }
+    }
+    if (input.kind === "cluster-write" && (!exactCommand?.trim() || !input.change?.trim()))
+      throw new Error("Cluster writes need the exact command and what it changes.");
+    if (["merge", "production", "cluster-write"].includes(input.kind)) {
+      const detail = input.kind === "cluster-write" ? "Approve one run of this exact command. A changed command or another run needs a new ask." : "Authorize the exact act; Keeper approval needs a current Warden verdict.";
+      input = { ...input, options: [{ id: "approve", label: "Approve the act", detail, recommended: false }, { id: "deny", label: "Decline the act", detail: "Do not authorize this act.", recommended: false }], effect: { type: "decision", outcomes: [{ optionId: "approve", outcome: "approve" }, { optionId: "deny", outcome: "decline" }] } };
+    }
     const lane = this.authority.baseLane({ kind: input.kind, boardQuestId: questId, unsure: input.unsure });
-    if (questId && lane === "user" && ["production", "merge", "credential", "sends-as-you", "destructive"].includes(input.kind)) {
+    if (questId && lane === "user" && DELEGATABLE_KINDS.includes(input.kind as DelegationKind)) {
       input = { ...input, options: [...input.options, this.authority.delegationOption(threadId)] };
     }
     const ask = askSchema.parse({
       ...input,
       lane,
+      ...(clusterTargets?.length ? { clusterTargets } : {}),
       effect: input.effect,
       reversible: input.reversible === true,
       id: this.store.id("ask"),
@@ -1194,6 +1222,7 @@ export class Keeper {
   ) {
     const ask = this.store.get("asks", askId);
     if (!ask) throw new Error("Unknown ask");
+    if (ask.kind === "cluster-write" && by === "user" && (receipt?.act !== "answerAsk" || via === "timer")) throw new Error("Cluster writes require your explicit answer.");
     if (ask.state !== "open") {
       if (ask.answer?.optionId === optionId) {
         if (by === "user") this.userAction(ask.keeperThreadId);

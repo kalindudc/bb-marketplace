@@ -4,7 +4,7 @@ import { rpcContract } from "../../shared/contract";
 import { DELEGATABLE_KINDS, preapprovalWords } from "../../shared/quest-authority";
 import { QueryState, clockTime } from "./primitives";
 import { useRegistry } from "./registry";
-const names = { production: "Production changes", merge: "Merges", credential: "Credentials", "sends-as-you": "Sending as you", destructive: "Deleting outside quest work or changing your tools" };
+const names = { "cluster-write": "Cluster writes", production: "Production changes", merge: "Merges", credential: "Credentials", "sends-as-you": "Sending as you", destructive: "Deleting outside quest work or changing your tools" };
 export function QuestAuthority({ questId, via = "page", compact = false }: { questId: string; via?: "page" | "banner" | "phone" | "chat"; compact?: boolean }) {
   const query = experimental_useRpcQuery({ contract: rpcContract, method: "questAuthority", input: { boardQuestId: questId } });
   const registry = useRegistry();
@@ -21,7 +21,7 @@ export function QuestAuthority({ questId, via = "page", compact = false }: { que
   return <section className="tavern gl-blocks" aria-label="Who decides on this quest">
     <h3>Authority on this quest</h3>
     <dl className="sendbox"><dt>{data.keeperName} decides</dt><dd>{data.rows.filter(r => r.lane === "keeper").map(r => names[r.kind as keyof typeof names] ?? r.kind).join(", ")}</dd><dt>Asks you</dt><dd>{data.rows.filter(r => r.lane === "user").map(r => names[r.kind as keyof typeof names] ?? r.kind).join(", ") || "No delegated kinds remain with you"}</dd><dt>Tavern answers</dt><dd>{data.rows.filter(r => r.lane === "tavern").map(r => `${r.kind} within your pre-approval`).join(", ") || "No standing answers"}</dd><dt>Review</dt><dd>review {data.review.used} of {data.review.total}</dd><dt>Spend budget</dt><dd>{data.spendBudget === null ? "None set" : data.spendBudget}</dd></dl>
-    {!compact && <details><summary>Let {data.keeperName} decide for this quest</summary><ul className="grants">{DELEGATABLE_KINDS.map(kind => {
+    {!compact && <details><summary>Let {data.keeperName} decide for this quest</summary><p>Cluster writes always ask you and cannot be delegated.</p><ul className="grants">{DELEGATABLE_KINDS.map(kind => {
       const grant = data.delegations.find(g => g.kind === kind && live(g));
       return <li key={kind}><span>{names[kind]}</span>{(kind === "merge" || kind === "production") && <p className="m">Needs a Warden verdict on the exact commit or command.</p>}{grant ? <span className="m">Delegated</span> : <button className="btn sm" type="button" disabled={busy} onClick={() => void act(() => delegate.mutate({ boardQuestId: questId, kind, via }), `${names[kind]} delegated to ${data.keeperName} for this quest only.`)}>Let {data.keeperName} decide {names[kind].toLowerCase()}</button>}</li>;
     })}</ul></details>}

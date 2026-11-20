@@ -363,7 +363,7 @@ export const planSchema = z.object({
   questions: z.array(planQuestionSchema).max(3),
   waypoints: z.array(waypointSchema).min(1).max(24),
   party: z.array(partySlotSchema).max(8),
-  alwaysAskKinds: z.array(z.enum(["production", "merge", "credential", "sends-as-you", "destructive"])).default([]),
+  alwaysAskKinds: z.array(z.enum(CONSEQUENTIAL_ASK_KINDS)).default([]),
   reviewLoad: z.string().max(300),
   eta: z.string().max(120).nullable(),
   changeNote: z.string().max(500).nullable(),
@@ -392,7 +392,7 @@ export const checkerHandoffHoldSchema = z.object({
 });
 export type CheckerHandoffHold = z.infer<typeof checkerHandoffHoldSchema>;
 
-import { delegationSchema, preapprovalSchema, delegationKindSchema, actTargetSchema } from "./quest-authority";
+import { delegationSchema, preapprovalSchema, delegationKindSchema, actTargetSchema, CONSEQUENTIAL_ASK_KINDS } from "./quest-authority";
 import { closeEarlyDraftSchema, concludeDraftSchema, questOutcomeSchema, waypointWaiverSchema } from "./closing";
 import { pullRequestDraftOperationSchema } from "./pull-request";
 
@@ -426,7 +426,7 @@ export const boardQuestSchema = z.object({
 export type BoardQuest = z.infer<typeof boardQuestSchema>;
 
 // Only "decision" may carry a timed default; every other kind waits for the user.
-export const ASK_KINDS = ["greenlight", "decision", "conclude", "production", "merge", "destructive", "sends-as-you", "blocker", "credential", "scope"] as const;
+export const ASK_KINDS = ["greenlight", "decision", "conclude", ...CONSEQUENTIAL_ASK_KINDS, "blocker", "scope"] as const;
 
 export const askOptionSchema = z.object({
   id: z.string().regex(/^[a-z0-9-]{1,20}$/),
@@ -455,6 +455,9 @@ export type AskEffect = z.infer<typeof askEffectSchema>;
 export const askSchema = z.object({
   unsure: z.boolean().optional(),
   target: actTargetSchema.optional(),
+  clusterTargets: z.array(z.object({ context: z.string().optional(), namespace: z.string().optional() })).optional(),
+  change: z.string().trim().min(1).max(600).optional(),
+  undo: z.string().trim().min(1).max(600).optional(),
   lane: z.enum(["user", "keeper", "tavern"]).optional(),
   effect: askEffectSchema.optional(),
   reversible: z.boolean().optional(),

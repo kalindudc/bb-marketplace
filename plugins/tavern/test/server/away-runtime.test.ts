@@ -178,10 +178,10 @@ describe("Closing time runtime", () => {
     await expect(result).rejects.toThrow(/closed/i);
     expect(f.k.store.runtime("child").released).toBeFalsy();
   });
-  it("sends an opted-in production wake after two hours under consequential notifications, once across restart", async () => {
+  it.each(["production", "cluster-write"] as const)("sends an opted-in %s wake after two hours, once across restart", async kind => {
     const f = await party();
     await f.runtime.away.close({ revision: 0, until: f.time() + 60_000, quests: [{ questId: f.quest.id, endState: "pause" }], wakeRules: { blockers: false, productionAsksAfterTwoHours: true } });
-    f.k.ask("lead", { effect: {type:"decision"}, boardQuestId: f.quest.id, kind: "production", question: "Production?", why: "Needs you", options: [{ id: "no", label: "No", detail: "Wait", recommended: true }], meanwhile: "Drafts", holds: [] });
+    f.k.ask("lead", { effect: {type:"decision"}, boardQuestId: f.quest.id, kind, question: "Change the sample release?", why: "Needs you", target: { command: kind === "cluster-write" ? "kubectl apply -f sample.yaml" : "quick deploy ./site sample" }, change: "Update the sample release.", options: [{ id: "no", label: "No", detail: "Wait", recommended: true }], meanwhile: "Drafts", holds: [] });
     f.advance(2 * 60 * 60_000 - 1);
     await f.runtime.away.sweep();
     expect(f.harness.inspection.sdk.callsTo("plugins.callRpc")).toHaveLength(0);

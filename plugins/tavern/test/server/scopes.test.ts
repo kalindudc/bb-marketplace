@@ -341,6 +341,15 @@ describe("backend scope integration", () => {
     });
     expect(childSends()).toHaveLength(0);
   });
+  it("refuses a cluster-write scope request without opening an ask", async () => {
+    const f = await fixture();
+    await f.runtime.hire("lead", "project", f.input);
+    registerTools(f.bb, f.runtime);
+    await expect(f.harness.behavior.invokeAgentTool("tavern_scope", {
+      memberThreadId: "child", reason: "Apply the sample deployment", override: { allowRules: ["cluster-write"] },
+    }, { threadId: "lead" })).rejects.toThrow(/Cluster writes can't be granted as scope/);
+    expect(f.k.store.openAsks("lead").filter(a => a.kind === "scope")).toHaveLength(0);
+  });
   it("applies safe narrowing immediately, refuses foreign members and withholds an unapproved widening", async () => {
     const f = await fixture();
     await f.runtime.hire("lead", "project", f.input);

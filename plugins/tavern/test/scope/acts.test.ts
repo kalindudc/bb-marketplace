@@ -25,7 +25,11 @@ const commands = [
   ["review", "gh pr review 1 --approve"], ["review", "dt pr review 1"], ["review", "dt pr approve 1"],
   ["publish", "gh pr comment 1 -b hi"], ["publish", "dt pr comment 1 -b hi"],
   ["publish", "gh pr edit 1 --title hi"], ["publish", "dt pr edit 1 --title hi"],
-  ["deploy", "kubectl --context x apply -f a"], ["deploy", "quick deploy ./site site"],
+  ["cluster-write", "kubectl --context x apply -f a"], ["deploy", "quick deploy ./site site"],
+  ["cluster-write", "kubectl apply --dry-run=server -f a"], ["cluster-write", "kubectl apply --dry-run=client -f a"],
+  ["cluster-write", "kubectl port-forward svc/demo 8080:80"],
+  ["cluster-write", "kubectl exec pod -- app --help"], ["cluster-write", "kubectl cp pod:/source ./copy"],
+  ["cluster-write", "terraform -chdir=infra apply"], ["cluster-write", "helm upgrade release ./chart"], ["cluster-write", "kapp deploy -a fixture"],
   ["send", "curl -X POST https://example.test"], ["delete", "bb thread delete t"],
   ["configure", "bb plugin install x"], ["credential", "gh auth token"],
   ["allocate", "bb machine create --new-machine x"],
@@ -40,9 +44,27 @@ it.each(commands)("recognises %s: %s for every class", (kind, command) => {
     if (managed && role === "keeper" && kind !== "ready") expect(decision).toMatchObject({ reason: expect.stringContaining("tavern_pull_request") });
   }
 });
-it.each(["kubectl --context x get pods", "cortex update 1175 -m hi", "bb thread spawn --task hi"])("does not catalogue coordination or reads: %s", command => {
+it.each(["kubectl --context x get pods", "kubectl describe pod web", "kubectl logs web", "kubectl events", "kubectl auth can-i get pods", "kubectl rollout status deployment/demo", "kubectl rollout history deployment/demo", "helm template release ./chart", "cortex update 1175 -m hi", "bb thread spawn --task hi"])("does not catalogue coordination or reads: %s", command => {
   expect(acts(command)).toEqual([]);
   expect(evaluate(scope("keeper"), call(command)).allow).toBe(true);
+  if (/^(kubectl|helm|terraform) /.test(command)) expect(evaluate(scope("ranger"), call(command)).allow).toBe(true);
+});
+it("does not catalogue Terraform plan as a cluster write or run it in a read-only host preset", () => {
+  const command = "terraform plan";
+  expect(acts(command)).toEqual([]);
+  expect(evaluate(scope("ranger"), { ...call(command), containment: undefined })).toMatchObject({ allow: false, ruleId: "readonly-shell" });
+});
+it.each(["--kubeconfig-context demo", "--kubeconfig ./config", "--yes", "-y", "--yes=false"])("catalogues kapp with global flag %s", flag => {
+  expect(acts(`kapp ${flag} deploy -a demo`)).toEqual(["cluster-write"]);
+});
+it.each([
+  "--debug", "--debug=false", "--kube-context demo", "--kubeconfig ./config", "--namespace tools", "-n tools",
+  "--burst-limit 100", "--kube-apiserver https://example.test", "--kube-as-group readers", "--kube-as-user demo",
+  "--kube-ca-file ./ca", "--kube-insecure-skip-tls-verify", "--kube-tls-server-name example.test", "--kube-token fixture",
+  "--qps 10", "--registry-config ./registry.json", "--repository-cache ./cache", "--repository-config ./repos.yaml",
+  "--content-cache ./charts", "--color never", "--colour auto",
+])("catalogues Helm with global flag %s", flag => {
+  expect(acts(`helm ${flag} upgrade release ./chart`)).toEqual(["cluster-write"]);
 });
 it.each(["--new-machine x", "--machine=x", "--host x", "--environment-provider x", "--project other"])("recognises placement even before subcommands: %s", flag => {
   expect(acts(`bb ${flag} thread spawn --task hi`)).toContain("allocate");

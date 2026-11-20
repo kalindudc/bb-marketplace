@@ -315,7 +315,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   register(
     "tavern_ask",
     "Opened an ask",
-    "Record a non-blocking user ask. Only kind decision with explicit reversible: true may carry a timed default. Merges, deploys, deletes, sends and production changes are NEVER decisions. Merge, destructive, production, sends-as-you, credential, blocker and greenlight asks require an explicit answer. Sends-as-you requires the complete recipient and draft; an answer does not execute a send or production action. To confirm words that may release a checker-handoff hold, use kind blocker, boardQuestId and releaseCheckerHandoff:true. Tavern privately pins the current hold and supplies the exact release question and options; only the user's answer releases it. Include options, a recommendation, what continues meanwhile and the held waypoints. Use a decision ask without a timer for unresolved clarification. Scope grants and blockers never default. Never use a native question tool or infer approval from chat or a timer. An answer records a choice; it does not execute a merge, deploy, deletion, send, production write or supply credentials.",
+    "Record a non-blocking ask. Only kind decision with explicit reversible: true may carry a timed default. Merge, destructive, production, sends-as-you, credential, blocker, greenlight and cluster-write asks require an explicit answer. Use cluster-write for Kubernetes, Terraform, Helm and kapp writes; give target.command and change. Each run needs its own user answer, plus immediate user confirmation before execution. Give undo when known, or say it cannot be undone. Sends-as-you needs the full recipient and draft. For a checker-handoff release, use blocker, boardQuestId and releaseCheckerHandoff:true; Tavern pins the hold and supplies its question and options. Include options, a recommendation, what continues and the held waypoints. Use an untimed decision for clarification. Never use a native question tool or infer approval from chat or a timer. An answer records a choice; it does not execute an act or supply credentials.",
     askSchema
       .pick({
         question: true,
@@ -331,7 +331,9 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
         proceedInMinutes: z.number().int().min(1).max(10080).nullish(),
         reversible: z.boolean().optional(),
         unsure: z.boolean().optional(),
-        target: askSchema.shape.target.optional(),
+        target: askSchema.shape.target,
+        change: askSchema.shape.change,
+        undo: askSchema.shape.undo,
         draft: askSchema.shape.draft.optional(),
       }),
     (input, threadId) => {

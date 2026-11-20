@@ -77,7 +77,7 @@ export function closePlan(room: Room, control: Pick<AwayControl, "watchedCount" 
   const open = room.asks.filter((a) => a.state === "open").length;
   const solos = control?.soloCount ?? room.solos.filter(inPlay).length;
   const stopping = stoppingQuests(room).length;
-  const wakes = [input.wakeRules.blockers ? "A blocker wakes you." : "Nothing wakes you for a blocker.", input.wakeRules.productionAsksAfterTwoHours ? `So does a production ask that waits ${plural(input.productionWakeHours ?? DEFAULT_SETTINGS.away.productionWakeHours, "hour")}.` : ""].filter(Boolean).join(" ");
+  const wakes = [input.wakeRules.blockers ? "A blocker wakes you." : "Nothing wakes you for a blocker.", input.wakeRules.productionAsksAfterTwoHours ? `A production or cluster write ask wakes you after ${plural(input.productionWakeHours ?? DEFAULT_SETTINGS.away.productionWakeHours, "hour")}.` : ""].filter(Boolean).join(" ");
   return {
     quests,
     watchedTotal: byQuest || eligible || !control || !control.watchedCount ? null : `${plural(control.watchedCount, "watched member")} ${input.allowWatched ? s(control.watchedCount, "keeps drafting, watched", "keep drafting, watched") : s(control.watchedCount, "holds", "hold")} across all quests.`,
@@ -324,7 +324,7 @@ export function AwayForm({ room, registry }: { room: Room; registry: Registry })
     </fieldset>
     <fieldset className="tv-grpbox" disabled={close.isPending}><legend>Wake me for</legend>
       <label className="tv-chk"><input type="checkbox" checked={wake.blockers} onChange={(e) => setWake((w) => ({ ...w, blockers: e.target.checked }))} /><span>Blockers</span></label>
-      <label className="tv-chk"><input type="checkbox" checked={wake.productionAsksAfterTwoHours} onChange={(e) => setWake((w) => ({ ...w, productionAsksAfterTwoHours: e.target.checked }))} /><span>Production asks waiting {plural(defaults.productionWakeHours, "hour")}</span></label>
+      <label className="tv-chk"><input type="checkbox" checked={wake.productionAsksAfterTwoHours} onChange={(e) => setWake((w) => ({ ...w, productionAsksAfterTwoHours: e.target.checked }))} /><span>Production or cluster write asks waiting {plural(defaults.productionWakeHours, "hour")}</span></label>
     </fieldset>
     {settings.data && <>
       <AwayStopChoices items={stopList} disabled={close.isPending} onChange={items => { setSelection(items); setConfirming(false); }} />

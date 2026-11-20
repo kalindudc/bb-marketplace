@@ -189,6 +189,7 @@ describe("Tavern settings sections", () => {
     const save = vi.fn(() => ok());
     const keepers = await section("keepers", { settingsUpdate: save });
     const group = within(await keepers.findByRole("group", {name:"Always ask"}));
+    expect(group.getByText("Cluster writes always ask you and cannot be delegated.")).toBeTruthy();
     expect(group.getAllByRole("checkbox")).toHaveLength(5);
     fireEvent.click(group.getByRole("checkbox", {name:"Merge"}));
     await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({patch:{keepers:{alwaysAsk:["production","credential","sends-as-you","destructive"]}}})));

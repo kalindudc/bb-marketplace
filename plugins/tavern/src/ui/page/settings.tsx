@@ -95,7 +95,7 @@ const NUMBER_HELP: Record<{ [G in keyof typeof KNOB_FIELDS]: keyof typeof KNOB_F
   reportedPoseSeconds: "How long a character holds its finished pose above the composer.",
   verifiedPoseMinutes: "How long a character holds its verified pose above the composer.",
   voiceChecksPerHour: "How many voice checks you can run from a character sheet in an hour. Each check runs a model and can cost money.",
-  productionWakeHours: "How long a production ask waits before waking you, if that option is on for the window.",
+  productionWakeHours: "How long a production or cluster write ask waits before waking you, if that option is on for the window.",
   defaultBackAtHour: "Prefills Back at with the next time at this local hour that's at least an hour away.",
   restatementBytes: "Caps the Keeper's restatement. Lower limits make Keepers forget what you told them.",
   tickFactChars: "Caps the facts in each routine Keeper check-in. Lower limits make Keepers forget what you told them.",
@@ -202,7 +202,7 @@ export function AwaySettingsSection() {
       <div className="tv-set-row tv-set-ro" data-setting-keys="away.neverWhileClosed"><AwayStopChoices items={a.neverWhileClosed} disabled={api.pending} onChange={items => void api.save({ away: { neverWhileClosed: items } })} /><SettingDefault setting="away.neverWhileClosed" /></div>
       <NumberKnobRows group="away" />
       <Row label="Default quest end" setting="away.defaultEndState" control={id => <select id={id} className="tv-select" value={a.defaultEndState} disabled={api.pending} onChange={e => void api.save({ away: { defaultEndState: e.target.value as "pause" | "drafts-ready" } })}><option value="drafts-ready">Drafts ready</option><option value="pause">Pause</option></select>} />
-      {([["defaultAllowWatched","Let watched members keep drafting by default"],["defaultWakeBlockers","Wake me for blockers by default"],["defaultWakeProduction","Wake me for waiting production asks by default"]] as const).map(([key,label]) => <Row key={key} setting={`away.${key}`} label={label} control={id => <Toggle id={id} checked={a[key]} disabled={api.pending} onChange={v => void api.save({ away: { [key]: v } })} />} />)}
+      {([["defaultAllowWatched","Let watched members keep drafting by default"],["defaultWakeBlockers","Wake me for blockers by default"],["defaultWakeProduction","Wake me for waiting production or cluster write asks by default"]] as const).map(([key,label]) => <Row key={key} setting={`away.${key}`} label={label} control={id => <Toggle id={id} checked={a[key]} disabled={api.pending} onChange={v => void api.save({ away: { [key]: v } })} />} />)}
     </SettingsCard>;
   }}</Shell>;
 }
@@ -323,6 +323,7 @@ export function KeepersSection() {
     <div className="tv-set-row tv-set-ro" data-setting-keys="keepers.alwaysAsk">
       <fieldset className="tv-grpbox tv-away-stops" disabled={api.pending}><legend>Always ask</legend>
         <p className="m small">Unchecked kinds go to the Keeper on every quest. It decides and records each one, or asks you when unsure. A merge or production change still needs a Warden’s check of the exact commit or command.</p>
+        <p className="m small">Cluster writes always ask you and cannot be delegated.</p>
         {DELEGATABLE_KINDS.map(kind => <label key={kind} className="tv-chk"><input type="checkbox" checked={k.alwaysAsk.includes(kind)}
           onChange={e => void api.save({ keepers: { alwaysAsk: DELEGATABLE_KINDS.filter(item => item === kind ? e.target.checked : k.alwaysAsk.includes(item)) } })} /><span>{ALWAYS_WORDS[kind]}</span></label>)}
       </fieldset><SettingDefault setting="keepers.alwaysAsk" />

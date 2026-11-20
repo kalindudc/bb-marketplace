@@ -3,7 +3,7 @@ import { expect, it } from "vitest";
 import { setup } from "./runtime-fixture";
 import { seedQuest, planInput } from "./support";
 import { QuestAuthority } from "../../src/server/quest-authority";
-import { requireUserAct } from "../../src/server/authority";
+import { QUEST_LANES, requireUserAct } from "../../src/server/authority";
 import { SettingsStore } from "../../src/server/settings/store";
 import { InsightsReader } from "../../src/server/insights/index";
 const client = { experimental_caller: { kind: "client" } } as never;
@@ -75,6 +75,40 @@ it("retries a typed placement blocker once, then stops; untyped blockers stay wi
   f.a.consume(f.a.match(ask)!); expect(f.a.match(ask)?.optionId).toBe("stop");
   expect(f.a.match({ ...ask, effect: { type: "answer-blocker" } })).toBeNull();
   expect(f.a.match({ ...ask, kind: "conclude", effect: { type: "conclude", draft: { outcome: "Done", left: "" } } })).toBeNull();
+});
+it.each(["kubectl --context demo apply -f sample.yaml --namespace=tools", "terraform apply", "helm upgrade release ./chart"])("keeps %s in a new user ask even with production delegation and pre-approval", async command => {
+  const f = await fixture();
+  f.a.delegate(f.q.id, "production", receipt());
+  f.a.preapprove(f.q.id, { greenlight: { maxMembers: 1, classes: ["smith"] }, placement: true, conclude: true, endsAt: null }, requireUserAct(client, "preapproveQuest"));
+  expect(QUEST_LANES["cluster-write"]).toMatchObject({ lane: "user", delegatable: false });
+  expect(() => f.a.delegate(f.q.id, "cluster-write" as never, receipt())).toThrow(/cannot be delegated/);
+  const input = { ...request(f.q.id), kind: "cluster-write" as const, question: "Apply the sample change?", target: { command }, change: "Update the fixture.", undo: "Restore the previous version." };
+  const ask = f.k.ask("lead", input);
+  expect(ask).toMatchObject({ lane: "user", state: "open", target: { command }, undo: input.undo });
+  if (command.startsWith("kubectl")) expect(ask.clusterTargets).toEqual([{ context: "demo", namespace: "tools" }]);
+  expect(ask.options.map(o => o.id)).toEqual(["approve", "deny"]);
+  expect(f.a.match(ask)).toBeNull();
+  expect(() => f.k.answerAsk(ask.id, "approve", null, "timer", "preapproval")).toThrow(/No matching/);
+  expect(() => f.k.answerAsk(ask.id, "approve", null, "chat", "keeper")).toThrow(/belongs to the user/);
+  expect(() => f.k.ask("lead", { ...input, target: undefined })).toThrow(/exact command/);
+  expect(() => f.k.ask("lead", { ...input, kind: "production" })).toThrow(/cluster-write/);
+  f.k.answerAsk(ask.id, "approve", null, "page", "user", "client (unattested)", {}, requireUserAct(client, "answerAsk"));
+  const changed = f.k.ask("lead", { ...input, target: { command: command + " --different" } });
+  const repeat = f.k.ask("lead", input);
+  for (const next of [changed, repeat]) {
+    expect(next.id).not.toBe(ask.id);
+    expect(next).toMatchObject({ state: "open", lane: "user", answer: null });
+  }
+});
+it("keeps the full compound command and each distinct target on a cluster write ask", async () => {
+  const f = await fixture();
+  const command = "kustomize build . | kubectl --context demo apply -f - -n tools && helm --kube-context other --namespace apps upgrade release ./chart";
+  const input = { ...request(f.q.id), kind: "cluster-write" as const, target: { command }, change: "Apply the overlay and upgrade the sample release." };
+  const ask = f.k.ask("lead", input);
+  expect(ask.target?.command).toBe(command);
+  expect(ask.clusterTargets).toEqual([{ context: "demo", namespace: "tools" }, { context: "other", namespace: "apps" }]);
+  expect(() => f.k.ask("lead", { ...input, kind: "production" })).toThrow(/Use kind cluster-write/);
+  expect(() => f.k.ask("lead", { ...input, target: { command: "kubectl apply 'unterminated" } })).toThrow(/unterminated single quote.*send the literal command/i);
 });
 it("rejects non-client callers and missing receipts", async () => {
   const f = await fixture();

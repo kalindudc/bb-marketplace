@@ -129,7 +129,7 @@
 .tavern .tw-ask-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto auto; gap: 8px; align-items: center; width: 100%; min-height: 32px; padding: 0 10px; border: 0; background: transparent; text-align: left; font-size: 12px; cursor: pointer; }
 .tavern .tw-ask-row:hover { background: var(--tavern-hover); }
 .tavern .tw-ak { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--tavern-muted); white-space: nowrap; }
-.tavern .tw-ask:is(.k-sends-as-you, .k-production, .k-destructive, .k-merge, .k-credential, .k-scope) .tw-ak { color: var(--foreground); }
+.tavern .tw-ask:is(.k-sends-as-you, .k-production, .k-cluster-write, .k-destructive, .k-merge, .k-credential, .k-scope) .tw-ak { color: var(--foreground); }
 .tavern .tw-ask.k-blocker .tw-ak { color: var(--tavern-blocked); }
 .tavern .tw-aq { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .tavern .tw-ag { font-size: 11px; padding: 0 5px; border: 1px solid var(--tavern-line); white-space: nowrap; }
@@ -862,5 +862,6 @@ html.dark .tavern .qsvg .wp.o-you .wp-fo { filter: drop-shadow(0 0 5px color-mix
 .tavern.gl-blocks input[type="datetime-local"] { max-width: 100%; }
 @media (max-width: 520px) {
   .tavern.gl-blocks .btn, .tavern.gl-blocks summary, .tavern.gl-blocks .opt { min-height: 44px; }
+  .tavern.gl-blocks .grants .btn { min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
   .tavern.gl-blocks .sendbox { grid-template-columns: minmax(0, 1fr); }
 }
