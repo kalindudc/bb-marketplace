@@ -78,6 +78,8 @@ import { PlacementController } from "./placement/controller";
 import { reviewWaypointFingerprint } from "./placement/review";
 import { isVoiceCheckThread, type VoiceCheckRunner } from "./voice-check/run";
 
+import { undoPullRequestReady } from "./pull-request-rules";
+
 export const KEEPER_TOOLS = [
   "tavern_route",
   "tavern_note",
@@ -99,6 +101,7 @@ export const KEEPER_TOOLS = [
   "tavern_decide",
   "tavern_rule",
   "tavern_status",
+  "tavern_pull_request",
   "tavern_wrap",
   "tavern_tune",
 ];
@@ -190,6 +193,7 @@ export class TavernRuntime {
     this.previousSettings = next;
     if (previous) this.keeper.authority.applyAskPolicy(previous.keepers.alwaysAsk, next.keepers.alwaysAsk);
     this.reviewCache = null;
+    if (previous?.keepers.alwaysAsk.includes("sends-as-you") !== next.keepers.alwaysAsk.includes("sends-as-you")) this.scopes?.refreshPullRequestPolicies();
     if (this.scopes && this.scopes.api.mode() !== next.scopes.mode)
       this.scopes.api.setMode(next.scopes.mode);
     if (this.syncLegacyScopes && previous?.scopes.mode !== next.scopes.mode)
@@ -345,6 +349,7 @@ export class TavernRuntime {
   }
   async undoDecision(id: string, receipt?: UserActReceipt) {
     const approval = this.keeper.store.get("autoGreenlights", id), decision = this.keeper.store.get("decisions", id);
+    if (decision?.pullRequestReady) return undoPullRequestReady(this, decision, receipt);
     if (!approval || !decision) { commitUserAct(this.keeper.store, () => this.keeper.now(), receipt, () => this.keeper.undoDecision(id)); return; }
     const release = commitUserAct(this.keeper.store, () => this.keeper.now(), receipt, () => {
       const before = this.keeper.quest(approval.boardQuestId);
@@ -698,6 +703,14 @@ export class TavernRuntime {
     // Actionable news wakes the Keeper it belongs to through the same gates as the sweep.
     keeper.store.onEvent = ({ keeperThreadId, type, data, actor }) => {
       if (!keeperThreadId) return;
+      if (this.scopes && ["pull-request.changed", "decision.undone", "authority.revoked", "delegation.granted", "lane.reset", "quest.wrapped", "quest.stopping", "quest.stopped"].includes(type)) {
+        queueMicrotask(() => {
+          try {
+            this.scopes?.refreshPullRequestPolicy(keeperThreadId);
+            if (type === "pull-request.changed" && typeof data.memberThreadId === "string") this.scopes?.refreshPullRequestPolicy(data.memberThreadId);
+          } catch (error) { this.bb.log.warn(`Tavern pull request scope: ${String(error)}`); }
+        });
+      }
       if (!isWakeEvent({ type, data, actor }, keeperThreadId)) return;
       void this.wakeKeeper(keeperThreadId, type);
     };
@@ -1397,33 +1410,32 @@ export class TavernRuntime {
     if (q) this.keeper.guard(threadId, q.id);
     if (role.id !== "ranger" && !errand && q?.greenlitVersion === null)
       throw new Error("The party needs the user's explicit greenlight");
-    const { rangerMinutes: rangerLimit } = classLimits(lead, this.config(questId));
+    const rangerTimebox = role.id === "ranger" ? input.brief.timeboxMinutes : null;
+    if (role.id === "ranger" && (rangerTimebox === null || !input.brief.questions.length))
+      throw new Error("Rangers need numbered questions and a time box.");
     const limits = new LimitPolicy(this.keeper);
     const checkStaffing = () => {
       const config = this.config(questId);
-      const { partyMax: partyLimit } = classLimits(lead, config);
+      const { partyMax: partyLimit, rangerMinutes } = classLimits(lead, config);
+      if (rangerTimebox !== null && rangerTimebox > config.knobs.rangerTimeboxMaxMinutes)
+        throw new Error(`The Ranger time box exceeds the settings ceiling of ${config.knobs.rangerTimeboxMaxMinutes} minutes. Only the user can lift this limit.`);
       const party = this.keeper.store.activeStaffing(threadId);
       const reserved = this.keeper.store.all("hires").filter(i => !i.memberThreadId && i.owner.keeperThreadId === threadId && !isHireCancelled(this.keeper, i));
       const count = party.length + reserved.length;
       if (count >= config.keepers.partyMax) throw new Error("The live party budget is full");
       const partyDecision = count >= partyLimit ? limits.softDecision(threadId, questId, "party") : null;
-      if (count >= partyLimit && !partyDecision) throw new Error("The live party budget is full");
+      if (count >= partyLimit && !partyDecision) throw new Error("The live party budget is full. Use tavern_decide with exceeds: party to request a reversible exception for one hire.");
       const rangerFull = role.id === "ranger" && party.filter(m => m.classId === "ranger").length + reserved.filter(i => i.classId === "ranger").length >= (lead.budget?.rangers ?? this.config().keepers.rangerMax);
-      const rangerDecision = rangerFull ? limits.softDecision(threadId, questId, "rangers") : null;
-      if (rangerFull && !rangerDecision) throw new Error("The Ranger budget is full");
+      const rangerOverTime = rangerTimebox !== null && rangerTimebox > rangerMinutes;
+      const rangerDecision = rangerFull || rangerOverTime ? limits.softDecision(threadId, questId, "rangers") : null;
+      if ((rangerFull || rangerOverTime) && !rangerDecision) {
+        const reason = rangerOverTime ? `The Ranger time box exceeds the class budget of ${rangerMinutes} minutes` : "The Ranger budget is full";
+        throw new Error(`${reason}. Use tavern_decide with exceeds: rangers to request a reversible exception for one hire.`);
+      }
       return { party, reserved, permits: [partyDecision, rangerDecision].filter((id): id is string => id !== null) };
     };
     const { party, reserved } = checkStaffing();
     const limitDecisionIds: string[] = [];
-    if (
-      role.id === "ranger" &&
-      (input.brief.timeboxMinutes === null ||
-        input.brief.timeboxMinutes > rangerLimit ||
-        !input.brief.questions.length)
-    )
-      throw new Error(
-        `Rangers need numbered questions and a time box of at most ${rangerLimit} minutes`,
-      );
     const review = this.review("automatic");
     const reviewAllowance = role.id === "smith" && review.waiting >= review.budget && limits.reviewAvailable(questId);
     if (

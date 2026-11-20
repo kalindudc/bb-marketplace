@@ -11,7 +11,7 @@ afterEach(() => { for (const db of databases.splice(0)) db.close(); });
 function fixture() {
   let now = 1_000_000;
   const db = new Sqlite(":memory:");
-  db.exec(MIGRATIONS.join("\n"));
+  db.exec(MIGRATIONS.join(";\n"));
   databases.push(db);
   const store = new AwayStore(db, () => now);
   const input = (revision = store.snapshot().revision) => ({ revision, until: now + 3_600_000,

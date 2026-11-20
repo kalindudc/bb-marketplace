@@ -20,7 +20,7 @@ async function fixture(combined = false) {
   cleanup.push(async () => { await f.harness.lifecycle.dispose(); rmSync(root, { recursive: true, force: true }); });
   if (combined) await tavern(f.bb);
   const db = f.bb.storage.database();
-  if (!combined) db.exec(MIGRATIONS.join("\n"));
+  if (!combined) db.exec(MIGRATIONS.join(";\n"));
   const pending = { afterCommit: undefined as (() => void) | undefined };
   const store = new SettingsStore(db, () => 1000, () => { const next = pending.afterCommit; pending.afterCommit = undefined; next?.(); }, () => {});
   if (!combined) registerSettingsRpc(f.bb, store, new SettingsFiles(store, join(root, "settings.toml")));

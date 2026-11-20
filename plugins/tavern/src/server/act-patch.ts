@@ -39,7 +39,7 @@ export function cleanRebaseMatches(repository: string, verifiedCommit: string, c
     if (directory) rmSync(directory, { recursive: true, force: true });
   }
 }
-export type RebaseHome = { root: string | null; remoteUrl: string; dataDir: string };
+export type RebaseHome = { root: string | null; remoteUrl: string; dataDir: string; base?: string };
 export function homeRebaseMatches(maker: string, home: RebaseHome, verifiedCommit: string, commit: string) {
   if (![verifiedCommit, commit].every(oid => gitOidSchema.safeParse(oid).success) || !sourceFetchSchema.shape.remoteUrl.safeParse(home.remoteUrl).success) return false;
   let directory: string | undefined;
@@ -52,8 +52,8 @@ export function homeRebaseMatches(maker: string, home: RebaseHome, verifiedCommi
     execGitSync(directory, ["init", "--quiet", "--bare", repository], { cwd: directory, extra, stdio: ["ignore", "pipe", "pipe"], timeout: 15_000 });
     // Keep the Git config private too: linked worktrees share their repository config with the maker.
     const cwd = home.root ?? repository;
-    const advertised = git(repository, ["ls-remote", "--symref", "--", home.remoteUrl, "HEAD"], undefined, undefined, cwd);
-    const branch = /^ref: (refs\/heads\/[^\s]+)\tHEAD$/m.exec(advertised)?.[1];
+    const advertised = home.base ? null : git(repository, ["ls-remote", "--symref", "--", home.remoteUrl, "HEAD"], undefined, undefined, cwd);
+    const branch = home.base ? (home.base.startsWith("refs/heads/") ? home.base : "refs/heads/" + home.base) : /^ref: (refs\/heads\/[^\s]+)\tHEAD$/m.exec(advertised ?? "")?.[1];
     if (!branch || !gitRefSchema.safeParse(branch).success) return false;
     const resolve = () => {
       const lines = git(repository, ["ls-remote", "--refs", "--", home.remoteUrl, branch], undefined, undefined, cwd).split("\n");
@@ -63,7 +63,7 @@ export function homeRebaseMatches(maker: string, home: RebaseHome, verifiedCommi
       return oid!;
     };
     const destination = resolve();
-    if (!advertised.split("\n").includes(`${destination}\tHEAD`)) return false;
+    if (advertised && !advertised.split("\n").includes(`${destination}\tHEAD`)) return false;
     git(repository, ["fetch", "--no-tags", "--no-write-fetch-head", "--no-recurse-submodules", "--refmap=", "--", home.remoteUrl, branch]);
     git(repository, ["cat-file", "-e", `${destination}^{commit}`]);
     const common = execGitSync(maker, ["merge-base", verifiedCommit, commit], { extra, encoding: "utf8", timeout: 15_000, stdio: ["pipe", "pipe", "pipe"] }).trim();

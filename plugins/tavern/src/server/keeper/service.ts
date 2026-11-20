@@ -2,6 +2,8 @@ import { authorize, commitUserAct, type UserActReceipt } from "../authority";
 import { QuestAuthority } from "../quest-authority";
 import { preapprovalWords } from "../../shared/quest-authority";
 import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
+import type { KeeperCallKind } from "../../shared/undo-lane";
 import { applyAskEffect, type EffectHandlers, type AskEffect } from "../ask-effects";
 import type { RequestSources } from "../../shared/request-source";
 import { LIMITS } from "../limits";
@@ -80,7 +82,7 @@ import { moveTime } from "../../shared/time";
 import { assertQuestTransition, transitionQuest, displayStage, nextNewsBy, storedPhase, partyFits, checksFit, approvedPartyReceipt } from "./quest-lifecycle";
 import { settled, verifiedWaypoint, waypointCheck } from "../../shared/waypoint";
 import { isCloseEffect, waiverWords } from "../../shared/closing";
-import { assertUndoLane, undoAskProjection } from "../undo-record";
+import { assertUndoLane, readUndoLanes, undoAskProjection } from "../undo-record";
 
 export class Keeper {
   settings: (questId?: string | null) => TavernSettings = () =>
@@ -938,8 +940,19 @@ export class Keeper {
       holds: plan.waypoints.map(w => w.id),
     }, { planVersion: plan.version });
   }
-  settle(threadId: string, input: Parameters<typeof settleWaypointSchema.parse>[0], legacySkipAskId?: string) {
-    const { boardQuestId, waypointId, as, reason } = settleWaypointSchema.parse(input);
+  settle(threadId: string, input: Parameters<typeof settleWaypointSchema.parse>[0], legacySkipAskId?: string): Decision | Ask {
+    const call = settleWaypointSchema.parse(input);
+    const { q, w } = this.waypointForSettlement(threadId, call);
+    const shift = !legacySkipAskId && this.keeperCallShift(threadId, call.as);
+    if (shift) {
+      const { boardQuestId, ...effect } = call;
+      const verb = { accepted: "Accept", skipped: "Skip", open: "Reopen" }[call.as];
+      return this.askForKeeperCall(threadId, boardQuestId, { ...effect, type: "settle-waypoint", planVersion: q.planVersion },
+        `${verb} ${w.id}: ${w.title}?`, verb, `${verb} this waypoint.`, "Leave the waypoint unchanged.", "The Keeper waits for your answer on this waypoint.");
+    }
+    return this.recordSettlement(threadId, call, q, w.title, legacySkipAskId);
+  }
+  private waypointForSettlement(threadId: string, { boardQuestId, waypointId, as }: ReturnType<typeof settleWaypointSchema.parse>) {
     const q = this.liveQuest(threadId, boardQuestId);
     this.assertQuestNotHeld(q.id);
     this.guard(threadId, q.id);
@@ -955,17 +968,43 @@ export class Keeper {
       throw new Error("Only an unsettled optional waypoint can be skipped");
     if (as === "open" && !(w.state === "skipped" || w.state === "accepted"))
       throw new Error("Only a waypoint the Keeper accepted or skipped can be reopened");
+    return { q, w };
+  }
+  private recordSettlement(threadId: string, { boardQuestId, waypointId, as, reason }: ReturnType<typeof settleWaypointSchema.parse>, q: BoardQuest, title: string, askId?: string, answerReceipt?: string) {
     const words = as === "open" ? "Reopened" : as === "accepted" ? "Accepted" : "Skipped";
     return this.store.atomic(() => {
-      const decision = this.decide(threadId, { boardQuestId, text: `${words} ${w.id}: ${w.title}`, why: reason, reversible: true,
-        ...(legacySkipAskId ? { source: "ask", sourceRef: legacySkipAskId } : { source: "keeper" }),
-      }, undefined, { waypointCall: { planVersion: q.planVersion, waypointId, as } });
-      if (!legacySkipAskId) {
-        authorize(as === "accepted" ? "acceptWaypoint" : as === "skipped" ? "skipWaypoint" : "reopenWaypoint", { level: "keeper", receipt: decision.id });
-        this.withdrawClosingForWaypointChange(q);
-      }
+      const decision = this.decide(threadId, { boardQuestId, text: `${words} ${waypointId}: ${title}`, why: reason, reversible: true,
+        ...(askId ? { source: "ask", sourceRef: askId } : { source: "keeper" }),
+      }, undefined, { waypointCall: { planVersion: q.planVersion, waypointId, as }, answerReceipt });
+      if (!askId) authorize(as === "accepted" ? "acceptWaypoint" : as === "skipped" ? "skipWaypoint" : "reopenWaypoint", { level: "keeper", receipt: decision.id });
+      if (!askId || answerReceipt) this.withdrawClosingForWaypointChange(q);
       return decision;
     });
+  }
+  private keeperCallShift(threadId: string, kind: KeeperCallKind) {
+    return readUndoLanes(this.store, threadId).find(row => row.kind === kind);
+  }
+  private askForKeeperCall(threadId: string, boardQuestId: string | null, effect: Extract<AskEffect, { type: "settle-waypoint" | "soft-limit" }>,
+    question: string, label: string, approve: string, decline: string, meanwhile: string) {
+    const pending = this.store.openAsks(threadId).find(a => a.boardQuestId === boardQuestId && isDeepStrictEqual(a.effect, effect));
+    if (pending) return pending;
+    return this.ask(threadId, { boardQuestId, kind: "decision", effect, question, why: effect.reason.slice(0, 200), meanwhile, holds: [],
+      options: [{ id: "approve", label, detail: approve, recommended: true }, { id: "deny", label: "Leave as is", detail: decline, recommended: false }],
+    });
+  }
+  decideOrAsk(threadId: string, input: Parameters<Keeper["decide"]>[1]): Decision | Ask {
+    if (!input.exceeds || input.source === "user" || !input.reversible || input.askId || input.kind) return this.decide(threadId, input);
+    this.assertUnusedSoftLimitAnswer(input.sourceRef);
+    const shift = this.keeperCallShift(threadId, input.exceeds);
+    if (!shift) return this.decide(threadId, input);
+    const target = input.exceeds === "party" ? "party" : "Ranger";
+    const question = `Allow one hire beyond the class ${target} limit?`;
+    return this.askForKeeperCall(threadId, input.boardQuestId ?? null, { type: "soft-limit", limit: input.exceeds, text: input.text, reason: input.why },
+      question, "Allow one hire", `Give the Keeper one ${target} exception for this hire; your settings ceiling still applies.`, "Do not give the Keeper an exception.", "The Keeper waits for your answer before using an exception.");
+  }
+  private assertUnusedSoftLimitAnswer(sourceRef: string | null | undefined) {
+    if (sourceRef && this.store.get("asks", sourceRef)?.effect?.type === "soft-limit")
+      throw new Error("The Keeper cannot reuse a soft-limit answer; it records one exception when answered.");
   }
   private withdrawClosingForWaypointChange(q: BoardQuest) {
     if (q.phase !== "closing") return;
@@ -1215,6 +1254,20 @@ export class Keeper {
       });
       applyAskEffect(effect, {
         ...effects,
+        "settle-waypoint": effect => {
+          if (effect.type !== "settle-waypoint" || optionId !== "approve") return;
+          if (by !== "user" || receipt?.act !== "answerAsk" || !ask.boardQuestId) throw new Error("This waypoint needs your explicit answer.");
+          const call = { boardQuestId: ask.boardQuestId, waypointId: effect.waypointId, as: effect.as, reason: effect.reason };
+          const { q, w } = this.waypointForSettlement(ask.keeperThreadId, call);
+          if (q.planVersion !== effect.planVersion) throw new Error("This waypoint ask belongs to an old plan.");
+          this.recordSettlement(ask.keeperThreadId, call, q, w.title, ask.id, ask.id);
+        },
+        "soft-limit": effect => {
+          if (effect.type !== "soft-limit" || optionId !== "approve") return;
+          if (by !== "user" || receipt?.act !== "answerAsk") throw new Error("This exception needs your explicit answer.");
+          this.decide(ask.keeperThreadId, { boardQuestId: ask.boardQuestId, text: effect.text, why: effect.reason,
+            reversible: true, source: "ask", sourceRef: ask.id, exceeds: effect.limit }, undefined, { answerReceipt: ask.id });
+        },
         greenlight: effect => {
           if (effect.type !== "greenlight" || optionId !== "approve") return;
           if (!ask.boardQuestId) throw new Error("A greenlight needs its quest");
@@ -1269,7 +1322,7 @@ export class Keeper {
       sourceRef?: string | null;
     },
     autoApproval?: { questId: string; planVersion: number },
-    effect?: Pick<Decision, "waypointCall" | "checkChange">,
+    effect?: Pick<Decision, "waypointCall" | "checkChange" | "answerReceipt" | "pullRequestReady" | "pullRequestGrant">,
   ) {
     this.require(threadId, "keeper");
     const questId = input.boardQuestId ?? null;
@@ -1317,7 +1370,11 @@ export class Keeper {
         throw new Error("Consequential decisions require an answered user ask");
     }
     if (input.exceeds) {
-      if (!input.reversible) throw new Error("A soft limit decision must be reversible");
+      if (!input.reversible || input.askId || input.kind) throw new Error("A soft limit decision must be a separate, reversible call.");
+      if (!effect?.answerReceipt) {
+        this.assertUnusedSoftLimitAnswer(input.sourceRef);
+        assertUndoLane(this.store, threadId, input.exceeds);
+      }
     }
     authorize(input.source === "steer" ? "steerDecision" : input.source === "ask" ? "answerAsk" : "defaultDecision", { level: input.source === "steer" ? "user-in-words" : input.source === "ask" ? "user-explicit" : "keeper", receipt: input.sourceRef ?? input.text });
     const decision = decisionSchema.parse({
@@ -1346,8 +1403,8 @@ export class Keeper {
         questId,
         "decision.made",
         decision.text,
-        { decisionId: decision.id, ...(effect?.waypointCall ? { waypoint: { ...effect.waypointCall, reason: decision.why } } : {}), ...(input.askId ? { askId: input.askId, answeredBy: "keeper", keeperName: this.name(this.require(threadId, "keeper")), ...this.authority.keeperDecisionSource(this.store.get("asks", input.askId)!) } : {}) },
-        { kind: "agent", threadId },
+        { decisionId: decision.id, ...(effect?.waypointCall ? { waypoint: { ...effect.waypointCall, reason: decision.why } } : {}), ...(input.askId ? { askId: input.askId, answeredBy: "keeper", keeperName: this.name(this.require(threadId, "keeper")), ...this.authority.keeperDecisionSource(this.store.get("asks", input.askId)!) } : {}), ...(decision.answerReceipt ? { askId: decision.answerReceipt, answeredBy: "user" } : {}) },
+        decision.answerReceipt ? { kind: "user" } : { kind: "agent", threadId },
       );
       }
     });
@@ -1772,7 +1829,7 @@ export class Keeper {
         state = "accepted";
         resolutionReason = call.why;
         const keeper = this.member(q.keeperThreadId);
-        acceptedBy = keeper ? this.name(keeper) : "the Keeper";
+        acceptedBy = call.answerReceipt ? "you" : keeper ? this.name(keeper) : "the Keeper";
       } else if (reported && (w.check === "none" || w.check === "you" && linked.every(e => e.doneBy?.kind === "user"))) state = "done";
       else if (w.check === "warden" && reported && linked.every(e => e.status === "verified")) state = "verified";
       else if (rejected) state = "rejected";

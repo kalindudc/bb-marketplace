@@ -12,7 +12,7 @@ import type { Database } from "../../src/server/ports";
 const close: (() => void)[] = [];
 const client = { experimental_caller: { kind: "client" as const }, experimental_signal: new AbortController().signal };
 function fixture() {
-  const db = new Sqlite(":memory:"); db.exec(MIGRATIONS.join("\n"));
+  const db = new Sqlite(":memory:"); db.exec(MIGRATIONS.join(";\n"));
   const directory = mkdtempSync(join(tmpdir(), "tavern-settings-"));
   close.push(() => { db.close(); rmSync(directory, { recursive: true, force: true }); });
   const store = new SettingsStore(db as unknown as Database);

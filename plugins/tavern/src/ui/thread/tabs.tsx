@@ -27,14 +27,15 @@ function RuleRow({ rule, quest, variant = "on", lead = "", actions, onWiden }: {
 
 
 const SOURCE_WORD: Record<Decision["source"], string> = { steer: "your steer", ask: "your answer", user: "you", keeper: "Keeper" };
-function DecisionRow({ d }: { d: Decision }) {
-  return <li className={d.undone ? "undone" : ""}><span className="src">{SOURCE_WORD[d.source]}</span><Clamp lines={1} text={d.text} more={d.why} /><TimeAgo at={d.createdAt} /></li>;
+function DecisionRow({ d, undo }: { d: Decision; undo: { pending: boolean; run(id: string): void } }) {
+  return <li className={d.undone ? "undone" : ""}><span className="src">{SOURCE_WORD[d.source]}</span><Clamp lines={1} text={d.text} more={d.why} /><TimeAgo at={d.createdAt} />{d.answerReceipt && d.reversible && !d.undone && !d.undoUnavailable && <button type="button" className="btn sm" disabled={undo.pending} onClick={() => undo.run(d.id)} aria-label={`Undo: ${d.text}`}>Undo</button>}</li>;
 }
 /** Older history, one bounded page per "Show more"; each page asks for the next only when the user does. */
-function OlderDecisions({ keeperThreadId, cursor, shown, total }: { keeperThreadId: string; cursor: string; shown: number; total: number }) {
+type DecisionHistoryProps = { keeperThreadId: string; cursor: string; shown: number; total: number; undo: Parameters<typeof DecisionRow>[0]["undo"] };
+function OlderDecisions({ keeperThreadId, cursor, shown, total, undo }: DecisionHistoryProps) {
   const [open, setOpen] = useState(false);
   if (!open) return <li className="lg-more"><button type="button" className="btn sm ghost act" onClick={() => setOpen(true)} aria-label={`Show older decisions: ${shown} of ${total} shown`}>Show more<span className="m">{shown} of {total}</span><ExpandsMark open={false} /></button></li>;
-  return <HistoryPage keeperThreadId={keeperThreadId} cursor={cursor} shown={shown} total={total} />;
+  return <HistoryPage keeperThreadId={keeperThreadId} cursor={cursor} shown={shown} total={total} undo={undo} />;
 }
 function AskHistoryPage({ threadId, cursor }: { threadId: string; cursor: string }) {
   const [open, setOpen] = useState(false);
@@ -42,11 +43,11 @@ function AskHistoryPage({ threadId, cursor }: { threadId: string; cursor: string
   if (!open) return <li><button type="button" className="btn sm" onClick={() => setOpen(true)}>Show older</button></li>;
   return <>{query.data?.asks.map(ask => <li key={ask.id}><span className="t">{ask.question}</span><StatusPill status={ask.state}>{ask.state}</StatusPill></li>)}{query.data?.nextCursor && <AskHistoryPage threadId={threadId} cursor={query.data.nextCursor} />}<QueryState error={query.error} /></>;
 }
-function HistoryPage({ keeperThreadId, cursor, shown, total }: { keeperThreadId: string; cursor: string; shown: number; total: number }) {
+function HistoryPage({ keeperThreadId, cursor, shown, total, undo }: DecisionHistoryProps) {
   const page = experimental_useRpcQuery({ contract: rpcContract, method: "decisionHistory", input: { keeperThreadId, cursor, limit: 100 } });
   if (!page.data) return <li className="lg-more"><QueryState error={page.error} loading={page.isLoading} retry={() => void page.refetch()} label="older decisions" skeleton={<SkLines n={3} />} /></li>;
   const now = shown + page.data.decisions.length;
-  return <>{page.data.decisions.map(d => <DecisionRow key={d.id} d={d} />)}{page.data.nextCursor && <OlderDecisions keeperThreadId={keeperThreadId} cursor={page.data.nextCursor} shown={now} total={page.data.total} />}</>;
+  return <>{page.data.decisions.map(d => <DecisionRow key={d.id} d={d} undo={undo} />)}{page.data.nextCursor && <OlderDecisions keeperThreadId={keeperThreadId} cursor={page.data.nextCursor} shown={now} total={page.data.total} undo={undo} />}</>;
 }
 
 /** The ledger while it loads: the now line, a card per live quest this device last saw, Decided for you and the standing rules, in their own classes. */
@@ -126,6 +127,7 @@ export function LedgerTab({ threadId, params }: ExperimentalThreadTabProps & { p
         const decidedCount = data.decidedCount ?? attention.length;
         const newSummaries = list.items.filter(item => item.kind === "summary" && item.questId).reverse();
         const historyTotal = data.decisionsTotal ?? data.decisions.length;
+        const undoFromHistory = { pending: undo.isPending, run: (decisionId: string) => void undo.mutate({ decisionId }).catch(setError) };
         const short = (id: string | null) => data.boardQuests.find(q => q.id === id)?.short ?? null;
         const setRule = (id: string, active: boolean) => void confirm.mutate({ ruleId: id, active }).catch(setError);
         const questTitle = (r: Rule) => r.scope === "quest" ? data.boardQuests.find(q => q.id === r.scopeId)?.title ?? null : null;
@@ -188,7 +190,7 @@ export function LedgerTab({ threadId, params }: ExperimentalThreadTabProps & { p
           <div className="lg-history" role="group" aria-label="History">
             <h3 className="lbl">History</h3>
             {answered.length > 0 && <details className="lg-fold" data-fold="answered"><summary><Glyph name="chevron" size={12} /><span>Past asks</span><span className="num">{answered.length}</span></summary><ul className="lg-rows">{answered.map(a => <li key={a.id}><span className="lg-row"><StatusPill status={a.state === "answered" ? "answered" : a.state}>{a.state}</StatusPill><span className="t" title={a.question}>{a.question}</span><TimeAgo at={a.answer?.at ?? a.createdAt} /></span></li>)}{data.asksNextCursor && <AskHistoryPage threadId={threadId} cursor={data.asksNextCursor} />}</ul></details>}
-            <details className="lg-fold" data-fold="decisions"><summary><Glyph name="chevron" size={12} /><span>All decisions</span><span className="num">{historyTotal}</span><span className="anc">{historyTotal > data.decisions.length ? "newest first" : `${keeperCalls.length} by the Keeper alone · ${data.decisions.length - keeperCalls.length} from you`}</span></summary><ul className="lg-rows">{data.decisions.map(d => <DecisionRow key={d.id} d={d} />)}{data.decisionsNextCursor && <OlderDecisions keeperThreadId={threadId} cursor={data.decisionsNextCursor} shown={data.decisions.length} total={historyTotal} />}</ul></details>
+            <details className="lg-fold" data-fold="decisions"><summary><Glyph name="chevron" size={12} /><span>All decisions</span><span className="num">{historyTotal}</span><span className="anc">{historyTotal > data.decisions.length ? "newest first" : `${keeperCalls.length} by the Keeper alone · ${data.decisions.length - keeperCalls.length} from you`}</span></summary><ul className="lg-rows">{data.decisions.map(d => <DecisionRow key={d.id} d={d} undo={undoFromHistory} />)}{data.decisionsNextCursor && <OlderDecisions keeperThreadId={threadId} cursor={data.decisionsNextCursor} shown={data.decisions.length} total={historyTotal} undo={undoFromHistory} />}</ul></details>
             {offRules.length > 0 && <details className="lg-fold" data-fold="rules-off"><summary><Glyph name="chevron" size={12} /><span>Rules turned off</span><span className="num">{offRules.length}</span></summary><ul className="lg-rows lg-rules">{offRules.map(r => <RuleRow key={r.id} rule={r} variant="off" quest={questTitle(r)} actions={<button type="button" className="btn sm" disabled={confirm.isPending} aria-label={`Turn on the rule: ${r.text}`} onClick={() => setRule(r.id, true)}>Turn on</button>} />)}</ul></details>}
             {data.routes.length > 0 && <details className="lg-fold" data-fold="routes"><summary><Glyph name="chevron" size={12} /><span>Read as</span><span className="num">{data.routes.length}</span><span className="anc">how the Keeper took your messages</span></summary><ul className="lg-rows">{data.routes.map(r => <li key={r.id}><span className={`route-chip k-${r.kind}`}>{r.kind === "new-quest" ? "new quest" : r.kind}</span><Clamp lines={1} text={`${r.summary}${r.corrected ? " · corrected" : ""}`} /><TimeAgo at={r.createdAt} /></li>)}</ul></details>}
             {archived.length > 0 && <details className="lg-fold" data-fold="cellar"><summary><Glyph name="chevron" size={12} /><span><Vocabulary word="cellar" /></span><span className="num">{archived.length}</span></summary><ul className="lg-rows">{archived.map(q => <li key={q.id}><button type="button" className="lg-row act" onClick={() => navigate.toPluginPanel("tavern", { subPath: `quest/${q.id}` })}><span className="t">{q.title}</span><OpensMark /></button></li>)}</ul></details>}

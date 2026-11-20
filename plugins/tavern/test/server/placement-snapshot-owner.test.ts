@@ -19,7 +19,7 @@ function captureInput(overrides = {}) {
 }
 function fixture() {
   const host = createFakePluginHost({ pluginId: "tavern" }); hosts.add(host);
-  const db = host.bb.storage.database(); db.exec(MIGRATIONS.join("\n"));
+  const db = host.bb.storage.database(); db.exec(MIGRATIONS.join(";\n"));
   return { ...host, db, placements: new PlacementStore(db, () => 100), owners: new SnapshotStore(db) };
 }
 const limits = { maxMakers: 10, maxCheckers: 10 };

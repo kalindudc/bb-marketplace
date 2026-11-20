@@ -68,7 +68,7 @@ async function fixture(format: "sha1" | "sha256" = "sha1", binarySize = 32) {
     }
     return intercept ? intercept(call.method as HostMethod, call.input, result) : result;
   } }); hosts.add(host);
-  const db = host.bb.storage.database(); db.exec(MIGRATIONS.join("\n"));
+  const db = host.bb.storage.database(); db.exec(MIGRATIONS.join(";\n"));
   const placements = new PlacementStore(db), port = createHostPort(host.bb);
   placements.reserve(placementRecord({ memberThreadId: "maker", sourceSnapshotId: "snapshot", hostId: "source-host", environmentId: "source-env", root: source }), { maxMakers: 2, maxCheckers: 2 });
   const snapshot = sourceSnapshot({ purpose: "wip", sourceThreadId: "maker", makerThreadId: "maker", objectFormat: format, base, sourceHead: head, tree,
@@ -132,7 +132,7 @@ it("keeps receipts strict, optional for old records, private to backups, and per
   const forged = structuredClone(captured);
   forged.tables.tavern_placements = { columns: ["id", "data", "scope_delivery_json"], rows: [{ id: record.id, data: JSON.stringify(record), scope_delivery_json: null }] };
   const target = createFakePluginHost({ pluginId: "tavern" }); hosts.add(target);
-  const db = target.bb.storage.database(); db.exec(MIGRATIONS.join("\n"));
+  const db = target.bb.storage.database(); db.exec(MIGRATIONS.join(";\n"));
   expect(() => new BackupRecords(db, new SettingsStore(db)).restore(forged)).toThrow(/not a Tavern records table/);
   expect(() => backups.restore(captured)).toThrow(/empty/);
 }, 60_000);

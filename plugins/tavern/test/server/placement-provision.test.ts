@@ -18,7 +18,7 @@ const intent = (): HireIntent => ({ classId: "smith", characterId: "juno", proje
 function fixture() {
   const spawn = vi.fn(async () => makeThreadResponse({ id: "child", projectId: "project", parentThreadId: "keeper" }));
   const host = createFakePluginHost({ pluginId: "tavern", sdk: { threads: { spawn } } }); hosts.add(host);
-  const db = host.bb.storage.database(); db.exec(MIGRATIONS.join("\n"));
+  const db = host.bb.storage.database(); db.exec(MIGRATIONS.join(";\n"));
   const placements = new PlacementStore(db, () => 2), hires = new KeeperStore(db);
   placements.saveSnapshot(sourceSnapshot());
   const record = placementRecord({ target: { type: "provider", environmentProviderId: "vendor-checkout", inputs: null,

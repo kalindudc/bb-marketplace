@@ -146,7 +146,7 @@ export function TavernHeader({ subPath }: PluginNavPanelProps) {
 }
 
 function QuestRoute({ id, summaryId, tale, registry, room }: { id: string; summaryId?: string; tale: boolean; registry: Registry; room: Room | undefined }) {
-  const query = experimental_useRpcQuery({ contract: rpcContract, method: "boardQuest", input: { id } });
+  const query = experimental_useRpcQuery({ contract: rpcContract, method: "boardQuest", input: { id, ...(tale ? {} : { refreshPullRequests: true }) } });
   const ended = query.data ? isFinished(query.data.quest.phase) : undefined;
   useEffect(() => { if (ended !== undefined) rememberCount(SKEL.finished(id), ended ? 1 : 0); }, [id, ended]);
   return query.data ? <>{query.error && <div className="tv-problem" role="alert" data-stuck>Refresh failed: {query.error.message}. Showing the last loaded quest.<button type="button" className="btn sm" onClick={() => void query.refetch()}>Retry</button></div>}{!tale && room && <QuestAwayNotes room={room} registry={registry} questId={id} />}{tale ? <Surface.TalePage detail={query.data} registry={registry} room={room} /> : <Surface.QuestPage detail={query.data} registry={registry} room={room} summaryId={summaryId} />}</> : <PageLoad error={query.error} retry={query.refetch} skeleton={questSkeleton(id, tale, room)} label={tale ? "the tale" : "the quest"} />;

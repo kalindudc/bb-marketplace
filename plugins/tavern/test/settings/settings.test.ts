@@ -10,7 +10,7 @@ const databases: Sqlite.Database[] = [];
 function fixture() {
   const db = new Sqlite(":memory:");
   databases.push(db);
-  db.exec(MIGRATIONS.join("\n"));
+  db.exec(MIGRATIONS.join(";\n"));
   let now = 1_800_000_000_000;
   const store = new SettingsStore(db as unknown as Database, () => now++);
   return { db, store };

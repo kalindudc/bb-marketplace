@@ -30,7 +30,8 @@ export class LimitPolicy {
   claimSoft(id: string, token: string) {
     const d = this.k.store.get("decisions", id);
     if (!d || !d.reversible || d.undone || d.usedBy || !d.exceeds) throw new Error("This soft limit decision is no longer available.");
-    authorize(d.exceeds === "party" ? "exceedParty" : "exceedRangers", { level: "keeper", receipt: d.id });
+    if (d.answerReceipt) authorize("answerAsk", { level: "user-explicit", receipt: d.answerReceipt });
+    else authorize(d.exceeds === "party" ? "exceedParty" : "exceedRangers", { level: "keeper", receipt: d.id });
     this.k.store.put("decisions", id, { ...d, usedBy: token });
   }
   release(token: string, questId: string | null, decisions: string[]) {

@@ -1,33 +1,9 @@
 import { PluginCliError, experimental_PluginRpcRefusal, type ExperimentalPluginRpcHandlerContext } from "@get-bb/plugin-sdk";
 import type { KeeperStore } from "./keeper/store";
 
-const explicit = { level: "user-explicit", proof: "act and surface" } as const;
-const words = { level: "user-in-words", proof: "routed user message, quoted exactly" } as const;
-const keeper = { level: "keeper", proof: "recorded reversible decision" } as const;
-const invariant = { level: "tavern", proof: "invariant" } as const;
-export const AUTHORITY = {
-  delegateQuest: explicit, preapproveQuest: explicit, revokeQuestAuthority: explicit,
-  answerAsk: explicit, greenlight: explicit, conclude: explicit, closeEarly: explicit,
-  resolveHandBack: explicit,
-  releaseCheckerHandoff: explicit, awayClose: explicit, awayReturn: explicit,
-  addRule: explicit, widenRule: explicit, confirmRule: explicit, undoDecision: explicit, resetUndoLane: explicit,
-  correctRoute: explicit, stopBoardQuest: explicit, resumeAll: explicit,
-  placementRetry: explicit, placementModelFailureClear: explicit,
-  holdBoardQuest: explicit, resumeBoardQuest: explicit, allowReview: explicit,
-  archiveBoardQuests: explicit, deleteBoardQuest: explicit, restoreDeletedQuest: explicit,
-  setTaleKept: explicit, journalEdit: explicit, resumeKeeper: explicit,
-  saveCharacterVoice: explicit, saveCharacterAvatar: explicit, saveClass: explicit, removeClassOverride: explicit,
-  applyClassExecution: explicit, dismissClassNotice: explicit,
-  settingsAgentChange: { level: "keeper", proof: "recorded user grant and calling thread", grant: "tavern.agentsMayChangeSettings" },
-  settingsUpdate: explicit, settingsUndo: explicit, settingsImport: explicit,
-  settingsFile: explicit, settingsApplySuggestion: explicit, settingsEndOverride: explicit, backupRestore: explicit,
-  guardInstall: explicit, guardUninstall: explicit,
-  voiceCheckStart: explicit, voiceCheckCancel: explicit, releaseHold: explicit,
-  openQuest: words, reopenQuest: words, weakenChecks: words, steerDecision: words,
-  holdQuestFromMessage: words, resumeQuestFromMessage: words,
-  keepMember: keeper, releaseMember: keeper, defaultDecision: keeper, acceptWaypoint: keeper, skipWaypoint: keeper, reopenWaypoint: keeper, exceedParty: keeper, exceedRangers: keeper,
-  verifyOwnWork: invariant, upgradeResolution: invariant, changeClosedCredits: invariant,
-} as const;
+import { AUTHORITY, type Act, type AuthorityLevel } from "../shared/authority";
+export { AUTHORITY, type Act, type AuthorityLevel } from "../shared/authority";
+
 export const QUEST_LANES = {
   production: { lane: "user", delegatable: true }, merge: { lane: "user", delegatable: true },
   credential: { lane: "user", delegatable: true }, "sends-as-you": { lane: "user", delegatable: true }, destructive: { lane: "user", delegatable: true },
@@ -36,8 +12,6 @@ export const QUEST_LANES = {
   "re-plans within the party": { lane: "keeper", delegatable: false }, "optional waypoint skips": { lane: "keeper", delegatable: false },
 } as const;
 export type OptionalRpcContext<T> = { [K in keyof T]: T[K] extends (input: infer I, context: infer C) => infer R ? (input: I, context?: C) => R : never };
-export type Act = keyof typeof AUTHORITY;
-export type AuthorityLevel = typeof AUTHORITY[Act]["level"];
 export function authorize(act: Act, evidence: { level: AuthorityLevel; receipt: string }) {
   if (AUTHORITY[act].level !== evidence.level || !evidence.receipt.trim())
     throw new Error(`${act} requires ${AUTHORITY[act].level}: ${AUTHORITY[act].proof}`);

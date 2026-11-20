@@ -35,6 +35,7 @@ export interface ScopesDeps extends WatchDeps {
   hostTargetForThread?(threadId: string): import("./schema").ScopeHostTarget | undefined;
   onHostTemplateChanged?(threadId: string): void;
   narrowBoundScope?(scope: Scope): Scope;
+  pullRequestPolicy?(threadId: string): Scope["pullRequestPolicy"];
   dataDir?: string;
   pathsForThread(threadId: string): ScopeThreadPaths | Promise<ScopeThreadPaths>;
   projectForThread?(threadId: string): ProjectContext;
@@ -105,6 +106,7 @@ export function registerScopes(bb: BbPluginApi, deps: ScopesDeps) {
     check(store.revision(threadId) !== revision);
     const current = store.records.get(threadId), enforceFrom = current?.scope?.enforceFrom ?? template.enforceFrom;
     template = { ...template, mode, ...(enforceFrom === undefined ? {} : { enforceFrom }) };
+    if (deps.pullRequestPolicy) template.pullRequestPolicy = deps.pullRequestPolicy(threadId);
     if (current?.binding) {
       if (current.binding.placementId === null && current.scope?.preset === "open" && template.preset !== "open") throw new Error("Only an open Keeper scope can bind remotely without a native delivery");
       if (!current.error && JSON.stringify(current.scope) === JSON.stringify(template) && JSON.stringify(current.template) === JSON.stringify(template)) return current.scope!;
@@ -211,6 +213,16 @@ export function registerScopes(bb: BbPluginApi, deps: ScopesDeps) {
     mode: () => mode,
     writeScope,
     rebindScope,
+    refreshPullRequestPolicy(threadId: string) {
+      const record = store.records.get(threadId);
+      if (!record?.scope || record.error || !deps.pullRequestPolicy) return false;
+      const pullRequestPolicy = deps.pullRequestPolicy(threadId);
+      if (JSON.stringify(record.scope.pullRequestPolicy) === JSON.stringify(pullRequestPolicy)) return true;
+      const bound = { ...record.scope, pullRequestPolicy };
+      store.write(threadId, bound, record.template && { ...record.template, pullRequestPolicy }, undefined, true);
+      if (record.binding) deps.onHostTemplateChanged?.(threadId);
+      return true;
+    },
     hostTemplate: (threadId: string) => originalHostTemplate(store.records.get(threadId)),
     clearScope: (threadId: string) => store.clear(threadId),
     status: () => ({ mode, installation, guard: guardStatus(guard), threads: [...store.records.entries()].map(([threadId, record]) => {

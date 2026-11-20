@@ -23,6 +23,7 @@ import type { Ask, Member } from "../shared/schema";
 import { DEFAULT_SETTINGS } from "../shared/settings";
 import { SCOPE_DENIAL_TEXT } from "../shared/text";
 import type { ScopeRequest } from "./keeper/store";
+import { readUndoLanes } from "./undo-record";
 import type { TavernRuntime } from "./runtime";
 
 export type BackendScopeOptions = Pick<
@@ -67,6 +68,7 @@ export class BackendScopes {
         return undefined;
       },
       narrowBoundScope: scope => runtime.away.narrowScope(scope),
+      pullRequestPolicy: threadId => this.pullRequestPolicy(threadId),
       cwdForThread: (threadId) => this.cwd.get(threadId),
       projectForThread: (threadId) => this.context(threadId),
       classScope: (classId) => this.resolvingClass?.id === classId ? this.resolvingClass.scope :
@@ -76,11 +78,31 @@ export class BackendScopes {
       onViolation: (violation) => this.violation(violation),
     });
   }
+  private pullRequestPolicy(threadId: string) {
+    const k = this.runtime.keeper, member = k.member(threadId);
+    const keeper = member?.role === "keeper";
+    const owned = keeper || member?.classId === "wanderer" ? k.store.all("pullRequests").filter(pr =>
+      ["draft", "ready"].includes(pr.state) && pr.owner !== "user" && (keeper ? pr.keeperThreadId === threadId && !!pr.boardQuestId : pr.owner === threadId)
+    ).map(pr => pr.url).slice(-1000) : [];
+    const grants = keeper ? k.store.query("decisions", "keeperThreadId", threadId, 500).flatMap(decision => {
+      if (!decision.pullRequestGrant || decision.undone || !decision.askId) return [];
+      const ask = k.store.get("asks", decision.askId);
+      return ask?.state === "answered" && ask.answer?.by === "keeper" && k.authority.lane(ask) === "keeper" ? [{ id: decision.id, digest: decision.pullRequestGrant.digest }] : [];
+    }).slice(0, 100) : [];
+    const alwaysAsk = this.runtime.config().keepers.alwaysAsk.includes("sends-as-you") ||
+      (keeper && readUndoLanes(k.store, threadId).some(lane => lane.kind === "sends-as-you"));
+    return { alwaysAsk, owned, grants };
+  }
+  refreshPullRequestPolicy(threadId: string) { return this.api.refreshPullRequestPolicy(threadId); }
+  refreshPullRequestPolicies() {
+    for (const { threadId } of this.api.status().threads) this.refreshPullRequestPolicy(threadId);
+  }
   async refreshPresets() {
     const runtime = this.runtime;
     for (const row of this.api.status().threads) {
       const member = runtime.keeper.member(row.threadId), state = runtime.keeper.store.runtime(row.threadId);
       try {
+        this.refreshPullRequestPolicy(row.threadId);
         if (await this.api.protectOpenPolicy(row.threadId)) {
           runtime.keeper.store.event(runtime.keeper.now(), member?.keeperThreadId ?? row.threadId, member?.boardQuestId ?? null,
             "scope.refreshed", "Protected the trusted scope policy in an open scope",

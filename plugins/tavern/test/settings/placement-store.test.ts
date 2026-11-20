@@ -10,7 +10,7 @@ import type { Database } from "../../src/server/ports";
 
 const databases: Sqlite.Database[] = [];
 function fixture() {
-  const db = new Sqlite(":memory:"); databases.push(db); db.exec(MIGRATIONS.join("\n"));
+  const db = new Sqlite(":memory:"); databases.push(db); db.exec(MIGRATIONS.join(";\n"));
   const warnings: string[] = [];
   const store = new SettingsStore(db as unknown as Database, Date.now, undefined, message => { warnings.push(message); });
   const row = () => (db.prepare("SELECT data FROM tavern_settings WHERE id=1").get() as { data: string }).data;

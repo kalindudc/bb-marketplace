@@ -23,3 +23,18 @@ it("shows the Ledger's undo count and invokes the explicit Reset for that kind",
     await waitFor(() => expect(reset.mock.calls[0]?.[0]).toMatchObject({ threadId: "keeper-1", kind: "credential" }));
   } finally { slot.lifecycle.unmount(); }
 });
+
+it("lets you undo an answered waypoint call from the Ledger history", async () => {
+  const undoDecision = vi.fn((_input: unknown) => ({ ok: true }));
+  const slot = renderSlot({ component: LedgerTab }, { threadId: "keeper-1", environment: null }, { rpc: {
+    ledger: () => ({ ...fixtureLedger, boardQuests: [], asks: [], decisions: [{ id: "accepted-call", keeperThreadId: "keeper-1", boardQuestId: "quest-1",
+      text: "Accepted w1: Check sources", why: "The sources agree", source: "ask", sourceRef: "acceptance-ask", answerReceipt: "acceptance-ask",
+      reversible: true, undone: false, createdAt: Date.now() }] }),
+    decor: () => fixtureDecor, registry: () => fixtureRegistry, undoDecision,
+  } });
+  try {
+    fireEvent.click(await slot.findByText("All decisions"));
+    fireEvent.click(await slot.findByRole("button", { name: "Undo: Accepted w1: Check sources" }));
+    await waitFor(() => expect(undoDecision.mock.calls[0]?.[0]).toMatchObject({ decisionId: "accepted-call" }));
+  } finally { slot.lifecycle.unmount(); }
+});

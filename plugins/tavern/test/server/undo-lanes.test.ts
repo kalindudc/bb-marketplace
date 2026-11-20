@@ -37,20 +37,71 @@ async function fixture(count = 10) {
   return { ...f, q, next, acceptances, settle, ledger, undo, reset, delegate, ask, reply };
 }
 
-it("keeps accepting, skipping and reopening with the Keeper after two undos each", async () => {
-  const f = await fixture(2);
-  for (const call of f.acceptances) await f.undo(call.id);
-  for (const as of ["skipped", "open"] as const) {
-    if (as === "open") await f.settle(f.q.id, "accepted");
-    for (let i = 0; i < 2; i++) {
-      const call = f.k.settle("lead", { boardQuestId: f.q.id, waypointId: "w1", as, reason: "Review the source again" });
-      await f.undo(call.id);
-    }
-    expect(() => f.k.settle("lead", { boardQuestId: f.q.id, waypointId: "w1", as, reason: "Review the source again" })).not.toThrow();
-    if (as === "skipped") f.k.settle("lead", { boardQuestId: f.q.id, waypointId: "w1", as: "open", reason: "Check the source again" });
-  }
-  await expect(f.settle(f.next.id, "accepted")).resolves.toBeTruthy();
+const answer = (f: Awaited<ReturnType<typeof fixture>>, askId: string, optionId = "approve", context = client) =>
+  f.harness.invokeRpc("answerAsk", { askId, optionId, note: null, via: "page" }, context);
+
+it("routes the next accept to you after two undos in ten, then Reset hands it back", async () => {
+  const f = await fixture();
+  await f.undo(f.acceptances[0]!.id); await f.undo(f.acceptances[2]!.id);
+  const call = () => f.settle(f.next.id, "accepted");
+  await expect(call()).resolves.toBeTruthy();
+  const ask = f.k.store.openAsks("lead", f.next.id)[0]!;
+  expect(ask).toBeDefined();
+  await call();
+  expect(f.k.store.openAsks("lead", f.next.id)).toHaveLength(1);
+  expect(ask).toMatchObject({ lane: "user", proceedAt: null, effect: { type: "settle-waypoint", as: "accepted", waypointId: "w1" } });
+  expect(ask.options.map(o => o.detail)).toEqual([expect.stringMatching(/accept/i), expect.stringMatching(/unchanged/i)]);
+  expect(f.k.summary(f.next.id).waypoints[0]?.state).toBe("reported");
+  expect((await f.ledger()).undoLanes).toEqual([{ kind: "accepted", undone: 2, recent: 10 }]);
+  expect((await f.ledger()).restatement).toContain("waypoint acceptances; ask the user");
+  await expect(answer(f, ask.id, "approve", explicitPlugin)).rejects.toThrow(/explicit client/);
+  await answer(f, ask.id);
+  await answer(f, ask.id);
+  expect(f.k.summary(f.next.id).waypoints[0]?.state).toBe("accepted");
+  const applied = f.k.store.all("decisions").filter(d => d.sourceRef === ask.id);
+  expect(applied).toEqual([expect.objectContaining({ source: "ask", reversible: true, answerReceipt: ask.id })]);
+  expect(f.k.store.get("asks", ask.id)?.answer).toMatchObject({ by: "user", surface: "client (unattested)" });
+  await f.undo(applied[0]!.id);
+  expect(f.k.summary(f.next.id).waypoints[0]?.state).toBe("reported");
+  await f.reset("accepted");
+  await call();
+  expect(f.k.summary(f.next.id).waypoints[0]?.state).toBe("accepted");
+  expect(f.k.store.openAsks("lead", f.next.id)).toEqual([]);
   expect((await f.ledger()).undoLanes).toEqual([]);
+});
+
+it("rejects a stale waypoint answer without a receipt when its plan or resolution changes", async () => {
+  const f = await fixture(2);
+  await f.undo(f.acceptances[0]!.id); await f.undo(f.acceptances[1]!.id);
+  await f.settle(f.next.id, "accepted");
+  const old = f.k.store.openAsks("lead", f.next.id)[0]!;
+  const plan = f.k.summary(f.next.id).plan!;
+  f.k.store.put("plans", `${f.next.id}:${plan.version + 1}`, { ...plan, version: plan.version + 1 });
+  f.k.store.put("quests", f.next.id, { ...f.k.quest(f.next.id), planVersion: plan.version + 1 });
+  await expect(answer(f, old.id)).rejects.toThrow(/old plan/i);
+  expect(f.k.store.get("asks", old.id)?.answer).toBeNull();
+
+  await f.settle(f.next.id, "accepted");
+  const current = f.k.store.openAsks("lead", f.next.id).find(a => a.id !== old.id)!;
+  await f.reset("accepted");
+  await f.settle(f.next.id, "accepted");
+  await expect(answer(f, current.id)).rejects.toThrow(/Only a reported/i);
+  expect(f.k.store.get("asks", current.id)?.answer).toBeNull();
+  expect(f.k.store.all("decisions").some(d => d.sourceRef === current.id || d.sourceRef === old.id)).toBe(false);
+});
+
+it.each(["skipped", "open"] as const)("asks before %s, and declining leaves the waypoint unchanged", async as => {
+  const f = await fixture(0);
+  if (as === "open") await f.settle(f.q.id, "accepted");
+  const move = () => f.k.settle("lead", { boardQuestId: f.q.id, waypointId: "w1", as, reason: "Review the source again" });
+  await f.undo(move().id);
+  await f.undo(move().id);
+  const ask = move();
+  expect(ask).toMatchObject({ lane: "user", effect: { type: "settle-waypoint", as } });
+  await answer(f, ask.id, "deny");
+  expect(f.k.summary(f.q.id).waypoints[0]?.state).toBe(as === "open" ? "accepted" : "reported");
+  await answer(f, move().id);
+  expect(f.k.summary(f.q.id).waypoints[0]?.state).toBe(as === "open" ? "reported" : "skipped");
 });
 
 it("counts the last ten calls of the routed ask kind, per Keeper, ignoring older or unrelated decisions", async () => {
@@ -111,11 +162,24 @@ it("leaves every existing ask lane unchanged without undos", async () => {
   }
 });
 
-it.each(["party", "rangers"] as const)("keeps new %s exceptions with the Keeper after two undos", async kind => {
+it.each(["party", "rangers"] as const)("requires a typed answer for the next %s exception after two undos", async kind => {
   const f = await fixture(1);
-  const choice = () => f.k.decide("lead", { text: "One extra", why: "Bounded work", reversible: true, source: "keeper", exceeds: kind });
-  const one = choice(), two = choice();
-  await f.undo(one.id); await f.undo(two.id);
-  expect(choice).not.toThrow();
-  expect((await f.ledger()).undoLanes).toEqual([]);
+  const input = { text: "One extra", why: "Bounded work", reversible: true, source: "keeper" as const, exceeds: kind };
+  await f.undo(f.k.decide("lead", input).id);
+  await f.undo(f.k.decide("lead", input).id);
+  const propose = (fields = {}) => f.harness.behavior.invokeAgentTool("tavern_decide", { ...input, ...fields }, { threadId: "lead" });
+  await propose();
+  const ask = f.k.store.openAsks("lead").find(a => a.boardQuestId === null)!;
+  expect(ask).toMatchObject({ lane: "user", effect: { type: "soft-limit", limit: kind }, proceedAt: null });
+  expect(f.k.store.all("decisions").filter(d => d.exceeds === kind && !d.undone)).toEqual([]);
+  await answer(f, ask.id);
+  await answer(f, ask.id);
+  await expect(propose({ source: "ask", sourceRef: ask.id })).rejects.toThrow(/cannot reuse/i);
+  const active = f.k.store.all("decisions").filter(d => d.exceeds === kind && !d.undone);
+  expect(active).toEqual([expect.objectContaining({ source: "ask", answerReceipt: ask.id, reversible: true })]);
+  await f.undo(active[0]!.id);
+  expect((await f.ledger()).undoLanes).toEqual([{ kind, recent: 2, undone: 2 }]);
+  await f.reset(kind);
+  await propose();
+  expect(f.k.store.all("decisions").filter(d => d.exceeds === kind && !d.undone)).toEqual([expect.objectContaining({ source: "keeper" })]);
 });

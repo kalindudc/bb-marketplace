@@ -2,6 +2,7 @@ import { ACT_KINDS } from "./scope/acts";
 import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { forgeProfileSchema } from "./shared/placement-settings";
+import { pullRequestReviewerSchema } from "./shared/pull-request";
 import { nativeScopeVariablesSchema } from "./scope/host-env";
 import { artifactFileSchema, endpointSchema, gitOidSchema, objectFormatSchema, sha256Schema, sourceFetchSchema, workspaceKindSchema } from "./shared/placement";
 
@@ -60,10 +61,10 @@ const scopeCall = z.object({
   resolvedPaths: z.record(z.string(), z.string()).optional(), pushTargets: z.record(z.string(), z.array(z.string())).optional(),
   pushHeads: z.record(z.string(), z.string()).optional(), gitRoots: z.record(z.string(), z.string()).optional(),
   directories: z.array(path).optional(), ownedDraftPrs: z.array(z.string()).optional(),
-  ownedPrs: z.array(z.string()).optional(),
+  ownedPrs: z.array(z.string()).optional(), questOwnedPrs: z.array(z.string()).optional(), observationId: id.optional(),
 }).strict();
 export const scopeDecisionSchema = z.discriminatedUnion("allow", [
-  z.object({ allow: z.literal(true), check: z.boolean().optional(), acts: z.array(z.object({ kind: z.enum(ACT_KINDS), ruleId: id, why: text }).strict()).optional() }).strict(),
+  z.object({ allow: z.literal(true), check: z.boolean().optional(), prGrant: id.optional(), acts: z.array(z.object({ kind: z.enum(ACT_KINDS), ruleId: id, why: text }).strict()).optional() }).strict(),
   z.object({ allow: z.literal(false), ruleId: id, reason: text }).strict(),
 ]);
 const empty = z.object({}).strict();
@@ -145,7 +146,7 @@ export const hostContract = defineRpcContract({
     output: z.discriminatedUnion("ok", [z.object({ ok: z.literal(true), url: z.string().url(), state: z.enum(["open", "merged", "closed"]).optional() }).strict(), z.object({ ok: z.literal(false), failureClass: z.enum(["temporary", "lasting", "broken contract"]), lines: text }).strict()]),
   },
   forgePullRequest: {
-    input: authoritySchema.extend({ profile: forgeProfileSchema, action: z.enum(["inspect", "close"]), url: z.url(), head: baseBranch, base: baseBranch, headCommit: gitOidSchema, state: z.enum(["draft", "ready"]) }).strict(),
+    input: authoritySchema.extend({ profile: forgeProfileSchema, action: z.enum(["inspect", "close", "ready", "draft", "comment"]), url: z.url(), head: baseBranch, base: baseBranch, headCommit: gitOidSchema, state: z.enum(["draft", "ready"]), reviewers: z.array(pullRequestReviewerSchema).max(10).optional(), comment: z.string().trim().min(1).max(8000).optional() }).strict(),
     output: z.object({ state: z.enum(["draft", "ready", "closed", "merged"]), headCommit: gitOidSchema.optional() }).strict(),
   },
   commitAll: {

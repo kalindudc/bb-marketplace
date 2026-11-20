@@ -1,4 +1,5 @@
 import { askHistory } from "./ask-history";
+import { refreshQuestPullRequests } from "./conclude-pull-requests";
 import { attention, AttentionSnapshot } from "./attention";
 import { LimitPolicy } from "./limit-policy";
 import { userActHandlers, requireUserAct, type OptionalRpcContext, commitUserAct, type UserActReceipt } from "./authority";
@@ -298,10 +299,11 @@ export function rpcHandlers(
         }),
       };
     },
-    boardQuest: async ({ id }): Promise<BoardQuestDetail> => {
+    boardQuest: async ({ id, refreshPullRequests }): Promise<BoardQuestDetail> => {
       const q = k.quest(id);
       const snapshot = new AttentionSnapshot(k.store, { boardQuestId: id });
       if (q.deletedAt != null) throw new experimental_PluginRpcRefusal({ code: "not_found", message: "This quest is deleted. Restore it from the cellar’s Deleted view." });
+      if (refreshPullRequests) await refreshQuestPullRequests(runtime, id);
       try { await backfillTaleDelivery(k, q, args => runtime.bb.sdk.threads.output(args)); }
       catch (error) { runtime.bb.log.warn(`Tavern tale backfill ${id}: ${String(error)}`); }
       void runtime.taleRenderer?.ensure(id);

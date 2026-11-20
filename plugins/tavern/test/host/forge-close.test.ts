@@ -29,8 +29,11 @@ async function fixture() {
 [ "$1" = pr ] || exit 1
 case "$2" in
   view) state=OPEN; if [ -f closed ]; then state=CLOSED; fi
-        printf '{"state":"%s","headRefOid":"${head}","headRefName":"work","baseRefName":"main","isDraft":true}\n' "$state" ;;
+        draft=true; if [ -f ready ]; then draft=false; fi
+        printf '{"state":"%s","headRefOid":"${head}","headRefName":"work","baseRefName":"main","isDraft":%s}\n' "$state" "$draft" ;;
   close) printf '%s\n' "$*" > closed ;;
+  ready) if [ "$3" = "--undo" ]; then rm ready; else touch ready; fi ;;
+  edit) printf '%s\n' "$*" > reviewers ;;
   *) exit 1 ;;
 esac`, { mode: 0o700 });
   const call = (overrides: Partial<HostInput<"forgePullRequest">> = {}) => forgePullRequest(registry, { ...input, ...overrides }, new AbortController().signal);
@@ -48,6 +51,15 @@ it("refuses a GitHub head or repository different from the one on the card befor
   await expect(f.call({ operationId: "wrong-head", headCommit: "0".repeat(40) })).rejects.toThrow(/head or review state changed/i);
   await expect(f.call({ operationId: "wrong-repo", url: "https://github.com/example/other/pull/12" })).rejects.toThrow(/does not belong/i);
   expect(existsSync(join(f.repo, "closed"))).toBe(false);
+});
+
+it("makes only the recorded head ready, requests the specified reviewers, and returns it to draft", async () => {
+  const f = await fixture();
+  await expect(f.call({ action: "ready", operationId: "ready-stale", headCommit: "0".repeat(40), reviewers: ["one"] })).rejects.toThrow(/head or review state changed/i);
+  expect(existsSync(join(f.repo, "reviewers"))).toBe(false);
+  expect(await f.call({ action: "ready", operationId: "ready", reviewers: ["one", "example/team"] })).toEqual({ state: "ready", headCommit: f.input.headCommit });
+  expect(readFileSync(join(f.repo, "reviewers"), "utf8").trim()).toBe(`pr edit ${f.input.url} --add-reviewer one,example/team`);
+  expect(await f.call({ action: "draft", operationId: "draft", state: "ready" })).toEqual({ state: "draft", headCommit: f.input.headCommit });
 });
 
 it("passes the recorded target to the configured forge and confirms the result with its state command", async () => {

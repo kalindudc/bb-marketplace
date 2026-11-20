@@ -73,7 +73,7 @@ async function fixture(format: "sha1" | "sha256" = "sha1", extended = false) {
     }
     return intercept ? intercept(call.method as HostMethod, call.input, result) : result;
   } }); hosts.add(host);
-  const db = host.bb.storage.database(); db.exec(MIGRATIONS.join("\n"));
+  const db = host.bb.storage.database(); db.exec(MIGRATIONS.join(";\n"));
   const placements = new PlacementStore(db), owners = new SnapshotStore(db), port = createHostPort(host.bb);
   const { id: _id, homeRef: _ref, homeCommit: _commit, createdAt: _at, ...input } = sourceSnapshot({ purpose: "wip", sourceThreadId: "maker", makerThreadId: "maker",
     objectFormat: format, base, sourceHead: head, tree, source: endpoint("source"), home: endpoint("home"),

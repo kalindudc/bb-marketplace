@@ -5,7 +5,7 @@ import { KeeperStore } from "../../src/server/keeper/store";
 import { MIGRATIONS } from "../../src/server/migrations";
 import { fixtureMember } from "../../src/ui/thread/fixtures";
 it.each(["ready", "merged", "closed"] as const)("keeps %s on same-URL reuse, resets a new URL to draft, and transfers open ownership", state => {
-  const db = new Sqlite(":memory:"); db.exec(MIGRATIONS.join("\n"));
+  const db = new Sqlite(":memory:"); db.exec(MIGRATIONS.join(";\n"));
   try {
     const store = new KeeperStore(db as never);
     store.put("members", "smith", { ...fixtureMember, threadId: "smith", classId: "smith", keeperThreadId: "keeper" });

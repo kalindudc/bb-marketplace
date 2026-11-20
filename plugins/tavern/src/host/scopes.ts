@@ -5,7 +5,8 @@ import { join } from "node:path";
 import { z } from "zod";
 import { hostContract, type Authority, type HostInput, type HostOutput } from "../host-contract";
 import { envForScope } from "../scope/env";
-import { evaluate, type ScopeCall } from "../scope/engine";
+import { blocked, evaluate, type ScopeCall } from "../scope/engine";
+import { claimPullRequestGrant, pullRequestGrantAvailable } from "../scope/pr-grants";
 import { prepareCall as prepareFacts } from "../scope/prepare";
 import { nativeScopeVariablesSchema } from "../scope/host-env";
 import { piAgentDir } from "../scope/install";
@@ -202,7 +203,12 @@ export class NativeScopes {
       await assertRepository(context); check();
       const { kind, toolName, input: toolInput, cwd } = input.call;
       const call = await this.facts(context, scope, { kind, toolName, input: toolInput, cwd }, check);
-      check(); const decision = evaluate(this.intact(authority, record), call); check();
+      check();
+      const file = this.registry.scopeStatePath(authority, "scope.json"), observationId = input.call.observationId;
+      let decision = evaluate(this.intact(authority, record), { ...call, prGrantAvailable: id => !!observationId && pullRequestGrantAvailable(file, id, observationId) });
+      if (decision.allow && decision.prGrant && !claimPullRequestGrant(file, decision.prGrant, observationId!) && !pullRequestGrantAvailable(file, decision.prGrant, observationId))
+        decision = blocked(call.toolName, "pr-sends-as-you", "the one-use pull request exception was already used");
+      check();
       return hostContract.prepareCall.output.parse({ call, scopeRevision: record.binding.revision, scopeDigest: record.binding.scopeDigest, decision });
     });
     this.acknowledged(authority, result.scopeRevision, result.scopeDigest, signal);

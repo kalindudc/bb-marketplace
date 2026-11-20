@@ -8,7 +8,7 @@ import { fixtureMember } from "../../src/ui/thread/fixtures";
 import { MIGRATIONS } from "../../src/server/migrations";
 import { exportToml, previewToml } from "../../src/server/settings/toml";
 it.each([false, true])("reports the original TOML syntax error line (apply: %s)", async apply => {
-  const db = new Sqlite(":memory:"); db.exec(MIGRATIONS.join("\n"));
+  const db = new Sqlite(":memory:"); db.exec(MIGRATIONS.join(";\n"));
   try {
     const store = new SettingsStore(db as never);
     const cli = defineCli({ name: "tavern", summary: "Tavern", commands: settingsCommands({} as BbPluginApi, store) });
@@ -22,7 +22,7 @@ it.each([false, true])("reports the original TOML syntax error line (apply: %s)"
 });
 const message = "Forge profiles run commands on this machine, so they change only on Tavern's Settings page, Where work runs.";
 it.each([{}, { threadId: "agent" }])("only permits the Settings page to write forge commands: %j", async ctx => {
-  const db = new Sqlite(":memory:"); db.exec(MIGRATIONS.join("\n"));
+  const db = new Sqlite(":memory:"); db.exec(MIGRATIONS.join(";\n"));
   try {
     const store = new SettingsStore(db as never);
     if (ctx.threadId) new KeeperStore(db as never).put("members", ctx.threadId, { ...fixtureMember, threadId: ctx.threadId, classId: "smith" });

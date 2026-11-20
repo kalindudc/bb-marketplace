@@ -6,7 +6,7 @@ import { SettingsStore } from "../../src/server/settings/store";
 import { BackupRecords } from "../../src/server/backup/records";
 
 function setup() {
-  const db = new Database(":memory:"); db.exec(MIGRATIONS.join("\n"));
+  const db = new Database(":memory:"); db.exec(MIGRATIONS.join(";\n"));
   return { db, records: new BackupRecords(db, new SettingsStore(db, () => 123)) };
 }
 it("excludes private preservation manifests from portable records and rejects imported authority", () => {

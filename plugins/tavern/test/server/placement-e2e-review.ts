@@ -73,7 +73,7 @@ export async function reviewFixture(checkerCount = 1) {
     const result = await natives.get(hostId!)!.experimental_call(method as HostMethod, input as never, { signal });
     await intercept?.(method as HostMethod); return result;
   } });
-  const db = host.bb.storage.database(); db.exec(MIGRATIONS.join("\n")); const keepers = new KeeperStore(db);
+  const db = host.bb.storage.database(); db.exec(MIGRATIONS.join(";\n")); const keepers = new KeeperStore(db);
   let keeper: Keeper;
   const journal = registerJournal(host.bb, db, { roleOf: id => { const member = keepers.get("members", id); return member ? { ...member, ...(member.classId === "warden" ? { checkerWaypointIds: keeper.checkerWaypoints(id) } : {}) } : null; }, invalidate: () => {} });
   keeper = new Keeper(keepers, journal, () => 1_000_000);

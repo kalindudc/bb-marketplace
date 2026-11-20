@@ -8,7 +8,7 @@ import type { Database } from "../../src/server/ports";
 const databases: Sqlite.Database[] = [];
 afterEach(() => databases.splice(0).forEach(db => db.close()));
 function fixture() {
-  const db = new Sqlite(":memory:"); databases.push(db); db.exec(MIGRATIONS.join("\n"));
+  const db = new Sqlite(":memory:"); databases.push(db); db.exec(MIGRATIONS.join(";\n"));
   const store = new SettingsStore(db as unknown as Database);
   const read = vi.fn(async () => ({ content: "[tavern]\npaused = true", contentEncoding: "utf8", sizeBytes: 23 }));
   const write = vi.fn(async () => ({}));

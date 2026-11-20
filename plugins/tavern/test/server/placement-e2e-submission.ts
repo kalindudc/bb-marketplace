@@ -68,7 +68,7 @@ export async function submissionFixture(format: "sha1" | "sha256" = "sha1") {
     await state.intercept?.(call.method as HostMethod);
     return result;
   } });
-  const db = host.bb.storage.database(); db.exec(MIGRATIONS.join("\n"));
+  const db = host.bb.storage.database(); db.exec(MIGRATIONS.join(";\n"));
   const keepers = new KeeperStore(db), placements = new PlacementStore(db), port = createHostPort(host.bb), rows = new AwayHolds(db);
   keepers.put("members", "maker", memberSchema.parse({ threadId: "maker", classId: "smith", characterId: null, displayName: "Vale", role: "member", keeperThreadId: "keeper", boardQuestId: "quest", waypointId: "waypoint", errand: false, title: "Implement", place: "table", state: "idle", doing: null, createdAt: 1, lastActiveAt: 1, lastReportAt: null, strikes: 0, verifiedWins: 0 }));
   const actor = { kind: "agent", threadId: "maker" };

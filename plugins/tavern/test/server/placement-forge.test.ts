@@ -56,7 +56,7 @@ it.each([[undefined, false, false], ["release", false, false], [undefined, true,
     if (call.method in transport) return (transport[call.method as keyof typeof transport] as Function)(call.input, call.signal);
     throw new Error(call.method);
   } }); cleanup.push(() => host.harness.lifecycle.dispose());
-  const db = new Sqlite(":memory:"); db.exec(MIGRATIONS.join("\n")); cleanup.push(() => { db.close(); });
+  const db = new Sqlite(":memory:"); db.exec(MIGRATIONS.join(";\n")); cleanup.push(() => { db.close(); });
   const store = new PlacementStore(db as never), port = createHostPort(host.bb), transport = new PlacementTransport(host.bb, port, store);
   const endpoint = (name: string) => ({ hostId: name, environmentId: name, root: name === "home" ? home : source });
   writeFileSync(join(home, "work.txt"), "user staged"); git(home, "add", "work.txt"); writeFileSync(join(home, "work.txt"), "user unstaged");

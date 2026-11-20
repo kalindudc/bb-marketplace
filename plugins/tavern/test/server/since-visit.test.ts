@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { expect, it, vi } from "vitest";
 import { rpcHandlers } from "../../src/server/rpc";
-import { MIGRATIONS } from "../../src/server/migrations";
+import { SEED_QUEST_CHANGE_SEEN } from "../../src/server/quest-change-attention";
 import { setup } from "./runtime-fixture";
 import { planInput, seedQuest } from "./support";
 
@@ -88,7 +88,7 @@ it("projects the exact seen receipt to the quest without acknowledging it on a d
 it("has no old transitions on first room read after upgrade", async () => {
   const f = await fixture();
   f.k.plan("lead", planInput(f.q.id));
-  f.k.store.db.exec(MIGRATIONS.at(-1)!);
+  f.k.store.db.exec(SEED_QUEST_CHANGE_SEEN);
   expect((await f.rpc.room({})).sinceVisit?.changedQuests).toBe(0);
   f.k.store.event(f.time(), "lead", f.q.id, "quest.phase", "A later transition", { phase: { from: "greenlight", to: "build" } }, { kind: "tavern" });
   expect((await f.rpc.room({})).sinceVisit?.changedQuests).toBe(1);

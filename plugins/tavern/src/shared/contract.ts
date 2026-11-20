@@ -418,7 +418,7 @@ export const rpcContract = defineContract({
     tags: ({ threadId }: { threadId: string }) => [tags.thread(threadId)],
   },
   boardQuest: {
-    input: z.object({ id }).strict(),
+    input: z.object({ id, refreshPullRequests: z.boolean().optional() }).strict(),
     output: boardQuestDetailSchema,
     tags: ({ id }: { id: string }) => [tags.boardQuest(id), tags.undoLanes()],
   },

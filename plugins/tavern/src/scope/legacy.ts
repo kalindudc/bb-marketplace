@@ -10,26 +10,29 @@ export function bbPositionals(argv: string[]): string[] {
   }
   return words;
 }
+export function bbControlPositionals(argv: string[]): string[] {
+  const words = bbPositionals(argv);
+  return words[0] === "bb" && words[1] === "plugin" && words[2] === "run" && words[3] === "tavern" ? ["bb", ...words.slice(3)] : words;
+}
 export function agentProgram(argv: string[]): boolean {
   const help = argv.includes("--help") || argv.includes("--version");
-  argv = bbPositionals(argv);
+  argv = bbControlPositionals(argv);
   const [program, sub, action] = argv;
   if (program === "cortex") return ["ls", "show", "search", "recall", "schema", "doctor", "watch", "memory", "add", "update", "edit"].includes(sub);
   if (program !== "bb") return false;
   if (help) return true;
-  if (sub === "plugin" && action === "rpc") return ["list", "show"].includes(argv[3]);
+  if (sub === "plugin" && action === "rpc") return ["list", "show"].includes(argv[3]) || argv[3] === "call" && argv[4] === "burn" && argv[5] === "usage";
   if (sub === "secrets" && action === "request") return true;
   if (["settings", "lan", "secrets"].includes(sub)) return ["show", "status", "list"].includes(action);
   return ["status", "guide", "help", "--help", "--version", "flare", "browser-automation", "journal"].includes(sub) ||
     ["show", "list", "log", "logs", "context", "help", "status", "--help"].includes(action) ||
     sub === "thread" && ["tell", "send", "wait"].includes(action) ||
-    sub === "tavern" && ["quests", "stop-all"].includes(action) ||
+    sub === "tavern" && (["quests", "stop-all"].includes(action) || action === "settings" && argv[3] === "get") ||
     sub === "shuttle" && ["prs", "board", "boards"].includes(action) ||
     ["automation", "automations"].includes(sub) && action === "runs" ||
     sub === "browser" && action === "instances" ||
     sub === "tavern" && action === "journal" && ["export", "show", "list"].includes(argv[3]);
 }
-export { userControl } from "./acts";
 export function nestedCommands(command: ShellCommand): string[] {
   const argv = command.argv, [program] = argv;
   const source = (args: string[]) => args.map(shellQuote).join(" ");

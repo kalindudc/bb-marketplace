@@ -386,6 +386,7 @@ export type CheckerHandoffHold = z.infer<typeof checkerHandoffHoldSchema>;
 
 import { delegationSchema, preapprovalSchema, delegationKindSchema, actTargetSchema } from "./quest-authority";
 import { closeEarlyDraftSchema, concludeDraftSchema, questOutcomeSchema, waypointWaiverSchema } from "./closing";
+import { pullRequestDraftOperationSchema } from "./pull-request";
 
 export const boardQuestSchema = z.object({
   delegations: z.array(delegationSchema).max(100).optional(),
@@ -430,6 +431,9 @@ export const askEffectSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("conclude"), draft: concludeDraftSchema }),
   z.object({ type: z.literal("close-early"), draft: closeEarlyDraftSchema }),
   z.object({ type: z.literal("release-hold"), holdId: id }),
+  settleWaypointSchema.omit({ boardQuestId: true }).extend({ type: z.literal("settle-waypoint"), planVersion: z.number().int().positive() }),
+  z.object({ type: z.literal("soft-limit"), limit: z.enum(["party", "rangers"]), text: z.string().min(1).max(400), reason: z.string().max(600) }),
+  z.object({ type: z.literal("pull-request-draft"), operation: pullRequestDraftOperationSchema }),
   z.object({ type: z.literal("retry-stop"), memberThreadId: threadId.optional(), hireTokens: z.array(z.string()).optional() }),
   z.object({ type: z.literal("retry-brief"), threadId, briefId: id }),
   z.object({ type: z.literal("grant-scope"), memberThreadId: threadId }),
@@ -486,6 +490,9 @@ export type Ask = z.infer<typeof askSchema>;
 /** A call recorded in the ledger. Reversible calls the Keeper made alone show under "Decided for you" with an Undo. */
 export const decisionSchema = z.object({
   undoUnavailable: z.literal(true).optional(),
+  answerReceipt: id.optional(),
+  pullRequestReady: id.optional(),
+  pullRequestGrant: z.object({ digest: z.string().regex(/^[a-f0-9]{64}$/) }).optional(),
   askId: id.optional(), optionId: z.string().optional(), kind: delegationKindSchema.optional(),
   exceeds: z.enum(["party", "rangers"]).optional(),
   waypointCall: settleWaypointSchema.pick({ waypointId: true, as: true }).extend({ planVersion: z.number().int().positive() }).optional(),

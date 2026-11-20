@@ -11,7 +11,7 @@ export function makeHost(metadata: Record<string, unknown> = {}, legacyEnabled =
   let eventRows: any[] = [];
   const bb = {
     pluginId: "tavern",
-    storage: { database: () => db, migrate: (_db: unknown, statements: string[]) => db.exec(statements.join("\n")) },
+    storage: { database: () => db, migrate: (_db: unknown, statements: string[]) => { for (const statement of statements) db.exec(statement); } },
     sdk: {
       threads: {
         get: async ({ threadId }: { threadId: string }) => threads.get(threadId) ?? { id: threadId, status: "active", originKind: null, originPluginId: null, sourceThreadId: null },

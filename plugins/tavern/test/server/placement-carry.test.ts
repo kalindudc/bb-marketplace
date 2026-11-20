@@ -75,7 +75,7 @@ async function fixture(format: "sha1" | "sha256" = "sha1", size = 32) {
     }
     return intercept ? intercept(call.method as HostMethod, call.input, result) : result;
   } }); hosts.add(host);
-  const db = host.bb.storage.database(); db.exec(MIGRATIONS.join("\n"));
+  const db = host.bb.storage.database(); db.exec(MIGRATIONS.join(";\n"));
   const placements = new PlacementStore(db), port = createHostPort(host.bb);
   const k = new Keeper(new KeeperStore(db), fakePort(), Date.now, () => {});
   k.bind("keeper", "keeper", "wren", "project");

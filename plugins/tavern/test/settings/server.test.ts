@@ -19,7 +19,7 @@ it("registers core, live settings, Insights and CLI together through the real se
   const db = new Sqlite(join(location.home, "data.db")), f = setup({ plugins: { list: async () => ({ plugins: [] }) } });
   const disposals: (() => unknown)[] = [];
   Object.assign(f.bb, {
-    storage: { database: () => db, migrate: (_db: unknown, statements: string[]) => db.exec(statements.join("\n")) },
+    storage: { database: () => db, migrate: (_db: unknown, statements: string[]) => { for (const statement of statements) db.exec(statement); } },
     settings: { define: () => ({ get: async () => ({ scopes: "enforce" }), onChange: () => {} }) },
     ui: { registerMentionProvider: vi.fn() }, background: { service: vi.fn() },
     experimental_hooks: { ...f.bb.experimental_hooks, on: vi.fn() }, onDispose: (fn: () => unknown) => disposals.push(fn),

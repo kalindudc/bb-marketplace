@@ -27,7 +27,7 @@ it.each(["keeper", "lead"])("binds an open %s on its actual remote host without 
     environments: { get: async () => ({ id: "guest-env", hostId: "guest", path: remotePath, isWorktree: false }) as never },
   } }); fixtures.push({ root, host });
   let paths: unknown;
-  const db = host.bb.storage.database(); db.exec(MIGRATIONS.join("\n"));
+  const db = host.bb.storage.database(); db.exec(MIGRATIONS.join(";\n"));
   const keeper = new Keeper(new KeeperStore(db), fakePort());
   keeper.bind("member", "keeper", null, "project", classId === "lead" ? {
     keeperThreadId: "parent", boardQuestId: null, waypointId: null, errand: false, title: "Lead",

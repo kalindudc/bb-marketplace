@@ -26,6 +26,9 @@ export const ASK_EFFECTS: Record<AskEffect["type"], { act: Act; handler: keyof E
   conclude: { act: "conclude", handler: "conclude" },
   "close-early": { act: "closeEarly", handler: "close-early" },
   "release-hold": { act: "releaseCheckerHandoff", handler: "release-hold" },
+  "settle-waypoint": { act: "answerAsk", handler: "settle-waypoint" },
+  "soft-limit": { act: "answerAsk", handler: "soft-limit" },
+  "pull-request-draft": { act: "answerAsk", handler: "pull-request-draft", answerOnly: true },
   "retry-stop": { act: "answerAsk", handler: "retry-stop" },
   "retry-brief": { act: "answerAsk", handler: "retry-brief" },
   "grant-scope": { act: "answerAsk", handler: "grant-scope" },
@@ -41,7 +44,7 @@ export function applyAskEffect(effect: AskEffect, handlers: Partial<EffectHandle
   if (receipt.by === "default" && effect.type !== "decision") throw new Error("Only a reversible plain decision may default");
   const row = ASK_EFFECTS[effect.type];
   if (receipt.by === "preapproval" && effect.type === "close-early") throw new Error("Closing early requires your explicit answer");
-  if (receipt.by === "keeper" && effect.type !== "decision") throw new Error("Keeper answers cannot apply user-only transitions");
+  if (receipt.by === "keeper" && effect.type !== "decision" && effect.type !== "pull-request-draft") throw new Error("Keeper answers cannot apply user-only transitions");
   authorize(receipt.by === "default" || receipt.by === "keeper" ? "defaultDecision" : row.act, { level: receipt.by === "default" || receipt.by === "keeper" ? "keeper" : "user-explicit", receipt: receipt.id });
   const handler = handlers[row.handler];
   if (!handler) {

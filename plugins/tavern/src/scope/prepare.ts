@@ -3,6 +3,7 @@ import { execGitSync, gitEnvironmentSync } from "../shared/git-safety";
 import { statSync } from "node:fs";
 import { normalizeRemote, pushSpec } from "./remote";
 import { draftEditKey, draftEditSelector } from "./github";
+import { prCallKey, prUrl, pullRequestWrite } from "./pr-policy";
 import { isSink, normalizeToolPath, realPath } from "./paths";
 import { containmentRead, readonlyProgram, temporaryRoot, type ScopeCall } from "./engine";
 import type { Scope } from "./schema";
@@ -28,6 +29,7 @@ export function prepareCall(call: ScopeCall, deps: PrepareDeps = {}): ScopeCall 
   const directories: string[] = [];
   const ownedDraftPrs: string[] = [];
   const ownedPrs: string[] = [];
+  const questOwnedPrs: string[] = [];
   const fetchWriteRoots: string[] = [];
   const add = (path: string, base: string) => {
     if (!/[\$`]/.test(path)) {
@@ -72,6 +74,19 @@ export function prepareCall(call: ScopeCall, deps: PrepareDeps = {}): ScopeCall 
           catch { /* A detached or unresolved HEAD is not an explicit branch destination. */ }
         }
       }
+      const write = pullRequestWrite(cmd);
+      if (stableHead && !redirectedGithub && deps.scope?.pullRequestPolicy?.owned.length && write && cmd.argv[1] === "pr" &&
+          (!write.target || cmd.repository) && draftEditSelector(cmd.argv) !== null) {
+        try {
+          const output = read(cmd.argv[0], ["pr", "view", ...(write.selector ? [write.selector] : []),
+            ...(cmd.repository ? ["--repo", cmd.repository] : []), "--json", "url"], cmd.cwd);
+          const target = prUrl(JSON.parse(output).url);
+          if (target && deps.scope.pullRequestPolicy.owned.some(url => prUrl(url) === target)) {
+            questOwnedPrs.push(prCallKey(cmd));
+            preservesBranch = true;
+          }
+        } catch { /* An unresolved repository or PR number is not proof of ownership. */ }
+      }
       if (["gh", "dt"].includes(cmd.argv[0]) && cmd.argv[1] === "pr" && ["create", "edit", "comment"].includes(cmd.argv[2]) && stableHead && !redirectedGithub && (!deps.scope || deps.scope.github === "draft-pr-only" && deps.scope.preset !== "open")) {
         try {
           const branch = read("git", ["-C", cmd.cwd, "symbolic-ref", "--quiet", "--short", "HEAD"]).trim();
@@ -97,5 +112,5 @@ export function prepareCall(call: ScopeCall, deps: PrepareDeps = {}): ScopeCall 
       for (const path of commandWritePaths(cmd)) add(path, cmd.cwd);
     }
   }
-  return { ...call, cwd, resolvedPaths, pushTargets, pushHeads, gitRoots, directories, ownedDraftPrs, ownedPrs, ...(call.containment === "sandbox" ? { fetchWriteRoots: [...new Set(fetchWriteRoots)] } : {}) };
+  return { ...call, cwd, resolvedPaths, pushTargets, pushHeads, gitRoots, directories, ownedDraftPrs, ownedPrs, ...(questOwnedPrs.length ? { questOwnedPrs } : {}), ...(call.containment === "sandbox" ? { fetchWriteRoots: [...new Set(fetchWriteRoots)] } : {}) };
 }

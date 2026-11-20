@@ -15,7 +15,7 @@ import type { Database } from "../../src/server/ports";
 const cleanups: (() => Promise<void>)[] = [];
 function fixture() {
   const host = createFakePluginHost({ pluginId: "tavern" });
-  const db = new Sqlite(":memory:"); db.exec(MIGRATIONS.join("\n"));
+  const db = new Sqlite(":memory:"); db.exec(MIGRATIONS.join(";\n"));
   const root = mkdtempSync(join(tmpdir(), "placement-rpc-"));
   const store = new SettingsStore(db as unknown as Database), files = new SettingsFiles(store, join(root, "settings.toml"));
   registerSettingsRpc(host.bb, store, files);

@@ -14,7 +14,7 @@ const databases: Database.Database[] = [];
 afterEach(() => { for (const db of databases.splice(0)) db.close(); });
 function setup() {
   const db = new Database(":memory:");
-  db.exec(MIGRATIONS.join("\n"));
+  db.exec(MIGRATIONS.join(";\n"));
   databases.push(db);
   const settings = new SettingsStore(db, () => 1000), away = new AwayStore(db, () => 1000);
   return { db, away, records: new BackupRecords(db, settings) };

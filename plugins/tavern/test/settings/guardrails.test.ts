@@ -9,7 +9,7 @@ import type { Database } from "../../src/server/ports";
 import { fixtureMember } from "../../src/ui/thread/fixtures";
 
 it.each(["member", "keeper"] as const)("blocks guardrail applies from a persisted %s, including archived callers", async role => {
- const db = new Sqlite(":memory:"); db.exec(MIGRATIONS.join("\n"));
+ const db = new Sqlite(":memory:"); db.exec(MIGRATIONS.join(";\n"));
  try {
  const store = new SettingsStore(db as unknown as Database);
  const members = new KeeperStore(db as unknown as Database);

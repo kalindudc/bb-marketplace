@@ -86,7 +86,7 @@ export async function readyFixture(checker = false, includesUncommitted = false)
     }
     return intercept ? intercept(method, call.input, result) : result;
   } }); fixtures.push({ root, host });
-  const db = host.bb.storage.database(); db.exec(MIGRATIONS.join("\n"));
+  const db = host.bb.storage.database(); db.exec(MIGRATIONS.join(";\n"));
   const placements = new PlacementStore(db), deliveries = new PlacementDeliveries(db, placements), port = createHostPort(host.bb);
   const journal = { boardQuestId: "quest", waypointId: "waypoint", makerThreadId: "maker", journalEntryId: "entry", entryFingerprint: "a".repeat(64), reviewAssignmentId: "review" };
   const snapshot = placements.captureSnapshot({ purpose: checker ? "submission" : "initial", keeperThreadId: "keeper", projectId: "project",

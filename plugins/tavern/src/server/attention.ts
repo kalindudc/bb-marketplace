@@ -20,6 +20,10 @@ export function decisionUndoProjection(store: KeeperStore) {
   const open = new Map<string, boolean>();
   return (decision: Decision): Decision => {
     const id = decision.boardQuestId;
+    if (decision.pullRequestReady && !decision.undone) {
+      const pr = store.get("pullRequests", decision.pullRequestReady);
+      if (pr?.state !== "ready" || pr.readyDecisionId !== decision.id || pr.owner === "user") return { ...decision, undoUnavailable: true };
+    }
     if (!id || !(decision.waypointCall || decision.checkChange) || !decision.reversible || decision.undone) return decision;
     if (!open.has(id)) open.set(id, isOpenQuest(store.get("quests", id)));
     return open.get(id) ? decision : { ...decision, undoUnavailable: true };

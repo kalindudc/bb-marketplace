@@ -14,6 +14,9 @@ export const shellRuleSchema = z.object({
   requires: z.array(z.string()).optional(),
   why: z.string().min(1).max(1000),
 }).strict().refine(rule => rule.argv !== undefined || rule.regex !== undefined, "A rule needs argv or regex");
+export const prGrantIdSchema = z.string().regex(/^[a-zA-Z\d_-]{1,120}$/);
+export const prGrantSchema = z.object({ id: prGrantIdSchema, digest: z.string().regex(/^[a-f0-9]{64}$/) }).strict();
+export const pullRequestPolicySchema = z.object({ alwaysAsk: z.boolean(), owned: z.array(z.url()).max(1000), grants: z.array(prGrantSchema).max(100) }).strict();
 export const scopeSchema = z.object({
   v: z.literal(1),
   threadId: z.string().regex(/^[a-zA-Z0-9_-]{1,100}$/),
@@ -25,6 +28,7 @@ export const scopeSchema = z.object({
   commandTools: patterns.default(["bash", "Bash"]),
   expectedWorktree: z.string().optional(),
   assignedBranch: z.string().min(1).max(1000).optional(),
+  pullRequestPolicy: pullRequestPolicySchema.optional(),
   workspaceKind: workspaceKindSchema.optional(),
   checks: z.object({ worktree: z.string().min(1).optional(), commands: z.array(z.string().min(1).max(8000)).max(100) }).strict().optional(),
   enforceFrom: z.number().int().nonnegative().optional(),

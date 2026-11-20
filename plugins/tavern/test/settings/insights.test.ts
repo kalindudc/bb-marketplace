@@ -10,7 +10,7 @@ const databases: Sqlite.Database[] = [];
 afterEach(() => databases.splice(0).forEach(db => db.close()));
 const DAY = 86400000, HOUR = 3600000;
 function fixture() {
-  const db = new Sqlite(":memory:"); databases.push(db); db.exec(MIGRATIONS.join("\n"));
+  const db = new Sqlite(":memory:"); databases.push(db); db.exec(MIGRATIONS.join(";\n"));
   const now = 1_800_000_000_000;
   const store = new SettingsStore(db as unknown as Database, () => now);
   const characters: { id: string; classIds: string[] }[] = [], serviceRecords: InsightCharacters["serviceRecords"] = [];

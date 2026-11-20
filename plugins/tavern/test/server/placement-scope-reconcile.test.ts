@@ -9,7 +9,7 @@ import { readyFixture, readyGit } from "./placement-e2e-ready";
 async function fixture() {
   const f = await readyFixture();
   const services = { store: f.placements, deliveries: f.deliveries, host: f.port, ready: undefined as unknown as ReturnType<typeof f.make> };
-  const runtime = { bb: f.bb, placements: () => services, keeper: { changed: vi.fn(), member: () => null }, config: () => ({ machines: { rules: [] } }),
+  const runtime = { bb: f.bb, placements: () => services, keeper: { changed: vi.fn(), member: () => null }, config: () => ({ machines: { rules: [] }, keepers: { alwaysAsk: ["production", "merge", "credential", "sends-as-you", "destructive"] } }),
     scopes: undefined as unknown as BackendScopes };
   const scopes = new BackendScopes(runtime as never, { dataDir: join(f.root, "controller"), installGuard: false });
   runtime.scopes = scopes;
@@ -29,7 +29,7 @@ it("redelivers a changed host-bound template without a member turn or replaying 
   expect(f.reconcile).toHaveBeenCalledWith("member");
   await f.reconcile.mock.results[0].value;
   expect(f.placements.get("placement")).toMatchObject({ phase: "ready", acknowledgedScopeRevision: 2, desiredScopeRevision: 2 });
-  expect(JSON.parse(f.deliveries.get("placement")!.scopeFileJson).bindingTemplate).toEqual(f.changed);
+  expect(JSON.parse(f.deliveries.get("placement")!.scopeFileJson).bindingTemplate).toEqual({ ...f.changed, pullRequestPolicy: { alwaysAsk: true, grants: [], owned: [] } });
   expect(f.harness.experimental_hostRpcCalls.slice(calls).map(call => call.method)).toEqual(["inspect", "bindScope", "sessionStatus"]);
   expect(f.controller.forMember("member")!.posture.detail).toBeNull();
   expect((await f.harness.behavior.resolveProviderEnv("pi", { threadId: "member", hostId: "member-host" } as never))
@@ -57,7 +57,7 @@ it("reconciles another template change that arrives during native delivery", asy
   await f.reconcile.mock.results[0].value;
   await f.reconcile.mock.results[1].value;
   expect(f.placements.get("placement")).toMatchObject({ phase: "ready", acknowledgedScopeRevision: 3, desiredScopeRevision: 3 });
-  expect(JSON.parse(f.deliveries.get("placement")!.scopeFileJson).bindingTemplate).toEqual(latest);
+  expect(JSON.parse(f.deliveries.get("placement")!.scopeFileJson).bindingTemplate).toEqual({ ...latest, pullRequestPolicy: { alwaysAsk: true, grants: [], owned: [] } });
 }, 60_000);
 
 it("shows failed scope redelivery and its observation hold, then resumes after retry", async () => {

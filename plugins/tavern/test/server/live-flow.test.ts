@@ -618,6 +618,6 @@ describe("live Keeper flow regressions", () => {
         errand: true,
         brief: { ...brief, timeboxMinutes: 15 },
       }),
-    ).rejects.toThrow("at most 12 minutes");
+    ).rejects.toThrow("settings ceiling of 12 minutes");
   });
 });

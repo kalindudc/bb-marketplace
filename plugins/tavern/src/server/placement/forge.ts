@@ -29,7 +29,17 @@ export class PlacementForge {
     if (!profile || profile.kind === "command" && !profile.close) throw new Error(this.closeUnavailable(pr));
     return this.pullRequestAction(pr, profile, "close");
   }
-  private async pullRequestAction(pr: PullRequest, profile: ForgeProfile, action: "inspect" | "close") {
+  async setReviewState(pr: PullRequest, action: "ready" | "draft", reviewers: string[]) {
+    const profile = this.profile(pr);
+    if (profile?.kind !== "github") throw new Error("This forge cannot confirm a head and change review state through Tavern.");
+    return this.pullRequestAction(pr, profile, action, { reviewers });
+  }
+  async comment(pr: PullRequest, comment: string) {
+    const profile = this.profile(pr);
+    if (profile?.kind !== "github") throw new Error("This forge does not support Keeper comments through Tavern.");
+    return this.pullRequestAction(pr, profile, "comment", { comment });
+  }
+  private async pullRequestAction(pr: PullRequest, profile: ForgeProfile, action: HostInput<"forgePullRequest">["action"], extra: { reviewers?: string[]; comment?: string } = {}) {
     if (pr.state !== "draft" && pr.state !== "ready") throw new Error("This pull request is no longer open.");
     const { bb } = this.runtime, host = this.runtime.placements().host;
     const { endpoint } = await readSourceIdentity(bb, pr.keeperThreadId, pr.projectId);
@@ -39,7 +49,7 @@ export class PlacementForge {
     await host.call(endpoint.hostId, "inspect", authority);
     const current = await readSourceIdentity(bb, pr.keeperThreadId, pr.projectId);
     if (!isDeepStrictEqual(endpoint, current.endpoint)) throw new Error("The forge source checkout changed.");
-    return hostContract.forgePullRequest.output.parse(await host.call(endpoint.hostId, "forgePullRequest", { ...authority, operationId: randomUUID(), profile, action, url: pr.url, head: pr.head, base: pr.base, headCommit: pullRequestHead(pr), state: pr.state }));
+    return hostContract.forgePullRequest.output.parse(await host.call(endpoint.hostId, "forgePullRequest", { ...authority, operationId: randomUUID(), profile, action, url: pr.url, head: pr.head, base: pr.base, headCommit: pullRequestHead(pr), state: pr.state, ...extra }));
   }
   async forThread(threadId: string, input: { title: string; body?: string; base?: string; url?: string; forge?: string }, signal?: AbortSignal): Promise<string> {
     const runtime = this.runtime, services = runtime.placements(), record = services.store.byMember(threadId), member = runtime.keeper.member(threadId);

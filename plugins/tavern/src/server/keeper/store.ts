@@ -758,7 +758,10 @@ export class KeeperStore {
       if (previous && (previous.owner !== input.owner || previous.boardQuestId !== input.boardQuestId || previous.keeperThreadId !== input.keeperThreadId)) throw new Error("This branch already has a pull request and an owner; reuse that record.");
       if (previous && previous.base !== input.base) throw new Error(`This branch's draft targets ${previous.base}; moving it comes later`);
       const state = previous && previous.url !== input.url ? "draft" : previous?.state ?? input.state;
-      const next = pullRequestSchema.parse({ ...input, state, memberThreadId: previous?.memberThreadId ?? input.memberThreadId ?? input.owner, id });
+      const prior = previous?.url === input.url ? previous : null;
+      const next = pullRequestSchema.parse({ ...input, state, memberThreadId: previous?.memberThreadId ?? input.memberThreadId ?? input.owner, id,
+        ...(prior ? { verdict: prior.verdict, readyDecisionId: prior.readyDecisionId,
+          verifiedCommit: (prior.pushedHead ?? prior.memberHead) === (input.pushedHead ?? input.memberHead) ? prior.verifiedCommit : input.verifiedCommit } : {}) });
       if (JSON.stringify(previous) !== JSON.stringify(next)) this.changePullRequest(next, at);
       return next;
     });
@@ -768,10 +771,11 @@ export class KeeperStore {
     return rows.map(row => pullRequestSchema.parse(JSON.parse(row.data)));
   }
   openPullRequests(questId: string) { return this.pullRequestsForQuest(questId).filter(pr => pr.state === "draft" || pr.state === "ready"); }
-  changePullRequest(pr: PullRequest, at: number, askId?: string) {
+  changePullRequest(pr: PullRequest, at: number, askId?: string, change?: { actor: Actor; action: string; reason: string; receipt: string }) {
     return this.atomic(() => {
       this.put("pullRequests", pr.id, pr);
-      this.event(at, pr.keeperThreadId, pr.boardQuestId, "pull-request.changed", `Pull request ${pr.state}: ${pr.url}; owner ${pr.owner}`, { ...pr, ...(askId ? { askId } : {}) }, askId ? { kind: "user" } : { kind: "tavern" });
+      const { actor, ...details } = change ?? {};
+      this.event(at, pr.keeperThreadId, pr.boardQuestId, "pull-request.changed", `Pull request ${pr.state}: ${pr.url}; owner ${pr.owner}`, { ...pr, ...details, ...(askId ? { askId } : {}) }, actor ?? (askId ? { kind: "user" } : { kind: "tavern" }));
       return pr;
     });
   }

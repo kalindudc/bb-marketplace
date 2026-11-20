@@ -8,6 +8,7 @@ export function draftEditSelector(argv: string[]): string | undefined | null {
     if (arg === "--") { selectors.push(...argv.slice(i + 1)); break; }
     if (values.includes(arg) || /^-[BbFmt]$/.test(arg)) { if (argv[++i] === undefined) return null; }
     else if (values.some(flag => arg.startsWith(flag + "=")) || /^-[BbFmt].+/.test(arg)) continue;
+    else if (["--approve", "--comment", "--request-changes", "-a", "-c", "-r"].includes(arg) && argv[2] === "review") continue;
     else if (arg.startsWith("-")) return null;
     else selectors.push(arg);
   }

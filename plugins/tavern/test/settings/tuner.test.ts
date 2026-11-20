@@ -16,7 +16,7 @@ const signals = (): TuningSignals => ({ ticks: 100, held: 60, deferred: 40, typi
   restatementBytes: many(22000), restatementClipped: 10, tickFactChars: many(18000), factsClipped: 10,
   rangerMinutes: many(18), rangerOverruns: 5 });
 function fixture(mode: "apply" | "suggest" | "off") {
-  const db = new Sqlite(":memory:"); databases.push(db); db.exec(MIGRATIONS.join("\n"));
+  const db = new Sqlite(":memory:"); databases.push(db); db.exec(MIGRATIONS.join(";\n"));
   let now = 1_800_000_000_000;
   const store = new SettingsStore(db as unknown as Database, () => now);
   if (mode !== "off") store.update({ revision: 0, patch: { tuning: { mode } }, why: "Enable" });

@@ -7,6 +7,8 @@ import { prepareCall } from "./prepare";
 import { bindChecks } from "./checker";
 import { bindWorktree, checkedWorktreeRoot, gitWorktreeRoot, needsWorktree, readerFallback } from "./worktree";
 
+import { claimPullRequestGrant, observedPullRequestReceipt, pullRequestGrantAvailable } from "./pr-grants";
+
 export type RemoteScopeObservation = { kind: "unavailable"; reason: string } | { kind: "open"; reason: string } | {
   kind: "ready"; hostId: string; cwd: string; binding: ScopeHostBinding;
   prepare(call: ScopeCall): Promise<HostOutput<"prepareCall">>;
@@ -194,7 +196,7 @@ export function registerWatcher(bb: BbPluginApi, store: ScopeStore, deps: WatchD
             const before = lookup(threadId);
             if (before?.kind !== "ready" || !sameBinding(identity(before), expected)) { await hold(threadId, providerId, row.id, row.seq, "The remote assignment changed before inspection; keep the event pending until the Keeper reconciles its current binding.", expected); return; }
             let reply: HostOutput<"prepareCall">;
-            try { reply = hostContract.prepareCall.output.parse(await before.prepare({ ...rawCall, cwd: rawCall.cwd || before.cwd })); }
+            try { reply = hostContract.prepareCall.output.parse(await before.prepare({ ...rawCall, cwd: rawCall.cwd || before.cwd, observationId: observedPullRequestReceipt(item) ?? row.id })); }
             catch { await hold(threadId, providerId, row.id, row.seq, "Remote scope inspection is unavailable or returned an invalid reply; reconnect or update the host worker before retrying this event.", expected); return; }
             const after = lookup(threadId);
             if (disposed || store.records.get(threadId) !== record || after?.kind !== "ready" || !sameBinding(identity(after), expected) || reply.scopeRevision !== expected.revision || reply.scopeDigest !== expected.scopeDigest) {
@@ -247,7 +249,11 @@ export function registerWatcher(bb: BbPluginApi, store: ScopeStore, deps: WatchD
           try {
             scope = bindChecks(scope);
             const local = { ...call, containment: providerId === "pi" && process.platform === "darwin" && scope.sandbox ? "sandbox" as const : undefined };
-            decision = evaluate(scope, prepareCall(local, { scope }));
+            const id = observedPullRequestReceipt(item) ?? row.id;
+            const prepared = prepareCall(local, { scope });
+            decision = evaluate(scope, { ...prepared, prGrantAvailable: grant => pullRequestGrantAvailable(record.file, grant, id) });
+            if (decision.allow && decision.prGrant && !claimPullRequestGrant(record.file, decision.prGrant, id) && !pullRequestGrantAvailable(record.file, decision.prGrant, id))
+              decision = blocked(call.toolName, "pr-sends-as-you", "the one-use pull request exception was already used");
           }
           catch (error) { decision = blocked(call.toolName, "path-unresolved", "the call paths could not be resolved: " + String(error)); }
           if (!decision.allow) { await contain(threadId, providerId, row.id, row.seq, row.createdAt, decision, call); break; }

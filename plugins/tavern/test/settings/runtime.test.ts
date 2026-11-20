@@ -43,7 +43,7 @@ describe("live settings integration", () => {
     f.settings.update({ revision: 0, patch: { keepers: { partyMax: 1 }, knobs: { rangerTimeboxMaxMinutes: 8 } }, why: "Smaller party and scouting ceiling" });
     const input = { classId: "ranger", title: "Scout", errand: true,
       brief: { outcome: "Read", mode: "make-it-work" as const, outOfScope: "", doneWhen: "Read", context: [], questions: ["What exists?"], timeboxMinutes: 9 } };
-    await expect(f.runtime.hire("lead", "project", input)).rejects.toThrow(/at most 8/);
+    await expect(f.runtime.hire("lead", "project", input)).rejects.toThrow(/settings ceiling of 8 minutes/);
     await f.runtime.hire("lead", "project", { ...input, brief: { ...input.brief, timeboxMinutes: 6 } });
     await expect(f.runtime.hire("lead", "project", { ...input, brief: { ...input.brief, timeboxMinutes: 6 } })).rejects.toThrow(/party budget/);
   });

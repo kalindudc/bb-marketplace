@@ -22,6 +22,7 @@ import { registerCli } from "../../src/server/cli";
 import { provider } from "./provider-fixture";
 import { scopeForClass } from "../../src/scope/presets";
 import { BackendScopes } from "../../src/server/scopes";
+import { evaluate } from "../../src/scope/engine";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -93,6 +94,34 @@ async function fixture(installGuard = false) {
 }
 
 describe("backend scope integration", () => {
+  it("refreshes the Keeper shell when the sends-as-you undo lane shifts and resets", async () => {
+    const f = await fixture();
+    const config = f.runtime.config();
+    const settings = { ...config, keepers: { ...config.keepers, alwaysAsk: config.keepers.alwaysAsk.filter(kind => kind !== "sends-as-you") } };
+    vi.spyOn(f.runtime, "config").mockReturnValue(settings);
+    vi.spyOn(f.k, "settings").mockReturnValue(settings);
+    registerRpc(f.bb, f.runtime);
+    const scopes = f.runtime.scopes!;
+    await scopes.api.writeScope("lead", scopeForClass("keeper"));
+    const url = "https://github.com/example/other/pull/10";
+    const shell = () => evaluate(scopes.view("lead")!.scope!, { kind: "bash", toolName: "bash", cwd: f.work, input: { command: `gh pr comment ${url} --body hi` } });
+    const allowSend = { allow: true, acts: [expect.objectContaining({ kind: "send" })] };
+    const client = { experimental_caller: { kind: "client" as const }, experimental_signal: new AbortController().signal };
+    const decide = () => {
+      const ask = f.k.ask("lead", { boardQuestId: f.q.id, kind: "sends-as-you", question: "Post the comment?", why: "The reviewer asked", draft: { to: url, body: "hi" },
+        effect: { type: "decision" }, holds: [], meanwhile: "", options: [{ id: "approve", label: "Post", detail: "Post the comment", recommended: true }] });
+      return f.k.decide("lead", { boardQuestId: f.q.id, askId: ask.id, optionId: "approve", text: "Post the comment", why: "The send is in scope", reversible: true, source: "keeper" });
+    };
+    expect(shell()).toMatchObject(allowSend);
+    const first = decide(), second = decide();
+    await f.harness.invokeRpc("undoDecision", { decisionId: first.id }, client);
+    expect(shell()).toMatchObject(allowSend);
+    await f.harness.invokeRpc("undoDecision", { decisionId: second.id }, client);
+    expect(shell()).toMatchObject({ allow: false, ruleId: "pr-sends-as-you" });
+    await f.harness.invokeRpc("resetUndoLane", { threadId: "lead", kind: "sends-as-you" }, client);
+    expect(shell()).toMatchObject(allowSend);
+  });
+
   it("pins the hire assignment and ignores later SDK checkout changes", async () => {
     const f = await fixture();
     const get = f.bb.sdk.environments.get;

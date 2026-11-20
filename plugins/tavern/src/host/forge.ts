@@ -90,12 +90,30 @@ export async function forgePullRequest(registry: HostRegistry, input: HostInput<
       };
       const before = await view();
       if (action === "inspect" || before.state === "closed" || before.state === "merged") return before;
-      if (before.headCommit !== headCommit || before.state !== input.state) throw new Error("The head or review state changed after the card was shown; close the pull request on its forge if it is still wanted.");
-      await run("gh", ["pr", "close", url]);
-      const after = await view();
-      if (after.state !== "closed" && after.state !== "merged") throw new Error("The forge did not confirm that the pull request closed.");
-      return after;
+      if (before.headCommit !== headCommit || before.state !== input.state) throw new Error("The head or review state changed after it was checked; confirm the current pull request before taking another action.");
+      if (action === "close") {
+        await run("gh", ["pr", "close", url]);
+        const after = await view();
+        if (after.state !== "closed" && after.state !== "merged") throw new Error("The forge did not confirm that the pull request closed.");
+        return after;
+      }
+      if (action === "comment") {
+        if (!input.comment) throw new Error("A pull request comment needs its text.");
+        await run("gh", ["pr", "comment", url, `--body=${input.comment}`]);
+        return view();
+      }
+      const confirm = async () => {
+        const after = await view();
+        if (after.headCommit !== headCommit || after.state !== action) throw new Error("The forge did not confirm the expected head and review state. Check it before retrying.");
+        return after;
+      };
+      if (action !== before.state) await run("gh", ["pr", "ready", ...(action === "draft" ? ["--undo"] : []), url]);
+      const after = await confirm();
+      if (action !== "ready" || !input.reviewers?.length) return after;
+      await run("gh", ["pr", "edit", url, "--add-reviewer", input.reviewers.join(",")]);
+      return confirm();
     }
+    if (action !== "inspect" && action !== "close") throw new Error("The recorded forge does not support this pull request action.");
     for (const [key, value] of Object.entries({ URL: url, PR_NUMBER: target.pathname.match(/\d+/g)?.at(-1) ?? "", HEAD: head, BASE: base, HEAD_COMMIT: headCommit })) {
       env[`FORGE_${key}`] = value; env[`LOOM_${key}`] = value;
     }

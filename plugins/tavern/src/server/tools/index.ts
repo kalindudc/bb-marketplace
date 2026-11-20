@@ -28,9 +28,13 @@ import { DetectionApprovalRequired } from "../guard-hire";
 import { PlacementHireBlocked } from "../placement/controller";
 import { agentData } from "../agent-data";
 import { registerReady } from "./ready";
+import { managePullRequest, pullRequestActionSchema } from "../pull-request-rules";
+import { refreshQuestPullRequests } from "../conclude-pull-requests";
 
 const id = z.string().min(1).max(120);
 const optionalQuest = id.nullish();
+const keeperCallAsk = (id: string) => `This kind now waits for the user. No decision has been applied. Write on its own line:\n::tavern-ask{id="${id}"}`;
+
 export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   const k = runtime.keeper;
   const register = <S extends z.ZodType>(
@@ -97,7 +101,12 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
       notes: z.array(noteDraftSchema).max(12),
       checkerHandoffHold: checkerHandoffHoldDraftSchema.optional(),
     }),
-    (input, threadId) => k.route(threadId, input),
+    async (input, threadId) => {
+      const route = k.route(threadId, input);
+      const quests = [...new Set(input.notes.flatMap(note => note.kind === "waiting-on-user" && note.boardQuestId ? [note.boardQuestId] : []))];
+      await Promise.all(quests.map(id => refreshQuestPullRequests(runtime, id)));
+      return route;
+    },
   );
   register(
     "tavern_summary",
@@ -114,10 +123,13 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
       noteDraftSchema.safeExtend({ op: z.literal("add") }),
       z.object({ op: z.literal("done"), noteId: id }).strict(),
     ]),
-    (input, threadId) => {
+    async (input, threadId) => {
       if (input.op === "done") return k.memory.complete(threadId, input.noteId);
       const { op, ...draft } = input;
-      return k.memory.note(threadId, draft);
+      const note = k.memory.note(threadId, draft);
+      if (note.kind !== "waiting-on-user" || !note.boardQuestId) return note;
+      await refreshQuestPullRequests(runtime, note.boardQuestId);
+      return { ...note, pullRequests: k.store.pullRequestsForQuest(note.boardQuestId) };
     },
   );
   register(
@@ -294,7 +306,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
     "Recorded a waypoint decision",
     "Record why you accepted a Keeper check (reported work or an answered outside gate), skipped an unsettled optional waypoint, or reopened one you accepted or skipped. Set as to accepted, skipped, or open. The reason is visible and the user can undo the call. This never awards Warden credit.",
     settleWaypointSchema,
-    (input, threadId) => k.settle(threadId, input),
+    (input, threadId) => { const result = k.settle(threadId, input); return "question" in result ? keeperCallAsk(result.id) : result; },
   );
   register(
     "tavern_ask",
@@ -336,7 +348,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   register(
     "tavern_decide",
     "Recorded a decision",
-    "Delegated asks arrive in your Keeper lane; answer with askId and optionId, recorded with Undo, or ask the user when unsure. Quest pre-approval answers matching routine asks in code and its receipt names the user record, not your decision. Record a reversible decision with its reason. Never claim the user's consent without an answered ask. source:user is not allowed; sourceRef must reference a real user-answered ask to attribute consent. exceeds: party or rangers permits one extra hire at that soft limit and is consumed once. The review budget and keepers.partyMax are hard limits only the user lifts.",
+    "Delegated asks arrive in your Keeper lane: answer with askId and optionId (recorded with Undo), or ask the user when unsure. Quest pre-approval answers routine asks in code; its receipt names the user's record. Record a reversible decision with its reason. Never claim the user's consent without an answered ask: sourceRef must name a real user-answered ask; source:user is not allowed. exceeds: party or rangers permits one extra hire at that soft limit, used once. The review budget and keepers.partyMax are hard limits only the user lifts.",
     decisionSchema
       .pick({
         text: true,
@@ -347,7 +359,11 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
         askId: true, optionId: true, kind: true,
       })
       .extend({ boardQuestId: optionalQuest, sourceRef: id.nullish() }),
-    async (input, threadId) => { if (input.askId) await runtime.prepareActDecision(input.askId); return k.decide(threadId, input); },
+    async (input, threadId) => {
+      if (input.askId) await runtime.prepareActDecision(input.askId);
+      const result = k.decideOrAsk(threadId, input);
+      return "question" in result ? keeperCallAsk(result.id) : result;
+    },
   );
   register("tavern_act_verdict", "Verified an exact act", "An assigned Warden records a verdict for a delegated merge or production change from a verified maker journal entry whose review evidence names the exact commit or command.", z.object({ askId: id, entryId: id, target: askSchema.shape.target.unwrap() }), (input, threadId) => { k.authority.recordVerdict(threadId, input.askId, input.entryId, input.target); return "Exact act verdict recorded."; }, "member");
   register(
@@ -415,6 +431,10 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
     "Read bounded board state and page through reports, answers, defaults, events or pending routes. section=archived lists archived party members; use tavern_unarchive to bring one back. Use reportId and character offset for a full report and its original brief. memberThreadId accepts a unique live display name or thread id from your own party. Use section=requests with memberThreadId to inspect that member's frozen user-source manifest; page with sourceIndex and character offset. Fetch remaining facts when a digest says more remain. Page omitted rules with section=rules and use section=placement for machine rules and slots. The highest ledger version wins, configure or tick; read the needed quests after a re-anchor before acting.",
     statusInput,
     (input, threadId) => readStatus(runtime, threadId, { ...input, ...(input.memberThreadId ? { memberThreadId: k.resolvePartyMember(threadId, input.memberThreadId).threadId } : {}) }),
+  );
+  register("tavern_pull_request", "Recorded a pull request action",
+    "Manage a quest PR by id: ready (optional reviewers) needs the Warden’s full commit in journal review evidence; Undo returns it to draft. Close records why; comment replies on your quest’s PR. For others, draft the URL, operation and full text; in your lane, give the quest and the literal gh or dt command with full URL, allowed once. unsure:true asks the user.",
+    pullRequestActionSchema, (input, threadId) => managePullRequest(runtime, threadId, input),
   );
   register(
     "tavern_wrap",

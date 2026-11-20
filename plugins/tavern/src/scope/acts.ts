@@ -2,25 +2,31 @@ import { selectedAwayGuards } from "./away-policy";
 import type { Scope, ShellRule } from "./schema";
 import { writeAllowed } from "./paths";
 import type { ScopeCall } from "./engine";
-import { agentProgram, bbPositionals } from "./legacy";
+import { agentProgram, bbControlPositionals, bbPositionals } from "./legacy";
 import { draftEditKey, githubApiRead } from "./github";
 import { pushSpec } from "./remote";
 import type { ShellCommand } from "./shell";
+import { AUTHORITY, USER_ONLY_CLI } from "../shared/authority";
+import { pullRequestWrite } from "./pr-policy";
 
-const clientOnlyMethods = ["holdBoardQuest", "resumeBoardQuest", "answerAsk", "applyClassExecution", "archiveBoardQuests", "awayClose", "awayReturn", "deleteBoardQuest", "dismissClassNotice", "releaseCheckerHandoff", "removeClassOverride", "restoreDeletedQuest", "saveClass", "setTaleKept", "settingsApplySuggestion", "settingsEndOverride", "settingsFile", "settingsImport", "settingsUndo", "settingsUpdate", "voiceCheckCancel", "voiceCheckStart"];
-const namedUserMethods = ["delegateQuest", "preapproveQuest", "revokeQuestAuthority", "resumeAll", "releaseHold", "backupRestore", "confirmRule", "stopBoardQuest", "addRule", "widenRule", "undoDecision", "resetUndoLane", "correctRoute", "resumeKeeper", "journalEdit", "resolveHandBack", "saveCharacterVoice", "saveCharacterAvatar"];
-const userMethods = new Set([...clientOnlyMethods, ...namedUserMethods, "greenlight", "conclude", "closeEarly", "allowReview", "guardInstall", "guardUninstall", "placementRetry", "placementModelFailureClear"]);
+const userMethods = new Set(Object.keys(AUTHORITY).filter(act => AUTHORITY[act as keyof typeof AUTHORITY].level === "user-explicit"));
+const bbOptions = String.raw`\s+(?:--(?:input-file|project|host|server|url|token)\s+[^\s;\n]+\s+|--[^\s;\n]+\s+)*`;
+const cliControls = USER_ONLY_CLI.map(command => {
+  const words = command.split(" "), option = words.at(-1)?.startsWith("--") ? words.pop() : undefined;
+  return { words, option };
+});
+const controlEnd = String.raw`(?=$|[\s;|&])`;
+const cliFallback = cliControls.map(({ words, option }) => words.join(bbOptions) + controlEnd + (option ? String.raw`[^;\n]*\s${option}(?=$|[\s=;|&])` : "")).join("|");
+const tavernControlFallback = new RegExp(String.raw`\bbb${bbOptions}(?:(?:plugin${bbOptions}run${bbOptions})?tavern${bbOptions}(?:${cliFallback})|plugin${bbOptions}rpc${bbOptions}call${bbOptions}tavern${bbOptions}(?:${[...userMethods].join("|")})${controlEnd})`);
 export function userControl(command: ShellCommand): boolean {
-  const words = bbPositionals(command.argv);
-  if (words[0] !== "bb" || !words.includes("tavern")) return false;
-  const has = (word: string) => words.includes(word);
-  const rpc = words.indexOf("rpc"), call = words.indexOf("call", rpc + 1);
-  if (rpc >= 0 && call > rpc && words.slice(call + 1).some(word => userMethods.has(word))) return true;
-  if (rpc >= 0 && call > rpc && /[$`]/.test(words[words.indexOf("tavern") + 1] ?? "")) return true;
-  return ["ask", "release", "return", "rule", "stop"].some(has) ||
-    has("settings") && ["set", "import", "undo", "apply", "file"].some(has) ||
-    has("guard") && ["install", "uninstall"].some(has) ||
-    has("backup") && has("restore") || has("stop-all") && has("resume");
+  const [program, group, verb, action, plugin, method] = bbControlPositionals(command.argv);
+  if (program !== "bb") return false;
+  if (group === "plugin" && verb === "rpc" && action === "call")
+    return plugin === "tavern" && (userMethods.has(method) || /[$`]/.test(method ?? ""));
+  if (group !== "tavern") return false;
+  const words = bbControlPositionals(command.argv).slice(2);
+  return cliControls.some(spec => spec.words.every((word, i) => word === words[i]) &&
+    (!spec.option || command.argv.some(arg => arg === spec.option || arg.startsWith(spec.option + "="))));
 }
 
 export const ACT_KINDS = ["merge", "publish", "ready", "close", "review", "deploy", "send", "delete", "configure", "credential", "tavern-control", "allocate"] as const;
@@ -99,7 +105,7 @@ export const ACT_CATALOGUE: readonly ActDefinition[] = [
   { kind: "delete", ruleId: "delete", why: "Deleting the user's things needs a grant", commands: ["bb thread|project|environment delete", "bb machine remove", "cortex rm", "gcloud resource delete"], matches: c => controlAct(c) === "delete", fallback: /\bbb\b[^;\n]*\b(?:thread|project|environment|machine)\s+(?:delete|archive|remove)\b|\bcortex\s+(?:rm|delete|remove)\b|\bgcloud\b[^;\n]*\b(?:delete|remove)\b/ },
   { kind: "configure", ruleId: "configure", why: "Changing the user's tools or settings needs a grant", commands: ["bb plugin install|uninstall|enable|disable|dev|settings", "bb settings set", "bb lan on|off|pair|revoke", "bb loom approve|start|land|live|archive|pause|resume", "bb automations create|update|delete|enable|disable", "bb aquifer-machines rotate|park|remove", "bb machine rotate|env set|env unset", "bb secrets except request", "cortex agents|reset|restore", "Tavern settings writes"], matches: c => controlAct(c) === "configure", fallback: /\bbb\b[^;\n]*\b(?:plugin\s+(?:install|uninstall|enable|disable|dev|settings)|loom\s+(?:approve|start|land|live|archive|pause|resume)|automations?\s+(?:create|update|delete|enable|disable)|lan\s+(?:on|off|pair|revoke)|settings\s+set|aquifer-machines\s+(?:rotate|park|remove)|machine\s+(?:rotate|env\s+(?:set|unset))|secrets(?!\s+request\b))\b|\bcortex\s+(?:agents|reset|restore)\b/ },
   { kind: "credential", ruleId: "credential", why: "Revealing a credential needs the user's grant", commands: ["gh auth token", "security find-password -w|-g", "vault read|kv get", "gcloud secrets versions access"], matches: c => { const [p, s, a] = c.argv; return p === "gh" && s === "auth" && a === "token" || p === "security" && /^find-.*password$/.test(s ?? "") && c.argv.some(arg => /^-[^-]*[wg]/.test(arg)) || p === "gcloud" && s === "auth" && /^print-(?:access|identity)-token$/.test(a ?? "") || p === "gcloud" && s === "secrets" && a === "versions" && c.argv[3] === "access" || p === "vault" && (c.argv.includes("read") || c.argv.includes("kv") && c.argv.includes("get")); }, fallback: /\bgcloud\b[^;\n]*\bsecrets\s+versions\s+access\b|\bgh\s+auth\s+token\b|\bsecurity\s+find-[^;\n]*-[wg]\b|\bvault\s+(?:read|kv\s+get)\b/ },
-  { kind: "tavern-control", ruleId: "tavern-control", why: "Tavern's controls are the user's; ask the user", commands: ["bb tavern user controls", "bb plugin rpc call tavern user controls"], matches: userControl, fallback: /\bbb\s+(?:tavern\s+(?:ask|release|return|rule|stop|settings|guard\s+(?:install|uninstall)|backup\s+restore)|plugin\s+rpc\s+call\s+tavern\s+(?:answerAsk|resumeAll|releaseHold|resetUndoLane|settings\w+|backupRestore))\b/ },
+  { kind: "tavern-control", ruleId: "tavern-control", why: "Tavern's controls are the user's; ask the user", commands: ["bb tavern user controls", "bb plugin rpc call tavern user controls"], matches: userControl, fallback: tavernControlFallback },
   { kind: "allocate", ruleId: "allocate", why: "Machines come only from rules; ask the Keeper", commands: ["bb machine", "bb thread spawn with placement flags"], matches: c => { const [p, s, a] = bbPositionals(c.argv); return p === "bb" && ((s === "machine" && ["create", "enroll"].includes(a) || s === "aquifer-machines" && a === "create") || s === "thread" && a === "spawn" && (c.originalArgv ?? c.argv).some((arg, i, args) => /^(?:--new-machine|--machine|--host|--environment-provider|--project)(?:=|$)/.test(arg) && !["--task", "--title", "--message"].includes(args[i - 1]))); }, fallback: /\bbb\b[^;\n]*\b(?:machine|aquifer-machines)\s+(?:create|enroll)\b|\bbb\b(?=[^;\n]*\bthread\s+spawn\b)[^;\n]*--(?:new-machine|machine|host|environment-provider|project)\b/ },
 ];
 export const actsForCommand = (command: ShellCommand): Act[] => {
@@ -115,6 +121,24 @@ export const actsForCommand = (command: ShellCommand): Act[] => {
   return acts;
 };
 export const fallbackActs = (source: string): Act[] => ACT_CATALOGUE.filter(act => act.fallback.test(source)).map(({ kind, ruleId, why }) => ({ kind, ruleId, why }));
+const prDraftAct: Act = { kind: "send", ruleId: "pr-sends-as-you", why: "This pull request is not known to belong to the quest; use tavern_pull_request to record the decision or draft it for the user." };
+const ownPrAct: Act = { kind: "publish", ruleId: "pr-owned-write", why: "Managing the quest’s own pull request" };
+const prReadyAct: Act = { kind: "ready", ruleId: "pr-keeper-ready", why: "Only the Keeper marks a verified pull request ready or requests reviewers, through tavern_pull_request." };
+const prCloseAct: Act = { kind: "close", ruleId: "pr-keeper-close", why: "Use tavern_pull_request to close a quest-owned pull request or draft the request for the user." };
+export function pullRequestRoute(command: ShellCommand, owned: boolean): Act | undefined {
+  if (command.argv.includes("--help") || command.argv.includes("--version")) return;
+  if (pr(command, ["ready"]) || pr(command, ["create", "edit"]) &&
+    command.argv.slice(3).some(arg => /^(?:--(?:add-)?reviewer(?:=|$)|-r)/.test(arg))) return prReadyAct;
+  const write = pullRequestWrite(command);
+  if (!write) return;
+  if (write.operation === "close" && owned) return prCloseAct;
+  if (owned && (write.operation === "comment" || write.operation === "edit")) return ownPrAct;
+  return prDraftAct;
+}
+export function fallbackPullRequestRoute(source: string): Act | undefined {
+  if (/\b(?:gh|dt)\b[^;\n]*\bpr\s+(?:ready\b|(?:create|edit)\b[^;\n]*\s(?:--(?:add-)?reviewer\b|-r\b))/.test(source)) return prReadyAct;
+  if (/\b(?:gh|dt)\b[^;\n]*\bpr\s+(?:close|comment|edit|review|approve)\b/.test(source)) return prDraftAct;
+}
 export function baselineHolds(scope: Scope, call: ScopeCall, command: ShellCommand, act: Act): boolean {
   if (act.kind === "tavern-control") return false;
   if (scope.role === "keeper" || scope.role === "wanderer" && scope.preset === "open") return true;

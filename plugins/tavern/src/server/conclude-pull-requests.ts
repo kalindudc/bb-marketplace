@@ -2,41 +2,36 @@ import { isDeepStrictEqual } from "node:util";
 import { pullRequestHead, pullRequestVerified, type PullRequest } from "../shared/pull-request";
 import type { ClosePullRequest, PullRequestChoices } from "../shared/closing";
 import type { TavernRuntime } from "./runtime";
-
-type Observation = { state: PullRequest["state"]; headCommit?: string };
+import { observePullRequest, refreshPullRequest } from "./pull-request-rules";
 const binding = (pr: PullRequest | ClosePullRequest) => ({ id: pr.id, url: pr.url, head: pr.head, base: pr.base, state: pr.state, forge: pr.forge,
   headCommit: "headCommit" in pr ? pr.headCommit : pullRequestHead(pr), headVerified: "headVerified" in pr ? pr.headVerified : pullRequestVerified(pr) });
 
-function observed(pr: PullRequest, live: Observation): PullRequest {
-  return { ...pr, state: live.state,
-    ...(live.headCommit && live.headCommit !== pullRequestHead(pr) ? { pushedHead: live.headCommit, verifiedCommit: null } : {}) };
+const refreshes = new WeakMap<TavernRuntime, Map<string, Promise<unknown>>>();
+export async function refreshQuestPullRequests(runtime: TavernRuntime, questId: string) {
+  let pending = refreshes.get(runtime);
+  if (!pending) refreshes.set(runtime, pending = new Map());
+  const active = pending;
+  const unchecked = new Set<string>();
+  await Promise.all(runtime.keeper.store.openPullRequests(questId).map(async pr => {
+    let refresh = active.get(pr.id);
+    if (!refresh) {
+      refresh = refreshPullRequest(runtime, pr).finally(() => active.delete(pr.id));
+      active.set(pr.id, refresh);
+    }
+    try { await refresh; }
+    catch { unchecked.add(pr.id); }
+  }));
+  return unchecked;
 }
 
 export async function previewPullRequests(runtime: TavernRuntime, questId: string) {
   const k = runtime.keeper;
-  const rows = k.store.openPullRequests(questId);
-  if (!rows.length) return [];
-  const forge = runtime.placements().forge;
-  const observations = await Promise.all(rows.map(async pr => {
-    try { return { pr, live: await forge.inspect(pr) }; }
-    catch { return { pr, live: null, unchecked: true }; }
-  }));
-  return k.store.atomic(() => {
-    const unchecked = new Set<string>();
-    for (const { pr, live, unchecked: failed } of observations) {
-      const current = k.store.get("pullRequests", pr.id);
-      if (!current || !isDeepStrictEqual(current, pr) || failed) { unchecked.add(pr.id); continue; }
-      if (live) {
-        const next = observed(pr, live);
-        if (!isDeepStrictEqual(current, next)) k.store.changePullRequest(next, k.now());
-      }
-    }
-    return k.store.openPullRequests(questId).map((pr): ClosePullRequest => {
-      const owner = k.member(pr.owner);
-      const closeUnavailable = forge.closeUnavailable(pr);
-      return { ...binding(pr), state: pr.state as ClosePullRequest["state"], owner: pr.owner, ownerName: pr.owner === "user" ? "You" : owner ? k.name(owner) : pr.owner,
-        ...(closeUnavailable ? { closeUnavailable } : {}), ...(unchecked.has(pr.id) ? { stateNote: "The forge state could not be refreshed; this is the last recorded state." } : {}) };
-    });
+  const unchecked = await refreshQuestPullRequests(runtime, questId);
+  return k.store.openPullRequests(questId).map((pr): ClosePullRequest => {
+    const owner = k.member(pr.owner);
+    const closeUnavailable = runtime.placements().forge.closeUnavailable(pr);
+    return { ...binding(pr), state: pr.state as ClosePullRequest["state"], owner: pr.owner, ownerName: pr.owner === "user" ? "You" : owner ? k.name(owner) : pr.owner,
+      ...(closeUnavailable ? { closeUnavailable } : {}), ...(unchecked.has(pr.id) ? { stateNote: "The forge state could not be refreshed; this is the last recorded state." } : {}) };
   });
 }
 
@@ -76,7 +71,7 @@ export async function closeAnsweredPullRequests(runtime: TavernRuntime, ids: str
       if (result.state !== "closed" && result.state !== "merged") throw new Error("The forge did not confirm that the pull request closed.");
       const current = k.store.get("pullRequests", id);
       if (!current || !isDeepStrictEqual(pr, current)) throw new Error("The pull request record changed during the forge call. Check it on the forge before taking another action.");
-      const { closeRequest, ...record } = observed(current, result);
+      const { closeRequest, ...record } = observePullRequest(current, result);
       k.store.changePullRequest(record, k.now(), askId);
     } catch (error) {
       const message = error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500);

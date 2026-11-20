@@ -2,7 +2,9 @@
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import ts from "typescript";
 import { AUTHORITY } from "../../src/server/authority";
-import { userControl } from "../../src/scope/legacy";
+import { USER_ONLY_CLI } from "../../src/shared/authority";
+import { fallbackActs, userControl } from "../../src/scope/acts";
+import { shouldScope } from "../../src/scope";
 import { shellCommands } from "../../src/scope/shell";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,7 +16,12 @@ import { ScopeStore } from "../../src/scope/store";
 import extension, { type PiGuardApi } from "../../adapters/pi/extension";
 
 const scope = (role: string, mode: "watch" | "enforce" = "enforce") => bindPaths({ ...scopeForClass(role), mode }, { home: "/home/fixture", tmp: ["/tmp"], threadStorage: "/storage", worktree: "/workspace", scopesDir: "/scopes" });
-const check = (role: string, command: string, contained = true, mode: "watch" | "enforce" = "enforce") => evaluate(scope(role, mode), { kind: "bash", toolName: "bash", input: { command }, cwd: "/workspace", containment: contained ? "sandbox" : undefined });
+const bound = new Map<string, ReturnType<typeof scope>>();
+const check = (role: string, command: string, contained = true, mode: "watch" | "enforce" = "enforce") => {
+  const key = `${role}:${mode}`;
+  if (!bound.has(key)) bound.set(key, scope(role, mode));
+  return evaluate(bound.get(key)!, { kind: "bash", toolName: "bash", input: { command }, cwd: "/workspace", containment: contained ? "sandbox" : undefined });
+};
 // Cloud config set, machine reads and secure credential requests are approved exceptions to SC1’s reader floor.
 const probe: [string, string, "act" | "authority" | "allow" | "research" | "agent" | "gap"][] = [
   ["ranger", "dt pr merge 17", "act"], ["warden", "dt pr merge 17", "act"],
@@ -129,7 +136,51 @@ it("covers every RPC handler that checks for a client caller", () => {
 it("keeps the isolated shell deny catalogue aligned with every user-explicit act", () => {
   const methods = Object.entries(AUTHORITY).filter(([, row]) => row.level === "user-explicit").map(([act]) => act);
   expect(methods.length).toBeGreaterThan(0);
-  for (const method of methods) expect(userControl(shellCommands(`bb plugin rpc call --json tavern ${method}`, "/workspace")[0]), method).toBe(true);
+  for (const method of methods) {
+    expect(fallbackActs(`bb --json plugin rpc call --input-file a.json tavern ${method}`).map(act => act.kind), method).toContain("tavern-control");
+    for (const role of ["ranger", "warden", "smith", "keeper", "wanderer", "custom-open"]) for (const mode of ["enforce", "watch"] as const) {
+      expect(check(role, `bb plugin rpc call tavern ${method}`, false, mode), `${role} ${mode}: ${method}`).toMatchObject({ allow: false, ruleId: "tavern-control" });
+    }
+  }
+});
+it("covers the registered CLI commands with an agent-thread check", () => {
+  const guarded: string[] = [];
+  for (const file of ["cli.ts", "settings/cli.ts", "backup/cli.ts"]) {
+    const src = ts.createSourceFile(file, readFileSync(join(import.meta.dirname, "../../src/server", file), "utf8"), ts.ScriptTarget.Latest, true);
+    const visit = (node: ts.Node) => {
+      if (ts.isPropertyAssignment(node) && ts.isCallExpression(node.initializer) && node.initializer.expression.getText() === "cliCommand" &&
+          /terminalUserAct\(ctx|settingsAccess\(ctx|guard\("(?:install|uninstall)", ctx/.test(node.initializer.getText()))
+        guarded.push(node.name.getText().replace(/^["']|["']$/g, ""));
+      ts.forEachChild(node, visit);
+    };
+    visit(src);
+  }
+  expect(guarded).toContain("ask");
+  expect(guarded).toContain("backup restore");
+  for (const command of guarded) expect(USER_ONLY_CLI.some(rule => rule === command || rule.startsWith(command + " --")), command).toBe(true);
+});
+
+it("refuses every user-only CLI command in both bb spellings across scoped roles and modes", () => {
+  for (const verb of USER_ONLY_CLI) for (const prefix of ["bb tavern", "bb plugin --json run tavern"]) {
+    const command = `${prefix} ${verb}`;
+    expect(fallbackActs(command).map(act => act.kind), command).toContain("tavern-control");
+    for (const role of ["ranger", "warden", "smith", "keeper", "wanderer", "custom-open"]) for (const mode of ["enforce", "watch"] as const) {
+      expect(check(role, command, false, mode), `${role} ${mode}: ${command}`).toMatchObject({ allow: false, ruleId: "tavern-control" });
+    }
+  }
+});
+
+it("keeps ordinary reads open in every scoped shell, including directly started classes", () => {
+  expect(shouldScope("smith", "direct")).toBe(true);
+  expect(shouldScope("ranger", "direct")).toBe(true);
+  expect(shouldScope("wanderer", "direct")).toBe(false);
+  expect(shouldScope("wanderer", "hire")).toBe(true);
+  for (const role of ["ranger", "warden", "smith", "keeper", "wanderer", "custom-open"]) for (const mode of ["enforce", "watch"] as const) for (const contained of [true, false]) {
+    for (const command of ["bb tavern status", "bb tavern settings get", "bb tavern settings get stop", "bb plugin rpc call burn usage", "bb thread show thr_x"]) {
+      expect(check(role, command, contained, mode).allow, `${role} ${mode}: ${command}`).toBe(true);
+    }
+  }
+  expect(check("keeper", "bb plugin rpc call another-plugin status --data tavern answerAsk").allow).toBe(true);
 });
 it.each(["holdBoardQuest", "resumeBoardQuest", "confirmRule", "stopBoardQuest", "addRule", "widenRule", "undoDecision", "correctRoute", "resumeKeeper", "journalEdit", "saveCharacterVoice", "resolveHandBack"])("refuses user controls even when their RPC handlers have no client check: %s", method => {
   for (const role of ["ranger", "warden", "smith", "wanderer", "keeper"]) for (const mode of ["watch", "enforce"] as const) for (const contained of [true, false]) {

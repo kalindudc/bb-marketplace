@@ -15,7 +15,7 @@ const closed = awayWindowSchema.parse({
   eventFloor: 0, eventCeiling: null,
 });
 
-const scope = (role: string) => bindPaths({ ...scopeForClass(role), ...(role === "smith" ? { assignedBranch: "feature" } : {}) }, { home: "/home/me", tmp: ["/tmp"], threadStorage: "/storage", worktree: "/repo", scopesDir: "/scopes" });
+const scope = (role: string) => bindPaths({ ...scopeForClass(role), ...(role === "smith" ? { assignedBranch: "feature" } : {}) }, { home: process.env.TAVERN_TEST_FIXTURES!, tmp: ["/tmp"], threadStorage: "/storage", worktree: "/repo", scopesDir: "/scopes" });
 const call = (command: string) => ({ kind: "bash" as const, toolName: "bash", cwd: "/repo", input: { command }, containment: "sandbox" as const });
 const acts = (command: string) => shellCommands(command, "/repo").flatMap(actsForCommand).map(act => act.kind);
 const commands = [
@@ -34,8 +34,10 @@ it.each(commands)("recognises %s: %s for every class", (kind, command) => {
   expect(acts(command)).toContain(kind);
   for (const role of ["ranger", "warden", "smith", "wanderer", "keeper"]) {
     const decision = evaluate(scope(role), call(command));
-    expect(decision.allow, role).toBe(role === "keeper" || role === "wanderer");
-    if (role === "keeper") expect(decision).toMatchObject({ acts: expect.arrayContaining([expect.objectContaining({ kind })]) });
+    const managed = ["ready", "close", "review"].includes(kind) || /\bpr (?:comment|edit)\b/.test(command);
+    expect(decision.allow, role).toBe(!managed && (role === "keeper" || role === "wanderer"));
+    if (role === "keeper" && !managed) expect(decision).toMatchObject({ acts: expect.arrayContaining([expect.objectContaining({ kind })]) });
+    if (managed && role === "keeper" && kind !== "ready") expect(decision).toMatchObject({ reason: expect.stringContaining("tavern_pull_request") });
   }
 });
 it.each(["kubectl --context x get pods", "cortex update 1175 -m hi", "bb thread spawn --task hi"])("does not catalogue coordination or reads: %s", command => {
@@ -61,6 +63,11 @@ it.each(["gh", "dt"])("grants %s comments and title/body edits only with verifie
     const key = draftEditKey(shellCommands(command, "/repo")[0]);
     expect(evaluate(scope("smith"), call(command)).allow).toBe(false);
     expect(evaluate(scope("smith"), { ...call(command), ownedPrs: [key] }).allow).toBe(true);
+  }
+  const reviewers = program + " pr edit 1 --add-reviewer example";
+  const key = draftEditKey(shellCommands(reviewers, "/repo")[0]);
+  for (const role of ["smith", "keeper", "wanderer"]) {
+    expect(evaluate(scope(role), { ...call(reviewers), ownedPrs: [key] })).toMatchObject({ allow: false, reason: expect.stringContaining("tavern_pull_request") });
   }
   expect(evaluate(scope("smith"), call(program + " pr create --draft --head someone-else")).allow).toBe(false);
 });

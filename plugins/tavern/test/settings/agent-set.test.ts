@@ -6,7 +6,7 @@ import { SettingsStore } from "../../src/server/settings/store";
 import { MIGRATIONS } from "../../src/server/migrations";
 import type { Database } from "../../src/server/ports";
 it.each([["keepers.alwaysAsk", "[keepers]\\nalways_ask = []"], ["away.neverWhileClosed", "[away]\\nnever_while_closed = []"]])("reserves %s for the user anywhere settings can be applied", async (key, toml) => {
- const db = new Sqlite(":memory:"); db.exec(MIGRATIONS.join("\n"));
+ const db = new Sqlite(":memory:"); db.exec(MIGRATIONS.join(";\n"));
  try {
   const store = new SettingsStore(db as unknown as Database);
   const cli = defineCli({name:"tavern",summary:"Test",commands:settingsCommands({} as BbPluginApi,store)});
@@ -26,7 +26,7 @@ it.each([["keepers.alwaysAsk", "[keepers]\\nalways_ask = []"], ["away.neverWhile
  } finally {db.close();}
 });
 it("previews multiple keys, audits an agent apply and allows undo", async () => {
- const db = new Sqlite(":memory:"); db.exec(MIGRATIONS.join("\n"));
+ const db = new Sqlite(":memory:"); db.exec(MIGRATIONS.join(";\n"));
  try {
  const store = new SettingsStore(db as unknown as Database);
  const cli = defineCli({ name: "tavern", summary: "Tavern", commands: settingsCommands({} as BbPluginApi, store) });

@@ -1,16 +1,17 @@
 import type { Scope } from "./schema";
-import { agentProgram, bbPositionals, nestedCommands, userControl } from "./legacy";
-import { actsForCommand, baselineHolds, isCatalogueRule, closingAct, fallbackActs, readerNeedsDecision, type Act } from "./acts";
+import { agentProgram, bbPositionals, nestedCommands } from "./legacy";
+import { actsForCommand, baselineHolds, isCatalogueRule, closingAct, fallbackActs, fallbackPullRequestRoute, pullRequestRoute, readerNeedsDecision, userControl, type Act } from "./acts";
 import { readerFallback } from "./worktree";
 import { checkInvocation } from "./checker";
 import { glob, isSink, normalizeToolPath, within, writeAllowed, writeDenied } from "./paths";
 import { normalizeRemote, pushSpec } from "./remote";
 import { awkRead, fileRead, findRead, sedRead, xxdRead } from "./reads";
-import { githubApiRead } from "./github";
+import { draftEditKey, githubApiRead } from "./github";
+import { prCommandDigest, pullRequestOwned } from "./pr-policy";
 import { commandWritePaths, knownWritePaths, ruleMatches, shellCommands, type ShellCommand } from "./shell";
 
-export interface ScopeCall { containment?: "sandbox"; fetchWriteRoots?: string[]; kind: "tool" | "bash" | "write" | "read"; toolName: string; input: Record<string, unknown>; cwd: string; resolvedPaths?: Record<string, string>; pushTargets?: Record<string, string[]>; pushHeads?: Record<string, string>; gitRoots?: Record<string, string>; directories?: string[]; ownedDraftPrs?: string[]; ownedPrs?: string[] }
-export type Decision = { allow: true; check?: boolean; acts?: Act[] } | { allow: false; ruleId: string; reason: string };
+export interface ScopeCall { containment?: "sandbox"; fetchWriteRoots?: string[]; kind: "tool" | "bash" | "write" | "read"; toolName: string; input: Record<string, unknown>; cwd: string; resolvedPaths?: Record<string, string>; pushTargets?: Record<string, string[]>; pushHeads?: Record<string, string>; gitRoots?: Record<string, string>; directories?: string[]; ownedDraftPrs?: string[]; ownedPrs?: string[]; questOwnedPrs?: string[]; observationId?: string; prGrantAvailable?(id: string): boolean }
+export type Decision = { allow: true; check?: boolean; acts?: Act[]; prGrant?: string } | { allow: false; ruleId: string; reason: string };
 const allowed: Decision = { allow: true };
 export const BLOCK_MARKER = "[Tavern scope blocked]";
 export function blocked(what: string, ruleId: string, why: string): Decision {
@@ -112,19 +113,20 @@ export function evaluate(scope: Scope, call: ScopeCall): Decision {
   if (scope.preset !== "open" && !(scope.commandTools ?? ["bash", "Bash"]).includes(call.toolName)) return blocked(call.toolName, "command-tool", "command-running tools require an explicit scope allowlist and a guarded execution backend");
   let commands;
   try { commands = shellCommands(source, call.cwd, { temporaryRoot: temporaryRoot(scope), isRead: contained ? containmentRead : readonlyProgram, gitRoots: call.gitRoots, directories: call.directories, env: scope.env.variables, containment: contained ? "sandbox" : undefined }); } catch {
-    const acts = fallbackActs(source);
-    const refused = acts.find(act => closingAct(scope, act, source) || !(scope.role === "keeper" || scope.role === "wanderer" && scope.preset === "open") || act.kind === "tavern-control");
+    const route = fallbackPullRequestRoute(source);
+    const acts = route ? [route, ...fallbackActs(source)] : fallbackActs(source);
+    const refused = (route && (route.kind !== "send" || scope.pullRequestPolicy?.alwaysAsk !== false) ? route : undefined) ?? acts.find(act => closingAct(scope, act, source) || !(scope.role === "keeper" || scope.role === "wanderer" && scope.preset === "open") || act.kind === "tavern-control");
     if (refused) return blocked("shell command", refused.kind === "deploy" ? "deploy-fallback" : refused.ruleId, refused.why);
     if (scope.preset === "open") return acts.length ? { allow: true, acts } : allowed;
     for (const rule of scope.shell.deny) if (rule.regex && new RegExp(rule.regex).test(source)) return blocked("shell command", rule.id, rule.why);
     if (contained) return allowed;
     return blocked("shell command", "shell-parse", "unsupported shell syntax cannot be checked safely");
   }
-  let checking = false;
+  let checking = false, prGrant: string | undefined;
   const observed: Act[] = [];
   for (const command of commands) {
     for (const source of nestedCommands(command)) {
-      const result = evaluate(scope, { ...call, input: { command: source }, cwd: command.cwd });
+      const result = evaluate(scope, { ...call, input: { command: source }, cwd: command.cwd, prGrantAvailable: undefined });
       if (!result.allow) return result;
       observed.push(...result.acts ?? []);
     }
@@ -144,7 +146,16 @@ export function evaluate(scope: Scope, call: ScopeCall): Decision {
       const targets = call.pushTargets?.[command.cwd + "\0" + push.remote];
       return !!targets?.length && targets.every(target => glob(rule.remote!, normalizeRemote(target)));
     });
-    for (const act of actsForCommand(command)) {
+    const smithOwned = Boolean(call.ownedPrs?.includes(draftEditKey(command)));
+    const questOwned = pullRequestOwned(command, scope.pullRequestPolicy?.owned ?? [], call.questOwnedPrs ?? []);
+    const route = pullRequestRoute(command, smithOwned || questOwned);
+    if (route && (route.kind === "ready" || route.kind === "close")) return blocked(command.text, route.ruleId, route.why);
+    if (route?.kind === "send") {
+      const grant = commands.length === 1 && !command.githubEnvironment && scope.pullRequestPolicy?.grants.find(g => g.digest === prCommandDigest(source) && call.prGrantAvailable?.(g.id));
+      if (!grant && scope.pullRequestPolicy?.alwaysAsk !== false) return blocked(command.text, route.ruleId, route.why);
+      if (grant) prGrant = grant.id;
+    }
+    for (const act of route && !smithOwned ? [route] : scope.pullRequestPolicy?.alwaysAsk === false && route?.kind === "send" ? [route] : actsForCommand(command)) {
       observed.push(act);
       if (closingAct(scope, act, command)) return blocked(command.text, "closing-act", "Closing time: " + act.kind + " waits for your return");
       if (!baselineHolds(scope, call, command, act) && !excepted(act.ruleId)) return blocked(command.text, act.ruleId, act.why);
@@ -170,5 +181,5 @@ export function evaluate(scope: Scope, call: ScopeCall): Decision {
       if (!read && !check && !knownWriter) return blocked(command.text, "readonly-shell", "this scope permits inspected read programs, not arbitrary programs or opaque shell input");
     }
   }
-  return { allow: true, ...(checking ? { check: true } : {}), ...(observed.length ? { acts: observed } : {}) };
+  return { allow: true, ...(checking ? { check: true } : {}), ...(observed.length ? { acts: observed } : {}), ...(prGrant ? { prGrant } : {}) };
 }

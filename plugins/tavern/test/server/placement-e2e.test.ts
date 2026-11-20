@@ -74,7 +74,7 @@ function nativeSourceFixture() {
     throw new Error("Unexpected source mutation: " + call.method);
   } });
   hosts.add(host);
-  const db = host.bb.storage.database(); db.exec(MIGRATIONS.join("\n"));
+  const db = host.bb.storage.database(); db.exec(MIGRATIONS.join(";\n"));
   const port = createHostPort(host.bb), placements = new PlacementStore(db, () => 123);
   const discovery = new SourceDiscovery(host.bb, port, new DiscoveryStore(db)), capture = new SourceCapture(discovery, port, placements);
   return { ...host, source, base, head, tree, placements, discovery, capture };

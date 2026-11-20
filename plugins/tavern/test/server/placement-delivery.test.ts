@@ -19,7 +19,7 @@ function fixture(beforeDeliveryMigration = false, overrides: Partial<PlacementRe
   const db = host.bb.storage.database();
   const deliveryMigration = MIGRATIONS.findIndex(sql => sql.includes("ADD COLUMN scope_delivery_json"));
   expect(deliveryMigration).toBeGreaterThan(0);
-  db.exec((beforeDeliveryMigration ? MIGRATIONS.slice(0, deliveryMigration) : MIGRATIONS).join("\n"));
+  db.exec((beforeDeliveryMigration ? MIGRATIONS.slice(0, deliveryMigration) : MIGRATIONS).join(";\n"));
   const placements = new PlacementStore(db);
   placements.reserve(placementRecord({ memberThreadId: "member", hostId: "guest", environmentId: "guest-env", root: "/guest/repo", phase: "reserved", ...overrides }),
     { maxMakers: 2, maxCheckers: 2 });
@@ -44,7 +44,7 @@ describe("private exact-byte scope delivery persistence", () => {
     const original = f.placements.get("placement");
     expect(f.db.prepare("PRAGMA table_info(tavern_placements)").all()).not.toContainEqual(expect.objectContaining({ name: "scope_delivery_json" }));
     const index = MIGRATIONS.findIndex(sql => sql.includes("ADD COLUMN scope_delivery_json"));
-    f.db.exec(MIGRATIONS.slice(index).join("\n"));
+    f.db.exec(MIGRATIONS.slice(index).join(";\n"));
     expect(f.placements.get("placement")).toEqual(original);
     expect(f.deliveries.get("placement")).toBeNull();
     expect(f.deliveries.forThread("member")).toMatchObject({ kind: "unavailable" });
@@ -198,7 +198,7 @@ describe("private exact-byte scope delivery persistence", () => {
     expect(snapshot.tables).not.toHaveProperty("tavern_placements");
     expect(records.empty()).toBe(false);
     const target = createFakePluginHost({ pluginId: "tavern" }); hosts.add(target);
-    const db = target.bb.storage.database(); db.exec(MIGRATIONS.join("\n"));
+    const db = target.bb.storage.database(); db.exec(MIGRATIONS.join(";\n"));
     const restored = new BackupRecords(db, new SettingsStore(db));
     restored.restore(snapshot);
     expect(db.prepare("SELECT scope_delivery_json FROM tavern_placements").all()).toEqual([]);
