@@ -40,6 +40,8 @@ import { reviewLimitation } from "../../shared/check-posture";
 import { KeeperMemory } from "./memory";
 import type { NoteDraft } from "../../shared/schema";
 import { memberPlace } from "../../shared/member-place";
+import { appendSummary } from "../summaries";
+import type { SummaryDraft } from "../../shared/schema";
 
 export type PlanInput = Omit<
   Plan,
@@ -1243,6 +1245,16 @@ export class Keeper {
     });
     if (by === "user") this.userAction(ask.keeperThreadId);
     this.changed(ask.keeperThreadId, ask.boardQuestId);
+  }
+  postSummary(threadId: string, draft: SummaryDraft) {
+    this.require(threadId, "keeper");
+    const quest = this.quest(draft.boardQuestId);
+    if (quest.keeperThreadId !== threadId) throw new Error("A Keeper can only post a summary to its own quest.");
+    if (!isOpenQuest(quest)) throw new Error("Only an active quest can receive a summary.");
+    this.guard(threadId, quest.id);
+    const summary = appendSummary(this.store, threadId, draft, this.now());
+    this.invalidate([tags.room(), tags.thread(threadId), tags.boardQuest(quest.id)]);
+    return summary;
   }
   decide(
     threadId: string,

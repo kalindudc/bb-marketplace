@@ -21,14 +21,15 @@ it.each([false, true])("never rounds a measured chart up into SVG downscaling (n
   expect(view.container.querySelector("svg")?.getAttribute("width")).toBe("287");
 });
 
-it.each([1, 2, 3])("offers one collapsed Ledger chip for %i quests without replacing the quest links", async count => {
+it.each([1, 2, 3])("offers one collapsed chip for %i quests with the Ledger still reachable", async count => {
   const decor = { ...fixtureDecor, characters: false, keeperView: { ...fixtureDecor.keeperView!, boardQuests: Array.from({ length: count }, (_, i) => ({ ...fixtureQuest, id: `q${i}` })) } };
   const slot = renderSlot({ component: ThreadWidget }, { threadId: "keeper-1" }, { rpc: { decor: () => decor, registry: () => fixtureRegistry } });
-  const chip = await slot.findByRole("button", { name: `${count} ${count === 1 ? "quest" : "quests"}: open the Ledger` });
+  const chip = await slot.findByRole("button", { name: `Show ${count} ${count === 1 ? "quest" : "quests"}` });
   expect(chip.classList.contains("tw-quests-count")).toBe(true);
   expect(chip.textContent).toBe(`${count} ${count === 1 ? "quest" : "quests"}`);
   expect(slot.getAllByRole("button", { name: /Open the quest page for/ })).toHaveLength(count);
   fireEvent.click(chip);
+  fireEvent.click(slot.getByRole("button", { name: "Open the Ledger" }));
   expect(slot.inspection.experimental_panelCalls).toContainEqual({ method: "openTab", options: { tab: expect.objectContaining({ id: "ledger" }) } });
   slot.lifecycle.unmount();
 });

@@ -1,5 +1,6 @@
 import { KeeperStore } from "../keeper/store";
 import { JOURNAL_ACTION_PHRASES } from "../journal/action-phrases";
+import { SEED_QUEST_CHANGE_SEEN } from "../quest-change-attention";
 import { transitionQuest } from "../keeper/quest-lifecycle";
 import { z } from "zod";
 import { pullRequestSchema } from "../../shared/pull-request";
@@ -11,7 +12,7 @@ import { sparseTunablesSchema } from "../../shared/settings";
 import { awayHoldSchema, type AwayHold } from "../away/holds";
 import { awayCompletedWindowSchema, awayStateSchema, type AwayState, type AwayWindow } from "../../shared/away";
 import { isCloseEffect } from "../../shared/closing";
-import { actorSchema, readStoredActor, askSchema, boardQuestSchema, decisionSchema, gateRecordSchema, journalEntrySchema, keeperNoteSchema, memberSchema, planSchema, reportSchema, routeSchema, ruleSchema } from "../../shared/schema";
+import { actorSchema, readStoredActor, askSchema, boardQuestSchema, decisionSchema, gateRecordSchema, journalEntrySchema, keeperNoteSchema, memberSchema, planSchema, reportSchema, routeSchema, ruleSchema, summarySchema } from "../../shared/schema";
 
 import { taleDeliverySchema, taleDeliveryAttemptSchema } from "../tale";
 
@@ -20,7 +21,7 @@ const tableSchema = z.object({ columns: z.array(z.string()).min(1), rows: z.arra
 export const recordsSnapshotSchema = z.object({ format: z.literal("tavern-records/1"), collectingSince: z.number().int().nonnegative(), overrides: z.record(z.string(), sparseTunablesSchema), sequences: z.record(z.string(), z.number().int().nonnegative()), tables: z.record(z.string(), tableSchema) }).strict();
 export type RecordsSnapshot = z.infer<typeof recordsSnapshotSchema>;
 type Column = { name: string; type: string; notnull: number; pk: number; dflt_value: unknown };
-const recordSchemas: Record<string, z.ZodType> = { pullRequests: pullRequestSchema, taleDeliveries: taleDeliverySchema, taleDeliveryAttempts: taleDeliveryAttemptSchema, taleKeeps: taleKeepSchema, serviceRecords: serviceQuestRecordSchema, serviceVerdicts: serviceVerdictSchema, serviceRecordState: serviceRecordStateSchema, members: memberSchema, quests: boardQuestSchema, plans: planSchema, asks: askSchema, decisions: decisionSchema, rules: ruleSchema, reports: reportSchema, routes: routeSchema, notes: keeperNoteSchema, gates: gateRecordSchema };
+const recordSchemas: Record<string, z.ZodType> = { pullRequests: pullRequestSchema, taleDeliveries: taleDeliverySchema, taleDeliveryAttempts: taleDeliveryAttemptSchema, taleKeeps: taleKeepSchema, serviceRecords: serviceQuestRecordSchema, serviceVerdicts: serviceVerdictSchema, serviceRecordState: serviceRecordStateSchema, members: memberSchema, quests: boardQuestSchema, plans: planSchema, asks: askSchema, decisions: decisionSchema, rules: ruleSchema, reports: reportSchema, summaries: summarySchema, routes: routeSchema, notes: keeperNoteSchema, gates: gateRecordSchema };
 const jsonColumns = new Set(["data", "actor", "entry_ids", "before_data", "after_data", "snapshot", "changes", "undo_data", "evidence"]);
 const privateRecordKinds = new Set(["placementArtifactManifests", "stopAll"]);
 const privateAuthorityTables = ["tavern_placements", "tavern_source_snapshots", "tavern_placement_discoveries", "tavern_snapshot_owners"];
@@ -143,6 +144,7 @@ export class BackupRecords {
           } else if (row.kind === "awayWakes") z.object({ at: z.number().int().nonnegative() }).strict().parse(data);
           else if (typeof row.kind === "string" && Object.hasOwn(recordSchemas, row.kind)) {
             recordSchemas[row.kind]!.parse(data);
+            if (row.kind === "summaries" && row.id !== data.id) throw new Error("Summary identity does not match its payload.");
             if (row.kind === "serviceRecords" && row.id !== data.questId || row.kind === "serviceVerdicts" && row.id !== data.id || row.kind === "serviceRecordState" && row.id !== "v1" || row.kind === "taleKeeps" && row.id !== taleKeepKey(String(data.questId), String(data.characterId)))
               throw new Error(`Service record identity does not match its payload: ${row.kind}`);
           }
@@ -207,6 +209,8 @@ export class BackupRecords {
       if (!this.empty()) throw new Error("Records restore requires an empty Tavern database");
       this.insert(snapshot);
       this.db.exec(JOURNAL_ACTION_PHRASES);
+      if (!this.db.prepare("SELECT 1 FROM tavern_records WHERE kind='attentionSeen' AND id GLOB 'quest-change:[0-9]*' LIMIT 1").get())
+        this.db.exec(SEED_QUEST_CHANGE_SEEN);
       const store = new KeeperStore(this.db);
       for (const ask of store.all("asks")) {
         if (ask.kind !== "conclude" || ask.state !== "withdrawn" || ask.withdrawnCause !== "backup-restored" || !ask.boardQuestId) continue;

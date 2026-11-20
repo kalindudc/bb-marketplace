@@ -1,9 +1,12 @@
 import type { TavernEvent } from "../shared/schema";
 
+export const SUMMARY_POSTED = "summary.posted";
+
 /** The event types whose arrival leaves a Keeper with something to act on or report on. */
 export const NEWS = new Set([
   "tavern.members-interrupted",
   "report.filed",
+  SUMMARY_POSTED,
   "promise.due",
   "member.rest-reminder",
   "handback.resolved",

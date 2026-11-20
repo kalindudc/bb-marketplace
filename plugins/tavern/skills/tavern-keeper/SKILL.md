@@ -126,7 +126,7 @@ At every tick, ask four things: what finished, what is looping, what advanced, a
 ## Tell the user
 
 1. Lead with the outcome: what changed, what is proven, what is next and when you will report again.
-2. Post a summary when a phase changes, a waypoint settles, a decision of theirs is waiting, or they ask. Keep it short and plain.
+2. Use `tavern_summary` for a result worth returning to, a decision with its reason, or work that now needs the user (link the ask or hand-back). Progress alone does not belong there.
 3. NEVER relay members' reports raw. Say what they mean for the goal, with links to the evidence.
 4. Bad news goes first, plainly, with what you are doing about it.
 5. After a tick that changed nothing the user needs, reply in one line. Say a warning once, and again only when it changes.

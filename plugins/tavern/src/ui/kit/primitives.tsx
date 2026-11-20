@@ -76,8 +76,8 @@ export function PhaseStrip({ phase, label = true }: { phase: Phase; label?: bool
 export function safeHref(ref: string) { try { const url = new URL(ref); return ["http:", "https:"].includes(url.protocol) ? url.href : null; } catch { return null; } }
 
 /** `fold` clamps a long detail (a command's output) to two lines that open in place. */
-export function EvidenceList({ evidence, fold = false }: { evidence: readonly Evidence[]; fold?: boolean }) {
-  return <ul className="evidence-list" aria-label="Evidence">{evidence.map((e, i) => { const href = safeHref(e.ref); return <li key={i}><span className="ek">{e.kind}</span><span className="er">{href ? <a href={href} target="_blank" rel="noreferrer" title={e.ref}>{e.ref}</a> : <code title={e.ref}>{e.ref}</code>}{e.exitCode !== null && <span className={`exit ${e.exitCode === 0 ? "ok" : "bad"}`}>exit {e.exitCode}</span>}</span>{e.detail && (fold ? <Clamp text={e.detail} lines={2} className="ed" /> : <span className="ed">{e.detail}</span>)}</li>; })}</ul>;
+export function EvidenceList({ evidence, fold = false, fileRef }: { evidence: readonly Evidence[]; fold?: boolean; fileRef?: (ref: string) => ReactNode }) {
+  return <ul className="evidence-list" aria-label="Evidence">{evidence.map((e, i) => { const href = safeHref(e.ref); return <li key={i}><span className="ek">{e.kind}</span><span className="er">{href ? <a href={href} target="_blank" rel="noreferrer" title={e.ref}>{e.ref}</a> : (e.kind === "file" && fileRef?.(e.ref)) || <code title={e.ref}>{e.ref}</code>}{e.exitCode !== null && <span className={`exit ${e.exitCode === 0 ? "ok" : "bad"}`}>exit {e.exitCode}</span>}</span>{e.detail && (fold ? <Clamp text={e.detail} lines={2} className="ed" /> : <span className="ed">{e.detail}</span>)}</li>; })}</ul>;
 }
 
 export function MemberChip({ member, registry, compact = false, onOpen, summary }: { member: Member; registry: Registry; compact?: boolean; onOpen?: (threadId: string) => void; summary?: string }) {

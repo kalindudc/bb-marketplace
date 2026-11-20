@@ -10,6 +10,7 @@ import type { ClassNotice } from "../../shared/class-execution-contract";
 import { AskCard, Crest, KEEPER_STATE_HINT, DecidedForYou, useDecisionSeen, ExpandsMark, Glyph, IconButton, OpensMark, QueryState, Skeleton, SkCrest, SkLine, TimeAgo, Vocabulary, memberIdentity, plural, useRegistry, useSkeletonCount, useSkeletonDelay, type Registry, glowVars, QuietNotice, useArmedNewQuest, activeHold, heldQuests, releaseWords, Clamp, localTime, useNow } from "../kit";
 import { PHASE_STEPS, phaseIndex, phaseWord } from "../kit/phase";
 import { LEDGER_TAB } from "./tabs";
+import { summaryCountWords } from "../kit/rows";
 import { acknowledgeAskReveal, acknowledgeWidgetReveal, useWidgetPanel, useWidgetReveal, threadDecorCache } from "./state";
 import { useChangeCue, useTavernMotion } from "../kit/motion";
 import { ThreadPartyStrip } from "../engine/thread-party";
@@ -179,7 +180,7 @@ export function ClassBanner() {
 
 export function TavernBanner() { const composer = useComposer(); return composer.scope.kind === "thread" ? <ThreadWidget threadId={composer.scope.threadId} /> : null; }
 
-type Open = null | "asks" | "decided" | "brief";
+type Open = null | "asks" | "decided" | "brief" | "quests";
 
 export function ThreadWidget({ threadId }: { threadId: string }) {
   const composer = useComposer();
@@ -265,6 +266,10 @@ export function ThreadWidget({ threadId }: { threadId: string }) {
       {armedLine}
       <QueryState error={error} />
       {keeper && open === "asks" && <AsksPanel threadId={threadId} asks={keeper.openAsks} holds={heldQuests(keeper.boardQuests, keeper.openAsks)} quests={keeper.boardQuests} revealAskId={revealAskId} revealVersion={revealVersion} onClose={() => setOpen(null)} />}
+      {keeper && keeper.quietSince == null && open === "quests" && <div id={`tw-quests-${threadId}`} className="tw-panel tw-quest-popover" role="region" aria-label="Board quests">
+        <ul>{keeper.boardQuests.map(q => <li key={q.id}><button type="button" className="lnk-btn act" onClick={() => { setOpen(null); navigate.toPluginPanel("tavern", { subPath: `quest/${q.id}` }); }}><b>{q.title}</b><OpensMark /></button>{!!q.attention?.summaries && <span className="m">{summaryCountWords(q.attention.summaries)}</span>}</li>)}</ul>
+        <div className="tw-pf"><button type="button" className="btn sm" onClick={() => { setOpen(null); panel.openTab({ tab: LEDGER_TAB }); }}>Open the Ledger</button><button type="button" className="btn sm" onClick={() => setOpen(null)}>Close</button></div>
+      </div>}
       {keeper && open === "decided" && <DecidedPanel threadId={threadId} data={data} />}
       {open === "brief" && !keeper && <div className="tw-panel tw-brief" id={`tw-brief-${threadId}`} role="region" aria-label="Member"><MemberPanel key={threadId} data={data} cue={data.ambientMotion === "off" ? undefined : cue} registry={registry.data ?? null} scopeDetails={<ScopePanel data={data} />} onQuest={id => navigate.toPluginPanel("tavern", { subPath: `quest/${id}` })} /></div>}
     </section>
@@ -339,7 +344,7 @@ function ArmedLine({ onCancel, onError }: { onCancel: () => void; onError: (e: u
 /** The widget's words for the server's Keeper status; "listening" reads as "idle" (keeperStatus says why). */
 const STATUS_WORD = { listening: "idle", busy: "busy", holding: "holding while you type" } as const;
 const STATUS_HINT = { listening: KEEPER_STATE_HINT.idle, busy: KEEPER_STATE_HINT.busy, holding: KEEPER_STATE_HINT.holding } as const;
-function KeeperParts({ data, open, toggle, onLedger, onQuest, quiet }: { data: ThreadDecor; open: Open; toggle: (o: "asks" | "decided") => void; onLedger: (group?: "need" | "new") => void; onQuest: (id: string) => void; quiet: ReactNode }) {
+function KeeperParts({ data, open, toggle, onLedger, onQuest, quiet }: { data: ThreadDecor; open: Open; toggle: (o: "asks" | "decided" | "quests") => void; onLedger: (group?: "need" | "new") => void; onQuest: (id: string) => void; quiet: ReactNode }) {
   const keeper = data.keeperView!;
   const list = attentionView(keeper.attention), need = list.needYou;
   const decided = list.new;
@@ -347,9 +352,13 @@ function KeeperParts({ data, open, toggle, onLedger, onQuest, quiet }: { data: T
   return <>
     {quiet}
     {keeper.quietSince == null && <span className={`tw-quests ${keeper.boardQuests.reduce((n, q) => n + q.short.length, 0) > 18 ? "long" : ""}`} role="group" aria-label="Board quests (goals)">
-      {keeper.boardQuests.map(q => <button type="button" key={q.id} className="tw-quest act" title={`Open the quest page: ${q.title} · ${q.phase} · plan v${q.planVersion} · ${q.move.text}`} aria-label={`Open the quest page for ${q.title}: ${q.phase}, plan v${q.planVersion}`} onClick={() => onQuest(q.id)}><b>{q.short}</b>{q.phase === "held" ? <span>{q.move.text}</span> : <><Phase phase={q.phase} />{q.phase === "scout" && q.nextNewsBy != null && <span>{q.move.text}</span>}</>}<OpensMark /></button>)}
+      {keeper.boardQuests.map(q => {
+        const unread = q.attention?.summaries ?? 0;
+        const suffix = unread ? `, ${summaryCountWords(unread)}` : "";
+        return <button type="button" key={q.id} className="tw-quest act" title={`Open the quest page: ${q.title} · ${q.phase} · plan v${q.planVersion} · ${q.move.text}${suffix}`} aria-label={`Open the quest page for ${q.title}: ${q.phase}, plan v${q.planVersion}${suffix}`} onClick={() => onQuest(q.id)}><b>{q.short}</b>{unread > 0 && <span className="tw-unread m" aria-hidden="true">{unread} new</span>}{q.phase === "held" ? <span>{q.move.text}</span> : <><Phase phase={q.phase} />{q.phase === "scout" && q.nextNewsBy != null && <span>{q.move.text}</span>}</>}<OpensMark /></button>;
+      })}
     </span>}
-    {keeper.quietSince == null && keeper.boardQuests.length > 0 && <button type="button" className="tw-chip tw-quests-count act" title={keeper.boardQuests.map(q => q.title).join(" · ")} aria-label={`${plural(keeper.boardQuests.length, "quest")}: open the Ledger`} onClick={() => onLedger()}>{plural(keeper.boardQuests.length, "quest")}</button>}
+    {keeper.quietSince == null && keeper.boardQuests.length > 0 && <button type="button" className="tw-chip tw-quests-count act" title={keeper.boardQuests.map(q => q.title).join(" · ")} aria-label={`Show ${plural(keeper.boardQuests.length, "quest")}`} aria-expanded={open === "quests"} aria-controls={`tw-quests-${data.threadId}`} onClick={() => toggle("quests")}>{plural(keeper.boardQuests.length, "quest")}</button>}
     {/* The free space carries the status words and measures itself, so they show only when the whole phrase fits; the dot, the crest's tooltip and the hidden name carry it otherwise. */}
     <span className="tw-sp tw-free">{keeper.status === "holding" && keeper.quietSince == null && <span className="tw-sw" aria-hidden="true">holding<span className="tw-sw-x"> while you type</span></span>}</span>
 

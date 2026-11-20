@@ -12,6 +12,7 @@ import { readUndoLanes } from "../undo-record";
 import { PLACEMENT_CLASSES, placementClassLine, placementGuidance } from "../placement/controller";
 import { matchPlacementRule } from "../placement/match";
 import { PlacementStore } from "../placement/store";
+import { summariesToday } from "../summaries";
 
 export const clock = localClock;
 const quoted = (value: string) => JSON.stringify(value);
@@ -237,6 +238,11 @@ export function renderRestatement(
     ? placementGuidance(placementLines, new PlacementStore(k.store.db).counts(threadId), machines)
     : "Where your party runs: where you run; no machine rule matches this project (tavern_status section=placement).";
   const undoLanes = readUndoLanes(k.store, threadId);
+  const today = summaries.length ? summariesToday(k.store, threadId, k.now()) : new Map<string, number>();
+  const todayLines = summaries.flatMap(quest => {
+    const count = today.get(quest.id);
+    return count === undefined ? [] : [`${boundedData(quest.short, 60, "…")}: ${count} summaries today`];
+  });
   const parts = [
     ...(undoLanes.length ? [section("Undo record", undoLanes.map(keeperUndoLaneWords), priorities ? 800 : 1600, "more kinds; see the Ledger or call tavern_status")] : []),
     ...(holds.length ? [section(
@@ -262,6 +268,8 @@ export function renderRestatement(
     ),
     ...(guidance ? [guidance] : []),
     questSection(k, summaries, priorities),
+    ...(summaries.length ? ["Summary reminder: aim for at most 6 summaries per quest per day."] : []),
+    ...(todayLines.length ? [section("Summaries today", todayLines, 450, "more quests have at least 4 summaries today")] : []),
     ...(delegated.length ? [section(delegated.every(a => k.settings(a.boardQuestId).keepers.alwaysAsk.includes(a.kind as never)) ? "Yours to decide (delegated)" : "Yours to decide", delegated.map(a => `${a.id} [${a.kind}]: ${quoted(short(a.question, 160))}; holds ${a.holds.join(",") || "none"}; answer with tavern_decide askId and optionId, or tavern_ask unsure:true`), priorities ? 1200 : 2400, "more delegated asks; call tavern_status section=asks", delegated.length)] : []),
     section(
       "Open asks",

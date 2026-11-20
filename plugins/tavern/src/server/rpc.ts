@@ -17,6 +17,8 @@ import { currentMoodReport, waypointMoodVerdict } from "../shared/mood";
 import type { Brief, Decision } from "../shared/schema";
 import { isLiveMember } from "./liveness";
 import { DecisionViews } from "./decisions";
+import { markSummariesSeen, markVisitSummariesSeen, summariesForQuest, summaryCounts, summaryView } from "./summaries";
+import { markQuestChangesSeen } from "./quest-change-attention";
 import { stopAllHandlers } from "./stop-all-rpc";
 import { placementHandlers } from "./placement/rpc";
 import { PlacementStore } from "./placement/store";
@@ -305,15 +307,24 @@ export function rpcHandlers(
       void runtime.taleRenderer?.ensure(id);
       const summary = k.summary(id);
       const tale: BoardQuestDetail["tale"] = readTale(k, summary);
-      if (tale?.delivery) {
+      const historyPage = summariesForQuest(k.store, id);
+      const boardAttention = snapshot.view({ boardQuestId: id });
+      const visitChangeId = boardAttention.items.find(item => item.kind === "quest-changed")?.id;
+      let summaryDocument: BoardQuestDetail["summaryDocument"];
+      if (tale?.delivery || historyPage.summaries.length) {
         try {
           const thread = await runtime.bb.sdk.threads.get({ threadId: q.keeperThreadId });
           if (thread.environmentId) {
             const environment = await runtime.bb.sdk.environments.get({ environmentId: thread.environmentId });
-            tale.fileHostId = environment.hostId;
-            if (environment.path) tale.document = { threadId: q.keeperThreadId, rootPath: environment.path, target: { kind: "workspace", environmentId: thread.environmentId, path: environment.path } };
+            const path = environment.path;
+            if (tale?.delivery) tale.fileHostId = environment.hostId;
+            if (path) {
+              const document = { threadId: q.keeperThreadId, rootPath: path, target: { kind: "workspace" as const, environmentId: thread.environmentId, path } };
+              if (tale?.delivery) tale.document = document;
+              if (historyPage.summaries.length) summaryDocument = document;
+            }
           }
-        } catch (error) { runtime.bb.log.warn(`Tavern tale document ${id}: ${String(error)}`); }
+        } catch (error) { runtime.bb.log.warn(`Tavern Keeper document ${id}: ${String(error)}`); }
       }
       const history = decisions.history({ keeperThreadId: q.keeperThreadId, boardQuestId: id });
       const ids = k.store
@@ -336,14 +347,18 @@ export function rpcHandlers(
       }
       const asks: BoardQuestDetail["asks"] = k.store.query("asks", "boardQuestId", id, 500).map(undoAskProjection(k.store));
       return {
-        attention: snapshot.view({ boardQuestId: id }),
+        ...historyPage,
+        ...(visitChangeId ? { visitChangeId } : {}),
+        ...(summaryDocument ? { summaryDocument } : {}),
+        ...(historyPage.summaries.length ? { summaryCounts: summaryCounts(k.store, id) } : {}),
+        attention: boardAttention,
         notes: k.memory.notes(q.keeperThreadId, 200, 0, id).filter(note => note.kind !== "waiting-on-user"),
         gates: k.memory
           .gates(q.keeperThreadId)
           .filter((gate) => gate.boardQuestId === id),
         scopes: runtime.scopes?.views(ids) ?? [],
         violations: runtime.scopes?.violations(ids) ?? [],
-        quest: { ...projectQuest(summary, snapshot), attention: snapshot.view({ boardQuestId: id }) },
+        quest: { ...projectQuest(summary, snapshot), attention: boardAttention },
         tale,
         memberCredits: memberCredits(summary),
         pullRequests: k.store.pullRequestsForQuest(summary.id),
@@ -357,6 +372,19 @@ export function rpcHandlers(
         routes: k.store.query("routes", "boardQuestId", id, 100),
         events,
       };
+    },
+    olderSummaries: ({ boardQuestId, beforeId }) => {
+      if (k.quest(boardQuestId).deletedAt != null) return { summaries: [], nextCursor: null };
+      const { summaries, summariesNextCursor } = summariesForQuest(k.store, boardQuestId, beforeId);
+      return { summaries, nextCursor: summariesNextCursor };
+    },
+    summary: ({ id, threadId }) => {
+      const summary = summaryView(k.store, id);
+      if (!summary || summary.keeperThreadId !== threadId || k.quest(summary.boardQuestId).deletedAt != null) return { summary: null, ask: null, handBack: null };
+      const request = summary.request;
+      const ask = request?.kind === "ask" ? k.store.get("asks", request.id) : null;
+      const handBack = request?.kind === "hand-back" ? k.store.get("notes", request.id) : null;
+      return { summary, ask: ask ? undoAskProjection(k.store)(ask) : null, handBack };
     },
     allowReview: ({ id }, context?: ExperimentalPluginRpcHandlerContext) => new LimitPolicy(k).allowReview(id, requireUserAct(context, "allowReview").surface),
     holdBoardQuest: ({ id }, context?: ExperimentalPluginRpcHandlerContext, receipt?: UserActReceipt) => {
@@ -396,6 +424,7 @@ export function rpcHandlers(
       const askIds = new Set(list.items.filter(item => item.kind === "ask").map(item => item.id));
       return {
       attention: list,
+      sinceVisit: snapshot.sinceVisit(),
       away: runtime.away.status(),
       hearthFlicker: runtime.config().tavern.hearthFlicker,
       ambientMotion: runtime.config().tavern.hearthFlicker ? runtime.config().tavern.ambientMotion : "off",
@@ -444,6 +473,22 @@ export function rpcHandlers(
       const ask = k.store.get("asks", askId)!;
       wake(ask.keeperThreadId);
       return { ok: true, ...(result.pullRequestErrors ? { pullRequestErrors: result.pullRequestErrors } : {}) };
+    },
+    markVisitSeen: ({ summaryIds, changeIds }) => {
+      const now = k.now();
+      const { marked, changed } = k.store.atomic(() => ({
+        marked: markVisitSummariesSeen(k.store, summaryIds, now),
+        changed: markQuestChangesSeen(k.store, changeIds, now),
+      }));
+      if (changed || marked.length) runtime.bb.rpc.experimental_invalidate([...new Set([tags.room(), ...marked.flatMap(s => [tags.thread(s.keeperThreadId), tags.boardQuest(s.boardQuestId)])])]);
+      return { ok: true };
+    },
+    markSummariesSeen: ({ boardQuestId, ids }) => {
+      const quest = k.quest(boardQuestId);
+      if (quest.deletedAt == null && markSummariesSeen(k.store, boardQuestId, ids, k.now())) {
+        runtime.bb.rpc.experimental_invalidate([tags.room(), tags.thread(quest.keeperThreadId), tags.boardQuest(boardQuestId)]);
+      }
+      return { ok: true };
     },
     markDecisionsSeen: (input) => {
       const { changed, result } = decisions.mark(input, k.now());

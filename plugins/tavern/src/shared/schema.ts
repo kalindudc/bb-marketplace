@@ -3,6 +3,7 @@ import { classScopeSchema, scopeOverrideSchema } from "../scope/schema";
 import { CLASS_BODY_LIMIT } from "./class-rules";
 import { LOOK_BUILDS, LOOK_HAIRS, LOOK_HAIR_COLOURS, LOOK_HATS, LOOK_LIGHTS, LOOK_SKINS } from "./look";
 import { SPEECH_KEYS } from "./says";
+import { taleResultsSchema } from "./tale-results";
 
 // The one source of truth for Tavern's domain shapes, shared by the server, the RPC contract and the UI.
 // Words: a "board quest" is a goal a Keeper holds; a "journal" is any thread's own checklist.
@@ -100,6 +101,25 @@ export const evidenceSchema = z.object({
   exitCode: z.number().int().nullable().default(null),
 });
 export type Evidence = z.infer<typeof evidenceSchema>;
+
+const summaryLine = z.string().trim().min(1).regex(/^[^\r\n\u2028\u2029]+$/, "Use one line");
+export const summaryDraftSchema = z.object({
+  boardQuestId: id,
+  title: summaryLine.max(180),
+  body: z.string().min(1).max(4000),
+  results: taleResultsSchema.optional(),
+  links: z.array(evidenceSchema).max(30).default([]),
+  next: z.array(summaryLine.max(400)).max(3).optional(),
+  request: z.object({ kind: z.enum(["ask", "hand-back"]), id }).strict().optional(),
+  supersedes: id.optional(),
+}).strict();
+export const summarySchema = summaryDraftSchema.extend({ id, keeperThreadId: threadId, createdAt: epochMs });
+export const summaryViewSchema = summarySchema.extend({ seen: z.boolean(), correctedBy: id.nullable(), previousTitle: z.string().optional() });
+export const summaryEntrySchema = summaryViewSchema.partial({ body: true, links: true }).extend({ order: z.number().int().optional() });
+export type Summary = z.infer<typeof summarySchema>;
+export type SummaryDraft = z.infer<typeof summaryDraftSchema>;
+export type SummaryView = z.infer<typeof summaryViewSchema>;
+export type SummaryEntry = z.infer<typeof summaryEntrySchema>;
 
 // ---------- Journal (every thread) ----------
 

@@ -10,7 +10,7 @@ model: anthropic/claude-opus-5-5
 reasoning: high
 permission: full
 scope: open
-tools: [tavern_route, tavern_note, tavern_gate, tavern_quest, tavern_hire, tavern_keep, tavern_release, tavern_scope, tavern_tell, tavern_plan, tavern_settle, tavern_ask, tavern_decide, tavern_rule, tavern_status, tavern_wrap]
+tools: [tavern_route, tavern_note, tavern_summary, tavern_gate, tavern_quest, tavern_hire, tavern_keep, tavern_release, tavern_scope, tavern_tell, tavern_plan, tavern_settle, tavern_ask, tavern_decide, tavern_rule, tavern_status, tavern_wrap]
 hires: [ranger, smith, warden, wanderer]
 greenlight: explicit
 budget:

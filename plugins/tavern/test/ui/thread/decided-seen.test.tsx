@@ -123,7 +123,7 @@ describe("Ledger and widget use the server's attention list and counts", () => {
 
   it("marks a row and a clipped list through the server, and counts the uncapped total", async () => {
     const slot = renderSlot({ component: LedgerTab }, { threadId: "keeper-1", environment: null }, { rpc: { ledger: () => ledger, decor: () => fixtureDecor, registry: () => fixtureRegistry, markDecisionsSeen: (input: unknown) => ({ ok: true as const, ids: (input as { ids?: string[] }).ids ?? ["d1", "d2"], undoToken: "tok" }), markDecisionsUnseen: () => ({ ok: true as const, ids: ["d2"] }) } });
-    expect((await slot.findByLabelText("What the Keeper knows now")).textContent).toContain("7 decided for you");
+    expect((await slot.findByLabelText("What the Keeper knows now")).textContent).toContain("7 unseen calls");
     fireEvent.click(await slot.findByRole("button", { name: "Mark seen: Picked staging first" }));
     await waitFor(() => expect(slot.inspection.rpcCalls.find(c => c.method === "markDecisionsSeen")?.input).toEqual({ ids: ["d2"] }));
     fireEvent.click(await slot.findByRole("button", { name: /Undo: mark 1 decision unseen again/ }));

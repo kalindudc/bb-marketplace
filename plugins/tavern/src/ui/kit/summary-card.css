@@ -1,0 +1,38 @@
+.tavern .tv-sum-sec { min-width: 0; padding: 12px; }
+.tavern .tv-sums, .tavern .tw-quest-popover ul { display: grid; gap: 8px; list-style: none; margin: 0; padding: 0; }
+:is(.tavern.tv-sum, .tavern .tv-sum) { display: grid; min-width: 0; gap: 8px; overflow-wrap: anywhere; }
+:is(.tavern.tv-sum, .tavern .tv-sum).nested { padding: 12px; }
+.tavern .tv-sum-h, .tavern .tv-sum-meta { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; min-width: 0; }
+.tavern .tv-sum-h { justify-content: space-between; }
+.tavern .tv-sum-h h3 { font-size: 15px; margin: 0; min-width: 0; }
+.tavern .tv-sum-meta, .tavern .tv-sum-meta .ago, .tavern .tw-unread, .tavern .qrow-unread { font-size: 11px; }
+.tavern .tv-sum-body { font-size: 13px; line-height: 1.6; min-width: 0; max-inline-size: 76ch; }
+:is(.tavern.tv-sum, .tavern .tv-sum) :is(pre, table, img) { max-width: 100%; }
+:is(.tavern.tv-sum, .tavern .tv-sum) pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+:is(.tavern.tv-sum, .tavern .tv-sum) table:not(.sr) { display: block; overflow-x: auto; }
+:is(.tavern.tv-sum, .tavern .tv-sum) .evidence-list { min-width: 0; }
+:is(.tavern.tv-sum, .tavern .tv-sum) .evidence-list :is(.er, .ed, a, code) { min-width: 0; white-space: normal; overflow-wrap: anywhere; }
+:is(.tavern.tv-sum, .tavern .tv-sum) .tfig { grid-template-columns: repeat(auto-fit, minmax(min(110px, 100%), 1fr)); }
+.tavern .tv-sum-next { font-size: 13px; }
+.tavern .tv-sum-next ul { padding-inline-start: 18px; }
+.tavern .tv-sum-next :is(ul, p) { margin-block: 0; }
+.tavern .tv-sum-fold { border-top: 1px solid var(--tavern-line); min-width: 0; overflow-wrap: anywhere; }
+.tavern .tv-sum-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.tavern .tv-sum-more { margin-block: 8px; }
+.tavern :where(.tv-sum-fold, .tv-sum .tale-visual details) > summary { cursor: pointer; min-height: 28px; }
+.tavern .tv-sum-fold > summary { display: flex; gap: 6px; align-items: center; list-style: none; font-size: 12px; }
+.tavern .tv-sum-fold > summary::-webkit-details-marker { display: none; }
+.tavern .tv-sum-fold > summary :is(.tavern-glyph, .m) { flex: none; white-space: nowrap; }
+.tavern .tv-sum-fold[open] > summary .tavern-glyph { transform: rotate(90deg); }
+.tavern .tv-sum-request { border-inline-start: 2px solid var(--tavern-you); padding-inline-start: 8px; min-width: 0; }
+.tavern .tw-quest-popover { padding: 8px 10px; }
+.tavern .tw-quest-popover li, .tavern .lg-summary-rows li { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; }
+.tavern .tw-quest-popover .lnk-btn { white-space: normal; text-align: start; }
+.tavern .tw-quest-popover :is(b, button), .tavern .lg-summary-rows li > span { min-width: 0; overflow-wrap: anywhere; }
+.tavern .tw-quest-popover .m { font-size: 11px; }
+.tavern .lg-summary-rows li > span { flex: 1 1 14ch; }
+.tavern.qrow-done .qrow-unread { display: block; white-space: normal; }
+@media (max-width: 560px), (pointer: coarse) {
+  .tavern .tv-sum-fold > summary, .tavern .tv-sum-more, :is(.tavern.tv-sum, .tavern .tv-sum) :is(button, .tale-visual summary, .evidence-list a), .tavern .tw-quest-popover button, .tavern.twidget:has(.tw-unread) .tw-ledger { min-height: 44px; min-width: 44px; }
+  :is(.tavern.tv-sum, .tavern .tv-sum) .evidence-list a { display: block; width: fit-content; max-width: 100%; padding-block: 6px; }
+}

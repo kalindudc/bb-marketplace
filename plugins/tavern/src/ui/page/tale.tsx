@@ -11,6 +11,7 @@ import { TaleResults } from "../kit/tale-results";
 import { TaleAction, TaleDelivery } from "../kit/tale-delivery";
 import { CreditCard, LeftRow, LootRow } from "./finished";
 import { WaiverRows } from "../kit/waiver-rows";
+import { TaleSummaries } from "./summaries";
 
 /** The Keeper's "left" note and the skipped waypoints, quietly; "Nothing left for you." when there is neither. */
 function LeftForYou({ detail, registry }: { detail: BoardQuestDetail; registry: Registry }) {
@@ -80,6 +81,7 @@ export function TalePage({ detail, registry, room }: { detail: BoardQuestDetail;
       <div className="tv-credits-h"><h3><Vocabulary word="party" /></h3><span className="tv-count">{plural(quest.members.length, "member")}</span></div>
       <TaleCredits detail={detail} registry={registry} />
     </section>
+    <TaleSummaries detail={detail} />
     <div className="tv-tgrid">
       {closedEarly && <Section title="Closed early at your request" count={`${waivers.length} not verified`} level={3} className="tv-card tv-tsec">{!waivers.length && detail.tale?.closeReason && <p data-content>{detail.tale.closeReason}</p>}<WaiverRows items={waivers} final /></Section>}
       {done.length > 0 && <Section title="Done without a Warden check" count={plural(done.length, "waypoint")} level={3} className="tv-card tv-tsec"><ul className="tv-dw">{done.map(w => <LeftRow key={w.id} waypoint={w} />)}</ul></Section>}

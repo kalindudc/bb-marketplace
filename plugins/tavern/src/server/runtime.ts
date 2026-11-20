@@ -81,6 +81,7 @@ import { isVoiceCheckThread, type VoiceCheckRunner } from "./voice-check/run";
 export const KEEPER_TOOLS = [
   "tavern_route",
   "tavern_note",
+  "tavern_summary",
   "tavern_gate",
   "tavern_quest",
   "tavern_hold",

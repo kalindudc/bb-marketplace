@@ -21,6 +21,7 @@ import { WaiverRows } from "../kit/waiver-rows";
 import { pullRequestVerified } from "../../shared/pull-request";
 import { AsksRecord, PlanRecord, RecordFold, RulesAndAnchor } from "./quest-record";
 import { QuestLead } from "./quest-lead";
+import { QuestSummaries } from "./summaries";
 import { recordedStop } from "./quest-road";
 import { PlacementFacts } from "../kit/placement";
 
@@ -110,7 +111,7 @@ function CellarQuest({ quest }: { quest: BoardQuestDetail["quest"] }) {
 }
 
 /** A quest's page: the live page while it is in play, the record once it has returned or stopped. */
-export function QuestPage({ detail, registry, room }: { detail: BoardQuestDetail; registry: Registry; room?: Room }) {
+export function QuestPage({ detail, registry, room, summaryId }: { detail: BoardQuestDetail; registry: Registry; room?: Room; summaryId?: string }) {
   const navigate = useBbNavigate();
   const quest = detail.quest;
   const now = useNow();
@@ -184,6 +185,7 @@ export function QuestPage({ detail, registry, room }: { detail: BoardQuestDetail
         <GateRows waypoints={quest.waypoints} />
       </div>}
     </section>
+    <QuestSummaries key={quest.id} detail={detail} focusId={summaryId} />
     <div className="tv-ggrid" role="group" aria-label="The quest sections">
       <div className="tv-col">
         {!finished ? <Section title="By whose move" count={`${attention.needYou} need you`}>

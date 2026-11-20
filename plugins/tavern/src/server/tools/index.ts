@@ -14,6 +14,7 @@ import {
   reportSchema,
   ROUTE_KINDS,
   noteDraftSchema,
+  summaryDraftSchema,
   gateInputSchema,
 } from "../../shared/schema";
 import type { TavernRuntime } from "../runtime";
@@ -97,6 +98,13 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
       checkerHandoffHold: checkerHandoffHoldDraftSchema.optional(),
     }),
     (input, threadId) => k.route(threadId, input),
+  );
+  register(
+    "tavern_summary",
+    "Posted a Keeper summary",
+    "Write only what the user would want to read later: finished work and its result, a decision and why, or something that needs them. Never post progress like “still working.” For an action, open and link the ask or hand-back. Include evidence; use results for figures. Put the returned directive on its own line in chat.",
+    summaryDraftSchema,
+    (input, threadId) => `Posted. Put this card on its own line in your reply:\n::tavern-summary{id="${k.postSummary(threadId, input).id}"}`,
   );
   register(
     "tavern_note",

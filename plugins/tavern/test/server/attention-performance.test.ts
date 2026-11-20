@@ -10,6 +10,10 @@ async function loadData(f: ReturnType<typeof setup>) {
   f.k.store.atomic(() => {
     for (let i = 0; i < 4000; i++) put.run("notes", `n${i}`, JSON.stringify({ id: `n${i}`, keeperThreadId: "lead", boardQuestId: ids[i % 40], kind: i % 2 ? "fact" : "waiting-on-user", text: "x".repeat(200), action: "a", dueAt: null, condition: null, validUntil: null, sourceMessageId: null, routeId: null, state: i % 10 ? "done" : "open", createdAt: 1, updatedAt: 1 }));
     for (let i = 0; i < 3000; i++) put.run("decisions", `d${i}`, JSON.stringify({ id: `d${i}`, keeperThreadId: "lead", boardQuestId: ids[i % 40], text: "d", why: "w", source: "keeper", reversible: true, undone: false, seenAt: i % 3 ? 5 : null, createdAt: i }));
+    for (let i = 0; i < 300; i++) {
+      put.run("summaries", `s${i}`, JSON.stringify({ id: `s${i}`, keeperThreadId: "lead", boardQuestId: ids[i % 40], title: "Summary", body: "b".repeat(4000), links: [], createdAt: i }));
+      if (i % 3) put.run("attentionSeen", `s${i}`, JSON.stringify({ token: `m${i}`, seenAt: 300 }));
+    }
     for (let i = 0; i < 3000; i++) put.run("asks", `a${i}`, JSON.stringify({ id: `a${i}`, keeperThreadId: "lead", boardQuestId: ids[i % 40], question: "q", why: "w", kind: "decision", options: [], meanwhile: "m", holds: [], state: "answered", createdAt: i, effect: { type: "decision" } }));
   });
 }
@@ -22,7 +26,7 @@ it("keeps reads, rows, payloads and latency bounded on R9's dataset", async () =
     ledger: async () => { const payload = await handlers.ledger({ threadId: "lead" }); return { payload, attention: payload.attention }; },
     decor: async () => { const payload = await handlers.decor({ threadId: "lead" }); return { payload, attention: payload.keeperView?.attention }; },
   };
-  const limits = { room: { ms: 250, bytes: 300_000, items: 70 }, ledger: { ms: 300, bytes: 400_000, items: 420 }, decor: { bytes: 55_000, items: 70 } };
+  const limits = { room: { ms: 250, bytes: 300_000, items: 90 }, ledger: { ms: 300, bytes: 400_000, items: 440 }, decor: { bytes: 55_000, items: 90 } };
   for (const method of ["room", "ledger", "decor"] as const) {
     await views[method]();
     const samples: number[] = [];
@@ -31,12 +35,13 @@ it("keeps reads, rows, payloads and latency bounded on R9's dataset", async () =
     const all = vi.spyOn(f.k.store, "all");
     const { payload, attention } = await views[method]();
     expect(reads.mock.calls.filter(([sql]) => sql.startsWith("SELECT r.data") && sql.includes("WHERE r.kind=?") && sql.endsWith("ORDER BY r.rowid"))).toHaveLength(5);
-    expect(all.mock.calls.filter(([kind]) => ["notes", "quests", "rules", "asks", "decisions"].includes(kind))).toHaveLength(0);
+    expect(reads.mock.calls.filter(([sql]) => sql.startsWith("SELECT json_object") && sql.includes("$.supersedes"))).toHaveLength(1);
+    expect(all.mock.calls.filter(([kind]) => ["notes", "quests", "rules", "asks", "decisions", "summaries"].includes(kind))).toHaveLength(0);
     reads.mockRestore(); all.mockRestore();
     const ms = samples.sort((a, b) => a - b)[2]!;
     const bytes = Buffer.byteLength(JSON.stringify(payload));
     process.stdout.write(`ATTENTION_METRICS ${JSON.stringify({ method, ms, bytes, items: attention?.items.length })}\n`);
-    expect(attention).toMatchObject({ needYou: 400, new: 1000, heldByYou: 0 });
+    expect(attention).toMatchObject({ needYou: 400, new: 1100, summaries: 100, heldByYou: 0 });
     expect(attention!.items.length).toBeLessThanOrEqual(limits[method].items);
     expect(bytes).toBeLessThanOrEqual(limits[method].bytes);
     if (method !== "decor") expect(ms).toBeLessThanOrEqual(limits[method].ms);

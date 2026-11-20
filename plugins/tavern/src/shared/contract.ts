@@ -1,5 +1,5 @@
 import { delegationKindSchema, preapprovalInputSchema, questAuthorityViewSchema } from "./quest-authority";
-import { attentionSchema } from "./attention";
+import { attentionSchema, sinceVisitSchema } from "./attention";
 import { taleResultsSchema } from "./tale-results";
 import { characterServiceRecordSchema, taleLevelSchema } from "./service-record";
 import { executionFactsSchema } from "./class-execution";
@@ -34,6 +34,8 @@ import {
   journalSchema,
   journalProgressSchema,
   reportSchema,
+  summaryEntrySchema,
+  summaryViewSchema,
   ROUTE_KINDS,
   routeSchema,
   ruleSchema,
@@ -187,7 +189,17 @@ export const threadDecorSchema = z.object({
 });
 export type ThreadDecor = z.infer<typeof threadDecorSchema>;
 
+const keeperDocumentSchema = z.object({ threadId: z.string(), rootPath: z.string(), target: z.object({ kind: z.literal("workspace"), environmentId: z.string(), path: z.string() }) });
+const summaryPageFields = {
+  summaries: z.array(summaryEntrySchema), summariesNextCursor: id.nullable(),
+};
+
 export const boardQuestDetailSchema = z.object({
+  visitChangeId: id.optional(),
+  summaryDocument: keeperDocumentSchema.optional(),
+  summaryCounts: z.object({ current: z.number().int().nonnegative(), corrected: z.number().int().nonnegative() }).optional(),
+  summaries: summaryPageFields.summaries.optional(),
+  summariesNextCursor: summaryPageFields.summariesNextCursor.optional(),
   attention: attentionSchema.optional(),
   // added by Builder B: the Keeper's wrap and journal-backed credits remain sparse-safe for old fixtures.
   tale: z.object({
@@ -196,7 +208,7 @@ export const boardQuestDetailSchema = z.object({
     fileHostId: z.string().optional(),
     delivery: z.object({ text: z.string().max(24000), capturedAt: z.number(), threadId: z.string(), truncated: z.boolean(), companionThreadId: z.string().optional(), companionReady: z.boolean().optional(), companionFailed: z.boolean().optional() }).optional(),
     next: z.array(z.string().max(200)).max(5).optional(),
-    document: z.object({ threadId: z.string(), rootPath: z.string(), target: z.object({ kind: z.literal("workspace"), environmentId: z.string(), path: z.string() }) }).optional(),
+    document: keeperDocumentSchema.optional(),
     skipped: z.array(z.object({ waypointId: id, reason: z.string() })),
     closure: questOutcomeSchema.optional(),
     closeReason: z.string().min(1).max(500).optional(),
@@ -257,6 +269,7 @@ export const ledgerSchema = z.object({
 export type Ledger = z.infer<typeof ledgerSchema>;
 
 export const roomSchema = z.object({
+  sinceVisit: sinceVisitSchema.optional(),
   notes: z.array(keeperNoteSchema).optional(),
   attention: attentionSchema.optional(),
   hearthFlicker: z.boolean().optional(),
@@ -409,6 +422,16 @@ export const rpcContract = defineContract({
     output: boardQuestDetailSchema,
     tags: ({ id }: { id: string }) => [tags.boardQuest(id), tags.undoLanes()],
   },
+  olderSummaries: {
+    input: z.object({ boardQuestId: id, beforeId: id }).strict(),
+    output: z.object({ summaries: summaryPageFields.summaries, nextCursor: summaryPageFields.summariesNextCursor }),
+    tags: ({ boardQuestId }: { boardQuestId: string }) => [tags.boardQuest(boardQuestId)],
+  },
+  summary: {
+    input: z.object({ id, threadId }).strict(),
+    output: z.object({ summary: summaryViewSchema.nullable(), ask: askSchema.nullable(), handBack: keeperNoteSchema.nullable() }),
+    tags: ({ threadId }: { threadId: string }) => [tags.thread(threadId)],
+  },
   setTaleKept: {
     input: z.object({ questId: id, characterId: id, kept: z.boolean() }).strict(),
     output: z.object({ kept: z.boolean() }),
@@ -437,6 +460,14 @@ export const rpcContract = defineContract({
     output: ok.extend({ pullRequestErrors: z.array(z.string()).optional() }),
   },
   // added by Builder B: display-only acknowledgement never undoes a decision or wakes its Keeper.
+  markVisitSeen: {
+    input: z.object({ summaryIds: z.array(id).max(20), changeIds: z.array(z.string().regex(/^quest-change:[1-9]\d{0,14}$/)).max(20) }).strict(),
+    output: ok,
+  },
+  markSummariesSeen: {
+    input: z.object({ boardQuestId: id, ids: z.array(id).min(1).max(200) }).strict(),
+    output: ok,
+  },
   markDecisionsSeen: {
     input: z.union([
       z.object({ ids: z.array(id).min(1).max(200) }).strict(),

@@ -9,7 +9,7 @@ import type { Ask, CheckerHandoffHold, Member, Phase } from "../../shared/schema
 import { Crest } from "./crest";
 import { Glyph, OpensMark, type GlyphName } from "./glyphs";
 import { moveTime } from "../../shared/time";
-import { CELLAR, TimeAgo, clockTime, useToday, useNow } from "./primitives";
+import { CELLAR, TimeAgo, clockTime, useToday, useNow, plural } from "./primitives";
 import { memberIdentity, type Registry } from "./registry";
 import { ArrivalMark } from "./arrival";
 import { memberPlace } from "../../shared/member-place";
@@ -40,6 +40,8 @@ export function heldQuests<Q extends Pick<BoardQuestSummary, "checkerHandoffHold
   return quests.filter((q) => { const h = activeHold(q); return h !== null && !releaseAskOf(h, asks); });
 }
 export const questNeedYouCount = (quest: Pick<BoardQuestSummary, "attention">, _asks?: readonly Ask[]) => attentionView(quest.attention).needYou;
+
+export function summaryCountWords(count: number) { return plural(count, "new summary", "new summaries"); }
 
 type Release = NonNullable<CheckerHandoffHold["release"]>;
 const RELEASE_VIA: Record<Release["via"], string> = { banner: "from the ask banner", page: "from the Tavern page", phone: "from your phone", chat: "in chat", cli: "from the command line" };
@@ -196,6 +198,8 @@ export function QuestRow({ quest, room, registry, keeper, showKeeper = false, on
   const open = (sub: string) => navigate.toPluginPanel("tavern", { subPath: sub });
   const now = useNow();
   const path = pathProgress(quest), verified = verifiedOf(quest);
+  const unread = attentionView(quest.attention).summaries ?? 0;
+  const summaryCount = unread > 0 && <span className="qrow-unread m">{summaryCountWords(unread)}</span>;
   const name = <button type="button" className="qrow-name act" data-quest-name onClick={() => open(`quest/${quest.id}`)} title={`${isFinished(quest.phase) ? "Open the quest record" : "Open the quest page"}: ${quest.title}`}><b data-content>{quest.short}</b></button>;
   if (isFinished(quest.phase)) {
     const returned = quest.phase === "done";
@@ -203,7 +207,7 @@ export function QuestRow({ quest, room, registry, keeper, showKeeper = false, on
       <Glyph name={returned ? "verified" : "rejected"} size={13} className="qrow-g" />
       {name}
       {arrival && <ArrivalMark at={quest.endedAt ?? quest.updatedAt} since={arrival.since} surface="page" cueKey={`row:${quest.id}`} still={!returned} />}
-      <span className="qrow-f num"><span>{returned ? "returned" : "stopped"}</span>{returned && verified && <span className="qrow-v"> · {verifiedWords(verified)}</span>}</span>
+      <span className="qrow-f num"><span>{returned ? "returned" : "stopped"}</span>{returned && verified && <span className="qrow-v"> · {verifiedWords(verified)}</span>}{summaryCount}</span>
       <TimeAgo at={quest.endedAt ?? quest.updatedAt} />
       {returned && <button type="button" className="lnk-btn act qrow-tale" onClick={() => open(`tale/${quest.id}`)} title={`Open the tale: ${quest.title}`}><span>Tale</span><OpensMark /></button>}
       {onArchive && <button type="button" className="qrow-x act" onClick={() => onArchive(quest)} disabled={pending} aria-label={`${CELLAR.send}: ${quest.short}`} title={`${CELLAR.send}: ${quest.short}`}><Glyph name="archive" size={13} /><span className="qrow-xl">Cellar</span></button>}
@@ -224,7 +228,7 @@ export function QuestRow({ quest, room, registry, keeper, showKeeper = false, on
     <span className="qrow-m"><StateMark tone={move.tone} title={`${move.who}${move.next ? ` · ${move.next}` : ""}`}>
       {/* Whose move and the verb are the state and never cut; only the waypoint's title truncates, with the whole phrase in the tooltip. */}
       <span className="qrow-mv"><b>{move.who}</b>{move.task !== undefined ? ` ·${move.verb ? ` ${move.verb}` : ""}\u00a0` : move.next ? ` · ${move.next}` : ""}</span>{move.task !== undefined && <span className="qrow-mt" data-content>{move.task}</span>}
-    </StateMark></span></span>
+    </StateMark></span>{summaryCount}</span>
   </div>;
 }
 

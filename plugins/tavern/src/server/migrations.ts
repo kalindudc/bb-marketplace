@@ -1,3 +1,4 @@
+import { SEED_QUEST_CHANGE_SEEN } from "./quest-change-attention";
 import { KEEPER_MIGRATIONS } from "./keeper/migrations";
 import { QUESTLOG_MIGRATIONS as JOURNAL_MIGRATIONS } from "./journal/migrations";
 import { JOURNAL_ACTION_PHRASES } from "./journal/action-phrases";
@@ -96,6 +97,11 @@ const APPENDED: string[] = [
      WHERE kind='decisions' AND json_extract(data,'$.source')='keeper' AND json_extract(data,'$.reversible')=1 AND json_extract(data,'$.askId') IS NOT NULL;`,
   // Journal actor labels now come from the actor column.
   JOURNAL_ACTION_PHRASES,
+  `CREATE INDEX tavern_summary_correction ON tavern_records(json_extract(data,'$.boardQuestId'),json_extract(data,'$.supersedes')) WHERE kind='summaries';`,
+  // The room reads one phase receipt per quest, not each quest's whole event history.
+  `CREATE INDEX tavern_events_quest_phase_order ON tavern_events(board_quest_id,id DESC) WHERE json_type(data,'$.phase')='object';`,
+  // Past phase changes are not news on the first visit after upgrade.
+  SEED_QUEST_CHANGE_SEEN,
 ];
 
 export const MIGRATIONS: string[] = [

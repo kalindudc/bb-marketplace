@@ -107,6 +107,7 @@ describe("Re-check load, last reply and paused ticks", () => {
         makePluginAgentConfigurationContext({ thread: { id: "lead" } }),
       ).instructions!;
     for (const t of [text, config]) {
+      expect(t).toContain("6 summaries per quest per day");
       for (let i = 0; i < 4; i++) {
         expect(t).toContain(`QUEST-${i}`);
         for (let j = 1; j <= 10; j++) expect(t).toContain(`WP-${i}-${j}-END`);

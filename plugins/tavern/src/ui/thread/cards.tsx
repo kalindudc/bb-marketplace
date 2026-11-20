@@ -11,6 +11,7 @@ import type { ReportHeadlineNames } from "../../shared/report-headline";
 import { TaleAction } from "../kit/tale-delivery";
 import { TaleResults } from "../kit/tale-results";
 import { WaiverRows } from "../kit/waiver-rows";
+import { SummaryCard, summaryPath } from "../kit/summary-card";
 import { REPORTS_TAB } from "./reports-tab";
 import { glowVars } from "../kit";
 import { useMoment } from "../kit/moment";
@@ -103,11 +104,11 @@ export function QuestMapCard({ detail, version }: { detail: BoardQuestDetail; ve
 }
 
 const id = z.string().min(1).max(120);
-export const DIRECTIVE_IDS = ["tavern-questmap", "tavern-ask", "tavern-reports", "tavern-ledger", "tavern-party", "tavern-errand", "tavern-tale"] as const;
+export const DIRECTIVE_IDS = ["tavern-questmap", "tavern-ask", "tavern-reports", "tavern-ledger", "tavern-party", "tavern-errand", "tavern-tale", "tavern-summary"] as const;
 export type DirectiveKind = typeof DIRECTIVE_IDS[number];
 export function directiveAttributes(kind: DirectiveKind, attributes: Readonly<Record<string, string>>) {
   if (kind === "tavern-reports") return z.object({ ids: z.string().min(1).transform(value => value.split(",").map(s => s.trim())).pipe(z.array(id).min(1).max(30)) }).safeParse(attributes);
-  if (kind === "tavern-ask") return z.object({ id }).safeParse(attributes);
+  if (kind === "tavern-ask" || kind === "tavern-summary") return z.object({ id }).safeParse(attributes);
   if (kind === "tavern-errand") return z.object({ member: id }).safeParse(attributes);
   return z.object({ quest: id, version: z.string().regex(/^[1-9]\d{0,5}$/).transform(Number).optional() }).safeParse(attributes);
 }
@@ -115,13 +116,31 @@ export function directiveAttributes(kind: DirectiveKind, attributes: Readonly<Re
 export function DirectiveCard({ kind, ...props }: PluginMessageDirectiveProps & { kind: DirectiveKind }) {
   const parsed = directiveAttributes(kind, props.attributes);
   if (!parsed.success) return <code>{props.source}</code>;
+  if (kind === "tavern-summary") return <SummaryDirective threadId={props.message.threadId} id={props.attributes.id!} />;
   if (kind === "tavern-ask") return <AskPointer threadId={props.message.threadId} askId={props.attributes.id!} />;
   if (kind === "tavern-reports" || kind === "tavern-errand") return <ReportDigest threadId={props.message.threadId} ids={kind === "tavern-reports" ? props.attributes.ids!.split(",").map(s => s.trim()) : []} memberThreadId={kind === "tavern-errand" ? props.attributes.member! : null} />;
   return <QuestDirective kind={kind} questId={props.attributes.quest!} version={props.attributes.version ? Number(props.attributes.version) : null} />;
 }
 
+function SummaryDirective({ threadId, id }: { threadId: string; id: string }) {
+  const query = experimental_useRpcQuery({ contract: rpcContract, method: "summary", input: { id, threadId } });
+  const navigate = useBbNavigate();
+  const mark = experimental_useRpcMutation({ contract: rpcContract, method: "markSummariesSeen" });
+  const [acknowledged, setAcknowledged] = useState<string>();
+  if (!query.data) return <div className="tavern tcard"><QueryState error={query.error} loading={query.isLoading} label="the Keeper’s summary" retry={() => void query.refetch()} /></div>;
+  const { summary, ask, handBack } = query.data;
+  if (!summary) return <p className="tavern m">This summary is not available in this thread.</p>;
+  const seen = summary.seen || acknowledged === summary.id;
+  return <SummaryCard summary={{ ...summary, seen }} ask={ask} handBack={handBack} chat>
+    <footer className="tv-sum-actions"><button type="button" className="lnk-btn act" onClick={() => navigate.toPluginPanel("tavern", { subPath: summaryPath(summary.boardQuestId, summary.id) })}>Open on the quest page<OpensMark /></button>
+      {!seen && summary.correctedBy === null && <button type="button" className="btn sm" disabled={mark.isPending} onClick={() => void mark.mutate({ boardQuestId: summary.boardQuestId, ids: [summary.id] }).then(() => setAcknowledged(summary.id)).catch(() => { /* The refusal is shown below. */ })}>OK</button>}
+      {acknowledged === summary.id && <span className="m" role="status">Seen</span>}
+    </footer><QueryState error={mark.error} />
+  </SummaryCard>;
+}
+
 const cardKey = (kind: string, id: string) => `skel:thread:card:${kind.replace(/^tavern-/, "")}:${id}`;
-const CARD_LABEL: Record<DirectiveKind, string> = { "tavern-questmap": "the quest map", "tavern-ask": "the ask", "tavern-reports": "the reports", "tavern-ledger": "the ledger change", "tavern-party": "the party", "tavern-errand": "the errand result", "tavern-tale": "the tale" };
+const CARD_LABEL: Record<DirectiveKind, string> = { "tavern-questmap": "the quest map", "tavern-ask": "the ask", "tavern-reports": "the reports", "tavern-ledger": "the ledger change", "tavern-party": "the party", "tavern-errand": "the errand result", "tavern-tale": "the tale", "tavern-summary": "the Keeper’s summary" };
 /** What a quest card's skeleton counts: waypoints on a map, the party on the party and tale cards, and a ledger change's lines. */
 function cardRows(kind: DirectiveKind, detail: BoardQuestDetail, version: number | null) {
   if (kind === "tavern-questmap") return ((version === null ? detail.quest.plan : detail.plans.find(p => p.version === version))?.waypoints.length ?? 0);

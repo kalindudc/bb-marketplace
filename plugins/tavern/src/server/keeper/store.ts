@@ -54,6 +54,7 @@ export interface Records {
   attentionSeen: { token: string; seenAt: number };
   rules: Rule;
   reports: Report;
+  summaries: import("../../shared/schema").Summary;
   routes: Route;
   askMeta: {
     planVersion?: number;

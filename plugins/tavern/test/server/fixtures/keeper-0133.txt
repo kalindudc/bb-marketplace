@@ -20,6 +20,8 @@ w1 [reported] "Write the three-section missing-plugins.md"; agent owner Lark (ra
 Lark (ranger), stopped; waypoint w1; strikes 0; doing "File written; independent Warden check remains"
 Vex (warden), waiting; waypoint ; strikes 0; doing "Tavern refused to let me verify entry 02 (w1). The exact error was: Only a Warden assigned to this board quest and waypoint can verify or reject this entry. Assign this thread as Warden for w1 before verifying."
 
+Summary reminder: aim for at most 6 summaries per quest per day.
+
 Open asks:
 None
 

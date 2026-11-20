@@ -5,6 +5,16 @@ import { renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { LedgerTab } from "../../../src/ui/thread/tabs";
 import { fixtureLedger, fixtureDecor, fixtureRegistry } from "../../../src/ui/thread/fixtures";
 import { withAttention } from "../attention-fixture";
+it("handles decor resolving to a member after the Ledger has rendered its loading state", async () => {
+  let resolve!: (value: typeof fixtureDecor) => void;
+  const slot = renderSlot({ component: LedgerTab }, { threadId: "keeper-1", environment: null }, { rpc: {
+    ledger: () => withAttention(fixtureLedger), decor: () => new Promise(r => { resolve = r; }), registry: () => fixtureRegistry,
+  } });
+  await slot.findByLabelText("What the Keeper knows now");
+  resolve({ ...fixtureDecor, member: { ...fixtureDecor.member!, role: "member" }, keeperView: null });
+  expect(await slot.findByText("The ledger belongs to Keeper threads.")).toBeTruthy();
+});
+
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 it.each(["need", "new"])("opens the Ledger at its %s group", async group => {
   const targets: string[] = [];

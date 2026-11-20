@@ -145,6 +145,10 @@ it("returns strict JSON from EVERY registered RPC with optional record fields ab
     preapproveQuest: () => call("preapproveQuest", { boardQuestId: f.q.id, greenlight: null, placement: false, conclude: false, endsAt: null, via: "page" }),
     revokeQuestAuthority: () => call("revokeQuestAuthority", { boardQuestId: f.q.id, id: f.k.quest(f.q.id).delegations![0]!.id, via: "page" }),
     answerAsk: () => call("answerAsk", { askId: f.ask.id, optionId: "yes", via: "page" }),
+    olderSummaries: () => call("olderSummaries", { boardQuestId: f.q.id, beforeId: "absent" }),
+    summary: () => call("summary", { id: "absent", threadId: "lead" }),
+    markVisitSeen: () => call("markVisitSeen", { summaryIds: [], changeIds: ["quest-change:999"] }),
+    markSummariesSeen: () => call("markSummariesSeen", { boardQuestId: f.q.id, ids: ["absent"] }),
     markDecisionsSeen: async () => {
       const result = await call("markDecisionsSeen", { ids: [f.decision.id] }) as { undoToken: string | null };
       seenUndoToken = result.undoToken;

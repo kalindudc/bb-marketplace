@@ -145,11 +145,11 @@ export function TavernHeader({ subPath }: PluginNavPanelProps) {
   </div>;
 }
 
-function QuestRoute({ id, tale, registry, room }: { id: string; tale: boolean; registry: Registry; room: Room | undefined }) {
+function QuestRoute({ id, summaryId, tale, registry, room }: { id: string; summaryId?: string; tale: boolean; registry: Registry; room: Room | undefined }) {
   const query = experimental_useRpcQuery({ contract: rpcContract, method: "boardQuest", input: { id } });
   const ended = query.data ? isFinished(query.data.quest.phase) : undefined;
   useEffect(() => { if (ended !== undefined) rememberCount(SKEL.finished(id), ended ? 1 : 0); }, [id, ended]);
-  return query.data ? <>{query.error && <div className="tv-problem" role="alert" data-stuck>Refresh failed: {query.error.message}. Showing the last loaded quest.<button type="button" className="btn sm" onClick={() => void query.refetch()}>Retry</button></div>}{!tale && room && <QuestAwayNotes room={room} registry={registry} questId={id} />}{tale ? <Surface.TalePage detail={query.data} registry={registry} room={room} /> : <Surface.QuestPage detail={query.data} registry={registry} room={room} />}</> : <PageLoad error={query.error} retry={query.refetch} skeleton={questSkeleton(id, tale, room)} label={tale ? "the tale" : "the quest"} />;
+  return query.data ? <>{query.error && <div className="tv-problem" role="alert" data-stuck>Refresh failed: {query.error.message}. Showing the last loaded quest.<button type="button" className="btn sm" onClick={() => void query.refetch()}>Retry</button></div>}{!tale && room && <QuestAwayNotes room={room} registry={registry} questId={id} />}{tale ? <Surface.TalePage detail={query.data} registry={registry} room={room} /> : <Surface.QuestPage detail={query.data} registry={registry} room={room} summaryId={summaryId} />}</> : <PageLoad error={query.error} retry={query.refetch} skeleton={questSkeleton(id, tale, room)} label={tale ? "the tale" : "the quest"} />;
 }
 /** A quest route's skeleton: the tale's, or the record's when the room already says the quest has ended, else the live page's. */
 function questSkeleton(id: string, tale: boolean, room: Room | undefined) {
@@ -225,7 +225,7 @@ export function TavernPage({ subPath }: PluginNavPanelProps) {
   else if (route.kind === "insights") body = <Surface.InsightsPage />;
   else if (route.kind === "machines") body = <Surface.MachinesPage rule={route.rule} hire={route.hire} />;
   else if (!registry.data) { const sk = routeSkeleton(route, room.data); body = sk ? <PageLoad error={registry.error} retry={registry.refetch} {...sk} /> : <ReadState error={registry.error} retry={registry.refetch} />; }
-  else if (route.kind === "quest" || route.kind === "tale") body = <Surface.QuestRoute key={route.id} id={route.id} tale={route.kind === "tale"} registry={registry.data} room={room.data} />;
+  else if (route.kind === "quest" || route.kind === "tale") body = <Surface.QuestRoute key={route.id} id={route.id} summaryId={route.summaryId} tale={route.kind === "tale"} registry={registry.data} room={room.data} />;
   else if (route.kind === "classes") body = <Surface.ClassesList registry={registry.data} />;
   else if (route.kind === "class") body = <Surface.ClassDetail id={route.id} registry={registry.data} />;
   else if (!room.data) { const sk = routeSkeleton(route, undefined); body = sk ? <PageLoad error={room.error} retry={room.refetch} {...sk} /> : <ReadState error={room.error} retry={room.refetch} />; }

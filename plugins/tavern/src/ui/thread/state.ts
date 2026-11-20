@@ -8,7 +8,7 @@ type Reveal = {
 const empty: Reveal = { revealAskId: null, revealVersion: 0 };
 const reveals = new Map<string, Reveal>();
 const listeners = new Set<() => void>();
-export type WidgetPanel = null | "asks" | "decided" | "brief";
+export type WidgetPanel = null | "asks" | "decided" | "brief" | "quests";
 const panels = new Map<string, WidgetPanel>();
 const acknowledged = new Map<string, number>();
 const expandedReveals = new Map<string, number>();

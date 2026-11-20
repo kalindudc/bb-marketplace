@@ -3,7 +3,7 @@ import { StopAllNotice } from "./stop-all";
 import { useBbNavigate } from "@get-bb/plugin-sdk/app";
 import { Fragment, useEffect, useId, useMemo, useState, type ReactNode } from "react";
 import { PlacementFacts } from "../kit/placement";
-import { voiceShown, Crest, ExpandsMark, Hearth, OpensMark, rememberCount, PartyPicture as KitParty, Vocabulary, activeHold, onTheRoad, clockTime, glowVars, hearthWords, useNow } from "../kit";
+import { voiceShown, Crest, ExpandsMark, Hearth, OpensMark, rememberCount, PartyPicture as KitParty, Vocabulary, activeHold, onTheRoad, glowVars, hearthWords, useNow } from "../kit";
 import type { BoardQuestSummary, Room } from "../../shared/contract";
 import type { Member } from "../../shared/schema";
 import { DecidedForYou, NeedsYouQueue } from "./asks";
@@ -17,6 +17,7 @@ import { Rail, jumpTo, takePendingJump } from "./rail";
 import { ReturnButton, RoomAwayNotes, usePendingStops } from "./away";
 import { SKEL } from "./skeletons";
 import { Board } from "./board";
+import { SinceVisit } from "./since-visit";
 import { reportsTitle, useOpenReports } from "./reports";
 
 /** Where each member is, drawn by the kit; every crest opens its thread. */
@@ -128,23 +129,9 @@ export function EventFeed({ lines, registry, questShort, title = "What happened"
 const SEEN_KEY = "tavern.commonRoom.lastSeen";
 function useSinceLastVisit() {
   const [since] = useState<number | null>(() => { try { const v = window.localStorage.getItem(SEEN_KEY); return v ? Number(v) : null; } catch { return null; } });
-  const [cleared, setCleared] = useState(false);
-  useEffect(() => { try { window.localStorage.setItem(SEEN_KEY, String(Date.now())); } catch { /* Storage can be off; the strip then never shows. */ } }, []);
-  return { since: cleared ? null : since, clear: () => setCleared(true) };
+  useEffect(() => { try { window.localStorage.setItem(SEEN_KEY, String(Date.now())); } catch { /* Arrival cues are optional without local storage. */ } }, []);
+  return since;
 }
-
-export function SinceYouLooked({ lines, since, clear, onFilter }: { lines: EventLine[]; since: number; clear: () => void; onFilter: (f: Filter) => void }) {
-  const fresh = lines.filter((l) => l.at > since);
-  if (!fresh.length) return null;
-  const count = (f: EventLine["filter"]) => fresh.filter((l) => l.filter === f).length;
-  const items: [Filter, PageGlyphName, number, string][] = [["reports", "done", count("reports"), "reported"], ["asks", "you", fresh.filter((l) => l.icon === "ask").length, "new asks"], ["steers", "steer", count("steers"), "steers applied"], ["decided", "seal", count("decided"), "decided for you"]];
-  return <div className="tv-since" role="group" aria-label="Since you looked">
-    <span className="m">Since you looked · {clockTime(since)}</span>
-    {items.filter(([, , n]) => n > 0).map(([f, g, n, word]) => <button type="button" key={f} className="act" onClick={() => onFilter(f)} title={`Show ${word} below`}><PageGlyph name={g} /><b className="num">{n}</b> {word}</button>)}
-    <span className="tv-sp" /><button type="button" className="btn ghost sm" onClick={clear}>Clear</button>
-  </div>;
-}
-
 export function SideQuests({ room, registry }: { room: Room; registry: Registry }) {
   const navigate = useBbNavigate();
   const errands = room.keepers.flatMap((k) => k.errands.map((m) => ({ m, keeper: k.member })));
@@ -275,7 +262,7 @@ function RoomActivity({ room, registry }: { room: Room; registry: Registry }) {
   const folded = allLines.filter(inCellar).length;
   const lines = showCellar ? allLines : allLines.filter((l) => !inCellar(l));
   const [filter, setFilter] = usePanelState<Filter>("room.events.filter", "all", (v) => FILTERS.some(([f]) => f === v));
-  const { since, clear } = useSinceLastVisit();
+  const since = useSinceLastVisit();
   useEffect(() => { const id = takePendingJump(); if (id) requestAnimationFrame(() => jumpTo(id)); }, []);
   const navigate = useBbNavigate();
   const asks = needYouCount(room), decided = Math.min(5, attentionView(room.attention).new);
@@ -284,7 +271,7 @@ function RoomActivity({ room, registry }: { room: Room; registry: Registry }) {
     <h1 className="sr">The common room (home)</h1>
     <StatusLine room={room} registry={registry} />
     <RoomAwayNotes room={room} registry={registry} />
-    {since !== null && <SinceYouLooked lines={lines} since={since} clear={clear} onFilter={(f) => { setFilter(f); jumpTo("rm-events"); }} />}
+    <SinceVisit visit={room.sinceVisit} />
     <ArchiveReceiptLine api={api} />
     <Rail calm={!needYouCount(room) && !attentionView(room.attention).new}
       attention={<>
