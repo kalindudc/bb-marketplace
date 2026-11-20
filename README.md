@@ -55,13 +55,14 @@ plugin store.
 ## Layout
 
 ```
-marketplace.base.json   marketplace name, description and categories
-entries/<id>.json       one store listing per plugin
-plugins/<id>/           plugin source (a plugin can also live in its own repository)
-scripts/build.mjs       checks the entries and writes marketplace.json
-scripts/rules.mjs       the listing rules: bb's schema and stricter marketplaces
-scripts/changelog.mjs   the changelog format, checked by npm test and npm run check
-marketplace.json        generated; bb reads this file, so commit it
+marketplace.base.json     marketplace name, description and categories
+entries/<id>.json         one store listing per plugin
+plugins/<id>/             plugin source (a plugin can also live in its own repository)
+scripts/build.mjs         checks the entries and writes marketplace.json
+scripts/rules.mjs         the listing rules: bb's schema and stricter marketplaces
+scripts/changelog.mjs     the changelog format, checked by npm test and npm run check
+scripts/tag-releases.mjs  tags each new plugin version; run by the Tag releases workflow
+marketplace.json          generated; bb reads this file, so commit it
 ```
 
 ## Add a plugin
@@ -78,25 +79,28 @@ marketplace.json        generated; bb reads this file, so commit it
 4. Run `npm run build` and commit `marketplace.json` with the change. The
    build stops and lists every problem it finds. CI runs `npm test` and
    `npm run check` on every push to `main` and every pull request.
-5. Tag the first release (see below). Until a tag exists, the listing shows
-   in the store but cannot be installed.
+5. Push to `main`. The first release is tagged automatically (see below).
+   Until a tag exists, the listing shows in the store but cannot be
+   installed.
 
 A plugin that lives in its own repository needs only steps 2 to 4, with
 `source.git.url` pointing at that repository, or an `npm` source instead.
 
 ## Release a plugin
 
-Entries follow semver tags scoped to each plugin, so pushing to `main` ships
-nothing by itself:
+Entries follow semver tags scoped to each plugin. To release, bump
+`"version"` in `plugins/<id>/package.json`, add its `CHANGELOG.md` entry in
+the same commit, and push to `main`. The entry goes in the same commit as the
+version bump; `npm test` and `npm run check` fail without it.
 
-```sh
-# bump "version" in plugins/<id>/package.json, add its CHANGELOG.md entry in
-# the same commit, and commit both to main, then:
-git tag <id>/v0.2.0 && git push origin <id>/v0.2.0
-```
-
-The entry goes in the same commit as the version bump; `npm test` and
-`npm run check` fail without it.
+The Tag releases workflow (`.github/workflows/tag-releases.yml`) then tags
+the release as `<id>/vX.Y.Z` at the commit that bumped the version. It walks
+each plugin's history back to its newest tag, so a push that releases several
+plugins, or one plugin more than once, gets every tag, and the next run
+catches up anything a cancelled run missed. It never moves a tag. It does not
+tag a version that is not newer than the plugin's newest tag, or one a later
+commit reverted, and it warns when the lockfile or changelog disagrees with
+the release. To see what it would tag, run `node scripts/tag-releases.mjs`.
 
 Entries accept any `0.x` release (`>=0.1.0 <1.0.0`), so a release needs no
 catalog change until 1.0. bb records the commit each tag points at and

@@ -1,0 +1,37 @@
+name: Tag releases
+
+# A plugin release is a version bump on main. This tags every new version as <tagPrefix>vX.Y.Z at the commit that set
+# it. scripts/tag-releases.mjs works from history, so one run covers every plugin and every bump since their newest
+# tags, and a run that was cancelled or failed is caught up by the next one.
+
+'on':
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One run at a time. A newer push replaces a waiting run, and the newer run covers what it would have tagged.
+concurrency:
+  group: tag-releases
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    name: Tag releases
+    if: ${{ github.ref == 'refs/heads/main' && !github.event.deleted }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      # Full history and tags: each plugin's history is walked back to its newest tag.
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: '22'
+      - name: Tag new plugin versions
+        run: node scripts/tag-releases.mjs --push
