@@ -23,7 +23,7 @@ import { LIMITS } from "./src/server/limits";
 import { createBackupService } from "./src/server/backup/index";
 import { backupHandlers } from "./src/server/backup/rpc";
 import { backupContract } from "./src/shared/backup";
-import { rpcContract as coreContract } from "./src/shared/contract";
+import { rpcContract as coreContract, tags } from "./src/shared/contract";
 import { settingsContract } from "./src/shared/settings";
 import { insightsContract } from "./src/shared/insights";
 import { VoiceCheckRunner } from "./src/server/voice-check/run";
@@ -218,13 +218,12 @@ export default async function tavern(bb: BbPluginApi) {
     "thread.unarchived",
     "thread.deleted",
   ] as const)
-    bb.events.on(type, (event) =>
-      runtime
-        .threadLifecycle(type, event)
-        .catch((error) =>
-          bb.log.warn(`Tavern lifecycle ${type}: ${String(error)}`),
-        ),
-    );
+    bb.events.on(type, (event) => {
+      bb.rpc.experimental_invalidate([tags.identity(event.thread.id)]);
+      return runtime.threadLifecycle(type, event).catch((error) =>
+        bb.log.warn(`Tavern lifecycle ${type}: ${String(error)}`),
+      );
+    });
   bb.events.on("experimental_thread.events", ({ thread, sequence }) => {
     void runtime
       .observe(thread, sequence)

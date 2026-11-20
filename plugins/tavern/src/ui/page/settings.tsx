@@ -1,7 +1,7 @@
 import { experimental_ProviderModelPicker as ProviderModelPicker, experimental_copyToClipboard, experimental_useProviders, experimental_useRpcMutation, experimental_useRpcQuery, useBbNavigate, type ExperimentalProviderModelPickerValue } from "@get-bb/plugin-sdk/app";
 import { createContext, useContext, useCallback, useEffect, useId, useRef, useState, type ComponentType, type ReactNode } from "react";
 import { DEFAULT_SETTINGS, KNOB_FIELDS, importSummary, isGuardrailSetting, settingsContract, type TavernSettings, type SettingsChange, type SettingsPatch, type ResettableSetting, type SettingsView, type TunableKey } from "../../shared/settings";
-import { Glyph, OpensMark, TimeAgo, plural, useRegistry, useActorNames, useRemembered, ExpandsMark } from "../kit";
+import { Glyph, OpensMark, TimeAgo, plural, useRegistry, useSidebarActorNames, useRemembered, ExpandsMark } from "../kit";
 import { ReadState, SegFilter } from "./common";
 import { BACKUP_INTRO, BackupSection } from "./backup";
 import { PageGlyph, type PageGlyphName } from "./glyphs";
@@ -223,8 +223,8 @@ export function AwaySettingsSection() {
   }}</Shell>;
 }
 
-function SettingsAuthors({ history, children }: { history: SettingsView["history"]; children: (names: ReturnType<typeof useActorNames>) => ReactNode }) {
-  const names = useActorNames(history.flatMap(c => c.threadId ? [c.threadId] : []));
+function SettingsAuthors({ history, children }: { history: SettingsView["history"]; children: (names: ReturnType<typeof useSidebarActorNames>) => ReactNode }) {
+  const names = useSidebarActorNames(history.flatMap(c => c.threadId ? [c.threadId] : []));
   return children(names);
 }
 

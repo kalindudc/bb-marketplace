@@ -1,22 +1,39 @@
-import { createContext, useContext, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
-import { experimental_useRpcQuery, experimental_useRpcMutation, experimental_useAppPanel, type ExperimentalThreadTabProps, type JsonValue } from "@get-bb/plugin-sdk/app";
+import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type FormEvent, type KeyboardEvent } from "react";
+import { experimental_useRpcQuery, experimental_useRpcMutation, experimental_useAppPanel, useBbNavigate, type ExperimentalThreadTabProps, type JsonValue } from "@get-bb/plugin-sdk/app";
 import { rpcContract, type JournalEdit } from "../../shared/contract";
 import type { Evidence, JournalEntry, Journal } from "../../shared/schema";
-import { EvidenceList, ExpandsMark, Glyph, readableEvidence, IconButton, OverflowMenu, QueryState, Ribbon, SkGlyph, SkLine, SkSegmented, StatusMark, Tally, TimeAgo, timeAgo, useNow, Vocabulary, rememberCount, skWidths, useActorNames, useJournalCues, useRegistry, useSkeletonCount, useSkeletonDelay, useRemembered, useRememberedView, type MenuItem } from "../kit";
+import { CrestOf, EvidenceList, ExpandsMark, Glyph, readableEvidence, IconButton, OverflowMenu, QueryState, Ribbon, SkGlyph, SkLine, SkSegmented, StatusMark, Tally, TimeAgo, timeAgo, useNow, Vocabulary, rememberCount, skWidths, useActorNames, useJournalCues, useSkeletonCount, useSkeletonDelay, useRemembered, useRememberedView, type MenuItem } from "../kit";
 import "./journal-notebook.css";
-import { memberName } from "../../shared/member-name";
+import { IDENTITY_PAGE_SIZE, identityLabel, isThreadId, type ThreadIdentity } from "../../shared/identity";
+import { journalActionText } from "../../shared/journal-action-text";
 import { waypointCheck } from "../../shared/waypoint";
 import { currency, delegated, TRACKER_GROUPS, trackerGroups } from "../../shared/journal-tracker";
 
 type Change = (edit: JournalEdit) => Promise<boolean>;
 type Names = ReturnType<typeof useActorNames>;
-/**
- * Which thread ids the journal names, and the journal's own name. The tab works them out but never subscribes to names itself:
- * bb's query hook re-renders its subscriber on every refetch, even with equal data, and other threads' work refetches names
- * often. So only the parts that show a name (useJournalNames) re-render then, never the tab, the tally or the list.
- */
-const NameInput = createContext<{ ids: string[]; self: { threadId: string; name: string | null } }>({ ids: [], self: { threadId: "", name: null } });
-const useJournalNames = () => { const { ids, self } = useContext(NameInput); return useActorNames(ids, self); };
+
+// BB invalidates live reads even when only names change; keep those updates out of the journal's row tree.
+function createOwnerIdentities() {
+  const identities = new Map<string, ThreadIdentity>();
+  const listeners = new Set<() => void>();
+  return {
+    get: (id: string) => identities.get(id),
+    subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; },
+    publish(page: ThreadIdentity[]) {
+      for (const identity of page) identities.set(identity.threadId, identity);
+      for (const listener of listeners) listener();
+    },
+  };
+}
+const OwnerIdentities = createContext<ReturnType<typeof createOwnerIdentities> | null>(null);
+
+function OwnerIdentityPage({ ids, viewer, store }: { ids: string[]; viewer: string; store: ReturnType<typeof createOwnerIdentities> }) {
+  const query = experimental_useRpcQuery({ contract: rpcContract, method: "identities", input: { ids, viewer } });
+  useLayoutEffect(() => {
+    if (query.data) store.publish(query.data.identities);
+  }, [query.data, store]);
+  return null;
+}
 const FILTERS = { done: "Done", verified: "Verified", rejected: "Rejected", added: "Added by you" } as const;
 type Filter = "all" | "open" | "stuck" | "delegated" | keyof typeof FILTERS;
 const isFilter = (v: unknown): v is Filter => v === "all" || v === "open" || v === "stuck" || v === "delegated" || (typeof v === "string" && v in FILTERS);
@@ -86,16 +103,9 @@ function reportLine(entry: JournalEntry, now = Date.now()): string | null {
   const head = r.kind === "idle" ? `Went idle ${when}` : r.kind === "settled" ? `Reported settled ${when}` : `Its thread was ${r.kind} ${when}`;
   return r.summary ? `${head}: ${r.summary}` : head;
 }
-/** An owner as a person reads it: a character's name, or an untyped thread's title up to its " · ", cut at a word, never mid-word. */
-function ownerName(names: Names, owner: string): string {
-  const full = names(owner).split(" · ")[0]!.trim();
-  return full.length <= 24 ? full : `${full.slice(0, 24).replace(/\s+\S*$/, "") || full.slice(0, 24)}…`;
-}
-
 export function JournalTab({ threadId, params }: ExperimentalThreadTabProps & { params: JsonValue | null }) {
   const query = experimental_useRpcQuery({ contract: rpcContract, method: "journal", input: { threadId } });
-  const decor = experimental_useRpcQuery({ contract: rpcContract, method: "decor", input: { threadId } });
-  const registry = useRegistry();
+  const ownerIdentities = useMemo(createOwnerIdentities, [threadId]);
   const edit = experimental_useRpcMutation({ contract: rpcContract, method: "journalEdit" });
   const panel = experimental_useAppPanel();
   // Filter, open entries, the folds and scroll come back when the panel reopens on this thread (per device).
@@ -152,12 +162,6 @@ export function JournalTab({ threadId, params }: ExperimentalThreadTabProps & { 
     const frame = requestAnimationFrame(() => { const el = document.getElementById(rowId(threadId, jump)); el?.scrollIntoView?.({ block: "center" }); el?.focus({ preventScroll: true }); setJump(null); });
     return () => cancelAnimationFrame(frame);
   }, [jump, threadId, filter, showDone]);
-  const member = decor.data?.member ?? null;
-  const selfName = member && registry.data ? memberName(member, registry.data) : null;
-  const nameIds = data ? [...data.entries.flatMap(e => [e.updatedBy, e.createdBy, e.doneBy, e.review?.actor ?? null].flatMap(a => a && a.kind === "agent" ? [a.threadId] : [])), ...data.entries.flatMap(e => e.owner ? [e.owner] : []), ...data.changes.flatMap(c => c.actor.kind === "agent" ? [c.actor.threadId] : [])] : [];
-  const idKey = [...new Set(nameIds)].sort().join(",");
-  const nameInput = useMemo(() => ({ ids: idKey ? idKey.split(",") : [], self: { threadId, name: selfName } }), [idKey, threadId, selfName]);
-
   const change: Change = async value => {
     setError(null);
     try { const result = await edit.mutate({ threadId, edit: value }); setMessage(result.message); if (value.op !== "clear") setReceipt(null); return true; }
@@ -200,6 +204,9 @@ export function JournalTab({ threadId, params }: ExperimentalThreadTabProps & { 
   const openCount = data.entries.filter(e => !isDone(e)).length;
   // The current entry is the server's choice (progress.current), never worked out again here.
   const current = data.progress.current ? data.entries.find(e => e.id === data.progress.current!.id) ?? null : null;
+  const ownerIds = filter === "delegated" || filter === "stuck"
+    ? [...new Set(shown.flatMap(entry => delegated(entry) && isThreadId(entry.owner!) ? [entry.owner!] : []))].sort()
+    : [];
   const rowProps = { entries: data.entries, stepsOf, change, pending: edit.isPending, open, toggle, expand, changes: data.changes, threadId, currentId: current?.id ?? null, doneStepsShown, toggleSteps, filter };
   const add = (event: FormEvent) => { event.preventDefault(); const value = text.trim(); if (value) void change({ op: "add", descriptions: [value], parentId: null }).then(ok => { if (ok) setText(""); }); };
   const clearable = tops.filter(isDone).length;
@@ -210,7 +217,10 @@ export function JournalTab({ threadId, params }: ExperimentalThreadTabProps & { 
   ];
 
   return (
-    <NameInput.Provider value={nameInput}>
+    <OwnerIdentities.Provider value={ownerIdentities}>
+    {Array.from({ length: Math.ceil(ownerIds.length / IDENTITY_PAGE_SIZE) }, (_, page) =>
+      <OwnerIdentityPage key={page} ids={ownerIds.slice(page * IDENTITY_PAGE_SIZE, (page + 1) * IDENTITY_PAGE_SIZE)} viewer={threadId} store={ownerIdentities} />
+    )}
     <div className="tavern journal notebook" data-part="JournalTab" ref={root} onFocus={onListFocus}>
       <header className="journal-head">
         <div className="journal-title">
@@ -289,25 +299,69 @@ export function JournalTab({ threadId, params }: ExperimentalThreadTabProps & { 
       )}
       <details className="journal-history" data-fold="history" ref={history}>
         <summary><Glyph name="chevron" size={12} /><span>History · {data.changes.length}</span></summary>
-        <JournalHistoryList changes={data.changes} all={allHistory} />
+        <JournalHistoryList changes={data.changes} all={allHistory} threadId={threadId} />
         {data.changes.length > LONG_FOLD && <ShowAll open={allHistory} count={data.changes.length} onToggle={() => setAllHistory(!allHistory)} />}
       </details>
     </div>
-    </NameInput.Provider>
+    </OwnerIdentities.Provider>
   );
 }
 
-/** The History fold's list: it shows who made each change, so it subscribes to names, and the tab doesn't. */
-function JournalHistoryList({ changes, all }: { changes: Journal["changes"]; all: boolean }) {
-  const names = useJournalNames();
-  return <ol>{[...changes].reverse().slice(0, all ? undefined : LONG_FOLD).map(c => <li key={c.id}><span className="who-n">{names(c.actor)}</span><span className="tx" title={c.text} data-content>{c.text}</span><TimeAgo at={c.at} /></li>)}</ol>;
+function JournalChangeRow({ change, names }: { change: Journal["changes"][number]; names: Names }) {
+  const { actor } = change;
+  const text = journalActionText(change);
+  const rawId = /\bthr_[\w-]+/gi;
+  const named = (s: string) => s.replace(rawId, id => names.threadNames.get(id)?.replace(rawId, "another thread") ?? "another thread");
+  const label = names(actor);
+  return <li aria-busy={!label || undefined}>
+    <span className="who-n">{label ? named(label) : <span aria-hidden="true"><SkLine w="7ch" /></span>}</span>
+    {" "}<span className="tx" data-content>{named(text)}</span> <TimeAgo at={change.at} />
+  </li>;
 }
-/** A delegated row's owner, by name; left out when the description already starts with it. */
-function OwnerTag({ entry }: { entry: JournalEntry }) {
-  const names = useJournalNames();
-  const short = ownerName(names, entry.owner!);
-  if (entry.description.startsWith(short)) return null;
-  return <span className="own" title={`Owner: ${names(entry.owner)}`}>{short}</span>;
+
+function JournalHistoryPage({ changes, threadId }: { changes: Journal["changes"]; threadId: string }) {
+  const names = useActorNames(changes.map(c => c.actor), threadId);
+  return <>{changes.map(change => <JournalChangeRow key={change.id} change={change} names={names} />)}</>;
+}
+
+function JournalHistoryList({ changes, all, threadId }: { changes: Journal["changes"]; all: boolean; threadId: string }) {
+  const shown = [...changes].reverse().slice(0, all ? undefined : LONG_FOLD);
+  return <ol>{Array.from({ length: Math.ceil(shown.length / IDENTITY_PAGE_SIZE) }, (_, page) =>
+    <JournalHistoryPage key={page} changes={shown.slice(page * IDENTITY_PAGE_SIZE, (page + 1) * IDENTITY_PAGE_SIZE)} threadId={threadId} />
+  )}</ol>;
+}
+
+function OwnerThreadLink({ owner }: { owner: ThreadIdentity }) {
+  const navigate = useBbNavigate();
+  const label = owner.name === "a thread" ? "Open thread: owner" : `Open thread: ${owner.name}`;
+  return <button type="button" className="lnk-btn journal-owner-link" aria-label={label} onClick={() => navigate.toThread(owner.threadId)}>Open thread</button>;
+}
+
+function OwnerTag({ ownerId, expanded }: { ownerId: string; expanded: boolean }) {
+  const store = useContext(OwnerIdentities)!;
+  const identity = useSyncExternalStore(store.subscribe, () => store.get(ownerId));
+  if (!identity && isThreadId(ownerId)) return null;
+  const label = identityLabel(ownerId, identity, { short: true, mid: true });
+  const short = !identity || label.length <= 24 ? label : `${label.slice(0, 24).replace(/\s+\S*$/, "") || label.slice(0, 24)}…`;
+  return <span className="own" title={`Owner: ${identityLabel(ownerId, identity, { relation: true, mid: true })}`}>
+    <span>{short}</span>
+    {!expanded && identity?.canOpen && <OwnerThreadLink owner={identity} />}
+  </span>;
+}
+
+function OwnerLine({ ownerId, names }: { ownerId: string; names: Names }) {
+  const owner = names.identities.get(ownerId);
+  const registry = experimental_useRpcQuery({
+    contract: rpcContract, method: "registry", input: owner?.projectId ? { projectId: owner.projectId } : {},
+    enabled: owner?.role === "member" && owner.life !== "deleted",
+  });
+  const label = names(ownerId, { relation: true, mid: true });
+  return <span className="journal-owner" aria-busy={!label || undefined}>
+    {owner?.role === "member" && owner.classId && owner.life !== "deleted" && registry.data &&
+      <span aria-hidden="true"><CrestOf member={{ classId: owner.classId, characterId: owner.characterId }} registry={registry.data} size={14} /></span>}
+    <span>Owner: {label || <span aria-hidden="true"><SkLine w="9ch" /></span>}</span>
+    {owner?.canOpen && <OwnerThreadLink owner={owner} />}
+  </span>;
 }
 
 const journalSkeletonKey = (threadId: string) => `skel:thread:journal:${threadId}`;
@@ -419,7 +473,7 @@ function EntryRow({ entry, siblings, index, entries, steps, change, pending, ope
           {isNow && <span className="sr">, {entry.status === "doing" ? "doing now" : "next"}</span>}
         </button>
         <span className="meta">
-          {reasons && delegated(entry) && <OwnerTag entry={entry} />}
+          {reasons && delegated(entry) && <OwnerTag ownerId={entry.owner!} expanded={expanded} />}
           {entry.createdBy.kind === "user" && <span className="pen wide" title="Added by you"><Glyph name="edit" size={11} /><span className="sr">Added by you</span></span>}
           {reported && <span className="flag rep">report in</span>}
           {entry.status === "rejected" && <span className="flag bad">rejected</span>}
@@ -475,12 +529,14 @@ function LinkLine({ link }: { link: NonNullable<JournalEntry["link"]> }) {
 
 type DetailProps = { id: string; descId: string; entry: JournalEntry; entries: JournalEntry[]; pending: boolean; change: Change; changes: Journal["changes"]; asking: Pending; setAsking: (p: Pending) => void; menu: MenuItem[]; tick: () => void; start: () => void; block: () => void };
 function EntryDetail({ id, descId, entry, entries, pending, change, changes, asking, setAsking, menu, tick, start, block }: DetailProps) {
-  const names = useJournalNames();
   const [note, setNote] = useState(entry.note ?? "");
   const [step, setStep] = useState("");
   const [reason, setReason] = useState("");
   const [ev, setEv] = useState<Evidence>({ kind: "url", ref: "", detail: "", exitCode: null });
   const recent = changes.filter(c => c.entryIds.includes(entry.id)).slice(-4).reverse();
+  const names = useActorNames([entry.owner, entry.updatedBy, entry.doneBy, entry.review?.actor, ...recent.map(c => c.actor)], entry.threadId);
+  const updater = entry.updatedBy?.kind === "agent" && entry.updatedBy.threadId === entry.owner ? ""
+    : entry.updatedBy ? names(entry.updatedBy, { mid: true }) : "";
   const hasSteps = entries.some(e => e.parentId === entry.id);
   const mirror = entry.boardQuestId !== null;
   const parents = hasSteps || mirror ? [] : entries.filter(e => e.parentId === null && e.id !== entry.id && !isDone(e) && e.boardQuestId === null);
@@ -506,7 +562,7 @@ function EntryDetail({ id, descId, entry, entries, pending, change, changes, ask
       )}
       {!isDone(entry) && entry.report && (
         <div className="journal-verdict rep"><Glyph name="report" size={14} /><div>
-          <p>{entry.owner ? ownerName(names, entry.owner) : "The owner"} {entry.report.kind === "idle" ? "went idle" : entry.report.kind === "settled" ? "reported settled" : `’s thread was ${entry.report.kind}`} <TimeAgo at={entry.report.at} /></p>
+          <p>{entry.owner ? names(entry.owner, { short: true }) : "The owner"} {entry.report.kind === "idle" ? "went idle" : entry.report.kind === "settled" ? "reported settled" : `’s thread was ${entry.report.kind}`} <TimeAgo at={entry.report.at} /></p>
           {entry.report.summary && <p className="why" data-content>{entry.report.summary}</p>}
           <button type="button" className="btn sm" disabled={pending} onClick={() => void change({ op: "wait", entryIds: [entry.id] })}>Still waiting</button>
         </div></div>
@@ -537,15 +593,15 @@ function EntryDetail({ id, descId, entry, entries, pending, change, changes, ask
       ) : entry.note ? <p className="journal-note"><span data-content>{entry.note}</span> <button type="button" className="lnk" aria-label="Edit the note" onClick={() => setAsking("note")}>Edit</button></p> : null}
       {entry.evidence.length > 0 && <EvidenceList evidence={readableEvidence(entry.evidence, { threadNames: names.threadNames })} />}
       <p className="journal-facts">
-        <span>{entry.owner ? `Owner: ${names(entry.owner)}` : "No owner"}</span>
-        <span>{names(entry.updatedBy)} · <TimeAgo at={entry.updatedAt} /></span>
+        {entry.owner ? <OwnerLine ownerId={entry.owner} names={names} /> : <span>No owner</span>}
+        <span><span>{updater ? `Updated by ${updater}` : "Updated"}</span> <TimeAgo at={entry.updatedAt} /></span>
         {entry.doneBy && isDone(entry) && <span>done by {names(entry.doneBy, { mid: true })}</span>}
         {entry.after.length > 0 && <span>after {entry.after.join(", ")}</span>}
       </p>
       {parents.length > 0 && (
         <label className="journal-parent">Step of<select id={`${id}-parent`} value={entry.parentId ?? ""} disabled={pending} onChange={e => void change({ op: "reparent", entryId: entry.id, parentId: e.target.value || null })}><option value="">Top level</option>{parents.map(p => <option value={p.id} key={p.id}>{p.id} · {p.description.slice(0, 50)}</option>)}</select></label>
       )}
-      {recent.length > 0 && <ol className="journal-ehist" aria-label="Recent changes">{recent.map(c => <li key={c.id}><span className="who-n">{names(c.actor)}</span> <span className="tx" data-content>{c.text}</span> <TimeAgo at={c.at} /></li>)}</ol>}
+      {recent.length > 0 && <ol className="journal-ehist" aria-label="Recent changes">{recent.map(change => <JournalChangeRow key={change.id} change={change} names={names} />)}</ol>}
       <div className="journal-dacts">
         {main}
         {!isDone(entry) && entry.status !== "blocked" && !mirror && <button type="button" className="lnk" disabled={pending} onClick={block}>Block…</button>}

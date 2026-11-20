@@ -22,7 +22,7 @@ const delegatedEntries = [
 const progressOf = (entries: JournalEntry[]) => ({ done: entries.filter(e => e.status === "done").length, total: entries.length, blocked: entries.filter(e => e.status === "blocked").length, current: null });
 const make = (entries: JournalEntry[]) => journalSchema.parse({ ...fixtureJournal, threadId: "k", entries, changes: [], progress: progressOf(entries) });
 const open = (data: ReturnType<typeof make>, journalEdit = vi.fn(() => ({ ok: true, message: "Recorded" }))) =>
-  ({ slot: renderSlot({ component: JournalTab }, { threadId: "k", environment: null, params: null }, { rpc: { journal: () => data, journalEdit, decor: () => fixtureDecor, registry: () => fixtureRegistry, crests: () => ({ crests: [{ threadId: "thr_g", label: "Gaetano" }, { threadId: "thr_s", label: "Steve" }] }) } }), journalEdit });
+  ({ slot: renderSlot({ component: JournalTab }, { threadId: "k", environment: null, params: null }, { rpc: { journal: () => data, journalEdit, decor: () => fixtureDecor, registry: () => fixtureRegistry, identities: () => ({ identities: [["thr_g", "Gaetano"], ["thr_s", "Steve"]].map(([threadId, name]) => ({ threadId, name, relation: "other", role: "thread", classId: null, className: null, characterId: null, keeper: null, life: "live", canOpen: true })) }) } }), journalEdit });
 
 const cursor = (root: HTMLElement) => waitFor(() => { const el = root.querySelector(".journal-cur"); if (!el) throw new Error("no currency"); return el; });
 describe("the journal's currency", () => {
@@ -61,9 +61,9 @@ describe("the Delegated view", () => {
     expect(groups[2]!.querySelector("h3")!.getAttribute("title")).toBe("The delegate is blocked; it needs you or something outside");
     const reported = within(groups[0] as HTMLElement);
     expect(reported.getByText("Owner hook")).toBeTruthy();
-    expect(reported.getByText("Gaetano")).toBeTruthy();
+    expect(await reported.findByText("Gaetano")).toBeTruthy();
     expect(groups[0]!.querySelector(".journal-reason")!.textContent).toBe("Went idle 12m ago: SOURCE SETTLED for the hook");
-    expect(within(groups[1] as HTMLElement).getByText("Steve")).toBeTruthy();
+    expect(await within(groups[1] as HTMLElement).findByText("Steve")).toBeTruthy();
     expect(slot.queryByText("Round 3")).toBeNull();
   });
 });
@@ -78,7 +78,7 @@ describe("a delegate's report on a row", () => {
     expect(row.querySelector(".desc")!.getAttribute("title")).toBe("Owner hook · 2 evidence");
     fireEvent.click(row.querySelector(".desc")!);
     const rep = await waitFor(() => { const el = slot.container.querySelector(".journal-detail .journal-verdict.rep"); if (!el) throw new Error("no report"); return el as HTMLElement; });
-    expect(rep.querySelector("p")!.textContent).toBe("Gaetano went idle 12m ago");
+    await waitFor(() => expect(rep.querySelector("p")!.textContent).toBe("Gaetano went idle 12m ago"));
     expect(rep.querySelector(".why")!.textContent).toBe("SOURCE SETTLED for the hook");
     const wait = within(rep).getByRole("button", { name: "Still waiting" });
     expect(wait.className).toBe("btn sm");

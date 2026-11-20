@@ -29,6 +29,7 @@ import { backfillTaleDelivery, memberCredits, readTale } from "./tale";
 import { readCharacterPresentation } from "./character-presentation";
 import type { TavernRuntime } from "./runtime";
 import { freeHands, restingContext } from "./resting";
+import { threadIdentities } from "./identity";
 
 /** The stored brief for the widget: every hire-time line, then as many of the newest follow-ups as fit. */
 function decorBrief(brief: Brief | null | undefined) {
@@ -44,6 +45,7 @@ export function rpcHandlers(
   runtime: TavernRuntime,
 ): OptionalRpcContext<ExperimentalPluginRpcHandlersWithContext<typeof rpcContract>> {
   const k = runtime.keeper;
+  const { identities } = threadIdentities(runtime);
   const placementStore = new PlacementStore(k.store.db);
   const projectMember = (member: import("../shared/schema").Member, context = restingContext(k)) => ({ ...member, restNote: runtime.restNote(member, context),
     pullRequests: runtime.keeper.store.pullRequestsForMember(member.threadId),
@@ -234,6 +236,7 @@ export function rpcHandlers(
         ];
       }),
     }),
+    identities: async ({ ids, viewer }) => ({ identities: await identities(ids, viewer) }),
     journal: ({ threadId }) => k.journal.get(threadId),
     journalEdit: async ({ threadId, edit }, _context?: ExperimentalPluginRpcHandlerContext, receipt?: UserActReceipt) => {
       await k.journal.prepare(threadId);

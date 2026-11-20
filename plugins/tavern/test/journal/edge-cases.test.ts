@@ -89,7 +89,7 @@ describe("journal persistence and race edges", () => {
     await inSend;
     const result = f.store.runTool("t", { action: "list" });
     release(); await note;
-    expect((await result).text).not.toContain("The user changed");
+    expect((await result).text).not.toContain("Your journal changed");
   });
   it("validates persisted rows and snapshots instead of silently replacing corrupted data", async () => {
     const f = fixture(); await f.store.ready("t");

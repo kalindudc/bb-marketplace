@@ -71,7 +71,16 @@
 .tavern .journal-row .flag.rep { color: var(--foreground); font-weight: 600; }
 /* The user's own hand: a still pen, never a control. */
 .tavern .journal-row .pen { display: inline-flex; align-items: center; color: var(--tavern-muted); }
-.tavern .journal-row .own { max-width: 14ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tavern .journal-row .meta:has(.own) { flex: 0 1 auto; min-width: 0; }
+.tavern .journal-row .own, .tavern .journal-owner { display: inline-flex; align-items: center; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
+.tavern .journal-owner { flex-wrap: wrap; }
+.tavern.journal .journal-owner-link { font-size: 11px; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+@container notebook (max-width: 420px) {
+  .tavern .journal-row:has(.own) .desc { min-width: 0; }
+  .tavern .journal-row:has(.own) .desc .t { white-space: normal; overflow-wrap: anywhere; }
+  .tavern .journal-row .meta:has(.own) { max-width: 54%; }
+  .tavern .journal-row .own > span { min-width: min-content; overflow-wrap: break-word; }
+}
 .tavern .journal-group > h3 { margin: 0; padding: 10px var(--jn-pad) 2px var(--jn-gutter); font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--tavern-muted); }
 .tavern .journal-group > h3 .num { font-weight: 600; letter-spacing: 0; }
 .tavern .journal-stepfold { width: 100%; border: 0; background: transparent; font: inherit; font-size: 11px; color: var(--tavern-muted); cursor: pointer; text-align: left; }
@@ -107,6 +116,7 @@
 .tavern .journal-linkline .tavern-glyph { color: var(--tavern-teal); }
 .tavern .journal-linkline .m { grid-column: 2; font-size: 11px; }
 .tavern .journal-note { white-space: pre-wrap; border-left: 2px solid var(--tavern-line); padding-left: 8px; }
+.tavern.journal :is(.journal-owner[aria-busy], .who-n) .sk-l { display: inline-block; vertical-align: middle; }
 .tavern .journal-facts { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 11px; color: var(--tavern-muted); }
 .tavern .journal-ehist { display: flex; flex-direction: column; gap: 2px; font-size: 11px; color: var(--tavern-muted); border-top: 1px dashed var(--tavern-line); padding-top: 6px; }
 .tavern .journal-ehist .who-n, .tavern .journal-history .who-n { color: var(--foreground); font-weight: 600; }
@@ -134,8 +144,9 @@
 .tavern .journal-history summary { display: inline-flex; align-items: center; gap: 4px; min-height: 26px; font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--tavern-muted); cursor: pointer; }
 .tavern .journal-history[open] summary .tavern-glyph { transform: rotate(90deg); }
 .tavern .journal-history ol { display: flex; flex-direction: column; gap: 3px; padding-top: 4px; }
-.tavern .journal-history li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; font-size: 11px; color: var(--tavern-muted); align-items: baseline; }
-.tavern .journal-history .tx { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tavern .journal-history li { display: grid; grid-template-columns: minmax(0, max-content) minmax(0, 1fr) auto; gap: 8px; font-size: 11px; color: var(--tavern-muted); align-items: baseline; }
+.tavern :is(.journal-history, .journal-ehist) .who-n { overflow-wrap: anywhere; }
+.tavern .journal-history .who-n { max-width: 23ch; }
 .tavern .journal-more { margin: 4px 0 0 4px; }
 
 /* On the open, hovered and asking tints, muted text moves closer to the foreground so it keeps 4.5:1 in every theme. */
@@ -154,7 +165,7 @@
   .tavern .journal-title h2 .anc { display: none; }
   .tavern.journal .btn.sm { min-height: 44px; min-width: 44px; }
   .tavern :is(.journal-dacts, .journal-note) .lnk { min-width: 44px; }
-  .tavern .journal-history summary { min-height: 44px; }
+  .tavern .journal-history summary, .tavern.journal .journal-owner-link { min-height: 44px; min-width: 44px; }
   .tavern :is(.journal-add, .journal-stepadd, .journal-ask, .journal-edit, .journal-note-edit, .journal-parent) :is(input, select, textarea) { font-size: 16px; min-height: 44px; }
   .tavern .journal-row .meta .wide { display: none; }
 }

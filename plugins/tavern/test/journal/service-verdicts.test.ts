@@ -10,13 +10,33 @@ afterEach(async () => { await Promise.all(dispose.splice(0).map(f => f())); });
 async function fixture() {
   const f = makeHost(); dispose.push(f.dispose); f.bb.storage.migrate(f.db, MIGRATIONS);
   const reviewed = vi.fn<(input: JournalReview) => void>();
-  const store = createJournalStore(f.bb, f.db, { reviewed, invalidate: vi.fn(), roleOf: t => t === "checker" ? { classId: "warden", role: "member", boardQuestId: "q", waypointId: "w1" } : null });
+  const store = createJournalStore(f.bb, f.db, { reviewed, invalidate: vi.fn(), nameOf: id => id === "checker" ? "Fern" : id === "thr_keeper" ? "Wren II" : null, roleOf: t => t === "checker" ? { classId: "warden", role: "member", boardQuestId: "q", waypointId: "w1" } : t === "thr_keeper" ? { classId: "keeper", role: "keeper", boardQuestId: null, waypointId: null } : null });
   await store.ready("maker");
   const id = store.linkWaypoint("maker", { boardQuestId: "q", waypointId: "w1" }, "Prove this", "maker", { kind: "tavern" });
   const proof = [{ kind: "command" as const, ref: "node check", detail: "Pass", exitCode: 0 }];
   await store.runTool("maker", { action: "done", id, evidence: proof });
   return { ...f, store, reviewed, id, proof };
 }
+it.each(["tool", "steer"] as const)("names a Warden and Keeper in the member's next journal %s", async delivery => {
+  const f = await fixture();
+  expect((await f.store.runTool("checker", { action: "verify", threadId: "maker", id: f.id, evidence: f.proof })).isError).toBe(false);
+  f.store.edit("maker", { op: "update", entryId: f.id, description: "Prove the follow-up" }, { kind: "agent", threadId: "thr_keeper" });
+  let text = "";
+  if (delivery === "tool") text = (await f.store.runTool("maker", { action: "list" })).text;
+  else expect(await f.store.deliverNote("maker", null, async note => { text = note; })).toBe(true);
+  expect(text).toContain(`- Fern verified [${f.id}]`);
+  expect(text).toContain(`- Wren II updated [${f.id}]`);
+  expect(text).toContain("Your journal changed since your last call:");
+  expect(f.store.pending("maker")).toEqual([]);
+});
+
+it("names an unknown agent by ID and starts the caller's own receipt with You", async () => {
+  const f = await fixture();
+  f.store.edit("maker", { op: "note", entryId: f.id, note: "A note" }, { kind: "agent", threadId: "thr_unknown" });
+  expect((await f.store.runTool("maker", { action: "list" })).text).toContain(`- Agent thr_unknown noted [${f.id}]`);
+  expect((await f.store.runTool("maker", { action: "note", id: f.id, note: "My own note" })).text).toMatch(/^You noted /);
+});
+
 describe("private journal verdict receipts", () => {
   it("emits exactly one private before/after receipt for each successful verify or reject, never ordinary edits", async () => {
     const f = await fixture(); expect(f.reviewed).not.toHaveBeenCalled();

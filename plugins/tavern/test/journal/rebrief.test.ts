@@ -42,7 +42,7 @@ describe("a follow-up brief reopens the member's linked work", () => {
     expect(e.note).toBe("04:10 Brief v2 arrived; v1 evidence kept for reference: npm test (9 tests pass (4 existing + 5 new), fail 0), git status --short (only the two new untracked files shown).");
     const change = f.store.get("m").changes.at(-1)!;
     expect(change).toMatchObject({ actor: tavern, action: "rebrief", entryIds: ["00"] });
-    expect(change.text).toBe('Tavern reopened [00] "Implement labelCount with tests": brief v2 arrived after it was done. Its v1 evidence is in the note; attach fresh evidence before marking it done.');
+    expect(change.text).toBe('reopened [00] "Implement labelCount with tests": brief v2 arrived after it was done. Its v1 evidence is in the note; attach fresh evidence before marking it done.');
   });
   it("leaves unfinished work, unlinked work and another quest's waypoint alone", async () => {
     const f = await fixture();

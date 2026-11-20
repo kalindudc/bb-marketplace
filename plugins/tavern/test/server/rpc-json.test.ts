@@ -109,6 +109,7 @@ it("returns strict JSON from EVERY registered RPC with optional record fields ab
     placementPreview: () => call("placementPreview", { projectId: "project", keeperThreadId: "lead", keeperPath: null, classId: "ranger", questId: null }),
     decor: () => call("decor", { threadId: "member" }),
     crests: () => call("crests", { threadIds: ["lead", "member", "untyped"] }),
+    identities: () => call("identities", { ids: ["lead", "member", "untyped"], viewer: "lead" }),
     journal: () => call("journal", { threadId: "member" }),
     journalEdit: () => call("journalEdit", { threadId: "member", edit: { op: "add", descriptions: ["Check sparse output"] } }),
     resumeKeeper: () => call("resumeKeeper", { threadId: "lead" }),

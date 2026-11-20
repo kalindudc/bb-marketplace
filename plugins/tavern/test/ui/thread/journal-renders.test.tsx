@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { act, cleanup, waitFor } from "@testing-library/react";
 import { renderSlot } from "@get-bb/plugin-sdk/testing/app";
-import { fixtureDecor, fixtureJournal, fixtureRegistry } from "../../../src/ui/thread/fixtures";
+import { fixtureJournal } from "../../../src/ui/thread/fixtures";
 import { JournalTab } from "../../../src/ui/thread/tabs";
 import { journalSchema, type JournalEntry } from "../../../src/shared/schema";
 
@@ -35,13 +35,16 @@ const base = fixtureJournal.entries[0]!;
 const NOW = Date.UTC(2026, 10, 15, 1, 0);
 const entry = (id: string, order: number, over: Partial<JournalEntry> = {}): JournalEntry => ({ ...base, threadId: "k", id, order, description: `Entry ${id}`, status: "todo", owner: null, report: null, createdAt: NOW - 3_600_000, doneAt: null, ...over });
 const entries = [entry("01", 0, { status: "done", doneAt: NOW - 5 * 60_000 }), entry("02", 1, { status: "done", doneAt: NOW - 9 * 60_000 }), entry("03", 2, { status: "doing" }), entry("04", 3)];
-const changes = [{ id: 1, threadId: "k", at: NOW - 5 * 60_000, actor: { kind: "agent" as const, threadId: "thr_g" }, action: "done", entryIds: ["01"], text: "Agent ticked [01]", seen: true }];
+const changes = [{ id: 1, threadId: "k", at: NOW - 5 * 60_000, actor: { kind: "agent" as const, threadId: "thr_g" }, action: "done", entryIds: ["01"], text: "ticked [01]", seen: true }];
 const journal = journalSchema.parse({ ...fixtureJournal, threadId: "k", entries, changes, progress: { done: 2, total: 4, blocked: 0, current: { id: "03", description: "Entry 03", status: "doing" } } });
-let decorCalls = 0, crestLabel = "Gaetano";
+let journalCalls = 0, actorName = "Gaetano";
 async function open() {
-  decorCalls = 0; crestLabel = "Gaetano";
+  journalCalls = 0; actorName = "Gaetano";
   vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] }); vi.setSystemTime(NOW);
-  const slot = renderSlot({ component: JournalTab }, { threadId: "k", environment: null, params: null }, { rpc: { journal: () => journal, decor: () => (decorCalls++ === 0 ? fixtureDecor : { ...fixtureDecor, keeperView: null }), registry: () => fixtureRegistry, crests: () => ({ crests: [{ threadId: "thr_g", label: crestLabel }] }) as never } });
+  const slot = renderSlot({ component: JournalTab }, { threadId: "k", environment: null, params: null }, { rpc: {
+    journal: () => { journalCalls++; return journal; },
+    identities: () => ({ identities: [{ threadId: "thr_g", name: actorName, role: "thread", classId: null, className: null, characterId: null, keeper: null, relation: "other", life: "live", canOpen: true }] }),
+  } });
   await waitFor(() => expect(slot.container.querySelector(".journal-cur")?.textContent).toBe("Last done 5m ago"));
   await act(async () => {});
   return slot;
@@ -58,24 +61,23 @@ describe("what re-renders in the journal tab", () => {
     expect(r.TimeAgo).toBeGreaterThan(0);
     expect({ tab: r.JournalTab ?? 0, tally: r.Tally ?? 0, rows: r.EntryRow ?? 0 }).toEqual({ tab: 0, tally: 0, rows: 0 });
   });
-  it("a change the journal doesn't show re-renders the tab but skips the tally, whose counts did not change", async () => {
+  it("a journal refetch re-renders the tab but skips the tally when its counts do not change", async () => {
     const slot = await open();
     const before = tree(slot.container.querySelector(".journal-list")!);
-    await act(async () => { await slot.experimental_invalidateRpc(["tavern:thread:k"]); });
-    // Wait for the decor change itself to re-render the tab, then read the tally in that same snapshot.
+    await act(async () => { await slot.experimental_invalidateRpc(["tavern:journal:k"]); });
     const r = await waitFor(() => { const now = rendersSince(before, tree(slot.container.querySelector(".journal-list")!)); expect(now.JournalTab).toBeGreaterThan(0); return now; });
-    expect(decorCalls).toBe(2);
+    expect(journalCalls).toBe(2);
     expect(r.Tally ?? 0).toBe(0);
   });
   it("another thread's change refreshes the names and re-renders only the parts that show them, 0 times the tab", async () => {
     const slot = await open();
     await waitFor(() => expect(slot.container.querySelector(".journal-history .who-n")?.textContent).toBe("Gaetano"));
     const before = tree(slot.container.querySelector(".journal-list")!);
-    crestLabel = "Gaetano the cook";
-    await act(async () => { await slot.experimental_invalidateRpc(["tavern:rows"]); });
+    actorName = "Gaetano the cook";
+    await act(async () => { await slot.experimental_invalidateRpc(["tavern:identity:thr_g"]); });
     await waitFor(() => expect(slot.container.querySelector(".journal-history .who-n")?.textContent).toBe("Gaetano the cook"));
     const r = rendersSince(before, tree(slot.container.querySelector(".journal-list")!));
-    expect(r.JournalHistoryList).toBeGreaterThan(0);
+    expect(r.JournalHistoryPage).toBeGreaterThan(0);
     expect({ tab: r.JournalTab ?? 0, tally: r.Tally ?? 0, rows: r.EntryRow ?? 0 }).toEqual({ tab: 0, tally: 0, rows: 0 });
   });
 });

@@ -9,6 +9,7 @@ import { experimental_useRpcMutation, experimental_useRpcQuery, experimental_use
 import { rpcContract, type BoardQuestSummary } from "../../shared/contract";
 import { extractReportHeadline, type ReportHeadlineNames } from "../../shared/report-headline";
 import type { Actor, Evidence, EntryStatus, Member, Phase, Decision, Report } from "../../shared/schema";
+import { identityLabel, isThreadId } from "../../shared/identity";
 import { Crest } from "./crest";
 import { ExpandsMark, Glyph, OpensMark } from "./glyphs";
 import { memberIdentity, type Registry } from "./registry";
@@ -340,21 +341,33 @@ export const TimeAgo = memo(function TimeAgo({ at }: { at: number }) { const now
 
 export { QueryState } from "./skeleton";
 
-/** Display names for actors: "you", the thread's character, a crest label or the sidebar title; never a raw thread id. */
-/**
- * Names an actor for a person to read. `{ mid: true }` is for the middle of a sentence ("Rejected by another thread"): only
- * the fallback words change case, never a character's or thread's name. `threadNames` feeds `readable()`, so ids inside agent
- * text resolve to the same names.
- */
-export function useActorNames(threadIds: string[], self?: { threadId: string; name: string | null }) {
+export function useActorNames(actors: readonly (Actor | string | null | undefined)[], viewer: string) {
+  const ids = [...new Set(actors.flatMap(actor => typeof actor === "string" ? [actor] : actor?.kind === "agent" ? [actor.threadId] : []).filter(isThreadId))].sort();
+  const query = experimental_useRpcQuery({ contract: rpcContract, method: "identities", input: { ids, viewer }, enabled: ids.length > 0 });
+  const previous = useRef<{ viewer: string; data: NonNullable<typeof query.data> } | null>(null);
+  useLayoutEffect(() => {
+    if (query.data) previous.current = { viewer, data: query.data };
+  }, [query.data, viewer]);
+  const page = query.data ?? (previous.current?.viewer === viewer ? previous.current.data : undefined);
+  const identities = useMemo(() => new Map(page?.identities.map(identity => [identity.threadId, identity])), [page]);
+  const threadNames = useMemo(() => new Map([...identities].map(([id, identity]) => [id, identityLabel(id, identity)])), [identities]);
+  const name = (actor: Actor | string | null, opts?: Parameters<typeof identityLabel>[2]) => {
+    const id = typeof actor === "string" ? actor : actor?.kind === "agent" ? actor.threadId : undefined;
+    const identity = id ? identities.get(id) : undefined;
+    if (id && isThreadId(id) && !identity && !query.data && !query.error) return "";
+    return identityLabel(actor, identity, opts);
+  };
+  return Object.assign(name, { threadNames, identities });
+}
+
+export function useSidebarActorNames(threadIds: string[]) {
   const ids = useMemo(() => [...new Set(threadIds)].sort(), [threadIds.join(",")]);
   const crests = experimental_useRpcQuery({ contract: rpcContract, method: "crests", input: { threadIds: ids } });
   const sidebar = experimental_useSidebarThreads();
   const threadNames = useMemo(() => new Map<string, string>([
     ...sidebar.threads.flatMap(t => { const title = t.displayTitle ?? t.title; return title ? [[t.id, title] as const] : []; }),
     ...(crests.data?.crests ?? []).map(c => [c.threadId, c.label] as const),
-    ...(self?.name ? [[self.threadId, self.name] as const] : []),
-  ]), [crests.data, sidebar.threads, self?.threadId, self?.name]);
+  ]), [crests.data, sidebar.threads]);
   const name = (actor: Actor | string | null, opts: { mid?: boolean } = {}) => {
     const word = (start: string, mid: string) => opts.mid ? mid : start;
     if (actor === null) return word("Unassigned", "nobody");
@@ -364,7 +377,6 @@ export function useActorNames(threadIds: string[], self?: { threadId: string; na
       if (actor.kind === "import") return `${word("Imported", "imported")} from ${actor.from}`;
       actor = actor.threadId;
     }
-    if (self && actor === self.threadId) return self.name ?? word("This thread’s agent", "this thread’s agent");
     return threadNames.get(actor) ?? word("Another thread", "another thread");
   };
   return Object.assign(name, { threadNames });

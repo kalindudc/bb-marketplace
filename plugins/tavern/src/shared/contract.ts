@@ -46,6 +46,7 @@ import {
 
 import { pullRequestChoicesSchema, questOutcomeSchema, waypointWaiverSchema } from "./closing";
 import { undoKindSchema, undoLaneSchema } from "./undo-lane";
+import { IDENTITY_PAGE_SIZE, threadIdentitySchema } from "./identity";
 const memberSchema = storedMemberSchema.extend({ restNote: z.string().nullable().optional(), pullRequests: z.array(pullRequestSchema).optional(), placement: placementViewSchema.nullable().optional() });
 const threadId = z.string().min(1).max(100);
 const id = z.string().min(1).max(120);
@@ -57,6 +58,7 @@ export const tags = {
   settings: () => "tavern:settings",
   thread: (threadId: string) => `tavern:thread:${threadId}`,
   journal: (threadId: string) => `tavern:journal:${threadId}`,
+  identity: (threadId: string) => `tavern:identity:${threadId}`,
   boardQuest: (id: string) => `tavern:quest:${id}`,
   undoLanes: () => "tavern:undo-lanes",
   room: () => "tavern:room",
@@ -363,6 +365,11 @@ export const rpcContract = defineContract({
     input: z.object({ threadIds: z.array(threadId).max(500) }).strict(),
     output: z.object({ crests: z.array(crestSchema) }),
     tags: () => [tags.rows()],
+  },
+  identities: {
+    input: z.object({ ids: z.array(threadId).max(IDENTITY_PAGE_SIZE), viewer: threadId }).strict(),
+    output: z.object({ identities: z.array(threadIdentitySchema).max(IDENTITY_PAGE_SIZE) }),
+    tags: ({ ids, viewer }: { ids: string[]; viewer: string }) => [tags.registry(), ...new Set([viewer, ...ids].map(tags.identity))],
   },
   journal: {
     input: z.object({ threadId }).strict(),

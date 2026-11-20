@@ -29,6 +29,27 @@ it("round trips settings, verbatim overrides, scope policy and data into a fresh
   expect(target.db.prepare("SELECT text FROM tavern_events").get()).toMatchObject({ text: "Private notes stay private" });
   expect(target.changed).toHaveBeenCalledOnce();
 });
+it("normalises journal change texts from a pre-migration backup on restore", async () => {
+  const source = fixture();
+  source.db.exec("INSERT INTO questlog_logs (thread_id) VALUES ('thr_thread')");
+  const insert = source.db.prepare("INSERT INTO questlog_changes (thread_id, at, actor, action, entry_ids, text, seen) VALUES ('thr_thread', 1, ?, ?, '[\"ab\"]', ?, 0)");
+  insert.run('{"kind":"agent","threadId":"thr_warden"}', "verify", 'Agent thr_warden verified [ab] "Ship it".');
+  insert.run('{"kind":"user"}', "link", 'Tavern assigned [ab] "Ship it" to waypoint w1.');
+  insert.run('{"kind":"tavern"}', "board-phase", "Board quest phases refreshed: [ab].");
+  insert.run('{"kind":"import","from":"pi-quests"}', "note", "You noted this in a legacy journal.");
+  const exported = await source.backup.export({ withData: true });
+  const old = JSON.parse(exported.json!);
+  old.manifest.migrations.pop();
+  old.manifest.schemaVersion--;
+  const target = fixture(), from = { bundle: JSON.stringify(old) };
+  const preview = await target.backup.restore({ from, apply: false });
+  expect(preview.records.action).toBe("restore");
+  expect(target.db.prepare("SELECT text FROM questlog_changes").all()).toEqual([]);
+  expect((await target.backup.restore({ from, apply: true, previewHash: preview.previewHash })).code).toBe("applied");
+  expect(target.db.prepare("SELECT text FROM questlog_changes ORDER BY id").pluck().all()).toEqual([
+    'verified [ab] "Ship it".', 'assigned [ab] "Ship it" to waypoint w1.', "refreshed board quest phases: [ab].", "You noted this in a legacy journal.",
+  ]);
+});
 it("refuses data in a non-empty database while still restoring configuration", async () => {
   const source = fixture(); override(source);
   const exported = await source.backup.export({ withData: true }), target = fixture();

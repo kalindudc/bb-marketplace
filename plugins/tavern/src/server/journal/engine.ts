@@ -103,10 +103,10 @@ export function rebriefEntries(original: JournalEntry[], { boardQuestId, version
     if (review) parts.push(`Verified for brief v${was} by ${review.actor.kind === "agent" ? name(review.actor.threadId) : "a Warden"} (Warden).`);
     if (!parts.length) continue;
     const head = `[${e.id}] ${JSON.stringify(e.description)}`;
-    if (e.status === "rejected") lines.push(`Tavern moved ${head}'s v${was} evidence to its note: brief v${version} arrived.`);
+    if (e.status === "rejected") lines.push(`moved ${head}'s v${was} evidence to its note: brief v${version} arrived.`);
     else lines.push(review
-      ? `Tavern reopened ${head}: brief v${version} arrived after it was verified. Its v${was} verdict and evidence are in the note; it needs fresh evidence and a new check.`
-      : `Tavern reopened ${head}: brief v${version} arrived after it was done. Its v${was} evidence is in the note; attach fresh evidence before marking it done.`);
+      ? `reopened ${head}: brief v${version} arrived after it was verified. Its v${was} verdict and evidence are in the note; it needs fresh evidence and a new check.`
+      : `reopened ${head}: brief v${version} arrived after it was done. Its v${was} evidence is in the note; attach fresh evidence before marking it done.`);
     if (review) { verified.push(copy(e)); e.review = null; }
     // An answer to a rejection given under the earlier brief no longer counts.
     if (e.review) e.review.memberEvidenceAt = null;
@@ -356,6 +356,6 @@ export function applyAction(original: JournalEntry[], input: JournalAction, ctx:
   const detail = action.reason !== undefined ? ` Reason: ${JSON.stringify(action.reason)}.` : action.action === "note" ? ` Note: ${JSON.stringify(action.note)}.` : action.action === "link" ? ` Link: ${JSON.stringify(action.link)}.` : "";
   const reworded = action.action === "update" ? entries.find(e => e.id === action.id && (e.rewrites ?? 0) >= 3) : undefined;
   const hint = reworded ? ` Hint: [${reworded.id}] has been reworded ${reworded.rewrites} times without a status change. Put progress in a note, close it, or split it.` : "";
-  const text = clip(`${changeSummary(actor, action.action, [...changedIds], original, entries)}${detail}`, 1000) + hint;
+  const text = clip(`${changeSummary(action.action, [...changedIds], original, entries)}${detail}`, 1000) + hint;
   return { entries, entryIds: [...changedIds], createdIds: resultIds, changed, text };
 }

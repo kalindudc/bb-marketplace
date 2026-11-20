@@ -1,4 +1,5 @@
 import { KeeperStore } from "../keeper/store";
+import { JOURNAL_ACTION_PHRASES } from "../journal/action-phrases";
 import { transitionQuest } from "../keeper/quest-lifecycle";
 import { z } from "zod";
 import { pullRequestSchema } from "../../shared/pull-request";
@@ -205,6 +206,7 @@ export class BackupRecords {
     this.db.transaction(() => {
       if (!this.empty()) throw new Error("Records restore requires an empty Tavern database");
       this.insert(snapshot);
+      this.db.exec(JOURNAL_ACTION_PHRASES);
       const store = new KeeperStore(this.db);
       for (const ask of store.all("asks")) {
         if (ask.kind !== "conclude" || ask.state !== "withdrawn" || ask.withdrawnCause !== "backup-restored" || !ask.boardQuestId) continue;

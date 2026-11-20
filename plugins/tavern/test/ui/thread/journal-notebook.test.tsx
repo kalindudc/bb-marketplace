@@ -258,7 +258,7 @@ describe("notebook journal tab", () => {
     const { slot } = open(withEvidence);
     fireEvent.click(await slot.findByRole("button", { name: /^a4\s*Count the lines$/ }));
     const region = await slot.findByRole("region", { name: "Details of Count the lines" });
-    expect(region.textContent).toContain("Rejected by another thread");
+    expect(region.textContent).toContain("Rejected by a thread");
     expect(region.textContent).not.toContain("thr_4d5aferz3e");
     const kinds = [...region.querySelectorAll(".evidence-list li")].map(li => li.textContent ?? "");
     expect(kinds.findIndex(t => t.includes("npm test"))).toBeLessThan(kinds.findIndex(t => t.includes("count")));

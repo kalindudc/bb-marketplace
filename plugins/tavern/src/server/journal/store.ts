@@ -92,7 +92,9 @@ export function createJournalStore(bb: BbPluginApi, db: Database, deps: JournalD
   }
   /** Owner thread names learned from bb thread titles, for owners Tavern doesn't know as members. */
   const titles = new Map<string, string>();
-  const ownerLabel = (owner: string) => !/^thr_/.test(owner) ? owner : deps.nameOf?.(owner) ?? titles.get(owner) ?? `thread ${owner}`;
+  const knownName = (threadId: string) => deps.nameOf?.(threadId) || titles.get(threadId);
+  const ownerLabel = (owner: string) => !/^thr_/.test(owner) ? owner : knownName(owner) ?? `thread ${owner}`;
+  const describeChanges = (changes: JournalChange[]) => formatUserChanges(changes, knownName);
   const show = { name: ownerLabel };
   async function learnOwner(owner: string) {
     if (!/^thr_/.test(owner) || deps.nameOf?.(owner) || titles.has(owner)) return;
@@ -330,7 +332,7 @@ export function createJournalStore(bb: BbPluginApi, db: Database, deps: JournalD
       const histories = db.prepare("SELECT * FROM questlog_history WHERE thread_id = ?").all(threadId) as HistoryRow[];
       // Checklist undo must not roll back a board phase.
       for (const h of histories) db.prepare("UPDATE questlog_history SET before_data = ?, after_data = ? WHERE id = ?").run(JSON.stringify(mirrorHistory(validateEntries(JSON.parse(h.before_data)), after)), JSON.stringify(mirrorHistory(validateEntries(JSON.parse(h.after_data)), after)), h.id);
-      record(threadId, {kind:"tavern"}, "board-phase", ids, `Board quest phases refreshed: ${ids.map(id => `[${id}]`).join(", ")}. These entries mirror the board; use tavern_wrap to finish them.`, true);
+      record(threadId, {kind:"tavern"}, "board-phase", ids, `refreshed board quest phases: ${ids.map(id => `[${id}]`).join(", ")}. These entries mirror the board; use tavern_wrap to finish them.`, true);
     })();
     notify(threadId, ids, [...before, ...after]);
   }
@@ -421,7 +423,7 @@ export function createJournalStore(bb: BbPluginApi, db: Database, deps: JournalD
           if (restored?.status === "verified") requireWarden(restored, actor, deps.roleOf);
           if (JSON.stringify(prior?.link ?? null) !== JSON.stringify(restored?.link ?? null) && !canManageLinks(actor, deps.roleOf)) throw new Error("Only the Keeper or Tavern can change linked waypoints through history.");
         }
-        text = changeSummary(actor, direction, ids, before, after);
+        text = changeSummary(direction, ids, before, after);
         db.prepare("UPDATE questlog_history SET state = ? WHERE id = ?").run(direction === "undo" ? "redo" : "undo", row.id);
       } else {
         const result = applyAction(before, action, { threadId, actor, now: Date.now(), allocate: () => allocate(threadId), roleOf: deps.roleOf, finishedMirror: finishedMirror(threadId) });
@@ -446,7 +448,7 @@ export function createJournalStore(bb: BbPluginApi, db: Database, deps: JournalD
       const noProof = after.filter(e => ids.includes(e.id) && e.status === "done" && !e.boardQuestId && !e.evidence.length);
       const details = action.action === "add" || action.action === "split" || action.action === "add_step" ? `\nNew ids: ${ids.join(", ")}\nOpen:\n${openSummary(after, 5, show)}` : "";
       const waiting = awaitingSummary(after, show);
-      return { message: `${text}\n${planLine(after, show)}${waiting ? `\n${waiting}` : ""}${details}${noProof.length ? `\n${noProof.map(e => `[${e.id}] done without evidence; attach a command/result, file or short statement when available.`).join("\n")}` : ""}`, changed: true, ids, affected: [...before, ...after] };
+      return { message: `You ${text}\n${planLine(after, show)}${waiting ? `\n${waiting}` : ""}${details}${noProof.length ? `\n${noProof.map(e => `[${e.id}] done without evidence; attach a command/result, file or short statement when available.`).join("\n")}` : ""}`, changed: true, ids, affected: [...before, ...after] };
     })();
     if (result.changed) notify(threadId, result.ids, result.affected);
     return { message: result.message };
@@ -509,7 +511,6 @@ export function createJournalStore(bb: BbPluginApi, db: Database, deps: JournalD
       else {
         const verdictNote = action.action === "verify" || action.action === "reject" ? assertVerdict?.() : undefined;
         text = mutate(threadId, action, actor).message;
-        if (threadId === callerThreadId && text.startsWith(`Agent ${callerThreadId} `)) text = `You ${text.slice(`Agent ${callerThreadId} `.length)}`;
         if (threadId !== callerThreadId) {
           const ids = action.ids ?? (action.id ? [action.id] : []);
           text = localEntries(threadId).filter(e => ids.includes(e.id)).map(e => `[${e.id}] ${JSON.stringify(e.description)} ${e.status}${e.note ? `; ${JSON.stringify(e.note)}` : ""}`).join("\n");
@@ -517,10 +518,10 @@ export function createJournalStore(bb: BbPluginApi, db: Database, deps: JournalD
         if (verdictNote) text += `\n${verdictNote}`;
       }
       acknowledge(threadId, unseen);
-      return { text: clip(`${formatUserChanges(unseen)}${text}`, 28000), isError: false };
+      return { text: clip(`${describeChanges(unseen)}${text}`, 28000), isError: false };
     } catch (error) {
       acknowledge(targetThreadId, unseen);
-      return { text: `${formatUserChanges(unseen)}Error: ${error instanceof Error ? error.message : String(error)}`, isError: true };
+      return { text: `${describeChanges(unseen)}Error: ${error instanceof Error ? error.message : String(error)}`, isError: true };
     }
   }
   async function runTool(callerThreadId: string, input: JournalAction) {
@@ -583,7 +584,7 @@ export function createJournalStore(bb: BbPluginApi, db: Database, deps: JournalD
       db.prepare("DELETE FROM questlog_history WHERE thread_id = ? AND state = 'redo'").run(threadId);
       db.prepare("INSERT INTO questlog_history(thread_id,before_data,after_data,action,actor,state) VALUES(?,?,?,?,?,'undo')").run(threadId, JSON.stringify(before), JSON.stringify(r.entries), "linkWaypoint", JSON.stringify(actor));
       db.prepare("DELETE FROM questlog_history WHERE thread_id = ? AND id NOT IN (SELECT id FROM questlog_history WHERE thread_id = ? ORDER BY id DESC LIMIT 50)").run(threadId, threadId);
-      record(threadId, actor, "link", [id], `Tavern assigned [${id}] ${JSON.stringify(description)} to waypoint ${link.waypointId}.`, actor.kind !== "user");
+      record(threadId, actor, "link", [id], `assigned [${id}] ${JSON.stringify(description)} to waypoint ${link.waypointId}.`, actor.kind !== "user");
     })();
     notify(threadId, [id]); return id;
   }
@@ -626,6 +627,7 @@ export function createJournalStore(bb: BbPluginApi, db: Database, deps: JournalD
     awaiting: (threadId: string) => awaitingSummary(get(threadId).entries, show),
     isOwner: (owner: string) => ownedRows(owner).some(row => { const e = JSON.parse(row.data) as JournalEntry; return !closed(e) && delegated(e); }),
     pending: (threadId: string) => pending(threadId),
+    describeChanges,
     async deliverNote(threadId: string, previousRequestAt: number | null, send: (text: string) => Promise<void>, skipped: (reason: string) => void = () => {}) {
       return withThreadLock(threadId, async () => {
         if (isKeeper(threadId)) { skipped("a Keeper thread gets no journal steers"); return false; }
@@ -642,7 +644,7 @@ export function createJournalStore(bb: BbPluginApi, db: Database, deps: JournalD
         const stale = store.reminders() && reminderDue(state, entries, previousRequestAt, remindEveryMinutes * 60_000, reportGraceMinutes * 60_000);
         if (!stale && !changes.length) { skipped(store.reminders() ? `no reminder is due (statuses changed since the previous message, or one went out in the last ${remindEveryMinutes} minutes), and no user edits are waiting` : "reminders are off in Tavern's settings, and no user edits are waiting"); return false; }
         const named = stale ? [awaitingSummary(entries, { ...show, now }), ...staleLines(entries, { ...show, now })].filter(Boolean).join("\n") : "";
-        const text = clip(`${JOURNAL_NOTE_PREFIX} ${planLine(entries, show)}\n${clip(openSummary(entries, 5, show), 750)}\n${formatUserChanges(changes)}${named ? `${named}\n` : ""}${stale ? "You have not updated the journal's statuses since the previous message. If this request changes the plan, or a delegate reported, start, close, block, reopen, settle or wait on its entry; if not, carry on." : ""}`, MAX_NOTE_TEXT);
+        const text = clip(`${JOURNAL_NOTE_PREFIX} ${planLine(entries, show)}\n${clip(openSummary(entries, 5, show), 750)}\n${describeChanges(changes)}${named ? `${named}\n` : ""}${stale ? "You have not updated the journal's statuses since the previous message. If this request changes the plan, or a delegate reported, start, close, block, reopen, settle or wait on its entry; if not, carry on." : ""}`, MAX_NOTE_TEXT);
         await send(text);
         if (disposed) return true;
         acknowledge(threadId, changes);

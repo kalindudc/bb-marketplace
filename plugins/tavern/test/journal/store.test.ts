@@ -52,7 +52,7 @@ describe("SQLite journal store", () => {
     store.edit("t", { op: "add", descriptions: ["retry"], parentId: null }, { kind: "user" });
     store.edit("t", { op: "status", entryIds: ["00"], status: "done" }, { kind: "user" });
     expect((await store.runTool("t", { action: "list" })).text).toContain('The user ticked [00] "retry" done');
-    expect((await store.runTool("t", { action: "list" })).text).not.toContain("The user changed");
+    expect((await store.runTool("t", { action: "list" })).text).not.toContain("Your journal changed");
     await store.flush("t");
     expect(mirrors.at(-1)).toEqual({ threadId: "t", pluginId: "quests", set: { progress: { done: 1, total: 1, current: null } } });
   });

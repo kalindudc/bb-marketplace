@@ -1,5 +1,6 @@
 import { KEEPER_MIGRATIONS } from "./keeper/migrations";
 import { QUESTLOG_MIGRATIONS as JOURNAL_MIGRATIONS } from "./journal/migrations";
+import { JOURNAL_ACTION_PHRASES } from "./journal/action-phrases";
 
 // Installed live on 2026-11-14: bb.storage.migrate applies statements by position, so the two frozen lists below must
 // never change. New statements from either subsystem go ONLY at the end of APPENDED, with a one-line comment.
@@ -93,6 +94,8 @@ const APPENDED: string[] = [
      AND json_extract(data,'$.reversible')=1 AND json_extract(data,'$.undone')=0 AND json_extract(data,'$.seenAt') IS NULL;
    CREATE INDEX tavern_undo_ask_decisions ON tavern_records(json_extract(data,'$.keeperThreadId'))
      WHERE kind='decisions' AND json_extract(data,'$.source')='keeper' AND json_extract(data,'$.reversible')=1 AND json_extract(data,'$.askId') IS NOT NULL;`,
+  // Journal actor labels now come from the actor column.
+  JOURNAL_ACTION_PHRASES,
 ];
 
 export const MIGRATIONS: string[] = [

@@ -118,10 +118,10 @@ describe("KeeperRow", () => {
 });
 
 
-import { useActorNames } from "../../../src/ui/kit";
-describe("useActorNames", () => {
+import { useSidebarActorNames } from "../../../src/ui/kit";
+describe("useSidebarActorNames", () => {
   function Probe() {
-    const names = useActorNames([]);
+    const names = useSidebarActorNames([]);
     return <p>{[names({ kind: "agent", threadId: "thr_unknown" }), names({ kind: "agent", threadId: "thr_unknown" }, { mid: true }), names({ kind: "user" }, { mid: true }), names(null, { mid: true }), String(names.threadNames.size)].join("|")}</p>;
   }
   it("lowercases only its own fallback words in the middle of a sentence, and exposes the names it knows", async () => {

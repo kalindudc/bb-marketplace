@@ -62,6 +62,7 @@ Machine rules put a project's party members on their own new machines through th
 
 ### Fixed
 
+- The journal names entry owners and history actors instead of showing thread IDs. Open thread takes you to the owner from an expanded entry or its delegated row. Archived owners stay linked; deleted owners are marked and have no link.
 - On macOS, Git that Tavern starts directly runs in an OS sandbox. Git can write to the checkout, its verified worktree metadata and the private files it needs. Only remote operations can use the network. Your forge commands and `gh` still run outside this sandbox.
 - Tavern's Git calls ignore checkout-supplied overrides for hooks, filters and transport commands. Standard Git LFS and git-crypt installations keep their filters when their programs are on Tavern's PATH. Unknown required filters fail instead of staging unfiltered files. Tavern checks populated submodules before cleanup and refuses drafts or base fetches redirected away from their recorded network remote. Large `bb tavern status` results stay valid JSON. If BB's output limit omits older entries, the result reports how many and points to `--thread <id>`.
 - A Warden can now be hired for a machine-placed maker that has reported done. Tavern refused to capture a finished maker's submission, so no placed maker could ever be checked. A released or archived maker is still refused.
