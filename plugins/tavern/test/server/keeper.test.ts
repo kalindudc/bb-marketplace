@@ -30,7 +30,7 @@ function setup() {
   const thread = makeThreadResponse({ id: "lead", status: "idle", projectId: "project" });
   const host = createFakePluginHost({
     pluginId: "tavern",
-    agentSkillIds: ["journal", "quest-management", "tavern-keeper"],
+    agentSkillIds: ["journal", "quest-management", "tavern", "tavern-keeper"],
     sdk: {
       providers: providerSdk(),
       system: { config: async () => ({ primaryHostId: "host" }) },
@@ -241,13 +241,13 @@ describe("ticks and lifecycle", () => {
 });
 
 describe("host boundaries", () => {
-  it("selects journal in untyped threads; members get report only", async () => {
+  it("selects journal and the Tavern setup skill in untyped threads; members get report only", async () => {
     const { harness, k, runtime } = setup();
     const c = await harness.behavior.resolveAgentConfiguration(
       makePluginAgentConfigurationContext({ thread: { id: "untyped" } }),
     );
     expect(c.tools.map((t) => t.name)).toEqual(["journal"]);
-    expect(c.skills).toEqual(["journal", "quest-management"]);
+    expect(c.skills).toEqual(["journal", "quest-management", "tavern"]);
     expect(c.instructions).toContain("Use journal");
     k.bind("child", "smith", "juno", "project", {
       keeperThreadId: "lead",

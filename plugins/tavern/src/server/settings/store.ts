@@ -61,6 +61,61 @@ function setPath(target: Record<string, unknown>, path: string, value: Json, exi
     if (parent.object !== target && record(value) && !Object.keys(value).length) delete parent.object[parent.key];
   }
 }
+type SettingLayers = Pick<State, "user" | "pinned" | "tuned">;
+type PatchInput = Pick<SettingsUpdate, "patch" | "pins" | "reset">;
+
+function patchState<T extends SettingLayers>(current: T, input: PatchInput): T {
+  const motion = input.patch.tavern?.ambientMotion;
+  if (motion !== undefined) input = { ...input, patch: { ...input.patch, tavern: { ...input.patch.tavern, hearthFlicker: motion !== "off" } } };
+  const next = structuredClone(current);
+  next.user = settingsPatchSchema.parse(mergeSettings(next.user, input.patch));
+  for (const key of input.reset ?? []) {
+    setPath(next, `user.${key}`, null, false);
+    if (key === "tavern.ambientMotion" || key === "tavern.hearthFlicker") {
+      setPath(next, "user.tavern.ambientMotion", null, false);
+      setPath(next, "user.tavern.hearthFlicker", null, false);
+    }
+    const knob = key.startsWith("knobs.") ? key.slice(6) as TunableKey : null;
+    if (knob && TUNABLE_KEYS.includes(knob)) {
+      delete next.tuned[knob];
+      delete next.pinned[knob];
+    }
+  }
+  if (input.patch.classes && next.user.classes) {
+    for (const [id, override] of Object.entries(input.patch.classes)) {
+      if (Object.keys(override).length) next.user.classes[id] = structuredClone(override);
+      else delete next.user.classes[id];
+    }
+    if (!Object.keys(next.user.classes).length) delete next.user.classes;
+  }
+  for (const key of TUNABLE_KEYS) {
+    const value = input.patch.knobs?.[key];
+    if (value === undefined) continue;
+    delete next.tuned[key];
+    if (next.pinned[key] !== undefined) next.pinned[key] = value;
+  }
+  for (const [key, value] of Object.entries(input.pins ?? {})) {
+    if (value === null) delete next.pinned[key as TunableKey];
+    else if (value !== undefined) next.pinned[key as TunableKey] = value;
+  }
+  return next;
+}
+
+export function setupLayers<T extends SettingLayers>(current: T, patch: SettingLayers): T {
+  const classes = patch.user.classes && Object.fromEntries(Object.entries(patch.user.classes).map(([id, role]) =>
+    [id, { ...current.user.classes?.[id], ...role }]));
+  const next = patchState(current, { patch: classes ? { ...patch.user, classes } : patch.user, pins: patch.pinned });
+  Object.assign(next.tuned, patch.tuned);
+  return next;
+}
+
+export function effectiveSettings(value: SettingLayers, override?: SparseTunables): TavernSettings {
+  const result = settingsSchema.parse(mergeSettings(settingsSchema.parse({}), value.user));
+  if (result.tuning.mode !== "off") Object.assign(result.knobs, value.tuned, override);
+  Object.assign(result.knobs, value.pinned);
+  return result;
+}
+
 export class SettingsConflict extends Error {
   readonly code = "stale";
   constructor(readonly revision: number) { super("Settings changed. Refresh the preview before applying it."); }
@@ -145,13 +200,12 @@ export class SettingsStore {
   }
   read(questId?: string | null) {
     const { value } = this.state();
-    const result = settingsSchema.parse(mergeSettings(settingsSchema.parse({}), value.user));
-    if (result.tuning.mode !== "off") {
-      Object.assign(result.knobs, value.tuned);
-      if (questId) Object.assign(result.knobs, value.overrides[questId]);
-    }
-    Object.assign(result.knobs, value.pinned);
-    return result;
+    return effectiveSettings(value, questId ? value.overrides[questId] : undefined);
+  }
+  patchSnapshot() {
+    const { revision, value, policy } = this.state();
+    return { revision, user: value.user, pinned: value.pinned, tuned: value.tuned,
+      effective: effectiveSettings(value), placementPolicy: policy };
   }
   hasUser(path: string) { return own(flatten(this.state().value.user), path); }
   private decision(row: ChangeRow, state: State, policyInvalid = false): SettingDecision {
@@ -218,47 +272,20 @@ export class SettingsStore {
   }
   update(input: SettingsUpdate, threadId: string | null = null) {
     const parsed = settingsUpdateSchema.parse(input), current = this.state();
-    if (parsed.patch.tavern?.ambientMotion !== undefined) parsed.patch.tavern.hearthFlicker = parsed.patch.tavern.ambientMotion !== "off";
     if (current.revision !== parsed.revision) throw new SettingsConflict(current.revision);
     if (current.policy.state === "invalid" && (parsed.patch.machines && !own(parsed.patch.machines, "rules") || parsed.reset?.some(key => key.startsWith("machines."))))
       throw new Error("Repair machine placement with an explicit replacement rules array.");
-    const next = structuredClone(current.value);
-    next.user = settingsPatchSchema.parse(mergeSettings(next.user, parsed.patch));
-    for (const key of parsed.reset ?? []) {
-      setPath(next, `user.${key}`, null, false);
-      if (key === "tavern.ambientMotion" || key === "tavern.hearthFlicker") {
-        setPath(next, "user.tavern.ambientMotion", null, false);
-        setPath(next, "user.tavern.hearthFlicker", null, false);
-      }
-      const knob = key.startsWith("knobs.") ? key.slice(6) as TunableKey : null;
-      if (knob && TUNABLE_KEYS.includes(knob)) {
-        delete next.tuned[knob];
-        delete next.pinned[knob];
-      }
-    }
-    if (parsed.patch.classes && next.user.classes) {
-      for (const [id, override] of Object.entries(parsed.patch.classes)) {
-        if (Object.keys(override).length) next.user.classes[id] = structuredClone(override);
-        else delete next.user.classes[id];
-      }
-      if (!Object.keys(next.user.classes).length) delete next.user.classes;
-    }
-    for (const key of TUNABLE_KEYS) {
-      const value = parsed.patch.knobs?.[key];
-      if (value === undefined) continue;
-      delete next.tuned[key];
-      if (next.pinned[key] !== undefined) next.pinned[key] = value;
-    }
-    for (const [key, value] of Object.entries(parsed.pins ?? {})) {
-      if (value === null) delete next.pinned[key as TunableKey];
-      else if (value !== undefined) next.pinned[key as TunableKey] = value;
-    }
+    const next = patchState(current.value, parsed);
     return this.commit(parsed.revision, next, "user", parsed.why, parsed.evidence ?? null, null, threadId, true, parsed.patch.machines?.rules !== undefined);
   }
   replace(user: SettingsPatch, pinned: SparseTunables, tuned: SparseTunables | undefined, revision: number, why: string, threadId: string | null = null) {
     const current = this.state();
     if (user.tavern?.ambientMotion !== undefined) user = { ...user, tavern: { ...user.tavern, hearthFlicker: user.tavern.ambientMotion !== "off" } };
     return this.commit(revision, { ...current.value, user, pinned, tuned: tuned ?? current.value.tuned }, "user", why, null, null, threadId, true, true);
+  }
+  applySetup(patch: SettingLayers, revision: number, why: string, threadId: string | null) {
+    const current = this.state();
+    return this.commit(revision, setupLayers(current.value, patch), "user", why, null, null, threadId);
   }
   applyTuned(values: SparseTunables, why: string, evidence: SettingsEvidence, by: "tavern" | "user" = "tavern") {
     if (this.read().tuning.mode === "off") throw new Error("Tuning is off; only your settings and pins apply.");

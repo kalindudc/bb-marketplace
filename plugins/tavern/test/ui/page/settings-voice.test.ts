@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { registrySchema } from "../../../src/shared/contract";
-import { settingLabel } from "../../../src/ui/page/settings";
+import { settingLabel } from "../../../src/ui/page/settings-label";
 
 describe("the settings page", () => {
   it("labels the voice setting as Speech bubbles without changing the registry field", () => {

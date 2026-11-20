@@ -182,7 +182,7 @@ it("keeps ordinary reads open in every scoped shell, including directly started 
   }
   expect(check("keeper", "bb plugin rpc call another-plugin status --data tavern answerAsk").allow).toBe(true);
 });
-it.each(["holdBoardQuest", "resumeBoardQuest", "confirmRule", "stopBoardQuest", "addRule", "widenRule", "undoDecision", "correctRoute", "resumeKeeper", "journalEdit", "saveCharacterVoice", "resolveHandBack"])("refuses user controls even when their RPC handlers have no client check: %s", method => {
+it.each(["setupApply", "setupDismiss", "holdBoardQuest", "resumeBoardQuest", "confirmRule", "stopBoardQuest", "addRule", "widenRule", "undoDecision", "correctRoute", "resumeKeeper", "journalEdit", "saveCharacterVoice", "resolveHandBack"])("refuses user controls even when their RPC handlers have no client check: %s", method => {
   for (const role of ["ranger", "warden", "smith", "wanderer", "keeper"]) for (const mode of ["watch", "enforce"] as const) for (const contained of [true, false]) {
     for (const command of [`bb plugin rpc call tavern ${method}`, `bb plugin rpc call --input-file a.json --json tavern ${method}`, `bb --x=y plugin rpc call tavern ${method} --json`]) expect(check(role, command, contained, mode)).toMatchObject({ allow: false, reason: "Tavern's controls are the user's; ask the user." });
     expect(check(role, `bb thread tell thr_x 'tavern ${method}'`, contained, mode).allow).toBe(true);

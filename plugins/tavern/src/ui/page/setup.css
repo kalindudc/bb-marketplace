@@ -1,0 +1,49 @@
+.tavern.tsu-card { min-width: 0; border: 1px solid var(--tavern-line); border-radius: var(--radius); background: var(--card); color: var(--foreground); overflow-wrap: anywhere; font-size: 13px; }
+.tsu-head, .tsu-body, .tsu-form { padding: 12px 16px; }
+.tsu-head { display: flex; align-items: flex-start; gap: 8px; border-bottom: 1px solid var(--tavern-line); }
+.tsu-head svg { flex: none; margin-top: 2px; color: var(--primary); }
+.tsu-card :is(h3, h4, p, ul, dl, dd), .tsu-settings :is(h3, p) { margin: 0; }
+.tsu-head h3, .tsu-list h3 { font-size: 14px; font-weight: 700; }
+.tsu-card h4 { font-size: 13px; font-weight: 700; }
+.tsu-head p, .tsu-change p, .tsu-foot p { color: var(--tv-text-2, var(--foreground)); }
+.tsu-body, .tsu-list, .tsu-form { display: grid; gap: 10px; min-width: 0; }
+.tsu-card ul { padding: 0; list-style: none; }
+.tsu-change, .tsu-checks li { padding: 6px 0; }
+.tsu-change + .tsu-change { border-top: 1px solid var(--tavern-line); }
+.tsu-change p { margin-block: 2px 5px; }
+.tsu-card code { font-family: var(--font-mono); overflow-wrap: anywhere; white-space: pre-wrap; font-size: 11px; }
+.tsu-diff { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.tsu-diff > div { min-width: 0; padding: 4px 8px; background: var(--muted); border-radius: var(--radius); }
+.tsu-diff dt { font-size: 11px; font-weight: 600; }
+.tsu-card summary { cursor: pointer; min-height: 24px; align-content: center; }
+.tsu-key { color: var(--tavern-muted); }
+.tsu-by, .tsu-line-head { display: flex; gap: 0 6px; flex-wrap: wrap; align-items: center; }
+.tsu-thread { min-width: 44px; min-height: 24px; text-decoration: underline; }
+.tsu-tag { display: inline-block; font-size: 11px; border: 1px solid var(--tavern-line); border-radius: var(--radius); padding: 0 5px; }
+.tsu-guardrail { font-weight: 700; color: var(--destructive-text, var(--foreground)); }
+.tsu-placement > li { background: var(--muted); margin-top: 6px; padding: 8px; border-radius: var(--radius); }
+.tsu-facts { margin-top: 6px; }
+.tsu-facts > div { display: grid; grid-template-columns: 8rem minmax(0, 1fr); gap: 2px 8px; padding-block: 2px; }
+.tsu-facts dt { font-weight: 600; }
+.tsu-facts dd { min-width: 0; }
+.tsu-entry { min-width: 0; }
+.tsu-expand { display: grid; grid-template-columns: minmax(0, 1fr) auto; width: 100%; min-height: 44px; gap: 0 8px; padding: 6px 8px; text-align: start; border: 1px solid var(--tavern-line); border-radius: var(--radius); overflow-wrap: anywhere; }
+.tsu-expand > span:nth-child(2) { grid-column: 1; color: var(--tavern-muted); }
+.tsu-expand > span:last-child { grid-area: 1 / 2 / span 2; align-self: center; }
+.tsu-entry .tsu-card { margin-top: 6px; }
+.tsu-checks li { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px; }
+.tsu-mark { border: 1px solid currentColor; border-radius: 50%; align-self: start; width: 1.45em; height: 1.45em; display: grid; place-items: center; font-size: 11px; font-weight: 700; line-height: 1; }
+.tsu-checks [data-status="pass"] .tsu-mark { color: var(--success, var(--foreground)); }
+.tsu-checks [data-status="fail"] .tsu-mark, .tsu-error { color: var(--destructive); }
+.tsu-status, .tsu-foot { border-top: 1px solid var(--tavern-line); padding-top: 8px; }
+.tsu-status { font-weight: 600; }
+.tsu-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.tsu-settings .tsu-form { margin-bottom: 16px; padding: 0; justify-items: start; }
+.tsu-form label { font-size: 13px; font-weight: 700; }
+.tsu-form :is(select, textarea) { width: min(100%, 42rem); min-width: 0; }
+.tsu-form textarea { resize: vertical; }
+@media (max-width: 520px) {
+  .tsu-head, .tsu-body { padding: 10px 12px; }
+  .tsu-diff, .tsu-facts > div { grid-template-columns: minmax(0, 1fr); }
+  .tavern :is(.tsu-form button, .tsu-form select, .tsu-form textarea, .tsu-actions button, .tsu-card summary, .tsu-thread) { min-height: 44px; }
+}

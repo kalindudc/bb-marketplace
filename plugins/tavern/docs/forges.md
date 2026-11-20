@@ -1,6 +1,6 @@
 # Draft pull requests from home
 
-A machine rule chooses where its Smith opens pull requests. Existing rules default to the member’s machine. On Where work runs, choose a forge profile to open drafts from home instead. A rule that names a missing or disabled profile cannot be saved. Forge profiles are under `machines.forges`. Only Tavern’s Settings page, Where work runs, can write their commands. CLI settings imports and every backup restore preserve the current profiles, skip imported profiles and report their IDs; CLI settings set refuses forge changes even without a thread ID.
+A machine rule chooses where its Smith opens pull requests. Existing rules default to the member’s machine. On Where work runs, choose a forge profile to open drafts from home instead. A rule that names a missing or disabled profile cannot be saved. Forge profiles are under `machines.forges`. The user writes their commands in Tavern’s Settings page, Where work runs, or by applying a setup proposal. CLI settings imports and every backup restore preserve the current profiles, skip imported profiles and report their IDs; CLI settings set refuses forge changes even without a thread ID.
 
 A profile has an ID, name, enabled switch and kind. The GitHub kind uses `gh`. The command kind requires an `open` shell string and may have a `state` shell string. Keep your scripts outside the plugin installation. No profile is configured by default.
 
@@ -27,6 +27,12 @@ Commands run on the source host through the native host entry, with `/bin/sh -c`
 Print the new draft’s URL, or the existing open PR for the head. Tavern takes the last HTTP or HTTPS URL on stdout. A configured state command receives `FORGE_URL` and `FORGE_PR_NUMBER`, with matching `LOOM_` names. The number is the URL’s last run of digits. Its last line begins with `open`, `merged` or `closed`; open drafts remain `draft` in Tavern. The state command is read at open in this slice; hand-back state refresh is deferred. There is no polling.
 
 A network failure, HTTP 429 or HTTP 500, 502, 503 or 504 is temporary. Other nonzero exits and timeouts are lasting. Exit zero without the required URL or state is a broken contract. The result and quest event name the profile, classification and output tail. A failed call leaves the member working, not waiting on a blocker ask.
+
+## Setup preflight
+
+For a setup proposal, give one absolute executable path without arguments for each new or changed command. Before Apply, Tavern checks the path without running it. It rejects scripts inside known environments, registered project checkouts or agent thread storage, including symlinks that resolve there. The proposal saves the resolved path and checks it again before running. This is a tripwire, not a security boundary: agents run as you, and Tavern does not pin the script’s contents. Apply asks each script for `--help` with no other arguments. Implement that flag as a read-only exit before any normal operation, including for the state and close scripts. The built-in profile checks its CLI's help instead. The native worker uses the home forge call’s Git mode and environment, but has no actual member checkout or pull request yet. The probe runs in the registered checkout when available, otherwise its home directory, with empty values for the operation’s usual inputs. Never treat those as an instruction to open, inspect or close a pull request. If a check fails, no settings are saved.
+
+Apply is yours to press. Tavern blocks agents it can recognise, but it can’t tell every agent’s call from your click. The receipt records that limit.
 
 ## Recorded ownership
 

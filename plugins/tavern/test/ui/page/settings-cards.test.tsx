@@ -17,9 +17,9 @@ async function section(id:string,view=structuredClone(settingsView),rpc:Record<s
  const slot=renderSlot(app.settingsSections.find(s=>s.id===id)!,{}, {pluginId:"tavern",experimental_rpcContract:{...rpcContract,...settingsContract,...backupContract},rpc:{settings:()=>view,registry:()=>registry,backupList:()=>({dir:"/fixture/backups",keep:14,backups:[],error:null,dataBytes:0,exportLimitBytes:8388608}),...rpc},providers:{status:"ready",providers:[{id:"codex",displayName:"Codex",available:true}] as never}});
  slots.push(slot);return slot;
 }
-it("registers fewer sections with kit descriptions and history last",async()=>{
+it("registers Setup first, kit descriptions for each section, and history last",async()=>{
  const app=await loadPluginApp(async()=>({default:definePluginApp(registerPageSurfaces)}));
- expect(app.settingsSections.map(s=>s.id)).toEqual(["tavern","attention","keepers","classes","scopes","machines","atmosphere","away","journal","tuning","data","settings-history"]);
+ expect(app.settingsSections.map(s=>s.id)).toEqual(["setup","tavern","attention","keepers","classes","scopes","machines","atmosphere","away","journal","tuning","data","settings-history"]);
  expect(app.settingsSections.filter(s=>s.title==="Atmosphere").map(s=>s.id)).toEqual(["atmosphere"]);
  for(const s of app.settingsSections){
   expect(s.description??"").toBe("");

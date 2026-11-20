@@ -2,8 +2,10 @@ import { cliCommand, defineCli, PLUGIN_CLI_OUTPUT_MAX_BYTES, PluginCliError, typ
 import { terminalUserAct } from "./authority";
 import type { TavernRuntime } from "./runtime";
 import { settingsCommands } from "./settings/cli";
+import { setupDiscoveryCommands } from "./settings/setup-discovery";
 import { backupCommands } from "./backup/cli";
 import type { BackupService } from "./backup/service";
+import type { SetupService } from "./settings/setup";
 
 function output(value: unknown) {
   return { exitCode: 0, stdout: JSON.stringify(value, null, 2) };
@@ -44,7 +46,7 @@ function statusOutput(runtime: TavernRuntime, thread?: string) {
     ...(lists.some(group => group.omitted.size) ? { truncated } : {}),
   }) };
 }
-export function registerCli(bb: BbPluginApi, runtime: TavernRuntime, backups?: BackupService) {
+export function registerCli(bb: BbPluginApi, runtime: TavernRuntime, backups?: BackupService, setup?: SetupService) {
   const scopes = () => {
     if (!runtime.scopes) throw new Error("Tavern scopes are not registered");
     return runtime.scopes;
@@ -63,8 +65,9 @@ export function registerCli(bb: BbPluginApi, runtime: TavernRuntime, backups?: B
       name: "tavern",
       summary: "Read the board, answer asks and inspect Tavern guardrails",
       commands: {
-        ...(runtime.settings ? settingsCommands(bb, runtime.settings) : {}),
+        ...(runtime.settings ? { ...settingsCommands(bb, runtime.settings), ...setupDiscoveryCommands(bb, runtime.settings) } : {}),
         ...(backups ? backupCommands(backups) : {}),
+        ...(setup ? setup.commands() : {}),
         "stop-all": cliCommand({
           summary: "Stop every Keeper and member turn and hold new Tavern work",
           run: async (_input, ctx) => output(await runtime.stopAll.stop(ctx.threadId ? { kind: "agent", threadId: ctx.threadId } : { kind: "user" }, { surface: "CLI" })),

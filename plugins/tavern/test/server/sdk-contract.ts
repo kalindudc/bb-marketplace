@@ -67,7 +67,7 @@ export const SDK_CONTRACTS: Record<string, z.ZodType> = {
   "threads.list": z.object({ ...routing, parentThreadId: id.optional(), originPluginId: id.optional(), archived: z.boolean().optional(), includeHidden: z.boolean().optional(), limit: z.number().int().nonnegative().optional(), offset: z.number().int().nonnegative().optional() }).optional(),
   "threads.events.list": thread.extend({ afterSeq: digits.optional(), beforeSeq: digits.optional(), limit: digits.refine(value => Number(value) <= 100, "Thread event limit cannot exceed 100").optional(), order: z.enum(["asc", "desc"]).optional(), types: z.array(z.enum(["item/started", "item/completed", "client/turn/requested", "client/turn/rejected", "system/thread/interrupted", "thread/compacted", "turn/started", "turn/mainRun/updated", "turn/completed"])).optional() }),
   "environments.get": z.object({ environmentId: id, signal }),
-  "environments.list": z.object({ projectId: id.optional(), hostId: id.optional(), path: id.optional(), environmentProviderId: id.optional(), signal }).optional(),
+  "environments.list": z.object({ projectId: id.optional(), hostId: id.optional(), path: id.optional(), environmentProviderId: id.optional(), limit: z.number().int().positive().optional(), offset: z.number().int().nonnegative().optional(), signal }).optional(),
   "environments.listProviders": z.object({ projectId: id.optional(), hostId: id.optional(), signal }).superRefine((value, ctx) => {
     if (value.hostId !== undefined && value.projectId === undefined) ctx.addIssue({ code: "custom", message: "hostId requires projectId", path: ["hostId"] });
   }).optional(),
@@ -78,7 +78,8 @@ export const SDK_CONTRACTS: Record<string, z.ZodType> = {
   "projects.list": z.object({ include: z.string().optional(), includePersonal: z.boolean().optional(), signal }).optional(),
   "system.config": z.object({ signal }).optional(),
   "providers.list": z.object(routing).optional(),
-  "providers.models": z.object({ ...routing, providerId: id }),
+  "projects.defaultExecutionOptions": z.object({ projectId: id, signal }),
+  "providers.models": z.object({ ...routing, providerId: id, signal }),
   "plugins.list": z.object({ signal }).optional(),
   "plugins.callRpc": z.object({ pluginId, method: id, input: json.optional(), signal }),
   "files.mkdir": z.object({ hostId: id, path: id, recursive: z.boolean().optional(), signal }),

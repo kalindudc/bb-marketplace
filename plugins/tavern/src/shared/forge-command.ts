@@ -1,3 +1,5 @@
+export const HOME_FORGE_GIT = "full" as const;
+
 export type ForgeResult = { ok: true; url: string; state?: "open" | "merged" | "closed" } | { ok: false; failureClass: "temporary" | "lasting" | "broken contract"; lines: string };
 export function forgeFailure(result: { code: number | null; stdout: string; stderr: string; timedOut: boolean }, broken = false): Extract<ForgeResult, { ok: false }> {
   const lines = [result.stdout, result.stderr].join("\n").trim().split("\n").slice(-12).join("\n").slice(-4000);

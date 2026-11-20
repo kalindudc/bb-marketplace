@@ -3,6 +3,8 @@ import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { forgeProfileSchema } from "./shared/placement-settings";
 import { pullRequestReviewerSchema } from "./shared/pull-request";
+import { setupLineSchema } from "./shared/setup";
+import { setupForgeInput } from "./shared/setup-forge";
 import { nativeScopeVariablesSchema } from "./scope/host-env";
 import { artifactFileSchema, endpointSchema, gitOidSchema, objectFormatSchema, sha256Schema, sourceFetchSchema, workspaceKindSchema } from "./shared/placement";
 
@@ -145,6 +147,8 @@ export const hostContract = defineRpcContract({
     input: authoritySchema.extend({ profile: forgeProfileSchema, title: z.string().min(1).max(500), body: z.string().max(100_000) }).strict(),
     output: z.discriminatedUnion("ok", [z.object({ ok: z.literal(true), url: z.string().url(), state: z.enum(["open", "merged", "closed"]).optional() }).strict(), z.object({ ok: z.literal(false), failureClass: z.enum(["temporary", "lasting", "broken contract"]), lines: text }).strict()]),
   },
+  setupForgeInspect: { input: setupForgeInput, output: z.array(setupLineSchema.extend({ resolvedPath: path.optional() })) },
+  setupForgeProbe: { input: setupForgeInput, output: z.array(setupLineSchema) },
   forgePullRequest: {
     input: authoritySchema.extend({ profile: forgeProfileSchema, action: z.enum(["inspect", "close", "ready", "draft", "comment"]), url: z.url(), head: baseBranch, base: baseBranch, headCommit: gitOidSchema, state: z.enum(["draft", "ready"]), reviewers: z.array(pullRequestReviewerSchema).max(10).optional(), comment: z.string().trim().min(1).max(8000).optional() }).strict(),
     output: z.object({ state: z.enum(["draft", "ready", "closed", "merged"]), headCommit: gitOidSchema.optional() }).strict(),

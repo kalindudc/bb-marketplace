@@ -105,6 +105,8 @@ const APPENDED: string[] = [
   `CREATE INDEX tavern_undo_keeper_calls ON tavern_records(json_extract(data,'$.keeperThreadId'))
      WHERE kind='decisions' AND json_extract(data,'$.source')='keeper' AND json_extract(data,'$.reversible')=1 AND json_extract(data,'$.askId') IS NULL
        AND (json_extract(data,'$.waypointCall.as') IS NOT NULL OR json_extract(data,'$.exceeds') IS NOT NULL);`,
+  `CREATE TABLE tavern_setup_proposals (id TEXT PRIMARY KEY, data TEXT NOT NULL CHECK(json_valid(data)));
+   CREATE INDEX tavern_setup_pending ON tavern_setup_proposals(id) WHERE json_extract(data, '$.proposal.state') = 'pending';`,
 ];
 
 export const MIGRATIONS: string[] = [

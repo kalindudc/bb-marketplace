@@ -73,6 +73,9 @@ it.each([[undefined, false, false], ["release", false, false], [undefined, true,
   const forge = new PlacementForge(runtime);
   const result = await forge.forThread("member", { title: "Draft", body: "description", base: baseOverride });
   expect(result).toContain("Draft PR: https://forge.example/pr/12"); expect(result).toContain("untracked.txt"); expect(result).toContain("work.txt");
+  expect(host.harness.inspection.experimental_hostRpcCalls).toContainEqual(expect.objectContaining({
+    method: "registerEndpoint", input: expect.objectContaining({ endpointId: "draft-forge", git: "full" }),
+  }));
   expect(member().draftPush!.memberHead).toBe(memberHead);
   if (pushedOnly) {
     expect(git(home, "rev-parse", "HEAD")).toBe(userBefore.head); expect(git(home, "show-ref")).toBe(userBefore.refs);

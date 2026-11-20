@@ -926,6 +926,7 @@ export class TavernRuntime {
         skills: [
           "journal",
           "quest-management",
+          "tavern",
           ...(member?.role === "keeper" ? ["tavern-keeper"] : []),
         ],
         instructions:
@@ -939,7 +940,7 @@ export class TavernRuntime {
     const m = this.keeper.member(ctx.thread.id);
     const common = {
       tools: ["journal", ...(m?.classId === "smith" ? ["tavern_draft_pr"] : []), ...(m && new PlacementStore(this.keeper.store.db).byMember(m.threadId) ? ["tavern_ready"] : [])],
-      skills: ["journal", "quest-management"],
+      skills: ["journal", "quest-management", "tavern"],
     };
     const journal = this.keeper.journal.instructions(ctx.thread.id);
     if (!m) return { ...common, instructions: utf8Limit(journal, LIMITS.configureBytes) };

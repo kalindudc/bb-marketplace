@@ -25,10 +25,13 @@ import { backupHandlers } from "./src/server/backup/rpc";
 import { backupContract } from "./src/shared/backup";
 import { rpcContract as coreContract, tags } from "./src/shared/contract";
 import { settingsContract } from "./src/shared/settings";
+import { setupContract } from "./src/shared/setup";
+import { SetupPreflight } from "./src/server/settings/setup-preflight";
+import { SetupService } from "./src/server/settings/setup";
 import { insightsContract } from "./src/shared/insights";
 import { VoiceCheckRunner } from "./src/server/voice-check/run";
 import { resolveWriter } from "./src/server/voice-check/writer";
-export const rpcContract = { ...coreContract, ...settingsContract, ...insightsContract, ...backupContract };
+export const rpcContract = { ...coreContract, ...settingsContract, ...setupContract, ...insightsContract, ...backupContract };
 
 export function pause(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
@@ -125,9 +128,11 @@ export default async function tavern(bb: BbPluginApi) {
   bb.onDispose(() => runtime.taleRenderer?.settled());
   registerTools(bb, runtime);
   const backups = createBackupService(bb, settings, runtime.registry);
-  bb.rpc.register(rpcContract, { ...rpcHandlers(runtime), ...settingsHandlers(settings, new SettingsFiles(settings)), ...backupHandlers(backups),
+  const setup = new SetupService(bb, settings, store, new SetupPreflight(bb, async (projectId, id) =>
+    (projectId === null ? runtime.snapshot() : await runtime.prepareRegistry(projectId)).classes.find(role => role.id === id)));
+  bb.rpc.register(rpcContract, { ...rpcHandlers(runtime), ...settingsHandlers(settings, new SettingsFiles(settings)), ...setup.handlers(), ...backupHandlers(backups),
     insights: input => insights.view(input.range) });
-  registerCli(bb, runtime, backups);
+  registerCli(bb, runtime, backups, setup);
   bb.agents.configure((ctx) => runtime.configure(ctx));
   bb.ui.registerMentionProvider({
     id: "classes",

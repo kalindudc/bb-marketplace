@@ -9,6 +9,7 @@ import { HostError, HostRegistry } from "./registry";
 import { NativeScopes, type NativeScopePaths } from "./scopes";
 import { createTransport } from "./transport";
 import { draftPush, draftOpen, forgePullRequest } from "./forge";
+import { inspectSetupForges, probeSetupForges } from "./setup-forge";
 import { pushedBase } from "./pushed-base";
 import { snapshotWorktree } from "./snapshot";
 
@@ -27,17 +28,19 @@ export function createTavernHostEntry(options: TavernHostEntryOptions) {
     }
     return state;
   };
-  const call = <T>(context: ExperimentalHostRpcContext, work: (native: ReturnType<typeof services>, signal: AbortSignal) => T | Promise<T>): Promise<T> => {
+  const invoke = <T>(context: ExperimentalHostRpcContext, work: (signal: AbortSignal) => T | Promise<T>): Promise<T> => {
     const signal = AbortSignal.any([context.signal, context.lifecycle.signal, controller.signal]);
     const pending = (async () => {
       if (closed || signal.aborted) throw abortError();
-      const result = await work(services(context), signal);
+      const result = await work(signal);
       if (signal.aborted) throw abortError();
       return result;
     })();
     calls.add(pending); void pending.then(() => calls.delete(pending), () => calls.delete(pending));
     return pending;
   };
+  const call = <T>(context: ExperimentalHostRpcContext, work: (native: ReturnType<typeof services>, signal: AbortSignal) => T | Promise<T>) =>
+    invoke(context, signal => work(services(context), signal));
   return experimental_defineHostEntry({
     contract: hostContract,
     handlers: {
@@ -69,6 +72,8 @@ export function createTavernHostEntry(options: TavernHostEntryOptions) {
       }),
       draftPush: (input, context) => call(context, (native, signal) => draftPush(native.registry, input, signal)),
       draftOpen: (input, context) => call(context, (native, signal) => draftOpen(native.registry, input, signal)),
+      setupForgeInspect: (input, context) => invoke(context, () => inspectSetupForges(input)),
+      setupForgeProbe: (input, context) => invoke(context, signal => probeSetupForges(input, signal)),
       forgePullRequest: (input, context) => call(context, (native, signal) => forgePullRequest(native.registry, input, signal)),
       commitAll: (input, context) => call(context, (native, signal) => native.transport.commitAll(input, signal)),
       exportChanges: (input, context) => call(context, (native, signal) => native.transport.exportChanges(input, signal)),

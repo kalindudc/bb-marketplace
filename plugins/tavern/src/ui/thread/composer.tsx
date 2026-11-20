@@ -3,6 +3,7 @@ import { attentionView, attentionTitle } from "../../shared/attention";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type CSSProperties } from "react";
 import { experimental_useRpcQuery, experimental_useRpcMutation, experimental_usePluginId, experimental_useAppPanel, useBbNavigate, useComposer, UrlLink, type PluginComposerApi } from "@get-bb/plugin-sdk/app";
 import { settingsContract } from "../../shared/settings";
+import { isSetupPrompt } from "../../shared/setup";
 import { classDifferences, composerProjectId, fieldWords, rearmClassSettings, startRefusal, useClassStart } from "./class-start";
 import { rpcContract, type ThreadDecor } from "../../shared/contract";
 import type { Ask, CheckerHandoffHold, ClassDef, Phase as QuestPhase } from "../../shared/schema";
@@ -131,6 +132,19 @@ export function ClassBanner() {
   if (!classId) return null;
   const cls = registry.data?.classes.find(c => c.id === classId);
   const label = cls?.label ?? classId;
+  const startPlain = async () => {
+    setPlainError(null);
+    try {
+      await composer.submit({ experimental_data: { classId: "none" } });
+    } catch (err) { setPlainError(err instanceof Error ? err.message : String(err)); }
+  };
+  const plain = <button type="button" className="btn sm tw-plain" disabled={composer.isSubmittingBlocked || composer.isEmpty} title={composer.submittingBlockedReason ?? (composer.isEmpty ? "Write a message first" : "Send this message without the default class")} onClick={() => void startPlain()}>Start as a plain thread</button>;
+  if (defaultId && isSetupPrompt(composer.draft.text)) return (
+    <section className="tavern twidget tw-class" aria-label="Tavern class for this thread">
+      <div className="tw-row">{plain}<span className="tw-text">Setup needs no Tavern class. Sending as usual uses the default class, {label}.</span></div>
+      {plainError && <p className="problem tw-class-err" role="alert">Couldn’t start a plain thread: {plainError}</p>}
+    </section>
+  );
   const reason = start.facts?.errors[0] ?? null;
   const readError = start.error ? (start.error instanceof Error ? start.error.message : String(start.error)) : null;
   const settingsLink = <UrlLink href={`/settings/plugins/${encodeURIComponent(pluginId)}`} className="lnk-btn act" title="Tavern's settings: New threads start as"><span>Settings</span><OpensMark /></UrlLink>;
@@ -154,19 +168,13 @@ export function ClassBanner() {
   const chosen = diffs.filter(d => !kept.includes(d));
   const words = (list: typeof diffs, side: "have" | "want") => list.map(d => fieldWords(d.field, side === "have" ? d.have : d.want, modelLabel)).join(" · ");
   const useClass = <button type="button" className="btn sm" disabled={start.pending} onClick={() => void start.apply()} title={`Set the composer to the ${label} class's settings`}>Use class settings</button>;
-  const startPlain = async () => {
-    setPlainError(null);
-    try {
-      await composer.submit({ experimental_data: { classId: "none" } });
-    } catch (err) { setPlainError(err instanceof Error ? err.message : String(err)); }
-  };
   return (
     <section className="tavern twidget tw-class" aria-label="Tavern class for this thread">
       <div className="tw-row">
         {character ? <Crest cls={cls} character={{ ...character, name: cls.label }} size={18} title={`${cls.label} crest`} /> : <Crest cls={cls} character={{ name: cls.label, hue: "ink", charge: "chevron", plain: true }} size={18} />}
         <span className="tw-name"><b>{cls.label}</b> <span className="anc">{cls.plain}</span></span>
         <span className="tw-text" title={line}>{line}</span>
-        {defaultId && <button type="button" className="btn sm tw-plain" disabled={composer.isSubmittingBlocked || composer.isEmpty} title={composer.submittingBlockedReason ?? (composer.isEmpty ? "Write a message first" : "Send this message as a plain thread, without the default class, on the settings shown below")} onClick={() => void startPlain()}>Start as a plain thread</button>}
+        {defaultId && plain}
       </div>
       {refusal && <p className="problem tw-class-refuse" role="alert"><span><b>Won’t start as {label}.</b> {refusal}</span>{start.execution && useClass}</p>}
       {chosen.length > 0 && <p className="tw-class-diff"><span>Running on {words(chosen, "have")}; the {label} class says {words(chosen, "want")}.</span>{useClass}</p>}

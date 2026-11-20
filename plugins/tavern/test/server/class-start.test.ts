@@ -27,6 +27,15 @@ describe("user-started class admission", () => {
     expect(f.k.store.runtime("new").classExecutionChoice?.modelSource).toBe("explicit");
   });
 
+  it.each([false, true])("admits setup text through normal class selection (explicitly plain: %s)", async explicit => {
+    const f = fixture();
+    const text = "Set up Tavern using the Setup section of the tavern skill.\n\nPrepare the settings for this repo.";
+    f.ctx.input = { text, blocks: [{ type: "text", text, mentions: [] }] };
+    if (explicit) f.ctx.experimental_submission = { pluginId: "tavern", data: { classId: "none" } };
+    expect(await f.runtime.dispatch(f.ctx)).toEqual({ action: "proceed" });
+    expect(f.k.member("new")?.classId ?? null).toBe(explicit ? null : "keeper");
+  });
+
   it("pins a display name on a user-started thread", async () => {
     const f = fixture();
     f.ctx.thread.title = "Route this work";

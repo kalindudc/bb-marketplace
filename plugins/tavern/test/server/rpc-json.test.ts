@@ -95,7 +95,19 @@ it("returns strict JSON from EVERY registered RPC with optional record fields ab
   const { name, hue, charge, temper, style, quirks, lines } = character;
   let seenUndoToken: string | null = null;
   let awayWindowId: string | null = null;
+  const propose = async (why: string) => {
+    const result = await f.harness.inspection.registrations.cli[0]!.run(["setup", "propose", "--toml", "[tavern]\nrepeat_seconds = 35", "--reasons", JSON.stringify({ "tavern.repeatSeconds": why })], {});
+    expect(result.exitCode).toBe(0);
+    const { id } = JSON.parse(result.stdout!) as { id: string };
+    return { id };
+  };
+  const pendingSetup = await propose("Verify Strict JSON for a pending setup.");
   const cases = {
+    setupProposal: () => call("setupProposal", { id: pendingSetup.id }),
+    setupPending: () => call("setupPending", null),
+    setupProjects: () => call("setupProjects", null),
+    setupDismiss: () => call("setupDismiss", { id: pendingSetup.id }),
+    setupApply: async () => call("setupApply", await propose("Verify Strict JSON for an applied setup.")),
     registry: () => call("registry", {}),
     classExecution: () => call("classExecution", { classId: "ranger", projectId: "project", mode: "start" }),
     classExecutions: () => call("classExecutions", {}),

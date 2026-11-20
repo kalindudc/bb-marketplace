@@ -98,6 +98,15 @@ describe("the default class", () => {
     await waitFor(() => expect(slot.inspection.composer.submits).toContainEqual({ experimental_data: { classId: "none" } }));
   });
 
+  it("offers the explicit plain-thread button for a setup draft without submitting it", async () => {
+    const text = "Set up Tavern using the Setup section of the tavern skill.\n\nUse my scripts.";
+    const { slot } = await banner({ composer: { text, mentions: [] }, defaultClass: "keeper" });
+    expect(await slot.findByText(/Setup needs no Tavern class/)).toBeTruthy();
+    expect(slot.inspection.composer.submits).toEqual([]);
+    fireEvent.click(slot.getByRole("button", { name: "Start as a plain thread" }));
+    await waitFor(() => expect(slot.inspection.composer.submits).toContainEqual({ experimental_data: { classId: "none" } }));
+  });
+
   it("never falls back silently: it says why the thread starts plain and links to the setting", async () => {
     const { slot } = await banner({ composer: draft, defaultClass: "keeper", classFacts: facts({ execution: null, errors: ["the Keeper needs Pi"] }) });
     const note = await slot.findByText("Starts as a plain thread: the default class Keeper can’t start here (the Keeper needs Pi).");

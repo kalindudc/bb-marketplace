@@ -27,7 +27,7 @@ export function agentProgram(argv: string[]): boolean {
   return ["status", "guide", "help", "--help", "--version", "flare", "browser-automation", "journal"].includes(sub) ||
     ["show", "list", "log", "logs", "context", "help", "status", "--help"].includes(action) ||
     sub === "thread" && ["tell", "send", "wait"].includes(action) ||
-    sub === "tavern" && (["quests", "stop-all"].includes(action) || action === "settings" && argv[3] === "get") ||
+    sub === "tavern" && (["quests", "stop-all"].includes(action) || action === "settings" && argv[3] === "get" || action === "setup" && ["discover", "propose"].includes(argv[3])) ||
     sub === "shuttle" && ["prs", "board", "boards"].includes(action) ||
     ["automation", "automations"].includes(sub) && action === "runs" ||
     sub === "browser" && action === "instances" ||

@@ -52,7 +52,7 @@ export function exportToml(snapshot: SettingsSnapshot, withTuned = false) {
   if (snapshot.placementPolicy?.state === "invalid") throw new Error("Machine placement policy is invalid. Repair it before exporting settings.");
   return encodeSettingsToml(snapshot, withTuned);
 }
-export function previewToml(source: string, snapshot: SettingsSnapshot): TomlPreview {
+export function previewToml(source: string, snapshot: Pick<SettingsSnapshot, "user" | "pinned" | "tuned">, mode: "replace" | "patch" = "replace"): TomlPreview {
   const empty: TomlPreview = { user: {}, pinned: {}, changes: [], problems: [] };
   if (Buffer.byteLength(source) > LIMITS.tomlBytes) return { ...empty, problems: [{ line: 1, key: "", message: "Settings file is too large.", allowed: `At most ${LIMITS.tomlBytes} UTF-8 bytes` }] };
   let parsed: Record<string, unknown>;
@@ -104,6 +104,7 @@ export function previewToml(source: string, snapshot: SettingsSnapshot): TomlPre
   const pinned = validate(sparseTunablesSchema, pins, ["tuning", "pinned"]);
   const machine = hasTuned ? validate(sparseTunablesSchema, tuned, ["tuned"]) : undefined;
   if (problems.length || user === undefined || pinned === undefined) return { ...empty, problems };
+  if (mode === "patch") return { user, pinned, ...(hasTuned ? { tuned: machine } : {}), changes: [], problems };
   try { encodeSettingsToml({ user, pinned, tuned: machine ?? snapshot.tuned }, true); }
   catch (error) { return { ...empty, problems: [{ line: 1, key: "", message: error instanceof Error ? error.message : String(error) }] }; }
   const before = { user: snapshot.user, pinned: snapshot.pinned, ...(hasTuned ? { tuned: snapshot.tuned } : {}) };

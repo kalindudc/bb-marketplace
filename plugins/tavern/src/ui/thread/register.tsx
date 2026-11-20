@@ -10,6 +10,7 @@ import { NameMentionSwap } from "./mentions";
 import { JournalCardSection, JournalSegmentSummary, useJournalSegmentVisible } from "./journal-segment";
 import { getRpc, threadDecorCache } from "./state";
 import { motion } from "../kit/motion";
+import { SetupDirective } from "../page/setup";
 export function registerThreadSurfaces(app: PluginAppBuilder) {
     app.composer.customize({ id: "tavern-new-thread", scopes: ["new-thread"], banners: [{ id: "class-preview", chrome: "bare", component: ClassBanner }, { id: "names", chrome: "bare", component: NameMentionSwap }], experimental_popups: [{ id: "tavern-classes", label: "Pick a class (thread type)", component: ClassPickerPopover }], plusMenu: [{ id: "pick-class", label: "Choose a Tavern class", run: ({ composer }) => { composer.experimental_openPopup("tavern-classes"); } }], sendMenu: ["Keeper", "Wanderer", "Ranger", "Smith"].map(label => ({ id: `start-${label.toLowerCase()}`, label: `Start as ${label}`, description: "Use this class’s provider, model and role", run: async ({ composer }) => {
                 const registry = await getRpc().call("registry", {});
@@ -61,6 +62,7 @@ export function registerThreadSurfaces(app: PluginAppBuilder) {
     app.slots.messageAction({ id: "add-to-journal", title: "Add to journal (checklist)", icon: "tavern/journal", run: ctx => { ctx.experimental_panel.openTab({ tab: JOURNAL_TAB, params: { text: (ctx.selectedText ?? ctx.message.text).slice(0, 500) } }); } });
     for (const kind of DIRECTIVE_IDS)
         app.slots.messageDirective({ id: kind, component: props => <DirectiveCard {...props} kind={kind}/> });
+    app.slots.messageDirective({ id: "tavern-setup", component: SetupDirective });
     registerRowCrests(app);
     // The motion coordinator lives for one frontend generation: its document and window listeners go when bb replaces or deactivates the bundle.
     app.contentScripts.register({ id: "tavern-motion", mount() { motion.activate(); return () => motion.dispose(); } });

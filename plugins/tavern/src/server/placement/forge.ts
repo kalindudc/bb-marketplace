@@ -3,7 +3,7 @@ import { isDeepStrictEqual } from "node:util";
 import { hostContract, type HostInput, type HostMethod, type HostOutput } from "../../host-contract";
 import { pullRequestHead, pullRequestLine, type PullRequest } from "../../shared/pull-request";
 import type { ForgeProfile } from "../../shared/placement-settings";
-import { forgeFailure } from "../../shared/forge-command";
+import { forgeFailure, HOME_FORGE_GIT } from "../../shared/forge-command";
 import type { TavernRuntime } from "../runtime";
 import { readSourceIdentity } from "./source-discovery";
 
@@ -44,7 +44,7 @@ export class PlacementForge {
     const { bb } = this.runtime, host = this.runtime.placements().host;
     const { endpoint } = await readSourceIdentity(bb, pr.keeperThreadId, pr.projectId);
     const binding = { placementId: "quest-" + pr.id, generation: 1, endpointId: endpoint.environmentId ?? "source" };
-    await host.call(endpoint.hostId, "registerEndpoint", { ...binding, endpoint, ownerThreadId: pr.keeperThreadId, access: "source-read", git: "full", workspaceKind: null, objectFormat: null, allowedRefs: [] });
+    await host.call(endpoint.hostId, "registerEndpoint", { ...binding, endpoint, ownerThreadId: pr.keeperThreadId, access: "source-read", git: HOME_FORGE_GIT, workspaceKind: null, objectFormat: null, allowedRefs: [] });
     const authority = { ...binding, operationId: randomUUID() };
     await host.call(endpoint.hostId, "inspect", authority);
     const current = await readSourceIdentity(bb, pr.keeperThreadId, pr.projectId);
@@ -128,7 +128,7 @@ export class PlacementForge {
       if (existing) runtime.keeper.store.recordPullRequest({ ...existing, memberHead: inspection.head, pushedHead: pinned.homeCommit, verifiedCommit: null }, runtime.keeper.now());
       const forgeEndpoint = { ...to, endpointId: "draft-forge", operationId: randomUUID() };
       await call(home.endpoint.hostId, "registerEndpoint", { placementId: forgeEndpoint.placementId, generation: forgeEndpoint.generation, endpointId: forgeEndpoint.endpointId, endpoint: home.endpoint, ownerThreadId: record.keeperThreadId,
-        access: "source-read", git: "full", workspaceKind: null, objectFormat: inspection.objectFormat, allowedRefs: [], draft: { branch, base, sourceBase, remote: original.fetch.remoteUrl } });
+        access: "source-read", git: HOME_FORGE_GIT, workspaceKind: null, objectFormat: inspection.objectFormat, allowedRefs: [], draft: { branch, base, sourceBase, remote: original.fetch.remoteUrl } });
       await call(home.endpoint.hostId, "inspect", forgeEndpoint);
       const opened = await call(home.endpoint.hostId, "draftOpen", { ...forgeEndpoint, profile, title: input.title, body: input.body });
       if (!opened.ok) {
