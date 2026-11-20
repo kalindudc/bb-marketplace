@@ -25,6 +25,7 @@ export interface SwitchboardSettings {
   showAge: boolean;
   showBranch: boolean;
   showPullRequests: boolean;
+  showProviderIcons: boolean;
   view: View;
   needsYouShelf: boolean;
   showArchived: boolean;
@@ -41,6 +42,7 @@ export const DEFAULT_SETTINGS: SwitchboardSettings = {
   showAge: true,
   showBranch: false,
   showPullRequests: true,
+  showProviderIcons: false,
   view: "sections",
   needsYouShelf: false,
   showArchived: false,
@@ -81,6 +83,7 @@ export const SETTING_DESCRIPTORS = {
   showAge: { type: "boolean", label: "Show age", description: "Show the time since each thread last needed attention.", default: true },
   showBranch: { type: "boolean", label: "Show branch", description: "Show each thread's environment branch name.", default: false },
   showPullRequests: { type: "boolean", label: "Show pull requests", description: "Show bb's pull request badge, and other plugins' row badges, on root threads.", default: true },
+  showProviderIcons: { type: "boolean", label: "Show provider icons", description: "Show each thread's agent provider icon before its title.", default: false },
   infoCard: {
     type: "select", label: "Thread info card",
     description: "Show a card with a thread's details when you hover or tab to its row.",
@@ -96,7 +99,7 @@ export function parseSettings(values: Readonly<Record<string, unknown>> | undefi
   const sectionColour = (["rail", "tint", "swatch"] as const).find((value) => value === read.sectionColour) ?? DEFAULT_SETTINGS.sectionColour;
   const view = (read.view === "status" || read.view === "sections") ? read.view : DEFAULT_SETTINGS.view;
   const infoCard = (["off", "glance", "briefing", "full"] as const).find((value) => value === read.infoCard) ?? DEFAULT_SETTINGS.infoCard;
-  const flag = (key: "treeGuides" | "statusChips" | "showAge" | "showBranch" | "showPullRequests" | "needsYouShelf" | "showArchived") =>
+  const flag = (key: "treeGuides" | "statusChips" | "showAge" | "showBranch" | "showPullRequests" | "showProviderIcons" | "needsYouShelf" | "showArchived") =>
     typeof read[key] === "boolean" ? read[key] as boolean : DEFAULT_SETTINGS[key];
   return {
     density, sectionColour, view, needsYouShelf: flag("needsYouShelf"), showArchived: flag("showArchived"),
@@ -104,6 +107,7 @@ export function parseSettings(values: Readonly<Record<string, unknown>> | undefi
     snoozeHour: isWholeNumber(read.snoozeHour, 23) ? read.snoozeHour : DEFAULT_SETTINGS.snoozeHour,
     treeGuides: flag("treeGuides"), statusChips: flag("statusChips"),
     showAge: flag("showAge"), showBranch: flag("showBranch"), showPullRequests: flag("showPullRequests"),
+    showProviderIcons: flag("showProviderIcons"),
     infoCard,
   };
 }

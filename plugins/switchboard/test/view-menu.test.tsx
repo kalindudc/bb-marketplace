@@ -35,6 +35,18 @@ describe("view controls", () => {
     slot.unmount();
   });
 
+  it("turns provider icons on from View options", () => {
+    const onChange = vi.fn();
+    const slot = renderSlot({ component: ViewMenu }, { settings: DEFAULT_SETTINGS, onChange });
+    fireEvent.pointerDown(screen.getByRole("button", { name: "View options" }),
+      { button: 0, ctrlKey: false, pointerType: "mouse" });
+    const toggle = screen.getByRole("menuitemcheckbox", { name: "Provider icons" });
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+    fireEvent.click(toggle);
+    expect(onChange).toHaveBeenCalledWith({ showProviderIcons: true });
+    slot.unmount();
+  });
+
   it("updates settings optimistically then shows an error when a write fails", async () => {
     const updateSettings = vi.fn().mockRejectedValue(new Error("offline"));
     function Test() {

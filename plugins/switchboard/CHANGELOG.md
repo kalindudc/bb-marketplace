@@ -2,6 +2,12 @@
 
 Notable changes to Switchboard, newest first. Releases are tagged `switchboard/vX.Y.Z` in this repository.
 
+## Unreleased
+
+### Added
+
+- Rows can draw each thread's agent provider icon before its title: turn on **Provider icons** in View options (`showProviderIcons`, off by default). This matches bb's own sidebar option. The icon uses bb's provider artwork and names the provider on hover; a provider bb no longer lists gets bb's fallback icon and its id.
+
 ## 0.4.1 (2026-11-03)
 
 ### Fixed
