@@ -64,7 +64,7 @@ import { runTuner } from "./settings/tuner";
 import { AlertRoute } from "./alert-route";
 import { LIMITS } from "./limits";
 import { createHostPort } from "../host/client";
-import { memberWorktree, preserveMemberWork, worktreeState } from "./member-worktree";
+import { memberWorktree, preserveMemberWork, readWorktree } from "./member-worktree";
 import { captureTaleDelivery } from "./tale";
 import type { TaleCompanions } from "./renderer/companion";
 import { DiscoveryStore, StaleDiscoveryError } from "./placement/discovery-store";
@@ -245,7 +245,7 @@ export class TavernRuntime {
     try {
       const worktree = await memberWorktree(this.bb, threadId);
       if (!worktree) return null;
-      const state = worktreeState(worktree.root);
+      const state = await readWorktree(worktree.root);
       if (!state.dirty) return null;
       changed = state.changed;
     } catch (error) {
@@ -692,7 +692,7 @@ export class TavernRuntime {
     const home = local.find(s => s.isDefault) ?? (local.length === 1 ? local[0] : undefined);
     if (sameRepo && (!home || home.path === worktree.root)) return;
     const dataDir = join(dirname(this.bb.storage.database().name), "merge-proofs");
-    if (homeRebaseMatches(worktree.root, { root: sameRepo ? home!.path : null, remoteUrl: project.gitRemoteUrl, dataDir }, verdict.target.commit, ask.target.commit))
+    if (await homeRebaseMatches(worktree.root, { root: sameRepo ? home!.path : null, remoteUrl: project.gitRemoteUrl, dataDir }, verdict.target.commit, ask.target.commit))
       this.keeper.authority.rebaseMatches.set(askId, { verifiedCommit: verdict.target.commit, commit: ask.target.commit });
   }
   async applyStandingAnswers(questId: string) {

@@ -18,7 +18,7 @@ function fixture() {
   return { dir, root, git };
 }
 
-it.each([false, true])("reads and preserves a dirty worktree without filters, fsmonitor or hooks (custom hooks path: %s)", custom => {
+it.each([false, true])("reads and preserves a dirty worktree without filters, fsmonitor or hooks (custom hooks path: %s)", async custom => {
   const f = fixture(), fsmonitor = join(f.dir, "monitor"), filtered = join(f.dir, "filtered"), hookRan = join(f.dir, "hook-ran");
   f.git("config", "filter.fixture.clean", `touch "${filtered}"; cat`);
   writeFileSync(join(f.root, ".git/info/attributes"), "tracked filter=fixture\n");
@@ -30,27 +30,27 @@ it.each([false, true])("reads and preserves a dirty worktree without filters, fs
   for (const name of ["pre-commit", "prepare-commit-msg", "commit-msg", "post-commit", "reference-transaction", "post-index-change", "pre-push", "pre-auto-gc"])
     writeFileSync(join(hooks, name), `#!/bin/sh\ntouch "${hookRan}"\n`, { mode: 0o755 });
   writeFileSync(join(f.root, "tracked"), "changed content\n");
-  expect(worktreeState(f.root)).toMatchObject({ dirty: true, changed: ["tracked"] });
-  expect(preserveWorktree(f.root)).toMatchObject({ status: "committed", changed: ["tracked"] });
+  expect(await worktreeState(f.root)).toMatchObject({ dirty: true, changed: ["tracked"] });
+  expect(await preserveWorktree(f.root)).toMatchObject({ status: "committed", changed: ["tracked"] });
   expect(f.git("show", "HEAD:tracked")).toBe("changed content");
   expect([fsmonitor, filtered, hookRan].filter(existsSync)).toEqual([]);
 });
 
-it("reports dirty nested work and defers preservation rather than dropping it", () => {
+it("reports dirty nested work and defers preservation rather than dropping it", async () => {
   const f = fixture(), source = join(f.dir, "subsource"), module = join(f.root, "module");
   f.git("clone", "-q", ".", source);
   f.git("-c", "protocol.file.allow=always", "submodule", "add", "-q", source, "module");
   f.git("commit", "-qm", "submodule");
   writeFileSync(join(module, "tracked"), "uncommitted tracked edit\n");
   writeFileSync(join(module, "untracked"), "uncommitted file\n");
-  expect(worktreeState(f.root)).toMatchObject({ dirty: true, changed: ["module"] });
-  expect(preserveWorktree(f.root)).toMatchObject({ status: "deferred" });
+  expect(await worktreeState(f.root)).toMatchObject({ dirty: true, changed: ["module"] });
+  expect(await preserveWorktree(f.root)).toMatchObject({ status: "deferred" });
   expect(existsSync(join(module, "untracked"))).toBe(true);
   writeFileSync(join(module, ".git"), "gitdir: missing\n");
-  expect(preserveWorktree(f.root)).toMatchObject({ status: "deferred", error: expect.stringMatching(/cannot read|submodule/i) });
+  expect(await preserveWorktree(f.root)).toMatchObject({ status: "deferred", error: expect.stringMatching(/cannot read|submodule/i) });
 });
 
-it("does not execute an object repository's signing program during patch verification", () => {
+it("does not execute an object repository's signing program during patch verification", async () => {
   const f = fixture(), base = f.git("rev-parse", "HEAD"), sentinel = join(f.dir, "ran"), gpg = join(f.dir, "gpg");
   writeFileSync(join(f.root, "tracked"), "approved\n"); f.git("commit", "-qam", "approved");
   const verified = f.git("rev-parse", "HEAD");
@@ -61,6 +61,6 @@ it("does not execute an object repository's signing program during patch verific
   const commit = execFileSync("git", ["-C", f.root, "hash-object", "-t", "commit", "-w", "--stdin"], { input: raw, encoding: "utf8" }).trim();
   writeFileSync(gpg, `#!/bin/sh\ntouch "${sentinel}"\n`, { mode: 0o755 });
   f.git("config", "log.showSignature", "true"); f.git("config", "gpg.program", gpg);
-  expect(cleanRebaseMatches(join(f.root, ".git"), verified, commit, destination)).toBe(true);
+  expect(await cleanRebaseMatches(join(f.root, ".git"), verified, commit, destination)).toBe(true);
   expect(existsSync(sentinel)).toBe(false);
 });

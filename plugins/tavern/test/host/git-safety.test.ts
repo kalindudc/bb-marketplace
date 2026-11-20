@@ -88,7 +88,7 @@ it.skipIf(spawnSync("git-lfs", ["version"], { stdio: "ignore" }).status !== 0)("
   f.git("lfs", "install", "--local");
   writeFileSync(join(f.root, ".gitattributes"), "*.bin filter=lfs diff=lfs merge=lfs -text\n");
   writeFileSync(join(f.root, "asset.bin"), "preserved asset\n");
-  expect(preserveWorktree(f.root)).toMatchObject({ status: "committed" });
+  expect(await preserveWorktree(f.root)).toMatchObject({ status: "committed" });
   expect(f.git("show", "HEAD:asset.bin")).toMatch(/^version https:\/\/git-lfs.github.com\/spec\/v1\noid sha256:/);
   writeFileSync(join(f.root, "asset.bin"), "staged asset\n");
   expect((await f.run(["add", "--", "asset.bin"])).code).toBe(0);

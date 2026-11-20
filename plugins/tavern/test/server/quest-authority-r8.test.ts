@@ -14,7 +14,7 @@ import { preapprovalWords } from "../../src/shared/quest-authority";
 const receipt = (act: "delegateQuest" | "preapproveQuest") => requireUserAct({ experimental_caller: { kind: "client" } } as never, act);
 const request = (q: string) => ({ boardQuestId: q, kind: "credential" as const, effect: { type: "decision" } as const, question: "Use the credential?", why: "Delegated", options: [{ id: "approve", label: "Approve", detail: "", recommended: false }, { id: "deny", label: "Deny", detail: "", recommended: false }], meanwhile: "Other work", holds: [] });
 const safe = (q: string) => ({ ...planInput(q), reversible: true, waypoints: planInput(q).waypoints.map(w => ({ ...w, acts: [{ kind: "workspace-write", path: "result.md" }] })) });
-it("R5 destructive probe: changed work below an unchanged tip never matches; ordered clean replay does", () => {
+it("R5 destructive probe: changed work below an unchanged tip never matches; ordered clean replay does", async () => {
  const root = mkdtempSync(join(tmpdir(), "r8-range-"));
  const git = (...args: string[]) => execFileSync("git", ["-C", root, ...args], { encoding: "utf8" }).trim();
  try {
@@ -25,14 +25,14 @@ it("R5 destructive probe: changed work below an unchanged tip never matches; ord
   git("checkout","-q","--detach",base);writeFileSync(join(root,"other"),"upstream\n");git("add",".");git("commit","-qm","new base");const upstream=git("rev-parse","HEAD");
   git("update-ref","refs/remotes/origin/main",upstream);git("symbolic-ref","refs/remotes/origin/HEAD","refs/remotes/origin/main");
   writeFileSync(join(root,"config"),"rm -rf / # unreviewed\n");git("add",".");git("commit","-qm","A* changed");git("cherry-pick",verified);
-  expect(cleanRebaseMatches(join(root,".git"),verified,git("rev-parse","HEAD"),upstream)).toBe(false);
+  expect(await cleanRebaseMatches(join(root,".git"),verified,git("rev-parse","HEAD"),upstream)).toBe(false);
   git("checkout","-q","--detach",upstream);git("cherry-pick",first,verified);
-  expect(cleanRebaseMatches(join(root,".git"),verified,git("rev-parse","HEAD"),upstream)).toBe(true);
+  expect(await cleanRebaseMatches(join(root,".git"),verified,git("rev-parse","HEAD"),upstream)).toBe(true);
   git("checkout","-q","--detach",upstream);git("cherry-pick",verified,first);
-  expect(cleanRebaseMatches(join(root,".git"),verified,git("rev-parse","HEAD"),upstream)).toBe(false);
+  expect(await cleanRebaseMatches(join(root,".git"),verified,git("rev-parse","HEAD"),upstream)).toBe(false);
   git("checkout","-q","--detach",upstream);writeFileSync(join(root,"config"),"safe  \n");git("add",".");git("commit","-qm","same patch-id, different tree");git("cherry-pick",verified);
-  expect(cleanRebaseMatches(join(root,".git"),verified,git("rev-parse","HEAD"),upstream)).toBe(false);
-  expect(cleanRebaseMatches(join(root,".git"),verified,git("rev-parse","HEAD"))).toBe(false);
+  expect(await cleanRebaseMatches(join(root,".git"),verified,git("rev-parse","HEAD"),upstream)).toBe(false);
+  expect(await cleanRebaseMatches(join(root,".git"),verified,git("rev-parse","HEAD"))).toBe(false);
  } finally {rmSync(root,{recursive:true,force:true});}
 });
 it("keeps delegated asks in Keeper restatement/status and the move, never need-you", async () => {

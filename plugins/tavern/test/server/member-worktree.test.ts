@@ -30,8 +30,8 @@ describe("member worktree preservation", () => {
   it("reports a clean worktree and commits nothing", async () => {
     const f = fixture();
     const before = f.head();
-    expect(worktreeState(f.worktree)).toMatchObject({ dirty: false, changed: [], unfinishedMerge: false });
-    expect(preserveWorktree(f.worktree)).toEqual({ status: "clean", root: f.worktree });
+    expect(await worktreeState(f.worktree)).toMatchObject({ dirty: false, changed: [], unfinishedMerge: false });
+    expect(await preserveWorktree(f.worktree)).toEqual({ status: "clean", root: f.worktree });
     expect(f.head()).toBe(before);
     expect(f.subject()).toBe("fixture");
   });
@@ -43,11 +43,11 @@ describe("member worktree preservation", () => {
     writeFileSync(join(f.worktree, "tracked.txt"), "changed again\n");
     writeFileSync(join(f.worktree, "notes.txt"), "uncommitted member work\n");
 
-    const state = worktreeState(f.worktree);
+    const state = await worktreeState(f.worktree);
     expect(state.dirty).toBe(true);
     expect(state.changed.sort()).toEqual(["notes.txt", "tracked.txt"]);
 
-    const preserved = preserveWorktree(f.worktree);
+    const preserved = await preserveWorktree(f.worktree);
     expect(preserved).toMatchObject({ status: "committed", changed: expect.arrayContaining(["notes.txt", "tracked.txt"]) });
     expect(preserved.status === "committed" && preserved.sha).toBe(f.head());
     expect(f.subject()).toBe(PRESERVE_MESSAGE);
@@ -63,9 +63,9 @@ describe("member worktree preservation", () => {
     writeFileSync(join(f.worktree, "shared.txt"), "topic\n"); f.git(f.worktree, "add", "shared.txt"); f.git(f.worktree, "commit", "-qm", "topic side");
     f.git(f.worktree, "checkout", "-q", "other"); writeFileSync(join(f.worktree, "shared.txt"), "other\n"); f.git(f.worktree, "add", "shared.txt"); f.git(f.worktree, "commit", "-qm", "other side");
     f.git(f.worktree, "checkout", "-q", "topic"); expect(() => f.git(f.worktree, "merge", "other")).toThrow();
-    expect(worktreeState(f.worktree).unfinishedMerge).toBe(true);
+    expect((await worktreeState(f.worktree)).unfinishedMerge).toBe(true);
 
-    const preserved = preserveWorktree(f.worktree);
+    const preserved = await preserveWorktree(f.worktree);
     expect(preserved).toMatchObject({ status: "deferred", error: expect.stringContaining("unfinished merge") });
     expect(readFileSync(join(f.worktree, "shared.txt"), "utf8")).toContain("<<<<<<<");
   });
@@ -75,7 +75,7 @@ describe("member worktree preservation", () => {
     writeFileSync(join(f.worktree, "notes.txt"), "uncommitted member work\n");
     writeFileSync(f.lock(), "");
 
-    const preserved = preserveWorktree(f.worktree);
+    const preserved = await preserveWorktree(f.worktree);
     expect(preserved).toMatchObject({ status: "deferred", error: expect.stringContaining("cannot commit") });
     expect(f.porcelain()).toContain("notes.txt");
     expect(readFileSync(join(f.worktree, "notes.txt"), "utf8")).toBe("uncommitted member work\n");
@@ -86,7 +86,7 @@ describe("member worktree preservation", () => {
     const f = fixture();
     const plain = join(f.root, "not-a-repository");
     mkdirSync(plain); writeFileSync(join(plain, "notes.txt"), "work Tavern cannot classify\n");
-    expect(preserveWorktree(plain)).toMatchObject({ status: "deferred", error: expect.stringContaining("cannot read the member worktree") });
+    expect(await preserveWorktree(plain)).toMatchObject({ status: "deferred", error: expect.stringContaining("cannot read the member worktree") });
     expect(readFileSync(join(plain, "notes.txt"), "utf8")).toBe("work Tavern cannot classify\n");
   });
 
@@ -94,8 +94,19 @@ describe("member worktree preservation", () => {
     const f = fixture();
     const empty = join(f.root, "empty");
     mkdirSync(empty);
-    expect(preserveWorktree(empty)).toEqual({ status: "none" });
-    expect(preserveWorktree(join(f.root, "gone"))).toEqual({ status: "none" });
+    expect(await preserveWorktree(empty)).toEqual({ status: "none" });
+    expect(await preserveWorktree(join(f.root, "gone"))).toEqual({ status: "none" });
+  });
+
+  it("serializes preservation of the same worktree across overlapping cleanups", async () => {
+    const f = fixture();
+    writeFileSync(join(f.worktree, "notes.txt"), "uncommitted member work\n");
+
+    const [first, second] = await Promise.all([preserveWorktree(f.worktree), preserveWorktree(f.worktree)]);
+
+    expect(first).toMatchObject({ status: "committed", sha: f.head(), changed: ["notes.txt"] });
+    expect(second).toEqual({ status: "clean", root: f.worktree });
+    expect(f.porcelain()).toBe("");
   });
 
   it("preserves a member on this server and skips one whose worktree is elsewhere", async () => {
