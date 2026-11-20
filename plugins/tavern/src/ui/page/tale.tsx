@@ -1,6 +1,7 @@
 import { useBbNavigate } from "@get-bb/plugin-sdk/app";
 import { useRef } from "react";
 import type { BoardQuestDetail, Room } from "../../shared/contract";
+import { settled, verifiedWaypoint } from "../../shared/waypoint";
 import { useMoment } from "../kit/moment";
 import { verifiedOf, verifiedWords, FigureRow, OpensMark, Prose, QuestMap, questNames, readable, Vocabulary, glowVars, plural, taleFigures } from "../kit";
 import { Ago, PageButton, Section, StateMark, ThreadButton, Time, type Registry } from "./common";
@@ -9,6 +10,7 @@ import { leftNothing, reportBlocks } from "./model";
 import { TaleResults } from "../kit/tale-results";
 import { TaleAction, TaleDelivery } from "../kit/tale-delivery";
 import { CreditCard, LeftRow, LootRow } from "./finished";
+import { WaiverRows } from "../kit/waiver-rows";
 
 /** The Keeper's "left" note and the skipped waypoints, quietly; "Nothing left for you." when there is neither. */
 function LeftForYou({ detail, registry }: { detail: BoardQuestDetail; registry: Registry }) {
@@ -41,8 +43,11 @@ export function TalePage({ detail, registry, room }: { detail: BoardQuestDetail;
   const quest = detail.quest;
   if (quest.phase === "stopped") return <div className="tv-tale-wait"><h1 className="sr">The tale (credits): {quest.title}</h1><StateMark tone="wait">Stopped</StateMark><p>This quest was stopped, so it has no tale. The quest record has what was done and left.</p><PageButton path={`quest/${quest.id}`}>The quest record</PageButton></div>;
   if (quest.phase !== "done") return <div className="tv-tale-wait"><h1 className="sr">The tale (credits): {quest.title}</h1><StateMark tone="wait">Not returned yet</StateMark><p>This quest has not returned. No completed tale or loot is claimed.</p><PageButton path={`quest/${quest.id}`}>Open the live quest</PageButton></div>;
-  const verified = quest.waypoints.filter((w) => w.state === "verified");
-  const left = quest.waypoints.filter((w) => w.state !== "verified");
+  const waivers = detail.tale?.waivers ?? quest.waivers ?? [];
+  const closedEarly = detail.tale?.closure === "closed-early" || quest.outcome === "closed-early";
+  const verified = quest.waypoints.filter(verifiedWaypoint);
+  const done = quest.waypoints.filter(w => w.state === "done" || w.state === "accepted");
+  const left = quest.waypoints.filter(w => !settled(w) || w.state === "skipped");
   const names = questNames(quest, registry, detail.reports);
   const skippedWhy = (id: string) => { const s = detail.tale?.skipped.find((x) => x.waypointId === id); return s ? readable(s.reason, names) : undefined; };
   return <div className="tv-tale-page">
@@ -76,6 +81,8 @@ export function TalePage({ detail, registry, room }: { detail: BoardQuestDetail;
       <TaleCredits detail={detail} registry={registry} />
     </section>
     <div className="tv-tgrid">
+      {closedEarly && <Section title="Closed early at your request" count={`${waivers.length} not verified`} level={3} className="tv-card tv-tsec">{!waivers.length && detail.tale?.closeReason && <p data-content>{detail.tale.closeReason}</p>}<WaiverRows items={waivers} final /></Section>}
+      {done.length > 0 && <Section title="Done without a Warden check" count={plural(done.length, "waypoint")} level={3} className="tv-card tv-tsec"><ul className="tv-dw">{done.map(w => <LeftRow key={w.id} waypoint={w} />)}</ul></Section>}
       <Section title="Loot (verified results)" count={verifiedOf(quest) ? verifiedWords(verifiedOf(quest)!, "") : "no quest map"} level={3} className="tv-card tv-tsec">{verified.length ? <ul className="tv-dw tv-loot">{verified.map((w) => <LootRow key={w.id} waypoint={w} detail={detail} registry={registry} />)}</ul> : <p className="tv-empty" data-empty>No verified loot.</p>}</Section>
       <Section title="Left on the board" count={`${plural(left.length, "waypoint")}`} level={3} className="tv-card tv-tsec">{left.length ? <ul className="tv-dw">{left.map((w) => <LeftRow key={w.id} waypoint={w} skipped={skippedWhy(w.id)} />)}</ul> : <p className="tv-empty" data-empty>No unverified waypoints remain.</p>}</Section>
       <Section title="Done when" level={3} className="tv-card tv-tsec"><p data-content>{quest.plan?.doneWhen ?? "No done-when recorded."}</p><div className="tv-first-links tv-tsec-foot"><ThreadButton id={quest.keeperThreadId} label="Open the Keeper's thread" quiet={keeperArchived} /></div></Section>

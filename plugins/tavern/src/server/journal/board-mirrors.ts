@@ -1,6 +1,7 @@
 import type { BoardQuestMirror } from "../ports";
 import type { JournalEntry } from "../../shared/schema";
 import { clip } from "./text";
+import { waiverLine } from "../../shared/closing";
 import { copy, validateEntries } from "./engine";
 
 export function boardMirrors(entries: JournalEntry[], quests: readonly BoardQuestMirror[], now: number): JournalEntry[] {
@@ -17,7 +18,9 @@ export function boardMirrors(entries: JournalEntry[], quests: readonly BoardQues
       status: done ? "done" as const : stopped ? "blocked" as const : "todo" as const,
       parentId: null,
       note: stopped ? `Board quest phase: ${quest.phase}. ${quest.phase === "stopping" ? "Tavern is confirming that every member has stopped." : "Stopped by you, not finished."}`
-        : `Board quest phase: ${quest.phase}. This entry mirrors the board; use tavern_wrap to finish it.`,
+        : done && quest.outcome === "closed-early"
+          ? `Board quest phase: done. Closed early at your request: ${quest.waivers?.map(waiverLine).join("; ")}.`
+          : done && quest.outcome === "concluded" ? "Board quest phase: done. Concluded." : `Board quest phase: ${quest.phase}. This entry mirrors the board; use tavern_wrap to finish it.`,
 
       doneAt: done ? quest.endedAt ?? quest.updatedAt : null,
       doneBy: done ? {kind:"tavern" as const} : null,

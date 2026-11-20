@@ -454,17 +454,21 @@ describe("host boundaries", () => {
     expect(harness.inspection.sdk.callsTo("threads.stop")).toHaveLength(1);
     expect(harness.inspection.sdk.callsTo("threads.send")).toHaveLength(0);
   });
-  it("requires verification or an explicit reason to skip an optional waypoint", async () => {
+  it("offers Close early for unsettled work and requires a reason to skip optional work", async () => {
     const { k, runtime } = setup();
     const q = await seedQuest(k,"lead", "A", "A");
     const plan = planInput(q.id);
     k.plan("lead", plan);
-    await expect(concludeQuest(runtime, "lead", q.id, "Done", "")).rejects.toThrow(/verified/);
+    k.answerAsk(k.store.openAsks("lead", q.id)[0]!.id, "approve", null, "page", "user");
+    const early = await runtime.proposeWrap("lead", q.id, "Done", "");
+    expect(k.store.get("asks", early.askId!)?.effect?.type).toBe("close-early");
+    await runtime.answerAsk(early.askId!, "hold", null, "page", true);
     await expect(
       concludeQuest(runtime, "lead", q.id, "Done", "", [{ waypointId: "w1", reason: "Not needed" }]),
     ).rejects.toThrow(/optional/);
     k.plan("lead", { ...plan, waypoints: plan.waypoints.map((w) => ({ ...w, optional: true })) });
-    const close = await runtime.proposeWrap("lead", q.id, "Done", "Optional work left", [{ waypointId: "w1", reason: "Not needed" }]);
+    k.settle("lead", { boardQuestId: q.id, as: "skipped", waypointId: "w1", reason: "Not needed" });
+    const close = await runtime.proposeWrap("lead", q.id, "Done", "Optional work left");
     await runtime.answerAsk(close.askId!, "conclude", null, "page", true);
     expect(k.summary(q.id).waypoints[0]!.state).toBe("skipped");
     expect(k.quest(q.id).phase).toBe("done");

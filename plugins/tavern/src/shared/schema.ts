@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { taleResultsSchema } from "./tale-results";
 import { classScopeSchema, scopeOverrideSchema } from "../scope/schema";
 import { CLASS_BODY_LIMIT } from "./class-rules";
 import { LOOK_BUILDS, LOOK_HAIRS, LOOK_HAIR_COLOURS, LOOK_HATS, LOOK_LIGHTS, LOOK_SKINS } from "./look";
@@ -251,7 +250,7 @@ export type Brief = z.infer<typeof briefSchema>;
 export const PHASES = ["scout", "greenlight", "build", "check", "wrap", "held", "closing", "done", "stopping", "stopped"] as const;
 export type Phase = (typeof PHASES)[number];
 
-export const WAYPOINT_STATES = ["planned", "todo", "doing", "blocked", "reported", "verified", "rejected", "skipped"] as const;
+export const WAYPOINT_STATES = ["planned", "todo", "doing", "blocked", "rejected", "reported", "verified", "accepted", "done", "skipped", "waived"] as const;
 export type WaypointState = (typeof WAYPOINT_STATES)[number];
 
 // added by Builder B: durable facts, promises, hand-backs and outside-gate contact survive session loss.
@@ -288,12 +287,14 @@ export const gateRecordSchema = gateInputSchema.extend({
 });
 export type GateRecord = z.infer<typeof gateRecordSchema>;
 
+export const waypointCheckSchema = z.enum(["warden", "keeper", "none", "you"], { error: "Each waypoint needs a check: warden, keeper, or none for an agent; you for the user; keeper for an outside owner." });
 export const waypointSchema = z.object({
   id: z.string().regex(/^w[0-9]{1,3}$/),
   title: z.string().min(1).max(200),
   acts: z.array(z.object({ kind: z.string().min(1).max(120), path: z.string().max(4096).optional(), command: z.string().max(8000).optional() }).strict()).max(30).optional(),
   /** agent: a party member; user: the human; outside: a named person or team (a gate). */
   actor: z.enum(["agent", "user", "outside"]),
+  check: waypointCheckSchema.optional(),
   /** Member thread id once staffed; a class id while planned; a person or team name for outside gates. */
   owner: z.string().nullable(),
   leadTime: z.string().max(80).nullable(),
@@ -341,6 +342,20 @@ export const planSchema = z.object({
 });
 export type Plan = z.infer<typeof planSchema>;
 
+export const planInputSchema = planSchema.omit({ version: true, createdAt: true, fromSteer: true }).extend({
+  fromSteer: id.nullish(),
+  waypoints: z.array(waypointSchema.extend({ check: waypointCheckSchema }).refine(w =>
+    w.actor === "user" ? w.check === "you" : w.actor === "outside" ? w.check === "keeper" : w.check !== "you",
+  { path: ["check"], message: "Use warden, keeper, or none for an agent; you for the user; keeper for an outside owner." })).min(1).max(24),
+});
+
+export const settleWaypointSchema = z.object({
+  boardQuestId: id,
+  waypointId: z.string().regex(/^w[0-9]{1,3}$/),
+  as: z.enum(["accepted", "skipped", "open"]),
+  reason: z.string().trim().min(1).max(500),
+}).strict();
+
 export const checkerHandoffHoldDraftSchema = z.object({ reason: z.string().trim().min(1).max(1000) }).strict();
 export const checkerHandoffHoldSchema = z.object({
   id, routeId: id, sourceMessageId: id, sourceText: z.string().max(2000),
@@ -350,6 +365,7 @@ export const checkerHandoffHoldSchema = z.object({
 export type CheckerHandoffHold = z.infer<typeof checkerHandoffHoldSchema>;
 
 import { delegationSchema, preapprovalSchema, delegationKindSchema, actTargetSchema } from "./quest-authority";
+import { closeEarlyDraftSchema, concludeDraftSchema, questOutcomeSchema, waypointWaiverSchema } from "./closing";
 
 export const boardQuestSchema = z.object({
   delegations: z.array(delegationSchema).max(100).optional(),
@@ -360,9 +376,12 @@ export const boardQuestSchema = z.object({
   title: z.string().min(1).max(200),
   short: z.string().min(1).max(40),
   phase: z.enum(PHASES),
+  outcome: questOutcomeSchema.optional(),
+  waivers: z.array(waypointWaiverSchema).max(24).optional(),
   held: z.object({ from: z.enum(["scout", "greenlight", "build"]), since: epochMs }).optional(),
   planVersion: z.number().int().nonnegative(),
   greenlitVersion: z.number().int().nullable(),
+  checkPlanVersion: z.number().int().positive().optional(),
   createdAt: epochMs,
   updatedAt: epochMs,
   endedAt: epochMs.nullable(),
@@ -387,8 +406,9 @@ export const askOptionSchema = z.object({
 });
 
 export const askEffectSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("greenlight"), planVersion: z.number().int().nonnegative() }),
-  z.object({ type: z.literal("conclude"), draft: z.object({ outcome: z.string(), left: z.string(), skipped: z.array(z.object({ waypointId: z.string(), reason: z.string() })).optional(), next: z.array(z.string()).optional(), results: taleResultsSchema.optional() }) }),
+  z.object({ type: z.literal("greenlight"), planVersion: z.number().int().nonnegative(), requiresExplicit: z.literal(true).optional() }),
+  z.object({ type: z.literal("conclude"), draft: concludeDraftSchema }),
+  z.object({ type: z.literal("close-early"), draft: closeEarlyDraftSchema }),
   z.object({ type: z.literal("release-hold"), holdId: id }),
   z.object({ type: z.literal("retry-stop"), memberThreadId: threadId.optional(), hireTokens: z.array(z.string()).optional() }),
   z.object({ type: z.literal("retry-brief"), threadId, briefId: id }),
@@ -426,7 +446,7 @@ export const askSchema = z.object({
   draft: z.object({ to: z.string().max(300), body: z.string().max(8000) }).nullable(),
   state: z.enum(["open", "answered", "defaulted", "withdrawn"]),
   withdrawnAt: epochMs.nullable().optional(),
-  withdrawnCause: z.enum(["quest-stopped", "quest-returned", "plan-superseded", "keeper-archived", "turn-recovered", "scope-cleared", "backup-restored", "conclude-stale-at-upgrade"]).nullable().optional(),
+  withdrawnCause: z.enum(["quest-stopped", "quest-returned", "plan-superseded", "keeper-archived", "turn-recovered", "scope-cleared", "backup-restored", "conclude-stale-at-upgrade", "closing-stale"]).nullable().optional(),
   answer: z
     .object({
       surface: z.string().optional(),
@@ -445,8 +465,11 @@ export type Ask = z.infer<typeof askSchema>;
 
 /** A call recorded in the ledger. Reversible calls the Keeper made alone show under "Decided for you" with an Undo. */
 export const decisionSchema = z.object({
+  undoUnavailable: z.literal(true).optional(),
   askId: id.optional(), optionId: z.string().optional(), kind: delegationKindSchema.optional(),
   exceeds: z.enum(["party", "rangers"]).optional(),
+  waypointCall: settleWaypointSchema.pick({ waypointId: true, as: true }).extend({ planVersion: z.number().int().positive() }).optional(),
+  checkChange: z.object({ planVersion: z.number().int().positive(), previousVersion: z.number().int().positive(), steer: z.object({ at: epochMs, text: z.string() }) }).optional(),
   usedBy: z.string().nullable().optional(),
   // added by Builder B: acknowledgement is cross-device display state; missing means unseen.
   seenAt: epochMs.nullable().optional(),

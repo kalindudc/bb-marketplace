@@ -9,7 +9,8 @@ type Row = CharacterServiceRecord["records"][number];
 /** One quest's tale on a character's sheet: its rows for each role the character held there, merged. */
 export type TaleRow = {
   questId: string; title: string; short: string; endedAt: number | null; kept: boolean; available: boolean;
-  waypoints: { verified: number; total: number; skipped?: number } | null;
+  outcome?: Row["outcome"];
+  waypoints: NonNullable<Row["waypoints"]> | null;
   checks: { checks: number; independent: number; sameFamily: number } | null;
 };
 
@@ -25,6 +26,7 @@ export function talesOf(record: CharacterServiceRecord | null): TaleRow[] {
     row.kept ||= r.kept === true;
     row.available &&= r.available !== false;
     row.waypoints ??= r.waypoints ?? null;
+    if (r.outcome) row.outcome = r.outcome;
     if (r.role === "warden" && r.checks) row.checks = { checks: r.checks, independent: r.independentChecks ?? 0, sameFamily: r.sameFamilyChecks ?? 0 };
     byQuest.set(r.questId, row);
   }
@@ -39,7 +41,8 @@ export function taleFigures(row: TaleRow): string[] {
   const out: string[] = [];
   const w = row.waypoints;
   // An older record has no skipped count: unknown, never zero, so it adds no skipped clause.
-  if (w && w.total > 0) out.push(w.skipped === undefined ? `${w.verified} of ${w.total} verified` : verifiedWords({ verified: w.verified, skipped: w.skipped, total: w.total }));
+  if (row.outcome === "closed-early" && w) out.push(`${w.verified} verified${w.accepted ? `, ${w.accepted} accepted` : ""}, closed early, ${w.waived ?? 0} not verified`);
+  else if (w && w.total > 0) out.push(w.skipped === undefined ? `${w.verified} of ${w.total} verified` : verifiedWords({ verified: w.verified, skipped: w.skipped, total: w.total }));
   const c = row.checks;
   if (c) out.push(c.sameFamily === c.checks ? plural(c.checks, "same-family check") : [plural(c.checks, "check"), c.independent > 0 ? `${c.independent} independent` : null, c.sameFamily > 0 ? `${c.sameFamily} same-family` : null].filter(Boolean).join(", "));
   return out;

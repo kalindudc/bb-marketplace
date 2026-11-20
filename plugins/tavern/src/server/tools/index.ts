@@ -9,7 +9,8 @@ import {
   checkerHandoffHoldDraftSchema,
   briefSchema,
   decisionSchema,
-  planSchema,
+  planInputSchema,
+  settleWaypointSchema,
   reportSchema,
   ROUTE_KINDS,
   noteDraftSchema,
@@ -263,22 +264,29 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   register(
     "tavern_plan",
     "Wrote the quest map",
-    "Write a versioned quest map with done-when, critical path, at most three questions and the proposed party. fromSteer names a recorded steer route. Set reversible:true only for fully reversible work and inventory each waypoint’s acts with kind and command or path; Tavern classifies them for routine pre-approval and refuses unknown acts. read and workspace-write require relative paths; check requires a recognised check command. Production, merge, credential, sends-as-you and destructive acts never match routine pre-approval. The default requires explicit greenlight; an enabled by-size policy may automatically approve one party slot without unresolved asks/questions or outside/user gates, as a reversible decision. Include findings and evidence, assumptions, owners, dependencies, lead times and the user's review load. Existing member thread ids prepare and link their journals; each Warden slot names its assigned waypointIds from one maker. Emit the exact quest-map directive returned, on its own line. Read the approval result rather than inferring consent from chat. While approval waits, do only reversible scouting, private briefs and drafts. Re-plans within approved counts are reversible decisions; a larger party needs a new greenlight. Do not fabricate another greenlight with tavern_ask.",
-    planSchema
-      .omit({ version: true, createdAt: true, fromSteer: true })
-      .extend({ fromSteer: id.nullish() }),
+    "Write a quest map with done-when, owners, dependencies, lead times, review load, party and at most three questions. Set reversible:true only for fully reversible work. For routine pre-approval, inventory acts: read and workspace-write need relative paths; check needs a recognised command. Each waypoint needs check: warden, keeper, or none for an agent; you for a mark in the Keeper's journal; keeper for an outside answer recorded with tavern_gate. Warden slots name waypointIds from one maker. Await explicit greenlight before staffing; by-size can approve one party slot without open asks, questions or user or outside gates. A larger party or weaker checks need a new greenlight. For a reversible check change, fromSteer cites the user's routed steer for this quest. Emit the exact returned quest-map directive.",
+    planInputSchema,
     async (input, threadId) => {
       const plan = await runtime.plan(threadId, input);
       const quest = k.quest(plan.boardQuestId);
       const standing = k.store.query("asks", "boardQuestId", quest.id, 500).find(ask => ask.effect?.type === "greenlight" && ask.effect.planVersion === plan.version && ask.answer?.preapproval)?.answer?.preapproval;
       const approval = standing ? ` ${preapprovalWords(standing)}.` :
-        quest.greenlitVersion === plan.version
+        quest.phase === "greenlight"
+          ? " Await the user's explicit greenlight for this plan."
+          : quest.greenlitVersion === plan.version
           ? " Automatically greenlit by the configured by-size policy; Undo is in Decided for you."
           : quest.greenlitVersion !== null
             ? ` Staffing remains within approved plan v${quest.greenlitVersion}.`
             : " Await the user’s explicit greenlight before staffing.";
       return `Plan v${plan.version} saved.${approval} Write on its own line:\n::tavern-questmap{quest="${plan.boardQuestId}" version="${plan.version}"}${plan.fromSteer ? `\n::tavern-ledger{quest="${plan.boardQuestId}" version="${plan.version}"}` : ""}`;
     },
+  );
+  register(
+    "tavern_settle",
+    "Recorded a waypoint decision",
+    "Record why you accepted a Keeper check (reported work or an answered outside gate), skipped an unsettled optional waypoint, or reopened one you accepted or skipped. Set as to accepted, skipped, or open. The reason is visible and the user can undo the call. This never awards Warden credit.",
+    settleWaypointSchema,
+    (input, threadId) => k.settle(threadId, input),
   );
   register(
     "tavern_ask",
@@ -403,31 +411,29 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   register(
     "tavern_wrap",
     "Reported the final summary",
-    "Report a verified board quest's final summary and ask the user to conclude. A quest NEVER concludes itself: this tool opens a never-timed conclude ask and the tale is told only after the user answers. Every waypoint must be verified or explicitly skipped with a reason. Give next actions for the user (empty if none). Put a short summary in results.figures and results.chart. Your final message is the summary: lead with the answer, state what changed and what was proved, and ask whether the quest can conclude, should hold for other work, or should open extensions or side quests. End with the ask directive. Do not write the tale directive, do not say the quest returned and do not archive anyone before the user answers. Rich visuals are welcome: check each renderer block with its check tool when available (for example check_ui), and fix every error before sending. If the check tool is absent, keep the block simple; do not ask the user for it. Do not repeat the next list; Tavern shows What to do now; no notes about your process or tools. outcome is a short account of what changed and what was proved, not raw reports. Put remaining user work in left, or write \"Nothing\" when none remains.",
+    "A quest NEVER concludes itself. Open a never-timed conclude ask: Conclude for a settled map, Close early otherwise. Give a reason for unfinished work and cite fromSteer if the user asked in chat. Tell what changed and what was proved in outcome; put remaining work in left and actions in next. Do not repeat the next list. Use results.figures and results.chart for a short summary. Check renderer blocks with check_ui and fix every error. If the check tool is absent, keep the block simple; do not ask the user for it. End with the ask directive. Do not write the tale directive or archive anyone before the user answers.",
     z.object({
       boardQuestId: id,
       outcome: z.string().min(1).max(4000),
       next: z.array(z.string().trim().min(1).max(200)).max(5),
       results: taleResultsSchema.optional(),
       left: z.string().max(4000),
-      skipped: z
-        .array(z.object({ waypointId: id, reason: z.string().min(1).max(500) }))
-        .max(24)
-        .default([]),
-    }),
+      reason: z.string().trim().min(1).max(500).optional(),
+      fromSteer: id.optional(),
+    }).strict(),
     async (input, threadId) => {
       const result = await runtime.proposeWrap(
         threadId,
         input.boardQuestId,
         input.outcome,
         input.left,
-        input.skipped,
         input.next,
         input.results,
+        { reason: input.reason, fromSteer: input.fromSteer },
       );
       if (!result.askId)
         return `Retold the returned quest.${result.pendingArchives.length ? ` Archiving ${result.pendingArchives.length} member(s) remains pending and will retry automatically.` : ""} Keep results.figures and results.chart as the short summary. Rich visuals are welcome in the final message: check each renderer block with its check tool when available (for example check_ui), and fix every error before sending. If the check tool is absent, keep the block simple; do not ask the user for it. Your final message is only the tale: lead with the answer, use Markdown lists or tables if useful. Do not repeat the next list; Tavern shows What to do now. Include no notes about your process or tools, and end on its own line:\n::tavern-tale{quest="${input.boardQuestId}"}`;
-      return `Summary recorded. The quest has NOT concluded.\nYour final message reports that summary to the user and asks whether the quest can conclude, should hold for other work, or should open extensions or side quests. Keep results.figures and results.chart as the short summary. Do not say the quest returned, do not archive the party and do not write the tale directive until the user answers the ask. Rich visuals are welcome: check each renderer block with its check tool when available (for example check_ui), and fix every error before sending. Lead with the answer, use Markdown lists or tables if useful, and end on its own line:\n::tavern-ask{id="${result.askId}"}`;
+      return `Summary recorded. The quest has NOT concluded.\nReport that summary and let the returned Conclude or Close early card carry the decision. Keep results.figures and results.chart as the short summary. Do not say the quest returned, do not archive the party and do not write the tale directive until the user answers the ask. Rich visuals are welcome: check each renderer block with its check tool when available (for example check_ui), and fix every error before sending. Lead with the answer, use Markdown lists or tables if useful, and end on its own line:\n::tavern-ask{id="${result.askId}"}`;
     },
   );
   register(

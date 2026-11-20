@@ -109,5 +109,8 @@ export function reviewWaypointFingerprint(keepers: KeeperStore, target: ReviewTa
   const waypoint = plan?.waypoints.find(item => item.id === target.waypointId);
   if (!plan || !waypoint || !quest || ["done", "stopped", "stopping"].includes(quest.phase)) throw new Error("The reviewed waypoint is no longer active.");
   const members = keepers.all("members").filter(member => member.boardQuestId === quest.id && !keepers.runtime(member.threadId).released);
-  return createHash("sha256").update(JSON.stringify({ waypoint, maker: makerForWaypoint(plan, members, waypoint.id) })).digest("hex");
+  // Preserve existing fingerprints when a plan makes its implicit Warden check explicit.
+  const { check, ...work } = waypoint;
+  const binding = check === "warden" ? work : waypoint;
+  return createHash("sha256").update(JSON.stringify({ waypoint: binding, maker: makerForWaypoint(plan, members, waypoint.id) })).digest("hex");
 }

@@ -152,6 +152,7 @@ it("returns strict JSON from EVERY registered RPC with optional record fields ab
     markDecisionsUnseen: () => call("markDecisionsUnseen", { undoToken: seenUndoToken }),
     decisionHistory: () => call("decisionHistory", { keeperThreadId: "lead" }),
     undoDecision: () => call("undoDecision", { decisionId: f.decision.id }),
+    resetUndoLane: () => call("resetUndoLane", { threadId: "lead", kind: "merge" }),
     correctRoute: () => call("correctRoute", { routeId: f.route.id, kind: "aside", boardQuestId: null }),
     addRule: () => call("addRule", { scope: "keeper", scopeId: "lead", text: "Keep drafts private", source: "user" }),
     confirmRule: () => call("confirmRule", { ruleId: f.rule.id, active: true }),

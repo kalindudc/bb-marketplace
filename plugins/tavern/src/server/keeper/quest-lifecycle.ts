@@ -1,5 +1,6 @@
-import type { Actor, BoardQuest, Phase, Plan } from "../../shared/schema";
+import type { Actor, BoardQuest, Phase, Plan, WaypointState } from "../../shared/schema";
 import type { KeeperStore } from "./store";
+import { settled, waypointCheck } from "../../shared/waypoint";
 
 export const STORED_PHASES = ["scout", "greenlight", "build", "held", "closing", "done", "stopping", "stopped"] as const;
 type StoredPhase = typeof STORED_PHASES[number];
@@ -13,12 +14,13 @@ export const QUEST_TRANSITIONS: readonly Row[] = [
   ...rows(["greenlight"], ["build"], "approve", ["user"], "ask-answer", "ask.answered"),
   ...rows(["greenlight"], ["build"], "auto-approve", ["agent"], "decision", "decision.made"),
   ...rows(["build"], ["greenlight"], "undo", ["user"], "undo", "decision.undone"),
-  ...rows(["build"], ["closing"], "close", ["agent"], "ask", "ask.opened"),
+  ...rows(["scout", "greenlight", "build"], ["closing"], "close", ["agent"], "ask", "ask.opened"),
   ...rows(["build"], ["closing"], "conclude-open-at-upgrade", ["tavern"], "ask", "ask.opened"),
-  ...rows(["closing"], ["build"], "conclude-withdrawn", ["tavern"], "ask", "ask.withdrawn"),
-  ...rows(["closing"], ["build"], "keep-open", ["user"], "ask-answer", "quest.kept-open"),
+  ...rows(["closing"], ["scout", "greenlight", "build"], "conclude-withdrawn", ["tavern"], "ask", "ask.withdrawn"),
+  ...rows(["closing"], ["scout", "greenlight", "build"], "keep-open", ["user"], "ask-answer", "quest.kept-open"),
   ...rows(["closing"], ["build"], "extensions", ["user"], "ask-answer", "quest.extended"),
   ...rows(["closing"], ["done"], "conclude", ["user"], "ask-answer", "quest.wrapped"),
+  ...rows(["closing"], ["done"], "close-early", ["user"], "ask-answer", "quest.wrapped"),
   ...rows(["scout", "greenlight", "build", "held", "closing"], ["stopping"], "stop", ["user"], "user-act", "quest.stopping"),
   ...rows(["stopping"], ["stopped"], "stopped", ["tavern"], "members-stopped", "quest.stopped"),
   ...rows(["done", "stopped"], ["scout", "build"], "reopen", ["agent"], "user-message", "quest.reopened"),
@@ -35,6 +37,16 @@ export function partyCounts(plan: Plan): Map<string, number> {
 export function partyFits(plan: Plan, approved: Plan) {
   const capacity = partyCounts(approved);
   return [...partyCounts(plan)].every(([classId, count]) => count <= (capacity.get(classId) ?? 0));
+}
+export function checksFit(plan: Plan, approved: Plan, earlier: Plan | null = null, isSettled: (waypointId: string) => boolean = () => false) {
+  const strength = { none: 0, keeper: 1, you: 2, warden: 3 };
+  const checks = new Map([...(earlier?.waypoints ?? []), ...approved.waypoints].map(w => [w.id, strength[waypointCheck(w)]]));
+  if (plan.waypoints.some(w => strength[waypointCheck(w)] < (checks.get(w.id) ?? 0))) return false;
+  const kept = new Set(plan.waypoints.map(w => w.id));
+  return approved.waypoints.every(w => {
+    const check = waypointCheck(w);
+    return kept.has(w.id) || check !== "warden" && check !== "keeper" || isSettled(w.id);
+  });
 }
 export function approvedPartyReceipt(store: KeeperStore, quest: BoardQuest): { kind: string; id: string } | null {
   if (quest.greenlitVersion === null) return null;
@@ -69,6 +81,8 @@ export function transitionQuest(store: KeeperStore, quest: BoardQuest, to: Phase
     const { current, from, row } = assertQuestTransition(store, quest, to, cause, actor, receipt, options);
     const result: BoardQuest = { ...(current ?? quest), ...options.patch, phase: to, updatedAt: at, ...(to === "held" ? { held: { from: from as "scout" | "greenlight" | "build", since: at } } : {}) };
     if (to !== "held") delete result.held;
+    if (to === "stopped") result.outcome = "stopped";
+    if (cause === "reopen") { delete result.outcome; delete result.waivers; }
     if (to === "done" || to === "stopping" || to === "stopped") result.reviewAllowance = result.reviewAllowance?.filter(grant => grant.usedBy !== null);
     const cursors = { ...store.runtime(quest.keeperThreadId).heldNewsCursors };
     if (to === "held") cursors[quest.id] = { cursor: cursors[quest.id]?.cursor ?? store.eventSequence(quest.keeperThreadId) };
@@ -90,16 +104,16 @@ export function transitionQuest(store: KeeperStore, quest: BoardQuest, to: Phase
     }
     authorised.add(result);
     store.put("quests", quest.id, result);
-    store.event(at, quest.keeperThreadId, quest.id, row.event, options.text ?? `${quest.title}: ${from ?? "new"} to ${to}`, { ...options.data, cause, phase: { from, to }, receipt }, actor);
+    store.event(at, quest.keeperThreadId, quest.id, row.event, options.text ?? `${quest.title}: ${from ?? "new"} to ${to}`, { ...options.data, ...(to === "stopped" ? { closure: result.outcome } : {}), cause, phase: { from, to }, receipt }, actor);
     if (from === "held") cursors[quest.id] = { ...cursors[quest.id]!, through: store.eventSequence(quest.keeperThreadId) };
     if (to === "held" || from === "held") store.patch(quest.keeperThreadId, { heldNewsCursors: cursors });
     return result;
   });
 }
-export function displayStage(phase: Phase, waypoints: { state: string }[], hasPlan: boolean): Phase {
+export function displayStage(phase: Phase, waypoints: { state: WaypointState }[], hasPlan: boolean): Phase {
   const stored = storedPhase(phase);
   if (stored !== "build" || !hasPlan) return stored;
-  return waypoints.every(w => ["verified", "skipped"].includes(w.state)) ? "wrap" : waypoints.some(w => w.state === "reported") ? "check" : "build";
+  return waypoints.every(settled) ? "wrap" : waypoints.some(w => w.state === "reported") ? "check" : "build";
 }
 export function nextNewsBy(phase: Phase, boxes: number[], promises: number[]): number | null {
   const times = [...boxes, ...promises];

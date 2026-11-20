@@ -11,6 +11,7 @@ import {
 import type { Keeper } from "./service";
 import { messageKey } from "../../shared/text";
 import { isOpenQuest } from "../liveness";
+import { settled } from "../../shared/waypoint";
 
 export class KeeperMemory {
   review = () => ({ waiting: 0, budget: 3 });
@@ -303,7 +304,7 @@ export class KeeperMemory {
           (w) =>
             w.actor === "outside" &&
             !w.gate &&
-            !["verified", "skipped"].includes(w.state),
+            !settled(w),
         )
         .map((w) => ({
           boardQuestId: q.id,
@@ -312,7 +313,7 @@ export class KeeperMemory {
             waypoints.some(
               (parent) =>
                 parent.id === id &&
-                ["verified", "skipped"].includes(parent.state),
+                settled(parent),
             ),
           ),
           text: `Outside gate ${w.title} not asked yet (lead time ${w.leadTime ?? "not stated"}); owner ${w.owner ?? "unassigned"}; ${q.id}/${w.id}`,

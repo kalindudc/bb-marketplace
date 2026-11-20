@@ -10,7 +10,7 @@ export const AUTHORITY = {
   answerAsk: explicit, greenlight: explicit, conclude: explicit, closeEarly: explicit,
   resolveHandBack: explicit,
   releaseCheckerHandoff: explicit, awayClose: explicit, awayReturn: explicit,
-  addRule: explicit, widenRule: explicit, confirmRule: explicit, undoDecision: explicit,
+  addRule: explicit, widenRule: explicit, confirmRule: explicit, undoDecision: explicit, resetUndoLane: explicit,
   correctRoute: explicit, stopBoardQuest: explicit, resumeAll: explicit,
   placementRetry: explicit, placementModelFailureClear: explicit,
   holdBoardQuest: explicit, resumeBoardQuest: explicit, allowReview: explicit,
@@ -25,7 +25,7 @@ export const AUTHORITY = {
   voiceCheckStart: explicit, voiceCheckCancel: explicit, releaseHold: explicit,
   openQuest: words, reopenQuest: words, weakenChecks: words, steerDecision: words,
   holdQuestFromMessage: words, resumeQuestFromMessage: words,
-  keepMember: keeper, releaseMember: keeper, defaultDecision: keeper, acceptWaypoint: keeper, skipWaypoint: keeper, exceedParty: keeper, exceedRangers: keeper,
+  keepMember: keeper, releaseMember: keeper, defaultDecision: keeper, acceptWaypoint: keeper, skipWaypoint: keeper, reopenWaypoint: keeper, exceedParty: keeper, exceedRangers: keeper,
   verifyOwnWork: invariant, upgradeResolution: invariant, changeClosedCredits: invariant,
 } as const;
 export const QUEST_LANES = {

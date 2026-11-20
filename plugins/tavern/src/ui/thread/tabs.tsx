@@ -1,4 +1,5 @@
 import { attentionView, attentionNotes } from "../../shared/attention";
+import { undoKindWords, undoLaneWords } from "../../shared/undo-lane";
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { experimental_useRpcQuery, experimental_useRpcMutation, experimental_useAppPanel, useBbNavigate, type ExperimentalTabReference, type ExperimentalThreadTabProps } from "@get-bb/plugin-sdk/app";
 import { rpcContract } from "../../shared/contract";
@@ -76,6 +77,7 @@ export function LedgerTab({ threadId, params }: ExperimentalThreadTabProps & { p
   const navigate = useBbNavigate();
   const panel = experimental_useAppPanel();
   const undo = experimental_useRpcMutation({ contract: rpcContract, method: "undoDecision" });
+  const resetLane = experimental_useRpcMutation({ contract: rpcContract, method: "resetUndoLane" });
   const confirm = experimental_useRpcMutation({ contract: rpcContract, method: "confirmRule" });
   const widenRule = experimental_useRpcMutation({ contract: rpcContract, method: "widenRule" });
   const [error, setError] = useState<unknown>(null);
@@ -115,7 +117,7 @@ export function LedgerTab({ threadId, params }: ExperimentalThreadTabProps & { p
         const activeRules = data.rules.filter(r => r.active);
         const offRules = data.rules.filter(r => !r.active && r.source !== "keeper-proposed");
         const answered = data.asks.filter(a => a.state !== "open");
-        const keeperCalls = data.decisions.filter(d => d.source === "keeper");
+        const keeperCalls = data.decisions.filter(d => d.source === "keeper" || d.checkChange);
         // The server's attention list (unseen, reversible Keeper calls outside the cellar) is the one the widget counts; the fallback applies the same rule to the loaded history.
         const cellared = new Set(archived.map(q => q.id));
         const attention = data.decidedForYou ?? keeperCalls.filter(d => !d.undone && d.reversible && d.seenAt == null && !(d.boardQuestId && cellared.has(d.boardQuestId)));
@@ -154,11 +156,18 @@ export function LedgerTab({ threadId, params }: ExperimentalThreadTabProps & { p
               {q.members.filter(m => m.restNote).map(m => <p className="m small" key={`rest-${m.threadId}`}><b>{registry.data ? characterName(registry.data, m) : m.displayName ?? m.classId}</b> {m.restNote}</p>)}
               {q.members.filter(m => m.checkIndependence === "same-family" || m.checkIndependence === "not-established" || m.guardPosture?.mode === "detection-only").map(m => <p className="lg-indep" key={m.threadId}><b>{registry.data ? characterName(registry.data, m) : m.displayName ?? m.classId}</b><CheckIndependence member={m} /><GuardPosture member={m} /></p>)}
               <button type="button" className="fold" aria-expanded={mapOpen === q.id} onClick={() => setMapOpen(mapOpen === q.id ? null : q.id)}><Glyph name="chevron" size={12} className={mapOpen === q.id ? "down" : ""} /><span><Vocabulary word="map" /> · {q.waypoints.length} waypoints</span></button>
-              {mapOpen === q.id && <QuestMap quest={q} mode="live" />}
+              {mapOpen === q.id && <QuestMap quest={q} mode="live" rowsOnly />}
             </section>
           ))}
           <KeptInMind notes={notes} total={data.notesTotal} older={data.olderPromises} short={short} />
           <h3 data-attention-group="new">New for you</h3>
+          {!!data.undoLanes?.length && <section className="lg-card" aria-label="Decisions that now ask you">
+            <h3>Decisions that now ask you</h3>
+            <ul className="lg-undo-lanes">{data.undoLanes.map(lane => <li key={lane.kind}>
+              <span>{undoLaneWords(lane)}</span>
+              <button className="btn sm" type="button" aria-label={`Reset ${undoKindWords[lane.kind]}`} disabled={resetLane.isPending} onClick={() => void resetLane.mutate({ threadId, kind: lane.kind }).catch(setError)}>Reset</button>
+            </li>)}</ul>
+          </section>}
           <DecidedForYou decisions={attention} total={decidedCount} pending={undo.isPending} onUndo={id => void undo.mutate({ decisionId: id }).catch(setError)} {...seen} />
           {data.boardQuests.map(q => <QuestAuthority key={q.id} questId={q.id} via="banner" compact />)}
           <section className="lg-sec" aria-label="Standing rules">
@@ -166,7 +175,7 @@ export function LedgerTab({ threadId, params }: ExperimentalThreadTabProps & { p
             {activeRules.length === 0 ? <p className="m small">No standing rules yet. Use “Make this a rule” on any message.</p>
               : <ul className="lg-rows lg-rules">{activeRules.map(r => <RuleRow key={r.id} rule={r} quest={questTitle(r)} onWiden={widen(r)} actions={<button type="button" className="btn sm" disabled={confirm.isPending} aria-label={`Turn off the rule: ${r.text}`} onClick={() => setRule(r.id, false)}>Turn off</button>} />)}</ul>}
           </section>
-          {returned.length > 0 && <ul className="lg-rows lg-done" aria-label="Returned quests">{returned.map(q => { const verified = q.waypoints.filter(w => w.verifiedBy !== null).length; return <li key={q.id}><button type="button" className="lg-row act" title={`Open the quest page: ${q.title}`} onClick={() => navigate.toPluginPanel("tavern", { subPath: `quest/${q.id}` })}><span className="t">{q.title}</span><span className="m">{q.phase === "stopped" ? "Stopped" : "Returned"} · verified {verified} of {q.waypoints.length}</span><OpensMark /></button></li>; })}</ul>}
+          {returned.length > 0 && <ul className="lg-rows lg-done" aria-label="Returned quests">{returned.map(q => <li key={q.id}><button type="button" className="lg-row act" title={`Open the quest page: ${q.title}. ${q.move.text}`} onClick={() => navigate.toPluginPanel("tavern", { subPath: `quest/${q.id}` })}><span className="t">{q.title}</span><span className="m">{q.move.text}</span><OpensMark /></button></li>)}</ul>}
           <div className="lg-history" role="group" aria-label="History">
             <h3 className="lbl">History</h3>
             {answered.length > 0 && <details className="lg-fold" data-fold="answered"><summary><Glyph name="chevron" size={12} /><span>Past asks</span><span className="num">{answered.length}</span></summary><ul className="lg-rows">{answered.map(a => <li key={a.id}><span className="lg-row"><StatusPill status={a.state === "answered" ? "answered" : a.state}>{a.state}</StatusPill><span className="t" title={a.question}>{a.question}</span><TimeAgo at={a.answer?.at ?? a.createdAt} /></span></li>)}{data.asksNextCursor && <AskHistoryPage threadId={threadId} cursor={data.asksNextCursor} />}</ul></details>}

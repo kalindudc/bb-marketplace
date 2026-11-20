@@ -21,13 +21,12 @@ async function fixture(endState: "drafts-ready" | "pause" = "drafts-ready", allo
   await f.runtime.away.close({ revision: 0, until: f.time() + 60_000, quests: [{ questId: q.id, endState }], allowWatched });
   return { ...f, q, ask, archive };
 }
-async function concludeQuest(runtime: TavernRuntime, ...args: Parameters<TavernRuntime["wrap"]>) {
-  const [threadId, id] = args;
-  if (runtime.keeper.quest(id).phase === "done") return runtime.wrap(...args);
+async function concludeQuest(runtime: TavernRuntime, ...args: Parameters<TavernRuntime["proposeWrap"]>) {
   const opened = await runtime.proposeWrap(...args);
-  const ask = runtime.keeper.store.get("asks", opened.askId!)!;
-  runtime.keeper.store.put("asks", ask.id, { ...ask, state: "answered", answer: { optionId: "conclude", note: null, by: "user", via: "page", at: runtime.keeper.now(), surface: "client (unattested)" } });
-  return runtime.wrap(...args);
+  if (!opened.askId) return { pendingArchives: opened.pendingArchives };
+  const stayAway = vi.spyOn(runtime.away, "return").mockResolvedValue(undefined as never);
+  try { return await runtime.answerAsk(opened.askId, "conclude", null, "page", true); }
+  finally { stayAway.mockRestore(); }
 }
 describe("Closing time cleanup of a previously answered conclusion", () => {
   it("returns a finished draft and closes its asks without archiving members while closed", async () => {

@@ -10,6 +10,7 @@ import { voiceShown, AskCard, Clamp, Crest, levelsShown, reachedInParty, reached
 import type { ReportHeadlineNames } from "../../shared/report-headline";
 import { TaleAction } from "../kit/tale-delivery";
 import { TaleResults } from "../kit/tale-results";
+import { WaiverRows } from "../kit/waiver-rows";
 import { REPORTS_TAB } from "./reports-tab";
 import { glowVars } from "../kit";
 import { useMoment } from "../kit/moment";
@@ -49,7 +50,7 @@ export function QuestMapCard({ detail, version }: { detail: BoardQuestDetail; ve
   const [more, setMore] = useState<null | "findings" | "decided">(null);
   const plan = version === null ? detail.quest.plan : detail.plans.find(p => p.version === version);
   const card = useRef<HTMLElement>(null);
-  const isSealed = !!plan && detail.quest.greenlitVersion !== null && detail.quest.greenlitVersion >= plan.version;
+  const isSealed = !!plan && ((detail.quest.greenlitVersion ?? 0) >= plan.version || detail.quest.checkPlanVersion === plan.version && detail.quest.planVersion === plan.version && detail.quest.phase !== "greenlight");
   // The seal stamps and the party is dealt once per device: when sealed here, or the first time this device sees it sealed.
   const moment = useMoment(card, { surface: `thread:${detail.quest.keeperThreadId ?? "chat"}`, kind: "party forms", rememberKey: `moment:seal:${detail.quest.id}:${plan?.version ?? 0}`, active: isSealed, className: "mo-seal", ms: 1200 });
   if (!plan) return <p className="tavern problem" role="alert">This plan version is not available.</p>;
@@ -57,7 +58,7 @@ export function QuestMapCard({ detail, version }: { detail: BoardQuestDetail; ve
   const greenlight = detail.asks.find(a => a.kind === "greenlight" && a.state === "open");
   const sealed = isSealed;
   const quest = current ? detail.quest : { ...detail.quest, plan, waypoints: plan.waypoints.map(w => ({ ...w, state: "planned" as const, ownerMember: null, evidenceCount: 0, verifiedBy: null, rejectedReason: null })) };
-  const decided = detail.decisions.filter(d => d.source === "keeper");
+  const decided = detail.decisions.filter(d => d.source === "keeper" || d.checkChange);
   const formOption = greenlight?.options.find(o => o.recommended) ?? greenlight?.options[0];
   const unknownLead = plan.waypoints.filter(w => w.leadTime === null).length;
   const redirect = () => { composer.insert(`About ${detail.quest.title}, plan v${plan.version}: `); composer.focus(); };
@@ -70,7 +71,7 @@ export function QuestMapCard({ detail, version }: { detail: BoardQuestDetail; ve
         {sealed ? <span className="sealmark"><Glyph name="wax-seal" size={16} /><span>Sealed · party formed</span></span> : current ? <span className="qm-wait">Waits for your seal</span> : <StatusPill status="superseded">superseded</StatusPill>}
       </header>
       <p className="qm-goal"><b>{plan.goal}</b><span className="m"> · done when {plan.doneWhen.charAt(0).toLowerCase() + plan.doneWhen.slice(1)}</span></p>
-      <QuestMap quest={quest} mode={sealed ? "live" : "plan"} dealt={sealed} stretch={!sealed} />
+      <QuestMap quest={quest} mode={sealed ? "live" : "plan"} dealt={sealed} stretch={!sealed} showChecks />
       <div className="qm-key m"><span><i className="k crest" />agent</span><span><i className="k you" />your move</span><span><i className="k gate" />outside owner</span><span>left to right is order, not a schedule</span></div>
       <div className="qm-cols">
         <section className="qm-qs" aria-label="Questions for you">
@@ -91,9 +92,9 @@ export function QuestMapCard({ detail, version }: { detail: BoardQuestDetail; ve
       <QueryState error={error} />
       {current && !sealed && (
         <footer className="qm-f">
-          {greenlight && formOption ? <button type="button" className="btn pri seal" disabled={answer.isPending} onClick={() => void answer.mutate({ askId: greenlight.id, optionId: formOption.id, note: null, via: "chat" }).catch(setError)}><Glyph name="wax-seal" />{answer.isPending ? "Sealing…" : "Form the party (greenlight)"}</button> : <span className="m small">The greenlight ask is not open yet.</span>}
+          {greenlight && formOption ? <button type="button" className="btn pri seal" disabled={answer.isPending} onClick={() => void answer.mutate({ askId: greenlight.id, optionId: formOption.id, note: null, via: "chat" }).catch(setError)}><Glyph name="wax-seal" />{answer.isPending ? "Sealing…" : greenlight.effect?.type === "greenlight" && greenlight.effect.requiresExplicit ? "Approve the updated plan" : "Form the party (greenlight)"}</button> : <span className="m small">The greenlight ask is not open yet.</span>}
           <button type="button" className="btn" onClick={redirect}>Redirect in chat</button>
-          <span className="qm-scope m">Staffs the party only. Production steps and anything sent as you still ask you. Or reply in chat, e.g. “seal, 1 Monday”.</span>
+          <span className="qm-scope m">Approves the party and these checks. Production steps and anything sent as you still ask you. Or reply in chat, e.g. “seal, 1 Monday”.</span>
         </footer>
       )}
       {!sealed && !current && <p className="m small qm-old">This plan was superseded; it cannot be greenlit here.</p>}
@@ -258,6 +259,7 @@ function QuestDirective({ kind, questId, version }: { kind: DirectiveKind; quest
       <header className="qm-h"><span className="qm-t"><b><Vocabulary word="tale" /></b><span className="qm-q" title={detail.quest.title}>{detail.quest.title}</span></span><span className="tc-sp" />{openTale}</header>
       {detail.tale ? <Clamp className="tale-lead" lines={2} text={registry.data ? readable(detail.tale.outcome, questNames(detail.quest, registry.data, detail.reports)) : detail.tale.outcome} /> : <p className="m tale-lead">No tale was written for this quest; its reports are on the tale page.</p>}
       <TaleResults results={detail.tale?.results} compact />
+      {detail.tale?.closure === "closed-early" && <div className="tale-next"><b>Closed early at your request</b><WaiverRows items={detail.tale.waivers ?? []} final /></div>}
       {detail.tale?.next?.length ? <div className="tale-next"><p><b>What to do now: </b><TaleAction text={detail.tale.next[0]!} tale={detail.tale} threadId={detail.quest.keeperThreadId} /></p>{detail.tale.next.length > 1 && <button type="button" className="lnk-btn act" onClick={() => navigate.toPluginPanel("tavern", { subPath: `tale/${detail.quest.id}` })}>{detail.tale.next.length - 1} more</button>}</div> : null}
       <div className="tale-foot">
         <FigureRow compact figures={taleFigures(detail)} />

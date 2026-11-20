@@ -115,7 +115,8 @@ it("keeps an incomplete legacy conclude ask open and visible", async () => {
   f.k.answerAsk(f.k.store.openAsks("lead", q.id)[0]!.id, "approve", null, "page", "user");
   const entry = waypointEntry("maker", q.id), get = f.port.get;
   f.port.get = id => ({ ...get(id), entries: id === "maker" ? [entry] : [] }); f.port.linkedEntries = () => [entry];
-  await f.runtime.proposeWrap("lead", q.id, "Built", "", [{ waypointId: "w1", reason: "Not needed" }]);
+  f.k.settle("lead", { boardQuestId: q.id, waypointId: "w1", as: "skipped", reason: "Not needed" });
+  await f.runtime.proposeWrap("lead", q.id, "Built", "");
   const ask = f.k.store.openAsks("lead", q.id).find(a => a.kind === "conclude")!, { effect: _effect, ...old } = ask;
   f.k.store.put("asks", ask.id, old);
   await expect(f.runtime.answerAsk(ask.id, "conclude", null, "page", true)).rejects.toThrow(/old ask.*conclusion draft/i);

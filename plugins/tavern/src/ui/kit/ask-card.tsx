@@ -7,6 +7,8 @@ import { MemberChip, QueryState, TimeAgo, clockTime } from "./primitives";
 import { preapprovalWords } from "../../shared/quest-authority";
 import { QuestAuthority } from "./quest-authority";
 import { useRegistry } from "./registry";
+import { isCloseEffect, type PullRequestChoices } from "../../shared/closing";
+import { WaiverRows } from "./waiver-rows";
 
 const KIND: Record<Ask["kind"], string> = { greenlight: "Greenlight", decision: "Decision", conclude: "Conclude", production: "Production", merge: "Merge", destructive: "Destructive", "sends-as-you": "Sends as you", blocker: "Blocker", credential: "Credential", scope: "Scope change" };
 const VIA: Record<string, string> = { banner: "in the thread", page: "in the common room", phone: "on the phone", chat: "in the chat", cli: "from the CLI", timer: "by its default" };
@@ -51,7 +53,10 @@ export function AskCard({ ask, via = "banner", onFold, onAnswered, headless = fa
   const [optionId, setOption] = useState<string | null>(ask.kind === "decision" ? ask.options.find(o => o.recommended)?.id ?? null : null);
   const [note, setNote] = useState("");
   const [error, setError] = useState<unknown>(null);
-  const [receipt, setReceipt] = useState<{ label: string; at: number; note: string | null } | null>(null);
+  const [receipt, setReceipt] = useState<{ label: string; at: number; note: string | null; pullRequestErrors?: string[] } | null>(null);
+  const [choices, setChoices] = useState<Record<string, PullRequestChoices[number]["action"]>>({});
+  const closing = isCloseEffect(ask.effect) ? ask.effect : null;
+  const early = closing?.type === "close-early" ? closing : null;
   const answer = experimental_useRpcMutation({ contract: rpcContract, method: "answerAsk" });
   if (ask.state !== "open" || receipt) {
     const label = receipt?.label ?? ask.options.find(o => o.id === ask.answer?.optionId)?.label ?? ask.answer?.optionId ?? "";
@@ -66,26 +71,28 @@ export function AskCard({ ask, via = "banner", onFold, onAnswered, headless = fa
         {ask.answer?.by === "keeper" && <span>Decided by the Keeper, with Undo in the ledger</span>}
         {(receipt || ask.answer?.by === "user" && ask.answer?.surface === "client (unattested)") && <span className="m">answered from a client Tavern could not attribute</span>}
         {receiptNote && <span className="receipt-note" data-content>“{receiptNote}”</span>}
+        {receipt?.pullRequestErrors?.map(message => <span key={message} className="receipt-note problem" role="alert">{message}</span>)}
         <span className="m">{ask.answer?.by === "preapproval" ? "from your quest pre-approval" : VIA[ask.answer?.via ?? via]}{at !== null ? ` at ${clockTime(at)}` : ""} · cleared everywhere</span>
       </div>
     );
   }
   const missingGrant = ask.kind === "scope" && !ask.scopeChange;
   const canSend = (ask.kind !== "sends-as-you" || ask.draft !== null) && !(missingGrant && optionId !== null && GRANTING(optionId));
-  const action = ask.kind === "sends-as-you" ? "Send as you" : ask.kind === "greenlight" ? "Form the party (greenlight)" : ask.kind === "scope" && optionId !== null && GRANTING(optionId) ? "Grant this scope" : "Send answer";
+  const action = early && optionId === "close-early" ? "Close early" : ask.kind === "sends-as-you" ? "Send as you" : ask.kind === "greenlight" ? "Form the party (greenlight)" : ask.kind === "scope" && optionId !== null && GRANTING(optionId) ? "Grant this scope" : "Send answer";
   async function submit() {
     if (!optionId || !canSend) return;
     setError(null);
     try {
-      await answer.mutate({ askId: ask.id, optionId, note: note.trim() || null, via });
+      const pullRequestChoices = closing?.type === optionId ? Object.entries(choices).map(([id, action]) => ({ id, action })) : [];
+      const result = await answer.mutate({ askId: ask.id, optionId, note: note.trim() || null, via, ...(pullRequestChoices.length ? { pullRequestChoices } : {}) });
       const at = Date.now();
-      setReceipt({ label: ask.options.find(o => o.id === optionId)!.label, at, note: note.trim() || null });
+      setReceipt({ label: ask.options.find(o => o.id === optionId)!.label, at, note: note.trim() || null, pullRequestErrors: result.pullRequestErrors });
       onAnswered?.({ ...ask, state: "answered", answer: { optionId, note: note.trim() || null, by: "user", via, at, surface: "client (unattested)" } });
     } catch (e) { setError(e); }
   }
   return (
     <section className={`tavern ask k-${ask.kind}`} aria-label={`Ask: ${ask.question}`} data-ask>
-      {headless ? ask.why && <p className="ask-why">Yours because {ask.why.charAt(0).toLowerCase() + ask.why.slice(1)}</p> : <><div className="ask-h"><span className="kind">{KIND[ask.kind]}</span><span>asked <TimeAgo at={ask.createdAt} /></span>{ask.why && <span>· yours because {ask.why.charAt(0).toLowerCase() + ask.why.slice(1)}</span>}</div><h3 className="ask-q">{ask.question}</h3></>}
+      {headless ? ask.why && <p className="ask-why">Yours because {ask.why.charAt(0).toLowerCase() + ask.why.slice(1)}</p> : <><div className="ask-h"><span className="kind">{early ? "Close early" : KIND[ask.kind]}</span><span>asked <TimeAgo at={ask.createdAt} /></span>{ask.why && <span>· yours because {ask.why.charAt(0).toLowerCase() + ask.why.slice(1)}</span>}</div><h3 className="ask-q">{ask.question}</h3></>}
       {ask.kind === "greenlight" && ask.boardQuestId && <QuestAuthority questId={ask.boardQuestId} via={via} />}
       {ask.lane === "keeper" && <p role="status">This kind is delegated to the Keeper. You can still answer here or revoke it in the ledger.</p>}
       {ask.draft && (
@@ -98,6 +105,22 @@ export function AskCard({ ask, via = "banner", onFold, onAnswered, headless = fa
       {ask.scopeChange && <ScopeGrant change={ask.scopeChange} />}
       {ask.kind === "sends-as-you" && ask.draft === null && <p role="alert" className="problem">The send preview is missing. Ask the Keeper for the recipient and the full draft before answering.</p>}
       {missingGrant && <p role="alert" className="problem">The grant details are missing, so this scope cannot be widened here. You can still keep the current restrictions.</p>}
+      {closing?.draft.fromSteer && <blockquote className="close-quote"><b>You said, {clockTime(closing.draft.fromSteer.at)}:</b> <span data-content>“{closing.draft.fromSteer.text}”</span></blockquote>}
+      {early?.draft.noPlan && early.draft.reason && <p className="m" data-content>Reason for closing early: {early.draft.reason}</p>}
+      {early && <WaiverRows items={early.draft.unsettled} />}
+      {closing?.draft.pullRequests?.length ? <fieldset className="close-prs">
+        <legend>Open pull requests</legend>
+        <p className="m">These choices apply only if you close the quest. Pull requests stay open unless you choose Close pull request.</p>
+        <ul>{closing.draft.pullRequests.map(pr => <li key={pr.id}>
+          <div><a href={pr.url} target="_blank" rel="noreferrer">{pr.url}</a>
+            <span className="m">{pr.state === "ready" ? "Ready" : "Draft"}, owner: {pr.ownerName}, {pr.headVerified ? "head verified" : "head not verified"}</span>
+            {pr.stateNote && <span className="m">{pr.stateNote}</span>}{pr.closeUnavailable && <span className="m">{pr.closeUnavailable}</span>}
+          </div>
+          <select aria-label={`After closing: ${pr.url}`} value={choices[pr.id] ?? "keep"} disabled={answer.isPending} onChange={event => setChoices(current => ({ ...current, [pr.id]: event.target.value as PullRequestChoices[number]["action"] }))}>
+            <option value="keep">Keep with the Keeper</option><option value="you">Keep and transfer to you</option><option value="close" disabled={!!pr.closeUnavailable}>Close pull request</option>
+          </select>
+        </li>)}</ul>
+      </fieldset> : null}
       <fieldset className="opts">
         <legend className="sr">Your answer</legend>
         {ask.options.map(o => (

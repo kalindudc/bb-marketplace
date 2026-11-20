@@ -6,6 +6,9 @@ import { SettingsStore } from "../../src/server/settings/store";
 import { BackupRecords } from "../../src/server/backup/records";
 import { AwayHolds } from "../../src/server/away/holds";
 import { AwayStore } from "../../src/server/away/store";
+import { Keeper } from "../../src/server/keeper/service";
+import { KeeperStore } from "../../src/server/keeper/store";
+import { fakePort, seedQuest } from "../server/support";
 
 const databases: Database.Database[] = [];
 afterEach(() => { for (const db of databases.splice(0)) db.close(); });
@@ -28,6 +31,20 @@ function held() {
     heldAt: 1000, resumeRequired: true, stopPending: true, error: "Offline", cancelledBrief: { id: "old", text: "Do not replay" } });
   return source;
 }
+it("returns a withdrawn closing request to its recorded scout phase after restore", async () => {
+  const source = setup(), target = setup();
+  const k = new Keeper(new KeeperStore(source.db), fakePort(), () => 1000);
+  k.bind("lead", "keeper", "wren", "project");
+  const q = await seedQuest(k, "lead", "Unplanned", "Unplanned");
+  const ask = k.ask("lead", { boardQuestId: q.id, kind: "conclude", question: "Finish?", why: "No work needed", meanwhile: "Wait", holds: [], options: [{ id: "hold", label: "Keep open", detail: "", recommended: true }], effect: { type: "conclude", draft: { outcome: "No work needed", left: "", returnTo: "scout" } } });
+  expect(k.quest(q.id).phase).toBe("closing");
+  const snapshot = source.records.capture();
+  const row = snapshot.tables.tavern_records!.rows.find(r => r.id === ask.id)!;
+  row.data = JSON.stringify({ ...ask, state: "withdrawn", withdrawnCause: "backup-restored", withdrawnAt: null });
+  target.records.restore(snapshot);
+  expect(new KeeperStore(target.db).get("quests", q.id)?.phase).toBe("scout");
+});
+
 it("round-trips a restrictive member hold without dropping the pending interruption", () => {
   const source = held(), target = setup();
   target.records.restore(source.records.capture());

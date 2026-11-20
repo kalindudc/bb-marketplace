@@ -444,6 +444,10 @@ html.dark .tavern .qsvg .wp.o-you .wp-fo { filter: drop-shadow(0 0 5px color-mix
 .tavern .lg-card h3 { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; font-size: 12px; }
 .tavern .lg-card h3 .num { min-width: 0; white-space: normal; overflow-wrap: anywhere; margin-left: auto; color: var(--tavern-muted); font-weight: 400; }
 .tavern .lg-card.lg-quest { gap: 5px; }
+.tavern .lg-undo-lanes { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.tavern .lg-undo-lanes li { display: flex; align-items: start; justify-content: space-between; gap: 8px; font-size: 12px; }
+.tavern .lg-undo-lanes span { min-width: 0; overflow-wrap: anywhere; }
+.tavern .lg-undo-lanes button { flex: none; font-size: 11px; }
 .tavern .lg-qh { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .tavern .lg-qt { display: inline-flex; align-items: center; gap: 3px; min-width: 0; padding: 0; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; }
 .tavern .lg-qt b.clamp { min-width: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; text-overflow: ellipsis; white-space: normal; overflow-wrap: anywhere; text-align: left; }
@@ -597,7 +601,7 @@ html.dark .tavern .qsvg .wp.o-you .wp-fo { filter: drop-shadow(0 0 5px color-mix
 @container tavern-ledger (max-width: 420px) {
   .tavern .lg-done .lg-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "t go" "m go"; column-gap: 8px; row-gap: 1px; padding: 4px; }
   .tavern .lg-done .lg-row > .t { grid-area: t; }
-  .tavern .lg-done .lg-row > .m { grid-area: m; }
+  .tavern .lg-done .lg-row > .m { grid-area: m; white-space: normal; }
   .tavern .lg-done .lg-row > .act-i { grid-area: go; }
 }
 .tavern .lg-fold > summary { flex-wrap: wrap; column-gap: 6px; row-gap: 0; }

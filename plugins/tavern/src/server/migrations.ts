@@ -87,6 +87,12 @@ const APPENDED: string[] = [
   `CREATE INDEX tavern_handback_attention ON tavern_records(json_extract(data,\'$.keeperThreadId\'),json_extract(data,\'$.boardQuestId\')) WHERE kind=\'notes\' AND json_extract(data,\'$.state\')=\'open\' AND json_extract(data,\'$.kind\')=\'waiting-on-user\';
    CREATE INDEX tavern_rule_attention ON tavern_records(json_extract(data,\'$.keeperThreadId\'),json_extract(data,\'$.scopeId\')) WHERE kind=\'rules\' AND json_extract(data,\'$.active\')=0 AND json_extract(data,\'$.source\')=\'keeper-proposed\' AND json_extract(data,\'$.confirmedAt\') IS NULL;
    CREATE INDEX tavern_rule_origin ON tavern_events(json_extract(data,\'$.ruleId\'),id DESC) WHERE type=\'rule.added\';`,
+  `DROP INDEX tavern_decision_attention;
+   CREATE INDEX tavern_decision_attention ON tavern_records(kind,json_extract(data,'$.keeperThreadId'))
+     WHERE kind='decisions' AND (json_extract(data,'$.source')='keeper' OR json_type(data,'$.checkChange')='object')
+     AND json_extract(data,'$.reversible')=1 AND json_extract(data,'$.undone')=0 AND json_extract(data,'$.seenAt') IS NULL;
+   CREATE INDEX tavern_undo_ask_decisions ON tavern_records(json_extract(data,'$.keeperThreadId'))
+     WHERE kind='decisions' AND json_extract(data,'$.source')='keeper' AND json_extract(data,'$.reversible')=1 AND json_extract(data,'$.askId') IS NOT NULL;`,
 ];
 
 export const MIGRATIONS: string[] = [

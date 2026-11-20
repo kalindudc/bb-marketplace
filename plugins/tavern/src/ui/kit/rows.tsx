@@ -1,4 +1,5 @@
 import { attentionView } from "../../shared/attention";
+import { settled, verifiedWaypoint, waypointCheck } from "../../shared/waypoint";
 import { PHASE_STEPS, phaseIndex, phaseWord } from "./phase";
 import { memberName } from "../../shared/member-name";
 import { useBbNavigate } from "@get-bb/plugin-sdk/app";
@@ -58,7 +59,7 @@ export function onTheRoad(room: Pick<Room, "keepers">): number {
 /** What was verified: verified waypoints only, the skipped ones, and every waypoint; null while there is no map. Every "verified" label reads this. */
 export function verifiedOf(quest: Pick<BoardQuestSummary, "waypoints">): { verified: number; skipped: number; total: number } | null {
   if (!quest.waypoints.length) return null;
-  return { verified: quest.waypoints.filter((w) => w.state === "verified").length, skipped: quest.waypoints.filter((w) => w.state === "skipped").length, total: quest.waypoints.length };
+  return { verified: quest.waypoints.filter(verifiedWaypoint).length, skipped: quest.waypoints.filter((w) => w.state === "skipped").length, total: quest.waypoints.length };
 }
 /**
  * "1 of 2 verified · 1 skipped". When nothing was verified and everything was skipped: "1 skipped" for one waypoint, "all 3 skipped" for
@@ -70,10 +71,10 @@ export function verifiedWords(c: { verified: number; skipped: number; total: num
   return `${c.verified} of ${c.total}${noun ? ` ${noun}` : ""}${c.skipped ? `\u00a0· ${c.skipped} skipped` : ""}`;
 }
 
-/** Critical-path progress: verified or skipped waypoints out of all of them; null while there is no plan. A skipped waypoint is out of the way, so it counts here, never in a "verified" label (`verifiedOf`). */
+/** Settled waypoints count toward path progress, not necessarily toward verified credit. */
 export function pathProgress(quest: BoardQuestSummary) {
   if (!quest.waypoints.length) return null;
-  return { done: quest.waypoints.filter((w) => w.state === "verified" || w.state === "skipped").length, total: quest.waypoints.length };
+  return { done: quest.waypoints.filter(settled).length, total: quest.waypoints.length };
 }
 
 export type MoveTone = "you" | "work" | "wait" | "keeper" | "done" | "bad" | "archived";
@@ -101,14 +102,14 @@ function baseQuestMove(quest: BoardQuestSummary, asks: Ask[], names: { keeper: s
   }
   const failed = quest.members.find((m) => m.state === "failed");
   if (failed) return { tone: "bad", who: names.member(failed), next: "failed" };
-  const next = quest.waypoints.find((w) => w.state !== "verified" && w.state !== "skipped");
+  const next = quest.waypoints.find(w => !settled(w));
   if (!quest.plan) {
     const out = quest.members.filter((m) => m.state === "working");
     return out.length ? { tone: "work", who: out.map(names.member).join(", "), next: "scouting" } : { tone: "keeper", who: names.keeper, next: "quest map next" };
   }
   if (!next) return { tone: "keeper", who: names.keeper, next: "wrap it up" };
-  // A reported waypoint waits on its check, not its maker: the Warden checking it, or the Keeper, who has to find one.
   if (next.state === "reported") {
+    if (waypointCheck(next) === "keeper") return { tone: "keeper", who: names.keeper, next: `decide whether to accept ${next.title}`, verb: "decide whether to accept", task: next.title };
     const checker = quest.members.find((m) => m.state === "working" && m.checkerWaypointId === next.id);
     return checker
       ? { tone: "work", who: names.member(checker), next: `checking ${next.title}`, verb: "checking", task: next.title }

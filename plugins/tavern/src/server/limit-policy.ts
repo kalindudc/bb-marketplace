@@ -24,7 +24,8 @@ export class LimitPolicy {
     this.k.store.put("quests", q.id, { ...q, reviewAllowance: q.reviewAllowance!.map(g => g.id === grant.id ? { ...g, usedBy: token } : g) });
   }
   softDecision(threadId: string, questId: string | null, limit: "party" | "rangers") {
-    return this.k.store.query("decisions", "keeperThreadId", threadId, 500).find(d => d.boardQuestId === questId && d.exceeds === limit && d.reversible && !d.undone && !d.usedBy)?.id ?? null;
+    const decision = this.k.store.query("decisions", "keeperThreadId", threadId, 500).find(d => d.boardQuestId === questId && d.exceeds === limit && d.reversible && !d.undone && !d.usedBy);
+    return decision?.id ?? null;
   }
   claimSoft(id: string, token: string) {
     const d = this.k.store.get("decisions", id);

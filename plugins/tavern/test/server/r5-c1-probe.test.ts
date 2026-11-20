@@ -11,7 +11,8 @@ async function closing() {
   const q = await seedQuest(f.k, "lead", "Watch", "Watch");
   f.k.plan("lead", { ...planInput(q.id), waypoints: [{ ...planInput(q.id).waypoints[0]!, optional: true }] });
   f.k.answerAsk(f.k.store.openAsks("lead", q.id)[0]!.id, "approve", null, "page", "user");
-  const proposed = await f.runtime.proposeWrap("lead", q.id, "Done", "", [{ waypointId: "w1", reason: "Optional" }]);
+  f.k.settle("lead", { boardQuestId: q.id, waypointId: "w1", as: "skipped", reason: "Optional" });
+  const proposed = await f.runtime.proposeWrap("lead", q.id, "Done", "");
   return { ...f, q, askId: proposed.askId! };
 }
 it.each(["conclude", "hold", "extensions"])("H1 adopts an upgrade conclude ask before %s", async option => {

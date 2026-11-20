@@ -3,12 +3,25 @@ import type { Attention, AttentionItem } from "../shared/attention";
 import type { Ask, BoardQuest, Decision, KeeperNote, Rule } from "../shared/schema";
 import { AUTHORITY } from "./authority";
 import { ASK_EFFECTS, legacyAskEffect } from "./ask-effects";
+import { undoAskProjection } from "./undo-record";
+import { isOpenQuest } from "./liveness";
+
+export const DECIDED_FOR_YOU_SQL = "(json_extract(r.data,'$.source')='keeper' OR json_type(r.data,'$.checkChange')='object')";
 
 export type AttentionScope = { keeperThreadId?: string; boardQuestId?: string };
 export function askNeedsUser(store: KeeperStore, ask: Ask) {
   if (ask.lane === "keeper") return false;
   const effect = ask.effect ?? legacyAskEffect(ask, store.get("askMeta", ask.id), store.runtime(ask.keeperThreadId));
   return AUTHORITY[ASK_EFFECTS[effect.type].act].level === "user-explicit";
+}
+export function decisionUndoProjection(store: KeeperStore) {
+  const open = new Map<string, boolean>();
+  return (decision: Decision): Decision => {
+    const id = decision.boardQuestId;
+    if (!id || !(decision.waypointCall || decision.checkChange) || !decision.reversible || decision.undone) return decision;
+    if (!open.has(id)) open.set(id, isOpenQuest(store.get("quests", id)));
+    return open.get(id) ? decision : { ...decision, undoUnavailable: true };
+  };
 }
 const isNew = (item: AttentionItem) => item.kind === "decided" || item.kind === "summary";
 export class AttentionSnapshot {
@@ -30,10 +43,10 @@ export class AttentionSnapshot {
       return (store.db.prepare(`SELECT r.data${extra} FROM tavern_records r WHERE ${where} ORDER BY r.rowid`).all(...args) as { data: string; origin?: string | null }[]).map(row => ({ ...JSON.parse(row.data), ...(row.origin ? { keeperThreadId: row.origin } : {}) }) as T);
     };
     const quests = rows<BoardQuest>("quests", "json_extract(r.data,'$.phase') NOT IN ('done','stopped','stopping') AND (json_extract(r.data,'$.phase')='held' OR (json_extract(r.data,'$.checkerHandoffHold') IS NOT NULL AND json_extract(r.data,'$.checkerHandoffHold.release') IS NULL))", true);
-    this.asks = rows<Ask>("asks", "json_extract(r.data,'$.state')='open'").filter(ask => askNeedsUser(store, ask));
+    this.asks = rows<Ask>("asks", "json_extract(r.data,'$.state')='open'").map(undoAskProjection(store)).filter(ask => askNeedsUser(store, ask));
     this.notes = rows<KeeperNote>("notes", "json_extract(r.data,'$.state')='open' AND json_extract(r.data,'$.kind')='waiting-on-user'");
     this.rules = rows<Rule>("rules", "json_extract(r.data,'$.active')=0 AND json_extract(r.data,'$.source')='keeper-proposed' AND json_extract(r.data,'$.confirmedAt') IS NULL", false, `, ${origin} AS origin`);
-    this.decisions = rows<Decision>("decisions", "json_extract(r.data,'$.source')='keeper' AND json_extract(r.data,'$.reversible')=1 AND json_extract(r.data,'$.undone')=0 AND json_extract(r.data,'$.seenAt') IS NULL AND NOT EXISTS (SELECT 1 FROM tavern_records seen WHERE seen.kind='attentionSeen' AND seen.id=r.id)");
+    this.decisions = rows<Decision>("decisions", `${DECIDED_FOR_YOU_SQL} AND json_extract(r.data,'$.reversible')=1 AND json_extract(r.data,'$.undone')=0 AND json_extract(r.data,'$.seenAt') IS NULL AND NOT EXISTS (SELECT 1 FROM tavern_records seen WHERE seen.kind='attentionSeen' AND seen.id=r.id)`).map(decisionUndoProjection(store));
     const items: AttentionItem[] = [];
     const add = (item: Omit<AttentionItem, "seen">) => items.push({ ...item, seen: false });
     const releases = new Set(this.asks.flatMap(ask => ask.effect?.type === "release-hold" ? [ask.effect.holdId] : ask.releaseHoldId ? [ask.releaseHoldId] : []));

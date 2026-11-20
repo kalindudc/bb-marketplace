@@ -45,12 +45,13 @@ export function putQuestFixture(store: import("../../src/server/keeper/store").K
   store.db.prepare("INSERT INTO tavern_records(kind,id,data,archived_at) VALUES('quests',?,?,?) ON CONFLICT(kind,id) DO UPDATE SET data=excluded.data,archived_at=excluded.archived_at").run(id, JSON.stringify(quest), quest.archivedAt ?? null);
   return quest;
 }
-export async function concludeQuest(runtime: import("../../src/server/runtime").TavernRuntime, ...args: Parameters<import("../../src/server/runtime").TavernRuntime["wrap"]>) {
-  const [threadId, id] = args;
+export async function concludeQuest(runtime: import("../../src/server/runtime").TavernRuntime, threadId: string, id: string, outcome: string, left: string,
+  skips: { waypointId: string; reason: string }[] = [], next?: string[], results?: import("../../src/shared/tale-results").TaleResults) {
   const quest = runtime.keeper.quest(id);
-  if (quest.phase === "done") return runtime.wrap(...args);
+  if (quest.phase === "done") return { pendingArchives: (await runtime.proposeWrap(threadId, id, outcome, left, next, results)).pendingArchives };
   if (quest.phase === "greenlight") runtime.keeper.answerAsk(runtime.keeper.store.openAsks(threadId, id).find(ask => ask.kind === "greenlight")!.id, "approve", null, "page", "user");
-  const ask = await runtime.proposeWrap(...args);
+  for (const skip of skips) runtime.keeper.settle(threadId, { boardQuestId: id, as: "skipped", ...skip });
+  const ask = await runtime.proposeWrap(threadId, id, outcome, left, next, results);
   return runtime.answerAsk(ask.askId!, "conclude", null, "page", true);
 }
 export function planInput(boardQuestId: string) {

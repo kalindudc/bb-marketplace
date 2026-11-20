@@ -33,6 +33,8 @@ export const statusInput = z.object({
   afterEventId: z.number().int().nonnegative().default(0),
   limit: z.number().int().min(1).max(10).default(3),
 });
+import { undoAskProjection } from "./undo-record";
+
 export function readStatus(runtime: TavernRuntime, threadId: string, input: z.output<typeof statusInput>) {
   if (input.section === "placement") return runtime.placements().controller.status(threadId, input.boardQuestId ?? null).then(agentData);
   return agentData(statusData(runtime, threadId, input));
@@ -223,7 +225,7 @@ function statusData(
         input.limit,
         input.offset,
         input.boardQuestId ?? undefined,
-      ),
+      ).map(undoAskProjection(k.store)),
     };
   const pending = k.store.runtime(threadId).pending;
   if (input.section === "pending")

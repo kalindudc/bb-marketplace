@@ -44,6 +44,8 @@ import {
 // The RPC contract between Tavern's server and its UI. Server handlers invalidate the tags below whenever the data
 // behind them changes, so every query stays live without polling.
 
+import { pullRequestChoicesSchema, questOutcomeSchema, waypointWaiverSchema } from "./closing";
+import { undoKindSchema, undoLaneSchema } from "./undo-lane";
 const memberSchema = storedMemberSchema.extend({ restNote: z.string().nullable().optional(), pullRequests: z.array(pullRequestSchema).optional(), placement: placementViewSchema.nullable().optional() });
 const threadId = z.string().min(1).max(100);
 const id = z.string().min(1).max(120);
@@ -56,6 +58,7 @@ export const tags = {
   thread: (threadId: string) => `tavern:thread:${threadId}`,
   journal: (threadId: string) => `tavern:journal:${threadId}`,
   boardQuest: (id: string) => `tavern:quest:${id}`,
+  undoLanes: () => "tavern:undo-lanes",
   room: () => "tavern:room",
   mapHistory: () => "tavern:map-history",
   rows: () => "tavern:rows",
@@ -79,6 +82,11 @@ export const waypointViewSchema = waypointSchema.extend({
   // added by Builder B: contact is a server-recorded fact, not a plan-author assertion.
   gate: gateRecordSchema.nullable().optional(),
   state: z.enum(WAYPOINT_STATES),
+  resolutionReason: z.string().nullable().optional(),
+  waiver: waypointWaiverSchema.optional(),
+  acceptedBy: z.string().nullable().optional(),
+  madeBy: z.array(threadId).optional(),
+  checkedBy: z.array(threadId).optional(),
   ownerMember: memberSchema.nullable(),
   /** The linked entry's evidence, and the Warden's verdict when there is one. */
   evidenceCount: z.number().int(),
@@ -188,10 +196,14 @@ export const boardQuestDetailSchema = z.object({
     next: z.array(z.string().max(200)).max(5).optional(),
     document: z.object({ threadId: z.string(), rootPath: z.string(), target: z.object({ kind: z.literal("workspace"), environmentId: z.string(), path: z.string() }) }).optional(),
     skipped: z.array(z.object({ waypointId: id, reason: z.string() })),
+    closure: questOutcomeSchema.optional(),
+    closeReason: z.string().min(1).max(500).optional(),
+    waivers: z.array(waypointWaiverSchema).max(24).optional(),
     wrappedAt: z.number().int().nonnegative(),
     levels: z.array(taleLevelSchema).nullable().optional(),
     keptCharacterIds: z.array(id).optional(),
   }).nullable().optional(),
+  pullRequests: z.array(pullRequestSchema).optional(),
   memberCredits: z.array(z.object({
     memberThreadId: threadId, madeWaypointIds: z.array(id), verifiedWaypointIds: z.array(id),
   })).optional(),
@@ -223,6 +235,7 @@ export const ledgerSchema = z.object({
   violations: z.array(scopeViolationSchema).optional(),
   keeperThreadId: threadId,
   quietSince: z.number().nullable().optional(),
+  undoLanes: z.array(undoLaneSchema).optional(),
   // added by Builder B: aged, unscoped promises remain readable through status history.
   olderPromises: z.number().int().nonnegative().optional(),
   boardQuests: z.array(boardQuestSummarySchema),
@@ -387,7 +400,7 @@ export const rpcContract = defineContract({
   boardQuest: {
     input: z.object({ id }).strict(),
     output: boardQuestDetailSchema,
-    tags: ({ id }: { id: string }) => [tags.boardQuest(id)],
+    tags: ({ id }: { id: string }) => [tags.boardQuest(id), tags.undoLanes()],
   },
   setTaleKept: {
     input: z.object({ questId: id, characterId: id, kept: z.boolean() }).strict(),
@@ -413,8 +426,8 @@ export const rpcContract = defineContract({
   preapproveQuest: { input: preapprovalInputSchema.extend({ boardQuestId: id, via: z.enum(["page", "banner", "phone", "chat"]) }).strict(), output: ok },
   revokeQuestAuthority: { input: z.object({ boardQuestId: id, id, via: z.enum(["page", "banner", "phone", "chat"]) }).strict(), output: ok },
   answerAsk: {
-    input: z.object({ askId: id, optionId: z.string(), note: z.string().max(2000).nullable().default(null), via: z.enum(["banner", "page", "phone", "chat"]) }).strict(),
-    output: ok,
+    input: z.object({ askId: id, optionId: z.string(), note: z.string().max(2000).nullable().default(null), via: z.enum(["banner", "page", "phone", "chat"]), pullRequestChoices: pullRequestChoicesSchema.optional() }).strict(),
+    output: ok.extend({ pullRequestErrors: z.array(z.string()).optional() }),
   },
   // added by Builder B: display-only acknowledgement never undoes a decision or wakes its Keeper.
   markDecisionsSeen: {
@@ -435,6 +448,10 @@ export const rpcContract = defineContract({
   },
   undoDecision: {
     input: z.object({ decisionId: id }).strict(),
+    output: ok,
+  },
+  resetUndoLane: {
+    input: z.object({ threadId, kind: undoKindSchema }).strict(),
     output: ok,
   },
   correctRoute: {

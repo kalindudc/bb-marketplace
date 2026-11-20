@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { experimental_PluginRpcRefusal } from "@get-bb/plugin-sdk";
 import { tags } from "../shared/contract";
+import { verifiedWaypoint } from "../shared/waypoint";
 import { levelFromCount, earnedCount } from "../shared/level";
 import { journalEntrySchema, type JournalEntry, type Member } from "../shared/schema";
 import { serviceQuestRecordSchema, serviceVerdictSchema, taleKeepKey, type CharacterServiceRecord, type ServiceQuestRecord, type ServiceRecordState, type ServiceVerdict } from "../shared/service-record";
@@ -142,7 +143,7 @@ export class ServiceRecords {
     const receipts = this.verdicts(questId);
     const verdicts = receipts.filter(receipt => !receipt.withdrawn);
     const superseded = new Set(receipts.filter(receipt => receipt.superseded).map(receipt => receipt.id));
-    const verified = new Set(summary.waypoints.filter(w => w.state === "verified").map(w => w.id));
+    const verified = new Set(summary.waypoints.filter(verifiedWaypoint).map(w => w.id));
     const credits = new Map<string, ServiceQuestRecord["credits"][number]>();
     const credit = (characterId: string, role: ServiceQuestRecord["credits"][number]["role"]) => {
       const id = JSON.stringify([characterId, role]);
@@ -209,10 +210,14 @@ export class ServiceRecords {
     }
     const waypoints: NonNullable<ServiceQuestRecord["waypoints"]> = { verified: verified.size, total: summary.waypoints.length };
     if (backfilledAt === null) waypoints.skipped = summary.waypoints.filter(waypoint => waypoint.state === "skipped").length;
+    if (q.outcome === "closed-early") {
+      waypoints.waived = q.waivers?.length ?? 0;
+      waypoints.accepted = summary.waypoints.filter(w => w.state === "accepted").length;
+    }
     const record = serviceQuestRecordSchema.parse({ version: 1, questId: q.id, title: q.title, short: q.short, phase: q.phase,
       endedAt: q.endedAt, keeperThreadId: this.k.store.runtime(q.keeperThreadId).deletedAt != null ? null : q.keeperThreadId,
       backfilledAt, completeSince: backfilledAt !== null || q.createdAt < state.recordingSince ? state.recordingSince : null,
-      credits: [...credits.values()], waypoints });
+      credits: [...credits.values()], waypoints, ...(q.outcome ? { outcome: q.outcome } : {}), ...(q.waivers?.length ? { waivers: q.waivers } : {}) });
     this.k.store.put("serviceRecords", questId, record);
     return true;
   }
@@ -300,7 +305,7 @@ export class ServiceRecords {
       value.recordsTotal++;
       if (position < 20 || kept) value.records.push({ questId: record.questId, title: deleted ? "a deleted quest" : record.title, short: deleted ? "a deleted quest" : record.short, phase: record.phase,
         endedAt: record.endedAt, keeperThreadId: available ? record.keeperThreadId : null, role: credit.role, verifiedWaypoints: credit.verifiedWaypoints,
-        told: record.phase === "done" && !!told, kept, available: !!available, waypoints: record.waypoints ?? null,
+        told: record.phase === "done" && !!told, kept, available: !!available, waypoints: record.waypoints ?? null, ...(record.outcome ? { outcome: record.outcome } : {}),
         ...(credit.role === "warden" ? { checks: credit.checks, caught: credit.caught, independentChecks: credit.independentChecks, sameFamilyChecks: credit.sameFamilyChecks } : {}), threadIds: available ? [...credit.threadIds] : [] });
     }
     for (const id of undated) { const value = characters.get(id)!; value.firstEarnedAt = null; value.lastEarnedAt = null; }

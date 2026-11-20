@@ -144,6 +144,10 @@ export const hostContract = defineRpcContract({
     input: authoritySchema.extend({ profile: forgeProfileSchema, title: z.string().min(1).max(500), body: z.string().max(100_000) }).strict(),
     output: z.discriminatedUnion("ok", [z.object({ ok: z.literal(true), url: z.string().url(), state: z.enum(["open", "merged", "closed"]).optional() }).strict(), z.object({ ok: z.literal(false), failureClass: z.enum(["temporary", "lasting", "broken contract"]), lines: text }).strict()]),
   },
+  forgePullRequest: {
+    input: authoritySchema.extend({ profile: forgeProfileSchema, action: z.enum(["inspect", "close"]), url: z.url(), head: baseBranch, base: baseBranch, headCommit: gitOidSchema, state: z.enum(["draft", "ready"]) }).strict(),
+    output: z.object({ state: z.enum(["draft", "ready", "closed", "merged"]), headCommit: gitOidSchema.optional() }).strict(),
+  },
   commitAll: {
     input: authoritySchema.extend({ message: z.string().min(1).max(500) }).strict(),
     output: z.object({ sha: gitOidSchema, committed: z.boolean() }).strict(),

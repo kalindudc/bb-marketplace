@@ -1,6 +1,7 @@
 
 import { useState } from "react";
 import { type BoardQuestDetail } from "../../shared/contract";
+import { resolutionWords, settled } from "../../shared/waypoint";
 import type { Ask, Member, Report } from "../../shared/schema";
 import { voiceShown, CheckIndependence, MemberIdentity, Glyph, levelFor, levelsShown, reachedInParty, reachedWords, EvidenceList, ExpandsMark, GuardPosture, MemberReports, OpensMark, memberReportNames } from "../kit";
 import { CrestOf, characterName, classLabel, type Registry } from "./common";
@@ -82,9 +83,9 @@ export function LootRow({ waypoint: w, detail, registry }: { waypoint: Waypoint;
 
 /** What a waypoint that was not verified was left as, in words. */
 export function leftWord(w: Waypoint, skipped?: string): string {
+  if (settled(w)) return resolutionWords(skipped && w.state === "skipped" ? { ...w, resolutionReason: skipped } : w);
   if (w.actor === "user") return "still yours";
   if (w.actor === "outside") return `waiting on ${w.owner ?? "someone outside"}`;
-  if (w.state === "skipped") return skipped ? `skipped: ${skipped}` : "skipped";
   if (w.state === "rejected") return w.rejectedReason ? `rejected: ${w.rejectedReason}` : "rejected";
   return ({ planned: "planned", todo: "planned", doing: "in progress", blocked: "blocked", reported: "reported, not verified" } as Record<string, string>)[w.state] ?? w.state;
 }
@@ -96,7 +97,7 @@ export function LeftRow({ waypoint: w, skipped }: { waypoint: Waypoint; skipped?
 import { preapprovalWords } from "../../shared/quest-authority";
 const VIA: Record<NonNullable<Ask["answer"]>["via"], string> = { banner: "from the banner", page: "on the Tavern page", phone: "on your phone", chat: "in chat", cli: "from the CLI", timer: "by its timer" };
 /** Why Tavern withdrew an ask, where the server recorded it. Keyed by string so a cause the schema adds later still reads "withdrawn". */
-const WITHDRAWN: Record<string, string> = { "quest-stopped": "withdrawn when it stopped", "quest-returned": "withdrawn when the quest returned", "backup-restored": "withdrawn when this backup was restored" };
+const WITHDRAWN: Record<string, string> = { "quest-stopped": "withdrawn when it stopped", "quest-returned": "withdrawn when the quest returned", "backup-restored": "withdrawn when this backup was restored", "closing-stale": "withdrawn because the closing details changed" };
 /** How an ask ended, in words: the option chosen, by whom and how; withdrawn or still open otherwise. */
 export function askOutcome(ask: Ask): string {
   const label = ask.answer ? ask.options.find((o) => o.id === ask.answer!.optionId)?.label ?? "an option no longer listed" : null;

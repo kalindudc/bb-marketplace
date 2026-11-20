@@ -69,11 +69,11 @@ export const SITUATIONS: readonly Situation[] = [
   {
     id: "wrap", title: "A wrap", tool: "tavern_wrap",
     brief: "You are a Keeper wrapping the verified quest `quest-vault` (Vault cutover). Every waypoint is verified except `w4` (load test), skipped because staging was frozen; the user still has to schedule it. Write the wrap. One short line in your character's voice is welcome at the start or end of the outcome, nowhere else.",
-    facts: [{ text: "w4", in: ["skipped.waypointId"] }, { text: "load test", in: ["left", "skipped.reason"] }],
-    plain: ["left", "skipped.reason"], voice: false,
+    facts: [{ text: "w4", in: ["left"] }, { text: "load test", in: ["left"] }],
+    plain: ["left"], voice: false,
     reference: {
       boardQuestId: "quest-vault", outcome: "The vault cutover is done and verified, except the load test.",
-      left: "Schedule the load test (w4) once staging unfreezes.", skipped: [{ waypointId: "w4", reason: "Load test skipped: staging was frozen." }],
+      left: "Schedule the skipped load test (w4) once staging unfreezes.",
     },
   },
 ];

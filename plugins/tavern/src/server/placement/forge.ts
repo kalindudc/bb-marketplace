@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { hostContract, type HostInput, type HostMethod, type HostOutput } from "../../host-contract";
-import { pullRequestLine } from "../../shared/pull-request";
+import { pullRequestHead, pullRequestLine, type PullRequest } from "../../shared/pull-request";
+import type { ForgeProfile } from "../../shared/placement-settings";
 import { forgeFailure } from "../../shared/forge-command";
 import type { TavernRuntime } from "../runtime";
 import { readSourceIdentity } from "./source-discovery";
@@ -10,6 +11,36 @@ export const MEMBER_PR_REFUSAL = "Your pull requests open on your own machine; u
 export class PlacementForge {
   private readonly pending = new Set<string>();
   constructor(private readonly runtime: TavernRuntime) {}
+  private profile(pr: PullRequest): ForgeProfile | undefined {
+    if (pr.forge === "gh" || (pr.forge === null && new URL(pr.url).hostname === "github.com")) return { id: "gh", kind: "github", enabled: true, name: "GitHub" };
+    const policy = this.runtime.settings?.placementPolicy();
+    return policy?.state === "valid" ? policy.settings.forges.find(forge => forge.enabled && forge.id === pr.forge) : undefined;
+  }
+  closeUnavailable(pr: PullRequest) {
+    const profile = this.profile(pr);
+    return !profile ? "The recorded forge is missing or disabled. Close this pull request on its forge." : profile.kind === "command" && !profile.close ? "This forge has no close command. Close this pull request on its forge." : undefined;
+  }
+  inspect(pr: PullRequest) {
+    const profile = this.profile(pr);
+    return profile && (profile.kind === "github" || profile.state) ? this.pullRequestAction(pr, profile, "inspect") : null;
+  }
+  async close(pr: PullRequest) {
+    const profile = this.profile(pr);
+    if (!profile || profile.kind === "command" && !profile.close) throw new Error(this.closeUnavailable(pr));
+    return this.pullRequestAction(pr, profile, "close");
+  }
+  private async pullRequestAction(pr: PullRequest, profile: ForgeProfile, action: "inspect" | "close") {
+    if (pr.state !== "draft" && pr.state !== "ready") throw new Error("This pull request is no longer open.");
+    const { bb } = this.runtime, host = this.runtime.placements().host;
+    const { endpoint } = await readSourceIdentity(bb, pr.keeperThreadId, pr.projectId);
+    const binding = { placementId: "quest-" + pr.id, generation: 1, endpointId: endpoint.environmentId ?? "source" };
+    await host.call(endpoint.hostId, "registerEndpoint", { ...binding, endpoint, ownerThreadId: pr.keeperThreadId, access: "source-read", git: "full", workspaceKind: null, objectFormat: null, allowedRefs: [] });
+    const authority = { ...binding, operationId: randomUUID() };
+    await host.call(endpoint.hostId, "inspect", authority);
+    const current = await readSourceIdentity(bb, pr.keeperThreadId, pr.projectId);
+    if (!isDeepStrictEqual(endpoint, current.endpoint)) throw new Error("The forge source checkout changed.");
+    return hostContract.forgePullRequest.output.parse(await host.call(endpoint.hostId, "forgePullRequest", { ...authority, operationId: randomUUID(), profile, action, url: pr.url, head: pr.head, base: pr.base, headCommit: pullRequestHead(pr), state: pr.state }));
+  }
   async forThread(threadId: string, input: { title: string; body?: string; base?: string; url?: string; forge?: string }, signal?: AbortSignal): Promise<string> {
     const runtime = this.runtime, services = runtime.placements(), record = services.store.byMember(threadId), member = runtime.keeper.member(threadId);
     if (member?.classId !== "smith") return MEMBER_PR_REFUSAL;
@@ -133,7 +164,7 @@ export class PlacementForge {
     const existing = runtime.keeper.store.all("pullRequests").find(pr => pr.projectId === projectId && pr.head === env.branchName);
     if (existing && existing.base !== base) return `This branch's draft targets ${existing.base}; moving it comes later`;
     const pr = runtime.keeper.store.recordPullRequest({ keeperThreadId: member.keeperThreadId, boardQuestId: member.boardQuestId, projectId,
-      url: input.url, forge: input.forge ?? null, head: env.branchName, base, owner: threadId, memberHead: inspection.head, pushedHead: null, verifiedCommit: null, state: "draft" }, runtime.keeper.now());
+      url: input.url, forge: input.forge ?? (new URL(input.url).hostname === "github.com" ? "gh" : null), head: env.branchName, base, owner: threadId, memberHead: inspection.head, pushedHead: null, verifiedCommit: null, state: "draft" }, runtime.keeper.now());
     runtime.keeper.changed(threadId);
     return pullRequestLine(pr);
   }

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { questOutcomeSchema, waypointWaiverSchema } from "./closing";
 import { evidenceSchema } from "./schema";
 
 const count = z.number().int().nonnegative();
@@ -34,11 +35,14 @@ const creditSchema = z.object({
   independentChecks: count, sameFamilyChecks: count, caught: count, threadIds: z.array(identity),
   level: levelSnapshotSchema.nullable().optional(),
 }).strict();
+const waypointCountsSchema = z.object({ verified: count, total: count, skipped: count.optional(), accepted: count.optional(), waived: count.optional() }).strict();
 export const serviceQuestRecordSchema = z.object({
   version: z.literal(1), questId: identity, title: z.string(), short: z.string(), phase, endedAt: at.nullable(),
   keeperThreadId: identity.nullable(), backfilledAt: at.nullable(), completeSince: at.nullable(),
   credits: z.array(creditSchema),
-  waypoints: z.object({ verified: count, total: count, skipped: count.optional() }).strict().optional(),
+  outcome: questOutcomeSchema.optional(),
+  waivers: z.array(waypointWaiverSchema).max(24).optional(),
+  waypoints: waypointCountsSchema.optional(),
 }).strict();
 export type ServiceQuestRecord = z.infer<typeof serviceQuestRecordSchema>;
 export const serviceRecordStateSchema = z.object({ version: z.literal(1), recordingSince: at, backfilledAt: at.nullable() }).strict();
@@ -50,7 +54,8 @@ const historySchema = z.object({
   checks: count.optional(), caught: count.optional(), threadIds: z.array(identity),
   independentChecks: count.optional(), sameFamilyChecks: count.optional(),
   told: z.boolean().optional(), kept: z.boolean().optional(), available: z.boolean().optional(),
-  waypoints: z.object({ verified: count, total: count, skipped: count.optional() }).nullable().optional(),
+  outcome: questOutcomeSchema.optional(),
+  waypoints: waypointCountsSchema.nullable().optional(),
 });
 export const characterServiceRecordSchema = z.object({
   characterId: identity, firstEarnedAt: at.nullable(), lastEarnedAt: at.nullable(),

@@ -46,8 +46,8 @@ export const CELLAR = {
 export function Button({ className = "", children, ...props }: ButtonHTMLAttributes<HTMLButtonElement>) { return <button type="button" className={`btn ${className}`} {...props}>{children}</button>; }
 
 const PILL_MARK: Record<string, string> = { done: "✓", verified: "✓", answered: "✓", failed: "!", rejected: "✕", blocked: "!", "needs-decision": "?", waiting: "…", reported: "✓" };
-export function StatusPill({ status, children }: { status: string; children?: ReactNode }) {
-  return <span className={`tag status-${status}`}><span aria-hidden="true">{PILL_MARK[status] ?? "·"}</span>{children ?? status.replaceAll("-", " ")}</span>;
+export function StatusPill({ status, children, mark }: { status: string; children?: ReactNode; mark?: string }) {
+  return <span className={`tag status-${status}`}><span aria-hidden="true">{mark ?? PILL_MARK[status] ?? "·"}</span>{children ?? status.replaceAll("-", " ")}</span>;
 }
 
 /** The checklist mark: shape carries the status so it reads without colour. */
@@ -263,11 +263,11 @@ export function DecidedForYou({ decisions, total, onUndo, pending = false, onSee
     {/* The title takes the row: two lines closed (all of it in the tooltip), all of it open, above the reason. The time sits under it, the actions to its right. */}
     <button type="button" className="dt act" aria-expanded={isOpen} title={isOpen ? undefined : `${d.text} · ${d.why}`} onClick={() => setOpen(isOpen ? null : d.id)}><b data-content className="clamp">{d.text}</b><ExpandsMark open={isOpen} /></button>
     <span className="di-acts">
-      {d.undone ? <span className="m">Undone</span> : d.reversible && onUndo ? <button type="button" className="btn sm" disabled={pending} onClick={() => onUndo(d.id)} aria-label={`Undo: ${d.text}`}>Undo</button> : !d.reversible ? <span className="m">Final</span> : null}
+      {d.undone ? <span className="m">Undone</span> : d.reversible && !d.undoUnavailable && onUndo ? <button type="button" className="btn sm" disabled={pending} onClick={() => onUndo(d.id)} aria-label={`Undo: ${d.text}`}>Undo</button> : !d.reversible || d.undoUnavailable ? <span className="m">Final</span> : null}
       {onSeen && (seen ? <span className="m di-seen">Seen</span> : <button type="button" className="btn sm ghost di-ok" disabled={busy || pending} title="Mark seen: it leaves Decided for you and stays in the Ledger’s All decisions. Nothing is undone." aria-label={`Mark seen: ${d.text}`} onClick={() => mark([d.id])}>OK<Glyph name="check" size={12} /></button>)}
     </span>
-    <span className="di-meta m"><TimeAgo at={d.createdAt} /></span>
-    {isOpen && <p className="dwhy m" data-content>{d.why}</p>}
+    <span className="di-meta m">{d.checkChange && <span>From your steer, {clockTime(d.checkChange.steer.at)} · </span>}<TimeAgo at={d.createdAt} /></span>
+    {isOpen && <p className="dwhy m" data-content>{d.why}{d.checkChange && <> “{d.checkChange.steer.text}”</>}</p>}
   </li>; })}</ul>{limit != null && shown.length > limit && <button type="button" className="lnk-btn act di-more" aria-expanded={all} onClick={() => setAll(!all)}><ExpandsMark open={all} />{all ? "Show fewer" : `Show all ${shown.length}`}</button>}</>}</section>;
 }
 

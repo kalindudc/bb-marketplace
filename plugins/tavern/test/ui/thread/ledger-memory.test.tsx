@@ -36,6 +36,25 @@ const ledger = ledgerAt(now);
 const renderLedger = (data: Ledger = ledger) => renderSlot({ component: LedgerTab }, { threadId: "keeper-1", environment: null }, { rpc: { ledger: () => withAttention(data), decor: () => fixtureDecor, registry: () => fixtureRegistry } });
 
 describe("Ledger: what the Keeper keeps in mind", () => {
+  it("uses the returned quest's recorded move line for close early", async () => {
+    const outcome = "Returned, 0 verified, closed early, 2 not verified";
+    const slot = renderLedger({ ...ledger, boardQuests: [{ ...fixtureQuest, phase: "done", outcome: "closed-early", move: { who: "nobody", text: outcome } }] });
+    try {
+      const line = await slot.findByText(outcome);
+      expect(line.closest("button")?.title).toContain(outcome);
+    }
+    finally { slot.lifecycle.unmount(); }
+  });
+
+  it("shows closed waypoint decisions as Final rather than offering Undo", async () => {
+    const decision = { id: "closed-check", keeperThreadId: "keeper-1", boardQuestId: fixtureQuest.id, text: "Accepted w1", why: "Sources check out", reversible: true, undoUnavailable: true as const, source: "keeper" as const, sourceRef: null, undone: false, createdAt: now };
+    const slot = renderLedger({ ...ledger, boardQuests: [], decidedForYou: [decision], decidedCount: 1 });
+    try {
+      const row = (await slot.findByRole("button", { name: "Accepted w1" })).closest("li")!;
+      expect(within(row).queryByRole("button", { name: "Undo: Accepted w1" })).toBeNull();
+      expect(within(row).getByText("Final")).toBeTruthy();
+    } finally { slot.lifecycle.unmount(); }
+  });
   it("shows each resting member’s keep reason and time", async () => {
     const restNote = "kept until 13:00: expect a follow-up.";
     const slot = renderLedger({ ...ledger, boardQuests: [{ ...ledger.boardQuests[0]!, members: [{ ...fixtureMember, restNote }] }] });

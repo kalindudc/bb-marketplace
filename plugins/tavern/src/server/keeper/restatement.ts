@@ -6,6 +6,9 @@ import { boundedData, LEDGER_OVERFLOW } from "../instructions";
 import { localClock } from "../clock";
 import { restingParty } from "../resting";
 import { isOpenQuest } from "../liveness";
+import { settled } from "../../shared/waypoint";
+import { keeperUndoLaneWords } from "../../shared/undo-lane";
+import { readUndoLanes } from "../undo-record";
 import { PLACEMENT_CLASSES, placementClassLine, placementGuidance } from "../placement/controller";
 import { matchPlacementRule } from "../placement/match";
 import { PlacementStore } from "../placement/store";
@@ -51,9 +54,7 @@ function leadMinutes(text: string | null) {
   );
 }
 export function criticalWaypoints(waypoints: BoardQuestSummary["waypoints"]) {
-  const open = waypoints.filter(
-    (w) => !["verified", "skipped"].includes(w.state),
-  );
+  const open = waypoints.filter(w => !settled(w));
   const scores = new Map<string, number>();
   const score = (id: string, seen = new Set<string>()): number => {
     if (scores.has(id)) return scores.get(id)!;
@@ -155,7 +156,7 @@ function questBlock(k: Keeper, summary: BoardQuestSummary) {
     w.dependsOn.every((id) => !waypoints.some((other) => other.id === id)),
   );
   const nextLink =
-    !plan || !isOpenQuest(summary) || summary.phase === "wrap"
+    summary.phase === "closing" ? `tavern_wrap opened the Conclude or Close early card: ${summary.move.text}` : !plan || !isOpenQuest(summary) || summary.phase === "wrap"
       ? summary.move.text
       : next
         ? `${next.id}: ${short(next.title, 80)}; ${next.actor} ${next.actor === "agent" && next.ownerMember ? `${k.name(next.ownerMember)} (${next.ownerMember.classId})` : (next.owner ?? "unassigned")}; lead time ${next.leadTime ?? "unknown"}`
@@ -167,7 +168,7 @@ function questBlock(k: Keeper, summary: BoardQuestSummary) {
     `Allocated party: ${plan?.party.map((p) => `${p.classId} for ${p.waypointIds.join(",") || p.purpose}`).join("; ") || "not planned"}`,
     ...waypoints.map(
       (w) =>
-        `${w.id} [${w.state}] ${quoted(short(w.title, 80))}; ${w.actor} owner ${w.actor === "agent" && w.ownerMember ? `${k.name(w.ownerMember)} (${w.ownerMember.classId}, ${w.ownerMember.state})` : (w.owner ?? "unassigned")}; lead time ${w.leadTime ?? "unknown"}; after ${w.dependsOn.join(",") || "none"}${w.rejectedReason ? `; rejected: ${quoted(w.rejectedReason)}` : ""}${w.actor === "outside" ? (w.gate ? `; asked ${w.gate.askedWho} at ${clock(w.gate.askedAt)} via ${quoted(w.gate.via)}; answer ${quoted(w.gate.answer ?? "waiting")}` : "; not asked yet") : ""}`,
+        `${w.id} [${w.state}] ${quoted(short(w.title, 80))}; ${w.actor} owner ${w.actor === "agent" && w.ownerMember ? `${k.name(w.ownerMember)} (${w.ownerMember.classId}, ${w.ownerMember.state})` : (w.owner ?? "unassigned")}; lead time ${w.leadTime ?? "unknown"}; after ${w.dependsOn.join(",") || "none"}${w.rejectedReason ? `; rejected: ${quoted(w.rejectedReason)}` : ""}${w.state === "reported" && w.check === "keeper" ? "; Keeper check: use tavern_settle" : ""}${w.actor === "outside" ? (w.gate ? `; asked ${w.gate.askedWho} at ${clock(w.gate.askedAt)} via ${quoted(w.gate.via)}; answer ${quoted(w.gate.answer ?? "waiting")}` : "; not asked yet") : ""}`,
     ),
     ...memberLines(k, summary),
   ];
@@ -203,7 +204,7 @@ export function renderRestatement(
     (summary.waypoints.some(
       (w) =>
         w.actor === "outside" &&
-        !["verified", "skipped"].includes(w.state) &&
+        !settled(w) &&
         !w.gate?.answer,
     )
       ? 4
@@ -235,7 +236,9 @@ export function renderRestatement(
   const guidance = !enabledRules.length ? null : enabledRules.some(rule => !rule.match.projectIds || projectId !== null && rule.match.projectIds.includes(projectId))
     ? placementGuidance(placementLines, new PlacementStore(k.store.db).counts(threadId), machines)
     : "Where your party runs: where you run; no machine rule matches this project (tavern_status section=placement).";
+  const undoLanes = readUndoLanes(k.store, threadId);
   const parts = [
+    ...(undoLanes.length ? [section("Undo record", undoLanes.map(keeperUndoLaneWords), priorities ? 800 : 1600, "more kinds; see the Ledger or call tavern_status")] : []),
     ...(holds.length ? [section(
       "Active user holds — checker handoff held, waiting for the user\'s release; Warden hire/re-task blocked; details: tavern_status section=holds",
       holds.map(quest => `${quoted(boundedData(quest.title, 40, "…"))}, held ${clock(quest.checkerHandoffHold!.createdAt)}: reason ${quoted(boundedData(quest.checkerHandoffHold!.reason, 40, "…"))}; source ${quoted(boundedData(quest.checkerHandoffHold!.sourceText, 40, "…"))}`),
@@ -292,8 +295,8 @@ export function renderRestatement(
   ];
   const resting = restingParty(k, threadId);
   parts.push(section("Free hands", resting.filter(m => m.mayRebriefFor !== null).map(m => `${m.name} (${m.classId}, ${m.threadId}); quest ${m.quest}; resting ${m.restedMinutes} min${m.machineHeld ? "; machine held" : ""}; last work ${quoted(short(m.lastWork, 160))}; may be re-briefed for: ${m.mayRebriefFor}`), 2200, "more free hands; call tavern_status"));
-  const settled = resting.filter(m => m.settled);
-  if (settled.length) parts.push(section("Resting, settled", settled.map(m => `${m.name} (${m.threadId}); resting ${m.restedMinutes} min${m.machineHeld ? "; machine held" : ""}${m.kept ? `; kept until ${clock(m.kept.until)}: ${quoted(short(m.kept.why, 120))}` : "; release or keep"}`), 1500, "more resting members; call tavern_status"));
+  const settledMembers = resting.filter(m => m.settled);
+  if (settledMembers.length) parts.push(section("Resting, settled", settledMembers.map(m => `${m.name} (${m.threadId}); resting ${m.restedMinutes} min${m.machineHeld ? "; machine held" : ""}${m.kept ? `; kept until ${clock(m.kept.until)}: ${quoted(short(m.kept.why, 120))}` : "; release or keep"}`), 1500, "more resting members; call tavern_status"));
   if (!priorities) {
     const steers = summaries.flatMap((q) =>
       k.memory.steers(threadId, q.id).map((route) => {

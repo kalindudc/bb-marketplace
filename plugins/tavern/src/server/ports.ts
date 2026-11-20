@@ -5,7 +5,7 @@ import type { Actor, BoardQuest, JournalEntry, Journal, JournalProgress, Waypoin
 type HookContext = Parameters<Parameters<BbPluginApi["experimental_hooks"]["on"]>[1]>[0];
 export type Database = ReturnType<BbPluginApi["storage"]["database"]>;
 
-export type BoardQuestMirror = Pick<BoardQuest, "id" | "title" | "phase" | "updatedAt" | "endedAt">;
+export type BoardQuestMirror = Pick<BoardQuest, "id" | "title" | "phase" | "updatedAt" | "endedAt" | "outcome" | "waivers">;
 
 export interface JournalPort {
   // added by Builder A: board phase changes refresh the Keeper's read-only checklist mirrors.

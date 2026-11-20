@@ -1,5 +1,7 @@
 import type { Keeper } from "./keeper/service";
 import type { Member, JournalEntry } from "../shared/schema";
+import type { BoardQuestSummary } from "../shared/contract";
+import { settled } from "../shared/waypoint";
 import { isOpenQuest } from "./liveness";
 import { PlacementStore } from "./placement/store";
 
@@ -22,9 +24,13 @@ export function restingContext(k: Keeper) {
   const members = k.store.all("members");
   const reviewing = new Set(members.filter(m => m.classId === "warden" && !["done", "stopped", "failed"].includes(m.state) && !k.store.runtime(m.threadId).released).map(m => m.checkerMakerThreadId));
   const entries = new Map<string, JournalEntry[]>();
+  const waypoints = new Map<string, BoardQuestSummary["waypoints"]>();
   return { reviewing, placements: new PlacementStore(k.store.db), entries: (questId: string) => {
     if (!entries.has(questId)) entries.set(questId, k.journal.linkedEntries(questId));
     return entries.get(questId)!;
+  }, waypoints: (questId: string) => {
+    if (!waypoints.has(questId)) waypoints.set(questId, k.summary(questId).waypoints);
+    return waypoints.get(questId)!;
   } };
 }
 export function restingEngagement(k: Keeper, member: Member, context = restingContext(k)): RestingEngagement | null {
@@ -45,13 +51,18 @@ export function restingMember(k: Keeper, member: Member, context = restingContex
   if (!engagement) return null;
   const entries = member.boardQuestId ? context.entries(member.boardQuestId) : [];
   const own = entries.filter(e => member.classId === "warden" ? e.review?.actor.kind === "agent" && e.review.actor.threadId === member.threadId : e.threadId === member.threadId);
-  const settled = !engagement.underReview && own.every(e => e.status === "verified") && (member.classId === "warden" ? own.length > 0 && k.checkerWaypoints(member.threadId).every(id => own.some(e => e.link?.waypointId === id)) : !member.waypointId || own.length > 0);
+  const workSettled = member.classId === "warden"
+    ? own.length > 0 && own.every(e => e.status === "verified") && k.checkerWaypoints(member.threadId).every(id => own.some(e => e.link?.waypointId === id))
+    : (!member.waypointId || own.length > 0) && own.every(e => {
+      const waypoint = member.boardQuestId && context.waypoints(member.boardQuestId).find(w => w.id === e.link?.waypointId);
+      return waypoint ? settled(waypoint) : e.status === "verified";
+    });
   const state = k.store.runtime(member.threadId);
   const kept = state.kept && state.kept.until > k.now() && member.boardQuestId && !k.store.get("decisions", state.kept.decisionId)?.undone ? state.kept : null;
   const quest = member.boardQuestId ? k.quest(member.boardQuestId).short : "its errand";
   const placement = context.placements.byMember(member.threadId);
   return { threadId: member.threadId, name: k.name(member), classId: member.classId, boardQuestId: member.boardQuestId, quest, ...engagement,
-    settled, kept, restedMinutes: Math.max(0, Math.floor((k.now() - engagement.since) / 60_000)),
+    settled: !engagement.underReview && workSettled, kept, restedMinutes: Math.max(0, Math.floor((k.now() - engagement.since) / 60_000)),
     machineHeld: !!placement && placement.phase !== "released", mayRebriefFor: reuseRule(member.classId, engagement, quest) };
 }
 export function restingParty(k: Keeper, keeperId: string) {

@@ -1,4 +1,4 @@
-import { AttentionSnapshot } from "./attention";
+import { AttentionSnapshot, DECIDED_FOR_YOU_SQL, decisionUndoProjection } from "./attention";
 import type { Decision } from "../shared/schema";
 import type { KeeperStore, Records } from "./keeper/store";
 
@@ -14,7 +14,7 @@ export class DecisionViews {
   private attentionQuery(filter: AttentionFilter): Query {
     const terms = [
       "r.kind='decisions'",
-      "json_extract(r.data,'$.source')='keeper'",
+      DECIDED_FOR_YOU_SQL,
       "json_extract(r.data,'$.reversible')=1",
       "json_extract(r.data,'$.undone')=0",
       "json_extract(r.data,'$.seenAt') IS NULL",
@@ -137,7 +137,7 @@ export class DecisionViews {
     ).get(...args) as { n: number };
     const page = rows.slice(0, limit), last = page.at(-1);
     return {
-      decisions: page.map(row => JSON.parse(row.data) as Decision),
+      decisions: page.map(row => JSON.parse(row.data) as Decision).map(decisionUndoProjection(this.store)),
       nextCursor: rows.length > limit && last
         ? Buffer.from(JSON.stringify([
             filter.keeperThreadId, filter.boardQuestId ?? null, last.ordinal, last.id,

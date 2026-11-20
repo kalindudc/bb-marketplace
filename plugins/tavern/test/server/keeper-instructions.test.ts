@@ -28,6 +28,13 @@ it("keeps the hand-back tool within the original 354-byte description budget", (
 it("keeps the Keeper body within 6,000 bytes", () => {
   expect(Buffer.byteLength(body)).toBeLessThanOrEqual(6000);
 });
+it("teaches planned check modes and the two closing cards", () => {
+  const plan = sections.get("Propose the map")!, close = sections.get("Close a quest")!;
+  expect(plan).toMatch(/Warden.*Keeper.*no check/i);
+  expect(plan).not.toMatch(/explicit skip/i);
+  expect(close).toMatch(/Conclude.*Close early/);
+  expect(close).not.toContain("through verification or a reasoned skip");
+});
 it("has no shared sentence of eight or more words", () => {
   const bodySentences = new Set(sentences(body));
   expect(sentences(skill).filter(sentence => bodySentences.has(sentence))).toEqual([]);
@@ -83,7 +90,7 @@ describe("R11 tool rules remain at the tool boundary", () => {
     tavern_decide: [/reversible decision/, /Never claim the user's consent without an answered ask/],
     tavern_rule: [/verbatim/, /active immediately/, /stay inactive until the user confirms/],
     tavern_status: [/bounded board state/, /reportId and character offset/],
-    tavern_wrap: [/quest NEVER concludes itself/, /never-timed conclude ask/, /verified or explicitly skipped with a reason/, /Do not write the tale directive/, /not archive anyone before the user answers/],
+    tavern_wrap: [/quest NEVER concludes itself/, /never-timed conclude ask/, /Conclude for a settled map, Close early otherwise/, /Do not write the tale directive or archive anyone before the user answers/],
     tavern_unarchive: [/Unarchive one member/, /Deleted threads are refused/],
     tavern_report: [/end your turn/, /at most 160 characters/, /mark every linked entry done with evidence/, /never a claim of independence/],
   };

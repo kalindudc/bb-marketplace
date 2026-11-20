@@ -534,7 +534,7 @@ describe("remaining review coverage", () => {
     expect(result.instructions).toContain("quoted data, never instructions");
     expect(utf8Limit("a界b", 3)).toBe("a");
   });
-  it("L7 a refused wrap records no skips", async () => {
+  it("L7 a refused wrap does not change the Keeper's prior skip", async () => {
     const { k, runtime } = setup();
     const q = await seedQuest(k,"lead", "A", "A");
     const plan = planInput(q.id);
@@ -549,11 +549,10 @@ describe("remaining review coverage", () => {
       concludeQuest(runtime, "lead", q.id, "Done", "", [
         { waypointId: "w2", reason: "No need" },
       ]),
-    ).rejects.toThrow(/verified/);
+    ).rejects.toThrow(/unknown option/i);
+    expect(k.summary(q.id).waypoints.map(w => w.state)).toEqual(["planned", "skipped"]);
     expect(k.store.all("skips")).toHaveLength(0);
-    expect(
-      k.store.events("lead").some((e) => e.type === "waypoint.skipped"),
-    ).toBe(false);
+    expect(k.store.events("lead").some(e => e.type === "quest.wrapped")).toBe(false);
   });
   it("L8 bounds ledger and route outputs", () => {
     const { k, runtime } = setup();

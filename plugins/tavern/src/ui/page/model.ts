@@ -1,4 +1,5 @@
 import { moveTime } from "../../shared/time";
+import { resolutionWords, settled, verifiedWaypoint } from "../../shared/waypoint";
 import { attentionView } from "../../shared/attention";
 import type { BoardQuestSummary, MapHistory, Room } from "../../shared/contract";
 import { checkerHandoffHoldSchema, type Ask, type Member, type Phase, type Report, type TavernEvent } from "../../shared/schema";
@@ -51,7 +52,7 @@ export function visibleMembers(room: Room): Member[] {
   return [...new Map([...room.keepers.flatMap((k) => [k.member, ...k.boardQuests.flatMap((q) => q.members), ...k.errands]), ...room.solos].map((m) => [m.threadId, m])).values()];
 }
 export function waypointMove(waypoint: BoardQuestSummary["waypoints"][number]): string {
-  if (waypoint.state === "verified" || waypoint.state === "skipped") return "Done";
+  if (settled(waypoint)) return "Done";
   if (waypoint.state === "reported") return "Ready for review";
   if (waypoint.actor === "user") return "Your next moves";
   if (waypoint.actor === "outside") return "Waiting on others";
@@ -186,7 +187,7 @@ function describeRaw(e: TavernEvent, ctx: EventContext): EventLine | null {
     case "quest.stop-failed": return { ...base, icon: "failed", tone: "bad", actor: { kind: "tavern" }, head: "could not stop a thread", detail: e.text };
     case "waypoint.skipped": return { ...base, icon: "skip", actor: leadActor, head: "skipped a waypoint", detail: prefixed(e.text, "Skipped ").replace(/^w\d+: /, "") };
     case "quest.retold": return { ...base, icon: "wrap", tone: "done", actor: leadActor, head: "retold the tale", detail: e.text };
-    case "quest.wrapped": return { ...base, icon: "wrap", tone: "done", actor: leadActor, head: "returned with the loot", detail: e.text };
+    case "quest.wrapped": return { ...base, icon: "wrap", tone: "done", actor: leadActor, head: e.data.closure === "closed-early" ? "closed early at your request" : "returned with the loot", detail: e.text };
     case "tick.sent": return { ...base, icon: "tick", actor: { kind: "tavern" }, head: "sent a tick" };
     case "tick.held": return { ...base, icon: "tick", actor: { kind: "tavern" }, head: "held a tick while you typed", detail: e.text };
     default: return { ...base, icon: "note", actor: leadActor, head: e.type.replace(/[._-]/g, " "), detail: e.text };
@@ -407,8 +408,9 @@ export function stoppedStory(detail: StoryDetail, names: StoryNames): string[] {
   if (reason) lines.push(sentence(`The reason given: ${reason}`));
   const maker = (w: StoryDetail["quest"]["waypoints"][number]) => { const id = credits.find((c) => c.madeWaypointIds.includes(w.id))?.memberThreadId ?? w.ownerMember?.threadId; return id ? names.name(id) : null; };
   const verifier = (w: StoryDetail["quest"]["waypoints"][number]) => { const id = credits.find((c) => c.verifiedWaypointIds.includes(w.id))?.memberThreadId ?? w.verifiedBy; return id ? names.name(id) : null; };
-  const verified = quest.waypoints.filter((w) => w.state === "verified");
-  const madeOnly = verified.length ? [] : quest.waypoints.filter((w) => w.state === "reported" || (w.state !== "rejected" && credits.some((c) => c.madeWaypointIds.includes(w.id))));
+  const verified = quest.waypoints.filter(verifiedWaypoint);
+  const resolved = quest.waypoints.filter(w => w.state === "accepted" || w.state === "done");
+  const madeOnly = verified.length ? [] : quest.waypoints.filter(w => !settled(w) && (w.state === "reported" || (w.state !== "rejected" && credits.some(c => c.madeWaypointIds.includes(w.id)))));
   for (const w of verified) {
     const by = maker(w), check = verifier(w);
     lines.push(by ? `${by} made ${quoted(w.title)}, and ${check ?? "a Warden"} verified it.` : `${quoted(w.title)} was verified${check ? ` by ${check}` : ""}.`);
@@ -418,8 +420,9 @@ export function stoppedStory(detail: StoryDetail, names: StoryNames): string[] {
     const evidence = w.evidenceCount > 0 ? ` (${w.evidenceCount} evidence)` : "";
     lines.push(`${by ?? "A member"} made ${quoted(w.title)}${evidence}, not verified.`);
   }
-  if (!verified.length && !madeOnly.length) lines.push("Nothing was finished.");
-  const told = new Set([...verified, ...madeOnly].map((w) => w.id));
+  for (const w of resolved) lines.push(sentence(`${quoted(w.title)}: ${resolutionWords(w)}`));
+  if (!verified.length && !madeOnly.length && !resolved.length) lines.push("Nothing was finished.");
+  const told = new Set([...verified, ...madeOnly, ...resolved].map(w => w.id));
   // A checker files reports against the waypoint it checks; they belong to its own check waypoint.
   const checks = new Map((quest.members ?? []).flatMap((m) => m.checkerWaypointId ? [[m.threadId, m.checkerWaypointId] as const] : []));
   const about = (r: Report) => checks.get(r.memberThreadId) ?? r.waypointId;

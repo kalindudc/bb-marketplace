@@ -39,7 +39,8 @@ it.each(["done", "stopped"] as const)("N3 withdraws a stray conclude ask without
   const f = setup(), q = await seedQuest(f.k, "lead", "Finished", "Finished");
   f.k.plan("lead", { ...planInput(q.id), waypoints: [{ ...planInput(q.id).waypoints[0]!, optional: true }] });
   f.k.answerAsk(f.k.store.openAsks("lead", q.id)[0]!.id, "approve", null, "page", "user");
-  const ask = await f.runtime.proposeWrap("lead", q.id, "Done", "", [{ waypointId: "w1", reason: "Optional" }]);
+  f.k.settle("lead", { boardQuestId: q.id, waypointId: "w1", as: "skipped", reason: "Optional" });
+  const ask = await f.runtime.proposeWrap("lead", q.id, "Done", "");
   putQuestFixture(f.k.store, q.id, { ...f.k.quest(q.id), phase }); await f.runtime.reconcile();
   expect(f.k.quest(q.id).phase).toBe(phase); expect(f.k.store.get("asks", ask.askId!)?.state).toBe("withdrawn");
   expect(f.k.store.events("lead").some(e => e.type === "ask.withdrawn" && e.data.askId === ask.askId && e.data.cause === "conclude-stale-at-upgrade")).toBe(true);

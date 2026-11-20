@@ -17,7 +17,7 @@ function fixture(phase: BoardQuest["phase"] = "scout") {
 
 describe("quest lifecycle", () => {
   it("pins the allowed rows and records each cause atomically", () => {
-    expect([...new Set(QUEST_TRANSITIONS.map(row => row.cause))].sort()).toEqual(["approve", "auto-approve", "close", "conclude", "conclude-open-at-upgrade", "conclude-withdrawn", "extensions", "hold", "keep-open", "open", "plan", "reopen", "replacement-plan", "resume", "stop", "stopped", "undo"]);
+    expect([...new Set(QUEST_TRANSITIONS.map(row => row.cause))].sort()).toEqual(["approve", "auto-approve", "close", "close-early", "conclude", "conclude-open-at-upgrade", "conclude-withdrawn", "extensions", "hold", "keep-open", "open", "plan", "reopen", "replacement-plan", "resume", "stop", "stopped", "undo"]);
     for (const row of QUEST_TRANSITIONS) {
       const { store, quest } = fixture(row.from ?? "scout");
       if (row.from === null) store.remove("quests", quest.id);

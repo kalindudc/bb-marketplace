@@ -174,7 +174,7 @@ describe("Closing time runtime", () => {
   it.each(["release", "wrap"] as const)("does not let a background %s bypass a paused quest's hold", async operation => {
     const f = await party();
     await f.close(false, "pause");
-    const result = operation === "release" ? f.runtime.release("lead", "child", "Old stale worker") : f.runtime.wrap("lead", f.quest.id, "Done", "Nothing");
+    const result = operation === "release" ? f.runtime.release("lead", "child", "Old stale worker") : f.runtime.proposeWrap("lead", f.quest.id, "Done", "Nothing");
     await expect(result).rejects.toThrow(/closed/i);
     expect(f.k.store.runtime("child").released).toBeFalsy();
   });

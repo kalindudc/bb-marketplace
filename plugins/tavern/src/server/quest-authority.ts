@@ -1,8 +1,11 @@
 import { DELEGATABLE_KINDS, preapprovalInputSchema, type DelegationKind, type PreapprovalInput, type Preapproval, type ActTarget } from "../shared/quest-authority";
 import { doneWhenCommands } from "./check-commands";
 import type { Plan, Ask } from "../shared/schema";
+import { verifiedWaypoint } from "../shared/waypoint";
 import type { Keeper } from "./keeper/service";
-import { QUEST_LANES, commitUserAct, type UserActReceipt } from "./authority";
+import { QUEST_LANES, authorize, commitUserAct, type UserActReceipt } from "./authority";
+import { readUndoLanes } from "./undo-record";
+import type { UndoKind } from "../shared/undo-lane";
 export type StandingAnswer = { questId: string; grant: Preapproval; optionId: string; placement: boolean };
 export class QuestAuthority {
   readonly rebaseMatches = new Map<string, { verifiedCommit: string; commit: string }>();
@@ -17,6 +20,7 @@ export class QuestAuthority {
     this.explicit(receipt);
     if (!DELEGATABLE_KINDS.includes(kind)) throw new Error("This kind cannot be delegated");
     const k = this.keeper, q = k.quest(questId); k.liveQuest(q.keeperThreadId, q.id);
+    if (readUndoLanes(k.store, q.keeperThreadId).some(lane => lane.kind === kind)) throw new Error("Reset this kind in the Ledger first.");
     return commitUserAct(k.store, k.now, receipt, () => {
       const existing = q.delegations?.find(g => g.kind === kind && this.active(g)); if (existing) return existing;
       if ((q.delegations?.length ?? 0) >= 100) throw new Error("This quest has reached its authority record limit");
@@ -45,12 +49,12 @@ export class QuestAuthority {
     if (!grant) throw new Error("Unknown quest authority record");
     commitUserAct(k.store, k.now, receipt, () => {
       k.store.put("quests", q.id, { ...q, delegations: q.delegations?.map(g => g.id === id ? { ...g, revokedAt: k.now() } : g), preapprovals: q.preapprovals?.map(g => g.id === id ? { ...g, revokedAt: k.now() } : g) });
-      for (const ask of k.store.query("asks", "boardQuestId", q.id, 500).filter(a => a.state === "open" && a.lane === "keeper")) k.store.put("asks", ask.id, { ...ask, lane: this.lane(ask) });
+      for (const ask of k.store.query("asks", "boardQuestId", q.id, 500).filter(a => a.state === "open" && a.lane === "keeper")) k.store.put("asks", ask.id, { ...ask, lane: this.baseLane(ask) });
       k.store.event(k.now(), q.keeperThreadId, q.id, "authority.revoked", "Quest authority revoked immediately", { id, surface: receipt.surface }, { kind: "user" });
     });
     k.changed(q.keeperThreadId, q.id);
   }
-  lane(ask: Pick<Ask, "kind" | "boardQuestId"> & { unsure?: boolean }): "user" | "keeper" {
+  baseLane(ask: Pick<Ask, "kind" | "boardQuestId"> & { unsure?: boolean }): "user" | "keeper" {
     if (ask.unsure || !ask.boardQuestId || !DELEGATABLE_KINDS.includes(ask.kind as DelegationKind)) return "user";
     const q = this.keeper.store.get("quests", ask.boardQuestId);
     if (!q || ["done", "stopping", "stopped"].includes(q.phase)) return "user";
@@ -85,6 +89,20 @@ export class QuestAuthority {
     return { id: "delegate", label: `Let ${k.name(k.require(keeperThreadId, "keeper"))} decide these for the rest of this quest`,
       detail: "Records a revocable grant for this kind on this quest only. This act still needs a decision.", recommended: false };
   }
+  lane(ask: Parameters<QuestAuthority["baseLane"]>[0]): "user" | "keeper" {
+    if (this.baseLane(ask) === "user") return "user";
+    const k = this.keeper, keeperId = k.quest(ask.boardQuestId!).keeperThreadId;
+    return readUndoLanes(k.store, keeperId).some(shift => shift.kind === ask.kind) ? "user" : "keeper";
+  }
+  resetUndoLane(threadId: string, kind: UndoKind, receipt: UserActReceipt) {
+    const k = this.keeper;
+    k.require(threadId, "keeper");
+    if (receipt?.act !== "resetUndoLane") throw new Error("Reset needs an explicit user action");
+    authorize("resetUndoLane", { level: "user-explicit", receipt: receipt.surface });
+    if (!readUndoLanes(k.store, threadId).some(shift => shift.kind === kind)) return { ok: true as const };
+    k.store.event(k.now(), threadId, null, "lane.reset", "You reset the Keeper's undo record for this kind.", { kind, surface: receipt.surface }, { kind: "user" });
+    return { ok: true as const };
+  }
   private routinePlan(plan: Plan) {
     const check = (command: string) => /^(?:(?:npm|pnpm|yarn|bun)(?: run)? (?:test|check|lint|typecheck|verify)(?::[\w-]+)?|node --(?:test|check)|(?:npx )?tsc --noEmit)$/.test(command.trim());
     const relative = (path: string | undefined) => !!path && !/^(?:[\\/]|[a-z]:)/i.test(path) && !path.split(/[\\/]/).includes("..");
@@ -100,13 +118,13 @@ export class QuestAuthority {
     if (["held", "stopping", "stopped", "done"].includes(q.phase)) return null;
     const grant = q.preapprovals?.find(g => this.active(g)); if (!grant) return null;
     let optionId: string | null = null;
-    if (ask.kind === "greenlight" && ask.effect?.type === "greenlight" && grant.greenlight) {
+    if (ask.kind === "greenlight" && ask.effect?.type === "greenlight" && !ask.effect.requiresExplicit && grant.greenlight) {
       const plan = k.store.get("plans", `${q.id}:${ask.effect.planVersion}`), envelope = grant.greenlight;
       if (plan && plan.version === q.planVersion && plan.reversible && !(plan.alwaysAskKinds?.length ?? 0) && !plan.questions.length && this.routinePlan(plan) && plan.party.length <= envelope.maxMembers && plan.party.every(s => envelope.classes.includes(s.classId))) optionId = "approve";
     } else if (ask.effect?.type === "placement-blocker" && grant.placement) optionId = grant.retriesUsed === 0 ? "retry" : "stop";
-    else if (ask.kind === "conclude" && ask.effect?.type === "conclude" && grant.conclude && !ask.effect.draft.skipped?.length) {
+    else if (ask.kind === "conclude" && ask.effect?.type === "conclude" && grant.conclude && !ask.effect.draft.skipped?.length && !ask.effect.draft.pullRequests?.length && !k.store.openPullRequests(q.id).length) {
       const summary = k.summary(q.id);
-      if (summary.plan && summary.waypoints.length && summary.waypoints.every(w => w.state === "verified")) optionId = "conclude";
+      if (summary.plan && summary.waypoints.length && summary.waypoints.every(verifiedWaypoint)) optionId = "conclude";
     }
     return optionId ? { questId: q.id, grant, optionId, placement: ask.effect?.type === "placement-blocker" } : null;
   }
@@ -143,6 +161,7 @@ export class QuestAuthority {
   }
   view(questId: string) {
     const k = this.keeper, q = k.quest(questId);
-    return { keeperName: k.name(k.require(q.keeperThreadId, "keeper")), rows: [...DELEGATABLE_KINDS.map(kind => ({ kind, lane: this.lane({ kind, boardQuestId: q.id }) })), ...["greenlight", "conclude"].map(kind => ({ kind, lane: q.preapprovals?.some(g => this.active(g) && (kind === "greenlight" ? g.greenlight : g.conclude)) ? "tavern" as const : "user" as const })), ...Object.entries(QUEST_LANES).filter(([, row]) => row.lane === "keeper").map(([kind, row]) => ({ kind, lane: row.lane }))], delegations: q.delegations ?? [], preapprovals: q.preapprovals ?? [], review: { used: k.store.query("members", "boardQuestId", q.id, 500).filter(m => m.classId === "warden").length, total: k.settings(q.id).attention.reviewBudget }, spendBudget: null };
+    const shifted = new Set(q.delegations?.some(g => this.active(g)) ? readUndoLanes(k.store, q.keeperThreadId).map(row => row.kind) : []);
+    return { keeperName: k.name(k.require(q.keeperThreadId, "keeper")), rows: [...DELEGATABLE_KINDS.map(kind => ({ kind, lane: shifted.has(kind) ? "user" as const : this.baseLane({ kind, boardQuestId: q.id }) })), ...["greenlight", "conclude"].map(kind => ({ kind, lane: q.preapprovals?.some(g => this.active(g) && (kind === "greenlight" ? g.greenlight : g.conclude)) ? "tavern" as const : "user" as const })), ...Object.entries(QUEST_LANES).filter(([, row]) => row.lane === "keeper").map(([kind, row]) => ({ kind, lane: row.lane }))], delegations: q.delegations ?? [], preapprovals: q.preapprovals ?? [], review: { used: k.store.query("members", "boardQuestId", q.id, 500).filter(m => m.classId === "warden").length, total: k.settings(q.id).attention.reviewBudget }, spendBudget: null };
   }
 }

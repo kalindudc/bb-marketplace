@@ -3,6 +3,7 @@ import { useId, useMemo, useState } from "react";
 import { rpcContract, type BoardQuestDetail, type BoardQuestSummary, type Room } from "../../shared/contract";
 
 import { attentionView, attentionNotes } from "../../shared/attention";
+import { resolutionWords, settled, verifiedWaypoint } from "../../shared/waypoint";
 import { QuestAuthority, AskCard, verifiedOf, verifiedWords, questNames, readable, heldQuests, stoppingWords as kitStoppingWords, CELLAR, CheckIndependence, ExpandsMark, GateRows, GuardPosture, KeeperNoteRows, KeptInMind, OpensMark, QuestMap, QuietNotice, Vocabulary, clockTime, useNow, glowVars, vocab } from "../kit";
 import { DecidedForYou, KIND, heldTitles } from "./asks";
 import { ArchiveReceiptLine, ArchivedList, FinishedRow, finishedQuests, useArchive } from "./archive";
@@ -16,6 +17,8 @@ import { usePanelState } from "./panel-state";
 
 import { Confidence, Guardrails, History, OlderDecisions, ReportItem, useHistoryLines } from "./record";
 import { CreditCard, LeftRow, LootRow } from "./finished";
+import { WaiverRows } from "../kit/waiver-rows";
+import { pullRequestVerified } from "../../shared/pull-request";
 import { AsksRecord, PlanRecord, RecordFold, RulesAndAnchor } from "./quest-record";
 import { QuestLead } from "./quest-lead";
 import { recordedStop } from "./quest-road";
@@ -119,6 +122,7 @@ export function QuestPage({ detail, registry, room }: { detail: BoardQuestDetail
   const names = useMemo(() => questNames(quest, registry, detail.reports), [quest, registry, detail.reports]);
   const stopper = stopperOf(detail.events, quest.id, { name: id => names.threadNames?.get(id) ?? null });
   const finishedPath = verifiedOf(quest);
+  const completed = quest.waypoints.filter(w => settled(w) && w.state !== "skipped" && w.state !== "waived");
   const stop = StopQuest({ detail, registry });
   const members = new Map([...(room ? visibleMembers(room) : []), ...quest.members].map((m) => [m.threadId, m]));
   const attention = attentionView(detail.attention);
@@ -171,6 +175,7 @@ export function QuestPage({ detail, registry, room }: { detail: BoardQuestDetail
     </header>
     {stop.confirm}
     {finished && <QuestLead detail={detail} registry={registry} />}
+    {quest.outcome === "closed-early" && <Section title="Closed early at your request" count={`${quest.waivers?.length ?? 0} not verified`} className="tv-card"><WaiverRows items={quest.waivers ?? []} final /></Section>}
     <section className={`tv-card tv-qmapcard ${finished ? "" : "lit"} ${showMap ? "" : "folded"}`} aria-labelledby="tv-qmap-h" style={finished ? undefined : glowVars(`questmap:${quest.id}`)}>
       <header className="tv-colh"><h2 id="tv-qmap-h"><Vocabulary word="map" /></h2><span className="tv-colh-aside">{mapAside(quest)}</span><span className="tv-sp" />{steer && showMap && <span className="tag tv-steer-tag" title={steer.text}><PageGlyph name="steer" /><span>v{quest.planVersion} from your steer, {clockTime(steer.at)}</span></span>}{finished && <button type="button" className="tv-fold act" aria-label={`${vocab("map")} ${mapAside(quest)} ${mapOpen ? "Hide" : "Show"}`} aria-expanded={mapOpen} aria-controls="tv-qmap-b" onClick={() => setMapOpen(!mapOpen)}><ExpandsMark open={mapOpen} /><span>{mapOpen ? "Hide" : "Show"}</span></button>}</header>
       {showMap && <div id="tv-qmap-b">
@@ -193,20 +198,25 @@ export function QuestPage({ detail, registry, room }: { detail: BoardQuestDetail
               {w.ownerMember ? <CrestOf member={w.ownerMember} registry={registry} size={16} /> : <PageGlyph name={w.actor === "user" ? "diamond" : w.actor === "outside" ? "gate" : "wait"} className={w.actor === "user" ? "tv-mn-you" : ""} />}
               <span className="tv-item-t" data-content title={`${owner}: ${w.title}`}>{owner}: {w.title}</span>
               <span className="m small num">{w.leadTime ?? "lead time unknown"}</span>
-              <span className="tv-item-s">{w.ownerMember && <><CheckIndependence member={w.ownerMember} /><GuardPosture member={w.ownerMember} /></>}<span>{w.doneWhen ? `done when ${w.doneWhen}` : "no done-when"}</span>{w.evidenceCount > 0 && <span>{w.evidenceCount} evidence</span>}{w.verifiedBy && <span>verified by the Warden</span>}{w.rejectedReason && <span className="tv-st-bad">rejected: {w.rejectedReason}</span>}{report && <Confidence report={report} />}</span>
+              <span className="tv-item-s">{w.ownerMember && <><CheckIndependence member={w.ownerMember} /><GuardPosture member={w.ownerMember} /></>}<span>{w.doneWhen ? `done when ${w.doneWhen}` : "no done-when"}</span>{w.evidenceCount > 0 && <span>{w.evidenceCount} evidence</span>}{verifiedWaypoint(w) ? <span>verified by the Warden</span> : <span>{resolutionWords(w)}</span>}{w.rejectedReason && <span className="tv-st-bad">rejected: {w.rejectedReason}</span>}{report && <Confidence report={report} />}</span>
               {w.ownerMember && <PlacementFacts placement={w.ownerMember.placement} memberName={owner} variant="status" />}
             </li>;
           })}</ul></div>; })}
           {!openAsks.length && !quest.waypoints.length && <p className="tv-empty" data-empty>Nothing to move yet: {move.who}{move.next ? ` · ${move.next}` : ""}.</p>}
         </Section> : <Section title="Done and left"><div className="tv-rec-two">
           <section className="tv-card tv-rec-sec" aria-label="Done"><header className="tv-colh"><h2>Done</h2></header>
-            {quest.waypoints.some(w => w.state === "verified") ? <ul className="tv-dw tv-loot">{quest.waypoints.filter(w => w.state === "verified").map(w => <LootRow key={w.id} waypoint={w} detail={detail} registry={registry} />)}</ul> : <p className="tv-empty" data-empty>Nothing was verified.</p>}
+            {completed.length > 0 ? <ul className="tv-dw tv-loot">{completed.map(w => verifiedWaypoint(w) ? <LootRow key={w.id} waypoint={w} detail={detail} registry={registry} /> : <LeftRow key={w.id} waypoint={w} />)}</ul> : <p className="tv-empty" data-empty>Nothing was verified.</p>}
           </section>
           <section className="tv-card tv-rec-sec" aria-label="Left"><header className="tv-colh"><h2>Left</h2></header>
             {handBacks.length > 0 && <KeeperNoteRows notes={handBacks} label="Handed back to you" />}
-            {quest.waypoints.some(w => w.state !== "verified") ? <ul className="tv-dw">{quest.waypoints.filter(w => w.state !== "verified").map(w => <LeftRow key={w.id} waypoint={w} skipped={detail.tale?.skipped.find(s => s.waypointId === w.id) ? readable(detail.tale.skipped.find(s => s.waypointId === w.id)!.reason, names) : undefined} />)}</ul> : !handBacks.length && <p className="tv-empty" data-empty>Nothing was left.</p>}
+            {quest.waypoints.some(w => !settled(w) || w.state === "skipped") ? <ul className="tv-dw">{quest.waypoints.filter(w => !settled(w) || w.state === "skipped").map(w => <LeftRow key={w.id} waypoint={w} skipped={detail.tale?.skipped.find(s => s.waypointId === w.id) ? readable(detail.tale.skipped.find(s => s.waypointId === w.id)!.reason, names) : undefined} />)}</ul> : !handBacks.length && <p className="tv-empty" data-empty>Nothing was left.</p>}
           </section>
         </div></Section>}
+        {!!detail.pullRequests?.length && <Section title="Pull requests" count={plural(detail.pullRequests.length, "pull request")}><ul className="waiver-rows">{detail.pullRequests.map(pr => <li key={pr.id}>
+          <a href={pr.url} target="_blank" rel="noreferrer">{pr.url}</a>
+          <span className="m">{pr.state}, owner: {pr.owner === "user" ? "You" : pr.owner === quest.keeperThreadId ? keeperName : names.threadNames?.get(pr.owner) ?? pr.owner}, {pullRequestVerified(pr) ? "head verified" : "head not verified"}</span>
+          {pr.closeRequest && <span className="m">{pr.closeRequest.error ? `Could not confirm closure: ${pr.closeRequest.error}` : "Close requested. Check the forge if it is still open."}</span>}
+        </li>)}</ul></Section>}
         <RecordFold id="quest.reports" title="Reports and evidence" count={plural(detail.reports.length, "report")} open={false}>
           {detail.reports.length ? <ul className="tv-items">{detail.reports.map(r => <ReportItem key={r.id} report={r} registry={registry} detail={detail} />)}</ul> : <p className="tv-empty" data-empty>No reports were filed.</p>}
         </RecordFold>

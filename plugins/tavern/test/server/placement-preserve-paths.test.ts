@@ -35,7 +35,8 @@ it.each(["wrap", "conclude", "cellar", "delete"] as const)("preserves a placed m
   let pending: string[];
   if (path === "wrap") pending = (await f.wrap()).pendingArchives;
   else if (path === "conclude") {
-    const proposed = await f.runtime.proposeWrap("lead", f.quest.id, "Draft tested", "", [{ waypointId: "w1", reason: "Optional" }], []);
+    f.k.settle("lead", { boardQuestId: f.quest.id, waypointId: "w1", as: "skipped", reason: "Optional" });
+    const proposed = await f.runtime.proposeWrap("lead", f.quest.id, "Draft tested", "", []);
     expect(f.save).not.toHaveBeenCalled();
     await f.runtime.answerAsk(proposed.askId!, "conclude", null, "page", true);
     pending = f.k.store.runtime("child").archivePending ? ["child"] : [];

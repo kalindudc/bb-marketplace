@@ -8,7 +8,7 @@ import { abortError } from "./process";
 import { HostError, HostRegistry } from "./registry";
 import { NativeScopes, type NativeScopePaths } from "./scopes";
 import { createTransport } from "./transport";
-import { draftPush, draftOpen } from "./forge";
+import { draftPush, draftOpen, forgePullRequest } from "./forge";
 import { pushedBase } from "./pushed-base";
 import { snapshotWorktree } from "./snapshot";
 
@@ -69,6 +69,7 @@ export function createTavernHostEntry(options: TavernHostEntryOptions) {
       }),
       draftPush: (input, context) => call(context, (native, signal) => draftPush(native.registry, input, signal)),
       draftOpen: (input, context) => call(context, (native, signal) => draftOpen(native.registry, input, signal)),
+      forgePullRequest: (input, context) => call(context, (native, signal) => forgePullRequest(native.registry, input, signal)),
       commitAll: (input, context) => call(context, (native, signal) => native.transport.commitAll(input, signal)),
       exportChanges: (input, context) => call(context, (native, signal) => native.transport.exportChanges(input, signal)),
       readBlob: (input, context) => call(context, (native, signal) => native.transport.readBlob(input, signal)),

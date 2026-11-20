@@ -64,7 +64,7 @@ describe("quest tale and credits", () => {
     const wrapped = f.k.store.events("lead", 0, 200).find(e => e.type === "quest.wrapped")!;
     expect(wrapped.data.skipped).toEqual([{ waypointId: "w1", reason: "No implementation was needed" }]);
     await f.call("archiveBoardQuests", { ids: [f.q.id], archived: true });
-    expect((await f.detail()).tale).toEqual({ outcome: "The smoke check is complete.", left: "Nothing", skipped: wrapped.data.skipped, wrappedAt: f.time(), levels: [{ characterId: "wren", role: "keeper", before: null, after: null, historyComplete: true }], keptCharacterIds: [] });
+    expect((await f.detail()).tale).toEqual({ outcome: "The smoke check is complete.", closure: "concluded", left: "Nothing", skipped: wrapped.data.skipped, wrappedAt: f.time(), levels: [{ characterId: "wren", role: "keeper", before: null, after: null, historyComplete: true }], keptCharacterIds: [] });
   });
 
   it("credits completed linked work and actual review actors, not symbolic owners or later note authors", async () => {

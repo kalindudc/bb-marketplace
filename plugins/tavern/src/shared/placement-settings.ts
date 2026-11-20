@@ -95,7 +95,7 @@ const noConsent = {
 
 export const forgeProfileSchema = z.discriminatedUnion("kind", [
   z.object({ id: id.regex(/^[a-z][a-z0-9-]{0,31}$/), name: z.string().min(1).max(200), enabled: z.boolean().default(true), kind: z.literal("github") }).strict(),
-  z.object({ id: id.regex(/^[a-z][a-z0-9-]{0,31}$/), name: z.string().min(1).max(200), enabled: z.boolean().default(true), kind: z.literal("command"), open: z.string().trim().min(1).max(16000), state: z.string().trim().min(1).max(16000).optional() }).strict(),
+  z.object({ id: id.regex(/^[a-z][a-z0-9-]{0,31}$/), name: z.string().min(1).max(200), enabled: z.boolean().default(true), kind: z.literal("command"), open: z.string().trim().min(1).max(16000), state: z.string().trim().min(1).max(16000).optional(), close: z.string().trim().min(1).max(16000).optional() }).strict(),
 ]);
 export type ForgeProfile = z.infer<typeof forgeProfileSchema>;
 export const pullRequestsSchema = z.discriminatedUnion("at", [

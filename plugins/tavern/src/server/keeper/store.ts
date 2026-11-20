@@ -308,6 +308,7 @@ const initialRuntime = (): Runtime => ({
 
 import { legacyAskEffect } from "../ask-effects";
 import { consumesQuestWrite } from "./quest-lifecycle";
+import { undoAskProjection } from "../undo-record";
 
 export class KeeperStore {
   log?: (level: "info" | "warn", message: string) => void;
@@ -541,15 +542,16 @@ export class KeeperStore {
       (id): id is string => id !== undefined,
     );
     const clause = `${keeperThreadId ? " AND json_extract(data,'$.keeperThreadId')=?" : ""}${boardQuestId ? " AND json_extract(data,'$.boardQuestId')=?" : ""}`;
-    return (
+    const asks = (
       this.db
         .prepare(
           `SELECT r.data FROM tavern_records r WHERE kind='asks' AND json_extract(data,'$.state')='open'${clause}
-           ${visibleOnly ? "AND COALESCE(json_extract(r.data,'$.lane'),'user') != 'keeper' AND NOT EXISTS (SELECT 1 FROM tavern_records q WHERE q.kind='quests' AND q.id=json_extract(r.data,'$.boardQuestId') AND q.archived_at IS NOT NULL)" : ""}
+           ${visibleOnly ? "AND NOT EXISTS (SELECT 1 FROM tavern_records q WHERE q.kind='quests' AND q.id=json_extract(r.data,'$.boardQuestId') AND q.archived_at IS NOT NULL)" : ""}
            ORDER BY r.rowid`,
         )
         .all(...args) as { data: string }[]
     ).map((row) => this.decode("asks", row.data));
+    return visibleOnly ? asks.map(undoAskProjection(this)).filter(ask => ask.lane !== "keeper") : asks;
   }
   activeRules(
     keeperId: string,
@@ -760,9 +762,17 @@ export class KeeperStore {
       return next;
     });
   }
-  private changePullRequest(pr: PullRequest, at: number) {
-    this.put("pullRequests", pr.id, pr);
-    this.event(at, pr.keeperThreadId, pr.boardQuestId, "pull-request.changed", `Pull request ${pr.state}: ${pr.url}; owner ${pr.owner}`, pr);
+  pullRequestsForQuest(questId: string): PullRequest[] {
+    const rows = this.db.prepare("SELECT data FROM tavern_records WHERE kind='pullRequests' AND json_extract(data,'$.boardQuestId')=? ORDER BY rowid").all(questId) as { data: string }[];
+    return rows.map(row => pullRequestSchema.parse(JSON.parse(row.data)));
+  }
+  openPullRequests(questId: string) { return this.pullRequestsForQuest(questId).filter(pr => pr.state === "draft" || pr.state === "ready"); }
+  changePullRequest(pr: PullRequest, at: number, askId?: string) {
+    return this.atomic(() => {
+      this.put("pullRequests", pr.id, pr);
+      this.event(at, pr.keeperThreadId, pr.boardQuestId, "pull-request.changed", `Pull request ${pr.state}: ${pr.url}; owner ${pr.owner}`, { ...pr, ...(askId ? { askId } : {}) }, askId ? { kind: "user" } : { kind: "tavern" });
+      return pr;
+    });
   }
   transferPullRequests(threadId: string, at: number) {
     const member = this.get("members", threadId);

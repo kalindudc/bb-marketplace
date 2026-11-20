@@ -15,7 +15,7 @@ export type Voice = { name: string; style: string; quirks: readonly string[] };
 const reportInput = reportSchema.pick({ status: true, outcome: true, headline: true, evidence: true, artifacts: true })
   .extend({ confidence: reportSchema.shape.confidence.default(null), voice: reportSchema.shape.voice.default(null) });
 const askInput = askSchema.pick({ question: true, why: true, kind: true, options: true, meanwhile: true, holds: true }).extend({ options: askSchema.shape.options.min(2) });
-const wrapInput = z.object({ boardQuestId: z.string().min(1), outcome: z.string().min(1).max(4000), left: z.string().max(4000), skipped: z.array(z.object({ waypointId: z.string().min(1), reason: z.string().min(1).max(500) })).max(24).default([]) });
+const wrapInput = z.object({ boardQuestId: z.string().min(1), outcome: z.string().min(1).max(4000), left: z.string().max(4000), next: z.array(z.string()).max(5).optional() });
 export const TOOL_INPUT = { tavern_report: reportInput, tavern_ask: askInput, tavern_wrap: wrapInput } as const;
 
 // Words too common to mark a voice, whatever the style says.

@@ -2,7 +2,7 @@
 import { expect, it, vi } from "vitest";
 import { setup } from "./runtime-fixture";
 import { makeThreadResponse } from "./host";
-import { seedQuest, waypointEntry, putQuestFixture } from "./support";
+import { seedQuest, planInput, waypointEntry, putQuestFixture } from "./support";
 import { placementRecord } from "./placement-fixture";
 import { DEFAULT_SETTINGS } from "../../src/shared/settings";
 import { readStatus, statusInput } from "../../src/server/status";
@@ -75,6 +75,20 @@ it("uses upgrade time rather than an old report as the rest start and persists i
   new TavernRuntime(f.bb, f.k, f.runtime.registry).remindResting("lead");
   expect(reminders(f)).toHaveLength(1);
   new TavernRuntime(f.bb, f.k, f.runtime.registry).remindResting("lead");
+  expect(reminders(f)).toHaveLength(1);
+});
+it.each(["none", "keeper"] as const)("counts resting work as settled with the planned %s check", async check => {
+  const f = await fixture();
+  const base = planInput(f.q.id);
+  f.k.plan("lead", { ...base, waypoints: [{ ...base.waypoints[0]!, check }] });
+  f.port.linkedEntries = () => [waypointEntry(f.m.threadId, f.q.id)];
+  if (check === "keeper") {
+    expect(f.k.restatement("lead")).not.toContain("Resting, settled");
+    f.k.settle("lead", { boardQuestId: f.q.id, waypointId: "w1", as: "accepted", reason: "Read the source" });
+  }
+  expect(f.k.restatement("lead")).toContain("Resting, settled");
+  f.advance(60 * 60_000);
+  f.runtime.remindResting("lead");
   expect(reminders(f)).toHaveLength(1);
 });
 it("does not remind about unchecked Smith work", async () => {

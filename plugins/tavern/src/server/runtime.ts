@@ -16,6 +16,10 @@ import type {
 } from "@get-bb/plugin-sdk";
 import { actorSchema, type Actor, type Brief, type Member } from "../shared/schema";
 import { TICK_PREFIX } from "../shared/text";
+import { settled, verifiedWaypoint } from "../shared/waypoint";
+import { isCloseEffect, unsettledWaypointSchema, waiverLine, type PullRequestChoices } from "../shared/closing";
+import type { AskEffect } from "./ask-effects";
+import { closeAnsweredPullRequests, previewPullRequests, recordPullRequestChoices, StaleClosingCard } from "./conclude-pull-requests";
 import { tags } from "../shared/contract";
 import { Keeper, partyCounts, type PlanInput } from "./keeper/service";
 import { checkerAssignments, validatePartyCharacters, validateCheckerMakers, makerForWaypoint } from "./assignments";
@@ -89,6 +93,7 @@ export const KEEPER_TOOLS = [
   "tavern_unarchive",
   "tavern_reopen",
   "tavern_plan",
+  "tavern_settle",
   "tavern_ask",
   "tavern_decide",
   "tavern_rule",
@@ -124,7 +129,7 @@ type Thread = PluginThreadEventPayloads["thread.active"]["thread"];
 type QueuedMessage = PluginThreadEventPayloads["message.queued"]["entry"];
 
 import { authorize, commitUserAct, type UserActReceipt } from "./authority";
-import { transitionQuest } from "./keeper/quest-lifecycle";
+import { storedPhase, transitionQuest } from "./keeper/quest-lifecycle";
 
 export class TavernRuntime {
   readonly stopAll = new StopAll(this);
@@ -578,26 +583,29 @@ export class TavernRuntime {
     surface = "client (unattested)",
     receipt?: UserActReceipt,
     preapproved = false,
+    pullRequestChoices: PullRequestChoices = [],
   ) {
     if (this.away.store.snapshot().status.closed && !clientAction && !preapproved) throw new Error("An away ask answer needs an explicit client action.");
     const ask = this.keeper.store.get("asks", askId);
     if (!ask) throw new Error("Unknown ask");
     if (ask.effect?.type === "release-hold" && !clientAction) throw new Error("Releasing a checker-handoff hold requires an explicit client action; the Keeper cannot answer it.");
+    if (isCloseEffect(ask.effect) && !clientAction && !(preapproved && ask.effect.type === "conclude")) throw new Error("Closing needs your explicit answer on the card.");
+    if (pullRequestChoices.length && (!clientAction || !isCloseEffect(ask.effect) || optionId !== ask.effect.type)) throw new Error("Pull request choices need your explicit closing answer.");
     const wasOpen = ask.state === "open";
     const after: (() => Promise<unknown>)[] = [];
-    let pendingArchives: string[] = [];
-    this.keeper.answerAsk(askId, optionId, note, via, preapproved ? "preapproval" : "user", surface, {
-      conclude: effect => {
-        if (effect.type !== "conclude" || !ask.boardQuestId) throw new Error("A conclude effect needs its quest and draft");
-        if (optionId === "conclude") {
-          const draft = effect.draft;
-          const members = this.completeWrap(ask.keeperThreadId, ask.boardQuestId, draft.outcome, draft.left, draft.skipped ?? [], draft.next, draft.results, receipt);
-          after.push(async () => { pendingArchives = await this.archiveMembers(members); });
-        } else if (optionId === "hold" || optionId === "extensions") {
-          transitionQuest(this.keeper.store, this.keeper.quest(ask.boardQuestId), "build", optionId === "hold" ? "keep-open" : "extensions", { kind: "user" }, { kind: "ask-answer", id: askId }, this.keeper.now(), { text: optionId === "hold" ? "You kept this quest open for other work." : "You asked for extensions or side quests.", data: { askId, optionId, ...(receipt ? { authority: receipt } : {}) } });
-          this.keeper.reanchor(ask.keeperThreadId, optionId === "hold" ? "user kept the quest open for other work" : "user asked for extensions or side quests");
-        }
-      },
+    let pendingArchives: string[] = [], pullRequestErrors: string[] = [];
+    const close = (effect: AskEffect) => {
+      if (!isCloseEffect(effect)) throw new Error("A closing answer needs its typed effect.");
+      const result = this.applyClose(ask, effect, optionId, pullRequestChoices, receipt);
+      if (!result) return;
+      after.push(async () => {
+        pullRequestErrors = await closeAnsweredPullRequests(this, result.closeIds, askId);
+        pendingArchives = await this.archiveMembers(result.members);
+      });
+    };
+    const effects: Parameters<Keeper["answerAsk"]>[6] = {
+      conclude: close,
+      "close-early": close,
       "placement-blocker": () => {
         if (!ask.boardQuestId) throw new Error("A placement blocker needs its quest");
         if (optionId === "stop") after.push(() => this.stop(ask.boardQuestId!));
@@ -633,11 +641,20 @@ export class TavernRuntime {
         if (optionId !== "retry") return;
         after.push(async () => { await this.resetQuietQueue(ask.keeperThreadId); await this.loop.recover(ask.keeperThreadId, true); });
       },
-    }, receipt);
+    };
+    try {
+      this.keeper.answerAsk(askId, optionId, note, via, preapproved ? "preapproval" : "user", surface, effects, receipt);
+    } catch (error) {
+      if (error instanceof StaleClosingCard) {
+        this.keeper.withdrawStaleClosing(ask, error.message);
+        void this.wakeKeeper(ask.keeperThreadId, "closing card went stale");
+      }
+      throw error;
+    }
     for (const apply of after) await apply();
     if (clientAction && wasOpen) await this.away.return({ kind: "ask-answer", threadId: ask.keeperThreadId, refId: ask.id });
     void this.resetQuietQueue(ask.keeperThreadId).then(() => this.recheckDispatch()).catch(error => this.bb.log.warn(`Tavern resume: ${String(error)}`));
-    return { pendingArchives };
+    return { pendingArchives, ...(pullRequestErrors.length ? { pullRequestErrors } : {}) };
   }
   async prepareActDecision(askId: string) {
     const ask = this.keeper.store.get("asks", askId), verdict = this.keeper.store.get("actVerdicts", askId);
@@ -1276,10 +1293,14 @@ export class TavernRuntime {
     const ids = new Set(input.waypoints.map((waypoint) => waypoint.id));
     if (input.party.some((slot) => slot.waypointIds.some((id) => !ids.has(id))))
       throw new Error("Party assignments must name waypoints in this plan");
-    for (const memberId of new Set(links.map((link) => link.member.threadId)))
+    const userWaypoints = input.waypoints.filter(w => w.actor === "user");
+    for (const memberId of new Set([...links.map(link => link.member.threadId), ...(userWaypoints.length ? [threadId] : [])]))
       await this.keeper.journal.prepare(memberId);
     return this.keeper.store.atomic(() => {
       const plan = this.keeper.plan(threadId, input);
+      for (const waypoint of userWaypoints) {
+        this.keeper.journal.linkWaypoint(threadId, { boardQuestId: q.id, waypointId: waypoint.id }, waypoint.title, "You", { kind: "agent", threadId });
+      }
       for (const { waypoint, member } of links) {
         this.keeper.journal.linkWaypoint(
           member.threadId,
@@ -1375,21 +1396,24 @@ export class TavernRuntime {
     if (q) this.keeper.guard(threadId, q.id);
     if (role.id !== "ranger" && !errand && q?.greenlitVersion === null)
       throw new Error("The party needs the user's explicit greenlight");
-    const config = this.config(questId);
-    const { partyMax: partyLimit, rangerMinutes: rangerLimit } = classLimits(lead, config);
-    const party = this.keeper.store.activeStaffing(threadId);
-    const reserved = this.keeper.store
-      .all("hires")
-      .filter((i) => !i.memberThreadId && i.owner.keeperThreadId === threadId && !isHireCancelled(this.keeper, i));
+    const { rangerMinutes: rangerLimit } = classLimits(lead, this.config(questId));
     const limits = new LimitPolicy(this.keeper);
-    const count = party.length + reserved.length;
-    if (count >= config.keepers.partyMax) throw new Error("The live party budget is full");
-    const partyDecision = count >= partyLimit ? limits.softDecision(threadId, questId, "party") : null;
-    if (count >= partyLimit && !partyDecision) throw new Error("The live party budget is full");
-    const rangerFull = role.id === "ranger" && party.filter(m => m.classId === "ranger").length + reserved.filter(i => i.classId === "ranger").length >= (lead.budget?.rangers ?? this.config().keepers.rangerMax);
-    const rangerDecision = rangerFull ? limits.softDecision(threadId, questId, "rangers") : null;
-    const limitDecisionIds = [partyDecision, rangerDecision].filter((id): id is string => id !== null);
-    if (rangerFull && !rangerDecision) throw new Error("The Ranger budget is full");
+    const checkStaffing = () => {
+      const config = this.config(questId);
+      const { partyMax: partyLimit } = classLimits(lead, config);
+      const party = this.keeper.store.activeStaffing(threadId);
+      const reserved = this.keeper.store.all("hires").filter(i => !i.memberThreadId && i.owner.keeperThreadId === threadId && !isHireCancelled(this.keeper, i));
+      const count = party.length + reserved.length;
+      if (count >= config.keepers.partyMax) throw new Error("The live party budget is full");
+      const partyDecision = count >= partyLimit ? limits.softDecision(threadId, questId, "party") : null;
+      if (count >= partyLimit && !partyDecision) throw new Error("The live party budget is full");
+      const rangerFull = role.id === "ranger" && party.filter(m => m.classId === "ranger").length + reserved.filter(i => i.classId === "ranger").length >= (lead.budget?.rangers ?? this.config().keepers.rangerMax);
+      const rangerDecision = rangerFull ? limits.softDecision(threadId, questId, "rangers") : null;
+      if (rangerFull && !rangerDecision) throw new Error("The Ranger budget is full");
+      return { party, reserved, permits: [partyDecision, rangerDecision].filter((id): id is string => id !== null) };
+    };
+    const { party, reserved } = checkStaffing();
+    const limitDecisionIds: string[] = [];
     if (
       role.id === "ranger" &&
       (input.brief.timeboxMinutes === null ||
@@ -1619,6 +1643,7 @@ export class TavernRuntime {
     }
     this.keeper.assertCheckerHandoff(role.id, questId);
     this.keeper.store.atomic(() => {
+      limitDecisionIds.push(...checkStaffing().permits);
       if (reviewAllowance && questId) limits.claimReview(questId, token);
       for (const id of limitDecisionIds) limits.claimSoft(id, token);
       if (q && staffingCapacity !== null) {
@@ -2572,181 +2597,106 @@ export class TavernRuntime {
     }
     this.keeper.changed(keeperId, q.id);
   }
-  /** A quest never concludes itself: the Keeper reports the summary and this ask carries the user's decision. */
   async proposeWrap(
-    threadId: string,
-    id: string,
-    outcome: string,
-    left: string,
-    skipped: { waypointId: string; reason: string }[] = [],
-    next?: string[],
-    results?: import("../shared/tale-results").TaleResults,
+    threadId: string, id: string, outcome: string, left: string,
+    next?: string[], results?: import("../shared/tale-results").TaleResults,
+    options: { reason?: string; fromSteer?: string } = {},
   ) {
-    const q = this.keeper.owned(threadId, id);
-    this.keeper.assertQuestNotHeld(id);
-    if (q.phase === "stopped" || q.phase === "stopping")
-      throw new Error("This board quest was stopped or is stopping");
-    // A returned quest is only retold; there is nothing left for the user to conclude.
-    if (q.phase === "done") {
-      await this.wrap(threadId, id, outcome, left, skipped, next, results);
+    const k = this.keeper;
+    const story = { outcome, left, ...(next ? { next } : {}), ...(results ? { results } : {}) };
+    if (k.owned(threadId, id).phase === "done") {
+      k.store.event(k.now(), threadId, id, "quest.retold", outcome, story);
+      k.changed(threadId, id);
       return { askId: null, retold: true, pendingArchives: [] as string[] };
     }
-    this.keeper.guard(threadId, id);
-    const summary = this.keeper.summary(id);
-    for (const skip of skipped) {
-      const waypoint = summary.waypoints.find((w) => w.id === skip.waypointId);
-      if (!waypoint?.optional || !skip.reason.trim())
-        throw new Error("Only optional waypoints may be explicitly skipped, with a reason");
-    }
-    const proposed = new Set(skipped.map((skip) => skip.waypointId));
-    if (
-      !summary.plan ||
-      summary.waypoints.some(
-        (w) => !["verified", "skipped"].includes(w.state) && !proposed.has(w.id),
-      )
-    )
-      throw new Error("Every waypoint must be verified or explicitly skipped before wrapping");
-    for (const ask of this.keeper.store.openAsks(threadId, id).filter((ask) => ask.kind === "conclude"))
-      this.keeper.withdrawAsk(ask.id, "plan-superseded");
-    const ask = this.keeper.ask(threadId, { effect: { type: "conclude", draft: { outcome, left, skipped, ...(next ? { next } : {}), ...(results ? { results } : {}) } },
-      kind: "conclude",
-      boardQuestId: id,
-      question: `Can “${q.title}” conclude?`,
-      why: "A quest returns only when you say so; the tale is told after your answer.",
-      options: [
-        { id: "conclude", label: "Conclude the quest", detail: "Tell the tale, archive the party and free its slots.", recommended: true },
-        { id: "hold", label: "Keep open for other work", detail: "Keep the quest and its party open; nothing is told yet.", recommended: false },
-        { id: "extensions", label: "Open extensions or side quests", detail: "Keep this quest open and add bounded follow-up work.", recommended: false },
-      ],
-      meanwhile: "Nothing else runs for this quest until you answer.",
-      holds: summary.waypoints.filter((w) => w.state !== "verified" && w.state !== "skipped").map((w) => w.id),
+    k.assertQuestNotHeld(id);
+    k.liveQuest(threadId, id);
+    k.guard(threadId, id);
+    this.away.wrapWindow(id);
+    const pullRequests = await previewPullRequests(this, id);
+    return k.store.atomic(() => {
+      const q = k.liveQuest(threadId, id);
+      k.assertQuestNotHeld(id);
+      k.guard(threadId, id);
+      const fromSteer = options.fromSteer ? k.closingSteer(q, options.fromSteer) : undefined;
+      const reason = options.reason ?? (left.trim() || outcome.trim() || "The Keeper proposed closing before these waypoints settled.").slice(0, 500);
+      const summary = k.summary(id), noPlan = !summary.plan;
+      const unsettled = summary.waypoints.filter(w => !settled(w)).map(w => unsettledWaypointSchema.parse({ waypointId: w.id, title: w.title, state: w.state, reason }));
+      for (const ask of k.store.openAsks(threadId, id)) if (ask.kind === "conclude") k.withdrawAsk(ask.id, "plan-superseded");
+      const phase = storedPhase(k.quest(id).phase);
+      const returnTo: "scout" | "greenlight" | "build" = phase === "scout" || phase === "greenlight" ? phase : "build";
+      const draft = { ...story, planVersion: q.planVersion, returnTo, pullRequests, ...(fromSteer ? { fromSteer } : {}) };
+      const early = noPlan || unsettled.length > 0;
+      const preview = noPlan ? "No quest map was written." : unsettled.map(waiverLine).join("; ");
+      const ask = k.ask(threadId, {
+        effect: early ? { type: "close-early", draft: { ...draft, unsettled, reason, ...(noPlan ? { noPlan: true } : {}) } } : { type: "conclude", draft },
+        kind: "conclude", boardQuestId: id,
+        question: early ? `Can “${q.title}” close early?` : `Can “${q.title}” conclude?`,
+        why: early ? "Only your answer can waive the work that is still open." : "A quest returns only when you say so; the tale is told after your answer.",
+        options: early ? [
+          { id: "close-early", label: "Close early", detail: preview.length <= 300 ? preview : "Record the waivers listed on this card and tell the tale.", recommended: false },
+          { id: "hold", label: "Keep open", detail: "Keep the quest and its party open; no work is waived.", recommended: true },
+        ] : [
+          { id: "conclude", label: "Conclude the quest", detail: "Tell the tale, archive the party and free its slots.", recommended: true },
+          { id: "hold", label: "Keep open for other work", detail: "Keep the quest and its party open; nothing is told yet.", recommended: false },
+          ...(returnTo === "build" ? [{ id: "extensions", label: "Open extensions or side quests", detail: "Keep this quest open and add bounded follow-up work.", recommended: false }] : []),
+        ],
+        meanwhile: "The quest stays open until you answer.", holds: unsettled.map(w => w.waypointId),
+      }, { closeType: early ? "close-early" : "conclude", ...(fromSteer ? { fromSteer } : {}), ...(early ? { unsettled } : {}), ...(noPlan ? { noPlan: true } : {}) });
+      return { askId: ask.id, pendingArchives: [] as string[] };
     });
-
-    this.keeper.changed(threadId, id);
-    return { askId: ask.id, pendingArchives: [] as string[] };
   }
-  private completeWrap(
-    threadId: string,
-    id: string,
-    outcome: string,
-    left: string,
-    skipped: { waypointId: string; reason: string }[] = [],
-    next?: string[],
-    results?: import("../shared/tale-results").TaleResults,
-    receipt?: UserActReceipt,
-  ) {
-    const q = this.keeper.owned(threadId, id);
-    if (q.phase === "stopped" || q.phase === "stopping") throw new Error("This board quest was stopped or is stopping");
-    if (q.phase === "done") {
-      this.keeper.store.event(this.keeper.now(), threadId, id, "quest.retold", outcome, { outcome, left, ...(next ? { next } : {}), ...(results ? { results } : {}) });
-      this.keeper.changed(threadId, id);
-      return [];
+  private applyClose(ask: Ask, effect: Extract<AskEffect, { type: "conclude" | "close-early" }>, optionId: string, choices: PullRequestChoices, authority?: UserActReceipt) {
+    if (!ask.boardQuestId) throw new Error("A closing answer needs its quest.");
+    const k = this.keeper, id = ask.boardQuestId, q = k.quest(id), threadId = ask.keeperThreadId;
+    const receipt = { kind: "ask-answer", id: ask.id };
+    if (optionId === "hold" || optionId === "extensions") {
+      const keep = optionId === "hold";
+      transitionQuest(k.store, q, keep ? effect.draft.returnTo ?? "build" : "build", keep ? "keep-open" : "extensions", { kind: "user" }, receipt, k.now(), { text: keep ? "You kept this quest open for other work." : "You asked for extensions or side quests.", data: { askId: ask.id, optionId, ...(authority ? { authority } : {}) } });
+      k.reanchor(threadId, keep ? "user kept the quest open for other work" : "user asked for extensions or side quests");
+      return null;
     }
+    if (optionId !== effect.type) throw new Error("This answer does not match the closing card.");
+    const { draft } = effect;
     const awayWindow = this.away.wrapWindow(id);
-    this.keeper.guard(threadId, id);
-    const before = this.keeper.summary(id);
-    for (const skip of skipped) {
-      const waypoint = before.waypoints.find((w) => w.id === skip.waypointId);
-      if (!waypoint?.optional || !skip.reason.trim())
-        throw new Error(
-          "Only optional waypoints may be explicitly skipped, with a reason",
-        );
+    for (const skip of draft.skipped ?? []) {
+      const w = k.summary(id).waypoints.find(w => w.id === skip.waypointId);
+      if (!w || !settled(w)) k.settle(threadId, { boardQuestId: id, as: "skipped", ...skip }, k.store.get("asks", ask.id)?.answer?.by === "user" ? ask.id : undefined);
     }
-    const summary = before;
-    const proposed = new Set(skipped.map((skip) => skip.waypointId));
-    if (
-      !summary.plan ||
-      summary.waypoints.some(
-        (w) =>
-          !["verified", "skipped"].includes(w.state) && !proposed.has(w.id),
-      )
-    )
-      throw new Error(
-        "Every waypoint must be verified or explicitly skipped before wrapping",
-      );
-    const verifiedEntries = this.keeper.journal
-      .linkedEntries(id)
-      .filter(
-        (entry) =>
-          entry.status === "verified" &&
-          summary.waypoints.some(
-            (waypoint) => waypoint.id === entry.link?.waypointId,
-          ),
-      );
-    this.keeper.store.atomic(() => {
-      this.keeper.store.db.prepare("UPDATE tavern_records SET data=json_set(data,\'$.cancelledAt\',?) WHERE kind=\'hires\' AND json_extract(data,\'$.owner.boardQuestId\')=?").run(this.keeper.now(), id);
-      for (const m of summary.members) {
-        this.keeper.store.patch(m.threadId, { archivePending: true });
-        if (this.keeper.store.runtime(m.threadId).released || ["failed", "stopped"].includes(m.state)) continue;
-        const wins =
-          m.classId === "warden"
-            ? 0
-            : new Set(
-                verifiedEntries
-                  .filter((entry) => entry.threadId === m.threadId)
-                  .map((entry) => entry.link?.waypointId),
-              ).size;
-        this.keeper.store.put("members", m.threadId, {
-          ...m,
-          state: "done",
-          place: "rest",
-          verifiedWins: wins,
-        });
-      }
-      for (const skip of skipped) {
-        const value = {
-          boardQuestId: id,
-          version: q.planVersion,
-          waypointId: skip.waypointId,
-        };
-        this.keeper.store.put(
-          "skips",
-          `${id}:${q.planVersion}:${skip.waypointId}`,
-          value,
-        );
-        this.keeper.store.event(
-          this.keeper.now(),
-          threadId,
-          id,
-          "waypoint.skipped",
-          `Skipped ${skip.waypointId}: ${skip.reason}`,
-          { ...value, reason: skip.reason },
-          { kind: "agent", threadId },
-        );
-      }
-      this.keeper.memory.closeQuest(threadId, id);
-      const withdrawnAskIds: string[] = [];
-      {
-        const open = this.keeper.store.db.prepare("SELECT id FROM tavern_records WHERE kind='asks' AND json_extract(data,'$.boardQuestId')=? AND json_extract(data,'$.state')='open'").all(id) as { id: string }[];
-        for (const ask of open) {
-          const withdrawn = this.keeper.withdrawAsk(ask.id, "quest-returned");
-          if (withdrawn) withdrawnAskIds.push(withdrawn.id);
-        }
-      }
-      const answer = this.keeper.store.query("asks", "boardQuestId", id, 500).filter(ask => ask.kind === "conclude" && (ask.answer?.by === "user" || ask.answer?.by === "preapproval") && ask.answer.optionId === "conclude").at(-1);
-      if (!answer) throw new Error("Concluding requires the user's conclude answer");
-      transitionQuest(this.keeper.store, q, "done", "conclude", { kind: "user" }, { kind: "ask-answer", id: answer.id }, this.keeper.now(), { patch: { endedAt: this.keeper.now() }, text: outcome, data: {
-        ...(receipt ? { authority: receipt } : {}),
-          outcome,
-          left,
-          skipped,
-          ...(next ? { next } : {}),
-          ...(results ? { results } : {}),
-          ...(awayWindow ? { awayWindowId: awayWindow.id, deferredMemberThreadIds: summary.members.map(member => member.threadId), withdrawnAskIds } : {}),
-        } });
-      this.serviceRecords.record(id);
-    });
+    const summary = k.summary(id);
+    const open = summary.waypoints.filter(w => !settled(w));
+    const approved = effect.type === "close-early" ? effect.draft.unsettled : [];
+    if ((draft.planVersion !== undefined && draft.planVersion !== q.planVersion) ||
+      !isDeepStrictEqual(open.map(w => [w.id, w.title, w.state]), approved.map(w => [w.waypointId, w.title, w.state]))) {
+      throw new StaleClosingCard("The waypoints changed after this card was shown. The Keeper will need to propose closing again.");
+    }
+    const closure = effect.type === "close-early" ? "closed-early" : "concluded";
+    const waivers = approved.map(w => ({ ...w, askId: ask.id, planVersion: q.planVersion }));
+    const pullRequests = recordPullRequestChoices(this, id, ask.id, draft.pullRequests ?? [], choices);
+    const verified = summary.waypoints.filter(verifiedWaypoint);
+    const skipped = summary.waypoints.flatMap(w => w.state === "skipped" && w.resolutionReason ? [{ waypointId: w.id, reason: w.resolutionReason }] : []);
+    const at = k.now();
+    k.store.db.prepare("UPDATE tavern_records SET data=json_set(data,'$.cancelledAt',?) WHERE kind='hires' AND json_extract(data,'$.owner.boardQuestId')=?").run(at, id);
+    for (const m of summary.members) {
+      k.store.patch(m.threadId, { archivePending: true });
+      if (k.store.runtime(m.threadId).released || ["failed", "stopped"].includes(m.state)) continue;
+      k.store.put("members", m.threadId, { ...m, state: "done", place: "rest", verifiedWins: verified.filter(w => w.madeBy?.includes(m.threadId)).length });
+    }
+    k.memory.closeQuest(threadId, id);
+    const withdrawnAskIds = (k.store.db.prepare("SELECT id FROM tavern_records WHERE kind='asks' AND json_extract(data,'$.boardQuestId')=? AND json_extract(data,'$.state')='open'").all(id) as { id: string }[]).map(row => row.id);
+    transitionQuest(k.store, q, "done", effect.type, { kind: "user" }, receipt, at, { patch: { endedAt: at, outcome: closure, waivers }, text: draft.outcome, data: {
+      outcome: draft.outcome, left: draft.left, closure, waivers, skipped, pullRequests: pullRequests.applied, withdrawnAskIds,
+      verified: verified.length, accepted: summary.waypoints.filter(w => w.state === "accepted").length,
+      ...(effect.type === "close-early" ? { ...(effect.draft.noPlan ? { noPlan: true } : {}), ...(effect.draft.reason ? { closeReason: effect.draft.reason } : {}) } : {}),
+      ...(draft.next ? { next: draft.next } : {}), ...(draft.results ? { results: draft.results } : {}), ...(draft.fromSteer ? { fromSteer: draft.fromSteer } : {}),
+      ...(authority ? { authority: { ...authority, act: effect.type === "close-early" ? "closeEarly" : "conclude" } } : {}),
+      ...(awayWindow ? { awayWindowId: awayWindow.id, deferredMemberThreadIds: summary.members.map(member => member.threadId) } : {}),
+    } });
+    for (const askId of withdrawnAskIds) k.withdrawAsk(askId, "quest-returned");
+    this.serviceRecords.record(id);
     this.bb.rpc.experimental_invalidate([tags.registry()]);
-    this.keeper.changed(threadId, id);
-    return summary.members;
-  }
-  async wrap(
-    threadId: string, id: string, outcome: string, left: string,
-    skipped: { waypointId: string; reason: string }[] = [], next?: string[],
-    results?: import("../shared/tale-results").TaleResults,
-  ) {
-    const members = this.completeWrap(threadId, id, outcome, left, skipped, next, results);
-    return { pendingArchives: await this.archiveMembers(members) };
+    k.changed(threadId, id);
+    return { members: summary.members, closeIds: pullRequests.closeIds };
   }
   async push(threadId: string, title: string, body: string, askId?: string) {
     const attention = this.config().attention;

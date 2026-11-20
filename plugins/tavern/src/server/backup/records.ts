@@ -9,6 +9,7 @@ import { LIMITS } from "../limits";
 import { sparseTunablesSchema } from "../../shared/settings";
 import { awayHoldSchema, type AwayHold } from "../away/holds";
 import { awayCompletedWindowSchema, awayStateSchema, type AwayState, type AwayWindow } from "../../shared/away";
+import { isCloseEffect } from "../../shared/closing";
 import { actorSchema, readStoredActor, askSchema, boardQuestSchema, decisionSchema, gateRecordSchema, journalEntrySchema, keeperNoteSchema, memberSchema, planSchema, reportSchema, routeSchema, ruleSchema } from "../../shared/schema";
 
 import { taleDeliverySchema, taleDeliveryAttemptSchema } from "../tale";
@@ -208,7 +209,7 @@ export class BackupRecords {
       for (const ask of store.all("asks")) {
         if (ask.kind !== "conclude" || ask.state !== "withdrawn" || ask.withdrawnCause !== "backup-restored" || !ask.boardQuestId) continue;
         const quest = store.get("quests", ask.boardQuestId);
-        if (quest?.phase === "closing") transitionQuest(store, quest, "build", "conclude-withdrawn", { kind: "tavern" }, { kind: "ask", id: ask.id }, this.now());
+        if (quest?.phase === "closing") transitionQuest(store, quest, isCloseEffect(ask.effect) ? ask.effect.draft.returnTo ?? "build" : "build", "conclude-withdrawn", { kind: "tavern" }, { kind: "ask", id: ask.id }, this.now());
       }
     })();
   }

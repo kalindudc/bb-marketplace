@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { taleResultsSchema } from "../shared/tale-results";
+import { questOutcomeSchema, waypointWaiverSchema } from "../shared/closing";
 import type { BoardQuestSummary } from "../shared/contract";
 import type { Keeper } from "./keeper/service";
 
@@ -83,6 +84,9 @@ const wrapDataSchema = z.object({
   outcome: z.string().min(1).max(4000),
   left: z.string().max(4000).nullish(),
   skipped: z.array(skipSchema).max(24).optional(),
+  closure: questOutcomeSchema.optional(),
+  closeReason: z.string().min(1).max(500).optional(),
+  waivers: z.array(waypointWaiverSchema).max(24).optional(),
   next: z.array(z.string().max(200)).max(5).optional(),
   results: z.unknown().optional(),
 });
@@ -108,31 +112,19 @@ export function readTale(k: Keeper, quest: BoardQuestSummary) {
   }] : []) ?? [];
   const keptCharacterIds = k.store.all("taleKeeps").filter(keep => keep.questId === quest.id && keep.kept).map(keep => keep.characterId).sort();
   const delivery = newestDelivery(k, quest.id);
-  return { ...(results.success ? { results: results.data } : {}), ...(delivery ? { delivery } : {}), ...(data.next ? { next: data.next } : {}), outcome: data.outcome, left: data.left?.trim() ? data.left : null, skipped, wrappedAt: wrapped.at, levels: levels.length ? levels : null, keptCharacterIds };
+  return { ...(results.success ? { results: results.data } : {}), ...(delivery ? { delivery } : {}), ...(data.next ? { next: data.next } : {}), outcome: data.outcome, left: data.left?.trim() ? data.left : null, skipped,
+    ...(wrapData.closure ? { closure: wrapData.closure } : {}), ...(wrapData.closeReason ? { closeReason: wrapData.closeReason } : {}), ...(wrapData.waivers?.length ? { waivers: wrapData.waivers } : {}), wrappedAt: wrapped.at, levels: levels.length ? levels : null, keptCharacterIds };
 }
 
-export function memberCredits(k: Keeper, quest: BoardQuestSummary) {
+export function memberCredits(quest: BoardQuestSummary) {
   const credits = new Map(quest.members.map(member => [member.threadId, {
     memberThreadId: member.threadId,
     madeWaypointIds: new Set<string>(),
     verifiedWaypointIds: new Set<string>(),
   }]));
-  const entries = k.journal.linkedEntries(quest.id).filter(entry =>
-    entry.link?.boardQuestId === quest.id && k.member(entry.threadId)?.classId !== "warden"
-    && (!k.store.runtime(entry.threadId).released || entry.status === "verified"));
   for (const waypoint of quest.waypoints) {
-    if (waypoint.state !== "reported" && waypoint.state !== "verified") continue;
-    const linked = entries.filter(entry => entry.link?.waypointId === waypoint.id);
-    for (const entry of linked) {
-      if (entry.status === "done" || entry.status === "verified")
-        credits.get(entry.threadId)?.madeWaypointIds.add(waypoint.id);
-      if (waypoint.state !== "verified" || entry.status !== "verified") continue;
-      const actor = entry.review?.actor ?? (
-        entry.updatedBy.kind === "agent" && k.member(entry.updatedBy.threadId)?.classId === "warden"
-          ? entry.updatedBy : null
-      );
-      if (actor?.kind === "agent") credits.get(actor.threadId)?.verifiedWaypointIds.add(waypoint.id);
-    }
+    for (const threadId of waypoint.madeBy ?? []) credits.get(threadId)?.madeWaypointIds.add(waypoint.id);
+    for (const threadId of waypoint.checkedBy ?? []) credits.get(threadId)?.verifiedWaypointIds.add(waypoint.id);
   }
   return [...credits.values()].map(credit => ({
     memberThreadId: credit.memberThreadId,

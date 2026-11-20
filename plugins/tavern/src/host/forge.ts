@@ -1,5 +1,8 @@
 import { forgeProfileSchema, type ForgeProfile } from "../shared/placement-settings";
 import { gitRefSchema, type HostInput, type HostOutput } from "../host-contract";
+import { gitOidSchema } from "../shared/placement";
+import { z } from "zod";
+import { normalizeRemote } from "../scope/remote";
 import { hostContext, assertRepository } from "./context";
 import type { HostRegistry } from "./registry";
 import { runProcess } from "./process";
@@ -54,6 +57,62 @@ export async function openDraft(root: string, profile: ForgeProfile, input: Draf
   }
   return { ok: true, url };
 }
+const githubStateSchema = z.object({ state: z.enum(["OPEN", "CLOSED", "MERGED"]), headRefOid: gitOidSchema, headRefName: z.string(), baseRefName: z.string(), isDraft: z.boolean() });
+
+export async function forgePullRequest(registry: HostRegistry, input: HostInput<"forgePullRequest">, signal: AbortSignal): Promise<HostOutput<"forgePullRequest">> {
+  return registry.operation(input, signal, async combined => {
+    const ctx = hostContext(registry, input, ["source-read"], combined);
+    await assertRepository(ctx);
+    const { profile, action, url, head, base, headCommit } = input;
+    const target = new URL(url);
+    if (target.username || target.password || !["https:", "http:"].includes(target.protocol)) throw new Error("This pull request URL is not a supported forge target.");
+    const env: NodeJS.ProcessEnv = { ...process.env, GIT_OPTIONAL_LOCKS: "0", GH_PROMPT_DISABLED: "1" };
+    const run = async (executable: string, args: string[]) => {
+      ctx.active();
+      const result = await runProcess(executable, args, { cwd: ctx.root, env, input: "", timeoutMs: 120_000, maxBuffer: 1024 * 1024, signal: combined });
+      if (result.code !== 0 || result.timedOut) throw new Error(forgeFailure(result).lines);
+      return result.stdout.trim();
+    };
+    if (profile.kind === "github") {
+      const path = target.pathname.match(/^\/([\w.-]+\/[\w.-]+)\/pull\/[1-9][0-9]*\/?$/);
+      if (!path || target.protocol !== "https:" || target.search || target.hash) throw new Error("This is not a GitHub pull request URL.");
+      const repo = normalizeRemote(`${target.origin}/${path[1]}`).toLowerCase();
+      const remotes = (await ctx.git(["remote", "-v"])).split("\n").flatMap(line => line.match(/\t(\S+) \((?:fetch|push)\)$/)?.[1] ?? []);
+      if (!remotes.some(remote => normalizeRemote(remote).toLowerCase() === repo)) throw new Error("This pull request does not belong to a remote in the quest's source checkout.");
+      const view = async () => {
+        const gh = githubStateSchema.parse(JSON.parse(await run("gh", ["pr", "view", url, "--json", "state,headRefOid,headRefName,baseRefName,isDraft"])));
+        if (gh.headRefName !== head || gh.baseRefName !== base) throw new Error("This pull request's branches no longer match the quest record.");
+        return { headCommit: gh.headRefOid, state: gh.state === "OPEN" ? gh.isDraft ? "draft" as const : "ready" as const : gh.state === "MERGED" ? "merged" as const : "closed" as const };
+      };
+      const before = await view();
+      if (action === "inspect" || before.state === "closed" || before.state === "merged") return before;
+      if (before.headCommit !== headCommit || before.state !== input.state) throw new Error("The head or review state changed after the card was shown; close the pull request on its forge if it is still wanted.");
+      await run("gh", ["pr", "close", url]);
+      const after = await view();
+      if (after.state !== "closed" && after.state !== "merged") throw new Error("The forge did not confirm that the pull request closed.");
+      return after;
+    }
+    for (const [key, value] of Object.entries({ URL: url, PR_NUMBER: target.pathname.match(/\d+/g)?.at(-1) ?? "", HEAD: head, BASE: base, HEAD_COMMIT: headCommit })) {
+      env[`FORGE_${key}`] = value; env[`LOOM_${key}`] = value;
+    }
+    const state = async () => {
+      if (!profile.state) return input.state;
+      const word = (await run("/bin/sh", ["-c", profile.state])).split("\n").at(-1)?.split(/\s+/)[0];
+      if (word === "open") return input.state;
+      if (word === "closed" || word === "merged" || word === "draft" || word === "ready") return word;
+      throw new Error("The forge state command did not report open, merged or closed.");
+    };
+    const before = await state();
+    if (action === "inspect" || before === "closed" || before === "merged") return { state: before };
+    if (!profile.close) throw new Error("This forge has no close command.");
+    if (before !== input.state) throw new Error("The pull request's review state changed after the card was shown.");
+    await run("/bin/sh", ["-c", profile.close]);
+    const after = profile.state ? await state() : "closed";
+    if (after !== "closed" && after !== "merged") throw new Error("The forge did not confirm that the pull request closed.");
+    return { state: after };
+  });
+}
+
 export function pushArguments(branch: string, base: string, sha: string, remote: string, previous: string | null, protectedBranches: string[] = []): string[] {
   gitRefSchema.parse("refs/heads/" + branch);
   if ([base, ...protectedBranches].some(value => branch === value || `refs/heads/${branch}` === value)) throw new Error("Tavern never pushes to the base branch.");

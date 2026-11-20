@@ -20,9 +20,10 @@ async function fixture() {
   const get = f.port.get;
   f.port.get = id => ({ ...get(id), entries: id === "maker" ? [entry] : [] });
   f.port.linkedEntries = () => [entry];
+  f.k.settle("lead", { boardQuestId: q.id, waypointId: "w1", as: "skipped", reason: "Not needed" });
   const wrap = (outcome = "Built it") => f.harness.behavior.invokeAgentTool(
     "tavern_wrap",
-    { boardQuestId: q.id, outcome, left: "", next: [], skipped: [{ waypointId: "w1", reason: "Not needed" }] },
+    { boardQuestId: q.id, outcome, left: "", next: [] },
     { threadId: "lead" },
   ) as Promise<string>;
   const answer = (optionId: string) => {

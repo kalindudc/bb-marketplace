@@ -16,7 +16,10 @@ import {
   type CheckerHandoffHold,
   decisionSchema,
   planSchema,
+  settleWaypointSchema,
   reportSchema,
+  type Decision,
+  type WaypointState,
   routeSchema,
   ruleSchema,
   type Ask,
@@ -72,7 +75,10 @@ export const routeQuestIds = (
 
 import { localClock } from "../clock";
 import { moveTime } from "../../shared/time";
-import { assertQuestTransition, transitionQuest, displayStage, nextNewsBy, storedPhase, partyFits, approvedPartyReceipt } from "./quest-lifecycle";
+import { assertQuestTransition, transitionQuest, displayStage, nextNewsBy, storedPhase, partyFits, checksFit, approvedPartyReceipt } from "./quest-lifecycle";
+import { settled, verifiedWaypoint, waypointCheck } from "../../shared/waypoint";
+import { isCloseEffect, waiverWords } from "../../shared/closing";
+import { assertUndoLane, undoAskProjection } from "../undo-record";
 
 export class Keeper {
   settings: (questId?: string | null) => TavernSettings = () =>
@@ -809,7 +815,7 @@ export class Keeper {
       ...input,
       version: q.planVersion + 1,
       createdAt: this.now(),
-      fromSteer: r ? { routeId: r.id, at: r.messageAt, text: r.summary } : null,
+      fromSteer: r ? { routeId: r.id, at: r.messageAt, text: (r.sourceMessageId && this.store.messageText(r.sourceMessageId) || r.userText || r.summary).slice(0, 300) } : null,
     });
     const ids = new Set(plan.waypoints.map((w) => w.id));
     if (
@@ -833,9 +839,16 @@ export class Keeper {
       q.greenlitVersion === null
         ? null
         : this.store.get("plans", `${q.id}:${q.greenlitVersion}`);
-    const needsGreenlight = approved === null || !partyFits(plan, approved);
+    const checkPlan = this.store.get("plans", `${q.id}:${q.checkPlanVersion ?? q.greenlitVersion}`);
+    let previousWaypoints: BoardQuestSummary["waypoints"] | undefined;
+    const weakensChecks = !!checkPlan && !checksFit(plan, checkPlan, approved, waypointId => {
+      previousWaypoints ??= this.summary(q.id, checkPlan.version).waypoints;
+      return previousWaypoints.some(w => w.id === waypointId && settled(w));
+    });
+    const steer = weakensChecks && r ? this.checkSteer(q, r) : null;
+    const needsGreenlight = approved === null || !partyFits(plan, approved) || weakensChecks && !steer;
     const automatic =
-      needsGreenlight &&
+      needsGreenlight && !weakensChecks &&
       this.settings().keepers.greenlight === "by-size" &&
       plan.reversible &&
       plan.party.length === 1 &&
@@ -844,7 +857,7 @@ export class Keeper {
       !this.store.openAsks(threadId).length;
     this.store.atomic(() => {
       this.store.put("plans", `${q.id}:${plan.version}`, plan);
-      const updated = { ...q, planVersion: plan.version, greenlitVersion: q.greenlitVersion, updatedAt: this.now() };
+      const updated = { ...q, planVersion: plan.version, ...(!needsGreenlight ? { checkPlanVersion: plan.version } : {}), updatedAt: this.now() };
       const data = { version: plan.version, routeId: r?.id ?? null };
       if (needsGreenlight && storedPhase(q.phase) !== "greenlight") {
         transitionQuest(this.store, q, "greenlight", "plan", { kind: "agent", threadId }, { kind: "plan", id: `${q.id}:${plan.version}` }, this.now(), { patch: updated, text: `Plan v${plan.version}`, data });
@@ -877,52 +890,92 @@ export class Keeper {
           planVersion: plan.version,
         });
       }
-      if (needsGreenlight && !automatic) {
-        for (const ask of this.asks(threadId).filter(
-          (a) =>
-            a.boardQuestId === q.id &&
-            a.kind === "greenlight" &&
-            a.state === "open",
-        ))
-          this.withdrawAsk(ask.id, "plan-superseded");
-        this.ask(
-          threadId,
-          { effect: { type: "greenlight", planVersion: plan.version },
-            boardQuestId: q.id,
-            kind: "greenlight",
-            question: `Form the party for ${q.title}, plan v${plan.version}?`,
-            why: "Staffing requires your explicit greenlight.",
-            options: [
-              {
-                id: "approve",
-                label: "Form the party",
-                recommended: true,
-                detail: "Approve this plan version",
-              },
-              {
-                id: "revise",
-                label: "Revise the plan",
-                detail: "Keep scouting; do not staff",
-                recommended: false,
-              },
-            ],
-            meanwhile: "Keep scouting and preparing private drafts.",
-            holds: plan.waypoints.map((w) => w.id),
-          },
-          { planVersion: plan.version },
-        );
+      if (needsGreenlight && !automatic) this.askGreenlight(q, plan, weakensChecks ? "This plan reduces the checks you approved. Review its checks before it can proceed." : "Staffing requires your explicit greenlight.", weakensChecks);
+      if (!needsGreenlight) {
+        this.decide(threadId, {
+          boardQuestId: q.id,
+          text: steer ? `Changed checks in plan v${plan.version} from your steer` : `Replanned to v${plan.version} within the greenlit party`,
+          why: steer ? "You steered the checks for this quest. Undo requires a fresh greenlight for the weaker checks." : "The checks and class counts fit the approvals for this quest.",
+          reversible: true,
+          source: steer ? "steer" : "keeper",
+          sourceRef: steer ? r!.id : null,
+        }, undefined, steer ? { checkChange: { planVersion: plan.version, previousVersion: checkPlan!.version, steer } } : undefined);
       }
     });
-    if (approved && !needsGreenlight)
-      this.decide(threadId, {
-        boardQuestId: q.id,
-        text: `Replanned to v${plan.version} within the greenlit party`,
-        why: "The class counts do not exceed the user's approved party.",
-        reversible: true,
-        source: "keeper",
-      });
     this.changed(threadId, q.id);
     return plan;
+  }
+  closingSteer(q: BoardQuest, routeId: string) {
+    const route = this.applicableRoutes(q.keeperThreadId).find(r => r.id === routeId && r.kind === "steer" && routeQuestIds(r).includes(q.id));
+    if (!route) throw new Error("fromSteer must name an applicable steer for this quest");
+    return { routeId, ...this.steerMessage(q, route) };
+  }
+  private steerMessage(q: BoardQuest, route: Route) {
+    const message = this.store.db.prepare("SELECT text,at FROM tavern_messages WHERE id=? AND thread_id=? AND accepted=2 AND length(trim(text))>0").get(route.sourceMessageId ?? "", q.keeperThreadId) as { text: string; at: number } | undefined;
+    if (!message || route.classSelectionOnly) throw new Error("Cite the user's own routed steer for this quest");
+    return message;
+  }
+  private checkSteer(q: BoardQuest, route: Route) {
+    const message = this.steerMessage(q, route);
+    if (this.store.db.prepare("SELECT 1 FROM tavern_records WHERE kind='decisions' AND json_extract(data,'$.sourceRef')=? AND json_type(data,'$.checkChange')='object' AND json_extract(data,'$.undone')=1").get(route.id)) throw new Error("Weakening checks needs a current user steer for this quest that was not undone");
+    authorize("weakenChecks", { level: "user-in-words", receipt: route.sourceMessageId! });
+    return message;
+  }
+  private askGreenlight(q: BoardQuest, plan: Plan, why: string, requiresExplicit = false) {
+    return this.ask(q.keeperThreadId, {
+      effect: { type: "greenlight", planVersion: plan.version, ...(requiresExplicit ? { requiresExplicit: true } : {}) },
+      boardQuestId: q.id,
+      kind: "greenlight",
+      question: requiresExplicit ? `Approve the updated checks for ${q.title}, plan v${plan.version}?` : `Form the party for ${q.title}, plan v${plan.version}?`,
+      why,
+      options: [
+        { id: "approve", label: requiresExplicit ? "Approve the updated plan" : "Form the party", recommended: true, detail: "Approve this plan version" },
+        { id: "revise", label: "Revise the plan", recommended: false, detail: "Keep scouting; do not staff" },
+      ],
+      meanwhile: "Keep scouting and preparing private drafts.",
+      holds: plan.waypoints.map(w => w.id),
+    }, { planVersion: plan.version });
+  }
+  settle(threadId: string, input: Parameters<typeof settleWaypointSchema.parse>[0], legacySkipAskId?: string) {
+    const { boardQuestId, waypointId, as, reason } = settleWaypointSchema.parse(input);
+    const q = this.liveQuest(threadId, boardQuestId);
+    this.assertQuestNotHeld(q.id);
+    this.guard(threadId, q.id);
+    const w = this.summary(q.id).waypoints.find(w => w.id === waypointId);
+    if (!w) throw new Error("Settlement must name a waypoint in the current plan");
+    if (as === "accepted") {
+      if (w.actor === "outside" && (w.gate?.answer == null || w.gate.answeredAt === null))
+        throw new Error("Record the outside gate answer before accepting this waypoint");
+      if (w.check !== "keeper" || !(w.actor === "outside" ? !settled(w) : w.actor === "agent" && w.state === "reported"))
+        throw new Error("Only a reported or answered outside waypoint with a Keeper check can be accepted");
+    }
+    if (as === "skipped" && (!w.optional || settled(w)))
+      throw new Error("Only an unsettled optional waypoint can be skipped");
+    if (as === "open" && !(w.state === "skipped" || w.state === "accepted"))
+      throw new Error("Only a waypoint the Keeper accepted or skipped can be reopened");
+    const words = as === "open" ? "Reopened" : as === "accepted" ? "Accepted" : "Skipped";
+    return this.store.atomic(() => {
+      const decision = this.decide(threadId, { boardQuestId, text: `${words} ${w.id}: ${w.title}`, why: reason, reversible: true,
+        ...(legacySkipAskId ? { source: "ask", sourceRef: legacySkipAskId } : { source: "keeper" }),
+      }, undefined, { waypointCall: { planVersion: q.planVersion, waypointId, as } });
+      if (!legacySkipAskId) {
+        authorize(as === "accepted" ? "acceptWaypoint" : as === "skipped" ? "skipWaypoint" : "reopenWaypoint", { level: "keeper", receipt: decision.id });
+        this.withdrawClosingForWaypointChange(q);
+      }
+      return decision;
+    });
+  }
+  private withdrawClosingForWaypointChange(q: BoardQuest) {
+    if (q.phase !== "closing") return;
+    for (const ask of this.store.openAsks(q.keeperThreadId, q.id)) {
+      if (ask.kind === "conclude") this.withdrawStaleClosing(ask, "The waypoints changed after this card was shown.");
+    }
+  }
+  withdrawStaleClosing(ask: Ask, reason: string) {
+    this.store.atomic(() => {
+      if (this.withdrawAsk(ask.id, "closing-stale", this.now(), { kind: "tavern" }, reason))
+        this.reanchor(ask.keeperThreadId, "the closing card went stale; review the quest before proposing closing again");
+    });
   }
   asks(threadId: string) {
     return this.store.query("asks", "keeperThreadId", threadId, 500);
@@ -940,7 +993,7 @@ export class Keeper {
     return this.store.atomic(() => {
       const closing = ask.kind === "conclude" && ask.boardQuestId && this.quest(ask.boardQuestId).phase === "closing";
       if (closing)
-        transitionQuest(this.store, this.quest(ask.boardQuestId!), "build", "conclude-withdrawn", { kind: "tavern" }, { kind: "ask", id }, at, { text, data: { ...data, askId: id, withdrawnCause: cause } });
+        transitionQuest(this.store, this.quest(ask.boardQuestId!), isCloseEffect(ask.effect) ? ask.effect.draft.returnTo ?? "build" : "build", "conclude-withdrawn", { kind: "tavern" }, { kind: "ask", id }, at, { text, data: { ...data, askId: id, withdrawnCause: cause } });
       if (!closing) this.store.event(at, ask.keeperThreadId, ask.boardQuestId, "ask.withdrawn", text ?? ask.question, { ...data, askId: id, cause }, actor);
       return this.store.put("asks", id, { ...ask, state: "withdrawn", withdrawnAt: at, withdrawnCause: cause });
     });
@@ -1033,11 +1086,11 @@ export class Keeper {
         "A timed default needs one recommendation and a time within seven days",
       );
     if (input.kind === "greenlight" && input.effect.type !== "greenlight") throw new Error("A greenlight ask needs its typed plan version; propose the plan instead.");
-    if (input.kind === "conclude" && input.effect.type !== "conclude") throw new Error("A conclude ask needs its typed draft; tell the quest result instead.");
+    if (input.kind === "conclude" && !isCloseEffect(input.effect)) throw new Error("A conclude ask needs its typed draft; tell the quest result instead.");
     if (input.effect.type === "placement-blocker" && !trusted) throw new Error("Only Tavern may open a typed placement blocker");
     if (input.options.some(o => o.id === "delegate")) throw new Error("The delegation answer is reserved for Tavern");
     if (["merge", "production"].includes(input.kind)) input = { ...input, options: [{ id: "approve", label: "Approve the act", detail: "Authorize the exact act; Keeper approval needs a current Warden verdict.", recommended: false }, { id: "deny", label: "Decline the act", detail: "Do not authorize this act.", recommended: false }], effect: { type: "decision", outcomes: [{ optionId: "approve", outcome: "approve" }, { optionId: "deny", outcome: "decline" }] } };
-    const lane = this.authority.lane({ kind: input.kind, boardQuestId: questId, unsure: input.unsure });
+    const lane = this.authority.baseLane({ kind: input.kind, boardQuestId: questId, unsure: input.unsure });
     if (questId && lane === "user" && ["production", "merge", "credential", "sends-as-you", "destructive"].includes(input.kind)) {
       input = { ...input, options: [...input.options, this.authority.delegationOption(threadId)] };
     }
@@ -1058,6 +1111,7 @@ export class Keeper {
       answer: null,
       createdAt: this.now(),
     });
+    const projected = undoAskProjection(this.store)(ask);
     this.store.atomic(() => {
       this.store.put("asks", ask.id, ask);
       if (ask.kind === "conclude" && questId && this.quest(questId).phase !== "closing") {
@@ -1068,7 +1122,7 @@ export class Keeper {
         questId,
         "ask.opened",
         ask.question,
-        { askId: ask.id, lane, keeperName: this.name(this.require(threadId, "keeper")), ...eventData },
+        { askId: ask.id, lane: projected.lane, keeperName: this.name(this.require(threadId, "keeper")), ...eventData },
         { kind: "agent", threadId },
       );
     });
@@ -1080,12 +1134,12 @@ export class Keeper {
         const current = this.store.get("asks", ask.id);
         if (current?.state !== "open") return;
         if (this.authority.match(current)) return this.routineAskOpened(current);
-        if (this.authority.lane(current) === "user") return this.askOpened(current);
+        if (this.authority.lane(current) === "user") return this.askOpened(undoAskProjection(this.store)(current));
       })
       .catch((error) =>
         console.warn(`Tavern ask notification ${ask.id}: ${String(error)}`),
       );
-    return ask;
+    return projected;
   }
   answerAsk(
     askId: string,
@@ -1116,21 +1170,25 @@ export class Keeper {
       this.changed(ask.keeperThreadId, ask.boardQuestId); return;
     }
     if (by === "keeper") {
+      assertUndoLane(this.store, ask.keeperThreadId, ask.kind);
       if (this.authority.lane(ask) !== "keeper") throw new Error("This ask belongs to the user");
       const outcome = ask.effect?.type === "decision" ? ask.effect.outcomes?.find(answer => answer.optionId === optionId)?.outcome : undefined;
       if (outcome !== "decline") this.authority.assertVerdict(ask);
     }
     const effect = ask.effect!;
     if (ask.kind === "greenlight" && effect.type !== "greenlight") throw new Error("This old ask has no plan version; ask the Keeper to propose the plan again.");
-    if (ask.kind === "conclude" && effect.type !== "conclude") throw new Error("This old ask has no conclusion draft; ask the Keeper to tell the result again.");
-    if (ask.boardQuestId && (effect.type === "conclude" || effect.type === "greenlight" && optionId === "approve")) {
+    if (ask.kind === "conclude" && !isCloseEffect(effect)) throw new Error("This old ask has no conclusion draft; ask the Keeper to tell the result again.");
+    if (ask.boardQuestId && (isCloseEffect(effect) || effect.type === "greenlight" && optionId === "approve")) {
       const quest = this.quest(ask.boardQuestId);
       if (quest.phase === "held") throw new Error("This quest is held; resume it first");
       if (effect.type === "greenlight") {
         assertQuestTransition(this.store, quest, "build", "approve", { kind: "user" }, { kind: "ask-answer", id: askId });
         if ((effect.type !== "greenlight" || effect.planVersion !== quest.planVersion)) throw new Error("This greenlight belongs to an old plan version");
-      } else
-        assertQuestTransition(this.store, quest, optionId === "conclude" ? "done" : "build", optionId === "conclude" ? "conclude" : optionId === "hold" ? "keep-open" : "extensions", { kind: "user" }, { kind: "ask-answer", id: askId });
+      } else {
+        const closing = optionId === effect.type;
+        const to = closing ? "done" : optionId === "hold" ? effect.draft.returnTo ?? "build" : "build";
+        assertQuestTransition(this.store, quest, to, closing ? effect.type : optionId === "hold" ? "keep-open" : "extensions", { kind: "user" }, { kind: "ask-answer", id: askId });
+      }
     }
     if (ask.boardQuestId && effect.type !== "retry-stop") this.liveQuest(ask.keeperThreadId, ask.boardQuestId);
     if (!ask.options.some((o) => o.id === optionId))
@@ -1161,7 +1219,7 @@ export class Keeper {
           const q = this.quest(ask.boardQuestId);
           if (q.phase !== "greenlight") throw new Error("This plan is no longer waiting for greenlight");
           if (effect.planVersion !== q.planVersion) throw new Error("This greenlight belongs to an old plan version");
-          transitionQuest(this.store, q, "build", "approve", { kind: "user" }, { kind: "ask-answer", id: askId }, this.now(), { patch: { greenlitVersion: q.planVersion }, text: standing ? `Party approved: ${preapprovalWords(standing.grant)}. Hire it now, critical path first.` : "Party approved: hire it now, critical path first.", data: answerData });
+          transitionQuest(this.store, q, "build", "approve", { kind: "user" }, { kind: "ask-answer", id: askId }, this.now(), { patch: { greenlitVersion: q.planVersion, checkPlanVersion: q.planVersion }, text: standing ? `Party approved: ${preapprovalWords(standing.grant)}. Hire it now, critical path first.` : "Party approved: hire it now, critical path first.", data: answerData });
         },
         "release-hold": effect => {
           if (effect.type !== "release-hold" || optionId !== "release") return;
@@ -1199,6 +1257,7 @@ export class Keeper {
       sourceRef?: string | null;
     },
     autoApproval?: { questId: string; planVersion: number },
+    effect?: Pick<Decision, "waypointCall" | "checkChange">,
   ) {
     this.require(threadId, "keeper");
     const questId = input.boardQuestId ?? null;
@@ -1245,11 +1304,13 @@ export class Keeper {
       if (!input.reversible)
         throw new Error("Consequential decisions require an answered user ask");
     }
-    if (input.exceeds && !input.reversible)
-      throw new Error("A soft limit decision must be reversible");
+    if (input.exceeds) {
+      if (!input.reversible) throw new Error("A soft limit decision must be reversible");
+    }
     authorize(input.source === "steer" ? "steerDecision" : input.source === "ask" ? "answerAsk" : "defaultDecision", { level: input.source === "steer" ? "user-in-words" : input.source === "ask" ? "user-explicit" : "keeper", receipt: input.sourceRef ?? input.text });
     const decision = decisionSchema.parse({
       ...input,
+      ...effect,
       id: this.store.id("decision"),
       keeperThreadId: threadId,
       boardQuestId: questId,
@@ -1265,7 +1326,7 @@ export class Keeper {
       } else if (input.kind) throw new Error("A delegated kind needs its exact askId and optionId");
       this.store.put("decisions", decision.id, decision);
       if (autoApproval) {
-        transitionQuest(this.store, this.quest(autoApproval.questId), "build", "auto-approve", { kind: "agent", threadId }, { kind: "decision", id: decision.id }, this.now(), { patch: { greenlitVersion: autoApproval.planVersion }, text: decision.text, data: { decisionId: decision.id } });
+        transitionQuest(this.store, this.quest(autoApproval.questId), "build", "auto-approve", { kind: "agent", threadId }, { kind: "decision", id: decision.id }, this.now(), { patch: { greenlitVersion: autoApproval.planVersion, checkPlanVersion: autoApproval.planVersion }, text: decision.text, data: { decisionId: decision.id } });
       } else {
       this.store.event(
         this.now(),
@@ -1273,7 +1334,7 @@ export class Keeper {
         questId,
         "decision.made",
         decision.text,
-        { decisionId: decision.id, ...(input.askId ? { askId: input.askId, answeredBy: "keeper", keeperName: this.name(this.require(threadId, "keeper")), ...this.authority.keeperDecisionSource(this.store.get("asks", input.askId)!) } : {}) },
+        { decisionId: decision.id, ...(effect?.waypointCall ? { waypoint: { ...effect.waypointCall, reason: decision.why } } : {}), ...(input.askId ? { askId: input.askId, answeredBy: "keeper", keeperName: this.name(this.require(threadId, "keeper")), ...this.authority.keeperDecisionSource(this.store.get("asks", input.askId)!) } : {}) },
         { kind: "agent", threadId },
       );
       }
@@ -1287,13 +1348,32 @@ export class Keeper {
     if (!d.reversible) throw new Error("This decision is not reversible");
     if (d.undone) return;
     const approval = this.store.get("autoGreenlights", id);
-    if (approval && this.quest(approval.boardQuestId).phase === "held") throw new Error("This quest is held; resume it first");
+    const q = (approval || d.waypointCall || d.checkChange) && d.boardQuestId ? this.quest(d.boardQuestId) : null;
+    if ((approval || d.checkChange) && q?.phase === "held") throw new Error("This quest is held; resume it first");
+    if ((d.waypointCall || d.checkChange) && q && !isOpenQuest(q)) throw new Error("This quest has ended; its waypoint record is fixed");
     this.store.atomic(() => {
       let phaseChanged = false;
       this.store.put("decisions", id, { ...d, undone: true });
       if (d.askId) {
         const ask = this.store.get("asks", d.askId);
         if (ask?.answer?.by === "keeper" && ask.answer.optionId === d.optionId && (!ask.boardQuestId || isOpenQuest(this.quest(ask.boardQuestId)))) this.store.put("asks", ask.id, { ...ask, state: "open", answer: null, unsure: true, lane: "user" });
+      }
+      if (q && d.waypointCall?.planVersion === q.planVersion) this.withdrawClosingForWaypointChange(q);
+      if (d.checkChange && q && (q.greenlitVersion ?? 0) < d.checkChange.planVersion) {
+        const previous = this.store.get("plans", `${q.id}:${d.checkChange.previousVersion}`);
+        const current = this.store.get("plans", `${q.id}:${q.planVersion}`);
+        if (previous && current && !checksFit(current, previous)) {
+          for (const ask of this.store.openAsks(q.keeperThreadId, q.id)) {
+            if (ask.kind === "conclude" || ask.kind === "greenlight") this.withdrawAsk(ask.id, "plan-superseded");
+          }
+          const patch = { checkPlanVersion: previous.version };
+          const text = `Undid the check change: ${d.text}`;
+          if (this.quest(q.id).phase === "build") {
+            transitionQuest(this.store, q, "greenlight", "undo", { kind: "user" }, { kind: "undo", id }, this.now(), { patch, text, data: { decisionId: id } });
+            phaseChanged = true;
+          } else this.store.put("quests", q.id, { ...this.quest(q.id), ...patch });
+          this.askGreenlight(q, current, "You undid the change to these checks. The weaker checks need your greenlight.", true);
+        }
       }
       const approval = this.store.get("autoGreenlights", id);
       if (approval) {
@@ -1302,7 +1382,7 @@ export class Keeper {
           q.greenlitVersion === approval.planVersion &&
           isOpenQuest(q)
         ) {
-          transitionQuest(this.store, q, "greenlight", "undo", { kind: "user" }, { kind: "undo", id }, this.now(), { patch: { greenlitVersion: null }, text: `Undo this decision and reconcile its effects: ${d.text}`, data: { decisionId: id } });
+          transitionQuest(this.store, q, "greenlight", "undo", { kind: "user" }, { kind: "undo", id }, this.now(), { patch: { greenlitVersion: null, checkPlanVersion: undefined }, text: `Undo this decision and reconcile its effects: ${d.text}`, data: { decisionId: id } });
           phaseChanged = true;
           this.ask(
             d.keeperThreadId,
@@ -1345,7 +1425,7 @@ export class Keeper {
       );
     });
     this.userAction(d.keeperThreadId);
-    this.changed(d.keeperThreadId, d.boardQuestId);
+    this.invalidate([...this.changedTags(d.keeperThreadId, d.boardQuestId), tags.undoLanes()]);
   }
   messageRule(threadId: string, text: string, questId?: string | null) {
     const routes = this.applicableRoutes(threadId).filter(
@@ -1613,11 +1693,13 @@ export class Keeper {
       )?.waypointIds ?? []
     );
   }
-  summary(id: string): BoardQuestSummary {
-    const q = this.quest(id),
-      plan = this.store.get("plans", `${id}:${q.planVersion}`),
+  summary(id: string, planVersion?: number): BoardQuestSummary {
+    const current = this.quest(id);
+    const q = planVersion === undefined ? current : { ...current, planVersion };
+    const storedPlan = this.store.get("plans", `${id}:${q.planVersion}`),
       members = this.store.query("members", "boardQuestId", id),
       entries = this.journal.linkedEntries(id);
+    const plan = storedPlan && { ...storedPlan, waypoints: storedPlan.waypoints.map(w => ({ ...w, check: waypointCheck(w) })) };
     const released = new Set(
       [
         ...new Set([
@@ -1626,23 +1708,27 @@ export class Keeper {
         ]),
       ].filter((threadId) => this.store.runtime(threadId).released),
     );
-    const skipped = new Set(
-      this.store
-        .query("skips", "boardQuestId", id, 100)
-        .filter((s) => s.version === q.planVersion)
-        .map((s) => s.waypointId),
-    );
+    const calls = new Map<string, Decision>();
+    const rows = this.store.db.prepare(`SELECT data FROM tavern_records WHERE kind='decisions'
+      AND json_extract(data,'$.boardQuestId')=? AND json_extract(data,'$.waypointCall.planVersion')=?
+      AND json_extract(data,'$.undone')=0 ORDER BY rowid`).all(id, q.planVersion) as { data: string }[];
+    for (const row of rows) {
+      const decision = JSON.parse(row.data) as Decision;
+      calls.set(decision.waypointCall!.waypointId, decision);
+    }
     const waypoints: BoardQuestSummary["waypoints"] = (
       plan?.waypoints ?? []
     ).map((w) => {
-      const linked = entries.filter(
-        (e) =>
-          e.link?.waypointId === w.id &&
-          this.member(e.threadId)?.classId !== "warden" &&
-          (!released.has(e.threadId) || e.status === "verified"),
+      const call = calls.get(w.id);
+      const waiver = q.waivers?.find(waiver => waiver.waypointId === w.id && waiver.planVersion === q.planVersion);
+      const linked = entries.filter(e =>
+        e.link?.boardQuestId === id && e.link.waypointId === w.id &&
+        (w.actor === "user" ? e.threadId === q.keeperThreadId : w.actor === "agent" && e.owner !== "You") &&
+        this.member(e.threadId)?.classId !== "warden" &&
+        (!released.has(e.threadId) || e.status === "verified" || e.status === "done" && (w.check === "none" || call?.waypointCall?.as === "accepted")),
       );
       const ownerMember =
-        members.find(
+        (w.actor === "agent" && members.find(
           (m) =>
             m.classId !== "warden" &&
             (m.threadId === w.owner || m.waypointId === w.id) &&
@@ -1651,43 +1737,57 @@ export class Keeper {
                 (entry) =>
                   entry.threadId === m.threadId && entry.status === "verified",
               )),
-        ) ?? null;
-      const state =
-        w.optional && skipped.has(w.id)
-          ? "skipped"
-          : linked.length === 0
-            ? "planned"
-            : linked.every((e) => e.status === "verified")
-              ? "verified"
-              : linked.some((e) => e.status === "rejected")
-                ? "rejected"
-                : linked.some((e) => e.status === "blocked")
-                  ? "blocked"
-                  : linked.some((e) => e.status === "doing")
-                    ? "doing"
-                    : linked.every(
-                          (e) => e.status === "done" || e.status === "verified",
-                        )
-                      ? "reported"
-                      : "todo";
-      const verifier = linked
-        .filter((entry) => entry.status === "verified")
-        .map((entry) => {
-          if (entry.review) return entry.review.actor;
-          const author = entry.updatedBy;
-          if (author.kind !== "agent") return null;
-          const member = this.member(author.threadId);
-          return !member || member.classId === "warden" ? author : null;
-        })
-        .find((actor) => actor?.kind === "agent");
-      const rejected = linked.find((entry) => entry.status === "rejected");
+        )) || null;
+      const legacySkip = w.optional && !call && this.store.get("skips", `${id}:${q.planVersion}:${w.id}`);
+      const gate = this.memory.gateFor(q.id, q.planVersion, w.id);
+      const reported = linked.length > 0 && linked.every(e => e.status === "verified" || e.status === "done" && (w.check === "warden" || e.evidence.length > 0));
+      const rejected = linked.find(e => e.status === "rejected");
+      let state: WaypointState;
+      let resolutionReason: string | null = null;
+      let acceptedBy: string | null = null;
+      if (waiver) {
+        state = "waived";
+        resolutionReason = `${waiverWords(waiver.state)}; closed early at your request: ${waiver.reason}`;
+      } else if (w.optional && (call?.waypointCall?.as === "skipped" || legacySkip)) {
+        state = "skipped";
+        const receipt = legacySkip && this.store.db.prepare(`SELECT json_extract(data,'$.reason') AS reason FROM tavern_events
+          WHERE board_quest_id=? AND type='waypoint.skipped' AND json_extract(data,'$.version')=?
+          AND json_extract(data,'$.waypointId')=? ORDER BY id DESC LIMIT 1`).get(id, q.planVersion, w.id) as { reason: string | null } | false | undefined;
+        resolutionReason = call?.why ?? (receipt ? receipt.reason : null);
+      } else if (w.check === "keeper" && call?.waypointCall?.as === "accepted" &&
+        (w.actor === "outside" ? gate?.answer != null && gate.answeredAt !== null && gate.answeredAt <= call.createdAt
+          : w.actor === "agent" && reported && linked.every(e => (e.doneAt ?? e.createdAt) <= call.createdAt))) {
+        state = "accepted";
+        resolutionReason = call.why;
+        const keeper = this.member(q.keeperThreadId);
+        acceptedBy = keeper ? this.name(keeper) : "the Keeper";
+      } else if (reported && (w.check === "none" || w.check === "you" && linked.every(e => e.doneBy?.kind === "user"))) state = "done";
+      else if (w.check === "warden" && reported && linked.every(e => e.status === "verified")) state = "verified";
+      else if (rejected) state = "rejected";
+      else if (linked.some(e => e.status === "blocked")) state = "blocked";
+      else if (linked.some(e => e.status === "doing")) state = "doing";
+      else if (reported && w.actor === "agent") state = "reported";
+      else state = linked.length ? "todo" : "planned";
+      const madeBy = state === "reported" || state === "verified" || (state === "accepted" || state === "done") && w.actor === "agent"
+        ? [...new Set(linked.map(e => e.threadId))] : [];
+      const checkedBy = state === "verified" ? [...new Set(linked.flatMap(entry => {
+        const author = entry.review?.actor ?? entry.updatedBy;
+        if (author.kind !== "agent" || author.threadId === entry.threadId) return [];
+        const member = this.member(author.threadId);
+        return !member || member.classId === "warden" ? [author.threadId] : [];
+      }))] : [];
       return {
         ...w,
-        gate: this.memory.gateFor(q.id, q.planVersion, w.id),
+        gate,
         state,
+        resolutionReason,
+        ...(waiver ? { waiver } : {}),
+        acceptedBy,
         ownerMember,
         evidenceCount: linked.reduce((n, e) => n + e.evidence.length, 0),
-        verifiedBy: verifier?.kind === "agent" ? verifier.threadId : null,
+        madeBy,
+        checkedBy,
+        verifiedBy: checkedBy[0] ?? null,
         rejectedReason: rejected
           ? rejected.review
             ? rejected.review.reason
@@ -1696,17 +1796,16 @@ export class Keeper {
       };
     });
     const asks = this.store.openAsks(q.keeperThreadId, id);
-    const next = waypoints.find(
-      (w) => w.state !== "verified" && w.state !== "skipped",
-    );
-    const verified = waypoints.filter(
-      (waypoint) => waypoint.state === "verified",
-    ).length;
+    const next = waypoints.find(w => !settled(w));
+    const closing = q.phase === "closing" ? asks.find(a => a.kind === "conclude") : undefined;
+    const verified = waypoints.filter(verifiedWaypoint).length;
     const skippedCount = waypoints.filter(
       (waypoint) => waypoint.state === "skipped",
     ).length;
+    const accepted = waypoints.filter(w => w.state === "accepted").length;
+    const done = waypoints.filter(w => w.state === "done").length;
     const progress = waypoints.length
-      ? ` · verified ${verified} of ${waypoints.length}${skippedCount ? ` · skipped ${skippedCount}` : ""}`
+      ? ` · verified ${verified} of ${waypoints.length}${accepted ? ` · accepted ${accepted}` : ""}${done ? ` · done ${done}` : ""}${skippedCount ? ` · skipped ${skippedCount}` : ""}`
       : "";
     const phase = displayStage(q.phase, waypoints, plan !== null);
     const newsBy = nextNewsBy(phase, members.filter(member => member.classId === "ranger" && isLiveMember(this.store, member, "work")).flatMap(member => {
@@ -1717,7 +1816,11 @@ export class Keeper {
     const outcome =
       q.phase === "held" ? `Held by you since ${clock(q.held!.since)} · Resume` :
       q.phase === "done"
-        ? `Returned${progress}`
+        ? q.outcome === "closed-early"
+          ? plan
+            ? `Returned, ${verified} verified${accepted ? `, ${accepted} accepted` : ""}, closed early, ${q.waivers?.length ?? 0} not verified`
+            : "Returned, closed early without a quest map"
+          : `Returned${progress}`
         : q.phase === "stopping"
           ? "Stopping"
           : q.phase === "stopped"
@@ -1739,11 +1842,12 @@ export class Keeper {
         who:
           q.phase === "held" || !isOpenQuest(q)
             ? "nobody"
+            : closing ? "you"
             : phase === "wrap" || !plan
               ? "keeper"
               : asks.some(a => this.authority.lane(a) === "user")
                 ? "you"
-                : asks.some(a => this.authority.lane(a) === "keeper")
+                : asks.some(a => this.authority.lane(a) === "keeper") || next?.state === "reported" && next.check === "keeper"
                   ? "keeper"
                 : next?.actor === "outside"
                   ? "outside"
@@ -1753,7 +1857,7 @@ export class Keeper {
                       ? "party"
                       : "keeper",
         text:
-          outcome ??
+          outcome ?? closing?.question ??
           (asks.some(a => this.authority.lane(a) === "keeper") && !asks.some(a => this.authority.lane(a) === "user")
             ? `Waiting on ${this.name(this.require(q.keeperThreadId, "keeper"))}: ${asks.find(a => this.authority.lane(a) === "keeper")!.question}`
             : !plan

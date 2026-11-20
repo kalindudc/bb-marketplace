@@ -4,6 +4,9 @@ import { setup } from "./runtime-fixture";
 import { seedQuest } from "./support";
 import { LimitPolicy } from "../../src/server/limit-policy";
 import { rpcHandlers } from "../../src/server/rpc";
+import { registerTools } from "../../src/server/tools";
+
+const scout = { classId: "ranger", errand: true, title: "Scout", brief: { outcome: "Read", doneWhen: "Evidence", outOfScope: "Changes", mode: "make-it-work" as const, context: [], questions: ["1. What changed?"], timeboxMinutes: 1 } };
 
 it("only a client may lift review once, with its surface recorded", async () => {
   const f = setup(), q = await seedQuest(f.k, "lead", "Review", "Review");
@@ -27,6 +30,33 @@ it.each(["party", "rangers"] as const)("enforces the %s grant in the real hire p
   f.k.decide("lead", { text: "One extra", why: "Bounded scout", reversible: true, source: "keeper", exceeds: limit });
   await expect(f.runtime.hire("lead", "project", input)).resolves.toBeTruthy();
   await expect(f.runtime.hire("lead", "project", input)).rejects.toThrow(limit === "party" ? "party budget" : "Ranger budget");
+});
+it("a Ranger exception cannot pass the user's party ceiling", async () => {
+  const f = setup(), config = f.runtime.config.bind(f.runtime), snapshot = f.runtime.snapshot();
+  f.runtime.config = q => { const current = config(q); return { ...current, keepers: { ...current.keepers, partyMax: 1 } }; };
+  snapshot.classes = snapshot.classes.map(role => role.id === "keeper" ? { ...role, source: "global" as const, budget: { ...role.budget, members: 1, rangers: 1, rangerMinutes: 5 } } : role);
+  vi.spyOn(f.runtime, "snapshot").mockReturnValue(snapshot);
+  await f.runtime.hire("lead", "project", scout);
+  const one = f.k.decide("lead", { text: "One extra scout", why: "Finish the research", reversible: true, source: "keeper", exceeds: "rangers" });
+  await expect(f.runtime.hire("lead", "project", scout)).rejects.toThrow(/party budget/i);
+  expect(f.k.store.get("decisions", one.id)?.usedBy).toBeUndefined();
+});
+it("does not offer a Keeper review-budget exception", async () => {
+  const f = setup(); registerTools(f.bb, f.runtime);
+  await expect(f.harness.behavior.invokeAgentTool("tavern_decide", { text: "One more review", why: "Finish checking", source: "keeper", reversible: true, exceeds: "review" }, { threadId: "lead" })).rejects.toThrow(/party.*rangers/s);
+  expect(f.k.store.all("decisions")).toEqual([]);
+});
+it("rechecks the hard ceiling when simultaneous hires try to reserve the last slot", async () => {
+  const f = setup(), config = f.runtime.config.bind(f.runtime);
+  f.runtime.config = q => { const current = config(q); return { ...current, keepers: { ...current.keepers, partyMax: 1 } }; };
+  let unblock!: () => void;
+  const gate = new Promise<void>(resolve => { unblock = resolve; });
+  let resolving = 0;
+  f.runtime.scopes = { api: { shouldScope: () => true }, resolve: async () => { if (++resolving === 2) unblock(); await gate; return null; }, pending: () => null } as never;
+  const results = await Promise.allSettled([f.runtime.hire("lead", "project", scout), f.runtime.hire("lead", "project", scout)]);
+  expect(results.filter(r => r.status === "fulfilled")).toHaveLength(1);
+  expect(results.find(r => r.status === "rejected")).toMatchObject({ reason: expect.objectContaining({ message: expect.stringMatching(/party budget/i) }) });
+  expect(f.harness.inspection.sdk.callsTo("threads.spawn")).toHaveLength(1);
 });
 it.each(["party", "rangers"] as const)("consumes a recorded %s soft limit decision once", limit => {
   const f = setup(), policy = new LimitPolicy(f.k);

@@ -5,6 +5,7 @@ import type { Evidence, JournalEntry, Journal } from "../../shared/schema";
 import { EvidenceList, ExpandsMark, Glyph, readableEvidence, IconButton, OverflowMenu, QueryState, Ribbon, SkGlyph, SkLine, SkSegmented, StatusMark, Tally, TimeAgo, timeAgo, useNow, Vocabulary, rememberCount, skWidths, useActorNames, useJournalCues, useRegistry, useSkeletonCount, useSkeletonDelay, useRemembered, useRememberedView, type MenuItem } from "../kit";
 import "./journal-notebook.css";
 import { memberName } from "../../shared/member-name";
+import { waypointCheck } from "../../shared/waypoint";
 import { currency, delegated, TRACKER_GROUPS, trackerGroups } from "../../shared/journal-tracker";
 
 type Change = (edit: JournalEdit) => Promise<boolean>;
@@ -462,12 +463,14 @@ function EditRow({ entry, pending, onCancel, onSave }: { entry: JournalEntry; pe
   );
 }
 
+const LINK_CHECK = { warden: "Done needs evidence; the Warden verifies or rejects.", keeper: "Done needs evidence; the Keeper accepts.", none: "Done needs evidence; no check was planned.", you: "Mark it done yourself with evidence." };
+
 function LinkLine({ link }: { link: NonNullable<JournalEntry["link"]> }) {
   const quest = experimental_useRpcQuery({ contract: rpcContract, method: "boardQuest", input: { id: link.boardQuestId } });
   const q = quest.data?.quest;
   const n = q ? q.waypoints.findIndex(w => w.id === link.waypointId) : -1;
   const w = n >= 0 ? q!.waypoints[n] : null;
-  return <p className="journal-linkline"><Glyph name="link" size={12} /><span><b data-content>{q?.title ?? link.boardQuestId}</b> · waypoint {n >= 0 ? n + 1 : link.waypointId}{w ? ` ${w.title}` : ""}</span><span className="m">Done needs evidence; the Warden verifies or rejects.</span></p>;
+  return <p className="journal-linkline"><Glyph name="link" size={12} /><span><b data-content>{q?.title ?? link.boardQuestId}</b> · waypoint {n >= 0 ? n + 1 : link.waypointId}{w ? ` ${w.title}` : ""}</span><span className="m">{w ? LINK_CHECK[waypointCheck(w)] : "Done needs evidence."}</span></p>;
 }
 
 type DetailProps = { id: string; descId: string; entry: JournalEntry; entries: JournalEntry[]; pending: boolean; change: Change; changes: Journal["changes"]; asking: Pending; setAsking: (p: Pending) => void; menu: MenuItem[]; tick: () => void; start: () => void; block: () => void };

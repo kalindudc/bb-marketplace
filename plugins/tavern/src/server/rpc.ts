@@ -2,6 +2,7 @@ import { askHistory } from "./ask-history";
 import { attention, AttentionSnapshot } from "./attention";
 import { LimitPolicy } from "./limit-policy";
 import { userActHandlers, requireUserAct, type OptionalRpcContext, commitUserAct, type UserActReceipt } from "./authority";
+import { readUndoLanes, undoAskProjection } from "./undo-record";
 import type { BbPluginApi, ExperimentalPluginRpcHandlersWithContext } from "@get-bb/plugin-sdk";
 import {
   DECOR_BRIEF_CONTEXT_MAX,
@@ -264,6 +265,7 @@ export function rpcHandlers(
         scopes: runtime.scopes?.views(partyIds(threadId)) ?? [],
         violations: runtime.scopes?.violations(partyIds(threadId)) ?? [],
         keeperThreadId: threadId,
+        undoLanes: readUndoLanes(k.store, threadId),
         quietSince: k.store.runtime(threadId).manualStopAt ?? null,
         olderPromises: k.memory.olderPromiseCount(threadId),
         boardQuests: quests(threadId, snapshot),
@@ -329,7 +331,7 @@ export function rpcHandlers(
           events.sort((a, b) => a.id - b.id);
         }
       }
-      const asks: BoardQuestDetail["asks"] = k.store.query("asks", "boardQuestId", id, 500);
+      const asks: BoardQuestDetail["asks"] = k.store.query("asks", "boardQuestId", id, 500).map(undoAskProjection(k.store));
       return {
         attention: snapshot.view({ boardQuestId: id }),
         notes: k.memory.notes(q.keeperThreadId, 200, 0, id).filter(note => note.kind !== "waiting-on-user"),
@@ -340,7 +342,8 @@ export function rpcHandlers(
         violations: runtime.scopes?.violations(ids) ?? [],
         quest: { ...projectQuest(summary, snapshot), attention: snapshot.view({ boardQuestId: id }) },
         tale,
-        memberCredits: memberCredits(k, summary),
+        memberCredits: memberCredits(summary),
+        pullRequests: k.store.pullRequestsForQuest(summary.id),
         plans: k.store.query("plans", "boardQuestId", id, 30),
         asks,
         decisions: history.decisions,
@@ -433,11 +436,11 @@ export function rpcHandlers(
     delegateQuest: ({ boardQuestId, kind, via }, context?: ExperimentalPluginRpcHandlerContext, receipt?: UserActReceipt) => { requireUserAct(context, "delegateQuest"); k.authority.delegate(boardQuestId, kind, receipt ? { ...receipt, surface: `${via} (client, unattested)` } : receipt!); return { ok: true }; },
     preapproveQuest: ({ boardQuestId, via, ...input }, context?: ExperimentalPluginRpcHandlerContext, receipt?: UserActReceipt) => { requireUserAct(context, "preapproveQuest"); k.authority.preapprove(boardQuestId, input, receipt ? { ...receipt, surface: `${via} (client, unattested)` } : receipt!); void runtime.applyStandingAnswers(boardQuestId).catch(error => runtime.bb.log.warn(`Tavern pre-approval: ${String(error)}`)); return { ok: true }; },
     revokeQuestAuthority: ({ boardQuestId, id, via }, context?: ExperimentalPluginRpcHandlerContext, receipt?: UserActReceipt) => { requireUserAct(context, "revokeQuestAuthority"); k.authority.revoke(boardQuestId, id, receipt ? { ...receipt, surface: `${via} (client, unattested)` } : receipt!); return { ok: true }; },
-    answerAsk: async ({ askId, optionId, note, via }, context?: ExperimentalPluginRpcHandlerContext, receipt?: UserActReceipt) => {
-      await runtime.answerAsk(askId, optionId, note, via, context?.experimental_caller.kind === "client", receipt?.surface, receipt);
+    answerAsk: async ({ askId, optionId, note, via, pullRequestChoices }, context?: ExperimentalPluginRpcHandlerContext, receipt?: UserActReceipt) => {
+      const result = await runtime.answerAsk(askId, optionId, note, via, context?.experimental_caller.kind === "client", receipt?.surface, receipt, false, pullRequestChoices);
       const ask = k.store.get("asks", askId)!;
       wake(ask.keeperThreadId);
-      return { ok: true };
+      return { ok: true, ...(result.pullRequestErrors ? { pullRequestErrors: result.pullRequestErrors } : {}) };
     },
     markDecisionsSeen: (input) => {
       const { changed, result } = decisions.mark(input, k.now());
@@ -456,6 +459,13 @@ export function rpcHandlers(
       k.userAction(k.store.get("decisions", decisionId)!.keeperThreadId);
       wake(k.store.get("decisions", decisionId)!.keeperThreadId);
       return { ok: true };
+    },
+    resetUndoLane: ({ threadId, kind }, _context?: ExperimentalPluginRpcHandlerContext, receipt?: UserActReceipt) => {
+      const result = k.authority.resetUndoLane(threadId, kind, receipt!);
+      k.userAction(threadId);
+      runtime.bb.rpc.experimental_invalidate([...k.changedTags(threadId), tags.undoLanes()]);
+      wake(threadId);
+      return result;
     },
     correctRoute: ({ routeId, kind, boardQuestId, boardQuestIds }) => {
       k.correctRoute(routeId, kind, boardQuestId, boardQuestIds);
