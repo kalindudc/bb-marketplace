@@ -1,3 +1,4 @@
+import { putMemberFixture } from "../server/member-fixture";
 import Sqlite from "better-sqlite3";
 import { expect, it } from "vitest";
 import { defineCli, type BbPluginApi } from "@get-bb/plugin-sdk";
@@ -25,7 +26,7 @@ it.each([{}, { threadId: "agent" }])("only permits the Settings page to write fo
   const db = new Sqlite(":memory:"); db.exec(MIGRATIONS.join(";\n"));
   try {
     const store = new SettingsStore(db as never);
-    if (ctx.threadId) new KeeperStore(db as never).put("members", ctx.threadId, { ...fixtureMember, threadId: ctx.threadId, classId: "smith" });
+    if (ctx.threadId) putMemberFixture(new KeeperStore(db as never), ctx.threadId, { ...fixtureMember, threadId: ctx.threadId, classId: "smith" });
     store.update({ revision: 0, patch: { machines: { forges: [{ id: "kept", name: "Kept", enabled: true, kind: "command", open: "original" }] } }, why: "User page" });
     const cli = defineCli({ name: "tavern", summary: "Tavern", commands: settingsCommands({} as BbPluginApi, store) });
     const result = await cli.run(["settings", "set", 'machines.forges=[{"id":"injected","name":"Injected","kind":"command","open":"injected"}]', "--apply"], ctx);

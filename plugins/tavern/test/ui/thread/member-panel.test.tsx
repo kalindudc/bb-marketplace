@@ -132,7 +132,7 @@ it("shows follow-ups newest first, with a still new mark only after a later visi
   expect([...slot.container.querySelectorAll("[data-follow-up]")].map(e => e.getAttribute("data-follow-up"))).toEqual(["3", "2"]);
 });
 it.each(["ended", "done", "released", "archived", "deleted", "failed"] as const)("uses historical guard words for an %s member", async kind => {
-  const decor = { ...memberPanelDecor, member: { ...memberPanelDecor.member!, state: kind === "done" ? "done" as const : kind === "ended" ? "idle" as const : kind === "failed" ? "failed" as const : "stopped" as const }, boardQuest: { ...fixtureQuest, phase: kind === "ended" ? "done" as const : "build" as const } };
+  const decor = { ...memberPanelDecor, member: { ...memberPanelDecor.member!, state: kind === "failed" ? "failed" as const : "idle" as const, engagement: kind === "done" ? "resting" as const : kind === "archived" || kind === "deleted" ? "archived" as const : kind === "released" ? "released" as const : "active" as const }, boardQuest: { ...fixtureQuest, phase: kind === "ended" ? "done" as const : "build" as const } };
   const slot = await panel(decor);
   expect(slot.getByText("enforced during the run")).toBeTruthy();
   expect(slot.container.querySelector(".tw-member-id")?.getAttribute("title")).not.toContain("not armed yet");

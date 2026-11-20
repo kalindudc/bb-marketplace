@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { patchThreadFixture, runtimeFixture } from "./member-fixture";
 import { putQuestFixture } from "./support";
 import { expect, it, vi } from "vitest";
 import { makeThreadResponse } from "@get-bb/plugin-sdk/testing";
@@ -17,14 +18,23 @@ async function fixture(placed = true) {
   if (placed) f.runtime.placements().store.reserve(placementRecord({ memberThreadId: "child", keeperThreadId: "lead", questId: quest.id }), { maxMakers: 2, maxCheckers: 2 });
   vi.spyOn(f.runtime.placements(), "host", "get").mockReturnValue({ call: vi.fn(), onWorkerExit: () => () => {} });
   const save = vi.spyOn(f.runtime.placements().preserve, "beforeRelease").mockResolvedValue({ state: "blocked", message: "save refused" });
-  return { ...f, quest, save, stop, archive, archived };
+  const confirmMachine = () => {
+    const placements = f.runtime.placements().store, record = placements.byMember("child")!;
+    const cancelled = placements.cancel(record.id, record.generation);
+    placements.update(cancelled.id, cancelled.generation, row => ({ ...row, phase: "releasing",
+      preservation: { ...row.preservation, source: "not-needed", liveOwnerThreadId: null, stopConfirmed: true } }), "released");
+    placements.finishRelease(cancelled.id, cancelled.generation, true);
+    archived.add("child");
+    return { state: "released" as const };
+  };
+  return { ...f, quest, save, stop, archive, archived, confirmMachine };
 }
 it("stops before preservation on release and does not publish a release on save failure", async () => {
   const f = await fixture();
   expect(await f.runtime.release("lead", "child", "Release")).toBe(false);
   expect(f.stop).toHaveBeenCalledOnce(); expect(f.save).toHaveBeenCalledWith("child", "Release");
   expect(f.stop.mock.invocationCallOrder[0]).toBeLessThan(f.save.mock.invocationCallOrder[0]!);
-  expect(f.k.store.runtime("child").released).toBeFalsy(); expect(f.archive).not.toHaveBeenCalled();
+  expect(runtimeFixture(f.k.store, "child").released).toBeFalsy(); expect(f.archive).not.toHaveBeenCalled();
 });
 it("retains the old unplaced release path without calling preservation", async () => {
   const f = await fixture(false);
@@ -35,16 +45,16 @@ it("keeps a quest stopping and its thread alive until preservation succeeds", as
   const f = await fixture();
   await f.runtime.stop(f.quest.id, "Quest stop");
   expect(f.k.quest(f.quest.id).phase).toBe("stopping"); expect(f.save).toHaveBeenCalled(); expect(f.archive).not.toHaveBeenCalled();
-  f.save.mockResolvedValue({ state: "released" });
+  f.save.mockImplementation(async () => f.confirmMachine());
   await f.runtime.stop(f.quest.id, "Retry");
   expect(f.k.quest(f.quest.id).phase).toBe("stopped");
 });
 it("blocks archiveMembers on preservation failure and skips duplicate native archive after preservation", async () => {
   const f = await fixture();
-  f.k.store.patch("child", { archivePending: true });
+  patchThreadFixture(f.k.store, "child", { archivePending: true });
   expect(await f.runtime["archiveMembers"]([f.k.member("child")!])).toEqual(["child"]);
-  expect(f.archive).not.toHaveBeenCalled(); expect(f.k.store.runtime("child").archiveError).toContain("save refused");
-  f.save.mockResolvedValue({ state: "released" });
+  expect(f.archive).not.toHaveBeenCalled(); expect(runtimeFixture(f.k.store, "child").archiveError).toContain("save refused");
+  f.save.mockImplementation(async () => f.confirmMachine());
   expect(await f.runtime["archiveMembers"]([f.k.member("child")!])).toEqual([]);
   expect(f.archive).not.toHaveBeenCalled();
 });
@@ -55,7 +65,7 @@ it("allows an idle preservation hold after a quest stops without allowing ordina
   const token = f.runtime.away.requestContentHold("child", { operationId: "preserve", idleOnly: true, preservation: true });
   expect(await f.runtime.away.confirmHeld(token)).toMatchObject({ state: "confirmed" });
   expect(f.stop).not.toHaveBeenCalled(); f.runtime.away.finishContentHold(token);
-  f.k.store.patch("child", { archivedAt: 1 });
+  patchThreadFixture(f.k.store, "child", { archivedAt: 1 });
   expect(() => f.runtime.away.requestContentHold("child", { operationId: "preserve-archived", idleOnly: true, preservation: true })).toThrow();
 });
 it("completes a quest stop after external archive and frees the lost member's slot", async () => {
@@ -73,7 +83,7 @@ it("finishes a Keeper release of a lost member with an honest loss reply", async
   const reply = await f.harness.behavior.invokeAgentTool("tavern_release", { memberThreadId: "child", reason: "Finish loss cleanup" }, { threadId: "lead" });
   expect(String(reply)).toContain("its work was not saved: The member host disappeared.");
   expect(f.runtime.placements().store.byMember("child")!.phase).toBe("released");
-  expect(f.k.store.runtime("child").released).toBeTruthy();
+  expect(runtimeFixture(f.k.store, "child").released).toBeTruthy();
 });
 it("reports saved source and unknown artifacts on loss in the Keeper reply and placement surface", async () => {
   const f = await fixture(); f.save.mockRestore(); registerTools(f.bb, f.runtime);
@@ -86,7 +96,7 @@ it("reports saved source and unknown artifacts on loss in the Keeper reply and p
   expect(String(reply).match(/declared artifacts are unknown/gi)).toHaveLength(1);
   expect(store.byMember("child")).toMatchObject({ phase: "released", preservation: { source: "saved", artifacts: "unknown" } });
   expect(f.runtime.placements().controller.view(store.byMember("child")!)).toMatchObject({ preservation: "saved", preservationReason: expect.stringContaining("Declared artifacts are unknown") });
-  expect(f.k.store.runtime("child").released).toBeTruthy();
+  expect(runtimeFixture(f.k.store, "child").released).toBeTruthy();
 });
 it("releases a lost host without waiting for a remote stop that cannot succeed", async () => {
   const f = await fixture(); f.save.mockRestore();

@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { patchThreadFixture, putMemberFixture, runtimeFixture } from "./member-fixture";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -74,7 +75,7 @@ describe("inert machine placement foundation", () => {
     expect(f.k.store.db.prepare("SELECT count(*) AS n FROM tavern_placements").get()).toEqual({ n: 1 });
     expect(f.k.store.db.prepare("SELECT count(*) AS n FROM tavern_placement_discoveries").get()).toEqual({ n: 0 });
     expect(hired.executionNotes).toContain("Rule local matched: kept where its Keeper is.");
-    expect(f.k.store.runtime(hired.threadId).executionNotes).toContain("Rule local matched: kept where its Keeper is.");
+    expect(runtimeFixture(f.k.store, hired.threadId).executionNotes).toContain("Rule local matched: kept where its Keeper is.");
     expect(f.harness.inspection.sdk.callsTo("environments.listProviders")).toEqual([]);
   });
 
@@ -103,7 +104,7 @@ describe("inert machine placement foundation", () => {
   it("keeps the ordinary party ceiling for a matched current target", async () => {
     const f = fixture(), keeper = f.k.member("lead")!;
     f.settings.update({ revision: 0, patch: { machines: { rules: [rule] } }, why: "Legacy limit" });
-    for (let i = 0; i < 5; i++) f.k.store.put("members", `busy-${i}`, { ...keeper, threadId: `busy-${i}`, role: "member", keeperThreadId: "lead", classId: "smith", state: "idle" });
+    for (let i = 0; i < 5; i++) putMemberFixture(f.k.store, `busy-${i}`, { ...keeper, threadId: `busy-${i}`, role: "member", keeperThreadId: "lead", classId: "smith", state: "idle" });
     await expect(f.runtime.hire("lead", "project", hire)).rejects.toThrow("The live party budget is full");
     expect(f.k.store.db.prepare("SELECT count(*) AS n FROM tavern_placements").get()).toEqual({ n: 0 });
   });
@@ -125,10 +126,10 @@ describe("inert machine placement foundation", () => {
   it("retains the old active-party semantics for released, ended and pending-brief members", () => {
     const f = fixture(), keeper = f.k.member("lead")!;
     for (const [threadId, state] of [["active", "idle"], ["released", "idle"], ["ended", "done"], ["pending", "failed"]] as const) {
-      f.k.store.put("members", threadId, { ...keeper, threadId, role: "member", keeperThreadId: "lead", classId: "smith", state });
+      putMemberFixture(f.k.store, threadId, { ...keeper, threadId, role: "member", keeperThreadId: "lead", classId: "smith", state });
     }
-    f.k.store.patch("released", { released: { reason: "Done", decisionId: "decision" } });
-    f.k.store.patch("pending", { pendingBrief: {
+    patchThreadFixture(f.k.store, "released", { released: { reason: "Done", decisionId: "decision" } });
+    patchThreadFixture(f.k.store, "pending", { pendingBrief: {
       id: "brief", text: "Work", attempts: 0, nextAttemptAt: 1, attemptedAt: null, hostAfterSeq: null, error: null,
     } });
     expect(f.k.store.activeStaffing("lead").map(member => member.threadId)).toEqual(["active", "pending"]);
@@ -141,7 +142,7 @@ describe("inert machine placement foundation", () => {
     f.k.store.atomic(() => {
       for (let i = 0; i < 1000; i++) {
         const threadId = `maker-${i}`;
-        f.k.store.put("members", threadId, { ...keeper, threadId, role: "member", keeperThreadId: "lead", classId: "smith", state: "idle" });
+        putMemberFixture(f.k.store, threadId, { ...keeper, threadId, role: "member", keeperThreadId: "lead", classId: "smith", state: "idle" });
       }
     });
     const spawn = vi.spyOn(f.bb.sdk.threads, "spawn");

@@ -4,6 +4,7 @@ import { TaleCompanions } from "./src/server/renderer/companion";
 import { existsSync } from "node:fs";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { MIGRATIONS } from "./src/server/migrations";
+import { migrateMemberEngagement } from "./src/server/member-engagement-migration";
 import { registerJournal } from "./src/server/journal/index";
 import type { RegisterJournal } from "./src/server/ports";
 import { KeeperStore } from "./src/server/keeper/store";
@@ -50,6 +51,7 @@ export default async function tavern(bb: BbPluginApi) {
   const db = bb.storage.database();
   bb.storage.migrate(db, MIGRATIONS);
   const store = new KeeperStore(db);
+  migrateMemberEngagement(store, Date.now());
   let applySettings = () => {};
   const settings = new SettingsStore(db, Date.now, () => {
     applySettings();

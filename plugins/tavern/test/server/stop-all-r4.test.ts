@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { patchThreadFixture, runtimeFixture } from "./member-fixture";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { setup } from "./runtime-fixture";
 import { makeThreadResponse } from "./host";
@@ -90,7 +91,7 @@ describe("R4 brake regressions", () => {
   it("closes incomplete receipt collection and holds pending releases, archives and quest stops across restart", async () => {
     const f = setup(), q = await seedQuest(f.k, "lead", "Hold", "Draft");
     f.k.bind("member", "ranger", "lark", "project", { keeperThreadId: "lead", boardQuestId: q.id, waypointId: null, errand: false, title: "Scout", brief: { outcome: "Scout", doneWhen: "Findings", mode: "make-it-work", outOfScope: "Production", context: [], questions: [], timeboxMinutes: null } });
-    f.k.store.patch("member", { releasePending: "Pending release", archivePending: true });
+    patchThreadFixture(f.k.store, "member", { releasePending: "Pending release", archivePending: true });
     putQuestFixture(f.k.store, q.id, { ...q, phase: "stopping" });
     f.k.store.put("stopAll", "tavern", { state: "stopped", since: f.time(), by: { kind: "user" }, receipt: { startedAt: f.time(), completedAt: null, elapsedMs: 0, stopped: 0, keepersStopped: 0, membersStopped: 0, stillStopping: 1, failed: 0, alreadyIdle: 0, entries: [{ threadId: "member", role: "member", status: "still-stopping", error: null, confirmedAt: null }] } });
     const restarted = new TavernRuntime(f.bb, f.k, f.runtime.registry);
@@ -104,7 +105,7 @@ describe("R4 brake regressions", () => {
     await restarted.sweep();
     expect(new StopAll(restarted).snapshot().receipt?.completedAt).not.toBeNull();
     expect(new StopAll(restarted).snapshot().receipt).toMatchObject({ stopped: 1, stillStopping: 0 });
-    expect(f.k.store.runtime("member")).toMatchObject({ releasePending: "Pending release", archivePending: true });
+    expect(runtimeFixture(f.k.store, "member")).toMatchObject({ releasePending: "Pending release", archivePending: true });
     expect(f.k.store.get("quests", q.id)?.phase).toBe("stopping");
     expect(f.harness.inspection.sdk.callsTo("threads.archive")).toHaveLength(0);
     expect(f.harness.inspection.sdk.callsTo("threads.stop")).toHaveLength(0);
@@ -136,11 +137,12 @@ describe("R4 brake regressions", () => {
   it("holds explicit releases and archive completion while stopped", async () => {
     const f = setup();
     f.k.bind("member", "ranger", "lark", "project", { keeperThreadId: "lead", boardQuestId: null, waypointId: null, errand: true, title: "Scout", brief: { outcome: "Scout", doneWhen: "Findings", mode: "make-it-work", outOfScope: "Production", context: [], questions: [], timeboxMinutes: null } });
+    const report = f.k.report("member", { status: "done", outcome: "Done", evidence: [], artifacts: [], confidence: null, voice: null });
     await f.runtime.stopAll.stop({ kind: "user" });
     await expect(f.runtime.release("lead", "member", "Done")).rejects.toThrow(/Tavern is stopped/);
-    await f.runtime.archiveMember("member");
+    await f.runtime.archiveMember("member", report.id);
     expect(f.harness.inspection.sdk.callsTo("threads.archive")).toHaveLength(0);
-    expect(f.k.store.runtime("member").released).toBeFalsy();
+    expect(runtimeFixture(f.k.store, "member").released).toBeFalsy();
   });
   it("tells each Keeper which member turns were interrupted on Resume", async () => {
     const f = setup();

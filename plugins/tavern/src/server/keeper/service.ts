@@ -10,6 +10,9 @@ import { applyAskEffect, type EffectHandlers, type AskEffect } from "../ask-effe
 import type { RequestSources } from "../../shared/request-source";
 import { LIMITS } from "../limits";
 import { isLiveKeeper, isLiveMember, isOpenQuest } from "../liveness";
+import { memberDetails, memberHost, outstandingArchivedPlacement, transitionMember } from "../member-engagement";
+import { PlacementStore } from "../placement/store";
+import { wasReleased } from "../../shared/member-engagement";
 import type { JournalPort } from "../ports";
 import { messageKey, SCOPE_DENIAL_TEXT } from "../../shared/text";
 import { DEFAULT_SETTINGS, type TavernSettings } from "../../shared/settings";
@@ -43,7 +46,6 @@ import { checkerAssignments } from "../assignments";
 import { reviewLimitation } from "../../shared/check-posture";
 import { KeeperMemory } from "./memory";
 import type { NoteDraft } from "../../shared/schema";
-import { memberPlace } from "../../shared/member-place";
 import { appendSummary } from "../summaries";
 import type { SummaryDraft } from "../../shared/schema";
 
@@ -173,8 +175,8 @@ export class Keeper {
     const direct = party.find(member => member.threadId === reference);
     if (direct) return direct;
     const live = party.filter(member => {
-      const state = this.store.runtime(member.threadId);
-      return includeArchived || state.archivedAt == null && state.deletedAt == null && !state.released;
+      const state = memberHost(this.store, member);
+      return includeArchived || state.archivedAt == null && state.deletedAt == null && !wasReleased(member);
     });
     const matches = live.filter(member => this.name(member).toLowerCase() === reference.trim().toLowerCase());
     if (matches.length === 1) return matches[0]!;
@@ -199,6 +201,7 @@ export class Keeper {
       assignmentText?: string;
       brief: Brief;
     },
+    bindingId?: string,
   ) {
     const existing = this.member(threadId);
     if (existing) return existing;
@@ -219,7 +222,6 @@ export class Keeper {
       ...(classId === "warden" && owner?.reviewTarget ? { checkerMakerThreadId: owner.reviewTarget.makerThreadId } : {}),
       errand: owner?.errand ?? false,
       title: owner?.title ?? null,
-      place: memberPlace(state),
       state,
       doing: owner?.brief.outcome ?? null,
       createdAt: this.now(),
@@ -229,11 +231,16 @@ export class Keeper {
       verifiedWins: 0,
     };
     this.store.atomic(() => {
-      this.store.put("members", threadId, m);
+      if (m.role === "keeper") this.store.put("members", threadId, m);
+      else {
+        if (!bindingId) throw new Error("Binding a member requires its hire or class-start receipt");
+        if (owner) transitionMember(this.store, m, "briefing", "bind-hire", { kind: "agent", threadId: owner.keeperThreadId }, { kind: "hire", id: bindingId }, this.now());
+        else transitionMember(this.store, m, "active", "bind-solo", { kind: "user" }, { kind: "class-start", id: bindingId }, this.now());
+      }
       this.store.patch(threadId, { projectId, brief: owner?.brief ?? null, reviewTarget: owner?.reviewTarget ?? null, requestSources: owner?.requestSources ?? null, assignmentText: owner?.assignmentText ?? null });
     });
     this.changed(threadId, m.boardQuestId);
-    return m;
+    return this.member(threadId)!;
   }
   assertQuestNotHeld(id: string) {
     const quest = this.quest(id);
@@ -1066,9 +1073,14 @@ export class Keeper {
       const withdrawnAskIds = (this.store.db.prepare("SELECT id FROM tavern_records WHERE kind='asks' AND json_extract(data,'$.keeperThreadId')=? AND json_extract(data,'$.boardQuestId')=? AND json_extract(data,'$.state')='open'").all(quest.keeperThreadId, id) as { id: string }[]).map(ask => ask.id);
       const stopped = transitionQuest(this.store, quest, "stopping", "stop", { kind: "user" }, { kind: "user-act", id: this.store.id("act"), surface, at }, at, { patch: stopPatch, text: "Stop requested for every party member", data: { reason: stopReason, withdrawnAskIds } });
       this.store.db.prepare("UPDATE tavern_records SET data=json_set(data,\'$.cancelledAt\',?) WHERE kind=\'hires\' AND json_extract(data,\'$.owner.boardQuestId\')=?").run(at, id);
+      const request = this.store.latestQuestEvent(id, "quest.stopping")!;
       for (const member of this.store.query("members", "boardQuestId", id, 500)) {
-        if (["done", "stopped"].includes(member.state) || this.store.runtime(member.threadId).released) continue;
-        this.store.put("members", member.threadId, { ...member, stopPending: true, stopError: null });
+        if (!["briefing", "active", "resting", "releasing"].includes(member.engagement ?? "")) continue;
+        const receipt = { kind: "quest-stop", id: String(request.id) };
+        transitionMember(this.store, member, "stopping", "quest-stop", { kind: "user" }, receipt, at,
+          { details: { operation: { id: this.store.id("stop"), reason: stopReason ?? "Quest stop", receipt,
+            skipStopIfQuiet: member.engagement === "resting", placementRequired: this.store.runtime(member.threadId).placementExecution != null || new PlacementStore(this.store.db).byMember(member.threadId) !== null }, release: null },
+            data: { previouslyResting: member.engagement === "resting" } });
       }
       this.memory.closeQuest(quest.keeperThreadId, id);
       for (const askId of withdrawnAskIds) this.withdrawAsk(askId, "quest-stopped", at);
@@ -1678,7 +1690,7 @@ export class Keeper {
   ) {
     const m = this.require(threadId, "member");
     const voiceOff = this.settings(m.boardQuestId).tavern.voice === "off";
-    const late = !isLiveMember(this.store, m, "brief") || m.state === "done" && input.status !== "done" || !isLiveKeeper(this.store, this.member(m.keeperThreadId!), "present");
+    const late = !isLiveMember(this.store, m, "brief") || m.engagement === "resting" && input.status !== "done" || !isLiveKeeper(this.store, this.member(m.keeperThreadId!), "present");
     const entries = this.journal
       .get(threadId)
       .entries.filter((e) => e.link?.boardQuestId === m.boardQuestId);
@@ -1743,27 +1755,20 @@ export class Keeper {
       return voiceOff ? { ...previous, voice: null } : previous;
     this.store.atomic(() => {
       this.store.put("reports", report.id, report);
-      this.store.patch(threadId, {
-        reportedBriefVersion: this.store.runtime(threadId).briefVersion ?? 0,
-        ...(!late && input.status === "done" ? { restSince: this.store.runtime(threadId).restSince ?? this.now() } : {}),
-      });
-      const state = late ? m.state : input.status === "done" ? "done" : "waiting";
+      this.store.patch(threadId, { reportedBriefVersion: this.store.runtime(threadId).briefVersion ?? 0 });
+      const text = `${this.name(m)}: ${input.outcome}`, data = { reportId: report.id, status: input.status };
+      if (!late && input.status === "done" && m.engagement === "active") {
+        transitionMember(this.store, m, "resting", "done-report", { kind: "agent", threadId }, { kind: "report", id: report.id }, this.now(), { text, data });
+      } else {
+        if (!late && input.status !== "done") this.activity(threadId, "waiting");
+        this.store.event(this.now(), m.keeperThreadId, m.boardQuestId, late ? "report.late" : "report.filed", text, data);
+      }
       this.store.put("members", threadId, {
-        ...m,
-        state,
-        place: memberPlace(state),
+        ...this.member(threadId)!,
         doing: input.outcome.slice(0, 300),
         lastReportAt: this.now(),
         strikes: 0,
       });
-      this.store.event(
-        this.now(),
-        m.keeperThreadId,
-        m.boardQuestId,
-        late ? "report.late" : "report.filed",
-        `${this.name(m)}: ${input.outcome}`,
-        { reportId: report.id, status: input.status },
-      );
     });
     this.changed(threadId, m.boardQuestId);
     if (m.characterId && report.status === "done" && report.voice?.trim()) this.invalidate([tags.registry()]);
@@ -1775,7 +1780,7 @@ export class Keeper {
       !member ||
       member.classId !== "warden" ||
       !member.boardQuestId ||
-      this.store.runtime(threadId).released
+      wasReleased(member)
     )
       return [];
     const quest = this.quest(member.boardQuestId);
@@ -1784,7 +1789,7 @@ export class Keeper {
       return member.checkerWaypointId ? [member.checkerWaypointId] : [];
     const members = this.store
       .query("members", "boardQuestId", quest.id, 500)
-      .filter((member) => !this.store.runtime(member.threadId).released);
+      .filter((member) => !wasReleased(member));
     return (
       checkerAssignments(plan, members).find(
         (assignment) => assignment.memberThreadId === threadId,
@@ -1804,7 +1809,7 @@ export class Keeper {
           ...members.map((member) => member.threadId),
           ...entries.map((entry) => entry.threadId),
         ]),
-      ].filter((threadId) => this.store.runtime(threadId).released),
+      ].filter((threadId) => wasReleased(this.member(threadId))),
     );
     const calls = new Map<string, Decision>();
     const rows = this.store.db.prepare(`SELECT data FROM tavern_records WHERE kind='decisions'
@@ -1906,7 +1911,7 @@ export class Keeper {
       ? ` · verified ${verified} of ${waypoints.length}${accepted ? ` · accepted ${accepted}` : ""}${done ? ` · done ${done}` : ""}${skippedCount ? ` · skipped ${skippedCount}` : ""}`
       : "";
     const phase = displayStage(q.phase, waypoints, plan !== null);
-    const newsBy = nextNewsBy(phase, members.filter(member => member.classId === "ranger" && isLiveMember(this.store, member, "work")).flatMap(member => {
+    const newsBy = nextNewsBy(phase, members.filter(member => member.classId === "ranger" && member.state !== "failed" && isLiveMember(this.store, member, "work")).flatMap(member => {
       const runtime = this.store.runtime(member.threadId);
       return runtime.brief?.timeboxMinutes != null ? [(runtime.initialBriefAt ?? member.createdAt) + runtime.brief.timeboxMinutes * 60_000] : [];
     }), this.memory.notes(q.keeperThreadId, 500, 0, id).filter(note => note.kind === "commitment" && note.state === "open" && note.dueAt != null).map(note => note.dueAt!));
@@ -1926,15 +1931,20 @@ export class Keeper {
           : phase === "wrap"
             ? `Wrapping${progress}`
             : null;
+    const placements = new PlacementStore(this.store.db);
+    const pendingMachines = new Map(q.phase === "stopping" ? members.flatMap(member => {
+      const record = outstandingArchivedPlacement(placements, member);
+      return record ? [[member.threadId, record.blocked?.message ?? record.preservation.reason ?? "Machine cleanup is not confirmed."] as const] : [];
+    }) : []);
     return {
       ...q,
       phase,
       nextNewsBy: newsBy,
-      stopUnconfirmed: members.filter(member => member.stopPending).length + this.pendingQuestHires(id),
+      stopUnconfirmed: members.filter(member => member.engagement === "stopping" || pendingMachines.has(member.threadId)).length + this.pendingQuestHires(id),
       stopPendingHires: q.phase === "stopping" ? this.pendingStopHires(id) : [],
       plan,
       waypoints,
-      members,
+      members: members.map(member => pendingMachines.has(member.threadId) ? { ...member, stopError: pendingMachines.get(member.threadId) } : member),
       openAsks: asks.filter(a => this.authority.lane(a) !== "keeper").length,
       move: {
         who:
@@ -1951,7 +1961,7 @@ export class Keeper {
                   ? "outside"
                   : next?.actor === "user"
                     ? "you"
-                    : members.some(member => isLiveMember(this.store, member, "work"))
+                    : members.some(member => member.state !== "failed" && isLiveMember(this.store, member, "work"))
                       ? "party"
                       : "keeper",
         text:
@@ -1977,7 +1987,7 @@ export class Keeper {
     const members = keeperThreadId
       ? this.store.query("members", "keeperThreadId", keeperThreadId)
       : this.store.all("members");
-    for (const m of members.filter((m) => m.role === "member" && isLiveMember(this.store, m, "work") && isLiveKeeper(this.store, this.member(m.keeperThreadId!)) && !held(m.threadId))) {
+    for (const m of members.filter((m) => m.role === "member" && isLiveMember(this.store, m, "work") && m.state !== "failed" && isLiveKeeper(this.store, this.member(m.keeperThreadId!)) && !held(m.threadId))) {
       const rt = this.store.runtime(m.threadId);
       const quietSince = this.journal.progress(m.threadId).quietSince;
       const last = Math.max(
@@ -2034,20 +2044,12 @@ export class Keeper {
   activity(threadId: string, state: Member["state"], at = this.now()) {
     const member = this.member(threadId);
     if (!member) return;
-    const released = this.store.runtime(threadId).released;
-    const ended = member.role === "member" && member.boardQuestId !== null && !isOpenQuest(this.store.get("quests", member.boardQuestId));
-    const next = released ? "stopped"
-      : member.state === "done" && ["idle", "stopped", "waiting"].includes(state) ? "done"
-      : ended ? member.state === "done" ? "done" : "stopped" : state;
-    if (member.state === next) return;
-    if (next === "done") this.store.patch(threadId, { restSince: this.now() });
-    if (next === "working") this.store.patch(threadId, { restSince: null, restReminderFor: null, kept: null });
+    if (member.state === state) return;
     this.store.put("members", threadId, {
       ...member,
-      state: next,
-      place: memberPlace(next),
+      state,
       lastActiveAt: at,
-      strikes: next === "working" ? 0 : member.strikes,
+      strikes: state === "working" ? 0 : member.strikes,
     });
     this.changed(threadId, member.boardQuestId);
   }

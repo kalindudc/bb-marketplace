@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { putMemberFixture } from "./member-fixture";
 import { seedQuest } from "./support";
 import { describe, expect, it } from "vitest";
 import { setup } from "./runtime-fixture";
@@ -266,7 +267,7 @@ describe("Complete Keeper restatement", () => {
         displayName: "Lark",
         brief,
       });
-      f.k.store.put("members", id, {
+      putMemberFixture(f.k.store, id, {
         ...owner,
         state: "stopped",
         doing: "File written; independent Warden check remains",

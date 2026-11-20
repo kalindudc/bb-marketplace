@@ -17,6 +17,48 @@ function populate(f: ReturnType<typeof setup>) {
   f.db.prepare("INSERT INTO tavern_events(at,keeper_thread_id,board_quest_id,actor,type,text,data) VALUES(1,NULL,NULL,?,?,?,?)").run('{"kind":"tavern"}', "backup.fixture", "A private note", '{}');
 }
 describe("Tavern records snapshots", () => {
+  it("restores legacy done, stopped and archived-release members with import events", () => {
+    const source = setup(), target = setup();
+    try {
+      const rows = [
+        ["done-member", "done", { restSince: 30, initialBriefAt: 4 }, "resting"],
+        ["stopped-member", "stopped", { archivePending: false }, "stopped"],
+        ["released-member", "stopped", { archivedAt: 50, released: { reason: "Finished", decisionId: "decision" } }, "archived"],
+      ] as const;
+      for (const [id, state, runtime] of rows) {
+        const member = { threadId: id, classId: "smith", characterId: null, role: "member", keeperThreadId: "keeper", boardQuestId: null, waypointId: null, errand: true, title: null, place: "rest", state, doing: null, createdAt: 1, lastActiveAt: 2, lastReportAt: state === "done" ? 29 : null, strikes: 0, verifiedWins: 0 };
+        source.db.prepare("INSERT INTO tavern_records(kind,id,data) VALUES('members',?,?)").run(id, JSON.stringify(member));
+        source.db.prepare("INSERT INTO tavern_runtime(thread_id,data) VALUES(?,?)").run(id, JSON.stringify(runtime));
+      }
+      const bundle = source.records.capture();
+      target.records.validate(bundle);
+      expect(target.records.empty()).toBe(true);
+      target.records.restore(bundle);
+      for (const [id, , , engagement] of rows) {
+        const member = target.db.prepare("SELECT data FROM tavern_records WHERE kind='members' AND id=?").pluck().get(id) as string;
+        expect(JSON.parse(member)).toMatchObject({ engagement, state: "idle" });
+        const runtime = JSON.parse(target.db.prepare("SELECT data FROM tavern_runtime WHERE thread_id=?").pluck().get(id) as string);
+        expect(runtime).not.toHaveProperty("released"); expect(runtime).not.toHaveProperty("archivePending");
+        expect(runtime).not.toHaveProperty("restSince");
+        if (id === "released-member") expect(runtime.memberEngagement.archive).toEqual({ disposition: "released", resumeTo: "released" });
+        const events = target.db.prepare("SELECT data FROM tavern_events WHERE type='member.engagement-imported' AND json_extract(data,'$.memberThreadId')=?").pluck().all(id) as string[];
+        expect(events.map(value => JSON.parse(value).engagement)).toEqual([{ from: null, to: engagement }]);
+      }
+    } finally { source.db.close(); target.db.close(); }
+  });
+  it("does not export or restore local setup proposals", () => {
+    const source = setup(), target = setup();
+    try {
+      source.db.prepare("INSERT INTO tavern_setup_proposals(id,data) VALUES('pending',?)")
+        .run(JSON.stringify({ proposal: { state: "pending" } }));
+      const snapshot = source.records.capture();
+      expect(snapshot.tables).not.toHaveProperty("tavern_setup_proposals");
+      expect(source.records.empty()).toBe(true);
+      snapshot.tables.tavern_setup_proposals = { columns: ["id", "data"], rows: [] };
+      expect(() => target.records.restore(snapshot)).toThrow(/not a Tavern records table/);
+      expect(target.records.empty()).toBe(true);
+    } finally { source.db.close(); target.db.close(); }
+  });
   it("excludes the live brake from capture and refuses a portable brake on restore", () => {
     const source = setup(), target = setup();
     source.db.prepare("INSERT INTO tavern_records(kind,id,data) VALUES('stopAll','tavern',?)")

@@ -1,3 +1,4 @@
+import { isMemberMachineGone, memberDetails } from "./member-engagement";
 import type { Keeper } from "./keeper/service";
 import type { Member, JournalEntry } from "../shared/schema";
 import type { BoardQuestSummary } from "../shared/contract";
@@ -22,7 +23,7 @@ export function reuseRule(classId: string, engagement: RestingEngagement, quest:
 }
 export function restingContext(k: Keeper) {
   const members = k.store.all("members");
-  const reviewing = new Set(members.filter(m => m.classId === "warden" && !["done", "stopped", "failed"].includes(m.state) && !k.store.runtime(m.threadId).released).map(m => m.checkerMakerThreadId));
+  const reviewing = new Set(members.filter(m => m.classId === "warden" && m.state !== "failed" && ["briefing", "active"].includes(m.engagement ?? "")).map(m => m.checkerMakerThreadId));
   const entries = new Map<string, JournalEntry[]>();
   const waypoints = new Map<string, BoardQuestSummary["waypoints"]>();
   return { reviewing, placements: new PlacementStore(k.store.db), entries: (questId: string) => {
@@ -34,13 +35,13 @@ export function restingContext(k: Keeper) {
   } };
 }
 export function restingEngagement(k: Keeper, member: Member, context = restingContext(k)): RestingEngagement | null {
-  const rt = k.store.runtime(member.threadId);
-  if (member.role !== "member" || member.state !== "done" || rt.released || rt.releasePending || rt.archivedAt != null || rt.deletedAt != null || rt.pendingBrief) return null;
+  if (member.role !== "member" || member.engagement !== "resting") return null;
+  const rest = memberDetails(k.store, member.threadId).rest!;
   if (member.boardQuestId && !isOpenQuest(k.store.get("quests", member.boardQuestId))) return null;
   const report = k.store.query("reports", "memberThreadId", member.threadId, 1)[0];
   const entries = member.boardQuestId ? context.entries(member.boardQuestId) : [];
   return {
-    state: "resting", since: rt.restSince ?? k.now(),
+    state: "resting", since: rest.since,
     lastWork: (report?.headline ?? report?.outcome ?? member.doing ?? member.title ?? "No report").slice(0, 300),
     rejectedWaypoints: [...new Set(entries.filter(e => e.status === "rejected" && e.review?.actor.kind === "agent" && e.review.actor.threadId === member.threadId).map(e => e.link!.waypointId))],
     underReview: context.reviewing.has(member.threadId),
@@ -57,13 +58,14 @@ export function restingMember(k: Keeper, member: Member, context = restingContex
       const waypoint = member.boardQuestId && context.waypoints(member.boardQuestId).find(w => w.id === e.link?.waypointId);
       return waypoint ? settled(waypoint) : e.status === "verified";
     });
-  const state = k.store.runtime(member.threadId);
-  const kept = state.kept && state.kept.until > k.now() && member.boardQuestId && !k.store.get("decisions", state.kept.decisionId)?.undone ? state.kept : null;
+  const keep = memberDetails(k.store, member.threadId).rest?.keep;
+  const kept = keep && keep.until > k.now() && member.boardQuestId && !k.store.get("decisions", keep.decisionId)?.undone ? keep : null;
   const quest = member.boardQuestId ? k.quest(member.boardQuestId).short : "its errand";
   const placement = context.placements.byMember(member.threadId);
+  const machineLost = isMemberMachineGone(placement);
   return { threadId: member.threadId, name: k.name(member), classId: member.classId, boardQuestId: member.boardQuestId, quest, ...engagement,
     settled: !engagement.underReview && workSettled, kept, restedMinutes: Math.max(0, Math.floor((k.now() - engagement.since) / 60_000)),
-    machineHeld: !!placement && placement.phase !== "released", mayRebriefFor: reuseRule(member.classId, engagement, quest) };
+    machineHeld: placement !== null && !machineLost, machineLost, mayRebriefFor: machineLost ? null : reuseRule(member.classId, engagement, quest) };
 }
 export function restingParty(k: Keeper, keeperId: string) {
   const context = restingContext(k);

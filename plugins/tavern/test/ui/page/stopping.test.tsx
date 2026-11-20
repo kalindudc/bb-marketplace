@@ -19,11 +19,11 @@ beforeEach(() => { window.localStorage.clear(); vi.stubGlobal("ResizeObserver", 
 const LOADED = { timeout: 3000 };
 
 const since = scenes.min(4), tried = scenes.min(0.5);
-const pending = (m: Member, over: Partial<Member> = {}): Member => ({ ...m, stopPending: true, lastStopAttemptAt: tried, stopError: null, ...over });
+const pending = (m: Member, over: Partial<Member> = {}): Member => ({ ...m, engagement: "stopping", lastStopAttemptAt: tried, stopError: null, ...over });
 const live = scenes.richDetails.vault!;
 const stoppingDetail: BoardQuestDetail = {
   ...live,
-  quest: { ...live.quest, phase: "stopping", stoppingSince: since, stopUnconfirmed: 2, updatedAt: since, members: live.quest.members.map((m) => m.threadId === "thr-juno" ? pending(m, { stopError: "thread is busy" }) : m.threadId === "thr-pip" ? pending(m, { lastStopAttemptAt: null }) : { ...m, state: "stopped" as const }) },
+  quest: { ...live.quest, phase: "stopping", stoppingSince: since, stopUnconfirmed: 2, updatedAt: since, members: live.quest.members.map((m) => m.threadId === "thr-juno" ? pending(m, { stopError: "thread is busy" }) : m.threadId === "thr-pip" ? pending(m, { lastStopAttemptAt: null }) : { ...m, state: "idle" as const, engagement: "stopped" as const }) },
 };
 const withQuest = (room: Room, quest: BoardQuestDetail["quest"]): Room => ({ ...room, keepers: room.keepers.map((k) => ({ ...k, boardQuests: k.boardQuests.map((q) => q.id === quest.id ? quest : q) })) });
 

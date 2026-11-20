@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { patchThreadFixture, runtimeFixture } from "./member-fixture";
 import { expect, it } from "vitest";
 import { BackupRecords } from "../../src/server/backup/records";
 import { SettingsStore } from "../../src/server/settings/store";
@@ -74,10 +75,10 @@ it("M5 exits closing when its conclude ask is withdrawn", async () => {
 it("M6 defers an initial brief without changing attempts and delivers after resume", async () => {
   const f = setup(), q = await seedQuest(f.k, "lead", "Watch", "Watch"); registerRpc(f.bb, f.runtime);
   const m = f.k.bind("child", "smith", null, "project", { keeperThreadId: "lead", boardQuestId: q.id, waypointId: null, errand: false, title: "Watch", brief: { outcome: "Watch", outOfScope: "Rest", doneWhen: "Report", mode: "make-it-work", context: [], questions: [], timeboxMinutes: 5 } });
-  f.k.store.patch(m.threadId, { pendingBrief: { id: "b1", text: "FIRST_BRIEF", attempts: 0, nextAttemptAt: 0, attemptedAt: null, hostAfterSeq: null, error: null } });
+  patchThreadFixture(f.k.store, m.threadId, { pendingBrief: { id: "b1", text: "FIRST_BRIEF", attempts: 0, nextAttemptAt: 0, attemptedAt: null, hostAfterSeq: null, error: null } });
   f.k.setQuestHeld(q.id, true, { kind: "user" }); await f.runtime.retryInitialBriefs("lead");
   expect(f.harness.inspection.sdk.callsTo("threads.send")).toHaveLength(0);
-  expect(f.k.store.runtime(m.threadId).pendingBrief?.attempts).toBe(0);
+  expect(runtimeFixture(f.k.store, m.threadId).pendingBrief?.attempts).toBe(0);
   await f.harness.invokeRpc("resumeBoardQuest", { id: q.id }, { experimental_caller: { kind: "client" } });
   expect(f.harness.inspection.sdk.callsTo("threads.send")).toHaveLength(1);
 });

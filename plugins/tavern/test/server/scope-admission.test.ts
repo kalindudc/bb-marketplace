@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { runtimeFixture } from "./member-fixture";
 import { seedQuest } from "./support";
 import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -139,7 +140,7 @@ describe("scope admission across provisioning", () => {
     });
     expect(send).not.toHaveBeenCalled();
     expect(member.briefPending).toBe(false);
-    expect(f.k.store.runtime(member.threadId).pendingBrief).toBeNull();
+    expect(runtimeFixture(f.k.store, member.threadId).pendingBrief).toBeNull();
     expect(f.k.store.runtime(member.threadId).briefVersion).toBe(1);
   });
 

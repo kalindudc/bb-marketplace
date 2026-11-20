@@ -34,7 +34,7 @@ export function CreditCard({ member, index, detail, registry, identity = false }
   const lead = reports.find((r) => r.status === "done") ?? reports[0];
   const headline = lead ? taleHeadline(lead, memberReportNames(detail, member, registry)) : null;
   // A report's own voice line always shows; the character's stock wrap line claims an ending, so only a member that finished gets it.
-  const voice = lead?.voice ?? (character && member.state === "done" ? character.lines.wrap : null);
+  const voice = lead?.voice ?? (character && (member.engagement === "resting" || member.disposition === "finished") ? character.lines.wrap : null);
   const role = roleWords(member, detail.memberCredits?.find((c) => c.memberThreadId === member.threadId), registry, reports);
   const title = (id: string) => quest.waypoints.find((w) => w.id === id)?.title ?? id;
   const ids = (list: string[]) => list.map((id, i) => <span key={id}>{i > 0 && ", "}<span className="tv-wpid" title={title(id)}>{id}</span></span>);

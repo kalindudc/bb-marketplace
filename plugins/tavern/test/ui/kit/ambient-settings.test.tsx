@@ -17,12 +17,12 @@ afterEach(() => { cleanup(); animations.uninstall(); vi.useRealTimers(); vi.rest
 it("road repeats survive unrelated rerenders, stop at rest, and dispose on unmount", () => {
   vi.useFakeTimers({toFake:["setInterval","clearInterval"]});
   const spy = vi.spyOn(motion,"cue");
-  let update!: (state: typeof fixtureMember.state) => void;
+  let update!: (state: typeof fixtureMember.state | "done") => void;
   let redraw!: () => void;
   const slot=renderSlot({component:()=>{
-    const [state,setState]=useState<typeof fixtureMember.state>("working"); update=setState;
+    const [state,setState]=useState<typeof fixtureMember.state | "done">("working"); update=setState;
     const [,setVersion]=useState(0); redraw=()=>setVersion(v=>v+1);
-    return <div className="tavern"><PartyPicture members={[{...fixtureMember,state}]} registry={fixtureRegistry} ambientMotion="lively" repeatSeconds={3} /></div>;
+    return <div className="tavern"><PartyPicture members={[{...fixtureMember,state: state === "done" ? "idle" : state, engagement: state === "done" ? "resting" : undefined}]} registry={fixtureRegistry} ambientMotion="lively" repeatSeconds={3} /></div>;
   }},{},{});
   act(()=>vi.advanceTimersByTime(2000));
   act(()=>redraw());

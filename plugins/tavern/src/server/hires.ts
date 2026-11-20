@@ -8,6 +8,8 @@ import { isNotFound } from "./host-errors";
 import { loopCall } from "./loop-call";
 import { LimitPolicy } from "./limit-policy";
 import { PlacementStore } from "./placement/store";
+import { isQuiescentThread } from "./placement/quiescence";
+import { archiveDisposition, memberDetails, patchMemberDetails, transitionMember } from "./member-engagement";
 
 export function rejectedSpawn(error: unknown) {
   if (error && typeof error === "object") {
@@ -38,27 +40,51 @@ export function isHireCancelled(k: Keeper, intent: HireIntent) {
 }
 export async function settleCancelledHire(bb: BbPluginApi, k: Keeper, token: string, intent: HireIntent, threadId: string, beforeArchive?: (threadId: string) => Promise<void>) {
   k.store.put("hires", token, { ...intent, cancelledAt: intent.cancelledAt ?? k.now(), memberThreadId: threadId });
-  k.store.put("members", threadId, { ...k.member(threadId)!, stopPending: true });
-  let thread;
-  try { thread = await loopCall(bb.sdk.threads.get({ threadId }), `cancelled hire thread ${threadId}`); }
-  catch (error) { if (!isNotFound(error)) throw error; thread = null; }
-  if (thread && thread.archivedAt == null && thread.deletedAt == null) {
-    try { await loopCall(bb.sdk.threads.stop({ threadId }), `cancelled hire stop ${threadId}`); }
-    catch (error) { if (!isNotFound(error)) throw error; }
-    try { thread = await loopCall(bb.sdk.threads.get({ threadId }), `confirm cancelled hire ${threadId}`); }
-    catch (error) { if (!isNotFound(error)) throw error; thread = null; }
-    if (thread && thread.archivedAt == null && thread.deletedAt == null && !["idle", "error"].includes(thread.status))
-      throw new Error(`Cancelled hire stop not yet confirmed for ${threadId}`);
+  let member = k.member(threadId)!;
+  const placed = new PlacementStore(k.store.db).byMember(threadId) !== null || k.store.runtime(threadId).placementExecution != null;
+  if (["briefing", "active", "resting", "releasing"].includes(member.engagement ?? "")) {
+    const receipt = { kind: "cancelled-hire", id: token };
+    member = transitionMember(k.store, member, "stopping", "hire-cancelled", { kind: "tavern" }, receipt, k.now(),
+      { details: { operation: { id: token, receipt, reason: "Cancelled hire", placementRequired: placed } } });
   }
-  k.activity(threadId, "stopped");
-  k.store.put("members", threadId, { ...k.member(threadId)!, stopPending: false, stopError: null });
-  if (beforeArchive) await beforeArchive(threadId);
-  if (thread && thread.archivedAt == null && thread.deletedAt == null) {
-    const current = await loopCall(bb.sdk.threads.get({ threadId }), `cancelled hire archive check ${threadId}`);
-    if (current.archivedAt == null && current.deletedAt == null)
-      await loopCall(bb.sdk.threads.archive({ threadId }), `cancelled hire archive ${threadId}`);
+  const lookup = async () => {
+    try { return await loopCall(bb.sdk.threads.get({ threadId }), `cancelled hire thread ${threadId}`); }
+    catch (error) { if (!isNotFound(error)) throw error; return null; }
+  };
+  if (member.engagement === "stopping") {
+    const op = memberDetails(k.store, threadId).operation!;
+    let thread = await lookup();
+    if (!op.stopConfirmed && thread && thread.archivedAt === null && thread.deletedAt === null) {
+      try { await loopCall(bb.sdk.threads.stop({ threadId }), `cancelled hire stop ${threadId}`); }
+      catch (error) { if (!isNotFound(error)) throw error; }
+      thread = await lookup();
+      if (thread && thread.archivedAt === null && thread.deletedAt === null && !(placed ? isQuiescentThread(thread) : ["idle", "error"].includes(thread.status)))
+        throw new Error(`Cancelled hire stop not yet confirmed for ${threadId}`);
+    }
+    patchMemberDetails(k.store, threadId, { operation: { ...op, stopConfirmed: true } });
+    if (beforeArchive) await beforeArchive(threadId);
+    member = transitionMember(k.store, member, "stopped", "stop-confirmed", { kind: "tavern" }, { kind: "host-stop", id: op.id, evidence: { request: op.receipt } }, k.now());
   }
-  k.store.patch(threadId, { pendingBrief: null });
+  if (member.engagement === "stopped") {
+    const receipt = { kind: "archive-authority", id: token, evidence: { cause: "cancelled-hire" } };
+    member = transitionMember(k.store, member, "archiving", "archive-requested", { kind: "tavern" }, receipt, k.now(),
+      { details: { operation: { id: token, receipt, reason: "Archive cancelled hire", placementRequired: placed }, archive: archiveDisposition(member) } });
+  }
+  if (member.engagement === "archiving") {
+    const operation = memberDetails(k.store, threadId).operation!;
+    let thread = await lookup();
+    const placement = new PlacementStore(k.store.db).byMember(threadId);
+    if (placed && placement?.phase !== "released") throw new Error("Cancelled hire preservation is not confirmed");
+    if (thread && thread.archivedAt === null && thread.deletedAt === null) {
+      const result = await loopCall(bb.sdk.threads.archive({ threadId }), `cancelled hire archive ${threadId}`);
+      thread = result.archivedThreadIds?.includes(threadId) ? { ...thread, archivedAt: k.now() } : await lookup();
+      if (thread && thread.archivedAt === null && thread.deletedAt === null) throw new Error("Cancelled hire archive is not confirmed");
+    }
+    const host = { archivedAt: thread?.archivedAt ?? k.now(), deletedAt: thread ? thread.deletedAt : k.now() };
+    transitionMember(k.store, member, "archived", "archive-confirmed", { kind: "tavern" }, { kind: "host-archive", id: operation.id, evidence: host }, k.now(),
+      { details: { host }, data: { keeperArchiveRequested: true } });
+  }
+  if (k.member(threadId)?.engagement !== "archived") throw new Error("Cancelled hire is not archived");
   releaseHire(k, token, intent);
   k.store.event(k.now(), intent.owner.keeperThreadId, intent.owner.boardQuestId, "hire.cancelled", "Stopped a hire whose quest ended before it could join", { token, memberThreadId: threadId });
 }
@@ -129,6 +155,7 @@ export async function recoverHires(
           intent.characterId,
           intent.projectId,
           intent.owner,
+          row.id,
         );
         if (intent.classDefinition) k.store.patch(member.threadId, { classDefinition: intent.classDefinition });
         const latest = k.store.get("hires", row.id) ?? intent;

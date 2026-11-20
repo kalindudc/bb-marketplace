@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { patchThreadFixture, putMemberFixture } from "./member-fixture";
 import { putQuestFixture } from "./support";
 import { seedQuest } from "./support";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -57,8 +58,8 @@ describe("Closing time follow-up", () => {
   });
   it.each(["done-member", "archived-member", "finished-quest"])("ignores no-longer-eligible work: %s", async variant => {
     const f = await fixture(); await f.close();
-    if (variant === "done-member") f.k.store.put("members", "child", { ...f.k.member("child")!, state: "done" });
-    if (variant === "archived-member") f.k.store.patch("child", { archivedAt: f.time() });
+    if (variant === "done-member") putMemberFixture(f.k.store, "child", { ...f.k.member("child")!, state: "done" });
+    if (variant === "archived-member") patchThreadFixture(f.k.store, "child", { archivedAt: f.time() });
     if (variant === "finished-quest") putQuestFixture(f.k.store, f.quest.id, { ...f.k.quest(f.quest.id), phase: "done", endedAt: f.time() });
     expect(f.runtime.away.snapshot()).toMatchObject({ pendingStops: [], resumeRequired: [] });
     expect(await f.room()).toHaveProperty("followUp", false);

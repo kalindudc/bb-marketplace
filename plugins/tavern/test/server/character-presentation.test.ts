@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { patchThreadFixture, withMemberFixtures } from "./member-fixture";
 import type { ExperimentalPluginRpcHandlerContext } from "@get-bb/plugin-sdk";
 import { putQuestFixture } from "./support";
 import { seedQuest } from "./support";
@@ -186,7 +187,7 @@ describe("UI-only character presentation", () => {
   });
   it.each([false, true])("keeps archived report text/date but drops only deleted thread links (deleted=%s)", async deleted => {
     const f = fixture(); f.member(); const report = f.report();
-    f.k.store.patch("worker", { archivedAt: f.time(), ...(deleted ? { deletedAt: f.time() } : {}) });
+    patchThreadFixture(f.k.store, "worker", { archivedAt: f.time(), ...(deleted ? { deletedAt: f.time() } : {}) });
     expect((await f.read()).characterReportVoices).toEqual([{ characterId: "juno", voices: [{ reportId: report.id, line: report.voice, at: report.createdAt, threadId: deleted ? null : "worker", questId: null }] }]);
   });
   it("keeps a cellar quest reference and removes a missing quest's link", async () => {
@@ -252,14 +253,14 @@ describe("UI-only character presentation", () => {
     expect(invalidate.mock.calls.filter(([tags]) => tags.includes("tavern:registry"))).toEqual([]);
   });
   it("derives the same voices from a data backup without any new record kinds", async () => {
-    const f = fixture(); f.member(); f.report(); f.k.store.patch("worker", { deletedAt: f.time() });
+    const f = fixture(); f.member(); f.report(); patchThreadFixture(f.k.store, "worker", { deletedAt: f.time() });
     const before = (await f.read()).characterReportVoices;
     expect(before).toEqual([{ characterId: "juno", voices: [{ reportId: "report-one", line: "An agent-written line", at: f.time(), threadId: null, questId: null }] }]);
     const source = new BackupRecords(f.k.store.db, new SettingsStore(f.k.store.db));
     const snapshot = source.capture(), db = new Database(":memory:"); databases.push(db);
     for (const sql of MIGRATIONS) db.exec(sql);
     new BackupRecords(db, new SettingsStore(db)).restore(snapshot);
-    const keeper = new Keeper(new KeeperStore(db), fakePort(), f.time);
+    const keeper = withMemberFixtures(new Keeper(new KeeperStore(db), fakePort(), f.time));
     const runtime = new TavernRuntime(f.bb, keeper, f.registry);
     expect(registrySchema.parse(await rpcHandlers(runtime).registry({})).characterReportVoices).toEqual(before);
     expect(db.prepare("SELECT DISTINCT kind FROM tavern_records WHERE kind LIKE '%voice%' OR kind LIKE '%Voice%'").all()).toEqual([]);

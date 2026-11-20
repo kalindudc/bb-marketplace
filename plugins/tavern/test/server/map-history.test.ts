@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { patchThreadFixture, putMemberFixture } from "./member-fixture";
 import { putQuestFixture } from "./support";
 import { afterEach, expect, it, vi } from "vitest";
 import { rpcContract, type MapHistory } from "../../src/shared/contract";
@@ -12,7 +13,7 @@ it("caps history at the 50 most recently archived Keepers", async () => {
   for (let i = 0; i < 55; i++) {
     const threadId = `archived-${i}`;
     f.k.store.put("members", threadId, { ...fixtureMember, threadId });
-    f.k.store.patch(threadId, { archivedAt: 1000 + i });
+    patchThreadFixture(f.k.store, threadId, { archivedAt: 1000 + i });
   }
   const result = await f.harness.invokeRpc("mapHistory", {}) as MapHistory;
   expect(result.keepers).toHaveLength(50);
@@ -43,12 +44,12 @@ it("returns five newest quests per archived Keeper, exact totals and parties inc
   const f = setup(); databases.push(f.k.store.db); registerRpc(f.bb, f.runtime);
   for (const threadId of ["old-a", "old-b", "live", "empty"]) {
     f.k.store.put("members", threadId, { ...fixtureMember, threadId });
-    f.k.store.patch(threadId, { archivedAt: threadId === "live" ? null : 500 });
+    patchThreadFixture(f.k.store, threadId, { archivedAt: threadId === "live" ? null : 500 });
     const count = threadId === "empty" ? 0 : threadId === "old-b" ? 2 : 8;
     for (let i = 0; i < count; i++) {
       const id = `${threadId}-${i}`;
       putQuestFixture(f.k.store, id, { ...fixtureBoard, id, keeperThreadId: threadId, phase: "done", endedAt: 1000 + i, archivedAt: i % 2 ? 800 : null });
-      f.k.store.put("members", `member-${id}`, { ...fixtureMember, threadId: `member-${id}`, role: "member", keeperThreadId: threadId, boardQuestId: id });
+      putMemberFixture(f.k.store, `member-${id}`, { ...fixtureMember, threadId: `member-${id}`, role: "member", keeperThreadId: threadId, boardQuestId: id });
     }
   }
   const prepare = vi.spyOn(f.k.store.db, "prepare");

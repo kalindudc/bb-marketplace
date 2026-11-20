@@ -1,3 +1,4 @@
+import { memberHost } from "../member-engagement";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { createHash, randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
@@ -62,10 +63,12 @@ export class PlacementSubmissions {
 
   private async run(makerThreadId: string, waypointId: string, caller?: AbortSignal): Promise<SubmissionResult> {
     const record = this.placements.byMember(makerThreadId), maker = this.keepers.get("members", makerThreadId);
+    const canCapture = (member: NonNullable<typeof maker>) => member.state !== "failed" &&
+      (member.engagement === "active" || member.engagement === "resting" || member.engagement === "briefing") &&
+      memberHost(this.keepers, member).archivedAt === null;
     if (!record || record.slot !== "maker" || !["ready", "running"].includes(record.phase) || !record.hostId || !record.environmentId || !record.root ||
         !record.workspaceKind || !maker || maker.role !== "member" || maker.keeperThreadId !== record.keeperThreadId ||
-        !record.questId || maker.boardQuestId !== record.questId || ["stopped", "failed"].includes(maker.state) ||
-        this.keepers.runtime(makerThreadId).released || this.keepers.runtime(makerThreadId).archivedAt != null)
+        !record.questId || maker.boardQuestId !== record.questId || !canCapture(maker))
       throw new Error("Submission capture requires a content-ready active maker and its private placement");
     const busy = (): SubmissionResult => ({ state: "maker-busy", message: `Waiting for ${maker.displayName ?? maker.title ?? maker.threadId} to finish its turn before its work can be checked.` });
     const operation = { hosts: new Set([record.hostId]), controller: new AbortController() };
@@ -80,7 +83,7 @@ export class PlacementSubmissions {
       for (const key of ["memberThreadId", "hostId", "environmentId", "root", "workspaceKind", "reviewTarget", "phase", "sourceSnapshotId", "submissionSnapshotId"] as const)
         if (!isDeepStrictEqual(live[key], record[key])) throw new Error("The maker submission placement changed");
       if (!member || member.keeperThreadId !== maker.keeperThreadId || member.boardQuestId !== maker.boardQuestId ||
-          ["stopped", "failed"].includes(member.state) || this.keepers.runtime(makerThreadId).released || this.keepers.runtime(makerThreadId).archivedAt != null)
+          !canCapture(member))
         throw new Error("The maker submission assignment is no longer active");
       if (pinnedEntries && !isDeepStrictEqual(entries(), pinnedEntries)) throw new Error("The maker journal entries changed during submission capture");
     };
@@ -94,7 +97,7 @@ export class PlacementSubmissions {
       current();
       active(await this.bb.sdk.threads.get({ threadId: makerThreadId, signal })); current();
       // A maker that reported done is no longer live for work, so read its finished tree under the idle-only hold preservation uses.
-      token = this.holds.requestContentHold(makerThreadId, { operationId: "submission-" + randomUUID(), idleOnly: true, preservation: maker.state === "done" });
+      token = this.holds.requestContentHold(makerThreadId, { operationId: "submission-" + randomUUID(), idleOnly: true, preservation: maker.engagement === "resting" });
       current();
       const confirmed = await this.holds.confirmHeld(token); current();
       if (confirmed.state !== "confirmed") {

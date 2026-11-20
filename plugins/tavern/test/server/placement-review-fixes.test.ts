@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { patchThreadFixture } from "./member-fixture";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -63,14 +64,14 @@ describe("Review B submission fixes", () => {
   it("hires the Warden after the placed maker reports done", async () => {
     const f = await fixture(), id = await f.make();
     f.keeper.report("maker", { status: "done", outcome: "Built", evidence: [], artifacts: [], confidence: { intent: 100, safe: 100 }, voice: null });
-    expect(f.keeper.store.get("members", "maker")!.state).toBe("done");
+    expect(f.keeper.store.get("members", "maker")!.engagement).toBe("resting");
     await f.check();
     expect(f.runtime.placements().store.byMember("checker")!.reviewTarget).toBeTruthy();
     expect(await verdict(f, id)).not.toMatchObject({ isError: true });
   }, 60_000);
   it("refuses capture from a released maker", async () => {
     const f = await fixture(); await f.make();
-    f.keeper.store.patch("maker", { released: { reason: "test", decisionId: "d1" } });
+    patchThreadFixture(f.keeper.store, "maker", { released: { reason: "test", decisionId: "d1" } });
     await expect(f.runtime.placements().submissions.capture("maker", "w1")).rejects.toThrow("content-ready active maker");
   }, 60_000);
   it("captures a failed maker turn once it is quiescent", async () => {

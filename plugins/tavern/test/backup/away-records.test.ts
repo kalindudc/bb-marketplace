@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { withMemberFixtures } from "../server/member-fixture";
 import Database from "better-sqlite3";
 import { afterEach, expect, it } from "vitest";
 import { MIGRATIONS } from "../../src/server/migrations";
@@ -33,7 +34,7 @@ function held() {
 }
 it("returns a withdrawn closing request to its recorded scout phase after restore", async () => {
   const source = setup(), target = setup();
-  const k = new Keeper(new KeeperStore(source.db), fakePort(), () => 1000);
+  const k = withMemberFixtures(new Keeper(new KeeperStore(source.db), fakePort(), () => 1000));
   k.bind("lead", "keeper", "wren", "project");
   const q = await seedQuest(k, "lead", "Unplanned", "Unplanned");
   const ask = k.ask("lead", { boardQuestId: q.id, kind: "conclude", question: "Finish?", why: "No work needed", meanwhile: "Wait", holds: [], options: [{ id: "hold", label: "Keep open", detail: "", recommended: true }], effect: { type: "conclude", draft: { outcome: "No work needed", left: "", returnTo: "scout" } } });

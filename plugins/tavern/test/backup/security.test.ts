@@ -46,7 +46,7 @@ it("checks saved SHA-256 hashes even when the file's size did not change", async
 });
 it("preserves a character's verified wins and derived level in a fresh-database round trip", async () => {
   const source = fixture(), character = source.registry.read().characters.find(character => character.classes.includes("smith"))!;
-  const member = memberSchema.parse({ threadId: "maker", classId: "smith", characterId: character.id, role: "solo", keeperThreadId: null, boardQuestId: null, waypointId: null, errand: false, title: "Verified work", place: "rest", state: "done", doing: null, createdAt: 1000, lastActiveAt: null, lastReportAt: 1000, strikes: 0, verifiedWins: 17 });
+  const member = memberSchema.parse({ threadId: "maker", classId: "smith", characterId: character.id, role: "solo", keeperThreadId: null, boardQuestId: null, waypointId: null, errand: false, title: "Verified work", engagement: "resting", state: "idle", doing: null, createdAt: 1000, lastActiveAt: null, lastReportAt: 1000, strikes: 0, verifiedWins: 17 });
   source.db.prepare("INSERT INTO tavern_records(kind,id,data) VALUES(\'members\',?,?)").run(member.threadId, JSON.stringify(member));
   const exported = await source.backup.export({ withData: true }), target = fixture(), from = { bundle: exported.json! };
   const preview = await target.backup.restore({ from, apply: false });

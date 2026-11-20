@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { runtimeFixture } from "./member-fixture";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -85,13 +86,13 @@ describe("target model failures", () => {
     expect(f.k.store.all("placementModelFailures")).toHaveLength(1);
     const record = f.services.store.byMember(member.threadId)!;
     expect(record.blocked).toMatchObject({ stage: "release", retryable: true });
-    expect(f.k.store.runtime(member.threadId).releasePending).toBeTruthy();
+    expect(runtimeFixture(f.k.store, member.threadId).releasePending).toBeTruthy();
     stopped = true;
     stop.mockResolvedValue({} as never);
     archive.mockImplementation(async () => { archived = true; return {} as never; });
     await f.services.controller.retry(record.id, record.generation);
     expect(f.services.store.byMember(member.threadId)?.phase).toBe("released");
-    expect(f.k.store.runtime(member.threadId).released).toBeTruthy();
+    expect(runtimeFixture(f.k.store, member.threadId).released).toBeTruthy();
   });
   it("does not settle the first turn from an idle event before its failed turn event", async () => {
     const f = fixture();
@@ -110,7 +111,7 @@ describe("target model failures", () => {
     const release = vi.spyOn(f.runtime, "release").mockResolvedValue(true);
     vi.spyOn(f.bb.sdk.threads, "archive").mockResolvedValue({} as never);
     await f.runtime.failed(member.threadId, `Failed to resolve Pi model ${model}`, "request-1");
-    expect(release).toHaveBeenCalledWith("lead", member.threadId, expect.stringContaining("can't run"));
+    expect(release).toHaveBeenCalledWith("lead", member.threadId, expect.stringContaining("can't run"), { kind: "host-failure", id: "request-1", evidence: { modelFailureId: expect.any(String) } });
     const reserve = vi.spyOn(f.services.controller, "reserve");
     await expect(f.runtime.hire("lead", "project", hire)).rejects.toThrow(/can't run.*set this rule's model for ranger/);
     expect(reserve).not.toHaveBeenCalled();
@@ -119,6 +120,36 @@ describe("target model failures", () => {
     f.runtime.clearPlacementModelFailure(record.id);
     expect(f.k.store.all("placementModelFailures")).toEqual([]);
   });
+  it.each(["unrouted", "held", "Stop all"] as const)("retains first-turn model cleanup with %s", async gate => {
+    const f = fixture(), q = await seedQuest(f.k, "lead", "Model test", "Model test");
+    f.settings.update({ revision: 1, patch: { machines: { rules: [{ ...rule, classModels: { ranger: { model: "anthropic/claude-sonnet-5-5" } } }] } }, why: "Set target model" });
+    const member = await f.runtime.hire("lead", "project", { ...hire, errand: false, boardQuestId: q.id });
+    const held = vi.spyOn(f.k, "quest");
+    if (gate === "unrouted") {
+      f.k.endTurn("lead");
+      f.k.receiveUser("lead", "An unrouted message");
+      expect(() => f.k.guard("lead", q.id)).toThrow(/unrouted/);
+    }
+    if (gate === "Stop all") f.k.store.put("stopAll", "tavern", { state: "stopped", since: f.time(), by: { kind: "user" }, receipt: null });
+    const readQuest = held.getMockImplementation()!;
+    if (gate === "held") held.mockImplementation(id => ({ ...readQuest.call(f.k, id), phase: "held" }));
+    let archived = false;
+    vi.spyOn(f.bb.sdk.threads, "get").mockImplementation(async ({ threadId }) => makeThreadResponse({ id: threadId, projectId: "project", status: "error", archivedAt: archived ? 1 : null }));
+    const archive = vi.spyOn(f.bb.sdk.threads, "archive").mockImplementation(async () => { archived = true; return {} as never; });
+    f.bb.sdk.threads.stop = vi.fn().mockResolvedValue({} as never);
+    await f.runtime.failed(member.threadId, "Failed to resolve Pi model anthropic/claude-sonnet-5-5", "failure-receipt");
+    if (gate === "unrouted") expect(f.k.member(member.threadId)?.engagement).toBe("released");
+    else {
+      expect(f.k.member(member.threadId)?.engagement).toBe("releasing");
+      expect(runtimeFixture(f.k.store, member.threadId).memberEngagement?.operation?.receipt.id).toBe("failure-receipt");
+      expect(archive).not.toHaveBeenCalled();
+      if (gate === "Stop all") f.k.store.remove("stopAll", "tavern");
+      held.mockRestore();
+      expect(await f.runtime.retryModelFailureRelease(member.threadId)).toBe(true);
+    }
+    expect(f.services.store.byMember(member.threadId)?.phase).toBe("released");
+  });
+
   it("uses the first turn's actual failure text and completes normal release without preservation", async () => {
     const f = fixture();
     f.settings.update({ revision: 1, patch: { machines: { rules: [{ ...rule, classModels: { ranger: { model: "anthropic/claude-sonnet-5-5" } } }] } }, why: "Set target model" });
@@ -131,7 +162,7 @@ describe("target model failures", () => {
     const capture = vi.spyOn(f.services.capture, "initial").mockClear();
     await f.runtime.failed(member.threadId, "Provider turn failed", "first");
     expect(f.services.store.byMember(member.threadId)).toMatchObject({ phase: "released", preservation: { source: "not-needed" } });
-    expect(f.k.store.runtime(member.threadId).released).toBeTruthy();
+    expect(runtimeFixture(f.k.store, member.threadId).released).toBeTruthy();
     expect(capture).not.toHaveBeenCalled();
   });
   it("does not treat a later model error as a first-turn failure", async () => {

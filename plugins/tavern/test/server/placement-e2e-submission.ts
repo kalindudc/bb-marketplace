@@ -1,3 +1,4 @@
+import { putMemberFixture } from "./member-fixture";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { createFakePluginHost, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { execFileSync } from "node:child_process";
@@ -70,7 +71,7 @@ export async function submissionFixture(format: "sha1" | "sha256" = "sha1") {
   } });
   const db = host.bb.storage.database(); db.exec(MIGRATIONS.join(";\n"));
   const keepers = new KeeperStore(db), placements = new PlacementStore(db), port = createHostPort(host.bb), rows = new AwayHolds(db);
-  keepers.put("members", "maker", memberSchema.parse({ threadId: "maker", classId: "smith", characterId: null, displayName: "Vale", role: "member", keeperThreadId: "keeper", boardQuestId: "quest", waypointId: "waypoint", errand: false, title: "Implement", place: "table", state: "idle", doing: null, createdAt: 1, lastActiveAt: 1, lastReportAt: null, strikes: 0, verifiedWins: 0 }));
+  putMemberFixture(keepers, "maker", memberSchema.parse({ threadId: "maker", classId: "smith", characterId: null, displayName: "Vale", role: "member", keeperThreadId: "keeper", boardQuestId: "quest", waypointId: "waypoint", errand: false, title: "Implement", place: "table", state: "idle", doing: null, createdAt: 1, lastActiveAt: 1, lastReportAt: null, strikes: 0, verifiedWins: 0 }));
   const actor = { kind: "agent", threadId: "maker" };
   const entries = ["00", "01"].map((id, order) => journalEntrySchema.parse({ threadId: "maker", id, parentId: null, description: "Implement " + id, status: "done", owner: null, note: null, evidence: [{ kind: "file", ref: "tracked", detail: "", exitCode: null }], link: { boardQuestId: "quest", waypointId: "waypoint" }, order, createdAt: 1, updatedAt: 1, createdBy: actor, updatedBy: actor }));
   const journal = { prepare: vi.fn(async () => {}), get: () => ({ entries }) };

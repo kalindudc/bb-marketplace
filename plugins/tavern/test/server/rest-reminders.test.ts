@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { fixtureActivity, patchThreadFixture, runtimeFixture } from "./member-fixture";
 import { expect, it, vi } from "vitest";
 import { setup } from "./runtime-fixture";
 import { makeThreadResponse } from "./host";
@@ -9,12 +10,14 @@ import { readStatus, statusInput } from "../../src/server/status";
 import { TavernRuntime } from "../../src/server/runtime";
 import { rpcHandlers } from "../../src/server/rpc";
 import { AUTHORITY } from "../../src/server/authority";
+import { migrateMemberEngagement } from "../../src/server/member-engagement-migration";
+import { patchMemberDetails } from "../../src/server/member-engagement";
 
 async function fixture(classId = "ranger") {
   const f = setup();
   const q = await seedQuest(f.k, "lead", "A", "A");
   const m = f.k.bind("resting", classId, "fern", "project", { keeperThreadId: "lead", boardQuestId: q.id, waypointId: null, errand: false, title: "Find the source", brief: { outcome: "Find the source", mode: "make-it-work", outOfScope: "", doneWhen: "Evidence", context: [], questions: [], timeboxMinutes: null } });
-  f.k.activity(m.threadId, "done");
+  fixtureActivity(f.k, m.threadId, "done");
   f.bb.sdk.threads.get = vi.fn(async ({ threadId }) => makeThreadResponse({ id: threadId, activeBackgroundAgentCount: 0 }));
   f.bb.sdk.threads.stop = vi.fn(async () => ({ ok: true as const }));
   return { ...f, q, m: f.k.member(m.threadId)! };
@@ -32,9 +35,9 @@ it("reminds once per member per rest at the configured threshold, without stoppi
   expect(reminders(f)).toHaveLength(1);
   expect(reminders(f)[0]?.text).toContain("resting 30 min");
   expect(f.bb.sdk.threads.stop).not.toHaveBeenCalled();
-  expect(f.k.store.runtime(f.m.threadId).released).toBeUndefined();
-  f.k.activity(f.m.threadId, "working");
-  f.k.activity(f.m.threadId, "done");
+  expect(runtimeFixture(f.k.store, f.m.threadId).released).toBeUndefined();
+  await f.runtime.tell("lead", f.m.threadId, "Check the follow-up");
+  f.k.report(f.m.threadId, { status: "done", outcome: "Follow-up checked", evidence: [], artifacts: [], confidence: null, voice: null });
   f.advance(30 * 60_000);
   f.runtime.remindResting("lead");
   expect(reminders(f)).toHaveLength(2);
@@ -65,12 +68,14 @@ it("puts a resting, settled member and its held machine in the ledger and status
 });
 it("uses upgrade time rather than an old report as the rest start and persists it across restart", async () => {
   const f = await fixture();
-  f.k.store.patch(f.m.threadId, { restSince: null });
+  f.k.store.db.prepare("UPDATE tavern_records SET data=json_set(json_remove(data,'$.engagement'),'$.state','done') WHERE kind='members' AND id=?").run(f.m.threadId);
+  f.k.store.db.prepare("UPDATE tavern_runtime SET data=json_remove(data,'$.memberEngagement') WHERE thread_id=?").run(f.m.threadId);
   f.advance(3 * 60 * 60_000);
+  migrateMemberEngagement(f.k.store, f.time());
   const restarted = new TavernRuntime(f.bb, f.k, f.runtime.registry);
   restarted.remindResting("lead");
   expect(reminders(f)).toHaveLength(0);
-  expect(f.k.store.runtime(f.m.threadId).restSince).toBe(f.time());
+  expect(runtimeFixture(f.k.store, f.m.threadId).restSince).toBe(f.time());
   f.advance(30 * 60_000);
   new TavernRuntime(f.bb, f.k, f.runtime.registry).remindResting("lead");
   expect(reminders(f)).toHaveLength(1);
@@ -107,7 +112,7 @@ it.each(["verified", "rejected"] as const)("does not automatically release a War
   f.advance(60 * 60_000);
   f.runtime.remindResting("lead");
   expect(reminders(f)).toHaveLength(status === "verified" ? 1 : 0);
-  expect(f.k.store.runtime(f.m.threadId).released).toBeUndefined();
+  expect(runtimeFixture(f.k.store, f.m.threadId).released).toBeUndefined();
   expect(f.bb.sdk.threads.stop).not.toHaveBeenCalled();
 });
 it("a keep suppresses the first reminder until its deadline, without a release or repeated reminder", async () => {
@@ -123,7 +128,7 @@ it("a keep suppresses the first reminder until its deadline, without a release o
   f.runtime.remindResting("lead");
   f.runtime.remindResting("lead");
   expect(reminders(f)).toHaveLength(1);
-  expect(f.k.store.runtime(f.m.threadId).released).toBeUndefined();
+  expect(runtimeFixture(f.k.store, f.m.threadId).released).toBeUndefined();
 });
 it.each(["done", "held", "stopped"] as const)("refuses a keep on a %s quest", async phase => {
   const f = await fixture();
@@ -140,7 +145,7 @@ it("ends a keep when the quest ends", async () => {
   const f = await fixture();
   f.runtime.keep("lead", f.m.threadId, f.time() + 60 * 60_000, "Follow-up");
   f.k.recordStop(f.q.id);
-  expect(f.k.store.runtime(f.m.threadId).kept).toBeNull();
+  expect(runtimeFixture(f.k.store, f.m.threadId).kept).toBeNull();
   expect(f.runtime.restNote(f.m)).toBeNull();
 });
 it("refuses manual release on a held quest before sending stop", async () => {
@@ -151,10 +156,21 @@ it("refuses manual release on a held quest before sending stop", async () => {
 });
 it.each(["manual", "cleanup"] as const)("records a placed manual release racing cleanup only once when %s starts first", async firstPath => {
   const f = await fixture();
-  f.k.store.patch(f.m.threadId, { releasePending: "cleanup" });
-  f.runtime.placements().store.reserve(placementRecord({ memberThreadId: f.m.threadId, keeperThreadId: "lead", questId: f.q.id }), { maxMakers: 2, maxCheckers: 2 });
+  patchThreadFixture(f.k.store, f.m.threadId, { releasePending: "cleanup" });
+  const receipt = f.k.decide("lead", { text: "Release the resting member", why: "Cleanup", boardQuestId: f.q.id, reversible: true, source: "keeper" });
+  const operation = f.k.store.runtime(f.m.threadId).memberEngagement!.operation!;
+  patchMemberDetails(f.k.store, f.m.threadId, { operation: { ...operation, receipt: { kind: "decision", id: receipt.id } } });
+  const placements = f.runtime.placements().store;
+  placements.reserve(placementRecord({ memberThreadId: f.m.threadId, keeperThreadId: "lead", questId: f.q.id }), { maxMakers: 2, maxCheckers: 2 });
   vi.spyOn(f.runtime.placements(), "host", "get").mockReturnValue({ call: vi.fn(), onWorkerExit: () => () => {} });
-  const preserve = vi.spyOn(f.runtime.placements().preserve, "beforeRelease").mockResolvedValue({ state: "released" });
+  const preserve = vi.spyOn(f.runtime.placements().preserve, "beforeRelease").mockImplementation(async () => {
+    const record = placements.byMember(f.m.threadId)!;
+    const cancelled = placements.cancel(record.id, record.generation);
+    placements.update(cancelled.id, cancelled.generation, row => ({ ...row, phase: "releasing",
+      preservation: { ...row.preservation, source: "not-needed", liveOwnerThreadId: null, stopConfirmed: true } }), "released");
+    placements.finishRelease(cancelled.id, cancelled.generation, true);
+    return { state: "released" };
+  });
   let resolve!: () => void;
   const wait = new Promise<void>(done => { resolve = done; });
   let entered!: () => void;

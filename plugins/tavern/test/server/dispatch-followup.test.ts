@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { patchThreadFixture } from "./member-fixture";
 import { seedQuest } from "./support";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { scopeForClass } from "../../src/scope/presets";
@@ -170,8 +171,8 @@ describe("classes second recheck dispatch", () => {
   it.each(["stored-archive", "stored-delete", "thread-archive", "thread-delete"] as const)("drops a tick for a %s Keeper before registry and scope work", async state => {
     const f = setup();
     const ctx = dispatch049({ pluginId: "tavern", text: "[Tavern tick] id=tick_1234" });
-    if (state === "stored-archive") f.k.store.patch("lead", { archivedAt: f.time() });
-    if (state === "stored-delete") f.k.store.patch("lead", { deletedAt: f.time() });
+    if (state === "stored-archive") patchThreadFixture(f.k.store, "lead", { archivedAt: f.time() });
+    if (state === "stored-delete") patchThreadFixture(f.k.store, "lead", { deletedAt: f.time() });
     if (state === "thread-archive") ctx.thread.archivedAt = f.time();
     if (state === "thread-delete") ctx.thread.deletedAt = f.time();
     const ensure = vi.fn();
@@ -187,7 +188,7 @@ describe("classes second recheck dispatch", () => {
 
   it("drops an archived Keeper tick even when the journal port is broken", async () => {
     const f = setup();
-    f.k.store.patch("lead", { archivedAt: f.time() });
+    patchThreadFixture(f.k.store, "lead", { archivedAt: f.time() });
     f.port.dispatchCheck = () => { throw new Error("broken port"); };
     expect(await f.runtime.dispatch(dispatch049({ pluginId: "tavern", text: "[Tavern tick] id=tick_1234" }))).toMatchObject({ action: "reject", message: expect.stringContaining("archived or deleted Keeper") });
   });

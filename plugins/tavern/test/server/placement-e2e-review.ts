@@ -1,3 +1,4 @@
+import { withMemberFixtures } from "./member-fixture";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { createFakePluginHost, makeHostResponse, makeThreadResponse, makeMessageDispatchHookContext } from "@get-bb/plugin-sdk/testing";
 import { experimental_createHostEntryHarness } from "@get-bb/plugin-sdk/testing/host";
@@ -76,7 +77,7 @@ export async function reviewFixture(checkerCount = 1) {
   const db = host.bb.storage.database(); db.exec(MIGRATIONS.join(";\n")); const keepers = new KeeperStore(db);
   let keeper: Keeper;
   const journal = registerJournal(host.bb, db, { roleOf: id => { const member = keepers.get("members", id); return member ? { ...member, ...(member.classId === "warden" ? { checkerWaypointIds: keeper.checkerWaypoints(id) } : {}) } : null; }, invalidate: () => {} });
-  keeper = new Keeper(keepers, journal, () => 1_000_000);
+  keeper = withMemberFixtures(new Keeper(keepers, journal, () => 1_000_000));
   keeper.bind("keeper", "keeper", "wren", "project");
   const runtime = new TavernRuntime(host.bb, keeper, new Registry(fileURLToPath(new URL("../../", import.meta.url)), "/nonexistent"));
   const settings = new SettingsStore(db); runtime.enableSettings(settings, new InsightsReader(db, settings));

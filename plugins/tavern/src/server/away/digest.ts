@@ -1,3 +1,5 @@
+import { memberDetails, outstandingArchivedPlacement } from "../member-engagement";
+import { PlacementStore } from "../placement/store";
 import { z } from "zod";
 import { awayDigestInputSchema, type AwayDigest } from "../../shared/away-rpc";
 import { askSchema, eventSchema, readStoredActor } from "../../shared/schema";
@@ -40,8 +42,9 @@ export function readAwayDigest(k: Keeper, store: AwayStore, input: z.input<typeo
       const cleanup = receipt ? z.object({ awayWindowId: z.string().optional(), deferredMemberThreadIds: z.array(z.string()).optional() }).passthrough().parse(JSON.parse(receipt.data)) : null;
       const returnedWhileAway = cleanup?.awayWindowId === window.id;
       const deferredCleanup = (cleanup?.deferredMemberThreadIds ?? []).map(threadId => {
-        const state = k.store.runtime(threadId);
-        return { threadId, action: "archive-member-thread" as const, pending: state.archivePending !== false, error: state.archivePending === undefined ? "Cleanup state is unavailable; review this thread" : state.archiveError ?? null };
+        const member = k.member(threadId);
+        const placement = member && outstandingArchivedPlacement(new PlacementStore(db), member);
+        return { threadId, action: "archive-member-thread" as const, pending: member?.engagement !== "archived" || !!placement, error: member ? memberDetails(k.store, threadId).operation?.error ?? placement?.blocked?.message ?? null : "Cleanup state is unavailable; review this thread" };
       });
       return { ...(returnedWhileAway ? { returnedWhileAway: true, deferredCleanup } : {}), questId, title: quest ? quest.title : "Unavailable quest", short: quest ? quest.short : "Unavailable quest", missing: quest === null,
         events: group ? group.events : 0, reports: group ? group.reports : 0, decisions: group ? group.decisions : 0, asks: allAsks.filter(ask => ask.boardQuestId === questId).length };

@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { withMemberFixtures } from "./member-fixture";
 import { concludeQuest } from "./support";
 import { seedQuest } from "./support";
 import { describe, expect, it, vi } from "vitest";
@@ -268,7 +269,7 @@ describe("round 2 release, ask and scout policies", () => {
     );
     expect(result).toContain("Released");
     expect(f.bb.sdk.threads.stop).toHaveBeenCalledWith({ threadId: member.threadId });
-    expect(f.k.member(member.threadId)).toMatchObject({ state: "stopped", place: "rest" });
+    expect(f.k.member(member.threadId)).toMatchObject({ engagement: "released", disposition: "released" });
     expect(
       f.k.store
         .query("decisions", "keeperThreadId", "lead")
@@ -276,7 +277,7 @@ describe("round 2 release, ask and scout policies", () => {
     ).toBe(true);
     await expect(f.runtime.hire("lead", "project", f.input)).resolves.toBeTruthy();
     f.runtime.updateThread(makeThreadResponse({ id: member.threadId, status: "idle" }));
-    expect(f.k.member(member.threadId)?.state).toBe("stopped");
+    expect(f.k.member(member.threadId)?.engagement).toBe("released");
   });
   it("M-2 keeps the slot until stopping is confirmed, then completes release in the sweep", async () => {
     const f = await approved();
@@ -302,7 +303,7 @@ describe("round 2 release, ask and scout policies", () => {
     );
     const created = f.k.ask("lead", { effect: {type:"decision"}, ...ask, reversible: true, proceedInMinutes: 1 });
     f.advance(60_000);
-    new Keeper(f.k.store, f.port, f.time).defaults();
+    withMemberFixtures(new Keeper(f.k.store, f.port, f.time)).defaults();
     expect(f.k.store.get("asks", created.id)?.state).toBe("defaulted");
   });
   it.each(["ranger", "wanderer"])(
@@ -380,7 +381,7 @@ describe("round 2 delivery and cleanup", () => {
       .mockResolvedValue({ ok: true });
     await concludeQuest(f.runtime, "lead", f.q.id, "Done", "");
     expect(f.k.quest(f.q.id).phase).toBe("done");
-    expect(f.k.member(member.threadId)?.state).toBe("done");
+    expect(f.k.member(member.threadId)).toMatchObject({ engagement: "archiving", disposition: "retired unfinished" });
     await f.runtime.sweep();
     expect(f.bb.sdk.threads.archive).toHaveBeenCalledTimes(2);
   });

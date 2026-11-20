@@ -4,6 +4,7 @@ import { rpcHandlers } from "../../src/server/rpc";
 import { rpcContract } from "../../src/shared/contract";
 import { IDENTITY_PAGE_SIZE } from "../../src/shared/identity";
 import { setup } from "./runtime-fixture";
+import { putMemberFixture } from "./member-fixture";
 import { makeThreadResponse } from "./host";
 
 const f = () => {
@@ -28,7 +29,7 @@ it("resolves relatives and names from the SDK and member records, not Tavern lif
   k.bind("moss", "keeper", null, "project");
   k.store.put("members", "moss", { ...k.member("moss")!, displayName: "Moss" });
   for (const [id, keeper] of [["juno", "moss"], ["sibling", "lead"], ["child", "lead"]]) {
-    k.store.put("members", id!, { ...k.member("lead")!, threadId: id!, keeperThreadId: keeper!, role: "member", classId: "smith", displayName: id === "juno" ? "Juno" : undefined, characterId: null });
+    putMemberFixture(k.store, id!, { ...k.member("lead")!, threadId: id!, keeperThreadId: keeper!, role: "member", classId: "smith", displayName: id === "juno" ? "Juno" : undefined, characterId: null });
   }
   const get = vi.spyOn(bb.sdk.threads, "get").mockImplementation(async ({ threadId }) => {
     if (threadId === "missing") throw Object.assign(new Error("not found"), { status: 404 });
@@ -36,7 +37,7 @@ it("resolves relatives and names from the SDK and member records, not Tavern lif
     const parentThreadId = threadId === "viewer" ? "plain-parent" : threadId === "child" ? "lead" : null;
     return makeThreadResponse({ id: threadId, parentThreadId, title: threadId === "old" ? "Old notes" : null, archivedAt: threadId === "old" ? 20 : null, deletedAt: threadId === "deleted" ? 30 : null });
   });
-  k.store.put("members", "viewer", { ...k.member("sibling")!, threadId: "viewer" });
+  putMemberFixture(k.store, "viewer", { ...k.member("sibling")!, threadId: "viewer" });
   const readRuntime = vi.spyOn(k.store, "runtime");
   const read = rpcHandlers(runtime).identities;
   expect(read).toBeTypeOf("function");

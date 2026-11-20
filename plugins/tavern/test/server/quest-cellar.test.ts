@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { patchThreadFixture, putMemberFixture, runtimeFixture } from "./member-fixture";
 import { putQuestFixture } from "./support";
 import { describe, expect, it, vi } from "vitest";
 import { setup } from "./runtime-fixture";
@@ -24,7 +25,7 @@ describe("quest cellar threads", () => {
   it("keeps a Keeper with a live side quest and names the reason", async () => {
     const f = await fixture();
     const child = f.k.member("child")!;
-    f.k.store.put("members", "errand", { ...child, threadId: "errand", boardQuestId: null, errand: true, state: "working" });
+    putMemberFixture(f.k.store, "errand", { ...child, threadId: "errand", boardQuestId: null, errand: true, state: "working" });
     f.threads.set("errand", makeThreadResponse({ id: "errand", status: "active" }));
     f.k.store.put("members", "lead", { ...f.k.member("lead")!, displayName: "Moss" });
     const result = await f.runtime.archiveBoardQuests([f.q.id], true);
@@ -33,8 +34,8 @@ describe("quest cellar threads", () => {
   });
   it.each(["done", "failed", "released"] as const)("does not keep a Keeper open for a %s side quest", async status => {
     const f = await fixture();
-    f.k.store.put("members", "errand", { ...f.k.member("child")!, threadId: "errand", boardQuestId: null, errand: true, state: status === "released" ? "working" : status });
-    if (status === "released") f.k.store.patch("errand", { released: { reason: "Finished", decisionId: "release" } });
+    putMemberFixture(f.k.store, "errand", { ...f.k.member("child")!, threadId: "errand", boardQuestId: null, errand: true, state: status === "released" ? "working" : status });
+    if (status === "released") patchThreadFixture(f.k.store, "errand", { released: { reason: "Finished", decisionId: "release" } });
     const result = await f.runtime.archiveBoardQuests([f.q.id], true);
     expect(result.notes).toEqual([]);
     expect(f.archive.mock.calls.map(([args]) => args.threadId).sort()).toEqual(["child", "lead"]);
@@ -43,7 +44,7 @@ describe("quest cellar threads", () => {
     const f = await fixture();
     vi.spyOn(f.runtime.away, "cleanupHeld").mockReturnValue(true);
     await f.runtime.archiveBoardQuests([f.q.id], true);
-    f.k.store.put("members", "errand", { ...f.k.member("child")!, threadId: "errand", boardQuestId: null, errand: true, state: "working" });
+    putMemberFixture(f.k.store, "errand", { ...f.k.member("child")!, threadId: "errand", boardQuestId: null, errand: true, state: "working" });
     f.threads.set("errand", makeThreadResponse({ id: "errand", status: "active" }));
     vi.mocked(f.runtime.away.cleanupHeld).mockReturnValue(false);
     await f.runtime.sweep();
@@ -72,7 +73,7 @@ describe("quest cellar threads", () => {
   it("exposes a Keeper-only named unarchive tool and reports archived members including released and deleted-quest wording", async () => {
     const f = await fixture(); registerTools(f.bb, f.runtime);
     await f.runtime.archiveBoardQuests([f.q.id], true);
-    f.k.store.patch("child", { released: { reason: "Finished", decisionId: "release" } });
+    patchThreadFixture(f.k.store, "child", { released: { reason: "Finished", decisionId: "release" } });
     f.k.deleteQuest(f.q.id, { kind: "user" });
     const status = readStatus(f.runtime, "lead", statusInput.parse({}));
     expect(status).toMatchObject({ archivedMembers: [{ name: "Vale", classId: "smith", quest: "a deleted quest", released: true }] });
@@ -95,9 +96,9 @@ describe("quest cellar threads", () => {
     f.archive.mockRejectedValueOnce(new Error("offline"));
     const result = await f.runtime.archiveBoardQuests([f.q.id], true);
     expect(result.pendingArchives).toContain("child");
-    expect(f.k.store.runtime("child").archivePending).toBe(true);
+    expect(runtimeFixture(f.k.store, "child").archivePending).toBe(true);
     await f.runtime.sweep();
-    expect(f.k.store.runtime("child").archivePending).toBe(false);
+    expect(runtimeFixture(f.k.store, "child").archivePending).toBe(false);
     await f.runtime.threadLifecycle("thread.archived", { thread: f.threads.get("child")! });
     expect(f.k.store.events("lead").filter(e => e.type === "thread.archived" && e.data.memberThreadId === "child")).toHaveLength(1);
   });
@@ -163,11 +164,11 @@ describe("quest cellar threads", () => {
   it("unarchives its own named released member without rehiring it", async () => {
     const f = await fixture();
     await f.runtime.archiveBoardQuests([f.q.id], true);
-    f.k.store.patch("child", { released: { reason: "Finished", decisionId: "release" } });
+    patchThreadFixture(f.k.store, "child", { released: { reason: "Finished", decisionId: "release" } });
     const result = await f.runtime.unarchiveMember("lead", "Vale");
     expect(result.released).toBe(true);
     expect(f.unarchive).toHaveBeenCalledWith({ threadId: "child" });
-    expect(f.k.store.runtime("child").released).toMatchObject({ reason: "Finished" });
+    expect(runtimeFixture(f.k.store, "child").released).toMatchObject({ reason: "Finished" });
   });
   it("refuses another Keeper's member and deleted threads", async () => {
     const f = await fixture();

@@ -71,10 +71,10 @@ describe("bounded lifecycle maintenance", () => {
     const stop = f.runtime.stop(q.id);
     await vi.advanceTimersByTimeAsync(20_001);
     expect(await stop).toEqual({ phase: "stopping", unconfirmed: 1 });
-    expect(f.k.member("child")?.stopPending).toBe(true);
+    expect((f.k.member("child")?.engagement === "stopping")).toBe(true);
     vi.spyOn(f.bb.sdk.threads, "get").mockImplementation(async ({ threadId }) => makeThreadResponse({ id: threadId }));
     f.advance(5000); await f.runtime.retryStops("lead");
     expect(f.k.quest(q.id).phase).toBe("stopped");
-    expect(f.k.member("child")?.stopPending).toBe(false);
+    expect((f.k.member("child")?.engagement === "stopping")).toBe(false);
   });
 });

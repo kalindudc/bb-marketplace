@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { withMemberFixtures } from "../server/member-fixture";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -29,7 +30,7 @@ it.each(["keeper", "lead"])("binds an open %s on its actual remote host without 
   let paths: unknown;
   const db = host.bb.storage.database(); db.exec(MIGRATIONS.join(";\n"));
   const keeper = new Keeper(new KeeperStore(db), fakePort());
-  keeper.bind("member", "keeper", null, "project", classId === "lead" ? {
+  withMemberFixtures(keeper).bind("member", "keeper", null, "project", classId === "lead" ? {
     keeperThreadId: "parent", boardQuestId: null, waypointId: null, errand: false, title: "Lead",
     brief: { outcome: "Lead", mode: "make-it-work", outOfScope: "", doneWhen: "Done", context: [], questions: [], timeboxMinutes: null },
   } : undefined);

@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { putMemberFixture, runtimeFixture } from "./member-fixture";
 import { seedQuest } from "./support";
 import { expect, it, vi } from "vitest";
 import { setup } from "./runtime-fixture";
@@ -50,13 +51,13 @@ it("keeps a failed child's slot occupied while a later rebrief is pending until 
   expect(result).not.toContain("brief pending");
   const member = f.k.store.query("members", "boardQuestId", q.id)[0]!;
   expect(await f.runtime.tell("lead", member.threadId, "Continue with the revised checks")).toMatchObject({ briefPending: true, status: "retrying", attempts: 1 });
-  f.k.store.put("members", member.threadId, { ...member, state: "failed" });
+  putMemberFixture(f.k.store, member.threadId, { ...member, state: "failed" });
   await expect(f.runtime.hire("lead", "project", input)).rejects.toThrow(
     /initial smith brief is still pending|already has a live member/,
   );
   expect(f.harness.inspection.sdk.callsTo("threads.spawn")).toHaveLength(1);
   f.advance(61_000);
   await f.runtime.retryInitialBriefs("lead");
-  expect(f.k.store.runtime(member.threadId).pendingBrief).toBeNull();
+  expect(runtimeFixture(f.k.store, member.threadId).pendingBrief).toBeNull();
   expect(f.k.store.runtime(member.threadId).briefVersion).toBe(2);
 });

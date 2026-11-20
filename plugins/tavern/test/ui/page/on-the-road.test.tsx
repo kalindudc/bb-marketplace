@@ -29,7 +29,7 @@ describe("the status line's on the road", () => {
 
   it("reads 0 for smoke 5: one quest in check, its maker done and nobody working", async () => {
     const base = scenes.richRoom.keepers[0]!;
-    const quest = { ...base.boardQuests[0]!, phase: "check" as const, members: base.boardQuests[0]!.members.slice(0, 1).map((m) => ({ ...m, state: "done" as const })) };
+    const quest = { ...base.boardQuests[0]!, phase: "check" as const, members: base.boardQuests[0]!.members.slice(0, 1).map((m) => ({ ...m, state: "idle" as const, engagement: "resting" as const })) };
     const slot = await room({ ...scenes.richRoom, keepers: [{ ...base, errands: [], boardQuests: [quest] }] });
     expect(road(slot)).toBe("0 on the road");
   });

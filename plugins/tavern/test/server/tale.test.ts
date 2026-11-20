@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { fixtureActivity, patchThreadFixture } from "./member-fixture";
 import { concludeQuest, putQuestFixture } from "./support";
 import { seedQuest } from "./support";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -87,7 +88,7 @@ describe("quest tale and credits", () => {
     f.port.linkedEntries = () => [{ ...entry, status: "verified", updatedBy: { kind: "agent", threadId: "checker" } }, { ...entry, id: "a2", status: "doing" }];
     expect((await f.detail()).memberCredits!.find(c => c.memberThreadId === "checker")!.verifiedWaypointIds).toEqual([]);
     expect((await f.detail()).memberCredits!.find(c => c.memberThreadId === "maker")!.madeWaypointIds).toEqual([]);
-    f.k.store.patch("maker", { released: { reason: "Replaced", decisionId: "release" } });
+    patchThreadFixture(f.k.store, "maker", { released: { reason: "Replaced", decisionId: "release" } });
     f.port.linkedEntries = () => [entry];
     expect((await f.detail()).memberCredits!.find(c => c.memberThreadId === "maker")!.madeWaypointIds).toEqual([]);
     f.port.linkedEntries = () => [{ ...entry, status: "verified", updatedBy: { kind: "agent", threadId: "checker" } }];
@@ -200,7 +201,7 @@ describe("archived Keepers and current holding state", () => {
   });
 
   it("reconciles missed archive events, without equating a manual Stop with archive", async () => {
-    const f = await fixture(); f.k.activity("lead", "stopped");
+    const f = await fixture(); fixtureActivity(f.k, "lead", "stopped");
     expect((await f.call<Room>("room", {})).keepers[0]!.archived).toBe(false);
     f.k.store.patch("lead", { heldAt: f.time() });
     f.bb.sdk.threads.get = async ({ threadId }) => makeThreadResponse({ id: threadId, archivedAt: f.time() });

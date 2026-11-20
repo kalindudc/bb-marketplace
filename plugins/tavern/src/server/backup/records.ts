@@ -12,6 +12,7 @@ import { sparseTunablesSchema } from "../../shared/settings";
 import { awayHoldSchema, type AwayHold } from "../away/holds";
 import { awayCompletedWindowSchema, awayStateSchema, type AwayState, type AwayWindow } from "../../shared/away";
 import { isCloseEffect } from "../../shared/closing";
+import { migrateMemberEngagement } from "../member-engagement-migration";
 import { actorSchema, readStoredActor, askSchema, boardQuestSchema, decisionSchema, gateRecordSchema, journalEntrySchema, keeperNoteSchema, memberSchema, planSchema, reportSchema, routeSchema, ruleSchema, summarySchema } from "../../shared/schema";
 
 import { taleDeliverySchema, taleDeliveryAttemptSchema } from "../tale";
@@ -21,6 +22,7 @@ const tableSchema = z.object({ columns: z.array(z.string()).min(1), rows: z.arra
 export const recordsSnapshotSchema = z.object({ format: z.literal("tavern-records/1"), collectingSince: z.number().int().nonnegative(), overrides: z.record(z.string(), sparseTunablesSchema), sequences: z.record(z.string(), z.number().int().nonnegative()), tables: z.record(z.string(), tableSchema) }).strict();
 export type RecordsSnapshot = z.infer<typeof recordsSnapshotSchema>;
 type Column = { name: string; type: string; notnull: number; pk: number; dflt_value: unknown };
+const legacyMemberSchema = memberSchema.extend({ state: z.union([memberSchema.shape.state, z.literal("done"), z.literal("stopped")]) });
 const recordSchemas: Record<string, z.ZodType> = { pullRequests: pullRequestSchema, taleDeliveries: taleDeliverySchema, taleDeliveryAttempts: taleDeliveryAttemptSchema, taleKeeps: taleKeepSchema, serviceRecords: serviceQuestRecordSchema, serviceVerdicts: serviceVerdictSchema, serviceRecordState: serviceRecordStateSchema, members: memberSchema, quests: boardQuestSchema, plans: planSchema, asks: askSchema, decisions: decisionSchema, rules: ruleSchema, reports: reportSchema, summaries: summarySchema, routes: routeSchema, notes: keeperNoteSchema, gates: gateRecordSchema };
 const jsonColumns = new Set(["data", "actor", "entry_ids", "before_data", "after_data", "snapshot", "changes", "undo_data", "evidence"]);
 const privateRecordKinds = new Set(["placementArtifactManifests", "stopAll"]);
@@ -144,7 +146,8 @@ export class BackupRecords {
             awayHolds.push(hold);
           } else if (row.kind === "awayWakes") z.object({ at: z.number().int().nonnegative() }).strict().parse(data);
           else if (typeof row.kind === "string" && Object.hasOwn(recordSchemas, row.kind)) {
-            recordSchemas[row.kind]!.parse(data);
+            if (row.kind === "members" && data.engagement === undefined) legacyMemberSchema.parse(data);
+            else recordSchemas[row.kind]!.parse(data);
             if (row.kind === "summaries" && row.id !== data.id) throw new Error("Summary identity does not match its payload.");
             if (row.kind === "serviceRecords" && row.id !== data.questId || row.kind === "serviceVerdicts" && row.id !== data.id || row.kind === "serviceRecordState" && row.id !== "v1" || row.kind === "taleKeeps" && row.id !== taleKeepKey(String(data.questId), String(data.characterId)))
               throw new Error(`Service record identity does not match its payload: ${row.kind}`);
@@ -200,7 +203,7 @@ export class BackupRecords {
     const snapshot = this.checkRows(input);
     if (!this.empty()) return snapshot;
     const rollback = new Error("Rollback snapshot validation");
-    try { this.db.transaction(() => { this.insert(snapshot); throw rollback; })(); }
+    try { this.db.transaction(() => { this.insert(snapshot); migrateMemberEngagement(new KeeperStore(this.db), this.now()); throw rollback; })(); }
     catch (error) { if (error !== rollback) throw error; }
     return snapshot;
   }
@@ -213,6 +216,7 @@ export class BackupRecords {
       if (!this.db.prepare("SELECT 1 FROM tavern_records WHERE kind='attentionSeen' AND id GLOB 'quest-change:[0-9]*' LIMIT 1").get())
         this.db.exec(SEED_QUEST_CHANGE_SEEN);
       const store = new KeeperStore(this.db);
+      migrateMemberEngagement(store, this.now());
       for (const ask of store.all("asks")) {
         if (ask.kind !== "conclude" || ask.state !== "withdrawn" || ask.withdrawnCause !== "backup-restored" || !ask.boardQuestId) continue;
         const quest = store.get("quests", ask.boardQuestId);

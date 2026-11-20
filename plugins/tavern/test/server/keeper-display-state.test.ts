@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { patchThreadFixture } from "./member-fixture";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Room, ThreadDecor } from "../../src/shared/contract";
 import { registerRpc } from "../../src/server/rpc";
@@ -44,7 +45,7 @@ describe.each(["room", "decor"] as const)("%s Keeper display state", surface => 
 
   it("keeps archived precedence over stale working state and recent holds", async () => {
     const f = fixture(); f.hold("message"); f.hold("typing"); f.k.activity("lead", "working");
-    f.k.store.patch("lead", { archivedAt: f.time() });
+    patchThreadFixture(f.k.store, "lead", { archivedAt: f.time() });
     expect(f.k.member("lead")!.state).toBe("working");
     expect(await f.status(surface)).toBe("listening");
   });

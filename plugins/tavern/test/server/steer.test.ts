@@ -1,3 +1,4 @@
+import { withMemberFixtures } from "./member-fixture";
 import { seedQuest } from "./support";
 import { beforeEach, describe, expect, it } from "vitest";
 import Database from "better-sqlite3";
@@ -10,7 +11,7 @@ let keeper: Keeper;
 beforeEach(() => {
   const db = new Database(":memory:");
   for (const migration of MIGRATIONS) db.exec(migration);
-  keeper = new Keeper(new KeeperStore(db), fakePort(), () => 1_000_000);
+  keeper = withMemberFixtures(new Keeper(new KeeperStore(db), fakePort(), () => 1_000_000));
   keeper.bind("lead", "keeper", "wren", "project");
 });
 

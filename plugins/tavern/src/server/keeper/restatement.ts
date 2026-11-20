@@ -1,3 +1,5 @@
+import { isLiveMember } from "../liveness";
+import { memberActivityWord } from "../../shared/member-engagement";
 import { preapprovalWords } from "../../shared/quest-authority";
 import type { Keeper } from "./service";
 import type { BoardQuestSummary } from "../../shared/contract";
@@ -104,7 +106,7 @@ function noteLine(note: KeeperNote) {
 function memberLines(k: Keeper, summary: BoardQuestSummary) {
   return summary.members.map(
     (m) =>
-      `${k.name(m)} (${m.classId})${m.repo ? `, repo ${m.repo}` : ""}, ${m.state}${m.checkIndependence === "same-family" ? "; same-family check (not independent)" : m.checkIndependence === "not-established" ? "; check independence not established" : ""}${m.guardPosture ? `; ${m.guardPosture.label}` : ""}; waypoint ${m.waypointId ?? (m.classId === "warden" ? k.checkerWaypoints(m.threadId).join(",") : "none")}; strikes ${m.strikes}; doing ${quoted(short(memberDoing(k, m.threadId, m.doing), needsAttention(k, m.threadId) ? 300 : 120))}${k.store.runtime(m.threadId).released ? "; released" : ""}`,
+      `${k.name(m)} (${m.classId})${m.repo ? `, repo ${m.repo}` : ""}, ${memberActivityWord(m, !isOpenQuest(summary))}${m.checkIndependence === "same-family" ? "; same-family check (not independent)" : m.checkIndependence === "not-established" ? "; check independence not established" : ""}${m.guardPosture ? `; ${m.guardPosture.label}` : ""}; waypoint ${m.waypointId ?? (m.classId === "warden" ? k.checkerWaypoints(m.threadId).join(",") : "none")}; strikes ${m.strikes}; doing ${quoted(short(memberDoing(k, m.threadId, m.doing), needsAttention(k, m.threadId) ? 300 : 120))}`,
   );
 }
 function needsAttention(k: Keeper, threadId: string) {
@@ -169,7 +171,7 @@ function questBlock(k: Keeper, summary: BoardQuestSummary) {
     `Allocated party: ${plan?.party.map((p) => `${p.classId} for ${p.waypointIds.join(",") || p.purpose}`).join("; ") || "not planned"}`,
     ...waypoints.map(
       (w) =>
-        `${w.id} [${w.state}] ${quoted(short(w.title, 80))}; ${w.actor} owner ${w.actor === "agent" && w.ownerMember ? `${k.name(w.ownerMember)} (${w.ownerMember.classId}, ${w.ownerMember.state})` : (w.owner ?? "unassigned")}; lead time ${w.leadTime ?? "unknown"}; after ${w.dependsOn.join(",") || "none"}${w.rejectedReason ? `; rejected: ${quoted(w.rejectedReason)}` : ""}${w.state === "reported" && w.check === "keeper" ? "; Keeper check: use tavern_settle" : ""}${w.actor === "outside" ? (w.gate ? `; asked ${w.gate.askedWho} at ${clock(w.gate.askedAt)} via ${quoted(w.gate.via)}; answer ${quoted(w.gate.answer ?? "waiting")}` : "; not asked yet") : ""}`,
+        `${w.id} [${w.state}] ${quoted(short(w.title, 80))}; ${w.actor} owner ${w.actor === "agent" && w.ownerMember ? `${k.name(w.ownerMember)} (${w.ownerMember.classId}, ${memberActivityWord(w.ownerMember)})` : (w.owner ?? "unassigned")}; lead time ${w.leadTime ?? "unknown"}; after ${w.dependsOn.join(",") || "none"}${w.rejectedReason ? `; rejected: ${quoted(w.rejectedReason)}` : ""}${w.state === "reported" && w.check === "keeper" ? "; Keeper check: use tavern_settle" : ""}${w.actor === "outside" ? (w.gate ? `; asked ${w.gate.askedWho} at ${clock(w.gate.askedAt)} via ${quoted(w.gate.via)}; answer ${quoted(w.gate.answer ?? "waiting")}` : "; not asked yet") : ""}`,
     ),
     ...memberLines(k, summary),
   ];
@@ -302,9 +304,9 @@ export function renderRestatement(
     ),
   ];
   const resting = restingParty(k, threadId);
-  parts.push(section("Free hands", resting.filter(m => m.mayRebriefFor !== null).map(m => `${m.name} (${m.classId}, ${m.threadId}); quest ${m.quest}; resting ${m.restedMinutes} min${m.machineHeld ? "; machine held" : ""}; last work ${quoted(short(m.lastWork, 160))}; may be re-briefed for: ${m.mayRebriefFor}`), 2200, "more free hands; call tavern_status"));
+  parts.push(section("Free hands", resting.filter(m => m.mayRebriefFor !== null || m.machineLost).map(m => `${m.name} (${m.classId}, ${m.threadId}); quest ${m.quest}; resting ${m.restedMinutes} min${m.machineHeld ? "; machine held" : ""}; last work ${quoted(short(m.lastWork, 160))}; ${m.machineLost ? "machine lost: can't take new work; release it" : `may be re-briefed for: ${m.mayRebriefFor}`}`), 2200, "more free hands; call tavern_status"));
   const settledMembers = resting.filter(m => m.settled);
-  if (settledMembers.length) parts.push(section("Resting, settled", settledMembers.map(m => `${m.name} (${m.threadId}); resting ${m.restedMinutes} min${m.machineHeld ? "; machine held" : ""}${m.kept ? `; kept until ${clock(m.kept.until)}: ${quoted(short(m.kept.why, 120))}` : "; release or keep"}`), 1500, "more resting members; call tavern_status"));
+  if (settledMembers.length) parts.push(section("Resting, settled", settledMembers.map(m => `${m.name} (${m.threadId}); resting ${m.restedMinutes} min${m.machineHeld ? "; machine held" : ""}${m.machineLost ? "; machine lost: can't take new work; release it" : m.kept ? `; kept until ${clock(m.kept.until)}: ${quoted(short(m.kept.why, 120))}` : "; release or keep"}`), 1500, "more resting members; call tavern_status"));
   if (!priorities) {
     const steers = summaries.flatMap((q) =>
       k.memory.steers(threadId, q.id).map((route) => {
@@ -325,7 +327,7 @@ export function renderRestatement(
     const errands = k.store
       .query("members", "keeperThreadId", threadId, 500)
       .filter(
-        (m) => m.errand && !["done", "stopped", "failed"].includes(m.state),
+        (m) => m.errand && isLiveMember(k.store, m, "work") && m.state !== "failed",
       );
     const recent = decisions.filter(
       (d) =>
@@ -341,7 +343,7 @@ export function renderRestatement(
         "Errands in flight",
         errands.map(
           (m) =>
-            `${k.name(m)} (${m.classId})${m.repo ? `, repo ${m.repo}` : ""}, ${m.state}${m.checkIndependence === "same-family" ? "; same-family check (not independent)" : m.checkIndependence === "not-established" ? "; check independence not established" : ""}${m.guardPosture ? `; ${m.guardPosture.label}` : ""}, strikes ${m.strikes}; ${quoted(m.title ?? "errand")}; doing ${quoted(short(m.doing ?? "none", 120))}`,
+            `${k.name(m)} (${m.classId})${m.repo ? `, repo ${m.repo}` : ""}, ${memberActivityWord(m)}${m.checkIndependence === "same-family" ? "; same-family check (not independent)" : m.checkIndependence === "not-established" ? "; check independence not established" : ""}${m.guardPosture ? `; ${m.guardPosture.label}` : ""}, strikes ${m.strikes}; ${quoted(m.title ?? "errand")}; doing ${quoted(short(m.doing ?? "none", 120))}`,
         ),
         1500,
         "more errands; call tavern_status section=errands",

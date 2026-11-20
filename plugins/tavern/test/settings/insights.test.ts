@@ -1,3 +1,4 @@
+import { putMemberFixture } from "../server/member-fixture";
 import Sqlite from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { InsightCharacters } from "../../src/server/insights/aggregate";

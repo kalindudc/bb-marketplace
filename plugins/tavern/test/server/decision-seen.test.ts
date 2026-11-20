@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { withMemberFixtures } from "./member-fixture";
 import { putQuestFixture } from "./support";
 import { seedQuest } from "./support";
 import Database from "better-sqlite3";
@@ -91,7 +92,7 @@ describe("decision acknowledgement", () => {
     const f = fixture(); f.decide("one");
     const first = await f.mark({ ids: ["one"] });
     const host = createFakePluginHost({ pluginId: "tavern", sdk: {} });
-    const keeper = new Keeper(new KeeperStore(f.k.store.db), f.port, f.time);
+    const keeper = withMemberFixtures(new Keeper(new KeeperStore(f.k.store.db), f.port, f.time));
     registerRpc(host.bb, new TavernRuntime(host.bb, keeper, f.runtime.registry));
     await host.harness.invokeRpc("markDecisionsUnseen", { undoToken: first.undoToken });
     const second = await f.mark({ ids: ["one"] });
@@ -107,7 +108,7 @@ describe("decision acknowledgement", () => {
     const db = new Database(f.k.store.db.serialize());
     databases.push(db);
     const host = createFakePluginHost({ pluginId: "tavern", sdk: {} });
-    const keeper = new Keeper(new KeeperStore(db), f.port, f.time);
+    const keeper = withMemberFixtures(new Keeper(new KeeperStore(db), f.port, f.time));
     registerRpc(host.bb, new TavernRuntime(host.bb, keeper, f.runtime.registry));
     expect(keeper.store.get("decisions", "one")!.seenAt).toBe(f.time());
     expect(await host.harness.invokeRpc("markDecisionsUnseen", { undoToken: marked.undoToken })).toEqual({ ok: true, ids: ["one"] });

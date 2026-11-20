@@ -26,7 +26,7 @@ export const SOLOS_LINE = "Solo threads keep running. Where a solo is guarded, t
 export const SIDE_QUESTS_LINE = "Side quests follow their quest: a paused or unselected quest pauses its side quests.";
 
 /** A member still in play: what closing can pause or let keep drafting. */
-const inPlay = (m: Pick<Member, "state">) => m.state === "working" || m.state === "idle" || m.state === "waiting";
+const inPlay = (m: Pick<Member, "engagement" | "state">) => m.engagement === "active" && m.state !== "failed";
 const s = (n: number, one: string, many: string) => (n === 1 ? one : many);
 
 export type ClosePlan = {

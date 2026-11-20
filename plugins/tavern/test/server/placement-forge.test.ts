@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { putMemberFixture } from "./member-fixture";
 import Sqlite from "better-sqlite3";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -65,7 +66,7 @@ it.each([[undefined, false, false], ["release", false, false], [undefined, true,
   store.reserve(placementRecord({ memberThreadId: "member", phase: "reserved", hostId: "member", environmentId: "member", root: source, memberBranch: "member-work", sourceSnapshotId: snapshot.id, pullRequests: { at: "home", profile: "forge" } }), { maxMakers: 2, maxCheckers: 2 });
   store.update("placement", 1, value => ({ ...value, phase: "running" }));
   const keepers = new KeeperStore(db as never);
-  keepers.put("members", "member", { threadId: "member", classId: "smith", keeperThreadId: "keeper", boardQuestId: "quest" } as never);
+  putMemberFixture(keepers, "member", { threadId: "member", classId: "smith", keeperThreadId: "keeper", boardQuestId: "quest" } as never);
   keepers.patch("member", { projectId: "project" });
   const member = () => keepers.get("members", "member")!;
   const profile = { id: "forge", name: "Forge", enabled: true, kind: "command", open: `test "$GIT_OPTIONAL_LOCKS" = 0 && git status --porcelain >/dev/null && test "$(git rev-parse --show-toplevel)" = ${JSON.stringify(home)} && test "$(git remote get-url origin)" = ${JSON.stringify(network.url)} && test "$FORGE_HEAD" = member-work && test "$LOOM_DRAFT" = 1 && test "$(cat)" = description && echo https://forge.example/pr/12` };

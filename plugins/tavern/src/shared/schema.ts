@@ -4,6 +4,7 @@ import { CLASS_BODY_LIMIT } from "./class-rules";
 import { LOOK_BUILDS, LOOK_HAIRS, LOOK_HAIR_COLOURS, LOOK_HATS, LOOK_LIGHTS, LOOK_SKINS } from "./look";
 import { SPEECH_KEYS } from "./says";
 import { taleResultsSchema } from "./tale-results";
+import { dispositionSchema, engagementSchema } from "./member-engagement";
 
 // The one source of truth for Tavern's domain shapes, shared by the server, the RPC contract and the UI.
 // Words: a "board quest" is a goal a Keeper holds; a "journal" is any thread's own checklist.
@@ -209,7 +210,7 @@ export type Journal = z.infer<typeof journalSchema>;
 
 // ---------- Members (every typed thread) ----------
 
-export const MEMBER_STATES = ["working", "idle", "waiting", "done", "failed", "stopped"] as const;
+export const MEMBER_STATES = ["working", "idle", "waiting", "failed"] as const;
 
 // added by Builder B: provider capability and a specific user-approved detection-only exception remain visible.
 export const guardPostureSchema = z.object({
@@ -218,7 +219,8 @@ export const guardPostureSchema = z.object({
 export const memberSchema = z.object({
   repo: z.string().min(1).optional(),
   draftPush: z.object({ branch: z.string(), remote: z.string(), memberHead: z.string(), homeHead: z.string(), profile: z.string() }).optional(),
-  stopPending: z.boolean().optional(),
+  engagement: engagementSchema.optional(),
+  disposition: dispositionSchema.optional(),
   stopError: z.string().nullable().optional(),
   lastStopAttemptAt: epochMs.nullable().optional(),
   threadId,
@@ -240,8 +242,6 @@ export const memberSchema = z.object({
   /** A side quest: a one-off helper hired for an aside, outside any board quest. */
   errand: z.boolean(),
   title: z.string().nullable(),
-  /** Where the party picture puts it: out on the road, at the table, or resting. */
-  place: z.enum(["road", "table", "rest"]),
   state: z.enum(MEMBER_STATES),
   /** One short line about what it is doing now. */
   doing: z.string().nullable(),

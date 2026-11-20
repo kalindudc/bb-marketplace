@@ -110,7 +110,7 @@ describe("quest stop history", () => {
     f.advance(1000);
     await f.runtime.stop(q.id);
     expect(stop).toHaveBeenCalledTimes(1);
-    expect(f.k.member("child")?.state).toBe("stopped");
+    expect(f.k.member("child")).toMatchObject({ engagement: "archived", disposition: "stopped" });
     expect(f.k.quest(q.id)).toMatchObject({ stopReason: "Stop requested.", endedAt: f.time() });
     expect(f.k.store.events("lead").filter(e => e.type === "quest.stopped")).toHaveLength(1);
     expect(f.k.store.get("asks", entry.id)?.withdrawnAt).toBe(stopped.stoppingSince);

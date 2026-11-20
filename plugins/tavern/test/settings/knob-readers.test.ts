@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { fixtureActivity, patchThreadFixture, runtimeFixture } from "../server/member-fixture";
 import { afterEach, expect, it, vi } from "vitest";
 import { SettingsStore } from "../../src/server/settings/store";
 import { InsightsReader } from "../../src/server/insights";
@@ -99,17 +100,17 @@ it("exhausts brief delivery at the selected number of attempts", async () => {
   f.save({ keepers: { briefRetryAttempts: 1 } });
   vi.spyOn(f.bb.sdk.threads, "send").mockRejectedValue(new Error("offline"));
   await f.runtime.sendRebrief(f.member.threadId, "Resume work");
-  expect(f.k.store.runtime(f.member.threadId).pendingBrief?.attempts).toBe(1);
+  expect(runtimeFixture(f.k.store, f.member.threadId).pendingBrief?.attempts).toBe(1);
   expect(f.k.store.openAsks("lead").find(a => a.kind === "blocker")?.why).toContain("after 1 attempt.");
 });
 
 it("enforces the configured replacement and keep ceilings", async () => {
   const f = await party();
-  f.k.activity(f.member.threadId, "done");
+  fixtureActivity(f.k, f.member.threadId, "done");
   f.save({ keepers: { replacementsPerSlot: 0, keepMaxHours: 2 } });
   expect(() => f.runtime.keep("lead", f.member.threadId, f.time() + 2 * 3_600_000 + 1, "Wait")).toThrow(/2 hours/);
   f.runtime.keep("lead", f.member.threadId, f.time() + 2 * 3_600_000, "Wait");
-  f.k.store.patch(f.member.threadId, { released: { reason: "Done", decisionId: "release-f" } });
+  patchThreadFixture(f.k.store, f.member.threadId, { released: { reason: "Done", decisionId: "release-f" } });
   expect(() => reserveStaffing(f.k, f.k.quest(f.q.id), "smith", 1, "replacement")).toThrow(/0 replacements/);
 });
 

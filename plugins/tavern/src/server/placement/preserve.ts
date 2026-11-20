@@ -1,3 +1,4 @@
+import { memberDetails } from "../member-engagement";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { createHash, randomUUID } from "node:crypto";
 import { posix } from "node:path";
@@ -168,7 +169,7 @@ export class PlacementPreservation {
     let token: ContentHoldToken | undefined;
     let capturedActivity: unknown;
     let archiveConfirmed = false;
-    const waiting = () => `Waiting for ${member.displayName ?? member.title ?? threadId} to finish its turn so its work can be saved.${member.stopPending || /stop unconfirmed/i.test(reason) ? " Stop unconfirmed." : ""}`;
+    const waiting = () => `Waiting for ${member.displayName ?? member.title ?? threadId} to finish its turn so its work can be saved.${(member.engagement === "stopping" && !memberDetails(this.keepers, threadId).operation?.stopConfirmed) || /stop unconfirmed/i.test(reason) ? " Stop unconfirmed." : ""}`;
     const block = (message: string, code: string, stage: "preserve" | "release" = "preserve", retryable = true) => {
       current();
       const live = this.placements.get(record.id)!;
@@ -196,7 +197,8 @@ export class PlacementPreservation {
           current();
           if (thread.id !== threadId || thread.projectId !== record.projectId) throw new Error("The preservation thread identity changed");
           if (thread.archivedAt !== null || thread.deletedAt !== null) { this.observeLoss(threadId, "The member thread was archived or deleted before preservation finished."); signal.throwIfAborted(); }
-          if (!isQuiescentThread(thread) || this.keepers.get("members", threadId)?.stopPending) throw new MemberBusy(waiting());
+          const owner = this.keepers.get("members", threadId);
+          if (!isQuiescentThread(thread) || owner?.engagement === "stopping" && !memberDetails(this.keepers, threadId).operation?.stopConfirmed) throw new MemberBusy(waiting());
           if (neverProvisioned && thread.environmentId !== null) throw new Error("The member environment attached during preservation; retry cleanup");
           return [thread.updatedAt, thread.latestAttentionAt, thread.queuedMessageCount];
         };

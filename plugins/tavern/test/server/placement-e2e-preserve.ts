@@ -1,3 +1,4 @@
+import { runtimeFixture, withMemberFixtures } from "./member-fixture";
 import { putQuestFixture } from "./support";
 import { makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { readFileSync, writeFileSync } from "node:fs";
@@ -57,7 +58,7 @@ export async function proveStopStage() {
   const stopped = await preservationFixture();
   try {
     const port = { ...fakePort(), prepare: stopped.journal.prepare, get: (threadId: string) => ({ ...fakePort().get(threadId), entries: stopped.entries }) };
-    const keeper = new Keeper(stopped.keepers, port, () => 1_000_000);
+    const keeper = withMemberFixtures(new Keeper(stopped.keepers, port, () => 1_000_000));
     keeper.bind("keeper", "keeper", "wren", "project");
     const quest = await seedQuest(keeper, "keeper", "Save before stop", "Source and evidence survive");
     putQuestFixture(keeper.store, "quest", { ...quest, id: "quest" }); keeper.store.remove("quests", quest.id);
@@ -75,7 +76,7 @@ export async function proveStopStage() {
     const retried = await runtime.stop("quest", "Retry stop");
     expect(retried, JSON.stringify(stopped.placements.byMember("maker")!.blocked)).toEqual({ phase: "stopped", unconfirmed: 0 });
     expect(stopped.placements.byMember("maker")).toMatchObject({ phase: "released", preservation: { source: "saved", artifacts: "saved", stopConfirmed: true, liveOwnerThreadId: null } });
-    expect(keeper.store.runtime("maker")).toMatchObject({ archivePending: false, archiveError: null });
+    expect(runtimeFixture(keeper.store, "maker")).toMatchObject({ archivePending: false, archiveError: null });
     expect(stopped.archive).toHaveBeenCalledOnce();
   } finally { await stopped.close(); }
   const f = await preservationFixture();

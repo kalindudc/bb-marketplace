@@ -1,3 +1,4 @@
+import { memberDetails } from "./member-engagement";
 import type { BoardQuest } from "../shared/schema";
 
 import type { Keeper } from "./keeper/service";
@@ -60,7 +61,7 @@ export function reserveStaffing(
       .some(
         (candidate) =>
           candidate.memberThreadId &&
-          k.store.runtime(candidate.memberThreadId).pendingBrief &&
+          memberDetails(k.store, candidate.memberThreadId).delivery &&
           occupied(k, candidate.memberThreadId),
       )
   )

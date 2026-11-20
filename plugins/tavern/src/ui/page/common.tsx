@@ -1,3 +1,4 @@
+import { memberActivityWord } from "../../shared/member-engagement";
 import { useBbNavigate } from "@get-bb/plugin-sdk/app";
 import { useId, type ReactNode, memo } from "react";
 import type { z } from "zod";
@@ -52,7 +53,7 @@ export function MemberLink({ member, registry, size = 20, sub, className = "" }:
 }
 export function MemberMark({ member, registry, size = 24 }: { member: Member; registry: Registry; size?: number }) {
   const cls = classLabel(registry, member.classId);
-  return <span className="tv-member" title={`${characterName(registry, member)} · ${cls?.label ?? member.classId} · ${member.state}`}>
+  return <span className="tv-member" title={`${characterName(registry, member)} · ${cls?.label ?? member.classId} · ${memberActivityWord(member, true)}`}>
     <CrestOf member={member} registry={registry} size={size} />
     <span><strong>{characterName(registry, member)}</strong><small>{cls ? `${cls.label} (${cls.plain})` : `Unknown class: ${member.classId}`}</small></span>
   </span>;

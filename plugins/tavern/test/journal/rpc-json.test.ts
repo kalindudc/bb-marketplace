@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { withMemberFixtures } from "../server/member-fixture";
 import type { ExperimentalPluginRpcHandlerContext } from "@get-bb/plugin-sdk";
 import { afterEach, describe, expect, it } from "vitest";
 import { makeHost } from "./host";
@@ -16,7 +17,7 @@ function wire(value:unknown){return JSON.parse(JSON.stringify(value,(_key,value)
 async function fixture(){
   const h=makeHost();cleanup.push(h.dispose);h.bb.storage.migrate(h.db,MIGRATIONS);const data=new KeeperStore(h.db);
   const journal=registerJournal(h.bb,h.db,{roleOf:id=>data.get("members",id),invalidate:()=>{}});
-  const keeper=new Keeper(data,journal);const handlers=rpcHandlers({keeper,restNote:()=>null,held:(_threadId:string):boolean=>false,config:()=>DEFAULT_SETTINGS,pendingNews:()=>0,wakeBatching:()=>false} as unknown as TavernRuntime);await journal.prepare("t");
+  const keeper=withMemberFixtures(new Keeper(data,journal));const handlers=rpcHandlers({keeper,restNote:()=>null,held:(_threadId:string):boolean=>false,config:()=>DEFAULT_SETTINGS,pendingNews:()=>0,wakeBatching:()=>false} as unknown as TavernRuntime);await journal.prepare("t");
   return {...h,journal,keeper,handlers};
 }
 describe("quest RPC JSON values",()=>{

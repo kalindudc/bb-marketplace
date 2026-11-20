@@ -1,3 +1,4 @@
+import { memberHost } from "./member-engagement";
 import { createHash } from "node:crypto";
 import { experimental_PluginRpcRefusal } from "@get-bb/plugin-sdk";
 import { tags } from "../shared/contract";
@@ -54,7 +55,7 @@ export class ServiceRecords {
   }
   private subject(member: Member, family: string | null = null): ServiceVerdict["maker"] {
     const runtime = this.k.store.runtime(member.threadId);
-    return { key: key(member.threadId), threadId: runtime.deletedAt != null ? null : member.threadId, characterId: member.characterId, family };
+    return { key: key(member.threadId), threadId: memberHost(this.k.store, member).deletedAt != null ? null : member.threadId, characterId: member.characterId, family };
   }
   private receipt({ before, after, sequence }: JournalReview, id: string): ServiceVerdict | null {
     const review = after.review;

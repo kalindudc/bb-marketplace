@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { withMemberFixtures } from "../server/member-fixture";
 import { seedQuest } from "../server/support";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { makeHost } from "./host";
@@ -117,7 +118,7 @@ it("replays live run 4: done with 9 tests, brief v2, a note only, and the second
   const h = makeHost(); cleanup.push(h.dispose); h.bb.storage.migrate(h.db, MIGRATIONS);
   const data = new KeeperStore(h.db);
   const journal = registerJournal(h.bb, h.db, { roleOf: id => data.get("members", id), invalidate: () => {} });
-  const keeper = new Keeper(data, journal);
+  const keeper = withMemberFixtures(new Keeper(data, journal));
   const tool = h.tools.get("journal");
   const run = async (input: unknown) => String(await tool.execute(input, { threadId: "m" }));
   keeper.bind("lead", "keeper", "wren", "project");

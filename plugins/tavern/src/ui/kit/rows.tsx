@@ -54,7 +54,7 @@ export const releaseWords = (release: Release) => release.askId ? `by answering 
  */
 export function onTheRoad(room: Pick<Room, "keepers">): number {
   const out = new Set<string>();
-  for (const k of room.keepers) for (const m of [...k.boardQuests.flatMap((q) => q.members), ...k.errands]) if (memberPlace(m.state) === "road") out.add(m.threadId);
+  for (const k of room.keepers) for (const m of [...k.boardQuests.flatMap((q) => q.members), ...k.errands]) if (memberPlace(m) === "road") out.add(m.threadId);
   return out.size;
 }
 

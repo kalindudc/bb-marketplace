@@ -99,7 +99,8 @@ export function transitionQuest(store: KeeperStore, quest: BoardQuest, to: Phase
         }) as never;
       }
       for (const member of store.query("members", "boardQuestId", quest.id, 500)) {
-        if (store.runtime(member.threadId).kept) store.patch(member.threadId, { kept: null });
+        const rt = store.runtime(member.threadId), rest = rt.memberEngagement?.rest;
+        if (rest?.keep) store.patch(member.threadId, { memberEngagement: { ...rt.memberEngagement, rest: { ...rest, keep: null } } });
       }
     }
     authorised.add(result);

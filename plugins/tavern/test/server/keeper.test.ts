@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { withMemberFixtures } from "./member-fixture";
 import { concludeQuest } from "./support";
 import { seedQuest } from "./support";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -60,12 +61,12 @@ function setup() {
     },
   });
   const port = fakePort();
-  const k = new Keeper(
+  const k = withMemberFixtures(new Keeper(
     new KeeperStore(db),
     port,
     () => now,
     (tags) => host.bb.rpc.experimental_invalidate(tags),
-  );
+  ));
   const runtime = new TavernRuntime(
     host.bb,
     k,
@@ -448,8 +449,8 @@ describe("host boundaries", () => {
     const ask = k.ask("lead", { effect: {type:"decision"}, ...askInput, boardQuestId: q.id });
     await runtime.stop(q.id);
     expect(k.quest(q.id).phase).toBe("stopped");
-    expect(k.member("a")?.state).toBe("stopped");
-    expect(k.member("b")?.state).toBe("idle");
+    expect(k.member("a")).toMatchObject({ engagement: "archiving", disposition: "stopped" });
+    expect(k.member("b")).toMatchObject({ state: "idle", engagement: "active" });
     expect(k.store.get("asks", ask.id)?.state).toBe("withdrawn");
     expect(harness.inspection.sdk.callsTo("threads.stop")).toHaveLength(1);
     expect(harness.inspection.sdk.callsTo("threads.send")).toHaveLength(0);

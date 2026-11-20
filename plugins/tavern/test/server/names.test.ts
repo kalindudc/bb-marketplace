@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { patchThreadFixture } from "./member-fixture";
 import { describe, expect, it } from "vitest";
 import { setup } from "./runtime-fixture";
 import { SettingsStore } from "../../src/server/settings/store";
@@ -151,16 +152,16 @@ describe("live Tavern names", () => {
     const { k, runtime } = setup();
     k.bind("other", "keeper", "moss", "elsewhere");
     k.bind("gone", "keeper", "ada", "elsewhere");
-    k.store.patch("gone", { archivedAt: 10 });
+    patchThreadFixture(k.store, "gone", { archivedAt: 10 });
     k.bind("released", "ranger", "juno", "elsewhere");
-    k.store.patch("released", { released: { reason: "done", decisionId: "d" } });
+    patchThreadFixture(k.store, "released", { released: { reason: "done", decisionId: "d" } });
     expect(runtime.busyCharacters("project")).toEqual(["wren", "moss"]);
   });
   it("mentions live names with their class and quest, without raw identifiers in text", () => {
     const { k, runtime } = setup();
     k.store.put("members", "lead", { ...k.member("lead")!, displayName: "Wren II", title: "Read the tree" });
     expect(runtime.mentionNames("wren")).toEqual([{ id: "lead", title: "Wren II", subtitle: "Keeper · Read the tree", icon: expect.stringContaining("tavern-crest-") }]);
-    k.store.patch("lead", { archivedAt: 10 });
+    patchThreadFixture(k.store, "lead", { archivedAt: 10 });
     expect(runtime.mentionNames("")).toEqual([]);
   });
   it("rosters identify the Keeper and fellows by display name and role", () => {

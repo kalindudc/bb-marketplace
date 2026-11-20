@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { runtimeFixture } from "./member-fixture";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { captureRequestSources, requestSourcePacket } from "../../src/server/request-sources";
 import { registerTools } from "../../src/server/tools";
@@ -44,18 +45,18 @@ describe("verbatim user sources at native brief delivery", () => {
     f.k.receiveUser("lead", 'SOURCE_ONLY_steer: keep "unknown" exactly.'); f.k.route("lead", { kind: "steer", boardQuestId: f.q.id, summary: "Use unknown items", notes: [] });
     const send = vi.spyOn(f.bb.sdk.threads, "send").mockRejectedValueOnce(new Error("temporarily offline"));
     await f.runtime.tell("lead", "child", "Return unknown items");
-    const pending = f.k.store.runtime("child").pendingBrief!;
+    const pending = runtimeFixture(f.k.store, "child").pendingBrief!;
     expect(pending.assignmentText).toBe("Return unknown items"); expect(pending.text).toContain(raw); expect(pending.text).toContain("SOURCE_ONLY_steer");
     const id = pending.requestSources!.id;
     f.k.receiveUser("lead", "SOURCE_ONLY_later: unrelated new steer."); f.k.route("lead", { kind: "steer", boardQuestId: f.q.id, summary: "Later", notes: [] });
     await f.runtime.tell("lead", "child", "Return unknown items");
-    expect(f.k.store.runtime("child").pendingBrief!.id).toBe(pending.id);
-    expect(f.k.store.runtime("child").pendingBrief!.requestSources!.id).toBe(id);
+    expect(runtimeFixture(f.k.store, "child").pendingBrief!.id).toBe(pending.id);
+    expect(runtimeFixture(f.k.store, "child").pendingBrief!.requestSources!.id).toBe(id);
     f.advance(60_001); await f.runtime.retryInitialBriefs("lead");
     expect(send).toHaveBeenCalledTimes(2);
     expect(send.mock.calls[1]![0].input).toEqual(send.mock.calls[0]![0].input);
     const state = f.k.store.runtime("child");
-    expect(state.pendingBrief).toBeNull(); expect(state.requestSources!.id).toBe(id);
+    expect(state.memberEngagement?.delivery).toBeNull(); expect(state.requestSources!.id).toBe(id);
     expect(state.brief!.context).toContain("Follow-up v2: Return unknown items");
     expect(JSON.stringify(state.brief)).not.toContain("SOURCE_ONLY");
     expect(f.k.store.events("lead", 0, 200).filter(event => event.type === "member.told").every(event => !event.text.includes("SOURCE_ONLY"))).toBe(true);

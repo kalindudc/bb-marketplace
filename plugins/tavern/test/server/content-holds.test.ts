@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { patchThreadFixture, runtimeFixture } from "./member-fixture";
 import { seedQuest } from "./support";
 import { describe, expect, it, vi } from "vitest";
 import { makeMessageDispatchHookContext, makeQueueEntry } from "@get-bb/plugin-sdk/testing";
@@ -31,7 +32,7 @@ describe("shared content-transfer holds", () => {
     expect(f.runtime.away.finishContentHold(token)).toEqual({ state: "finished" });
     expect(f.runtime.away.inspectHeld(token)).toMatchObject({ state: "stale" });
     expect(f.runtime.away.blocked("child")).toBe(true);
-    expect(f.k.store.runtime("child").released).toBeFalsy();
+    expect(runtimeFixture(f.k.store, "child").released).toBeFalsy();
     await f.runtime.tell("lead", "child", "Fresh private work");
     expect(f.runtime.away.blocked("child")).toBe(false);
     for (const table of ["tavern_placements", "tavern_source_snapshots", "tavern_placement_discoveries"]) expect(f.k.store.db.prepare(`SELECT count(*) AS n FROM ${table}`).get()).toEqual({ n: 0 });
@@ -158,7 +159,7 @@ describe("shared content-transfer holds", () => {
   });
   it("retains the no-replay fence and foreign queues after a transfer finishes", async () => {
     const f = await fixture();
-    f.k.store.patch("child", { pendingBrief: { id: "old-brief", text: "Old work", attempts: 0, nextAttemptAt: f.time(), attemptedAt: null, hostAfterSeq: null, error: null } });
+    patchThreadFixture(f.k.store, "child", { pendingBrief: { id: "old-brief", text: "Old work", attempts: 0, nextAttemptAt: f.time(), attemptedAt: null, hostAfterSeq: null, error: null } });
     let queued = [makeQueueEntry({ id: "ours", originPluginId: "tavern", senderThreadId: "lead" }), makeQueueEntry({ id: "human", originPluginId: null, senderThreadId: null }), makeQueueEntry({ id: "other", originPluginId: "other", senderThreadId: null })];
     f.bb.sdk.threads.queuedMessages.list = async () => queued;
     f.bb.sdk.threads.queuedMessages.delete = async ({ queuedMessageId }) => { queued = queued.filter(row => row.id !== queuedMessageId); return { ok: true }; };

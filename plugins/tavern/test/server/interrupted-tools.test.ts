@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { runtimeFixture } from "./member-fixture";
 import { seedQuest } from "./support";
 import { describe, expect, it, vi } from "vitest";
 import { registerTools } from "../../src/server/tools";
@@ -109,7 +110,7 @@ describe("Keeper tools and routing across Stop", () => {
     const input = name === "tavern_tell" ? { memberThreadId: "child", text: "New work" } : f.decision;
     await expect(f.invoke(name, input, controller.signal)).rejects.toThrow(/cancelled|stopped/i);
     expect(f.k.store.all("decisions")).toEqual([]);
-    expect(f.k.store.runtime("child").pendingBrief).toBeUndefined();
+    expect(runtimeFixture(f.k.store, "child").pendingBrief).toBeUndefined();
     expect(f.harness.inspection.sdk.callsTo("threads.send")).toHaveLength(0);
   });
 
@@ -137,7 +138,7 @@ describe("Keeper tools and routing across Stop", () => {
     finish({ ok: true, delivery: "sent" });
     await expect(call).resolves.toContain("Brief delivered to Juno");
     expect(f.harness.inspection.sdk.callsTo("threads.send")).toHaveLength(1);
-    expect(f.k.store.runtime("child").pendingBrief).toBeNull();
+    expect(runtimeFixture(f.k.store, "child").pendingBrief).toBeNull();
     const route = JSON.parse(await f.invoke("tavern_route", { kind: "steer", boardQuestId: f.q.id, summary: "Carry on", notes: [] }) as string);
     expect(route.userText).toBe("Carry on");
   });

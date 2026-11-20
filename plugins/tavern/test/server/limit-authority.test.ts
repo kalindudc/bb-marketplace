@@ -31,6 +31,19 @@ it.each(["party", "rangers"] as const)("enforces the %s grant in the real hire p
   await expect(f.runtime.hire("lead", "project", input)).resolves.toBeTruthy();
   await expect(f.runtime.hire("lead", "project", input)).rejects.toThrow(limit === "party" ? "party budget" : "Ranger budget");
 });
+it("names a failed Ranger who still occupies the class limit and honours a one-hire exception", async () => {
+  const f = setup(), snapshot = f.runtime.snapshot();
+  snapshot.classes = snapshot.classes.map(role => role.id === "keeper" ? { ...role, source: "global" as const, budget: { members: 5, rangers: 1, rangerMinutes: 5 } } : role);
+  vi.spyOn(f.runtime, "snapshot").mockReturnValue(snapshot);
+  const member = await f.runtime.hire("lead", "project", scout);
+  f.k.activity(member.threadId, "failed");
+  await expect(f.runtime.hire("lead", "project", scout)).rejects.toThrow(`These members failed: ${f.k.name(member)}. Release them or retry their work`);
+  expect(f.k.store.activeStaffing("lead").map(row => row.threadId)).toEqual([member.threadId]);
+  const decision = f.k.decide("lead", { text: "One extra scout", why: "Finish research", reversible: true, source: "keeper", exceeds: "rangers" });
+  await expect(f.runtime.hire("lead", "project", scout)).resolves.toBeTruthy();
+  expect(f.k.store.get("decisions", decision.id)?.usedBy).toBeTruthy();
+});
+
 it("shares one Ranger exception between the class time box and count, below the settings ceiling", async () => {
   const f = setup(), snapshot = f.runtime.snapshot();
   snapshot.classes = snapshot.classes.map(role => role.id === "keeper" ? { ...role, source: "global" as const, budget: { members: 5, rangers: 1, rangerMinutes: 2 } } : role);

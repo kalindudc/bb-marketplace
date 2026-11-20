@@ -4,6 +4,8 @@ import { afterEach, expect, it, vi } from "vitest";
 import tavern from "../../server";
 import { KeeperStore } from "../../src/server/keeper/store";
 import { SettingsStore } from "../../src/server/settings/store";
+import { Keeper } from "../../src/server/keeper/service";
+import { fakePort } from "../server/support";
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const dispose of cleanups.splice(0)) await dispose(); });
@@ -121,7 +123,7 @@ it("refuses agent Apply and Dismiss, has no CLI Apply, and never probes a confli
 
 it("stores the proposer's class and timestamp without applying a member's proposal", async () => {
   const f = await fixture();
-  new KeeperStore(f.db).put("members", "agent", { threadId: "agent", classId: "smith" } as never);
+  new Keeper(new KeeperStore(f.db), fakePort()).bind("agent", "smith", null, "project", undefined, "setup-proposal-fixture");
   const p = await f.propose(cap, { "keepers.partyMax": "Leave room for another checker." });
   expect(p).toMatchObject({ threadId: "agent", classId: "smith", proposedAt: expect.any(Number), state: "pending" });
   expect(await f.read()).toMatchObject({ revision: 0 });

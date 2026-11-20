@@ -10,7 +10,7 @@ const keeper = richRoom.keepers.find(k => k.boardQuests.some(q => q.plan && q.wa
 const quest = keeper.boardQuests.find(q => q.plan && q.waypoints.length > 0)!;
 const member0 = richRoom.keepers.flatMap(k => [...k.boardQuests.flatMap(q => q.members), ...k.errands])[0]!;
 type M = typeof member0;
-const m = (threadId: string, state: M["state"], over: Partial<M> = {}): M => ({ ...member0, threadId, state, ...over });
+const m = (threadId: string, state: M["state"] | "done" | "stopped", over: Partial<M> = {}): M => ({ ...member0, threadId, state: state === "done" || state === "stopped" ? "idle" : state, engagement: state === "done" ? "resting" : state === "stopped" ? "stopped" : "active", ...over });
 const names = { keeper: characterName(registry, keeper.member), member: (x: M) => characterName(registry, x) };
 
 describe("onTheRoad", () => {
@@ -26,7 +26,7 @@ describe("onTheRoad", () => {
 
 describe("PartyPicture places members by their state, never the stored place", () => {
   it("draws a done member stored at the table under Resting, a working one under On the road, and an idle one at the table", () => {
-    const members = [m("done-1", "done", { place: "table" }), m("work-1", "working", { place: "table" }), m("idle-1", "idle", { place: "road" }), m("stop-1", "stopped", { place: "road" })];
+    const members = [m("done-1", "done"), m("work-1", "working"), m("idle-1", "idle"), m("stop-1", "stopped")];
     const { container } = render(<div className="tavern"><PartyPicture members={members} registry={registry} /></div>);
     const zone = (place: string) => container.querySelector(`.zone.${place}`) as HTMLElement;
     const ids = (place: string) => [...zone(place).querySelectorAll<HTMLElement>("[data-member]")].map(e => e.dataset.member);

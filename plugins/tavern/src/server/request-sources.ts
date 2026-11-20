@@ -1,3 +1,4 @@
+import { memberDetails } from "./member-engagement";
 import { createHash } from "node:crypto";
 import { requestSourcesSchema, type RequestSources } from "../shared/request-source";
 import { routeSchema, type Route } from "../shared/schema";
@@ -73,7 +74,7 @@ export function readRequestSources(k: Keeper, actorId: string, input: { manifest
   }
   const member = k.member(memberId)!;
   const state = k.store.runtime(memberId);
-  const manifests = [state.pendingBrief?.requestSources, state.requestSources].filter(value => value != null).map(value => requestSourcesSchema.parse(value));
+  const manifests = [memberDetails(k.store, member.threadId).delivery?.requestSources, state.requestSources].filter(value => value != null).map(value => requestSourcesSchema.parse(value));
   const manifest = input.manifestId ? manifests.find(value => value.id === input.manifestId) : manifests[0];
   if (!manifest) throw new Error("Unknown frozen request manifest for this member.");
   if (manifest.keeperThreadId !== member.keeperThreadId || manifest.boardQuestId !== member.boardQuestId) throw new Error("The request manifest belongs to another quest.");

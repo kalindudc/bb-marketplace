@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { withMemberFixtures } from "./member-fixture";
 import Database from "better-sqlite3";
 import { fileURLToPath } from "node:url";
 import { Keeper } from "../../src/server/keeper/service";
@@ -27,7 +28,7 @@ export function setup(sdkOverrides: Record<string, unknown> = {}, pluginRoot = f
         updatePluginMetadata: async () => ({}),
         update: async ({ threadId, title }: { threadId: string; title?: string }) => makeThreadResponse({ id: threadId, title: title ?? null }),
         events: { list: async () => [] },
-        archive: async () => ({}),
+        archive: async ({ threadId }: { threadId: string }) => ({ ok: true, archivedThreadIds: [threadId] }),
         spawn: async () => makeThreadResponse({ id: `child-${now++}`, parentThreadId: "lead" }),
       },
       plugins: { callRpc: async () => ({ ok: true, channels: [] }) },
@@ -42,12 +43,12 @@ export function setup(sdkOverrides: Record<string, unknown> = {}, pluginRoot = f
     },
   });
   const port = fakePort();
-  const k = new Keeper(
+  const k = withMemberFixtures(new Keeper(
     new KeeperStore(db),
     port,
     () => now,
     (tags) => host.bb.rpc.experimental_invalidate(tags),
-  );
+  ));
   const runtime = new TavernRuntime(
     host.bb,
     k,

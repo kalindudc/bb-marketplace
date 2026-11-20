@@ -135,7 +135,8 @@ it("lists every open pull request and applies the default, user ownership and fo
 it("moves an open draft to the Keeper when its Smith is released, without closing it", async () => {
   const f = await fixture();
   const pr = f.k.store.recordPullRequest({ keeperThreadId: "lead", boardQuestId: f.q.id, projectId: "project", url: "https://github.com/example/repo/pull/1", owner: "maker", forge: "gh", head: "maker-work", base: "main", memberHead: "a".repeat(40), pushedHead: null, verifiedCommit: null, state: "draft" }, f.time());
-  f.k.store.patch("maker", { released: { reason: "End of shift", decisionId: "released" } }, f.time());
+  f.bb.sdk.threads.stop = async () => ({ ok: true });
+  expect(await f.runtime.release("lead", "maker", "End of shift")).toBe(true);
   expect(f.k.store.get("pullRequests", pr.id)).toMatchObject({ owner: "lead", state: "draft" });
   expect(f.k.store.latestQuestEvent(f.q.id, "pull-request.changed")?.data).toMatchObject({ owner: "lead", state: "draft" });
 });

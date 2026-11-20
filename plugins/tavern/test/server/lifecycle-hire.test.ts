@@ -33,7 +33,7 @@ it.each(["stop", "wrap"] as const)("stops and archives a child returned after %s
   await expect(f.runtime.hire("lead", "project", f.input)).rejects.toThrow(/ended|stopping|cancelled/);
   expect(f.bb.sdk.threads.stop).toHaveBeenCalledWith({ threadId: "late" });
   expect(f.harness.inspection.sdk.callsTo("threads.archive").some(call => JSON.stringify(call.args).includes("late"))).toBe(true);
-  expect(f.k.member("late")?.state).toBe("stopped");
+  expect(f.k.member("late")).toMatchObject({ engagement: "archived", disposition: "stopped" });
   expect(f.k.store.all("hires")).toHaveLength(0);
 });
 it("keeps a replacement waiting while the previous member's release is unconfirmed", async () => {
@@ -59,7 +59,7 @@ it("recovery never delivers a late child brief into an ended quest", async () =>
   await recoverHires(f.bb, f.k, "lead", delivered);
   expect(delivered).not.toHaveBeenCalled();
   expect(f.bb.sdk.threads.stop).toHaveBeenCalledWith({ threadId: "late" });
-  expect(f.k.member("late")?.state).toBe("stopped");
+  expect(f.k.member("late")).toMatchObject({ engagement: "archived", disposition: "stopped" });
   expect(f.k.store.runtime("late").classDefinition?.body).toBe("PINNED RECOVERED ROLE");
   expect(f.k.store.get("hires", "token")).toBeNull();
 });

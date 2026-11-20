@@ -14,10 +14,9 @@ beforeEach(() => { motion.reset(); motion.now = () => 1_000_000; fx = installAni
 afterEach(() => { cleanup(); fx.uninstall(); motion.reset(); });
 
 const base = liveRoom.keepers[0]!.boardQuests.flatMap(q => q.members)[0]!;
-// The picture places a member by its state, so the tests move a member by changing its state; the stored place is left stale on purpose.
 let move: ((state: typeof base.state) => void) | null = null;
 function Party() {
-  const [m, setM] = useState({ ...base, place: "table" as const, state: "idle" as typeof base.state });
+  const [m, setM] = useState({ ...base, engagement: "active" as const, state: "idle" as typeof base.state });
   move = state => setM(prev => ({ ...prev, state }));
   return <div className="tavern"><PartyPicture members={[m]} registry={registry} /></div>;
 }

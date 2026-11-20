@@ -1,3 +1,4 @@
+import { hasEndedEngagement } from "../../shared/member-engagement";
 import { UrlLink, experimental_usePluginId, experimental_useRpcQuery, useBbNavigate, useComposer, type ExperimentalPageTitle, type PluginAppBuilder, type PluginHomepageSectionProps, type PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
 import { rpcContract, type Room } from "../../shared/contract";
 import { Hearth, hearthWords, keeperStatus, onTheRoad, OpensMark, QuestRow, questNeedYouCount, rememberCount, useRegistry, vocab } from "../kit";
@@ -55,7 +56,7 @@ export function TavernSidebar({ subPath }: PluginNavPanelProps) {
   const asks = data ? needYouCount(data) : 0;
   const navRef = useRef<HTMLElement>(null);
   useRememberSideNav(navRef, !!data);
-  const errands = data ? data.keepers.flatMap((k) => k.errands).filter((m) => m.state !== "done" && m.state !== "stopped") : [];
+  const errands = data ? data.keepers.flatMap((k) => k.errands).filter((m) => !hasEndedEngagement(m)) : [];
   return <PanelStateProvider value={panelStorageKey(pluginId)}><nav ref={navRef} className="tavern tv-page tv-sidebar" aria-label="Tavern navigation">
     <SideLink path="room" label="Common room (home)" glyph="home" route={route} room={data} count={data ? <span className={`tv-snav-c ${asks ? "y" : ""}`}>{asks > 0 && <PageGlyph name="you" size={10} />}<span>{asks} need you</span></span> : undefined} />
     {data ? <QuestNav room={data} registry={registry.data} route={route} /> : !room.error && <SideNavSkeleton />}

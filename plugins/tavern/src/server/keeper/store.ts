@@ -3,6 +3,7 @@ import { pullRequestSchema, type PullRequest } from "../../shared/pull-request";
 import type { JournalTarget } from "../../shared/placement";
 import type { RequestSources } from "../../shared/request-source";
 import { liveMemberSql } from "../liveness";
+import { consumesMemberWrite, type MemberEngagementData } from "../member-engagement";
 import type { Database } from "../ports";
 import type { ProjectContext, Scope, ScopeOverride, ScopeResolution, Violation } from "../../scope";
 import type {
@@ -190,6 +191,7 @@ export interface PendingBrief {
   blockerAskId?: string | null;
 }
 export interface Runtime {
+  memberEngagement?: MemberEngagementData;
   placementExecution?: HireIntent["placementExecution"];
   keeperTitleSet?: string;
   keeperTitleReplaced?: string;
@@ -205,18 +207,13 @@ export interface Runtime {
   scopeAssignedBranch?: { environmentId: string; branch: string };
   projectClassRevision?: string;
   classExecutionChoice?: { providerId?: string; recordedAt?: number; model: string | null; reasoningLevel: string | null; modelSource: string | null; reasoningSource: string | null };
-  stopAttempts?: number;
-  stopNextAttemptAt?: number;
-  stopAskId?: string | null;
   reviewTarget?: ReviewTarget | null;
   submissionTarget?: ReviewTarget | null;
   openingGoal?: { text: string; at: number };
   requestSources?: RequestSources | null;
   assignmentText?: string | null;
-  pendingBrief?: PendingBrief | null;
   lastFailure?: string;
   placementFirstTurnSettled?: boolean;
-  placementModelFailureRelease?: string | null;
   turnStartedAt?: number | null;
   ledger?: { hash: string; version: number; asOf: number };
   lastLedger?: { hash: string; version: number; at: number };
@@ -249,11 +246,6 @@ export interface Runtime {
   mainTurnId?: string;
   endedMainTurns?: string[];
   interruptedMainTurns?: { id: string; at: number }[];
-  restSince?: number | null;
-  restReminderFor?: number | null;
-  kept?: { until: number; why: string; decisionId: string } | null;
-  releasePending?: string | null;
-  released?: { reason: string; decisionId: string; at?: number };
   archivePending?: boolean;
   cellarArchiveRequested?: boolean;
   cellarArchived?: boolean;
@@ -365,18 +357,18 @@ export class KeeperStore {
     const where = `m.kind='members' AND json_extract(m.data,'$.role')='member'
       AND json_extract(m.data,'$.keeperThreadId')=? AND json_extract(m.data,'$.errand')=1
       ${boardQuestId ? "AND json_extract(m.data,'$.boardQuestId')=?" : ""}`;
-    const inactive = `NOT (${liveMemberSql("occupy")})`;
-    const from = `FROM tavern_records m LEFT JOIN tavern_runtime t
-      ON t.thread_id=json_extract(m.data,'$.threadId') WHERE ${where}`;
+    const occupies = liveMemberSql("occupy");
+    const inFlight = `(${occupies}) AND json_extract(m.data,'$.state')<>'failed'`;
+    const from = `FROM tavern_records m WHERE ${where}`;
     const params = [keeperThreadId, ...(boardQuestId ? [boardQuestId] : [])];
     const counts = this.db.prepare(`SELECT count(*) AS total,
-      coalesce(sum(CASE WHEN ${inactive} THEN 0 ELSE 1 END),0) AS inFlightCount ${from}`)
+      coalesce(sum(CASE WHEN ${inFlight} THEN 1 ELSE 0 END),0) AS inFlightCount ${from}`)
       .get(...params) as { total: number; inFlightCount: number };
-    const rows = this.db.prepare(`SELECT m.data ${from}
-      ORDER BY CASE WHEN ${inactive} THEN 1 ELSE 0 END,
+    const rows = this.db.prepare(`SELECT m.data, CASE WHEN ${occupies} THEN 1 ELSE 0 END AS occupies ${from}
+      ORDER BY CASE WHEN ${inFlight} THEN 0 ELSE 1 END,
       max(json_extract(m.data,'$.createdAt'),coalesce(json_extract(m.data,'$.lastReportAt'),0),coalesce(json_extract(m.data,'$.lastActiveAt'),0)) DESC,
-      m.rowid DESC LIMIT ? OFFSET ?`).all(...params, limit, offset) as { data: string }[];
-    return { ...counts, members: rows.map(row => JSON.parse(row.data) as Member) };
+      m.rowid DESC LIMIT ? OFFSET ?`).all(...params, limit, offset) as { data: string; occupies: number }[];
+    return { ...counts, members: rows.map(row => ({ member: JSON.parse(row.data) as Member, occupies: row.occupies === 1 })) };
   }
   mapHistory() {
     const rows = this.db.prepare(`WITH archived AS (
@@ -719,6 +711,12 @@ export class KeeperStore {
     ).map((row) => this.decode(kind, row.data));
   }
   put<K extends keyof Records>(kind: K, id: string, data: Records[K]) {
+    if (kind === "members") {
+      const member = data as Member, previous = this.get("members", id);
+      const authorised = consumesMemberWrite(data);
+      if ((member.engagement !== previous?.engagement || member.disposition !== previous?.disposition || member.role !== "keeper" && !member.engagement) && !authorised)
+        throw new Error("Member engagement writes require the engagement transition");
+    }
     if (kind === "quests") {
       const previous = this.get("quests", id);
       const authorised = consumesQuestWrite(data);
@@ -785,8 +783,7 @@ export class KeeperStore {
     for (const pr of this.all("pullRequests")) if (pr.owner === threadId && ["draft", "ready"].includes(pr.state))
       this.changePullRequest({ ...pr, owner: member.keeperThreadId }, at);
   }
-  patch(threadId: string, patch: Partial<Runtime>, at = patch.deletedAt ?? patch.archivedAt ?? Date.now()) {
-    if (patch.released || patch.archivedAt != null || patch.deletedAt != null) this.transferPullRequests(threadId, at);
+  patch(threadId: string, patch: Partial<Runtime>) {
     const data = { ...this.runtime(threadId), ...patch };
     this.db
       .prepare(

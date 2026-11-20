@@ -44,10 +44,10 @@ export function HearthBand({ room, registry }: { room: Room; registry?: Registry
   const needs = attention.needYou;
   const decided = attention.decided ?? attention.new;
   const onRoad = onTheRoad(room);
-  const live = room.keepers.filter(keeper => !keeper.archived && keeper.quietSince == null && keeper.member.state !== "stopped");
+  const live = room.keepers.filter(keeper => !keeper.archived && keeper.quietSince == null);
   const party = [...new Map(live.flatMap(keeper => [...keeper.boardQuests.filter(quest => !quest.archivedAt).flatMap(quest => quest.members), ...keeper.errands]).map(member => [member.threadId, member])).values()];
-  const rest = party.filter(member => memberPlace(member.state) === "rest");
-  const road = party.filter(member => memberPlace(member.state) === "road");
+  const rest = party.filter(member => memberPlace(member) === "rest");
+  const road = party.filter(member => memberPlace(member) === "road");
   const members = new Set(attention.items.filter(item => item.kind === "ask" || item.kind === "hold" || item.kind === "hand-back" || item.kind === "rule").map(item => item.keeperThreadId));
   const waits = (keeper: Room["keepers"][number]) => Boolean(keeper.attention?.needYou || members.has(keeper.member.threadId) || keeper.boardQuests.some(quest => quest.move.who === "you"));
   const keepers = live.map(keeper => ({ member: keeper.member, mood: waits(keeper) ? "waiting" as const : keeper.status === "busy" ? "working" as const : "idle" as const }));

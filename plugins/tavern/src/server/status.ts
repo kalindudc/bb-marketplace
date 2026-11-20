@@ -1,3 +1,5 @@
+import { memberDetails, memberHost } from "./member-engagement";
+import { memberActivityWord, wasReleased } from "../shared/member-engagement";
 import { z } from "zod";
 import { restingParty } from "./resting";
 import { agentData } from "./agent-data";
@@ -46,10 +48,10 @@ function statusData(
 ) {
   const k = runtime.keeper;
   if (input.section === "requests") return readRequestSources(k, threadId, { memberThreadId: input.memberThreadId ?? undefined, manifestId: input.manifestId ?? undefined, sourceIndex: input.sourceIndex, offset: input.offset });
-  const archivedRows = k.store.all("members").filter(member => member.keeperThreadId === threadId && k.store.runtime(member.threadId).archivedAt != null).map(member => {
+  const archivedRows = k.store.all("members").filter(member => member.keeperThreadId === threadId && memberHost(k.store, member).archivedAt !== null).map(member => {
     const state = k.store.runtime(member.threadId);
     const quest = member.boardQuestId ? k.store.get("quests", member.boardQuestId) : null;
-    return { threadId: member.threadId, name: k.name(member), classId: member.classId, quest: quest?.deletedAt != null ? "a deleted quest" : quest?.short ?? null, released: !!state.released, deleted: state.deletedAt != null };
+    return { threadId: member.threadId, name: k.name(member), classId: member.classId, quest: quest?.deletedAt != null ? "a deleted quest" : quest?.short ?? null, released: wasReleased(member), deleted: memberHost(k.store, member).deletedAt !== null };
   });
   const archivedMembers = archivedRows.slice(input.offset, input.offset + input.limit);
   const archivedMemberTotal = archivedRows.length;
@@ -76,9 +78,10 @@ function statusData(
       input.offset,
       input.boardQuestId ?? undefined,
     );
-    const rows = page.members.map((member) => {
+    const entries = page.members.map(({ member, occupies }) => {
       const state = k.store.runtime(member.threadId);
-      return {
+      const failed = member.state === "failed";
+      const row = {
         memberThreadId: member.threadId,
         keeperThreadId: threadId,
         owner: {
@@ -89,28 +92,28 @@ function statusData(
         title: member.title,
         ask: state.brief?.outcome ?? null,
         doneWhen: state.brief?.doneWhen ?? null,
-        state: member.state,
+        state: failed ? "failed" : member.engagement === "resting" ? "done" : memberActivityWord(member),
+        engagement: member.engagement,
+        slotNote: failed && occupies ? "Holds its slot until the Keeper releases it." : null,
         doing: member.doing,
-        released: state.released ?? null,
+        released: wasReleased(member) ? memberDetails(k.store, member.threadId).release ?? { reason: "Its machine was released." } : null,
         createdAt: member.createdAt,
         lastActiveAt: member.lastActiveAt,
         lastReportAt: member.lastReportAt,
       };
+      return { row, inFlight: occupies && !failed };
     });
-    const recent = (row: (typeof rows)[number]) =>
-      row.released !== null ||
-      ["done", "stopped", "failed"].includes(row.state);
     return {
       total: page.total,
       inFlightCount: page.inFlightCount,
       recentCount: page.total - page.inFlightCount,
       offset: input.offset,
       nextOffset:
-        input.offset + rows.length < page.total
-          ? input.offset + rows.length
+        input.offset + entries.length < page.total
+          ? input.offset + entries.length
           : null,
-      inFlight: rows.filter((row) => !recent(row)),
-      recent: rows.filter(recent),
+      inFlight: entries.filter(entry => entry.inFlight).map(entry => entry.row),
+      recent: entries.filter(entry => !entry.inFlight).map(entry => entry.row),
     };
   }
   if (input.section === "rules")
@@ -239,7 +242,7 @@ function statusData(
   return {
     archivedCount,
     archivedMembers, archivedMemberTotal, nextArchivedOffset,
-    freeHands: resting.filter(m => m.mayRebriefFor !== null),
+    freeHands: resting.filter(m => m.mayRebriefFor !== null || m.machineLost).map(m => m.machineLost ? { ...m, unavailable: "machine lost: can't take new work; release it" } : m),
     restingMembers: resting.filter(m => m.settled),
     quests: (input.boardQuestId
       ? [k.quest(input.boardQuestId)]

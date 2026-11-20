@@ -1,3 +1,5 @@
+import { memberHost } from "./member-engagement";
+import { wasReleased } from "../shared/member-engagement";
 import { randomUUID } from "node:crypto";
 import type { Actor } from "../shared/schema";
 import { QUEUED_STOP_NOTICE, RESUME_ATTESTATION_NOTICE, stopBy, stopAllStateSchema, type StopAllState, type StopReceipt } from "../shared/stop-all";
@@ -101,9 +103,9 @@ export class StopAll {
     if (this.flight) return this.flight;
     const previous = this.snapshot(), k = this.runtime.keeper, startedAt = k.now();
     const entries: StopReceipt["entries"] = k.store.all("members").filter(member => {
-      const state = k.store.runtime(member.threadId);
+      const host = memberHost(k.store, member);
       return (member.role === "keeper" || member.role === "member") &&
-        state.archivedAt == null && state.deletedAt == null && !state.released;
+        host.archivedAt == null && host.deletedAt == null && !wasReleased(member);
     }).map(member => ({ threadId: member.threadId, role: member.role as "keeper" | "member",
       status: "still-stopping", error: null, confirmedAt: null }));
     const receipt: StopReceipt = { id: randomUUID(), surface: source.surface, pluginId: source.pluginId,

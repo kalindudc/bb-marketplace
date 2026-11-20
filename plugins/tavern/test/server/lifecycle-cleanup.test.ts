@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { patchThreadFixture, runtimeFixture } from "./member-fixture";
 import { putQuestFixture } from "./support";
 import { seedQuest } from "./support";
 import { expect, it, vi } from "vitest";
@@ -30,21 +31,21 @@ it("finishes an already requested release after its quest ends without new write
   const f = setup();
   const q = await seedQuest(f.k,"lead", "Build", "Build");
   f.k.bind("child", "smith", "juno", "project", { keeperThreadId: "lead", boardQuestId: q.id, waypointId: null, errand: false, title: "Build", brief });
-  f.k.store.patch("child", { releasePending: "Not needed" });
+  patchThreadFixture(f.k.store, "child", { releasePending: "Not needed" });
   putQuestFixture(f.k.store, q.id, { ...q, phase: "done", endedAt: f.time() });
   await f.runtime.sweep();
-  expect(f.k.store.runtime("child").released?.reason).toBe("Not needed");
+  expect(runtimeFixture(f.k.store, "child").released?.reason).toBe("Not needed");
   expect(f.k.quest(q.id)).toMatchObject({ phase: "done", endedAt: f.time() });
 });
 it("pending archive cleanup treats a missing thread as already gone", async () => {
   const f = setup();
   f.k.bind("child", "ranger", "juno", "project", { keeperThreadId: "lead", boardQuestId: null, waypointId: null, errand: true, title: "Scout", brief });
-  f.k.store.patch("child", { archivePending: true });
+  patchThreadFixture(f.k.store, "child", { archivePending: true });
   const get = f.bb.sdk.threads.get;
   f.bb.sdk.threads.get = vi.fn(async args => {
     if (args.threadId === "child") throw Object.assign(new Error("missing"), { status: 404 });
     return get(args);
   });
   await f.runtime.sweep();
-  expect(f.k.store.runtime("child")).toMatchObject({ archivePending: false, archiveError: null, deletedAt: f.time() });
+  expect(runtimeFixture(f.k.store, "child")).toMatchObject({ archivePending: false, archiveError: null, deletedAt: f.time() });
 });

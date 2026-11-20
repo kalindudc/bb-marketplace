@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { fixtureActivity } from "./member-fixture";
 import { describe, expect, it, vi } from "vitest";
 import { setup } from "./runtime-fixture";
 import { queued049 } from "./dispatch-fixture";
@@ -26,7 +27,7 @@ describe("Keeper loop delivery failures", () => {
     vi.spyOn(f.bb.sdk.threads, "get").mockRejectedValue(Object.assign(new Error("thread not found"), { status: 404 }));
     await f.runtime.sweep();
     expect(f.harness.inspection.sdk.callsTo("threads.get").length).toBeGreaterThan(0);
-    expect(f.k.member("lead")?.state).toBe("stopped");
+    expect(f.k.store.runtime("lead")).toMatchObject({ archivedAt: f.time(), deletedAt: f.time() });
   });
 
   it("does not mark a live Keeper stopped for a reconcile scope-row 404", async () => {
@@ -55,7 +56,7 @@ describe("Keeper loop delivery failures", () => {
   it("sends to a currently live Keeper despite a stale cached stopped state", async () => {
     const f = setup();
     news(f);
-    f.k.activity("lead", "stopped");
+    fixtureActivity(f.k, "lead", "stopped");
     await f.runtime.tick("lead");
     expect(f.harness.inspection.sdk.callsTo("threads.send")).toHaveLength(1);
   });

@@ -1,3 +1,5 @@
+import { memberHost } from "./member-engagement";
+import { wasReleased } from "../shared/member-engagement";
 import { askHistory } from "./ask-history";
 import { refreshQuestPullRequests } from "./conclude-pull-requests";
 import { attention, AttentionSnapshot } from "./attention";
@@ -83,7 +85,7 @@ export function rpcHandlers(
       ]),
     ])]);
   };
-  const errands = (threadId: string) => projectMembers(k.store.errandsPage(threadId, 100, 0).members);
+  const errands = (threadId: string) => projectMembers(k.store.errandsPage(threadId, 100, 0).members.map(({ member }) => member));
   const partyIds = (threadId: string) => [
     threadId,
     ...k.store
@@ -186,8 +188,8 @@ export function rpcHandlers(
         reportedPoseSeconds: runtime.config().tavern.reportedPoseSeconds,
         verifiedPoseMinutes: runtime.config().tavern.verifiedPoseMinutes,
         ...(m ? { moodSignals: {
-          released: thread.released != null,
-          archived: thread.archivedAt != null || thread.deletedAt != null,
+          released: wasReleased(m),
+          archived: memberHost(k.store, m).archivedAt !== null || memberHost(k.store, m).deletedAt !== null,
           handBack: m.role === "keeper" && k.memory.notes(threadId, 200).some(note => note.kind === "waiting-on-user"),
           report: currentMoodReport(k.store.query("reports", "memberThreadId", threadId, 1)[0], thread.lastBriefAt),
           waypointTitle: titleOf(m.waypointId ?? m.checkerWaypointId ?? null),

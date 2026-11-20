@@ -1,3 +1,4 @@
+import { withEngagement } from "../member-fixture";
 import { definePluginApp } from "@get-bb/plugin-sdk/app";
 import { loadPluginApp, renderSlot, type PluginRpcTestHandlers, type RenderedSlot } from "@get-bb/plugin-sdk/testing/app";
 import { fireEvent, waitFor, within } from "@testing-library/react";
@@ -12,7 +13,7 @@ import liveRoomJson from "./live-room-archived.json";
 import { registry } from "./scenes";
 
 // The user's room on 14 November: nine Keepers, eight of them in archived threads, every one with status "listening".
-const live = roomSchema.parse(liveRoomJson);
+const live = roomSchema.parse(withEngagement(liveRoomJson));
 type Handlers = PluginRpcTestHandlers<typeof rpcContract>;
 const slots: RenderedSlot[] = [];
 afterEach(() => { for (const s of slots.splice(0)) s.lifecycle.unmount(); vi.unstubAllGlobals(); });

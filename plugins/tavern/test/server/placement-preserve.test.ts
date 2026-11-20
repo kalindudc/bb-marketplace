@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { putMemberFixture, withMemberFixtures } from "./member-fixture";
 import { putQuestFixture } from "./support";
 import { afterEach, expect, it } from "vitest";
 import { makeThreadResponse } from "@get-bb/plugin-sdk/testing";
@@ -63,7 +64,7 @@ it("finishes a quest stop when its failed member never received an environment",
   for (const entry of f.entries) entry.evidence = entry.evidence.filter(item => item.ref.startsWith(f.storage + "/"));
   f.harness.sdk.stub("threads.get", async ({ threadId }: { threadId: string }) => makeThreadResponse({ id: threadId, projectId: "project", environmentId: threadId === "maker" ? null : "home-env", status: threadId === "maker" ? "error" : "idle", archivedAt: threadId === "maker" && f.releaseState.archived ? 100 : null }));
   const port = { ...fakePort(), prepare: f.journal.prepare, get: (threadId: string) => ({ ...fakePort().get(threadId), entries: f.entries }) };
-  const keeper = new Keeper(f.keepers, port, () => 1_000_000);
+  const keeper = withMemberFixtures(new Keeper(f.keepers, port, () => 1_000_000));
   keeper.bind("keeper", "keeper", "wren", "project");
   const quest = await seedQuest(keeper, "keeper", "Failed machine", "Save declared evidence");
   putQuestFixture(keeper.store, "quest", { ...quest, id: "quest" }); keeper.store.remove("quests", quest.id);
@@ -192,7 +193,7 @@ it("observes generic environment loss even before the lazy preservation service 
 });
 it("keeps an unconfirmed Tavern stop visible and never snapshots it", async () => {
   const f = await preservationFixture(); fixtures.push(f);
-  f.keepers.put("members", "maker", { ...f.keepers.get("members", "maker")!, stopPending: true });
+  putMemberFixture(f.keepers, "maker", { ...f.keepers.get("members", "maker")!, stopPending: true });
   expect(await f.preserve.beforeRelease("maker", "Quest stop")).toMatchObject({ state: "waiting", message: expect.stringContaining("Stop unconfirmed") });
   expect(f.harness.experimental_hostRpcCalls).toEqual([]); expect(f.archive).not.toHaveBeenCalled();
 });

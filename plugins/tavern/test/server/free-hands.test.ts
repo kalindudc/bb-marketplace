@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { fixtureActivity, patchThreadFixture } from "./member-fixture";
 import { expect, it } from "vitest";
 import { setup } from "./runtime-fixture";
 import { seedQuest, waypointEntry } from "./support";
@@ -11,7 +12,7 @@ export async function restingFixture(classId = "ranger") {
     keeperThreadId: "lead", boardQuestId: q.id, waypointId: null, errand: false, title: "Find the source", displayName: "Fern",
     brief: { outcome: "Find the source", mode: "make-it-work", outOfScope: "", doneWhen: "Evidence", context: [], questions: [], timeboxMinutes: null },
   });
-  f.k.activity(m.threadId, "done");
+  fixtureActivity(f.k, m.threadId, "done");
   return { ...f, q, m };
 }
 it("lists a resting Ranger across quests before hiring, with its last work and reuse scope", async () => {
@@ -25,7 +26,7 @@ it("lists a resting Ranger across quests before hiring, with its last work and r
 });
 it("never lists released members as free hands", async () => {
   const f = await restingFixture();
-  f.k.store.patch(f.m.threadId, { released: { reason: "Finished", decisionId: "d1" } });
+  patchThreadFixture(f.k.store, f.m.threadId, { released: { reason: "Finished", decisionId: "d1" } });
   expect(f.k.restatement("lead").split("Free hands:")[1]?.split("\n\n")[0]).toBe("\nNone");
 });
 it("lists a Warden as re-briefable only for the waypoint it rejected", async () => {

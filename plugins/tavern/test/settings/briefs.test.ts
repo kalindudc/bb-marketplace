@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { patchThreadFixture, runtimeFixture } from "../server/member-fixture";
 import { describe, expect, it, vi } from "vitest";
 import { setup } from "../server/runtime-fixture";
 import { planInput } from "../server/support";
@@ -22,13 +23,13 @@ describe("durable explicit briefs", () => {
     const member = await f.runtime.hire("lead", "project", f.input);
     const send = vi.spyOn(f.bb.sdk.threads, "send").mockRejectedValueOnce(new Error("socket hang up"));
     expect(await f.runtime.sendRebrief(member.threadId, rebrief)).toEqual({ briefPending: true });
-    expect(f.k.store.runtime(member.threadId).pendingBrief).toMatchObject({ attempts: 1 });
+    expect(runtimeFixture(f.k.store, member.threadId).pendingBrief).toMatchObject({ attempts: 1 });
     expect(f.k.store.events("lead", 0, 100).some(event => event.type === "member.unbriefed")).toBe(true);
     await expect(f.runtime.hire("lead", "project", f.input)).rejects.toThrow();
     expect(spawn).toHaveBeenCalledTimes(1);
     f.advance(60_001); await f.runtime.sweep();
     expect(send.mock.calls.filter(([input]) => input.threadId === member.threadId)).toHaveLength(2);
-    expect(f.k.store.runtime(member.threadId).pendingBrief).toBeNull();
+    expect(runtimeFixture(f.k.store, member.threadId).pendingBrief).toBeNull();
     expect(f.k.store.runtime(member.threadId).briefVersion).toBe(2);
   });
   it("keeps a failed member's character leased while its later brief is pending", async () => {
@@ -37,7 +38,7 @@ describe("durable explicit briefs", () => {
     await f.runtime.sendRebrief(member.threadId, rebrief);
     f.k.activity(member.threadId, "failed");
     expect(f.runtime.busyCharacters("project")).toContain(member.characterId);
-    f.k.store.patch(member.threadId, { released: { reason: "Confirmed release", decisionId: "release-test" } });
+    patchThreadFixture(f.k.store, member.threadId, { released: { reason: "Confirmed release", decisionId: "release-test" } });
     expect(f.runtime.busyCharacters("project")).not.toContain(member.characterId);
   });
   it("does not duplicate an accepted rebrief when its acknowledgement was lost", async () => {
@@ -48,7 +49,7 @@ describe("durable explicit briefs", () => {
     vi.spyOn(f.bb.sdk.threads.events, "list").mockImplementation(async input => input.types?.includes("client/turn/requested") ? [{ seq: 1, createdAt: f.time(), type: "client/turn/requested", data: { originPluginId: "tavern", input: accepted } }] as never : []);
     f.advance(60_001); await f.runtime.sweep();
     expect(send.mock.calls.filter(([input]) => input.threadId === member.threadId)).toHaveLength(1);
-    expect(f.k.store.runtime(member.threadId).pendingBrief).toBeNull();
+    expect(runtimeFixture(f.k.store, member.threadId).pendingBrief).toBeNull();
     expect(f.k.store.runtime(member.threadId).briefVersion).toBe(2);
   });
   it("does not call a queued rebrief delivered before dispatch acknowledges it", async () => {
@@ -57,7 +58,7 @@ describe("durable explicit briefs", () => {
     expect(await f.runtime.sendRebrief(member.threadId, rebrief)).toEqual({ briefPending: true });
     expect(f.k.store.runtime(member.threadId).briefVersion).toBe(1);
     f.runtime.dispatched({ threadId: member.threadId, originPluginId: "tavern", content: send.mock.calls[0]![0].input } as never);
-    expect(f.k.store.runtime(member.threadId).pendingBrief).toBeNull();
+    expect(runtimeFixture(f.k.store, member.threadId).pendingBrief).toBeNull();
     expect(f.k.store.runtime(member.threadId).briefVersion).toBe(2);
   });
   it("does not automatically resend a queued rebrief the user cancelled", async () => {
@@ -89,14 +90,14 @@ describe("durable explicit briefs", () => {
       return { delivery: "sent" } as never;
     });
     await f.runtime.sendRebrief(member.threadId, rebrief);
-    const pending = f.k.store.runtime(member.threadId).pendingBrief!;
+    const pending = runtimeFixture(f.k.store, member.threadId).pendingBrief!;
     const runtime = new TavernRuntime(f.bb, f.k, f.runtime.registry);
     expect(await runtime.sendInitialBrief(member.threadId, pending.text)).toEqual({ briefPending: true });
     for (let attempt = 0; attempt < 10; attempt++) { f.advance(3_600_000); await runtime.sweep(); }
     const attempts = send.mock.calls.filter(([input]) => input.threadId === member.threadId);
     expect(attempts).toHaveLength(5);
     expect(attempts.every(([input]) => JSON.stringify(input.input).includes(pending.id))).toBe(true);
-    expect(f.k.store.runtime(member.threadId).pendingBrief).toMatchObject({ attempts: 5 });
+    expect(runtimeFixture(f.k.store, member.threadId).pendingBrief).toMatchObject({ attempts: 5 });
     expect(f.k.member(member.threadId)).not.toBeNull();
     const blockers = f.k.store.openAsks("lead").filter(ask => ask.kind === "blocker");
     expect(blockers).toHaveLength(1);
@@ -104,6 +105,6 @@ describe("durable explicit briefs", () => {
     await runtime.sweep();
     expect(f.k.store.openAsks("lead").filter(ask => ask.kind === "blocker")).toHaveLength(1);
     await runtime.answerAsk(blockers[0]!.id, "retry", null, "page");
-    expect(f.k.store.runtime(member.threadId).pendingBrief!.attempts).toBe(1);
+    expect(runtimeFixture(f.k.store, member.threadId).pendingBrief!.attempts).toBe(1);
   });
 });

@@ -37,9 +37,9 @@ const closedState = (revision: number, over: Partial<AwayControl> = {}) => contr
 function control(over: Partial<AwayControl> = {}): AwayControl {
   return { revision: 0, window: null, status: { closed: false, until: null, dueBack: false, windowId: null }, watchedCount: 2, heldCount: 0, pendingStops: [], resumeRequired: [], ...over };
 }
-const inPlay = (state: string) => state === "working" || state === "idle" || state === "waiting";
+const inPlay = (m: Pick<Room["solos"][number], "engagement" | "state">) => m.engagement === "active" && m.state !== "failed";
 const vault = scenes.richRoom.keepers.flatMap((k) => k.boardQuests).find((q) => q.id === "vault")!;
-const vaultOnRoad = vault.members.filter((m) => m.role === "member" && !m.errand && inPlay(m.state)).length;
+const vaultOnRoad = vault.members.filter((m) => m.role === "member" && !m.errand && inPlay(m)).length;
 const wake = { blockers: true, productionAsksAfterTwoHours: false };
 
 describe("what closing would do (the confirm's lines)", () => {
@@ -58,7 +58,7 @@ describe("what closing would do (the confirm's lines)", () => {
     it("takes the errands that belong to no quest from the null row, and the solos from soloCount", () => {
       const plan = closePlan(open, control({ eligibleByQuest: [{ questId: null, members: 2, watchedCount: 1 }], soloCount: 0 }), opts);
       expect(plan.unattached).toBe("Errands that belong to no quest pause: 2, 1 of them watched.");
-      expect(open.solos.some((m) => inPlay(m.state))).toBe(true);
+      expect(open.solos.some((m) => inPlay(m))).toBe(true);
       expect(plan.solos.running).toBe(0);
       const none = closePlan(open, control({ eligibleByQuest: [] , soloCount: 0 }), opts);
       expect(none.unattached).toBeNull();
@@ -82,11 +82,11 @@ describe("what closing would do (the confirm's lines)", () => {
     expect(plan.watchedTotal).toBeNull();
     expect(plan.unattached).toBe("Errands that belong to no quest pause: 1, 1 of them watched.");
     expect(plan.solos.text).toBe("Solo threads keep running. Where a solo is guarded, the stop list still applies; a watched solo isn't stopped, only watched.");
-    expect(plan.solos.running).toBe(scenes.richRoom.solos.filter((m) => inPlay(m.state)).length);
+    expect(plan.solos.running).toBe(scenes.richRoom.solos.filter((m) => inPlay(m)).length);
     // Each kind is said once: the side-quest line counts only side quests whose quest pauses; the errands line carries the rest.
     expect(plan.sideQuests.text).toBe("Side quests follow their quest: a paused or unselected quest pauses its side quests.");
     expect(plan.sideQuests.text).not.toMatch(/no quest/);
-    const attachedPausing = open.keepers.flatMap((k) => k.errands).filter((m) => inPlay(m.state) && (m.boardQuestId === "audit" || m.boardQuestId === "rollout")).length;
+    const attachedPausing = open.keepers.flatMap((k) => k.errands).filter((m) => inPlay(m) && (m.boardQuestId === "audit" || m.boardQuestId === "rollout")).length;
     expect(plan.sideQuests.pausing).toBe(attachedPausing);
   });
   it("says watched members keep drafting, watched, only when the user lets them", () => {
@@ -94,7 +94,7 @@ describe("what closing would do (the confirm's lines)", () => {
     expect(plan.quests.find((q) => q.id === "vault")!.text).toMatch(/1 watched member keeps drafting, watched\.$/);
   });
   it("says a drafts-ready quest with nobody on the road keeps new work as private drafts, without repeating its choice", () => {
-    const quiet: Room = { ...open, keepers: open.keepers.map((k) => ({ ...k, boardQuests: k.boardQuests.map((q) => q.id === "vault" ? { ...q, members: q.members.map((m) => ({ ...m, state: "done" as const })) } : q) })) };
+    const quiet: Room = { ...open, keepers: open.keepers.map((k) => ({ ...k, boardQuests: k.boardQuests.map((q) => q.id === "vault" ? { ...q, members: q.members.map((m) => ({ ...m, state: "idle" as const, engagement: "resting" as const })) } : q) })) };
     const plan = closePlan(quiet, control({ watchedByQuest: [] }), { choices: {}, allowWatched: false, wakeRules: wake });
     const v = plan.quests.find((q) => q.id === "vault")!;
     expect(v.detail).toBe("No member is on the road; new work stays as private drafts.");
@@ -152,7 +152,7 @@ describe("the Closing time sheet", () => {
     expect(view.effective.away.neverWhileClosed).toEqual([]);
   });
   it("with nothing live, leads with one line and shows no zero-count lines and no empty divider", async () => {
-    const quiet: Room = { ...open, asks: [], solos: open.solos.map((m) => ({ ...m, state: "stopped" as const })), keepers: open.keepers.map((k) => ({ ...k, errands: k.errands.map((m) => ({ ...m, state: "done" as const })), boardQuests: k.boardQuests.map((q) => ({ ...q, phase: "done" as const })) })) };
+    const quiet: Room = { ...open, asks: [], solos: open.solos.map((m) => ({ ...m, state: "idle" as const, engagement: "stopped" as const })), keepers: open.keepers.map((k) => ({ ...k, errands: k.errands.map((m) => ({ ...m, state: "idle" as const, engagement: "resting" as const })), boardQuests: k.boardQuests.map((q) => ({ ...q, phase: "done" as const })) })) };
     const slot = await tab({}, quiet);
     const confirm = await review(slot);
     expect(confirm.querySelector(".tv-confirm-q")).toBeNull();

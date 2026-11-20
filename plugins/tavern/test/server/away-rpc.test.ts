@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { patchThreadFixture, putMemberFixture } from "./member-fixture";
 import { putQuestFixture } from "./support";
 import { seedQuest } from "./support";
 import { afterEach, describe, expect, it } from "vitest";
@@ -32,10 +33,10 @@ describe("Closing time RPC", () => {
   it("groups watched party members by quest, including unattached errands but not solos or inactive allocations", async () => {
     const f = fixture(), first = await seedQuest(f.k,"lead", "First", "Draft"), second = await seedQuest(f.k,"lead", "Second", "Draft");
     bind(f, "first-a", first.id); bind(f, "first-b", first.id); bind(f, "second", second.id); bind(f, "unattached", null);
-    bind(f, "released", first.id); f.k.store.patch("released", { released: { reason: "Done", decisionId: "release" } });
-    bind(f, "releasing", first.id); f.k.store.patch("releasing", { releasePending: "Done" });
-    bind(f, "archiving", second.id); f.k.store.patch("archiving", { archivePending: true });
-    const stopped = bind(f, "stopped", second.id); f.k.store.put("members", stopped.threadId, { ...stopped, state: "stopped" });
+    bind(f, "released", first.id); patchThreadFixture(f.k.store, "released", { released: { reason: "Done", decisionId: "release" } });
+    bind(f, "releasing", first.id); patchThreadFixture(f.k.store, "releasing", { releasePending: "Done" });
+    bind(f, "archiving", second.id); patchThreadFixture(f.k.store, "archiving", { archivePending: true });
+    const stopped = bind(f, "stopped", second.id); putMemberFixture(f.k.store, stopped.threadId, { ...stopped, state: "stopped" });
     f.k.bind("solo", "wanderer", "pip", "project");
     expect(await f.call("away", {})).toMatchObject({ revision: 0, watchedCount: 4, watchedByQuest: expect.arrayContaining([
       { questId: first.id, watchedCount: 2 }, { questId: second.id, watchedCount: 1 }, { questId: null, watchedCount: 1 },
@@ -46,37 +47,39 @@ describe("Closing time RPC", () => {
   });
   it.each(["done-member", "archived-member", "stopped-member", "done-quest", "stopped-quest", "archived-quest", "missing-quest"])("does not count inactive work in the closing warning: %s", async variant => {
     const f = fixture(), quest = await seedQuest(f.k,"lead", "Old quest", "Draft"), member = bind(f, "old-member", variant === "missing-quest" ? "missing" : quest.id);
-    if (variant === "done-member" || variant === "stopped-member") f.k.store.put("members", member.threadId, { ...member, state: variant === "done-member" ? "done" : "stopped" });
-    if (variant === "archived-member") f.k.store.patch(member.threadId, { archivedAt: 0 });
+    if (variant === "done-member" || variant === "stopped-member") putMemberFixture(f.k.store, member.threadId, { ...member, state: variant === "done-member" ? "done" : "stopped" });
+    if (variant === "archived-member") patchThreadFixture(f.k.store, member.threadId, { archivedAt: 0 });
     if (variant === "done-quest" || variant === "stopped-quest") putQuestFixture(f.k.store, quest.id, { ...quest, phase: variant === "done-quest" ? "done" : "stopped", endedAt: f.time() });
     if (variant === "archived-quest") putQuestFixture(f.k.store, quest.id, { ...quest, archivedAt: f.time() });
     expect(await f.call("away", {})).toMatchObject({ watchedCount: 0, watchedByQuest: [], eligibleByQuest: [], soloCount: 0 });
     expect(f.runtime.away.store.snapshot().window).toBeNull();
     expect(f.harness.inspection.sdk.callsTo("threads.stop")).toEqual([]);
   });
-  it("excludes archived completed members even though activity preserves their done state", async () => {
+  it("excludes archived completed members independently of activity", async () => {
     const f = fixture(), quest = await seedQuest(f.k,"lead", "Old quest", "Draft"), member = bind(f, "finished", quest.id);
-    f.k.store.put("members", member.threadId, { ...member, state: "done" });
+    putMemberFixture(f.k.store, member.threadId, { ...member, state: "done" });
     f.runtime.updateThread(makeThreadResponse({ id: member.threadId, status: "idle", archivedAt: f.time() }));
-    expect(f.k.member(member.threadId)?.state).toBe("done");
+    expect(f.k.member(member.threadId)).toMatchObject({ engagement: "archived", disposition: "finished" });
     expect(await f.call("away", {})).toMatchObject({ watchedCount: 0, watchedByQuest: [] });
   });
-  it("counts a rebriefed completed member only after real activity resumes", async () => {
+  it("counts a rebriefed completed member only after the brief is accepted", async () => {
     const f = fixture(), quest = await seedQuest(f.k,"lead", "Live quest", "Draft"), member = bind(f, "rebriefed", quest.id);
-    f.k.store.put("members", member.threadId, { ...member, state: "done" });
-    f.k.store.patch(member.threadId, { pendingBrief: { id: "new-brief", text: "Fresh work", attempts: 0, nextAttemptAt: f.time(), attemptedAt: null, hostAfterSeq: null, error: null } });
+    putMemberFixture(f.k.store, member.threadId, { ...member, state: "done" });
+    patchThreadFixture(f.k.store, member.threadId, { pendingBrief: { id: "new-brief", text: "Fresh work", attempts: 0, nextAttemptAt: f.time(), attemptedAt: null, hostAfterSeq: null, error: null } });
     expect(await f.call("away", {})).toMatchObject({ watchedCount: 0, watchedByQuest: [] });
     f.runtime.updateThread(makeThreadResponse({ id: member.threadId, status: "active" }));
+    expect(await f.call("away", {})).toMatchObject({ watchedCount: 0 });
+    f.runtime["finishInitialBrief"](member.threadId, "new-brief");
     expect(await f.call("away", {})).toMatchObject({ watchedCount: 1, watchedByQuest: [{ questId: quest.id, watchedCount: 1 }] });
   });
   it("counts only live solos for display without making them close participants", async () => {
     const f = fixture();
     for (const state of ["working", "idle", "waiting", "done", "failed", "stopped"] as const) {
-      const member = f.k.bind(state, "wanderer", "pip", "project"); f.k.store.put("members", state, { ...member, state });
+      const member = f.k.bind(state, "wanderer", "pip", "project"); putMemberFixture(f.k.store, state, { ...member, state });
     }
     for (const threadId of ["archived", "deleted", "released"]) {
       f.k.bind(threadId, "wanderer", "pip", "project");
-      f.k.store.patch(threadId, threadId === "archived" ? { archivedAt: 0 } : threadId === "deleted" ? { deletedAt: 0 } : { released: { reason: "Done", decisionId: "release" } });
+      patchThreadFixture(f.k.store, threadId, threadId === "archived" ? { archivedAt: 0 } : threadId === "deleted" ? { deletedAt: 0 } : { released: { reason: "Done", decisionId: "release" } });
     }
     expect(await f.call("away", {})).toMatchObject({ soloCount: 3, eligibleByQuest: [], watchedCount: 0 });
     await f.call("awayClose", input);
@@ -84,8 +87,8 @@ describe("Closing time RPC", () => {
   });
   it.each(["failed", "deleted", "ended", "stopping"])("excludes shared-work-ineligible %s members from both count sets", async variant => {
     const f = fixture(), quest = await seedQuest(f.k,"lead", "Old quest", "Draft"), member = bind(f, "old-member", quest.id);
-    if (variant === "failed") f.k.store.put("members", member.threadId, { ...member, state: "failed" });
-    if (variant === "deleted") f.k.store.patch(member.threadId, { deletedAt: f.time() });
+    if (variant === "failed") putMemberFixture(f.k.store, member.threadId, { ...member, state: "failed" });
+    if (variant === "deleted") patchThreadFixture(f.k.store, member.threadId, { deletedAt: f.time() });
     if (variant === "ended") putQuestFixture(f.k.store, quest.id, { ...quest, endedAt: f.time() });
     if (variant === "stopping") putQuestFixture(f.k.store, quest.id, { ...quest, phase: "stopping" });
     expect(await f.call("away", {})).toMatchObject({ watchedCount: 0, watchedByQuest: [], eligibleByQuest: [] });

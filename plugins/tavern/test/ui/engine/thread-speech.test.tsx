@@ -52,7 +52,7 @@ async function widget(patch: Partial<ThreadDecor> = {}) {
       else await new Promise(resolve => setTimeout(resolve, 0));
     });
   };
-  const mood = (state: NonNullable<ThreadDecor["member"]>["state"]) => update({ member: { ...data.member!, state } });
+  const mood = (state: NonNullable<ThreadDecor["member"]>["state"] | "stopped") => update({ member: { ...data.member!, state: state === "stopped" ? "idle" : state, engagement: state === "stopped" ? "stopped" : "active" } });
   const verify = () => update({ moodSignals: { ...signals, verdict: { status: "verified", at: Date.now(), checkerName: "Vex", waypointTitle: "Stone Bridge" } } });
   const click = () => { fireEvent.click(actor()!); };
   return { actor, speech, update, mood, verify, click };

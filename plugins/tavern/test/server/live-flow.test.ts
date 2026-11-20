@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { patchThreadFixture } from "./member-fixture";
 import { concludeQuest } from "./support";
 import { seedQuest } from "./support";
 import { describe, expect, it, vi } from "vitest";
@@ -480,7 +481,7 @@ describe("live Keeper flow regressions", () => {
     await f.runtime.threadLifecycle("thread.archived", {
       thread: makeThreadResponse({ id: "scout", archivedAt: f.time() }),
     });
-    expect(f.k.member("scout")?.state).toBe("stopped");
+    expect(f.k.member("scout")).toMatchObject({ state: "idle", engagement: "archived" });
     const archived = f.k.store
       .events("lead")
       .find((event) => event.type === "thread.archived")!;
@@ -495,7 +496,7 @@ describe("live Keeper flow regressions", () => {
         archivedAt: null,
       }),
     });
-    expect(f.k.member("scout")?.state).toBe("idle");
+    expect(f.k.member("scout")).toMatchObject({ state: "idle", engagement: "active" });
     expect(
       f.k.store
         .events("lead")
@@ -525,15 +526,17 @@ describe("live Keeper flow regressions", () => {
       voice: null,
     });
     f.runtime.updateThread(makeThreadResponse({ id: "scout", status: "idle" }));
-    expect(f.k.member("scout")?.state).toBe("done");
-    f.k.store.patch("scout", {
+    expect(f.k.member("scout")).toMatchObject({ state: "idle", engagement: "resting" });
+    patchThreadFixture(f.k.store, "scout", {
       released: { reason: "Released", decisionId: "decision" },
     });
-    f.k.activity("scout", "stopped");
+    await f.runtime.threadLifecycle("thread.archived", {
+      thread: makeThreadResponse({ id: "scout", archivedAt: f.time() }),
+    });
     await f.runtime.threadLifecycle("thread.unarchived", {
       thread: makeThreadResponse({ id: "scout", archivedAt: null }),
     });
-    expect(f.k.member("scout")?.state).toBe("stopped");
+    expect(f.k.member("scout")?.engagement).toBe("released");
     bind(f, "other", "ranger", q.id, "fern");
     f.k.report("other", {
       status: "done",
@@ -550,7 +553,7 @@ describe("live Keeper flow regressions", () => {
         archivedAt: null,
       }),
     });
-    expect(f.k.member("other")?.state).toBe("working");
+    expect(f.k.member("other")).toMatchObject({ state: "working", engagement: "resting" });
   });
   it("credits verified work to the entry's member rather than a symbolic plan owner", async () => {
     const f = setup();

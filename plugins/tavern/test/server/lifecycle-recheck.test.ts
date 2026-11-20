@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { fixtureActivity, patchThreadFixture, runtimeFixture } from "./member-fixture";
 import { seedQuest } from "./support";
 import { expect, it, vi } from "vitest";
 import { setup } from "./runtime-fixture";
@@ -39,8 +40,8 @@ it("undoing an automatic approval cannot reopen a stopping quest or release its 
   await f.runtime.undoDecision(decision.id);
   expect(f.k.quest(f.q.id)).toMatchObject({ phase: "stopping", greenlitVersion: 1, stoppingSince });
   expect(f.k.store.openAsks("lead", f.q.id)).toHaveLength(0);
-  expect(f.k.store.runtime("child").released).toBeFalsy();
-  expect(f.k.member("child")?.stopPending).toBe(true);
+  expect(runtimeFixture(f.k.store, "child").released).toBeFalsy();
+  expect((f.k.member("child")?.engagement === "stopping")).toBe(true);
   status = "idle";
   await f.runtime.retryStops("lead", f.q.id, true);
   expect(f.k.quest(f.q.id).phase).toBe("stopped");
@@ -60,7 +61,7 @@ it("visible reviews retain manually stopped Keepers while the automatic hire bud
   f.k.store.patch("lead", { manualStopAt: f.time() });
   expect(f.runtime.review()).toMatchObject({ waiting: 1, items: [{ boardQuestId: f.q.id }] });
   expect(f.runtime.review("automatic").waiting).toBe(0);
-  f.k.store.patch("lead", { archivedAt: f.time() });
+  patchThreadFixture(f.k.store, "lead", { archivedAt: f.time() });
   expect(f.runtime.review().waiting).toBe(0);
 });
 it("a stopping quest projects no next step or unasked outside-gate reminder", async () => {
@@ -78,13 +79,13 @@ it("a stopping quest projects no next step or unasked outside-gate reminder", as
 it.each(["active", "stopping"] as const)("Stop discovers a cached done member whose host is %s and waits for confirmation", async running => {
   const f = await fixture();
   bind(f);
-  f.k.activity("child", "done");
+  fixtureActivity(f.k, "child", "done");
   let status: typeof running | "idle" = running;
   f.bb.sdk.threads.get = vi.fn(async ({ threadId }) => makeThreadResponse({ id: threadId, status: threadId === "child" ? status : "idle" }));
   f.bb.sdk.threads.stop = vi.fn(async () => ({ ok: true as const }));
   expect(await f.runtime.stop(f.q.id)).toEqual({ phase: "stopping", unconfirmed: 1 });
   expect(f.bb.sdk.threads.stop).toHaveBeenCalledWith({ threadId: "child" });
-  expect(f.k.member("child")?.stopPending).toBe(true);
+  expect((f.k.member("child")?.engagement === "stopping")).toBe(true);
   status = "idle";
   await f.runtime.retryStops("lead", f.q.id, true);
   expect(f.k.quest(f.q.id).phase).toBe("stopped");
@@ -92,7 +93,7 @@ it.each(["active", "stopping"] as const)("Stop discovers a cached done member wh
 it("Stop verifies an idle cached done member without interrupting it", async () => {
   const f = await fixture();
   bind(f);
-  f.k.activity("child", "done");
+  fixtureActivity(f.k, "child", "done");
   f.bb.sdk.threads.get = vi.fn(async ({ threadId }) => makeThreadResponse({ id: threadId, status: "idle" }));
   f.bb.sdk.threads.stop = vi.fn(async () => ({ ok: true as const }));
   expect(await f.runtime.stop(f.q.id)).toEqual({ phase: "stopped", unconfirmed: 0 });
@@ -102,7 +103,7 @@ it("Stop verifies an idle cached done member without interrupting it", async () 
 it("a failed fresh lookup of a done member keeps Stop pending and surfaces its error", async () => {
   const f = await fixture();
   bind(f);
-  f.k.activity("child", "done");
+  fixtureActivity(f.k, "child", "done");
   f.bb.sdk.threads.get = vi.fn(async () => { throw new Error("host unavailable"); });
   f.bb.sdk.threads.stop = vi.fn(async () => ({ ok: true as const }));
   expect(await f.runtime.stop(f.q.id)).toEqual({ phase: "stopping", unconfirmed: 1 });
@@ -113,7 +114,7 @@ it("a failed fresh lookup of a done member keeps Stop pending and surfaces its e
 it.each(["archivedAt", "deletedAt", "not-found"] as const)("Stop verifies a cached done member is %s without stopping it", async gone => {
   const f = await fixture();
   bind(f);
-  f.k.activity("child", "done");
+  fixtureActivity(f.k, "child", "done");
   f.bb.sdk.threads.get = vi.fn(async ({ threadId }) => {
     if (gone === "not-found") throw Object.assign(new Error("Missing"), { status: 404 });
     return makeThreadResponse({ id: threadId, [gone]: f.time(), status: "active" });
@@ -126,7 +127,7 @@ it.each(["archivedAt", "deletedAt", "not-found"] as const)("Stop verifies a cach
 it("Stop remains unconfirmed while a done member's rebrief send is still in flight", async () => {
   const f = await fixture();
   bind(f);
-  f.k.activity("child", "done");
+  fixtureActivity(f.k, "child", "done");
   let accept!: () => void;
   const sent = new Promise<{ ok: true; delivery: "sent" }>(resolve => { accept = () => resolve({ ok: true, delivery: "sent" }); });
   f.bb.sdk.threads.send = vi.fn(() => sent);

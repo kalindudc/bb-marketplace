@@ -1,3 +1,4 @@
+import { engagementSchema, hasEndedEngagement, memberActivityWord } from "../../shared/member-engagement";
 import { moveTime } from "../../shared/time";
 import { resolutionWords, settled, verifiedWaypoint } from "../../shared/waypoint";
 import { attentionView } from "../../shared/attention";
@@ -130,6 +131,19 @@ function describeRaw(e: TavernEvent, ctx: EventContext): EventLine | null {
   const named = (characterId: string) => ctx.characterName(characterId) ?? characterId;
   const byCharacter = (text: string) => { const m = text.match(/^([a-z0-9_-]+): ([\s\S]*)$/); return m && ctx.characterName(m[1]!) ? { name: ctx.characterName(m[1]!)!, characterId: m[1]!, rest: m[2]! } : null; };
   const memberByCharacter = (characterId: string) => [...ctx.members.values()].find((m) => m.characterId === characterId && (!e.boardQuestId || m.boardQuestId === e.boardQuestId)) ?? null;
+  if (["member.bound", "member.rebrief-requested", "member.brief-cancelled", "member.briefed", "member.release-requested", "member.released", "member.stop-requested", "member.stopped", "member.archive-requested", "member.engagement-imported"].includes(e.type)) {
+    const states = data.engagement as { from?: unknown; to?: unknown } | undefined;
+    const to = engagementSchema.safeParse(states?.to);
+    if (to.success) {
+      const member = ctx.members.get(str("memberThreadId") ?? "");
+      const name = member ? ctx.memberName(member) : "A member";
+      const words = { briefing: "waiting for a brief", active: "brief accepted", resting: "finished", releasing: "release requested", released: "released", stopping: "stop requested", stopped: "stopped", archiving: "archive requested", archived: "archived" };
+      const word = e.type === "member.bound" && to.data === "active" ? "started solo work" : words[to.data];
+      const head = e.type === "member.engagement-imported" ? `${name}: ${word} at upgrade` : `${name}: ${word}`;
+      return { ...base, icon: "note", actor: e.actor.kind === "user" ? you : e.actor.kind === "agent" ? leadActor : { kind: "tavern" }, head,
+        detail: e.type === "member.release-requested" || e.type === "member.released" ? e.text : null };
+    }
+  }
   switch (e.type) {
     case "thread.archived": case "thread.unarchived": case "thread.deleted": {
       const verb = e.type.slice(7);
@@ -263,7 +277,7 @@ export function graphFor(room: Room, registry: Parameters<typeof memberName>[1],
     for (const quest of keeper.boardQuests.filter((q) => !keeper.archived && !isFinished(q.phase) && drawn(q))) {
       const q = `quest:${quest.id}`;
       add({ id: q, kind: "quest", label: quest.title, detail: `${quest.phase} · ${quest.move.text}`, layer: 1, subPath: `quest/${quest.id}`, questId: quest.id, quest }, k);
-      for (const member of quest.members) add({ id: `member:${member.threadId}`, kind: "member", label: name(member), detail: member.state, classId: member.classId, layer: 2, threadId: member.threadId, questId: quest.id, member }, q);
+      for (const member of quest.members) add({ id: `member:${member.threadId}`, kind: "member", label: name(member), detail: memberActivityWord(member, isFinished(quest.phase)), classId: member.classId, layer: 2, threadId: member.threadId, questId: quest.id, member }, q);
       for (const ask of room.asks.filter((a) => a.boardQuestId === quest.id && a.state === "open")) add({ id: `ask:${ask.id}`, kind: "ask", label: ask.question, detail: `Needs you · ${ask.kind}`, layer: 2, subPath: `quest/${quest.id}`, questId: quest.id, ask }, q);
       for (const waypoint of quest.waypoints.filter((w) => w.actor === "outside")) {
         const preceding = waypoint.dependsOn.map((id) => quest.waypoints.find((w) => w.id === id));
@@ -280,11 +294,11 @@ export function graphFor(room: Room, registry: Parameters<typeof memberName>[1],
     for (const quest of returned) {
       const q = `returned:${quest.id}`;
       add({ id: q, kind: "returned", label: quest.short, detail: phaseWord(quest.phase), layer: 1, subPath: quest.phase === "done" ? `tale/${quest.id}` : `quest/${quest.id}`, questId: quest.id, quest, quiet: true }, k);
-      for (const member of quest.members) add({ id: `member:${quest.id}:${member.threadId}`, kind: "member", label: name(member), detail: member.state, classId: member.classId, layer: 2, threadId: member.threadId, questId: quest.id, member, quiet: true }, q);
+      for (const member of quest.members) add({ id: `member:${quest.id}:${member.threadId}`, kind: "member", label: name(member), detail: memberActivityWord(member, isFinished(quest.phase)), classId: member.classId, layer: 2, threadId: member.threadId, questId: quest.id, member, quiet: true }, q);
     }
     const more = keeper.archived ? (history?.total ?? ordered.length) - Math.min(5, ordered.length) : 0;
     if (more > 0) add({ id: `more:${keeper.member.threadId}`, kind: "more", label: `+${more} more`, detail: "Quests in the cellar", layer: 1, subPath: "archive", quiet: true }, k);
-    for (const member of keeper.errands.filter((m) => m.state !== "done" && m.state !== "stopped")) add({ id: `member:${member.threadId}`, kind: "errand", label: member.title ?? name(member), detail: `Side quest (errand) · ${member.state}`, classId: member.classId, layer: 1, threadId: member.threadId, member }, k);
+    for (const member of keeper.errands.filter((m) => !hasEndedEngagement(m))) add({ id: `member:${member.threadId}`, kind: "errand", label: member.title ?? name(member), detail: `Side quest (errand) · ${memberActivityWord(member)}`, classId: member.classId, layer: 1, threadId: member.threadId, member }, k);
     for (const ask of room.asks.filter((a) => a.keeperThreadId === keeper.member.threadId && a.boardQuestId === null && a.state === "open")) add({ id: `ask:${ask.id}`, kind: "ask", label: ask.question, detail: `Needs you · ${ask.kind}`, layer: 2, threadId: keeper.member.threadId, ask }, k);
   }
   for (const solo of room.solos) add({ id: `solo:${solo.threadId}`, kind: "solo", label: name(solo), detail: `Solo · ${solo.state}`, classId: solo.classId, layer: 0, threadId: solo.threadId, member: solo });

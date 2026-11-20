@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { fixtureActivity } from "./member-fixture";
 import { seedQuest } from "./support";
 import { describe, expect, it, vi } from "vitest";
 import { recoverHires } from "../../src/server/hires";
@@ -34,11 +35,23 @@ async function approvedParty(slots = 1) {
   return { ...fixture, q, plan, input };
 }
 
+async function failAndRelease(f: Awaited<ReturnType<typeof approvedParty>>, threadId: string) {
+  f.k.activity(threadId, "failed");
+  const name = f.k.name(f.k.member(threadId)!);
+  await expect(f.runtime.hire("lead", "project", f.input)).rejects.toThrow(`These members failed: ${name}. Release them or retry their work`);
+  f.bb.sdk.threads.stop = async () => ({ ok: true });
+  expect(await f.runtime.release("lead", threadId, "Free the slot after failure")).toBe(true);
+}
+
+function replacementDecisions(f: Awaited<ReturnType<typeof approvedParty>>) {
+  return f.k.store.query("decisions", "keeperThreadId", "lead").filter(d => d.text.startsWith("Start replacement "));
+}
+
 describe("bounded party replacements", () => {
   it.each(["execution", "spawn-400", "spawn-uncertain"])("records no replacement decision for an unstarted %s refusal", async refusal => {
     const f = await approvedParty();
     const first = await f.runtime.hire("lead", "project", f.input);
-    f.k.activity(first.threadId, "done");
+    fixtureActivity(f.k, first.threadId, "done");
     if (refusal === "execution") {
       const snapshot = structuredClone(f.runtime.snapshot());
       snapshot.classes.find(role => role.id === "smith")!.model = "unknown/not-advertised";
@@ -57,10 +70,11 @@ describe("bounded party replacements", () => {
   it("records an uncertain replacement exactly once only after recovery finds the real child", async () => {
     const f = await approvedParty();
     const first = await f.runtime.hire("lead", "project", f.input);
-    f.k.activity(first.threadId, "failed");
+    await failAndRelease(f, first.threadId);
     f.bb.sdk.threads.spawn = async () => { throw new Error("acknowledgement lost"); };
     await expect(f.runtime.hire("lead", "project", f.input)).rejects.toThrow("acknowledgement lost");
-    expect(f.k.store.query("decisions", "keeperThreadId", "lead")).toEqual([]);
+    expect(replacementDecisions(f)).toEqual([]);
+    expect(f.k.store.query("decisions", "keeperThreadId", "lead")).toHaveLength(1);
     const [row] = f.k.store.db.prepare("SELECT id FROM tavern_records WHERE kind='hires'").all() as { id: string }[];
     f.advance(6 * 60_000);
     f.bb.sdk.threads.list = async () => [{
@@ -76,25 +90,28 @@ describe("bounded party replacements", () => {
     f.bb.sdk.threads.getPluginMetadata = async () => ({ hireToken: row!.id });
     await recoverHires(f.bb, f.k);
     expect(f.k.member("recovered")).not.toBeNull();
-    expect(f.k.store.query("decisions", "keeperThreadId", "lead")).toHaveLength(1);
+    expect(replacementDecisions(f)).toHaveLength(1);
     await recoverHires(f.bb, f.k);
-    expect(f.k.store.query("decisions", "keeperThreadId", "lead")).toHaveLength(1);
+    expect(replacementDecisions(f)).toHaveLength(1);
+    expect(f.k.store.query("decisions", "keeperThreadId", "lead")).toHaveLength(2);
   });
-  it("frees completed, failed and stopped capacity, journal replacements, and persists the two-replacement cap", async () => {
-    const { k, runtime, q, input, plan } = await approvedParty();
+  it("frees completed, explicitly released and stopped capacity, journals replacements, and persists the two-replacement cap", async () => {
+    const f = await approvedParty();
+    const { k, runtime, q, input, plan } = f;
     const first = await runtime.hire("lead", "project", input);
     await expect(runtime.hire("lead", "project", input)).rejects.toThrow(/greenlit party/);
-    k.activity(first.threadId, "done");
+    fixtureActivity(k, first.threadId, "done");
     expect(k.store.allocated(q.id, "smith")).toBe(0);
     const second = await runtime.hire("lead", "project", input);
-    k.activity(second.threadId, "failed");
+    await failAndRelease(f, second.threadId);
     const restarted = new TavernRuntime(runtime.bb, k, runtime.registry);
     const third = await restarted.hire("lead", "project", input);
-    k.activity(third.threadId, "stopped");
+    fixtureActivity(k, third.threadId, "stopped");
     await expect(restarted.hire("lead", "project", input)).rejects.toThrow(
       /two replacements.*plan version/i,
     );
-    const decisions = k.store.query("decisions", "keeperThreadId", "lead");
+    const decisions = replacementDecisions(f);
+    expect(k.store.query("decisions", "keeperThreadId", "lead")).toHaveLength(3);
     expect(decisions).toHaveLength(2);
     for (const decision of decisions)
       expect(decision).toMatchObject({
@@ -109,26 +126,27 @@ describe("bounded party replacements", () => {
     await expect(restarted.hire("lead", "project", input)).resolves.toBeTruthy();
   });
   it("gives each same-class slot its own replacement budget", async () => {
-    const { k, runtime, input } = await approvedParty(2);
+    const f = await approvedParty(2);
+    const { k, runtime, input } = f;
     const first = await runtime.hire("lead", "project", input);
     const second = await runtime.hire("lead", "project", input);
     for (let i = 0; i < 2; i++) {
       const current = k.store
         .query("members", "boardQuestId", input.boardQuestId)
         .find(
-          (m) => m.threadId !== second.threadId && !["done", "stopped", "failed"].includes(m.state),
+          (m) => m.threadId !== second.threadId && m.engagement === "active",
         )!;
-      k.activity(current.threadId, "failed");
+      await failAndRelease(f, current.threadId);
       await runtime.hire("lead", "project", input);
     }
     const activeFirstSlot = k.store
       .query("members", "boardQuestId", input.boardQuestId)
       .find(
-        (m) => m.threadId !== second.threadId && !["done", "stopped", "failed"].includes(m.state),
+        (m) => m.threadId !== second.threadId && m.engagement === "active",
       )!;
-    k.activity(activeFirstSlot.threadId, "failed");
+    await failAndRelease(f, activeFirstSlot.threadId);
     await expect(runtime.hire("lead", "project", input)).rejects.toThrow(/two replacements/);
-    k.activity(second.threadId, "stopped");
+    fixtureActivity(k, second.threadId, "stopped");
     const replacement = await runtime.hire("lead", "project", input);
     expect(replacement.threadId).not.toBe(first.threadId);
     await expect(runtime.hire("lead", "project", input)).rejects.toThrow(/two replacements/);

@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { patchThreadFixture, withMemberFixtures } from "./member-fixture";
 import { seedQuest, waypointEntry } from "./support";
 import Database from "better-sqlite3";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -39,7 +40,7 @@ async function fixture() {
   const scopes = registerScopes(f.bb, { dataDir: location.home, installGuard: false, pathsForThread: () => ({}), onViolation: () => {} });
   for (const [id, role] of [["lead", "keeper"], ["member", "ranger"]]) await scopes.writeScope(id!, scopes.resolve(role!, {}).scope);
   await tavern(f.bb);
-  const k = new Keeper(new KeeperStore(db), fakePort());
+  const k = withMemberFixtures(new Keeper(new KeeperStore(db), fakePort()));
   k.bind("lead", "keeper", "wren", "project");
   const q = await seedQuest(k,"lead", "Sparse quest", "Sparse");
   const plan = planInput(q.id);
@@ -58,7 +59,10 @@ async function fixture() {
   for (const [kind, schema] of Object.entries(recordSchemas)) {
     for (const row of db.prepare("SELECT id,data FROM tavern_records WHERE kind=?").all(kind) as { id: string; data: string }[]) {
       const value = JSON.parse(row.data);
-      for (const [key, field] of Object.entries(schema.shape)) if (field instanceof z.ZodOptional) delete value[key];
+      for (const [key, field] of Object.entries(schema.shape)) {
+        if (kind === "members" && key === "engagement" && value.role !== "keeper") continue;
+        if (field instanceof z.ZodOptional) delete value[key];
+      }
       db.prepare("UPDATE tavern_records SET data=? WHERE kind=? AND id=?").run(JSON.stringify(value), kind, row.id);
     }
   }
@@ -81,10 +85,19 @@ it("returns compact mood signals and the voice setting in the thread widget", as
   f.k.store.db.prepare("INSERT INTO questlog_entries(thread_id, id, board_quest_id, data) VALUES (?, ?, ?, ?)")
     .run(entry.threadId, entry.id, f.q.id, JSON.stringify(entry));
   expect(await decor()).toMatchObject({ moodSignals: { verdict: { status: "verified", at, checkerName: "Vex", waypointTitle: planInput(f.q.id).waypoints[0]!.title } } });
-  f.k.store.patch("member", { archivedAt: Date.now(), lastBriefAt: f.report.createdAt + 1, released: { decisionId: f.decision.id, reason: "Returned" } });
+  patchThreadFixture(f.k.store, "member", { archivedAt: Date.now(), lastBriefAt: f.report.createdAt + 1, released: { decisionId: f.decision.id, reason: "Returned" } });
   expect(await decor()).toMatchObject({ moodSignals: { released: true, archived: true, report: null } });
   f.k.memory.note("lead", { kind: "waiting-on-user", text: "Choose the next trail", action: "Choose the next trail", need: "Choose the next trail." });
   expect(await f.harness.invokeRpc("decor", { threadId: "lead" })).toMatchObject({ moodSignals: { handBack: true } });
+});
+
+it("stops and queues the party for archive without archiving its Keeper", async () => {
+  const f = await fixture();
+  f.k.store.put("members", "lead", { ...f.k.member("lead")!, boardQuestId: f.q.id });
+  expect(await f.harness.invokeRpc("stopBoardQuest", { id: f.q.id })).toMatchObject({ phase: "stopped", unconfirmed: 0 });
+  expect(f.k.member("member")).toMatchObject({ engagement: "archiving", disposition: "stopped" });
+  expect(f.k.store.runtime("lead").archivePending).toBeFalsy();
+  expect(f.k.member("lead")?.engagement).toBeUndefined();
 });
 
 it("returns strict JSON from EVERY registered RPC with optional record fields absent", async () => {

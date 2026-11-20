@@ -20,7 +20,7 @@ it("keeps a stop progressing, backs off, and confirms it on a later sweep", asyn
   const f = await party();
   expect(await f.runtime.stop(f.q.id)).toEqual({ phase: "stopping", unconfirmed: 1 });
   expect(f.k.quest(f.q.id)).toMatchObject({ phase: "stopping", endedAt: null });
-  expect(f.k.member("child")).toMatchObject({ stopPending: true, lastStopAttemptAt: f.time() });
+  expect(f.k.member("child")).toMatchObject({ engagement: "stopping", lastStopAttemptAt: f.time() });
   expect(() => f.k.archiveQuests([f.q.id], true, { kind: "user" })).toThrow(/Only done or stopped/);
   await f.runtime.retryStops("lead");
   expect(f.bb.sdk.threads.stop).toHaveBeenCalledTimes(1);
@@ -31,7 +31,7 @@ it("keeps a stop progressing, backs off, and confirms it on a later sweep", asyn
   f.advance(15_000);
   await f.runtime.retryStops("lead");
   expect(f.k.quest(f.q.id)).toMatchObject({ phase: "stopped", endedAt: f.time() });
-  expect(f.k.member("child")).toMatchObject({ stopPending: false, state: "stopped", stopError: null });
+  expect(f.k.member("child")).toMatchObject({ engagement: "archived", disposition: "stopped" });
 });
 it("raises just one blocker after two minutes and withdraws it on confirmation", async () => {
   const f = await party();

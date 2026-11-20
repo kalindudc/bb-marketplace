@@ -1,3 +1,4 @@
+import { memberDetails } from "../member-engagement";
 import { randomUUID } from "node:crypto";
 import type { PlacementRecord } from "../../shared/placement";
 import type { PlacementPolicyRead } from "../../shared/placement-settings";
@@ -217,7 +218,7 @@ export class PlacementController {
       const intent = this.runtime.keeper.store.get("hires", owner.hireToken);
       if (intent) {
         this.runtime.keeper.store.put("hires", owner.hireToken, { ...intent, memberThreadId: threadId, cancelledAt: intent.cancelledAt ?? this.runtime.keeper.now() });
-        this.runtime.keeper.bind(threadId, intent.classId, intent.characterId, intent.projectId, intent.owner);
+        this.runtime.keeper.bind(threadId, intent.classId, intent.characterId, intent.projectId, intent.owner, owner.hireToken);
       }
       return owner;
     });
@@ -341,9 +342,10 @@ export class PlacementController {
     const candidate = this.services.store.get(placementId);
     if (!candidate) throw new Error("Unknown placement.");
     let record = this.services.store.assertCurrent(placementId, generation, candidate.desiredState);
-    if (record.memberThreadId && this.runtime.keeper.store.runtime(record.memberThreadId).placementModelFailureRelease) {
-      if (!await this.runtime.retryModelFailureRelease(record.memberThreadId))
-        throw new Error(this.runtime.keeper.store.runtime(record.memberThreadId).archiveError ?? "Model-failure release is still pending.");
+    const member = record.memberThreadId ? this.runtime.keeper.member(record.memberThreadId) : null;
+    if (member && ["releasing", "stopping", "archiving"].includes(member.engagement ?? "")) {
+      if (!await this.runtime.retryMemberCleanup(member.threadId))
+        throw new Error(memberDetails(this.runtime.keeper.store, member.threadId).operation?.error ?? "Member cleanup is still pending.");
       return this.view(this.services.store.get(record.id)!);
     }
     if (record.memberThreadId && (record.desiredState === "released" || record.blocked?.stage === "preserve" || record.blocked?.stage === "release")) {
@@ -376,12 +378,11 @@ export class PlacementController {
       if (record.phase === "blocked") record = this.services.store.retry(placementId, generation);
       const threadId = [...matches][0];
       record = this.services.provisioner.bindDispatchedMember(record.hireToken, threadId);
-      this.runtime.keeper.bind(threadId, intent.classId, intent.characterId, intent.projectId, intent.owner);
+      this.runtime.keeper.bind(threadId, intent.classId, intent.characterId, intent.projectId, intent.owner, record.hireToken);
       this.runtime.keeper.changed(threadId, record.questId);
       return this.view(record);
     }
     if (!record.blocked) return this.view(record);
-    const member = record.memberThreadId && this.runtime.keeper.member(record.memberThreadId);
     if (!member) throw new Error("This placement has no live member to retry setup.");
     record = this.services.store.retry(placementId, generation);
     if (!record.memberThreadId) throw new Error("This placement has no dispatched member; retry the original hire rather than allocating again.");

@@ -1,3 +1,4 @@
+import { hasEndedEngagement } from "../../shared/member-engagement";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type { Brief } from "../../shared/schema";
 import type { ThreadDecor } from "../../shared/contract";
@@ -15,7 +16,7 @@ import { claimMemberUnderline, memberVisit, recordMemberVisit, rememberMemberNew
 import "./member-brief.css";
 
 export function memberFinished(data: ThreadDecor) {
-  return data.boardQuest?.phase === "done" || data.boardQuest?.phase === "stopped" || !!data.member && ["done", "stopped", "failed"].includes(data.member.state);
+  return data.boardQuest?.phase === "done" || data.boardQuest?.phase === "stopped" || !!data.member && (data.member.state === "failed" || hasEndedEngagement(data.member));
 }
 
 function summary(text: string) {

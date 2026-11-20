@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { patchThreadFixture, runtimeFixture, withMemberFixtures } from "./member-fixture";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createFakePluginHost as createRpcHost } from "@get-bb/plugin-sdk/testing";
 import { setup } from "./runtime-fixture";
@@ -114,7 +115,7 @@ describe("user checker-handoff holds", () => {
     try {
       for (const migration of MIGRATIONS) db.exec(migration);
       new BackupRecords(db, new SettingsStore(db, f.time)).restore(source.capture());
-      const restored = new Keeper(new KeeperStore(db), f.port, f.time);
+      const restored = withMemberFixtures(new Keeper(new KeeperStore(db), f.port, f.time));
       expect(restored.quest(f.q.id).checkerHandoffHold).toEqual(f.q.checkerHandoffHold);
       expect(() => restored.assertCheckerHandoff("warden", f.q.id)).toThrow(/checker handoff.*held/i);
     } finally { db.close(); }
@@ -133,15 +134,15 @@ describe("user checker-handoff holds", () => {
   it("does not send or queue a fresh rebrief to an existing Warden", async () => {
     const f = await goal(); checker(f);
     await expect(f.runtime.tell("lead", "checker", "Check now")).rejects.toThrow(/checker handoff.*held/i);
-    expect(f.k.store.runtime("checker").pendingBrief).toBeUndefined();
+    expect(runtimeFixture(f.k.store, "checker").pendingBrief).toBeUndefined();
     expect(f.harness.inspection.sdk.callsTo("threads.send")).toHaveLength(0);
   });
 
   it("holds an existing pending Warden brief without consuming a delivery attempt", async () => {
     const f = await goal(); checker(f);
-    f.k.store.patch("checker", { pendingBrief: { id: "brief-held", text: "Check now", attempts: 0, nextAttemptAt: f.time(), attemptedAt: null, hostAfterSeq: null, error: null } });
+    patchThreadFixture(f.k.store, "checker", { pendingBrief: { id: "brief-held", text: "Check now", attempts: 0, nextAttemptAt: f.time(), attemptedAt: null, hostAfterSeq: null, error: null } });
     expect(await f.runtime.sendInitialBrief("checker", "Check now")).toEqual({ briefPending: true });
-    expect(f.k.store.runtime("checker").pendingBrief?.attempts).toBe(0);
+    expect(runtimeFixture(f.k.store, "checker").pendingBrief?.attempts).toBe(0);
     expect(f.harness.inspection.sdk.callsTo("threads.send")).toHaveLength(0);
   });
 
@@ -157,7 +158,7 @@ describe("user checker-handoff holds", () => {
   it("keeps hold state through schema/backup JSON and a new Keeper instance", async () => {
     const f = await goal();
     expect(boardQuestSchema.parse(JSON.parse(JSON.stringify(f.q))).checkerHandoffHold).toEqual(f.q.checkerHandoffHold);
-    const restarted = new Keeper(f.k.store, f.port, f.time);
+    const restarted = withMemberFixtures(new Keeper(f.k.store, f.port, f.time));
     expect(restarted.activeCheckerHolds("lead")).toMatchObject([{ id: f.q.id, checkerHandoffHold: { release: null } }]);
   });
 

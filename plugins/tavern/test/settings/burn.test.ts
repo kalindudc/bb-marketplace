@@ -3,10 +3,11 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { BurnCosts } from "../../src/server/insights/burn";
 import type { InsightData } from "../../src/server/insights/aggregate";
 import { boardQuestSchema, memberSchema } from "../../src/shared/schema";
+import { withEngagement } from "../ui/member-fixture";
 const now = 1_800_000_000_000;
 function data(): InsightData {
   const quests = ["q1", "q2"].map(id => boardQuestSchema.parse({ id, keeperThreadId: "keeper", title: id, short: id, phase: "done", planVersion: 1, greenlitVersion: 1, createdAt: now - 10000, updatedAt: now, endedAt: now, archivedAt: null }));
-  const members = ["q1", "q2"].map((id, index) => memberSchema.parse({ threadId: `m${index}`, classId: "smith", characterId: "smith", role: "member", keeperThreadId: "keeper", boardQuestId: id, waypointId: "w1", errand: false, title: id, place: "rest", state: "done", doing: null, createdAt: now - 10000, lastActiveAt: now, lastReportAt: now, strikes: 0, verifiedWins: 1 }));
+  const members = ["q1", "q2"].map((id, index) => memberSchema.parse(withEngagement({ threadId: `m${index}`, classId: "smith", characterId: "smith", role: "member", keeperThreadId: "keeper", boardQuestId: id, waypointId: "w1", errand: false, title: id, place: "rest", state: "done", doing: null, createdAt: now - 10000, lastActiveAt: now, lastReportAt: now, strikes: 0, verifiedWins: 1 })));
   return { quests, members, asks: [], reports: [], events: [], routes: [], gates: [], notes: [] };
 }
 function usage(cost: number) {

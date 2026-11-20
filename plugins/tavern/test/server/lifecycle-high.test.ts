@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { patchThreadFixture, runtimeFixture } from "./member-fixture";
 import { putQuestFixture } from "./support";
 import { seedQuest } from "./support";
 import { expect, it, vi } from "vitest";
@@ -24,10 +25,10 @@ it.each(["confirm", "widen"] as const)("%s a broad rule only resumes its own Kee
 });
 it.each(["done", "stopped"] as const)("drops pending briefs after a quest is %s", async phase => {
   const f = await party();
-  f.k.store.patch("child", { pendingBrief: { id: "old", text: "Again", attempts: 0, nextAttemptAt: 0, attemptedAt: null, hostAfterSeq: null, error: null } });
+  patchThreadFixture(f.k.store, "child", { pendingBrief: { id: "old", text: "Again", attempts: 0, nextAttemptAt: 0, attemptedAt: null, hostAfterSeq: null, error: null } });
   putQuestFixture(f.k.store, f.q.id, { ...f.q, phase, endedAt: f.time() });
   await f.runtime.retryInitialBriefs("lead");
-  expect(f.k.store.runtime("child").pendingBrief).toBeNull();
+  expect(runtimeFixture(f.k.store, "child").pendingBrief).toBeNull();
   expect(f.harness.inspection.sdk.callsTo("threads.send")).toHaveLength(0);
   expect(f.k.store.events("lead").some(event => event.type === "member.brief-refused" && event.data.memberThreadId === "child")).toBe(true);
 });
@@ -36,14 +37,14 @@ it.each(["archivedAt", "deletedAt"] as const)("checks current host %s immediatel
   f.bb.sdk.threads.get = vi.fn(async ({ threadId }) => makeThreadResponse({ id: threadId, [field]: f.time() }));
   await expect(f.runtime.sendRebrief("child", "Again")).rejects.toThrow(/can't take new work/);
   expect(f.harness.inspection.sdk.callsTo("threads.send")).toHaveLength(0);
-  expect(f.k.store.runtime("child").pendingBrief).toBeNull();
+  expect(runtimeFixture(f.k.store, "child").pendingBrief).toBeNull();
 });
 it("a deleted Keeper withdraws asks, records deletion and clears failure state", () => {
   const f = setup();
   const ask = f.k.ask("lead", { effect: {type:"answer-blocker"}, kind: "blocker", question: "Retry?", why: "Failed", options: [{ id: "retry", label: "Retry", detail: "", recommended: true }], meanwhile: "Wait", holds: [] });
   f.k.store.patch("lead", { failureCount: 2, tickRefusalCount: 2, failureAskId: ask.id });
   f.runtime.updateThread(makeThreadResponse({ id: "lead", deletedAt: f.time(), archivedAt: null }));
-  expect(f.k.store.runtime("lead")).toMatchObject({ deletedAt: f.time(), archivedAt: f.time(), failureCount: 0, tickRefusalCount: 0, failureAskId: null });
+  expect(runtimeFixture(f.k.store, "lead")).toMatchObject({ deletedAt: f.time(), archivedAt: f.time(), failureCount: 0, tickRefusalCount: 0, failureAskId: null });
   expect(f.k.store.get("asks", ask.id)?.state).toBe("withdrawn");
 });
 it("withdraws a Keeper's asks when fresh host reads confirm it is not found", async () => {
@@ -53,7 +54,7 @@ it("withdraws a Keeper's asks when fresh host reads confirm it is not found", as
   f.bb.sdk.threads.get = vi.fn(async () => { throw Object.assign(new Error("thread missing"), { status: 404 }); });
   await f.runtime.sweep();
   expect(f.k.store.get("asks", ask.id)?.state).toBe("withdrawn");
-  expect(f.k.store.runtime("lead")).toMatchObject({ failureCount: 0, failureAskId: null, deletedAt: f.time() });
+  expect(runtimeFixture(f.k.store, "lead")).toMatchObject({ failureCount: 0, failureAskId: null, deletedAt: f.time() });
 });
 it("persists only delivered rebrief text, once across repeated retries", async () => {
   const f = await party();

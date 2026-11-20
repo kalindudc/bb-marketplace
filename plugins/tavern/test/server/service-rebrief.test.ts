@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { withMemberFixtures } from "./member-fixture";
 import { putQuestFixture } from "./support";
 import { afterEach, expect, it } from "vitest";
 import { Keeper } from "../../src/server/keeper/service";
@@ -18,7 +19,7 @@ it("a real accepted rebrief removes maker proof but keeps the Warden's independe
     roleOf: id => { const m = k?.member(id); return m ? { ...m, checkerWaypointIds: k.checkerWaypoints(id) } : null; },
     invalidate: () => {}, reviewed: input => runtime.serviceRecords.reviewed(input), superseded: input => runtime.serviceRecords.superseded(input),
   });
-  k = new Keeper(f.k.store, journal, f.time, () => {}); runtime = new TavernRuntime(f.bb, k, f.runtime.registry);
+  k = withMemberFixtures(new Keeper(f.k.store, journal, f.time, () => {})); runtime = new TavernRuntime(f.bb, k, f.runtime.registry);
   k.receiveUser("lead", "Return exactly unknown for NaN."); k.route("lead", { kind: "new-quest", summary: "Format", notes: [] });
   const q = await k.openQuest("lead", "Format", "Exact wording");
   const brief = { outcome: "Format", mode: "make-it-work" as const, outOfScope: "Publish", doneWhen: "Tests pass", context: [], questions: [], timeboxMinutes: null };

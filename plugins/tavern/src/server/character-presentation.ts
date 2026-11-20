@@ -39,7 +39,7 @@ export function readCharacterPresentation(registry: Registry, snapshot: Registry
         AND json_extract(m.data,'$.characterId') IN (${snapshot.characters.map(() => "?").join(",")})
     ) SELECT ranked.characterId, r.id AS reportId, json_extract(r.data,'$.voice') AS line,
       json_extract(r.data,'$.createdAt') AS at, q.id AS questId,
-      CASE WHEN json_extract(t.data,'$.deletedAt') IS NOT NULL THEN NULL
+      CASE WHEN COALESCE(json_extract(t.data,'$.memberEngagement.host.deletedAt'), json_extract(t.data,'$.deletedAt')) IS NOT NULL THEN NULL
         ELSE json_extract(r.data,'$.memberThreadId') END AS threadId
     FROM voice_reports ranked
     JOIN tavern_records r ON r.kind='reports' AND r.id=ranked.reportId

@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { patchThreadFixture, putMemberFixture } from "./member-fixture";
 import { describe, expect, it } from "vitest";
 import { setup } from "./runtime-fixture";
 import { readStatus, statusInput } from "../../src/server/status";
@@ -42,7 +43,7 @@ function page(f: ReturnType<typeof setup>, offset = 0, limit = 3) {
       state: string;
       released: unknown;
     }[];
-    recent: { memberThreadId: string; state: string; released: unknown }[];
+    recent: { memberThreadId: string; state: string; released: unknown; slotNote: string | null }[];
     total: number;
     inFlightCount: number;
     recentCount: number;
@@ -55,8 +56,8 @@ describe("Keeper errands status", () => {
       working = helper(f, "working"),
       done = helper(f, "done"),
       failed = helper(f, "failed");
-    f.k.store.put("members", done.threadId, { ...done, state: "done" });
-    f.k.store.put("members", failed.threadId, { ...failed, state: "failed" });
+    putMemberFixture(f.k.store, done.threadId, { ...done, state: "done" });
+    putMemberFixture(f.k.store, failed.threadId, { ...failed, state: "failed" });
     helper(f, "not-an-errand", "lead", false);
     f.k.bind("other", "keeper", "wren", "project");
     helper(f, "other-helper", "other");
@@ -79,13 +80,18 @@ describe("Keeper errands status", () => {
       "done",
       "failed",
     ]);
+    expect(result.recent).toContainEqual(expect.objectContaining({
+      memberThreadId: failed.threadId,
+      state: "failed",
+      slotNote: "Holds its slot until the Keeper releases it.",
+    }));
     expect(JSON.stringify(result)).not.toContain("other-helper");
   });
   it("pages active errands first and then newest recent errands without omissions", () => {
     const f = setup();
     for (const id of ["old", "middle", "new"]) {
       const m = helper(f, id);
-      f.k.store.put("members", id, { ...m, state: "done" });
+      putMemberFixture(f.k.store, id, { ...m, state: "done" });
       f.advance(1000);
     }
     helper(f, "active");
@@ -102,7 +108,7 @@ describe("Keeper errands status", () => {
   it("keeps a released helper in recent history even before its member state refreshes", () => {
     const f = setup();
     helper(f, "released");
-    f.k.store.patch("released", {
+    patchThreadFixture(f.k.store, "released", {
       released: { reason: "No longer needed", decisionId: "release-decision" },
     });
     expect(page(f)).toMatchObject({

@@ -3,7 +3,9 @@ import { loadPluginApp, renderSlot, type PluginRpcTestHandlers, type RenderedSlo
 import { fireEvent, waitFor, within } from "@testing-library/react";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { boardQuestDetailSchema, ledgerSchema, rpcContract, type BoardQuestDetail, type Room } from "../../../src/shared/contract";
-import formatDuration from "./live-format-duration.json";
+import formatDurationCapture from "./live-format-duration.json";
+import { withEngagement } from "../member-fixture";
+const formatDuration = withEngagement(formatDurationCapture);
 import { registerPageSurfaces } from "../../../src/ui/page/register";
 import * as scenes from "./scenes";
 

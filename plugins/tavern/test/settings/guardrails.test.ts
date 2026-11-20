@@ -1,3 +1,4 @@
+import { putMemberFixture } from "../server/member-fixture";
 import Sqlite from "better-sqlite3";
 import { expect, it } from "vitest";
 import { defineCli, type BbPluginApi } from "@get-bb/plugin-sdk";
@@ -13,7 +14,7 @@ it.each(["member", "keeper"] as const)("blocks guardrail applies from a persiste
  try {
  const store = new SettingsStore(db as unknown as Database);
  const members = new KeeperStore(db as unknown as Database);
- members.put("members","smith",{...fixtureMember,threadId:"smith",classId:"smith",role});
+ putMemberFixture(members, "smith", {...fixtureMember,threadId:"smith",classId:"smith",role});
  members.patch("smith",{archivedAt:123});
  const cli = defineCli({name:"tavern",summary:"Tavern",commands:settingsCommands({} as BbPluginApi,store)});
  const scoped = {threadId:"smith"};

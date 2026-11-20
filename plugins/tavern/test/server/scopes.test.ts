@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { patchThreadFixture, runtimeFixture } from "./member-fixture";
 import { seedQuest } from "./support";
 import {
   existsSync,
@@ -242,7 +243,7 @@ describe("backend scope integration", () => {
     await f.runtime.scopes!.override("lead", "child", { allowRules: ["git-push-main"] }, "Requested push");
     expect(f.runtime.scopes!.pending("child")?.initialBrief).toBeNull();
     await expect(f.runtime.tell("lead", "child", "Review the new work")).rejects.toThrow("scope decision");
-    expect(f.k.store.runtime("child").pendingBrief).toBeNull();
+    expect(runtimeFixture(f.k.store, "child").pendingBrief).toBeNull();
     expect(f.harness.inspection.sdk.callsTo("threads.send")).toHaveLength(0);
   });
 
@@ -256,7 +257,7 @@ describe("backend scope integration", () => {
       f.advance(3_600_000);
       await f.runtime.retryInitialBriefs("lead");
     }
-    expect(f.k.store.runtime("child").pendingBrief).toMatchObject({ attempts: 5 });
+    expect(runtimeFixture(f.k.store, "child").pendingBrief).toMatchObject({ attempts: 5 });
     expect(f.k.store.openAsks("lead").filter(ask => ask.kind === "blocker")).toHaveLength(1);
     expect(f.harness.inspection.sdk.callsTo("threads.send")).toHaveLength(1);
   });
@@ -560,7 +561,7 @@ describe("backend scope integration", () => {
     });
     const ask = f.k.store.openAsks("lead").find((ask) => ask.kind === "scope")!;
     await f.runtime.answerAsk(ask.id, "deny", null, "page");
-    expect(f.k.member("child")?.state).toBe("stopped");
+    expect(f.k.member("child")?.engagement).toBe("released");
     expect(f.k.store.allocated(f.q.id, "smith")).toBe(0);
     expect(f.harness.inspection.sdk.callsTo("threads.send")).toHaveLength(0);
     expect(f.runtime.scopes!.api.status().threads).toHaveLength(0);
@@ -638,7 +639,7 @@ describe("backend scope integration", () => {
   it("retains the scope when wrapping archives the party", async () => {
     const f = await fixture();
     await f.runtime.hire("lead", "project", f.input);
-    f.k.store.patch("child", { archivePending: true });
+    patchThreadFixture(f.k.store, "child", { archivePending: true });
     f.bb.sdk.threads.archive = vi.fn(async () => ({
       ok: true as const,
       archivedThreadIds: ["child"],

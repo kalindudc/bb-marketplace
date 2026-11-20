@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { putMemberFixture } from "./member-fixture";
 import { seedQuest } from "./support";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -62,7 +63,7 @@ describe("class hire snapshots", () => {
     const f = setup();
     const input = { classId: "ranger", errand: true, title: "Scout", brief: { ...brief, questions: ["What changed?"], timeboxMinutes: 5 } };
     const first = await f.runtime.hire("lead", "project", input);
-    f.k.store.put("members", first.threadId, { ...f.k.store.get("members", first.threadId)!, state: "done", place: "rest" });
+    putMemberFixture(f.k.store, first.threadId, { ...f.k.store.get("members", first.threadId)!, state: "done", place: "rest" });
     registerTools(f.bb, f.runtime);
     const text = await f.harness.behavior.invokeAgentTool("tavern_hire", {
       classId: "ranger", errand: true, title: "Follow up",

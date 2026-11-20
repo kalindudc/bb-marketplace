@@ -15,6 +15,7 @@ export const VERIFIED_MS = KNOB_FIELDS.tavern.verifiedPoseMinutes.default * 60_0
 export type MoodFacts = {
   now: number;
   activity: Member["state"];
+  engagement?: Member["engagement"];
   released?: boolean;
   archived?: boolean;
   openAsk?: boolean;
@@ -28,16 +29,16 @@ export type MoodFacts = {
 
 const recent = (now: number, at: number, window: number) => now >= at && now - at < window;
 
-export function characterMood({ now, activity, released, archived, openAsk, handBack, report, verdict, settled, reportedMs = REPORTED_MS, verifiedMs = VERIFIED_MS }: MoodFacts): MoodOrGone {
-  if (released || archived || activity === "stopped") return "released";
+export function characterMood({ now, activity, engagement, released, archived, openAsk, handBack, report, verdict, settled, reportedMs = REPORTED_MS, verifiedMs = VERIFIED_MS }: MoodFacts): MoodOrGone {
+  if (released || archived || engagement === "released" || engagement === "stopped" || engagement === "archived") return "released";
   if (activity === "failed") return "error";
   if (openAsk || handBack || report?.status === "needs-decision") return "waiting";
   if (verdict?.status === "rejected") return "blocked";
   if (report?.status === "blocked" && !(verdict?.status === "verified" && verdict.at !== null && verdict.at >= report.createdAt && verdict.at <= now)) return "blocked";
   if (verdict?.status === "verified" && verdict.at !== null && recent(now, verdict.at, verifiedMs)) return "verified";
   if (report?.status === "done" && recent(now, report.createdAt, reportedMs)) return "reported";
+  if (engagement === "resting" || activity === "idle" && settled) return "resting";
   if (activity === "working") return "working";
-  if (activity === "done" || (activity === "idle" && settled)) return "resting";
   return "idle";
 }
 
@@ -67,6 +68,7 @@ export function widgetMoodFacts(data: ThreadDecor, now: number): MoodFacts {
   return {
     now,
     activity: member?.state ?? "idle",
+    engagement: member?.engagement,
     released: moodSignals?.released === true,
     archived: moodSignals?.archived === true || keeperView?.archived === true || goneQuest(boardQuest),
     openAsk: !!scope?.pendingAskId || !!keeperView?.openAsks.some(a => a.state === "open"),
@@ -97,6 +99,7 @@ export function roomMoodFacts(room: Pick<Room, "keepers" | "asks">, member: Memb
   return {
     now,
     activity: member.state,
+    engagement: member.engagement,
     archived: (member.role === "keeper" && keeper?.archived === true) || goneQuest(quest),
     openAsk: room.asks.some(a => a.state === "open" && (a.scopeChange?.memberThreadId === id || a.keeperThreadId === id)),
     handBack: (member.role === "keeper" && !!keeper?.boardQuests.some(holds)) || !!details.notes?.some(n =>

@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { withMemberFixtures } from "./member-fixture";
 import { seedQuest } from "./support";
 import { describe, expect, it } from "vitest";
 import { setup } from "./runtime-fixture";
@@ -46,7 +47,7 @@ describe("Keeper context-loss recovery", () => {
     );
     const reloaded = new TavernRuntime(
       f.bb,
-      new Keeper(f.k.store, f.port, f.time),
+      withMemberFixtures(new Keeper(f.k.store, f.port, f.time)),
       f.runtime.registry,
     );
     for (let i = 0; i < 5; i++) {

@@ -1,3 +1,5 @@
+import { memberHost } from "./member-engagement";
+import { wasReleased } from "../shared/member-engagement";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
@@ -110,7 +112,7 @@ export class BackendScopes {
           runtime.bb.log.info(`Tavern scope policy protection added ${row.threadId}: ~/.agents/tavern/scopes.yml`);
           if (member) runtime.keeper.changed(row.threadId, member.boardQuestId);
         }
-        if (!member || state.archivedAt || state.deletedAt || state.released || (member.role === "keeper" && row.scope?.preset === "open")) continue;
+        if (!member || memberHost(this.runtime.keeper.store, member).archivedAt !== null || memberHost(this.runtime.keeper.store, member).deletedAt !== null || wasReleased(member) || (member.role === "keeper" && row.scope?.preset === "open")) continue;
         const result = member.role === "keeper"
           ? await this.api.openKeeperScope(row.threadId) ? "updated" : "skipped"
           : this.api.refreshPresetTools(row.threadId);
@@ -364,7 +366,7 @@ export class BackendScopes {
     if (member.boardQuestId) k.guard(keeperThreadId, member.boardQuestId);
     if (this.pending(memberThreadId))
       throw new Error("A scope request is already awaiting the user's answer");
-    if (k.store.runtime(memberThreadId).released)
+    if (wasReleased(k.member(memberThreadId)))
       throw new Error("This member has been released");
     await this.prepare(memberThreadId);
     await this.ensure(member);
@@ -518,7 +520,7 @@ export class BackendScopes {
     if (
       !member ||
       member.keeperThreadId !== request.keeperThreadId ||
-      k.store.runtime(member.threadId).released
+      wasReleased(member)
     )
       throw new Error(
         "The scope request no longer belongs to an active member",
@@ -529,6 +531,7 @@ export class BackendScopes {
           request.keeperThreadId,
           member.threadId,
           "The user declined the task's required scope",
+          { kind: "ask-answer", id: ask.id },
         );
       this.finish(ask, request, "declined");
       return;
@@ -633,7 +636,7 @@ export class BackendScopes {
       member.role === "keeper"
         ? "waiting"
         : violation.stopped
-          ? "stopped"
+          ? "idle"
           : "waiting",
     );
     this.runtime.bb.log.warn(

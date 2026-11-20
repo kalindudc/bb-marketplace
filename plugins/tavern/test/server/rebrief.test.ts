@@ -1,4 +1,6 @@
 // @vitest-environment node
+import { fixtureActivity, patchThreadFixture, runtimeFixture } from "./member-fixture";
+import { memberPlace } from "../../src/shared/member-place";
 import { seedQuest } from "./support";
 import { describe, expect, it, vi } from "vitest";
 import { MEMBER_STATES } from "../../src/shared/schema";
@@ -28,7 +30,7 @@ function told(f: ReturnType<typeof party>) {
 const briefSends = (send: { mock: { calls: { 0: { threadId: string } }[] } }) =>
   send.mock.calls.filter(call => call[0].threadId === "child");
 function pending(f: ReturnType<typeof party>, attempts = 0) {
-  f.k.store.patch("child", { pendingBrief: { id: "brief_old", text: instruction, attempts, nextAttemptAt: f.time(), attemptedAt: attempts ? f.time() : null, hostAfterSeq: null, error: null } });
+  patchThreadFixture(f.k.store, "child", { pendingBrief: { id: "brief_old", text: instruction, attempts, nextAttemptAt: f.time(), attemptedAt: attempts ? f.time() : null, hostAfterSeq: null, error: null } });
 }
 
 describe("member re-brief delivery through the strict host", () => {
@@ -37,8 +39,9 @@ describe("member re-brief delivery through the strict host", () => {
     const send = vi.spyOn(f.bb.sdk.threads, "send");
     expect(await f.tell()).toContain("Brief delivered to Pip");
     expect(send).toHaveBeenCalledWith(expect.objectContaining({ threadId: "child", mode: "queue-if-active", input: [expect.objectContaining({ text: expect.stringContaining(instruction) })] }));
-    expect(f.k.member("child")).toMatchObject({ state: "working", place: "road" });
-    expect(f.k.store.runtime("child")).toMatchObject({ pendingBrief: null, briefVersion: 2, reportedBriefVersion: 1 });
+    expect(f.k.member("child")).toMatchObject({ state: "working", engagement: "active" });
+    expect(memberPlace(f.k.member("child")!)).toBe("road");
+    expect(runtimeFixture(f.k.store, "child")).toMatchObject({ pendingBrief: null, briefVersion: 2, reportedBriefVersion: 1 });
     expect(f.k.store.get("reports", report.id)).toEqual(report);
     expect(told(f)).toHaveLength(1);
     expect(told(f)[0]?.data).toMatchObject({ delivery: "delivered", briefPending: false });
@@ -46,23 +49,23 @@ describe("member re-brief delivery through the strict host", () => {
     expect(f.k.store.events("lead", 0, 200).some(event => event.type === "member.unreported")).toBe(true);
   });
 
-  it.each(MEMBER_STATES.filter(state => state !== "done" && state !== "stopped"))("delivers to a %s member and activates the new generation", async state => {
+  it.each(MEMBER_STATES)("delivers to a %s member and activates the new generation", async state => {
     const f = party();
     f.k.activity("child", state);
     expect(await f.tell()).toContain("Brief delivered to Pip");
-    expect(f.k.store.runtime("child")).toMatchObject({ pendingBrief: null, briefVersion: 2 });
+    expect(runtimeFixture(f.k.store, "child")).toMatchObject({ pendingBrief: null, briefVersion: 2 });
     expect(f.k.member("child")?.state).toBe("working");
     expect(f.harness.inspection.sdk.callsTo("threads.send")).toHaveLength(1);
   });
 
   it.each(["stopped", "released", "release-pending", "archive-pending"] as const)("refuses a %s member without persisting a retry", async state => {
     const f = party();
-    if (state === "stopped") f.k.activity("child", "stopped");
-    if (state === "released") f.k.store.patch("child", { released: { reason: "Old task ended", decisionId: "release-old" } });
-    if (state === "release-pending") f.k.store.patch("child", { releasePending: "Stopping" });
-    if (state === "archive-pending") f.k.store.patch("child", { archivePending: true });
+    if (state === "stopped") fixtureActivity(f.k, "child", "stopped");
+    if (state === "released") patchThreadFixture(f.k.store, "child", { released: { reason: "Old task ended", decisionId: "release-old" } });
+    if (state === "release-pending") patchThreadFixture(f.k.store, "child", { releasePending: "Stopping" });
+    if (state === "archive-pending") patchThreadFixture(f.k.store, "child", { archivePending: true });
     await expect(f.tell()).rejects.toThrow(/Pip .*can't take new work; hire a replacement or re-plan/);
-    expect(f.k.store.runtime("child").pendingBrief).toBeFalsy();
+    expect(runtimeFixture(f.k.store, "child").pendingBrief).toBeFalsy();
     await f.runtime.retryInitialBriefs("lead");
     expect(f.harness.inspection.sdk.callsTo("threads.send")).toHaveLength(0);
     expect(told(f)).toHaveLength(0);
@@ -75,8 +78,8 @@ describe("member re-brief delivery through the strict host", () => {
     f.k.store.put("members", "child", { ...f.k.member("child")!, boardQuestId: quest.id });
     f.k.receiveUser("lead", "What time is it?");
     f.k.route("lead", { kind: "question", summary: "A question", notes: [] });
-    if (state === "stopped") f.k.activity("child", "stopped");
-    else f.k.store.patch("child", { released: { reason: "Old release", decisionId: "old" } });
+    if (state === "stopped") fixtureActivity(f.k, "child", "stopped");
+    else patchThreadFixture(f.k.store, "child", { released: { reason: "Old release", decisionId: "old" } });
     await expect(f.tell()).rejects.toThrow(`Pip is ${state} and can\u0027t take new work`);
     expect(f.harness.inspection.sdk.callsTo("threads.send")).toHaveLength(0);
   });
@@ -84,10 +87,10 @@ describe("member re-brief delivery through the strict host", () => {
   it.each(["stopped", "released"] as const)("clears an old zero-attempt pending brief for a %s member instead of retrying", async state => {
     const f = party();
     pending(f);
-    if (state === "stopped") f.k.activity("child", "stopped");
-    else f.k.store.patch("child", { released: { reason: "Old release", decisionId: "old" } });
+    if (state === "stopped") fixtureActivity(f.k, "child", "stopped");
+    else patchThreadFixture(f.k.store, "child", { released: { reason: "Old release", decisionId: "old" } });
     await f.runtime.retryInitialBriefs("lead");
-    expect(f.k.store.runtime("child").pendingBrief).toBeNull();
+    expect(runtimeFixture(f.k.store, "child").pendingBrief).toBeNull();
     expect(f.harness.inspection.sdk.callsTo("threads.send")).toHaveLength(0);
     expect(f.k.store.openAsks("lead")).toHaveLength(0);
   });
@@ -98,7 +101,7 @@ describe("member re-brief delivery through the strict host", () => {
     pending(f);
     const restarted = new TavernRuntime(f.bb, f.k, f.runtime.registry);
     await restarted.retryInitialBriefs("lead");
-    expect(f.k.store.runtime("child")).toMatchObject({ pendingBrief: null, briefVersion: 2 });
+    expect(runtimeFixture(f.k.store, "child")).toMatchObject({ pendingBrief: null, briefVersion: 2 });
     expect(f.k.member("child")?.state).toBe("working");
     expect(f.harness.inspection.sdk.callsTo("threads.send")).toHaveLength(1);
     expect(told(f).at(-1)?.data).toMatchObject({ delivery: "delivered", briefPending: false });
@@ -109,13 +112,13 @@ describe("member re-brief delivery through the strict host", () => {
     reported(f);
     const send = vi.spyOn(f.bb.sdk.threads, "send").mockRejectedValueOnce(new Error("temporarily offline"));
     expect(await f.tell()).toContain("attempt 1 of 5");
-    expect(f.k.store.runtime("child").pendingBrief).toMatchObject({ attempts: 1 });
-    expect(f.k.member("child")?.state).toBe("done");
+    expect(runtimeFixture(f.k.store, "child").pendingBrief).toMatchObject({ attempts: 1 });
+    expect(f.k.member("child")?.engagement).toBe("briefing");
     expect(told(f).at(-1)?.data).toMatchObject({ delivery: "retrying", briefPending: true, attempts: 1 });
     f.advance(60_001);
     await f.runtime.retryInitialBriefs("lead");
     expect(briefSends(send)).toHaveLength(2);
-    expect(f.k.store.runtime("child")).toMatchObject({ pendingBrief: null, briefVersion: 2 });
+    expect(runtimeFixture(f.k.store, "child")).toMatchObject({ pendingBrief: null, briefVersion: 2 });
     expect(f.k.member("child")?.state).toBe("working");
     expect(told(f).at(-1)?.data).toMatchObject({ delivery: "delivered", briefPending: false });
   });
@@ -125,11 +128,15 @@ describe("member re-brief delivery through the strict host", () => {
     reported(f);
     const send = vi.spyOn(f.bb.sdk.threads, "send").mockResolvedValueOnce({ delivery: "queued" } as never);
     expect(await f.tell()).toContain("Brief queued in bb for Pip; delivery is not confirmed");
-    expect(f.k.store.runtime("child")).toMatchObject({ briefVersion: 1, pendingBrief: { attempts: 1 } });
-    expect(f.k.member("child")?.state).toBe("done");
+    expect(runtimeFixture(f.k.store, "child")).toMatchObject({ briefVersion: 1, pendingBrief: { attempts: 1 } });
+    expect(f.k.member("child")?.engagement).toBe("briefing");
+    const pendingId = runtimeFixture(f.k.store, "child").pendingBrief?.id;
+    f.k.report("child", { status: "done", outcome: "A final note from the old work", evidence: [], artifacts: [], confidence: null, voice: null });
+    expect(f.k.member("child")?.engagement).toBe("briefing");
+    expect(runtimeFixture(f.k.store, "child").pendingBrief?.id).toBe(pendingId);
     f.runtime.dispatched({ threadId: "child", originPluginId: "tavern", content: send.mock.calls[0]![0].input } as never);
     expect(f.k.member("child")?.state).toBe("working");
-    expect(f.k.store.runtime("child")).toMatchObject({ pendingBrief: null, briefVersion: 2 });
+    expect(runtimeFixture(f.k.store, "child")).toMatchObject({ pendingBrief: null, briefVersion: 2 });
     expect(told(f).map(event => event.data.delivery)).toEqual(["queued", "delivered"]);
     expect(send).toHaveBeenCalledOnce();
   });
@@ -144,7 +151,7 @@ describe("member re-brief delivery through the strict host", () => {
       await f.runtime.retryInitialBriefs("lead");
     }
     expect(briefSends(send)).toHaveLength(5);
-    expect(f.k.store.runtime("child").pendingBrief).toMatchObject({ attempts: 5 });
+    expect(runtimeFixture(f.k.store, "child").pendingBrief).toMatchObject({ attempts: 5 });
     expect(f.k.store.openAsks("lead").filter(ask => ask.kind === "blocker")).toHaveLength(1);
     expect(await f.tell()).toContain("Automatic retries have stopped");
     f.advance(3_600_000);
@@ -157,11 +164,11 @@ describe("member re-brief delivery through the strict host", () => {
   it("refuses a member stopped during the pre-send lookup without restoring pending state", async () => {
     const f = party();
     vi.spyOn(f.bb.sdk.threads.events, "list").mockImplementation(async () => {
-      f.k.activity("child", "stopped");
+      fixtureActivity(f.k, "child", "stopped");
       return [];
     });
     await expect(f.tell()).rejects.toThrow("Pip is stopped and can\u0027t take new work");
-    expect(f.k.store.runtime("child").pendingBrief).toBeNull();
+    expect(runtimeFixture(f.k.store, "child").pendingBrief).toBeNull();
     expect(f.harness.inspection.sdk.callsTo("threads.send").filter(call => (call.args[0] as { threadId: string }).threadId === "child")).toHaveLength(0);
   });
 
@@ -170,7 +177,7 @@ describe("member re-brief delivery through the strict host", () => {
     const config = f.runtime.config();
     vi.spyOn(f.runtime, "config").mockReturnValue({ ...config, tavern: { ...config.tavern, paused: true } });
     await expect(f.tell()).rejects.toThrow(/Tavern is paused/);
-    expect(f.k.store.runtime("child").pendingBrief).toBeNull();
+    expect(runtimeFixture(f.k.store, "child").pendingBrief).toBeNull();
     expect(f.harness.inspection.sdk.callsTo("threads.send")).toHaveLength(0);
   });
 });

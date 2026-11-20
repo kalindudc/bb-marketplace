@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { withMemberFixtures } from "./member-fixture";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -77,7 +78,7 @@ async function fixture(format: "sha1" | "sha256" = "sha1", size = 32) {
   } }); hosts.add(host);
   const db = host.bb.storage.database(); db.exec(MIGRATIONS.join(";\n"));
   const placements = new PlacementStore(db), port = createHostPort(host.bb);
-  const k = new Keeper(new KeeperStore(db), fakePort(), Date.now, () => {});
+  const k = withMemberFixtures(new Keeper(new KeeperStore(db), fakePort(), Date.now, () => {}));
   k.bind("keeper", "keeper", "wren", "project");
   k.bind("member", "smith", "vale", "project", { keeperThreadId: "keeper", boardQuestId: null, waypointId: null, errand: true, title: "Work",
     brief: { outcome: "Work", doneWhen: "Checks", mode: "make-it-work", outOfScope: "Production", context: [], questions: [], timeboxMinutes: null } });

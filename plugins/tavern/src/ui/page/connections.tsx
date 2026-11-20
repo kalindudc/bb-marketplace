@@ -1,3 +1,4 @@
+import { hasEndedEngagement, memberActivityWord } from "../../shared/member-engagement";
 import { experimental_useRpcQuery, experimental_copyToClipboard, experimental_saveFile, useBbNavigate } from "@get-bb/plugin-sdk/app";
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { rpcContract, type Room } from "../../shared/contract";
@@ -52,7 +53,7 @@ function useWidth<T extends HTMLElement>() {
   return [ref, width] as const;
 }
 
-function memberSub(registry: Registry, m: Member) { const cls = classLabel(registry, m.classId); return `${cls ? `${cls.label} (${cls.plain})` : "Unknown class"} · ${m.state}`; }
+function memberSub(registry: Registry, m: Member, status = memberActivityWord(m)) { const cls = classLabel(registry, m.classId); return `${cls ? `${cls.label} (${cls.plain})` : "Unknown class"} · ${status}`; }
 
 type Laid = { n: PictureNode; x: number; y: number; w: number; h: number; label: string; sub: string; title: string; focused: boolean; tall: boolean };
 /** One layout for the screen and the export, so a shared image matches what the user saw. */
@@ -232,7 +233,7 @@ export function TheMap({ room, registry }: { room: Room; registry: Registry }) {
   const [receipt, setReceipt] = useState<string | null>(null);
   const listHeading = useId();
   useEffect(() => { if (!receipt) return; const t = setTimeout(() => setReceipt(null), 6000); return () => clearTimeout(t); }, [receipt]);
-  const errands = room.keepers.flatMap((k) => k.errands).filter((m) => !isFinished(m.state));
+  const errands = room.keepers.flatMap((k) => k.errands).filter((m) => !hasEndedEngagement(m));
   const open = room.asks.filter((a) => a.state === "open" && (a.boardQuestId === null || !hidden.has(a.boardQuestId))).sort((a, b) => a.createdAt - b.createdAt);
   const outside = graph.nodes.filter((n) => n.kind === "outside");
   const quest = (id?: string) => quests.find((q) => q.id === id);
@@ -247,7 +248,7 @@ export function TheMap({ room, registry }: { room: Room; registry: Registry }) {
   const order = (m: Member) => m.state === "failed" ? 0 : m.state === "working" ? 1 : m.state === "waiting" ? 2 : 3;
   for (const n of [...members].sort((a, b) => order(a.member) - order(b.member))) {
     const m = n.member;
-    rows.push({ key: n.id, tone: m.state === "failed" ? "bad" : m.strikes > 0 ? "bad" : m.state === "working" ? "work" : m.state === "done" ? "done" : "wait", member: m, title: `${characterName(registry, m)} · ${m.doing ?? m.title ?? m.state}`, place: n.kind === "errand" ? "Side quest" : quest(n.questId)?.short ?? "", sub: memberSub(registry, m), run: () => navigate.toThread(m.threadId), label: `Open ${characterName(registry, m)}'s thread` });
+    rows.push({ key: n.id, tone: m.state === "failed" ? "bad" : m.strikes > 0 ? "bad" : m.state === "working" ? "work" : m.engagement === "resting" ? "done" : "wait", member: m, title: `${characterName(registry, m)} · ${m.doing ?? m.title ?? m.state}`, place: n.kind === "errand" ? "Side quest" : quest(n.questId)?.short ?? "", sub: memberSub(registry, m, n.detail), run: () => navigate.toThread(m.threadId), label: `Open ${characterName(registry, m)}'s thread` });
   }
   const archivedRows: ListRow[] = [];
   for (const k of room.keepers) {

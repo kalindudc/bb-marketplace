@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { withMemberFixtures } from "./member-fixture";
 import { deliverGate, readyGate } from "./placement-e2e-ready";
 import { createFakePluginHost, makeThreadResponse, makeMessageDispatchHookContext } from "@get-bb/plugin-sdk/testing";
 import { fileURLToPath } from "node:url";
@@ -82,7 +83,7 @@ function nativeSourceFixture() {
 
 async function fixture() {
   const f = nativeSourceFixture(), trace: string[] = [];
-  const db = f.bb.storage.database(), k = new Keeper(new KeeperStore(db), fakePort(), () => 1_000_000);
+  const db = f.bb.storage.database(), k = withMemberFixtures(new Keeper(new KeeperStore(db), fakePort(), () => 1_000_000));
   const runtime = new TavernRuntime(f.bb, k, new Registry(fileURLToPath(new URL("../../", import.meta.url)), "/nonexistent"));
   const settings = new SettingsStore(db);
   runtime.enableSettings(settings, new InsightsReader(db, settings));

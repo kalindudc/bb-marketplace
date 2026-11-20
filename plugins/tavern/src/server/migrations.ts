@@ -107,6 +107,8 @@ const APPENDED: string[] = [
        AND (json_extract(data,'$.waypointCall.as') IS NOT NULL OR json_extract(data,'$.exceeds') IS NOT NULL);`,
   `CREATE TABLE tavern_setup_proposals (id TEXT PRIMARY KEY, data TEXT NOT NULL CHECK(json_valid(data)));
    CREATE INDEX tavern_setup_pending ON tavern_setup_proposals(id) WHERE json_extract(data, '$.proposal.state') = 'pending';`,
+  `CREATE INDEX tavern_member_engagement_events ON tavern_events(json_extract(data,'$.memberThreadId'),id)
+     WHERE json_type(data,'$.engagement')='object';`,
 ];
 
 export const MIGRATIONS: string[] = [

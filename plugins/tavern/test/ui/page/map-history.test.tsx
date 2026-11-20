@@ -7,7 +7,7 @@ import { PanelStateProvider } from "../../../src/ui/page/panel-state";
 import { TheMap } from "../../../src/ui/page/connections";
 import { fixtureQuest, fixtureMember, fixtureRegistry } from "../../../src/ui/thread/fixtures";
 import { richRoom } from "./scenes";
-const member = { ...fixtureMember, threadId: "past-member", role: "member" as const, displayName: "Wren II", state: "done" as const };
+const member = { ...fixtureMember, threadId: "past-member", role: "member" as const, displayName: "Wren II", state: "idle" as const, engagement: "resting" as const };
 const quest = { ...fixtureQuest, id: "past", phase: "done" as const, archivedAt: 10, endedAt: 20, members: [member] };
 const keeper = { ...richRoom.keepers[0]!, archived: true, member: { ...fixtureMember, threadId: "past-keeper" }, boardQuests: [quest], errands: [] };
 const room = { ...richRoom, keepers: [keeper], asks: [], solos: [] };

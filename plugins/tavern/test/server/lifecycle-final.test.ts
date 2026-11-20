@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { fixtureActivity, patchThreadFixture, putMemberFixture } from "./member-fixture";
 import type { ExperimentalPluginRpcHandlerContext } from "@get-bb/plugin-sdk";
 import { concludeQuest, putQuestFixture } from "./support";
 import { seedQuest } from "./support";
@@ -34,8 +35,8 @@ it.each(["stopped", "stopping"] as const)("wrap refuses a %s quest without rewri
 });
 it.each(["released", "failed", "stopped"] as const)("wrap preserves %s members\u0027 state but archives their threads", async state => {
   const f = await fixture();
-  if (state === "released") f.k.store.patch("child", { released: { reason: "Done here", decisionId: "d" } });
-  else f.k.store.put("members", "child", { ...f.k.member("child")!, state });
+  if (state === "released") patchThreadFixture(f.k.store, "child", { released: { reason: "Done here", decisionId: "d" } });
+  else putMemberFixture(f.k.store, "child", { state });
   const before = f.k.member("child");
   await f.wrap();
   expect(f.k.member("child")?.state).toBe(before?.state);
@@ -59,25 +60,25 @@ it.each(["done", "stopped", "stopping"] as const)("all Keeper write paths refuse
 });
 it.each(["done", "stopped", "released", "ended"] as const)("stores a late report from %s without reviving the member or notifying the Keeper", async state => {
   const f = await fixture();
-  if (state === "released") f.k.store.patch("child", { released: { reason: "Done", decisionId: "d" } });
+  if (state === "released") patchThreadFixture(f.k.store, "child", { released: { reason: "Done", decisionId: "d" } });
   else if (state === "ended") putQuestFixture(f.k.store, f.q.id, { ...f.k.quest(f.q.id), phase: "done", endedAt: f.time() });
-  else f.k.store.put("members", "child", { ...f.k.member("child")!, state });
-  const before = f.k.member("child")?.state;
+  else putMemberFixture(f.k.store, "child", { state });
+  const before = f.k.member("child")!;
   const report = f.k.report("child", { status: "blocked", outcome: "Late", evidence: [], artifacts: [], confidence: { intent: 100, safe: 100 }, voice: null });
   expect(f.k.store.get("reports", report.id)).not.toBeNull();
-  expect(f.k.member("child")?.state).toBe(before);
+  expect(f.k.member("child")).toMatchObject({ state: before.state, engagement: before.engagement });
   expect(f.k.store.events("lead").some(e => e.type === "report.filed")).toBe(false);
   expect(f.k.store.events("lead").some(e => e.type === "report.late")).toBe(true);
 });
 it("waiting activity cannot reopen a done member and thread updates cannot reopen ended work", async () => {
   const f = await fixture();
-  f.k.activity("child", "done");
+  fixtureActivity(f.k, "child", "done");
   f.k.activity("child", "waiting");
-  expect(f.k.member("child")?.state).toBe("done");
-  f.k.store.put("members", "child", { ...f.k.member("child")!, state: "stopped" });
+  expect(f.k.member("child")).toMatchObject({ state: "waiting", engagement: "resting" });
+  putMemberFixture(f.k.store, "child", { ...f.k.member("child")!, state: "stopped" });
   putQuestFixture(f.k.store, f.q.id, { ...f.k.quest(f.q.id), phase: "stopped", endedAt: f.time() });
   f.runtime.updateThread(makeThreadResponse({ id: "child", status: "idle" }));
-  expect(f.k.member("child")?.state).toBe("stopped");
+  expect(f.k.member("child")).toMatchObject({ state: "idle", engagement: "stopped" });
 });
 it("archive and journal housekeeping do not resume a manually stopped Keeper", async () => {
   const f = await fixture();

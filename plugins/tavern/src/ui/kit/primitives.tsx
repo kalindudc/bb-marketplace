@@ -1,3 +1,4 @@
+import { memberActivityWord } from "../../shared/member-engagement";
 import { clockTime } from "../../shared/time";
 export { clockTime, moveTime } from "../../shared/time";
 import { PHASE_STEPS, phaseIndex, phaseWord } from "./phase";
@@ -84,7 +85,7 @@ export function MemberChip({ member, registry, compact = false, onOpen, summary 
   const identity = memberIdentity(registry, member);
   const name = identity?.character.name ?? member.displayName ?? member.characterId;
   const content = <>{identity ? <Crest {...identity} size={compact ? 16 : 22} /> : <span className="tag" aria-label="Unknown character">?</span>}{!compact && <span className="who-t"><b>{name}</b><span className="anc">{identity ? `${identity.cls.label} · ${identity.cls.plain}` : `Unknown class: ${member.classId}`}</span></span>}</>;
-  const title = `${name} · ${identity?.cls.label ?? member.classId} (${identity?.cls.plain ?? "unknown"}) · ${member.state}${reviewLimitation(member.checkIndependence) ? ` · ${reviewLimitation(member.checkIndependence)}` : ""}${member.guardPosture ? ` · ${member.guardPosture.label}` : ""}${(summary ?? member.doing) ? ` · ${summary ?? member.doing}` : ""}`;
+  const title = `${name} · ${identity?.cls.label ?? member.classId} (${identity?.cls.plain ?? "unknown"}) · ${memberActivityWord(member)}${reviewLimitation(member.checkIndependence) ? ` · ${reviewLimitation(member.checkIndependence)}` : ""}${member.guardPosture ? ` · ${member.guardPosture.label}` : ""}${(summary ?? member.doing) ? ` · ${summary ?? member.doing}` : ""}`;
   return onOpen ? <button type="button" className="who who-btn act" title={`Open ${title}`} aria-label={`Open ${title}`} onClick={() => onOpen(member.threadId)}>{content}<OpensMark /></button> : <span className="who" title={title}>{content}</span>;
 }
 
@@ -181,7 +182,7 @@ export function reportLabels(reports: readonly ReportRef[], authors: ReadonlyMap
 }
 /** What a party member is doing, in words for people: its report line with names in place of ids, else its state. Never a raw id. */
 export function memberSummary(member: Member, members: Member[], registry: Registry, quests: BoardQuestSummary[] = []): string {
-  return (member.doing ? extractReportHeadline({ outcome: member.doing }, summaryNames(member, members, registry, quests)) : null) ?? member.state;
+  return (member.doing ? extractReportHeadline({ outcome: member.doing }, summaryNames(member, members, registry, quests)) : null) ?? memberActivityWord(member, quests.some(q => q.id === member.boardQuestId && (q.phase === "done" || q.phase === "stopped")));
 }
 
 /** The party in three places. `quests` are the quests these members are on (the quest page passes its quest; the room, the Keeper's quests), so their reports can name waypoints and quests. */
@@ -194,7 +195,7 @@ export function PartyPicture({ members, registry, onOpen, mini = false, quests =
   const seen = useRef(new Map<string, { place: string; x: number; y: number }>());
   const { cue, settle } = useTavernMotion(surface);
   const lively = ambientMotion === "lively";
-  const onRoad = members.some(m => memberPlace(m.state) === "road");
+  const onRoad = members.some(m => memberPlace(m) === "road");
   useEffect(() => {
     if (!lively || !onRoad) return;
     const timer = setInterval(() => {
@@ -224,7 +225,7 @@ export function PartyPicture({ members, registry, onOpen, mini = false, quests =
     }
     seen.current = next;
   });
-  return <div ref={root} className={`party ${mini ? "mini" : ""}`} role="group" aria-label="The party (team)">{(["road", "table", "rest"] as const).map(place => { const here = members.filter(m => memberPlace(m.state) === place); return <div className={`zone ${place}`} key={place}><div className="zh"><b><Vocabulary word={place} /></b><span className="num">{here.length}</span></div><div className="zm">{here.length === 0 ? <span className="m">Nobody</span> : here.map(m => { const summary = memberSummary(m, members, registry, quests); return <div className={`pm ${m.state === "failed" ? "fail" : ""}`} key={m.threadId} data-member={m.threadId} data-place={place}>{renderMember ? renderMember(m, summary) : <MemberChip member={m} registry={registry} onOpen={onOpen} compact={mini} summary={summary} />}{!mini && <CheckIndependence member={m} />}{!mini && <GuardPosture member={m} />}{!mini && <Clamp className="pm-s" text={summary} />}{!renderMember && <PlacementFacts placement={m.placement} memberName={memberName(m, registry)} variant={mini ? "compact" : "row"} />}</div>; })}</div></div>; })}</div>;
+  return <div ref={root} className={`party ${mini ? "mini" : ""}`} role="group" aria-label="The party (team)">{(["road", "table", "rest"] as const).map(place => { const here = members.filter(m => memberPlace(m) === place); return <div className={`zone ${place}`} key={place}><div className="zh"><b><Vocabulary word={place} /></b><span className="num">{here.length}</span></div><div className="zm">{here.length === 0 ? <span className="m">Nobody</span> : here.map(m => { const summary = memberSummary(m, members, registry, quests); return <div className={`pm ${m.state === "failed" ? "fail" : ""}`} key={m.threadId} data-member={m.threadId} data-place={place}>{renderMember ? renderMember(m, summary) : <MemberChip member={m} registry={registry} onOpen={onOpen} compact={mini} summary={summary} />}{!mini && <CheckIndependence member={m} />}{!mini && <GuardPosture member={m} />}{!mini && <Clamp className="pm-s" text={summary} />}{!renderMember && <PlacementFacts placement={m.placement} memberName={memberName(m, registry)} variant={mini ? "compact" : "row"} />}</div>; })}</div></div>; })}</div>;
 }
 
 /** Reversible calls, one line each: the title truncates and the why folds open in place; age and Undo stay on the row. */

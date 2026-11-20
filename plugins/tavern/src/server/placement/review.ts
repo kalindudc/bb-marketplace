@@ -1,3 +1,6 @@
+import { memberHost } from "../member-engagement";
+import { isLiveMember } from "../liveness";
+import { wasReleased } from "../../shared/member-engagement";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { createHash, randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
@@ -48,16 +51,16 @@ export class PlacementReview {
       if (!isDeepStrictEqual(record.reviewTarget, pinned) || !isDeepStrictEqual(state.reviewTarget, target))
         superseded("The review no longer matches its pinned snapshot and journal assignment.");
       if (!["ready", "running"].includes(record.phase) || record.hostId !== initial.hostId || record.environmentId !== initial.environmentId || record.root !== initial.root ||
-          !record.hostId || !record.root || !record.acknowledgedScopeRevision || state.released || state.archivedAt != null)
+          !record.hostId || !record.root || !record.acknowledgedScopeRevision || !warden || memberHost(this.keepers, warden).archivedAt !== null)
         throw new Error("The Warden placement or content readiness changed before its verdict.");
       let waypointFingerprint: string;
       try { waypointFingerprint = reviewWaypointFingerprint(this.keepers, target); }
       catch { throw new Error("The quest or waypoint is no longer active; no verdict is needed."); }
       if (!warden || warden.classId !== "warden" || warden.checkerMakerThreadId !== pinned.makerThreadId || warden.checkerWaypointId !== target.waypointId ||
-          warden.boardQuestId !== target.boardQuestId || ["done", "stopped", "failed"].includes(warden.state) ||
+          warden.boardQuestId !== target.boardQuestId || warden.state === "failed" || !isLiveMember(this.keepers, warden, "work") ||
           role?.classId !== "warden" || role.boardQuestId !== target.boardQuestId ||
           !(role.checkerWaypointIds ? role.checkerWaypointIds.includes(target.waypointId) : role.waypointId === null || role.waypointId === target.waypointId) ||
-          !makerMember || makerMember.boardQuestId !== target.boardQuestId || this.keepers.runtime(pinned.makerThreadId).released ||
+          !makerMember || makerMember.boardQuestId !== target.boardQuestId || wasReleased(makerMember) ||
           waypointFingerprint !== target.waypointFingerprint)
         superseded("The reviewed waypoint or Warden assignment changed.");
       const submission = this.keepers.runtime(pinned.makerThreadId).submissionTarget;
@@ -108,7 +111,7 @@ export function reviewWaypointFingerprint(keepers: KeeperStore, target: ReviewTa
   const plan = quest ? keepers.get("plans", `${quest.id}:${quest.planVersion}`) : null;
   const waypoint = plan?.waypoints.find(item => item.id === target.waypointId);
   if (!plan || !waypoint || !quest || ["done", "stopped", "stopping"].includes(quest.phase)) throw new Error("The reviewed waypoint is no longer active.");
-  const members = keepers.all("members").filter(member => member.boardQuestId === quest.id && !keepers.runtime(member.threadId).released);
+  const members = keepers.all("members").filter(member => member.boardQuestId === quest.id && !wasReleased(member));
   // Preserve existing fingerprints when a plan makes its implicit Warden check explicit.
   const { check, ...work } = waypoint;
   const binding = check === "warden" ? work : waypoint;

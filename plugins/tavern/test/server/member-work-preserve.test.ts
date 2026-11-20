@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { runtimeFixture } from "./member-fixture";
 import { putQuestFixture } from "./support";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -65,7 +66,7 @@ describe("member work preservation before cleanup", () => {
 
     expect(f.archive).not.toHaveBeenCalled();
     expect(result.pendingArchives).toContain("child");
-    expect(f.runtime.keeper.store.runtime("child").archiveError).toMatch(/worktree/);
+    expect(runtimeFixture(f.runtime.keeper.store, "child").archiveError).toMatch(/worktree/);
     expect(readFileSync(join(plain, "notes.txt"), "utf8")).toBe("uncommitted member work\n");
     expect(f.k.store.events("lead").some(event => event.type === "quest.archive-failed")).toBe(true);
     expect(f.k.store.events("lead").some(event => event.type === "member.work-preserved")).toBe(false);

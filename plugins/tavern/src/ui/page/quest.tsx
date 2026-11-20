@@ -1,3 +1,4 @@
+import { hasEndedEngagement } from "../../shared/member-engagement";
 import { experimental_useRpcMutation, useBbNavigate } from "@get-bb/plugin-sdk/app";
 import { useId, useMemo, useState } from "react";
 import { rpcContract, type BoardQuestDetail, type BoardQuestSummary, type Room } from "../../shared/contract";
@@ -59,7 +60,7 @@ function StopQuest({ detail, registry }: { detail: BoardQuestDetail; registry: R
   if (phase === "done" || phase === "stopped") return { button: null, confirm: null, stopping: null };
   const problem = stop.error && <p role="alert" className="tavern problem">Could not stop: {stop.error.message}</p>;
   if (phase === "stopping") {
-    const pending = quest.members.filter((m) => m.stopPending);
+    const pending = quest.members.filter((m) => m.engagement === "stopping" || m.engagement === "archived" && !!m.stopError);
     /** Hires that were cancelled before they bound to a thread, which Tavern hasn't confirmed ended: no thread to open, so a title and its class. */
     const hires = quest.stopPendingHires ?? [];
     const fresher = answer && answer.at >= quest.updatedAt;
@@ -84,7 +85,7 @@ function StopQuest({ detail, registry }: { detail: BoardQuestDetail; registry: R
       </section>{problem}</>,
     };
   }
-  const live = quest.members.filter((m) => m.state !== "done" && m.state !== "stopped").length;
+  const live = quest.members.filter((m) => !hasEndedEngagement(m)).length;
   const act = () => call(reason.trim() || null);
   return {
     button: <button type="button" className="btn danger" aria-expanded={armed} onClick={() => setArmed(!armed)}><PageGlyph name="stop" /><span>Stop quest</span></button>,

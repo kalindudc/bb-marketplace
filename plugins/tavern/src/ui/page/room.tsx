@@ -1,3 +1,4 @@
+import { hasEndedEngagement, memberActivityWord } from "../../shared/member-engagement";
 import { attentionView } from "../../shared/attention";
 import { StopAllNotice } from "./stop-all";
 import { useBbNavigate } from "@get-bb/plugin-sdk/app";
@@ -132,13 +133,13 @@ function useSinceLastVisit() {
 export function SideQuests({ room, registry }: { room: Room; registry: Registry }) {
   const navigate = useBbNavigate();
   const errands = room.keepers.flatMap((k) => k.errands.map((m) => ({ m, keeper: k.member })));
-  const live = errands.filter(({ m }) => m.state !== "done" && m.state !== "stopped");
-  const done = errands.filter(({ m }) => m.state === "done" || m.state === "stopped");
+  const live = errands.filter(({ m }) => !hasEndedEngagement(m));
+  const done = errands.filter(({ m }) => hasEndedEngagement(m));
   const [doneOpen, setDoneOpen] = usePanelState("room.errands.done", false);
   if (!errands.length) return null;
   return <Section title={<Vocabulary word="errand" plural />} count={`${live.length} out`} aside="kept apart from quests" level={3}>
     <div className="tv-errands">{live.map(({ m, keeper }) => <Fragment key={m.threadId}><button type="button" className="tv-erow act" onClick={() => navigate.toThread(m.threadId)} title={`Open ${characterName(registry, m)}'s thread`}>
-      <CrestOf member={m} registry={registry} size={16} /><span className="tv-erow-t"><b>{m.title ?? m.doing ?? "Side quest"}</b> <span className="m">· {characterName(registry, m)} for {characterName(registry, keeper)}</span></span><StateMark tone={m.state === "failed" ? "bad" : m.state === "working" ? "work" : "wait"}>{m.state}</StateMark><OpensMark />
+      <CrestOf member={m} registry={registry} size={16} /><span className="tv-erow-t"><b>{m.title ?? m.doing ?? "Side quest"}</b> <span className="m">· {characterName(registry, m)} for {characterName(registry, keeper)}</span></span><StateMark tone={m.state === "failed" ? "bad" : m.state === "working" ? "work" : "wait"}>{memberActivityWord(m)}</StateMark><OpensMark />
     </button><PlacementFacts placement={m.placement} memberName={characterName(registry, m)} /></Fragment>)}
       {done.length > 0 && <details className="tv-fold-d" open={doneOpen} onToggle={(event) => { const now = (event.currentTarget as HTMLDetailsElement).open; if (now !== doneOpen) setDoneOpen(now); }}><summary className="tv-fold act"><ExpandsMark open={doneOpen} />{done.length} done · {done.map(({ m }) => m.title ?? characterName(registry, m)).join(", ")}</summary>{done.map(({ m }) => <Fragment key={m.threadId}><button type="button" className="tv-erow done act" onClick={() => navigate.toThread(m.threadId)}><CrestOf member={m} registry={registry} size={16} /><span className="tv-erow-t"><b>{m.title ?? "Side quest"}</b> <span className="m" data-content>· {m.doing}</span></span><StateMark tone="done">done</StateMark><OpensMark /></button><PlacementFacts placement={m.placement} memberName={characterName(registry, m)} /></Fragment>)}</details>}
     </div>
@@ -150,7 +151,7 @@ export function Solos({ room, registry }: { room: Room; registry: Registry }) {
   if (!room.solos.length) return null;
   return <Section title={<>Solos <span className="anc">your own typed threads</span></>} count={`${plural(room.solos.length, "thread")}`} level={3}>
     <div className="tv-errands">{room.solos.map((m) => { const cls = classLabel(registry, m.classId); return <Fragment key={m.threadId}><button type="button" className="tv-erow solo act" onClick={() => navigate.toThread(m.threadId)} title={`Open ${characterName(registry, m)}'s thread`}>
-      <CrestOf member={m} registry={registry} size={16} /><span className="tv-erow-t"><b>{characterName(registry, m)}</b> <span className="m">· {cls ? cls.label : m.classId}{m.title ? ` · ${m.title}` : ""}</span></span><StateMark tone={m.state === "working" ? "work" : m.state === "failed" ? "bad" : m.state === "done" ? "done" : "wait"}>{m.state}</StateMark><OpensMark />
+      <CrestOf member={m} registry={registry} size={16} /><span className="tv-erow-t"><b>{characterName(registry, m)}</b> <span className="m">· {cls ? cls.label : m.classId}{m.title ? ` · ${m.title}` : ""}</span></span><StateMark tone={m.state === "working" ? "work" : m.state === "failed" ? "bad" : m.engagement === "resting" ? "done" : "wait"}>{memberActivityWord(m)}</StateMark><OpensMark />
     </button><PlacementFacts placement={m.placement} memberName={characterName(registry, m)} /></Fragment>; })}</div>
   </Section>;
 }

@@ -161,6 +161,8 @@ describe("tick delivery regressions", () => {
   it("H4 splits an oversized escaped outcome without marking it until its final part", async () => {
     const { k, runtime, advance } = setup();
     bind(k);
+    await runtime.tick("lead");
+    advance(61_000);
     const r = k.report("child", { ...report, outcome: "\u0000".repeat(4000) });
     await runtime.tick("lead");
     expect(k.store.get("reports", r.id)?.deliveredAt).toBeNull();
@@ -182,7 +184,7 @@ describe("tick delivery regressions", () => {
       return makeThreadResponse({ id: threadId });
     };
     await expect(runtime.sweep()).resolves.toBeUndefined();
-    expect(k.member("lead")?.state).toBe("stopped");
+    expect(k.store.runtime("lead")).toMatchObject({ deletedAt: expect.any(Number), archivedAt: expect.any(Number) });
     expect(sent(harness)).toHaveLength(1);
     expect(sent(harness)[0]).toContain("next");
   });

@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { withMemberFixtures } from "../server/member-fixture";
 import { seedQuest } from "../server/support";
 import { describe, expect, it, vi } from "vitest";
 import { Keeper } from "../../src/server/keeper/service";
@@ -84,7 +85,7 @@ describe("quiet-end queued tick recovery", () => {
     await expect(f.runtime.tick("lead")).rejects.toThrow("queue temporarily unavailable");
     expect(f.k.store.runtime("lead").queuedTickResetId).toBeTypeOf("string");
     expect(f.k.store.runtime("lead").cursor).toBe(cursor);
-    const keeper = new Keeper(new KeeperStore(f.k.store.db), f.port, f.time, () => {});
+    const keeper = withMemberFixtures(new Keeper(new KeeperStore(f.k.store.db), f.port, f.time, () => {}));
     const runtime = new TavernRuntime(f.bb, keeper, f.runtime.registry), settings = new SettingsStore(f.k.store.db, f.time);
     runtime.enableSettings(settings, new InsightsReader(f.k.store.db, settings, f.time));
     await runtime.tick("lead");

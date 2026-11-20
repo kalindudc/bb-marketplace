@@ -1,3 +1,5 @@
+import { isMemberMachineGone, MACHINE_RELEASED, memberDetails, memberHost, patchMemberDetails, transitionMember } from "../member-engagement";
+import { wasReleased } from "../../shared/member-engagement";
 import { commitUserAct, type UserActReceipt } from "../authority";
 import { randomUUID } from "node:crypto";
 import { hasAwayDenials, localAwayPrevention, narrowAwayScope } from "./denials";
@@ -33,12 +35,12 @@ export class AwayRuntime {
   }
   private get k() { return this.runtime.keeper; }
   private eligible(member: Member | null): member is Member {
-    return member?.role === "member" && isLiveMember(this.k.store, member, "work");
+    return member?.role === "member" && member.state !== "failed" && isLiveMember(this.k.store, member, "work");
   }
   private preservationEligible(member: Member | null): member is Member {
     if (member?.role !== "member") return false;
-    const state = this.k.store.runtime(member.threadId);
-    return !state.released && state.archivedAt == null && state.deletedAt == null;
+    const host = memberHost(this.k.store, member);
+    return !wasReleased(member) && host.archivedAt === null && host.deletedAt === null;
   }
   private heldEligible(threadId: string): boolean {
     const member = this.k.member(threadId);
@@ -51,8 +53,7 @@ export class AwayRuntime {
     for (const quest of this.k.store.all("quests")) if (isOpenQuest(quest)) ids.add(quest.keeperThreadId);
     for (const member of this.k.store.all("members")) {
       if (member.role !== "member" || !member.keeperThreadId) continue;
-      const state = this.k.store.runtime(member.threadId);
-      if (state.archivePending || state.releasePending || isLiveMember(this.k.store, member, "occupy")) ids.add(member.keeperThreadId);
+      if (["archiving", "releasing", "stopping"].includes(member.engagement ?? "") || member.state !== "failed" && isLiveMember(this.k.store, member, "occupy")) ids.add(member.keeperThreadId);
     }
     for (const hire of this.k.store.all("hires")) if (!hire.memberThreadId && !isHireCancelled(this.k, hire)) ids.add(hire.owner.keeperThreadId);
     return ids;
@@ -83,7 +84,7 @@ export class AwayRuntime {
     }
     return { ...state, status: { ...state.status, followUp: holds.some(hold => this.followsWindow(state.status.windowId, hold)) }, watchedCount, watchedByQuest: [...counts].map(([questId, group]) => ({ questId, watchedCount: group.watchedCount })),
       eligibleByQuest: [...counts].map(([questId, group]) => ({ questId, ...group })),
-      soloCount: this.k.store.all("members").filter(member => member.role === "solo" && isLiveMember(this.k.store, member, "work")).length, heldCount: holds.length,
+      soloCount: this.k.store.all("members").filter(member => member.role === "solo" && member.state !== "failed" && isLiveMember(this.k.store, member, "work")).length, heldCount: holds.length,
       pendingStops: holds.filter(hold => hold.stopPending).map(hold => ({ threadId: hold.threadId, error: hold.error })),
       resumeRequired: holds.filter(hold => hold.resumeRequired).map(({ threadId, keeperThreadId, questId }) => ({ threadId, keeperThreadId, questId })) };
   }
@@ -109,15 +110,14 @@ export class AwayRuntime {
     return window;
   }
   assertWork(questId: string | null, threadId?: string) {
-    if (threadId !== undefined && this.cleanupHeld() && this.k.store.runtime(threadId).archivePending) throw new Error("This finished quest is waiting for deferred cleanup; do not assign new work.");
+    if (threadId !== undefined && this.cleanupHeld() && this.k.member(threadId)?.engagement === "archiving") throw new Error("This finished quest is waiting for deferred cleanup; do not assign new work.");
     if (this.policy(questId, threadId).mode === "held") throw new Error("Tavern is closed; this work is held until you return. Watched work needs the explicit closing-time opt-in.");
   }
   blocked(threadId: string) {
     const member = this.k.member(threadId);
     if (member?.role !== "member") return false;
     const hold = this.holds.get(threadId);
-    const state = this.k.store.runtime(threadId);
-    return state.archivedAt != null || state.archivePending === true || !!hold && (hold.resumeRequired || hold.stopPending) || this.policy(member.boardQuestId, member.threadId).mode === "held";
+    return member.engagement === "archived" || member.engagement === "archiving" || !!hold && (hold.resumeRequired || hold.stopPending) || this.policy(member.boardQuestId, member.threadId).mode === "held";
   }
   private stage(input: Member) {
     const member = this.k.member(input.threadId);
@@ -128,7 +128,7 @@ export class AwayRuntime {
   }
   private holdOwner(member: Member) {
     if (member.role !== "member" || !member.keeperThreadId) throw new Error("A member hold requires a party member with a Keeper");
-    const pending = this.k.store.runtime(member.threadId).pendingBrief;
+    const pending = memberDetails(this.k.store, member.threadId).delivery;
     return { threadId: member.threadId, keeperThreadId: member.keeperThreadId, questId: member.boardQuestId,
       heldAt: this.k.now(), cancelledBrief: pending ? { id: pending.id, text: pending.text } : null };
   }
@@ -208,10 +208,12 @@ export class AwayRuntime {
     const member = this.k.member(ctx.thread.id);
     await this.detectReturn(ctx);
     if (member?.role !== "member") return null;
-    if (this.k.store.runtime(member.threadId).archivedAt != null || ctx.thread.archivedAt !== null || ctx.thread.deletedAt !== null)
+    if (member.engagement === "archived" || ctx.thread.archivedAt !== null || ctx.thread.deletedAt !== null)
       return { action: "wait" as const, reason: "This member's thread is archived or deleted; queued work cannot run." };
+    if ((member.engagement === "released" || member.engagement === "stopped") && isMemberMachineGone(this.runtime.placements().store.byMember(member.threadId)))
+      return { action: "reject" as const, message: `${this.k.name(member)}: ${MACHINE_RELEASED}` };
     this.stage(member);
-    if (this.k.store.runtime(member.threadId).archivePending) return { action: "wait" as const, reason: "This finished quest is waiting for deferred cleanup; queued work will not replay." };
+    if (["archiving", "stopping", "releasing"].includes(member.engagement ?? "")) return { action: "wait" as const, reason: "This finished quest is waiting for deferred cleanup; queued work will not replay." };
     if (this.holds.get(member.threadId)?.reasons.some(reason => reason.kind === "content")) return { action: "wait" as const, reason: "A content transfer holds this member; it must finish before fresh Keeper instructions. No queued work is replayed." };
     return this.blocked(member.threadId) ? { action: "wait" as const, reason: "Closing time paused this member; the Keeper must send a fresh brief after return. No queued work is replayed." } : null;
   }
@@ -293,10 +295,13 @@ export class AwayRuntime {
       const current = this.holds.get(threadId)!;
       if (current.reasons.some(reason => reason.kind === "content")) throw new Error("A content transfer still holds this member; finish it before sending fresh instructions.");
       if (current.stopPending) throw new Error("The member's previous turn has not stopped; retry the interruption before sending work.");
-      const pending = this.k.store.runtime(threadId).pendingBrief;
+      const details = memberDetails(this.k.store, threadId), pending = details.delivery;
       if (!this.holds.compareAndSet(current, { resumeRequired: false, reasons: [], cancelledBrief: pending ? { id: pending.id, text: pending.text } : current.cancelledBrief })) throw new Error("Member hold changed; retry the fresh instruction");
       if (pending) {
-        this.k.store.patch(threadId, { pendingBrief: null });
+        const member = this.k.member(threadId)!;
+        if (member.engagement === "briefing" && details.rest) {
+          transitionMember(this.k.store, member, "resting", "rebrief-cancelled", { kind: "tavern" }, { kind: "brief-cancelled", id: pending.id, evidence: { holdVersion: current.version } }, this.k.now(), { details: { delivery: null } });
+        } else patchMemberDetails(this.k.store, threadId, { delivery: null });
         if (pending.blockerAskId) this.k.withdrawAsk(pending.blockerAskId, "turn-recovered");
       }
     });

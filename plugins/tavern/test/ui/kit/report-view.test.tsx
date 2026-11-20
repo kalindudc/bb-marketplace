@@ -1,3 +1,4 @@
+import { withEngagement } from "../member-fixture";
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from "vitest";
 import { cleanup, render } from "@testing-library/react";
@@ -9,7 +10,7 @@ import live from "./live-iszeroduration.json";
 
 afterEach(cleanup);
 // Captured from the live isZeroDuration quest (13:57 build): Vex's report names its maker and quest by raw id.
-const quest = boardQuestSummarySchema.parse(live.quest);
+const quest = boardQuestSummarySchema.parse(withEngagement(live.quest));
 const vexReport = reportSchema.parse(live.report);
 const vex = quest.members.find((m) => m.threadId === vexReport.memberThreadId)!;
 const names = summaryNames(vex, quest.members, scenes.registry, [quest]);

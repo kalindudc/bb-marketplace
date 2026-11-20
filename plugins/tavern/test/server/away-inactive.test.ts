@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { fixtureActivity, patchThreadFixture, putMemberFixture, runtimeFixture } from "./member-fixture";
 import { putQuestFixture } from "./support";
 import { seedQuest } from "./support";
 import { describe, expect, it, vi } from "vitest";
@@ -21,10 +22,10 @@ async function fixture() {
   const close = () => f.runtime.away.close({ revision: 0, until: f.time() + 60_000, quests: [] });
   const inactive = (kind: string) => {
     const member = f.k.member("child")!;
-    if (kind === "done" || kind === "failed") f.k.store.put("members", member.threadId, { ...member, state: kind });
-    else if (kind === "deleted") f.k.store.patch(member.threadId, { deletedAt: f.time() });
+    if (kind === "done" || kind === "failed") putMemberFixture(f.k.store, member.threadId, { ...member, state: kind });
+    else if (kind === "deleted") patchThreadFixture(f.k.store, member.threadId, { deletedAt: f.time() });
     else if (kind === "ended-quest") putQuestFixture(f.k.store, quest.id, { ...quest, endedAt: f.time() });
-    else if (kind === "archived") f.k.store.patch(member.threadId, { archivedAt: f.time() });
+    else if (kind === "archived") patchThreadFixture(f.k.store, member.threadId, { archivedAt: f.time() });
     else if (kind === "finished-quest") putQuestFixture(f.k.store, quest.id, { ...quest, phase: "done", endedAt: f.time() });
     else throw new Error(`Unknown inactive fixture: ${kind}`);
   };
@@ -107,7 +108,7 @@ describe("inactive away participants", () => {
 async function drain(f: Awaited<ReturnType<typeof fixture>>, queue: ReturnType<typeof makeQueueEntry>[], delivered: string[]) {
   for (const row of [...queue]) {
     const text = row.content.filter(block => block.type === "text").map(block => block.text).join("\n");
-    const result = await f.runtime.dispatch(makeMessageDispatchHookContext({ thread: { id: "child", status: "idle", archivedAt: f.k.store.runtime("child").archivedAt ?? null },
+    const result = await f.runtime.dispatch(makeMessageDispatchHookContext({ thread: { id: "child", status: "idle", archivedAt: runtimeFixture(f.k.store, "child").archivedAt ?? null },
       queuedMessages: [row], initiator: "agent", originPluginId: "tavern", senderThreadId: "lead", input: { text, blocks: row.content } }));
     if (result.action !== "proceed") continue;
     delivered.push(row.id); queue.splice(queue.indexOf(row), 1); f.runtime.dispatched(row);
@@ -121,7 +122,7 @@ describe("inactive queued briefs", () => {
   it.each([false, true])("keeps an already queued brief read-only while closed, delivering once only if still unarchived: %s", async archived => {
     const f = await fixture(); f.inactive("done"); await f.close();
     const queue = [briefRow("brief", "New work")], delivered: string[] = [];
-    f.k.store.patch("child", { pendingBrief: { id: "brief", text: "New work", attempts: 1, nextAttemptAt: f.time(), attemptedAt: f.time(), hostAfterSeq: 0, error: null } });
+    patchThreadFixture(f.k.store, "child", { pendingBrief: { id: "brief", text: "New work", attempts: 1, nextAttemptAt: f.time(), attemptedAt: f.time(), hostAfterSeq: 0, error: null } });
     f.bb.sdk.threads.queuedMessages.list = async ({ threadId }) => threadId === "child" ? queue : [];
     vi.spyOn(f.bb.experimental_hooks, "recheck").mockImplementation(async () => { await drain(f, queue, delivered); });
     await drain(f, queue, delivered);
@@ -142,35 +143,44 @@ describe("inactive queued briefs", () => {
     f.bb.sdk.threads.queuedMessages.list = async ({ threadId }) => threadId === "child" ? queue : [];
     vi.spyOn(f.bb.experimental_hooks, "recheck").mockImplementation(async () => { await drain(f, queue, delivered); });
     const send = vi.spyOn(f.bb.sdk.threads, "send").mockImplementation(async () => {
-      const pending = f.k.store.runtime("child").pendingBrief!;
+      const pending = runtimeFixture(f.k.store, "child").pendingBrief!;
       queue.push(briefRow(pending.id, pending.text)); await drain(f, queue, delivered);
       return queue.length ? { delivery: "queued", ok: true, queuedMessage: queue[0]! } : { delivery: "sent", ok: true };
     });
     const sources = captureRequestSources(f.k, "lead", f.quest.id), frozenText = `New work\n\n${requestSourcePacket(f.k, sources)}`;
     expect(sources.sources).toHaveLength(1); expect(frozenText).toContain("\nDraft\n");
     expect(await f.runtime.sendRebrief("child", "New work")).toEqual({ briefPending: true });
-    const pending = f.k.store.runtime("child").pendingBrief!;
+    const pending = runtimeFixture(f.k.store, "child").pendingBrief!;
     expect(pending.assignmentText).toBe("New work"); expect(pending.text).toBe(frozenText); expect(pending.requestSources).toEqual(sources);
     await f.runtime.retryInitialBriefs("lead");
     expect(send).not.toHaveBeenCalled(); expect(delivered).toEqual([]);
-    expect(f.k.store.runtime("child").pendingBrief).toEqual(pending);
+    expect(runtimeFixture(f.k.store, "child").pendingBrief).toEqual(pending);
     expect(f.runtime.away.snapshot().watchedCount).toBe(0); expect(f.hold()).toBeUndefined();
     if (archived) f.runtime.updateThread(makeThreadResponse({ id: "child", status: "idle", archivedAt: f.time() }));
     await f.runtime.away.return(returned); await f.runtime.retryInitialBriefs("lead"); await f.runtime.retryInitialBriefs("lead");
     expect(send).toHaveBeenCalledTimes(archived ? 0 : 1);
     if (archived) {
-      expect(f.k.store.runtime("child").pendingBrief).toBeNull();
+      expect(runtimeFixture(f.k.store, "child").pendingBrief).toBeNull();
       const refused = f.k.store.events("lead", 0, 200).filter(event => event.type === "member.brief-refused");
       expect(refused).toHaveLength(1); expect(refused[0]!.data).toEqual({ memberThreadId: "child", briefId: pending.id });
       expect(refused[0]!.text).toContain("archived");
     } else {
       expect(send.mock.calls[0]![0].input).toEqual([{ type: "text", text: `[Tavern brief] id=${pending.id}\n${frozenText}`, mentions: [], visibility: "agent-only" }]);
-      expect(f.k.store.runtime("child")).toMatchObject({ pendingBrief: null, assignmentText: "New work", requestSources: sources });
+      expect(runtimeFixture(f.k.store, "child")).toMatchObject({ pendingBrief: null, assignmentText: "New work", requestSources: sources });
     }
     expect(delivered).toEqual(archived ? [] : ["queued-brief"]);
     expect(f.k.store.runtime("child").briefVersion ?? 0).toBe(archived ? 0 : 1);
     expect(f.stop).not.toHaveBeenCalled(); expect(f.remove).not.toHaveBeenCalled(); expect(f.hold()).toBeUndefined();
   });
+});
+
+it.each(["released", "stopped"] as const)("admits a direct user message to an open unplaced %s thread", async state => {
+  const f = await fixture();
+  if (state === "released") patchThreadFixture(f.k.store, "child", { released: { reason: "Finished", decisionId: "release" } });
+  else fixtureActivity(f.k, "child", "stopped");
+  const result = await f.runtime.away.dispatch(makeMessageDispatchHookContext({ thread: { id: "child", status: "idle" }, initiator: "user" }));
+  expect(result).toBeNull();
+  expect(f.k.member("child")?.engagement).toBe(state);
 });
 
 describe("away lifecycle boundaries", () => {
@@ -183,7 +193,7 @@ describe("away lifecycle boundaries", () => {
   });
   it.each(["quiet", "deleted"])("does not re-anchor a %s Keeper on close or Return", async kind => {
     const f = await fixture(); f.inactive("done");
-    f.k.store.patch("lead", { reanchor: "Existing facts", queuedTickResetId: "existing-reset", ...(kind === "quiet" ? { manualStopAt: f.time() } : { deletedAt: f.time() }) });
+    patchThreadFixture(f.k.store, "lead", { reanchor: "Existing facts", queuedTickResetId: "existing-reset", ...(kind === "quiet" ? { manualStopAt: f.time() } : { deletedAt: f.time() }) });
     const before = f.k.store.runtime("lead");
     await f.close(); await f.runtime.away.return(returned);
     expect(f.k.store.runtime("lead")).toEqual(before);
@@ -194,7 +204,7 @@ describe("away lifecycle boundaries", () => {
 describe("archived Keeper reopening", () => {
   it.each(["late-report", "restart"])("never sends an archived Keeper a tick without Closing time: %s", async cause => {
     const f = await fixture();
-    f.k.store.patch("lead", { archivedAt: f.time() });
+    patchThreadFixture(f.k.store, "lead", { archivedAt: f.time() });
     f.k.report("child", { status: "done", outcome: "Late findings", evidence: [], artifacts: [], confidence: null, voice: null });
     const runtime = cause === "restart" ? new TavernRuntime(f.bb, f.k, f.runtime.registry) : f.runtime;
     await runtime.sweep();
@@ -203,7 +213,7 @@ describe("archived Keeper reopening", () => {
   });
   it("does not re-anchor or rebuild an archived Keeper's queue on close, Return or a later tick", async () => {
     const f = await fixture(); f.inactive("done");
-    f.k.store.patch("lead", { archivedAt: f.time(), reanchor: "Old facts", queuedTickResetId: "old-reset" });
+    patchThreadFixture(f.k.store, "lead", { archivedAt: f.time(), reanchor: "Old facts", queuedTickResetId: "old-reset" });
     const before = f.k.store.runtime("lead");
     await f.close(); await f.runtime.away.return(returned); await f.runtime.tick("lead");
     expect(f.send).not.toHaveBeenCalled();
@@ -219,7 +229,7 @@ describe("archived Keeper reopening", () => {
   });
   it("rechecks cached archival immediately before sending after awaited event reads", async () => {
     const f = await fixture(); f.k.reanchor("lead", "Facts ready");
-    f.bb.sdk.threads.events.list = async () => { f.k.store.patch("lead", { archivedAt: f.time() }); return []; };
+    f.bb.sdk.threads.events.list = async () => { patchThreadFixture(f.k.store, "lead", { archivedAt: f.time() }); return []; };
     await f.runtime.tick("lead");
     expect(f.send).not.toHaveBeenCalled();
   });

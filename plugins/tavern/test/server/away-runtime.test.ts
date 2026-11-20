@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { patchThreadFixture, runtimeFixture } from "./member-fixture";
 import { seedQuest } from "./support";
 import { describe, expect, it, vi } from "vitest";
 import { makeMessageDispatchHookContext, makeQueueEntry } from "@get-bb/plugin-sdk/testing";
@@ -43,7 +44,7 @@ describe("Closing time runtime", () => {
     expect(result.code).toBe("closed");
     expect(f.stop).toHaveBeenCalledWith({ threadId: "child" });
     expect(f.k.store.get("quests", f.quest.id)).toEqual(before);
-    expect(f.k.store.runtime("child").released).toBeFalsy();
+    expect(runtimeFixture(f.k.store, "child").released).toBeFalsy();
     expect(f.k.member("child")?.state).not.toBe("stopped");
     expect(f.k.store.runtime("lead").manualStopAt).toBe(f.time());
     expect(f.runtime.away.snapshot()).toMatchObject({ heldCount: 1, pendingStops: [] });
@@ -82,7 +83,7 @@ describe("Closing time runtime", () => {
   });
   it("does not reopen by the clock or replay an old pending brief on return", async () => {
     const f = await party();
-    f.k.store.patch("child", { pendingBrief: { id: "old", text: "Old work", attempts: 0, nextAttemptAt: f.time(), attemptedAt: null, hostAfterSeq: null, error: null } });
+    patchThreadFixture(f.k.store, "child", { pendingBrief: { id: "old", text: "Old work", attempts: 0, nextAttemptAt: f.time(), attemptedAt: null, hostAfterSeq: null, error: null } });
     await f.close();
     f.advance(90_000);
     expect(f.runtime.away.snapshot().status).toMatchObject({ closed: true, dueBack: true });
@@ -176,7 +177,7 @@ describe("Closing time runtime", () => {
     await f.close(false, "pause");
     const result = operation === "release" ? f.runtime.release("lead", "child", "Old stale worker") : f.runtime.proposeWrap("lead", f.quest.id, "Done", "Nothing");
     await expect(result).rejects.toThrow(/closed/i);
-    expect(f.k.store.runtime("child").released).toBeFalsy();
+    expect(runtimeFixture(f.k.store, "child").released).toBeFalsy();
   });
   it.each(["production", "cluster-write"] as const)("sends an opted-in %s wake after two hours, once across restart", async kind => {
     const f = await party();

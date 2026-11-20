@@ -97,7 +97,7 @@ describe("character voice modes without orchestration changes", () => {
     const f = fixture(); f.setMode(mode);
     expect(f.k.report("child", report)).toMatchObject({ ...report, voice: mode === "off" ? null : report.voice });
     expect(f.k.store.all("reports")[0]).toMatchObject({ ...report, voice: mode === "off" ? null : report.voice });
-    expect(f.k.member("child")!.state).toBe("done");
+    expect(f.k.member("child")!.engagement).toBe("resting");
   });
   for (const mode of MODES) it.each(["blocked", "needs-decision"] as const)(`never allows voice on %s reports in ${mode}`, status => {
     const f = fixture(); f.setMode(mode);

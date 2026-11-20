@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { runtimeFixture } from "./member-fixture";
 import { concludeQuest, putQuestFixture } from "./support";
 import { afterEach, expect, it, vi } from "vitest";
 import { makeThreadResponse } from "@get-bb/plugin-sdk/testing";
@@ -30,6 +31,29 @@ async function fixture(placed = true) {
   return { ...f, quest, owner, archive, archived, local, save, wrap };
 }
 
+function confirmPlacementRelease(f: Awaited<ReturnType<typeof fixture>>) {
+  const placements = f.runtime.placements().store, record = placements.byMember("child")!;
+  const cancelled = placements.cancel(record.id, record.generation);
+  placements.update(cancelled.id, cancelled.generation, current => ({ ...current, phase: "releasing",
+    preservation: { ...current.preservation, source: current.preservation.source === "saved" ? "saved" : "not-needed",
+      liveOwnerThreadId: null, stopConfirmed: true } }), "released");
+  placements.finishRelease(cancelled.id, cancelled.generation, true);
+  f.archived.add("child");
+  return { state: "released" as const };
+}
+
+it("does not complete a placed release from a host reply alone, and records one release after reconciliation", async () => {
+  const f = await fixture();
+  f.save.mockResolvedValue({ state: "released" });
+  expect(await f.runtime.release("lead", "child", "Release")).toBe(false);
+  expect(f.k.member("child")?.engagement).toBe("releasing");
+  expect(f.k.store.events("lead").filter(event => event.type === "member.released")).toHaveLength(0);
+  confirmPlacementRelease(f);
+  expect(await f.runtime.release("lead", "child", "Release")).toBe(true);
+  expect(await f.runtime.release("lead", "child", "Release")).toBe(true);
+  expect(f.k.store.events("lead").filter(event => event.type === "member.released").map(e => e.data.engagement)).toEqual([{ from: "releasing", to: "released" }]);
+});
+
 it.each(["wrap", "conclude", "cellar", "delete"] as const)("preserves a placed member before %s archives it and retains a failed save for Retry", async path => {
   const f = await fixture();
   let pending: string[];
@@ -39,7 +63,7 @@ it.each(["wrap", "conclude", "cellar", "delete"] as const)("preserves a placed m
     const proposed = await f.runtime.proposeWrap("lead", f.quest.id, "Draft tested", "", []);
     expect(f.save).not.toHaveBeenCalled();
     await f.runtime.answerAsk(proposed.askId!, "conclude", null, "page", true);
-    pending = f.k.store.runtime("child").archivePending ? ["child"] : [];
+    pending = runtimeFixture(f.k.store, "child").archivePending ? ["child"] : [];
   } else {
     putQuestFixture(f.k.store, f.quest.id, { ...f.k.quest(f.quest.id), phase: "done", endedAt: f.time() });
     pending = path === "cellar" ? (await f.runtime.archiveBoardQuests([f.quest.id], true)).pendingArchives : (await f.runtime.deleteBoardQuest(f.quest.id)).pendingArchives;
@@ -47,11 +71,11 @@ it.each(["wrap", "conclude", "cellar", "delete"] as const)("preserves a placed m
   expect(pending).toContain("child");
   expect(f.save).toHaveBeenCalledOnce(); expect(f.local).not.toHaveBeenCalledWith("child");
   expect(f.archive.mock.calls.some(([input]) => input.threadId === "child")).toBe(false);
-  expect(f.k.store.runtime("child").archiveError).toContain("save refused");
-  f.save.mockResolvedValue({ state: "released" });
+  expect(runtimeFixture(f.k.store, "child").archiveError).toContain("save refused");
+  f.save.mockImplementation(async () => confirmPlacementRelease(f));
   expect(await f.runtime["archiveMembers"]([f.k.member("child")!])).toEqual([]);
   expect(f.archive.mock.calls.some(([input]) => input.threadId === "child")).toBe(false);
-  expect(f.k.store.runtime("child")).toMatchObject({ archivePending: false, archiveError: null });
+  expect(runtimeFixture(f.k.store, "child")).toMatchObject({ archivePending: false, archiveError: null });
 });
 
 it("keeps a placed errand's report archive pending with the exact blocker and never runs local preservation", async () => {
@@ -61,8 +85,8 @@ it("keeps a placed errand's report archive pending with the exact blocker and ne
   const reply = await f.harness.behavior.invokeAgentTool("tavern_report", report, { threadId: "child" });
   expect(String(reply)).toContain("save refused");
   expect(f.save).toHaveBeenCalledOnce(); expect(f.local).not.toHaveBeenCalled(); expect(f.archive).not.toHaveBeenCalled();
-  expect(f.k.store.runtime("child")).toMatchObject({ archivePending: true, archiveError: expect.stringContaining("save refused") });
-  f.save.mockResolvedValue({ state: "released" });
+  expect(runtimeFixture(f.k.store, "child")).toMatchObject({ archivePending: true, archiveError: expect.stringContaining("save refused") });
+  f.save.mockImplementation(async () => confirmPlacementRelease(f));
   expect(await f.runtime["archiveMembers"]([f.k.member("child")!])).toEqual([]);
   expect(f.archive).not.toHaveBeenCalled();
 });
@@ -85,21 +109,99 @@ it("keeps unplaced release on main's non-committing path", async () => {
 it("does not use the stale pre-preservation active thread after placed release succeeds", async () => {
   const f = await fixture();
   f.bb.sdk.threads.get = vi.fn(async ({ threadId }: { threadId: string }) => makeThreadResponse({ id: threadId, status: "active" }));
-  f.save.mockResolvedValue({ state: "released" });
+  f.save.mockImplementation(async () => confirmPlacementRelease(f));
   expect(await f.runtime.release("lead", "child", "Release")).toBe(true);
-  expect(f.k.store.runtime("child").released).toBeTruthy();
+  expect(runtimeFixture(f.k.store, "child").released).toBeTruthy();
 });
-it("keeps a placed errand's normal preservation wait quiet and records done after archive", async () => {
+it("keeps a placed errand's normal preservation wait quiet and archives after confirmation", async () => {
   const f = await fixture(); registerTools(f.bb, f.runtime);
   f.k.store.put("members", "child", { ...f.k.member("child")!, boardQuestId: null, errand: true });
   f.save.mockResolvedValue({ state: "waiting", message: "Waiting for Vale to finish its turn so its work can be saved." });
-  const activity = vi.spyOn(f.k, "activity");
   await f.harness.behavior.invokeAgentTool("tavern_report", { status: "done", outcome: "Drafted", evidence: [], artifacts: [] }, { threadId: "child" });
   expect(f.k.store.events("lead").some(event => event.type === "quest.archive-failed")).toBe(false);
-  expect(activity).not.toHaveBeenCalledWith("child", "done");
-  f.save.mockResolvedValue({ state: "released" });
+  expect(f.k.member("child")?.engagement).toBe("archiving");
+  f.save.mockImplementation(async () => confirmPlacementRelease(f));
   await f.runtime["archiveMembers"]([f.k.member("child")!]);
-  expect(activity.mock.calls.filter(([threadId, state]) => threadId === "child" && state === "done")).toHaveLength(1);
+  expect(f.k.member("child")).toMatchObject({ engagement: "archived", disposition: "finished" });
+});
+
+it.each([true, false])("unarchives a done errand to the recorded state (placed: %s)", async placed => {
+  const f = await fixture(placed);
+  const child = f.k.member("child")!;
+  f.k.store.put("members", "child", { ...child, boardQuestId: null, errand: true });
+  f.bb.sdk.threads.unarchive = vi.fn(async ({ threadId }) => { f.archived.delete(threadId); return { ok: true as const, unarchivedThreadIds: [threadId] }; });
+  if (placed) f.save.mockImplementation(async () => confirmPlacementRelease(f));
+  const report = f.k.report("child", { status: "done", outcome: "Drafted", evidence: [], artifacts: [], confidence: null, voice: null });
+  expect(await f.runtime.archiveMember("child", report.id)).toBeNull();
+  const resumeTo = placed ? "released" : "resting";
+  expect(f.k.store.runtime("child").memberEngagement?.archive).toEqual({ disposition: "finished", resumeTo });
+  const reopened = await f.runtime.unarchiveMember("lead", "child");
+  expect(f.k.member("child")?.engagement).toBe(resumeTo);
+  if (placed) expect(reopened.message).toBe("Thread opened for reading. Its machine was released, so it can't take new work; hire a new member to continue.");
+  else expect(reopened.message).toContain("available in your party");
+});
+
+it("does not offer a resting member with a lost machine or send it a brief", async () => {
+  const f = await fixture();
+  f.k.report("child", { status: "done", outcome: "Drafted", evidence: [], artifacts: [], confidence: null, voice: null });
+  f.runtime.placements().preserve.observeLoss("child", "Its host was removed.");
+  await expect(f.runtime.tell("lead", "child", "Draft the follow-up")).rejects.toThrow(/Smith.*Its machine was released, so it can't take new work; hire a new member to continue\./);
+  expect(f.k.restatement("lead")).toMatch(/Free hands[\s\S]*machine lost: can't take new work; release it/);
+  expect(f.k.member("child")?.engagement).toBe("resting");
+  expect(f.save).not.toHaveBeenCalled();
+});
+
+it("keeps the disposition of unfinished placed work retired by wrap", async () => {
+  const f = await fixture(); f.save.mockImplementation(async () => confirmPlacementRelease(f));
+  expect((await f.wrap()).pendingArchives).toEqual([]);
+  expect(f.k.store.runtime("child").memberEngagement?.archive).toEqual({ disposition: "retired unfinished", resumeTo: "released" });
+  expect(f.k.store.runtime("child").memberEngagement?.release).toBeUndefined();
+});
+
+it("returns an externally archived unplaced quest member to its recorded rest", async () => {
+  const f = await fixture(false);
+  f.k.report("child", { status: "done", outcome: "Drafted", evidence: [], artifacts: [], confidence: null, voice: null });
+  f.archived.add("child");
+  f.runtime.updateThread(await f.bb.sdk.threads.get({ threadId: "child" }));
+  f.bb.sdk.threads.unarchive = vi.fn(async ({ threadId }) => { f.archived.delete(threadId); return { ok: true as const, unarchivedThreadIds: [threadId] }; });
+  expect((await f.runtime.unarchiveMember("lead", "child")).message).toContain("available in your party");
+  expect(f.k.member("child")?.engagement).toBe("resting");
+});
+
+it("does not finish quest Stop while a member archived in bb still holds an unreconciled machine", async () => {
+  const f = await fixture();
+  f.archived.add("child");
+  f.runtime.updateThread(await f.bb.sdk.threads.get({ threadId: "child" }));
+  expect(f.k.member("child")?.engagement).toBe("archived");
+  expect(f.runtime.placements().store.byMember("child")).toMatchObject({ phase: "blocked", blocked: { code: "preservation-owner-lost" } });
+  const archived = f.k.store.runtime("child").memberEngagement?.archive;
+  expect(await f.runtime.stop(f.quest.id)).toMatchObject({ phase: "stopping", unconfirmed: 1 });
+  expect(f.k.summary(f.quest.id).members.find(m => m.threadId === "child")?.stopError).toContain("archived or deleted");
+  expect(f.save).toHaveBeenCalledWith("child", expect.any(String));
+  f.save.mockImplementation(async () => confirmPlacementRelease(f));
+  expect(await f.runtime.stop(f.quest.id)).toMatchObject({ phase: "stopped", unconfirmed: 0 });
+  expect(f.k.store.runtime("child").memberEngagement?.archive).toEqual(archived);
+});
+
+it.each(["Wrap", "Cellar"] as const)("%s retains outstanding cleanup of an already archived placement", async path => {
+  const f = await fixture();
+  f.archived.add("child");
+  f.runtime.updateThread(await f.bb.sdk.threads.get({ threadId: "child" }));
+  const archived = f.k.store.runtime("child").memberEngagement?.archive;
+  const events = () => f.k.store.events("lead").filter(e => e.data.memberThreadId === "child" && e.data.engagement);
+  const before = events();
+  let result;
+  if (path === "Wrap") result = await f.wrap();
+  else {
+    putQuestFixture(f.k.store, f.quest.id, { ...f.k.quest(f.quest.id), phase: "done", endedAt: f.time() });
+    result = await f.runtime.archiveBoardQuests([f.quest.id], true);
+  }
+  expect(result.pendingArchives).toContain("child");
+  expect(f.save).toHaveBeenCalledWith("child", expect.any(String));
+  f.save.mockImplementation(async () => confirmPlacementRelease(f));
+  expect(await f.runtime["archiveMembers"]([f.k.member("child")!])).toEqual([]);
+  expect(f.k.store.runtime("child").memberEngagement?.archive).toEqual(archived);
+  expect(events()).toEqual(before);
 });
 
 it("shows the preservation blocker in the Keeper's release reply", async () => {
@@ -114,7 +216,7 @@ it("lists unsaved declared files in the release reply and placement view", async
   const warning = "Release; Declared files not saved: /tmp/log.txt: outside the allowed checkout and thread-storage roots";
   f.save.mockImplementation(async () => {
     f.runtime.placements().store.update("placement", 1, record => ({ ...record, preservation: { ...record.preservation, source: "saved", artifacts: "unpreserved", artifactManifestId: "manifest", reason: warning } }));
-    return { state: "released" };
+    return confirmPlacementRelease(f);
   });
   const reply = await f.harness.behavior.invokeAgentTool("tavern_release", { memberThreadId: "child", reason: "Release" }, { threadId: "lead" });
   expect(String(reply)).toContain("/tmp/log.txt: outside");
@@ -127,7 +229,7 @@ it("preserves a cancelled placed hire before archive and does not archive twice"
   const settle = () => settleCancelledHire(f.bb, f.k, "token", intent, "child", id => f.runtime["preserveCancelledHire"](id));
   await expect(settle()).rejects.toThrow("save refused");
   expect(f.archive).not.toHaveBeenCalled(); expect(f.local).not.toHaveBeenCalled();
-  f.save.mockImplementation(async () => { f.archived.add("child"); return { state: "released" }; });
+  f.save.mockImplementation(async () => confirmPlacementRelease(f));
   await settle(); expect(f.archive).not.toHaveBeenCalled();
   expect(f.k.store.get("hires", "token")).toBeNull();
 });

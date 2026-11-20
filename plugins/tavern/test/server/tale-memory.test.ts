@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { patchThreadFixture } from "./member-fixture";
 import { concludeQuest, putQuestFixture } from "./support";
 import { seedQuest } from "./support";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -93,7 +94,7 @@ describe("terminal tale level snapshots", () => {
     const legacyId = `legacy-${role}`, oldThread = `old-${role}`, characterId = role === "warden" ? "vex" : "juno";
     putQuestFixture(f.k.store, legacyId, { ...f.k.quest(f.q.id), id: legacyId, phase: "done", createdAt: f.time() - 500, endedAt: f.time() - 100, archivedAt: f.time() - 50 });
     f.k.bind(oldThread, role === "warden" ? "warden" : "smith", characterId, "project", { keeperThreadId: "lead", boardQuestId: legacyId, waypointId: "w1", title: "Legacy work", errand: false, brief: { outcome: "Legacy work", mode: "make-it-work", outOfScope: "Publish", doneWhen: "Proof", context: [], questions: [], timeboxMinutes: null } });
-    f.k.store.patch(oldThread, { archivedAt: f.time(), deletedAt: f.time() });
+    patchThreadFixture(f.k.store, oldThread, { archivedAt: f.time(), deletedAt: f.time() });
     if (deletedQuest) f.k.store.remove("quests", legacyId);
     expect(f.k.store.get("serviceRecords", legacyId)).toBeNull();
     f.k.plan("lead", { ...plan, waypoints: Array.from({ length: 8 }, (_, index) => ({ ...plan.waypoints[0]!, id: `w${index + 1}` })) });

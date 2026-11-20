@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { fixtureActivity, patchThreadFixture, putMemberFixture } from "./member-fixture";
 import { putQuestFixture } from "./support";
 import { seedQuest } from "./support";
 import { expect, it, vi } from "vitest";
@@ -17,11 +18,11 @@ async function fixture() {
 }
 it.each(["released", "release-pending", "archive-pending", "deleted", "archived", "ended"] as const)("SQL staffing, allocation and errand counts agree on %s members, and names stay taken while the thread is live", async state => {
   const f = await fixture();
-  if (state === "released") f.k.store.patch("child", { released: { reason: "Done", decisionId: "d" } });
-  if (state === "release-pending") f.k.store.patch("child", { releasePending: "Stop" });
-  if (state === "archive-pending") f.k.store.patch("child", { archivePending: true });
-  if (state === "deleted") f.k.store.patch("child", { deletedAt: f.time() });
-  if (state === "archived") f.k.store.patch("child", { archivedAt: f.time() });
+  if (state === "released") patchThreadFixture(f.k.store, "child", { released: { reason: "Done", decisionId: "d" } });
+  if (state === "release-pending") patchThreadFixture(f.k.store, "child", { releasePending: "Stop" });
+  if (state === "archive-pending") patchThreadFixture(f.k.store, "child", { archivePending: true });
+  if (state === "deleted") patchThreadFixture(f.k.store, "child", { deletedAt: f.time() });
+  if (state === "archived") patchThreadFixture(f.k.store, "child", { archivedAt: f.time() });
   if (state === "ended") putQuestFixture(f.k.store, f.q.id, { ...f.q, phase: "done", endedAt: f.time() });
   const occupied = state === "release-pending" ? 1 : 0;
   expect(f.k.store.activeStaffing("lead")).toHaveLength(occupied);
@@ -35,8 +36,8 @@ it.each(["released", "release-pending", "archive-pending", "deleted", "archived"
 });
 it("done pending rebriefs reserve slots but are not shown as active work", async () => {
   const f = await fixture();
-  f.k.activity("child", "done");
-  f.k.store.patch("child", { pendingBrief: { id: "b", text: "Again", attempts: 0, nextAttemptAt: 0, attemptedAt: null, hostAfterSeq: null, error: null } });
+  fixtureActivity(f.k, "child", "done");
+  patchThreadFixture(f.k.store, "child", { pendingBrief: { id: "b", text: "Again", attempts: 0, nextAttemptAt: 0, attemptedAt: null, hostAfterSeq: null, error: null } });
   expect(f.k.store.activeStaffing("lead")).toHaveLength(1);
   expect(f.k.store.allocated(f.q.id, "smith")).toBe(1);
   expect(f.k.store.errandsPage("lead", 100, 0).inFlightCount).toBe(1);
@@ -46,15 +47,15 @@ it.each(["archived", "quiet"] as const)("review budget ignores a %s Keeper's aba
   f.k.plan("lead", planInput(f.q.id));
   f.port.linkedEntries = () => [waypointEntry("child", f.q.id)];
   expect(f.runtime.review().waiting).toBe(1);
-  f.k.store.patch("lead", state === "archived" ? { archivedAt: f.time() } : { manualStopAt: f.time() });
+  patchThreadFixture(f.k.store, "lead", state === "archived" ? { archivedAt: f.time() } : { manualStopAt: f.time() });
   expect(f.runtime.review("automatic").waiting).toBe(0);
   expect(f.runtime.review().waiting).toBe(state === "quiet" ? 1 : 0);
 });
 it("room keeps an old in-flight errand past 100 newer quest members and omits finished solos", async () => {
   const f = await fixture();
-  for (let i = 0; i < 105; i++) f.k.store.put("members", `new-${i}`, { ...f.member, threadId: `new-${i}`, errand: false });
+  for (let i = 0; i < 105; i++) putMemberFixture(f.k.store, `new-${i}`, { ...f.member, threadId: `new-${i}`, errand: false });
   f.k.bind("solo", "smith", "juno", "project");
-  f.k.activity("solo", "done");
+  fixtureActivity(f.k, "solo", "done");
   const room = await rpcHandlers(f.runtime).room({});
   expect(room.keepers[0]?.errands.map(member => member.threadId)).toContain("child");
   expect(room.solos).toHaveLength(0);
@@ -75,7 +76,7 @@ it("a stopped board mirror is blocked, not completed", () => {
 it("unpause skips gone and manually stopped Keepers and closes old failure asks before reanchoring", () => {
   const f = setup();
   f.k.bind("gone", "keeper", "wren", "project");
-  f.k.store.patch("gone", { archivedAt: f.time() });
+  patchThreadFixture(f.k.store, "gone", { archivedAt: f.time() });
   f.k.bind("quiet", "keeper", "wren", "project");
   f.k.store.patch("quiet", { manualStopAt: f.time() });
   const ask = f.k.ask("lead", { effect: {type:"answer-blocker"}, kind: "blocker", question: "Retry?", why: "Failed", options: [{ id: "retry", label: "Retry", detail: "", recommended: true }], meanwhile: "Wait", holds: [] });

@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { runtimeFixture } from "./member-fixture";
 import { seedQuest } from "./support";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_SETTINGS } from "../../src/shared/settings";
@@ -58,7 +59,7 @@ describe("Explicitly selected by-size greenlights", () => {
       phase: "greenlight",
       greenlitVersion: null,
     });
-    expect(f.k.store.runtime(m.threadId).released).toBeTruthy();
+    expect(runtimeFixture(f.k.store, m.threadId).released).toBeTruthy();
     expect(f.k.store.openAsks("lead")[0]?.kind).toBe("greenlight");
   });
   it.each(["irreversible", "party", "questions", "outside", "user", "ask"])(

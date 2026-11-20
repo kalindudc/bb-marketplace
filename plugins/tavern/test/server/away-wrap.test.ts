@@ -1,5 +1,6 @@
 // @vitest-environment node
 
+import { runtimeFixture } from "./member-fixture";
 import { seedQuest } from "./support";
 import { describe, expect, it, vi } from "vitest";
 import { makeMessageDispatchHookContext } from "@get-bb/plugin-sdk/testing";
@@ -10,7 +11,7 @@ import { readAwayDigest } from "../../src/server/away/digest";
 import { TavernRuntime } from "../../src/server/runtime";
 
 async function fixture(endState: "drafts-ready" | "pause" = "drafts-ready", allowWatched = false) {
-  const archive = vi.fn(async () => ({ ok: true as const }));
+  const archive = vi.fn(async ({ threadId }: { threadId: string }) => ({ ok: true as const, archivedThreadIds: [threadId] }));
   const f = setup({ threads: { archive, stop: async () => ({ ok: true }), get: async ({ threadId }: { threadId: string }) => makeThreadResponse({ id: threadId, status: "idle" }), queuedMessages: { list: async () => [] } } });
   const q = await seedQuest(f.k,"lead", "Private draft", "Verified draft");
   f.k.plan("lead", planInput(q.id));
@@ -34,7 +35,7 @@ describe("Closing time cleanup of a previously answered conclusion", () => {
     expect(await concludeQuest(f.runtime, "lead", f.q.id, "Draft tested", "Publication waits")).toEqual({ pendingArchives: ["child"] });
     expect(f.k.quest(f.q.id).phase).toBe("done");
     expect(f.k.store.get("asks", f.ask.id)).toMatchObject({ state: "withdrawn", withdrawnCause: "quest-returned", withdrawnAt: f.time() });
-    expect(f.k.store.runtime("child").archivePending).toBe(true);
+    expect(runtimeFixture(f.k.store, "child").archivePending).toBe(true);
     const digest = readAwayDigest(f.k, f.runtime.away.store, {});
     expect(digest.quests[0]).toMatchObject({ returnedWhileAway: true, deferredCleanup: [{ threadId: "child", action: "archive-member-thread", pending: true, error: null }] });
     expect(digest.events.find(event => event.type === "quest.wrapped")?.data.outcome).toBe("Draft tested");

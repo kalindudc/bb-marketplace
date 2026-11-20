@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { patchThreadFixture, putMemberFixture } from "./member-fixture";
 import { putQuestFixture } from "./support";
 import { seedQuest } from "./support";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
@@ -109,7 +110,7 @@ describe("Closing time re-anchors only Keepers with window work", () => {
     await f.runtime.tick("lead");
     expect(f.k.store.runtime("lead").reanchor).toBeNull();
     putQuestFixture(f.k.store, quest.id, { ...quest, phase: "done", endedAt: f.time() });
-    f.k.store.put("members", child.threadId, { ...child, state: "done" });
+    putMemberFixture(f.k.store, child.threadId, { ...child, state: "done" });
     const restarted = new TavernRuntime(f.bb, f.k, f.runtime.registry);
     f.anchors.mockClear(); f.send.mockClear();
     await restarted.away.return(returned);
@@ -192,17 +193,17 @@ describe("Closing time re-anchors only Keepers with window work", () => {
 
   it.each(["done", "failed", "stopped", "released", "archived", "deleted"])("does not count an old %s member as window work", async state => {
     const f = fixture(), member = f.child();
-    if (state === "released") f.k.store.patch(member.threadId, { released: { reason: "Finished", decisionId: "past-decision" } });
-    else if (state === "archived") f.k.store.patch(member.threadId, { archivedAt: f.time() });
-    else if (state === "deleted") f.k.store.patch(member.threadId, { deletedAt: f.time() });
-    else f.k.store.put("members", member.threadId, { ...member, state: state as "done" | "failed" | "stopped" });
+    if (state === "released") patchThreadFixture(f.k.store, member.threadId, { released: { reason: "Finished", decisionId: "past-decision" } });
+    else if (state === "archived") patchThreadFixture(f.k.store, member.threadId, { archivedAt: f.time() });
+    else if (state === "deleted") patchThreadFixture(f.k.store, member.threadId, { deletedAt: f.time() });
+    else putMemberFixture(f.k.store, member.threadId, { ...member, state: state as "done" | "failed" | "stopped" });
     await f.close(); await f.runtime.away.return(returned);
     expect(f.anchors).not.toHaveBeenCalled();
   });
 
   it.each(["pending", "cancelled", "bound-finished", "missing-quest"])("counts only real staged hires: %s", async state => {
     const f = fixture();
-    if (state === "bound-finished") { const member = f.child(); f.k.store.put("members", member.threadId, { ...member, state: "done" }); }
+    if (state === "bound-finished") { const member = f.child(); putMemberFixture(f.k.store, member.threadId, { ...member, state: "done" }); }
     f.k.store.put("hires", "staged", { classId: "ranger", characterId: "lark", projectId: "project", createdAt: f.time(),
       ...(state === "cancelled" ? { cancelledAt: f.time() } : {}), ...(state === "bound-finished" ? { memberThreadId: "child" } : {}),
       owner: { keeperThreadId: "lead", boardQuestId: state === "missing-quest" ? "missing" : null, waypointId: null, errand: true, title: "Staged scout", brief } });
@@ -212,15 +213,15 @@ describe("Closing time re-anchors only Keepers with window work", () => {
 
   it.each(["live", "pending-brief", "release", "ended-release", "cleanup"])("keeps relevant %s party work in the cohort without an open quest", async state => {
     const f = fixture(), member = f.child();
-    if (state !== "live") f.k.store.put("members", member.threadId, { ...member, state: state === "release" ? "stopped" : "done" });
-    if (state === "pending-brief") f.k.store.patch(member.threadId, { pendingBrief: { id: "fresh", text: "Fresh instructions", attempts: 0, nextAttemptAt: f.time(), attemptedAt: null, hostAfterSeq: null, error: null } });
-    if (state === "release" || state === "ended-release") f.k.store.patch(member.threadId, { releasePending: "Confirm release" });
+    if (state !== "live") putMemberFixture(f.k.store, member.threadId, { ...member, state: state === "release" ? "stopped" : "done" });
+    if (state === "pending-brief") patchThreadFixture(f.k.store, member.threadId, { pendingBrief: { id: "fresh", text: "Fresh instructions", attempts: 0, nextAttemptAt: f.time(), attemptedAt: null, hostAfterSeq: null, error: null } });
+    if (state === "release" || state === "ended-release") patchThreadFixture(f.k.store, member.threadId, { releasePending: "Confirm release" });
     if (state === "ended-release") {
       const quest = await seedQuest(f.k,"lead", "Ended work", "Past draft");
       putQuestFixture(f.k.store, quest.id, { ...quest, phase: "done", endedAt: f.time() });
       f.k.store.put("members", member.threadId, { ...f.k.member(member.threadId)!, boardQuestId: quest.id });
     }
-    if (state === "cleanup") f.k.store.patch(member.threadId, { archivePending: true });
+    if (state === "cleanup") patchThreadFixture(f.k.store, member.threadId, { archivePending: true });
     await f.close(); await f.runtime.away.return(returned);
     expect(anchorsFor(f)).toHaveLength(2);
   });

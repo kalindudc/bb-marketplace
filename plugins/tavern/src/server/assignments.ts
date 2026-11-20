@@ -1,3 +1,4 @@
+import { hasEndedEngagement } from "../shared/member-engagement";
 import type { CharacterDef, ClassDef, Member, Plan } from "../shared/schema";
 
 export function validatePartyCharacters(plan: Pick<Plan, "party">, registry: { classes: ClassDef[]; characters: CharacterDef[] }) {
@@ -33,7 +34,7 @@ export function checkerAssignments(plan: Pick<Plan, "party" | "waypoints">, memb
     .filter((member) => member.classId === "warden")
     .sort((a, b) => {
       const inactive = (member: Member) =>
-        Number(["done", "stopped", "failed"].includes(member.state));
+        Number(member.state === "failed" || hasEndedEngagement(member));
       return inactive(a) - inactive(b) || a.createdAt - b.createdAt;
     });
   const assignments: { memberThreadId: string; slot: number; waypointIds: string[] }[] = [];
