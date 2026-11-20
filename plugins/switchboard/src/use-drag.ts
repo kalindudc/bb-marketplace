@@ -145,8 +145,8 @@ export function useDrag(options: DragOptions): DragController {
     const { index, metrics, hitTest, rootRef, onExpand } = optionsRef.current;
     const root = rootRef.current;
     const element = (hitTest ?? ((x, y) => document.elementFromPoint(x, y)))(x, y);
-    const row = element?.closest<HTMLElement>("[data-sb-row]");
-    const drop = row ? null : element?.closest<HTMLElement>("[data-sb-drop]");
+    const row = element?.closest<HTMLElement>("[data-switchboard-row]");
+    const drop = row ? null : element?.closest<HTMLElement>("[data-switchboard-drop]");
     let target: DragTarget | null = null;
     let expansion: CollapseKey | null = null;
     let indicator: DragView["indicator"] = null;
@@ -162,13 +162,13 @@ export function useDrag(options: DragOptions): DragController {
       if (origin) indicator = { top: (instruction.kind === "above" ? rect.top : rect.bottom) - origin.top,
         left: rect.left - origin.left + metrics.base + (instruction.kind === "out" ? instruction.level : depth) * metrics.indent,
         width: Math.max(12, rect.width - metrics.base - depth * metrics.indent) };
-    } else if (drop?.dataset.sbDrop) {
+    } else if (drop?.dataset.switchboardDrop) {
       const rect = drop.getBoundingClientRect();
-      if (current.subject.kind === "section" && drop.dataset.sbSection) {
-        target = { kind: "section", sectionId: drop.dataset.sbSection, edge: resolveHeaderEdge(y, rect) };
+      if (current.subject.kind === "section" && drop.dataset.switchboardSection) {
+        target = { kind: "section", sectionId: drop.dataset.switchboardSection, edge: resolveHeaderEdge(y, rect) };
       } else if (current.subject.kind === "threads") {
-        target = { kind: "group", key: drop.dataset.sbDrop as GroupKey };
-        if (drop.dataset.collapsed === "true") expansion = drop.dataset.sbDrop as CollapseKey;
+        target = { kind: "group", key: drop.dataset.switchboardDrop as GroupKey };
+        if (drop.dataset.collapsed === "true") expansion = drop.dataset.switchboardDrop as CollapseKey;
       }
       if (origin) indicator = { top: (target?.kind === "section" && target.edge === "below" ? rect.bottom : rect.top) - origin.top,
         left: rect.left - origin.left + metrics.base, width: Math.max(12, rect.width - metrics.base) };

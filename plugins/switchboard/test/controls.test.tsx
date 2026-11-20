@@ -24,13 +24,13 @@ describe("list controls", () => {
     expect(button.getAttribute("aria-expanded")).toBe("false");
     expect(screen.getByText("01")).toBeTruthy();
     expect(screen.getByLabelText("Failed")).toBeTruthy();
-    const header = slot.container.querySelector<HTMLElement>("[data-sb-section=s]")!;
-    expect(header.classList.contains("sb-group-header")).toBe(true);
-    expect(header.classList.contains("sb-pill-hued")).toBe(true);
-    expect(header.classList.contains("sb-tint")).toBe(true);
+    const header = slot.container.querySelector<HTMLElement>("[data-switchboard-section=s]")!;
+    expect(header.classList.contains("switchboard-group-header")).toBe(true);
+    expect(header.classList.contains("switchboard-pill-hued")).toBe(true);
+    expect(header.classList.contains("switchboard-tint")).toBe(true);
     expect(header.className).not.toContain("hover:bg-sidebar-accent");
-    expect(header.querySelector(".sb-section-slot .sb-section-rollups")).toBeTruthy();
-    expect(header.querySelector(".sb-section-slot .sb-section-controls button[aria-label='Section actions']")).toBeTruthy();
+    expect(header.querySelector(".switchboard-section-slot .switchboard-section-rollups")).toBeTruthy();
+    expect(header.querySelector(".switchboard-section-slot .switchboard-section-controls button[aria-label='Section actions']")).toBeTruthy();
     fireEvent.click(button);
     expect(onToggle).toHaveBeenCalledWith("section:s");
     slot.unmount();
@@ -55,7 +55,7 @@ describe("list controls", () => {
       renaming: false, dropState: null, hueOverride: null, onRename: vi.fn(), onRenameSubmit: vi.fn(),
       onRenameCancel: vi.fn(), onSetHue: vi.fn(), onNewThread: vi.fn(), onMarkAllRead: vi.fn(),
       onDelete: vi.fn(), onSectionMove: vi.fn() });
-    expect(slot.container.querySelector(".sb-empty-drop[data-sb-drop='section:empty']")).toBeTruthy();
+    expect(slot.container.querySelector(".switchboard-empty-drop[data-switchboard-drop='section:empty']")).toBeTruthy();
     slot.unmount();
   });
 

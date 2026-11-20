@@ -31,7 +31,7 @@ export interface SectionMenuProps {
 // Contains a space, so it never collides with a stored project ID.
 const AUTOMATIC_PROJECT = "automatic project";
 
-const item = "sb-menu-item rounded px-2 py-1.5 text-xs outline-none";
+const item = "switchboard-menu-item rounded px-2 py-1.5 text-xs outline-none";
 export function SectionMenu({ group, unreadCount, hueOverride, onRename, onSetHue,
   onNewThread, onNewSectionBelow, onMarkAllRead, onDelete, sortMode = "manual", staleCount = 0,
   staleChildCount = 0, staleDays = 3, onSort, onArchiveStale, projects = [], defaultProjectId = null,
@@ -45,18 +45,18 @@ export function SectionMenu({ group, unreadCount, hueOverride, onRename, onSetHu
   return <>
     <DropdownMenu.Root>
       <Hint label="Section actions: rename, colour, sort and more"><DropdownMenu.Trigger asChild><button type="button" aria-label="Section actions"
-        className="sb-control sb-section-menu-trigger sb-icon-button relative z-10 shrink-0 text-muted-foreground">⋯</button></DropdownMenu.Trigger></Hint>
+        className="switchboard-control switchboard-section-menu-trigger switchboard-icon-button relative z-10 shrink-0 text-muted-foreground">⋯</button></DropdownMenu.Trigger></Hint>
       <DropdownMenu.Portal><DropdownMenu.Content {...portalScopeProps()} side="right" align="start" sideOffset={4}
         onCloseAutoFocus={(event) => {
           if (editPending.current) { event.preventDefault(); editPending.current = false; }
         }}
-        className="sb-section-menu z-50 min-w-44 rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-lg">
+        className="switchboard-section-menu z-50 min-w-44 rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-lg">
         {group.kind === "section" && <>
           <DropdownMenu.Item className={item} onSelect={() => { editPending.current = true; onRename(); }}>Rename</DropdownMenu.Item>
           <DropdownMenu.Sub>
             <DropdownMenu.SubTrigger className={`${item} flex items-center justify-between`}>Colour <span aria-hidden>›</span></DropdownMenu.SubTrigger>
             <DropdownMenu.Portal><DropdownMenu.SubContent {...portalScopeProps()} sideOffset={4}
-              className="sb-colour-menu z-50 w-max rounded-md border border-border bg-popover p-2 text-popover-foreground shadow-lg">
+              className="switchboard-colour-menu z-50 w-max rounded-md border border-border bg-popover p-2 text-popover-foreground shadow-lg">
               <DropdownMenu.RadioGroup className="grid gap-1.5" value={hueOverride ?? "automatic"} onValueChange={(value) =>
                 onSetHue(value === "automatic" ? null : value as HueId)}>
                 <DropdownMenu.RadioItem value="automatic" aria-label="Automatic"
@@ -64,8 +64,8 @@ export function SectionMenu({ group, unreadCount, hueOverride, onRename, onSetHu
                 <div className="grid grid-cols-4 gap-1.5">
                   {HUE_IDS.map((hue) => <DropdownMenu.RadioItem key={hue} value={hue} aria-label={hue[0]!.toUpperCase() + hue.slice(1)}
                     title={hue[0]!.toUpperCase() + hue.slice(1)}
-                    className={`sb-hue-${hue} grid size-6 cursor-pointer place-items-center rounded-md border border-border outline-none focus:ring-1 focus:ring-primary data-[state=checked]:ring-2 data-[state=checked]:ring-primary`}>
-                    <span aria-hidden className="size-4 rounded-sm" style={{ background: "var(--sb-hue)" }} />
+                    className={`switchboard-hue-${hue} grid size-6 cursor-pointer place-items-center rounded-md border border-border outline-none focus:ring-1 focus:ring-primary data-[state=checked]:ring-2 data-[state=checked]:ring-primary`}>
+                    <span aria-hidden className="size-4 rounded-sm" style={{ background: "var(--switchboard-hue)" }} />
                   </DropdownMenu.RadioItem>)}
                 </div>
               </DropdownMenu.RadioGroup>
@@ -77,11 +77,11 @@ export function SectionMenu({ group, unreadCount, hueOverride, onRename, onSetHu
           {onSort && <DropdownMenu.Sub>
             <DropdownMenu.SubTrigger className={`${item} flex items-center justify-between`}>Sort <span aria-hidden>›</span></DropdownMenu.SubTrigger>
             <DropdownMenu.Portal><DropdownMenu.SubContent {...portalScopeProps()} sideOffset={4}
-              className="sb-sort-menu z-50 min-w-40 rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-lg">
+              className="switchboard-sort-menu z-50 min-w-40 rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-lg">
               <DropdownMenu.RadioGroup value={sortMode} onValueChange={(mode) => onSort(mode as SortMode)}>
                 {([ ["manual", "By hand"], ["recent", "Recent activity"], ["status", "Status"] ] as const)
                   .map(([mode, label]) => <DropdownMenu.RadioItem key={mode} value={mode} className={`${item} relative pl-7`}>
-                    <DropdownMenu.ItemIndicator data-sb-check="" className="absolute left-2 inline-grid size-3.5 place-items-center">
+                    <DropdownMenu.ItemIndicator data-switchboard-check="" className="absolute left-2 inline-grid size-3.5 place-items-center">
                       <Icon name="Check" className="size-3.5" aria-hidden /></DropdownMenu.ItemIndicator>{label}</DropdownMenu.RadioItem>)}
               </DropdownMenu.RadioGroup>
             </DropdownMenu.SubContent></DropdownMenu.Portal>
@@ -89,12 +89,12 @@ export function SectionMenu({ group, unreadCount, hueOverride, onRename, onSetHu
           {onSetDefaultProject && projects.length > 0 && <DropdownMenu.Sub>
             <DropdownMenu.SubTrigger className={`${item} flex items-center justify-between`}>Default project <span aria-hidden>›</span></DropdownMenu.SubTrigger>
             <DropdownMenu.Portal><DropdownMenu.SubContent {...portalScopeProps()} sideOffset={4}
-              className="sb-project-menu z-50 max-h-80 min-w-40 max-w-64 overflow-y-auto rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-lg">
+              className="switchboard-project-menu z-50 max-h-80 min-w-40 max-w-64 overflow-y-auto rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-lg">
               <DropdownMenu.RadioGroup value={defaultProjectId ?? AUTOMATIC_PROJECT}
                 onValueChange={(value) => onSetDefaultProject(value === AUTOMATIC_PROJECT ? null : value)}>
                 {[{ id: AUTOMATIC_PROJECT, name: "Automatic" }, ...projects].map(({ id, name: label }) =>
                   <DropdownMenu.RadioItem key={id} value={id} className={`${item} relative truncate pl-7`}>
-                    <DropdownMenu.ItemIndicator data-sb-check="" className="absolute left-2 inline-grid size-3.5 place-items-center">
+                    <DropdownMenu.ItemIndicator data-switchboard-check="" className="absolute left-2 inline-grid size-3.5 place-items-center">
                       <Icon name="Check" className="size-3.5" aria-hidden /></DropdownMenu.ItemIndicator>{label}</DropdownMenu.RadioItem>)}
               </DropdownMenu.RadioGroup>
             </DropdownMenu.SubContent></DropdownMenu.Portal>
@@ -121,8 +121,8 @@ export function SectionMenu({ group, unreadCount, hueOverride, onRename, onSetHu
             Their {staleChildCount} child {staleChildCount === 1 ? "thread is" : "threads are"} archived too.
           </AlertDialog.Description>
           <div className="mt-5 flex justify-end gap-2">
-            <AlertDialog.Cancel className="sb-control rounded border border-border px-3 py-1.5 text-xs">Cancel</AlertDialog.Cancel>
-            <AlertDialog.Action className="sb-control rounded bg-destructive px-3 py-1.5 text-xs text-destructive-foreground" onClick={onArchiveStale}>
+            <AlertDialog.Cancel className="switchboard-control rounded border border-border px-3 py-1.5 text-xs">Cancel</AlertDialog.Cancel>
+            <AlertDialog.Action className="switchboard-control rounded bg-destructive px-3 py-1.5 text-xs text-destructive-foreground" onClick={onArchiveStale}>
               Archive stale threads
             </AlertDialog.Action>
           </div>
@@ -137,8 +137,8 @@ export function SectionMenu({ group, unreadCount, hueOverride, onRename, onSetHu
             Its {count} {count === 1 ? "thread moves" : "threads move"} to Threads. Nothing is archived.
           </AlertDialog.Description>
           <div className="mt-5 flex justify-end gap-2">
-            <AlertDialog.Cancel className="sb-control rounded border border-border px-3 py-1.5 text-xs">Cancel</AlertDialog.Cancel>
-            <AlertDialog.Action className="sb-control rounded bg-destructive px-3 py-1.5 text-xs text-destructive-foreground"
+            <AlertDialog.Cancel className="switchboard-control rounded border border-border px-3 py-1.5 text-xs">Cancel</AlertDialog.Cancel>
+            <AlertDialog.Action className="switchboard-control rounded bg-destructive px-3 py-1.5 text-xs text-destructive-foreground"
               onClick={onDelete}>Delete section</AlertDialog.Action>
           </div>
         </AlertDialog.Content>

@@ -1,33 +1,33 @@
 /* Colors come from the active bb theme, so tints follow any palette in light and dark. */
-[data-sl-tint="agent"] { --sl-tint: var(--timeline-accent); }
-[data-sl-tint="tool"] { --sl-tint: var(--pr-merged); }
-[data-sl-tint="command"] { --sl-tint: var(--attention); }
-[data-sl-tint="file"] { --sl-tint: var(--diff-added); }
-[data-sl-tint="error"] { --sl-tint: var(--destructive); --sl-tint-text: var(--destructive-text); }
-.sl-tint-icon { color: var(--sl-tint-text, var(--sl-tint)); }
-.sl-tinted {
-  background-color: color-mix(in oklab, var(--sl-tint) 6%, transparent);
-  box-shadow: inset 2px 0 0 color-mix(in oklab, var(--sl-tint) 75%, transparent);
+[data-session-log-tint="agent"] { --session-log-tint: var(--timeline-accent); }
+[data-session-log-tint="tool"] { --session-log-tint: var(--pr-merged); }
+[data-session-log-tint="command"] { --session-log-tint: var(--attention); }
+[data-session-log-tint="file"] { --session-log-tint: var(--diff-added); }
+[data-session-log-tint="error"] { --session-log-tint: var(--destructive); --session-log-tint-text: var(--destructive-text); }
+.session-log-tint-icon { color: var(--session-log-tint-text, var(--session-log-tint)); }
+.session-log-tinted {
+  background-color: color-mix(in oklab, var(--session-log-tint) 6%, transparent);
+  box-shadow: inset 2px 0 0 color-mix(in oklab, var(--session-log-tint) 75%, transparent);
 }
-.sl-tinted[data-sl-tint="error"] { background-color: var(--surface-destructive); }
-.sl-tinted:hover, .sl-tinted:focus { background-color: color-mix(in oklab, var(--sl-tint) 11%, transparent); }
-.sl-tinted:focus { outline: 1px solid color-mix(in oklab, var(--ring) 55%, transparent); outline-offset: -1px; }
+.session-log-tinted[data-session-log-tint="error"] { background-color: var(--surface-destructive); }
+.session-log-tinted:hover, .session-log-tinted:focus { background-color: color-mix(in oklab, var(--session-log-tint) 11%, transparent); }
+.session-log-tinted:focus { outline: 1px solid color-mix(in oklab, var(--ring) 55%, transparent); outline-offset: -1px; }
 /* Input the chat never shows: a dashed rail sets it apart from what the reader saw there. */
-.sl-hidden { border-left: 2px dashed color-mix(in oklab, var(--subtle-foreground) 60%, transparent); }
+.session-log-hidden { border-left: 2px dashed color-mix(in oklab, var(--subtle-foreground) 60%, transparent); }
 /* Search paints matches with the CSS Custom Highlight API, so they show inside rendered Markdown too:
    every match in amber, the current one in orange like a browser's find bar, both with the theme's dark
    end (ink in a light theme, canvas in a dark one) as text so they read on either. */
-::highlight(sl-search-match) {
+::highlight(session-log-search-match) {
   background-color: color-mix(in oklab, var(--attention) 70%, transparent);
   color: light-dark(var(--ink), var(--canvas));
 }
-::highlight(sl-search-current) {
+::highlight(session-log-search-current) {
   background-color: var(--warning);
   color: light-dark(var(--ink), var(--canvas));
   text-decoration: underline 2px;
 }
 /* The row holding the current match keeps its frame while focused, so n and N show where they landed. */
-.sl-search-current, .sl-search-current:focus {
+.session-log-search-current, .session-log-search-current:focus {
   box-shadow: inset 3px 0 0 var(--warning);
   outline: 1px solid color-mix(in oklab, var(--warning) 70%, transparent);
   outline-offset: -1px;

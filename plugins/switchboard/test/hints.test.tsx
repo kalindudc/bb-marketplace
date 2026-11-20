@@ -35,7 +35,7 @@ function renderBar(active: RowState[] = [], showArchived = false) {
 describe("icon buttons", () => {
   it("centre their icon whatever classes the button adds", () => {
     const css = readFileSync(join(process.cwd(), "src/switchboard.css"), "utf8");
-    const rule = css.match(/\.sb-icon-button\s*\{([^}]*)\}/)?.[1] ?? "";
+    const rule = css.match(/\.switchboard-icon-button\s*\{([^}]*)\}/)?.[1] ?? "";
     expect(rule).toMatch(/display:\s*grid/);
     expect(rule).toMatch(/place-items:\s*center/);
   });

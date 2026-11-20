@@ -14,7 +14,7 @@ const css = readFileSync(join(process.cwd(), "src/switchboard.css"), "utf8");
 
 describe("theme conformance", () => {
   it("takes surface corners from the theme, keeping only semantic circles and square joins", () => {
-    for (const declaration of css.matchAll(/(?:border-radius|--sb-pill-radius):\s*([^;]+);/g)) {
+    for (const declaration of css.matchAll(/(?:border-radius|--switchboard-pill-radius):\s*([^;]+);/g)) {
       const corners = declaration[1].replace(/max\(0px, calc\(var\(--radius\) - \d+px\)\)/g, "");
       expect(corners).not.toMatch(/\d+px/);
       expect(declaration[1]).toMatch(/var\(--radius-|^0$|^50%$/);
@@ -31,7 +31,7 @@ describe("theme conformance", () => {
   });
 
   it("uses theme elevation and fonts for the drag preview and portalled info card", () => {
-    for (const name of ["sb-ghost", "sb-info-card"]) {
+    for (const name of ["switchboard-ghost", "switchboard-info-card"]) {
       const body = css.match(new RegExp(`^\\.${name} \\{([^}]+)\\}`, "m"))?.[1];
       expect(body).toMatch(/box-shadow: var\(--shadow-/);
     }
@@ -40,23 +40,23 @@ describe("theme conformance", () => {
   });
 
   it("shows the info card's whole thread title, wrapping long words instead of clipping", () => {
-    const body = css.match(/^\.sb-info-title \{([^}]+)\}/m)?.[1];
+    const body = css.match(/^\.switchboard-info-title \{([^}]+)\}/m)?.[1];
     expect(body).toBeDefined();
     expect(body).not.toMatch(/line-clamp|overflow: hidden|text-overflow|white-space: nowrap/);
     expect(body).toMatch(/overflow-wrap: anywhere/);
     // bb's ThreadTitle puts each run of text in a `truncate whitespace-pre` span, which never wraps on its own.
-    expect(css).toMatch(/^\.sb-info-title > span \{[^}]*white-space: pre-wrap/m);
-    expect(css).toMatch(/^\.sb-info-title > \* \{[^}]*max-width: 100%/m);
+    expect(css).toMatch(/^\.switchboard-info-title > span \{[^}]*white-space: pre-wrap/m);
+    expect(css).toMatch(/^\.switchboard-info-title > \* \{[^}]*max-width: 100%/m);
   });
 
   it("adds no gap after the title when bb's row metadata line has no items", () => {
     // bb hides an empty line with display: none, which drops its margin and leaves the wrapper's negative one.
-    expect(css).toMatch(/^\.sb-row-meta \{[^}]*margin-left: calc\(-1 \* var\(--sb-gap\)\)/m);
-    expect(css).toMatch(/^\.sb-row-meta > \[data-thread-row-metadata\] \{[^}]*margin-left: var\(--sb-gap\)/m);
+    expect(css).toMatch(/^\.switchboard-row-meta \{[^}]*margin-left: calc\(-1 \* var\(--switchboard-gap\)\)/m);
+    expect(css).toMatch(/^\.switchboard-row-meta > \[data-thread-row-metadata\] \{[^}]*margin-left: var\(--switchboard-gap\)/m);
   });
 
   it("uses the destructive foreground rather than white or the page background", () => {
-    expect(css).toMatch(/\.sb-drop-pill-bad \{[^}]*color: var\(--destructive-foreground\)/);
+    expect(css).toMatch(/\.switchboard-drop-pill-bad \{[^}]*color: var\(--destructive-foreground\)/);
     for (const name of ["section-menu.tsx", "bulk-bar.tsx"]) {
       const source = readFileSync(join(process.cwd(), "src", name), "utf8");
       expect(source).not.toContain("text-white");

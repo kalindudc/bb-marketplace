@@ -1,7 +1,7 @@
-export const MATCH_HIGHLIGHT = "sl-search-match";
-export const CURRENT_HIGHLIGHT = "sl-search-current";
+export const MATCH_HIGHLIGHT = "session-log-search-match";
+export const CURRENT_HIGHLIGHT = "session-log-search-current";
 // Row parts that are not the row's content (time, badges, actions); search skips them.
-export const NO_SEARCH_ATTRIBUTE = "data-sl-nosearch";
+export const NO_SEARCH_ATTRIBUTE = "data-session-log-nosearch";
 
 export interface SearchMatch {
   entryId: string;

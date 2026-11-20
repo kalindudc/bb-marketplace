@@ -37,8 +37,8 @@ describe("findMatches", () => {
   });
 
   it("skips time, badges and actions, and keeps a row whose match is only in text it does not show", () => {
-    const root = rows(`<div data-entry-id="a"><time data-sl-nosearch="">12:00</time><span>12 files</span>
-      <div data-sl-nosearch=""><a>12 in chat</a></div></div>`);
+    const root = rows(`<div data-entry-id="a"><time data-session-log-nosearch="">12:00</time><span>12 files</span>
+      <div data-session-log-nosearch=""><a>12 in chat</a></div></div>`);
     expect(findMatches(root, "12").map((match) => match.range?.toString())).toEqual(["12"]);
     expect(findMatches(root, "chat")).toEqual([{ entryId: "a", range: null }]);
     expect(findMatches(root, "")).toEqual([]);

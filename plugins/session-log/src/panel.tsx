@@ -751,7 +751,7 @@ export function SessionLogPanel({ threadId, preference }: { threadId: string; pr
             <p className="p-3 text-sm text-muted-foreground">Nothing has happened in this thread yet.</p>
           )}
           {ready && (range.start > 0 || snapshot.hasOlder) && (
-            <div data-sl-edge="earlier" className={edgeClass}>
+            <div data-session-log-edge="earlier" className={edgeClass}>
               {range.start > 0 ? (
                 <button type="button" className={edgeButton} onClick={() => showEarlier()}>Show earlier rows</button>
               ) : snapshot.olderError !== null ? (
@@ -782,7 +782,7 @@ export function SessionLogPanel({ threadId, preference }: { threadId: string; pr
             ))}
           </div>
           {ready && !drawsNewest && (
-            <div data-sl-edge="later" className={edgeClass}>
+            <div data-session-log-edge="later" className={edgeClass}>
               <button type="button" className={edgeButton} onClick={() => showLater()}>Show later rows</button>
             </div>
           )}

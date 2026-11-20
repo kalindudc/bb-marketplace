@@ -29,9 +29,9 @@ function Harness() {
     <button onPointerDown={(event) => drag.onSectionPointerDown(event, "s")}>Section</button>
     <output data-testid="view">{drag.view ? JSON.stringify({ subject: drag.view.subject, target: drag.view.target, plan: drag.view.plan }) : "idle"}</output>
     {drag.view && <div ref={drag.ghostRef} data-testid="ghost" />}
-    <div data-sb-row="" data-thread-id="b" data-depth="0" data-last-child="false" data-open-children="false" data-testid="row">B</div>
-    <div data-sb-row="" data-thread-id="b" data-depth="0" data-last-child="false" data-open-children="false" data-collapsed="true" data-testid="collapsed">Collapsed</div>
-    <div data-sb-section="other" data-sb-drop="section:other" data-testid="section">Other</div>
+    <div data-switchboard-row="" data-thread-id="b" data-depth="0" data-last-child="false" data-open-children="false" data-testid="row">B</div>
+    <div data-switchboard-row="" data-thread-id="b" data-depth="0" data-last-child="false" data-open-children="false" data-collapsed="true" data-testid="collapsed">Collapsed</div>
+    <div data-switchboard-section="other" data-switchboard-drop="section:other" data-testid="section">Other</div>
   </div></div>;
 }
 function pointer(type: "pointerMove" | "pointerUp", x: number, y: number) {

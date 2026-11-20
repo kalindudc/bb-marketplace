@@ -93,20 +93,20 @@ describe("section controls", () => {
       onArchiveStale={vi.fn()} staleCount={0} projects={[sidebarProject("p", "Project")]} onSetDefaultProject={vi.fn()}
       onNewSectionBelow={vi.fn()} />);
     openMenu();
-    const items = [...document.querySelectorAll<HTMLElement>(".sb-section-menu [role^='menuitem']")];
+    const items = [...document.querySelectorAll<HTMLElement>(".switchboard-section-menu [role^='menuitem']")];
     expect(items.map((entry) => entry.textContent)).toEqual(["Rename", "Colour \u203a", "Sort \u203a",
       "Default project \u203a", "New thread here", "New section below", "Mark all read", "Archive stale threads\u2026", "Delete section\u2026"]);
     for (const entry of items) {
-      expect(entry.classList.contains("sb-menu-item")).toBe(true);
+      expect(entry.classList.contains("switchboard-menu-item")).toBe(true);
       expect(entry.classList.contains("cursor-default")).toBe(false);
     }
     expect(items.filter((entry) => entry.hasAttribute("data-disabled")).map((entry) => entry.textContent))
       .toEqual(["Mark all read", "Archive stale threads\u2026"]);
     const css = readFileSync(join(process.cwd(), "src/switchboard.css"), "utf8");
     const rule = (selector: RegExp) => css.match(new RegExp(`${selector.source}\\s*\\{([^}]*)\\}`))?.[1] ?? "";
-    expect(rule(/\.sb-menu-item/)).toMatch(/cursor:\s*pointer/);
-    expect(rule(/\.sb-menu-item\[data-highlighted\], \.sb-menu-item\[data-state="open"\]/)).toMatch(/background:\s*var\(--sidebar-accent\)/);
-    expect(rule(/\.sb-menu-item\[data-disabled\]/)).toMatch(/cursor:\s*not-allowed;\s*opacity:\s*\.5/);
+    expect(rule(/\.switchboard-menu-item/)).toMatch(/cursor:\s*pointer/);
+    expect(rule(/\.switchboard-menu-item\[data-highlighted\], \.switchboard-menu-item\[data-state="open"\]/)).toMatch(/background:\s*var\(--sidebar-accent\)/);
+    expect(rule(/\.switchboard-menu-item\[data-disabled\]/)).toMatch(/cursor:\s*not-allowed;\s*opacity:\s*\.5/);
   });
 
   it("exposes automatic and eight hue choices", () => {
@@ -117,7 +117,7 @@ describe("section controls", () => {
     expect(screen.getByRole("menuitem", { name: "Mark all read" }).hasAttribute("data-disabled")).toBe(true);
     fireEvent.pointerMove(screen.getByRole("menuitem", { name: "Colour" }));
     fireEvent.keyDown(screen.getByRole("menuitem", { name: "Colour" }), { key: "ArrowRight" });
-    expect(document.querySelector(".sb-colour-menu")?.classList.contains("w-max")).toBe(true);
+    expect(document.querySelector(".switchboard-colour-menu")?.classList.contains("w-max")).toBe(true);
     fireEvent.click(screen.getByRole("menuitemradio", { name: "Violet" }));
     expect(onSetHue).toHaveBeenCalledWith("violet");
     openMenu();

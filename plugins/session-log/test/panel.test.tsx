@@ -64,8 +64,8 @@ describe("LogRow", () => {
     const slot = renderRow(props);
     const row = slot.container.querySelector('[data-entry-id="failed"]') as HTMLElement;
     expect(row.tabIndex).toBe(0);
-    expect(row.dataset.slTint).toBe("error");
-    expect(row.classList.contains("sl-tinted")).toBe(true);
+    expect(row.dataset.sessionLogTint).toBe("error");
+    expect(row.classList.contains("session-log-tinted")).toBe(true);
     expect(row.classList.contains("hover:bg-state-hover")).toBe(false);
     expect(row.classList.contains("focus:bg-surface-selected")).toBe(false);
     expect(row.classList.contains("bg-surface-selected")).toBe(false);
@@ -87,23 +87,23 @@ describe("LogRow", () => {
     const rowOf = (slot: ReturnType<typeof renderRow>) => slot.container.querySelector("[data-entry-id]") as HTMLElement;
     const tool = toLogEntries([toolRow("tool")])[0]!;
     const tinted = rowOf(renderRow(rowProps(tool)));
-    expect(tinted.dataset.slTint).toBe("tool");
-    expect(tinted.classList.contains("sl-tinted")).toBe(true);
-    expect(tinted.querySelector("[data-icon]")?.classList.contains("sl-tint-icon")).toBe(true);
+    expect(tinted.dataset.sessionLogTint).toBe("tool");
+    expect(tinted.classList.contains("session-log-tinted")).toBe(true);
+    expect(tinted.querySelector("[data-icon]")?.classList.contains("session-log-tint-icon")).toBe(true);
 
     const plain = rowOf(renderRow(rowProps(tool, { settings: { ...DEFAULT_SETTINGS, tintRows: false } })));
-    expect(plain.dataset.slTint).toBe("tool");
-    expect(plain.classList.contains("sl-tinted")).toBe(false);
+    expect(plain.dataset.sessionLogTint).toBe("tool");
+    expect(plain.classList.contains("session-log-tinted")).toBe(false);
     expect(plain.classList.contains("hover:bg-state-hover")).toBe(true);
     expect(plain.classList.contains("focus:bg-surface-selected")).toBe(true);
-    expect(plain.querySelector("[data-icon]")?.classList.contains("sl-tint-icon")).toBe(true);
+    expect(plain.querySelector("[data-icon]")?.classList.contains("session-log-tint-icon")).toBe(true);
 
     const [thought, divider] = [reasoningRow("thought"), userRow("request")]
       .map((row) => rowOf(renderRow(rowProps(toLogEntries([row])[0]!))));
     for (const row of [thought!, divider!]) {
-      expect(row.hasAttribute("data-sl-tint")).toBe(false);
-      expect(row.classList.contains("sl-tinted")).toBe(false);
-      expect(row.querySelector(".sl-tint-icon")).toBeNull();
+      expect(row.hasAttribute("data-session-log-tint")).toBe(false);
+      expect(row.classList.contains("session-log-tinted")).toBe(false);
+      expect(row.querySelector(".session-log-tint-icon")).toBeNull();
     }
     expect(divider!.classList.contains("bg-surface-recessed")).toBe(true);
   });
@@ -185,17 +185,17 @@ describe("LogRow", () => {
   it("marks the current search row, keeps search off its time, badges and actions, and exposes copy/open controls", () => {
     const tool = toLogEntries([toolRow("tool", { output: "Matching output", toolName: "match" })])[0]!;
     const plain = renderRow(rowProps(tool));
-    expect(plain.container.querySelector("[data-entry-id]")?.classList.contains("sl-search-current")).toBe(false);
+    expect(plain.container.querySelector("[data-entry-id]")?.classList.contains("session-log-search-current")).toBe(false);
     const current = renderRow(rowProps(tool, { searchCurrent: true }));
     const row = current.container.querySelector("[data-entry-id]") as HTMLElement;
-    expect(row.classList.contains("sl-search-current")).toBe(true);
-    expect(row.querySelector("time")?.hasAttribute("data-sl-nosearch")).toBe(true);
-    expect(within(row).getByText("✓").hasAttribute("data-sl-nosearch")).toBe(true);
+    expect(row.classList.contains("session-log-search-current")).toBe(true);
+    expect(row.querySelector("time")?.hasAttribute("data-session-log-nosearch")).toBe(true);
+    expect(within(row).getByText("✓").hasAttribute("data-session-log-nosearch")).toBe(true);
     expect(row.querySelector("mark")).toBeNull();
     const message = toLogEntries([userRow("other", { senderThreadId: "thr_sender", text: "Matching message" })])[0]!;
     const props = rowProps(message, { chatHref: "/projects/proj_1/threads/thr_1#msg=10" });
     const slot = renderRow(props);
-    expect(within(slot.container).getByRole("link", { name: "Show in chat" }).closest("[data-sl-nosearch]")).toBeTruthy();
+    expect(within(slot.container).getByRole("link", { name: "Show in chat" }).closest("[data-session-log-nosearch]")).toBeTruthy();
     expect(within(slot.container).getByRole("link", { name: "Show in chat" }).getAttribute("href"))
       .toBe("/projects/proj_1/threads/thr_1#msg=10");
     fireEvent.click(within(slot.container).getByRole("button", { name: "Copy row" }));
@@ -403,7 +403,7 @@ describe("SessionLogPanel", () => {
     const hiddenRow = slot.container.querySelector('[data-entry-id="hidden:creq_25"]') as HTMLElement;
     expect(hiddenRow.textContent).toContain("Hidden steer");
     expect(hiddenRow.textContent).toContain("Possibly relevant memory");
-    expect(hiddenRow.classList.contains("sl-hidden")).toBe(true);
+    expect(hiddenRow.classList.contains("session-log-hidden")).toBe(true);
     expect(within(hiddenRow).queryByRole("link", { name: "Show in chat" })).toBeNull();
 
     const chip = within(slot.container).getByRole("button", { name: "Hidden" });
@@ -441,13 +441,13 @@ describe("SessionLogPanel", () => {
     await waitFor(() => expect(slot.container.querySelectorAll("[data-entry-id]")).toHaveLength(2));
     expect(slot.container.textContent).toContain("2 of 3 rows");
     expect(slot.container.textContent).toContain("3 matches");
-    expect(painted("sl-search-match")).toEqual(["Needle", "Needle", "needle"]);
-    expect(painted("sl-search-current")).toEqual([]);
+    expect(painted("session-log-search-match")).toEqual(["Needle", "Needle", "needle"]);
+    expect(painted("session-log-search-current")).toEqual([]);
     expect(slot.container.querySelector('[data-entry-id="command"] button[aria-expanded]')?.getAttribute("aria-expanded")).toBe("true");
 
     fireEvent.change(within(slot.container).getByRole("searchbox"), { target: { value: "nothing like it" } });
     await waitFor(() => expect(slot.container.textContent).toContain("No matches"));
-    expect(highlights.has("sl-search-match")).toBe(false);
+    expect(highlights.has("session-log-search-match")).toBe(false);
     expect((within(slot.container).getByRole("button", { name: "Next match" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
@@ -462,15 +462,15 @@ describe("SessionLogPanel", () => {
     search.focus();
     fireEvent.change(search, { target: { value: "marker" } });
     await waitFor(() => expect(slot.container.textContent).toContain("3 matches"));
-    const currentRow = () => slot.container.querySelector(".sl-search-current")?.getAttribute("data-entry-id");
+    const currentRow = () => slot.container.querySelector(".session-log-search-current")?.getAttribute("data-entry-id");
 
     fireEvent.keyDown(search, { key: "Enter" });
     expect(slot.container.textContent).toContain("1 of 3");
     expect(currentRow()).toBe("request");
     expect(cursorId(slot.container)).toBe("request");
     expect(document.activeElement).toBe(search);
-    expect(painted("sl-search-current")).toEqual(["marker"]);
-    expect(painted("sl-search-match")).toHaveLength(2);
+    expect(painted("session-log-search-current")).toEqual(["marker"]);
+    expect(painted("session-log-search-match")).toHaveLength(2);
 
     fireEvent.keyDown(search, { key: "Enter" });
     fireEvent.keyDown(search, { key: "Enter" });
@@ -535,7 +535,7 @@ describe("SessionLogPanel", () => {
     expect((document.activeElement as HTMLElement).dataset.entryId).toBe("request");
     fireEvent.keyDown(document.activeElement!, { key: "N" });
     expect((document.activeElement as HTMLElement).dataset.entryId).toBe("reply-b");
-    expect(painted("sl-search-current")).toEqual(["marker"]);
+    expect(painted("session-log-search-current")).toEqual(["marker"]);
   });
 
   it("keeps the current match as new rows stream in, and clears highlights on unmount", async () => {
@@ -556,8 +556,8 @@ describe("SessionLogPanel", () => {
     expect(slot.container.textContent).toContain("1 of 1");
     fake.emitThread();
     await waitFor(() => expect(slot.container.textContent).toContain("1 of 2"), { timeout: 2_000 });
-    expect(painted("sl-search-match")).toEqual(["marker"]);
-    expect(painted("sl-search-current")).toEqual(["marker"]);
+    expect(painted("session-log-search-match")).toEqual(["marker"]);
+    expect(painted("session-log-search-current")).toEqual(["marker"]);
     slot.lifecycle.unmount();
     mounts.splice(mounts.indexOf(slot), 1);
     expect(highlights.size).toBe(0);
@@ -652,7 +652,7 @@ describe("SessionLogPanel", () => {
     expect(within(slot.container).getByRole("button", { name: "Thinking" }).getAttribute("aria-pressed")).toBe("false");
     const failedToggle = () => slot.container.querySelector('[data-entry-id="failed"] button[aria-expanded]')?.getAttribute("aria-expanded");
     expect(failedToggle()).toBe("false");
-    const failedTinted = () => slot.container.querySelector('[data-entry-id="failed"]')?.classList.contains("sl-tinted");
+    const failedTinted = () => slot.container.querySelector('[data-entry-id="failed"]')?.classList.contains("session-log-tinted");
     expect(failedTinted()).toBe(true);
     fake.getSettings.mockResolvedValue({
       ok: true, schema: {}, values: { showThinking: false, expandFailures: true, tintRows: false },
@@ -906,7 +906,7 @@ describe("SessionLogPanel", () => {
     fireEvent.keyDown(search, { key: "Enter", shiftKey: true });
     await waitFor(() => expect(cursorId(slot.container)).toBe("first"));
     expect(slot.container.querySelectorAll("[data-entry-id]")).toHaveLength(1);
-    expect(painted("sl-search-current")).toEqual(["unrelated"]);
+    expect(painted("session-log-search-current")).toEqual(["unrelated"]);
   });
 
   it("opens on the newest page of rows, draws earlier pages as the reader scrolls up, and trims them at the bottom", async () => {
@@ -954,7 +954,7 @@ describe("SessionLogPanel", () => {
     expect(drawnIds(slot.container)).toEqual([...manyRows(5, undefined, "older"), ...manyRows(5)].map((row) => row.id));
     expect(layout.list.scrollTop).toBe(250);
     expect(slot.container.textContent).toContain("10 rows");
-    expect(slot.container.querySelector('[data-sl-edge="earlier"]')).toBeNull();
+    expect(slot.container.querySelector('[data-session-log-edge="earlier"]')).toBeNull();
   });
 
   it("keeps an older-page error at the top with a Retry that reads it again", async () => {
@@ -967,10 +967,10 @@ describe("SessionLogPanel", () => {
     const slot = renderPanel(fake);
     await waitFor(() => expect(drawnIds(slot.container)).toHaveLength(3));
     fireEvent.click(within(slot.container).getByRole("button", { name: "Load older rows" }));
-    await waitFor(() => expect(slot.container.querySelector('[data-sl-edge="earlier"]')?.textContent)
+    await waitFor(() => expect(slot.container.querySelector('[data-session-log-edge="earlier"]')?.textContent)
       .toContain("Could not load older rows: HTTP 500 server busy"));
     withOlderPages(fake, latest, { "anchor-20": pageOf(manyRows(2, undefined, "older"), null) });
-    fireEvent.click(within(slot.container.querySelector('[data-sl-edge="earlier"]') as HTMLElement).getByRole("button", { name: "Retry" }));
+    fireEvent.click(within(slot.container.querySelector('[data-session-log-edge="earlier"]') as HTMLElement).getByRole("button", { name: "Retry" }));
     await waitFor(() => expect(drawnIds(slot.container)).toEqual(["older-0", "older-1", "row-0", "row-1", "row-2"]));
   });
 
@@ -1034,7 +1034,7 @@ describe("SessionLogPanel", () => {
     fireEvent.keyDown(search, { key: "Enter" });
     await waitFor(() => expect(cursorId(slot.container)).toBe("old-match"));
     expect(slot.container.textContent).toContain("1 of 10+");
-    expect(painted("sl-search-current")).toEqual(["marker"]);
+    expect(painted("session-log-search-current")).toEqual(["marker"]);
     fireEvent.keyDown(search, { key: "Enter", shiftKey: true });
     await waitFor(() => expect(cursorId(slot.container)).toBe("row-24"));
     fireEvent.keyDown(search, { key: "Enter" });

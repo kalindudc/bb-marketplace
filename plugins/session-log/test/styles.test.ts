@@ -9,7 +9,7 @@ describe("session-log.css", () => {
     ["agent", "timeline-accent"], ["tool", "pr-merged"], ["command", "attention"],
     ["file", "diff-added"], ["error", "destructive"],
   ])("tints %s rows with the theme's --%s", (tint, token) => {
-    expect(css()).toMatch(new RegExp(`\\[data-sl-tint="${tint}"\\]\\s*\\{\\s*--sl-tint:\\s*var\\(--${token}\\)`));
+    expect(css()).toMatch(new RegExp(`\\[data-session-log-tint="${tint}"\\]\\s*\\{\\s*--session-log-tint:\\s*var\\(--${token}\\)`));
   });
 
   it("uses theme tokens only, never color literals", () => {
@@ -19,6 +19,6 @@ describe("session-log.css", () => {
   it("prefixes every class it styles, because plugin CSS is global", () => {
     const classes = [...css().replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/\.([a-z][\w-]*)/g)].map((match) => match[1]);
     expect(classes.length).toBeGreaterThan(0);
-    for (const name of classes) expect(name).toMatch(/^sl-/);
+    for (const name of classes) expect(name).toMatch(/^session-log-/);
   });
 });

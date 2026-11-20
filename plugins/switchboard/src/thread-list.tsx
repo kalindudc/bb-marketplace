@@ -137,8 +137,8 @@ export function ThreadList(props: PluginThreadListProps) {
     }, 0);
   }, []);
   const focusSectionHeader = useCallback((id: string) => focusWhenIdle((root) =>
-    [...root.querySelectorAll<HTMLElement>("[data-sb-section]")].find((header) => header.dataset.sbSection === id)
-      ?.querySelector<HTMLElement>(".sb-header-main")), [focusWhenIdle]);
+    [...root.querySelectorAll<HTMLElement>("[data-switchboard-section]")].find((header) => header.dataset.switchboardSection === id)
+      ?.querySelector<HTMLElement>(".switchboard-header-main")), [focusWhenIdle]);
   const draftCreated = draft?.createdId !== undefined && sections.has(draft.createdId);
   useEffect(() => {
     if (!draftCreated || !draft?.createdId) return;
@@ -285,7 +285,7 @@ export function ThreadList(props: PluginThreadListProps) {
   const cancelDraft = (current: SectionDraft) => {
     setDraft((latest) => latest?.seq === current.seq ? null : latest);
     if (current.after) focusSectionHeader(current.after);
-    else focusWhenIdle((root) => root.querySelector<HTMLElement>(".sb-new-section"));
+    else focusWhenIdle((root) => root.querySelector<HTMLElement>(".switchboard-new-section"));
   };
   const commandRows = useMemo(() => {
     if (settings.view === "status") return lanes.flatMap((lane) => lane.rows.map((row) =>
@@ -332,18 +332,18 @@ export function ThreadList(props: PluginThreadListProps) {
   const target = current?.target;
   const blocked = current?.plan?.ok === false;
   const spacing = {
-    "--sb-row-h": `${metrics.rowH}px`, "--sb-indent": `${metrics.indent}px`,
-    "--sb-gap": `${metrics.gap}px`, "--sb-header-h": `${metrics.headerH}px`,
-    "--sb-section-gap": `${metrics.sectionGap}px`, "--sb-control-h": `${metrics.controlH}px`,
-    "--sb-base": `${metrics.base}px`, "--sb-pill-l": `${metrics.pillLeft}px`,
-    "--sb-pill-r": `${metrics.pillRight}px`,
+    "--switchboard-row-h": `${metrics.rowH}px`, "--switchboard-indent": `${metrics.indent}px`,
+    "--switchboard-gap": `${metrics.gap}px`, "--switchboard-header-h": `${metrics.headerH}px`,
+    "--switchboard-section-gap": `${metrics.sectionGap}px`, "--switchboard-control-h": `${metrics.controlH}px`,
+    "--switchboard-base": `${metrics.base}px`, "--switchboard-pill-l": `${metrics.pillLeft}px`,
+    "--switchboard-pill-r": `${metrics.pillRight}px`,
   } as CSSProperties;
   const dragActive = useRef(false);
   dragActive.current = current !== null;
   const isSuppressed = useCallback(() => dragActive.current, []);
   return <InfoCardProvider mode={props.isCompactViewport ? "off" : settings.infoCard} sdk={sdk} isSuppressed={isSuppressed}>
-  <nav ref={rootRef} aria-label="Threads" onKeyDown={onKeyDown} style={spacing} data-sb-dragging={current ? "" : undefined}
-    className={`sb-list sb-density-${settings.density} relative min-w-0 pb-3 text-[13px] text-sidebar-foreground`}>
+  <nav ref={rootRef} aria-label="Threads" onKeyDown={onKeyDown} style={spacing} data-switchboard-dragging={current ? "" : undefined}
+    className={`switchboard-list switchboard-density-${settings.density} relative min-w-0 pb-3 text-[13px] text-sidebar-foreground`}>
     <FilterBar filter={filter} counts={sidebar.status === "ready" ? counts : EMPTY_COUNTS}
       showChips={sidebar.status === "ready" && settings.statusChips} inputRef={inputRef}
       settings={settings} onSettingsChange={updateSettings}
@@ -353,22 +353,22 @@ export function ThreadList(props: PluginThreadListProps) {
       onMove={onBulkMove} onArchive={() => { void onBulkArchive(); }} onClear={() => setSelection(EMPTY_SELECTION)} />}
     {sidebar.status === "error" && <p className="px-3 py-3 text-muted-foreground">Could not load threads</p>}
     {sidebar.status === "ready" && settings.view === "sections" && current?.subject.kind === "threads" && !groups.some((group) => group.kind === "pinned") &&
-      <div data-sb-drop="pinned"
-        className="sb-group sb-pinned-drop absolute top-0 z-20 border border-primary bg-popover uppercase text-popover-foreground shadow-lg">Pinned</div>}
+      <div data-switchboard-drop="pinned"
+        className="switchboard-group switchboard-pinned-drop absolute top-0 z-20 border border-primary bg-popover uppercase text-popover-foreground shadow-lg">Pinned</div>}
     {sidebar.status === "ready" && settings.view === "status" && <LanesView lanes={lanes} collapsed={collapsed}
       activeThreadId={props.activeThreadId} settings={settings} now={now} projectName={names.project}
       onToggle={onToggle} onNavigate={onNavigate} onSnooze={onSnoozeId} canSnooze={canSnoozeId} />}
     {sidebar.status === "ready" && settings.view === "sections" && settings.needsYouShelf && urgent.length > 0 &&
-      <section className="sb-needs-shelf">
-        <div className="sb-group-header relative flex min-w-0 items-center text-muted-foreground">
+      <section className="switchboard-needs-shelf">
+        <div className="switchboard-group-header relative flex min-w-0 items-center text-muted-foreground">
           <button type="button" aria-expanded={needsOpen} onClick={() => setNeedsOpen(!needsOpen)}
-            className="sb-header-main flex h-full min-w-0 flex-1 items-center text-left">
-            <span aria-hidden className="sb-header-caret shrink-0 text-center text-2xs text-subtle-foreground">{needsOpen ? "▾" : "▸"}</span>
-            <span className="sb-header-name text-[11px] font-semibold uppercase tracking-[.06em]">Needs you</span>
+            className="switchboard-header-main flex h-full min-w-0 flex-1 items-center text-left">
+            <span aria-hidden className="switchboard-header-caret shrink-0 text-center text-2xs text-subtle-foreground">{needsOpen ? "▾" : "▸"}</span>
+            <span className="switchboard-header-name text-[11px] font-semibold uppercase tracking-[.06em]">Needs you</span>
             <span className="font-mono text-[11px] text-subtle-foreground">{String(urgent.length).padStart(2, "0")}</span>
           </button>
         </div>
-        {needsOpen && <div className="sb-group-body relative">{urgent.map((entry) => <ThreadRow key={entry.thread.id}
+        {needsOpen && <div className="switchboard-group-body relative">{urgent.map((entry) => <ThreadRow key={entry.thread.id}
           variant="mirror" row={{ thread: entry.thread, state: entry.state, depth: 0, guides: "", isLast: true,
             childCount: 0, collapsed: false, rollup: null, rollupCount: 0, crossProject: null, dim: false }}
           isActive={entry.thread.id === props.activeThreadId} settings={settings} now={now}
@@ -376,7 +376,7 @@ export function ThreadList(props: PluginThreadListProps) {
       </section>}
     {sidebar.status === "ready" && settings.view === "sections" && rows.map(({ group, items, isCollapsed }) => <Fragment key={group.key}>
     {group.kind === "loose" && draftNode && draftAfter === null && draftNode}
-    <section className={group.hue ? `sb-hue-${group.hue}` : undefined}>
+    <section className={group.hue ? `switchboard-hue-${group.hue}` : undefined}>
       <GroupHeader group={group} collapsed={isCollapsed} sectionColour={settings.sectionColour} flash={flashIds.has(group.key)}
         onToggle={onToggle} drag={drag} renaming={renamingId === group.section?.id && group.kind === "section"}
         dropState={target && ((target.kind === "group" && target.key === group.key) ||
@@ -412,7 +412,7 @@ export function ThreadList(props: PluginThreadListProps) {
           [next[position], next[other]] = [next[other]!, next[position]!];
           onSectionMove(next);
         }} />
-      {!isCollapsed && <div className={`sb-group-body relative ${group.hue && settings.sectionColour !== "swatch" ? "sb-rail" : ""}`}>
+      {!isCollapsed && <div className={`switchboard-group-body relative ${group.hue && settings.sectionColour !== "swatch" ? "switchboard-rail" : ""}`}>
         {items.map((row) => <ThreadRow key={row.thread.id} row={row}
           isActive={row.thread.id === props.activeThreadId} settings={settings} now={now}
           projectName={names.project(row.thread.projectId)} drag={drag}
@@ -429,15 +429,15 @@ export function ThreadList(props: PluginThreadListProps) {
     </section>
     {group.kind === "section" && draftNode && draftAfter === group.section?.id && draftNode}
     </Fragment>)}
-    {sidebar.status === "ready" && snoozed.length > 0 && <section className="sb-snoozed-shelf">
-      <div className="sb-group-header relative flex min-w-0 items-center text-muted-foreground">
+    {sidebar.status === "ready" && snoozed.length > 0 && <section className="switchboard-snoozed-shelf">
+      <div className="switchboard-group-header relative flex min-w-0 items-center text-muted-foreground">
         <button type="button" aria-expanded={snoozedOpen} onClick={() => setSnoozedOpen(!snoozedOpen)}
-          className="sb-header-main flex h-full min-w-0 flex-1 items-center text-left">
-          <span aria-hidden className="sb-header-caret shrink-0 text-center text-2xs text-subtle-foreground">{snoozedOpen ? "▾" : "▸"}</span>
-          <span className="sb-header-name text-[11px] font-semibold uppercase tracking-[.06em]">Snoozed · {snoozed.length}</span>
+          className="switchboard-header-main flex h-full min-w-0 flex-1 items-center text-left">
+          <span aria-hidden className="switchboard-header-caret shrink-0 text-center text-2xs text-subtle-foreground">{snoozedOpen ? "▾" : "▸"}</span>
+          <span className="switchboard-header-name text-[11px] font-semibold uppercase tracking-[.06em]">Snoozed · {snoozed.length}</span>
         </button>
       </div>
-      {snoozedOpen && <div className="sb-group-body relative">{snoozed.map((node) => <ThreadRow key={node.thread.id}
+      {snoozedOpen && <div className="switchboard-group-body relative">{snoozed.map((node) => <ThreadRow key={node.thread.id}
         variant="snoozed" row={{ thread: node.thread, state: node.state, depth: 0, guides: "", isLast: true,
           childCount: 0, collapsed: false, rollup: null, rollupCount: 0, crossProject: null, dim: false }}
         isActive={node.thread.id === props.activeThreadId} settings={settings} now={now}
@@ -445,31 +445,31 @@ export function ThreadList(props: PluginThreadListProps) {
         wakeLabel={wakeLabel(layout.snoozes[node.thread.id]!.until, now)} onWake={() => unsnooze([node.thread.id])} />)}</div>}
     </section>}
     {sidebar.status === "ready" && settings.showArchived && filter.states.size === 0 && (archived.length > 0 || !filter.query.trim()) &&
-      <section className="sb-archived-shelf" aria-label="Archived threads">
-        <div className="sb-group-header relative flex min-w-0 items-center text-muted-foreground">
-          <div className="sb-header-main flex h-full min-w-0 flex-1 items-center">
-            <span aria-hidden className="sb-header-caret shrink-0" />
-            <span className="sb-header-name text-[11px] font-semibold uppercase tracking-[.06em]">Archived</span>
+      <section className="switchboard-archived-shelf" aria-label="Archived threads">
+        <div className="switchboard-group-header relative flex min-w-0 items-center text-muted-foreground">
+          <div className="switchboard-header-main flex h-full min-w-0 flex-1 items-center">
+            <span aria-hidden className="switchboard-header-caret shrink-0" />
+            <span className="switchboard-header-name text-[11px] font-semibold uppercase tracking-[.06em]">Archived</span>
             <span className="font-mono text-[11px] text-subtle-foreground">{String(archived.length).padStart(2, "0")}{archivedPage?.hasNextPage ? "+" : ""}</span>
           </div>
         </div>
-        <div className="sb-group-body relative">
+        <div className="switchboard-group-body relative">
           {archived.map((thread) => <ThreadRow key={thread.id} variant="archived"
             row={{ thread, state: rowState(thread), depth: 0, guides: "", isLast: true, childCount: 0, collapsed: false,
               rollup: null, rollupCount: 0, crossProject: null, dim: false }}
             isActive={thread.id === props.activeThreadId} settings={settings} now={now}
             projectName={names.project(thread.projectId)} onNavigate={onNavigate} />)}
-          {archivedPage?.status === "loading" && <p className="sb-shelf-note text-[11px] text-subtle-foreground">Loading archived threads…</p>}
-          {archivedPage?.status === "error" && <p className="sb-shelf-note text-[11px] text-subtle-foreground">Could not load archived threads</p>}
+          {archivedPage?.status === "loading" && <p className="switchboard-shelf-note text-[11px] text-subtle-foreground">Loading archived threads…</p>}
+          {archivedPage?.status === "error" && <p className="switchboard-shelf-note text-[11px] text-subtle-foreground">Could not load archived threads</p>}
           {archivedPage?.status === "ready" && archived.length === 0 && !archivedPage.hasNextPage &&
-            <p className="sb-shelf-note text-[11px] text-subtle-foreground">No archived threads</p>}
+            <p className="switchboard-shelf-note text-[11px] text-subtle-foreground">No archived threads</p>}
           {archivedPage?.hasNextPage && <button type="button" aria-label="Show more archived threads"
-            disabled={archivedPage.isFetchingNextPage} className="sb-control sb-text-button sb-shelf-more text-[11px] text-muted-foreground"
+            disabled={archivedPage.isFetchingNextPage} className="switchboard-control switchboard-text-button switchboard-shelf-more text-[11px] text-muted-foreground"
             onClick={() => { void archivedPage.fetchNextPage().catch(() => toast.error("Switchboard could not load more archived threads")); }}>
             {archivedPage.isFetchingNextPage ? "Loading…" : "Show more"}</button>}
         </div>
       </section>}
-    {sidebar.status === "ready" && settings.view === "sections" && <button type="button" className="sb-control sb-new-section flex items-center text-muted-foreground"
+    {sidebar.status === "ready" && settings.view === "sections" && <button type="button" className="switchboard-control switchboard-new-section flex items-center text-muted-foreground"
       onClick={onNewSection}>+ New section</button>}
     {settings.view === "sections" && <><DropIndicator view={current} />
       <DragGhost view={current} ghostRef={drag.ghostRef}

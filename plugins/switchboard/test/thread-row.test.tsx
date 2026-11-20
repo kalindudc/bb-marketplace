@@ -51,7 +51,7 @@ describe("thread row", () => {
   it("keeps the menu trigger laid out while its menu is open so the menu stays anchored", () => {
     const { slot } = mount({}, { threadActions: () => [{ key: "bb--core/archive", pluginId: "bb--core", group: "thread",
       action: { label: "Archive", icon: "Archive", run: async () => {} } }] });
-    const element = slot.container.querySelector<HTMLElement>("[data-sb-row]")!;
+    const element = slot.container.querySelector<HTMLElement>("[data-switchboard-row]")!;
     expect(element.hasAttribute("data-menu-open")).toBe(false);
     fireEvent.click(screen.getByRole("button", { name: "Thread actions" }));
     expect(element.hasAttribute("data-menu-open")).toBe(true);
@@ -59,7 +59,7 @@ describe("thread row", () => {
     expect(element.hasAttribute("data-menu-open")).toBe(false);
     const css = readFileSync(join(process.cwd(), "src/switchboard.css"), "utf8");
     const hover = css.slice(css.indexOf("@media (hover: hover)"));
-    expect(hover).toMatch(/\.sb-row\[data-menu-open\] \.sb-menu-trigger[^{]*\{ display: grid; \}/);
+    expect(hover).toMatch(/\.switchboard-row\[data-menu-open\] \.switchboard-menu-trigger[^{]*\{ display: grid; \}/);
     slot.unmount();
   });
 
@@ -113,7 +113,7 @@ describe("thread row", () => {
   it("centres the leading status glyph in its box instead of on the text baseline", () => {
     for (const state of ["running", "failed", "idle"] as const) {
       const { slot } = mount({ row: { ...row, state } });
-      const glyph = slot.container.querySelector<HTMLElement>(".sb-leading-glyph")!;
+      const glyph = slot.container.querySelector<HTMLElement>(".switchboard-leading-glyph")!;
       expect(glyph.className).toMatch(/(^| )grid( |$)/);
       expect(glyph.className).toContain("place-items-center");
       slot.unmount();
@@ -150,10 +150,10 @@ describe("thread row", () => {
     const { slot, onNavigate } = mount({ drag, onSelect, onKeyboardMove, isSelected: true, isDragging: true,
       dropState: "child", flash: true, selectedRun: "middle" });
     const anchor = screen.getByRole("link", { name: "A thread" });
-    const element = slot.container.querySelector<HTMLElement>("[data-sb-row]")!;
+    const element = slot.container.querySelector<HTMLElement>("[data-switchboard-row]")!;
     expect(element.dataset).toMatchObject({ threadId: "t", depth: "0", lastChild: "true",
       openChildren: "true", selected: "true", dragging: "true", drop: "child", run: "middle" });
-    expect(element.className).toContain("sb-flash");
+    expect(element.className).toContain("switchboard-flash");
     expect(element.className).not.toContain("hover:bg-sidebar-accent");
     expect(element.className).not.toContain("bg-state-active");
     fireEvent.pointerDown(anchor, { pointerType: "mouse", button: 0 });
@@ -169,34 +169,34 @@ describe("thread row", () => {
 
   it("fades the flash in an overlay on the compositor, and leaves it out for reduced motion", () => {
     const css = readFileSync(join(process.cwd(), "src/switchboard.css"), "utf8");
-    expect(css).toContain(".sb-row::before, .sb-group-header::before, .sb-flash::after {");
-    expect(css).toContain(".sb-flash::after { background: color-mix(in oklch, var(--primary) 28%, transparent); opacity: 0; animation: sb-flash .9s ease-out; }");
-    expect(css).toContain("@keyframes sb-flash { from { opacity: 1; } to { opacity: 0; } }");
-    expect(css).not.toMatch(/\.sb-flash::before/);
-    expect(css).toMatch(/prefers-reduced-motion: reduce\) \{[^}]*\}\s*\.sb-flash::after \{ animation: none; \}/);
+    expect(css).toContain(".switchboard-row::before, .switchboard-group-header::before, .switchboard-flash::after {");
+    expect(css).toContain(".switchboard-flash::after { background: color-mix(in oklch, var(--primary) 28%, transparent); opacity: 0; animation: switchboard-flash .9s ease-out; }");
+    expect(css).toContain("@keyframes switchboard-flash { from { opacity: 1; } to { opacity: 0; } }");
+    expect(css).not.toMatch(/\.switchboard-flash::before/);
+    expect(css).toMatch(/prefers-reduced-motion: reduce\) \{[^}]*\}\s*\.switchboard-flash::after \{ animation: none; \}/);
   });
 
   it("places nested content, caret and guides from shared spacing variables", () => {
     const nested = { ...row, depth: 2, guides: "|", isLast: false };
     const { slot } = mount({ row: nested });
-    const element = slot.container.querySelector<HTMLElement>("[data-sb-row]")!;
-    expect(element.getAttribute("style")).toContain("var(--sb-base)");
-    expect(element.getAttribute("style")).toContain("var(--sb-indent)");
-    const caret = slot.container.querySelector<HTMLElement>(".sb-caret")!;
-    expect(caret.getAttribute("style")).toContain("var(--sb-indent)");
-    expect(slot.container.querySelector(".sb-elbow")).toBeNull();
-    expect(slot.container.querySelector(".sb-guide-nested-top")).toBeTruthy();
-    expect(slot.container.querySelector(".sb-guide-nested-bottom")).toBeTruthy();
-    expect(slot.container.querySelector(".sb-guide-nested-top")?.getAttribute("style")).toContain("var(--sb-base)");
+    const element = slot.container.querySelector<HTMLElement>("[data-switchboard-row]")!;
+    expect(element.getAttribute("style")).toContain("var(--switchboard-base)");
+    expect(element.getAttribute("style")).toContain("var(--switchboard-indent)");
+    const caret = slot.container.querySelector<HTMLElement>(".switchboard-caret")!;
+    expect(caret.getAttribute("style")).toContain("var(--switchboard-indent)");
+    expect(slot.container.querySelector(".switchboard-elbow")).toBeNull();
+    expect(slot.container.querySelector(".switchboard-guide-nested-top")).toBeTruthy();
+    expect(slot.container.querySelector(".switchboard-guide-nested-bottom")).toBeTruthy();
+    expect(slot.container.querySelector(".switchboard-guide-nested-top")?.getAttribute("style")).toContain("var(--switchboard-base)");
     slot.unmount();
   });
 
   it("draws a last child's own column as an elbow only, with full lines just for open ancestor columns", () => {
     const trunks = (guides: string) => {
       const { slot } = mount({ row: { ...row, depth: 2, guides, isLast: true, childCount: 0 } });
-      const found = slot.container.querySelectorAll(".sb-guide.top-0.bottom-0").length;
-      expect(slot.container.querySelector(".sb-elbow")).toBeTruthy();
-      expect(slot.container.querySelector(".sb-guide-cont")).toBeNull();
+      const found = slot.container.querySelectorAll(".switchboard-guide.top-0.bottom-0").length;
+      expect(slot.container.querySelector(".switchboard-elbow")).toBeTruthy();
+      expect(slot.container.querySelector(".switchboard-guide-cont")).toBeNull();
       slot.unmount();
       return found;
     };
@@ -208,8 +208,8 @@ describe("thread row", () => {
     const { slot } = mount({ row: { ...row, crossProject: "Other project" }, settings: {
       ...DEFAULT_SETTINGS, showBranch: true, showPullRequests: true,
     } });
-    expect(slot.container.querySelector(".sb-row-line .min-w-24")).toBeTruthy();
-    expect(slot.container.querySelector(".sb-meta[title='Other project']")?.className).toContain("shrink");
+    expect(slot.container.querySelector(".switchboard-row-line .min-w-24")).toBeTruthy();
+    expect(slot.container.querySelector(".switchboard-meta[title='Other project']")?.className).toContain("shrink");
     slot.unmount();
   });
 
@@ -244,8 +244,8 @@ describe("thread row", () => {
     const { slot, onNavigate } = mount({ drag, onSelect });
     const meta = slot.container.querySelector<HTMLElement>("[data-thread-row-metadata]")!;
     expect(meta.getAttribute("data-thread-row-metadata")).toBe("t");
-    expect(meta.parentElement!.classList.contains("sb-row-meta")).toBe(true);
-    expect(slot.container.querySelector(".sb-pr-badge")).toBeNull();
+    expect(meta.parentElement!.classList.contains("switchboard-row-meta")).toBe(true);
+    expect(slot.container.querySelector(".switchboard-pr-badge")).toBeNull();
     const anchor = screen.getByRole("link", { name: "A thread" });
     anchor.addEventListener("click", (event) => event.preventDefault());
     fireEvent.pointerDown(meta, { pointerType: "mouse", button: 0 });
@@ -263,7 +263,7 @@ describe("thread row", () => {
     expect(off.slot.container.querySelector("[data-thread-row-metadata]")).toBeNull();
     off.slot.unmount();
     const twoLine = mount({ settings: { ...DEFAULT_SETTINGS, density: "two-line" } });
-    expect(twoLine.slot.container.querySelector(".sb-two-line-title [data-thread-row-metadata]")).not.toBeNull();
+    expect(twoLine.slot.container.querySelector(".switchboard-two-line-title [data-thread-row-metadata]")).not.toBeNull();
     twoLine.slot.unmount();
   });
 

@@ -49,12 +49,12 @@ export function NameEditor({ initial = "", placeholder, action, onSubmit, onCanc
     });
   };
   const busy = action === "create" ? "Creating…" : "Saving…";
-  return <span className="sb-name-editor flex min-w-0 flex-1 items-center gap-2" aria-busy={pending}
+  return <span className="switchboard-name-editor flex min-w-0 flex-1 items-center gap-2" aria-busy={pending}
     onPointerDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()}>
     <input ref={input} aria-label="Section name" value={value} placeholder={placeholder} maxLength={100}
       autoCapitalize="sentences" autoCorrect="off" spellCheck={false} readOnly={pending}
       aria-invalid={error ? true : undefined} aria-describedby={error ? errorId : undefined}
-      className="sb-name-input min-w-0 flex-1"
+      className="switchboard-name-input min-w-0 flex-1"
       onChange={(event) => { setValue(event.target.value); setError(null); }}
       onBlur={() => submit(true)}
       onCompositionStart={() => { composing.current = true; }}
@@ -69,10 +69,10 @@ export function NameEditor({ initial = "", placeholder, action, onSubmit, onCanc
           cancel();
         }
       }} />
-    <span aria-hidden className="sb-name-hint shrink-0 font-mono text-[10px] text-subtle-foreground">
+    <span aria-hidden className="switchboard-name-hint shrink-0 font-mono text-[10px] text-subtle-foreground">
       {pending ? busy : `↵ ${action}`}</span>
     {pending && <span role="status" className="sr-only">{busy}</span>}
     {error && <span id={errorId} role="alert"
-      className="sb-name-error rounded-md border border-border bg-popover px-2 py-1 text-xs text-destructive shadow-md">{error}</span>}
+      className="switchboard-name-error rounded-md border border-border bg-popover px-2 py-1 text-xs text-destructive shadow-md">{error}</span>}
   </span>;
 }

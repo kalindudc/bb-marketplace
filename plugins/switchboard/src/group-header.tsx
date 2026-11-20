@@ -45,12 +45,12 @@ export interface GroupHeaderProps {
 }
 
 const hueClasses = (hue: HueId | null, sectionColour: SectionColour): string =>
-  hue ? `sb-hue-${hue} ${sectionColour !== "swatch" ? "sb-pill-hued" : ""} ${sectionColour === "tint" ? "sb-tint" : ""}` : "";
+  hue ? `switchboard-hue-${hue} ${sectionColour !== "swatch" ? "switchboard-pill-hued" : ""} ${sectionColour === "tint" ? "switchboard-tint" : ""}` : "";
 
 function EditingMain({ collapsed, hue, children }: { collapsed: boolean; hue: HueId | null; children: ReactNode }) {
-  return <div className="sb-header-main flex h-full min-w-0 flex-1 items-center">
-    <span aria-hidden className="sb-header-caret shrink-0 text-center text-2xs text-subtle-foreground">{collapsed ? "▸" : "▾"}</span>
-    {hue && <span aria-hidden className="size-2.5 shrink-0 rounded-sm" style={{ background: "var(--sb-hue)" }} />}
+  return <div className="switchboard-header-main flex h-full min-w-0 flex-1 items-center">
+    <span aria-hidden className="switchboard-header-caret shrink-0 text-center text-2xs text-subtle-foreground">{collapsed ? "▸" : "▾"}</span>
+    {hue && <span aria-hidden className="size-2.5 shrink-0 rounded-sm" style={{ background: "var(--switchboard-hue)" }} />}
     {children}
   </div>;
 }
@@ -59,9 +59,9 @@ function EditingMain({ collapsed, hue, children }: { collapsed: boolean; hue: Hu
 export function DraftSectionHeader({ hue, sectionColour, onSubmit, onCancel }: {
   hue: HueId; sectionColour: SectionColour; onSubmit(name: string): Promise<unknown>; onCancel(): void;
 }) {
-  return <section className={`sb-hue-${hue}`} aria-label="New section">
-    <div data-editing="" data-sb-draft=""
-      className={`sb-group-header relative flex min-w-0 items-center text-muted-foreground ${hueClasses(hue, sectionColour)}`}>
+  return <section className={`switchboard-hue-${hue}`} aria-label="New section">
+    <div data-editing="" data-switchboard-draft=""
+      className={`switchboard-group-header relative flex min-w-0 items-center text-muted-foreground ${hueClasses(hue, sectionColour)}`}>
       <EditingMain collapsed={false} hue={hue}>
         <NameEditor placeholder="Section name" action="create" onSubmit={onSubmit} onCancel={onCancel} />
       </EditingMain>
@@ -79,9 +79,9 @@ function GroupHeaderView({ group, collapsed, sectionColour, onToggle, drag, rena
   const states: Exclude<RowState, "idle">[] = ["failed", "needs", "running", ...(collapsed ? ["unread" as const] : [])];
   const editing = renaming && group.kind === "section";
   return <>
-    <div data-sb-drop={group.key} data-sb-section={group.section?.id} data-collapsed={collapsed}
+    <div data-switchboard-drop={group.key} data-switchboard-section={group.section?.id} data-collapsed={collapsed}
       data-drop={dropState ?? undefined} data-editing={editing ? "" : undefined}
-      className={`sb-group sb-group-header relative flex min-w-0 items-center text-muted-foreground ${hueClasses(group.hue, sectionColour)} ${flash ? "sb-flash" : ""}`}>
+      className={`switchboard-group switchboard-group-header relative flex min-w-0 items-center text-muted-foreground ${hueClasses(group.hue, sectionColour)} ${flash ? "switchboard-flash" : ""}`}>
       {editing ?
         <EditingMain collapsed={collapsed} hue={group.hue}>
           <NameEditor initial={name} action="save" onSubmit={onRenameSubmit} onCancel={onRenameCancel} />
@@ -98,26 +98,26 @@ function GroupHeaderView({ group, collapsed, sectionColour, onToggle, drag, rena
               onSectionMove(event.key === "ArrowUp" ? "up" : "down");
             }
           }}
-          className="sb-header-main flex h-full min-w-0 flex-1 items-center text-left">
-          <span aria-hidden className="sb-header-caret shrink-0 text-center text-2xs text-subtle-foreground">{collapsed ? "▸" : "▾"}</span>
+          className="switchboard-header-main flex h-full min-w-0 flex-1 items-center text-left">
+          <span aria-hidden className="switchboard-header-caret shrink-0 text-center text-2xs text-subtle-foreground">{collapsed ? "▸" : "▾"}</span>
           {group.kind === "pinned" && <Icon name="Pin" className="size-3 shrink-0 text-subtle-foreground" aria-hidden />}
-          {group.hue && <span aria-hidden className="size-2.5 shrink-0 rounded-sm" style={{ background: "var(--sb-hue)" }} />}
-          <span className="sb-header-name min-w-0 truncate text-[11px] font-semibold uppercase tracking-[.06em]">{name}</span>
+          {group.hue && <span aria-hidden className="size-2.5 shrink-0 rounded-sm" style={{ background: "var(--switchboard-hue)" }} />}
+          <span className="switchboard-header-name min-w-0 truncate text-[11px] font-semibold uppercase tracking-[.06em]">{name}</span>
           {sortMode !== "manual" && <Hint label={`${SORT_LABEL[sortMode]}. Change it in Section actions.`}>
             <span role="img" aria-label={SORT_LABEL[sortMode]} className="inline-grid shrink-0 text-subtle-foreground">
               <Icon name="Sort" className="size-3" aria-hidden /></span></Hint>}
           <span className="shrink-0 font-mono text-[11px] font-normal tracking-normal text-subtle-foreground">{String(group.threadCount).padStart(2, "0")}</span>
         </button>}
-      <div className="sb-section-slot relative z-10 ml-auto flex shrink-0 items-center">
-        <span className="sb-section-rollups items-center gap-2">
+      <div className="switchboard-section-slot relative z-10 ml-auto flex shrink-0 items-center">
+        <span className="switchboard-section-rollups items-center gap-2">
           {states.map((state) => group.counts[state] > 0 && <span key={state}
             className="inline-flex items-center gap-0.5 font-mono text-[11px] text-subtle-foreground">
             <StatusGlyph state={state} label={STATE_LABEL[state]} />{group.counts[state]}
           </span>)}
         </span>
-        <span className="sb-section-controls items-center gap-0.5">
+        <span className="switchboard-section-controls items-center gap-0.5">
           {group.kind !== "pinned" && <Hint label={newThreadLabel}><button type="button" aria-label={newThreadLabel}
-            className="sb-control sb-icon-button shrink-0 text-muted-foreground"
+            className="switchboard-control switchboard-icon-button shrink-0 text-muted-foreground"
             onClick={onNewThread}>+</button></Hint>}
           <SectionMenu group={group} unreadCount={group.roots.reduce((total, root) => total + unreadIn(root), 0)} hueOverride={hueOverride}
             sortMode={sortMode} staleDays={staleDays} onSort={onSort} onArchiveStale={onArchiveStale}
@@ -130,7 +130,7 @@ function GroupHeaderView({ group, collapsed, sectionColour, onToggle, drag, rena
       </div>
     </div>
     {!collapsed && group.kind === "section" && group.threadCount === 0 &&
-      <div data-sb-drop={group.key} className="sb-group sb-empty-drop border border-dashed border-sidebar-border text-subtle-foreground"
+      <div data-switchboard-drop={group.key} className="switchboard-group switchboard-empty-drop border border-dashed border-sidebar-border text-subtle-foreground"
         data-drop={dropState ?? undefined}>Drop threads here</div>}
   </>;
 }

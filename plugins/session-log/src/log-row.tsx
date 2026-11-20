@@ -90,7 +90,7 @@ function RowBody({ entry, expanded, settings, onToggle }: {
         <div className={clip ? "max-h-48 overflow-hidden" : ""}>
           <Markdown content={body} className="text-sm break-words" />
         </div>
-        {clip && <button type="button" data-sl-nosearch="" className="text-xs text-foreground hover:underline" onClick={() => onToggle(entry.id)}>Show more</button>}
+        {clip && <button type="button" data-session-log-nosearch="" className="text-xs text-foreground hover:underline" onClick={() => onToggle(entry.id)}>Show more</button>}
       </>
     );
   }
@@ -139,32 +139,32 @@ export const LogRow = memo(function LogRow({
       data-entry-id={entry.id}
       onFocus={(event) => { if (event.target === event.currentTarget) onFocusRow(entry.id); }}
       style={{ contentVisibility: "auto", containIntrinsicSize: "auto 48px" }}
-      data-sl-tint={entry.tint ?? undefined}
+      data-session-log-tint={entry.tint ?? undefined}
       className={`min-w-0 border-b border-border-seam px-3 py-2 text-foreground ${
         entry.divider ? "bg-surface-recessed focus:bg-surface-selected"
-          : entry.tint && settings.tintRows ? "sl-tinted" : "hover:bg-state-hover focus:bg-surface-selected"
-      } ${entry.depth === 1 ? "ml-4 border-l border-border-seam pl-3" : ""} ${entry.category === "hidden" ? "sl-hidden" : ""} ${
-        searchCurrent ? "sl-search-current" : ""}`}
+          : entry.tint && settings.tintRows ? "session-log-tinted" : "hover:bg-state-hover focus:bg-surface-selected"
+      } ${entry.depth === 1 ? "ml-4 border-l border-border-seam pl-3" : ""} ${entry.category === "hidden" ? "session-log-hidden" : ""} ${
+        searchCurrent ? "session-log-search-current" : ""}`}
     >
       <div className="flex min-w-0 items-start gap-2">
-        <time data-sl-nosearch="" className="shrink-0 font-mono text-xs text-subtle-foreground" dateTime={new Date(entry.startedAt).toISOString()}>{time}</time>
+        <time data-session-log-nosearch="" className="shrink-0 font-mono text-xs text-subtle-foreground" dateTime={new Date(entry.startedAt).toISOString()}>{time}</time>
         <button
           type="button"
           aria-expanded={expanded}
           className="flex min-w-0 flex-1 cursor-pointer items-center gap-1 text-left text-sm"
           onClick={() => onToggle(entry.id)}
         >
-          <Icon name={entry.icon} className={`size-4 shrink-0 ${entry.tint ? "sl-tint-icon" : ""}`} aria-hidden />
+          <Icon name={entry.icon} className={`size-4 shrink-0 ${entry.tint ? "session-log-tint-icon" : ""}`} aria-hidden />
           <span className={`min-w-0 break-words ${expanded ? "" : "line-clamp-2"}`}>{entry.title}</span>
         </button>
-        {badge && <span data-sl-nosearch="" className={`shrink-0 text-xs ${entry.isError ? "text-destructive-text" : statusColor(entry.status)}`}>{badge}</span>}
-        {entry.durationMs !== null && entry.category !== "thinking" && <span data-sl-nosearch="" className="shrink-0 font-mono text-xs text-subtle-foreground">{formatDuration(entry.durationMs)}</span>}
+        {badge && <span data-session-log-nosearch="" className={`shrink-0 text-xs ${entry.isError ? "text-destructive-text" : statusColor(entry.status)}`}>{badge}</span>}
+        {entry.durationMs !== null && entry.category !== "thinking" && <span data-session-log-nosearch="" className="shrink-0 font-mono text-xs text-subtle-foreground">{formatDuration(entry.durationMs)}</span>}
         <button type="button" aria-label="Copy row" title="Copy row" className="shrink-0 text-muted-foreground hover:text-foreground" onClick={() => onCopy(entry)}>
           <Icon name="Copy" className="size-4" aria-hidden />
         </button>
       </div>
       {entry.divider && (
-        <div data-sl-nosearch="" className="mt-1 flex flex-wrap gap-x-2 text-xs text-muted-foreground">
+        <div data-session-log-nosearch="" className="mt-1 flex flex-wrap gap-x-2 text-xs text-muted-foreground">
           <span>{DATE_FORMATTER.format(entry.startedAt)}</span>
           {turnStats && (
             <span>
@@ -178,7 +178,7 @@ export const LogRow = memo(function LogRow({
       <div className="min-w-0 pl-2 pt-1">
         <RowBody entry={entry} expanded={expanded} settings={settings} onToggle={onToggle} />
         {(chatHref || threadId) && (
-          <div data-sl-nosearch="" className="mt-1 flex gap-3 text-xs">
+          <div data-session-log-nosearch="" className="mt-1 flex gap-3 text-xs">
             {chatHref && <UrlLink data-chat-link href={chatHref} className="text-muted-foreground hover:text-foreground hover:underline">Show in chat</UrlLink>}
             {threadId && <button type="button" className="text-muted-foreground hover:text-foreground hover:underline" onClick={() => onOpenThread(threadId)}>Open thread</button>}
           </div>

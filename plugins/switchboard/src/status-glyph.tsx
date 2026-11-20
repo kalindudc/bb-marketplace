@@ -10,9 +10,9 @@ function onVisibility(entries: IntersectionObserverEntry[]) {
 // A spinner's animation starts when it comes on screen, and restarts when React moves its row. A start time of 0
 // keeps every spinner at the same angle, so they turn together and the compositor draws one set of steps.
 function alignSpinner(event: AnimationEvent) {
-  if (event.animationName !== "sb-spin" || !(event.target instanceof Element)) return;
+  if (event.animationName !== "switchboard-spin" || !(event.target instanceof Element)) return;
   for (const animation of event.target.getAnimations())
-    if ((animation as CSSAnimation).animationName === "sb-spin") animation.startTime = 0;
+    if ((animation as CSSAnimation).animationName === "switchboard-spin") animation.startTime = 0;
 }
 
 function startSpinning(spinner: HTMLElement) {
@@ -50,5 +50,5 @@ export function StatusGlyph(props: { state: RowState; label: string; spin?: bool
     {state === "idle" && <circle cx="8" cy="8" r="3.3" fill="none" stroke="currentColor" strokeWidth="1.3" />}
   </svg>;
   return state === "running" && spin ?
-    <span ref={startSpinning} className="sb-spin inline-grid size-[14px] shrink-0 place-items-center text-primary">{icon}</span> : icon;
+    <span ref={startSpinning} className="switchboard-spin inline-grid size-[14px] shrink-0 place-items-center text-primary">{icon}</span> : icon;
 }

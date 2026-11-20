@@ -5,18 +5,18 @@ import type { SwitchboardSettings, View } from "./settings";
 import { Hint } from "./hint";
 import { portalScopeProps } from "./portal-scope";
 
-const item = "sb-menu-item flex items-center gap-2 rounded px-2 py-1.5 text-xs outline-none";
+const item = "switchboard-menu-item flex items-center gap-2 rounded px-2 py-1.5 text-xs outline-none";
 const choice = `${item} relative pl-7`;
-const check = <DropdownMenu.ItemIndicator data-sb-check="" className="absolute left-2 inline-grid size-3.5 place-items-center">
+const check = <DropdownMenu.ItemIndicator data-switchboard-check="" className="absolute left-2 inline-grid size-3.5 place-items-center">
   <Icon name="Check" className="size-3.5" aria-hidden /></DropdownMenu.ItemIndicator>;
-const content = "sb-view-menu z-50 min-w-48 rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-lg";
+const content = "switchboard-view-menu z-50 min-w-48 rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-lg";
 
 export function ViewSwitch({ view, onChange }: { view: View; onChange(view: View): void }) {
-  return <div className="sb-view-switch flex shrink-0 items-center gap-0.5" role="group" aria-label="Thread view">
+  return <div className="switchboard-view-switch flex shrink-0 items-center gap-0.5" role="group" aria-label="Thread view">
     {([ ["sections", "ListView", "Sections view", "Sections: your sections, in the order you set"],
         ["status", "Rows2", "Status lanes view", "Status lanes: threads grouped by state, newest first"] ] as const)
       .map(([value, icon, label, hint]) => <Hint key={value} label={hint}><button type="button" aria-label={label}
-        aria-pressed={view === value} className="sb-control sb-icon-button grid place-items-center text-muted-foreground aria-pressed:bg-surface-selected aria-pressed:text-sidebar-foreground"
+        aria-pressed={view === value} className="switchboard-control switchboard-icon-button grid place-items-center text-muted-foreground aria-pressed:bg-surface-selected aria-pressed:text-sidebar-foreground"
         onClick={() => onChange(value)}><Icon name={icon} aria-hidden /></button></Hint>)}
   </div>;
 }
@@ -53,7 +53,7 @@ export function ViewMenu({ settings, onChange, onNewSection }: {
   return <DropdownMenu.Root>
     <Hint label="View options: new section, view, density, colours and row details">
       <DropdownMenu.Trigger asChild><button type="button" aria-label="View options"
-        className="sb-control sb-icon-button shrink-0 text-muted-foreground">
+        className="switchboard-control switchboard-icon-button shrink-0 text-muted-foreground">
         <Icon name="SlidersHorizontal" aria-hidden /></button></DropdownMenu.Trigger>
     </Hint>
     <DropdownMenu.Portal><DropdownMenu.Content {...portalScopeProps()} side="bottom" align="end" sideOffset={4} className={content}

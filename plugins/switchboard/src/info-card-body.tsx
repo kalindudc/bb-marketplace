@@ -32,16 +32,16 @@ const messages = (outline: format.Outline) => {
 };
 
 function Field<T>({ resource, children }: { resource: Resource<T>; children(value: T): ReactNode }): ReactNode {
-  if (resource.status === "loading") return <span className="sb-info-skeleton" />;
+  if (resource.status === "loading") return <span className="switchboard-info-skeleton" />;
   if (resource.status === "error") return "Unavailable";
   return children(resource.value) ?? "—";
 }
 
 function Meter({ usage }: { usage: format.Usage }) {
   const { percent, text } = format.usageSummary(usage);
-  return <span className="sb-info-meter-row">
-    <span className={`sb-info-meter ${percent >= 80 ? "sb-info-meter-high" : ""}`}><span style={{ width: `${percent}%` }} /></span>
-    <span className="sb-info-mono">{text}</span>
+  return <span className="switchboard-info-meter-row">
+    <span className={`switchboard-info-meter ${percent >= 80 ? "switchboard-info-meter-high" : ""}`}><span style={{ width: `${percent}%` }} /></span>
+    <span className="switchboard-info-mono">{text}</span>
   </span>;
 }
 
@@ -51,9 +51,9 @@ function changesText(status: format.WorkspaceStatus): ReactNode {
   const label = format.changesLabel(changes);
   const shown = changes.committed ?? changes.uncommitted;
   if (!shown) return label;
-  return <span className="sb-info-mono">
-    <span className="sb-info-added">+{shown.insertions.toLocaleString()}</span>{" "}
-    <span className="sb-info-removed">−{shown.deletions.toLocaleString()}</span>{label.slice(label.indexOf(" · "))}
+  return <span className="switchboard-info-mono">
+    <span className="switchboard-info-added">+{shown.insertions.toLocaleString()}</span>{" "}
+    <span className="switchboard-info-removed">−{shown.deletions.toLocaleString()}</span>{label.slice(label.indexOf(" · "))}
   </span>;
 }
 
@@ -70,7 +70,7 @@ const pullRequestWords = (pr: PullRequest, withReview = true): Word[] => {
   return [{ text: `#${pr.number} ${PR_STATE[pr.state]}`, tone: PR_TONE[pr.state] },
     ...(checks ? [{ text: checks, tone: CHECKS_TONE[pr.checks.state] }] : []), ...(review ? [{ text: review }] : [])];
 };
-const tone = (word: Word) => word.tone ? `sb-info-tone-${word.tone}` : "";
+const tone = (word: Word) => word.tone ? `switchboard-info-tone-${word.tone}` : "";
 const joined = (words: Word[]) => words.map((word, index) =>
   <Fragment key={word.text}>{index > 0 && " · "}<span className={tone(word) || undefined}>{word.text}</span></Fragment>);
 
@@ -105,24 +105,24 @@ export function InfoCardBody({ thread, state, projectName, stale, now, mode, sdk
   const ask = asks && !(asks.status === "ready" && format.askSummary(asks.value) === null) && asks;
 
   const header = <>
-    <div className="sb-info-top">
+    <div className="switchboard-info-top">
       <StatusGlyph state={state} label={STATE_LABEL[state]} />
       <span>{thread.indicatorLabel ?? STATE_LABEL[state]} · {age === "now" ? "active now" : `${age} ago`}</span>
-      {shortcut && <span className="sb-info-kbd sb-info-mono">{shortcut.label}</span>}
+      {shortcut && <span className="switchboard-info-kbd switchboard-info-mono">{shortcut.label}</span>}
     </div>
-    <div className="sb-info-title"><ThreadTitle threadId={thread.id} /></div>
-    <div className="sb-info-crumb">{projectName} › {section}</div>
-    {parent && <div className="sb-info-crumb">↳ Child of {parent}</div>}
-    {stale && <div className="sb-info-crumb">Idle for {Math.floor((now - lastActivity(thread)) / 86_400_000)} days</div>}
-    {ask && <div className="sb-info-ask">⚑ <Field resource={ask}>{format.askSummary}</Field></div>}
+    <div className="switchboard-info-title"><ThreadTitle threadId={thread.id} /></div>
+    <div className="switchboard-info-crumb">{projectName} › {section}</div>
+    {parent && <div className="switchboard-info-crumb">↳ Child of {parent}</div>}
+    {stale && <div className="switchboard-info-crumb">Idle for {Math.floor((now - lastActivity(thread)) / 86_400_000)} days</div>}
+    {ask && <div className="switchboard-info-ask">⚑ <Field resource={ask}>{format.askSummary}</Field></div>}
   </>;
 
   if (mode === "glance") return <>
     {header}
-    <dl className="sb-info-rows">
+    <dl className="switchboard-info-rows">
       <dt>Model</dt><dd><Field resource={options}>{model}</Field></dd>
       <dt>Context</dt><dd><Field resource={usage}>{(value) => value && <Meter usage={value} />}</Field></dd>
-      {branch ? <><dt>Branch</dt><dd className="sb-info-mono">{branch}</dd></> :
+      {branch ? <><dt>Branch</dt><dd className="switchboard-info-mono">{branch}</dd></> :
         machine && <><dt>Machine</dt><dd>{machine}</dd></>}
       {changes && <><dt>Changes</dt><dd><Field resource={changes}>{changesText}</Field></dd></>}
       {pullRequest && <><dt>Pull request</dt><dd>{joined(pullRequestWords(pullRequest, false))}</dd></>}
@@ -133,55 +133,55 @@ export function InfoCardBody({ thread, state, projectName, stale, now, mode, sdk
   if (mode === "briefing") return <>
     {header}
     {outline && <>
-      <div className="sb-info-sep" />
-      <div className="sb-info-label">Asked</div>
-      <div className="sb-info-text"><Field resource={outline}>{(value) => format.outlineSummary(value).asked}</Field></div>
-      <div className="sb-info-label">Latest</div>
-      <div className="sb-info-text"><Field resource={outline}>{(value) => format.outlineSummary(value).latest}</Field></div>
-      <div className="sb-info-line sb-info-muted"><Field resource={outline}>{messages}</Field></div>
+      <div className="switchboard-info-sep" />
+      <div className="switchboard-info-label">Asked</div>
+      <div className="switchboard-info-text"><Field resource={outline}>{(value) => format.outlineSummary(value).asked}</Field></div>
+      <div className="switchboard-info-label">Latest</div>
+      <div className="switchboard-info-text"><Field resource={outline}>{(value) => format.outlineSummary(value).latest}</Field></div>
+      <div className="switchboard-info-line switchboard-info-muted"><Field resource={outline}>{messages}</Field></div>
     </>}
-    <div className="sb-info-sep" />
-    <div className="sb-info-line">
-      <span className="sb-info-chip"><Field resource={options}>{model}</Field></span>
-      <span className="sb-info-chip"><Field resource={options}>{(value) => value && format.permissionLabel(value.permissionMode)}</Field></span>
+    <div className="switchboard-info-sep" />
+    <div className="switchboard-info-line">
+      <span className="switchboard-info-chip"><Field resource={options}>{model}</Field></span>
+      <span className="switchboard-info-chip"><Field resource={options}>{(value) => value && format.permissionLabel(value.permissionMode)}</Field></span>
     </div>
-    <div className="sb-info-line"><span className="sb-info-muted">Context</span><Field resource={usage}>{(value) => value && <Meter usage={value} />}</Field></div>
-    {branch && <div className="sb-info-line sb-info-single">
-      <span className="sb-info-muted">⑂</span><span className="sb-info-mono sb-info-ellipsis">{branch}</span>
-      {thread.environment?.isWorktree && <span className="sb-info-chip">worktree</span>}
+    <div className="switchboard-info-line"><span className="switchboard-info-muted">Context</span><Field resource={usage}>{(value) => value && <Meter usage={value} />}</Field></div>
+    {branch && <div className="switchboard-info-line switchboard-info-single">
+      <span className="switchboard-info-muted">⑂</span><span className="switchboard-info-mono switchboard-info-ellipsis">{branch}</span>
+      {thread.environment?.isWorktree && <span className="switchboard-info-chip">worktree</span>}
     </div>}
-    {changes && <div className="sb-info-line">
+    {changes && <div className="switchboard-info-line">
       <Field resource={changes}>{changesText}</Field>
-      <span className="sb-info-muted sb-info-mono"><Field resource={changes}>{(value) => aheadBehind(value, false)}</Field></span>
+      <span className="switchboard-info-muted switchboard-info-mono"><Field resource={changes}>{(value) => aheadBehind(value, false)}</Field></span>
     </div>}
-    {pullRequest && <div className="sb-info-line">{pullRequestWords(pullRequest).map((word) =>
-      <span key={word.text} className={`sb-info-chip ${tone(word)}`}>{word.text}</span>)}</div>}
-    {(children || notifies || background.length > 0) && <div className="sb-info-line">
-      {children && <span className="sb-info-chip">↳ {children}</span>}
-      {notifies && <span className="sb-info-chip">Parent {notifies.toLowerCase()}</span>}
-      {background.map((word) => <span key={word} className="sb-info-chip">{word}</span>)}
+    {pullRequest && <div className="switchboard-info-line">{pullRequestWords(pullRequest).map((word) =>
+      <span key={word.text} className={`switchboard-info-chip ${tone(word)}`}>{word.text}</span>)}</div>}
+    {(children || notifies || background.length > 0) && <div className="switchboard-info-line">
+      {children && <span className="switchboard-info-chip">↳ {children}</span>}
+      {notifies && <span className="switchboard-info-chip">Parent {notifies.toLowerCase()}</span>}
+      {background.map((word) => <span key={word} className="switchboard-info-chip">{word}</span>)}
     </div>}
-    <div className="sb-info-sep" />
-    <div className="sb-info-foot">Created {ago(now, thread.createdAt)}{machine && ` · ${machine}`}</div>
+    <div className="switchboard-info-sep" />
+    <div className="switchboard-info-foot">Created {ago(now, thread.createdAt)}{machine && ` · ${machine}`}</div>
   </>;
 
   const cell = (label: string, value: ReactNode, span = false) =>
-    <div className={span ? "sb-info-span" : undefined}><div className="sb-info-label">{label}</div><div className="sb-info-value">{value}</div></div>;
+    <div className={span ? "switchboard-info-span" : undefined}><div className="switchboard-info-label">{label}</div><div className="switchboard-info-value">{value}</div></div>;
   return <>
     {header}
-    <div className="sb-info-grid">
+    <div className="switchboard-info-grid">
       {cell("Provider", provider?.displayName ?? thread.providerId)}
       {cell("Model", <Field resource={options}>{(value) => value && format.modelLabel(value.model)}</Field>)}
       {cell("Reasoning", <Field resource={options}>{(value) => value && reasoning(value)}</Field>)}
       {cell("Permissions", <Field resource={options}>{(value) => value && format.permissionLabel(value.permissionMode)}</Field>)}
       {cell("Context", <Field resource={usage}>{(value) => value && <>
-        <Meter usage={value} />{format.costLabel(value) && <span className="sb-info-muted"> · {format.costLabel(value)}</span>}
+        <Meter usage={value} />{format.costLabel(value) && <span className="switchboard-info-muted"> · {format.costLabel(value)}</span>}
       </>}</Field>, true)}
       {cell("Messages", outline ? <Field resource={outline}>{messages}</Field> : "—")}
       {cell("Children", children ?? "—")}
       {cell("Background", background.length ? background.join(", ") : "—")}
       {notifies && cell("Parent", notifies, true)}
-      {cell("Branch", branch ? <span className="sb-info-mono">{branch}</span> : "—", true)}
+      {cell("Branch", branch ? <span className="switchboard-info-mono">{branch}</span> : "—", true)}
       {cell("Changes", changes ? <Field resource={changes}>{changesText}</Field> : "—")}
       {cell("Base", changes ? <Field resource={changes}>{(value) => aheadBehind(value, true)}</Field> : "—")}
       {cell("Pull request", pullRequest ? joined(pullRequestWords(pullRequest)) : "—", true)}

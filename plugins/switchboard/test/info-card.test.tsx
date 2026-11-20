@@ -84,14 +84,14 @@ function mount(mode: InfoCardMode, options: { row?: PluginSidebarThread; stale?:
     providers: { status: "ready", providers }, sdk: options.sdk ?? sdkFakes().sdk,
     rpc: { pullRequests: () => ({ e: { outcome: "available", pullRequest } }), status: (input: unknown) => (options.status ?? sdkFakes().status)(input as { keys: string[] }) } });
   const link = screen.getByRole("link", { name: "Hover card" });
-  return { slot, link, row: slot.container.querySelector<HTMLElement>("[data-sb-row]")! };
+  return { slot, link, row: slot.container.querySelector<HTMLElement>("[data-switchboard-row]")! };
 }
 
 function focus(link: HTMLElement) {
   fireEvent.keyDown(document.body, { key: "Tab" });
   act(() => link.focus());
 }
-const card = () => document.querySelector<HTMLElement>(".sb-info-card");
+const card = () => document.querySelector<HTMLElement>(".switchboard-info-card");
 const methods = (slot: ReturnType<typeof mount>["slot"]) => slot.inspection.sdkCalls.map((call) => call.method);
 
 afterEach(() => { cleanup(); resetInfoCache(); vi.useRealTimers(); });
@@ -115,21 +115,21 @@ describe("info card", () => {
     focus(link);
     await screen.findByRole("tooltip");
     const view = within(card()!);
-    expect(card()!.className).toContain("sb-info-glance");
+    expect(card()!.className).toContain("switchboard-info-glance");
     expect(view.getByText("Hover card")).toBeTruthy();
     expect(view.getByText("Marketplace › cortex")).toBeTruthy();
     expect(view.getByText("↳ Child of Sidebar redesign")).toBeTruthy();
     expect(view.getByText("kalindudc/hover-card")).toBeTruthy();
     expect(view.getByText("Parent").nextElementSibling!.textContent).toBe("Always notified");
     expect(view.getByText("Pull request").nextElementSibling!.textContent).toBe("#12 Open · Checks passing");
-    expect(view.getByText("#12 Open").classList.contains("sb-info-tone-good")).toBe(true);
-    expect(view.getByText("Checks passing").classList.contains("sb-info-tone-good")).toBe(true);
-    expect(card()!.querySelectorAll(".sb-info-skeleton")).toHaveLength(3);
+    expect(view.getByText("#12 Open").classList.contains("switchboard-info-tone-good")).toBe(true);
+    expect(view.getByText("Checks passing").classList.contains("switchboard-info-tone-good")).toBe(true);
+    expect(card()!.querySelectorAll(".switchboard-info-skeleton")).toHaveLength(3);
     await resolveAll();
     expect(await view.findByText("claude-opus-5 · Extra high")).toBeTruthy();
     expect(view.getByText("109k / 1M · 11%")).toBeTruthy();
     expect(await view.findByText(/· 21 files/)).toBeTruthy();
-    expect(card()!.querySelectorAll(".sb-info-skeleton")).toHaveLength(0);
+    expect(card()!.querySelectorAll(".switchboard-info-skeleton")).toHaveLength(0);
     expect(methods(slot)).not.toContain("threads.conversationOutline");
     expect(methods(slot).filter((method) => method.includes("interactions"))).toEqual([]);
   });
@@ -146,14 +146,14 @@ describe("info card", () => {
     expect(view.getByText("3 prompts · 99 replies")).toBeTruthy();
     expect(view.getByText(/Approve command: terraform plan/)).toBeTruthy();
     expect(view.getByText("Full Access")).toBeTruthy();
-    expect(view.getByText("worktree").parentElement!.classList.contains("sb-info-single")).toBe(true);
+    expect(view.getByText("worktree").parentElement!.classList.contains("switchboard-info-single")).toBe(true);
     const css = readFileSync(join(process.cwd(), "src/switchboard.css"), "utf8");
-    expect(css.match(/\.sb-info-single\s*\{([^}]*)\}/)?.[1]).toMatch(/flex-wrap:\s*nowrap/);
+    expect(css.match(/\.switchboard-info-single\s*\{([^}]*)\}/)?.[1]).toMatch(/flex-wrap:\s*nowrap/);
     expect(view.getByText("↳ 2 children · 1 running")).toBeTruthy();
     expect(view.getByText("Parent always notified")).toBeTruthy();
-    expect(view.getByText("Checks passing").classList.contains("sb-info-tone-good")).toBe(true);
-    expect(view.getByText("#12 Open").classList.contains("sb-info-tone-good")).toBe(true);
-    expect(view.getByText("Approved").className).not.toMatch(/sb-info-tone/);
+    expect(view.getByText("Checks passing").classList.contains("switchboard-info-tone-good")).toBe(true);
+    expect(view.getByText("#12 Open").classList.contains("switchboard-info-tone-good")).toBe(true);
+    expect(view.getByText("Approved").className).not.toMatch(/switchboard-info-tone/);
     expect(view.getByText("Created 2d ago · MacBook Pro")).toBeTruthy();
   });
 
@@ -163,7 +163,7 @@ describe("info card", () => {
     focus(link);
     await screen.findByRole("tooltip");
     const view = within(card()!);
-    expect(card()!.className).toContain("sb-info-full");
+    expect(card()!.className).toContain("switchboard-info-full");
     expect(view.getByText("Pi")).toBeTruthy();
     await resolveAll();
     expect(await view.findByText("Full Access")).toBeTruthy();
@@ -228,9 +228,9 @@ describe("info card", () => {
 
   it("colours each pull request state and checks result with bb's state tokens", async () => {
     const cases = [
-      [{ state: "merged", checks: { state: "failing" } }, "sb-info-tone-merged", "Checks failing", "sb-info-tone-bad"],
-      [{ state: "closed", checks: { state: "pending" } }, "sb-info-tone-bad", "Checks pending", "sb-info-tone-warn"],
-      [{ state: "draft", checks: { state: "none" } }, "sb-info-tone-muted", null, null],
+      [{ state: "merged", checks: { state: "failing" } }, "switchboard-info-tone-merged", "Checks failing", "switchboard-info-tone-bad"],
+      [{ state: "closed", checks: { state: "pending" } }, "switchboard-info-tone-bad", "Checks pending", "switchboard-info-tone-warn"],
+      [{ state: "draft", checks: { state: "none" } }, "switchboard-info-tone-muted", null, null],
     ] as const;
     for (const [change, stateTone, checks, checksTone] of cases) {
       const pr = { ...pullRequest, ...change };
@@ -250,7 +250,7 @@ describe("info card", () => {
     const css = readFileSync(join(process.cwd(), "src/switchboard.css"), "utf8");
     for (const [tone, token] of [["good", "--success-foreground"], ["merged", "--pr-merged"], ["bad", "--destructive-text"],
       ["warn", "--warning-text"], ["muted", "--subtle-foreground"]])
-      expect(css).toMatch(new RegExp(`\\.sb-info-tone-${tone} \\{ color: var\\(${token}\\); \\}`));
+      expect(css).toMatch(new RegExp(`\\.switchboard-info-tone-${tone} \\{ color: var\\(${token}\\); \\}`));
   });
 
   it("closes when the pointer leaves before the opened card renders", () => {

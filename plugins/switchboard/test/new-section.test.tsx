@@ -67,7 +67,7 @@ describe("new section", () => {
     await waitFor(() => expect(document.activeElement).toBe(field()));
     expect(field().value).toBe("");
     expect(sdkCalls(slot, "threadSections.create")).toHaveLength(0);
-    const sections = [...document.querySelectorAll(".sb-list > section")];
+    const sections = [...document.querySelectorAll(".switchboard-list > section")];
     expect(sections.indexOf(draft()!)).toBe(sections.findIndex((section) => section.textContent?.includes("Threads")) - 1);
     fireEvent.keyDown(field(), { key: "Escape" });
     expect(draft()).toBeNull();
@@ -80,17 +80,17 @@ describe("new section", () => {
     openSectionMenu(0);
     fireEvent.click(screen.getByRole("menuitem", { name: "New section below" }));
     await waitFor(() => expect(document.activeElement).toBe(field()));
-    const sections = [...document.querySelectorAll(".sb-list > section")];
+    const sections = [...document.querySelectorAll(".switchboard-list > section")];
     expect(sections[sections.indexOf(draft()!) - 1]?.textContent).toContain("Alpha");
     const hue = leastUsedHue(["a", "b", "new"], {});
-    expect(draft()!.querySelector(".sb-group-header")!.classList.contains(`sb-hue-${hue}`)).toBe(true);
+    expect(draft()!.querySelector(".switchboard-group-header")!.classList.contains(`switchboard-hue-${hue}`)).toBe(true);
     await type("  Infra ");
     expect(sdkCalls(slot, "threadSections.create").map((call) => call.args[0])).toEqual([{ name: "Infra" }]);
     await waitFor(() => expect(rpcInputs(slot, "setSectionOrder")).toEqual([{ ids: ["a", "new", "b"] }]));
     expect(rpcInputs(slot, "setSectionHue")).toEqual([{ sectionId: "new", hue }]);
     await waitFor(() => expect(draft()).toBeNull());
     await waitFor(() => expect(document.activeElement).toBe(header(/^Created/)));
-    expect(document.activeElement!.closest(".sb-group-header")!.classList.contains("sb-flash")).toBe(true);
+    expect(document.activeElement!.closest(".switchboard-group-header")!.classList.contains("switchboard-flash")).toBe(true);
   });
 
   it("keeps the draft, read-only, until bb lists the new section", async () => {

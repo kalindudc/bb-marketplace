@@ -42,10 +42,10 @@ describe("portal scope", () => {
     expect(screen.getByRole("menu").hasAttribute("data-bb-plugin-root")).toBe(true);
     const checked = screen.getByRole("menuitemradio", { name: "Comfortable" });
     expect(checked.getAttribute("aria-checked")).toBe("true");
-    expect(checked.querySelector("[data-sb-check]")).not.toBeNull();
-    expect(screen.getByRole("menuitemradio", { name: "Compact" }).querySelector("[data-sb-check]")).toBeNull();
-    expect(screen.getByRole("menuitemcheckbox", { name: "Status chips" }).querySelector("[data-sb-check]")).not.toBeNull();
-    expect(screen.getByRole("menuitemcheckbox", { name: "Branch names" }).querySelector("[data-sb-check]")).toBeNull();
+    expect(checked.querySelector("[data-switchboard-check]")).not.toBeNull();
+    expect(screen.getByRole("menuitemradio", { name: "Compact" }).querySelector("[data-switchboard-check]")).toBeNull();
+    expect(screen.getByRole("menuitemcheckbox", { name: "Status chips" }).querySelector("[data-switchboard-check]")).not.toBeNull();
+    expect(screen.getByRole("menuitemcheckbox", { name: "Branch names" }).querySelector("[data-switchboard-check]")).toBeNull();
     slot.unmount();
   });
 

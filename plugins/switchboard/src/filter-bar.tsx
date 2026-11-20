@@ -20,7 +20,7 @@ function ArchivedToggle({ shown, onChange }: { shown: boolean; onChange(shown: b
   const label = shown ? "Hide archived threads" : "Show archived threads";
   return <Hint label={label}>
     <button type="button" aria-label={label} aria-pressed={shown} onClick={() => onChange(!shown)}
-      className="sb-control sb-icon-button shrink-0 text-muted-foreground aria-pressed:bg-surface-selected aria-pressed:text-sidebar-foreground">
+      className="switchboard-control switchboard-icon-button shrink-0 text-muted-foreground aria-pressed:bg-surface-selected aria-pressed:text-sidebar-foreground">
       <Icon name="Archive" aria-hidden /></button>
   </Hint>;
 }
@@ -37,9 +37,9 @@ export function FilterBar(props: {
 }) {
   const { filter, counts, showChips, inputRef, onChange, settings, onSettingsChange, onNewSection } = props;
   const states: Exclude<RowState, "idle">[] = ["failed", "needs", "running", "unread"];
-  return <div className="sb-filter-bar pt-1">
-    <div className="sb-filter-controls flex min-w-0 items-center gap-1">
-    <label className="sb-filter flex min-w-0 flex-1 items-center border border-sidebar-border text-subtle-foreground">
+  return <div className="switchboard-filter-bar pt-1">
+    <div className="switchboard-filter-controls flex min-w-0 items-center gap-1">
+    <label className="switchboard-filter flex min-w-0 flex-1 items-center border border-sidebar-border text-subtle-foreground">
       <svg aria-hidden width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6">
         <circle cx="7" cy="7" r="4.5" /><path d="m10.5 10.5 3.5 3.5" />
       </svg>
@@ -55,11 +55,11 @@ export function FilterBar(props: {
       <ArchivedToggle shown={settings.showArchived} onChange={(showArchived) => onSettingsChange({ showArchived })} />
       <ViewMenu settings={settings} onChange={onSettingsChange} onNewSection={onNewSection} /></>}
     </div>
-    {showChips && <div className="sb-chips flex">
+    {showChips && <div className="switchboard-chips flex">
       {states.map((state) => (counts[state] > 0 || filter.states.has(state)) && <Hint key={state}
         label={chipHint(state, counts[state], filter.states)}><button
         type="button" aria-label={`${STATE_LABEL[state]}: ${counts[state]}`} aria-pressed={filter.states.has(state)}
-        className={`sb-control sb-chip inline-flex min-w-0 items-center rounded-md border border-sidebar-border font-mono text-[11px] ${filter.states.has(state) ? "bg-surface-selected text-sidebar-foreground" : "text-muted-foreground"}`}
+        className={`switchboard-control switchboard-chip inline-flex min-w-0 items-center rounded-md border border-sidebar-border font-mono text-[11px] ${filter.states.has(state) ? "bg-surface-selected text-sidebar-foreground" : "text-muted-foreground"}`}
         onClick={() => {
           const selected = new Set(filter.states);
           if (selected.has(state)) selected.delete(state); else selected.add(state);

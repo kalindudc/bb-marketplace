@@ -123,7 +123,7 @@ describe("Switchboard sidebar", () => {
     const slot = await mount({ sdk: { plugins: { getSettings: async () => ({ ok: true, schema: {}, values: { density } }) } } });
     density = "two-line";
     await slot.behavior.emitRealtime("settings", {});
-    await waitFor(() => expect(screen.getByRole("navigation", { name: "Threads" }).className).toContain("sb-density-two-line"));
+    await waitFor(() => expect(screen.getByRole("navigation", { name: "Threads" }).className).toContain("switchboard-density-two-line"));
     fireEvent.contextMenu(screen.getByRole("link", { name: "Pinned note" }));
     expect(screen.getByRole("menuitem", { name: "Archive" })).toBeTruthy();
     slot.unmount();

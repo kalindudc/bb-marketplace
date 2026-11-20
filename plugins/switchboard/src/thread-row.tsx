@@ -86,7 +86,7 @@ function ThreadRowView({ row, isActive, settings, now, projectName, onNavigate, 
       { bubbles: true, cancelable: true, altKey, ctrlKey, metaKey, shiftKey, button }));
   };
   const metadata = !thread.parentThreadId && settings.showPullRequests &&
-    <span className="sb-row-meta relative z-1" onPointerDown={onLinkPointerDown} onClick={forwardClick}>
+    <span className="switchboard-row-meta relative z-1" onPointerDown={onLinkPointerDown} onClick={forwardClick}>
       <ThreadRowMetadata thread={thread} /></span>;
   const inline = useMemo<PluginThreadActionsInlineItem[] | undefined>(() => onSnooze && [{
     key: "switchboard/snooze", group: ACTION_GROUPS.state,
@@ -100,60 +100,60 @@ function ThreadRowView({ row, isActive, settings, now, projectName, onNavigate, 
     <ThreadTitle threadId={thread.id} />
   </span>;
   const branch = settings.showBranch && thread.environment?.branchName;
-  const age = variant !== "snoozed" && (settings.showAge || (shortcut && variant === "tree")) && <span className={`${shortcut && variant === "tree" ? "sb-shortcut" : "sb-age"} sb-meta relative z-1 shrink-0 font-mono tabular-nums text-subtle-foreground`}>
+  const age = variant !== "snoozed" && (settings.showAge || (shortcut && variant === "tree")) && <span className={`${shortcut && variant === "tree" ? "switchboard-shortcut" : "switchboard-age"} switchboard-meta relative z-1 shrink-0 font-mono tabular-nums text-subtle-foreground`}>
     {shortcut && variant === "tree" ? shortcut.label : ageLabel(now, variant === "archived" ? thread.archivedAt ?? lastActivity(thread) : lastActivity(thread))}
   </span>;
-  const count = childCount > 0 && <span className="sb-meta relative z-1 inline-flex shrink-0 items-center gap-0.5 font-mono text-subtle-foreground" aria-label={`${childCount} child threads`}>
+  const count = childCount > 0 && <span className="switchboard-meta relative z-1 inline-flex shrink-0 items-center gap-0.5 font-mono text-subtle-foreground" aria-label={`${childCount} child threads`}>
     {rollup ? <StatusGlyph state={rollup} label={STATE_LABEL[rollup]} /> : "↳"}{rollup ? rollupCount : childCount}
   </span>;
   const tags = <>
-    {row.crossProject && <span className="sb-meta relative z-1 min-w-0 max-w-20 shrink truncate font-mono text-subtle-foreground" title={row.crossProject}>{row.crossProject}</span>}
-    {settings.density !== "two-line" && branch && <span className="sb-meta relative z-1 min-w-0 max-w-20 shrink truncate font-mono text-subtle-foreground" title={branch}>{branch}</span>}
+    {row.crossProject && <span className="switchboard-meta relative z-1 min-w-0 max-w-20 shrink truncate font-mono text-subtle-foreground" title={row.crossProject}>{row.crossProject}</span>}
+    {settings.density !== "two-line" && branch && <span className="switchboard-meta relative z-1 min-w-0 max-w-20 shrink truncate font-mono text-subtle-foreground" title={branch}>{branch}</span>}
     {settings.density !== "two-line" && count}
     {metadata}
   </>;
   const withQuickActions = variant === "tree" || variant === "archived";
   const withMenu = withQuickActions || variant === "lane";
-  const actions = withQuickActions && <span className="sb-quick-actions relative z-10 shrink-0 items-center gap-0.5">
+  const actions = withQuickActions && <span className="switchboard-quick-actions relative z-10 shrink-0 items-center gap-0.5">
     {quickActions.map(({ key, action }) => <button key={key} type="button" aria-label={action.label}
-      disabled={action.disabled} className="sb-control sb-icon-button text-muted-foreground"
+      disabled={action.disabled} className="switchboard-control switchboard-icon-button text-muted-foreground"
       onClick={() => { void action.run(); }}><Icon name={action.icon} className="size-3.5" aria-hidden /></button>)}
   </span>;
   return <ThreadActionsContextMenu thread={target} inline={bulk ? bulk.inline : inline} dragging={isDragging}
     experimental_bulkThreads={bulk?.threads} onEscapeKeyDown={bulk?.onEscape}>
-    <div data-sb-row="" data-thread-id={thread.id} data-depth={depth} data-last-child={isLast}
+    <div data-switchboard-row="" data-thread-id={thread.id} data-depth={depth} data-last-child={isLast}
       data-open-children={childCount > 0 && !collapsed} data-collapsed={collapsed}
       data-active={isActive} data-selected={isSelected} data-run={selectedRun}
       data-dragging={isDragging} data-drop={dropState ?? undefined} data-menu-open={menuOpen || undefined}
-      className={`sb-row relative flex min-w-0 overflow-hidden text-sidebar-foreground ${stale ? "sb-stale" : ""} ${row.dim ? "opacity-60" : ""} ${flash ? "sb-flash" : ""}`}
+      className={`switchboard-row relative flex min-w-0 overflow-hidden text-sidebar-foreground ${stale ? "switchboard-stale" : ""} ${row.dim ? "opacity-60" : ""} ${flash ? "switchboard-flash" : ""}`}
       title={stale && infoCardMode === "off" ? `Idle for ${Math.floor((now - lastActivity(thread)) / 86_400_000)} days` : undefined}
-      style={{ paddingLeft: `calc(var(--sb-base) + ${variant === "tree" ? depth : 0} * var(--sb-indent))` }}>
+      style={{ paddingLeft: `calc(var(--switchboard-base) + ${variant === "tree" ? depth : 0} * var(--switchboard-indent))` }}>
       {variant === "tree" && settings.treeGuides && depth > 0 && <>
         {[...guides].map((line, index) => line === "|" &&
-          <span key={index} aria-hidden className="sb-guide pointer-events-none absolute top-0 bottom-0 w-px"
-            style={{ left: `calc(var(--sb-base) + ${index} * var(--sb-indent) + 7px)` }} />)}
+          <span key={index} aria-hidden className="switchboard-guide pointer-events-none absolute top-0 bottom-0 w-px"
+            style={{ left: `calc(var(--switchboard-base) + ${index} * var(--switchboard-indent) + 7px)` }} />)}
         {childCount > 0 ? <>
-          <span aria-hidden className="sb-guide sb-guide-nested-top pointer-events-none absolute w-px"
-            style={{ left: `calc(var(--sb-base) + ${depth - 1} * var(--sb-indent) + 7px)` }} />
-          {!isLast && <span aria-hidden className="sb-guide sb-guide-nested-bottom pointer-events-none absolute w-px"
-            style={{ left: `calc(var(--sb-base) + ${depth - 1} * var(--sb-indent) + 7px)` }} />}
+          <span aria-hidden className="switchboard-guide switchboard-guide-nested-top pointer-events-none absolute w-px"
+            style={{ left: `calc(var(--switchboard-base) + ${depth - 1} * var(--switchboard-indent) + 7px)` }} />
+          {!isLast && <span aria-hidden className="switchboard-guide switchboard-guide-nested-bottom pointer-events-none absolute w-px"
+            style={{ left: `calc(var(--switchboard-base) + ${depth - 1} * var(--switchboard-indent) + 7px)` }} />}
         </> : <>
-          <span aria-hidden className="sb-elbow pointer-events-none absolute top-0 rounded-bl border-b border-l"
-            style={{ left: `calc(var(--sb-base) + ${depth - 1} * var(--sb-indent) + 7px)` }} />
-          {!isLast && <span aria-hidden className="sb-guide sb-guide-cont pointer-events-none absolute bottom-0 w-px"
-            style={{ left: `calc(var(--sb-base) + ${depth - 1} * var(--sb-indent) + 7px)` }} />}
+          <span aria-hidden className="switchboard-elbow pointer-events-none absolute top-0 rounded-bl border-b border-l"
+            style={{ left: `calc(var(--switchboard-base) + ${depth - 1} * var(--switchboard-indent) + 7px)` }} />
+          {!isLast && <span aria-hidden className="switchboard-guide switchboard-guide-cont pointer-events-none absolute bottom-0 w-px"
+            style={{ left: `calc(var(--switchboard-base) + ${depth - 1} * var(--switchboard-indent) + 7px)` }} />}
         </>}
       </>}
       {variant === "tree" && childCount > 0 && <button type="button" aria-label={`${collapsed ? "Expand" : "Collapse"} ${thread.displayTitle}`}
         aria-expanded={!collapsed} onClick={() => onToggle?.(`thread:${thread.id}`)}
-        className="sb-caret absolute z-10 grid place-items-center text-2xs text-subtle-foreground hover:text-sidebar-foreground"
-        style={{ left: `calc(var(--sb-base) + ${depth} * var(--sb-indent) - 16px)` }}>{collapsed ? "▸" : "▾"}</button>}
+        className="switchboard-caret absolute z-10 grid place-items-center text-2xs text-subtle-foreground hover:text-sidebar-foreground"
+        style={{ left: `calc(var(--switchboard-base) + ${depth} * var(--switchboard-indent) - 16px)` }}>{collapsed ? "▸" : "▾"}</button>}
       <InfoCard thread={thread} state={state} projectName={projectName} stale={stale === true} now={now}>
       <a ref={linkRef} href={thread.href} data-sidebar-thread-shortcut-target={variant === "tree" || variant === "lane" ? "" : undefined}
         data-sidebar-thread-id={variant === "tree" || variant === "lane" ? thread.id : undefined}
         aria-label={thread.displayTitle} aria-current={isActive ? "page" : undefined}
         aria-keyshortcuts={variant === "tree" ? shortcut?.ariaKeyshortcuts : undefined}
-        className="sb-row-link absolute inset-0 z-0" draggable={false} {...split.splitProps}
+        className="switchboard-row-link absolute inset-0 z-0" draggable={false} {...split.splitProps}
         onPointerDown={onLinkPointerDown}
         onClick={(event) => {
           if (variant === "tree" && drag?.consumeClick()) { event.preventDefault(); event.stopPropagation(); return; }
@@ -172,31 +172,31 @@ function ThreadRowView({ row, isActive, settings, now, projectName, onNavigate, 
           const move = direction[event.key as keyof typeof direction];
           if (move) { event.preventDefault(); event.stopPropagation(); onKeyboardMove?.(thread.id, move); }
         }} /></InfoCard>
-      {hue && <span aria-hidden className={`sb-hue-${hue} relative z-1 size-2 shrink-0 rounded-sm`} style={{ background: "var(--sb-hue)" }} />}
+      {hue && <span aria-hidden className={`switchboard-hue-${hue} relative z-1 size-2 shrink-0 rounded-sm`} style={{ background: "var(--switchboard-hue)" }} />}
       {variant === "lane" && parentTitle && <span aria-hidden className="relative z-1 shrink-0 text-subtle-foreground">↳</span>}
-      <span className="sb-leading-glyph pointer-events-none relative z-1 grid shrink-0 place-items-center">
+      <span className="switchboard-leading-glyph pointer-events-none relative z-1 grid shrink-0 place-items-center">
         {variant === "archived" ? <span role="img" aria-label="Archived" className="inline-grid size-[14px] place-items-center text-subtle-foreground">
           <Icon name="Archive" className="size-3.5" aria-hidden /></span>
         : hostGlyph ? <ThreadStatusGlyph size="compact" indicator={rowStatus ? thread.indicator : "draft"} rowStatus={rowStatus} />
           : <StatusGlyph state={state} label={label} spin={state === "running"} />}
       </span>
-      {settings.density === "two-line" ? <span className="sb-two-line-stack pointer-events-none relative z-1 flex min-w-0 flex-1 flex-col">
-        <span className="sb-two-line-title sb-row-line flex min-w-0 items-center">{title}{metadata}{age}</span>
-        <span className="sb-two-line-meta sb-row-line flex min-w-0 items-center truncate font-mono text-subtle-foreground">
+      {settings.density === "two-line" ? <span className="switchboard-two-line-stack pointer-events-none relative z-1 flex min-w-0 flex-1 flex-col">
+        <span className="switchboard-two-line-title switchboard-row-line flex min-w-0 items-center">{title}{metadata}{age}</span>
+        <span className="switchboard-two-line-meta switchboard-row-line flex min-w-0 items-center truncate font-mono text-subtle-foreground">
           {variant === "lane" && parentTitle ? <span className="truncate" title={parentTitle}>{parentTitle}</span> :
             <span className="truncate">{projectName}</span>}{branch && <span className="truncate">{branch}</span>}
           {variant === "tree" && count}
         </span>
-      </span> : <span className="sb-row-line pointer-events-none relative z-1 flex min-w-0 flex-1 items-center">
+      </span> : <span className="switchboard-row-line pointer-events-none relative z-1 flex min-w-0 flex-1 items-center">
         {title}{variant === "tree" && tags}{age}
       </span>}
-      {variant === "snoozed" && <span className="sb-meta relative z-1 shrink-0 font-mono text-subtle-foreground">{wakeLabel}</span>}
-      {variant === "snoozed" && <button type="button" className="sb-control sb-text-button relative z-10 shrink-0 text-[11px] text-muted-foreground"
+      {variant === "snoozed" && <span className="switchboard-meta relative z-1 shrink-0 font-mono text-subtle-foreground">{wakeLabel}</span>}
+      {variant === "snoozed" && <button type="button" className="switchboard-control switchboard-text-button relative z-10 shrink-0 text-[11px] text-muted-foreground"
         onClick={onWake}>Wake</button>}
       {actions}
       {withMenu && <ThreadActionsMenu thread={target} inline={inline} side="right" align="start" onOpenChange={setMenuOpen}
         trigger={(triggerProps) => <button {...triggerProps} type="button" aria-label="Thread actions"
-          className={`${triggerProps.className ?? ""} sb-control sb-menu-trigger sb-icon-button relative z-10 shrink-0 place-items-center text-muted-foreground`}>⋯</button>} />}
+          className={`${triggerProps.className ?? ""} switchboard-control switchboard-menu-trigger switchboard-icon-button relative z-10 shrink-0 place-items-center text-muted-foreground`}>⋯</button>} />}
     </div>
   </ThreadActionsContextMenu>;
 }

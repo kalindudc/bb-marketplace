@@ -65,7 +65,7 @@ function InfoCardRoot({ thread, state, projectName, stale, now, children, mode, 
       onPointerEnter={startPrefetch} onPointerLeave={leave}>{children}</Tooltip.Trigger>
     <Tooltip.Portal>
       <Tooltip.Content {...portalScopeProps()} side="right" align="start" sideOffset={8} collisionPadding={8}
-        aria-label={label} className={`sb-info-card sb-info-${mode}`}>
+        aria-label={label} className={`switchboard-info-card switchboard-info-${mode}`}>
         <InfoCardBody thread={thread} state={state} projectName={projectName} stale={stale} now={now} mode={mode} sdk={sdk} />
       </Tooltip.Content>
     </Tooltip.Portal>

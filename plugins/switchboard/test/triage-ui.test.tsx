@@ -69,7 +69,7 @@ async function mount(initialSettings: Record<string, unknown> = {}, activeThread
 }
 
 function sectionMenu() {
-  fireEvent.pointerDown(document.querySelector("[data-sb-section='test'] .sb-section-menu-trigger")!,
+  fireEvent.pointerDown(document.querySelector("[data-switchboard-section='test'] .switchboard-section-menu-trigger")!,
     { button: 0, ctrlKey: false, pointerType: "mouse" });
 }
 
@@ -80,11 +80,11 @@ describe("triage UI", () => {
     expect(updateSettings).toHaveBeenCalledWith({ pluginId: "switchboard", values: { view: "status" } });
     setSettings({ view: "status" });
     await slot.behavior.emitRealtime("settings", {});
-    await waitFor(() => expect([...slot.container.querySelectorAll(".sb-lane .sb-header-name")]
+    await waitFor(() => expect([...slot.container.querySelectorAll(".switchboard-lane .switchboard-header-name")]
       .some((header) => header.textContent === "Finished, unread")).toBe(true));
     const lane = screen.getByRole("link", { name: "Finished child" });
     expect(lane.getAttribute("data-sidebar-thread-id")).toBe("child");
-    expect(within(lane.closest("[data-sb-row]")!).getByText("Old quiet")).toBeTruthy();
+    expect(within(lane.closest("[data-switchboard-row]")!).getByText("Old quiet")).toBeTruthy();
     const command = createCommands().find((item) => item.id === "toggle-view")!;
     void command.run({} as never);
     expect(updateSettings).toHaveBeenLastCalledWith({ pluginId: "switchboard", values: { view: "sections" } });
@@ -100,7 +100,7 @@ describe("triage UI", () => {
     await waitFor(() => expect(slot.rpcCalls).toContainEqual(expect.objectContaining({
       method: "setSectionSort", input: { container: "section:test", mode: "recent" },
     })));
-    const rows = [...slot.container.querySelectorAll("[data-sb-section='test'] ~ .sb-group-body [data-sidebar-thread-id]")];
+    const rows = [...slot.container.querySelectorAll("[data-switchboard-section='test'] ~ .switchboard-group-body [data-sidebar-thread-id]")];
     expect(rows.map((row) => row.getAttribute("data-sidebar-thread-id")).slice(0, 2)).toEqual(["fresh", "old"]);
     fireEvent.keyDown(screen.getByRole("link", { name: "Old quiet" }), { key: "ArrowUp", altKey: true });
     expect(screen.getByText("Sorted by recent activity")).toBeTruthy();
@@ -109,8 +109,8 @@ describe("triage UI", () => {
 
   it("fades stale roots, archives only those in the test section, and Undo unarchives the family", async () => {
     const { slot, archive, unarchive } = await mount();
-    expect(slot.container.querySelector("[data-sb-row][data-thread-id='old']")?.className).toContain("sb-stale");
-    expect(slot.container.querySelector("[data-sb-row][data-thread-id='fresh']")?.className).not.toContain("sb-stale");
+    expect(slot.container.querySelector("[data-switchboard-row][data-thread-id='old']")?.className).toContain("switchboard-stale");
+    expect(slot.container.querySelector("[data-switchboard-row][data-thread-id='fresh']")?.className).not.toContain("switchboard-stale");
     sectionMenu();
     fireEvent.click(screen.getByRole("menuitem", { name: /Archive stale threads/ }));
     expect(screen.getByText(/Archive 1 thread idle for more than 3 days/)).toBeTruthy();
@@ -127,7 +127,7 @@ describe("triage UI", () => {
 
   it("snoozes a quiet family, shows a collapsed shortcut-free shelf, and wakes it", async () => {
     const { slot } = await mount();
-    const row = within(slot.container.querySelector<HTMLElement>("[data-sb-row][data-thread-id='old']")!);
+    const row = within(slot.container.querySelector<HTMLElement>("[data-switchboard-row][data-thread-id='old']")!);
     fireEvent.click(row.getByRole("button", { name: "Thread actions" }));
     fireEvent.click(row.getByRole("menuitem", { name: /Snooze until tomorrow/i }));
     const until = nextWake(NOW, 9);
@@ -155,7 +155,7 @@ describe("triage UI", () => {
     } });
     expect(screen.getByRole("link", { name: "Old quiet" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: /Snoozed/i })).toBeNull();
-    expect(slot.container.querySelector("[data-sb-row][data-thread-id='old']")?.className).not.toContain("sb-stale");
+    expect(slot.container.querySelector("[data-switchboard-row][data-thread-id='old']")?.className).not.toContain("switchboard-stale");
     sectionMenu();
     expect(screen.getByRole("menuitem", { name: /Archive stale threads/ }).hasAttribute("data-disabled")).toBe(true);
     slot.unmount();
@@ -175,25 +175,25 @@ describe("triage UI", () => {
   it("gives chips, view controls, headers, row actions, shelves and bulk buttons pointer affordances", async () => {
     const { slot, setSettings } = await mount({ needsYouShelf: true });
     const assertControls = () => {
-      const nav = slot.container.querySelector<HTMLElement>("nav.sb-list")!;
+      const nav = slot.container.querySelector<HTMLElement>("nav.switchboard-list")!;
       const buttons = [...nav.querySelectorAll<HTMLButtonElement>("button")];
       expect(buttons.length).toBeGreaterThan(8);
-      expect(buttons.filter((button) => !button.classList.contains("sb-control") &&
-        !button.classList.contains("sb-header-main") && !button.classList.contains("sb-caret"))
+      expect(buttons.filter((button) => !button.classList.contains("switchboard-control") &&
+        !button.classList.contains("switchboard-header-main") && !button.classList.contains("switchboard-caret"))
         .map((button) => button.getAttribute("aria-label") ?? button.textContent?.trim())).toEqual([]);
-      expect([...nav.querySelectorAll<HTMLAnchorElement>(".sb-row > a")].every((link) =>
-        link.classList.contains("sb-row-link"))).toBe(true);
+      expect([...nav.querySelectorAll<HTMLAnchorElement>(".switchboard-row > a")].every((link) =>
+        link.classList.contains("switchboard-row-link"))).toBe(true);
     };
     assertControls();
-    expect(screen.getByRole("button", { name: "View options" }).classList.contains("sb-control")).toBe(true);
-    expect(screen.getByRole("button", { name: "Failed: 1" }).classList.contains("sb-control")).toBe(true);
-    expect(screen.getByRole("button", { name: "Collapse Old quiet" }).classList.contains("sb-caret")).toBe(true);
+    expect(screen.getByRole("button", { name: "View options" }).classList.contains("switchboard-control")).toBe(true);
+    expect(screen.getByRole("button", { name: "Failed: 1" }).classList.contains("switchboard-control")).toBe(true);
+    expect(screen.getByRole("button", { name: "Collapse Old quiet" }).classList.contains("switchboard-caret")).toBe(true);
     fireEvent.click(screen.getByRole("link", { name: "Fresh quiet" }), { altKey: true });
     expect(screen.getByRole("button", { name: "Clear selection" })).toBeTruthy();
     assertControls();
     setSettings({ view: "status" });
     await slot.behavior.emitRealtime("settings", {});
-    await waitFor(() => expect(slot.container.querySelector(".sb-lane")).toBeTruthy());
+    await waitFor(() => expect(slot.container.querySelector(".switchboard-lane")).toBeTruthy());
     assertControls();
     slot.unmount();
   });

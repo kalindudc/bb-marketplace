@@ -112,7 +112,7 @@ describe("organize in the sidebar", () => {
     const slot = await mount({}, (targets) => { seen.push(targets.map((target) => target.id)); return []; });
     fireEvent.click(link("A"), { altKey: true });
     fireEvent.click(link("B"), { altKey: true });
-    const row = (id: string) => slot.container.querySelector<HTMLElement>(`[data-sb-row][data-thread-id="${id}"]`)!;
+    const row = (id: string) => slot.container.querySelector<HTMLElement>(`[data-switchboard-row][data-thread-id="${id}"]`)!;
     fireEvent.contextMenu(row("b"));
     const menu = screen.getByRole("menu", { name: "Actions for 2 threads" });
     expect(seen.at(-1)).toEqual(["a", "b"]);
@@ -220,7 +220,7 @@ describe("organize in the sidebar", () => {
     fireEvent.change(screen.getByRole("searchbox", { name: "Filter threads" }), { target: { value: "A" } });
     fireEvent.pointerDown(link("A"), { pointerId: 1, pointerType: "mouse", button: 0, clientX: 40, clientY: 100 });
     fireEvent.pointerMove(window, { pointerId: 1, pointerType: "mouse", clientX: 40, clientY: 120 });
-    expect(slot.container.querySelector(".sb-ghost")).toBeNull();
+    expect(slot.container.querySelector(".switchboard-ghost")).toBeNull();
     slot.unmount();
   });
 });
