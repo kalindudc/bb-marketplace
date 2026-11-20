@@ -70,6 +70,7 @@ it("defines all five route kinds and retains steer authority", () => {
   const route = tools.get("tavern_route")!;
   for (const kind of ["steer", "question", "aside", "new-quest", "rule"]) expect(route).toContain(`${kind}:`);
   expect(route).toContain("still-applicable");
+  expect(route).toMatch(/hand-backs.{0,50}need/);
   expect(route).toContain("following Keeper turn ends");
 });
 

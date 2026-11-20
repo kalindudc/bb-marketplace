@@ -1,5 +1,5 @@
 import { experimental_useRpcMutation, useBbNavigate } from "@get-bb/plugin-sdk/app";
-import { useState } from "react";
+import { useId, useState } from "react";
 import { rpcContract, type BoardQuestSummary } from "../../shared/contract";
 import type { Ask, CheckerHandoffHold } from "../../shared/schema";
 import { Clamp, Glyph, StateMark, activeHold, localTime, releaseWords, useNow } from "../kit";
@@ -9,10 +9,11 @@ import { Clamp, Glyph, StateMark, activeHold, localTime, releaseWords, useNow } 
  * with one control; the server's answer is the state, and its receipt stays after the row's hold reads released. A hold released
  * before this visit draws nothing here; the history says when and how.
  */
-export function CheckerHold({ quest, asks, queue = false }: { quest: Pick<BoardQuestSummary, "id" | "short" | "title" | "phase" | "checkerHandoffHold">; asks: readonly Ask[]; queue?: boolean }) {
+export function CheckerHold({ quest, asks, queue = false, card = false }: { quest: Pick<BoardQuestSummary, "id" | "short" | "title" | "phase" | "checkerHandoffHold">; asks: readonly Ask[]; queue?: boolean; card?: boolean }) {
   const navigate = useBbNavigate();
   const release = experimental_useRpcMutation({ contract: rpcContract, method: "releaseCheckerHandoff" });
   const now = useNow();
+  const effect = useId();
   const [released, setReleased] = useState<CheckerHandoffHold | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const hold = activeHold(quest);
@@ -36,15 +37,15 @@ export function CheckerHold({ quest, asks, queue = false }: { quest: Pick<BoardQ
       <Glyph name="gate" size={14} className="tv-hold-g" />
       <div className="tv-hold-t">
         {/* In the needs-you queue the quest is named once, as a quiet link; on its own page it needs no name. */}
-        {queue ? <span><b className="tv-hold-h">Checker handoff on hold</b> · <button type="button" className="tv-ilink tv-hold-quest" onClick={() => navigate.toPluginPanel("tavern", { subPath: `quest/${quest.id}` })} title={`Open the quest page: ${quest.title}`}>{quest.short}</button></span>
+        {card ? null : queue ? <span><b className="tv-hold-h">Checker handoff on hold</b> · <button type="button" className="tv-ilink tv-hold-quest" onClick={() => navigate.toPluginPanel("tavern", { subPath: `quest/${quest.id}` })} title={`Open the quest page: ${quest.title}`}>{quest.short}</button></span>
           : <b className="tv-hold-h">Checker handoff on hold</b>}
-        <p>No Warden is hired or re-tasked on this quest until you release it.</p>
-        <p className="tv-hold-why" data-content>{hold.reason}</p>
+        {!card && <><p>No Warden is hired or re-tasked on this quest until you release it.</p><p className="tv-hold-why" data-content>{hold.reason}</p></>}
         <p className="tv-hold-src">Held at {localTime(hold.createdAt, now)}, from your message: <Clamp text={`“${hold.sourceText}”`} className="tv-hold-q" /></p>
         {linked && <p className="m small">The Keeper also asked you about it, below.</p>}
         {problem && <p className="tv-problem" role="alert">Couldn’t release it: {problem}</p>}
       </div>
-      <button type="button" className="btn sm tv-hold-release" disabled={release.isPending} onClick={() => void press()} title="Lets the Keeper hand the work to a Warden for checking">Release checker handoff</button>
+      <button type="button" className="btn sm tv-hold-release" disabled={release.isPending} onClick={() => void press()} aria-describedby={card ? effect : undefined} title="Lets the Keeper hand the work to a Warden for checking">Release checker handoff</button>
+      {card && <span className="tv-need-effect" id={effect}>Lets the Keeper hand the work to a Warden for checking.</span>}
     </div>
   </div>;
 }

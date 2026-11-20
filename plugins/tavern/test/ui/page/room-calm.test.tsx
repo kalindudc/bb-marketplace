@@ -19,7 +19,7 @@ async function mount(calm: boolean) {
 it("collapses empty attention containers only around the calm line", async()=>{
   const slot=await mount(true);
   const calm=await slot.findByText("Nothing needs you.");
-  expect(calm.closest(".rm-o1")!.querySelectorAll("[data-sec]:empty")).toHaveLength(3);
+  expect(calm.closest(".rm-o1")!.querySelectorAll("[data-sec]:empty")).toHaveLength(1);
   const css=readFileSync("src/ui/page/page.css","utf8");
   expect(css).toMatch(/\.rm-o1:has\(> \.rm-calm\) > \[data-sec\]:empty\s*\{\s*display: none/);
   expect(css).not.toMatch(/\.rm-a-grid:has\(\.rm-calm\) \.rm-o[14]\s*\{\s*order:/);

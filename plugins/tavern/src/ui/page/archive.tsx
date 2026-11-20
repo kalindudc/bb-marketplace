@@ -114,9 +114,11 @@ export function ArchiveFold({ room, registry, api }: { room: Room; registry: Reg
   const [open, setOpen] = usePanelState("room.cellar", false);
   const total = archiveTotal(room, api.hidden, api.shown);
   const deleted = experimental_useRpcQuery({ contract: rpcContract, method: "deletedBoardQuests", input: { cursor: null, limit: 1 } });
-  if (!total && !deleted.data?.total && !deleted.error) return null;
-  return <section className="tv-archive" aria-label={vocab("cellar")}>
-    <button type="button" className="tv-fold act tv-archive-h" aria-expanded={open} onClick={() => setOpen(!open)}><PageGlyph name="archive" /><span>{CELLAR.link(total)}{deleted.data && deleted.data.total > 0 && ` · ${plural(deleted.data.total, "deleted quest")}`}</span><ExpandsMark open={open} /></button>
+  if (!total && !deleted.data?.total) return deleted.error
+    ? <p className="tv-problem" role="alert">Could not check for deleted quests. <button type="button" className="btn sm" onClick={() => void deleted.refetch()}>Retry</button></p>
+    : null;
+  return <section data-sec="cellar" className="tv-archive" aria-label={vocab("cellar")}>
+    <button type="button" className="tv-fold act tv-archive-h" aria-expanded={open} onClick={() => setOpen(!open)}><PageGlyph name="archive" /><span>{total ? CELLAR.link(total) : "Cellar"}{deleted.data && deleted.data.total > 0 && ` · ${plural(deleted.data.total, "deleted quest")}`}</span><ExpandsMark open={open} /></button>
     {open && <div className="tv-card tv-archive-b"><ArchivedList registry={registry} api={api} total={total} /></div>}
   </section>;
 }

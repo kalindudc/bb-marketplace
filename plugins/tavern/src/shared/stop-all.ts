@@ -1,6 +1,14 @@
 import { z } from "zod";
 import { actorSchema } from "./schema";
 
+const id = z.string().min(1).max(120);
+
+export const cellarStopReceiptSchema = z.object({
+  id, at: z.number(), surface: z.string(),
+  entries: z.array(z.object({ questId: id, title: z.string(), state: z.enum(["cellared", "stopping"]) })),
+});
+export type CellarStopReceipt = z.infer<typeof cellarStopReceiptSchema>;
+
 export const QUEUED_STOP_NOTICE = "A message queued together with Tavern\'s own work waits until you resume.";
 export const RESUME_ATTESTATION_NOTICE = "Tavern can\'t prove a person pressed Resume";
 
@@ -26,6 +34,10 @@ export function stopBy(state: StopAllState): string {
   return state.byLabel ?? (state.by?.kind === "user" ? "you" : state.by?.kind === "agent" ? `agent ${state.by.threadId}` : "an unverified caller");
 }
 export const stopAllContract = {
+  stopKeeperGoneQuests: {
+    input: z.object({ ids: z.array(id).min(1).max(200) }).strict(),
+    output: cellarStopReceiptSchema,
+  },
   stopAllStatus: { input: z.object({}).strict(), output: stopAllStateSchema, tags: () => ["tavern:stop-all"] },
   stopAll: { input: z.object({}).strict(), output: stopAllStateSchema },
   resumeAll: { input: z.object({}).strict(), output: stopAllStateSchema },

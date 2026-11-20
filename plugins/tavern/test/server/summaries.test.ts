@@ -74,7 +74,7 @@ it("counts the same unseen summary across views and acknowledges only the IDs re
 it("shows a soft reminder but permits a seventh summary and requires linked requests to belong to the quest", async () => {
   const f = await fixture();
   const another = await seedQuest(f.k, "other", "Another goal", "Another");
-  const note = f.k.memory.note("other", { kind: "waiting-on-user", text: "Check the dashboard", action: "Check the dashboard", boardQuestId: another.id });
+  const note = f.k.memory.note("other", { kind: "waiting-on-user", text: "Check the dashboard", action: "Check the dashboard", need: "Please check the dashboard.", boardQuestId: another.id });
   await expect(f.post({ request: { kind: "hand-back", id: note.id } })).rejects.toThrow(/hand-back.*quest/i);
   for (let i = 1; i <= 7; i++) await f.post({ title: `Result ${i}` });
   const restatement = f.k.restatement("lead");

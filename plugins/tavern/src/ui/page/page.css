@@ -84,6 +84,7 @@
 
 /* ---------- The common room ---------- */
 .tavern.tv-page .tv-room { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.tavern.tv-page [data-room] > div:empty { display: none; }
 .tavern.tv-page .tv-sline { display: flex; align-items: center; gap: 8px 22px; flex-wrap: wrap; min-height: 40px; }
 .tavern.tv-page .tv-hero { display: flex; align-items: baseline; gap: 8px; }
 .tavern.tv-page .tv-hero b { font-size: 30px; line-height: 1; font-weight: 700; }
@@ -100,7 +101,45 @@
 .tavern.tv-page .tv-room-grid { display: grid; grid-template-columns: minmax(320px, 400px) minmax(0, 1fr); gap: 24px; align-items: start; }
 .tavern.tv-page .tv-col { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
 
-/* Needs you */
+.tavern.tv-page .tv-queue { display: grid; gap: 12px; }
+.tavern.tv-page .tv-queue > .tv-colh { margin-bottom: 0; }
+.tavern.tv-page .tv-need-kinds, .tavern.tv-page .tv-need-meta, .tavern.tv-page .tv-need-facts { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; }
+.tavern.tv-page .tv-need-kinds .btn { border-color: var(--tavern-line); }
+.tavern.tv-page .tv-need-group-head { display: flex; align-items: center; gap: 8px; padding: 4px 0; min-height: 32px; }
+.tavern.tv-page summary.tv-need-group-head { cursor: pointer; border-top: 1px solid var(--tavern-line); }
+.tavern.tv-page .tv-need-card { display: grid; gap: 8px 20px; border: 1px solid var(--tavern-line); border-inline-start: 3px solid var(--tavern-you); padding: 10px 12px; background: var(--card); overflow-wrap: anywhere; }
+.tavern.tv-page .tv-need-split { grid-template-columns: minmax(0, 1fr) minmax(210px, 29%); }
+.tavern.tv-page .tv-need-meta { grid-column: 1 / -1; font-size: 12px; }
+.tavern.tv-page .tv-need-meta .tv-askrow-a { margin-inline-start: auto; }
+.tavern.tv-page .tv-need-meta button { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; min-height: 28px; text-align: start; padding: 2px 6px; }
+.tavern.tv-page .tv-need-person { border: 0; background: transparent; }
+.tavern.tv-page .tv-need-quest { background: var(--tavern-recessed); border: 1px solid var(--tavern-line); }
+.tavern.tv-page .tv-need-state { color: var(--tv-text-2); }
+.tavern.tv-page .tv-need-sentence { font-size: 14px; font-weight: 700; }
+.tavern.tv-page .tv-need-body { display: grid; align-content: start; gap: 6px; min-width: 0; }
+.tavern.tv-page .tv-need-facts, .tavern.tv-page .tv-need-effect, .tavern.tv-page .tv-need-card .ask-effect { color: var(--tv-text-2); font-size: 12px; }
+.tavern.tv-page .tv-need-quote { margin: 0; padding-inline-start: 8px; border-inline-start: 2px solid var(--tavern-line); font-size: 12px; white-space: pre-wrap; }
+.tavern.tv-page .tv-need-quote[data-clamped] { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.tavern.tv-page .tv-need-reading .lnk-btn { min-height: 26px; color: var(--foreground); text-decoration: underline; }
+.tavern.tv-page .tv-need-actions, .tavern.tv-page .tv-need-action { display: grid; align-content: start; gap: 6px; }
+.tavern.tv-page .tv-need-action { grid-template-columns: minmax(78px, auto) minmax(0, 1fr); align-items: center; }
+.tavern.tv-page .tv-need-answer > summary { cursor: pointer; }
+.tavern.tv-page .tv-need-answer > .ask { margin: 0; border: 0; border-top: 1px dashed var(--tavern-line); box-shadow: none; background: transparent; }
+.tavern.tv-page .tv-need-answer .ask-f { display: grid; grid-template-columns: max-content minmax(0, 1fr); justify-items: start; }
+.tavern.tv-page .tv-need-answer .ask-effect { align-self: center; }
+.tavern.tv-page .tv-need-answer .ask-f > .small { grid-column: 1 / -1; }
+.tavern.tv-page .tv-need-stopped[open] > summary .act-i.down { transform: rotate(-90deg); }
+.tavern.tv-page .tv-need-card .tv-hold { box-shadow: none; }
+.tavern.tv-page .tv-need-card .tv-hold .tv-need-effect { grid-column: 2 / -1; }
+@container tavern-page (max-width: 600px) {
+  .tavern.tv-page .tv-need-split, .tavern.tv-page .tv-need-action, .tavern.tv-page .tv-need-answer .ask-f { grid-template-columns: minmax(0, 1fr); justify-items: stretch; }
+}
+@media (pointer: coarse), (max-width: 560px) {
+  .tavern.tv-page .tv-queue :is(button, summary) { min-width: 44px; min-height: 44px; }
+  .tavern.tv-page .tv-need-answer :is(.opt, .ask-note-in, select) { min-height: 44px; }
+}
+
+/* Quest-page asks */
 .tavern.tv-page .tv-oldest { font-size: 12px; color: var(--tv-text-2); white-space: nowrap; }
 .tavern.tv-page .tv-asks { display: flex; flex-direction: column; gap: 6px; }
 .tavern.tv-page .tv-ask-disclosure { border: 1px solid var(--tavern-line); background: var(--card); box-shadow: inset 3px 0 0 var(--tavern-you); }
@@ -1134,7 +1173,7 @@
 /* A report's evidence can hold a whole worktree path; it breaks inside the card rather than running past it. */
 
 /* The rail (Steve, design/room/why.md): two columns that hold at a page of 900 px and wider, one column below in why.md's order. */
-.tavern.tv-page .rm-a-grid { position: relative; display: grid; grid-template-columns: minmax(300px, 360px) minmax(0, 1fr); gap: 24px; align-items: start; }
+.tavern.tv-page .rm-a-grid { position: relative; display: grid; grid-template-columns: minmax(0, 1.02fr) minmax(0, 1fr); gap: 24px; align-items: start; }
 .tavern.tv-page :is(.rm-a-rail, .rm-a-main) { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
 .tavern.tv-page .rm-stackcol { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
 .tavern.tv-page .rm-stackcol:empty { display: none; }
@@ -1144,9 +1183,9 @@
 /* The held columns place themselves; the browser's scroll anchoring would fight them. */
 .tavern.tv-page .rm-a-grid, .tavern.tv-page .rm-a-grid * { overflow-anchor: none; }
 @container tavern-page (max-width: 900px) {
-  .tavern.tv-page .rm-a-grid { display: flex; flex-direction: column; gap: 20px; }
+  .tavern.tv-page .rm-a-grid { display: flex; flex-direction: column; align-items: stretch; gap: 20px; }
   .tavern.tv-page :is(.rm-a-rail, .rm-a-main) { display: contents; transform: none !important; }
-  .tavern.tv-page .rm-o1 { order: 1; } .tavern.tv-page .rm-o2 { order: 2; } .tavern.tv-page .rm-o3 { order: 3; } .tavern.tv-page .rm-o4 { order: 4; } .tavern.tv-page .rm-o5 { order: 5; }
+  .tavern.tv-page .rm-o2 { order: 1; } .tavern.tv-page .rm-o5 { order: 2; } .tavern.tv-page .rm-o1 { order: 3; } .tavern.tv-page .rm-o4 { order: 4; } .tavern.tv-page .rm-o3 { order: 5; }
 }
 
 
@@ -1172,6 +1211,43 @@
 .tavern.tv-page .rm-done { background: color-mix(in oklab, var(--background) 45%, var(--card)); }
 .tavern.tv-page .rm-more { margin: 0; width: 100%; justify-content: flex-start; border-top: 1px solid var(--tavern-line); padding-left: 12px; min-height: 30px; }
 .tavern.tv-page .rm-boardhead { row-gap: 4px; }
+.tavern.tv-page .rm-board-sec { display: grid; gap: 8px; }
+.tavern.tv-page .rm-a-rail .rm-stackcol { gap: 14px; }
+.tavern.tv-page .rm-a-rail [data-compact-decided] .di:not(.open) { grid-template-areas: "t a"; padding-block: 4px; }
+.tavern.tv-page .rm-a-rail [data-compact-decided] .di:not(.open) .dt .clamp { -webkit-line-clamp: 1; }
+.tavern.tv-page .rm-a-rail [data-compact-decided] .di:not(.open) .di-meta { display: none; }
+.tavern.tv-page .rm-a-rail .tv-ev { gap: 5px; padding-block: 4px; }
+.tavern.tv-page .rm-a-rail .tv-evgroups { gap: 8px; }
+.tavern.tv-page .tv-ev-compact { align-items: center; }
+.tavern.tv-page .tv-ev-brief { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.tavern.tv-page .tv-ev-brief > .num { flex: none; color: var(--tv-text-2); }
+.tavern.tv-page .rm-a-rail .tv-ev-preview { padding: 0; min-height: 24px; align-items: center; }
+@container tavern-page (min-width: 901px) {
+  .tavern.tv-page .rm-a-rail { gap: 12px; }
+  .tavern.tv-page .rm-a-rail .rm-stackcol { gap: 8px; }
+  .tavern.tv-page .rm-a-rail .tv-events-sec .tv-colh { margin-bottom: 4px; }
+  .tavern.tv-page .rm-a-rail .tv-evgroups { gap: 6px; }
+  .tavern.tv-page .rm-a-rail .tv-ev-compact { padding-block: 0; }
+}
+@media (pointer: coarse), (max-width: 560px) {
+  .tavern.tv-page .rm-a-rail .tv-ev-preview.act { min-width: 44px; min-height: 44px; }
+}
+.tavern.tv-page .rm-room-fold { border-top: 1px solid var(--tavern-line); min-width: 0; }
+.tavern.tv-page .rm-room-fold h3 > button { width: 100%; justify-content: start; text-align: start; color: var(--foreground); font-weight: 600; }
+.tavern.tv-page .rm-room-fold > div:not([hidden]) { display: grid; gap: 6px; padding: 4px 0 8px; }
+.tavern.tv-page .rm-room-fold > div > .btn { justify-self: start; }
+.tavern.tv-page .rm-fold-quest { border: 1px solid var(--tavern-line); min-width: 0; background: var(--card); }
+.tavern.tv-page .rm-pending-cellar { padding: 2px 8px; font-size: 12px; }
+.tavern.tv-page .rm-fold-keeper { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; min-height: 28px; }
+.tavern.tv-page .rm-party-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 2px 12px; }
+.tavern.tv-page .rm-party-strip .tv-fold { margin: 0; }
+.tavern.tv-page .tv-cellar-stop { display: grid; justify-items: start; gap: 8px; }
+.tavern.tv-page .tv-cellar-stop .tv-confirm { max-width: 100%; }
+.tavern.tv-page .tv-room :is(.rm-o1, .rm-o3, .rm-o4, .rm-o5):empty { display: none; }
+.tavern.tv-page .tv-room :is(.tv-erow-t, .rm-nh-title, .qrow-done .qrow-f) { overflow: visible; white-space: normal; overflow-wrap: anywhere; }
+@media (pointer: coarse), (max-width: 560px) {
+  .tavern.tv-page .rm-room-fold :is(button, summary) { min-width: 44px; min-height: 44px; }
+}
 .tavern.tv-page .rm-hearth-slot { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--tv-text-2); white-space: nowrap; }
 .tavern.tv-page .rm-board-acts { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
 @container tavern-page (max-width: 640px) {
@@ -1185,7 +1261,26 @@
 }
 
 /* The status line: the count and the oldest wait on one line, jumps and facts on one wrapping line. Jumps scroll, so no mark. */
-.tavern.tv-page .rm-sline { row-gap: 2px; }
+.tavern.tv-page .tv-hearth-band { display: grid; grid-template-columns: minmax(110px, auto) minmax(0, 1fr) auto; gap: 6px 16px; align-items: center; padding: 8px 12px; border: 1px solid var(--tavern-line); background: var(--card); }
+.tavern.tv-page .tv-hearth-need { display: grid; justify-items: start; gap: 2px; }
+.tavern.tv-page .tv-hearth-scene { display: flex; align-items: center; min-width: 0; gap: 2px; }
+.tavern.tv-page .tv-hearth-fire { display: grid; align-content: center; min-width: 0; }
+.tavern.tv-page .tv-hearth-fire .tavern-hearth { display: flex; gap: 6px; align-items: center; }
+.tavern.tv-page .tv-hearth-fire .hearth-w { font-size: 11px; }
+.tavern.tv-page .tv-hearth-band .tv-facts { display: grid; grid-template-columns: auto auto; align-items: center; gap: 2px 12px; }
+.tavern.tv-page .tv-hearth-links { display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: center; font-size: 12px; color: var(--tv-text-2); padding: 2px 4px 0; }
+.tavern.tv-page .tv-hearth-links:not(:has(button)) { display: none; }
+@container tavern-page (max-width: 800px) {
+  .tavern.tv-page .tv-hearth-band { grid-template-columns: minmax(0, 1fr); }
+  .tavern.tv-page .tv-hearth-need { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 12px; }
+  .tavern.tv-page .tv-hearth-scene { flex-wrap: wrap; }
+  .tavern.tv-page .tv-hearth-band .tv-facts { display: flex; }
+}
+@media (pointer: coarse), (max-width: 560px) {
+  .tavern.tv-page .tv-hearth-band .tv-hero { min-height: 44px; }
+  .tavern.tv-page .tv-hearth-fire .hearth-w { display: none; }
+  .tavern.tv-page .tv-hearth-scene [data-page-scene-actor] { flex-basis: 48px; width: 48px; }
+}
 .tavern.tv-page .rm-sl1 { display: flex; align-items: baseline; gap: 12px; flex: none; }
 .tavern.tv-page .rm-oldest { font-size: 12px; color: var(--tv-text-2); white-space: nowrap; }
 .tavern.tv-page .rm-oldest b { color: var(--foreground); }

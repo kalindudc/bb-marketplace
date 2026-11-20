@@ -29,6 +29,11 @@ function endAtFifth(rule: string): number {
 }
 
 describe("Tavern's stylesheets", () => {
+  it("gives the band a layout, not a motion class on its count or facts", () => {
+    const band = pageCss.split("\n").filter(line => line.includes(".tv-hearth-band"));
+    expect(band.some(line => line.includes("display: grid"))).toBe(true);
+    for (const rule of band.filter(line => /\.tv-(hero|facts)/.test(line))) expect(rule).not.toMatch(/animation:|transition:|\.mo-/);
+  });
   it("loop nothing forever", () => {
     expect(files.length).toBeGreaterThan(3);
     for (const f of files) expect(readFileSync(f, "utf8"), f).not.toMatch(/\binfinite\b/);

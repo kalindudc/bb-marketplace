@@ -3,29 +3,23 @@ import { StopAllNotice } from "./stop-all";
 import { useBbNavigate } from "@get-bb/plugin-sdk/app";
 import { Fragment, useEffect, useId, useMemo, useState, type ReactNode } from "react";
 import { PlacementFacts } from "../kit/placement";
-import { voiceShown, Crest, ExpandsMark, Hearth, OpensMark, rememberCount, PartyPicture as KitParty, Vocabulary, activeHold, onTheRoad, glowVars, hearthWords, useNow } from "../kit";
+import { voiceShown, Clamp, Crest, ExpandsMark, Hearth, OpensMark, rememberCount, Vocabulary, glowVars, hearthWords } from "../kit";
 import type { BoardQuestSummary, Room } from "../../shared/contract";
-import type { Member } from "../../shared/schema";
 import { DecidedForYou, NeedsYouQueue } from "./asks";
 import { ArchiveFold, ArchiveReceiptLine, useArchive } from "./archive";
-import { Ago, ClosedWords, CrestOf, InlineLink, PageButton, Section, SegFilter, StateMark, characterName, classLabel, type Registry, plural } from "./common";
+import { Ago, CrestOf, InlineLink, PageButton, Section, SegFilter, StateMark, characterName, classLabel, type Registry, plural } from "./common";
 import { PageGlyph, type PageGlyphName } from "./glyphs";
-import { activeQuests, eventContext, eventLines, heldForYou, needYouCount, openAskCount, questsIn, roomAway, type EventLine } from "./model";
+import { eventContext, eventLines, needYouCount, questsIn, type EventLine } from "./model";
 import { ClassStartCards } from "./start";
 import { usePanelState } from "./panel-state";
 import { Rail, jumpTo, takePendingJump } from "./rail";
-import { ReturnButton, RoomAwayNotes, usePendingStops } from "./away";
+import { RoomAwayNotes } from "./away";
 import { SKEL } from "./skeletons";
-import { Board } from "./board";
+import { Board, RoomFold } from "./board";
 import { SinceVisit } from "./since-visit";
 import { reportsTitle, useOpenReports } from "./reports";
-
-/** Where each member is, drawn by the kit; every crest opens its thread. */
-export function PartyPicture({ members, registry, mini = false, quests, ambientMotion, repeatSeconds }: { ambientMotion?: "calm" | "lively" | "off"; repeatSeconds?: number; members: Member[]; registry: Registry; mini?: boolean; quests: BoardQuestSummary[] }) {
-  const navigate = useBbNavigate();
-  return <KitParty ambientMotion={ambientMotion} repeatSeconds={repeatSeconds} members={members} registry={registry} mini={mini} quests={quests} onOpen={(id) => navigate.toThread(id)} />;
-}
-
+import { HearthBand } from "./hearth-band";
+export { HearthBand as StatusLine } from "./hearth-band";
 
 const reviewFolds = new Map<string, boolean>();
 type ReviewItem = Room["review"]["items"][number];
@@ -81,33 +75,34 @@ export function SafeLink({ href, children }: { href: string; children: ReactNode
 }
 
 const EVENT_GLYPH: Record<EventLine["icon"], PageGlyphName> = { steer: "steer", question: "question", aside: "aside", quest: "quest", plan: "plan", ask: "you", answer: "done", decided: "seal", undo: "undo", rule: "rule", report: "report", hire: "hire", told: "told", stale: "stale", failed: "fail", anchor: "anchor", stop: "stop", skip: "skip", wrap: "wrap", phase: "phase", tick: "tick", note: "note" };
-export function EventRow({ line, registry }: { line: EventLine; registry: Registry }) {
+export function EventRow({ line, registry, compact = false }: { line: EventLine; registry: Registry; compact?: boolean }) {
   const who = line.actor.kind === "you" ? "You" : line.actor.kind === "tavern" ? "Tavern" : line.actor.kind === "unknown" ? "" : characterName(registry, line.actor.member);
-  return <li className={`tv-ev t-${line.tone}`}>
+  const repeats = (line.repeats ?? 1) > 1 ? <span className="num" aria-label={`${line.repeats} occurrences`}>×{line.repeats}</span> : null;
+  return <li className={`tv-ev t-${line.tone}${compact ? " tv-ev-compact" : ""}`}>
     <PageGlyph name={EVENT_GLYPH[line.icon] ?? "note"} size={13} className="tv-ev-g" />
-    <span className="tv-ev-b">
-      <span className="tv-ev-h">{line.actor.kind === "member" || line.actor.kind === "keeper" ? <span className="tv-ev-who"><CrestOf member={line.actor.member} registry={registry} size={14} /><b>{who}</b></span> : line.actor.kind === "you" ? <b className="tv-ev-you">You</b> : line.actor.kind === "tavern" ? <b className="m">Tavern</b> : null} <span title={line.note}>{line.head}</span></span>
+    {compact ? <span className="tv-ev-brief"><Clamp text={[who, line.head].filter(Boolean).join(" ")} more={line.detail ?? undefined} lines={1} className="tv-ev-preview" />{repeats}</span> : <span className="tv-ev-b">
+      <span className="tv-ev-h">{line.actor.kind === "member" || line.actor.kind === "keeper" ? <span className="tv-ev-who"><CrestOf member={line.actor.member} registry={registry} size={14} /><b>{who}</b></span> : line.actor.kind === "you" ? <b className="tv-ev-you">You</b> : line.actor.kind === "tavern" ? <b className="m">Tavern</b> : null} <span title={line.note}>{line.head}</span>{repeats}</span>
       {line.detail && <span className="tv-ev-d" data-content title={line.detail}>{line.detail}</span>}
-    </span>
+    </span>}
     <Ago at={line.at} />
   </li>;
 }
 
 /** A plain list of events, newest first. */
-export function EventList({ lines, registry }: { lines: EventLine[]; registry: Registry }) {
-  return <ol className="tv-evs">{lines.map((line) => <EventRow key={line.id} line={line} registry={registry} />)}</ol>;
+export function EventList({ lines, registry, compact }: { lines: EventLine[]; registry: Registry; compact?: boolean }) {
+  return <ol className="tv-evs">{lines.map((line) => <EventRow key={line.id} line={line} registry={registry} compact={compact} />)}</ol>;
 }
 
 /** Events grouped by quest: each quest is named once, as a quiet link, with its latest events under it. */
-function GroupedEvents({ lines, registry, questShort, perGroup }: { lines: EventLine[]; registry: Registry; questShort: (id: string) => string | null; perGroup: number }) {
+function GroupedEvents({ lines, registry, questShort }: { lines: EventLine[]; registry: Registry; questShort: (id: string) => string | null }) {
   const navigate = useBbNavigate();
   const groups = new Map<string, EventLine[]>();
   for (const line of lines) { const key = line.questId ?? ""; groups.set(key, [...(groups.get(key) ?? []), line]); }
   return <div className="tv-evgroups">{[...groups.entries()].map(([q, items]) => {
     const short = q ? questShort(q) : null;
     return <section key={q || "none"} className="tv-evgroup" aria-label={short ?? "Not tied to a board quest"}>
-      <header className="tv-evq">{short ? <InlineLink onClick={() => navigate.toPluginPanel("tavern", { subPath: `quest/${q}` })} title={`Open the quest page: ${short}`}>{short}<OpensMark /></InlineLink> : <span>Keepers and solos</span>}<span className="m">{plural(items.length, "event")}</span></header>
-      <EventList lines={items.slice(0, perGroup)} registry={registry} />
+      <header className="tv-evq">{short ? <InlineLink onClick={() => navigate.toPluginPanel("tavern", { subPath: `quest/${q}` })} title={`Open the quest page: ${short}`}>{short}<OpensMark /></InlineLink> : <span>Keepers and solos</span>}<span className="m">{plural(items.reduce((sum, item) => sum + (item.repeats ?? 1), 0), "event")}</span></header>
+      <EventList lines={items} registry={registry} compact />
     </section>;
   })}</div>;
 }
@@ -118,10 +113,12 @@ export function EventFeed({ lines, registry, questShort, title = "What happened"
   const [more, setMore] = usePanelState(foldKey && `${foldKey}.more`, false);
   if (!lines.length) return null;
   const shown = lines.filter((l) => filter === "all" || l.filter === filter);
-  const counts = Object.fromEntries(FILTERS.map(([f]) => [f, f === "all" ? lines.length : lines.filter((l) => l.filter === f).length]));
-  return <Section title={title} count={plural(lines.length, "event")} className="tv-events-sec" action={<SegFilter label="Filter events" value={filter} onChange={setFilter} options={FILTERS.filter(([f]) => f === "all" || counts[f]).map(([f, label]) => ({ id: f, label, count: counts[f] }))} />}>
-    {showQuest ? <GroupedEvents lines={shown} registry={registry} questShort={questShort} perGroup={more ? 50 : 3} /> : <EventList lines={more ? shown : shown.slice(0, limit)} registry={registry} />}
-    {(showQuest ? shown.length > 3 : shown.length > limit) && <button type="button" className="tv-fold act" aria-expanded={more} onClick={() => setMore(!more)}><ExpandsMark open={more} />{more ? "Show fewer" : "Show every event"}</button>}
+  const count = (list: EventLine[]) => list.reduce((sum, item) => sum + (item.repeats ?? 1), 0);
+  const counts = Object.fromEntries(FILTERS.map(([f]) => [f, f === "all" ? count(lines) : count(lines.filter((l) => l.filter === f))]));
+  const preview = more ? shown : shown.slice(0, limit);
+  return <Section title={title} count={plural(count(lines), "event")} className="tv-events-sec" action={<SegFilter label="Filter events" value={filter} onChange={setFilter} options={FILTERS.filter(([f]) => f === "all" || counts[f]).map(([f, label]) => ({ id: f, label, count: counts[f] }))} />}>
+    {showQuest ? <GroupedEvents lines={preview} registry={registry} questShort={questShort} /> : <EventList lines={preview} registry={registry} />}
+    {shown.length > limit && <button type="button" className="tv-fold act" aria-expanded={more} onClick={() => setMore(!more)}><ExpandsMark open={more} />{more ? "Show fewer" : "Show every event"}</button>}
     {!shown.length && <p className="tv-empty" data-empty>Nothing of this kind yet.</p>}
   </Section>;
 }
@@ -196,94 +193,51 @@ function RoomContents({ room, registry }: { room: Room; registry: Registry }) {
   </details></div>;
 }
 
-export const waited = (at: number, now: number) => {
-  const m = Math.max(0, Math.floor((now - at) / 60000));
-  if (m < 60) return `${m}m`;
-  if (m < 1440) return `${Math.floor(m / 60)}h${m % 60 ? ` ${m % 60}m` : ""}`;
-  const h = Math.floor(m / 60);
-  return `${Math.floor(h / 24)}d${h % 24 ? ` ${h % 24}h` : ""}`;
-};
-/** How long the oldest ask has waited, on its own minute clock. */
-function Waited({ at }: { at: number }) { const now = useNow(); return <b className="num">{waited(at, now)}</b>; }
-const errandsOf = (room: Room) => room.keepers.flatMap((k) => k.errands.map((m) => ({ m, keeper: k.member })));
-
-/**
- * The status line: the need-you count and the one "oldest" on a line, then one wrapping line of jumps and facts. Jumps are
- * underlined with no mark, because they scroll. Below a 560 px page the side lists' jump shows the count alone, and its name
- * holds both forms and both counts.
- */
-// Declared outside StatusLine: a component made inside a render is a new type each time, so React rebuilt these buttons on every
-// Keeper tick and keyboard focus fell to the page body.
-function J({ to, children, title }: { to: string; children: ReactNode; title: string }) {
-  return <button type="button" className="act rm-jump" onClick={() => jumpTo(to)} title={title}>{children}</button>;
-}
-
-export function StatusLine({ room, registry }: { room: Room; registry?: Registry }) {
-  const navigate = useBbNavigate();
-  const away = roomAway(room), closed = !!away?.closed;
-  const pending = usePendingStops(room);
-  const asks = needYouCount(room);
-  const oldest = attentionView(room.attention).oldest ?? null;
-  const quests = activeQuests(room);
-  const decided = attentionView(room.attention).decided ?? attentionView(room.attention).new;
-  const failed = quests.flatMap((q) => q.members).filter((m) => m.state === "failed").length;
-  const stale = quests.flatMap((q) => q.members).filter((m) => m.strikes > 0).length;
-  const errands = errandsOf(room).length, solos = room.solos.length;
-  const lists = [errands && plural(errands, "side quest"), solos && plural(solos, "solo")].filter(Boolean).join(" · ");
-  const review = <span>review <b className="num">{room.review.waiting} of {room.review.budget}</b></span>;
-  return <div className="tv-sline rm-sline" role="group" aria-label="Status" data-sec="status">
-    <div className="rm-sl1">
-      {asks > 0 ? <button type="button" className="tv-hero act" onClick={() => jumpTo("tv-needs-you")} title="Scroll to what needs you"><b className="num">{asks}</b><span>need you</span></button> : <div className="tv-hero"><b className="num">0</b><span>need you</span></div>}
-      {asks > 0 && oldest !== null && <span className="rm-oldest" title={new Date(oldest).toLocaleString()}>oldest <Waited at={oldest} /></span>}
-      {closed && <button type="button" className="act rm-jump rm-closed" onClick={() => navigate.toPluginPanel("tavern", { subPath: "closing" })} title="Closing time (away): open the page"><PageGlyph name="lantern" /><span><ClosedWords away={away} /></span><OpensMark /></button>}
-      {/* Mounted while open too, so its receipt outlives the room reopening; it draws nothing when there is nothing to say. */}
-      {registry && <ReturnButton room={room} registry={registry} className="rm-return" />}
-      {pending > 0 && <button type="button" className="act rm-jump rm-pending" onClick={() => jumpTo("tv-away-notes")} title="Scroll to the stops that haven't confirmed"><PageGlyph name="stale" /><span><b className="num">{pending}</b> {pending === 1 ? "stop" : "stops"} not confirmed</span></button>}
-    </div>
-    <div className="tv-facts rm-sl2">
-      {decided > 0 && <J to="room-decided" title="Scroll to Decided for you"><PageGlyph name="seal" /><span><b className="num">{decided}</b> decided<span className="rm-long"> for you</span></span></J>}
-      <J to="rm-board-h" title="Scroll to the quest board"><span><b className="num">{onTheRoad(room)}</b> on the road</span></J>
-      {room.review.items.length > 0 ? <J to="rm-review" title="Scroll to the review queue">{review}</J> : review}
-      {failed > 0 && <span className="tv-bad" data-stuck><StateMark tone="bad"><b>{failed} failed</b></StateMark></span>}
-      {stale > 0 && <span className="tv-warn"><StateMark tone="warn"><b>{stale} quiet</b></StateMark></span>}
-      {lists && <button type="button" className="act rm-jump" onClick={() => jumpTo("rm-lists")} title={`Scroll to ${lists}`} aria-label={`${plural(errands + solos, "thread")}: ${lists}`}><span><span className="rm-lists-long">{lists}</span><span className="rm-lists-short">{plural(errands + solos, "thread")}</span></span></button>}
-      {room.recent.length > 0 && <J to="rm-events" title="Scroll to What happened"><span>What happened</span></J>}
-    </div>
-  </div>;
-}
+const errandsOf = (room: Room) => room.keepers.flatMap((keeper) => keeper.errands.map((m) => ({ m, keeper: keeper.member })));
 
 function RoomActivity({ room, registry }: { room: Room; registry: Registry }) {
   const api = useArchive();
   const ctx = useMemo(() => eventContext(room, registry), [room, registry]);
-  const allLines = useMemo(() => eventLines(room.recent, ctx), [room.recent, ctx]);
+  const allLines = useMemo(() => eventLines(room.recent, ctx, { collapseRepeats: true }), [room.recent, ctx]);
   const onBoard = useMemo(() => new Set(questsIn(room).filter((q) => !q.archivedAt).map((q) => q.id)), [room]);
   const inCellar = (l: Pick<EventLine, "questId">) => l.questId !== null && (!onBoard.has(l.questId) || api.hidden.has(l.questId));
   const [showCellar, setShowCellar] = usePanelState("room.events.cellar", false);
-  const folded = allLines.filter(inCellar).length;
+  const folded = allLines.filter(inCellar).reduce((count, line) => count + (line.repeats ?? 1), 0);
   const lines = showCellar ? allLines : allLines.filter((l) => !inCellar(l));
   const [filter, setFilter] = usePanelState<Filter>("room.events.filter", "all", (v) => FILTERS.some(([f]) => f === v));
   const since = useSinceLastVisit();
   useEffect(() => { const id = takePendingJump(); if (id) requestAnimationFrame(() => jumpTo(id)); }, []);
   const navigate = useBbNavigate();
-  const asks = needYouCount(room), decided = Math.min(5, attentionView(room.attention).new);
+  const asks = needYouCount(room);
+  const calls = attentionView(room.attention).decided ?? attentionView(room.attention).new;
+  const decided = Math.min(3, calls);
+  const errands = errandsOf(room).length;
   useEffect(() => { rememberCount(SKEL.asks, asks); rememberCount(SKEL.decided, decided); rememberCount(SKEL.events, Math.min(8, lines.length)); }, [asks, decided, lines.length]);
   return <div className="tv-room rm-a" data-room>
     <h1 className="sr">The common room (home)</h1>
-    <StatusLine room={room} registry={registry} />
+    <HearthBand room={room} registry={registry} />
+    <SinceVisit visit={room.sinceVisit} foldOnNarrow={asks > 0} />
     <RoomAwayNotes room={room} registry={registry} />
-    <SinceVisit visit={room.sinceVisit} />
     <ArchiveReceiptLine api={api} />
-    <Rail calm={!needYouCount(room) && !attentionView(room.attention).new}
+    {(asks > 0 || attentionView(room.attention).heldByYou > 0) && <div data-sec="needs"><NeedsYouQueue room={room} registry={registry} /></div>}
+    <Rail calm={!asks && !attentionView(room.attention).new}
       attention={<>
-        <div data-sec="needs"><NeedsYouQueue room={room} registry={registry} /></div>
-        <div id="rm-decided" data-sec="decided"><DecidedForYou decisions={room.decidedForYou} total={room.decidedCount} seen={{ throughId: room.decidedThroughId }} headingId="room-decided" limit={5} /></div>
-        <div id="rm-review" data-sec="review"><ReviewQueue review={room.review} /></div>
-        {!needYouCount(room) && !attentionView(room.attention).new && <p className="tv-empty rm-calm" data-empty>Nothing needs you.</p>}
+        <div id="rm-decided" data-sec="decided"><DecidedForYou decisions={room.decidedForYou} total={calls} seen={{ throughId: room.decidedThroughId }} headingId="room-decided" limit={3} compact /></div>
+        {!!room.review.items.length && <div id="rm-review" data-sec="review"><ReviewQueue review={room.review} /></div>}
+        {!asks && !attentionView(room.attention).new && <p className="tv-empty rm-calm" data-empty>Nothing needs you.</p>}
       </>}
       board={<div data-sec="board"><Board room={room} registry={registry} api={api} since={since ?? undefined} /></div>}
-      lists={(room.solos.length > 0 || errandsOf(room).length > 0) && <div id="rm-lists" className="rm-stackcol"><div data-sec="errands"><SideQuests room={room} registry={registry} /></div><div data-sec="solos"><Solos room={room} registry={registry} /></div></div>}
-      events={<div id="rm-events" data-sec="events"><EventFeed lines={lines} registry={registry} questShort={(id) => ctx.questShort(id) ?? (inCellar({ questId: id }) ? "A quest in the cellar" : null)} filter={filter} setFilter={setFilter} foldKey="room.events" />{folded > 0 && <button type="button" className="tv-fold act" aria-expanded={showCellar} onClick={() => setShowCellar(!showCellar)}><ExpandsMark open={showCellar} /><span>{showCellar ? "Fold the cellar's events" : `${plural(folded, "event")} from quests in the cellar folded out`}</span></button>}</div>}
-      cellar={<div data-sec="cellar"><ArchiveFold room={room} registry={registry} api={api} /></div>}
+      lists={null}
+      events={<div className="rm-stackcol">
+        <div id="rm-events" data-sec="events"><EventFeed lines={lines} registry={registry} questShort={(id) => ctx.questShort(id) ?? (inCellar({ questId: id }) ? "A quest in the cellar" : null)} filter={filter} setFilter={setFilter} foldKey="room.events" />
+          {folded > 0 && <button type="button" className="tv-fold act" aria-expanded={showCellar} onClick={() => setShowCellar(!showCellar)}><ExpandsMark open={showCellar} /><span>{showCellar ? "Fold the cellar's events" : `${plural(folded, "event")} from quests in the cellar folded out`}</span></button>}
+        </div>
+        {(errands > 0 || room.solos.length > 0) && <div id="rm-lists" className="rm-stackcol">
+          {errands > 0 && <RoomFold name="errands" label="Side quests" count={errands}><div data-sec="errands"><SideQuests room={room} registry={registry} /></div></RoomFold>}
+          {room.solos.length > 0 && <RoomFold name="solos" label="Solos" count={room.solos.length}><div data-sec="solos"><Solos room={room} registry={registry} /></div></RoomFold>}
+        </div>}
+      </div>}
+      cellar={<ArchiveFold room={room} registry={registry} api={api} />}
     />
   </div>;
 }

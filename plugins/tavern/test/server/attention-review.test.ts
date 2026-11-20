@@ -6,12 +6,12 @@ import { attention } from "../../src/server/attention";
 import { rpcHandlers } from "../../src/server/rpc";
 it("expired hand-backs stay in attention until a user clears them", () => {
   const f = setup();
-  f.k.memory.note("lead", { kind: "waiting-on-user", text: "Access", action: "Approve access", validUntil: f.time() - 1 });
+  f.k.memory.note("lead", { kind: "waiting-on-user", text: "Access", action: "Approve access", need: "Please approve access.", validUntil: f.time() - 1 });
   expect(attention(f.k.store, { keeperThreadId: "lead" }, f.time()).needYou).toBe(1);
 });
 it("one hand-back action records one authority act", async () => {
   const f = setup();
-  const n = f.k.memory.note("lead", { kind: "waiting-on-user", text: "Access", action: "Approve access" });
+  const n = f.k.memory.note("lead", { kind: "waiting-on-user", text: "Access", action: "Approve access", need: "Please approve access." });
   vi.spyOn(f.runtime, "wakeKeeper").mockResolvedValue(undefined as never);
   await rpcHandlers(f.runtime).resolveHandBack({ noteId: n.id, how: "done" }, { experimental_caller: { kind: "client" }, experimental_signal: new AbortController().signal });
   expect(f.k.store.db.prepare("SELECT count(*) AS n FROM tavern_events WHERE type='authority.acted'").get()).toEqual({ n: 1 });

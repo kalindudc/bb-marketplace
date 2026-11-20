@@ -92,7 +92,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   register(
     "tavern_route",
     "Read the user's message",
-    "Record how the oldest unrouted user message was read. notes is REQUIRED on every route kind; use [] only after considering durable facts, commitments and waiting-on-user hand-backs. The goal itself is never a note: open a board quest for it, and record only separate facts, commitments or hand-backs as notes. A steer can name one boardQuestId or several boardQuestIds when the user means multiple goals. Asides and questions must not name quests. Route the user's own standing rule as rule. For a new quest, route first then open it with tavern_quest. Record an explicit checker-handoff hold with checkerHandoffHold: { reason }. It stays held until a user control releases it; a reporting promise never releases it. Route queued messages in order before quest writes. steer: apply the change to every named quest; if targets are unclear, ask one short question and change nothing. A still-applicable steer or new-quest route survives later questions, asides and queued messages until its following Keeper turn ends; never re-route a newer message to regain authority for it. question: answer from the ledger or knowledge and change nothing. aside: do quick work directly, otherwise hire an errand helper with errand:true, without a board quest or waypoint; never change board quests. new-quest: open the concrete goal with tavern_quest and scout; a greeting or class selection is not a goal. rule: save the user's standing rule verbatim with tavern_rule and source:message, active for this Keeper by default; global only when the user explicitly names all Keepers or all Tavern threads. Keeper proposals wait for ledger confirmation. Record commitments with dueAt or a condition and facts verbatim.",
+    "Record how the oldest unrouted user message was read. notes is REQUIRED on every route kind; use [] after considering facts, promises and hand-backs (include need; see tavern_note). The goal itself is never a note: open a board quest for it, and record only separate facts, commitments or hand-backs as notes. A steer can name one boardQuestId or several boardQuestIds when the user means multiple goals. Asides and questions must not name quests. Route the user's own standing rule as rule. For a new quest, route first then open it with tavern_quest. Record an explicit checker-handoff hold with checkerHandoffHold: { reason }. It stays held until a user control releases it; a reporting promise never releases it. Route queued messages in order before quest writes. steer: apply the change to every named quest; if targets are unclear, ask one short question and change nothing. A still-applicable steer or new-quest route survives later questions, asides and queued messages until its following Keeper turn ends; never re-route a newer message to regain authority for it. question: answer from the ledger or knowledge and change nothing. aside: do quick work directly, otherwise hire an errand helper with errand:true, without a board quest or waypoint; never change board quests. new-quest: open the concrete goal with tavern_quest and scout; a greeting or class selection is not a goal. rule: save the user's standing rule verbatim with tavern_rule and source:message, active for this Keeper by default; global only when the user explicitly names all Keepers or all Tavern threads. Keeper proposals wait for ledger confirmation. Keep facts verbatim and promises timed or conditional.",
     z.object({
       kind: z.enum(ROUTE_KINDS),
       boardQuestId: optionalQuest,
@@ -118,9 +118,13 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   register(
     "tavern_note",
     "Recorded Keeper memory",
-    "Record a fact verbatim (validUntil optional), a commitment with dueAt or condition, or a waiting-on-user hand-back with a one-line action only the user can do and optional why. Use facts or summaries for information. Done and Reply resolve it; op done closes notes. Quest end closes promises and hand-backs. Do not make promises only in chat.",
+    "Record a fact verbatim, a commitment with dueAt or condition, or a hand-back with an action only the user can do and need: one sentence of at most 120 characters. Use facts or summaries for information. Done or Reply resolves hand-backs; op done closes notes. Quest end closes promises and hand-backs. Do not make promises only in chat.",
     z.union([
-      noteDraftSchema.safeExtend({ op: z.literal("add") }),
+      z.discriminatedUnion("kind", [
+        noteDraftSchema.options[0].safeExtend({ op: z.literal("add") }),
+        noteDraftSchema.options[1].safeExtend({ op: z.literal("add") }),
+        noteDraftSchema.options[2].safeExtend({ op: z.literal("add") }),
+      ]),
       z.object({ op: z.literal("done"), noteId: id }).strict(),
     ]),
     async (input, threadId) => {

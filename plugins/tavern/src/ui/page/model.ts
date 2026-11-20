@@ -68,7 +68,7 @@ export const openAskCount = (room: Room) => room.asks.filter((ask) => ask.state 
 // ---------- Events: what happened, in words for people ----------
 
 export type EventIcon = "steer" | "question" | "aside" | "quest" | "plan" | "ask" | "answer" | "decided" | "undo" | "rule" | "report" | "hire" | "told" | "stale" | "failed" | "anchor" | "stop" | "skip" | "wrap" | "phase" | "tick" | "note";
-export type EventLine = { id: number; at: number; icon: EventIcon; tone: "plain" | "steer" | "you" | "bad" | "warn" | "done"; actor: { kind: "you" } | { kind: "member"; member: Member } | { kind: "keeper"; member: Member } | { kind: "tavern" } | { kind: "unknown" }; head: string; detail: string | null; questId: string | null; filter: "steers" | "decided" | "reports" | "asks" | "other"; note?: string; fold?: { key: string; names: string[]; verb: string } };
+export type EventLine = { repeats?: number; id: number; at: number; icon: EventIcon; tone: "plain" | "steer" | "you" | "bad" | "warn" | "done"; actor: { kind: "you" } | { kind: "member"; member: Member } | { kind: "keeper"; member: Member } | { kind: "tavern" } | { kind: "unknown" }; head: string; detail: string | null; questId: string | null; filter: "steers" | "decided" | "reports" | "asks" | "other"; note?: string; fold?: { key: string; names: string[]; verb: string } };
 type EventContext = { members: Map<string, Member>; characterName: (characterId: string) => string | null; memberName: (member: Member) => string; questShort: (id: string) => string | null; decisions: Map<string, string>; waypoints?: (questId: string) => ReadonlyMap<string, string> };
 
 /** Agent-facing bookkeeping that says nothing a person needs: raw user text (the route says what it meant), tool chatter and nudges. */
@@ -185,6 +185,7 @@ function describeRaw(e: TavernEvent, ctx: EventContext): EventLine | null {
     case "reanchor.requested": return { ...base, icon: "anchor", actor: leadActor, head: "queued a re-anchor", detail: prefixed(e.text, "Re-anchor ") };
     case "checker-handoff.held": return { ...base, icon: "note", tone: "you", actor: leadActor, head: "held the checker handoff for your release", detail: null };
     case "checker-handoff.released": { const via = releaseVia.safeParse(data.via); return { ...base, icon: "answer", actor: you, head: "released the checker handoff", detail: via.success ? releaseWords({ at: e.at, via: via.data, askId: str("askId") }) : null }; }
+    case "tavern.cellar-stop-receipt": return { ...base, icon: "stop", actor: you, head: "asked Tavern to stop and cellar quests", detail: Array.isArray(data.entries) ? data.entries.flatMap(entry => typeof entry?.title === "string" ? [entry.title] : []).join("; ") : null };
     case "quest.stopped": return { ...base, icon: "stop", tone: "bad", actor: you, head: "stopped the quest", detail: e.text };
     case "quest.stop-failed": return { ...base, icon: "failed", tone: "bad", actor: { kind: "tavern" }, head: "could not stop a thread", detail: e.text };
     case "waypoint.skipped": return { ...base, icon: "skip", actor: leadActor, head: "skipped a waypoint", detail: prefixed(e.text, "Skipped ").replace(/^w\d+: /, "") };
@@ -196,8 +197,24 @@ function describeRaw(e: TavernEvent, ctx: EventContext): EventLine | null {
   }
 }
 
-export function eventLines(events: TavernEvent[], ctx: EventContext) {
-  return foldRuns(events.map((e) => describeEvent(e, ctx)).filter((line): line is EventLine => line !== null).sort((a, b) => b.at - a.at));
+export function eventLines(events: TavernEvent[], ctx: EventContext, { collapseRepeats = false } = {}) {
+  const byKey = new Map<string, EventLine>();
+  const lines: EventLine[] = [];
+  for (const event of [...events].sort((a, b) => b.at - a.at || b.id - a.id)) {
+    const line = describeEvent(event, ctx);
+    if (!line) continue;
+    if (collapseRepeats) {
+      const key = JSON.stringify([event.boardQuestId, event.keeperThreadId, event.actor, event.type, event.text, event.data]);
+      const same = byKey.get(key);
+      if (same) {
+        same.repeats = (same.repeats ?? 1) + 1;
+        continue;
+      }
+      byKey.set(key, line);
+    }
+    lines.push(line);
+  }
+  return foldRuns(lines);
 }
 
 const listNames = (names: string[]) => names.length < 2 ? names.join("") : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;

@@ -16,7 +16,7 @@ import {
 } from "../shared/contract";
 import { currentMoodReport, waypointMoodVerdict } from "../shared/mood";
 import type { Brief, Decision } from "../shared/schema";
-import { isLiveMember } from "./liveness";
+import { isLiveKeeper, isLiveMember } from "./liveness";
 import { DecisionViews } from "./decisions";
 import { markSummariesSeen, markVisitSummariesSeen, summariesForQuest, summaryCounts, summaryView } from "./summaries";
 import { markQuestChangesSeen } from "./quest-change-attention";
@@ -440,7 +440,7 @@ export function rpcHandlers(
           return {
             member: projectMember(m),
             freeHands: freeHands(k, m.threadId).length,
-            archived: thread.archivedAt != null,
+            archived: !isLiveKeeper(k.store, m, "present"),
             threadTitle: thread.threadTitle ?? null,
             threadCreatedAt: thread.threadCreatedAt ?? null,
             quietSince: thread.manualStopAt ?? null,

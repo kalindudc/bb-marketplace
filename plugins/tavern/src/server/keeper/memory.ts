@@ -92,6 +92,7 @@ export class KeeperMemory {
       kind: draft.kind,
       text: draft.text,
       ...(draft.action ? { action: draft.action } : {}),
+      ...(draft.kind === "waiting-on-user" ? { need: draft.need } : {}),
       ...(draft.why ? { why: draft.why } : {}),
       dueAt: draft.dueAt ?? null,
       condition: draft.condition ?? null,

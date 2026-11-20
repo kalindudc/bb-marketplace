@@ -166,7 +166,7 @@ describe("nothing grows after the first paint", () => {
       const { NeedsYouQueue } = await import("../../../src/ui/page/asks");
       // A layout effect runs at the first commit, before any passive effect, so it sees what the first paint will show.
       let atFirstCommit: boolean | undefined;
-      const Probe = () => { useLayoutEffect(() => { atFirstCommit = document.querySelector<HTMLDetailsElement>("details[data-ask]")?.open; }, []); return null; };
+      const Probe = () => { useLayoutEffect(() => { atFirstCommit = document.querySelector<HTMLDetailsElement>("[data-need-card=ask] .tv-need-answer")?.open; }, []); return null; };
       const slot = renderSlot({ component: () => <><NeedsYouQueue room={withAttention(scenes.richRoom)} registry={scenes.registry} /><Probe /></> }, {}, { pluginId: "tavern", experimental_rpcContract: rpcContract });
       slots.push(slot);
       expect(atFirstCommit).toBe(true);

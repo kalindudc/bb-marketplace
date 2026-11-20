@@ -3,7 +3,7 @@ import { loadPluginApp, renderSlot, type PluginRpcTestHandlers, type RenderedSlo
 import { fireEvent, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { rpcContract, type BoardQuestDetail, type Room } from "../../../src/shared/contract";
-import { endedCounts, eventContext, keeperStatus, moveAfterPhase, namedDetail, questMove } from "../../../src/ui/page/model";
+import { endedCounts, eventContext, keeperStatus, moveAfterPhase, namedDetail, pathProgress, phaseWord, questMove } from "../../../src/ui/page/model";
 import { registerPageSurfaces } from "../../../src/ui/page/register";
 import * as scenes from "./scenes";
 
@@ -46,21 +46,30 @@ describe("a quest whose Keeper's thread is archived", () => {
     expect(questMove({ ...active, phase: "stopped" }, [], names, { keeperArchived: true }).who).toBe("Stopped");
     expect(questMove({ ...active, phase: "done" }, [], names, { keeperArchived: true }).who).toBe("Returned");
   });
-  it("reads as archived on the notice, with the pause mark and the phase and path left as they are", async () => {
+  it("reads as archived in Keeper gone, with the pause mark and the phase and path left as they are", async () => {
     const room: Room = { ...scenes.richRoom, keepers: [{ ...scenes.richRoom.keepers[0]!, archived: true }, scenes.richRoom.keepers[1]!], asks: [] };
     const slot = await open("room", room);
-    const notice = await slot.findByRole("article", { name: /^Wren\b.*Keeper$/ });
-    const rows = [...notice.querySelectorAll(".qrow-live")];
-    expect(rows.length).toBeGreaterThan(0);
+    const fold = await slot.findByRole("button", { name: /^Keeper gone \d+$/ });
+    expect(fold.getAttribute("aria-expanded")).toBe("false");
+    expect(slot.queryByRole("article", { name: /^Wren\b.*Keeper$/ })).toBeNull();
+    fireEvent.click(fold);
+    const group = fold.closest("section")!;
+    const rows = [...group.querySelectorAll(".qrow-live")];
+    const openQuests = room.keepers[0]!.boardQuests.filter(q => !q.endedAt && !q.archivedAt);
+    expect(rows.map(row => row.getAttribute("data-quest")).sort()).toEqual(openQuests.map(q => q.id).sort());
     for (const row of rows) {
+      const quest = openQuests.find(q => q.id === row.getAttribute("data-quest"))!;
+      const path = pathProgress(quest);
       const move = row.querySelector(".qrow-m .tv-st")!;
       expect(move.textContent).toBe("Keeper's thread archived");
       expect(move.classList.contains("tv-st-archived")).toBe(true);
       expect(row.textContent).not.toMatch(/quest map next|scouting|· ·/);
-      expect(row.querySelector(".qrow-p")!.textContent).toBeTruthy();
+      expect(move.querySelector(".tv-g-pause")).toBeTruthy();
+      expect(row.querySelector(".tv-ph-w")!.textContent).toBe(phaseWord(quest.phase));
+      expect(row.querySelector(".qrow-path")!.textContent).toBe(path ? `${path.done} of ${path.total}` : "no map yet");
+      expect(row.closest(".lit")).toBeNull();
     }
-    expect(notice.querySelector(".rm-nh-s .tv-st")!.textContent).toBe("Thread archived");
-    expect(notice.classList.contains("lit")).toBe(false);
+    expect(within(group).getAllByRole("button", { name: /^Open Wren\x27s thread/ })).toHaveLength(rows.length);
   });
 });
 
@@ -69,10 +78,14 @@ describe("the common room tells the truth about each Keeper", () => {
     const slot = await open("room", archivedRoom);
     await slot.findByRole("article", { name: /^Moss\b.*Keeper$/ });
     expect(slot.queryByRole("article", { name: /^Wren\b.*Keeper$/ })).toBeNull();
-    const fold = slot.getByRole("button", { name: "1 Keeper without a quest · threads archived" });
+    const fold = slot.getByRole("button", { name: "Keepers without a quest 1" });
     expect(fold.getAttribute("aria-expanded")).toBe("false");
     fireEvent.click(fold);
-    const row = slot.container.querySelector<HTMLElement>(".rm-idle .krow[data-status=archived]")!;
+    const rows = fold.closest("section")!.querySelectorAll<HTMLElement>(".rm-idle .krow");
+    expect(rows).toHaveLength(1);
+    const row = rows[0]!;
+    expect(row.dataset.status).toBe("archived");
+    expect(within(row).getByRole("button", { name: /^Open Wren\x27s thread/ })).toBeTruthy();
     expect(row.querySelector(".krow-sl")!.textContent).toBe("Thread archived");
     expect(row.textContent).not.toMatch(/Idle|Listening|thin goal/);
     expect(row.querySelector(".tv-voice")).toBeNull();

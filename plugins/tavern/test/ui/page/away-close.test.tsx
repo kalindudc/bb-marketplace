@@ -236,7 +236,7 @@ describe("Return and the stops that haven't confirmed", () => {
     const target = panel ? plugin.tabs.find((x) => x.id === "closing-time")! : plugin.navPanels[0]!;
     const slot = renderSlot(target as never, { subPath, params: null } as never, { pluginId: "tavern", experimental_rpcContract: contract, rpc });
     slots.push(slot);
-    fireEvent.click(await slot.findByRole("button", { name: /^Return/ }, LOADED));
+    fireEvent.click(await slot.findByRole("button", { name: /^Return$/ }, LOADED));
     await waitFor(() => expect(awayReturn).toHaveBeenCalledTimes(1), LOADED);
     await act(async () => { await slot.experimental_invalidateRpc(null); });
     return slot;
@@ -245,8 +245,9 @@ describe("Return and the stops that haven't confirmed", () => {
     it(`keeps the Return receipt on ${where} after the room reopens`, async () => {
       const slot = await reopening(subPath, panel);
       // The room now says open: the Return button is gone, and the receipt stays, with its link to the digest.
-      await waitFor(() => expect(slot.queryByRole("button", { name: /^Return/ })).toBeNull(), LOADED);
-      const receipt = await slot.findByRole("status", {}, LOADED);
+      const surface = subPath === "room" ? within(await slot.findByRole("group", { name: "Status" }, LOADED)) : slot;
+      await waitFor(() => expect(surface.queryByRole("button", { name: /^Return(?:ing…)?$/ })).toBeNull(), LOADED);
+      const receipt = await surface.findByRole("status", {}, LOADED);
       expect(receipt.textContent).toMatch(/^Back\. Keepers pick up with a digest on their next tick\./);
       expect(within(receipt).getByRole("button", { name: /While closed/ })).toBeTruthy();
       if (panel) expect(slot.container.querySelector("form.tv-awayform")).not.toBeNull();

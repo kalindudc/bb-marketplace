@@ -1,10 +1,10 @@
 import type { KeeperStore } from "./keeper/store";
-import type { Attention, AttentionItem, SinceVisit } from "../shared/attention";
+import { fromStoppedKeeper, type Attention, type AttentionCounts, type AttentionItem, type SinceVisit } from "../shared/attention";
 import type { Ask, BoardQuest, Decision, KeeperNote, Rule, Summary } from "../shared/schema";
 import { AUTHORITY } from "./authority";
 import { ASK_EFFECTS, legacyAskEffect } from "./ask-effects";
 import { undoAskProjection } from "./undo-record";
-import { isOpenQuest } from "./liveness";
+import { isLiveKeeper, isOpenQuest } from "./liveness";
 import { UNSEEN_SUMMARY_SQL } from "./summaries";
 import { unseenQuestChanges } from "./quest-change-attention";
 
@@ -62,7 +62,37 @@ export class AttentionSnapshot {
       `json_object('id',r.id,'boardQuestId',json_extract(r.data,'$.boardQuestId'),'keeperThreadId',json_extract(r.data,'$.keeperThreadId'),'title',json_extract(r.data,'$.title'),'createdAt',json_extract(r.data,'$.createdAt'),
       'questTitle',(SELECT json_extract(q.data,'$.title') FROM tavern_records q WHERE q.kind='quests' AND q.id=json_extract(r.data,'$.boardQuestId')))`);
     const items: AttentionItem[] = [];
-    const add = (item: Omit<AttentionItem, "seen">) => items.push({ ...item, seen: false });
+    const roomFields = !scope.keeperThreadId && !scope.boardQuestId;
+    const knownKeepers = new Map<string, { name: string; state: NonNullable<AttentionItem["who"]>["state"]; startedAt: number } | null>();
+    const knownQuests = new Map(quests.map(quest => [quest.id, quest.title]));
+    const questTitle = (id: string | null) => {
+      if (!id) return null;
+      if (!knownQuests.has(id)) knownQuests.set(id, store.get("quests", id)?.title ?? "");
+      return knownQuests.get(id) || null;
+    };
+    const keeper = (id: string | null) => {
+      if (!id) return null;
+      if (!knownKeepers.has(id)) {
+        const member = store.get("members", id);
+        const label = member?.characterId ?? "keeper";
+        const archived = !isLiveKeeper(store, member, "present");
+        const quiet = !isLiveKeeper(store, member);
+        knownKeepers.set(id, member ? {
+          name: member.displayName ?? label.charAt(0).toUpperCase() + label.slice(1),
+          state: archived ? "archived" : quiet ? "quiet" : member.state === "working" ? "running" : "idle",
+          startedAt: store.runtime(id).threadCreatedAt ?? member.createdAt,
+        } : null);
+      }
+      return knownKeepers.get(id) ?? null;
+    };
+    const add = (item: Omit<AttentionItem, "seen">) => {
+      const origin = roomFields && item.kind !== "decided" && item.kind !== "summary" && item.kind !== "quest-changed" ? keeper(item.keeperThreadId) : null;
+      items.push({
+        ...item,
+        ...(origin ? { who: { state: origin.state, startedAt: origin.startedAt, questTitle: questTitle(item.questId) } } : {}),
+        seen: false,
+      });
+    };
     const releases = new Set(this.asks.flatMap(ask => ask.effect?.type === "release-hold" ? [ask.effect.holdId] : ask.releaseHoldId ? [ask.releaseHoldId] : []));
     for (const ask of this.asks) add({ id: ask.id, kind: "ask", questId: ask.boardQuestId, keeperThreadId: ask.keeperThreadId, title: ask.question, action: "Answer", since: ask.createdAt });
     for (const q of quests) {
@@ -70,8 +100,13 @@ export class AttentionSnapshot {
       if (hold && !hold.release && !releases.has(hold.id)) add({ id: hold.id, kind: "hold", questId: q.id, keeperThreadId: q.keeperThreadId, title: hold.reason, action: "Review", since: hold.createdAt });
       if (q.phase === "held") add({ id: q.id, kind: "held", questId: q.id, keeperThreadId: q.keeperThreadId, title: q.title, action: "Resume", since: q.held!.since });
     }
-    for (const rule of this.rules) add({ id: rule.id, kind: "rule", questId: rule.scope === "quest" ? rule.scopeId : null, keeperThreadId: rule.keeperThreadId ?? (rule.scope === "keeper" ? rule.scopeId : null), title: rule.text, action: "Confirm", since: rule.createdAt });
-    for (const note of this.notes) add({ detail: { text: note.text, ...("why" in note && typeof note.why === "string" ? { why: note.why } : {}), sourceMessageId: note.sourceMessageId ?? null, validUntil: note.validUntil ?? null }, id: note.id, kind: "hand-back", questId: note.boardQuestId, keeperThreadId: note.keeperThreadId, title: (note as KeeperNote & { action?: string }).action ?? note.text, action: "Done", since: note.createdAt });
+    for (const rule of this.rules) add({
+      id: rule.id, kind: "rule", questId: rule.scope === "quest" ? rule.scopeId : null,
+      keeperThreadId: rule.keeperThreadId ?? (rule.scope === "keeper" ? rule.scopeId : null),
+      title: rule.text, action: "Confirm", since: rule.createdAt,
+      ...(roomFields ? { scope: { kind: rule.scope, label: rule.scope === "keeper" ? keeper(rule.scopeId)?.name ?? null : rule.scope === "quest" ? questTitle(rule.scopeId) : null } } : {}),
+    });
+    for (const note of this.notes) add({ detail: { text: note.text, ...("why" in note && typeof note.why === "string" ? { why: note.why } : {}), sourceMessageId: note.sourceMessageId ?? null, validUntil: note.validUntil ?? null }, id: note.id, kind: "hand-back", questId: note.boardQuestId, keeperThreadId: note.keeperThreadId, title: note.action ?? note.text, ...(roomFields ? { need: note.need ?? `${keeper(note.keeperThreadId)?.name ?? "The Keeper"} handed this back to you.` } : {}), action: "Done", since: note.createdAt });
     for (const d of this.decisions) add({ id: d.id, kind: "decided", questId: d.boardQuestId, keeperThreadId: d.keeperThreadId, title: d.text, action: "OK", since: d.createdAt });
     for (const summary of summaries) {
       if (summary.questTitle !== null) this.summaryQuestTitles.set(summary.boardQuestId, summary.questTitle);
@@ -89,7 +124,13 @@ export class AttentionSnapshot {
   }
   view(scope: AttentionScope = {}, needLimit = Infinity, newLimit = 20, withItems = true): Attention {
     const { need, held, calls, summaries, changes } = this.group(scope) ?? { need: [], held: [], changes: [], summaries: [], calls: [] };
-    return { items: withItems ? [...need.slice(0, needLimit), ...(newLimit > 0 ? [...summaries.slice(-newLimit), ...calls.slice(-newLimit), ...changes.slice(-newLimit)] : []), ...held] : [], needYou: need.length, new: summaries.length + calls.length, heldByYou: held.length, decided: calls.length, summaries: summaries.length, changedQuests: changes.length, oldest: need[0]?.since ?? null };
+    const counts: AttentionCounts = { ask: 0, hold: 0, "hand-back": 0, rule: 0, stopped: 0 };
+    const roomCounts = withItems && !scope.keeperThreadId && !scope.boardQuestId;
+    if (roomCounts) for (const item of need) {
+      if (fromStoppedKeeper(item)) counts.stopped++;
+      else if (item.kind === "ask" || item.kind === "hold" || item.kind === "hand-back" || item.kind === "rule") counts[item.kind]++;
+    }
+    return { ...(roomCounts ? { counts } : {}), items: withItems ? [...need.slice(0, needLimit), ...(newLimit > 0 ? [...summaries.slice(-newLimit), ...calls.slice(-newLimit), ...changes.slice(-newLimit)] : []), ...held] : [], needYou: need.length, new: summaries.length + calls.length, heldByYou: held.length, decided: calls.length, summaries: summaries.length, changedQuests: changes.length, oldest: need[0]?.since ?? null };
   }
   sinceVisit(): SinceVisit {
     const group = this.group({});

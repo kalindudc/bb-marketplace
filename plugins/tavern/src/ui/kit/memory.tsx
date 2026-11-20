@@ -27,18 +27,28 @@ function NoteRow({ note, short, now }: { note: KeeperNote; short?: Short; now: n
   return <li className={`mem-row k-${note.kind} ${late ? "late" : ""}`}><Clamp lines={1} text={text} /><span className="mem-meta">{meta}</span>{q ? <span className="lg-q" title={q}>{q}</span> : <span />}{note.kind === "waiting-on-user" && <HandBackActions note={note} />}</li>;
 }
 
-function HandBackActions({ note }: { note: KeeperNote }) {
+export function useHandBackActions(note: Pick<KeeperNote, "id" | "keeperThreadId" | "text" | "action" | "why">) {
   const resolve = experimental_useRpcMutation({ contract: rpcContract, method: "resolveHandBack" });
   const navigate = useBbNavigate();
   const [error, setError] = useState<unknown>(null);
   const [done, setDone] = useState(false);
+  return {
+    done, error, pending: resolve.isPending,
+    markDone: () => void resolve.mutate({ noteId: note.id, how: "done" }).then(() => setDone(true)).catch(setError),
+    reply: () => { replyToHandBack(note); navigate.toThread(note.keeperThreadId); },
+  };
+}
+
+function HandBackActions({ note }: { note: KeeperNote }) {
+  const actions = useHandBackActions(note);
+  const navigate = useBbNavigate();
   return <div className="mem-handback">
     {note.validUntil != null && note.validUntil < Date.now() && <p>expired, Done to clear</p>}
     {note.why && <p>{note.why}</p>}
     {note.action && note.text !== note.action && <p className="m small">{note.text}</p>}
     {note.sourceMessageId && <button type="button" className="lnk-btn" onClick={() => navigate.toThread(note.keeperThreadId)} title={`Source receipt: ${note.sourceMessageId}`}>Keeper thread</button>}
-    {done ? <span role="status">Done. The Keeper has been told.</span> : <><button type="button" className="btn sm" disabled={resolve.isPending} onClick={() => void resolve.mutate({ noteId: note.id, how: "done" }).then(() => setDone(true)).catch(setError)}>Done</button><button type="button" className="btn sm" onClick={() => { replyToHandBack(note); navigate.toThread(note.keeperThreadId); }}>Reply</button></>}
-    {error != null && <p role="alert">{error instanceof Error ? error.message : String(error)}</p>}
+    {actions.done ? <span role="status">Done. The Keeper has been told.</span> : <><button type="button" className="btn sm" disabled={actions.pending} onClick={actions.markDone}>Done</button><button type="button" className="btn sm" onClick={actions.reply}>Reply</button></>}
+    {actions.error != null && <p role="alert">{actions.error instanceof Error ? actions.error.message : String(actions.error)}</p>}
   </div>;
 }
 

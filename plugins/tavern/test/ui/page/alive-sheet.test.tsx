@@ -205,11 +205,11 @@ describe("when part of a character's presentation can't be read", () => {
     base.characters = base.characters.map((c) => c.id === "wren" ? { ...c, source: WREN_FILE } : c);
     const registry = { ...base, problems: problems(), characterAuthorship: [{ characterId: "wren", source: "global" as const, changedAt: null }] };
     const slot = renderSlot(plugin.navPanels[0]!, { subPath }, { pluginId: "tavern", experimental_rpcContract: rpcContract,
-      rpc: { registry: () => structuredClone(registry), room: () => structuredClone(scenes.richRoom), voiceCheck: () => view([]) } as Partial<Handlers> as Handlers });
+      rpc: { registry: () => structuredClone(registry), room: () => structuredClone(scenes.richRoom), voiceCheck: () => view([]), deletedBoardQuests: () => ({ boardQuests: [], total: 0, nextCursor: null }) } as Partial<Handlers> as Handlers });
     slots.push(slot);
     // The other problem's alert shows once the registry is in; then the route's own content, past its skeleton.
     await waitFor(() => expect(slot.container.textContent).toContain("Invalid front matter"), LOADED);
-    const ready = subPath === "room" ? ".tv-sline" : subPath === "characters" ? ".tv-ccard" : ".tv-sheet-head h1";
+    const ready = subPath === "room" ? "[data-room] [data-sec=status]" : subPath === "characters" ? ".tv-ccard" : ".tv-sheet-head h1";
     await waitFor(() => expect([...slot.container.querySelectorAll(ready)].some((e) => !e.closest(".sk"))).toBe(true), LOADED);
     return slot;
   }

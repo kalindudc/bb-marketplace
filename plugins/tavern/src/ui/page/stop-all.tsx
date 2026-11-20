@@ -1,6 +1,6 @@
 import { experimental_useRpcMutation, experimental_useRpcQuery } from "@get-bb/plugin-sdk/app";
 import { useEffect, useId, useRef, useState } from "react";
-import { QUEUED_STOP_NOTICE, RESUME_ATTESTATION_NOTICE, stopBy, stopAllContract, type StopReceipt } from "../../shared/stop-all";
+import { QUEUED_STOP_NOTICE, RESUME_ATTESTATION_NOTICE, stopBy, stopAllContract, type CellarStopReceipt, type StopReceipt } from "../../shared/stop-all";
 import { Glyph } from "../kit";
 import { useTavernSettings } from "./settings";
 import "./stop-all.css";
@@ -49,6 +49,43 @@ export function StopReceiptView({ receipt }: { receipt: StopReceipt }) {
     <p>Stop requested through {receipt.surface ?? "an unrecorded surface"}.</p>
     <p>{receipt.keepersStopped} Keeper{receipt.keepersStopped === 1 ? "" : "s"} and {receipt.membersStopped} member{receipt.membersStopped === 1 ? "" : "s"} stopped; {receipt.stillStopping} still stopping; {receipt.failed} failed; {receipt.alreadyIdle} already idle. {receipt.completedAt === null ? "Collecting confirmations." : `Last confirmed stop after ${receipt.elapsedMs} ms. Still-stopping entries update when bb next reports their status.`}</p>
     <details><summary>Stop receipt</summary><ul>{receipt.entries.map(entry => <li key={entry.threadId}>{entry.role === "keeper" ? "Keeper" : "Member"} {entry.threadId}: {entry.status.replaceAll("-", " ")}{entry.error ? ` — ${entry.error}` : ""}</li>)}</ul></details>
+  </div>;
+}
+
+export function StopKeeperGone({ ids, onReceipt }: { ids: string[]; onReceipt: (receipt: CellarStopReceipt) => void }) {
+  const stop = experimental_useRpcMutation({ contract: stopAllContract, method: "stopKeeperGoneQuests" });
+  const [confirm, setConfirm] = useState<string[] | null>(null);
+  const trigger = useRef<HTMLButtonElement>(null), cancel = useRef<HTMLButtonElement>(null);
+  const id = useId();
+  const restoreFocus = useRef(false);
+  const close = () => { restoreFocus.current = true; setConfirm(null); };
+  useEffect(() => {
+    if (confirm) cancel.current?.focus();
+    else if (restoreFocus.current && !stop.isPending) { restoreFocus.current = false; trigger.current?.focus(); }
+  }, [confirm, stop.isPending]);
+  const act = async (targets: string[]) => {
+    try { onReceipt(await stop.mutate({ ids: targets })); }
+    catch { /* The mutation keeps the refusal next to the trigger. */ }
+    finally { close(); }
+  };
+  return <div className="tv-cellar-stop" onKeyDown={event => { if (event.key === "Escape" && !stop.isPending) close(); }}>
+    <button ref={trigger} type="button" className="btn sm" disabled={!ids.length || stop.isPending} aria-expanded={!!confirm} aria-controls={confirm ? id : undefined} onClick={() => setConfirm([...ids])}>Stop and send to the cellar</button>
+    {confirm && <div id={id} className="tv-confirm" role="dialog" aria-label="Stop and send to the cellar">
+      <h3>Stop and send to the cellar?</h3>
+      <p>Stop {confirm.length} {confirm.length === 1 ? "quest" : "quests"}. Each is recorded as stopped and sent to the cellar after its party stops.</p>
+      <div className="tv-brake-actions">
+        <button type="button" className="btn sm" onClick={() => void act(confirm)} disabled={stop.isPending}>Stop {confirm.length} {confirm.length === 1 ? "quest" : "quests"}</button>
+        <button ref={cancel} type="button" className="btn ghost sm" onClick={close} disabled={stop.isPending}>Cancel</button>
+      </div>
+    </div>}
+    {stop.error && <p className="tv-problem" role="alert">{stop.error.message}</p>}
+  </div>;
+}
+
+export function CellarStopReceiptView({ receipt, stillStopping }: { receipt: CellarStopReceipt; stillStopping: ReadonlySet<string> }) {
+  return <div className="tv-confirm" role="status" aria-label="Stop and cellar receipt">
+    <p>You asked to stop these quests and send them to the cellar.</p>
+    <ul>{receipt.entries.map(entry => <li key={entry.questId}>{entry.title}: {stillStopping.has(entry.questId) ? "Still stopping. Tavern retries before sending it to the cellar." : "Stopped and sent to the cellar."}</li>)}</ul>
   </div>;
 }
 

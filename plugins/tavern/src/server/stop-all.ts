@@ -6,6 +6,9 @@ import { LoopTimeout, loopCall } from "./loop-call";
 import type { MessageDispatchHookContext } from "@get-bb/plugin-sdk";
 import type { TavernRuntime } from "./runtime";
 import type { KeeperStore } from "./keeper/store";
+import { commitUserAct, type UserActReceipt } from "./authority";
+import { isLiveKeeper, isOpenQuest } from "./liveness";
+import type { CellarStopReceipt } from "../shared/stop-all";
 
 type StopSource = { surface: string; pluginId?: string };
 const busy = (status: string) => ["active", "starting", "pending", "stopping"].includes(status);
@@ -16,6 +19,36 @@ export function stopAllReason(store: Pick<KeeperStore, "get">): string | null {
 export function assertTavernRunning(store: Pick<KeeperStore, "get">) {
   const reason = stopAllReason(store);
   if (reason) throw new Error(reason);
+}
+
+export async function stopKeeperGoneQuests(runtime: TavernRuntime, ids: string[], authority: UserActReceipt): Promise<CellarStopReceipt> {
+  const k = runtime.keeper;
+  const at = k.now(), id = k.store.id("cellar-stop");
+  const quests = commitUserAct(k.store, () => k.now(), authority, () => {
+    const targets = [...new Set(ids)].map(questId => k.store.get("quests", questId));
+    if (!targets.length || targets.length !== ids.length || targets.some(q => {
+      if (!q || q.deletedAt != null || q.archivedAt != null || q.cellarOnStop) return true;
+      const member = k.member(q.keeperThreadId);
+      return member?.role !== "keeper" || isLiveKeeper(k.store, member, "present") || !(q.phase === "stopping" || isOpenQuest(q));
+    })) throw new Error("The Keeper gone list changed. Review the quests and confirm again.");
+    const entries = targets.map(target => {
+      const q = k.recordStop(target!.id, "Sent to the cellar because the Keeper is gone", authority.act);
+      k.store.put("quests", q.id, { ...q, cellarOnStop: id });
+      return q;
+    });
+    k.store.event(at, null, null, "tavern.cellar-stop-receipt", "Stop and cellar requested.", {
+      id, surface: authority.surface, entries: entries.map(q => ({ questId: q.id, title: q.title })),
+    }, { kind: "user" });
+    return entries;
+  });
+  for (const q of quests) k.changed(q.keeperThreadId, q.id);
+  for (const q of quests) {
+    try { await runtime.retryStops(q.keeperThreadId, q.id, true); }
+    catch (error) { runtime.bb.log.warn(`Tavern stop and cellar ${q.id}: ${String(error)}`); }
+  }
+  return { id, at, surface: authority.surface, entries: quests.map(q => ({
+    questId: q.id, title: q.title, state: k.quest(q.id).archivedAt != null ? "cellared" : "stopping",
+  })) };
 }
 
 export class StopAll {

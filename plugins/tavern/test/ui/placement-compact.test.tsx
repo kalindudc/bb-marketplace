@@ -1,7 +1,7 @@
 import { renderSlot, type RenderedSlot } from "@get-bb/plugin-sdk/testing/app";
 import { fireEvent, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import { PartyPicture } from "../../src/ui/page/room";
+import { NoticeParty } from "../../src/ui/page/board";
 import { QuestPage } from "../../src/ui/page/quest";
 import { MachinesPage } from "../../src/ui/page/machines";
 import { detail, registry, room } from "../../src/ui/page/fixtures";
@@ -18,7 +18,7 @@ const smith = { ...detail.quest.members.find(m => m.classId === "smith")!, displ
 const contract = { ...rpcContract, ...placementContract, ...settingsContract };
 
 it.each([pendingPlacement, readyPlacement])("keeps ordinary $phase placement details out of the mini party picture", placement => {
-  const component = () => <PartyPicture mini members={[{ ...smith, placement }]} registry={registry} quests={[]} />;
+  const component = () => <NoticeParty id="party" party={[{ ...smith, placement }]} registry={registry} />;
   const slot = renderSlot({ component }, {});
   slots.push(slot);
   expect(slot.container.querySelector('[data-part="PlacementFacts"]')).toBeNull();
@@ -27,7 +27,7 @@ it.each([pendingPlacement, readyPlacement])("keeps ordinary $phase placement det
 });
 it.each([blockedPlacement, { ...pendingPlacement, phase: "blocked", hold: placementHolds.find(h => h.kind === "transfer-slots")! }])("keeps a mini blocker or hold actionable without full facts", async placement => {
   const retry = vi.fn(async () => ({ ok: true as const, message: null }));
-  const component = () => <PartyPicture mini members={[{ ...smith, placement }]} registry={registry} quests={[]} />;
+  const component = () => <NoticeParty id="party" party={[{ ...smith, placement }]} registry={registry} />;
   const slot = renderSlot({ component }, {}, { experimental_rpcContract: contract, rpc: { placementRetry: retry } });
   slots.push(slot);
   const message = placement.hold?.message ?? placement.blocker!.message;

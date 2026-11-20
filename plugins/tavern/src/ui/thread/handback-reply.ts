@@ -7,7 +7,7 @@ type Reply = { noteId: string; quote: string; staged: boolean };
 const replies = new Map<string, Reply>();
 const listeners = new Set<() => void>();
 const changed = () => listeners.forEach(listener => listener());
-export function replyToHandBack(note: KeeperNote) {
+export function replyToHandBack(note: Pick<KeeperNote, "id" | "keeperThreadId" | "text" | "action" | "why">) {
   const text = [note.action ?? note.text, note.why, note.action ? note.text : null].filter(Boolean).join("\n");
   replies.set(note.keeperThreadId, { noteId: note.id, quote: text.split("\n").map(line => `> ${line}`).join("\n"), staged: false });
   changed();

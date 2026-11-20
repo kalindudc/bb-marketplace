@@ -9,7 +9,7 @@ export const AUTHORITY = {
   resolveHandBack: explicit,
   releaseCheckerHandoff: explicit, awayClose: explicit, awayReturn: explicit,
   addRule: explicit, widenRule: explicit, confirmRule: explicit, undoDecision: explicit, resetUndoLane: explicit,
-  correctRoute: explicit, stopBoardQuest: explicit, resumeAll: explicit,
+  correctRoute: explicit, stopBoardQuest: explicit, stopKeeperGoneQuests: explicit, resumeAll: explicit,
   placementRetry: explicit, placementModelFailureClear: explicit,
   holdBoardQuest: explicit, resumeBoardQuest: explicit, allowReview: explicit,
   archiveBoardQuests: explicit, deleteBoardQuest: explicit, restoreDeletedQuest: explicit,

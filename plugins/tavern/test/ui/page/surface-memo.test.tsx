@@ -114,7 +114,7 @@ describe("texts that read the clock keep time on their own", () => {
     await minute();
     expect(await text()).toBe("oldest 13m");
     // The queue row's own age moves with it.
-    expect(slot.container.querySelector(`[data-ask] .tv-askrow-a time`)!.textContent).toBe("13m");
+    expect(slot.container.querySelector(`[data-ask] .tv-askrow-a time`)!.textContent).toBe("13m ago");
     expect(calls()).toBe(fetched);
   });
 

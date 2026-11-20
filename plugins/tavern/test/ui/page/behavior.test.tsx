@@ -69,6 +69,12 @@ describe("Tavern page surfaces", () => {
     fireEvent.click(within(slot.getByRole("group", { name: "Confirm deleting quest" })).getByRole("button", { name: "Delete" }));
     await waitFor(() => expect(remove).toHaveBeenCalledWith({ id: ended.quest.id }));
   });
+  it("omits a genuinely empty cellar from the room", async () => {
+    const slot = await page("", { room: () => ({ ...room, archivedCount: 0 }), deletedBoardQuests: () => ({ boardQuests: [], total: 0, nextCursor: null }) });
+    await slot.findByRole("heading", { name: /The quest board/ });
+    expect(slot.queryByRole("button", { name: /Cellar \(archived\).*0/ })).toBeNull();
+    expect(slot.container.querySelector("[data-sec=cellar]")).toBeNull();
+  });
   it("keeps a deleted-only cellar reachable and restores a deleted quest to the cellar", async () => {
     const deleted = { ...detail.quest, phase: "done" as const, archivedAt: 123, deletedAt: 456 };
     const restore = vi.fn(() => ({ ok: true as const, changed: 1 }));
@@ -85,7 +91,7 @@ describe("Tavern page surfaces", () => {
     expect(plugin.navPanels[0]?.experimental_sidebar).toBeTruthy();
     expect(plugin.navPanels[0]?.experimental_useBadge).toBe(useTavernBadge);
     expect(plugin.homepageSections).toHaveLength(1);
-    expect(plugin.settingsSections.map((s) => s.id)).toEqual(["tavern", "attention", "keepers", "classes", "scopes", "machines", "atmosphere", "away", "journal", "tuning", "data", "settings-history"]);
+    expect(plugin.settingsSections.map((s) => s.id)).toEqual(["setup", "tavern", "attention", "keepers", "classes", "scopes", "machines", "atmosphere", "away", "journal", "tuning", "data", "settings-history"]);
     const slot = await page();
     await slot.findByRole("heading", { name: /The quest board/ });
     expect(slot.container.querySelector('[data-thread-chat], [data-composer]')).toBeNull();
@@ -97,7 +103,7 @@ describe("Tavern page surfaces", () => {
     const slot = await page("", { room: () => ({ ...room, asks: [newer, room.asks[0]!] }) });
     await slot.findByRole("heading", { name: /Needs you/ });
     const queue = slot.getByRole("region", { name: "Needs you" });
-    const summaries = [...queue.querySelectorAll(".tv-ask-disclosure > summary")];
+    const summaries = [...queue.querySelectorAll("[data-need-card=ask]")];
     expect(summaries[0]?.textContent).toContain("Send Luc the PR link?");
     for (const summary of summaries) {
       expect(summary.textContent).toContain("Vault cutover");
@@ -113,19 +119,17 @@ describe("Tavern page surfaces", () => {
     expect(oldest.textContent).toMatch(/^oldest \d/);
     expect(oldest.getAttribute("title")).toBe(new Date(Math.min(...room.asks.filter((a) => a.state === "open").map((a) => a.createdAt))).toLocaleString());
   });
-  it("shows an ask's full question in the common-room summary, wrapping once it is open and on a phone", async () => {
+  it("shows an ask's full question even when its common-room answer form is closed", async () => {
     const slot = await page("", { room: () => ({ ...room, asks: [room.asks[0]!] }) });
     await slot.findByRole("heading", { name: /Needs you/ });
-    expect(slot.container.querySelector(".tv-ask-disclosure .tv-askrow-q")!.textContent).toBe(room.asks[0]!.question);
-    // The summary truncates the question only while closed; open, or on a phone, it wraps in full.
-    const css = readFileSync("src/ui/page/page.css", "utf8");
-    expect(css).toMatch(/\.tavern\.tv-page \[open\] > \.tv-askrow \.tv-askrow-q \{ white-space: normal; \}/);
-    expect(css).toMatch(/\.tavern\.tv-page \.tv-askrow-q \{ white-space: normal; \}/);
+    const card = slot.container.querySelector("[data-need-card=ask]")!;
+    expect(card.querySelector("details")?.open).toBe(false);
+    expect(card.querySelector(".tv-need-sentence")?.textContent).toBe(room.asks[0]!.question);
   });
   it("never substitutes an internal id when an ask's quest or Keeper is unavailable", async () => {
     const slot = await page("", { room: () => ({ ...room, asks: [{ ...room.asks[0]!, boardQuestId: "bq_missing_123", keeperThreadId: "thr_missing_456" }] }) });
     await slot.findByRole("heading", { name: /Needs you/ });
-    const summary = slot.container.querySelector(".tv-ask-disclosure summary")!;
+    const summary = slot.container.querySelector("[data-need-card=ask]")!;
     expect(summary.textContent).toContain("Quest unavailable");
     expect(summary.textContent).toContain("Keeper unavailable");
     expect(summary.textContent).not.toMatch(/bq_missing_123|thr_missing_456|\bw2\b/);
@@ -615,6 +619,7 @@ describe("Tavern page surfaces", () => {
     const archive = vi.fn((_input: { ids: string[]; archived: boolean }) => ({ ok: true as const, changed: _input.ids.length, notes: [], pendingArchives: [] }));
     const list = vi.fn((_input: { cursor?: string | null; limit?: number }) => ({ boardQuests: [{ ...done, id: "older", short: "Older quest", archivedAt: detail.quest.updatedAt }], nextCursor: null, total: 3 }));
     const slot = await page("", { room: () => withDone, archiveBoardQuests: archive, archivedBoardQuests: list });
+    fireEvent.click(await slot.findByRole("button", { name: /Returned and stopped.*2/ }));
     const row = await slot.findByRole("button", { name: "Send to the cellar (archive): SFE candidates" });
     expect(row.classList.contains("btn")).toBe(false);
     fireEvent.click(row);
@@ -628,7 +633,7 @@ describe("Tavern page surfaces", () => {
     await waitFor(() => expect(archive).toHaveBeenLastCalledWith({ ids: ["sfe"], archived: false }));
     await waitFor(() => expect(slot.container.querySelector(".tv-receipt")!.textContent).toContain("Party threads stay archived; the Keeper can bring members back."));
     await slot.findByRole("button", { name: "Send to the cellar (archive): SFE candidates" });
-    fireEvent.click(slot.getByRole("button", { name: "Send all returned to the cellar" }));
+    fireEvent.click(slot.getByRole("button", { name: "Send all 2 to the cellar" }));
     await waitFor(() => expect(archive).toHaveBeenLastCalledWith({ ids: ["sfe", "old"], archived: true }));
     expect(slot.container.querySelector(".tv-receipt")!.textContent).toContain("2 sent to the cellar");
     const fold = slot.getByRole("button", { name: "Cellar (archived) · 5" });

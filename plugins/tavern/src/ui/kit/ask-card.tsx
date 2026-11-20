@@ -48,7 +48,7 @@ function ScopeGrant({ change }: { change: NonNullable<Ask["scopeChange"]> }) {
 }
 
 /** One ask, answered in place. Consequential kinds start with nothing selected; sends-as-you shows sender, recipient and the full draft. */
-export function AskCard({ ask, via = "banner", onFold, onAnswered, headless = false }: { ask: Ask; via?: "banner" | "page" | "phone" | "chat"; onFold?: () => void; onAnswered?: (answered: Ask) => void; headless?: boolean }) {
+export function AskCard({ ask, via = "banner", onFold, onAnswered, headless = false, describeEffects = false }: { ask: Ask; via?: "banner" | "page" | "phone" | "chat"; onFold?: () => void; onAnswered?: (answered: Ask) => void; headless?: boolean; describeEffects?: boolean }) {
   const name = useId();
   const [optionId, setOption] = useState<string | null>(ask.kind === "decision" ? ask.options.find(o => o.recommended)?.id ?? null : null);
   const [note, setNote] = useState("");
@@ -138,8 +138,12 @@ export function AskCard({ ask, via = "banner", onFold, onAnswered, headless = fa
       <div className="facts"><span><b>Meanwhile</b> <span data-content>{ask.meanwhile || "nothing else waits"}</span></span><span><b>Holds</b> <span data-content>{holdsText(ask.holds)}</span></span>{ask.proceedAt !== null && <span><b>Default</b> applies at {clockTime(ask.proceedAt)}</span>}</div>
       <QueryState error={error} />
       <div className="ask-f">
-        <button type="button" className={`btn ${ask.kind === "greenlight" ? "pri seal" : "pri"}`} disabled={!optionId || answer.isPending || !canSend} onClick={() => void submit()}>{ask.kind === "greenlight" && <Glyph name="wax-seal" />}{answer.isPending ? "Sending…" : action}</button>
-        {onFold && <button type="button" className="btn" onClick={onFold}>Not now</button>}
+        <button type="button" className={`btn ${ask.kind === "greenlight" ? "pri seal" : "pri"}`} disabled={!optionId || answer.isPending || !canSend} aria-describedby={describeEffects ? `${name}-effect` : undefined} onClick={() => void submit()}>{ask.kind === "greenlight" && <Glyph name="wax-seal" />}{answer.isPending ? "Sending…" : action}</button>
+        {describeEffects && <span className="ask-effect" id={`${name}-effect`}>{ask.kind === "sends-as-you" ? "Sends the message above as you." : "Applies your choice and tells the Keeper."}</span>}
+        {onFold && <>
+          <button type="button" className="btn" aria-describedby={describeEffects ? `${name}-fold-effect` : undefined} onClick={onFold}>Not now</button>
+          {describeEffects && <span className="ask-effect" id={`${name}-fold-effect`}>Hides the form without answering.</span>}
+        </>}
         {!optionId && <span className="m small">Pick an answer first.</span>}
       </div>
     </section>

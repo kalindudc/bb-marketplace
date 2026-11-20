@@ -186,8 +186,8 @@ describe("a checker-handoff hold in the common room", () => {
     const row = queue.querySelector<HTMLElement>("[data-checker-hold]")!;
     expect(row.querySelector("button.tv-hold-release")!.textContent).toBe("Release checker handoff");
     // The quest is named once, as a quiet link to its page.
-    expect(row.querySelector<HTMLButtonElement>("button.tv-hold-quest")!.textContent).toBe(live.quest.short);
-    expect(queue.querySelector(".tv-count")!.textContent).toBe(`${openAsks + 1} need you, oldest first`);
+    expect(row.closest("[data-need-card]")!.querySelector<HTMLButtonElement>(".tv-need-quest")!.textContent).toBe(live.quest.title);
+    expect(queue.querySelector("#tv-need-hold .tv-count")!.textContent).toBe("1");
   });
 
   it("counts the hold in bb's canonical Tavern attention badge too", async () => {

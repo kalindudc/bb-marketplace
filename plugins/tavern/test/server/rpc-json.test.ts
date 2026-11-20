@@ -83,7 +83,7 @@ it("returns compact mood signals and the voice setting in the thread widget", as
   expect(await decor()).toMatchObject({ moodSignals: { verdict: { status: "verified", at, checkerName: "Vex", waypointTitle: planInput(f.q.id).waypoints[0]!.title } } });
   f.k.store.patch("member", { archivedAt: Date.now(), lastBriefAt: f.report.createdAt + 1, released: { decisionId: f.decision.id, reason: "Returned" } });
   expect(await decor()).toMatchObject({ moodSignals: { released: true, archived: true, report: null } });
-  f.k.memory.note("lead", { kind: "waiting-on-user", text: "Choose the next trail", action: "Choose the next trail" });
+  f.k.memory.note("lead", { kind: "waiting-on-user", text: "Choose the next trail", action: "Choose the next trail", need: "Choose the next trail." });
   expect(await f.harness.invokeRpc("decor", { threadId: "lead" })).toMatchObject({ moodSignals: { handBack: true } });
 });
 
@@ -126,7 +126,7 @@ it("returns strict JSON from EVERY registered RPC with optional record fields ab
     journalEdit: () => call("journalEdit", { threadId: "member", edit: { op: "add", descriptions: ["Check sparse output"] } }),
     resumeKeeper: () => call("resumeKeeper", { threadId: "lead" }),
     resolveHandBack: () => {
-      const note = f.k.memory.note("lead", { kind: "waiting-on-user", text: "Access pending", action: "Approve access" });
+      const note = f.k.memory.note("lead", { kind: "waiting-on-user", text: "Access pending", action: "Approve access", need: "Please approve access." });
       return call("resolveHandBack", { noteId: note.id, how: "done" });
     },
     ledger: () => call("ledger", { threadId: "lead" }),
@@ -138,6 +138,12 @@ it("returns strict JSON from EVERY registered RPC with optional record fields ab
     stopAllStatus: () => call("stopAllStatus", {}),
     stopAll: () => call("stopAll", {}),
     resumeAll: () => call("resumeAll", {}),
+    stopKeeperGoneQuests: async () => {
+      f.k.bind("gone", "keeper", "wren", "project");
+      const quest = await seedQuest(f.k, "gone", "Gone", "Gone");
+      f.k.store.patch("gone", { archivedAt: f.k.now() });
+      return f.harness.invokeRpc("stopKeeperGoneQuests", { ids: [quest.id] }, { experimental_caller: { kind: "client" } });
+    },
     away: () => call("away", {}),
     awayDigest: () => call("awayDigest", {}),
     awayClose: async () => {

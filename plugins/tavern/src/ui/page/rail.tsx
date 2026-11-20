@@ -161,8 +161,7 @@ export function useKeepPlaceOnResize<T extends HTMLElement>() {
 }
 
 /**
- * The rail: two held columns at a page of 900 px and wider. Left: what needs you, the side lists, the history. Right: the
- * board, the cellar. Narrower, one column in why.md's order: needs, decided, review, board, side lists, history, cellar.
+ * The rail keeps the board and attention columns in view without an inner scroll area.
  */
 export function Rail({ attention, board, lists, events, cellar, calm = false }: { attention: ReactNode; board: ReactNode; lists: ReactNode; events: ReactNode; cellar: ReactNode; calm?: boolean }) {
   const left = useHeldColumn<HTMLElement>();
@@ -184,13 +183,13 @@ export function Rail({ attention, board, lists, events, cellar, calm = false }: 
   const sideLists = <div key="lists" className="rm-o3 rm-stackcol">{lists}</div>;
   const history = <div key="history" className="rm-o4">{events}</div>;
   return <div ref={grid} className="rm-a-grid">
-    <aside ref={left} className="rm-a-rail" data-col="rail" aria-label="What needs you and what happened">
-      <div className="rm-o1 rm-stackcol">{attention}</div>
-      {calm && wide ? [history, sideLists] : [sideLists, history]}
-    </aside>
     <div ref={right} className="rm-a-main" data-col="main">
       <div className="rm-o2">{board}</div>
       <div className="rm-o5">{cellar}</div>
     </div>
+    <aside ref={left} className="rm-a-rail" data-col="rail" aria-label="Decisions and history">
+      <div className="rm-o1 rm-stackcol">{attention}</div>
+      {calm && wide ? [history, sideLists] : [sideLists, history]}
+    </aside>
   </div>;
 }

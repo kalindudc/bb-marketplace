@@ -171,6 +171,7 @@ describe("Memory re-check regressions", () => {
     f.k.memory.note("lead", {
       kind: "waiting-on-user",
       action: "NEW-HANDBACK send one line",
+      need: "Please send one line.",
       text: "NEW-HANDBACK send one line",
     });
     f.k.memory.note("lead", { kind: "fact", text: "NEW-FACT Luc is online" });

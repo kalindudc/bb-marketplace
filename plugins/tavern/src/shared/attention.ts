@@ -1,7 +1,17 @@
 import { PHASES, type KeeperNote } from "./schema";
 import { z } from "zod";
+const countsSchema = z.object({
+  ask: z.number().int().nonnegative(), hold: z.number().int().nonnegative(),
+  "hand-back": z.number().int().nonnegative(), rule: z.number().int().nonnegative(),
+  stopped: z.number().int().nonnegative(),
+});
+export type AttentionCounts = z.infer<typeof countsSchema>;
+export const fromStoppedKeeper = (item: AttentionItem) => item.who?.state === "archived";
 export const attentionItemSchema = z.object({
   detail: z.object({ text: z.string(), why: z.string().optional(), sourceMessageId: z.string().nullable(), validUntil: z.number().nullable() }).optional(),
+  who: z.object({ state: z.enum(["running", "idle", "quiet", "archived"]), startedAt: z.number().nullable(), questTitle: z.string().nullable() }).optional(),
+  scope: z.object({ kind: z.enum(["global", "project", "keeper", "quest"]), label: z.string().nullable() }).optional(),
+  need: z.string().optional(),
   id: z.string(), kind: z.enum(["ask", "hold", "rule", "hand-back", "summary", "decided", "held", "quest-changed"]),
   phaseChange: z.object({ from: z.enum(PHASES), to: z.enum(PHASES) }).optional(),
   questId: z.string().nullable(), keeperThreadId: z.string().nullable(),
@@ -10,6 +20,7 @@ export const attentionItemSchema = z.object({
 export const attentionSchema = z.object({
   summaries: z.number().int().nonnegative().optional(),
   changedQuests: z.number().int().nonnegative().optional(),
+  counts: countsSchema.optional(),
   decided: z.number().int().nonnegative().optional(), oldest: z.number().nullable().optional(),
   items: z.array(attentionItemSchema), needYou: z.number().int().nonnegative(),
   new: z.number().int().nonnegative(), heldByYou: z.number().int().nonnegative(),

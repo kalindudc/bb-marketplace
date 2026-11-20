@@ -58,6 +58,8 @@ export type CueOptions = {
    * the window only when it decides whether it plays itself, never when another cue is checked.
    */
   yields?: boolean;
+  /** Refuses an automatic cue while someone is reading an ask, without changing its budget. */
+  clearView?: boolean;
   /**
    * Counts toward the window only when it decides whether it plays itself, never when another cue is checked: every hearth cue, so the
    * hearth never takes motion time from a member setting out. When it decides, it counts every cue's motion, its own kind's included.
@@ -301,7 +303,7 @@ class Coordinator {
       if (surface.startsWith("journal:") && auto && this.held.get(surface)) return this.refuse(surface, kind, o.key, "held", o.onDone);
       for (const c of this.cues) if (c.id === id) return this.refuse(surface, kind, o.key, "merged"); // the running cue's onDone lands the state
     }
-    if (auto && o.repeat && stuckInView()) return this.refuse(surface, kind, o.key, "ask", o.onDone);
+    if (auto && (o.repeat || o.clearView) && stuckInView()) return this.refuse(surface, kind, o.key, "ask", o.onDone);
     if (auto && o.repeat && this.paused) return this.refuse(surface, kind, o.key, "paused", o.onDone);
     if (auto && !o.repeat) {
       if (this.paused) return this.refuse(surface, kind, o.key, "paused", o.onDone);

@@ -12,7 +12,7 @@ async function fixture() {
   const f = setup();
   const q = await seedQuest(f.k, "lead", "Attention", "Attention");
   const ask = f.k.ask("lead", { boardQuestId: q.id, effect: { type: "decision" }, question: "Pick a region", why: "Your call", kind: "decision", options: [{ id: "yes", label: "Yes", detail: "", recommended: true }], meanwhile: "Wait", holds: [] });
-  const note = f.k.memory.note("lead", { kind: "waiting-on-user", text: "Approve access", action: "Approve access", boardQuestId: q.id } as any);
+  const note = f.k.memory.note("lead", { kind: "waiting-on-user", text: "Approve access", action: "Approve access", need: "Please approve access.", boardQuestId: q.id });
   f.k.addRule({ scope: "quest", scopeId: q.id, text: "Confirm this rule", source: "keeper-proposed" }, "lead");
   f.k.store.put("quests", q.id, { ...f.k.quest(q.id), checkerHandoffHold: { id: "hold", reason: "Review", createdAt: f.time(), routeId: "route", sourceMessageId: "message", sourceText: "Hold", release: null } });
   return { ...f, q, ask, note, rpc: rpcHandlers(f.runtime) };
@@ -29,6 +29,40 @@ it("every surface reads the same four need-you items", async () => {
   expect(needYouCount(room)).toBe(4);
   expect(questNeedYouCount(detail.quest)).toBe(4);
   expect(ledger.attention?.items.map(item => item.kind).sort()).toEqual(["ask", "hand-back", "hold", "rule"]);
+});
+
+it.each(["archivedAt", "deletedAt"] as const)("adds identity and scope for a Keeper with %s without changing who needs the user", async goneAt => {
+  const f = await fixture();
+  const keeper = f.k.member("lead")!;
+  f.k.store.put("members", "lead", { ...keeper, displayName: "Wren" });
+  f.k.store.patch("lead", { [goneAt]: f.time(), threadCreatedAt: 123 });
+  const keeperRule = f.k.addRule({ scope: "keeper", scopeId: "lead", text: "Keep work short", source: "keeper-proposed" }, "lead");
+  const room = await f.rpc.room({});
+  expect(room.keepers.find(keeper => keeper.member.threadId === "lead")?.archived).toBe(true);
+  const list = room.attention!;
+  expect(list).toMatchObject({ needYou: 5, heldByYou: 0, counts: { ask: 0, hold: 0, "hand-back": 0, rule: 0, stopped: 5 } });
+  expect(list.items.find(item => item.id === keeperRule.id)).toMatchObject({ who: { state: "archived", startedAt: 123 }, scope: { kind: "keeper", label: "Wren" } });
+  expect(list.items.find(item => item.kind === "rule" && item.questId)).toMatchObject({ who: { state: "archived", questTitle: "Attention" }, scope: { kind: "quest", label: "Attention" } });
+  expect(list.items.find(item => item.kind === "hand-back")).toMatchObject({ need: "Please approve access." });
+});
+
+it("keeps the only ask from an interrupted Keeper in the Asks group", async () => {
+  const f = setup();
+  const q = await seedQuest(f.k, "lead", "Attention", "Attention");
+  const ask = f.k.ask("lead", { boardQuestId: q.id, effect: { type: "decision" }, question: "Which region?", why: "Your call", kind: "decision", options: [{ id: "yes", label: "Yes", detail: "", recommended: true }], meanwhile: "Wait", holds: [] });
+  f.k.store.patch("lead", { manualStopAt: f.time() });
+  const list = (await rpcHandlers(f.runtime).room({})).attention!;
+  expect(list).toMatchObject({ needYou: 1, counts: { ask: 1, stopped: 0 }, items: [expect.objectContaining({ id: ask.id, who: { state: "quiet", startedAt: expect.any(Number), questTitle: q.title } })] });
+});
+
+it("projects a sentence for an older hand-back without changing its action", async () => {
+  const f = await fixture();
+  const { need: _, ...older } = f.note;
+  f.k.store.put("notes", older.id, older);
+  expect((await f.rpc.room({})).attention?.items.find(item => item.id === older.id)).toMatchObject({
+    title: "Approve access",
+    need: "Wren handed this back to you.",
+  });
 });
 
 it("keeps a delegated ask out of every user attention queue", async () => {

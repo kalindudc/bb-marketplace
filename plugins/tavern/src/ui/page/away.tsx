@@ -163,7 +163,19 @@ export function QuestAwayNotes({ room, registry, questId }: { room: Room; regist
 /** The room's Closing time line under the status line: the stops that haven't confirmed, named, with an anchor the status line jumps to. */
 export function RoomAwayNotes({ room, registry }: { room: Room; registry: Registry }) {
   const control = useAwayControl(room);
-  return <div id="tv-away-notes"><AwayNotes room={room} registry={registry} control={control.data} /></div>;
+  const navigate = useBbNavigate();
+  const pendingCellar = room.keepers.flatMap(keeper => keeper.boardQuests).filter(quest => quest.phase === "stopping" && quest.cellarOnStop);
+  return <div id="tv-away-notes">
+    <AwayNotes room={room} registry={registry} control={control.data} />
+    {pendingCellar.length > 0 && <section className="tv-awaynotes" aria-labelledby="tv-cellar-pending-h">
+      <h2 id="tv-cellar-pending-h">Stops not confirmed</h2>
+      <ul>{pendingCellar.map(quest => <li key={quest.id} className="tv-awaynote warn" data-pending-stop data-stuck>
+        <PageGlyph name="stale" size={13} />
+        <span><b>{quest.title}</b>: Tavern retries before sending this quest to the cellar.</span>
+        <button type="button" className="btn sm" aria-label={`Open stop retry for ${quest.title}`} onClick={() => navigate.toPluginPanel("tavern", { subPath: `quest/${quest.id}` })}>Open stop retry</button>
+      </li>)}</ul>
+    </section>}
+  </div>;
 }
 /** How many stops haven't confirmed, for the status line; 0 when there is no window. */
 export function usePendingStops(room: Room) { return useAwayControl(room).data?.pendingStops.length ?? 0; }

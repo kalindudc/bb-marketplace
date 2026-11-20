@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { rpcContract, type Room } from "../../../src/shared/contract";
 import { registerPageSurfaces } from "../../../src/ui/page/register";
 import * as scenes from "./scenes";
+import { withAttention } from "../attention-fixture";
 
 const slots: RenderedSlot[] = [];
 afterEach(() => { for (const slot of slots.splice(0)) slot.lifecycle.unmount(); });
@@ -107,7 +108,9 @@ describe("Decided for you: OK and Mark all seen", () => {
   });
 
   it("marks through the room's watermark, for every Keeper, when the list is cut off", async () => {
-    const clipped = { ...scenes.richRoom, decidedCount: 140, decidedThroughId: "d3" };
+    const decidedForYou = scenes.richRoom.decidedForYou.map((d) => d.id === "d3" ? { ...d, keeperThreadId: "thr-moss" } : d);
+    const preview = withAttention({ ...scenes.richRoom, decidedForYou });
+    const clipped: Room = { ...preview, attention: { ...preview.attention!, decided: 140, new: 140 }, decidedCount: 140, decidedThroughId: "d3" };
     const seen = vi.fn((_input: unknown) => ({ ok: true as const, ids: ["d1", "d2", "d3"], undoToken: "tok-2" }));
     const slot = await page("room", { markDecisionsSeen: seen as never }, clipped);
     expect((await slot.findByLabelText("140 decisions")).textContent).toBe("140");

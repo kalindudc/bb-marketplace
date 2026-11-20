@@ -2603,8 +2603,10 @@ export class TavernRuntime {
         for (const member of this.keeper.store.query("members", "boardQuestId", q.id, 500))
           this.keeper.store.patch(member.threadId, { archivePending: true });
         const request = this.keeper.store.latestQuestEvent(q.id, "quest.stopping");
-        transitionQuest(this.keeper.store, this.keeper.quest(q.id), "stopped", "stopped", { kind: "tavern" }, { kind: "members-stopped", id: this.keeper.store.id("act"), surface: "retryQuestStop", at: this.keeper.now() }, this.keeper.now(), { patch: { endedAt: this.keeper.now() }, text: "Every party member is confirmed stopped or gone", data: { ...request?.data, reason: q.stopReason ?? null } });
+        const current = this.keeper.quest(q.id);
+        transitionQuest(this.keeper.store, current, "stopped", "stopped", { kind: "tavern" }, { kind: "members-stopped", id: this.keeper.store.id("act"), surface: "retryQuestStop", at: this.keeper.now() }, this.keeper.now(), { patch: { endedAt: this.keeper.now(), cellarOnStop: undefined }, text: "Every party member is confirmed stopped or gone", data: { ...request?.data, reason: q.stopReason ?? null } });
         this.serviceRecords.record(q.id);
+        if (current.cellarOnStop) this.keeper.archiveQuests([q.id], true, { kind: "tavern" });
       });
       await this.archiveMembers(this.keeper.store.query("members", "boardQuestId", q.id, 500));
       this.bb.rpc.experimental_invalidate([tags.registry()]);

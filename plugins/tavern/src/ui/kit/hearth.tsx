@@ -29,7 +29,7 @@ export function awayClock(at: number, now = Date.now()): string {
  * The hearth is lit while the tavern is at work: a Keeper busy, or a member on the road (`onRoad`, the room's `onTheRoad(room)`).
  * The words name only what is at work, never a total. Leave out `onRoad` only where no party can be on the road (decoration, previews).
  */
-export function hearthWords(statuses: readonly Pick<KeeperStatus, "tone">[], opts: { away?: Pick<AwayStatus, "closed" | "until" | "dueBack"> | null; now?: number; onRoad?: number } = {}): HearthWords {
+export function hearthWords(statuses: readonly Pick<KeeperStatus, "tone">[], opts: { away?: Pick<AwayStatus, "closed" | "until" | "dueBack"> | null; now?: number; onRoad?: number; showRoad?: boolean } = {}): HearthWords {
   // Archived Keepers can't work, so they stay out of the total; the rows flag them.
   const live = statuses.filter(s => s.tone !== "archived");
   const n = live.length;
@@ -37,8 +37,8 @@ export function hearthWords(statuses: readonly Pick<KeeperStatus, "tone">[], opt
   if (away?.closed) return { state: "out", lead: "Out", detail: away.until === null ? "closed" : `${away.dueBack ? "was due back at" : "closed until"} ${awayClock(away.until, opts.now)}` };
   if (statuses.length === 0) return { state: "out", lead: "Not lit yet", detail: "no Keeper" };
   const busy = live.filter(s => s.tone === "busy").length, road = opts.onRoad ?? 0;
-  const atWork = [busy > 0 && `${busy} ${busy === 1 ? "Keeper" : "Keepers"} busy`, road > 0 && `${road} ${VOCABULARY.road[0].toLowerCase()}`].filter(Boolean).join(" · ");
-  if (atWork) return { state: "working", lead: "Lit", detail: atWork };
+  const atWork = [busy > 0 && `${busy} ${busy === 1 ? "Keeper" : "Keepers"} busy`, road > 0 && opts.showRoad !== false && `${road} ${VOCABULARY.road[0].toLowerCase()}`].filter(Boolean).join(" · ");
+  if (atWork || road > 0) return { state: "working", lead: "Lit", detail: atWork || "party at work" };
   if (n === 0) return { state: "out", lead: "Not lit", detail: "no active Keeper" };
   return { state: "banked", lead: "Banked", detail: "nobody at work" };
 }
@@ -58,7 +58,7 @@ export const hearthReplayGap = (random: () => number = Math.random) => HEARTH_RE
  * one repeating cue. It yields to every other cue and stop condition, and a replay re-renders nothing: plain timers, no state. Its words
  * then end with the flicker and a link to the setting (`settingsHref`), so the control is one step from the thing that moves.
  */
-export function Hearth({ words, surface, size = 24, flareKey, replay = false, settingsHref, ambientMotion = "calm", repeatSeconds = 20, iconOnly = false }: { iconOnly?: boolean; ambientMotion?: "calm" | "lively" | "off"; repeatSeconds?: number; words: HearthWords; surface: Surface; size?: number; flareKey?: string | number; replay?: boolean; settingsHref?: string }) {
+export function Hearth({ words, surface, size = 24, flareKey, replay = false, settingsHref, ambientMotion = "calm", repeatSeconds = 20, iconOnly = false, clearView = false }: { iconOnly?: boolean; clearView?: boolean; ambientMotion?: "calm" | "lively" | "off"; repeatSeconds?: number; words: HearthWords; surface: Surface; size?: number; flareKey?: string | number; replay?: boolean; settingsHref?: string }) {
   const px = Math.min(40, Math.max(iconOnly ? 14 : 24, size));
   const ref = useRef<HTMLSpanElement>(null);
   const { cue, settle, reduced } = useTavernMotion(surface);
@@ -115,20 +115,20 @@ export function Hearth({ words, surface, size = 24, flareKey, replay = false, se
     if (!replaying) return;
     const el = ref.current;
     let timer: ReturnType<typeof setTimeout>;
-    const next = () => { timer = setTimeout(() => { if (allowed.current) cue(ref.current, "hearth replay", { key: "hearth-replay", ms: HEARTH_REPLAY_MS, className: "mo-flick1", ambient: true, yields: true, repeat: ambientMotion === "lively", restMs: HEARTH_REPLAY_MIN_MS }); next(); }, ambientMotion === "lively" ? repeatSeconds * 1000 : hearthReplayGap()); };
+    const next = () => { timer = setTimeout(() => { if (allowed.current) cue(ref.current, "hearth replay", { key: "hearth-replay", ms: HEARTH_REPLAY_MS, className: "mo-flick1", ambient: true, yields: true, clearView, repeat: ambientMotion === "lively", restMs: HEARTH_REPLAY_MIN_MS }); next(); }, ambientMotion === "lively" ? repeatSeconds * 1000 : hearthReplayGap()); };
     next();
     // Banked, switched off or gone: no more turns, and a replay in flight stills at once.
     return () => { clearTimeout(timer); settle(c => c.el === el && c.kind === "hearth replay"); };
-  }, [replaying, cue, settle, ambientMotion, repeatSeconds]);
+  }, [replaying, cue, settle, ambientMotion, repeatSeconds, clearView]);
   // Every hearth cue counts toward the window only for itself (ownWindow), so the hearth never takes motion time from the party.
-  const flicker = () => allowed.current && ambientMotion !== "off" && cue(ref.current, "hearth flicker", { key: "hearth", ms: 3600, className: "mo-flick", ambient: true, ownWindow: true });
+  const flicker = () => allowed.current && ambientMotion !== "off" && cue(ref.current, "hearth flicker", { key: "hearth", ms: 3600, className: "mo-flick", ambient: true, ownWindow: true, clearView });
   // Arrival: once per view; the coordinator's rest stops a remount from replaying it.
   useLayoutEffect(() => { if (words.state === "working") flicker(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   useChangeCue(words.state, (_prev, next) => {
     if (next === "working") flicker();
-    else if (next === "out" && allowed.current) cue(ref.current, "hearth out", { key: "hearth", ms: 600, className: "mo-out", ownWindow: true });
+    else if (next === "out" && allowed.current) cue(ref.current, "hearth out", { key: "hearth", ms: 600, className: "mo-out", ownWindow: true, clearView });
   });
-  useChangeCue(flareKey, () => { if (flareKey !== undefined && allowed.current) cue(ref.current, "hearth flare", { key: "hearth", ms: 500, className: "mo-flare", ownWindow: true }); });
+  useChangeCue(flareKey, () => { if (flareKey !== undefined && allowed.current) cue(ref.current, "hearth flare", { key: "hearth", ms: 500, className: "mo-flare", ownWindow: true, clearView }); });
   return <span ref={ref} className={`tavern-hearth ${words.state}`} data-part="Hearth" data-icon={iconOnly || undefined} aria-hidden={iconOnly || undefined}>
     <svg className="hearth-g" width={px} height={px} viewBox="0 0 24 24" aria-hidden="true">
       <path className="arch" d="M3 21V11a9 9 0 0 1 18 0v10M1.5 21h21" />

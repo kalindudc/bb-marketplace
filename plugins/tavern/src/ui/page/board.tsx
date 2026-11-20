@@ -1,18 +1,20 @@
 import { attentionView } from "../../shared/attention";
-import { experimental_usePluginId, useBbNavigate } from "@get-bb/plugin-sdk/app";
-import { useEffect, useLayoutEffect, useRef } from "react";
-import { onTheRoad, CELLAR, ExpandsMark, Hearth, rememberCount, KeeperRow, OpensMark, QuestRow, QuietNotice, Vocabulary, clockTime, glowVars, hearthWords, keeperStartedLabel, keeperStatus, plural, useNow, useReturnCue, useToday } from "../kit";
+import { useBbNavigate } from "@get-bb/plugin-sdk/app";
+import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { ExpandsMark, rememberCount, KeeperRow, OpensMark, QuestRow, QuietNotice, Vocabulary, clockTime, glowVars, keeperStartedLabel, keeperStatus, plural, useReturnCue, useToday } from "../kit";
 import type { BoardQuestSummary, Room } from "../../shared/contract";
 import type { Member } from "../../shared/schema";
+import type { CellarStopReceipt } from "../../shared/stop-all";
 import type { ArchiveApi } from "./archive";
-import { CrestOf, StateMark, characterName, classLabel, type Registry } from "./common";
+import { CrestOf, Faces, StateMark, characterName, classLabel, type Registry } from "./common";
 import { PageGlyph } from "./glyphs";
-import { isFinished, questMove, roomAway } from "./model";
+import { isFinished, questMove } from "./model";
 import { usePanelState } from "./panel-state";
 import { SKEL } from "./skeletons";
-import { PartyPicture } from "./room";
-import { settingsHref } from "./insights";
-import { ATMOSPHERE_ANCHOR } from "./settings";
+import { jumpTo } from "./rail";
+import { CellarStopReceiptView, StopKeeperGone } from "./stop-all";
+import { PlacementFacts } from "../kit/placement";
+
 
 type K = Room["keepers"][number];
 const names = (registry: Registry, keeper: Member) => ({ keeper: characterName(registry, keeper), member: (m: Member) => characterName(registry, m) });
@@ -21,17 +23,15 @@ export const inRoom = (k: K, api: Pick<ArchiveApi, "hidden">) => k.boardQuests.f
 export const needsYou = (_room: Room, k: K) => attentionView(k.attention).needYou > 0;
 const unseenDecided = (_room: Room, k: K) => attentionView(k.attention).decided ?? attentionView(k.attention).new;
 
-/**
- * Who gets a notice and in what order: a Keeper with a quest in the room or an open ask. Yours first, then a failed member,
- * then work on the road, then only returned quests, archived threads last; the latest change breaks ties. The rest are rows.
- */
 export function sortKeepers(room: Room, api: Pick<ArchiveApi, "hidden">) {
-  const withWork = room.keepers.filter((k) => inRoom(k, api).length > 0 || needsYou(room, k));
-  const rank = (k: K) => needsYou(room, k) ? 0 : inRoom(k, api).some((q) => !isFinished(q.phase) && q.members.some((m) => m.state === "failed")) ? 1 : k.archived ? 4 : inRoom(k, api).some((q) => !isFinished(q.phase)) ? 2 : 3;
-  const latest = (k: K) => Math.max(0, ...inRoom(k, api).map((q) => q.updatedAt));
-  const notices = [...withWork].sort((a, b) => rank(a) - rank(b) || latest(b) - latest(a));
-  const idle = room.keepers.filter((k) => !withWork.includes(k));
-  return { notices, idleLive: idle.filter((k) => !k.archived), idleArchived: idle.filter((k) => k.archived) };
+  const open = (keeper: K) => inRoom(keeper, api).filter(quest => !isFinished(quest.phase));
+  const active = room.keepers.filter(keeper => !keeper.archived && (open(keeper).length > 0 || needsYou(room, keeper)));
+  const rank = (keeper: K) => needsYou(room, keeper) ? 0 : open(keeper).some(quest => quest.members.some(member => member.state === "failed")) ? 1 : 2;
+  const latest = (keeper: K) => Math.max(0, ...open(keeper).map(quest => quest.updatedAt));
+  return {
+    notices: active.sort((a, b) => rank(a) - rank(b) || latest(b) - latest(a)),
+    idle: room.keepers.filter(keeper => !active.includes(keeper) && open(keeper).length === 0),
+  };
 }
 
 /** The board's one glow: the notice that needs you, else the one with the most members at work. Never a quiet or archived Keeper. */
@@ -45,7 +45,17 @@ export function litKeeper(room: Room, notices: K[]) {
 }
 
 const ACTIVE_CAP = 5;
-const DONE_CAP = 2;
+const PARTY_CAP = 4;
+
+export function NoticeParty({ party, registry, id }: { party: Member[]; registry: Registry; id: string }) {
+  const [all, setAll] = usePanelState(`room.notice.${id}.party`, false);
+  const controlled = useId();
+  return <div className="rm-party-strip" role="group" aria-label="Party">
+    <div id={controlled}><Faces members={all ? party : party.slice(0, PARTY_CAP)} registry={registry} size={18} max={party.length} still /></div>
+    {party.map(member => <PlacementFacts key={member.threadId} placement={member.placement} memberName={characterName(registry, member)} variant="compact" />)}
+    {party.length > PARTY_CAP && <button type="button" className="tv-fold act" aria-controls={controlled} aria-expanded={all} onClick={() => setAll(!all)}>{all ? "Show fewer members" : `+${party.length - PARTY_CAP} more members`}</button>}
+  </div>;
+}
 /** A Keeper's notice: its header is the Keeper (it opens the thread), and each quest's row opens that quest. */
 export function KeeperNotice({ keeper, room, registry, api, lit, since }: { keeper: K; room: Room; registry: Registry; api: ArchiveApi; lit: boolean; since?: number }) {
   const navigate = useBbNavigate();
@@ -58,9 +68,7 @@ export function KeeperNotice({ keeper, room, registry, api, lit, since }: { keep
   const all = inRoom(keeper, api);
   const order = (q: BoardQuestSummary) => { const t = questMove(q, room.asks, names(registry, keeper.member), { now: day }).tone; return t === "you" ? 0 : t === "bad" ? 1 : 2; };
   const active = all.filter((q) => !isFinished(q.phase)).sort((a, b) => order(a) - order(b) || b.updatedAt - a.updatedAt);
-  const done = all.filter((q) => isFinished(q.phase)).sort((a, b) => (b.endedAt ?? b.updatedAt) - (a.endedAt ?? a.updatedAt));
   const [moreA, setMoreA] = usePanelState(`room.notice.${id}.active`, false);
-  const [moreD, setMoreD] = usePanelState(`room.notice.${id}.done`, false);
   const party = [...new Map(active.flatMap((q) => q.members).map((m) => [m.threadId, m])).values()];
   const failed = party.filter((m) => m.state === "failed").length;
   const stale = party.filter((m) => m.strikes > 0).length;
@@ -73,7 +81,6 @@ export function KeeperNotice({ keeper, room, registry, api, lit, since }: { keep
   const ledger = steered ? `steer ${clockTime(steered.at)}` : versions.length ? `quest map ${versions.slice(0, 3).join(", ")}` : null;
   const status = keeperStatus(keeper);
   const label = `Open ${name}'s thread${title ? `: ${title}` : ""}${started ? `, ${started}` : ""}`;
-  const archive = (q: BoardQuestSummary) => void api.archive([q]);
   return <article className={`tv-notice rm-notice ${needsYou(room, keeper) ? "needs" : ""} ${lit ? "lit" : ""}`} aria-label={`${name}${title ? `, ${title}` : ""}, Keeper`} style={lit ? glowVars(`notice:${id}`) : undefined} data-part="KeeperNotice">
     <span className="tack" aria-hidden="true" />
     <header className="rm-nh">
@@ -86,12 +93,11 @@ export function KeeperNotice({ keeper, room, registry, api, lit, since }: { keep
     </header>
     <QuietNotice threadId={id} since={keeper.quietSince} />
     {(keeper.freeHands ?? 0) > 0 && <p className="m small">{keeper.freeHands} free {keeper.freeHands === 1 ? "hand" : "hands"}</p>}
-    {party.length > 0 && <PartyPicture ambientMotion={room.ambientMotion} repeatSeconds={room.repeatSeconds} members={party} registry={registry} quests={all} mini />}
+    {party.length > 0 && <NoticeParty party={party} registry={registry} id={id} />}
     <div className="rm-qs" ref={rows}>
       {(moreA ? active : active.slice(0, ACTIVE_CAP)).map((q) => <QuestRow key={q.id} quest={q} room={room} registry={registry} keeper={keeper} arrival={{ since }} />)}
       {active.length > ACTIVE_CAP && <button type="button" className="tv-fold act rm-more" aria-expanded={moreA} onClick={() => setMoreA(!moreA)}><ExpandsMark open={moreA} /><span>{moreA ? "Show fewer" : `+${active.length - ACTIVE_CAP} more active ${active.length - ACTIVE_CAP === 1 ? "quest" : "quests"}`}</span></button>}
-      {done.length > 0 && <div className="rm-done" role="group" aria-label={`${name}: returned and stopped`}>{(moreD ? done : done.slice(0, DONE_CAP)).map((q) => <QuestRow key={q.id} quest={q} room={room} registry={registry} keeper={keeper} onArchive={archive} pending={api.pending} arrival={{ since }} />)}</div>}
-      {done.length > DONE_CAP && <button type="button" className="tv-fold act rm-more" aria-expanded={moreD} onClick={() => setMoreD(!moreD)}><ExpandsMark open={moreD} /><span>{moreD ? "Show fewer" : `+${done.length - DONE_CAP} returned`}</span></button>}
+
     </div>
     {(decided > 0 || ledger) && <footer className="tv-nf">{decided > 0 && <span className="tag tv-decided-tag" title="Reversible calls made for you, not yet seen"><PageGlyph name="seal" /><span>{decided} decided</span></span>}{ledger && <span className="tv-nf-t">{ledger}</span>}</footer>}
   </article>;
@@ -125,46 +131,61 @@ export function useMasonry<T extends HTMLElement>(deps: unknown[]) {
   return ref;
 }
 
-/** The board's hearth. Its words read the clock while the tavern is closed ("closed until Sun 08:00"), so it keeps its own. */
-function BoardHearth({ room, flareKey }: { room: Room; flareKey: string | undefined }) {
-  const now = useNow();
-  const pluginId = experimental_usePluginId();
-  // Older servers retain Calm with the legacy flicker switch.
-  return <Hearth words={hearthWords(room.keepers.map(keeperStatus), { away: roomAway(room), now, onRoad: onTheRoad(room) })} surface="page" flareKey={flareKey} replay={room.hearthFlicker !== false} ambientMotion={room.ambientMotion} repeatSeconds={room.repeatSeconds} settingsHref={`${settingsHref(pluginId)}#${ATMOSPHERE_ANCHOR}`} />;
+export function RoomFold({ name, label, count, children }: { name: string; label: string; count: number; children: ReactNode }) {
+  const [open, setOpen] = usePanelState(`room.fold.${name}`, false);
+  const id = useId();
+  return <section data-board-fold={name} className="rm-room-fold">
+    <h3><button type="button" className="tv-fold act" aria-expanded={open} aria-controls={id} onClick={() => setOpen(!open)}><ExpandsMark open={open} />{label} <span className="tv-count">{count}</span></button></h3>
+    <div id={id} hidden={!open}>{open && children}</div>
+  </section>;
 }
 
-/**
- * The quest board: a notice per Keeper with work, one-line rows for idle Keepers, archived idle Keepers folded.
- * Heading line 1 is the title and the hearth, whose words carry the Keeper count; line 2 the actions. `since` is the room's last look, for the rows' "new" marks.
- */
+function FoldQuest({ keeper, quest, room, registry, api, finished = false, waiting = false }: { keeper: K; quest: BoardQuestSummary; room: Room; registry: Registry; api: ArchiveApi; finished?: boolean; waiting?: boolean }) {
+  const navigate = useBbNavigate();
+  const name = characterName(registry, keeper.member);
+  return <div className="rm-fold-quest">
+    <QuestRow quest={quest} room={room} registry={registry} keeper={keeper}
+      onArchive={finished ? q => void api.archive([q]) : undefined} pending={api.pending} />
+    <button type="button" className="act lnk-btn rm-fold-keeper" title={keeper.threadTitle ?? undefined} aria-label={`Open ${name}'s thread${keeper.threadTitle ? `: ${keeper.threadTitle}` : ""}`} onClick={() => navigate.toThread(keeper.member.threadId)}>
+      <CrestOf member={keeper.member} registry={registry} size={16} />{name}<OpensMark />
+    </button>
+    {waiting && <p className="rm-pending-cellar m">Waiting for Tavern to confirm the stop. <button type="button" className="act lnk-btn" onClick={() => jumpTo("tv-away-notes")}>See stop status</button></p>}
+  </div>;
+}
+
 export function Board({ room, registry, api, since }: { room: Room; registry: Registry; api: ArchiveApi; since?: number }) {
   const navigate = useBbNavigate();
-  const { notices, idleLive, idleArchived } = sortKeepers(room, api);
-  const [foldOpen, setFoldOpen] = usePanelState("room.board.idle", false);
-  const returned = room.keepers.flatMap((k) => inRoom(k, api)).filter((q) => isFinished(q.phase));
+  const { notices, idle } = sortKeepers(room, api);
+  const [receipt, setReceipt] = useState<CellarStopReceipt | null>(null);
+  const rows = room.keepers.flatMap(keeper => inRoom(keeper, api).map(quest => ({ keeper, quest })));
+  const cellared = new Set(receipt?.entries.filter(entry => entry.state === "cellared").map(entry => entry.questId));
+  const gone = rows.filter(({ keeper, quest }) => keeper.archived && !isFinished(quest.phase) && !cellared.has(quest.id));
+  const returned = rows.filter(({ quest }) => isFinished(quest.phase))
+    .sort((a, b) => (b.quest.endedAt ?? b.quest.updatedAt) - (a.quest.endedAt ?? a.quest.updatedAt));
+  const stillStopping = new Set(receipt?.entries.filter(entry => entry.state === "stopping" && rows.some(({ quest }) => quest.id === entry.questId && !isFinished(quest.phase))).map(entry => entry.questId));
+  const ready = gone.filter(({ quest }) => !quest.cellarOnStop && !stillStopping.has(quest.id));
   const lit = litKeeper(room, notices);
-  // The hearth flares once when a quest comes back: its key is the newest returned quest.
-  const newestReturned = returned.filter((q) => q.phase === "done").sort((a, b) => (b.endedAt ?? b.updatedAt) - (a.endedAt ?? a.updatedAt))[0]?.id;
-  const grid = useMasonry<HTMLDivElement>([room, api.hidden, foldOpen]);
+  const grid = useMasonry<HTMLDivElement>([room, api.hidden]);
   useEffect(() => rememberCount(SKEL.notices, notices.length), [notices.length]);
   return <section className="tv-sec rm-board-sec" aria-labelledby="rm-board-h">
     <header className="tv-colh rm-boardhead"><h2 id="rm-board-h"><Vocabulary word="questBoard" /></h2>
-      <span className="rm-hearth-slot" data-slot="hearth"><BoardHearth room={room} flareKey={newestReturned} /></span>
-      <div className="rm-board-acts">
-        <button type="button" className="btn ghost sm" onClick={() => navigate.toPluginPanel("tavern", { subPath: "map" })}><PageGlyph name="map" /><span>The map</span><OpensMark /></button>
-        {returned.length > 1 && <button type="button" className="lnk-btn act" onClick={() => void api.archive(returned)} disabled={api.pending} title={`${CELLAR.sendAllReturned}: ${plural(returned.length, "quest")}, returned and stopped`}><PageGlyph name="archive" /><span>{CELLAR.sendAllReturned}</span></button>}
-      </div>
+      <div className="rm-board-acts"><button type="button" className="btn ghost sm" onClick={() => navigate.toPluginPanel("tavern", { subPath: "map" })}><PageGlyph name="map" /><span>The map</span><OpensMark /></button></div>
     </header>
-    <div className="tv-board rm-board lit" ref={grid} style={glowVars("board")}>
-      {notices.map((k) => <KeeperNotice key={k.member.threadId} keeper={k} room={room} registry={registry} api={api} lit={k.member.threadId === lit} since={since} />)}
-      {(idleLive.length > 0 || idleArchived.length > 0) && <div className="rm-idle" data-part="KeeperRow list">
-        {idleLive.map((k) => <KeeperRow key={k.member.threadId} keeper={k} registry={registry} room={room} />)}
-        {idleArchived.length > 0 && <>
-          <button type="button" className="tv-fold act rm-idle-fold" aria-expanded={foldOpen} onClick={() => setFoldOpen(!foldOpen)}><ExpandsMark open={foldOpen} /><span>{plural(idleArchived.length, "Keeper")} without a quest · threads archived</span></button>
-          {foldOpen && idleArchived.map((k) => <KeeperRow key={k.member.threadId} keeper={k} registry={registry} room={room} />)}
-        </>}
-      </div>}
-      {!room.keepers.length && <p className="tv-empty" data-empty>No Keeper yet. Start a quest from the header to hire one.</p>}
-    </div>
+    {notices.length > 0 && <div className="tv-board rm-board lit" ref={grid} style={glowVars("board")}>
+      {notices.map(keeper => <KeeperNotice key={keeper.member.threadId} keeper={keeper} room={room} registry={registry} api={api} lit={keeper.member.threadId === lit} since={since} />)}
+    </div>}
+    {receipt && <CellarStopReceiptView receipt={receipt} stillStopping={stillStopping} />}
+    {gone.length > 0 && <RoomFold name="gone" label="Keeper gone" count={gone.length}>
+      {gone.map(({ keeper, quest }) => <FoldQuest key={quest.id} {...{ keeper, quest, room, registry, api }} waiting={!!quest.cellarOnStop || stillStopping.has(quest.id)} />)}
+      {ready.length > 0 && <StopKeeperGone ids={ready.map(({ quest }) => quest.id)} onReceipt={setReceipt} />}
+    </RoomFold>}
+    {returned.length > 0 && <RoomFold name="returned" label="Returned and stopped" count={returned.length}>
+      {returned.map(({ keeper, quest }) => <FoldQuest key={quest.id} {...{ keeper, quest, room, registry, api }} finished />)}
+      {returned.length > 1 && <button type="button" className="btn sm" onClick={() => void api.archive(returned.map(({ quest }) => quest))} disabled={api.pending}><PageGlyph name="archive" />Send all {returned.length} to the cellar</button>}
+    </RoomFold>}
+    {idle.length > 0 && <RoomFold name="idle" label="Keepers without a quest" count={idle.length}><div className="rm-idle">
+      {idle.map(keeper => <KeeperRow key={keeper.member.threadId} keeper={keeper} registry={registry} room={room} />)}
+    </div></RoomFold>}
+    {!room.keepers.length && <p className="tv-empty" data-empty>No Keeper yet. Start a quest from the header to hire one.</p>}
   </section>;
 }

@@ -9,7 +9,8 @@ import { pendingPlacement, readyPlacement, blockedPlacement, placementHolds } fr
 import { detail, registry, room } from "../../src/ui/page/fixtures";
 import { settingsView } from "../../src/ui/page/fixtures-insights";
 import { machineVolumes, machinesCatalog, previewFixture } from "./fixtures/machines";
-import { PartyPicture, SideQuests } from "../../src/ui/page/room";
+import { SideQuests } from "../../src/ui/page/room";
+import { PartyPicture } from "../../src/ui/kit";
 import { QuestPage } from "../../src/ui/page/quest";
 import { MemberPanel } from "../../src/ui/thread/member-brief";
 import { ThreadWidget } from "../../src/ui/thread/composer";

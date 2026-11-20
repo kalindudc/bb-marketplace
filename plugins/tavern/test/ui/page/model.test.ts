@@ -1,9 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { decodePageRoute, graphFor, levelFromWins, visibleMembers, waypointMove, openAskCount, describeEvent, eventContext } from "../../../src/ui/page/model";
+import { decodePageRoute, graphFor, levelFromWins, visibleMembers, waypointMove, openAskCount, describeEvent, eventContext, eventLines } from "../../../src/ui/page/model";
 import { detail, emptyRoom, registry, room } from "../../../src/ui/page/fixtures";
 import { boardQuestDetailSchema, registrySchema, roomSchema } from "../../../src/shared/contract";
 
 describe("Tavern page data", () => {
+  it("collapses three identical events without merging quests whose names differ only in case", () => {
+    const base = room.keepers[0]!.boardQuests[0]!;
+    const quests = [{ ...base, id: "lower", short: "placement live test" }, { ...base, id: "upper", short: "Placement live test" }];
+    const ctx = eventContext({ ...room, keepers: [{ ...room.keepers[0]!, boardQuests: quests }] }, registry);
+    const event = { id: 1, at: 1, keeperThreadId: "keeper", boardQuestId: "lower", actor: { kind: "tavern" as const }, type: "member.failed", text: "A member's thread failed", data: { memberThreadId: "scout" } };
+    const lines = eventLines([event, { ...event, id: 2, at: 2 }, { ...event, id: 3, at: 3 }, { ...event, id: 4, at: 4, boardQuestId: "upper" }], ctx, { collapseRepeats: true });
+    expect(lines.map(line => [ctx.questShort(line.questId!), line.repeats ?? 1])).toEqual([["Placement live test", 1], ["placement live test", 3]]);
+  });
   it("names a retelling in human words", () => {
     expect(describeEvent({ id: 1, at: 1, keeperThreadId: null, boardQuestId: null, type: "quest.retold", text: "Updated delivery", data: {}, actor: { kind: "tavern" } }, eventContext(room, registry))?.head).toBe("retold the tale");
   });

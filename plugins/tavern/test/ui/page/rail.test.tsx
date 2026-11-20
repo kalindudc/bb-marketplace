@@ -30,19 +30,20 @@ const quests = (base: BoardQuestSummary, n: number, phase: BoardQuestSummary["ph
 const hearthWords = (el: Element) => el.querySelector(".hearth-w")!.textContent!.replace(/\u00a0·$/, "");
 
 describe("the rail's order", () => {
-  it("puts needs, decided and review, then the board, the side lists, the history and the cellar, in that order below 900 px", async () => {
-    const slot = await room();
+  it("puts the full-width queue first, then the board and cellar, then decisions, review, history and side folds", async () => {
+    const slot = await room({ ...scenes.richRoom, archivedCount: 1 });
     const cols = [...slot.container.querySelectorAll(".rm-a-grid [class*='rm-o']")].map((el) => [...el.classList].find((c) => /^rm-o\d$/.test(c)));
-    expect(cols).toEqual(["rm-o1", "rm-o3", "rm-o4", "rm-o2", "rm-o5"]);
+    expect(cols).toEqual(["rm-o2", "rm-o5", "rm-o1", "rm-o3", "rm-o4"]);
     const o1 = slot.container.querySelector(".rm-o1")!;
-    expect([...o1.querySelectorAll("[data-sec]")].map((el) => (el as HTMLElement).dataset.sec)).toEqual(["needs", "decided", "review"]);
+    expect([...o1.querySelectorAll("[data-sec]")].map((el) => (el as HTMLElement).dataset.sec)).toEqual(["decided", "review"]);
+    expect(slot.container.querySelector("[data-sec=needs] + .rm-a-grid")).toBeTruthy();
     expect((slot.container.querySelector(".rm-o2 [data-sec]") as HTMLElement).dataset.sec).toBe("board");
-    expect([...slot.container.querySelectorAll(".rm-o3 [data-sec]")].map((el) => (el as HTMLElement).dataset.sec)).toEqual(["errands", "solos"]);
+    expect([...slot.container.querySelectorAll(".rm-o4 #rm-lists [data-board-fold]")].map(el => el.getAttribute("data-board-fold"))).toEqual(["errands", "solos"]);
     expect((slot.container.querySelector(".rm-o4 [data-sec]") as HTMLElement).dataset.sec).toBe("events");
     expect((slot.container.querySelector(".rm-o5 [data-sec]") as HTMLElement).dataset.sec).toBe("cellar");
     const css = readFileSync(join(process.cwd(), "src/ui/page/page.css"), "utf8");
     const narrow = css.slice(css.indexOf("@container tavern-page (max-width: 900px)"));
-    for (let i = 1; i <= 5; i++) expect(narrow).toContain(`.rm-o${i} { order: ${i}; }`);
+    [2, 5, 1, 4, 3].forEach((slot, i) => expect(narrow).toContain(`.rm-o${slot} { order: ${i + 1}; }`));
   });
   it("holds a column taller than the screen once its end is in view, and never moves a column that just grew without a scroll", () => {
     expect(placeHeld({ scroll: 0, view: 900, moved: 0, height: 2000, bandTop: 100, shift: 0 })).toBe(0);
@@ -105,13 +106,15 @@ describe("the status line", () => {
 });
 
 describe("the board", () => {
-  it("heads itself with the title and one hearth slot whose words carry the Keeper count, then the map and Send all returned", async () => {
+  it("keeps one hearth in the band and the map in the board heading", async () => {
     const slot = await room();
     const head = slot.container.querySelector(".rm-boardhead")!;
-    const slotEl = head.querySelectorAll("[data-slot=hearth]");
+    const slotEl = slot.container.querySelectorAll(".tv-hearth-band [data-slot=hearth]");
+    expect(head.querySelector("[data-slot=hearth]")).toBeNull();
     expect(slotEl).toHaveLength(1);
     // The hearth reads the same members-on-the-road count as the status line.
-    expect(hearthWords(slotEl[0]!)).toBe(`Lit · 1 Keeper busy · ${onTheRoad(scenes.richRoom)} on the road`);
+    expect(hearthWords(slotEl[0]!)).toBe("Lit · 1 Keeper busy");
+    expect(within(slot.getByRole("group", { name: "Status" })).getByRole("button", { name: `${onTheRoad(scenes.richRoom)} on the road` })).toBeTruthy();
     expect(slotEl[0]!.querySelector("[data-part=Hearth]")).not.toBeNull();
     expect(within(head as HTMLElement).getByRole("button", { name: /The map/ })).toBeTruthy();
     expect(head.textContent).not.toMatch(/\d+ quests? on the road/);
@@ -121,23 +124,25 @@ describe("the board", () => {
     const slot = await room({ ...scenes.richRoom, keepers: [wren!, idle], asks: scenes.richRoom.asks.filter((a) => a.keeperThreadId !== moss!.member.threadId) });
     expect(slot.getByRole("article", { name: /^Wren\b.*Keeper$/ })).toBeTruthy();
     expect(slot.queryByRole("article", { name: /^Moss\b.*Keeper$/ })).toBeNull();
+    fireEvent.click(slot.getByRole("button", { name: /Keepers without a quest/ }));
     const row = slot.container.querySelector(".rm-idle .krow")!;
     expect(row.textContent).toContain("Moss");
     expect(row.textContent).toContain("no quest");
   });
-  it("shows five active quests and two returned per Keeper, the rest in place behind a count", async () => {
+  it("shows five active quests per Keeper and puts all returned work in one fold", async () => {
     const base = wren!.boardQuests.find((q) => q.phase !== "done" && q.phase !== "stopped")!;
     const many = { ...wren!, boardQuests: [...quests(base, 7, base.phase), ...quests(base, 4, "done")] };
     const slot = await room({ ...scenes.richRoom, keepers: [many, moss!], asks: [] });
     const notice = slot.getByRole("article", { name: /^Wren\b.*Keeper$/ });
     expect(notice.querySelectorAll(".qrow-live")).toHaveLength(5);
-    expect(notice.querySelectorAll(".rm-done .qrow")).toHaveLength(2);
+    expect(notice.querySelectorAll(".qrow-done")).toHaveLength(0);
     fireEvent.click(within(notice).getByRole("button", { name: "+2 more active quests" }));
     expect(notice.querySelectorAll(".qrow-live")).toHaveLength(7);
-    fireEvent.click(within(notice).getByRole("button", { name: "+2 returned" }));
-    expect(notice.querySelectorAll(".rm-done .qrow")).toHaveLength(4);
+    fireEvent.click(slot.getByRole("button", { name: /Returned and stopped.*5/ }));
+    const returned = slot.container.querySelector("[data-board-fold=returned]")!;
+    expect(returned.querySelectorAll(".qrow-done")).toHaveLength(5);
     for (const name of notice.querySelectorAll<HTMLButtonElement>(".qrow-live [data-quest-name]")) expect(name.title).toMatch(/^Open the quest page: /);
-    for (const name of notice.querySelectorAll<HTMLButtonElement>(".rm-done .qrow [data-quest-name]")) expect(name.title).toMatch(/^Open the quest record: /);
+    for (const name of returned.querySelectorAll<HTMLButtonElement>(".qrow-done [data-quest-name]")) expect(name.title).toMatch(/^Open the quest record: /);
   });
   it("lights one notice, never a quiet or archived Keeper's", async () => {
     const slot = await room({ ...scenes.richRoom, keepers: [{ ...wren!, quietSince: scenes.min(30) }, moss!] });

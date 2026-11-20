@@ -58,9 +58,9 @@ describe("thread UI", () => {
         expect(() => layoutWaypoints([{ ...first, dependsOn: ["missing"] }])).toThrow("missing waypoint");
         expect(() => layoutWaypoints([{ ...first, dependsOn: ["w1"] }])).toThrow("cycle");
     });
-    it("registers all eight directives and only one thread composer action", async () => {
+    it("registers all nine directives and only one thread composer action", async () => {
         const app = await load();
-        expect(app.messageDirectives.map(d => d.id)).toEqual(["tavern-questmap", "tavern-ask", "tavern-reports", "tavern-ledger", "tavern-party", "tavern-errand", "tavern-tale", "tavern-summary"]);
+        expect(app.messageDirectives.map(d => d.id)).toEqual(["tavern-questmap", "tavern-ask", "tavern-reports", "tavern-ledger", "tavern-party", "tavern-errand", "tavern-tale", "tavern-summary", "tavern-setup"]);
         const thread = app.composerCustomizations.find(c => c.id === "tavern-thread")!;
         expect(thread.actions).toHaveLength(1);
         expect(thread.banners?.[0]?.chrome).toBe("bare");
