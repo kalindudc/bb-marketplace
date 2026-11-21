@@ -37,8 +37,8 @@ export function unseenQuestChanges(store: KeeperStore, questId?: string): Omit<A
 
 export function markQuestChangesSeen(store: KeeperStore, ids: string[], at: number) {
   if (!ids.length) return false;
-  return store.db.prepare(`INSERT OR IGNORE INTO tavern_records(kind,id,data)
+  return store.writeRecords(`INSERT OR IGNORE INTO tavern_records(kind,id,data)
     SELECT 'attentionSeen',${seenId},? FROM tavern_events e JOIN tavern_records q ON q.id=e.board_quest_id
-    WHERE e.id IN (${ids.map(() => "?").join(",")}) AND ${visibleQuest} AND ${notByUser} AND ${actualTransition}`)
-    .run(JSON.stringify({ token: store.id("seen"), seenAt: at }), ...ids.map(id => Number(id.slice("quest-change:".length)))).changes > 0;
+    WHERE e.id IN (SELECT value FROM json_each(?)) AND ${visibleQuest} AND ${notByUser} AND ${actualTransition}`,
+    JSON.stringify({ token: store.id("seen"), seenAt: at }), JSON.stringify(ids.map(id => Number(id.slice("quest-change:".length))))).changes > 0;
 }

@@ -23,7 +23,7 @@ export function putMemberFixture(store: KeeperStore, id: string, update: MemberF
   if (stopPending) record.engagement = "stopping";
   record.state = state === "done" || state === "stopped" ? "idle" : state ?? record.state;
   if (record.role !== "keeper") record.engagement ??= "active";
-  store.db.prepare("INSERT INTO tavern_records(kind,id,data) VALUES('members',?,?) ON CONFLICT(kind,id) DO UPDATE SET data=excluded.data").run(id, JSON.stringify(record));
+  store.writeRecords("INSERT INTO tavern_records(kind,id,data) VALUES('members',?,?) ON CONFLICT(kind,id) DO UPDATE SET data=excluded.data", id, JSON.stringify(record));
   const details = memberDetails(store, id);
   if (record.engagement === "resting") store.patch(id, { memberEngagement: { ...details, rest: details.rest ?? { since: record.lastReportAt ?? record.createdAt } } });
   if (record.engagement === "stopping" && !details.operation) {

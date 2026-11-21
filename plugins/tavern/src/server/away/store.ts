@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { Database } from "../ports";
+import { KeeperStore } from "../keeper/store";
 import { AWAY_STOP_LIST, PRODUCTION_WAKE_HOURS, awayCloseSchema, awayCompletedWindowSchema, awayReturnCauseSchema, awayStateSchema, awayWindowSchema, type AwayCloseInput, type AwayReturnCause, type AwaySnapshot, type AwayStopKind, type AwayState, type AwayWindow } from "../../shared/away";
 
 export class AwayConflict extends Error {
@@ -10,7 +11,8 @@ type Row = { id: string; data: string };
 const cursor = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 
 export class AwayStore {
-  constructor(readonly db: Database, private readonly now: () => number = Date.now) {}
+  private readonly records: KeeperStore;
+  constructor(readonly db: Database, private readonly now: () => number = Date.now) { this.records = new KeeperStore(db); }
 
   private state(): AwayState {
     try {
@@ -34,8 +36,7 @@ export class AwayStore {
   }
   private save(state: AwayState) {
     const parsed = awayStateSchema.parse(state);
-    this.db.prepare("INSERT INTO tavern_records(kind,id,data) VALUES('away','current',?) ON CONFLICT(kind,id) DO UPDATE SET data=excluded.data")
-      .run(JSON.stringify(parsed));
+    this.records.writeRecords("INSERT INTO tavern_records(kind,id,data) VALUES('away','current',?) ON CONFLICT(kind,id) DO UPDATE SET data=excluded.data", JSON.stringify(parsed));
   }
   private event(at: number, type: string, text: string, data: Record<string, unknown>) {
     return cursor.parse(Number(this.db.prepare("INSERT INTO tavern_events(at,keeper_thread_id,board_quest_id,actor,type,text,data) VALUES(?,NULL,NULL,?, ?,?,?)")
@@ -78,7 +79,7 @@ export class AwayStore {
       const window = awayCompletedWindowSchema.parse({ ...current.window, version, returnedAt: this.now(), returnCause: parsed, eventCeiling: this.maxEvent() });
       const state = { revision: version, window };
       this.save(state);
-      this.db.prepare("INSERT INTO tavern_records(kind,id,data) VALUES('awayWindows',?,?)").run(window.id, JSON.stringify(window));
+      this.records.writeRecords("INSERT INTO tavern_records(kind,id,data) VALUES('awayWindows',?,?)", window.id, JSON.stringify(window));
       this.event(window.returnedAt!, "away.returned", "The tavern reopened", { windowId, cause: parsed, openAskIds: this.openAskIds() });
       return { changed: true, snapshot: this.view(state) };
     })();

@@ -36,7 +36,7 @@ export function readCharacterPresentation(registry: Registry, snapshot: Registry
       JOIN tavern_records m ON m.kind='members' AND m.id=json_extract(r.data,'$.memberThreadId')
       WHERE r.kind='reports' AND json_extract(r.data,'$.status')='done'
         AND json_type(r.data,'$.voice')='text' AND length(trim(json_extract(r.data,'$.voice'),?))>0
-        AND json_extract(m.data,'$.characterId') IN (${snapshot.characters.map(() => "?").join(",")})
+        AND json_extract(m.data,'$.characterId') IN (SELECT value FROM json_each(?))
     ) SELECT ranked.characterId, r.id AS reportId, json_extract(r.data,'$.voice') AS line,
       json_extract(r.data,'$.createdAt') AS at, q.id AS questId,
       CASE WHEN COALESCE(json_extract(t.data,'$.memberEngagement.host.deletedAt'), json_extract(t.data,'$.deletedAt')) IS NOT NULL THEN NULL
@@ -46,7 +46,7 @@ export function readCharacterPresentation(registry: Registry, snapshot: Registry
     LEFT JOIN tavern_runtime t ON t.thread_id=json_extract(r.data,'$.memberThreadId')
     LEFT JOIN tavern_records q ON q.kind='quests' AND q.id=json_extract(r.data,'$.boardQuestId')
     WHERE ranked.position<=3 ORDER BY ranked.characterId, ranked.position`)
-      .all(whitespace, ...snapshot.characters.map(character => character.id)) as (CharacterReportVoices["voices"][number] & { characterId: string })[];
+      .all(whitespace, JSON.stringify(snapshot.characters.map(character => character.id))) as (CharacterReportVoices["voices"][number] & { characterId: string })[];
     for (const { characterId, ...voice } of rows) {
       let group = grouped.get(characterId);
       if (!group) { group = { characterId, voices: [] }; grouped.set(characterId, group); }

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { Database } from "../ports";
+import { KeeperStore } from "../keeper/store";
 
 const id = z.string().min(1).max(100);
 export const contentHoldTokenSchema = z.string().max(100).regex(/^hold_[0-9a-z]+_[0-9a-f-]{36}$/).brand<"ContentHoldToken">();
@@ -43,7 +44,8 @@ function normalize(input: unknown): Hold {
 }
 function token(version: number): ContentHoldToken { return contentHoldTokenSchema.parse(`hold_${version.toString(36)}_${randomUUID()}`); }
 export class AwayHolds {
-  constructor(private readonly db: Database) {}
+  private readonly records: KeeperStore;
+  constructor(private readonly db: Database) { this.records = new KeeperStore(db); }
   private read(row: { id: string; data: string }): Hold {
     const hold = normalize(JSON.parse(row.data));
     if (hold.threadId !== row.id) throw new Error("Member hold has a mismatched thread id");
@@ -57,7 +59,7 @@ export class AwayHolds {
   }
   private write(hold: Hold) {
     awayHoldSchema.parse(hold);
-    this.db.prepare("INSERT INTO tavern_records(kind,id,data) VALUES('awayHolds',?,?) ON CONFLICT(kind,id) DO UPDATE SET data=excluded.data").run(hold.threadId, JSON.stringify(hold));
+    this.records.writeRecords("INSERT INTO tavern_records(kind,id,data) VALUES('awayHolds',?,?) ON CONFLICT(kind,id) DO UPDATE SET data=excluded.data", hold.threadId, JSON.stringify(hold));
     return hold;
   }
   put(input: AwayHold): Hold {
@@ -95,8 +97,8 @@ export class AwayHolds {
   compareAndSet(expected: Hold, patch: Partial<Pick<Hold, "stopPending" | "error" | "reasons" | "resumeRequired" | "cancelledBrief">>): Hold | null {
     const version = expected.version + 1, next = { ...expected, ...patch, version, token: token(version) };
     awayHoldSchema.parse(next);
-    const result = this.db.prepare("UPDATE tavern_records SET data=? WHERE kind='awayHolds' AND id=? AND COALESCE(json_extract(data,'$.version'),0)=? AND json_extract(data,'$.token') IS ?")
-      .run(JSON.stringify(next), expected.threadId, expected.version, expected.token);
+    const result = this.records.writeRecords("UPDATE tavern_records SET data=? WHERE kind='awayHolds' AND id=? AND COALESCE(json_extract(data,'$.version'),0)=? AND json_extract(data,'$.token') IS ?",
+      JSON.stringify(next), expected.threadId, expected.version, expected.token);
     return result.changes ? next : null;
   }
   prepareStop(threadId: string): Hold | null {

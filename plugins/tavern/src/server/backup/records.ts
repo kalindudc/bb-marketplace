@@ -6,6 +6,7 @@ import { z } from "zod";
 import { pullRequestSchema } from "../../shared/pull-request";
 import { serviceQuestRecordSchema, serviceVerdictSchema, serviceRecordStateSchema, taleKeepSchema, taleKeepKey } from "../../shared/service-record";
 import type { Database } from "../ports";
+import { databaseConnection } from "../prepared-database";
 import type { SettingsStore } from "../settings/store";
 import { LIMITS } from "../limits";
 import { sparseTunablesSchema } from "../../shared/settings";
@@ -194,7 +195,8 @@ export class BackupRecords {
   private insert(snapshot: RecordsSnapshot) {
     this.db.pragma("defer_foreign_keys = ON");
     for (const [name, table] of Object.entries(snapshot.tables)) {
-      const statement = this.db.prepare(`INSERT INTO ${identifier(name)} (${table.columns.map(identifier).join(",")}) VALUES (${table.columns.map(() => "?").join(",")})`);
+      // Snapshot column orders vary by bundle, not by query shape in Tavern.
+      const statement = databaseConnection(this.db).prepare(`INSERT INTO ${identifier(name)} (${table.columns.map(identifier).join(",")}) VALUES (${table.columns.map(() => "?").join(",")})`);
       for (const row of table.rows) statement.run(...table.columns.map(column => row[column]));
     }
     if (this.db.prepare("PRAGMA foreign_key_check").all().length) throw new Error("Snapshot has invalid journal references");
@@ -202,14 +204,15 @@ export class BackupRecords {
       const updated = this.db.prepare("UPDATE sqlite_sequence SET seq=MAX(COALESCE(seq,0),?) WHERE name=?").run(value, name);
       if (!updated.changes) this.db.prepare("INSERT INTO sqlite_sequence(name,seq) VALUES(?,?)").run(name, value);
     }
-    this.db.prepare("UPDATE tavern_settings SET data=json_set(data,'$.overrides',json(?)) WHERE id=1").run(JSON.stringify(snapshot.overrides));
+    this.settings.restoreOverrides(snapshot.overrides);
     this.db.prepare("UPDATE tavern_insight_meta SET value=? WHERE key='collecting_since'").run(String(snapshot.collectingSince));
   }
   validate(input: unknown) {
     const snapshot = this.checkRows(input);
     if (!this.empty()) return snapshot;
     const rollback = new Error("Rollback snapshot validation");
-    try { this.db.transaction(() => { this.insert(snapshot); migrateMemberEngagement(new KeeperStore(this.db), this.now()); throw rollback; })(); }
+    const store = new KeeperStore(this.db);
+    try { store.atomic(() => { store.importRows(() => this.insert(snapshot)); migrateMemberEngagement(store, this.now()); throw rollback; }); }
     catch (error) { if (error !== rollback) throw error; }
     return snapshot;
   }
@@ -217,11 +220,13 @@ export class BackupRecords {
     const snapshot = this.checkRows(input, this.now());
     this.db.transaction(() => {
       if (!this.empty()) throw new Error("Records restore requires an empty Tavern database");
-      this.insert(snapshot);
-      this.db.exec(JOURNAL_ACTION_PHRASES);
-      if (!this.db.prepare("SELECT 1 FROM tavern_records WHERE kind='attentionSeen' AND id GLOB 'quest-change:[0-9]*' LIMIT 1").get())
-        this.db.exec(SEED_QUEST_CHANGE_SEEN);
       const store = new KeeperStore(this.db);
+      store.importRows(() => {
+        this.insert(snapshot);
+        this.db.exec(JOURNAL_ACTION_PHRASES);
+        if (!this.db.prepare("SELECT 1 FROM tavern_records WHERE kind='attentionSeen' AND id GLOB 'quest-change:[0-9]*' LIMIT 1").get())
+          this.db.exec(SEED_QUEST_CHANGE_SEEN);
+      });
       migrateMemberEngagement(store, this.now());
       for (const ask of store.all("asks")) {
         if (ask.kind !== "conclude" || ask.state !== "withdrawn" || ask.withdrawnCause !== "backup-restored" || !ask.boardQuestId) continue;

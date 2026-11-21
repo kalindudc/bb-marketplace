@@ -164,11 +164,8 @@ export class KeeperMemory {
     return done;
   }
   closeQuest(threadId: string, questId: string) {
-    const result = this.k.store.db
-      .prepare(
-        "UPDATE tavern_records SET data=json_set(data,\'$.state\',\'done\',\'$.doneAt\',?,\'$.updatedAt\',?) WHERE kind=\'notes\' AND json_extract(data,\'$.keeperThreadId\')=? AND json_extract(data,\'$.boardQuestId\')=? AND json_extract(data,\'$.state\')=\'open\' AND json_extract(data,\'$.kind\')<>\'fact\'",
-      )
-      .run(this.k.now(), this.k.now(), threadId, questId);
+    const result = this.k.store.writeRecords("UPDATE tavern_records SET data=json_set(data,'$.state','done','$.doneAt',?,'$.updatedAt',?) WHERE kind='notes' AND json_extract(data,'$.keeperThreadId')=? AND json_extract(data,'$.boardQuestId')=? AND json_extract(data,'$.state')='open' AND json_extract(data,'$.kind')<>'fact'",
+      this.k.now(), this.k.now(), threadId, questId);
     if (result.changes)
       this.k.store.event(
         this.k.now(),

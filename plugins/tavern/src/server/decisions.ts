@@ -30,8 +30,8 @@ export class DecisionViews {
       }
     }
     if (filter.ids) {
-      terms.push(`r.id IN (${filter.ids.map(() => "?").join(",")})`);
-      args.push(...filter.ids);
+      terms.push("r.id IN (SELECT value FROM json_each(?))");
+      args.push(JSON.stringify(filter.ids));
     }
     if (filter.throughId === null) terms.push("0");
     else if (filter.throughId !== undefined) {

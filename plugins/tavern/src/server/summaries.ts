@@ -91,9 +91,9 @@ export function markVisitSummariesSeen(store: KeeperStore, ids: string[], seenAt
 
 export function markSummariesSeen(store: KeeperStore, boardQuestId: string, ids: string[], seenAt: number) {
   return store.atomic(() => {
-    const mark = store.db.prepare(`INSERT OR IGNORE INTO tavern_records(kind,id,data)
+    return store.writeRecords(`INSERT OR IGNORE INTO tavern_records(kind,id,data)
       SELECT 'attentionSeen',id,? FROM tavern_records
-      WHERE kind='summaries' AND json_extract(data,'$.boardQuestId')=? AND id IN (${ids.map(() => "?").join(",")})`);
-    return mark.run(JSON.stringify({ token: store.id("seen"), seenAt }), boardQuestId, ...ids).changes > 0;
+      WHERE kind='summaries' AND json_extract(data,'$.boardQuestId')=? AND id IN (SELECT value FROM json_each(?))`,
+      JSON.stringify({ token: store.id("seen"), seenAt }), boardQuestId, JSON.stringify(ids)).changes > 0;
   });
 }

@@ -68,8 +68,10 @@ it("puts a resting, settled member and its held machine in the ledger and status
 });
 it("uses upgrade time rather than an old report as the rest start and persists it across restart", async () => {
   const f = await fixture();
-  f.k.store.db.prepare("UPDATE tavern_records SET data=json_set(json_remove(data,'$.engagement'),'$.state','done') WHERE kind='members' AND id=?").run(f.m.threadId);
-  f.k.store.db.prepare("UPDATE tavern_runtime SET data=json_remove(data,'$.memberEngagement') WHERE thread_id=?").run(f.m.threadId);
+  f.k.store.importRows(() => {
+    f.k.store.db.prepare("UPDATE tavern_records SET data=json_set(json_remove(data,'$.engagement'),'$.state','done') WHERE kind='members' AND id=?").run(f.m.threadId);
+    f.k.store.db.prepare("UPDATE tavern_runtime SET data=json_remove(data,'$.memberEngagement') WHERE thread_id=?").run(f.m.threadId);
+  });
   f.advance(3 * 60 * 60_000);
   migrateMemberEngagement(f.k.store, f.time());
   const restarted = new TavernRuntime(f.bb, f.k, f.runtime.registry);

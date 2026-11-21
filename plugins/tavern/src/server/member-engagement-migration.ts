@@ -53,7 +53,6 @@ function derive(store: KeeperStore, member: LegacyMember, r: LegacyRuntime, at: 
 export function migrateMemberEngagement(store: KeeperStore, at: number): number {
   return store.atomic(() => {
     let converted = 0;
-    const strip = store.db.prepare(`UPDATE tavern_runtime SET data=json_remove(data,${retiredFields.map(() => "?").join(",")}) WHERE thread_id=?`);
     for (const member of store.all("members") as LegacyMember[]) {
       if (member.engagement !== undefined) continue;
       const state = member.state === "done" || member.state === "stopped" ? "idle" : member.state;
@@ -64,7 +63,7 @@ export function migrateMemberEngagement(store: KeeperStore, at: number): number 
       const next = derive(store, member, store.runtime(member.threadId), at);
       transitionMember(store, member as Member, next.state, "legacy-import", { kind: "tavern" }, { kind: "migration", id: "member-engagement-v1" }, at,
         { details: next.details, patch: { state }, data: { legacyActivity: member.state }, text: "Imported member engagement from the existing record" });
-      strip.run(...retiredFields.map(field => `$.${field}`), member.threadId);
+      store.removeLegacyRuntimeFields(member.threadId, retiredFields);
       converted++;
     }
     return converted;

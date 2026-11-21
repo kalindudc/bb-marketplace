@@ -111,7 +111,7 @@ describe("lasting character service record", () => {
     const f = await fixture();
     f.k.plan("lead", { ...planInput(f.q.id), waypoints: [{ ...planInput(f.q.id).waypoints[0]!, optional: true }] });
     await concludeQuest(f.runtime, "lead", f.q.id, "Nothing needed making", "", [{ waypointId: "w1", reason: "Not needed" }]);
-    f.k.store.db.prepare("DELETE FROM tavern_records WHERE kind LIKE 'service%'").run();
+    f.k.store.importRows(() => f.k.store.db.prepare("DELETE FROM tavern_records WHERE kind LIKE 'service%'").run());
     f.runtime.serviceRecords.backfill();
     expect(f.record("wren").keeper).toEqual({ returnedQuests: 1, verifiedReturns: 0, stoppedQuests: 0, verifiedWaypoints: 0, firstEarnedAt: f.k.quest(f.q.id).endedAt, completeSince: f.time() });
     expect(f.record("wren").completeSince).toBe(f.time());
@@ -154,7 +154,7 @@ describe("lasting character service record", () => {
   });
   it("backfills a legacy stopped quest before a later return without claiming complete history", async () => {
     const f = await fixture(); f.review("verify");
-    f.k.store.db.prepare("DELETE FROM tavern_records WHERE kind LIKE 'service%'").run();
+    f.k.store.importRows(() => f.k.store.db.prepare("DELETE FROM tavern_records WHERE kind LIKE 'service%'").run());
     putQuestFixture(f.k.store, f.q.id, { ...f.k.quest(f.q.id), phase: "stopped", endedAt: f.time() });
     f.advance(1000); const boundary = f.time(); f.runtime.serviceRecords.backfill();
     f.setEntries([]); f.advance(1000);
@@ -285,7 +285,7 @@ describe("lasting character service record", () => {
   });
   it.each([false, true])("keeps supersession sticky through replay, undo and redo (legacy=%s)", async legacy => {
     const f = await fixture(), old = f.review("verify");
-    if (legacy) f.k.store.db.prepare("DELETE FROM tavern_records WHERE kind='serviceVerdicts'").run();
+    if (legacy) f.k.store.importRows(() => f.k.store.db.prepare("DELETE FROM tavern_records WHERE kind='serviceVerdicts'").run());
     f.k.store.db.prepare("INSERT INTO questlog_logs(thread_id) VALUES(?)").run("maker");
     f.k.store.db.prepare("INSERT INTO questlog_history(thread_id,before_data,after_data,action,actor,state) VALUES(?,?,?,?,?,'undo')").run("maker", JSON.stringify([f.entry]), JSON.stringify([old]), "verify", JSON.stringify({ kind: "agent", threadId: "checker" }));
     const at = f.time();
@@ -304,7 +304,7 @@ describe("lasting character service record", () => {
   });
   it("recovers a legacy catch before supersession freezes its verify receipt", async () => {
     const f = await fixture(), rejected = f.review("reject"), fixed = f.fixed(rejected), verified = f.review("verify", fixed);
-    f.k.store.db.prepare("DELETE FROM tavern_records WHERE kind='serviceVerdicts'").run();
+    f.k.store.importRows(() => f.k.store.db.prepare("DELETE FROM tavern_records WHERE kind='serviceVerdicts'").run());
     f.k.store.db.prepare("INSERT INTO questlog_logs(thread_id) VALUES(?)").run("maker");
     const history = f.k.store.db.prepare("INSERT INTO questlog_history(thread_id,before_data,after_data,action,actor,state) VALUES(?,?,?,?,?,'undo')");
     history.run("maker", JSON.stringify([f.entry]), JSON.stringify([rejected]), "reject", JSON.stringify({ kind: "agent", threadId: "checker" }));
@@ -408,7 +408,7 @@ describe("lasting character service record", () => {
   });
   it("backs up legacy returned quests once without double counting surviving entries and stored wins", async () => {
     const f = await fixture(); const verified = f.review("verify");
-    f.k.store.db.prepare("DELETE FROM tavern_records WHERE kind LIKE 'service%'").run();
+    f.k.store.importRows(() => f.k.store.db.prepare("DELETE FROM tavern_records WHERE kind LIKE 'service%'").run());
     f.setEntries([verified, { ...verified, id: "a2" }]);
     f.k.store.put("members", "maker", { ...f.k.member("maker")!, verifiedWins: 1 });
     putQuestFixture(f.k.store, f.q.id, { ...f.k.quest(f.q.id), phase: "done", endedAt: f.time() });
@@ -469,7 +469,7 @@ describe("lasting character service record", () => {
   });
   it("recovers a legacy catch only when the surviving history records the entire rejection, new evidence and verification chain", async () => {
     const f = await fixture(), rejected = f.review("reject"), fixed = f.fixed(rejected), verified = f.review("verify", fixed);
-    f.k.store.db.prepare("DELETE FROM tavern_records WHERE kind LIKE 'service%'").run();
+    f.k.store.importRows(() => f.k.store.db.prepare("DELETE FROM tavern_records WHERE kind LIKE 'service%'").run());
     f.k.store.db.prepare("INSERT INTO questlog_logs(thread_id) VALUES(?)").run("maker");
     const insert = f.k.store.db.prepare("INSERT INTO questlog_history(thread_id,before_data,after_data,action,actor,state) VALUES(?,?,?,?,?,'undo')");
     insert.run("maker", JSON.stringify([f.entry]), JSON.stringify([rejected]), "reject", JSON.stringify({ kind: "agent", threadId: "checker" }));
@@ -492,7 +492,7 @@ describe("lasting character service record", () => {
   });
   it("keeps an undone legacy verdict as withdrawn history without counting it", async () => {
     const f = await fixture(), verified = f.review("verify");
-    f.k.store.db.prepare("DELETE FROM tavern_records WHERE kind LIKE 'service%'").run();
+    f.k.store.importRows(() => f.k.store.db.prepare("DELETE FROM tavern_records WHERE kind LIKE 'service%'").run());
     f.k.store.db.prepare("INSERT INTO questlog_logs(thread_id) VALUES(?)").run("maker");
     f.k.store.db.prepare("INSERT INTO questlog_history(thread_id,before_data,after_data,action,actor,state) VALUES(?,?,?,?,?,'redo')").run("maker", JSON.stringify([f.entry]), JSON.stringify([verified]), "verify", JSON.stringify({ kind: "agent", threadId: "checker" }));
     f.setEntries([f.entry]); putQuestFixture(f.k.store, f.q.id, { ...f.k.quest(f.q.id), phase: "stopped", endedAt: f.time() });

@@ -45,10 +45,11 @@ export function reserveStaffing(
       })),
     };
   }
-  while (allocation.slots.length < capacity)
-    allocation.slots.push({ memberThreadId: null, uses: 0 });
+  const slots = [...allocation.slots];
+  while (slots.length < capacity)
+    slots.push({ memberThreadId: null, uses: 0 });
   const replacements = k.settings(quest.id).keepers.replacementsPerSlot;
-  const slot = allocation.slots
+  const slot = slots
     .slice(0, capacity)
     .findIndex(
       (candidate) =>
@@ -56,7 +57,7 @@ export function reserveStaffing(
     );
   if (
     slot < 0 &&
-    allocation.slots
+    slots
       .slice(0, capacity)
       .some(
         (candidate) =>
@@ -72,9 +73,8 @@ export function reserveStaffing(
     throw new Error(
       `Only ${replacements === 2 ? "two" : replacements} ${replacements === 1 ? "replacement is" : "replacements are"} allowed per party slot per plan version. Re-plan before another ${classId} attempt.`,
     );
-  const previous = allocation.slots[slot]!;
+  const previous = slots[slot]!;
   const reservation = { id, slot, replacement: previous.uses, previous };
-  const slots = [...allocation.slots];
   slots[slot] = { memberThreadId: token, uses: previous.uses + 1 };
   k.store.put("staffing", id, { ...allocation, slots });
   return reservation;

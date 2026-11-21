@@ -13,21 +13,23 @@ import { settingsMutationSchema, settingsViewSchema } from "../../src/shared/set
 
 const cleanup: Array<() => Promise<void>> = [];
 afterEach(async () => { try { for (const dispose of cleanup.splice(0)) await dispose(); } finally { vi.unstubAllEnvs(); } });
-async function fixture(combined = false) {
+async function fixture(combined = false, storedMachines?: unknown) {
   const root = mkdtempSync(join(tmpdir(), "tavern-placement-repair-"));
   vi.stubEnv("HOME", root);
   const f = createFakePluginHost({ pluginId: "tavern", experimental_declaredIconNames: ["tavern"], dataDir: join(root, "data") });
   cleanup.push(async () => { await f.harness.lifecycle.dispose(); rmSync(root, { recursive: true, force: true }); });
-  if (combined) await tavern(f.bb);
   const db = f.bb.storage.database();
-  if (!combined) db.exec(MIGRATIONS.join(";\n"));
+  if (combined) f.bb.storage.migrate(db, MIGRATIONS);
+  else db.exec(MIGRATIONS.join(";\n"));
   const pending = { afterCommit: undefined as (() => void) | undefined };
   const store = new SettingsStore(db, () => 1000, () => { const next = pending.afterCommit; pending.afterCommit = undefined; next?.(); }, () => {});
-  if (!combined) registerSettingsRpc(f.bb, store, new SettingsFiles(store, join(root, "settings.toml")));
   const stored = () => (db.prepare("SELECT revision,data FROM tavern_settings WHERE id=1").get() as { revision: number; data: string });
   const corrupt = (value: unknown) => db.prepare("UPDATE tavern_settings SET data=? WHERE id=1").run(JSON.stringify({
     user: { machines: value, classes: { smith: { model: "unrelated-setting" } } }, pinned: {}, tuned: {}, overrides: {},
   }));
+  if (storedMachines !== undefined) corrupt(storedMachines);
+  if (combined) await tavern(f.bb);
+  else registerSettingsRpc(f.bb, store, new SettingsFiles(store, join(root, "settings.toml")));
   return { ...f, db, store, stored, corrupt, pending,
     view: async () => settingsViewSchema.parse(await f.harness.behavior.callRpc("settings", null)),
     update: async (patch: unknown, revision = store.snapshot().revision) => settingsMutationSchema.parse(await f.harness.behavior.callRpc("settingsUpdate", { revision, patch, why: "Rule edit" })),
@@ -54,9 +56,8 @@ describe("invalid machine policy repair read", () => {
   });
 
   it("survives the SDK's reserved-key output normalization by carrying only JSON text", async () => {
-    const f = await fixture(true);
     const value = JSON.parse('{"rules":[{"id":"bad","target":{"inputs":{"MixedKey":[{"__proto__":{"still":"data"},"constructor":null}]}}}]}');
-    f.corrupt(value);
+    const f = await fixture(true, value);
     const view = await f.view();
     expect(view.placementRawJson).toBe(JSON.stringify(value));
     const restored = JSON.parse(view.placementRawJson!);
@@ -73,7 +74,8 @@ describe("invalid machine policy repair read", () => {
   });
 
   it("keeps the same invalid value through unrelated edits, then clears raw data only after explicit repair", async () => {
-    const f = await fixture(true), value = { maxMakers: 9, rules: "broken" }; f.corrupt(value);
+    const value = { maxMakers: 9, rules: "broken" };
+    const f = await fixture(true, value);
     const unrelated = await f.update({ tavern: { voice: "light" } });
     expect(unrelated).toMatchObject({ code: "ok", settings: { placementPolicy: { state: "invalid", revision: 1 }, placementRawJson: JSON.stringify(value) } });
     const repaired = await f.update({ machines: { rules: [] } });

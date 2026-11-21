@@ -568,10 +568,12 @@ export class TavernRuntime {
   }
   async retryInitialBriefs(keeperId: string) {
     if (this.config().tavern.paused || !isLiveKeeper(this.keeper.store, this.keeper.member(keeperId))) return;
+    const members = () => this.keeper.store.query("members", "keeperThreadId", keeperId, 500);
+    if (!members().some(member => member.role === "member" && memberDetails(this.keeper.store, member.threadId).delivery)) return;
     const host = await this.bb.sdk.threads.get({ threadId: keeperId });
     this.updateThread(host);
     if (!isLiveKeeper(this.keeper.store, this.keeper.member(keeperId))) return;
-    for (const member of this.keeper.store.query("members", "keeperThreadId", keeperId, 500)) {
+    for (const member of members()) {
       const delivery = memberDetails(this.keeper.store, member.threadId).delivery;
       if (member.role !== "member" || !delivery) continue;
       try {
@@ -1647,7 +1649,8 @@ export class TavernRuntime {
     const slot = hirePlan?.party.find(slot => slot.classId === role!.id &&
       (!input.waypointId || slot.waypointIds.includes(input.waypointId) || role.id === "warden" && slot.waypointIds.length === 0) &&
       !occupied.some(member => member.classId === slot.classId && (slot.characterId ? member.characterId === slot.characterId : !!member.waypointId && slot.waypointIds.includes(member.waypointId))));
-    if (role.id === "warden" && slot && reviewTarget && hirePlan && slot.waypointIds.some(id => makerForWaypoint(hirePlan, this.keeper.store.all("members").filter(member => member.boardQuestId === q?.id), id) !== reviewTarget.makerThreadId))
+    const reviewMaker = reviewTarget?.makerThreadId;
+    if (role.id === "warden" && slot && reviewMaker !== undefined && hirePlan && slot.waypointIds.some(id => makerForWaypoint(hirePlan, this.keeper.store.all("members").filter(member => member.boardQuestId === q?.id), id) !== reviewMaker))
       throw new Error("Every waypoint in this Warden slot must name the same maker as its review target. Assign those maker threads first; a different maker needs its own Warden.");
     if (slot?.characterId && input.characterId && slot.characterId !== input.characterId)
       throw new Error(`This plan slot requires character ${slot.characterId}; propose a new plan to change it.`);
@@ -1760,7 +1763,10 @@ export class TavernRuntime {
           : await this.scopes.checkerChecks(maker?.environmentId ?? null, checkerCommands);
         scopeResolution.scope.checks = checking.checks;
         scopeResolution.problems.push(...checking.problems);
-        if (reviewTarget) reviewTarget.checks = checking.checks;
+        if (reviewTarget) {
+          reviewTarget = { ...reviewTarget, checks: checking.checks };
+          owner.reviewTarget = reviewTarget;
+        }
         brief += reviewTarget?.snapshotId
           ? `\nTrusted checker execution:\n${JSON.stringify(checking.checks, null, 2)}\nRun checks in your own checkout, using the cwd returned by tavern_ready. The pinned submitted tree is ${reviewTarget.expectedTree}, snapshot ${reviewTarget.snapshotId}. Default test/check/lint/typecheck runners accepted by the checker preset need no tool-name widening or user-run workaround. Additional commands above are verbatim from this plan, not the brief. The observed checker posture is shown once the machine is ready; use the posture returned by tavern_ready. Tracked files, Git metadata, publishing and network writes remain protected.`
           : `\nTrusted checker execution:\n${JSON.stringify(checking.checks, null, 2)}\nDefault test/check/lint/typecheck runners accepted by the checker preset need no tool-name widening or user-run workaround. Additional commands above are verbatim from this plan, not the brief. Run checks inside the exact maker worktree (or change to it first), never the Warden/Keeper checkout. Tracked files, Git metadata, publishing and network writes remain protected.`;
@@ -2812,7 +2818,7 @@ export class TavernRuntime {
     const verified = summary.waypoints.filter(verifiedWaypoint);
     const skipped = summary.waypoints.flatMap(w => w.state === "skipped" && w.resolutionReason ? [{ waypointId: w.id, reason: w.resolutionReason }] : []);
     const at = k.now();
-    k.store.db.prepare("UPDATE tavern_records SET data=json_set(data,'$.cancelledAt',?) WHERE kind='hires' AND json_extract(data,'$.owner.boardQuestId')=?").run(at, id);
+    k.store.cancelQuestHires(id, at);
     for (const m of summary.members) {
       this.queueMemberArchive(m, "Archive returned party", { kind: "archive-authority", id: ask.id, evidence: { cause: effect.type, optionId, authority } }, { kind: "user" }, true);
       if (wasReleased(m) || m.state === "failed" || m.engagement === "stopped" || m.disposition === "stopped") continue;

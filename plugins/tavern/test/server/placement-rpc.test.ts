@@ -20,7 +20,7 @@ const providerRule = placementRuleSchema.parse({ ...current, id: "provider", tar
   kind: "provider", environmentProviderId: "vendor", machine: { type: "keeper" }, workspace: "linked-worktree",
 } });
 const input: PlacementPreviewInput = { projectId: "project", keeperThreadId: "lead", keeperPath: null, classId: "ranger", questId: null };
-function fixture() {
+function fixture(storedMachines?: unknown) {
   const environment = worktreeProvider({ id: "vendor", displayName: "Vendor workspace", description: "Provider description", inputs: { type: "object", properties: { zone: { type: "string" } } } });
   const f = setup({
     projects: { list: async () => [project], get: async () => project },
@@ -28,6 +28,8 @@ function fixture() {
     hosts: { list: async () => [{ id: "host", name: "Main", status: "connected" }], experimental_listProviders: async () => [] },
   });
   const settings = new SettingsStore(f.k.store.db, f.time);
+  if (storedMachines !== undefined)
+    f.k.store.db.prepare("UPDATE tavern_settings SET data=json_set(data,'$.user.machines',json(?)) WHERE id=1").run(JSON.stringify(storedMachines));
   f.runtime.enableSettings(settings, new InsightsReader(f.k.store.db, settings, f.time));
   registerRpc(f.bb, f.runtime);
   const rules = (values: typeof current[]) => settings.update({ revision: settings.snapshot().revision, patch: { machines: { rules: values } }, why: "Preview configuration" });
@@ -164,8 +166,7 @@ describe("placement reads through the registered RPC contract", () => {
   });
 
   it("blocks present-invalid policy and still returns the exact revision and problems", async () => {
-    const f = fixture();
-    f.k.store.db.prepare("UPDATE tavern_settings SET data=json_set(data,'$.user.machines',json(?)) WHERE id=1").run(JSON.stringify({ rules: "broken" }));
+    const f = fixture({ rules: "broken" });
     expect(await f.preview()).toMatchObject({ verdict: { state: "blocked", code: "invalid-machine-policy", problems: expect.arrayContaining([expect.objectContaining({ path: expect.any(String) })]) } });
     expectNoAllocation(f);
   });

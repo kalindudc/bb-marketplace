@@ -4,6 +4,8 @@ import { settingsSchema, settingsPatchSchema, settingsUpdateSchema, sparseTunabl
   TUNABLE_KEYS, TUNABLES, QUEST_TUNABLE_KEYS, type SettingsPatch, type SettingsUpdate, type SettingsEvidence, type SettingsSnapshot,
   type SparseTunables, type TunableKey, type SettingDecision, type SettingsChange, type TuningSuggestion, type TavernSettings } from "../../shared/settings";
 import type { Database } from "../ports";
+import { freezeJson } from "../freeze-json";
+import { databaseConnection } from "../prepared-database";
 import { LIMITS } from "../limits";
 import { readStored } from "./stored";
 import { placementSettingsSchema, settingsJsonValueSchema, type PlacementPolicyRead } from "../../shared/placement-settings";
@@ -120,8 +122,12 @@ export class SettingsConflict extends Error {
   readonly code = "stale";
   constructor(readonly revision: number) { super("Settings changed. Refresh the preview before applying it."); }
 }
+const versions = new WeakMap<Database, { value: number }>();
+
 export class SettingsStore {
-  private cached: { raw: string; value: State; policy: PlacementPolicyRead; machine: { value: unknown } | null; readable: boolean } | undefined;
+  private readonly version: { value: number };
+  private cached?: { revision: number; version: number; value: State; policy: PlacementPolicyRead; machine: { value: unknown } | null; readable: boolean;
+    effective: TavernSettings; overrides: Map<string, TavernSettings> };
   private notificationDepth = 0;
   private pendingNotification = false;
   private readonly warned = new Set<string>();
@@ -133,6 +139,9 @@ export class SettingsStore {
   private validate: (settings: TavernSettings) => void = () => {};
   setValidator(validate: (settings: TavernSettings) => void) { this.validate = validate; }
   constructor(readonly db: Database, readonly now = Date.now, private readonly changed: () => void = () => {}, private readonly warning: (message: string) => void = message => console.warn(message)) {
+    const connection = databaseConnection(db);
+    this.version = versions.get(connection) ?? { value: 0 };
+    versions.set(connection, this.version);
     db.prepare("INSERT INTO tavern_settings(id,revision,data) VALUES(1,0,?) ON CONFLICT(id) DO NOTHING")
       .run(JSON.stringify({ user: {}, pinned: {}, tuned: {}, overrides: {} }));
     db.prepare("INSERT INTO tavern_insight_meta(key,value) VALUES('collecting_since',?) ON CONFLICT(key) DO NOTHING").run(String(now()));
@@ -156,41 +165,47 @@ export class SettingsStore {
     else this.changed();
   }
   private state() {
+    if (this.cached?.version === this.version.value) return this.cached;
     const row = this.db.prepare("SELECT revision,data FROM tavern_settings WHERE id=1").get() as { revision: number; data: string };
-    let cached = this.cached;
-    if (!cached || cached.raw !== row.data) {
-      const raw = this.json(row.data, "settings"), value: Record<string, unknown> = { user: {}, pinned: {}, tuned: {}, overrides: {} };
-      const readable = record(raw) && (raw.user === undefined || record(raw.user));
-      const user = record(raw) && record(raw.user) ? raw.user : {};
-      const machine = own(user, "machines") ? { value: user.machines } : null;
-      let policy: PlacementPolicyRead;
-      if (!readable) policy = { state: "invalid", revision: row.revision,
-        problems: [{ path: "machines", message: "Stored settings are unreadable. Load a valid replacement before placing members." }] };
-      else {
-        const parsed = placementSettingsSchema.safeParse(machine === null ? {} : machine.value);
-        policy = parsed.success ? { state: "valid", revision: row.revision, settings: parsed.data }
-          : { state: "invalid", revision: row.revision, problems: parsed.error.issues.slice(0, 50).map(issue => ({
-            path: ["machines", ...issue.path].join(".").slice(0, 500), message: issue.message.slice(0, 1000),
-          })) };
-      }
-      if (record(raw)) {
-        for (const [key, item] of Object.entries(raw)) {
-          if (!own(stateSchema.shape, key)) { this.warn(`Tavern ignored obsolete stored setting ${key}; defaults or inheritance apply.`); continue; }
-          const parsed = readStored(stateSchema.shape[key as keyof typeof stateSchema.shape], item, key, this.warn);
-          if (parsed !== undefined) value[key] = parsed;
-        }
-      } else this.warn("Tavern ignored invalid stored settings; defaults apply.");
-      const parsed = stateSchema.parse(value);
-      if (machine !== null && policy.state === "valid") {
-        try { encodeSettingsToml(parsed, true); }
-        catch (error) { policy = { state: "invalid", revision: row.revision, problems: [{ path: "machines",
-          message: error instanceof Error ? error.message : String(error) }] }; }
-      }
-      if (policy.state === "invalid") this.warn("Tavern machine placement is blocked by invalid stored policy; other settings remain available.");
-      cached = { raw: row.data, value: parsed, policy, machine, readable }; this.cached = cached;
+    const raw = this.json(row.data, "settings"), value: Record<string, unknown> = { user: {}, pinned: {}, tuned: {}, overrides: {} };
+    const readable = record(raw) && (raw.user === undefined || record(raw.user));
+    const user = record(raw) && record(raw.user) ? raw.user : {};
+    const machine = own(user, "machines") ? { value: user.machines } : null;
+    let policy: PlacementPolicyRead;
+    if (!readable) policy = { state: "invalid", revision: row.revision,
+      problems: [{ path: "machines", message: "Stored settings are unreadable. Load a valid replacement before placing members." }] };
+    else {
+      const parsed = placementSettingsSchema.safeParse(machine === null ? {} : machine.value);
+      policy = parsed.success ? { state: "valid", revision: row.revision, settings: parsed.data }
+        : { state: "invalid", revision: row.revision, problems: parsed.error.issues.slice(0, 50).map(issue => ({
+          path: ["machines", ...issue.path].join(".").slice(0, 500), message: issue.message.slice(0, 1000),
+        })) };
     }
-    return { revision: row.revision, value: cached.value, policy: { ...cached.policy, revision: row.revision } as PlacementPolicyRead,
-      machine: cached.machine, readable: cached.readable };
+    if (record(raw)) {
+      for (const [key, item] of Object.entries(raw)) {
+        if (!own(stateSchema.shape, key)) { this.warn(`Tavern ignored obsolete stored setting ${key}; defaults or inheritance apply.`); continue; }
+        const parsed = readStored(stateSchema.shape[key as keyof typeof stateSchema.shape], item, key, this.warn);
+        if (parsed !== undefined) value[key] = parsed;
+      }
+    } else this.warn("Tavern ignored invalid stored settings; defaults apply.");
+    const parsed = stateSchema.parse(value);
+    if (machine !== null && policy.state === "valid") {
+      try { encodeSettingsToml(parsed, true); }
+      catch (error) { policy = { state: "invalid", revision: row.revision, problems: [{ path: "machines",
+        message: error instanceof Error ? error.message : String(error) }] }; }
+    }
+    if (policy.state === "invalid") this.warn("Tavern machine placement is blocked by invalid stored policy; other settings remain available.");
+    const state = freezeJson({ revision: row.revision, version: this.version.value, value: parsed, policy, machine, readable,
+      effective: effectiveSettings(parsed),
+      overrides: new Map<string, TavernSettings>(),
+    });
+    // An enclosing savepoint may still roll back the row we just read.
+    if (!this.db.inTransaction) this.cached = state;
+    return state;
+  }
+  restoreOverrides(overrides: State["overrides"]) {
+    this.db.prepare("UPDATE tavern_settings SET data=json_set(data,'$.overrides',json(?)) WHERE id=1").run(JSON.stringify(overrides));
+    this.version.value++;
   }
   placementPolicy(): PlacementPolicyRead { return structuredClone(this.state().policy); }
   placementRepair(): { placementPolicy: PlacementPolicyRead; placementRawJson: string | null } {
@@ -199,13 +214,18 @@ export class SettingsStore {
       placementRawJson: policy.state === "invalid" && machine !== null ? JSON.stringify(machine.value) : null };
   }
   read(questId?: string | null) {
-    const { value } = this.state();
-    return effectiveSettings(value, questId ? value.overrides[questId] : undefined);
+    const state = this.state();
+    if (!questId || !own(state.value.overrides, questId)) return state.effective;
+    let effective = state.overrides.get(questId);
+    if (!effective) {
+      effective = freezeJson(effectiveSettings(state.value, state.value.overrides[questId]));
+      state.overrides.set(questId, effective);
+    }
+    return effective;
   }
   patchSnapshot() {
-    const { revision, value, policy } = this.state();
-    return { revision, user: value.user, pinned: value.pinned, tuned: value.tuned,
-      effective: effectiveSettings(value), placementPolicy: policy };
+    const { revision, value, policy, effective } = this.state();
+    return { revision, user: value.user, pinned: value.pinned, tuned: value.tuned, effective, placementPolicy: policy };
   }
   hasUser(path: string) { return own(flatten(this.state().value.user), path); }
   private decision(row: ChangeRow, state: State, policyInvalid = false): SettingDecision {
@@ -264,6 +284,7 @@ export class SettingsStore {
         .run(id, at, by, why, evidence === null ? null : JSON.stringify(evidence), questId, threadId,
           JSON.stringify(changes), JSON.stringify({ changes: undo, reversible: reversible && !repaired } satisfies UndoData));
       this.db.prepare("UPDATE tavern_settings SET revision=revision+1,data=? WHERE id=1").run(JSON.stringify(persisted));
+      this.version.value++;
       const row = this.db.prepare("SELECT * FROM tavern_setting_changes WHERE id=?").get(id) as ChangeRow;
       return this.decision(row, parsed, current.policy.state === "invalid" && !repairMachines);
     })();

@@ -63,7 +63,7 @@ async function fixture() {
         if (kind === "members" && key === "engagement" && value.role !== "keeper") continue;
         if (field instanceof z.ZodOptional) delete value[key];
       }
-      db.prepare("UPDATE tavern_records SET data=? WHERE kind=? AND id=?").run(JSON.stringify(value), kind, row.id);
+      k.store.writeRecords("UPDATE tavern_records SET data=? WHERE kind=? AND id=?", JSON.stringify(value), kind, row.id);
     }
   }
   return { ...f, k, q, ask, decision, rule, route, report };

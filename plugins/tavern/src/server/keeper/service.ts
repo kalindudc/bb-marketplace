@@ -1072,7 +1072,7 @@ export class Keeper {
       };
       const withdrawnAskIds = (this.store.db.prepare("SELECT id FROM tavern_records WHERE kind='asks' AND json_extract(data,'$.keeperThreadId')=? AND json_extract(data,'$.boardQuestId')=? AND json_extract(data,'$.state')='open'").all(quest.keeperThreadId, id) as { id: string }[]).map(ask => ask.id);
       const stopped = transitionQuest(this.store, quest, "stopping", "stop", { kind: "user" }, { kind: "user-act", id: this.store.id("act"), surface, at }, at, { patch: stopPatch, text: "Stop requested for every party member", data: { reason: stopReason, withdrawnAskIds } });
-      this.store.db.prepare("UPDATE tavern_records SET data=json_set(data,\'$.cancelledAt\',?) WHERE kind=\'hires\' AND json_extract(data,\'$.owner.boardQuestId\')=?").run(at, id);
+      this.store.cancelQuestHires(id, at);
       const request = this.store.latestQuestEvent(id, "quest.stopping")!;
       for (const member of this.store.query("members", "boardQuestId", id, 500)) {
         if (!["briefing", "active", "resting", "releasing"].includes(member.engagement ?? "")) continue;

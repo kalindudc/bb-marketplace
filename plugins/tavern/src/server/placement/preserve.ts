@@ -72,7 +72,7 @@ export class PlacementPreservation {
 
   private saveManifest(manifest: SavedManifest): void {
     const parsed = savedManifestSchema.parse(manifest);
-    this.keepers.db.prepare("INSERT INTO tavern_records(kind,id,data) VALUES('placementArtifactManifests',?,?) ON CONFLICT(kind,id) DO UPDATE SET data=excluded.data").run(parsed.id, JSON.stringify(parsed));
+    this.keepers.writeRecords("INSERT INTO tavern_records(kind,id,data) VALUES('placementArtifactManifests',?,?) ON CONFLICT(kind,id) DO UPDATE SET data=excluded.data", parsed.id, JSON.stringify(parsed));
   }
 
   observeLoss(threadId: string, reason: string): void {

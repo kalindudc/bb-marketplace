@@ -98,6 +98,17 @@ describe("Warden checker scope at strict-host hire", () => {
     expect(f.spawnedBrief()).toMatch(/maker.*worktree.*unavailable|missing.*maker.*root/i);
     expect(f.k.store.openAsks("lead").filter(ask => ["scope", "blocker"].includes(ask.kind))).toEqual([]);
   });
+  it("persists an unplaced Warden's checks for a cold scope rewrite", async () => {
+    const f = await fixture();
+    const member = await f.runtime.hire("lead", "project", f.input);
+    const expected = { worktree: f.makerRoot, commands: ["npm test", "./bin/check-duration --strict", "node --test"] };
+    const stored = f.k.store.runtime(member.threadId).reviewTarget;
+    expect(stored?.snapshotId).toBeFalsy();
+    expect.soft(stored?.checks).toEqual(expected);
+    f.runtime.scopes!.api.clearScope(member.threadId);
+    await f.runtime.scopes!.ensure(member);
+    expect(f.scope()).toMatchObject({ preset: "checker", checks: expected });
+  });
   it("retains the maker binding through rebind, narrowing and cold scope recovery", async () => {
     const f = await fixture();
     const member = await f.runtime.hire("lead", "project", f.input);

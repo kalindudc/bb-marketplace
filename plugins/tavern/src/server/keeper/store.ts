@@ -6,6 +6,8 @@ import { liveMemberSql } from "../liveness";
 import { nonAlertEventSql } from "../news";
 import { consumesMemberWrite, type MemberEngagementData } from "../member-engagement";
 import type { Database } from "../ports";
+import { freezeJson } from "../freeze-json";
+import { databaseConnection } from "../prepared-database";
 import type { ProjectContext, Scope, ScopeOverride, ScopeResolution, Violation } from "../../scope";
 import type {
   Actor,
@@ -312,11 +314,55 @@ import { legacyAskEffect } from "../ask-effects";
 import { consumesQuestWrite } from "./quest-lifecycle";
 import { undoAskProjection } from "../undo-record";
 
+type StoreView = {
+  records: Map<string, Map<string, unknown>>;
+  members?: Map<string, Member>;
+  runtime: Map<string, { value: Runtime; json: string }>;
+};
+const views = new WeakMap<Database, StoreView>();
+
 export class KeeperStore {
+  private readonly view: StoreView;
   log?: (level: "info" | "warn", message: string) => void;
   /** Set by the runtime: fires after an event is appended, so news can wake the Keeper it belongs to. */
   onEvent?: (event: { keeperThreadId: string | null; boardQuestId: string | null; type: string; data: Record<string, unknown>; actor: Actor }) => void;
-  constructor(readonly db: Database) {}
+  constructor(readonly db: Database) {
+    const connection = databaseConnection(db);
+    let view = views.get(connection);
+    if (!view) {
+      view = { records: new Map(), runtime: new Map() };
+      views.set(connection, view);
+    }
+    this.view = view;
+  }
+  private rememberRecord(kind: string, id: string, value: unknown) {
+    let rows = this.view.records.get(kind);
+    if (!rows) { rows = new Map(); this.view.records.set(kind, rows); }
+    rows.set(id, value);
+  }
+  private forgetRecords(kind: string) {
+    this.view.records.delete(kind);
+    if (kind === "members") this.view.members = undefined;
+  }
+  writeRecords(sql: string, ...args: unknown[]) {
+    const rows = this.db.prepare(`${sql} RETURNING kind`).all(...args) as { kind: string }[];
+    for (const kind of new Set(rows.map(row => row.kind))) this.forgetRecords(kind);
+    return { changes: rows.length };
+  }
+  cancelQuestHires(questId: string, at: number) {
+    this.writeRecords("UPDATE tavern_records SET data=json_set(data,'$.cancelledAt',?) WHERE kind='hires' AND json_extract(data,'$.owner.boardQuestId')=?", at, questId);
+  }
+  importRows<T>(write: () => T): T {
+    this.view.records.clear();
+    this.view.runtime.clear();
+    this.view.members = undefined;
+    return write();
+  }
+  removeLegacyRuntimeFields(threadId: string, fields: readonly string[]) {
+    this.db.prepare(`UPDATE tavern_runtime SET data=json_remove(data,${fields.map(() => "?").join(",")}) WHERE thread_id=?`)
+      .run(...fields.map(field => `$.${field}`), threadId);
+    this.view.runtime.delete(threadId);
+  }
   id(prefix: string) {
     return `${prefix}_${randomUUID()}`;
   }
@@ -330,10 +376,17 @@ export class KeeperStore {
     return record;
   }
   get<K extends keyof Records>(kind: K, id: string): Records[K] | null {
-    const row = this.db
-      .prepare("SELECT data FROM tavern_records WHERE kind=? AND id=?")
-      .get(kind, id) as { data: string } | undefined;
-    return row === undefined ? null : (this.decode(kind, row.data));
+    if (kind === "members" && this.view.members) return (this.view.members.get(id) ?? null) as Records[K] | null;
+    const cached = this.view.records.get(kind)?.get(id);
+    if (cached !== undefined) return cached as Records[K];
+    const row = this.db.prepare("SELECT data FROM tavern_records WHERE kind=? AND id=?").get(kind, id) as { data: string } | undefined;
+    if (row === undefined) return null;
+    const value = JSON.parse(row.data) as Records[K];
+    // Legacy asks derive an effect from other rows that can change independently.
+    if (kind === "asks" && (!(value as Ask).effect || (value as Ask).reversible === undefined)) return freezeJson(this.decode(kind, row.data));
+    const immutable = freezeJson(value);
+    if (!this.db.inTransaction) this.rememberRecord(kind, id, immutable);
+    return immutable;
   }
   query<K extends keyof Records>(
     kind: K,
@@ -420,9 +473,9 @@ export class KeeperStore {
     const ids = [...new Set(threadIds)].slice(0, 500);
     const rows = this.db
       .prepare(
-        `SELECT data FROM tavern_records WHERE kind='scopeViolations' AND json_extract(data,'$.threadId') IN (${ids.map(() => "?").join(",")}) ORDER BY rowid DESC LIMIT 100`,
+        `SELECT data FROM tavern_records WHERE kind='scopeViolations' AND json_extract(data,'$.threadId') IN (SELECT value FROM json_each(?)) ORDER BY rowid DESC LIMIT 100`,
       )
-      .all(...ids) as { data: string }[];
+      .all(JSON.stringify(ids)) as { data: string }[];
     return rows.map((row) => JSON.parse(row.data) as Violation).reverse();
   }
   pendingScopeRequests(keeperThreadId: string) {
@@ -717,18 +770,26 @@ export class KeeperStore {
     return row ? (JSON.parse(row.data) as TickBatch) : null;
   }
   remove(kind: keyof Records, id: string) {
-    this.db
-      .prepare("DELETE FROM tavern_records WHERE kind=? AND id=?")
-      .run(kind, id);
+    this.db.prepare("DELETE FROM tavern_records WHERE kind=? AND id=?").run(kind, id);
+    this.view.records.get(kind)?.delete(id);
+    // Only publish committed rows: a savepoint can undo this removal.
+    if (kind === "members") this.view.members = undefined;
   }
   all<K extends keyof Records>(kind: K): Records[K][] {
-    return (
-      this.db
-        .prepare("SELECT data FROM tavern_records WHERE kind=? ORDER BY rowid")
-        .all(kind) as {
-        data: string;
-      }[]
-    ).map((row) => this.decode(kind, row.data));
+    if (kind === "members") {
+      let members = this.view.members;
+      if (!members) {
+        const rows = this.db.prepare("SELECT id,data FROM tavern_records WHERE kind=? ORDER BY rowid").all(kind) as { id: string; data: string }[];
+        members = new Map(rows.map(row => [row.id, freezeJson(this.decode("members", row.data))]));
+        if (!this.db.inTransaction) {
+          this.view.members = members;
+          this.view.records.delete("members");
+        }
+      }
+      return [...members.values()] as Records[K][];
+    }
+    const rows = this.db.prepare("SELECT data FROM tavern_records WHERE kind=? ORDER BY rowid").all(kind) as { data: string }[];
+    return rows.map(row => this.decode(kind, row.data));
   }
   put<K extends keyof Records>(kind: K, id: string, data: Records[K]) {
     if (kind === "members") {
@@ -746,25 +807,31 @@ export class KeeperStore {
       }
       if ((!previous || previous.phase !== (data as BoardQuest).phase || JSON.stringify(previous.held) !== JSON.stringify((data as BoardQuest).held)) && !authorised) throw new Error("Quest phase writes require the quest lifecycle");
     }
-    this.db
-      .prepare(
-        "INSERT INTO tavern_records(kind,id,data,archived_at) VALUES(?,?,?,?) ON CONFLICT(kind,id) DO UPDATE SET data=excluded.data,archived_at=excluded.archived_at",
-      )
-      .run(
-        kind,
-        id,
-        JSON.stringify(data),
-        kind === "quests" ? ((data as BoardQuest).archivedAt ?? null) : null,
-      );
+    const json = JSON.stringify(data);
+    this.db.prepare(
+      "INSERT INTO tavern_records(kind,id,data,archived_at) VALUES(?,?,?,?) ON CONFLICT(kind,id) DO UPDATE SET data=excluded.data,archived_at=excluded.archived_at",
+    ).run(kind, id, json, kind === "quests" ? ((data as BoardQuest).archivedAt ?? null) : null);
+    this.view.records.get(kind)?.delete(id);
+    if (this.db.inTransaction) {
+      if (kind === "members") this.view.members = undefined;
+    } else {
+      const value = freezeJson(JSON.parse(json) as Records[K]);
+      if (kind === "members" && this.view.members) this.view.members.set(id, value as Member);
+      else if (kind !== "asks" || (value as Ask).effect && (value as Ask).reversible !== undefined) this.rememberRecord(kind, id, value);
+    }
     return data;
   }
+  private runtimeRow(threadId: string) {
+    const cached = this.view.runtime.get(threadId);
+    if (cached) return cached;
+    const row = this.db.prepare("SELECT data FROM tavern_runtime WHERE thread_id=?").get(threadId) as { data: string } | undefined;
+    if (!row) return null;
+    const result = { value: freezeJson({ ...initialRuntime(), ...(JSON.parse(row.data) as Runtime) }), json: row.data };
+    if (!this.db.inTransaction) this.view.runtime.set(threadId, result);
+    return result;
+  }
   runtime(threadId: string): Runtime {
-    const row = this.db
-      .prepare("SELECT data FROM tavern_runtime WHERE thread_id=?")
-      .get(threadId) as { data: string } | undefined;
-    return row === undefined
-      ? initialRuntime()
-      : { ...initialRuntime(), ...(JSON.parse(row.data) as Runtime) };
+    return this.runtimeRow(threadId)?.value ?? freezeJson(initialRuntime());
   }
   pullRequestsForMember(threadId: string): PullRequest[] {
     return this.all("pullRequests").filter(pr => pr.memberThreadId === threadId || pr.owner === threadId);
@@ -804,12 +871,15 @@ export class KeeperStore {
       this.changePullRequest({ ...pr, owner: member.keeperThreadId }, at);
   }
   patch(threadId: string, patch: Partial<Runtime>) {
-    const data = { ...this.runtime(threadId), ...patch };
-    this.db
-      .prepare(
-        "INSERT INTO tavern_runtime(thread_id,data) VALUES(?,?) ON CONFLICT(thread_id) DO UPDATE SET data=excluded.data",
-      )
-      .run(threadId, JSON.stringify(data));
+    const current = this.runtimeRow(threadId);
+    const data = { ...(current?.value ?? initialRuntime()), ...patch };
+    const json = JSON.stringify(data);
+    if (current?.json === json) return data;
+    this.db.prepare(
+      "INSERT INTO tavern_runtime(thread_id,data) VALUES(?,?) ON CONFLICT(thread_id) DO UPDATE SET data=excluded.data",
+    ).run(threadId, json);
+    if (this.db.inTransaction) this.view.runtime.delete(threadId);
+    else this.view.runtime.set(threadId, { value: freezeJson({ ...initialRuntime(), ...JSON.parse(json) as Runtime }), json });
     return data;
   }
   atomic<T>(fn: () => T): T {

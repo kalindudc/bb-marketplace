@@ -18,9 +18,11 @@ const hire = {
   classId: "ranger", title: "Scout", errand: true,
   brief: { outcome: "Read", mode: "make-it-work" as const, outOfScope: "", doneWhen: "Read", context: [], questions: ["What exists?"], timeboxMinutes: 1 },
 };
-function fixture(sdkOverrides: Record<string, unknown> = {}) {
+function fixture(sdkOverrides: Record<string, unknown> = {}, storedMachines?: unknown) {
   const f = setup(sdkOverrides);
   const settings = new SettingsStore(f.k.store.db, f.time);
+  if (storedMachines !== undefined)
+    f.k.store.db.prepare("UPDATE tavern_settings SET data=json_set(data,'$.user.machines',json(?)) WHERE id=1").run(JSON.stringify(storedMachines));
   f.runtime.enableSettings(settings, new InsightsReader(f.k.store.db, settings, f.time));
   return { ...f, settings };
 }
@@ -40,9 +42,7 @@ describe("inert machine placement foundation", () => {
   });
 
   it("blocks a present-corrupt policy even though ordinary settings remain readable", async () => {
-    const f = fixture();
-    f.k.store.db.prepare("UPDATE tavern_settings SET data=json_set(data,'$.user.machines',json(?)) WHERE id=1")
-      .run(JSON.stringify({ rules: "corrupt" }));
+    const f = fixture({}, { rules: "corrupt" });
     expect(f.settings.read().machines.rules).toEqual([]);
     expect(f.settings.placementPolicy().state).toBe("invalid");
     const spawn = vi.spyOn(f.bb.sdk.threads, "spawn");

@@ -315,7 +315,7 @@ export class AwayRuntime {
   notified(key: string) { return !!this.k.store.db.prepare("SELECT 1 FROM tavern_records WHERE kind='awayWakes' AND id=?").get(key); }
   markNotified(key: string) {
     if (!key.startsWith("away_")) return;
-    this.k.store.db.prepare("INSERT OR IGNORE INTO tavern_records(kind,id,data) VALUES('awayWakes',?,?)").run(key, JSON.stringify({ at: this.k.now() }));
+    this.k.store.writeRecords("INSERT OR IGNORE INTO tavern_records(kind,id,data) VALUES('awayWakes',?,?)", key, JSON.stringify({ at: this.k.now() }));
   }
   private async refreshLocalScopes() {
     const scopes = this.runtime.scopes;
