@@ -9,7 +9,7 @@ import { CheckerHold } from "./hold";
 import { NeedAction, NeedCard } from "./need-card";
 import { jumpTo } from "./rail";
 
-export const KIND: Record<Ask["kind"], string> = { greenlight: "greenlight", decision: "decision", conclude: "conclude", production: "production", "cluster-write": "cluster write", merge: "merge", destructive: "destructive", "sends-as-you": "sends as you", blocker: "blocker", credential: "credential", scope: "scope change" };
+export const KIND: Record<Ask["kind"], string> = { greenlight: "greenlight", decision: "decision", conclude: "conclude", production: "production", "cluster-write": "cluster write", merge: "merge", destructive: "destructive", "sends-as-you": "sends as you", "drafts-as-you": "draft as you", blocker: "blocker", credential: "credential", scope: "scope change" };
 export function heldTitles(ask: Ask, quest: BoardQuestSummary | null | undefined) { return ask.holds.map((id) => quest?.waypoints.find((w) => w.id === id)?.title ?? "Unlisted waypoint"); }
 
 function useWide(query: string) {

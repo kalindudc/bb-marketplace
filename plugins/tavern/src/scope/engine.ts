@@ -3,6 +3,9 @@ import { agentProgram, bbPositionals, nestedCommands } from "./legacy";
 import { actsForCommand, baselineHolds, isCatalogueRule, closingAct, fallbackActs, fallbackPullRequestRoute, pullRequestRoute, readerNeedsDecision, userControl, kubectlRead, type Act, type ActKind } from "./acts";
 import { actAskKind } from "./act-routing";
 import { shellGrantTarget, type ShellGrantProjection } from "./shell-grants";
+import { namedCommunication } from "./communication";
+import { shellCommunication } from "./shell-communication";
+import type { CommunicationPreview } from "../shared/communication";
 import { readerFallback } from "./worktree";
 import { checkInvocation } from "./checker";
 import { glob, isSink, normalizeToolPath, within, writeAllowed, writeDenied } from "./paths";
@@ -12,7 +15,7 @@ import { draftEditKey, githubApiRead } from "./github";
 import { prCommandDigest, pullRequestOwned } from "./pr-policy";
 import { commandWritePaths, knownWritePaths, ruleMatches, shellCommands, type ShellCommand } from "./shell";
 
-export interface ScopeCall { clusterWriteApproved?: boolean; clusterObservation?: string; containment?: "sandbox"; fetchWriteRoots?: string[]; kind: "tool" | "bash" | "write" | "read"; toolName: string; input: Record<string, unknown>; cwd: string; resolvedPaths?: Record<string, string>; pushTargets?: Record<string, string[]>; pushHeads?: Record<string, string>; gitRoots?: Record<string, string>; directories?: string[]; ownedDraftPrs?: string[]; ownedPrs?: string[]; questOwnedPrs?: string[]; observationId?: string; shellGrants?: readonly ShellGrantProjection[]; prGrantAvailable?(id: string): boolean }
+export interface ScopeCall { draftApproved?: boolean; clusterWriteApproved?: boolean; clusterObservation?: string; containment?: "sandbox"; fetchWriteRoots?: string[]; kind: "tool" | "bash" | "write" | "read"; toolName: string; input: Record<string, unknown>; cwd: string; resolvedPaths?: Record<string, string>; pushTargets?: Record<string, string[]>; pushHeads?: Record<string, string>; gitRoots?: Record<string, string>; directories?: string[]; ownedDraftPrs?: string[]; ownedPrs?: string[]; questOwnedPrs?: string[]; observationId?: string; shellGrants?: readonly ShellGrantProjection[]; prGrantAvailable?(id: string): boolean }
 export type Decision = { allow: true; check?: boolean; acts?: Act[]; prGrant?: string; shellGrant?: string } | { allow: false; ruleId: string; reason: string; act?: ActKind };
 const allowed: Decision = { allow: true };
 export const BLOCK_MARKER = "[Tavern scope blocked]";
@@ -27,8 +30,10 @@ function blockedAct(what: string, act: Act, ruleId = act.ruleId): Decision {
   const why = ruleId === "pr-sends-as-you" ? " " + act.why : "";
   return { allow: false, act: act.kind, ruleId, reason: `${HELD_MARKER}${act.kind}. This needs a ${ask} ask. Nothing was done. ${keepWorking} Held command: ${JSON.stringify(what.slice(0, 8000))}.${why}` };
 }
-export function toolAllowed(scope: Scope, name: string): boolean {
-  return !scope.tools.deny.some(pattern => glob(pattern, name)) && scope.tools.allow.some(pattern => glob(pattern, name));
+export function toolAllowed(scope: Scope, name: string, input: Record<string, unknown> = {}): boolean {
+  const awaySend = scope.tools.deny.includes("*send*") && scope.shell.deny.some(rule => rule.id.startsWith("away:") && rule.id.endsWith(":send"));
+  const except = awaySend && namedCommunication(scope.sendTools, { toolName: name, input })?.act === "draft" ? scope.tools.deny.lastIndexOf("*send*") : -1;
+  return !scope.tools.deny.some((pattern, index) => index !== except && glob(pattern, name)) && scope.tools.allow.some(pattern => glob(pattern, name));
 }
 const gitReads = ["status", "diff", "show", "log", "blame", "grep", "ls-files", "ls-tree", "rev-parse", "rev-list", "for-each-ref", "cat-file", "describe", "merge-base", "name-rev", "shortlog", "version", "--version", "--help", "help", "ls-remote", "show-ref", "check-ignore", "whatchanged", "count-objects"];
 function gitRead(argv: string[]): boolean {
@@ -98,7 +103,18 @@ export function hasClusterWrite(source: string, cwd: string): boolean {
   try { return clusterWriteCommands(source, cwd).length > 0; }
   catch { return fallbackActs(source).some(act => act.kind === "cluster-write"); }
 }
+export function communicationAct(scope: Scope, call: ScopeCall): CommunicationPreview | undefined {
+  const named = namedCommunication(scope.sendTools, call);
+  return named?.act === "send" ? named : shellCommunication(scope, call) ?? named;
+}
+export function communicationDecision(scope: Scope, call: ScopeCall): Decision | undefined {
+  const act = communicationAct(scope, call);
+  if (act?.act === "send") return { allow: false, ruleId: "send-guard", act: "send", reason: `${BLOCK_MARKER} Agents do not send as you. Draft instead for the user to post. Nothing was sent.` };
+  if (act?.act === "draft" && !call.draftApproved) return { allow: false, ruleId: "draft-guard", act: "draft", reason: `${BLOCK_MARKER} This draft needs approval. Nothing was drafted.` };
+}
 export function authorityDecision(scope: Scope, call: ScopeCall): Decision | undefined {
+  const communication = communicationDecision(scope, call);
+  if (communication) return communication;
   if (scope.role !== "keeper" && ["spawn", "bb_workflow_run"].includes(call.toolName)) return { allow: false, ruleId: "member-spawn", reason: "Members don't start threads; ask your Keeper to hire." };
   const source = call.input.command ?? call.input.cmd;
   if (typeof source !== "string") return;
@@ -135,7 +151,7 @@ function evaluateShell(scope: Scope, call: ScopeCall, legacyWanderer: boolean, r
   const contained = call.containment === "sandbox" && scope.sandbox && ["bash", "Bash"].includes(call.toolName);
   if (contained) scope = readerFallback(scope);
   if ([...scope.writes.allow, ...scope.writes.deny].some(path => path.includes("${")) && !["tavern_report", "journal", "quest", "tavern_ready"].includes(call.toolName)) return blocked(call.toolName, "worktree-unresolved", "the worktree root must be bound from the provisioned environment");
-  if (!toolAllowed(scope, call.toolName)) return blocked(`tool ${call.toolName}`, "tool", "the thread's scope does not allow this tool");
+  if (!toolAllowed(scope, call.toolName, call.input)) return blocked(`tool ${call.toolName}`, "tool", "the thread's scope does not allow this tool");
   const name = call.toolName.toLowerCase();
   const canWrite = (path: string, cwd: string) => {
     const full = normalizeToolPath(path, cwd);

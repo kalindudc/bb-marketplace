@@ -1,6 +1,6 @@
 import type { Ask } from "../shared/schema";
 
-export const ACT_KINDS = ["merge", "publish", "ready", "close", "review", "deploy", "cluster-write", "send", "delete", "configure", "credential", "tavern-control", "allocate"] as const;
+export const ACT_KINDS = ["merge", "publish", "ready", "close", "review", "deploy", "cluster-write", "send", "draft", "delete", "configure", "credential", "tavern-control", "allocate"] as const;
 export type ActKind = typeof ACT_KINDS[number];
 
 const actAsks: Partial<Record<ActKind, Ask["kind"]>> = {
@@ -9,6 +9,7 @@ const actAsks: Partial<Record<ActKind, Ask["kind"]>> = {
   deploy: "production",
   "cluster-write": "cluster-write",
   send: "sends-as-you",
+  draft: "drafts-as-you",
   delete: "destructive",
   configure: "decision",
   credential: "credential",

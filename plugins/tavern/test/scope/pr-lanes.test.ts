@@ -23,16 +23,18 @@ it.each(["keeper", "wanderer"])("records own PR writes and follows Always ask fo
   }
   const read = vi.fn(() => JSON.stringify({ url: own }));
   expect(evaluate(policy(role, true), prepareCall(call("gh pr edit 12 --body hi"), { scope: policy(role, true), readCommand: read })).allow).toBe(true);
-  for (const command of [`gh pr review ${other} --approve`, `dt pr edit ${other} --title hi`, "gh api -X POST repos/example/repo/pulls/13/reviews -f body=hi"]) {
-    expect(evaluate(policy(role, true), call(command))).toMatchObject({ allow: false, ruleId: "pr-sends-as-you" });
-    expect(evaluate(policy(role, false), call(command))).toMatchObject({ allow: true, acts: [{ kind: "send" }] });
+  for (const command of [`gh pr review ${other} --approve`, "gh api -X POST repos/example/repo/pulls/13/reviews -f body=hi"]) {
+    for (const alwaysAsk of [true, false]) expect(evaluate(policy(role, alwaysAsk), call(command))).toMatchObject({ allow: false, ruleId: "send-guard" });
   }
+  const edit = call(`dt pr edit ${other} --title hi`);
+  expect(evaluate(policy(role, true), edit)).toMatchObject({ allow: false, ruleId: "pr-sends-as-you" });
+  expect(evaluate(policy(role, false), edit)).toMatchObject({ allow: true });
 });
 
-it("claims an exact PR exception once across guard reloads", () => {
+it("claims an exact non-message PR exception once across guard reloads", () => {
   const root = mkdtempSync(join(tmpdir(), "pr-grant-"));
   const store = new ScopeStore(root), threadId = "keeper-one";
-  const command = `gh pr review ${other} --approve`;
+  const command = `gh pr edit ${other} --title hi`;
   const grant = { id: "decision-fixture", digest: createHash("sha256").update(command).digest("hex") };
   const scope = policy("keeper", true);
   store.write(threadId, { ...scope, pullRequestPolicy: { alwaysAsk: true, owned: [], grants: [grant] } });
@@ -47,7 +49,7 @@ it("claims an exact PR exception once across guard reloads", () => {
   };
   try {
     const first = load();
-    expect(first.call(command.replace("--approve", "--comment"), "different")).toMatchObject({ block: true });
+    expect(first.call(command.replace("--title", "--body"), "different")).toMatchObject({ block: true });
     expect(first.call(command, "use-one")).toBeUndefined();
     const receipt = observedPullRequestReceipt({ result: first.result("use-one") });
     expect(receipt).toMatch(/^[a-f0-9-]{36}$/);

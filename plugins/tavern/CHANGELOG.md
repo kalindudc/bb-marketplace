@@ -4,6 +4,8 @@ Notable changes to Tavern, newest first. Releases are tagged `tavern/vX.Y.Z` in 
 
 ## Unreleased
 
+- Agents with an active guard cannot send messages as you, even in Watch or Off. A blocked send leaves you one handoff with the recipient and message when the call reveals them. Scopes accepts tool patterns and shell command prefixes. Named-target draft approvals wake the member for one exact call. Older guards keep their ordinary scope and need a restart for the send guard. If the message policy and scope disagree, Tavern reports it and holds recognized sends and drafts without stopping unrelated work.
+
 - Tell selected Keepers in the common room sends one unchanged message to each selected thread and shows a receipt for each. Their normal routing still applies.
 
 - Reports label confidence percentages as the member’s own estimate, not a Warden verdict.

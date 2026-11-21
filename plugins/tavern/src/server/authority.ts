@@ -7,7 +7,7 @@ export { AUTHORITY, type Act, type AuthorityLevel } from "../shared/authority";
 export const QUEST_LANES = {
   "cluster-write": { lane: "user", delegatable: false },
   production: { lane: "user", delegatable: true }, merge: { lane: "user", delegatable: true },
-  credential: { lane: "user", delegatable: true }, "sends-as-you": { lane: "user", delegatable: true }, destructive: { lane: "user", delegatable: true },
+  credential: { lane: "user", delegatable: true }, "sends-as-you": { lane: "user", delegatable: false }, "drafts-as-you": { lane: "user", delegatable: true }, destructive: { lane: "user", delegatable: true },
   greenlight: { lane: "user", delegatable: false }, conclude: { lane: "user", delegatable: false },
   "scope widenings": { lane: "keeper", delegatable: false }, replacements: { lane: "keeper", delegatable: false },
   "re-plans within the party": { lane: "keeper", delegatable: false }, "optional waypoint skips": { lane: "keeper", delegatable: false },

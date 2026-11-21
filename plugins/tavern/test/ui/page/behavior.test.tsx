@@ -161,7 +161,7 @@ describe("Tavern page surfaces", () => {
     const ask = slot.getByRole("region", { name: "Ask: Send Luc the PR link?" });
     expect(within(ask).getByText("Luc · #vault")).toBeTruthy();
     expect(within(ask).getByText(/Please review https/)).toBeTruthy();
-    const button = within(ask).getByRole("button", { name: "Send as you" });
+    const button = within(ask).getByRole("button", { name: "Record answer" });
     expect((button as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(within(ask).getByRole("radio", { name: /Send the link/ }));
     fireEvent.click(button);
@@ -177,11 +177,11 @@ describe("Tavern page surfaces", () => {
     await slot.findByRole("heading", { name: /The quest board/ });
     fireEvent.click(slot.container.querySelector("summary")!);
     expect(slot.getByRole("alert").textContent).toContain("Ask the Keeper for the recipient and the full draft");
-    expect((slot.getByRole("button", { name: "Send as you" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((slot.getByRole("button", { name: "Record answer" }) as HTMLButtonElement).disabled).toBe(true);
     slot.lifecycle.unmount(); slots.pop();
     const refused = await page("quest/vault", { answerAsk: () => { throw new Error("Already answered on the phone"); } });
     const radio = await refused.findByRole("radio", { name: /Send the link/ });
-    fireEvent.click(radio); fireEvent.click(refused.getByRole("button", { name: "Send as you" }));
+    fireEvent.click(radio); fireEvent.click(refused.getByRole("button", { name: "Record answer" }));
     await refused.findByText(/Already answered on the phone/);
     expect((radio as HTMLInputElement).checked).toBe(true);
   });

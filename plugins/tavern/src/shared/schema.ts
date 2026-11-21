@@ -397,6 +397,7 @@ export const checkerHandoffHoldSchema = z.object({
 });
 export type CheckerHandoffHold = z.infer<typeof checkerHandoffHoldSchema>;
 
+import { communicationHoldSchema } from "./communication";
 import { delegationSchema, preapprovalSchema, delegationKindSchema, actTargetSchema, CONSEQUENTIAL_ASK_KINDS } from "./quest-authority";
 import { closeEarlyDraftSchema, concludeDraftSchema, questOutcomeSchema, waypointWaiverSchema } from "./closing";
 import { pullRequestDraftOperationSchema } from "./pull-request";
@@ -452,6 +453,7 @@ export const askEffectSchema = z.discriminatedUnion("type", [
   settleWaypointSchema.omit({ boardQuestId: true }).extend({ type: z.literal("settle-waypoint"), planVersion: z.number().int().positive() }),
   z.object({ type: z.literal("soft-limit"), limit: z.enum(["party", "rangers"]), text: z.string().min(1).max(400), reason: z.string().max(600) }),
   z.object({ type: z.literal("pull-request-draft"), operation: pullRequestDraftOperationSchema }),
+  z.object({ type: z.literal("communication-hold"), hold: communicationHoldSchema }).strict(),
   z.object({ type: z.literal("retry-stop"), memberThreadId: threadId.optional(), hireTokens: z.array(z.string()).optional() }),
   z.object({ type: z.literal("retry-brief"), threadId, briefId: id }),
   z.object({ type: z.literal("grant-scope"), memberThreadId: threadId }),
@@ -465,6 +467,7 @@ export type AskEffect = z.infer<typeof askEffectSchema>;
 export const askSchema = z.object({
   unsure: z.boolean().optional(),
   target: actTargetSchema.optional(),
+  sendTarget: z.string().optional(),
   clusterTargets: z.array(z.object({ context: z.string().optional(), namespace: z.string().optional() })).optional(),
   runThreadId: threadId.optional(),
   runThreadName: z.string().optional(),
@@ -495,6 +498,7 @@ export const askSchema = z.object({
   /** For sends-as-you: exactly what would be sent, and where. Shown in full wherever the ask is answered. */
   draft: z.object({ to: z.string().max(300), body: z.string().max(8000) }).nullable(),
   state: z.enum(["open", "answered", "defaulted", "withdrawn"]),
+  draftApprovalInvalidated: z.literal(true).optional(),
   withdrawnAt: epochMs.nullable().optional(),
   withdrawnCause: z.enum(["quest-stopped", "quest-returned", "plan-superseded", "keeper-archived", "turn-recovered", "scope-cleared", "backup-restored", "conclude-stale-at-upgrade", "closing-stale"]).nullable().optional(),
   answer: z
@@ -505,6 +509,7 @@ export const askSchema = z.object({
       by: z.enum(["user", "default", "keeper", "preapproval"]),
       preapproval: z.object({ id: z.string(), at: epochMs, surface: z.string() }).optional(),
       keeperAuthority: z.literal("keepers.alwaysAsk").optional(),
+    draftDelegationId: id.optional(),
       via: z.enum(["banner", "page", "phone", "chat", "cli", "timer"]),
       at: epochMs,
     })

@@ -20,9 +20,9 @@ describe("thread UI", () => {
         expect(slot.getByText(fixtureAsk.draft!.body)).toBeTruthy();
         // The note is offered inline for every kind, not only decisions.
         expect(slot.container.querySelector(".ask-notefield input")).not.toBeNull();
-        expect((slot.getByRole("button", { name: "Send as you" }) as HTMLButtonElement).disabled).toBe(true);
+        expect((slot.getByRole("button", { name: "Record answer" }) as HTMLButtonElement).disabled).toBe(true);
         fireEvent.click(slot.getByRole("radio", { name: /Send.*exact draft/ }));
-        fireEvent.click(slot.getByRole("button", { name: "Send as you" }));
+        fireEvent.click(slot.getByRole("button", { name: "Record answer" }));
         await waitFor(() => expect(mutate).toHaveBeenCalledTimes(1));
         await slot.findByText("Answered");
         expect(slot.getByText("answered from a client Tavern could not attribute")).toBeTruthy();

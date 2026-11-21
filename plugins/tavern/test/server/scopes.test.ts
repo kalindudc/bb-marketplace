@@ -25,6 +25,7 @@ import { scopeForClass } from "../../src/scope/presets";
 import { BackendScopes } from "../../src/server/scopes";
 import { evaluate } from "../../src/scope/engine";
 import { armScope } from "../../src/scope/store";
+import { holdCommunication, readCommunicationHolds } from "../../src/scope/communication-holds";
 import { claimShellGrant } from "../../src/scope/shell-grants";
 
 const roots: string[] = [];
@@ -105,33 +106,88 @@ describe("backend scope integration", () => {
     const scope = scopes.view("child")!.scope!;
     writeFileSync(join(f.root, "scopes/child.armed"), JSON.stringify({ threadId: "child", issuedAt: scope.issuedAt, pid: process.pid, at: Date.now() }));
     expect(scopes.view("child")?.clusterGuard).toBe("restart");
+    expect(scopes.view("child")?.sendGuard).toBe("restart");
+    armScope(join(f.root, "scopes/child.json"), scope);
+    expect(scopes.view("child")?.sendGuard).toBe("armed");
   });
-  it("refreshes the Keeper shell when the sends-as-you undo lane shifts and resets", async () => {
+  it("refreshes a running Off scope and records its held message once", async () => {
+    const f = await fixture();
+    const scopes = f.runtime.scopes!;
+    const original = f.runtime.config();
+    await scopes.api.writeScope("lead", scopeForClass("keeper"));
+    const rule = { pattern: "*_post", act: "send" as const, targetKey: "to" };
+    const config = vi.spyOn(f.runtime, "config").mockReturnValue({ ...original, scopes: { mode: "off", sendTools: [rule] } });
+    f.runtime.settingsChanged();
+    const local = scopes.api.localScopeRecord("lead")!;
+    expect(local.scope).toMatchObject({ mode: "off", sendTools: [rule] });
+    const call = { kind: "tool" as const, toolName: "fixture_post", input: { to: "fixture-room", text: "First\nLast" }, cwd: f.work };
+    const preview = { act: "send" as const, tool: call.toolName, target: "fixture-room", body: "First\nLast" };
+    holdCommunication(local.file, local.scope, call, preview);
+    holdCommunication(local.file, local.scope, call, preview);
+    await scopes.drainCommunication("lead");
+    expect(f.k.store.openAsks("lead").filter(ask => ask.kind === "sends-as-you")).toEqual([
+      expect.objectContaining({ effect: { type: "communication-hold", hold: expect.objectContaining(preview) }, lane: "user" }),
+    ]);
+    expect(readCommunicationHolds(local.file)).toEqual([]);
+    config.mockReturnValue({ ...original, scopes: { mode: "off", sendTools: [] } });
+    f.runtime.settingsChanged();
+    expect(scopes.api.localScopeRecord("lead")!.scope).not.toHaveProperty("sendTools");
+  });
+  it("wakes the member for an exact approved draft without a two-minute deadline", async () => {
+    const f = await fixture();
+    await f.runtime.hire("lead", "project", f.input);
+    const rule = { pattern: "fixture_draft", act: "draft" as const, targetKey: "to" };
+    const config = f.runtime.config();
+    const settings = vi.spyOn(f.runtime, "config").mockReturnValue({ ...config, scopes: { ...config.scopes, sendTools: [rule] } });
+    f.runtime.settingsChanged();
+    const scopes = f.runtime.scopes!, held = scopes.api.localScopeRecord("child")!;
+    holdCommunication(held.file, held.scope, { kind: "tool", toolName: "fixture_draft", input: { to: "room", text: "fixture" }, cwd: f.work },
+      { act: "draft", tool: "fixture_draft", target: "room", body: "fixture" });
+    await scopes.drainCommunication("child");
+    const ask = f.k.store.openAsks("lead", f.q.id).find(item => item.kind === "drafts-as-you")!;
+    const send = vi.spyOn(f.bb.sdk.threads, "send");
+    registerRpc(f.bb, f.runtime);
+    await f.harness.invokeRpc("answerAsk", { askId: ask.id, optionId: "approve", note: null, via: "page" });
+    await vi.waitFor(() => expect(send.mock.calls.some(([input]) => input.threadId === "child" && JSON.stringify(input).includes("exact call"))).toBe(true));
+    f.advance(360_000);
+    scopes.refreshCommunication("child");
+    expect(scopes.api.localScopeRecord("child")!.scope.communicationAuthority?.receipts).toEqual([expect.objectContaining({ askId: ask.id })]);
+    settings.mockReturnValue({ ...config, scopes: { ...config.scopes, sendTools: [] } });
+    f.runtime.settingsChanged();
+    settings.mockReturnValue({ ...config, scopes: { ...config.scopes, sendTools: [rule] } });
+    f.runtime.settingsChanged();
+    expect(scopes.api.localScopeRecord("child")!.scope.communicationAuthority).toBeUndefined();
+    expect(f.k.store.get("asks", ask.id)?.draftApprovalInvalidated).toBe(true);
+    const local = scopes.api.localScopeRecord("child")!;
+    holdCommunication(local.file, local.scope, { kind: "tool", toolName: "fixture_draft", input: { to: "room", text: "new" }, cwd: f.work },
+      { act: "draft", tool: "fixture_draft", target: "room", body: "new" });
+    await scopes.drainCommunication("child");
+    const next = f.k.store.openAsks("lead", f.q.id).find(item => item.kind === "drafts-as-you")!;
+    await f.harness.invokeRpc("answerAsk", { askId: next.id, optionId: "approve", note: null, via: "page" });
+    expect(scopes.api.localScopeRecord("child")!.scope.communicationAuthority?.receipts).toEqual([expect.objectContaining({ askId: next.id })]);
+    await f.runtime.closeAfterRevokingClusterGrants(() => {});
+    expect(scopes.api.localScopeRecord("child")!.scope.communicationAuthority).toBeUndefined();
+    expect(f.k.store.get("asks", next.id)?.draftApprovalInvalidated).toBe(true);
+  });
+  it("keeps historic send delegations readable but does not let the Keeper use them", async () => {
     const f = await fixture();
     const config = f.runtime.config();
     const settings = { ...config, keepers: { ...config.keepers, alwaysAsk: config.keepers.alwaysAsk.filter(kind => kind !== "sends-as-you") } };
     vi.spyOn(f.runtime, "config").mockReturnValue(settings);
     vi.spyOn(f.k, "settings").mockReturnValue(settings);
-    registerRpc(f.bb, f.runtime);
+    const grant = { id: "historic", kind: "sends-as-you" as const, surface: "page", at: f.k.now(), revokedAt: null, endedAt: null };
+    f.k.store.put("quests", f.q.id, { ...f.k.quest(f.q.id), delegations: [grant] });
+    expect(f.k.quest(f.q.id).delegations).toEqual([grant]);
     const scopes = f.runtime.scopes!;
     await scopes.api.writeScope("lead", scopeForClass("keeper"));
     const url = "https://github.com/example/other/pull/10";
-    const shell = () => evaluate(scopes.view("lead")!.scope!, { kind: "bash", toolName: "bash", cwd: f.work, input: { command: `gh pr comment ${url} --body hi` } });
-    const allowSend = { allow: true, acts: [expect.objectContaining({ kind: "send" })] };
-    const client = { experimental_caller: { kind: "client" as const }, experimental_signal: new AbortController().signal };
-    const decide = () => {
-      const ask = f.k.ask("lead", { boardQuestId: f.q.id, kind: "sends-as-you", question: "Post the comment?", why: "The reviewer asked", draft: { to: url, body: "hi" },
-        effect: { type: "decision" }, holds: [], meanwhile: "", options: [{ id: "approve", label: "Post", detail: "Post the comment", recommended: true }] });
-      return f.k.decide("lead", { boardQuestId: f.q.id, askId: ask.id, optionId: "approve", text: "Post the comment", why: "The send is in scope", reversible: true, source: "keeper" });
-    };
-    expect(shell()).toMatchObject(allowSend);
-    const first = decide(), second = decide();
-    await f.harness.invokeRpc("undoDecision", { decisionId: first.id }, client);
-    expect(shell()).toMatchObject(allowSend);
-    await f.harness.invokeRpc("undoDecision", { decisionId: second.id }, client);
-    expect(shell()).toMatchObject({ allow: false, ruleId: "pr-sends-as-you" });
-    await f.harness.invokeRpc("resetUndoLane", { threadId: "lead", kind: "sends-as-you" }, client);
-    expect(shell()).toMatchObject(allowSend);
+    expect(evaluate(scopes.view("lead")!.scope!, { kind: "bash", toolName: "bash", cwd: f.work, input: { command: `gh pr comment ${url} --body hi` } }))
+      .toMatchObject({ allow: false, ruleId: "send-guard" });
+    const ask = f.k.ask("lead", { boardQuestId: f.q.id, kind: "sends-as-you", question: "Post the comment?", why: "The reviewer asked", draft: { to: url, body: "hi" },
+      effect: { type: "decision" }, holds: [], meanwhile: "", options: [{ id: "approve", label: "Post", detail: "Post the comment", recommended: true }] });
+    expect(ask.lane).toBe("user");
+    expect(ask.options.map(option => option.id)).toEqual(["acknowledge", "deny"]);
+    expect(() => f.k.decide("lead", { boardQuestId: f.q.id, askId: ask.id, optionId: "acknowledge", text: "Confirm", why: "Historic grant", reversible: true, source: "keeper" })).toThrow();
   });
 
   it("rebuilds a live scope on policy change and does not rewrite it for unchanged inputs", async () => {

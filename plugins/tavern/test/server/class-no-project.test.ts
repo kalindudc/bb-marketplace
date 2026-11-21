@@ -97,7 +97,7 @@ describe("class execution facts without a project", () => {
   });
   it.each(["watch", "off"] as const)("does not guess a provider or model label in %s mode", async mode => {
     const f = fixture(), config = f.runtime.config();
-    f.runtime.config = () => ({ ...config, scopes: { mode } });
+    f.runtime.config = () => ({ ...config, scopes: { ...config.scopes, mode } });
     const facts = await classExecutionFacts(f.runtime, { classId: "ranger", projectId: "project", mode: "hire" });
     expect(facts.requiresPi).toBe(false);
     expect(facts.execution).toBeNull();

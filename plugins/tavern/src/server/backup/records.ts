@@ -103,7 +103,9 @@ export class BackupRecords {
       if (row.kind !== "asks") continue;
       const { clusterGrantExpiresAt, ...ask } = askSchema.parse(JSON.parse(String(row.data)));
       if (clusterGrantExpiresAt !== undefined) row.data = JSON.stringify(ask);
-      if (ask.state === "open" && (ask.kind === "cluster-write" || deliveryAsks.get(ask.id) === ask.keeperThreadId || ask.effect?.type === "grant-shell-act") ||
+      if (ask.effect?.type === "communication-hold" && ask.kind === "drafts-as-you" && ask.state === "answered")
+        row.data = JSON.stringify(askSchema.parse({ ...ask, effect: { ...ask.effect, hold: { ...ask.effect.hold, callDigest: null } } }));
+      if (ask.state === "open" && (ask.kind === "cluster-write" || deliveryAsks.get(ask.id) === ask.keeperThreadId || ask.effect?.type === "grant-shell-act" || ask.effect?.type === "communication-hold" && ask.kind === "drafts-as-you") ||
         ask.state === "withdrawn" && ask.withdrawnCause === "backup-restored" && ask.withdrawnAt == null) {
         row.data = JSON.stringify(askSchema.parse({ ...ask, state: "withdrawn", withdrawnCause: "backup-restored", withdrawnAt: restoredAt }));
       }

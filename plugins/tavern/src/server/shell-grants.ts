@@ -1,4 +1,6 @@
 import type { Ask } from "../shared/schema";
+import { shellCommunication } from "../scope/shell-communication";
+import { scopeForClass } from "../scope/presets";
 import { shellGrantSchema, type ShellGrant } from "../shared/shell-grant";
 import type { KeeperStore } from "./keeper/store";
 import { isLiveMember, isOpenQuest } from "./liveness";
@@ -8,6 +10,9 @@ type EndState = Exclude<ShellGrant["state"], "issued">;
 export function issueShellGrant(store: KeeperStore, ask: Ask, scope: ShellGrant["scope"], by: ShellGrant["by"], at: number) {
   const effect = ask.effect;
   if (effect?.type !== "grant-shell-act" || !ask.boardQuestId) throw new Error("A shell grant needs an active quest and its exact target.");
+  const { command, cwd } = effect.target;
+  if (effect.target.act === "send" && shellCommunication(scopeForClass("keeper"), { kind: "bash", toolName: "bash", input: { command }, cwd }))
+    throw new Error("Sending as you cannot be covered by a shell grant.");
   const member = store.get("members", effect.memberThreadId), quest = store.get("quests", ask.boardQuestId);
   if (!isOpenQuest(quest) || quest.phase === "held" || quest.keeperThreadId !== ask.keeperThreadId || !isLiveMember(store, member) || member.keeperThreadId !== ask.keeperThreadId || member.boardQuestId !== quest.id)
     throw new Error("The member is no longer available for this shell grant.");

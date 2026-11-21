@@ -7,13 +7,14 @@ import { BackendScopes } from "../../src/server/scopes";
 import { PlacementController } from "../../src/server/placement/controller";
 import { scopeRenderedFileSchema } from "../../src/scope/schema";
 import { armedFile, armScope } from "../../src/scope/store";
+import { DEFAULT_SETTINGS } from "../../src/shared/settings";
 import { readyFixture, readyGit } from "./placement-e2e-ready";
 
 async function fixture() {
   const f = await readyFixture();
   const services = { store: f.placements, deliveries: f.deliveries, host: f.port, ready: undefined as unknown as ReturnType<typeof f.make> };
-  const runtime = { bb: f.bb, placements: () => services, keeper: { changed: vi.fn(), member: () => null }, config: () => ({ machines: { rules: [] }, keepers: { alwaysAsk: ["production", "merge", "credential", "sends-as-you", "destructive"] } }),
-    scopes: undefined as unknown as BackendScopes };
+  const runtime = { bb: f.bb, placements: () => services, keeper: { changed: vi.fn(), member: () => null }, config: () => DEFAULT_SETTINGS,
+    away: { store: { snapshot: () => ({ status: { closed: false } }) } }, scopes: undefined as unknown as BackendScopes };
   const scopes = new BackendScopes(runtime as never, { dataDir: join(f.root, "controller"), installGuard: false });
   runtime.scopes = scopes;
   services.ready = f.make(threadId => scopes.api.hostTemplate(threadId));

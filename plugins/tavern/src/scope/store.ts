@@ -1,10 +1,11 @@
-import { appendFileSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { scopeForClass } from "./presets";
 import { z } from "zod";
 import { scopeControllerBindingSchema, scopeFileSchema, scopeHostBindingSchema, scopeSchema, type Scope, type ScopeControllerBinding, type ScopeHostBinding } from "./schema";
 import type { ScopeCall } from "./engine";
+import { communicationAuthoritySchema, sendToolsSchema, type SendTools } from "../shared/communication";
 import type { ActKind } from "./acts";
 export interface ActAudit { threadId: string; providerId: string; at: number; eventId: string; seq: number; kind: ActKind; call: ScopeCall; mode: "watch" | "enforce" }
 
@@ -21,7 +22,7 @@ const progressSchema = z.object({ cursor: z.number().int().nonnegative(), pendin
 export interface NativeScopeReceipt { hostBinding: ScopeHostBinding; renderedDigest: string }
 export const scopeArmedSchema = z.object({
   threadId: scopeSchema.shape.threadId, issuedAt: scopeSchema.shape.issuedAt, pid: z.number().int().positive(), at: z.number().int().nonnegative(),
-  clusterWrites: z.literal(1).optional(), hostBinding: scopeHostBindingSchema.optional(), renderedDigest: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  clusterWrites: z.literal(1).optional(), sendGuard: z.literal(1).optional(), messagePolicyProblem: z.string().optional(), hostBinding: scopeHostBindingSchema.optional(), renderedDigest: z.string().regex(/^[a-f0-9]{64}$/).optional(),
 }).strict().refine(value => (value.hostBinding === undefined) === (value.renderedDigest === undefined), "A native receipt requires its binding and rendered-byte digest together");
 export const armedFile = (file: string) => file.replace(/\.json$/, "") + ".armed";
 export function atomicWrite(file: string, value: string, check?: () => void): void {
@@ -29,9 +30,46 @@ export function atomicWrite(file: string, value: string, check?: () => void): vo
   try { check?.(); writeFileSync(temp, value, { mode: 0o600, flag: "wx" }); check?.(); renameSync(temp, file); }
   finally { rmSync(temp, { force: true }); }
 }
-export function armScope(file: string, scope: Scope, native?: NativeScopeReceipt, at = Date.now()): void {
-  atomicWrite(armedFile(file), JSON.stringify(scopeArmedSchema.parse({ threadId: scope.threadId, issuedAt: scope.issuedAt, pid: process.pid, at, clusterWrites: 1, ...native })));
+export function armScope(file: string, scope: Scope, native?: NativeScopeReceipt, at = Date.now(), messagePolicyProblem?: string): void {
+  atomicWrite(armedFile(file), JSON.stringify(scopeArmedSchema.parse({ threadId: scope.threadId, issuedAt: scope.issuedAt, pid: process.pid, at, clusterWrites: 1,
+    ...(messagePolicyProblem ? { messagePolicyProblem } : { sendGuard: 1 }), ...native })));
 }
+const messagePolicySchema = z.object({
+  threadId: scopeSchema.shape.threadId, issuedAt: scopeSchema.shape.issuedAt, scopeDigest: z.string().optional(),
+  sendTools: sendToolsSchema.optional(), communicationAuthority: communicationAuthoritySchema.optional(),
+}).strict();
+export function splitMessagePolicy({ sendTools, communicationAuthority, ...scope }: Scope) {
+  return { scope, policy: { ...(sendTools?.length ? { sendTools } : {}), ...(communicationAuthority ? { communicationAuthority } : {}) } };
+}
+const messagePolicyFile = (file: string) => file + ".message-policy";
+export function writeMessagePolicy(file: string, scope: Scope, scopeDigest?: string, check?: () => void) {
+  const { threadId, issuedAt, sendTools, communicationAuthority } = scope;
+  check?.();
+  if (!sendTools?.length && !communicationAuthority) {
+    rmSync(messagePolicyFile(file), { force: true });
+    return;
+  }
+  atomicWrite(messagePolicyFile(file), JSON.stringify(messagePolicySchema.parse({ threadId, issuedAt, scopeDigest, sendTools, communicationAuthority })), check);
+}
+export class MessagePolicyError extends Error {
+  constructor(readonly sendTools?: SendTools, cause?: unknown) {
+    super("The private message policy is invalid or does not match this scope; ask the Keeper to repair it.", { cause });
+  }
+}
+export function readMessagePolicy(file: string, scope: Scope, scopeDigest?: string): Scope {
+  const path = messagePolicyFile(file);
+  try {
+    const stat = lstatSync(path);
+    if (!stat.isFile() || stat.size > 256 * 1024) throw new Error("Invalid private message policy");
+    const { threadId, issuedAt, scopeDigest: recorded, ...policy } = messagePolicySchema.parse(JSON.parse(readFileSync(path, "utf8")));
+    if (threadId !== scope.threadId || issuedAt !== scope.issuedAt || recorded !== scopeDigest) throw new MessagePolicyError(policy.sendTools);
+    return { ...scope, ...policy };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return scope;
+    throw error instanceof MessagePolicyError ? error : new MessagePolicyError(undefined, error);
+  }
+}
+
 export class ScopeStore {
   readonly directory: string;
   readonly records = new Map<string, ScopeRecord>();
@@ -47,11 +85,14 @@ export class ScopeStore {
       try { binding = scopeControllerBindingSchema.parse(JSON.parse(readFileSync(file + ".host", "utf8"))); }
       catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") { binding = { kind: "host", placementId: null, generation: null }; markerError = "Invalid host-binding marker: " + String(error); } }
       try {
-        const { bindingTemplate: template, bindingError, controllerBinding, presetProvenance, ...scope } = scopeFileSchema.parse(JSON.parse(readFileSync(file, "utf8")));
+        const { bindingTemplate: template, bindingError, controllerBinding, presetProvenance, ...base } = scopeFileSchema.parse(JSON.parse(readFileSync(file, "utf8")));
+        let scope = base;
+        try { scope = readMessagePolicy(file, base); }
+        catch (error) { if (!(error instanceof MessagePolicyError)) throw error; }
         if (scope.threadId !== id) throw new Error("Scope identity does not match its filename");
         const incomplete = binding && JSON.stringify(binding) !== JSON.stringify(controllerBinding);
         binding ??= controllerBinding;
-        this.records.set(id, { file, scope, template, presetProvenance, error: markerError ?? (incomplete ? "Host-bound template update is incomplete" : bindingError), mode: scope.mode, ...(binding ? { binding } : {}) });
+        this.records.set(id, { file, scope, template: template ? { ...template, ...splitMessagePolicy(scope).policy } : undefined, presetProvenance, error: markerError ?? (incomplete ? "Host-bound template update is incomplete" : bindingError), mode: scope.mode, ...(binding ? { binding } : {}) });
       } catch (error) { this.records.set(id, { file, scope: null, error: String(error), ...(binding ? { binding } : {}) }); }
     }
   }
@@ -98,9 +139,12 @@ export class ScopeStore {
     const binding = this.records.get(threadId)?.binding;
     const preset = scopeForClass(scope.role, undefined, scope.preset);
     const presetProvenance = preserveProvenance ? this.records.get(threadId)?.presetProvenance : { id: scope.preset, version: createHash("sha256").update(JSON.stringify({ ...preset, role: "", threadId: "", issuedAt: 0 })).digest("hex") };
-    const value = scopeFileSchema.parse({ ...scope, presetProvenance, ...(template ? { bindingTemplate: template } : {}), ...(error === undefined ? {} : { bindingError: error }), ...(binding ? { controllerBinding: binding } : {}) });
+    const { scope: base } = splitMessagePolicy(scope);
+    const original = template && splitMessagePolicy(template).scope;
+    const value = scopeFileSchema.parse({ ...base, presetProvenance, ...(original ? { bindingTemplate: original } : {}), ...(error === undefined ? {} : { bindingError: error }), ...(binding ? { controllerBinding: binding } : {}) });
+    writeMessagePolicy(file, scope);
     atomicWrite(file, JSON.stringify(value, null, 2) + "\n");
-    this.records.set(threadId, { file, scope, template: value.bindingTemplate, presetProvenance, error, mode: scope.mode, ...(binding ? { binding } : {}) });
+    this.records.set(threadId, { file, scope, template: value.bindingTemplate && { ...value.bindingTemplate, ...splitMessagePolicy(template!).policy }, presetProvenance, error, mode: scope.mode, ...(binding ? { binding } : {}) });
     return scope;
   }
   failBinding(threadId: string, error: unknown): void {
@@ -132,21 +176,34 @@ export class ScopeStore {
     rmSync(file, { force: true }); rmSync(armedFile(file), { force: true }); rmSync(file + ".cursor", { force: true }); rmSync(file + ".hold", { force: true }); rmSync(file + ".host", { force: true });
     rmSync(file + ".grants", { force: true, recursive: true });
     rmSync(file + ".act-grants", { force: true, recursive: true });
+    rmSync(file + ".messages", { force: true, recursive: true });
+    rmSync(messagePolicyFile(file), { force: true });
     this.records.delete(threadId);
     this.revisions.set(threadId, this.revision(threadId) + 1);
   }
   arm(scope: Scope): void { armScope(this.file(scope.threadId), scope); }
-  isArmed(threadId: string, clusterWrites = false): boolean {
+  private liveMarker(threadId: string) {
     try {
       const record = this.records.get(threadId);
-      if (record?.binding) return false;
-      const scope = record?.scope;
-      const marker = scopeArmedSchema.parse(JSON.parse(readFileSync(armedFile(this.file(threadId)), "utf8")));
-      if (marker.hostBinding || clusterWrites && marker.clusterWrites !== 1) return false;
-      if (!scope || marker.threadId !== threadId || marker.issuedAt !== scope.issuedAt || marker.at < scope.issuedAt) return false;
+      if (!record?.scope || record.binding) return;
+      const marker = scopeArmedSchema.parse(JSON.parse(readFileSync(armedFile(record.file), "utf8")));
+      if (marker.hostBinding || marker.threadId !== threadId || marker.issuedAt !== record.scope.issuedAt || marker.at < record.scope.issuedAt) return;
       process.kill(marker.pid, 0);
-      return true;
-    } catch { return false; }
+      return marker;
+    } catch { return; }
+  }
+  messagePolicyProblem(threadId: string): string | undefined {
+    const record = this.records.get(threadId);
+    if (!record?.scope || record.binding) return;
+    try {
+      const base = scopeFileSchema.parse(JSON.parse(readFileSync(record.file, "utf8")));
+      readMessagePolicy(record.file, base);
+    } catch (error) { if (error instanceof MessagePolicyError) return error.message; }
+    return this.liveMarker(threadId)?.messagePolicyProblem;
+  }
+  isArmed(threadId: string, clusterWrites = false, sendGuard = false): boolean {
+    const marker = this.liveMarker(threadId);
+    return !!marker && (!clusterWrites || marker.clusterWrites === 1) && (!sendGuard || marker.sendGuard === 1 && !this.messagePolicyProblem(threadId));
   }
   observationHold(threadId: string): ScopeObservationHold | null {
     try { return observationHoldSchema.parse(JSON.parse(readFileSync(this.file(threadId) + ".hold", "utf8"))); }

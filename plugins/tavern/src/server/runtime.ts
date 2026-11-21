@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import { homeRebaseMatches } from "./act-patch";
 import { LimitPolicy } from "./limit-policy";
+import { approvedDrafts, invalidateDrafts } from "./communication";
 import { hasLiveName, isLiveKeeper, isLiveMember, isOpenQuest } from "./liveness";
 import { archiveDisposition, assertMemberMachineForBrief, MACHINE_RELEASED, memberDetails, memberHost, outstandingArchivedPlacement, patchMemberDetails, transitionMember, type EngagementReceipt, type MemberOperation } from "./member-engagement";
 import { wasReleased } from "../shared/member-engagement";
@@ -194,6 +195,10 @@ export class TavernRuntime {
     this.previousSettings = next;
     if (previous) this.keeper.authority.applyAskPolicy(previous.keepers.alwaysAsk, next.keepers.alwaysAsk);
     this.reviewCache = null;
+    if (!isDeepStrictEqual(previous?.scopes.sendTools, next.scopes.sendTools)) {
+      if (previous) invalidateDrafts(this.keeper, approvedDrafts(this.keeper));
+      this.scopes?.refreshCommunication();
+    }
     if (previous?.keepers.alwaysAsk.includes("sends-as-you") !== next.keepers.alwaysAsk.includes("sends-as-you")) this.scopes?.refreshPullRequestPolicies();
     if (this.scopes && this.scopes.api.mode() !== next.scopes.mode)
       this.scopes.api.setMode(next.scopes.mode);
@@ -592,6 +597,29 @@ export class TavernRuntime {
     if (this.scopes) throw new Error("Tavern scopes are already registered");
     this.scopes = new BackendScopes(this, options);
     this.keeper.syncShellGrants = threadId => this.scopes!.syncGrants(threadId);
+    this.keeper.assertDraftApprovalOpen = () => {
+      if (this.closingClusterGate || this.away.store.snapshot().status.closed) throw new Error("Return from Closing time before approving this draft.");
+    };
+    this.keeper.syncCommunication = (threadId, askId) => {
+      this.scopes!.refreshCommunication(threadId);
+      if (askId) void this.notifyDraftApproved(threadId, askId).catch(error => this.bb.log.warn(`Tavern draft approval delivery ${threadId}: ${String(error)}`));
+    };
+    this.scopes.refreshCommunication();
+  }
+  private async notifyDraftApproved(threadId: string, askId: string) {
+    const current = () => {
+      const ask = this.keeper.store.get("asks", askId), member = this.keeper.member(threadId);
+      return ask?.state === "answered" && !ask.draftApprovalInvalidated && ask.effect?.type === "communication-hold" && ask.effect.hold.threadId === threadId &&
+        ask.answer?.optionId === "approve" && member?.role === "member" && isLiveMember(this.keeper.store, member) &&
+        !this.stopAll.reason() && !this.config().tavern.paused && !this.away.store.snapshot().status.closed && !this.away.blocked(threadId) &&
+        (!ask.boardQuestId || this.keeper.quest(ask.boardQuestId).phase !== "held");
+    };
+    if (!current()) return;
+    if (this.placements().store.byMember(threadId)) {
+      await this.placements().ready.reconcileForThread(threadId);
+      if (!current() || !this.scopes?.api.status().threads.some(row => row.threadId === threadId && row.hostScope === "acknowledged")) return;
+    }
+    await this.bb.sdk.threads.send({ threadId, mode: "queue-if-active", input: [{ type: "text", text: "Tavern recorded approval for the held draft. Repeat the exact call once; do not send the message.", mentions: [], visibility: "agent-only" }] });
   }
   private detectionCharacter(askId?: string) {
     const effect = askId ? this.keeper.store.get("asks", askId)?.effect : null;
@@ -618,7 +646,13 @@ export class TavernRuntime {
         catch { throw new Error("Tavern cannot revoke a confirmed cluster command on its host. Wait for the grant to expire before closing."); }
         this.keeper.store.put("asks", ask.id, { ...ask, clusterGrantExpiresAt: undefined });
       }
-      close();
+      const drafts = approvedDrafts(this.keeper);
+      if (drafts.length) await this.scopes?.fenceDraftReceipts(drafts);
+      this.keeper.store.atomic(() => {
+        close();
+        invalidateDrafts(this.keeper, drafts);
+      });
+      if (drafts.length) this.scopes?.refreshCommunication();
     } finally { this.closingClusterGate = false; }
   }
   async clusterRunStatus(ask: Ask) {
@@ -779,8 +813,18 @@ export class TavernRuntime {
     PlacementPreservation.observe(bb, () => this.placements());
     keeper.store.log = (level, message) => this.bb.log[level](message);
     // Actionable news wakes the Keeper it belongs to through the same gates as the sweep.
-    keeper.store.onEvent = ({ keeperThreadId, type, data, actor }) => {
+    keeper.store.onEvent = ({ keeperThreadId, boardQuestId, type, data, actor }) => {
       if (!keeperThreadId) return;
+      if (this.scopes && this.config().scopes.sendTools.some(rule => rule.act === "draft") &&
+          ["authority.revoked", "delegation.ended", "decision.undone", "quest.held", "quest.wrapped", "quest.stopping", "quest.stopped", "member.released"].includes(type)) {
+        queueMicrotask(() => {
+          try {
+            if (boardQuestId && ["quest.wrapped", "quest.stopping", "quest.stopped"].includes(type)) invalidateDrafts(keeper, approvedDrafts(keeper, boardQuestId));
+            this.scopes?.refreshCommunication(undefined, keeperThreadId);
+          }
+          catch (error) { this.bb.log.warn(`Tavern draft scope: ${String(error)}`); }
+        });
+      }
       if (this.scopes && ["pull-request.changed", "decision.undone", "authority.revoked", "delegation.granted", "lane.reset", "quest.wrapped", "quest.stopping", "quest.stopped"].includes(type)) {
         queueMicrotask(() => {
           try {

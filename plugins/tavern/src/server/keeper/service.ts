@@ -67,6 +67,7 @@ export type AskInput = Pick<
   boardQuestId?: string | null;
   proceedInMinutes?: number | null;
   draft?: Ask["draft"];
+  sendTarget?: Ask["sendTarget"];
   unsure?: boolean;
   target?: Ask["target"];
   change?: Ask["change"];
@@ -99,6 +100,8 @@ export class Keeper {
     DEFAULT_SETTINGS;
   askOpened: (ask: Ask) => void = () => {};
   syncShellGrants: (threadId: string) => void = () => {};
+  syncCommunication: (threadId: string, approvedAskId?: string) => void = () => {};
+  assertDraftApprovalOpen: () => void = () => {};
   routineAskOpened: (ask: Ask) => Promise<void> = async () => {};
   readonly authority = new QuestAuthority(this);
   readonly memory = new KeeperMemory(this);
@@ -1135,7 +1138,7 @@ export class Keeper {
         "A timed decision must explicitly declare reversible: true",
       );
     if (
-      input.kind === "sends-as-you" &&
+      input.kind === "sends-as-you" && input.effect.type !== "communication-hold" &&
       (!input.draft?.to || !input.draft.body)
     )
       throw new Error("Sends-as-you requires the complete recipient and draft");
@@ -1152,7 +1155,11 @@ export class Keeper {
       );
     if (input.kind === "greenlight" && input.effect.type !== "greenlight") throw new Error("A greenlight ask needs its typed plan version; propose the plan instead.");
     if (input.kind === "conclude" && !isCloseEffect(input.effect)) throw new Error("A conclude ask needs its typed draft; tell the quest result instead.");
-    if (input.effect.type === "placement-blocker" && !trusted) throw new Error("Only Tavern may open a typed placement blocker");
+    if ((input.effect.type === "placement-blocker" || input.effect.type === "communication-hold") && !trusted) throw new Error("Only Tavern may open this typed ask");
+    if (input.kind === "drafts-as-you" && input.effect.type !== "communication-hold") throw new Error("Call the draft tool first so Tavern can record the exact arguments.");
+    if (input.kind === "sends-as-you" && input.effect.type === "decision") input = { ...input,
+      options: [{ id: "acknowledge", label: "I have the draft", detail: "Records your answer. The agent does not send anything.", recommended: false }, { id: "deny", label: "Dismiss", detail: "Nothing is sent.", recommended: false }],
+    };
     if (input.options.some(o => o.id === "delegate")) throw new Error("The delegation answer is reserved for Tavern");
     const exactCommand = input.target?.command;
     let clusterTargets: Ask["clusterTargets"];
@@ -1178,8 +1185,8 @@ export class Keeper {
       const detail = runner ? "Approve this exact command for the named thread. Nothing runs until you confirm." : "Authorize the exact act; Keeper approval needs a current Warden verdict.";
       input = { ...input, options: [{ id: "approve", label: runner ? "Approve" : "Approve the act", detail, recommended: false }, { id: "deny", label: "Decline the act", detail: "Do not authorize this act.", recommended: false }], effect: { type: "decision", outcomes: [{ optionId: runner ? "confirm-run" : "approve", outcome: "approve" }, { optionId: "deny", outcome: "decline" }] } };
     }
-    const lane = this.authority.baseLane({ kind: input.kind, boardQuestId: questId, unsure: input.unsure, effect: input.effect });
-    if (questId && lane === "user" && DELEGATABLE_KINDS.includes(input.kind as DelegationKind)) {
+    const lane = this.authority.baseLane({ kind: input.kind, boardQuestId: questId, unsure: input.unsure, effect: input.effect, sendTarget: input.sendTarget });
+    if (questId && lane === "user" && input.kind !== "drafts-as-you" && DELEGATABLE_KINDS.some(kind => kind === input.kind)) {
       input = { ...input, options: [...input.options, this.authority.delegationOption(threadId)] };
     }
     const ask = askSchema.parse({
@@ -1252,6 +1259,15 @@ export class Keeper {
   ) {
     const ask = this.store.get("asks", askId);
     if (!ask) throw new Error("Unknown ask");
+    const heldCommunication = ask.effect?.type === "communication-hold" ? ask.effect.hold : undefined;
+    if (ask.kind === "sends-as-you" && (by !== "user" || optionId === "delegate" || heldCommunication && !["acknowledge", "deny"].includes(optionId)))
+      throw new Error("Only the user can acknowledge or dismiss a send handoff.");
+    if (heldCommunication?.act === "draft" && optionId === "approve") {
+      this.assertDraftApprovalOpen();
+      if (by !== "keeper" && (by !== "user" || receipt?.act !== "answerAsk" || via === "timer")) throw new Error("Draft approval needs an explicit answer.");
+      if (!heldCommunication.callDigest) throw new Error("Tavern could not match this draft to exact arguments.");
+      this.clusterRunner(ask.keeperThreadId, ask.boardQuestId, heldCommunication.threadId);
+    }
     if (ask.kind === "cluster-write" && by === "user" && (receipt?.act !== "answerAsk" || via === "timer" || via === "cli")) throw new Error("Cluster writes require your explicit answer on the card.");
     if (ask.state !== "open") {
       if (ask.answer?.optionId === optionId) {
@@ -1322,7 +1338,7 @@ export class Keeper {
       this.store.put("asks", ask.id, {
         ...ask,
         state: by === "default" ? "defaulted" : "answered",
-        answer: { optionId, note, via, by, at: this.now(), ...(keeperSource.keeperAuthority ? { keeperAuthority: keeperSource.keeperAuthority } : {}), ...(surface ? { surface } : {}), ...(standing ? { preapproval: { id: standing.grant.id, at: standing.grant.at, surface: standing.grant.surface } } : {}) },
+        answer: { optionId, note, via, by, at: this.now(), ...(keeperSource.keeperAuthority ? { keeperAuthority: keeperSource.keeperAuthority } : {}), ...(heldCommunication?.act === "draft" && keeperSource.delegation ? { draftDelegationId: keeperSource.delegation.id } : {}), ...(surface ? { surface } : {}), ...(standing ? { preapproval: { id: standing.grant.id, at: standing.grant.at, surface: standing.grant.surface } } : {}) },
       });
       applyAskEffect(effect, {
         ...effects,
@@ -1385,6 +1401,7 @@ export class Keeper {
     });
     if (by === "user") this.userAction(ask.keeperThreadId);
     if (effect.type === "grant-shell-act" && by !== "keeper") this.syncShellGrants(effect.memberThreadId);
+    if (heldCommunication?.act === "draft" && optionId === "approve" && by !== "keeper") this.syncCommunication(heldCommunication.threadId, askId);
     this.changed(ask.keeperThreadId, ask.boardQuestId);
   }
   postSummary(threadId: string, draft: SummaryDraft) {
@@ -1498,6 +1515,8 @@ export class Keeper {
     });
     const grant = input.askId ? this.store.get("shellGrants", input.askId) : null;
     if (grant) this.syncShellGrants(grant.memberThreadId);
+    const answered = input.askId ? this.store.get("asks", input.askId) : null;
+    if (answered?.effect?.type === "communication-hold" && answered.effect.hold.act === "draft" && answered.answer?.optionId === "approve") this.syncCommunication(answered.effect.hold.threadId, answered.id);
     this.changed(threadId, questId);
     return decision;
   }

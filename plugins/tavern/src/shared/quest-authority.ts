@@ -1,11 +1,17 @@
 import { moveTime } from "./time";
 import { z } from "zod";
-export const DELEGATABLE_KINDS = ["production", "merge", "credential", "sends-as-you", "destructive"] as const;
-export const CONSEQUENTIAL_ASK_KINDS = ["cluster-write", ...DELEGATABLE_KINDS] as const;
-export const delegationKindSchema = z.enum(DELEGATABLE_KINDS);
+import { draftTargetsSchema } from "./communication";
+export const ALWAYS_ASK_KINDS = ["production", "merge", "credential", "sends-as-you", "destructive"] as const;
+export const DELEGATABLE_KINDS = ["production", "merge", "credential", "drafts-as-you", "destructive"] as const;
+export const CONSEQUENTIAL_ASK_KINDS = ["cluster-write", "sends-as-you", ...DELEGATABLE_KINDS] as const;
+export const delegationKindSchema = z.enum(["sends-as-you", ...DELEGATABLE_KINDS]);
 export type DelegationKind = z.infer<typeof delegationKindSchema>;
 const grant = { id: z.string(), surface: z.string(), at: z.number(), endedAt: z.number().nullable(), revokedAt: z.number().nullable() };
-export const delegationSchema = z.object({ ...grant, kind: delegationKindSchema });
+export const delegationSchema = z.object({ ...grant, kind: delegationKindSchema, targets: draftTargetsSchema.optional() }).refine(row => (row.kind === "drafts-as-you") === (row.targets !== undefined));
+export const delegateRequestSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("drafts-as-you"), targets: draftTargetsSchema }).strict(),
+  z.object({ kind: z.enum(["production", "merge", "credential", "destructive"]) }).strict(),
+]);
 export const preapprovalInputSchema = z.object({
   greenlight: z.object({ maxMembers: z.number().int().min(0).max(8), classes: z.array(z.string().min(1)).min(1).max(30) }).strict().nullable(),
   placement: z.boolean(), conclude: z.boolean(), endsAt: z.number().int().nonnegative().nullable(),

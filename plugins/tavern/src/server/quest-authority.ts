@@ -1,4 +1,5 @@
-import { DELEGATABLE_KINDS, preapprovalInputSchema, type DelegationKind, type PreapprovalInput, type Preapproval, type ActTarget } from "../shared/quest-authority";
+import { draftTargetsSchema } from "../shared/communication";
+import { ALWAYS_ASK_KINDS, DELEGATABLE_KINDS, preapprovalInputSchema, type DelegationKind, type PreapprovalInput, type Preapproval, type ActTarget } from "../shared/quest-authority";
 import { doneWhenCommands } from "./check-commands";
 import type { Plan, Ask } from "../shared/schema";
 import { verifiedWaypoint } from "../shared/waypoint";
@@ -8,6 +9,7 @@ import { readUndoLanes } from "./undo-record";
 import type { UndoKind } from "../shared/undo-lane";
 export type StandingAnswer = { questId: string; grant: Preapproval; optionId: string; placement: boolean };
 export class QuestAuthority {
+  readonly revokingDraftDelegations = new Set<string>();
   readonly rebaseMatches = new Map<string, { verifiedCommit: string; commit: string }>();
   constructor(readonly keeper: Keeper) {}
   private explicit(receipt: UserActReceipt | undefined) {
@@ -16,17 +18,19 @@ export class QuestAuthority {
   private active(record: { endedAt: number | null; revokedAt: number | null; endsAt?: number | null }) {
     return record.endedAt === null && record.revokedAt === null && (record.endsAt == null || record.endsAt > this.keeper.now());
   }
-  delegate(questId: string, kind: DelegationKind, receipt: UserActReceipt) {
+  delegate(questId: string, kind: DelegationKind, receipt: UserActReceipt, targets?: string[]) {
     this.explicit(receipt);
-    if (!DELEGATABLE_KINDS.includes(kind)) throw new Error("This kind cannot be delegated");
+    if (!DELEGATABLE_KINDS.some(candidate => candidate === kind)) throw new Error("This kind cannot be delegated");
+    if (kind === "drafts-as-you") targets = draftTargetsSchema.parse(targets);
+    else if (targets !== undefined) throw new Error("Only drafting takes a list of targets");
     const k = this.keeper, q = k.quest(questId); k.liveQuest(q.keeperThreadId, q.id);
     if (readUndoLanes(k.store, q.keeperThreadId).some(lane => lane.kind === kind)) throw new Error("Reset this kind in the Ledger first.");
     return commitUserAct(k.store, k.now, receipt, () => {
-      const existing = q.delegations?.find(g => g.kind === kind && this.active(g)); if (existing) return existing;
+      const existing = q.delegations?.find(g => g.kind === kind && this.active(g) && JSON.stringify(g.targets) === JSON.stringify(targets)); if (existing) return existing;
       if ((q.delegations?.length ?? 0) >= 100) throw new Error("This quest has reached its authority record limit");
-      const grant = { id: k.store.id("delegation"), kind, at: k.now(), surface: receipt.surface, endedAt: null, revokedAt: null };
+      const grant = { id: k.store.id("delegation"), kind, at: k.now(), surface: receipt.surface, endedAt: null, revokedAt: null, ...(targets ? { targets } : {}) };
       k.store.put("quests", q.id, { ...q, delegations: [...(q.delegations ?? []), grant] });
-      for (const ask of k.store.query("asks", "boardQuestId", q.id, 500).filter(a => a.state === "open" && a.kind === kind && !a.unsure)) k.store.put("asks", ask.id, { ...ask, lane: "keeper" });
+      for (const ask of k.store.query("asks", "boardQuestId", q.id, 500).filter(a => a.state === "open" && a.kind === kind && !a.unsure && (kind !== "drafts-as-you" || !!a.sendTarget && targets?.includes(a.sendTarget)))) k.store.put("asks", ask.id, { ...ask, lane: "keeper" });
       k.store.event(k.now(), q.keeperThreadId, q.id, "delegation.granted", `${kind}: let ${k.name(k.require(q.keeperThreadId, "keeper"))} decide for this quest`, grant, { kind: "user" });
       k.changed(q.keeperThreadId, q.id); return grant;
     });
@@ -54,29 +58,33 @@ export class QuestAuthority {
     });
     k.changed(q.keeperThreadId, q.id);
   }
-  baseLane(ask: Pick<Ask, "kind" | "boardQuestId" | "effect"> & { unsure?: boolean }): "user" | "keeper" {
-    if (ask.kind === "cluster-write" || ask.unsure || !ask.boardQuestId) return "user";
+  baseLane(ask: Pick<Ask, "kind" | "boardQuestId" | "effect" | "sendTarget"> & { unsure?: boolean }): "user" | "keeper" {
+    if (ask.kind === "cluster-write" || ask.kind === "sends-as-you" || ask.unsure || !ask.boardQuestId) return "user";
     const q = this.keeper.store.get("quests", ask.boardQuestId);
     if (!q || ["done", "stopping", "stopped"].includes(q.phase)) return "user";
     if (ask.effect?.type === "grant-shell-act" && ask.effect.target.act === "publish") return "keeper";
+    if (ask.kind === "decision" && ask.effect?.type === "pull-request-draft" && ["edit", "close"].includes(ask.effect.operation))
+      return this.keeper.settings(q.id).keepers.alwaysAsk.includes("sends-as-you") ? "user" : "keeper";
     if (!QUEST_LANES[ask.kind as keyof typeof QUEST_LANES]?.delegatable) return "user";
-    const kind = ask.kind as DelegationKind;
-    return !this.keeper.settings(q.id).keepers.alwaysAsk.includes(kind) || q.delegations?.some(g => g.kind === kind && this.active(g)) ? "keeper" : "user";
+    const { delegation, keeperAuthority } = this.keeperDecisionSource(ask);
+    return delegation || keeperAuthority ? "keeper" : "user";
   }
-  keeperDecisionSource(ask: Pick<Ask, "kind" | "boardQuestId">) {
-    if (!ask.boardQuestId) return {};
-    const delegation = this.keeper.quest(ask.boardQuestId).delegations?.find(g => g.kind === ask.kind && this.active(g));
+  keeperDecisionSource(ask: Pick<Ask, "kind" | "boardQuestId" | "sendTarget">) {
+    if (!ask.boardQuestId || ask.kind === "sends-as-you") return {};
+    const delegation = this.keeper.quest(ask.boardQuestId).delegations?.find(g => g.kind === ask.kind && this.active(g) &&
+      (g.kind !== "drafts-as-you" || !this.revokingDraftDelegations.has(g.id) && !!ask.sendTarget && g.targets?.includes(ask.sendTarget)));
     if (delegation) return { delegation };
-    return DELEGATABLE_KINDS.includes(ask.kind as DelegationKind) && !this.keeper.settings(ask.boardQuestId).keepers.alwaysAsk.includes(ask.kind as DelegationKind)
+    const kind = ALWAYS_ASK_KINDS.find(kind => kind === ask.kind);
+    return kind && !this.keeper.settings(ask.boardQuestId).keepers.alwaysAsk.includes(kind)
       ? { keeperAuthority: "keepers.alwaysAsk" as const } : {};
   }
-  applyAskPolicy(prior: readonly DelegationKind[], next: readonly DelegationKind[]) {
+  applyAskPolicy(prior: readonly (typeof ALWAYS_ASK_KINDS[number])[], next: readonly (typeof ALWAYS_ASK_KINDS[number])[]) {
     const k = this.keeper;
-    if (DELEGATABLE_KINDS.every(kind => prior.includes(kind) === next.includes(kind))) return;
+    if (ALWAYS_ASK_KINDS.every(kind => prior.includes(kind) === next.includes(kind))) return;
     k.store.atomic(() => {
       for (const ask of k.store.openAsks()) {
-        const kind = ask.kind as DelegationKind;
-        if (prior.includes(kind) === next.includes(kind)) continue;
+        const kind = ALWAYS_ASK_KINDS.find(kind => kind === ask.kind);
+        if (!kind || kind === "sends-as-you" || prior.includes(kind) === next.includes(kind)) continue;
         const lane = this.lane(ask);
         if (lane === (ask.lane ?? "user")) continue;
         const options = ask.options.filter(option => option.id !== "delegate");
@@ -165,6 +173,6 @@ export class QuestAuthority {
     const k = this.keeper, q = k.quest(questId);
     const shifted = new Set(q.delegations?.some(g => this.active(g)) ? readUndoLanes(k.store, q.keeperThreadId).map(row => row.kind) : []);
     const proposal = q.phase === "greenlight" && !q.spendBudget?.reached && q.spendProposal?.planVersion === q.planVersion ? q.spendProposal.cents : undefined;
-    return { keeperName: k.name(k.require(q.keeperThreadId, "keeper")), rows: [...DELEGATABLE_KINDS.map(kind => ({ kind, lane: shifted.has(kind) ? "user" as const : this.baseLane({ kind, boardQuestId: q.id }) })), { kind: "cluster-write", lane: QUEST_LANES["cluster-write"].lane }, ...["greenlight", "conclude"].map(kind => ({ kind, lane: q.preapprovals?.some(g => this.active(g) && (kind === "greenlight" ? g.greenlight : g.conclude)) ? "tavern" as const : "user" as const })), ...Object.entries(QUEST_LANES).filter(([, row]) => row.lane === "keeper").map(([kind, row]) => ({ kind, lane: row.lane }))], delegations: q.delegations ?? [], preapprovals: q.preapprovals ?? [], review: { used: k.store.query("members", "boardQuestId", q.id, 500).filter(m => m.classId === "warden").length, total: k.settings(q.id).attention.reviewBudget }, spendBudget: q.spendBudget?.cents ?? null, ...(proposal !== undefined && proposal !== q.spendBudget?.cents ? { spendProposal: proposal } : {}) };
+    return { keeperName: k.name(k.require(q.keeperThreadId, "keeper")), rows: [...DELEGATABLE_KINDS.map(kind => ({ kind, lane: shifted.has(kind) ? "user" as const : this.baseLane({ kind, boardQuestId: q.id }) })), { kind: "cluster-write", lane: QUEST_LANES["cluster-write"].lane }, { kind: "sends-as-you", lane: "user" as const }, ...["greenlight", "conclude"].map(kind => ({ kind, lane: q.preapprovals?.some(g => this.active(g) && (kind === "greenlight" ? g.greenlight : g.conclude)) ? "tavern" as const : "user" as const })), ...Object.entries(QUEST_LANES).filter(([, row]) => row.lane === "keeper").map(([kind, row]) => ({ kind, lane: row.lane }))], delegations: q.delegations ?? [], preapprovals: q.preapprovals ?? [], review: { used: k.store.query("members", "boardQuestId", q.id, 500).filter(m => m.classId === "warden").length, total: k.settings(q.id).attention.reviewBudget }, spendBudget: q.spendBudget?.cents ?? null, ...(proposal !== undefined && proposal !== q.spendBudget?.cents ? { spendProposal: proposal } : {}) };
   }
 }

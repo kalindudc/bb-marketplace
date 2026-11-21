@@ -79,6 +79,7 @@ export async function readyFixture(checker = false, includesUncommitted = false)
     else if (method === "bindScope") result = await nativeScopes.bindScope(input as never, call.signal);
     else if (method === "prepareCall") result = await nativeScopes.prepareCall(input as never, call.signal);
     else if (method === "sessionStatus") result = await nativeScopes.sessionStatus(input as never, call.signal);
+    else if (method === "communicationHolds") result = nativeScopes.communicationHolds(input as never);
     else {
       const transport = createTransport(registry), invoke = transport[method as keyof typeof transport] as (input: unknown, signal?: AbortSignal) => Promise<unknown>;
       if (!invoke) throw new Error("Unexpected native method " + method);

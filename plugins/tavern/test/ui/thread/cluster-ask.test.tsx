@@ -65,7 +65,7 @@ it("states the cluster write rule on both greenlight and delegation", async () =
     expect(slot.getByText("Cluster writes always ask you, even after you approve the quest map.")).toBeTruthy();
     await slot.findByRole("heading", { name: "Authority on this quest" });
     const delegation = slot.getByText("Let Wren decide for this quest");
-    expect(within(delegation.parentElement!).getByText("Cluster writes always ask you and cannot be delegated.")).toBeTruthy();
+    expect(within(delegation.parentElement!).getByText("Cluster writes always ask you. Only you send messages.")).toBeTruthy();
   } finally { slot.lifecycle.unmount(); }
 });
 

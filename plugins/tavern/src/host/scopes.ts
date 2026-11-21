@@ -5,10 +5,12 @@ import { join } from "node:path";
 import { z } from "zod";
 import { hostContract, type Authority, type HostInput, type HostOutput } from "../host-contract";
 import { envForScope } from "../scope/env";
-import { blocked, evaluate, type ScopeCall } from "../scope/engine";
+import { blocked, communicationAct, evaluate, type ScopeCall } from "../scope/engine";
+import { acknowledgeCommunicationHolds, matchedDraftReceipt, readCommunicationHolds, revokeCommunicationReceipt } from "../scope/communication-holds";
 import { issueActGrant, matchesActReceipt, revokeActGrant } from "../scope/act-grants";
 import { claimPullRequestGrant, pullRequestGrantAvailable } from "../scope/pr-grants";
 import { prepareCall as prepareFacts } from "../scope/prepare";
+import { MessagePolicyError, readMessagePolicy, splitMessagePolicy, writeMessagePolicy } from "../scope/store";
 import { nativeScopeVariablesSchema } from "../scope/host-env";
 import { piAgentDir } from "../scope/install";
 import { bindPaths, realPath } from "../scope/paths";
@@ -101,7 +103,7 @@ export class NativeScopes {
       throw new HostError("scope-integrity", "The rendered scope binding or native variables no longer match its acknowledgment.");
     return scope;
   }
-  private intact(authority: Authority, record: BindingRecord): Scope {
+  private intact(authority: Authority, record: BindingRecord, inspectMessageProblem?: (error: MessagePolicyError) => void): Scope {
     const file = this.registry.scopeStatePath(authority, "scope.json");
     let json: string;
     try {
@@ -111,16 +113,27 @@ export class NativeScopes {
     } catch { throw new HostError("scope-integrity", "The acknowledged native scope is missing or not a regular private file; reconcile a new revision."); }
     if (digest(json) !== record.renderedDigest || json !== record.renderedJson || digest(record.deliveryJson) !== record.binding.scopeDigest)
       throw new HostError("scope-integrity", "The acknowledged native scope bytes or delivery digest changed; reconcile a new revision rather than retrying altered policy.");
-    return this.rendered(record);
+    const base = this.rendered(record), expected = scopeDeliveryFileSchema.parse(JSON.parse(record.deliveryJson));
+    try {
+      const scope = readMessagePolicy(file, base, record.binding.scopeDigest);
+      if (JSON.stringify(splitMessagePolicy(scope).policy) !== JSON.stringify(splitMessagePolicy(expected).policy))
+        throw new MessagePolicyError(scope.sendTools);
+      return scope;
+    } catch (error) {
+      if (!(error instanceof MessagePolicyError)) throw error;
+      if (!inspectMessageProblem) throw new HostError("message-policy-mismatch", error.message);
+      inspectMessageProblem(error);
+      return { ...base, sendTools: expected.sendTools };
+    }
   }
-  private acknowledged(authority: Authority, revision: number, scopeDigest?: string, signal?: AbortSignal): { record: BindingRecord; scope: Scope } {
+  private acknowledged(authority: Authority, revision: number, scopeDigest?: string, signal?: AbortSignal, inspectMessageProblem?: (error: MessagePolicyError) => void): { record: BindingRecord; scope: Scope } {
     if (signal?.aborted) throw abortError();
     this.registry.endpoint(authority, ["member-write"]);
     const record = this.record(authority);
     if (!record || record.state !== "bound") throw new HostError("scope-unavailable", "No current acknowledged native scope is bound to this endpoint.");
     if (record.binding.revision !== revision || scopeDigest !== undefined && record.binding.scopeDigest !== scopeDigest)
       throw new HostError("scope-stale", "The requested scope revision or delivery digest is not the current native acknowledgment.");
-    return { record, scope: this.intact(authority, record) };
+    return { record, scope: this.intact(authority, record, inspectMessageProblem) };
   }
   async bindScope(raw: HostInput<"bindScope">, signal?: AbortSignal): Promise<HostOutput<"bindScope">> {
     const input = hostContract.bindScope.input.parse(raw), authority = authorityOf(input);
@@ -143,11 +156,13 @@ export class NativeScopes {
         this.rendered(previous); record = previous;
       } else {
         const scope = this.render(delivery, authority, context.endpoint);
-        const renderedJson = JSON.stringify(scopeRenderedFileSchema.parse({ ...scope, bindingTemplate: delivery.bindingTemplate, hostBinding: binding }), null, 2) + "\n";
+        const renderedJson = JSON.stringify(scopeRenderedFileSchema.parse({ ...splitMessagePolicy(scope).scope, bindingTemplate: splitMessagePolicy(delivery.bindingTemplate).scope, hostBinding: binding }), null, 2) + "\n";
         record = bindingRecordSchema.parse({ state: "binding", binding, deliveryJson: input.scopeFileJson, renderedJson, renderedDigest: digest(renderedJson), variables: scope.env.variables });
       }
       this.writeRecord(authority, record, check);
-      atomicWrite(this.registry.scopeStatePath(authority, "scope.json"), record.renderedJson, check);
+      const file = this.registry.scopeStatePath(authority, "scope.json");
+      writeMessagePolicy(file, delivery, binding.scopeDigest, check);
+      atomicWrite(file, record.renderedJson, check);
       check(); rmSync(this.registry.scopeStatePath(authority, "scope.armed"), { force: true });
       this.writeRecord(authority, { ...record, state: "bound" }, check); check();
       return hostContract.bindScope.output.parse({ revision: input.revision, scopeDigest: input.scopeDigest, scopeFile: this.registry.scopeStatePath(authority, "scope.json"), variables: record.variables });
@@ -194,7 +209,9 @@ export class NativeScopes {
   async prepareCall(raw: HostInput<"prepareCall">, signal?: AbortSignal): Promise<HostOutput<"prepareCall">> {
     const input = hostContract.prepareCall.input.parse(raw), authority = authorityOf(input);
     const result = await this.registry.operation(authority, signal, async combined => {
-      const context = hostContext(this.registry, authority, ["member-write"], combined), { record, scope } = this.acknowledged(authority, input.scopeRevision);
+      const context = hostContext(this.registry, authority, ["member-write"], combined);
+      const tolerateMessageProblem = () => {};
+      const { record, scope } = this.acknowledged(authority, input.scopeRevision, undefined, combined, tolerateMessageProblem);
       const check = () => {
         context.active(); const current = this.record(authority);
         if (!current || current.state !== "bound" || JSON.stringify(current.binding) !== JSON.stringify(record.binding) || current.renderedDigest !== record.renderedDigest)
@@ -208,13 +225,17 @@ export class NativeScopes {
       const file = this.registry.scopeStatePath(authority, "scope.json"), observationId = input.call.observationId;
       const receipt = input.call.clusterObservation;
       const clusterWriteApproved = matchesActReceipt(file, scope.threadId, "cluster-write", toolInput.command ?? toolInput.cmd, receipt);
-      let decision = evaluate(this.intact(authority, record), { ...call, clusterWriteApproved, ...(clusterWriteApproved ? { clusterObservation: receipt } : {}), prGrantAvailable: id => !!observationId && pullRequestGrantAvailable(file, id, observationId) });
+      let mismatch: MessagePolicyError | undefined;
+      const currentScope = this.intact(authority, record, error => { mismatch = error; });
+      const mismatchedAct = mismatch && (communicationAct(currentScope, call) || mismatch.sendTools?.length && communicationAct({ ...currentScope, sendTools: mismatch.sendTools }, call));
+      let decision = mismatchedAct ? blocked(toolName, "message-policy-mismatch", mismatch!.message)
+        : evaluate(currentScope, { ...call, draftApproved: !mismatch && matchedDraftReceipt(file, call, input.call.draftObservation), clusterWriteApproved, ...(clusterWriteApproved ? { clusterObservation: receipt } : {}), prGrantAvailable: id => !!observationId && pullRequestGrantAvailable(file, id, observationId) });
       if (decision.allow && decision.prGrant && !claimPullRequestGrant(file, decision.prGrant, observationId!) && !pullRequestGrantAvailable(file, decision.prGrant, observationId))
         decision = blocked(call.toolName, "pr-sends-as-you", "the one-use pull request exception was already used");
       check();
       return hostContract.prepareCall.output.parse({ call, scopeRevision: record.binding.revision, scopeDigest: record.binding.scopeDigest, decision });
     });
-    this.acknowledged(authority, result.scopeRevision, result.scopeDigest, signal);
+    this.acknowledged(authority, result.scopeRevision, result.scopeDigest, signal, () => {});
     return result;
   }
   async sessionStatus(raw: HostInput<"sessionStatus">, signal?: AbortSignal): Promise<HostOutput<"sessionStatus">> {
@@ -230,17 +251,46 @@ export class NativeScopes {
     if (record.binding.revision !== input.revision || record.binding.scopeDigest !== input.scopeDigest) return reply("stale");
     let scope: Scope;
     try { scope = this.intact(authority, record); }
-    catch (error) { if (error instanceof HostError && error.code === "scope-integrity") return reply("stale"); throw error; }
+    catch (error) { if (error instanceof HostError && ["scope-integrity", "message-policy-mismatch"].includes(error.code)) return reply("stale"); throw error; }
     this.workspace(scopeDeliveryFileSchema.parse(JSON.parse(record.deliveryJson)), authority, endpoint);
+    const armed = this.armedMarker(authority, scope, record);
+    if (armed === "missing") return reply("not-observed");
+    if (armed === "stale") return reply("stale");
+    return { ...reply(scope.mode === "enforce" ? "armed" : "not-observed"), ...(armed.clusterWrites === 1 ? { clusterWrites: true as const } : {}), ...(armed.sendGuard === 1 ? { sendGuard: true as const } : {}) };
+  }
+  private armedMarker(authority: Authority, scope: Scope, record: BindingRecord) {
     let marker: z.infer<typeof scopeArmedSchema>;
     try {
       const file = this.registry.scopeStatePath(authority, "scope.armed"), status = lstatSync(file);
-      if (!status.isFile() || status.isSymbolicLink() || status.size > 16_384) return reply("stale");
+      if (!status.isFile() || status.isSymbolicLink() || status.size > 16_384) return "stale" as const;
       marker = scopeArmedSchema.parse(JSON.parse(readFileSync(file, "utf8")));
-    } catch (error) { return reply((error as NodeJS.ErrnoException).code === "ENOENT" ? "not-observed" : "stale"); }
-    if (!marker.hostBinding || marker.threadId !== scope.threadId || marker.issuedAt !== scope.issuedAt || JSON.stringify(marker.hostBinding) !== JSON.stringify(record.binding) || marker.renderedDigest !== record.renderedDigest) return reply("stale");
-    try { process.kill(marker.pid, 0); } catch { return reply("stale"); }
-    return { ...reply(scope.mode === "enforce" ? "armed" : "not-observed"), ...(marker.clusterWrites === 1 ? { clusterWrites: true as const } : {}) };
+    } catch (error) { return (error as NodeJS.ErrnoException).code === "ENOENT" ? "missing" as const : "stale" as const; }
+    if (!marker.hostBinding || marker.threadId !== scope.threadId || marker.issuedAt !== scope.issuedAt || JSON.stringify(marker.hostBinding) !== JSON.stringify(record.binding) || marker.renderedDigest !== record.renderedDigest) return "stale" as const;
+    try { process.kill(marker.pid, 0); } catch { return "stale" as const; }
+    return marker;
+  }
+  communicationHolds(raw: HostInput<"communicationHolds">, signal?: AbortSignal): HostOutput<"communicationHolds"> {
+    const input = hostContract.communicationHolds.input.parse(raw), authority = authorityOf(input);
+    let binding: ReturnType<NativeScopes["acknowledged"]>;
+    try { binding = this.acknowledged(authority, input.revision, input.scopeDigest, signal); }
+    catch (error) {
+      if (!input.acknowledge.length && error instanceof HostError && error.code === "message-policy-mismatch")
+        return { holds: [], guard: "not-prevented", problem: "The private message policy does not match this scope; ask the Keeper to repair it." };
+      throw error;
+    }
+    const { scope, record } = binding;
+    const marker = this.armedMarker(authority, scope, record);
+    const guard = typeof marker === "string" ? "not-prevented" as const : marker.sendGuard === 1 ? "armed" as const : "restart" as const;
+    const file = this.registry.scopeStatePath(authority, "scope.json");
+    if (input.acknowledge.length) acknowledgeCommunicationHolds(file, input.acknowledge);
+    return { guard, holds: readCommunicationHolds(file).filter(hold => hold.threadId === scope.threadId && hold.scopeIssuedAt === scope.issuedAt) };
+  }
+  revokeDraftReceipts(raw: HostInput<"revokeDraftReceipts">, signal?: AbortSignal): HostOutput<"revokeDraftReceipts"> {
+    const { askIds, ...authority } = hostContract.revokeDraftReceipts.input.parse(raw);
+    if (signal?.aborted) throw abortError();
+    const file = this.registry.scopeStatePath(authority, "scope.json");
+    for (const askId of askIds) revokeCommunicationReceipt(file, askId);
+    return { revoked: true };
   }
   async issueClusterGrant(raw: HostInput<"issueClusterGrant">, signal?: AbortSignal): Promise<HostOutput<"issueClusterGrant">> {
     const { grant, ...statusInput } = hostContract.issueClusterGrant.input.parse(raw), authority = authorityOf(statusInput);
@@ -265,7 +315,7 @@ export class NativeScopes {
     const check = () => { if (signal?.aborted) throw abortError(); this.registry.scopeStatePath(authority, "binding.json"); };
     check(); this.writeRecord(authority, { state: "released" }, check);
     for (const name of ["scope.json", "scope.armed"] as const) { check(); rmSync(this.registry.scopeStatePath(authority, name), { force: true }); }
-    for (const suffix of [".grants", ".act-grants"]) {
+    for (const suffix of [".grants", ".act-grants", ".messages", ".message-policy"]) {
       check(); rmSync(this.registry.scopeStatePath(authority, "scope.json") + suffix, { force: true, recursive: true });
     }
     check(); return { released: true };

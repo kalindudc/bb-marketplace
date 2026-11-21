@@ -38,6 +38,7 @@ export interface ScopesDeps extends WatchDeps {
   onScopeModeChanged?(threadId: string, mode: ScopeMode): void;
   narrowBoundScope?(scope: Scope): Scope;
   pullRequestPolicy?(threadId: string): Scope["pullRequestPolicy"];
+  communicationPolicy?(threadId: string): Pick<Scope, "sendTools" | "communicationAuthority">;
   dataDir?: string;
   pathsForThread(threadId: string): ScopeThreadPaths | Promise<ScopeThreadPaths>;
   projectForThread?(threadId: string): ProjectContext;
@@ -92,6 +93,10 @@ export function registerScopes(bb: BbPluginApi, deps: ScopesDeps) {
     const state = hostStateForThread(threadId);
     if (state !== undefined) return store.markHostBinding(threadId, { kind: "host", placementId: state.kind === "ready" ? state.expected.placementId : null, generation: state.kind === "ready" ? state.expected.generation : null });
   };
+  const withCommunicationPolicy = (scope: Scope, policy: Pick<Scope, "sendTools" | "communicationAuthority">): Scope => {
+    const { sendTools: _oldRules, communicationAuthority: _oldAuthority, ...base } = scope;
+    return { ...base, ...policy };
+  };
   const bindAndWrite = async (threadId: string, input: Scope, check: (bindingChanged?: boolean) => void, preserveProvenance = false) => {
     let template = scopeSchema.parse({ ...input, threadId, issuedAt: input.issuedAt || Date.now() });
     if (template.role === "smith" && !template.assignedBranch) {
@@ -109,6 +114,7 @@ export function registerScopes(bb: BbPluginApi, deps: ScopesDeps) {
     const current = store.records.get(threadId), enforceFrom = current?.scope?.enforceFrom ?? template.enforceFrom;
     template = { ...template, mode, ...(enforceFrom === undefined ? {} : { enforceFrom }) };
     if (deps.pullRequestPolicy) template.pullRequestPolicy = deps.pullRequestPolicy(threadId);
+    if (deps.communicationPolicy) template = withCommunicationPolicy(template, deps.communicationPolicy(threadId));
     if (current?.binding) {
       if (current.binding.placementId === null && current.scope?.preset === "open" && template.preset !== "open") throw new Error("Only an open Keeper scope can bind remotely without a native delivery");
       if (!current.error && JSON.stringify(current.scope) === JSON.stringify(template) && JSON.stringify(current.template) === JSON.stringify(template)) return current.scope!;
@@ -237,6 +243,16 @@ export function registerScopes(bb: BbPluginApi, deps: ScopesDeps) {
       if (record.binding) deps.onHostTemplateChanged?.(threadId);
       return true;
     },
+    refreshCommunicationPolicy(threadId: string) {
+      const record = store.records.get(threadId);
+      if (!record?.scope || record.error || !deps.communicationPolicy) return;
+      const policy = deps.communicationPolicy(threadId);
+      if (JSON.stringify([record.scope.sendTools, record.scope.communicationAuthority]) === JSON.stringify([policy.sendTools, policy.communicationAuthority])) return;
+      store.write(threadId, withCommunicationPolicy(record.scope, policy), record.template && withCommunicationPolicy(record.template, policy), undefined, true);
+      if (record.binding) deps.onHostTemplateChanged?.(threadId);
+    },
+    sendGuardArmed: (threadId: string) => store.isArmed(threadId, false, true),
+    messagePolicyProblem: (threadId: string) => store.messagePolicyProblem(threadId),
     scopeFile: (threadId: string) => store.file(threadId),
     scopeTemplate: (threadId: string) => store.records.get(threadId)?.template,
     rebuildScope(threadId: string, template: Scope, next: Scope) {

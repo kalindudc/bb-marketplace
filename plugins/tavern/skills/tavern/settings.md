@@ -58,7 +58,8 @@ Paths use the snake_case spelling for TOML. The settings CLI uses camelCase. A v
 | `classes.<id>.provider` | Overrides the provider for this class. | Inherits | User; Granted |
 | `classes.<id>.model` | Overrides the model for this class. | Inherits | User; Granted |
 | `classes.<id>.reasoning` | Overrides the model’s reasoning level. Use `"default"` in TOML to request the model default. | Inherits | User; Granted |
-| `scopes.mode` | Selects Enforce, Watch or Off for Tavern’s scope guard. Host capabilities still constrain containment. | `"enforce"` | User; Plain |
+| `scopes.mode` | Selects Enforce, Watch or Off for ordinary scope checks. Host capabilities still constrain containment. | `"enforce"` | User; Plain |
+| `scopes.send_tools` | Names tool patterns that send or draft as you. Each has a `pattern`, `act` (`send` or `draft`) and optional `target_key`. An asterisk matches any part of the name. The send guard remains active in Watch and Off. | `[]` | User |
 | `machines.max_makers` | Caps machine slots for makers per Keeper. | `2` | User; Plain |
 | `machines.max_checkers` | Caps machine slots for checkers per Keeper. | `2` | User; Plain |
 | `machines.rules` | Lists placement rules in match order, with their target, inputs, consent, draft location and per-class model overrides. | `[]` | User; Plain |

@@ -131,28 +131,21 @@ it("only refreshes on explicit quest reads and dedupes concurrent ones", async (
   expect(f.inspect).toHaveBeenCalledTimes(1);
 });
 
-it.each(["setting", "delegation", "default", "unsure"] as const)("uses the sends-as-you decision lane for %s", async lane => {
+it.each(["setting", "delegation", "default", "unsure"] as const)("leaves external posts with the user for %s", async lane => {
   const f = await fixture();
   f.runtime.enableScopes({ installGuard: false, dataDir: process.env.TAVERN_TEST_FIXTURES });
-  const grant = vi.spyOn(f.runtime.scopes!, "refreshPullRequestPolicy").mockReturnValue(true);
   if (lane === "setting") {
     const settings = f.k.settings.bind(f.k);
     vi.spyOn(f.k, "settings").mockImplementation(id => { const current = settings(id); return { ...current, keepers: { ...current.keepers, alwaysAsk: current.keepers.alwaysAsk.filter(k => k !== "sends-as-you") } }; });
   }
-  if (lane === "delegation" || lane === "unsure") await f.harness.invokeRpc("delegateQuest", { boardQuestId: f.q.id, kind: "sends-as-you", via: "page" }, client);
+  if (lane === "delegation") await expect(f.harness.invokeRpc("delegateQuest", { boardQuestId: f.q.id, kind: "sends-as-you", via: "page" }, client)).rejects.toThrow();
   const url = "https://github.com/example/other/pull/2";
   const command = `gh pr comment ${url} --body hi`;
   await f.change({ action: "draft", boardQuestId: f.q.id, operation: "comment", url, body: "hi", command, ...(lane === "unsure" ? { unsure: true } : {}) });
   const ask = f.k.store.query("asks", "boardQuestId", f.q.id).find(a => a.kind === "sends-as-you")!;
-  if (lane === "default" || lane === "unsure") {
-    expect(ask).toMatchObject({ state: "open", lane: "user" });
-    expect(ask.options.some(o => o.id === "delegate")).toBe(true);
-    expect(f.k.store.all("decisions").filter(d => d.askId === ask.id)).toEqual([]);
-  } else {
-    expect(ask.answer?.by).toBe("keeper");
-    expect(f.k.store.all("decisions")).toContainEqual(expect.objectContaining({ askId: ask.id, reversible: true, pullRequestGrant: expect.objectContaining({ digest: expect.stringMatching(/^[a-f0-9]{64}$/) }) }));
-    expect(grant).toHaveBeenCalledWith("lead");
-  }
+  expect(ask).toMatchObject({ state: "open", lane: "user" });
+  expect(ask.options.some(o => o.id === "delegate")).toBe(false);
+  expect(f.k.store.all("decisions").filter(d => d.askId === ask.id)).toEqual([]);
 });
 
 it.each(["comment", "review", "approve"] as const)("drafts an external PR %s in the user's sends-as-you lane", async operation => {
