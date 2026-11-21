@@ -1,7 +1,8 @@
 import { memberDetails } from "./member-engagement";
 import { createHash } from "node:crypto";
 import { requestSourcesSchema, type RequestSources } from "../shared/request-source";
-import { routeSchema, type Route } from "../shared/schema";
+import { routeSchema, type BoardQuest, type Member, type Route } from "../shared/schema";
+import { isLiveMember, isOpenQuest } from "./liveness";
 import type { Keeper } from "./keeper/service";
 
 const INLINE_CHARS = 4000;
@@ -12,19 +13,51 @@ function receipt(k: Keeper, keeperId: string, sourceId: string | null): string |
   if (sourceId === null) return undefined;
   return (k.store.db.prepare("SELECT text FROM tavern_messages WHERE id=? AND thread_id=?").get(sourceId, keeperId) as { text: string } | undefined)?.text;
 }
-export function captureRequestSources(k: Keeper, keeperId: string, questId: string | null): RequestSources {
-  k.require(keeperId, "keeper");
-  if (questId !== null) k.owned(keeperId, questId);
-  const routes: Route[] = questId === null
-    ? k.applicableRoutes(keeperId).filter(route => route.kind === "question" && route.boardQuestId === null)
-    : (k.store.db.prepare(`SELECT data FROM tavern_records WHERE kind='routes' AND json_extract(data,'$.keeperThreadId')=?
+function questRequestRoutes(k: Keeper, keeperId: string, questId: string) {
+  return (k.store.db.prepare(`SELECT data FROM tavern_records WHERE kind='routes' AND json_extract(data,'$.keeperThreadId')=?
       AND json_extract(data,'$.kind') IN ('new-quest','steer') AND (json_extract(data,'$.boardQuestId')=?
       OR EXISTS(SELECT 1 FROM json_each(json_extract(data,'$.boardQuestIds')) WHERE value=?))
       ORDER BY json_extract(data,'$.messageAt'),json_extract(data,'$.createdAt'),rowid`).all(keeperId, questId, questId) as { data: string }[]).map(row => routeSchema.parse(JSON.parse(row.data)));
+}
+
+const sourceKey = (source: { sourceMessageId?: string | null; routeId: string }) => source.sourceMessageId ?? source.routeId;
+
+export function briefSteers(k: Keeper, quest: BoardQuest, members: readonly Member[]) {
+  if (!isOpenQuest(quest)) return [];
+  const briefs = members.flatMap(member => {
+    if (member.role !== "member" || member.boardQuestId !== quest.id || !isLiveMember(k.store, member, "brief")) return [];
+    const manifest = k.store.runtime(member.threadId).requestSources;
+    return manifest?.boardQuestId === quest.id && manifest.keeperThreadId === quest.keeperThreadId ? [{ member, manifest }] : [];
+  });
+  if (!briefs.length) return [];
+  const steers = new Map(questRequestRoutes(k, quest.keeperThreadId, quest.id)
+    .filter(route => route.kind === "steer" && !route.classSelectionOnly)
+    .map(route => [sourceKey({ sourceMessageId: route.sourceMessageId, routeId: route.id }), route]));
+  const excerpts = new Map<string, string | null>();
+  return briefs.flatMap(({ member, manifest }) => {
+    const known = new Set(manifest.sources.map(sourceKey));
+    const missing = [...steers.keys()].filter(key => !known.has(key));
+    const latest = missing.at(-1);
+    if (latest === undefined) return [];
+    const route = steers.get(latest)!;
+    if (!excerpts.has(latest)) {
+      const text = receipt(k, quest.keeperThreadId, route.sourceMessageId ?? null) ?? route.userText;
+      const chars = text ? Array.from(text) : [];
+      excerpts.set(latest, chars.length > 160 ? `${chars.slice(0, 160).join("")}…` : text || null);
+    }
+    return [{ memberThreadId: member.threadId, at: route.messageAt, excerpt: excerpts.get(latest)!, signature: hash(JSON.stringify(missing)) }];
+  });
+}
+
+export function captureRequestSources(k: Keeper, keeperId: string, questId: string | null): RequestSources {
+  k.require(keeperId, "keeper");
+  if (questId !== null) k.owned(keeperId, questId);
+  const routes = questId === null ? k.applicableRoutes(keeperId).filter(route => route.kind === "question" && route.boardQuestId === null)
+    : questRequestRoutes(k, keeperId, questId);
   const seen = new Set<string>();
   const sources = routes.flatMap(route => {
     const sourceMessageId = route.sourceMessageId ?? null;
-    const key = sourceMessageId ?? route.id;
+    const key = sourceKey({ sourceMessageId, routeId: route.id });
     if (seen.has(key)) return [];
     seen.add(key);
     const text = receipt(k, keeperId, sourceMessageId);

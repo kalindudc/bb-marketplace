@@ -200,9 +200,9 @@ describe("Tavern page surfaces", () => {
     expect(history.textContent).toMatch(/re-anchored/i);
     expect(history.textContent).toContain("quest map v2 from your steer");
     const reports = slot.getByRole("region", { name: /Reports and evidence/ });
-    expect(within(reports).queryByRole("img", { name: "Matches intent 95%, safe to ship 60%" })).toBeNull();
+    expect(within(reports).queryByRole("group", { name: "Member’s own estimate" })).toBeNull();
     fireEvent.click(within(reports).getByRole("button", { name: /^Reports and evidence/ }));
-    expect(within(reports).getAllByRole("img", { name: "Matches intent 95%, safe to ship 60%" }).length).toBeGreaterThan(0);
+    expect(within(reports).getAllByRole("group", { name: "Member’s own estimate" }).length).toBeGreaterThan(0);
     fireEvent.click(within(history).getByRole("button", { name: /^Re-anchors/ }));
     expect(history.textContent).not.toContain("quest map v2 from your steer");
     expect(history.textContent).toMatch(/re-anchored/i);

@@ -4,6 +4,14 @@ Notable changes to Tavern, newest first. Releases are tagged `tavern/vX.Y.Z` in 
 
 ## Unreleased
 
+- Tell selected Keepers in the common room sends one unchanged message to each selected thread and shows a receipt for each. Their normal routing still applies.
+
+- Reports label confidence percentages as the member’s own estimate, not a Warden verdict.
+
+- Insights sizes trend labels to the available space before the chart first appears, so they stay readable on a phone. Long model names wrap.
+
+- The Ledger and each quest's party show when a member's brief predates one of your steers. The Keeper receives the hint when it changes, and a delivered re-brief clears it. The path count also shows waypoints added or removed since the last greenlight.
+
 - New party members take their names from their own Keeper’s party, so two Keepers can each hire a Juno. A resting member keeps its name, and existing numerals stay unless there is a conflict. The mention list puts your party first. It, the common room history and the map name the Keeper where parties meet. The member widget shows the current waypoint and, when different, the one named by the latest report.
 - Every new Keeper promise has a deadline. When the promise comes due, Tavern tells the Keeper what it was waiting for. A member that reports a wait gets no stale strikes before its deadline, and a blocked report with a declared wait does not send you an alert. The Keeper sees fresh gate warnings and the first two stale strikes, not the same reminder every tick. A member whose thread is still busy but has no recent progress evidence prompts one quiet hint to the Keeper. Older promises without a deadline stay in the ledger and say so.
 

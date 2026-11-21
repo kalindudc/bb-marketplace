@@ -8,6 +8,7 @@ import { Glyph, OpensMark } from "./glyphs";
 import { CheckIndependence, Clamp, EvidenceList, StatusPill, clockTime, plural, summaryNames, useToday } from "./primitives";
 import { voiceShown, type Registry } from "./registry";
 import { CrestOf, characterName } from "./rows";
+import { MemberEstimate } from "./member-estimate";
 import "./report-view.css";
 
 export type ReportBlock = { kind: "p"; text: string } | { kind: "list"; items: string[] } | { kind: "code"; text: string };
@@ -113,7 +114,7 @@ export function ReportView({ report, names = {}, compact = false, member, onView
     {prs}
     {evidence.length > 0 && <div className="rv-sec"><h4 className="rv-h">Evidence</h4><EvidenceList evidence={evidence} fold /></div>}
     {report.artifacts.length > 0 && <div className="rv-sec"><h4 className="rv-h">Artifacts</h4><EvidenceList evidence={report.artifacts.map((ref) => ({ kind: /^https?:\/\//i.test(ref) ? "url" : "file", ref, detail: "", exitCode: null }))} /></div>}
-    {report.confidence && <div className="conf"><span className="conf-l">Confidence</span><span className="conf-t">matches intent {report.confidence.intent}% · safe to ship {report.confidence.safe}%</span></div>}
+    <MemberEstimate confidence={report.confidence} />
     {member && <CheckIndependence member={member} />}
     {voice && report.voice && <p className="rv-voice" data-content>{report.voice}</p>}
   </div>;

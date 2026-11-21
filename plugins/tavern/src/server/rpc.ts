@@ -20,6 +20,7 @@ import {
 import { currentMoodReport, waypointMoodVerdict } from "../shared/mood";
 import type { Brief, Decision } from "../shared/schema";
 import { isLiveKeeper, isLiveMember } from "./liveness";
+import { isNotFound } from "./host-errors";
 import { DecisionViews } from "./decisions";
 import { markSummariesSeen, markVisitSummariesSeen, summariesForQuest, summaryCounts, summaryView } from "./summaries";
 import { markQuestChangesSeen } from "./quest-change-attention";
@@ -107,6 +108,17 @@ export function rpcHandlers(
     alertRoute: () => runtime.alerts.view(),
     alertTestSend: (_input, context, receipt?: UserActReceipt) => runtime.alerts.sendTest(receipt ?? requireUserAct(context, "alertTestSend")),
     alertTestConfirm: ({ id, arrived }) => runtime.alerts.confirm(id, arrived),
+    prepareTellKeepers: async ({ keeperIds }) => ({ targets: await Promise.all([...new Set(keeperIds)].map(async threadId => {
+      const keeper = k.member(threadId);
+      const name = keeper?.role === "keeper" ? k.name(keeper) : "Keeper";
+      if (!isLiveKeeper(k.store, keeper, "present")) return { threadId, name, status: "gone" as const };
+      try {
+        const thread = await runtime.bb.sdk.threads.get({ threadId });
+        return { threadId, name, status: thread.archivedAt != null || thread.deletedAt != null ? "gone" as const : "ready" as const };
+      } catch (error) {
+        return { threadId, name, status: isNotFound(error) ? "gone" as const : "unavailable" as const };
+      }
+    })) }),
     registry: async ({ projectId }) => {
       const snapshot = projectId ? await runtime.prepareRegistry(projectId) : runtime.snapshot();
       const serviceRecords = runtime.serviceRecords.read();

@@ -13,10 +13,12 @@ import { PageGlyph } from "./glyphs";
 import { durationWords, stopperOf, endedCounts, isFinished, keeperStatus, mapAside, pathProgress, phaseWord, questMove, visibleMembers, waypointMove } from "./model";
 
 import { MemberIdentity, PartyPicture as KitPartyPicture } from "../kit";
+import { pathChangeWords } from "../kit/rows";
 import { CheckerHold } from "./hold";
 import { usePanelState } from "./panel-state";
 
-import { Confidence, Guardrails, History, OlderDecisions, ReportItem, useHistoryLines } from "./record";
+import { Guardrails, History, OlderDecisions, ReportItem, useHistoryLines } from "./record";
+import { MemberEstimate } from "../kit/member-estimate";
 import { CreditCard, LeftRow, LootRow } from "./finished";
 import { WaiverRows } from "../kit/waiver-rows";
 import { pullRequestVerified } from "../../shared/pull-request";
@@ -120,7 +122,8 @@ export function QuestPage({ detail, registry, room, summaryId }: { detail: Board
   const keeper = room?.keepers.find((k) => k.member.threadId === quest.keeperThreadId) ?? null;
   const keeperName = keeper ? characterName(registry, keeper.member) : "the Keeper";
   const move = questMove(quest, detail.asks, { keeper: keeperName, member: (m) => characterName(registry, m) }, { keeperArchived: !!keeper?.archived, now });
-  const path = pathProgress(quest);
+  const path = pathProgress(quest), change = pathChangeWords(quest);
+  const briefSteers = new Map(quest.briefSteers?.map(steer => [steer.memberThreadId, steer]));
   const names = useMemo(() => questNames(quest, registry, detail.reports), [quest, registry, detail.reports]);
   const stopper = stopperOf(detail.events, quest.id, { name: id => names.threadNames?.get(id) ?? null });
   const finishedPath = verifiedOf(quest);
@@ -157,7 +160,7 @@ export function QuestPage({ detail, registry, room, summaryId }: { detail: Board
             : stop.stopping ? <><StateMark tone="warn"><b>{stoppingWords(stop.stopping.unconfirmed)}</b></StateMark>{stop.stopping.since && <span>since <b>{clockTime(stop.stopping.since)}</b></span>}</>
             : quest.phase === "held" ? <StateMark tone={move.tone}>{quest.move.text.replace(/ · Resume$/, "")}</StateMark>
             : <><StateMark tone={move.tone}><b>{phaseWord(quest.phase)} · {move.who === "You" ? "your move" : move.who}</b>{move.next ? ` · ${move.next}` : ""}</StateMark><span>updated <b><Ago at={quest.updatedAt} /></b></span></>}
-          <span>path <b className="num">{finished ? finishedPath ? verifiedWords(finishedPath) : "not mapped" : path ? `${path.done} of ${path.total}` : "not mapped yet"}</b></span>
+          <span>path <b className="num">{finished ? finishedPath ? verifiedWords(finishedPath) : "not mapped" : path ? `${path.done} of ${path.total}` : "not mapped yet"}</b>{!finished && path && change && <> · <span className="tv-path-change">{change}</span></>}</span>
           <span>plan <b>v{quest.planVersion}</b>{steer && <span className="tag tv-steer-tag" title={`From your steer: ${steer.text}`}>steer {clockTime(steer.at)}</span>}</span>
           {room && !finished && <span>review <b className="num">{room.review.waiting} of {room.review.budget}</b></span>}
         </div>
@@ -201,7 +204,7 @@ export function QuestPage({ detail, registry, room, summaryId }: { detail: Board
               {w.ownerMember ? <CrestOf member={w.ownerMember} registry={registry} size={16} /> : <PageGlyph name={w.actor === "user" ? "diamond" : w.actor === "outside" ? "gate" : "wait"} className={w.actor === "user" ? "tv-mn-you" : ""} />}
               <span className="tv-item-t" data-content title={`${owner}: ${w.title}`}>{owner}: {w.title}</span>
               <span className="m small num">{w.leadTime ?? "lead time unknown"}</span>
-              <span className="tv-item-s">{w.ownerMember && <><CheckIndependence member={w.ownerMember} /><GuardPosture member={w.ownerMember} /></>}<span>{w.doneWhen ? `done when ${w.doneWhen}` : "no done-when"}</span>{w.evidenceCount > 0 && <span>{w.evidenceCount} evidence</span>}{verifiedWaypoint(w) ? <span>verified by the Warden</span> : <span>{resolutionWords(w)}</span>}{w.rejectedReason && <span className="tv-st-bad">rejected: {w.rejectedReason}</span>}{report && <Confidence report={report} />}</span>
+              <span className="tv-item-s">{w.ownerMember && <><CheckIndependence member={w.ownerMember} /><GuardPosture member={w.ownerMember} /></>}<span>{w.doneWhen ? `done when ${w.doneWhen}` : "no done-when"}</span>{w.evidenceCount > 0 && <span>{w.evidenceCount} evidence</span>}{verifiedWaypoint(w) ? <span>verified by the Warden</span> : <span>{resolutionWords(w)}</span>}{w.rejectedReason && <span className="tv-st-bad">rejected: {w.rejectedReason}</span>}<MemberEstimate confidence={report?.confidence ?? null} /></span>
               {w.ownerMember && <PlacementFacts placement={w.ownerMember.placement} memberName={owner} variant="status" />}
             </li>;
           })}</ul></div>; })}
@@ -227,7 +230,7 @@ export function QuestPage({ detail, registry, room, summaryId }: { detail: Board
       </div>
       <aside className="tv-col" aria-label="Party and ledger">
         <RecordFold id="quest.party" title={<Vocabulary word="party" />} count={plural(quest.members.length, "member")} open={!finished}>
-          {finished ? <div className="tv-credits-w"><ol className="tv-credits n-1">{quest.members.map((member, i) => <CreditCard identity key={member.threadId} member={member} index={i} detail={detail} registry={registry} />)}</ol></div> : <KitPartyPicture members={quest.members} registry={registry} quests={[quest]} renderMember={(member, summary) => <div className="tv-party-identity"><CrestOf member={member} registry={registry} size={20} /><MemberIdentity member={member} registry={registry} compact scope={detail.scopes?.find(s => s.threadId === member.threadId)} violations={detail.violations?.filter(v => v.threadId === member.threadId)} /><button type="button" className="lnk-btn act" onClick={() => navigate.toThread(member.threadId)} aria-label={`Open ${characterName(registry, member)}’s thread`} title={summary}><OpensMark /></button></div>} />}
+          {finished ? <div className="tv-credits-w"><ol className="tv-credits n-1">{quest.members.map((member, i) => <CreditCard identity key={member.threadId} member={member} index={i} detail={detail} registry={registry} />)}</ol></div> : <KitPartyPicture members={quest.members} registry={registry} quests={[quest]} renderMember={(member, summary) => <div className="tv-party-identity"><CrestOf member={member} registry={registry} size={20} /><MemberIdentity member={member} registry={registry} compact briefSteer={briefSteers.get(member.threadId)} scope={detail.scopes?.find(s => s.threadId === member.threadId)} violations={detail.violations?.filter(v => v.threadId === member.threadId)} /><button type="button" className="lnk-btn act" onClick={() => navigate.toThread(member.threadId)} aria-label={`Open ${characterName(registry, member)}’s thread`} title={summary}><OpensMark /></button></div>} />}
         </RecordFold>
         <RecordFold id="quest.kept" title="Kept in mind" count={plural(keptNotes.filter(n => n.state === "open").length, "note")} open={false}>
           <KeptInMind headless notes={keptNotes} newestFirst folds={{ promises: [promisesMore, setPromisesMore], facts: [factsMore, setFactsMore] }} />

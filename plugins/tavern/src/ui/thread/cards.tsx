@@ -22,6 +22,8 @@ import "./skeletons.css";
 type Identity = { cls: ClassDef; character: CharacterDef };
 const REPORT_WORD = { done: "done", "needs-decision": "needs your decision", blocked: "blocked" } as const;
 
+import { MemberEstimate } from "../kit/member-estimate";
+
 /** A member's report in short: the headline, two lines of outcome, the evidence count with "View report ›", and the two-part confidence. Voice appears only on good news. */
 export function ReportCard({ report, who, onOpen, names, onView, voice = true, pullRequests }: { pullRequests?: import("../../shared/pull-request").PullRequest[]; report: Report; who?: Identity | null; onOpen?: (threadId: string) => void; names?: ReportHeadlineNames; onView?: () => void; voice?: boolean }) {
   const name = who ? `${who.character.name}` : "A member";
@@ -36,7 +38,7 @@ export function ReportCard({ report, who, onOpen, names, onView, voice = true, p
         <TimeAgo at={report.createdAt} />
       </header>
       <ReportView report={report} pullRequests={pullRequests} names={names ?? {}} compact voice={voice} {...(onView ? { onView } : {})} />
-      {report.confidence && <div className="conf"><span className="conf-l">Confidence</span><span className="conf-t">matches intent {report.confidence.intent}% · safe to ship {report.confidence.safe}%</span><span className="conf-b" aria-hidden="true"><i style={{ width: `${report.confidence.intent}%` }} /></span><span className="conf-b safe" aria-hidden="true"><i style={{ width: `${report.confidence.safe}%` }} /></span></div>}
+      <MemberEstimate confidence={report.confidence} />
       {voice && report.status === "done" && report.voice && <p className="voice">{report.voice}</p>}
     </article>
   );

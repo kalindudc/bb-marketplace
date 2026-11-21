@@ -1,0 +1,14 @@
+.tavern.tv-page .tv-tell { margin: 8px 0; min-width: 0; }
+.tavern.tv-page .tv-tell-form { display: grid; gap: 8px; max-width: 38rem; padding: 10px; border: 1px solid var(--tavern-line); font-size: 12px; }
+.tavern.tv-page .tv-tell-form :is(p, fieldset) { margin: 0; }
+.tavern.tv-page .tv-tell-form fieldset { min-width: 0; padding: 0; border: 0; }
+.tavern.tv-page .tv-tell-keepers { display: flex; flex-wrap: wrap; gap: 0 12px; }
+.tavern.tv-page .tv-tell-keepers label { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; min-width: 0; overflow-wrap: anywhere; }
+.tavern.tv-page .tv-tell-text { display: grid; gap: 4px; }
+.tavern.tv-page .tv-tell-text textarea { width: 100%; box-sizing: border-box; }
+.tavern.tv-page .tv-tell-form > button { justify-self: start; }
+.tavern.tv-page .tv-tell-receipts { display: grid; gap: 4px; list-style: none; padding: 8px 0; margin: 0; font-size: 12px; overflow-wrap: anywhere; }
+@media (pointer: coarse), (max-width: 560px) {
+  .tavern.tv-page .tv-tell button, .tavern.tv-page .tv-tell-keepers label { min-width: 44px; min-height: 44px; }
+  .tavern.tv-page .tv-tell-text textarea { font-size: 16px; }
+}

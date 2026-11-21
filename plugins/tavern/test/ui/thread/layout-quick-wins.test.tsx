@@ -12,6 +12,16 @@ const css = readFileSync("src/ui/kit/components.css", "utf8");
 const trim = readFileSync("src/ui/kit/tavern.css", "utf8");
 afterEach(() => { cleanup(); clearThreadState(); vi.unstubAllGlobals(); });
 
+it.each([false, true])("uses the chart's actual content width before its first resize (named: %s)", named => {
+  const width = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({ width: 313.9 } as DOMRect);
+  try {
+    const series = { id: "days", label: "Ticks", unit: "count", points: [{ x: "2026-11-01", y: 1 }, { x: "2026-11-02", y: 2 }] };
+    const view = render(<Chart type="trend" series={named ? [series] : series} />);
+    const chart = view.container.querySelector<HTMLElement>("figure")!;
+    expect(chart.querySelector("svg")?.getAttribute("width")).toBe("313");
+  } finally { width.mockRestore(); }
+});
+
 it.each([false, true])("never rounds a measured chart up into SVG downscaling (named: %s)", named => {
   let resize!: ResizeObserverCallback;
   vi.stubGlobal("ResizeObserver", class { constructor(cb: ResizeObserverCallback) { resize = cb; } observe() {} disconnect() {} });

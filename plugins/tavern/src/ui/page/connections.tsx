@@ -7,6 +7,7 @@ import type { Member } from "../../shared/schema";
 import { verifiedOf, verifiedWords, CheckIndependence, ExpandsMark, GuardPosture, OpensMark, OverflowMenu, endedCounts, glowVars, keeperStartedLabel, keeperStatus, useToday, type StateTone } from "../kit";
 import { CrestOf, Section, StateMark, characterName, classLabel, type Registry, plural } from "./common";
 import { rememberCount, timeAgo, useNow } from "../kit";
+import { pathChangeWords } from "../kit/rows";
 import { PageGlyph } from "./glyphs";
 import { MapViewport, mapSvg, svgToPng, textMeasurer, type Box } from "./mapview";
 import { graphFor, isFinished, mapPicture, mapQuests, pathProgress, phaseWord, type MapNode, type PictureNode } from "./model";
@@ -64,7 +65,7 @@ type Laid = { n: PictureNode; x: number; y: number; w: number; h: number; label:
 /** `now` dates a returned quest's "3h ago": TheMap is memoized, so it passes its own minute clock rather than reading the time here. */
 function layoutMap(picture: ReturnType<typeof mapPicture>, registry: Registry, keepers: ReadonlyMap<string, Member>, focus: string | null, cols: readonly number[], now: number) {
   const crossParty = memberKeeperIds(picture.nodes.map(n => n.node?.member)).size > 1;
-  const tall = crossParty || cols.some((w, i) => w < COLS[i]!), rowH = tall ? ROW_TALL : ROW, nodeH = tall ? NODE_H_TALL : NODE_H;
+  const tall = crossParty || picture.nodes.some(n => n.kind === "quest" && n.node?.quest?.pathChange) || cols.some((w, i) => w < COLS[i]!), rowH = tall ? ROW_TALL : ROW, nodeH = tall ? NODE_H_TALL : NODE_H;
   const used = [...new Set(picture.nodes.map((n) => n.col))].sort();
   const slot = new Map(used.map((c, i) => [c, i]));
   const cw = used.map((c) => cols[c]!);
@@ -86,7 +87,7 @@ function layoutMap(picture: ReturnType<typeof mapPicture>, registry: Registry, k
       return keeper ? memberSub(registry, m, task, keeper) : task;
     }
     if (n.kind === "returned" && n.node?.quest) { const q = n.node.quest; const v = verifiedOf(q); return `${phaseWord(q.phase)}${v ? ` · ${verifiedWords(v)}` : ""} · ${timeAgo(q.endedAt ?? q.updatedAt, now)}`; }
-    if (n.kind === "quest" && n.node?.quest) { const q = n.node.quest; const path = pathProgress(q); return `${phaseWord(q.phase)} · ${path ? `${path.done} of ${path.total}` : "no map yet"}${n.folded ? ` · +${n.folded} members` : ""}`; }
+    if (n.kind === "quest" && n.node?.quest) { const q = n.node.quest; const path = pathProgress(q), change = pathChangeWords(q); return `${phaseWord(q.phase)} · ${path ? `${path.done} of ${path.total}` : "no map yet"}${path && change ? `, ${change}` : ""}${n.folded ? ` · +${n.folded} members` : ""}`; }
     if (n.kind === "outside" && n.node) return n.node.detail;
     if (n.kind === "gate") return "outside gate";
     return n.sub;

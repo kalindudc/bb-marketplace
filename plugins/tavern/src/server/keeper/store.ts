@@ -167,6 +167,7 @@ export interface TickBatch {
   fullLedger?: boolean;
   gateReminderKeys?: string[];
   gateWarnings?: { key: string; value: string }[];
+  briefWarnings?: { memberThreadId: string; signature: string }[];
   reanchorVersion?: number;
   reanchor: string | null;
   createdAt: number;
@@ -219,6 +220,7 @@ export interface Runtime {
   turnStartedAt?: number | null;
   ledger?: { hash: string; version: number; asOf: number };
   lastLedger?: { hash: string; version: number; at: number };
+  briefWarningsSeen?: Record<string, string>;
   manualStopAt?: number | null;
   queuedTickResetId?: string | null;
   lastReply?: { text: string; at: number };
@@ -348,6 +350,13 @@ export class KeeperStore {
       "SELECT id,data FROM tavern_records WHERE kind='hires' AND json_extract(data,'$.memberThreadId')=? ORDER BY rowid DESC LIMIT 1",
     ).get(memberThreadId) as { id: string; data: string } | undefined;
     return row ? { ...JSON.parse(row.data) as HireIntent, id: row.id } : null;
+  }
+  membersWithBriefs(keeperThreadId: string): Member[] {
+    const rows = this.db.prepare(`SELECT m.data FROM tavern_records m
+      WHERE m.kind='members' AND json_extract(m.data,'$.keeperThreadId')=?
+      AND json_extract(m.data,'$.boardQuestId') IS NOT NULL AND ${liveMemberSql("brief")}
+      ORDER BY m.rowid`).all(keeperThreadId) as { data: string }[];
+    return rows.map(row => this.decode("members", row.data));
   }
   activeStaffing(keeperThreadId: string): Member[] {
     const rows = this.db.prepare(`SELECT m.data FROM tavern_records m

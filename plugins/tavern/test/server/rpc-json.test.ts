@@ -202,6 +202,7 @@ it("returns strict JSON from EVERY registered RPC with optional record fields ab
     deleteBoardQuest: () => call("deleteBoardQuest", { id: f.q.id }),
     deletedBoardQuests: () => call("deletedBoardQuests", {}),
     restoreDeletedQuest: () => call("restoreDeletedQuest", { id: f.q.id }),
+    prepareTellKeepers: () => call("prepareTellKeepers", { keeperIds: ["lead"] }),
     mapHistory: () => call("mapHistory", {}),
     archivedBoardQuests: () => call("archivedBoardQuests", {}),
     setHidden: () => call("setHidden", { threadId: "member", hidden: true }),

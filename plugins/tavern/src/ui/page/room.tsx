@@ -1,6 +1,7 @@
 import { hasEndedEngagement, memberActivityWord } from "../../shared/member-engagement";
 import { attentionView } from "../../shared/attention";
 import { StopAllNotice } from "./stop-all";
+import { TellKeepers } from "./tell-keepers";
 import { useBbNavigate } from "@get-bb/plugin-sdk/app";
 import { Fragment, useEffect, useId, useMemo, useState, type ReactNode } from "react";
 import { PlacementFacts } from "../kit/placement";
@@ -224,6 +225,7 @@ function RoomActivity({ room, registry }: { room: Room; registry: Registry }) {
     <HearthBand room={room} registry={registry} />
     <SinceVisit visit={room.sinceVisit} foldOnNarrow={asks > 0} />
     <RoomAwayNotes room={room} registry={registry} />
+    <TellKeepers keepers={room.keepers} registry={registry} />
     <ArchiveReceiptLine api={api} />
     {(asks > 0 || attentionView(room.attention).heldByYou > 0) && <div data-sec="needs"><NeedsYouQueue room={room} registry={registry} /></div>}
     <Rail calm={!asks && !attentionView(room.attention).new}

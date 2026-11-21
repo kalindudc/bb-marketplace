@@ -8,6 +8,7 @@ import { isDeepStrictEqual } from "node:util";
 import type { KeeperCallKind } from "../../shared/undo-lane";
 import { applyAskEffect, type EffectHandlers, type AskEffect } from "../ask-effects";
 import type { RequestSources } from "../../shared/request-source";
+import { briefSteers } from "../request-sources";
 import { LIMITS } from "../limits";
 import { hasLiveName, isLiveKeeper, isLiveMember, isOpenQuest } from "../liveness";
 import { memberDetails, memberHost, outstandingArchivedPlacement, transitionMember } from "../member-engagement";
@@ -750,7 +751,7 @@ export class Keeper {
         },
       );
     });
-    this.changed(threadId, boardQuestId);
+    for (const id of boardQuestIds.length ? boardQuestIds : [null]) this.changed(threadId, id);
     return route;
   }
   validateRoute(
@@ -801,8 +802,8 @@ export class Keeper {
         { routeId, previousBoardQuestId: r.boardQuestId },
       );
     });
-    this.changed(r.keeperThreadId, boardQuestId);
-    if (r.boardQuestId) this.changed(r.keeperThreadId, r.boardQuestId);
+    const affected = new Set([...ids, ...routeQuestIds(r)]);
+    for (const id of affected.size ? affected : [null]) this.changed(r.keeperThreadId, id);
   }
   plan(threadId: string, input: PlanInput) {
     const q = this.owned(threadId, input.boardQuestId);
@@ -1806,6 +1807,13 @@ export class Keeper {
       members = this.store.query("members", "boardQuestId", id),
       entries = this.journal.linkedEntries(id);
     const plan = storedPlan && { ...storedPlan, waypoints: storedPlan.waypoints.map(w => ({ ...w, check: waypointCheck(w) })) };
+    const baseline = plan && q.greenlitVersion !== null && q.greenlitVersion !== plan.version
+      ? this.store.get("plans", `${id}:${q.greenlitVersion}`) : null;
+    const pathChange = plan && baseline ? (() => {
+      const before = new Set(baseline.waypoints.map(w => w.id)), after = new Set(plan.waypoints.map(w => w.id));
+      return { added: [...after].filter(id => !before.has(id)).length, removed: [...before].filter(id => !after.has(id)).length };
+    })() : null;
+    const missed = briefSteers(this, q, members);
     const released = new Set(
       [
         ...new Set([
@@ -1947,6 +1955,8 @@ export class Keeper {
       stopPendingHires: q.phase === "stopping" ? this.pendingStopHires(id) : [],
       plan,
       waypoints,
+      ...(missed.length ? { briefSteers: missed.map(({ memberThreadId, at, excerpt }) => ({ memberThreadId, at, excerpt })) } : {}),
+      ...(pathChange && (pathChange.added || pathChange.removed) ? { pathChange } : {}),
       members: members.map(member => pendingMachines.has(member.threadId) ? { ...member, stopError: pendingMachines.get(member.threadId) } : member),
       openAsks: asks.filter(a => this.authority.lane(a) !== "keeper").length,
       move: {

@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { setup } from "./runtime-fixture";
 import { registerTools } from "../../src/server/tools";
+import { briefSteerFact } from "../../src/server/tick";
 
 const read = (path: string) => readFileSync(new URL(`../../${path}`, import.meta.url), "utf8");
 const body = read("classes/keeper.md").split(/^---\s*$/m).slice(2).join("---").trim();
@@ -19,8 +20,17 @@ it("does not grow the integrated pre-F1 loaded instruction budget, including the
   const source = read("src/server/tools/index.ts");
   const metadata = [...source.matchAll(/register\(\s*"(tavern_\w+)",\s*"((?:[^"\\]|\\.)*)",\s*("(?:[^"\\]|\\.)*")/g)].map(match => match[1]! + match[2]! + JSON.parse(match[3]!)).join("");
   const structure = Buffer.byteLength(JSON.stringify(keep)) - Buffer.byteLength(keep.name + keep.description + "Kept a resting member");
-  const bytes = Buffer.byteLength(metadata + read("classes/keeper.md") + skill) + structure + Buffer.byteLength("\n\nFree hands:\nNone");
+  const briefWarning = briefSteerFact("Wren XVIII", { at: 0, excerpt: "x".repeat(160), memberThreadId: "thr_abcdefghij" });
+  const bytes = Buffer.byteLength(metadata + read("classes/keeper.md") + skill) + structure + Buffer.byteLength(`\n\nFree hands:\nNone\n${briefWarning}`);
+  if (process.env.TAVERN_MEASURE_KEEPER_TEXT === "1") process.stdout.write(`KEEPER_INSTRUCTIONS_BYTES=${bytes}\n`);
   expect(bytes).toBeLessThanOrEqual(34754);
+});
+it("keeps the normal-reply limit and per-quest re-anchor instructions", () => {
+  expect(body).toContain("Keep normal replies under 120 words.");
+  expect(body).toContain("The ledger is the truth, not your chat memory");
+  expect(body).toContain("for each quest you need BEFORE acting");
+  expect(sections.get("Check the work")).toContain("A pending Warden check is a follow-up.");
+  expect(sections.get("Reference")).toContain("Only the user restores archived quests.");
 });
 it("keeps the hand-back tool within the original 354-byte description budget", () => {
   expect(Buffer.byteLength(tools.get("tavern_note")!)).toBeLessThanOrEqual(354);
@@ -39,7 +49,7 @@ it("has no shared sentence of eight or more words", () => {
   const bodySentences = new Set(sentences(body));
   expect(sentences(skill).filter(sentence => bodySentences.has(sentence))).toEqual([]);
 });
-for (const heading of ["Take a thin goal", "Scout", "Propose the map", "Size the party", "Staff the work", "Write a brief", "Decide or ask", "Decide a member's request", "Check the work", "Track progress", "Handle a steer", "Recover after compaction", "Tell the user", "Close a quest", "Learn from a quest", "Reference"]) {
+for (const heading of ["Take a thin goal", "Scout", "Propose the map", "Size the party", "Staff the work", "Write a brief", "Decide or ask", "Carry it to done", "Decide a member's request", "Check the work", "Track progress", "Handle a steer", "Recover after compaction", "Tell the user", "Close a quest", "Learn from a quest", "Reference"]) {
   it(`keeps ${heading} present and within 1,500 bytes`, () => {
     expect(sections.has(heading)).toBe(true);
     expect(Buffer.byteLength(sections.get(heading)!)).toBeLessThanOrEqual(1500);
@@ -48,6 +58,20 @@ for (const heading of ["Take a thin goal", "Scout", "Propose the map", "Size the
 it("asks for the full skill at quest opening and after a re-anchor without claiming future delivery or delegation", () => {
   expect(body).toMatch(/read the full.*skill when a quest opens and after a re-anchor/i);
   expect(body + skill).not.toMatch(/Tavern sends the section|Tavern also sends it|unless the user handed that kind|tavern_lesson|user lane|your lane/);
+});
+it("teaches carrying the user's outcome to done without adding a stop", () => {
+  const carry = sections.get("Carry it to done")!;
+  expect(carry.match(/^\d+\. /gm)).toHaveLength(6);
+  expect(carry).toMatch(/own the steps.*Stop only at a gate or a choice the user reserved/);
+  expect(carry).toMatch(/condition covers only what it names.*If it passes, merge it/);
+  expect(carry).toMatch(/findings.*failing checks.*conflicts.*fix.*push.*new head checked.*reply.*mark ready/i);
+  expect(carry).toMatch(/Write no stop into a brief or wait the user did not ask for/);
+  expect(carry).toMatch(/Prove a blocker with a read.*Update what exists/);
+  expect(carry).toMatch(/Before the user leaves.*summary.*Closing time choice/);
+});
+it("keeps what the user relies on and makes the release decision while reading the report", () => {
+  expect(sections.get("Write a brief")).toMatch(/already uses.*what must survive.*before and after.*local until they approve/);
+  expect(sections.get("Check the work")).toMatch(/read a report.*no follow-up.*release.*that turn.*expect one.*tavern_keep/);
 });
 it("keeps backup applies user-only and permits agent previews", () => {
   expect(sections.get("Reference")).toContain("NEVER upload or commit one without the user's approval.");

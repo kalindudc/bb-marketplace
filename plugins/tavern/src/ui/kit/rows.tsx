@@ -79,6 +79,13 @@ export function pathProgress(quest: BoardQuestSummary) {
   return { done: quest.waypoints.filter(settled).length, total: quest.waypoints.length };
 }
 
+export function pathChangeWords(quest: Pick<BoardQuestSummary, "pathChange">) {
+  const change = quest.pathChange;
+  if (!change) return null;
+  const parts = [change.added ? `${change.added} added` : "", change.removed ? `${change.removed} removed` : ""].filter(Boolean);
+  return parts.length ? `${parts.join(", ")} since the greenlight` : null;
+}
+
 export type MoveTone = "you" | "work" | "wait" | "keeper" | "done" | "bad" | "archived";
 /** Whose move a quest waits on. `next` is the whole phrase; where it ends in a waypoint's title, `verb` and `task` split it, so a narrow row cuts the task and never the state. An archived Keeper's thread can move nothing, so its unfinished quests say so instead of naming a next step; `next` is then empty. */
 export function questMove(...args: Parameters<typeof baseQuestMove>): ReturnType<typeof baseQuestMove> {
@@ -197,7 +204,7 @@ export function QuestRow({ quest, room, registry, keeper, showKeeper = false, on
   const navigate = useBbNavigate();
   const open = (sub: string) => navigate.toPluginPanel("tavern", { subPath: sub });
   const now = useNow();
-  const path = pathProgress(quest), verified = verifiedOf(quest);
+  const path = pathProgress(quest), verified = verifiedOf(quest), change = pathChangeWords(quest);
   const unread = attentionView(quest.attention).summaries ?? 0;
   const summaryCount = unread > 0 && <span className="qrow-unread m">{summaryCountWords(unread)}</span>;
   const name = <button type="button" className="qrow-name act" data-quest-name onClick={() => open(`quest/${quest.id}`)} title={`${isFinished(quest.phase) ? "Open the quest record" : "Open the quest page"}: ${quest.title}`}><b data-content>{quest.short}</b></button>;
@@ -225,6 +232,7 @@ export function QuestRow({ quest, room, registry, keeper, showKeeper = false, on
     <TimeAgo at={quest.updatedAt} />
     <OpensMark />
     <span className="qrow-l2">{showKeeper && <span className="qrow-k"><CrestOf member={keeper.member} registry={registry} size={12} /><span title={characterName(registry, keeper.member)}>{characterName(registry, keeper.member)}</span></span>}{showKeeper && need > 0 && <span className="tag status-needs-decision">{need} need you</span>}<span className="qrow-p"><PhaseMark phase={quest.phase} tone={move.tone} /><span className="qrow-path num">{path ? `${path.done} of ${path.total}` : "no map yet"}</span></span>
+    {path && change && <span className="qrow-path-change m">{change}</span>}
     <span className="qrow-m"><StateMark tone={move.tone} title={`${move.who}${move.next ? ` · ${move.next}` : ""}`}>
       {/* Whose move and the verb are the state and never cut; only the waypoint's title truncates, with the whole phrase in the tooltip. */}
       <span className="qrow-mv"><b>{move.who}</b>{move.task !== undefined ? ` ·${move.verb ? ` ${move.verb}` : ""}\u00a0` : move.next ? ` · ${move.next}` : ""}</span>{move.task !== undefined && <span className="qrow-mt" data-content>{move.task}</span>}

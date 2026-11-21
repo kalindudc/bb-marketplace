@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
 /** One series as Insights sends it: category or day points, with the unit as a word ("ratio", "s", "min", "h", "bytes", "chars", "usd"). */
 export type ChartSeries = { id: string; label: string; unit: string; points: { x: string; y: number | null }[] };
@@ -46,13 +46,18 @@ function Delta({ value, previous, unit, lowerIsBetter = false, format }: { value
   </span>;
 }
 
-function useMeasuredWidth<T extends Element>(fallback: number) {
+function useMeasuredWidth<T extends HTMLElement>(fallback: number) {
   const ref = useRef<T>(null);
   const [width, setWidth] = useState(fallback);
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = ref.current;
-    if (!el || typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver(([entry]) => { const next = Math.floor(entry!.contentRect.width); if (next > 0) setWidth(next); });
+    if (!el) return;
+    const measure = (contentWidth: number) => { const next = Math.floor(contentWidth); if (next > 0) setWidth(next); };
+    const style = getComputedStyle(el);
+    const inset = [style.paddingLeft, style.paddingRight, style.borderLeftWidth, style.borderRightWidth].reduce((px, value) => px + (parseFloat(value) || 0), 0);
+    measure(el.getBoundingClientRect().width - inset);
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(([entry]) => { if (entry) measure(entry.contentRect.width); });
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
@@ -110,7 +115,7 @@ function Bars({ series, unit, format }: { series: ChartSeries; unit: string; for
   </figure>;
 }
 
-const H = 136, L = 8, R = 8, T = 20, B = 32;
+const H = 136, L = 8, R = 8, T = 20, B = 40;
 function Trend({ series, unit, limit, format }: { series: ChartSeries; unit: string; limit?: number; format: Format }) {
   const [ref, W] = useMeasuredWidth<HTMLElement>(480);
   const all = series.points;
@@ -124,14 +129,30 @@ function Trend({ series, unit, limit, format }: { series: ChartSeries; unit: str
   all.forEach((p, i) => { if (p.y === null) { if (runs.at(-1)?.length) runs.push([]); return; } if (!runs.length) runs.push([]); runs.at(-1)!.push({ x: x(i), y: y(p.y) }); });
   const first = known[0]!, last = known.at(-1)!;
   const low = known.reduce((a, b) => b.y < a.y ? b : a), high = known.reduce((a, b) => b.y > a.y ? b : a);
-  const placed: { x: number; y: number }[] = [];
+  const placed: { left: number; right: number; at: number }[] = [];
   const labels = [first, last, high, low].filter((p, n, list) => list.findIndex(q => q.i === p.i) === n).flatMap(p => {
-    const below = p === low && p !== first && p !== last;
-    const ly = below ? y(p.y) + 14 : y(p.y) - 6;
-    const lx = Math.min(W - R, Math.max(L, x(p.i)));
-    if (placed.some(q => Math.abs(q.x - lx) < 44 && Math.abs(q.y - ly) < 13)) return [];
-    placed.push({ x: lx, y: ly });
-    return [{ p, lx, ly, anchor: (p === first ? "start" : p === last ? "end" : "middle") as "start" | "end" | "middle" }];
+    const value = format(p.y, unit);
+    const labelWidth = Array.from(value).length * 8;
+    if (labelWidth > W - L - R) return [];
+    const center = p === first ? 0 : p === last ? labelWidth : labelWidth / 2;
+    const left = Math.max(L, Math.min(W - R - labelWidth, x(p.i) - center)), right = left + labelWidth;
+    const strokeNear = (at: number) => runs.some(run => run.some((point, i) => {
+      if (point.x >= left - 3 && point.x <= right + 3 && point.y >= at - 13 && point.y <= at + 4) return true;
+      const next = run[i + 1];
+      if (!next) return false;
+      const a = Math.max(point.x, left - 2), b = Math.min(next.x, right + 2);
+      if (a > b) return false;
+      const along = (px: number) => point.y + (next.y - point.y) * (px - point.x) / (next.x - point.x);
+      const ya = along(a), yb = along(b);
+      return Math.max(ya, yb) >= at - 13 && Math.min(ya, yb) <= at + 4;
+    }));
+    const cy = y(p.y);
+    const offsets = p === low || p === last ? [15, -7, 29, -21, 43, -35] : [-7, 15, -21, 29, -35, 43];
+    const ly = offsets.map(offset => cy + offset).find(at => at >= 11 && at <= H - 23 && !strokeNear(at) &&
+      placed.every(q => right + 3 <= q.left || q.right + 3 <= left || Math.abs(q.at - at) >= 15));
+    if (ly === undefined) return [];
+    placed.push({ left, right, at: ly });
+    return [{ p, lx: left + center, ly, anchor: (p === first ? "start" : p === last ? "end" : "middle") as "start" | "end" | "middle", value }];
   });
   const describe = `${series.label}: from ${format(first.y, unit)} on ${dayLabel(first.x)} to ${format(last.y, unit)} on ${dayLabel(last.x)}; lowest ${format(low.y, unit)}, highest ${format(high.y, unit)}${limit !== undefined ? `; limit ${format(limit, unit)}` : ""}${known.length < all.length ? `; ${all.length - known.length} days without data` : ""}`;
   return <figure ref={ref} className="tchart" data-chart="trend">
@@ -140,7 +161,7 @@ function Trend({ series, unit, limit, format }: { series: ChartSeries; unit: str
       <line className="base" x1={L} x2={W - R} y1={H - B} y2={H - B} />
       {limit !== undefined && <><line className="limit" x1={L} x2={W - R} y1={y(limit)} y2={y(limit)} /><text className="ax" x={W - R} y={y(limit) - 4} textAnchor="end">limit {format(limit, unit)}</text></>}
       {runs.filter(r => r.length > 0).map((r, n) => r.length === 1 ? <circle key={n} className="dot" cx={r[0]!.x} cy={r[0]!.y} r={2} /> : <polyline key={n} className="line" points={r.map(q => `${q.x.toFixed(1)},${q.y.toFixed(1)}`).join(" ")} />)}
-      {labels.map(({ p, lx, ly, anchor }) => <g key={p.i}><circle className="dot" cx={x(p.i)} cy={y(p.y)} r={2.5} /><text className="val" x={lx} y={ly} textAnchor={anchor}>{format(p.y, unit)}</text></g>)}
+      {labels.map(({ p, lx, ly, anchor, value }) => <g key={p.i}><circle className="dot" cx={x(p.i)} cy={y(p.y)} r={2.5} /><text className="val" x={lx} y={ly} textAnchor={anchor}>{value}</text></g>)}
       <text className="ax" x={L} y={H - 6}>{dayLabel(all[0]!.x)}</text>
       <text className="ax" x={W - R} y={H - 6} textAnchor="end">{dayLabel(all.at(-1)!.x)}</text>
     </svg>

@@ -4,11 +4,13 @@ import { memberIdentityLabel } from "../../shared/identity";
 import { pullRequestVerified } from "../../shared/pull-request";
 import { Crest } from "./crest";
 import { memberIdentity, type Registry } from "./registry";
+import type { BriefSteer } from "../../shared/contract";
+import { BriefSteerLine } from "./brief-steer";
 import { PlacementFacts } from "./placement";
 import "./member-identity.css";
 
 type MemberScope = ThreadDecor["scope"];
-export type MemberIdentityProps = { member: Member; registry: Registry; scope?: MemberScope; compact?: boolean; finished?: boolean; violations?: ThreadDecor["violations"]; variant?: "chips"; onScopeDetails?: () => void };
+export type MemberIdentityProps = { member: Member; registry: Registry; briefSteer?: BriefSteer; scope?: MemberScope; compact?: boolean; finished?: boolean; violations?: ThreadDecor["violations"]; variant?: "chips"; onScopeDetails?: () => void };
 
 function guardWords(member: Member, scope: MemberScope, finished: boolean) {
   if (!scope && member.role === "solo") return "no Tavern guard (started by you)";
@@ -41,7 +43,7 @@ export function memberIdentityWords(member: Member, registry: Registry, scope?: 
   return `${name}, ${cls} · scope: ${scope?.scope?.preset ?? "not recorded"} · ${guardWords(member, scope, finished)}`;
 }
 
-export function MemberIdentity({ member, registry, scope, compact = false, finished = false, violations = [], variant, onScopeDetails }: MemberIdentityProps) {
+export function MemberIdentity({ member, registry, briefSteer, scope, compact = false, finished = false, violations = [], variant, onScopeDetails }: MemberIdentityProps) {
   const identity = memberIdentity(registry, member);
   const name = memberIdentityLabel(member, registry);
   const sc = scope?.scope;
@@ -63,6 +65,7 @@ export function MemberIdentity({ member, registry, scope, compact = false, finis
       {!compact && <p className="mi-permissions">writes: {writeWords(sc ?? null)} · network: {sc ? sc.network === "any" ? "allowed" : "none" : "not recorded"} · GitHub: {sc ? ({none:"none",read:"reads only","draft-pr-only":"reads and draft pull requests"} as const)[sc.github] : "not recorded"}</p>}
       {alerts > 0 && <p className="mi-alert" role="status">{alerts} scope {alerts === 1 ? "alert" : "alerts"}{scope?.error ? `: ${scope.error}` : ""}</p>}</>}
       {member.pullRequests?.map(pr => <p key={pr.id}>Draft PR: <a href={pr.url} target="_blank" rel="noreferrer">{pr.url}</a> ({pr.state}; owner: {pr.owner}; {pullRequestVerified(pr) ? "head verified" : "head not verified"})</p>)}
+      {briefSteer && <BriefSteerLine name={name} steer={briefSteer} />}
       <PlacementFacts placement={member.placement} memberName={name} variant={chips ? "card" : "row"} />
     </div>
   </div>;

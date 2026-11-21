@@ -99,7 +99,12 @@ export const waypointViewSchema = waypointSchema.extend({
   rejectedReason: z.string().nullable(),
 });
 
+export const briefSteerSchema = z.object({ memberThreadId: threadId, at: z.number(), excerpt: z.string().nullable() });
+export type BriefSteer = z.infer<typeof briefSteerSchema>;
+
 export const boardQuestSummarySchema = boardQuestSchema.extend({
+  briefSteers: z.array(briefSteerSchema).optional(),
+  pathChange: z.object({ added: z.number().int().nonnegative(), removed: z.number().int().nonnegative() }).optional(),
   attention: attentionSchema.optional(),
   nextNewsBy: z.number().nullable().optional(),
   stopUnconfirmed: z.number().int().nonnegative().optional(),
@@ -343,12 +348,18 @@ const ok = z.object({ ok: z.literal(true) });
 export const classEditSchema = classDefSchema.pick({ label: true, plain: true, description: true, body: true, characters: true, startable: true, hireable: true, scope: true }).partial().strict();
 export type ClassEditInput = z.infer<typeof classEditSchema>;
 
+export const TELL_KEEPER_LIMIT = 50;
+
 export const rpcContract = defineContract({
   ...stopAllContract,
   ...placementContract,
   ...awayContract,
   ...alertRouteContract,
   ...voiceCheckContract,
+  prepareTellKeepers: {
+    input: z.object({ keeperIds: z.array(threadId).min(1).max(TELL_KEEPER_LIMIT) }).strict(),
+    output: z.object({ targets: z.array(z.object({ threadId, name: z.string(), status: z.enum(["ready", "gone", "unavailable"]) })) }),
+  },
   classExecution: {
     input: classExecutionInputSchema,
     output: classModeFactsSchema,

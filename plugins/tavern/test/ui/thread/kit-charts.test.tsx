@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render } from "@testing-library/react";
 import { Chart, Kpi, formatValue } from "../../../src/ui/kit";
 afterEach(cleanup);
@@ -57,6 +57,26 @@ describe("Kit charts", () => {
     expect(svg.getAttribute("aria-label")).toContain("lowest 1, highest 7; 1 days without data");
     expect(view.container.querySelectorAll("polyline")).toHaveLength(2);
     expect(view.container.querySelectorAll("circle.dot").length).toBeGreaterThanOrEqual(4);
+  });
+
+  it("keeps nearby point labels apart at phone width without losing the extents", () => {
+    const width = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({ width: 313 } as DOMRect);
+    try {
+      const view = render(<Chart type="trend" series={{ id: "narrow", label: "Duration", unit: "min", points: days([28, 30, 12, 19, null, 25, 22]) }} />);
+      const labels = [...view.container.querySelectorAll("text.val")];
+      expect(labels.map(label => label.textContent)).toEqual(expect.arrayContaining(["28 min", "30 min", "12 min", "22 min"]));
+      const boxes = labels.map(label => {
+        const x = Number(label.getAttribute("x")), y = Number(label.getAttribute("y")), w = label.textContent!.length * 7;
+        const anchor = label.getAttribute("text-anchor");
+        const x0 = x - (anchor === "end" ? w : anchor === "middle" ? w / 2 : 0);
+        return { x0, x1: x0 + w, y };
+      });
+      for (const [i, a] of boxes.entries()) for (const b of boxes.slice(i + 1))
+        expect(a.x1 + 3 <= b.x0 || b.x1 + 3 <= a.x0 || Math.abs(a.y - b.y) >= 14).toBe(true);
+      const last = labels.find(label => label.textContent === "22 min")!;
+      const dot = last.parentElement!.querySelector("circle")!;
+      expect(Number(last.getAttribute("y")) > Number(dot.getAttribute("cy")) + 10).toBe(true);
+    } finally { width.mockRestore(); }
   });
 
   it("says so when there are too few days to draw", () => {

@@ -10,6 +10,7 @@ import { describeEvent, foldRuns, questsIn, taleHeadline, visibleMembers, type E
 import { EventList } from "./room";
 import { usePanelState } from "./panel-state";
 import { reportsTitle, useOpenReports } from "./reports";
+import { MemberEstimate } from "../kit/member-estimate";
 import { FoldLoad } from "./skeletons";
 
 /* Pieces of a quest's record that the live quest page and the finished record page both draw. */
@@ -88,11 +89,6 @@ export function History({ detail, registry, room, bare = false }: { detail: Boar
   return <Section title="History" count={plural(lines.length, "event")} action={seg}>{body}</Section>;
 }
 
-export function Confidence({ report }: { report: Report }) {
-  if (!report.confidence) return null;
-  const { intent, safe } = report.confidence;
-  return <span className="tv-conf" role="img" aria-label={`Matches intent ${intent}%, safe to ship ${safe}%`}><span>matches intent <b className="num">{intent}%</b></span><span className="tv-cb" aria-hidden="true"><i style={{ width: `${intent}%` }} /></span><span>safe to ship <b className="num">{safe}%</b></span><span className={`tv-cb ${safe < 75 ? "lo" : ""}`} aria-hidden="true"><i style={{ width: `${safe}%` }} /></span></span>;
-}
 /** One report as a line: who, its id-free headline (or its status alone), and "View ›" opening the member's reports at this one in the side panel. */
 export function ReportItem({ report, registry, detail }: { report: Report; registry: Registry; detail: BoardQuestDetail }) {
   const members = detail.quest.members;
@@ -106,7 +102,7 @@ export function ReportItem({ report, registry, detail }: { report: Report; regis
     {member ? <CrestOf member={member} registry={registry} size={16} /> : <PageGlyph name="done" />}
     <span className="tv-item-t" data-content title={headline ?? undefined}><b>{name}{headline ? ": " : ""}</b>{headline}</span>
     <Ago at={report.createdAt} />
-    <span className="tv-item-s">{member && <><CheckIndependence member={member} /><GuardPosture member={member} /></>}<StateMark tone={tone}>{report.status === "needs-decision" ? "needs a decision" : report.status}</StateMark><Confidence report={report} />
+    <span className="tv-item-s">{member && <><CheckIndependence member={member} /><GuardPosture member={member} /></>}<StateMark tone={tone}>{report.status === "needs-decision" ? "needs a decision" : report.status}</StateMark><MemberEstimate confidence={report.confidence} />
       {member && (inline
         ? <button type="button" className="lnk-btn act" aria-expanded onClick={() => setInline(false)}><span>Hide</span><ExpandsMark open /></button>
         : <button type="button" className="lnk-btn act" title={`Opens ${name}'s report in the side panel`} onClick={() => { if (!openReports({ questId: detail.quest.id, memberThreadId: member.threadId, reportId: report.id }, reportsTitle(name, detail.quest.short))) setInline(true); }}><span>View</span><OpensMark /></button>)}
