@@ -26,7 +26,8 @@ function parseMarks(value: unknown): ReviewMarks {
 // Drops the oldest entries, the first in insertion order, until the row fits.
 function fit<T>(entries: Array<[string, T]>, max: number): Record<string, T> {
   let kept = entries.slice(-max);
-  while (kept.length > 0 && bytes(Object.fromEntries(kept)) > MAX_ROW_BYTES) kept = kept.slice(Math.ceil(kept.length / 10));
+  while (kept.length > 0 && bytes(Object.fromEntries(kept)) > MAX_ROW_BYTES)
+    kept = kept.slice(Math.ceil(kept.length / 10));
   return Object.fromEntries(kept);
 }
 
@@ -37,15 +38,22 @@ export function createReviewStore(kv: () => KvStorage) {
   const chains = new Map<string, Promise<unknown>>();
   const serial = <T>(key: string, run: () => Promise<T>): Promise<T> => {
     const next = (chains.get(key) ?? Promise.resolve()).then(run, run);
-    const settled = next.then(() => {}, () => {});
+    const settled = next.then(
+      () => {},
+      () => {},
+    );
     chains.set(key, settled);
-    void settled.then(() => { if (chains.get(key) === settled) chains.delete(key); });
+    void settled.then(() => {
+      if (chains.get(key) === settled) chains.delete(key);
+    });
     return next;
   };
 
   return {
     async reviewed(keys: readonly string[]): Promise<Record<string, ReviewMarks>> {
-      const rows = await Promise.all(keys.map(async (key) => [key, parseMarks(await kv().get(REVIEWED_PREFIX + key))] as const));
+      const rows = await Promise.all(
+        keys.map(async (key) => [key, parseMarks(await kv().get(REVIEWED_PREFIX + key))] as const),
+      );
       return Object.fromEntries(rows);
     },
     setReviewed(input: SetReviewedInput): Promise<ReviewMarks> {

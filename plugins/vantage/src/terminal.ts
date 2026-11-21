@@ -15,7 +15,10 @@ export async function openEnvironmentTerminal(
   input: { environmentId: string; title: string },
 ): Promise<boolean> {
   const session = await sdk.terminals.create({
-    cols: 120, rows: 32, scope: { kind: "environment", environmentId: input.environmentId }, title: input.title,
+    cols: 120,
+    rows: 32,
+    scope: { kind: "environment", environmentId: input.environmentId },
+    title: input.title,
   });
   return navigate.experimental_openTerminal({ terminalId: session.id });
 }
@@ -27,7 +30,10 @@ export async function openHostTerminal(
   input: { hostId: string; path: string; title: string },
 ): Promise<boolean> {
   const session = await sdk.terminals.create({
-    cols: 120, rows: 32, scope: { kind: "host_path", hostId: input.hostId, cwd: input.path }, title: input.title,
+    cols: 120,
+    rows: 32,
+    scope: { kind: "host_path", hostId: input.hostId, cwd: input.path },
+    title: input.title,
   });
   return navigate.experimental_openTerminal({ terminalId: session.id });
 }
@@ -39,7 +45,10 @@ export async function openWorktreeTerminal(
   input: { threadId: string; path: string; title: string },
 ): Promise<boolean> {
   const session = await sdk.terminals.create({
-    cols: 120, rows: 32, scope: { kind: "thread", threadId: input.threadId }, title: input.title,
+    cols: 120,
+    rows: 32,
+    scope: { kind: "thread", threadId: input.threadId },
+    title: input.title,
     start: { mode: "command", command: terminalCommand(input.path) },
   });
   return navigate.experimental_openTerminal({ terminalId: session.id });

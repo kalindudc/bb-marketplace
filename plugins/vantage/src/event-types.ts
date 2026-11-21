@@ -1,22 +1,44 @@
 // Streaming chunks change no file.
 const DELTA_EVENT_TYPES = [
-  "item/agentMessage/delta", "item/reasoning/textDelta", "item/reasoning/summaryTextDelta", "item/commandExecution/outputDelta",
-  "item/fileChange/outputDelta", "item/plan/delta", "item/toolCall/progress",
+  "item/agentMessage/delta",
+  "item/reasoning/textDelta",
+  "item/reasoning/summaryTextDelta",
+  "item/commandExecution/outputDelta",
+  "item/fileChange/outputDelta",
+  "item/plan/delta",
+  "item/toolCall/progress",
 ];
 
 // Event types that carry no file change and no commit.
 const QUIET_EVENT_TYPES: ReadonlySet<string> = new Set([
-  ...DELTA_EVENT_TYPES, "item/started", "item/mcpToolCall/progress", "item/backgroundTask/progress", "item/delegation/progress",
-  "thread/tokenUsage/updated", "thread/contextWindowUsage/updated", "thread/name/updated", "thread/goal/updated", "thread/goal/cleared",
-  "thread/extensionState/updated", "provider/rateLimits/updated", "provider/warning", "turn/started", "turn/input/accepted",
-  "turn/plan/updated", "turn/mainRun/updated",
+  ...DELTA_EVENT_TYPES,
+  "item/started",
+  "item/mcpToolCall/progress",
+  "item/backgroundTask/progress",
+  "item/delegation/progress",
+  "thread/tokenUsage/updated",
+  "thread/contextWindowUsage/updated",
+  "thread/name/updated",
+  "thread/goal/updated",
+  "thread/goal/cleared",
+  "thread/extensionState/updated",
+  "provider/rateLimits/updated",
+  "provider/warning",
+  "turn/started",
+  "turn/input/accepted",
+  "turn/plan/updated",
+  "turn/mainRun/updated",
 ]);
 
 export const ITEM_COMPLETED = "item/completed";
 
 /** Event types after which a thread's files may have changed; the page refreshes for any of them. */
 export const FILE_EVENT_TYPES: readonly string[] = [
-  ITEM_COMPLETED, "turn/completed", "turn/diff/updated", "item/backgroundTask/completed", "item/delegation/completed",
+  ITEM_COMPLETED,
+  "turn/completed",
+  "turn/diff/updated",
+  "item/backgroundTask/completed",
+  "item/delegation/completed",
 ];
 
 export type EventVerdict = "changed" | "unchanged" | "look";

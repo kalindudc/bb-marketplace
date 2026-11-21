@@ -1,10 +1,20 @@
 import { useSyncExternalStore } from "react";
 import type { Part } from "./reviewed";
 
-export interface Comment { id: string; path: string; part: Part; quote: string; text: string; at: number }
+export interface Comment {
+  id: string;
+  path: string;
+  part: Part;
+  quote: string;
+  text: string;
+  at: number;
+}
 
 export const COMMENTS_STORAGE_KEY = "bb-plugin-vantage:comments";
-const MAX_WORKTREES = 100;
+const MAX_RECIPIENT_DRAFTS = 100;
+
+// Worktree keys cannot contain NUL. The suffix also preserves older, already attributed drafts.
+export const reviewDraftKey = (worktreeKey: string, threadId: string): string => `${worktreeKey}\0${threadId}`;
 const NONE: readonly Comment[] = [];
 
 type Drafts = Record<string, Comment[]>;
@@ -12,7 +22,7 @@ type Drafts = Record<string, Comment[]>;
 function read(storage: Storage): Drafts {
   try {
     const parsed: unknown = JSON.parse(storage.getItem(COMMENTS_STORAGE_KEY) ?? "{}");
-    return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Drafts : {};
+    return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Drafts) : {};
   } catch {
     return {};
   }
@@ -24,10 +34,14 @@ export function createCommentStore(win: Window) {
   const listeners = new Set<() => void>();
   let drafts = read(storage);
   let counter = 0;
-  const notify = () => { for (const listener of [...listeners]) listener(); };
+  const notify = () => {
+    for (const listener of [...listeners]) listener();
+  };
   const write = (next: Drafts) => {
     const keys = Object.keys(next).filter((key) => next[key]!.length > 0);
-    drafts = Object.fromEntries(keys.slice(-MAX_WORKTREES).map((key) => [key, next[key]!]));
+    const unattributed = keys.filter((key) => !key.includes("\0"));
+    const scoped = keys.filter((key) => key.includes("\0")).slice(-MAX_RECIPIENT_DRAFTS);
+    drafts = Object.fromEntries([...unattributed, ...scoped].map((key) => [key, next[key]!]));
     storage.setItem(COMMENTS_STORAGE_KEY, JSON.stringify(drafts));
     notify();
   };
@@ -39,11 +53,18 @@ export function createCommentStore(win: Window) {
   return {
     get: (key: string): readonly Comment[] => drafts[key] ?? NONE,
     add(key: string, comment: Omit<Comment, "id" | "at">): void {
-      const entry: Comment = { ...comment, id: `${Date.now().toString(36)}-${(counter++).toString(36)}`, at: Date.now() };
+      const entry: Comment = {
+        ...comment,
+        id: `${Date.now().toString(36)}-${(counter++).toString(36)}`,
+        at: Date.now(),
+      };
       write({ ...drafts, [key]: [...(drafts[key] ?? []), entry] });
     },
     update(key: string, id: string, text: string): void {
-      write({ ...drafts, [key]: (drafts[key] ?? []).map((comment) => (comment.id === id ? { ...comment, text } : comment)) });
+      write({
+        ...drafts,
+        [key]: (drafts[key] ?? []).map((comment) => (comment.id === id ? { ...comment, text } : comment)),
+      });
     },
     remove(key: string, id: string): void {
       write({ ...drafts, [key]: (drafts[key] ?? []).filter((comment) => comment.id !== id) });
@@ -76,14 +97,22 @@ export function createCommentStore(win: Window) {
 export type CommentStore = ReturnType<typeof createCommentStore>;
 
 export function useComments(store: CommentStore, key: string): readonly Comment[] {
-  return useSyncExternalStore(store.subscribe, () => store.get(key), () => store.get(key));
+  return useSyncExternalStore(
+    store.subscribe,
+    () => store.get(key),
+    () => store.get(key),
+  );
 }
 
-const PART_LABEL = (part: Part): string => (part === "uncommitted" ? "not committed" : part === "committed" ? "committed" : `in commit ${part.slice(7, 14)}`);
+const PART_LABEL = (part: Part): string =>
+  part === "uncommitted" ? "not committed" : part === "committed" ? "committed" : `in commit ${part.slice(7, 14)}`;
 
 // One message for the agent: each comment names its file, quotes the lines it is about, then says what to change.
-export function composeReview(comments: readonly Comment[], root: string | null): string {
-  const lines = ["Review notes from Vantage on your changes:", ""];
+export function composeReview(comments: readonly Comment[], root: string | null, attributed = true): string {
+  const lines = [
+    attributed ? "Review notes from Vantage on your changes:" : "Unattributed review notes from Vantage:",
+    "",
+  ];
   comments.forEach((comment, index) => {
     lines.push(`${index + 1}. \`${comment.path}\` (${PART_LABEL(comment.part)})`);
     if (comment.quote.trim() !== "") for (const quoted of comment.quote.split("\n")) lines.push(`   > ${quoted}`);

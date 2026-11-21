@@ -2,11 +2,48 @@
 
 Notable changes to Vantage, newest first. Releases are tagged `vantage/vX.Y.Z` in this repository.
 
-## Unreleased
+## 0.11.0 (2026-11-20)
+
+### Added
+
+- Opt in to Git exclusions by folder (`excludedPaths`) or environment provider ID (`excludedProviders`). Both settings start empty. Excluded checkouts show recorded thread edits when available, not live diffs.
+
+### Changed
+
+- The thread's Vantage tab has a navigator: the Trail with the selected thread's evidence sources, and below it the selected source's files, with one Tab stop for both. From 720 px of panel width it sits beside the diffs; below that it opens as a modal sheet from a "Trail" button that names the thread and source you are reading. The button in the review bar shows or hides the whole navigator.
+- Each evidence source says whose work it is: "Recorded edits · only Worker" or "Checkout Git · shared · 3 threads". A shared checkout's chip lists who uses it and offers the thread's own recorded edits.
+- The panel's notices are one title line and one line of chips instead of strips: Working explains that the diffs can change, the branch chip opens the checkout's details and actions, and overlaps read "Overlaps · N threads" in a narrow panel and list each thread with Compare. Ask to rebase stays on the full page.
+- The incomplete-records warning is a labelled disclosure under the Trail with the reason, Refresh records and the affected threads, and each affected thread carries a mark. The overview flags each such thread, and the full page keeps its warning.
+- Archived threads you are reading, have read in this tab, or that have live children keep their place in the Trail; a parent's other archived threads fold into one row. Flare's companion threads are counted in a footer, and a hidden thread that recorded edits keeps its row with a mark. Thread summaries carry bb's hidden flag and the parent a Flare companion belongs to.
+- In the panel the scope is one menu, Send names its recipient, a narrow panel has Preview in the send menu, and an archived thread says why it refuses and offers Copy as Markdown.
+- The navigator is easier to read and use. Threads, evidence sources and files each have their own row style; a Files section under the Trail, headed by its source and count, lists the files and scrolls on its own, so other threads and warnings stay in reach. Levels indent 16 px with guides, the selected thread and file share one accent bar, group rows are quiet, muted text and counts reach 4.5:1, rows are at least 28 px tall, and the column can be resized by dragging or with the arrow keys. A compact review bar says "Expand all" when Collapse all has folded every file.
+- Focus on diffs gives the panel and page more room for diffs without losing the current file, scroll position, folds or layout.
+- Vantage no longer puts a count badge on its navigation icon, and the "Badge the Vantage icon when a thread needs you" setting is gone. The optional toast stays.
 
 ### Fixed
 
+- Reopening the panel returns to the saved place within the file: the reader keeps restoring the saved offset until the anchored card's diff has drawn, instead of giving up while the first cards are still placeholders.
+- Vantage requests the first two eligible patches before mounting their cards and stages nearby diff bodies one per frame after the first paint. Hard Refresh rechecks cached repository roots instead of looking up every edited file again.
+- The reader loads visible diffs before unchanged lines and nearby files, mounts later diff bodies as needed, and asks before drawing patches over 48 KiB. All-threads builds log where they spend time.
+- Thread panels read fewer overviews, start known diffs sooner, and wait to load sidebar counts until those diffs paint. All-threads refreshes limit event reads and background Git work, and diff context skips oversized files.
+- Overview rebuilds wait longer after slow builds and stop refreshing keys that have not been requested for 90 seconds. Only a caller waiting for a thread tree can delay all-threads Git reads.
+- Settings and whole-worktree changes return a fresh overview. A cached overview reports the last refresh error, and change signals refresh only views with matching options.
+- Sidebar counts load without an open thread. Switching panel tabs keeps unsent review comments.
+- Hard Refresh keeps previous and new recorded edits visible while it checks old live edit history. Vantage keeps the full checkout history when a thread’s event read is incomplete or the narrower range would include unrelated commits.
+- Added and deleted files no longer warn about a missing diff side that is not expected. A file replaced by a folder of the same name, or a folder replaced by a file, shows its deletion instead of failing to open.
+- Thread trees take priority over the all-threads view. Overviews show the last result while they refresh, and opening a diff reuses recent Git metadata.
+- One bounded host Git runner serves text and image reads. Lists check file counts and byte sizes before running line counts. Rename detection is off, so a rename appears as an addition and a deletion. Oversized or unreadable files do not get a patch.
+- In the side panel, a long title or notice no longer squeezes the file tree and diffs to zero height. Those diffs were never loaded because they never scrolled into view. The title and notices now scroll in their own band, and the diffs keep at least 8rem.
+- Jumping to a file from the tree scrolls to it even while a busy thread's overview is still refreshing, and a reopened panel keeps the remembered file on screen so its diff loads.
+- Diffs you open no longer wait behind background overview reads. Overview reads use at most one of the two Git slots, so a diff, file side or image read always has one.
+- Untracked folder scans and reflog ancestry checks have fixed limits. A folder that reaches its scan limit shows a sample instead of a full count.
+- Image sides are capped just below 3 MiB each. Both sides fit in the host RPC reply after base64 encoding.
 - The composer summary shrinks with its pane, including split views. Narrow panes hide the words; tighter panes replace this thread’s line counts with its file count. Child worktrees and attention counts remain visible, and the full details stay available on expansion and hover.
+- Vantage draws the Trail before Git finishes, shares matching overview reads, waits to load sidebar counts until the visible view has loaded, and puts diffs over 2,000 lines behind Show diff. Unchanged lines load when a card scrolls near the screen rather than for every prefetched card.
+
+### Compatibility
+
+- Requires bb 0.49 or later and Plugin SDK 0.6.132 or later.
 
 ## 0.10.0 (2026-11-07)
 
@@ -159,7 +196,7 @@ Notable changes to Vantage, newest first. Releases are tagged `vantage/vX.Y.Z` i
 
 ### Added
 
-- A checkout a thread made and works in outside bb, such as a world tree from `dev tree add`, becomes a thread checkout. It gets a worktree row grouped with the thread's project, with its branch, commits ahead and behind `origin/HEAD`, its commits and every uncommitted and committed change, and the Repositories view lists its changes under "Thread checkout".
+- A checkout a thread made and works in outside bb, such as a worktree created from the shell, becomes a thread checkout. It gets a worktree row grouped with the thread's project, with its branch, commits ahead and behind `origin/HEAD`, its commits and every uncommitted and committed change, and the Repositories view lists its changes under "Thread checkout".
 - The edit index notes every folder a thread's commands change into with `cd`, `pushd` or `git -C` and an absolute or `~/` path, the 32 most recent per thread. Folders are looked up only for threads that edited files outside their own workspace, and the host expands `~/` itself.
 - `bb vantage worktree <thread>` prints every worktree the thread is in, its own workspace first and then any thread checkout.
 

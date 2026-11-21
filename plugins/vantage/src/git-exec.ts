@@ -4,7 +4,8 @@ import { createLimiter } from "./limit";
 export const GIT_CONCURRENCY = 3;
 
 export function limitGit<Args extends unknown[], Result>(
-  exec: (...args: Args) => Promise<Result>, limit: number = GIT_CONCURRENCY,
+  exec: (...args: Args) => Promise<Result>,
+  limit: number = GIT_CONCURRENCY,
 ): (...args: Args) => Promise<Result> {
   const run = createLimiter(limit);
   return (...args) => run(() => exec(...args));

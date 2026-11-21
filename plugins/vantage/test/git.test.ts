@@ -1,7 +1,25 @@
 import { describe, expect, it } from "vitest";
 import {
-  EMPTY_TREE, FILE_LIMIT, FOLDER_SAMPLE, LOG_FORMAT, PATCH_LIMIT, REFLOG_SLACK_MS, closestBase, commitsInWindows, countDiffLines, foldUntracked,
-  isSafeRef, isSafeRelativePath, isSafeSha, parseLog, parseNameStatusZ, parseNumstatZ, parseReflog, parseStatusZ, splitToplevel, statusFromCode,
+  EMPTY_TREE,
+  FILE_LIMIT,
+  FOLDER_SAMPLE,
+  LOG_FORMAT,
+  PATCH_LIMIT,
+  REFLOG_SLACK_MS,
+  closestBase,
+  commitsInWindows,
+  countDiffLines,
+  foldUntracked,
+  isSafeRef,
+  isSafeRelativePath,
+  isSafeSha,
+  parseLog,
+  parseNameStatusZ,
+  parseNumstatZ,
+  parseReflog,
+  parseStatusZ,
+  splitToplevel,
+  statusFromCode,
   truncatePatch,
 } from "../src/git";
 
@@ -77,9 +95,22 @@ describe("parseNumstatZ", () => {
 
 describe("statusFromCode", () => {
   it.each([
-    [" M", "modified"], ["M ", "modified"], ["MM", "modified"], ["A ", "added"], ["D ", "deleted"], [" D", "deleted"],
-    ["R ", "renamed"], ["R087", "renamed"], ["C ", "copied"], [" T", "type-changed"], ["??", "untracked"],
-    ["UU", "unmerged"], ["AA", "unmerged"], ["DD", "unmerged"], ["AU", "unmerged"], ["U", "unmerged"],
+    [" M", "modified"],
+    ["M ", "modified"],
+    ["MM", "modified"],
+    ["A ", "added"],
+    ["D ", "deleted"],
+    [" D", "deleted"],
+    ["R ", "renamed"],
+    ["R087", "renamed"],
+    ["C ", "copied"],
+    [" T", "type-changed"],
+    ["??", "untracked"],
+    ["UU", "unmerged"],
+    ["AA", "unmerged"],
+    ["DD", "unmerged"],
+    ["AU", "unmerged"],
+    ["U", "unmerged"],
   ])("maps %j to %s", (code, status) => {
     expect(statusFromCode(code)).toBe(status);
   });
@@ -169,18 +200,35 @@ describe("parseLog", () => {
   });
 
   it("reads commits newest first and turns the author time into milliseconds", () => {
-    const output = [
-      line("a".repeat(40), "aaaaaaa", "Ada", "1700000100", "Second: fix it"),
-      line("b".repeat(40), "bbbbbbb", "Grace Hopper", "1700000000", "First"),
-    ].join("\n") + "\n";
+    const output =
+      [
+        line("a".repeat(40), "aaaaaaa", "Ada", "1700000100", "Second: fix it"),
+        line("b".repeat(40), "bbbbbbb", "Grace Hopper", "1700000000", "First"),
+      ].join("\n") + "\n";
     expect(parseLog(output)).toEqual([
-      { sha: "a".repeat(40), shortSha: "aaaaaaa", authorName: "Ada", authoredAt: 1_700_000_100_000, subject: "Second: fix it" },
-      { sha: "b".repeat(40), shortSha: "bbbbbbb", authorName: "Grace Hopper", authoredAt: 1_700_000_000_000, subject: "First" },
+      {
+        sha: "a".repeat(40),
+        shortSha: "aaaaaaa",
+        authorName: "Ada",
+        authoredAt: 1_700_000_100_000,
+        subject: "Second: fix it",
+      },
+      {
+        sha: "b".repeat(40),
+        shortSha: "bbbbbbb",
+        authorName: "Grace Hopper",
+        authoredAt: 1_700_000_000_000,
+        subject: "First",
+      },
     ]);
   });
 
   it("skips malformed lines and reads an empty output as no commits", () => {
-    const output = ["junk", line("c".repeat(40), "ccccccc", "Ada", "not-a-number", "Bad time"), line("d".repeat(40), "ddddddd", "Ada", "5", "Ok")].join("\n");
+    const output = [
+      "junk",
+      line("c".repeat(40), "ccccccc", "Ada", "not-a-number", "Bad time"),
+      line("d".repeat(40), "ddddddd", "Ada", "5", "Ok"),
+    ].join("\n");
     expect(parseLog(output).map((commit) => commit.subject)).toEqual(["Ok"]);
     expect(parseLog("")).toEqual([]);
   });
@@ -215,7 +263,12 @@ describe("parseReflog", () => {
   });
 
   it("skips malformed lines and an empty output", () => {
-    const output = ["junk", entry("not-a-sha", "1", "commit: x"), entry("d".repeat(40), "HEAD~1", "commit: x"), entry("e".repeat(40), "5", "commit: ok")].join("\n");
+    const output = [
+      "junk",
+      entry("not-a-sha", "1", "commit: x"),
+      entry("d".repeat(40), "HEAD~1", "commit: x"),
+      entry("e".repeat(40), "5", "commit: ok"),
+    ].join("\n");
     expect(parseReflog(output)).toEqual([{ sha: "e".repeat(40), at: 5000, action: "commit" }]);
     expect(parseReflog("")).toEqual([]);
   });
@@ -226,15 +279,29 @@ describe("commitsInWindows", () => {
 
   it("keeps commits git commit made while a window was open, newest first and each once", () => {
     const entries = [
-      at("a", 50_000), at("b", 40_000, "commit (amend)"), at("c", 30_000, "pull --ff-only"), at("d", 20_000, "checkout"),
-      at("e", 10_000, "commit (merge)"), at("a", 9_000), at("f", 1_000, "commit (initial)"),
+      at("a", 50_000),
+      at("b", 40_000, "commit (amend)"),
+      at("c", 30_000, "pull --ff-only"),
+      at("d", 20_000, "checkout"),
+      at("e", 10_000, "commit (merge)"),
+      at("a", 9_000),
+      at("f", 1_000, "commit (initial)"),
     ];
-    expect(commitsInWindows(entries, [{ start: 9_000, end: 50_000 }])).toEqual(["a".repeat(40), "b".repeat(40), "e".repeat(40)]);
+    expect(commitsInWindows(entries, [{ start: 9_000, end: 50_000 }])).toEqual([
+      "a".repeat(40),
+      "b".repeat(40),
+      "e".repeat(40),
+    ]);
   });
 
   it("allows for whole-second reflog times at both edges, and nothing beyond", () => {
     const windows = [{ start: 100_000, end: 200_000 }];
-    const edges = [at("a", 100_000 - REFLOG_SLACK_MS), at("b", 200_000 + REFLOG_SLACK_MS), at("c", 100_000 - REFLOG_SLACK_MS - 1), at("d", 200_000 + REFLOG_SLACK_MS + 1)];
+    const edges = [
+      at("a", 100_000 - REFLOG_SLACK_MS),
+      at("b", 200_000 + REFLOG_SLACK_MS),
+      at("c", 100_000 - REFLOG_SLACK_MS - 1),
+      at("d", 200_000 + REFLOG_SLACK_MS + 1),
+    ];
     expect(commitsInWindows(edges, windows)).toEqual(["a".repeat(40), "b".repeat(40)]);
   });
 
@@ -248,10 +315,16 @@ describe("foldUntracked", () => {
   const modified = (path: string) => ({ path, previousPath: null, code: " M" });
 
   it("folds a folder with more files than the limit, and leaves tracked changes and small folders alone", () => {
-    const entries = [modified("src/a.ts"), ...["1", "2", "3"].map((name) => untracked(`vendor/${name}.js`)), untracked("notes/one.txt")];
+    const entries = [
+      modified("src/a.ts"),
+      ...["1", "2", "3"].map((name) => untracked(`vendor/${name}.js`)),
+      untracked("notes/one.txt"),
+    ];
     const result = foldUntracked(entries, ["vendor/", "notes/"], 2);
     expect(result.entries.map((entry) => entry.path)).toEqual(["src/a.ts", "notes/one.txt"]);
-    expect(result.folders).toEqual([{ path: "vendor/", files: 3, repository: false, sample: ["vendor/1.js", "vendor/2.js", "vendor/3.js"] }]);
+    expect(result.folders).toEqual([
+      { path: "vendor/", files: 3, repository: false, sample: ["vendor/1.js", "vendor/2.js", "vendor/3.js"] },
+    ]);
   });
 
   it("folds a folder holding a repository of its own, whatever its size, and the folders inside a folded one go with it", () => {
@@ -265,7 +338,9 @@ describe("foldUntracked", () => {
   });
 
   it("keeps only the first few files as a sample", () => {
-    const entries = Array.from({ length: FOLDER_SAMPLE + 5 }, (_, index) => untracked(`big/${String(index).padStart(3, "0")}`));
+    const entries = Array.from({ length: FOLDER_SAMPLE + 5 }, (_, index) =>
+      untracked(`big/${String(index).padStart(3, "0")}`),
+    );
     const [folder] = foldUntracked(entries, ["big/"], 1).folders;
     expect(folder).toMatchObject({ files: FOLDER_SAMPLE + 5 });
     expect(folder!.sample).toHaveLength(FOLDER_SAMPLE);
@@ -274,10 +349,25 @@ describe("foldUntracked", () => {
 
 describe("closestBase", () => {
   it("picks the base the fewest commits are ahead of, a remote-tracking one on a tie, and the earlier one otherwise", () => {
-    expect(closestBase([{ name: "main", ahead: 504 }, { name: "origin/main", ahead: 1 }])).toEqual({ name: "origin/main", ahead: 1 });
-    expect(closestBase([{ name: "feature/parent", ahead: 1 }, { name: "origin/feature/parent", ahead: 1 }, { name: "origin/main", ahead: 2 }]))
-      .toEqual({ name: "origin/feature/parent", ahead: 1 });
-    expect(closestBase([{ name: "develop", ahead: 3 }, { name: "trunk", ahead: 3 }])).toEqual({ name: "develop", ahead: 3 });
+    expect(
+      closestBase([
+        { name: "main", ahead: 504 },
+        { name: "origin/main", ahead: 1 },
+      ]),
+    ).toEqual({ name: "origin/main", ahead: 1 });
+    expect(
+      closestBase([
+        { name: "feature/parent", ahead: 1 },
+        { name: "origin/feature/parent", ahead: 1 },
+        { name: "origin/main", ahead: 2 },
+      ]),
+    ).toEqual({ name: "origin/feature/parent", ahead: 1 });
+    expect(
+      closestBase([
+        { name: "develop", ahead: 3 },
+        { name: "trunk", ahead: 3 },
+      ]),
+    ).toEqual({ name: "develop", ahead: 3 });
     expect(closestBase([])).toBeNull();
   });
 });

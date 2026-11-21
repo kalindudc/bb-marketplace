@@ -4,7 +4,16 @@ import type { EventsSdk } from "./edits";
 // Items that only talk, think or read. A command, a file change, a tool call or a delegation may write, and so may an item type
 // that does not exist yet, so anything not listed here counts as a change.
 const HARMLESS_ITEMS = new Set([
-  "userMessage", "agentMessage", "reasoning", "plan", "planSteps", "webSearch", "webFetch", "imageView", "fileRead", "search",
+  "userMessage",
+  "agentMessage",
+  "reasoning",
+  "plan",
+  "planSteps",
+  "webSearch",
+  "webFetch",
+  "imageView",
+  "fileRead",
+  "search",
   "contextCompaction",
 ]);
 const PAGE_SIZE = 100;
@@ -24,11 +33,19 @@ interface Reads {
   queued: Promise<void> | null;
 }
 
-interface Finding { changed: boolean; cursor: number }
+interface Finding {
+  changed: boolean;
+  cursor: number;
+}
 
 export function createFileEventGate(
   sdk: EventsSdk,
-  options: { invalidate(threadId: string): void; hasThread(threadId: string): boolean; timeoutMs?: number; maxCursors?: number },
+  options: {
+    invalidate(threadId: string): void;
+    hasThread(threadId: string): boolean;
+    timeoutMs?: number;
+    maxCursors?: number;
+  },
 ): FileEventGate {
   const timeoutMs = options.timeoutMs ?? READ_TIMEOUT_MS;
   const maxCursors = options.maxCursors ?? MAX_CURSORS;
@@ -57,14 +74,27 @@ export function createFileEventGate(
   async function findItems(threadId: string, signal: AbortSignal): Promise<Finding> {
     const after = cursors.get(threadId);
     if (after === undefined) {
-      const latest = await sdk.threads.events.list({ threadId, types: [ITEM_COMPLETED], order: "desc", limit: "1", signal });
+      const latest = await sdk.threads.events.list({
+        threadId,
+        types: [ITEM_COMPLETED],
+        order: "desc",
+        limit: "1",
+        signal,
+      });
       return { changed: true, cursor: latest[0]?.seq ?? 0 };
     }
     const rows = await sdk.threads.events.list({
-      threadId, types: [ITEM_COMPLETED], order: "asc", limit: String(PAGE_SIZE), afterSeq: String(after), signal,
+      threadId,
+      types: [ITEM_COMPLETED],
+      order: "asc",
+      limit: String(PAGE_SIZE),
+      afterSeq: String(after),
+      signal,
     });
     return {
-      changed: rows.length >= PAGE_SIZE || rows.some((row) => row.type !== ITEM_COMPLETED || !HARMLESS_ITEMS.has(row.data.item.type)),
+      changed:
+        rows.length >= PAGE_SIZE ||
+        rows.some((row) => row.type !== ITEM_COMPLETED || !HARMLESS_ITEMS.has(row.data.item.type)),
       cursor: rows.at(-1)?.seq ?? after,
     };
   }
@@ -78,7 +108,9 @@ export function createFileEventGate(
     const current = () => tokens.get(threadId) === token;
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      const timeout = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("timed out")), timeoutMs); });
+      const timeout = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("timed out")), timeoutMs);
+      });
       const found = await Promise.race([findItems(threadId, controller.signal), timeout]);
       if (!current()) return;
       remember(threadId, found.cursor);

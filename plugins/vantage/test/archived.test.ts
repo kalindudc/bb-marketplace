@@ -36,6 +36,11 @@ describe("archivedLast", () => {
 
 describe("countArchived", () => {
   it("counts the rows whose threads are all archived", () => {
-    expect(countArchived([{ threadIds: ["thr_old"] }, { threadIds: ["thr_live"] }, { threadIds: ["thr_old", "thr_older"] }], threads)).toBe(2);
+    expect(
+      countArchived(
+        [{ threadIds: ["thr_old"] }, { threadIds: ["thr_live"] }, { threadIds: ["thr_old", "thr_older"] }],
+        threads,
+      ),
+    ).toBe(2);
   });
 });

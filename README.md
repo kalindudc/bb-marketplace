@@ -50,7 +50,7 @@ plugin store.
 | [Switchboard](plugins/switchboard) | `switchboard` | Replaces the sidebar thread list: your bb sections as coloured groups, children as trees, status at a glance, drag-and-drop organizing, status lanes and snooze. Choose it under Settings → Appearance → Sidebar. |
 | [Tavern](plugins/tavern) | `tavern` | Draft: hand a goal to a Keeper, approve its quest map, then steer its builders and checker from one thread. Follow asks, reports and verified results, with a journal checklist in every thread. |
 | [Update Shelf](plugins/update-shelf) | `update-shelf` | Groups every plugin with a waiting update at the top of bb's Installed plugins page, with each one's changelog read from its source on GitHub and one-click Update or Update all through bb's own update queue. No separate page: bb's cards, filters and Update dialog stay as they are. |
-| [Vantage](plugins/vantage) | `vantage` | Adds a thread side-panel tab for parallel agents: every child worktree with status, branch and changes, a drill-in with diffs, commits, chat and a terminal, and a by-repository view of everything the thread tree changed. `bb vantage` prints the same for agents. A full-screen page in the left navigation covers every recent thread. |
+| [Vantage](plugins/vantage) | `vantage` | Review your agents’ changes by thread or repository. Browse worktrees, text diffs, images and recorded edits, spot overlapping changes, mark files reviewed and send comments to the agent that made the change. |
 
 ## Layout
 

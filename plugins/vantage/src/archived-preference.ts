@@ -22,7 +22,9 @@ export function createArchivedPreference(win: Window, surface: ArchivedSurface):
     const stored = storage.getItem(key);
     return stored === "true" ? true : stored === "false" ? false : DEFAULTS[surface];
   };
-  const notify = () => { for (const listener of [...listeners]) listener(); };
+  const notify = () => {
+    for (const listener of [...listeners]) listener();
+  };
   const onStorage = (event: StorageEvent) => {
     if (event.key === key || event.key === null) notify();
   };

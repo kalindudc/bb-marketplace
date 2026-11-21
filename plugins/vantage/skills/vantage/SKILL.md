@@ -7,6 +7,13 @@ description: Check on the child threads of a parent, or on every recent thread. 
 
 Vantage shows the worktrees of a thread and all of its descendant threads, and groups what they changed by repository. With `--all` it does the same for every thread active in a time window, not one tree. It reads only; it never stages, commits or edits anything.
 
+## Install
+
+Vantage needs bb 0.49 or later.
+
+    bb marketplace add git:github.com/kalindudc/bb-marketplace@main
+    bb plugin install vantage@kalindudc
+
 ## Check on every recent thread
 
     bb vantage worktrees --all               # every thread active in the window, grouped by project
@@ -79,7 +86,11 @@ Read these from `--json` output:
 
 ## The user's Vantage choices
 
-In bb, the user can tick files as reviewed in Vantage, and two Vantage settings choose its alerts: "Badge the Vantage icon when a thread needs you" (on by default) and "Show a toast when a thread needs you" (off by default). There are no per-thread choices. None of this changes what the commands here print, and there is no command to change it. Review comments the user writes in Vantage arrive in a thread as an ordinary message that starts "Review notes from Vantage on your changes:".
+In bb, the user can tick files as reviewed in Vantage, and one Vantage setting chooses its alerts: "Show a toast when a thread needs you" (off by default). Vantage puts no badge on its navigation icon. Review marks and alerts do not change what the commands here print. Review comments the user writes in Vantage arrive in a thread as an ordinary message that starts "Review notes from Vantage on your changes:".
+
+## Git exclusions
+
+The Vantage plugin settings can exclude folders (`excludedPaths`, absolute or starting with `~/`) and environment provider IDs (`excludedProviders`). Both default to empty. Enter one item per line or separate items with commas. The host that owns the checkout expands `~`. For an excluded checkout, report that live Git was not read, not that the checkout is clean. Use any recorded edits the overview reports.
 
 ## Limits
 

@@ -12,9 +12,13 @@ function reachable(entry: string): string[] {
   const visit = (file: string) => {
     if (seen.has(file)) return;
     seen.add(file);
-    for (const match of readFileSync(file, "utf8").matchAll(/^\s*(?:import|export)\s+(?!type\b)[^;]*?from\s+"(\.[^"]+)"/gm)) {
+    for (const match of readFileSync(file, "utf8").matchAll(
+      /^\s*(?:import|export)\s+(?!type\b)[^;]*?from\s+"(\.[^"]+)"/gm,
+    )) {
       const base = resolve(dirname(file), match[1]!);
-      const found = [base, ...EXTENSIONS.map((extension) => base + extension)].find((candidate) => existsSync(candidate) && !candidate.endsWith("/"));
+      const found = [base, ...EXTENSIONS.map((extension) => base + extension)].find(
+        (candidate) => existsSync(candidate) && !candidate.endsWith("/"),
+      );
       if (found !== undefined && EXTENSIONS.some((extension) => found.endsWith(extension))) visit(found);
     }
   };
@@ -26,7 +30,9 @@ describe("the frontend bundle", () => {
   it("takes no value from the SDK's root package, which a git install leaves out", () => {
     const files = reachable(join(root, "app.tsx"));
     expect(files.some((file) => file.endsWith("src/contract.ts"))).toBe(true);
-    const offenders = files.filter((file) => /^\s*import\s+(?!type\b)[^;]*from\s+"@get-bb\/plugin-sdk"/m.test(readFileSync(file, "utf8")));
+    const offenders = files.filter((file) =>
+      /^\s*import\s+(?!type\b)[^;]*from\s+"@get-bb\/plugin-sdk"/m.test(readFileSync(file, "utf8")),
+    );
     expect(offenders.map((file) => file.slice(root.length + 1))).toEqual([]);
   });
 });

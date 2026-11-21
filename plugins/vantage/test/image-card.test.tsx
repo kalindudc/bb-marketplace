@@ -9,8 +9,16 @@ import type { FileChange } from "../src/contract";
 const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
 
 const fileChange = (overrides: Partial<FileChange> = {}): FileChange => ({
-  path: "shots/after.png", previousPath: null, status: "modified", additions: null, deletions: null,
-  binary: true, untracked: false, tooLarge: false, edits: null, ...overrides,
+  path: "shots/after.png",
+  previousPath: null,
+  status: "modified",
+  additions: null,
+  deletions: null,
+  binary: true,
+  untracked: false,
+  tooLarge: false,
+  edits: null,
+  ...overrides,
 });
 
 const repo = { key: "k", ref: { kind: "checkout" as const, hostId: "host_1", root: "/repo", base: "origin/main" } };
@@ -21,7 +29,11 @@ afterEach(() => {
   clearLoadedCache();
 });
 
-const mount = (file: FileChange, overrides: Partial<FileCardProps> = {}, imageOutput?: { old: string | null; new: string | null; truncated: boolean }) => {
+const mount = (
+  file: FileChange,
+  overrides: Partial<FileCardProps> = {},
+  imageOutput?: { old: string | null; new: string | null; truncated: boolean },
+) => {
   const mock = vi.fn(async () => imageOutput ?? { old: PNG, new: null, truncated: false });
   const loaders: FileLoaders = {
     patch: vi.fn(async () => ({ patch: "", truncated: false, binary: true })),
@@ -30,8 +42,17 @@ const mount = (file: FileChange, overrides: Partial<FileCardProps> = {}, imageOu
     recordedEdits: vi.fn(async () => ({ edits: [] })),
   };
   const props: FileCardProps = {
-    repo, file, scope: "uncommitted", sha: null, cardKey: "c1", folded: false, onFold: () => {},
-    view: "unified", threads: new Map(), loaders, ...overrides,
+    repo,
+    file,
+    scope: "uncommitted",
+    sha: null,
+    cardKey: "c1",
+    folded: false,
+    onFold: () => {},
+    view: "unified",
+    threads: new Map(),
+    loaders,
+    ...overrides,
   };
   const slot = renderSlot({ component: (passed) => <FileCard {...passed} /> }, props);
   mounts.push(slot);

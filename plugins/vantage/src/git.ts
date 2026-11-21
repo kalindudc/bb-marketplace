@@ -8,10 +8,25 @@ export const REFLOG_FORMAT = "%H%x1f%gd%x1f%gs";
 // Reflog times are whole seconds, and bb's clock and the machine's may differ a little.
 export const REFLOG_SLACK_MS = 2000;
 
-export interface GitEntry { path: string; previousPath: string | null; code: string }
-export interface ReflogEntry { sha: string; at: number; action: string }
-export interface TimeWindow { start: number; end: number }
-export interface NumstatEntry { additions: number | null; deletions: number | null; previousPath: string | null }
+export interface GitEntry {
+  path: string;
+  previousPath: string | null;
+  code: string;
+}
+export interface ReflogEntry {
+  sha: string;
+  at: number;
+  action: string;
+}
+export interface TimeWindow {
+  start: number;
+  end: number;
+}
+export interface NumstatEntry {
+  additions: number | null;
+  deletions: number | null;
+  previousPath: string | null;
+}
 
 const fields = (output: string): string[] => {
   const parts = output.split("\0");
@@ -75,12 +90,18 @@ export function statusFromCode(code: string): GitFile["status"] {
   if (code === "??") return "untracked";
   if (code.includes("U") || code === "AA" || code === "DD") return "unmerged";
   switch (code.trim()[0]) {
-    case "A": return "added";
-    case "D": return "deleted";
-    case "R": return "renamed";
-    case "C": return "copied";
-    case "T": return "type-changed";
-    default: return "modified";
+    case "A":
+      return "added";
+    case "D":
+      return "deleted";
+    case "R":
+      return "renamed";
+    case "C":
+      return "copied";
+    case "T":
+      return "type-changed";
+    default:
+      return "modified";
   }
 }
 
@@ -134,7 +155,10 @@ export function commitsInWindows(entries: readonly ReflogEntry[], windows: reado
   const found = new Set<string>();
   for (const entry of entries) {
     if (!COMMIT_ACTION.test(entry.action)) continue;
-    if (windows.some((window) => entry.at >= window.start - REFLOG_SLACK_MS && entry.at <= window.end + REFLOG_SLACK_MS)) found.add(entry.sha);
+    if (
+      windows.some((window) => entry.at >= window.start - REFLOG_SLACK_MS && entry.at <= window.end + REFLOG_SLACK_MS)
+    )
+      found.add(entry.sha);
   }
   return [...found];
 }
@@ -144,7 +168,12 @@ export function isSafeRef(ref: string): boolean {
 }
 
 export const FOLDER_SAMPLE = 20;
-export interface UntrackedFolder { path: string; files: number; repository: boolean; sample: string[] }
+export interface UntrackedFolder {
+  path: string;
+  files: number;
+  repository: boolean;
+  sample: string[];
+}
 
 /**
  * Folds each untracked folder that is a repository of its own, or holds more than `limit` files, into one entry.
@@ -152,7 +181,9 @@ export interface UntrackedFolder { path: string; files: number; repository: bool
  * `git status --untracked-files=all` entries, which list a nested repository as its folder, also ending in `/`.
  */
 export function foldUntracked(
-  entries: readonly GitEntry[], collapsed: readonly string[], limit: number,
+  entries: readonly GitEntry[],
+  collapsed: readonly string[],
+  limit: number,
 ): { entries: GitEntry[]; folders: UntrackedFolder[] } {
   const dirs = new Set(collapsed.filter((path) => path.endsWith("/")));
   // Each untracked entry belongs to the outermost collapsed folder above it, found by walking its own path once.
@@ -178,17 +209,29 @@ export function foldUntracked(
     const files = inside.filter((entry) => !entry.path.endsWith("/"));
     if (!repository && files.length <= limit) continue;
     for (const entry of inside) folded.add(entry);
-    folders.push({ path: dir, files: files.length, repository, sample: files.slice(0, FOLDER_SAMPLE).map((entry) => entry.path) });
+    folders.push({
+      path: dir,
+      files: files.length,
+      repository,
+      sample: files.slice(0, FOLDER_SAMPLE).map((entry) => entry.path),
+    });
   }
   return { entries: entries.filter((entry) => !folded.has(entry)), folders };
 }
 
 // Of the candidate bases, the one the fewest commits on HEAD are ahead of; on a tie, a remote-tracking branch, then the earlier one.
-export function closestBase(candidates: readonly { name: string; ahead: number }[]): { name: string; ahead: number } | null {
+export function closestBase(
+  candidates: readonly { name: string; ahead: number }[],
+): { name: string; ahead: number } | null {
   let best: { name: string; ahead: number } | null = null;
   const remote = (name: string) => name.startsWith("origin/");
   for (const candidate of candidates) {
-    if (best === null || candidate.ahead < best.ahead || (candidate.ahead === best.ahead && remote(candidate.name) && !remote(best.name))) best = candidate;
+    if (
+      best === null ||
+      candidate.ahead < best.ahead ||
+      (candidate.ahead === best.ahead && remote(candidate.name) && !remote(best.name))
+    )
+      best = candidate;
   }
   return best;
 }

@@ -1,4 +1,8 @@
-export async function mapLimit<T, R>(items: readonly T[], limit: number, run: (item: T, index: number) => Promise<R>): Promise<R[]> {
+export async function mapLimit<T, R>(
+  items: readonly T[],
+  limit: number,
+  run: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
   const results = new Array<R>(items.length);
   let next = 0;
   const worker = async (): Promise<void> => {
@@ -21,13 +25,14 @@ export function createLimiter(limit: number): <T>(task: () => Promise<T>) => Pro
       start();
     }
   };
-  return <T>(task: () => Promise<T>) => new Promise<T>((resolve, reject) => {
-    waiting.push(() => {
-      new Promise<T>((started) => started(task())).then(resolve, reject).finally(() => {
-        active--;
-        next();
+  return <T>(task: () => Promise<T>) =>
+    new Promise<T>((resolve, reject) => {
+      waiting.push(() => {
+        new Promise<T>((started) => started(task())).then(resolve, reject).finally(() => {
+          active--;
+          next();
+        });
       });
+      next();
     });
-    next();
-  });
 }

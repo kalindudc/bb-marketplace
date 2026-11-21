@@ -1,7 +1,14 @@
 // Git calls these files binary, but a picture is the review's best diff: the card renders each side as an image.
 const MEDIA_TYPES: Record<string, string> = {
-  png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp",
-  avif: "image/avif", bmp: "image/bmp", ico: "image/x-icon", svg: "image/svg+xml",
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  gif: "image/gif",
+  webp: "image/webp",
+  avif: "image/avif",
+  bmp: "image/bmp",
+  ico: "image/x-icon",
+  svg: "image/svg+xml",
 };
 
 const extensionOf = (path: string): string => {
@@ -17,5 +24,5 @@ export const mediaTypeOfPath = (path: string): string => MEDIA_TYPES[extensionOf
 
 export const dataUrlOf = (path: string, base64: string): string => `data:${mediaTypeOfPath(path)};base64,${base64}`;
 
-// One side's bytes: the host sends at most this, and says so when it left a side out for being larger.
-export const IMAGE_LIMIT = 8 * 1024 * 1024;
+// Two base64-encoded sides and the JSON fields must fit the host RPC's 8 MiB response limit.
+export const IMAGE_LIMIT = 3 * 1024 * 1024 - 1024;

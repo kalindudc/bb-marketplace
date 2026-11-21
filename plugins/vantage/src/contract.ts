@@ -3,7 +3,11 @@ import { z } from "zod";
 
 const text = z.string().max(4096);
 const relativePath = z.string().min(1).max(4096);
-const absolutePath = z.string().min(1).max(4096).regex(/^(\/|[A-Za-z]:[\\/]|\\\\)/);
+const absolutePath = z
+  .string()
+  .min(1)
+  .max(4096)
+  .regex(/^(\/|[A-Za-z]:[\\/]|\\\\)/);
 // A folder a command changed into, which the machine that ran it resolves against its own home folder.
 const homePath = z.string().min(3).max(4096).regex(/^~\//);
 const resolvablePath = z.union([absolutePath, homePath]);
@@ -14,20 +18,38 @@ export type Scope = z.infer<typeof scopeSchema>;
 
 export const shaSchema = z.string().regex(/^[0-9a-f]{7,64}$/);
 
-export const commitSchema = z.object({
-  sha: text,
-  shortSha: text,
-  subject: text,
-  authorName: text,
-  authoredAt: z.number().nonnegative(),
-}).strict();
+export const commitSchema = z
+  .object({
+    sha: text,
+    shortSha: text,
+    subject: text,
+    authorName: text,
+    authoredAt: z.number().nonnegative(),
+  })
+  .strict();
 export type Commit = z.infer<typeof commitSchema>;
 
-const GIT_STATUSES = ["added", "modified", "deleted", "renamed", "copied", "type-changed", "unmerged", "untracked"] as const;
+const GIT_STATUSES = [
+  "added",
+  "modified",
+  "deleted",
+  "renamed",
+  "copied",
+  "type-changed",
+  "unmerged",
+  "untracked",
+] as const;
 
 // An untracked folder Vantage shows as one entry and leaves out of every count: a repository of its own, or one with
 // more files than the folder limit. `path` ends in `/`; `sample` holds the first few of its files.
-export const folderSchema = z.object({ files: count, repository: z.boolean(), sample: z.array(relativePath).max(20) }).strict();
+export const folderSchema = z
+  .object({
+    files: count,
+    repository: z.boolean(),
+    sample: z.array(relativePath).max(20),
+    partial: z.literal(true).optional(),
+  })
+  .strict();
 
 const gitFileShape = {
   path: relativePath,
@@ -51,95 +73,139 @@ export const hostTargetSchema = z.discriminatedUnion("type", [
 ]);
 export type HostTarget = z.infer<typeof hostTargetSchema>;
 
-export const hostUnavailableSchema = z.object({
-  outcome: z.literal("unavailable"),
-  reason: z.enum(["not-a-repo", "missing-ref", "invalid-input", "git-failed"]),
-  message: text,
-}).strict();
+export const hostUnavailableSchema = z
+  .object({
+    outcome: z.literal("unavailable"),
+    reason: z.enum(["not-a-repo", "missing-ref", "invalid-input", "git-failed"]),
+    message: text,
+  })
+  .strict();
 export type HostUnavailable = z.infer<typeof hostUnavailableSchema>;
 
+export const exclusionRootSchema = z.union([resolvablePath, z.literal("~"), z.literal("~/")]);
+export const MAX_EXCLUDED_PATHS = 500;
+export const MAX_EXCLUDED_PROVIDER_ROOTS = 512;
+const excludedRoots = z.array(exclusionRootSchema).max(MAX_EXCLUDED_PATHS + MAX_EXCLUDED_PROVIDER_ROOTS).optional();
 const folderLimit = z.number().int().min(1).max(1_000_000).optional();
 // The base a checkout was compared with instead of the one asked for, and how many commits that one would have counted.
 export const skippedBaseSchema = z.object({ name: text, aheadCount: count }).strict();
 
 // One read covers repoPatch, fileSides and imageSides: where the file is and which change of it to read.
-const patchTargetInput = z.object({
-  root: absolutePath,
-  path: relativePath,
-  previousPath: relativePath.nullable(),
-  untracked: z.boolean(),
-  target: hostTargetSchema,
-}).strict();
+const patchTargetInput = z
+  .object({
+    root: absolutePath,
+    excludedRoots,
+    path: relativePath,
+    previousPath: relativePath.nullable(),
+    untracked: z.boolean(),
+    target: hostTargetSchema,
+  })
+  .strict();
+
+export const MAX_ROOT_PATHS = 2_000;
 
 export const hostContract = defineContract({
   resolveRoots: {
-    input: z.object({ paths: z.array(resolvablePath).max(2000) }).strict(),
-    output: z.object({
-      results: z.array(z.object({
-        path: resolvablePath,
-        root: absolutePath.nullable(),
-        relative: z.string().max(4096).nullable(),
-      }).strict()),
-    }).strict(),
+    input: z.object({ paths: z.array(resolvablePath).max(MAX_ROOT_PATHS), excludedRoots }).strict(),
+    output: z
+      .object({
+        results: z.array(
+          z
+            .object({
+              path: resolvablePath,
+              root: absolutePath.nullable(),
+              relative: z.string().max(4096).nullable(),
+              excluded: z.literal(true).optional(),
+            })
+            .strict(),
+        ),
+      })
+      .strict(),
+  },
+  verifyRoots: {
+    input: z.object({ roots: z.array(absolutePath).max(MAX_ROOT_PATHS), excludedRoots }).strict(),
+    output: z.object({ invalidRoots: z.array(absolutePath).max(MAX_ROOT_PATHS) }).strict(),
   },
   repoFiles: {
-    input: z.object({ root: absolutePath, target: hostTargetSchema, folderLimit }).strict(),
+    input: z.object({ root: absolutePath, excludedRoots, target: hostTargetSchema, folderLimit }).strict(),
     output: z.discriminatedUnion("outcome", [
-      z.object({
-        outcome: z.literal("available"),
-        branch: text.nullable(),
-        base: text.nullable(),
-        aheadCount: count.nullable(),
-        behindCount: count.nullable(),
-        commits: z.array(commitSchema).max(100),
-        files: z.array(gitFileSchema),
-        truncated: z.boolean(),
-      }).strict(),
+      z
+        .object({
+          outcome: z.literal("available"),
+          branch: text.nullable(),
+          base: text.nullable(),
+          aheadCount: count.nullable(),
+          behindCount: count.nullable(),
+          commits: z.array(commitSchema).max(100),
+          files: z.array(gitFileSchema),
+          truncated: z.boolean(),
+        })
+        .strict(),
       hostUnavailableSchema,
     ]),
   },
   // `pick`: compare with the closest of the likely bases rather than only `base`.
   checkoutStatus: {
-    input: z.object({ root: absolutePath, base: text.nullable(), pick: z.boolean().optional(), folderLimit }).strict(),
+    input: z
+      .object({ root: absolutePath, excludedRoots, base: text.nullable(), pick: z.boolean().optional(), folderLimit })
+      .strict(),
     output: z.discriminatedUnion("outcome", [
-      z.object({
-        outcome: z.literal("available"),
-        branch: text.nullable(),
-        head: shaSchema.nullable(),
-        base: text.nullable(),
-        skippedBase: skippedBaseSchema.nullable(),
-        aheadCount: count.nullable(),
-        behindCount: count.nullable(),
-        commits: z.array(commitSchema).max(100),
-        uncommitted: z.array(gitFileSchema),
-        committed: z.array(gitFileSchema),
-        truncated: z.boolean(),
-      }).strict(),
+      z
+        .object({
+          outcome: z.literal("available"),
+          branch: text.nullable(),
+          head: shaSchema.nullable(),
+          base: text.nullable(),
+          skippedBase: skippedBaseSchema.nullable(),
+          aheadCount: count.nullable(),
+          behindCount: count.nullable(),
+          commits: z.array(commitSchema).max(100),
+          uncommitted: z.array(gitFileSchema),
+          committed: z.array(gitFileSchema),
+          truncated: z.boolean(),
+        })
+        .strict(),
       hostUnavailableSchema,
     ]),
   },
   // The commits on HEAD that `git commit` made while one of the windows was open, from the checkout's reflog.
   threadCommits: {
-    input: z.object({
-      root: absolutePath,
-      windows: z.array(z.object({ start: count, end: count }).strict()).min(1).max(200),
-    }).strict(),
+    input: z
+      .object({
+        root: absolutePath,
+        excludedRoots,
+        windows: z
+          .array(z.object({ start: count, end: count }).strict())
+          .min(1)
+          .max(200),
+      })
+      .strict(),
     output: z.discriminatedUnion("outcome", [
       // `since`: the commit before the oldest of them, so diffing from it shows only their work; null with none.
       // `total`: how many there are; `commits` lists the newest 100.
-      z.object({ outcome: z.literal("available"), commits: z.array(commitSchema).max(100), total: count, since: shaSchema.nullable() }).strict(),
+      z
+        .object({
+          outcome: z.literal("available"),
+          commits: z.array(commitSchema).max(100),
+          total: count,
+          since: shaSchema.nullable(),
+        })
+        .strict(),
       hostUnavailableSchema,
     ]),
   },
   repoPatch: {
     input: patchTargetInput,
     output: z.discriminatedUnion("outcome", [
-      z.object({
-        outcome: z.literal("available"),
-        patch: z.string(),
-        truncated: z.boolean(),
-        binary: z.boolean(),
-      }).strict(),
+      z
+        .object({
+          outcome: z.literal("available"),
+          patch: z.string(),
+          truncated: z.boolean(),
+          binary: z.boolean(),
+          largeSides: z.literal(true).optional(),
+        })
+        .strict(),
       hostUnavailableSchema,
     ]),
   },
@@ -148,7 +214,14 @@ export const hostContract = defineContract({
   fileSides: {
     input: patchTargetInput,
     output: z.discriminatedUnion("outcome", [
-      z.object({ outcome: z.literal("available"), old: z.string().nullable(), new: z.string().nullable() }).strict(),
+      z
+        .object({
+          outcome: z.literal("available"),
+          old: z.string().nullable(),
+          new: z.string().nullable(),
+          largeSides: z.literal(true).optional(),
+        })
+        .strict(),
       hostUnavailableSchema,
     ]),
   },
@@ -157,7 +230,14 @@ export const hostContract = defineContract({
   imageSides: {
     input: patchTargetInput,
     output: z.discriminatedUnion("outcome", [
-      z.object({ outcome: z.literal("available"), old: z.string().nullable(), new: z.string().nullable(), truncated: z.boolean() }).strict(),
+      z
+        .object({
+          outcome: z.literal("available"),
+          old: z.string().nullable(),
+          new: z.string().nullable(),
+          truncated: z.boolean(),
+        })
+        .strict(),
       hostUnavailableSchema,
     ]),
   },
@@ -169,14 +249,28 @@ export type HostOutput<M extends HostMethod> = z.output<(typeof hostContract)[M]
 
 // `root` and `hostId`: the repository root and machine Vantage reads the workspace with git at. Every ref has them now;
 // one kept from Vantage 0.8 or earlier does not, and its reads ask for a refresh.
-const workspaceRefSchema = z.object({
-  kind: z.literal("workspace"), environmentId: text, base: text.nullable(), root: absolutePath.optional(), hostId: text.optional(),
-}).strict();
-const branchRefSchema = z.object({ kind: z.literal("branch"), hostId: text, root: absolutePath, base: text.nullable(), head: text }).strict();
+const workspaceRefSchema = z
+  .object({
+    kind: z.literal("workspace"),
+    environmentId: text,
+    base: text.nullable(),
+    root: absolutePath.optional(),
+    hostId: text.optional(),
+  })
+  .strict();
+const branchRefSchema = z
+  .object({ kind: z.literal("branch"), hostId: text, root: absolutePath, base: text.nullable(), head: text })
+  .strict();
 // `worked`: a thread both edited files in this checkout and ran commands in it, so it is that thread's worktree too.
-const checkoutRefSchema = z.object({
-  kind: z.literal("checkout"), hostId: text, root: absolutePath, base: text.nullable(), worked: z.literal(true).optional(),
-}).strict();
+const checkoutRefSchema = z
+  .object({
+    kind: z.literal("checkout"),
+    hostId: text,
+    root: absolutePath,
+    base: text.nullable(),
+    worked: z.literal(true).optional(),
+  })
+  .strict();
 
 export const repoRefSchema = z.discriminatedUnion("kind", [
   workspaceRefSchema,
@@ -186,95 +280,113 @@ export const repoRefSchema = z.discriminatedUnion("kind", [
 ]);
 export type RepoRef = z.infer<typeof repoRefSchema>;
 
-const editsSchema = z.object({
-  threadIds: z.array(text),
-  rawPaths: z.array(text),
-  count,
-}).strict();
+const editsSchema = z
+  .object({
+    threadIds: z.array(text),
+    rawPaths: z.array(text),
+    count,
+  })
+  .strict();
 
-export const fileChangeSchema = z.object({
-  ...gitFileShape,
-  status: z.enum([...GIT_STATUSES, "clean"]),
-  untracked: z.boolean(),
-  tooLarge: z.boolean(),
-  edits: editsSchema.nullable(),
-}).strict();
+export const fileChangeSchema = z
+  .object({
+    ...gitFileShape,
+    status: z.enum([...GIT_STATUSES, "clean"]),
+    untracked: z.boolean(),
+    tooLarge: z.boolean(),
+    edits: editsSchema.nullable(),
+  })
+  .strict();
 export type FileChange = z.infer<typeof fileChangeSchema>;
 
-export const repoSchema = z.object({
-  key: text,
-  ref: repoRefSchema,
-  label: text,
-  projectId: text.nullable(),
-  root: text.nullable(),
-  hostId: text.nullable(),
-  hostName: text.nullable(),
-  branch: text.nullable(),
-  base: text.nullable(),
-  aheadCount: count.nullable(),
-  threadIds: z.array(text),
-  state: z.enum(["ready", "unavailable", "loading"]),
-  message: text.nullable(),
-  files: z.array(fileChangeSchema),
-  otherFiles: z.array(fileChangeSchema),
-  truncated: z.boolean(),
-  totals: z.object({ files: count, additions: count, deletions: count }).strict(),
-  threadCommits: z.array(commitSchema),
-}).strict();
+export const repoSchema = z
+  .object({
+    key: text,
+    ref: repoRefSchema,
+    label: text,
+    projectId: text.nullable(),
+    root: text.nullable(),
+    hostId: text.nullable(),
+    hostName: text.nullable(),
+    branch: text.nullable(),
+    base: text.nullable(),
+    aheadCount: count.nullable(),
+    threadIds: z.array(text),
+    state: z.enum(["ready", "unavailable", "loading"]),
+    message: text.nullable(),
+    files: z.array(fileChangeSchema),
+    otherFiles: z.array(fileChangeSchema),
+    truncated: z.boolean(),
+    totals: z.object({ files: count, additions: count, deletions: count }).strict(),
+    threadCommits: z.array(commitSchema),
+  })
+  .strict();
 export type Repo = z.infer<typeof repoSchema>;
 
-export const worktreeSchema = z.object({
-  key: text,
-  ref: z.discriminatedUnion("kind", [workspaceRefSchema, branchRefSchema, checkoutRefSchema]),
-  label: text,
-  projectId: text,
-  hostId: text,
-  hostName: text,
-  root: text,
-  branch: text.nullable(),
-  base: text.nullable(),
-  kind: z.enum(["workspace", "branch", "checkout"]),
-  threadIds: z.array(text),
-  state: z.enum(["ready", "unavailable", "loading"]),
-  message: text.nullable(),
-  aheadCount: count.nullable(),
-  behindCount: count.nullable(),
-  uncommitted: z.array(fileChangeSchema),
-  committed: z.array(fileChangeSchema),
-  commits: z.array(commitSchema),
-  // The branch is its base branch, or that branch on a remote, so no commit counts as ahead.
-  onBase: z.boolean(),
-  // Commits its threads made that are not ahead of the base: on the base branch itself, or already merged into it.
-  threadCommits: z.array(commitSchema),
-  // The base asked for when a closer one was picked.
-  skippedBase: skippedBaseSchema.nullable().optional(),
-  // The commit HEAD points at, from the same read.
-  head: shaSchema.nullable().optional(),
-  // The branch was far ahead of its base and its threads made few of those commits, so only their work is shown and counted:
-  // `aheadCount` commits ahead of `base`, `kept` of them by its threads.
-  leftOut: z.object({ aheadCount: count, kept: count }).strict().nullable().optional(),
-  // The user chose to see the whole branch against the base asked for, with nothing picked or left out.
-  whole: z.boolean().optional(),
-}).strict();
+export const worktreeSchema = z
+  .object({
+    key: text,
+    ref: z.discriminatedUnion("kind", [workspaceRefSchema, branchRefSchema, checkoutRefSchema]),
+    label: text,
+    projectId: text,
+    hostId: text,
+    hostName: text,
+    root: text,
+    branch: text.nullable(),
+    base: text.nullable(),
+    kind: z.enum(["workspace", "branch", "checkout"]),
+    threadIds: z.array(text),
+    state: z.enum(["ready", "unavailable", "loading"]),
+    message: text.nullable(),
+    aheadCount: count.nullable(),
+    behindCount: count.nullable(),
+    uncommitted: z.array(fileChangeSchema),
+    committed: z.array(fileChangeSchema),
+    commits: z.array(commitSchema),
+    // The branch is its base branch, or that branch on a remote, so no commit counts as ahead.
+    onBase: z.boolean(),
+    // Commits its threads made that are not ahead of the base: on the base branch itself, or already merged into it.
+    threadCommits: z.array(commitSchema),
+    // The base asked for when a closer one was picked.
+    skippedBase: skippedBaseSchema.nullable().optional(),
+    // The commit HEAD points at, from the same read.
+    head: shaSchema.nullable().optional(),
+    // The branch was far ahead of its base and its threads made few of those commits, so only their work is shown and counted:
+    // `aheadCount` commits ahead of `base`, `kept` of them by its threads.
+    leftOut: z.object({ aheadCount: count, kept: count }).strict().nullable().optional(),
+    // The user chose to see the whole branch against the base asked for, with nothing picked or left out.
+    whole: z.boolean().optional(),
+  })
+  .strict();
 export type Worktree = z.infer<typeof worktreeSchema>;
 
-export const sharedFileSchema = z.object({
-  projectId: text,
-  path: relativePath,
-  worktreeKeys: z.array(text).min(2),
-}).strict();
+export const sharedFileSchema = z
+  .object({
+    projectId: text,
+    path: relativePath,
+    worktreeKeys: z.array(text).min(2),
+  })
+  .strict();
 export type SharedFile = z.infer<typeof sharedFileSchema>;
 
-export const threadSummarySchema = z.object({
-  id: text,
-  title: text,
-  parentThreadId: text.nullable(),
-  archived: z.boolean(),
-  depth: count,
-  environmentId: text.nullable(),
-  status: text,
-  rootThreadId: text,
-}).strict();
+export const threadSummarySchema = z
+  .object({
+    id: text,
+    title: text,
+    parentThreadId: text.nullable(),
+    archived: z.boolean(),
+    depth: count,
+    environmentId: text.nullable(),
+    status: text,
+    rootThreadId: text,
+    // bb hides the thread from its sidebar, as plugins do with their helper threads.
+    hidden: z.literal(true).optional(),
+    // The parent a Flare companion draws flares for. Flare started it hidden, beside that parent, and it edits nothing.
+    companionOf: text.optional(),
+    // Archived, and bb may not have handed over its last recorded edits yet: a count of 0 is not proof that nothing changed.
+    recordsIncomplete: z.literal(true).optional(),
+  })
+  .strict();
 export type ThreadSummary = z.infer<typeof threadSummarySchema>;
 
 export const overviewTargetSchema = z.discriminatedUnion("kind", [
@@ -283,75 +395,96 @@ export const overviewTargetSchema = z.discriminatedUnion("kind", [
 ]);
 export type OverviewTarget = z.infer<typeof overviewTargetSchema>;
 
-export const overviewSchema = z.object({
-  threadId: text,
-  target: overviewTargetSchema,
-  windowHours: z.number().int().nullable(),
-  scope: scopeSchema,
-  threads: z.array(threadSummarySchema),
-  repos: z.array(repoSchema),
-  worktrees: z.array(worktreeSchema),
-  sharedFiles: z.array(sharedFileSchema).max(200),
-  otherFiles: z.array(fileChangeSchema),
-  environmentIds: z.array(text),
-  warnings: z.array(z.string()),
-  truncatedThreads: z.boolean(),
-  partial: z.boolean(),
-  archivedHidden: count,
-  generatedAt: count,
-}).strict();
+export const overviewSchema = z
+  .object({
+    threadId: text,
+    target: overviewTargetSchema,
+    windowHours: z.number().int().nullable(),
+    scope: scopeSchema,
+    threads: z.array(threadSummarySchema),
+    repos: z.array(repoSchema),
+    worktrees: z.array(worktreeSchema),
+    sharedFiles: z.array(sharedFileSchema).max(200),
+    otherFiles: z.array(fileChangeSchema),
+    environmentIds: z.array(text),
+    warnings: z.array(z.string()),
+    truncatedThreads: z.boolean(),
+    partial: z.boolean(),
+    archivedHidden: count,
+    generatedAt: count,
+  })
+  .strict();
 export type Overview = z.infer<typeof overviewSchema>;
 
-export const overviewInputSchema = z.object({
-  target: overviewTargetSchema,
-  scope: scopeSchema,
-  includeArchived: z.boolean(),
-  refresh: z.boolean().optional(),
-}).strict();
+export const overviewInputSchema = z
+  .object({
+    target: overviewTargetSchema,
+    scope: scopeSchema,
+    includeArchived: z.boolean(),
+    refresh: z.boolean().optional(),
+  })
+  .strict();
 export type OverviewInput = z.infer<typeof overviewInputSchema>;
 
-export const shellInputSchema = z.object({
-  target: overviewTargetSchema,
-  includeArchived: z.boolean(),
-}).strict();
+export const shellInputSchema = z
+  .object({
+    target: overviewTargetSchema,
+    includeArchived: z.boolean(),
+  })
+  .strict();
 export type ShellInput = z.infer<typeof shellInputSchema>;
 
 export const patchScopeSchema = z.enum(["uncommitted", "branch", "committed"]);
 export type PatchScope = z.infer<typeof patchScopeSchema>;
 
-export const patchInputSchema = z.object({
-  ref: repoRefSchema,
-  path: relativePath,
-  previousPath: relativePath.nullable(),
-  untracked: z.boolean(),
-  scope: patchScopeSchema,
-  sha: shaSchema.nullable().default(null),
-}).strict();
+export const patchInputSchema = z
+  .object({
+    ref: repoRefSchema,
+    path: relativePath,
+    previousPath: relativePath.nullable(),
+    untracked: z.boolean(),
+    scope: patchScopeSchema,
+    sha: shaSchema.nullable().default(null),
+  })
+  .strict();
 export type PatchInput = z.infer<typeof patchInputSchema>;
 export type PatchRequest = z.input<typeof patchInputSchema>;
 
-export const patchOutputSchema = z.object({
-  patch: z.string(),
-  truncated: z.boolean(),
-  binary: z.boolean(),
-}).strict();
+export const patchOutputSchema = z
+  .object({
+    patch: z.string(),
+    truncated: z.boolean(),
+    binary: z.boolean(),
+    largeSides: z.literal(true).optional(),
+  })
+  .strict();
 export type PatchOutput = z.infer<typeof patchOutputSchema>;
 
-export const recordedEditsInputSchema = z.object({
-  threadIds: z.array(text.min(1)).max(200),
-  rawPaths: z.array(text.min(1)).max(20),
-}).strict();
+export const recordedEditsInputSchema = z
+  .object({
+    threadIds: z.array(text.min(1)).max(200),
+    rawPaths: z.array(text.min(1)).max(20),
+  })
+  .strict();
 export type RecordedEditsInput = z.infer<typeof recordedEditsInputSchema>;
 
-export const recordedEditsOutputSchema = z.object({
-  edits: z.array(z.object({
-    threadId: text,
-    at: count,
-    kind: z.enum(["add", "delete", "update"]),
-    diff: z.string().nullable(),
-    truncated: z.boolean(),
-  }).strict()).max(50),
-}).strict();
+export const recordedEditsOutputSchema = z
+  .object({
+    edits: z
+      .array(
+        z
+          .object({
+            threadId: text,
+            at: count,
+            kind: z.enum(["add", "delete", "update"]),
+            diff: z.string().nullable(),
+            truncated: z.boolean(),
+          })
+          .strict(),
+      )
+      .max(50),
+  })
+  .strict();
 export type RecordedEditsOutput = z.infer<typeof recordedEditsOutputSchema>;
 
 export const commitFilesInputSchema = z.object({ ref: repoRefSchema, sha: shaSchema }).strict();
@@ -360,10 +493,18 @@ export type CommitFilesInput = z.infer<typeof commitFilesInputSchema>;
 export const commitFilesOutputSchema = z.object({ files: z.array(fileChangeSchema) }).strict();
 export type CommitFilesOutput = z.infer<typeof commitFilesOutputSchema>;
 
-export const fileSidesOutputSchema = z.object({ old: z.string().nullable(), new: z.string().nullable() }).strict();
+export const fileSidesOutputSchema = z
+  .object({
+    old: z.string().nullable(),
+    new: z.string().nullable(),
+    largeSides: z.literal(true).optional(),
+  })
+  .strict();
 export type FileSidesOutput = z.infer<typeof fileSidesOutputSchema>;
 
-export const imageOutputSchema = z.object({ old: z.string().nullable(), new: z.string().nullable(), truncated: z.boolean() }).strict();
+export const imageOutputSchema = z
+  .object({ old: z.string().nullable(), new: z.string().nullable(), truncated: z.boolean() })
+  .strict();
 export type ImageOutput = z.infer<typeof imageOutputSchema>;
 
 // One worktree's reviewed files: each part of a file (its uncommitted change, its committed change, or one commit's change)
@@ -372,10 +513,15 @@ export const reviewMarksSchema = z.record(z.string().max(8192), z.string().max(2
 export type ReviewMarks = z.infer<typeof reviewMarksSchema>;
 
 export const reviewedInputSchema = z.object({ keys: z.array(text.min(1)).min(1).max(2000) }).strict();
-export const setReviewedInputSchema = z.object({
-  key: text.min(1),
-  marks: z.array(z.object({ mark: z.string().min(1).max(8192), signature: z.string().max(256).nullable() }).strict()).min(1).max(500),
-}).strict();
+export const setReviewedInputSchema = z
+  .object({
+    key: text.min(1),
+    marks: z
+      .array(z.object({ mark: z.string().min(1).max(8192), signature: z.string().max(256).nullable() }).strict())
+      .min(1)
+      .max(500),
+  })
+  .strict();
 export type SetReviewedInput = z.infer<typeof setReviewedInputSchema>;
 
 export const reviewedTag = (key: string): string => `vantage:reviewed:${key}`;

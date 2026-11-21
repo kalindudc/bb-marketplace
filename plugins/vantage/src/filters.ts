@@ -1,7 +1,11 @@
 import type { FileChange, Overview, Repo, Worktree } from "./contract";
 import { fileCount } from "./counted";
 
-export interface PageFilter { text: string; projectId: string | null; changedOnly: boolean }
+export interface PageFilter {
+  text: string;
+  projectId: string | null;
+  changedOnly: boolean;
+}
 export const DEFAULT_FILTER: PageFilter = { text: "", projectId: null, changedOnly: true };
 
 // The one row of "Changed outside worktrees" the Repositories view was opened for.
@@ -31,7 +35,11 @@ export function filterWorktrees(overview: Overview, filter: PageFilter): Worktre
     if (filter.changedOnly && !changed) return false;
     return matches([
       ...worktree.threadIds.map((id) => titles.get(id) ?? ""),
-      worktree.label, worktree.branch ?? "", worktree.root, ...paths(worktree.uncommitted), ...paths(worktree.committed),
+      worktree.label,
+      worktree.branch ?? "",
+      worktree.root,
+      ...paths(worktree.uncommitted),
+      ...paths(worktree.committed),
     ]);
   });
 }
@@ -41,7 +49,11 @@ export function filterRepos(overview: Overview, filter: PageFilter): { repos: Re
   const repos = overview.repos.filter((repo) => {
     if (filter.projectId !== null && repo.projectId !== filter.projectId) return false;
     // A "clean" row is a file an agent edited that has no change now, so it is not a change.
-    const changed = repo.files.some((file) => file.status !== "clean") || repo.otherFiles.length > 0 || repo.state === "unavailable" || maybeChanged(overview, repo);
+    const changed =
+      repo.files.some((file) => file.status !== "clean") ||
+      repo.otherFiles.length > 0 ||
+      repo.state === "unavailable" ||
+      maybeChanged(overview, repo);
     if (filter.changedOnly && !changed) return false;
     return matches([repo.label, repo.root ?? "", ...paths(repo.files), ...paths(repo.otherFiles)]);
   });
@@ -68,7 +80,10 @@ export function focusLabel(repos: readonly Repo[], focus: RepoFocus): string {
 export function projectOptions(overview: Overview): { id: string; name: string }[] {
   const names = new Map<string, string>();
   for (const item of [...overview.worktrees, ...overview.repos]) {
-    if (item.projectId !== null && item.projectId !== "" && !names.has(item.projectId)) names.set(item.projectId, item.label);
+    if (item.projectId !== null && item.projectId !== "" && !names.has(item.projectId))
+      names.set(item.projectId, item.label);
   }
-  return [...names].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name) || (a.id < b.id ? -1 : 1));
+  return [...names]
+    .map(([id, name]) => ({ id, name }))
+    .sort((a, b) => a.name.localeCompare(b.name) || (a.id < b.id ? -1 : 1));
 }

@@ -18,18 +18,25 @@ vi.mock("@get-bb/plugin-sdk/app", () => ({
 
 import { AttentionToasts } from "../src/notify";
 
-const thread = (id: string, indicator: string) => ({ id, displayTitle: id, indicator, isArchived: false, isHidden: false, parentThreadId: null });
+const thread = (id: string, indicator: string) => ({
+  id,
+  displayTitle: id,
+  indicator,
+  isArchived: false,
+  isHidden: false,
+  parentThreadId: null,
+});
 
 describe("the attention toasts", () => {
   it("toast only threads that start waiting while toasts are on, never a burst when turned on, never the thread on screen", () => {
     state.threads = [thread("a", "waiting-for-input")];
     const view = render(<AttentionToasts />);
-    state.values = { badge: true, toasts: false };
+    state.values = { toasts: false };
     view.rerender(<AttentionToasts />);
     state.threads = [thread("a", "waiting-for-input"), thread("b", "unread-error")];
     view.rerender(<AttentionToasts />);
     expect(toast).not.toHaveBeenCalled();
-    state.values = { badge: true, toasts: true };
+    state.values = { toasts: true };
     view.rerender(<AttentionToasts />);
     expect(toast).not.toHaveBeenCalled();
     state.threads = [...state.threads, thread("c", "waiting-for-input")];

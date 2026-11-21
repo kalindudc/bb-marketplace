@@ -13,8 +13,12 @@ type Sides = Extract<HostOutput<"imageSides">, { outcome: "available" }>;
 
 const harness = experimental_createHostEntryHarness(hostEntry);
 const ENV: Record<string, string> = {
-  GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1", GIT_AUTHOR_NAME: "Test", GIT_AUTHOR_EMAIL: "t@example.com",
-  GIT_COMMITTER_NAME: "Test", GIT_COMMITTER_EMAIL: "t@example.com",
+  GIT_CONFIG_GLOBAL: "/dev/null",
+  GIT_CONFIG_NOSYSTEM: "1",
+  GIT_AUTHOR_NAME: "Test",
+  GIT_AUTHOR_EMAIL: "t@example.com",
+  GIT_COMMITTER_NAME: "Test",
+  GIT_COMMITTER_EMAIL: "t@example.com",
 };
 const saved: Record<string, string | undefined> = {};
 let root: string;
@@ -24,8 +28,19 @@ const put = (path: string, content: string | Buffer): void => {
   mkdirSync(join(root, path, ".."), { recursive: true });
   writeFileSync(join(root, path), content);
 };
-const sides = (path: string, target: HostInput<"imageSides">["target"], extra: Partial<HostInput<"imageSides">> = {}): Promise<HostOutput<"imageSides">> =>
-  harness.experimental_call("imageSides", { root, path, previousPath: null, untracked: false, target, ...extra }) as Promise<HostOutput<"imageSides">>;
+const sides = (
+  path: string,
+  target: HostInput<"imageSides">["target"],
+  extra: Partial<HostInput<"imageSides">> = {},
+): Promise<HostOutput<"imageSides">> =>
+  harness.experimental_call("imageSides", {
+    root,
+    path,
+    previousPath: null,
+    untracked: false,
+    target,
+    ...extra,
+  }) as Promise<HostOutput<"imageSides">>;
 const available = (output: HostOutput<"imageSides">): Sides => {
   if (output.outcome !== "available") throw new Error(`unavailable: ${output.message}`);
   return output;
@@ -33,11 +48,20 @@ const available = (output: HostOutput<"imageSides">): Sides => {
 const bytesOf = (base64: string): Buffer => Buffer.from(base64, "base64");
 
 // A real one-pixel PNG, so the bytes survive the base64 round trip unchanged.
-const FIRST = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
-const SECOND = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", "base64");
+const FIRST = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+  "base64",
+);
+const SECOND = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+  "base64",
+);
 
 beforeAll(() => {
-  for (const [key, value] of Object.entries(ENV)) { saved[key] = process.env[key]; process.env[key] = value; }
+  for (const [key, value] of Object.entries(ENV)) {
+    saved[key] = process.env[key];
+    process.env[key] = value;
+  }
   root = realpathSync(mkdtempSync(join(tmpdir(), "vantage-images-")));
   git("init", "-q", "-b", "main");
   put("shot.png", FIRST);
@@ -55,7 +79,10 @@ beforeAll(() => {
 
 afterAll(() => {
   rmSync(root, { recursive: true, force: true });
-  for (const [key, value] of Object.entries(saved)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+  for (const [key, value] of Object.entries(saved)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
 });
 
 describe("imageSides", () => {
@@ -79,11 +106,14 @@ describe("imageSides", () => {
   });
 
   it("answers a deleted image with only its old side", async () => {
-    execFileSync("git", ["-C", root, "rm", "-q", "added.png"]);
-    const result = available(await sides("added.png", { type: "uncommitted" }));
-    expect(bytesOf(result.old!)).toEqual(SECOND);
-    expect(result.new).toBeNull();
-    git("reset", "-q", "--hard");
+    rmSync(join(root, "added.png"));
+    try {
+      const result = available(await sides("added.png", { type: "uncommitted" }));
+      expect(bytesOf(result.old!)).toEqual(SECOND);
+      expect(result.new).toBeNull();
+    } finally {
+      put("added.png", SECOND);
+    }
   });
 
   it("leaves a side out that is over the byte limit, and says so", async () => {

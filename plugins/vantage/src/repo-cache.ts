@@ -1,6 +1,9 @@
 import type { RepoPlan } from "./collect";
 
-export interface CacheMeta { threadIds: readonly string[]; environmentId: string | null }
+export interface CacheMeta {
+  threadIds: readonly string[];
+  environmentId: string | null;
+}
 
 export interface RepoCache {
   /** `ttlFor` lets a result outlive the default time to live, for example a branch that is gone for good. */
@@ -24,13 +27,17 @@ interface Entry {
 const DEFAULT_TTL_MS = 60_000;
 const DEFAULT_MAX_ENTRIES = 500;
 
-export function createRepoCache(options: {
-  ttlMs?: number; maxEntries?: number; now?: () => number;
-  /** A lookup for these threads waits for the promise it returns, such as for an event that may have made their entries stale. */
-  pending?: (threadIds: readonly string[]) => Promise<void> | null;
-  /** Called after entries were dropped on purpose, so work that started before it, and may have read them, can be set apart. */
-  onInvalidate?: () => void;
-} = {}): RepoCache {
+export function createRepoCache(
+  options: {
+    ttlMs?: number;
+    maxEntries?: number;
+    now?: () => number;
+    /** A lookup for these threads waits for the promise it returns, such as for an event that may have made their entries stale. */
+    pending?: (threadIds: readonly string[]) => Promise<void> | null;
+    /** Called after entries were dropped on purpose, so work that started before it, and may have read them, can be set apart. */
+    onInvalidate?: () => void;
+  } = {},
+): RepoCache {
   const ttlMs = options.ttlMs ?? DEFAULT_TTL_MS;
   const maxEntries = options.maxEntries ?? DEFAULT_MAX_ENTRIES;
   const now = options.now ?? Date.now;
@@ -40,7 +47,12 @@ export function createRepoCache(options: {
     for (const [key, entry] of entries) if (matches(entry)) entries.delete(key);
   };
 
-  function get<T>(key: string, meta: CacheMeta, load: () => Promise<T>, ttlFor?: (value: T) => number | undefined): Promise<T> {
+  function get<T>(
+    key: string,
+    meta: CacheMeta,
+    load: () => Promise<T>,
+    ttlFor?: (value: T) => number | undefined,
+  ): Promise<T> {
     const waiting = options.pending?.(meta.threadIds) ?? null;
     if (waiting !== null) return waiting.then(() => get(key, meta, load, ttlFor));
     const known = entries.get(key);
@@ -49,7 +61,13 @@ export function createRepoCache(options: {
     if (known !== undefined && covers && (known.settledAt === null || now() - known.settledAt < known.ttlMs)) {
       return known.promise as Promise<T>;
     }
-    const entry: Entry = { promise: Promise.resolve(), settledAt: null, ttlMs, threadIds: new Set(meta.threadIds), environmentId: meta.environmentId };
+    const entry: Entry = {
+      promise: Promise.resolve(),
+      settledAt: null,
+      ttlMs,
+      threadIds: new Set(meta.threadIds),
+      environmentId: meta.environmentId,
+    };
     entry.promise = new Promise<T>((resolve) => resolve(load())).then(
       (value) => {
         entry.settledAt = now();
@@ -87,7 +105,12 @@ export function createRepoCache(options: {
 }
 
 // Recorded edits are not read from git: they differ for every request, so they are never cached.
-export function planCached<T>(cache: RepoCache | undefined, plan: RepoPlan, variant: string, load: () => Promise<T>): Promise<T> {
+export function planCached<T>(
+  cache: RepoCache | undefined,
+  plan: RepoPlan,
+  variant: string,
+  load: () => Promise<T>,
+): Promise<T> {
   if (cache === undefined || plan.ref.kind === "recorded") return load();
   return cache.get(
     `${plan.key}\0${variant}`,

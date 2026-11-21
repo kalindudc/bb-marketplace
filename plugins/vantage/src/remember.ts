@@ -13,7 +13,13 @@ export function writeStorage(win: Window, key: string, value: string | null): vo
 
 // Keys mapped to values this device remembers, such as the files folded by hand. It holds at most `max` entries and drops
 // the one set longest ago first, because bb and every plugin share one localStorage.
-export function createRemembered<T>(win: Window, key: string, parse: (value: unknown) => T | null, max: number) {
+export function createRemembered<T>(
+  win: Window,
+  key: string,
+  parse: (value: unknown) => T | null,
+  max: number,
+  saveIntervalMs = 0,
+) {
   const read = (): ReadonlyMap<string, T> => {
     const out = new Map<string, T>();
     let stored: unknown;
@@ -31,8 +37,12 @@ export function createRemembered<T>(win: Window, key: string, parse: (value: unk
     return out;
   };
   let entries = read();
+  const staged = new Map<string, T | undefined>();
+  let timer: number | null = null;
   const listeners = new Set<() => void>();
-  const notify = () => { for (const listener of [...listeners]) listener(); };
+  const notify = () => {
+    for (const listener of [...listeners]) listener();
+  };
   // Another bb window wrote; without this, the next write here would put back what that window changed.
   const onStorage = (event: StorageEvent) => {
     if (event.key !== key && event.key !== null) return;
@@ -66,12 +76,40 @@ export function createRemembered<T>(win: Window, key: string, parse: (value: unk
     writeStorage(win, key, next.size === 0 ? null : JSON.stringify([...next]));
   };
 
+  const cancelSave = () => {
+    if (timer !== null) win.clearTimeout(timer);
+    timer = null;
+    win.removeEventListener("pagehide", flush);
+    if (listeners.size === 0) win.removeEventListener("storage", onStorage);
+  };
+  function flush(): void {
+    cancelSave();
+    if (staged.size === 0) return;
+    const batch = [...staged];
+    staged.clear();
+    setMany(batch);
+  }
+  const save = (changes: Iterable<readonly [string, T | undefined]>): void => {
+    if (saveIntervalMs === 0) return setMany(changes);
+    for (const [entryKey, value] of changes) {
+      staged.delete(entryKey);
+      staged.set(entryKey, value);
+    }
+    if (timer !== null || staged.size === 0) return;
+    timer = win.setTimeout(flush, saveIntervalMs);
+    win.addEventListener("pagehide", flush);
+    win.addEventListener("storage", onStorage);
+  };
+
   return {
     snapshot: (): ReadonlyMap<string, T> => entries,
-    get: (entryKey: string): T | undefined => entries.get(entryKey),
-    set: (entryKey: string, value: T | undefined): void => setMany([[entryKey, value]]),
-    setMany,
+    get: (entryKey: string): T | undefined => (staged.has(entryKey) ? staged.get(entryKey) : entries.get(entryKey)),
+    set: (entryKey: string, value: T | undefined): void => save([[entryKey, value]]),
+    setMany: save,
+    flush,
     reload(): void {
+      cancelSave();
+      staged.clear();
       entries = read();
       notify();
     },
@@ -80,7 +118,7 @@ export function createRemembered<T>(win: Window, key: string, parse: (value: unk
       if (listeners.size === 1) win.addEventListener("storage", onStorage);
       return () => {
         if (!listeners.delete(listener)) return;
-        if (listeners.size === 0) win.removeEventListener("storage", onStorage);
+        if (listeners.size === 0 && timer === null) win.removeEventListener("storage", onStorage);
       };
     },
   };

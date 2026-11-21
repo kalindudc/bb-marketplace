@@ -25,11 +25,16 @@ describe("openWorktreeTerminal", () => {
     const create = vi.fn(async (..._args: unknown[]) => ({ id: "term_1" }));
     const experimental_openTerminal = vi.fn(async (..._args: unknown[]) => true);
     const opened = await openWorktreeTerminal(
-      { terminals: { create } } as never, { experimental_openTerminal } as never, input,
+      { terminals: { create } } as never,
+      { experimental_openTerminal } as never,
+      input,
     );
     expect(opened).toBe(true);
     expect(create).toHaveBeenCalledWith({
-      cols: 120, rows: 32, scope: { kind: "thread", threadId: "thr_1" }, title: "Child A · feature/work",
+      cols: 120,
+      rows: 32,
+      scope: { kind: "thread", threadId: "thr_1" },
+      title: "Child A · feature/work",
       start: { mode: "command", command: terminalCommand("/work/one") },
     });
     expect(experimental_openTerminal).toHaveBeenCalledWith({ terminalId: "term_1" });
@@ -37,9 +42,21 @@ describe("openWorktreeTerminal", () => {
 
   it("returns false when bb cannot show the terminal, and lets a failed create reject", async () => {
     const create = vi.fn(async (..._args: unknown[]) => ({ id: "term_1" }));
-    expect(await openWorktreeTerminal({ terminals: { create } } as never, { experimental_openTerminal: async () => false } as never, input)).toBe(false);
+    expect(
+      await openWorktreeTerminal(
+        { terminals: { create } } as never,
+        { experimental_openTerminal: async () => false } as never,
+        input,
+      ),
+    ).toBe(false);
     create.mockRejectedValueOnce(new Error("no terminal for you"));
-    await expect(openWorktreeTerminal({ terminals: { create } } as never, { experimental_openTerminal: async () => true } as never, input)).rejects.toThrow("no terminal for you");
+    await expect(
+      openWorktreeTerminal(
+        { terminals: { create } } as never,
+        { experimental_openTerminal: async () => true } as never,
+        input,
+      ),
+    ).rejects.toThrow("no terminal for you");
   });
 });
 
@@ -49,17 +66,38 @@ describe("openEnvironmentTerminal", () => {
   it("starts an environment-scoped terminal with no command, so it opens in the workspace, then shows it", async () => {
     const create = vi.fn(async (..._args: unknown[]) => ({ id: "term_7" }));
     const experimental_openTerminal = vi.fn(async (..._args: unknown[]) => true);
-    const opened = await openEnvironmentTerminal({ terminals: { create } } as never, { experimental_openTerminal } as never, input);
+    const opened = await openEnvironmentTerminal(
+      { terminals: { create } } as never,
+      { experimental_openTerminal } as never,
+      input,
+    );
     expect(opened).toBe(true);
-    expect(create).toHaveBeenCalledWith({ cols: 120, rows: 32, scope: { kind: "environment", environmentId: "env_1" }, title: "Child A · feature/work" });
+    expect(create).toHaveBeenCalledWith({
+      cols: 120,
+      rows: 32,
+      scope: { kind: "environment", environmentId: "env_1" },
+      title: "Child A · feature/work",
+    });
     expect(create.mock.calls[0]![0]).not.toHaveProperty("start");
     expect(experimental_openTerminal).toHaveBeenCalledWith({ terminalId: "term_7" });
   });
 
   it("returns false when bb cannot show the terminal, and lets a failed create reject", async () => {
     const create = vi.fn(async (..._args: unknown[]) => ({ id: "term_7" }));
-    expect(await openEnvironmentTerminal({ terminals: { create } } as never, { experimental_openTerminal: async () => false } as never, input)).toBe(false);
+    expect(
+      await openEnvironmentTerminal(
+        { terminals: { create } } as never,
+        { experimental_openTerminal: async () => false } as never,
+        input,
+      ),
+    ).toBe(false);
     create.mockRejectedValueOnce(new Error("nope"));
-    await expect(openEnvironmentTerminal({ terminals: { create } } as never, { experimental_openTerminal: async () => true } as never, input)).rejects.toThrow("nope");
+    await expect(
+      openEnvironmentTerminal(
+        { terminals: { create } } as never,
+        { experimental_openTerminal: async () => true } as never,
+        input,
+      ),
+    ).rejects.toThrow("nope");
   });
 });

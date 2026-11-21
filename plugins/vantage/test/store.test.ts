@@ -6,11 +6,23 @@ import { branchRepo, fileChange, overview, repo, sharedFile, threadSummary, work
 
 type Callback = (event: unknown) => void;
 
-interface PendingCall { input: OverviewInput; resolve(value: Overview): void; reject(error: Error): void }
-interface PendingShell { input: ShellInput; resolve(value: Overview): void; reject(error: Error): void }
+interface PendingCall {
+  input: OverviewInput;
+  resolve(value: Overview): void;
+  reject(error: Error): void;
+}
+interface PendingShell {
+  input: ShellInput;
+  resolve(value: Overview): void;
+  reject(error: Error): void;
+}
 
 function setup(options: { refreshDelayMs?: number; target?: OverviewTarget; includeArchived?: boolean } = {}) {
-  const callbacks = { "thread:changed": new Set<Callback>(), "environment:changed": new Set<Callback>(), "realtime:connection": new Set<Callback>() };
+  const callbacks = {
+    "thread:changed": new Set<Callback>(),
+    "environment:changed": new Set<Callback>(),
+    "realtime:connection": new Set<Callback>(),
+  };
   const unsubscribed: string[] = [];
   const sdk = {
     subscribe: vi.fn((args: { event: keyof typeof callbacks; callback: Callback; threadId?: string }) => {
@@ -23,30 +35,45 @@ function setup(options: { refreshDelayMs?: number; target?: OverviewTarget; incl
   } as unknown as Pick<PluginBrowserBbSdk, "subscribe">;
   const calls: PendingCall[] = [];
   const shells: PendingShell[] = [];
-  const shell = vi.fn((input: ShellInput) => new Promise<Overview>((resolve, reject) => {
-    shells.push({ input, resolve, reject });
-  }));
+  const shell = vi.fn(
+    (input: ShellInput) =>
+      new Promise<Overview>((resolve, reject) => {
+        shells.push({ input, resolve, reject });
+      }),
+  );
   // `rpc.call` counts the overview requests only, so the tests of refreshes need not know about the shell.
   const rpc = {
-    call: vi.fn((input: OverviewInput) => new Promise<Overview>((resolve, reject) => {
-      calls.push({ input, resolve, reject });
-    })),
+    call: vi.fn(
+      (input: OverviewInput) =>
+        new Promise<Overview>((resolve, reject) => {
+          calls.push({ input, resolve, reject });
+        }),
+    ),
   };
   const transport = {
-    call: ((method: "shell" | "overview", input: ShellInput | OverviewInput) => (
-      method === "shell" ? shell(input as ShellInput) : rpc.call(input as OverviewInput)
-    )) as never,
+    call: ((method: "shell" | "overview", input: ShellInput | OverviewInput) =>
+      method === "shell" ? shell(input as ShellInput) : rpc.call(input as OverviewInput)) as never,
   };
-  const store = createVantageStore({ rpc: transport, sdk, target: { kind: "tree", threadId: "thr_1" }, includeArchived: true, ...options });
+  const store = createVantageStore({
+    rpc: transport,
+    sdk,
+    target: { kind: "tree", threadId: "thr_1" },
+    includeArchived: true,
+    ...options,
+  });
   const emit = (event: keyof typeof callbacks, payload: object) => {
     for (const callback of [...callbacks[event]]) callback(payload);
   };
-  const thread = (id: string, changes: string[], metadata?: object) => emit("thread:changed", { entity: "thread", type: "changed", id, changes, metadata });
+  const thread = (id: string, changes: string[], metadata?: object) =>
+    emit("thread:changed", { entity: "thread", type: "changed", id, changes, metadata });
   return { store, sdk, rpc, shell, shells, calls, emit, thread, callbacks, unsubscribed };
 }
 
 const tree = overview({
-  threads: [threadSummary({ id: "thr_1" }), threadSummary({ id: "thr_child", parentThreadId: "thr_1", depth: 1, environmentId: "env_2" })],
+  threads: [
+    threadSummary({ id: "thr_1" }),
+    threadSummary({ id: "thr_child", parentThreadId: "thr_1", depth: 1, environmentId: "env_2" }),
+  ],
   environmentIds: ["env_1", "env_2"],
 });
 
@@ -66,14 +93,53 @@ afterEach(() => {
 });
 
 describe("loading", () => {
+  it("keeps the overview reference for identical responses but accepts same-timestamp content changes", async () => {
+    const { store, calls } = await loaded();
+    const changedSnapshot = vi.fn();
+    store.subscribe(changedSnapshot);
+    store.invalidate();
+    await vi.advanceTimersByTimeAsync(0);
+    const stringify = vi.fn(() => tree);
+    const duplicate = Object.defineProperty(structuredClone(tree), "toJSON", { value: stringify });
+    calls[1]!.resolve(duplicate);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(stringify).not.toHaveBeenCalled();
+    expect(store.getSnapshot().overview).toBe(tree);
+    expect(changedSnapshot).not.toHaveBeenCalled();
+
+    store.invalidate();
+    await vi.advanceTimersByTimeAsync(0);
+    const changed = { ...tree, warnings: ["A refresh failed"] };
+    calls[2]!.resolve(changed);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(store.getSnapshot().overview).toBe(changed);
+    store.dispose();
+  });
+
   it("starts in loading, requests the overview once, and publishes it when it arrives", async () => {
     const { store, rpc, calls } = setup();
-    expect(store.getSnapshot()).toEqual({ status: "loading", overview: null, scope: "uncommitted", refreshing: false, error: null });
+    expect(store.getSnapshot()).toEqual({
+      status: "loading",
+      overview: null,
+      scope: "uncommitted",
+      refreshing: false,
+      error: null,
+    });
     expect(rpc.call).toHaveBeenCalledTimes(1);
-    expect(calls[0]?.input).toEqual({ target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted", includeArchived: true });
+    expect(calls[0]?.input).toEqual({
+      target: { kind: "tree", threadId: "thr_1" },
+      scope: "uncommitted",
+      includeArchived: true,
+    });
     calls[0]!.resolve(tree);
     await vi.advanceTimersByTimeAsync(0);
-    expect(store.getSnapshot()).toEqual({ status: "ready", overview: tree, scope: "uncommitted", refreshing: false, error: null });
+    expect(store.getSnapshot()).toEqual({
+      status: "ready",
+      overview: tree,
+      scope: "uncommitted",
+      refreshing: false,
+      error: null,
+    });
   });
 
   it("reports a failed first load and recovers when refreshed", async () => {
@@ -91,12 +157,18 @@ describe("loading", () => {
   it("keeps the last overview and shows the error when a refresh fails", async () => {
     const { store, calls, thread } = await loaded();
     await vi.advanceTimersByTimeAsync(1500);
-    thread("thr_1", ["events-appended"]);
+    thread("thr_1", ["parent-changed"]);
     expect(store.getSnapshot()).toMatchObject({ refreshing: true, overview: tree });
     calls[1]!.reject(new Error("timed out"));
     await vi.advanceTimersByTimeAsync(0);
-    expect(store.getSnapshot()).toEqual({ status: "ready", overview: tree, scope: "uncommitted", refreshing: false, error: "timed out" });
-    thread("thr_1", ["events-appended"]);
+    expect(store.getSnapshot()).toEqual({
+      status: "ready",
+      overview: tree,
+      scope: "uncommitted",
+      refreshing: false,
+      error: "timed out",
+    });
+    thread("thr_1", ["parent-changed"]);
     await vi.advanceTimersByTimeAsync(1500);
     calls[2]!.resolve(overview({ threadId: "thr_1" }));
     await vi.advanceTimersByTimeAsync(0);
@@ -108,7 +180,13 @@ describe("thread events", () => {
   it("ignores events for threads outside the tree", async () => {
     const { rpc, thread } = await loaded();
     await vi.advanceTimersByTimeAsync(5000);
-    thread("thr_elsewhere", ["events-appended", "archived-changed", "environment-changed", "parent-changed", "history-rewritten"]);
+    thread("thr_elsewhere", [
+      "events-appended",
+      "archived-changed",
+      "environment-changed",
+      "parent-changed",
+      "history-rewritten",
+    ]);
     await vi.advanceTimersByTimeAsync(5000);
     expect(rpc.call).toHaveBeenCalledTimes(1);
   });
@@ -117,18 +195,46 @@ describe("thread events", () => {
     const { rpc, thread, emit } = await loaded();
     await vi.advanceTimersByTimeAsync(5000);
     emit("thread:changed", { entity: "thread", type: "changed", changes: ["events-appended"] });
-    thread("thr_1", ["title-changed", "read-state-changed", "status-changed", "queue-changed", "pin-state-changed", "tabs-changed"]);
+    thread("thr_1", [
+      "title-changed",
+      "read-state-changed",
+      "status-changed",
+      "queue-changed",
+      "pin-state-changed",
+      "tabs-changed",
+    ]);
     await vi.advanceTimersByTimeAsync(5000);
     expect(rpc.call).toHaveBeenCalledTimes(1);
   });
 
   it.each([
     ["events-appended without event types", ["events-appended"], undefined],
-    ["events-appended with item/completed", ["events-appended"], { eventTypes: ["item/agentMessage/delta", "item/completed"] }],
+    [
+      "events-appended with item/completed",
+      ["events-appended"],
+      { eventTypes: ["item/agentMessage/delta", "item/completed"] },
+    ],
     ["events-appended with turn/completed", ["events-appended"], { eventTypes: ["turn/completed"] }],
     ["events-appended with turn/diff/updated", ["events-appended"], { eventTypes: ["turn/diff/updated"] }],
-    ["events-appended with item/backgroundTask/completed", ["events-appended"], { eventTypes: ["item/backgroundTask/completed"] }],
-    ["events-appended with item/delegation/completed", ["events-appended"], { eventTypes: ["item/delegation/completed"] }],
+    [
+      "events-appended with item/backgroundTask/completed",
+      ["events-appended"],
+      { eventTypes: ["item/backgroundTask/completed"] },
+    ],
+    [
+      "events-appended with item/delegation/completed",
+      ["events-appended"],
+      { eventTypes: ["item/delegation/completed"] },
+    ],
+  ])("lets the server signal tree updates for %s", async (_name, changes, metadata) => {
+    const { rpc, thread } = await loaded();
+    await vi.advanceTimersByTimeAsync(5000);
+    thread("thr_child", changes, metadata);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(rpc.call).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
     ["archived-changed", ["archived-changed"], undefined],
     ["environment-changed", ["environment-changed"], undefined],
     ["parent-changed", ["parent-changed"], undefined],
@@ -142,23 +248,40 @@ describe("thread events", () => {
   it("ignores events-appended that carry only streaming deltas", async () => {
     const { rpc, thread } = await loaded();
     await vi.advanceTimersByTimeAsync(5000);
-    thread("thr_1", ["events-appended"], { eventTypes: ["item/agentMessage/delta", "item/commandExecution/outputDelta"] });
+    thread("thr_1", ["events-appended"], {
+      eventTypes: ["item/agentMessage/delta", "item/commandExecution/outputDelta"],
+    });
     await vi.advanceTimersByTimeAsync(5000);
     expect(rpc.call).toHaveBeenCalledTimes(1);
   });
 
-  it("refreshes when any thread is created, since it may be a new child", async () => {
+  it("arms the slow fallback after files change in a tree whose last overview was idle", async () => {
+    const { rpc, thread } = await loaded();
+    await vi.advanceTimersByTimeAsync(120_000);
+    thread("thr_child", ["events-appended"], { eventTypes: ["item/completed"] });
+    await vi.advanceTimersByTimeAsync(29_999);
+    expect(rpc.call).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(rpc.call).toHaveBeenCalledTimes(2);
+  });
+
+  it("lets the server signal which tree contains a new thread", async () => {
     const { rpc, thread } = await loaded();
     await vi.advanceTimersByTimeAsync(5000);
     thread("thr_new_elsewhere", ["thread-created"]);
-    expect(rpc.call).toHaveBeenCalledTimes(2);
+    expect(rpc.call).toHaveBeenCalledTimes(1);
   });
 
   it("sends refresh: true after the history of a tree thread was rewritten or compacted", async () => {
     const { calls, thread } = await loaded();
     await vi.advanceTimersByTimeAsync(5000);
     thread("thr_child", ["history-rewritten"]);
-    expect(calls[1]?.input).toEqual({ target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted", includeArchived: true, refresh: true });
+    expect(calls[1]?.input).toEqual({
+      target: { kind: "tree", threadId: "thr_1" },
+      scope: "uncommitted",
+      includeArchived: true,
+      refresh: true,
+    });
     calls[1]!.resolve(tree);
     await vi.advanceTimersByTimeAsync(1500);
     thread("thr_1", ["history-compacted"]);
@@ -168,7 +291,9 @@ describe("thread events", () => {
   it("subscribes to every thread, not just this one", async () => {
     const { sdk } = await loaded();
     const subscribe = sdk.subscribe as unknown as ReturnType<typeof vi.fn>;
-    const threadSubscription = subscribe.mock.calls.map(([args]) => args).find((args) => args.event === "thread:changed");
+    const threadSubscription = subscribe.mock.calls
+      .map(([args]) => args)
+      .find((args) => args.event === "thread:changed");
     expect(threadSubscription).toBeDefined();
     expect(threadSubscription).not.toHaveProperty("threadId");
   });
@@ -178,9 +303,9 @@ describe("throttling", () => {
   it("answers a burst with one request and one trailing request 1,500 ms after the first ended", async () => {
     const { rpc, calls, thread } = await loaded();
     await vi.advanceTimersByTimeAsync(5000);
-    thread("thr_1", ["events-appended"]);
+    thread("thr_1", ["parent-changed"]);
     expect(rpc.call).toHaveBeenCalledTimes(2);
-    for (let index = 0; index < 20; index++) thread("thr_child", ["events-appended"]);
+    for (let index = 0; index < 20; index++) thread("thr_child", ["parent-changed"]);
     expect(rpc.call).toHaveBeenCalledTimes(2);
 
     await vi.advanceTimersByTimeAsync(700);
@@ -197,7 +322,7 @@ describe("throttling", () => {
 
   it("makes an event that comes soon after a request wait out the delay", async () => {
     const { rpc, thread } = await loaded();
-    thread("thr_1", ["events-appended"]);
+    thread("thr_1", ["parent-changed"]);
     expect(rpc.call).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(1499);
     expect(rpc.call).toHaveBeenCalledTimes(1);
@@ -208,9 +333,9 @@ describe("throttling", () => {
   it("keeps the strongest request when a burst mixes a plain refresh with a rewrite", async () => {
     const { calls, thread } = await loaded();
     await vi.advanceTimersByTimeAsync(5000);
-    thread("thr_1", ["events-appended"]);
+    thread("thr_1", ["parent-changed"]);
     thread("thr_1", ["history-rewritten"]);
-    thread("thr_1", ["events-appended"]);
+    thread("thr_1", ["parent-changed"]);
     calls[1]!.resolve(tree);
     await vi.advanceTimersByTimeAsync(1500);
     expect(calls[2]?.input).toMatchObject({ refresh: true });
@@ -218,7 +343,7 @@ describe("throttling", () => {
 
   it("uses the configured delay", async () => {
     const { rpc, thread } = await loaded({ refreshDelayMs: 200 });
-    thread("thr_1", ["events-appended"]);
+    thread("thr_1", ["parent-changed"]);
     await vi.advanceTimersByTimeAsync(199);
     expect(rpc.call).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(1);
@@ -230,7 +355,12 @@ describe("environment and connection events", () => {
   it("refreshes for a listed environment's git and status changes only", async () => {
     const { rpc, emit, calls } = await loaded();
     await vi.advanceTimersByTimeAsync(5000);
-    emit("environment:changed", { entity: "environment", type: "changed", id: "env_other", changes: ["git-refs-changed"] });
+    emit("environment:changed", {
+      entity: "environment",
+      type: "changed",
+      id: "env_other",
+      changes: ["git-refs-changed"],
+    });
     emit("environment:changed", { entity: "environment", type: "changed", id: "env_1", changes: ["metadata-changed"] });
     emit("environment:changed", { entity: "environment", type: "changed", changes: ["git-refs-changed"] });
     expect(rpc.call).toHaveBeenCalledTimes(1);
@@ -258,13 +388,23 @@ describe("scope and manual refresh", () => {
     const { store, rpc, calls } = await loaded();
     store.setScope("branch");
     expect(rpc.call).toHaveBeenCalledTimes(2);
-    expect(calls[1]?.input).toEqual({ target: { kind: "tree", threadId: "thr_1" }, scope: "branch", includeArchived: true });
+    expect(calls[1]?.input).toEqual({
+      target: { kind: "tree", threadId: "thr_1" },
+      scope: "branch",
+      includeArchived: true,
+    });
     expect(store.getSnapshot()).toMatchObject({ scope: "branch", refreshing: true, overview: tree });
 
     const fresh = overview({ scope: "branch", repos: [] });
     calls[1]!.resolve(fresh);
     await vi.advanceTimersByTimeAsync(0);
-    expect(store.getSnapshot()).toEqual({ status: "ready", overview: fresh, scope: "branch", refreshing: false, error: null });
+    expect(store.getSnapshot()).toEqual({
+      status: "ready",
+      overview: fresh,
+      scope: "branch",
+      refreshing: false,
+      error: null,
+    });
   });
 
   it("does not let a request for the old scope overwrite the new one", async () => {
@@ -294,11 +434,20 @@ describe("scope and manual refresh", () => {
   it("refresh() starts at once, and refresh({ hard: true }) asks the server to forget its cache", async () => {
     const { store, calls } = await loaded();
     store.refresh();
-    expect(calls[1]?.input).toEqual({ target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted", includeArchived: true });
+    expect(calls[1]?.input).toEqual({
+      target: { kind: "tree", threadId: "thr_1" },
+      scope: "uncommitted",
+      includeArchived: true,
+    });
     calls[1]!.resolve(tree);
     await vi.advanceTimersByTimeAsync(0);
     store.refresh({ hard: true });
-    expect(calls[2]?.input).toEqual({ target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted", includeArchived: true, refresh: true });
+    expect(calls[2]?.input).toEqual({
+      target: { kind: "tree", threadId: "thr_1" },
+      scope: "uncommitted",
+      includeArchived: true,
+      refresh: true,
+    });
   });
 
   it("waits for the running request of the same scope instead of overlapping it", async () => {
@@ -339,7 +488,9 @@ describe("snapshots and disposal", () => {
     store.subscribe(listener);
     store.dispose();
     expect(unsubscribed.sort()).toEqual(["environment:changed", "realtime:connection", "thread:changed"]);
-    expect(callbacks["thread:changed"].size + callbacks["environment:changed"].size + callbacks["realtime:connection"].size).toBe(0);
+    expect(
+      callbacks["thread:changed"].size + callbacks["environment:changed"].size + callbacks["realtime:connection"].size,
+    ).toBe(0);
     calls[1]!.resolve(overview({ warnings: ["late"] }));
     await vi.advanceTimersByTimeAsync(5000);
     expect(store.getSnapshot().overview).toBe(tree);
@@ -363,7 +514,10 @@ describe("every thread", () => {
   const ALL: OverviewTarget = { kind: "all" };
   const everyThread = overview({
     threads: [threadSummary({ id: "thr_a" }), threadSummary({ id: "thr_b", environmentId: "env_2" })],
-    environmentIds: ["env_1", "env_2"], target: ALL, windowHours: 24, threadId: "",
+    environmentIds: ["env_1", "env_2"],
+    target: ALL,
+    windowHours: 24,
+    threadId: "",
   });
   const allLoaded = async (options: { refreshDelayMs?: number } = {}) => {
     const harness = setup({ target: ALL, ...options });
@@ -397,6 +551,13 @@ describe("every thread", () => {
     expect(rpc.call).toHaveBeenCalledTimes(2);
   });
 
+  it.each(["archived-changed", "parent-changed"])("refreshes all for an unseen thread's %s", async (change) => {
+    const { rpc, thread } = await allLoaded();
+    await vi.advanceTimersByTimeAsync(5000);
+    thread("thr_unseen", [change]);
+    expect(rpc.call).toHaveBeenCalledTimes(2);
+  });
+
   it("still ignores deltas and changes that cannot alter files", async () => {
     const { rpc, thread } = await allLoaded();
     await vi.advanceTimersByTimeAsync(5000);
@@ -410,6 +571,8 @@ describe("every thread", () => {
     const { calls, thread } = await allLoaded();
     await vi.advanceTimersByTimeAsync(5000);
     thread("thr_unseen", ["history-rewritten"]);
+    expect(calls).toHaveLength(1);
+    thread("thr_a", ["history-rewritten"]);
     expect(calls[1]?.input).toEqual({ target: ALL, scope: "uncommitted", includeArchived: true, refresh: true });
   });
 
@@ -425,7 +588,12 @@ describe("every thread", () => {
   it("only follows the environments the overview lists", async () => {
     const { rpc, emit } = await allLoaded();
     await vi.advanceTimersByTimeAsync(5000);
-    emit("environment:changed", { entity: "environment", type: "changed", id: "env_other", changes: ["git-refs-changed"] });
+    emit("environment:changed", {
+      entity: "environment",
+      type: "changed",
+      id: "env_other",
+      changes: ["git-refs-changed"],
+    });
     expect(rpc.call).toHaveBeenCalledTimes(1);
     emit("environment:changed", { entity: "environment", type: "changed", id: "env_2", changes: ["git-refs-changed"] });
     expect(rpc.call).toHaveBeenCalledTimes(2);
@@ -469,13 +637,13 @@ describe("every thread", () => {
     expect(rpc.call).toHaveBeenCalledTimes(1);
   });
 
-  it("does not run a heartbeat or follow visibility for a tree", async () => {
+  it("does not poll an idle tree but refreshes when the document is shown again", async () => {
     const { rpc } = await loaded();
     await vi.advanceTimersByTimeAsync(180_000);
+    expect(rpc.call).toHaveBeenCalledTimes(1);
     setVisibility("hidden");
     setVisibility("visible");
-    await vi.advanceTimersByTimeAsync(5000);
-    expect(rpc.call).toHaveBeenCalledTimes(1);
+    expect(rpc.call).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -508,13 +676,13 @@ describe("a hidden page", () => {
     expect(rpc.call).toHaveBeenCalledTimes(2);
   });
 
-  it("does not refresh on becoming visible when nothing happened while hidden", async () => {
+  it("refreshes once on becoming visible even if nothing was announced while hidden", async () => {
     const { rpc } = await loaded();
     await vi.advanceTimersByTimeAsync(5000);
     setVisibility("hidden");
     setVisibility("visible");
     await vi.advanceTimersByTimeAsync(5000);
-    expect(rpc.call).toHaveBeenCalledTimes(1);
+    expect(rpc.call).toHaveBeenCalledTimes(2);
   });
 
   it("holds a refresh that was waiting for its delay when the page is hidden in the meantime", async () => {
@@ -615,7 +783,11 @@ describe("the instant outline", () => {
     expect(shell).toHaveBeenCalledTimes(1);
     expect(rpc.call).toHaveBeenCalledTimes(1);
     expect(shells[0]?.input).toEqual({ target: { kind: "tree", threadId: "thr_1" }, includeArchived: false });
-    expect(calls[0]?.input).toEqual({ target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted", includeArchived: false });
+    expect(calls[0]?.input).toEqual({
+      target: { kind: "tree", threadId: "thr_1" },
+      scope: "uncommitted",
+      includeArchived: false,
+    });
     store.dispose();
   });
 
@@ -623,10 +795,22 @@ describe("the instant outline", () => {
     const { store, shells, calls } = setup();
     shells[0]!.resolve(outline);
     await vi.advanceTimersByTimeAsync(0);
-    expect(store.getSnapshot()).toEqual({ status: "ready", overview: outline, scope: "uncommitted", refreshing: true, error: null });
+    expect(store.getSnapshot()).toEqual({
+      status: "ready",
+      overview: outline,
+      scope: "uncommitted",
+      refreshing: true,
+      error: null,
+    });
     calls[0]!.resolve(tree);
     await vi.advanceTimersByTimeAsync(0);
-    expect(store.getSnapshot()).toEqual({ status: "ready", overview: tree, scope: "uncommitted", refreshing: false, error: null });
+    expect(store.getSnapshot()).toEqual({
+      status: "ready",
+      overview: tree,
+      scope: "uncommitted",
+      refreshing: false,
+      error: null,
+    });
   });
 
   it("keeps the full result when it arrives first, and drops a late outline", async () => {
@@ -654,7 +838,12 @@ describe("the instant outline", () => {
     await vi.advanceTimersByTimeAsync(0);
     calls[0]!.reject(new Error("timed out"));
     await vi.advanceTimersByTimeAsync(0);
-    expect(store.getSnapshot()).toMatchObject({ status: "ready", overview: outline, refreshing: false, error: "timed out" });
+    expect(store.getSnapshot()).toMatchObject({
+      status: "ready",
+      overview: outline,
+      refreshing: false,
+      error: "timed out",
+    });
   });
 
   it("shows the scope the store is in, whatever the outline says", async () => {
@@ -670,7 +859,7 @@ describe("the instant outline", () => {
   it("asks for no outline when a refresh follows an event, a refresh button or a heartbeat", async () => {
     const { store, shell, rpc, thread } = await loaded();
     await vi.advanceTimersByTimeAsync(5000);
-    thread("thr_1", ["events-appended"]);
+    thread("thr_1", ["parent-changed"]);
     expect(rpc.call).toHaveBeenCalledTimes(2);
     store.refresh({ hard: true });
     await vi.advanceTimersByTimeAsync(0);
@@ -702,28 +891,53 @@ describe("the instant outline", () => {
   describe("switching archived threads keeps the active rows on screen", () => {
     const live = threadSummary({ id: "thr_1" });
     const old = threadSummary({ id: "thr_old", archived: true, environmentId: "env_old" });
-    const activeRow = worktree({ key: "host_1:/work/live", threadIds: ["thr_1"], uncommitted: [fileChange({ path: "a.ts" })] });
-    const archivedRow = worktree({ key: "host_1:/work/old", threadIds: ["thr_old"], state: "loading", uncommitted: [] });
+    const activeRow = worktree({
+      key: "host_1:/work/live",
+      threadIds: ["thr_1"],
+      uncommitted: [fileChange({ path: "a.ts" })],
+    });
+    const archivedRow = worktree({
+      key: "host_1:/work/old",
+      threadIds: ["thr_old"],
+      state: "loading",
+      uncommitted: [],
+    });
     const activeRepo = repo({ key: "host_1:/work/live", threadIds: ["thr_1"] });
     const archivedRepo = branchRepo({ key: "host_1:/code/proj@old", threadIds: ["thr_old"] });
-    const full = overview({ threads: [live], worktrees: [activeRow], repos: [activeRepo], warnings: ["kept"], archivedHidden: 1 });
+    const full = overview({
+      threads: [live],
+      worktrees: [activeRow],
+      repos: [activeRepo],
+      warnings: ["kept"],
+      archivedHidden: 1,
+    });
 
     it("adds the archived rows from the outline under the active ones, whose numbers stay", async () => {
       const { store, shells, calls } = setup({ includeArchived: false });
       calls[0]!.resolve(full);
       await vi.advanceTimersByTimeAsync(0);
       store.setIncludeArchived(true);
-      shells[1]!.resolve(overview({
-        partial: true, threads: [live, old], archivedHidden: 0,
-        worktrees: [{ ...activeRow, state: "loading", uncommitted: [] }, archivedRow],
-        repos: [{ ...activeRepo, state: "loading" }, { ...archivedRepo, state: "loading" }],
-      }));
+      shells[1]!.resolve(
+        overview({
+          partial: true,
+          threads: [live, old],
+          archivedHidden: 0,
+          worktrees: [{ ...activeRow, state: "loading", uncommitted: [] }, archivedRow],
+          repos: [
+            { ...activeRepo, state: "loading" },
+            { ...archivedRepo, state: "loading" },
+          ],
+        }),
+      );
       await vi.advanceTimersByTimeAsync(0);
       const shown = store.getSnapshot();
       expect(shown.refreshing).toBe(true);
       expect(shown.overview?.partial).toBe(false);
       expect(shown.overview?.worktrees).toEqual([activeRow, archivedRow]);
-      expect(shown.overview?.repos.map((entry) => [entry.key, entry.state])).toEqual([[activeRepo.key, "ready"], [archivedRepo.key, "loading"]]);
+      expect(shown.overview?.repos.map((entry) => [entry.key, entry.state])).toEqual([
+        [activeRepo.key, "ready"],
+        [archivedRepo.key, "loading"],
+      ]);
       expect(shown.overview?.threads.map((thread) => thread.id)).toEqual(["thr_1", "thr_old"]);
       expect(shown.overview).toMatchObject({ archivedHidden: 0, warnings: ["kept"] });
       calls[1]!.resolve(overview({ threads: [live, old], worktrees: [activeRow, { ...archivedRow, state: "ready" }] }));
@@ -733,13 +947,24 @@ describe("the instant outline", () => {
 
     it("removes only the archived rows when archived threads are switched off", async () => {
       const { store, shells, calls } = setup({ includeArchived: true });
-      calls[0]!.resolve(overview({
-        threads: [live, old], worktrees: [activeRow, { ...archivedRow, state: "ready" }], repos: [activeRepo, archivedRepo],
-        sharedFiles: [sharedFile({ worktreeKeys: [activeRow.key, archivedRow.key] })],
-      }));
+      calls[0]!.resolve(
+        overview({
+          threads: [live, old],
+          worktrees: [activeRow, { ...archivedRow, state: "ready" }],
+          repos: [activeRepo, archivedRepo],
+          sharedFiles: [sharedFile({ worktreeKeys: [activeRow.key, archivedRow.key] })],
+        }),
+      );
       await vi.advanceTimersByTimeAsync(0);
       store.setIncludeArchived(false);
-      shells[1]!.resolve(overview({ partial: true, threads: [live], archivedHidden: 1, worktrees: [{ ...activeRow, state: "loading" }] }));
+      shells[1]!.resolve(
+        overview({
+          partial: true,
+          threads: [live],
+          archivedHidden: 1,
+          worktrees: [{ ...activeRow, state: "loading" }],
+        }),
+      );
       await vi.advanceTimersByTimeAsync(0);
       const shown = store.getSnapshot().overview;
       expect(shown?.worktrees).toEqual([activeRow]);

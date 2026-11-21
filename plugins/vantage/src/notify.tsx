@@ -1,9 +1,13 @@
 import { useEffect, useMemo, useRef } from "react";
-import { experimental_useSidebarThreads, useBbContext, useBbNavigate, useSettings, type ExperimentalBadge } from "@get-bb/plugin-sdk/app";
+import { experimental_useSidebarThreads, useBbContext, useBbNavigate, useSettings } from "@get-bb/plugin-sdk/app";
 import { toast } from "sonner";
 import { needsYou, useSidebarIndex, type SidebarIndex } from "./live";
 
-export interface Attention { id: string; title: string; failed: boolean }
+export interface Attention {
+  id: string;
+  title: string;
+  failed: boolean;
+}
 
 // Threads that wait for your answer or whose last turn failed, the same ones bb's sidebar marks.
 export function attentionOf(live: SidebarIndex): Attention[] {
@@ -16,24 +20,21 @@ export function attentionOf(live: SidebarIndex): Attention[] {
   return out;
 }
 
-// Both alerts are settings; nothing shows until bb has said what they are.
-function useAlerts(): { badge: boolean; toasts: boolean; loaded: boolean } {
+// Toasts are a setting; nothing shows until bb has said what it is.
+function useAlerts(): { toasts: boolean; loaded: boolean } {
   const { values } = useSettings();
-  return { badge: values?.badge === true, toasts: values?.toasts === true, loaded: values !== undefined };
-}
-
-export function useVantageBadge(): ExperimentalBadge | null {
-  const live = useSidebarIndex();
-  const { badge } = useAlerts();
-  const count = useMemo(() => attentionOf(live).length, [live]);
-  if (!badge || count === 0) return null;
-  return { count, tone: "warning", label: `${count} ${count === 1 ? "thread needs" : "threads need"} you` };
+  return { toasts: values?.toasts === true, loaded: values !== undefined };
 }
 
 // The threads to toast: new since the last look, not the one on screen. The first look is what was already waiting before
 // this window opened, which bb's own sidebar shows. With toasts off nothing is toasted, but what was seen still moves on,
 // so turning them on does not toast everything already waiting.
-export function toastsFor(seen: ReadonlySet<string> | null, attention: readonly Attention[], onScreen: string | null, enabled: boolean): Attention[] {
+export function toastsFor(
+  seen: ReadonlySet<string> | null,
+  attention: readonly Attention[],
+  onScreen: string | null,
+  enabled: boolean,
+): Attention[] {
   if (seen === null || !enabled) return [];
   return attention.filter((entry) => !seen.has(entry.id) && entry.id !== onScreen);
 }

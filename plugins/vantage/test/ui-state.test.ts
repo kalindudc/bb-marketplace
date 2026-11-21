@@ -3,7 +3,9 @@ import { buildFileTree, dirPaths, type TreeNode } from "../src/file-tree";
 import { createRemembered } from "../src/remember";
 import { createShared } from "../src/session";
 
-afterEach(() => { window.localStorage.clear(); });
+afterEach(() => {
+  window.localStorage.clear();
+});
 
 const isBoolean = (value: unknown): boolean | null => (typeof value === "boolean" ? value : null);
 
@@ -20,11 +22,23 @@ describe("createRemembered", () => {
   it("forgets a key set to undefined, and writes several keys with one change", () => {
     const store = createRemembered(window, "test:folds", isBoolean, 10);
     let changes = 0;
-    store.subscribe(() => { changes++; });
-    store.setMany([["a", true], ["b", true], ["c", true]]);
-    store.setMany([["a", undefined], ["b", false]]);
+    store.subscribe(() => {
+      changes++;
+    });
+    store.setMany([
+      ["a", true],
+      ["b", true],
+      ["c", true],
+    ]);
+    store.setMany([
+      ["a", undefined],
+      ["b", false],
+    ]);
     expect(changes).toBe(2);
-    expect([...store.snapshot()]).toEqual([["c", true], ["b", false]]);
+    expect([...store.snapshot()]).toEqual([
+      ["c", true],
+      ["b", false],
+    ]);
   });
 
   it("drops the entries set longest ago once it holds more than its limit", () => {
@@ -56,7 +70,9 @@ describe("createRemembered", () => {
 
   it("keeps a value for this session when storage refuses the write", () => {
     const store = createRemembered(window, "test:folds", isBoolean, 10);
-    const setItem = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new DOMException("full", "QuotaExceededError"); });
+    const setItem = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new DOMException("full", "QuotaExceededError");
+    });
     try {
       expect(() => store.set("a", true)).not.toThrow();
       expect(store.get("a")).toBe(true);
@@ -94,7 +110,11 @@ describe("createRemembered", () => {
 
 describe("createShared with storage", () => {
   it("reads storage again on reload and falls back to its first value", () => {
-    const shared = createShared<boolean>(false, { win: window, key: "test:wrap", parse: (raw) => (raw === "true" ? true : raw === "false" ? false : null) });
+    const shared = createShared<boolean>(false, {
+      win: window,
+      key: "test:wrap",
+      parse: (raw) => (raw === "true" ? true : raw === "false" ? false : null),
+    });
     shared.set(true);
     expect(window.localStorage.getItem("test:wrap")).toBe("true");
     window.localStorage.clear();
@@ -107,7 +127,14 @@ const names = (nodes: readonly TreeNode<string>[]): unknown[] =>
   nodes.map((node) => (node.kind === "dir" ? { [node.name]: names(node.children) } : node.name));
 
 describe("buildFileTree", () => {
-  const paths = ["src/ui/button.tsx", "src/ui/card.tsx", "src/index.ts", "README.md", "docs/guide/intro.md", "package.json"];
+  const paths = [
+    "src/ui/button.tsx",
+    "src/ui/card.tsx",
+    "src/index.ts",
+    "README.md",
+    "docs/guide/intro.md",
+    "package.json",
+  ];
   const tree = buildFileTree(paths, (path) => path);
 
   it("nests files under their folders, folders first and each level sorted by name", () => {
@@ -134,9 +161,18 @@ describe("buildFileTree", () => {
   });
 
   it("keeps two entries for one path, such as its uncommitted and committed changes", () => {
-    const twice = buildFileTree([{ path: "a/b.ts", part: "uncommitted" }, { path: "a/b.ts", part: "committed" }], (entry) => entry.path);
+    const twice = buildFileTree(
+      [
+        { path: "a/b.ts", part: "uncommitted" },
+        { path: "a/b.ts", part: "committed" },
+      ],
+      (entry) => entry.path,
+    );
     const dir = twice[0]!;
-    expect(dir.kind === "dir" && dir.children.map((child) => child.kind === "file" && child.item.part)).toEqual(["uncommitted", "committed"]);
+    expect(dir.kind === "dir" && dir.children.map((child) => child.kind === "file" && child.item.part)).toEqual([
+      "uncommitted",
+      "committed",
+    ]);
   });
 
   it("returns an empty tree for no files", () => {

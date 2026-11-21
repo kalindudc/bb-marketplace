@@ -6,7 +6,10 @@ import { countedFiles } from "./counted";
 // Which change of a file a mark is for: the uncommitted one, the one committed on the branch, or one commit's.
 export type Part = "uncommitted" | "committed" | `commit:${string}`;
 
-export interface FilePart { part: Part; file: FileChange }
+export interface FilePart {
+  part: Part;
+  file: FileChange;
+}
 
 const EMPTY: Record<string, ReviewMarks> = {};
 
@@ -33,7 +36,10 @@ export const isStale = (marks: ReviewMarks | undefined, { part, file }: FilePart
   return stored !== undefined && stored !== signature(file);
 };
 
-export function progress(marks: ReviewMarks | undefined, parts: readonly FilePart[]): { reviewed: number; total: number } {
+export function progress(
+  marks: ReviewMarks | undefined,
+  parts: readonly FilePart[],
+): { reviewed: number; total: number } {
   return { reviewed: parts.filter((part) => isReviewed(marks, part)).length, total: parts.length };
 }
 
@@ -65,8 +71,17 @@ export function useSetReviewed(): SetReviewed {
       });
     },
   });
-  return useCallback(async (key, parts, reviewed) => {
-    if (parts.length === 0) return;
-    await mutate({ key, marks: parts.map((part) => ({ mark: markId(part.part, part.file.path), signature: reviewed ? signature(part.file) : null })) });
-  }, [mutate]);
+  return useCallback(
+    async (key, parts, reviewed) => {
+      if (parts.length === 0) return;
+      await mutate({
+        key,
+        marks: parts.map((part) => ({
+          mark: markId(part.part, part.file.path),
+          signature: reviewed ? signature(part.file) : null,
+        })),
+      });
+    },
+    [mutate],
+  );
 }

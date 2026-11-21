@@ -22,8 +22,10 @@ function setup(active: Thread[], archived: Thread[] = []) {
   return { deps: { sdk } as CollectDeps, list, get };
 }
 
-const run = (deps: CollectDeps, options: { windowHours?: number; maxThreads?: number; includeArchived?: boolean } = {}) =>
-  collectAll(deps, { windowHours: 24, maxThreads: 200, now: NOW, includeArchived: true, ...options });
+const run = (
+  deps: CollectDeps,
+  options: { windowHours?: number; maxThreads?: number; includeArchived?: boolean } = {},
+) => collectAll(deps, { windowHours: 24, maxThreads: 200, now: NOW, includeArchived: true, ...options });
 
 describe("collectAll", () => {
   it("pages the active threads and then the archived ones, hidden threads included", async () => {
@@ -31,7 +33,10 @@ describe("collectAll", () => {
     const { deps, list } = setup(active, [thread("old", { archivedAt: NOW - HOUR })]);
     const { threads } = await run(deps, { maxThreads: 500 });
     expect(list.mock.calls.map(([args]) => [args.archived, args.offset, args.limit, args.includeHidden])).toEqual([
-      [false, 0, 100, true], [false, 100, 100, true], [false, 200, 100, true], [true, 0, 100, true],
+      [false, 0, 100, true],
+      [false, 100, 100, true],
+      [false, 200, 100, true],
+      [true, 0, 100, true],
     ]);
     expect(threads).toHaveLength(251);
   });
@@ -41,7 +46,8 @@ describe("collectAll", () => {
       Array.from({ length: count }, (_, index) => thread(`${prefix}${index}`, extra));
     const { deps, list } = setup(full("a", 1200), full("z", 700, { archivedAt: NOW - HOUR }));
     await run(deps, { maxThreads: 500 });
-    const offsets = (archived: boolean) => list.mock.calls.filter(([args]) => args.archived === archived).map(([args]) => args.offset);
+    const offsets = (archived: boolean) =>
+      list.mock.calls.filter(([args]) => args.archived === archived).map(([args]) => args.offset);
     expect(offsets(false)).toHaveLength(10);
     expect(offsets(true)).toHaveLength(5);
   });
@@ -60,17 +66,22 @@ describe("collectAll", () => {
   });
 
   it("keeps an archived thread only when it was archived inside the window", async () => {
-    const { deps } = setup([], [
-      thread("recent", { archivedAt: NOW - 3 * HOUR, updatedAt: NOW - 3 * HOUR }),
-      thread("long-gone", { archivedAt: NOW - 40 * HOUR, updatedAt: NOW - 1 * HOUR }),
-    ]);
+    const { deps } = setup(
+      [],
+      [
+        thread("recent", { archivedAt: NOW - 3 * HOUR, updatedAt: NOW - 3 * HOUR }),
+        thread("long-gone", { archivedAt: NOW - 40 * HOUR, updatedAt: NOW - 1 * HOUR }),
+      ],
+    );
     const { threads } = await run(deps);
     expect(threads.map((entry) => [entry.id, entry.archived])).toEqual([["recent", true]]);
   });
 
   it("lists the newest thread first and reports a truncated list at maxThreads", async () => {
     const { deps } = setup([
-      thread("b", { updatedAt: NOW - 3 * HOUR }), thread("a", { updatedAt: NOW - 1 * HOUR }), thread("c", { updatedAt: NOW - 5 * HOUR }),
+      thread("b", { updatedAt: NOW - 3 * HOUR }),
+      thread("a", { updatedAt: NOW - 1 * HOUR }),
+      thread("c", { updatedAt: NOW - 5 * HOUR }),
     ]);
     const all = await run(deps);
     expect(all.threads.map((entry) => entry.id)).toEqual(["a", "b", "c"]);
@@ -104,16 +115,29 @@ describe("collectAll", () => {
   });
 
   it("summarises a thread like collectTree: fallback title, status and environment", async () => {
-    const { deps } = setup([thread("t", { title: null, titleFallback: "Fallback", status: "active", environmentId: "env_1" })]);
+    const { deps } = setup([
+      thread("t", { title: null, titleFallback: "Fallback", status: "active", environmentId: "env_1" }),
+    ]);
     const { threads } = await run(deps);
-    expect(threads).toEqual([{
-      id: "t", title: "Fallback", parentThreadId: null, archived: false, depth: 0, environmentId: "env_1", status: "active", rootThreadId: "t",
-    }]);
+    expect(threads).toEqual([
+      {
+        id: "t",
+        title: "Fallback",
+        parentThreadId: null,
+        archived: false,
+        depth: 0,
+        environmentId: "env_1",
+        status: "active",
+        rootThreadId: "t",
+      },
+    ]);
   });
 
   it("fetches each distinct environment once and skips one that cannot be read", async () => {
     const { deps, get } = setup([
-      thread("a", { environmentId: "env_1" }), thread("b", { environmentId: "env_1" }), thread("c", { environmentId: "env_gone" }),
+      thread("a", { environmentId: "env_1" }),
+      thread("b", { environmentId: "env_1" }),
+      thread("c", { environmentId: "env_gone" }),
     ]);
     get.mockImplementation(async ({ environmentId }) => {
       if (environmentId === "env_gone") throw new Error("gone");
@@ -128,10 +152,11 @@ describe("collectAll", () => {
 describe("collectAll with archived threads hidden", () => {
   const archivedThread = (id: string, hoursAgo = 3) =>
     thread(id, { archivedAt: NOW - hoursAgo * HOUR, updatedAt: NOW - hoursAgo * HOUR, environmentId: `env_${id}` });
-  const withArchived = () => setup(
-    [thread("live", { environmentId: "env_live" })],
-    [archivedThread("a1"), archivedThread("a2"), archivedThread("gone", 40)],
-  );
+  const withArchived = () =>
+    setup(
+      [thread("live", { environmentId: "env_live" })],
+      [archivedThread("a1"), archivedThread("a2"), archivedThread("gone", 40)],
+    );
 
   it("counts the archived threads inside the window and keeps none of them", async () => {
     const { deps } = withArchived();
@@ -177,4 +202,3 @@ describe("collectAll with archived threads hidden", () => {
     expect(truncated).toBe(false);
   });
 });
-

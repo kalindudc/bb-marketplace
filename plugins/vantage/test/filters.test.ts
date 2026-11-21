@@ -1,7 +1,21 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_FILTER, filterRepos, filterWorktrees, focusLabel, focusRepos, projectOptions, type PageFilter } from "../src/filters";
 import {
-  branchWorktree, checkoutRepo, fileChange, overview as makeOverview, repo, threadSummary, worktree,
+  DEFAULT_FILTER,
+  filterRepos,
+  filterWorktrees,
+  focusLabel,
+  focusRepos,
+  projectOptions,
+  type PageFilter,
+} from "../src/filters";
+import {
+  branchWorktree,
+  checkoutRepo,
+  fileChange,
+  overview as makeOverview,
+  repo,
+  threadSummary,
+  worktree,
 } from "./fixtures";
 
 const filter = (overrides: Partial<PageFilter> = {}): PageFilter => ({ ...DEFAULT_FILTER, ...overrides });
@@ -17,20 +31,98 @@ const sample = makeOverview({
     threadSummary({ id: "thr_5", title: "Broken thread", environmentId: "env_5" }),
   ],
   worktrees: [
-    worktree({ key: "wt1", threadIds: ["thr_1"], label: "Shop", projectId: "proj_shop", root: "/work/shop-1", branch: "agent/login", uncommitted: [fileChange({ path: "src/auth/login.ts" })] }),
-    worktree({ key: "wt2", threadIds: ["thr_2"], label: "Docs site", projectId: "proj_docs", root: "/work/docs", branch: "agent/docs", committed: [fileChange({ path: "README.md" })] }),
-    worktree({ key: "wt3", threadIds: ["thr_3"], label: "Shop", projectId: "proj_shop", root: "/work/shop-2", branch: "agent/idle" }),
-    branchWorktree({ key: "wt4", threadIds: ["thr_4"], label: "Shop", projectId: "proj_shop", root: "/code/shop", branch: "agent/old" }),
-    worktree({ key: "wt5", threadIds: ["thr_5"], label: "Docs site", projectId: "proj_docs", root: "/work/docs-2", branch: null, state: "unavailable", message: "Folder is gone" }),
+    worktree({
+      key: "wt1",
+      threadIds: ["thr_1"],
+      label: "Shop",
+      projectId: "proj_shop",
+      root: "/work/shop-1",
+      branch: "agent/login",
+      uncommitted: [fileChange({ path: "src/auth/login.ts" })],
+    }),
+    worktree({
+      key: "wt2",
+      threadIds: ["thr_2"],
+      label: "Docs site",
+      projectId: "proj_docs",
+      root: "/work/docs",
+      branch: "agent/docs",
+      committed: [fileChange({ path: "README.md" })],
+    }),
+    worktree({
+      key: "wt3",
+      threadIds: ["thr_3"],
+      label: "Shop",
+      projectId: "proj_shop",
+      root: "/work/shop-2",
+      branch: "agent/idle",
+    }),
+    branchWorktree({
+      key: "wt4",
+      threadIds: ["thr_4"],
+      label: "Shop",
+      projectId: "proj_shop",
+      root: "/code/shop",
+      branch: "agent/old",
+    }),
+    worktree({
+      key: "wt5",
+      threadIds: ["thr_5"],
+      label: "Docs site",
+      projectId: "proj_docs",
+      root: "/work/docs-2",
+      branch: null,
+      state: "unavailable",
+      message: "Folder is gone",
+    }),
   ],
   repos: [
-    repo({ key: "r1", label: "Shop", projectId: "proj_shop", root: "/work/shop-1", files: [fileChange({ path: "src/auth/login.ts" })] }),
-    repo({ key: "r2", label: "Docs site", projectId: "proj_docs", root: "/work/docs", files: [fileChange({ path: "README.md" })] }),
+    repo({
+      key: "r1",
+      label: "Shop",
+      projectId: "proj_shop",
+      root: "/work/shop-1",
+      files: [fileChange({ path: "src/auth/login.ts" })],
+    }),
+    repo({
+      key: "r2",
+      label: "Docs site",
+      projectId: "proj_docs",
+      root: "/work/docs",
+      files: [fileChange({ path: "README.md" })],
+    }),
     repo({ key: "r3", label: "Shop", projectId: "proj_shop", root: "/work/shop-2", files: [] }),
-    checkoutRepo({ key: "r4", label: "commons", projectId: "proj_commons", root: "/code/commons", files: [], otherFiles: [fileChange({ path: "tasks/todo.md" })] }),
-    checkoutRepo({ key: "r5", label: "scripts", projectId: null, root: "/code/scripts", files: [fileChange({ path: "run.sh" })] }),
-    repo({ key: "r6", label: "Docs site", projectId: "proj_docs", root: "/work/docs-2", state: "unavailable", message: "Folder is gone", files: [] }),
-    repo({ key: "r7", label: "Shop", projectId: "proj_shop", root: "/work/shop-3", files: [fileChange({ path: "done.ts", status: "clean", additions: null, deletions: null })] }),
+    checkoutRepo({
+      key: "r4",
+      label: "commons",
+      projectId: "proj_commons",
+      root: "/code/commons",
+      files: [],
+      otherFiles: [fileChange({ path: "tasks/todo.md" })],
+    }),
+    checkoutRepo({
+      key: "r5",
+      label: "scripts",
+      projectId: null,
+      root: "/code/scripts",
+      files: [fileChange({ path: "run.sh" })],
+    }),
+    repo({
+      key: "r6",
+      label: "Docs site",
+      projectId: "proj_docs",
+      root: "/work/docs-2",
+      state: "unavailable",
+      message: "Folder is gone",
+      files: [],
+    }),
+    repo({
+      key: "r7",
+      label: "Shop",
+      projectId: "proj_shop",
+      root: "/work/shop-3",
+      files: [fileChange({ path: "done.ts", status: "clean", additions: null, deletions: null })],
+    }),
   ],
   otherFiles: [fileChange({ path: "/tmp/notes.txt" })],
 });
@@ -57,7 +149,11 @@ describe("filterWorktrees", () => {
   });
 
   it("filters by project id", () => {
-    expect(keys(filterWorktrees(sample, filter({ projectId: "proj_shop", changedOnly: false })))).toEqual(["wt1", "wt3", "wt4"]);
+    expect(keys(filterWorktrees(sample, filter({ projectId: "proj_shop", changedOnly: false })))).toEqual([
+      "wt1",
+      "wt3",
+      "wt4",
+    ]);
     expect(keys(filterWorktrees(sample, filter({ projectId: "proj_shop" })))).toEqual(["wt1"]);
     expect(filterWorktrees(sample, filter({ projectId: "proj_missing" }))).toEqual([]);
   });
@@ -80,7 +176,10 @@ describe("filterWorktrees", () => {
   });
 
   it("applies the project, the text and the changed-only filters together", () => {
-    expect(keys(filterWorktrees(sample, filter({ projectId: "proj_docs", text: "docs", changedOnly: true })))).toEqual(["wt2", "wt5"]);
+    expect(keys(filterWorktrees(sample, filter({ projectId: "proj_docs", text: "docs", changedOnly: true })))).toEqual([
+      "wt2",
+      "wt5",
+    ]);
     expect(keys(filterWorktrees(sample, filter({ projectId: "proj_shop", text: "docs" })))).toEqual([]);
   });
 });
@@ -90,13 +189,22 @@ describe("loading rows with changes only", () => {
   const loadingRepo = repo({ key: "r9", threadIds: ["thr_4"], state: "loading", files: [] });
 
   it("keeps them in the first outline, which has no numbers yet for any row", () => {
-    const partial = makeOverview({ partial: true, threads: sample.threads, worktrees: [loadingWorktree], repos: [loadingRepo] });
+    const partial = makeOverview({
+      partial: true,
+      threads: sample.threads,
+      worktrees: [loadingWorktree],
+      repos: [loadingRepo],
+    });
     expect(keys(filterWorktrees(partial, filter()))).toEqual(["wt9"]);
     expect(keys(filterRepos(partial, filter()).repos)).toEqual(["r9"]);
   });
 
   it("holds them back once the other rows have numbers, until their own changes are known", () => {
-    const merged = makeOverview({ threads: sample.threads, worktrees: [...sample.worktrees, loadingWorktree], repos: [...sample.repos, loadingRepo] });
+    const merged = makeOverview({
+      threads: sample.threads,
+      worktrees: [...sample.worktrees, loadingWorktree],
+      repos: [...sample.repos, loadingRepo],
+    });
     expect(keys(filterWorktrees(merged, filter()))).not.toContain("wt9");
     expect(keys(filterRepos(merged, filter()).repos)).not.toContain("r9");
     expect(keys(filterWorktrees(merged, everything))).toContain("wt9");
@@ -121,7 +229,11 @@ describe("filterRepos", () => {
 
   it("filters by the project of each repository, a checkout's coming from its source", () => {
     expect(keys(filterRepos(sample, filter({ projectId: "proj_commons" })).repos)).toEqual(["r4"]);
-    expect(keys(filterRepos(sample, filter({ projectId: "proj_shop", changedOnly: false })).repos)).toEqual(["r1", "r3", "r7"]);
+    expect(keys(filterRepos(sample, filter({ projectId: "proj_shop", changedOnly: false })).repos)).toEqual([
+      "r1",
+      "r3",
+      "r7",
+    ]);
   });
 
   it("leaves a checkout that no project owns out of every project", () => {
@@ -169,7 +281,10 @@ describe("focusRepos", () => {
   });
 
   it("shows nothing for a repository the other filters left out", () => {
-    expect(focusRepos(filterRepos(sample, filter({ projectId: "proj_shop" })), { kind: "repo", key: "r4" })).toEqual({ repos: [], otherFiles: [] });
+    expect(focusRepos(filterRepos(sample, filter({ projectId: "proj_shop" })), { kind: "repo", key: "r4" })).toEqual({
+      repos: [],
+      otherFiles: [],
+    });
   });
 });
 

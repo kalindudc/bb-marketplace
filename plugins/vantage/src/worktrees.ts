@@ -3,8 +3,18 @@ import type { RepoRef, SharedFile, Worktree } from "./contract";
 import { mapLimit } from "./limit";
 import { isOnBase } from "./thread-commits";
 import {
-  checkoutWorktreeStatus, gitFileChange, hostMessage, loadBranchRange, loadCheckoutStatus, loadWorkspaceStatus, MAX_COMMITS, MAX_FILES, picksBase,
-  unavailableStatus, type WorktreeStatus,
+  checkoutWorktreeStatus,
+  gitFileChange,
+  hostMessage,
+  loadBranchRange,
+  loadCheckoutStatus,
+  loadWorkspaceStatus,
+  MAX_COMMITS,
+  MAX_FILES,
+  picksBase,
+  readOverviewHost,
+  unavailableStatus,
+  type WorktreeStatus,
 } from "./sources";
 
 const STATUS_CONCURRENCY = 8;
@@ -13,97 +23,168 @@ const MAX_MESSAGE = 1000;
 
 type WorktreeRef = Extract<RepoRef, { kind: "workspace" | "branch" | "checkout" }>;
 type WorktreePlan = RepoPlan & { ref: WorktreeRef };
-type Identity = Pick<Worktree, "key" | "ref" | "label" | "projectId" | "hostId" | "hostName" | "root" | "kind" | "threadIds">;
+type Identity = Pick<
+  Worktree,
+  "key" | "ref" | "label" | "projectId" | "hostId" | "hostName" | "root" | "kind" | "threadIds"
+>;
 
-const errorMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error)).slice(0, MAX_MESSAGE);
+const errorMessage = (error: unknown): string =>
+  (error instanceof Error ? error.message : String(error)).slice(0, MAX_MESSAGE);
 // A checkout counts once a thread works in it; one it only edited by path stays in the repository view.
 const isWorktreePlan = (plan: RepoPlan): plan is WorktreePlan =>
-  plan.ref.kind === "workspace" || plan.ref.kind === "branch" || (plan.ref.kind === "checkout" && plan.ref.worked === true);
+  plan.ref.kind === "workspace" ||
+  plan.ref.kind === "branch" ||
+  (plan.ref.kind === "checkout" && plan.ref.worked === true);
 
-function identify(plan: WorktreePlan, environments: ReadonlyMap<string, Environment>, hostNames: ReadonlyMap<string, string>): Identity {
+function identify(
+  plan: WorktreePlan,
+  environments: ReadonlyMap<string, Environment>,
+  hostNames: ReadonlyMap<string, string>,
+): Identity {
   const { ref } = plan;
-  const hostId = plan.hostId ?? (ref.kind === "workspace" ? (environments.get(ref.environmentId)?.hostId ?? "") : ref.hostId);
+  const hostId =
+    plan.hostId ?? (ref.kind === "workspace" ? (environments.get(ref.environmentId)?.hostId ?? "") : ref.hostId);
   if (ref.kind === "checkout") {
     return {
-      key: plan.key, ref, label: plan.label, projectId: plan.projectId ?? "", hostId, hostName: hostNames.get(hostId) ?? hostId,
-      root: ref.root, kind: ref.kind, threadIds: [...plan.threadIds],
+      key: plan.key,
+      ref,
+      label: plan.label,
+      projectId: plan.projectId ?? "",
+      hostId,
+      hostName: hostNames.get(hostId) ?? hostId,
+      root: ref.root,
+      kind: ref.kind,
+      threadIds: [...plan.threadIds],
     };
   }
-  const environment = ref.kind === "workspace"
-    ? environments.get(ref.environmentId)
-    : [...environments.values()].find((entry) => entry.hostId === ref.hostId && entry.branchName === ref.head);
+  const environment =
+    ref.kind === "workspace"
+      ? environments.get(ref.environmentId)
+      : [...environments.values()].find((entry) => entry.hostId === ref.hostId && entry.branchName === ref.head);
   return {
-    key: plan.key, ref, label: plan.label, projectId: environment?.projectId ?? "", hostId, hostName: hostNames.get(hostId) ?? hostId,
-    root: plan.root ?? environment?.path ?? "", kind: ref.kind, threadIds: [...plan.threadIds],
+    key: plan.key,
+    ref,
+    label: plan.label,
+    projectId: environment?.projectId ?? "",
+    hostId,
+    hostName: hostNames.get(hostId) ?? hostId,
+    root: plan.root ?? environment?.path ?? "",
+    kind: ref.kind,
+    threadIds: [...plan.threadIds],
   };
 }
 
 // A branch the host no longer has is not a worktree: plan 01 shows it as recorded edits instead.
 async function loadBranch(
-  deps: CollectDeps, ref: Extract<RepoRef, { kind: "branch" }>, threadIds: readonly string[], signal?: AbortSignal,
+  deps: CollectDeps,
+  ref: Extract<RepoRef, { kind: "branch" }>,
+  threadIds: readonly string[],
+  signal?: AbortSignal,
 ): Promise<WorktreeStatus | null> {
   const result = await loadBranchRange(deps, ref, threadIds, signal);
   if (result.outcome === "unavailable") {
     return result.reason === "missing-ref" ? null : unavailableStatus(hostMessage(result), ref.head, ref.base);
   }
   return {
-    branch: ref.head, base: result.base, state: "ready", message: null,
-    aheadCount: result.aheadCount, behindCount: result.behindCount,
-    uncommitted: [], committed: result.files.slice(0, MAX_FILES).map(gitFileChange), commits: result.commits.slice(0, MAX_COMMITS),
+    branch: ref.head,
+    base: result.base,
+    state: "ready",
+    message: null,
+    aheadCount: result.aheadCount,
+    behindCount: result.behindCount,
+    uncommitted: [],
+    committed: result.files.slice(0, MAX_FILES).map(gitFileChange),
+    commits: result.commits.slice(0, MAX_COMMITS),
   };
 }
 
 async function loadCheckout(
-  deps: CollectDeps, ref: Extract<RepoRef, { kind: "checkout" }>, threadIds: readonly string[], signal: AbortSignal | undefined, pick: boolean,
+  deps: CollectDeps,
+  ref: Extract<RepoRef, { kind: "checkout" }>,
+  threadIds: readonly string[],
+  signal: AbortSignal | undefined,
+  pick: boolean,
 ): Promise<WorktreeStatus> {
   return checkoutWorktreeStatus(await loadCheckoutStatus(deps, ref, threadIds, signal, null, pick), ref.base);
 }
 
 // Later reads of a worktree's diffs use the base its status was read against, with nothing picked again. A worktree with
 // no base to compare with keeps none, so those reads show its uncommitted files instead of failing on a missing branch.
-const readAgainst = <R extends Extract<RepoRef, { kind: "workspace" | "checkout" }>>(ref: R, status: WorktreeStatus): R =>
-  (status.state === "ready" ? { ...ref, base: status.base } : ref);
+const readAgainst = <R extends Extract<RepoRef, { kind: "workspace" | "checkout" }>>(
+  ref: R,
+  status: WorktreeStatus,
+): R => (status.state === "ready" ? { ...ref, base: status.base } : ref);
 
 const plannedBranch = (plan: WorktreePlan, environments: ReadonlyMap<string, Environment>): string | null =>
-  plan.ref.kind === "branch" ? plan.ref.head : plan.ref.kind === "workspace" ? (environments.get(plan.ref.environmentId)?.branchName ?? null) : null;
+  plan.ref.kind === "branch"
+    ? plan.ref.head
+    : plan.ref.kind === "workspace"
+      ? (environments.get(plan.ref.environmentId)?.branchName ?? null)
+      : null;
 
 export async function loadWorktrees(
-  deps: CollectDeps, repos: readonly RepoPlan[], environments: ReadonlyMap<string, Environment>,
-  hostNames: ReadonlyMap<string, string>, signal?: AbortSignal,
+  deps: CollectDeps,
+  repos: readonly RepoPlan[],
+  environments: ReadonlyMap<string, Environment>,
+  hostNames: ReadonlyMap<string, string>,
+  signal?: AbortSignal,
 ): Promise<Worktree[]> {
-  const loaded = await mapLimit(repos.filter(isWorktreePlan), STATUS_CONCURRENCY, async (plan): Promise<Omit<Worktree, "onBase" | "threadCommits"> | null> => {
-    const identity = identify(plan, environments, hostNames);
-    const { ref } = plan;
-    const branch = plannedBranch(plan, environments);
-    try {
-      if (ref.kind === "branch") {
-        const status = await loadBranch(deps, ref, plan.threadIds, signal);
-        return status === null ? null : { ...identity, ...status };
+  const loaded = await mapLimit(
+    repos.filter(isWorktreePlan),
+    STATUS_CONCURRENCY,
+    async (plan): Promise<Omit<Worktree, "onBase" | "threadCommits"> | null> => {
+      const identity = identify(plan, environments, hostNames);
+      const { ref } = plan;
+      const branch = plannedBranch(plan, environments);
+      if (plan.blocked !== undefined) return { ...identity, ...unavailableStatus(plan.blocked, branch, ref.base) };
+      try {
+        signal?.throwIfAborted();
+        return await readOverviewHost(
+          deps,
+          identity.hostId,
+          async () => {
+            if (ref.kind === "branch") {
+              const status = await loadBranch(deps, ref, plan.threadIds, signal);
+              return status === null ? null : { ...identity, ...status };
+            }
+            const pick = picksBase(deps, plan.key);
+            const whole = deps.whole?.has(plan.key) === true ? { whole: true } : {};
+            if (ref.kind === "checkout") {
+              const status = await loadCheckout(deps, ref, plan.threadIds, signal, pick);
+              return { ...identity, ...status, ...whole, ref: readAgainst(ref, status) };
+            }
+            const status = await loadWorkspaceStatus(deps, ref, plan.threadIds, signal, pick);
+            return {
+              ...identity,
+              ...status,
+              ...whole,
+              ref: readAgainst(ref, status),
+              branch: status.branch ?? (status.state === "unavailable" ? branch : null),
+              uncommitted: status.uncommitted.slice(0, MAX_FILES),
+            };
+          },
+          signal,
+        );
+      } catch (error) {
+        return { ...identity, ...unavailableStatus(errorMessage(error), branch, ref.base) };
       }
-      const pick = picksBase(deps, plan.key);
-      const whole = deps.whole?.has(plan.key) === true ? { whole: true } : {};
-      if (ref.kind === "checkout") {
-        const status = await loadCheckout(deps, ref, plan.threadIds, signal, pick);
-        return { ...identity, ...status, ...whole, ref: readAgainst(ref, status) };
-      }
-      const status = await loadWorkspaceStatus(deps, ref, plan.threadIds, signal, pick);
-      return {
-        ...identity, ...status, ...whole, ref: readAgainst(ref, status), branch: status.branch ?? (status.state === "unavailable" ? branch : null),
-        uncommitted: status.uncommitted.slice(0, MAX_FILES),
-      };
-    } catch (error) {
-      return { ...identity, ...unavailableStatus(errorMessage(error), branch, ref.base) };
-    }
-  });
+    },
+  );
   // The commits its threads made are only known once their edits are, so the overview adds them.
-  return loaded.filter((worktree) => worktree !== null).map((worktree) => ({
-    ...worktree, onBase: worktree.state === "ready" && isOnBase(worktree.branch, worktree.base), threadCommits: [],
-  }));
+  return loaded
+    .filter((worktree) => worktree !== null)
+    .map((worktree) => ({
+      ...worktree,
+      onBase: worktree.state === "ready" && isOnBase(worktree.branch, worktree.base),
+      threadCommits: [],
+    }));
 }
 
 // The rows the instant outline shows: who, where and on which branch are known; every number waits for git.
 export function loadingWorktrees(
-  repos: readonly RepoPlan[], environments: ReadonlyMap<string, Environment>, hostNames: ReadonlyMap<string, string>,
+  repos: readonly RepoPlan[],
+  environments: ReadonlyMap<string, Environment>,
+  hostNames: ReadonlyMap<string, string>,
 ): Worktree[] {
   return repos.filter(isWorktreePlan).map((plan) => ({
     ...identify(plan, environments, hostNames),

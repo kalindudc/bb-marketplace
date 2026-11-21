@@ -1,9 +1,14 @@
-export interface RootEntry { root: string | null; relative: string | null }
+export interface RootEntry {
+  root: string | null;
+  relative: string | null;
+  excluded?: true;
+}
 
 export interface RootCache {
   peek(hostId: string, path: string): RootEntry | undefined;
   missing(hostId: string, paths: readonly string[]): string[];
   store(hostId: string, path: string, entry: RootEntry): void;
+  dropRoots(hostId: string, roots: ReadonlySet<string>): void;
   clear(): void;
 }
 
@@ -25,7 +30,8 @@ export function createRootCache(options: { ttlMs?: number; maxEntries?: number; 
       entries.delete(key);
       return undefined;
     }
-    return { root: found.root, relative: found.relative };
+    const { at: _, ...entry } = found;
+    return entry;
   };
 
   return {
@@ -34,8 +40,15 @@ export function createRootCache(options: { ttlMs?: number; maxEntries?: number; 
     store(hostId, path, entry) {
       const key = keyOf(hostId, path);
       entries.delete(key);
-      entries.set(key, { root: entry.root, relative: entry.relative, at: now() });
+      entries.set(key, { ...entry, at: now() });
       while (entries.size > maxEntries) entries.delete(entries.keys().next().value!);
+    },
+    dropRoots(hostId, roots) {
+      if (roots.size === 0) return;
+      const prefix = `${hostId}\0`;
+      for (const [key, entry] of entries) {
+        if (key.startsWith(prefix) && entry.root !== null && roots.has(entry.root)) entries.delete(key);
+      }
     },
     clear: () => entries.clear(),
   };

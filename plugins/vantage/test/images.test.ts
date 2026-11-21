@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { dataUrlOf, isImagePath, mediaTypeOfPath } from "../src/images";
+import { dataUrlOf, IMAGE_LIMIT, isImagePath, mediaTypeOfPath } from "../src/images";
+
+it("leaves room for two base64 image sides and the host RPC response fields", () => {
+  const sideBytes = Math.ceil(IMAGE_LIMIT / 3) * 4;
+  const responseBytes = JSON.stringify({ outcome: "available", old: "", new: "", truncated: false }).length;
+  expect(2 * sideBytes + responseBytes).toBeLessThanOrEqual(8 * 1024 * 1024);
+});
 
 describe("image paths", () => {
   it("recognises the picture extensions, whatever their case or folder", () => {

@@ -1,39 +1,66 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createFileEventGate } from "../src/file-events";
 
-interface Row { seq: number; type: string; data: { item: { type: string } } }
+interface Row {
+  seq: number;
+  type: string;
+  data: { item: { type: string } };
+}
 const item = (seq: number, type: string): Row => ({ seq, type: "item/completed", data: { item: { type } } });
 type ListArgs = { threadId: string; afterSeq?: string; order?: string };
 
 const deferred = <T>() => {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => { resolve = done; });
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
   return { promise, resolve };
 };
 // A macrotask turn lets every promise that can settle settle, with no timing to tune.
 const flush = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
-function setup(options: { rows?: Row[]; cached?: (threadId: string) => boolean; list?: (args: ListArgs) => Promise<Row[]>; timeoutMs?: number; maxCursors?: number } = {}) {
+function setup(
+  options: {
+    rows?: Row[];
+    cached?: (threadId: string) => boolean;
+    list?: (args: ListArgs) => Promise<Row[]>;
+    timeoutMs?: number;
+    maxCursors?: number;
+  } = {},
+) {
   const rows = options.rows ?? [];
   const lists: ListArgs[] = [];
   const invalidated: string[] = [];
   const gate = createFileEventGate(
     {
-      threads: { events: { list: (async (args: ListArgs) => {
-        lists.push(args);
-        if (options.list !== undefined) return options.list(args);
-        const found = rows.filter((row) => row.seq > Number(args.afterSeq ?? 0));
-        return args.order === "desc" ? found.reverse() : found;
-      }) as never } },
+      threads: {
+        events: {
+          list: (async (args: ListArgs) => {
+            lists.push(args);
+            if (options.list !== undefined) return options.list(args);
+            const found = rows.filter((row) => row.seq > Number(args.afterSeq ?? 0));
+            return args.order === "desc" ? found.reverse() : found;
+          }) as never,
+        },
+      },
     },
-    { invalidate: (threadId) => { invalidated.push(threadId); }, hasThread: options.cached ?? (() => true), timeoutMs: options.timeoutMs, maxCursors: options.maxCursors },
+    {
+      invalidate: (threadId) => {
+        invalidated.push(threadId);
+      },
+      hasThread: options.cached ?? (() => true),
+      timeoutMs: options.timeoutMs,
+      maxCursors: options.maxCursors,
+    },
   );
   return { gate, lists, invalidated, rows };
 }
 const COMPLETED = ["item/completed"];
 const append = ["events-appended"];
 
-afterEach(() => { vi.useRealTimers(); });
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe("createFileEventGate", () => {
   it("counts the first completed item of a thread as a change and keeps later messages", async () => {
@@ -82,7 +109,10 @@ describe("createFileEventGate", () => {
     await gate.pending(["thr_1"]);
     gate.handle("thr_1", append, COMPLETED);
     await gate.pending(["thr_1"]);
-    expect(lists.map((args) => [args.order, args.afterSeq])).toEqual([["desc", undefined], ["asc", "0"]]);
+    expect(lists.map((args) => [args.order, args.afterSeq])).toEqual([
+      ["desc", undefined],
+      ["asc", "0"],
+    ]);
   });
 
   it("reads once at a time per thread, and once more for any number of events that came in meanwhile", async () => {
@@ -108,7 +138,9 @@ describe("createFileEventGate", () => {
     gate.handle("thr_1", append, COMPLETED);
     gate.handle("thr_1", append, COMPLETED);
     let done = false;
-    void gate.pending(["thr_1"])!.then(() => { done = true; });
+    void gate.pending(["thr_1"])!.then(() => {
+      done = true;
+    });
     first.resolve([item(1, "agentMessage")]);
     await flush();
     expect(done).toBe(false);
@@ -119,14 +151,18 @@ describe("createFileEventGate", () => {
 
   it("holds back only the thread whose read is undecided", async () => {
     const hung = deferred<Row[]>();
-    const { gate, invalidated } = setup({ list: (args) => (args.threadId === "thr_slow" ? hung.promise : Promise.resolve([])) });
+    const { gate, invalidated } = setup({
+      list: (args) => (args.threadId === "thr_slow" ? hung.promise : Promise.resolve([])),
+    });
     gate.handle("thr_slow", append, COMPLETED);
     gate.handle("thr_fast", append, COMPLETED);
     expect(gate.pending(["thr_other"])).toBeNull();
     await gate.pending(["thr_fast"]);
     expect(invalidated).toEqual(["thr_fast"]);
     let slowDone = false;
-    void gate.pending(["thr_fast", "thr_slow"])!.then(() => { slowDone = true; });
+    void gate.pending(["thr_fast", "thr_slow"])!.then(() => {
+      slowDone = true;
+    });
     await flush();
     expect(slowDone).toBe(false);
     hung.resolve([]);
@@ -140,7 +176,9 @@ describe("createFileEventGate", () => {
     const { gate, invalidated } = setup({ list: () => new Promise<Row[]>(() => {}), timeoutMs: 5000 });
     gate.handle("thr_1", append, COMPLETED);
     let done = false;
-    void gate.pending(["thr_1"])!.then(() => { done = true; });
+    void gate.pending(["thr_1"])!.then(() => {
+      done = true;
+    });
     await vi.advanceTimersByTimeAsync(4999);
     expect(done).toBe(false);
     await vi.advanceTimersByTimeAsync(1);
@@ -176,7 +214,13 @@ describe("createFileEventGate", () => {
   it("aborts the request of a read that timed out", async () => {
     vi.useFakeTimers();
     const signals: AbortSignal[] = [];
-    const { gate } = setup({ timeoutMs: 5000, list: (args) => { signals.push((args as unknown as { signal: AbortSignal }).signal); return new Promise<Row[]>(() => {}); } });
+    const { gate } = setup({
+      timeoutMs: 5000,
+      list: (args) => {
+        signals.push((args as unknown as { signal: AbortSignal }).signal);
+        return new Promise<Row[]>(() => {});
+      },
+    });
     gate.handle("thr_1", append, COMPLETED);
     await vi.advanceTimersByTimeAsync(4999);
     expect(signals[0]!.aborted).toBe(false);
@@ -187,7 +231,9 @@ describe("createFileEventGate", () => {
   it("ignores a response that arrives after a history reset, so it cannot move the cursor or invalidate again", async () => {
     const inFlight = deferred<Row[]>();
     let call = 0;
-    const { gate, invalidated, lists } = setup({ list: () => (++call === 1 ? inFlight.promise : Promise.resolve([item(1, "agentMessage")])) });
+    const { gate, invalidated, lists } = setup({
+      list: () => (++call === 1 ? inFlight.promise : Promise.resolve([item(1, "agentMessage")])),
+    });
     gate.handle("thr_1", append, COMPLETED);
     await flush();
     gate.handle("thr_1", ["history-rewritten"], undefined);
@@ -213,13 +259,21 @@ describe("createFileEventGate", () => {
       gate.handle(id, append, COMPLETED);
       await gate.pending([id]);
     }
-    expect(lists.map((args) => [args.threadId, args.order])).toEqual([["thr_c", "asc"], ["thr_a", "desc"]]);
+    expect(lists.map((args) => [args.threadId, args.order])).toEqual([
+      ["thr_c", "asc"],
+      ["thr_a", "desc"],
+    ]);
     expect(invalidated).toEqual(["thr_a", "thr_b", "thr_c", "thr_a"]);
   });
 
   it("counts a failed read as a change and starts over with a new baseline", async () => {
     let fail = true;
-    const { gate, invalidated, lists } = setup({ list: async () => { if (fail) throw new Error("down"); return []; } });
+    const { gate, invalidated, lists } = setup({
+      list: async () => {
+        if (fail) throw new Error("down");
+        return [];
+      },
+    });
     gate.handle("thr_1", append, COMPLETED);
     await gate.pending(["thr_1"]);
     fail = false;

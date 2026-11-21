@@ -10,8 +10,12 @@ import type { HostInput } from "../src/contract";
 
 const harness = experimental_createHostEntryHarness(hostEntry);
 const ENV: Record<string, string> = {
-  GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1", GIT_AUTHOR_NAME: "Test", GIT_AUTHOR_EMAIL: "t@example.com",
-  GIT_COMMITTER_NAME: "Test", GIT_COMMITTER_EMAIL: "t@example.com",
+  GIT_CONFIG_GLOBAL: "/dev/null",
+  GIT_CONFIG_NOSYSTEM: "1",
+  GIT_AUTHOR_NAME: "Test",
+  GIT_AUTHOR_EMAIL: "t@example.com",
+  GIT_COMMITTER_NAME: "Test",
+  GIT_COMMITTER_EMAIL: "t@example.com",
 };
 const saved: Record<string, string | undefined> = {};
 let root: string;
@@ -23,10 +27,14 @@ const sides = (path: string, target: HostInput<"fileSides">["target"], extra: Pa
   harness.experimental_call("fileSides", { root, path, previousPath: null, untracked: false, target, ...extra });
 
 beforeAll(() => {
-  for (const [key, value] of Object.entries(ENV)) { saved[key] = process.env[key]; process.env[key] = value; }
+  for (const [key, value] of Object.entries(ENV)) {
+    saved[key] = process.env[key];
+    process.env[key] = value;
+  }
   root = realpathSync(mkdtempSync(join(tmpdir(), "vantage-sides-")));
   git("init", "-q", "-b", "main");
   writeFileSync(join(root, "a.txt"), "one\ntwo\n");
+  writeFileSync(join(root, "large-old.txt"), "0123456789\n".repeat(49_000));
   git("add", "-A");
   git("commit", "-q", "-m", "base");
   git("checkout", "-q", "-b", "feature");
@@ -38,46 +46,135 @@ beforeAll(() => {
   writeFileSync(join(root, "a.txt"), "one\nTWO\nthree\n");
   writeFileSync(join(root, "untracked.txt"), "fresh\n");
   writeFileSync(join(root, "binary.bin"), Buffer.from([0, 1, 2, 3]));
-  symlinkSync("/etc/hosts", join(root, "link.txt"));
   outside = realpathSync(mkdtempSync(join(tmpdir(), "vantage-outside-")));
   writeFileSync(join(outside, "secret.txt"), "TOP SECRET\n");
+  symlinkSync(join(outside, "secret.txt"), join(root, "link.txt"));
   symlinkSync(outside, join(root, "escape"));
 });
 
 afterAll(() => {
   rmSync(root, { recursive: true, force: true });
   rmSync(outside, { recursive: true, force: true });
-  for (const [key, value] of Object.entries(saved)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+  for (const [key, value] of Object.entries(saved)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
 });
 
 describe("fileSides", () => {
+  it("marks a working file over 512 KiB in the patch and withholds both full sides", async () => {
+    writeFileSync(join(root, "large.txt"), "0123456789\n".repeat(49_000));
+    const target = { type: "uncommitted" } as const;
+    expect(
+      await harness.experimental_call("repoPatch", {
+        root,
+        path: "large.txt",
+        previousPath: null,
+        untracked: true,
+        target,
+      }),
+    ).toMatchObject({ outcome: "available", largeSides: true });
+    expect(await sides("large.txt", target, { untracked: true })).toEqual({
+      outcome: "available",
+      old: null,
+      new: null,
+      largeSides: true,
+    });
+  });
+
+  it("withholds both sides when only the old Git blob is over the limit", async () => {
+    writeFileSync(join(root, "large-old.txt"), "small\n");
+    const target = { type: "uncommitted" } as const;
+    expect(
+      await harness.experimental_call("repoPatch", {
+        root,
+        path: "large-old.txt",
+        previousPath: null,
+        untracked: false,
+        target,
+      }),
+    ).toMatchObject({ outcome: "available", largeSides: true });
+    expect(await sides("large-old.txt", target)).toEqual({
+      outcome: "available",
+      old: null,
+      new: null,
+      largeSides: true,
+    });
+  });
+
   it("reads HEAD and the working tree for an uncommitted change", async () => {
-    expect(await sides("a.txt", { type: "uncommitted" })).toEqual({ outcome: "available", old: "one\nTWO\n", new: "one\nTWO\nthree\n" });
+    expect(await sides("a.txt", { type: "uncommitted" })).toEqual({
+      outcome: "available",
+      old: "one\nTWO\n",
+      new: "one\nTWO\nthree\n",
+    });
   });
 
   it("reads the merge base and HEAD for the committed change", async () => {
-    expect(await sides("a.txt", { type: "committed", base: "main" })).toEqual({ outcome: "available", old: "one\ntwo\n", new: "one\nTWO\n" });
+    expect(await sides("a.txt", { type: "committed", base: "main" })).toEqual({
+      outcome: "available",
+      old: "one\ntwo\n",
+      new: "one\nTWO\n",
+    });
   });
 
   it("reads the parent and the commit for one commit, and no old side for a file the commit added", async () => {
-    expect(await sides("a.txt", { type: "commit", sha })).toEqual({ outcome: "available", old: "one\ntwo\n", new: "one\nTWO\n" });
-    expect(await sides("added.txt", { type: "commit", sha })).toEqual({ outcome: "available", old: null, new: "new\n" });
+    expect(await sides("a.txt", { type: "commit", sha })).toEqual({
+      outcome: "available",
+      old: "one\ntwo\n",
+      new: "one\nTWO\n",
+    });
+    expect(await sides("added.txt", { type: "commit", sha })).toEqual({
+      outcome: "available",
+      old: null,
+      new: "new\n",
+    });
   });
 
   it("reads the merge base and the branch head for an archived branch", async () => {
-    expect(await sides("a.txt", { type: "range", base: "main", head: "feature" })).toEqual({ outcome: "available", old: "one\ntwo\n", new: "one\nTWO\n" });
+    expect(await sides("a.txt", { type: "range", base: "main", head: "feature" })).toEqual({
+      outcome: "available",
+      old: "one\ntwo\n",
+      new: "one\nTWO\n",
+    });
   });
 
   it("has only a new side for an untracked file, and never follows a symlink or sends a binary file", async () => {
-    expect(await sides("untracked.txt", { type: "uncommitted" }, { untracked: true })).toEqual({ outcome: "available", old: null, new: "fresh\n" });
-    expect(await sides("link.txt", { type: "uncommitted" }, { untracked: true })).toEqual({ outcome: "available", old: null, new: null });
-    expect(await sides("binary.bin", { type: "uncommitted" }, { untracked: true })).toEqual({ outcome: "available", old: null, new: null });
+    expect(await sides("untracked.txt", { type: "uncommitted" }, { untracked: true })).toEqual({
+      outcome: "available",
+      old: null,
+      new: "fresh\n",
+    });
+    expect(await sides("link.txt", { type: "uncommitted" }, { untracked: true })).toEqual({
+      outcome: "available",
+      old: null,
+      new: null,
+    });
+    expect(await sides("binary.bin", { type: "uncommitted" }, { untracked: true })).toEqual({
+      outcome: "available",
+      old: null,
+      new: null,
+    });
   });
 
   it("never reads a file through a symlinked folder that points outside the repository", async () => {
-    expect(await sides("escape/secret.txt", { type: "uncommitted" })).toEqual({ outcome: "available", old: null, new: null });
-    expect(await sides("escape/secret.txt", { type: "uncommitted" }, { untracked: true })).toEqual({ outcome: "available", old: null, new: null });
-    const patch = await harness.experimental_call("repoPatch", { root, path: "escape/secret.txt", previousPath: null, untracked: true, target: { type: "uncommitted" } });
+    expect(await sides("escape/secret.txt", { type: "uncommitted" })).toEqual({
+      outcome: "available",
+      old: null,
+      new: null,
+    });
+    expect(await sides("escape/secret.txt", { type: "uncommitted" }, { untracked: true })).toEqual({
+      outcome: "available",
+      old: null,
+      new: null,
+    });
+    const patch = await harness.experimental_call("repoPatch", {
+      root,
+      path: "escape/secret.txt",
+      previousPath: null,
+      untracked: true,
+      target: { type: "uncommitted" },
+    });
     expect(patch).toMatchObject({ outcome: "unavailable", reason: "invalid-input" });
   });
 
@@ -93,7 +190,14 @@ describe("fileSides", () => {
       run("add", "-A");
       run("commit", "-q", "-m", "kinds");
       const head = run("rev-parse", "HEAD").trim();
-      const call = (path: string) => harness.experimental_call("fileSides", { root: scratch, path, previousPath: null, untracked: false, target: { type: "commit", sha: head } });
+      const call = (path: string) =>
+        harness.experimental_call("fileSides", {
+          root: scratch,
+          path,
+          previousPath: null,
+          untracked: false,
+          target: { type: "commit", sha: head },
+        });
       expect(await call("link")).toEqual({ outcome: "available", old: null, new: null });
       expect(await call("dir")).toEqual({ outcome: "available", old: null, new: null });
       expect(await call("dir/inner.txt")).toEqual({ outcome: "available", old: null, new: "inner\n" });
@@ -103,6 +207,9 @@ describe("fileSides", () => {
   });
 
   it("refuses a path that leaves the repository", async () => {
-    expect(await sides("../etc/passwd", { type: "uncommitted" })).toMatchObject({ outcome: "unavailable", reason: "invalid-input" });
+    expect(await sides("../etc/passwd", { type: "uncommitted" })).toMatchObject({
+      outcome: "unavailable",
+      reason: "invalid-input",
+    });
   });
 });

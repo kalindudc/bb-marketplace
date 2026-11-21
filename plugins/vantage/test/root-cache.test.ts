@@ -4,7 +4,12 @@ import { createRootCache } from "../src/root-cache";
 function setup(options: { ttlMs?: number; maxEntries?: number } = {}) {
   let now = 1_000;
   const cache = createRootCache({ ...options, now: () => now });
-  return { cache, advance: (ms: number) => { now += ms; } };
+  return {
+    cache,
+    advance: (ms: number) => {
+      now += ms;
+    },
+  };
 }
 
 const entry = { root: "/work/repo", relative: "src" };

@@ -39,13 +39,31 @@ export function destroyedEnvironment(overrides: Partial<Environment> = {}): Envi
 }
 
 export function threadSummary(overrides: Partial<ThreadSummary> = {}): ThreadSummary {
-  return { id: "thr_1", title: "Parent thread", parentThreadId: null, archived: false, depth: 0, environmentId: "env_1", status: "idle", rootThreadId: "thr_1", ...overrides };
+  return {
+    id: "thr_1",
+    title: "Parent thread",
+    parentThreadId: null,
+    archived: false,
+    depth: 0,
+    environmentId: "env_1",
+    status: "idle",
+    rootThreadId: "thr_1",
+    ...overrides,
+  };
 }
 
 export function fileChange(overrides: Partial<FileChange> = {}): FileChange {
   return {
-    path: "src/a.ts", previousPath: null, status: "modified", additions: 2, deletions: 1, binary: false,
-    untracked: false, tooLarge: false, edits: null, ...overrides,
+    path: "src/a.ts",
+    previousPath: null,
+    status: "modified",
+    additions: 2,
+    deletions: 1,
+    binary: false,
+    untracked: false,
+    tooLarge: false,
+    edits: null,
+    ...overrides,
   };
 }
 
@@ -82,15 +100,23 @@ export function repo(overrides: Partial<Repo> = {}): Repo {
 
 export function checkoutRepo(overrides: Partial<Repo> = {}): Repo {
   return repo({
-    key: "host_1:/code/commons", ref: { kind: "checkout", hostId: "host_1", root: "/code/commons", base: null },
-    label: "commons", root: "/code/commons", branch: "main", ...overrides,
+    key: "host_1:/code/commons",
+    ref: { kind: "checkout", hostId: "host_1", root: "/code/commons", base: null },
+    label: "commons",
+    root: "/code/commons",
+    branch: "main",
+    ...overrides,
   });
 }
 
 export function checkoutWorktree(overrides: Partial<Worktree> = {}): Worktree {
   return worktree({
-    key: "host_1:/clones/side", ref: { kind: "checkout", hostId: "host_1", root: "/clones/side", base: null, worked: true },
-    kind: "checkout", root: "/clones/side", branch: "side-work", ...overrides,
+    key: "host_1:/clones/side",
+    ref: { kind: "checkout", hostId: "host_1", root: "/clones/side", base: null, worked: true },
+    kind: "checkout",
+    root: "/clones/side",
+    branch: "side-work",
+    ...overrides,
   });
 }
 
@@ -98,19 +124,38 @@ export function branchRepo(overrides: Partial<Repo> = {}): Repo {
   return repo({
     key: "host_1:/code/proj@feature/old",
     ref: { kind: "branch", hostId: "host_1", root: "/code/proj", base: "origin/main", head: "feature/old" },
-    label: "Project", root: "/code/proj", branch: "feature/old", base: "origin/main", aheadCount: 3, threadIds: ["thr_2"], ...overrides,
+    label: "Project",
+    root: "/code/proj",
+    branch: "feature/old",
+    base: "origin/main",
+    aheadCount: 3,
+    threadIds: ["thr_2"],
+    ...overrides,
   });
 }
 
 export function recordedRepo(overrides: Partial<Repo> = {}): Repo {
   return repo({
-    key: "recorded:env_9", ref: { kind: "recorded" }, label: "Removed workspace", root: null, hostId: "host_1",
-    branch: null, threadIds: ["thr_3"], ...overrides,
+    key: "recorded:env_9",
+    ref: { kind: "recorded" },
+    label: "Removed workspace",
+    root: null,
+    hostId: "host_1",
+    branch: null,
+    threadIds: ["thr_3"],
+    ...overrides,
   });
 }
 
 export function commit(overrides: Partial<Commit> = {}): Commit {
-  return { sha: "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2", shortSha: "a1b2c3d", subject: "Add the thing", authorName: "Ada", authoredAt: 1_700_000_000_000, ...overrides };
+  return {
+    sha: "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+    shortSha: "a1b2c3d",
+    subject: "Add the thing",
+    authorName: "Ada",
+    authoredAt: 1_700_000_000_000,
+    ...overrides,
+  };
 }
 
 const worktreeBase: Worktree = {
@@ -144,12 +189,22 @@ export function branchWorktree(overrides: Partial<Worktree> = {}): Worktree {
   return worktree({
     key: "host_1:/code/proj@feature/old",
     ref: { kind: "branch", hostId: "host_1", root: "/code/proj", base: "origin/main", head: "feature/old" },
-    kind: "branch", root: "/code/proj", branch: "feature/old", threadIds: ["thr_2"], aheadCount: 1, ...overrides,
+    kind: "branch",
+    root: "/code/proj",
+    branch: "feature/old",
+    threadIds: ["thr_2"],
+    aheadCount: 1,
+    ...overrides,
   });
 }
 
 export function sharedFile(overrides: Partial<SharedFile> = {}): SharedFile {
-  return { projectId: "proj_1", path: "README.md", worktreeKeys: ["host_1:/work/one", "host_1:/work/two"], ...overrides };
+  return {
+    projectId: "proj_1",
+    path: "README.md",
+    worktreeKeys: ["host_1:/work/one", "host_1:/work/two"],
+    ...overrides,
+  };
 }
 
 export function overview(overrides: Partial<Overview> = {}): Overview {
@@ -176,38 +231,92 @@ export function overview(overrides: Partial<Overview> = {}): Overview {
 /** An all-threads overview over two projects: Shop (a parent, its child and an idle worktree) and Docs site (one worktree). */
 export function allOverview(overrides: Partial<Overview> = {}): Overview {
   const threads = [
-    threadSummary({ id: "thr_root", title: "Parent thread", environmentId: "env_1", rootThreadId: "thr_root", status: "active" }),
-    threadSummary({ id: "thr_child", title: "Child worker", parentThreadId: "thr_root", depth: 1, environmentId: "env_2", rootThreadId: "thr_root" }),
+    threadSummary({
+      id: "thr_root",
+      title: "Parent thread",
+      environmentId: "env_1",
+      rootThreadId: "thr_root",
+      status: "active",
+    }),
+    threadSummary({
+      id: "thr_child",
+      title: "Child worker",
+      parentThreadId: "thr_root",
+      depth: 1,
+      environmentId: "env_2",
+      rootThreadId: "thr_root",
+    }),
     threadSummary({ id: "thr_docs", title: "Docs thread", environmentId: "env_3", rootThreadId: "thr_docs" }),
     threadSummary({ id: "thr_idle", title: "Idle thread", environmentId: "env_4", rootThreadId: "thr_idle" }),
   ];
   const parent = worktree({
-    key: "k_parent", label: "Shop", projectId: "proj_shop", root: "/work/shop", branch: "feature/main", threadIds: ["thr_root"],
-    ref: { kind: "workspace", environmentId: "env_1", base: "origin/main" }, uncommitted: [fileChange({ path: "src/app.ts", additions: 4, deletions: 1 })],
+    key: "k_parent",
+    label: "Shop",
+    projectId: "proj_shop",
+    root: "/work/shop",
+    branch: "feature/main",
+    threadIds: ["thr_root"],
+    ref: { kind: "workspace", environmentId: "env_1", base: "origin/main" },
+    uncommitted: [fileChange({ path: "src/app.ts", additions: 4, deletions: 1 })],
   });
   const child = worktree({
-    key: "k_child", label: "Shop", projectId: "proj_shop", root: "/work/shop-child", branch: "agent/child", threadIds: ["thr_child"],
-    ref: { kind: "workspace", environmentId: "env_2", base: "origin/main" }, aheadCount: 1,
-    uncommitted: [fileChange({ path: "src/child.ts", additions: 2, deletions: 0 }), fileChange({ path: "README.md", additions: 1, deletions: 1 })],
+    key: "k_child",
+    label: "Shop",
+    projectId: "proj_shop",
+    root: "/work/shop-child",
+    branch: "agent/child",
+    threadIds: ["thr_child"],
+    ref: { kind: "workspace", environmentId: "env_2", base: "origin/main" },
+    aheadCount: 1,
+    uncommitted: [
+      fileChange({ path: "src/child.ts", additions: 2, deletions: 0 }),
+      fileChange({ path: "README.md", additions: 1, deletions: 1 }),
+    ],
     committed: [fileChange({ path: "lib/done.ts", additions: 9, deletions: 0 })],
     commits: [commit({ subject: "Finish the lib" })],
   });
   const docs = worktree({
-    key: "k_docs", label: "Docs site", projectId: "proj_docs", root: "/work/docs", branch: "agent/docs", threadIds: ["thr_docs"],
-    ref: { kind: "workspace", environmentId: "env_3", base: "origin/main" }, aheadCount: 2, committed: [fileChange({ path: "guide.md", additions: 7, deletions: 2 })],
+    key: "k_docs",
+    label: "Docs site",
+    projectId: "proj_docs",
+    root: "/work/docs",
+    branch: "agent/docs",
+    threadIds: ["thr_docs"],
+    ref: { kind: "workspace", environmentId: "env_3", base: "origin/main" },
+    aheadCount: 2,
+    committed: [fileChange({ path: "guide.md", additions: 7, deletions: 2 })],
   });
   const idle = worktree({
-    key: "k_idle", label: "Shop", projectId: "proj_shop", root: "/work/shop-idle", branch: "agent/idle", threadIds: ["thr_idle"],
+    key: "k_idle",
+    label: "Shop",
+    projectId: "proj_shop",
+    root: "/work/shop-idle",
+    branch: "agent/idle",
+    threadIds: ["thr_idle"],
     ref: { kind: "workspace", environmentId: "env_4", base: "origin/main" },
   });
   const worktrees = [parent, child, docs, idle];
-  const repos = worktrees.map((entry) => repo({
-    key: entry.key, label: entry.label, projectId: entry.projectId, root: entry.root, branch: entry.branch, threadIds: entry.threadIds,
-    ref: entry.ref as Repo["ref"], files: [...entry.uncommitted, ...entry.committed],
-  }));
+  const repos = worktrees.map((entry) =>
+    repo({
+      key: entry.key,
+      label: entry.label,
+      projectId: entry.projectId,
+      root: entry.root,
+      branch: entry.branch,
+      threadIds: entry.threadIds,
+      ref: entry.ref as Repo["ref"],
+      files: [...entry.uncommitted, ...entry.committed],
+    }),
+  );
   return overview({
-    threadId: "", target: { kind: "all" }, windowHours: 24, threads, worktrees, repos,
-    environmentIds: ["env_1", "env_2", "env_3", "env_4"], ...overrides,
+    threadId: "",
+    target: { kind: "all" },
+    windowHours: 24,
+    threads,
+    worktrees,
+    repos,
+    environmentIds: ["env_1", "env_2", "env_3", "env_4"],
+    ...overrides,
   });
 }
 
@@ -221,10 +330,23 @@ export function partialOverview(overrides: Partial<Overview> = {}): Overview {
     sharedFiles: [],
     otherFiles: [],
     worktrees: full.worktrees.map((entry) => ({
-      ...entry, state: "loading", aheadCount: null, behindCount: null, uncommitted: [], committed: [], commits: [],
+      ...entry,
+      state: "loading",
+      aheadCount: null,
+      behindCount: null,
+      uncommitted: [],
+      committed: [],
+      commits: [],
     })),
     repos: full.repos.map((entry) => ({
-      ...entry, state: "loading", base: null, aheadCount: null, files: [], otherFiles: [], truncated: false, totals: { files: 0, additions: 0, deletions: 0 },
+      ...entry,
+      state: "loading",
+      base: null,
+      aheadCount: null,
+      files: [],
+      otherFiles: [],
+      truncated: false,
+      totals: { files: 0, additions: 0, deletions: 0 },
     })),
     ...overrides,
   };
@@ -250,7 +372,7 @@ export function sidebarThread(overrides: Partial<PluginSidebarThread> = {}): Plu
     runtimeStatus: "idle",
     queuedWork: "none",
     hasPendingInteraction: false,
-    activity: { workflows: 0, backgroundAgents: 0, backgroundCommands: 0, planMode: 0, goals: 0 },
+    activity: { workflows: 0, backgroundAgents: 0, backgroundCommands: 0, planMode: 0 },
     indicator: "none",
     indicatorLabel: null,
     isUnread: false,
@@ -261,7 +383,14 @@ export function sidebarThread(overrides: Partial<PluginSidebarThread> = {}): Plu
     archivedAt: null,
     href: `/projects/proj_1/threads/${id}`,
     isHidden: false,
-    environment: { id: "env_1", name: null, branchName: "feature/work", path: "/work/one", isWorktree: true, providerId: null, workspaceDisplayKind: null },
+    environment: {
+      id: "env_1",
+      name: null,
+      branchName: "feature/work",
+      path: "/work/one",
+      isWorktree: true,
+      providerId: null,
+    } as PluginSidebarThread["environment"],
     host: { id: "host_1", name: "Laptop" },
     createdAt: 1,
     updatedAt: 1,
@@ -270,4 +399,3 @@ export function sidebarThread(overrides: Partial<PluginSidebarThread> = {}): Plu
     ...overrides,
   };
 }
-

@@ -2,12 +2,20 @@ import { describe, expect, it, vi } from "vitest";
 import type { RepoPlan } from "../src/collect";
 import { createRepoCache, planCached } from "../src/repo-cache";
 
-const meta = (threadIds: string[] = ["thr_1"], environmentId: string | null = "env_1") => ({ threadIds, environmentId });
+const meta = (threadIds: string[] = ["thr_1"], environmentId: string | null = "env_1") => ({
+  threadIds,
+  environmentId,
+});
 
 function setup(options: { ttlMs?: number; maxEntries?: number } = {}) {
   let now = 1_000;
   const cache = createRepoCache({ ...options, now: () => now });
-  return { cache, advance: (ms: number) => { now += ms; } };
+  return {
+    cache,
+    advance: (ms: number) => {
+      now += ms;
+    },
+  };
 }
 
 describe("createRepoCache", () => {
@@ -34,7 +42,10 @@ describe("createRepoCache", () => {
 
   it("counts the time to live from when a slow load finished", async () => {
     const { cache, advance } = setup({ ttlMs: 60_000 });
-    const load = vi.fn(async () => { advance(50_000); return "slow"; });
+    const load = vi.fn(async () => {
+      advance(50_000);
+      return "slow";
+    });
     await cache.get("k", meta(), load);
     advance(30_000);
     await cache.get("k", meta(), load);
@@ -67,7 +78,12 @@ describe("createRepoCache", () => {
   it("shares one load between concurrent requests for a key", async () => {
     const { cache } = setup();
     let release: (value: string) => void = () => {};
-    const load = vi.fn(() => new Promise<string>((resolve) => { release = resolve; }));
+    const load = vi.fn(
+      () =>
+        new Promise<string>((resolve) => {
+          release = resolve;
+        }),
+    );
     const first = cache.get("k", meta(), load);
     const second = cache.get("k", meta(), load);
     release("shared");
@@ -86,14 +102,20 @@ describe("createRepoCache", () => {
 
   it("does not cache a load that throws before it returns a promise", async () => {
     const { cache } = setup();
-    const load = vi.fn<() => Promise<string>>(() => { throw new Error("sync"); });
+    const load = vi.fn<() => Promise<string>>(() => {
+      throw new Error("sync");
+    });
     await expect(cache.get("k", meta(), load)).rejects.toThrow("sync");
     expect(cache.size()).toBe(0);
   });
 
   it("drops only the entries of the threads named", async () => {
     const { cache } = setup();
-    for (const [key, ids] of [["a", ["thr_1", "thr_2"]], ["b", ["thr_3"]], ["c", ["thr_2"]]] as const) {
+    for (const [key, ids] of [
+      ["a", ["thr_1", "thr_2"]],
+      ["b", ["thr_3"]],
+      ["c", ["thr_2"]],
+    ] as const) {
       await cache.get(key, meta([...ids], null), async () => key);
     }
     cache.invalidateThreads(["thr_2", "thr_unknown"]);
@@ -119,7 +141,14 @@ describe("createRepoCache", () => {
   it("does not store a load that an invalidation overtook", async () => {
     const { cache } = setup();
     let release: (value: string) => void = () => {};
-    const slow = cache.get("k", meta(), () => new Promise<string>((resolve) => { release = resolve; }));
+    const slow = cache.get(
+      "k",
+      meta(),
+      () =>
+        new Promise<string>((resolve) => {
+          release = resolve;
+        }),
+    );
     cache.invalidateThreads(["thr_1"]);
     release("stale");
     expect(await slow).toBe("stale");
@@ -163,7 +192,14 @@ describe("createRepoCache", () => {
 
 describe("planCached", () => {
   const plan = (ref: RepoPlan["ref"], threadIds = ["thr_1"]): RepoPlan => ({
-    key: "host_1:/work/one", ref, label: "Project", projectId: "proj_1", root: "/work/one", hostId: "host_1", threadIds, touched: new Map(),
+    key: "host_1:/work/one",
+    ref,
+    label: "Project",
+    projectId: "proj_1",
+    root: "/work/one",
+    hostId: "host_1",
+    threadIds,
+    touched: new Map(),
   });
 
   it("keys an entry by repository and variant, and watches the workspace's environment", async () => {
@@ -189,7 +225,14 @@ describe("planCached", () => {
 
   it("loads straight through when there is no cache", async () => {
     const load = vi.fn(async () => "files");
-    expect(await planCached(undefined, plan({ kind: "checkout", hostId: "host_1", root: "/work/one", base: null }), "uncommitted", load)).toBe("files");
+    expect(
+      await planCached(
+        undefined,
+        plan({ kind: "checkout", hostId: "host_1", root: "/work/one", base: null }),
+        "uncommitted",
+        load,
+      ),
+    ).toBe("files");
   });
 });
 
@@ -198,7 +241,14 @@ describe("hasThread", () => {
     const { cache } = setup();
     expect(cache.hasThread("thr_1")).toBe(false);
     let release!: () => void;
-    const loading = cache.get("k", meta(["thr_1", "thr_2"]), () => new Promise<string>((resolve) => { release = () => resolve("files"); }));
+    const loading = cache.get(
+      "k",
+      meta(["thr_1", "thr_2"]),
+      () =>
+        new Promise<string>((resolve) => {
+          release = () => resolve("files");
+        }),
+    );
     expect([cache.hasThread("thr_1"), cache.hasThread("thr_2"), cache.hasThread("thr_3")]).toEqual([true, true, false]);
     release();
     await loading;
@@ -224,7 +274,9 @@ describe("onInvalidate", () => {
 describe("a lookup that waits for a pending decision", () => {
   const deferred = () => {
     let resolve!: () => void;
-    const promise = new Promise<void>((done) => { resolve = done; });
+    const promise = new Promise<void>((done) => {
+      resolve = done;
+    });
     return { promise, resolve };
   };
   const flush = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
@@ -238,7 +290,9 @@ describe("a lookup that waits for a pending decision", () => {
     expect(await cache.get("a", meta(["thr_a"]), loadA)).toBe("a");
     const waiting = cache.get("b", meta(["thr_b"]), loadB);
     let answered = false;
-    void waiting.then(() => { answered = true; });
+    void waiting.then(() => {
+      answered = true;
+    });
     await flush();
     expect(answered).toBe(false);
     expect(loadB).not.toHaveBeenCalled();

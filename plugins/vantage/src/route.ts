@@ -1,11 +1,18 @@
 import type { OverviewTarget } from "./contract";
 import type { RepoFocus } from "./filters";
+import { parseHandoff, threadIdPattern, type Handoff } from "./reading-state";
 
 // "overview": nothing selected, or one worktree when `selectedKey` is set. "changes": every change, by repository.
 export type PageView = "overview" | "changes" | "overlaps";
-export interface PageRoute { target: OverviewTarget; view: PageView; selectedKey: string | null; focus: RepoFocus | null }
+export interface PageRoute {
+  target: OverviewTarget;
+  view: PageView;
+  selectedKey: string | null;
+  focus: RepoFocus | null;
+  handoff?: Handoff;
+}
 
-const THREAD_ID = /^[A-Za-z0-9_-]{1,64}$/;
+const MAX_HANDOFF_LENGTH = 60_000;
 const MAX_KEY_LENGTH = 400;
 const KEY_TEXT = /^(?:[A-Za-z0-9._-]|~[0-9A-Fa-f]{2})*$/;
 
@@ -13,15 +20,21 @@ const KEY_TEXT = /^(?:[A-Za-z0-9._-]|~[0-9A-Fa-f]{2})*$/;
 // comes back altered. A key is written with letters, digits, "." "_" "-" and "~XX" (a byte in hex)
 // instead: no stage of the round trip changes those.
 function encodeKey(key: string): string {
-  return [...new TextEncoder().encode(key)].map((byte) => {
-    const character = String.fromCharCode(byte);
-    return byte < 128 && /[A-Za-z0-9._-]/.test(character) ? character : `~${byte.toString(16).toUpperCase().padStart(2, "0")}`;
-  }).join("");
+  return [...new TextEncoder().encode(key)]
+    .map((byte) => {
+      const character = String.fromCharCode(byte);
+      return byte < 128 && /[A-Za-z0-9._-]/.test(character)
+        ? character
+        : `~${byte.toString(16).toUpperCase().padStart(2, "0")}`;
+    })
+    .join("");
 }
 
 function decodeKey(text: string): string | null {
   if (!KEY_TEXT.test(text)) return null;
-  const bytes = [...text.matchAll(/~([0-9A-Fa-f]{2})|[^~]/g)].map((part) => (part[1] === undefined ? part[0].charCodeAt(0) : parseInt(part[1], 16)));
+  const bytes = [...text.matchAll(/~([0-9A-Fa-f]{2})|[^~]/g)].map((part) =>
+    part[1] === undefined ? part[0].charCodeAt(0) : parseInt(part[1], 16),
+  );
   try {
     return new TextDecoder("utf-8", { fatal: true }).decode(Uint8Array.from(bytes));
   } catch {
@@ -49,7 +62,7 @@ export function parseRoute(subPath: string): { route: PageRoute; canonical: stri
   if (has(rest, "tree")) {
     take();
     const threadId = take();
-    if (THREAD_ID.test(threadId)) route.target = { kind: "tree", threadId };
+    if (threadIdPattern.test(threadId)) route.target = { kind: "tree", threadId };
     else rest = "";
   }
   // "repositories" is the address 0.5 and earlier gave this view.
@@ -65,6 +78,20 @@ export function parseRoute(subPath: string): { route: PageRoute; canonical: stri
   } else if (has(rest, "overlaps")) {
     take();
     route.view = "overlaps";
+  } else if (has(rest, "review")) {
+    take();
+    const segment = take();
+    if (segment.length <= MAX_HANDOFF_LENGTH) {
+      const decoded = decodeKey(segment);
+      if (decoded !== null) {
+        try {
+          const handoff = parseHandoff(JSON.parse(decoded));
+          if (handoff !== null) route.handoff = handoff;
+        } catch {
+          // The rest of the route remains valid.
+        }
+      }
+    }
   } else if (has(rest, "worktree")) {
     take();
     route.selectedKey = parseKey(rest);
@@ -80,6 +107,9 @@ export function formatRoute(route: PageRoute): string {
     parts.push("changes");
     if (route.focus?.kind === "otherFiles") parts.push("other-files");
     else if (route.focus?.kind === "repo") parts.push("repo", encodeKey(route.focus.key));
+  } else if (route.handoff !== undefined) {
+    const handoff = parseHandoff(route.handoff);
+    if (handoff !== null) parts.push("review", encodeKey(JSON.stringify(handoff)));
   } else if (route.selectedKey !== null) parts.push("worktree", encodeKey(route.selectedKey));
   return parts.join("/");
 }

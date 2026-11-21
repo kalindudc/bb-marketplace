@@ -3,15 +3,33 @@ import type { CollectDeps, Environment } from "./collect";
 import type { ThreadSummary } from "./contract";
 import { mapLimit } from "./limit";
 
-export interface AllOptions { windowHours: number; maxThreads: number; now?: number }
+export interface AllOptions {
+  windowHours: number;
+  maxThreads: number;
+  now?: number;
+}
 export interface Collected {
-  threads: ThreadSummary[]; environments: Map<string, Environment>; truncated: boolean;
+  threads: ThreadSummary[];
+  environments: Map<string, Environment>;
+  truncated: boolean;
   /** Archived threads that matched but were left out, so a toggle can say how many it would bring back. */
   archivedHidden: number;
 }
 
 type Listed = Awaited<ReturnType<PluginBbSdk["threads"]["list"]>>[number];
-type ThreadFields = Pick<Listed, "id" | "title" | "titleFallback" | "parentThreadId" | "archivedAt" | "environmentId" | "status">;
+type ThreadFields = Pick<
+  Listed,
+  | "id"
+  | "title"
+  | "titleFallback"
+  | "parentThreadId"
+  | "archivedAt"
+  | "environmentId"
+  | "status"
+  | "visibility"
+  | "originPluginId"
+  | "lifecycleOwnerThreadId"
+>;
 
 export const FETCH_CONCURRENCY = 8;
 const MAX_TITLE = 500;
@@ -21,7 +39,18 @@ const MAX_ARCHIVED_SCANNED = 500;
 export const RUNNING = new Set(["active", "starting", "pending"]);
 const HOUR_MS = 3_600_000;
 
+// Flare draws a thread's flares in a hidden companion it starts beside that thread and owns (plugins/flare/src/companion.ts).
+const FLARE_PLUGIN_ID = "flare";
+
 export function summarizeThread(thread: ThreadFields, depth: number, rootThreadId: string): ThreadSummary {
+  const hidden = thread.visibility === "hidden";
+  const companionOf =
+    hidden &&
+    thread.originPluginId === FLARE_PLUGIN_ID &&
+    thread.parentThreadId !== null &&
+    thread.lifecycleOwnerThreadId === thread.parentThreadId
+      ? thread.parentThreadId
+      : null;
   return {
     id: thread.id,
     title: (thread.title ?? thread.titleFallback ?? thread.id).slice(0, MAX_TITLE),
@@ -31,13 +60,19 @@ export function summarizeThread(thread: ThreadFields, depth: number, rootThreadI
     environmentId: thread.environmentId,
     status: thread.status,
     rootThreadId,
+    ...(hidden ? { hidden: true as const } : {}),
+    ...(companionOf === null ? {} : { companionOf }),
   };
 }
 
 export async function loadEnvironments(
-  sdk: PluginBbSdk, threads: readonly ThreadSummary[], signal?: AbortSignal,
+  sdk: PluginBbSdk,
+  threads: readonly ThreadSummary[],
+  signal?: AbortSignal,
 ): Promise<Map<string, Environment>> {
-  const environmentIds = [...new Set(threads.flatMap((thread) => (thread.environmentId === null ? [] : [thread.environmentId])))];
+  const environmentIds = [
+    ...new Set(threads.flatMap((thread) => (thread.environmentId === null ? [] : [thread.environmentId]))),
+  ];
   const environments = new Map<string, Environment>();
   await mapLimit(environmentIds, FETCH_CONCURRENCY, async (environmentId) => {
     const environment = await sdk.environments.get({ environmentId, signal }).catch(() => null);
@@ -46,7 +81,12 @@ export async function loadEnvironments(
   return environments;
 }
 
-async function listAll(sdk: PluginBbSdk, archived: boolean, maxScanned: number, signal?: AbortSignal): Promise<Listed[]> {
+async function listAll(
+  sdk: PluginBbSdk,
+  archived: boolean,
+  maxScanned: number,
+  signal?: AbortSignal,
+): Promise<Listed[]> {
   const found: Listed[] = [];
   for (let offset = 0; offset < maxScanned; offset += PAGE_SIZE) {
     const page = await sdk.threads.list({ archived, includeHidden: true, limit: PAGE_SIZE, offset, signal });
@@ -57,20 +97,27 @@ async function listAll(sdk: PluginBbSdk, archived: boolean, maxScanned: number, 
 }
 
 export async function collectAll(
-  deps: CollectDeps, options: AllOptions & { includeArchived: boolean }, signal?: AbortSignal,
+  deps: CollectDeps,
+  options: AllOptions & { includeArchived: boolean },
+  signal?: AbortSignal,
 ): Promise<Collected> {
   const { sdk } = deps;
   const cutoff = (options.now ?? Date.now()) - options.windowHours * HOUR_MS;
-  const active = (await listAll(sdk, false, MAX_ACTIVE_SCANNED, signal))
-    .filter((thread) => thread.updatedAt >= cutoff || RUNNING.has(thread.status));
+  const active = (await listAll(sdk, false, MAX_ACTIVE_SCANNED, signal)).filter(
+    (thread) => thread.updatedAt >= cutoff || RUNNING.has(thread.status),
+  );
   // The archived list is paged even when it is hidden: one page costs about 10 ms and gives the count.
-  const archivedInWindow = (await listAll(sdk, true, MAX_ARCHIVED_SCANNED, signal))
-    .filter((thread) => thread.archivedAt !== null && thread.archivedAt >= cutoff);
+  const archivedInWindow = (await listAll(sdk, true, MAX_ARCHIVED_SCANNED, signal)).filter(
+    (thread) => thread.archivedAt !== null && thread.archivedAt >= cutoff,
+  );
   const archived = options.includeArchived ? archivedInWindow : [];
   const newestFirst = (a: Listed, b: Listed): number => b.updatedAt - a.updatedAt || (a.id < b.id ? -1 : 1);
   const activeIds = new Set(active.map((thread) => thread.id));
   // Active threads come first under the limit, so including archived ones can never push an active thread off the page.
-  const matched = [...active.sort(newestFirst), ...archived.filter((thread) => !activeIds.has(thread.id)).sort(newestFirst)];
+  const matched = [
+    ...active.sort(newestFirst),
+    ...archived.filter((thread) => !activeIds.has(thread.id)).sort(newestFirst),
+  ];
   const kept = matched.slice(0, options.maxThreads);
 
   const byId = new Map(kept.map((thread) => [thread.id, thread]));
@@ -92,7 +139,9 @@ export async function collectAll(
     return summarizeThread(thread, depth, root);
   });
   return {
-    threads, environments: await loadEnvironments(sdk, threads, signal), truncated: matched.length > kept.length,
+    threads,
+    environments: await loadEnvironments(sdk, threads, signal),
+    truncated: matched.length > kept.length,
     archivedHidden: options.includeArchived ? 0 : archivedInWindow.length,
   };
 }

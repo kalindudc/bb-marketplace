@@ -9,10 +9,15 @@ function slowExec() {
     state.running++;
     state.peak = Math.max(state.peak, state.running);
     return new Promise<string>((resolve) => {
-      releases.push(() => { state.running--; resolve(name); });
+      releases.push(() => {
+        state.running--;
+        resolve(name);
+      });
     });
   };
-  const flush = async () => { await new Promise((resolve) => setTimeout(resolve, 0)); };
+  const flush = async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  };
   return { state, exec, releases, flush };
 }
 
@@ -37,7 +42,10 @@ describe("limitGit", () => {
   });
 
   it("frees the slot when a call fails", async () => {
-    const run = limitGit(async (fail: boolean) => { if (fail) throw new Error("boom"); return "ok"; }, 1);
+    const run = limitGit(async (fail: boolean) => {
+      if (fail) throw new Error("boom");
+      return "ok";
+    }, 1);
     const first = run(true);
     const second = run(false);
     await expect(first).rejects.toThrow("boom");

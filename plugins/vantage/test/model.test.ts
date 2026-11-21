@@ -1,19 +1,41 @@
 import { describe, expect, it } from "vitest";
 import type { Overview, ReviewMarks, Worktree } from "../src/contract";
-import { buildRows, chipCounts, firstToOpen, groupRows, hiddenCount, matchesChip, outsideEntries, reviewStarted, type Bucket, type RowsInput } from "../src/model";
+import {
+  buildRows,
+  chipCounts,
+  firstToOpen,
+  groupRows,
+  hiddenCount,
+  matchesChip,
+  outsideEntries,
+  reviewStarted,
+  type Bucket,
+  type RowsInput,
+} from "../src/model";
 import { markId, signature } from "../src/reviewed";
 import { checkoutRepo, fileChange, overview, sharedFile, sidebarThread, threadSummary, worktree } from "./fixtures";
 
 const file = fileChange({ path: "src/a.ts", additions: 3, deletions: 1 });
 const one = worktree({ key: "w1", threadIds: ["thr_1"], uncommitted: [file], label: "Shop" });
-const two = worktree({ key: "w2", threadIds: ["thr_2"], committed: [fileChange({ path: "src/b.ts" })], label: "Api", hostName: "Laptop" });
+const two = worktree({
+  key: "w2",
+  threadIds: ["thr_2"],
+  committed: [fileChange({ path: "src/b.ts" })],
+  label: "Api",
+  hostName: "Laptop",
+});
 const quiet = worktree({ key: "w3", threadIds: ["thr_3"], label: "Shop" });
 
 function input(over: Partial<Overview>, options: Partial<RowsInput> = {}): RowsInput {
   return {
     overview: overview({
-      threads: [threadSummary({ id: "thr_1" }), threadSummary({ id: "thr_2", title: "Api work" }), threadSummary({ id: "thr_3" })],
-      worktrees: [one, two, quiet], ...over,
+      threads: [
+        threadSummary({ id: "thr_1" }),
+        threadSummary({ id: "thr_2", title: "Api work" }),
+        threadSummary({ id: "thr_3" }),
+      ],
+      worktrees: [one, two, quiet],
+      ...over,
     }),
     live: new Map([
       ["thr_1", sidebarThread({ id: "thr_1", displayTitle: "Shop work", indicator: "waiting-for-input" })],
@@ -29,7 +51,10 @@ function input(over: Partial<Overview>, options: Partial<RowsInput> = {}): RowsI
 describe("buildRows", () => {
   it("leaves out worktrees with nothing changed and names each row by its thread", () => {
     const rows = buildRows(input({}));
-    expect(rows.map((row) => [row.worktree.key, row.title])).toEqual([["w1", "Shop work"], ["w2", "Api work"]]);
+    expect(rows.map((row) => [row.worktree.key, row.title])).toEqual([
+      ["w1", "Shop work"],
+      ["w2", "Api work"],
+    ]);
     expect(rows[0]).toMatchObject({ additions: 3, deletions: 1, progress: { reviewed: 0, total: 1 } });
   });
 
@@ -60,11 +85,21 @@ describe("buildRows", () => {
   it("counts reviewed files in every worktree, and calls one reviewed once every part is ticked", () => {
     const idle = new Map([["thr_1", sidebarThread({ id: "thr_1", indicator: "none" })]]);
     const marks: Record<string, ReviewMarks> = { w1: { [markId("uncommitted", "src/a.ts")]: signature(file) } };
-    expect(buildRows(input({}, { live: idle, marks }))[0]).toMatchObject({ bucket: "reviewed", progress: { reviewed: 1, total: 1 } });
+    expect(buildRows(input({}, { live: idle, marks }))[0]).toMatchObject({
+      bucket: "reviewed",
+      progress: { reviewed: 1, total: 1 },
+    });
   });
 
   it("leaves a folded untracked folder out of review progress, and a worktree with only one out of the list", () => {
-    const folder = fileChange({ path: "vendor/", status: "untracked", untracked: true, additions: null, deletions: null, folder: { files: 900, repository: true, sample: [] } });
+    const folder = fileChange({
+      path: "vendor/",
+      status: "untracked",
+      untracked: true,
+      additions: null,
+      deletions: null,
+      folder: { files: 900, repository: true, sample: [] },
+    });
     const idle = new Map([["thr_1", sidebarThread({ id: "thr_1", indicator: "none" })]]);
     const marks: Record<string, ReviewMarks> = { w1: { [markId("uncommitted", "src/a.ts")]: signature(file) } };
     const withFolder = { ...one, uncommitted: [file, folder] };
@@ -87,11 +122,16 @@ describe("buildRows", () => {
   it("does not count a tick from before the file changed", () => {
     const idle = new Map([["thr_1", sidebarThread({ id: "thr_1", indicator: "none" })]]);
     const marks: Record<string, ReviewMarks> = { w1: { [markId("uncommitted", "src/a.ts")]: "modified:1:1:" } };
-    expect(buildRows(input({}, { live: idle, marks }))[0]).toMatchObject({ bucket: "review", progress: { reviewed: 0, total: 1 } });
+    expect(buildRows(input({}, { live: idle, marks }))[0]).toMatchObject({
+      bucket: "review",
+      progress: { reviewed: 0, total: 1 },
+    });
   });
 
   it("files an archived thread's worktree under Archived, even when it is waiting", () => {
-    const rows = buildRows(input({ threads: [threadSummary({ id: "thr_1", archived: true }), threadSummary({ id: "thr_2" })] }));
+    const rows = buildRows(
+      input({ threads: [threadSummary({ id: "thr_1", archived: true }), threadSummary({ id: "thr_2" })] }),
+    );
     expect(rows[0]!.bucket).toBe("archived");
   });
 
@@ -114,7 +154,8 @@ describe("firstToOpen", () => {
   const rows = buildRows(input({}));
 
   it("opens the worktree that most needs a person, in a fixed order, and never an archived one", () => {
-    const withBuckets = (...buckets: Bucket[]) => buckets.map((bucket, index) => ({ ...rows[index % rows.length]!, bucket }));
+    const withBuckets = (...buckets: Bucket[]) =>
+      buckets.map((bucket, index) => ({ ...rows[index % rows.length]!, bucket }));
     expect(firstToOpen([])).toBeNull();
     expect(firstToOpen(withBuckets("archived"))).toBeNull();
     expect(firstToOpen(withBuckets("needs", "review", "working"))?.bucket).toBe("needs");
@@ -128,11 +169,16 @@ describe("groups and chips", () => {
   const rows = buildRows(input({ sharedFiles: [sharedFile({ path: "src/a.ts", worktreeKeys: ["w1", "w2"] })] }));
 
   it("groups by what needs doing, in a fixed order, and leaves out empty groups", () => {
-    expect(groupRows(rows, "status").map((group) => [group.label, group.rows.length])).toEqual([["Waiting on you", 1], ["Still working", 1]]);
+    expect(groupRows(rows, "status").map((group) => [group.label, group.rows.length])).toEqual([
+      ["Waiting on you", 1],
+      ["Still working", 1],
+    ]);
   });
 
   it("groups by project, archived last", () => {
-    const archived = buildRows(input({ threads: [threadSummary({ id: "thr_1", archived: true }), threadSummary({ id: "thr_2" })] }));
+    const archived = buildRows(
+      input({ threads: [threadSummary({ id: "thr_1", archived: true }), threadSummary({ id: "thr_2" })] }),
+    );
     expect(groupRows(archived, "project").map((group) => group.label)).toEqual(["Api", "Archived"]);
   });
 
@@ -146,9 +192,19 @@ describe("groups and chips", () => {
 describe("outside entries and hidden worktrees", () => {
   it("lists repositories edited by path and files outside any repository", () => {
     const edited = checkoutRepo({ files: [fileChange({ path: "docs/a.md", additions: 2, deletions: 0 })] });
-    const worked = checkoutRepo({ key: "worked", ref: { kind: "checkout", hostId: "host_1", root: "/c", base: null, worked: true }, files: [fileChange()] });
-    const entries = outsideEntries(overview({ repos: [edited, worked], otherFiles: [fileChange({ path: "/tmp/x" })] }), "");
-    expect(entries.map((entry) => [entry.kind, entry.title, entry.files])).toEqual([["repo", "commons", 1], ["otherFiles", "Other files", 1]]);
+    const worked = checkoutRepo({
+      key: "worked",
+      ref: { kind: "checkout", hostId: "host_1", root: "/c", base: null, worked: true },
+      files: [fileChange()],
+    });
+    const entries = outsideEntries(
+      overview({ repos: [edited, worked], otherFiles: [fileChange({ path: "/tmp/x" })] }),
+      "",
+    );
+    expect(entries.map((entry) => [entry.kind, entry.title, entry.files])).toEqual([
+      ["repo", "commons", 1],
+      ["otherFiles", "Other files", 1],
+    ]);
     expect(outsideEntries(overview({ repos: [edited] }), "zzz")).toEqual([]);
   });
 

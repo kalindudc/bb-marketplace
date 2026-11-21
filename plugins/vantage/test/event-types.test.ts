@@ -21,8 +21,14 @@ describe("classifyEventTypes", () => {
   });
 
   it("lists every type the server treats as a change on its own", () => {
-    expect(FILE_EVENT_TYPES).toEqual(expect.arrayContaining([
-      "item/completed", "turn/completed", "turn/diff/updated", "item/backgroundTask/completed", "item/delegation/completed",
-    ]));
+    expect(FILE_EVENT_TYPES).toEqual(
+      expect.arrayContaining([
+        "item/completed",
+        "turn/completed",
+        "turn/diff/updated",
+        "item/backgroundTask/completed",
+        "item/delegation/completed",
+      ]),
+    );
   });
 });
