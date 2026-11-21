@@ -217,7 +217,8 @@ export function applyAction(original: JournalEntry[], input: JournalAction, ctx:
   let resultIds: string[] = ids;
   switch (action.action) {
     case "add": case "split": case "add_step": {
-      if (!action.descriptions?.length) throw new Error("Provide one or more descriptions.");
+      const descriptions = action.descriptions ?? (action.action === "add" && action.description ? [action.description] : []);
+      if (!descriptions.length) throw new Error("Provide one or more descriptions.");
       let parentId: string | null = null;
       if (action.action !== "add") {
         const parent = find(action.id);
@@ -225,17 +226,18 @@ export function applyAction(original: JournalEntry[], input: JournalAction, ctx:
         if (closed(parent)) throw new Error("Reopen the parent before adding steps.");
         parentId = parent.id;
       }
-      if (entries.length + action.descriptions.length > 200) throw new Error("A journal holds at most 200 entries. Clear completed work first.");
-      resultIds = action.descriptions.map(d => add(d, parentId));
+      if (entries.length + descriptions.length > 200) throw new Error("A journal holds at most 200 entries. Clear completed work first.");
+      resultIds = descriptions.map(d => add(d, parentId));
       break;
     }
     case "toggle": case "done": case "reopen": case "start": case "block": case "verify": case "reject": {
       const targets = selected();
-      if (action.action === "start" && targets.length > 1) throw new Error("Start one entry at a time.");
+      if (action.action === "start" && targets.length > 1 && (!action.owner?.trim() || action.owner === ctx.threadId)) {
+        throw new Error("Start one entry per call. To run several at once, give each an owner, the thread id of whoever does it.");
+      }
       if (action.owner !== undefined && action.action !== "start") throw new Error("owner only goes with add, split, add_step, start or update.");
-      // Handing work over is one call: the owner is set before start decides which entries to demote.
-      if (action.action === "start" && action.owner !== undefined && targets[0]!.owner !== action.owner) { targets[0]!.owner = action.owner; touch(targets[0]!); }
       for (const e of targets) {
+        if (action.action === "start" && action.owner !== undefined && e.owner !== action.owner) { e.owner = action.owner; touch(e); }
         if (action.action === "verify" || action.action === "reject") requireWarden(e, actor, ctx.roleOf);
         if (action.action === "verify" && !closed(e)) throw new Error("Only reported done entries can be verified.");
         if ((action.action === "block" || action.action === "reject") && !action.reason) throw new Error("A reason is required.");

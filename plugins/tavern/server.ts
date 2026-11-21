@@ -19,7 +19,7 @@ import { registerScopeSettings } from "./src/server/scopes";
 import { SettingsStore } from "./src/server/settings/store";
 import { SettingsFiles } from "./src/server/settings/files";
 import { settingsHandlers } from "./src/server/settings/rpc";
-import { InsightsReader } from "./src/server/insights/index";
+import { InsightsReader, insightsHandlers } from "./src/server/insights/index";
 import { BurnCosts } from "./src/server/insights/burn";
 import { LIMITS } from "./src/server/limits";
 import { createBackupService } from "./src/server/backup/index";
@@ -31,8 +31,6 @@ import { setupContract } from "./src/shared/setup";
 import { SetupPreflight } from "./src/server/settings/setup-preflight";
 import { SetupService } from "./src/server/settings/setup";
 import { insightsContract } from "./src/shared/insights";
-import { VoiceCheckRunner } from "./src/server/voice-check/run";
-import { resolveWriter } from "./src/server/voice-check/writer";
 export const rpcContract = { ...coreContract, ...settingsContract, ...setupContract, ...insightsContract, ...backupContract };
 
 export function pause(ms: number, signal: AbortSignal): Promise<void> {
@@ -116,18 +114,6 @@ export default async function tavern(bb: BbPluginApi) {
   runtime.enableSettings(settings, insights);
   applySettings = () => runtime.settingsChanged();
   await registerScopeSettings(bb, runtime);
-  const voiceChecks = new VoiceCheckRunner({
-    bb, store, pluginId: bb.pluginId, now: Date.now, sleep: pause, checksPerHour: () => settings.read().tavern.voiceChecksPerHour,
-    log: (level, message) => bb.log[level](message), invalidate: (tags) => bb.rpc.experimental_invalidate(tags),
-    writer: async (characterId) => {
-      const personal = (await bb.sdk.projects.list({ includePersonal: true })).find((p) => p.kind === "personal");
-      if (!personal) throw new Error("no personal project");
-      return resolveWriter(bb, runtime.snapshot().classes, characterId, personal.id);
-    },
-    character: (characterId) => runtime.snapshot().characters.find((c) => c.id === characterId),
-  });
-  runtime.voiceChecks = voiceChecks;
-  void voiceChecks.recover().catch((error) => bb.log.warn(`Tavern voice check recovery failed: ${String(error)}`));
   runtime.taleRenderer = new TaleCompanions(bb, keeper);
   bb.onDispose(() => runtime.taleRenderer?.settled());
   registerTools(bb, runtime);
@@ -135,7 +121,7 @@ export default async function tavern(bb: BbPluginApi) {
   const setup = new SetupService(bb, settings, store, new SetupPreflight(bb, async (projectId, id) =>
     (projectId === null ? runtime.snapshot() : await runtime.prepareRegistry(projectId)).classes.find(role => role.id === id)));
   bb.rpc.register(rpcContract, { ...rpcHandlers(runtime), ...settingsHandlers(settings, new SettingsFiles(settings)), ...setup.handlers(), ...backupHandlers(backups),
-    insights: input => insights.view(input.range) });
+    ...insightsHandlers(insights) });
   registerCli(bb, runtime, backups, setup);
   bb.agents.configure((ctx) => runtime.configure(ctx));
   bb.ui.registerMentionProvider({

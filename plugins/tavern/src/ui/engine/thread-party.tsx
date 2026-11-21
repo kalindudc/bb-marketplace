@@ -141,7 +141,7 @@ export function ThreadPartyStrip({ data, character, classLabel, voice, held, pag
 
   if (mood === "released") return null;
   return <PartyStrip
-    character={character} classId={member.classId} classLabel={classLabel} mood={mood}
+    character={character} classId={member.classId} classLabel={classLabel} mood={mood} memberId={member.threadId}
     keeper={!!data.keeperView} surface={surface} region="widget" mode={motionMode} held={held} quiet={quiet}
     actorMenu={{ mode: motionMode, voice, voiceBeforeOff: data.voiceBeforeOff, quietUntil: quiet ? data.characterQuietUntil : undefined, change, openSheet: () => navigate.toPluginPanel("tavern", { subPath: `character/${character.id}` }) }}
     speech={visible?.line ?? null} canClickSpeak={speechMode !== "off" && speechSlot(mood) && !!character.says?.[mood]?.length}

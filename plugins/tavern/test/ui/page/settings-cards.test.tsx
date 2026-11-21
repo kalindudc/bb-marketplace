@@ -101,7 +101,7 @@ it("groups Atmosphere controls and links to the character sheets",async()=>{
  const party=await s.findByRole("region",{name:"The party"});
  const motion=s.getByRole("region",{name:"Motion"});
  expect(s.getByText("How the tavern looks and feels: its characters, their speech and its motion.")).toBeTruthy();
- expect(s.getAllByRole("heading",{level:3}).map(h=>h.textContent)).toEqual(["The party","Motion","Lantern","Character cues and checks"]);
+ expect(s.getAllByRole("heading",{level:3}).map(h=>h.textContent)).toEqual(["The party","Motion","Lantern","Character cues"]);
  const labels=(el:HTMLElement)=>[...el.querySelectorAll(".tv-set-row label")].map(l=>l.textContent);
  expect(labels(party)).toEqual(["Show characters","Speech bubbles","Levels and crest notches"]);
  expect(labels(motion)).toEqual(["Ambient motion","Character quiet","Repeat every"]);
@@ -109,8 +109,8 @@ it("groups Atmosphere controls and links to the character sheets",async()=>{
  expect(s.container.querySelector("#tavern-settings-atmosphere")).toBeTruthy();
  expect(s.container.querySelector("#motion")?.closest("#tavern-settings-atmosphere")).toBeTruthy();
  for(const text of s.container.querySelectorAll("p")){
-  if(text.closest(".tv-set-row")?.querySelector("label")?.textContent==="Speech bubbles") expect(text.textContent).toMatch(/bubbles.*reports/i);
-  else expect(text.textContent).not.toMatch(/\b(reports?|records?)\b/i);
+  if(text.closest(".tv-set-row")?.querySelector("label")?.textContent==="Speech bubbles") expect(text.textContent).toMatch(/Show speech bubbles/i);
+  expect(text.textContent).not.toMatch(/allow.*(?:line|replies)|voice check/i);
  }
  fireEvent.click(within(party).getByRole("button",{name:"Character sheets"}));
  expect(s.inspection.navigateCalls).toEqual([{method:"toPluginPanel",path:"tavern",options:{subPath:"characters"}}]);

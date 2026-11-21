@@ -1727,12 +1727,11 @@ export class Keeper {
     threadId: string,
     input: Pick<
       Report,
-      "status" | "outcome" | "headline" | "evidence" | "artifacts" | "confidence" | "voice" | "wait"
-    >,
+      "status" | "outcome" | "headline" | "evidence" | "artifacts" | "confidence" | "wait"
+    > & Partial<Pick<Report, "voice">>,
   ) {
     const m = this.require(threadId, "member");
     if (input.status === "done" && input.wait) throw new Error("A done report cannot declare a wait.");
-    const voiceOff = this.settings(m.boardQuestId).tavern.voice === "off";
     const late = !isLiveMember(this.store, m, "brief") || m.engagement === "resting" && input.status !== "done" || !isLiveKeeper(this.store, this.member(m.keeperThreadId!), "present");
     const entries = this.journal
       .get(threadId)
@@ -1775,7 +1774,7 @@ export class Keeper {
       keeperThreadId: m.keeperThreadId,
       boardQuestId: m.boardQuestId,
       waypointId: m.waypointId,
-      voice: input.status === "done" && !voiceOff ? input.voice : null,
+      voice: null,
       createdAt: this.now(),
       deliveredAt: late ? this.now() : null,
     });
@@ -1796,7 +1795,7 @@ export class Keeper {
       JSON.stringify(previous.artifacts) === JSON.stringify(report.artifacts) &&
       isDeepStrictEqual(previous.wait, report.wait)
     )
-      return voiceOff ? { ...previous, voice: null } : previous;
+      return { ...previous, voice: null };
     this.store.atomic(() => {
       this.store.put("reports", report.id, report);
       if (!late) {
@@ -1819,7 +1818,6 @@ export class Keeper {
       });
     });
     this.changed(threadId, m.boardQuestId);
-    if (m.characterId && report.status === "done" && report.voice?.trim()) this.invalidate([tags.registry()]);
     return report;
   }
   checkerWaypoints(threadId: string) {

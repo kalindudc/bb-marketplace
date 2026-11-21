@@ -7,7 +7,6 @@ import { FormSkeleton, PageLoad } from "./skeletons";
 import { AwayForm } from "./away";
 import { type Registry } from "./common";
 import { PageGlyph } from "./glyphs";
-import { VoiceCheckBox } from "./voice-check";
 import { AvatarRoll } from "./avatar-roll";
 import { BubbleFields, readBubbleDraft, type BubbleEdits } from "./bubble-lines";
 
@@ -79,7 +78,6 @@ export function CharacterVoiceForm({ character, registry }: { character: Charact
       }} />
     </fieldset>
     <section className="tv-grpbox" aria-label="Voice preview"><div className="lbl">Preview · your draft</div><dl className="tv-preview">{Object.entries(draft.lines).map(([slot, line]) => <div key={slot}><dt>{slot}</dt><dd className="tv-voice">{line}</dd></div>)}</dl></section>
-    <VoiceCheckBox characterId={character.id} draft={{ name: draft.name, style: draft.style, quirks: draft.quirks }} voice={registry.voice} />
     <footer className="tv-formf"><button className="btn pri" type="submit" disabled={save.isPending}><span>{save.isPending ? "Saving…" : `Save ${character.name}`}</span></button><button className="btn" type="button" disabled={save.isPending} onClick={() => { setDraft(character); setBubbleEdits({}); setCheckedBubbles(false); setSaved(false); setInvalid(null); }}><span>Discard draft</span></button>{saved && <span role="status" className="tv-saved"><PageGlyph name="done" /><span>Voice saved to your character override.</span></span>}</footer>
     {invalid && <p className="tv-problem" role="alert">{invalid}</p>}
     {save.error && <p className="tv-problem" role="alert">Voice not saved: {save.error.message}</p>}

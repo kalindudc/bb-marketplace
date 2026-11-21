@@ -9,16 +9,25 @@ import { registerJournal } from "../../src/server/journal";
 
 const cleanup: (() => Promise<void>)[] = [];
 afterEach(async () => { vi.useRealTimers(); await Promise.all(cleanup.splice(0).map(f => f())); });
-function fixture() {
+function fixture(deps: Partial<Parameters<typeof createJournalStore>[2]> = {}) {
   const host = makeHost(); cleanup.push(host.dispose);
   host.bb.storage.migrate(host.db, JOURNAL_MIGRATIONS);
-  const store = createJournalStore(host.bb, host.db, { roleOf: () => null, invalidate: () => {} });
+  const store = createJournalStore(host.bb, host.db, { roleOf: () => null, invalidate: () => {}, ...deps });
   watchRequests(host.bb, store);
   const thread = { id: "t", providerId: "pi" };
   return { ...host, store, thread };
 }
 const user = (seq: number, at: number) => ({ seq, createdAt: at, type: "client/turn/requested", data: { initiator: "user", input: [{ type: "text", text: "continue" }] } });
 const item = (seq: number, type: string, tool = "bash") => ({ seq, createdAt: 1000, type, data: { item: { id: "work", type: "toolCall", tool } } });
+const work = (after: number, count = 15) => Array.from({ length: count }, (_, n) => {
+  const seq = after + n * 2 + 1;
+  return ["item/started", "item/completed"].map((type, i) => ({ seq: seq + i, createdAt: 1000, type, data: { item: { id: `work-${seq}`, type: "toolCall", tool: "bash" } } }));
+}).flat();
+const inProgress = (seq: number) => item(seq, "item/started");
+const codemodeJournal = (seq: number) => {
+  const row = item(seq, "item/started", "codemode");
+  return { ...row, data: { item: { ...row.data.item, arguments: { code: 'await tools.journal({ action: "list" })' } } } };
+};
 async function staleFixture() {
   const f = fixture(); await f.store.ready("t");
   await f.store.runTool("t", { action: "add", descriptions: ["build"] });
@@ -27,6 +36,69 @@ async function staleFixture() {
   f.db.prepare("UPDATE questlog_changes SET at = 100").run();
   return f;
 }
+
+describe("empty journal hint", () => {
+  it.each(["pi", "claude-code", "codex"])("joins an existing %s turn after 15 completed pieces of work, without starting a turn", async providerId => {
+    const f = fixture(), thread = { ...f.thread, providerId };
+    f.setEvents([user(1, 100), ...work(1, 14), inProgress(30)]);
+    await f.emit("thread.active", { thread });
+    expect(f.sent).toEqual([]);
+    f.setEvents([user(1, 100), ...work(1), item(32, "item/completed")]);
+    await f.emit("experimental_thread.events", { thread });
+    expect(f.sent).toEqual([]);
+    f.setEvents([user(1, 100), ...work(1), item(32, "item/completed"), { ...inProgress(33), data: { item: { id: "next", type: "toolCall", tool: "bash" } } }]);
+    await f.emit("experimental_thread.events", { thread });
+    expect(f.sent).toEqual([expect.objectContaining({ threadId: "t", mode: "steer", input: [expect.objectContaining({ visibility: "agent-only", text: expect.stringMatching(/^\[Journal\].*empty/) })] })]);
+  });
+  it("sends once across ordinary turns and rearms after a human steer, never twice in the same turn", async () => {
+    const f = fixture(), thread = f.thread;
+    const first = [user(1, 100), ...work(1), inProgress(32)];
+    f.setEvents(first);
+    await f.emit("thread.active", { thread });
+    expect(f.sent).toHaveLength(1);
+    const second = [...first, user(40, 200), ...work(40), inProgress(71)];
+    await f.emit("thread.idle", { thread });
+    f.setEvents(second);
+    await f.emit("thread.active", { thread });
+    expect(f.sent).toHaveLength(1);
+    const steer = { ...user(72, 300), data: { ...user(72, 300).data, requestId: "req-steer", target: { kind: "steer", expectedTurnId: "turn-2" } } };
+    const accepted = { seq: 73, createdAt: 301, type: "turn/input/accepted", data: { clientRequestId: "req-steer" } };
+    f.setEvents([...second, steer, accepted]);
+    await f.emit("experimental_thread.events", { thread });
+    await f.emit("thread.idle", { thread });
+    const third = [...second, steer, accepted, user(80, 400), ...work(80), inProgress(111)];
+    f.setEvents(third);
+    await f.emit("thread.active", { thread });
+    await f.emit("experimental_thread.events", { thread });
+    expect(f.sent).toHaveLength(2);
+    await f.emit("thread.idle", { thread });
+    f.setEvents([...third, user(120, 500), ...work(120), inProgress(151)]);
+    await f.emit("thread.active", { thread });
+    expect(f.sent).toHaveLength(2);
+  });
+  it.each(["journal", "mcp__tavern__journal", "codemode", "quest"])("handles %s before the threshold", async tool => {
+    const f = fixture();
+    f.setEvents([user(1, 100), tool === "codemode" ? codemodeJournal(2) : item(2, "item/started", tool), item(3, "item/completed", tool), ...work(3), inProgress(34)]);
+    await f.emit("thread.active", { thread: f.thread });
+    expect(f.sent).toHaveLength(tool === "quest" ? 1 : 0);
+  });
+  it.each(["acp", "disabled", "keeper", "idle", "closed", "no-work-id"])("does not send in the %s case", async mode => {
+    const f = fixture({
+      ...(mode === "disabled" ? { settings: () => ({ journalReminders: false, journalQuietMinutes: 10 }) } : {}),
+      ...(mode === "keeper" ? { roleOf: () => ({ classId: "keeper", role: "keeper", boardQuestId: null, waypointId: null }) } : {}),
+    });
+    if (mode === "idle") f.threads.set("t", { id: "t", status: "idle" });
+    if (mode === "closed") {
+      await f.store.ready("t");
+      await f.store.runTool("t", { action: "add", descriptions: ["Already kept a journal"] });
+      await f.store.runTool("t", { action: "done", id: "00" });
+    }
+    const rows = mode === "no-work-id" ? work(1).map(row => ({ ...row, data: { item: { ...row.data.item, id: undefined } } })) : work(1);
+    f.setEvents([user(1, 100), ...rows, inProgress(32)]);
+    await f.emit("thread.active", { thread: { ...f.thread, providerId: mode === "acp" ? mode : "pi" } });
+    expect(f.sent).toEqual([]);
+  });
+});
 
 describe("no-wake journal notes", () => {
   it("rejects only agent-only [Journal] notes that would start turns and never throws", () => {
@@ -102,10 +174,10 @@ describe("no-wake journal notes", () => {
     expect(f.sent[0]).toMatchObject({ threadId: "t", mode: "steer", input: [{ type: "text", visibility: "agent-only", text: expect.stringContaining("[Journal]") }] });
     expect(f.sent[0]).toMatchObject({ input: [{ text: expect.stringContaining("previous message") }] });
   });
-  it.each(["completed", "quest-first", "idle", "acp"])("does not send after %s", async mode => {
+  it.each(["completed", "quest-first", "codemode-first", "idle", "acp"])("does not send after %s", async mode => {
     const f = await staleFixture();
     if (mode === "idle") f.threads.set("t", { id: "t", status: "idle" });
-    f.setEvents([user(1, 200), user(2, 300), item(3, "item/started", mode === "quest-first" ? "tavern.quest" : "bash"), ...(mode === "completed" ? [item(4, "item/completed")] : [])]);
+    f.setEvents([user(1, 200), user(2, 300), mode === "codemode-first" ? codemodeJournal(3) : item(3, "item/started", mode === "quest-first" ? "tavern.quest" : "bash"), ...(mode === "completed" ? [item(4, "item/completed")] : [])]);
     await f.emit("thread.active", { thread: { ...f.thread, providerId: mode === "acp" ? "acp" : "pi" } });
     expect(f.sent).toEqual([]);
   });

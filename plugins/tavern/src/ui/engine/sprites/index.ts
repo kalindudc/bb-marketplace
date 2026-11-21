@@ -69,7 +69,6 @@ export const createArt: ArtFactory = input => {
         const boundary = t + next;
         t = boundary + 1e-7;
         if (pixelKey({ ...frame, t }) !== key) return boundary - frame.t;
-        if (frame.activity === "quiet") return null;
       }
     },
     lightAnchor(frame) {

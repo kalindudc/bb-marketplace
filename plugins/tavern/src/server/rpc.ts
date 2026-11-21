@@ -27,7 +27,6 @@ import { markQuestChangesSeen } from "./quest-change-attention";
 import { stopAllHandlers } from "./stop-all-rpc";
 import { placementHandlers } from "./placement/rpc";
 import { PlacementStore } from "./placement/store";
-import { voiceCheckHandlers } from "./voice-check/rpc";
 import { awayHandlers } from "./away/rpc";
 import { classEditorHandlers, requireClassClient } from "./registry-rpc";
 import { classExecutionFacts } from "./class-execution";
@@ -103,7 +102,6 @@ export function rpcHandlers(
   return userActHandlers({
     ...stopAllHandlers(runtime),
     ...placementHandlers(runtime),
-    ...voiceCheckHandlers(() => runtime.voiceChecks),
     ...awayHandlers(runtime),
     alertRoute: () => runtime.alerts.view(),
     alertTestSend: (_input, context, receipt?: UserActReceipt) => runtime.alerts.sendTest(receipt ?? requireUserAct(context, "alertTestSend")),

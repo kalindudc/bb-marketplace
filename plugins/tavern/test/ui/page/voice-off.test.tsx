@@ -21,7 +21,7 @@ async function open(subPath: string, voice: "full" | "light" | "off" | undefined
   base.classes = base.classes.map((c) => c.id === "keeper" ? { ...c, characters: [...new Set([...c.characters, "wren"])] } : c);
   const registry = { ...base, characterReportVoices: reportVoices, ...(voice ? { voice } : {}) };
   const slot = renderSlot(plugin.navPanels[0]!, { subPath }, { pluginId: "tavern", experimental_rpcContract: rpcContract,
-    rpc: { registry: () => structuredClone(registry), room: () => structuredClone(room), voiceCheck: () => ({ characterId: "wren", history: [] }), ...rpc } as Partial<Handlers> as Handlers });
+    rpc: { registry: () => structuredClone(registry), room: () => structuredClone(room), ...rpc } as Partial<Handlers> as Handlers });
   slots.push(slot);
   return slot;
 }

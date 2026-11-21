@@ -4,8 +4,6 @@ import { fireEvent, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CHARACTER_PRESENTATION_PROBLEM_PREFIX } from "../../../src/shared/character-presentation";
 import { rpcContract } from "../../../src/shared/contract";
-import type { VoiceCheck, VoiceCheckView } from "../../../src/shared/voice-check";
-import { VOICE_CHECK_SITUATIONS } from "../../../src/shared/voice-check";
 import { registerPageSurfaces } from "../../../src/ui/page/register";
 import * as scenes from "./scenes";
 
@@ -16,69 +14,33 @@ beforeEach(() => window.localStorage.clear());
 afterEach(() => { for (const slot of slots.splice(0)) slot.lifecycle.unmount(); });
 
 const wren = scenes.registry.characters.find((c) => c.id === "wren")!;
-const at = new Date(new Date().getFullYear(), 10, 13, 12).getTime();
-const five = (failing = 0) => VOICE_CHECK_SITUATIONS.map((id, i) => ({ id, title: id, pass: i >= failing, failures: [], answer: null }));
-const check = (over: Partial<VoiceCheck> = {}): VoiceCheck => ({ id: "vc_1", characterId: "wren", draft: { name: wren.name, style: wren.style }, state: "passed", startedAt: at - 30_000, finishedAt: at,
-  writer: { providerId: "pi", model: "gpt-5.1" }, judge: { providerId: "pi", model: "claude-haiku-4-5" }, tone: "judged", situations: five(), reason: null, cost: null, ...over });
-const view = (history: VoiceCheck[]): VoiceCheckView => ({ history, running: null, cap: { used: history.length, max: 10, nextAt: null } });
-
-async function sheet(history: VoiceCheck[], extra: Partial<typeof scenes.registry> = {}, panel = false) {
+async function sheet(extra: Partial<typeof scenes.registry> = {}, panel = false) {
   const plugin = await loadPluginApp(async () => ({ default: definePluginApp(registerPageSurfaces) }));
   const registry = { ...structuredClone(scenes.registry), ...extra };
   const slot = renderSlot(plugin.navPanels[0]!, { subPath: "character/wren" }, { pluginId: "tavern", experimental_rpcContract: rpcContract,
-    rpc: { registry: () => structuredClone(registry), room: () => structuredClone(scenes.richRoom), voiceCheck: () => view(history) } as Partial<Handlers> as Handlers,
+    rpc: { registry: () => structuredClone(registry), room: () => structuredClone(scenes.richRoom) } as Partial<Handlers> as Handlers,
     ...(panel ? { experimental_panel: { openTab: () => true } } : {}) });
   slots.push(slot);
   await slot.findByRole("heading", { name: wren.name }, LOADED);
   return slot;
 }
-const seal = (slot: RenderedSlot) => slot.container.querySelector<HTMLElement>(".tv-sheet-head [data-seal]");
-
-describe("the voice check's seal on the character sheet", () => {
-  it("keeps a full seal for a pass whose tone a model judged", async () => {
-    const slot = await sheet([check()]);
-    const el = await waitFor(() => { expect(seal(slot)).not.toBeNull(); return seal(slot)!; }, LOADED);
-    expect(el.dataset.seal).toBe("full");
-    expect(el.textContent).toBe("Voice checked 13 Nov, 5 of 5");
-    expect(el.querySelector("svg")).not.toBeNull();
-  });
-
-  it("never shows a rules-only pass as a full seal", async () => {
-    const slot = await sheet([check({ judge: null, tone: "not-judged" })]);
-    const el = await waitFor(() => { expect(seal(slot)).not.toBeNull(); return seal(slot)!; }, LOADED);
-    expect(el.dataset.seal).toBe("rules");
-    expect(el.textContent).toBe("Rules checked 13 Nov, 5 of 5 · tone not judged");
-    expect(el.textContent).not.toMatch(/Voice checked/);
-    expect(el.querySelector("svg")).toBeNull();
-  });
-
-  it("leaves no seal when the latest finished check failed, or checked an earlier draft", async () => {
-    for (const history of [[check({ state: "failed", situations: five(1) }), check({ id: "vc_0" })], [check({ draft: { name: wren.name, style: "an older style" } })]]) {
-      const slot = await sheet(history);
-      await slot.findByText(/Agents never see levels/, {}, LOADED);
-      await new Promise((r) => setTimeout(r, 80));
-      expect(seal(slot)).toBeNull();
-      slot.lifecycle.unmount(); slots.pop();
-    }
-  });
-});
 
 describe("the user's hand on the character sheet", () => {
   const changed = new Date(new Date().getFullYear(), 10, 12, 9).getTime();
   const yours = (slot: RenderedSlot) => slot.container.querySelector<HTMLElement>(".tv-sheet-head [data-yours]");
 
   it("says Your character, with the file's change date, for a file that didn't ship with Tavern; never 'edited'", async () => {
-    const slot = await sheet([], { characterAuthorship: [{ characterId: "wren", source: "global", changedAt: changed }] });
+    const slot = await sheet({ characterAuthorship: [{ characterId: "wren", source: "global", changedAt: changed }] });
     const el = await waitFor(() => { expect(yours(slot)).not.toBeNull(); return yours(slot)!; }, LOADED);
     expect(el.textContent).toBe("Your character · file changed 12 Nov");
     expect(slot.container.textContent).not.toMatch(/edited/i);
-    const project = await sheet([], { characterAuthorship: [{ characterId: "wren", source: "project", changedAt: null }] });
+    const project = await sheet({ characterAuthorship: [{ characterId: "wren", source: "project", changedAt: null }] });
     await waitFor(() => expect(yours(project)?.textContent).toBe("Your character · this project's file"), LOADED);
   });
 
   it("never says Your character for a shipped character, or when the server sends no entry", async () => {
     for (const extra of [{ characterAuthorship: [{ characterId: "wren", source: "shipped" as const, changedAt: null }] }, {}]) {
-      const slot = await sheet([], extra);
+      const slot = await sheet(extra);
       await slot.findByText(/Agents never see levels/, {}, LOADED);
       expect(yours(slot)).toBeNull();
     }
@@ -90,7 +52,7 @@ describe("the user's hand on the character sheet", () => {
       { reportId: "r2", line: "Front passed; drafts are in.", at: changed + 86_400_000, threadId: null, questId: "vault" },
       { reportId: "r1", line: "Light rain on the audit.", at: changed, threadId: "thr-lark", questId: "audit" },
     ];
-    const slot = await sheet([], { characterReportVoices: [{ characterId: "wren", voices }] }, true);
+    const slot = await sheet({ characterReportVoices: [{ characterId: "wren", voices }] }, true);
     const section = await slot.findByRole("region", { name: "Said in a report" }, LOADED);
     const rows = [...section.querySelectorAll("li")];
     expect(rows.map((r) => r.querySelector(".tv-voice")!.textContent)).toEqual(voices.map((v) => v.line));
@@ -105,7 +67,7 @@ describe("the user's hand on the character sheet", () => {
   });
 
   it("draws no section when the character has no report lines", async () => {
-    const slot = await sheet([], { characterReportVoices: [{ characterId: "wren", voices: [] }] });
+    const slot = await sheet({ characterReportVoices: [{ characterId: "wren", voices: [] }] });
     await slot.findByText(/Agents never see levels/, {}, LOADED);
     expect(slot.queryByRole("region", { name: "Said in a report" })).toBeNull();
   });
@@ -131,7 +93,7 @@ describe("the tales on a character's sheet", () => {
     const plugin = await loadPluginApp(async () => ({ default: definePluginApp(registerPageSurfaces) }));
     const registry = { ...structuredClone(scenes.registry), serviceRecords: [svc] };
     const slot = renderSlot(plugin.navPanels[0]!, { subPath: "character/wren" }, { pluginId: "tavern", experimental_rpcContract: rpcContract,
-      rpc: { registry: () => structuredClone(registry), room: () => structuredClone(scenes.richRoom), voiceCheck: () => view([]), ...rpc } as Partial<Handlers> as Handlers });
+      rpc: { registry: () => structuredClone(registry), room: () => structuredClone(scenes.richRoom), ...rpc } as Partial<Handlers> as Handlers });
     slots.push(slot);
     // Scoped to this slot: an earlier slot may still be mounted in the document.
     const section = await waitFor(() => { const el = slot.container.querySelector<HTMLElement>("section.tv-tales"); expect(el).not.toBeNull(); return el!; }, LOADED);
@@ -183,7 +145,7 @@ describe("the tales on a character's sheet", () => {
     const plugin = await loadPluginApp(async () => ({ default: definePluginApp(registerPageSurfaces) }));
     const registry = { ...structuredClone(scenes.registry), serviceRecords: [{ ...svc, records: [row("stopped", { phase: "stopped", told: false })] }] };
     const slot = renderSlot(plugin.navPanels[0]!, { subPath: "character/wren" }, { pluginId: "tavern", experimental_rpcContract: rpcContract,
-      rpc: { registry: () => structuredClone(registry), room: () => structuredClone(scenes.richRoom), voiceCheck: () => view([]) } as Partial<Handlers> as Handlers });
+      rpc: { registry: () => structuredClone(registry), room: () => structuredClone(scenes.richRoom) } as Partial<Handlers> as Handlers });
     slots.push(slot);
     await slot.findByText(/Agents never see levels/, {}, LOADED);
     expect(slot.queryByRole("region", { name: "Tales" })).toBeNull();
@@ -205,7 +167,7 @@ describe("when part of a character's presentation can't be read", () => {
     base.characters = base.characters.map((c) => c.id === "wren" ? { ...c, source: WREN_FILE } : c);
     const registry = { ...base, problems: problems(), characterAuthorship: [{ characterId: "wren", source: "global" as const, changedAt: null }] };
     const slot = renderSlot(plugin.navPanels[0]!, { subPath }, { pluginId: "tavern", experimental_rpcContract: rpcContract,
-      rpc: { registry: () => structuredClone(registry), room: () => structuredClone(scenes.richRoom), voiceCheck: () => view([]), deletedBoardQuests: () => ({ boardQuests: [], total: 0, nextCursor: null }) } as Partial<Handlers> as Handlers });
+      rpc: { registry: () => structuredClone(registry), room: () => structuredClone(scenes.richRoom), deletedBoardQuests: () => ({ boardQuests: [], total: 0, nextCursor: null }) } as Partial<Handlers> as Handlers });
     slots.push(slot);
     // The other problem's alert shows once the registry is in; then the route's own content, past its skeleton.
     await waitFor(() => expect(slot.container.textContent).toContain("Invalid front matter"), LOADED);

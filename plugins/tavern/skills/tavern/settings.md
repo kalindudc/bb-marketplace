@@ -27,7 +27,6 @@ Paths use the snake_case spelling for TOML. The settings CLI uses camelCase. A v
 | `tavern.batch_wake_events` | Lets wake-delivered Keeper ticks briefly gather more events; does not affect regular sweeps. | `false` | User; Granted |
 | `tavern.reported_pose_seconds` | Sets how long a character holds the reported pose. | `60` | User; Granted |
 | `tavern.verified_pose_minutes` | Sets how long a character holds the verified pose. | `10` | User; Granted |
-| `tavern.voice_checks_per_hour` | Limits the number of voice checks started in an hour. | `10` | User; Granted |
 | `away.never_while_closed` | Lists kinds to stop in the next Closing time window. | `["merge","deploy","production","sends-as-you","delete","other-writes"]` | User |
 | `away.default_end_state` | Preselects the outcome to aim for at the next Closing time. | `"drafts-ready"` | User; Plain |
 | `away.default_allow_watched` | Preselects whether watched work can continue while closed. | `false` | User; Plain |

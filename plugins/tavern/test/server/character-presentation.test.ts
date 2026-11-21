@@ -198,19 +198,11 @@ describe("UI-only character presentation", () => {
     f.k.store.db.prepare("DELETE FROM tavern_records WHERE kind='quests' AND id=?").run(quest.id);
     expect((await f.read()).characterReportVoices?.[0]?.voices[0]?.questId).toBeNull();
   });
-  it("refreshes the registry once for a newly stored report voice, not a duplicate retry", () => {
-    const f = fixture(); f.member();
-    const invalidate = vi.spyOn(f.bb.rpc, "experimental_invalidate");
-    const input = { status: "done" as const, outcome: "Proved", voice: "An actual report line", evidence: [], artifacts: [], confidence: null };
-    const report = f.k.report("worker", input);
-    expect(invalidate.mock.calls.filter(([tags]) => tags.includes("tavern:registry"))).toHaveLength(1);
-    expect(f.k.report("worker", input).id).toBe(report.id);
-    expect(invalidate.mock.calls.filter(([tags]) => tags.includes("tavern:registry"))).toHaveLength(1);
-  });
-  it.each(["blocked", "needs-decision", "empty", "characterless"])("does not refresh registry for a %s report voice", kind => {
+  it.each(["done", "blocked", "needs-decision", "characterless"])("does not create a new %s report voice or refresh the registry", kind => {
     const f = fixture(); f.member("worker", kind === "characterless" ? null : "juno");
     const invalidate = vi.spyOn(f.bb.rpc, "experimental_invalidate");
-    f.k.report("worker", { status: kind === "blocked" || kind === "needs-decision" ? kind : "done", outcome: "Result", voice: kind === "empty" ? " \t\u00a0" : "An agent line", evidence: [], artifacts: [], confidence: null });
+    const report = f.k.report("worker", { status: kind === "blocked" || kind === "needs-decision" ? kind : "done", outcome: "Result", voice: "An obsolete input line", evidence: [], artifacts: [], confidence: null });
+    expect(report.voice).toBeNull();
     expect(invalidate.mock.calls.filter(([tags]) => tags.includes("tavern:registry"))).toEqual([]);
   });
   it.each([

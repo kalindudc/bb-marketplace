@@ -26,7 +26,6 @@ import type {
 } from "../../shared/schema";
 import { actorSchema, readStoredActor } from "../../shared/schema";
 
-import type { VoiceCheck } from "../../shared/voice-check";
 
 // Opening events remain append-only; their quest is projected from the bound source route.
 const eventQuestSql = `coalesce(tavern_events.board_quest_id, CASE tavern_events.type
@@ -85,10 +84,6 @@ export interface Records {
   gates: GateRecord;
   gateReminders: { keeperThreadId: string; at: number; value?: string };
   autoGreenlights: { keeperThreadId: string; boardQuestId: string; planVersion: number; undonePlanVersion?: number };
-  // The voice check (voice-check/run.ts): each run with the thread ids Tavern spawned for it, and the one hidden parent.
-  voiceChecks: VoiceCheck & { threadIds: string[] };
-  voiceCheckParent: { threadId: string; ready: boolean; createdAt: number; muted?: boolean };
-  voiceCheckUnreachable: { providerId: string; model: string; at: number; detail: string };
 }
 export interface ScopeRequest {
   keeperThreadId: string;

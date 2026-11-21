@@ -59,7 +59,7 @@ export function phaseSeconds(data: InsightData, from: number, to: number) {
   }
   return result;
 }
-export function aggregateInsights(data: InsightData, settings: SettingsSnapshot, range: InsightsView["range"], now: number, collectingSince: number, tuningHistory: SettingDecision[], characters: InsightCharacters | null = null): InsightsView {
+export function aggregateInsights(data: InsightData, settings: SettingsSnapshot, range: InsightsView["range"], now: number, collectingSince: number, tuningHistory: SettingDecision[], characters: InsightCharacters | null = null): Omit<InsightsView, "wardenQuality"> {
   const days = { "7d": 7, "30d": 30, "90d": 90 }[range], from = now - days * LIMITS.dayMs;
   const events = data.events.filter(event => event.at >= from && event.at <= now);
   const count = (type: string) => events.filter(event => event.type === type).length;

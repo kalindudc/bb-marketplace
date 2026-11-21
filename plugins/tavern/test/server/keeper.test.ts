@@ -280,7 +280,8 @@ describe("host boundaries", () => {
       makePluginAgentConfigurationContext({ thread: { id: "child" } }),
     );
     expect(member.tools.map((t) => t.name)).toEqual(["journal", "tavern_request_sources", "tavern_report", "tavern_draft_pr"]);
-    expect(member.instructions).toContain("Never use the voice for blockers");
+    expect(member.instructions).toContain("Write asks, blockers and failures plainly");
+    expect(member.instructions).not.toContain("Character voice rules");
   });
   it("binds from an actual plugin mention before configuration, never metadata", async () => {
     const { runtime, k } = setup();

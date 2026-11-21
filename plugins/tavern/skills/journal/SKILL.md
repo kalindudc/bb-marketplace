@@ -19,8 +19,8 @@ All readers need a journal that is current while work happens. A journal ticked 
 
 ## When to use the journal
 
-- Use it for work with several steps or more than one turn, and whenever the user gives you a list of tasks.
-- Skip it for a single-pass answer, a quick read-only look or a one-line fix. A plan created and closed in the same message adds nothing.
+- Use it when you expect more than about 5 tool calls, any wait, or any delegation.
+- Skip it only for an answer that takes one or two calls.
 - Write one entry per deliverable you can check, such as "Add the retry to the queue worker", not per activity such as "Look at code". Split a big entry into steps.
 
 ## Keeping the journal current
@@ -29,7 +29,7 @@ All readers need a journal that is current while work happens. A journal ticked 
 - Every successful change returns progress and the next open item. Add, split and add_step return every created id on a New ids: line, plus the top five open entries. Use their short ids, NEVER positions.
 - Revisit the journal when the user redirects or adds work, when you resume after an error or interruption, when a delegated thread reports back, and before your final answer.
 - When the plan changes, change the journal. Add, update or delete entries instead of leaving stale work open. NEVER append DONE to a description.
-- Tavern reminds you, in an agent-only `[Journal]` note during a running turn, when no entry's status changed since the previous message (from the user, another agent or bb), or when a delegate's mark has waited unchecked for ten minutes. The note names what looks stale: unchecked marks, entries reworded three times without a status change, and open entries whose text reads as finished. It comes at most once per stale stretch and never twice in 15 minutes. Rewording an entry doesn't count as keeping it current.
+- Tavern reminds you, in an agent-only `[Journal]` note during a running turn, when no entry's status changed since the previous message (from the user, another agent or bb), or when a delegate's mark has waited unchecked for ten minutes. The note names what looks stale: unchecked marks, entries reworded three times without a status change, and open entries whose text reads as finished. It comes at most once per stale stretch and never twice in 15 minutes. Rewording an entry doesn't count as keeping it current. If the journal is empty, Tavern can send one hint after about 15 pieces of work with no journal calls. It does not repeat unless the user steers the thread. A steer can rearm the hint for a later turn, never twice in the same turn.
 - User edits and Warden verdicts are acknowledged once in the next journal result or in an agent-only `[Journal]` note during an existing turn. A session snapshot may repeat the current state; it is not a delivery receipt. Read the descriptions, update your plan, and keep working. Notes MUST NOT start turns.
 - Keeper threads receive no automatic journal steers. Board phases drive their mirrors; pending human edits remain visible in the next journal result and session instructions.
 - On providers without safe steering, read the next journal result and the session's journal instructions. Do not simulate steering or start a new turn to deliver reminders.
@@ -38,11 +38,11 @@ All readers need a journal that is current while work happens. A journal ticked 
 
 | Action | Parameters | Behavior |
 | --- | --- | --- |
-| `add` | `descriptions[]`, optional `owner` | Add top-level entries in one atomic action. Set `owner` to the delegate's thread id (`thr_…`) for work another agent does. |
+| `add` | `description` or `descriptions[]`, optional `owner` | Add top-level entries in one atomic action. Set `owner` to the delegate's thread id (`thr_…`) for work another agent does. |
 | `split`, `add_step` | `id`, `descriptions[]`, optional `owner` | Add steps under an open top-level entry. Returns their ids. |
 | `list` | optional `filter: open, mine, blocked` | Read all entries or a filtered view. |
 | `get` | `id` | Read one entry with its notes, links, actor, timestamps and evidence. |
-| `start` | `id`, optional `owner` | Set doing. With `owner`, hands the entry over in one call. Your other unowned doing entry returns to todo; entries with an owner stay doing, so delegated work can run side by side. Dependencies must be complete. |
+| `start` | `id` or `ids[]`, optional `owner` | Set doing. To hand several entries to the same delegate at once, pass `ids` and the delegate's thread id as `owner`. Start your own work one entry at a time: your other unowned doing entry returns to todo. Delegated entries with an owner stay doing side by side. Dependencies must be complete. |
 | `done` | `id` or `ids[]`, optional `evidence[]` | Set done idempotently. Linked entries REQUIRE evidence and are reported done, not yet verified. Unlinked entries can finish without evidence; attach proof when available. |
 | `block` | `id` or `ids[]`, `reason` | Set blocked and record why. |
 | `reopen` | `id` or `ids[]` | Set todo idempotently. A completed parent reopens too. Reopening verified work needs the assigned Warden or the Keeper. |

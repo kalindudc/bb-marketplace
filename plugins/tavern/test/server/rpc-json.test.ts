@@ -242,16 +242,13 @@ it("returns strict JSON from EVERY registered RPC with optional record fields ab
     settingsEndOverride: () => call("settingsEndOverride", { revision: 0, boardQuestId: "missing", key: "staleMinutes" }),
     settingsApplySuggestion: () => call("settingsApplySuggestion", { key: "staleMinutes", revision: 0 }),
     insights: () => call("insights", { range: "7d" }),
+    wardenQuality: () => call("wardenQuality", null),
     backupList: () => call("backupList", {}),
     backupSave: () => call("backupSave", {}),
     backupExport: () => call("backupExport", {}),
     backupRestore: () => call("backupRestore", { from: { name: "missing-backup.json" } }),
     registryFile: () => call("registryFile", { kind: "class", id: "smith" }),
     registryExportFolder: () => call("registryExportFolder", { kind: "class" }),
-    voiceCheck: () => call("voiceCheck", { characterId: character.id }),
-    // The fixture's SDK offers no personal project, so the check ends at once as couldn't run and spawns nothing.
-    voiceCheckStart: () => call("voiceCheckStart", { characterId: character.id, draft: { name, style, quirks } }),
-    voiceCheckCancel: () => call("voiceCheckCancel", { characterId: character.id, runId: "missing" }),
   } satisfies Record<keyof typeof rpcContract, () => Promise<unknown>>;
   expect(f.harness.inspection.registrations.rpcMethods.sort()).toEqual(Object.keys(rpcContract).sort());
   expect(Object.keys(cases).sort()).toEqual(Object.keys(rpcContract).sort());
@@ -269,8 +266,6 @@ it("returns strict JSON from EVERY registered RPC with optional record fields ab
       expect(JSON.parse(JSON.stringify(result))).toStrictEqual(result);
     }
   }
-  await vi.waitFor(() => expect(f.k.store.all("voiceChecks").map((r) => [r.state, r.reason])).toEqual([["couldnt-run", "No personal project is available to run the check in."]]));
-  expect(f.harness.inspection.sdk.callsTo("threads.spawn").filter((call) => (call.args[0] as { pluginMetadata?: { voiceCheck?: unknown } }).pluginMetadata?.voiceCheck)).toEqual([]);
   expect(f.k.store.get("reports", f.report.id)).not.toHaveProperty("headline");
   f.k.store.event(Date.now(), "lead", f.q.id, "quest.wrapped", "The sparse tale is retained.", { outcome: "The sparse tale is retained.", left: "" });
   const detail = await call("boardQuest", { id: f.q.id });

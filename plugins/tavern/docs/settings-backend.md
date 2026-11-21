@@ -54,14 +54,12 @@ Settings rows show the default and offer Reset only when the value differs. Rese
 | Due-soon sort order, list limits, status and CLI output ceilings | Sorting, paging and transport limits; agents can ask for the rest by page or section. |
 | Plan party, waypoint, finding and question array bounds | Stored record shapes, not the live party or review budget. |
 | Audit history page size, TOML and backup size limits, Insights cost cache and notification dedupe | Transport, storage and duplicated-notice protection. |
-| Guard and subprocess timeouts, Stop all confirmation timeout, voice-check turn timeout, tale capture window | Fences for hangs and incomplete flows; changing them does not make the operation succeed. |
+| Guard and subprocess timeouts, Stop all confirmation timeout, tale capture window | Fences for hangs and incomplete flows; changing them does not make the operation succeed. |
 | Same-maker Warden exclusions, what counts as verified, character level credit and user-only authority | These preserve the meaning of records, not presentation or pacing. |
 
 The additional configurable controls are pause, the default class, row visibility, presentation voice and levels, drawn characters, Ambient motion and its repeat interval in Atmosphere, notification eligibility and quiet hours, explicit versus eligible by-size greenlight, class execution overrides, scope mode, journal reminders, archival, retention, and tuning mode. Presentation settings do not remove orchestration instructions or memory.
 
-Speech bubbles in Atmosphere controls both the composer bubbles and the existing character voice for replies and reports. For replies and reports, Full is the unchanged default: one optional short greeting or closing line. Light permits at most one optional character line after successful completion, not in greetings or progress remarks. Off asks for plain replies, stores new reports with `voice: null`, and hides stored optional voice lines on the page without rewriting their history. Blockers, failures, asks and trouble stay plain in every mode. Work, checks, evidence, exact literals, class instructions, identity, scope, holds and orchestration stay the same. The instructions reserve the legacy Full-mode data budget in every mode so a shorter voice rule cannot change which ledger facts fit. Changes apply at the next instruction assembly and report write; existing chat messages are not rewritten.
-
-The existing registry read carries `voice: "full" | "light" | "off"`; a missing field from an older server means Full. It subscribes to the existing settings-change signal. An Off-mode duplicate report returns its existing identity and proof with `voice: null` while preserving deduplication, the saved row and its old voice. The manual voice check remains an explicit preview of the selected character's style.
+Speech bubbles in Atmosphere is a display preference, not a model instruction. Agents write plainly in every mode, and new reports do not take a voice line. The existing registry read carries `voice: "full" | "light" | "off"`; a missing field means Full. Off hides historical voice lines without rewriting saved reports or chat. Old settings files and backups may still contain `tavern.voice_checks_per_hour`; import discards that retired key.
 
 ### Display preferences on existing reads
 

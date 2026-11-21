@@ -39,6 +39,7 @@ type PartyStripProps = {
   classLabel: string;
   mood: Mood;
   keeper: boolean;
+  memberId?: string;
   surface: Surface;
   region?: "widget";
   pageScene?: { threadId: string; road?: boolean };
@@ -74,14 +75,16 @@ export function PartyStrip(props: PartyStripProps) {
     if (restoreFocus) button.current?.focus({ preventScroll: true });
   }, []);
   const actorId = scene?.threadId ?? character.id;
+  const memberId = props.memberId ?? actorId;
   const seed = character.avatar ?? character.id;
   const art = useMemo(() => createArt({
     seed, classId, hue: character.hue, charge: character.charge, look: character.look, keeper,
   }), [seed, classId, character.hue, character.charge, character.look, keeper]);
-  const actor = useMemo(() => new Actor(actorId, art, mood), [actorId]);
+  const actor = useMemo(() => new Actor(actorId, art, mood, memberId), [actorId, memberId]);
   const strip = useRef<HTMLElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const button = useRef<HTMLButtonElement>(null);
+  const need = useRef<HTMLSpanElement>(null);
   const bubble = useRef<HTMLSpanElement>(null);
   const runtime = useRef<{ invalidate(change?: () => void): void; cue(kind: Cue, auto: boolean, onEnd?: () => void): void; click(): void }>(null);
   const latest = useRef(props);
@@ -153,6 +156,8 @@ export function PartyStrip(props: PartyStripProps) {
           control.style.transform = position;
           lastPosition = position;
         }
+        const mark = need.current;
+        if (mark && mark.style.transform !== position) mark.style.transform = position;
         const frame = actor.frame(still);
         if (scene) control.dataset.pose = frame.still ? "still" : frame.activity;
         if (control.dataset.activity !== frame.activity) control.dataset.activity = frame.activity;
@@ -339,8 +344,8 @@ export function PartyStrip(props: PartyStripProps) {
         if (scene) props.onActorClick?.(actor.id);
         else runtime.current?.click();
       }}>
-      {mood === "waiting" && !scene && <span className="tchar-need" data-tavern-still aria-hidden="true">!</span>}
     </button>
+    {mood === "waiting" && !scene && <span ref={need} className="tchar-need twalk-need" data-tavern-still aria-hidden="true">!</span>}
     {props.actorMenu && <span id={`${menuId}-hint`} className="sr">{MENU_HINT}</span>}
     {menuTrigger && props.actorMenu && <CharacterMenu id={menuId} trigger={menuTrigger} name={character.name} close={closeMenu} {...props.actorMenu} />}
     {words && <span ref={bubble} className="twalk-speech" role="status" hidden><span className="twalk-speech-text">{words}</span></span>}

@@ -31,7 +31,7 @@ function head(p: PixelGrid, x: number, top: number, chin: number, t: SeedTraits,
   p.mask(x, top + 2, [hair.fringe[1]!], Ink.Hair);
   if (hair.fringe[2]?.startsWith("#")) p.rect(x, top + 3, 1, 1, Ink.Hair);
   if (hair.fringe[2]?.endsWith("#")) p.rect(x + 9, top + 3, 1, 1, Ink.Hair);
-  const eyes = top + 4 + pose.glance;
+  const eyes = top + 4 + pose.glance - Number(pose.gaze === "up");
   const left = x + (t.eyes === "wide" ? 1 : 2);
   const right = x + 6;
   if (pose.face === "delighted") {
@@ -42,8 +42,9 @@ function head(p: PixelGrid, x: number, top: number, chin: number, t: SeedTraits,
   } else {
     p.rect(left, eyes, 2, 2, Ink.Outline);
     p.rect(right, eyes, 2, 2, Ink.Outline);
-    p.rect(left + 1, eyes, 1, 1, Ink.Glint);
-    p.rect(right + 1, eyes, 1, 1, Ink.Glint);
+    const glint = Number(pose.gaze !== "back");
+    p.rect(left + glint, eyes, 1, 1, Ink.Glint);
+    p.rect(right + glint, eyes, 1, 1, Ink.Glint);
   }
   const cheek = Math.min(top + 6, eyes + 2);
   p.rect(x + 1, cheek, 1, 1, Ink.Cheek);
@@ -193,20 +194,25 @@ export function actor(t: SeedTraits, pose: SpritePose, charge: string | null) {
   const p = new PixelGrid();
   const bootTop = GROUND - 2 - pose.lift;
   const bottom = bootTop + (pose.seated ? 0 : t.outfit === "robe" ? 0 : -1);
-  const top = GROUND - t.height + 8 + (pose.seated ? 3 : pose.slump ? 2 : 0) - pose.lift - Number(pose.breath === "full");
+  const shoulders = GROUND - t.height + 8 + (pose.seated ? 3 : pose.slump ? 2 : 0) - pose.lift + Number(pose.breath === "full");
+  const gait = pose.gait;
+  const top = shoulders + (gait?.shoulders ?? 0);
   const peak = pose.accent === "peak";
   const spyglass = pose.action === "spyglass" && peak && t.tool === "spyglass";
   const tip = pose.gesture === "tip";
   const removableHat = t.hat === "soft-cap" || t.hat === "folded-hat" || t.hat === "wide-brim" || t.hat === "round-brim" || t.hat === "warden-felt";
   const headroom = t.hat ? HAT_HEADROOM[t.hat] : 2;
-  const dip = pose.action === "nod" ? peak ? 3 : 1 : 0;
-  const headTop = Math.max(headroom, top - (pose.slump ? 6 : pose.glance === -1 ? 9 : 8) + dip);
+  const dip = pose.dip ?? (pose.action === "nod" ? peak ? 3 : 1 : 0);
+  const headTop = Math.max(headroom, shoulders - (pose.slump ? 6 : pose.glance === -1 ? 9 : 8) + dip + (gait?.head ?? 0));
   const hatLift = tip && peak && removableHat ? Math.min(2, headTop - headroom) : 0;
   p.rect(7, GROUND, 12, 1, Ink.Shadow);
   const fast = pose.stride === 2;
   if (pose.seated) {
     p.rect(9, bootTop + 1, 5, 1, Ink.Boot);
     p.rect(15, bootTop, 5, 2, Ink.Boot);
+  } else if (gait) {
+    p.rect(8 + gait.far, bootTop - Number(gait.farUp), 3, 2, Ink.Boot);
+    p.rect(13 + gait.near, bootTop - Number(gait.nearUp), 3, 2, Ink.Boot);
   } else {
     p.rect(8 + (pose.stride === 1 ? -1 : fast ? 1 : 0), bootTop - Number(pose.stride === -1), 3, 2, Ink.Boot);
     p.rect(13 + (pose.stride === -1 ? 2 : fast ? 1 : 0), bootTop - Number(pose.stride === 1 || fast), 3, 2, Ink.Boot);
@@ -216,10 +222,11 @@ export function actor(t: SeedTraits, pose: SpritePose, charge: string | null) {
   const lampLimit = t.light && t.tool !== "staff-lantern" ? GROUND - 8 : GROUND;
   const tendsLight = pose.gesture === "lantern" || (pose.gesture === "work" && t.tool === "staff-lantern");
   const liftLight = pose.action === "lantern" && peak ? 5 : pose.raised && t.tool === "staff-lantern" ? 3 : Number(tendsLight && pose.beat);
-  const leftHand = Math.min(bottom - 2, top + 4, lampLimit) - liftLight;
+  const arm = gait?.arm ?? 0;
+  const leftHand = Math.min(bottom - 2, top + 4 + arm, lampLimit) - liftLight;
   p.rect(7, top + 2, 1, leftHand - top - 1, Ink.Garment);
   p.rect(6, leftHand, 2, 1, Ink.Skin);
-  let rightHand = Math.min(bottom - 1, top + (pose.raised ? 1 : 5));
+  let rightHand = Math.min(bottom - 1, top + (pose.raised ? 1 : 5) - arm);
   if (tip) {
     const y = peak ? headTop + 1 - hatLift : top + 3;
     p.rect(19, y + 1, 2, top + 5 - y, Ink.Garment);
@@ -254,7 +261,8 @@ export function actor(t: SeedTraits, pose: SpritePose, charge: string | null) {
     }
   }
   const chin = headTop + 7;
-  head(p, pose.slump ? 9 : 7, headTop, chin, t, pose, hatLift);
+  const turn = pose.gaze === "forward" ? 1 : pose.gaze === "back" ? -1 : 0;
+  head(p, (pose.slump ? 9 : 7) + turn, headTop, chin, t, pose, hatLift);
   if (tip && peak) p.mask(17, headTop - hatLift, [".##.", "####", "..##"], Ink.Skin);
   if (spyglass) {
     const y = headTop + 4 + pose.glance;

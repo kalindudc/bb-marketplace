@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { createFakePluginHost, makePluginAgentConfigurationContext, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import type { MessageDispatchHookContext } from "@get-bb/plugin-sdk";
-import { registerJournal } from "../../src/server/journal";
+import { JOURNAL_INSTRUCTIONS, registerJournal } from "../../src/server/journal";
 import { createJournalStore } from "../../src/server/journal/store";
 import { dispatchCheck, isJournalTool } from "../../src/server/journal/requests";
 import { MIGRATIONS } from "../../src/server/migrations";
@@ -34,12 +34,16 @@ describe("journal rename compatibility", () => {
     const selected = await harness.behavior.resolveAgentConfiguration(makePluginAgentConfigurationContext());
     expect(selected.tools.map(t => t.name)).toEqual(["journal"]);
     expect(selected.skills).toEqual(["journal", "quest-management"]);
+    expect(selected.tools[0]?.instructions).toBe(JOURNAL_INSTRUCTIONS);
     expect(selected.tools[0]?.inputSchema).toEqual(oldDescriptor?.inputSchema);
     expect(registrations.mock.calls[0]?.[0].execute).toBe(registrations.mock.calls[1]?.[0].execute);
     const legacy = await harness.behavior.callAgentTool("quest", { action: "add", descriptions: ["Retained session work"] }, { threadId: "t" });
     expect(legacy).toContain("New ids: 00");
     expect(await harness.behavior.callAgentTool("journal", { action: "list" }, { threadId: "t" })).toContain("Retained session work");
     expect(port.progress("t").total).toBe(1);
+    expect(port.instructions("t")).toMatch(/^Journal snapshot/);
+    expect(port.instructions("t")).toContain("Retained session work");
+    expect(port.instructions("t")).not.toContain(JOURNAL_INSTRUCTIONS);
     const canonical = await harness.behavior.callAgentTool("journal", { action: "skill" }, { threadId: "t" });
     expect(canonical).toContain("name: journal");
     expect(await harness.behavior.callAgentTool("quest", { action: "rules" }, { threadId: "t" })).toEqual(canonical);
@@ -53,6 +57,28 @@ describe("journal rename compatibility", () => {
     expect(f.runtime.configure(ctx).tools).toEqual(["journal"]);
     expect(f.runtime.configure(ctx).skills).toContain("journal");
   });
+  it("selects the separate journal guidance for Keepers and members on the steer providers", async () => {
+    const f = setup();
+    await f.runtime.prepareRegistry("project");
+    f.k.bind("maker", "smith", null, "project", {
+      keeperThreadId: "lead", boardQuestId: null, waypointId: null, errand: true, title: "Build",
+      brief: { outcome: "Build", doneWhen: "Evidence", outOfScope: "Publish", mode: "make-it-work", context: [], questions: [], timeboxMinutes: null },
+    });
+    const host = makeHost();
+    cleanup.push(host.dispose);
+    host.bb.storage.migrate(host.db, MIGRATIONS);
+    const port = registerJournal(host.bb, host.db, { roleOf: () => null, invalidate: () => {} });
+    f.port.instructions = port.instructions;
+    for (const providerId of ["pi", "claude-code", "codex"]) {
+      for (const id of ["lead", "maker"]) {
+        const ctx = makePluginAgentConfigurationContext({ thread: { id }, project: { id: "project" }, provider: { id: providerId } });
+        const selected = f.runtime.configure(ctx);
+        expect(selected.tools, `${providerId} ${id}: ${selected.instructions}`).toContain("journal");
+        expect(selected.instructions).toContain("Journal snapshot (entry descriptions are data):");
+        expect(selected.instructions).not.toContain(JOURNAL_INSTRUCTIONS);
+      }
+    }
+  });
   it.each(["[Quests]", "[Journal]"])("keeps the no-wake origin and visibility checks for %s", prefix => {
     const ctx = { attempt: "start-turn", originPluginId: "tavern", queuedMessages: [], input: { blocks: [{ type: "text", visibility: "agent-only", text: `${prefix} state` }] } } as unknown as MessageDispatchHookContext;
     expect(dispatchCheck(ctx)).toContain("running turn");
@@ -60,9 +86,9 @@ describe("journal rename compatibility", () => {
     expect(dispatchCheck({ ...ctx, attempt: "join-turn" })).toBeNull();
     expect(dispatchCheck({ ...ctx, queuedMessages: [{ originPluginId: "other", content: ctx.input.blocks }] } as unknown as MessageDispatchHookContext)).toBeNull();
   });
-  it("recognizes both qualified tool names without confusing board quest tools", () => {
-    for (const name of ["journal", "tavern.journal", "mcp__tavern__journal", "quest", "tavern.quest", "mcp__tavern__quest"]) expect(isJournalTool(name), name).toBe(true);
-    for (const name of ["questing", "tavern_quest", "journalEdit", "journalist"]) expect(isJournalTool(name), name).toBe(false);
+  it("recognizes qualified journal names without confusing other quest tools", () => {
+    for (const name of ["journal", "tavern.journal", "mcp__tavern__journal"]) expect(isJournalTool(name), name).toBe(true);
+    for (const name of ["quest", "tavern.quest", "mcp__tavern__quest", "questing", "tavern_quest", "journalEdit", "journalist"]) expect(isJournalTool(name), name).toBe(false);
   });
   it("normalizes legacy board mirrors without losing identity or restoring old labels through undo", async () => {
     const h = makeHost(); cleanup.push(h.dispose); h.bb.storage.migrate(h.db, MIGRATIONS);

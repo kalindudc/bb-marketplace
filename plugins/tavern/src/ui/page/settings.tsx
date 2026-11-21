@@ -16,13 +16,15 @@ import { SetupSettings } from "./setup";
 import { settingLabel } from "./settings-label";
 import { SETUP_CALLER_NOTICE } from "../../shared/setup";
 import { alertRouteContract, type AlertRouteView, type HoldReason } from "../../shared/alert-route";
+import { insightsContract } from "../../shared/insights";
+import { WardenQualitySection } from "./warden-quality";
 
 const WHY = "Changed on the settings page";
 export const ATMOSPHERE_ANCHOR = "tavern-settings-atmosphere";
 export const VOICE_HELP = {
-  full: "See speech bubbles at greetings, milestones and intervals or on a click, and allow a short character line in replies and successful reports.",
-  light: "See bubbles after a verification, at a quest wrap or on a click, and allow a short character line in a reply or report only after success.",
-  off: "Turn off speech bubbles, keep new replies and reports plain, and hide saved voice lines in reports and character sheets.",
+  full: "Show speech bubbles at greetings, milestones, intervals and on clicks.",
+  light: "Show speech bubbles after verification, at a quest wrap and on clicks.",
+  off: "Hide speech bubbles and saved voice lines in reports and character sheets.",
 } as const;
 type Problem = { line: number; key: string; message: string; allowed?: string };
 type Change = SettingsChange;
@@ -96,7 +98,6 @@ function Row({ label, help, children, control, setting, managed = false, covered
 const NUMBER_HELP: Record<{ [G in keyof typeof KNOB_FIELDS]: keyof typeof KNOB_FIELDS[G] }[keyof typeof KNOB_FIELDS], string> = {
   reportedPoseSeconds: "How long a character holds its finished pose above the composer.",
   verifiedPoseMinutes: "How long a character holds its verified pose above the composer.",
-  voiceChecksPerHour: "How many voice checks you can run from a character sheet in an hour. Each check runs a model and can cost money.",
   productionWakeHours: "How long a production or cluster write ask waits before waking you, if that option is on for the window.",
   defaultBackAtHour: "Prefills Back at with the next time at this local hour that's at least an hour away.",
   restatementBytes: "Caps the Keeper's restatement. Lower limits make Keepers forget what you told them.",
@@ -226,7 +227,7 @@ export function AtmosphereSection() {
       <Row label="Strength" setting="tavern.lanternStrength" help="Changes how strongly the halo, pool and nearby edges glow." control={id => <select id={id} className="tv-select" value={t.lanternStrength} disabled={api.pending} onChange={e => void api.save({ tavern: { lanternStrength: e.target.value as typeof t.lanternStrength } })}><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select>} />
       <Row label="Light bb's surfaces" setting="tavern.lanternLightBb" help="Lights the nearby edges of the composer box and message bubbles, never the text. Off keeps the light on Tavern's own surfaces." control={id => <Toggle id={id} checked={t.lanternLightBb} disabled={api.pending} onChange={v => void api.save({ tavern: { lanternLightBb: v } })} />} />
     </SettingsCard>
-    <SettingsCard title="Character cues and checks" hint="Choose how long poses last and how often a voice check can run." glyph="shield"><NumberKnobRows group="tavern" /></SettingsCard>
+    <SettingsCard title="Character cues" hint="Choose how long poses last." glyph="shield"><NumberKnobRows group="tavern" /></SettingsCard>
   </>; }}</Shell>;
 }
 
@@ -258,7 +259,7 @@ export function SettingAuthor({ threadId, by, label = "another thread", sentence
 function historySection(key: string) {
   const path = key.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase());
   if (path === "knobs.rangerTimeboxMaxMinutes") return "Keepers and decisions";
-  if (/^tavern\.(characters|voice|voiceBeforeOff|levels|ambientMotion|hearthFlicker|characterQuietUntil|repeatSeconds|lanternLight|lanternStrength|lanternLightBb|reportedPoseSeconds|verifiedPoseMinutes|voiceChecksPerHour)$/.test(path)) return "Atmosphere";
+  if (/^tavern\.(characters|voice|voiceBeforeOff|levels|ambientMotion|hearthFlicker|characterQuietUntil|repeatSeconds|lanternLight|lanternStrength|lanternLightBb|reportedPoseSeconds|verifiedPoseMinutes)$/.test(path)) return "Atmosphere";
   if (/^(knobs|tuned|overrides|tuning\.pinned)\./.test(path)) return "Tuning";
   return ({tavern:"Tavern",away:"Closing time",attention:"Your attention",keepers:"Keepers and decisions",classes:"Classes and models",scopes:"Scopes",machines:"Where work runs",journal:"Journal",tuning:"Tuning",data:"Data and backups",backup:"Data and backups"} as Record<string,string>)[path.split(".")[0]!] ?? "Settings";
 }
@@ -498,6 +499,13 @@ function ClassExecution({ label, defaults, override, onSave }: { label: string; 
   </div>;
 }
 
+function WardenQualitySetting() {
+  const quality = experimental_useRpcQuery({ contract: insightsContract, method: "wardenQuality", input: null });
+  return <div className="tv-set-warden-quality">{quality.data ? <WardenQualitySection data={quality.data} settings />
+    : quality.error ? <div className="tv-problem" role="alert"><span>Could not load Warden quality.</span><button type="button" className="btn sm" onClick={() => void quality.refetch()}>Try again</button></div>
+      : <p className="tv-isec-cap" role="status">Loading Warden quality…</p>}</div>;
+}
+
 export function ClassesSection() {
   const api = useTavernSettings();
   const registry = useRegistry();
@@ -511,6 +519,7 @@ export function ClassesSection() {
         <div className="tv-set-l"><span className="tv-set-lbl">{c.label} <span className="anc">{c.plain}</span></span></div>
         <div className="tv-set-c"><ClassExecution label={c.label} defaults={{ provider: c.provider, model: c.model, reasoning: c.reasoning }} override={override}
           onSave={(next) => { const entry: ClassOverride = next ?? {}; return api.save({ classes: { [c.id]: entry } }); }} /></div>
+        {c.id === "warden" && <WardenQualitySetting />}
       </div>;
     })}
   </SettingsCard>}</Shell>;

@@ -1,13 +1,13 @@
 import { randomUUID } from "node:crypto";
-import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
-import { insightsContract, type InsightsView } from "../../shared/insights";
+import type { InsightsView } from "../../shared/insights";
 import type { Ask, BoardQuest, GateRecord, KeeperNote, Member, Report, Route } from "../../shared/schema";
 import type { Database } from "../ports";
 import type { SettingsStore } from "../settings/store";
 import { LIMITS } from "../limits";
 import { aggregateInsights, type InsightData, type InsightCharacters, type Observation } from "./aggregate";
 import { tuningSignals } from "./signals";
+import { readWardenQuality } from "./warden-quality";
 
 type EventRow = { id: string | number; at: number; type: string; text: string; data: string; keeper_thread_id: string | null; board_quest_id: string | null };
 type SampleRow = Omit<EventRow, "type" | "text"> & { kind: string };
@@ -49,14 +49,21 @@ export class InsightsReader {
     const to = this.now(), from = to - this.settings.read().tuning.windowDays * LIMITS.dayMs;
     return tuningSignals(this.data(from, to), from, to);
   }
+  wardenQuality() {
+    const to = this.now();
+    return readWardenQuality(this.db, to - 30 * LIMITS.dayMs, to);
+  }
   async view(range: InsightsView["range"]): Promise<InsightsView> {
     const now = this.now(), from = now - { "7d": 7, "30d": 30, "90d": 90 }[range] * LIMITS.dayMs;
     const data = this.data(from, now);
-    const view = aggregateInsights(data, this.settings.snapshot(), range, now, this.settings.collectingSince(), this.settings.historySince(from, now), this.readCharacters?.() ?? null);
+    const view: InsightsView = {
+      ...aggregateInsights(data, this.settings.snapshot(), range, now, this.settings.collectingSince(), this.settings.historySince(from, now), this.readCharacters?.() ?? null),
+      wardenQuality: readWardenQuality(this.db, from, now),
+    };
     if (this.readCost) view.cost = await this.readCost(data, from, now);
     return view;
   }
 }
-export function registerInsightsRpc(bb: BbPluginApi, reader: InsightsReader) {
-  bb.rpc.register(insightsContract, { insights: input => reader.view(input.range) });
+export function insightsHandlers(reader: InsightsReader) {
+  return { insights: (input: { range: InsightsView["range"] }) => reader.view(input.range), wardenQuality: () => reader.wardenQuality() };
 }

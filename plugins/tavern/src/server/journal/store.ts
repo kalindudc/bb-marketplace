@@ -54,7 +54,7 @@ export function staleLines(entries: JournalEntry[], show: ShowOptions): string[]
   }
   return lines.slice(0, 8);
 }
-type JournalRow = { thread_id: string; next_id: number; hydrated: number; agent_changed_at: number | null; noted_at: number | null; last_tool_at: number | null };
+type JournalRow = { thread_id: string; next_id: number; hydrated: number; agent_changed_at: number | null; noted_at: number | null; last_tool_at: number | null; empty_hint_seq: number | null };
 export const QUIET_AFTER_MS = DEFAULT_SETTINGS.journal.journalQuietMinutes * 60_000;
 type HistoryRow = { id: number; before_data: string; after_data: string; action: string; actor: string; state: "undo" | "redo" };
 export function createJournalStore(bb: BbPluginApi, db: Database, deps: JournalDeps) {
@@ -629,6 +629,17 @@ export function createJournalStore(bb: BbPluginApi, db: Database, deps: JournalD
     isOwner: (owner: string) => ownedRows(owner).some(row => { const e = JSON.parse(row.data) as JournalEntry; return !closed(e) && delegated(e); }),
     pending: (threadId: string) => pending(threadId),
     describeChanges,
+    emptyHintSeq: (threadId: string) => journalRow(threadId)?.empty_hint_seq ?? null,
+    async deliverEmptyHint(threadId: string, throughSeq: number, userSteerSeq: number, send: (text: string) => Promise<void>) {
+      return withThreadLock(threadId, async () => {
+        if (disposed || deleted.has(threadId) || isKeeper(threadId) || ownedElsewhere || !store.reminders()) return;
+        const row = journalRow(threadId);
+        if (!row || (row.empty_hint_seq !== null && userSteerSeq <= row.empty_hint_seq)) return;
+        if (localEntries(threadId).length || pending(threadId).length) return;
+        await send(`${JOURNAL_NOTE_PREFIX} The journal is empty. If you have more work to do, add one entry per deliverable and start the one you are working on.`);
+        if (!disposed) db.prepare("UPDATE questlog_logs SET empty_hint_seq = ? WHERE thread_id = ?").run(throughSeq, threadId);
+      });
+    },
     async deliverNote(threadId: string, previousRequestAt: number | null, send: (text: string) => Promise<void>, skipped: (reason: string) => void = () => {}) {
       return withThreadLock(threadId, async () => {
         if (isKeeper(threadId)) { skipped("a Keeper thread gets no journal steers"); return false; }

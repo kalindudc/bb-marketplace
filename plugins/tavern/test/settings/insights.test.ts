@@ -7,6 +7,8 @@ import { SettingsStore } from "../../src/server/settings/store";
 import { MIGRATIONS } from "../../src/server/migrations";
 import { insightsSchema, insightSeriesSchema, type InsightsView } from "../../src/shared/insights";
 import type { Database } from "../../src/server/ports";
+import { createJournalStore } from "../../src/server/journal/store";
+import { makeHost } from "../journal/host";
 const databases: Sqlite.Database[] = [];
 afterEach(() => databases.splice(0).forEach(db => db.close()));
 const DAY = 86400000, HOUR = 3600000;
@@ -31,6 +33,75 @@ function scalar(view: InsightsView, section: "reliability" | "party" | "attentio
   const row = view[section].series.find(series => series.id === id)!;
   return "value" in row ? row.value : null;
 }
+
+describe("Warden quality", () => {
+  it("counts retained journal reopens and verified-to-todo toggles, separates model executions, and keeps waivers out of model counts", async () => {
+    const f = fixture();
+    const from = f.now - 7 * DAY, at = from + DAY;
+    const choice = (id: string, providerId: string, model: string, recordedAt: number) => f.db.prepare("INSERT INTO tavern_runtime(thread_id,data) VALUES(?,?)")
+      .run(id, JSON.stringify({ classExecutionChoice: { providerId, model, recordedAt } }));
+    choice("checker", "agent-a", "lab/reviewer", from);
+    choice("other", "agent-b", "lab/reviewer", from);
+    choice("switched", "agent-a", "new-model", at + 1);
+    const verdict = (id: string, checker = "checker", verdict = "verified", time = at, extra = {}) =>
+      f.put("serviceVerdicts", id, { id, at: time, verdict, questId: "quest", waypointId: "review", entryId: id,
+        maker: { threadId: "maker" }, checker: { threadId: checker }, reason: null, checkerEvidence: [], ...extra });
+    const host = makeHost(), clock = vi.spyOn(Date, "now");
+    const journal = createJournalStore(host.bb, f.db, {
+      invalidate: () => {},
+      roleOf: thread => thread === "checker" ? { classId: "warden", role: "member", boardQuestId: "quest", waypointId: "w1" }
+        : thread === "toggled" ? { classId: "keeper", role: "keeper", boardQuestId: null, waypointId: null } : null,
+      reviewed: ({ after }) => {
+        if (after.status !== "verified" || !after.review) return;
+        verdict(after.threadId, "checker", "verified", after.review.at, { entryId: after.id, waypointId: "w1", maker: { threadId: after.threadId }, checkerEvidence: after.review.evidence });
+      },
+    });
+    const proof = [{ kind: "command" as const, ref: "node check", detail: "Passed", exitCode: 0 }];
+    try {
+      for (const maker of ["reopened", "toggled", "undone", "new-brief", "earlier-reported", "future-reopen"]) {
+        clock.mockReturnValue(at - 1);
+        await journal.ready(maker);
+        const id = journal.linkWaypoint(maker, { boardQuestId: "quest", waypointId: "w1" }, "Prove it", maker, { kind: "tavern" });
+        expect(await journal.runTool(maker, { action: "done", id, evidence: proof })).toMatchObject({ isError: false });
+        if (maker === "earlier-reported") {
+          expect(await journal.runTool(maker, { action: "reopen", id })).toMatchObject({ isError: false });
+          expect(await journal.runTool(maker, { action: "done", id, evidence: proof })).toMatchObject({ isError: false });
+        }
+        clock.mockReturnValue(at);
+        expect(await journal.runTool("checker", { action: "verify", threadId: maker, id, evidence: proof })).toMatchObject({ isError: false });
+        clock.mockReturnValue(maker === "future-reopen" ? f.now + 1 : at + 1);
+        if (maker === "earlier-reported") continue;
+        if (maker === "new-brief") { journal.rebriefed(maker, "quest", 2); continue; }
+        const move = maker === "toggled" ? await journal.runTool(maker, { action: "toggle", id })
+          : await journal.runTool("checker", { action: "reopen", threadId: maker, id });
+        expect(move.isError, move.text).toBe(false);
+        if (maker === "undone") journal.edit(maker, { op: "undo" }, { kind: "agent", threadId: "checker" });
+      }
+    } finally { clock.mockRestore(); await host.dispose(); }
+    verdict("withdrawn", "checker", "verified", at, { withdrawn: true });
+    verdict("rejection", "checker", "rejected");
+    verdict("same-name", "other", "rejected", from);
+    verdict("old-model-unknown", "switched", "verified");
+    verdict("past", "checker", "rejected", from - 1);
+    verdict("future", "checker", "verified", f.now + 1);
+    const wrap = f.db.prepare("INSERT INTO tavern_events(at,keeper_thread_id,board_quest_id,actor,type,text,data) VALUES(?,?,?,?,?,?,?)");
+    wrap.run(f.now, "keeper", "quest", '{"kind":"user"}', "quest.wrapped", "Closed early", JSON.stringify({
+      cause: "close-early", waivers: [{ state: "rejected" }, { state: "blocked" }],
+    }));
+    f.event("quest.wrapped", f.now, { cause: "close-early", waivers: [{ state: "rejected" }] }, "not-user");
+    const view = await f.reader.view("7d");
+    expect(view.wardenQuality).toEqual({
+      from, to: f.now, rejectedWaypointsWaived: 1,
+      rows: [
+        { classId: "warden", providerId: "agent-a", model: "lab/reviewer", verified: 6, reopened: 2, rejected: 1 },
+        { classId: "warden", providerId: "agent-b", model: "lab/reviewer", verified: 0, reopened: 0, rejected: 1 },
+        { classId: "warden", providerId: null, model: null, verified: 1, reopened: 0, rejected: 0 },
+      ],
+    });
+    expect(insightsSchema.parse(view).wardenQuality).toEqual(view.wardenQuality);
+    expect(f.reader.wardenQuality()).toMatchObject({ from: f.now - 30 * DAY, to: f.now });
+  });
+});
 
 describe("Insights aggregation", () => {
   it("uses contract-checked units and fractional ratios, not display percentages", async () => {
