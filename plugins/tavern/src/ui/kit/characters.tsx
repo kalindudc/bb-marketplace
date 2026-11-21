@@ -568,6 +568,7 @@ export function TavernCharacter({
     const world = observeWorld(el, {
       mode: () => "lively",
       update: () => {},
+      nextDraw: () => 0,
       draw: () => drawRef.current(performance.now()),
     });
     return world.remove;

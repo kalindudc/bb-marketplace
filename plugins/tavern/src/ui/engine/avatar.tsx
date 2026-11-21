@@ -36,15 +36,28 @@ export function CharacterAvatar({ character, seed = character.avatar ?? characte
     let palette: CharacterPalette | undefined;
     const actor = new Actor(id, art, "idle");
     let untilCue = CUE_GAP;
+    let painted: number | null = null;
     const rules = () => ({ mode: world.mode(), ...motion.getHolds("page") });
+    const frameFor = (still: boolean) => {
+      const frame = actor.frame(still);
+      if (!still && frame.activity === "stand" && frame.t % 9600 >= 6400) frame.activity = "quiet";
+      return frame;
+    };
     const world: EngineWorld = {
       mode: () => worldMode.current === "off" ? "off" : "calm",
-      update(seconds) {
-        actor.update(seconds, 0, rules());
-        untilCue -= seconds;
+      refresh: () => actor.setRules(rules()),
+      update(seconds, steps) {
+        actor.update(seconds, 0, rules(), steps);
+        untilCue -= seconds * steps;
         if (untilCue > 0) return;
         untilCue = CUE_GAP;
         play.current?.("notice", true);
+      },
+      nextDraw() {
+        if (actor.nextDraw(0) === 0) return 0;
+        const frame = frameFor(false);
+        const phase = frame.t % 9600;
+        return Math.min(art.nextChange(frame) ?? Infinity, (phase < 6400 ? 6400 : 9600) - phase, untilCue * 1000);
       },
       draw(still) {
         if (ctx === undefined) {
@@ -54,9 +67,9 @@ export function CharacterAvatar({ character, seed = character.avatar ?? characte
         }
         if (!ctx) return;
         palette ??= readPalette(paletteHost.current);
-        const frame = actor.frame(still);
-        if (!still && frame.activity === "stand" && frame.t % 9600 >= 6400) frame.activity = "quiet";
-        art.draw(ctx, frame, palette);
+        const frame = frameFor(still);
+        const key = art.pixelKey(frame);
+        if (painted !== key) { painted = key; art.draw(ctx, frame, palette); }
       },
       suspend(reason) {
         if (reason === "hidden") return;
@@ -73,11 +86,12 @@ export function CharacterAvatar({ character, seed = character.avatar ?? characte
       if (motion.cue("page", el, "avatar cue", {
         key: `${id}:${kind}:${auto ? "idle" : "greeting"}`, auto, ms, yields: auto,
         run: node => typeof node.animate === "function" ? [node.animate([], { duration: ms })] : [],
-        onDone: () => cancel?.(),
-      })) cancel = actor.playCue(kind, auto, rules());
+        onDone: () => { if (cancel) handle.invalidate(cancel); },
+      })) handle.invalidate(() => { cancel = actor.playCue(kind, auto, rules()); });
     };
     const theme = new MutationObserver(() => {
       palette = undefined;
+      painted = null;
       handle.invalidate();
     });
     theme.observe(document.documentElement, { attributes: true, attributeFilter: ["class", "style", "data-theme"] });

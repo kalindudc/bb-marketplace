@@ -5,6 +5,7 @@ import type { Room } from "../../shared/contract";
 import { memberPlace } from "../../shared/member-place";
 import type { Member } from "../../shared/schema";
 import { PartyStrip } from "../engine/strip";
+import { useCharacterQuiet } from "../engine/character-quiet";
 import type { Mood } from "../engine/art";
 import { Hearth, OpensMark, hearthWords, keeperStatus, memberIdentity, onTheRoad, useNow } from "../kit";
 import { ReturnButton, usePendingStops } from "./away";
@@ -39,6 +40,7 @@ function HearthFire({ room, onRoad }: { room: Room; onRoad: number }) {
 export function HearthBand({ room, registry }: { room: Room; registry?: Registry }) {
   const navigate = useBbNavigate();
   const pending = usePendingStops(room);
+  const quiet = useCharacterQuiet(room.characterQuietUntil);
   const away = roomAway(room);
   const attention = attentionView(room.attention);
   const needs = attention.needYou;
@@ -73,7 +75,7 @@ export function HearthBand({ room, registry }: { room: Room; registry?: Registry
           const who = memberIdentity(registry, member);
           if (!who || who.character.plain) return null;
           return <PartyStrip key={member.threadId} character={who.character} classId={who.cls.id} classLabel={who.cls.label}
-            surface="page" keeper={member.role === "keeper"} mood={mood} held={mood === "waiting"} mode={room.ambientMotion}
+            surface="page" keeper={member.role === "keeper"} mood={mood} held={mood === "waiting"} mode={room.ambientMotion} quiet={quiet}
             pageScene={{ threadId: member.threadId, road }} onActorClick={() => navigate.toThread(member.threadId)} />;
         })}
       </div>

@@ -64,6 +64,26 @@ describe("settings compatibility and validation", () => {
     expect(() => settingsPatchSchema.parse({ knobs: { tickFactChars: 6000 } })).toThrow();
     expect(previewToml("[keepers]\nrestatement_bytes = 8000", store.snapshot()).problems).toEqual([]);
   });
+  it("defaults the lantern to medium, lights bb, and round-trips each control without filling sparse patches", () => {
+    const { store } = fixture();
+    expect(store.read().tavern).toMatchObject({ lanternLight: true, lanternStrength: "medium", lanternLightBb: true });
+    const tavern = { lanternLight: false, lanternStrength: "high", lanternLightBb: false } as const;
+    for (const [key, value] of Object.entries(tavern)) {
+      const patch = { tavern: { [key]: value } };
+      expect(settingsPatchSchema.parse(patch)).toEqual(patch);
+    }
+    store.update({ revision: 0, patch: { tavern }, why: "Keep lantern light within Tavern" });
+    const toml = exportToml(store.snapshot());
+    expect(toml).toContain("lantern_light = false");
+    expect(toml).toContain('lantern_strength = "high"');
+    expect(toml).toContain("lantern_light_bb = false");
+    const target = fixture().store;
+    const preview = previewToml(toml, target.snapshot());
+    expect(preview.problems).toEqual([]);
+    expect(preview.user).toEqual({ tavern });
+    target.replace(preview.user, preview.pinned, preview.tuned, 0, "Restore lantern preferences");
+    expect(target.read().tavern).toMatchObject(tavern);
+  });
   it("round-trips non-default knobs and choices across all Settings sections", () => {
     const { store } = fixture();
     const patch = settingsPatchSchema.parse({

@@ -12,16 +12,16 @@ export function enteringMood(mood: Mood) {
   return MOOD_CUE[mood];
 }
 
-export function isStillMood(mood: Mood): boolean {
+export function isAttentionMood(mood: Mood): boolean {
   return mood === "waiting" || mood === "blocked" || mood === "error";
 }
 
 export function actorActivity(mood: Mood, rules: ActorRules): Exclude<Activity, "cue"> {
-  if (rules.mode === "off" || rules.held || isStillMood(mood)) return "stand";
+  if (rules.mode === "off" || rules.held || isAttentionMood(mood)) return "stand";
   if (rules.typing) return "quiet";
   return rules.mode === "lively" && (mood === "working" || mood === "idle") ? "walk" : "stand";
 }
 
 export function allowsCue(rules: ActorRules, auto: boolean, mood: Mood) {
-  return rules.mode !== "off" && (!auto || !(rules.held || rules.typing || isStillMood(mood)));
+  return rules.mode !== "off" && (!auto || !(rules.held || rules.typing || isAttentionMood(mood)));
 }

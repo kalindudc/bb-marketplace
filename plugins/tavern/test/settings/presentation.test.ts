@@ -63,6 +63,30 @@ describe("presentation settings on existing UI reads", () => {
     expect(rpcContract.decor.tags?.({ threadId: "plain" }, decor)).toContain("tavern:settings");
     expect(rpcContract.room.tags?.({}, room)).toContain("tavern:settings");
   });
+  it("round-trips the character Quiet end time through TOML and exposes it to both character surfaces", async () => {
+    const f = fixture(), until = 1_800_000_000_000;
+    f.settings.update({ revision: 0, patch: { tavern: { characterQuietUntil: until } }, why: "Quiet the sprites" });
+    const toml = exportToml(f.settings.snapshot());
+    expect(toml).toContain(`character_quiet_until = ${until}`);
+    const target = fixture(), preview = previewToml(toml, target.settings.snapshot());
+    expect(preview.problems).toEqual([]);
+    expect(preview.user).toEqual({ tavern: { characterQuietUntil: until } });
+    target.settings.replace(preview.user, preview.pinned, undefined, 0, "Restore display preference");
+    expect(await target.call("decor", { threadId: "lead" })).toMatchObject({ characterQuietUntil: until, voice: "full", ambientMotion: "calm" });
+    expect(await target.call("room", {})).toMatchObject({ characterQuietUntil: until, hearthFlicker: true });
+  });
+
+  it("keeps the remembered Speech bubbles level in TOML and the widget read", async () => {
+    const f = fixture();
+    f.settings.update({ revision: 0, patch: { tavern: { voice: "off", voiceBeforeOff: "light" } }, why: "Mute the characters" });
+    const toml = exportToml(f.settings.snapshot());
+    expect(toml).toContain('voice_before_off = "light"');
+    const target = fixture(), preview = previewToml(toml, target.settings.snapshot());
+    expect(preview.problems).toEqual([]);
+    target.settings.replace(preview.user, preview.pinned, undefined, 0, "Restore speech preference");
+    expect(await target.call("decor", { threadId: "lead" })).toMatchObject({ voice: "off", voiceBeforeOff: "light" });
+  });
+
   it("round-trips the new hearth preference through validated TOML", () => {
     const f = fixture();
     f.settings.update({ revision: 0, patch: { tavern: { hearthFlicker: false } }, why: "Stop ongoing decorative motion" });

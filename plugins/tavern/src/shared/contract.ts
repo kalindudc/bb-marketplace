@@ -8,7 +8,7 @@ import { z } from "zod";
 import { pullRequestSchema } from "./pull-request";
 import { defineContract } from "./define-contract";
 import { stopAllContract } from "./stop-all";
-import { voiceModeSchema } from "./settings";
+import { characterQuietUntilSchema, voiceBeforeOffSchema, voiceModeSchema } from "./settings";
 import { placementContract } from "./placement-rpc";
 import { placementViewSchema } from "./placement-view";
 import { voiceCheckContract } from "./voice-check";
@@ -150,7 +150,7 @@ export const threadDecorSchema = z.object({
   threadId,
   widgetRow: z.boolean().optional(),
   ambientMotion: z.enum(["calm", "lively", "off"]).optional(), repeatSeconds: z.number().optional(), characters: z.boolean().optional(),
-  voice: voiceModeSchema.optional(),
+  voice: voiceModeSchema.optional(), voiceBeforeOff: voiceBeforeOffSchema.optional(), characterQuietUntil: characterQuietUntilSchema.optional(),
   reportedPoseSeconds: z.number().int().positive().optional(), verifiedPoseMinutes: z.number().int().positive().optional(),
   moodSignals: z.object({
     released: z.boolean(),
@@ -283,7 +283,7 @@ export const roomSchema = z.object({
   sinceVisit: sinceVisitSchema.optional(),
   notes: z.array(keeperNoteSchema).optional(),
   attention: attentionSchema.optional(),
-  hearthFlicker: z.boolean().optional(),
+  hearthFlicker: z.boolean().optional(), characterQuietUntil: characterQuietUntilSchema.optional(),
   ambientMotion: z.enum(["calm", "lively", "off"]).optional(), repeatSeconds: z.number().optional(),
   away: awayStatusSchema.optional(),
   keepers: z.array(
