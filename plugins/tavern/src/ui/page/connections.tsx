@@ -1,7 +1,7 @@
 import { memberIdentityLabel, memberKeeperIds } from "../../shared/identity";
 import { hasEndedEngagement, memberActivityWord } from "../../shared/member-engagement";
 import { experimental_useRpcQuery, experimental_copyToClipboard, experimental_saveFile, useBbNavigate } from "@get-bb/plugin-sdk/app";
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { rpcContract, type Room } from "../../shared/contract";
 import type { Member } from "../../shared/schema";
 import { verifiedOf, verifiedWords, CheckIndependence, ExpandsMark, GuardPosture, OpensMark, OverflowMenu, endedCounts, glowVars, keeperStartedLabel, keeperStatus, useToday, type StateTone } from "../kit";
@@ -37,22 +37,6 @@ export function fitColumns(cols: readonly number[], used: readonly number[], ava
 export function finishedWord(phases: readonly string[]): "Finished" | "Returned" | "Stopped" {
   const returned = phases.includes("done"), stopped = phases.includes("stopped");
   return returned && stopped ? "Finished" : stopped ? "Stopped" : "Returned";
-}
-
-/** Measured before the first paint, so the page never draws its wide layout on a phone and then jumps to the narrow one. */
-function useWidth<T extends HTMLElement>() {
-  const ref = useRef<T>(null);
-  const [width, setWidth] = useState(0);
-  useLayoutEffect(() => {
-    const node = ref.current;
-    if (!node) return;
-    setWidth(node.getBoundingClientRect().width);
-    if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver((entries) => { const entry = entries[0]; if (entry) setWidth(entry.contentRect.width); });
-    observer.observe(node);
-    return () => observer.disconnect();
-  }, []);
-  return [ref, width] as const;
 }
 
 function memberSub(registry: Registry, m: Member, status = memberActivityWord(m), keeper?: Member) {
@@ -229,7 +213,7 @@ export function TheMap({ room, registry }: { room: Room; registry: Registry }) {
   const filtered = hidden.size > 0;
   const clearFilters = () => { setFramed(null); setHiddenIds([]); };
   const toggleQuest = (id: string) => { setFramed(null); const next = new Set(hidden); if (next.has(id)) next.delete(id); else next.add(id); setHidden(next); };
-  const onlyThis = (id: string) => { setFramed(id); setHidden(new Set(drawable.filter((q) => q.id !== id).map((q) => q.id))); if (drawable.some((q) => q.id === id && isFinished(q.phase))) setShowReturned(true); };
+  const onlyThis = (id: string) => { setFramed(id); setHidden(new Set(drawable.filter((q) => q.id !== id).map((q) => q.id))); };
   const firstYours = shownActive.find((q) => room.asks.some((a) => a.state === "open" && a.boardQuestId === q.id));
   const [kept, keepFocus] = usePanelState<string | null>("map.focus", null, (v) => typeof v === "string");
   const focus = kept && shownActive.some((q) => q.id === kept) ? kept : firstYours?.id ?? shownActive[0]?.id ?? null;
@@ -241,7 +225,7 @@ export function TheMap({ room, registry }: { room: Room; registry: Registry }) {
   const cols = useMemo(() => fitColumns(COLS, framed ? [0, 1] : [...new Set(picture.nodes.map((n) => n.col))], boxWidth - 24), [picture, boxWidth, framed]);
   const keepers = useMemo(() => new Map(room.keepers.map(k => [k.member.threadId, k.member])), [room.keepers]);
   const layout = useMemo(() => layoutMap(picture, registry, keepers, focus, cols, now), [picture, registry, keepers, focus, cols, now]);
-  const [ref, width] = useWidth<HTMLDivElement>();
+  const ref = useRef<HTMLDivElement>(null);
   const [receipt, setReceipt] = useState<string | null>(null);
   const listHeading = useId();
   useEffect(() => { if (!receipt) return; const t = setTimeout(() => setReceipt(null), 6000); return () => clearTimeout(t); }, [receipt]);
@@ -278,7 +262,7 @@ export function TheMap({ room, registry }: { room: Room; registry: Registry }) {
   for (const m of room.solos) rows.push({ key: m.threadId, tone: m.state === "working" ? "work" : "wait", member: m, title: `${characterName(registry, m)} · ${m.title ?? m.doing ?? "solo"}`, place: "Solo", sub: memberSub(registry, m), run: () => navigate.toThread(m.threadId), label: `Open ${characterName(registry, m)}'s thread` });
   useEffect(() => rememberCount(SKEL.mapRows, rows.length), [rows.length]);
   const waitingOn = waitingWords(open.length, outside.map((n) => n.label));
-  const narrow = width > 0 && width < 940;
+  const pickerOpen = picking && drawable.length > 0;
   // The focused quest always has a segment; the menu holds the rest.
   const segQuests = quests.length <= SEG_MAX ? quests : (() => { const first = quests.slice(0, SEG_SHOWN); const f = quests.find((q) => q.id === focus); return f && !first.includes(f) ? [...first, f] : first; })();
   const moreQuests = quests.filter((q) => !segQuests.includes(q));
@@ -322,41 +306,53 @@ export function TheMap({ room, registry }: { room: Room; registry: Registry }) {
     </ul>}
     {!rows.length && !archivedRows.length && <p className="tv-empty" data-empty>The map is quiet. No typed threads or quests yet.</p>}
   </section>;
+  const finishedToggle = hasFinished && <button type="button" className="seg" aria-pressed={showReturned} onClick={() => { setFramed(null); setCellarCursors([null]); setShowReturned(!showReturned); }}>Show finished quests <span className="num">{ended.returned} returned · {ended.stopped} stopped · {room.archivedCount} archived</span></button>;
   return <div className="tv-map">
     <h1 className="sr">The map (connections)</h1>
-    <div className="tv-sline">
-      <div className="tv-hero"><b className="num">{room.keepers.length}</b><span>Keeper{room.keepers.length === 1 ? "" : "s"} · {quests.length} active quest{quests.length === 1 ? "" : "s"} · {errands.length} side quest{errands.length === 1 ? "" : "s"}</span></div>
-      {waitingOn && <div className="tv-facts"><span className="tv-facts-long"><span className="tv-nowrap">waiting on</span> <b>{waitingOn}</b></span></div>}
-      <span className="tv-sp" />
-      {quests.length > 0 && <div className="segc tv-mapfocus" role="group" aria-label="Focus on a quest">{segQuests.map((q) => <button type="button" className={`seg ${hidden.has(q.id) ? "tv-seg-off" : ""}`} key={q.id} aria-pressed={focus === q.id} onClick={() => setFocus(q.id)} title={hidden.has(q.id) ? `Hidden by your filter. Focus on ${q.title} to show it again` : `Focus on ${q.title}`} aria-label={`Focus on ${q.title} · ${phaseWord(q.phase)} · ${q.move.text}${hidden.has(q.id) ? " · hidden by your filter" : ""}`}>{q.short}</button>)}
-        {moreQuests.length > 0 && <select className="tv-select seg tv-mapmore" aria-label="Focus on another quest" title="Focus on another quest" value="" onChange={(e) => e.target.value && setFocus(e.target.value)}>
-          <option value="">+{moreQuests.length} more</option>
-          {moreQuests.map((q) => <option key={q.id} value={q.id}>{q.short} · {phaseWord(q.phase)}</option>)}
-        </select>}
+    <div className="tv-map-controls">
+      <div className="tv-sline">
+        <div className="tv-hero"><b className="num">{room.keepers.length}</b><span>Keeper{room.keepers.length === 1 ? "" : "s"} · {quests.length} active quest{quests.length === 1 ? "" : "s"} · {errands.length} side quest{errands.length === 1 ? "" : "s"}</span></div>
+        {waitingOn && <div className="tv-facts"><span className="tv-facts-long"><span className="tv-nowrap">waiting on</span> <b>{waitingOn}</b></span></div>}
+        <span className="tv-sp" />
+        {quests.length > 0 && <div className="segc tv-mapfocus" role="group" aria-label="Focus on a quest">{segQuests.map((q) => <button type="button" className={`seg ${hidden.has(q.id) ? "tv-seg-off" : ""}`} key={q.id} aria-pressed={focus === q.id} onClick={() => setFocus(q.id)} title={hidden.has(q.id) ? `Hidden by your filter. Focus on ${q.title} to show it again` : `Focus on ${q.title}`} aria-label={`Focus on ${q.title} · ${phaseWord(q.phase)} · ${q.move.text}${hidden.has(q.id) ? " · hidden by your filter" : ""}`}>{q.short}</button>)}
+          {moreQuests.length > 0 && <select className="tv-select seg tv-mapmore" aria-label="Focus on another quest" title="Focus on another quest" value="" onChange={(e) => e.target.value && setFocus(e.target.value)}>
+            <option value="">+{moreQuests.length} more</option>
+            {moreQuests.map((q) => <option key={q.id} value={q.id}>{q.short} · {phaseWord(q.phase)}</option>)}
+          </select>}
+        </div>}
+      </div>
+      {(drawable.length > 0 || hasFinished || archivedCount > 0) && <div className="tv-mapfilters">
+        {archivedCount > 0 && <button type="button" className="seg" aria-pressed={showArchived} onClick={() => setShowArchived(!showArchived)}>Show archived Keepers ({archivedCount})</button>}
+        {drawable.length > 0 && <button type="button" className="lnk-btn act" aria-expanded={pickerOpen} aria-controls={pickerId} onClick={() => setPicking(!picking)}><span>Quests on the board</span><span className="num">{drawnCount} of {drawable.length}</span><ExpandsMark open={pickerOpen} /></button>}
+        {!pickerOpen && finishedToggle}
+        {!pickerOpen && !quests.length && hasFinished && !showReturned && <span className="tv-mapfilters-n">Only finished quests are available to show.</span>}
+        {filtered && <span className="tv-mapfilters-n" role="status"><span>{shownNote}</span><button type="button" className="lnk act tv-clear" onClick={clearFilters}>Clear filters</button></span>}
+      </div>}
+      {showReturned && room.archivedCount > 0 && <div className="tv-mapfilters">
+        {cellarCursors.length > 1 && <button type="button" className="lnk-btn act" onClick={() => setCellarCursors(cellarCursors.slice(0, -1))}>Newer archived quests</button>}
+        {cellar.error ? <p className="problem" role="alert">Could not read archived quests: {cellar.error.message}<button type="button" className="lnk act" onClick={() => void cellar.refetch()}>Retry</button></p> :
+          !cellar.data ? <span className="tv-mapfilters-n" role="status">Loading archived quests…</span> :
+            cellar.data.nextCursor && <button type="button" className="lnk-btn act" onClick={() => setCellarCursors([...cellarCursors, cellar.data!.nextCursor])}>Older archived quests</button>}
+      </div>}
+      {showArchived && history.error && <p className="problem" role="alert">Could not read archived Keeper history: {history.error.message}<button type="button" className="lnk act" onClick={() => void history.refetch()}>Retry</button></p>}
+      {pickerOpen && <div id={pickerId} className="tv-card tv-mappick" role="group" aria-label="Quests the map draws">
+        {hasFinished && <div className="tv-mapfilters tv-mappick-status">
+          {!showReturned && <span className="tv-mapfilters-n">Finished quests are hidden.</span>}
+          {finishedToggle}
+        </div>}
+        {choices.map(({ active, done, keeper }) => {
+          const quests = showReturned ? [...active, ...done] : active;
+          return quests.length > 0 && <fieldset key={keeper.threadId}>
+            <legend><CrestOf member={keeper} registry={registry} size={16} /><span>{characterName(registry, keeper)}</span></legend>
+            {quests.map((q) => <div className="tv-mappick-r" key={q.id}>
+              <label title={q.title}><input type="checkbox" checked={!hidden.has(q.id)} onChange={() => toggleQuest(q.id)} /><span className="tv-mappick-x"><span className="tv-mappick-t">{q.short}</span><span className="m">{q.phase === "done" ? "returned" : phaseWord(q.phase)}</span></span></label>
+              <button type="button" className="lnk-btn act" onClick={() => onlyThis(q.id)} aria-label={`Only this one: ${q.short}`}><span>Only this one</span></button>
+            </div>)}
+          </fieldset>;
+        })}
       </div>}
     </div>
-    {(drawable.length > 0 || hasFinished || archivedCount > 0) && <div className="tv-mapfilters">
-      {archivedCount > 0 && <button type="button" className="seg" aria-pressed={showArchived} onClick={() => setShowArchived(!showArchived)}>Show archived Keepers ({archivedCount})</button>}
-      {hasFinished && <button type="button" className="seg" aria-pressed={showReturned} onClick={() => { setFramed(null); setCellarCursors([null]); setShowReturned(!showReturned); }}>Show finished quests <span className="num">{ended.returned} returned · {ended.stopped} stopped · {room.archivedCount} archived</span></button>}
-      {!quests.length && hasFinished && !showReturned && <span className="tv-mapfilters-n">Only finished quests are available to show.</span>}
-      {drawable.length > 0 && <button type="button" className="lnk-btn act" aria-expanded={picking} aria-controls={pickerId} onClick={() => setPicking(!picking)}><span>Quests on the board</span><span className="num">{drawnCount} of {drawable.length}</span><ExpandsMark open={picking} /></button>}
-      {filtered && <span className="tv-mapfilters-n" role="status"><span>{shownNote}</span><button type="button" className="lnk act tv-clear" onClick={clearFilters}>Clear filters</button></span>}
-    </div>}
-    {showReturned && room.archivedCount > 0 && <div className="tv-mapfilters">
-      {cellarCursors.length > 1 && <button type="button" className="lnk-btn act" onClick={() => setCellarCursors(cellarCursors.slice(0, -1))}>Newer archived quests</button>}
-      {cellar.error ? <p className="problem" role="alert">Could not read archived quests: {cellar.error.message}<button type="button" className="lnk act" onClick={() => void cellar.refetch()}>Retry</button></p> :
-        !cellar.data ? <span className="tv-mapfilters-n" role="status">Loading archived quests…</span> :
-          cellar.data.nextCursor && <button type="button" className="lnk-btn act" onClick={() => setCellarCursors([...cellarCursors, cellar.data!.nextCursor])}>Older archived quests</button>}
-    </div>}
-    {showArchived && history.error && <p className="problem" role="alert">Could not read archived Keeper history: {history.error.message}<button type="button" className="lnk act" onClick={() => void history.refetch()}>Retry</button></p>}
-    {picking && drawable.length > 0 && <div id={pickerId} className="tv-card tv-mappick" role="group" aria-label="Quests the map draws">{choices.filter((c) => c.active.length + c.done.length > 0).map((c) => <fieldset key={c.keeper.threadId}>
-      <legend><CrestOf member={c.keeper} registry={registry} size={16} /><span>{characterName(registry, c.keeper)}</span></legend>
-      {[...c.active, ...c.done].map((q) => { const done = isFinished(q.phase); const off = done && !showReturned; return <div className="tv-mappick-r" key={q.id}>
-        <label title={q.title}><input type="checkbox" checked={!hidden.has(q.id) && !off} disabled={off} onChange={() => toggleQuest(q.id)} /><span className="tv-mappick-x"><span className="tv-mappick-t">{q.short}</span><span className="m">{done ? q.phase === "stopped" ? "stopped" : "returned" : phaseWord(q.phase)}{off ? " · Finished quests are off" : ""}</span></span></label>
-        <button type="button" className="lnk-btn act" onClick={() => onlyThis(q.id)} aria-label={`Only this one: ${q.short}`}><span>Only this one</span></button>
-      </div>; })}
-    </fieldset>)}</div>}
-    <div className={`tv-mapgrid ${narrow ? "narrow" : ""}`} ref={ref}>
+    <div className="tv-mapgrid" ref={ref}>
       <figure className="tv-card tv-mapcard lit" style={glowVars("connections")}>
         <MapViewport onBoxWidth={setBoxWidth} width={layout.width} height={layout.height} nodes={layout.nodes.length} focus={focusBox(layout, framed)} focusKey={`${framed ?? ""}|${focus ?? ""}`} label={`The map: ${caption}`} bar={<span className="tv-mv-cap clamp" title={caption}>{caption}</span>} controls={exportMenu} status={receipt}
           note={quests.length === 0 ? <p className="tv-map-quiet"><PageGlyph name="map" size={16} /><span><b>No active quests.</b> {room.keepers.some(k => !k.archived) ? "Live Keepers stay on the map." : "There are no live Keepers to draw."}</span></p> : shownActive.length === 0 ? <p className="tv-map-quiet"><PageGlyph name="map" size={16} /><span><b>Every active quest is hidden by your filters.</b></span><button type="button" className="lnk act tv-clear" onClick={clearFilters}>Clear filters</button></p> : undefined}>

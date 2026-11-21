@@ -95,6 +95,7 @@ Machine rules put a project's party members on their own new machines through th
 
 ### Fixed
 
+- The map fills the available space again when you close the quest filter, and Everyone on the map stays within the page. The filter hides finished rows until you choose Show finished quests.
 - Quests whose Keeper thread is archived or deleted leave the active board. Find them under Needs a Keeper in the common room to stop them. Unarchiving the Keeper’s thread brings its quests back to the board.
 - New Keepers use free characters first, and live Keepers who share a character get distinct names. On the next reload, this also applies to live child leads: duplicate names get a suffix such as Moss II, and Tavern updates the thread titles it manages. A returning Keeper takes the suffix instead of renaming a Keeper that stayed live.
 - The map stays visible when there is no active work; turn on Show finished quests to see returned, stopped and archived work.

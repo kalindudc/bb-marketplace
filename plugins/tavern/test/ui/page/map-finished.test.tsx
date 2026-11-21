@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { definePluginApp } from "@get-bb/plugin-sdk/app";
 import { loadPluginApp, renderSlot, type PluginRpcTestHandlers, type RenderedSlot } from "@get-bb/plugin-sdk/testing/app";
-import { fireEvent } from "@testing-library/react";
+import { fireEvent, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { rpcContract, type Room } from "../../../src/shared/contract";
 import { finishedWord } from "../../../src/ui/page/connections";
@@ -62,6 +62,41 @@ describe("the map's finished group", () => {
     fireEvent.click(slot.getByRole("button", { name: `Only this one: ${scenes.sfe.short}` }));
     expect(slot.container.querySelector('[data-node="returned:sfe"]')).not.toBeNull();
     expect(slot.container.querySelector('[data-node="returned:cellared"]')).toBeNull();
+  });
+
+  it("keeps the picker button in the same position when finished controls move", async () => {
+    const slot = await map(withFinished("stopped"));
+    const button = slot.getByRole("button", { name: /^Quests on the board/ });
+    const index = () => [...button.parentElement!.children].indexOf(button);
+    const closed = index();
+    fireEvent.click(button);
+    expect(button.getAttribute("aria-expanded")).toBe("true");
+    expect(index()).toBe(closed);
+    fireEvent.click(button);
+    expect(button.getAttribute("aria-expanded")).toBe("false");
+    expect(index()).toBe(closed);
+  });
+
+  it("only lists actionable quests and offers one control to reveal finished quests", async () => {
+    const slot = await map(withFinished("stopped"));
+    fireEvent.click(slot.getByRole("button", { name: /^Quests on the board/ }));
+    const picker = within(slot.getByRole("group", { name: "Quests the map draws" }));
+    expect(picker.getByRole("checkbox", { name: /Rollout batching/ })).toHaveProperty("disabled", false);
+    expect(picker.queryByRole("checkbox", { name: new RegExp(scenes.sfe.short) })).toBeNull();
+    expect(picker.queryByRole("button", { name: `Only this one: ${scenes.sfe.short}` })).toBeNull();
+    expect(picker.getAllByText("Finished quests are hidden.")).toHaveLength(1);
+    const show = picker.getByRole("button", { name: /^Show finished quests/ });
+    expect(slot.getAllByRole("button", { name: /^Show finished quests/ })).toHaveLength(1);
+    fireEvent.click(show);
+    const returned = picker.getByRole("checkbox", { name: new RegExp(scenes.sfe.short) });
+    expect(returned).toHaveProperty("checked", true);
+    fireEvent.click(returned);
+    expect(returned).toHaveProperty("checked", false);
+    expect(picker.getByRole("checkbox", { name: /stopped 0/ })).toHaveProperty("disabled", false);
+    expect(picker.queryByText("Finished quests are hidden.")).toBeNull();
+    fireEvent.click(show);
+    fireEvent.click(show);
+    expect(picker.getByRole("checkbox", { name: new RegExp(scenes.sfe.short) })).toHaveProperty("checked", false);
   });
 
   it("loads one cellar page at a time even when the Keeper is not on the board", async () => {

@@ -18,13 +18,13 @@ function scrollParent(el: HTMLElement): HTMLElement | null {
  * Room from the window's top to the bottom of the scrolling panel, less what sits under the window in its card.
  * Measured against the panel's content, not the scroll position, so scrolling never resizes the map.
  */
-export function useRoomBelow(box: React.RefObject<HTMLElement | null>, cardSelector = "figure") {
+function useRoomBelow(box: React.RefObject<HTMLElement | null>) {
   const [room, setRoom] = useState<number | null>(null);
   useLayoutEffect(() => {
     const el = box.current;
     if (!el || typeof ResizeObserver === "undefined") return;
     const panel = scrollParent(el);
-    const card = (el.closest(cardSelector) as HTMLElement | null) ?? el.parentElement!;
+    const card = el.closest("figure") ?? el.parentElement!;
     let frame = 0;
     const measure = () => {
       frame = 0;
@@ -37,17 +37,21 @@ export function useRoomBelow(box: React.RefObject<HTMLElement | null>, cardSelec
       let below = 0;
       for (let e: HTMLElement | null = card; e && e !== panel; e = e.parentElement) { const cs = getComputedStyle(e); below += parseFloat(cs.marginBottom) || 0; if (e !== card) below += (parseFloat(cs.paddingBottom) || 0) + (parseFloat(cs.borderBottomWidth) || 0); }
       if (panel) below += parseFloat(getComputedStyle(panel).paddingBottom) || 0;
-      const next = el.closest(".tv-mapgrid.narrow") ? Math.floor(height * 0.7) : Math.floor(height - (b.top - top + scrolled) - under - Math.max(below, BOTTOM_GAP));
+      const next = Math.floor(height - (b.top - top + scrolled) - under - Math.max(below, BOTTOM_GAP));
       if (height > 0) setRoom((prev) => prev !== null && Math.abs(prev - next) < 2 ? prev : next);
     };
     const schedule = () => { if (!frame) frame = requestAnimationFrame(measure); };
     measure();
     const observer = new ResizeObserver(schedule);
     if (panel) observer.observe(panel);
-    observer.observe(card.parentElement ?? card);
+    observer.observe(card);
+    // A fold moves the map without resizing its grid; watch the controls that take up space above it.
+    for (let e: HTMLElement | null = el; e && e !== panel; e = e.parentElement) {
+      for (let before = e.previousElementSibling; before; before = before.previousElementSibling) observer.observe(before);
+    }
     window.addEventListener("resize", schedule);
     return () => { observer.disconnect(); window.removeEventListener("resize", schedule); if (frame) cancelAnimationFrame(frame); };
-  }, [box, cardSelector]);
+  }, [box]);
   return room;
 }
 

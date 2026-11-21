@@ -225,8 +225,10 @@ export function InsightsSkeleton() {
 export function MapSkeleton() {
   const rows = Math.max(2, useSkeletonCount(SKEL.mapRows, undefined, 4));
   return <div ref={useHeldShape("map")} className="tv-map sk-map">
-    <div className="tv-sline"><div className="tv-hero"><b className="num"><SkLine w="1.4ch" /></b><span><SkLine w="22ch" /></span></div></div>
-    <div className="tv-mapfilters" data-sk-optional><SkSegmented count={3} /></div>
+    <div className="tv-map-controls">
+      <div className="tv-sline"><div className="tv-hero"><b className="num"><SkLine w="1.4ch" /></b><span><SkLine w="22ch" /></span></div></div>
+      <div className="tv-mapfilters" data-sk-optional><SkSegmented count={1} /><span className="lnk-btn"><SkLine w="18ch" /></span><SkSegmented count={1} /></div>
+    </div>
     <div className="tv-mapgrid">
       <figure className="tv-card tv-mapcard sk-mapcard"><div className="sk-mapcols">{[0, 1, 2].map((c) => <div key={c} className="sk-mapcol">{repeat(c === 1 ? 3 : 2, (i) => <SkMapNode key={i} w={c === 1 ? 238 : 198} />)}</div>)}</div></figure>
       <section className="tv-card tv-maplist"><header className="tv-maplist-bar"><h2><SkLine w="16ch" /></h2></header><div className="sk-maprows">{repeat(rows, (i) => <div key={i} className="sk-maprow"><SkBlock w={13} h={13} /><SkCrest size={18} /><span className="sk-col"><SkLine w="70%" /><SkLine w="45%" /></span></div>)}</div></section>

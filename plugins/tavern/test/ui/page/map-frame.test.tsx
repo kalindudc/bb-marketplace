@@ -70,6 +70,7 @@ describe("Only this one on the map", () => {
     size = { w: 1400, h: 350 };
     const slot = await map();
     fireEvent.click(slot.getByRole("button", { name: /^Quests/ }));
+    fireEvent.click(within(slot.getByRole("group", { name: "Quests the map draws" })).getByRole("button", { name: /^Show finished quests/ }));
     fireEvent.click(within(slot.getByRole("group", { name: "Quests the map draws" })).getByRole("button", { name: "Only this one: isZeroDuration" }));
     await waitFor(() => expect(inWindow(slot, '[data-node="returned:old-11"]').inside).toBe(true));
     fireEvent.click(within(slot.getByRole("group", { name: "Focus on a quest" })).getByRole("button", { name: /^Focus on sandbox.example audit/ }));
