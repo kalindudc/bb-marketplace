@@ -124,7 +124,7 @@ describe("user checker-handoff holds", () => {
   it("does not release for a reporting promise, completed note, or manual resume", async () => {
     const f = await goal();
     f.k.receiveUser("lead", "Tell me when it has been independently checked");
-    f.k.route("lead", { kind: "steer", boardQuestId: f.q.id, summary: "Report when checked", notes: [{ kind: "commitment", text: "Tell the user when independently checked", boardQuestId: f.q.id, dueAt: null, condition: "When checked" }] });
+    f.k.route("lead", { kind: "steer", boardQuestId: f.q.id, summary: "Report when checked", notes: [{ kind: "commitment", text: "Tell the user when independently checked", boardQuestId: f.q.id, dueAt: f.time() + 600_000, condition: "When checked" }] });
     for (const note of f.k.memory.notes("lead", 100)) f.k.memory.complete("lead", note.id);
     f.k.store.patch("lead", { manualStopAt: f.time() });
     f.k.userAction("lead", "User resumed", true);

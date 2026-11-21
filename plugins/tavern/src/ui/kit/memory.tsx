@@ -21,7 +21,7 @@ function NoteRow({ note, short, now }: { note: KeeperNote; short?: Short; now: n
   const late = note.kind === "commitment" && note.dueAt !== null && note.dueAt < now;
   const text = note.kind === "waiting-on-user" ? note.action ?? note.text : note.kind === "fact" ? `“${note.text}”` : note.condition ? `${note.text} · when ${note.condition}` : note.text;
   const meta = note.kind === "commitment"
-    ? late ? <span title={`Was due ${at(note.dueAt!, now)}`}><StatusPill status="blocked">overdue</StatusPill></span> : note.dueAt !== null ? <span className="m" title={`by ${at(note.dueAt, now)}`}>by {at(note.dueAt, now)}</span> : <span className="m" title={`on a condition: ${note.condition}`}>on a condition</span>
+    ? late ? <span title={`Was due ${at(note.dueAt!, now)}`}><StatusPill status="blocked">overdue</StatusPill></span> : note.dueAt !== null ? <span className="m" title={`by ${at(note.dueAt, now)}`}>by {at(note.dueAt, now)}</span> : <span className="m" title={note.condition ? `no deadline: ${note.condition}` : "no deadline"}>no deadline</span>
     : note.kind === "fact" && note.validUntil !== null ? <span className="m" title={`Kept until ${new Date(note.validUntil).toLocaleString()}`}>until {at(note.validUntil, now)}</span>
     : <TimeAgo at={note.createdAt} />;
   return <li className={`mem-row k-${note.kind} ${late ? "late" : ""}`}><Clamp lines={1} text={text} /><span className="mem-meta">{meta}</span>{q ? <span className="lg-q" title={q}>{q}</span> : <span />}{note.kind === "waiting-on-user" && <HandBackActions note={note} />}</li>;

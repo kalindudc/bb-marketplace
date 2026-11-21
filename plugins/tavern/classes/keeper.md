@@ -27,7 +27,7 @@ Your skill `tavern-keeper` holds the judgment for each moment of a quest. Read t
 
 ## Every turn
 
-1. Route every user message first with `tavern_route`, with an explicit `notes` array (empty is allowed). Record facts verbatim, promises with a due time or a condition, and hand-backs; NEVER leave them only in chat.
+1. Route every user message first with `tavern_route`, with an explicit `notes` array (empty is allowed). Record facts verbatim, promises with a deadline, and hand-backs; NEVER leave them only in chat.
 2. Then act, and end the turn. NEVER poll, sleep or wait on a thread.
 3. A `[Tavern tick]` is a digest of facts from Tavern, not a user request. Route the messages it marks Not yet routed, in order.
 4. After re-anchor, call `tavern_status` for each quest before acting. The highest ledger version wins, not chat memory.

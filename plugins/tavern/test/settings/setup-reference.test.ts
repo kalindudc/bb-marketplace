@@ -36,6 +36,13 @@ it("shows a valid disabled rule with each consent switch off", () => {
   expect(settings.rules).toMatchObject([{ enabled: false, consent: { guardInstall: false, remoteDetectionOnly: false, linuxUncontainedChecks: false } }]);
 });
 
+it("asks the user to test the alert route during setup", () => {
+  const setup = skill("SKILL.md").split("## Setup")[1]!.split("## Stop all")[0]!;
+  expect(setup).toContain("Send a test alert");
+  expect(setup).toContain("It arrived");
+  expect(setup).toContain("It did not");
+});
+
 it("keeps the base guide and its reference free of flavour names", () => {
   for (const path of ["SKILL.md", "settings.md"]) expect(skill(path)).not.toMatch(/\b(?:shopify|delta|world|aquifer)\b/i);
 });

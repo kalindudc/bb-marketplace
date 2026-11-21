@@ -4,6 +4,7 @@ import { z } from "zod";
 import { awayDigestInputSchema, type AwayDigest } from "../../shared/away-rpc";
 import { askSchema, eventSchema, readStoredActor } from "../../shared/schema";
 import type { Keeper } from "../keeper/service";
+import { nonAlertEventSql } from "../news";
 import type { AwayStore } from "./store";
 
 type EventRow = { id: number; at: number; keeper_thread_id: string | null; board_quest_id: string | null; actor: string; type: string; text: string; data: string };
@@ -33,7 +34,7 @@ export function readAwayDigest(k: Keeper, store: AwayStore, input: z.input<typeo
     const allAsks = (db.prepare("SELECT data FROM tavern_records WHERE kind='asks' AND id IN (SELECT value FROM json_each(?)) ORDER BY id").all(JSON.stringify([...waited])) as { data: string }[]).map(row => askSchema.parse(JSON.parse(row.data)));
     const waiting = new Set(waitingAtEnd), remainingAsks = allAsks.filter(ask => parsed.askCursor === null || ask.id > parsed.askCursor);
     const asks = remainingAsks.slice(0, parsed.limit).map(ask => ({ ask, waitingAtEnd: waiting.has(ask.id) }));
-    const groups = db.prepare("SELECT board_quest_id AS questId, COUNT(*) AS events, SUM(type='report.filed') AS reports, SUM(type='decision.made') AS decisions FROM tavern_events WHERE id>? AND id<=? AND type NOT LIKE 'away.%' GROUP BY board_quest_id").all(range.after, range.through) as { questId: string | null; events: number; reports: number; decisions: number }[];
+    const groups = db.prepare(`SELECT board_quest_id AS questId, COUNT(*) AS events, SUM(type='report.filed') AS reports, SUM(type='decision.made') AS decisions FROM tavern_events WHERE id>? AND id<=? AND type NOT LIKE 'away.%' AND ${nonAlertEventSql} GROUP BY board_quest_id`).all(range.after, range.through) as { questId: string | null; events: number; reports: number; decisions: number }[];
     const ids = new Set([...window.quests.map(quest => quest.questId), ...groups.flatMap(group => group.questId === null ? [] : [group.questId]), ...allAsks.flatMap(ask => ask.boardQuestId === null ? [] : [ask.boardQuestId])]);
     const wrapped = db.prepare("SELECT board_quest_id AS questId,data FROM tavern_events WHERE id>? AND id<=? AND type='quest.wrapped' ORDER BY id DESC").all(range.after, range.through) as { questId: string; data: string }[];
     const quests = [...ids].map(questId => {
@@ -49,7 +50,7 @@ export function readAwayDigest(k: Keeper, store: AwayStore, input: z.input<typeo
       return { ...(returnedWhileAway ? { returnedWhileAway: true, deferredCleanup } : {}), questId, title: quest ? quest.title : "Unavailable quest", short: quest ? quest.short : "Unavailable quest", missing: quest === null,
         events: group ? group.events : 0, reports: group ? group.reports : 0, decisions: group ? group.decisions : 0, asks: allAsks.filter(ask => ask.boardQuestId === questId).length };
     });
-    const rows = db.prepare("SELECT * FROM tavern_events WHERE id>? AND id<=? AND type NOT LIKE 'away.%' ORDER BY id LIMIT ?").all(Math.max(range.after, parsed.cursor), range.through, parsed.limit + 1) as EventRow[];
+    const rows = db.prepare(`SELECT * FROM tavern_events WHERE id>? AND id<=? AND type NOT LIKE 'away.%' AND ${nonAlertEventSql} ORDER BY id LIMIT ?`).all(Math.max(range.after, parsed.cursor), range.through, parsed.limit + 1) as EventRow[];
     const events = rows.slice(0, parsed.limit).map(row => eventSchema.parse({ id: row.id, at: row.at, keeperThreadId: row.keeper_thread_id, boardQuestId: row.board_quest_id, actor: readStoredActor(row.actor), type: row.type, text: row.text, data: JSON.parse(row.data) }));
     return { window, totalEvents: groups.reduce((sum, group) => sum + group.events, 0), nextCursor: rows.length > parsed.limit ? events.at(-1)!.id : null, events,
       totalAsks: allAsks.length, nextAskCursor: remainingAsks.length > parsed.limit ? asks.at(-1)!.ask.id : null, asks, quests };

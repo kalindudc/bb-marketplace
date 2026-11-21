@@ -1,4 +1,4 @@
-import type { ThreadIdentity } from "../shared/identity";
+import { memberIdentityFacts, type ThreadIdentity } from "../shared/identity";
 import { memberName } from "../shared/member-name";
 import type { Member } from "../shared/schema";
 import { isNotFound } from "./host-errors";
@@ -44,9 +44,8 @@ export function threadIdentities(runtime: TavernRuntime) {
         : viewerKeeper && keeperId(m) === viewerKeeper ? "in this Keeper's party"
         : "other";
       return {
-        threadId, name: name(m, record), role: m?.role ?? "thread", classId: m?.classId ?? null,
-        className: m ? registry(record).classes.find(c => c.id === m.classId)?.label ?? m.classId : null,
-        characterId: m?.characterId ?? null, keeper, relation, life, canOpen: life !== "deleted",
+        ...(m ? memberIdentityFacts(m, registry(record), keeper) : { name: name(m, record), role: "thread", className: null, keeper: null }),
+        threadId, classId: m?.classId ?? null, characterId: m?.characterId ?? null, relation, life, canOpen: life !== "deleted",
         ...(record?.projectId ? { projectId: record.projectId } : {}),
       };
     }));

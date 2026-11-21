@@ -7,10 +7,11 @@ import {
   type GateRecord,
   type Rule,
   type Route,
+  type Report,
 } from "../../shared/schema";
 import type { Keeper } from "./service";
 import { messageKey } from "../../shared/text";
-import { isOpenQuest } from "../liveness";
+import { isLiveMember, isOpenQuest } from "../liveness";
 import { settled } from "../../shared/waypoint";
 
 export class KeeperMemory {
@@ -179,6 +180,31 @@ export class KeeperMemory {
         { kind: "agent", threadId },
       );
   }
+  openMemberWait(threadId: string) {
+    const id = this.k.store.runtime(threadId).waitNoteId;
+    const note = id ? this.k.store.get("notes", id) : null;
+    return note?.state === "open" ? note : null;
+  }
+  clearMemberWait(threadId: string) {
+    const id = this.k.store.runtime(threadId).waitNoteId;
+    if (!id) return;
+    const note = this.k.store.get("notes", id);
+    if (note?.state === "open") this.complete(note.keeperThreadId, note.id);
+    this.k.store.patch(threadId, { waitNoteId: null });
+  }
+  recordMemberWait(report: Report) {
+    const { id, wait, memberThreadId, keeperThreadId, boardQuestId, createdAt, outcome } = report;
+    if (!wait || !keeperThreadId) return;
+    const noteId = this.k.store.id("note");
+    const text = `${this.k.name(this.k.require(memberThreadId, "member"))}: ${outcome.slice(0, 300)}`;
+    this.k.store.put("notes", noteId, {
+      id: noteId, kind: "commitment", memberThreadId, keeperThreadId, boardQuestId, text, ...wait,
+      state: "open", createdAt, updatedAt: createdAt, doneAt: null, dueNotifiedAt: null,
+      validUntil: null, sourceMessageId: null, routeId: null,
+    });
+    this.k.store.patch(memberThreadId, { waitNoteId: noteId });
+    this.k.store.event(createdAt, keeperThreadId, boardQuestId, "note.recorded", text, { noteId, reportId: id }, { kind: "agent", threadId: memberThreadId });
+  }
   due(threadId: string) {
     const rows = this.k.store.db
       .prepare(
@@ -189,6 +215,10 @@ export class KeeperMemory {
     for (const row of rows)
       this.k.store.atomic(() => {
         const note = JSON.parse(row.data) as KeeperNote;
+        if (note.memberThreadId && !isLiveMember(this.k.store, this.k.member(note.memberThreadId), "brief")) {
+          this.clearMemberWait(note.memberThreadId);
+          return;
+        }
         this.k.store.put("notes", note.id, {
           ...note,
           dueNotifiedAt: this.k.now(),
@@ -198,8 +228,8 @@ export class KeeperMemory {
           threadId,
           note.boardQuestId,
           "promise.due",
-          `Promise due: ${note.text}`,
-          { noteId: note.id, dueAt: note.dueAt },
+          `Promise due: ${note.text}${note.condition ? `. ${note.condition}` : ""}`,
+          { noteId: note.id, dueAt: note.dueAt, ...(note.memberThreadId ? { memberThreadId: note.memberThreadId } : {}) },
         );
       });
     if (rows.length) this.k.changed(threadId);
@@ -309,7 +339,8 @@ export class KeeperMemory {
         )
         .map((w) => ({
           boardQuestId: q.id,
-          key: `${q.id}:${w.id}:${this.gateIdentity(w)}`,
+          key: `${q.id}:${w.id}`,
+          value: JSON.stringify([this.gateIdentity(w), w.leadTime]),
           ready: w.dependsOn.every((id) =>
             waypoints.some(
               (parent) =>
@@ -321,15 +352,11 @@ export class KeeperMemory {
         }));
     });
   }
-  unaskedGates(threadId: string) {
-    return this.unaskedGateEntries(threadId).map((gate) => gate.text);
-  }
   readyGateReminders(threadId: string) {
-    return this.unaskedGateEntries(threadId)
-      .filter(
-        (gate) => gate.ready && !this.k.store.get("gateReminders", gate.key),
-      )
-      .map((gate) => gate.key);
+    return this.unaskedGateEntries(threadId).filter(gate =>
+      gate.ready && this.k.quest(gate.boardQuestId).phase !== "held" &&
+      this.k.store.get("gateReminders", gate.key)?.value !== gate.value,
+    );
   }
   private gateIdentity(waypoint: {
     owner: string | null;

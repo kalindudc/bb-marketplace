@@ -1,3 +1,4 @@
+import { memberIdentityLabel, memberKeeperIds } from "../../shared/identity";
 import { hasEndedEngagement, memberActivityWord } from "../../shared/member-engagement";
 import { experimental_useRpcQuery, experimental_copyToClipboard, experimental_saveFile, useBbNavigate } from "@get-bb/plugin-sdk/app";
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -53,13 +54,17 @@ function useWidth<T extends HTMLElement>() {
   return [ref, width] as const;
 }
 
-function memberSub(registry: Registry, m: Member, status = memberActivityWord(m)) { const cls = classLabel(registry, m.classId); return `${cls ? `${cls.label} (${cls.plain})` : "Unknown class"} · ${status}`; }
+function memberSub(registry: Registry, m: Member, status = memberActivityWord(m), keeper?: Member) {
+  const cls = classLabel(registry, m.classId);
+  return `${keeper ? `${memberIdentityLabel(keeper, registry)}'s ` : ""}${cls ? `${cls.label} (${cls.plain})` : "Unknown class"} · ${status}`;
+}
 
 type Laid = { n: PictureNode; x: number; y: number; w: number; h: number; label: string; sub: string; title: string; focused: boolean; tall: boolean };
 /** One layout for the screen and the export, so a shared image matches what the user saw. */
 /** `now` dates a returned quest's "3h ago": TheMap is memoized, so it passes its own minute clock rather than reading the time here. */
-function layoutMap(picture: ReturnType<typeof mapPicture>, registry: Registry, focus: string | null, cols: readonly number[], now: number) {
-  const tall = cols.some((w, i) => w < COLS[i]!), rowH = tall ? ROW_TALL : ROW, nodeH = tall ? NODE_H_TALL : NODE_H;
+function layoutMap(picture: ReturnType<typeof mapPicture>, registry: Registry, keepers: ReadonlyMap<string, Member>, focus: string | null, cols: readonly number[], now: number) {
+  const crossParty = memberKeeperIds(picture.nodes.map(n => n.node?.member)).size > 1;
+  const tall = crossParty || cols.some((w, i) => w < COLS[i]!), rowH = tall ? ROW_TALL : ROW, nodeH = tall ? NODE_H_TALL : NODE_H;
   const used = [...new Set(picture.nodes.map((n) => n.col))].sort();
   const slot = new Map(used.map((c, i) => [c, i]));
   const cw = used.map((c) => cols[c]!);
@@ -69,13 +74,17 @@ function layoutMap(picture: ReturnType<typeof mapPicture>, registry: Registry, f
   const y = (row: number) => HEAD + row * rowH;
   const height = HEAD + picture.rows * rowH + 4;
   const byId = new Map(picture.nodes.map((n) => [n.id, n]));
-  const label = (n: PictureNode) => n.node?.member && n.kind !== "errand" ? characterName(registry, n.node.member) : n.kind === "errand" ? "Side quest" : n.label;
+  const label = (n: PictureNode) => n.label;
   const sub = (n: PictureNode) => {
     const m = n.node?.member;
     if (n.kind === "keeper") return n.sub.charAt(0).toUpperCase() + n.sub.slice(1) + (n.node?.loading ? " · Loading history…" : "");
     if (n.kind === "solo" && m) return `${classLabel(registry, m.classId)?.label ?? "Solo"} · ${m.state}`;
-    if (n.kind === "member" && m) return memberSub(registry, m);
-    if (n.kind === "errand" && m) return `${characterName(registry, m)} · ${m.title ?? m.state}`;
+    const keeper = crossParty && m?.keeperThreadId ? keepers.get(m.keeperThreadId) : undefined;
+    if (n.kind === "member" && m) return memberSub(registry, m, n.sub, keeper);
+    if (n.kind === "errand" && m) {
+      const task = `Side quest · ${m.title ?? m.state}`;
+      return keeper ? memberSub(registry, m, task, keeper) : task;
+    }
     if (n.kind === "returned" && n.node?.quest) { const q = n.node.quest; const v = verifiedOf(q); return `${phaseWord(q.phase)}${v ? ` · ${verifiedWords(v)}` : ""} · ${timeAgo(q.endedAt ?? q.updatedAt, now)}`; }
     if (n.kind === "quest" && n.node?.quest) { const q = n.node.quest; const path = pathProgress(q); return `${phaseWord(q.phase)} · ${path ? `${path.done} of ${path.total}` : "no map yet"}${n.folded ? ` · +${n.folded} members` : ""}`; }
     if (n.kind === "outside" && n.node) return n.node.detail;
@@ -228,7 +237,8 @@ export function TheMap({ room, registry }: { room: Room; registry: Registry }) {
   const picture = useMemo(() => mapPicture(graph, focus), [graph, focus]);
   const [boxWidth, setBoxWidth] = useState(0);
   const cols = useMemo(() => fitColumns(COLS, framed ? [0, 1] : [...new Set(picture.nodes.map((n) => n.col))], boxWidth - 24), [picture, boxWidth, framed]);
-  const layout = useMemo(() => layoutMap(picture, registry, focus, cols, now), [picture, registry, focus, cols, now]);
+  const keepers = useMemo(() => new Map(room.keepers.map(k => [k.member.threadId, k.member])), [room.keepers]);
+  const layout = useMemo(() => layoutMap(picture, registry, keepers, focus, cols, now), [picture, registry, keepers, focus, cols, now]);
   const [ref, width] = useWidth<HTMLDivElement>();
   const [receipt, setReceipt] = useState<string | null>(null);
   const listHeading = useId();
@@ -245,10 +255,11 @@ export function TheMap({ room, registry }: { room: Room; registry: Registry }) {
   }
   for (const n of outside) rows.push({ key: n.id, tone: "wait", title: `${n.label} · ${n.detail.split(" · ")[0]}`, sub: `${quest(n.questId)?.short ?? ""} · ${n.detail.split(" · ").slice(1).join(" · ")}`, run: () => n.subPath && navigate.toPluginPanel("tavern", { subPath: n.subPath }), label: `${n.label}: open ${quest(n.questId)?.short ?? "the quest"}` });
   const members = graph.nodes.filter((n): n is MapNode & { member: Member } => (n.kind === "member" || n.kind === "errand") && !!n.member);
+  const crossPartyList = memberKeeperIds(members.map(n => n.member)).size > 1;
   const order = (m: Member) => m.state === "failed" ? 0 : m.state === "working" ? 1 : m.state === "waiting" ? 2 : 3;
   for (const n of [...members].sort((a, b) => order(a.member) - order(b.member))) {
     const m = n.member;
-    rows.push({ key: n.id, tone: m.state === "failed" ? "bad" : m.strikes > 0 ? "bad" : m.state === "working" ? "work" : m.engagement === "resting" ? "done" : "wait", member: m, title: `${characterName(registry, m)} · ${m.doing ?? m.title ?? m.state}`, place: n.kind === "errand" ? "Side quest" : quest(n.questId)?.short ?? "", sub: memberSub(registry, m, n.detail), run: () => navigate.toThread(m.threadId), label: `Open ${characterName(registry, m)}'s thread` });
+    rows.push({ key: n.id, tone: m.state === "failed" ? "bad" : m.strikes > 0 ? "bad" : m.state === "working" ? "work" : m.engagement === "resting" ? "done" : "wait", member: m, title: `${n.label} · ${m.doing ?? m.title ?? m.state}`, place: n.kind === "errand" ? "Side quest" : quest(n.questId)?.short ?? "", sub: memberSub(registry, m, n.detail, crossPartyList && m.keeperThreadId ? keepers.get(m.keeperThreadId) : undefined), run: () => navigate.toThread(m.threadId), label: `Open ${n.label}'s thread` });
   }
   const archivedRows: ListRow[] = [];
   for (const k of room.keepers) {
@@ -281,7 +292,7 @@ export function TheMap({ room, registry }: { room: Room; registry: Registry }) {
         setReceipt(ok ? "Copied the map as a Markdown outline" : "Could not copy the outline");
         return;
       }
-      const wide = layoutMap(picture, registry, focus, exportColumns(layout, textMeasurer(el)), Date.now());
+      const wide = layoutMap(picture, registry, keepers, focus, exportColumns(layout, textMeasurer(el)), Date.now());
       const image = mapSvg({ root: el, nodes: wide.nodes.map((l) => ({ id: l.n.id, x: l.x, y: l.y, w: l.w, h: l.h, label: l.label, sub: l.sub, kind: l.n.kind, focused: l.focused })), edges: wide.edges, headings: wide.headings, width: wide.width, height: wide.height, title: heading, caption });
       const fileName = `tavern-map-${stamp()}.${kind}`;
       const blob = kind === "svg" ? new Blob([image.svg], { type: "image/svg+xml" }) : await svgToPng(image.svg, image.width, image.height);

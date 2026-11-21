@@ -83,7 +83,8 @@
 .tavern .member-identity.compact { margin: 0; }
 .tavern .member-identity.compact p { margin-top: 2px; }
 .tavern .member-identity .mi-alert { color: var(--foreground); }
-@media (pointer: coarse), (max-width: 560px) { .tavern .tw-member-id { min-width: 44px; min-height: 44px; } }
+.tavern .tw-waypoints { display: flex; flex-wrap: wrap; gap: 2px 12px; margin: 0; padding: 0 16px 6px; font-size: 12px; line-height: 18px; color: var(--tavern-muted); overflow-wrap: anywhere; }
+@media (pointer: coarse), (max-width: 560px) { .tavern .tw-member-id, .tavern.twidget.v-member .tw-row button { min-width: 44px; min-height: 44px; } }
 .tavern .tw-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--tavern-muted); }
 .tavern .tw-sp { flex: 1 1 0; min-width: 0; }
 .tavern .tw-hide { margin-left: auto; }
@@ -162,7 +163,11 @@
 .tavern .tw-quest { padding: 0 5px 0 7px; }
 /* Collapse order when the row narrows: anchors and words, then task text, then secondary controls. Counts keep their nouns. */
 @container tavern-widget (max-width: 720px) { .tavern .tw-ledger .tw-anc, .tavern .tw-keeper .tw-w { display: none; } }
-@container tavern-widget (max-width: 600px) { .tavern .tw-quest .tw-ph, .tavern .tw-where .tw-w { display: none; } .tavern.twidget .tw-quest { min-width: calc(6ch + 26px); } }
+.tavern .tw-waypoint-compact { display: none; }
+@container tavern-widget (max-width: 600px) {
+  .tavern .tw-quest .tw-ph, .tavern .tw-where .tw-w { display: none; }
+  .tavern .tw-waypoint-compact { display: inline; }
+  .tavern.twidget .tw-quest { min-width: calc(6ch + 26px); } }
 @container tavern-widget (max-width: 520px) { .tavern .tw-chip.tw-quests-count { display: inline-flex; } .tavern .tw-quests { display: none; } .tavern .tw-ask-row { grid-template-columns: minmax(0, 1fr) auto; } .tavern .tw-ak, .tavern .tw-ag, .tavern .tw-ask-row .ago { display: none; } }
 @container tavern-widget (max-width: 420px) { .tavern .tw-brief-w, .tavern .tw-member-class, .tavern .tw-keeper .tw-kn { display: none; } }
 /* On a phone the decided count shows only while no ask waits: asks come first, and the Ledger holds the rest. */
@@ -170,7 +175,16 @@
 /* On a narrow row the events bubble yields to the asks; the Ledger keeps the count readable. */
 @container tavern-widget (max-width: 420px) { .tavern .tw-row:has(.tw-asks) .tw-events { display: none; } }
 @container tavern-widget (max-width: 340px) { .tavern .tw-row:has(.tquiet) .tw-dec { display: none; } }
-@container tavern-widget (max-width: 340px) { .tavern.v-member .tw-id .tw-name { display: none; } }
+@container tavern-widget (max-width: 500px) {
+  .tavern.twidget.v-member .tw-row:has(.tw-member-id) { display: grid; grid-template-columns: minmax(0, 1fr) minmax(44px, 32%) 44px; gap: 0 6px; }
+  .tavern.v-member .tw-member-id { grid-area: 1 / 1; justify-self: start; max-width: 100%; }
+  .tavern.v-member .tw-row > :is(.tw-where, .tw-fact) { grid-area: 1 / 2 / auto / 4; justify-self: end; max-width: 100%; }
+  .tavern.v-member .tw-keeper { grid-area: 2 / 1; justify-self: start; }
+  .tavern.v-member .tw-row > .tw-chip:not(.tw-where, .tw-keeper) { grid-area: 2 / 2; justify-self: end; }
+  .tavern.v-member .tw-hide { grid-area: 2 / 3; }
+  .tavern.v-member .tw-row .tw-keeper .tw-kn { display: inline; }
+  .tavern.v-member .tw-row > .tw-sp { display: none; }
+}
 @container tavern-widget (max-width: 339px) { .tavern.v-keeper .tw-row .tw-w { display: none; } }
 @container tavern-widget (max-width: 520px) {
   .tavern.v-keeper .tw-free, .tavern.v-keeper .tw-ledger > span, .tavern.v-keeper .tw-ledger > svg:last-child, .tavern.v-keeper .tw-asks > svg { display: none; }

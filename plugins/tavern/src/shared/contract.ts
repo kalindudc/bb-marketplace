@@ -13,6 +13,7 @@ import { placementContract } from "./placement-rpc";
 import { placementViewSchema } from "./placement-view";
 import { voiceCheckContract } from "./voice-check";
 import { awayContract } from "./away-rpc";
+import { alertRouteContract } from "./alert-route";
 import { awayStatusSchema } from "./away";
 import { scopeSchema } from "../scope/schema";
 import { characterAuthorshipSchema, characterReportVoicesSchema } from "./character-presentation";
@@ -162,6 +163,7 @@ export const threadDecorSchema = z.object({
   /** The Keeper of a member thread, so its header can say who it reports to. */
   keeper: memberSchema.nullable(),
   boardQuest: boardQuestSchema.nullable(),
+  lastReportedWaypointId: z.string().nullable().optional(),
   /** Member threads: the brief they were hired with. */
   brief: z.string().nullable(),
   /** The brief as hired, plus every follow-up the Keeper sent since; follow-ups outgrow the hire-time limits. */
@@ -345,6 +347,7 @@ export const rpcContract = defineContract({
   ...stopAllContract,
   ...placementContract,
   ...awayContract,
+  ...alertRouteContract,
   ...voiceCheckContract,
   classExecution: {
     input: classExecutionInputSchema,

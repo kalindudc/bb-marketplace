@@ -31,7 +31,7 @@ export function setup(sdkOverrides: Record<string, unknown> = {}, pluginRoot = f
         archive: async ({ threadId }: { threadId: string }) => ({ ok: true, archivedThreadIds: [threadId] }),
         spawn: async () => makeThreadResponse({ id: `child-${now++}`, parentThreadId: "lead" }),
       },
-      plugins: { callRpc: async () => ({ ok: true, channels: [] }) },
+      plugins: { list: async () => ({ plugins: [{ id: "push-notifications", enabled: true }] }), callRpc: async () => ({ ok: true, channels: ["fixture"] }) },
       system: { config: async () => ({ primaryHostId: "host" }) },
       projects: { get: async () => ({ sources: [] }) },
       ...sdkOverrides,

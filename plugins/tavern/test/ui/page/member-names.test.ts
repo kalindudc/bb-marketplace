@@ -13,16 +13,16 @@ describe("page names for members", () => {
   const ctx = eventContext(room, scenes.registry);
   const event = (type: string, data: Record<string, unknown>, text = "") => ({ id: 1, at: 1, keeperThreadId: room.keepers[0]!.member.threadId, boardQuestId: null, type, text, data, actor: { kind: "tavern" as const } });
 
-  it("names a member with no character by its class in events", () => {
-    expect(describeEvent(event("member.hired", { memberThreadId: smith.threadId }), ctx)!.head).toBe("hired Smith");
-    expect(describeEvent(event("member.told", { memberThreadId: smith.threadId }), ctx)!.head).toBe("re-briefed Smith");
+  it("uses the class when there is no character and still names the Keeper", () => {
+    expect(describeEvent(event("member.hired", { memberThreadId: smith.threadId }), ctx)!.head).toBe("hired Smith, Wren's Smith");
+    expect(describeEvent(event("member.told", { memberThreadId: smith.threadId }), ctx)!.head).toBe("re-briefed Smith, Wren's Smith");
   });
-  it("names a member with no character by its class in an event's detail, not by its thread id", () => {
-    expect(namedDetail(`Waiting on ${smith.threadId} for the diff`, null, ctx)).toBe("Waiting on Smith for the diff");
+  it("names a member and their Keeper in an event's detail, not by thread id", () => {
+    expect(namedDetail(`Waiting on ${smith.threadId} for the diff`, null, ctx)).toBe("Waiting on Smith, Wren's Smith for the diff");
   });
-  it("keeps the display name first, then the character's name", () => {
-    expect(ctx.memberName(unnamed(scenes.juno, { displayName: "Juno II" }))).toBe("Juno II");
-    expect(ctx.memberName(scenes.juno)).toBe(scenes.registry.characters.find((c) => c.id === "juno")!.name);
+  it("prefers the display name to the character's name", () => {
+    expect(ctx.memberName(unnamed(scenes.juno, { displayName: "Juno II" }))).toBe("Juno II, Wren's Smith");
+    expect(ctx.memberName(scenes.juno)).toBe("Juno, Wren's Smith");
   });
   it("names twin quests' Keepers by their character's name when the registry is known, not by the raw id", () => {
     const [k] = scenes.richRoom.keepers;

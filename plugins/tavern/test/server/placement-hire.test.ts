@@ -72,6 +72,23 @@ async function blocked(promise: Promise<unknown>) {
   catch (error) { expect(error).toBeInstanceOf(PlacementHireBlocked); return error as PlacementHireBlocked; }
 }
 
+it("chooses distinct names when two placed hires revalidate the same Keeper's checkout together", async () => {
+  const f = fixture();
+  f.settings.update({ revision: 1, patch: { machines: { rules: [{ ...rule, match: { ...rule.match, keeperPathGlobs: ["/source"] } }] } }, why: "Match the Keeper's checkout" });
+  const characterId = f.runtime.snapshot().classes.find(c => c.id === "ranger")!.characters[0]!;
+  const name = f.runtime.snapshot().characters.find(c => c.id === characterId)!.name;
+  let ready!: () => void;
+  const both = new Promise<void>(resolve => { ready = resolve; });
+  let reads = 0;
+  vi.mocked(f.services.sources.revalidate).mockImplementation(async () => {
+    if (++reads === 2) ready();
+    if (reads <= 2) await both;
+  });
+  const input = { ...hire, characterId };
+  const members = await Promise.all([f.runtime.hire("lead", "project", input), f.runtime.hire("lead", "project", input)]);
+  expect(members.map(m => m.displayName).sort()).toEqual([name, `${name} II`]);
+});
+
 describe("target model failures", () => {
   it.each(["running", "stop-error", "archive-error"])("keeps a visible release hold after a %s first-turn model failure and retries", async fault => {
     const f = fixture();

@@ -2,6 +2,7 @@ import { experimental_useRpcMutation, experimental_useRpcQuery, useBbNavigate } 
 import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
 import { rpcContract, type BoardQuestSummary, type Room } from "../../shared/contract";
 import type { AwayControl } from "../../shared/away-rpc";
+import { alertRouteContract } from "../../shared/alert-route";
 import { DEFAULT_SETTINGS } from "../../shared/settings";
 import type { AwayStopKind } from "../../shared/away";
 import { AwayStopChoices, stopListWords, windowStopWords } from "./away-preferences";
@@ -245,6 +246,8 @@ const CHOICES: { id: EndChoice; label: string; hint: string }[] = [
 export function AwayForm({ room, registry }: { room: Room; registry: Registry }) {
   const id = useId();
   const control = useAwayControl(room, true);
+  const away = roomAway(room);
+  const alerts = experimental_useRpcQuery({ contract: alertRouteContract, method: "alertRoute", input: null, enabled: !away?.closed });
   const close = experimental_useRpcMutation({ contract: rpcContract, method: "awayClose" });
   const live = workingQuests(room);
   const settings = useTavernSettings();
@@ -273,7 +276,6 @@ export function AwayForm({ room, registry }: { room: Room; registry: Registry })
     } : control.data;
     return closePlan(room, preview, { choices, allowWatched, wakeRules: wake, defaultEndState: defaults.defaultEndState, productionWakeHours: defaults.productionWakeHours });
   }, [room, control.data, choices, allowWatched, wake, defaults, stopList.length]);
-  const away = roomAway(room);
   const ret = useReturn(room, registry);
   // Close's own receipt is for the moment before the room says closed; once it does, the closed view says so, and a receipt kept
   // past that would reappear, stale, when the form opens again after Return.
@@ -326,6 +328,7 @@ export function AwayForm({ room, registry }: { room: Room; registry: Registry })
       <label className="tv-chk"><input type="checkbox" checked={wake.blockers} onChange={(e) => setWake((w) => ({ ...w, blockers: e.target.checked }))} /><span>Blockers</span></label>
       <label className="tv-chk"><input type="checkbox" checked={wake.productionAsksAfterTwoHours} onChange={(e) => setWake((w) => ({ ...w, productionAsksAfterTwoHours: e.target.checked }))} /><span>Production or cluster write asks waiting {plural(defaults.productionWakeHours, "hour")}</span></label>
     </fieldset>
+    {alerts.data?.proven === false && <p className="m">Alerts have not reached you yet. Blocker wakes may not either.</p>}
     {settings.data && <>
       <AwayStopChoices items={stopList} disabled={close.isPending} onChange={items => { setSelection(items); setConfirming(false); }} />
       <p className="m small">These choices apply only to this window. Change the default in Tavern Settings.</p>

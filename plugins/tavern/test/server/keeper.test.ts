@@ -212,7 +212,7 @@ describe("ticks and lifecycle", () => {
     });
     expect((await runtime.dispatch(ctx)).action).toBe("wait");
   });
-  it("adds stale strikes at twenty-minute intervals, not every service sweep", () => {
+  it("adds two stale strikes at twenty-minute intervals and starts over after progress", () => {
     const { k } = setup();
     k.bind("child", "ranger", "otto", "project", {
       keeperThreadId: "lead",
@@ -238,6 +238,15 @@ describe("ticks and lifecycle", () => {
     k.stale();
     expect(k.member("child")?.strikes).toBe(2);
     expect(k.store.events("lead").at(-1)?.text).toContain("re-plan or replace");
+    now += 2 * 20 * 60_000;
+    k.stale();
+    expect(k.store.events("lead").filter(e => e.type === "member.stale")).toHaveLength(2);
+    expect(k.member("child")?.strikes).toBe(2);
+    k.activity("child", "working");
+    k.activity("child", "idle");
+    now += 20 * 60_000;
+    k.stale();
+    expect(k.store.events("lead").filter(e => e.type === "member.stale").at(-1)?.text).toContain("stale strike 1");
   });
 });
 

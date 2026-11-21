@@ -1,5 +1,7 @@
 import type { TavernEvent } from "../shared/schema";
 
+export const nonAlertEventSql = `type NOT LIKE 'alert.%' AND (type <> 'authority.acted' OR coalesce(json_extract(data,'$.act'),'') NOT IN ('alertTestSend','alertTestConfirm'))`;
+
 export const SUMMARY_POSTED = "summary.posted";
 
 /** The event types whose arrival leaves a Keeper with something to act on or report on. */
@@ -22,6 +24,7 @@ export const NEWS = new Set([
   "member.hired",
   "member.failed",
   "member.stale",
+  "member.quiet",
   "user.told-member",
   "decision.undone",
   "rule.confirmed",

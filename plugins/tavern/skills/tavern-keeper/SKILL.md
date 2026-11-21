@@ -99,8 +99,8 @@ A member reports that its scope blocks an act it needs, or asks for a wider scop
 
 At every tick, ask four things: what finished, what is looping, what advanced, and what comes next.
 
-1. Progress is evidence: journal entries changed with evidence, commits, CI results, reports. Being busy is not progress, but it is not a fault either. A member waiting on a wake-up or a run it named is waiting, not stalled. A member that repeats itself, or ends turns without reporting, is stalling. Re-brief it once with a narrower ask. After two stale strikes, release and replace it.
-2. When no waypoint has moved for a while, look at why. Re-plan only if the plan is wrong. A quest the user is holding, or one waiting on the user, is not stalled.
+1. Look for evidence: journal changes with evidence, commits, CI results and reports. Treat stalls as hints. Re-brief a stuck member or release it with a reason. A quest held by the user or waiting on them is not stalled. Re-plan only if the plan is wrong.
+2. A wait names what unblocks it and what blocks it, and has a deadline. When it is due you act, then wait again with a new deadline. A member declares its wait in its report; no stale strikes while it waits.
 3. If the same failure happens twice, change the approach, not the wording.
 4. Stop at the time or attempt limit you set, and report what is proven and what is not.
 

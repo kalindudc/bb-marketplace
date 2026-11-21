@@ -1,6 +1,6 @@
 import type { Member } from "../../shared/schema";
 import type { ThreadDecor } from "../../shared/contract";
-import { memberName } from "../../shared/member-name";
+import { memberIdentityLabel } from "../../shared/identity";
 import { pullRequestVerified } from "../../shared/pull-request";
 import { Crest } from "./crest";
 import { memberIdentity, type Registry } from "./registry";
@@ -36,14 +36,14 @@ function writeWords(scope: NonNullable<MemberScope>["scope"]) {
 
 export function memberIdentityWords(member: Member, registry: Registry, scope?: MemberScope, finished = false) {
   const identity = memberIdentity(registry, member);
-  const name = memberName(member, registry);
+  const name = memberIdentityLabel(member, registry);
   const cls = identity ? `${identity.cls.label} (${identity.cls.plain})` : member.classId;
   return `${name}, ${cls} · scope: ${scope?.scope?.preset ?? "not recorded"} · ${guardWords(member, scope, finished)}`;
 }
 
 export function MemberIdentity({ member, registry, scope, compact = false, finished = false, violations = [], variant, onScopeDetails }: MemberIdentityProps) {
   const identity = memberIdentity(registry, member);
-  const name = memberName(member, registry);
+  const name = memberIdentityLabel(member, registry);
   const sc = scope?.scope;
   const guard = guardWords(member, scope, finished);
   const alerts = (scope?.problems?.length ?? 0) + violations.length + (scope?.error ? 1 : 0) + (variant === "chips" && scope?.pendingAskId ? 1 : 0);

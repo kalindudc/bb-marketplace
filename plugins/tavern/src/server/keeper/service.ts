@@ -9,7 +9,7 @@ import type { KeeperCallKind } from "../../shared/undo-lane";
 import { applyAskEffect, type EffectHandlers, type AskEffect } from "../ask-effects";
 import type { RequestSources } from "../../shared/request-source";
 import { LIMITS } from "../limits";
-import { isLiveKeeper, isLiveMember, isOpenQuest } from "../liveness";
+import { hasLiveName, isLiveKeeper, isLiveMember, isOpenQuest } from "../liveness";
 import { memberDetails, memberHost, outstandingArchivedPlacement, transitionMember } from "../member-engagement";
 import { PlacementStore } from "../placement/store";
 import { wasReleased } from "../../shared/member-engagement";
@@ -174,10 +174,7 @@ export class Keeper {
     const party = this.store.all("members").filter(member => member.role === "member" && member.keeperThreadId === keeperThreadId);
     const direct = party.find(member => member.threadId === reference);
     if (direct) return direct;
-    const live = party.filter(member => {
-      const state = memberHost(this.store, member);
-      return includeArchived || state.archivedAt == null && state.deletedAt == null && !wasReleased(member);
-    });
+    const live = includeArchived ? party : party.filter(member => hasLiveName(this.store, member));
     const matches = live.filter(member => this.name(member).toLowerCase() === reference.trim().toLowerCase());
     if (matches.length === 1) return matches[0]!;
     throw new Error(`${matches.length ? "Ambiguous" : "Unknown"} member name in your own party. Members: ${live.map(member => `${this.name(member)} (${member.classId})`).join(", ") || "none"}.`);
@@ -1685,10 +1682,11 @@ export class Keeper {
     threadId: string,
     input: Pick<
       Report,
-      "status" | "outcome" | "headline" | "evidence" | "artifacts" | "confidence" | "voice"
+      "status" | "outcome" | "headline" | "evidence" | "artifacts" | "confidence" | "voice" | "wait"
     >,
   ) {
     const m = this.require(threadId, "member");
+    if (input.status === "done" && input.wait) throw new Error("A done report cannot declare a wait.");
     const voiceOff = this.settings(m.boardQuestId).tavern.voice === "off";
     const late = !isLiveMember(this.store, m, "brief") || m.engagement === "resting" && input.status !== "done" || !isLiveKeeper(this.store, this.member(m.keeperThreadId!), "present");
     const entries = this.journal
@@ -1750,11 +1748,16 @@ export class Keeper {
       previous.outcome === report.outcome &&
       previous.headline === report.headline &&
       JSON.stringify(previous.evidence) === JSON.stringify(report.evidence) &&
-      JSON.stringify(previous.artifacts) === JSON.stringify(report.artifacts)
+      JSON.stringify(previous.artifacts) === JSON.stringify(report.artifacts) &&
+      isDeepStrictEqual(previous.wait, report.wait)
     )
       return voiceOff ? { ...previous, voice: null } : previous;
     this.store.atomic(() => {
       this.store.put("reports", report.id, report);
+      if (!late) {
+        this.memory.clearMemberWait(threadId);
+        this.memory.recordMemberWait(report);
+      }
       this.store.patch(threadId, { reportedBriefVersion: this.store.runtime(threadId).briefVersion ?? 0 });
       const text = `${this.name(m)}: ${input.outcome}`, data = { reportId: report.id, status: input.status };
       if (!late && input.status === "done" && m.engagement === "active") {
@@ -1988,29 +1991,35 @@ export class Keeper {
       ? this.store.query("members", "keeperThreadId", keeperThreadId)
       : this.store.all("members");
     for (const m of members.filter((m) => m.role === "member" && isLiveMember(this.store, m, "work") && m.state !== "failed" && isLiveKeeper(this.store, this.member(m.keeperThreadId!)) && !held(m.threadId))) {
+      const now = this.now();
+      const wait = this.memory.openMemberWait(m.threadId);
+      if (wait?.dueAt != null && wait.dueAt > now) continue;
       const rt = this.store.runtime(m.threadId);
-      const quietSince = this.journal.progress(m.threadId).quietSince;
-      const last = Math.max(
-        m.lastActiveAt ?? m.createdAt,
-        m.lastReportAt ?? m.createdAt,
-        rt.lastStrikeAt ?? 0,
-        quietSince ?? 0,
-      );
-      if (
-        this.now() - last <
-        this.settings(m.boardQuestId).knobs.staleMinutes * 60_000
-      )
+      const interval = this.settings(m.boardQuestId).knobs.staleMinutes * 60_000;
+      const progress = this.journal.progress(m.threadId);
+      const evidenceAt = Math.max(m.createdAt, m.lastReportAt ?? 0, rt.lastBriefAt ?? 0, progress.lastEvidenceAt ?? 0);
+      if (m.state === "working" && now - (m.lastActiveAt ?? 0) < interval) {
+        if (now - evidenceAt >= interval && rt.quietHintAt !== evidenceAt) {
+          this.store.atomic(() => {
+            this.store.patch(m.threadId, { quietHintAt: evidenceAt });
+            this.store.event(now, m.keeperThreadId, m.boardQuestId, "member.quiet",
+              `${this.name(m)} is working without recent progress evidence. Check the work before deciding whether to intervene.`, { memberThreadId: m.threadId });
+          });
+          this.changed(m.threadId, m.boardQuestId);
+        }
         continue;
+      }
+      const releaseAt = this.settings().keepers.staleStrikes;
+      const lastStrikeAt = rt.lastStrikeAt ?? 0;
+      const strikes = lastStrikeAt && evidenceAt > lastStrikeAt ? 1 : m.strikes + 1;
+      if (strikes > Math.max(2, releaseAt) || now - Math.max(m.lastActiveAt ?? 0, evidenceAt, lastStrikeAt, progress.quietSince ?? 0) < interval) continue;
       this.store.atomic(() => {
-        this.store.put("members", m.threadId, { ...m, strikes: m.strikes + 1 });
-        this.store.patch(m.threadId, { lastStrikeAt: this.now() });
-        this.store.event(
-          this.now(),
-          m.keeperThreadId,
-          m.boardQuestId,
-          "member.stale",
-          `${this.name(m)}: stale strike ${m.strikes + 1}${m.strikes + 1 >= this.settings().keepers.staleStrikes ? `; releasable: call tavern_release for ${m.threadId}, then re-plan or replace` : ""}`,
-        );
+        this.store.put("members", m.threadId, { ...m, strikes });
+        this.store.patch(m.threadId, { lastStrikeAt: now });
+        if (strikes <= 2 || strikes === releaseAt)
+          this.store.event(now, m.keeperThreadId, m.boardQuestId, "member.stale",
+            `${this.name(m)}: stale strike ${strikes}${strikes >= releaseAt ? `; releasable: call tavern_release for ${m.threadId}, then re-plan or replace` : ""}`,
+            { memberThreadId: m.threadId, strikes });
       });
       this.changed(m.threadId, m.boardQuestId);
     }

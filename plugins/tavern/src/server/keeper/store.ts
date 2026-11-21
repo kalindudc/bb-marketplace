@@ -3,6 +3,7 @@ import { pullRequestSchema, type PullRequest } from "../../shared/pull-request";
 import type { JournalTarget } from "../../shared/placement";
 import type { RequestSources } from "../../shared/request-source";
 import { liveMemberSql } from "../liveness";
+import { nonAlertEventSql } from "../news";
 import { consumesMemberWrite, type MemberEngagementData } from "../member-engagement";
 import type { Database } from "../ports";
 import type { ProjectContext, Scope, ScopeOverride, ScopeResolution, Violation } from "../../scope";
@@ -34,7 +35,7 @@ const eventQuestSql = `coalesce(tavern_events.board_quest_id, CASE tavern_events
     WHERE opening.kind='routes' AND json_extract(opening.data,'$.sourceMessageId')=json_extract(tavern_events.data,'$.receiptId')
     AND json_extract(opening.data,'$.keeperThreadId')=tavern_events.keeper_thread_id AND json_extract(opening.data,'$.kind')='new-quest'
     ORDER BY opening.rowid DESC LIMIT 1) END)`;
-const visibleEventSql = `NOT EXISTS (SELECT 1 FROM tavern_records q WHERE q.kind='quests' AND q.id=${eventQuestSql} AND q.archived_at IS NOT NULL)`;
+const visibleEventSql = `${nonAlertEventSql} AND NOT EXISTS (SELECT 1 FROM tavern_records q WHERE q.kind='quests' AND q.id=${eventQuestSql} AND q.archived_at IS NOT NULL)`;
 
 export interface Records {
   stopAll: import("../../shared/stop-all").StopAllState;
@@ -77,7 +78,7 @@ export interface Records {
   staffing: Staffing;
   notes: KeeperNote;
   gates: GateRecord;
-  gateReminders: { keeperThreadId: string; at: number };
+  gateReminders: { keeperThreadId: string; at: number; value?: string };
   autoGreenlights: { keeperThreadId: string; boardQuestId: string; planVersion: number; undonePlanVersion?: number };
   // The voice check (voice-check/run.ts): each run with the thread ids Tavern spawned for it, and the one hidden parent.
   voiceChecks: VoiceCheck & { threadIds: string[] };
@@ -165,6 +166,7 @@ export interface TickBatch {
   ledger?: { hash: string; version: number; asOf: number };
   fullLedger?: boolean;
   gateReminderKeys?: string[];
+  gateWarnings?: { key: string; value: string }[];
   reanchorVersion?: number;
   reanchor: string | null;
   createdAt: number;
@@ -281,6 +283,8 @@ export interface Runtime {
   lastReanchorAt: number | null;
   eventSequence: number;
   lastStrikeAt: number | null;
+  quietHintAt?: number;
+  waitNoteId?: string | null;
 }
 const initialRuntime = (): Runtime => ({
   projectId: null,

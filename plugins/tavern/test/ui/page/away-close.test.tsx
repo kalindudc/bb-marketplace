@@ -127,6 +127,14 @@ async function review(slot: RenderedSlot) {
 }
 
 describe("the Closing time sheet", () => {
+  it.each([false, true])("shows the alert line only when the route is unproven (proven: %s)", async (proven) => {
+    const slot = await tab({ alertRoute: () => ({ proven, lastTest: null, lastFailure: null }) });
+    await review(slot);
+    const line = "Alerts have not reached you yet. Blocker wakes may not either.";
+    if (proven) expect(slot.queryByText(line)).toBeNull();
+    else expect(await slot.findByText(line)).toBeTruthy();
+    expect((slot.getByRole("button", { name: "Close the tavern" }) as HTMLButtonElement).disabled).toBe(false);
+  });
   it("uses changed sheet defaults and allows an empty stop list", async () => {
     const view = structuredClone(settingsView);
     view.effective.away = { neverWhileClosed: [], defaultEndState: "pause", defaultAllowWatched: true, defaultBackAtHour: 16, defaultWakeBlockers: false, defaultWakeProduction: true, productionWakeHours: 5 };

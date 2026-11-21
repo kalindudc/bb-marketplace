@@ -1,6 +1,6 @@
 import type { BoardQuest, Member } from "../shared/schema";
 import type { KeeperStore } from "./keeper/store";
-import type { Engagement } from "../shared/member-engagement";
+import { wasReleased, type Engagement } from "../shared/member-engagement";
 
 type Store = Pick<KeeperStore, "get" | "runtime">;
 export type MemberPurpose = "work" | "brief" | "occupy";
@@ -25,6 +25,11 @@ export function isLiveKeeper(store: Store, member: Member | null, purpose: "pres
   return state.archivedAt == null && state.deletedAt == null && (purpose === "present" || state.manualStopAt == null);
 }
 
+export function hasLiveName(store: Store, member: Member): boolean {
+  if (member.role === "keeper") return isLiveKeeper(store, member, "present");
+  if (member.engagement === "archiving") return !wasReleased(member) && (member.boardQuestId === null || isOpenQuest(store.get("quests", member.boardQuestId)));
+  return isLiveMember(store, member, "brief") || isLiveMember(store, member, "occupy");
+}
 export function liveMemberSql(purpose: MemberPurpose = "work"): string {
   return `json_extract(m.data,'$.role') IN ('member','solo')
     AND coalesce(json_extract(m.data,'$.engagement') IN (${purposes[purpose].map(state => `'${state}'`).join(",")}),0)

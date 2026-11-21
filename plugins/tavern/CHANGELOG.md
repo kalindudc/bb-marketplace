@@ -4,10 +4,14 @@ Notable changes to Tavern, newest first. Releases are tagged `tavern/vX.Y.Z` in 
 
 ## Unreleased
 
+- New party members take their names from their own Keeper’s party, so two Keepers can each hire a Juno. A resting member keeps its name, and existing numerals stay unless there is a conflict. The mention list puts your party first. It, the common room history and the map name the Keeper where parties meet. The member widget shows the current waypoint and, when different, the one named by the latest report.
+- Every new Keeper promise has a deadline. When the promise comes due, Tavern tells the Keeper what it was waiting for. A member that reports a wait gets no stale strikes before its deadline, and a blocked report with a declared wait does not send you an alert. The Keeper sees fresh gate warnings and the first two stale strikes, not the same reminder every tick. A member whose thread is still busy but has no recent progress evidence prompts one quiet hint to the Keeper. Older promises without a deadline stay in the ledger and say so.
+
 Machine rules put a project's party members on their own new machines through the user's chosen providers, a returned or stopped quest reopens for deviations without a new quest, the checker recognises the check runners a repository actually uses, the pages and composer lose their rough edges, and the party is drawn as animated pixel art.
 
 ### Added
 
+- In Settings, Your attention, you can send a test alert and say whether it arrived. Tavern records what happened to each alert, shows the last test and real delivery failure, and lets you close as usual if the route has not been proven.
 - Settings opens the bb composer with your Tavern setup request. If you have a default class, you can explicitly start the request as a plain thread. An agent reads bb’s checkouts, providers and models, then proposes a settings patch with reasons and preflight results. Review it in the thread or at the top of Settings. Apply runs the forge help checks first, then saves only the named settings in one change; Dismiss leaves settings alone. If a proposed setting changed, the card names it and asks for a fresh proposal; unrelated changes are kept. The Tavern skill includes a reference for every setting.
 - The common room board shows live Keepers first and puts returned work and missing Keepers in folds. If a Keeper is gone, you can confirm stopping its quests and sending them to the cellar. History groups repeats without merging different quests.
 - The hearth band puts the count and oldest wait beside a small scene of the Keepers and party. The counts stay still, and so does the whole scene under reduced motion.

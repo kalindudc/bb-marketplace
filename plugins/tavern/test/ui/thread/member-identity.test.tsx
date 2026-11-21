@@ -24,10 +24,11 @@ it("opens Member from the named crest button and keeps identity above its brief"
  expect(slot.getByRole("button",{name:/Member: show/})).toBeTruthy();
  slot.lifecycle.unmount();
 });
-it("defines class-first, name-second collapse rules and retains the crest",()=>{
+it("gives the member identity its own space on narrow rows instead of hiding the name",()=>{
  const css=readFileSync("src/ui/kit/components.css","utf8");
  expect(css).toMatch(/max-width: 420px[^}]*tw-member-class[^}]*display: none/);
- expect(css).toMatch(/max-width: 340px[^}]*tw-id \.tw-name[^}]*display: none/);
+ expect(css).toMatch(/max-width: 500px[^}]*v-member \.tw-row:has\(\.tw-member-id\)[^}]*display: grid/);
+ expect(css).not.toMatch(/v-member \.tw-id \.tw-name[^}]*display: none/);
  expect(css).not.toMatch(/v-member \.tw-id \{ display: none/);
  expect(css).not.toMatch(/max-width: 760px[^}]*v-member[^}]*\.anc[^}]*display: none/);
 });

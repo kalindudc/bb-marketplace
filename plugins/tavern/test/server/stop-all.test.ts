@@ -63,6 +63,8 @@ describe("Stop all brake", () => {
     expect(f.harness.inspection.sdk.callsTo("threads.spawn")).toHaveLength(0);
     const automated = await f.runtime.dispatch(dispatch049({ pluginId: "tavern", text: "[Tavern brief] work" }));
     expect(automated).toMatchObject({ action: "wait", reason });
+    const wake = queued049("wake", "CI finished", f.time(), { pluginId: "wakeup" });
+    expect(await f.runtime.dispatch(dispatch049({ rows: [wake] }))).toMatchObject({ action: "wait", reason });
     const mixed = await f.runtime.dispatch(dispatch049({ rows: [queued049("tick", "[Tavern tick] work", f.time(), { pluginId: "tavern" }), queued049("user", "Talk to me", f.time())] }));
     expect(mixed.action).not.toBe("proceed");
     expect(await f.runtime.dispatch(dispatch049({ text: "Talk to me" }))).toMatchObject({ action: "proceed" });

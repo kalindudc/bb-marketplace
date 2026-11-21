@@ -37,9 +37,9 @@ describe("durable explicit briefs", () => {
     vi.spyOn(f.bb.sdk.threads, "send").mockRejectedValueOnce(new Error("socket hang up"));
     await f.runtime.sendRebrief(member.threadId, rebrief);
     f.k.activity(member.threadId, "failed");
-    expect(f.runtime.busyCharacters("project")).toContain(member.characterId);
+    expect(f.runtime.busyCharacters(member)).toContain(member.characterId);
     patchThreadFixture(f.k.store, member.threadId, { released: { reason: "Confirmed release", decisionId: "release-test" } });
-    expect(f.runtime.busyCharacters("project")).not.toContain(member.characterId);
+    expect(f.runtime.busyCharacters(member)).not.toContain(member.characterId);
   });
   it("does not duplicate an accepted rebrief when its acknowledgement was lost", async () => {
     const f = await planned(), member = await f.runtime.hire("lead", "project", f.input);

@@ -274,16 +274,17 @@ export const WAYPOINT_STATES = ["planned", "todo", "doing", "blocked", "rejected
 export type WaypointState = (typeof WAYPOINT_STATES)[number];
 
 // added by Builder B: durable facts, promises, hand-backs and outside-gate contact survive session loss.
+const noteCondition = z.string().trim().min(1).max(500);
 const noteFields = z.object({
   text: z.string().trim().min(1).max(1000),
   action: z.string().trim().min(1).max(300).refine(text => !/[\r\n]/.test(text), "An action must be one line").optional(),
   why: z.string().trim().min(1).max(1000).optional(),
   boardQuestId: id.nullish(), dueAt: epochMs.nullish(),
-  condition: z.string().trim().min(1).max(500).nullish(), validUntil: epochMs.nullish(),
+  condition: noteCondition.nullish(), validUntil: epochMs.nullish(),
 }).strict();
 export const noteDraftSchema = z.discriminatedUnion("kind", [
   noteFields.extend({ kind: z.literal("fact") }),
-  noteFields.extend({ kind: z.literal("commitment") }).refine(note => note.dueAt != null || !!note.condition, { message: "A commitment needs dueAt or condition" }),
+  noteFields.extend({ kind: z.literal("commitment") }).refine(note => note.dueAt != null, { message: "A commitment needs a deadline (dueAt)." }),
   noteFields.extend({
     kind: z.literal("waiting-on-user"),
     need: z.string({ error: "Add need: one sentence saying what you need from the user, at most 120 characters." }).trim().min(1).max(120)
@@ -294,6 +295,7 @@ export type NoteDraft = z.input<typeof noteDraftSchema>;
 export const keeperNoteSchema = z.object({
   id, keeperThreadId: threadId, boardQuestId: id.nullable(),
   kind: z.enum(["fact", "commitment", "waiting-on-user"]), text: z.string(),
+  memberThreadId: threadId.optional(),
   action: z.string().optional(), why: z.string().optional(), need: z.string().optional(),
   resolution: z.object({ by: z.literal("user"), how: z.enum(["done", "replied"]), at: epochMs, reply: z.string().optional() }).optional(),
   dueAt: epochMs.nullable(), condition: z.string().nullable(), validUntil: epochMs.nullable(),
@@ -558,6 +560,7 @@ export const reportSchema = z.object({
   confidence: z.object({ intent: z.number().int().min(0).max(100), safe: z.number().int().min(0).max(100) }).nullable(),
   /** One line in the character's voice; dropped by the server for blocked and needs-decision reports. */
   voice: z.string().max(140).nullable(),
+  wait: z.object({ condition: noteCondition, dueAt: epochMs }).strict().optional(),
   createdAt: epochMs,
   deliveredAt: epochMs.nullable(),
 });

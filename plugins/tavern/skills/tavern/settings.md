@@ -85,6 +85,8 @@ A rule's `class_models` map defaults to empty. Each class row specifies a model 
 
 `[tuning.pinned]` in TOML contains the user’s fixed values for the five tunable knobs. `[tuned]` is optional machine tuning state, not an ordinary preference. Both default to empty. Use Settings to pin or reset a value and to inspect any live quest override.
 
+In Settings, Your attention, use "Send a test alert" to check the route to your devices. The test uses bb push notifications but is not held by Tavern's ordinary notification settings. Confirm what actually happened on your device. The test and its answer are receipts, not settings values.
+
 ## Setup examples
 
 Use an executable outside agent checkouts and thread storage. This example uses an open script that supports read-only `--help`.

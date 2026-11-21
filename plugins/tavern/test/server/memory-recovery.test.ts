@@ -202,7 +202,7 @@ describe("Keeper context-loss recovery", () => {
     expect(sends(f)).toHaveLength(0);
     expect(f.k.store.runtime("lead").manualStopAt).not.toBeNull();
   });
-  it("repeats every unasked outside gate in ticks until actual contact is recorded", async () => {
+  it("warns about an unasked gate only when ready and its details change", async () => {
     const f = setup();
     const q = await seedQuest(f.k,"lead", "Outside work", "Outside");
     f.k.plan("lead", {
@@ -228,10 +228,15 @@ describe("Keeper context-loss recovery", () => {
         `Real news ${i}`,
       );
       await f.runtime.tick("lead");
-      expect(sends(f).at(-1)).toContain(
-        "Outside gate Vault approval not asked yet (lead time 2 days)",
-      );
+      const warning = "Outside gate Vault approval not asked yet (lead time 2 days)";
+      if (i === 0) expect(sends(f).at(-1)).toContain(warning);
+      else expect(sends(f).at(-1)).not.toContain(warning);
     }
+    const plan = f.k.summary(q.id).plan!;
+    f.k.plan("lead", { ...planInput(q.id), waypoints: [{ ...plan.waypoints[0]!, leadTime: "3 days" }] });
+    f.advance(61_000);
+    await f.runtime.tick("lead");
+    expect(sends(f).at(-1)).toContain("Outside gate Vault approval not asked yet (lead time 3 days)");
     f.k.memory.gate("lead", {
       boardQuestId: q.id,
       waypointId: "w1",

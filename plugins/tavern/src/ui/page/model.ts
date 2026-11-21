@@ -1,3 +1,4 @@
+import { memberIdentityLabel, memberKeeperIds } from "../../shared/identity";
 import { engagementSchema, hasEndedEngagement, memberActivityWord } from "../../shared/member-engagement";
 import { moveTime } from "../../shared/time";
 import { resolutionWords, settled, verifiedWaypoint } from "../../shared/waypoint";
@@ -69,7 +70,7 @@ export const openAskCount = (room: Room) => room.asks.filter((ask) => ask.state 
 // ---------- Events: what happened, in words for people ----------
 
 export type EventIcon = "steer" | "question" | "aside" | "quest" | "plan" | "ask" | "answer" | "decided" | "undo" | "rule" | "report" | "hire" | "told" | "stale" | "failed" | "anchor" | "stop" | "skip" | "wrap" | "phase" | "tick" | "note";
-export type EventLine = { repeats?: number; id: number; at: number; icon: EventIcon; tone: "plain" | "steer" | "you" | "bad" | "warn" | "done"; actor: { kind: "you" } | { kind: "member"; member: Member } | { kind: "keeper"; member: Member } | { kind: "tavern" } | { kind: "unknown" }; head: string; detail: string | null; questId: string | null; filter: "steers" | "decided" | "reports" | "asks" | "other"; note?: string; fold?: { key: string; names: string[]; verb: string } };
+export type EventLine = { repeats?: number; memberKeeperIds?: string[]; id: number; at: number; icon: EventIcon; tone: "plain" | "steer" | "you" | "bad" | "warn" | "done"; actorLabel?: string; actor: { kind: "you" } | { kind: "member"; member: Member } | { kind: "keeper"; member: Member } | { kind: "tavern" } | { kind: "unknown" }; head: string; detail: string | null; questId: string | null; filter: "steers" | "decided" | "reports" | "asks" | "other"; note?: string; fold?: { key: string; names: string[]; verb: string } };
 type EventContext = { members: Map<string, Member>; characterName: (characterId: string) => string | null; memberName: (member: Member) => string; questShort: (id: string) => string | null; decisions: Map<string, string>; waypoints?: (questId: string) => ReadonlyMap<string, string> };
 
 /** Agent-facing bookkeeping that says nothing a person needs: raw user text (the route says what it meant), tool chatter and nudges. */
@@ -78,11 +79,12 @@ const prefixed = (text: string, prefix: string) => text.startsWith(prefix) ? tex
 
 /** The names a page knows: its registry's characters and classes. */
 export type KnownNames = Parameters<typeof memberName>[1];
-export function eventContext(room: Room, names: KnownNames): EventContext {
+export function eventContext(room: Room, names: KnownNames, qualify = memberKeeperIds(room.keepers.filter(k => !k.archived).flatMap(k => [...k.errands, ...k.boardQuests.filter(q => !q.archivedAt).flatMap(q => q.members)])).size > 1): EventContext {
+  const keepers = new Map(room.keepers.map(k => [k.member.threadId, k.member]));
   return {
     members: new Map(visibleMembers(room).map((m) => [m.threadId, m])),
     characterName: (id) => names.characters.find((c) => c.id === id)?.name ?? null,
-    memberName: (m) => memberName(m, names),
+    memberName: (m) => memberIdentityLabel(m, names, qualify && m.keeperThreadId ? keepers.get(m.keeperThreadId) : undefined),
     questShort: (id) => questsIn(room).find((q) => q.id === id)?.short ?? null,
     decisions: new Map(room.decidedForYou.map((d) => [d.id, d.text])),
     waypoints: (id) => new Map(questsIn(room).find((q) => q.id === id)?.waypoints.map((w) => [w.id, w.title]) ?? []),
@@ -93,7 +95,10 @@ const HAS_ID = /(?<![\w-])(?:thr_[\w-]+|quest_[\w-]+|w\d+)(?![\w-])/i;
 /** An event's detail with every id named from what the page knows (Ted's shared helper), or null when one has no name, so the head stands alone. Text without ids keeps its full length. */
 export function namedDetail(detail: string | null, questId: string | null, ctx: EventContext): string | null {
   if (!detail || !HAS_ID.test(detail)) return detail;
-  const threadNames = new Map([...ctx.members.values()].map((m) => [m.threadId, ctx.memberName(m)]));
+  const threadNames = new Map([...detail.matchAll(/(?<![\w-])thr_[\w-]+(?![\w-])/g)].flatMap(([id]) => {
+    const member = ctx.members.get(id);
+    return member ? [[id, ctx.memberName(member)] as const] : [];
+  }));
   const questNames = new Map([...detail.matchAll(/quest_[\w-]+/g)].flatMap(([id]) => { const short = ctx.questShort(id); return short ? [[id, short] as const] : []; }));
   return extractReportHeadline({ outcome: detail }, { threadNames, questNames, waypointTitles: questId && ctx.waypoints ? ctx.waypoints(questId) : undefined });
 }
@@ -113,9 +118,17 @@ export function badgeLabel(asks: number, holds: number) {
 /** A release path the server can write; anything else in an old event is left unworded rather than guessed. */
 const releaseVia = checkerHandoffHoldSchema.shape.release.unwrap().shape.via;
 
-export function describeEvent(e: TavernEvent, ctx: EventContext): EventLine | null {
-  const line = describeRaw(e, ctx);
-  return line && line.detail ? { ...line, detail: namedDetail(line.detail, e.boardQuestId, ctx) } : line;
+export function describeEvent(e: TavernEvent, ctx: EventContext, trackParties = false): EventLine | null {
+  const ids = new Set<string>();
+  const naming = trackParties ? { ...ctx, memberName(member: Member) {
+    if (member.role === "member" && member.keeperThreadId) ids.add(member.keeperThreadId);
+    return ctx.memberName(member);
+  } } : ctx;
+  const line = describeRaw(e, naming);
+  if (!line) return null;
+  const actorLabel = line.actor.kind === "member" || line.actor.kind === "keeper" ? naming.memberName(line.actor.member) : undefined;
+  const detail = namedDetail(line.detail, e.boardQuestId, naming);
+  return { ...line, actorLabel, detail, ...(ids.size ? { memberKeeperIds: [...ids] } : {}) };
 }
 
 function describeRaw(e: TavernEvent, ctx: EventContext): EventLine | null {
@@ -130,7 +143,7 @@ function describeRaw(e: TavernEvent, ctx: EventContext): EventLine | null {
   const base = { id: e.id, at: e.at, questId: e.boardQuestId, detail: null as string | null, tone: "plain" as EventLine["tone"], filter: "other" as EventLine["filter"] };
   const named = (characterId: string) => ctx.characterName(characterId) ?? characterId;
   const byCharacter = (text: string) => { const m = text.match(/^([a-z0-9_-]+): ([\s\S]*)$/); return m && ctx.characterName(m[1]!) ? { name: ctx.characterName(m[1]!)!, characterId: m[1]!, rest: m[2]! } : null; };
-  const memberByCharacter = (characterId: string) => [...ctx.members.values()].find((m) => m.characterId === characterId && (!e.boardQuestId || m.boardQuestId === e.boardQuestId)) ?? null;
+  const memberByCharacter = (characterId: string) => [...ctx.members.values()].find((m) => m.characterId === characterId && (!e.keeperThreadId || m.keeperThreadId === e.keeperThreadId || m.threadId === e.keeperThreadId) && (!e.boardQuestId || m.boardQuestId === e.boardQuestId)) ?? null;
   if (["member.bound", "member.rebrief-requested", "member.brief-cancelled", "member.briefed", "member.release-requested", "member.released", "member.stop-requested", "member.stopped", "member.archive-requested", "member.engagement-imported"].includes(e.type)) {
     const states = data.engagement as { from?: unknown; to?: unknown } | undefined;
     const to = engagementSchema.safeParse(states?.to);
@@ -211,11 +224,11 @@ function describeRaw(e: TavernEvent, ctx: EventContext): EventLine | null {
   }
 }
 
-export function eventLines(events: TavernEvent[], ctx: EventContext, { collapseRepeats = false } = {}) {
+export function eventLines(events: TavernEvent[], ctx: EventContext, { collapseRepeats = false, trackParties = false } = {}) {
   const byKey = new Map<string, EventLine>();
   const lines: EventLine[] = [];
   for (const event of [...events].sort((a, b) => b.at - a.at || b.id - a.id)) {
-    const line = describeEvent(event, ctx);
+    const line = describeEvent(event, ctx, trackParties);
     if (!line) continue;
     if (collapseRepeats) {
       const key = JSON.stringify([event.boardQuestId, event.keeperThreadId, event.actor, event.type, event.text, event.data]);
@@ -243,7 +256,8 @@ export function foldRuns(lines: EventLine[]): EventLine[] {
     if (!run) { out.push(line); continue; }
     const names = [...run.fold!.names, ...line.fold!.names];
     const known = run.actor.kind !== "unknown";
-    out[out.length - 1] = { ...run, fold: { ...run.fold!, names }, head: known ? `${run.fold!.verb} ${names.length} member threads: ${listNames(names)}` : `${names.length} member threads ${run.fold!.verb}: ${listNames(names)}` };
+    const ids = [...new Set([...(run.memberKeeperIds ?? []), ...(line.memberKeeperIds ?? [])])];
+    out[out.length - 1] = { ...run, ...(ids.length ? { memberKeeperIds: ids } : {}), fold: { ...run.fold!, names }, head: known ? `${run.fold!.verb} ${names.length} member threads: ${listNames(names)}` : `${names.length} member threads ${run.fold!.verb}: ${listNames(names)}` };
   }
   return out;
 }
@@ -264,7 +278,7 @@ export function mapQuests(room: Room) {
 }
 /** The map's nodes and roads. Members are named with the shared member name, so one with no character shows its class, never an id. */
 export function graphFor(room: Room, registry: Parameters<typeof memberName>[1], filter: MapFilter = NO_MAP_FILTER): { nodes: MapNode[]; edges: [string, string][] } {
-  const name = (m: Parameters<typeof memberName>[0]) => memberName(m, registry);
+  const name = (m: Member) => memberIdentityLabel(m, registry);
   const nodes = new Map<string, MapNode>();
   const edges: [string, string][] = [];
   const add = (node: MapNode, parent?: string) => { nodes.set(node.id, node); if (parent) edges.push([parent, node.id]); };
@@ -298,7 +312,7 @@ export function graphFor(room: Room, registry: Parameters<typeof memberName>[1],
     }
     const more = keeper.archived ? (history?.total ?? ordered.length) - Math.min(5, ordered.length) : 0;
     if (more > 0) add({ id: `more:${keeper.member.threadId}`, kind: "more", label: `+${more} more`, detail: "Quests in the cellar", layer: 1, subPath: "archive", quiet: true }, k);
-    for (const member of keeper.errands.filter((m) => !hasEndedEngagement(m))) add({ id: `member:${member.threadId}`, kind: "errand", label: member.title ?? name(member), detail: `Side quest (errand) · ${memberActivityWord(member)}`, classId: member.classId, layer: 1, threadId: member.threadId, member }, k);
+    for (const member of keeper.errands.filter((m) => !hasEndedEngagement(m))) add({ id: `member:${member.threadId}`, kind: "errand", label: name(member), detail: `Side quest (errand) · ${memberActivityWord(member)}`, classId: member.classId, layer: 1, threadId: member.threadId, member }, k);
     for (const ask of room.asks.filter((a) => a.keeperThreadId === keeper.member.threadId && a.boardQuestId === null && a.state === "open")) add({ id: `ask:${ask.id}`, kind: "ask", label: ask.question, detail: `Needs you · ${ask.kind}`, layer: 2, threadId: keeper.member.threadId, ask }, k);
   }
   for (const solo of room.solos) add({ id: `solo:${solo.threadId}`, kind: "solo", label: name(solo), detail: `Solo · ${solo.state}`, classId: solo.classId, layer: 0, threadId: solo.threadId, member: solo });

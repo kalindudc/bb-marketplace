@@ -1,3 +1,4 @@
+import { memberIdentityFacts, memberIdentityLabel } from "../shared/identity";
 import { memberHost } from "./member-engagement";
 import { wasReleased } from "../shared/member-engagement";
 import { askHistory } from "./ask-history";
@@ -103,6 +104,9 @@ export function rpcHandlers(
     ...placementHandlers(runtime),
     ...voiceCheckHandlers(() => runtime.voiceChecks),
     ...awayHandlers(runtime),
+    alertRoute: () => runtime.alerts.view(),
+    alertTestSend: (_input, context, receipt?: UserActReceipt) => runtime.alerts.sendTest(receipt ?? requireUserAct(context, "alertTestSend")),
+    alertTestConfirm: ({ id, arrived }) => runtime.alerts.confirm(id, arrived),
     registry: async ({ projectId }) => {
       const snapshot = projectId ? await runtime.prepareRegistry(projectId) : runtime.snapshot();
       const serviceRecords = runtime.serviceRecords.read();
@@ -177,6 +181,7 @@ export function rpcHandlers(
       const checkerName = reviewer?.classId === "warden" && reviewer.characterId
         ? reviewer.displayName ?? runtime.snapshot(k.store.runtime(reviewer.threadId).projectId ?? undefined).characters.find(c => c.id === reviewer.characterId)?.name ?? null : null;
       const titleOf = (id: string | null) => plan?.waypoints.find(w => w.id === id)?.title ?? null;
+      const lastReport = m ? k.store.query("reports", "memberThreadId", threadId, 1)[0] : undefined;
       const snapshot = m?.role === "keeper" ? new AttentionSnapshot(k.store, { keeperThreadId: threadId }) : null;
       return {
         threadId,
@@ -191,8 +196,8 @@ export function rpcHandlers(
           released: wasReleased(m),
           archived: memberHost(k.store, m).archivedAt !== null || memberHost(k.store, m).deletedAt !== null,
           handBack: m.role === "keeper" && k.memory.notes(threadId, 200).some(note => note.kind === "waiting-on-user"),
-          report: currentMoodReport(k.store.query("reports", "memberThreadId", threadId, 1)[0], thread.lastBriefAt),
-          waypointTitle: titleOf(m.waypointId ?? m.checkerWaypointId ?? null),
+          report: currentMoodReport(lastReport, thread.lastBriefAt),
+          waypointTitle: titleOf(m.checkerWaypointId ?? m.waypointId),
           verdict: verdict ? { status: verdict.status, at: verdict.at, waypointTitle: titleOf(verdict.waypointId), checkerName } : null,
         } } : {}),
         classNotice: thread.classNotice ?? null,
@@ -201,6 +206,7 @@ export function rpcHandlers(
         member: m ? projectMember(m) : null,
         keeper: m?.keeperThreadId ? k.member(m.keeperThreadId) : null,
         boardQuest: m?.boardQuestId ? k.summary(m.boardQuestId) : null,
+        lastReportedWaypointId: lastReport?.waypointId ?? null,
         briefFields: decorBrief(k.store.runtime(threadId).brief),
         brief: k.store.runtime(threadId).brief
           ? JSON.stringify(k.store.runtime(threadId).brief, null, 2)
@@ -231,14 +237,11 @@ export function rpcHandlers(
         const registry = runtime.snapshot(
           k.store.runtime(threadId).projectId ?? undefined,
         );
-        return [
-          {
-            threadId,
-            classId: m.classId,
-            characterId: m.characterId,
-            label: `${runtime.keeper.name(m)} · ${registry.classes.find((c) => c.id === m.classId)?.label ?? m.classId}`,
-          },
-        ];
+        const keeper = m.keeperThreadId ? k.member(m.keeperThreadId) : null;
+        return [{
+          threadId, classId: m.classId, characterId: m.characterId,
+          label: keeper ? memberIdentityLabel(m, registry, keeper) : `${memberIdentityLabel(m, registry)} · ${memberIdentityFacts(m, registry).className}`,
+        }];
       }),
     }),
     identities: async ({ ids, viewer }) => ({ identities: await identities(ids, viewer) }),

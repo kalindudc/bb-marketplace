@@ -134,6 +134,8 @@ export class TickLoop {
           keeperThreadId: batch.threadId,
           at: now,
         });
+      for (const { key, value } of batch.gateWarnings ?? [])
+        this.k.store.put("gateReminders", key, { keeperThreadId: batch.threadId, at: now, value });
       for (const reportId of batch.reportIds) {
         const report = this.k.store.get("reports", reportId);
         if (report)
@@ -191,6 +193,7 @@ export class TickLoop {
             boardQuestId: report.boardQuestId,
             status: report.status,
             outcome: report.outcome,
+            ...(report.wait ? { wait: report.wait } : {}),
             evidenceCount: report.evidence.length,
             artifactsCount: report.artifacts.length,
           })}\nEvidence and full brief: call tavern_status for this report.`,
@@ -286,20 +289,9 @@ export class TickLoop {
         heldNewsProgress[questId] = window.through;
       if (heldNewsProgress[questId] !== undefined) churn += this.k.store.heldJournalChurn(questId, window.cursor, heldNewsProgress[questId]!);
     }
-    const gateEntries = this.k.memory.unaskedGateEntries(threadId).filter(gate => this.k.quest(gate.boardQuestId).phase !== "held");
-    const ready = new Set(
-      gateEntries
-        .filter((g) => g.ready && !this.k.store.get("gateReminders", g.key))
-        .map((g) => g.key),
-    );
-    const gates = gateEntries.sort(
-      (a, b) => Number(ready.has(b.key)) - Number(ready.has(a.key)),
-    );
-    const gateReminderKeys = gates
-      .slice(0, 20)
-      .filter((g) => ready.has(g.key))
-      .map((g) => g.key);
-    if (!news && !rt.reanchor && !gateReminderKeys.length) {
+    const gates = this.k.memory.readyGateReminders(threadId);
+    const gateWarnings = gates.slice(0, 20).map(({ key, value }) => ({ key, value }));
+    if (!news && !rt.reanchor && !gateWarnings.length) {
       this.k.store.patch(threadId, { cursor });
       this.k.store.acknowledgeHeldNews(threadId, heldNewsProgress);
       return null;
@@ -387,7 +379,7 @@ export class TickLoop {
       heldNewsProgress,
       continuation,
       reportIds,
-      gateReminderKeys,
+      gateWarnings,
       reanchor: rt.reanchor,
       reanchorVersion: rt.reanchorVersion,
       ledger: {

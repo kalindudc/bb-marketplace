@@ -50,6 +50,21 @@ it("shows the schema's user knobs with defaults and only offers Reset for change
  }
  expect(expected.filter(key=>!exceptions.has(key)&&!shown.has(key))).toEqual([]);
 });
+it("lets the user confirm a test alert and shows the last real failure separately", async () => {
+ let route: import("../../../src/shared/alert-route").AlertRouteView = { proven: false, lastTest: null, lastFailure: { at: Date.now(), error: "Fixture delivery failed" } };
+ const lastTest = { id: 23, at: Date.now(), outcome: "sent", response: null } as const;
+ const send = vi.fn(() => route = { ...route, lastTest });
+ const confirm = vi.fn(() => route = { ...route, proven: true, lastTest: { ...lastTest, response: "arrived" } });
+ const s = await section("attention", settingsView, { alertRoute: () => route, alertTestSend: send, alertTestConfirm: confirm });
+ expect(await s.findByText("No test alert yet.")).toBeTruthy();
+ expect(s.getByText("Fixture delivery failed")).toBeTruthy();
+ fireEvent.click(s.getByRole("button", { name: "Send a test alert" }));
+ expect(await s.findByRole("button", { name: "It did not" })).toBeTruthy();
+ fireEvent.click(s.getByRole("button", { name: "It arrived" }));
+ await waitFor(() => expect(confirm).toHaveBeenCalledWith({ id: 23, arrived: true }));
+ expect(await s.findByText("You confirmed it arrived.")).toBeTruthy();
+ expect(s.queryByRole("button", { name: "It arrived" })).toBeNull();
+});
 it("resets using the same recorded save path",async()=>{
  const view=structuredClone(settingsView);view.effective.tavern.repeatSeconds=42;
  const update=vi.fn(()=>({code:"ok",revision:view.revision+1,settings:view,problems:[]}));

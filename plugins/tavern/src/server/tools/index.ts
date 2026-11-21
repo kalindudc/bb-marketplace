@@ -93,7 +93,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   register(
     "tavern_route",
     "Read the user's message",
-    "Record how the oldest unrouted user message was read. notes is REQUIRED on every route kind; use [] after considering facts, promises and hand-backs (include need; see tavern_note). The goal itself is never a note: open a board quest for it, and record only separate facts, commitments or hand-backs as notes. A steer can name one boardQuestId or several boardQuestIds when the user means multiple goals. Asides and questions must not name quests. Route the user's own standing rule as rule. For a new quest, route first then open it with tavern_quest. Record an explicit checker-handoff hold with checkerHandoffHold: { reason }. It stays held until a user control releases it; a reporting promise never releases it. Route queued messages in order before quest writes. steer: apply the change to every named quest; if targets are unclear, ask one short question and change nothing. A still-applicable steer or new-quest route survives later questions, asides and queued messages until its following Keeper turn ends; never re-route a newer message to regain authority for it. question: answer from the ledger or knowledge and change nothing. aside: do quick work directly, otherwise hire an errand helper with errand:true, without a board quest or waypoint; never change board quests. new-quest: open the concrete goal with tavern_quest and scout; a greeting or class selection is not a goal. rule: save the user's standing rule verbatim with tavern_rule and source:message, active for this Keeper by default; global only when the user explicitly names all Keepers or all Tavern threads. Keeper proposals wait for ledger confirmation. Keep facts verbatim and promises timed or conditional.",
+    "Record how the oldest unrouted user message was read. notes is REQUIRED on every route kind; use [] after considering facts, promises and hand-backs (include need; see tavern_note). The goal itself is never a note: open a board quest for it, and record only separate facts, commitments or hand-backs as notes. A steer can name one boardQuestId or several boardQuestIds when the user means multiple goals. Asides and questions must not name quests. Route the user's own standing rule as rule. For a new quest, route first then open it with tavern_quest. Record an explicit checker-handoff hold with checkerHandoffHold: { reason }. It stays held until a user control releases it; a reporting promise never releases it. Route queued messages in order before quest writes. steer: apply the change to every named quest; if targets are unclear, ask one short question and change nothing. A still-applicable steer or new-quest route survives later questions, asides and queued messages until its following Keeper turn ends; never re-route a newer message to regain authority for it. question: answer from the ledger or knowledge and change nothing. aside: do quick work directly, otherwise hire an errand helper with errand:true, without a board quest or waypoint; never change board quests. new-quest: open the concrete goal with tavern_quest and scout; a greeting or class selection is not a goal. rule: save the user's standing rule verbatim with tavern_rule and source:message, active for this Keeper by default; global only when the user explicitly names all Keepers or all Tavern threads. Keeper proposals wait for ledger confirmation. Keep facts verbatim and give promises deadlines.",
     z.object({
       kind: z.enum(ROUTE_KINDS),
       boardQuestId: optionalQuest,
@@ -119,7 +119,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   register(
     "tavern_note",
     "Recorded Keeper memory",
-    "Record a fact verbatim, a commitment with dueAt or condition, or a hand-back with an action only the user can do and need: one sentence of at most 120 characters. Use facts or summaries for information. Done or Reply resolves hand-backs; op done closes notes. Quest end closes promises and hand-backs. Do not make promises only in chat.",
+    "Record a fact verbatim, a commitment with dueAt, or a hand-back with an action only the user can do and need: one sentence of at most 120 characters. Use facts or summaries for information. Done or Reply resolves hand-backs; op done closes notes. Quest end closes promises and hand-backs. Do not make promises only in chat.",
     z.union([
       z.discriminatedUnion("kind", [
         noteDraftSchema.options[0].safeExtend({ op: z.literal("add") }),
@@ -228,7 +228,7 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   register(
     "tavern_release",
     "Released a party member",
-    "Stop a member of your own party and free its allocation once stopping is confirmed. memberThreadId accepts its unique live display name or thread id. Give the reason. The reversible release appears under Decided for you; replacements still obey their per-slot budget. Two stale strikes permit release and replacement or a re-plan. Released members retain history and credit for verified work; unfinished entries no longer own or hold open the waypoint.",
+    "Stop a member of your own party and free its allocation once stopping is confirmed. memberThreadId accepts its unique live display name or thread id. Give the reason. The reversible release appears under Decided for you; replacements still obey their per-slot budget. Treat stale strikes as advice, not an order to release. Released members retain history and credit for verified work; unfinished entries no longer own or hold open the waypoint.",
     z.object({ memberThreadId: id, reason: z.string().trim().min(1).max(500) }),
     async (input, threadId) => {
       const member = k.resolvePartyMember(threadId, input.memberThreadId);
@@ -474,16 +474,16 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   register(
     "tavern_report",
     "Filed a report",
-    "Write a report to the Keeper's mailbox and end your turn. Include headline: one plain sentence stating the answer, at most 160 characters. A Warden headline states the check result, never a claim of independence; leave room for the same-family label when applicable. Voice is dropped for blocked and needs-decision reports. Before a done report, mark every linked entry done with evidence (or have it verified). A Warden checks rather than owns its assigned waypoint. If its review posture is same-family check (not independent), retain that exact limitation in the verdict and never call the fallback independent.",
+    "Write a report to the Keeper's mailbox and end your turn. Give a one-sentence headline of at most 160 characters. A Warden headline states the result, never a claim of independence. Preserve the same-family check (not independent) label when applicable. Only done reports keep voice; first mark every linked entry done with evidence or have it verified. A Warden checks rather than owns its waypoint. To declare a wait, include wait with a condition and dueAt; the Keeper is reminded at the deadline.",
     reportSchema
-      .pick({ status: true, outcome: true, headline: true, evidence: true, artifacts: true })
+      .pick({ status: true, outcome: true, headline: true, evidence: true, artifacts: true, wait: true })
       .extend({
         confidence: reportSchema.shape.confidence.default(null),
         voice: reportSchema.shape.voice.default(null),
       }),
     async (input, threadId) => {
       const report = k.report(threadId, input);
-      if (report.status === "blocked" && report.keeperThreadId)
+      if (report.status === "blocked" && !report.wait && report.keeperThreadId)
         void runtime.push(
           report.keeperThreadId,
           "Party member blocked",

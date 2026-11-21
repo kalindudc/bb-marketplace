@@ -77,7 +77,7 @@ export function SafeLink({ href, children }: { href: string; children: ReactNode
 
 const EVENT_GLYPH: Record<EventLine["icon"], PageGlyphName> = { steer: "steer", question: "question", aside: "aside", quest: "quest", plan: "plan", ask: "you", answer: "done", decided: "seal", undo: "undo", rule: "rule", report: "report", hire: "hire", told: "told", stale: "stale", failed: "fail", anchor: "anchor", stop: "stop", skip: "skip", wrap: "wrap", phase: "phase", tick: "tick", note: "note" };
 export function EventRow({ line, registry, compact = false }: { line: EventLine; registry: Registry; compact?: boolean }) {
-  const who = line.actor.kind === "you" ? "You" : line.actor.kind === "tavern" ? "Tavern" : line.actor.kind === "unknown" ? "" : characterName(registry, line.actor.member);
+  const who = line.actor.kind === "you" ? "You" : line.actor.kind === "tavern" ? "Tavern" : line.actor.kind === "unknown" ? "" : line.actorLabel ?? characterName(registry, line.actor.member);
   const repeats = (line.repeats ?? 1) > 1 ? <span className="num" aria-label={`${line.repeats} occurrences`}>×{line.repeats}</span> : null;
   return <li className={`tv-ev t-${line.tone}${compact ? " tv-ev-compact" : ""}`}>
     <PageGlyph name={EVENT_GLYPH[line.icon] ?? "note"} size={13} className="tv-ev-g" />
@@ -110,15 +110,17 @@ function GroupedEvents({ lines, registry, questShort }: { lines: EventLine[]; re
 
 const FILTERS = [["all", "All"], ["asks", "Asks"], ["steers", "Steers"], ["reports", "Reports"], ["decided", "Decided"]] as const;
 export type Filter = (typeof FILTERS)[number][0];
-export function EventFeed({ lines, registry, questShort, title = "What happened", filter, setFilter, showQuest = true, limit = 8, foldKey = null }: { lines: EventLine[]; registry: Registry; questShort: (id: string) => string | null; title?: ReactNode; filter: Filter; setFilter: (f: Filter) => void; showQuest?: boolean; limit?: number; foldKey?: string | null }) {
+export function EventFeed({ lines, qualified, registry, questShort, title = "What happened", filter, setFilter, showQuest = true, limit = 8, foldKey = null }: { lines: EventLine[]; qualified?: ReadonlyMap<number, EventLine>; registry: Registry; questShort: (id: string) => string | null; title?: ReactNode; filter: Filter; setFilter: (f: Filter) => void; showQuest?: boolean; limit?: number; foldKey?: string | null }) {
   const [more, setMore] = usePanelState(foldKey && `${foldKey}.more`, false);
   if (!lines.length) return null;
   const shown = lines.filter((l) => filter === "all" || l.filter === filter);
   const count = (list: EventLine[]) => list.reduce((sum, item) => sum + (item.repeats ?? 1), 0);
   const counts = Object.fromEntries(FILTERS.map(([f]) => [f, f === "all" ? count(lines) : count(lines.filter((l) => l.filter === f))]));
   const preview = more ? shown : shown.slice(0, limit);
+  const crossParty = qualified && new Set(preview.flatMap(l => l.memberKeeperIds ?? [])).size > 1;
+  const namedPreview = crossParty ? preview.map(l => qualified.get(l.id) ?? l) : preview;
   return <Section title={title} count={plural(count(lines), "event")} className="tv-events-sec" action={<SegFilter label="Filter events" value={filter} onChange={setFilter} options={FILTERS.filter(([f]) => f === "all" || counts[f]).map(([f, label]) => ({ id: f, label, count: counts[f] }))} />}>
-    {showQuest ? <GroupedEvents lines={preview} registry={registry} questShort={questShort} /> : <EventList lines={preview} registry={registry} />}
+    {showQuest ? <GroupedEvents lines={namedPreview} registry={registry} questShort={questShort} /> : <EventList lines={namedPreview} registry={registry} />}
     {shown.length > limit && <button type="button" className="tv-fold act" aria-expanded={more} onClick={() => setMore(!more)}><ExpandsMark open={more} />{more ? "Show fewer" : "Show every event"}</button>}
     {!shown.length && <p className="tv-empty" data-empty>Nothing of this kind yet.</p>}
   </Section>;
@@ -198,8 +200,11 @@ const errandsOf = (room: Room) => room.keepers.flatMap((keeper) => keeper.errand
 
 function RoomActivity({ room, registry }: { room: Room; registry: Registry }) {
   const api = useArchive();
-  const ctx = useMemo(() => eventContext(room, registry), [room, registry]);
-  const allLines = useMemo(() => eventLines(room.recent, ctx, { collapseRepeats: true }), [room.recent, ctx]);
+  const ctx = useMemo(() => eventContext(room, registry, false), [room, registry]);
+  const allLines = useMemo(() => eventLines(room.recent, ctx, { collapseRepeats: true, trackParties: true }), [room.recent, ctx]);
+  const qualified = useMemo(() => new Set(allLines.flatMap(l => l.memberKeeperIds ?? [])).size > 1
+    ? new Map(eventLines(room.recent, eventContext(room, registry, true), { collapseRepeats: true }).map(l => [l.id, l]))
+    : undefined, [allLines, room, registry]);
   const onBoard = useMemo(() => new Set(questsIn(room).filter((q) => !q.archivedAt).map((q) => q.id)), [room]);
   const inCellar = (l: Pick<EventLine, "questId">) => l.questId !== null && (!onBoard.has(l.questId) || api.hidden.has(l.questId));
   const [showCellar, setShowCellar] = usePanelState("room.events.cellar", false);
@@ -230,7 +235,7 @@ function RoomActivity({ room, registry }: { room: Room; registry: Registry }) {
       board={<div data-sec="board"><Board room={room} registry={registry} api={api} since={since ?? undefined} /></div>}
       lists={null}
       events={<div className="rm-stackcol">
-        <div id="rm-events" data-sec="events"><EventFeed lines={lines} registry={registry} questShort={(id) => ctx.questShort(id) ?? (inCellar({ questId: id }) ? "A quest in the cellar" : null)} filter={filter} setFilter={setFilter} foldKey="room.events" />
+        <div id="rm-events" data-sec="events"><EventFeed lines={lines} qualified={qualified} registry={registry} questShort={(id) => ctx.questShort(id) ?? (inCellar({ questId: id }) ? "A quest in the cellar" : null)} filter={filter} setFilter={setFilter} foldKey="room.events" />
           {folded > 0 && <button type="button" className="tv-fold act" aria-expanded={showCellar} onClick={() => setShowCellar(!showCellar)}><ExpandsMark open={showCellar} /><span>{showCellar ? "Fold the cellar's events" : `${plural(folded, "event")} from quests in the cellar folded out`}</span></button>}
         </div>
         {(errands > 0 || room.solos.length > 0) && <div id="rm-lists" className="rm-stackcol">

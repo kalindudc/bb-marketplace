@@ -8,6 +8,38 @@ import { insightsView, settingsView } from "../../../src/ui/page/fixtures-insigh
 import { fixtureDecor, fixtureLedger, fixtureQuest, fixtureRegistry } from "../../../src/ui/thread/fixtures";
 import { Chart } from "../../../src/ui/kit/charts";
 import { waitFor } from "@testing-library/react";
+import { AttentionSection } from "../../../src/ui/page/settings";
+import { ClosingTimeTab } from "../../../src/ui/page/panels";
+import { emptyRoomScene } from "../page/scenes";
+import type { AlertRouteView } from "../../../src/shared/alert-route";
+
+it.runIf(process.env.TAVERN_ALERT_HARNESS === "1")("renders the alert route states for browser measurement", async () => {
+  const unproven: AlertRouteView = { proven: false, lastTest: null, lastFailure: null };
+  const at = Date.now() - 120_000;
+  const sent: AlertRouteView = { ...unproven, lastTest: { id: 1, at, outcome: "sent", response: null } };
+  const arrived: AlertRouteView = { proven: true, lastTest: { id: 1, at, outcome: "sent", response: "arrived" }, lastFailure: { at: at - 180_000, error: "The notification service did not respond." } };
+  const settings = async (route: AlertRouteView, ready: string) => {
+    const slot = renderSlot({ component: AttentionSection }, {}, { rpc: { settings: () => settingsView, alertRoute: () => route } });
+    await slot.findByText(ready);
+    const markup = slot.container.innerHTML;
+    slot.lifecycle.unmount();
+    return markup;
+  };
+  const before = await settings(unproven, "No test alert yet.");
+  const waiting = await settings(sent, "Tavern sent the test. Did it arrive on your device?");
+  const after = await settings(arrived, "You confirmed it arrived.");
+  const closing = renderSlot({ component: ClosingTimeTab }, { subPath: "closing", params: null }, {
+    rpc: {
+      room: () => emptyRoomScene, registry: () => fixtureRegistry, settings: () => settingsView, alertRoute: () => unproven,
+      away: () => ({ revision: 0, status: { closed: false, until: null, dueBack: false, windowId: null }, window: null, watchedCount: 0, heldCount: 0, pendingStops: [], resumeRequired: [] }),
+    },
+  });
+  await closing.findByText("Alerts have not reached you yet. Blocker wakes may not either.");
+  await waitFor(() => { if ((closing.getByRole("button", { name: "Review before closing" }) as HTMLButtonElement).disabled) throw new Error("Waiting for the loaded sheet"); });
+  const sheet = closing.container.innerHTML;
+  closing.lifecycle.unmount();
+  process.stdout.write("ALERT_HARNESS=" + JSON.stringify({ before, waiting, after, sheet }) + "\n");
+});
 
 it.runIf(process.env.TAVERN_LAYOUT_HARNESS === "1")("renders branch components for the browser layout harness", async () => {
   const widgets: string[] = [];

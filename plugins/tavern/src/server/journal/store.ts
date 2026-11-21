@@ -374,7 +374,8 @@ export function createJournalStore(bb: BbPluginApi, db: Database, deps: JournalD
     try {
       initialize(threadId); scheduleRead(threadId); syncBoardQuests(threadId);
       const entries = ownedElsewhere && readOnly.has(threadId) ? readOnly.get(threadId)! : localEntries(threadId);
-      return { ...progress(entries), quietSince: quietSince(threadId, entries) };
+      const lastEvidenceAt = entries.reduce((at, entry) => entry.evidence.length ? Math.max(at, entry.updatedAt) : at, 0);
+      return { ...progress(entries), quietSince: quietSince(threadId, entries), ...(lastEvidenceAt ? { lastEvidenceAt } : {}) };
     } catch (error) { reportReadError(threadId, error); return progress([]); }
   }
   function get(threadId: string): Journal {

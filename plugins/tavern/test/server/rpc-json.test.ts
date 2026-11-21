@@ -26,7 +26,7 @@ async function fixture() {
   const db = new Database(join(location.home, "data.db"));
   const f = createFakePluginHost({ pluginId: "tavern", sdk: {
     threads: { get: async ({ threadId }: { threadId: string }) => makeThreadResponse({ id: threadId, status: threadId === "lead" ? "active" : "idle" }), defaultExecutionOptions: async () => ({ model: "checked-model", reasoningLevel: "high" }), update: async () => ({}), getPluginMetadata: async () => ({}), updatePluginMetadata: async () => ({}), events: { list: async () => [] }, queuedMessages: { list: async () => [] }, stop: async () => ({}) },
-    plugins: { list: async () => ({ plugins: [] }) }, projects: { list: async () => [], get: async () => ({ sources: [] }) }, system: { config: async () => ({ primaryHostId: "host" }) },
+    plugins: { list: async () => ({ plugins: [{ id: "push-notifications", enabled: true }] }), callRpc: async () => ({ ok: true, channels: ["fixture"] }) }, projects: { list: async () => [], get: async () => ({ sources: [] }) }, system: { config: async () => ({ primaryHostId: "host" }) },
     environments: { listProviders: async () => [] }, hosts: { list: async () => [], experimental_listProviders: async () => [] },
   } });
   const disposals: (() => unknown)[] = [];
@@ -108,6 +108,7 @@ it("returns strict JSON from EVERY registered RPC with optional record fields ab
   const { name, hue, charge, temper, style, quirks, lines } = character;
   let seenUndoToken: string | null = null;
   let awayWindowId: string | null = null;
+  let alertTestId = 0;
   const propose = async (why: string) => {
     const result = await f.harness.inspection.registrations.cli[0]!.run(["setup", "propose", "--toml", "[tavern]\nrepeat_seconds = 35", "--reasons", JSON.stringify({ "tavern.repeatSeconds": why })], {});
     expect(result.exitCode).toBe(0);
@@ -220,6 +221,13 @@ it("returns strict JSON from EVERY registered RPC with optional record fields ab
     placementModelFailures: () => call("placementModelFailures", {}),
     placementModelFailureClear: () => call("placementModelFailureClear", { id: "missing" }),
     settings: () => call("settings", null),
+    alertRoute: () => call("alertRoute", null),
+    alertTestSend: async () => {
+      const result = await call("alertTestSend", {}) as { lastTest: { id: number } };
+      alertTestId = result.lastTest.id;
+      return result;
+    },
+    alertTestConfirm: () => call("alertTestConfirm", { id: alertTestId, arrived: true }),
     settingsUpdate: () => call("settingsUpdate", { revision: 0, patch: {}, why: "Sparse fixture" }),
     settingsUndo: () => call("settingsUndo", { id: "missing", revision: 0, why: "Sparse fixture" }),
     settingsExport: () => call("settingsExport", {}),

@@ -109,6 +109,8 @@ const APPENDED: string[] = [
    CREATE INDEX tavern_setup_pending ON tavern_setup_proposals(id) WHERE json_extract(data, '$.proposal.state') = 'pending';`,
   `CREATE INDEX tavern_member_engagement_events ON tavern_events(json_extract(data,'$.memberThreadId'),id)
      WHERE json_type(data,'$.engagement')='object';`,
+  `CREATE INDEX tavern_alert_outcomes ON tavern_events(json_extract(data,'$.outcome'),id) WHERE type='alert.push';
+   CREATE INDEX tavern_alert_holds ON tavern_events(json_extract(data,'$.holdKey')) WHERE type='alert.push';`,
 ];
 
 export const MIGRATIONS: string[] = [

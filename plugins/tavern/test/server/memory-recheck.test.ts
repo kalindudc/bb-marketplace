@@ -86,6 +86,7 @@ describe("Memory re-check regressions", () => {
     f.k.memory.note("lead", {
       kind: "commitment",
       text: "New promise",
+      dueAt: f.time() + 600_000,
       condition: "When the user replies",
     });
     const config = f.runtime.configure(
@@ -206,11 +207,14 @@ describe("Memory re-check regressions", () => {
       text: "Scoped promise",
       dueAt: f.time() + 1,
     });
-    f.k.memory.note("lead", {
+    const old = f.k.memory.note("lead", {
       kind: "commitment",
       text: "Old conditional promise",
       condition: "When ready",
+      dueAt: f.time() + 600_000,
     });
+    f.k.store.put("notes", old.id, { ...old, dueAt: null });
+    expect(f.k.restatement("lead")).toContain('"Old conditional promise"; no deadline');
     f.advance(3 * 86400_000 + 1);
     expect(f.k.memory.notes("lead").map((n) => n.text)).toEqual([
       "Scoped promise",

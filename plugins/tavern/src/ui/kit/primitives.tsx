@@ -10,7 +10,7 @@ import { experimental_useRpcMutation, experimental_useRpcQuery, experimental_use
 import { rpcContract, type BoardQuestSummary } from "../../shared/contract";
 import { extractReportHeadline, type ReportHeadlineNames } from "../../shared/report-headline";
 import type { Actor, Evidence, EntryStatus, Member, Phase, Decision, Report } from "../../shared/schema";
-import { identityLabel, isThreadId } from "../../shared/identity";
+import { identityLabel, isThreadId, memberIdentityLabel } from "../../shared/identity";
 import { Crest } from "./crest";
 import { ExpandsMark, Glyph, OpensMark } from "./glyphs";
 import { memberIdentity, type Registry } from "./registry";
@@ -83,7 +83,7 @@ export function EvidenceList({ evidence, fold = false, fileRef }: { evidence: re
 
 export function MemberChip({ member, registry, compact = false, onOpen, summary }: { member: Member; registry: Registry; compact?: boolean; onOpen?: (threadId: string) => void; summary?: string }) {
   const identity = memberIdentity(registry, member);
-  const name = identity?.character.name ?? member.displayName ?? member.characterId;
+  const name = memberIdentityLabel(member, registry);
   const content = <>{identity ? <Crest {...identity} size={compact ? 16 : 22} /> : <span className="tag" aria-label="Unknown character">?</span>}{!compact && <span className="who-t"><b>{name}</b><span className="anc">{identity ? `${identity.cls.label} · ${identity.cls.plain}` : `Unknown class: ${member.classId}`}</span></span>}</>;
   const title = `${name} · ${identity?.cls.label ?? member.classId} (${identity?.cls.plain ?? "unknown"}) · ${memberActivityWord(member)}${reviewLimitation(member.checkIndependence) ? ` · ${reviewLimitation(member.checkIndependence)}` : ""}${member.guardPosture ? ` · ${member.guardPosture.label}` : ""}${(summary ?? member.doing) ? ` · ${summary ?? member.doing}` : ""}`;
   return onOpen ? <button type="button" className="who who-btn act" title={`Open ${title}`} aria-label={`Open ${title}`} onClick={() => onOpen(member.threadId)}>{content}<OpensMark /></button> : <span className="who" title={title}>{content}</span>;

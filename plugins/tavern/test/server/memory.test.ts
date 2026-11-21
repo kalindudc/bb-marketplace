@@ -40,19 +40,25 @@ describe("durable Keeper memory", () => {
       "Luc is available until five",
     );
   });
-  it("requires a time or condition for commitments and emits one durable due event", async () => {
+  it("requires a deadline even when the commitment has a condition", async () => {
     const f = await goal();
     registerTools(f.bb, f.runtime);
     await expect(
       f.harness.behavior.invokeAgentTool(
         "tavern_note",
-        { op: "add", kind: "commitment", text: "I will return" },
+        { op: "add", kind: "commitment", text: "I will return", condition: "CI finishes" },
         { threadId: "lead" },
       ),
-    ).rejects.toThrow();
+    ).rejects.toThrow("A commitment needs a deadline (dueAt).");
+    expect(f.k.memory.notes("lead")).toHaveLength(0);
+  });
+  it("emits one durable due event and wakes the Keeper with the condition", async () => {
+    const f = await goal();
+    f.k.store.patch("lead", { userAt: null });
     const note = f.k.memory.note("lead", {
       kind: "commitment",
       text: "Check totals",
+      condition: "Wait for the calculation to finish or fail",
       boardQuestId: f.q.id,
       dueAt: f.time() + 600_000,
     });
@@ -62,11 +68,14 @@ describe("durable Keeper memory", () => {
       f.k.store.events("lead").filter((e) => e.type === "promise.due"),
     ).toHaveLength(0);
     f.advance(600_001);
-    f.k.memory.due("lead");
-    f.k.memory.due("lead");
-    expect(
-      f.k.store.events("lead").filter((e) => e.type === "promise.due"),
-    ).toHaveLength(1);
+    await f.runtime.tick("lead");
+    f.advance(61_000);
+    await f.runtime.tick("lead");
+    const due = f.k.store.events("lead").filter(e => e.type === "promise.due");
+    expect(due).toEqual([expect.objectContaining({ text: "Promise due: Check totals. Wait for the calculation to finish or fail" })]);
+    const sent = f.harness.inspection.sdk.callsTo("threads.send");
+    expect(sent).toHaveLength(1);
+    expect(JSON.stringify(sent[0]!.args)).toContain(due[0]!.text);
     f.k.memory.complete("lead", note.id);
     expect(f.k.memory.notes("lead")).toHaveLength(0);
   });
@@ -115,7 +124,7 @@ describe("durable Keeper memory", () => {
     expect(f.k.memory.notes("lead")).toHaveLength(0);
     expect(f.k.store.get("notes", note.id)?.text).toBe("Luc is online");
   });
-  it("records outside-gate contact and repeats unasked gates after greenlight until asked", async () => {
+  it("records outside-gate contact and warns about a ready gate until asked", async () => {
     const f = await goal();
     f.k.plan("lead", {
       ...planInput(f.q.id),
@@ -130,12 +139,9 @@ describe("durable Keeper memory", () => {
       ],
     });
     f.k.answerAsk(f.k.asks("lead")[0]!.id, "approve", null, "page", "user");
-    expect(f.k.memory.unaskedGates("lead")).toContainEqual(
-      expect.stringContaining(
-        "Outside gate Approval not asked yet (lead time Thursday 10:00)",
-      ),
-    );
-    expect(f.k.memory.unaskedGates("lead")).toHaveLength(1);
+    expect(f.k.memory.readyGateReminders("lead")).toEqual([
+      expect.objectContaining({ text: expect.stringContaining("Outside gate Approval not asked yet (lead time Thursday 10:00)") }),
+    ]);
     f.k.memory.gate("lead", {
       boardQuestId: f.q.id,
       waypointId: "w1",
@@ -143,7 +149,7 @@ describe("durable Keeper memory", () => {
       via: "User supplied the question",
       answer: "Approved",
     });
-    expect(f.k.memory.unaskedGates("lead")).toHaveLength(0);
+    expect(f.k.memory.readyGateReminders("lead")).toHaveLength(0);
     expect(f.k.summary(f.q.id).waypoints[0]!.gate).toMatchObject({
       askedWho: "Luc",
       answer: "Approved",

@@ -53,8 +53,11 @@ it("keeps backup applies user-only and permits agent previews", () => {
   expect(sections.get("Reference")).toContain("NEVER upload or commit one without the user's approval.");
   expect(sections.get("Reference")).toContain("Only the user applies a restore, from an ordinary terminal or the settings page; you may preview one.");
 });
-it("keeps condition-based promises and describes today's scope requests", () => {
-  expect(body).toContain("promises with a due time or a condition");
+it("teaches deadlines, treats stalls as hints, and describes today's scope requests", () => {
+  expect(body).toContain("promises with a deadline");
+  const progress = sections.get("Track progress");
+  expect(progress).toContain("A wait names what unblocks it and what blocks it, and has a deadline.");
+  expect(progress).toContain("Treat stalls as hints.");
   expect(sections.get("Decide a member's request")).toContain("A member reports that its scope blocks an act it needs, or asks for a wider scope.");
 });
 it("resolves the reference from the skill, never the user's project", () => {

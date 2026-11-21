@@ -14,7 +14,7 @@ export interface JournalPort {
   prepare(threadId: string): Promise<void>;
   /** Also imports a pi-quests log on first touch. */
   get(threadId: string): Journal;
-  progress(threadId: string): JournalProgress;
+  progress(threadId: string): JournalProgress & { lastEvidenceAt?: number };
   /** User edits from the UI. */
   edit(threadId: string, edit: JournalEdit, actor: Actor): { message: string };
   /** Create or update a waypoint entry, honouring the supplied owner. Await prepare before any allocating write. */

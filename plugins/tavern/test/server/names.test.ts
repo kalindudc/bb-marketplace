@@ -105,7 +105,7 @@ describe("live Tavern names", () => {
     const characterId = f.runtime.snapshot().classes.find(c => c.id === "ranger")!.characters[0]!;
     const name = f.runtime.snapshot().characters.find(c => c.id === characterId)!.name;
     const member = await f.runtime.hire("lead", "project", { classId: "ranger", characterId, errand: true, title: "Read", brief: { outcome: "Read", mode: "make-it-work", outOfScope: "Writes", doneWhen: "Report", context: [], questions: ["What changed?"], timeboxMinutes: 5 } });
-    f.k.bind("older", "ranger", characterId, "elsewhere");
+    f.k.bind("older", "ranger", characterId, "elsewhere", { keeperThreadId: "lead", boardQuestId: null, waypointId: null, errand: true, title: "Read", brief: { outcome: "Read", mode: "make-it-work", outOfScope: "Writes", doneWhen: "Report", context: [], questions: [], timeboxMinutes: 5 } });
     f.k.store.put("members", "older", { ...f.k.member("older")!, createdAt: 0, displayName: name });
     f.bb.sdk.threads.get = async ({ threadId }) => makeThreadResponse({ id: threadId, title: manual ? "My title" : `${name} · Read` });
     await f.runtime.reconcileNames();
@@ -137,25 +137,17 @@ describe("live Tavern names", () => {
     const { k, runtime } = setup();
     const pool = runtime.snapshot().classes.find(c => c.id === "keeper")!.characters;
     pool.forEach((id, i) => k.bind(`keeper-${i}`, "keeper", id, "elsewhere"));
-    const selected = (runtime as unknown as { pickCharacter(classId: string, projectId: string, busy: (string | null)[]): { id: string } }).pickCharacter("keeper", "project", runtime.busyCharacters("project"));
+    const selected = (runtime as unknown as { pickCharacter(classId: string, projectId: string, busy: (string | null)[]): { id: string } }).pickCharacter("keeper", "project", runtime.busyCharacters({ role: "keeper", keeperThreadId: null }));
     expect(selected.id).not.toBe("wren");
   });
-  it("gives a hire a numeral when its character is live in another project", async () => {
-    const { k, runtime } = setup();
-    const characterId = runtime.snapshot().classes.find(c => c.id === "ranger")!.characters[0]!;
-    const name = runtime.snapshot().characters.find(c => c.id === characterId)!.name;
-    k.bind("outside", "ranger", characterId, "elsewhere");
-    const member = await runtime.hire("lead", "project", { classId: "ranger", characterId, errand: true, title: "Read", brief: { outcome: "Read", mode: "make-it-work", outOfScope: "Writes", doneWhen: "Report", context: [], questions: ["What changed?"], timeboxMinutes: 5 } });
-    expect(member.displayName).toBe(`${name} II`);
-  });
-  it("counts characters across projects and excludes released and archived threads", () => {
+  it("counts Keeper characters across projects and excludes archived threads", () => {
     const { k, runtime } = setup();
     k.bind("other", "keeper", "moss", "elsewhere");
     k.bind("gone", "keeper", "ada", "elsewhere");
     patchThreadFixture(k.store, "gone", { archivedAt: 10 });
     k.bind("released", "ranger", "juno", "elsewhere");
     patchThreadFixture(k.store, "released", { released: { reason: "done", decisionId: "d" } });
-    expect(runtime.busyCharacters("project")).toEqual(["wren", "moss"]);
+    expect(runtime.busyCharacters({ role: "keeper", keeperThreadId: null })).toEqual(["wren", "moss"]);
   });
   it("mentions live names with their class and quest, without raw identifiers in text", () => {
     const { k, runtime } = setup();

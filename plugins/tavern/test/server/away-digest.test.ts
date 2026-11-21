@@ -19,6 +19,9 @@ describe("Closing time digest", () => {
     f.runtime.away.store.close({ revision: 0, until: f.time() + 60_000, quests: [{ questId: q.id, endState: "drafts-ready" }] });
     f.advance(-1000);
     const included = f.k.store.event(f.time(), "lead", q.id, "report.filed", "Draft ready");
+    await f.runtime.push("lead", "Test blocker", "Held by the closing window");
+    expect(f.k.store.events().some(e => e.type === "alert.push")).toBe(true);
+    f.k.store.event(f.time(), null, null, "authority.acted", "Test receipt", { act: "alertTestConfirm" });
     f.runtime.away.store.finish(f.runtime.away.store.snapshot().window!.id, explicit);
     f.k.store.event(f.time(), "lead", q.id, "report.filed", "Later report");
     const result = readAwayDigest(f.k, f.runtime.away.store, {});

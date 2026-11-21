@@ -101,7 +101,7 @@ function ruleLine(rule: Rule) {
   return `${rule.id} [${rule.scope}${rule.scope === "quest" ? ` ${rule.scopeId}` : ""}] ${quoted(rule.text)}`;
 }
 function noteLine(note: KeeperNote) {
-  return `${note.id} [${note.kind}${note.boardQuestId ? `; ${note.boardQuestId}` : ""}] ${quoted(note.kind === "waiting-on-user" ? note.action ?? note.text : note.text)}${note.dueAt !== null ? `; due ${clock(note.dueAt)}` : ""}${note.condition ? `; when ${quoted(note.condition)}` : ""}${note.validUntil !== null ? `; valid until ${clock(note.validUntil)}` : ""}`;
+  return `${note.id} [${note.kind}${note.boardQuestId ? `; ${note.boardQuestId}` : ""}] ${quoted(note.kind === "waiting-on-user" ? note.action ?? note.text : note.text)}${note.dueAt !== null ? `; due ${clock(note.dueAt)}` : note.kind === "commitment" ? "; no deadline" : ""}${note.condition ? `; when ${quoted(note.condition)}` : ""}${note.validUntil !== null ? `; valid until ${clock(note.validUntil)}` : ""}`;
 }
 function memberLines(k: Keeper, summary: BoardQuestSummary) {
   return summary.members.map(

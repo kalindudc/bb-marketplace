@@ -170,7 +170,7 @@ export default async function tavern(bb: BbPluginApi) {
     id: "names",
     label: "Tavern names",
     triggers: ["@"],
-    search: async ctx => runtime.mentionNames(ctx.query),
+    search: async ctx => runtime.mentionNames(ctx.query, ctx.threadId),
     resolve: itemId => {
       const item = runtime.mentionNames("").find(item => item.id === itemId);
       if (!item) throw new Error("This Tavern name is no longer live");

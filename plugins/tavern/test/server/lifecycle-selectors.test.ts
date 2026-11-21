@@ -16,7 +16,7 @@ async function fixture() {
   const member = f.k.bind("child", "smith", "juno", "project", { keeperThreadId: "lead", boardQuestId: q.id, waypointId: null, errand: true, title: "Build", brief });
   return { ...f, q, member };
 }
-it.each(["released", "release-pending", "archive-pending", "deleted", "archived", "ended"] as const)("SQL staffing, allocation and errand counts agree on %s members, and names stay taken while the thread is live", async state => {
+it.each(["released", "release-pending", "archive-pending", "deleted", "archived", "ended"] as const)("SQL staffing, allocation and errand counts agree on %s members, and names stay taken while the party member is live", async state => {
   const f = await fixture();
   if (state === "released") patchThreadFixture(f.k.store, "child", { released: { reason: "Done", decisionId: "d" } });
   if (state === "release-pending") patchThreadFixture(f.k.store, "child", { releasePending: "Stop" });
@@ -28,8 +28,9 @@ it.each(["released", "release-pending", "archive-pending", "deleted", "archived"
   expect(f.k.store.activeStaffing("lead")).toHaveLength(occupied);
   expect(f.k.store.allocated(f.q.id, "smith")).toBe(occupied);
   expect(f.k.store.errandsPage("lead", 100, 0).inFlightCount).toBe(occupied);
-  const nameTaken = ["release-pending", "archive-pending", "ended"].includes(state);
-  expect(f.runtime.busyCharacters("project").includes("juno")).toBe(nameTaken);
+  const nameTaken = ["release-pending", "archive-pending"].includes(state);
+  expect(f.runtime.busyCharacters({ role: "member", keeperThreadId: "lead" }).includes("juno")).toBe(nameTaken);
+  if (!nameTaken) expect(() => f.k.resolvePartyMember("lead", f.k.name(f.member))).toThrow("Unknown member name");
   f.advance(24 * 60 * 60_000);
   f.k.stale("lead");
   expect(f.k.member("child")?.strikes).toBe(0);

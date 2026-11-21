@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import { homeRebaseMatches } from "./act-patch";
 import { LimitPolicy } from "./limit-policy";
-import { isLiveKeeper, isLiveMember, isOpenQuest } from "./liveness";
+import { hasLiveName, isLiveKeeper, isLiveMember, isOpenQuest } from "./liveness";
 import { archiveDisposition, assertMemberMachineForBrief, MACHINE_RELEASED, memberDetails, memberHost, outstandingArchivedPlacement, patchMemberDetails, transitionMember, type EngagementReceipt, type MemberOperation } from "./member-engagement";
 import { wasReleased } from "../shared/member-engagement";
 import { AwayRuntime } from "./away/runtime";
@@ -51,6 +51,7 @@ import { resolveHireEnvironment } from "./environments";
 import { authorizeGuardedHire } from "./guard-hire";
 import { doneWhenCommands } from "./check-commands";
 import { memberTitle, uniqueMemberName } from "./titles";
+import { memberIdentityFacts, memberRoleLabel } from "../shared/identity";
 import { captureRequestSources, requestSourcePacket } from "./request-sources";
 import { isHireCancelled, recoverHires, rejectedSpawn, releaseHire, settleCancelledHire } from "./hires";
 import { BackendScopes, type BackendScopeOptions } from "./scopes";
@@ -60,6 +61,7 @@ import { DEFAULT_SETTINGS, type TavernSettings, type SparseTunables } from "../s
 import type { SettingsStore } from "./settings/store";
 import type { InsightsReader } from "./insights/index";
 import { runTuner } from "./settings/tuner";
+import { AlertRoute } from "./alert-route";
 import { LIMITS } from "./limits";
 import { createHostPort } from "../host/client";
 import { memberWorktree, preserveMemberWork, worktreeState } from "./member-worktree";
@@ -107,10 +109,6 @@ export const KEEPER_TOOLS = [
   "tavern_wrap",
   "tavern_tune",
 ];
-const pushResultSchema = z.object({
-  ok: z.literal(true),
-  channels: z.array(z.string()),
-});
 const submissionSchema = z.object({
   classId: z.string().optional(),
   route: z.enum(["aside", "new-quest"]).optional(),
@@ -144,6 +142,7 @@ export class TavernRuntime {
   private readonly loop = new TickLoop(this);
   private readonly releaseLocks = new Map<string, Promise<boolean>>();
   private sourceInspection: SourceDiscovery | null = null;
+  readonly alerts: AlertRoute;
   private awayState: AwayRuntime | null = null;
   get away(): AwayRuntime { return this.awayState ??= new AwayRuntime(this); }
   private reviewCache: ReturnType<TavernRuntime["review"]> | null = null;
@@ -708,6 +707,7 @@ export class TavernRuntime {
     readonly keeper: Keeper,
     readonly registry: Registry,
   ) {
+    this.alerts = new AlertRoute(bb, keeper);
     keeper.routineAskOpened = async ask => { if (ask.boardQuestId) await this.applyStandingAnswers(ask.boardQuestId); };
     this.serviceRecords = new ServiceRecords(keeper, stale => bb.rpc.experimental_invalidate(stale));
     PlacementPreservation.observe(bb, () => this.placements());
@@ -802,20 +802,54 @@ export class TavernRuntime {
     return { ...snapshot, classes: snapshot.classes.map(role => overrides[role.id] ? { ...role, ...overrides[role.id] } : role) };
   }
   liveNamedMembers() {
-    return this.keeper.store.all("members").filter(m => {
-      const state = memberHost(this.keeper.store, m);
-      return state.archivedAt == null && state.deletedAt == null && !wasReleased(m);
-    });
+    const store = this.keeper.store;
+    return store.all("members").filter(m => hasLiveName(store, m));
+  }
+  private nameReservations() {
+    return this.keeper.store.all("hires").filter(i => !i.memberThreadId && !isHireCancelled(this.keeper, i));
+  }
+  private nameScope(subject: Pick<Member, "role" | "keeperThreadId">, live = this.liveNamedMembers(), holds?: HireIntent[]) {
+    const members = live.filter(m => subject.role === "member"
+      ? (m.role === "member" && m.keeperThreadId === subject.keeperThreadId) || (m.role === "keeper" && m.threadId === subject.keeperThreadId)
+      : m.role === subject.role);
+    const reserved = subject.role === "member" ? (holds ?? this.nameReservations()).filter(i => i.owner.keeperThreadId === subject.keeperThreadId) : [];
+    return { members, reserved };
+  }
+  private namesInScope(scope: ReturnType<TavernRuntime["nameScope"]>) {
+    return [
+      ...scope.members.map(m => this.keeper.name(m)),
+      ...scope.reserved.map(i => memberName({ classId: i.classId, characterId: i.characterId, displayName: i.owner.displayName }, this.snapshot(i.projectId))),
+    ];
   }
   async reconcileNames() {
-    const used: string[] = [];
-    for (const member of this.liveNamedMembers().sort((a, b) => a.createdAt - b.createdAt || a.threadId.localeCompare(b.threadId))) {
-      const registry = this.snapshot(this.keeper.store.runtime(member.threadId).projectId ?? undefined);
-      const base = registry.characters.find(c => c.id === member.characterId)?.name ?? registry.classes.find(c => c.id === member.classId)?.label ?? member.classId;
-      const current = memberName(member, registry);
-      const displayName = uniqueMemberName(used.some(name => name.toLowerCase() === current.toLowerCase()) ? base : current, used);
-      used.push(displayName);
-      if (member.displayName === displayName) continue;
+    const sorted = this.liveNamedMembers().sort((a, b) => Number(b.role === "keeper") - Number(a.role === "keeper") || a.createdAt - b.createdAt || a.threadId.localeCompare(b.threadId));
+    const order = new Map(sorted.map((m, i) => [m.threadId, i]));
+    const holds = this.nameReservations();
+    const registries = new Map<string | null, ReturnType<TavernRuntime["snapshot"]>>();
+    const registryFor = (project: string | null) => {
+      let registry = registries.get(project);
+      if (!registry) { registry = this.snapshot(project ?? undefined); registries.set(project, registry); }
+      return registry;
+    };
+    const names = new Map(sorted.map(m => {
+      const registry = registryFor(this.keeper.store.runtime(m.threadId).projectId ?? null);
+      return [m.threadId, { registry, label: memberName(m, registry) }];
+    }));
+    const holdNames = new Map(holds.map(i => [i, memberName({ ...i, displayName: i.owner.displayName }, registryFor(i.projectId))]));
+    const changes = this.keeper.store.atomic(() => sorted.flatMap(member => {
+      const entry = names.get(member.threadId)!;
+      const { registry, label: current } = entry;
+      const scope = this.nameScope(member, sorted, holds);
+      const reserved = scope.reserved.map(i => holdNames.get(i)!);
+      const earlier = scope.members.filter(m => order.get(m.threadId)! < order.get(member.threadId)!).map(m => names.get(m.threadId)!.label);
+      const conflict = [...earlier, ...reserved].some(name => name.toLowerCase() === current.toLowerCase());
+      const displayName = conflict ? uniqueMemberName(memberName({ ...member, displayName: null }, registry), [...scope.members.map(m => names.get(m.threadId)!.label), ...reserved]) : current;
+      if (member.displayName === displayName) return [];
+      this.keeper.store.put("members", member.threadId, { ...member, displayName });
+      entry.label = displayName;
+      return [{ member, registry, current, displayName }];
+    }));
+    for (const { member, registry, current, displayName } of changes) {
       try {
         if (current !== displayName) {
           const thread = await this.bb.sdk.threads.get({ threadId: member.threadId });
@@ -830,33 +864,38 @@ export class TavernRuntime {
       } catch (error) {
         this.bb.log.warn(`Tavern name title ${member.threadId}: ${String(error)}`);
       }
-      this.keeper.store.put("members", member.threadId, { ...this.keeper.member(member.threadId)!, displayName });
       this.bb.rpc.experimental_invalidate([tags.registry(), tags.room(), tags.rows(), tags.thread(member.threadId)]);
-
     }
   }
-  busyCharacters(_projectId: string) {
-    return this.liveNamedMembers().map(m => m.characterId);
+  busyCharacters(scope: Pick<Member, "role" | "keeperThreadId">) {
+    const { members, reserved } = this.nameScope(scope);
+    return [...members, ...reserved].map(m => m.characterId);
   }
-  mentionNames(query: string) {
-    return this.liveNamedMembers().map(m => {
+  mentionNames(query: string, viewerThreadId: string | null = null) {
+    const viewer = viewerThreadId ? this.keeper.member(viewerThreadId) : null;
+    const party = viewer?.role === "keeper" ? viewer.threadId : viewer?.keeperThreadId;
+    const inParty = (m: Member) => !!party && (m.threadId === party || m.keeperThreadId === party);
+    return this.liveNamedMembers().sort((a, b) => Number(inParty(b)) - Number(inParty(a))).map(m => {
       const registry = this.snapshot(this.keeper.store.runtime(m.threadId).projectId ?? undefined);
-      const role = registry.classes.find(c => c.id === m.classId)?.label ?? m.classId;
       const quest = m.boardQuestId ? this.keeper.store.get("quests", m.boardQuestId)?.title : m.title;
       const character = registry.characters.find(c => c.id === m.characterId);
       const shape = registry.classes.find(c => c.id === m.classId)?.shape;
       const icon = character && shape ? `tavern-crest-${shape}-${character.hue}-${character.charge}` : "tavern/tavern";
-      return { id: m.threadId, title: memberName(m, registry), subtitle: `${role}${quest ? ` · ${quest}` : ""}`, icon };
+      const keeper = m.keeperThreadId ? this.keeper.member(m.keeperThreadId) : null;
+      const identity = memberIdentityFacts(m, registry, keeper ? { threadId: keeper.threadId, name: this.keeper.name(keeper), sameParty: inParty(m) } : null);
+      return { id: m.threadId, title: identity.name, subtitle: `${memberRoleLabel(identity)}${quest ? ` · ${quest}` : ""}`, icon };
     }).filter(item => `${item.title} ${item.subtitle}`.toLowerCase().includes(query.toLowerCase()));
   }
   nameRoster(threadId: string) {
     const member = this.keeper.member(threadId);
     if (!member) return "";
     const keeperId = member.keeperThreadId ?? member.threadId;
-    const names = new Set(this.liveNamedMembers().filter(m => m.threadId !== threadId && (m.threadId === keeperId || m.keeperThreadId === keeperId)).map(m => m.threadId));
-    return boundedData(this.mentionNames("").filter(item => names.has(item.id)).map(item => {
-      const [role, ...quest] = item.subtitle.split(" · ");
-      return `${item.title} (${role})${quest.length ? ` · ${Array.from(quest.join(" · ")).slice(0, 60).join("")}` : ""}`;
+    const fellows = this.liveNamedMembers().filter(m => m.threadId !== threadId && (m.threadId === keeperId || m.keeperThreadId === keeperId));
+    return boundedData(fellows.map(m => {
+      const registry = this.snapshot(this.keeper.store.runtime(m.threadId).projectId ?? undefined);
+      const { name, className } = memberIdentityFacts(m, registry);
+      const quest = m.boardQuestId ? this.keeper.store.get("quests", m.boardQuestId)?.title : m.title;
+      return `${name} (${className})${quest ? ` · ${Array.from(quest).slice(0, 60).join("")}` : ""}`;
     }).join("\n"), 1000);
   }
   private pickCharacter(classId: string, projectId: string, busy: (string | null)[], requested?: string | null) {
@@ -1219,12 +1258,12 @@ export class TavernRuntime {
           }
           }
           await this.reconcileNames();
+          const scope = { role: classId === "keeper" ? "keeper" as const : "solo" as const, keeperThreadId: null };
           let character;
-          try { character = registryProblem ? undefined : this.pickCharacter(classId, ctx.project.id, this.busyCharacters(ctx.project.id)); }
+          try { character = registryProblem ? undefined : this.pickCharacter(classId, ctx.project.id, this.busyCharacters(scope)); }
           catch (error) { return { action: "reject" as const, message: `Cannot start ${role.label}: ${String(error)}. Fix the class’s character pool.` }; }
+          const displayName = uniqueMemberName(character?.name ?? role.label, this.namesInScope(this.nameScope(scope)));
           member = this.keeper.bind(ctx.thread.id, classId, character?.id ?? null, ctx.project.id, undefined, ctx.thread.id);
-          const usedNames = this.mentionNames("").filter(other => other.id !== member!.threadId).map(other => other.title);
-          const displayName = uniqueMemberName(character?.name ?? role.label, usedNames);
           member = { ...member, displayName, title: ctx.thread.title };
           this.keeper.store.put("members", member.threadId, member);
           if (!registryProblem) this.projectClassNotice(member.threadId, classId, ctx.project.id);
@@ -1615,13 +1654,11 @@ export class TavernRuntime {
     const ruleModel = modelRule?.classModels?.[role.id];
     const beforeRuleRole = slot?.model ? { ...role, model: slot.model } : role;
     const executionRole = { ...beforeRuleRole, ...ruleModel };
+    const nameScope = { role: "member" as const, keeperThreadId: threadId };
     const character = this.pickCharacter(
       role.id,
       projectId,
-      [
-        ...this.busyCharacters(projectId),
-        ...this.keeper.store.all("hires").filter(i => !i.memberThreadId && !isHireCancelled(this.keeper, i)).map(i => i.characterId),
-      ],
+      this.busyCharacters(nameScope),
       input.characterId ?? slot?.characterId ?? this.detectionCharacter(input.detectionOnlyAskId),
     );
     const checkerPlan = role.id === "warden" && q ? this.keeper.summary(q.id).plan : null;
@@ -1632,15 +1669,6 @@ export class TavernRuntime {
       checkerPlan?.doneWhen, waypoint?.doneWhen,
       ...checkerPlan?.waypoints.filter(item => checkedWaypoints.has(item.id)).map(item => item.doneWhen) ?? [],
     ]);
-    const liveNames = this.mentionNames("").map(member => member.title);
-    const reservedNames = this.keeper.store.all("hires").filter(i => !i.memberThreadId && !isHireCancelled(this.keeper, i))
-      .map(
-        intent => memberName({ classId: intent.classId, characterId: intent.characterId, displayName: intent.owner.displayName }, snapshot),
-      );
-    const displayName = uniqueMemberName(character?.name ?? role.label, [
-      ...liveNames,
-      ...reservedNames,
-    ]);
     const token = randomUUID();
     const requestSources = captureRequestSources(this.keeper, threadId, questId);
     const owner: HireIntent["owner"] = {
@@ -1649,7 +1677,6 @@ export class TavernRuntime {
       waypointId: input.waypointId ?? null,
       errand,
       title: input.title,
-      displayName,
       ...(reviewTarget ? { reviewTarget } : {}),
       requestSources,
       brief: input.brief,
@@ -1681,7 +1708,7 @@ export class TavernRuntime {
         throw new Error("Machine placement settings changed before this hire was reserved; retry.");
     }
     this.keeper.assertCheckerHandoff(role.id, questId);
-    this.keeper.store.atomic(() => {
+    const displayName = this.keeper.store.atomic(() => {
       limitDecisionIds.push(...checkStaffing().permits);
       if (reviewAllowance && questId) limits.claimReview(questId, token);
       for (const id of limitDecisionIds) limits.claimSoft(id, token);
@@ -1695,7 +1722,9 @@ export class TavernRuntime {
         );
       }
       if (questId) this.keeper.assertQuestNotHeld(questId);
+      owner.displayName = uniqueMemberName(character?.name ?? role.label, this.namesInScope(this.nameScope(nameScope)));
       this.keeper.store.put("hires", token, intent);
+      return owner.displayName;
     });
     let placement: import("../shared/placement").PlacementRecord | null = null;
     let attempted = false;
@@ -2348,10 +2377,13 @@ export class TavernRuntime {
     await this.archiveMembers(keeper ? [...members, keeper] : members);
   }
   briefed(threadId: string) {
-    const state = this.keeper.store.runtime(threadId);
-    this.keeper.store.patch(threadId, {
-      lastBriefAt: this.keeper.now(),
-      briefVersion: (state.briefVersion ?? 0) + 1,
+    this.keeper.store.atomic(() => {
+      this.keeper.memory.clearMemberWait(threadId);
+      const state = this.keeper.store.runtime(threadId);
+      this.keeper.store.patch(threadId, {
+        lastBriefAt: this.keeper.now(),
+        briefVersion: (state.briefVersion ?? 0) + 1,
+      });
     });
   }
   memberEnded(thread: Thread, finalText?: string | null) {
@@ -2800,42 +2832,31 @@ export class TavernRuntime {
     return { members: summary.members, closeIds: pullRequests.closeIds };
   }
   async push(threadId: string, title: string, body: string, askId?: string) {
+    const id = askId ?? this.keeper.store.openAsks(threadId).find(ask => ask.question === title && ask.why === body)?.id;
+    const notificationId = id ? this.away.notificationKey(id) : null;
+    if (notificationId && (this.notifiedAsks.has(notificationId) || this.away.notified(notificationId))) return;
     const attention = this.config().attention;
-    if (attention.notify === "none") return;
+    if (attention.notify === "none") return this.alerts.hold(threadId, id, notificationId, "mode-none");
     if (attention.quietHours) {
       const quiet = attention.quietHours;
       const parts = new Intl.DateTimeFormat("en", { timeZone: quiet.timeZone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(new Date(this.keeper.now()));
       const minute = Number(parts.find(part => part.type === "hour")!.value) * 60 + Number(parts.find(part => part.type === "minute")!.value);
       const minutes = (clock: string) => Number(clock.slice(0, 2)) * 60 + Number(clock.slice(3));
       const start = minutes(quiet.start), end = minutes(quiet.end);
-      if (start < end ? minute >= start && minute < end : minute >= start || minute < end) return;
+      if (start < end ? minute >= start && minute < end : minute >= start || minute < end) return this.alerts.hold(threadId, id, notificationId, "quiet-hours");
     }
-    const id = askId ?? this.keeper.store.openAsks(threadId).find(ask => ask.question === title && ask.why === body)?.id;
-    const ask = id ? this.keeper.store.get("asks", id) : null;
-    if (this.away.store.snapshot().status.closed && (!ask || !this.away.shouldNotify(ask.kind, ask.createdAt))) return;
-    const notificationId = id ? this.away.notificationKey(id) : null;
+    if (this.away.store.snapshot().status.closed) {
+      const ask = id ? this.keeper.store.get("asks", id) : null;
+      if (!ask || !this.away.shouldNotify(ask.kind, ask.createdAt)) return this.alerts.hold(threadId, id, notificationId, "closed-window");
+    }
     if (notificationId) {
-      if (this.away.notified(notificationId) || this.notifiedAsks.has(notificationId)) return;
       this.notifiedAsks.add(notificationId);
       if (this.notifiedAsks.size > LIMITS.notificationDedupe) this.notifiedAsks.delete(this.notifiedAsks.values().next().value!);
     }
-    try {
-      await this.bb.sdk.plugins.callRpc({
-        pluginId: "push-notifications",
-        method: "notifications.send",
-        input: {
-          title: title.slice(0, 80),
-          body: body.slice(0, 180),
-          threadId,
-        },
-        outputSchema: pushResultSchema as unknown as Parameters<
-          BbPluginApi["sdk"]["plugins"]["callRpc"]
-        >[0]["outputSchema"],
-      });
-      if (notificationId) this.away.markNotified(notificationId);
-    } catch (error) {
-      this.bb.log.info(`Tavern blocker push unavailable: ${String(error)}`);
-    }
+    const result = await this.alerts.deliver(title, body, threadId);
+    this.alerts.recordPush(threadId, id, notificationId, result);
+    if (result.outcome === "sent" && notificationId) this.away.markNotified(notificationId);
+    if (result.outcome === "failed") this.bb.log.info(`Tavern blocker push unavailable: ${result.error}`);
   }
   queued(entry: QueuedMessage) {
     if (isUser(entry))

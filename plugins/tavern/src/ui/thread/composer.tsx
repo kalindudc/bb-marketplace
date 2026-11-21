@@ -20,7 +20,7 @@ import { MemberPanel, memberFinished } from "./member-brief";
 import { memberIdentityWords } from "../kit/member-identity";
 import { HUE_CSS } from "../../shared/heraldry";
 import { PlacementFacts } from "../kit/placement";
-import { memberName } from "../../shared/member-name";
+import { memberIdentityLabel } from "../../shared/identity";
 
 export const CLASS_PROVIDER = "classes";
 
@@ -243,7 +243,9 @@ export function ThreadWidget({ threadId }: { threadId: string }) {
   // Arming comes from the user's own pick on the page, so a hidden row, or one the Widget row setting turned off, shows the armed line
   // alone until it ends.
   if (data.hidden || data.widgetRow === false) return armedLine ? <section className="tavern twidget v-armed" aria-label="Tavern: new board quest" data-part="TavernWidget">{armedLine}<QueryState error={error} /></section> : <ClassNoticeLine threadId={threadId} notice={notice} standalone />;
-  const identity = data.member && registry.data ? memberIdentity(registry.data, data.member) : null;
+  const names = registry.data ?? { classes: [], characters: [] };
+  const name = memberIdentityLabel(data.member, names);
+  const identity = registry.data ? memberIdentity(registry.data, data.member) : null;
   const toggle = (what: Exclude<Open, null>) => setOpen(open === what ? null : what);
   const variant = keeper ? "keeper" : data.member.role === "member" ? "member" : "solo";
   const lit = !!identity && !identity.character.plain;
@@ -260,16 +262,17 @@ export function ThreadWidget({ threadId }: { threadId: string }) {
     {walker}
     <section className={`tavern twidget v-${variant} ${lit ? "glow" : ""} ${open ? "is-open" : ""} ${keeper?.quietSince != null ? "is-quiet" : ""}`} style={surface} aria-label="Tavern widget" data-part="TavernWidget">
       <div className="tw-row">
-        {identity && data.member && keeper && <span className={`tw-id ${keeper ? `st-${keeper.quietSince != null ? "quiet" : keeper.status}` : ""}`} title={`This thread: ${identity.character.name}, ${identity.cls.label} (${identity.cls.plain})${keeper ? ` · ${data.pendingEvents ?? 0} updates waiting for the Keeper’s next turn · ${keeper.quietSince != null ? `quiet: ${KEEPER_STATE_HINT.quiet}` : `${STATUS_WORD[keeper.status]}: ${STATUS_HINT[keeper.status]}`}` : ""}`}><span className="tw-crest"><Crest {...identity} size={18} />{keeper && <i ref={dot} className="tw-dot" aria-hidden="true" />}</span>{<span className="who-t tw-name"><b>{identity.character.name}</b>{keeper ? <span aria-hidden="true"> · </span> : <span className="anc">{identity.cls.label} · {identity.cls.plain}</span>}</span>}{keeper && <span className="sr">Keeper, {STATUS_WORD[keeper.status]}</span>}</span>}
+        {identity && data.member && keeper && <span className={`tw-id ${keeper ? `st-${keeper.quietSince != null ? "quiet" : keeper.status}` : ""}`} title={`This thread: ${name}, ${identity.cls.label} (${identity.cls.plain})${keeper ? ` · ${data.pendingEvents ?? 0} updates waiting for the Keeper’s next turn · ${keeper.quietSince != null ? `quiet: ${KEEPER_STATE_HINT.quiet}` : `${STATUS_WORD[keeper.status]}: ${STATUS_HINT[keeper.status]}`}` : ""}`}><span className="tw-crest"><Crest {...identity} size={18} />{keeper && <i ref={dot} className="tw-dot" aria-hidden="true" />}</span>{<span className="who-t tw-name"><b>{name}</b>{keeper ? <span aria-hidden="true"> · </span> : <span className="anc">{identity.cls.label} · {identity.cls.plain}</span>}</span>}{keeper && <span className="sr">Keeper, {STATUS_WORD[keeper.status]}</span>}</span>}
         {!keeper && data.member && registry.data && <button type="button" className="tw-id tw-member-id act" title={memberIdentityWords(data.member, registry.data, data.scope, memberFinished(data))} aria-label={memberIdentityWords(data.member, registry.data, data.scope, memberFinished(data))} aria-expanded={open === "brief"} aria-controls={`tw-brief-${threadId}`} onClick={() => toggle("brief")}>
           {identity && <span className="tw-crest"><Crest {...identity} size={18} /></span>}
-          <span className="who-t tw-name"><b>{identity?.character.name ?? data.member.displayName ?? data.member.classId}</b><span className="tw-member-class"> · {identity?.cls.label ?? data.member.classId}</span></span>
+          <span className="who-t tw-name"><b>{name}</b><span className="tw-member-class"> · {identity?.cls.label ?? data.member.classId}</span></span>
         </button>}
         {keeper && <KeeperParts quiet={<QuietNotice threadId={threadId} since={keeper.quietSince} compact />} data={data} open={open} toggle={toggle} onLedger={group => panel.openTab({ tab: LEDGER_TAB, ...(group ? { params: { attentionGroup: group } } : {}) })} onQuest={id => navigate.toPluginPanel("tavern", { subPath: `quest/${id}` })} />}
         {variant === "member" && <MemberParts data={data} registry={registry.data ?? null} open={open} toggle={toggle} onQuest={id => navigate.toPluginPanel("tavern", { subPath: `quest/${id}` })} onThread={id => navigate.toThread(id)} />}
         {hideBtn}
       </div>
-      {open !== "brief" && <PlacementFacts placement={data.member.placement} memberName={memberName(data.member, registry.data ?? { classes: [], characters: [] })} />}
+      {variant === "member" && data.boardQuest && <WidgetWaypoints member={data.member} reported={data.lastReportedWaypointId} />}
+      {open !== "brief" && <PlacementFacts placement={data.member.placement} memberName={name} />}
       <ClassNoticeLine threadId={threadId} notice={notice} />
       {armedLine}
       <QueryState error={error} />
@@ -400,15 +403,26 @@ function ScopePanel({ data }: { data: ThreadDecor }) {
   </section>;
 }
 
+const waypointWords = (id: string | null) => id ? `waypoint ${id.replace(/^w(?=\d+$)/, "")}` : "no waypoint";
+
+function WidgetWaypoints({ member, reported }: { member: NonNullable<ThreadDecor["member"]>; reported?: string | null }) {
+  const current = member.checkerWaypointId ?? member.waypointId;
+  const differentReport = reported && reported !== current ? reported : null;
+  if (!differentReport) return null;
+  return <p className="tw-waypoints"><span className={current ? "tw-waypoint-compact" : undefined}>Current: {waypointWords(current)}</span><span>Last report: {waypointWords(differentReport)}</span></p>;
+}
+
 function MemberParts({ data, registry, open, toggle, onQuest, onThread }: { data: ThreadDecor; registry: Registry | null; open: Open; toggle: (o: "brief") => void; onQuest: (id: string) => void; onThread: (id: string) => void }) {
   const m = data.member!;
   const keeperId = data.keeper && registry ? memberIdentity(registry, data.keeper) : null;
-  const wp = m.waypointId ? `waypoint ${m.waypointId.replace(/^w/, "")}` : "no waypoint";
+  const current = m.checkerWaypointId ?? m.waypointId;
+  const wp = waypointWords(current);
+  const keeperName = data.keeper ? memberIdentityLabel(data.keeper, registry ?? { classes: [], characters: [] }) : null;
   return <>
     {m.errand || !data.boardQuest
       ? <span className="tw-fact" title={m.title ?? undefined}><b>Side quest</b> <span className="anc">errand</span></span>
-      : <button type="button" className="tw-chip tw-where act" title={`Open the quest page: ${data.boardQuest.title} · ${wp}${m.title ? ` · ${m.title}` : ""}`} aria-label={`Open the quest page for ${data.boardQuest.title}, ${wp}`} onClick={() => onQuest(data.boardQuest!.id)}><b>{data.boardQuest.short}</b><span className="tw-w">· {wp}</span><OpensMark /></button>}
-    {keeperId && data.keeper && <button type="button" className="tw-chip tw-keeper act" title={`Open ${keeperId.character.name}’s thread: Keeper (lead) of this member`} aria-label={`Open ${keeperId.character.name}’s thread, the Keeper (lead) this member reports to`} onClick={() => onThread(data.keeper!.threadId)}><Crest {...keeperId} size={14} /><span className="tw-kn">{keeperId.character.name}</span><OpensMark /></button>}
+      : <button type="button" className="tw-chip tw-where act" title={`Open the quest page: ${data.boardQuest.title} · ${wp}${m.title ? ` · ${m.title}` : ""}`} aria-label={`Open the quest page for ${data.boardQuest.title}, ${wp}`} onClick={() => onQuest(data.boardQuest!.id)}><b>{data.boardQuest.short}</b>{current && <span className="tw-w">· {wp}</span>}<OpensMark /></button>}
+    {keeperId && data.keeper && <button type="button" className="tw-chip tw-keeper act" title={`Open ${keeperName}’s thread: Keeper (lead) of this member`} aria-label={`Open ${keeperName}’s thread, the Keeper (lead) this member reports to`} onClick={() => onThread(data.keeper!.threadId)}><Crest {...keeperId} size={14} /><span className="tw-kn">{keeperName}</span><OpensMark /></button>}
     <span className="tw-sp" />
     {(() => { const alerts = scopeAlerts(data); const label = `Member${alerts ? `, ${plural(alerts, "scope alert")}` : ""}: show this member’s class, brief and guardrails`; return <button type="button" className={`tw-chip act ${alerts ? "tw-alert" : ""}`} aria-expanded={open === "brief"} aria-controls={`tw-brief-${data.threadId}`} title={label} aria-label={label} onClick={() => toggle("brief")}><Glyph name="eye" size={13} /><span className="tw-brief-w">Member</span>{alerts > 0 && <span className="tw-al">{plural(alerts, "alert")}</span>}<ExpandsMark open={open === "brief"} /></button>; })()}
   </>;

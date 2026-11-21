@@ -14,6 +14,7 @@ import { DELEGATABLE_KINDS } from "../../shared/quest-authority";
 import { SetupSettings } from "./setup";
 import { settingLabel } from "./settings-label";
 import { SETUP_CALLER_NOTICE } from "../../shared/setup";
+import { alertRouteContract, type AlertRouteView, type HoldReason } from "../../shared/alert-route";
 
 const WHY = "Changed on the settings page";
 export const ATMOSPHERE_ANCHOR = "tavern-settings-atmosphere";
@@ -300,16 +301,67 @@ export function SettingsHistorySection() {
     </SettingsCard>;
   }}</Shell>;
 }
+const ALERT_HOLD_WORDS: Record<HoldReason, string> = {
+  "mode-none": "Push alerts are off in Tavern.",
+  "quiet-hours": "Quiet hours held this alert.",
+  "closed-window": "Closing time held this alert.",
+  "plugin-missing": "The bb Push Notifications plugin is not installed.",
+  "plugin-disabled": "The bb Push Notifications plugin is turned off.",
+};
+
+function testAlertWords(test: AlertRouteView["lastTest"]) {
+  if (!test) return "No test alert yet.";
+  if (test.outcome === "held") return ALERT_HOLD_WORDS[test.reason];
+  if (test.outcome === "failed") return `Tavern could not send the test: ${test.error}`;
+  if (test.response === "arrived") return "You confirmed it arrived.";
+  if (test.response === "not-arrived") return "You said it did not arrive.";
+  return "Tavern sent the test. Did it arrive on your device?";
+}
+
+function AlertRouteCard() {
+  const route = experimental_useRpcQuery({ contract: alertRouteContract, method: "alertRoute", input: null });
+  const sendTest = experimental_useRpcMutation({ contract: alertRouteContract, method: "alertTestSend" });
+  const confirm = experimental_useRpcMutation({ contract: alertRouteContract, method: "alertTestConfirm" });
+  const [problem, setProblem] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
+  const run = async (act: () => Promise<AlertRouteView>) => {
+    setProblem(null);
+    setPending(true);
+    try { await act(); }
+    catch (error) { setProblem(error instanceof Error ? error.message : String(error)); }
+    finally {
+      try { await route.refetch(); }
+      finally { setPending(false); }
+    }
+  };
+  const test = route.data?.lastTest;
+  const awaiting = test?.outcome === "sent" && test.response === null;
+  const failure = route.data?.lastFailure;
+  return <SettingsCard title="Test your alerts" hint="Send a test through bb and check your device. You can send a test even during quiet hours." glyph="you">
+    {!route.data ? <ReadState error={route.error} retry={route.refetch} /> : <div className="tv-alert-route">
+      <div role="status"><p>{test && <>Last test <TimeAgo at={test.at} />. </>}<span>{testAlertWords(test ?? null)}</span></p></div>
+      {problem && <p className="tv-problem" role="alert">{problem}</p>}
+      <div className="tv-alert-actions">
+        {awaiting ? <>
+          <button type="button" className="btn pri" disabled={pending} onClick={() => void run(() => confirm.mutate({ id: test.id, arrived: true }))}>It arrived</button>
+          <button type="button" className="btn" disabled={pending} onClick={() => void run(() => confirm.mutate({ id: test.id, arrived: false }))}>It did not</button>
+        </> : <button type="button" className="btn pri" disabled={pending} onClick={() => void run(() => sendTest.mutate({}))}>{pending ? "Sending…" : "Send a test alert"}</button>}
+      </div>
+      {failure ? <p className="m">Last real alert failure <TimeAgo at={failure.at} />: <span>{failure.error}</span></p> : <p className="m">No real alert failures recorded.</p>}
+    </div>}
+  </SettingsCard>;
+}
+
 export function AttentionSection() {
   const api = useTavernSettings();
-  return <Shell api={api}>{(d) => { const a = d.effective.attention; const q = a.quietHours; return <SettingsCard title="What reaches you" hint="Set your review capacity and when asks reach your devices." glyph="you" guardrail>
+  return <Shell api={api}>{(d) => { const a = d.effective.attention; const q = a.quietHours; return <><SettingsCard title="What reaches you" hint="Set your review capacity and when asks reach your devices." glyph="you" guardrail>
     <Row label="Review budget" setting="attention.reviewBudget" help="Items waiting on your review before Keepers stop opening new work." control={(id) => <NumberField id={id} value={a.reviewBudget} min={1} max={30} unit="items" disabled={api.pending} onSave={(v) => void api.save({ attention: { reviewBudget: v } })} />} />
     <Row label="Push to your devices" setting="attention.notify" help="Which asks send a notification." control={() => <SegFilter label="Push to your devices" value={a.notify} onChange={(v) => void api.save({ attention: { notify: v } })} options={[{ id: "consequential", label: "Consequential" }, { id: "all", label: "All" }, { id: "none", label: "None" }]} />} />
-    <Row label="Quiet hours" setting="attention.quietHours" help="No pushes in this window. Keepers keep working and timers still run." control={(id) => <span className="tv-quiet">
+    <Row label="Quiet hours" setting="attention.quietHours" help="Ordinary pushes are not sent in this window; a test alert still is." control={(id) => <span className="tv-quiet">
       <Toggle id={id} checked={!!q} disabled={api.pending} onChange={(v) => void api.save({ attention: { quietHours: v ? { start: "22:00", end: "07:30", timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone } : null } })} />
       {q && <><label className="sr" htmlFor={`${id}-s`}>Quiet from</label><input id={`${id}-s`} type="time" className="tv-text tv-time" value={q.start} disabled={api.pending} onChange={(e) => e.target.value && void api.save({ attention: { quietHours: { ...q, start: e.target.value } } })} /><span className="m">to</span><label className="sr" htmlFor={`${id}-e`}>Quiet until</label><input id={`${id}-e`} type="time" className="tv-text tv-time" value={q.end} disabled={api.pending} onChange={(e) => e.target.value && void api.save({ attention: { quietHours: { ...q, end: e.target.value } } })} /><span className="m small">{q.timeZone}</span></>}
     </span>} />
-  </SettingsCard>; }}</Shell>;
+  </SettingsCard><AlertRouteCard /></>; }}</Shell>;
 }
 
 const ALWAYS_WORDS: Record<typeof DELEGATABLE_KINDS[number], string> = { production: "Production", merge: "Merge", credential: "Credentials", "sends-as-you": "Send as you", destructive: "Delete what the quest did not make" };

@@ -19,7 +19,10 @@ it.each([false, true])("gives truncated note tags and plain metadata full toolti
   expect(view.container.querySelector(".lg-q")?.getAttribute("title")).toBe(short);
   const meta = view.container.querySelector(".mem-meta > span")!;
   expect(meta.getAttribute("title")).toContain(meta.textContent);
-  if (conditional) expect(meta.getAttribute("title")).toContain(note.condition);
+  if (conditional) {
+    expect(meta.textContent).toBe("no deadline");
+    expect(meta.getAttribute("title")).toContain(note.condition);
+  }
 });
 
 it("keeps progress and decision counts whole instead of ellipsizing their nouns", () => {
