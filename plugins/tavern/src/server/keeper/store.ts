@@ -225,6 +225,7 @@ export interface Runtime {
   manualStopAt?: number | null;
   queuedTickResetId?: string | null;
   lastReply?: { text: string; at: number };
+  lastSpendActivityAt?: number;
   reanchorVersion?: number;
   failureCount?: number;
   tickRefusalCount?: number;
@@ -651,6 +652,14 @@ export class KeeperStore {
       AND json_extract(data,'$.checkerHandoffHold.id') IS NOT NULL
       AND json_extract(data,'$.checkerHandoffHold.release') IS NULL ORDER BY rowid DESC`).all(keeperThreadId) as { data: string }[];
     return rows.map(row => JSON.parse(row.data) as BoardQuest);
+  }
+  questsAwaitingSpendCheck(): { id: string; keeperThreadId: string }[] {
+    return this.db.prepare(`SELECT id, json_extract(data,'$.keeperThreadId') AS keeperThreadId
+      FROM tavern_records WHERE kind='quests' AND archived_at IS NULL
+      AND json_extract(data,'$.archivedAt') IS NULL AND json_extract(data,'$.endedAt') IS NULL
+      AND json_extract(data,'$.phase') NOT IN ('done','stopped','stopping')
+      AND json_extract(data,'$.spendBudget.cents') IS NOT NULL
+      AND json_extract(data,'$.spendBudget.reached') IS NULL ORDER BY rowid DESC`).all() as { id: string; keeperThreadId: string }[];
   }
   activeQuests(limit = 200): BoardQuest[] {
     return (

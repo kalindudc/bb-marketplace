@@ -10,7 +10,7 @@ export function isUser(author: {
   );
 }
 export function inputText(
-  input: MessageDispatchHookContext["queuedMessages"][number]["content"],
+  input: Readonly<MessageDispatchHookContext["queuedMessages"][number]["content"]>,
 ): string {
   return input
     .filter((block) => block.type === "text")

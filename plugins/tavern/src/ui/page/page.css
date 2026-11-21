@@ -1341,6 +1341,16 @@
 /* On the highlighted item the muted path falls below 4.5:1 in gruvbox (4.29), so it takes the item's text colour there. */
 .tavern.tv-page .tv-export-menu [role=menuitem]:is(:hover, :focus, :focus-visible) .tv-mi2-p { color: inherit; }
 
+.tavern.tv-page .tv-spend > .tv-colh, .tavern.tv-page .tv-spend-fold > summary { padding-inline: 10px; }
+.tavern.tv-page .tv-spend-fold > summary { cursor: pointer; padding-block: 8px; font-size: 12px; align-content: center; }
+@media (max-width: 560px), (pointer: coarse) { .tavern.tv-page .tv-spend-fold > summary { min-height: 44px; } }
+.tavern.tv-page .tv-spend-body { display: grid; gap: 8px; padding: 10px; min-width: 0; font-size: 12px; }
+.tavern.tv-page .tv-spend-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.tavern.tv-page .tv-spend-form .tv-text { width: 10ch; }
+@media (max-width: 560px), (pointer: coarse) {
+  .tavern.tv-page .tv-spend-form :is(.btn, .tv-text) { min-height: 44px; }
+  .tavern.tv-page .tv-spend-form .tv-text { font-size: 16px; }
+}
 .tavern.tv-page .tv-quest .tv-ggrid { grid-template-columns: minmax(0, 1fr) clamp(340px, 30%, 460px); }
 .tavern.tv-page .tv-quest [data-fold="quest.history"] .tv-ev-b { max-width: 100ch; }
 .tavern.tv-page .tv-quest .tv-rec-ft { flex-wrap: wrap; gap: 6px; }

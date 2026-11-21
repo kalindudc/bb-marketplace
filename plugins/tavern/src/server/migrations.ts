@@ -112,6 +112,13 @@ const APPENDED: string[] = [
   `CREATE INDEX tavern_alert_outcomes ON tavern_events(json_extract(data,'$.outcome'),id) WHERE type='alert.push';
    CREATE INDEX tavern_alert_holds ON tavern_events(json_extract(data,'$.holdKey')) WHERE type='alert.push';`,
   `ALTER TABLE questlog_logs ADD COLUMN empty_hint_seq INTEGER;`,
+  `CREATE TABLE tavern_spend_receipts (
+     thread_id TEXT NOT NULL, source TEXT NOT NULL, session_id TEXT NOT NULL, entry_id TEXT NOT NULL,
+     at INTEGER NOT NULL, usd_nanos INTEGER, PRIMARY KEY(thread_id, source, session_id, entry_id)
+   );
+   CREATE INDEX tavern_spend_receipts_time ON tavern_spend_receipts(thread_id, at);
+   CREATE TABLE tavern_spend_inputs (thread_id TEXT PRIMARY KEY, file_id TEXT NOT NULL, offset INTEGER NOT NULL, invalid INTEGER NOT NULL);
+   CREATE TABLE tavern_spend_burn (thread_id TEXT PRIMARY KEY, read_at INTEGER NOT NULL, data TEXT NOT NULL);`,
 ];
 
 export const MIGRATIONS: string[] = [

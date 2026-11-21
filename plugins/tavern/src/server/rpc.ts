@@ -406,6 +406,14 @@ export function rpcHandlers(
       return { summary, ask: ask ? undoAskProjection(k.store)(ask) : null, handBack };
     },
     allowReview: ({ id }, context?: ExperimentalPluginRpcHandlerContext) => new LimitPolicy(k).allowReview(id, requireUserAct(context, "allowReview").surface),
+    questSpend: ({ id }) => runtime.spend.view(id),
+    setSpendBudget: async ({ id, budgetCents }, _context?: ExperimentalPluginRpcHandlerContext, receipt?: UserActReceipt) => {
+      await runtime.spend.set(id, budgetCents, receipt!);
+      const quest = k.quest(id);
+      wake(quest.keeperThreadId);
+      void runtime.recheckDispatch();
+      return { ok: true };
+    },
     holdBoardQuest: ({ id }, context?: ExperimentalPluginRpcHandlerContext, receipt?: UserActReceipt) => {
       return runtime.setQuestHeld(id, true, { kind: "user" }, undefined, receipt);
     },

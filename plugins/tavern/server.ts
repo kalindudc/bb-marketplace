@@ -1,4 +1,5 @@
 import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 import { registerProvider } from "./src/server/renderer/provider";
 import { TaleCompanions } from "./src/server/renderer/companion";
 import { existsSync } from "node:fs";
@@ -114,6 +115,7 @@ export default async function tavern(bb: BbPluginApi) {
   runtime.enableSettings(settings, insights);
   applySettings = () => runtime.settingsChanged();
   await registerScopeSettings(bb, runtime);
+  runtime.spend.ledger.directory = join(dirname(db.name), "scopes");
   runtime.taleRenderer = new TaleCompanions(bb, keeper);
   bb.onDispose(() => runtime.taleRenderer?.settled());
   registerTools(bb, runtime);
@@ -194,6 +196,7 @@ export default async function tavern(bb: BbPluginApi) {
     runtime.updateThread(thread);
     runtime.keeper.memory.lastReply(thread.id, lastAssistantText);
     runtime.memberEnded(thread, lastAssistantText);
+    runtime.spend.refreshForThread(thread.id).catch(error => bb.log.warn(`Tavern quest spend: ${String(error)}`));
   });
   bb.events.on("thread.failed", ({ thread }) => {
     runtime.taleRenderer?.failed(thread.id);

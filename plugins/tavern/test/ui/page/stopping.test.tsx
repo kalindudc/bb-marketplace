@@ -73,9 +73,9 @@ describe("a stopping quest's page", () => {
     fireEvent.click(slot.getByRole("button", { name: "Retry now" }));
     await waitFor(() => expect(stop).toHaveBeenCalledTimes(1));
     expect(stop.mock.calls[0]![0]).toEqual({ id: "vault", reason: null });
-    await slot.findByRole("region", { name: "1 stop not confirmed" }, LOADED);
+    const section = await slot.findByRole("region", { name: "1 stop not confirmed" }, LOADED);
     expect(slot.container.querySelector(".tv-ghead .tv-facts")!.textContent).toContain(stoppingWords(1));
-    expect(slot.getByRole("status").textContent).toMatch(/^Tried again at \d\d:\d\d: 1 stop not confirmed\.$/);
+    expect(within(section).getByRole("status").textContent).toMatch(/^Tried again at \d\d:\d\d: 1 stop not confirmed\.$/);
   });
 
   it("shows a stop the server couldn't confirm straight away as stopping, before the page's data catches up", async () => {

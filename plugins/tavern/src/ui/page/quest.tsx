@@ -24,6 +24,7 @@ import { WaiverRows } from "../kit/waiver-rows";
 import { pullRequestVerified } from "../../shared/pull-request";
 import { AsksRecord, PlanRecord, RecordFold, RulesAndAnchor } from "./quest-record";
 import { QuestLead } from "./quest-lead";
+import { QuestSpend } from "./quest-spend";
 import { QuestSummaries } from "./summaries";
 import { recordedStop } from "./quest-road";
 import { PlacementFacts } from "../kit/placement";
@@ -179,6 +180,7 @@ export function QuestPage({ detail, registry, room, summaryId }: { detail: Board
       </div>
     </header>
     {stop.confirm}
+    <QuestSpend key={quest.id} id={quest.id} editable={!finished && quest.phase !== "stopping"} />
     {finished && <QuestLead detail={detail} registry={registry} />}
     {quest.outcome === "closed-early" && <Section title="Closed early at your request" count={`${quest.waivers?.length ?? 0} not verified`} className="tv-card"><WaiverRows items={quest.waivers ?? []} final /></Section>}
     <section className={`tv-card tv-qmapcard ${finished ? "" : "lit"} ${showMap ? "" : "folded"}`} aria-labelledby="tv-qmap-h" style={finished ? undefined : glowVars(`questmap:${quest.id}`)}>

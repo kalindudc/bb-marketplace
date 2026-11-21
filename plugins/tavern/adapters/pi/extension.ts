@@ -11,12 +11,13 @@ import { realPath } from "../../src/scope/paths";
 import { sandboxCommand } from "../../src/scope/sandbox";
 import { bindChecks } from "../../src/scope/checker";
 import { bindWorktree, gitWorktreeRoot, needsWorktree, readerFallback } from "../../src/scope/worktree";
+import { receiveSpend, type SpendSession } from "./spend";
 
 // Structural API keeps the installed shim independent of a second copy of pi.
-interface PiContext { cwd: string }
-interface PiEvent { toolName?: string; toolCallId?: string; input?: Record<string, unknown>; content?: unknown[]; structuredContent?: unknown }
+interface PiContext { cwd: string; sessionManager?: SpendSession }
+interface PiEvent { toolName?: string; toolCallId?: string; input?: Record<string, unknown>; content?: unknown[]; structuredContent?: unknown; messageEntryId?: string }
 export interface PiGuardApi {
-  on(name: "session_start" | "before_agent_start" | "tool_call" | "tool_result", handler: (event: PiEvent, ctx: PiContext) => unknown): unknown;
+  on(name: "session_start" | "before_agent_start" | "tool_call" | "tool_result" | "turn_end", handler: (event: PiEvent, ctx: PiContext) => unknown): unknown;
   getActiveTools(): string[];
   setActiveTools(names: string[]): void;
 }
@@ -88,7 +89,16 @@ export default function tavernGuard(pi: PiGuardApi): void {
     hide(scope);
     arm(scope);
   };
-  pi.on("session_start", () => { worktree = undefined; localArm = undefined; refresh(); });
+  const spend = receiveSpend(file);
+  pi.on("session_start", (_event, ctx) => {
+    worktree = undefined;
+    localArm = undefined;
+    refresh();
+    if (ctx?.sessionManager) spend.backfill(ctx.sessionManager);
+  });
+  pi.on("turn_end", (event, ctx) => {
+    if (ctx.sessionManager && event.messageEntryId) spend.turn(ctx.sessionManager, event.messageEntryId);
+  });
   pi.on("before_agent_start", refresh);
   pi.on("tool_call", (event, ctx) => {
     const name = event.toolName ?? "unknown";

@@ -7,6 +7,7 @@ import { undoAskProjection } from "./undo-record";
 import { isLiveKeeper, isOpenQuest } from "./liveness";
 import { UNSEEN_SUMMARY_SQL } from "./summaries";
 import { unseenQuestChanges } from "./quest-change-attention";
+import { usd } from "../shared/spend";
 
 export const DECIDED_FOR_YOU_SQL = "(json_extract(r.data,'$.source')='keeper' OR json_type(r.data,'$.checkChange')='object')";
 
@@ -53,7 +54,7 @@ export class AttentionSnapshot {
         return { ...JSON.parse(row.data), ...(row.origin ? { keeperThreadId: row.origin } : {}) } as T;
       });
     };
-    const quests = rows<BoardQuest>("quests", "json_extract(r.data,'$.phase') NOT IN ('done','stopped','stopping') AND (json_extract(r.data,'$.phase')='held' OR (json_extract(r.data,'$.checkerHandoffHold') IS NOT NULL AND json_extract(r.data,'$.checkerHandoffHold.release') IS NULL))", true);
+    const quests = rows<BoardQuest>("quests", "json_extract(r.data,'$.phase') NOT IN ('done','stopped','stopping') AND (json_extract(r.data,'$.phase')='held' OR json_type(r.data,'$.spendBudget.reached')='object' OR (json_extract(r.data,'$.checkerHandoffHold') IS NOT NULL AND json_extract(r.data,'$.checkerHandoffHold.release') IS NULL))", true);
     this.asks = rows<Ask>("asks", "json_extract(r.data,'$.state')='open'").map(undoAskProjection(store)).filter(ask => askNeedsUser(store, ask));
     this.notes = rows<KeeperNote>("notes", "json_extract(r.data,'$.state')='open' AND json_extract(r.data,'$.kind')='waiting-on-user'");
     this.rules = rows<Rule>("rules", "json_extract(r.data,'$.active')=0 AND json_extract(r.data,'$.source')='keeper-proposed' AND json_extract(r.data,'$.confirmedAt') IS NULL", false, `, ${origin} AS origin`);
@@ -99,6 +100,8 @@ export class AttentionSnapshot {
       const hold = q.checkerHandoffHold;
       if (hold && !hold.release && !releases.has(hold.id)) add({ id: hold.id, kind: "hold", questId: q.id, keeperThreadId: q.keeperThreadId, title: hold.reason, action: "Review", since: hold.createdAt });
       if (q.phase === "held") add({ id: q.id, kind: "held", questId: q.id, keeperThreadId: q.keeperThreadId, title: q.title, action: "Resume", since: q.held!.since });
+      if (q.spendBudget?.reached) add({ id: `spend:${q.id}`, kind: "hold", questId: q.id, keeperThreadId: q.keeperThreadId,
+        title: `The quest reached its ${usd(q.spendBudget.cents / 100)} spend budget. New hires and briefs wait until you raise or remove it.`, action: "Open quest", since: q.spendBudget.reached.at });
     }
     for (const rule of this.rules) add({
       id: rule.id, kind: "rule", questId: rule.scope === "quest" ? rule.scopeId : null,

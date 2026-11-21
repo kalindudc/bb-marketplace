@@ -30,8 +30,8 @@ const jsonColumns = new Set(["data", "actor", "entry_ids", "before_data", "after
 const privateRecordKinds = new Set(["placementArtifactManifests", "stopAll", "scopeInputs"]);
 const privateAuthorityTables = ["tavern_placements", "tavern_source_snapshots", "tavern_placement_discoveries", "tavern_snapshot_owners"];
 // Setup proposals hold agent-named commands against a past settings revision; a restore never revives them.
-const excluded = new Set(["tavern_settings", "tavern_insight_meta", "tavern_setup_proposals", ...privateAuthorityTables]);
-const supported = new Set(["tavern_records", "tavern_runtime", "tavern_events", "tavern_messages", "tavern_outbox", "tavern_setting_changes", "tavern_tuning_runs", "tavern_tuning_suggestions", "tavern_insight_samples", "questlog_logs", "questlog_entries", "questlog_reserved", "questlog_changes", "questlog_history", "questlog_imports", "questlog_archive", "questlog_mirrors"]);
+const excluded = new Set(["tavern_settings", "tavern_insight_meta", "tavern_setup_proposals", "tavern_spend_inputs", ...privateAuthorityTables]);
+const supported = new Set(["tavern_records", "tavern_runtime", "tavern_events", "tavern_messages", "tavern_outbox", "tavern_setting_changes", "tavern_tuning_runs", "tavern_tuning_suggestions", "tavern_insight_samples", "tavern_spend_receipts", "tavern_spend_burn", "questlog_logs", "questlog_entries", "questlog_reserved", "questlog_changes", "questlog_history", "questlog_imports", "questlog_archive", "questlog_mirrors"]);
 function identifier(value: string) {
   if (!/^[a-z_][a-z0-9_]*$/i.test(value)) throw new Error(`Unsupported database identifier: ${value}`);
   return `"${value}"`;

@@ -350,6 +350,8 @@ export const partySlotSchema = z.object({
   waypointIds: z.array(z.string()),
 });
 
+import { budgetCentsSchema, spendBudgetSchema, spendProposalSchema } from "./spend";
+
 /** One version of a quest map: the plan the user greenlights. */
 export const planSchema = z.object({
   boardQuestId: id,
@@ -367,6 +369,7 @@ export const planSchema = z.object({
   party: z.array(partySlotSchema).max(8),
   alwaysAskKinds: z.array(z.enum(CONSEQUENTIAL_ASK_KINDS)).default([]),
   reviewLoad: z.string().max(300),
+  spendBudgetCents: budgetCentsSchema.optional().describe("Proposed spend budget in USD cents. Only the user approving this exact plan can set it."),
   eta: z.string().max(120).nullable(),
   changeNote: z.string().max(500).nullable(),
 });
@@ -421,6 +424,8 @@ export const boardQuestSchema = z.object({
   stoppingSince: epochMs.nullable().optional(),
   stopHireAskId: id.nullable().optional(),
   reviewAllowance: z.array(z.object({ id, surface: z.string(), at: epochMs, usedBy: z.string().nullable() })).optional(),
+  spendBudget: spendBudgetSchema.optional(),
+  spendProposal: spendProposalSchema.nullable().optional(),
   deletedAt: epochMs.nullable().optional(),
   /** Set when the user archived a returned or stopped quest: hidden from the common room, kept in the archive. */
   archivedAt: epochMs.nullable().default(null),

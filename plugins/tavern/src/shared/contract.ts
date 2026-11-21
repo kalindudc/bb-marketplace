@@ -1,5 +1,6 @@
 import { delegationKindSchema, preapprovalInputSchema, questAuthorityViewSchema } from "./quest-authority";
 import { attentionSchema, sinceVisitSchema } from "./attention";
+import { budgetCentsSchema, spendViewSchema } from "./spend";
 import { taleResultsSchema } from "./tale-results";
 import { characterServiceRecordSchema, taleLevelSchema } from "./service-record";
 import { executionFactsSchema } from "./class-execution";
@@ -534,6 +535,8 @@ export const rpcContract = defineContract({
   allowReview: {
     input: z.object({ id }).strict(), output: ok,
   },
+  questSpend: { input: z.object({ id }).strict(), output: spendViewSchema, tags: ({ id }: { id: string }) => [tags.boardQuest(id)] },
+  setSpendBudget: { input: z.object({ id, budgetCents: budgetCentsSchema.nullable() }).strict(), output: ok },
   holdBoardQuest: {
     input: z.object({ id }).strict(), output: boardQuestSchema,
   },
