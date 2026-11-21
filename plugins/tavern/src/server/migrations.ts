@@ -111,6 +111,7 @@ const APPENDED: string[] = [
      WHERE json_type(data,'$.engagement')='object';`,
   `CREATE INDEX tavern_alert_outcomes ON tavern_events(json_extract(data,'$.outcome'),id) WHERE type='alert.push';
    CREATE INDEX tavern_alert_holds ON tavern_events(json_extract(data,'$.holdKey')) WHERE type='alert.push';`,
+  `ALTER TABLE questlog_logs ADD COLUMN empty_hint_seq INTEGER;`,
 ];
 
 export const MIGRATIONS: string[] = [

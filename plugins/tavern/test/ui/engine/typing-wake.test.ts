@@ -5,7 +5,7 @@ import { observeWorld, scheduler } from "../../../src/ui/engine/scheduler";
 import { createArt } from "../../../src/ui/engine/sprites";
 import { motion, TYPING_HOLD_MS } from "../../../src/ui/kit/motion";
 
-it.each(["input", "compositionend"])("wakes a seated quiet pose when the %s hold ends, even if the timer reads early", lastEvent => {
+it.each(["input", "compositionend"])("wakes a parked quiet pose when the %s hold ends, even if the timer reads early", lastEvent => {
   vi.useFakeTimers();
   const start = Date.now();
   let lag = 0;
@@ -14,7 +14,7 @@ it.each(["input", "compositionend"])("wakes a seated quiet pose when the %s hold
   const field = page.appendChild(document.createElement("input"));
   vi.spyOn(page, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 0, 48, 64));
   const art = createArt({ seed: "wren", classId: "smith", hue: "teal", charge: null, keeper: false });
-  const actor = new Actor("wren", art, "resting");
+  const actor = new Actor("wren", { ...art, nextChange: frame => frame.activity === "quiet" ? null : art.nextChange(frame) }, "resting");
   const rules = () => ({ mode: "calm" as const, ...motion.getHolds("page") });
   const draw = vi.fn((still: boolean) => actor.frame(still).activity);
   const handle = observeWorld(page, {

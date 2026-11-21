@@ -20,12 +20,21 @@ export const insightIdeaSchema = z.object({ id: z.string(), title: z.string(), d
     z.object({ kind: z.literal("open-section"), section: z.string() }),
   ]), evidence: z.object({ section: z.string(), chart: z.string() }).optional(),
 });
+const count = z.number().int().nonnegative();
+export const wardenQualitySchema = z.object({
+  from: z.number(), to: z.number(), rejectedWaypointsWaived: count,
+  rows: z.array(z.object({
+    classId: z.literal("warden"), providerId: z.string().nullable(), model: z.string().nullable(),
+    verified: count, reopened: count, rejected: count,
+  }).refine(row => row.reopened <= row.verified, "Reopened verifications cannot exceed recorded verifications")),
+});
+export type WardenQuality = z.infer<typeof wardenQualitySchema>;
 export const insightsSchema = z.object({
   range: z.enum(["7d", "30d", "90d"]), from: z.number(), to: z.number(), collectingSince: z.number(),
   headline: z.array(z.object({ id: z.string(), label: z.string(), value: scalar, unit: insightUnitSchema, previous: scalar.optional() })
     .refine(row => row.unit !== "ratio" || fraction(row.value) && (row.previous === undefined || fraction(row.previous)), "Ratios must be between zero and one")),
   ideas: z.array(insightIdeaSchema), reliability: insightSectionSchema, phases: insightSectionSchema,
-  attention: insightSectionSchema, party: insightSectionSchema, guardrails: insightSectionSchema,
+  attention: insightSectionSchema, party: insightSectionSchema, guardrails: insightSectionSchema, wardenQuality: wardenQualitySchema,
   tuningHistory: z.array(settingDecisionSchema),
   cost: insightSectionSchema.extend({
     estimated: z.boolean(), threadsKnown: z.number(), threadsTotal: z.number(),
@@ -35,4 +44,5 @@ export const insightsSchema = z.object({
 export type InsightsView = z.infer<typeof insightsSchema>;
 export const insightsContract = defineContract({
   insights: { input: z.object({ range: z.enum(["7d", "30d", "90d"]).default("30d") }).strict(), output: insightsSchema },
+  wardenQuality: { input: z.null(), output: wardenQualitySchema },
 });

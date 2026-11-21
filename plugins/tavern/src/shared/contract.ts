@@ -11,7 +11,6 @@ import { stopAllContract } from "./stop-all";
 import { characterQuietUntilSchema, voiceBeforeOffSchema, voiceModeSchema } from "./settings";
 import { placementContract } from "./placement-rpc";
 import { placementViewSchema } from "./placement-view";
-import { voiceCheckContract } from "./voice-check";
 import { awayContract } from "./away-rpc";
 import { alertRouteContract } from "./alert-route";
 import { awayStatusSchema } from "./away";
@@ -360,7 +359,6 @@ export const rpcContract = defineContract({
   ...placementContract,
   ...awayContract,
   ...alertRouteContract,
-  ...voiceCheckContract,
   prepareTellKeepers: {
     input: z.object({ keeperIds: z.array(threadId).min(1).max(TELL_KEEPER_LIMIT) }).strict(),
     output: z.object({ targets: z.array(z.object({ threadId, name: z.string(), status: z.enum(["ready", "gone", "unavailable"]) })) }),

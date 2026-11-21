@@ -45,7 +45,7 @@
   outline: 2px solid var(--tavern-hearth);
   outline-offset: -3px;
 }
-.tavern .twalk-actor .tchar-need { top: 4px; right: 3px; }
+.tavern.twalk .twalk-need { top: 4px; left: 32px; right: auto; --tchar-card: var(--card); border-radius: 0; pointer-events: none; }
 .tavern .twalk-speech {
   position: absolute;
   top: 5px;

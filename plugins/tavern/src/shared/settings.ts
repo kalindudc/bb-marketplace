@@ -9,7 +9,6 @@ export const KNOB_FIELDS = {
   tavern: {
     reportedPoseSeconds: { default: 60, min: 10, max: 600, unit: "seconds", label: "Reported pose lasts" },
     verifiedPoseMinutes: { default: 10, min: 1, max: 60, unit: "minutes", label: "Verified pose lasts" },
-    voiceChecksPerHour: { default: 10, min: 1, max: 60, unit: "per hour", label: "Voice checks" },
   },
   away: {
     productionWakeHours: { ...PRODUCTION_WAKE_HOURS, unit: "hours", label: "Wake me for production or cluster write asks after" },

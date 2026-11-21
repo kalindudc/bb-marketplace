@@ -5,6 +5,7 @@ import { TUNABLES, settingsContract, type SettingDecision, type TunableKey } fro
 import { Chart, Glyph, Kpi, OpensMark, TimeAgo, formatValue, glowVars, levelsShown, plural, useRegistry } from "../kit";
 import { SegFilter } from "./common";
 import { InsightsSkeleton, PageLoad } from "./skeletons";
+import { WardenQualitySection } from "./warden-quality";
 import { PageGlyph } from "./glyphs";
 import { usePanelState } from "./panel-state";
 
@@ -137,6 +138,7 @@ export function InsightsPage() {
       <Section id="phases" title="Where quests spend their time" section={data.phases} />
       <Section id="attention" title="Your attention" section={data.attention} />
       <Section id="party" title="The party" section={registry.data && levelsShown(registry.data) ? data.party : withoutLevels(data.party)} />
+      <WardenQualitySection data={data.wardenQuality} />
       <Section id="guardrails" title="Guardrails" section={data.guardrails} />
       <section className="tv-card tv-isec" id="tv-ins-tuning" aria-labelledby="tv-ins-tuning-h">
         <header className="tv-isec-h"><h2 id="tv-ins-tuning-h">Tuning history</h2><span className="tv-count">{plural(data.tuningHistory.length, "change")}</span></header>

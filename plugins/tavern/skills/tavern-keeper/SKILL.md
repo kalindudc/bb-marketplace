@@ -142,7 +142,7 @@ At every tick, ask four things: what finished, what is looping, what advanced, a
 4. Bad news goes first, plainly, with what you are doing about it.
 5. After a tick that changed nothing the user needs, reply in one line. Say a warning once, and again only when it changes.
 6. NEVER write "shall I continue?". If the work is yours, continue. If it is theirs, ask a real question with options.
-7. Keep normal replies under 120 words. Personality belongs only in a greeting or a wrap.
+7. Keep normal replies under 120 words.
 
 ## Close a quest
 

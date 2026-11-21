@@ -4,6 +4,7 @@ import { readPalette, type CharacterPalette } from "../kit/characters";
 import { motion } from "../kit/motion";
 import { Actor } from "./actor";
 import { CUE_MS, type Cue } from "./art";
+import { idlePulse, variation } from "./rhythm";
 import type { MotionMode } from "./rules";
 import { observeWorld, scheduler, type EngineWorld } from "./scheduler";
 import { createArt } from "./sprites";
@@ -35,13 +36,15 @@ export function CharacterAvatar({ character, seed = character.avatar ?? characte
     let ctx: CanvasRenderingContext2D | null | undefined;
     let palette: CharacterPalette | undefined;
     const actor = new Actor(id, art, "idle");
-    let untilCue = CUE_GAP;
+    let turn = 0;
+    const cueGap = () => CUE_GAP + 12 * variation(actor.motionSeed, turn++);
+    let untilCue = cueGap();
+    const handwork = (t: number) => idlePulse(t, actor.motionSeed, 14_000, 7_500, 2_800);
     let painted: number | null = null;
     const rules = () => ({ mode: world.mode(), ...motion.getHolds("page") });
     const frameFor = (still: boolean) => {
       const frame = actor.frame(still);
-      if (!still && frame.activity === "stand" && frame.t % 9600 >= 6400) frame.activity = "quiet";
-      return frame;
+      return !still && frame.activity === "stand" && handwork(frame.t).on ? { ...frame, activity: "quiet" as const } : frame;
     };
     const world: EngineWorld = {
       mode: () => worldMode.current === "off" ? "off" : "calm",
@@ -50,14 +53,13 @@ export function CharacterAvatar({ character, seed = character.avatar ?? characte
         actor.update(seconds, 0, rules(), steps);
         untilCue -= seconds * steps;
         if (untilCue > 0) return;
-        untilCue = CUE_GAP;
+        untilCue = cueGap();
         play.current?.("notice", true);
       },
       nextDraw() {
         if (actor.nextDraw(0) === 0) return 0;
         const frame = frameFor(false);
-        const phase = frame.t % 9600;
-        return Math.min(art.nextChange(frame) ?? Infinity, (phase < 6400 ? 6400 : 9600) - phase, untilCue * 1000);
+        return Math.min(art.nextChange(frame) ?? Infinity, handwork(frame.t).next, untilCue * 1000);
       },
       draw(still) {
         if (ctx === undefined) {

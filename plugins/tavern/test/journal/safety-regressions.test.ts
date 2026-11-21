@@ -20,14 +20,15 @@ it("keeps the installed checklist migration unchanged and upgrades old counter/r
   h.db.prepare("INSERT INTO questlog_logs(thread_id,next_id,hydrated) VALUES('t',579,1)").run();
   h.db.prepare("INSERT INTO questlog_reserved(thread_id,id) VALUES('t','g0')").run();
   h.bb.storage.migrate(h.db,MIGRATIONS.slice(JOURNAL_MIGRATIONS.length));
+  expect(h.db.prepare("SELECT empty_hint_seq FROM questlog_logs WHERE thread_id = 't'").get()).toEqual({ empty_hint_seq: null });
   const store=createJournalStore(h.bb,h.db,{roleOf:()=>null,invalidate:()=>{}}); await store.ready("t");
   await store.runTool("t",{action:"add",descriptions:["next"]});
   expect(store.get("t").entries[0]?.id).toBe("03");
   expect(h.db.prepare("SELECT id FROM questlog_reserved WHERE id='g0'").get()).toEqual({id:"g0"});
 });
 it("does not mistake requests or board-quest tools for the checklist tool",()=>{
-  for(const name of ["quest","tavern.quest","mcp__tavern__quest"]) expect(isJournalTool(name)).toBe(true);
-  for(const name of ["tavern_quest","pull_request","http_request","questing"]) expect(isJournalTool(name)).toBe(false);
+  for(const name of ["journal","tavern.journal","mcp__tavern__journal"]) expect(isJournalTool(name)).toBe(true);
+  for(const name of ["quest","tavern_quest","pull_request","http_request","questing"]) expect(isJournalTool(name)).toBe(false);
 });
 it("checks every queued row's origin and content before rejecting a start-turn group",()=>{
   const note={type:"text",text:"[Journal] snapshot",visibility:"agent-only"};

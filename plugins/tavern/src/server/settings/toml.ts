@@ -69,6 +69,10 @@ export function previewToml(source: string, snapshot: Pick<SettingsSnapshot, "us
     const path = error.path.map(snake);
     return { ...empty, problems: [{ line: lineFor(path), key: path.join("."), message: error.message }] };
   }
+  if (isObject(converted.tavern) && Object.hasOwn(converted.tavern, "voiceChecksPerHour")) {
+    delete converted.tavern.voiceChecksPerHour;
+    if (!Object.keys(converted.tavern).length) delete converted.tavern;
+  }
   const tuning = isObject(converted.tuning) ? converted.tuning : null;
   const pins = tuning?.pinned ?? {};
   if (tuning) delete tuning.pinned;

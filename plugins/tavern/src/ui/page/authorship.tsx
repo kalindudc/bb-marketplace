@@ -1,34 +1,10 @@
-import { experimental_useRpcQuery, useBbNavigate } from "@get-bb/plugin-sdk/app";
-import { rpcContract } from "../../shared/contract";
+import { useBbNavigate } from "@get-bb/plugin-sdk/app";
 import { CHARACTER_PRESENTATION_PROBLEM_PREFIX, type CharacterAuthorship, type CharacterReportVoices } from "../../shared/character-presentation";
 import type { CharacterDef } from "../../shared/schema";
-import type { VoiceCheck } from "../../shared/voice-check";
-import { Glyph, useToday } from "../kit";
+import { useToday } from "../kit";
 import { InlineLink } from "./common";
 import { reportsTitle, useOpenReports } from "./reports";
 import { recordDate } from "./service-record";
-
-/**
- * The seal a voice keeps from its latest finished check, when that check passed the saved voice. A pass whose tone no model
- * judged rests on rules only, so it says so and carries no seal mark. A failed, cancelled or older-draft check leaves no seal.
- */
-export function sealOf(history: readonly VoiceCheck[], character: Pick<CharacterDef, "name" | "style">): { full: boolean; at: number; passed: number; total: number } | null {
-  const latest = history.find((h) => h.state !== "running");
-  if (!latest || latest.state !== "passed" || latest.finishedAt === null) return null;
-  if (latest.draft.name !== character.name || latest.draft.style !== character.style) return null;
-  return { full: latest.tone === "judged", at: latest.finishedAt, passed: latest.situations.filter((s) => s.pass).length, total: latest.situations.length };
-}
-
-export function VoiceSeal({ character }: { character: CharacterDef }) {
-  const query = experimental_useRpcQuery({ contract: rpcContract, method: "voiceCheck", input: { characterId: character.id } });
-  const today = useToday();
-  const seal = query.data ? sealOf(query.data.history, character) : null;
-  if (!seal) return null;
-  const when = recordDate(seal.at, today);
-  return seal.full
-    ? <span className="tv-seal" data-seal="full" title="The latest voice check passed, with its tone judged by a model from another family"><Glyph name="wax-seal" size={14} /><span>Voice checked {when}, {seal.passed} of {seal.total}</span></span>
-    : <span className="tv-seal" data-seal="rules" title="The latest voice check passed on rules only: no model judged its tone"><span>Rules checked {when}, {seal.passed} of {seal.total} · tone not judged</span></span>;
-}
 
 /**
  * "Your character" for a file that isn't shipped with Tavern. The date is the file's change time, which measures the file, not who

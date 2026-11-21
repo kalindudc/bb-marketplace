@@ -15,9 +15,8 @@ import { RecordFold } from "./quest-record";
 import { FoldLoad } from "./skeletons";
 import { RegistryExport } from "./backup";
 import { usePanelState } from "./panel-state";
-import { VoiceCheckSummary } from "./voice-check";
 import { Level, RecordBrief, ServiceRecord, roleOf, serviceRecordOf } from "./service-record";
-import { PresentationProblems, ReportVoices, VoiceSeal, YourCharacter } from "./authorship";
+import { PresentationProblems, ReportVoices, YourCharacter } from "./authorship";
 import { TaleList } from "./tales";
 
 
@@ -81,7 +80,7 @@ export function CharacterSheetEditor({ character, registry, room }: { character:
         {service !== undefined && levelsShown(registry) && <Level lv={lv} role={roleOf(character.classes)} detail />}
         {service !== undefined && <ServiceRecord record={service} name={character.name} />}
         <PresentationProblems problems={registry.problems} characters={registry.characters} only={character} />
-        <div className="tv-facts">{service === undefined && <span><b className="num">{rec.wins}</b> verified wins in visible threads</span>}<YourCharacter authorship={registry.characterAuthorship?.find((a) => a.characterId === character.id)} /><VoiceSeal character={character} />{levelsShown(registry) && <span>Agents never see levels.</span>}<code className="tv-sh-src" title={`~/.agents/tavern/characters/${character.id}.md`}>~/.agents/tavern/characters/{character.id}.md</code></div>
+        <div className="tv-facts">{service === undefined && <span><b className="num">{rec.wins}</b> verified wins in visible threads</span>}<YourCharacter authorship={registry.characterAuthorship?.find((a) => a.characterId === character.id)} />{levelsShown(registry) && <span>Agents never see levels.</span>}<code className="tv-sh-src" title={`~/.agents/tavern/characters/${character.id}.md`}>~/.agents/tavern/characters/{character.id}.md</code></div>
       </div>
       <button type="button" className="btn pri" onClick={edit} aria-expanded={inline || undefined} title="Opens the editor in the side panel, beside this sheet"><PageGlyph name="told" /><span>Edit {character.name}'s voice and avatar</span><OpensMark /></button>
       <RegistryExport kind="character" id={character.id} name={`${character.name}'s sheet`} />
@@ -102,7 +101,6 @@ export function CharacterSheetEditor({ character, registry, room }: { character:
         <p className="m small" style={{ marginTop: 10 }}>Asks, blockers, findings, evidence and numbers stay plain.</p>
         {!voiceShown(registry) && <p className="m small" data-voice-off>Speech bubbles are off in Atmosphere. Agents write plainly, and saved voice lines are hidden.</p>}
         {voiceShown(registry) && <ReportVoices voices={registry.characterReportVoices?.find((v) => v.characterId === character.id)?.voices ?? []} name={character.name} questShort={(id) => questsIn(room).find((q) => q.id === id)?.short ?? service?.records.find((r) => r.questId === id)?.short ?? "a quest"} />}
-        <VoiceCheckSummary character={character} />
       </section>
     </div>
   </div>;

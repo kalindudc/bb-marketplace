@@ -54,6 +54,7 @@ it("reacts to clicks beside a held ask without moving the exclamation mark or as
   const button = screen.getByRole("button", { name: /Wren, Wanderer/ });
   Object.defineProperty(button, "animate", { value: () => ({ finished: new Promise(() => {}), playState: "running", finish() {}, cancel() {} }) });
   const mark = screen.getByText("!");
+  expect(button.contains(mark)).toBe(false);
   world!.refresh?.(); world!.draw(false);
   const original = [button.style.transform, mark.outerHTML];
   for (let click = 0; click < 6; click++) {

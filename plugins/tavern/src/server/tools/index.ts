@@ -485,12 +485,11 @@ export function registerTools(bb: BbPluginApi, runtime: TavernRuntime) {
   register(
     "tavern_report",
     "Filed a report",
-    "Write a report to the Keeper's mailbox and end your turn. Give a one-sentence headline of at most 160 characters. A Warden headline states the result, never a claim of independence. Preserve the same-family check (not independent) label when applicable. Only done reports keep voice; first mark every linked entry done with evidence or have it verified. A Warden checks rather than owns its waypoint. To declare a wait, include wait with a condition and dueAt; the Keeper is reminded at the deadline.",
+    "Write a report to the Keeper's mailbox and end your turn. Give a one-sentence headline of at most 160 characters. A Warden headline states the result, never a claim of independence. Preserve the same-family check (not independent) label when applicable. Before a done report, mark every linked entry done with evidence or have it verified. A Warden checks rather than owns its waypoint. To declare a wait, include wait with a condition and dueAt; the Keeper is reminded at the deadline.",
     reportSchema
       .pick({ status: true, outcome: true, headline: true, evidence: true, artifacts: true, wait: true })
       .extend({
         confidence: reportSchema.shape.confidence.default(null),
-        voice: reportSchema.shape.voice.default(null),
       }),
     async (input, threadId) => {
       const report = k.report(threadId, input);

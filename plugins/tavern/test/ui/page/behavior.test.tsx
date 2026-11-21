@@ -380,7 +380,7 @@ describe("Tavern page surfaces", () => {
     expect(save.mock.calls[0]?.[0].voice.style).toBe("A short weather report.");
     expect(save.mock.calls[0]?.[0].voice).not.toHaveProperty("body");
     expect(slot.container.textContent).toContain("Agents never see levels");
-    expect(slot.getByRole("region", { name: "Voice check" })).toBeTruthy();
+    expect(slot.queryByRole("region", { name: "Voice check" })).toBeNull();
     expect(slot.container.textContent).not.toContain("No automatic voice check is available");
   });
   it("provides connection focus and navigation in the native-size list", async () => {

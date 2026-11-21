@@ -87,7 +87,7 @@ describe("settings compatibility and validation", () => {
   it("round-trips non-default knobs and choices across all Settings sections", () => {
     const { store } = fixture();
     const patch = settingsPatchSchema.parse({
-      tavern: { paused: true, agentsMayChangeSettings: false, defaultClass: "smith", widgetRow: false, voice: "light", levels: false, characters: false, ambientMotion: "off", hearthFlicker: false, repeatSeconds: 43, batchWakeEvents: true, reportedPoseSeconds: 87, verifiedPoseMinutes: 23, voiceChecksPerHour: 7 },
+      tavern: { paused: true, agentsMayChangeSettings: false, defaultClass: "smith", widgetRow: false, voice: "light", levels: false, characters: false, ambientMotion: "off", hearthFlicker: false, repeatSeconds: 43, batchWakeEvents: true, reportedPoseSeconds: 87, verifiedPoseMinutes: 23 },
       attention: { reviewBudget: 7, notify: "all", quietHours: { start: "22:00", end: "06:00", timeZone: "UTC" } },
       away: { neverWhileClosed: ["merge", "production", "delete"], productionWakeHours: 3, defaultBackAtHour: 7, defaultEndState: "pause", defaultAllowWatched: true, defaultWakeBlockers: false, defaultWakeProduction: true },
       keepers: { restMinutes: 42, greenlight: "by-size", decisionTimerMax: 90, partyMax: 14, staleStrikes: 4, restatementBytes: 9300, tickFactChars: 8400, alwaysAsk: [], failuresBeforeAsk: 4, stopAskAfterSeconds: 190, retryAfterSeconds: 82, briefRetryAttempts: 7, replacementsPerSlot: 1, rangerMax: 6, keepMaxHours: 36, registryWaitSeconds: 48, registryBlockerMinutes: 9 },

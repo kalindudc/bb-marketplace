@@ -30,4 +30,4 @@ The live brake record is excluded from portable backup capture and cannot be res
 
 ## Scope
 
-Already-running hidden tale-renderer companions and character voice checks are outside the Keeper-and-member stop scope and may finish. New companion and voice-check spawns are held. A held placed hire can free an unstarted reservation, but that reservation owns no spawned member or machine. Pause every Keeper is separate: it pauses new Keeper work while running turns finish.
+Already-running hidden tale-renderer companions are outside the Keeper-and-member stop scope and may finish. New companion spawns are held. A held placed hire can free an unstarted reservation, but that reservation owns no spawned member or machine. Pause every Keeper is separate: it pauses new Keeper work while running turns finish.

@@ -153,9 +153,8 @@ the combined build and live check before these installed-version limits change.
 
 - Closing time and its away controls are previews, not an enforced away mode.
   While closed currently shows recent activity, not a recorded away window.
-- Classes has a read-only page, not a class editor. Character voice editing
-  works, but its preview is not an automatic behavioral voice check; that
-  check is not implemented.
+- Classes has a read-only page, not a class editor. Character presentation
+  is edited separately from the agent's work.
 - The connection map can label an archived Keeper as listening. The common
   room distinguishes archived threads correctly.
 - Machine placement is still under development. Leave its rules empty for

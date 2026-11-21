@@ -157,7 +157,8 @@ describe("seeded character art", () => {
       for (const pose of poses.filter(pose => pose.face !== "calm")) {
         const { runs, chin } = actor(traits, pose, null);
         const plain = actor(traits, { ...pose, face: "calm" }, null).runs;
-        const centre = pose.slump ? 13 : 11;
+        const turn = pose.gaze === "forward" ? 1 : pose.gaze === "back" ? -1 : 0;
+        const centre = (pose.slump ? 13 : 11) + turn;
         const mouth: [number, number][] = [];
         for (let y = chin - 1; y <= chin; y++) for (let x = centre - 1; x <= centre + 1; x++) {
           const ink = at(runs, x, y);

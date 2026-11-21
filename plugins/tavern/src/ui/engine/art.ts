@@ -25,8 +25,10 @@ export type ArtFrame = {
   t: number;
   mood: Mood;
   facing: 1 | -1;
-  /** Walk step index, a whole number that advances while walking. */
+  /** Quantized phase in the current gait cycle (0 to 7). */
   step: number;
+  /** Member identity's seed, independent of the avatar's traits. */
+  motionSeed?: number;
   /** The hanging light's pendulum angle in radians, from the engine's physics; 0 hangs straight. */
   swing: number;
   /** The flame's flicker around 1; exactly 1 when still. */

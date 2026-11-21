@@ -55,6 +55,13 @@ pinned = { stale_minutes = 30 }
 
 export const insightsView: InsightsView = insightsSchema.parse({
   range: "30d", from: NOW - 30 * DAY, to: NOW, collectingSince: NOW - 41 * DAY,
+  wardenQuality: {
+    from: NOW - 30 * DAY, to: NOW, rejectedWaypointsWaived: 1,
+    rows: [
+      { classId: "warden", providerId: "codex", model: "gpt-6.1-sol", verified: 10, reopened: 2, rejected: 3 },
+      { classId: "warden", providerId: "pi", model: "example-labs/reviewer-large-2026-11-14-preview-with-a-long-model-identifier", verified: 2, reopened: 0, rejected: 1 },
+    ],
+  },
   headline: [
     { id: "returned", label: "Quests returned", value: 7, unit: "count", previous: 4 },
     { id: "goal-to-return", label: "Median goal to return", value: 5.2 * 3600, unit: "s", previous: 7.9 * 3600 },
@@ -108,6 +115,7 @@ export const insightsView: InsightsView = insightsSchema.parse({
 
 export const emptyInsights: InsightsView = insightsSchema.parse({
   range: "7d", from: NOW - 7 * DAY, to: NOW, collectingSince: NOW - 2 * DAY,
+  wardenQuality: { from: NOW - 7 * DAY, to: NOW, rejectedWaypointsWaived: 0, rows: [] },
   headline: [{ id: "returned", label: "Quests returned", value: null, unit: "count" }],
   ideas: [], reliability: { caption: "How well Keepers keep the thread.", series: [] }, phases: { caption: "Where quests spend their time.", series: [] },
   attention: { caption: "What reached you.", series: [] }, party: { caption: "Who was hired and how they did.", series: [] },

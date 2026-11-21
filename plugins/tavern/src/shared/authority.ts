@@ -22,7 +22,7 @@ export const AUTHORITY = {
   alertTestSend: explicit, alertTestConfirm: explicit,
   settingsFile: explicit, settingsApplySuggestion: explicit, settingsEndOverride: explicit, backupRestore: explicit,
   guardInstall: explicit, guardUninstall: explicit,
-  voiceCheckStart: explicit, voiceCheckCancel: explicit, releaseHold: explicit,
+  releaseHold: explicit,
   openQuest: words, reopenQuest: words, weakenChecks: words, steerDecision: words,
   holdQuestFromMessage: words, resumeQuestFromMessage: words,
   keepMember: keeper, releaseMember: keeper, defaultDecision: keeper, acceptWaypoint: keeper, skipWaypoint: keeper, reopenWaypoint: keeper, exceedParty: keeper, exceedRangers: keeper,

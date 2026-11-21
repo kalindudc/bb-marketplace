@@ -33,7 +33,7 @@ Person-only messages pass. A message queued together with Tavern's own work wait
 
 Resume is intended for the user on the common room. There is no CLI resume command. Plugin callers and any exposed agent or CLI markers are refused and the available surface is recorded. bb groups the page, CLI and agents as client callers with no thread id or origin, so Tavern can't prove a person pressed Resume. The receipt and common room state that limit. NEVER use a generic RPC call, shell or another send or spawn path to bypass the brake.
 
-The stop scope is Keeper and member turns. Already-running hidden tale-renderer companions and character voice checks are outside that scope and can finish; new renderer and voice-check spawns are held. A placed hire stopped before spawning may free its unstarted reservation; no member or machine exists to release. See `docs/stop-all.md` for the receipt and caller limits.
+The stop scope is Keeper and member turns. Already-running hidden tale-renderer companions are outside that scope and can finish; new renderer spawns are held. A placed hire stopped before spawning may free its unstarted reservation; no member or machine exists to release. See `docs/stop-all.md` for the receipt and caller limits.
 
 Pause every Keeper is a separate setting on the common room and Settings page: it pauses new Keeper work while running turns finish.
 

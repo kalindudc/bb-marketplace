@@ -26,6 +26,26 @@ describe("journal rules", () => {
     expect(() => f.run({ action: "add", descriptions: ["ok", " "] })).toThrow();
     expect(f.entries()).toHaveLength(4);
   });
+  it("adds a single description with the same id and validation as a one-item list", () => {
+    const f = fixture();
+    expect(f.run({ action: "add", description: "  Build  " }).entryIds).toEqual(["g0"]);
+    expect(f.entries()[0]?.description).toBe("Build");
+    expect(() => f.run({ action: "add", description: " " })).toThrow();
+    expect(f.entries()).toHaveLength(1);
+  });
+  it("starts multiple entries atomically when handing them to one delegate", () => {
+    const f = fixture();
+    f.run({ action: "add", descriptions: ["Mine", "Build", "Check"] });
+    f.run({ action: "start", id: "g0" });
+    expect(() => f.run({ action: "start", ids: ["g1", "g2"] })).toThrow(/Start one entry per call.*owner/);
+    expect(() => f.run({ action: "start", ids: ["g1", "g2"], owner: "smith" })).toThrow(/Start one entry per call.*owner/);
+    f.run({ action: "update", id: "g2", after: ["g0"] });
+    expect(() => f.run({ action: "start", ids: ["g1", "g2"], owner: "thr_builder" })).toThrow(/dependencies/);
+    expect(f.entries().map(e => [e.status, e.owner])).toEqual([["doing", null], ["todo", null], ["todo", null]]);
+    f.run({ action: "update", id: "g2", after: [] });
+    expect(f.run({ action: "start", ids: ["g1", "g2"], owner: "thr_builder" }).entryIds).toEqual(["g1", "g2"]);
+    expect(f.entries().map(e => [e.status, e.owner])).toEqual([["doing", null], ["doing", "thr_builder"], ["doing", "thr_builder"]]);
+  });
   it("checks final batch status and does not close a parent with open children", () => {
     const f = fixture();
     f.run({ action: "add", descriptions: ["parent"] });

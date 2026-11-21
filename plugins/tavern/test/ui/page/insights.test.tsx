@@ -45,7 +45,7 @@ describe("Insights page", () => {
     expect(slot.getByText("5.2 h")).toBeTruthy();
     expect(slot.getByText("from 7.9 h")).toBeTruthy();
     const headings = slot.getAllByRole("heading", { level: 2 }).map((h) => h.textContent);
-    expect(headings).toEqual(["Ideas", "Keeper reliability", "Where quests spend their time", "Your attention", "The party", "Guardrails", "Tuning history", "Cost and time per quest"]);
+    expect(headings).toEqual(["Ideas", "Keeper reliability", "Where quests spend their time", "Your attention", "The party", "Warden quality", "Guardrails", "Tuning history", "Cost and time per quest"]);
     for (const section of ["Keeper reliability", "Your attention"]) expect(slot.getByRole("region", { name: section }).querySelector(".tv-isec-cap")?.textContent).toMatch(/\w+/);
     expect(within(slot.getByRole("region", { name: "Keeper reliability" })).getByText("93%")).toBeTruthy();
   });
@@ -72,6 +72,39 @@ describe("Insights page", () => {
     fireEvent.click(within(slot.getByRole("group", { name: "Range" })).getByRole("button", { name: "7 days" }));
     await slot.findByText(/No ideas yet/);
     expect(slot.queryByRole("heading", { name: "Cost and time per quest" })).toBeNull();
+  });
+});
+
+describe("Warden quality evidence", () => {
+  it("shows counts, the small sample and the separate waiver in Insights", async () => {
+    const slot = await insightsPage();
+    const quality = within(await slot.findByRole("region", { name: "Warden quality" }));
+    expect(quality.getByText("2 of 10 verifications reopened (20%)")).toBeTruthy();
+    expect(quality.getByText("0 of 2 verifications reopened")).toBeTruthy();
+    expect(quality.getByText(/verifications moved back to to-do/)).toBeTruthy();
+    expect(quality.getByText("Too few to judge.")).toBeTruthy();
+    expect(quality.getByText("1 rejected waypoint you waived when closing early.")).toBeTruthy();
+    expect(quality.getByText(/Read on/).querySelector("time")?.dateTime).toBe(new Date(insightsView.to).toISOString());
+  });
+
+  it("uses the dedicated summary beside the Warden's class controls", async () => {
+    const wardenQuality = vi.fn(() => insightsView.wardenQuality);
+    const insights = vi.fn(() => insightsView);
+    const handlers = { wardenQuality, insights };
+    const slot = await section("classes", handlers);
+    const quality = within(await slot.findByRole("region", { name: "Warden quality" }));
+    expect(quality.getByText("2 of 10 verifications reopened (20%)")).toBeTruthy();
+    expect(quality.getByText(/Last 30 days/)).toBeTruthy();
+    expect(slot.getByRole("button", { name: "Choose model and thinking for Warden" })).toBeTruthy();
+    expect(wardenQuality).toHaveBeenCalled();
+    expect(insights).not.toHaveBeenCalled();
+  });
+
+  it("distinguishes an empty verdict history from a zero reopen rate", async () => {
+    const slot = await insightsPage({ insights: () => emptyInsights });
+    const quality = within(await slot.findByRole("region", { name: "Warden quality" }));
+    expect(quality.getByText("No recorded Warden verdicts in this range.")).toBeTruthy();
+    expect(quality.queryByText(/0%/)).toBeNull();
   });
 });
 
@@ -178,12 +211,14 @@ describe("Tavern settings sections", () => {
     fireEvent.click(within(group).getByRole("button", { name: "Off" }));
     await waitFor(() => expect(update).toHaveBeenCalledWith(expect.objectContaining({ patch: { tavern: { voice: "off", voiceBeforeOff: "full" } } })));
   });
-  it("explains the bubble and report effects of all three voice choices", () => {
+  it("explains speech bubbles and saved voice lines without promising new report voice", () => {
     expect(VOICE_HELP).toEqual({
-      full: "See speech bubbles at greetings, milestones and intervals or on a click, and allow a short character line in replies and successful reports.",
-      light: "See bubbles after a verification, at a quest wrap or on a click, and allow a short character line in a reply or report only after success.",
-      off: "Turn off speech bubbles, keep new replies and reports plain, and hide saved voice lines in reports and character sheets.",
+      full: "Show speech bubbles at greetings, milestones, intervals and on clicks.",
+      light: "Show speech bubbles after verification, at a quest wrap and on clicks.",
+      off: "Hide speech bubbles and saved voice lines in reports and character sheets.",
     });
+    expect(Object.values(VOICE_HELP).join(" ").replace("saved voice lines in reports and character sheets", ""))
+      .not.toMatch(/\b(?:repl(?:y|ies)|reports?)\b/i);
   });
   it("edits Always ask and shows tuned rows with default, bounds, who set it, Undo and Pin", async () => {
     const save = vi.fn(() => ok());
