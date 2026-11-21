@@ -14,6 +14,7 @@ import { scopeForClass } from "../../src/scope/presets";
 import { bindPaths } from "../../src/scope/paths";
 import { ScopeStore } from "../../src/scope/store";
 import extension, { type PiGuardApi } from "../../adapters/pi/extension";
+import { linkedWorktree } from "./git-fixture";
 
 const scope = (role: string, mode: "watch" | "enforce" = "enforce") => bindPaths({ ...scopeForClass(role), mode }, { home: "/home/fixture", tmp: ["/tmp"], threadStorage: "/storage", worktree: "/workspace", scopesDir: "/scopes" });
 const bound = new Map<string, ReturnType<typeof scope>>();
@@ -194,9 +195,11 @@ it("does not grant sandbox leniency to an unwrapped command tool", () => {
   expect(evaluate(s, { kind: "tool", toolName: "other_shell", cwd: "/workspace", input: { command: "python3 -c 'print(1)'" }, containment: "sandbox" }).allow).toBe(false);
 });
 const dirs: string[] = [];
-afterEach(() => { vi.unstubAllEnvs(); for (const root of dirs.splice(0)) rmSync(root, { recursive: true, force: true }); });
+afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); for (const root of dirs.splice(0)) rmSync(root, { recursive: true, force: true }); });
 it.each(["ranger", "warden", "smith", "keeper", "wanderer"])("refuses user-only controls for %s even in Watch and after env changes", role => {
   const root = mkdtempSync(join(tmpdir(), "tavern-controls-")); dirs.push(root);
+  const { worktree } = linkedWorktree(root);
+  vi.spyOn(process, "cwd").mockReturnValue(worktree);
   const store = new ScopeStore(root); vi.stubEnv("TAVERN_SCOPE_FILE", store.file("t1")); vi.stubEnv("BB_THREAD_ID", "t1");
   for (const mode of ["watch", "enforce"] as const) {
     const s = bindPaths({ ...scopeForClass(role), mode, threadId: "t1", issuedAt: 1 }, { home: root, tmp: ["/tmp"], threadStorage: join(root, "storage"), scopesDir: store.directory });
@@ -205,7 +208,7 @@ it.each(["ranger", "warden", "smith", "keeper", "wanderer"])("refuses user-only 
     extension({ on: (name, handler) => handlers.set(name, handler), getActiveTools: () => ["bash"], setActiveTools: () => {} });
     for (const command of ["bb tavern ask ask_fixture approve", "bb tavern settings set x=y --apply", "bb tavern guard install", "bb tavern backup restore fixture --apply", ...["holdBoardQuest", "resumeBoardQuest", "answerAsk", "resumeAll", "releaseHold", "settingsUpdate", "settingsUndo", "settingsImport", "settingsFile", "settingsApplySuggestion", "backupRestore", "applyClassExecution", "dismissClassNotice", "setTaleKept", "archiveBoardQuests", "deleteBoardQuest", "restoreDeletedQuest", "saveClass", "removeClassOverride", "awayClose", "awayReturn", "releaseCheckerHandoff", "confirmRule", "stopBoardQuest", "addRule", "widenRule", "undoDecision", "correctRoute", "resumeKeeper", "journalEdit", "saveCharacterVoice", "resolveHandBack", "resetUndoLane"].map(method => `bb plugin rpc call tavern ${method}`)]) {
       for (const prefix of ["", "env -u TAVERN_SCOPE_FILE ", "env TAVERN_SCOPE_MODE=off "]) {
-        expect(handlers.get("tool_call")!({ toolName: "bash", input: { command: prefix + command.replace(/^bb /, "bb --json --server example.test ") } }, { cwd: root })).toEqual({ block: true, reason: "Tavern's controls are the user's; ask the user." });
+        expect(handlers.get("tool_call")!({ toolName: "bash", input: { command: prefix + command.replace(/^bb /, "bb --json --server example.test ") } }, { cwd: worktree })).toEqual({ block: true, reason: "Tavern's controls are the user's; ask the user." });
       }
     }
   }

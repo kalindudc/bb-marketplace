@@ -73,7 +73,7 @@ describe("provider-neutral watcher", () => {
     store.write("t1", s);
     const { bb, harness } = createFakePluginHost({ pluginId: "tavern", sdk: { threads: {
       get: async () => ({}), stop: async () => ({}),
-      events: { list: async () => [{ id: "e1", seq: 1, type: "item/started", createdAt: Date.now(), data: { item: { type: "commandExecution", command: "dt pr merge 1", cwd: process.cwd() } } }] },
+      events: { list: async () => [{ id: "e1", seq: 1, type: "item/started", createdAt: Date.now(), data: { item: { type: "commandExecution", command: "dt pr merge 1", cwd: store.dataDir } } }] },
     }, environments: {} } });
     const onViolation = vi.fn();
     registerWatcher(bb, store, { onViolation });
@@ -123,7 +123,7 @@ describe("provider-neutral watcher", () => {
   it.each(["pi", "claude-code", "codex"])("stops and records a %s violation through the fake host", async providerId => {
     const { store, s } = fixture(); store.arm(s);
     const onViolation = vi.fn();
-    const { bb, harness } = createFakePluginHost({ pluginId: "tavern", sdk: { threads: { stop: async () => ({}), events: { list: async () => [{ id: "e1", seq: 1, type: providerId === "pi" ? "item/completed" : "item/started", createdAt: Date.now(), data: { item: { type: "commandExecution", command: "git push origin main", cwd: process.cwd() } } }] } } } });
+    const { bb, harness } = createFakePluginHost({ pluginId: "tavern", sdk: { threads: { stop: async () => ({}), events: { list: async () => [{ id: "e1", seq: 1, type: providerId === "pi" ? "item/completed" : "item/started", createdAt: Date.now(), data: { item: { type: "commandExecution", command: "git push origin main", cwd: store.dataDir } } }] } } } });
     registerWatcher(bb, store, { onViolation });
     await harness.behavior.emitThreadEvent("experimental_thread.events", { thread: makeThreadResponse({ id: "t1", providerId }), sequence: 1 });
     expect(harness.inspection.sdk.callsTo("threads.stop")).toHaveLength(1);

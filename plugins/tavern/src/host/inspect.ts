@@ -8,6 +8,8 @@ import { git, runGit, withGitDeadline, type GitOptions } from "./git";
 import { abortError } from "./process";
 import { HostError, HostRegistry } from "./registry";
 import { fetchUrl, inspectSourceBase } from "./source-base";
+import { gitConfigRevision } from "../shared/git-safety";
+import { rememberRepository } from "./context";
 
 function remoteIdentity(value: string): string | undefined {
   if (!value || value.length > 4096 || /[\0\r\n]/.test(value) || value !== value.trim()) return;
@@ -67,7 +69,9 @@ export async function inspectHost(registry: HostRegistry, authority: Authority, 
   const endpoint = registry.endpoint(authority, ["source-read", "member-write", "home-import"]);
   const options = { dataDir: registry.dataDir, signal: bounded, kind: endpoint.registration.git, metadata: endpoint.inspection, check: () => { registry.endpoint(authority); } };
   const root = endpoint.realRoot;
+  const before = gitConfigRevision(root, options);
   const bare = await git(root, ["rev-parse", "--is-bare-repository"], options);
+  const config = before ?? gitConfigRevision(root, options);
   if (bare !== "true" && bare !== "false") throw new HostError("git-capability", "The host cannot identify its repository layout.");
   const actualRoot = await git(root, ["rev-parse", bare === "true" ? "--absolute-git-dir" : "--show-toplevel"], options);
   const gitRoot = realpathSync(isAbsolute(actualRoot) ? actualRoot : resolve(root, actualRoot));
@@ -109,6 +113,7 @@ export async function inspectHost(registry: HostRegistry, authority: Authority, 
   if (result.head.length !== (result.objectFormat === "sha1" ? 40 : 64) || result.tree.length !== result.head.length)
     throw new HostError("object-format-mismatch", "The repository returned object ids inconsistent with its declared object format.");
   registry.recordInspection(authority, { objectFormat: result.objectFormat, branch: result.branch, gitDir: normalized(gitDir), commonDir: normalized(commonDir), sparse, fetchRemote: repoRemotes?.fetchRemote });
+  if (gitRoot === root && config === gitConfigRevision(root, options)) rememberRepository(registry, registry.endpoint(authority), config);
   return result;
   }, signal);
 }
