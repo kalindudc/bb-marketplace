@@ -128,3 +128,20 @@ jobs:
         env:
           # Without the bb CLI, Forage skips its compiled-bundle tests when pretest is not run.
           npm_config_ignore_scripts: ${{ matrix.plugin == 'forage' && 'true' || 'false' }}
+
+  result:
+    # One check with a fixed name, so a ruleset can require it: the test jobs are named after whichever plugins changed.
+    name: Plugin tests passed
+    needs: [select, test]
+    if: ${{ always() && !github.event.deleted }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check the plugin test jobs
+        env:
+          SELECT_RESULT: ${{ needs.select.result }}
+          TEST_RESULT: ${{ needs.test.result }}
+        run: |
+          echo "Select plugins: $SELECT_RESULT; plugin tests: $TEST_RESULT"
+          [ "$SELECT_RESULT" = success ] || exit 1
+          case "$TEST_RESULT" in success | skipped) ;; *) exit 1 ;; esac
