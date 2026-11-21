@@ -4,23 +4,12 @@ Notable changes to Tavern, newest first. Releases are tagged `tavern/vX.Y.Z` in 
 
 ## Unreleased
 
-- Agents with an active guard cannot send messages as you, even in Watch or Off. A blocked send leaves you one handoff with the recipient and message when the call reveals them. Scopes accepts tool patterns and shell command prefixes. Named-target draft approvals wake the member for one exact call. Older guards keep their ordinary scope and need a restart for the send guard. If the message policy and scope disagree, Tavern reports it and holds recognized sends and drafts without stopping unrelated work.
-
-- Tell selected Keepers in the common room sends one unchanged message to each selected thread and shows a receipt for each. Their normal routing still applies.
-
-- Reports label confidence percentages as the member’s own estimate, not a Warden verdict.
-
-- Insights sizes trend labels to the available space before the chart first appears, so they stay readable on a phone. Long model names wrap.
-
-- The Ledger and each quest's party show when a member's brief predates one of your steers. The Keeper receives the hint when it changes, and a delivered re-brief clears it. The path count also shows waypoints added or removed since the last greenlight.
-
-- New party members take their names from their own Keeper’s party, so two Keepers can each hire a Juno. A resting member keeps its name, and existing numerals stay unless there is a conflict. The mention list puts your party first. It, the common room history and the map name the Keeper where parties meet. The member widget shows the current waypoint and, when different, the one named by the latest report.
-- Every new Keeper promise has a deadline. When the promise comes due, Tavern tells the Keeper what it was waiting for. A member that reports a wait gets no stale strikes before its deadline, and a blocked report with a declared wait does not send you an alert. The Keeper sees fresh gate warnings and the first two stale strikes, not the same reminder every tick. A member whose thread is still busy but has no recent progress evidence prompts one quiet hint to the Keeper. Older promises without a deadline stay in the ledger and say so.
-
 Machine rules put a project's party members on their own new machines through the user's chosen providers, a returned or stopped quest reopens for deviations without a new quest, the checker recognises the check runners a repository actually uses, the pages and composer lose their rough edges, and the party is drawn as animated pixel art.
 
 ### Added
 
+- Tell selected Keepers in the common room sends one unchanged message to each selected thread and shows a receipt for each. Their normal routing still applies.
+- The Ledger and each quest's party show when a member's brief predates one of your steers. The Keeper receives the hint when it changes, and a delivered re-brief clears it. The path count also shows waypoints added or removed since the last greenlight.
 - Agents get clearer guidance on when to keep a journal. If an agent does substantial work without starting one, Tavern can give it a private hint without opening a new turn or notifying you. Agents can add a single journal entry or start several entries for the same delegate in one call.
 - In Settings, Your attention, you can send a test alert and say whether it arrived. Tavern records what happened to each alert, shows the last test and real delivery failure, and lets you close as usual if the route has not been proven.
 - A carried lantern or hearth-light warms the ground and nearby edges as the character moves, without touching chat text, asks or evidence. In Settings → Atmosphere, you can turn the light off, set its strength or keep it only on Tavern's surfaces.
@@ -71,6 +60,10 @@ Machine rules put a project's party members on their own new machines through th
 
 ### Changed
 
+- Agents with an active guard cannot send messages as you, even in Watch or Off. A blocked send leaves you one handoff with the recipient and message when the call reveals them. Scopes accepts tool patterns and shell command prefixes. Named-target draft approvals wake the member for one exact call. Older guards keep their ordinary scope and need a restart for the send guard. If the message policy and scope disagree, Tavern reports it and holds recognized sends and drafts without stopping unrelated work.
+- Reports label confidence percentages as the member’s own estimate, not a Warden verdict.
+- New party members take their names from their own Keeper’s party, so two Keepers can each hire a Juno. A resting member keeps its name, and existing numerals stay unless there is a conflict. The mention list puts your party first. It, the common room history and the map name the Keeper where parties meet. The member widget shows the current waypoint and, when different, the one named by the latest report.
+- Every new Keeper promise has a deadline. When the promise comes due, Tavern tells the Keeper what it was waiting for. A member that reports a wait gets no stale strikes before its deadline, and a blocked report with a declared wait does not send you an alert. The Keeper sees fresh gate warnings and the first two stale strikes, not the same reminder every tick. A member whose thread is still busy but has no recent progress evidence prompts one quiet hint to the Keeper. Older promises without a deadline stay in the ledger and say so.
 - Member reports and cleanup no longer make the rest of bb wait for Git. A report makes four fewer Git calls, and cleanup makes eight to twelve fewer on the tested checkouts. Rebase checks also run without blocking bb.
 - The journal and read-as line no longer make the browser recalculate layout when you open a thread panel or update something unrelated. They still remember their widths when they resize.
 - Tavern’s background check runs every five seconds and now does about 80% less database work. It checks each Keeper’s thread once instead of twice when no brief needs retrying, and skips writes when the saved state hasn’t changed.
@@ -101,6 +94,10 @@ Machine rules put a project's party members on their own new machines through th
 
 ### Fixed
 
+- Quests whose Keeper thread is archived or deleted leave the active board. Find them under Needs a Keeper in the common room to stop them. Unarchiving the Keeper’s thread brings its quests back to the board.
+- New Keepers use free characters first, and live Keepers who share a character get distinct names. On the next reload, this also applies to live child leads: duplicate names get a suffix such as Moss II, and Tavern updates the thread titles it manages. A returning Keeper takes the suffix instead of renaming a Keeper that stayed live.
+- The map stays visible when there is no active work; turn on Show finished quests to see returned, stopped and archived work.
+- Insights sizes trend labels to the available space before the chart first appears, so they stay readable on a phone. Long model names wrap.
 - The journal names entry owners and history actors instead of showing thread IDs. Open thread takes you to the owner from an expanded entry or its delegated row. Archived owners stay linked; deleted owners are marked and have no link.
 - The Keeper can record a one-hire Ranger exception to the class count or time box. A refusal names the exception; it never overrides your settings ceiling.
 - Tavern’s shell guard uses the same list of user controls as the server. Ordinary reads such as Tavern settings and Burn usage stay available in read-only shells.

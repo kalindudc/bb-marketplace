@@ -269,6 +269,7 @@ export interface Runtime {
   cellarArchived?: boolean;
   partyArchiveRepairAt?: number;
   archiveError?: string | null;
+  liveSince?: number;
   archivedAt?: number | null;
   deletedAt?: number | null;
   threadTitle?: string | null;

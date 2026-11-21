@@ -45,7 +45,7 @@ it("refuses a stale scope atomically when one Keeper is still present", async ()
   f.k.bind("other", "keeper", "moss", "project");
   const second = await seedQuest(f.k, "other", "Still live", "A narrow goal");
   f.k.store.patch("lead", { archivedAt: f.time() });
-  await expect(async () => stop(f)({ ids: [first.id, second.id] }, client)).rejects.toThrow(/Keeper gone.*changed/i);
+  await expect(async () => stop(f)({ ids: [first.id, second.id] }, client)).rejects.toThrow('The “Needs a Keeper” list changed. Review the quests and confirm again.');
   for (const quest of [first, second]) expect(f.k.quest(quest.id)).toMatchObject({ phase: "scout", archivedAt: null });
 });
 

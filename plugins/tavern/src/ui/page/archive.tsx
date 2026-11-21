@@ -9,7 +9,7 @@ import { usePanelState } from "./panel-state";
 import { FoldLoad } from "./skeletons";
 
 /** Returned and stopped quests still on the board, newest first. */
-export const finishedQuests = (room: Room) => questsIn(room).filter((q) => (q.phase === "done" || q.phase === "stopped") && !q.archivedAt).sort((a, b) => (b.endedAt ?? b.updatedAt) - (a.endedAt ?? a.updatedAt));
+export const finishedQuests = (room: Room) => questsIn(room).filter((q) => (q.phase === "done" || q.phase === "stopped") && q.archivedAt == null && q.deletedAt == null).sort((a, b) => (b.endedAt ?? b.updatedAt) - (a.endedAt ?? a.updatedAt));
 
 /** Archived count with the optimistic changes the room does not show yet; once the room refetches, the server's count already holds them. */
 export function archiveTotal(room: Room, hidden: ReadonlySet<string>, shown: ReadonlySet<string>) {

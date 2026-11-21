@@ -279,7 +279,7 @@ export function MapViewport({ width, height, label, children, bar, controls, sta
       </div>
       {controls}
     </div>
-    <div ref={box} className={`tv-mv-box ${dragging ? "dragging" : ""}`} style={room !== null ? { "--mv-pane": `${room}px` } as React.CSSProperties : undefined} tabIndex={0} role="group" aria-label={`${label}. Drag or use the arrow keys to move; plus and minus zoom; 0 fits the whole map.`}
+    <div ref={box} className={`tv-mv-box ${dragging ? "dragging" : ""}`} data-empty-map={nodes === 0 || undefined} style={room !== null ? { "--mv-pane": `${room}px` } as React.CSSProperties : undefined} tabIndex={0} role="group" aria-label={`${label}. Drag or use the arrow keys to move; plus and minus zoom; 0 fits the whole map.`}
       onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp} onKeyDown={onKeyDown} onFocus={onFocus}
       onDoubleClick={(e) => { if ((e.target as HTMLElement).closest(".tv-mn, .tv-mv-note")) return; const r = box.current!.getBoundingClientRect(); zoomAt(1.5, e.clientX - r.left, e.clientY - r.top, true); }}
       onClickCapture={(e) => { if (suppress.current) { e.preventDefault(); e.stopPropagation(); suppress.current = false; } }}>

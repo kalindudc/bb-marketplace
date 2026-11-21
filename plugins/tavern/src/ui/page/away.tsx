@@ -11,7 +11,7 @@ import type { Member } from "../../shared/schema";
 import { OpensMark, Vocabulary, plural, readable, useNow } from "../kit";
 import { AwayTime, ClosedWords, characterName, type Registry } from "./common";
 import { PageGlyph } from "./glyphs";
-import { activeQuests, closedWords, roomAway, stoppingQuests, visibleMembers, workingQuests } from "./model";
+import { closedWords, questsIn, roomAway, stoppingQuests, visibleMembers, workingQuests } from "./model";
 import "./away.css";
 
 /*
@@ -108,7 +108,7 @@ function questLine(choice: EndChoice, counts: { members: number; watched: number
 /** Names for ids in server text (a stop's error), from every member the room knows, so no raw thread id reaches the page. */
 export function roomNames(room: Room, registry: Registry) {
   const threadNames = new Map(visibleMembers(room).map((m) => [m.threadId, characterName(registry, m)] as const));
-  const questNames = new Map(activeQuests(room).map((q) => [q.id, q.short || q.title] as const));
+  const questNames = new Map(questsIn(room).map((q) => [q.id, q.short || q.title] as const));
   return { threadNames, questNames };
 }
 /** Server text with every id named: the room's own thread ids first (whatever their form), then the shared namer for the rest. */

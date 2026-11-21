@@ -933,14 +933,19 @@ export class TavernRuntime {
   }
   liveNamedMembers() {
     const store = this.keeper.store;
-    return store.all("members").filter(m => hasLiveName(store, m));
+    return store.all("members").filter(m => hasLiveName(store, m) &&
+      (!(m.role === "keeper" || m.leadLinkId) || this.succession.state.current(m.threadId) === m.threadId));
   }
   private nameReservations() {
     return this.keeper.store.all("hires").filter(i => !i.memberThreadId && !isHireCancelled(this.keeper, i));
   }
-  private nameScope(subject: Pick<Member, "role" | "keeperThreadId">, live = this.liveNamedMembers(), holds?: HireIntent[]) {
+  private nameScope(subject: Pick<Member, "role" | "keeperThreadId" | "leadLinkId">, live = this.liveNamedMembers(), holds?: HireIntent[]) {
+    if (subject.role === "keeper" || subject.leadLinkId) return {
+      members: live.filter(m => isLiveKeeper(this.keeper.store, m, "present")),
+      reserved: (holds ?? this.nameReservations()).filter(i => i.leadLinkId),
+    };
     const members = live.filter(m => subject.role === "member"
-      ? (m.role === "member" && m.keeperThreadId === subject.keeperThreadId) || (m.role === "keeper" && m.threadId === subject.keeperThreadId)
+      ? (m.role === "member" && m.keeperThreadId === subject.keeperThreadId) || (isKeeperIdentity(this.keeper.store, m) && m.threadId === subject.keeperThreadId)
       : m.role === subject.role);
     const reserved = subject.role === "member" ? (holds ?? this.nameReservations()).filter(i => i.owner.keeperThreadId === subject.keeperThreadId) : [];
     return { members, reserved };
@@ -951,8 +956,15 @@ export class TavernRuntime {
       ...scope.reserved.map(i => memberName({ classId: i.classId, characterId: i.characterId, displayName: i.owner.displayName }, this.snapshot(i.projectId))),
     ];
   }
-  async reconcileNames() {
-    const sorted = this.liveNamedMembers().sort((a, b) => Number(b.role === "keeper") - Number(a.role === "keeper") || a.createdAt - b.createdAt || a.threadId.localeCompare(b.threadId));
+  async reconcileNames(returningId?: string) {
+    const store = this.keeper.store;
+    const sorted = this.liveNamedMembers().map(member => ({
+      member,
+      keeper: Number(isKeeperIdentity(store, member)),
+      since: (member.role === "keeper" ? store.runtime(member.threadId).liveSince : undefined) ?? member.createdAt,
+    })).sort((a, b) => b.keeper - a.keeper || a.since - b.since ||
+      Number(a.member.threadId === returningId) - Number(b.member.threadId === returningId) ||
+      a.member.threadId.localeCompare(b.member.threadId)).map(({ member }) => member);
     const order = new Map(sorted.map((m, i) => [m.threadId, i]));
     const holds = this.nameReservations();
     const registries = new Map<string | null, ReturnType<TavernRuntime["snapshot"]>>();
@@ -985,7 +997,7 @@ export class TavernRuntime {
           const thread = await this.bb.sdk.threads.get({ threadId: member.threadId });
           const state = this.keeper.store.runtime(member.threadId);
           const expected = member.role === "keeper" ? state.keeperTitleSet : memberTitle(current, member.title ?? "", registry.classes);
-          if (thread.title && thread.title === expected && thread.title.startsWith(`${current} · `)) {
+          if (thread.archivedAt === null && thread.deletedAt === null && thread.title && thread.title === expected && thread.title.startsWith(`${current} · `)) {
             const title = memberTitle(displayName, thread.title.slice(current.length + 3), registry.classes);
             await this.bb.sdk.threads.update({ threadId: member.threadId, title });
             if (member.role === "keeper") this.keeper.store.patch(member.threadId, { keeperTitleSet: title, keeperTitleReplaced: thread.title });
@@ -1824,13 +1836,10 @@ export class TavernRuntime {
     const ruleModel = modelRule?.classModels?.[role.id];
     const beforeRuleRole = slot?.model ? { ...role, model: slot.model } : role;
     const executionRole = { ...beforeRuleRole, ...ruleModel };
-    const nameScope = { role: "member" as const, keeperThreadId: threadId };
-    const character = this.pickCharacter(
-      role.id,
-      projectId,
-      this.busyCharacters(nameScope),
-      input.characterId ?? slot?.characterId ?? this.detectionCharacter(input.detectionOnlyAskId),
-    );
+    const nameScope = { role: leadHire ? "keeper" as const : "member" as const, keeperThreadId: threadId };
+    const requestedCharacter = input.characterId ?? slot?.characterId ?? this.detectionCharacter(input.detectionOnlyAskId);
+    const selectCharacter = () => this.pickCharacter(role.id, projectId, this.busyCharacters(nameScope), requestedCharacter);
+    let character = leadHire ? null : selectCharacter();
     const checkerPlan = role.id === "warden" && q ? this.keeper.summary(q.id).plan : null;
     const checkedWaypoints = new Set(checkerPlan?.party
       .filter(slot => slot.classId === "warden" && (!slot.characterId || slot.characterId === character?.id))
@@ -1894,6 +1903,10 @@ export class TavernRuntime {
         );
       }
       if (questId) this.keeper.assertQuestNotHeld(questId);
+      if (leadHire) {
+        character = selectCharacter();
+        intent.characterId = character?.id ?? null;
+      }
       owner.displayName = uniqueMemberName(character?.name ?? role.label, this.namesInScope(this.nameScope(nameScope)));
       if (authorization) intent.leadLinkId = reserveLead(this.keeper, this.keeper.owned(threadId, questId!),
         { classId: role.id, waypointId: input.waypointId!, token }, authorization);
@@ -3450,29 +3463,13 @@ export class TavernRuntime {
         await this.scopes.ensure(this.keeper.member(member.threadId)!);
       return;
     }
-    if (type === "thread.unarchived") this.keeper.store.patch(member.threadId, { cellarArchived: false, cellarArchiveRequested: false });
-    this.keeper.store.event(
-      this.keeper.now(),
-      member.keeperThreadId ?? member.threadId,
-      member.boardQuestId,
-      type,
-      `${this.keeper.name(member)} ${type.slice(7)}; actor ${actor.success ? JSON.stringify(actor.data) : "unknown (not supplied by the host)"}`,
-      {
-        memberThreadId: member.threadId,
-        originActor: event.actor ?? null,
-        keeperArchiveRequested:
-          this.keeper.store.runtime(member.threadId).archivePending === true,
-      },
-      actor.success ? actor.data : { kind: "tavern" },
-    );
-    this.keeper.changed(member.threadId, member.boardQuestId);
-    this.updateThread(event.thread, actor.success ? actor.data : { kind: "tavern" });
+    this.updateThread(event.thread, actor.success ? actor.data : { kind: "tavern" }, event.actor);
     if (type !== "thread.unarchived") await this.retryStops(member.threadId);
     if (type === "thread.deleted" && member.role === "keeper") {
       try { await this.taleRenderer?.deleteKeeper(member.threadId); }
       catch (error) { this.bb.log.warn(`Tavern renderer Keeper delete ${member.threadId}: ${String(error)}`); }
     }
-    if (type === "thread.unarchived") {
+    if (type === "thread.unarchived" && isLiveKeeper(this.keeper.store, member, "present")) {
       if (this.scopes) await this.scopes.ensure(this.keeper.member(member.threadId)!);
       this.keeper.reanchor(member.threadId, "thread unarchived");
     }
@@ -3529,6 +3526,36 @@ export class TavernRuntime {
       }
     });
   }
+  private observeKeeperHost(member: Member, archivedAt: number | null, deletedAt: number | null, actor: Actor, originActor?: unknown) {
+    const k = this.keeper, id = member.threadId, before = k.store.runtime(id);
+    if (before.deletedAt != null) return;
+    const goneAt = archivedAt ?? (deletedAt !== null ? before.archivedAt ?? deletedAt : null);
+    const wasArchived = before.archivedAt != null, isArchived = goneAt !== null;
+    const transition = deletedAt !== null ? "thread.deleted"
+      : wasArchived === isArchived ? null : isArchived ? "thread.archived" : "thread.unarchived";
+    if (!transition && before.archivedAt === goneAt &&
+        (goneAt === null || before.heldAt == null && before.typingAt == null && before.userAt == null)) return;
+    const at = k.now();
+    k.store.atomic(() => {
+      k.store.patch(id, { archivedAt: goneAt, deletedAt,
+        ...(transition === "thread.unarchived" ? { liveSince: at } : {}),
+        ...(goneAt === null ? { cellarArchived: false, cellarArchiveRequested: false } :
+          { heldAt: null, typingAt: null, userAt: null, failureCount: 0, tickRefusalCount: 0, tickRetryAt: null, failureAskId: null }),
+      });
+      if (transition) k.store.event(at, id, null, transition, `${k.name(member)} ${transition.slice(7)}`, {
+        memberThreadId: id, originActor: originActor ?? null, keeperArchiveRequested: before.archivePending === true,
+        archivedAt: goneAt, deletedAt,
+      }, actor);
+    });
+    if (transition) {
+      this.reviewCache = null;
+      const quests = k.store.visibleRecords("quests", id);
+      this.bb.rpc.experimental_invalidate([...new Set([
+        ...k.changedTags(id), tags.mapHistory(), ...quests.filter(q => q.deletedAt == null && q.endedAt == null).map(q => tags.boardQuest(q.id)),
+      ])]);
+      if (transition === "thread.unarchived") void this.reconcileNames(id).catch(error => this.bb.log.warn(`Tavern Keeper names: ${String(error)}`));
+    }
+  }
   threadGone(threadId: string) {
     if (new PlacementStore(this.keeper.store.db).byMember(threadId)) this.placements().preserve.observeLoss(threadId, "The member thread was deleted or is missing before controlled release.");
     const member = this.keeper.member(threadId);
@@ -3546,7 +3573,7 @@ export class TavernRuntime {
       this.keeper.changed(threadId, member.boardQuestId);
       return;
     }
-    this.keeper.store.patch(threadId, { deletedAt: host.deletedAt ?? at, archivedAt: host.archivedAt ?? at, heldAt: null, typingAt: null, userAt: null, failureCount: 0, tickRefusalCount: 0, tickRetryAt: null, failureAskId: null });
+    this.observeKeeperHost(member, host.archivedAt, host.deletedAt ?? at, { kind: "tavern" });
     this.recordChainHostLoss(member, host.archivedAt ?? at);
     if (firstDeletion && !this.serviceRecords.dropThreadLinks(threadId)) this.bb.rpc.experimental_invalidate([tags.registry()]);
     if (member.role === "keeper") {
@@ -3603,21 +3630,13 @@ export class TavernRuntime {
       return;
     }
     const firstDeletion = thread.deletedAt !== null && memberHost(this.keeper.store, member).deletedAt === null;
-    this.captureThreadMetadata(thread);
-    const state = this.keeper.store.runtime(thread.id);
+    if (member.role === "keeper" && this.keeper.store.runtime(thread.id).deletedAt != null && thread.deletedAt === null) return;
     const goneAt = thread.archivedAt ?? thread.deletedAt;
     const archived = goneAt !== null;
     if (member.role !== "keeper") {
       this.observeMemberHost(member, { archivedAt: goneAt, deletedAt: thread.deletedAt }, actor, { originActor: originActor ?? null, updatedAt: thread.updatedAt });
-    } else if (state.archivedAt !== goneAt || state.deletedAt !== thread.deletedAt || archived &&
-      (state.heldAt !== null || state.typingAt !== null || state.userAt !== null)) {
-      this.keeper.store.patch(thread.id, {
-        archivedAt: goneAt,
-        deletedAt: thread.deletedAt,
-        ...(archived ? { heldAt: null, typingAt: null, userAt: null, failureCount: 0, tickRefusalCount: 0, tickRetryAt: null, failureAskId: null } : {}),
-      });
-      if (member.role === "keeper" && (state.archivedAt !== goneAt || state.deletedAt !== thread.deletedAt)) this.bb.rpc.experimental_invalidate([tags.mapHistory()]);
-    }
+    } else this.observeKeeperHost(member, thread.archivedAt, thread.deletedAt, actor, originActor);
+    this.captureThreadMetadata(thread);
     if (firstDeletion && !this.serviceRecords.dropThreadLinks(thread.id)) this.bb.rpc.experimental_invalidate([tags.registry()]);
     if (goneAt !== null && (member.role === "keeper" || member.leadLinkId)) this.recordChainHostLoss(member, goneAt);
     if (member.role === "keeper" && archived) {
@@ -3891,7 +3910,6 @@ export class TavernRuntime {
         );
       }
     }
-    await this.maintain("name reconciliation", null, [{ name: "names", run: () => this.reconcileNames() }]);
     await this.maintain("startup Keeper succession", null, [{ name: "recovery", run: () => this.succession.sweep() }]);
     await Promise.all(this.keeper.store.all("members").map(m => {
       let thread: Thread | null = null;
@@ -3908,6 +3926,7 @@ export class TavernRuntime {
         { name: "tick recovery", run: () => !this.succession.state.fence(m.threadId) && isLiveKeeper(this.keeper.store, this.keeper.member(m.threadId), "present") ? this.loop.recover(m.threadId) : undefined },
       ]);
     }));
+    await this.maintain("name reconciliation", null, [{ name: "names", run: () => this.reconcileNames() }]);
     if (this.scopes) {
       await this.scopes.refreshPresets();
       await this.maintain("Scope refresh", null, [{ name: "scopes", run: () => this.scopes?.refreshLiveScopes() }]);

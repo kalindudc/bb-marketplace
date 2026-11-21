@@ -32,7 +32,7 @@ export async function stopKeeperGoneQuests(runtime: TavernRuntime, ids: string[]
       if (!q || q.deletedAt != null || q.archivedAt != null || q.cellarOnStop) return true;
       const member = k.member(q.keeperThreadId);
       return member?.role !== "keeper" || isLiveKeeper(k.store, member, "present") || !(q.phase === "stopping" || isOpenQuest(q));
-    })) throw new Error("The Keeper gone list changed. Review the quests and confirm again.");
+    })) throw new Error("The “Needs a Keeper” list changed. Review the quests and confirm again.");
     const entries = targets.map(target => {
       const q = k.recordStop(target!.id, "Sent to the cellar because the Keeper is gone", authority.act);
       k.store.put("quests", q.id, { ...q, cellarOnStop: id });

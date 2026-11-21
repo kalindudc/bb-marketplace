@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it, vi } from "vitest";
-import { makeMessageDispatchHookContext, makePluginAgentConfigurationContext } from "./host";
+import { makeMessageDispatchHookContext, makePluginAgentConfigurationContext, makeThreadResponse } from "./host";
 import { setup } from "./runtime-fixture";
 import { SettingsStore } from "../../src/server/settings/store";
 import { InsightsReader } from "../../src/server/insights";
@@ -42,6 +42,47 @@ describe("user-started class admission", () => {
     await f.runtime.dispatch(f.ctx);
     const member = f.k.member("new")!;
     expect(member.displayName).toBeTruthy();
+  });
+
+  it("uses each live Keeper character once before deterministically reusing the least occupied character", async () => {
+    const f = fixture();
+    f.k.store.put("members", "lead", { ...f.k.member("lead")!, displayName: "Wren" });
+    const pool = f.runtime.snapshot().classes.find(role => role.id === "keeper")!.characters;
+    const archivedId = pool[1]!;
+    const archived = f.k.bind("old", "keeper", archivedId, "project");
+    f.k.store.patch("old", { archivedAt: f.time() });
+    for (const threadId of ["new", "next", "overflow"]) {
+      expect(await f.runtime.dispatch({ ...f.ctx, thread: { ...f.ctx.thread, id: threadId } })).toEqual({ action: "proceed" });
+    }
+    const names = ["lead", "new", "next", "overflow"].map(id => f.k.member(id)!);
+    expect(names.map(m => m.characterId)).toEqual([...pool, pool[0]]);
+    expect(names[3]!.displayName).toBe("Wren II");
+    expect(f.k.member("old")).toEqual(archived);
+  });
+
+  it.each([0, 1_000])("keeps the live Keeper’s name when an older Keeper returns (%d ms later)", async delay => {
+    const f = fixture();
+    const old = f.k.bind("a-old", "keeper", "wren", "project");
+    f.k.store.put("members", old.threadId, { ...old, createdAt: f.time() - 1_000, displayName: "Wren" });
+    f.k.store.patch(old.threadId, { archivedAt: f.time() });
+    f.advance(delay);
+    await f.runtime.threadLifecycle("thread.unarchived", { thread: makeThreadResponse({ id: old.threadId }) });
+    expect(["lead", old.threadId].map(id => f.k.member(id)?.displayName)).toEqual(["Wren", "Wren II"]);
+    expect(f.k.store.runtime(old.threadId).liveSince).toBe(f.time());
+    f.advance(1_000);
+    await f.runtime.threadLifecycle("thread.unarchived", { thread: makeThreadResponse({ id: old.threadId }) });
+    expect(f.k.store.runtime(old.threadId).liveSince).toBe(f.time() - 1_000);
+  });
+
+  it("repairs live duplicate names at startup without renaming a thread archived while Tavern was offline", async () => {
+    const f = fixture();
+    for (const id of ["lead", "live-other", "old"]) {
+      const member = f.k.member(id) ?? f.k.bind(id, "keeper", "wren", "project");
+      f.k.store.put("members", id, { ...member, displayName: "Wren" });
+    }
+    f.bb.sdk.threads.get = vi.fn(async ({ threadId }) => makeThreadResponse({ id: threadId, archivedAt: threadId === "old" ? f.time() : null }));
+    await f.runtime.reconcile();
+    expect(["lead", "live-other", "old"].map(id => f.k.member(id)?.displayName)).toEqual(["Wren", "Wren II", "Wren"]);
   });
 
   it("does not reconcile subsequent deliberate model changes or recreate a dismissed notice", async () => {

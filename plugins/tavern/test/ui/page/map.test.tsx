@@ -30,12 +30,12 @@ async function map(data: typeof live = live) {
 const list = (slot: RenderedSlot) => slot.getByRole("region", { name: /Everyone on the map/ });
 
 describe("The map's Keepers", () => {
-  it("keeps the standalone list outside map-card containment when no map is drawn", async () => {
+  it("keeps the list outside the map card when the map is empty", async () => {
     const data = structuredClone(live); data.keepers = []; data.asks = []; data.solos = [];
     const slot = await map(data);
-    expect(slot.container.querySelector(".tv-mapcard")).toBeNull();
+    expect(slot.container.querySelector(".tv-mapcard")).not.toBeNull();
     expect(slot.container.querySelector(".tv-maplist")).not.toBeNull();
-    expect(slot.container.querySelector(".tv-mapgrid:not(.narrow) .tv-mapcard + .tv-maplist")).toBeNull();
+    expect(slot.container.querySelector(".tv-mapgrid .tv-mapcard + .tv-maplist")).not.toBeNull();
   });
   it("gives every Keeper node the room's status word, so archived threads never read as listening", () => {
     const nodes = graphFor(live, registry, { hidden: new Set(), returned: true, archived: true }).nodes.filter((n) => n.kind === "keeper");

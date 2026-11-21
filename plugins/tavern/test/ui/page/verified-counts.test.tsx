@@ -1,6 +1,6 @@
 import { definePluginApp } from "@get-bb/plugin-sdk/app";
 import { loadPluginApp, renderSlot, type PluginRpcTestHandlers, type RenderedSlot } from "@get-bb/plugin-sdk/testing/app";
-import { waitFor } from "@testing-library/react";
+import { fireEvent, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { rpcContract, type BoardQuestDetail, type Room } from "../../../src/shared/contract";
 import { FinishedRow } from "../../../src/ui/page/archive";
@@ -91,6 +91,7 @@ describe("a verified count counts only verified waypoints, and names skipped one
   it("on the map's returned label", async () => {
     const room: Room = { ...scenes.richRoom, keepers: scenes.richRoom.keepers.map((k) => ({ ...k, boardQuests: k.boardQuests.map((q) => q.id === "sfe" ? { ...q, waypoints: skipOnly(q.waypoints.length ? q.waypoints : scenes.readmeDetail.quest.waypoints) } : q) })) };
     const slot = await open("map", { room: () => structuredClone(room) });
+    fireEvent.click(await slot.findByRole("button", { name: /^Show finished quests/ }, LOADED));
     const sub = () => [...slot.container.querySelectorAll(".tv-map *")].map((el) => el.textContent ?? "").find((t) => /^Returned · /.test(t)) ?? "";
     await waitFor(() => expect(sub()).toMatch(/^Returned · 1 skipped · /), LOADED);
   });

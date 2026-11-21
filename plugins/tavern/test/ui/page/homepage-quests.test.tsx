@@ -43,6 +43,13 @@ describe("homepage quest rows", () => {
     fireEvent.click(name);
     expect(slot.inspection.navigateCalls).toContainEqual({ method: "toPluginPanel", path: "tavern", options: { subPath: `quest/${greenlight.id}` } });
   });
+  it("excludes quests with unavailable Keepers from the board and its count", async () => {
+    const slot = await homepage({ ...room, keepers: room.keepers.map(k => ({ ...k, archived: k.member.threadId === greenlight.keeperThreadId })) });
+    await slot.findByText(quiet.short);
+    expect(slot.queryByText(greenlight.short)).toBeNull();
+    const visible = room.keepers.filter(k => k.member.threadId !== greenlight.keeperThreadId).flatMap(k => k.boardQuests);
+    expect(slot.getByText(`${visible.length} ${visible.length === 1 ? "quest" : "quests"}`)).toBeTruthy();
+  });
   it("counts an open greenlight and sorts attention first, then newest first", async () => {
     const slot = await homepage();
     await slot.findByText(greenlight.short);

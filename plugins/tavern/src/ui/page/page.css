@@ -375,6 +375,7 @@
 .tavern.tv-page .tv-mv-layer.animate { transition: transform 180ms var(--tavern-ease, ease-out); }
 .tavern.tv-page .tv-mv-hint { color: var(--tv-text-2); }
 .tavern.tv-page .tv-mv-note { position: absolute; left: 12px; bottom: 12px; right: 12px; z-index: 1; pointer-events: none; }
+.tavern.tv-page .tv-mv-box[data-empty-map] .tv-mv-note { top: 12px; bottom: auto; }
 .tavern.tv-page .tv-mv-note .tv-map-quiet { margin: 0; pointer-events: auto; cursor: auto; user-select: text; }
 .tavern.tv-page .tv-maprows-fold { padding: 2px 8px 4px; }
 .tavern.tv-page .tv-mn.tall .tv-mn-t > span { white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
@@ -1133,9 +1134,9 @@
   .tavern.tv-page .tv-set-table td { border: 0; padding: 0; }
 }
 
-/* The map's filters: the Returned toggle, the Quests picker (unfolds in place, never an overlay) and Clear filters. */
 .tavern.tv-page .tv-mapfilters { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 14px; min-width: 0; }
 .tavern.tv-page .tv-mapfilters .lnk-btn .num { color: var(--tv-text-2); font-weight: 400; }
+.tavern.tv-page .tv-mapfilters .seg { max-width: 100%; flex-wrap: wrap; white-space: normal; }
 .tavern.tv-page .tv-nowrap { white-space: nowrap; }
 .tavern.tv-page .tv-clear { display: inline-flex; align-items: center; min-height: 24px; }
 .tavern.tv-page .tv-mapfilters-n { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; font-size: 12px; color: var(--tv-text-2); }
@@ -1153,7 +1154,7 @@
 .tavern.tv-page .tv-mappick-r .lnk-btn { flex: none; color: var(--tv-text-2); font-weight: 500; opacity: 0; }
 .tavern.tv-page .tv-mappick-r:hover .lnk-btn, .tavern.tv-page .tv-mappick-r:focus-within .lnk-btn { opacity: 1; }
 @media (pointer: coarse), (max-width: 560px) {
-  .tavern.tv-page .tv-mappick-r, .tavern.tv-page .tv-mappick-r label, .tavern.tv-page .tv-mapfilters .lnk-btn, .tavern.tv-page .tv-clear { min-height: 44px; }
+  .tavern.tv-page .tv-mappick-r, .tavern.tv-page .tv-mappick-r label, .tavern.tv-page .tv-mapfilters :is(.lnk-btn, .seg), .tavern.tv-page .tv-clear { min-height: 44px; }
   .tavern.tv-page .tv-mappick-r .lnk-btn { opacity: 1; min-height: 44px; }
   .tavern.tv-page .tv-mappick { grid-template-columns: minmax(0, 1fr); }
 }

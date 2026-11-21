@@ -31,7 +31,7 @@ it("every surface reads the same four need-you items", async () => {
   expect(ledger.attention?.items.map(item => item.kind).sort()).toEqual(["ask", "hand-back", "hold", "rule"]);
 });
 
-it.each(["archivedAt", "deletedAt"] as const)("adds identity and scope for a Keeper with %s without changing who needs the user", async goneAt => {
+it.each(["archivedAt", "deletedAt"] as const)("adds identity and scope for a Keeper with %s without counting a quest hold as active attention", async goneAt => {
   const f = await fixture();
   const keeper = f.k.member("lead")!;
   f.k.store.put("members", "lead", { ...keeper, displayName: "Wren" });
@@ -40,7 +40,7 @@ it.each(["archivedAt", "deletedAt"] as const)("adds identity and scope for a Kee
   const room = await f.rpc.room({});
   expect(room.keepers.find(keeper => keeper.member.threadId === "lead")?.archived).toBe(true);
   const list = room.attention!;
-  expect(list).toMatchObject({ needYou: 5, heldByYou: 0, counts: { ask: 0, hold: 0, "hand-back": 0, rule: 0, stopped: 5 } });
+  expect(list).toMatchObject({ needYou: 4, heldByYou: 0, counts: { ask: 0, hold: 0, "hand-back": 0, rule: 0, stopped: 4 } });
   expect(list.items.find(item => item.id === keeperRule.id)).toMatchObject({ who: { state: "archived", startedAt: 123 }, scope: { kind: "keeper", label: "Wren" } });
   expect(list.items.find(item => item.kind === "rule" && item.questId)).toMatchObject({ who: { state: "archived", questTitle: "Attention" }, scope: { kind: "quest", label: "Attention" } });
   expect(list.items.find(item => item.kind === "hand-back")).toMatchObject({ need: "Please approve access." });

@@ -1,7 +1,7 @@
 import { definePluginApp } from "@get-bb/plugin-sdk/app";
 import { loadPluginApp, type PluginRpcTestHandlers, type RenderedSlot } from "@get-bb/plugin-sdk/testing/app";
 import { renderAttentionSlot as renderSlot } from "../attention-fixture";
-import { act, waitFor } from "@testing-library/react";
+import { act, fireEvent, waitFor } from "@testing-library/react";
 import { createElement, type ComponentType } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { rpcContract, type Room } from "../../../src/shared/contract";
@@ -140,6 +140,7 @@ describe("texts that read the clock keep time on their own", () => {
     fake();
     const room: Room = { ...scenes.richRoom, keepers: scenes.richRoom.keepers.map((k) => ({ ...k, boardQuests: k.boardQuests.map((q) => q.id === "sfe" ? { ...q, endedAt: T - 12 * 60_000, updatedAt: T - 12 * 60_000 } : q) })) };
     const { slot, calls } = await open("map", () => room);
+    fireEvent.click(await slot.findByRole("button", { name: /^Show finished quests/ }, LOADED));
     const sub = () => [...slot.container.querySelectorAll(".tv-map *")].map((el) => el.textContent ?? "").find((t) => /^Returned · .*ago$/.test(t)) ?? "";
     await waitFor(() => expect(sub()).toMatch(/ · 12m ago$/), LOADED);
     await act(async () => { await new Promise((r) => setTimeout(r, 120)); });

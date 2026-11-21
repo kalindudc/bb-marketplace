@@ -97,6 +97,7 @@ export class AttentionSnapshot {
     const releases = new Set(this.asks.flatMap(ask => ask.effect?.type === "release-hold" ? [ask.effect.holdId] : ask.releaseHoldId ? [ask.releaseHoldId] : []));
     for (const ask of this.asks) add({ id: ask.id, kind: "ask", questId: ask.boardQuestId, keeperThreadId: ask.keeperThreadId, title: ask.question, action: "Answer", since: ask.createdAt });
     for (const q of quests) {
+      if (keeper(q.keeperThreadId)?.state === "archived") continue;
       const hold = q.checkerHandoffHold;
       if (hold && !hold.release && !releases.has(hold.id)) add({ id: hold.id, kind: "hold", questId: q.id, keeperThreadId: q.keeperThreadId, title: hold.reason, action: "Review", since: hold.createdAt });
       if (q.phase === "held") add({ id: q.id, kind: "held", questId: q.id, keeperThreadId: q.keeperThreadId, title: q.title, action: "Resume", since: q.held!.since });

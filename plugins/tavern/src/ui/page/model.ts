@@ -46,10 +46,15 @@ export function levelFromWins(wins: number): number {
 /** Wins into the current level, out of the eight a level takes. */
 export const winsToNext = (wins: number) => ({ into: wins % 8, of: 8 });
 export const questsIn = (room: Room) => room.keepers.flatMap((k) => k.boardQuests);
-export const activeQuests = (room: Room) => questsIn(room).filter((q) => !isFinished(q.phase));
-/** Live quests that still take new work. A stopping quest is live (on the board, never archivable) but takes none. */
+export function boardQuestState(keeper: Room["keepers"][number], quest: BoardQuestSummary) {
+  if (quest.archivedAt != null || quest.deletedAt != null) return "off-board";
+  if (isFinished(quest.phase)) return "finished";
+  return keeper.archived ? "needs-keeper" : "active";
+}
+export const activeQuests = (room: Room) => room.keepers.flatMap(k => k.boardQuests.filter(q => boardQuestState(k, q) === "active"));
 export const workingQuests = (room: Room) => activeQuests(room).filter((q) => q.phase !== "stopping");
-export const stoppingQuests = (room: Room) => activeQuests(room).filter((q) => q.phase === "stopping");
+/** A stop keeps running even if the Keeper is no longer present. */
+export const stoppingQuests = (room: Room) => questsIn(room).filter(q => q.phase === "stopping" && q.archivedAt == null && q.deletedAt == null);
 export const returnedQuests = (room: Room) => questsIn(room).filter((q) => q.phase === "done").sort((a, b) => (b.endedAt ?? b.updatedAt) - (a.endedAt ?? a.updatedAt));
 export function visibleMembers(room: Room): Member[] {
   return [...new Map([...room.keepers.flatMap((k) => [k.member, ...k.boardQuests.flatMap((q) => q.members), ...k.errands]), ...room.solos].map((m) => [m.threadId, m])).values()];
@@ -105,7 +110,7 @@ export function namedDetail(detail: string | null, questId: string | null, ctx: 
 
 /** One event as a line a person reads: who, what happened, and a detail with its ids named (or dropped). */
 /** Quests in the room whose checker-handoff hold waits on the user: the kit's rule (heldQuests) over the room's quests. */
-export const heldForYou = (room: Room) => heldQuests(questsIn(room), room.asks);
+export const heldForYou = (room: Room) => heldQuests(activeQuests(room), room.asks);
 /** What waits on the user in the common room: open asks and checker-handoff holds to release. */
 export const needYouCount = (room: Pick<Room, "attention">) => attentionView(room.attention).needYou;
 /** bb's Tavern badge label: the nouns follow their own counts, the verb follows the total. */
@@ -265,15 +270,13 @@ export function foldRuns(lines: EventLine[]): EventLine[] {
 // ---------- The map: who connects to whom ----------
 
 export type MapNode = { id: string; label: string; detail: string; layer: number; subPath?: string; threadId?: string; classId?: string; kind: "keeper" | "quest" | "returned" | "more" | "errand" | "member" | "ask" | "gate" | "outside" | "solo"; quiet?: boolean; loading?: boolean; questId?: string; member?: Member; ask?: Ask; quest?: BoardQuestSummary };
-/** Archived history is opt-in; live Keepers' cellar quests remain off the map. */
-export type MapFilter = { hidden: ReadonlySet<string>; returned: boolean; archived?: boolean; history?: MapHistory };
+export type MapFilter = { hidden: ReadonlySet<string>; returned: boolean; archived?: boolean; history?: MapHistory; cellar?: readonly BoardQuestSummary[]; only?: string | null };
 export const NO_MAP_FILTER: MapFilter = { hidden: new Set(), returned: true };
 /** Every quest the map can draw, active first, then returned and stopped ones, newest first: the Quests picker's list. */
 export function mapQuests(room: Room) {
   return room.keepers.map((keeper) => {
-    const live = keeper.boardQuests.filter((q) => !q.archivedAt);
-    const done = live.filter((q) => isFinished(q.phase)).sort((a, b) => (b.endedAt ?? b.updatedAt) - (a.endedAt ?? a.updatedAt));
-    return { keeper: keeper.member, active: live.filter((q) => !isFinished(q.phase)), done };
+    const done = keeper.boardQuests.filter(q => boardQuestState(keeper, q) === "finished").sort((a, b) => (b.endedAt ?? b.updatedAt) - (a.endedAt ?? a.updatedAt));
+    return { keeper: keeper.member, active: keeper.boardQuests.filter(q => boardQuestState(keeper, q) === "active"), done };
   });
 }
 /** The map's nodes and roads. Members are named with the shared member name, so one with no character shows its class, never an id. */
@@ -282,13 +285,29 @@ export function graphFor(room: Room, registry: Parameters<typeof memberName>[1],
   const nodes = new Map<string, MapNode>();
   const edges: [string, string][] = [];
   const add = (node: MapNode, parent?: string) => { nodes.set(node.id, node); if (parent) edges.push([parent, node.id]); };
+  const addFinished = (quest: BoardQuestSummary, parent?: string) => {
+    const q = `returned:${quest.id}`;
+    add({ id: q, kind: "returned", label: quest.short, detail: phaseWord(quest.phase), layer: 1, subPath: quest.phase === "done" ? `tale/${quest.id}` : `quest/${quest.id}`, questId: quest.id, quest, quiet: true }, parent);
+    for (const member of quest.members) add({ id: `member:${quest.id}:${member.threadId}`, kind: "member", label: name(member), detail: memberActivityWord(member, true), classId: member.classId, layer: 2, threadId: member.threadId, questId: quest.id, member, quiet: true }, q);
+  };
+  const visible = (q: Pick<BoardQuestSummary, "id">) => !filter.hidden.has(q.id) && (!filter.only || q.id === filter.only);
+  const cellar = new Map<string, BoardQuestSummary[]>();
+  if (filter.returned) for (const q of filter.cellar ?? []) {
+    if (!isFinished(q.phase) || q.deletedAt != null || !visible(q)) continue;
+    const list = cellar.get(q.keeperThreadId) ?? [];
+    list.push(q);
+    cellar.set(q.keeperThreadId, list);
+  }
+  const historyByKeeper = new Map(filter.history?.keepers.map(h => [h.threadId, h]));
   for (const keeper of room.keepers) {
-    if (keeper.archived && !filter.archived) continue;
-    const k = `keeper:${keeper.member.threadId}`;
-    add({ id: k, kind: "keeper", label: name(keeper.member), detail: keeperStatus(keeper).word, classId: keeper.member.classId, layer: 0, threadId: keeper.member.threadId, member: keeper.member, quiet: keeper.archived, loading: keeper.archived && !filter.history });
-    if (keeper.archived && !filter.history) continue;
-    const drawn = (q: BoardQuestSummary) => !q.archivedAt && !filter.hidden.has(q.id);
-    for (const quest of keeper.boardQuests.filter((q) => !keeper.archived && !isFinished(q.phase) && drawn(q))) {
+    const id = keeper.member.threadId, k = `keeper:${id}`;
+    const finished = filter.returned ? keeper.boardQuests.filter(q => boardQuestState(keeper, q) === "finished" && visible(q)) : [];
+    const archived = cellar.get(id) ?? [];
+    cellar.delete(id);
+    const history = keeper.archived && filter.archived ? historyByKeeper.get(id) : undefined;
+    if (keeper.archived && !filter.archived && !finished.length && !archived.length) continue;
+    add({ id: k, kind: "keeper", label: name(keeper.member), detail: keeperStatus(keeper).word, classId: keeper.member.classId, layer: 0, threadId: id, member: keeper.member, quiet: keeper.archived, loading: keeper.archived && filter.archived && !filter.history });
+    for (const quest of keeper.boardQuests.filter(q => boardQuestState(keeper, q) === "active" && visible(q))) {
       const q = `quest:${quest.id}`;
       add({ id: q, kind: "quest", label: quest.title, detail: `${quest.phase} · ${quest.move.text}`, layer: 1, subPath: `quest/${quest.id}`, questId: quest.id, quest }, k);
       for (const member of quest.members) add({ id: `member:${member.threadId}`, kind: "member", label: name(member), detail: memberActivityWord(member, isFinished(quest.phase)), classId: member.classId, layer: 2, threadId: member.threadId, questId: quest.id, member }, q);
@@ -301,20 +320,19 @@ export function graphFor(room: Room, registry: Parameters<typeof memberName>[1],
         add({ id: `outside:${quest.id}:${waypoint.id}`, kind: "outside", label: waypoint.owner ?? "Outside owner not named", detail: `${waypoint.title} · ${waypoint.leadTime ?? "lead time unknown"}`, layer: 3, subPath: `quest/${quest.id}`, questId: quest.id }, parent);
       }
     }
-    const history = keeper.archived ? filter.history?.keepers.find(h => h.threadId === keeper.member.threadId) : undefined;
-    const past = history ? history.quests.map(q => ({ ...q, plan: null, waypoints: [], openAsks: 0, move: { who: "nobody" as const, text: "" } })) : keeper.archived ? [] : keeper.boardQuests;
-    const ordered = past.filter(q => keeper.archived || (isFinished(q.phase) && drawn(q))).sort((a, b) => (b.endedAt ?? b.updatedAt) - (a.endedAt ?? a.updatedAt));
-    const returned = keeper.archived ? ordered.slice(0, 5).filter(q => !filter.hidden.has(q.id)) : filter.returned ? ordered : [];
-    for (const quest of returned) {
-      const q = `returned:${quest.id}`;
-      add({ id: q, kind: "returned", label: quest.short, detail: phaseWord(quest.phase), layer: 1, subPath: quest.phase === "done" ? `tale/${quest.id}` : `quest/${quest.id}`, questId: quest.id, quest, quiet: true }, k);
-      for (const member of quest.members) add({ id: `member:${quest.id}:${member.threadId}`, kind: "member", label: name(member), detail: memberActivityWord(member, isFinished(quest.phase)), classId: member.classId, layer: 2, threadId: member.threadId, questId: quest.id, member, quiet: true }, q);
-    }
-    const more = keeper.archived ? (history?.total ?? ordered.length) - Math.min(5, ordered.length) : 0;
-    if (more > 0) add({ id: `more:${keeper.member.threadId}`, kind: "more", label: `+${more} more`, detail: "Quests in the cellar", layer: 1, subPath: "archive", quiet: true }, k);
+    const past = history?.quests.filter(q => isFinished(q.phase) && visible(q))
+      .map(q => ({ ...q, plan: null, waypoints: [], openAsks: 0, move: { who: "nobody" as const, text: "" } })) ?? [];
+    const returned = [...new Map([...past, ...finished, ...archived].map(q => [q.id, q])).values()]
+      .sort((a, b) => (b.endedAt ?? b.updatedAt) - (a.endedAt ?? a.updatedAt));
+    for (const quest of returned) addFinished(quest, k);
+    const known = new Set([...(history?.quests ?? []), ...returned].map(q => q.id));
+    const more = (history?.total ?? 0) - known.size;
+    if (more > 0 && !filter.only) add({ id: `more:${id}`, kind: "more", label: `+${more} more`, detail: "Quests in the cellar", layer: 1, subPath: "archive", quiet: true }, k);
+    if (keeper.archived) continue;
     for (const member of keeper.errands.filter((m) => !hasEndedEngagement(m))) add({ id: `member:${member.threadId}`, kind: "errand", label: name(member), detail: `Side quest (errand) · ${memberActivityWord(member)}`, classId: member.classId, layer: 1, threadId: member.threadId, member }, k);
     for (const ask of room.asks.filter((a) => a.keeperThreadId === keeper.member.threadId && a.boardQuestId === null && a.state === "open")) add({ id: `ask:${ask.id}`, kind: "ask", label: ask.question, detail: `Needs you · ${ask.kind}`, layer: 2, threadId: keeper.member.threadId, ask }, k);
   }
+  for (const quests of cellar.values()) for (const quest of quests) addFinished(quest);
   for (const solo of room.solos) add({ id: `solo:${solo.threadId}`, kind: "solo", label: name(solo), detail: `Solo · ${solo.state}`, classId: solo.classId, layer: 0, threadId: solo.threadId, member: solo });
   return { nodes: [...nodes.values()], edges };
 }
@@ -359,6 +377,11 @@ export function mapPicture(graph: ReturnType<typeof graphFor>, focusQuestId: str
     if (blocked.length) { const id = `blocked:${parentId}`; place({ id, col: 2, kind: "blocked", label: "You · blocked", sub: blocked[0]!.question, asks: blocked, questId, hot }, []); out.push(id); }
     return out;
   };
+  const placeFinished = (r: MapNode) => {
+    place({ id: r.id, col: 1, kind: r.kind === "more" ? "more" : "returned", node: r, label: r.label, sub: r.detail, questId: r.questId, hot: false, quiet: true },
+      (children.get(r.id) ?? []).map(id => () => leafOrSubtree(id, false)));
+    return [r.id];
+  };
   for (const keeper of graph.nodes.filter((n) => n.kind === "keeper")) {
     const kids = children.get(keeper.id) ?? [];
     const quests = kids.map((id) => byId.get(id)!).filter((n) => n.kind === "quest");
@@ -377,11 +400,13 @@ export function mapPicture(graph: ReturnType<typeof graphFor>, focusQuestId: str
         return [q.id];
       }),
       ...errands.map((e) => () => { place({ id: e.id, col: 1, kind: "errand", node: e, label: e.label, sub: e.detail, hot: false }, []); return [e.id]; }),
-      ...kids.map((id) => byId.get(id)!).filter((n) => n.kind === "returned" || n.kind === "more").map((r) => () => { place({ id: r.id, col: 1, kind: r.kind === "more" ? "more" : "returned", node: r, label: r.label, sub: r.detail, questId: r.questId, hot: false, quiet: true }, (children.get(r.id) ?? []).map(id => () => leafOrSubtree(id, false))); return [r.id]; }),
+      ...kids.map(id => byId.get(id)!).filter(n => n.kind === "returned" || n.kind === "more").map(r => () => placeFinished(r)),
       () => asksNode(keeper.id, wideAsks, false),
     ]);
     row += 0.35;
   }
+  const linked = new Set(graph.edges.map(([, to]) => to));
+  for (const n of graph.nodes) if (n.kind === "returned" && !linked.has(n.id)) placeFinished(n);
   const solos = graph.nodes.filter((n) => n.kind === "solo");
   if (solos.length && row > 0) row += 0.25;
   for (const solo of solos) place({ id: solo.id, col: 0, kind: "solo", node: solo, label: solo.label, sub: solo.detail, hot: false }, []);

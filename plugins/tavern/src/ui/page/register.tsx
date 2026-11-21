@@ -11,7 +11,7 @@ import { Ago, CrestOf, Empty, PageButton, PhaseMark, ReadState, type Registry, p
 import { TheMap } from "./connections";
 import { MobileQuestOptions, QuestNav, mobileQuestPaths } from "./nav";
 import { PageGlyph, type PageGlyphName } from "./glyphs";
-import { badgeLabel, decodePageRoute, heldForYou, isFinished, needYouCount, openAskCount, questsIn, restoreVerdict, roomAway, type PageRoute } from "./model";
+import { boardQuestState, decodePageRoute, isFinished, needYouCount, questsIn, restoreVerdict, roomAway, type PageRoute } from "./model";
 import { QuestAwayNotes } from "./away";
 import { MapSkeleton, PageLoad, QuestSkeleton, RoomSkeleton, RouteSkeleton, SKEL, SideNavSkeleton, StartCardsSkeleton, TaleSkeleton, FoldLoad, useRememberSideNav, useRememberShape } from "./skeletons";
 import { PanelStateProvider, panelStorageKey, readPanel, rememberPath, useRestoreScroll } from "./panel-state";
@@ -262,7 +262,7 @@ export function TavernHomepage(_props: PluginHomepageSectionProps) {
   const registry = useRegistry();
   const room = experimental_useRpcQuery({ contract: rpcContract, method: "room", input: {} });
   const data = room.data;
-  const quests = data ? data.keepers.flatMap(keeper => keeper.boardQuests.filter(quest => !isFinished(quest.phase)).map(quest => ({ quest, keeper }))).sort((a, b) => Number(questNeedYouCount(b.quest, data.asks) > 0) - Number(questNeedYouCount(a.quest, data.asks) > 0) || b.quest.updatedAt - a.quest.updatedAt) : [];
+  const quests = data ? data.keepers.flatMap(keeper => keeper.boardQuests.filter(quest => boardQuestState(keeper, quest) === "active").map(quest => ({ quest, keeper }))).sort((a, b) => Number(questNeedYouCount(b.quest, data.asks) > 0) - Number(questNeedYouCount(a.quest, data.asks) > 0) || b.quest.updatedAt - a.quest.updatedAt) : [];
   return <section className="tavern tv-page tv-homepage" aria-label="Tavern">
     <header className="tv-colh"><h2>Start with a class <span className="anc">thread type</span></h2><span className="tv-colh-aside">your draft stays here until you send</span><span className="tv-sp" /><PageButton path="room" className="ghost sm" glyph="home">{room.data ? `${needYouCount(room.data)} need you` : "The common room"}</PageButton></header>
     {registry.data ? <ClassStartCards registry={registry.data} /> : <FoldLoad error={registry.error} retry={registry.refetch} label="the classes"><StartCardsSkeleton /></FoldLoad>}

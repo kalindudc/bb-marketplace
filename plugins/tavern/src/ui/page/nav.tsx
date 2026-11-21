@@ -50,7 +50,7 @@ export function QuestNav({ room, registry, route }: { room: Room; registry: Regi
         </div>;
       })
       : active.map((q) => activeRow(q, true))}
-    {!active.length && <p className="tv-empty tv-snone" data-empty>{done.length ? "No active quests right now" : "No quests yet"}</p>}
+    {!active.length && <p className="tv-empty tv-snone" data-empty>{room.keepers.some(k => k.boardQuests.length > 0) ? "No active quests right now" : "No quests yet"}</p>}
     {done.length > 0 && <>
       <button type="button" className="tv-sfold act" aria-expanded={open} onClick={() => setOpen(!open)} aria-label={`${endedCounts(done).heading}: ${endedCounts(done).words}`} title={endedCounts(done).words}>
         <ExpandsMark open={open} /><span>{endedCounts(done).heading}</span><span className="tv-snav-c">{done.length}</span>

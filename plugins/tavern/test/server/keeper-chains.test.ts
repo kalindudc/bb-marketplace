@@ -58,6 +58,26 @@ it("uses the parent environment, accounts for the seat, and opens just one verif
   await expect(f.runtime.hire("lead", "project", request(f.q.id))).rejects.toThrow(/already|allocates/);
 });
 
+it("uses the global Keeper roster for an automatically assigned child lead", async () => {
+  const f = await fixture();
+  f.k.bind("other-keeper", "keeper", "moss", "project");
+  const child = await f.runtime.hire("lead", "project", request(f.q.id));
+  expect(child.characterId).toBe("ada");
+});
+
+it("does not rename a live child lead when an older Keeper returns with the same name", async () => {
+  const f = await fixture();
+  const old = f.k.bind("old", "keeper", "moss", "project");
+  f.k.store.put("members", old.threadId, { ...old, createdAt: f.time() - 1_000, displayName: "Moss" });
+  f.k.store.patch(old.threadId, { archivedAt: f.time() });
+  f.advance(1_000);
+  const child = await f.runtime.hire("lead", "project", request(f.q.id));
+  expect(child.displayName).toBe("Moss");
+  f.advance(1_000);
+  await f.runtime.threadLifecycle("thread.unarchived", { thread: makeThreadResponse({ id: old.threadId }) });
+  expect([child.threadId, old.threadId].map(id => f.k.member(id)?.displayName)).toEqual(["Moss", "Moss II"]);
+});
+
 it("refuses an unapproved, unallocated, or unnamed lead without spawning", async () => {
   const f = setup();
   const q = await seedQuest(f.k, "lead", "No lead authorized", "None");

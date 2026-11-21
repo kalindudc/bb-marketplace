@@ -8,7 +8,7 @@ import type { CellarStopReceipt } from "../../shared/stop-all";
 import type { ArchiveApi } from "./archive";
 import { CrestOf, Faces, StateMark, characterName, classLabel, type Registry } from "./common";
 import { PageGlyph } from "./glyphs";
-import { isFinished, questMove } from "./model";
+import { boardQuestState, isFinished, questMove } from "./model";
 import { usePanelState } from "./panel-state";
 import { SKEL } from "./skeletons";
 import { jumpTo } from "./rail";
@@ -20,18 +20,18 @@ import { RefreshKeeper } from "../kit/succession";
 type K = Room["keepers"][number];
 const names = (registry: Registry, keeper: Member) => ({ keeper: characterName(registry, keeper), member: (m: Member) => characterName(registry, m) });
 /** A Keeper's quests still in the room: not in the cellar, and not just sent there (the receipt's Undo can bring them back). */
-export const inRoom = (k: K, api: Pick<ArchiveApi, "hidden">) => k.boardQuests.filter((q) => !q.archivedAt && !api.hidden.has(q.id));
+export const inRoom = (k: K, api: Pick<ArchiveApi, "hidden">) => k.boardQuests.filter(q => boardQuestState(k, q) !== "off-board" && !api.hidden.has(q.id));
 export const needsYou = (_room: Room, k: K) => attentionView(k.attention).needYou > 0;
 const unseenDecided = (_room: Room, k: K) => attentionView(k.attention).decided ?? attentionView(k.attention).new;
 
 export function sortKeepers(room: Room, api: Pick<ArchiveApi, "hidden">) {
-  const open = (keeper: K) => inRoom(keeper, api).filter(quest => !isFinished(quest.phase));
+  const open = (keeper: K) => inRoom(keeper, api).filter(quest => boardQuestState(keeper, quest) === "active");
   const active = room.keepers.filter(keeper => !keeper.archived && (open(keeper).length > 0 || needsYou(room, keeper)));
   const rank = (keeper: K) => needsYou(room, keeper) ? 0 : open(keeper).some(quest => quest.members.some(member => member.state === "failed")) ? 1 : 2;
   const latest = (keeper: K) => Math.max(0, ...open(keeper).map(quest => quest.updatedAt));
   return {
     notices: active.sort((a, b) => rank(a) - rank(b) || latest(b) - latest(a)),
-    idle: room.keepers.filter(keeper => !active.includes(keeper) && open(keeper).length === 0),
+    idle: room.keepers.filter(keeper => !active.includes(keeper) && inRoom(keeper, api).every(q => boardQuestState(keeper, q) === "finished")),
   };
 }
 
@@ -40,7 +40,7 @@ export function litKeeper(room: Room, notices: K[]) {
   const awake = notices.filter((k) => k.quietSince == null && !k.archived);
   const waiting = awake.find((k) => needsYou(room, k));
   if (waiting) return waiting.member.threadId;
-  const working = (k: K) => k.boardQuests.flatMap((q) => isFinished(q.phase) ? [] : q.members).filter((m) => m.state === "working").length;
+  const working = (k: K) => k.boardQuests.flatMap(q => boardQuestState(k, q) === "active" ? q.members : []).filter((m) => m.state === "working").length;
   const busiest = [...awake].sort((a, b) => working(b) - working(a))[0];
   return busiest && working(busiest) > 0 ? busiest.member.threadId : null;
 }
@@ -68,7 +68,7 @@ export function KeeperNotice({ keeper, room, registry, api, lit, since }: { keep
   const title = keeper.threadTitle ?? null;
   const all = inRoom(keeper, api);
   const order = (q: BoardQuestSummary) => { const t = questMove(q, room.asks, names(registry, keeper.member), { now: day }).tone; return t === "you" ? 0 : t === "bad" ? 1 : 2; };
-  const active = all.filter((q) => !isFinished(q.phase)).sort((a, b) => order(a) - order(b) || b.updatedAt - a.updatedAt);
+  const active = all.filter(q => boardQuestState(keeper, q) === "active").sort((a, b) => order(a) - order(b) || b.updatedAt - a.updatedAt);
   const [moreA, setMoreA] = usePanelState(`room.notice.${id}.active`, false);
   const party = [...new Map(active.flatMap((q) => q.members).map((m) => [m.threadId, m])).values()];
   const failed = party.filter((m) => m.state === "failed").length;
@@ -161,8 +161,8 @@ export function Board({ room, registry, api, since }: { room: Room; registry: Re
   const [receipt, setReceipt] = useState<CellarStopReceipt | null>(null);
   const rows = room.keepers.flatMap(keeper => inRoom(keeper, api).map(quest => ({ keeper, quest })));
   const cellared = new Set(receipt?.entries.filter(entry => entry.state === "cellared").map(entry => entry.questId));
-  const gone = rows.filter(({ keeper, quest }) => keeper.archived && !isFinished(quest.phase) && !cellared.has(quest.id));
-  const returned = rows.filter(({ quest }) => isFinished(quest.phase))
+  const gone = rows.filter(({ keeper, quest }) => boardQuestState(keeper, quest) === "needs-keeper" && !cellared.has(quest.id));
+  const returned = rows.filter(({ keeper, quest }) => boardQuestState(keeper, quest) === "finished")
     .sort((a, b) => (b.quest.endedAt ?? b.quest.updatedAt) - (a.quest.endedAt ?? a.quest.updatedAt));
   const stillStopping = new Set(receipt?.entries.filter(entry => entry.state === "stopping" && rows.some(({ quest }) => quest.id === entry.questId && !isFinished(quest.phase))).map(entry => entry.questId));
   const ready = gone.filter(({ quest }) => !quest.cellarOnStop && !stillStopping.has(quest.id));
@@ -177,7 +177,8 @@ export function Board({ room, registry, api, since }: { room: Room; registry: Re
       {notices.map(keeper => <KeeperNotice key={keeper.member.threadId} keeper={keeper} room={room} registry={registry} api={api} lit={keeper.member.threadId === lit} since={since} />)}
     </div>}
     {receipt && <CellarStopReceiptView receipt={receipt} stillStopping={stillStopping} />}
-    {gone.length > 0 && <RoomFold name="gone" label="Keeper gone" count={gone.length}>
+    {gone.length > 0 && <RoomFold name="gone" label="Needs a Keeper" count={gone.length}>
+      <p className="m small">These quests are off the active board because their Keeper’s thread is archived or deleted. Unarchive the Keeper’s thread to bring its quests back, or stop them here.</p>
       {gone.map(({ keeper, quest }) => <FoldQuest key={quest.id} {...{ keeper, quest, room, registry, api }} waiting={!!quest.cellarOnStop || stillStopping.has(quest.id)} />)}
       {ready.length > 0 && <StopKeeperGone ids={ready.map(({ quest }) => quest.id)} onReceipt={setReceipt} />}
     </RoomFold>}

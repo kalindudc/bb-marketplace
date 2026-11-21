@@ -49,7 +49,7 @@ describe("a quest whose Keeper's thread is archived", () => {
   it("reads as archived in Keeper gone, with the pause mark and the phase and path left as they are", async () => {
     const room: Room = { ...scenes.richRoom, keepers: [{ ...scenes.richRoom.keepers[0]!, archived: true }, scenes.richRoom.keepers[1]!], asks: [] };
     const slot = await open("room", room);
-    const fold = await slot.findByRole("button", { name: /^Keeper gone \d+$/ });
+    const fold = await slot.findByRole("button", { name: /^Needs a Keeper \d+$/ });
     expect(fold.getAttribute("aria-expanded")).toBe("false");
     expect(slot.queryByRole("article", { name: /^Wren\b.*Keeper$/ })).toBeNull();
     fireEvent.click(fold);

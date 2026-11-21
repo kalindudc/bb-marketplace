@@ -5,6 +5,7 @@ import { roomSchema, type Room } from "../../src/shared/contract";
 import { registerRpc } from "../../src/server/rpc";
 import { KeeperStore } from "../../src/server/keeper/store";
 import { makeThreadResponse } from "./host";
+import { seedQuest } from "./support";
 import { setup } from "./runtime-fixture";
 
 const databases: ReturnType<typeof setup>["k"]["store"]["db"][] = [];
@@ -73,6 +74,28 @@ describe("room Keeper thread metadata", () => {
     vi.mocked(f.bb.sdk.threads.get).mockClear();
     expect((await f.room()).keepers[0]).toMatchObject({ threadTitle: "Restored title", threadCreatedAt: 123 });
     expect(f.bb.sdk.threads.get).not.toHaveBeenCalled();
+  });
+
+  it.each(["archive", "delete", "missing"] as const)("records an idle Keeper's %s once and invalidates its room and quest", async cause => {
+    const f = fixture();
+    const quest = await seedQuest(f.k, "lead", "Keep the work intact", "Proof");
+    const thread = makeThreadResponse({ id: "lead" });
+    f.runtime.updateThread(thread);
+    vi.mocked(f.bb.rpc.experimental_invalidate).mockClear();
+    const next = { ...thread, ...(cause === "archive" ? { archivedAt: f.time() } : { deletedAt: f.time() }) };
+    if (cause === "missing") f.runtime.threadGone(thread.id);
+    else f.runtime.updateThread(next);
+    if (cause !== "missing") await f.runtime.threadLifecycle(cause === "archive" ? "thread.archived" : "thread.deleted", { thread: next });
+    f.runtime.updateThread(next);
+    expect((await f.room()).keepers[0]).toMatchObject({ archived: true, boardQuests: [expect.objectContaining({ id: quest.id, phase: quest.phase })] });
+    const type = cause === "archive" ? "thread.archived" : "thread.deleted";
+    expect(f.k.store.events("lead", 0, 100).filter(event => event.type === type)).toHaveLength(1);
+    expect(vi.mocked(f.bb.rpc.experimental_invalidate).mock.calls.flat(2)).toEqual(expect.arrayContaining(["tavern:room", `tavern:quest:${quest.id}`]));
+    if (cause === "archive") {
+      f.runtime.updateThread(thread);
+      expect((await f.room()).keepers[0]?.archived).toBe(false);
+      expect(f.k.store.events("lead", 0, 100).filter(event => event.type === "thread.unarchived")).toHaveLength(1);
+    }
   });
 
   it("captures metadata carried by native thread observations", async () => {

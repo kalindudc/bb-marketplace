@@ -143,28 +143,27 @@ describe("the map: Returned, the Quests picker and Clear filters", () => {
   };
   const node = (slot: RenderedSlot, id: string) => slot.container.querySelector(`[data-node="${id}"]`);
 
-  it("draws returned quests by default, hides them with Returned off, and never draws the cellar", async () => {
+  it("hides finished quests by default and remembers the toggle separately from the quest filter", async () => {
     const slot = await page("map");
     await slot.findByRole("group", { name: "Focus on a quest" });
-    expect(node(slot, "returned:sfe")).toBeTruthy();
-    const toggle = within(slot.getByRole("group", { name: "Returned quests on the map" })).getByRole("button", { name: /^Returned/ });
-    expect(toggle.getAttribute("aria-pressed")).toBe("true");
-    fireEvent.click(toggle);
     expect(node(slot, "returned:sfe")).toBeNull();
-    expect(slot.getByText("3 of 4 quests · 1 hidden")).toBeTruthy();
-    fireEvent.click(slot.getByRole("button", { name: "Clear filters" }));
+    const toggle = slot.getByRole("button", { name: /^Show finished quests/ });
+    expect(toggle.getAttribute("aria-pressed")).toBe("false");
+    fireEvent.click(toggle);
     expect(node(slot, "returned:sfe")).toBeTruthy();
     expect(slot.queryByRole("button", { name: "Clear filters" })).toBeNull();
     slot.lifecycle.unmount();
-    const cellared = { ...scenes.richRoom, keepers: scenes.richRoom.keepers.map((k) => ({ ...k, boardQuests: k.boardQuests.map((q) => q.id === "sfe" ? { ...q, archivedAt: scenes.min(2) } : q) })) };
-    const later = await page("map", {}, cellared);
+    const later = await page("map");
     await later.findByRole("group", { name: "Focus on a quest" });
+    expect(node(later, "returned:sfe")).toBeTruthy();
+    fireEvent.click(later.getByRole("button", { name: /^Show finished quests/ }));
     expect(node(later, "returned:sfe")).toBeNull();
   });
 
   it("leaves out an unchecked quest and the members only on it, keeps shared members, and shows it again on focus", async () => {
     const slot = await page("map", {}, shared());
-    fireEvent.click(await slot.findByRole("button", { name: /^Quests/ }));
+    fireEvent.click(await slot.findByRole("button", { name: /^Show finished quests/ }));
+    fireEvent.click(slot.getByRole("button", { name: /^Quests/ }));
     const picker = slot.getByRole("group", { name: "Quests the map draws" });
     fireEvent.click(within(picker).getByRole("checkbox", { name: /shopifycloud.com audit/ }));
     expect(slot.getByText("3 of 4 quests · 1 hidden")).toBeTruthy();
@@ -182,7 +181,7 @@ describe("the map: Returned, the Quests picker and Clear filters", () => {
   });
 
   it("remembers the choice, shows new quests by default and drops quests that left", async () => {
-    store({ path: "map", ui: { "map.hidden": ["audit", "gone"], "map.picker": true } });
+    store({ path: "map", ui: { "map.hidden": ["audit", "gone"], "map.picker": true, "map.finished": true } });
     const slot = await page("map");
     const picker = await slot.findByRole("group", { name: "Quests the map draws" });
     expect((within(picker).getByRole("checkbox", { name: /shopifycloud.com audit/ }) as HTMLInputElement).checked).toBe(false);
@@ -191,7 +190,7 @@ describe("the map: Returned, the Quests picker and Clear filters", () => {
   });
 
   it("exports what is on screen and says so in the title", async () => {
-    store({ path: "map", ui: { "map.hidden": ["audit"] } });
+    store({ path: "map", ui: { "map.hidden": ["audit"], "map.finished": true } });
     const slot = await page("map");
     await slot.findByRole("group", { name: "Focus on a quest" });
     fireEvent.click(slot.getByRole("button", { name: "Export" }));

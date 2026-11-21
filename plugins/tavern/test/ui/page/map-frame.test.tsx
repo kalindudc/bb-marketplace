@@ -56,6 +56,7 @@ describe("Only this one on the map", () => {
     const slot = await map();
     const keeper = `[data-node="keeper:${scenes.richRoom.keepers.at(-1)!.member.threadId}"]`;
     expect(slot.container.querySelector(keeper), "the Keeper's node").not.toBeNull();
+    fireEvent.click(slot.getByRole("button", { name: /^Show finished quests/ }));
     expect(inWindow(slot, '[data-node="returned:old-11"]').inside, "out of view before").toBe(false);
     fireEvent.click(slot.getByRole("button", { name: /^Quests/ }));
     fireEvent.click(within(slot.getByRole("group", { name: "Quests the map draws" })).getByRole("button", { name: "Only this one: isZeroDuration" }));
