@@ -22,7 +22,7 @@ function setup(providerId = "codex", mode: "enforce" | "watch" | "off" = "enforc
   let rows: any[] = [], stops = 0, fail = false;
   const onViolation = vi.fn(), handlers = new Map<string, Function>();
   const bb = { events: { on: (name: string, fn: Function) => handlers.set(name, fn) }, onDispose: vi.fn(), log: { warn: vi.fn() }, sdk: { threads: { events: { list: async (args: any) => rows.filter(row => row.seq > Number(args.afterSeq) && args.types.includes(row.type)).slice(0, Number(args.limit)) }, stop: async () => { stops++; if (fail) throw new Error("stop failed"); } } } } as unknown as BbPluginApi;
-  const started = { id: "started", seq: 1, type: "item/started", createdAt: Date.now(), data: { item: { id: "call1", type: "commandExecution", command: "git push origin main", cwd: process.cwd(), status: "pending", approvalStatus: null } } };
+  const started = { id: "started", seq: 1, type: "item/started", createdAt: Date.now(), data: { item: { id: "call1", type: "commandExecution", command: "git push origin main", cwd: root, status: "pending", approvalStatus: null } } };
   registerWatcher(bb, store, { onViolation });
   return { root, store, scope, bb, onViolation, started, handlers, setRows: (value: any[]) => { rows = value; }, failStop: () => { fail = true; }, succeedStop: () => { fail = false; }, stops: () => stops, emit: (sequence: number) => handlers.get("experimental_thread.events")!({ thread: { id: "t1", providerId }, sequence }) };
 }

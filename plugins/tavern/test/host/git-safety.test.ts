@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { execFileSync, spawnSync } from "node:child_process";
+import fs from "node:fs";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
@@ -12,6 +13,7 @@ import { inspectHost } from "../../src/host/inspect";
 import { HostRegistry } from "../../src/host/registry";
 import * as safety from "../../src/shared/git-safety";
 import { serveGit } from "./git-daemon";
+import { countGitLaunches, settleGitConfigClock } from "../git-launch-count";
 
 const roots: string[] = [];
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
@@ -31,6 +33,84 @@ function fixture() {
   writeFileSync(join(root, "tracked"), "base\n"); git("add", "-A"); git("commit", "-qm", "base");
   return { dir, root, dataDir, sentinel, global, program, git, raw, run: (args: string[], cwd = root) => runGit(cwd, args, { dataDir }) };
 }
+
+function configValue(env: NodeJS.ProcessEnv, key: string) {
+  let value: string | undefined;
+  for (let i = 0; i < Number(env.GIT_CONFIG_COUNT); i++)
+    if (env[`GIT_CONFIG_KEY_${i}`]?.toLowerCase() === key) value = env[`GIT_CONFIG_VALUE_${i}`];
+  return value;
+}
+
+it("does not cache a config whose unchanged stat may describe multiple writes in one clock tick", async () => {
+  const f = fixture(), config = join(f.root, ".git/config"), key = "filter.fixture.clean";
+  const original = fs.statSync, file = original(config, { bigint: true });
+  const checkedAt = Date.now() + 1000, stamp = BigInt(checkedAt - 50) * 1_000_000n;
+  const clock = vi.spyOn(Date, "now").mockReturnValue(checkedAt);
+  vi.spyOn(fs, "statSync").mockImplementation(((...args: Parameters<typeof original>) => {
+    const stat = Reflect.apply(original, fs, args);
+    return args[0] === config && args[1]?.bigint && stat ? Object.assign(stat, { mtimeNs: stamp, ctimeNs: stamp, size: file.size }) : stat;
+  }) as typeof original);
+  expect(configValue(await safety.gitEnvironment(f.root), key)).toBeUndefined();
+  expect.soft(safety.gitConfigRevision(f.root)).toBeUndefined();
+  f.git("config", key, "cat");
+  expect.soft(configValue(await safety.gitEnvironment(f.root), key)).toBe("");
+  clock.mockReturnValue(checkedAt + 200);
+  expect(configValue(await safety.gitEnvironment(f.root), key)).toBe("");
+  expect(safety.gitConfigRevision(f.root)).toBeDefined();
+});
+
+it("lists configuration only once across eight sequential Git calls", async () => {
+  const f = fixture(), count = countGitLaunches();
+  settleGitConfigClock();
+  for (let i = 0; i < 8; i++) expect(await f.run(["rev-parse", "--verify", "HEAD"])).toMatchObject({ code: 0 });
+  count("eight calls on one repository", 9, 1);
+});
+
+it.each(["local", "worktree", "include", "existing nested include", "conditional include"])("applies protections on the next call after %s config changes", async kind => {
+  const f = fixture();
+  settleGitConfigClock();
+  let root = f.root;
+  const key = "filter.fixture.clean", included = join(f.dir, "included");
+  if (kind === "worktree") {
+    root = join(f.dir, "linked");
+    f.git("worktree", "add", "-qb", "linked", root);
+    f.git("config", "extensions.worktreeConfig", "true");
+  } else if (kind === "include") f.git("config", "include.path", included);
+  else if (kind === "existing nested include") {
+    const parent = join(f.dir, "parent");
+    f.git("config", "include.path", parent);
+    f.git("config", "--file", parent, "include.path", "included");
+    f.git("config", "--file", included, "fixture.before", "value");
+  } else if (kind === "conditional include") {
+    f.git("branch", "include-enabled");
+    f.git("config", "includeIf.onbranch:include-enabled.path", included);
+    writeFileSync(included, "[filter \"fixture\"]\n\tclean = cat\n");
+  }
+  expect(configValue(await safety.gitEnvironment(root), key)).toBeUndefined();
+  if (kind !== "conditional include") expect(safety.gitConfigRevision(root)).toBeDefined();
+  if (kind === "local") f.git("config", key, "cat");
+  else if (kind === "worktree") f.raw(root, "config", "--worktree", key, "cat");
+  else if (kind === "include" || kind === "existing nested include") writeFileSync(included, "[filter \"fixture\"]\n\tclean = cat\n");
+  else f.git("checkout", "-q", "include-enabled");
+  expect(configValue(await safety.gitEnvironment(root), key)).toBe("");
+});
+
+it.each(["home", "xdg", "system", "environment"])("refreshes the trusted filter override when %s configuration changes", async kind => {
+  const f = fixture(), key = "filter.fixture.clean";
+  settleGitConfigClock();
+  const home = join(f.dir, "home"), xdg = join(f.dir, "xdg"), system = join(f.dir, "git-system");
+  mkdirSync(home); mkdirSync(join(xdg, "git"), { recursive: true });
+  vi.stubEnv("HOME", home); vi.stubEnv("XDG_CONFIG_HOME", xdg);
+  vi.stubEnv("GIT_CONFIG_GLOBAL", undefined);
+  if (kind === "system") { vi.stubEnv("GIT_CONFIG_SYSTEM", system); vi.stubEnv("GIT_CONFIG_NOSYSTEM", "0"); }
+  f.git("config", key, "cat");
+  expect(configValue(await safety.gitEnvironment(f.root), key)).toBe("");
+  expect(safety.gitConfigRevision(f.root)).toBeDefined();
+  const file = kind === "home" ? join(home, ".gitconfig") : kind === "xdg" ? join(xdg, "git/config") : kind === "system" ? system : f.global;
+  writeFileSync(file, "[filter \"fixture\"]\n\tclean = trusted-fixture\n");
+  if (kind === "environment") vi.stubEnv("GIT_CONFIG_GLOBAL", file);
+  expect(configValue(safety.gitEnvironmentSync(f.root), key)).toBe("trusted-fixture");
+});
 
 it.each(["clean", "smudge", "process"])("disables an optional local %s filter", async kind => {
   const f = fixture();

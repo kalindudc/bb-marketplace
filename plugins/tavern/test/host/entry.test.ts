@@ -3,7 +3,7 @@ import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
 import { experimental_createHostEntryHarness } from "@get-bb/plugin-sdk/testing/host";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
@@ -14,6 +14,7 @@ import { hostContract, type HostMethod } from "../../src/host-contract";
 import * as gitHost from "../../src/host/git";
 import { runProcess } from "../../src/host/process";
 import { scopeForClass } from "../../src/scope/presets";
+import { countGitLaunches, settleGitConfigClock } from "../git-launch-count";
 
 const roots:string[]=[];
 afterEach(async()=>{vi.restoreAllMocks();vi.unstubAllEnvs();for(const root of roots.splice(0)){await killFixtureChildren(root);rmSync(root,{recursive:true,force:true});}});
@@ -40,6 +41,32 @@ it("creates no native authority files until the first authenticated handler cont
 it("routes real native register/inspect/state through the official SDK harness",async()=>{
   const f=fixture();try{await f.register();const inspected=await f.harness.experimental_call("inspect",f.authority);expect(inspected).toMatchObject({root:f.repo,branch:"tavern/member",objectFormat:"sha1"});expect(await f.harness.experimental_call("worktreeState",{...f.authority,base:"HEAD"})).toMatchObject({head:f.git("rev-parse","HEAD"),dirty:false});expect(existsSync(f.agent)).toBe(false);}finally{await f.harness.experimental_dispose();}
 });
+it("bounds Git launches for inspect, prepareCall and a dirty snapshot", async () => {
+  const f = fixture();
+  settleGitConfigClock();
+  try {
+    await f.register();
+    const count = countGitLaunches();
+    await f.harness.experimental_call("inspect", f.authority);
+    count("inspect", 24);
+    await f.harness.experimental_call("bindScope", f.input());
+    count("bindScope", 4);
+    const prepare = () => f.harness.experimental_call("prepareCall", { ...f.authority, scopeRevision: 1, call: { kind: "bash", toolName: "bash", input: { command: "pwd" }, cwd: f.repo } });
+    await prepare();
+    count("prepareCall", 2);
+    writeFileSync(join(f.repo, "dirty"), "untracked");
+    const snapshot = await f.harness.experimental_call("snapshotWorktree", { ...f.authority, base: f.git("rev-parse", "HEAD") });
+    expect(snapshot).toMatchObject({ includesUncommitted: true, untrackedPaths: 1 });
+    count("dirty snapshot", 30);
+    f.git("checkout", "-qb", "other");
+    await expect(prepare()).rejects.toThrow(/branch-mismatch/);
+    f.git("checkout", "-q", "tavern/member");
+    const replacement = join(f.root, "replacement-git");
+    renameSync(join(f.repo, ".git"), replacement);
+    writeFileSync(join(f.repo, ".git"), `gitdir: ${replacement}\n`);
+    await expect(prepare()).rejects.toThrow(/repository-replaced/);
+  } finally { await f.harness.experimental_dispose(); }
+}, 900_000);
 it("routes atomic batch waiting and terminal endpoint release through the SDK harness",async()=>{
   const f=fixture(),read=(endpointId:string)=>({...f.endpoint,endpointId,git:"full" as const,access:"source-read" as const,allowedRefs:[],ownerThreadId:null,workspaceKind:null}),batch=(ids:string[])=>({placementId:"placement",generation:1,operationId:"batch",endpoints:ids.map(read)});
   try{expect(await f.harness.experimental_call("registerEndpoints",batch(Array.from({length:31},(_,i)=>String(i))))).toMatchObject({outcome:"registered"});expect(await f.harness.experimental_call("registerEndpoints",batch(["0","new-a","new-b"]))).toEqual({outcome:"waiting",generation:1,active:31,required:2,limit:32});

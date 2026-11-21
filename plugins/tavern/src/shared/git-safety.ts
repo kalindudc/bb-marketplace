@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import { basename, delimiter as pathDelimiter, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { promisify } from "node:util";
+import { configLookup, configRead, parseConfig, type ConfigRow } from "./git-config-cache";
 
 const exec = promisify(execFile);
 type Entry = [key: string, value: string];
@@ -63,6 +64,9 @@ const credential = /^credential(?:\..*)?\.helper$/s;
 const filterProgram = /^filter\.(.+)\.(clean|smudge|process)$/s;
 const program = /^(?:core\.(?:sshcommand|askpass|gitproxy|alternaterefscommand)|diff\.external|diff\..*\.(?:command|textconv)|merge\..*\.driver|gpg(?:\..*)?\.program|gpg\.ssh\.defaultkeycommand)$/s;
 const packProgram = /^remote\..+\.(?:uploadpack|receivepack)$/s;
+const hookProgram = /^hook\..+\.(?:command|event|enabled)$/s;
+const protectedRow = ({ key }: ConfigRow) => key === "core.worktree" || credential.test(key) || filterProgram.test(key)
+  || /^filter\..+\.required$/s.test(key) || program.test(key) || packProgram.test(key) || hookProgram.test(key);
 const packOverrides = new WeakMap<NodeJS.ProcessEnv, Map<string, string>>();
 const neutral: Record<string, string> = { "core.sshcommand": "ssh", "core.alternaterefscommand": ":" };
 function checkoutRoot(cwd: string) {
@@ -101,15 +105,10 @@ function canonicalFilter(driver: string, repository: Map<string, string>): Map<s
   }
   return new Map();
 }
-function protectRepository(env: NodeJS.ProcessEnv, listing: string, root: string, options: Options) {
+function protectRepository(env: NodeJS.ProcessEnv, rows: readonly ConfigRow[], root: string, options: Options) {
   const trusted: Entry[] = [], repository = new Map<string, string>(), firstPack = new Map<string, string>(), hooks = new Set<string>();
-  const fields = listing.split("\0");
-  if (fields.pop() !== "" || fields.length % 2 !== 0) throw new Error("Tavern could not parse Git's scoped configuration.");
-  for (let i = 0; i < fields.length; i += 2) {
-    const scope = fields[i]!, row = fields[i + 1]!, separator = row.indexOf("\n");
-    const key = separator < 0 ? row : row.slice(0, separator);
-    const value = separator < 0 ? (key.endsWith(".required") ? "true" : "") : row.slice(separator + 1);
-    if (/^hook\..+\.(?:command|event|enabled)$/s.test(key)) hooks.add(key.slice(0, key.lastIndexOf(".")) + ".enabled");
+  for (const { scope, key, value } of rows) {
+    if (hookProgram.test(key)) hooks.add(key.slice(0, key.lastIndexOf(".")) + ".enabled");
     if (packProgram.test(key) && !firstPack.has(key)) firstPack.set(key, scope);
     if (scope === "system" || scope === "global") trusted.push([key, value]);
     else if (scope === "local" || scope === "worktree") repository.set(key, value);
@@ -212,7 +211,17 @@ function gitRead(root: string, args: string[], options: Options, env: NodeJS.Pro
     options: { cwd: options.cwd, env, encoding: "utf8" as const, timeout: Math.min(options.timeoutMs ?? 3000, 3000), maxBuffer: 8 * 1024 * 1024 },
   };
 }
-const configList = ["config", "--list", "--show-scope", "-z"];
+const configList = ["config", "--list", "--show-origin", "--show-scope", "-z"];
+const systemConfig = ["var", "GIT_CONFIG_SYSTEM"];
+
+function systemPath(output: string): string | undefined {
+  const value = output.replace(/\n$/, "");
+  return isAbsolute(value) && !value.includes("\n") ? value : undefined;
+}
+
+export function gitConfigRevision(root: string, options: Options = {}): object | undefined {
+  if (options.kind !== "porcelain") return configLookup(root, options.gitDir, options.cwd, baseEnvironment(root, options))?.cached?.revision;
+}
 
 function writeRoots(root: string, options: Options) {
   const checkout = fs.realpathSync(options.gitDir ?? (options.metadata ? root : checkoutRoot(root)));
@@ -322,19 +331,47 @@ export function execGitSync(root: string, args: readonly string[], options: Sync
 }
 export async function gitEnvironment(root: string, options: Options = {}): Promise<NodeJS.ProcessEnv> {
   const env = baseEnvironment(root, options);
-  if (options.kind !== "porcelain") {
-    const read = gitRead(root, configList, options, env);
-    const { stdout } = await exec(read.command.file, read.command.args, { ...read.options, signal: options.signal });
-    protectRepository(env, stdout, root, options);
+  if (options.kind === "porcelain") return env;
+  if (options.signal?.aborted) options.signal.throwIfAborted();
+  const lookup = configLookup(root, options.gitDir, options.cwd, env);
+  const read = async (args: string[]) => {
+    const call = gitRead(root, args, options, env);
+    return (await exec(call.command.file, call.command.args, { ...call.options, signal: options.signal })).stdout;
+  };
+  let rows = lookup?.cached?.rows;
+  if (!rows) {
+    const system = lookup && (lookup.system ?? systemPath(await read(systemConfig).catch(error => {
+      if (typeof error.code !== "number") throw error;
+      return "";
+    })));
+    const complete = lookup && system !== undefined ? configRead(lookup, system, protectedRow) : undefined;
+    rows = parseConfig(await read(configList));
+    const confirm = complete?.(rows);
+    if (confirm) { rows = parseConfig(await read(configList)); confirm(rows); }
   }
+  protectRepository(env, rows, root, options);
   return env;
 }
 export function gitEnvironmentSync(root: string, options: Options = {}): NodeJS.ProcessEnv {
   const env = baseEnvironment(root, options);
-  if (options.kind !== "porcelain") {
-    const read = gitRead(root, configList, options, env);
-    const stdout = execFileSync(read.command.file, read.command.args, { ...read.options, stdio: ["ignore", "pipe", "pipe"] });
-    protectRepository(env, stdout, root, options);
+  if (options.kind === "porcelain") return env;
+  const lookup = configLookup(root, options.gitDir, options.cwd, env);
+  const read = (args: string[]) => {
+    const call = gitRead(root, args, options, env);
+    return execFileSync(call.command.file, call.command.args, { ...call.options, stdio: ["ignore", "pipe", "pipe"] });
+  };
+  let rows = lookup?.cached?.rows;
+  if (!rows) {
+    let system = lookup?.system;
+    if (lookup && system === undefined) {
+      try { system = systemPath(read(systemConfig)); }
+      catch (error) { if (typeof (error as { status?: number }).status !== "number") throw error; }
+    }
+    const complete = lookup && system !== undefined ? configRead(lookup, system, protectedRow) : undefined;
+    rows = parseConfig(read(configList));
+    const confirm = complete?.(rows);
+    if (confirm) { rows = parseConfig(read(configList)); confirm(rows); }
   }
+  protectRepository(env, rows, root, options);
   return env;
 }

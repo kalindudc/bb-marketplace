@@ -13,6 +13,7 @@ import { prepareCall } from "../../src/scope/prepare";
 import { sandboxProfile } from "../../src/scope/sandbox";
 import { ScopeStore } from "../../src/scope/store";
 import extension, { type PiGuardApi } from "../../adapters/pi/extension";
+import { linkedWorktree } from "./git-fixture";
 
 const scope = (role = "ranger", worktree: string | null = "/repo") => bindPaths(scopeForClass(role), { home: "/home/me", tmp: ["/tmp"], threadStorage: "/storage/t1", scopesDir: "/scopes", worktree: worktree ?? undefined });
 const call = (command: string, cwd = "/repo"): ScopeCall => ({ kind: "bash", toolName: "bash", cwd, input: { command }, containment: "sandbox" });
@@ -96,6 +97,8 @@ it("keeps both direct tool and shell write boundaries and Ranger pushes guarded"
 });
 it("applies the same availability and boundary checks to calls emitted from codemode", () => {
   const root = realPath(mkdtempSync(join(tmpdir(), "tavern-codemode-"))); roots.push(root);
+  const { worktree } = linkedWorktree(root);
+  vi.spyOn(process, "cwd").mockReturnValue(worktree);
   const store = new ScopeStore(root);
   vi.stubEnv("TAVERN_SCOPE_FILE", store.file("t1")); vi.stubEnv("BB_THREAD_ID", "t1");
   for (const preset of ["readonly", "checker", "worktree", "keeper", "open"] as const) {
@@ -104,7 +107,7 @@ it("applies the same availability and boundary checks to calls emitted from code
     const handlers = new Map<string, Parameters<PiGuardApi["on"]>[1]>();
     const pi: PiGuardApi = { on: (name, handler) => handlers.set(name, handler), getActiveTools: () => tools, setActiveTools: () => {} };
     extension(pi);
-    const emit = (toolName: string, input = {}) => handlers.get("tool_call")!({ toolName, input }, { cwd: root });
+    const emit = (toolName: string, input = {}) => handlers.get("tool_call")!({ toolName, input }, { cwd: worktree });
     expect(emit("codemode")).toBeUndefined();
     for (const toolName of tools) expect(emit(toolName)).toBeUndefined();
     expect(emit("write", { path: join(root, ".ssh/config") })).toMatchObject({ block: true });

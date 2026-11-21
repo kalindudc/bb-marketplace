@@ -27,6 +27,7 @@ import { PlacementStore } from "../../src/server/placement/store";
 import { PlacementTransport } from "../../src/server/placement/transport";
 import { placementRecord, sourceSnapshot } from "./placement-fixture";
 import { fakePort } from "./support";
+import { countGitLaunches, settleGitConfigClock } from "../git-launch-count";
 
 const roots: string[] = [], hosts = new Set<ReturnType<typeof createFakePluginHost>>();
 afterEach(async () => {
@@ -115,6 +116,16 @@ it.each(["sha1", "sha256"] as const)("carries exact %s pinned content only under
   await f.make().carryOut("placement", 1, "snapshot");
   expect(calls.filter(call => call.method === "registerEndpoint").length - registrations).toBeLessThanOrEqual(2);
 }, 60_000);
+
+it("bounds Git launches for one carry of pinned content", async () => {
+  const clock = settleGitConfigClock();
+  try {
+    const f = await fixture("sha1", CHUNK_BYTES + 19);
+    const count = countGitLaunches();
+    expect(await f.make().carryOut("placement", 1, "snapshot")).toMatchObject({ tree: f.tree });
+    count("carry", 220);
+  } finally { clock.mockRestore(); }
+}, 900_000);
 
 it("persists private operation+token before interruption and refuses pending stops", async () => {
   const f = await fixture(); f.stopError(new Error("Stop unavailable"));
