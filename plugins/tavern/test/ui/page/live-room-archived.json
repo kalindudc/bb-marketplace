@@ -2,7 +2,7 @@
   "keepers": [
     {
       "member": {
-        "threadId": "thr_t3zru37rah",
+        "threadId": "thr_test000053",
         "classId": "keeper",
         "characterId": "wren",
         "role": "keeper",
@@ -28,7 +28,7 @@
       "boardQuests": [
         {
           "id": "quest_e459cbf4-30fa-4eb0-86de-458a5748bd35",
-          "keeperThreadId": "thr_t3zru37rah",
+          "keeperThreadId": "thr_test000053",
           "title": "List plugins/* folders missing from the README.md plugin table, one per line, in /tmp/tavern-smoke/missing-plugins.md (read-only on repo)",
           "short": "README missing plugins",
           "phase": "done",
@@ -65,7 +65,7 @@
                 "id": "w1",
                 "title": "Write the three-section missing-plugins.md",
                 "actor": "agent",
-                "owner": "lark (thr_z5k6x43jc2)",
+                "owner": "lark (thr_test000064)",
                 "leadTime": "7 min (file written; Warden verdict left)",
                 "dependsOn": [],
                 "doneWhen": "A Warden assigned to w1 re-derives the three lists, they match the file, and it verifies entry 02.",
@@ -75,7 +75,7 @@
                 "id": "w2",
                 "title": "Warden re-derives the three lists and checks the file",
                 "actor": "agent",
-                "owner": "vex (thr_f8kheswkzk)",
+                "owner": "vex (thr_test000027)",
                 "leadTime": "done",
                 "dependsOn": [
                   "w1"
@@ -113,7 +113,7 @@
               "id": "w1",
               "title": "Write the three-section missing-plugins.md",
               "actor": "agent",
-              "owner": "lark (thr_z5k6x43jc2)",
+              "owner": "lark (thr_test000064)",
               "leadTime": "7 min (file written; Warden verdict left)",
               "dependsOn": [],
               "doneWhen": "A Warden assigned to w1 re-derives the three lists, they match the file, and it verifies entry 02.",
@@ -122,14 +122,14 @@
               "state": "verified",
               "ownerMember": null,
               "evidenceCount": 2,
-              "verifiedBy": "thr_feyk5p4jv9",
+              "verifiedBy": "thr_test000028",
               "rejectedReason": null
             },
             {
               "id": "w2",
               "title": "Warden re-derives the three lists and checks the file",
               "actor": "agent",
-              "owner": "vex (thr_f8kheswkzk)",
+              "owner": "vex (thr_test000027)",
               "leadTime": "done",
               "dependsOn": [
                 "w1"
@@ -140,17 +140,17 @@
               "state": "verified",
               "ownerMember": null,
               "evidenceCount": 1,
-              "verifiedBy": "thr_f8kheswkzk",
+              "verifiedBy": "thr_test000027",
               "rejectedReason": null
             }
           ],
           "members": [
             {
-              "threadId": "thr_z5k6x43jc2",
+              "threadId": "thr_test000064",
               "classId": "ranger",
               "characterId": "lark",
               "role": "member",
-              "keeperThreadId": "thr_t3zru37rah",
+              "keeperThreadId": "thr_test000053",
               "boardQuestId": "quest_e459cbf4-30fa-4eb0-86de-458a5748bd35",
               "waypointId": null,
               "checkerWaypointId": null,
@@ -166,11 +166,11 @@
               "verifiedWins": 0
             },
             {
-              "threadId": "thr_f8kheswkzk",
+              "threadId": "thr_test000027",
               "classId": "warden",
               "characterId": "vex",
               "role": "member",
-              "keeperThreadId": "thr_t3zru37rah",
+              "keeperThreadId": "thr_test000053",
               "boardQuestId": "quest_e459cbf4-30fa-4eb0-86de-458a5748bd35",
               "waypointId": "w2",
               "checkerWaypointId": "w2",
@@ -186,11 +186,11 @@
               "verifiedWins": 0
             },
             {
-              "threadId": "thr_feyk5p4jv9",
+              "threadId": "thr_test000028",
               "classId": "warden",
               "characterId": "rook",
               "role": "member",
-              "keeperThreadId": "thr_t3zru37rah",
+              "keeperThreadId": "thr_test000053",
               "boardQuestId": "quest_e459cbf4-30fa-4eb0-86de-458a5748bd35",
               "waypointId": "w1",
               "checkerWaypointId": "w1",
@@ -214,7 +214,7 @@
         },
         {
           "id": "quest_ea64324f-25c1-45c7-99b1-619d594bddf8",
-          "keeperThreadId": "thr_t3zru37rah",
+          "keeperThreadId": "thr_test000053",
           "title": "Count TypeScript lines per plugins/* folder and write a table to /tmp/tavern-smoke/loc.md (read-only on repo)",
           "short": "TS lines per plugin",
           "phase": "done",
@@ -252,7 +252,7 @@
                 "id": "w1",
                 "title": "loc.md with total, source and test per plugin, checked by a Warden",
                 "actor": "agent",
-                "owner": "lark (thr_4d5aferz3e)",
+                "owner": "lark (thr_test000007)",
                 "leadTime": "7 min (file written; Warden check left)",
                 "dependsOn": [],
                 "doneWhen": "The Warden's own count from git matches every row and the totals, and it verifies w1.",
@@ -279,7 +279,7 @@
               "id": "w1",
               "title": "loc.md with total, source and test per plugin, checked by a Warden",
               "actor": "agent",
-              "owner": "lark (thr_4d5aferz3e)",
+              "owner": "lark (thr_test000007)",
               "leadTime": "7 min (file written; Warden check left)",
               "dependsOn": [],
               "doneWhen": "The Warden's own count from git matches every row and the totals, and it verifies w1.",
@@ -288,17 +288,17 @@
               "state": "verified",
               "ownerMember": null,
               "evidenceCount": 3,
-              "verifiedBy": "thr_56u6bxxqgc",
+              "verifiedBy": "thr_test000009",
               "rejectedReason": null
             }
           ],
           "members": [
             {
-              "threadId": "thr_4d5aferz3e",
+              "threadId": "thr_test000007",
               "classId": "ranger",
               "characterId": "lark",
               "role": "member",
-              "keeperThreadId": "thr_t3zru37rah",
+              "keeperThreadId": "thr_test000053",
               "boardQuestId": "quest_ea64324f-25c1-45c7-99b1-619d594bddf8",
               "waypointId": null,
               "checkerWaypointId": null,
@@ -314,11 +314,11 @@
               "verifiedWins": 0
             },
             {
-              "threadId": "thr_56u6bxxqgc",
+              "threadId": "thr_test000009",
               "classId": "warden",
               "characterId": "rook",
               "role": "member",
-              "keeperThreadId": "thr_t3zru37rah",
+              "keeperThreadId": "thr_test000053",
               "boardQuestId": "quest_ea64324f-25c1-45c7-99b1-619d594bddf8",
               "waypointId": "w1",
               "checkerWaypointId": "w1",
@@ -346,7 +346,7 @@
     },
     {
       "member": {
-        "threadId": "thr_qiqsbmrsd3",
+        "threadId": "thr_test000045",
         "classId": "keeper",
         "characterId": "wren",
         "role": "keeper",
@@ -375,7 +375,7 @@
     },
     {
       "member": {
-        "threadId": "thr_gd2spgmbft",
+        "threadId": "thr_test000032",
         "classId": "keeper",
         "characterId": "wren",
         "role": "keeper",
@@ -401,7 +401,7 @@
       "boardQuests": [
         {
           "id": "quest_eed3ad2b-6216-4e21-8cf0-7fd7d7b5504f",
-          "keeperThreadId": "thr_gd2spgmbft",
+          "keeperThreadId": "thr_test000032",
           "title": "List src/ functions with test counts in /tmp/tavern-live-r2/functions.md",
           "short": "Function test counts",
           "phase": "done",
@@ -437,7 +437,7 @@
                 "id": "w1",
                 "title": "Write functions.md with per-function test and line counts, sorted by test count, and check it against src/ and test/",
                 "actor": "agent",
-                "owner": "thr_fymtb5axrt",
+                "owner": "thr_test000031",
                 "leadTime": null,
                 "dependsOn": [],
                 "doneWhen": "File has 3 lines in descending test-count order (3, 1, 0) with line counts matching the source; repo has no changes.",
@@ -473,7 +473,7 @@
               "id": "w1",
               "title": "Write functions.md with per-function test and line counts, sorted by test count, and check it against src/ and test/",
               "actor": "agent",
-              "owner": "thr_fymtb5axrt",
+              "owner": "thr_test000031",
               "leadTime": null,
               "dependsOn": [],
               "doneWhen": "File has 3 lines in descending test-count order (3, 1, 0) with line counts matching the source; repo has no changes.",
@@ -481,12 +481,12 @@
               "gate": null,
               "state": "verified",
               "ownerMember": {
-                "threadId": "thr_fymtb5axrt",
+                "threadId": "thr_test000031",
                 "classId": "wanderer",
                 "characterId": "pip",
                 "displayName": "Pip",
                 "role": "member",
-                "keeperThreadId": "thr_gd2spgmbft",
+                "keeperThreadId": "thr_test000032",
                 "boardQuestId": "quest_eed3ad2b-6216-4e21-8cf0-7fd7d7b5504f",
                 "waypointId": "w1",
                 "checkerWaypointId": null,
@@ -502,18 +502,18 @@
                 "verifiedWins": 1
               },
               "evidenceCount": 2,
-              "verifiedBy": "thr_q2hs4qa46r",
+              "verifiedBy": "thr_test000043",
               "rejectedReason": null
             }
           ],
           "members": [
             {
-              "threadId": "thr_2dsr968bik",
+              "threadId": "thr_test000002",
               "classId": "ranger",
               "characterId": "otto",
               "displayName": "Otto",
               "role": "member",
-              "keeperThreadId": "thr_gd2spgmbft",
+              "keeperThreadId": "thr_test000032",
               "boardQuestId": "quest_eed3ad2b-6216-4e21-8cf0-7fd7d7b5504f",
               "waypointId": null,
               "checkerWaypointId": null,
@@ -529,12 +529,12 @@
               "verifiedWins": 0
             },
             {
-              "threadId": "thr_fymtb5axrt",
+              "threadId": "thr_test000031",
               "classId": "wanderer",
               "characterId": "pip",
               "displayName": "Pip",
               "role": "member",
-              "keeperThreadId": "thr_gd2spgmbft",
+              "keeperThreadId": "thr_test000032",
               "boardQuestId": "quest_eed3ad2b-6216-4e21-8cf0-7fd7d7b5504f",
               "waypointId": "w1",
               "checkerWaypointId": null,
@@ -550,12 +550,12 @@
               "verifiedWins": 1
             },
             {
-              "threadId": "thr_q2hs4qa46r",
+              "threadId": "thr_test000043",
               "classId": "warden",
               "characterId": "vex",
               "displayName": "Vex",
               "role": "member",
-              "keeperThreadId": "thr_gd2spgmbft",
+              "keeperThreadId": "thr_test000032",
               "boardQuestId": "quest_eed3ad2b-6216-4e21-8cf0-7fd7d7b5504f",
               "waypointId": "w1",
               "checkerWaypointId": "w1",
@@ -563,7 +563,7 @@
               "title": "Check functions.md",
               "place": "rest",
               "state": "done",
-              "doing": "I marked entry 00 verified in Pip's journal (thread thr_fymtb5axrt). Entry 00 is the one linked to waypoint w1 on board quest quest_eed3ad2b-6216-4e21-8cf0-7fd7d7b5504f.\n\nJust before verifying, I ran the checks again and got the same results as in my last report:\n- `cat /tmp/tavern-live-r2/functions",
+              "doing": "I marked entry 00 verified in Pip's journal (thread thr_test000031). Entry 00 is the one linked to waypoint w1 on board quest quest_eed3ad2b-6216-4e21-8cf0-7fd7d7b5504f.\n\nJust before verifying, I ran the checks again and got the same results as in my last report:\n- `cat /tmp/tavern-live-r2/functions",
               "createdAt": 1794655712522,
               "lastActiveAt": 1794655775268,
               "lastReportAt": 1794655796438,
@@ -583,7 +583,7 @@
     },
     {
       "member": {
-        "threadId": "thr_cg9av9uanw",
+        "threadId": "thr_test000020",
         "classId": "keeper",
         "characterId": "moss",
         "role": "keeper",
@@ -609,7 +609,7 @@
       "boardQuests": [
         {
           "id": "quest_1a4cae88-b48b-4dc6-a904-ecb084deeb48",
-          "keeperThreadId": "thr_cg9av9uanw",
+          "keeperThreadId": "thr_test000020",
           "title": "List exported functions of src/duration.js to /tmp/tavern-live-r2/exports.md",
           "short": "duration exports",
           "phase": "stopped",
@@ -723,12 +723,12 @@
           ],
           "members": [
             {
-              "threadId": "thr_xiapza9v5m",
+              "threadId": "thr_test000061",
               "classId": "ranger",
               "characterId": "otto",
               "displayName": "Otto",
               "role": "member",
-              "keeperThreadId": "thr_cg9av9uanw",
+              "keeperThreadId": "thr_test000020",
               "boardQuestId": "quest_1a4cae88-b48b-4dc6-a904-ecb084deeb48",
               "waypointId": null,
               "checkerWaypointId": null,
@@ -756,7 +756,7 @@
     },
     {
       "member": {
-        "threadId": "thr_wzgz6eyctp",
+        "threadId": "thr_test000059",
         "classId": "keeper",
         "characterId": "ada",
         "role": "keeper",
@@ -782,7 +782,7 @@
       "boardQuests": [
         {
           "id": "quest_04663432-af75-464f-b802-72ece0393f39",
-          "keeperThreadId": "thr_wzgz6eyctp",
+          "keeperThreadId": "thr_test000059",
           "title": "parseDuration accepts uppercase units, with test; npm test passes",
           "short": "Uppercase durations",
           "phase": "stopped",
@@ -873,12 +873,12 @@
               "gate": null,
               "state": "todo",
               "ownerMember": {
-                "threadId": "thr_f4wfp9k8r3",
+                "threadId": "thr_test000026",
                 "classId": "smith",
                 "characterId": "juno",
                 "displayName": "Juno",
                 "role": "member",
-                "keeperThreadId": "thr_wzgz6eyctp",
+                "keeperThreadId": "thr_test000059",
                 "boardQuestId": "quest_04663432-af75-464f-b802-72ece0393f39",
                 "waypointId": "w1",
                 "checkerWaypointId": null,
@@ -918,12 +918,12 @@
           ],
           "members": [
             {
-              "threadId": "thr_xscguameh6",
+              "threadId": "thr_test000062",
               "classId": "ranger",
               "characterId": "otto",
               "displayName": "Otto",
               "role": "member",
-              "keeperThreadId": "thr_wzgz6eyctp",
+              "keeperThreadId": "thr_test000059",
               "boardQuestId": "quest_04663432-af75-464f-b802-72ece0393f39",
               "waypointId": null,
               "checkerWaypointId": null,
@@ -939,12 +939,12 @@
               "verifiedWins": 0
             },
             {
-              "threadId": "thr_f4wfp9k8r3",
+              "threadId": "thr_test000026",
               "classId": "smith",
               "characterId": "juno",
               "displayName": "Juno",
               "role": "member",
-              "keeperThreadId": "thr_wzgz6eyctp",
+              "keeperThreadId": "thr_test000059",
               "boardQuestId": "quest_04663432-af75-464f-b802-72ece0393f39",
               "waypointId": "w1",
               "checkerWaypointId": null,
@@ -972,7 +972,7 @@
     },
     {
       "member": {
-        "threadId": "thr_vhnrtdty72",
+        "threadId": "thr_test000057",
         "classId": "keeper",
         "characterId": "wren",
         "role": "keeper",
@@ -998,7 +998,7 @@
       "boardQuests": [
         {
           "id": "quest_08eee999-db76-42d9-8f10-e1c60b6a228a",
-          "keeperThreadId": "thr_vhnrtdty72",
+          "keeperThreadId": "thr_test000057",
           "title": "parseDuration accepts uppercase units, with test; npm test passes",
           "short": "Uppercase durations",
           "phase": "stopped",
@@ -1017,7 +1017,7 @@
             "goal": "parseDuration in src/duration.js accepts uppercase units such as \"5S\" and \"1H 2M\", with a test, and npm test passes.",
             "doneWhen": "`parseDuration(\"5S\")` returns 5000 and `parseDuration(\"1H 2M\")` returns 3720000. A new test in test/duration.test.js covers both, and `npm test` passes with no failures. The change is one commit on the Smith's branch.",
             "findings": [
-              "Bram (thr_tvicemgma7) committed de1128a touching only src/duration.js and test/duration.test.js, and reports npm test passing 5 tests. This is a maker claim, not yet independently checked.",
+              "Bram (thr_test000055) committed de1128a touching only src/duration.js and test/duration.test.js, and reports npm test passing 5 tests. This is a maker claim, not yet independently checked.",
               "Bram's journal entry 00 is already linked to w1.",
               "The Warden hire was refused while the Warden was assigned only to w2, which has no maker; the Warden must check w1, the maker's waypoint."
             ],
@@ -1032,7 +1032,7 @@
                 "id": "w1",
                 "title": "Make parseDuration case-insensitive, add a test, run npm test, commit",
                 "actor": "agent",
-                "owner": "thr_tvicemgma7",
+                "owner": "thr_test000055",
                 "leadTime": null,
                 "dependsOn": [],
                 "doneWhen": "Bram's commit de1128a changes only src/duration.js and test/duration.test.js, and its journal entry links the npm test output.",
@@ -1081,7 +1081,7 @@
               "id": "w1",
               "title": "Make parseDuration case-insensitive, add a test, run npm test, commit",
               "actor": "agent",
-              "owner": "thr_tvicemgma7",
+              "owner": "thr_test000055",
               "leadTime": null,
               "dependsOn": [],
               "doneWhen": "Bram's commit de1128a changes only src/duration.js and test/duration.test.js, and its journal entry links the npm test output.",
@@ -1089,12 +1089,12 @@
               "gate": null,
               "state": "reported",
               "ownerMember": {
-                "threadId": "thr_tvicemgma7",
+                "threadId": "thr_test000055",
                 "classId": "smith",
                 "characterId": "bram",
                 "displayName": "Bram",
                 "role": "member",
-                "keeperThreadId": "thr_vhnrtdty72",
+                "keeperThreadId": "thr_test000057",
                 "boardQuestId": "quest_08eee999-db76-42d9-8f10-e1c60b6a228a",
                 "waypointId": "w1",
                 "checkerWaypointId": null,
@@ -1134,12 +1134,12 @@
           ],
           "members": [
             {
-              "threadId": "thr_jpztmd52sw",
+              "threadId": "thr_test000035",
               "classId": "ranger",
               "characterId": "otto",
               "displayName": "Otto",
               "role": "member",
-              "keeperThreadId": "thr_vhnrtdty72",
+              "keeperThreadId": "thr_test000057",
               "boardQuestId": "quest_08eee999-db76-42d9-8f10-e1c60b6a228a",
               "waypointId": null,
               "checkerWaypointId": null,
@@ -1155,12 +1155,12 @@
               "verifiedWins": 0
             },
             {
-              "threadId": "thr_3j3h8ktxfv",
+              "threadId": "thr_test000005",
               "classId": "smith",
               "characterId": "juno",
               "displayName": "Juno",
               "role": "member",
-              "keeperThreadId": "thr_vhnrtdty72",
+              "keeperThreadId": "thr_test000057",
               "boardQuestId": "quest_08eee999-db76-42d9-8f10-e1c60b6a228a",
               "waypointId": "w1",
               "checkerWaypointId": null,
@@ -1176,12 +1176,12 @@
               "verifiedWins": 0
             },
             {
-              "threadId": "thr_tvicemgma7",
+              "threadId": "thr_test000055",
               "classId": "smith",
               "characterId": "bram",
               "displayName": "Bram",
               "role": "member",
-              "keeperThreadId": "thr_vhnrtdty72",
+              "keeperThreadId": "thr_test000057",
               "boardQuestId": "quest_08eee999-db76-42d9-8f10-e1c60b6a228a",
               "waypointId": "w1",
               "checkerWaypointId": null,
@@ -1197,12 +1197,12 @@
               "verifiedWins": 0
             },
             {
-              "threadId": "thr_kz9p284nfc",
+              "threadId": "thr_test000038",
               "classId": "warden",
               "characterId": "vex",
               "displayName": "Vex",
               "role": "member",
-              "keeperThreadId": "thr_vhnrtdty72",
+              "keeperThreadId": "thr_test000057",
               "boardQuestId": "quest_08eee999-db76-42d9-8f10-e1c60b6a228a",
               "waypointId": "w1",
               "checkerWaypointId": "w1",
@@ -1211,7 +1211,7 @@
               "title": "Check uppercase duration units",
               "place": "rest",
               "state": "stopped",
-              "doing": "I could not finish verifying waypoint w1 (maker thread thr_tvicemgma7, Bram, journal entry 00, commit de1128a). Tavern scope blocked the commands needed for checks 1, 2 and 4, so I left entry 00 neither verified nor rejected.\n\nDone, with fresh evidence:\n- Check 3 passes. `git show --stat de1128a` to",
+              "doing": "I could not finish verifying waypoint w1 (maker thread thr_test000055, Bram, journal entry 00, commit de1128a). Tavern scope blocked the commands needed for checks 1, 2 and 4, so I left entry 00 neither verified nor rejected.\n\nDone, with fresh evidence:\n- Check 3 passes. `git show --stat de1128a` to",
               "createdAt": 1794657970882,
               "lastActiveAt": 1794661557953,
               "lastReportAt": 1794658013350,
@@ -1231,7 +1231,7 @@
     },
     {
       "member": {
-        "threadId": "thr_qqxcaqvjsw",
+        "threadId": "thr_test000047",
         "classId": "keeper",
         "characterId": "wren",
         "role": "keeper",
@@ -1257,7 +1257,7 @@
       "boardQuests": [
         {
           "id": "quest_271b9b19-8de8-48cd-9326-052fce62c917",
-          "keeperThreadId": "thr_qqxcaqvjsw",
+          "keeperThreadId": "thr_test000047",
           "title": "Write count of test() calls in test/duration.test.js to /tmp/tavern-live-r2/count.md (read-only on repo)",
           "short": "Count test() calls",
           "phase": "stopped",
@@ -1332,12 +1332,12 @@
           ],
           "members": [
             {
-              "threadId": "thr_3u5hihkn6r",
+              "threadId": "thr_test000006",
               "classId": "ranger",
               "characterId": "lark",
               "displayName": "Lark",
               "role": "member",
-              "keeperThreadId": "thr_qqxcaqvjsw",
+              "keeperThreadId": "thr_test000047",
               "boardQuestId": "quest_271b9b19-8de8-48cd-9326-052fce62c917",
               "waypointId": null,
               "checkerWaypointId": null,
@@ -1365,7 +1365,7 @@
     },
     {
       "member": {
-        "threadId": "thr_yj6ei8hxus",
+        "threadId": "thr_test000063",
         "classId": "keeper",
         "characterId": "wren",
         "role": "keeper",
@@ -1391,7 +1391,7 @@
       "boardQuests": [
         {
           "id": "quest_9e7f9c0f-b782-4d3d-b946-d68ab832e74b",
-          "keeperThreadId": "thr_yj6ei8hxus",
+          "keeperThreadId": "thr_test000063",
           "title": "Add formatDuration(ms) to src/duration.js (inverse of parseDuration) with tests in test/duration.test.js; npm test passes; delivered as a commit on a branch",
           "short": "formatDuration",
           "phase": "stopped",
@@ -1516,12 +1516,12 @@
               "gate": null,
               "state": "reported",
               "ownerMember": {
-                "threadId": "thr_ragzivfix4",
+                "threadId": "thr_test000049",
                 "classId": "smith",
                 "characterId": "juno",
                 "displayName": "Juno",
                 "role": "member",
-                "keeperThreadId": "thr_yj6ei8hxus",
+                "keeperThreadId": "thr_test000063",
                 "boardQuestId": "quest_9e7f9c0f-b782-4d3d-b946-d68ab832e74b",
                 "waypointId": "w1",
                 "checkerWaypointId": null,
@@ -1567,12 +1567,12 @@
           ],
           "members": [
             {
-              "threadId": "thr_b5syyuhsxp",
+              "threadId": "thr_test000018",
               "classId": "ranger",
               "characterId": "lark",
               "displayName": "Lark",
               "role": "member",
-              "keeperThreadId": "thr_yj6ei8hxus",
+              "keeperThreadId": "thr_test000063",
               "boardQuestId": "quest_9e7f9c0f-b782-4d3d-b946-d68ab832e74b",
               "waypointId": null,
               "checkerWaypointId": null,
@@ -1594,12 +1594,12 @@
               "verifiedWins": 0
             },
             {
-              "threadId": "thr_ragzivfix4",
+              "threadId": "thr_test000049",
               "classId": "smith",
               "characterId": "juno",
               "displayName": "Juno",
               "role": "member",
-              "keeperThreadId": "thr_yj6ei8hxus",
+              "keeperThreadId": "thr_test000063",
               "boardQuestId": "quest_9e7f9c0f-b782-4d3d-b946-d68ab832e74b",
               "waypointId": "w1",
               "checkerWaypointId": null,
@@ -1621,12 +1621,12 @@
               "verifiedWins": 0
             },
             {
-              "threadId": "thr_4r5sy6cqzq",
+              "threadId": "thr_test000008",
               "classId": "warden",
               "characterId": "rook",
               "displayName": "Rook",
               "role": "member",
-              "keeperThreadId": "thr_yj6ei8hxus",
+              "keeperThreadId": "thr_test000063",
               "boardQuestId": "quest_9e7f9c0f-b782-4d3d-b946-d68ab832e74b",
               "waypointId": "w1",
               "checkerWaypointId": "w2",
@@ -1641,7 +1641,7 @@
               "title": "Check formatDuration commit",
               "place": "rest",
               "state": "stopped",
-              "doing": "Waypoint w2 is still not finished: the guard blocked `npm test` in the maker's worktree, so I have neither verified nor rejected entry 00 on thr_ragzivfix4 (board quest quest_9e7f9c0f-b782-4d3d-b946-d68ab832e74b, waypoint w1).\n\nFollowing brief_4ad38395, I first confirmed the worktree is exactly the ",
+              "doing": "Waypoint w2 is still not finished: the guard blocked `npm test` in the maker's worktree, so I have neither verified nor rejected entry 00 on thr_test000049 (board quest quest_9e7f9c0f-b782-4d3d-b946-d68ab832e74b, waypoint w1).\n\nFollowing brief_4ad38395, I first confirmed the worktree is exactly the ",
               "createdAt": 1794661267348,
               "lastActiveAt": 1794661538487,
               "lastReportAt": 1794661398313,
@@ -1661,7 +1661,7 @@
     },
     {
       "member": {
-        "threadId": "thr_8sye38b2mu",
+        "threadId": "thr_test000015",
         "classId": "keeper",
         "characterId": "wren",
         "role": "keeper",
@@ -1687,7 +1687,7 @@
       "boardQuests": [
         {
           "id": "quest_c4151d86-1feb-4271-a91c-0f66c285047e",
-          "keeperThreadId": "thr_8sye38b2mu",
+          "keeperThreadId": "thr_test000015",
           "title": "Add isZeroDuration(ms) (true only when ms === 0) with two tests",
           "short": "isZeroDuration",
           "phase": "done",
@@ -1705,7 +1705,7 @@
             "fromSteer": {
               "routeId": "route_cb0d641f-a7f7-4abc-836f-58a084ee73a6",
               "at": 1794675292791,
-              "text": "Add a third test: isZeroDuration(NaN) is false. Re-brief existing Smith thr_dakui5z2rx; revise plan. Hold Warden and wrap until compaction quiz answered."
+              "text": "Add a third test: isZeroDuration(NaN) is false. Re-brief existing Smith thr_test000023; revise plan. Hold Warden and wrap until compaction quiz answered."
             },
             "goal": "Add isZeroDuration(ms) to src/duration.js, true only when ms === 0, with three tests.",
             "doneWhen": "`cd /Users/me/tavern-live-r2/app && npm test` passes, including tests isZeroDuration(0) === true, isZeroDuration(1) === false and isZeroDuration(NaN) === false.",
@@ -1723,7 +1723,7 @@
                 "id": "w1",
                 "title": "Add isZeroDuration and three tests",
                 "actor": "agent",
-                "owner": "thr_dakui5z2rx",
+                "owner": "thr_test000023",
                 "leadTime": null,
                 "dependsOn": [],
                 "doneWhen": "`npm test` passes in /Users/me/tavern-live-r2/app with the 0, 1 and NaN tests.",
@@ -1735,7 +1735,7 @@
                 "classId": "ranger",
                 "characterId": null,
                 "model": null,
-                "purpose": "Scout (done: thr_vqnj623sr8)",
+                "purpose": "Scout (done: thr_test000058)",
                 "waypointIds": []
               },
               {
@@ -1766,7 +1766,7 @@
               "id": "w1",
               "title": "Add isZeroDuration and three tests",
               "actor": "agent",
-              "owner": "thr_dakui5z2rx",
+              "owner": "thr_test000023",
               "leadTime": null,
               "dependsOn": [],
               "doneWhen": "`npm test` passes in /Users/me/tavern-live-r2/app with the 0, 1 and NaN tests.",
@@ -1774,12 +1774,12 @@
               "gate": null,
               "state": "verified",
               "ownerMember": {
-                "threadId": "thr_dakui5z2rx",
+                "threadId": "thr_test000023",
                 "classId": "smith",
                 "characterId": "juno",
                 "displayName": "Juno",
                 "role": "member",
-                "keeperThreadId": "thr_8sye38b2mu",
+                "keeperThreadId": "thr_test000015",
                 "boardQuestId": "quest_c4151d86-1feb-4271-a91c-0f66c285047e",
                 "waypointId": "w1",
                 "checkerWaypointId": null,
@@ -1801,18 +1801,18 @@
                 "verifiedWins": 1
               },
               "evidenceCount": 7,
-              "verifiedBy": "thr_t7zqtmwfgx",
+              "verifiedBy": "thr_test000054",
               "rejectedReason": null
             }
           ],
           "members": [
             {
-              "threadId": "thr_vqnj623sr8",
+              "threadId": "thr_test000058",
               "classId": "ranger",
               "characterId": "otto",
               "displayName": "Otto",
               "role": "member",
-              "keeperThreadId": "thr_8sye38b2mu",
+              "keeperThreadId": "thr_test000015",
               "boardQuestId": "quest_c4151d86-1feb-4271-a91c-0f66c285047e",
               "waypointId": null,
               "checkerWaypointId": null,
@@ -1834,12 +1834,12 @@
               "verifiedWins": 0
             },
             {
-              "threadId": "thr_dakui5z2rx",
+              "threadId": "thr_test000023",
               "classId": "smith",
               "characterId": "juno",
               "displayName": "Juno",
               "role": "member",
-              "keeperThreadId": "thr_8sye38b2mu",
+              "keeperThreadId": "thr_test000015",
               "boardQuestId": "quest_c4151d86-1feb-4271-a91c-0f66c285047e",
               "waypointId": "w1",
               "checkerWaypointId": null,
@@ -1861,12 +1861,12 @@
               "verifiedWins": 1
             },
             {
-              "threadId": "thr_t7zqtmwfgx",
+              "threadId": "thr_test000054",
               "classId": "warden",
               "characterId": "vex",
               "displayName": "Vex",
               "role": "member",
-              "keeperThreadId": "thr_8sye38b2mu",
+              "keeperThreadId": "thr_test000015",
               "boardQuestId": "quest_c4151d86-1feb-4271-a91c-0f66c285047e",
               "waypointId": "w1",
               "checkerWaypointId": "w1",
@@ -1881,7 +1881,7 @@
               "title": "Check isZeroDuration",
               "place": "rest",
               "state": "done",
-              "doing": "Verified maker thr_dakui5z2rx entry [00] for board quest quest_c4151d86-1feb-4271-a91c-0f66c285047e, waypoint w1. Review posture: known different-family check.\n\n1) I ran `npm test` fresh in the maker worktree. It passed with 8 tests, 8 passing and 0 failing. That includes the three isZeroDuration te",
+              "doing": "Verified maker thr_test000023 entry [00] for board quest quest_c4151d86-1feb-4271-a91c-0f66c285047e, waypoint w1. Review posture: known different-family check.\n\n1) I ran `npm test` fresh in the maker worktree. It passed with 8 tests, 8 passing and 0 failing. That includes the three isZeroDuration te",
               "createdAt": 1794675476311,
               "lastActiveAt": 1794675587392,
               "lastReportAt": 1794675608554,
@@ -1904,7 +1904,7 @@
   "decidedForYou": [
     {
       "id": "decision_89474163-4e33-4dd7-bdae-3d205f42adcf",
-      "keeperThreadId": "thr_8sye38b2mu",
+      "keeperThreadId": "thr_test000015",
       "boardQuestId": "quest_c4151d86-1feb-4271-a91c-0f66c285047e",
       "text": "Replanned to v2 within the greenlit party",
       "why": "The class counts do not exceed the user's approved party.",
@@ -1916,7 +1916,7 @@
     },
     {
       "id": "decision_2536e7ac-0b2d-447d-846c-c163f467f54a",
-      "keeperThreadId": "thr_8sye38b2mu",
+      "keeperThreadId": "thr_test000015",
       "boardQuestId": "quest_c4151d86-1feb-4271-a91c-0f66c285047e",
       "text": "Start replacement 1 of 2 for smith party slot 1 in plan v1",
       "why": "The previous member is no longer active. This reuses an approved class allocation without expanding the party.",
@@ -1928,7 +1928,7 @@
     },
     {
       "id": "decision_163b2867-b444-45be-89d6-63d463347423",
-      "keeperThreadId": "thr_8sye38b2mu",
+      "keeperThreadId": "thr_test000015",
       "boardQuestId": "quest_c4151d86-1feb-4271-a91c-0f66c285047e",
       "text": "Start replacement 1 of 2 for smith party slot 1 in plan v1",
       "why": "The previous member is no longer active. This reuses an approved class allocation without expanding the party.",
@@ -1940,7 +1940,7 @@
     },
     {
       "id": "decision_6814ab80-4578-4f83-bb0a-d6aeaa9540fb",
-      "keeperThreadId": "thr_yj6ei8hxus",
+      "keeperThreadId": "thr_test000063",
       "boardQuestId": "quest_9e7f9c0f-b782-4d3d-b946-d68ab832e74b",
       "text": "Rook runs npm test, read-only, in Juno's existing worktree after confirming HEAD is d31dd8e and the tree is clean. No git archive or worktree-add scope is requested.",
       "why": "A run there tests exactly the committed code and needs no scope widening. The check stays independent because Rook works in a fresh context on a different model family.",
@@ -1952,7 +1952,7 @@
     },
     {
       "id": "decision_9683ed4b-d6d7-4c17-b027-ea90658ec882",
-      "keeperThreadId": "thr_vhnrtdty72",
+      "keeperThreadId": "thr_test000057",
       "boardQuestId": "quest_08eee999-db76-42d9-8f10-e1c60b6a228a",
       "text": "Replanned to v3 within the greenlit party",
       "why": "The class counts do not exceed the user's approved party.",
@@ -1964,7 +1964,7 @@
     },
     {
       "id": "decision_6e7a3166-c76a-484c-98cc-557cc306a7b3",
-      "keeperThreadId": "thr_vhnrtdty72",
+      "keeperThreadId": "thr_test000057",
       "boardQuestId": "quest_08eee999-db76-42d9-8f10-e1c60b6a228a",
       "text": "Replanned to v2 within the greenlit party",
       "why": "The class counts do not exceed the user's approved party.",
@@ -1976,7 +1976,7 @@
     },
     {
       "id": "decision_7fe9b9c0-706b-45e4-8d90-24d9e007e347",
-      "keeperThreadId": "thr_vhnrtdty72",
+      "keeperThreadId": "thr_test000057",
       "boardQuestId": "quest_08eee999-db76-42d9-8f10-e1c60b6a228a",
       "text": "Start replacement 1 of 2 for smith party slot 1 in plan v1",
       "why": "The previous member is no longer active. This reuses an approved class allocation without expanding the party.",
@@ -1988,7 +1988,7 @@
     },
     {
       "id": "decision_580f43b9-9ea8-487e-a2c2-aebe9859be40",
-      "keeperThreadId": "thr_vhnrtdty72",
+      "keeperThreadId": "thr_test000057",
       "boardQuestId": "quest_08eee999-db76-42d9-8f10-e1c60b6a228a",
       "text": "Release juno: The user declined the task's required scope",
       "why": "Stopping this member frees its allocation. Undo asks the Keeper to reconcile and resume or replace the work.",
@@ -2000,7 +2000,7 @@
     },
     {
       "id": "decision_fd17e9d7-48ba-4b6c-8402-3fb21d566bd8",
-      "keeperThreadId": "thr_gd2spgmbft",
+      "keeperThreadId": "thr_test000032",
       "boardQuestId": "quest_eed3ad2b-6216-4e21-8cf0-7fd7d7b5504f",
       "text": "Replanned to v3 within the greenlit party",
       "why": "The class counts do not exceed the user's approved party.",
@@ -2012,7 +2012,7 @@
     },
     {
       "id": "decision_a86dc2ce-3721-4f1f-b6fc-d8b6393914d4",
-      "keeperThreadId": "thr_gd2spgmbft",
+      "keeperThreadId": "thr_test000032",
       "boardQuestId": "quest_eed3ad2b-6216-4e21-8cf0-7fd7d7b5504f",
       "text": "Replanned to v2 within the greenlit party",
       "why": "The class counts do not exceed the user's approved party.",
@@ -2024,7 +2024,7 @@
     },
     {
       "id": "decision_d76fde35-0668-48d6-916b-36c475442660",
-      "keeperThreadId": "thr_gd2spgmbft",
+      "keeperThreadId": "thr_test000032",
       "boardQuestId": "quest_eed3ad2b-6216-4e21-8cf0-7fd7d7b5504f",
       "text": "Hire Wanderer for reversible scouting: Write functions.md",
       "why": "Scouting stays within the class and live party budgets; it does not expand the greenlit implementation party.",
@@ -2036,7 +2036,7 @@
     },
     {
       "id": "decision_7ea69803-8585-4edc-a66a-938e5a1cf4a5",
-      "keeperThreadId": "thr_t3zru37rah",
+      "keeperThreadId": "thr_test000053",
       "boardQuestId": "quest_ea64324f-25c1-45c7-99b1-619d594bddf8",
       "text": "Count physical lines (wc -l) in git-tracked .ts and .tsx files under each plugins/<folder>. Tests count, and node_modules, build output and other untracked files are left out. Report total, source and test lines per folder.",
       "why": "Counting only git-tracked files excludes vendored and generated code without needing a list of ignore rules. Splitting source from tests keeps both readings available. All of this is easy to re-run differently.",
@@ -2056,7 +2056,7 @@
   },
   "solos": [
     {
-      "threadId": "thr_66c3zxdbfr",
+      "threadId": "thr_test000011",
       "classId": "wanderer",
       "characterId": "pip",
       "role": "solo",
@@ -2079,7 +2079,7 @@
     {
       "id": 395,
       "at": 1794675179831,
-      "keeperThreadId": "thr_8sye38b2mu",
+      "keeperThreadId": "thr_test000015",
       "boardQuestId": "quest_c4151d86-1feb-4271-a91c-0f66c285047e",
       "actor": {
         "kind": "tavern"
@@ -2091,7 +2091,7 @@
     {
       "id": 396,
       "at": 1794675185619,
-      "keeperThreadId": "thr_8sye38b2mu",
+      "keeperThreadId": "thr_test000015",
       "boardQuestId": "quest_c4151d86-1feb-4271-a91c-0f66c285047e",
       "actor": {
         "kind": "tavern"
@@ -2106,7 +2106,7 @@
     {
       "id": 397,
       "at": 1794675235721,
-      "keeperThreadId": "thr_8sye38b2mu",
+      "keeperThreadId": "thr_test000015",
       "boardQuestId": null,
       "actor": {
         "kind": "user"
@@ -2121,11 +2121,11 @@
     {
       "id": 398,
       "at": 1794675245621,
-      "keeperThreadId": "thr_8sye38b2mu",
+      "keeperThreadId": "thr_test000015",
       "boardQuestId": "quest_c4151d86-1feb-4271-a91c-0f66c285047e",
       "actor": {
         "kind": "agent",
-        "threadId": "thr_8sye38b2mu"
+        "threadId": "thr_test000015"
       },
       "type": "note.recorded",
       "text": "User will decline the detection-only scope ask for the probe Smith hire.",
@@ -2136,11 +2136,11 @@
     {
       "id": 399,
       "at": 1794675245622,
-      "keeperThreadId": "thr_8sye38b2mu",
+      "keeperThreadId": "thr_test000015",
       "boardQuestId": "quest_c4151d86-1feb-4271-a91c-0f66c285047e",
       "actor": {
         "kind": "agent",
-        "threadId": "thr_8sye38b2mu"
+        "threadId": "thr_test000015"
       },
       "type": "note.recorded",
       "text": "Do not substitute providers or models for the probe Smith hire. Still hold Warden and wrap.",
@@ -2151,7 +2151,7 @@
     {
       "id": 400,
       "at": 1794675245622,
-      "keeperThreadId": "thr_8sye38b2mu",
+      "keeperThreadId": "thr_test000015",
       "boardQuestId": "quest_c4151d86-1feb-4271-a91c-0f66c285047e",
       "actor": {
         "kind": "tavern"
@@ -2169,11 +2169,11 @@
     {
       "id": 401,
       "at": 1794675245697,
-      "keeperThreadId": "thr_8sye38b2mu",
+      "keeperThreadId": "thr_test000015",
       "boardQuestId": "quest_c4151d86-1feb-4271-a91c-0f66c285047e",
       "actor": {
         "kind": "agent",
-        "threadId": "thr_8sye38b2mu"
+        "threadId": "thr_test000015"
       },
       "type": "decision.made",
       "text": "Start replacement 1 of 2 for smith party slot 1 in plan v1",
@@ -2184,11 +2184,11 @@
     {
       "id": 402,
       "at": 1794675250292,
-      "keeperThreadId": "thr_8sye38b2mu",
+      "keeperThreadId": "thr_test000015",
       "boardQuestId": "quest_c4151d86-1feb-4271-a91c-0f66c285047e",
       "actor": {
         "kind": "agent",
-        "threadId": "thr_8sye38b2mu"
+        "threadId": "thr_test000015"
       },
       "type": "decision.made",
       "text": "Start replacement 1 of 2 for smith party slot 1 in plan v1",
@@ -2199,11 +2199,11 @@
     {
       "id": 403,
       "at": 1794675250598,
-      "keeperThreadId": "thr_8sye38b2mu",
+      "keeperThreadId": "thr_test000015",
       "boardQuestId": "quest_c4151d86-1feb-4271-a91c-0f66c285047e",
       "actor": {
         "kind": "agent",
-        "threadId": "thr_8sye38b2mu"
+        "threadId": "thr_test000015"
       },
       "type": "ask.opened",
       "text": "Hire Juno II on codex with detection only? Tavern can stop the turn after a push or merge, but can't prevent it.",
@@ -2214,7 +2214,7 @@
     {
       "id": 404,
       "at": 1794675277708,
-      "keeperThreadId": "thr_8sye38b2mu",
+      "keeperThreadId": "thr_test000015",
       "boardQuestId": "quest_c4151d86-1feb-4271-a91c-0f66c285047e",
       "actor": {
         "kind": "user"
@@ -2229,13 +2229,13 @@
     {
       "id": 405,
       "at": 1794675292791,
-      "keeperThreadId": "thr_8sye38b2mu",
+      "keeperThreadId": "thr_test000015",
       "boardQuestId": null,
       "actor": {
         "kind": "user"
       },
       "type": "user.message",
-      "text": "Steer: add a third test proving isZeroDuration(NaN) is false. Re-brief the EXISTING reported Smith thr_dakui5z2rx now via tavern_tell; no replacement. Revise plan and report the actual delivery result. Keep Warden hire and wrap on HOLD until my compaction quiz is answered. Fact: Luc is the reviewer until 17:00. No commits or pushes.",
+      "text": "Steer: add a third test proving isZeroDuration(NaN) is false. Re-brief the EXISTING reported Smith thr_test000023 now via tavern_tell; no replacement. Revise plan and report the actual delivery result. Keep Warden hire and wrap on HOLD until my compaction quiz is answered. Fact: Luc is the reviewer until 17:00. No commits or pushes.",
       "data": {
         "receiptId": "message_91d1f9f9-e73f-469f-98bb-9c97b6b0e597",
         "hint": null
@@ -2244,11 +2244,11 @@
     {
       "id": 406,
       "at": 1794675303780,
-      "keeperThreadId": "thr_8sye38b2mu",
+      "keeperThreadId": "thr_test000015",
       "boardQuestId": "quest_c4151d86-1feb-4271-a91c-0f66c285047e",
       "actor": {
         "kind": "agent",
-        "threadId": "thr_8sye38b2mu"
+        "threadId": "thr_test000015"
       },
       "type": "note.recorded",
       "text": "Luc is the reviewer until 17:00.",
@@ -2259,11 +2259,11 @@
     {
       "id": 407,
       "at": 1794675303781,
-      "keeperThreadId": "thr_8sye38b2mu",
+      "keeperThreadId": "thr_test000015",
       "boardQuestId": "quest_c4151d86-1feb-4271-a91c-0f66c285047e",
       "actor": {
         "kind": "agent",
-        "threadId": "thr_8sye38b2mu"
+        "threadId": "thr_test000015"
       },
       "type": "note.recorded",
       "text": "Keep Warden hire and wrap on HOLD until the user's compaction quiz is answered.",
@@ -2274,14 +2274,14 @@
     {
       "id": 408,
       "at": 1794675303782,
-      "keeperThreadId": "thr_8sye38b2mu",
+      "keeperThreadId": "thr_test000015",
       "boardQuestId": "quest_c4151d86-1feb-4271-a91c-0f66c285047e",
       "actor": {
         "kind": "agent",
-        "threadId": "thr_8sye38b2mu"
+        "threadId": "thr_test000015"
       },
       "type": "note.recorded",
-      "text": "Re-brief the EXISTING reported Smith thr_dakui5z2rx via tavern_tell; no replacement.",
+      "text": "Re-brief the EXISTING reported Smith thr_test000023 via tavern_tell; no replacement.",
       "data": {
         "noteId": "note_71cf8383-add9-4bd7-a3de-51edfb50c138"
       }
@@ -2289,13 +2289,13 @@
     {
       "id": 409,
       "at": 1794675303782,
-      "keeperThreadId": "thr_8sye38b2mu",
+      "keeperThreadId": "thr_test000015",
       "boardQuestId": "quest_c4151d86-1feb-4271-a91c-0f66c285047e",
       "actor": {
         "kind": "tavern"
       },
       "type": "route.recorded",
-      "text": "Add a third test: isZeroDuration(NaN) is false. Re-brief existing Smith thr_dakui5z2rx; revise plan. Hold Warden and wrap until compaction quiz answered.",
+      "text": "Add a third test: isZeroDuration(NaN) is false. Re-brief existing Smith thr_test000023; revise plan. Hold Warden and wrap until compaction quiz answered.",
       "data": {
         "routeId": "route_cb0d641f-a7f7-4abc-836f-58a084ee73a6",
         "kind": "steer",
@@ -2307,11 +2307,11 @@
     {
       "id": 410,
       "at": 1794675316283,
-      "keeperThreadId": "thr_8sye38b2mu",
+      "keeperThreadId": "thr_test000015",
       "boardQuestId": "quest_c4151d86-1feb-4271-a91c-0f66c285047e",
       "actor": {
         "kind": "agent",
-        "threadId": "thr_8sye38b2mu"
+        "threadId": "thr_test000015"
       },
       "type": "plan.proposed",
       "text": "Plan v2 from your steer",
@@ -2323,11 +2323,11 @@
     {
       "id": 411,
       "at": 1794675316284,
-      "keeperThreadId": "thr_8sye38b2mu",
+      "keeperThreadId": "thr_test000015",
       "boardQuestId": "quest_c4151d86-1feb-4271-a91c-0f66c285047e",
       "actor": {
         "kind": "agent",
-        "threadId": "thr_8sye38b2mu"
+        "threadId": "thr_test000015"
       },
       "type": "decision.made",
       "text": "Replanned to v2 within the greenlit party",
@@ -2338,7 +2338,7 @@
     {
       "id": 412,
       "at": 1794675316286,
-      "keeperThreadId": "thr_8sye38b2mu",
+      "keeperThreadId": "thr_test000015",
       "boardQuestId": "quest_c4151d86-1feb-4271-a91c-0f66c285047e",
       "actor": {
         "kind": "tavern"
@@ -2350,16 +2350,16 @@
     {
       "id": 413,
       "at": 1794675316489,
-      "keeperThreadId": "thr_8sye38b2mu",
+      "keeperThreadId": "thr_test000015",
       "boardQuestId": "quest_c4151d86-1feb-4271-a91c-0f66c285047e",
       "actor": {
         "kind": "agent",
-        "threadId": "thr_8sye38b2mu"
+        "threadId": "thr_test000015"
       },
       "type": "member.told",
       "text": "New ask: add a third test in test/duration.test.js: isZeroDuration(NaN) is false. Done when `npm test` passes; update your linked journal entry with evidence. No commits or pushes.",
       "data": {
-        "memberThreadId": "thr_dakui5z2rx",
+        "memberThreadId": "thr_test000023",
         "briefId": "brief_5b328715-c756-4dc6-9860-64d36dd1813a",
         "briefPending": false,
         "delivery": "delivered",
@@ -2369,7 +2369,7 @@
     {
       "id": 414,
       "at": 1794675316489,
-      "keeperThreadId": "thr_8sye38b2mu",
+      "keeperThreadId": "thr_test000015",
       "boardQuestId": "quest_c4151d86-1feb-4271-a91c-0f66c285047e",
       "actor": {
         "kind": "tavern"
@@ -2377,13 +2377,13 @@
       "type": "member.briefed",
       "text": "Juno's brief was accepted",
       "data": {
-        "memberThreadId": "thr_dakui5z2rx"
+        "memberThreadId": "thr_test000023"
       }
     },
     {
       "id": 415,
       "at": 1794675324410,
-      "keeperThreadId": "thr_8sye38b2mu",
+      "keeperThreadId": "thr_test000015",
       "boardQuestId": "quest_c4151d86-1feb-4271-a91c-0f66c285047e",
       "actor": {
         "kind": "tavern"
@@ -2395,7 +2395,7 @@
     {
       "id": 416,
       "at": 1794675324411,
-      "keeperThreadId": "thr_8sye38b2mu",
+      "keeperThreadId": "thr_test000015",
       "boardQuestId": "quest_c4151d86-1feb-4271-a91c-0f66c285047e",
       "actor": {
         "kind": "tavern"
@@ -2407,7 +2407,7 @@
     {
       "id": 417,
       "at": 1794675327421,
-      "keeperThreadId": "thr_8sye38b2mu",
+      "keeperThreadId": "thr_test000015",
       "boardQuestId": "quest_c4151d86-1feb-4271-a91c-0f66c285047e",
       "actor": {
         "kind": "tavern"
@@ -2419,7 +2419,7 @@
     {
       "id": 418,
       "at": 1794675331100,
-      "keeperThreadId": "thr_8sye38b2mu",
+      "keeperThreadId": "thr_test000015",
       "boardQuestId": "quest_c4151d86-1feb-4271-a91c-0f66c285047e",
       "actor": {
         "kind": "tavern"
@@ -2431,7 +2431,7 @@
     {
       "id": 419,
       "at": 1794675331101,
-      "keeperThreadId": "thr_8sye38b2mu",
+      "keeperThreadId": "thr_test000015",
       "boardQuestId": "quest_c4151d86-1feb-4271-a91c-0f66c285047e",
       "actor": {
         "kind": "tavern"
@@ -2443,7 +2443,7 @@
     {
       "id": 420,
       "at": 1794675336823,
-      "keeperThreadId": "thr_8sye38b2mu",
+      "keeperThreadId": "thr_test000015",
       "boardQuestId": "quest_c4151d86-1feb-4271-a91c-0f66c285047e",
       "actor": {
         "kind": "tavern"
@@ -2458,11 +2458,11 @@
     {
       "id": 421,
       "at": 1794675360158,
-      "keeperThreadId": "thr_8sye38b2mu",
+      "keeperThreadId": "thr_test000015",
       "boardQuestId": "quest_c4151d86-1feb-4271-a91c-0f66c285047e",
       "actor": {
         "kind": "agent",
-        "threadId": "thr_8sye38b2mu"
+        "threadId": "thr_test000015"
       },
       "type": "note.completed",
       "text": "User will decline the detection-only scope ask for the probe Smith hire.",
@@ -2473,7 +2473,7 @@
     {
       "id": 422,
       "at": 1794675374083,
-      "keeperThreadId": "thr_8sye38b2mu",
+      "keeperThreadId": "thr_test000015",
       "boardQuestId": null,
       "actor": {
         "kind": "user"
@@ -2488,7 +2488,7 @@
     {
       "id": 423,
       "at": 1794675376754,
-      "keeperThreadId": "thr_8sye38b2mu",
+      "keeperThreadId": "thr_test000015",
       "boardQuestId": null,
       "actor": {
         "kind": "tavern"
@@ -2504,7 +2504,7 @@
     {
       "id": 424,
       "at": 1794675460407,
-      "keeperThreadId": "thr_8sye38b2mu",
+      "keeperThreadId": "thr_test000015",
       "boardQuestId": null,
       "actor": {
         "kind": "user"
@@ -2519,11 +2519,11 @@
     {
       "id": 425,
       "at": 1794675469884,
-      "keeperThreadId": "thr_8sye38b2mu",
+      "keeperThreadId": "thr_test000015",
       "boardQuestId": null,
       "actor": {
         "kind": "agent",
-        "threadId": "thr_8sye38b2mu"
+        "threadId": "thr_test000015"
       },
       "type": "note.recorded",
       "text": "Compaction actually skipped (session too small); do not retry it.",
@@ -2534,11 +2534,11 @@
     {
       "id": 426,
       "at": 1794675469885,
-      "keeperThreadId": "thr_8sye38b2mu",
+      "keeperThreadId": "thr_test000015",
       "boardQuestId": "quest_c4151d86-1feb-4271-a91c-0f66c285047e",
       "actor": {
         "kind": "agent",
-        "threadId": "thr_8sye38b2mu"
+        "threadId": "thr_test000015"
       },
       "type": "note.recorded",
       "text": "After the Warden verifies Juno's [00], record the independence label, then wrap and write the tale.",
@@ -2549,7 +2549,7 @@
     {
       "id": 427,
       "at": 1794675469886,
-      "keeperThreadId": "thr_8sye38b2mu",
+      "keeperThreadId": "thr_test000015",
       "boardQuestId": "quest_c4151d86-1feb-4271-a91c-0f66c285047e",
       "actor": {
         "kind": "tavern"
@@ -2567,11 +2567,11 @@
     {
       "id": 428,
       "at": 1794675469889,
-      "keeperThreadId": "thr_8sye38b2mu",
+      "keeperThreadId": "thr_test000015",
       "boardQuestId": "quest_c4151d86-1feb-4271-a91c-0f66c285047e",
       "actor": {
         "kind": "agent",
-        "threadId": "thr_8sye38b2mu"
+        "threadId": "thr_test000015"
       },
       "type": "note.completed",
       "text": "Keep Warden hire and wrap on HOLD until the user's compaction quiz is answered.",
@@ -2582,11 +2582,11 @@
     {
       "id": 429,
       "at": 1794675469909,
-      "keeperThreadId": "thr_8sye38b2mu",
+      "keeperThreadId": "thr_test000015",
       "boardQuestId": null,
       "actor": {
         "kind": "agent",
-        "threadId": "thr_8sye38b2mu"
+        "threadId": "thr_test000015"
       },
       "type": "note.completed",
       "text": "When Smith first reports done, HOLD Warden hire and wrap until the user steers; end the turn.",
@@ -2597,7 +2597,7 @@
     {
       "id": 430,
       "at": 1794675476357,
-      "keeperThreadId": "thr_8sye38b2mu",
+      "keeperThreadId": "thr_test000015",
       "boardQuestId": "quest_c4151d86-1feb-4271-a91c-0f66c285047e",
       "actor": {
         "kind": "tavern"
@@ -2605,22 +2605,22 @@
       "type": "member.briefed",
       "text": "Vex's brief was accepted",
       "data": {
-        "memberThreadId": "thr_t7zqtmwfgx"
+        "memberThreadId": "thr_test000054"
       }
     },
     {
       "id": 431,
       "at": 1794675476378,
-      "keeperThreadId": "thr_8sye38b2mu",
+      "keeperThreadId": "thr_test000015",
       "boardQuestId": "quest_c4151d86-1feb-4271-a91c-0f66c285047e",
       "actor": {
         "kind": "agent",
-        "threadId": "thr_8sye38b2mu"
+        "threadId": "thr_test000015"
       },
       "type": "member.hired",
       "text": "Vex (Warden): Check isZeroDuration",
       "data": {
-        "memberThreadId": "thr_t7zqtmwfgx",
+        "memberThreadId": "thr_test000054",
         "waypointId": "w1",
         "execution": {
           "providerId": "pi",
@@ -2639,7 +2639,7 @@
     {
       "id": 432,
       "at": 1794675476569,
-      "keeperThreadId": "thr_8sye38b2mu",
+      "keeperThreadId": "thr_test000015",
       "boardQuestId": "quest_c4151d86-1feb-4271-a91c-0f66c285047e",
       "actor": {
         "kind": "tavern"
@@ -2651,14 +2651,14 @@
     {
       "id": 433,
       "at": 1794675481113,
-      "keeperThreadId": "thr_8sye38b2mu",
+      "keeperThreadId": "thr_test000015",
       "boardQuestId": "quest_c4151d86-1feb-4271-a91c-0f66c285047e",
       "actor": {
         "kind": "agent",
-        "threadId": "thr_8sye38b2mu"
+        "threadId": "thr_test000015"
       },
       "type": "note.recorded",
-      "text": "Independence label: Warden Vex (thr_t7zqtmwfgx) runs on corp-router-anthropic/corp/dev, different family from maker Juno's openai/gpt-6.1-sol: independent check.",
+      "text": "Independence label: Warden Vex (thr_test000054) runs on corp-router-anthropic/corp/dev, different family from maker Juno's openai/gpt-6.1-sol: independent check.",
       "data": {
         "noteId": "note_ce1e27c6-53a5-40c5-924d-04ea5278fc83"
       }
@@ -2666,7 +2666,7 @@
     {
       "id": 434,
       "at": 1794675499307,
-      "keeperThreadId": "thr_8sye38b2mu",
+      "keeperThreadId": "thr_test000015",
       "boardQuestId": "quest_c4151d86-1feb-4271-a91c-0f66c285047e",
       "actor": {
         "kind": "tavern"
@@ -2674,7 +2674,7 @@
       "type": "member.unreported",
       "text": "Vex ended a turn without tavern_report: The guard blocked the probe. I won't retry it. Next I'll confirm the file is unchanged and check that the new tests fail against HEAD, using a scratch copy.",
       "data": {
-        "memberThreadId": "thr_t7zqtmwfgx",
+        "memberThreadId": "thr_test000054",
         "excerpt": "The guard blocked the probe. I won't retry it. Next I'll confirm the file is unchanged and check that the new tests fail against HEAD, using a scratch copy.",
         "strikes": 1
       }
@@ -2682,7 +2682,7 @@
     {
       "id": 435,
       "at": 1794675499406,
-      "keeperThreadId": "thr_8sye38b2mu",
+      "keeperThreadId": "thr_test000015",
       "boardQuestId": "quest_c4151d86-1feb-4271-a91c-0f66c285047e",
       "actor": {
         "kind": "tavern"
@@ -2690,7 +2690,7 @@
       "type": "scope.violation",
       "text": "vex: [Tavern scope blocked] Blocked od -c: the command's working directory or symlinks cannot be proven. Report the need with tavern_report status needs-decision; do not try another route.",
       "data": {
-        "threadId": "thr_t7zqtmwfgx",
+        "threadId": "thr_test000054",
         "providerId": "pi",
         "at": 1794675499405,
         "eventId": "evt_4fatc65hzs",
@@ -2701,7 +2701,7 @@
           "kind": "bash",
           "toolName": "bash",
           "input": {
-            "command": "W=/Users/me/.bb/plugins/environment-git-worktree/host-data/worktrees/thr_dakui5z2rx-1/app; cd $W && tail -c 20 src/duration.js | od -c | tail -3; git diff --stat; S=$(mktemp -d); mkdir -p $S/src $S/test; cp package.json $S/; git show HEAD:src/duration.js > $S/src/duration.js; cp test/duration.test.js $S/test/; cd $S && node --test 2>&1 | grep -E \"SyntaxError|does not provide|ℹ (pass|fail)\"; echo \"RED_EXIT=${PIPESTATUS[0]}\"; rm -rf $S"
+            "command": "W=/home/demo/.bb/plugins/environment-git-worktree/host-data/worktrees/thr_test000023-1/app; cd $W && tail -c 20 src/duration.js | od -c | tail -3; git diff --stat; S=$(mktemp -d); mkdir -p $S/src $S/test; cp package.json $S/; git show HEAD:src/duration.js > $S/src/duration.js; cp test/duration.test.js $S/test/; cd $S && node --test 2>&1 | grep -E \"SyntaxError|does not provide|ℹ (pass|fail)\"; echo \"RED_EXIT=${PIPESTATUS[0]}\"; rm -rf $S"
           },
           "cwd": "/Users/me/tavern-live-r2/app"
         },
@@ -2713,29 +2713,29 @@
     {
       "id": 436,
       "at": 1794675499407,
-      "keeperThreadId": "thr_8sye38b2mu",
+      "keeperThreadId": "thr_test000015",
       "boardQuestId": "quest_c4151d86-1feb-4271-a91c-0f66c285047e",
       "actor": {
         "kind": "agent",
-        "threadId": "thr_8sye38b2mu"
+        "threadId": "thr_test000015"
       },
       "type": "ask.opened",
       "text": "Scope blocked vex",
       "data": {
         "askId": "ask_ebeceb92-39c8-4e94-ba6a-21dae1eaeba5",
-        "scopeThreadId": "thr_t7zqtmwfgx"
+        "scopeThreadId": "thr_test000054"
       }
     },
     {
       "id": 437,
       "at": 1794675586850,
-      "keeperThreadId": "thr_8sye38b2mu",
+      "keeperThreadId": "thr_test000015",
       "boardQuestId": "quest_c4151d86-1feb-4271-a91c-0f66c285047e",
       "actor": {
         "kind": "user"
       },
       "type": "user.told-member",
-      "text": "You told vex: Resume only to finish journal verification and tavern_report. Your fresh npm test passed 8/8 and tracked-file probe was blocked; tester confirmed maker hashes unchanged. Do NOT retry the blocked scratch compound or tracked write; no new shell work or scope widening. Use your fresh evidence to verify maker thr_dakui5z2rx entry00 and report your independence label.",
+      "text": "You told vex: Resume only to finish journal verification and tavern_report. Your fresh npm test passed 8/8 and tracked-file probe was blocked; tester confirmed maker hashes unchanged. Do NOT retry the blocked scratch compound or tracked write; no new shell work or scope widening. Use your fresh evidence to verify maker thr_test000023 entry00 and report your independence label.",
       "data": {
         "receiptId": "message_0e9ca4d9-d22d-4307-a144-a3646f604670",
         "hint": null
@@ -2744,7 +2744,7 @@
     {
       "id": 438,
       "at": 1794675598876,
-      "keeperThreadId": "thr_8sye38b2mu",
+      "keeperThreadId": "thr_test000015",
       "boardQuestId": "quest_c4151d86-1feb-4271-a91c-0f66c285047e",
       "actor": {
         "kind": "tavern"
@@ -2756,7 +2756,7 @@
     {
       "id": 439,
       "at": 1794675598876,
-      "keeperThreadId": "thr_8sye38b2mu",
+      "keeperThreadId": "thr_test000015",
       "boardQuestId": "quest_c4151d86-1feb-4271-a91c-0f66c285047e",
       "actor": {
         "kind": "tavern"
@@ -2768,13 +2768,13 @@
     {
       "id": 440,
       "at": 1794675608554,
-      "keeperThreadId": "thr_8sye38b2mu",
+      "keeperThreadId": "thr_test000015",
       "boardQuestId": "quest_c4151d86-1feb-4271-a91c-0f66c285047e",
       "actor": {
         "kind": "tavern"
       },
       "type": "report.filed",
-      "text": "vex: Verified maker thr_dakui5z2rx entry [00] for board quest quest_c4151d86-1feb-4271-a91c-0f66c285047e, waypoint w1. Review posture: known different-family check.\n\n1) I ran `npm test` fresh in the maker worktree. It passed with 8 tests, 8 passing and 0 failing. That includes the three isZeroDuration tests: 0 returns true, 1 returns false and NaN returns false. The implementation is `return ms === 0`. The diff touches only src/duration.js and test/duration.test.js, and `git diff --check` is cle",
+      "text": "vex: Verified maker thr_test000023 entry [00] for board quest quest_c4151d86-1feb-4271-a91c-0f66c285047e, waypoint w1. Review posture: known different-family check.\n\n1) I ran `npm test` fresh in the maker worktree. It passed with 8 tests, 8 passing and 0 failing. That includes the three isZeroDuration tests: 0 returns true, 1 returns false and NaN returns false. The implementation is `return ms === 0`. The diff touches only src/duration.js and test/duration.test.js, and `git diff --check` is cle",
       "data": {
         "reportId": "report_320dba29-6c81-4af2-bd3e-814e71f1e6e7",
         "status": "done"
@@ -2783,7 +2783,7 @@
     {
       "id": 441,
       "at": 1794675624268,
-      "keeperThreadId": "thr_8sye38b2mu",
+      "keeperThreadId": "thr_test000015",
       "boardQuestId": "quest_c4151d86-1feb-4271-a91c-0f66c285047e",
       "actor": {
         "kind": "user"
@@ -2798,7 +2798,7 @@
     {
       "id": 442,
       "at": 1794675624411,
-      "keeperThreadId": "thr_vhnrtdty72",
+      "keeperThreadId": "thr_test000057",
       "boardQuestId": null,
       "actor": {
         "kind": "user"
@@ -2813,7 +2813,7 @@
     {
       "id": 443,
       "at": 1794675628499,
-      "keeperThreadId": "thr_8sye38b2mu",
+      "keeperThreadId": "thr_test000015",
       "boardQuestId": null,
       "actor": {
         "kind": "user"
@@ -2828,7 +2828,7 @@
     {
       "id": 444,
       "at": 1794675640352,
-      "keeperThreadId": "thr_8sye38b2mu",
+      "keeperThreadId": "thr_test000015",
       "boardQuestId": "quest_c4151d86-1feb-4271-a91c-0f66c285047e",
       "actor": {
         "kind": "tavern"
@@ -2846,11 +2846,11 @@
     {
       "id": 445,
       "at": 1794675647337,
-      "keeperThreadId": "thr_8sye38b2mu",
+      "keeperThreadId": "thr_test000015",
       "boardQuestId": "quest_c4151d86-1feb-4271-a91c-0f66c285047e",
       "actor": {
         "kind": "agent",
-        "threadId": "thr_8sye38b2mu"
+        "threadId": "thr_test000015"
       },
       "type": "note.closed-quest",
       "text": "Closed 2 promises and hand-backs as the quest ended",
@@ -2861,7 +2861,7 @@
     {
       "id": 446,
       "at": 1794675647337,
-      "keeperThreadId": "thr_8sye38b2mu",
+      "keeperThreadId": "thr_test000015",
       "boardQuestId": "quest_c4151d86-1feb-4271-a91c-0f66c285047e",
       "actor": {
         "kind": "tavern"
@@ -2870,13 +2870,13 @@
       "text": "isZeroDuration(ms) returns ms === 0 in src/duration.js, with tests for 0, 1 and NaN in test/duration.test.js. Warden Vex verified Juno's entry [00] (independent, different-family check): fresh npm test 8/8 pass; one printf append to src/duration.js blocked by the guard, not retried. No commits or pushes.",
       "data": {
         "outcome": "isZeroDuration(ms) returns ms === 0 in src/duration.js, with tests for 0, 1 and NaN in test/duration.test.js. Warden Vex verified Juno's entry [00] (independent, different-family check): fresh npm test 8/8 pass; one printf append to src/duration.js blocked by the guard, not retried. No commits or pushes.",
-        "left": "Changes are uncommitted in Juno's worktree (thr_dakui5z2rx-1/app); committing is yours. Vex did not re-run the red-first check itself (scratch command blocked); that rests on Juno's evidence. Two refused probe-hire decisions stay in the ledger with no member started."
+        "left": "Changes are uncommitted in Juno's worktree (thr_test000023-1/app); committing is yours. Vex did not re-run the red-first check itself (scratch command blocked); that rests on Juno's evidence. Two refused probe-hire decisions stay in the ledger with no member started."
       }
     },
     {
       "id": 447,
       "at": 1794675647347,
-      "keeperThreadId": "thr_8sye38b2mu",
+      "keeperThreadId": "thr_test000015",
       "boardQuestId": "quest_c4151d86-1feb-4271-a91c-0f66c285047e",
       "actor": {
         "kind": "tavern"
@@ -2884,7 +2884,7 @@
       "type": "thread.archived",
       "text": "Otto archived; actor unknown (not supplied by the host)",
       "data": {
-        "memberThreadId": "thr_vqnj623sr8",
+        "memberThreadId": "thr_test000058",
         "originActor": null,
         "keeperArchiveRequested": true
       }
@@ -2892,7 +2892,7 @@
     {
       "id": 448,
       "at": 1794675647378,
-      "keeperThreadId": "thr_8sye38b2mu",
+      "keeperThreadId": "thr_test000015",
       "boardQuestId": "quest_c4151d86-1feb-4271-a91c-0f66c285047e",
       "actor": {
         "kind": "tavern"
@@ -2900,7 +2900,7 @@
       "type": "thread.archived",
       "text": "Juno archived; actor unknown (not supplied by the host)",
       "data": {
-        "memberThreadId": "thr_dakui5z2rx",
+        "memberThreadId": "thr_test000023",
         "originActor": null,
         "keeperArchiveRequested": true
       }
@@ -2908,7 +2908,7 @@
     {
       "id": 449,
       "at": 1794675647406,
-      "keeperThreadId": "thr_8sye38b2mu",
+      "keeperThreadId": "thr_test000015",
       "boardQuestId": "quest_c4151d86-1feb-4271-a91c-0f66c285047e",
       "actor": {
         "kind": "tavern"
@@ -2916,7 +2916,7 @@
       "type": "thread.archived",
       "text": "Vex archived; actor unknown (not supplied by the host)",
       "data": {
-        "memberThreadId": "thr_t7zqtmwfgx",
+        "memberThreadId": "thr_test000054",
         "originActor": null,
         "keeperArchiveRequested": true
       }
@@ -2924,7 +2924,7 @@
     {
       "id": 450,
       "at": 1794675708151,
-      "keeperThreadId": "thr_8sye38b2mu",
+      "keeperThreadId": "thr_test000015",
       "boardQuestId": null,
       "actor": {
         "kind": "user"
@@ -2938,7 +2938,7 @@
     {
       "id": 451,
       "at": 1794675708152,
-      "keeperThreadId": "thr_8sye38b2mu",
+      "keeperThreadId": "thr_test000015",
       "boardQuestId": null,
       "actor": {
         "kind": "tavern"
@@ -2950,7 +2950,7 @@
     {
       "id": 452,
       "at": 1794675708305,
-      "keeperThreadId": "thr_8sye38b2mu",
+      "keeperThreadId": "thr_test000015",
       "boardQuestId": null,
       "actor": {
         "kind": "tavern"
@@ -2958,7 +2958,7 @@
       "type": "thread.archived",
       "text": "wren archived; actor unknown (not supplied by the host)",
       "data": {
-        "memberThreadId": "thr_8sye38b2mu",
+        "memberThreadId": "thr_test000015",
         "originActor": null,
         "keeperArchiveRequested": false
       }
@@ -2966,7 +2966,7 @@
     {
       "id": 453,
       "at": 1794681538018,
-      "keeperThreadId": "thr_t3zru37rah",
+      "keeperThreadId": "thr_test000053",
       "boardQuestId": null,
       "actor": {
         "kind": "user"
@@ -2981,7 +2981,7 @@
     {
       "id": 454,
       "at": 1794681574515,
-      "keeperThreadId": "thr_t3zru37rah",
+      "keeperThreadId": "thr_test000053",
       "boardQuestId": null,
       "actor": {
         "kind": "tavern"

@@ -96,7 +96,7 @@ describe("Decided for you: OK and Mark all seen", () => {
     const seen = vi.fn((input: { ids: string[] } | { all: true; keeperThreadId?: string; throughId?: string | null }) => ({ ok: true as const, ids: "ids" in input ? input.ids : [], undoToken: "tok-1" }));
     const unseen = vi.fn((_input: { undoToken: string }) => ({ ok: true as const, ids: ["d1"] }));
     const slot = await page("room", { markDecisionsSeen: seen, markDecisionsUnseen: unseen });
-    fireEvent.click(await slot.findByRole("button", { name: "Mark seen: vault-saturn ships in the first PR" }));
+    fireEvent.click(await slot.findByRole("button", { name: "Mark seen: vault-staging ships in the first PR" }));
     await waitFor(() => expect(seen).toHaveBeenCalledWith({ ids: ["d1"] }));
     const receipt = (await slot.findByText(/Marked 1 seen/)).closest("p")!;
     expect(slot.queryByRole("dialog")).toBeNull();
@@ -165,14 +165,14 @@ describe("the map: Returned, the Quests picker and Clear filters", () => {
     fireEvent.click(await slot.findByRole("button", { name: /^Show finished quests/ }));
     fireEvent.click(slot.getByRole("button", { name: /^Quests/ }));
     const picker = slot.getByRole("group", { name: "Quests the map draws" });
-    fireEvent.click(within(picker).getByRole("checkbox", { name: /shopifycloud.com audit/ }));
+    fireEvent.click(within(picker).getByRole("checkbox", { name: /sandbox.example audit/ }));
     expect(slot.getByText("3 of 4 quests · 1 hidden")).toBeTruthy();
     expect(node(slot, "member:thr-lark")).toBeNull();
     expect(node(slot, "member:thr-juno")).toBeTruthy();
     expect(node(slot, "member:sfe:thr-lark-sfe")).toBeTruthy();
     expect(node(slot, "quest:audit")).toBeNull();
-    fireEvent.click(within(slot.getByRole("group", { name: "Focus on a quest" })).getByRole("button", { name: /^Focus on shopifycloud.com audit/ }));
-    expect((within(picker).getByRole("checkbox", { name: /shopifycloud.com audit/ }) as HTMLInputElement).checked).toBe(true);
+    fireEvent.click(within(slot.getByRole("group", { name: "Focus on a quest" })).getByRole("button", { name: /^Focus on sandbox.example audit/ }));
+    expect((within(picker).getByRole("checkbox", { name: /sandbox.example audit/ }) as HTMLInputElement).checked).toBe(true);
     expect(node(slot, "quest:audit")).toBeTruthy();
     fireEvent.click(within(picker).getByRole("button", { name: "Only this one: Vault cutover" }));
     expect(slot.getByText("1 of 4 quests · 3 hidden")).toBeTruthy();
@@ -184,7 +184,7 @@ describe("the map: Returned, the Quests picker and Clear filters", () => {
     store({ path: "map", ui: { "map.hidden": ["audit", "gone"], "map.picker": true, "map.finished": true } });
     const slot = await page("map");
     const picker = await slot.findByRole("group", { name: "Quests the map draws" });
-    expect((within(picker).getByRole("checkbox", { name: /shopifycloud.com audit/ }) as HTMLInputElement).checked).toBe(false);
+    expect((within(picker).getByRole("checkbox", { name: /sandbox.example audit/ }) as HTMLInputElement).checked).toBe(false);
     expect((within(picker).getByRole("checkbox", { name: /Rollout batching/ }) as HTMLInputElement).checked).toBe(true);
     expect(slot.getByText("3 of 4 quests · 1 hidden")).toBeTruthy();
   });
@@ -198,6 +198,6 @@ describe("the map: Returned, the Quests picker and Clear filters", () => {
     await slot.findByText("Copied the map as a Markdown outline");
     const write = slot.inspection.experimental_clipboardWrites.at(-1)!;
     expect(write.text).toMatch(/^# Tavern · the map · Vault cutover · showing 3 of 4 quests/);
-    expect(write.text).not.toMatch(/shopifycloud\.com audit/);
+    expect(write.text).not.toMatch(/sandbox\.example audit/);
   });
 });

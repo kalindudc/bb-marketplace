@@ -72,7 +72,7 @@ describe("Only this one on the map", () => {
     fireEvent.click(slot.getByRole("button", { name: /^Quests/ }));
     fireEvent.click(within(slot.getByRole("group", { name: "Quests the map draws" })).getByRole("button", { name: "Only this one: isZeroDuration" }));
     await waitFor(() => expect(inWindow(slot, '[data-node="returned:old-11"]').inside).toBe(true));
-    fireEvent.click(within(slot.getByRole("group", { name: "Focus on a quest" })).getByRole("button", { name: /^Focus on shopifycloud.com audit/ }));
+    fireEvent.click(within(slot.getByRole("group", { name: "Focus on a quest" })).getByRole("button", { name: /^Focus on sandbox.example audit/ }));
     await waitFor(() => expect(inWindow(slot, '[data-node="quest:audit"]').inside).toBe(true));
     expect(inWindow(slot, '[data-node="quest:audit"]').k).toBeGreaterThanOrEqual(1);
   });

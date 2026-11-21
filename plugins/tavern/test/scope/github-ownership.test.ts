@@ -5,11 +5,11 @@ import { evaluate } from "../../src/scope/engine";
 import { scopeForClass } from "../../src/scope/presets";
 import { bindPaths } from "../../src/scope/paths";
 const cwd = process.cwd();
-const metadata = { isDraft: true, author: { login: "tester" }, headRefName: "feature", headRepositoryOwner: { login: "kalindudc" }, headRepository: { name: "world" } };
+const metadata = { isDraft: true, author: { login: "tester" }, headRefName: "feature", headRepositoryOwner: { login: "fixture-dev" }, headRepository: { name: "sample-repo" } };
 function check(patch: Record<string, unknown> = {}, command = "gh pr edit 1 --body x") {
   const readCommand = vi.fn((program: string, args: string[]) => {
     if (program === "git" && args.includes("symbolic-ref")) return "feature";
-    if (program === "git" && args.includes("get-url")) return "git@github.com:kalindudc/world.git";
+    if (program === "git" && args.includes("get-url")) return "git@github.com:fixture-dev/sample-repo.git";
     if (program === "gh" && args[0] === "api") return '{"login":"tester"}';
     if (program === "gh" && args[0] === "pr") return JSON.stringify({ ...metadata, ...patch });
     throw new Error("Unexpected fact lookup");

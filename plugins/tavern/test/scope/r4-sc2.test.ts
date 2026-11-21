@@ -47,7 +47,7 @@ it.each([
   ...["off", "pair", "revoke"].map(verb => ["configure", "bb lan " + verb]),
   ...["start", "land", "live", "archive", "pause", "resume"].map(verb => ["configure", "bb loom " + verb + " p"]),
   ...["update", "delete", "enable", "disable"].map(verb => ["configure", "bb automations " + verb + " a"]),
-  ...["park", "remove"].map(verb => ["configure", "bb aquifer-machines " + verb + " m"]),
+  ...["park", "remove"].map(verb => ["configure", "bb sample-machines " + verb + " m"]),
   ["configure", "bb machine env unset TOKEN"], ["configure", "bb secrets"],
   ["configure", "cortex reset"], ["configure", "cortex restore"],
   ["deploy", "gcloud run deploy service"], ["deploy", "gcloud app deploy"], ["deploy", "gcloud functions deploy function"],
@@ -101,14 +101,14 @@ it.each([
 });
 it.each(["ranger", "warden", "smith"])("retains the %s control-plane floor through the catalogue", role => {
   const s = bindPaths(scopeForClass(role), { home: "/home/me", tmp: ["/tmp"], scopesDir: "/scopes", worktree: "/repo" });
-  for (const command of ["bb loom approve project", "bb automations create --name fixture", "bb lan on", "bb settings set x y", "bb aquifer-machines rotate", "cortex agents reset", "gcloud compute instances delete vm", "bb machine env set TOKEN fixture"]) {
+  for (const command of ["bb loom approve project", "bb automations create --name fixture", "bb lan on", "bb settings set x y", "bb sample-machines rotate", "cortex agents reset", "gcloud compute instances delete vm", "bb machine env set TOKEN fixture"]) {
     expect(shellCommands(command, "/repo").flatMap(actsForCommand).map(act => act.kind)).toEqual([command.includes(" delete ") ? "delete" : "configure"]);
     for (const mode of ["watch", "enforce"] as const) expect(evaluate({ ...s, mode }, call(command)).allow).toBe(false);
   }
   if (role !== "smith") for (const command of research.slice(0, 5)) expect(evaluate(s, call(command)).allow).toBe(false);
   for (const command of ["gcloud compute instances list", "gcloud config get-value project", "bb status", "cortex update 17 -m fixture"]) expect(evaluate(s, call(command)).allow).toBe(true);
 });
-it.each(["bb loom approve project", "bb automations create --name fixture", "bb lan on", "bb settings set x y", "bb aquifer-machines rotate", "bb machine env set TOKEN fixture", "cortex agents reset", "gcloud compute instances delete vm"])("retains catalogue refusal when parsing fails: %s", command => {
+it.each(["bb loom approve project", "bb automations create --name fixture", "bb lan on", "bb settings set x y", "bb sample-machines rotate", "bb machine env set TOKEN fixture", "cortex agents reset", "gcloud compute instances delete vm"])("retains catalogue refusal when parsing fails: %s", command => {
   for (const role of ["ranger", "warden", "smith"]) {
     const s = bindPaths(scopeForClass(role), { home: "/home/me", tmp: ["/tmp"], scopesDir: "/scopes", worktree: "/repo" });
     expect(evaluate(s, call(command + " 'unterminated")).allow).toBe(false);

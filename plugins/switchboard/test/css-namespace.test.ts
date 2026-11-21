@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 // bb loads every plugin's stylesheet into the whole window and scopes only Tailwind utilities, so a plain class
-// rule from another plugin reaches Switchboard's rows, and Switchboard's reach theirs. Shopify Browser's bare
+// rule from another plugin reaches Switchboard's rows, and Switchboard's reach theirs. A bare
 // `.sb-stale { position: absolute; inset: 0 }` once stacked every faded row on top of its section.
 const PREFIX = "switchboard-";
 const HOST_CLASSES = new Set(["light", "dark"]);

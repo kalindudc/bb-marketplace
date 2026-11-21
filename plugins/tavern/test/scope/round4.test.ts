@@ -15,9 +15,9 @@ function fixture() {
   const readCommand = vi.fn((program: string, args: string[]) => {
     if (program === "git" && args.includes("symbolic-ref")) return "feature";
     if (program === "git" && args.includes("--show-toplevel")) return cwd;
-    if (program === "git" && args.includes("get-url")) return "git@github.com:kalindudc/world.git";
+    if (program === "git" && args.includes("get-url")) return "git@github.com:fixture-dev/sample-repo.git";
     if (program === "gh" && args[0] === "api") return '{"login":"tester"}';
-    if (program === "gh" && args[0] === "pr") return JSON.stringify({ isDraft: true, author: { login: "tester" }, headRefName: "feature", headRepositoryOwner: { login: "kalindudc" }, headRepository: { name: "world" } });
+    if (program === "gh" && args[0] === "pr") return JSON.stringify({ isDraft: true, author: { login: "tester" }, headRefName: "feature", headRepositoryOwner: { login: "fixture-dev" }, headRepository: { name: "sample-repo" } });
     throw new Error("Unexpected lookup");
   });
   const check = (source: string, role = "smith") => {

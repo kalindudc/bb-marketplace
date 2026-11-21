@@ -1,12 +1,12 @@
 # Tavern icons
 
-Tavern's own marks: the plugin icon, a small set of glyphs for its UI and its tool timeline rows, and the source that draws the crests. The contact sheet that shows all of them at 14, 16, 20, 28 and 96 px in gruve light, gruve dark and gruvbox dark is `/Users/me/.bb/thread-storage/thr_kyhzwgqhx4/design/icons/index.html`.
+Tavern's own marks: the plugin icon, a small set of glyphs for its UI and its tool timeline rows, and the source that draws the crests. Preview them at 14, 16, 20, 28 and 96 px in gruve light, gruve dark and gruvbox dark.
 
 ## How they are drawn
 
 - A 24 by 24 grid, `currentColor`, a 1.9-unit stroke, square caps and mitred joins, so they sit beside bb's own icons and the kit's `Glyph` at 13 to 16 px.
 - Each glyph is one stroke-only path, and every one is also in the `PATHS` table in `src/ui/kit/glyphs.tsx` under the same name, so `<Glyph name="ask" />` draws it. Keep the two copies equal when you edit one.
-- Each glyph's ink box (`getBBox()` over its path) is centred on (12, 12) within 0.5 units, because the kit centres the text beside an icon on the icon box's middle. Check with `node /Users/me/.bb/thread-storage/thr_kyhzwgqhx4/design/icons/lab/bbox.mjs`; today every file here is exact.
+- Each glyph's ink box (`getBBox()` over its path) is centred on (12, 12) within 0.5 units, because the kit centres the text beside an icon on the icon box's middle. Check the box by rendering the SVG and measuring the path.
 - Colour comes from where the glyph is used: the text colour, `--success` for verified, `--tavern-bad` for rejected, never a colour of its own.
 
 ## The plugin icon

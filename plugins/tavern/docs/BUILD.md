@@ -14,7 +14,7 @@ A bb plugin for orchestration that stays loose. The user hands a thin goal to a 
 
 Every thread, typed or not, gets a **journal** (Tavern supersedes the pi-quests plugin). Agents have characters (name, crest, voice), but personality only shows at thresholds and never changes the work.
 
-Design sources, all under `/Users/me/.bb/thread-storage/thr_kyhzwgqhx4/`:
+Design sources from the original build, not part of this checkout:
 
 - `design/brief.md`: the jobs, the lifecycle, the vocabulary (§ on Tavern words) and the decisions, including "Decisions after mock v2" and "How those land". It is the product spec; where it conflicts with `architecture.md`, the brief wins.
 - `design/architecture.md`: SDK mapping, the loop (mailbox, tick, re-anchor, routing), data and tools. Its "orchestrator", "goal", "scout", "builder" and "checker" are now Keeper, board quest, Ranger, Smith and Warden.

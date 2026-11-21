@@ -14,7 +14,7 @@
     "fixture": [
       "Create base outside every scratch root (not under /private/tmp or $TMPDIR), or the readonly write results become artifacts.",
       "git init -q -b main main && cd main && git -c user.email=a@b -c user.name=n commit -q --allow-empty -m init",
-      "git remote add origin git@github.com:kalindudc/world.git && git remote add upstream https://github.com/Shopify/world.git",
+      "git remote add origin git@github.com:fixture-dev/sample-repo.git && git remote add upstream https://github.com/example-org/sample-repo.git",
       "git worktree add -q ../wt -b feature",
       "cd ../wt && mkdir -p src packages/a && echo 'a' > src/a.ts && echo '{\"version\":\"1\"}' > package.json"
     ],

@@ -36,7 +36,7 @@ const probe: [string, string, "act" | "authority" | "allow" | "research" | "agen
   ["smith", "gcloud config get-value project", "allow"], ["smith", "gcloud compute instances list", "allow"], ["smith", "bb plugin rpc list tavern", "allow"],
   ["ranger", "gcloud compute instances list", "research"], ["ranger", "bb loom approve project", "authority"],
   ["ranger", "bb automations create --name fixture", "authority"], ["ranger", "bb lan on", "authority"], ["ranger", "bb settings set x y", "authority"],
-  ["ranger", "bb aquifer-machines rotate", "authority"], ["ranger", "bb thread archive thr_fixture", "authority"],
+  ["ranger", "bb sample-machines rotate", "authority"], ["ranger", "bb thread archive thr_fixture", "authority"],
   ["ranger", "gcloud compute instances delete vm", "authority"], ["ranger", "bb machine env set TOKEN fixture", "authority"],
   ["ranger", "gcloud config set project fixture", "research"], ["ranger", "bb machine providers", "research"], ["ranger", "bb machine env", "research"],
   ["ranger", "cortex rm 17", "authority"], ["ranger", "cortex agents reset", "authority"], ["ranger", "bb thread tell thr_fixture fixture", "agent"],

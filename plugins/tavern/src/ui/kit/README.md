@@ -10,17 +10,17 @@ Bad news, asks, blockers, evidence and numbers are always plain: no voice, no gl
 
 ## Reference screenshots
 
-All are taken with bb's own stylesheet and the plugin CSS in the fixture harness. They live in `/Users/me/.bb/thread-storage/thr_kyhzwgqhx4/design/system/`.
+The examples below use bb's stylesheet and the plugin CSS in a fixture harness.
 
 | Screenshot | Shows |
 |---|---|
-| [1-widget-keeper-asks-light.jpg](/Users/me/.bb/thread-storage/thr_kyhzwgqhx4/design/system/1-widget-keeper-asks-light.jpg) | The Keeper's widget row stacked under Flare, with an ask expanded in place (full sends-as-you consent) |
-| [2-quest-log-gruvbox.jpg](/Users/me/.bb/thread-storage/thr_kyhzwgqhx4/design/system/2-quest-log-gruvbox.jpg) | Journal tab: compact rows, one entry expanded, and the member widget row |
-| [3-ledger-dark.jpg](/Users/me/.bb/thread-storage/thr_kyhzwgqhx4/design/system/3-ledger-dark.jpg) | Ledger tab: board quests, party picture, Decided for you with Undo, asks; chat cards and the read-as tag |
-| [4-quest-map-card-light.jpg](/Users/me/.bb/thread-storage/thr_kyhzwgqhx4/design/system/4-quest-map-card-light.jpg) | The quest map card (greenlight): route, waypoint shapes, questions, party, the seal button, on one screen |
-| [5-chat-cards-gruvbox.jpg](/Users/me/.bb/thread-storage/thr_kyhzwgqhx4/design/system/5-chat-cards-gruvbox.jpg) | The tale (credits) card: the finished map, each member with verified wins, what is still yours; the ask pointer and the widget row |
-| [6-member-row-390-gruvbox.jpg](/Users/me/.bb/thread-storage/thr_kyhzwgqhx4/design/system/6-member-row-390-gruvbox.jpg) | The member widget row and a report card at 390 px, with 44 px targets |
-| [7-scope-ask-dark.jpg](/Users/me/.bb/thread-storage/thr_kyhzwgqhx4/design/system/7-scope-ask-dark.jpg) | A scope ask expanded: the member, each widening in words with its rule id, where it applies, why, and radio choices |
+| `1-widget-keeper-asks-light.jpg` | The Keeper's widget row stacked under Flare, with an ask expanded in place (full sends-as-you consent) |
+| `2-quest-log-gruvbox.jpg` | Journal tab: compact rows, one entry expanded, and the member widget row |
+| `3-ledger-dark.jpg` | Ledger tab: board quests, party picture, Decided for you with Undo, asks; chat cards and the read-as tag |
+| `4-quest-map-card-light.jpg` | The quest map card (greenlight): route, waypoint shapes, questions, party, the seal button, on one screen |
+| `5-chat-cards-gruvbox.jpg` | The tale (credits) card: the finished map, each member with verified wins, what is still yours; the ask pointer and the widget row |
+| `6-member-row-390-gruvbox.jpg` | The member widget row and a report card at 390 px, with 44 px targets |
+| `7-scope-ask-dark.jpg` | A scope ask expanded: the member, each widening in words with its rule id, where it applies, why, and radio choices |
 
 ## Layout and spacing
 
@@ -412,8 +412,8 @@ bb's side-panel tabs are fixed-height boxes with `overflow: hidden`, so every ta
 
 ## Checking a surface
 
-1. Look at it with bb's real stylesheet: the fixture harness in `/Users/me/.bb/thread-storage/thr_kyhzwgqhx4/design/prod/harness/` loads bb's app CSS and the plugin CSS, with the three themes and the widths.
+1. Look at it with bb's real stylesheet: use a fixture harness that loads bb's app CSS and the plugin CSS, with the three themes and the widths.
 2. Run `~/.agents/skills/ux-design/scripts/audit-page.js` with the root set to each top-level `.tavern` element, in all three themes at 1400, 720 and 390 px, with a `minTarget` of 44 at 560 px and below. Contrast, small text, small targets, unnamed controls, text spill and sideways overflow must all be zero.
-3. Run the overflow check, [`overflow-check.js`](/Users/me/.bb/thread-storage/thr_kyhzwgqhx4/design/system/overflow-check.js), in the same themes and widths. It lists text drawn past its card (spill), boxes that clip letters without an ellipsis (clipped) and text cut vertically (cut). All three must be zero. Intended truncation with an ellipsis is not counted.
+3. Check for overflow in the same themes and widths. Look for text drawn past its card (spill), boxes that clip letters without an ellipsis (clipped) and text cut vertically (cut). All three must be zero. Intended truncation with an ellipsis is not counted.
 4. Check optical centring on new rows: each icon's ink centre and the text's cap centre must be within 0.5 px.
 5. Take screenshots of what you changed, look at them yourself, and send them for review.

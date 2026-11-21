@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { expect, it } from "vitest";
-import { actsForCommand, ACT_CATALOGUE } from "../../src/scope/acts";
+import { actsForCommand, ACT_CATALOGUE, fallbackActs } from "../../src/scope/acts";
 import { draftEditKey } from "../../src/scope/github";
 import { shellCommands } from "../../src/scope/shell";
 import { evaluate } from "../../src/scope/engine";
@@ -19,7 +19,7 @@ const scope = (role: string) => bindPaths({ ...scopeForClass(role), ...(role ===
 const call = (command: string) => ({ kind: "bash" as const, toolName: "bash", cwd: "/repo", input: { command }, containment: "sandbox" as const });
 const acts = (command: string) => shellCommands(command, "/repo").flatMap(actsForCommand).map(act => act.kind);
 const commands = [
-  ["merge", "gh pr merge 1"], ["merge", "dt -R shop/world pr merge 1"],
+  ["merge", "gh pr merge 1"], ["merge", "dt -R example-org/sample-repo pr merge 1"],
   ["ready", "gh pr ready 1"], ["ready", "dt pr ready 1"],
   ["close", "gh pr close 1"], ["close", "dt pr close 1"],
   ["review", "gh pr review 1 --approve"], ["review", "dt pr review 1"], ["review", "dt pr approve 1"],
@@ -49,6 +49,21 @@ it.each(["kubectl --context x get pods", "kubectl describe pod web", "kubectl lo
   expect(acts(command)).toEqual([]);
   expect(evaluate(scope("keeper"), call(command)).allow).toBe(true);
   if (/^(kubectl|helm|terraform) /.test(command)) expect(evaluate(scope("ranger"), call(command)).allow).toBe(true);
+});
+it.each(["sample-machines", "other-fleet-machines"])("classifies machine writes without a named provider: %s", provider => {
+  for (const [kind, verbs] of [["configure", ["rotate", "park", "remove"]], ["allocate", ["create", "enroll"]]] as const) {
+    for (const verb of verbs) {
+      const command = `bb --host demo ${provider} ${verb} fixture`;
+      expect(acts(command)).toContain(kind);
+      expect(fallbackActs(command + " 'unterminated").map(act => act.kind)).toContain(kind);
+      expect(evaluate(scope("smith"), call(command)).allow).toBe(false);
+      expect(evaluate(narrowAwayScope(scope("keeper"), closed), call(command)).allow).toBe(false);
+    }
+  }
+  for (const command of [`bb ${provider} status`, "bb fixture-notes create"]) {
+    expect(acts(command)).toEqual([]);
+    expect(fallbackActs(command + " 'unterminated")).toEqual([]);
+  }
 });
 it("does not catalogue Terraform plan as a cluster write or run it in a read-only host preset", () => {
   const command = "terraform plan";

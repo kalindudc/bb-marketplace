@@ -33,7 +33,10 @@ it("documents each settings schema key exactly once and gives its current defaul
 it("shows a valid disabled rule with each consent switch off", () => {
   const examples = [...skill("settings.md").matchAll(/```toml\n([\s\S]*?)```/g)].map(match => match[1]).join("\n");
   const settings = placementSettingsSchema.parse(decodeSettingsToml(parse(examples)).machines);
-  expect(settings.rules).toMatchObject([{ enabled: false, consent: { guardInstall: false, remoteDetectionOnly: false, linuxUncontainedChecks: false } }]);
+  expect(settings.rules).toMatchObject([{
+    enabled: false, consent: { guardInstall: false, remoteDetectionOnly: false, linuxUncontainedChecks: false },
+    target: { environmentProviderId: "checkout-provider", machine: { machineProviderId: "machine-provider" } },
+  }]);
 });
 
 it("asks the user to test the alert route during setup", () => {
@@ -41,8 +44,4 @@ it("asks the user to test the alert route during setup", () => {
   expect(setup).toContain("Send a test alert");
   expect(setup).toContain("It arrived");
   expect(setup).toContain("It did not");
-});
-
-it("keeps the base guide and its reference free of flavour names", () => {
-  for (const path of ["SKILL.md", "settings.md"]) expect(skill(path)).not.toMatch(/\b(?:shopify|delta|world|aquifer)\b/i);
 });

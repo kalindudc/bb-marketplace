@@ -247,13 +247,13 @@ describe("Complete Keeper restatement", () => {
     for (const [q, id, title, leadTime] of [
       [
         missing,
-        "thr_z5k6x43jc2",
+        "thr_test000064",
         "Write the three-section missing-plugins.md",
         "done",
       ],
       [
         loc,
-        "thr_4d5aferz3e",
+        "thr_test000007",
         "loc.md with total, source and test per plugin",
         "7 min (file written; Warden check left)",
       ],
@@ -326,7 +326,7 @@ describe("Complete Keeper restatement", () => {
       },
       "lead",
     );
-    const vex = f.k.bind("thr_f8kheswkzk", "warden", "vex", "project", {
+    const vex = f.k.bind("thr_test000027", "warden", "vex", "project", {
       keeperThreadId: "lead",
       boardQuestId: missing.id,
       waypointId: null,

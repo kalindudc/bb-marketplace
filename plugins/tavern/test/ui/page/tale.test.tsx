@@ -196,7 +196,7 @@ describe("the tale page", () => {
     expect(view.classList.contains("lnk-btn")).toBe(true);
     expect(view.getAttribute("aria-expanded")).toBeNull();
     fireEvent.click(view);
-    expect(slot.inspection.experimental_panelCalls).toContainEqual({ method: "openTab", options: { tab: { id: "member-reports", context: { kind: "nav-panel", panelId: "tavern" }, availability: "action" }, params: { questId: scenes.readmeDetail.quest.id, memberThreadId: "thr_z5k6x43jc2" }, title: `Lark’s reports · ${scenes.readmeDetail.quest.short}` } });
+    expect(slot.inspection.experimental_panelCalls).toContainEqual({ method: "openTab", options: { tab: { id: "member-reports", context: { kind: "nav-panel", panelId: "tavern" }, availability: "action" }, params: { questId: scenes.readmeDetail.quest.id, memberThreadId: "thr_test000064" }, title: `Lark’s reports · ${scenes.readmeDetail.quest.short}` } });
     expect(slot.container.querySelector(".tv-credit.open")).toBeNull();
     expect(slot.queryByRole("dialog")).toBeNull();
   });
@@ -266,9 +266,9 @@ describe("the tale page", () => {
   });
   it("names every id in a headline from the quest's own data, and drops a headline whose id has no name", async () => {
     const detail = structuredClone(scenes.readmeDetail);
-    const vex = detail.reports.find((r) => r.memberThreadId === "thr_f8kheswkzk" && r.status === "done")!;
-    vex.outcome = `Verified maker thr_z5k6x43jc2 entry [00] for board quest ${detail.quest.id}, waypoint w1.`;
-    const rook = detail.reports.find((r) => r.memberThreadId === "thr_feyk5p4jv9")!;
+    const vex = detail.reports.find((r) => r.memberThreadId === "thr_test000027" && r.status === "done")!;
+    vex.outcome = `Verified maker thr_test000064 entry [00] for board quest ${detail.quest.id}, waypoint w1.`;
+    const rook = detail.reports.find((r) => r.memberThreadId === "thr_test000028")!;
     rook.outcome = "Verified maker thr_nobody123 entry [00], and it holds.";
     const slot = await tale(detail);
     const card = async (name: string) => (await slot.findByText(name, { selector: ".tv-credit-n b" })).closest(".tv-credit")!;
@@ -283,7 +283,7 @@ describe("the tale page", () => {
   });
   it("prefers a report's own headline and shows a level only when the character's lasting record earned one", async () => {
     const detail = structuredClone(scenes.readmeDetail);
-    const lark = detail.reports.filter((r) => r.memberThreadId === "thr_z5k6x43jc2").sort((a, b) => b.createdAt - a.createdAt)[0]!;
+    const lark = detail.reports.filter((r) => r.memberThreadId === "thr_test000064").sort((a, b) => b.createdAt - a.createdAt)[0]!;
     lark.headline = "Every plugin folder is in the README table.";
     // One rule with the sheets: a Ranger levels on its verified waypoints in the record, 9 of them for level 2.
     const serviceRecords = [{ characterId: "lark", firstEarnedAt: 1, lastEarnedAt: 1, completeSince: null, backfilledAt: null, maker: { verifiedWaypoints: 9, quests: 3 }, recordsTotal: 0, records: [] }];

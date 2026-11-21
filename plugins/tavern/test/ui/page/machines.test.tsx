@@ -53,18 +53,18 @@ const ruleRow = (slot: RenderedSlot, n: number) => slot.container.querySelector(
 
 describe("Machine placement words", () => {
   it("shows failed models on the target's rule and clears the explicit record", async () => {
-    let failures = [{ id: "failed", target: "aquifer-world/aquifer-world-checkout", providerId: "pi", model: "openai-1m/gpt-test", detail: "Failed to resolve Pi model", at: 1 }];
+    let failures = [{ id: "failed", target: "remote-monorepo/remote-monorepo-checkout", providerId: "pi", model: "example-model/gpt-test", detail: "Failed to resolve Pi model", at: 1 }];
     const clear = vi.fn(() => { failures = []; return { ok: true as const }; });
     const slot = await page("machines", { placementModelFailures: () => failures, placementModelFailureClear: clear }, machineVolumes.one);
-    const button = await slot.findByRole("button", { name: "Clear failed model openai-1m/gpt-test for rule 1" });
-    expect(ruleRow(slot, 1).textContent).toContain("This target can't run openai-1m/gpt-test through pi");
+    const button = await slot.findByRole("button", { name: "Clear failed model example-model/gpt-test for rule 1" });
+    expect(ruleRow(slot, 1).textContent).toContain("This target can't run example-model/gpt-test through pi");
     fireEvent.click(button);
     await waitFor(() => expect(clear).toHaveBeenCalledWith({ id: "failed" }));
-    await waitFor(() => expect(slot.queryByRole("button", { name: "Clear failed model openai-1m/gpt-test for rule 1" })).toBeNull());
+    await waitFor(() => expect(slot.queryByRole("button", { name: "Clear failed model example-model/gpt-test for rule 1" })).toBeNull());
   });
   it("uses the server's supported and unsupported verdicts in the preview fixture", async () => {
-    const input = { projectId: "proj_3m7ijbk6gx", keeperThreadId: null, keeperPath: null, classId: "smith", questId: null };
-    expect(await previewFixture(machineVolumes.one, input)).toMatchObject({ verdict: { state: "matched", ruleId: "shop-world-remote", blocked: null, remote: true, posture: "Detection only (remote)" } });
+    const input = { projectId: "proj_test000002", keeperThreadId: null, keeperPath: null, classId: "smith", questId: null };
+    expect(await previewFixture(machineVolumes.one, input)).toMatchObject({ verdict: { state: "matched", ruleId: "monorepo-remote", blocked: null, remote: true, posture: "Detection only (remote)" } });
     const rule = machineVolumes.one.rules[0]!;
     if (rule.target.kind !== "provider") throw new Error("Expected a provider fixture.");
     const unsupported = { ...machineVolumes.one, rules: [{ ...rule, target: { ...rule.target, machine: { type: "keeper" as const }, workspace: "linked-worktree" as const } }] };
@@ -76,13 +76,13 @@ describe("Machine placement words", () => {
     expect(validatePlacementInputs(provider, { base: "{source.base}" }, { "source.base": "a".repeat(40) })).toMatchObject({ state: "valid", inputs: { base: "a".repeat(40) } });
   });
   it("says what each rule catches and where it sends members, by name", () => {
-    const [local, shop, trees, wardens, , devbox, all] = machineVolumes.many.rules;
-    expect(MM.catches(names, shop!)).toEqual([{ field: "repoRemotes", word: "Repository", values: ["delta.shopify.io/shop/world"] }]);
-    expect(MM.catches(names, trees!).map((p) => p.values.join())).toEqual(["~/world/trees/*/src", "Smith (builder)"]);
-    expect(MM.catches(names, wardens!)[0]!.values).toEqual(["bb-marketplace"]);
+    const [local, monorepo, trees, wardens, , devbox, all] = machineVolumes.many.rules;
+    expect(MM.catches(names, monorepo!)).toEqual([{ field: "repoRemotes", word: "Repository", values: ["forge.example/example-org/monorepo"] }]);
+    expect(MM.catches(names, trees!).map((p) => p.values.join())).toEqual(["~/workspaces/trees/*/src", "Smith (builder)"]);
+    expect(MM.catches(names, wardens!)[0]!.values).toEqual(["sample-marketplace"]);
     expect(MM.catches(names, all!)).toEqual([]);
     expect(MM.sendsTo(names, local!.target).place).toBe("Where it runs today");
-    expect(MM.sendsTo(names, shop!.target)).toMatchObject({ place: "Aquifer World checkout on a new Aquifer World sandbox", detail: "one machine per member · cores 4, memoryGb 8", remote: true, unavailable: null });
+    expect(MM.sendsTo(names, monorepo!.target)).toMatchObject({ place: "Remote monorepo checkout on a new Remote monorepo sandbox", detail: "one machine per member · cores 4, memoryGb 8", remote: true, unavailable: null });
     expect(MM.sendsTo(names, devbox!.target).unavailable).toBe("devbox-checkout");
     const noCatalog = MM.makeNames(null, [], registry.classes, machinesRoom);
     expect(MM.sendsTo(noCatalog, devbox!.target).unavailable).toBeNull();
@@ -99,7 +99,7 @@ describe("Machine placement words", () => {
     const rules = machineVolumes.many.rules;
     expect(MM.shadowedBy(rules, 7)).toBe(6);
     expect(MM.shadowedBy(rules, 2)).toBeNull();
-    const narrow = { ...rules[3]!, id: "x", match: { projectIds: ["proj_7przffsyfd"], classes: ["warden"] } };
+    const narrow = { ...rules[3]!, id: "x", match: { projectIds: ["proj_test000009"], classes: ["warden"] } };
     expect(MM.shadowedBy([rules[3]!, narrow], 1)).toBe(0);
     expect(MM.shadowedBy([{ ...rules[6]!, enabled: false }, narrow], 1)).toBeNull();
   });
@@ -112,34 +112,34 @@ describe("Machine placement words", () => {
   });
 
   it("reads provider inputs from their schema and never sends an empty value", () => {
-    const aquifer = MM.fieldsOf(machinesCatalog.machines.find((m) => m.id === "aquifer")!.inputs);
-    expect(aquifer.optional).toBe(true);
-    expect(aquifer.fields.find((f) => f.key === "cores")).toMatchObject({ kind: "integer", min: 1, max: 20 });
-    expect(aquifer.fields.find((f) => f.key === "world.zones")).toMatchObject({ kind: "strings", maxItems: 32 });
-    expect(MM.fieldsOf(machinesCatalog.environments.find((e) => e.id === "world-tree")!.inputs).json).toBe(true);
+    const remoteSandbox = MM.fieldsOf(machinesCatalog.machines.find((m) => m.id === "remote-sandbox")!.inputs);
+    expect(remoteSandbox.optional).toBe(true);
+    expect(remoteSandbox.fields.find((f) => f.key === "cores")).toMatchObject({ kind: "integer", min: 1, max: 20 });
+    expect(remoteSandbox.fields.find((f) => f.key === "checkout.zones")).toMatchObject({ kind: "strings", maxItems: 32 });
+    expect(MM.fieldsOf(machinesCatalog.environments.find((e) => e.id === "workspace-tree")!.inputs).json).toBe(true);
     expect(MM.writeInput({ cores: 4 }, "cores", "")).toBeUndefined();
-    expect(MM.writeInput(undefined, "world.zones", ["areas/infra"])).toEqual({ world: { zones: ["areas/infra"] } });
+    expect(MM.writeInput(undefined, "checkout.zones", ["areas/build"])).toEqual({ checkout: { zones: ["areas/build"] } });
   });
 
   it("copies a rule with a new id, off and without its consent", () => {
     const rules = MM.copyRule(machineVolumes.many.rules, 1);
-    expect(rules[2]).toMatchObject({ id: "shop-world-remote-copy", enabled: false, consent: MM.NO_CONSENT, label: "Shop/world on an Aquifer machine (copy)" });
-    expect(MM.ruleId("Shop/world on an Aquifer machine", ["shop-world-on-an-aquifer-machine"])).toBe("shop-world-on-an-aquifer-machine-2");
+    expect(rules[2]).toMatchObject({ id: "monorepo-remote-copy", enabled: false, consent: MM.NO_CONSENT, label: "Monorepo on a remote machine (copy)" });
+    expect(MM.ruleId("Monorepo on a remote machine", ["monorepo-on-a-remote-machine"])).toBe("monorepo-on-a-remote-machine-2");
     expect(MM.moveRule(rules, 0, -1)).toBeNull();
   });
 
   it("starts the preview on the most recently active live Keeper, then the last hire here, then the first project", () => {
-    expect(MM.defaultHire(machinesRoom, null, machinesCatalog)).toEqual({ mode: "keeper", keeperThreadId: "thr_t3zru37rah", questId: null, classId: "smith" });
-    const remembered: MM.Hire = { mode: "project", projectId: "proj_3m7ijbk6gx", keeperPath: "", classId: "warden" };
+    expect(MM.defaultHire(machinesRoom, null, machinesCatalog)).toEqual({ mode: "keeper", keeperThreadId: "thr_test000053", questId: null, classId: "smith" });
+    const remembered: MM.Hire = { mode: "project", projectId: "proj_test000002", keeperPath: "", classId: "warden" };
     expect(MM.defaultHire({ ...machinesRoom, keepers: [] }, remembered, machinesCatalog)).toEqual(remembered);
-    expect(MM.defaultHire({ ...machinesRoom, keepers: [] }, null, machinesCatalog)).toMatchObject({ mode: "project", projectId: "proj_v75cbnswyk" });
+    expect(MM.defaultHire({ ...machinesRoom, keepers: [] }, null, machinesCatalog)).toMatchObject({ mode: "project", projectId: "proj_test000026" });
   });
 });
 
 describe("Where work runs page", () => {
   it("lists the rules in order with what they catch, where they send, and their flags", async () => {
     const slot = await page("machines");
-    expect(within(ruleRow(slot, 2)).getByText("delta.shopify.io/shop/world")).toBeTruthy();
+    expect(within(ruleRow(slot, 2)).getByText("forge.example/example-org/monorepo")).toBeTruthy();
     expect(within(ruleRow(slot, 2)).getByText("Detection only (remote)")).toBeTruthy();
     expect(within(ruleRow(slot, 5)).getByText("Needs your consent to turn on")).toBeTruthy();
     expect(within(ruleRow(slot, 6)).getByText(/devbox-checkout isn't installed in this bb/)).toBeTruthy();
@@ -179,7 +179,7 @@ describe("Where work runs page", () => {
     const slot = await page("machines", { settingsUpdate });
     fireEvent.click(within(ruleRow(slot, 2)).getByRole("button", { name: "Copy rule 2" }));
     await waitFor(() => expect(settingsUpdate).toHaveBeenCalled());
-    expect(settingsUpdate.mock.calls[0]![0].patch.machines!.rules![2]).toMatchObject({ id: "shop-world-remote-copy", enabled: false, consent: MM.NO_CONSENT });
+    expect(settingsUpdate.mock.calls[0]![0].patch.machines!.rules![2]).toMatchObject({ id: "monorepo-remote-copy", enabled: false, consent: MM.NO_CONSENT });
   });
 
   it("moves a rule by keyboard, keeps focus on it and says where it went", async () => {
@@ -187,7 +187,7 @@ describe("Where work runs page", () => {
     const slot = await page("machines", { settingsUpdate });
     fireEvent.click(slot.getByRole("button", { name: "Move rule 3 down" }));
     await waitFor(() => expect(settingsUpdate).toHaveBeenCalled());
-    expect(settingsUpdate.mock.calls[0]![0].patch.machines!.rules!.map((r) => r.id).slice(2, 4)).toEqual(["bb-marketplace-wardens", "world-trees-smiths"]);
+    expect(settingsUpdate.mock.calls[0]![0].patch.machines!.rules!.map((r) => r.id).slice(2, 4)).toEqual(["sample-marketplace-wardens", "workspace-trees-smiths"]);
     await waitFor(() => expect(document.activeElement?.getAttribute("aria-label")).toBe("Move rule 4 down"));
     expect(slot.getByText("Rule moved to position 4 of 8. Saved.")).toBeTruthy();
   });
@@ -204,11 +204,11 @@ describe("Where work runs page", () => {
   it("answers the preview on load for the most recently active Keeper, and for a project with no Keeper", async () => {
     const placementPreview = vi.fn((input: Parameters<Handlers["placementPreview"]>[0]) => previewFixture(machineVolumes.many, input));
     const slot = await page("machines", { placementPreview });
-    await waitFor(() => expect(placementPreview).toHaveBeenCalledWith({ projectId: null, keeperThreadId: "thr_t3zru37rah", keeperPath: null, classId: "smith", questId: null }));
+    await waitFor(() => expect(placementPreview).toHaveBeenCalledWith({ projectId: null, keeperThreadId: "thr_test000053", keeperPath: null, classId: "smith", questId: null }));
     fireEvent.click(slot.getByRole("button", { name: "A repo" }));
-    fireEvent.change(slot.getByLabelText("Repo"), { target: { value: "proj_3m7ijbk6gx" } });
-    const verdict = await slot.findByText(/Runs on a new Aquifer World sandbox/);
-    expect(verdict.closest("[data-verdict]")!.textContent).toMatch(/Because repository is delta\.shopify\.io\/shop\/world/);
+    fireEvent.change(slot.getByLabelText("Repo"), { target: { value: "proj_test000002" } });
+    const verdict = await slot.findByText(/Runs on a new Remote monorepo sandbox/);
+    expect(verdict.closest("[data-verdict]")!.textContent).toMatch(/Because repository is forge\.example\/example-org\/monorepo/);
     expect(within(ruleRow(slot, 2)).getByText("catches it")).toBeTruthy();
     expect(within(ruleRow(slot, 1)).getByText("no quest yet")).toBeTruthy();
   });
@@ -216,11 +216,11 @@ describe("Where work runs page", () => {
   it("shows a supported machine rule's destination, posture and slot from the preview", async () => {
     const slot = await page("machines");
     fireEvent.click(slot.getByRole("button", { name: "A repo" }));
-    fireEvent.change(slot.getByLabelText("Repo"), { target: { value: "proj_3m7ijbk6gx" } });
-    const verdict = (await slot.findByText(/Runs on a new Aquifer World sandbox/)).closest("[data-verdict]") as HTMLElement;
+    fireEvent.change(slot.getByLabelText("Repo"), { target: { value: "proj_test000002" } });
+    const verdict = (await slot.findByText(/Runs on a new Remote monorepo sandbox/)).closest("[data-verdict]") as HTMLElement;
     expect(verdict.dataset.verdict).toBe("caught");
     expect(within(verdict).getByText("Detection only (remote)")).toBeTruthy();
-    expect(within(verdict).getByRole("button", { name: /Rule 2 · Shop\/world on an Aquifer machine/ })).toBeTruthy();
+    expect(within(verdict).getByRole("button", { name: /Rule 2 · Monorepo on a remote machine/ })).toBeTruthy();
     expect(verdict.textContent).toContain("Preview only: nothing is created.");
     expect(verdict.textContent).toContain("Takes a maker slot: 0 of 4 in use. Party ceiling 5.");
     expect(verdict.textContent).not.toMatch(/Blocked|waits with a blocker|When it runs/);
@@ -299,7 +299,7 @@ describe("Where work runs page", () => {
   it("previews a hire caught by a rule with a missing provider as blocked, never as the laptop", async () => {
     const slot = await page("machines");
     fireEvent.click(slot.getByRole("button", { name: "A repo" }));
-    fireEvent.change(slot.getByLabelText("Repo"), { target: { value: "proj_mddz3fcct5" } });
+    fireEvent.change(slot.getByLabelText("Repo"), { target: { value: "proj_test000017" } });
     fireEvent.click(slot.getByRole("button", { name: /^Ranger/ }));
     const verdict = (await slot.findByText("Blocked.")).closest("[data-verdict]")!;
     expect(verdict.textContent).toMatch(/devbox-checkout is not installed/);

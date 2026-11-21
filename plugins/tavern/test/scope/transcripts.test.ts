@@ -12,13 +12,13 @@ import { scopeForClass } from "../../src/scope/presets";
 import { linkedWorktree } from "./git-fixture";
 
 const source = JSON.parse(readFileSync(new URL("./fixtures/round2-transcripts.json", import.meta.url), "utf8"));
-it("replays Billy's exact 88 Ranger, 79 Smith, 11 Keeper and 8 regression commands", () => {
+it("replays 88 Ranger, 79 Smith, 11 Keeper and 8 regression commands with anonymized remotes", () => {
   const base = realPath(mkdtempSync(join(process.env.TAVERN_TEST_FIXTURES!, "transcript-")));
   try {
     const scratch = process.platform === "darwin" ? ["/private/tmp", realPath(tmpdir())] : [realPath(tmpdir())];
     expect(scratch.some(path => within(base, path)), "The fixture must be outside every allowed scratch root").toBe(false);
     const { main, worktree, git } = linkedWorktree(base);
-    git(worktree, "branch", "-m", "feature"); git(main, "remote", "add", "origin", "git@github.com:kalindudc/world.git"); git(main, "remote", "add", "upstream", "https://github.com/Shopify/world.git");
+    git(worktree, "branch", "-m", "feature"); git(main, "remote", "add", "origin", "git@github.com:fixture-dev/sample-repo.git"); git(main, "remote", "add", "upstream", "https://github.com/example-org/sample-repo.git");
     for (const path of ["src", "packages/a"]) mkdirSync(join(worktree, path), { recursive: true });
     writeFileSync(join(worktree, "src/a.ts"), "a\n"); writeFileSync(join(worktree, "package.json"), '{"version":"1"}');
     const scopes = Object.fromEntries(["ranger", "smith", "keeper"].map(role => {
@@ -35,7 +35,7 @@ it("replays Billy's exact 88 Ranger, 79 Smith, 11 Keeper and 8 regression comman
           readCommand: (program, args, cwd) => {
             if (program !== "gh") return execFileSync(program, args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
             // The own-draft case has verified GitHub facts; no transcript calls contact GitHub.
-            if (args[0] === "pr" && args[1] === "view" && args[2] === "1") return JSON.stringify({ isDraft: true, author: { login: "tester" }, headRefName: "feature", headRepositoryOwner: { login: "kalindudc" }, headRepository: { name: "world" } });
+            if (args[0] === "pr" && args[1] === "view" && args[2] === "1") return JSON.stringify({ isDraft: true, author: { login: "tester" }, headRefName: "feature", headRepositoryOwner: { login: "fixture-dev" }, headRepository: { name: "sample-repo" } });
             if (args[0] === "api" && args[1] === "user") return '{"login":"tester"}';
             throw new Error("Unexpected GitHub fact lookup: " + args.join(" "));
           },

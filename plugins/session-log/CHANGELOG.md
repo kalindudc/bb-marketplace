@@ -6,7 +6,7 @@ Notable changes to Session Log, newest first. Releases are tagged `session-log/v
 
 ### Fixed
 
-- Session Log's styles can no longer clash with another plugin's. bb applies every plugin's stylesheet to the whole window, and Session Log used short `sl-` names that another plugin could style by accident, as Shopify Browser did to Switchboard's rows. Its classes, custom properties, data attributes and search highlights now start with `session-log-`, and a test fails if a short or unanchored name comes back. Tints, hidden rows and search highlighting look the same.
+- Session Log's styles can no longer clash with another plugin's. bb applies every plugin's stylesheet to the whole window, and Session Log used short `sl-` names that an unscoped rule from another plugin could style by accident. Its classes, custom properties, data attributes and search highlights now start with `session-log-`, and a test fails if a short or unanchored name comes back. Tints, hidden rows and search highlighting look the same.
 
 ## 0.6.0 (2026-11-19)
 

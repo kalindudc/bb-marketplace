@@ -34,12 +34,12 @@ describe("ReportView", () => {
     expect(container.querySelector(".glow, .lit, .tcard, .tv-card")).toBeNull();
   });
   it("words an id nobody can name, and leaves paths alone", () => {
-    const report = { ...vexReport, headline: undefined, outcome: "Checked thr_nobody42 on quest_gone99 in /Users/k/worktrees/thr_dakui5z2rx-1/app. Then done." };
+    const report = { ...vexReport, headline: undefined, outcome: "Checked thr_nobody42 on quest_gone99 in /Users/k/worktrees/thr_test000023-1/app. Then done." };
     const { container } = render(<ReportView report={report} names={names} />);
     const body = container.textContent ?? "";
     expect(body).toContain("another thread");
     expect(body).toContain("another quest");
-    expect(body).toContain("/Users/k/worktrees/thr_dakui5z2rx-1/app");
+    expect(body).toContain("/Users/k/worktrees/thr_test000023-1/app");
   });
   it("turns inline and line-start numbering into lists, and a trailing command into code", () => {
     expect(reportBlocks("Lead. (1) one (2) two (3) three")).toEqual([{ kind: "p", text: "Lead." }, { kind: "list", items: ["one", "two", "three"] }]);

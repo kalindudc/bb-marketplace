@@ -104,7 +104,7 @@ describe("Tavern page surfaces", () => {
     await slot.findByRole("heading", { name: /Needs you/ });
     const queue = slot.getByRole("region", { name: "Needs you" });
     const summaries = [...queue.querySelectorAll("[data-need-card=ask]")];
-    expect(summaries[0]?.textContent).toContain("Send Luc the PR link?");
+    expect(summaries[0]?.textContent).toContain("Send Riley the PR link?");
     for (const summary of summaries) {
       expect(summary.textContent).toContain("Vault cutover");
       expect(summary.textContent).toContain("Wren");
@@ -158,8 +158,8 @@ describe("Tavern page surfaces", () => {
     const slot = await page("", { answerAsk: answer });
     await slot.findByRole("heading", { name: /The quest board/ });
     fireEvent.click(slot.container.querySelector("summary")!);
-    const ask = slot.getByRole("region", { name: "Ask: Send Luc the PR link?" });
-    expect(within(ask).getByText("Luc · #vault")).toBeTruthy();
+    const ask = slot.getByRole("region", { name: "Ask: Send Riley the PR link?" });
+    expect(within(ask).getByText("Riley · #vault")).toBeTruthy();
     expect(within(ask).getByText(/Please review https/)).toBeTruthy();
     const button = within(ask).getByRole("button", { name: "Record answer" });
     expect((button as HTMLButtonElement).disabled).toBe(true);
@@ -167,7 +167,7 @@ describe("Tavern page surfaces", () => {
     fireEvent.click(button);
     await waitFor(() => expect(answer).toHaveBeenCalledTimes(1));
     expect(answer.mock.calls[0]?.[0]).toEqual({ askId: "send", optionId: "send", note: null, via: "page" });
-    const receipt = await slot.findByRole("status", { name: "Ask answered: Send Luc the PR link?" });
+    const receipt = await slot.findByRole("status", { name: "Ask answered: Send Riley the PR link?" });
     expect(receipt.textContent).toContain("Answered");
     expect(receipt.textContent).toContain("cleared everywhere");
   });
@@ -388,7 +388,7 @@ describe("Tavern page surfaces", () => {
     const focus = await slot.findByRole("group", { name: "Focus on a quest" });
     fireEvent.click(within(focus).getByRole("button", { name: /^Focus on Vault cutover · Build/ }));
     expect(within(focus).getByRole("button", { name: /^Focus on Vault cutover · Build/ }).getAttribute("aria-pressed")).toBe("true");
-    fireEvent.click(slot.getByRole("button", { name: /^Luc: open Vault cutover/ }));
+    fireEvent.click(slot.getByRole("button", { name: /^Riley: open Vault cutover/ }));
     expect(slot.inspection.navigateCalls).toContainEqual({ method: "toPluginPanel", path: "tavern", options: { subPath: "quest/vault" } });
   });
   it("zooms the map window and copies the map as a Markdown outline", async () => {

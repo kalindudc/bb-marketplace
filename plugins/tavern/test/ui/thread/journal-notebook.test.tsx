@@ -254,12 +254,12 @@ describe("notebook journal tab", () => {
   });
 
   it("names actors mid-sentence and evidence without raw thread ids", async () => {
-    const withEvidence = journalSchema.parse({ ...journal, entries: entries.map(e => e.id === "a4" ? { ...e, evidence: [{ kind: "note", ref: "count", detail: "Written by lark (thr_4d5aferz3e).", exitCode: null }, { kind: "command", ref: "npm test", detail: "8 passing", exitCode: 0 }] } : e) });
+    const withEvidence = journalSchema.parse({ ...journal, entries: entries.map(e => e.id === "a4" ? { ...e, evidence: [{ kind: "note", ref: "count", detail: "Written by lark (thr_test000007).", exitCode: null }, { kind: "command", ref: "npm test", detail: "8 passing", exitCode: 0 }] } : e) });
     const { slot } = open(withEvidence);
     fireEvent.click(await slot.findByRole("button", { name: /^a4\s*Count the lines$/ }));
     const region = await slot.findByRole("region", { name: "Details of Count the lines" });
     expect(region.textContent).toContain("Rejected by a thread");
-    expect(region.textContent).not.toContain("thr_4d5aferz3e");
+    expect(region.textContent).not.toContain("thr_test000007");
     const kinds = [...region.querySelectorAll(".evidence-list li")].map(li => li.textContent ?? "");
     expect(kinds.findIndex(t => t.includes("npm test"))).toBeLessThan(kinds.findIndex(t => t.includes("count")));
     slot.lifecycle.unmount();

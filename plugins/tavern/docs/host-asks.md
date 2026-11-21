@@ -40,7 +40,7 @@ These are core capabilities or fixes Tavern needs, not APIs Tavern already has. 
 
 - Ask: Expose whether the thread context card is actually shown, together with a stable pane identity. A context-kind value should not imply a visible card when the card is hidden.
 - Why Tavern needs it: The journal segment above the composer must remain visible when the card is hidden, without duplicating it when the card is shown. Two panes of the same thread may have different visibility.
-- Evidence: `src/ui/thread/card-shown.ts:1–10` records that `experimental_useThreadContextKind()` reports `"card"` for a non-banner layout even while the card is hidden, and that the SDK exposes no pane ID. The workaround follows the user's Wakeup fix, [bb-marketplace PR #616](https://github.com/shopify-playground/bb-marketplace/pull/616); this reference does not claim the PR's current merge status.
+- Evidence: `src/ui/thread/card-shown.ts:1–10` records that `experimental_useThreadContextKind()` reports `"card"` for a non-banner layout even while the card is hidden, and that the SDK exposes no pane ID.
 - Today's workaround: Observe the card container's `hidden` attribute and track visibility by thread. If two card-layout panes show the same thread and only one reveals its card, the thread-keyed state can hide both journal segments. Unknown or unmounted cards leave the segment visible.
 - Raised by: The user and Gaetano.
 
@@ -64,7 +64,7 @@ These are core capabilities or fixes Tavern needs, not APIs Tavern already has. 
 
 - Ask: Make hidden threads ineligible for user-facing thread notifications, regardless of the default notification level. Provide a core guarantee so a background check cannot notify merely because a notification sender uses the normal default.
 - Why Tavern needs it: Voice checks run in hidden threads and must stay quiet. Tavern must not depend on another plugin to mute each check, or race to change a notification setting after the turn starts.
-- Evidence: Steve's live probe, `thread-storage/thr_kyhzwgqhx4/design/voice-check/probe/results.md`, ran a hidden thread with parent notifications off on 14 November 2026. The notification-level query returned "all (default)". The probe explicitly could not establish whether the push plugin skips hidden threads or whether a push was delivered. This is a default-level risk and a missing core guarantee, not an observed notification.
+- Evidence: A live probe ran a hidden thread with parent notifications off on 14 November 2026. The notification-level query returned "all (default)". The probe explicitly could not establish whether the push plugin skips hidden threads or whether a push was delivered. This is a default-level risk and a missing core guarantee, not an observed notification.
 - Today's workaround: Request hidden visibility and turn parent notifications off, but do not treat those flags as a verified mute for every notification sender. The probes established no plugin-independent mute. Changing the level through the push-notifications plugin would add a dependency and is not Tavern's chosen solution.
 - Raised by: Steve.
 

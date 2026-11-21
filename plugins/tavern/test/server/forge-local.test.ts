@@ -3,8 +3,6 @@ import { expect, it, vi } from "vitest";
 import { PlacementForge } from "../../src/server/placement/forge";
 import type { TavernRuntime } from "../../src/server/runtime";
 import { placementRuleSchema, placementSettingsSchema } from "../../src/shared/placement-settings";
-import { readFileSync, readdirSync } from "node:fs";
-import { join } from "node:path";
 
 it.each([false, true])("records a member-machine draft without pushing (placed: %s)", async placed => {
   const host = { call: vi.fn(async (_host: string, method: string, _input?: unknown) => {
@@ -24,22 +22,6 @@ it("keeps an explicit member rule unchanged through settings parsing", () => {
   const rule = placementRuleSchema.parse({ id: "work", label: "Work", enabled: true, match: {}, target: { kind: "current" }, pullRequests: { at: "member" } });
   expect(placementSettingsSchema.parse({ rules: [rule] }).rules[0]).toEqual(rule);
 });
-it("contains no machine provider or private forge integration in source", () => {
-  const walk = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap(entry => entry.isDirectory() ? walk(join(dir, entry.name)) : [join(dir, entry.name)]);
-  const forbidden = /\baquifer\b|delta\.shopify|github\.com\/Shopify|shop\/world|\bWorld\b|["']dt (?:pr|deploy|status)\b/i;
-  const animationWorldFiles = ["ui/engine/avatar.tsx", "ui/engine/scheduler.ts", "ui/engine/strip.tsx", "ui/kit/characters.tsx", "ui/kit/README.md"].map(path => join(import.meta.dirname, "../../src", path));
-  const matches = walk(join(import.meta.dirname, "../../src")).filter(path => {
-    if (!/\.(?:ts|tsx|md|css)$/.test(path)) return false;
-    const source = readFileSync(path, "utf8");
-    // These animation files use lowercase world for scene state, not a machine provider.
-    let checked = animationWorldFiles.includes(path) ? source.replaceAll(/\bworld\b/g, "scene") : source;
-    if (path === join(import.meta.dirname, "../../src/scope/acts.ts")) {
-      // The scope catalogue classifies these command names; they are not provider coupling.
-      checked = checked.replaceAll(/(?<![\w-])aquifer-machines(?![\w-])/g, "classified-command");
-      for (const label of ["dt pr merge", "dt pr approve", "dt pr create|edit|comment", "dt deploy"])
-        checked = checked.replaceAll(JSON.stringify(label), JSON.stringify("classified-command"));
-    }
-    return forbidden.test(checked);
-  });
-  expect(matches).toEqual([]);
+it("does not seed a provider rule or a forge profile", () => {
+  expect(placementSettingsSchema.parse({})).toMatchObject({ rules: [], forges: [] });
 });

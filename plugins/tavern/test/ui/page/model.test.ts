@@ -43,7 +43,7 @@ describe("Tavern page data", () => {
   });
   it("builds the connection picture from real quest ownership, asks and outside gates", () => {
     const graph = graphFor(room, registry);
-    expect(graph.nodes.some((node) => node.label === "Luc")).toBe(true);
+    expect(graph.nodes.some((node) => node.label === "Riley")).toBe(true);
     expect(graph.nodes.some((node) => node.id === "ask:send")).toBe(true);
     expect(graph.edges).toContainEqual(["member:smith", "outside:vault:w2"]);
     expect(graph.edges.every(([a, b]) => graph.nodes.some((n) => n.id === a) && graph.nodes.some((n) => n.id === b))).toBe(true);

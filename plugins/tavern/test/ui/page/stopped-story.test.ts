@@ -15,7 +15,7 @@ const base = (waypoints: (typeof vault.quest.waypoints)[number][], extra: Record
 describe("stoppedStory", () => {
   it("a stop by you with no reason: nothing finished, each waypoint left in words, no reason line and no who-and-when", () => {
     const lines = stoppedStory(base([wp("w1", "doing", { ownerMember: scenes.juno }), wp("w4", "planned"), wp("w7", "planned")]), names);
-    expect(lines).toEqual(["Nothing was finished.", "“Code change” was in progress.", "“Merge” was waiting on Luc.", "“DNS cut” was still yours."]);
+    expect(lines).toEqual(["Nothing was finished.", "“Code change” was in progress.", "“Merge” was waiting on Riley.", "“DNS cut” was still yours."]);
     expect(lines.join(" ")).not.toMatch(/reason|stopped it|thr-|\bw\d\b/);
   });
   it("a stop with a recorded reason says it first", () => {

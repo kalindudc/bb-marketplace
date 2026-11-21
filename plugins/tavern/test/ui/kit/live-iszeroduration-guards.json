@@ -1,10 +1,10 @@
 {
  "scopes": [
   {
-   "threadId": "thr_vqnj623sr8",
+   "threadId": "thr_test000058",
    "scope": {
     "v": 1,
-    "threadId": "thr_vqnj623sr8",
+    "threadId": "thr_test000058",
     "role": "ranger",
     "preset": "readonly",
     "issuedAt": 1794675037970,
@@ -19,25 +19,25 @@
      "allow": [
       "/private/tmp",
       "/private/var/folders/2c/hlwr36nd3rx7j742yt2__mjm0000gn/T",
-      "/Users/me/.bb/thread-storage/thr_vqnj623sr8"
+      "/home/demo/.bb/thread-storage/thr_test000058"
      ],
      "deny": [
       "/Users/me/.ssh",
       "/Users/me/.pi/agent/extensions",
-      "/Users/me/src/github.com/kalindudc/shell/home/.pi/agent/extensions/agents-context",
+      "/home/demo/projects/shell/home/.pi/agent/extensions/agents-context",
       "/Users/me/.pi/agent/git/github.com/example/agent-kit/extensions/ai-proxy-credential-manager",
-      "/Users/me/src/github.com/kalindudc/shell/home/.pi/agent/extensions/auto-title",
-      "/Users/me/src/github.com/kalindudc/shell/home/.pi/agent/extensions/bash-guard",
-      "/Users/me/src/github.com/kalindudc/shell/home/.pi/agent/extensions/custom-tools",
-      "/Users/me/src/github.com/kalindudc/shell/home/.pi/agent/extensions/esc-guard",
-      "/Users/me/src/github.com/kalindudc/shell/home/.pi/agent/extensions/herdr-label",
-      "/Users/me/src/github.com/kalindudc/shell/home/.pi/agent/extensions/keep-awake",
-      "/Users/me/src/github.com/kalindudc/shell/home/.pi/agent/extensions/long-cache",
+      "/home/demo/projects/shell/home/.pi/agent/extensions/auto-title",
+      "/home/demo/projects/shell/home/.pi/agent/extensions/bash-guard",
+      "/home/demo/projects/shell/home/.pi/agent/extensions/custom-tools",
+      "/home/demo/projects/shell/home/.pi/agent/extensions/esc-guard",
+      "/home/demo/projects/shell/home/.pi/agent/extensions/herdr-label",
+      "/home/demo/projects/shell/home/.pi/agent/extensions/keep-awake",
+      "/home/demo/projects/shell/home/.pi/agent/extensions/long-cache",
       "/nix/store/ig8q9xkwbqbk1adbdr7sxw44b0ba4j5c-pi/config/event-export",
       "/nix/store/ig8q9xkwbqbk1adbdr7sxw44b0ba4j5c-pi/config/extension",
       "/Users/me/.claude",
       "/Users/me/.agents/tavern/scopes.yml",
-      "/Users/me/.bb/plugins/tavern/scopes"
+      "/home/demo/.bb/plugins/tavern/scopes"
      ]
     },
     "tools": {
@@ -139,7 +139,7 @@
      "variables": {
       "HOME": "/Users/me",
       "TMPDIR": "/private/var/folders/2c/hlwr36nd3rx7j742yt2__mjm0000gn/T",
-      "BB_THREAD_STORAGE": "/Users/me/.bb/thread-storage/thr_vqnj623sr8"
+      "BB_THREAD_STORAGE": "/home/demo/.bb/thread-storage/thr_test000058"
      }
     },
     "sandbox": true,
@@ -164,10 +164,10 @@
    }
   },
   {
-   "threadId": "thr_dakui5z2rx",
+   "threadId": "thr_test000023",
    "scope": {
     "v": 1,
-    "threadId": "thr_dakui5z2rx",
+    "threadId": "thr_test000023",
     "role": "smith",
     "preset": "worktree",
     "issuedAt": 1794675155278,
@@ -177,32 +177,32 @@
      "bash",
      "Bash"
     ],
-    "expectedWorktree": "/Users/me/.bb/plugins/environment-git-worktree/host-data/worktrees/thr_dakui5z2rx-1/app",
+    "expectedWorktree": "/home/demo/.bb/plugins/environment-git-worktree/host-data/worktrees/thr_test000023-1/app",
     "writes": {
      "mode": "worktree",
      "allow": [
-      "/Users/me/.bb/plugins/environment-git-worktree/host-data/worktrees/thr_dakui5z2rx-1/app",
+      "/home/demo/.bb/plugins/environment-git-worktree/host-data/worktrees/thr_test000023-1/app",
       "/private/tmp",
       "/private/var/folders/2c/hlwr36nd3rx7j742yt2__mjm0000gn/T",
-      "/Users/me/.bb/thread-storage/thr_dakui5z2rx"
+      "/home/demo/.bb/thread-storage/thr_test000023"
      ],
      "deny": [
       "/Users/me/.ssh",
       "/Users/me/.pi/agent/extensions",
-      "/Users/me/src/github.com/kalindudc/shell/home/.pi/agent/extensions/agents-context",
+      "/home/demo/projects/shell/home/.pi/agent/extensions/agents-context",
       "/Users/me/.pi/agent/git/github.com/example/agent-kit/extensions/ai-proxy-credential-manager",
-      "/Users/me/src/github.com/kalindudc/shell/home/.pi/agent/extensions/auto-title",
-      "/Users/me/src/github.com/kalindudc/shell/home/.pi/agent/extensions/bash-guard",
-      "/Users/me/src/github.com/kalindudc/shell/home/.pi/agent/extensions/custom-tools",
-      "/Users/me/src/github.com/kalindudc/shell/home/.pi/agent/extensions/esc-guard",
-      "/Users/me/src/github.com/kalindudc/shell/home/.pi/agent/extensions/herdr-label",
-      "/Users/me/src/github.com/kalindudc/shell/home/.pi/agent/extensions/keep-awake",
-      "/Users/me/src/github.com/kalindudc/shell/home/.pi/agent/extensions/long-cache",
+      "/home/demo/projects/shell/home/.pi/agent/extensions/auto-title",
+      "/home/demo/projects/shell/home/.pi/agent/extensions/bash-guard",
+      "/home/demo/projects/shell/home/.pi/agent/extensions/custom-tools",
+      "/home/demo/projects/shell/home/.pi/agent/extensions/esc-guard",
+      "/home/demo/projects/shell/home/.pi/agent/extensions/herdr-label",
+      "/home/demo/projects/shell/home/.pi/agent/extensions/keep-awake",
+      "/home/demo/projects/shell/home/.pi/agent/extensions/long-cache",
       "/nix/store/ig8q9xkwbqbk1adbdr7sxw44b0ba4j5c-pi/config/event-export",
       "/nix/store/ig8q9xkwbqbk1adbdr7sxw44b0ba4j5c-pi/config/extension",
       "/Users/me/.claude",
       "/Users/me/.agents/tavern/scopes.yml",
-      "/Users/me/.bb/plugins/tavern/scopes"
+      "/home/demo/.bb/plugins/tavern/scopes"
      ]
     },
     "tools": {
@@ -264,7 +264,7 @@
      "variables": {
       "HOME": "/Users/me",
       "TMPDIR": "/private/var/folders/2c/hlwr36nd3rx7j742yt2__mjm0000gn/T",
-      "BB_THREAD_STORAGE": "/Users/me/.bb/thread-storage/thr_dakui5z2rx"
+      "BB_THREAD_STORAGE": "/home/demo/.bb/thread-storage/thr_test000023"
      }
     },
     "sandbox": true,
@@ -289,10 +289,10 @@
    }
   },
   {
-   "threadId": "thr_t7zqtmwfgx",
+   "threadId": "thr_test000054",
    "scope": {
     "v": 1,
-    "threadId": "thr_t7zqtmwfgx",
+    "threadId": "thr_test000054",
     "role": "warden",
     "preset": "checker",
     "issuedAt": 1794675476312,
@@ -303,7 +303,7 @@
      "Bash"
     ],
     "checks": {
-     "worktree": "/Users/me/.bb/plugins/environment-git-worktree/host-data/worktrees/thr_dakui5z2rx-1/app",
+     "worktree": "/home/demo/.bb/plugins/environment-git-worktree/host-data/worktrees/thr_test000023-1/app",
      "commands": [
       "npm test"
      ]
@@ -313,25 +313,25 @@
      "allow": [
       "/private/tmp",
       "/private/var/folders/2c/hlwr36nd3rx7j742yt2__mjm0000gn/T",
-      "/Users/me/.bb/thread-storage/thr_t7zqtmwfgx"
+      "/home/demo/.bb/thread-storage/thr_test000054"
      ],
      "deny": [
       "/Users/me/.ssh",
       "/Users/me/.pi/agent/extensions",
-      "/Users/me/src/github.com/kalindudc/shell/home/.pi/agent/extensions/agents-context",
+      "/home/demo/projects/shell/home/.pi/agent/extensions/agents-context",
       "/Users/me/.pi/agent/git/github.com/example/agent-kit/extensions/ai-proxy-credential-manager",
-      "/Users/me/src/github.com/kalindudc/shell/home/.pi/agent/extensions/auto-title",
-      "/Users/me/src/github.com/kalindudc/shell/home/.pi/agent/extensions/bash-guard",
-      "/Users/me/src/github.com/kalindudc/shell/home/.pi/agent/extensions/custom-tools",
-      "/Users/me/src/github.com/kalindudc/shell/home/.pi/agent/extensions/esc-guard",
-      "/Users/me/src/github.com/kalindudc/shell/home/.pi/agent/extensions/herdr-label",
-      "/Users/me/src/github.com/kalindudc/shell/home/.pi/agent/extensions/keep-awake",
-      "/Users/me/src/github.com/kalindudc/shell/home/.pi/agent/extensions/long-cache",
+      "/home/demo/projects/shell/home/.pi/agent/extensions/auto-title",
+      "/home/demo/projects/shell/home/.pi/agent/extensions/bash-guard",
+      "/home/demo/projects/shell/home/.pi/agent/extensions/custom-tools",
+      "/home/demo/projects/shell/home/.pi/agent/extensions/esc-guard",
+      "/home/demo/projects/shell/home/.pi/agent/extensions/herdr-label",
+      "/home/demo/projects/shell/home/.pi/agent/extensions/keep-awake",
+      "/home/demo/projects/shell/home/.pi/agent/extensions/long-cache",
       "/nix/store/ig8q9xkwbqbk1adbdr7sxw44b0ba4j5c-pi/config/event-export",
       "/nix/store/ig8q9xkwbqbk1adbdr7sxw44b0ba4j5c-pi/config/extension",
       "/Users/me/.claude",
       "/Users/me/.agents/tavern/scopes.yml",
-      "/Users/me/.bb/plugins/tavern/scopes"
+      "/home/demo/.bb/plugins/tavern/scopes"
      ]
     },
     "tools": {
@@ -433,7 +433,7 @@
      "variables": {
       "HOME": "/Users/me",
       "TMPDIR": "/private/var/folders/2c/hlwr36nd3rx7j742yt2__mjm0000gn/T",
-      "BB_THREAD_STORAGE": "/Users/me/.bb/thread-storage/thr_t7zqtmwfgx"
+      "BB_THREAD_STORAGE": "/home/demo/.bb/thread-storage/thr_test000054"
      }
     },
     "sandbox": true,
@@ -460,7 +460,7 @@
  ],
  "violations": [
   {
-   "threadId": "thr_t7zqtmwfgx",
+   "threadId": "thr_test000054",
    "providerId": "pi",
    "at": 1794675499405,
    "eventId": "evt_4fatc65hzs",
@@ -473,7 +473,7 @@
     "kind": "bash",
     "toolName": "bash",
     "input": {
-     "command": "W=/Users/me/.bb/plugins/environment-git-worktree/host-data/worktrees/thr_dakui5z2rx-1/app; cd $W && tail -c 20 src/duration.js | od -c | tail -3; git diff --stat; S=$(mktemp -d); mkdir -p $S/src $S/test; cp package.json $S/; git show HEAD:src/duration.js > $S/src/duration.js; cp test/duration.test.js $S/test/; cd $S && node --test 2>&1 | grep -E \"SyntaxError|does not provide|\u2139 (pass|fail)\"; echo \"RED_EXIT=${PIPESTATUS[0]}\"; rm -rf $S"
+     "command": "W=/home/demo/.bb/plugins/environment-git-worktree/host-data/worktrees/thr_test000023-1/app; cd $W && tail -c 20 src/duration.js | od -c | tail -3; git diff --stat; S=$(mktemp -d); mkdir -p $S/src $S/test; cp package.json $S/; git show HEAD:src/duration.js > $S/src/duration.js; cp test/duration.test.js $S/test/; cd $S && node --test 2>&1 | grep -E \"SyntaxError|does not provide|\u2139 (pass|fail)\"; echo \"RED_EXIT=${PIPESTATUS[0]}\"; rm -rf $S"
     },
     "cwd": "/Users/me/tavern-live-r2/app"
    },
@@ -482,7 +482,7 @@
  ],
  "members": [
   {
-   "threadId": "thr_vqnj623sr8",
+   "threadId": "thr_test000058",
    "characterId": "otto",
    "classId": "ranger",
    "state": "done",
@@ -494,7 +494,7 @@
    }
   },
   {
-   "threadId": "thr_dakui5z2rx",
+   "threadId": "thr_test000023",
    "characterId": "juno",
    "classId": "smith",
    "state": "done",
@@ -506,7 +506,7 @@
    }
   },
   {
-   "threadId": "thr_t7zqtmwfgx",
+   "threadId": "thr_test000054",
    "characterId": "vex",
    "classId": "warden",
    "state": "done",

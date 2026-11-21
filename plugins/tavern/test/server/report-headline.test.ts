@@ -3,10 +3,10 @@ import { describe, expect, it } from "vitest";
 import { extractReportHeadline, nameReportIds } from "../../src/shared/report-headline";
 
 const questId = "quest_c4151d86-1feb-4271-a91c-0f66c285047e";
-const vexOutcome = `Verified maker thr_dakui5z2rx entry [00] for board quest ${questId}, waypoint w1.`;
+const vexOutcome = `Verified maker thr_test000023 entry [00] for board quest ${questId}, waypoint w1.`;
 const reportId = "report_64aaf554";
 const names = {
-  threadNames: new Map([["thr_dakui5z2rx", "Otto"]]),
+  threadNames: new Map([["thr_test000023", "Otto"]]),
   questNames: new Map([[questId, "isZeroDuration"]]),
   waypointTitles: new Map([["w1", "Check the duration"]]),
 };
@@ -54,15 +54,15 @@ describe("report identifier naming", () => {
   it("leaves unresolved ids in the text and reports each once in first-occurrence order", () => {
     const text = "thr_missing checked quest_missing, waypoint w404. thr_missing cannot find w9.";
     expect(nameReportIds(text, names)).toEqual({ text, unresolved: ["thr_missing", "quest_missing", "w404"] });
-    expect(nameReportIds("Checked thr_dakui5z2rx beside thr_missing.", names)).toEqual({
+    expect(nameReportIds("Checked thr_test000023 beside thr_missing.", names)).toEqual({
       text: "Checked Otto beside thr_missing.", unresolved: ["thr_missing"],
     });
   });
 
   it("does not replace partial identities or names that still contain raw ids", () => {
-    const text = "Checked thr_dakui5z2rx-more and thr_dakui5z2rx.";
-    expect(nameReportIds(text, { threadNames: new Map([["thr_dakui5z2rx", "thr_someone_else"]]) })).toEqual({
-      text, unresolved: ["thr_dakui5z2rx-more", "thr_dakui5z2rx"],
+    const text = "Checked thr_test000023-more and thr_test000023.";
+    expect(nameReportIds(text, { threadNames: new Map([["thr_test000023", "thr_someone_else"]]) })).toEqual({
+      text, unresolved: ["thr_test000023-more", "thr_test000023"],
     });
     expect(nameReportIds("Checked build-1 and build-10.", { waypointTitles: new Map([["build-1", "Build the feature"]]) })).toEqual({
       text: "Checked Build the feature and build-10.", unresolved: [],
@@ -70,9 +70,9 @@ describe("report identifier naming", () => {
   });
 
   it.each([
-    "/Users/me/.bb/plugins/environment-git-worktree/host-data/worktrees/thr_dakui5z2rx-1/app",
-    "thr_dakui5z2rx/app", "/logs/quest_missing", "/logs/w1/results",
-    "C:\\work\\thr_dakui5z2rx\\app", "/logs/report_64aaf554/evidence", "report_64aaf554/evidence",
+    "/Users/me/.bb/plugins/environment-git-worktree/host-data/worktrees/thr_test000023-1/app",
+    "thr_test000023/app", "/logs/quest_missing", "/logs/w1/results",
+    "C:\\work\\thr_test000023\\app", "/logs/report_64aaf554/evidence", "report_64aaf554/evidence",
     "C:\\work\\report_64aaf554\\evidence",
   ])("preserves path references rather than treating their segments as people: %s", path => {
     const outcome = `Checked ${path} without changing it.`;
@@ -99,7 +99,7 @@ describe("legacy report headline extraction", () => {
   });
 
   it("sanitizes stored headlines too and never changes the original report", () => {
-    const report = { headline: `Checked thr_dakui5z2rx on ${questId} at w1.`, outcome: "Full outcome stays exactly as written." };
+    const report = { headline: `Checked thr_test000023 on ${questId} at w1.`, outcome: "Full outcome stays exactly as written." };
     const original = { ...report };
     expect(extractReportHeadline(report, names)).toBe("Checked Otto on isZeroDuration at Check the duration.");
     expect(extractReportHeadline(report)).toBeNull();
@@ -108,12 +108,12 @@ describe("legacy report headline extraction", () => {
 
   it("recognizes arbitrary known waypoint ids and refuses names that still contain raw ids", () => {
     expect(extractReportHeadline({ outcome: "Checked waypoint make-readme exactly." }, { waypointTitles: new Map([["make-readme", "Update the README"]]) })).toBe("Checked waypoint Update the README exactly.");
-    expect(extractReportHeadline({ outcome: vexOutcome }, { ...names, threadNames: new Map([["thr_dakui5z2rx", "thr_someone_else"]]) })).toBeNull();
+    expect(extractReportHeadline({ outcome: vexOutcome }, { ...names, threadNames: new Map([["thr_test000023", "thr_someone_else"]]) })).toBeNull();
     expect(extractReportHeadline({ outcome: vexOutcome }, { ...names, waypointTitles: new Map([["w1", "w99"]]) })).toBeNull();
   });
 
   it("does not confuse an id prefix with a known identity or keep unknown waypoints", () => {
-    expect(extractReportHeadline({ outcome: `Checked thr_dakui5z2rx-more on ${questId} at w1.` }, names)).toBeNull();
+    expect(extractReportHeadline({ outcome: `Checked thr_test000023-more on ${questId} at w1.` }, names)).toBeNull();
     expect(extractReportHeadline({ outcome: "Verified waypoint w404 with the check." }, names)).toBeNull();
   });
 
@@ -127,7 +127,7 @@ describe("legacy report headline extraction", () => {
   });
 
   it("does not truncate a replacement or raw id at the legacy display limit", () => {
-    expect(extractReportHeadline({ outcome: `Checked thr_dakui5z2rx in the repository.` }, { threadNames: new Map([["thr_dakui5z2rx", "x".repeat(160)]]) })).toBeNull();
+    expect(extractReportHeadline({ outcome: `Checked thr_test000023 in the repository.` }, { threadNames: new Map([["thr_test000023", "x".repeat(160)]]) })).toBeNull();
     expect(extractReportHeadline({ headline: "x".repeat(160), outcome: "" })).toHaveLength(160);
     expect(extractReportHeadline({ headline: "x".repeat(161), outcome: "" })).toBeNull();
   });

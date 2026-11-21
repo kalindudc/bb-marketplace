@@ -159,7 +159,7 @@ describe("truth on the record (Tony's review)", () => {
     const rook = scenes.registry.characters.find((c) => c.id === "rook")!;
     expect(card("Rook").querySelector(".tv-credit-v")).toBeNull();
     expect(card("Rook").textContent).not.toContain(rook.lines.wrap);
-    const junoVoice = live.reports.filter((r) => r.memberThreadId === "thr_ragzivfix4" && r.status === "done")[0]!.voice!;
+    const junoVoice = live.reports.filter((r) => r.memberThreadId === "thr_test000049" && r.status === "done")[0]!.voice!;
     expect(card("Juno").querySelector(".tv-credit-v")!.textContent).toBe(junoVoice);
   });
   it("folds the three archived member threads from one moment into one line, keeping every name, with the unknown actor in the title", async () => {
@@ -173,7 +173,7 @@ describe("truth on the record (Tony's review)", () => {
     expect(body.textContent).not.toMatch(/actor unknown|not supplied by the host|Wren\s*archived/);
   });
   it("a finished record's guardrails say what was asked for, what the run recorded and the state now, never a bare 'enforce' or 'not armed yet'", async () => {
-    const rook = "thr_4r5sy6cqzq";
+    const rook = "thr_test000008";
     const blocked = { eventId: "ev-77", seq: 0, threadId: rook, providerId: "codex", at: live.quest.endedAt! - 60_000, mode: "enforce", stopped: true, latencyMs: 40, ruleId: "writes", reason: "Blocked od -c: writes outside the scope" };
     const withBlock = boardQuestDetailSchema.parse({ ...formatDuration, violations: [blocked] });
     const slot = await open(`quest/${live.quest.id}`, room, withBlock);

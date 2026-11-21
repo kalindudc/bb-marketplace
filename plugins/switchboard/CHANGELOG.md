@@ -6,7 +6,7 @@ Notable changes to Switchboard, newest first. Releases are tagged `switchboard/v
 
 ### Fixed
 
-- Idle threads no longer pile on top of other rows when another plugin styles a class with the same name. bb applies every plugin's stylesheet to the whole window, and Shopify Browser 0.2.0's own `sb-stale` rule made Switchboard's faded rows absolutely positioned over their section. Every class, custom property, keyframe and data attribute Switchboard styles now starts with `switchboard-`, and every rule is anchored on one of them, so other plugins' rules no longer reach Switchboard's rows and Switchboard's rules no longer reach theirs. A test fails if a short or unanchored name comes back.
+- Idle threads no longer pile on top of other rows when another plugin styles a class with the same name. bb applies every plugin's stylesheet to the whole window, and an unscoped `sb-stale` rule made Switchboard's faded rows absolutely positioned over their section. Every class, custom property, keyframe and data attribute Switchboard styles now starts with `switchboard-`, and every rule is anchored on one of them, so other plugins' rules no longer reach Switchboard's rows and Switchboard's rules no longer reach theirs. A test fails if a short or unanchored name comes back.
 
 ## 0.4.1 (2026-11-03)
 

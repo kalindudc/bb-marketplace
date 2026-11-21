@@ -9,10 +9,10 @@ const paths = { home: cwd + "/scratch/home", worktree: cwd, tmp: [cwd + "/scratc
 function check(command: string, role = "smith") {
   const readCommand = vi.fn((program: string, args: string[]) => {
     if (program === "git" && args.includes("symbolic-ref")) return "feature";
-    if (program === "git" && args.includes("get-url")) return "git@github.com:kalindudc/world.git";
+    if (program === "git" && args.includes("get-url")) return "git@github.com:fixture-dev/sample-repo.git";
     if (program === "git" && args.includes("--show-toplevel")) return cwd;
     if (program === "gh" && args[0] === "api") return '{"login":"tester"}';
-    if (program === "gh" && args[0] === "pr") return JSON.stringify({ isDraft: true, author: { login: args[2] === "5" ? "someone-else" : "tester" }, headRefName: args[2] === "5" ? "someone-else" : "feature", headRepositoryOwner: { login: "kalindudc" }, headRepository: { name: "world" } });
+    if (program === "gh" && args[0] === "pr") return JSON.stringify({ isDraft: true, author: { login: args[2] === "5" ? "someone-else" : "tester" }, headRefName: args[2] === "5" ? "someone-else" : "feature", headRepositoryOwner: { login: "fixture-dev" }, headRepository: { name: "sample-repo" } });
     throw new Error("Unexpected lookup");
   });
   const scope = bindPaths({ ...scopeForClass(role), assignedBranch: "feature" }, paths);

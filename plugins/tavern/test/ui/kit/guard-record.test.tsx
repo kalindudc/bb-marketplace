@@ -9,8 +9,8 @@ type Scope = Parameters<typeof guardRecordWords>[0];
 type Violations = Parameters<typeof guardRecordWords>[1];
 const scopes = live.scopes as unknown as Scope[];
 const violations = live.violations as unknown as Violations;
-const vex = scopes.find(s => s.threadId === "thr_t7zqtmwfgx")!;
-const otto = scopes.find(s => s.threadId === "thr_vqnj623sr8")!;
+const vex = scopes.find(s => s.threadId === "thr_test000054")!;
+const otto = scopes.find(s => s.threadId === "thr_test000058")!;
 // A day after the run, so times read with their date; the words take the caller's clock, never the render's.
 const NOW = violations[0]!.at + 24 * 3600_000;
 

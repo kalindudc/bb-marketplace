@@ -7,7 +7,7 @@ import { DecidedForYou } from "../../../src/ui/kit";
 
 afterEach(cleanup);
 const long = "Replanned to v2 within the same goal, because the second Vault instance was missed last time";
-const why = "Otto's notes show vault-saturn was left out of the first cutover";
+const why = "Otto's notes show vault-staging was left out of the first cutover";
 const d = (id: string, text: string): Decision => ({ id, keeperThreadId: "k", boardQuestId: null, text, why, source: "keeper", sourceRef: null, reversible: true, undone: false, createdAt: Date.now() - 60_000 }) as Decision;
 const css = readFileSync("src/ui/kit/tavern.css", "utf8");
 

@@ -29,7 +29,7 @@ describe("the armed new-quest line in a Keeper's thread", () => {
 
   it("sends the draft as a new board quest, then ends the arm", async () => {
     armNewQuest("keeper-1");
-    const slot = await keeperRow({ text: "Move Vault to envoy-direct" });
+    const slot = await keeperRow({ text: "Move Vault to edge-proxy" });
     const send = await slot.findByRole("button", { name: "Send as a new quest" });
     expect((send as HTMLButtonElement).disabled).toBe(false);
     await act(async () => { fireEvent.click(send); });

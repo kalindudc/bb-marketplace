@@ -14,7 +14,7 @@ beforeEach(() => window.localStorage.clear());
 type Handlers = PluginRpcTestHandlers<typeof rpcContract>;
 const detail = scenes.readmeDetail;
 const ID = detail.quest.id;
-const LARK = "thr_z5k6x43jc2", VEX = "thr_f8kheswkzk";
+const LARK = "thr_test000064", VEX = "thr_test000027";
 const rpc = { registry: () => structuredClone(scenes.registry), room: () => structuredClone(scenes.richRoom), boardQuest: () => structuredClone(detail) } as Partial<Handlers> as Handlers;
 const plugin = () => loadPluginApp(async () => ({ default: definePluginApp(registerPageSurfaces) }));
 async function tab(params: unknown) {

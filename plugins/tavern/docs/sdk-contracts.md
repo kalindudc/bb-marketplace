@@ -71,7 +71,7 @@ The event filters currently used are `client/turn/requested`, `item/started`, `i
 
 Smiths on legacy, Worktree or Project checkout Git environments select the official `git-worktree` provider on the parent machine. The base is the checkout’s current branch, or the provider’s default branch when absent. Non-Git, unprovisioned, unsupported-provider and unavailable-provider parents are refused before spawn; the staffing reservation is returned. Other classes continue reusing their parent environment.
 
-A read-only `bb environment providers --project proj_ttq967ke9y --machine host_fiffwzr9t6 --json` check reported both `project-checkout` and `git-worktree` available for the live-test project. The strict-host regressions cover these selections, refusal paths and recovery. Actual provider provisioning remains an asynchronous BB operation and needs the next live check; Tavern does not create Git worktrees itself or bypass scope admission.
+A read-only `bb environment providers --project "$PROJECT_ID" --machine "$HOST_ID" --json` check reported both `project-checkout` and `git-worktree` available for the live-test project. The strict-host regressions cover these selections, refusal paths and recovery. Actual provider provisioning remains an asynchronous BB operation and needs the next live check; Tavern does not create Git worktrees itself or bypass scope admission.
 
 ## Guarded provider and model selection
 

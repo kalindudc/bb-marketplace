@@ -53,7 +53,7 @@ describe("with Speech bubbles off in Atmosphere, the page hides stored voice lin
 
   it("drops the voice line from the tale's credits", async () => {
     const d = structuredClone(scenes.readmeDetail);
-    const lark = d.reports.filter((r) => r.memberThreadId === "thr_z5k6x43jc2").sort((a, b) => b.createdAt - a.createdAt)[0]!;
+    const lark = d.reports.filter((r) => r.memberThreadId === "thr_test000064").sort((a, b) => b.createdAt - a.createdAt)[0]!;
     lark.voice = "Early bird: every row link lands.";
     const tale = (voice: "off" | "full") => open(`tale/${d.quest.id}`, voice, { boardQuest: () => structuredClone(d) as BoardQuestDetail });
     const on = await tale("full");

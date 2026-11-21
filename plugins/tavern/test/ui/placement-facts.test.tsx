@@ -142,11 +142,11 @@ it("shows the real unsupported-target refusal without allocating", async () => {
   expect(slot.queryByText(/Today it waits.*can't run work yet/)).toBeNull();
   expect(spawn).not.toHaveBeenCalled();
 });
-it("previews a supported shop/world-style rule as remote without allocating", async () => {
+it("previews a supported repository-matched rule as remote without allocating", async () => {
   const { slot, spawn } = previewPage();
   await waitFor(() => expect(slot.container.querySelector('[data-verdict]')?.getAttribute('data-verdict')).toBe("caught"));
   const verdict = slot.container.querySelector('[data-verdict]')!;
-  expect(verdict.textContent).toContain("Runs on a new Aquifer World sandbox");
+  expect(verdict.textContent).toContain("Runs on a new Remote monorepo sandbox");
   expect(verdict.textContent).toContain("Preview only: nothing is created.");
   expect(verdict.textContent).toContain("Detection only (remote)");
   expect(verdict.textContent).not.toMatch(/Blocked|waits with a blocker|When it runs/);

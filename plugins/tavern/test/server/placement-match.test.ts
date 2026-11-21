@@ -5,8 +5,8 @@ import { matchPlacementRule, type PlacementFacts } from "../../src/server/placem
 
 const facts: PlacementFacts = {
   projectId: "project", repoRemotes: ["ssh://git@GitHub.com/Shop/Repo.git"],
-  keeperPath: "/remote/home/world/trees/work/src", keeperHome: "/remote/home",
-  keeperEnvironmentProvider: "world", classId: "smith", questId: "quest",
+  keeperPath: "/remote/home/workspaces/trees/work/src", keeperHome: "/remote/home",
+  keeperEnvironmentProvider: "tree-checkout", classId: "smith", questId: "quest",
 };
 function rule(id: string, match = {}, extra = {}) {
   return placementRuleSchema.parse({ id, label: id, enabled: true, match, target: { kind: "current" }, ...extra });
@@ -27,7 +27,7 @@ describe("pure machine rule matching", () => {
       rule("wrong-class", { projectIds: ["project"], classes: ["warden"] }),
       rule("match", {
         projectIds: ["other", "project"], repoRemotes: ["github.com/Shop/*"],
-        keeperPathGlobs: ["~/world/trees/*/src"], keeperEnvironmentProviders: ["world"],
+        keeperPathGlobs: ["~/workspaces/trees/*/src"], keeperEnvironmentProviders: ["tree-checkout"],
         classes: ["ranger", "smith"], questIds: ["quest"],
       }),
       rule("catch-all"),
@@ -47,7 +47,7 @@ describe("pure machine rule matching", () => {
       [{ repoRemotes: ["*"] }, { repoRemotes: null }],
       [{ keeperPathGlobs: ["*"] }, { keeperPath: null }],
       [{ keeperPathGlobs: ["~/*"] }, { keeperHome: null }],
-      [{ keeperEnvironmentProviders: ["world"] }, { keeperEnvironmentProvider: null }],
+      [{ keeperEnvironmentProviders: ["tree-checkout"] }, { keeperEnvironmentProvider: null }],
       [{ questIds: ["quest"] }, { questId: null }],
     ] as const) {
       expect(matchPlacementRule(policy([rule("needs-fact", match)]), { ...facts, ...absent }).state).toBe("compatibility");
@@ -63,7 +63,7 @@ describe("pure machine rule matching", () => {
   });
 
   it("expands home and matches paths using supplied host facts, not the server home", () => {
-    const rules = [rule("path", { keeperPathGlobs: ["~/world/*"] })];
+    const rules = [rule("path", { keeperPathGlobs: ["~/workspaces/*"] })];
     expect(matchPlacementRule(policy(rules), facts).state).toBe("matched");
     expect(matchPlacementRule(policy(rules), { ...facts, keeperHome: "/somewhere/else" }).state).toBe("compatibility");
     expect(matchPlacementRule(policy([rule("windows", { keeperPathGlobs: ["~/work/*"] })]), {
